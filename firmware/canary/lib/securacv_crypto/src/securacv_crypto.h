@@ -140,8 +140,24 @@ void compute_chain_hash(const uint8_t prev[32], const uint8_t payload_hash[32],
 // NVS PERSISTENCE HELPERS
 // ════════════════════════════════════════════════════════════════════════════
 
+// Both refuse (and say why, once) when the image was built with
+// SECURACV_REQUIRE_FLASH_ENCRYPTION=1 and the key's NVS is not encrypted —
+// which, because flash encryption does not cover NVS and this tree has no NVS
+// encryption, is every board today. The decision lives in
+// common/identity/key_at_rest.h. Default builds never refuse (Tier 0 of
+// docs/design/hardware_root_of_trust.md is the accepted default) and report
+// the posture instead.
 bool nvs_load_key(uint8_t priv[32]);
 bool nvs_store_key(const uint8_t priv[32]);
+// The wire label for where the identity key sleeps right now:
+// "plaintext-nvs" | "nvs-encrypted" | "nvs-encrypted+secure-boot"
+// (key_at_rest::wire_label; always "plaintext-nvs" in this tree, fused board
+// or not). Carried by /api/status, the health export, the 'f' console card
+// and the self-manifest as `key_at_rest`. Not secret material.
+const char* crypto_key_at_rest_label();
+// The one boot line saying the same thing: "[WARN|INFO|!!] Key at rest :
+// <label> - <text>", level and text from key_at_rest::boot_level()/boot_text().
+void crypto_print_key_at_rest();
 uint32_t nvs_load_u32(const char* key, uint32_t def = 0);
 bool nvs_store_u32(const char* key, uint32_t val);
 bool nvs_load_bytes(const char* key, uint8_t* out, size_t len);

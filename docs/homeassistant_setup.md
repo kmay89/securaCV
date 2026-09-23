@@ -237,6 +237,14 @@ Within 30 seconds of the Canary connecting to MQTT:
    attributes with `verified: false`, `trust_reason: unsigned`, so a
    dashboard can tell an unsigned publish from a verified one.
 
+   The names in bold are what Home Assistant renders after the device
+   name; they come from each entity's translation key, not from the code.
+   To rename one, edit `custom_components/securacv/strings.json`, copy it
+   over `translations/en.json` (a test keeps the two byte-identical), and
+   mirror the rename in this list and in the names
+   `tests/test_entity_translations.py` pins; other languages go in their
+   own `translations/<lang>.json`.
+
    Sensors:
    - **Witness Count** — total witness records created (`witness_count`; signed `counts` topic)
    - **Chain Length** — hash-chain length, with `latest_hash` and `algorithm` (`chain_length`; signed `chain` topic)
@@ -296,6 +304,19 @@ device also announces acoustic entities via MQTT discovery:
      muted / `OFF` = live). Every toggle — including ones from HA — is signed
      into the device's witness chain with its source, so an investigator can
      later verify when the mic was off and who turned it off.
+
+Canary Sentinel (the multi-sensor fusion guardian) is **not released yet** —
+its Phase 1a firmware is compiled by CI but has not run on a bench
+([project README](../firmware/projects/canary-sentinel/README.md)). When a
+unit is built by hand, its own discovery announces **Presence** and
+**Anomaly** binary sensors, a **Channel blinded** problem sensor, **Level**,
+**Confidence**, **Anomaly score**, **Occupancy**, **Range band** and
+**Corroborating modalities** sensors, the uptime / RSSI / free-heap
+diagnostics and the firmware update entity — all from the coarse fused
+claim, never a raw measurement. Its events are signed over their own
+`sentinel` canonical, which the integration verifies like every other signed
+kind; its **Last Event** reads `level_changed`, and its sensing modality
+shows as "Other sensor" because it fuses several media at once.
 
 ### Step 4b: Add the verified-✓ timeline card
 
@@ -386,6 +407,60 @@ lights-out-with-presence tamper, and a non-diagnostic welfare check — plus a
 stock-card **wellbeing tile**. See
 [`docs/blueprints/canary_sense_wellbeing.md`](blueprints/canary_sense_wellbeing.md).
 
+### Actions
+
+The integration registers three Home Assistant actions, all of them about
+[watches](design/watches.md): bounded attention that ends by itself. Try
+them from **Developer tools → Actions**, or call them from an automation or
+a script.
+
+| Action | Takes | Returns |
+|---|---|---|
+| `securacv.start_watch` | `subject` (required, in words: "the gate canary"), `duration` ("two weeks", in days, weeks, months, seasons or years; 14 days if left out, never more than a year, and refused rather than guessed when it names no unit, such as "48 hours"), `concern` (`stopped`, `unusual`, `more`, `less` or `every`; read off the subject's wording if left out) | the watch, including the `id` that `end_watch` takes |
+| `securacv.end_watch` | `watch`: its id, or its label ("the gate canary") | the watch as it ended |
+| `securacv.list_watches` | nothing (response only) | `watches`: each running watch with its `state`, `subject` and `days_left` |
+
+```yaml
+# automations.yaml — watch the gate while you're away; say if it goes quiet
+- alias: "Away: watch the gate Canary"
+  triggers:
+    - trigger: state
+      entity_id: input_boolean.away
+      to: "on"
+  actions:
+    - action: securacv.start_watch
+      data:
+        subject: "the gate canary"
+        duration: "10 days"
+        concern: stopped
+```
+
+The example is written in the automation syntax of Home Assistant 2024.10
+and newer. The integration supports 2024.4.1 and newer, and on a release
+before 2024.10 the same automation is written with `trigger:` and
+`- platform: state`, then `action:` and `- service: securacv.start_watch`.
+The action and its fields don't change.
+
+What to expect:
+
+- A watch started this way is the same object as one you spoke: the same
+  cap on how many run at once, kept across a clean restart (a crash or
+  power cut can lose the last few seconds of changes), delivered as a
+  persistent notification, and it ends by itself and says so.
+- A subject that no Canary's name matches is accepted but cannot fire until
+  something reports it. The returned watch says `subject.kind: unbound`, and
+  the log warns.
+- `end_watch` refuses a label that two watches share (end it by id) and a
+  name it doesn't know. It never guesses. An early end is announced the
+  same way an expiry is, with what the watch learned.
+- Until the integration has loaded, all three refuse with a message rather
+  than answering from an empty list. The same goes if the stored watches
+  could not be read. The file is left as it is, nothing is written over
+  it, and reloading the integration tries again.
+- There are no actions for pinning, rotating or unpinning a device key.
+  Those stay in the options flow on purpose
+  ([why](device_trust.md#why-pin-rotate-and-unpin-are-not-actions)).
+
 ### Step 6: Verify per-device PKI (optional but recommended)
 
 Each Canary signs its `chain`, `events`, and `counts` MQTT publishes
@@ -463,20 +538,30 @@ existing: the integration listens for several signals no firmware publishes yet.
 
 | Tamper type | HA sensor | Firmware signal today | Status |
 |-------------|-----------|----------------------|--------|
-| `sd_remove` | SD Removed | Canary WAP publishes `sd_mounted` in health | Implemented |
-| `sd_error` | SD Error | Canary publishes `sd_errors` in health | Implemented |
+| `sd_remove` | SD Removed | both publish `{"type":"sd_remove"}` on the tamper topic when their `system.integrity` module sees a mounted card leave (the per-kind bridge: `csi_mqtt.cpp` on the WAP, `csi_event_egress.cpp` on the canary base); both also publish `sd_mounted` in their MQTT health once a card has mounted this boot (a card-less boot sends no key, so it never reads as removed), so the sensor stays on until the card is back | Implemented (canary base + WAP) |
+| `sd_error` | SD Error | both publish `{"type":"sd_error"}` on the tamper topic when their `system.integrity` module sees a mounted card fail; the canary base also publishes `sd_errors` in health | Implemented (canary base + WAP) |
 | `memory_critical` | Memory Critical | derived HA-side from published `free_heap` | Implemented |
-| `enclosure` | Enclosure Open | capacitive-touch tamper published on the tamper topic (as `enclosure_tamper`) | Experimental |
+| `enclosure` | Enclosure Open | a reed/hall enclosure contact on the board map's `TAMPER_PIN_DEFAULT`, on builds with `FEATURE_TAMPER_GPIO=1` (off in every shipped profile until the pin is bench-validated): both publish `{"type":"enclosure"}` on the tamper topic when their `system.integrity` module commits an opening, and both also publish `enclosure_open` in health, so the sensor stays on while the lid is off. The canary base's capacitive-touch tamper is published on the tamper topic with `"kind":"enclosure_tamper","type":"enclosure"` | Experimental |
 | `power_loss` | Power Loss | canary base publishes `{"type":"power_loss"}` on the tamper topic at boot (power-events classifier, `canary_power_events.h`); Canary WAP publishes the same shape on the tamper topic when its `system.integrity` module commits a brownout-boot tamper (`csi_mqtt.cpp`'s per-kind bridge) | Implemented (canary base + WAP) |
 | `gps_jamming` | GPS Jamming | none found | Experimental |
 | `motion` | Unexpected Motion | none found (accelerometer signal not published) | Experimental |
-| `gpio` | GPIO Tamper | none found | Experimental |
+| `gpio` | GPIO Tamper | none by design: a tamper pin's contact is narrated as `enclosure` (one kind per physical fact) | Experimental |
 | `watchdog` | Watchdog Timeout | Canary WAP publishes `{"type":"watchdog"}` on the tamper topic when its `system.integrity` module classifies a watchdog reset at boot | Implemented (WAP) |
 | `unexpected_reboot` | Unexpected Reboot | canary base publishes `{"type":"unexpected_reboot"}` on the tamper topic at boot after a fault reset (power-events path); Canary WAP publishes the same shape from its `system.integrity` module after a panic reset | Implemented (canary base + WAP) |
 | `battery_remove` | — (no sensor) | none | Planned |
 | `gps_spoof` | — (no sensor) | none | Planned |
 | `capacitive` | — (no sensor; folded into `enclosure` on-device) | touch pad tamper | Planned |
 | `audio_anomaly` | — (no sensor) | none | Planned |
+
+Each per-type sensor is set by the tamper topic and then follows the health
+payload's level for its kind on every health publish; an absent key reads as
+"clear". So a kind whose level the health does not carry lights its sensor
+only until the next health publish (once a minute on the WAP, stretched in
+its power-saving modes). Today that is
+the WAP's `sd_error`, `watchdog`, `power_loss` and `unexpected_reboot`; the
+canary base carries `sd_errors`, and holds `power_loss_detected` /
+`unexpected_reboot` in health for a while after boot, and its watchdog resets
+reach HA as `unexpected_reboot`.
 
 ---
 
@@ -1017,6 +1102,36 @@ TOKEN=$(cat /config/api_token)
 curl -H "Authorization: Bearer $TOKEN" http://d0491a67-privacy-witness-kernel:8799/events
 ```
 
+### Viewer tokens (Witness Wall)
+
+A television cannot re-read a token file every ten minutes, so the kernel
+has a second, narrower credential for the tvOS Witness Wall: a **viewer
+token**, minted once by the operator and honored on exactly one route,
+`GET /api/sealed-log` (the non-queryable, size-capped, signed chain tail).
+Presented anywhere else — another path, another method — it is an invalid
+token that counts toward the per-address lockout, and `?token=` is refused
+for it as for every token.
+
+```bash
+witness_api mint-viewer-token --label "living room tv" --base-url http://192.168.1.20:8799
+# {"kernel":"witness-kernel","base_url":"http://192.168.1.20:8799","sealed_log_token":"<64 hex>","verifying_key":"<64 hex>","token_id":"<8 hex>"}
+witness_api revoke-viewer-token <token_id>
+```
+
+The command runs with the same `WITNESS_CONFIG` and `DEVICE_KEY_SEED` as
+the serving kernel. Its stdout is one JSON line, the pairing receipt, and
+the only copy of the token that will ever exist: the kernel keeps its
+sha256 in the viewer-token file — `api.viewer_token_path` /
+`WITNESS_API_VIEWER_TOKEN_PATH`, defaulting to `viewer_tokens.json` beside
+`api.token_path` — written `0600` and re-read on every request, so a mint
+or a revoke takes effect without a restart. The receipt carries the
+kernel's current verifying key, which the Wall pins at pairing: its
+"Verified" then means Ed25519 signatures checked against that pinned key,
+not whatever key the hub serves today. The Docker sidecar wraps both
+commands (`docker compose exec securacv entrypoint.sh mint-viewer-token …`,
+see [frigate_integration.md](frigate_integration.md)); the Home Assistant
+add-on reads the file but has no control that mints one yet.
+
 ### Endpoints
 
 | Endpoint | Method | Description |
@@ -1027,7 +1142,7 @@ curl -H "Authorization: Bearer $TOKEN" http://d0491a67-privacy-witness-kernel:87
 | `/status` | GET | Daemon status snapshot (retention, verify state) |
 | `/verify` | POST | Run sealed-log verification and return the `VerifyReport` |
 | `/export/bundle` | GET | Receipted export bundle (events reshaped for disclosure; correlation tokens stripped) |
-| `/api/sealed-log` | GET | Checkpoint-anchored sealed-log tail for read-only verifiers — stored bytes verbatim, size-capped, **no query parameters** (the log is non-queryable by design) |
+| `/api/sealed-log` | GET | Checkpoint-anchored sealed-log tail for read-only verifiers — stored bytes verbatim, size-capped, **no query parameters** (the log is non-queryable by design). The one route a [viewer token](#viewer-tokens-witness-wall) also opens |
 | `/health` | GET | Check daemon health (unauthenticated) |
 
 ### `/events/latest` Response (Event)

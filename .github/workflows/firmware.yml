@@ -9,6 +9,15 @@ on:
       # it and the generator's --check pins it, so an edit here must run this job.
       - 'spec/fixtures/witness_page_v1.json'
       - 'spec/fixtures/gen_witness_page_v1.py'
+      # The sealed-snapshot vault's python half and its cross-language
+      # fixture: "Mesh + Scout Host Tests" runs tools/test_unseal_snapshot.py
+      # and gen_svlt_parity.py --check, and the golden header they share
+      # with test_vault_logic.cpp is a firmware contract, so an edit here
+      # must run this job (the same reason the witness-page fixture is listed).
+      - 'tools/unseal_snapshot.py'
+      - 'tools/test_unseal_snapshot.py'
+      - 'tools/gen_svlt_parity.py'
+      - 'tools/fixtures/vault/**'
       - '.github/workflows/firmware.yml'
       # The release workflow is a checked INPUT here, not just a neighbor:
       # "Regression Guards" runs check_ota_channels.py, which reads the
@@ -24,6 +33,15 @@ on:
       # it and the generator's --check pins it, so an edit here must run this job.
       - 'spec/fixtures/witness_page_v1.json'
       - 'spec/fixtures/gen_witness_page_v1.py'
+      # The sealed-snapshot vault's python half and its cross-language
+      # fixture: "Mesh + Scout Host Tests" runs tools/test_unseal_snapshot.py
+      # and gen_svlt_parity.py --check, and the golden header they share
+      # with test_vault_logic.cpp is a firmware contract, so an edit here
+      # must run this job (the same reason the witness-page fixture is listed).
+      - 'tools/unseal_snapshot.py'
+      - 'tools/test_unseal_snapshot.py'
+      - 'tools/gen_svlt_parity.py'
+      - 'tools/fixtures/vault/**'
       - '.github/workflows/firmware.yml'
       # The release workflow is a checked INPUT here, not just a neighbor:
       # "Regression Guards" runs check_ota_channels.py, which reads the
@@ -96,11 +114,20 @@ jobs:
   #                        checks every env name those workflows type against
   #                        it (firmware/scripts/flavor_envs.py); a product
   #                        without it releases from its own dedicated steps.
-  #   pip_extras         — extra pip packages (e.g. canary needs
-  #                        intelhex: esptool 4.11.0 bundled by the
-  #                        official espressif32 7.x platform imports it
-  #                        without declaring it, so bootloader.bin
-  #                        generation dies on a clean runner without it)
+  #   unreleased         — a reason string: CI compiles this product (so its
+  #                        code cannot rot) but nothing ships it — no
+  #                        release_envs (flavor_envs.py refuses both), no
+  #                        build_matrix.json lane (lint_build_matrix.py
+  #                        refuses one). canary-sentinel carries it until its
+  #                        bench checklist is green.
+  #   pip_extras         — extra pip packages (e.g. canary carries
+  #                        intelhex: a leftover from when its [env] floated
+  #                        on espressif32 ^7.x, whose bundled esptool 4.11.0
+  #                        imports it without declaring it and so killed
+  #                        bootloader.bin generation on a clean runner.
+  #                        Since 2026-09-22 canary pins 6.9.0 exactly
+  #                        (firmware/PLATFORMS.md); the extra is harmless
+  #                        and stays until a green run shows it unneeded)
   #   core_dir_groups    — map of env → group label; every env with the same
   #                        label shares ONE PLATFORMIO_CORE_DIR
   #                        (.pio-core-<label>), separate from the default.
@@ -291,6 +318,38 @@ jobs:
             done < <(jq -c '.size_guards // [] | .[]' <<< "$FLAVOR_JSON")
           done
 
+      - name: Compile the enclosure tamper contact (canary dev, compile-only)
+        # FEATURE_TAMPER_GPIO is 0 in every shipped canary env until the
+        # reed/hall pin is bench-validated, so no env above compiles the
+        # contact glue (main.cpp, csi_modules_integration.cpp). This
+        # rebuilds [env:dev] with the flag on and the touch pad moved to D4
+        # (-DTOUCH_PIN_NUM=5), exactly as canary_config.h's pin sanity
+        # demands. A compile gate only: nothing ships from it. [env:dev]
+        # sets no -DFEATURE_TAMPER_GPIO of its own (canary_config.h's
+        # default 0 applies), so the flag here is the only definition.
+        if: matrix.flavor.name == 'canary'
+        env:
+          PLATFORMIO_BUILD_FLAGS: -DVALIDATION_BUILD=1 -DFEATURE_TAMPER_GPIO=1 -DTOUCH_PIN_NUM=5
+        run: pio run -e dev
+
+      - name: Compile the provisioning kit's secure envs (canary, compile-only)
+        # [env:secure] / [env:secure_ha] live in
+        # firmware/provisioning/platformio_secure.ini, which
+        # firmware/canary/platformio.ini pulls in through extra_configs: the
+        # Tier 3/4 image (SECURACV_REQUIRE_FLASH_ENCRYPTION=1,
+        # partitions_secure.csv, CSI off). No workflow compiled them, and they
+        # had stopped compiling unseen — their build_flags replaced the
+        # canary [env] include paths, and main.cpp needed FEATURE_CSI (F42).
+        # A compile gate only: neither env is in flavors.json, so no size
+        # guard, release, flasher catalog, SBOM row or OTA manifest touches
+        # them, and firmware-release.yml builds its canary envs by name.
+        if: matrix.flavor.name == 'canary'
+        env:
+          PLATFORMIO_BUILD_FLAGS: -DVALIDATION_BUILD=1
+        run: |
+          pio run -e secure
+          pio run -e secure_ha
+
   pio-check:
     name: Static Analysis (${{ matrix.flavor.name }})
     needs: flavors
@@ -404,18 +463,21 @@ jobs:
           fi
           echo "canary-wap size: $SIZE / $SLOT bytes ($((SIZE * 100 / SLOT))% of OTA slot)"
 
-      - name: Compile firmware (Beacon channel gate)
+      - name: Compile firmware (Beacon channel + tamper contact gate)
         run: |
           # FEATURE_BEACON_CHANNEL is OFF by default, which previously meant
           # beacon_channel.cpp (and every #if FEATURE_BEACON_CHANNEL block in
           # the sketch) was never compile-verified in CI. This second pass
           # forces the flag ON so the Beacon scaffold — including its
           # append-only SD audit-log path (AGENTS.md Beacon invariant 9) —
-          # can't silently rot.
+          # can't silently rot. FEATURE_TAMPER_GPIO rides the same pass for
+          # the same reason: the enclosure contact (pinMode, the debounced
+          # loop feed, the live selftest probe) is off in every shipped
+          # profile until its pin is bench-validated.
           arduino-cli compile \
             --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi \
             --libraries firmware/common \
-            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DFEATURE_BEACON_CHANNEL=1 -DBOARD_HAS_PSRAM" \
+            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DFEATURE_BEACON_CHANNEL=1 -DFEATURE_TAMPER_GPIO=1 -DBOARD_HAS_PSRAM" \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
       - name: Compile firmware (DEV profile gate)
@@ -619,6 +681,24 @@ jobs:
           chmod +x firmware/scripts/check_fleet_beacon_sync.sh
           firmware/scripts/check_fleet_beacon_sync.sh
 
+      - name: Verify canary-sentinel's network/witness stack matches canary-sense's
+        # canary-sentinel (F22 Phase 1a) carries canary-sense's src/net,
+        # runtime config, diagnostics and witness key/chain plumbing as a
+        # project-local copy (the way canary-vision carries its own src/net)
+        # instead of promoting them to firmware/common. A copy is only safe if
+        # it cannot drift: this pins the shared files byte-identical,
+        # wifi_mgr.cpp but for its setup-network product name, and mqtt_mgr /
+        # witness as whole files but for a named list of product regions (the
+        # payloads, the event canonical's call sites, sense's radar dials and
+        # identify button) — so the TLS gate, client ID, OTA command parser,
+        # key names and chain construction are pinned, and a fix to
+        # canary-sense that misses the sentinel is a red build, not two
+        # products quietly diverging. scripts/tests/test_check_sentinel_net_sync.py
+        # (lint.yml) is the mutation proof.
+        run: |
+          chmod +x firmware/scripts/check_sentinel_net_sync.sh
+          firmware/scripts/check_sentinel_net_sync.sh
+
       - name: Verify fleet self-report header copies match the canonical /api/fleet wire shape
         # fleet_selfreport.h is the ONE place the coarse /api/fleet presence JSON
         # shape lives (the DISCOVERY.md contract the Witness Wall emulator + the
@@ -707,16 +787,6 @@ jobs:
           chmod +x firmware/scripts/check_display_arduino_sync.sh
           firmware/scripts/check_display_arduino_sync.sh
 
-      - name: Verify provision_core.h stays identical in common/ and the display tree
-        # The onboarding pure helpers live canonically in common/network (the
-        # shared setup portal links them) with a byte-identical copy in the
-        # display tree until it migrates to the shared portal — the whole
-        # LESSONS_LEARNED history of onboarding is fixes landing in one portal
-        # and not the others, so drift fails here instead of shipping.
-        run: |
-          chmod +x firmware/scripts/check_provision_core_sync.sh
-          firmware/scripts/check_provision_core_sync.sh
-
       - name: Verify mqtt_transport_logic.h stays identical in common/ and the canary-wap sketch
         # The broker-socket decision (plain / verified-CA TLS / pinned /
         # explicit lab opt-in, fail-closed otherwise) lives once in
@@ -727,6 +797,16 @@ jobs:
         run: |
           chmod +x firmware/scripts/check_mqtt_transport_sync.sh
           firmware/scripts/check_mqtt_transport_sync.sh
+
+      - name: Verify ap_security_policy.h stays identical in common/ and the canary-wap sketch
+        # The SoftAP / STA security request (WPA2/WPA3 transition + PMF
+        # capable, WPA2 fallback with a named reason — F16) lives once in
+        # common/network and is host-tested there; the wap sketch carries a
+        # byte-identical staged copy. Drift here means the two products put
+        # different security on the same setup network.
+        run: |
+          chmod +x firmware/scripts/check_ap_security_sync.sh
+          firmware/scripts/check_ap_security_sync.sh
 
       - name: Verify on-glass text stays inside the display font's glyph range
         # LVGL's built-in Montserrat covers 0x20-0x7F, 0xB0 and U+2022 only, and
@@ -1042,17 +1122,33 @@ jobs:
             grep -q "ALL .* PASSED" "/tmp/host_tests/test_$name.log"
           }
 
-          # securacv_mesh suites — 7 of them now (mesh_state added with
-          # opera_secret NVS persistence). Each test links against
-          # every mesh src TU so internal symbols resolve.
-          for t in mesh_crypto mesh_envelope mesh_pairing mesh_session \
-                   mesh_transport mesh_beacon mesh_state mesh_channel_hop \
-                   mesh_hub_election; do
-            run_test $t \
-              firmware/canary/lib/securacv_mesh/test_${t}.cpp \
+          # securacv_mesh suites. Each test links against every mesh src
+          # TU so internal symbols resolve. The list is checked against
+          # the directory below, so a new test_mesh_*.cpp that is not
+          # added here fails the job instead of silently never running
+          # (the old "7 of them now" comment had drifted to 9).
+          MESH_TESTS="mesh_crypto mesh_envelope mesh_pairing mesh_session
+                      mesh_transport mesh_beacon mesh_state mesh_channel_hop
+                      mesh_hub_election mesh_alert mesh_rekey mesh_revocation"
+          for f in firmware/canary/lib/securacv_mesh/test_mesh_*.cpp; do
+            n=$(basename "$f" .cpp); n=${n#test_}
+            case " ${MESH_TESTS//$'\n'/ } " in
+              *" $n "*) ;;
+              *) echo "::error file=$f::$f is not in MESH_TESTS — add it so CI runs it"; exit 1 ;;
+            esac
+          done
+          for t in $MESH_TESTS; do
+            run_test "$t" \
+              "firmware/canary/lib/securacv_mesh/test_${t}.cpp" \
               $MESH_SRC/*.cpp \
               -I $MESH_SRC
           done
+
+          # The canary web UI's Opera alert list (securacv_webui.cpp): each
+          # alert's timestamp_ms is the receiver's uptime, shown as an age
+          # against the uptime_ms of the JSON test_mesh_session pins, never
+          # as a date (F33 part 7). node is preinstalled on ubuntu-latest.
+          node --test firmware/tests_host/test_canary_mesh_alerts.test.js
 
           # ble_scan + ble_scout_state — pure-logic, only link
           # ble_scan.cpp / ble_scout_state.cpp from the lib, plus
@@ -1085,6 +1181,32 @@ jobs:
             $COMMON_SRC/csi_bundler.cpp \
             $COMMON_SRC/csi_witness_payload.cpp \
             -I $BLE_SRC -I $MESH_SRC -I $COMMON_SRC
+
+          # ble_scout_pairing (repo sweep F27) — the proximity pairing
+          # window FSM plus its path through ble_scout_on_advert (first
+          # strong unpaired advert pairs, single-shot, no MAC in the
+          # snapshot, dirty until the loop tick), so it links the same
+          # Scout + chokepoint set as ble_scout_broadcast.
+          run_test ble_scout_pairing \
+            firmware/canary/lib/securacv_ble_scan/test_ble_scout_pairing.cpp \
+            $BLE_SRC/ble_scan.cpp \
+            $BLE_SRC/ble_scout.cpp \
+            $BLE_SRC/ble_scout_state.cpp \
+            $BLE_SRC/ble_scout_key.cpp \
+            $MESH_SRC/mesh_crypto.cpp \
+            $COMMON_SRC/csi_event.cpp \
+            $COMMON_SRC/csi_module.cpp \
+            $COMMON_SRC/csi_bundler.cpp \
+            $COMMON_SRC/csi_witness_payload.cpp \
+            -I $BLE_SRC -I $MESH_SRC -I $COMMON_SRC
+
+          # ble_scout_registry_store — the versioned NVS blob the paired
+          # registry persists as (round trip, all-or-nothing refusal).
+          run_test ble_scout_registry_store \
+            firmware/canary/lib/securacv_ble_scan/test_ble_scout_registry_store.cpp \
+            $BLE_SRC/ble_scan.cpp \
+            $MESH_SRC/mesh_crypto.cpp \
+            -I $BLE_SRC -I $MESH_SRC
 
           # thermal_wd — standalone: the module compiles against
           # thermal_wd_host_stubs.h under CSI_TEST_HOST_BUILD and the
@@ -1548,6 +1670,15 @@ jobs:
           python3 -m pip install --quiet cryptography
           python3 tools/test_unseal_snapshot.py
 
+      - name: Check the sealed-snapshot parity fixture is fresh
+        # tools/fixtures/vault/svlt_parity.json pins ONE sealed .svlt, byte
+        # for byte, from fixed test-only keys — the file the iOS app's
+        # CryptoKit port (SnapshotVaultTests, ios-selfheal.yml) must open and
+        # re-seal identically. The python test above asserts its contents;
+        # this asserts the committed bytes are what the generator renders,
+        # so the Swift side can never be held to a stale twin.
+        run: python3 tools/gen_svlt_parity.py --check
+
       - name: Build + run canary-wap witness store logic host test
         # The /WITNESS/records.jsonl durable tier (witness_store.h): the
         # byte-exact NDJSON line against a golden fixture, tail recovery
@@ -1734,6 +1865,21 @@ jobs:
           python3 -m pip install --quiet pytest cryptography
           python3 -m pytest firmware/scripts/test_ota_release.py -q
 
+      - name: Run the canary OTA deploy script tests (bearer + TLS pin)
+        # firmware/canary/scripts/ota_deploy.py and ota_deploy.sh push a dev
+        # build to the dev-only POST /api/ota, which answers auth_gate()
+        # first. They once sent no Authorization header at all, so every
+        # device refused them (F39). The tests run both scripts against a
+        # fake Canary on localhost (plain HTTP, and self-signed HTTPS with the
+        # right, a wrong and no tls_cert_fp pin) and fail when the bearer is
+        # missing, reaches an unpinned or mismatched certificate, or is
+        # printed. curl and openssl ship on the runner; shellcheck keeps the
+        # shell script clean.
+        run: |
+          python3 -m pip install --quiet pytest cryptography
+          python3 -m pytest firmware/canary/scripts/test_ota_deploy.py -q
+          shellcheck firmware/canary/scripts/ota_deploy.sh
+
       - name: Check canary-wap route security (every route gated or allowlisted)
         # Static fail-closed guard: every HTTP route the sketch registers
         # must carry a credential gate (Bearer/session/pair-token/BOOT
@@ -1743,6 +1889,21 @@ jobs:
         # by the handler-table overflow).
         run: |
           python3 firmware/projects/canary-wap/tests_host/check_route_security.py
+
+      - name: Check canary (PIO) route security (every route gated or allowlisted)
+        # The canary tree's sibling of the step above, same matcher: every
+        # route registerHttpHandlers() adds (the captive-probe loop
+        # included) must reach auth_gate / auth_check / auth_check_optional
+        # / provisioning_gate_take — in an if/return, not ignored, and not
+        # below an unconditional return — or sit on the script's documented
+        # public allowlist. The two HTML pages are public shells whose
+        # bearer-token injection is decided per request by
+        # provisioning_gate.h's page_token_decide (F20 gap #11); the script
+        # fails any page call that does not pass page_token_inject(req), a
+        # registration inside registerHttpHandlers that does not use its
+        # `server` parameter, and a table larger than kRouteTableSlots.
+        run: |
+          python3 firmware/canary/scripts/check_route_security.py
 
       - name: Check canary-wap handler-table budget (no silent route drops)
         # esp_http_server drops registrations past max_uri_handlers and the
@@ -1755,8 +1916,9 @@ jobs:
 
       - name: Build + run canary-wap project host tests
         # The canary-wap project keeps its own host-test Makefile (mesh
-        # coexistence, chirp/beacon invariants, device signature, the
-        # captive-portal DNS response builder, the BLE OTA header policy).
+        # coexistence, the Opera pairing-frame classifier, chirp/beacon
+        # invariants, device signature, the captive-portal DNS response
+        # builder, the BLE OTA header policy).
         # Its `run` target builds and
         # runs every suite; each test exits non-zero on failure, so make's
         # exit code gates the job. Needs libcrypto for the beacon tamper

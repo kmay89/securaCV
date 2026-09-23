@@ -13,7 +13,14 @@ What is pinned and why:
   • the stdlib schema validator rejects what a full validator would;
   • a manifest may own a second case file (`cad.also`, the Vision's doorbell):
     the file must exist and source a listed enclosure set, the schema spells
-    it like cad.scad, and no standalone doorbell manifest exists.
+    it like cad.scad, and no standalone doorbell manifest exists;
+  • enclosures.json homes every set on the manifests that claim it: a set
+    homed by its README name alone, a claimant the catalog does not reflect,
+    and a claimed set the catalog left universal each fail;
+  • every case a manifest claims lands on a Lab card: a manifest whose home
+    is no registry.json card fails (the Nightlight's manifest without its
+    `lab.card`), and so does a `lab.card` the registry lacks or one that
+    restates the default.
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
@@ -119,6 +126,73 @@ class LintCatchesRealMistakes(unittest.TestCase):
         self.assertTrue(any("unclaimed.json" in e and "canary-display-watch" in e
                             for e in errors), errors)
 
+    # enclosures.json homes each set on the manifests that claim it
+    # (gen_enclosures.py); the committed JSON stays as generated while the
+    # scratch manifests move, which is exactly the drift the lint must name.
+    def test_a_set_homed_by_its_name_alone_fails(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-vision",
+                 lambda d: d["cad"]["enclosure_sets"].remove("combo-witness"))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any("'combo-witness' is homed on device 'canary-vision', but no "
+                            "manifest claims it" in e for e in errors), errors)
+
+    def test_a_new_claimant_the_catalog_does_not_reflect_fails(self):
+        with _Mutated() as devices:          # a third claimant for the 7" case
+            edit(devices, "canary-display-dash",
+                 lambda d: d["cad"]["enclosure_sets"].append("7-touch-dashboard-case"))
+            _, errors = ldm.lint(devices_dir=devices)
+        hits = [e for e in errors if "'7-touch-dashboard-case'" in e and "disagrees" in e]
+        self.assertEqual(len(hits), 1, errors)
+        self.assertIn("canary-display-dash, canary-display-dash7, canary-display-nightstand7",
+                      hits[0])
+
+    def test_a_claimed_set_the_catalog_left_universal_fails(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-wap",
+                 lambda d: d["cad"]["enclosure_sets"].append("field-case"))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any("'field-case'" in e and "disagrees" in e and "canary-wap" in e
+                            for e in errors), errors)
+
+    # every claimed case shows on a Lab card (registry.json), through lab.card
+    # where the card and the manifest name one device two ways
+    def test_the_nightlight_case_is_homed_on_its_lab_card(self):
+        enclosures = json.loads((REPO / "canary-local/devices/enclosures.json")
+                                .read_text(encoding="utf-8"))
+        c3 = next(s for s in enclosures["sets"] if s["id"] == "c3-pocket-display-case")
+        self.assertEqual((c3["device"], c3["devices"]),
+                         ("canary-nightlight", ["canary-display-nightlight-c3"]))
+        m = json.loads((DEVICES / "canary-display-nightlight-c3" / "device.json")
+                       .read_text(encoding="utf-8"))
+        self.assertEqual(m["lab"], {"card": "canary-nightlight"})
+
+    def test_a_claimed_case_with_no_lab_card_fails(self):
+        with _Mutated() as devices:          # the C3 manifest, before it named its card
+            edit(devices, "canary-display-nightlight-c3", lambda d: d.pop("lab"))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any("canary-display-nightlight-c3: claims c3-pocket-display-case, but its "
+                            "Lab card 'canary-display-nightlight-c3' is not in" in e
+                            for e in errors), errors)
+        # and the committed catalog, homed on the card, no longer matches
+        self.assertTrue(any("'c3-pocket-display-case'" in e and "disagrees" in e for e in errors),
+                        errors)
+
+    def test_a_lab_card_the_registry_lacks_fails(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-display-nightlight-c3",
+                 lambda d: d.__setitem__("lab", {"card": "canary-lamp"}))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any("lab.card 'canary-lamp' is not a card in" in e for e in errors), errors)
+
+    def test_a_lab_card_restating_the_default_fails(self):
+        with _Mutated() as devices:          # the DevKit already lands on its family's card
+            edit(devices, "canary-vision-devkit",
+                 lambda d: d.__setitem__("lab", {"card": "canary-vision"}))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any("canary-vision-devkit: lab.card 'canary-vision' restates the default"
+                            in e for e in errors), errors)
+
     def test_chip_mismatch_with_flasher_catalog_fails(self):
         with _Mutated() as devices:
             edit(devices, "canary-sense", lambda d: d["board"].__setitem__("mcu", "ESP32-S3"))
@@ -221,9 +295,9 @@ class LintCatchesRealMistakes(unittest.TestCase):
     def test_cad_params_reference_to_an_unknown_row_is_refused(self):
         with _Mutated() as devices:
             edit(devices, "canary-sense", lambda d: d["cad"]["params"].__setitem__(
-                "vm_l", {"brd": "mr60x", "dim": "l"}))
+                "radar_l", {"brd": "mr60x", "dim": "l"}))
             _, errors = ldm.lint(devices_dir=devices)
-        hits = [e for e in errors if "cad.params.vm_l" in e]
+        hits = [e for e in errors if "cad.params.radar_l" in e]
         self.assertEqual(len(hits), 1, errors)
         self.assertIn('BRD_REGISTRY has no row "mr60x"', hits[0])
         self.assertIn("devices/canary-sense", hits[0])

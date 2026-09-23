@@ -188,7 +188,7 @@ same way; no sketch change is needed.)
 - Unique device identity from hardware TRNG
 - Every witness record signed with Ed25519
 - Tamper-evident hash chain with domain separation
-- Time coarsened to 5-second buckets (privacy)
+- Time coarsened to ten-minute buckets (privacy)
 - No frame storage — camera peek is positioning only
 - API token derived via HKDF (never stored in plaintext)
 - Device-unique AP password derived from the device private key (HMAC, domain-separated)

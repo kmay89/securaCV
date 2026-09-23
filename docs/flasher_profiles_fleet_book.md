@@ -6,7 +6,7 @@ them), losing track of which Canaries exist and what they run, and having no
 way to update a deployed board without a USB cable. Shipped in Flasher 0.4.0;
 the moving parts live in `desktop/src/app.js` (`secretStore`, `fleetBook`),
 `desktop/src-tauri/src/secret_store.rs`, `desktop/src-tauri/src/fleet.rs`,
-and `desktop/src-tauri/src/provisioning.rs`.
+and `desktop/flash-engine/src/provisioning.rs`.
 
 ## The setup profile — type it once
 
@@ -25,8 +25,8 @@ The Canary form and the hub form share one memory:
   the SHA-256 fingerprint itself (public data: the broker presents that
   certificate to every client on the LAN) — never the PEM or a password, and
   never a claim that the board connected; the browser flasher's done card
-  says the same line (`broker_receipt.rs` and `flash-core.js`, held equal by
-  `desktop_parity.test.js`).
+  says the same line (the flash engine's `broker_receipt.rs` and
+  `flash-core.js`, held equal by `desktop_parity.test.js`).
 - **Secrets** now persist too, with consent: the "Remember" checkbox under
   each form routes the Wi-Fi password (keyed by SSID, so two homes don't
   overwrite each other), the broker password (keyed by host + user), and the

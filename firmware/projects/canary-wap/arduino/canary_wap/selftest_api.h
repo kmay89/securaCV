@@ -89,6 +89,13 @@
 // from "init ran and the stack failed" (FAIL). Owned by the .ino.
 extern volatile bool g_ble_init_attempted;
 
+#if FEATURE_TAMPER_GPIO
+#include "contact_tamper.h"
+// The enclosure contact's debounced state, owned and fed by the .ino's
+// loop() — probe_tamper reports the live line from it.
+extern contact_tamper::State g_tamper_contact;
+#endif
+
 namespace selftest {
 
 enum class Status : uint8_t {
@@ -547,13 +554,20 @@ inline void probe_tamper(ProbeResult* r, JsonObject metric) {
   r->label = "Tamper";
 
 #if FEATURE_TAMPER_GPIO
-  // Tamper monitoring is compiled in. There is no standalone pin-read driver
-  // exposed yet, so we report it as armed rather than claiming a specific
-  // line state we can't read here.
+  // The enclosure contact on TAMPER_PIN_DEFAULT, as loop()'s debounce last
+  // accepted it: the line the firmware actually read, not a promise that
+  // something is watching.
   metric["enabled"] = true;
-  r->status = Status::SKIP;
-  r->code   = 0;
-  set_detail(r, "Tamper monitoring armed");
+  metric["pin"] = TAMPER_PIN_DEFAULT;
+  r->code = 0;
+  if (!g_tamper_contact.adopted) {
+    r->status = Status::UNKNOWN;
+    set_detail(r, "Tamper contact not read yet");
+  } else {
+    metric["open"] = g_tamper_contact.open;
+    r->status = Status::PASS;
+    set_detail(r, g_tamper_contact.open ? "Enclosure open" : "Enclosure closed");
+  }
 #else
   metric["enabled"] = false;
   r->status = Status::ABSENT;

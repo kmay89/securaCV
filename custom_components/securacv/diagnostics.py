@@ -59,6 +59,12 @@ async def async_get_config_entry_diagnostics(
         "subscription_count": len(entry_data.get("unsub_mqtt", [])),
     }
 
+    # Watches are domain-scoped (hass.data[DOMAIN]["watches"], persisted by
+    # watch_runtime). Count only: a label is what the owner said aloud, and
+    # diagnostics dumps get shared publicly.
+    watch_bucket = hass.data.get(DOMAIN, {}).get("watches")
+    watch_count = len(watch_bucket) if isinstance(watch_bucket, list) else 0
+
     return {
         "setup_mode": entry.data.get(CONF_SETUP_MODE, "unknown"),
         "kernel": kernel_info,
@@ -68,5 +74,6 @@ async def async_get_config_entry_diagnostics(
         "trust": trust_info,
         "verification": verify_info,
         "mismatch_notifications_sent": len(entry_data.get("mismatch_notified", set())),
+        "watch_count": watch_count,
         "platforms_loaded": ["sensor", "binary_sensor"],
     }

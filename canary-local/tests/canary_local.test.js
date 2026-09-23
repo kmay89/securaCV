@@ -9,7 +9,7 @@
 // LED cadence translation, and registry ↔ dist artifact integrity.
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { readFileSync, existsSync } = require("node:fs");
+const { readFileSync, existsSync, readdirSync } = require("node:fs");
 const { join } = require("node:path");
 
 const ROOT = join(__dirname, "..");
@@ -123,6 +123,66 @@ test("registry entries with emulators point at real artifacts", () => {
   }
 });
 
+// The Specs tab's Web row is a statement about a device's LAN surface, on a
+// privacy product. Seven display cards said "first-boot portal only" while
+// every canary-display flavor starts the glass mirror's WebServer on :80
+// right after provisioning (main.cpp setup(), no #if around it) and
+// advertises it over mDNS. Held here: the firmware still serves it on every
+// flavor, and every display manifest's card names the port, each page the
+// server registers, and its /api — never "only".
+test("every display card's Web row names the glass mirror the firmware serves", () => {
+  const reg = JSON.parse(readFileSync(join(ROOT, "devices/registry.json"), "utf8"));
+  const cards = new Map(reg.devices.map((d) => [d.id, d]));
+  const fw = join(ROOT, "../firmware/projects/canary-display/src");
+  // 1. unconditional: the init (setup) and the tick (loop) at #if depth 0
+  const main = readFileSync(join(fw, "main.cpp"), "utf8").split("\n");
+  let depth = 0;
+  const seen = {};
+  for (const line of main) {
+    const t = line.trim();
+    if (/^#\s*if(n?def)?\b/.test(t)) depth++;
+    else if (/^#\s*endif\b/.test(t)) depth--;
+    for (const call of ["glass_web_init()", "glass_web_tick("]) {
+      if (!t.startsWith("//") && t.includes(`canary::net::${call}`)) seen[call] = depth;
+    }
+  }
+  for (const call of ["glass_web_init()", "glass_web_tick("]) {
+    assert.strictEqual(seen[call], 0,
+      `main.cpp's ${call} is no longer unconditional — the display cards' Web row says every flavor serves :80`);
+  }
+  // 2. what it serves: the port and the GET pages outside /api
+  const web = readFileSync(join(fw, "net/glass_web.cpp"), "utf8");
+  const port = /new WebServer\((\d+)\)/.exec(web);
+  assert.ok(port, "glass_web.cpp still constructs its WebServer");
+  const pages = [...web.matchAll(/->on\("([^"]+)",\s*HTTP_GET/g)].map((m) => m[1])
+    .filter((p) => !p.startsWith("/api/"));
+  assert.ok(pages.includes("/") && web.includes('->on("/api/'), "glass_web.cpp route table parses");
+  // 3. every display manifest's card says so
+  const dir = join(ROOT, "../devices");
+  let n = 0;
+  for (const slug of readdirSync(dir).filter((d) => existsSync(join(dir, d, "device.json")))) {
+    const m = JSON.parse(readFileSync(join(dir, slug, "device.json"), "utf8"));
+    if (m.family !== "canary-display") continue;
+    const card = cards.get(m.lab?.card || slug);
+    assert.ok(card, `${slug}: its Lab card ${m.lab?.card || slug} is in registry.json`);
+    const says = card.network.web;
+    assert.doesNotMatch(says, /\bonly\b/, `${card.id}: Web row "${says}" understates the LAN surface`);
+    assert.ok(says.includes(`:${port[1]}`), `${card.id}: Web row names port ${port[1]}`);
+    for (const p of [...pages, "/api"]) {
+      assert.ok(says.split(/[\s(),]+/).includes(p), `${card.id}: Web row names ${p}`);
+    }
+    n++;
+  }
+  assert.ok(n >= 9, `every display manifest checked (${n})`);
+  // …and the Glass row beside it prints no raw null for a panel without touch
+  const glassRow = readFileSync(join(ROOT, "assets/app.js"), "utf8").split("\n")
+    .find((l) => l.includes('row("Glass"'));
+  assert.ok(glassRow, "app.js specsView still has its Glass row");
+  assert.match(glassRow, /dev\.glass\.touch \?/,
+    "specsView prints glass.touch without testing it — a touchless panel reads 'touch null'");
+  assert.ok(reg.devices.some((d) => d.glass && d.glass.touch === null), "a touchless panel is still carried");
+});
+
 test("fw_train matches the firmware tree's CANARY_FW_VERSION", () => {
   const reg = JSON.parse(readFileSync(join(ROOT, "devices/registry.json"), "utf8"));
   const vh = readFileSync(
@@ -130,6 +190,37 @@ test("fw_train matches the firmware tree's CANARY_FW_VERSION", () => {
   const m = vh.match(/CANARY_FW_VERSION "([^"]+)"/);
   assert.ok(m, "version.h parses");
   assert.strictEqual(reg.fw_train, m[1]);
+});
+
+// ── CI wiring: a test file here is a gate only once CI runs it ─────────────
+// canary-local.yml names each file on its own `node --test` line (repo
+// convention: no glob, no runner), so a new file is silently not a gate until
+// someone lists it. scene_figures, body_dims and device_models sat unlisted
+// while the Lab's prose (render_probe.mjs, the README, a workflow comment)
+// said they held their guards. A comment naming a file does not run it: only
+// `node --test` in command position counts.
+test("CI runs every test file in this folder", () => {
+  const wf = readFileSync(join(ROOT, "../.github/workflows/canary-local.yml"), "utf8");
+  const ran = [];
+  for (const raw of wf.split("\n")) {
+    const line = raw.trim().replace(/^(?:-\s*)?run:\s*/, "");
+    if (line.startsWith("#")) continue;
+    for (const seg of line.split(/&&|\|\||;|\|/)) {
+      const words = seg.trim().split(/\s+/);
+      if (words[0] !== "node" || words[1] !== "--test") continue;
+      for (const w of words.slice(2)) {
+        if (w.startsWith("#")) break;
+        if (!w.startsWith("-")) ran.push(w.replace(/^["']|["']$/g, ""));
+      }
+    }
+  }
+  const glob = (p) => new RegExp(`^${p.replace(/[.+?^${}()[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")}$`);
+  const files = readdirSync(__dirname).filter((n) => /\.test\.m?js$/.test(n));
+  assert.ok(files.includes("canary_local.test.js"), "the folder listing found this file");
+  const unrun = files.filter((n) => !ran.some((p) => glob(p).test(`canary-local/tests/${n}`)));
+  assert.deepStrictEqual(unrun, [],
+    `run by no \`node --test\` line in .github/workflows/canary-local.yml: ${unrun.join(", ")} — ` +
+    `list each in the logic-tests job's "Node tests" step`);
 });
 
 // ── the filament finish system (finishes.js) ───────────────────────────────

@@ -1,14 +1,16 @@
 # Canary Sentinel — Multi-Sensor Fusion Guardian: Design & Spec
 
-Status: **Phase 0 landed** — the board-agnostic fusion brain
-(`firmware/common/fusion/sentinel_fusion.*`) is in the tree and host-tested
-(`firmware/tests_host/test_sentinel_fusion.cpp`, 28 checks green under
-`-Wall -Wextra -Werror`). The project wrapper, presets, board pin maps and build
-envs are staged (`firmware/projects/canary-sentinel`,
-`firmware/configs/canary-sentinel`, `firmware/envs/platformio/canary-sentinel.ini`).
-**Hardware bench validation is pending** — see the project README checklist. This
-document is the spec the firmware is built to; where a number is a bench
-question it is marked `[BENCH]`.
+Status: **Phase 1a landed, compile-gated, not released** — the board-agnostic
+fusion brain (`firmware/common/fusion/sentinel_fusion.*`) is in the tree and
+host-tested (`firmware/tests_host/test_sentinel_fusion.cpp`, under
+`-Wall -Wextra -Werror`), and the project now carries canary-sense's
+network/witness stack (signed `sentinel` canonical, MQTT + HA discovery,
+pull-OTA, setup portal), compile-gated by CI's PlatformIO leg for the `door`
+(C6) and `lite` (C3) envs. The onboard-radio channels (WiFi-RF, CSI, BLE) are
+Phase 1b and not built. **Hardware bench validation is pending** — see the
+project README checklist and phase table. This document is the spec the
+firmware is built to; where a number is a bench question it is marked
+`[BENCH]`.
 
 Product family: **Canary Sentinel Lite / Standard / Heavy**
 Fusion core: `firmware/common/fusion/` · Project: `firmware/projects/canary-sentinel`
@@ -126,16 +128,24 @@ composition layer may publish is the coarse `FusionResult`:
 
 - `level` — clear / aware / present / confirmed / loiter / anomaly
 - `confidence` — 0..100
+- `anomaly` — 0..100, the suspicion accumulator behind the `anomaly` level
 - `occupancy` — 0 / 1 / 2+ (only if a counting channel supplies it)
 - `range` — near / mid / far (only if radar supplies it)
 - `modality_bits` — *which classes* corroborated, never which device
 
 No MAC is ever stored (RF/BLE are aggregate counts; canary-wap's `rf_presence`
 guarantees this). No distance in centimeters, no per-target track, no imagery,
-no vitals leave the device. Every published transition is Ed25519-signed over a
-`sentinel` v1 canonical and hash-chained, reusing `common/identity` and
-`common/witness` exactly as canary-sense does — HA TOFU-pins the pubkey and
-renders the "device-verified ✓" badge with zero new verifier code.
+no vitals leave the device. Every published transition is Ed25519-signed over
+the `sentinel` v1 canonical — `securacv-canary-sig|v1|sentinel|<device_id>|<seq>|
+<event>|<level>|<confidence>|<anomaly>|<occupancy>|<range>|<modality_bits>|
+<bucket_uptime_s>`, every field above plus the ordering counter and the
+10-minute uptime bucket (`spec/witness_dictionary.json` signature_format) — and
+hash-chained, reusing `common/identity` and `common/witness` exactly as
+canary-sense does. HA TOFU-pins the pubkey as it does for every Canary; the
+kind is new, so `custom_components/securacv/signature.py` gained
+`verify_sentinel_event`, pinned to the firmware by a golden vector both test
+suites share. A reused `sense` canonical would have left confidence, anomaly
+and the modality bitmask unsigned.
 
 ## 6. The product line — Lite vs Standard vs Heavy
 
@@ -223,9 +233,18 @@ adapter, and give it a weight in a preset. The fusion core doesn't change.
 ## 10. Roadmap
 
 - **Phase 0 (done):** fusion brain + host tests + spec + scaffolding.
-- **Phase 1:** Standard-tier project build on real C6+MR60 hardware; wire the
-  four onboard channels into the engine; signed `sentinel` witness canonical.
-- **Phase 2:** presets tuned on the bench; HA discovery entity set; pull-OTA.
+- **Phase 1a (landed, compile-gated in CI, not released):** the network/witness
+  path — the signed `sentinel` canonical + hash chain, MQTT events + retained
+  state, HA discovery entity set, signed pull-OTA and the shared setup portal,
+  all canary-sense's stack carried into the project and pinned to it
+  (`firmware/scripts/check_sentinel_net_sync.sh`). The project is in
+  `firmware/flavors.json` with `door` + `lite` build envs and no release envs.
+- **Phase 1b (bench-bound, not built):** the onboard-radio channels — WiFi-RF,
+  WiFi-CSI, BLE — on the C6 alongside the STA link; the CSI HAL on the C6 is
+  unproven and radio coexistence is a bench item (§9).
+- **Phase 2:** presets tuned on the bench; release envs + one OTA channel per
+  preset (the envs already name a product each) once the bench checklist is
+  green.
 - **Phase 3:** Heavy dual-board demo; vision hub as an independent optical vote.
 
 ## 11. About the creator

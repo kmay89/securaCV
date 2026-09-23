@@ -210,14 +210,19 @@ void apply_allow_list(csi_event_values_t* v, uint32_t allowed) {
  * the current monotonic time so a module that forgot to set it can't leak
  * a finer-grained value (e.g. a millisecond counter cast into the slot).
  *
- * NOTE: monotonic millis() is NOT aligned with wall-clock day, so a
- * device booted mid-afternoon will roll its time_bucket back to 0 at
- * boot+0, not at midnight. The Phase 4 host integration calls
- * csi_event_set_clock_offset_minutes() at first sync to align the bucket
- * index with wall clock; until that lands, time_bucket is consistent
- * within a session and the meta.daily_summary module emits when its
- * own host-supplied clock indicates day-boundary, so the surface
- * inconsistency is contained. Tracked as a follow-up to Phase 4. */
+ * NOTE: monotonic millis() is NOT aligned with wall-clock day on its own —
+ * a device booted mid-afternoon would roll its time_bucket back to 0 at
+ * boot+0, not at midnight. Both hosts therefore call
+ * csi_event_set_clock_offset_minutes() from their GPS clock sync (the one
+ * wall-clock source either tree has; canary main.cpp's updateCsiClockOffset,
+ * canary-wap's update_csi_clock_offset), re-deriving the offset on every
+ * pass with a set clock so it stays drift-corrected and survives millis()
+ * rollover. Until the first GPS fix the offset is 0 and time_bucket is
+ * session-relative. The hosts derive the offset from LOCAL wall time
+ * (tz_rule::local_minute_of_day, common/time/tz_rule.h): once the household
+ * time zone is set (repo sweep F28) bucket 0 and the quiet-hours window are
+ * the household's midnight; while no zone is set it is UTC midnight, as
+ * before. The per-pass recompute is also what carries a DST change. */
 static int32_t s_clock_offset_minutes = 0;
 
 /* Quiet-hours gating state. Set by csi_event_set_quiet_window(); read at

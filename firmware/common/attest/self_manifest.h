@@ -83,6 +83,13 @@ struct Facts {
   // common/identity/birth_day.h for the three rules that produce these.
   uint32_t born_day = 0;
   bool born_exact = false;
+  // Where the device's identity key sleeps, as the wire label from
+  // common/identity/key_at_rest.h ("plaintext-nvs" | "nvs-encrypted" |
+  // "nvs-encrypted+secure-boot"; "hw-bound" reserved). A posture statement
+  // read live on the device, never key material. Optional and additive:
+  // nullptr (an image that does not report it) omits the key entirely, so an
+  // older reader sees exactly the object it always did.
+  const char* key_at_rest = nullptr;
   int health;                 // 0..100, or <0 = unknown → emitted as null
   int temp_c = -1000;         // die temperature °C; <= -273 = unknown → null
   bool tamper;
@@ -180,6 +187,7 @@ inline size_t build(const Facts& f, char* out, size_t cap) {
   if (f.born_day == 0) w.raw("null");
   else w.u32(f.born_day);
   w.key("born_exact", false);   w.raw(f.born_exact ? "true" : "false");
+  if (f.key_at_rest) { w.key("key_at_rest", false); w.str(f.key_at_rest); }
   w.key("health", false);
   if (f.health < 0) w.raw("null");
   else { int h = f.health > 100 ? 100 : f.health; w.u32((uint32_t)h); }

@@ -132,8 +132,10 @@ float kalman_update(KalmanRssi* k, float raw_rssi);
  * Scout setup flow. Each slot: 16-byte hashed_id + a short text label
  * (no MAC, no raw identifiers). Lookup is by hashed_id only.
  *
- * In-RAM. PR 5b adds the NVS-persisted twin so paired beacons survive
- * reboots (under the same flash-encryption gate as opera_secret).
+ * In-RAM here. The NVS-persisted twin is ble_scout_registry_store.h
+ * (repo sweep F27): one versioned blob ble_scout.cpp writes from the loop
+ * task after every pair/unpair and loads at init, so paired beacons
+ * survive reboots (same "securacv" namespace as the per-device key).
  *
  * The label is fixed-length, ASCII only (the chokepoint enforces).
  * It is NEVER user-typed free text from a remote source; it comes

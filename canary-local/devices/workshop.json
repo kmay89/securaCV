@@ -392,7 +392,7 @@
       },
       "FEATURE_TAMPER_GPIO": {
        "on": false,
-       "note": "Enable tamper detection pin"
+       "note": "Enclosure tamper contact (reed/hall on D3); off until bench-validated"
       },
       "FEATURE_WATCHDOG": {
        "on": true,
@@ -652,7 +652,7 @@
    "options": [
     {
      "id": "opt_led",
-     "group": "Options",
+     "group": "Options (applied when preset = custom)",
      "label": "onboard WS2812",
      "consequence": "light-pipe port (outside the radome zone)",
      "audience": "user",
@@ -663,7 +663,7 @@
     },
     {
      "id": "opt_lux",
-     "group": "Options",
+     "group": "Options (applied when preset = custom)",
      "label": "BH1750 lux sensor",
      "consequence": "small light aperture (outside the radome zone)",
      "audience": "user",
@@ -674,7 +674,7 @@
     },
     {
      "id": "opt_vent",
-     "group": "Options",
+     "group": "Options (applied when preset = custom)",
      "label": "GORE vent cluster (recommended with opt_seal)",
      "consequence": "",
      "audience": "user",
@@ -682,7 +682,7 @@
     },
     {
      "id": "opt_tamper",
-     "group": "Options",
+     "group": "Options (applied when preset = custom)",
      "label": "reed/Hall magnet pocket",
      "consequence": "",
      "audience": "user",
@@ -694,7 +694,7 @@
     },
     {
      "id": "opt_seal",
-     "group": "Options",
+     "group": "Options (applied when preset = custom)",
      "label": "perimeter TPU gasket + drip-edge front (indoor ceilings rarely need it)",
      "consequence": "",
      "audience": "user",
@@ -705,7 +705,7 @@
     },
     {
      "id": "opt_weep",
-     "group": "Options",
+     "group": "Options (applied when preset = custom)",
      "label": "Ø2 weep at the bottom wall's floor corner (seal mode): condensate leaves",
      "consequence": "",
      "audience": "user",
@@ -713,7 +713,7 @@
     },
     {
      "id": "seal_mid_posts",
-     "group": "Options",
+     "group": "Options (applied when preset = custom)",
      "label": "(seal mode) one extra screw post mid-way along each ±X wall",
      "consequence": "",
      "audience": "user",
@@ -721,7 +721,7 @@
     },
     {
      "id": "head_seal",
-     "group": "Options",
+     "group": "Options (applied when preset = custom)",
      "label": "(seal mode) O-ring under each front screw head — needs screw_head = \"pan\"",
      "consequence": "",
      "audience": "user",
@@ -729,8 +729,8 @@
     },
     {
      "id": "opt_mount",
-     "group": "Options",
-     "label": "opt_mount",
+     "group": "Options (applied when preset = custom)",
+     "label": "mounting features per mount_style",
      "consequence": "",
      "audience": "user",
      "default": true,
@@ -740,7 +740,7 @@
     },
     {
      "id": "mount_style",
-     "group": "Options",
+     "group": "Options (applied when preset = custom)",
      "label": "mount_style",
      "consequence": "",
      "audience": "user",

@@ -10,8 +10,9 @@ namespace canary::ui {
 namespace {
 
 // Side padding a rectangular panel keeps when these helpers run there (the
-// nightstand renders the shared modal surfaces through the watch branch).
-constexpr int kRectSidePad = 8;
+// nightstand renders the shared modal surfaces through the watch branch);
+// the value lives in round_frame_core.h so the host tests share it.
+using roundframe::kRectSidePad;
 
 int panel_w() { return (int)lv_disp_get_hor_res(NULL); }
 int panel_h() { return (int)lv_disp_get_ver_res(NULL); }

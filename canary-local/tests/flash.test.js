@@ -888,7 +888,7 @@ test("mqttProvisioningToNvs: maps the optional broker/identity fields to native'
 
 // ── the broker TLS receipt line: what was SEALED, in the native app's words ──
 // One table in two places (flash-core.js MQTT_TLS_RECEIPT and
-// desktop/src-tauri/src/broker_receipt.rs MODE_LABELS), held equal by
+// desktop/flash-engine/src/broker_receipt.rs MODE_LABELS), held equal by
 // desktop_parity.test.js. These pin the browser's half to the firmware's mode
 // byte and to the bytes the builder actually seals — never the form, never a
 // credential, never a claim that anything connected. Same fixtures as the

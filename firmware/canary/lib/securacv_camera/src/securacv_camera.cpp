@@ -21,6 +21,13 @@ static const char* NVS_CAM_NS = "scv_cam";
 static const char* NVS_KEY_HMIRROR = "hmirror";
 static const char* NVS_KEY_VFLIP   = "vflip";
 
+/* Lifecycle-lock timeouts. Capture is on the hot path (stream pacing is
+ * 20–500 ms per frame), so a busy lock reads as a dropped frame quickly.
+ * Lifecycle ops tolerate waiting out one held frame (capture + socket
+ * send), but must give up well inside the 8 s task watchdog. */
+#define CAM_LOCK_CAPTURE_TIMEOUT_MS    100
+#define CAM_LOCK_LIFECYCLE_TIMEOUT_MS  2000
+
 // ════════════════════════════════════════════════════════════════════════════
 // GLOBAL INSTANCE
 // ════════════════════════════════════════════════════════════════════════════
@@ -75,7 +82,8 @@ static bool apply_int_setting(sensor_t* s, const JsonObject& body, const char* k
 // ════════════════════════════════════════════════════════════════════════════
 
 CameraManager::CameraManager()
-  : m_initialized(false), m_peek_active(false), m_framesize(FRAMESIZE_VGA),
+  : m_lock(xSemaphoreCreateMutex()),
+    m_initialized(false), m_peek_active(false), m_framesize(FRAMESIZE_VGA),
     m_frame_delay_ms(40), m_user_frame_delay_ms(40),
     m_metrics{}, m_metrics_mux(portMUX_INITIALIZER_UNLOCKED),
     m_thermal_state(THERMAL_NORMAL), m_die_temp_c(0),
@@ -145,7 +153,30 @@ void CameraManager::applyDefaultSensorTuning() {
   }
 }
 
+bool CameraManager::lockTake(uint32_t timeout_ms) const {
+  /* Constructor-created; creation can only fail under heap exhaustion at
+   * static-init time. If it somehow did, fall back to the pre-lock
+   * behavior (proceed unlocked) rather than bricking the camera. */
+  if (!m_lock) return true;
+  return xSemaphoreTake(m_lock, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+}
+
+void CameraManager::lockGive() const {
+  if (m_lock) xSemaphoreGive(m_lock);
+}
+
 bool CameraManager::begin() {
+  if (!lockTake(CAM_LOCK_LIFECYCLE_TIMEOUT_MS)) {
+    Serial.println("[CAMERA] begin() skipped — lifecycle lock busy");
+    return false;
+  }
+  bool ok = beginLocked();
+  lockGive();
+  return ok;
+}
+
+bool CameraManager::beginLocked() {
+  if (m_initialized) return true;
   psramInit();
   bool psram_ok = psramFound();
   Serial.printf("[CAMERA] PSRAM: %s\n", psram_ok ? "found" : "not found");
@@ -205,6 +236,16 @@ bool CameraManager::begin() {
 }
 
 void CameraManager::end() {
+  if (!m_initialized) return;
+  if (!lockTake(CAM_LOCK_LIFECYCLE_TIMEOUT_MS)) {
+    Serial.println("[CAMERA] end() skipped — lifecycle lock busy");
+    return;  // caller sees isInitialized() still true and retries
+  }
+  endLocked();
+  lockGive();
+}
+
+void CameraManager::endLocked() {
   if (m_initialized) {
     esp_camera_deinit();
     m_initialized = false;
@@ -213,25 +254,36 @@ void CameraManager::end() {
 }
 
 bool CameraManager::reinit() {
+  if (!lockTake(CAM_LOCK_LIFECYCLE_TIMEOUT_MS)) {
+    Serial.println("[CAMERA] reinit() skipped — lifecycle lock busy");
+    return false;
+  }
   if (m_peek_active) {
     m_peek_active = false;
-    delay(150);
+    delay(150);  // let the stream task observe the flag and exit its loop
   }
-  end();
-  return begin();
+  endLocked();
+  bool ok = beginLocked();
+  lockGive();
+  return ok;
 }
 
 bool CameraManager::setResolution(framesize_t size) {
   if (!m_initialized) return false;
+  if (!lockTake(CAM_LOCK_LIFECYCLE_TIMEOUT_MS)) return false;
+  if (!m_initialized) {
+    lockGive();
+    return false;
+  }
 
   sensor_t* s = esp_camera_sensor_get();
-  if (!s) return false;
-
-  if (s->set_framesize(s, size) != 0) {
+  if (!s || s->set_framesize(s, size) != 0) {
+    lockGive();
     return false;
   }
 
   m_framesize = size;
+  lockGive();
   return true;
 }
 
@@ -241,13 +293,23 @@ const char* CameraManager::getResolutionName() const {
 
 camera_fb_t* CameraManager::captureFrame() {
   if (!m_initialized) return nullptr;
-  return esp_camera_fb_get();
+  if (!lockTake(CAM_LOCK_CAPTURE_TIMEOUT_MS)) return nullptr;
+  if (!m_initialized) {  // deinited between the flag check and the take
+    lockGive();
+    return nullptr;
+  }
+  camera_fb_t* fb = esp_camera_fb_get();
+  if (!fb) {
+    lockGive();
+    return nullptr;
+  }
+  return fb;  // lock stays held until returnFrame()
 }
 
 void CameraManager::returnFrame(camera_fb_t* fb) {
-  if (fb) {
-    esp_camera_fb_return(fb);
-  }
+  if (!fb) return;
+  esp_camera_fb_return(fb);
+  lockGive();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -311,8 +373,17 @@ uint32_t CameraManager::getFrameDelay() const {
 // ════════════════════════════════════════════════════════════════════════════
 
 uint16_t CameraManager::getSensorPID() const {
-  sensor_t* s = esp_camera_sensor_get();
-  return s ? s->id.PID : 0;
+  /* Status polling calls this at ~1 Hz; a lock busy with a teardown or a
+   * held frame just reads as PID 0 ("Unknown") for that poll. */
+  if (!m_initialized) return 0;
+  if (!lockTake(CAM_LOCK_CAPTURE_TIMEOUT_MS)) return 0;
+  uint16_t pid = 0;
+  if (m_initialized) {
+    sensor_t* s = esp_camera_sensor_get();
+    if (s) pid = s->id.PID;
+  }
+  lockGive();
+  return pid;
 }
 
 const char* CameraManager::getSensorModelName() const {
@@ -324,8 +395,17 @@ const char* CameraManager::getSensorModelName() const {
 // ════════════════════════════════════════════════════════════════════════════
 
 bool CameraManager::getSensorParams(JsonDocument& doc) {
+  if (!m_initialized) return false;
+  if (!lockTake(CAM_LOCK_LIFECYCLE_TIMEOUT_MS)) return false;
+  if (!m_initialized) {  // torn down between the flag check and the take
+    lockGive();
+    return false;
+  }
   sensor_t* s = esp_camera_sensor_get();
-  if (!s) return false;
+  if (!s) {
+    lockGive();
+    return false;
+  }
 
   doc["ok"]              = true;
   doc["sensor_pid"]      = s->id.PID;
@@ -358,12 +438,22 @@ bool CameraManager::getSensorParams(JsonDocument& doc) {
   doc["colorbar"]        = s->status.colorbar;
   doc["frame_delay_ms"]  = m_frame_delay_ms;
 
+  lockGive();
   return true;
 }
 
 bool CameraManager::applySensorParams(const JsonObject& obj) {
+  if (!m_initialized) return false;
+  if (!lockTake(CAM_LOCK_LIFECYCLE_TIMEOUT_MS)) return false;
+  if (!m_initialized) {
+    lockGive();
+    return false;
+  }
   sensor_t* s = esp_camera_sensor_get();
-  if (!s) return false;
+  if (!s) {
+    lockGive();
+    return false;
+  }
 
   // JPEG quality — also read back from sensor
   if (obj["quality"].is<int>() && s->set_quality) {
@@ -427,18 +517,34 @@ bool CameraManager::applySensorParams(const JsonObject& obj) {
     m_frame_delay_ms = 40;
   }
 
+  lockGive();
   return true;
 }
 
 void CameraManager::resetSensorDefaults() {
-  applyDefaultSensorTuning();
-  loadOrientationFromNvs();
-  m_frame_delay_ms = 40;
+  if (!m_initialized) return;
+  if (!lockTake(CAM_LOCK_LIFECYCLE_TIMEOUT_MS)) return;
+  if (m_initialized) {
+    applyDefaultSensorTuning();
+    loadOrientationFromNvs();
+    m_frame_delay_ms = 40;
+  }
+  lockGive();
 }
 
 bool CameraManager::applyPreset(const char* name) {
+  if (!name) return false;
+  if (!m_initialized) return false;
+  if (!lockTake(CAM_LOCK_LIFECYCLE_TIMEOUT_MS)) return false;
+  if (!m_initialized) {
+    lockGive();
+    return false;
+  }
   sensor_t* s = esp_camera_sensor_get();
-  if (!s || !name) return false;
+  if (!s) {
+    lockGive();
+    return false;
+  }
 
   #define SAFE_SET(f, val) do { if (s->f) s->f(s, val); } while (0)
 
@@ -521,11 +627,13 @@ bool CameraManager::applyPreset(const char* name) {
     m_frame_delay_ms = 40;
   } else {
     #undef SAFE_SET
+    lockGive();
     return false;
   }
   #undef SAFE_SET
 
   loadOrientationFromNvs();
+  lockGive();
   return true;
 }
 
@@ -650,6 +758,20 @@ bool CameraManager::checkFreeze(uint32_t now_ms) {
     return false;
   }
 
+  /* Recovery deinits and reinits the driver, so it must own the lifecycle
+   * lock: this used to clear m_peek_active and tear the driver down with
+   * only flag guards, and the loop-task vision capture could call
+   * esp_camera_fb_get() into a half-initialized driver. If the lock is
+   * busy, skip — the caller retries on the next failed capture rather
+   * than blocking toward the task watchdog. */
+  if (!lockTake(CAM_LOCK_LIFECYCLE_TIMEOUT_MS)) return false;
+  if (!m_initialized) {
+    /* Deinited under us (power policy or the re-init endpoint) — the
+     * missing frames were a teardown, not a freeze. */
+    lockGive();
+    return false;
+  }
+
   m_freeze_count++;
   Serial.printf("[CAMERA] Freeze detected (%u ms since last frame) — attempting recovery\n",
                 now_ms - m_last_good_frame_ms);
@@ -659,10 +781,11 @@ bool CameraManager::checkFreeze(uint32_t now_ms) {
     m_peek_active = false;
     delay(100);
   }
-  end();
+  endLocked();
   delay(200);
-  bool ok = begin();
+  bool ok = beginLocked();
   m_last_good_frame_ms = millis();
+  lockGive();
 
   if (ok) {
     log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR, "Camera freeze recovery succeeded", nullptr);

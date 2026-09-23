@@ -56,6 +56,7 @@ static manifest::Facts sample() {
   f.chain_head_hex = "3f9ac10b00000000000000000000000000000000000000000000000000000000";
   f.seq = 41;
   f.boots = 12;
+  f.key_at_rest = "plaintext-nvs";
   f.health = 100;
   f.tamper = false;
   f.features = kFeatures;
@@ -96,6 +97,7 @@ static void test_shape_and_keys() {
   CHECK(has(s, "\"boots\":12"));
   CHECK(has(s, "\"tamper\":false"));
   CHECK(has(s, "\"health\":100"));
+  CHECK(has(s, "\"key_at_rest\":\"plaintext-nvs\""));
   CHECK(has(s, "\"features\":[\"sd_storage\",\"wifi_ap\",\"gnss\",\"ble_status\",\"console_theme\"]"));
   // The live command set — each as {"key","name"} — so the app shows exactly
   // what THIS unit answers.
@@ -205,6 +207,25 @@ static void test_temperature() {
   CHECK(has(std::string(buf), "\"temp_c\":null"));
 }
 
+// ── key_at_rest: the posture label when the image reports it, ABSENT (not
+//    null, not "") when it does not — additive, so an older reader sees the
+//    object it always did ──────────────────────────────────────────────────────
+static void test_key_at_rest_optional() {
+  char buf[1024];
+  manifest::Facts f = sample();
+  f.key_at_rest = nullptr;
+  manifest::build(f, buf, sizeof buf);
+  CHECK(!has(std::string(buf), "key_at_rest"));   // the key itself is gone
+  f.key_at_rest = "nvs-encrypted+secure-boot";
+  manifest::build(f, buf, sizeof buf);
+  CHECK(has(std::string(buf), "\"key_at_rest\":\"nvs-encrypted+secure-boot\""));
+  // It sits with the identity facts, before health, so the pubkey/fingerprint
+  // block and the posture read together.
+  std::string s(buf);
+  CHECK(s.find("\"born_exact\"") < s.find("\"key_at_rest\""));
+  CHECK(s.find("\"key_at_rest\"") < s.find("\"health\""));
+}
+
 // ── string values are escaped (never trust an input into a wire format) ─────
 static void test_escaping() {
   char buf[1024];
@@ -235,6 +256,7 @@ static void test_null_fields_safe() {
   CHECK(n > 0);
   CHECK(s.front() == '{' && s.back() == '}');
   CHECK(has(s, "\"device_id\":\"\""));      // null → empty string, not a crash
+  CHECK(!has(s, "key_at_rest"));            // optional posture → absent, not ""
   CHECK(has(s, "\"features\":[]"));
   CHECK(has(s, "\"fleet\":[]"));            // no roster → empty array, not a crash
 }
@@ -271,6 +293,7 @@ int main() {
   test_worst_case_fleet_fits();
   test_unknown_health_and_tamper();
   test_temperature();
+  test_key_at_rest_optional();
   test_escaping();
   test_no_features();
   test_null_fields_safe();

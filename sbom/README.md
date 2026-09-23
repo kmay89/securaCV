@@ -46,7 +46,7 @@ resolver against PlatformIO's own `pio project config` for every build env
 | `firmware/common/*/library.json` / `library.properties`, `firmware/canary/lib/*/library.json` | the first-party libraries (name, version, license) the images are built from |
 | `.github/workflows/*.yml` | every `esp32:esp32` core version the Arduino-CLI build path pins through `.github/actions/setup-arduino-esp32` (a literal, a matrix axis, or the action's "latest"), with each row's library pins and the sketch it goes on to compile |
 | `firmware/projects/*/arduino/*/sketch.yaml` | the other Arduino axis: the core (`esp32:esp32 (X.Y.Z)`) and library pins of every sketch profile, parsed from YAML — the files' comments quote core numbers too |
-| `firmware/canary/include/canary_config.h` | `FIRMWARE_VERSION` — the one release train (`scripts/lint_fw_version_sync.sh` holds the other five copies to it) |
+| `firmware/canary/include/canary_config.h` | `FIRMWARE_VERSION` — the one release train (`scripts/lint_fw_version_sync.sh` holds the other six copies to it) |
 
 Each product is a `firmware` component; each PlatformIO platform package a
 `platform` component; each Arduino core and ESP-IDF release a `framework`
@@ -99,8 +99,10 @@ where a reviewer can see them:
   fails generation with "no PLATFORM_FACTS for …" instead of carrying the old
   numbers forward. Whether a literal is an exact pin or a floating spec is in
   the `platform` component's `securacv:exact_pin` property; a floating spec
-  (`espressif32 @ ^7.0.0`) has no `version`, only `securacv:version_spec`, and
-  its core is what that line ships today, not a promise.
+  has no `version`, only `securacv:version_spec`, and its core is what that
+  line ships today, not a promise. Since 2026-09-22 every section pins
+  exactly (canary's `espressif32 @ ^7.0.0` was the last float —
+  `firmware/PLATFORMS.md`), so the document carries no such component today.
 - **The two framework licenses** (LGPL-2.1-or-later for arduino-esp32,
   Apache-2.0 for ESP-IDF).
 

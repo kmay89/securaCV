@@ -39,7 +39,7 @@ namespace canary::net::mqtt_tls {
 // Persisted as one NVS u8 (products: "securacv"/mqtt_tls; canary-wap:
 // "csi"/mqtt.tlsmode). The numeric values are the wire/NVS contract shared
 // with the flashers (canary-local/assets/flash-core.js mqttProvisioningToNvs,
-// desktop/src-tauri/src/provisioning.rs) — do not renumber.
+// desktop/flash-engine/src/provisioning.rs) — do not renumber.
 enum class Mode : uint8_t {
   Plain = 0,        // mqtt://  — what every Canary shipped with
   Ca = 1,           // mqtts:// — broker cert must chain to the configured CA (PEM)

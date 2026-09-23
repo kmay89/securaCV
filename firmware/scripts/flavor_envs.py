@@ -328,6 +328,21 @@ def validate(flavors: list[dict]) -> list[str]:
                     f"disagree, but only when a release is being cut)")
             else:
                 seen.add(genv)
+        # `unreleased` marks a product CI compiles but nothing ships (canary-
+        # sentinel while its bench checklist is open): a non-empty reason, and
+        # never beside release_envs — "compiled, not released" and "the
+        # release workflows publish these envs" cannot both be true.
+        # scripts/lint_build_matrix.py reads the same field to excuse the
+        # product from needing a /checkup lane (and to refuse one).
+        if "unreleased" in entry:
+            why = entry.get("unreleased")
+            if not isinstance(why, str) or not why.strip():
+                problems.append(f"{name}: `unreleased` must be a non-empty reason "
+                                f"string — say why the product does not ship")
+            if entry.get("release_envs"):
+                problems.append(f"{name}: declares `unreleased` AND release_envs — "
+                                f"a product the release workflows publish is released; "
+                                f"drop one")
         release = entry.get("release_envs")
         if release is None:
             continue

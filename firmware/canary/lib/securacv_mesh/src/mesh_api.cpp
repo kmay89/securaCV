@@ -2,8 +2,9 @@
  * SecuraCV Canary — Mesh REST API JSON builders (PR-8) — Implementation
  *
  * Pure snprintf-based JSON rendering; no Arduino / ArduinoJson deps so
- * the mesh host-test harness can link + exercise these on every PR (the
- * dev/release CI envs compile the actual handlers out — see mesh_api.h).
+ * the mesh host-test harness can link + exercise these on every PR (CI's
+ * [env:full] leg compiles the handlers; only these tests see the output
+ * shape — see mesh_api.h).
  */
 
 #include "mesh_api.h"
@@ -140,9 +141,75 @@ bool build_mesh_peers_json(char*  out,
     if (!append_escaped(out, cap, &pos, p.name)) return false;
 
     n = snprintf(out + pos, cap - pos,
-                 "\",\"state\":\"%s\",\"last_seen_sec\":%u,\"rssi\":%d}",
+                 "\",\"state\":\"%s\",\"last_seen_sec\":%u,\"rssi\":%d,"
+                 "\"alerts_received\":%u}",
                  p.state ? p.state : "OFFLINE",
-                 (unsigned)p.last_seen_sec, p.rssi);
+                 (unsigned)p.last_seen_sec, p.rssi,
+                 (unsigned)p.alerts_received);
+    if (n < 0 || (size_t)n >= cap - pos) return false;
+    pos += (size_t)n;
+  }
+
+  if (pos + 2 >= cap) return false;
+  out[pos++] = ']';
+  out[pos++] = '}';
+  out[pos]   = '\0';
+  return true;
+}
+
+static int hex_nibble(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+bool parse_fingerprint_hex(const char* hex,
+                           uint8_t     out[mesh_crypto::FINGERPRINT_LEN]) {
+  if (hex == nullptr || out == nullptr) return false;
+  constexpr size_t N = mesh_crypto::FINGERPRINT_LEN;
+  if (strnlen(hex, 2 * N + 1) != 2 * N) return false;
+  uint8_t tmp[N];
+  for (size_t i = 0; i < N; ++i) {
+    const int hi = hex_nibble(hex[2 * i]);
+    const int lo = hex_nibble(hex[2 * i + 1]);
+    if (hi < 0 || lo < 0) return false;
+    tmp[i] = (uint8_t)((hi << 4) | lo);
+  }
+  memcpy(out, tmp, N);
+  return true;
+}
+
+bool build_mesh_alerts_json(char*                     out,
+                            size_t                    cap,
+                            const mesh_alert::Record* alerts,
+                            size_t                    count,
+                            uint32_t                  now_ms) {
+  if (out == nullptr || cap == 0) return false;
+  if (count > 0 && alerts == nullptr) return false;
+
+  size_t pos = 0;
+  /* uptime_ms: what each timestamp_ms is measured against (F33 part 7). */
+  int n = snprintf(out + pos, cap - pos,
+                   "{\"ok\":true,\"count\":%u,\"uptime_ms\":%lu,\"alerts\":[",
+                   (unsigned)count, (unsigned long)now_ms);
+  if (n < 0 || (size_t)n >= cap - pos) return false;
+  pos += (size_t)n;
+
+  for (size_t i = 0; i < count; ++i) {
+    const mesh_alert::Record& a = alerts[i];
+    char fp_hex[sizeof(a.sender_fp) * 2 + 1];
+    to_hex(fp_hex, a.sender_fp, sizeof(a.sender_fp));
+    /* Every string here is a fixed template or hex — nothing
+     * sender-authored — so no escaping pass is needed. */
+    n = snprintf(out + pos, cap - pos,
+                 "%s{\"timestamp_ms\":%lu,\"type\":\"%s\",\"severity\":%u,"
+                 "\"sender_fp\":\"%s\",\"sender_name\":\"\",\"detail\":\"%s\","
+                 "\"witness_seq\":%lu}",
+                 i == 0 ? "" : ",",
+                 (unsigned long)a.timestamp_ms, mesh_alert::type_name(),
+                 (unsigned)a.severity, fp_hex, mesh_alert::kind_name(a.kind),
+                 (unsigned long)a.witness_seq);
     if (n < 0 || (size_t)n >= cap - pos) return false;
     pos += (size_t)n;
   }

@@ -47,6 +47,7 @@ await allow("canary-local/boards");
 await allow("canary-local/enclosures/preview");
 await allow("canary-local/emulator/web");
 await allow("canary-local/emulator/dist");
+await allow("canary-local/models");
 await allow("docs/hardware/enclosure");
 
 const server = createServer(async (req, res) => {

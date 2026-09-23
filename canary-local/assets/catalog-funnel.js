@@ -6,7 +6,7 @@
 // the fit coupon offered, and a sideways "see also" rail. All reasoning is
 // pure (funnelResult) and unit-tested; only a real page boots the UI.
 
-import { productSummary, envLabel } from "./catalog-browse.js";
+import { productSummary, envLabel, workshopHref } from "./catalog-browse.js";
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -50,11 +50,15 @@ const isRugged = (s) => RUGGED.has(s.id) || (s.env && s.env.cer >= 4);
 const isWeather = (s) => !!s.env && ((s.env.cer || 0) >= 2 || !!s.env.ip);
 const hasOpt = (p, id) => (p.options || []).some((o) => o.id === id);
 
-function matchesBuild(s, build) {
+// Every display device's manifest is family canary-display, and its slug says
+// so (tests/catalog_funnel.test.js holds the prefix to devices/*/device.json) —
+// so "a display" is any case a display device takes, not the two with a workshop.
+const isDisplayDevice = (d) => d.startsWith("canary-display-");
+
+export function matchesBuild(s, build) {
   if (!build) return true;
   if (build === "accessory") return s.klass === "accessory" || s.devices.includes("_universal");
-  if (build === "display")
-    return s.devices.includes("canary-display-dash") || s.devices.includes("canary-display-watch");
+  if (build === "display") return s.devices.some(isDisplayDevice);
   return s.devices.includes(build);
 }
 
@@ -181,10 +185,10 @@ function resultCard(product, recommend, reasons, fit) {
   const scad = el("a", "cat-scad", "open in OpenSCAD ↗");
   scad.href = GH + s.scad; scad.target = "_blank"; scad.rel = "noopener";
   links.append(scad);
-  const dev = s.devices.find((d) => d && d !== "_universal");
-  if (dev) {
+  const ws = workshopHref(s);
+  if (ws) {
     const w = el("a", "cat-workshop", "configure in the workshop →");
-    w.href = `workshop.html#${dev}`;
+    w.href = ws;
     links.append(w);
   }
   card.append(links);

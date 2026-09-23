@@ -1,19 +1,32 @@
 // KeysView.swift
 //
 // The part no web SPA can do well: your key ring. Pinned-key trust (TOFU) with
-// a loud "this key changed" alarm, the entry point for the on-device .svlt
-// unseal (still a placeholder — UnsealView says so), and the self-healing
-// About panel — build rev, firmware train, last-checked, "heals forward" —
-// ported from the desktop app's renderAbout() so every surface tells the same
-// story from one source of truth.
+// a loud "this key changed" alarm, the sealed-snapshot key and the on-phone
+// .svlt unseal (Views/UnsealView.swift), and the self-healing About panel —
+// build rev, firmware train, last-checked, "heals forward" — ported from the
+// desktop app's renderAbout() so every surface tells the same story from one
+// source of truth.
 
 import SwiftUI
 
+/// The typed destinations this tab pushes. A value, so a `.svlt` handed in
+/// from Files can push the Unseal screen the same way a tap does.
+enum KeysRoute: Hashable {
+    case unseal
+}
+
 struct KeysView: View {
     @EnvironmentObject var store: FleetStore
+    /// Owned here so a sealed file arriving from outside can land on the
+    /// Unseal screen without a second copy of it: the push is a path append,
+    /// and an already-open screen is left alone (it consumes the file itself).
+    @State private var path = NavigationPath()
+    /// The snapshot key's custody, read on appear (public/first-byte reads
+    /// only — never an unwrap, never a prompt). Nil when there is no key.
+    @State private var snapshotCustody: String?
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
                 Section("Pinned trust") {
                     if store.witnesses.isEmpty {
@@ -36,15 +49,17 @@ struct KeysView: View {
                 // Section has no title-string + footer initializer — spell
                 // the header out (SwiftUI API shape, not a style choice).
                 Section {
-                    NavigationLink {
-                        UnsealView()
-                    } label: {
+                    NavigationLink(value: KeysRoute.unseal) {
                         Label("Unseal a snapshot", systemImage: "lock.open.rotation")
                     }
+                    if let snapshotCustody {
+                        Label("Snapshot key: \(snapshotCustody)", systemImage: "lock.shield")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
                 } header: {
-                    Text("Vault")
+                    Text("Sealed snapshots")
                 } footer: {
-                    Text("Sealed snapshots are encrypted to your key. The Canary holds only the public half — it's structurally unable to open them. Unsealing in this app is still being built; today the repo's unseal tool is the working path.")
+                    Text("Sealed snapshots are encrypted to a key this phone holds. The Canary keeps only the public half — it's structurally unable to open them. Unsealing happens here, on this phone: shown once, never saved, never shared.")
                 }
 
                 Section {
@@ -86,20 +101,33 @@ struct KeysView: View {
                 AboutSection()
             }
             .navigationTitle("Keys")
+            .navigationDestination(for: KeysRoute.self) { route in
+                switch route {
+                case .unseal: UnsealView()
+                }
+            }
+            .onAppear {
+                snapshotCustody = Self.custodyNote(VaultKeyStore.app)
+                openUnsealIfFilePending()
+            }
+            .onChange(of: store.pendingSealedSnapshot) { _, _ in openUnsealIfFilePending() }
         }
     }
-}
 
-/// Placeholder unseal surface — and it SAYS so (the honest-status doctrine):
-/// there is no importer and no decrypt code in this app yet. The crypto is
-/// already built repo-side (tools/unseal_snapshot.py); when the flow lands
-/// here it will import a .svlt from Files and decrypt on this phone.
-struct UnsealView: View {
-    var body: some View {
-        ContentUnavailableView("Unsealing isn't in the app yet",
-            systemImage: "doc.badge.gearshape",
-            description: Text("This screen will import a .svlt from Files and decrypt it on this phone, never through any cloud. Until it lands, the repo's unseal tool (tools/unseal_snapshot.py) is the working path."))
-            .navigationTitle("Unseal")
+    /// Where the snapshot key's protection lives, in a few words — or nil
+    /// when this phone has no snapshot key. Static + pure over the store so
+    /// the tests can hold the copy to the custody it names.
+    nonisolated static func custodyNote(_ keys: VaultKeyStore) -> String? {
+        guard keys.exists else { return nil }
+        return keys.custody?.shortLabel ?? "Keychain · this device only"
+    }
+
+    /// A `.svlt` arrived (RootView's `.onOpenURL`): make sure the Unseal
+    /// screen is up so it can consume the file. When it is already up, it
+    /// sees the change itself — pushing again would stack a second copy.
+    private func openUnsealIfFilePending() {
+        guard store.pendingSealedSnapshot != nil, path.isEmpty else { return }
+        path.append(KeysRoute.unseal)
     }
 }
 

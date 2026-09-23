@@ -140,12 +140,36 @@ struct WallView: View {
                 }
             }
 
+            timelineRow
+
             Spacer()
             canaryRow
             residentRow
             footer
         }
         .padding(72)
+    }
+
+    /// The sealed record's day shape, below the devices — drawn ONLY from a
+    /// chain this TV verified against its pinned key (WallModel.timeline is
+    /// empty otherwise). Where there is nothing it may draw, one quiet line
+    /// says why instead of an empty frame that would read as "nothing
+    /// happened".
+    @ViewBuilder private var timelineRow: some View {
+        if !model.timeline.isEmpty {
+            WallTimelineView(records: model.timeline,
+                             unparsed: model.timelineUnparsed,
+                             profile: profile,
+                             skin: skin)
+        } else if model.report == nil {
+            Text("Sealed record not readable from this source yet")
+                .font(.footnote)
+                .foregroundStyle(.tertiary)
+        } else if model.standing == .unpaired, model.report?.ok == true {
+            Text("The sealed record's timeline appears here once this Apple TV is paired with your hub (Settings → Verification) — until its key is pinned, the Wall does not draw what the record says.")
+                .font(.footnote)
+                .foregroundStyle(.tertiary)
+        }
     }
 
     /// The character at the base of the wall — the same living canary the
@@ -197,6 +221,15 @@ struct WallView: View {
                     title: "Showing the last report received at \(receipt(asOf))",
                     detail: stale
                 )
+            } else if case .keyChanged(let pinned, let served) = model.standing {
+                // Paired, and the log is signed by a key other than the one
+                // pinned at pairing. Whatever the walk said under the NEW
+                // key, nothing on this wall is verified — say so first.
+                StatusBanner(
+                    tone: .alarm,
+                    title: "Your hub's signing key changed since this Apple TV was paired",
+                    detail: keyChangedDetail(pinned: pinned, served: served)
+                )
             } else if let report = model.report, !report.ok {
                 // This TV walked the chain itself and it did not verify —
                 // the one verdict that outranks every self-report below.
@@ -211,6 +244,15 @@ struct WallView: View {
                     title: "A Canary reports its record didn't verify",
                     detail: "One or more devices report a chain that isn't ok. Open the Canary's page on your hub to see why."
                 )
+            } else if model.standing == .unauthorized {
+                // A paired TV whose token the hub now refuses: news, not an
+                // alarm about the record — but never silently the calm
+                // self-report either, or a revoked pairing would look fine.
+                StatusBanner(
+                    tone: .warning,
+                    title: "Your hub refused this Apple TV's pairing",
+                    detail: "Its viewer token was revoked, or the hub lost its viewer-token file. Until you pair again (Settings → Verification), this screen shows the fleet's own report, not a check of its own."
+                )
             } else if offlineBanner, !offlineNames(fleet).isEmpty {
                 // The one banner that is a CHOICE (settings → Attention): a
                 // bar wants to hear about a dark Canary, a bedroom doesn't.
@@ -220,6 +262,27 @@ struct WallView: View {
                     tone: .warning,
                     title: offlineTitle(fleet),
                     detail: nil
+                )
+            } else if model.standing == .verified, let report = model.report {
+                // THE claim: this TV walked the hub's sealed log and every
+                // signature checked against the key pinned when it was
+                // paired (the operator's receipt, not the log's own word).
+                // The time is this TV's receipt time, as everywhere; the
+                // device's self-stamp stays labeled as the device's.
+                StatusBanner(
+                    tone: .calm,
+                    title: "Verified through \(receipt(asOf)) · \(report.verified) sealed \(report.verified == 1 ? "entry" : "entries")",
+                    detail: verifiedDetail(fleet)
+                )
+            } else if model.standing == .pinnedNothingToCheck {
+                // Paired, the log names the pinned key and walks clean — but
+                // it held no entries, so no signature was checked. A key is
+                // public and an empty list is easy to serve, so this says
+                // exactly that and never borrows the word "Verified".
+                StatusBanner(
+                    tone: .calm,
+                    title: "Paired · nothing sealed to check as of \(receipt(asOf))",
+                    detail: nothingToCheckDetail(fleet)
                 )
             } else if let verifiedThrough = fleet.verifiedThrough {
                 // Two sentences for two claims — and two clocks. The time
@@ -233,17 +296,20 @@ struct WallView: View {
                 // walking a served sealed log) and to nothing on the wire.
                 if let report = model.report, report.ok {
                     // "Verified" is reserved (AGENTS.md rule 4) for a signature
-                    // checked against a PINNED key. The Wall walks the chain
-                    // against the key the sealed-log document itself supplies —
-                    // it proves the log is internally consistent and signed by
-                    // one key, not that the key is the kernel's. Until the Wall
-                    // pins that key at first contact, the banner says exactly
-                    // that, and keeps the fleet's own timestamp labeled as the
-                    // fleet's report rather than this screen's verdict.
+                    // checked against a PINNED key. Unpaired, the Wall walks
+                    // the chain against the key the sealed-log document itself
+                    // supplies — it proves the log is internally consistent and
+                    // signed by one key, not that the key is the kernel's. So
+                    // the banner says exactly that ("not yet pinned") until a
+                    // pairing receipt pins the key (the branch above), and
+                    // keeps the fleet's own timestamp labeled as the fleet's
+                    // report rather than this screen's verdict.
                     StatusBanner(
                         tone: .calm,
                         title: "Chain intact through \(receipt(asOf)) · \(report.verified) sealed \(report.verified == 1 ? "entry" : "entries")",
-                        detail: "Signatures checked on this Apple TV against the key the log supplied (not yet pinned). Device reports “\(verifiedThrough)”."
+                        detail: report.verified > 0
+                            ? "Signatures checked on this Apple TV against the key the log supplied (not yet pinned). Device reports “\(verifiedThrough)”."
+                            : "The log held no sealed entries, so no signature was checked (and its key is not yet pinned). Device reports “\(verifiedThrough)”."
                     )
                 } else {
                     StatusBanner(
@@ -254,6 +320,30 @@ struct WallView: View {
                 }
             }
         }
+    }
+
+    /// Both key prefixes, so a person can hold them against the hub's own
+    /// `verifying_key` — and the two honest explanations, neither assumed.
+    private func keyChangedDetail(pinned: String, served: String) -> String {
+        let now = served.isEmpty ? "a key the log did not state" : "\(served.prefix(12))…"
+        return "Pinned \(pinned.prefix(12))…, now signed by \(now). If you re-keyed the hub on purpose, forget the pairing in Settings and pair again with a new receipt; if you did not, something else may be answering at your hub's address."
+    }
+
+    /// The verified banner's second line: what was checked, where, against
+    /// what — and the device's self-stamp, still labeled as the device's.
+    private func verifiedDetail(_ fleet: FleetSnapshot) -> String {
+        let checked = "Ed25519 signatures checked on this Apple TV against the key pinned when you paired it."
+        guard let stamp = fleet.verifiedThrough else { return checked }
+        return checked + " Device reports “\(stamp)”."
+    }
+
+    /// The nothing-to-check banner's second line: what was (not) checked,
+    /// and why that is not a verdict — plus the device's self-stamp, still
+    /// labeled as the device's.
+    private func nothingToCheckDetail(_ fleet: FleetSnapshot) -> String {
+        let said = "The hub named the key pinned when you paired this Apple TV but served no sealed entries — none since its last checkpoint, or none yet — so no signature was checked. The Wall says “Verified” once there is one to check."
+        guard let stamp = fleet.verifiedThrough else { return said }
+        return said + " Device reports “\(stamp)”."
     }
 
     /// This TV's own clock, as the banners print it: when THIS screen received
@@ -360,6 +450,32 @@ struct WallView: View {
         }
     }
 
+    /// The footer's one word on this TV's own check, phrased by standing so
+    /// it can never say more than the banner above it: "verified" only
+    /// against the pinned key and only when a signature was checked,
+    /// "nothing sealed to check" for a pinned walk of an empty tail, "not
+    /// pinned" for a walk against the log's own key, and a refused pairing
+    /// or a changed key in the trouble color.
+    private var footerVerdict: (text: String, trouble: Bool)? {
+        switch model.standing {
+        case .keyChanged:
+            return (text: "signing key changed since pairing", trouble: true)
+        case .unauthorized:
+            return (text: "pairing refused by the hub", trouble: true)
+        case .verified:
+            guard let report = model.report else { return nil }
+            return (text: "verified · \(report.verified) entries", trouble: false)
+        case .pinnedNothingToCheck:
+            return (text: "paired · nothing sealed to check", trouble: false)
+        case .none, .unpaired, .failedAgainstPin:
+            guard let report = model.report else { return nil }
+            if report.ok {
+                return (text: "chain ok · \(report.verified) entries · key not pinned", trouble: false)
+            }
+            return (text: report.message, trouble: true)
+        }
+    }
+
     private var footer: some View {
         HStack(spacing: 24) {
             Text("SecuraCV Witness Wall")
@@ -367,9 +483,9 @@ struct WallView: View {
             if !model.hubAddress.isEmpty {
                 Text(model.hubAddress)   // where "live" comes from — never a mystery
             }
-            if let report = model.report {
-                Text(report.ok ? "chain ok · \(report.verified) entries" : report.message)
-                    .foregroundStyle(report.ok ? Color.secondary : Color.orange)
+            if let verdict = footerVerdict {
+                Text(verdict.text)
+                    .foregroundStyle(verdict.trouble ? Color.orange : Color.secondary)
             }
             Spacer()
             Text("Witnessing without watching — no video on this screen.")

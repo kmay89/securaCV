@@ -14,10 +14,11 @@
  *     for Ed25519. Matches the canary-wap implementation byte-for-byte
  *     so on-the-wire compatibility holds when both lanes coexist.
  *   • Host build (CSI_TEST_HOST_BUILD) — uses a vendored SHA-256 (FIPS
- *     180-4 reference) for the deterministic helpers, and stubs Ed25519
- *     sign/verify to a deterministic non-cryptographic shim. Tests
- *     verify the deterministic helpers against published vectors; the
- *     Ed25519 path is exercised on-device in CI.
+ *     180-4 reference) for the deterministic helpers and a real X25519
+ *     (RFC 7748 ladder), and stubs Ed25519 sign/verify and the AEAD to
+ *     deterministic non-cryptographic shims. Tests verify SHA-256 and
+ *     X25519 against published vectors; the Ed25519 path is exercised
+ *     on-device.
  *
  * Domain separation:
  *   sha256_domain(domain, data) ≡ SHA-256(utf8(domain) || data).
@@ -138,17 +139,21 @@ bool ed25519_verify(const uint8_t pubkey[PUBKEY_LEN],
  * here, so this primitive stays single-purpose).
  *
  * Note on key formats:
- *   • X25519 takes 32-byte Curve25519 keys, NOT Ed25519 keys directly.
- *     rweather's Curve25519::eval clamps the private scalar internally
- *     so callers can pass either an Ed25519 seed (after clamping) or
- *     an explicit Curve25519 private. Wire-format compatibility with
- *     canary-wap requires passing the same input it expects (see
- *     mesh_network.cpp:derive_session_key).
+ *   • X25519 takes 32-byte Curve25519 keys, NOT Ed25519 keys. An Ed25519
+ *     public key is an Edwards-curve point derived from SHA-512(seed), not
+ *     the Montgomery u-coordinate of the seed times the base point, so two
+ *     sides that feed Ed25519 keys in derive DIFFERENT values. Generate
+ *     both halves with x25519_generate_keypair() below (F33 part 2: pairing
+ *     used ed25519_generate_keypair() here until then).
+ *   • rweather's Curve25519::eval does NOT clamp: it takes bits 254..0 of
+ *     the scalar as given. The generator clamps (RFC 7748 §5).
  *   • shared MUST NOT be used directly as a key — always KDF first.
  *
- * Returns false on identity element / low-order point (a real X25519
- * implementation defends against these; the host shim accepts anything
- * non-zero). Sensitive intermediate state is zeroed before return.
+ * Returns false when the peer's u-coordinate is not canonical or the
+ * result is all-zero (a low-order point). The host build runs a REAL
+ * X25519 — the RFC 7748 ladder in mesh_crypto.cpp, checked against the
+ * RFC's vectors — not a shim, so a host test's two sides agree only when
+ * a device's would. Sensitive intermediate state is zeroed before return.
  * ────────────────────────────────────────────────────────────────────────── */
 
 constexpr size_t X25519_SHARED_LEN = 32;
@@ -156,6 +161,27 @@ constexpr size_t X25519_SHARED_LEN = 32;
 bool x25519_derive(const uint8_t our_priv[PRIVKEY_LEN],
                    const uint8_t peer_pub[PUBKEY_LEN],
                    uint8_t shared_out[X25519_SHARED_LEN]);
+
+/* Generate a fresh X25519 keypair for x25519_derive() (F10-rekey).
+ *
+ * This is NOT ed25519_generate_keypair(): an Ed25519 public key is an
+ * Edwards-curve point derived from SHA-512(seed), not the Curve25519
+ * u-coordinate of the seed times the base point, so feeding Ed25519 keys
+ * to x25519_derive() gives the two sides DIFFERENT shared values on a
+ * real device. Device path: 32 bytes from esp_fill_random(), clamped per
+ * RFC 7748 (rweather's Curve25519::eval does not clamp), pub =
+ * Curve25519::eval(priv, basepoint), retried on the (negligible) eval
+ * refusal. Host path: the same sequence with rand() (TEST USE ONLY) and
+ * the host X25519 ladder. Used by pairing's ephemeral keys (F33 part 2)
+ * and by the F10 rotation. Returns false only on null pointers or an
+ * RNG/eval failure. */
+bool x25519_generate_keypair(uint8_t pub_out [PUBKEY_LEN],
+                             uint8_t priv_out[PRIVKEY_LEN]);
+
+/* Fill `out` with `len` random bytes: esp_fill_random() on device (RF
+ * must be up for full entropy — true whenever the mesh is running),
+ * rand() on host (TEST ONLY). Used for fresh opera secrets (F10-rekey). */
+void fill_random(uint8_t* out, size_t len);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * ChaCha20-Poly1305 AEAD

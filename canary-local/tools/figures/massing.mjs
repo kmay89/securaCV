@@ -264,6 +264,45 @@ export const FIGURES = [
     },
   },
 
+  /* ══════════════════════════════════════════════ Canary Combo ══════ */
+  {
+    id: 'device.canary-combo',
+    title: 'Canary Combo',
+    // The radar + camera witness (canary_combo.scad, v0.1-dev): the Vision
+    // stack beside the Sense stack in one housing, lens on the left column,
+    // radome window on the right. In development, with no committed STLs, so
+    // it is MEASURED off its CAD as seated (assembled_dims.json — the front
+    // at z = base_d, where the file's own echo, head pads and lid key put
+    // it: 86.4 x 73.6 x 26.38 today), not sketched from that echo. The lens
+    // and the radome window are drawn at the variables front() cuts them at
+    // (A.features: lens_x/lens_y, rad_cx/rad_cy, re-evaluated with the
+    // envelope, not read off the cut), so a moved stack moves the drawing.
+    // `of` is the catalog's own answer (the combo-witness variant is a
+    // canary-vision build); the ladder reads THIS case's catalog entry, not
+    // the Vision's released ones (gen_figures.mjs, catalogEvidence).
+    role: 'device', of: 'canary-vision',
+    assembled: true,
+    frame: 'scad-wall',
+    build: (E, P, A) => {
+      const [s0] = A.seams;   // the back's rim: the front plate rides from here out
+      const { lens, radome } = A.features;
+      return [
+        // the back (its keyhole thickening included) and the front plate on it
+        { kind: 'box', m: 'shell2', face: 'y', at: [0, 0, 0], size: [E.w, s0, E.h], r: 3 },
+        { kind: 'box', m: 'shell', face: 'y', at: [0, s0 - EPS, 0], size: [E.w, E.d - s0 + EPS, E.h], r: 3 },
+        // the lens in its aperture, and the radome window — the radar looks
+        // through a blind thinning, invisible from outside, drawn proud here
+        // exactly as the Sense figure draws its own
+        { kind: 'disc', m: 'lens', axis: 'y', at: [lens.x, E.d - EPS, lens.z], r: lens.w / 2, h: 1.4 },
+        {
+          kind: 'box', m: 'radome', face: 'y',
+          at: [radome.x - radome.w / 2, E.d - EPS, radome.z - radome.h / 2],
+          size: [radome.w, 0.9, radome.h], r: 1.5,
+        },
+      ];
+    },
+  },
+
   /* ═════════════════════════════════════════════════ Canary WAP ══════ */
   {
     id: 'part.wap.base',
@@ -407,23 +446,41 @@ export const FIGURES = [
 
   /* ══════════════════════════════════════════════════ displays ═══════
    * The display line has no committed STLs (the enclosures are still in
-   * development — dev_*.stl is gitignored on purpose), so these are sketched
-   * from registry.json's `body_mm` and `glass`. They are marked prototype,
-   * not shipping, and the ledger says so. */
+   * development — dev_*.stl is gitignored on purpose). Where the case CAD
+   * states its own seat, the figure is MEASURED off that CAD anyway
+   * (`assembled: true` — gen_assembled_dims.py renders the parts from the
+   * .scad and commits the union's bounds), so a knob edit moves the figure;
+   * the rest are sketched from their panel records. Either way they trace
+   * to no committed STL, so they are marked prototype, not shipping, and
+   * the ledger says so. */
   {
     id: 'device.canary-display-watch',
     title: 'Canary Watch Station',
     role: 'device', of: 'canary-display-watch',
-    // v0.2 CAD (canary_watch_station.scad): drum Ø49.0, seated depth 23.2
-    // (drum 21.0 + snap-bezel face 2.2) — the v0.1 "screwed drum" sketch
-    // said Ø52 x 21.8, dimensions the measured board could never seat.
-    sketch: { w: 49, d: 23.2, h: 49 },
-    build: (E) => [
-      // a snap-bezel drum looking at you: shell, bezel-inset glass, lit face
-      { kind: 'cyl', m: 'shell', axis: 'y', at: [E.w / 2, 0, E.h / 2], r: E.w / 2, h: E.d - 2.4 },
-      { kind: 'cyl', m: 'glass', axis: 'y', at: [E.w / 2, E.d - 2.4 - EPS, E.h / 2], r: E.w / 2 - 3.5, h: 2.0 },
-      { kind: 'cyl', m: 'lit', axis: 'y', at: [E.w / 2, E.d - 0.4, E.h / 2], r: E.w / 2 - 7, h: 0.4 },
-    ],
+    // v0.2 CAD (canary_watch_station.scad), measured: drum + snap bezel as
+    // seated (assembled_dims.json — Ø49.0 x 23.19 today: drum 21.0 + bezel
+    // face 2.2, less the 0.01 its edge chamfer overlaps), and the glass in
+    // the measured face aperture (bez_ap_d, A.face). The v0.1 "screwed drum"
+    // sketch said Ø52 x 21.8, dimensions the measured board could never
+    // seat; the v0.2 sketch that replaced it was typed from a comment, so a
+    // disc_d edit in the manifest moved the case and not this. The stand is
+    // its own part, not the puck's envelope.
+    assembled: true,
+    frame: 'scad-wall',
+    build: (E, P, A) => {
+      const [s0] = A.seams;   // the drum rim: the bezel face rides from here out
+      const ap = A.face.w / 2; // the bezel's aperture radius (bez_ap_d / 2), measured
+      return [
+        // the drum, back cap to rim, and the snap-bezel face riding on it
+        { kind: 'cyl', m: 'shell2', axis: 'y', at: [E.w / 2, 0, E.h / 2], r: E.w / 2, h: s0 },
+        { kind: 'cyl', m: 'shell', axis: 'y', at: [E.w / 2, s0 - EPS, E.h / 2], r: E.w / 2, h: E.d - s0 + EPS },
+        // the round glass in the bezel's aperture, and the lit face on it —
+        // the 2.2 lit inset is a drawing choice (no CAD number: the panel's
+        // active area is not in the case file), sized to read at glyph scale
+        { kind: 'cyl', m: 'glass', axis: 'y', at: [E.w / 2, E.d - EPS, E.h / 2], r: ap, h: 0.4 },
+        { kind: 'cyl', m: 'lit', axis: 'y', at: [E.w / 2, E.d + 0.4 - EPS, E.h / 2], r: ap - 2.2, h: 0.4 },
+      ];
+    },
   },
   {
     id: 'device.canary-display-touch169',
@@ -479,12 +536,37 @@ export const FIGURES = [
     id: 'device.canary-display-dash',
     title: 'Canary Dash',
     role: 'device', of: 'canary-display-dash',
-    board: 'waveshare_4_3b',
-    build: (E) => [
-      { kind: 'box', m: 'shell', face: 'y', at: [0, 0, 0], size: [E.w, E.d * 0.7, E.h], r: 4 },
-      { kind: 'box', m: 'glass', face: 'y', at: [3, E.d * 0.7, 3], size: [E.w - 6, E.d * 0.3 - 0.4, E.h - 6], r: 2.5 },
-      { kind: 'box', m: 'lit', face: 'y', at: [6.5, E.d - 0.4, 6.5], size: [E.w - 13, 0.4, E.h - 13], r: 1.5 },
-    ],
+    // The printed Dash case (canary_dash_display.scad), measured off its CAD
+    // as assembled (assembled_dims.json): the back with its four dock pads
+    // on the wall face, the frame seated on it. This used to be drawn from
+    // the vendor board mesh (`board: 'waveshare_4_3b'`, 118 x 79 x 38.9 —
+    // the Waveshare board with its own case, not ours), while the Lab's
+    // registry typed a third number for the case (113.7 x 73.6 x 16.0) that
+    // had lost its corner lobes, its thicker back and its pads. One source
+    // now: the case the Dash is sold to be printed in.
+    assembled: true,
+    frame: 'scad-wall',
+    build: (E, P, A) => {
+      const [s0, s1] = A.seams;   // pad tips -> back plate -> frame
+      // the view window the bezel lip frames (view_l x view_w, measured —
+      // A.face), centered on the case as the CAD cuts it: the glass is the
+      // whole story from across the room, so it is the CAD's number
+      const { w: vw, h: vh } = A.face;
+      const wx = (E.w - vw) / 2, wz = (E.h - vh) / 2;
+      return [
+        // the dock pads' shadow gap: four low pads, massed as one inset block
+        // — what holds the case off the wall, not a thicker back. Only its
+        // depth band (s0, the pad height) is the CAD's; the block's footprint
+        // is a drawing choice, roughly the cradle_dx x cradle_dy pad span
+        { kind: 'box', m: 'dark', face: 'y', at: [E.w * 0.18, 0, E.h * 0.22], size: [E.w * 0.64, s0 + EPS, E.h * 0.56], r: 3 },
+        { kind: 'box', m: 'shell2', face: 'y', at: [0, s0, 0], size: [E.w, s1 - s0 + EPS, E.h], r: 5 },
+        { kind: 'box', m: 'shell', face: 'y', at: [0, s1, 0], size: [E.w, E.d - s1, E.h], r: 5 },
+        { kind: 'box', m: 'glass', face: 'y', at: [wx, E.d - EPS, wz], size: [vw, 0.4, vh], r: 2 },
+        // the lit area 3 inside the window: a drawing choice (the panel's
+        // active area is not in the case file)
+        { kind: 'box', m: 'lit', face: 'y', at: [wx + 3, E.d + 0.4 - EPS, wz + 3], size: [vw - 6, 0.4, vh - 6], r: 1.5 },
+      ];
+    },
   },
   {
     id: 'device.canary-display-nightstand',
@@ -511,8 +593,8 @@ export const FIGURES = [
       // reason this product is shaped the way it is (it hangs off an outlet
       // rather than standing on a surface). A figure that left it off would
       // read as a different, free-standing device.
-      const usbW = 12.0;                 // series-A shell width  (usb_w)
-      const usbH = 4.5;                  // series-A shell height (usb_h)
+      const usbW = 12.0;                 // series-A shell width  (usb_shell_w)
+      const usbH = 4.5;                  // series-A shell height (usb_shell_h)
       const usbFree = 12.2;              // usb_proud 14.0 - usb_wall 1.8
       // The shell straddles the PCB, so it centers on the board's mid-plane:
       // z_usb = face_t + lcd_rise + pcb_t/2 back from the face.
@@ -530,6 +612,55 @@ export const FIGURES = [
           size: [19.39, 0.9, 36.28], r: 1.5 },
         { kind: 'box', m: 'lit', face: 'y', at: [(E.w - 17.39) / 2, E.d - 0.4, (E.h - 32.35) / 2],
           size: [17.39, 0.4, 32.35], r: 1 },
+      ];
+    },
+  },
+  {
+    id: 'device.canary-display-nightstand-c6',
+    title: 'Canary Nightstand C6',
+    role: 'device', of: 'canary-display-nightstand-c6',
+    // The C6-LCD-1.47 pocket case (canary_c6_display.scad) in the build the
+    // file defaults to and its Lab preview renders: headers="none", the
+    // stripped board. The case is still in development (its dev_*.stl export
+    // is gitignored), so the wall is the sketch part; the numbers are the
+    // SCAD's own derived ones (its echo: "outer 25.12 x 41.17 x 14.05"):
+    //   xo    = board_w 20.32 + 2*tol_slide 0.20 + 2*wall 2.2       = 25.12
+    //   yo    = board_l 36.37 + 2*tol_slide 0.20 + 2*wall 2.2       = 41.17
+    //   depth = face_t 2.0 + lcd_rise 3.65 + pcb_t 1.6 + back_stack 4.8
+    //           + back_t 2.0                                          = 14.05
+    // What makes it read as this case and not its 1.47 siblings is its
+    // outline: the "ears" (the BOOT/RST channels bulge each side wall) and
+    // the "chin" (the back-mounted USB-C shell's overhang bulges the bottom
+    // wall). No plug stands off it — the S3 stick ends in a series-A plug,
+    // this board takes its cable in a socket.
+    // The C6 manifest does not name this figure yet: naming it maps the C6
+    // board in the firmware's figure table (fleet_figures.h, and a
+    // CANARY_FIGURE_HARDWARE line in the board's pins.h) — a firmware change
+    // of its own. Today it draws the Lab card.
+    sketch: { w: 25.12, d: 14.05, h: 41.17 },
+    sketchNote: 'the C6-LCD-1.47 pocket case in canary_c6_display.scad, stripped-board build '
+      + '(headers="none", the file default): shell 25.12 x 41.17 (board cavity + 2.2 mm walls), '
+      + '14.05 mm deep (bezel 12.05 + back 2.0), plus the 1.0 mm button ears and the 1.1 mm '
+      + 'USB-C chin; no committed case STL yet',
+    build: (E) => {
+      const backT = 2.0;       // back_t — the snap-on back, its own print
+      const earBump = 1.0;     // ear_bump = btn_proud 1.8 + tol_slide 0.2 + ear_skin 1.2 - wall 2.2
+      const earW = 7.4;        // ear_w = btn_ch_w 3.4 + 4
+      const earZ = 7.0 + 2.4;  // btn_up 7.0 from the board's USB end, which sits tol_slide + wall up
+      const chin = 1.1;        // chin_bump = usb_proud 1.9 + tol_slide 0.2 + ear_skin 1.2 - wall 2.2
+      const chinW = 13.15;     // chin_w = usb_shell_w 9.15 + 4
+      const faceY = E.d - 1.0; // the glass stands where its 1.47 siblings' does
+      return [
+        { kind: 'box', m: 'shell2', face: 'y', at: [0, 0, 0], size: [E.w, backT, E.h], r: 3 },
+        { kind: 'box', m: 'shell', face: 'y', at: [0, backT - EPS, 0], size: [E.w, faceY - backT + EPS, E.h], r: 3 },
+        // the two ears and the chin, bezel bulges the whole bezel deep
+        { kind: 'box', m: 'shell', face: 'y', at: [-earBump, backT, earZ - earW / 2], size: [earBump + EPS, faceY - backT, earW] },
+        { kind: 'box', m: 'shell', face: 'y', at: [E.w - EPS, backT, earZ - earW / 2], size: [earBump + EPS, faceY - backT, earW] },
+        { kind: 'box', m: 'shell', face: 'y', at: [(E.w - chinW) / 2, backT, -chin], size: [chinW, faceY - backT, chin + EPS] },
+        // the 1.47" module under the face (lcm 19.39 x 36.28) and the window
+        // onto its active area (aa 17.39 x 32.35), centered as the bezel cuts it
+        { kind: 'box', m: 'glass', face: 'y', at: [(E.w - 19.39) / 2, faceY, (E.h - 36.28) / 2], size: [19.39, 0.9, 36.28], r: 1.5 },
+        { kind: 'box', m: 'lit', face: 'y', at: [(E.w - 17.39) / 2, E.d - 0.4, (E.h - 32.35) / 2], size: [17.39, 0.4, 32.35], r: 1 },
       ];
     },
   },

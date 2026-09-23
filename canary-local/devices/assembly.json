@@ -613,7 +613,7 @@
     "ry": 0.58,
     "pad": 2.0
    },
-   "assembly_source": "docs/hardware/enclosure/canary_watch_station.scad (v0.2-dev — steps authored here, not yet in the catalog README; seats derived from the scad's own cradle echo and the measured board GLB)",
+   "assembly_source": "docs/hardware/enclosure/README.md §Assembly (via devices/build.json) — canary_watch_station.scad v0.2-dev, in development and not print-validated: the steps follow the CAD, not a built unit; seats derived from the scad's own cradle echo and the measured board GLB",
    "parts": [
     {
      "id": "stand",
@@ -770,27 +770,27 @@
    "steps": [
     {
      "title": "Start with the stand",
-     "readmeStep": null,
+     "readmeStep": 0,
      "note": "The cradle prints upright, no supports: a full-depth divot bored normal to the 25° reclined face, thumb scallops to lift the puck out, and a chin slot that passes the USB-C cable into the open channel under the base."
     },
     {
      "title": "Rest the drum in the cradle",
-     "readmeStep": null,
+     "readmeStep": 1,
      "note": "The drum sinks 11 mm into the divot — it cannot rock or roll, and its USB slot lands in the chin channel. The blind keyhole in its back wall-mounts the puck without the stand."
     },
     {
      "title": "Pin the XIAO into the display's back socket",
-     "readmeStep": null,
+     "readmeStep": 2,
      "note": "The XIAO rides the Round Display's own two 7-pin headers — component side away from the display, USB-C at the disc edge. Zero wiring; the display's charger, RTC and SD come along for free."
     },
     {
      "title": "Lower the stack into the bore",
-     "readmeStep": null,
+     "readmeStep": 3,
      "note": "The Ø43.0 disc slides down the Ø44.4 bore (measured from the vendor CAD — the disc is 43 mm, not the marketing 39), USB-C aligned to the side slot. The trim ring stops 0.4 mm below the rim."
     },
     {
      "title": "Snap the bezel home",
-     "readmeStep": null,
+     "readmeStep": 4,
      "note": "The bezel's skirt drops into the bore over the disc edge and its four nubs click into the wall slots — no fasteners. The aperture shows the full glass and lands on the display's own trim ring."
     }
    ]
@@ -802,7 +802,7 @@
     "ry": 0.6,
     "pad": 1.9
    },
-   "assembly_source": "docs/hardware/enclosure/canary_dash_display.scad (v0.1-dev — steps authored here, not yet in the catalog README)",
+   "assembly_source": "docs/hardware/enclosure/README.md §Assembly (via devices/build.json) — canary_dash_display.scad, in development and not print-validated: the steps follow the CAD, not a built unit",
    "parts": [
     {
      "id": "stand",
@@ -978,27 +978,27 @@
    "steps": [
     {
      "title": "Start with the desk cradle",
-     "readmeStep": null,
+     "readmeStep": 0,
      "note": "Prints flat, no hardware: front lip and back rail form the bottom channel, the fin takes the 25-degree lean. Shown seated so the assembly axis reads true."
     },
     {
      "title": "The bezel frame",
-     "readmeStep": null,
+     "readmeStep": 1,
      "note": "Face shell with the 2.5 mm glass lip, USB-C slot in the bottom wall, chimney vents up top. Prints face-down — the A-surface is your build plate."
     },
     {
      "title": "Drop the panel in face-first",
-     "readmeStep": null,
+     "readmeStep": 2,
      "note": "Glass lands against the bezel lip; the rear stack faces you. Waveshare publishes no full mechanical drawing — MEASURE your panel; the render is a stand-in built to the BOM’s nominals."
     },
     {
      "title": "Close the vented back",
-     "readmeStep": null,
-     "note": "Carries two keyholes and the 75 mm horizontal M4 pair (a true VESA-75 square can’t fit this panel height)."
+     "readmeStep": 3,
+     "note": "The back carries the four dock pads that click onto the wall cradle (v0.2 retired the keyhole + M4 pair). Dock pads face out; the vent slots sit above and below them."
     },
     {
      "title": "Drive the four M2s — snug, diagonal",
-     "readmeStep": null,
+     "readmeStep": 4,
      "note": "Last and outermost: from the back, through the counterbores, into the corner lobes outside the panel cavity. Diagonal order, then a final quarter-turn."
     }
    ]

@@ -1,16 +1,26 @@
 // SecuraCV Lab — native shell around the local-first `canary-local` Lab.
 //
-// v1 wraps the existing web Lab so it ships as a Mac/Linux app that runs
+// It wraps the existing web Lab so it ships as a Mac/Linux app that runs
 // entirely on your machine. The commands below are the seam where native
-// capabilities plug in next — the biggest win being reliable USB flashing
-// (replacing the browser's flaky WebSerial). See ../README.md.
+// capabilities plug in — USB flashing through the Flasher's bundled espflash
+// engine (src/flash.rs, desktop/flash-engine) replaces the WebSerial the OS
+// webview doesn't have. See ../README.md.
 //
 // Self-update (desktop only; iOS/iPadOS updates ride the App Store): the app
 // checks its release channel at launch and on a six-hour routine while it
 // stays open — see src/self_update.rs for the shape, copied from the Flasher.
-// Local-first still means local-first: the only thing the Lab ever fetches on
-// its own is its update manifest, from the project's releases.
+// Local-first still means local-first: the Lab reaches the internet only for
+// the project's GitHub releases — its update manifest, and, on the Flash
+// page, which signed firmware is published (read once a board is connected)
+// and the image the user presses Flash for (src/flash.rs, the engine's
+// net.rs).
 
+#[cfg(desktop)]
+mod companion;
+#[cfg(desktop)]
+mod flash;
+#[cfg(desktop)]
+mod fleet;
 #[cfg(desktop)]
 mod self_update;
 
@@ -39,32 +49,83 @@ fn app_info() -> AppInfo {
     }
 }
 
-// --- roadmap seam (Phase 2): native device capabilities -----------------
+// --- native device capabilities -----------------------------------------
 // Reliable serial flashing and LAN discovery are why a native app earns its
-// keep. When we add the `serialport` crate, this becomes the real thing:
-//
-//   #[tauri::command]
-//   fn list_serial_ports() -> Vec<String> {
-//       serialport::available_ports()
-//           .map(|ports| ports.into_iter().map(|p| p.port_name).collect())
-//           .unwrap_or_default()
-//   }
-//
-// For now we expose a stub so the frontend can feature-detect the native
-// shell and light up the "Flash over USB (native)" path when it's present.
+// keep. Native FLASHING is live on macOS and Linux: the flash commands
+// (src/flash.rs — the Flasher's commands over the shared
+// desktop/flash-engine) run the espflash sidecar that the release bundles for
+// exactly those two platforms (tauri.{macos,linux}.conf.json externalBin,
+// desktop-release.yml "Bundle espflash sidecar"), and the Flash page mounts
+// its native bench (canary-local/assets/flash-native.js) when `serial` says
+// so. Anywhere else — the iPad shell, a Windows build nobody ships — `serial`
+// is false, so the page never lights a path that can only fail. On macOS and
+// Linux it is ALSO a runtime answer (espflash_bundled): the platform bundles
+// espflash, and the file is really there next to this binary.
+// `serial_list` advertises the port list (list_serial_ports) on every desktop
+// build. LAN discovery is two live
+// commands on desktop: an mDNS browse that finds the boards (fleet_scan,
+// src/fleet.rs) and the /api/fleet poll that finds a kernel
+// (witness_discover). Bluetooth LE discovery is still future.
 #[tauri::command]
-fn native_capabilities() -> serde_json::Value {
+fn native_capabilities(app: tauri::AppHandle) -> serde_json::Value {
     serde_json::json!({
         "shell": "tauri",
-        "serial": false,     // Phase 2: serialport
+        // Native FLASHING (src/flash.rs): only where the release bundles the
+        // espflash sidecar, AND only while that sidecar is really there to
+        // run. desktop_parity.test.js refuses this unless the sidecar, its
+        // bundling step and the frontend path all exist.
+        "serial": cfg!(any(target_os = "macos", target_os = "linux")) && espflash_bundled(&app),
+        // Native port enumeration (list_serial_ports). Desktop only:
+        // MOBILE.md's contract is that generic USB serial does not exist on
+        // iOS/iPadOS, so a mobile build neither registers the command nor
+        // advertises it — a capability must never light a path that can
+        // only fail.
+        "serial_list": cfg!(desktop),
         // LAN fleet discovery is live: witness_discover polls /api/fleet on
-        // the LAN (the DISCOVERY.md contract). mDNS browse + BLE stay future.
+        // the LAN (the DISCOVERY.md contract), on every build.
         "discovery": true,
-        "notifications": false,
+        // The mDNS browse of `_securacv._tcp` (fleet_scan, the Flasher's
+        // twin). Desktop only — iOS needs the multicast entitlement and
+        // NSBonjourServices first (MOBILE.md), so a mobile build neither
+        // registers the command nor advertises it. BLE is still future.
+        "mdns": cfg!(desktop),
+        // The menubar fleet companion (src/companion.rs): a tray icon and
+        // native notifications on fleet changes, posted from Rust — coarse
+        // presence words only, never sealed-log content, never "verified".
+        // Desktop only; the webview holds no notification grant.
+        "notifications": cfg!(desktop),
         // Signed self-update via the rolling lab-latest pointer (desktop
         // builds only — the App Store owns updates on iOS/iPadOS).
         "self_update": cfg!(desktop)
     })
+}
+
+/// The runtime half of `serial`: is the bundled espflash really next to this
+/// binary (src/flash.rs `espflash_bundled` — a non-empty executable file,
+/// resolved where the spawn will look)? Compile-time `cfg!` alone says only
+/// that the RELEASE bundles one; a dev build on the empty compile-only stub,
+/// a repackaged binary or a deleted file would still advertise a flash path
+/// whose every board read fails at spawn.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn espflash_bundled(app: &tauri::AppHandle) -> bool {
+    flash::espflash_bundled(app)
+}
+
+/// No espflash is bundled here (the iPad shell, an unshipped Windows build).
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn espflash_bundled(_app: &tauri::AppHandle) -> bool {
+    false
+}
+
+/// Serial ports the OS can see this instant. No Web Serial permission prompt,
+/// no Chromium — just the platform enumerating its own devices. The Flasher's
+/// `list_ports` (one engine, one wire shape: flash_engine::ports), kept under
+/// the name this seam always promised; `list_ports` itself is registered too
+/// (src/flash.rs), so either frontend's port picker works here unchanged.
+#[cfg(desktop)]
+#[tauri::command]
+fn list_serial_ports() -> Result<Vec<flash_engine::ports::PortDto>, String> {
+    flash_engine::ports::list_ports()
 }
 
 /// Only ever talk to a host that can be on this network: `.local`-style
@@ -135,7 +196,10 @@ fn base_ok(base: &str) -> bool {
 /// (`canary-local/tests/desktop_parity.test.js` pins that). Unlike the
 /// browser Lab (which can't scan a LAN), the native shell can reach it
 /// directly; `.local` hostnames resolve through the OS resolver (Bonjour /
-/// avahi), so no mDNS crate is needed. ONE pass over the candidate bases,
+/// avahi), so this command needs no mDNS of its own — on desktop the
+/// frontend adds the boards `fleet_scan` browsed (src/fleet.rs) to the
+/// candidates, and the typed kernel base stays first because the kernel
+/// advertises no `_securacv._tcp`. ONE pass over the candidate bases,
 /// first `/api/fleet` that answers wins; the frontend polls while the Witness
 /// Wall bench is open. Coarse presence/health only — see
 /// `tvos/discovery/DISCOVERY.md`.
@@ -188,12 +252,30 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
+        // The espflash sidecar is spawned from Rust (src/flash.rs); the shell
+        // plugin's state must exist for that, and the webview gets no grant.
+        .plugin(tauri_plugin_shell::init())
         .manage(std::sync::Mutex::new(self_update::UpdateGate::default()))
+        .manage(companion::Companion::default())
+        .manage(flash_engine::monitor::SerialMonitorState::default())
+        .manage(flash::Sidecars::default())
         .invoke_handler(tauri::generate_handler![
             app_version,
             app_info,
             native_capabilities,
+            list_serial_ports,
+            flash::list_ports,
+            flash::detect_chip,
+            flash::fetch_manifest,
+            flash::flash,
+            flash::start_serial_monitor,
+            flash::serial_monitor_send,
+            flash::stop_serial_monitor,
             witness_discover,
+            fleet::fleet_scan,
+            companion::companion_set_bases,
+            companion::companion_snapshot,
             self_update::check_update,
             self_update::install_update,
             self_update::read_update_journal,
@@ -212,7 +294,10 @@ pub fn run() {
     // until the install returns, and quitting mid-write is the one thing that
     // can leave the Lab unable to open at all (the Flasher's guard, ported —
     // desktop/src-tauri/src/lib.rs). Not negotiable, so no "quit anyway";
-    // the install takes seconds and the app relaunches itself.
+    // the install takes seconds and the app relaunches itself. That guard
+    // runs FIRST; only then, where the menu bar always shows the companion's
+    // tray (companion::keeps_running), does closing hide the window instead
+    // of quitting — the fleet watch keeps running, and the tray reopens it.
     #[cfg(desktop)]
     let builder = builder.on_window_event(|window, event| {
         use tauri::Manager as _;
@@ -231,6 +316,10 @@ pub fn run() {
                     .title("Finishing the update")
                     .buttons(MessageDialogButtons::OkCustom("OK".into()))
                     .show(|_| {});
+            } else if companion::keeps_running(window.app_handle()) {
+                api.prevent_close();
+                let _ = window.hide();
+                companion::told_hidden_once(window.app_handle());
             }
         }
     });
@@ -249,12 +338,30 @@ pub fn run() {
                         tokio::time::sleep(self_update::RECHECK_EVERY).await;
                     }
                 });
+                // The menubar fleet companion: tray + a 30 s fleet watch.
+                companion::start(_app.handle());
             }
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building the SecuraCV Lab")
         .run(|_app, _event| {
+            // The window may be hidden behind the menu bar companion: a Dock
+            // click brings it back.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen {
+                has_visible_windows: false,
+                ..
+            } = &_event
+            {
+                companion::show_main(_app);
+            }
+            // A quitting Lab takes its running espflash with it, so no sidecar
+            // is left holding a board's serial port (src/flash.rs: Sidecars).
+            #[cfg(desktop)]
+            if let tauri::RunEvent::Exit = &_event {
+                flash::Sidecars::kill_all(_app);
+            }
             // Cmd-Q / the app menu's Quit never pass through CloseRequested —
             // they request an application exit directly, and this is the only
             // place that can stop them (the Flasher's guard, ported).
@@ -287,15 +394,31 @@ mod tests {
     #[test]
     fn local_hosts_pass_and_public_hosts_are_refused() {
         for h in [
-            "canary.local", "homeassistant.local", "hub.lan", "pi.home.arpa",
-            "canary-3f2a", "192.168.1.40", "10.0.0.5", "172.16.9.9",
-            "127.0.0.1", "169.254.10.10", "::1", "fe80::1", "fd00::abcd",
+            "canary.local",
+            "homeassistant.local",
+            "hub.lan",
+            "pi.home.arpa",
+            "canary-3f2a",
+            "192.168.1.40",
+            "10.0.0.5",
+            "172.16.9.9",
+            "127.0.0.1",
+            "169.254.10.10",
+            "::1",
+            "fe80::1",
+            "fd00::abcd",
         ] {
             assert!(host_is_local(h), "{h} should be local");
         }
         for h in [
-            "example.com", "github.com", "evil.local.example.com",
-            "8.8.8.8", "172.32.0.1", "2001:4860:4860::8888", "", ".local",
+            "example.com",
+            "github.com",
+            "evil.local.example.com",
+            "8.8.8.8",
+            "172.32.0.1",
+            "2001:4860:4860::8888",
+            "",
+            ".local",
         ] {
             assert!(!host_is_local(h), "{h} must be refused");
         }

@@ -1038,7 +1038,7 @@ export function buildNvsWifiImage(ssid, pass, partitionSize) {
 
 // Turn the optional broker/identity fields into buildNvsSeedImage `strings`/`u16`
 // entries the firmware's runtime_config reads back — the SAME namespace ("securacv"),
-// keys, and NVS types the native app writes (desktop/src-tauri/src/provisioning.rs:
+// keys, and NVS types the native app writes (desktop/flash-engine/src/provisioning.rs:
 // build_nvs), so a board provisioned in the browser and one provisioned natively are
 // equivalent. Each field is optional: an empty device-id is omitted, and the MQTT
 // keys are written as a unit only when a broker host is given. Validates like native
@@ -1109,8 +1109,8 @@ export function mqttProvisioningToNvs(p = {}) {
 // (mqtt_transport_logic.h) and the boot self-manifest carries no transport
 // field, so a flasher can vouch for the bytes it wrote and nothing more. Four
 // single-line templates keyed by the firmware's mode byte; the SAME four
-// strings live in desktop/src-tauri/src/broker_receipt.rs MODE_LABELS for the
-// native Flasher (the two flashers share no UI code), and
+// strings live in desktop/flash-engine/src/broker_receipt.rs MODE_LABELS for
+// the native Flasher and the Lab (the two flashers share no UI code), and
 // tests/desktop_parity.test.js holds them equal — keep each on one line.
 // {N} = byte count of the CA string as sealed (trimmed PEM + "\n" — the count,
 // never the PEM); {FP} = the sealed fingerprint verbatim, which is public data

@@ -37,6 +37,11 @@ on:
       - "ios/Sources/SecuraCV/Cloud/CloudContainer.swift"
       - "ios/Sources/SecuraCV/Model/CanaryMoodKeeper.swift"
       - "tests/fixtures/envelope/domain_separation_vectors.json"
+      # The kernel's sealed-log document: witness-core's vectors test walks
+      # it, and the Wall's WallModelTests/WallTimelineTests read it through
+      # #filePath. scripts/lint_apple_parity.py derives every fixture the
+      # Wall's tests read and fails when one is missing from either list.
+      - "tests/fixtures/envelope/sealed_log_document_vector.json"
       - ".github/workflows/tvos.yml"
   pull_request:
     branches: [main]
@@ -53,6 +58,11 @@ on:
       - "ios/Sources/SecuraCV/Cloud/CloudContainer.swift"
       - "ios/Sources/SecuraCV/Model/CanaryMoodKeeper.swift"
       - "tests/fixtures/envelope/domain_separation_vectors.json"
+      # The kernel's sealed-log document: witness-core's vectors test walks
+      # it, and the Wall's WallModelTests/WallTimelineTests read it through
+      # #filePath. scripts/lint_apple_parity.py derives every fixture the
+      # Wall's tests read and fails when one is missing from either list.
+      - "tests/fixtures/envelope/sealed_log_document_vector.json"
       - ".github/workflows/tvos.yml"
 
 permissions:

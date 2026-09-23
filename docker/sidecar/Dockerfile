@@ -73,10 +73,16 @@ USER 1001:1001
 
 # Health check for orchestrators (compose `service_healthy` conditions,
 # swarm, `docker inspect`): probe witness_api's unauthenticated /health on
-# its loopback bind — same approach as the root witnessd image's
-# HEALTHCHECK. A wedged supervisor stops looking healthy instead of just
-# looking "running". start-period covers the entrypoint's broker wait (up
-# to BROKER_WAIT_SECS, default 30s) before witness_api is even started.
+# loopback — same approach as the root witnessd image's HEALTHCHECK, and
+# the same URL in both bind modes (SECURACV_API_BIND=all binds 0.0.0.0,
+# which includes loopback). A wedged supervisor stops looking healthy
+# instead of just looking "running". start-period covers the entrypoint's
+# broker wait (up to BROKER_WAIT_SECS, default 30s) before witness_api is
+# even started.
+#
+# No EXPOSE, on purpose: `docker run -P` must never publish the API by
+# accident. The Witness Wall opt-in is SECURACV_API_BIND=all plus a port
+# mapping the user writes into compose (see the quickstart files).
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=60s \
   CMD curl -fsS http://127.0.0.1:8799/health || exit 1
 

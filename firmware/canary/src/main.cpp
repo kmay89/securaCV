@@ -19,9 +19,12 @@
 #include "securacv_witness.h"
 #include "securacv_gps.h"
 #include "gnss/gps_privacy.h"  // gps_coarsen_deg() — operator-facing GPS coarsening (Invariant III)
+#include "network/provisioning_gate.h"  // BOOT-tap gate behind /api/provisioning-receipt (F20 gap #11)
 
 #if FEATURE_SD_STORAGE
 #include "securacv_storage.h"
+#include "storage/sd_mount_policy.h"  // SD_TAMPER_* — the health payload's sd_mounted
+#include "securacv_witness_history.h"  // the timeline's card pages (F35), served below
 #endif
 
 #if FEATURE_WIFI_AP
@@ -53,9 +56,22 @@
 #endif
 #endif
 
+#if FEATURE_TAMPER_GPIO
+#include "contact_tamper.h"  /* enclosure contact debounce (common/csi/src) */
+#endif
+
+/* Outside the FEATURE_CSI gate on purpose: loop()'s system.integrity tamper
+ * feed and syncClockFromGps()'s bucket offset run in every build, and their
+ * definitions (csi_modules_integration.cpp, csi_event.cpp) compile into every
+ * env, so a CSI-off build ([env:minimal], [env:secure]) needs these
+ * declarations too — without them main.cpp did not compile there (F42). */
+#include "csi_modules_integration.h"
+#include "csi_event.h"  /* csi_event_set_clock_offset_minutes — wall-clock bucket alignment */
+#include "time/tz_rule.h"  /* local minute-of-day for that offset (household zone, F28) */
+
 #if FEATURE_CSI
 #include "securacv_csi.h"
-#include "csi_modules_integration.h"
+#include "csi_event_egress.h"  /* committed events -> MQTT events/tamper (F29) */
 
 /* csi_features_t is the canonical csi_types.h struct (securacv_csi.h
  * includes it rather than declaring a twin — roadmap 22), so the module
@@ -74,6 +90,7 @@ static_assert(sizeof(csi_features_t) == 36,
 #include "mesh_transport.h"
 #include "mesh_session.h"
 #include "mesh_state.h"
+#include "mesh_revocation.h"
 #endif
 
 #if FEATURE_ACOUSTIC_EVENTS
@@ -133,6 +150,15 @@ static_assert(sizeof(csi_features_t) == 36,
 
 #if FEATURE_BLE_STATUS
 #include "securacv_ble_status.h"
+#endif
+
+/* Deliberately OUTSIDE the FEATURE_BLE_STATUS block: a Scout-only image
+ * (FEATURE_BLE_SCAN=1, FEATURE_BLE_STATUS=0) is a supported combination —
+ * ble_scout_nimble.cpp initializes the stack itself when the status service
+ * is absent — and setup()'s ble_scout_allow_radio() call gates only on
+ * FEATURE_BLE_SCAN. */
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+#include "ble_scout.h"  /* ble_scout_allow_radio — the scan latch (see setup()) */
 #endif
 
 #if FEATURE_USB_ONBOARD
@@ -237,6 +263,24 @@ static const time_t WALL_CLOCK_FLOOR = 1700000000;  // ~2023-11-14; below this, 
 static const uint32_t CLOCK_RESYNC_INTERVAL_MS = 10UL * 60UL * 1000UL;  // drift correction
 static const uint32_t GPS_FIX_STALE_MS = 30UL * 1000UL;  // RMC arrives ~1 Hz
 
+// Align csi_event's time_bucket / quiet-hours minute-of-day derivation to
+// the wall clock. The chokepoint coarsens timestamps into 10-minute day
+// buckets from monotonic uptime plus this offset; without it the "day"
+// started at boot, not midnight, so buckets and quiet hours were
+// session-relative. Derived from LOCAL wall time: the household time zone
+// (repo sweep F28 — setup_set_tz, seeded at provisioning) when one is set,
+// so bucket 0 is the household's midnight; UTC, exactly as before, while
+// none is. Recomputed on every pass with a set clock: cheap, keeps the offset
+// drift-corrected alongside the clock itself, carries DST and zone changes
+// without a flag, and stays aligned across millis() rollover because the
+// offset and csi_event's own millis()-based consumer wrap together. Loop
+// task only — the offset is loop-owned (csi_event.h).
+static void updateCsiClockOffset(time_t wall_now) {
+  const int32_t wall_min = tz_rule::local_minute_of_day(wall_now);
+  const int32_t mono_min = (int32_t)(millis() / 60000UL);
+  csi_event_set_clock_offset_minutes(wall_min - mono_min);
+}
+
 static void syncClockFromGps() {
   static uint32_t s_last_sync_attempt_ms = 0;
   uint32_t now_ms = millis();
@@ -249,7 +293,10 @@ static void syncClockFromGps() {
   // existed. Offered here rather than in the loop because this is the one
   // function that knows the clock is real; the recorder stamps once for the
   // life of the key and costs a comparison on every call after that.
-  if (clock_set) witness_note_wall_clock((uint32_t)sys_now);
+  if (clock_set) {
+    witness_note_wall_clock((uint32_t)sys_now);
+    updateCsiClockOffset(sys_now);
+  }
 
   if (clock_set && (now_ms - s_last_sync_attempt_ms) < CLOCK_RESYNC_INTERVAL_MS) {
     return;  // already trustworthy and not due for a drift-correction check
@@ -277,8 +324,11 @@ static void syncClockFromGps() {
 
   // The clock only just became real on the "set" path — offer it now rather
   // than waiting for the next call, so a device that gets one fix and then
-  // loses the sky still records the day it was dated.
+  // loses the sky still records the day it was dated. Same urgency for the
+  // bucket offset: events emitted between now and the next loop pass should
+  // already carry wall-aligned buckets.
   witness_note_wall_clock((uint32_t)gps_epoch);
+  updateCsiClockOffset(gps_epoch);
 }
 
 #if FEATURE_HA_MQTT
@@ -308,8 +358,27 @@ static volatile uint8_t g_tamper_pending_kind = 0;       /* sensing_witness_kind
 static volatile uint8_t g_tamper_pending_confidence = 0; /* 0..100 */
 #endif
 
+#if FEATURE_TAMPER_GPIO
+/* Enclosure tamper contact on TAMPER_PIN_DEFAULT (canary_config.h): the
+ * debounced state loop() feeds the system.integrity watcher. Loop task
+ * only. */
+static contact_tamper::State g_tamper_contact = contact_tamper::kInitial;
+#endif
+
 // Device-unique AP password (derived from pubkey fingerprint)
 static char g_ap_password[16];
+
+// Physical-presence gate (F20 gap #11). Opened by a short BOOT tap in
+// handle_boot_button(); the network lib takes it — from the receipt handler
+// or from a home-LAN page load, whichever asks first — through the hooks
+// registered in setup(). The State is this file's because the BOOT button is.
+static canary::net::provisioning_gate::State g_prov_gate = {0};
+static bool prov_gate_take_hook() {
+  return canary::net::provisioning_gate::take(g_prov_gate, millis(), PROVISIONING_GATE_TTL_MS);
+}
+static bool prov_gate_is_open_hook() {
+  return canary::net::provisioning_gate::is_open(g_prov_gate, millis(), PROVISIONING_GATE_TTL_MS);
+}
 
 // Serial command helpers
 static void handle_serial_commands();
@@ -328,10 +397,14 @@ static void derive_ap_password(const uint8_t fingerprint[8], char* password, siz
  * pairing kicks off). */
 static void persist_replay_counters() {
 #if FEATURE_MESH_NETWORK
-  uint8_t fps[mesh_session::MAX_TRUSTED_PEERS][mesh_crypto::FINGERPRINT_LEN];
-  uint64_t ctrs[mesh_session::MAX_TRUSTED_PEERS];
+  /* Live counters AND the replay tombstones of dropped peers, so a reboot
+   * does not re-open a left/removed device's window either. */
+  static_assert(mesh_state::MAX_REPLAY_ENTRIES >= mesh_session::MAX_REPLAY_COUNTERS,
+                "replay_ctrs must hold every live counter and tombstone");
+  uint8_t fps[mesh_session::MAX_REPLAY_COUNTERS][mesh_crypto::FINGERPRINT_LEN];
+  uint64_t ctrs[mesh_session::MAX_REPLAY_COUNTERS];
   const size_t n = mesh_session::get_replay_counters(fps, ctrs,
-                                                     mesh_session::MAX_TRUSTED_PEERS);
+                                                     mesh_session::MAX_REPLAY_COUNTERS);
   if (n == 0) return;
   const size_t save_count = (n > mesh_state::MAX_REPLAY_ENTRIES)
                           ? mesh_state::MAX_REPLAY_ENTRIES : n;
@@ -344,10 +417,180 @@ static void persist_replay_counters() {
 #endif
 }
 
+#if FEATURE_SENSING_WITNESS
+/* Pending opera TAMPER_ALERT (F10). One-deep slot, same shape and rule as
+ * g_tamper_publish_pending: the sensing witness callback (which must stay
+ * non-blocking) fills it, and loop() drains it right after
+ * mesh_session::process() — send_tamper_alert() must run on the main-loop
+ * task (mesh_session.h threading contract). Newest wins. */
+static volatile bool     g_mesh_alert_pending  = false;
+static volatile uint8_t  g_mesh_alert_kind     = 0;   /* mesh_alert::Kind */
+static volatile uint8_t  g_mesh_alert_severity = 0;   /* LogLevel 0..7 */
+static volatile uint32_t g_mesh_alert_seq      = 0;   /* witness seq, 0 = none */
+#endif
+
+static void mesh_fp_hex(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                        char out[mesh_crypto::FINGERPRINT_LEN * 2 + 1]) {
+  static const char kHex[] = "0123456789abcdef";
+  for (size_t i = 0; i < mesh_crypto::FINGERPRINT_LEN; ++i) {
+    out[2 * i]     = kHex[fp[i] >> 4];
+    out[2 * i + 1] = kHex[fp[i] & 0xF];
+  }
+  out[mesh_crypto::FINGERPRINT_LEN * 2] = '\0';
+}
+
+/* The §5.6 revocation deny-list to NVS (F33 part 6, FE-gated): on every
+ * change and at the 5-minute cadence while it holds anything, so a reboot
+ * restores roughly the grace that was left (never less). */
+static bool g_revocations_stored = false;
+static void persist_revocations() {
+  if (mesh_session::revoked_count() == 0 && !g_revocations_stored) return;
+  uint8_t blob[mesh_revocation::BLOB_MAX];
+  const size_t n = mesh_session::encode_revocations(blob, sizeof(blob));
+  if (mesh_state::save_revocations(blob, n)) g_revocations_stored = (n > 0);
+}
+
+/* A device was deny-listed (F33 part 6): removed here, or named as removed
+ * by a verified REKEY_OFFER from a trusted peer — which this device honors
+ * at once, whether or not it takes part in that rotation. Drop it from NVS
+ * too, keep its counter as a tombstone, and persist the list. */
+static void on_mesh_peer_revoked(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                                 const uint8_t* pubkey) {
+  char hex[mesh_crypto::FINGERPRINT_LEN * 2 + 1];
+  mesh_fp_hex(fp, hex);
+  const bool dropped = pubkey == nullptr || mesh_state::remove_trusted_peer(pubkey);
+  persist_replay_counters();
+  persist_revocations();
+  log_health(dropped ? LOG_LEVEL_WARNING : LOG_LEVEL_ALERT, LOG_CAT_NETWORK,
+             "Opera peer revoked (7-day deny-list)", hex);
+}
+
+/* POST /api/mesh/pair/start found no opera, and the main loop is founding
+ * one (F33 part 4, spec §5.4). The secret must be durable BEFORE the session
+ * uses it — a false return creates nothing (the route answers
+ * opera_not_persisted) — because a household secret this device forgot at
+ * reboot would strand every device that joined it. FE-gated like every
+ * other opera_secret write; the route already refused on an FE-off board.
+ * The name is best effort, as on the joiner's side. */
+static bool on_mesh_opera_create(const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN],
+                                 const char* name) {
+  if (!mesh_state::save_opera_secret(secret)) {
+    Serial.println("[ERR] New opera not created: opera_secret could not be persisted");
+    return false;
+  }
+  if (name != nullptr && name[0] != '\0' && !mesh_state::save_opera_name(name)) {
+    Serial.println("[WARN] New opera's name not persisted");
+  }
+  Serial.println("[OK] New opera created and persisted (initiator pairing next)");
+  return true;
+}
+
+/* A trusted peer's verified LEAVE_OPERA arrived (F10). mesh_session has
+ * already dropped it from the live table; drop the persisted copy too so
+ * a reboot does not resurrect it. Runs on the main loop. */
+static void on_mesh_peer_left(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                              const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]) {
+  char hex[mesh_crypto::FINGERPRINT_LEN * 2 + 1];
+  mesh_fp_hex(fp, hex);
+  const bool persisted = mesh_state::remove_trusted_peer(pubkey);
+  /* Its last counter is now a tombstone; persist it now rather than at the
+   * next 5-minute save, so a reboot in between cannot re-open its window. */
+  persist_replay_counters();
+  Serial.printf("[MESH] Peer %s left the opera (%s)\n", hex,
+                persisted ? "removed from NVS" : "NVS removal refused/failed");
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Opera peer left", hex);
+}
+
+/* A verified TAMPER_ALERT from a trusted peer (F10). The session has
+ * counted it and stored it in its history ring (GET /api/mesh/alerts);
+ * the health log carries the receipt with the sender's fingerprint
+ * (spec §6.3). No witness event kind is added — a peer's tamper is the
+ * PEER's record, not ours. */
+static void on_mesh_tamper_alert(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                                 mesh_alert::Kind kind, uint8_t severity,
+                                 uint32_t witness_seq) {
+  char hex[mesh_crypto::FINGERPRINT_LEN * 2 + 1];
+  mesh_fp_hex(fp, hex);
+  char detail[64];
+  snprintf(detail, sizeof(detail), "fp=%s kind=%s sev=%u seq=%lu", hex,
+           mesh_alert::kind_name(kind), (unsigned)severity,
+           (unsigned long)witness_seq);
+  log_health(LOG_LEVEL_ALERT, LOG_CAT_NETWORK, "Opera tamper alert", detail);
+}
+
+/* This device switched to a rotated opera_secret (F10-rekey — as the
+ * initiator of a POST /api/mesh/remove, or as a survivor of someone
+ * else's). Re-persist the new secret through the flash-encryption gate
+ * and drop every peer the session just forgot from NVS. On a refused save
+ * mesh_state clears the rotated-away secret rather than leave it for the
+ * next boot; the live session keeps the new one in RAM either way.
+ * CRYPTO: maintainer review required; bench-gated (U1 Track C3). */
+static void on_mesh_rekey_commit(const uint8_t new_secret[mesh_crypto::OPERA_SECRET_LEN],
+                                 const uint8_t (*forgotten)[mesh_crypto::PUBKEY_LEN],
+                                 size_t n_forgotten) {
+  const bool persisted = mesh_state::persist_rotation(new_secret, forgotten, n_forgotten);
+  /* Every peer the rotation dropped keeps its counter as a tombstone. */
+  persist_replay_counters();
+  char detail[48];
+  snprintf(detail, sizeof(detail), "forgot %u peer(s)%s", (unsigned)n_forgotten,
+           persisted ? "" : "; NOT persisted");
+  log_health(persisted ? LOG_LEVEL_WARNING : LOG_LEVEL_ALERT, LOG_CAT_NETWORK,
+             "Opera secret rotated", detail);
+}
+
+/* Persist + register the just-paired peer's pubkey. Both roles need it:
+ * the joiner to accept the initiator's frames, the initiator to accept the
+ * joiner's. Same "save first, set unconditionally" posture as the
+ * opera_secret: a save failure (typically FE off) degrades reboot
+ * survivability, not the active session. */
+static void register_paired_peer() {
+  uint8_t peer_pub[mesh_crypto::PUBKEY_LEN];
+  if (mesh_session::get_paired_peer_pubkey(peer_pub)) {
+    const bool peer_save_ok = mesh_state::save_trusted_peer(peer_pub);
+    const bool peer_set_ok  = mesh_session::register_trusted_peer(peer_pub);
+    /* Its radio address (F33 part 1): the session binds it into the
+     * transport table for this boot once this callback returns; persist it
+     * so the next boot can bind it too (FE-gated, like the pubkey). */
+    uint8_t peer_mac[mesh_transport::MESH_TRANSPORT_MAC_LEN];
+    if (mesh_session::get_paired_peer_mac(peer_mac)) {
+      uint8_t peer_fp[mesh_crypto::FINGERPRINT_LEN];
+      mesh_crypto::compute_fingerprint(peer_pub, peer_fp);
+      if (!mesh_state::save_peer_mac(peer_fp, peer_mac)) {
+        Serial.println("[WARN] Peer radio MAC not persisted — after a reboot "
+                       "this peer is not heard until it pairs again");
+      }
+    }
+    if (peer_save_ok && peer_set_ok) {
+      Serial.println("[OK] Peer pubkey persisted + registered for RX");
+    } else if (peer_set_ok && !peer_save_ok) {
+      Serial.println("[WARN] Peer registered for this boot but NVS persist "
+                     "failed — receive will need to re-pair after reboot");
+    } else if (!peer_set_ok && peer_save_ok) {
+      /* register_trusted_peer returns false in two distinct cases:
+       *   • table full (MAX_TRUSTED_PEERS=8 reached with a new pubkey)
+       *   • duplicate registration (pubkey already in the in-memory
+       *     table — typical on the post-first-paired-callback path
+       *     because save_trusted_peer + the boot-time
+       *     load_trusted_peers chain may already have registered it). */
+      Serial.println("[WARN] Peer pubkey persisted but mesh_session register "
+                     "failed (table full or already registered)");
+    } else {
+      Serial.println("[ERR] Failed to persist OR register peer pubkey");
+    }
+  } else {
+    Serial.println("[WARN] Paired but mesh_session has no peer pubkey "
+                   "available — receive from this peer won't work");
+  }
+}
+
 static void on_pairing_succeeded(const uint8_t* secret, uint32_t code) {
   if (secret == nullptr) {
     Serial.printf("[OK] Paired as initiator (code=%06u) — opera_secret "
                   "already persisted before start_pairing\n", code);
+    /* The initiator must trust the joiner too — before F10 this path
+     * returned without registering it, so the initiator dropped every
+     * frame the joiner sent (unknown sender) until... never. */
+    register_paired_peer();
     return;
   }
   /* Joiner side: persist FIRST so a power cut between save and set
@@ -376,37 +619,21 @@ static void on_pairing_succeeded(const uint8_t* secret, uint32_t code) {
     Serial.println("[ERR] Paired but mesh_session rejected opera_secret");
   }
 
-  /* Register the just-paired peer's pubkey so this boot's receive
-   * path accepts their BEACON_EVENT frames, AND persist it so a
-   * future reboot also accepts them. The same "save first, set
-   * unconditionally" posture as opera_secret: a save failure
-   * (typically FE off) degrades reboot survivability, not the
-   * active session. */
-  uint8_t peer_pub[mesh_crypto::PUBKEY_LEN];
-  if (mesh_session::get_paired_peer_pubkey(peer_pub)) {
-    const bool peer_save_ok = mesh_state::save_trusted_peer(peer_pub);
-    const bool peer_set_ok  = mesh_session::register_trusted_peer(peer_pub);
-    if (peer_save_ok && peer_set_ok) {
-      Serial.println("[OK] Peer pubkey persisted + registered for RX");
-    } else if (peer_set_ok && !peer_save_ok) {
-      Serial.println("[WARN] Peer registered for this boot but NVS persist "
-                     "failed — receive will need to re-pair after reboot");
-    } else if (!peer_set_ok && peer_save_ok) {
-      /* register_trusted_peer returns false in two distinct cases:
-       *   • table full (MAX_TRUSTED_PEERS=8 reached with a new pubkey)
-       *   • duplicate registration (pubkey already in the in-memory
-       *     table — typical on the post-first-paired-callback path
-       *     because save_trusted_peer + the boot-time
-       *     load_trusted_peers chain may already have registered it). */
-      Serial.println("[WARN] Peer pubkey persisted but mesh_session register "
-                     "failed (table full or already registered)");
-    } else {
-      Serial.println("[ERR] Failed to persist OR register peer pubkey");
+  /* The opera name the joiner learned from the OFFER (mesh_session cached
+   * it on NOTIFY_PAIRED). Best effort, FE-gated: on an FE-off board the
+   * name lasts until reboot. */
+  {
+    char name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
+    mesh_session::get_opera_name(name, sizeof(name));
+    if (name[0] != '\0' && !mesh_state::save_opera_name(name)) {
+      Serial.println("[WARN] Opera name not persisted (flash encryption off?)");
     }
-  } else {
-    Serial.println("[WARN] Paired but mesh_session has no peer pubkey "
-                   "available — receive from this peer won't work");
   }
+
+  /* Register the just-paired peer's pubkey so this boot's receive
+   * path accepts their frames, AND persist it so a future reboot also
+   * accepts them. */
+  register_paired_peer();
 }
 #endif
 
@@ -575,11 +802,14 @@ static void factory_reset() {
 
 // 10-minute daily time bucket (0..143), matched across audio, sensing,
 // CSI, and witness payloads so a verifier comparing two events from
-// different sensors sees consistent bucket values. Constant name is
-// prefixed BUCKET_ to avoid colliding with the 5-second TIME_BUCKET_MS
-// macro that canary_config.h defines for witness-chain coarsening.
-static constexpr uint32_t BUCKET_10MIN_MS    = 10UL * 60UL * 1000UL;
+// different sensors sees consistent bucket values. One number: derived from
+// canary_config.h's TIME_BUCKET_MS, the width the witness chain also binds
+// (securacv_witness.cpp time_bucket()), so the chain and every payload
+// share the ten-minute grid. The static_assert holds the day index to it.
+static constexpr uint32_t BUCKET_10MIN_MS    = TIME_BUCKET_MS;
 static constexpr uint8_t  TIME_BUCKETS_PER_DAY = 144;
+static_assert(BUCKET_10MIN_MS * (uint32_t)TIME_BUCKETS_PER_DAY == 24UL * 60UL * 60UL * 1000UL,
+              "TIME_BUCKET_MS must be the ten-minute grid: 144 buckets make one day");
 static inline uint8_t time_bucket_now() {
   return (uint8_t)((millis() / BUCKET_10MIN_MS) % TIME_BUCKETS_PER_DAY);
 }
@@ -754,7 +984,7 @@ void setup() {
                     (unsigned)witness_get_device().seq);
     }
   } else {
-    Serial.println("[WARN] SD card not available - records will not persist");
+    Serial.println("[WARN] SD card not available - records not persisting; will keep retrying (insert a card any time)");
     witness_get_health().sd_healthy = false;
   }
 #endif
@@ -768,6 +998,10 @@ void setup() {
       Serial.printf("[OK] Device name: %s\n", dev_name);
     }
   }
+  // Household time zone (repo sweep F28): apply the stored rule before the
+  // GPS clock is ever read, so the CSI day offset is local from the first
+  // pass. Nothing stored = TZ unset = UTC.
+  setup_apply_tz();
 #endif
 
   // USB "plug me in" onboarding (opt-in USB-OTG build). Brings up the HID
@@ -806,9 +1040,41 @@ void setup() {
 #endif
     Serial.println("[..] Starting WiFi Access Point...");
     ScvNetworkManager& net = network_get_instance();
+    // Wire the BOOT-tap gate before any route can be served (unregistered
+    // hooks read as closed, so the order is belt-and-braces, not load-bearing).
+    network_set_provisioning_gate_hooks(prov_gate_take_hook, prov_gate_is_open_hook);
     if (net.begin(ap_ssid, g_ap_password, device.device_id)) {
       Serial.println("[OK] WiFi AP active");
 #if FEATURE_HTTP_SERVER
+#if FEATURE_HTTPS
+      // F15: self-signed TLS. Skipped during first-boot setup (WAP parity) —
+      // captive mini-browsers (iOS CNA, Android) render a blank page on a
+      // self-signed certificate, and the AP is the security boundary before
+      // any home Wi-Fi exists. Setup completes WITHOUT a reboot
+      // (setup_mark_complete keeps this server up so the wizard's success
+      // screen survives), so HTTPS is only tried at the next boot, whenever
+      // that is; until then /api/status tls_mode_reason says "setup
+      // finished; HTTPS is tried at the next reboot" (tls_policy::live_reason).
+      // A failure is not fatal: the server falls back to HTTP-only and
+      // tls_mode_reason says why.
+#if FEATURE_SETUP_WIZARD
+      const bool tls_skip_for_setup = setup_is_first_boot();
+#else
+      const bool tls_skip_for_setup = false;
+#endif
+      if (tls_skip_for_setup) {
+        Serial.println("[..] SETUP MODE: HTTP only so the captive portal renders");
+      } else {
+        Serial.println("[..] Preparing TLS certificate...");
+#if FEATURE_WATCHDOG
+        esp_task_wdt_reset();  // first TLS boot generates a P-256 key (untimed; D1 records it)
+#endif
+        if (!net.initTls()) {
+          Serial.printf("[WARN] TLS unavailable (%s) — API traffic is NOT encrypted\n",
+                        net.getTlsModeReason());
+        }
+      }
+#endif
       Serial.println("[..] Starting HTTP server...");
       net.startHttpServer();
 #endif
@@ -854,6 +1120,31 @@ void setup() {
       mesh_session::start()) {
     Serial.println("[OK] Mesh layer active (mesh_transport + mesh_session)");
 
+    /* Outbound counter (F33 part 3): resume above every counter this device
+     * may have signed before the reboot, and persist each new reservation
+     * before its first counter is used — so peers, which remember our last
+     * counter, never drop our frames as replays after a reboot, and no
+     * counter is ever signed twice. BEFORE anything can send. Not FE-gated:
+     * a count, not a secret (mesh_state.h). */
+    {
+      uint64_t out_ctr = 0;
+      if (mesh_state::load_outbound_counter(&out_ctr)) {
+        mesh_session::restore_outbound_counter(out_ctr);
+      }
+      mesh_session::set_counter_reserve_handler(&mesh_state::save_outbound_counter);
+    }
+
+    /* POST /api/mesh/enable persists the user's on/off choice (F10).
+     * Absent key → enabled. Disabled stops the session but keeps the
+     * membership, so the loads below still run. */
+    {
+      bool mesh_on = true;
+      if (mesh_state::load_mesh_enabled(&mesh_on) && !mesh_on) {
+        mesh_session::set_enabled(false);
+        Serial.println("[--] Mesh disabled by user setting (POST /api/mesh/enable)");
+      }
+    }
+
     /* Load the persisted opera_secret (if any) and feed it to
      * mesh_session so this boot can immediately send/receive
      * BEACON_EVENT frames without re-pairing. The local buffer is
@@ -867,6 +1158,11 @@ void setup() {
     if (mesh_state::load_opera_secret(opera_secret_buf)) {
       if (mesh_session::set_opera_secret(opera_secret_buf)) {
         Serial.println("[OK] Opera secret loaded — mesh broadcast enabled");
+        /* The opera's display name (F10, FE-gated like the secret). */
+        char opera_name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
+        if (mesh_state::load_opera_name(opera_name, sizeof(opera_name))) {
+          mesh_session::set_opera_name(opera_name);
+        }
       } else {
         Serial.println("[WARN] mesh_session rejected loaded opera_secret");
       }
@@ -882,6 +1178,23 @@ void setup() {
 #if defined(__GNUC__) || defined(__clang__)
       asm volatile("" ::: "memory");
 #endif
+    }
+
+    /* The revocation deny-list FIRST (F33 part 6): a device on it is not
+     * registered as trusted again below, even if an interrupted removal
+     * left its pubkey in NVS. */
+    {
+      uint8_t blob[mesh_revocation::BLOB_MAX];
+      size_t len = 0;
+      if (mesh_state::load_revocations(blob, sizeof(blob), &len) && len > 0) {
+        if (mesh_session::restore_revocations(blob, len)) {
+          g_revocations_stored = true;
+          Serial.printf("[OK] Restored %u revoked opera device(s) from NVS\n",
+                        (unsigned)mesh_session::revoked_count());
+        } else {
+          Serial.println("[WARN] Malformed revocation deny-list in NVS — ignored");
+        }
+      }
     }
 
     /* Load persisted trusted peers (#480) and register each so this
@@ -906,6 +1219,24 @@ void setup() {
         if (peers_count > 0) {
           Serial.printf("[OK] Registered %u/%u trusted peer pubkeys from NVS\n",
                         (unsigned)registered, (unsigned)peers_count);
+        }
+      }
+      /* Put the trusted peers' radio MACs back into the transport table
+       * (F33 part 1) — without them mesh_transport drops every frame they
+       * send (recv_dropped_no_peer) and broadcast() reaches nobody. An
+       * entry whose fingerprint is not a registered peer binds nothing. */
+      {
+        mesh_state::PeerMac macs[mesh_state::MAX_TRUSTED_PEERS];
+        size_t n_macs = 0;
+        if (mesh_state::load_peer_macs(macs, mesh_state::MAX_TRUSTED_PEERS, &n_macs)) {
+          size_t bound = 0;
+          for (size_t i = 0; i < n_macs; ++i) {
+            if (mesh_session::bind_peer_mac(macs[i].fingerprint, macs[i].mac)) ++bound;
+          }
+          if (n_macs > 0) {
+            Serial.printf("[OK] Bound %u/%u peer radio MACs from NVS\n",
+                          (unsigned)bound, (unsigned)n_macs);
+          }
         }
       }
       /* Wipe the local buffer — pubkeys aren't secret per se but a
@@ -948,6 +1279,18 @@ void setup() {
      * pairing; its persistence is the integration layer's
      * responsibility before calling start_pairing_initiator). */
     mesh_session::set_paired_callback(&on_pairing_succeeded);
+    /* F10: a peer's signed LEAVE drops its NVS entry; a peer's verified
+     * TAMPER_ALERT lands in the health log. Installed here rather than in
+     * securacv_csi_modules_init() so they are live on mesh builds without
+     * FEATURE_CSI too. */
+    mesh_session::set_peer_left_handler(&on_mesh_peer_left);
+    mesh_session::set_tamper_alert_handler(&on_mesh_tamper_alert);
+    /* F10-rekey: a committed opera_secret rotation re-persists here. */
+    mesh_session::set_rekey_commit_handler(&on_mesh_rekey_commit);
+    /* F33 part 6: the revocation deny-list. */
+    mesh_session::set_peer_revoked_handler(&on_mesh_peer_revoked);
+    /* F33 part 4: pair/start with no opera founds one; persisted first. */
+    mesh_session::set_opera_create_handler(&on_mesh_opera_create);
   } else {
     Serial.println("[WARN] Mesh layer init failed — broadcast disabled");
   }
@@ -1085,10 +1428,30 @@ void setup() {
     /* witness_create_record() already increments records_created on
      * success internally (securacv_witness.cpp); we only log on the
      * failure path here. */
-    if (!witness_create_record(payload, cbor.size(), rt, &rec)) {
+    const bool recorded = witness_create_record(payload, cbor.size(), rt, &rec);
+    if (!recorded) {
       log_health(LOG_LEVEL_ERROR, LOG_CAT_WITNESS,
                  "Sensing witness record failed", nullptr);
     }
+
+#if FEATURE_MESH_NETWORK
+    /* F10: tell the opera. Queue a TAMPER_ALERT for the main loop (this
+     * callback must stay non-blocking and send_tamper_alert is main-loop
+     * only). Payload is templates + numbers only: the dictionary's tamper
+     * kind, a LogLevel severity, and the seq of the record just written
+     * (0 when the write failed). Fields first, flag last. */
+    if (rt == RECORD_TAMPER_ALERT) {
+      g_mesh_alert_kind = (uint8_t)(
+          (we->kind == SENSING_WITNESS_TOUCH_TAMPER) ? mesh_alert::Kind::ENCLOSURE_TAMPER :
+          (we->kind == SENSING_WITNESS_TEMP_DRIFT)   ? mesh_alert::Kind::TEMP_DRIFT
+                                                     : mesh_alert::Kind::CAMERA_TAMPER);
+      g_mesh_alert_severity = (we->kind == SENSING_WITNESS_TEMP_DRIFT)
+                                  ? (uint8_t)LOG_LEVEL_WARNING
+                                  : (uint8_t)LOG_LEVEL_ALERT;
+      g_mesh_alert_seq = recorded ? rec.seq : 0;
+      g_mesh_alert_pending = true;
+    }
+#endif
   });
   Serial.println("[OK] Sensing witness chain bridge armed");
 #endif
@@ -1107,8 +1470,27 @@ void setup() {
   }
 #endif
 
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+  // Permit the Scout's NimBLE scan BEFORE securacv_csi_modules_init() below
+  // runs ble_scout_init(): the scan bring-up is latch-gated
+  // (ble_scout_allow_radio), because on the canary-wap host csi_integration
+  // inits inside the provisioning join window and an early NimBLE start
+  // bypassed the bluetooth_channel heap guard. This tree has neither the
+  // window nor the guard, and the name-ordering concern is already settled —
+  // the stack owner (ble_status_stack_begin, above, on FEATURE_BLE_STATUS
+  // builds) brings NimBLE up under the device's own GAP name, so the Scout
+  // only attaches. Without this call the [env:full] build compiled the
+  // registry/tracker/roster but nothing ever scanned — room attribution and
+  // the fleet roster were inert (optimization-roadmap P0 item 3).
+  ble_scout::ble_scout_allow_radio();
+#endif
+
   // Initialize CSI sensing (motion / breathing / micro-activity)
 #if FEATURE_CSI
+  // Before any module can emit: restore the event-id floor (ids stay
+  // monotonic across reboots) and, on HA builds, arm the committed-event
+  // egress and its signer (csi_event_egress.h).
+  csi_event_egress_begin();
   Serial.println("[..] Initializing CSI environmental sensing...");
   sensing_init();
   csi_config_t csi_cfg = CSI_CONFIG_DEFAULT;
@@ -1219,6 +1601,15 @@ void setup() {
   } else {
     Serial.println("[WARN] Touch sensor init failed");
   }
+#endif
+
+#if FEATURE_TAMPER_GPIO
+  // Enclosure tamper contact: a reed/hall switch to GND on the board map's
+  // pin, read through the internal pull-up and debounced in loop()
+  // (contact_tamper.h). canary_config.h refuses to build it on a pin the
+  // touch pad, SD, camera, GNSS or BOOT button already owns.
+  pinMode(TAMPER_PIN_DEFAULT, INPUT_PULLUP);
+  Serial.printf("[OK] Enclosure contact on GPIO%d\n", (int)TAMPER_PIN_DEFAULT);
 #endif
 
   // Initialize IR remote-control activity detection (RMT RX)
@@ -1435,13 +1826,22 @@ void setup() {
   ScvNetworkManager& network = network_get_instance();
   Serial.printf("║  WiFi AP    : %-45s  ║\n", device.ap_ssid);
   Serial.printf("║  Password   : %-45s  ║\n", g_ap_password);
-  Serial.printf("║  Dashboard  : http://%-39s  ║\n", network.getStatus().ap_ip);
   {
+    // F15: the scheme the dashboard is actually served on.
+    const char* scheme = network.isTlsEnabled() ? "https" : "http";
+    char dash_url[64];
+    snprintf(dash_url, sizeof(dash_url), "%s://%s", scheme, network.getStatus().ap_ip);
+    Serial.printf("║  Dashboard  : %-45s  ║\n", dash_url);
     const char* host = network.getMdnsHostname();
     char mdns_url[64];
-    snprintf(mdns_url, sizeof(mdns_url), "http://%s.local",
+    snprintf(mdns_url, sizeof(mdns_url), "%s://%s.local", scheme,
              (host && host[0]) ? host : "canary");
     Serial.printf("║  mDNS       : %-45s  ║\n", mdns_url);
+    if (network.isTlsEnabled()) {
+      char fp_short[24];
+      snprintf(fp_short, sizeof(fp_short), "%.16s...", network.getTlsCertFp());
+      Serial.printf("║  TLS cert fp: %-45s  ║\n", fp_short);
+    }
   }
 #endif
 #if FEATURE_POWER_MONITOR
@@ -1461,7 +1861,7 @@ void setup() {
 #endif
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
   Serial.println("║  Commands: h=help, i=identity, s=status, g=gps, r=data       ║");
-  Serial.println("║  BOOT: short=info, 5s hold=factory reset                     ║");
+  Serial.println("║  BOOT: tap=provisioning gate, 2s=info, 5s=factory reset      ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
 #if FEATURE_CONSOLE_THEME
   // The warm hello: the canary greets whoever just plugged in and points them
@@ -1493,12 +1893,28 @@ void loop() {
   mesh_transport::process();
   mesh_session::process((uint32_t)millis());
 
+#if FEATURE_SENSING_WITNESS
+  /* Drain a pending opera TAMPER_ALERT (F10) on the main-loop task. Best
+   * effort and not re-armed: with no opera, the mesh disabled, or no
+   * peer in range the send returns false, and the alert still lives in
+   * this device's own witness chain and on the MQTT tamper topic. */
+  if (g_mesh_alert_pending) {
+    g_mesh_alert_pending = false;
+    const uint8_t  kind = g_mesh_alert_kind;
+    const uint8_t  sev  = g_mesh_alert_severity;
+    const uint32_t seq  = g_mesh_alert_seq;
+    mesh_session::send_tamper_alert(static_cast<mesh_alert::Kind>(kind), sev,
+                                    seq, (uint32_t)millis());
+  }
+#endif
+
   {
     static uint32_t s_last_replay_save_ms = 0;
     const uint32_t now = millis();
     if ((int32_t)(now - s_last_replay_save_ms) >= 300000) {
       s_last_replay_save_ms = now;
       persist_replay_counters();
+      persist_revocations();   /* grace left, while the list holds anything */
     }
   }
 #endif
@@ -1509,6 +1925,29 @@ void loop() {
 #if FEATURE_USB_ONBOARD
   // Re-lock the HID keyboard if an arming window elapsed with no confirm.
   usb_onboard::poll();
+#endif
+
+#if FEATURE_SD_STORAGE
+  // Periodic SD mount health (30 s cadence inside): verify a mounted card,
+  // background-remount an absent or glitched one, adopt late boot-mount
+  // results. Loop task only — the same single writer as every SD producer.
+  // MSC gate: while USB MSC exposes the card to a host, teardown/remount
+  // are refused (raw-sector reads come from the TinyUSB task; see
+  // common/storage/sd_mount_policy.h).
+  {
+    bool msc_holds_card = false;
+#if FEATURE_USB_ONBOARD
+    msc_holds_card = usb_onboard::msc_exposed();
+#endif
+    storage_periodic_check(msc_holds_card);
+  }
+  // The timeline's card pages (F35): GET /api/witness posts one request to
+  // the history bridge and waits on the httpd task; this loop task — the SD
+  // owner — reads for it, at most 4 x 1 KiB per pass so a deep page takes a
+  // few passes rather than one long read (what a pass costs on a large card
+  // is bench U1's to measure). No request, no card or a mount in flight:
+  // nothing touches SD.
+  witness_history_service();
 #endif
 
   // Handle boot button (info print, factory reset)
@@ -1610,12 +2049,24 @@ void loop() {
   // saver. On builds where the CSI pipeline never initializes, the
   // module's bounded retry gives up quietly.
   //
-  // sd_state: this lane has no SD state machine — storage mounts once at
-  // boot (storage_init) and never re-probes, unmounts, or errors out at
-  // runtime — so we feed the module's pinned ABSENT (0) constant rather
-  // than inventing a detector: the watcher adopts it on the first call and
-  // never emits an SD kind. The sd_error/sd_remove stories stay exclusive
-  // to hosts with a real hot-swap state machine (canary-wap).
+  // sd_state: the storage lane's live three-state (storage_sd_state(),
+  // sd_mount_policy::sd_state_for_tamper). MOUNTED while the card is
+  // mounted; ERROR once noteWriteFailure() gave up on a mounted card after
+  // consecutive write failures; ABSENT otherwise (the periodic presence
+  // probe failed, or no card was ever mounted). Those are the canary-wap's
+  // own two triggers (hardware_state.h SD_ERROR / card gone), so the
+  // watcher narrates sd_error on MOUNTED -> ERROR and sd_remove on
+  // MOUNTED -> ABSENT here exactly as it does there, and booting without a
+  // card is adopted silently. Both kinds are in this host's vocabulary
+  // (spec/witness_dictionary.json system_integrity_kinds, gated by
+  // scripts/lint_dictionary_sync.py). A build without FEATURE_SD_STORAGE
+  // feeds the pinned ABSENT constant and never emits an SD kind.
+  //
+  // Where the rows go: the RAM ring and, on HA builds, csi_event_egress's
+  // csi_event_on_committed override — the SD event log, the signed `events`
+  // topic, plus the tamper-topic bridge for the SD and enclosure kinds. Home
+  // Assistant's SD Removed sensor also reads `sd_mounted` from the health
+  // payload (mqtt_publish_health_update).
   {
     static const esp_reset_reason_t s_boot_rst = esp_reset_reason();
     // Same crash set as canary-wap's hardware_state.h reset_is_crash():
@@ -1628,11 +2079,37 @@ void loop() {
     const bool rst_brownout = (s_boot_rst == ESP_RST_BROWNOUT);
     const bool rst_crash = (s_boot_rst == ESP_RST_PANIC) ||
                            rst_watchdog || rst_brownout;
+#if FEATURE_SD_STORAGE
+    const uint8_t sd_state = storage_sd_state();
+#else
+    const uint8_t sd_state = 0u;  // pinned ABSENT: no SD lane in this build
+#endif
     securacv_csi_modules_tamper_watch(rst_crash ? 1 : 0,
                                       rst_watchdog ? 1 : 0,
                                       rst_brownout ? 1 : 0,
-                                      /*sd_state: pinned ABSENT*/ 0u);
+                                      sd_state);
   }
+
+#if FEATURE_TAMPER_GPIO
+  // Enclosure contact: debounce the raw line, feed the watcher the accepted
+  // state (it narrates `enclosure` on CLOSED -> OPEN only; the first sample
+  // is adopted, so booting with the lid off is not an intrusion), and keep
+  // DeviceIdentity.tamper_active as the standing condition — it drives the
+  // health payload's tamper_detected, the fleet beacon's tamper flag and the
+  // trust card, which had no writer before this contact existed.
+  {
+    const contact_tamper::Transition tr = contact_tamper::sample(
+        &g_tamper_contact, digitalRead(TAMPER_PIN_DEFAULT) == TAMPER_ACTIVE,
+        millis());
+    securacv_csi_modules_tamper_watch_contact(g_tamper_contact.open ? 1 : 0);
+    if (tr == contact_tamper::Transition::OPENED) {
+      witness_get_device().tamper_active = true;
+      witness_get_health().tamper_events++;
+    } else if (tr == contact_tamper::Transition::CLOSED) {
+      witness_get_device().tamper_active = false;
+    }
+  }
+#endif
 
 #if FEATURE_ACOUSTIC_EVENTS
   #if FEATURE_POWER_POLICY
@@ -1726,6 +2203,36 @@ void loop() {
 #if FEATURE_POWER_POLICY
   policy_process();
 
+#if FEATURE_CAMERA_PEEK
+  /* Act on the policy's camera signal instead of only printing it: every
+   * battery mode sets camera_peek=false, but an initialized camera keeps
+   * the sensor clocked at 20 MHz XCLK whether or not anything captures.
+   * Deinit while the policy disallows it (retried each pass — end() fails
+   * soft when a held frame owns the lifecycle lock), and eagerly re-init
+   * on the rising edge so vision resumes without a user request. A failed
+   * re-init is attempted once per edge, not every pass (begin() burns up
+   * to ~1 s probing configs on a dead sensor) — between edges the re-init
+   * endpoint stays the recovery path, as it is for a boot failure. */
+  {
+    static bool s_cam_policy_allowed = true;  /* camera_init() ran at boot */
+    CameraManager& cam = camera_get_instance();
+    const bool cam_allowed = policy_get_features()->camera_peek;
+    if (!cam_allowed && cam.isInitialized()) {
+      if (s_cam_policy_allowed) {
+        Serial.println("[POLICY] Battery mode — releasing camera");
+      }
+      cam.setPeekActive(false);  /* stream task exits on the flag */
+      cam.end();
+    } else if (cam_allowed && !s_cam_policy_allowed && !cam.isInitialized()) {
+      Serial.println("[POLICY] External power — re-initializing camera");
+      if (!cam.begin()) {
+        Serial.println("[POLICY] Camera re-init failed — use /api/peek/init");
+      }
+    }
+    s_cam_policy_allowed = cam_allowed;
+  }
+#endif
+
 #if FEATURE_DEEP_SLEEP
   if (policy_should_deep_sleep() && !power_is_charging()) {
     uint32_t sleep_sec = policy_get_sleep_duration_sec();
@@ -1808,6 +2315,16 @@ void loop() {
   // MQTT loop — handles reconnect and keepalive
   mqtt_loop();
 
+#if FEATURE_CSI
+  // Committed csi_events (presence, breathing, system.integrity tampers)
+  // -> the SD event log and securacv/{id}/events, signed, plus the per-kind
+  // tamper bridge; then one bounded backfill pass from the card (F37). The
+  // override only queues; this loop-task pump is the one publisher and the
+  // event log's one SD writer. After mqtt_loop(), so the offline queue
+  // drains before any backfill.
+  csi_event_egress_pump();
+#endif
+
   // Publish status periodically
   if (mqtt_connected() && now - g_last_mqtt_status_ms >= MQTT_STATUS_INTERVAL_MS) {
     g_last_mqtt_status_ms = now;
@@ -1831,7 +2348,17 @@ void loop() {
   // matches the host mqtt_sensor adapter contract ({state, confidence,
   // kind}); the adapter routes it into the sealed log as TamperDetected.
   // Confidence is rescaled 0..100 -> 0..1 for the kernel's bounds check.
-  if (g_tamper_publish_pending && mqtt_connected()) {
+  // A kind that IS one of Home Assistant's tamper types also carries
+  // `type` (spec/witness_dictionary.json firmware_kind_types): the touch
+  // pad's enclosure_tamper is HA's `enclosure`, so the Enclosure Open
+  // sensor lights — it matches `type`, never `kind`. temp_drift and
+  // camera_tamper have no HA type and stay kind-only.
+  // Gated on mqtt_accepting(), not mqtt_connected(): during a broker
+  // outage the publish buffers in the MQTT layer's offline queue, so each
+  // alert leaves this one-deep pending slot within a loop pass instead of
+  // camping in it for the whole outage — where a second tamper used to
+  // overwrite the first.
+  if (g_tamper_publish_pending && mqtt_accepting()) {
     g_tamper_publish_pending = false;
     /* Copy BOTH volatile fields back-to-back before formatting: a tamper
      * callback firing mid-publish may overwrite them, and a torn read
@@ -1842,12 +2369,15 @@ void loop() {
         (kind == SENSING_WITNESS_TOUCH_TAMPER)  ? "enclosure_tamper" :
         (kind == SENSING_WITNESS_TEMP_DRIFT)    ? "temp_drift"
                                                 : "camera_tamper";
-    char payload[96];
+    const char* type_kv =
+        (kind == SENSING_WITNESS_TOUCH_TAMPER) ? ",\"type\":\"enclosure\"" : "";
+    char payload[112];
     snprintf(payload, sizeof(payload),
-             "{\"state\":\"on\",\"confidence\":%.2f,\"kind\":\"%s\"}",
-             (double)confidence / 100.0, kind_str);
+             "{\"state\":\"on\",\"confidence\":%.2f,\"kind\":\"%s\"%s}",
+             (double)confidence / 100.0, kind_str, type_kv);
     if (!mqtt_publish_tamper(payload)) {
-      // Re-arm so the alert survives a transient broker drop; the
+      // False now means the offline queue itself refused (inert after a
+      // failed allocation) — re-arm so the alert still survives; the
       // device-side chain already holds the signed record either way.
       g_tamper_publish_pending = true;
     }
@@ -1862,7 +2392,7 @@ void loop() {
   // the sensing tamper drain above.
   {
     static bool s_pe_tamper_pending = true;
-    if (s_pe_tamper_pending && mqtt_connected()) {
+    if (s_pe_tamper_pending && mqtt_accepting()) {
       s_pe_tamper_pending = false;
       char pe_payload[224];
       if (canary_pe::ha_tamper_payload(pe_payload, sizeof(pe_payload)) &&
@@ -1958,16 +2488,58 @@ static void handle_boot_button() {
     if (duration >= BOOT_MEDIUM_PRESS_MS) {
       // Medium hold: print device info
       print_status();
-    }
+    } else {
 #if FEATURE_USB_ONBOARD
-    else {
-      // Short press: the physical confirmation for USB onboarding. This is the
-      // trust keystone — the ONLY thing that lets the HID keyboard type, and
-      // only while it is ARMED (a no-op otherwise).
-      usb_onboard::confirm();
-    }
+      // A tap that answers the console's armed USB-onboarding request ('u',
+      // a 15 s window the owner opened on purpose) is that confirmation and
+      // nothing else: it must not also open the provisioning gate. Read
+      // before usb_onboard::confirm() below moves Armed → Launched. (A tap
+      // from Idle is both the one-tap help launch and a gate open — see
+      // docs/design/usb_onboard.md.)
+      const bool tap_is_usb_confirm =
+          usb_onboard::state() == usb_onboard::State::Armed;
+#else
+      const bool tap_is_usb_confirm = false;
 #endif
-    // (Short press is otherwise reserved for future use / provisioning gate.)
+      if (duration >= BOOT_SHORT_PRESS_MS && tap_is_usb_confirm) {
+        Serial.println("[AUTH] BOOT tap confirmed USB onboarding; provisioning gate left closed");
+      } else if (duration >= BOOT_SHORT_PRESS_MS) {
+        // Short tap: open the provisioning gate (F20 gap #11, WAP parity).
+        // One tap admits exactly ONE consumer within PROVISIONING_GATE_TTL_MS:
+        // one GET /api/provisioning-receipt, or one home-LAN dashboard load
+        // with its credential — whichever asks first (page_token_decide).
+        canary::net::provisioning_gate::open(g_prov_gate, millis());
+        Serial.printf("[AUTH] Provisioning gate OPENED (one receipt fetch or one LAN page load, %lu seconds)\n",
+                      (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000));
+        log_health(LOG_LEVEL_INFO, LOG_CAT_USER, "Provisioning gate opened", "BOOT button");
+        // Blink the user LED 3x to confirm. Skipped while an SD mount attempt
+        // is in flight: on the XIAO ESP32-S3 the LED shares GPIO21 with the SD
+        // chip-select, and driving it mid-transaction on the mount worker
+        // would glitch CS and corrupt the mount (mirrors the WAP sketch).
+#ifdef LED_BUILTIN
+        bool led_ok = true;
+#if FEATURE_SD_STORAGE
+        led_ok = !storage_mount_in_flight();
+#endif
+        if (led_ok) {
+          for (int i = 0; i < 3; i++) {
+            digitalWrite(LED_BUILTIN, HIGH);
+            delay(100);
+            digitalWrite(LED_BUILTIN, LOW);
+            delay(100);
+          }
+        }
+#endif
+      }
+#if FEATURE_USB_ONBOARD
+      // Short press is ALSO the physical confirmation for USB onboarding. This
+      // is the trust keystone — the ONLY thing that lets the HID keyboard
+      // type (from Idle, Armed or Launched; a no-op when the feature is Off).
+      // Independent latch from the provisioning gate above, which an Armed
+      // confirmation leaves closed.
+      usb_onboard::confirm();
+#endif
+    }
   }
 }
 
@@ -2083,9 +2655,48 @@ static void mqtt_publish_health_update() {
   doc["http_requests"] = health.http_requests;
   doc["sd_writes"] = health.sd_writes;
   doc["sd_errors"] = health.sd_errors;
+#if FEATURE_SD_STORAGE
+  /* HA's SD Removed sensor reads `sd_mounted` (binary_sensor.py). Sent only
+   * once a card has mounted this boot: booting without a card is a
+   * configuration, not a removal — the same adopt-silently rule the
+   * system.integrity watcher follows — and an absent key reads as mounted
+   * on the HA side. After that it says whether a card is still in the
+   * slot, from the same three-state the watcher reads: a pulled card
+   * lights the sensor and a remount clears it. A card that is present
+   * but failing (ERROR: given up on after consecutive write failures) is
+   * NOT removed. It is SD Error's story (sd_errors here, sd_error on the
+   * tamper topic), so it must not light SD Removed beside it. */
+  if (storage_mount_generation() > 0) {
+    doc["sd_mounted"] = storage_sd_state() != sd_mount_policy::SD_TAMPER_ABSENT;
+  }
+#endif
   doc["boot_count"] = device.boot_count;
   doc["firmware_version"] = FIRMWARE_VERSION;
+  /* The witness key's public half, 64 lowercase hex: the canary-wap's
+   * health shape. Home Assistant pins it on first sight
+   * (__init__.py _async_health_for_tofu; docs/device_trust.md), and
+   * that pin is what lets it verify the Ed25519 signature on the `events`
+   * bodies csi_event_egress publishes. Without it every body read
+   * `no_pubkey` until someone pinned the key by hand. The same key signs
+   * those bodies (csi_event_egress hands this identity to
+   * device_signature). A public key; /api/status already serves it. */
+  {
+    static const char kHex[] = "0123456789abcdef";
+    char pk_hex[65];
+    for (int i = 0; i < 32; ++i) {
+      pk_hex[2 * i]     = kHex[(device.pubkey[i] >> 4) & 0xF];
+      pk_hex[2 * i + 1] = kHex[device.pubkey[i] & 0xF];
+    }
+    pk_hex[64] = '\0';
+    doc["public_key"] = pk_hex;
+  }
   doc["tamper_detected"] = device.tamper_active;
+#if FEATURE_TAMPER_GPIO
+  /* The contact's live (debounced) level, which HA's Enclosure Open sensor
+   * reads from health — so it stands while the lid is off instead of
+   * lasting only until the next health publish. */
+  doc["enclosure_open"] = g_tamper_contact.adopted && g_tamper_contact.open;
+#endif
 
   /* Power lineage flags, held for kIncidentHoldMs after boot: the tamper
    * topic's one-shot message is non-retained, so a hub that reboots slower
@@ -2667,6 +3278,7 @@ static void emit_self_manifest() {
   f.boots          = dev.boot_count;
   f.born_day       = dev.born_day;
   f.born_exact     = dev.born_exact;
+  f.key_at_rest    = crypto_key_at_rest_label();
   f.health         = health;
   {
     // Heat, from the shared thermal provider (never Arduino's temperatureRead()
@@ -3109,6 +3721,11 @@ static void handle_serial_commands() {
 #if HAVE_FLASH_ENCRYPT
       Serial.printf("  FlashEnc  : %s\n", esp_flash_encryption_enabled() ? "ENABLED" : "off");
 #endif
+      // Where the key's bytes actually sit, as the wire label the device also
+      // reports in /api/status and the self-manifest (key_at_rest.h). NOT what
+      // the FlashEnc line above implies: flash encryption does not cover NVS,
+      // so a fused board still reads plaintext-nvs in this tree.
+      Serial.printf("  KeyAtRest : %s\n", crypto_key_at_rest_label());
       Serial.printf("  Console   : %u diag cmds · policy %s\n",
                     (unsigned)kConsoleCommandCount,
                     testcon::table_is_safe(kConsoleCommands, kConsoleCommandCount)

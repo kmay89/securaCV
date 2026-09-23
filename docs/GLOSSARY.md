@@ -84,8 +84,16 @@ policy saying how many of them must sign for a break-glass request to
 authorize. Configured once, then rehearsed — see the Operator's Bench in
 the Lab.
 
-**The Vault** — The sealed store of raw snapshots that break-glass opens.
-→ [sealed snapshot vault](sealed_snapshot_vault.md)
+**The Vault** — The kernel's sealed store of raw frames that break-glass
+opens — by quorum, never by one person.
+→ [`spec/break_glass.md`](../spec/break_glass.md)
+
+**Sealed snapshot** — Not the Vault. One camera frame a canary-wap seals when
+an alarm it was armed for fires, encrypted to one person's X25519 key; the
+Canary keeps only the public half, so it cannot open its own file. Being
+single-recipient by construction, it is opened by that key's holder alone —
+with `tools/unseal_snapshot.py`, or on the iPhone app's Keys tab.
+→ [sealed snapshots](sealed_snapshot_vault.md)
 
 **Coarse timestamps** — Event times are bucketed (10-minute windows) on
 purpose, so the log can prove *that* something happened without becoming a
@@ -200,7 +208,7 @@ truth is [`firmware/build_matrix.json`](../firmware/build_matrix.json).
 | **Canary Vision** | shipping | Camera + on-device person detection, reports to Home Assistant. |
 | **Canary Sense** | shipping | Presence and breathing radar (60 GHz MR60BHA2) — care and wellbeing without a camera to point. |
 | **Canary Pool** | design | *Design-stage* — an outdoor pool/spa water-chemistry node (pH · ORP · water temp · TDS) that publishes to the fleet; the Dash already renders its cards. ESP32 + Atlas EZO or industrial differential probes. See [pool water-monitor research](research/pool_water_monitor.md). |
-| **Canary Sentinel** | design | *Phase 0 — fusion core host-tested, no released build.* Multi-sensor fusion guardian: PIR + radar + WiFi CSI + WiFi/BLE + light, scored for corroboration across physically independent channels. Lite / Standard / Heavy tiers. See `firmware/FIRMWARE_VARIANT_AUDIT.md`. |
+| **Canary Sentinel** | design | *Phase 1a — fusion core host-tested; the signed network/witness firmware is compile-gated in CI but has not run on hardware; no released build.* Multi-sensor fusion guardian: PIR + radar + WiFi CSI + WiFi/BLE + light, scored for corroboration across physically independent channels. Lite / Standard / Heavy tiers. See `firmware/FIRMWARE_VARIANT_AUDIT.md`. |
 | **Canary Display** | prototype | The wall displays and dashes — the ambient surface a household actually looks at. |
 | **Canary OTA** | software | The signed pull-update path, with rollback. |
 | **Canary Fence Guard** | idea | *Concept — nothing builds yet.* Boundary/perimeter variant. |
@@ -235,11 +243,17 @@ and [what still has to be true](BRAND.md) in the brand doc.
 Three separate channels, deliberately different trust models. Mixing them up is
 the most common misreading of this project.
 
-**Opera** — The household mesh protocol (ESP-NOW/BLE): how a household's own
-Canaries stay in sync. Requires WiFi association; `opera_secret` provisioning
-refuses to run on a device without flash encryption.
+**Opera** — The household mesh protocol: how a household's own Canaries stay
+in sync. It runs over ESP-NOW, which needs the radio on a shared channel but
+not an access-point association (the WiFi bridge and BLE fallback in the spec
+are not built, and the BLE control plane in the tandem doc is design only). An
+`opera_secret` is never written to or read back from NVS on a board without
+flash encryption (audit O2). That keeps the household secret off un-fused
+boards; it does **not** make it confidential at rest on fused ones, because
+flash encryption does not cover NVS.
 → [`spec/canary_mesh_network_v0.md`](../spec/canary_mesh_network_v0.md),
-[BLE mesh + Opera tandem](BLE_MESH_OPERA_TANDEM.md)
+[BLE mesh + Opera tandem](BLE_MESH_OPERA_TANDEM.md),
+[threat model](security/THREAT_MODEL.md#opera-mesh-household-trusted)
 
 **Chirp** — The community witness channel: neighbors corroborating an event,
 with ephemeral session keys (never persisted — that's the privacy firewall
@@ -401,7 +415,7 @@ event vocabulary and signed witness record stay identical across profiles.
 | "verified" loosely | "heard," "reported," "presence" | "Verified" is reserved for a checked Ed25519 signature against a pinned key. |
 | face recognition, plate reading, gait, re-ID, demographics | — | Not disabled — **absent**. Invariant II; never implement. |
 | "secure" as a bare adjective | the specific property | Say what can't happen and what still has to be true. |
-| performance claims without benchmarks | "varies by hardware; benchmark first" | Claims discipline; CI fact-tests enforce it on the site. |
+| performance claims without benchmarks | "varies by hardware; benchmark first" | Claims discipline. On the site, review keeps them out (no site test looks for them); here, `scripts/lint_bench_rows.py` fails the build on a pasted [benchmark](BENCHMARKS.md) table. |
 
 ---
 

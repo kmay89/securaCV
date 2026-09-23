@@ -4,7 +4,7 @@
 // the enclosure library it was generated from.
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { readFileSync, existsSync } = require("node:fs");
+const { readFileSync, existsSync, readdirSync } = require("node:fs");
 const { join } = require("node:path");
 
 const ROOT = join(__dirname, "..");
@@ -65,6 +65,117 @@ test("chooser candidates reference real enclosure sets and devices", async () =>
   for (const c of CANDIDATES) {
     assert.ok(devIds.has(c.device), `${c.id}: device ${c.device} exists`);
     assert.ok(encIds.has(c.enclosure), `${c.id}: enclosure set ${c.enclosure} exists`);
+  }
+});
+
+// ── device ↔ enclosure pairing: the MANIFESTS are the source of truth ─────
+// Every devices/<slug>/device.json lists the sets its hardware takes in
+// cad.enclosure_sets; gen_enclosures.py inverts that into each set's
+// `device` — the first claimant (slug order), on the Lab card that presents
+// it: its `lab.card` (the Nightlight's card is canary-nightlight, its
+// manifest canary-display-nightlight-c3), else its family's device when the
+// family is itself a manifest, else its own slug — and `devices`, every
+// claimant, whenever the device alone does not name them. A set no manifest
+// claims is universal. scripts/lint_device_manifests.py refuses any other
+// homing, and any home that is not a registry.json card.
+function manifestOwners() {
+  const dir = join(ROOT, "../devices");
+  const owners = new Map();
+  const family = new Map();
+  const card = new Map();
+  for (const slug of readdirSync(dir).filter((d) => existsSync(join(dir, d, "device.json"))).sort()) {
+    const m = JSON.parse(readFileSync(join(dir, slug, "device.json"), "utf8"));
+    family.set(slug, m.family);
+    if (m.lab?.card) card.set(slug, m.lab.card);
+    for (const s of m.cad?.enclosure_sets || []) owners.set(s, [...(owners.get(s) || []), slug]);
+  }
+  const home = (slug) => card.get(slug)
+    || (family.has(family.get(slug)) ? family.get(slug) : slug);
+  return { owners, home };
+}
+
+test("enclosures.json homes every set on the manifests that claim it", () => {
+  const enc = JSON.parse(readFileSync(join(ROOT, "devices/enclosures.json"), "utf8"));
+  const { owners, home } = manifestOwners();
+  for (const s of enc.sets) {
+    const own = owners.get(s.id);
+    if (!own) {
+      assert.strictEqual(s.device, null, `${s.id}: no manifest claims it, so it is universal`);
+      continue;
+    }
+    const dev = home(own[0]);
+    assert.strictEqual(s.device, dev, `${s.id}: device is the first claimant's home`);
+    assert.deepStrictEqual(s.devices, own.length === 1 && own[0] === dev ? undefined : own,
+      `${s.id}: devices = every claimant, whenever the device alone does not say them`);
+  }
+  // the DevKit's case is claimed by the DevKit manifest and stays on the Vision page
+  const devkit = enc.sets.find((s) => s.id === "vision-devkit-indoor");
+  assert.strictEqual(devkit.device, "canary-vision");
+  assert.deepStrictEqual(devkit.devices, ["canary-vision-devkit"]);
+  // the five display cards the old name regex mis-homed now sit on their own devices
+  const by = Object.fromEntries(enc.sets.map((s) => [s.id, s]));
+  assert.strictEqual(by["c6-display-pocket-case"].device, "canary-display-nightstand-c6");
+  assert.strictEqual(by["1-69-touch-watch-display-puck"].device, "canary-display-touch169");
+  assert.strictEqual(by["s3-hallway-stick-case"].device, "canary-display-nightstand-s3");
+  // the C3 case on the Nightlight's card, and still under its manifest's slug
+  // (the flasher's board identity looks a case up by the product's slug)
+  assert.strictEqual(by["c3-pocket-display-case"].device, "canary-nightlight");
+  assert.deepStrictEqual(by["c3-pocket-display-case"].devices, ["canary-display-nightlight-c3"]);
+  assert.deepStrictEqual(by["7-touch-dashboard-case"].devices,
+    ["canary-display-dash7", "canary-display-nightstand7"]);
+});
+
+test("every case a manifest claims shows on a Lab device page", () => {
+  // The Lab's device pages are registry.json's cards. A case homed on a
+  // device with no card shows on no page: the C6 pocket case and the 7"
+  // case's Nightstand claimant had no card, and the C3 case was homed on its
+  // manifest's slug while the registry carries the Nightlight as
+  // canary-nightlight — rendered, cataloged, reachable from nowhere.
+  const enc = JSON.parse(readFileSync(join(ROOT, "devices/enclosures.json"), "utf8"));
+  const reg = JSON.parse(readFileSync(join(ROOT, "devices/registry.json"), "utf8"));
+  const cards = new Set(reg.devices.map((d) => d.id));
+  const { owners, home } = manifestOwners();
+  const serves = (set, dev) => set.device === dev || (set.devices || []).includes(dev);
+  for (const s of enc.sets) {
+    for (const slug of owners.get(s.id) || []) {
+      assert.ok(cards.has(home(slug)), `${s.id}: ${slug}'s Lab card ${home(slug)} is not in registry.json`);
+      assert.ok(serves(s, home(slug)), `${s.id} is not on ${home(slug)}'s page`);
+    }
+  }
+  for (const [card, set] of [["canary-display-nightstand-c6", "c6-display-pocket-case"],
+    ["canary-nightlight", "c3-pocket-display-case"],
+    ["canary-display-nightstand7", "7-touch-dashboard-case"]]) {
+    assert.ok(cards.has(card), `${card} has a Lab card`);
+    assert.ok(serves(enc.sets.find((x) => x.id === set), card), `${set} shows on ${card}'s page`);
+  }
+});
+
+test("device pages list what the manifests give them, and the chooser agrees", async () => {
+  const enc = JSON.parse(readFileSync(join(ROOT, "devices/enclosures.json"), "utf8"));
+  const { setServes } = await import("../assets/enclosure-sets.js");
+  const page = (dev) => enc.sets.filter((s) => setServes(s, dev)).map((s) => s.id);
+  // the Watch and Dash pages carry their own cases — no other board's
+  assert.deepStrictEqual(page("canary-display-watch"), ["watch-station"]);
+  assert.deepStrictEqual(page("canary-display-dash"), ["dashboard-display-case"]);
+  // a claimant beyond the first still gets the case…
+  assert.ok(page("canary-display-nightstand7").includes("7-touch-dashboard-case"));
+  // …the two pocket cases sit on their own cards, and on no one else's
+  assert.deepStrictEqual(page("canary-display-nightstand-c6"), ["c6-display-pocket-case"]);
+  assert.deepStrictEqual(page("canary-nightlight"), ["c3-pocket-display-case"]);
+  // …and a family's own page lists its host variants' cases (the DevKit's)
+  const vision = page("canary-vision");
+  // (the Vision Pro mount is a reCamera bridge, not a case for every board: the
+  // manifest's claim keeps it here rather than universal on every page)
+  for (const id of ["vision-xiao-indoor", "vision-devkit-indoor", "vision-doorbell", "combo-witness",
+    "vision-pro-mount"]) {
+    assert.ok(vision.includes(id), `canary-vision page lists ${id}`);
+  }
+  // every chooser pairing is one the manifests make — or a universal case
+  const { CANDIDATES } = await chooser();
+  for (const c of CANDIDATES) {
+    const set = enc.sets.find((s) => s.id === c.enclosure);
+    assert.ok(set.device == null || setServes(set, c.device),
+      `${c.id}: ${c.enclosure} is not a ${c.device} case per the manifests`);
   }
 });
 

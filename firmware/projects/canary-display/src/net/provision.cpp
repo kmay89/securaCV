@@ -34,7 +34,7 @@
 #endif
 
 #include "canary/net/provision.h"
-#include "canary/net/provision_core.h"
+#include "network/provision_core.h"  // shared onboarding pure helpers (common/)
 #include "canary/net/tz_auto.h"  // the zone the portal collects, applied on join
 #include "canary/runtime_config.h"
 #include "network/wifi_join_policy.h"  // shared join-failure vocabulary (common/)
@@ -96,8 +96,8 @@ bool s_glass = false;
 void ui_stage(canary::ui::ObStage st, const char* detail) {
   if (s_glass) canary::ui::onboard_ui_stage(st, detail);
 }
-void ui_hint(const char* line) {
-  if (s_glass) canary::ui::onboard_ui_hint(line);
+void ui_hint(const char* line, const char* narrow = nullptr) {
+  if (s_glass) canary::ui::onboard_ui_hint(line, narrow);
 }
 void ui_pump() {
   if (s_glass) lv_timer_handler();
@@ -914,11 +914,17 @@ void provision_run(bool glass_ok) {
           // leaving a correct QR on the glass being ignored.
           ctx.stuck_hinted = true;
 #if defined(CD_FLAVOR_WATCH) && !defined(CD_FLAVOR_NIGHTSTAND)
-          // Round glass: the hint rides the password line's low band
-          // (round_frame fits it; ~142 px) — every word here is measured.
+          // Round glass: the hint takes the title's band over the card (the
+          // Join scene's note row — the name and the key keep theirs, F45),
+          // which holds the low band's ~142 px — every word here is measured.
           ui_hint("forget it on your phone");
 #elif defined(CD_FLAVOR_WATCH)
-          ui_hint("can't join? forget it on your phone");
+          // Portrait glass: the whole line where the row holds it (240 px
+          // and up); the round glass's words on the 172/180 px ones, where
+          // it rides under the network name and the key, on a row of its
+          // own (F45).
+          ui_hint("can't join? forget it on your phone",
+                  "forget it on your phone");
 #else
           ui_hint("can't join? on your phone, forget this network - then scan again");
 #endif

@@ -23,32 +23,47 @@ generator READS (its docstring, its imports), not from memory:
    2  lint_design_lang      the literal-knob canon still holds              (a lint; nothing written)
    3  render                render.sh --no-png: every released and dev STL  (needs OpenSCAD)
    4  gen_assembled_dims    fit-checked unions -> assembled_dims.json       (needs OpenSCAD)
-   5  gen_figures           STL bboxes + assembled_dims -> figures.json, SVGs,
+   5  gen_hardware          each committed preset's HARDWARE echo + lid-rib headroom
+                            -> hardware.json, joined against the BOM CSVs  (needs OpenSCAD)
+   6  gen_enclosures        README tables + .scad knobs + cad.enclosure_sets
+                            -> enclosures / catalog / build / workshop .json
+   7  gen_figures           STL bboxes + assembled_dims + catalog.json -> figures.json, SVGs,
                             fleet_figures.h / fleet_figures_art.h, FleetFigures.swift / FleetSolids.swift
-   6  gen_device_glbs       figures.json verdicts -> the two flashers' .glb
-   7  setup_regen           IF fleet_figures.h or fleet_figures_art.h moved: the Arduino sketch
+   8  gen_device_glbs       figures.json verdicts -> the two flashers' .glb
+   9  setup_regen           IF fleet_figures.h or fleet_figures_art.h moved: the Arduino sketch
                             mirror (firmware/projects/canary-display/setup.sh regen), then STOP —
                             the emulator dist is upstream of the catalogs and only Actions can build it
-   8  gen_flash             dist meta + manifests -> flash.json
-   9  gen_builder_manifest  curated .scad -> builder_manifest.json  [+ --site DIR: the website carries]
-  10  gen_enclosures        README tables + .scad knobs -> enclosures / catalog / build / workshop .json
-  11  gen_stamp             report-only: --check (a STAMP_REV bump is a human decision, gen_stamp.py)
-  12  gen_mark_svg          report-only: --check (the mark does not move with a board knob)
+  10  gen_flash             dist meta + manifests -> flash.json
+  11  gen_builder_manifest  curated .scad -> builder_manifest.json  [+ --site DIR: the website carries]
+  12  gen_stamp             report-only: --check (a STAMP_REV bump is a human decision, gen_stamp.py)
+  13  gen_mark_svg          report-only: --check (the mark does not move with a board knob)
 
-THE STOP AT STEP 7 IS THE POINT. The emulator compiles fleet_figure.cpp
+GEN_ENCLOSURES COMES BEFORE GEN_FIGURES because gen_figures.mjs reads
+canary-local/devices/catalog.json — each figure's catalog evidence (the
+variants a device's cases are cut as, which the confidence ladder cites) —
+and gen_enclosures.py writes it. A cad.enclosure_sets edit or a README
+variant-table row moves the catalog, and a figure regenerated from the
+stale one cites the wrong evidence. gen_enclosures.py reads nothing steps
+3-5 write (the .scad knobs step 1 writes, the README tables, the manifests,
+the BOM CSVs), so it could run as early as step 2; it sits immediately
+before the one generator that reads it. scripts/tests/test_regen_cad.py
+holds the rule for every step: no step's own script names, as a quoted
+path, a file a LATER step writes.
+
+THE STOP AT STEP 9 IS THE POINT. The emulator compiles fleet_figure.cpp
 against fleet_figures.h, and gen_flash.py stamps each artifact's
 fw_version from canary-local/emulator/dist/*.meta.json into flash.json — so
 when the figure headers moved, the dist must be rebuilt (Actions ->
 "Rebuild emulator dist (pinned emsdk)", dispatched on YOUR branch; emsdk
 6.0.3 exactly, which most machines cannot install) and pulled BEFORE steps
-8–10 run. The script regenerates the sketch mirror, prints exactly that,
+10–11 run. The script regenerates the sketch mirror, prints exactly that,
 and exits 3 (not a failure: a resume point). `--from gen_flash` finishes
 the chain once the dist is back. CLAUDE.md's four dist-retrigger symptoms
 apply and are printed at the stop.
 
 --check. Every step is run in its CHECK form and the first failure is named
 with the resume command. `render` has no check form — OpenSCAD's STL bytes
-are not deterministic, so nothing byte-gates them; the two steps after it
+are not deterministic, so nothing byte-gates them; two later steps
 gate their bounding boxes and seams (gen_assembled_dims.py --check at
 0.01 mm, gen_figures.mjs --check) and enclosure.yml re-renders and greps
 the log in CI. Two steps have no --check flag and get the form CI uses —
@@ -59,7 +74,7 @@ sketch mirror directory, as firmware/scripts/check_display_arduino_sync.sh
 proves it — but against the tree as it stands, not HEAD, so the check is
 meaningful right after a write run regenerated the mirror and before it is
 committed; CI's script would report that as drift). --site DIR under
---check runs step 9 as `gen_builder_manifest.py --site DIR --check`: every
+--check runs step 11 as `gen_builder_manifest.py --site DIR --check`: every
 carry is regenerated in memory and compared with the checkout, a stale or
 missing one is named by file, and nothing is written in either tree — so a
 checkout that was not carried after the ledger moved fails here, the same
@@ -91,7 +106,7 @@ gate on every push that touches docs/hardware/enclosure/** — it names the
 drift, it does not fix it. Install OpenSCAD 2021.01 (the version CI
 installs) and resume with --from render.
 
-Exit codes: 0 done · 1 a step failed or was refused · 3 stopped at step 7
+Exit codes: 0 done · 1 a step failed or was refused · 3 stopped at step 9
 for the dist rebuild (resume with --from gen_flash).
 
 Unit-tested by scripts/tests/test_regen_cad.py with subprocess mocked: the
@@ -145,8 +160,8 @@ class Step(NamedTuple):
     note: str = ""                  # for "none": why there is no check form and what covers it
     outputs: tuple[str, ...] = ()   # for "diff": the files regenerated and compared
     report_only: bool = False       # cmd IS the check form; the write form is a human's call
-    conditional: bool = False       # step 7: runs only when FIGURE_HEADERS moved
-    check_cwd: str | None = None    # where the check form runs, when not `cwd` (step 7's is a repo-root script)
+    conditional: bool = False       # setup_regen: runs only when FIGURE_HEADERS moved
+    check_cwd: str | None = None    # where the check form runs, when not `cwd`
 
 
 STEPS: tuple[Step, ...] = (
@@ -169,10 +184,23 @@ STEPS: tuple[Step, ...] = (
          ("python3", f"{ENC_REL}/gen_assembled_dims.py"), ".",
          ("python3", f"{ENC_REL}/gen_assembled_dims.py", "--check"), "argv", True,
          "each device's fit-checked assembled union (OpenSCAD) -> assembled_dims.json"),
+    Step("gen_hardware",
+         ("python3", f"{ENC_REL}/gen_hardware.py"), ".",
+         ("python3", f"{ENC_REL}/gen_hardware.py", "--check"), "argv", True,
+         "each committed preset's HARDWARE echo + lid-rib headroom (OpenSCAD) -> hardware.json, "
+         "fasteners joined against the BOM CSVs"),
+    # Before gen_figures, which reads the catalog this writes (a figure's
+    # catalog evidence): the order follows what each generator READS.
+    Step("gen_enclosures",
+         ("python3", "canary-local/tools/gen_enclosures.py"), ".",
+         ("python3", "canary-local/tools/gen_enclosures.py"), "diff", False,
+         "README variant tables + every .scad's knobs + manifests' cad.enclosure_sets -> "
+         "enclosures / catalog / build / workshop .json",
+         outputs=ENCLOSURE_OUTPUTS),
     Step("gen_figures",
          ("node", "canary-local/tools/figures/gen_figures.mjs"), ".",
          ("node", "canary-local/tools/figures/gen_figures.mjs", "--check"), "argv", False,
-         "committed STL bboxes + assembled_dims.json + manifests -> figures.json, SVGs, "
+         "committed STL bboxes + assembled_dims.json + catalog.json + manifests -> figures.json, SVGs, "
          "fleet_figures*.h, FleetFigures.swift, FleetSolids.swift, figures.picker.json"),
     Step("gen_device_glbs",
          ("node", "canary-local/tools/figures/gen_device_glbs.mjs"), ".",
@@ -193,11 +221,6 @@ STEPS: tuple[Step, ...] = (
          ("python3", f"{ENC_REL}/gen_builder_manifest.py", "--check"), "argv", False,
          "the curated .scad + deps + colorways -> builder_manifest.json (sha256 pins) "
          "[--site DIR: the website's scad/ carries, cad-dims.json, builder-data.js]"),
-    Step("gen_enclosures",
-         ("python3", "canary-local/tools/gen_enclosures.py"), ".",
-         ("python3", "canary-local/tools/gen_enclosures.py"), "diff", False,
-         "README variant tables + every .scad's knobs -> enclosures / catalog / build / workshop .json",
-         outputs=ENCLOSURE_OUTPUTS),
     Step("gen_stamp",
          ("python3", f"{ENC_REL}/gen_stamp.py", "--check"), ".",
          ("python3", f"{ENC_REL}/gen_stamp.py", "--check"), "argv", False,
@@ -333,7 +356,8 @@ def stop_message(moved: list[str]) -> str:
         "    1. commit what moved so far and push YOUR branch (never main — the rebuild pushes to the",
         "       branch it is dispatched on);",
         f"    2. {DIST_BUTTON}, dispatched on that branch, then pull its commit;",
-        f"    3. python3 scripts/regen_cad.py --from {RESUME_AFTER_DIST}   # steps 8–12",
+        f"    3. python3 scripts/regen_cad.py --from {RESUME_AFTER_DIST}   "
+        f"# steps {STEP_NAMES.index(RESUME_AFTER_DIST) + 1}–{len(STEPS)}",
         "",
         "  CLAUDE.md's four dist-retrigger symptoms apply to that push (\"Generated files\"):",
         "    - the bot's push does not retrigger CI (default GITHUB_TOKEN) — re-running the failed job",
@@ -356,7 +380,7 @@ def _hdr(i: int, step: Step, argv: tuple[str, ...], mode: str, cwd: str | None =
 
 
 def run_check(step: Step, i: int, repo: Path, site: Path | None = None) -> tuple[bool, str]:
-    """(ok, detail) for one step's check form. `site` reaches step 9 only, as
+    """(ok, detail) for one step's check form. `site` reaches gen_builder_manifest only, as
     `gen_builder_manifest.py --site DIR --check` — the carries are regenerated
     in memory and a stale one is named; nothing is written in either tree."""
     if step.check_kind == "none":

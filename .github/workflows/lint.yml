@@ -101,6 +101,11 @@ jobs:
         #    schema check, so cyclonedx-python-lib is too, at the same exact
         #    pin as that step. The tests import it unconditionally: a
         #    skipTest on ImportError reads as covered while catching nothing.
+        #  • canary-sentinel's copy of canary-sense's net/witness stack
+        #    (test_check_sentinel_net_sync.py) — runs the real sync script on a
+        #    scratch copy of both trees: a TLS-gate bypass, a MAC client ID or
+        #    a changed NVS key name in the copy must fail it, and a sense-only
+        #    radar dial must not. Its first version let all three mutations through.
         run: |
           python3 -m pip install --quiet pyyaml 'cyclonedx-python-lib[json-validation]==11.12.0'
           python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
@@ -167,6 +172,18 @@ jobs:
         # research docs) and allowlists only the files that state the rule or
         # test for it.
         run: python3 scripts/lint_fleet_word.py
+      - name: No benchmark number committed (AGENTS.md rule 4)
+        # tests/bench_harness.rs prints Markdown tables, and docs/BENCHMARKS.md
+        # says no number a run prints is ever committed. The check's input is
+        # Markdown anywhere in the tree, so it lives here, unfiltered: as a
+        # Rust test it would run only when rust.yml's path filter saw a Rust
+        # change, so a docs-only PR that pasted a table would merge green and
+        # the red would land on the next unrelated Rust PR or on the release
+        # tag's `cargo test`.
+        # It reads the row names from the harness's ROW_NAMES and refuses
+        # (exit 2) a source it cannot parse rather than pass with nothing to
+        # look for; scripts/tests/test_lint_bench_rows.py pins the shapes.
+        run: python3 scripts/lint_bench_rows.py
       - name: CloudKit container — named, never defaulted, fully deployed
         # CKContainer.default() reads an entitlement and raises an ObjC
         # CKException when there isn't one. Swift can't catch that, so an
@@ -320,3 +337,8 @@ jobs:
           python3 docs/hardware/enclosure/gen_qr.py --check
       - name: verify_pipeline.sh false-pass regression tests
         run: bash integrations/ha_frigate_mqtt/tests/test_verify_pipeline.sh
+      - name: Frigate stack docs write .env before the first Compose command
+        # Compose interpolates every service on load and two of them require
+        # SECURACV_MQTT_PASSWORD, so README/RUNBOOK step one must write .env
+        # before any `docker compose` command, or it fails as written.
+        run: bash integrations/ha_frigate_mqtt/tests/test_bringup_order.sh

@@ -12,6 +12,9 @@
 // The birth-day decision itself — board-agnostic, host-tested
 // (firmware/tests_host/test_birth_day.cpp). This file owns only the NVS.
 #include "identity/birth_day.h"
+// The chain-state blob codec + boot-time source decision — pure, host-tested
+// (firmware/tests_host/test_chain_state.cpp). Same split: this file owns NVS.
+#include "witness/chain_state.h"
 
 #if FEATURE_DIAGNOSTICS
 #include "securacv_diagnostics.h"
@@ -143,6 +146,18 @@ void format_uptime(char* out, size_t cap, uint32_t secs) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// CHAIN-STATE PERSISTENCE (one atomic NVS blob)
+// ════════════════════════════════════════════════════════════════════════════
+
+// {seq, chain_head} as the single 39-byte entry chain_state.h defines. The
+// only writer of NVS_KEY_CHAINST; nothing writes NVS_KEY_SEQ / NVS_KEY_CHAIN.
+static bool persist_chain_blob() {
+  uint8_t blob[chain_state::BLOB_LEN];
+  if (!chain_state::encode(g_device.seq, g_device.chain_head, blob)) return false;
+  return nvs_store_bytes(NVS_KEY_CHAINST, blob, sizeof(blob));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // DEVICE PROVISIONING
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -161,7 +176,12 @@ bool witness_provision_device() {
       return false;
     }
     if (!nvs_store_key(g_device.privkey)) {
-      Serial.println("[!!] Failed to store keypair");
+      // nvs_store_key already printed WHY: either NVS failed, or this image
+      // requires the key encrypted at rest and its NVS is not (key_at_rest
+      // rule 2 — flash encryption alone does not count) — in which case
+      // halting here, before any identity exists, is the point.
+      Serial.println("[!!] Failed to store keypair — provisioning cannot continue "
+                     "(see the identity key line above)");
       return false;
     }
     Serial.println("[OK] New keypair generated and stored");
@@ -170,6 +190,16 @@ bool witness_provision_device() {
     g_device.key_is_new = true;
     g_device.key_born_ms = millis();
   }
+
+  // Where that key sleeps, said once per boot. Tier 0 (plaintext NVS) is the
+  // accepted default — docs/design/hardware_root_of_trust.md §8 — so this is a
+  // statement of posture, not an error; the same label is carried live as
+  // `key_at_rest` in /api/status, the health export and the self-manifest.
+  // The level and the words are the host-tested policy's (key_at_rest.h
+  // boot_level/boot_text), not re-derived here: on a fused board the key's
+  // NVS is still plaintext (flash encryption does not cover NVS) and the line
+  // says so.
+  crypto_print_key_at_rest();
 
   // What we already know about when this key was born. Loaded before anything
   // can offer a clock, so the "already recorded" rule is in force from the
@@ -187,19 +217,55 @@ bool witness_provision_device() {
   generate_ap_ssid(g_device.ap_ssid, sizeof(g_device.ap_ssid),
                    g_device.pubkey_fp);
 
-  // Load chain state
-  g_device.seq = nvs_load_u32(NVS_KEY_SEQ, 0);
+  // Load chain state: the atomic {seq, head} blob first, then the legacy
+  // seq/chain pair (read-only — never rewritten or deleted, so an older image
+  // still boots after a downgrade), then genesis — except that a legacy seq
+  // AHEAD of the blob's means an older image ran since our last blob write,
+  // and resuming from the blob would re-sign its seqs on a second branch. The
+  // order is decided by chain_state::choose() and pinned on the host; the
+  // SD-wins reconciliation (witness_recover_chain_from_sd) is unchanged and
+  // still runs after this.
+  {
+    uint8_t blob[chain_state::BLOB_LEN];
+    uint32_t blob_seq = 0;
+    uint8_t blob_head[chain_state::HEAD_LEN];
+    const bool blob_ok =
+        nvs_load_bytes(NVS_KEY_CHAINST, blob, sizeof(blob)) &&
+        chain_state::decode(blob, sizeof(blob), &blob_seq, blob_head);
+    uint8_t legacy_head[chain_state::HEAD_LEN];
+    const bool legacy_present = nvs_load_bytes(NVS_KEY_CHAIN, legacy_head, 32);
+    const uint32_t legacy_seq = legacy_present ? nvs_load_u32(NVS_KEY_SEQ, 0) : 0;
+
+    switch (chain_state::choose(blob_ok, legacy_present, blob_seq, legacy_seq)) {
+      case chain_state::Source::Blob:
+        g_device.seq = blob_seq;
+        memcpy(g_device.chain_head, blob_head, 32);
+        break;
+      case chain_state::Source::Legacy:
+        if (blob_ok) {
+          // Only reachable when legacy_seq > blob_seq: say so once, since it
+          // means the chain already forked under an older image.
+          Serial.printf("[WARN] Chain: legacy seq %u is ahead of chain_st seq %u - an older "
+                        "image ran since the last blob write; resuming from its pair\n",
+                        (unsigned)legacy_seq, (unsigned)blob_seq);
+        }
+        g_device.seq = legacy_seq;
+        memcpy(g_device.chain_head, legacy_head, 32);
+        break;
+      case chain_state::Source::Genesis:
+        // Initialize genesis chain hash. The seq stays whatever the legacy
+        // entry says (0 on a fresh device), exactly as before the blob.
+        g_device.seq = nvs_load_u32(NVS_KEY_SEQ, 0);
+        sha256_domain("securacv:genesis:v1", (const uint8_t*)g_device.device_id,
+                      strlen(g_device.device_id), g_device.chain_head);
+        persist_chain_blob();
+        break;
+    }
+  }
   g_device.seq_persisted = g_device.seq;
   g_device.boot_count = nvs_load_u32(NVS_KEY_BOOTS, 0) + 1;
   nvs_store_u32(NVS_KEY_BOOTS, g_device.boot_count);
   g_device.log_seq = nvs_load_u32(NVS_KEY_LOGSEQ, 0);
-
-  if (!nvs_load_bytes(NVS_KEY_CHAIN, g_device.chain_head, 32)) {
-    // Initialize genesis chain hash
-    sha256_domain("securacv:genesis:v1", (const uint8_t*)g_device.device_id,
-                  strlen(g_device.device_id), g_device.chain_head);
-    nvs_store_bytes(NVS_KEY_CHAIN, g_device.chain_head, 32);
-  }
 
   // Provision the transport-layer bearer credential. Owned entirely by
   // securacv_auth — we just trigger derivation here so it happens during
@@ -267,8 +333,11 @@ bool witness_note_wall_clock(uint32_t unix_s) {
 }
 
 void witness_persist_chain_state() {
-  nvs_store_u32(NVS_KEY_SEQ, g_device.seq);
-  nvs_store_bytes(NVS_KEY_CHAIN, g_device.chain_head, 32);
+  // One NVS entry for {seq, chain_head} — committed atomically by NVS, so a
+  // power cut can no longer leave a seq that belongs to a different head (the
+  // two-write window the legacy seq/chain pair had; roadmap item 18). The
+  // legacy keys are deliberately never written again.
+  persist_chain_blob();
   g_device.seq_persisted = g_device.seq;
   g_health.chain_persists++;
 
@@ -299,6 +368,43 @@ static bool sd_append_fail(const char* why) {
   return false;
 }
 
+// Fork guard for mounts that land AFTER boot recovery already ran (a card
+// inserted late, or a boot whose mount outlived its wait budget).
+// witness_recover_from_sd() reconciles the SD tail with the NVS head only
+// "BEFORE the first record of the boot is created" — a mount adopted after
+// that point skipped it, and if the card's tail seq is at or past the seq
+// we are about to append, appending would fork the append-only history
+// (two different records claiming one seq). Checked once per mount
+// generation: reads the tail line and compares seqs. On a fork the card is
+// left untouched (records keep chaining in RAM/NVS; the verifier reports
+// the gap honestly) until a reboot reconciles — and a foreign card whose
+// history is ahead of ours is refused for the same reason, instead of
+// having our chain interleaved into someone else's file.
+static bool sd_tail_forks_chain(uint32_t next_seq) {
+  File f = SD.open("/WITNESS/records.jsonl", FILE_READ);
+  if (!f) return false;  // no history — nothing to fork
+  const size_t size = f.size();
+  if (size == 0) {
+    f.close();
+    return false;
+  }
+  char tail[witness_store::TAIL_READ + 1];
+  const size_t want =
+      (size < witness_store::TAIL_READ) ? size : witness_store::TAIL_READ;
+  if (!f.seek(size - want)) {
+    f.close();
+    return false;
+  }
+  const size_t got = f.read((uint8_t*)tail, want);
+  f.close();
+  if (got == 0) return false;
+  tail[got] = '\0';
+
+  witness_store::TailRecord rec;
+  if (!witness_store::tail_parse(tail, &rec)) return false;  // torn tail — tolerated
+  return rec.seq >= next_seq;
+}
+
 // Append one signed record to the durable log. Loop-task only (every
 // record producer — setup, loop, the *_process() event callbacks, and
 // power_graceful_shutdown — runs on the Arduino loopTask; the HTTP task
@@ -308,21 +414,48 @@ static bool sd_append_fail(const char* why) {
 static bool sd_append_record(const WitnessRecord* rec) {
   if (!storage_is_mounted()) return sd_append_fail("no card");
 
+  // Re-run the fork guard once per successful (re)mount: boot recovery only
+  // covers a card that was mounted before the first record of the boot.
+  static uint32_t s_fork_checked_gen = 0;
+  static bool s_fork_blocked = false;
+  const uint32_t gen = storage_mount_generation();
+  if (gen != s_fork_checked_gen) {
+    s_fork_checked_gen = gen;
+    s_fork_blocked = sd_tail_forks_chain(rec->seq);
+  }
+  if (s_fork_blocked)
+    return sd_append_fail("SD history ahead of this chain - reboot to reconcile");
+
   char line[witness_store::RECORD_LINE_MAX];
   const size_t n = witness_store::line_build(
       line, sizeof(line), rec->seq, rec->time_bucket, (uint8_t)rec->type,
       rec->payload_hash, rec->prev_hash, rec->chain_hash, rec->signature);
   if (n == 0) return sd_append_fail("line build failed");
 
-  if (!SD.exists("/WITNESS") && !SD.mkdir("/WITNESS"))
+  // Card-op failures below also feed the storage manager's consecutive-error
+  // counter: past its policy threshold the card is marked lost and the loop's
+  // storage_periodic_check() tears down and remounts it (F2 — an SD glitch
+  // used to disable persistence until reboot). The "no card" and
+  // "line build failed" returns above deliberately do not count: neither is
+  // evidence about the card.
+  if (!SD.exists("/WITNESS") && !SD.mkdir("/WITNESS")) {
+    storage_note_write_failure();
     return sd_append_fail("mkdir /WITNESS failed");
+  }
 
   File f = SD.open("/WITNESS/records.jsonl", FILE_APPEND);
-  if (!f) return sd_append_fail("open failed");
+  if (!f) {
+    storage_note_write_failure();
+    return sd_append_fail("open failed");
+  }
   const size_t wrote = f.write((const uint8_t*)line, n);
   f.close();
-  if (wrote != n) return sd_append_fail("short write (card full?)");
+  if (wrote != n) {
+    storage_note_write_failure();
+    return sd_append_fail("short write (card full?)");
+  }
 
+  storage_note_write_success();
   g_health.sd_writes++;
 #if FEATURE_DIAGNOSTICS
   diag_record_sd_write_bytes(n, true);

@@ -54,9 +54,11 @@ use <canary_board_lib.scad>  // board registry — the XIAO numbers the knobs ci
 part = "all";        // ["body","lid","boot","gasket","bezel","all"]
 
 /* [Board] — XIAO ESP32-S3 Sense, camera stack up, USB toward +X wall */
-board_l = 21.0;  board_w = 17.5;  board_h = 1.2;   // the xiao registry record — canary_board_lib;
-                     // the board rides in CLIPS, so clip_clear absorbs the measured
-                     // 17.8 width (brd_xiao_w_measured) and the spec 17.5 stays
+board_l = 21.0;      // board length — the xiao registry record, brd_l("xiao"), canary_board_lib
+board_w = 17.5;      // board width — the xiao registry record, brd_w("xiao"); the board rides in
+                     // CLIPS, so clip_clear absorbs the measured 17.8 width
+                     // (brd_xiao_w_measured) and the spec 17.5 stays
+board_h = 1.2;       // PCB thickness — the xiao registry record, brd_t("xiao")
 stack_h = 6.5;       // Sense expansion + camera height above the base PCB
 cam_dx = 0.0;        // lens center offset from board center
 cam_dy = 0.0;
@@ -67,13 +69,15 @@ foam_t = 2.0;        // closed-cell foam bed under + over the pack
 batt_pad = 1.0;
 
 /* [Print tolerances] — tune with canary_fit_coupon.scad */
-tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;   // catalog defaults — core_tol_* (canary_core_lib)
+tol_slide = 0.20;   // catalog default — core_tol_slide() (canary_core_lib)
+tol_press = 0.10;   // catalog default — core_tol_press() (canary_core_lib)
+tol_hole  = 0.30;   // catalog default — core_tol_hole() (canary_core_lib)
 
 /* [Shell] — 4 mm everywhere is the field-grade floor, not a suggestion.
    floor_t is 4.5 so the keyhole pockets reach the ecosystem-standard 3.5 mm
    depth (the shared T-stud is 3.4 mm tall) while keeping a 1.0 mm ceiling. */
 wall_t  = 4.0;   // deviates: drop-case wall — impact duty is this case's whole intent
-floor_t = 4.5;
+floor_t = 4.5;   // floor thickness — 4.5 so the keyhole pockets reach the standard 3.5 mm depth with a 1.0 mm ceiling
 lid_t   = 4.0;
 r_in    = 3.0;       // cavity corner radius
 head_clear = 1.8;    // clearance above the camera stack
@@ -88,10 +92,12 @@ g_c     = 2.0;       // groove centerline offset outboard of the cavity edge
 lob_d    = 9.0;
 lob_off  = 8.0;      // lobe center offset outboard of the cavity edge (keeps the lanyard bore >=1.5 mm off the pressure wall)
 end_lob_y = 8.0;     // Y of the two lobes on each short end
-insert_d = 4.0;  insert_h = 6.0;   // M3 heat-set HOLE (the short-series insert's knurl is Ø4.6:
-                                   // bore it 4.0 so the brass bites — at 4.6 it pulled out under preload)
+insert_d = 4.0;     // M3 heat-set HOLE Ø (the short-series insert's knurl is Ø4.6:
+                    // bore it 4.0 so the brass bites — at 4.6 it pulled out under preload)
+insert_h = 6.0;     // M3 heat-set hole depth
 screw_c_d = 3.4;                    // lid clearance hole
-cb_d = 6.4;  cb_h = 2.0;            // pan-head counterbore
+cb_d = 6.4;                         // pan-head counterbore Ø
+cb_h = 2.0;                         // pan-head counterbore depth
 
 /* [Lens window] — Ø12x2 polycarbonate disc, bonded from outside */
 disc_d = 12.0;  disc_t = 2.0;
@@ -99,18 +105,22 @@ ap_d   = 8.0;        // aperture through the web behind the disc
 
 /* [Vent] — Ø3 hole + adhesive ePTFE patch on the INSIDE face */
 vent_d = 3.0;
-vent_x = 30.0;   vent_y = 0.0;    // over the plug room beyond the board's USB edge: at (-15, 6) the
-                                  // membrane sat under the battery's foam-over pad and got pressed
-                                  // on every close; the lens keep-out and the wall are asserted
+vent_x = 30.0;   // vent position X — over the plug room beyond the board's USB edge: at (-15, 6) the
+                 // membrane sat under the battery's foam-over pad and got pressed
+                 // on every close; the lens keep-out and the wall are asserted
+vent_y = 0.0;    // vent position Y (see vent_x)
 
-/* [Keyhole mounts] — blind, seal-safe (never reach the cavity) */
+/* [Stud/keyhole interface] — blind keyhole pockets, seal-safe (never reach the cavity) */
 kh_x = 18.0;         // +/- X of the two keyholes
-kh_head_d = 8.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;   // deviates: head Ø8.0 is a STATED deviation from
+kh_head_d = 8.0;     // deviates: head Ø8.0 is a STATED deviation from
                      // mount_kh_head_d() = 7.0: a field case gets hung on found hardware, and Ø8
                      // passes a #8 pan head too, not just the T-stud. Shank/slot are the
                      // canary_mount_lib standard.
-kh_head_h = 3.5;  kh_face = 1.0;    // catalog standard — mount_kh_head_h()/mount_kh_face();
+kh_shank_d = 4.2;    // shank slot width — the canary_mount_lib standard, mount_kh_shank_d()
+kh_slot_l = 8.0;     // slot travel — the canary_mount_lib standard, mount_kh_slot_l()
+kh_head_h = 3.5;     // total pocket depth — catalog standard, mount_kh_head_h();
                      // fits the 3.4 mm T-stud (mount_stud_h) with 0.1 ceiling clearance
+kh_face = 1.0;       // face web the screw head grips behind — catalog standard, mount_kh_face()
 
 /* [Lanyard] — paracord bore through the two -X lobes */
 lan_d = 4.5;  lan_z = 5.0;

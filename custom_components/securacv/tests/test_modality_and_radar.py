@@ -15,8 +15,12 @@ and their pure helpers can be exercised without a real HA core.
 
 from __future__ import annotations
 
+import base64
+import json
 import sys
 import types
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from . import conftest  # noqa: F401  (installs the base HA stubs)
 
@@ -66,6 +70,8 @@ from ..const import (  # noqa: E402
     ATTESTATION_ADAPTER,
     ATTESTATION_DEVICE,
     ATTESTATION_HA_BRIDGED,
+    DEVICE_TYPE_CANARY_SENTINEL,
+    MODALITY_OTHER,
     MODALITY_RADAR,
     MODALITY_UNKNOWN,
     modality_for,
@@ -74,6 +80,9 @@ from ..const import (  # noqa: E402
     normalize_modality,
 )
 from .. import sensor as sensor_mod  # noqa: E402
+from ..device_trust import TrustStore, fingerprint_from_pubkey_hex  # noqa: E402
+from ..signature import build_sentinel_event_canonical  # noqa: E402
+from .conftest import run  # noqa: E402
 
 
 # ─── modality contract (const.py) ─────────────────────────────────────
@@ -106,6 +115,148 @@ def test_modality_for_priority_and_fallback():
     assert modality_for({}) == MODALITY_UNKNOWN
     assert modality_for({}, "weather-station") == MODALITY_UNKNOWN
     assert modality_for(None) == MODALITY_UNKNOWN
+
+
+def test_canary_sentinel_is_other_never_one_medium():
+    """The fusion guardian senses through several independent media, so it
+    resolves to the dictionary's "other" — not radar because it has one, not
+    unknown because it is unmapped."""
+    assert DEVICE_TYPE_CANARY_SENTINEL == "canary-sentinel"
+    assert modality_for({}, DEVICE_TYPE_CANARY_SENTINEL) == MODALITY_OTHER
+    assert modality_for({"device_type": "canary_sentinel"}) == MODALITY_OTHER
+    assert modality_metadata(MODALITY_OTHER) == {
+        "label": "Other sensor", "icon": "mdi:access-point",
+    }
+    # The sentinel's signed `modality_bits` is not the timeline's `modality`
+    # field: a payload carrying only the bitmask still resolves by device.
+    assert modality_for({"modality_bits": 11}, "canary-sentinel") == MODALITY_OTHER
+
+
+# ─── events-topic dialect dispatch (sensor.py) ────────────────────────
+
+def test_event_dialects_route_to_their_own_verifier():
+    pick = sensor_mod._event_verifier_for
+    # CSI canary: event_id is its counter and wins outright.
+    assert pick({"event_id": 7, "state": "active"}) is sensor_mod.verify_event
+    assert pick({"event_id": 7, "level": "x"}) is sensor_mod.verify_event
+    # canary-sense / canary-vision radar/optical shape.
+    assert pick({"event": "presence_detected", "occupants": "1"}) is (
+        sensor_mod.verify_sense_event)
+    # canary-sentinel fused claim (spells its bucket `occupancy`).
+    assert pick({"event": "level_changed", "level": "confirmed",
+                 "occupancy": "1"}) is sensor_mod.verify_sentinel_event
+    # Unknown shapes fall back to the CSI verifier ("unsigned", never a crash).
+    assert pick({}) is sensor_mod.verify_event
+
+
+def test_sentinel_counter_is_replay_gated_on_seq():
+    assert sensor_mod._REPLAY_COUNTER_FIELD["verify_sentinel_event"] == "seq"
+
+
+def test_last_event_handler_takes_a_sentinel_event():
+    cls = sensor_mod.SecuraCVCanaryLastEventSensor
+    inst = cls.__new__(cls)
+    inst._prefix = "securacv"
+    inst._device_id = "sentinel01"
+    inst._entry = types.SimpleNamespace(entry_id="e1")
+    inst.hass = sensor_mod.HomeAssistant()
+    inst.hass.data = {sensor_mod.DOMAIN: {}}
+    inst.async_write_ha_state = lambda: None
+    msg = types.SimpleNamespace(payload=(
+        '{"device_id":"sentinel01","device_type":"canary-sentinel",'
+        '"event":"level_changed","seq":7,"bucket_uptime_s":1200,'
+        '"level":"confirmed","confidence":82,"anomaly":0,"occupancy":"1",'
+        '"range":"near","modality_bits":11,"signed":false}'
+    ))
+    inst._handle_message(msg)
+    assert inst._attr_native_value == "level_changed"
+    attrs = inst._attr_extra_state_attributes
+    assert attrs["modality"] == MODALITY_OTHER
+    assert attrs["confidence"] == 82
+
+
+# A SIGNED sentinel event through the real handler: pinned key, real
+# TrustStore, the real verifier dispatch and the seq replay gate. The test
+# above drives only an unsigned event with no trust store, so no verifier ran
+# and deleting the sentinel dispatch branch left it green.
+
+_SENTINEL_PRIV = Ed25519PrivateKey.from_private_bytes(b"\x42" * 32)
+_SENTINEL_PUB_HEX = _SENTINEL_PRIV.public_key().public_bytes_raw().hex()
+
+
+def _signed_sentinel_msg(seq, event="level_changed", *, flip_sig=False, **after_signing):
+    """One events-topic publish signed exactly as the firmware signs it
+    (build_sentinel_event_canonical under the device key); `after_signing`
+    edits fields once the signature is fixed — a tamper."""
+    fields = {
+        "event": event, "seq": seq, "bucket_uptime_s": 1200, "level": "confirmed",
+        "confidence": 82, "anomaly": 0, "occupancy": "1", "range": "near",
+        "modality_bits": 11,
+    }
+    canonical = build_sentinel_event_canonical(
+        "sentinel01", fields["seq"], fields["event"], fields["level"],
+        fields["confidence"], fields["anomaly"], fields["occupancy"],
+        fields["range"], fields["modality_bits"], fields["bucket_uptime_s"],
+    )
+    sig = base64.urlsafe_b64encode(_SENTINEL_PRIV.sign(canonical)).rstrip(b"=").decode()
+    if flip_sig:
+        sig = ("B" if sig[10] == "A" else "A").join((sig[:10], sig[11:]))
+    payload = {
+        "v": 1, "device_id": "sentinel01", "device_type": "canary-sentinel",
+        **fields, "signed": True, "alg": "ed25519",
+        "fp": fingerprint_from_pubkey_hex(_SENTINEL_PUB_HEX), "sig": sig,
+    }
+    payload.update(after_signing)
+    return types.SimpleNamespace(payload=json.dumps(payload))
+
+
+def _pinned_last_event_sensor():
+    hass = sensor_mod.HomeAssistant()
+    store = TrustStore(hass, entry_id="e1")
+    run(store.async_load())
+    run(store.async_pin("sentinel01", _SENTINEL_PUB_HEX))
+    hass.data = {sensor_mod.DOMAIN: {"e1": {
+        "trust_store": store, "verify": {}, "replay": {}, "mismatch_notified": set(),
+    }}}
+    cls = sensor_mod.SecuraCVCanaryLastEventSensor
+    inst = cls.__new__(cls)
+    inst._prefix = "securacv"
+    inst._device_id = "sentinel01"
+    inst._entry = types.SimpleNamespace(entry_id="e1")
+    inst.hass = hass
+    inst.async_write_ha_state = lambda: None
+    return inst
+
+
+def test_last_event_handler_verifies_a_signed_sentinel_event_end_to_end():
+    inst = _pinned_last_event_sensor()
+
+    # A valid event verifies under the pinned key.
+    inst._handle_message(_signed_sentinel_msg(10))
+    attrs = inst._attr_extra_state_attributes
+    assert inst._attr_native_value == "level_changed"
+    assert (attrs["verified"], attrs["trust_reason"]) == (True, "ok")
+    assert attrs["confidence"] == 82
+    assert attrs["modality"] == MODALITY_OTHER
+
+    # One character of the signature flipped: mismatch, never verified.
+    inst._handle_message(_signed_sentinel_msg(11, flip_sig=True))
+    attrs = inst._attr_extra_state_attributes
+    assert (attrs["verified"], attrs["trust_reason"]) == (False, "mismatch")
+
+    # A field edited after signing (a Confirmed downgraded to Clear): mismatch.
+    inst._handle_message(_signed_sentinel_msg(12, level="clear"))
+    attrs = inst._attr_extra_state_attributes
+    assert (attrs["verified"], attrs["trust_reason"]) == (False, "mismatch")
+
+    # A newer valid event, then an OLDER validly signed one: the seq gate
+    # calls it a replay and the entity keeps the newer event.
+    inst._handle_message(_signed_sentinel_msg(13))
+    assert inst._attr_extra_state_attributes["trust_reason"] == "ok"
+    inst._handle_message(_signed_sentinel_msg(9, event="boot"))
+    attrs = inst._attr_extra_state_attributes
+    assert (attrs["verified"], attrs["trust_reason"]) == (False, "replay")
+    assert inst._attr_native_value == "level_changed", "an older signed event must not replace the newer one"
 
 
 def test_modality_metadata_shape():

@@ -56,6 +56,12 @@ Optional:
   log.
 - `WITNESS_API_ADDR`: Event API bind address (default in container: `0.0.0.0:8799`)
 - `WITNESS_API_TOKEN_PATH`: file path for the Event API capability token
+- `WITNESS_API_VIEWER_TOKEN_PATH`: the viewer-token file — long-lived
+  bearer tokens good for `GET /api/sealed-log` only, for a Witness Wall
+  (default: `viewer_tokens.json` beside `WITNESS_API_TOKEN_PATH`; no token
+  path, no viewer tokens). Minted with `witness_api mint-viewer-token`,
+  which this image does not ship yet — see
+  [the API reference](homeassistant_setup.md#viewer-tokens-witness-wall)
 - `BREAK_GLASS_SEAL_TOKEN`: path to a break-glass seal token JSON (enables vault sealing)
 
 ### Health

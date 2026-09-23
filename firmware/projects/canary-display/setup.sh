@@ -71,6 +71,7 @@ flatten_includes() {
   sed -i -E 's|#include "power/|#include "|g' "$f"
   sed -i -E 's|#include "story/|#include "|g' "$f"
   sed -i -E 's|#include "fleet_link/|#include "|g' "$f"
+  sed -i -E 's|#include "time/|#include "|g' "$f"
   # <config.h> is the FLAVOR config (angle brackets skip this dir on purpose);
   # in the flat sketch it lives as flavor_config.h to avoid colliding with the
   # composition header canary/config.h (-> config.h).
@@ -137,6 +138,14 @@ generate_shared() {
     # with (shared with the canary tree's securacv_network; host-tested once
     # in firmware/tests_host).
     "${FIRMWARE_ROOT}/common/network/host_guard.h"
+    # The fleet's IANA -> POSIX zone table (tz_auto.cpp's learner reads it;
+    # the canary and canary-wap seed their household zone from the same one).
+    "${FIRMWARE_ROOT}/common/time/tz_rule.h"
+    # The onboarding pure helpers (QR/JSON escaping, unbiased password
+    # alphabet). Canonical here since the display's include flipped to the
+    # common path; the old byte-identical display copy (and the
+    # check_provision_core_sync.sh gate that pinned it) are gone.
+    "${FIRMWARE_ROOT}/common/network/provision_core.h"
     # The broker socket decision + its WiFiClientSecure half (mqtt_mgr.cpp
     # includes the transport, which includes the logic bare, same directory).
     "${FIRMWARE_ROOT}/common/network/mqtt_transport_logic.h"

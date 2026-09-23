@@ -35,8 +35,14 @@ and reliable **background notifications**. These are the exact capabilities the
   the app deliberately doesn't duplicate that surface. A self-describing
   config schema the app could render is a roadmap idea, not a shipped one.
 - **Frozen OS primitives only** — Network.framework, CoreBluetooth, Keychain
-  (generic-password items today; Secure Enclave-backed keys are a roadmap item,
-  not a shipped one), CloudKit, UserNotifications, ActivityKit, CryptoKit. The
+  (generic-password items, `ThisDeviceOnly`), the Secure Enclave, CloudKit,
+  UserNotifications, ActivityKit, CryptoKit. Precisely what the Enclave does
+  here: it holds only P-256 keys, so no SecuraCV secret (X25519, Ed25519) can
+  live in it — it WRAPS the one whose exposure is media, the sealed-snapshot
+  key, behind Face ID / Touch ID / the passcode (`Security/EnclaveCustody.swift`;
+  a software wrapper of the same format where there is no Enclave or no
+  passcode, labeled as such in the Keys tab). Per-device tokens stay plain
+  generic-password items by design: they are read on every 10–20 s poll. The
   load-bearing frameworks are a decade stable; the churn is at the fashionable
   edges we avoid.
 - **Nightly self-heal** (`.github/workflows/ios-selfheal.yml`) rebuilds + tests
@@ -55,12 +61,15 @@ ios/
     SecuraCV/App/          entry, FleetStore (the one observable)
     SecuraCV/Model/        Witness, witness-chain, FleetRollup (mirror fleet_model.h + api.md)
     SecuraCV/Transport/    Discovery (mDNS), DeviceAPI (HTTP), BLEConsole (CoreBluetooth)
-    SecuraCV/Security/     Keychain, DeviceStore, ChainVerifier (Ed25519 on-device)
+    SecuraCV/Security/     Keychain (+ VaultKeyStore), DeviceStore, ChainVerifier (Ed25519
+                           on-device), SnapshotVault (.svlt unseal — CryptoKit twin of
+                           tools/unseal_snapshot.py, pinned by tools/fixtures/vault/),
+                           EnclaveCustody (the snapshot key, wrapped through the Secure Enclave)
     SecuraCV/Cloud/        CloudSync (CloudKit private DB — the user's own iCloud)
     SecuraCV/Alerts/       AlertCenter (interruption levels), Heartbeat (provably-alive)
     SecuraCV/Native/       LiveActivity, WatchLink (WCSession → wrist), HomeKitBridge,
                            MediaRoute, FleetIntents (Siri / Shortcuts / Action button)
-    SecuraCV/Views/        Today / Fleet / Alerts / Keys + Pair + DeviceDetail
+    SecuraCV/Views/        Today / Fleet / Alerts / Keys (+ Unseal) + Pair + DeviceDetail
     SecuraCVWidgets/       Dynamic Island / Live Activity UI
     SecuraCVNotificationService/  NSE: shape the content-free wake into a shown alert
     SecuraCVWatch/         SecuraCV on your wrist: WristStore + 3 screens (glance/heartbeat/about)
@@ -85,7 +94,10 @@ Four rules keep "beautiful" from decaying into "busy":
   `scripts/lint_dictionary_sync.py` fails CI on drift), speaks the device
   dialect, and renders *unknown* event types as readable words with a calm
   default — a new sensor lights up here without an app update, never as a
-  blank row (the anti-rot bet, applied to copy).
+  blank row (the anti-rot bet, applied to copy). It, `Shared/AlertRecord.swift`
+  and `Shared/TimelineScrub.swift` carry the `SecuraCV-Parity` marker: the
+  tvOS Witness Wall compiles them and draws the same day shape the Alerts
+  ribbon does, from the hub's sealed log once its key is pinned.
 - **The hive.** At a handful of Canaries the Fleet tab becomes a honeycomb
   (`Views/Components/Honeycomb.swift`, pure host-tested geometry): quiet
   cells wear soft rings, the one that needs you is the only saturated one,
@@ -397,5 +409,8 @@ every Apple target in the repo (`ENABLE_IOS_BUILD`, `APPLE_DEVELOPMENT_TEAM`,
 ## What it will never do (invariant guardrails)
 
 No live video wall, no face/plate/"who was that" search, no precise timestamps
-on an event, no SecuraCV-hosted footage, no solo vault unseal. An app that
-*can't* do these is one nobody has to trust us not to do. See the RFC §7.
+on an event, no SecuraCV-hosted footage, no solo break-glass of the kernel's
+evidence vault (N-of-M). An app that *can't* do these is one nobody has to
+trust us not to do. See the RFC §7. (A *sealed snapshot* is a different thing:
+one frame a Canary encrypted to this phone's key alone, which the Keys tab
+opens on the phone, shows once and discards — `docs/sealed_snapshot_vault.md`.)

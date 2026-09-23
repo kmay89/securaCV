@@ -9,10 +9,12 @@
  * arrive in PR 2b/2c.
  *
  * Boundaries:
- *   • No identifiers persist: MACs in the peer table are runtime-only.
- *     A future NVS persistence layer can re-hydrate the table at boot;
- *     it lives outside this module so the persistence policy stays one
- *     place instead of leaking into the transport.
+ *   • No identifiers persist here: MACs in the peer table are runtime-only.
+ *     mesh_session fills the table on the device (F33 part 1): each trusted
+ *     peer's radio MAC — learned at pairing, persisted by the integration
+ *     layer (mesh_state "peer_macs") and re-bound at boot — plus, while a
+ *     pairing runs, the pairing partner's MAC. The persistence policy stays
+ *     outside this module.
  *   • This module owns the ESP-NOW init/teardown for the peer-data
  *     channel. csi_probe also uses ESP-NOW; both call esp_now_init()
  *     which is idempotent across components.
@@ -86,7 +88,8 @@ struct Peer {
 };
 
 struct Config {
-  /* Reserved. Empty for PR 2a; PR 2b will add crypto-mode flags. */
+  /* Reserved. Crypto sits above the transport (mesh_envelope signs,
+   * mesh_session verifies), so there are no crypto-mode flags here. */
   uint8_t  _reserved;
 
   static Config defaults() {
@@ -116,6 +119,17 @@ using RecvCallback = void (*)(const uint8_t mac[MESH_TRANSPORT_MAC_LEN],
                               const uint8_t* data,
                               size_t          len,
                               int8_t          rssi_dbm);
+
+/* Frame from a MAC that is NOT in the peer table (F33 part 1). Called from
+ * process() on the main loop, like RecvCallback. Return true when the
+ * frame was taken — mesh_session takes pre-membership pairing frames while
+ * a pairing runs, because a joiner is by definition not a peer yet — and
+ * false to drop it, which counts recv_dropped_no_peer as before. With no
+ * callback installed every such frame is dropped and counted. */
+using UnknownSenderCallback = bool (*)(const uint8_t mac[MESH_TRANSPORT_MAC_LEN],
+                                       const uint8_t* data,
+                                       size_t          len,
+                                       int8_t          rssi_dbm);
 
 /* Peer state-change callback (transitions only; no-op when state is
  * unchanged). Useful for the integration layer to mirror peer add/remove
@@ -183,6 +197,7 @@ bool send_raw(const uint8_t mac[MESH_TRANSPORT_MAC_LEN],
  * ────────────────────────────────────────────────────────────────────────── */
 
 void set_recv_callback(RecvCallback cb);
+void set_unknown_sender_callback(UnknownSenderCallback cb);
 void set_peer_state_callback(PeerStateCallback cb);
 
 /* Pump: drains the recv ring (delivering to the recv callback) and ages

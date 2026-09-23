@@ -26,8 +26,17 @@
 #ifndef MQTT_KEEPALIVE_SEC
   #define MQTT_KEEPALIVE_SEC      60
 #endif
+// PubSubClient's one buffer holds a whole outgoing packet: fixed header
+// (5) + topic length (2) + topic + payload. It refuses anything larger,
+// silently. The health payload is the largest periodic publish: ~970 B
+// with realistic values, including the 64-hex public_key Home Assistant
+// pins. With every field at its type's widest it reaches ~1170 B, a
+// 1236 B packet on a topic at its 63-char cap. The old 1024 B buffer did
+// not hold that worst case even before the key. 1280 does, and
+// custom_components/securacv/tests/test_canary_health_trust.py holds
+// every health key to it.
 #ifndef MQTT_BUFFER_SIZE
-  #define MQTT_BUFFER_SIZE        1024
+  #define MQTT_BUFFER_SIZE        1280
 #endif
 #ifndef MQTT_RECONNECT_MIN_MS
   #define MQTT_RECONNECT_MIN_MS   1000
@@ -171,15 +180,42 @@ struct MqttTransportStatus {
 };
 void mqtt_transport_status(MqttTransportStatus* out);
 
+// True once init() ran with a configured, enabled broker — the gate for
+// callers deciding whether to build a payload at all. Unlike
+// mqtt_connected() it stays true through an outage: events and tamper
+// alerts are accepted (buffered) while the link is down.
+bool mqtt_accepting();
+
 // ── Publishing functions ────────────────────────────────────────────────
-// All publish functions return true if message was sent (or buffered).
-// They are no-ops if MQTT is not connected (device continues without MQTT).
+// Two publish classes. DISCRETE messages (events, tamper) return true when
+// sent OR buffered: a broker outage queues them in a bounded FIFO
+// (oldest-out on overflow) and the reconnected link replays them in order,
+// so false means the message is truly not going anywhere (MQTT
+// unconfigured, or the queue refused it) and the caller keeps its own
+// re-arm. PERIODIC snapshots (status, health, sensing, chain, transport)
+// are never queued — the next tick republishes fresher truth — and simply
+// return false while disconnected (device continues without MQTT).
 
 // Status: device state, GPS, chain sequence (QoS 0, every 30s)
 bool mqtt_publish_status(const char* json_payload);
 
-// Events: witness record created (QoS 0, debounced to max 1/sec)
+// Events: discrete event record (QoS 0, buffered across broker outages)
 bool mqtt_publish_event(const char* json_payload);
+
+// Events, live link only (the SD event log's backfill and its live path,
+// csi_event_egress / common/csi/src/csi_event_backfill.h): true when the
+// link took the body. Never buffers — false while the link is down, while
+// the offline queue still holds records from an outage (those go first, in
+// order: a queued tamper alert is never overtaken), or when the send
+// failed. The caller's copy stays on the card and is retried.
+bool mqtt_publish_event_live(const char* json_payload);
+
+// Bumped by every reprovision that changes the broker a record would be
+// delivered to (host, port or user changed, or the broker removed) — the
+// same test that flushes the offline queue. A caller holding undelivered
+// records of its own (the SD event log's backfill) drops them on a change:
+// what waited for one broker is not the next one's to see.
+uint32_t mqtt_destination_epoch();
 
 // Health: system metrics (QoS 0, every 60s)
 bool mqtt_publish_health(const char* json_payload);
@@ -187,7 +223,9 @@ bool mqtt_publish_health(const char* json_payload);
 // Chain: hash chain state (QoS 0, on demand)
 bool mqtt_publish_chain(const char* json_payload);
 
-// Tamper: tamper events (QoS 0, retained, immediate)
+// Tamper: tamper events (QoS 0, retained, immediate; buffered across
+// broker outages so every alert in the window reaches HA, not just the
+// newest)
 bool mqtt_publish_tamper(const char* json_payload, bool retained = true);
 
 // Transport: transport status (QoS 0, on change)

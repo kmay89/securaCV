@@ -414,6 +414,7 @@ fn read_http_request<R: Read>(reader: &mut R) -> Result<HttpRequest> {
 fn write_json<S: Write>(stream: &mut S, status: u16, body: &str) -> Result<()> {
     let status_line = match status {
         200 => "HTTP/1.1 200 OK",
+        201 => "HTTP/1.1 201 Created",
         400 => "HTTP/1.1 400 Bad Request",
         401 => "HTTP/1.1 401 Unauthorized",
         403 => "HTTP/1.1 403 Forbidden",
@@ -559,6 +560,11 @@ mod tests {
         ] {
             assert!(BREAK_GLASS_PAGE.contains(path), "page should call {path}");
         }
+        // The one-time setup panel bootstraps the policy through the same
+        // route the handler gates (accepted only while none exists).
+        assert!(BREAK_GLASS_PAGE.contains(r#"id="p-setup""#));
+        assert!(BREAK_GLASS_PAGE.contains(r#"api("POST", "/breakglass/policy""#));
+        assert!(BREAK_GLASS_PAGE.contains("policy propose"));
         // In-browser signer is present, and nothing is loaded from the network.
         assert!(BREAK_GLASS_PAGE.contains("Ed25519"));
         assert!(!BREAK_GLASS_PAGE.contains("http://"));

@@ -63,6 +63,56 @@ for (const [dev, d] of Object.entries(asm.devices)) {
   });
 }
 
+// ── the README → build.json → Assemble join ──────────────────────────────
+// gen_enclosures.py lifts every '## Assembly' block of the catalog README into
+// build.json (and refuses a block it cannot attribute, or two blocks for one
+// device). This pins the other half: every block landed on a device the
+// Assemble tab choreographs, and nothing choreographed lacks its block.
+test("every README §Assembly block is carried into build.json, one per choreographed device", () => {
+  const readme = readFileSync(join(REPO, "docs/hardware/enclosure/README.md"), "utf8");
+  const blocks = readme.match(/^## Assembly\s*$/gm) || [];
+  const carried = Object.keys(build.devices).filter((d) => build.devices[d].assembly).sort();
+  assert.strictEqual(carried.length, blocks.length,
+    `${blocks.length} README '## Assembly' blocks but ${carried.length} carried into build.json`);
+  assert.deepStrictEqual(carried, Object.keys(asm.devices).sort(),
+    "the devices with catalog steps are exactly the devices the Assemble tab choreographs");
+});
+
+// The two in-development display builds (Watch station, Dash) quote the
+// catalog for every step. Their status caveat is README prose ABOVE the
+// numbered list, so it travels as `caveat` — never as a step a later print
+// validation would have to find and delete from the middle of the build.
+// Each choreographed step names its part in its title, and the README step it
+// quotes opens on that same part — so a reordered or inserted README step
+// cannot leave the Assemble tab captioning the wrong step.
+const DISPLAY_STEP_PARTS = {
+  "canary-display-watch": ["stand", "drum", "XIAO", "bore", "bezel"],
+  "canary-display-dash": ["desk cradle", "bezel frame", "panel", "vented back", "M2"],
+};
+for (const [dev, vocab] of [["canary-display-watch", /Round Display/], ["canary-display-dash", /4\.3″ panel/]]) {
+  test(`${dev}: every step quotes the catalog, with the dev caveat beside the steps`, () => {
+    const a = build.devices[dev].assembly;
+    assert.ok(a, `${dev}: no README §Assembly carried into build.json`);
+    assert.match(a.steps.join(" "), vocab, "the block landed on the right device");
+    assert.match(a.caveat || "", /not print-validated/, "the dev caveat is carried");
+    assert.doesNotMatch(a.caveat || "", /\bverified\b/i,
+      "the caveat says checked, not verified (AGENTS.md rule 4 keeps 'verified' for a signature check)");
+    for (const s of a.steps) {
+      assert.doesNotMatch(s, /print-validated|in development/i, `caveat leaked into a step: ${s.slice(0, 60)}`);
+    }
+    const d = asm.devices[dev];
+    assert.deepStrictEqual(d.steps.map((s) => s.readmeStep), a.steps.map((_, i) => i),
+      "choreography step i quotes README step i");
+    d.steps.forEach((s, i) => {
+      const part = DISPLAY_STEP_PARTS[dev][i];
+      const lead = a.steps[s.readmeStep].split(/\.\s/)[0];
+      assert.ok(s.title.includes(part), `step ${i} ("${s.title}") is the ${part} step`);
+      assert.ok(lead.includes(part), `README step ${s.readmeStep} opens on the ${part}: "${lead.slice(0, 60)}"`);
+    });
+    assert.match(d.assembly_source, /README\.md §Assembly/);
+  });
+}
+
 // ── physical sanity, pinned after the field reports (the four bugs) ──────
 // Ground truth: canary_wap_enclosure.scad (battery_weather) — board parks
 // at the −X USB wall (board_cx −38.75), battery bay is central (batt_cx

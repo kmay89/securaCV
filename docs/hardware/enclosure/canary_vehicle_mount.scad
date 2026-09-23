@@ -26,7 +26,7 @@ use <canary_mount_lib.scad>  // the stud/keyhole standard this file carries arou
 /* [What to render] */
 part = "all";        // ["dash","vent","all"]
 
-/* [Stud interface] — match the target case's keyholes */
+/* [Stud/keyhole interface] — T-studs matching the target case's keyholes */
 stud_gap  = 36.0;    // center-to-center of the two T-studs
 // ecosystem-standard T-stud (canary_mount_lib, the interface's one home):
 // stem 1.4 (= kh_face 1.0 + 0.4 slide) + cone 1.2 + head 0.8 = 3.4 total,
@@ -42,7 +42,9 @@ tol_slide = 0.20;  tol_press = 0.10;
 /* [Dash plate] */
 dash_l = 110.0;  dash_w = 70.0;  dash_t = 4.0;
 dash_tilt = 10;      // riser angle (case leans back toward the cabin)
-vhb_w = 20.0;  vhb_l = 60.0;  vhb_rec = 0.6;   // 3M VHB strip registers
+vhb_w = 20.0;        // 3M VHB strip register width
+vhb_l = 60.0;        // 3M VHB strip register length
+vhb_rec = 0.6;       // 3M VHB strip register recess depth
 tether_w = 8.0;  tether_l = 4.0;
 
 /* [Vent clip] */

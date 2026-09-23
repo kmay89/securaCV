@@ -47,6 +47,14 @@ DEVSIG_BIN = $(BUILD_DIR)/test_device_signature_common
 WITCHAIN_HDR = ../common/witness/witness_chain.h
 WITCHAIN_BIN = $(BUILD_DIR)/test_witness_chain_core
 
+# Atomic chain-state blob (common/witness/chain_state.h): {seq, head} as ONE
+# NVS entry so a power cut can no longer tear the pair. Pins the 39-byte
+# layout (golden bytes), the CRC-16/CCITT-FALSE seal (every single-bit flip
+# and the 0x00<->0xFF substitution Fletcher would miss are rejected), and the
+# boot-time source order (blob > legacy pair > genesis). Pure header.
+CHAINST_HDR = ../common/witness/chain_state.h
+CHAINST_BIN = $(BUILD_DIR)/test_chain_state
+
 # Canonical witness-store pure logic (common/witness/witness_store.h):
 # the /WITNESS/records.jsonl byte-exact line format + SD-wins boot
 # reconciliation, consumed by the PIO canary tree directly and by the
@@ -56,6 +64,34 @@ WITCHAIN_BIN = $(BUILD_DIR)/test_witness_chain_core
 WITSTORE_HDR  = ../common/witness/witness_store.h
 WITSTORE_TEST = ../projects/canary-wap/tests_host/test_witness_store_logic.cpp
 WITSTORE_BIN  = $(BUILD_DIR)/test_witness_store_common
+
+# Witness history walker (common/witness/witness_history.h, repo sweep F26
+# stage 1): the pure backward JSONL walker the loop-task SD read bridge will
+# run over /WITNESS/records.jsonl — chunk stitching, torn-line skip, page
+# bounds, the untrusted resume hint, chain linkage — tested against files
+# built by witness_store::line_build. Pure header.
+WITHIST_HDRS = ../common/witness/witness_history.h $(WITSTORE_HDR)
+WITHIST_BIN  = $(BUILD_DIR)/test_witness_history
+
+# Witness history bridge (common/witness/witness_history_bridge.h, repo sweep
+# F35 — F26 stage 2): the httpd-task / loop-task handshake behind the
+# timeline's card pages — one outstanding request, the generation counter so a
+# late completion never answers the next request, the bounded wait, at most
+# 4 x 1 KiB read per loop pass, the resume-hint refusals and the linkage a page
+# reports — through deterministic interleavings and real threads (-pthread).
+# Pure header.
+WITHBR_HDRS = ../common/witness/witness_history_bridge.h $(WITHIST_HDRS)
+WITHBR_BIN  = $(BUILD_DIR)/test_witness_history_bridge
+
+# Household time zone (common/time/tz_rule.h, repo sweep F28): the fleet's one
+# IANA -> POSIX table (lifted from the display's tz_auto.cpp), the rule
+# validator, and the local minute-of-day the CSI clock offset keys on. glibc
+# applies the same POSIX rules newlib does, so the DST vectors are real; the
+# portal-parity case reads the display portal's TZS list (PORTAL_SRC) and holds
+# every zone it names to the same wall clock here. Pure header.
+TZRULE_HDR    = ../common/time/tz_rule.h
+TZRULE_PORTAL = ../projects/canary-display/src/net/provision.cpp
+TZRULE_BIN    = $(BUILD_DIR)/test_tz_rule
 
 # USB onboarding trust model (common/usb/usb_onboard_logic.h): the consent
 # state machine (types only after an announced arm + physical confirm), the
@@ -80,6 +116,13 @@ TESTCON_BIN = $(BUILD_DIR)/test_test_console
 BOOTPOL_HDR = ../common/health/boot_policy.h
 BOOTPOL_BIN = $(BUILD_DIR)/test_boot_policy
 
+# SD mount-recovery decisions (common/storage/sd_mount_policy.h): the pure
+# table around the blocking SD mount/teardown work — never pile onto an
+# in-flight mount (watchdog crash-loop), never rebuild or free driver state
+# while USB MSC holds the card, wrap-safe intervals. Pure header.
+SDMOUNT_HDR = ../common/storage/sd_mount_policy.h
+SDMOUNT_BIN = $(BUILD_DIR)/test_sd_mount_policy
+
 # Fleet-wide Wi-Fi join/retry rules (common/network/wifi_join_policy.h): which
 # failures a human can fix, how long to back off, and the rule that a link
 # which has NEVER associated must never be rebooted. That last one is the
@@ -87,6 +130,37 @@ BOOTPOL_BIN = $(BUILD_DIR)/test_boot_policy
 # join fails again, forever — reproduced as a unit test so it cannot come back.
 WIFIJOIN_HDR = ../common/network/wifi_join_policy.h
 WIFIJOIN_BIN = $(BUILD_DIR)/test_wifi_join_policy
+
+# BOOT-tap provisioning gate + page-token policy
+# (common/network/provisioning_gate.h): one tap admits exactly one consumer
+# (atomic exchange), the gate self-closes after its TTL, millis()==0 is a
+# real tap, and the dashboard's bearer credential is WITHHELD from a LAN
+# request that carries no grant (setup / bearer / SoftAP subnet / an unspent
+# tap, which the page load then spends — one tap, one consumer across the
+# page and receipt paths), and the dual-stack socket's ::ffff:a.b.c.d peer
+# address unwraps to IPv4 while a true IPv6 address reads as unknown.
+# Consumed by the canary tree's securacv_network + main.cpp; the canary-wap
+# sketch keeps an inline copy of the two gate operations to this contract.
+PROVGATE_HDR = ../common/network/provisioning_gate.h
+PROVGATE_BIN = $(BUILD_DIR)/test_provisioning_gate
+
+# Self-signed HTTPS surface decisions (common/network/tls_policy.h, F15):
+# HTTPS-with-port-80-redirect vs HTTP-only and the reason /api/status
+# reports, the redirect Location builder (refuses truncation, foreign hosts
+# and control bytes), the plain-HTTP exemptions (six connectivity probes
+# always, / and /setup only during the wizard), and the certificate pin's
+# hex form. Consumed by the canary tree's securacv_network.
+TLSPOL_HDR = ../common/network/tls_policy.h
+TLSPOL_BIN = $(BUILD_DIR)/test_tls_policy
+
+# SoftAP / STA security request (common/network/ap_security_policy.h, F16):
+# WPA2/WPA3 transition only for knob && SoftAP SAE in the core && an
+# 8+ character passphrase; PMF capable in every row and required in none; a
+# driver refusal reported as WPA2; the scan/auth label table. Consumed by the
+# canary tree's securacv_network and, as a byte-identical staged copy
+# (check_ap_security_sync.sh), by the canary-wap sketch.
+APSEC_HDR = ../common/network/ap_security_policy.h
+APSEC_BIN = $(BUILD_DIR)/test_ap_security_policy
 
 # MQTT broker transport decision (common/network/mqtt_transport_logic.h): the
 # ONE place the fleet decides whether the broker socket is plain, TLS with a
@@ -121,6 +195,54 @@ MQTTFIELDS_BIN = $(BUILD_DIR)/test_mqtt_tls_fields
 # degenerate and oversized authorities foreign. Pure header, no Arduino.
 HOSTGUARD_HDR = ../common/network/host_guard.h
 HOSTGUARD_BIN = $(BUILD_DIR)/test_host_guard
+# The bounded FIFO that holds discrete MQTT publishes (tamper alerts,
+# events) across a broker outage (common/mqtt/mqtt_offline_queue.h):
+# drop-oldest overflow, refuse-never-truncate oversize, peek-then-pop
+# drain so a failed replay keeps the record. Pure header.
+MQTTQUEUE_HDR = ../common/mqtt/mqtt_offline_queue.h
+MQTTQUEUE_BIN = $(BUILD_DIR)/test_mqtt_offline_queue
+
+# Enclosure tamper contact debounce (common/csi/src/contact_tamper.h): the
+# pure FSM between a reed/hall switch's raw pin level and the
+# system.integrity watcher's `enclosure` kind — bounce, a knock and a boot
+# with the lid off must never narrate an opening; a real one must survive a
+# millis() wrap. Pure header, no Arduino deps.
+CONTACT_HDR = ../common/csi/src/contact_tamper.h
+CONTACT_BIN = $(BUILD_DIR)/test_contact_tamper
+
+# The MQTT `events` body both the canary-wap sketch and the canary PIO tree
+# publish (common/csi/src/csi_event_wire.h): byte-exact goldens (signed,
+# unsigned, the system.integrity row and its tamper-topic bridge), `signed`
+# never true without a signature, overflow returns 0, and the widest signed
+# body still fits the canary's offline-queue slot. Header-only over
+# csi_event.h's types (CSI_TEST_HOST_BUILD), nothing to link.
+EVWIRE_HDRS = ../common/csi/src/csi_event_wire.h ../common/csi/src/csi_event.h
+EVWIRE_BIN  = $(BUILD_DIR)/test_csi_event_wire
+
+# When both trees write the csi_event id allocator's floor to NVS
+# (common/csi/src/csi_event_id_floor.h): modeled boots prove no id is ever
+# handed out twice across a reboot (HA's replay gate refuses a reused one),
+# including a boot that allocates fewer than a stride of ids.
+IDFLOOR_HDR = ../common/csi/src/csi_event_id_floor.h
+IDFLOOR_BIN = $(BUILD_DIR)/test_csi_event_id_floor
+
+# The SD event log's line format both trees write
+# (common/csi/src/csi_event_log_line.h, backlog F37): byte-exact goldens of
+# the canary-wap format it came from, round trip, torn and glued lines
+# refused, and both trees' adapters naming the same file and cap.
+EVLINE_HDRS = ../common/csi/src/csi_event_log_line.h ../common/csi/src/csi_event.h \
+              ../projects/canary-wap/arduino/canary_wap/csi_event_log.h \
+              ../canary/src/csi_event_log.h ../common/csi/src/csi_event_backfill.h
+EVLINE_BIN  = $(BUILD_DIR)/test_csi_event_log_line
+
+# The canary's reconnect backfill from that log
+# (common/csi/src/csi_event_backfill.h, backlog F37): whole outages, reboots
+# and card faults replayed against a model of Home Assistant's replay gate —
+# nothing it sends is ever refused, an outage longer than the MQTT offline
+# queue arrives whole and in id order, queued tamper alerts go first, and
+# each loop pass reads and sends a bounded amount.
+BACKFILL_HDRS = ../common/csi/src/csi_event_backfill.h $(EVLINE_HDRS) $(IDFLOOR_HDR)
+BACKFILL_BIN  = $(BUILD_DIR)/test_csi_event_backfill
 
 # The canary setup wizard's hub step (canary/lib/securacv_webui/src/
 # securacv_setup_page.cpp), the one UI that writes those fields: its script
@@ -131,12 +253,19 @@ HOSTGUARD_BIN = $(BUILD_DIR)/test_host_guard
 # this Makefile runs on.
 SETUPPAGE_JS = test_canary_setup_page.test.js
 
+# The canary dashboard's timeline (canary/lib/securacv_webui/src/
+# securacv_webui.cpp) paging into the SD card pages GET /api/witness serves
+# (repo sweep F35): the same lift-and-stub approach — a card row is badged
+# "from card, chain-linked" and never "Verified", the card page's next_hint
+# rides the next click as ?hint=, and "no card" retires Load More.
+TIMELINE_JS = test_canary_timeline.test.js
+
 # Shared headless setup portal (common/network): the pure timing choreography
 # (AP linger, quiet background retry, stuck-phone hint) plus the canonical
 # provision_core byte-math (A-only captive DNS, probe classification, JSON
 # escaping, the unambiguous password alphabet) that the sense/vision portal
-# links. The display's byte-identical provision_core copy is pinned separately
-# by firmware/scripts/check_provision_core_sync.sh.
+# links and the display now includes directly from common/ (its former
+# byte-identical copy, and the sync gate that pinned it, are gone).
 PORTAL_HDRS = ../common/network/setup_portal_logic.h \
               ../common/network/provision_core.h
 PORTAL_BIN  = $(BUILD_DIR)/test_setup_portal_logic
@@ -190,6 +319,16 @@ MANIFEST_BIN = $(BUILD_DIR)/test_self_manifest
 # misstate the device's age. Pure header, no Arduino deps.
 BIRTHDAY_HDR = ../common/identity/birth_day.h
 BIRTHDAY_BIN = $(BUILD_DIR)/test_birth_day
+
+# Key-at-rest policy (common/identity/key_at_rest.h): the tier / wire label /
+# allow-refuse decision / boot line for the identity key's NVS home from {flash
+# encryption, NVS encryption, secure boot, SECURACV_REQUIRE_FLASH_ENCRYPTION}.
+# Pins that flash encryption alone is still plaintext NVS, that the Tier-0
+# default never refuses, that the opt-in image refuses load AND persist
+# symmetrically unless NVS is encrypted, and that the labels are wire-safe.
+# Pure header, no Arduino.
+KEYREST_HDR = ../common/identity/key_at_rest.h
+KEYREST_BIN = $(BUILD_DIR)/test_key_at_rest
 
 # Coarse optical feature classifiers (canary-vision optical_features.h): pins
 # the invariant-safe coarsening of the person-detection model's box geometry —
@@ -350,17 +489,41 @@ $(WITCHAIN_BIN): test_witness_chain_core.cpp $(WITCHAIN_HDR) Makefile | $(BUILD_
 $(WITSTORE_BIN): $(WITSTORE_TEST) $(WITSTORE_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -I ../common/witness $(WITSTORE_TEST) -lcrypto -o $@
 
+$(WITHIST_BIN): test_witness_history.cpp $(WITHIST_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common/witness test_witness_history.cpp -o $@
+
+$(WITHBR_BIN): test_witness_history_bridge.cpp $(WITHBR_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -pthread -I ../common/witness test_witness_history_bridge.cpp -o $@
+
+$(TZRULE_BIN): test_tz_rule.cpp $(TZRULE_HDR) $(TZRULE_PORTAL) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common '-DPORTAL_SRC="$(TZRULE_PORTAL)"' test_tz_rule.cpp -o $@
+
 $(USBONB_BIN): test_usb_onboard_logic.cpp $(USBONB_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_usb_onboard_logic.cpp -o $@
 
 $(TESTCON_BIN): test_test_console.cpp $(TESTCON_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_test_console.cpp -o $@
 
+$(CHAINST_BIN): test_chain_state.cpp $(CHAINST_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_chain_state.cpp -o $@
+
 $(BOOTPOL_BIN): test_boot_policy.cpp $(BOOTPOL_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_boot_policy.cpp -o $@
 
+$(SDMOUNT_BIN): test_sd_mount_policy.cpp $(SDMOUNT_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_sd_mount_policy.cpp -o $@
+
 $(WIFIJOIN_BIN): test_wifi_join_policy.cpp $(WIFIJOIN_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_wifi_join_policy.cpp
+
+$(PROVGATE_BIN): test_provisioning_gate.cpp $(PROVGATE_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_provisioning_gate.cpp
+
+$(TLSPOL_BIN): test_tls_policy.cpp $(TLSPOL_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_tls_policy.cpp
+
+$(APSEC_BIN): test_ap_security_policy.cpp $(APSEC_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_ap_security_policy.cpp
 
 $(MQTTTLS_BIN): test_mqtt_transport_logic.cpp $(MQTTTLS_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_mqtt_transport_logic.cpp -o $@
@@ -370,6 +533,23 @@ $(MQTTFIELDS_BIN): test_mqtt_tls_fields.cpp $(MQTTFIELDS_HDR) $(MQTTTLS_HDR) Mak
 
 $(HOSTGUARD_BIN): test_host_guard.cpp $(HOSTGUARD_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_host_guard.cpp -o $@
+$(MQTTQUEUE_BIN): test_mqtt_offline_queue.cpp $(MQTTQUEUE_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_mqtt_offline_queue.cpp -o $@
+
+$(CONTACT_BIN): test_contact_tamper.cpp $(CONTACT_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) test_contact_tamper.cpp -o $@
+
+$(EVWIRE_BIN): test_csi_event_wire.cpp $(EVWIRE_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -I ../common/csi/src test_csi_event_wire.cpp -o $@
+
+$(IDFLOOR_BIN): test_csi_event_id_floor.cpp $(IDFLOOR_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) test_csi_event_id_floor.cpp -o $@
+
+$(EVLINE_BIN): test_csi_event_log_line.cpp $(EVLINE_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -I ../common/csi/src test_csi_event_log_line.cpp -o $@
+
+$(BACKFILL_BIN): test_csi_event_backfill.cpp $(BACKFILL_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -I ../common/csi/src test_csi_event_backfill.cpp -o $@
 
 $(PORTAL_BIN): test_setup_portal_logic.cpp $(PORTAL_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_setup_portal_logic.cpp -o $@
@@ -391,6 +571,9 @@ $(MANIFEST_BIN): test_self_manifest.cpp $(MANIFEST_HDR) Makefile | $(BUILD_DIR)
 
 $(BIRTHDAY_BIN): test_birth_day.cpp $(BIRTHDAY_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_birth_day.cpp -o $@
+
+$(KEYREST_BIN): test_key_at_rest.cpp $(KEYREST_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_key_at_rest.cpp -o $@
 
 $(OPTFEAT_BIN): test_optical_features.cpp $(OPTFEAT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(OPTFEAT_INC) test_optical_features.cpp -o $@
@@ -436,19 +619,33 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
 	./$(WITCHAIN_BIN)
 	./$(WITSTORE_BIN)
+	./$(WITHIST_BIN)
+	./$(WITHBR_BIN)
+	./$(TZRULE_BIN)
+	./$(CHAINST_BIN)
 	./$(USBONB_BIN)
 	./$(TESTCON_BIN)
 	./$(BOOTPOL_BIN)
+	./$(SDMOUNT_BIN)
 	./$(WIFIJOIN_BIN)
+	./$(PROVGATE_BIN)
+	./$(TLSPOL_BIN)
+	./$(APSEC_BIN)
 	./$(MQTTTLS_BIN)
 	./$(MQTTFIELDS_BIN)
 	./$(HOSTGUARD_BIN)
+	./$(MQTTQUEUE_BIN)
+	./$(CONTACT_BIN)
+	./$(EVWIRE_BIN)
+	./$(IDFLOOR_BIN)
+	./$(EVLINE_BIN)
+	./$(BACKFILL_BIN)
 	./$(PORTAL_BIN)
 	./$(POWEREVT_BIN)
 	./$(SCENE_BIN)
@@ -456,6 +653,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(FLEETSR_BIN)
 	./$(MANIFEST_BIN)
 	./$(BIRTHDAY_BIN)
+	./$(KEYREST_BIN)
 	./$(OPTFEAT_BIN)
 	./$(VISION_PIPE_BIN)
 	./$(VISPROF_BIN)
@@ -471,6 +669,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(WXCORE_BIN)
 	./$(CSIHAL_BIN)
 	$(NODE) --test $(SETUPPAGE_JS)
+	$(NODE) --test $(TIMELINE_JS)
 
 clean:
 	rm -rf $(BUILD_DIR)

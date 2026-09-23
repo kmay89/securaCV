@@ -252,6 +252,38 @@ size_t build_sense_canonical(uint32_t    seq,
   return (size_t)n;
 }
 
+size_t build_sentinel_canonical(uint32_t    seq,
+                                const char* event_name,
+                                const char* level,
+                                uint8_t     confidence,
+                                uint8_t     anomaly,
+                                const char* occupancy,
+                                const char* range,
+                                uint8_t     modality_bits,
+                                uint32_t    bucket_uptime_s,
+                                const char* device_id,
+                                char*       out,
+                                size_t      cap) {
+  if (!out || cap == 0) return 0;
+  int n = snprintf(out, cap, "%s|v%d|sentinel|%s|%lu|%s|%s|%u|%u|%s|%s|%u|%lu",
+                   SIG_PREFIX, SCHEMA_V,
+                   device_id ? device_id : "",
+                   (unsigned long)seq,
+                   event_name ? event_name : "",
+                   level ? level : "",
+                   (unsigned)confidence,
+                   (unsigned)anomaly,
+                   occupancy ? occupancy : "",
+                   range ? range : "",
+                   (unsigned)modality_bits,
+                   (unsigned long)bucket_uptime_s);
+  if (n <= 0 || (size_t)n >= cap) {
+    out[0] = '\0';
+    return 0;
+  }
+  return (size_t)n;
+}
+
 size_t build_whoami_canonical(const char*   nonce_hex,
                               const char*   device_id,
                               char*         out,
@@ -333,6 +365,26 @@ bool sign_sense(uint32_t    seq,
   size_t n = build_sense_canonical(seq, event_name, presence, occupants,
                                    range, bucket_uptime_s,
                                    s_device_id, canon, sizeof(canon));
+  if (n == 0) return false;
+  return sign_and_encode(canon, n, sig_b64url_out, sig_cap);
+}
+
+bool sign_sentinel(uint32_t    seq,
+                   const char* event_name,
+                   const char* level,
+                   uint8_t     confidence,
+                   uint8_t     anomaly,
+                   const char* occupancy,
+                   const char* range,
+                   uint8_t     modality_bits,
+                   uint32_t    bucket_uptime_s,
+                   char*       sig_b64url_out,
+                   size_t      sig_cap) {
+  char canon[256];
+  size_t n = build_sentinel_canonical(seq, event_name, level, confidence,
+                                      anomaly, occupancy, range,
+                                      modality_bits, bucket_uptime_s,
+                                      s_device_id, canon, sizeof(canon));
   if (n == 0) return false;
   return sign_and_encode(canon, n, sig_b64url_out, sig_cap);
 }

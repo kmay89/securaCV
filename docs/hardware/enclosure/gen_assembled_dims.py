@@ -33,19 +33,43 @@ generated catalog. Bounding boxes are deterministic even though OpenSCAD's
 STL bytes are not, so --check compares numbers, not bytes.
 
 Adding a device: add a row to DEVICES with the case's own assembled
-placement (crib it from that case's fitcheck module — never invent one) and
+placement (crib it from that case's fitcheck module — never invent one; a
+case with no fitcheck module is measured only where its own geometry states
+the seat, as the Watch Station's bezel does, and the row says where) and
 rerun. gen_figures.mjs refuses a `parts:` device figure that has no row
-here, so a new multi-part figure cannot fall back to the stacked lie.
+here, so a new multi-part figure cannot fall back to the stacked lie — and a
+figure declared `assembled: true` (an in-development case with no committed
+STLs) reads its envelope from its row here and nowhere else.
+
+A row may also name what the massing draws ON the face, so it is the CAD's
+number rather than a retyped one: `face` (a display's aperture, centered on
+the envelope — the Watch's bezel bore, the Dash's view window) and
+`features` (off-center marks — the Combo's lens and radome window: each the
+case's own `[cx, cy, w, h]` expression in its scad frame, recorded as a
+center on the measured envelope, from its min corner, so no symmetry is
+assumed). Neither is read off the cut geometry: each is the case's own
+variables, the ones its cuts are drawn at, echoed back. --check re-evaluates
+both with the envelope and refuses anything it cannot read back as the
+recorded number — so an edit through those variables is caught, and a cut
+moved without going through them is not. The features also cross to the
+website: gen_builder_manifest.py --site carries them verbatim as the figure's
+`features_mm` in scad/cad-dims.json, where the site's AR model of the case
+places its lens and window (so a feature edit here is a carry, then that
+model's regeneration, like a seam).
+
+The render-and-parse-echo mechanics live in scad_probe.py, shared with
+gen_hardware.py and gen_enclosures.py --check-previews.
 """
 
 import json
-import struct
-import subprocess
+import math
 import sys
-import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import scad_probe  # noqa: E402  (the shared render-and-parse-echo helper, beside this file)
+
 OUT = HERE / "assembled_dims.json"
 TOL = 0.01  # mm — bbox agreement required by --check
 
@@ -113,59 +137,157 @@ DEVICES = {
         "placement": ("doorbell_fitcheck: face at z = base_d; body back flush on plate front "
                       "(T-studs in pockets), resting 0.5 up the slide on the plate's L-foot"),
     },
+    "device.canary-display-watch": {
+        # The Watch Station has no committed STLs (in development — dev_*.stl
+        # is gitignored) and no fit-check module, but it does not need one to
+        # be measured: the seat is stated by its own geometry. bezel() is
+        # drawn in the SEATED frame — face plate z = 0..bez_t, skirt reaching
+        # -skirt_dep into the bore — and its snap nubs are placed at bezel
+        # z = -snap_depth precisely because "the face underside (bezel z=0)
+        # rests on the drum rim (drum z=drum_h), so drum_z = drum_h +
+        # bezel_z" (the nub comment in bezel()). Any other seat and the nubs
+        # miss the drum's windows, so this is the only placement the snap
+        # admits. Drum + bezel only: the puck as it hangs on the wall or sits
+        # in the cradle — the stand is its own part, not the device's
+        # envelope. This is what lets a manifest edit (disc_d, a registry
+        # reference) move the published figure: the ledger re-measures the
+        # case, where a typed sketch envelope silently would not.
+        "scad": "canary_watch_station.scad",
+        "overrides": {"part": '"drum"'},
+        "body": "union() { drum(); translate([0, 0, drum_h]) bezel(); }",
+        # visible bands from the back cap out: drum to its rim, bezel face beyond
+        "seams": "[drum_h]",
+        # the face aperture the glass shows through, centered on the drum axis
+        # (bezel() cuts it as cylinder(d = bez_ap_d) at the origin)
+        "face": "[bez_ap_d, bez_ap_d]",
+        "placement": ("bezel() seated frame: face underside on the drum rim, bezel at z = drum_h "
+                      "(the nubs' own datum, drum_z = drum_h + bezel_z)"),
+    },
+    "device.canary-display-dash": {
+        # The Dash case (in development, no committed STLs, no fit-check
+        # module), measured where its own file states the stack: the frame
+        # is modeled face at z = 0 with its rear rim at frame_h, the back
+        # with its OUTER (wall) face at z = 0 and its dock pads standing
+        # cr_pad_h() below that ("the shadow gap the case floats off the
+        # wall", canary_cradle_lib), and the file derives the assembled
+        # thickness as total_t = frame_h + back_t — the number its echo
+        # prints and its stand's channel is cut to; the M2 screws run from
+        # the back's outer counterbores into the frame's rim lobes. So: the
+        # back as modeled, the frame turned face-out (a rotation about Y, so
+        # +Y stays up — the USB wall stays at the bottom) with its rim on
+        # the back's inner face. The pads are in the envelope: they are how
+        # far the case stands off the wall on its cradle. This replaces the
+        # registry's hand-typed body_mm (113.7 x 73.6 x 16.0, which had lost
+        # the corner screw lobes, the thicker back and the pads) and the
+        # figure's vendor-board envelope (the Waveshare board, not the case).
+        "scad": "canary_dash_display.scad",
+        "overrides": {"part": '"back"'},
+        "body": ("union() { back(); "
+                 "translate([0, 0, back_t + frame_h]) rotate([0, 180, 0]) frame(); }"),
+        # the back's frame puts z = 0 at its outer face, so the union's back
+        # plane is the pad tips at -cr_pad_h(): the seams are measured from
+        # there — the pad band, then the back plate, then the frame out to
+        # the face
+        "seams": "[cr_pad_h(), cr_pad_h() + back_t]",
+        # the view window the bezel lip frames (view_l/view_w = panel less
+        # 2 * bez_lip), cut as rrect2d(view_l, view_w) at the frame's origin;
+        # the outline and its four corner lobes are symmetric about the same
+        # origin, so the window is centered on the envelope
+        "face": "[view_l, view_w]",
+        "placement": ("total_t = frame_h + back_t: back as modeled (dock pads on its wall face), "
+                      "frame turned face-out with its rim on the back's inner face"),
+    },
+    "device.canary-combo": {
+        # The radar + camera Combo witness (in development, v0.1-dev: no
+        # committed STLs, no fit-check module), measured where its own file
+        # states the seat. back() and front() are both drawn in the ASSEMBLED
+        # frame — front() is a plate at z = 0..lid_t with its nesting lip,
+        # pan-head pads and camera posts hanging below z = 0 (the file flips
+        # it only to print it) — and three of the file's own datums put that
+        # z = 0 on the back's rim at z = base_d: the echo's thickness is
+        # base_d + lid_t + mount_extra; the corner posts stop at
+        # base_d - head_pad precisely because "the front carries a pad under
+        # each head and the posts shorten by the same" (the pad hangs
+        # head_pad below the plate); and the lid-key rib tops out at base_d
+        # where the lip's slot starts. So the front rides at z = base_d, the
+        # Vision case's own placement. The back carries its keyhole
+        # thickening (mount_extra) below z = 0, so the union's back plane is
+        # there and the seam is measured from it.
+        "scad": "canary_combo.scad",
+        "overrides": {"part": '"back"'},
+        "body": "union() { back(); translate([0, 0, base_d]) front(); }",
+        # visible bands from the wall out: the back (keyhole thickening
+        # included) to its rim, the front plate beyond
+        "seams": "[mount_extra + base_d]",
+        # what the massing draws on the face, read from the variables front()
+        # cuts at (echoed, not measured off the cut): the
+        # lens aperture (cylinder(d = cam_ap_d) at lens_x, lens_y) on the
+        # Vision column and the radome window (rrect2d(rad_win_x, rad_win_y)
+        # at rad_cx, rad_cy) on the Sense column — the two features that
+        # make this case the Combo
+        "features": {
+            "lens": "[lens_x, lens_y, cam_ap_d, cam_ap_d]",
+            "radome": "[rad_cx, rad_cy, rad_win_x, rad_win_y]",
+        },
+        "placement": ("front() at z = base_d: the echo's base_d + lid_t + mount_extra, the posts "
+                      "shortened by the head pads they carry, the lid-key rib to the rim"),
+    },
 }
 
 
-def stl_bbox(path):
-    raw = path.read_bytes()
-    (n,) = struct.unpack_from("<I", raw, 80)
-    lo = [float("inf")] * 3
-    hi = [float("-inf")] * 3
-    off = 84
-    for _ in range(n):
-        # 12 floats: normal + 3 vertices; then a u16 attribute
-        vals = struct.unpack_from("<12f", raw, off)
-        for v in range(3):
-            for a in range(3):
-                c = vals[3 + v * 3 + a]
-                if c < lo[a]:
-                    lo[a] = c
-                if c > hi[a]:
-                    hi[a] = c
-        off += 50
-    return [round(hi[a] - lo[a], 3) for a in range(3)]
-
-
 def measure(fig_id, spec):
-    probe = "include <{scad}>\n{ov}\n{body}\necho(\"SEAMS\", {seams});\n".format(
-        scad=spec["scad"],
-        ov="\n".join(f"{k} = {v};" for k, v in spec["overrides"].items()),
-        body=spec["body"],
-        seams=spec["seams"],
-    )
-    # The probe must sit BESIDE the case files: OpenSCAD resolves `include`
-    # relative to the including file, and the cases include the shared libs
-    # the same way.
-    with tempfile.TemporaryDirectory() as td:
-        src = HERE / f".tmp_assembled_{fig_id.replace('.', '_')}.scad"
-        out = Path(td) / "probe.stl"
-        src.write_text(probe)
-        try:
-            r = subprocess.run(
-                ["openscad", "--export-format", "binstl", "-o", str(out), str(src)],
-                cwd=HERE, capture_output=True, text=True,
-            )
-        finally:
-            src.unlink(missing_ok=True)
-        diag = (r.stdout or "") + (r.stderr or "")
-        if "ERROR" in diag or "WARNING" in diag or not out.exists():
-            sys.exit(f"gen_assembled_dims: {fig_id}: dirty render, nothing measured\n{diag}")
-        m = __import__("re").search(r'ECHO: "SEAMS", \[([0-9., ]+)\]', diag)
-        if not m:
-            sys.exit(f"gen_assembled_dims: {fig_id}: seam echo missing\n{diag}")
-        seams = [round(float(v), 3) for v in m.group(1).split(",")]
-        x, y, z = stl_bbox(out)
+    # The shared probe (scad_probe.py): include the case beside the case files,
+    # apply the overrides after it, draw the union, echo the seams (and the
+    # face aperture, where the row names one) — and refuse a dirty render
+    # rather than measure it.
+    face_echo = "\necho(\"FACE\", {face});".format(face=spec["face"]) if "face" in spec else ""
+    features = spec.get("features", {})
+    feature_echo = "".join(f"\necho(\"FEATURE_{name}\", {expr});" for name, expr in features.items())
+    try:
+        res = scad_probe.probe(
+            f"assembled_{fig_id}", spec["scad"], spec["overrides"],
+            "{body}\necho(\"SEAMS\", {seams});{face}{features}".format(
+                body=spec["body"], seams=spec["seams"], face=face_echo, features=feature_echo),
+            root=HERE,
+        )
+        seams = scad_probe.echo_numbers(res, "SEAMS", fig_id)
+        face = scad_probe.echo_numbers(res, "FACE", fig_id) if "face" in spec else None
+        marks = {name: scad_probe.echo_numbers(res, f"FEATURE_{name}", fig_id) for name in features}
+    except scad_probe.ProbeError as e:
+        sys.exit(f"gen_assembled_dims: {e}")
+    if face is not None and len(face) != 2:
+        sys.exit(f"gen_assembled_dims: {fig_id} face must echo [w, h], got {face}")
+    for name, got in marks.items():
+        if len(got) != 4:
+            sys.exit(f"gen_assembled_dims: {fig_id} feature {name!r} must echo [cx, cy, w, h], got {got}")
+    x, y, z = res.bbox
     # scad frame -> figure frame (the massing's 'scad-wall'): w = x, h = y, d = z
+    extra = {}
+    if face is not None:
+        # the aperture on the outer face (scad x, y -> figure w, h), centered
+        # on the envelope: what the massing draws the glass in, so a panel
+        # or bezel-lip edit moves the drawn window as well as the outline
+        extra["face_fig_mm"] = {"w": face[0], "h": face[1]}
+    if marks:
+        # each feature's center on the outer face (scad x, y -> figure x, z),
+        # from the measured envelope's min corner (res.lo), and its extent
+        lo_x, lo_y = res.lo[0], res.lo[1]
+        extra["features_fig_mm"] = {
+            name: {"x": round(cx - lo_x, 3), "z": round(cy - lo_y, 3), "w": w, "h": h}
+            for name, (cx, cy, w, h) in sorted(marks.items())
+        }
+        # A feature this file cannot place on the face is refused, never
+        # written: a non-finite number (JSON cannot spell it and --check could
+        # never call it equal), a zero or negative extent, or a mark that does
+        # not lie on the measured face — an expression in the wrong frame, or
+        # the wrong variable, lands exactly there.
+        for name, f in extra["features_fig_mm"].items():
+            if not all(math.isfinite(v) for v in f.values()) or f["w"] <= 0 or f["h"] <= 0:
+                sys.exit(f"gen_assembled_dims: {fig_id} feature {name!r} is not a mark on a face: {f}")
+            if (f["x"] - f["w"] / 2 < -TOL or f["x"] + f["w"] / 2 > x + TOL
+                    or f["z"] - f["h"] / 2 < -TOL or f["z"] + f["h"] / 2 > y + TOL):
+                sys.exit(f"gen_assembled_dims: {fig_id} feature {name!r} {f} does not lie on the "
+                         f"measured {x} x {y} face — check its expression's frame")
     return {
         "scad": spec["scad"],
         "overrides": {k: v.strip('"') for k, v in spec["overrides"].items()},
@@ -176,18 +298,52 @@ def measure(fig_id, spec):
         # case's own datums: the massing draws each part's VISIBLE band
         # between consecutive seams, so the drawn stack nests as built
         "seams_fig_d": seams,
+        **extra,
     }
+
+
+def _numbers_moved(fresh: dict, got, keys: tuple[str, ...]) -> bool:
+    """True unless `got` is a dict of exactly `keys`, each a number within TOL
+    of `fresh`'s. A committed value this cannot read as a number (a string, a
+    bool, NaN, the wrong shape) is never "equal"."""
+    if not isinstance(got, dict) or set(got) != set(keys):
+        return True
+    return any(not isinstance(got[k], (int, float)) or isinstance(got[k], bool)
+               or not abs(fresh[k] - got[k]) <= TOL for k in keys)
+
+
+def face_moved(fresh, got) -> bool:
+    """True unless the committed face aperture is the measured one (to TOL) —
+    or both are absent. A committed value this cannot read as a number is
+    never "equal"."""
+    if fresh is None or got is None:
+        return (fresh is None) != (got is None)
+    return _numbers_moved(fresh, got, ("w", "h"))
+
+
+def features_moved(fresh, got) -> bool:
+    """True unless the committed face features are the measured ones — the
+    same names, each center and extent within TOL — or both are absent. Same
+    refusal as face_moved: nothing it cannot read as the measurement passes."""
+    if fresh is None or got is None:
+        return (fresh is None) != (got is None)
+    if not isinstance(got, dict) or set(got) != set(fresh):
+        return True
+    return any(_numbers_moved(fresh[name], got[name], ("x", "z", "w", "h")) for name in fresh)
 
 
 def build():
     return {
         "generated_by": "docs/hardware/enclosure/gen_assembled_dims.py",
         "note": ("Assembled outer envelopes, measured off the union of each "
-                 "device's committed parts in their fit-checked assembled "
-                 "positions. gen_figures.mjs reads these for multi-part device "
-                 "figures instead of stacking part depths, which overstates "
-                 "any nesting assembly. Regenerate after re-exporting any STL "
-                 "these unions include."),
+                 "device's parts rendered from its case source in their "
+                 "assembled positions (the fit-checked ones where the case has "
+                 "a fit check; `placement` says which). gen_figures.mjs reads "
+                 "these for multi-part device figures instead of stacking part "
+                 "depths, which overstates any nesting assembly, and for "
+                 "in-development figures declared `assembled` instead of a "
+                 "typed sketch. Regenerate after any edit to the cases these "
+                 "unions include."),
         "devices": {fig_id: measure(fig_id, spec) for fig_id, spec in sorted(DEVICES.items())},
     }
 
@@ -207,7 +363,8 @@ def main():
                 if abs(m - n) > TOL:
                     sys.exit(
                         f"gen_assembled_dims: {fig_id} axis {a}: measured {m} vs committed {n} "
-                        "— an STL moved; regenerate and re-run gen_figures.mjs"
+                        "— the CAD moved (a case edit or an STL re-export); regenerate and re-run "
+                        "gen_figures.mjs"
                     )
             # The seams are consumed data too (the massings draw each part's
             # visible band between them), and a datum like base_d can move
@@ -226,6 +383,22 @@ def main():
             # overrides) must match what this generator would write, so the
             # committed file can never describe a different assembly than the
             # one measured.
+            # The face aperture is consumed the same way (the massing draws
+            # the glass in it) — present exactly where the row names one.
+            fresh_face, got_face = spec.get("face_fig_mm"), got.get("face_fig_mm")
+            if face_moved(fresh_face, got_face):
+                sys.exit(
+                    f"gen_assembled_dims: {fig_id} face: measured {fresh_face} vs committed "
+                    f"{got_face} — the face aperture moved; regenerate and re-run gen_figures.mjs"
+                )
+            # ...and so are the off-center face features (the massing draws
+            # the Combo's lens and radome window at them)
+            fresh_feat, got_feat = spec.get("features_fig_mm"), got.get("features_fig_mm")
+            if features_moved(fresh_feat, got_feat):
+                sys.exit(
+                    f"gen_assembled_dims: {fig_id} features: measured {fresh_feat} vs committed "
+                    f"{got_feat} — a face feature moved; regenerate and re-run gen_figures.mjs"
+                )
             for key in ("scad", "overrides", "placement", "fig"):
                 if spec[key] != got.get(key):
                     sys.exit(

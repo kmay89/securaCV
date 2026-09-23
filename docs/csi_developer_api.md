@@ -131,7 +131,77 @@ instead. Boot kinds stand for the whole boot; SD kinds stand until the card
 recovers (and outrank a standing boot kind while they do). **Absent means
 nothing to confess** — a client must treat the missing field as calm, never
 as unknown-tamper, and may drive its level-triggered tamper flag from this
-field exactly as it would from an open row.
+field exactly as it would from an open row. The kind words are a gated
+vocabulary: `system_integrity_kinds` in `spec/witness_dictionary.json`,
+which `scripts/lint_dictionary_sync.py` holds equal to the module's
+literals and to Home Assistant's per-type tamper sensors. Both firmware
+trees register the module and feed it a live SD state, so both can narrate
+`sd_error` and `sd_remove`.
+
+### MQTT `securacv/<id>/events`
+
+When a broker is configured, every committed row is also published on
+`securacv/<id>/events` as one JSON body built by
+`firmware/common/csi/src/csi_event_wire.h`. The canary-wap sketch
+(`csi_mqtt.cpp`) and the canary PIO tree (`src/csi_event_egress.cpp`) share
+that builder, and `firmware/tests_host/test_csi_event_wire.cpp` pins its
+bytes. The body carries an Ed25519 signature over the `event` canonical
+(`firmware/common/identity/device_signature`), which Home Assistant verifies
+against the device's pinned key. Both trees publish that key as
+`public_key` in their MQTT health payload, and the integration pins it on
+first sight ([device_trust.md](device_trust.md)); until a key is pinned,
+the body reads as unverified (`no_pubkey`). `"signed"` is `true` only when
+a signature rides the body. `system.integrity` rows are also republished on
+`securacv/<id>/tamper` as `{"type":"<kind>","severity":"tamper"}`, the shape
+the integration's per-type tamper sensors match. On the canary base that
+bridge carries the SD and enclosure kinds only: its boot story already
+reaches the tamper topic through the power-events classifier.
+
+Both trees also keep an SD event log, `/EVENTS/today.ndjson`, one committed
+row per line in one shared format
+(`firmware/common/csi/src/csi_event_log_line.h`, so a tool reads either
+card), and backfill Home Assistant from it after a broker outage, marking
+those bodies `"replay":true`. On the canary base
+(`src/csi_event_egress.cpp` over the loop-task adapter
+`src/csi_event_log.cpp`; the rules are
+`firmware/common/csi/src/csi_event_backfill.h`, host-tested):
+
+- a row goes out live only when nothing older is waiting on the card;
+  otherwise it waits its turn, so a new row never overtakes an older one;
+- the backfill runs once the MQTT offline queue has drained (queued tamper
+  alerts first), walks the log in id order, sends at most two rows per loop
+  pass and about twenty a second, and never sends an id at or below the
+  highest one already handed to the broker, because Home Assistant's replay
+  gate refuses an `event_id` below the last one it verified. That watermark
+  survives a reboot through an NVS ceiling written with the event-id floor's
+  policy, so a reboot inside an outage skips at most ten undelivered rows
+  and republishes none. (Rows that pass through the bundler — presence,
+  `system.integrity` — take ids from its own space, 0x80000000 upward,
+  which restarts every boot and commits in bundle-close order; the gate
+  refuses such a row once a higher id is verified, live or replayed, and
+  the backfill skips it rather than send a refused id. And once one bundled
+  row has been handed over, the watermark sits in the bundler's space for
+  good: from then on the backfill sends no chokepoint-id row at all, in that
+  boot or after a reboot. One id space is an open item, and its fix has to
+  reset the stored watermark (NVS `csi.evsent`) and Home Assistant's mark.);
+- a row committed while the link was up but held behind the backlog is sent
+  with `"replay":false`, since it is news; everything else the backfill sends
+  says `"replay":true`;
+- the tamper-topic bridge publishes at commit, whatever the backfill is
+  doing;
+- the log is bound to the device's witness key by `/EVENTS/owner`; a card
+  whose log belongs to another device (or to a canary-wap) is left untouched
+  and not replayed. The canary-wap writes no owner file and leaves a card
+  that has one alone: it does not append to that log or replay it. A
+  canary-wap on firmware from before that rule does not know the file, and
+  would append its own rows to a canary's log, which that canary then
+  replays under its own key;
+- with no card, rows use the MQTT offline queue (12 records) as before, where
+  tamper alerts outrank events: once the queue is full, a new row pushes out
+  the oldest queued event, never a tamper alert. A body built while the
+  broker is unreachable says `"replay":true`. With no broker configured, rows
+  are logged and owed to nobody, and a broker configured later (or a changed
+  one) does not receive the old backlog.
 
 ### `POST /api/events/dismiss`
 
@@ -232,9 +302,22 @@ open; falls back to declared defaults for unset keys.
   "sensitivity": 50,
   "quiet_hours": { "enabled": false, "start_min": 0, "end_min": 480 },
   "privacy_ceiling": "p0",
-  "filter_foreign": true
+  "filter_foreign": true,
+  "tz": "EST5EDT,M3.2.0,M11.1.0",
+  "tz_iana": "America/New_York"
 }
 ```
+
+`tz` / `tz_iana` are the household time zone (repo sweep F28, option A —
+maintainer to confirm): the POSIX rule the device applies, and the IANA name
+it was mapped from when it came from one. Both are `""` while no zone is set,
+and then the device keeps **UTC**, exactly as before the setting existed.
+Once a zone is set, three things that used to run on UTC follow household
+time instead: the CSI day offset (`time_bucket` and quiet hours), the
+30-day Chirp self-test's waking-hours gate (it only sounds between 06:00
+and 22:00), and **Chirp night mode** (22:00 to 06:00, when templates not
+allowed at night are refused with `night_restricted` and `GET /api/chirp`
+reports `night_mode: true`).
 
 ### `POST /api/settings`
 
@@ -249,6 +332,8 @@ not the full module-tunable surface):
 | `"preset"` | string | `"sensitive"` / `"balanced"` / `"quiet"`. |
 | `"sensitivity"` | int 0..100 | Slider; ±20 around the preset baseline. |
 | `"quiet_hours"` | object | `{ "enabled": bool, "start_min": int 0..1439, "end_min": int 0..1439 }`. |
+| `"tz"` | string | Household time zone as a POSIX rule (≤ 47 characters, e.g. `"CET-1CEST,M3.5.0,M10.5.0/3"`). `""` alone clears the zone (back to UTC). The rule must fit the strict POSIX grammar in `tz_rule::posix_valid`: names of 3 to 10 letters (or `<…>`), offsets up to 24 h, and a zone with summer time names **both** change dates; nothing may trail it. Anything else is refused (`400`, `"bad time zone"`) and nothing in the body is written, because the C library under the ESP32 Arduino core 2.0.x (newlib 4.1) does not fall back to UTC on a rule it cannot read: it keeps part of the previous zone. |
+| `"tz_iana"` | string | The same, as an IANA zone name (`"Europe/Berlin"`), mapped on the device through the fleet's table (`firmware/common/time/tz_rule.h`). A zone the table does not know is refused (`400`, `"unknown zone"`) — never stored, never silently UTC. A typed `"tz"` wins when both are sent. |
 | `"filter_foreign"` | bool | CSI transmitter filter: accept frames only from the router this Canary is associated with (and registered peer Canaries); everything else is counted under `frames_dropped_foreign` on `/api/status` and never buffered. Default on. Off restores every decoded frame on the channel. Applied to the HAL at once and persisted; `/api/status` reports `filter_armed` (the setting is on and the Canary has associated, so the filter is comparing). |
 
 ```bash
@@ -350,7 +435,13 @@ without recompiling. The override is read once per boot.
 ## Quiet Hours gating
 
 The dashboard's Quiet Hours range (NVS keys `qh.en`, `qh.start`, `qh.end`)
-is wired into the chokepoint via `csi_event_set_quiet_window(start_min,
+is collected in the household's local time. The chokepoint compares it
+against the device's own clock, which follows the household time zone once
+one is set (`tz` above — seeded at setup from the phone's zone, which the
+setup wizard sends as `tz_iana` on `/api/wifi/connect`; applied with
+`setenv("TZ")` + `tzset()`, the device has no SNTP) and UTC until then. The
+same zone sets where the 10-minute `time_bucket` day starts. The Quiet
+Hours range is wired into the chokepoint via `csi_event_set_quiet_window(start_min,
 end_min, enabled)`. While the configured window is active, the chokepoint
 suppresses non-anomaly emits and increments an internal hold counter
 instead. At the first emit AFTER the window closes (or when the user
@@ -364,3 +455,78 @@ unusual activity matters most.
 The host wires this in `firmware/projects/canary-wap/arduino/canary_wap/
 csi_integration.cpp::register_v1_modules()` (boot-time NVS read) and
 the `/api/settings` POST handler (live re-apply on dashboard change).
+
+---
+
+## Household time zone on the canary PIO tree
+
+The canary PlatformIO tree has no module-settings surface, so its
+`/api/settings` (both methods, bearer-auth gated) carries only the zone:
+`GET` answers `{ok, tz, tz_iana}` and `POST` takes the same `tz` /
+`tz_iana` keys with the same rules as above (errors `unknown_zone` /
+`bad_time_zone`), answering with the stored values. Its setup page sends
+the phone's zone as `tz_iana` with the join, and the web UI's Settings
+panel has a Time zone card (use this browser's zone, a POSIX rule, or back
+to UTC). Storage: NVS `securacv`/`tz` and `tz_iana`.
+
+## BLE Scout pairing (canary PIO tree, `[env:full]`)
+
+Unlike the rest of this page, these five routes live in the **canary
+PlatformIO tree** (`firmware/canary/lib/securacv_network/src/securacv_network.cpp`),
+compiled only where `FEATURE_BLE_SCAN=1` (`[env:full]`). The canary-wap
+sketch carries the same Scout module and pairing window but no route for it
+yet. All five are bearer-auth gated and rate limited like every other `/api`
+route.
+
+Pairing is a **proximity window**, never a typed address (repo sweep F27,
+option B — maintainer to confirm): arm a window with a name, hold the tag
+against the Canary, and the first advert from a beacon that is not already
+paired, at or above the signal threshold, pairs inside the Bluetooth scan
+callback. The MAC is hashed there with the device's own key and dropped, so
+**no MAC crosses this API in either direction**. `hashed_id` is that keyed
+hash as 32 lowercase hex characters; the same tag has a different
+`hashed_id` on every other Canary. The paired list persists across reboots
+(one versioned NVS blob, written from the loop task).
+
+| Route | Body | Answer |
+| --- | --- | --- |
+| `GET /api/scout` | — | `{ok, count, max, beacons:[{hashed_id, label}]}` |
+| `POST /api/scout/pair/start` | `{label, window_s?, rssi_min?}` | the window status below; `400 bad_label` / `400 bad_window` / `409 window_busy` / `409 registry_full` / `503 scout_not_ready` |
+| `GET /api/scout/pair/status` | — | `{ok, state, label, window_s, remaining_s, rssi_min, hashed_id?}` |
+| `POST /api/scout/pair/cancel` | — | the window status plus `canceled` (bool) |
+| `POST /api/scout/unpair` | `{hashed_id}` | `{ok, count}`; `400 bad_hashed_id` / `404 not_paired` |
+
+- `label`: 1 to 23 printable ASCII characters (refused, not rewritten).
+- `window_s`: default and maximum 60 (larger values are clamped to 60,
+  smaller than 5 to 5).
+- `rssi_min`: default −45 dBm ("held against it"), clamped to −70..−20 dBm
+  so a window can never pair "anything in the house".
+- `state`: `idle`, `armed`, `pairing` (an advert won; finishing),
+  `paired` (then `hashed_id` names the new tag), `failed` (every slot
+  full), `expired`, `canceled`.
+
+Limits worth saying out loud: the window pairs the **first** single advert
+at or above the threshold from any unpaired device. There is no debounce
+and no strongest-wins rule, and the scan callback sees only an address and
+a signal level, not what kind of device sent it. So three things other
+than the tag can win at −45 dBm:
+
+- **your own phone**, in your hand after you pressed Pair;
+- **another Canary** on the same shelf, whose fleet-link adverts are
+  unpaired Bluetooth adverts like any other;
+- someone else's phone held right against the Canary.
+
+The window is at most 60 s, the name is yours, and forgetting the wrong
+device is one call (`POST /api/scout/unpair`), so the remedy is to unpair
+and pair again with the phone and other Canaries a step back. Most phones
+rotate their Bluetooth address every few minutes, so a paired phone stops
+matching; a tag with a fixed address is the reliable choice. Requiring two
+or three qualifying adverts from the same device, and skipping adverts that
+parse as a fleet-link or Chirp beacon, are the planned tightenings; both
+wait on a live pair against a real beacon, which is bench work (U1).
+
+```bash
+curl -X POST http://canary.local/api/scout/pair/start \
+     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+     -d '{"label": "Keys"}'
+```

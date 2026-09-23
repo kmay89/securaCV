@@ -6,6 +6,9 @@ backward, and a watch never alerts from a baseline it hasn't earned.
 """
 from __future__ import annotations
 
+import re
+
+from .. import watches as watches_module
 from ..watches import (
     CONCERN_EVERY,
     CONCERN_LESS,
@@ -16,6 +19,7 @@ from ..watches import (
     STATE_ENDED,
     STATE_SETTLING,
     STATE_WATCHING,
+    _duration_phrase,
     baseline,
     concern_from_text,
     days_left,
@@ -300,24 +304,136 @@ def test_speak_ending_is_honest_about_what_it_learned():
 
 def test_speak_fired_names_the_watch():
     watch = _watch()
-    assert "the litter box watch" in speak_fired(
+    assert speak_fired(
         watch, {"reason": "deviation", "detail": "9, up from the usual 3"}
-    )
-    assert "Something to flag" in speak_fired(
+    ) == "The litter box watch has something unusual: 9, up from the usual 3."
+    assert speak_fired(
         watch, {"reason": "stopped", "detail": "nothing for 2 days"}
+    ) == "Something to flag on the litter box watch: nothing for 2 days."
+    assert speak_fired(watch, {"reason": "every", "detail": "1"}) == "The litter box watch: 1."
+
+
+# ── speech: one article, and one of a thing is singular (HA11) ──────────
+#
+# Every label starts with its own "the" (watch_runtime._make_label), and
+# the speech used to add another: "The the gate canary watch ended after
+# 1 days". Both halves are pinned here, and the sweep below runs every
+# speak_* function over the shapes that broke them.
+
+
+def test_an_ending_says_the_label_once_and_one_day_not_one_days():
+    gate = _watch(label="the gate canary", days=1)
+    assert speak_ending(gate) == (
+        "The gate canary watch ended after 1 day. I never saw anything from it "
+        "— worth checking it was reporting at all. Want me to keep going, or "
+        "let it go?"
     )
+    _fill_baseline(gate, [3, 3, 4, 3, 3, 4])
+    assert speak_ending(gate) == (
+        "The gate canary watch ended. 1 day, holding steady around 3, nothing "
+        "unusual. Want me to keep going, or let it go?"
+    )
+    gate["fired"] = 1
+    assert speak_ending(gate) == (
+        "The gate canary watch ended. 1 day, usually around 3, and I flagged 1 "
+        "thing. Want me to keep going, or let it go?"
+    )
+    thin = _watch(label="the gate canary", days=1)
+    observe(thin, 3, NOW + 60)
+    assert speak_ending(thin).startswith(
+        "The gate canary watch ended after 1 day. Only 1 reading came in — "
+    )
+    # More than one keeps its plural.
+    assert speak_ending(_watch()).startswith("The litter box watch ended after 14 days. ")
+
+
+def test_a_label_says_its_article_once_however_it_is_stored():
+    verdict = {"reason": "deviation", "detail": "9, up from the usual 3"}
+    stopped = {"reason": "stopped", "detail": "nothing for 2 hours"}
+    # A label with its article capitalized, or doubled (a row stored by
+    # code that labeled "The gate canary" as "the The gate canary").
+    gate = _watch(label="The Gate Canary")
+    assert speak_fired(gate, verdict).startswith("The Gate Canary watch has ")
+    assert speak_fired(gate, stopped).startswith("Something to flag on the Gate Canary watch")
+    doubled = _watch(label="the The gate canary")
+    assert speak_fired(doubled, verdict).startswith("The gate canary watch has ")
+    assert speak_ending(doubled).startswith("The gate canary watch ended after 14 days.")
+    # A label with none (the id fallback) gets one, as it always did.
+    bare = _watch(label="w1")
+    assert speak_fired(bare, verdict).startswith("The w1 watch has ")
+    assert speak_ending(bare).startswith("The w1 watch ended after 14 days.")
+    # A name that only begins with the letters of the article is not one.
+    theater = _watch(label="theater lights")
+    assert speak_fired(theater, stopped).startswith("Something to flag on the theater lights")
+    # And the roster and the confirmation say a stored label's article once too.
+    assert speak_started(doubled).startswith("Watching the gate canary for 14 days")
+    assert speak_roster([doubled], NOW) == (
+        "One watch: the gate canary, 14 more days — still getting a feel for normal."
+    )
+
+
+def test_a_duration_of_one_is_singular():
+    assert _duration_phrase(60) == "1 minute"
+    assert _duration_phrase(10 * 60) == "10 minutes"
+    assert _duration_phrase(2 * 3600) == "2 hours"
+    assert _duration_phrase(2 * DAY) == "2 days"
+
+
+_DOUBLED_ARTICLE = re.compile(r"\bthe\s+the\b", re.IGNORECASE)
+_ONE_OF_A_PLURAL = re.compile(r"(?<![\d.])1 (?:days|hours|minutes|readings|things|watches)\b")
+
+
+def test_no_speech_doubles_the_article_or_says_one_of_a_plural():
+    said: dict[str, list[str]] = {}
+
+    def say(name, text):
+        said.setdefault(name, []).append(text)
+
+    verdicts = (
+        {"reason": "stopped", "detail": _duration_phrase(60)},
+        {"reason": "every", "detail": "1"},
+        {"reason": "deviation", "detail": "9, up from the usual 3"},
+    )
+    labels = ("the gate canary", "The Gate Canary", "the The gate canary", "the", "gate canary", "w1")
+    for label in labels:
+        for days in (1, 2, 14):
+            watch = _watch(label=label, days=days)
+            say("speak_started", speak_started(watch))
+            for verdict in verdicts:
+                say("speak_fired", speak_fired(watch, verdict))
+            say("speak_roster", speak_roster([watch], NOW))
+            say("speak_roster", speak_roster([watch], watch["ends_at"] - DAY))
+            say("speak_roster", speak_roster([watch] * 4, NOW))
+            say("speak_ending", speak_ending(watch))
+            observe(watch, 3, watch["started_at"] + 60)
+            say("speak_ending", speak_ending(watch))
+            _fill_baseline(watch, [3, 3, 4, 3, 3])
+            say("speak_ending", speak_ending(watch))
+            note_fired(watch, watch["settle_until"])
+            say("speak_ending", speak_ending(watch))
+
+    speakers = {name for name in dir(watches_module) if name.startswith("speak_")}
+    assert set(said) == speakers, f"not swept: {sorted(speakers - set(said))}"
+    for name, texts in said.items():
+        for text in texts:
+            assert not _DOUBLED_ARTICLE.search(text), (name, text)
+            assert not _ONE_OF_A_PLURAL.search(text), (name, text)
 
 
 def test_watch_roster_summarizes_past_a_handful():
     # Law 3 (docs/design/voice_moments.md): speech is serial, so a long
-    # list of watches is summarized and handed to the screen.
+    # list of watches is summarized and the rest handed to the
+    # securacv.list_watches action (HA10: no dashboard lists watches, so
+    # the old pointer at one led nowhere).
     many = [
         make_watch(f"w{i}", f"watch {i}", SUBJECT, NOW, days=10 + i)
         for i in range(5)
     ]
     speech = speak_roster(many, NOW + DAY)
-    assert speech.startswith("5 watches running.")
-    assert "The next to finish is watch 0, in 9 days." in speech
-    assert "The dashboard has the rest." in speech
+    assert speech == (
+        "5 watches running. The next to finish is watch 0, in 9 days. "
+        "The securacv.list_watches action has the rest."
+    )
+    assert "dashboard" not in speech
     # Three still read out in full.
     assert speak_roster(many[:3], NOW + DAY).startswith("3 watches:")

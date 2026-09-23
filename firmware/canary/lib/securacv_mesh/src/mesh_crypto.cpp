@@ -3,10 +3,20 @@
  *
  * Two paths via #ifdef CSI_TEST_HOST_BUILD:
  *   • Device path uses ESP-IDF's vendored mbedtls (SHA-256) and the
- *     rweather/Crypto library (Ed25519). This is the production code.
+ *     rweather/Crypto library (Ed25519, Curve25519, ChaChaPoly). This is
+ *     the production code.
  *   • Host path uses a vendored reference SHA-256 (FIPS 180-4, public
- *     domain) and a non-cryptographic Ed25519 shim. Real Ed25519
- *     correctness is exercised on-device.
+ *     domain), a REAL X25519 (the RFC 7748 Montgomery ladder, below —
+ *     checked against the RFC's vectors in test_mesh_crypto), and
+ *     non-cryptographic Ed25519 + AEAD shims. Real Ed25519 correctness is
+ *     exercised on-device.
+ *
+ * Why X25519 is real on the host (F33 part 2): the old host X25519 was a
+ * shim that returned the same value to both sides whatever keys they held,
+ * so a host test could not tell a working key exchange from a broken one —
+ * and pairing ran X25519 over Ed25519-generated keys for months, green on
+ * the host and unable to agree on a device. With the ladder, two sides agree
+ * on the host exactly when they would on a device.
  *
  * The shape mirrors firmware/projects/canary-wap/arduino/canary_wap/
  * mesh_network.cpp's static crypto helpers, so the wire format will
@@ -152,6 +162,167 @@ static void final_out(Ctx* c, uint8_t out[32]) {
 }
 
 }  /* namespace host_sha256 */
+#endif  /* CSI_TEST_HOST_BUILD */
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * HOST-BUILD X25519 (RFC 7748 §5, the Montgomery ladder)
+ *
+ * Field arithmetic over GF(2^255 - 19) on sixteen 16-bit limbs held in
+ * int64 — the public-domain TweetNaCl formulation (Bernstein et al.),
+ * restated here so the host build needs no crypto library. Semantics
+ * follow rweather's Curve25519::eval, which the device path calls, rather
+ * than RFC 7748's X25519() function:
+ *   • the scalar is taken AS GIVEN — bits 254..0, bit 255 ignored, NO
+ *     clamping (callers clamp: x25519_generate_keypair does);
+ *   • the u-coordinate's bit 255 is masked off (RFC 7748 §5 too);
+ *   • a u-coordinate that is not canonical (>= 2^255 - 19 once masked) is
+ *     reduced and the call still returns false, as eval() does.
+ * For a clamped scalar this is exactly X25519(); test_mesh_crypto pins the
+ * RFC 7748 §5.2 and §6.1 vectors through it. Not constant-time in the
+ * sense a device needs (host builds handle no real key material), and
+ * never compiled into firmware.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+#ifdef CSI_TEST_HOST_BUILD
+namespace host_x25519 {
+
+typedef int64_t gf[16];
+
+static void carry(gf o) {
+  for (int i = 0; i < 16; ++i) {
+    o[i] += ((int64_t)1 << 16);
+    const int64_t c = o[i] >> 16;
+    o[(i + 1) * (i < 15)] += c - 1 + 37 * (c - 1) * (i == 15);
+    o[i] -= c * 65536;
+  }
+}
+
+/* Swap p and q when b == 1, leave both when b == 0. */
+static void cswap(gf p, gf q, int b) {
+  const int64_t mask = ~(int64_t)(b - 1);
+  for (int i = 0; i < 16; ++i) {
+    const int64_t t = mask & (p[i] ^ q[i]);
+    p[i] ^= t;
+    q[i] ^= t;
+  }
+}
+
+static void pack(uint8_t out[32], const gf n) {
+  gf m, t;
+  for (int i = 0; i < 16; ++i) t[i] = n[i];
+  carry(t);
+  carry(t);
+  carry(t);
+  for (int j = 0; j < 2; ++j) {
+    m[0] = t[0] - 0xffed;
+    for (int i = 1; i < 15; ++i) {
+      m[i] = t[i] - 0xffff - ((m[i - 1] >> 16) & 1);
+      m[i - 1] &= 0xffff;
+    }
+    m[15] = t[15] - 0x7fff - ((m[14] >> 16) & 1);
+    const int borrow = (int)((m[15] >> 16) & 1);
+    m[14] &= 0xffff;
+    cswap(t, m, 1 - borrow);
+  }
+  for (int i = 0; i < 16; ++i) {
+    out[2 * i]     = (uint8_t)(t[i] & 0xff);
+    out[2 * i + 1] = (uint8_t)((t[i] >> 8) & 0xff);
+  }
+}
+
+static void unpack(gf o, const uint8_t in[32]) {
+  for (int i = 0; i < 16; ++i) o[i] = in[2 * i] + ((int64_t)in[2 * i + 1] << 8);
+  o[15] &= 0x7fff;   /* mask bit 255 */
+}
+
+static void fadd(gf o, const gf a, const gf b) { for (int i = 0; i < 16; ++i) o[i] = a[i] + b[i]; }
+static void fsub(gf o, const gf a, const gf b) { for (int i = 0; i < 16; ++i) o[i] = a[i] - b[i]; }
+
+static void fmul(gf o, const gf a, const gf b) {
+  int64_t t[31];
+  for (int i = 0; i < 31; ++i) t[i] = 0;
+  for (int i = 0; i < 16; ++i) {
+    for (int j = 0; j < 16; ++j) t[i + j] += a[i] * b[j];
+  }
+  for (int i = 0; i < 15; ++i) t[i] += 38 * t[i + 16];
+  for (int i = 0; i < 16; ++i) o[i] = t[i];
+  carry(o);
+  carry(o);
+}
+
+static void fsq(gf o, const gf a) { fmul(o, a, a); }
+
+/* o = i^(p-2) = 1/i. */
+static void finv(gf o, const gf in) {
+  gf c;
+  for (int a = 0; a < 16; ++a) c[a] = in[a];
+  for (int a = 253; a >= 0; --a) {
+    fsq(c, c);
+    if (a != 2 && a != 4) fmul(c, c, in);
+  }
+  for (int a = 0; a < 16; ++a) o[a] = c[a];
+}
+
+/* True iff the 255-bit value in `u` (bit 255 already ignored) is below
+ * p = 2^255 - 19: the only non-canonical encodings are p .. 2^255 - 1,
+ * i.e. u[0] >= 0xED, u[1..30] == 0xFF, (u[31] & 0x7F) == 0x7F. */
+static bool canonical(const uint8_t u[32]) {
+  if ((u[31] & 0x7F) != 0x7F) return true;
+  for (int i = 30; i >= 1; --i) {
+    if (u[i] != 0xFF) return true;
+  }
+  return u[0] < 0xED;
+}
+
+/* result = s * u on the Montgomery curve (u == nullptr means the base
+ * point, u = 9). Returns false for a non-canonical u, like eval(). */
+static bool eval(uint8_t result[32], const uint8_t s[32], const uint8_t* u) {
+  static const gf A24 = {0xDB41, 1};   /* 121665 */
+  uint8_t base[32] = {9};
+  const uint8_t* in = (u != nullptr) ? u : base;
+  const bool ok = canonical(in);
+
+  gf x1, a, b, c, d, e, f;
+  unpack(x1, in);
+  for (int i = 0; i < 16; ++i) {
+    b[i] = x1[i];
+    a[i] = c[i] = d[i] = 0;
+  }
+  a[0] = d[0] = 1;
+  for (int i = 254; i >= 0; --i) {
+    const int bit = (s[i >> 3] >> (i & 7)) & 1;
+    cswap(a, b, bit);
+    cswap(c, d, bit);
+    fadd(e, a, c);
+    fsub(a, a, c);
+    fadd(c, b, d);
+    fsub(b, b, d);
+    fsq(d, e);
+    fsq(f, a);
+    fmul(a, c, a);
+    fmul(c, b, e);
+    fadd(e, a, c);
+    fsub(a, a, c);
+    fsq(b, a);
+    fsub(c, d, f);
+    fmul(a, c, A24);
+    fadd(a, a, d);
+    fmul(c, c, a);
+    fmul(a, d, f);
+    fmul(d, b, x1);
+    fsq(b, e);
+    cswap(a, b, bit);
+    cswap(c, d, bit);
+  }
+  finv(c, c);
+  fmul(a, a, c);
+  pack(result, a);
+  secure_zero(a, sizeof(a)); secure_zero(b, sizeof(b)); secure_zero(c, sizeof(c));
+  secure_zero(d, sizeof(d)); secure_zero(e, sizeof(e)); secure_zero(f, sizeof(f));
+  return ok;
+}
+
+}  /* namespace host_x25519 */
 #endif  /* CSI_TEST_HOST_BUILD */
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -349,38 +520,15 @@ bool x25519_derive(const uint8_t our_priv[PRIVKEY_LEN],
   if (our_priv == nullptr || peer_pub == nullptr || shared_out == nullptr) return false;
 
 #ifdef CSI_TEST_HOST_BUILD
-  /* Host shim: derive a symmetric "shared" from the canonical ordering
-   * of (priv, peer_pub) — concretely SHA-256("dh-shim:v1" || min(priv,
-   * peer_pub) || max(priv, peer_pub)). Two peers that swap roles
-   * (A.priv + B.pub) vs (B.priv + A.pub) compute the same value IFF
-   * the host shim's keypair derives pub = SHA-256("securacv:host-
-   * shim:pub" || priv) — which it does (see ed25519_generate_keypair).
-   *
-   * Strictly: shared = SHA-256("dh-shim:v1" || sorted(pub_a, pub_b)),
-   * computed using the LOCAL priv's derived pub to reconstruct A's pub
-   * and the peer_pub directly. We don't need the actual DH property
-   * (since the priv is never used in the math) — only that both sides
-   * compute the same shared. The test asserts this. */
-  uint8_t our_pub[PUBKEY_LEN];
-  uint8_t h[SHA256_OUT_LEN];
-  sha256_domain("securacv:host-shim:pub", our_priv, PRIVKEY_LEN, h);
-  memcpy(our_pub, h, PUBKEY_LEN);
-
-  const uint8_t* lo = our_pub;
-  const uint8_t* hi = peer_pub;
-  if (memcmp(our_pub, peer_pub, PUBKEY_LEN) > 0) { lo = peer_pub; hi = our_pub; }
-
-  uint8_t concat[PUBKEY_LEN * 2];
-  memcpy(concat, lo, PUBKEY_LEN);
-  memcpy(concat + PUBKEY_LEN, hi, PUBKEY_LEN);
-  sha256_domain("dh-shim:v1", concat, sizeof(concat), h);
-  memcpy(shared_out, h, X25519_SHARED_LEN);
-
-  /* Refuse if peer_pub is the all-zero element (mirrors the device
-   * path's behavior; in real Curve25519 the all-zero point is
-   * low-order and DH produces the zero shared). */
-  if (is_all_zero(peer_pub, PUBKEY_LEN)) {
-    memset(shared_out, 0, X25519_SHARED_LEN);
+  /* The same sequence as the device path below, on the host ladder: a
+   * real scalar multiplication, so the two sides agree only when their
+   * keys are real X25519 keys (F33 part 2). */
+  uint8_t local_priv_copy[PRIVKEY_LEN];
+  memcpy(local_priv_copy, our_priv, PRIVKEY_LEN);
+  const bool ok = host_x25519::eval(shared_out, local_priv_copy, peer_pub);
+  secure_zero(local_priv_copy, sizeof(local_priv_copy));
+  if (!ok || is_all_zero(shared_out, X25519_SHARED_LEN)) {
+    secure_zero(shared_out, X25519_SHARED_LEN);
     return false;
   }
   return true;
@@ -402,6 +550,38 @@ bool x25519_derive(const uint8_t our_priv[PRIVKEY_LEN],
     return false;
   }
   return true;
+#endif
+}
+
+bool x25519_generate_keypair(uint8_t pub_out [PUBKEY_LEN],
+                             uint8_t priv_out[PRIVKEY_LEN]) {
+  if (pub_out == nullptr || priv_out == nullptr) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  /* The device sequence with rand() (TEST ONLY) for esp_fill_random():
+   * clamp, then pub = priv * basepoint on the host ladder. */
+  for (size_t i = 0; i < PRIVKEY_LEN; ++i) priv_out[i] = (uint8_t)(rand() & 0xFF);
+  priv_out[0]  &= 0xF8;
+  priv_out[31]  = (uint8_t)((priv_out[31] & 0x7F) | 0x40);
+  return host_x25519::eval(pub_out, priv_out, nullptr);
+#else
+  for (int attempt = 0; attempt < 4; ++attempt) {
+    esp_fill_random(priv_out, PRIVKEY_LEN);
+    /* RFC 7748 §5 clamping — Curve25519::eval takes the scalar as given. */
+    priv_out[0]  &= 0xF8;
+    priv_out[31]  = (uint8_t)((priv_out[31] & 0x7F) | 0x40);
+    if (Curve25519::eval(pub_out, priv_out, nullptr)) return true;
+  }
+  secure_zero(priv_out, PRIVKEY_LEN);
+  return false;
+#endif
+}
+
+void fill_random(uint8_t* out, size_t len) {
+  if (out == nullptr) return;
+#ifdef CSI_TEST_HOST_BUILD
+  for (size_t i = 0; i < len; ++i) out[i] = (uint8_t)(rand() & 0xFF);
+#else
+  esp_fill_random(out, len);
 #endif
 }
 

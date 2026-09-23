@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -441,6 +442,35 @@ class TheRealCatalog(unittest.TestCase):
                     f"{name}: {target['workflow']} never mentions {target['tag_prefix']}*, "
                     f"so it cannot be producing the tags this planner reads back",
                 )
+
+    def test_every_pins_file_a_release_reads_is_in_its_watch(self):
+        # RELEASE_LESSONS 2026-09-23 (b): the bundled espflash's version and
+        # sha256 pins lived only inside the two desktop release workflows,
+        # which no watch named, so a pin bump alone marked neither app as
+        # changed and released nothing. A pins file (.github/*.env) that a
+        # target's release workflow reads is an input to what it ships, so it
+        # must be in that target's watch.
+        workflows_dir = os.path.join(rp.REPO_ROOT, ".github", "workflows")
+        readers = set()
+        for target in self.targets:
+            with open(os.path.join(workflows_dir, target["workflow"]), encoding="utf-8") as handle:
+                source = handle.read()
+            for path in sorted(set(re.findall(r"\.github/[\w.-]+\.env\b", source))):
+                with self.subTest(target=target["name"], path=path):
+                    self.assertTrue(
+                        os.path.isfile(os.path.join(rp.REPO_ROOT, path)),
+                        f"{target['workflow']} reads {path}, which does not exist",
+                    )
+                    self.assertIn(
+                        path,
+                        target["watch"],
+                        f"{target['name']}'s release reads {path} but its watch does not name it — "
+                        f"a change to it alone would be reported as nothing to do",
+                    )
+                if path == ".github/espflash-pins.env":
+                    readers.add(target["name"])
+        # Not vacuous: both desktop apps bundle espflash from that one file.
+        self.assertEqual(readers, {"flasher", "lab"})
 
     def test_tag_prefixes_are_unique(self):
         prefixes = [t["tag_prefix"] for t in self.targets if t.get("tag_prefix")]

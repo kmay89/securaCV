@@ -27,7 +27,7 @@
 #define FEATURE_WIFI_STA            1   // Enable WiFi Station (connect to home)
 #define FEATURE_HTTP_SERVER         1   // Enable HTTP API server
 #define FEATURE_CAMERA_PEEK         1   // Enable camera preview streaming
-#define FEATURE_TAMPER_GPIO         0   // Enable tamper detection pin
+#define FEATURE_TAMPER_GPIO         0   // Enclosure tamper contact (reed/hall on D3); off until bench-validated
 #define FEATURE_WATCHDOG            1   // Enable hardware watchdog
 #define FEATURE_STATE_LOG           1   // Log state transitions
 #define FEATURE_MESH_NETWORK        1   // Enable Opera mesh network
@@ -73,7 +73,7 @@
 // ============================================================================
 
 #define CONFIG_RECORD_INTERVAL_MS       1000    // Record emission rate
-#define CONFIG_TIME_BUCKET_MS           5000    // Time coarsening (privacy)
+#define CONFIG_TIME_BUCKET_MS           600000  // Time coarsening (privacy) — the ten-minute grid, Invariant III
 #define CONFIG_FIX_LOST_TIMEOUT_MS      3000    // GPS fix timeout
 #define CONFIG_VERIFY_INTERVAL_SEC      60      // Self-verify interval
 #define CONFIG_WATCHDOG_TIMEOUT_SEC     8       // Watchdog timeout

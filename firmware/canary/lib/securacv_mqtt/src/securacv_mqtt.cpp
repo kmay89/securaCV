@@ -27,6 +27,7 @@
 #include "securacv_crypto.h"
 #include "securacv_witness.h"
 #include "log_level.h"
+#include "mqtt/mqtt_offline_queue.h"  // bounded FIFO for tamper/event publishes across a broker outage (host-tested)
 
 // ════════════════════════════════════════════════════════════════════════════
 // INTERNAL STATE
@@ -133,6 +134,31 @@ static uint32_t s_last_reconnect_attempt = 0;
 static bool s_initialized = false;
 static bool s_discovery_sent = false;
 
+// Offline publish queue: tamper alerts and events that could not go out
+// (link down, or the send failed) wait here and replay in order once the
+// link is back — a broker outage used to reduce every tamper in the window
+// to at most the newest one (main.cpp's single pending slot). When it is
+// full, events give way to tamper alerts (mqtt_offline_queue.h): the
+// committed csi_events csi_event_egress publishes cannot evict one. Storage is
+// allocated once, lazily, on the first push — PSRAM when the board has it,
+// heap otherwise; when the allocation fails the queue stays inert and the
+// publish functions report false so callers keep their own re-arm.
+// MQTT_OFFLINE_SLOT_BYTES stays under MQTT_BUFFER_SIZE with topic+framing
+// headroom, so anything the queue accepts is replayable — a failed replay
+// can only be transient, and the drain retries it next pass.
+#ifndef MQTT_OFFLINE_SLOT_BYTES
+  #define MQTT_OFFLINE_SLOT_BYTES 512
+#endif
+#ifndef MQTT_OFFLINE_SLOTS
+  #define MQTT_OFFLINE_SLOTS      12
+#endif
+static mqtt_offline_queue::Queue s_offline_q;
+static bool s_offline_q_alloc_tried = false;
+static uint32_t s_drain_logged_replayed = 0;
+// mqtt_destination_epoch(): bumped on the main task by a reprovision that
+// changes the broker (apply_pending_reload), read on the same task.
+static uint32_t s_destination_epoch = 0;
+
 // NVS keys for MQTT credentials
 static const char* NVS_KEY_MQTT_HOST = "mqtt_host";
 static const char* NVS_KEY_MQTT_PORT = "mqtt_port";
@@ -196,6 +222,87 @@ static void transport_reload(const char* why) {
     health_warn_changed("MQTT broker transport refused", text);
   } else if (d.warn_insecure()) {
     Serial.printf("[MQTT] %s\n", canary::net::mqtt_tls::insecure_warning());
+  }
+}
+
+// Lazy one-shot storage allocation for the offline queue. PSRAM first —
+// 6 KB of DRAM is real money on a build with camera + vision buffers —
+// heap as the fallback; a failed allocation is logged once and the queue
+// stays inert (capacity 0: push refuses, publishes report false).
+static void offline_queue_ensure() {
+  if (s_offline_q.capacity() > 0 || s_offline_q_alloc_tried) return;
+  s_offline_q_alloc_tried = true;
+  const size_t bytes =
+      MQTT_OFFLINE_SLOTS * mqtt_offline_queue::slot_stride(MQTT_OFFLINE_SLOT_BYTES);
+  void* storage = nullptr;
+  if (psramFound()) storage = ps_malloc(bytes);
+  // DRAM fallback even on a PSRAM board: fragmented/exhausted PSRAM must
+  // not latch the queue inert for the rest of the boot while 6 KB of
+  // ordinary heap sits free.
+  if (!storage) storage = malloc(bytes);
+  if (!storage || !s_offline_q.init(storage, bytes, MQTT_OFFLINE_SLOT_BYTES)) {
+    free(storage);
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
+               "MQTT offline queue unavailable", "allocation failed");
+    return;
+  }
+  Serial.printf("[MQTT] Offline queue: %u slots x %u B (%s)\n",
+                (unsigned)s_offline_q.capacity(), (unsigned)MQTT_OFFLINE_SLOT_BYTES,
+                psramFound() ? "PSRAM" : "heap");
+}
+
+// Common tail for the queued publish surfaces (events, tamper): send on
+// the live link, queue on a miss. True = sent or buffered; false only
+// when the queue is inert or refuses (oversize), so callers keep their
+// own re-arm for exactly the payloads the queue cannot carry.
+static bool publish_or_queue(mqtt_offline_queue::Kind kind, const char* topic,
+                             const char* payload, bool retained) {
+  if (payload == nullptr) return false;
+  const bool link_up = s_mqtt.connected();
+  if (link_up && !s_offline_q.empty()) {
+    // Records from the outage are still draining: join the back of the
+    // queue so the replay stays in order instead of a fresh publish
+    // jumping ahead of older alerts. A payload too big for a slot, or an
+    // event the full queue refuses (it keeps its tamper alerts), falls
+    // through to the live send — delivery beats ordering there.
+    if (s_offline_q.push(kind, retained, payload)) return true;
+  }
+  if (link_up && s_mqtt.publish(topic, payload, retained)) return true;
+  offline_queue_ensure();
+  return s_offline_q.push(kind, retained, payload);
+}
+
+// Replay queued records front-to-back while the link is up, a few per
+// pass so a full queue never stalls the loop task. A failed replay stops
+// the pass and keeps the record — anything the queue accepted fits the
+// client buffer, so the failure is transient (socket backpressure or the
+// link dying mid-drain). One health line per drained outage says what the
+// queue did, including what overflowed while the broker was gone.
+static void offline_queue_drain() {
+  using mqtt_offline_queue::Kind;
+  if (s_offline_q.empty()) return;
+  int budget = 4;
+  Kind kind;
+  bool retained;
+  const char* payload;
+  while (budget-- > 0 && s_mqtt.connected() &&
+         s_offline_q.front(&kind, &retained, &payload)) {
+    const char* topic =
+        (kind == mqtt_offline_queue::KIND_TAMPER) ? s_topic_tamper : s_topic_events;
+    if (!s_mqtt.publish(topic, payload, retained)) return;
+    s_offline_q.pop_front();
+  }
+  if (s_offline_q.empty()) {
+    const mqtt_offline_queue::Stats& st = s_offline_q.stats();
+    if (st.replayed != s_drain_logged_replayed) {
+      s_drain_logged_replayed = st.replayed;
+      char detail[96];
+      snprintf(detail, sizeof(detail), "replayed %lu, dropped %lu",
+               (unsigned long)st.replayed,
+               (unsigned long)(st.dropped_overflow + st.dropped_oversize));
+      log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK,
+                 "MQTT offline queue drained", detail);
+    }
   }
 }
 
@@ -568,6 +675,13 @@ bool mqtt_init(const char* device_id, const char* firmware_version) {
 // from NVS, and try again at once. No reboot.
 static void apply_pending_reload() {
   s_reload_pending = false;
+  // Capture the broker identity the queue's records were accepted for,
+  // before the re-read replaces it.
+  char prev_host[sizeof(s_creds.host)];
+  char prev_user[sizeof(s_creds.username)];
+  memcpy(prev_host, s_creds.host, sizeof(prev_host));
+  memcpy(prev_user, s_creds.username, sizeof(prev_user));
+  const uint16_t prev_port = s_creds.port;
   if (s_mqtt.connected()) {
     s_mqtt.publish(s_topic_avail, "offline", true);
     s_mqtt.disconnect();
@@ -575,6 +689,23 @@ static void apply_pending_reload() {
   }
   mqtt_load_credentials(&s_creds);
   transport_reload("reprovisioned");
+  // Records queued during an outage were destined for the broker identity
+  // that accepted them. If the endpoint or the account changed — or the
+  // broker was removed — flush rather than drain stale security signals
+  // to the wrong endpoint. A password rotation or TLS reprovision of the
+  // SAME host/port/user keeps the queue: destination unchanged. The epoch
+  // tells the SD event log's backfill the same thing about its own backlog.
+  const bool destination_changed =
+      !s_creds.configured || !s_creds.enabled ||
+      strcmp(prev_host, s_creds.host) != 0 || prev_port != s_creds.port ||
+      strcmp(prev_user, s_creds.username) != 0;
+  if (destination_changed) s_destination_epoch++;
+  if (!s_offline_q.empty() && destination_changed) {
+    char detail[64];
+    snprintf(detail, sizeof(detail), "broker changed; %u records discarded",
+             (unsigned)s_offline_q.clear());
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "MQTT offline queue flushed", detail);
+  }
   s_reconnect_delay_ms = MQTT_RECONNECT_MIN_MS;
   s_last_reconnect_attempt = 0;
   s_discovery_sent = false;
@@ -593,6 +724,7 @@ void mqtt_loop() {
 
   if (s_mqtt.connected()) {
     s_mqtt.loop();
+    offline_queue_drain();
     return;
   }
 
@@ -608,6 +740,10 @@ void mqtt_loop() {
 
 bool mqtt_connected() {
   return s_initialized && s_mqtt.connected();
+}
+
+bool mqtt_accepting() {
+  return s_initialized && s_creds.configured && s_creds.enabled;
 }
 
 void mqtt_disconnect() {
@@ -879,8 +1015,23 @@ bool mqtt_publish_status(const char* json_payload) {
 }
 
 bool mqtt_publish_event(const char* json_payload) {
-  if (!s_mqtt.connected()) return false;
-  return s_mqtt.publish(s_topic_events, json_payload);
+  if (!s_initialized || !s_creds.configured || !s_creds.enabled) return false;
+  return publish_or_queue(mqtt_offline_queue::KIND_EVENT, s_topic_events,
+                          json_payload, /*retained*/ false);
+}
+
+bool mqtt_publish_event_live(const char* json_payload) {
+  if (json_payload == nullptr || !s_initialized || !s_creds.configured ||
+      !s_creds.enabled) {
+    return false;
+  }
+  // The outage's queued records drain first (mqtt_loop), in order.
+  if (!s_mqtt.connected() || !s_offline_q.empty()) return false;
+  return s_mqtt.publish(s_topic_events, json_payload, /*retained*/ false);
+}
+
+uint32_t mqtt_destination_epoch() {
+  return s_destination_epoch;
 }
 
 bool mqtt_publish_health(const char* json_payload) {
@@ -894,14 +1045,18 @@ bool mqtt_publish_chain(const char* json_payload) {
 }
 
 bool mqtt_publish_tamper(const char* json_payload, bool retained) {
-  if (!s_mqtt.connected()) return false;
+  if (!s_initialized || !s_creds.configured || !s_creds.enabled) return false;
   // NOTE: PubSubClient only supports QoS 0 for publishing.
   // Default retained=true so the last tamper alert persists on the broker
   // for subscribers that connect after the event. Event-shaped payloads
   // (the boot power lineage) pass retained=false — a retained copy would
   // re-trigger HA's edge-latching tamper sensors on every HA restart,
   // days after the incident.
-  return s_mqtt.publish(s_topic_tamper, json_payload, retained);
+  // A tamper that cannot go out now (broker outage, failed send) is
+  // buffered and replayed in order on reconnect — every alert in the
+  // window reaches HA's edge-latching sensors, not just the newest.
+  return publish_or_queue(mqtt_offline_queue::KIND_TAMPER, s_topic_tamper,
+                          json_payload, retained);
 }
 
 bool mqtt_publish_transport(const char* json_payload) {

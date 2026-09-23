@@ -77,9 +77,10 @@ low-headache path.
    **Apple TV → Settings → General → VPN & Device Management → your Apple ID →
    Trust**. Run again.
 5. **Point it at your kernel — usually a no-op.** On launch the Wall probes
-   the well-known LAN addresses by itself (`canary.local:8099`, then
-   `canary.local` — the same list the desktop Flasher and Lab probe), so on a
-   standard install the fleet just appears. Keep the Apple TV and the
+   the well-known LAN addresses by itself (`canary.local:8099`, then the
+   kernel's own port `canary.local:8799`, then `canary.local` — the same list,
+   in the same order, the desktop Flasher, the Lab and the web walls probe),
+   so on a standard install the fleet just appears. Keep the Apple TV and the
    SecuraCV host on the **same LAN**; if your hub lives at a custom address,
    the on-screen prompt takes it once and remembers it. (Unlike iOS, tvOS
    generally doesn't interpose the Local Network permission prompt — if the

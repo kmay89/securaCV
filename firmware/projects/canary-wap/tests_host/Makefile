@@ -38,7 +38,13 @@ CHIRP_SEC_SRC = test_chirp_security.cpp
 # unsigned header nonce now says), and a frame
 # outside the freshness window — and that CANCEL/UPDATE only act on the
 # alarm they name, drills bank against their own rate bucket, and a replayed
-# SELFTEST_OK cannot keep a dead neighbor supervised-healthy.
+# SELFTEST_OK cannot keep a dead neighbor supervised-healthy; and that the
+# cosigner of a frame holds its alarm (its own fingerprint resolves to its own
+# key) and so can cosign that alarm's CANCEL, checked against the real
+# beacon_cancel_policy.h. Also pins that CAP-gateway trust confers no
+# privilege — in the mirror, and by reading the real beacon_channel.cpp (its
+# path is passed in, so the pin fails closed), which is also read to hold the
+# receive path's signer resolution to the mirror's.
 BEACON_ORIG_BIN = test_beacon_origination
 BEACON_ORIG_SRC = test_beacon_origination.cpp
 
@@ -49,6 +55,27 @@ BEACON_ORIG_SRC = test_beacon_origination.cpp
 # path still rejects collapsed signers without the flag.
 BEACON_SOLO_BIN = test_beacon_solo_origination
 BEACON_SOLO_SRC = test_beacon_solo_origination.cpp
+
+# Beacon CANCEL origination (beacon_cancel_policy.h): reason -> all-clear
+# template, the cancel request body (malformed fields refused, not
+# defaulted — beacon_api.h's adapter is read and pinned too), the canonical a
+# CANCEL signs, the refusal order the REST layer
+# names, the cosigner gate (sign a CANCEL only for the alarm this device
+# holds), the emitted header following the signed canonical, the originator
+# adopting its own frame, and the wire struct sizes. Includes the REAL
+# Arduino-free beacon_wire.h + beacon_cancel_policy.h, not a mirror — and reads
+# the real beacon_channel.cpp (beacon_source_scan.h; its path is passed in, so
+# the pins fail closed) to pin the call sites that use those helpers.
+BEACON_CANCEL_BIN = test_beacon_cancel_origination
+BEACON_CANCEL_SRC = test_beacon_cancel_origination.cpp
+
+# Beacon COSIGN envelope associated data (beacon_cosign_aad.h): the clear
+# routing fields both ends bind into the ChaCha20-Poly1305 tag (layout, byte
+# order, every field an attacker could flip changes the bytes, REQ/RESP
+# domain separation), the all-zero X25519 shared-secret refusal, and
+# secure_zero (the key wipe the optimizer cannot delete).
+BEACON_AAD_BIN = test_beacon_cosign_aad
+BEACON_AAD_SRC = test_beacon_cosign_aad.cpp
 
 # v0.5: auto-revoke-on-tamper invariants for
 # mesh_network.cpp::handle_tamper_alert → beacon_channel::on_peer_tampered.
@@ -196,11 +223,46 @@ $(CHIRP_INV_BIN): $(CHIRP_INV_SRC)
 $(CHIRP_SEC_BIN): $(CHIRP_SEC_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(CHIRP_SEC_SRC)
 
-$(BEACON_ORIG_BIN): $(BEACON_ORIG_SRC)
-	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_ORIG_SRC)
+$(BEACON_ORIG_BIN): $(BEACON_ORIG_SRC) beacon_source_scan.h $(SRC_DIR)/beacon_wire.h $(SRC_DIR)/beacon_cancel_policy.h
+	$(CXX) $(CXXFLAGS) -I $(SRC_DIR) -DBEACON_CHANNEL_CPP='"$(abspath $(SRC_DIR))/beacon_channel.cpp"' -o $@ $(BEACON_ORIG_SRC)
 
 $(BEACON_SOLO_BIN): $(BEACON_SOLO_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_SOLO_SRC)
+
+$(BEACON_CANCEL_BIN): $(BEACON_CANCEL_SRC) $(SRC_DIR)/beacon_wire.h $(SRC_DIR)/beacon_cancel_policy.h beacon_source_scan.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DBEACON_CHANNEL_CPP='"$(abspath $(SRC_DIR))/beacon_channel.cpp"' -DBEACON_API_H='"$(abspath $(SRC_DIR))/beacon_api.h"' -o $@ $(BEACON_CANCEL_SRC)
+
+$(BEACON_AAD_BIN): $(BEACON_AAD_SRC) $(SRC_DIR)/beacon_wire.h $(SRC_DIR)/beacon_cosign_aad.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(BEACON_AAD_SRC)
+
+# The two suites above join `run` and `clean` by prerequisite, so they add no
+# hunk to those shared lists (other branches extend the same lines).
+.PHONY: run-beacon-cancel clean-beacon-cancel
+run-beacon-cancel: $(BEACON_CANCEL_BIN) $(BEACON_AAD_BIN)
+	./$(BEACON_CANCEL_BIN)
+	./$(BEACON_AAD_BIN)
+clean-beacon-cancel:
+	rm -f $(BEACON_CANCEL_BIN) $(BEACON_AAD_BIN)
+run: run-beacon-cancel
+clean: clean-beacon-cancel
+
+# Full-body HTTP reads (http_body_reader.h): a body split across TCP reads is
+# reassembled, an oversized one is refused before any read (never truncated),
+# timeouts are bounded, nothing past content_len is read — and a source pin
+# that every Beacon route in beacon_api.h reads its body through read_body().
+HTTP_BODY_BIN = test_http_body_reader
+HTTP_BODY_SRC = test_http_body_reader.cpp
+
+$(HTTP_BODY_BIN): $(HTTP_BODY_SRC) $(SRC_DIR)/http_body_reader.h $(SRC_DIR)/beacon_api.h beacon_source_scan.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DBEACON_API_H='"$(abspath $(SRC_DIR))/beacon_api.h"' -o $@ $(HTTP_BODY_SRC)
+
+.PHONY: run-http-body clean-http-body
+run-http-body: $(HTTP_BODY_BIN)
+	./$(HTTP_BODY_BIN)
+clean-http-body:
+	rm -f $(HTTP_BODY_BIN)
+run: run-http-body
+clean: clean-http-body
 
 $(BEACON_TAMPER_BIN): $(BEACON_TAMPER_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_TAMPER_SRC) -lcrypto
@@ -261,6 +323,15 @@ HELPQR_SRC = test_help_qr_logic.cpp
 $(HELPQR_BIN): $(HELPQR_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(HELPQR_SRC)
 
+# Status tier: the dashboard's Good / Needs attention / Action required strip
+# (status_tier_logic.h) — worst-first ranking, one reason code per tier, a
+# missing card is not a fault, and every code has a COPY.tier row.
+STATUSTIER_BIN = test_status_tier_logic
+STATUSTIER_SRC = test_status_tier_logic.cpp
+
+$(STATUSTIER_BIN): $(STATUSTIER_SRC) $(SRC_DIR)/status_tier_logic.h
+	$(CXX) $(CXXFLAGS) -o $@ $(STATUSTIER_SRC)
+
 # CSI L-LTF tone canonicalization (csi_subcarriers.h): the 52-tone map for
 # FFT-ordered 20 MHz and linear 40 MHz L-LTF sections, HT/non-HT parity,
 # first_word_invalid patching, and the zero-based order detector.
@@ -311,7 +382,7 @@ TAMPER_SOURCES = test_tamper_events_logic.cpp \
 $(TAMPER_BIN): $(TAMPER_SOURCES)
 	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -Wno-unused-parameter -I $(SRC_DIR) -o $@ $(TAMPER_SOURCES)
 
-run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(FLEET_BEACON_BIN) $(EVDRIVE_BIN) $(EVVERIFY_BIN) $(BLEOTA_BIN) $(HELPQR_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN) $(WITNESS_PAGE_BIN)
+run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(FLEET_BEACON_BIN) $(EVDRIVE_BIN) $(EVVERIFY_BIN) $(BLEOTA_BIN) $(HELPQR_BIN) $(STATUSTIER_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN) $(WITNESS_PAGE_BIN)
 	./$(BIN)
 	./$(CHIRP_INV_BIN)
 	./$(CHIRP_SEC_BIN)
@@ -334,6 +405,7 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 	./$(EVVERIFY_BIN)
 	./$(BLEOTA_BIN)
 	./$(HELPQR_BIN)
+	./$(STATUSTIER_BIN)
 	./$(CSI_SUBC_BIN)
 	for b in $(CSI_COMPAT_BINS); do ./$$b || exit 1; done
 	./$(CSI_TRAFFIC_BIN)
@@ -341,4 +413,76 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 	./$(WITNESS_PAGE_BIN) $(WITNESS_PAGE_FIXTURE)
 
 clean:
-	rm -f $(WITNESS_PAGE_BIN) $(EVVERIFY_BIN) $(BLEOTA_BIN) $(EVDRIVE_BIN) $(FLEET_BEACON_BIN) $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(HELPQR_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN)
+	rm -f $(WITNESS_PAGE_BIN) $(EVVERIFY_BIN) $(BLEOTA_BIN) $(EVDRIVE_BIN) $(FLEET_BEACON_BIN) $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(HELPQR_BIN) $(STATUSTIER_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN)
+
+# F14: canary-wap Opera pairing framing (mesh_pair_frame.h). Pairing frames
+# are [MessageType 8..12][exact Pair*Payload] and must be classified before
+# handle_received_message()'s 102-byte signed-header minimum, which used to
+# drop all of them. Pins exact-size accept, off-by-one reject, and that a
+# signed Opera (version 0), Chirp (0xC4) or Beacon (0xB1) frame is never
+# taken for a pairing frame. Pure header, no Arduino glue. Hooked into
+# `run` and `clean` by prerequisite so it adds no hunk to their lists.
+PAIR_FRAME_BIN = test_mesh_pair_frame
+PAIR_FRAME_SRC = test_mesh_pair_frame.cpp
+
+$(PAIR_FRAME_BIN): $(PAIR_FRAME_SRC) $(SRC_DIR)/mesh_pair_frame.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(PAIR_FRAME_SRC)
+
+.PHONY: run-pair-frame clean-pair-frame
+run-pair-frame: $(PAIR_FRAME_BIN)
+	./$(PAIR_FRAME_BIN)
+clean-pair-frame:
+	rm -f $(PAIR_FRAME_BIN)
+
+run: run-pair-frame
+clean: clean-pair-frame
+
+# F33 part 2 (crypto review — maintainer to confirm): canary-wap Opera pairing
+# key agreement (mesh_pair_crypto.h). The header compiles here as the sketch
+# compiles it, against REAL X25519 / HKDF-SHA256 / SHA-256 (OpenSSL, behind the
+# rweather and mbedTLS names in stubs/pair_crypto) — no mock of the key
+# exchange: two independently generated keypairs must reach the same session
+# key and 6-digit code, and the pre-fix Ed25519 keys must not. Also reads the
+# real mesh_network.cpp (beacon_source_scan.h; its path is passed in, so the
+# pins fail closed) to pin that the pairing handlers use the header.
+PAIR_CRYPTO_BIN = test_mesh_pair_crypto
+PAIR_CRYPTO_SRC = test_mesh_pair_crypto.cpp
+
+$(PAIR_CRYPTO_BIN): $(PAIR_CRYPTO_SRC) $(SRC_DIR)/mesh_pair_crypto.h $(SRC_DIR)/mesh_network.cpp beacon_source_scan.h stubs/pair_crypto/Curve25519.h stubs/pair_crypto/mbedtls/md.h stubs/pair_crypto/mbedtls/hkdf.h
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/pair_crypto -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(PAIR_CRYPTO_SRC) -lcrypto
+
+.PHONY: run-pair-crypto clean-pair-crypto
+run-pair-crypto: $(PAIR_CRYPTO_BIN)
+	./$(PAIR_CRYPTO_BIN)
+clean-pair-crypto:
+	rm -f $(PAIR_CRYPTO_BIN)
+
+run: run-pair-crypto
+clean: clean-pair-crypto
+
+# F33 part 6: the spec §5.6 REVOCATION_GRACE_MS deny-list. mesh_revocation is
+# the PlatformIO tree's module, staged byte-identical (check_mesh_sync.sh);
+# its behavior suite runs here against the STAGED copy, and
+# test_mesh_revocation_wap pins what mesh_network.cpp does with it (records on
+# remove, refuses in the pairing handlers and add_peer, restores / expires /
+# persists, FE-gated) by reading the real file (beacon_source_scan.h).
+REVOC_WAP_BIN    = test_mesh_revocation_wap
+REVOC_WAP_SRC    = test_mesh_revocation_wap.cpp
+REVOC_STAGED_BIN = test_mesh_revocation_staged
+REVOC_STAGED_SRC = ../../../canary/lib/securacv_mesh/test_mesh_revocation.cpp
+
+$(REVOC_WAP_BIN): $(REVOC_WAP_SRC) $(SRC_DIR)/mesh_revocation.h $(SRC_DIR)/mesh_revocation.cpp $(SRC_DIR)/mesh_network.cpp beacon_source_scan.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(REVOC_WAP_SRC) $(SRC_DIR)/mesh_revocation.cpp
+
+$(REVOC_STAGED_BIN): $(REVOC_STAGED_SRC) $(SRC_DIR)/mesh_revocation.h $(SRC_DIR)/mesh_revocation.cpp
+	$(CXX) $(CXXFLAGS) -Werror -DCSI_TEST_HOST_BUILD -I $(SRC_DIR) -o $@ $(REVOC_STAGED_SRC) $(SRC_DIR)/mesh_revocation.cpp
+
+.PHONY: run-revocation clean-revocation
+run-revocation: $(REVOC_WAP_BIN) $(REVOC_STAGED_BIN)
+	./$(REVOC_WAP_BIN)
+	./$(REVOC_STAGED_BIN)
+clean-revocation:
+	rm -f $(REVOC_WAP_BIN) $(REVOC_STAGED_BIN)
+
+run: run-revocation
+clean: clean-revocation

@@ -439,6 +439,15 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
     font: inherit; font-size: 13px;
   }
   .qh-row .qh-arrow { color: var(--fg-mute); }
+  .qh-zone {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    font-size: 12px; color: var(--fg-mute);
+  }
+  .qh-zone button {
+    border: 1px solid var(--hairline); background: var(--bg-veil);
+    color: var(--fg); padding: 3px 8px; border-radius: 6px;
+    font: inherit; font-size: 12px; cursor: pointer;
+  }
   .switch {
     position: relative; width: 44px; height: 26px;
     background: rgba(0,0,0,0.10); border-radius: 13px;
@@ -582,6 +591,23 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
     letter-spacing: 0.02em;
   }
   .privacy-pill.warm { color: #b87800; }
+  /* Three-tier health strip under the topbar (status_tier_logic.h). Calm
+     by default; warm for "needs attention", a stronger warm for "action
+     required" — never red (the non-impersonation contract keeps alarm
+     colors for real alarms). Hidden until /api/status answers. */
+  .tier-strip {
+    display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap;
+    margin: 6px max(env(safe-area-inset-left), 18px) 0 max(env(safe-area-inset-right), 18px);
+    padding: 8px 12px; border-radius: 12px;
+    font-size: 13px; color: var(--fg-mute);
+    background: var(--bg-veil);
+    border: 1px solid var(--hairline);
+  }
+  .tier-strip[hidden] { display: none; }
+  .tier-strip .tier-label { font-weight: 600; }
+  .tier-strip[data-tier="needs_attention"] .tier-label { color: #b87800; }
+  .tier-strip[data-tier="action_required"] { border-color: #b87800; }
+  .tier-strip[data-tier="action_required"] .tier-label { color: #8a5a00; }
   /* Mic pill: same quiet-pill look as .privacy-pill, but always in the
      topbar — the mic's on/off state is privacy-relevant and must be
      visible at a glance, not buried in a sheet. Hidden until
@@ -1022,6 +1048,14 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
   </div>
 </header>
 
+<!-- Three-tier health strip: Good / Needs attention / Action required.
+     The verdict comes from /api/status (status_tier + status_reason); the
+     words live in COPY.tier. Stays hidden on a page that is not paired. -->
+<div class="tier-strip" id="tierStrip" role="status" aria-live="polite" hidden>
+  <span class="tier-label" id="tierLabel"></span>
+  <span class="tier-msg" id="tierMsg"></span>
+</div>
+
 <main>
   <section class="hero">
     <div class="plate">
@@ -1127,6 +1161,10 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
           <span class="qh-arrow" aria-hidden="true">→</span>
           <input type="time" id="qhEnd"   value="07:00" data-tip="quietHoursEnd">
         </span>
+      </div>
+      <div class="qh-zone" id="qhZone" hidden>
+        <span id="qhZoneText"></span>
+        <button type="button" id="qhZoneBtn" data-tip="timeZone" hidden>Use this phone's time zone</button>
       </div>
 
       <details class="tinker">
@@ -1330,6 +1368,7 @@ const COPY = {
     quietHours:      "Hide late-night events from the ribbon. Movement still folds into a gentle nightly summary.",
     quietHoursStart: "When quiet hours begin.",
     quietHoursEnd:   "When quiet hours end.",
+    timeZone:        "Set the canary's clock to the time zone this phone uses, so quiet hours start at your midnight.",
     sensitivity: "Slide right to notice more. Slide left to ignore tiny movements.",
     rawVector:   "For tinkerers. Shows the live numbers behind the scenes.",
     breathAudio: "Play a soft breath sound that follows the rhythm in the room. Off by default.",
@@ -1359,6 +1398,26 @@ const COPY = {
   },
   today: {
     empty: "Quiet so far today. The canary is perched, head cocked.",
+  },
+  tier: {
+    /* The health strip. Codes come from status_tier_logic.h (worst first);
+     * a new code there needs a row here. The three labels are the wording
+     * the enterprise checklist asked for — a maintainer's call to change. */
+    labels: {
+      good:            "Good",
+      needs_attention: "Needs attention",
+      action_required: "Action required",
+    },
+    reasons: {
+      ok:         "Everything is working.",
+      signing:    "The canary can't seal its records right now. Restart it. If this keeps happening, ask for help.",
+      verify:     "A saved record failed its check. Ask for help before you rely on it.",
+      safe_mode:  "The canary started in safe mode after a problem, so some parts are off. Restart it.",
+      sd_card:    "The memory card isn't working. Records stay on the canary for now.",
+      restarted:  "The canary restarted by itself. It's running again.",
+      low_memory: "The canary is short on memory. A restart will help.",
+      notes:      "The canary noted a problem you haven't looked at yet.",
+    },
   },
   what: {
     title: "What the sensor can and can't see",
@@ -2088,6 +2147,7 @@ async function fetchToday() {
         sd_error: 'Storage card failing',
         watchdog: 'Recovered from a system hang',
         unexpected_reboot: 'Rebooted unexpectedly',
+        enclosure: 'Enclosure opened',
       })[e.state] || e.state;
       if (e.state === 'active') activeCount++;
       if (e.state === 'empty')  quietCount++;
@@ -2695,6 +2755,10 @@ setSwitch(petSwitch, window.PET_MODE);
       if (typeof qh.end_min   === 'number')  window.QH_END_MIN   = Number(qh.end_min);
       applyQhUiState();
     }
+    /* Household time zone (F28): "" while the device keeps world time. */
+    if (typeof j.tz === 'string')      window.DEVICE_TZ      = j.tz;
+    if (typeof j.tz_iana === 'string') window.DEVICE_TZ_IANA = j.tz_iana;
+    applyZoneUi();
   } catch {}
 })();
 
@@ -2739,6 +2803,9 @@ const qhSwitch = document.getElementById('qhSwitch');
 const qhTimes  = document.getElementById('qhTimes');
 const qhStart  = document.getElementById('qhStart');
 const qhEnd    = document.getElementById('qhEnd');
+const qhZone     = document.getElementById('qhZone');
+const qhZoneText = document.getElementById('qhZoneText');
+const qhZoneBtn  = document.getElementById('qhZoneBtn');
 
 window.QH_ENABLED   = false;
 window.QH_START_MIN = 23 * 60;
@@ -2771,7 +2838,48 @@ function applyQhUiState() {
   if (qhTimes)  qhTimes.hidden = !window.QH_ENABLED;
   if (qhStart)  qhStart.value = minutesToTimeStr(window.QH_START_MIN);
   if (qhEnd)    qhEnd.value   = minutesToTimeStr(window.QH_END_MIN);
+  applyZoneUi();
 }
+
+/* Household time zone (repo sweep F28). The canary compares quiet hours
+ * against ITS clock, which is world time (UTC) until a zone is set — at
+ * setup from the phone, or here. The zone travels as the phone's own IANA
+ * name; the canary maps it to a rule from its built-in table and says so
+ * when it doesn't know it. */
+window.DEVICE_TZ      = '';
+window.DEVICE_TZ_IANA = '';
+function phoneZone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; }
+}
+function applyZoneUi() {
+  if (!qhZone || !qhZoneText || !qhZoneBtn) return;
+  qhZone.hidden = !window.QH_ENABLED;
+  const here = window.DEVICE_TZ_IANA || window.DEVICE_TZ;
+  qhZoneText.textContent = here ? ('Times follow ' + here + '.')
+                                : 'Times follow world time (UTC).';
+  const phone = phoneZone();
+  qhZoneBtn.hidden = !phone || phone === window.DEVICE_TZ_IANA;
+}
+async function usePhoneZone() {
+  const zone = phoneZone();
+  if (!zone) return;
+  try {
+    const r = await cvFetch('/api/settings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({tz_iana: zone}),
+    });
+    let j = {};
+    try { j = await r.json(); } catch {}
+    if (r.ok && j.ok) {
+      window.DEVICE_TZ_IANA = zone;
+      applyZoneUi();
+    } else if (qhZoneText) {
+      qhZoneText.textContent = "The canary doesn't know " + zone + " yet, so its clock did not change.";
+    }
+  } catch {}
+}
+if (qhZoneBtn) qhZoneBtn.addEventListener('click', usePhoneZone);
 applyQhUiState();
 
 let g_qhTimer = null;
@@ -3263,6 +3371,35 @@ pollLoop(pollMicPill, 5000);
  *  Best-effort: a transient network blip leaves the "canary" placeholder
  *  in place, never breaks the dashboard.
  * ──────────────────────────────────────────────────────────────────────── */
+/* ────────────────────────────────────────────────────────────────────────
+ *  Three-tier health strip (Good / Needs attention / Action required).
+ *
+ *  GET /api/status carries status_tier + status_reason, decided in the
+ *  firmware by status_tier_logic.h (host-tested, worst first). The words
+ *  live in COPY.tier. /api/status needs the pairing session, so an
+ *  unpaired page gets a plain 401 (not a lockout strike) and the strip just
+ *  stays hidden — never a guessed verdict. Checked once a minute.
+ * ──────────────────────────────────────────────────────────────────────── */
+async function refreshTier() {
+  const strip = document.getElementById('tierStrip');
+  if (!strip) return;
+  try {
+    const r = await cvFetch('/api/status', {cache: 'no-store'});
+    if (!r.ok) { strip.hidden = true; return; }
+    const j = await r.json();
+    const label = COPY.tier.labels[j.status_tier];
+    if (!label) { strip.hidden = true; return; }
+    document.getElementById('tierLabel').textContent = label;
+    document.getElementById('tierMsg').textContent = COPY.tier.reasons[j.status_reason] || '';
+    strip.dataset.tier = j.status_tier;
+    strip.hidden = false;
+  } catch {
+    strip.hidden = true;
+  }
+}
+refreshTier();
+setInterval(refreshTier, 60000);
+
 (async function fetchDeviceId() {
   try {
     const r = await cvFetch('/api/device-info', {cache: 'no-store'});

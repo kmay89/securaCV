@@ -24,6 +24,18 @@
 #ifndef FEATURE_HTTP_SERVER
   #define FEATURE_HTTP_SERVER   1
 #endif
+// Self-signed HTTPS on 443 with a port-80 redirect server (F15). Default OFF:
+// [env:dev] turns it on (inherited by dev_ha / usb-onboard / full), so CI
+// compiles it on both the IDF 4.4 and IDF 5.5 cores. release/release_ha and
+// the board envs stay at 0 until the firmware.yml size-guard log shows the
+// release delta fits the 0x1E0000 OTA slot (firmware/flavors.json
+// size_guards) — the maintainer flips release. Even when ON, the device falls
+// back to HTTP-only (and says why in /api/status tls_mode_reason) when the
+// core lacks esp_https_server, certificate generation is unavailable, or the
+// first-boot setup wizard is running.
+#ifndef FEATURE_HTTPS
+  #define FEATURE_HTTPS         0
+#endif
 #ifndef FEATURE_CAMERA_PEEK
   #define FEATURE_CAMERA_PEEK   1
 #endif
@@ -239,8 +251,21 @@
   #define MIC_PIN_DATA   41
 #endif
 
-// Tamper detection
-#define TAMPER_GPIO    2
+// Enclosure tamper contact (FEATURE_TAMPER_GPIO, off in every shipped env).
+// The pin and its polarity are the board map's: firmware/boards/
+// xiao-esp32s3-sense/pins/pins.h TAMPER_PIN_DEFAULT (D3 / GPIO4,
+// INPUT_PULLUP) and TAMPER_ACTIVE (the level that reads "enclosure open").
+// This tree does not include that header, so the values are restated here
+// and firmware/scripts/check_board_registry.py holds them equal; the
+// board-port envs pass their own map's pin with -DTAMPER_PIN_DEFAULT=N.
+// (This replaced a `TAMPER_GPIO 2` literal that nothing read — GPIO2 is the
+// canary-wap's buzzer, never the tamper line.)
+#ifndef TAMPER_PIN_DEFAULT
+  #define TAMPER_PIN_DEFAULT  4
+#endif
+#ifndef TAMPER_ACTIVE
+  #define TAMPER_ACTIVE       LOW
+#endif
 
 // Boot button
 #define BOOT_BUTTON_GPIO  0
@@ -303,6 +328,44 @@
   #endif
 #endif
 
+// ─── Tamper contact pin sanity ───────────────────────────────────
+// The contact is read with digitalRead() on a pin set to INPUT_PULLUP, so
+// it must own that pin outright. Every pin this header knows is checked;
+// the one that bit in practice is the touch pad, whose default
+// (securacv_touch.h TOUCH_PIN_NUM) is the same D3 / GPIO4 — the build plan
+// (docs/hardware/canary_peripheral_build_plan.md §5.1) moves the pad to
+// D4 / GPIO5 when both are fitted.
+#if FEATURE_TAMPER_GPIO
+  #if defined(HAS_TAMPER_INPUT) && !HAS_TAMPER_INPUT
+    #error "FEATURE_TAMPER_GPIO=1 but this board's map declares no tamper input (HAS_TAMPER_INPUT=0)."
+  #endif
+  #if FEATURE_TOUCH && !defined(TOUCH_PIN_NUM)
+    #error "FEATURE_TAMPER_GPIO=1 with FEATURE_TOUCH=1: the touch pad's default pin is the tamper contact's D3/GPIO4. Move the pad explicitly, e.g. -DTOUCH_PIN_NUM=5 (D4)."
+  #endif
+  #if FEATURE_TOUCH && defined(TOUCH_PIN_NUM) && (TOUCH_PIN_NUM == TAMPER_PIN_DEFAULT)
+    #error "FEATURE_TAMPER_GPIO=1: TOUCH_PIN_NUM and TAMPER_PIN_DEFAULT are the same pin."
+  #endif
+  #if FEATURE_SD_STORAGE && (TAMPER_PIN_DEFAULT == SD_CS_PIN || TAMPER_PIN_DEFAULT == SD_SCK_PIN || \
+                             TAMPER_PIN_DEFAULT == SD_MISO_PIN || TAMPER_PIN_DEFAULT == SD_MOSI_PIN)
+    #error "FEATURE_TAMPER_GPIO=1: TAMPER_PIN_DEFAULT is one of the SD card's SPI pins."
+  #endif
+  #if FEATURE_CAMERA_PEEK && (TAMPER_PIN_DEFAULT == CAM_PIN_XCLK || TAMPER_PIN_DEFAULT == CAM_PIN_SIOD || \
+      TAMPER_PIN_DEFAULT == CAM_PIN_SIOC || TAMPER_PIN_DEFAULT == CAM_PIN_VSYNC ||                        \
+      TAMPER_PIN_DEFAULT == CAM_PIN_HREF || TAMPER_PIN_DEFAULT == CAM_PIN_PCLK ||                         \
+      TAMPER_PIN_DEFAULT == CAM_PIN_D0 || TAMPER_PIN_DEFAULT == CAM_PIN_D1 ||                             \
+      TAMPER_PIN_DEFAULT == CAM_PIN_D2 || TAMPER_PIN_DEFAULT == CAM_PIN_D3 ||                             \
+      TAMPER_PIN_DEFAULT == CAM_PIN_D4 || TAMPER_PIN_DEFAULT == CAM_PIN_D5 ||                             \
+      TAMPER_PIN_DEFAULT == CAM_PIN_D6 || TAMPER_PIN_DEFAULT == CAM_PIN_D7)
+    #error "FEATURE_TAMPER_GPIO=1: TAMPER_PIN_DEFAULT is one of the camera's pins (a board-port env must pass its own map's pin with -DTAMPER_PIN_DEFAULT=N)."
+  #endif
+  #if FEATURE_GNSS && (TAMPER_PIN_DEFAULT == GPS_RX_PIN || TAMPER_PIN_DEFAULT == GPS_TX_PIN)
+    #error "FEATURE_TAMPER_GPIO=1: TAMPER_PIN_DEFAULT is one of the GNSS UART pins."
+  #endif
+  #if TAMPER_PIN_DEFAULT == BOOT_BUTTON_GPIO
+    #error "FEATURE_TAMPER_GPIO=1: TAMPER_PIN_DEFAULT is the BOOT button."
+  #endif
+#endif
+
 // ════════════════════════════════════════════════════════════════
 // WIFI AP DEFAULTS
 // ════════════════════════════════════════════════════════════════
@@ -316,6 +379,20 @@
 // AP. (regression_check.sh fails the build if the old literal returns.)
 #define AP_CHANNEL           1
 #define AP_MAX_CONNECTIONS   1    // Hardened: max 1 client for security isolation
+
+// F16: ask the driver for WPA2/WPA3 transition + PMF-capable on the SoftAP
+// (common/network/ap_security_policy.h). Runtime fallback: when the core's
+// prebuilt sdkconfig lacks SoftAP SAE (expected on the IDF 4.4 core) or the
+// driver refuses the config, the AP stays WPA2-PSK, the reason is logged, and
+// /api/wifi/status + /api/status report what is on the air as ap_auth.
+#ifndef CANARY_AP_WPA3_TRANSITION
+  #define CANARY_AP_WPA3_TRANSITION 1
+#endif
+
+// FEATURE_HTTPS ports: the TLS server, and the plain server that keeps the
+// OS connectivity probes and 307-redirects everything else to https://.
+#define HTTPS_PORT           443
+#define HTTP_REDIRECT_PORT   80
 
 // Radio defaults applied once at network bring-up. Pinning the PHY to HT20 +
 // 11bgn keeps the WiFi-CSI subcarrier count constant — an HT40 association or
@@ -345,7 +422,7 @@
 // ════════════════════════════════════════════════════════════════
 
 #define RECORD_INTERVAL_MS       1000    // Record emission rate
-#define TIME_BUCKET_MS           5000    // Time coarsening bucket
+#define TIME_BUCKET_MS           600000  // Time coarsening bucket — the ten-minute grid (Invariant III); main.cpp derives BUCKET_10MIN_MS from it
 #define FIX_LOST_TIMEOUT_MS      3000    // GPS fix timeout
 #define VERIFY_INTERVAL_SEC      60      // Self-verify every N seconds
 #define WATCHDOG_TIMEOUT_SEC     8       // Hardware watchdog
@@ -381,6 +458,11 @@
 #define BOOT_SHORT_PRESS_MS      50      // Debounce floor for short press
 #define BOOT_LONG_PRESS_MS       5000    // Hold for factory reset
 #define BOOT_MEDIUM_PRESS_MS     2000    // Medium hold for info print
+// A short BOOT tap opens the provisioning gate for this long (WAP parity):
+// a browser polling GET /api/provisioning-receipt every 2 s reliably catches
+// it and a captive-portal interstitial cannot time the user out. Still
+// single-use — the first receipt fetch closes it (provisioning_gate.h).
+#define PROVISIONING_GATE_TTL_MS 30000
 
 // ════════════════════════════════════════════════════════════════
 // SD CARD SPI SPEEDS
@@ -414,6 +496,33 @@
 
 #define NVS_MAIN_NS       "securacv"
 #define NVS_KEY_PRIV      "privkey"
+// Where that key may sleep. 0 (every canary env): the accepted Tier-0 default —
+// the key is stored and loaded on any silicon and the posture is reported as
+// `key_at_rest`. 1 (a Tier 3/4 image — provisioning/platformio_secure.ini
+// [env:secure] sets it; K1 builds it as a normal env plus
+// PLATFORMIO_BUILD_FLAGS=-DSECURACV_REQUIRE_FLASH_ENCRYPTION=1): refuse to
+// store AND to load the identity key unless its NVS is actually encrypted, so
+// the image fails closed at provisioning instead of quietly running with a
+// plaintext key. Flash encryption alone does NOT satisfy it — flash encryption
+// does not cover NVS, and NVS encryption is not available under
+// framework = arduino — so today such an image refuses on every board, by
+// design. Decided in common/identity/key_at_rest.h (host-tested); deliberately
+// not a FEATURE_* flag — it changes no feature set.
+#ifndef SECURACV_REQUIRE_FLASH_ENCRYPTION
+  #define SECURACV_REQUIRE_FLASH_ENCRYPTION 0
+#endif
+// Chain state. NVS_KEY_CHAINST is the live entry: {seq, chain head} as ONE
+// 39-byte blob (common/witness/chain_state.h) so a power cut cannot tear the
+// pair — NVS commits a blob atomically. NVS_KEY_SEQ / NVS_KEY_CHAIN are the
+// legacy two-entry layout: still READ as the fallback when no blob exists (so
+// an image upgrade keeps its chain) and never written again by this image (so
+// a downgrade still boots — from a pair that goes stale after the first blob
+// persist, so the older image forks the chain there; the SD-wins
+// reconciliation covers that only when a card is present). On the re-upgrade,
+// a legacy seq AHEAD of the blob's means that older image ran since the last
+// blob write, and boot resumes from its pair instead of re-signing its seqs
+// (chain_state::choose()).
+#define NVS_KEY_CHAINST   "chain_st"
 #define NVS_KEY_SEQ       "seq"
 #define NVS_KEY_BOOTS     "boots"
 #define NVS_KEY_CHAIN     "chain"
@@ -429,6 +538,11 @@
 #define NVS_KEY_WIFI_PASS "wifi_pass"
 #define NVS_KEY_WIFI_EN   "wifi_en"
 #define NVS_KEY_TOKEN     "api_token"
+// FEATURE_HTTPS: the self-signed ECDSA P-256 certificate and its key, DER,
+// generated once on the first TLS-capable boot (factory reset erases both,
+// so the device re-keys and a pinned iPhone pairing must be redone).
+#define NVS_KEY_TLS_CERT  "tls_cert"
+#define NVS_KEY_TLS_KEY   "tls_key"
 #define NVS_KEY_BATT_CAP  "batt_cap"
 #define NVS_KEY_BATT_CYC  "batt_cycles"
 #define NVS_KEY_BATT_MAX  "batt_max_mv"

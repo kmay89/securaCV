@@ -64,6 +64,9 @@ REPO = Path(__file__).resolve().parents[1]
 WIFI_SUPERVISORS = [
     "firmware/projects/canary-display/src/net/wifi_mgr.cpp",
     "firmware/projects/canary-sense/src/net/wifi_mgr.cpp",
+    # canary-sense's supervisor, carried byte-for-byte but for the setup
+    # network's product name (firmware/scripts/check_sentinel_net_sync.sh).
+    "firmware/projects/canary-sentinel/src/net/wifi_mgr.cpp",
     "firmware/projects/canary-vision/src/net/wifi_mgr.cpp",
     "canary-local/emulator/src/emu_net.cpp",
 ]

@@ -58,9 +58,11 @@ TRANSPORT_CHIRP = "chirp"           # Community alert network
 TRANSPORT_LORA = "lora"             # Future: LoRa radio
 TRANSPORT_AUDIO = "audio"           # Future: SCQCS audio squawks
 
-# The advertised transport set. scripts/lint_feature_flags.sh (check B)
-# greps this list to enforce that no FUTURE_* transport is ever advertised;
-# the registry is docs/feature-flags.md.
+# The advertised transport set: binary_sensor.py creates one transport
+# sensor for each entry (its TRANSPORT_SENSORS table is keyed by this list),
+# and tests/test_feature_flags.py plus scripts/lint_feature_flags.sh (check B)
+# enforce that no FUTURE_* transport is ever advertised; the registry is
+# docs/feature-flags.md.
 ALL_TRANSPORTS = [
     TRANSPORT_WIFI_AP,
     TRANSPORT_WIFI_STA,
@@ -95,10 +97,29 @@ TAMPER_REBOOT = "unexpected_reboot"        # Unexpected reboot
 TAMPER_MEMORY = "memory_critical"          # Critical memory exhaustion
 TAMPER_AUDIO = "audio_anomaly"             # Future: unusual audio (jamming?)
 
+# The advertised tamper set: binary_sensor.py creates one per-type tamper
+# sensor for each entry (its TAMPER_TYPE_SENSORS table is keyed by this
+# list), and tests/test_feature_flags.py plus scripts/lint_feature_flags.sh
+# (check B) enforce that no FUTURE_* tamper type is ever advertised; the
+# registry is docs/feature-flags.md.
+ALL_TAMPER_TYPES = [
+    TAMPER_POWER_LOSS,
+    TAMPER_SD_REMOVE,
+    TAMPER_SD_ERROR,
+    TAMPER_GPS_JAMMING,
+    TAMPER_MOTION,
+    TAMPER_ENCLOSURE,
+    TAMPER_GPIO,
+    TAMPER_WATCHDOG,
+    TAMPER_REBOOT,
+    TAMPER_MEMORY,
+]
+
 # Declared for forward-compatibility but NOT implemented: no firmware emits
 # these, and no tamper sensor is created for them — the integration never
-# advertises a tamper type no device can raise. Wire one end-to-end
-# (binary_sensor.py's per-type tamper list) before moving it out of this list.
+# advertises a tamper type no device can raise. Wire one end-to-end (a row in
+# binary_sensor.py's TAMPER_TYPE_SENSORS and a health/tamper field the
+# firmware actually publishes) before moving it up to ALL_TAMPER_TYPES.
 FUTURE_TAMPER_TYPES = [
     TAMPER_AUDIO,
 ]
@@ -204,11 +225,17 @@ MODALITY_UNKNOWN = "unknown"      # no modality info — render as before
 # device_type (status payload) -> modality. The canary-sense design (§5) keys
 # radar device awareness off `device_type: "canary-sense"`; the sibling vision
 # and WiFi-CSI projects use the same status field, so they map here too.
+# canary-sentinel FUSES several physically independent media (PIR, radar,
+# WiFi CSI/RF, BLE, light), so no single-medium glyph is honest for it: it is
+# "other" until the dictionary grows a fusion modality (a vocabulary decision
+# that starts in spec/witness_dictionary.json, not here). Its events carry
+# the corroborating classes themselves, as the signed `modality_bits`.
 DEVICE_TYPE_MODALITY = {
     "canary-sense": MODALITY_RADAR,
     "canary-vision": MODALITY_CAMERA,
     "canary-wap": MODALITY_WIFI_CSI,
     "canary-contact": MODALITY_CONTACT,
+    "canary-sentinel": MODALITY_OTHER,
 }
 
 # {label, icon} per modality, for HA entity attrs and (mirrored) the JS card.
@@ -222,6 +249,10 @@ MODALITY_METADATA = {
 
 # Canonical device_type literal for the MR60BHA2 radar witness (Track A + B).
 DEVICE_TYPE_CANARY_SENSE = "canary-sense"
+
+# Canonical device_type literal for the multi-sensor fusion guardian
+# (firmware/configs/canary-sentinel/*/config.h SENT_DEVICE_TYPE).
+DEVICE_TYPE_CANARY_SENTINEL = "canary-sentinel"
 
 # Canonical device_type literal for the design-stage pool water-chemistry node
 # (docs/research/pool_water_monitor.md). Reserved here so the name has ONE

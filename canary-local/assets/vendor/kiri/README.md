@@ -1,5 +1,19 @@
 # Vendored Kiri:Moto slicing engine (optional)
 
+> **Status (2026-09): deliberately not vendored — closed as intended.** The
+> Lab keeps the fail-closed bridge and the honest modeled time estimate. The
+> blocker is not the vendor step but what it needs: Kiri:Moto's slicing pool
+> allocates `SharedArrayBuffer`, which only exists on a cross-origin-isolated
+> page, and isolating the Lab (COOP/COEP via a `coi-serviceworker` shim — GitHub
+> Pages cannot set the headers) changes how every Lab page and the live-emulator
+> canvas are served, for one soft number. Revisit only together with a
+> COOP/COEP decision for the whole Lab; that call belongs to the maintainer.
+> Until then, **⚡ slice for exact time** tells the person printing that this
+> build doesn't include the optional slicer engine and the modeled estimate
+> stands; the pointer to this file and to
+> [`tools/vendor_kiri.sh`](../../../tools/vendor_kiri.sh) goes to the browser
+> console (`console.info`), not to them.
+
 The print guide's estimate ([`../../print-guide.js`](../../print-guide.js)) is
 always-on, offline, and exact on filament mass. The **one** number a
 transparent model can only approximate is *print time* — real toolpath time

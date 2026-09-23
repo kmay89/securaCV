@@ -54,7 +54,7 @@ GET /api/fleet        →  200 application/json
 - **No secrets, no raw media** — this is coarse fleet *presence and health*,
   exactly what the Witness Wall renders. It is not an evidence API.
 
-### The optional verification endpoint (the kernel serves it, token-gated)
+### The optional verification endpoint (the kernel serves it to a paired Wall)
 
 The native tvOS app also asks its source, every poll cycle, for
 
@@ -74,17 +74,66 @@ the document's `verifying_key` is the endpoint's **claim** about itself,
 so a client may say "Verified" only after comparing it (or, across a key
 rotation, the signed lineage in `rotation_records`) against a key **pinned
 at pairing** — the repo-wide verified-means-Ed25519-vs-pinned-key
-discipline — and proves continuity across polls by remembering the last
-head it walked. A walk that trusts the served key verifies internal
-consistency, not provenance, and must not wear the word. No firmware serves it, and the TV sends no token
-yet, so for the Wall its absence (or a 401) remains an answer, not an
-error: the Wall phrases the fleet's status as the devices' own report
-("Your fleet reported in through <this TV's own receipt time>", with the
-device's self-stamped `verified_through` shown only as "Device reports …",
-because the firmware fills that field with the literal word "now") and
-reserves the word "Verified" for a chain it actually walked against a key
-pinned at pairing. The day the TV holds a token, its
-verification lights up with no app change. Everything above about
+discipline — and should prove continuity across polls by remembering the
+last head it walked (the Wall does not yet; see "What "Verified" proves"
+below). A walk that trusts the served key verifies internal
+consistency, not provenance, and must not wear the word.
+
+The credential the Wall holds is a **viewer token**, not the capability
+token: that one rotates every ten minutes in a file a television cannot
+read. The operator mints a viewer token once on the hub (`witness_api
+mint-viewer-token --label <room>`; `entrypoint.sh mint-viewer-token` in
+the Docker sidecar) and pastes the one line it prints — the pairing
+receipt, `{"sealed_log_token", "verifying_key", "token_id", "base_url"?}`
+— into the Wall's Settings → Verification. The kernel honors that token on
+`GET /api/sealed-log` alone (anywhere else it is a bad token that counts
+toward the lockout), keeps only its sha256, and re-reads the file per
+request, so `revoke-viewer-token <id>` lands on the next poll. The Wall
+keeps the token and the receipt's key as ONE Keychain item per source,
+sends the bearer only to that source and never across a redirect, and
+folds every walk into a standing (`WallPairing.swift`): **verified** only
+when the log's key is the pinned key, every signature checked, and there
+was at least one to check; **nothing to check** when the log names the
+pinned key over an empty tail — a genuine hub just after a checkpoint
+serves that, and so can anything answering at its address, because the
+key is public — which is never phrased as verified;
+**key changed** — an alarm, not a quiet downgrade — when the log is signed
+by any other key (the core deliberately does not follow rotations, so a
+re-keyed hub reads this way until it is re-paired); **refused** when the
+hub no longer accepts the token. A source that refuses the Wall — a 401
+for a revoked token, or for no token at all — is asked once per session,
+not every cycle: the kernel counts each refusal toward a per-address
+lockout that closes `/api/fleet` as well, and a Wall that kept knocking
+would lock itself out of its own roll-call. No firmware serves the endpoint, and an
+unpaired Wall sends no token, so for them its absence (or a 401) remains
+an answer, not an error: the Wall phrases the fleet's status as the
+devices' own report ("Your fleet reported in through <this TV's own
+receipt time>", with the device's self-stamped `verified_through` shown
+only as "Device reports …", because the firmware fills that field with the
+literal word "now"), and a walk it did run against the log's own key is
+labeled "not yet pinned". What a verified log is for on the wall: every
+entry's `payload` embeds the coarse `time_bucket` the kernel sealed, so a
+paired Wall whose standing is verified also draws the record's day shape —
+the evidence viewer's timeline model (`ios/Shared/TimelineScrub.swift`,
+parity-pinned to `viewer/timeline_core.js`), bucket ranges only — and
+draws nothing of the kind from an unpinned, failed or re-keyed walk.
+
+**What "Verified" proves, and what it does not.** It proves *authorship*:
+every entry the Wall was served is signed by the pinned key, and the
+entries link from the served anchor. It does **not** prove the served tail
+is *current* or *complete*. The anchor (`checkpoint_head`) is unsigned,
+and the document carries no signed time or high-water mark, so a genuine
+document captured earlier (it crosses the LAN in cleartext unless the
+owner turned on TLS) and replayed later still walks clean against the pin,
+and so does a genuine one cut short — entries dropped from its end, or its
+start moved to a later entry with the anchor set to match. The time in
+"Verified through <time>" is this TV's receipt time, not a time the hub
+signed. The Wall does not yet remember the last head it walked, so it
+cannot even notice a tail that went backward between polls. Closing that
+takes a signed head (or signed high-water mark) in the document itself —
+roadmap work, not built.
+
+Everything above about
 `/api/fleet` being coarse and unauthenticated is exactly why this endpoint
 is separate — and gated: the sealed log is how a *display* gets to say
 something cryptographic instead of repeating the wire, and the full coarse
@@ -148,9 +197,33 @@ That last row is why the public demo ships a **same-origin live demo kernel**
 browser — and why the *real* fleet shows up once the page is served next to the
 kernel (hub, LAN, or desktop app).
 
+### The well-known addresses every wall tries first
+
+Every wall probes the same three well-known addresses, in this order, and
+keeps the first that answers:
+
+1. `canary.local:8099` — the hub convention port (the mock kernel's default);
+2. `canary.local:8799` — the kernel's own API port, what the Home Assistant
+   add-on and the Docker sidecar serve — found here only when the kernel's
+   host answers to `canary.local` and its owner has opened the port to the
+   LAN (both ship closed; see the add-on and sidecar notes below);
+3. `canary.local` — a lone `canary-wap` fronting its own fleet, no hub.
+
+The Apple TV's `WallModel.wellKnownCandidates` is the reference. The desktop
+Flasher (`witnessBases` in `desktop/src/app.js`), the Lab's wall host
+(`canary-local/assets/witness-host.js`) and its menu bar companion
+(`DEFAULT_BASES`), and the vendored web emulator (`tv-emulator.js`) are held
+to it by `canary-local/tests/desktop_parity.test.js`; the website's TV app
+(`tv/app.js`) is held to the emulator by that repo's
+`tests/tv-wall.test.mjs`. The desktop apps put the kernel address the owner
+gave them ahead of the three and the boards their mDNS browse heard after
+them: a board answers with its own one-row self-report, so a board tried
+first would stand in for the kernel's whole fleet. A browser page still
+reads an answer only where the table above lets it.
+
 ### What the Wall does with an advert (the native tvOS app)
 
-The Apple TV has no browser sandbox, so beyond probing `canary.local` it
+The Apple TV has no browser sandbox, so beyond probing those addresses it
 browses the `_securacv._tcp` Bonjour service every Canary announces and reads
 the TXT `host` key — the salted per-unit mDNS hostname the firmware writes.
 An advert is a claim anyone on the LAN can make, so two rules bound it:
@@ -245,11 +318,14 @@ one-header change instead of a per-board copy-paste.
     the Wall reaches it once the owner enables that port and types
     `http://<home-assistant-host>:8799` — with the port, because the Wall
     adds only `http://` to a bare host (`FleetAddress.normalize`) and would
-    otherwise poll port 80. The sidecar, not yet: its API binds
-    `127.0.0.1:8799` inside the container and there is no setting for it,
-    so no published port mapping reaches it (`docs/frigate_integration.md`
-    says so; a Wall-reachable sidecar is a bind and port decision not yet
-    made).
+    otherwise poll port 80. The sidecar ships loopback and opts in the same
+    way: `SECURACV_API_BIND=all` binds `0.0.0.0:8799` inside the container
+    (and exports the kernel's cleartext acknowledgment with it — the two
+    flip together, or the kernel refuses to start), the owner adds the
+    `ports: - "8799:8799"` mapping the image deliberately does not `EXPOSE`,
+    and types `http://<docker-host-ip>:8799` — with the port, for the same
+    reason. Both compose quickstarts carry the two lines as comments and
+    `docs/frigate_integration.md` walks through them.
   - `name` is the owner's name from the retained `meta` topic, else the
     device id (exactly what a Canary calls itself in its own self-report);
     `product` is the announced `device_type`. No firmware in this repo

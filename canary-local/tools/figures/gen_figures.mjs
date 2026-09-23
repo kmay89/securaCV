@@ -104,12 +104,28 @@ function firmwareConfigs(deviceId) {
 }
 
 const catalogByDevice = new Map();
+const productScad = new Map();   // catalog product id -> the case source it is cut from
 for (const p of catalog.products) {
+  productScad.set(p.id, p.scad);
   for (const v of p.variants || []) {
     const key = v.device || '_universal';
     if (!catalogByDevice.has(key)) catalogByDevice.set(key, []);
     catalogByDevice.get(key).push({ product: p.id, variant: v.id, status: v.status });
   }
+}
+
+// The catalog evidence a figure's verdict may cite. A device's variants, by
+// default — but a figure MEASURED off one in-development case (`assembled`)
+// is that case and nothing else, so it cites only the variants cut from the
+// .scad it was measured from. Without that, the Combo (a canary-vision build
+// in the catalog, measured off canary_combo.scad) would borrow the Vision's
+// RELEASED variants and read `confirmed` — a promotion no evidence about the
+// Combo supports. For the Watch and the Dash the filter changes nothing:
+// every variant of their device is cut from the case they are measured off.
+function catalogEvidence(fig, assembled) {
+  const variants = catalogByDevice.get(fig.of) || [];
+  if (!fig.assembled) return variants;
+  return variants.filter((v) => productScad.get(v.product) === assembled.scad);
 }
 
 function confidenceFor(fig, evidence) {
@@ -170,6 +186,43 @@ function toFigureFrame(size, frame) {
 }
 
 function envelopeFor(fig) {
+  if ([fig.assembled, fig.board, fig.sketch, fig.stl || fig.parts].filter(Boolean).length !== 1) {
+    throw new Error(`figures: ${fig.id} must declare exactly one envelope source `
+      + '(assembled / board / sketch / stl or parts)');
+  }
+  if (fig.assembled) {
+    // An in-development case with no committed STLs (dev_*.stl is gitignored
+    // on purpose), measured off its CAD anyway: gen_assembled_dims.py renders
+    // the parts from the case source in their seated positions and commits
+    // the union's bounds, and the enclosure CI re-measures on every CAD
+    // change. So a manifest knob edit that moves the case moves the figure —
+    // which a typed `sketch` envelope never would. It is never shipping
+    // (nothing printable is committed: committed_stls stays empty); its
+    // catalog evidence is only its own case's variants (catalogEvidence), so
+    // it is prototype unless that case is released. `dims_source` says the
+    // numbers are CAD-measured, and the evidence says nothing is printable.
+    const asm = assembledDims.devices?.[fig.id];
+    if (!asm) {
+      throw new Error(`figures: ${fig.id} declares an assembled envelope but has no row in `
+        + 'docs/hardware/enclosure/assembled_dims.json — add it to gen_assembled_dims.py and regenerate.');
+    }
+    return {
+      E: { w: asm.fig.w, d: asm.fig.d, h: asm.fig.h },
+      parts: {},
+      source: 'assembled-cad',
+      stls: [],
+      // `face`: the aperture the CAD cuts in the outer face (view window,
+      // bezel bore), measured with the envelope — the massing draws the
+      // glass in it rather than retyping the inset
+      // `features`: off-center marks the CAD cuts in the face (the Combo's
+      // lens and radome window), each read from the case's own cut
+      // variables and centered on the measured envelope
+      assembled: {
+        placement: asm.placement, mm: asm.mm_scad, seams: asm.seams_fig_d,
+        face: asm.face_fig_mm, features: asm.features_fig_mm, scad: asm.scad,
+      },
+    };
+  }
   if (fig.board) {
     // The committed board mesh (boards.json), whose geometry facts are
     // recomputed from the mesh itself. Same contract as an STL: the
@@ -253,21 +306,26 @@ const ASM_H_TOL = 2.5;   // mm, height of a multi-part massing vs its measured a
 
 function guardDrift(fig, E, solids, source) {
   // Applies to any figure with ONE dimensional source of truth behind it: a
-  // committed STL, a committed board mesh, or — for a multi-part device —
-  // the measured assembled envelope. Exempting the board path let
+  // committed STL, a committed board mesh, or — for a multi-part device or
+  // an in-development case declared `assembled` — the measured assembled
+  // envelope. Exempting the board path let
   // `board.xiao` publish 22.64 x 3.66 x 19.38 while claiming to come from CAD
   // measuring 22.64 x 4.42 x 17.78 — a figure that both fell short of the part
   // and overflowed it, under a `dims_source` that said otherwise. Exempting
   // multi-part figures was the same hole one size up: their drawn stacks
   // overstated every released device's assembled depth by 30-58 % with no
   // gate to see it.
-  if (source !== 'stl' && source !== 'board-cad') return null;
+  if (source !== 'stl' && source !== 'board-cad' && source !== 'assembled-cad') return null;
   // A multi-part massing centers its parts vertically, so small assembly
   // offsets (the doorbell plate's foot reaches 2 mm below the face's top
   // overhang) are beneath its fidelity — the height tolerance says so
-  // explicitly rather than pretending band drawing is exact.
+  // explicitly rather than pretending band drawing is exact. A CAD-measured
+  // (`assembled`) figure is checked against the same assembled envelope, but
+  // it is ONE case drawn at E.h — nothing is centered — so it keeps the
+  // plan tolerance: the exemption is exactly as wide as its reason.
+  const banded = !!(fig.parts || fig.assembled);
   const hTol = fig.parts ? ASM_H_TOL : PLAN_TOL;
-  const what = fig.parts ? 'assembled envelope' : `STL ${fig.stl ?? ''}`.trim();
+  const what = banded ? 'assembled envelope' : `STL ${fig.stl ?? ''}`.trim();
   const env = envelopeOf(solids);
   const got = { w: env.size[0], d: env.size[1], h: env.size[2] };
   const bad = [];
@@ -329,14 +387,16 @@ function emit(path, contents) {
 
 function buildOne(fig) {
   const { E, parts, source, stls, assembled } = envelopeFor(fig);
-  const solids = fig.build(E, parts, assembled ? { seams: assembled.seams } : undefined);
+  const solids = fig.build(E, parts, assembled
+    ? { seams: assembled.seams, face: assembled.face, features: assembled.features }
+    : undefined);
   guardCoplanar(fig, solids);
 
   const dev = registry.devices.find((d) => d.id === fig.of);
   const evidence = {
     registry_kind: dev?.kind ?? (fig.of === '_universal' ? 'universal' : null),
     committed_stls: stls.map((s) => s.file),
-    catalog_variants: catalogByDevice.get(fig.of) || [],
+    catalog_variants: catalogEvidence(fig, assembled),
     firmware_configs: fig.role === 'board' ? [] : firmwareConfigs(fig.of),
   };
   if (fig.board || fig.role === 'board') {
@@ -703,6 +763,22 @@ for (const id of Object.keys(HARDWARE_FIGURE)) {
   }
 }
 
+// Which manifests name each figure — carried in the ledger as the figure's
+// `manifests`, because a Lab card is a manifest slug while the figure it
+// draws can carry another device's id: the Nightstand 7 draws the Dash 7's
+// 7" slab (one board, one case, two products), and body-dims.js's
+// deviceFigure() resolves it through this list. Derived, never typed.
+const drawnBy = new Map();
+for (const m of manifests) {
+  if (!m.figure) continue;
+  if (!byIdBuilt.has(m.figure)) {
+    throw new Error(`figures: devices/${m.slug} names figure "${m.figure}", which is not a figure. `
+      + 'Fix the manifest or add the figure.');
+  }
+  if (!drawnBy.has(m.figure)) drawnBy.set(m.figure, []);
+  drawnBy.get(m.figure).push(m.slug);
+}
+
 /* The coarse map (CONFIG_FIGURE, above) is still typed here, because the
  * manifests cannot own it: they name boards, and a config directory is not
  * one board (canary-vision/default is compiled for four hosts; the WAP's
@@ -918,7 +994,8 @@ const ledger = {
     })),
     unmapped: hardwareGaps,
   },
-  figures: built.map(({ plan, picker, massing, ghost, ...rest }) => rest),
+  figures: built.map(({ plan, picker, massing, ghost, ...rest }) => (drawnBy.has(rest.id)
+    ? { ...rest, manifests: drawnBy.get(rest.id) } : rest)),
 };
 emit(OUT_JSON, `${JSON.stringify(ledger, null, 1)}\n`);
 

@@ -54,10 +54,11 @@ const csi_module_t MODULE = {
 
 /* Mirrors the canary-wap sketch's hardware_state.h SdState numeric values
  * (that header defines the sketch's globals and is single-include by
- * design, so the values are pinned here instead of included). A host with
- * no SD state machine feeds one of these as a constant — the watcher
- * adopts it on the first call and never emits an SD kind.
- * ABSENT=0 / MOUNTED=1 / ERROR=2. */
+ * design, so the values are pinned here instead of included); the canary
+ * PIO tree produces the same numbers from common/storage/sd_mount_policy.h
+ * (SD_TAMPER_*). A host with no SD state machine feeds one of these as a
+ * constant — the watcher adopts it on the first call and never emits an
+ * SD kind. ABSENT=0 / MOUNTED=1 / ERROR=2. */
 constexpr uint8_t kSdAbsent  = 0;
 constexpr uint8_t kSdMounted = 1;
 constexpr uint8_t kSdError   = 2;
@@ -67,12 +68,16 @@ bool    g_boot_reported   = false;
 uint8_t g_boot_attempts   = 0;
 bool    g_sd_adopted      = false;
 uint8_t g_sd_prev         = kSdAbsent;
+bool    g_contact_adopted = false;
+uint8_t g_contact_prev    = TAMPER_CONTACT_NONE;
 /* The standing conditions (see tamper_events_active_kind in the header).
- * Two levels, because they end differently: the boot story stands for the
- * whole boot, the SD story ends when the card comes back — and recovery
- * of the card must not erase how the boot began. */
+ * Three levels, because they end differently: the boot story stands for
+ * the whole boot, the SD story ends when the card comes back, the
+ * enclosure story ends when the lid closes — and neither recovery may
+ * erase how the boot began. */
 char    g_boot_kind[24]   = "";
 char    g_sd_kind[24]     = "";
+char    g_contact_kind[24] = "";
 
 uint32_t emit_kind(const char* kind) {
   csi_event_values_t v;
@@ -148,9 +153,33 @@ void tamper_events_watch(int reset_was_crash, int reset_was_watchdog,
   }
 }
 
+void tamper_events_watch_contact(uint8_t contact_state) {
+  if (contact_state > TAMPER_CONTACT_OPEN) return;  /* not a state: ignore */
+  /* The first call adopts silently — booting with the lid off is a
+   * configuration, not an intrusion. */
+  if (!g_contact_adopted) {
+    g_contact_prev = contact_state;
+    g_contact_adopted = true;
+    return;
+  }
+  if (contact_state == g_contact_prev) return;
+  if (g_contact_prev == TAMPER_CONTACT_CLOSED &&
+      contact_state == TAMPER_CONTACT_OPEN) {
+    if (emit_kind("enclosure") != 0u) remember_kind(g_contact_kind, "enclosure");
+  } else if (contact_state != TAMPER_CONTACT_OPEN) {
+    /* Closed again (or the input went away): the standing story ends,
+     * silently — closing the lid is not a tamper. NONE -> OPEN never
+     * emits: only a contact seen CLOSED can be opened. */
+    g_contact_kind[0] = '\0';
+  }
+  g_contact_prev = contact_state;
+}
+
 const char* tamper_events_active_kind(void) {
-  /* The SD story speaks first when both stand — it is the newer news and
-   * the actionable one; the boot story resurfaces once the card is back. */
+  /* An open enclosure speaks first — a physical intrusion happening now;
+   * then the SD story (the newer news and the actionable one); the boot
+   * story resurfaces once both have ended. */
+  if (g_contact_kind[0]) return g_contact_kind;
   return g_sd_kind[0] ? g_sd_kind : g_boot_kind;
 }
 
@@ -159,8 +188,11 @@ void tamper_events_reset(void) {
   g_boot_attempts = 0;
   g_sd_adopted = false;
   g_sd_prev = kSdAbsent;
+  g_contact_adopted = false;
+  g_contact_prev = TAMPER_CONTACT_NONE;
   g_boot_kind[0] = '\0';
   g_sd_kind[0] = '\0';
+  g_contact_kind[0] = '\0';
 }
 
 }  /* extern "C" */

@@ -101,7 +101,7 @@ devices and hosts you control.
 | `o` | Show onboarding status; cycle launch method (manual → macOS → Windows → Linux) |
 | `v` | Print the recovery guide (SD-wins chain reconciliation) |
 | `k` | Print the unseal guide (off-device, with the operator's private key) |
-| BOOT short press | **Confirm** — the only input that lets the keyboard type |
+| BOOT short press | **Confirm** — the only input that lets the keyboard type. On the canary it is also the provisioning-gate tap (one home-LAN dashboard load or one recovery-kit fetch within 30 s, [`getting_started_canary.md`](../getting_started_canary.md)), **except** while the `u` window is armed: a tap that answers `u` confirms the keyboard and leaves the gate closed. A tap from Idle does both. |
 
 ## Recovery & unsealing (surfaced, not reinvented)
 

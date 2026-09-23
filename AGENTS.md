@@ -545,10 +545,19 @@ or the Chirp v0.2 channel (`chirp_channel.cpp` there, with its header at
    path is permitted ONLY when the physical BOOT button on the device is
    held at the moment of origination (real-time GPIO check), the frame
    carries `BCN_FLAG_SOLO_ORIGIN` in its header, and `certainty` is
-   `Observed`. Receivers MUST verify all three invariants before
-   accepting; the spec promises this property so the UI can downweight
-   solo frames a notch. Do NOT add a software-only path that bypasses
-   the BOOT GPIO check.
+   `Observed`. The BOOT hold, like the spec's "no fresh paired cosigner"
+   rule, is enforced on the originating device only; no receiver can see
+   either. The solo rules a receiver MUST check before accepting are the
+   ones on the wire: the `BCN_FLAG_SOLO_ORIGIN` flag,
+   `certainty` = `Observed`, `originator_fp` == `cosigner_fp`, and both
+   signature slots (one Ed25519 signature, copied) against the
+   originator's non-revoked beacon-set entry, so the UI can show solo
+   frames downweighted a notch. The BOOT check therefore stops a caller of
+   that device's REST API who is not at the device, not a holder of its
+   Ed25519 key, who can sign a solo frame on any radio in range (spec §6.2
+   security note, §14.2; revocation is the recourse). Do NOT add a
+   software-only path that bypasses the BOOT GPIO check. *(Reworded
+   2026-09 to match the spec §6.2 security note; maintainer to confirm.)*
 3. **No red, no reserved emergency-broadcast tones, no reserved phrasing.**
    See `spec/beacon_cap_gateway_v0.md` §4. The
    `scripts/lint_no_impersonation.sh` CI lint enforces this; do not bypass.

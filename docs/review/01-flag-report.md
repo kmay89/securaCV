@@ -20,7 +20,7 @@
 | F-01 | Blocker | ✅ Resolved (#660/#665/#667) | Detection | Default detection is a frame-hash **stub**; real CV is feature-gated & off by default, while roadmap marks the stream "Done". |
 | F-02 | Blocker | ✅ Resolved (#673) | Versioning | "v1" is defined **three incompatible ways** across CHANGELOG / v1-roadmap / README badge. |
 | F-03 | Blocker | ✅ Resolved (#662/#669) | Firmware privacy | `ENTERPRISE_READINESS_TODO` admits raw **MAC exposure** and uncoarsened **GPS** in WAP APIs — contradicts Invariants II & III. |
-| F-04 | Major | 🟡 Partial (#674) | Crypto | Device key is **seed-derived from config**; DB key **coupled** to signing key → rotation blocked (acknowledged, still open). |
+| F-04 | Major | 🟡 Partial — hardware-backed keys only (#674; 2026-09 rotation commands) | Crypto | Device key is **seed-derived from config**; DB key **coupled** to signing key → rotation blocked (acknowledged, still open). |
 | F-05 | Minor | ✅ Resolved (#709) | Vault | *Corrected after code review:* vault sealing **is wired** into `witnessd` (real crypto modes); the real gap is that it's **opt-in / UX-gated**, not absent. |
 | F-06 | Major | ✅ Resolved (#670) | Firmware flash | **Divergent partition tables**; canary-wap Arduino pins **no** scheme; one secure table assumes **4 MB** flash on an 8 MB board. |
 | F-07 | Major | ✅ Resolved | Transports | `TRANSPORT_LORA` / `TRANSPORT_AUDIO` (+`audio_anomaly` tamper) declared but **unimplemented** — now split into `FUTURE_TRANSPORTS` / `FUTURE_TAMPER_TYPES`, out of the `ALL_*` lists, so the HA surface never advertises them. |
@@ -117,6 +117,18 @@ identity key, then add hardware-backed keys (Secure Element/eFuse) — see roadm
 > identity-rotation support is needed) and the higher bar of **hardware-backed keys** (TPM/Secure
 > Element/eFuse), which needs hardware to validate — roadmap P3.
 
+> **Status 2026-09 — 🟡 Resolved except hardware-backed keys.** The rotation half of the line above
+> is superseded. The kernel rotates the signing identity (`Kernel::rotate_device_identity`: a
+> retiring-key-signed `KeyRotation` record plus the genesis-anchored `device_key_history` lineage;
+> `Kernel::open` accepts the current epoch's seed and refuses a retired one), and it is an operator
+> command: `break_glass rotate-identity` (successor staged 0600 and fsynced before the rotation
+> commits, never printed) beside `break_glass rekey-db` (`docs/db_key_rotation.md`, runbook C7).
+> The seed is generated from the OS RNG and kept in a 0600 `<db>.ed25519.seed` that every
+> write-side daemon now resolves (environment, else that file, else generate), and a seed file any
+> other user can read is refused. **Still open:** hardware-backed keys (TPM/Secure
+> Element/eFuse), which need hardware to validate — roadmap P3. The commands' home (option (a)) is
+> for the maintainer to confirm.
+
 ### F-05 — Vault sealing is opt-in / UX-gated (NOT "unwired") — *corrected after code review*
 **Correction.** An earlier draft of this finding (and the requirements spec) called the vault
 "structure only, not wired," trusting `v1-roadmap.md`. **That was wrong — and is itself a lesson
@@ -143,6 +155,11 @@ document the token/crypto-mode config path, and build the trustee/seal setup UX 
 > expired token no longer reads as ENABLED). The doc-debt half was already done (`v1-roadmap.md` describes the vault as "wired,
 > opt-in"). What remains is **not a flag**: the full non-CLI **trustee/seal setup wizard** is a
 > roadmap **P2** product feature, separate from this correctness gap.
+
+> **Status 2026-09.** The trustee half of that wizard landed: the served console's one-time setup
+> panel bootstraps the quorum policy (`POST /breakglass/policy`, accepted only while none exists,
+> 409 afterwards; changes stay on the quorum-consented CLI flow — option (b), maintainer to
+> confirm). Enabling sealing (`BREAK_GLASS_SEAL_TOKEN`) is still configuration, not a UI.
 
 ### F-06 — Divergent firmware partition tables; risky flash assumptions
 **Evidence.** Three different layouts for the "same" device family:
@@ -228,8 +245,10 @@ multi-path mesh resilience story has unbuilt legs. **Fix:** scope mesh claims to
 >   capture-time privacy steps — is closed: the RTSP (GStreamer/FFmpeg) and file (`file`/`file_ffmpeg`)
 >   backends now all emit through one shared gate, `ingest::raw_frame_at_capture` (coarsen bucket +
 >   feature hash + `RawFrame`), covered by a contract test. The `ffmpeg` path stays the CI-exercised
->   canonical decoder (`ingest-rtsp` + `tests/rtsp_e2e.rs`, #666). *Follow-up:* the feature-gated
->   `esp32` / `v4l2` sources still inline the equivalent sequence and should adopt the same gate.
+>   canonical decoder (`ingest-rtsp` + `tests/rtsp_e2e.rs`, #666). The feature-gated `esp32` and
+>   `v4l2` sources emit through the same gate too (2026-09), and a source-text test
+>   (`every_frame_source_emits_through_the_capture_gate`) fails the default build if any file in
+>   `src/ingest/` re-implements the sequence inline.
 > - **F-12 ✅ Resolved (#673/#706)** — the badge half was fixed in #673 (`README.md:5` now `v1-rc`,
 >   no longer "core works end-to-end" beside an unshipped v1). The dangling
 >   `<!-- TODO: add a screenshot … -->` at `README.md:26` is gone: the verified-✓ timeline card

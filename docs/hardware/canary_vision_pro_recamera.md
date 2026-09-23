@@ -166,7 +166,7 @@ that already run RS485/Modbus/CAN.
   trained — this doc describes the target `ClaimKind` mapping, not a
   shipped model.
 - A mount adapter now exists (`canary_vision_pro_mount.scad`, §6 below) but
-  is render/mesh-verified only, like everything else in this doc — it has
+  is render/mesh-checked only, like everything else in this doc — it has
   never been fitted to a real reCamera Pro, because no bench unit exists
   yet. Its screw/nut/magnet dimensions are universal-standard defaults, not
   measurements off a real unit.

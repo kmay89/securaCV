@@ -807,13 +807,10 @@ pub fn spawn_tracked(
         // ("Bad CPU type in executable (os error 86)"), which tells the
         // operator neither what is wrong nor what to do. Translate that one
         // class here — every sidecar spawn goes through this function, so
-        // espflash gets the same treatment as rpiboot. The raw error is kept
-        // so a bug report still carries the real cause.
-        let raw = e.to_string();
-        match hub_core::hub_sidecar::arch_mismatch_hint(&raw) {
-            Some(hint) => format!("could not start {name}: {hint} ({raw})"),
-            None => format!("could not start {name}: {raw}"),
-        }
+        // espflash gets the same treatment as rpiboot, in the same words the
+        // Lab's spawn uses (flash_engine::sidecar::spawn_error). The raw error
+        // is kept so a bug report still carries the real cause.
+        flash_engine::sidecar::spawn_error(name, &e.to_string())
     })?;
     let pid = child.pid();
     let guard = app.try_state::<Arc<LaunchGuard>>().map(|s| Arc::clone(&s));

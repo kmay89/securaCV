@@ -48,6 +48,18 @@ it should feel like the device is doing the work.
         → fleet finds the broker (mDNS gossip) → fleet fades in
 ```
 
+On glass too narrow for `SecuraCV-A7K2 • p7Rm2Kqf` on one row (the round
+watch, and the 172/180 px nightstand and nightlight) the name and the key take
+a row each, the way round glass always has. The name and the key stay on the
+glass for as long as the Join scene is up — QR or no QR, hint or no hint: when
+the QR does not scan (or never rendered) that text is the only way in, and the
+stuck-phone hint ("forget it on your phone") comes up exactly when the phone
+needs the key again. On that glass the hint gets a row of its own: under the
+key on the nightstand and nightlight, the title's band on the round watch
+(the title yields while the hint stands: with the QR up, the card speaks for
+itself; without one, the hint replaces "On your phone").
+No row is ever cut to an ellipsis (F45).
+
 The last step is the payoff of the whole discovery program: the moment WiFi
 exists, the **fleet referral** (broker gossip, discovery doc §5.1) configures
 MQTT with zero further input. Onboarding ends at a *working* display, not at
@@ -114,9 +126,11 @@ look failed on the phone — hard-won WAP lesson.)
 
 | Piece | Where |
 |---|---|
-| Pure helpers (QR/JSON escaping, password alphabet, captive DNS, probe policy) | `include/canary/net/provision_core.h` (host-tested) — a byte-identical copy of the canonical `firmware/common/network/provision_core.h`, pinned by `firmware/scripts/check_provision_core_sync.sh` until the display migrates to the shared portal |
+| Pure helpers (QR/JSON escaping, password alphabet, captive DNS, probe policy) | `firmware/common/network/provision_core.h` (host-tested) — included directly from common/; the display's former byte-identical copy and its sync gate are gone (the Arduino sketch stages it flat via `setup.sh regen`) |
 | State machine + AP + portal | `src/net/provision.cpp` (`FEATURE_ONBOARDING`) |
 | Glass scenes | `src/ui/onboard_ui.cpp` — own LVGL screen, auto-deleted at handoff |
+| Join-scene geometry | `include/canary/ui/onboard_layout.h` — title, QR card and caption lines stacked from the panel and the fonts' line heights, never crossing (host-tested on every display env's panel by `tests_host/test_onboard_layout.cpp`; `canary-local/tests/onboard_probe.mjs` checks the card is clean on each emulated flavor) |
+| Join-scene text | the same header's `join_lines()` — the credentials joined where they fit their row, else split (name, then key, and a standing hint on the note row: nothing displaces the name or the key), shorter forms before a smaller face, never an ellipsis (F45). The host test measures every glass and ladder with LVGL's glyph metrics (`tests_host/montserrat_metrics.h`, from `firmware/scripts/gen_montserrat_metrics.py`) over the widest name and key the unit can mint, and requires both on the glass with and without the stuck-phone hint; the probe fails on an ellipsis in each flavor's Join scene and reads the firmware's own labels (the emulator's `emu_screen_labels`) for the name and key it printed, before and after the hint |
 | NVS persistence | `canary::cfg::set_wifi_credentials()` (success only) |
 | Boot hook | `main.cpp`: placeholder creds → `provision_run()` before the watchdog arms |
 | Captive mechanics provenance | canary-wap wizard, `LESSONS_LEARNED` §captive-portal |

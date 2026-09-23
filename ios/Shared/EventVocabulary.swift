@@ -18,6 +18,9 @@
 // because an app that cries wolf is an app whose alerts get turned off —
 // and then it protects no one (the §5b doctrine).
 
+// SecuraCV-Parity: every Apple surface that shows a device compiles this.
+// (what a sealed event MEANS — the timeline's labels, on the phone and the TV)
+
 import Foundation
 
 /// The kernel's semantic event vocabulary — one case per dictionary entry,

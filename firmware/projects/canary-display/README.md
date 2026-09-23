@@ -312,6 +312,7 @@ include/canary/
   ui/motion_core.h    the motion engine's pure half (tier, curves, governor)
   ui/motion.h         its LVGL half (gates, veil, glide, weather field)
   ui/round_frame_core.h  the circle's geometry engine (pure, host-tested)
+  ui/onboard_layout.h the first-boot Join scene's stack + row text (pure, host-tested)
 src/                  implementations; hal+ui TUs are flavor-gated
 ```
 
@@ -339,6 +340,21 @@ for the circle.** If a layout needs to know how wide, how many rows, or
 where on the disc, the answer comes from the engine — and if the engine
 can't answer it, extend the engine (with its host test) rather than
 deriving the number inline.
+
+An ellipsis is honest for a caption and a dead end for a credential. The
+first-boot Join scene's two low rows carry the setup network's name and key —
+the only way in when the QR does not scan — so they never lean on the
+ellipsis: `onboard_layout.h`'s `join_lines()` keeps the joined
+`SecuraCV-XXXX  •  <key>` line only where it fits its row, splits it the way
+round glass does everywhere else (name, then key), tries shorter forms
+before a smaller face, and steps a row down to the default Character's
+caption only when nothing else fits (F45). Nothing displaces the name or the
+key while the scene is up: a standing hint gets the note row (under the key
+on rectangular glass, the title's band on round glass). The host test
+measures every glass and ladder with LVGL's own glyph metrics
+([`tests_host/montserrat_metrics.h`](tests_host/montserrat_metrics.h),
+generated from the pinned LVGL by `firmware/scripts/gen_montserrat_metrics.py`)
+over the widest name and key the unit can mint.
 
 ## Text on the glass: the font has a fixed alphabet
 

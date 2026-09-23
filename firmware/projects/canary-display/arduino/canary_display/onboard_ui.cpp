@@ -17,21 +17,23 @@
 #include <string.h>
 
 #include "onboard_ui.h"
+#include "onboard_layout.h"
 #include "round_frame.h"
 #include "theme.h"
 #include "canary_mark.h"
-#include "provision_core.h"
+#include "provision_core.h"  // shared onboarding pure helpers (common/)
 
 namespace canary::ui {
 
 namespace {
 
-// Geometry per glass.
+// Geometry per glass. The QR card is asked for here; where it and the
+// Join scene's lines sit is onboard_layout.h's call (s_join below).
 #ifdef CD_FLAVOR_WATCH
-constexpr lv_coord_t QR_SIZE = 112, QR_CARD = 128;
+constexpr onboardlayout::CardSpec QR_SPEC = onboardlayout::kSmallGlassCard;
 constexpr lv_coord_t RING_D = 236, RING_W = 3;
 #else
-constexpr lv_coord_t QR_SIZE = 208, QR_CARD = 232;
+constexpr onboardlayout::CardSpec QR_SPEC = onboardlayout::kWideGlassCard;
 constexpr lv_coord_t RING_D = 300, RING_W = 3;
 #endif
 
@@ -51,43 +53,91 @@ lv_obj_t* s_qr_card = nullptr;
 lv_obj_t* s_qr = nullptr;
 lv_obj_t* s_creds = nullptr;           // SSID / password fallback text
 lv_obj_t* s_hint = nullptr;
+lv_obj_t* s_note = nullptr;            // small glass: the note row (join_lines)
+onboardlayout::Stack s_join = {};      // the Join scene's rows (see join_rows)
+#ifdef CD_FLAVOR_WATCH
+// The Join scene's text rows' faces and widths (see refresh_bottom): the
+// Character's caption, and the default Character's — the floor a row that
+// would be cut steps down to. Widths are what rf_fit_top sized each label to.
+const lv_font_t* s_row_font = nullptr;
+const lv_font_t* s_floor_font = nullptr;
+int s_creds_w = 0;
+int s_low_w = 0;
+int s_note_w = 0;
+#endif
 
 ObStage s_stage = ObStage::Hello;
 bool s_qr_ok = false;                  // the join QR actually rendered
 char s_ap_ssid[33] = {0};
 char s_ap_pass[17] = {0};
 char s_hint_text[96] = {0};            // the live coach line (see refresh_bottom)
+char s_hint_narrow[96] = {0};          // its shorter form, for a narrow row
 
-// The two low-latitude lines, owned in one place. On the round glass the old
-// single "ssid  •  pass" line at -34 outran its chord (152 px against ~165 px
-// of text — the physical rim ate the password's tail), so the Join scene
-// splits them: the network name rides the wider -46 band and the password
-// takes -30. A live hint OUTRANKS the password line while it stands — every
-// hint fires either when the phone has already joined (password moot) or
-// when the fix is on the phone itself, and the QR keeps carrying both
-// credentials the whole time. Rectangular glass keeps the joined line and a
-// separate hint slot; everything still runs through the engine's fit.
+#ifdef CD_FLAVOR_WATCH
+// A line's width in `font`, measured the way the label lays it out (see
+// onboardlayout::text_width) — the same call in LVGL 8 and 9.
+int text_w(const char* text, const lv_font_t* font) {
+  return onboardlayout::text_width(text, [font](uint32_t a, uint32_t b) {
+    return (int)lv_font_get_glyph_width(font, a, b);
+  });
+}
+
+void set_row(lv_obj_t* label, const onboardlayout::Line& line) {
+  lv_obj_set_style_text_font(label, line.floor ? s_floor_font : s_row_font, 0);
+  lv_label_set_text(label, line.text);
+}
+
+// The small-glass Join title ("Scan me" while the card is up).
+const char* join_title() { return s_qr_ok ? "Scan me" : "On your phone"; }
+#endif
+
+// The Join scene's text, owned in one place. On the round glass the old
+// single "ssid  •  pass" line at -34 outran its chord (152 px against
+// ~165 px of text — the physical rim ate the password's tail), so the Join
+// scene splits them: the network name rides the upper, wider band and the
+// password the lower one (onboard_layout.h keeps that band's chord at
+// kRoundLowRowW). Rectangular small glass splits the same way whenever the
+// joined line is wider than its row — on the 172 px nightstand it always
+// is (F45) — and nothing on any row is ever cut: onboardlayout::join_lines
+// picks each row's text and face. The name and the key never give up
+// their rows while the scene is up: when the QR does not scan (or never
+// rendered) they are the only way in, and the one hint that stands here —
+// the stuck phone's "forget it" — is when the phone needs the key again.
+// On split glass that hint takes the note row instead (under the key on
+// rectangular glass; the title's band on round glass, where the title
+// yields while it stands).
 void refresh_bottom() {
   if (!s_creds || !s_hint) return;
-#if RF_GLASS_ROUND
+#ifdef CD_FLAVOR_WATCH
   if (s_stage == ObStage::Join) {
-    lv_label_set_text(s_creds, s_ap_ssid);
-    if (s_hint_text[0]) {
-      lv_obj_set_style_text_color(s_hint, col_faint(), 0);
-      lv_label_set_text(s_hint, s_hint_text);
-    } else {
-      // The password is load-bearing here — muted, not faint.
-      lv_obj_set_style_text_color(s_hint, col_muted(), 0);
-      lv_label_set_text_fmt(s_hint, "pass  %s", s_ap_pass);
-    }
+    const lv_font_t* own_f = s_row_font;
+    const lv_font_t* floor_f = s_floor_font;
+    const onboardlayout::JoinLines j = onboardlayout::join_lines(
+        RF_GLASS_ROUND != 0, s_creds_w, s_low_w, s_note_w, s_ap_ssid,
+        s_ap_pass, s_hint_text, s_hint_narrow,
+        [own_f, floor_f](const char* t, bool fl) {
+          return text_w(t, fl ? floor_f : own_f);
+        });
+    set_row(s_creds, j.creds);
+    set_row(s_hint, j.low);
+    set_row(s_note, j.note);
+    // The key is load-bearing — muted; a hint is faint.
+    lv_obj_set_style_text_color(s_hint, j.split ? col_muted() : col_faint(),
+                                0);
+#if RF_GLASS_ROUND
+    lv_label_set_text(s_title, j.note.text[0] ? "" : join_title());
+#endif
     return;
   }
+  lv_obj_set_style_text_font(s_creds, s_row_font, 0);
+  lv_obj_set_style_text_font(s_hint, s_row_font, 0);
   lv_obj_set_style_text_color(s_hint, col_faint(), 0);
+  lv_label_set_text(s_note, "");
 #endif
   lv_label_set_text(s_hint, s_hint_text);
 }
 
-// Scene fade, applied to the TEXT of the four labels rather than as one
+// Scene fade, applied to the TEXT of the labels rather than as one
 // style `opa` on the full-screen content container. Under LVGL 9 a group
 // `opa` composites the whole 800x480 subtree through intermediate layer
 // buffers — ~22 KB of contiguous LV_MEM pool per frame, on top of two live
@@ -102,6 +152,7 @@ void fade_cb(void* /*var*/, int32_t v) {
   lv_obj_set_style_text_opa(s_body, (lv_opa_t)v, 0);
   lv_obj_set_style_text_opa(s_creds, (lv_opa_t)v, 0);
   lv_obj_set_style_text_opa(s_hint, (lv_opa_t)v, 0);
+  if (s_note) lv_obj_set_style_text_opa(s_note, (lv_opa_t)v, 0);
 }
 void ring_opa_cb(void* var, int32_t v) {
   lv_obj_set_style_arc_opa((lv_obj_t*)var, (lv_opa_t)v, LV_PART_INDICATOR);
@@ -189,6 +240,29 @@ void content_enter() {
   lv_anim_start(&a);
 }
 
+int line_h(lv_obj_t* label) {
+  return (int)lv_font_get_line_height(
+      lv_obj_get_style_text_font(label, LV_PART_MAIN));
+}
+
+// Stack the Join scene from THIS panel and the fonts its labels actually
+// carry (the active Character's ladder): title, QR card, credentials, hint.
+// The old per-glass offsets placed the card from the center and the captions
+// from the bottom edge independently, and on the dash and the round watch
+// the credentials line landed inside the card (F43).
+onboardlayout::Stack join_rows() {
+  onboardlayout::Glass g;
+  g.w = (int)lv_disp_get_hor_res(NULL);
+  g.h = (int)lv_disp_get_ver_res(NULL);
+  g.round = RF_GLASS_ROUND != 0;
+  onboardlayout::Rows r;
+  r.title_h = line_h(s_title);
+  r.card = QR_SPEC;
+  r.creds_h = line_h(s_creds);
+  r.hint_h = line_h(s_hint);
+  return onboardlayout::join_stack(g, r);
+}
+
 void show_qr(bool show) {
   // A card whose QR never rendered stays hidden — the Join scene's text
   // path (AP name + password) carries setup on its own, so a generator
@@ -252,47 +326,50 @@ void onboard_ui_create(const char* ap_ssid, const char* ap_pass) {
   s_title = mk(font_body(), col_text());
   rf_fit_top(s_title, 28);
   s_qr_card = lv_obj_create(s_content);
-  lv_obj_set_size(s_qr_card, QR_CARD, QR_CARD);
-  lv_obj_align(s_qr_card, LV_ALIGN_CENTER, 0, 2);
   s_body = mk(font_caption(), col_muted());
   rf_fit_center(s_body, 0);
   s_creds = mk(font_caption(), col_muted());
   s_hint = mk(font_caption(), col_faint());
-#if RF_GLASS_ROUND
-  // Round glass: two stacked low-band lines (see refresh_bottom).
-  rf_fit_bottom(s_creds, -46);
-  rf_fit_bottom(s_hint, -30);
-#else
-  rf_fit_bottom(s_creds, -34);
-  rf_fit_bottom(s_hint, -18);
-#endif
+  s_note = mk(font_caption(), col_faint());
+  // The text lines ride the stack's rows (split glass: the network name,
+  // then the key, and a standing hint on the note row — see refresh_bottom).
+  s_join = join_rows();
+  rf_fit_top(s_creds, s_join.creds_top);
+  rf_fit_top(s_hint, s_join.hint_top);
+  rf_fit_top(s_note, s_join.note_top);
+  s_row_font = font_caption();
+  s_floor_font = character_def(Character::QuietGlass).type.caption;
+  s_creds_w = rf_row_width(s_join.creds_top, line_h(s_creds));
+  s_low_w = rf_row_width(s_join.hint_top, line_h(s_hint));
+  s_note_w = rf_row_width(s_join.note_top, line_h(s_note));
 #else
   s_title = mk(font_title(), col_text());
   lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 96);
   s_qr_card = lv_obj_create(s_content);
-  lv_obj_set_size(s_qr_card, QR_CARD, QR_CARD);
-  lv_obj_align(s_qr_card, LV_ALIGN_CENTER, 0, 30);
   s_body = mk(font_body(), col_muted());
   lv_obj_align(s_body, LV_ALIGN_CENTER, 0, 10);
   s_creds = mk(font_label(), col_muted());
-  lv_obj_align(s_creds, LV_ALIGN_BOTTOM_MID, 0, -86);
   s_hint = mk(font_caption(), col_faint());
-  lv_obj_align(s_hint, LV_ALIGN_BOTTOM_MID, 0, -56);
+  s_join = join_rows();
+  lv_obj_align(s_creds, LV_ALIGN_TOP_MID, 0, s_join.creds_top);
+  lv_obj_align(s_hint, LV_ALIGN_TOP_MID, 0, s_join.hint_top);
 #endif
+  lv_obj_set_size(s_qr_card, s_join.card, s_join.card);
+  lv_obj_align(s_qr_card, LV_ALIGN_TOP_MID, 0, s_join.card_top);
 
   // QR on a white card — scanners want dark-on-light (proof-sheet lesson).
   lv_obj_set_style_bg_color(s_qr_card, lv_color_white(), 0);
   lv_obj_set_style_bg_opa(s_qr_card, LV_OPA_COVER, 0);
   lv_obj_set_style_radius(s_qr_card, 10, 0);
   lv_obj_set_style_border_width(s_qr_card, 0, 0);
-  lv_obj_set_style_pad_all(s_qr_card, (QR_CARD - QR_SIZE) / 2, 0);
+  lv_obj_set_style_pad_all(s_qr_card, QR_SPEC.pad, 0);
   lv_obj_clear_flag(s_qr_card, LV_OBJ_FLAG_SCROLLABLE);
   // Mint and render the join QR — and PROVE it rendered before ever showing
   // the card. Every step can fail (the v9 widget leaves a buffer-less canvas
   // behind when its draw-buffer allocation loses, and update reports its own
   // verdict); a failure here must degrade to the text instructions, never
   // crash the wizard or present an empty card.
-  s_qr = mk_qrcode(s_qr_card, QR_SIZE);
+  s_qr = mk_qrcode(s_qr_card, s_join.qr);
   s_qr_ok = false;
   if (s_qr != nullptr) {
     lv_obj_center(s_qr);
@@ -316,6 +393,7 @@ void onboard_ui_stage(ObStage st, const char* detail) {
   if (!s_scr) return;
   s_stage = st;
   s_hint_text[0] = '\0';  // a scene change retires the coach line
+  s_hint_narrow[0] = '\0';
 
   switch (st) {
     case ObStage::Hello:
@@ -337,26 +415,20 @@ void onboard_ui_stage(ObStage st, const char* detail) {
       canary_mark_mood(s_qr_ok ? CanaryMood::Hidden  // the QR owns the room
                                : CanaryMood::Idle);
 #ifdef CD_FLAVOR_WATCH
-      rf_fit_top(s_title, 24);
-      lv_label_set_text(s_title, s_qr_ok ? "Scan me" : "On your phone");
+      rf_fit_top(s_title, s_join.title_top);
+      lv_label_set_text(s_title, join_title());
       lv_label_set_text(s_body, "");
-#if !RF_GLASS_ROUND
-      // Round glass splits ssid/pass across the two bottom lines instead
-      // (refresh_bottom below); the nightstand keeps the joined line.
-      lv_label_set_text_fmt(s_creds, "%s  •  %s", s_ap_ssid, s_ap_pass);
-#endif
+      // The credentials rows are refresh_bottom's (below): joined or split
+      // by what fits this glass (onboardlayout::join_lines, F45).
 #else
-      lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 64);
+      lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, s_join.title_top);
       lv_label_set_text(s_title, s_qr_ok ? "Scan with your phone camera"
                                          : "On your phone, join this network");
       lv_label_set_text(s_body, "");
-      if (s_qr_ok) {
-        lv_label_set_text_fmt(s_creds, "or join \"%s\"  •  password  %s",
-                              s_ap_ssid, s_ap_pass);
-      } else {
-        lv_label_set_text_fmt(s_creds, "\"%s\"  •  password  %s",
-                              s_ap_ssid, s_ap_pass);
-      }
+      lv_label_set_text_fmt(s_creds,
+                            s_qr_ok ? onboardlayout::kWideScanFmt
+                                    : onboardlayout::kWideTypeFmt,
+                            s_ap_ssid, s_ap_pass);
 #endif
       ring_breathe();
       break;
@@ -415,9 +487,10 @@ void onboard_ui_stage(ObStage st, const char* detail) {
   content_enter();
 }
 
-void onboard_ui_hint(const char* line) {
+void onboard_ui_hint(const char* line, const char* narrow) {
   if (!s_hint) return;
   snprintf(s_hint_text, sizeof(s_hint_text), "%s", line ? line : "");
+  snprintf(s_hint_narrow, sizeof(s_hint_narrow), "%s", narrow ? narrow : "");
   refresh_bottom();
 }
 
@@ -442,9 +515,10 @@ void onboard_ui_finish() {
 #endif
   s_scr = nullptr;
   s_ring = s_content = s_title = s_body = nullptr;
-  s_qr_card = s_qr = s_creds = s_hint = nullptr;
+  s_qr_card = s_qr = s_creds = s_hint = s_note = nullptr;
   s_qr_ok = false;
   s_hint_text[0] = '\0';
+  s_hint_narrow[0] = '\0';
 }
 
 }  // namespace canary::ui

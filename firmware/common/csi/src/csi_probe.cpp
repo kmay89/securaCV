@@ -66,6 +66,7 @@ static uint32_t s_broadcasts_sent = 0;
 static uint32_t s_broadcasts_failed = 0;
 static uint32_t s_ticks_skipped_rate = 0;
 static uint32_t s_ticks_skipped_idle = 0;
+static uint32_t s_sends_denied_airtime = 0;
 
 /* Broadcast MAC. */
 static const uint8_t BROADCAST_MAC[CSI_PROBE_MAC_LEN] =
@@ -199,6 +200,7 @@ bool init(const Config& cfg) {
   s_unicasts_sent = s_unicasts_failed = 0;
   s_broadcasts_sent = s_broadcasts_failed = 0;
   s_ticks_skipped_rate = s_ticks_skipped_idle = 0;
+  s_sends_denied_airtime = 0;
 
 #ifndef CSI_TEST_HOST_BUILD
   /* esp_now_init() is safe to call multiple times — if another component
@@ -375,6 +377,16 @@ void process() {
     /* Use signed comparison so wrap-around doesn't starve a peer. */
     if ((int32_t)(t - s_peers[i].next_send_ms) < 0) continue;
 
+    /* Airtime reservation before the driver sees the frame. A denial
+     * means the shared routine budget is spent — keep the slot's cadence
+     * (retry one period later) so a saturated window doesn't turn into a
+     * burst the moment it clears. */
+    if (s_cfg.airtime_gate && !s_cfg.airtime_gate(t, payload_len)) {
+      ++s_sends_denied_airtime;
+      s_peers[i].next_send_ms = t + period;
+      continue;
+    }
+
     build_packet(payload, payload_len);
     if (send_raw(s_peers[i].mac, payload, payload_len)) {
       ++s_unicasts_sent;
@@ -400,6 +412,11 @@ void process() {
     ++s_ticks_skipped_rate;
     return;
   }
+  if (s_cfg.airtime_gate && !s_cfg.airtime_gate(t, payload_len)) {
+    ++s_sends_denied_airtime;
+    s_next_broadcast_ms = t + period_ms_from_rate(s_cfg.idle_rate_hz);
+    return;
+  }
   build_packet(payload, payload_len);
   if (send_raw(BROADCAST_MAC, payload, payload_len)) {
     ++s_broadcasts_sent;
@@ -418,6 +435,7 @@ bool get_stats(Stats* out) {
   out->ticks_skipped_rate = s_ticks_skipped_rate;
   out->ticks_skipped_idle = s_ticks_skipped_idle;
   out->peers_registered   = (uint32_t)peer_count();
+  out->sends_denied_airtime = s_sends_denied_airtime;
   return true;
 }
 

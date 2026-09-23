@@ -54,7 +54,7 @@ struct Args {
     #[arg(long, env = "MQTT_USERNAME")]
     mqtt_username: Option<String>,
 
-    #[arg(long, env = "MQTT_PASSWORD")]
+    #[arg(long, env = "MQTT_PASSWORD", hide_env_values = true)]
     mqtt_password: Option<String>,
 
     /// Force TLS to the broker even for a bare host:port address.
@@ -94,7 +94,7 @@ struct Args {
 
     /// The bar's HTTP-access PIN, if one is set in its web UI
     /// (Settings > HTTP Access). Sent as X-API-Token on the LAN.
-    #[arg(long, env = "BUSYBAR_TOKEN")]
+    #[arg(long, env = "BUSYBAR_TOKEN", hide_env_values = true)]
     busybar_token: Option<String>,
 
     /// Optional link-home URL attached to every ntfy poke (your local UI,

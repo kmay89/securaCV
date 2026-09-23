@@ -113,11 +113,74 @@ top face the lid seats on.
 | The two halves of every released case are intersected in their assembled position and must come out empty | `seat_lift` 0.1 | `canary_case_fitcheck.scad`, nine variants in CI |
 | Board dimensions come from the registry, measured where measured | `brd_*()` | `canary_board_lib`, `board_selfcheck()` |
 | Envelopes published to the website and the figures are measured off the committed meshes, never typed | — | `gen_assembled_dims.py`, `gen_figures.mjs --check`, the website's `ar-dims` test |
+| Hardware counts are derived and gated: every committed preset's `HARDWARE —` echo is parsed into `hardware.json`, and its fasteners are joined against the BOM CSVs | CSV qty ≥ echoed qty, per preset | `gen_hardware.py --check` (a new disagreement fails; a known one is listed in `hardware.json` `bom_drift` for the CSV's owner) |
 
-## 10. What is still open
+## 10. Knobs and their help
 
-- **Lid rib proportions.** Every lid's rib ring is pinned by a 1.0 mm
-  headroom, now asserted; making the ribs taller means growing `cav_extra`
-  on each case, which moves the released envelopes. A per-case decision.
-- **Customizer help text and naming collisions** — the audit's parametric
-  UX section.
+| Rule | Number | Enforced by |
+|---|---|---|
+| A knob's help sits on the knob's own line — the builder's parser keeps a trailing comment only on a one-knob line, so `a = 1;  b = 2;  // help` reaches neither | one knob per commented line | `lint_design_lang.py` (third rule); its `HELP_LINE_DEBT` ledger is empty since C10 split the 7" case's four lines, and it only shrinks |
+| A knob's range is the last `[min:step:max]` bracket in its trailing comment — the house form is `help  // [min:step:max]` — and the web builder and the Lab read it the same way | one reading, two parsers | `scripts/tests/test_enclosure_parsers.py`: `gen_builder_manifest.parse_scad` and `gen_enclosures.py`'s `parse_scad` agree on every knob's range and help |
+| A knob with a range keeps its whole help on its own line — the builder draws a slider with that line's help beside it, the Lab lists the range with the same help, and neither reads the comment lines below, so a help wrapped mid-sentence shows as half a sentence | the help ends at a sentence boundary; a continuation starts a new one | `lint_design_lang.py` (sixth rule): a ranged knob followed by a continuation fails on an open parenthesis, a dangling article, conjunction or preposition (`RUN_ON_WORDS`), or a continuation that starts in lowercase. Knobs without a range are not judged yet |
+| The stud/keyhole hanging interface — the README's "two-stud wall-hanging interface", the part of the design language that transfers between parts — keeps ONE group name wherever its knobs appear (it had 14, across 17 files) | `/* [Stud/keyhole interface] */`, a per-file note after the bracket (the name: maintainer to confirm) | `lint_design_lang.py` (fifth rule, `INTERFACE_KNOBS`): an interface knob in any other group fails; the C3 pocket case's egg hanger is exempt by name (`INTERFACE_EXEMPT`: a through-cut screw hanger, not the blind pocket) |
+| A released case's preset grays out exactly the options it overrides — the builder locks `preset_controls` while the preset is not `custom`, the `.scad`'s `_pre()` decides what the preset overrides | one list (the doorbell's and the Sense's preset contents, added in C10: maintainer to confirm) | `gen_builder_manifest.py` refuses a mismatch; `scripts/tests/test_builder_presets.py` |
+| A knob name means one thing across the catalog — a reader who learned it in one case reads it the same way in the next, so a second meaning gets its own name | the table below | `lint_design_lang.py` (fourth rule, `KNOB_MEANINGS`): a listed knob whose help does not say its meaning, or says the other one, fails |
+
+| Name | Means | Not to be confused with |
+|---|---|---|
+| `usb_w` / `usb_h` | the wall opening a USB cable's plug **and boot** pass through (12 × 6.5 in most case files) | `usb_shell_w` / `usb_shell_h` — the connector shell, or an opening sized to it (the display cases); `usb_slot_w` / `usb_slot_h` — the watch station's side slot |
+| `vm_l` / `vm_w` / `vm_front_h` | the Grove Vision AI V2 module (40 × 20) | `radar_l` / `radar_w` / `radar_front_h` — the MR60 radar carrier (44 × 36) in the Sense and its gang plate |
+| `skirt_t` | the rain (drip-edge) skirt's wall | `finger_t` — the watch station bezel's snap fingers |
+| `clip_w` | the snap board-clip's tab width (6.0, `snap_boardclip`) | `leaf_w` — the wear clip's belt-clip width (45.0) |
+
+## 11. What is still open
+
+- **Lid rib proportions — a maintainer decision, with the evidence
+  recorded.** Every released lid carries `lid_rib_h` 1.0 / `lid_rib_w` 2.5,
+  and each case asserts the rib against the headroom over its tallest
+  component (PLS-4). The headroom each committed preset actually leaves,
+  read off the CAD by `gen_hardware.py` (the bound is the variable that
+  case's own assert reads) and held to this table by its `--check`:
+
+  | Set (`hardware.json`) | Rib h | Headroom | Bound | Slack | Note |
+  |---|---|---|---|---|---|
+  | `doorbell` | 1.00 | 1.00 | `lid_headroom` | 0.00 | pinned |
+  | `sense` | 1.00 | 1.00 | `cav_extra` | 0.00 | pinned |
+  | `vision.devkit_indoor` | 1.00 | 1.00 | `lid_headroom` | 0.00 | pinned (`cav_d` = `cav_d_min`) |
+  | `vision.xiao_indoor` | 1.00 | 1.38 | `lid_headroom` | 0.38 | the USB rule set `cav_d` above `cav_d_min` |
+  | `vision.xiao_weather` | 1.00 | 4.58 | `lid_headroom` | 3.58 | the USB rule set `cav_d` above `cav_d_min` |
+  | `wap.battery_full` | 1.00 | 1.00 | `lid_headroom` | 0.00 | pinned; `batt_hold` |
+  | `wap.battery_weather` | 1.00 | 1.35 | `lid_headroom` | 0.35 | the USB rule set `cav_h` above `cav_h_min`; `batt_hold` |
+  | `wap.compact_plain` | 1.00 | 1.85 | `lid_headroom` | 0.85 | the USB rule set `cav_h` above `cav_h_min` |
+
+  So no single per-file literal can rise anywhere without either growing
+  `cav_extra` (which moves the released envelopes and every figure and AR
+  model after them) or becoming preset-derived. The WAP's rib is also not
+  free where headroom exists: over the battery bay it doubles as the
+  hold-down (`batt_hold`), whose face sits at `batt_h` to keep the 1 mm
+  swelling allowance. If the stiffness is wanted, the honest mechanism is a
+  bool `lid_rib_fill` — the rib grows to the preset's own slack, the WAP's
+  battery sets excluded — which leaves the four pinned presets
+  byte-identical and moves only the slack presets' lids and fronts (their
+  envelopes do not move; ribs are internal), shipped through
+  `scripts/regen_cad.py --previews <dir>` with previews of every affected
+  part. Nothing has been changed: the per-case call is the maintainer's.
+- **Customizer help text** — the audit's parametric UX section. Done: every
+  shared-help line is split one knob per line (the 7" case's four last), the
+  unambiguous comments above a knob are summarized onto it, every knob of the
+  released four has help except its eleven option-list selectors, the ranges
+  their sources state reach both parsers, the stud/keyhole interface has one
+  group name, and the doorbell and the Sense have presets (C1, then C10;
+  knobs without help, recounted with the builder's parser: 681 → 536 → 347,
+  the two new presets' selectors included).
+  Open: help for the 336 knobs of the development cases that still have
+  none (the 7" case's nine included), and the call below.
+  Found on the way (a maintainer call, nothing changed): OpenSCAD 2021.01's
+  own Customizer builds a slider or a dropdown only from a trailing comment
+  that is the bare bracket — probed with `openscad -o x.ast`, both
+  `// help  // [4:0.5:8]` and `// ["a","b"] text` come back
+  `Parameter("")`. So every range written with its help beside it (the house
+  form both repo parsers read) is a plain number box in the desktop
+  Customizer, and an option list with text after it (the WAP's `part`, every
+  `colorway`) loses its dropdown there. The Customizer's own description
+  slot is the comment line ABOVE a knob, which neither repo parser reads.

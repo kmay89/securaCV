@@ -23,6 +23,9 @@
 //      same — that distinction is what lets urgency mean something, and it
 //      is what lets old rows age out honestly instead of haunting the list.
 
+// SecuraCV-Parity: every Apple surface that shows a device compiles this.
+// (TimelineScrub's alert bridge needs it; the Wall keeps no alert ledger)
+
 import Foundation
 
 /// How an alert actually got to the user. Ordered by how much we managed.

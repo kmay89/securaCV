@@ -46,7 +46,7 @@ Two rules make it safe to run without a human per ticket:
 | Boot self-test, 10 probes with per-probe fixes | firmware `diag_run_selftest()` → mirrored into the website's `onboarding-spec.json` (`selftest.probes[].fix`) | The fix a user reads is byte-pinned to the firmware; `/checkup` and `/help` render it, never copy it |
 | `GET /api/selftest` | `canary-wap` `selftest_api.h` | One-shot verdict, reachable on the captive-portal AP; optional peripherals can never FAIL |
 | Crash evidence without a cable | `canary-wap` `hardware_state.h` (`safe_mode_check`, RTC breadcrumb) | "Why is it in recovery?" answered on the dashboard |
-| Flash-error classifier (7 kinds) + boot-log signatures (power vs clean-install) | `canary-local/assets/flash-core.js` (browser) + `desktop/src-tauri/src/health.rs` and friends (desktop; parity CI-gated) | The catalog's flashing entries restate these verbatim |
+| Flash-error classifier (7 kinds) + boot-log signatures (power vs clean-install) | `canary-local/assets/flash-core.js` (browser) + `desktop/flash-engine/src/health.rs` and friends (desktop; parity CI-gated) | The catalog's flashing entries restate these verbatim |
 | LED grammar, count-coded | `docs/hardware/canary_qr_onboarding.md` | The website's blink decoder; groups of 2/3/4/5 are pinned by test |
 | Diagnostic report (copy-paste, user-reviewed before sending) | `flash-core.js buildDiagnosticReport()` | The claims lane's proof-before-dispatch artifact — **after the Phase 3 tightening below**; as shipped it includes the MAC and an unfiltered serial tail |
 | Fix-it flows + physics bench on the real firmware in WASM | `canary-local/emulator/`, `canary-local/assets/guides.js` | The rehearsal layer |

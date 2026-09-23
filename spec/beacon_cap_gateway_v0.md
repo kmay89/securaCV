@@ -204,6 +204,19 @@ The lint runs in CI on every PR that touches `firmware/`, `homeassistant/`, or `
 4. **Rate-limit interactions.** Gateway-originated frames count against the gateway's per-pubkey limit, but if a real emergency justifies many alerts in rapid succession (e.g., tornado warning followed by update followed by extension), the limit must allow it. Proposal: gateway pubkeys get `MAX_ORIGINATIONS_PER_PUBKEY_24H = 50` instead of 5, justified by the upstream attestation requirement.
 5. **Acknowledgment back upstream.** CAP supports `Ack` msgType. Whether and how to feed acknowledgments back to the upstream system is an operator-specific concern, not a protocol concern.
 
-## 6. Changelog
+## 6. Implementation milestone and its gates
+
+**Decision (2026-09): deferred explicitly.** The firmware carries no `BeaconGatewayAttestation`, no trust root and no gateway build flag. Building attestation parsing against an empty trust root would be inert code, and §1 already requires a real gateway to live in a separate, explicitly-named build. What the default firmware guarantees instead is §2.3's own rule, *the gateway gets no special privilege without producing the upstream attestation*: a `trust_level = 1` entry is verified exactly like a cosigner — two signatures from two distinct paired keys, or the BOOT-button solo rules of `spec/beacon_channel_v0.md` §6.2, the ordinary 5-per-24 h bucket, and no parsing of bytes after the two signatures. Two host tests pin this (`firmware/projects/canary-wap/tests_host/test_beacon_origination.cpp`): `test_gateway_trust_confers_no_privilege` against the receive-path mirror, and `test_source_grants_gateway_trust_nothing` against the real `beacon_channel.cpp`. Implementing this spec means changing those pins on purpose.
+
+The milestone opens only when every gate below is met. The first three are human decisions, not code:
+
+1. **Trust root** (§5 question 1): which upstream keys are trusted, who holds them, and how they rotate and are revoked — with the same operational care as a CA bundle.
+2. **A separately, explicitly named firmware build** (§1). The default firmware never carries gateway origination.
+3. **A per-deployment legal review and a designated operator identity** (§1), before any gateway is paired.
+4. **Gateway pairing UX and the §2.2 cap.** "Pair as gateway" with its own hold-confirm and warning (§5 question 2), and the hard cap of three non-revoked gateway entries per beacon set, enforced where entries are added. Both land with the Beacon pairing flow (`spec/beacon_channel_v0.md` §3.3), which is itself not built yet.
+5. **Then the code:** attestation parsing and verification (§2.3), the "via" display rules (§2.4), and the §5 question 4 rate decision.
+
+## 7. Changelog
 
 - v0.1 (2026-05-11): Initial draft. Specification only; no implementation in this firmware release.
+- 2026-09: §6 records the explicit deferral, the no-privilege pins, and the milestone's gates.

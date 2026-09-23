@@ -126,12 +126,16 @@ inline Action make_send_action(ActionType t,
 }
 
 /* Generate the ephemeral X25519 keypair into ctx.ephem_{pub,priv}key.
- * Uses mesh_crypto::ed25519_generate_keypair to source a random 32-byte
- * private scalar — Curve25519::eval clamps internally, so the same
- * 32-byte privkey works for X25519 as for Ed25519 in the host shim;
- * on device the rweather Curve25519 takes the priv directly. */
+ *
+ * CRYPTO (F33 part 2 — crypto review, maintainer to confirm): this used to
+ * call ed25519_generate_keypair(), whose public key is an Edwards point
+ * derived from SHA-512(seed) — not the X25519 public key of that seed —
+ * so on a device the two sides' x25519_derive() gave different session
+ * keys and the 6-digit codes could never match (the host shim hid it by
+ * agreeing whatever the keys were). x25519_generate_keypair() clamps a
+ * random scalar per RFC 7748 §5 and derives pub = scalar * basepoint. */
 inline bool generate_ephemeral(PairingContext& ctx) {
-  return mesh_crypto::ed25519_generate_keypair(ctx.ephem_pubkey, ctx.ephem_privkey);
+  return mesh_crypto::x25519_generate_keypair(ctx.ephem_pubkey, ctx.ephem_privkey);
 }
 
 /* Derive session_key + confirmation_code once we know both ephemeral

@@ -408,6 +408,7 @@ footer a{color:var(--accent);text-decoration:none}
       <div class="wiz-tick">✓</div>
       <h2 class="wiz-h" tabindex="-1">Your Canary is online.</h2>
       <p class="wiz-sub">Joined <strong id="wiz-success-ssid">your home WiFi</strong>. Running one quick check that the sensors are awake.</p>
+      <p class="wiz-sub hidden" id="wiz-success-tz" role="status"></p>
       <p class="wiz-sub">The SecuraCV setup network turns itself off in about two minutes — reconnect this phone to your home WiFi and find your Canary at <strong>canary.local</strong>.</p>
     </div>
     <div id="wiz-step-4-standalone" class="hidden">
@@ -774,7 +775,40 @@ const WizardLogic = (function () {
     return { action: 'fail', isTokenErr: isTokenErr };
   }
 
-  return { isPairToken, connectOutcome, capabilityNotice };
+  // The /api/wifi/connect body. The phone's own IANA zone rides along as
+  // tz_iana (repo sweep F28) so the canary's quiet hours start at the
+  // household's midnight: one hop over the setup network, mapped on the
+  // device, no lookup service. Sent only when it looks like a zone name —
+  // an empty, odd or oversize value is left out, and the join never depends
+  // on it.
+  function connectBody(ssid, password, token, tzIana) {
+    const body = { ssid: ssid, password: password, token: token };
+    if (typeof tzIana === 'string' && tzIana.length > 0 && tzIana.length <= 47 &&
+        /^[A-Za-z][A-Za-z0-9_+\-]*(\/[A-Za-z0-9_+\-]+)*$/.test(tzIana)) {
+      body.tz_iana = tzIana;
+    }
+    return body;
+  }
+
+  // What to tell the person about the phone's time zone once the join is
+  // saved, from /api/wifi/connect's "tz" answer (repo sweep F28). The join
+  // never waits on the zone; when the Canary could not take it, it keeps
+  // world time (UTC), and the success card says so instead of implying the
+  // setup applied everything. '' = nothing to say (set, or none was sent).
+  function tzNotice(tzOutcome, zone) {
+    const named = (typeof zone === 'string' && zone) ? ' (' + zone + ')' : '';
+    if (tzOutcome === 'unknown_zone') {
+      return "Your phone's time zone" + named + " isn't in this Canary's built-in list, " +
+             "so it keeps world time (UTC): quiet hours and the day's summaries follow UTC.";
+    }
+    if (tzOutcome === 'not_set') {
+      return "This Canary couldn't store your phone's time zone" + named +
+             ", so it keeps world time (UTC) for now.";
+    }
+    return '';
+  }
+
+  return { isPairToken, connectOutcome, capabilityNotice, connectBody, tzNotice };
 })();
 if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLogic; }
 /* WIZARD_LOGIC:END */
@@ -1162,10 +1196,12 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
     }
     setStep(4);
     showProgress('Sending credentials to your Canary.');
+    let phoneZone = '';
+    try { phoneZone = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
     const postConnect = () => fetch('/api/wifi/connect', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ssid: pickedSsid, password: pw, token: token }),
+      body: JSON.stringify(WizardLogic.connectBody(pickedSsid, pw, token, phoneZone)),
     });
     try {
       let r = await postConnect();
@@ -1188,6 +1224,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
                     out.isTokenErr ? { raw: true } : undefined);
         return;
       }
+      successTzNote = WizardLogic.tzNotice(j && j.tz, phoneZone);
       pollWifiUntilConnected();
     } catch (e) {
       showFailure(e.message);
@@ -1236,12 +1273,16 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
   // — the device may not be reachable as canary.local on networks
   // without mDNS, so we surface the raw IP next to the mDNS hostname.
   let connectedStaIp = '';
+  let successTzNote = '';  // WizardLogic.tzNotice() for this join, '' = none
   function showSuccess(staIp) {
     connectedStaIp = staIp || '';
     $w('wiz-step-4-progress').classList.add('hidden');
     $w('wiz-step-4-failure').classList.add('hidden');
     $w('wiz-step-4-success').classList.remove('hidden');
     $w('wiz-success-ssid').textContent = pickedSsid || 'your home WiFi';
+    const tzLine = $w('wiz-success-tz');
+    tzLine.textContent = successTzNote;
+    tzLine.classList.toggle('hidden', !successTzNote);
     [4].forEach(i => {
       const dot = $w('wiz-prog-' + i);
       dot.classList.remove('now');
@@ -1254,7 +1295,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
     setTimeout(() => {
       setStep(5);
       runSelfTest();
-    }, 700);
+    }, successTzNote ? 6000 : 700);  // a time-zone note needs reading time
   }
   // showFailure() defaults to wrapping the reason as "We couldn't
   // connect: {reason}" because the HTTP / network call-sites pass tight
@@ -1436,6 +1477,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
       },
       tamper: (p) => {
         if (p.status === 'absent') return 'Tamper monitoring isn\'t enabled in this build. It\'s optional — to get physical-tamper alerts, enable the tamper input and wire a reed/contact switch to the tamper pin.';
+        if (p.status === 'pass' && p.metric && p.metric.open === true) return 'The enclosure reads open. Close the lid before you mount the Canary — opening it after that is recorded as a tamper.';
         return '';
       },
       gpio: (p) => (p.status === 'fail' || p.status === 'skip')

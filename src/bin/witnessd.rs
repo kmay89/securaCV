@@ -53,8 +53,17 @@ fn main() -> Result<()> {
     witness_kernel::set_sqlite_synchronous(config.storage_health.sqlite_synchronous);
     let device_key_seed = {
         let provided_seed = std::env::var("DEVICE_KEY_SEED").ok();
-        let key_path = witness_kernel::crypto::device_key_path_for_db(&config.db_path)?;
-        witness_kernel::crypto::load_or_create_device_seed(&key_path, provided_seed.as_deref())?
+        // witnessd alone writes an environment seed to <db>.ed25519.seed when
+        // no file exists yet, as it always has; every other daemon persists
+        // only a seed it generated.
+        let resolved = witness_kernel::crypto::resolve_device_seed_persisting_env(
+            &config.db_path,
+            provided_seed.as_deref(),
+        )?;
+        // Log where the identity came from (the environment, or which seed
+        // file) so an operator can find it; the seed value is never logged.
+        log::info!("device key seed: {}", resolved.source);
+        resolved.seed
     };
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(&config.ruleset_id);
 
@@ -165,6 +174,7 @@ fn main() -> Result<()> {
         addr: config.api_addr.clone(),
         token_path: config.api_token_path.clone(),
         fleet_peers_path: config.api_fleet_peers_path.clone(),
+        viewer_token_path: config.api_viewer_token_path.clone(),
         rate_limit_per_minute: config.api_rate_limit_per_minute,
         // Explicit opt-in required to expose the plaintext API off-loopback.
         allow_insecure: std::env::var("WITNESS_API_ALLOW_INSECURE")
@@ -1606,6 +1616,7 @@ mod tests {
             api_addr: "127.0.0.1:0".to_string(),
             api_token_path: None,
             api_fleet_peers_path: None,
+            api_viewer_token_path: None,
             api_rate_limit_per_minute: witness_kernel::api::DEFAULT_API_RATE_LIMIT_PER_MINUTE,
             ingest: IngestSettings {
                 backend: IngestBackend::Rtsp,

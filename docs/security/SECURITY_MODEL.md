@@ -50,7 +50,7 @@ visibly breaks and anyone checking the evidence can see the tampering.
 
 The device records only:
 
-- **Timestamps** — rounded to 5-second intervals (never precise)
+- **Timestamps** — rounded to ten-minute buckets (never precise)
 - **GPS coordinates** — if available, with configurable precision coarsening
 - **Count of nearby WiFi devices** — not their identities
 - **Device health data** — memory, storage, battery status
@@ -434,7 +434,7 @@ not objective ground truth.
 ### Clock Accuracy
 Timestamps come from GPS satellites when a fix is available. Without
 GPS fix, the device uses its internal clock, which may drift. All
-timestamps are coarsened to 5-second buckets regardless of source.
+timestamps are coarsened to ten-minute buckets regardless of source.
 
 ### Evidence Scope
 The device records metadata about events, not comprehensive multimedia
@@ -452,7 +452,9 @@ understanding because it is the one place where "keys never leave the
 device" needs an asterisk.
 
 ESP32-family chips support Secure Boot and flash encryption, which together
-make the flash contents unreadable and stop unsigned firmware running.
+make the firmware image unreadable and stop unsigned firmware running.
+(Flash encryption alone does not cover NVS, where the key lives; that
+takes NVS encryption on top — see the end of this paragraph.)
 They are also **irreversible**: they are burned into one-time fuses. A
 device with them enabled and a lost key is a brick, permanently, with no
 recovery path — not for you, and not for us. We decided that a default
@@ -462,6 +464,17 @@ device people are supposed to be able to keep, repair, and re-flash. So
 reversible protections in the default path and leaves the irreversible
 lockdown as an explicit, key-backup-enforced opt-in. The settings are
 staged and commented in `firmware/provisioning/sdkconfig.defaults.secure`.
+The PIO canary image (`firmware/canary`) does not leave you to assume
+which case yours is: it reports where its identity key sleeps as
+`key_at_rest` (`plaintext-nvs`, `nvs-encrypted` or
+`nvs-encrypted+secure-boot`) in `/api/status`, the health export, the `f`
+console card and the `j` self-manifest. Today that answer is always
+`plaintext-nvs`, on a fused board too: ESP-IDF's flash encryption encrypts
+the app, OTA-data and NVS-key partitions but not NVS itself, and the NVS
+encryption that would cover it is not available in that image's
+Arduino-framework build. No other firmware tree (canary-wap,
+canary-sense, canary-vision, canary-display, ...) reports `key_at_rest`
+yet.
 
 **What key recovery gets an attacker.** They can sign new records as that
 device. From that point on, a chain they produce is cryptographically

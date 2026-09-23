@@ -199,6 +199,17 @@ decided in advance (see step 2).
    parties out of band (**PROC**). This is what makes their `log_verify`
    verdict `valid` rather than `self-consistent; identity unverified`.
 
+**Served-console variant.** `break_glass_serve` bound to loopback (its
+default) shows a one-time setup panel while no policy exists; **Store policy**
+posts the roster to `POST /breakglass/policy`, validated as `policy set`
+validates it and written as the same `bootstrap` history row (**CODE**). It is
+accepted only while no policy exists — afterwards `409
+policy_already_configured` (**CODE**), and changes go through C2. Whoever
+holds the capability token first wins the bootstrap, so run it before the
+console is reachable on a routable address (**PROC**). The panel takes public
+keys only, and it neither reads nor clears an `init` setup draft — use the
+panel or the draft (steps 1–2 and 4), not both. Steps 3 and 5–7 still apply.
+
 **Exceptions.** Draft already complete → re-run `init` (it reports state).
 Key-reuse refusal → not an exception; choose another key. A trustee who cannot
 confirm their fingerprint → do not enroll them (E-entry).
@@ -482,8 +493,10 @@ tools — an older `witnessd` prunes anchored heads at every retention pass
 checkpoint row). A head already lost that way reports `anchored hash is not
 in chain history`; `log_anchor … relabel --id <n> --subject digest` records
 that membership is no longer asserted without touching the token (it refuses
-a head newer than the signed retention cutoff — that shape is truncation, not
-a legacy prune — and never upgrades a subject) (**CODE**). Record every
+a head newer than the signed retention cutoff, or any head when no retention
+checkpoint exists — either shape is truncation, not a legacy prune — refuses
+receipt-ledger and policy heads outright, and never upgrades a subject)
+(**CODE**). Record every
 `relabel` in the exceptions register (**PROC**).
 
 **`policy_head` note:** the policy-change history is empty only on a database
@@ -501,9 +514,12 @@ cross-bound into `log_verify` / `run_full_verify` — a `valid` verdict there
 says nothing about the anchors table (**GAP** → §4; `ENTERPRISE_CUSTODY.md`
 §2). The anchors table is not itself chained: export `tsa_anchors.token_der`
 with every backup (**PROC**). An OpenTimestamps leg and clock-provenance
-events are **GAP** (§4). No shipped image carries the `openssl` CLI or the
-`tsa` feature: online `anchor-all` and `verify --ca` / `--policy` run from an
-operator host (**PROC**).
+events are **GAP** (§4). No shipped image enables the `tsa` feature: online
+`anchor-all` runs from an operator host (**PROC**). The Debian-based
+`witnessd` image carries the `openssl` CLI (via `ca-certificates`), so
+`verify --ca` / `--policy` can run inside it against a mounted CA or policy
+file; the Alpine add-on image does not install it, and there those checks
+run from an operator host (**PROC**).
 
 ### C6 — Keyguard issuance (vault passphrase)
 
@@ -544,20 +560,41 @@ authorization (`quorum_unseal_v2.md` §2.5).
 Four different keys; the ceremony depends on which.
 
 - **Trustee key** → C2 (replace the roster entry).
-- **Device signing identity** → `Kernel::rotate_device_identity(new_seed)` —
-  a library API with no operator command (**GAP**). Prerequisite:
-  `SECURACV_DB_KEY_SEED` set as an independent secret so the database key does
-  not change with the device key, and `rekey_database_file` (also
-  library-only) if it must. A rotation produces a `KeyRotation` chain record
-  signed by the retiring key plus a `device_key_history` row; verification
-  follows the genesis-anchored lineage (**CODE**). Post-rotation duties
-  (**PROC**): redistribute the pin and lineage to every relying party; note
-  that post-quantum keys are not rotated. `receipts`, `policy history`, and
-  `log_verify` all verify rows under the genesis-anchored lineage, so rows
+- **Device signing identity** → `break_glass rotate-identity --db <db>
+  --generate` with every process that opens the database stopped (**CODE**,
+  over `Kernel::rotate_device_identity`). The retiring seed is
+  `--device-key-seed` / `DEVICE_KEY_SEED`, else `--seed-file`, else
+  `<db>.ed25519.seed`; a retired seed is refused before anything changes. The
+  successor is minted from the OS RNG and staged as a fsynced 0600
+  `<file>.new` beside every seed file that must follow the identity
+  (`--seed-file`, and `<db>.ed25519.seed` whenever it exists) *before* the
+  rotation commits, renamed over the live file after it, and proven by a
+  reopen; the command prints the retiring, current and genesis public keys
+  (the genesis key is the one verifiers pin) and the lineage epoch, never a
+  seed (**CODE**). `--new-seed` takes an operator-chosen successor instead. Prerequisite: `SECURACV_DB_KEY_SEED` set
+  as an independent secret so the database key does not change with the
+  device key — the command refuses without it unless `--rekey-db-to <secret>`
+  re-keys the database in the same ceremony (**CODE**). A rotation produces a
+  `KeyRotation` chain record signed by the retiring key plus a
+  `device_key_history` row; verification follows the genesis-anchored lineage
+  (**CODE**). Post-rotation duties (**PROC**): update `DEVICE_KEY_SEED`
+  wherever a deployment exports it (the add-on and sidecar key files —
+  point `--seed-file` at them), redistribute the pin and lineage
+  (`log_verify --lineage`) to every relying party; note that post-quantum keys
+  are not rotated. `receipts`, `policy history`, and `log_verify` all verify
+  rows under the genesis-anchored lineage, so with the genesis key pinned rows
   signed before the rotation stay VALID and the §3 checklist does not fire a
-  Class D exception on a legitimate rotation (**CODE**).
-- **Database encryption key** → `rekey_database_file` with the database
-  closed (library-only; **GAP**). Stop every process first.
+  Class D exception on a legitimate rotation (**CODE**). `log_verify` handed
+  only the new seed says the seed derives a later epoch and verifies
+  self-anchored — `self-consistent; identity unverified`, not a failure
+  (**CODE**); the genesis pin is what makes it `valid`.
+- **Database encryption key** → `break_glass rekey-db --db <db>
+  --new-db-key-seed <secret>` (or `SECURACV_NEW_DB_KEY_SEED`) with the
+  database closed (**CODE**, over `rekey_database_file`): the current key is
+  `--old-db-key`, else derived from `--old-device-key-seed` /
+  `DEVICE_KEY_SEED` (honoring `SECURACV_DB_KEY_SEED`), else from
+  `<db>.ed25519.seed`; a no-op is refused. Stop every process first, and start
+  every one afterwards with `SECURACV_DB_KEY_SEED` set to the new secret.
 - **Vault master key / keyguard passphrase** → no rotation path (**GAP**).
 
 Not ceremonies: capability tokens for `break_glass_serve` and `witness_api`
@@ -635,6 +672,7 @@ rotate per bucket automatically.
 |---|---|---|
 | Sign what you see (WYSIWYS approval) | **CODE** | `approve --request` recomputes and displays; served signer page recomputes in-browser |
 | Quorum-gated policy mutation | **CODE** (procedural against a host-level actor) | `policy set --approvals`, prior-era commitment from the stored policy |
+| Console bootstrap limited to the first policy | **CODE** | `POST /breakglass/policy` → `409 policy_already_configured` once a policy exists; the quorum-gated write re-reads the stored policy under the database write lock, so a policy the CLI stored while the console ran is never replaced |
 | Bootstrap labeled in history | **CODE** | history row `bootstrap` |
 | Complete-roster commit at issuance | **CODE** | `trustee enroll` |
 | Single-use token; bucket-bounded redemption | **CODE** | durable nonce burn; same-bucket rule with receipted denial |
@@ -664,7 +702,8 @@ rotate per bucket automatically.
 | Proactive resharing, liveness attestations | **GAP** → §2.4 | recorded rehearsals (C4b) |
 | Anchors cross-bound into full verify (`log_verify`) | **GAP** → §4 | `log_anchor verify` only; receipt heads are typed subjects there but not part of the ledger verdict |
 | Handoff sidecars for unseal outputs | **GAP** → §5 | `CLOSEOUT.md` digests |
-| Device-key rotation and database re-key commands | **GAP** | library APIs only |
+| Device-key rotation and database re-key commands | **CODE** | `break_glass rotate-identity`, `break_glass rekey-db` |
+| Device seed file private to its owner | **CODE** | a seed file with any group/other permission bit is refused, naming `chmod 600` |
 | Trustee key generation / public-key helper | **GAP** | external Ed25519 tool |
 | Keyguard migration and passphrase rotation | **GAP** | new vault only |
 | `doctor` awareness of `master.keyguard` | **GAP** | manual keyguard record |
@@ -674,7 +713,7 @@ rotate per bucket automatically.
 
 Every command, flag, file format id, and quoted message above is taken from
 the shipped source (`src/break_glass/cli.rs`, `src/bin/break_glass_serve.rs`,
-`src/bin/log_anchor.rs`, `src/bin/log_verify.rs`, `src/vault/mod.rs`,
+`src/bin/log_anchor.rs`, `src/bin/log_verify.rs`, `src/crypto/mod.rs`, `src/vault/mod.rs`,
 `src/log/high_water_mark.rs`, `src/ui.rs` for the stage markers). When a badge here says **PROC** or **GAP** and
 the code later enforces the control, the badge changes in the same pull
 request — the tracker entry in

@@ -231,7 +231,8 @@ anchor policy anchor-policy.json: NOT SATISFIED (1 subject(s) uncovered)
 chain head moves with every heartbeat — and is not a failure unless
 `--require-current` is given (ceremony close-out). The final line is
 `anchor policy anchor-policy.json: SATISFIED` with exit 0, or `NOT SATISFIED
-(…)` with exit 1, as above.
+(…)` with exit 1, as above; both go to stdout, and the failing one is also
+the process's error on stderr (`Error: anchor policy …: NOT SATISFIED (…)`).
 
 ## TSA identity
 
@@ -292,12 +293,19 @@ and openssl — no SecuraCV toolchain is required for the trust-critical step.
   not recoverable — `log_anchor relabel` records that; upgrade `witnessd`
   first. `relabel --id N --subject digest` leaves the token untouched,
   re-checks the imprint, refuses a head that is newer than the signed
-  retention cutoff (that shape is truncation, not a legacy prune), and never
-  upgrades a subject.
-- No shipped image carries the `openssl` CLI or the `tsa` feature; run
-  `verify --ca`/`--policy` and online `request` from an operator host. The
-  images do ship `log_anchor` for the offline flow and the structural
-  `list`/`verify` checks.
+  retention cutoff or a database with no retention checkpoint at all
+  (either shape is truncation, not a legacy prune — nothing was pruned
+  that far, or nothing was ever pruned), refuses every receipt-ledger and
+  policy head (those ledgers are never pruned), and never upgrades a
+  subject.
+- No shipped image enables the `tsa` feature; run online `request` and
+  `anchor-all` from an operator host. The images do ship `log_anchor` for
+  the offline flow and the structural `list`/`verify` checks. The
+  Debian-based `witnessd` image also carries the `openssl` CLI (a hard
+  dependency of its `ca-certificates` package), so `verify --ca`/`--policy`
+  and `import --policy`'s countersignature check run inside it against a
+  mounted CA or policy file; the Alpine Home Assistant add-on image does not
+  install it, and there those checks run from an operator host.
 - `list`, `verify`, `query`, and `anchor-all --offline-dir` open the
   database read-only and create nothing; a database with no anchors table
   reads as `no anchors stored`.

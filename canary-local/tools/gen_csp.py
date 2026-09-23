@@ -30,15 +30,18 @@ from a Tauri webview. This tool is the ONE place that policy is written:
     load from a file). Any other inline script, any <style> block, any
     style="…" attribute and any on*= handler fails the run: move it into the
     page's assets/<page>.js / .css instead of loosening the policy.
-  * SRCDOC_STYLES covers the one document a page renders that is not ours to
-    edit: wap.html shows the firmware's real captive-portal page, verbatim,
-    in an <iframe srcdoc> — and a srcdoc document INHERITS the embedder's
-    policy (about:srcdoc is never fetched, so frame-src does not apply, but
-    every other directive does). Its <style> block is hashed here from the
-    generated data it ships in (devices/wap.json, written by gen_wap.py from
-    the firmware source), so the pin follows the firmware; the tool refuses
-    the row if that document ever grows an inline script, a style= attribute
-    or an on*= handler, which no hash can cover.
+  * SRCDOC_STYLES covers the documents a page renders that are not ours to
+    edit: wap.html shows the WAP firmware's real captive-portal page,
+    verbatim, and fleet.html shows the display's (served by its own
+    WebServer route in the wasm build, script and style= attribute removed),
+    each in an <iframe srcdoc> — and a srcdoc document INHERITS the
+    embedder's policy (about:srcdoc is never fetched, so frame-src does not
+    apply, but every other directive does). Each <style> block is hashed here
+    from the generated data it ships in (devices/wap.json from gen_wap.py,
+    devices/display_portal.json from gen_display_portal.py — both read the
+    firmware source), so the pin follows the firmware; the tool refuses the
+    row if that document ever grows an inline script, a style= attribute or
+    an on*= handler, which no hash can cover.
 
 The tool then rewrites exactly one CSP <meta> line per page, right after the
 <meta charset> line, idempotently. Run it after editing a page or this table:
@@ -173,6 +176,16 @@ SRCDOC_STYLES = {
         "verbatim in a sandboxed <iframe srcdoc> by wap-ui.js; the frame inherits this policy, "
         "and the page is the device's, not the Lab's — so its one <style> block is pinned by "
         "hash from devices/wap.json rather than rewritten.",
+    ),
+    "fleet.html": (
+        "devices/display_portal.json",
+        ("captive", "html"),
+        "the display's first-boot captive portal (canary-display net/provision.cpp PORTAL_HTML), "
+        "as its own WebServer route serves it from the wasm build, rendered in a sandboxed "
+        "<iframe srcdoc> by onboard-phone.js with its <script> and style= attribute removed (the "
+        "phone sheet stands in for that script); the frame inherits this policy, so its one "
+        "<style> block is pinned by hash from devices/display_portal.json (gen_display_portal.py "
+        "writes it from the firmware source).",
     ),
 }
 

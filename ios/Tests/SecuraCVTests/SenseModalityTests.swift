@@ -20,6 +20,9 @@ final class SenseModalityTests: XCTestCase {
         XCTAssertEqual(SenseModality(publishedType: "canary-sense"), .radar)
         XCTAssertEqual(SenseModality(publishedType: "canary-wap"), .wifiCSI)
         XCTAssertEqual(SenseModality(publishedType: "canary-contact"), .contact)
+        // The fusion guardian senses through several media at once, so it
+        // takes the dictionary's "other", never one medium's glyph.
+        XCTAssertEqual(SenseModality(publishedType: "canary-sentinel"), .other)
         // Both spellings have shipped in firmware configs — the same reason
         // const.py grew canonical_device_type(). An underscore, case, or
         // stray whitespace must never cost a device its Senses row.
@@ -38,10 +41,11 @@ final class SenseModalityTests: XCTestCase {
         XCTAssertEqual(SenseModality.radar.rawValue, "radar")
         XCTAssertEqual(SenseModality.wifiCSI.rawValue, "wifi-csi")
         XCTAssertEqual(SenseModality.contact.rawValue, "contact")
+        XCTAssertEqual(SenseModality.other.rawValue, "other")
     }
 
     func testEveryModalityHasPresentation() {
-        for m in [SenseModality.camera, .radar, .wifiCSI, .contact] {
+        for m in [SenseModality.camera, .radar, .wifiCSI, .contact, .other] {
             XCTAssertFalse(m.label.isEmpty)
             XCTAssertFalse(m.sfSymbol.isEmpty)
         }
@@ -85,7 +89,8 @@ final class SenseModalityTests: XCTestCase {
         // And nothing extra: a Swift-only mapping would be a claim const.py
         // (the wire-contract home) never blessed.
         let constTypes = Set(pairs.map(\.deviceType))
-        for deviceType in ["canary-vision", "canary-sense", "canary-wap", "canary-contact"] {
+        for deviceType in ["canary-vision", "canary-sense", "canary-wap", "canary-contact",
+                           "canary-sentinel"] {
             XCTAssertTrue(constTypes.contains(deviceType),
                           "\(deviceType) is mapped in Swift but no longer in const.py")
         }

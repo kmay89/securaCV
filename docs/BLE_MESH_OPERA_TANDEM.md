@@ -1,6 +1,14 @@
 # BLE Mesh + Opera Mesh Tandem — Design
 
-**Status:** v1 design, scaffolding committed in `firmware/projects/canary-wap/arduino/canary_wap/ble_mesh.{h,cpp}`. Transport implementation pending review of options A/B/C below.
+**Status:** design only — nothing in any firmware tree implements it. The
+`ble_mesh.{h,cpp}` scaffold that used to sit in the canary-wap sketch was
+deleted (F12): its `init()` always refused, nothing called it, and it only
+added a translation unit to every WAP image. The wire-format structs in this
+document — including the frame header the scaffold defined, [kept below](#frame-header-from-the-deleted-scaffold)
+— are the contract if and when a transport is chosen. The transport decision
+(options A/B/C below) is still open; the recommendation stands at Option B.
+Note when weighing the rationale: Opera's transport is ESP-NOW, which needs
+the radio on the shared channel but not an access-point association.
 
 ## Why two mesh layers
 
@@ -62,6 +70,29 @@ struct __attribute__((packed)) FamiliarBloomDelta {
 ```
 
 The federated mesh module (Phase 9) already does Bloom-share aggregation over Opera. Mirroring lightweight deltas over BLE Mesh lets two Canaries on the same household but different VLANs stay synced even when WiFi is partitioned.
+
+### Frame header (from the deleted scaffold)
+
+The scaffold put `sender_id` in one common header instead of in each payload
+as the structs above do; pick one when a transport lands. Its header sat in
+the cleartext AAD, with the type-specific payload in ciphertext:
+
+```c
+enum MsgType : uint8_t {
+  MSG_CHAIN_HEAD_HEARTBEAT = 0x01,
+  MSG_BOND_ADVERTISE       = 0x02,
+  MSG_FAMILIAR_BLOOM_DELTA = 0x03,
+};
+
+struct __attribute__((packed)) MsgHeader {
+  uint16_t magic;      // 'SC' = 0x5343 (LE)
+  uint8_t  version;    // 0x01
+  uint8_t  msg_type;
+  uint16_t household;  // hash16 of household NetKey (lookup hint)
+  uint32_t sender_id;  // last 4 bytes of sender's pubkey fingerprint
+  uint32_t seq;        // monotonic, per-sender, household-wide
+};  // 14 bytes
+```
 
 ## Crypto
 

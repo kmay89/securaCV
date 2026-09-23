@@ -1,6 +1,8 @@
 // canary-local/emulator/shim/WString.h — just enough Arduino String.
-// The display tree uses String only for NVS credential round-trips
-// (runtime_config.cpp); std::string wears the costume.
+// The display tree uses String for NVS credential round-trips
+// (runtime_config.cpp) and, since the first-boot portal compiles here too,
+// for net/provision.cpp's request args and its /scan JSON (+=); std::string
+// wears the costume.
 #pragma once
 
 #ifdef __cplusplus
@@ -32,6 +34,18 @@ class String {
     return *this;
   }
   String operator+(const char* o) const { return String(s_ + (o ? o : "")); }
+  String& operator+=(const char* o) {
+    s_ += o ? o : "";
+    return *this;
+  }
+  String& operator+=(const String& o) {
+    s_ += o.s_;
+    return *this;
+  }
+  String& operator+=(char c) {
+    s_ += c;
+    return *this;
+  }
 
  private:
   std::string s_;

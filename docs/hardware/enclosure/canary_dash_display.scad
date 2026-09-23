@@ -44,14 +44,19 @@ bez_lip = 2.5;       // bezel overlap onto the glass edge
 
 /* [USB / terminals] — positions along the BOTTOM wall, from panel center */
 usb_dx   = 0.0;      // USB-C slot center offset — MEASURE
-usb_w    = 12.0;  usb_h = 6.5;
+usb_w    = 12.0;
+usb_h    = 6.5;
 term_open = false;   // also open the CAN/RS485 terminal zone (a parting-line notch to the rear rim; the back plate closes it)
 // term_h is the connector zone's height: the notch must clear it (asserted
 // below), and the back plate covers everything above it
-term_dx  = -30.0;  term_w = 24.0;  term_h = 8.0;
+term_dx  = -30.0;    // terminal zone center offset along the bottom wall, from panel center
+term_w   = 24.0;     // terminal notch width
+term_h   = 8.0;      // connector zone height — the notch must clear it; the back plate covers the rest
 
 /* [Print tolerances] — tune with canary_fit_coupon.scad */
-tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;   // catalog trio — canary_core_lib core_tol_*()
+tol_slide = 0.20;  // catalog default — canary_core_lib core_tol_slide()
+tol_press = 0.10;  // catalog default — canary_core_lib core_tol_press()
+tol_hole  = 0.30;  // catalog default — canary_core_lib core_tol_hole()
 
 /* [Shell] */
 frame_w = 3.5;       // side wall thickness
@@ -64,7 +69,8 @@ r_out   = 5.0;   // deviates: display-frame radius class — scaled to the 4.3-i
 
 /* [Fasteners] — M2 x 8 self-tappers into corner lobes OUTSIDE the cavity
    (bosses inside the frame would collide with the panel's sharp glass corners) */
-lob_d = 7.0;  lob_o = 2.2;   // lobe Ø / diagonal offset outboard of the cavity corner
+lob_d = 7.0;   // screw lobe Ø
+lob_o = 2.2;   // lobe diagonal offset outboard of the cavity corner
 pilot_d = 1.7;  screw_c = 2.4;  cb_d = 4.4;  cb_h = 1.4;
 
 /* [Rear mounts] */
