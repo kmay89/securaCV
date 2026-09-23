@@ -260,26 +260,58 @@ and doesn't let an attacker do, under
 ## Who Can Access Your Data
 
 Whoever can reach the device's network port. That boundary is the thing to
-understand, product by product, because there is no second factor behind
-it: no button press releases the dashboard, and the device cannot tell one
-host on its network from another.
+understand, product by product, because on most of them nothing stands
+behind it. The `firmware/canary` flagship adds one check of its own: once it
+is set up, a page loaded over your home network arrives without the API
+token unless you tap the BOOT button first, and a request over the
+flagship's own access point is told apart from one over your home network.
 
 **On the device's own access point** — the Canary WAP, the `firmware/canary`
 flagship, the headless products' setup portals — the boundary is the AP
-password, unique per device. Anyone holding it is inside.
+password, unique per device. Anyone holding it is inside. On the flagship
+that includes the API token: a request that provably arrived over its own
+access point gets the page with the token in it. The flagship keeps that
+access point up while it has no home network and again whenever the home
+link drops, and takes it down once the home link has held for a grace
+period.
 
-**On your home network, the boundary is your network.** The flagship serves
-its dashboard and API as plain HTTP on port 80 on every interface, access
-point and home network alike, and the page itself carries the API token to
-whoever can load `GET /` or `/setup`. That token is a defense against
-drive-by *web pages* — a page from another origin cannot read it — not
-against a *host* on the same network, which can load the page and read the
-token in one request. The
-WAP's sensing dashboard has the same shape with a different mechanism: its
-landing page mints a one-tap pairing link for whoever loads it, and the tap
-becomes a 24-hour session cookie; the WAP's bearer token itself is handed
-out only in the provisioning receipt (its gate opens for thirty seconds
-after a short BOOT tap) or on the serial console. The displays treat the
+**On your home network, the boundary is your network.** The flagship's
+release images serve its dashboard and API as plain HTTP on port 80. Once
+first-boot setup is done, a home-network load of `GET /` or `/setup` gets
+the page without its API token; the dashboard says how to unlock it (a BOOT
+tap, the flagship's own access point, or the token from your recovery kit).
+The token rides the page only while the first-boot wizard is running, for a
+request that already carries the bearer token, for a request over the
+flagship's own access point, or for the one page load that spends a short
+BOOT tap: the tap opens a 30-second gate that exactly one consumer spends —
+that page load or one provisioning-receipt fetch, whichever asks first.
+
+A request whose `Host` header cannot name this device — an IP address, the
+`.local` name, a single label and a private-use suffix all can; a public
+name re-pointed at your network, the DNS-rebinding trick, cannot — gets the
+page with no token whatever else applies, and the API's token check refuses
+every call under that name with `403 {"error":"host"}` before it looks at
+the token. Only a request over the flagship's own access point is exempt,
+because there the name is the device's by construction. A household that
+reaches the flagship by a public split-horizon name gets the same token-less
+page and has to use the IP, the `.local` name or a private-suffix alias
+instead.
+
+The gate is not encryption. The token is still a bearer secret on the wire,
+so on a release image a host that can watch your network reads it out of
+someone else's session — an unlocked page load, or any API call the page or
+the app makes — as it can read the broker password below, and whoever asks
+inside those 30 seconds, with a page load or a receipt fetch, can spend your
+tap before you do. The decisions
+(`firmware/common/network/provisioning_gate.h`'s `page_token_policy`, and
+`host_guard.h` beside it) are host-tested, the handler glue is compiled by
+CI, and none of it is bench-tested yet.
+
+The WAP's sensing dashboard draws the line elsewhere: its landing page
+mints a one-tap pairing link for whoever loads it, and the tap becomes a
+24-hour session cookie; the WAP's bearer token itself is handed out only in
+the provisioning receipt (its gate opens for thirty seconds after a short
+BOOT tap) or on the serial console. The displays treat the
 LAN as their trust boundary by design — no bearer credential at all, a
 per-boot CSRF token that keeps cross-site pages away from writes, and the
 on-glass-only settings above that no network caller can flip.
@@ -288,15 +320,27 @@ on-glass-only settings above that no network caller can flip.
 serves HTTPS on port 443 with a certificate minted on the device once setup
 has completed and the certificate loads; during first-boot setup, and when
 the HTTPS server fails to start, it serves plain HTTP and says so on the
-serial log. The flagship's dashboard, the displays' LAN page and the headless
-products' setup portals are plain HTTP on your own network. The hub's API has
-the same shape: plain on loopback by default, TLS through the kernel's
-`api-tls` build feature. The iPhone app pins the WAP certificate fingerprint
-carried in the pairing receipt and QR (`tls_cert_fp`), refuses an https
-Canary it cannot check, and offers a plain-http credential push only when
-nothing encrypted reaches the device and only behind a disclosure you switch
-on. Compile-tested by CI; whether a given unit is serving HTTPS is on its
-serial log and in its pairing receipt.
+serial log. The flagship's `dev`, `dev_ha`, `usb-onboard` and `full` builds
+(`FEATURE_HTTPS=1`) take the same shape with a self-signed ECDSA P-256
+certificate generated on the device and kept in its NVS: from the first
+boot after setup completes they serve HTTPS on 443 and 307-redirect port 80
+there, except the connectivity probes phones and laptops send, and a build,
+core or certificate step that cannot do TLS serves plain HTTP and says why in
+`/api/status` `tls_mode_reason`. CI compiles `dev` and `full`; `dev_ha` and
+`usb-onboard` inherit the flag from `dev` and no workflow builds them; none
+of the four has run on hardware. The flagship's release images (`release`,
+`release_ha` and the board envs built on them) stay plain HTTP on port 80
+until the size budget shows HTTPS fits and the maintainer turns it on, and
+the displays' LAN page and the headless products' setup portals are plain
+HTTP on your own network. The hub's API has the same shape: plain on
+loopback by default, TLS through the kernel's `api-tls` build feature. The
+iPhone app pins the certificate fingerprint in the receipt's `tls_cert_fp` —
+the WAP's pairing receipt and QR, and the flagship's receipt on its HTTPS
+builds, which `/api/status` also reports — refuses an https Canary it
+cannot check, and offers a plain-http credential push only when nothing
+encrypted reaches the device and only behind a disclosure you switch on.
+Compile-tested by CI; whether a given unit is serving HTTPS is on its serial
+log and in its pairing receipt (and, on the flagship, in `/api/status`).
 
 **One link is yours to encrypt: the MQTT broker.** A Canary that publishes
 to a broker opens that socket in plain text by default, so the broker
@@ -306,9 +350,11 @@ SHA-256 fingerprint (which products support which is in
 [`docs/FIRMWARE_VARIANT_AUDIT.md`](../FIRMWARE_VARIANT_AUDIT.md)). An
 incomplete TLS setup refuses to connect rather than quietly downgrading, and
 the unverified "lab" mode exists only as a mode chosen by name that warns on
-every connect. On the flagship, provisioning the broker password over
-`POST /api/mqtt/config` crosses the LAN in the clear like the rest of the
-device API. This is compile-tested, host-tested, not yet bench-tested.
+every connect. On the flagship's release images, and on its HTTPS builds
+until the first boot after setup or when HTTPS fails to start, provisioning
+the broker password over `POST /api/mqtt/config` crosses the LAN in the
+clear like the rest of the device API. This is compile-tested, host-tested,
+not yet bench-tested.
 
 **One read on the hub is open on purpose: the fleet roll-call**
 (`GET /api/fleet`). It answers anyone who can reach the kernel's port with
@@ -332,7 +378,7 @@ liveness proof against someone who can publish on your MQTT broker
 | **Law enforcement** (without the physical device) | There is no ERRERlabs server to subpoena. A Canary talks only to the broker and hub you run and to the update host, which sees an anonymous manifest fetch; the evidence lives on the device and on your hub. |
 | **Network observers** | They see the disclosed paths and nothing else: a broker session (readable on the wire until you provision TLS), a daily signed-manifest fetch and, on the display line, SNTP. No path carries an identifier beyond what your own broker login already is. |
 | **Other WiFi users** | Each device has a unique, randomly derived password. |
-| **Remote attackers** | Nothing listens beyond your network and nothing is exposed to the internet; the outbound paths are client-initiated to hosts you chose. Encryption on the device's own API is an opt-in — the WAP's HTTPS after setup, the kernel's `api-tls` — and the MQTT broker link is TLS only once you provision it (plain by default). |
+| **Remote attackers** | Nothing listens beyond your network and nothing is exposed to the internet; the outbound paths are client-initiated to hosts you chose. Encryption on the device's own API is an opt-in — the WAP's HTTPS after setup, the flagship's `FEATURE_HTTPS` builds from the first boot after setup, the kernel's `api-tls` — and the MQTT broker link is TLS only once you provision it (plain by default). |
 | **ERRERlabs under court order** | We cannot comply because we have nothing — no keys, no data, no access. |
 
 ---
@@ -346,7 +392,7 @@ The device uses well-vetted, standard cryptographic primitives:
 | Device identity & record signing | Ed25519 | Arduino Crypto (Rhys Weatherley) |
 | Chain integrity & domain separation | SHA-256 | mbedTLS (ESP-IDF) |
 | API token derivation | HMAC-SHA256 / HKDF | mbedTLS (ESP-IDF) |
-| Transport encryption (opt-in: the WAP's HTTPS after setup; the kernel's `api-tls` feature) | TLS 1.2+ (RSA-2048 self-signed on the WAP) | mbedTLS (ESP-IDF); rustls (kernel) |
+| Transport encryption (opt-in: the WAP's HTTPS after setup; the flagship's `FEATURE_HTTPS` builds from the first boot after setup; the kernel's `api-tls` feature) | TLS 1.2+ (RSA-2048 self-signed on the WAP; ECDSA P-256 self-signed on the flagship's `FEATURE_HTTPS` builds, CI-compiled in `dev` and `full` and never run on hardware) | mbedTLS (ESP-IDF); rustls (kernel) |
 | Broker link (MQTT over TLS, when provisioned) | TLS 1.2+; CA chain verification on all five products; SHA-256 certificate pin and a named unverified lab mode on canary-display (not the plain-only nightstand-c6), canary-sense, canary-vision and the `firmware/canary` flagship; canary-wap is CA-only (esp_mqtt has no pin hook). Compile-tested, host-tested, not bench-tested | mbedTLS via WiFiClientSecure (display / sense / vision / flagship) and esp-tls (canary-wap) |
 | At-rest event database (kernel) | SQLCipher (AES-256), key derived from the device seed | SQLCipher via rusqlite |
 

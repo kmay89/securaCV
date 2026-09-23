@@ -565,7 +565,7 @@
         "docs/hardware/canary_vision_getting_started.md",
         "docs/hardware/grove_vision_ai_v2_guide.md"
       ],
-      "status": "released — print-validated enclosure, fw 2.2.0",
+      "status": "released — print-validated enclosure",
       "persona": {
         "name": "Iris the Pixel Keeper",
         "accent": "saffron and privacy black",

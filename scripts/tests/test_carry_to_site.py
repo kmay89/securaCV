@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Pins scripts/carry_to_site.py — the one command that refreshes every fact the
 website carries from this repo (the /checkup build matrix, the landing page's
-kernel-status grid, the Witness Wall's vendored verifier).
+kernel-status grid, the Witness Wall's vendored verifier and the fleet contract
+vectors its parseFleet replays).
 
 What is pinned and why:
   • the `builds` projection of firmware/build_matrix.json keeps the invariants
@@ -20,7 +21,16 @@ What is pinned and why:
     changed");
   • a full --site run into a website-shaped tree is byte-reproducible (a second
     run changes nothing) and the vendored verifier + fixtures are byte-equal to
-    upstream with matching PROVENANCE sha256 lines.
+    upstream with matching PROVENANCE sha256 lines;
+  • the fleet contract vectors ride the verifier carry: they land at the one
+    path the website's tests/tv-wall.test.mjs reads, every PROVENANCE pin
+    resolves the way that test resolves it (so the website's existing sha256
+    check covers the new file with no edit there), a renamed upstream file
+    still lands at that path, the upstream file keeps the shape the website's
+    replay reads, and a missing upstream file stops the verifier carry before
+    it writes any of its files (in a default run the builds and kernel-status
+    carries ahead of it have already written theirs; the job's set -e keeps
+    that run from being committed).
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
@@ -36,6 +46,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "carry_to_site.py"
@@ -46,6 +57,23 @@ spec.loader.exec_module(cs)  # type: ignore[union-attr]
 
 MATRIX = json.loads(cs.BUILD_MATRIX.read_text(encoding="utf-8"))
 BOARDS = json.loads(cs.BOARDS.read_text(encoding="utf-8"))
+
+# The fleet contract vectors: where they live here (the Rust core's
+# tests/fleet_contract.rs replays them) and the one site path the website's
+# tests/tv-wall.test.mjs reads them from (its FLEET_VECTORS constant). Stated
+# here, not read off the script, so a carry that lands them anywhere else fails.
+UPSTREAM_VECTORS = REPO / "tvos" / "witness-core" / "tests" / "fixtures" / "fleet_contract_vectors.json"
+SITE_VECTORS = "tests/fixtures/fleet_contract_vectors.json"
+
+# How the website's tests/tv-wall.test.mjs reads tv/vendor/PROVENANCE.txt: one
+# pin per line, and a pinned name resolves to tv/vendor/verify_core.js or to
+# tests/fixtures/<name>. Mirrored here so a carried file whose pin the website
+# cannot resolve fails in this repo, not in a weekly carry PR.
+WEBSITE_PIN = re.compile(r"^ {2}(\S+) {2}sha256:([0-9a-f]{64})$", re.M)
+
+
+def website_pin_path(name: str) -> str:
+    return "tv/vendor/verify_core.js" if name == "verify_core.js" else "tests/fixtures/" + name
 
 # A miniature of the website's hand-formatted onboarding-spec.json: compact
 # inline objects, a string with braces and an escaped quote before the block,
@@ -247,6 +275,7 @@ class EndToEnd(unittest.TestCase):
             "tv/vendor/verify_core.js", "tv/vendor/PROVENANCE.txt",
             *(f"tests/fixtures/envelope/{f}" for f in cs.ENVELOPE_FIXTURES),
             *(f"tests/fixtures/export_bundle/{f}" for f in cs.BUNDLE_FIXTURES),
+            SITE_VECTORS,
         })
         # the verifier and its fixtures are the upstream bytes, and PROVENANCE says so
         self.assertEqual(first["tv/vendor/verify_core.js"], cs.VERIFIER.read_bytes())
@@ -260,6 +289,8 @@ class EndToEnd(unittest.TestCase):
             src = cs.FIXTURES / "export_bundle" / f
             self.assertEqual(first[f"tests/fixtures/export_bundle/{f}"], src.read_bytes())
             self.assertIn(f"  export_bundle/{f}  sha256:{sha256(src)}\n", prov)
+        self.assertEqual(first[SITE_VECTORS], UPSTREAM_VECTORS.read_bytes())
+        self.assertIn(f"  fleet_contract_vectors.json  sha256:{sha256(UPSTREAM_VECTORS)}\n", prov)
         self.assertIsNone(re.search(r"\b20\d\d\b", prov), "no date in the provenance file")
         # the stamped spec parses, carries the projection, and kept its own keys
         spec_json = json.loads(first["onboarding-spec.json"])
@@ -274,6 +305,71 @@ class EndToEnd(unittest.TestCase):
                          set())
         self.assertTrue((self.tmp / "tv" / "vendor" / "verify_core.js").is_file())
 
+    def test_verifier_carry_brings_the_fleet_contract_vectors(self):
+        # The website's Wall replays these through parseFleet; before this
+        # carry they were a hand copy pinned by a sha256 a human had to move.
+        self.run_carry("--only", "verifier")
+        self.assertEqual((self.tmp / SITE_VECTORS).read_bytes(), UPSTREAM_VECTORS.read_bytes())
+
+    def test_every_carried_file_has_a_pin_the_website_resolves(self):
+        # The website's tv-wall.test.mjs hashes every PROVENANCE pin at the path
+        # it resolves the name to. Every file the verifier carry writes must be
+        # pinned exactly once, resolvable that way, at its own sha256 — so the
+        # website's existing check covers each carried file with no edit there.
+        self.run_carry("--only", "verifier")
+        prov = (self.tmp / "tv" / "vendor" / "PROVENANCE.txt").read_text(encoding="utf-8")
+        pins = WEBSITE_PIN.findall(prov)
+        paths = [website_pin_path(name) for name, _sha in pins]
+        self.assertEqual(len(paths), len(set(paths)), "a file is pinned twice")
+        carried = {p for p in self.snapshot() if p != "tv/vendor/PROVENANCE.txt"
+                   and p != "onboarding-spec.json"}
+        self.assertEqual(set(paths), carried)
+        self.assertIn(SITE_VECTORS, paths)
+        for (name, sha), path in zip(pins, paths):
+            self.assertEqual(sha256(self.tmp / path), sha, name)
+
+    def test_an_upstream_rename_still_lands_where_the_wall_test_reads(self):
+        # The site path is the website's contract, not the upstream file name:
+        # when FLEET_VECTORS follows a renamed upstream file, the copy must
+        # still land at SITE_VECTORS (and be pinned there), never at a new name
+        # the website's replay never reads.
+        renamed = self.tmp / "renamed_upstream_vectors.json"
+        renamed.write_bytes(UPSTREAM_VECTORS.read_bytes() + b"\n")
+        with mock.patch.object(cs, "FLEET_VECTORS", renamed):
+            self.run_carry("--only", "verifier")
+        renamed.unlink()
+        self.assertEqual(sorted(p.name for p in (self.tmp / "tests" / "fixtures").glob("*.json")),
+                         ["fleet_contract_vectors.json"])
+        self.assertEqual((self.tmp / SITE_VECTORS).read_bytes(), UPSTREAM_VECTORS.read_bytes() + b"\n")
+        prov = (self.tmp / "tv" / "vendor" / "PROVENANCE.txt").read_text(encoding="utf-8")
+        self.assertIn(f"  fleet_contract_vectors.json  sha256:{sha256(self.tmp / SITE_VECTORS)}\n", prov)
+
+    def test_missing_upstream_vectors_stop_the_verifier_carry_before_any_of_its_writes(self):
+        # The upstream file moved and FLEET_VECTORS did not follow: the
+        # verifier carry names the missing file and writes none of its files,
+        # rather than dying half way through and leaving a partial carry.
+        # The claim is the verifier carry's, not the whole run's: in a default
+        # run (what the weekly job runs) the builds and kernel-status carries
+        # go first and have already written theirs, so both forms are pinned.
+        missing = UPSTREAM_VECTORS.with_name("no_such_fleet_contract_vectors.json")
+        self.assertFalse(missing.exists())
+
+        def verifier_files(snap: dict) -> dict:
+            return {p: b for p, b in snap.items() if p.startswith(("tv/", "tests/"))}
+
+        for extra in (("--only", "verifier"), ()):
+            with self.subTest(run=" ".join(extra) or "default (every carry)"):
+                before = self.snapshot()
+                with mock.patch.object(cs, "FLEET_VECTORS", missing):
+                    with self.assertRaises(SystemExit) as stop:
+                        self.run_carry(*extra)
+                self.assertIn("no_such_fleet_contract_vectors.json", str(stop.exception.code))
+                after = self.snapshot()
+                self.assertEqual(verifier_files(after), verifier_files(before),
+                                 "a failed verifier carry left a partial copy behind")
+                if extra:
+                    self.assertEqual(after, before, "--only verifier left a write behind")
+
     def test_refuses_a_directory_that_is_not_the_website(self):
         other = Path(tempfile.mkdtemp(prefix="not_site_"))
         try:
@@ -282,6 +378,41 @@ class EndToEnd(unittest.TestCase):
                     cs.main(["--site", str(other)])
         finally:
             shutil.rmtree(other)
+
+
+class FleetVectorsShape(unittest.TestCase):
+    """The upstream vectors keep the shape the website's replay reads.
+
+    tests/tv-wall.test.mjs parses each vector's string `input`, compares it to
+    `normalized` (kernel / verified_through / devices), wants at least five
+    vectors and at least four rows that say nothing about `online` (they must
+    read offline). A vectors edit here that breaks that reader would reach the
+    website as a red carry PR; this makes it red here, where it was made.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.doc = json.loads(UPSTREAM_VECTORS.read_text(encoding="utf-8"))
+
+    def test_the_website_replay_can_read_every_vector(self):
+        vectors = self.doc["vectors"]
+        self.assertGreaterEqual(len(vectors), 5)
+        silent_rows = 0
+        for v in vectors:
+            self.assertIsInstance(v["name"], str)
+            self.assertIsInstance(v["input"], str, v["name"])
+            raw = json.loads(v["input"])
+            rows = raw if isinstance(raw, list) else raw["devices"]
+            want = v["normalized"]["devices"]
+            self.assertEqual(len(rows), len(want), v["name"])
+            for row, w in zip(rows, want):
+                self.assertIsInstance(w["name"], str, v["name"])
+                self.assertIsInstance(w["online"], bool, v["name"])
+                if "online" not in row:
+                    silent_rows += 1
+                    self.assertIs(w["online"], False,
+                                  f"{v['name']}: a silent row is never a presence claim")
+        self.assertGreaterEqual(silent_rows, 4)
 
 
 if __name__ == "__main__":

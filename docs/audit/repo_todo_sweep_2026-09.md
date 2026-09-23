@@ -434,7 +434,8 @@ so — see D2 below.)
 ### Network surface & provisioning
 
 - [ ] **F15 [code] No TLS on the canary.local HTTP/peek surface.** The one
-  gap `firmware/PARITY_PLAN.md` marks ❌ in *both* trees. Landed for the
+  gap `firmware/PARITY_PLAN.md` lists as shared by *both* trees (❌ / ❌ at
+  the sweep; the dashboard reads ⚠️ / ⚠️ since #1691). Landed for the
   canary tree's dev builds in #1704 (option (b) — maintainer to confirm):
   self-signed ECDSA P-256 HTTPS on 443 serving the whole route table, the
   certificate generated on the device once and kept under the WAP's NVS
@@ -448,15 +449,19 @@ so — see D2 below.)
   capability builds HTTP-only and says why). `FEATURE_HTTPS=1` is on in
   `[env:dev]` (inherited by dev_ha, usb-onboard and full, and restated in
   full) and off in release and the board envs; the compile is CI's (the
-  dev, dev_ha and full legs), and FEATURES.md reads ⚠️ for canary (PIO).
+  dev and full legs; `dev_ha` inherits the flag but no workflow builds it,
+  `firmware/flavors.json` `build_envs`), and FEATURES.md reads ⚠️ for
+  canary (PIO).
   Still open: turning it on in release/release_ha, the maintainer's call
   once the size-guard delta is read (option (c), flasher-provisioned
   certificates, is the fallback if the 2.0.17 core lacks x509write);
-  canary-wap's default builds, which still read ❌ (its 443 path stays gated
-  on `SECURACV_HAS_HTTPS_SERVER` + a provisioned cert — PARITY_PLAN's shared
-  TLS line); the canary's mDNS TXT record, which does not yet advertise
-  TLS, so a discovery client cannot tell HTTPS is on; and the bench, U1
-  runbook Track D, D1–D5.
+  canary-wap, whose dashboard cell reads ⚠️ since #1691: a runtime opt-in,
+  not the build's posture — compile-gated on `esp_https_server.h`, served
+  after setup once the on-device certificate loads, and plain HTTP during
+  setup and on a start failure, logged (`firmware/FEATURES.md`, the
+  canary-wap HTTPS note; PARITY_PLAN's shared TLS line); the canary's mDNS
+  TXT record, which does not yet advertise TLS, so a discovery client cannot
+  tell HTTPS is on; and the bench, U1 runbook Track D, D1–D5.
 - [x] **F16 [code] WPA3/PMF + per-device AP password** on the WAP join path —
   done (option (b) — maintainer to confirm): both trees now ask for WPA2/WPA3
   transition on the SoftAP with PMF capable and never required, and for PMF
@@ -555,6 +560,42 @@ so — see D2 below.)
   names `regression_check.sh`, whose new "Build: PlatformIO extra_scripts"
   section fails an `extra_scripts` outside `[env]` or one that points at a
   missing file.
+- [ ] **F52 [code] The canary's NVS sessions are not serialized across
+  tasks.** Found by the wave-7 security scout (its finding 4, not this
+  file's F4). `NvsManager` (`firmware/canary/lib/securacv_crypto`) is one
+  shared `Preferences` handle with a bare open flag, and three tasks open
+  sessions on it: the loop (MQTT reload, witness chain persist, the birth
+  stamp, factory reset), the httpd task serving the API (MQTT status, config
+  and CA, Wi-Fi connect and disconnect, the reboot's chain persist) and the
+  pull-OTA task (the pre-reboot chain persist). A session ending on one task
+  closes the other task's handle. A status poll during a reload can read the
+  broker host as empty and leave MQTT off until the next reprovision, and a
+  write racing that `end()` lands nothing while `nvs_store_bytes` still
+  returns true (F55), the atomic chain blob included.
+  — in progress (2026-09-23)
+- [ ] **F53 [code] canary-wap's NvsManager copy has the same shared handle.**
+  `firmware/projects/canary-wap/arduino/canary_wap/nvs_store.h` carries its
+  own header-only `NvsManager` with the bare open flag F52 removes from the
+  canary. The WAP opens sessions from `canary_wap.ino` (its esp_http_server
+  routes among them), `vault_snapshot.cpp` (`set_pubkey_hex`,
+  `clear_pubkey`) and `bluetooth_channel.cpp`, and it runs several FreeRTOS
+  tasks. Trace every caller to its task. If more than one task holds a
+  session, port F52: move its `nvs_session_depth.h` to `firmware/common/`,
+  stage it for the sketch and add the lock. Compiled by the WAP PlatformIO
+  and Arduino CLI legs. Found in the wave-7 reconcile; not traced to a live
+  overlap.
+- [ ] **F55 [code] The canary's NVS writes report success whatever the
+  write did.** `nvs_store_bytes` and `nvs_store_u32`
+  (`firmware/canary/lib/securacv_crypto/src/securacv_crypto.cpp`) return
+  true once the session opens, whatever `putBytes` / `putUInt` returned, and
+  `witness_persist_chain_state()` (`securacv_witness.cpp`) does not read
+  `persist_chain_blob()`'s result anyway: it advances `seq_persisted`
+  regardless. So any NVS write failure, not only the cross-task race F52
+  closes, silently drops the atomic `{seq, chain_head}` blob F38 (b) added
+  (#1704), and nothing counts or logs it. Return what the put wrote, leave
+  `seq_persisted` behind when the chain persist fails so the next interval
+  retries, and count the failure beside `chain_persists`. Found reconciling
+  F52.
 
 ### Parity & sub-projects
 
@@ -935,6 +976,30 @@ so — see D2 below.)
   `fit_line()` with narrow forms. Also, on the round watch's no-QR path,
   the title band appears to overlap the top of the bird, inferred from the
   numbers only. The emulator always renders the QR, so it was not seen.
+- [ ] **F51 [code] The airtime governor's window loses sends above 25.6 a
+  second, and a saturating probe starves the heartbeat.** Found reconciling
+  F4 (#1696) on the host. `airtime_governor.cpp`'s 256-slot ring holds
+  sends, not time, so a caller reserving faster than 256 per 10 s window
+  overwrites in-window airtime and the 2 % cap silently stops holding
+  (200 Hz × 16 B: allowed in full, read 0.8 %, true 6.4 %). F4's probe
+  gate holds only because its framed 75 B frame (792 µs) clears the
+  781 µs-per-slot line by 1.4 %; a 3 % cap does not (at 160 frames/s,
+  12.7 % true, 2.0 % read). A probe asking for more than the cap takes
+  every microsecond the window frees: the 30 s heartbeat and 60 s chirp
+  presence were refused 9 of 9 times in 180 s at 160 frames/s. And on a
+  build without the mesh nothing calls `airtime_governor::init()`, so the
+  ring is never allocated and the probe's gate fails open.
+  — in progress (2026-09-23)
+- [ ] **F54 [code] The airtime governor charges the mesh, chirp and beacon
+  callers for their payload only.** Found reconciling F4 and F51. The
+  probe's gate adds the ~59 B of ESP-NOW MAC and action-frame framing
+  (`ESPNOW_FRAME_OVERHEAD_BYTES` in `csi_integration.cpp`); every other
+  caller passes header plus payload. The mesh also charges a heartbeat,
+  tamper or power broadcast once, while `broadcast_message` unicasts it, its
+  64 B signature included, to every connected peer (`mesh_network.cpp`; only
+  offline-imminent multiplies by the peer count). So the window under-reads
+  every caller but the probe. — in progress (2026-09-23)
+
 ---
 
 ## 2. Apps (desktop Flasher, Lab, iOS, tvOS)
@@ -1281,6 +1346,32 @@ so — see D2 below.)
   warnings`-clean on rustc 1.98.1 (`is_multiple_of`; the dead
   `clamp_threshold` and its test removed); `desktop-hub-core.yml`'s `cargo
   check (src-tauri)` job now runs a format check and clippy.
+- [ ] **A23 [code] The hub's provisioning executor and host runner accept
+  paths they cannot mean.** `canary-local/tools/hub_seed_apply.py`'s
+  `under_root()` joins a plan's `requires_files` under `--files-root` with
+  `..` segments intact, and a step's `dest` and `source` are never checked,
+  so a plan path can name a file outside the root it is joined under.
+  `canary-local/tools/hub_host_provision.sh` splices `SECURACV_HOST_SSL_DIR`
+  into `docker -v <src>:/ssl:ro` after only a `-d` test, so a `:` changes
+  the mount spec and a relative value becomes a named volume. Hygiene, not
+  a boundary: the plan rides the same read-only mount as the executor. The
+  Flasher embeds both (`desktop/hub-io/src/provision.rs`), but its release
+  watch (`.github/release-targets.yml`) does not name them. From the wave-7
+  security sweep (its path-hygiene findings, not this file's F7 or F8).
+  — in progress (2026-09-23)
+- [ ] **A24 [code] Both apps' Witness Wall emulator still reads a silent
+  `online` as present.** Found by W20 (website #199), which fixed the
+  canonical `js/tv-emulator.js` and `witness-wall.html` after the apps last
+  vendored them. `desktop/src/witness/tv-emulator.js` and
+  `canary-local/witness/tv-emulator.js` still write `online: … !== false` at
+  :416, :436 and :490, against `tvos/discovery/DISCOVERY.md` ("`online`
+  defaults to `false`"), and both `witness.html` copies still say the real
+  fleet brings "chain health". `PROVENANCE.txt` records 963aa8f6… and
+  0ff5397e…, but the website's main hashes 425e9c80… and 0d34d6fa….
+  `scripts/check_witness_emulator_sync.sh` compares only the two app copies,
+  so nothing fails. Re-run `scripts/vendor_witness_emulator.sh` against a
+  website checkout at or after a8b5e1f and commit both copies.
+  — in progress (2026-09-23)
 
 ---
 
@@ -1456,6 +1547,19 @@ so — see D2 below.)
   once and replace the derived samples with a dated live run; the header
   keeps saying "derived" until then. The verify script's first check needs
   a live detection, so this pairs with HA8.
+- [ ] **HA14 [code] `/enroll` is named as every Canary's key source, but only
+  canary-wap serves it.** `docs/homeassistant_setup.md` (Step 6: "the
+  fingerprint + pubkey hex are on each device's `/enroll` page"),
+  `docs/device_trust.md`'s manual pinning and the carried
+  `custom_components/securacv/strings.json` ("Read each device's fingerprint
+  and pubkey hex from its /enroll page") send operators to `/enroll`. Only
+  `canary_wap.ino`'s `start_http_server()` registers it; the headless MQTT
+  variants that compile the canonical copy never do
+  (`firmware/common/identity/device_signature.h` says so), and the flagship
+  and the displays have no such route. Say where each product's fingerprint
+  can be read out of band, or add the route. Change the three texts
+  together, and carry `strings.json` to the mirror. Found in the wave-7
+  mirror reconcile.
 - [ ] *(Mirror repo itself: no code work — it is byte-identical today. Its
   health items are U6 and U7 above, plus the three monorepo-fixture tests its
   CI deselects, which is by design.)*
@@ -1745,6 +1849,34 @@ so — see D2 below.)
   opened on the holder's own device, not the Vault and no quorum.
   `glossary.html`, `llms-full.txt` and `llms.txt` are regenerated, and the
   tests hold the split.
+- [x] **W20 [code] The website's Walls read a silent `online` as present, and
+  its pages carried stale status copy.** Found by the wave-7 site docs-drift
+  scout. `tv/app.js`'s `parseFleet` defaulted a missing `online` to true,
+  and `js/tv-emulator.js` did the same at three sites. That is against the
+  fleet contract the Apple TV and the Rust core follow
+  (`tvos/discovery/DISCOVERY.md`: a silent row is not claimed present).
+  *Done (website #199):* both read `online === true`. `tests/tv-wall.test.mjs`
+  replays a verbatim copy of `fleet_contract_vectors.json` through
+  `parseFleet` and pins the copy's sha256. `witness-wall.html` and
+  `tv/README.md` say the real Wall is presence-only against every shipping
+  source. The download page offers the Flasher, on its own `flasher-v` train
+  with the broker-encryption select and the fuse-read difference, and says
+  Windows is not built. Stale status copy is corrected on `docs/LAYOUT.md`,
+  `witness.html`, `docs/roadmap.md`, `lab.html`, `linux.html`,
+  `engine.html`, `compare.html` and `apple-tv.html`. The glossary defines
+  the companion app. Left: A24 and W21.
+- [ ] **W21 [code] The website's copy of the fleet contract vectors is
+  hand-carried.** W20 copied
+  `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json` into the
+  website's `tests/fixtures/`. `tests/tv-wall.test.mjs` pins it by sha256
+  and tells a human to re-copy it. Add it to `scripts/carry_to_site.py`'s
+  verifier carry, with a PROVENANCE line and a
+  `scripts/tests/test_carry_to_site.py` case, so the weekly carry job
+  refreshes it. Then retire the hand pin in the website's test. The same
+  website follow-up can fix a stale pointer: `tests/legal-claims.test.mjs`'s
+  phone-home comment cites `SECURITY_MODEL.md`'s old heading "The display
+  line's disclosed exceptions", path 1, which is now "The networked
+  products' disclosed outbound paths", path 3. — in progress (2026-09-23)
 
 ---
 
@@ -2043,6 +2175,86 @@ major, by theme") — work its themes, then tick here.
   say "checked". *Done:* that line, `docs/hardware/README.md`'s Vision Pro
   mount row and `canary_vision_pro_recamera.md` now say "mesh-checked".
   (#1704)
+- [ ] **D7 [code] The firmware and Lab READMEs trail the trees.**
+  `firmware/README.md` (an architecture tree naming two boards and two
+  directories that do not exist; a build-target table without the four
+  newer projects; a canary env table without `usb-onboard`, the reach ports
+  or the secure pair, and silent on which envs CI builds; the display called
+  PlatformIO-only; FULL + OTA said to need 16 MB; a "single supported" fleet
+  dashboard), the display README ("Two hardware flavors", a v0.1 status
+  banner, no Location page), the WAP README (an API table with a route that
+  does not exist, a non-route and two wrong methods, five routes missing, an
+  example that gets a 401, no `usbdrive` row), canary-ota's two-consumer
+  note, `devices/README.md` (three glTF models; the Sentinel manifests'
+  absent keys and unbuilt envs) and `canary-local/README.md` ("no fetches
+  outside the page's own directory", a "CI-generated" SBOM, a flash.html
+  line without broker encryption). — in progress (2026-09-23)
+- [ ] **D8 [code] The security docs have not caught up with the flagship's
+  page-token gate and HTTPS.** #1691's rewrite, written against an older
+  `main`, still says the flagship's page carries its API token to whoever
+  can load `GET /` or `/setup` and that no button press releases the
+  dashboard (`docs/security/SECURITY_MODEL.md`, "Who Can Access Your
+  Data"). #1704 had already made a set-up flagship withhold the token on the
+  home LAN (first-boot wizard, bearer, SoftAP peer or one BOOT tap only) and
+  serve self-signed HTTPS on 443 in its dev and full builds, and #1691 added
+  the `Host` guard beside that policy. `THREAT_MODEL.md`'s Scenario 2 and
+  Definition of Done item 7 say "the flagship's port 80" without that
+  qualifier, `scripts/tests/test_docs_claims.py`'s ban reasons repeat the old
+  posture, and `firmware/scripts/regression_check.sh` labels its display
+  egress paths by the retired "disclosed exception" numbering (they are
+  outbound paths 3 to 5 now). — in progress (2026-09-23)
+- [ ] **D9 [code] The Lab's Vision card says fw 2.2.0.**
+  `canary-local/devices/registry.json`'s canary-vision `status` reads
+  "released — print-validated enclosure, fw 2.2.0", while the registry's own
+  `fw_train` and `firmware/projects/canary-vision/include/canary/version.h`
+  name the current train (2.4.15 on 7446893). The website's `lab.html` shows
+  that registry live. Found by the wave-7 site scout. Say the train or drop
+  the version, then rerun the Lab's registry tests. — in progress (2026-09-23)
+
+---
+
+## 7. CI hygiene (monorepo workflows)
+
+Workflow debt no section above owns: path filters, interpreter pins and the
+host-test list. The rules these items apply are `.github/CI.md`'s.
+
+- [ ] **CI1 [code] CI hygiene the 2026-09 waves left.** The hub plan's
+  docs-prose gate walks every `docs/**/*.md` but runs only in
+  `canary-local.yml`, whose path filter a docs-only PR never reaches.
+  `canary-local.yml`'s two path lists miss files its logic tests read,
+  several of them opened by #1703/#1704 (the count and the durable fix are
+  CI2). `ios-selfheal.yml`'s PR compile does not fire on the files outside
+  `ios/` that its XCTests read by `#filePath`. Every explicit
+  `python-version` pin (six on 7446893) gives no reason, although R9 asks
+  for one. hub-core's test matrix builds its crates with no cargo cache, and
+  jobs that run `node` use the runner image's node instead of setting one
+  up. — in progress (2026-09-23)
+- [ ] **CI2 [code] canary-local.yml's path filter is hand-kept, and it
+  drifts.** Found in the wave-7 reconcile: 19 files its logic tests read
+  were outside it on 4e77f0d, 7 of them opened by #1703/#1704, and open PR
+  #1702 adds a reader of `desktop/src-tauri/src/efuse.rs`. Build a gate that
+  runs each logic-tests node suite under a `--require` preload recording
+  every repo path passed to `fs.readFileSync` / `existsSync` /
+  `readdirSync`, and each `canary-local/tools/tests` suite under
+  `sys.addaudithook` ('open' events). It fails on a read outside the
+  workflow's `pull_request` paths (R6 keeps push equal), naming test, file
+  and the line to add. It runs in the logic-tests job, so a new reader fails
+  in the PR that adds it. Allowlist: the job's own outputs and tmp dirs.
+- [ ] **CI3 [code] One host-test list.** On 7446893, `firmware.yml`'s Mesh +
+  Scout host-test job compiles 34 tests_host sources inline (canary-display
+  14, canary-wap 17, canary-tincan 2, canary-companion 1). 19 of those tests
+  are built nowhere else (canary-wap 14, canary-display 5), and 15 duplicate
+  a Makefile rule (canary-wap 3, canary-display 9, canary-tincan 2,
+  canary-companion 1). The tincan and companion Makefiles are never run by
+  CI: `make -C` names only the canary-wap, canary-display and
+  `firmware/tests_host` ones. Every host test main added in #1703-#1718 went
+  into a Makefile. Fix: move the 19 into their Makefiles with per-rule
+  `-Werror` (main's canary-wap pattern), and delete the inline steps. The
+  witness-page step keeps `gen_witness_page_v1.py --check` as a trimmed
+  step. CI runs `make -C` for all five host-test Makefiles. Add
+  `scripts/tests/test_host_test_lists.py` so the list cannot fork again
+  (the same idea as the `MESH_TESTS` guard in that job).
+  — in progress (2026-09-23)
 
 ---
 

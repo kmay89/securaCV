@@ -2,6 +2,85 @@
 
 ## [Unreleased]
 
+### The Canary's API keeps its broker password home and checks the Host, the security docs say what ships, the iPhone reads the glass, and both flashers name the sealed TLS mode (#1691, website #199)
+
+- **The Canary's API keeps a stored broker password home (security-sweep
+  findings 1, 3 and 9).** `POST /api/mqtt/config` kept a stored username
+  and password the body omitted, so a bearer holder could repoint the link
+  with `{"host":"<elsewhere>"}` and the next connect sent the household's
+  broker password there. A new host or port now carries nothing: with a
+  password stored and none in the body, the request is refused before any
+  write with `400 password_required_for_new_host` (`mqtt_tls_fields.h`,
+  `credential_carry`); the same endpoint keeps what the body omits, as
+  before. Every gated route refuses a `Host` that does not name the device
+  (`403 {"error":"host"}`), and the dashboard and setup pages served under
+  one carry no token, so a DNS-rebinding page can no longer read the token
+  out of them; a request over the Canary's own setup AP is exempt by
+  interface, never by name. The check is the display's `host_guard.h`,
+  moved to `firmware/common/network/`. A stored CA the transport reads back
+  empty is `409 ca_unreadable`, not Ok.
+  Host-tested (the decisions); compile-tested by CI (the glue, PR CI's
+  `release_ha` leg); not bench-tested. The setup-AP exemption on an
+  iPhone's first boot is the first thing a bench should check.
+- **The security docs say what ships, and a test keeps the retired
+  sentences out (security-sweep findings 2 and 6).** `SECURITY_MODEL.md`
+  travels in every evidence export, and it promised zero outbound
+  connections, TLS on all device traffic, Bluetooth compiled out and an
+  access code shown by a button press that does not exist. It now lists the
+  networked products' disclosed outbound paths (the broker socket, the
+  daily signed-manifest check, and on the display line SNTP, a
+  compile-time timezone lookup and the opt-in forecast), states Bluetooth
+  per profile and the radios' factory addresses, and names HTTPS as an
+  opt-in. `THREAT_MODEL.md` gains an MQTT broker link
+  row, and `firmware/FEATURES.md` rates the flagship's broker TLS ✅ and
+  canary-wap's HTTPS ⚠️. `scripts/tests/test_docs_claims.py` refuses each
+  retired sentence verbatim, in lint.yml's unfiltered run. No behavior
+  change. Written against an older `main`, the rewrite still says the
+  flagship's page hands its token to whoever loads it, which #1704's
+  page-token gate had already ended (sweep D8), and two CSI sentences it
+  carried (`FEATURES.md`'s probe row, `docs/esp32_mesh_sensing_design.md`)
+  were already false against sweep F4 (#1696, the probe's airtime
+  reservation).
+- **The iPhone's Display settings sheet reads the glass's `on_glass` block,
+  read-only (roadmap row 17).** The sheet parsed top-level `wx_direct`,
+  `wx_loc_set` and `wx_hub` keys that no firmware served, so its "Fetch
+  weather itself" toggle and its phone-geocoded location post never
+  appeared, and would have met `403 on_glass_only` if they had. It now
+  shows the standalone-weather state and whether a location is stored, in
+  the glass's own words, and filters every control it offers against the
+  glass's refuse-list; the toggle, the post and `CoreLocation` are gone,
+  and the footer points at Settings › Weather on the glass. The entry
+  below headed "Display: the LAN write API can no longer switch on the
+  glass's one opt-in outbound path" (#1635) said "no client draws a switch
+  that would fail": that held for the mirror page, while the iPhone sheet
+  carried such a switch, unreachable only by accident, until this
+  change. Compile-tested by CI (the iOS
+  self-heal job, which runs the XCTests); not bench-tested.
+- **Both flashers' receipts name the broker TLS mode they sealed (roadmap
+  row 12).** One line from a four-row table keyed by the sealed mode byte:
+  plain, CA-verified with the PEM's byte count, SHA-256 pin with the 64-hex
+  fingerprint, or lab-only ("encrypted but NOT verified"). It never prints
+  the PEM, a password or the host, prints nothing when no broker was
+  sealed, and says *sealed*, never connected.
+  `desktop/flash-engine/src/broker_receipt.rs` serves both desktop apps and
+  `flash-core.js` the browser; `desktop_parity.test.js` holds the two tables
+  equal. The browser's done card no longer keeps the form's broker password
+  and PEM in its closures. Host-tested (the JS, and the Rust module under
+  plain `rustc`); the engine glue is compile-tested by CI. No version bump.
+- **No product can declare a size guard on an env PR CI never builds.**
+  `firmware/scripts/flavor_envs.py` checked that only for sharded products,
+  so it caught the display and missed every unsharded one; the check now
+  runs for every product, and a second guard for one env is refused too (a
+  #1686 follow-up). Host-tested (`scripts/tests/test_flavor_envs.py`).
+- **The website's Walls read a silent `online` as offline (website #199,
+  sweep W20).** `tv/app.js` and the Wall emulator defaulted a missing
+  `online` to present, against the fleet contract the Apple TV and the Rust
+  core follow (`tvos/discovery/DISCOVERY.md`); both now read
+  `online === true`, and the Wall's test replays the contract vectors. The
+  download page offers the Flasher, and stale status copy is corrected
+  across the site. The two apps' vendored copies of the emulator still read
+  a silent row as present (sweep A24).
+
 ### The Opera mesh can pair and carry frames in code, and no join text is cut on narrow glass (#1718)
 
 - **The PlatformIO Opera mesh's seven known blockers are fixed in code (F33).**
@@ -1284,8 +1363,8 @@
   `board_w` are a `model` ternary), the 7" frame (its panel record is typed
   in `canary_panel_lib.scad`), the Touch 1.69's `aa_dx = 0.0; aa_dy = 0.0;`
   line, and the doorbell (no manifest names its case). The website's
-  reading of the new ledger keys is the website repo's change, landed on
-  the website branch (website PR #197). One disagreement recorded, not fixed: `canary-local/devices/registry.json`'s
+  reading of the new ledger keys is the website repo's change, merged as
+  website PR #197 (2026-09-20). One disagreement recorded, not fixed: `canary-local/devices/registry.json`'s
   hand-typed Dash `body_mm` (113.7 × 73.6 × 16) against the ledger's
   measured 118 × 79 × 38.9.
 - **One lesson kept (`CLAUDE.md`, "Generated files").** The review round

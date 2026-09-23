@@ -91,11 +91,14 @@ is already at parity ✅) are omitted.
 | WiFi auto-reconnect (exp. backoff) | ✅ | ❌ | code (compile) |
 
 ### Shared gap (neither tree, not a parity item but on the v1 path)
-- **TLS (HTTPS self-signed): ❌ / ❌ in the dashboard.** The `canary-wap` sketch *contains* an
-  `httpd_ssl_start`-on-443 path, but it's gated on `SECURACV_HAS_HTTPS_SERVER` (ESP-IDF config) +
-  a provisioned cert, so the dashboard honestly rates default builds ❌. Enabling it for real is
-  the shared TLS gap (launch review §2) and Track D in the bench runbook — do it once and
-  mirror into both trees.
+- **TLS (HTTPS self-signed): ⚠️ / ⚠️ in the dashboard** (canary (PIO) since #1704, the F15
+  paragraph below; canary-wap since #1691). The `canary-wap` sketch's `httpd_ssl_start`-on-443
+  path is a runtime opt-in, not the build's posture: compile-gated on `esp_https_server.h`
+  (`SECURACV_HAS_HTTPS_SERVER`), served after first-boot setup once `init_tls_cert()` loads or
+  generates the device certificate, and plain HTTP during setup and again when the HTTPS server
+  fails to start (logged) — `FEATURES.md`'s canary-wap HTTPS note. Neither tree has run it on
+  hardware: proving it is the shared TLS gap (launch review §2) and Track D in the bench
+  runbook — do it once and mirror into both trees.
 - *2026-09 (F15, option (b) — maintainer to confirm):* the `canary (PIO)` tree now has the same
   shape — `httpd_ssl` on 443 serving every route, a port-80 server that keeps the six OS
   connectivity probes and 307-redirects the rest, TLS skipped during first-boot setup — with an
