@@ -40,7 +40,7 @@ This script derives the document from the files the build actually reads:
                                            profile, parsed from YAML
   firmware/canary/include/canary_config.h  FIRMWARE_VERSION — the one train
                                            (scripts/lint_fw_version_sync.sh
-                                           holds the other five copies to it)
+                                           holds the other six copies to it)
 
 The two Arduino axes must agree, and the agreement is asserted here instead
 of in firmware.yml's "keep the two in lockstep" comment (check_core_pin_

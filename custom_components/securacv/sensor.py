@@ -64,7 +64,13 @@ from .health_metrics import (
     memory_free_bytes,
     round_pct,
 )
-from .signature import verify_chain, verify_counts, verify_event, verify_sense_event
+from .signature import (
+    verify_chain,
+    verify_counts,
+    verify_event,
+    verify_sense_event,
+    verify_sentinel_event,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -84,6 +90,7 @@ def _trust_store_for(hass: HomeAssistant, entry: ConfigEntry) -> TrustStore | No
 _REPLAY_COUNTER_FIELD = {
     "verify_event": "event_id",
     "verify_sense_event": "seq",
+    "verify_sentinel_event": "seq",
     "verify_chain": "length",
     "verify_counts": "total",
 }
@@ -172,6 +179,24 @@ def _verify_and_record(
     verdict = _replay_gate(hass, entry, device_id, payload, verifier, verdict)
     async_record_verify(hass, entry, device_id, verdict)
     return verdict
+
+
+def _event_verifier_for(data: dict[str, Any]):
+    """Pick the verifier for one events-topic payload by its shape.
+
+    `event_id` is the CSI dialect's counter and appears in no other shape,
+    so it wins outright. Without it, a `level` field is canary-sentinel's
+    fused claim (the sense dialect has no `level`), and an `occupants`
+    field is the canary-sense / canary-vision radar/optical shape (the
+    sentinel spells its bucket `occupancy`). Anything else falls back to
+    the CSI verifier, which reports a missing field as "unsigned"."""
+    if "event_id" in data:
+        return verify_event
+    if "level" in data:
+        return verify_sentinel_event
+    if "occupants" in data:
+        return verify_sense_event
+    return verify_event
 
 
 def _is_replay(verdict: TrustVerdict | None) -> bool:
@@ -886,18 +911,15 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
             self._attr_native_value = data.get(
                 "event_type", data.get("type", data.get("event", "unknown"))
             )
-            # Two event dialects share the events topic: the CSI canary's
-            # (event_id/state/category/...) and the radar witness's
-            # canary-sense shape (event/seq/occupants/range). Dispatch on
-            # the payload shape so each verifies against its own canonical —
-            # the wrong verifier would mark a validly signed payload
-            # "unsigned".
-            if "event_id" not in data and "occupants" in data:
-                verdict = _verify_and_record(self.hass, self._entry, self._device_id,
-                                             data, verify_sense_event)
-            else:
-                verdict = _verify_and_record(self.hass, self._entry, self._device_id,
-                                             data, verify_event)
+            # Three event dialects share the events topic: the CSI canary's
+            # (event_id/state/category/...), the radar witness's canary-sense
+            # shape (event/seq/occupants/range) and canary-sentinel's fused
+            # claim (event/seq/level/confidence/anomaly/occupancy/...).
+            # Dispatch on the payload shape so each verifies against its own
+            # canonical — the wrong verifier would mark a validly signed
+            # payload "unsigned".
+            verdict = _verify_and_record(self.hass, self._entry, self._device_id,
+                                         data, _event_verifier_for(data))
             if _is_replay(verdict):
                 # An older event re-sent with a valid signature: keep the
                 # newer state we already hold and only annotate the trust view.

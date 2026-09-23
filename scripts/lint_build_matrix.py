@@ -92,6 +92,34 @@ def device_join_errors(matrix: dict, flavors: list, manifests: list, root: Path)
     return errors
 
 
+def lane_coverage_errors(matrix: dict, flavors: list) -> list[str]:
+    """Every product flavors.json ships has a lane; no unreleased one does.
+
+    A product flavors.json marks `unreleased` (compiled by CI, shipped by
+    nothing — canary-sentinel while its bench checklist is open) is the one
+    exception to "every product has a lane", and it cuts both ways: it needs
+    no lane, and it may not HAVE one, because a lane is a Flash button on
+    /checkup for a binary no release publishes. flavor_envs.py validates the
+    field itself (a non-empty reason, never beside release_envs).
+    """
+    errors: list[str] = []
+    flavor_names = {f["name"] for f in flavors}
+    covered = {p.get("flavor", p["id"]) for p in matrix.get("products", [])}
+    unreleased = {f["name"] for f in flavors if "unreleased" in f}
+    for name in sorted(flavor_names - covered - unreleased):
+        errors.append(
+            f"flavors.json product '{name}' has no lane in build_matrix.json — "
+            f"add a product with id '{name}', or a board-specialized product "
+            f"whose `flavor` is '{name}' (the matrix must cover every product "
+            f"that ships)")
+    for name in sorted(covered & unreleased):
+        errors.append(
+            f"flavors.json marks '{name}' `unreleased`, but build_matrix.json "
+            f"gives it a lane — a lane offers a flashable build no release "
+            f"publishes; drop the lane, or drop `unreleased` when it ships")
+    return errors
+
+
 def collect(root: Path = ROOT) -> list[str]:
     """Every problem in the tree under `root`, as one line each; [] is green."""
     errors: list[str] = []
@@ -263,12 +291,8 @@ def collect(root: Path = ROOT) -> list[str]:
     # the most actively released product, had no lane for its whole life.
     # A lane is a product whose id IS the flavor, or a board-specialized
     # product whose `flavor` names it (the display's watch lane is one).
-    covered = {p.get("flavor", p["id"]) for p in matrix.get("products", [])}
-    for name in sorted(flavor_names - covered):
-        err(f"flavors.json product '{name}' has no lane in build_matrix.json — "
-            f"add a product with id '{name}', or a board-specialized product "
-            f"whose `flavor` is '{name}' (the matrix must cover every product "
-            f"that ships)")
+    for e in lane_coverage_errors(matrix, flavors):
+        err(e)
 
     # ── 2b-ter. every product lane is ONE device; every manifest env is real ──
     # The device manifests (devices/<slug>/device.json) join this matrix to the

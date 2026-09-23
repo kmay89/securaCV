@@ -192,5 +192,31 @@
         "slot_name": "0x1E0000 OTA slot (ESP32-C6 min_spiffs.csv app0/app1)"
       }
     ]
+  },
+  {
+    "name": "canary-sentinel",
+    "dir": "firmware/projects/canary-sentinel",
+    "build_envs": [
+      "canary-sentinel-door",
+      "canary-sentinel-lite"
+    ],
+    "check_env": "canary-sentinel-door",
+    "unreleased": "F22 Phase 1a: compile-gated in CI so the network/witness path cannot rot, NOT released — no release_envs, no build_matrix lane, no flasher product, no signed OTA manifest until the project README's bench checklist is green (firmware/projects/canary-sentinel/README.md). The window / hallway / demo-head envs differ from door only by preset data.",
+    "isolated_core_envs": [
+      "canary-sentinel-lite"
+    ],
+    "pre_step": "secrets_header",
+    "size_guards": [
+      {
+        "bin": ".pio/build/canary-sentinel-door/firmware.bin",
+        "slot_bytes": 1966080,
+        "slot_name": "0x1E0000 OTA slot (ESP32-C6 min_spiffs.csv app0/app1)"
+      },
+      {
+        "bin": ".pio/build/canary-sentinel-lite/firmware.bin",
+        "slot_bytes": 1310720,
+        "slot_name": "0x140000 OTA slot (ESP32-C3 default.csv app0/app1)"
+      }
+    ]
   }
 ]
