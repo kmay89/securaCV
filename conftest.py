@@ -48,9 +48,44 @@ def _install_minimum_stubs() -> None:
     ha = types.ModuleType("homeassistant")
     ha_core = types.ModuleType("homeassistant.core")
 
+    class _ServiceRegistry:
+        """Records what the integration registers (services.py) so a test
+        can find a handler by (domain, service) and call it with a
+        ServiceCall; async_call itself is a no-op — watch_runtime._notify
+        schedules one and the tests that care patch _notify."""
+
+        def __init__(self) -> None:
+            self.registered: dict[tuple[str, str], Any] = {}
+
+        def async_register(
+            self, domain, service, service_func, schema=None,
+            supports_response=None, job_type=None,
+        ) -> None:
+            self.registered[(domain, service)] = types.SimpleNamespace(
+                func=service_func, schema=schema, supports_response=supports_response
+            )
+
+        def has_service(self, domain, service) -> bool:
+            return (domain, service) in self.registered
+
+        def async_remove(self, domain, service) -> None:
+            self.registered.pop((domain, service), None)
+
+        async def async_call(self, *a, **kw):
+            return None
+
     class _HomeAssistant:
         def __init__(self) -> None:
             self.data: dict[str, Any] = {}
+
+        @property
+        def services(self):
+            # A property, cached per instance, so a test subclass can still
+            # override it with its own property (test_tofu_health_hook.py).
+            registry = self.__dict__.get("_services")
+            if registry is None:
+                registry = self.__dict__["_services"] = _ServiceRegistry()
+            return registry
 
         def async_create_task(self, coro):
             # Drop the coroutine on the floor — tests that need to
@@ -62,15 +97,42 @@ def _install_minimum_stubs() -> None:
                 pass
             return None
 
-        @property
-        def services(self):
-            class _Services:
-                async def async_call(self, *a, **kw):
-                    return None
-            return _Services()
+    class _ServiceCall:
+        """What a registered handler receives, in the OLDEST shape the
+        integration supports (hacs.json: 2024.4.1). HA added ``.hass`` to
+        ServiceCall only in 2025.1, so the stub is slotted without it: a
+        handler that reads ``call.hass`` fails here as it would there."""
+
+        __slots__ = ("domain", "service", "data", "context", "return_response")
+
+        def __init__(
+            self, domain, service, data=None, context=None, return_response=False
+        ) -> None:
+            self.domain = domain
+            self.service = service
+            self.data = dict(data or {})
+            self.context = context
+            self.return_response = return_response
 
     ha_core.HomeAssistant = _HomeAssistant
     ha_core.callback = lambda fn: fn
+    ha_core.ServiceCall = _ServiceCall
+    ha_core.SupportsResponse = types.SimpleNamespace(
+        NONE="none", OPTIONAL="optional", ONLY="only"
+    )
+
+    # ── homeassistant.exceptions ─────────────────────────────────────
+    ha_exceptions = types.ModuleType("homeassistant.exceptions")
+
+    class _HomeAssistantError(Exception):
+        pass
+
+    class _ServiceValidationError(_HomeAssistantError):
+        pass
+
+    ha_exceptions.HomeAssistantError = _HomeAssistantError
+    ha_exceptions.ServiceValidationError = _ServiceValidationError
+    sys.modules["homeassistant.exceptions"] = ha_exceptions
 
     # ── homeassistant.helpers.storage.Store ──────────────────────────
     ha_helpers = types.ModuleType("homeassistant.helpers")
@@ -138,6 +200,14 @@ def _install_minimum_stubs() -> None:
         }),
         ("homeassistant.helpers.device_registry", {
             "async_get": lambda *a, **kw: None,
+        }),
+        # The validators services.py's schemas and __init__.py's
+        # CONFIG_SCHEMA name; the stub voluptuous never runs them.
+        ("homeassistant.helpers.config_validation", {
+            "string": str,
+            "boolean": bool,
+            "positive_float": float,
+            "config_entry_only_config_schema": lambda domain: (lambda config: config),
         }),
         ("homeassistant.config_entries", {
             "ConfigEntry": object,

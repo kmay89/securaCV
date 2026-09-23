@@ -142,6 +142,31 @@ We dedupe by `(device_id, received_fingerprint)`, so a steady stream
 of mismatched publishes only fires the notification once until the
 operator either rotates or unpins.
 
+## Why pin, rotate and unpin are not actions
+
+The integration registers Home Assistant actions for watches
+(`securacv.start_watch`, `securacv.end_watch`, `securacv.list_watches`
+— see [Home Assistant setup](homeassistant_setup.md#actions)) and
+deliberately none for trust. Pinning, rotating and unpinning a device
+key happen only in the options flow, by a person.
+
+The reason is the mismatch path above. When a Canary shows up with a
+key that doesn't match its pin, the notification asks *you* to rotate,
+because only you know whether you re-flashed it. A `securacv.rotate_key`
+action would let an automation answer that question instead: "on a key
+mismatch notification, rotate to the received key" is one YAML rule,
+and it turns a re-flashed or impersonating device into a trusted one
+without anyone deciding it was theirs. That is exactly what pinning
+exists to catch. Actions are authenticated, but an automation reacting
+to the attacker's own publish is not a person checking `/enroll`.
+
+Watches are the opposite case. Starting one only adds attention, and
+ending one removes only attention, never trust, and the early end is
+announced like an expiry. So those are actions, and the key decisions
+stay with a person. Bulk import of pubkeys (below) is a separate
+decision: if it ever becomes callable from an automation it needs a
+written rule that it never overwrites an existing pin.
+
 ## Threat model
 
 What this defends against:

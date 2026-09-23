@@ -386,6 +386,60 @@ lights-out-with-presence tamper, and a non-diagnostic welfare check — plus a
 stock-card **wellbeing tile**. See
 [`docs/blueprints/canary_sense_wellbeing.md`](blueprints/canary_sense_wellbeing.md).
 
+### Actions
+
+The integration registers three Home Assistant actions, all of them about
+[watches](design/watches.md): bounded attention that ends by itself. Try
+them from **Developer tools → Actions**, or call them from an automation or
+a script.
+
+| Action | Takes | Returns |
+|---|---|---|
+| `securacv.start_watch` | `subject` (required, in words: "the gate canary"), `duration` ("two weeks", in days, weeks, months, seasons or years; 14 days if left out, never more than a year, and refused rather than guessed when it names no unit, such as "48 hours"), `concern` (`stopped`, `unusual`, `more`, `less` or `every`; read off the subject's wording if left out) | the watch, including the `id` that `end_watch` takes |
+| `securacv.end_watch` | `watch`: its id, or its label ("the gate canary") | the watch as it ended |
+| `securacv.list_watches` | nothing (response only) | `watches`: each running watch with its `state`, `subject` and `days_left` |
+
+```yaml
+# automations.yaml — watch the gate while you're away; say if it goes quiet
+- alias: "Away: watch the gate Canary"
+  triggers:
+    - trigger: state
+      entity_id: input_boolean.away
+      to: "on"
+  actions:
+    - action: securacv.start_watch
+      data:
+        subject: "the gate canary"
+        duration: "10 days"
+        concern: stopped
+```
+
+The example is written in the automation syntax of Home Assistant 2024.10
+and newer. The integration supports 2024.4.1 and newer, and on a release
+before 2024.10 the same automation is written with `trigger:` and
+`- platform: state`, then `action:` and `- service: securacv.start_watch`.
+The action and its fields don't change.
+
+What to expect:
+
+- A watch started this way is the same object as one you spoke: the same
+  cap on how many run at once, kept across a clean restart (a crash or
+  power cut can lose the last few seconds of changes), delivered as a
+  persistent notification, and it ends by itself and says so.
+- A subject that no Canary's name matches is accepted but cannot fire until
+  something reports it. The returned watch says `subject.kind: unbound`, and
+  the log warns.
+- `end_watch` refuses a label that two watches share (end it by id) and a
+  name it doesn't know. It never guesses. An early end is announced the
+  same way an expiry is, with what the watch learned.
+- Until the integration has loaded, all three refuse with a message rather
+  than answering from an empty list. The same goes if the stored watches
+  could not be read. The file is left as it is, nothing is written over
+  it, and reloading the integration tries again.
+- There are no actions for pinning, rotating or unpinning a device key.
+  Those stay in the options flow on purpose
+  ([why](device_trust.md#why-pin-rotate-and-unpin-are-not-actions)).
+
 ### Step 6: Verify per-device PKI (optional but recommended)
 
 Each Canary signs its `chain`, `events`, and `counts` MQTT publishes

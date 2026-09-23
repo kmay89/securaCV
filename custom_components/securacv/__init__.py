@@ -25,6 +25,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.components import mqtt
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 
 import json
@@ -49,6 +50,10 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 DEFAULT_UPDATE_INTERVAL = timedelta(seconds=30)
+
+# Config-entry only: nothing is read from configuration.yaml. Declared
+# because an integration with an async_setup must say so (hassfest).
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 # Untrusted-broker hardening: cap how much of any single MQTT payload this
 # integration will decode/parse. Real device publishes are well under 8 KiB;
@@ -458,12 +463,41 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
+async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
+    """Register the securacv.* actions, once per Home Assistant instance.
+
+    Here rather than in async_setup_entry (the action-setup rule): the
+    actions exist whether or not a config entry is loaded, so an
+    automation that calls one too early gets an explanatory error instead
+    of "service not found". Never fatal — the actions are optional, the
+    integration is not.
+    """
+    try:
+        from .services import async_setup_services
+
+        async_setup_services(hass)
+    except Exception:  # noqa: BLE001 - the actions are optional, setup is not
+        _LOGGER.warning("securacv actions not registered", exc_info=True)
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up SecuraCV from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
     # Serve + auto-load the Lovelace timeline card (best-effort, non-fatal).
     await _async_register_frontend(hass)
+
+    # Restore persisted watches BEFORE anything can feed them: the first
+    # MQTT event after a restart must reach a restored watch, not a bucket
+    # that is still empty. Once per HA instance (the loader is idempotent);
+    # never fatal — watches are optional, setup is not.
+    try:
+        from .watch_runtime import async_load_watches
+
+        await async_load_watches(hass)
+    except Exception:  # noqa: BLE001 - watches are optional, setup is not
+        _LOGGER.debug("watches not restored", exc_info=True)
 
     setup_mode = entry.data.get(CONF_SETUP_MODE, SETUP_MODE_KERNEL)
     has_kernel = setup_mode in (SETUP_MODE_KERNEL, SETUP_MODE_BOTH)
