@@ -142,8 +142,10 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 | OTA | User-initiated only, signed binaries. The WAP's BLE OTA (protocol v2) puts product and version under the release signature and enforces the same anti-rollback floor as the pull path; a downgrade or a legacy v1 header needs the owner's BOOT-button break-glass and is logged as a bypass (`docs/firmware_ota.md`) |
 | Cloud | No outbound connections |
 | mDNS | Local AP only |
-| HTTP | Plaintext on the LAN by default (token-authenticated); TLS is an owner opt-in on the WAP (`tls_enabled`) and the kernel (`api-tls` feature) — not "TLS only" |
-| Fleet roll-call (`GET /api/fleet`) | The one open read on the hub: rate-limited, no token. It serves the kernel's own row and — when `api.fleet_peers_path` is set — each Canary the MQTT bridge heard, in the contract's coarse words only (name, online, chain verdict, product, and presence/occupants/breathing while proven online); never an event, a zone or key material. The origin allow-list stops other websites' scripts, not a client that can reach the port, so the port stays loopback by default and is the owner's to expose. What the roll-call says is bounded by the MQTT broker, not proven past it: a peer with publish rights can replay a captured signed publish (held to one window per missed chain advance), invent ids, or put a real id into `degraded` — see `tvos/discovery/DISCOVERY.md`. The summary file behind it is `0600` and size-bounded |
+| Setup Wi-Fi (SoftAP) | Device-unique passphrase, max 1 client. Since 2026-09 (F16) both firmware trees ask the driver for WPA2/WPA3 transition with PMF capable (never required, so a WPA2-only phone still joins) and fall back to WPA2-PSK where the core lacks SoftAP SAE — expected on the IDF 4.4 core the `canary (PIO)` dev/release builds use — reporting what is on the air as `ap_auth` in `/api/wifi/status` and `/api/status` (WAP: `/api/wifi`, `/api/device-info`). CI-compiled (#1704), never run on hardware. The `canary (PIO)` passphrase is 8 characters, the WPA2 floor; widening it is a separate decision because it is re-derived every boot and would change every provisioned device's password |
+| HTTP | Plaintext on the LAN by default (token-authenticated); TLS is an owner opt-in on the WAP (`tls_enabled`) and the kernel (`api-tls` feature) — not "TLS only". The `canary (PIO)` dev/full builds (`FEATURE_HTTPS=1`, 2026-09) serve a self-signed ECDSA P-256 certificate on 443 after first-boot setup and redirect port 80 there; release builds stay plaintext until the size budget is read, and a build or core that cannot do TLS falls back to plaintext and says why in `/api/status` `tls_mode_reason` — CI-compiled (#1704), never run on hardware |
+| Fleet roll-call (`GET /api/fleet`) | The one open read on the hub: rate-limited, no token. It serves the kernel's own row and — when `api.fleet_peers_path` is set — each Canary the MQTT bridge heard, in the contract's coarse words only (name, online, chain verdict, product, and presence/occupants/breathing while proven online); never an event, a zone or key material. The origin allow-list stops other websites' scripts, not a client that can reach the port, so the port stays loopback by default and is the owner's to expose (the add-on's disabled 8799 host port; the Docker sidecar's `SECURACV_API_BIND=all` plus a port mapping the image does not `EXPOSE` — the switch also exports the kernel's cleartext acknowledgment, which never relaxes the token on any other route). What the roll-call says is bounded by the MQTT broker, not proven past it: a peer with publish rights can replay a captured signed publish (held to one window per missed chain advance), invent ids, or put a real id into `degraded` — see `tvos/discovery/DISCOVERY.md`. The summary file behind it is `0600` and size-bounded |
+| Viewer credential (`GET /api/sealed-log`, the Witness Wall) | A second, narrower bearer credential beside the rotating capability token, because a TV cannot re-read a token file: minted by the operator (`witness_api mint-viewer-token`, printed once as a pairing receipt that also carries the kernel's verifying key for the Wall to pin), long-lived until revoked by id, and honored on exactly one route — the non-queryable, size-capped, signed sealed-log tail (Invariant VII bounds what it reads). Presented on any other path or method it is an invalid token that counts toward the per-address lockout, and a good viewer read never clears that count (only a capability-token success does), so the narrower credential cannot reset the lockout that guards the wider one; `?token=` is refused for it as for every token. At rest only its sha256 (`viewer_tokens.json`, `0600`, beside the capability token), compared in constant time and re-read per request, so a revocation lands on the next poll. Whoever holds it reads the coarse sealed record (event types, zones, 10-minute buckets) — the reason it is a credential and not an open read like the roll-call — and over plaintext HTTP it can be sniffed on the LAN like the capability token; TLS stays the owner's opt-in (`api-tls`). What the Wall's "Verified" proves is *authorship* — every served entry signed by the pinned key and linked from the served anchor — not that the tail is *current* or *complete*: the served `checkpoint_head` is unsigned and the document carries no signed time or high-water mark, so a captured genuine document replayed later, or a genuine one cut short at either end, still walks clean against the pin, and the Wall keeps no last-walked head across polls. A signed head (or high-water mark) in the document is the roadmap item that closes it; not built |
 | Camera | Preview only (evidence is metadata, not video) |
 
 ### 8. Cryptographic Minimalism
@@ -154,7 +156,8 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 | Ed25519 | Signatures (identity, record signing) | Arduino Crypto (rweather) |
 | SHA-256 | Hashing (chain integrity, domain separation) | mbedTLS (ESP-IDF) |
 | HMAC-SHA256 / HKDF | Key derivation (token generation) | mbedTLS (ESP-IDF) |
-| RSA-2048 | TLS certificate (self-signed, local only) | mbedTLS (ESP-IDF) |
+| RSA-2048 | TLS certificate (self-signed, local only) — canary-wap | mbedTLS (ESP-IDF) |
+| ECDSA P-256 | TLS certificate (self-signed, local only) — `canary (PIO)` `FEATURE_HTTPS` builds | mbedTLS (ESP-IDF) |
 
 **Not used (and why):**
 | Primitive | Reason |
@@ -535,9 +538,44 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   authoritative freshness mechanism).
 - `opera_secret` storage requires flash encryption enabled
   (eFuse `FLASH_CRYPT_CNT > 0`); load/save paths refuse on FE-off devices
-  and log loudly (v0.2 audit O2).
+  and log loudly (v0.2 audit O2). That keeps the secret off un-fused
+  boards; it does **not** make it confidential at rest on fused ones.
+  Flash encryption does not cover NVS (ESP-IDF encrypts only the app,
+  OTA-data and NVS-key partitions), so on an FE-on board the persisted
+  `opera_secret`, trusted peers, replay counters and hub election are
+  still plaintext on the flash chip. They would be ciphertext only under
+  NVS encryption, which is not available under `framework = arduino`
+  (roadmap item 9 in `firmware/ESP32S3_OPTIMIZATION_ROADMAP.md`).
+- The device's **own identity key** is deliberately not gated the same way:
+  it exposes only this device, and Tier 0 of the
+  [root-of-trust ladder](../design/hardware_root_of_trust.md) keeps it in
+  NVS by decision (§8 #1/#3/#4). The PIO canary image (`firmware/canary`)
+  reports the posture live as `key_at_rest` (`plaintext-nvs` /
+  `nvs-encrypted` / `nvs-encrypted+secure-boot`) in `/api/status` and the
+  self-manifest — `plaintext-nvs` on every board today, fused or not, for
+  the reason above; canary-wap and the other trees do not report it yet.
+  Only images built with `SECURACV_REQUIRE_FLASH_ENCRYPTION=1` (Tier 3+)
+  refuse to store or load it, and they refuse unless NVS is actually
+  encrypted — so, under `framework = arduino`, on every board. The
+  decision is written once in `firmware/common/identity/key_at_rest.h`.
 - Peer removal auto-rotates `opera_secret` and invalidates existing sessions
-  (v0.2 audit O3).
+  (v0.2 audit O3; on canary-wap that is now spec v0.3's transactional flow,
+  #454, and on the PlatformIO tree the variant below — "Outstanding work"
+  has what neither has proven yet).
+  - PlatformIO tree (spec §5.6 PlatformIO subsection, `mesh_rekey.{h,cpp}`):
+    no per-peer session keys exist there, so the rotation runs an
+    ephemeral X25519 exchange per removal inside signed envelopes, the ACK
+    going out under the old `opera_id` before a survivor switches; a
+    survivor that misses the 60 s window is dropped and re-pairs. There,
+    `opera_id` is a cleartext header field and `opera_secret` buys nothing
+    else, so the removed device is shut out by each survivor
+    **unregistering its pubkey**, not by the new secret: a survivor that
+    missed the window (or aborted without its SECRET) keeps trusting the
+    removed device indefinitely, with no signal. The rotation's own gain is
+    that every pre-removal frame is dead to the survivors that switched,
+    across a re-pair too. Host-tested; **maintainer crypto review and the
+    U1 Track C3 bench pass are pending**, and the §5.6 revocation deny-list
+    is implemented in neither tree.
 
 ### Chirp channel (anonymous, community, soft-alert)
 
@@ -599,7 +637,13 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   tiers (AGENTS.md *Beacon channel invariants* item 9): the log of record is
   `/beacon/audit.jsonl` on SD — pure append, never pruned/truncated/rotated,
   tamper-evident via the embedded signatures and chain hashes — with a
-  64-entry flash-encrypted NVS ring as the bounded recent-view cache. The
+  64-entry NVS ring as the bounded recent-view cache. The ring is written
+  only on a board with flash encryption on (canary-wap's
+  `beacon_channel.cpp` uses the same gate as O2; an un-fused board keeps
+  the ring in RAM only), and it is plaintext NVS there too: flash
+  encryption does not cover NVS, only NVS encryption would, and that is
+  not available under `framework = arduino` (the O2 bullet in the Opera
+  mesh section above). The
   chain head spans every entry ever appended, so continuity stays provable
   past the ring boundary; SD-less devices keep chaining and raise a one-time
   `STORAGE` health warning.
@@ -624,7 +668,7 @@ firmware or UI source.
 | Spoofed origination | yes (Ed25519) | yes (Ed25519, v0.2) | yes (dual Ed25519) |
 | Replay | yes (counter) | yes (1024-entry dedup + freshness) | yes (dedup + freshness) |
 | Sybil flood | yes (opera_id isolation) | yes (per-pubkey rate + unique-pubkey set) | yes (two-pubkey rule + audit) |
-| Physical extraction of opera_secret | yes (FE gate) | n/a | n/a |
+| Physical extraction of opera_secret | partial (the FE gate keeps it off un-fused boards; NVS is not encrypted, so a fused board still holds it in plaintext) | n/a | n/a |
 | Compromised device originates fake alarm | n/a | partial (suppress vote) | yes (two-pubkey rule) |
 | Reserved-tone or reserved-phrase impersonation | n/a | yes (lint) | yes (lint, color, frequencies) |
 | Hawaii-style operator error | n/a | n/a | yes (two-person rule, msgType=Exercise distinct from Alert) |
@@ -637,9 +681,22 @@ firmware or UI source.
   `dispatch_espnow_message()`, and the shared ESP-NOW receive path forwards
   to Chirp only. Wiring it needs an explicit user opt-in and a `COSIGN_REQ`
   small enough for the 250-byte receive buffer (today 310 bytes).
-- Full transactional opera_secret rekey ACK protocol (v0.2 implements the
-  minimum-correct in-memory rotation; spec §5.6 documents the full flow for
-  v0.3).
+- `opera_secret` rotation on peer removal is implemented in both firmware
+  trees. canary-wap runs spec §5.6's
+  transactional flow (#454: the new secret under each survivor's session
+  key, the ACK sent under the old `opera_id`, commit on every ACK or at
+  60 s, an unacked peer marked `PEER_STALE`); the PlatformIO tree runs its
+  own ephemeral-X25519 variant over signed envelopes (#1704, the Opera
+  section above). Neither has run on a radio: the PlatformIO rotation is
+  host-tested two-sided (`test_mesh_rekey`), and canary-wap's host test
+  restates the commit rule on a mirror, not the sketch's own code. Open: the PlatformIO
+  rotation's maintainer crypto review; the bench passes (the checklist's O3
+  row; `docs/hardware/v1_bench_validation_runbook.md` Track C3); the §5.6
+  `REVOCATION_GRACE_MS` deny-list, in neither tree; and a pairing that
+  completes on a device, which both rotations need first — #1704 found that
+  both trees run pairing's X25519 on Ed25519-generated keys and that the
+  PlatformIO transport's peer table is never populated outside host tests
+  (read from the source, not yet seen on a bench).
 - Beacon pairing flow (spec §3.3: `PAIR_OFFER`, ephemeral X25519 +
   confirmation code) is a stub. Nothing writes a beacon-set entry or a peer's
   X25519 key, so the two-device co-sign path — whose transport is encrypted —

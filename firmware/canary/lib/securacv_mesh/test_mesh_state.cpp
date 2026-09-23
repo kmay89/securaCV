@@ -143,6 +143,94 @@ void test_elected_hub_null_handling() {
   std::printf("PASS test_elected_hub_null_handling\n");
 }
 
+void test_mesh_enabled_host_stub() {
+  /* F10: load reports "nothing stored" (callers default to enabled) and
+   * leaves the output untouched; save is a no-op success. */
+  bool v = false;
+  assert(!mesh_state::load_mesh_enabled(&v));
+  assert(v == false);
+  v = true;
+  assert(!mesh_state::load_mesh_enabled(&v));
+  assert(v == true);
+  assert(!mesh_state::load_mesh_enabled(nullptr));
+  assert(mesh_state::save_mesh_enabled(false));
+  assert(mesh_state::save_mesh_enabled(true));
+  std::printf("PASS test_mesh_enabled_host_stub\n");
+}
+
+void test_opera_name_host_stub() {
+  /* F10: load → false with out untouched; save/clear → true; save
+   * still validates its input on the host (null / empty / over-long). */
+  char out[mesh_state::MAX_OPERA_NAME_BYTES + 1];
+  std::memset(out, 0x5A, sizeof(out));
+  assert(!mesh_state::load_opera_name(out, sizeof(out)));
+  for (size_t i = 0; i < sizeof(out); ++i) assert(out[i] == 0x5A);
+  assert(!mesh_state::load_opera_name(nullptr, sizeof(out)));
+  assert(!mesh_state::load_opera_name(out, mesh_state::MAX_OPERA_NAME_BYTES));
+
+  assert(mesh_state::save_opera_name("Home"));
+  assert(!mesh_state::save_opera_name(nullptr));
+  assert(!mesh_state::save_opera_name(""));
+  char longname[mesh_state::MAX_OPERA_NAME_BYTES + 2];
+  std::memset(longname, 'A', sizeof(longname) - 1);
+  longname[sizeof(longname) - 1] = '\0';          /* 33 chars */
+  assert(!mesh_state::save_opera_name(longname));
+  longname[mesh_state::MAX_OPERA_NAME_BYTES] = '\0';  /* exactly 32 */
+  assert(mesh_state::save_opera_name(longname));
+  assert(mesh_state::clear_opera_name());
+  std::printf("PASS test_opera_name_host_stub\n");
+}
+
+void test_remove_trusted_peer_host_stub() {
+  uint8_t pubkey[mesh_crypto::PUBKEY_LEN];
+  for (size_t i = 0; i < sizeof(pubkey); ++i) pubkey[i] = (uint8_t)(0x60 + i);
+  assert(mesh_state::remove_trusted_peer(pubkey));   /* host: no-op success */
+  assert(!mesh_state::remove_trusted_peer(nullptr));
+  std::printf("PASS test_remove_trusted_peer_host_stub\n");
+}
+
+void test_persist_rotation_host_stub() {
+  /* F10-rekey: the integration layer's re-persist through the FE gate.
+   * Host stub validates arguments and succeeds. */
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x70 + i);
+  uint8_t pks[2][mesh_crypto::PUBKEY_LEN] = {{1}, {2}};
+  assert(mesh_state::persist_rotation(secret, nullptr, 0));
+  assert(mesh_state::persist_rotation(secret, pks, 2));
+  assert(!mesh_state::persist_rotation(nullptr, pks, 2));
+  assert(!mesh_state::persist_rotation(secret, nullptr, 1));
+  std::printf("PASS test_persist_rotation_host_stub\n");
+}
+
+void test_persist_rotation_fails_closed() {
+  /* Review finding (fw-mesh #5): the secret used to be saved BEFORE the
+   * forgotten pubkeys were removed, so a power cut between the writes
+   * booted a survivor with the new secret AND the removed device still
+   * trusted — and opera_id is cleartext, so the removed device could copy
+   * the new one off the air. Order is now remove, remove, …, save. */
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x71 + i);
+  uint8_t pks[2][mesh_crypto::PUBKEY_LEN] = {{1}, {2}};
+
+  mesh_state::test::reset_journal();
+  assert(mesh_state::persist_rotation(secret, pks, 2));
+  assert(std::strcmp(mesh_state::test::journal(), "RRS") == 0);
+
+  mesh_state::test::reset_journal();
+  assert(mesh_state::persist_rotation(secret, nullptr, 0));
+  assert(std::strcmp(mesh_state::test::journal(), "S") == 0);
+
+  /* A removal that fails: every removal is still tried, the new secret is
+   * NOT saved, and the rotated-away one is cleared — the next boot comes
+   * up with no opera rather than the new secret beside a stale member. */
+  mesh_state::test::reset_journal();
+  mesh_state::test::fail_remove_trusted_peer(true);
+  assert(!mesh_state::persist_rotation(secret, pks, 2));
+  assert(std::strcmp(mesh_state::test::journal(), "RRC") == 0);
+  mesh_state::test::reset_journal();   /* also clears the failure switch */
+  std::printf("PASS test_persist_rotation_fails_closed\n");
+}
+
 }  /* namespace */
 
 int main() {
@@ -156,6 +244,11 @@ int main() {
   test_elected_hub_load_returns_false_on_host();
   test_elected_hub_save_and_clear_on_host();
   test_elected_hub_null_handling();
+  test_mesh_enabled_host_stub();
+  test_opera_name_host_stub();
+  test_remove_trusted_peer_host_stub();
+  test_persist_rotation_host_stub();
+  test_persist_rotation_fails_closed();
   std::printf("\nALL MESH_STATE TESTS PASSED\n");
   return 0;
 }

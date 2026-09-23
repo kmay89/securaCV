@@ -44,18 +44,39 @@ categories are simply **empty**, and this app sits in all three:
    implementation of the kernel's chain math, pinned by CI to the kernel's
    own test vectors — and the app asks every poll cycle for a sealed log
    (`GET /api/sealed-log`) to run it on. When a source serves one, that
-   verdict — pass or fail — is what the banner says. **The repo-root kernel
-   now ships that endpoint, token-gated** (a checkpoint-anchored tail with
-   no query surface — Invariant VII); the TV sends no token yet, so today
-   the Wall still labels the fleet's status as what it is — the devices'
-   own report ("Your fleet reported in through <this TV's own receipt
-   time>" with the device's self-stamp shown only as "Device reports …",
-   and "reports record ok") — and the word "Verified" stays reserved for a
-   chain this TV actually walked against a key pinned at pairing. The day the TV holds a token, the verdict lights up
-   with no app change.
+   verdict — pass or fail — is what the banner says. The repo-root kernel
+   serves that endpoint behind a credential (a checkpoint-anchored tail
+   with no query surface — Invariant VII), so the Wall **pairs**: the
+   operator mints a viewer token on the hub (`witness_api
+   mint-viewer-token`, or `entrypoint.sh mint-viewer-token` in the Docker
+   sidecar) and pastes the one line it prints into Settings →
+   Verification. That receipt carries the token — good for this one read
+   and nothing else on the hub — and the kernel's verifying key, which the
+   Wall pins in the Keychain (never in the defaults tvOS may purge). From
+   then on the header says **"Verified through <this TV's receipt time>"**
+   only when every signature checked against that pinned key and at least
+   one did (a log naming the pinned key over an empty tail reads "Paired ·
+   nothing sealed to check" — the key is public, so an empty list proves
+   nothing). "Verified" proves who signed what the Wall was served, not
+   that the tail is current or complete: the document carries no signed
+   time or head, so a replayed or cut-short genuine log still walks clean
+   (tvos/discovery/DISCOVERY.md, "What 'Verified' proves"). A log signed
+   by any other key is an alarm ("Your hub's signing key changed since this
+   Apple TV was paired"), a revoked token a warning, and an unpaired Wall
+   still labels the fleet's status as the devices' own report ("Your fleet
+   reported in through …", the device's self-stamp shown only as "Device
+   reports …") or, when it did walk a log, as "not yet pinned". Forgetting
+   the pairing drops the token and the pin together. A verified log also
+   draws the record's **day shape** below the devices — the phone's and the
+   evidence viewer's timeline model, fed the sealed payloads' coarse time
+   buckets and driven by the Siri Remote bucket by bucket, every "when" a
+   range, never an instant — and nothing of the kind from an unpinned or
+   failed walk. The Home Assistant add-on has no mint control yet, so an
+   add-on install shows the roll-call and not a walk of the Wall's own.
 2. **Zero-typing, zero-cloud setup.** Turn it on: the Wall probes the same
    well-known LAN addresses the desktop Flasher and Lab probe
-   (`canary.local`), finds the fleet by itself, and remembers it. No account,
+   (`canary.local:8099`, `canary.local`) plus the kernel's own port
+   (`canary.local:8799`), finds the fleet by itself, and remembers it. No account,
    no subscription, nothing leaves the room — and tvOS's own constraints
    (storage the OS may purge, foreground-only apps) match the architecture:
    the TV never holds the record, it witnesses, displays, and proves.

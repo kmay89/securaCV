@@ -16,33 +16,37 @@
  *   │  (=1)   │          │          │              │ LE u64  │  LE u32  │          │           │
  *   └─────────┴──────────┴──────────┴──────────────┴─────────┴──────────┴──────────┴───────────┘
  *
- * The on-wire bytes are little-endian, matching canary-wap
- * mesh_network.cpp:386-394 (counter) and the existing `memcpy(...,
- * &timestamp, 4)` on a little-endian Xtensa/x86 build.
+ * The on-wire bytes are little-endian, the same order canary-wap's
+ * send_to_peer() writes its counter in (mesh_network.cpp) and the
+ * existing `memcpy(..., &timestamp, 4)` on a little-endian Xtensa/x86
+ * build.
  *
- * Wire-compat with canary-wap (post-fix):
- *   • version, msg_type, opera_id, sender_fp, counter, timestamp,
- *     payload, signature byte order: identical to
- *     firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp
- *     {send_to_peer @367, handle_received_message @430}.
- *   • Signature covers data[0 .. HEADER_LEN + payload_len), i.e. the
- *     header and payload but NOT the signature bytes themselves
- *     (canary-wap line 405:
- *       sign_message(g_device_privkey, msg, offset + payload_len, sig)
- *     where `offset` == HEADER_LEN).
+ * Layout parity with canary-wap — NOT wire interop:
+ *   • Field order and widths (version, msg_type, opera_id, sender_fp,
+ *     counter, timestamp, payload, signature) mirror canary-wap's outer
+ *     frame (firmware/projects/canary-wap/arduino/canary_wap/
+ *     mesh_network.cpp send_to_peer / handle_received_message), and the
+ *     signature covers data[0 .. HEADER_LEN + payload_len) the same way
+ *     (header + payload, not the signature bytes; both hash with
+ *     DOMAIN_MESSAGE before Ed25519).
+ *   • The two trees still do not exchange frames: the version byte
+ *     differs (PROTOCOL_VERSION below is 1; canary-wap's Opera frames
+ *     carry mesh_network::PROTOCOL_VERSION = 0 and each side rejects the
+ *     other's), and the msg_type numbering differs (MsgType below vs
+ *     canary-wap's MessageType, e.g. TAMPER_ALERT 18 vs 4).
  *
- * What this module does NOT do (intentionally, deferred to higher
- * layers):
- *   • No opera-peer table. The caller passes signer_priv/pub for sends
- *     and peer_pub for verify. PR 2h will add an OperaPeer table to
- *     mesh_session and route the pubkey lookup.
- *   • No replay-counter table. The Header carries the counter on the
- *     wire; the caller checks it against per-peer state. PR 2h supplies
- *     that state machine.
- *   • No opera_id membership check. The caller passes the local
- *     opera_id and matches it. mesh_envelope just round-trips the
- *     value.
- *   • No NVS persistence. PR 2i / integration-layer concern.
+ * What this module does NOT do — and where each piece lives instead:
+ *   • The opera-peer table and the pubkey lookup: mesh_session's
+ *     TrustedPeer table (register_trusted_peer / find_trusted_peer),
+ *     keyed by sender_fp. Callers here pass signer_priv/pub for sends
+ *     and peer_pub for verify.
+ *   • The replay-counter check: mesh_session::on_opera_frame, per-peer
+ *     strict-monotonic last_counter. The Header only carries the counter.
+ *   • The opera_id membership check: mesh_session::on_opera_frame too.
+ *     mesh_envelope just round-trips the value.
+ *   • NVS persistence: mesh_state (opera_secret, trusted_peers,
+ *     replay_ctrs, elected_hub, opera_name, mesh_enabled), called by the
+ *     integration layer (firmware/canary/src/main.cpp).
  *
  * Threading: pure functions. No globals. Safe to call from any context.
  */
@@ -61,8 +65,10 @@ namespace mesh_envelope {
  * CONSTANTS
  * ────────────────────────────────────────────────────────────────────────── */
 
-/* Protocol version. Matches canary-wap PROTOCOL_VERSION constant.
- * Receivers reject frames with a different byte at offset 0. */
+/* Protocol version. Receivers reject frames with a different byte at
+ * offset 0. NOT canary-wap's Opera value (its mesh_network::
+ * PROTOCOL_VERSION is 0; the 1 in its header belongs to chirp_channel) —
+ * see "Layout parity" above. */
 constexpr uint8_t PROTOCOL_VERSION = 1;
 
 constexpr size_t VERSION_LEN      = 1;
@@ -115,7 +121,17 @@ enum class MsgType : uint8_t {
   BEACON_EVENT   = 22,   /* PR 5c — ble.scout arrived/departed broadcast */
   CHANNEL_LOCK   = 23,   /* PR 4b — coordinated channel-hop proposal */
   HUB_ELECTION   = 24,   /* PR 4c — Hub failover election broadcast */
-  /* 25..255 reserved for future use. */
+  LEAVE_OPERA    = 25,   /* F10 — "I am leaving"; empty payload. A verified
+                          * LEAVE removes only the SIGNER's own trust entry
+                          * at each receiver (spec §4.2, §8.3). */
+  /* F10-rekey — opera_secret rotation on peer removal (mesh_rekey.h,
+   * spec §5.6 PIO). All four ride signed envelopes under the CURRENT
+   * opera_id. */
+  REKEY_OFFER    = 26,   /* initiator → all: rekey_id, ephemeral X25519 pub, removed fp */
+  REKEY_ACCEPT   = 27,   /* survivor → initiator: rekey_id, ephemeral X25519 pub */
+  REKEY_SECRET   = 28,   /* initiator → survivor: rekey_id, nonce, AEAD(new secret) */
+  REKEY_ACK      = 29,   /* survivor → initiator, sent BEFORE it switches */
+  /* 30..255 reserved for future use. */
 };
 
 /* ──────────────────────────────────────────────────────────────────────────

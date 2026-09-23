@@ -11,7 +11,8 @@
  *
  * Security considerations:
  * - AP mode only (no internet connection required)
- * - WPA2-PSK encryption with device-unique password
+ * - WPA2/WPA3 transition (PMF capable) with a device-unique password; WPA2-PSK
+ *   where the core lacks SoftAP SAE (ap_security_policy.h, F16)
  * - TLS 1.2+ on all connections (port 443)
  * - HTTP port 80 redirects to HTTPS (301)
  * - Bearer token authentication on protected endpoints

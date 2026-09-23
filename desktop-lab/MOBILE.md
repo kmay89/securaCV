@@ -92,9 +92,9 @@ iOS is the strictest surface, and the layer already accounts for it (see the
 
 | Capability | iOS |
 |---|---|
-| **USB flashing** | ❌ Apple blocks generic USB-serial. The **Flash bench is hidden on iOS**; it points to the desktop app instead. |
-| **Discovery (mDNS / BLE)** | ✅ native (CoreBluetooth / Bonjour) — live fleet on your phone. |
-| **Notifications** | ✅ native — alerts on signed events. |
+| **USB flashing** | ❌ Apple blocks generic USB-serial. The **Flash bench is hidden on iOS**: a mobile build registers none of the flash commands and reports `serial: false`, so the Flash page shows an in-app "not on this device" card that points to the desktop Lab or Flasher instead (where the Lab flashes natively, with the Flasher's bundled espflash). |
+| **Discovery (mDNS / BLE)** | ❌ not yet — the mDNS browse (`fleet_scan`) is **desktop-only today**: an iOS browse needs the multicast entitlement and `NSBonjourServices` first, so a mobile build neither registers the command nor reports `mdns`. BLE discovery isn't built on any surface yet. The `/api/fleet` poll (`witness_discover`, over a typed kernel address and `canary.local`) is the one discovery path a mobile build carries. |
+| **Notifications** | ❌ not yet — the fleet notifications are the **desktop** menu bar companion's (coarse fleet changes, posted from Rust); a mobile build reports `notifications: false`, and notifications on *signed* events wait on pairing on every surface. |
 | **Sealed local storage** | ✅ Keychain-backed. |
 
 Nothing pretends to work that can't. The frontend reads the capability seam and
@@ -104,7 +104,11 @@ hides/redirects the pieces iOS won't allow.
 
 ## CI
 
-There is no CI workflow for this shell any more. `desktop-mobile-release.yml`
+There is no iOS CI build of this shell any more. (The crate itself is
+compiled on every PR since 2026-09-22 — `.github/workflows/desktop-lab-check.yml`
+runs `cargo check`/`clippy`/`test` on `desktop-lab/src-tauri` on a Linux
+runner, the desktop configuration; that proves the Rust, not an iOS bundle.)
+`desktop-mobile-release.yml`
 ("Mobile (iOS) build") ran `npm run ios:init && npm run ios:build` on a macOS
 runner behind the `ENABLE_IOS_BUILD` gate; it was dispatched once (2026-07-24,
 gated to a no-op) and never built anything, so it was retired on 2026-09-08

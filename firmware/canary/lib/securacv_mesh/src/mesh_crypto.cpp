@@ -405,6 +405,38 @@ bool x25519_derive(const uint8_t our_priv[PRIVKEY_LEN],
 #endif
 }
 
+bool x25519_generate_keypair(uint8_t pub_out [PUBKEY_LEN],
+                             uint8_t priv_out[PRIVKEY_LEN]) {
+  if (pub_out == nullptr || priv_out == nullptr) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  /* Test-only RNG + the shim pub derivation x25519_derive() mirrors. */
+  for (size_t i = 0; i < PRIVKEY_LEN; ++i) priv_out[i] = (uint8_t)(rand() & 0xFF);
+  uint8_t h[SHA256_OUT_LEN];
+  sha256_domain("securacv:host-shim:pub", priv_out, PRIVKEY_LEN, h);
+  memcpy(pub_out, h, PUBKEY_LEN);
+  return true;
+#else
+  for (int attempt = 0; attempt < 4; ++attempt) {
+    esp_fill_random(priv_out, PRIVKEY_LEN);
+    /* RFC 7748 §5 clamping — Curve25519::eval takes the scalar as given. */
+    priv_out[0]  &= 0xF8;
+    priv_out[31]  = (uint8_t)((priv_out[31] & 0x7F) | 0x40);
+    if (Curve25519::eval(pub_out, priv_out, nullptr)) return true;
+  }
+  secure_zero(priv_out, PRIVKEY_LEN);
+  return false;
+#endif
+}
+
+void fill_random(uint8_t* out, size_t len) {
+  if (out == nullptr) return;
+#ifdef CSI_TEST_HOST_BUILD
+  for (size_t i = 0; i < len; ++i) out[i] = (uint8_t)(rand() & 0xFF);
+#else
+  esp_fill_random(out, len);
+#endif
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * ChaCha20-Poly1305 AEAD
  *

@@ -11,7 +11,17 @@
 #   5. GET /api/fleet answers with the kernel's own row: the config named
 #      api.fleet_peers_path and the kernel accepted it (deny_unknown_fields),
 #      and a summary the bridge has not written yet is an empty peer list,
-#      never an error.
+#      never an error;
+#   6. SECURACV_API_BIND=all reaches the LAN: a second sidecar in that mode
+#      with 8799 published on the runner's loopback serves /api/fleet to a
+#      curl OUTSIDE the container (the Witness Wall's path), and /events
+#      without a token still answers 401 there (the bind never relaxed
+#      authentication);
+#   7. a viewer token minted in that container (`entrypoint.sh
+#      mint-viewer-token`, what a Wall owner runs) opens GET /api/sealed-log
+#      across the published port and nothing else: the served key is the
+#      one its receipt pins, /events answers 401 to it, and after
+#      `revoke-viewer-token` the sealed log does too.
 #
 # Usage (repo root): docker/sidecar/ci_e2e.sh [image-tag]
 set -euo pipefail
@@ -20,9 +30,14 @@ IMG="${1:-securacv-sidecar:ci}"
 NET="securacv-ci-$$"
 BROKER="securacv-ci-mosquitto-$$"
 SIDECAR="securacv-ci-sidecar-$$"
+SIDECAR_LAN="securacv-ci-sidecar-lan-$$"
+# The runner-side port for the LAN-mode container: loopback-only so the
+# check never opens a runner port to its network, and off 8799 so nothing
+# else on the runner can collide with it.
+LAN_PORT=18799
 
 cleanup() {
-    docker rm -f "$SIDECAR" "$BROKER" >/dev/null 2>&1 || true
+    docker rm -f "$SIDECAR_LAN" "$SIDECAR" "$BROKER" >/dev/null 2>&1 || true
     docker network rm "$NET" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -118,6 +133,112 @@ case "$fleet_doc" in
         exit 1 ;;
 esac
 
+echo "==> Starting a second sidecar with SECURACV_API_BIND=all (8799 published on the runner's loopback)"
+# Its own /data (a fresh anonymous volume): the LAN-mode container must not
+# share the first one's database, key or token file. Publishing disabled so
+# it does not race the first container's HA Discovery topics on the broker.
+docker run -d --name "$SIDECAR_LAN" --network "$NET" \
+    -e FRIGATE_MQTT_HOST="$BROKER" -e SECURACV_API_BIND=all -e SECURACV_PUBLISH=false \
+    -p "127.0.0.1:${LAN_PORT}:8799" "$IMG" >/dev/null
+
+echo "==> Waiting for the LAN-mode API to answer from OUTSIDE the container"
+lan_up=0
+for _ in $(seq 1 60); do
+    if curl -fsS "http://127.0.0.1:${LAN_PORT}/health" >/dev/null 2>&1; then
+        lan_up=1
+        break
+    fi
+    if ! docker ps -q --no-trunc | grep -q "$(docker inspect -f '{{.Id}}' "$SIDECAR_LAN")"; then
+        break
+    fi
+    sleep 1
+done
+if [ "$lan_up" -ne 1 ]; then
+    echo "❌ SECURACV_API_BIND=all sidecar never answered /health on the published port" >&2
+    docker logs "$SIDECAR_LAN" >&2 || true
+    exit 1
+fi
+if docker logs "$SIDECAR_LAN" 2>&1 | grep -q "SECURACV_API_BIND=all: witness_api binds 0.0.0.0:8799"; then
+    echo "✓ the entrypoint announced the LAN bind once, with the exposure notice"
+else
+    echo "❌ no SECURACV_API_BIND=all startup notice in the LAN-mode sidecar's log" >&2
+    docker logs "$SIDECAR_LAN" >&2 || true
+    exit 1
+fi
+
+echo "==> Checking GET /api/fleet is readable from the runner (the Witness Wall's path)"
+lan_fleet=$(curl -fsS "http://127.0.0.1:${LAN_PORT}/api/fleet" || true)
+case "$lan_fleet" in
+    *'"witness-kernel"'*)
+        echo "✓ /api/fleet serves the kernel's row across the published port" ;;
+    *)
+        echo "❌ /api/fleet did not answer across the published port: ${lan_fleet:-<no response>}" >&2
+        docker logs "$SIDECAR_LAN" >&2 || true
+        exit 1 ;;
+esac
+
+echo "==> Checking /events without a token is still refused across the published port"
+# The bind widened, the authentication did not: every data endpoint keeps
+# demanding the rotating capability token. 401 is the kernel's answer to a
+# missing bearer; anything else means `all` mode relaxed more than the bind.
+lan_events_status=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${LAN_PORT}/events" || true)
+if [ "$lan_events_status" = "401" ]; then
+    echo "✓ /events answers 401 without a token in SECURACV_API_BIND=all mode"
+else
+    echo "❌ /events answered HTTP ${lan_events_status:-<none>} without a token (expected 401)" >&2
+    docker logs "$SIDECAR_LAN" >&2 || true
+    exit 1
+fi
+echo "==> Pairing a Wall: mint a viewer token inside the LAN-mode sidecar"
+# stdout is the receipt alone (one JSON line); the token's only copy.
+receipt=$(docker exec "$SIDECAR_LAN" entrypoint.sh mint-viewer-token \
+    --label "ci wall" --base-url "http://127.0.0.1:${LAN_PORT}" || true)
+viewer_token=$(printf '%s' "$receipt" | jq -r '.sealed_log_token // empty' 2>/dev/null || true)
+viewer_id=$(printf '%s' "$receipt" | jq -r '.token_id // empty' 2>/dev/null || true)
+pinned_key=$(printf '%s' "$receipt" | jq -r '.verifying_key // empty' 2>/dev/null || true)
+if ! [[ "$viewer_token" =~ ^[0-9a-f]{64}$ && "$pinned_key" =~ ^[0-9a-f]{64}$ && -n "$viewer_id" ]]; then
+    echo "❌ mint-viewer-token printed no usable receipt: ${receipt:-<nothing>}" >&2
+    docker logs "$SIDECAR_LAN" >&2 || true
+    exit 1
+fi
+
+echo "==> Checking the viewer token opens GET /api/sealed-log across the published port"
+sealed_doc=$(curl -fsS -H "Authorization: Bearer $viewer_token" \
+    "http://127.0.0.1:${LAN_PORT}/api/sealed-log" || true)
+served_key=$(printf '%s' "$sealed_doc" | jq -r '.verifying_key // empty' 2>/dev/null || true)
+if [ -n "$served_key" ] && [ "$served_key" = "$pinned_key" ]; then
+    echo "✓ the viewer token reads the sealed log, signed by the key its receipt pins"
+else
+    echo "❌ viewer-token sealed-log read failed or served another key (pinned $pinned_key, served ${served_key:-<none>})" >&2
+    docker logs "$SIDECAR_LAN" >&2 || true
+    exit 1
+fi
+
+echo "==> Checking the viewer token opens nothing else"
+viewer_events_status=$(curl -s -o /dev/null -w '%{http_code}' \
+    -H "Authorization: Bearer $viewer_token" "http://127.0.0.1:${LAN_PORT}/events" || true)
+if [ "$viewer_events_status" = "401" ]; then
+    echo "✓ /events answers 401 to a viewer token"
+else
+    echo "❌ /events answered HTTP ${viewer_events_status:-<none>} to a viewer token (expected 401)" >&2
+    exit 1
+fi
+
+echo "==> Revoking it: the next sealed-log read is refused"
+if ! docker exec "$SIDECAR_LAN" entrypoint.sh revoke-viewer-token "$viewer_id"; then
+    echo "❌ revoke-viewer-token $viewer_id failed" >&2
+    exit 1
+fi
+revoked_status=$(curl -s -o /dev/null -w '%{http_code}' \
+    -H "Authorization: Bearer $viewer_token" "http://127.0.0.1:${LAN_PORT}/api/sealed-log" || true)
+if [ "$revoked_status" = "401" ]; then
+    echo "✓ a revoked viewer token answers 401, no restart needed"
+else
+    echo "❌ a revoked viewer token answered HTTP ${revoked_status:-<none>} (expected 401)" >&2
+    exit 1
+fi
+docker rm -f "$SIDECAR_LAN" >/dev/null 2>&1 || true
+
 echo "==> Checking the HA Discovery config topic is retained"
 # Generous window: the publisher polls the event API every 30s.
 if docker run --rm --network "$NET" eclipse-mosquitto:2 \
@@ -145,4 +266,4 @@ else
     exit 1
 fi
 
-echo "✅ sidecar e2e passed: zero-config start, ingest, verify, fleet roll-call, discovery, button"
+echo "✅ sidecar e2e passed: zero-config start, ingest, verify, fleet roll-call, LAN bind opt-in, discovery, button"

@@ -41,8 +41,11 @@
 #include <stdbool.h>
 
 /* Default pad: GPIO 4 (D3 on the XIAO breakout) → Touch4. Avoids the
- * SD-SPI pins (D8/D9/D10), the TAMPER_GPIO=2 pin, and the BOOT button
- * (GPIO 0). Override at compile time with -DTOUCH_PIN_NUM=N. */
+ * SD-SPI pins (D8/D9/D10) and the BOOT button (GPIO 0). D3 is also the
+ * enclosure tamper contact's pin (TAMPER_PIN_DEFAULT, canary_config.h):
+ * with FEATURE_TAMPER_GPIO=1 the build refuses to compile until the pad is
+ * moved explicitly, e.g. -DTOUCH_PIN_NUM=5 (D4). Override at compile time
+ * with -DTOUCH_PIN_NUM=N. */
 #ifndef TOUCH_PIN_NUM
   #define TOUCH_PIN_NUM   4
 #endif

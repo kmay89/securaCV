@@ -3,11 +3,14 @@
 A native **Mac & Linux** application that wraps the local-first
 [`canary-local`](../canary-local) Lab in a [Tauri](https://tauri.app) shell.
 It runs the real firmware emulator, 3D device cards, and fix-it flows
-entirely on your machine — it **talks only to your own devices**; the one
-thing it fetches on its own is its update manifest from GitHub (15 s after
-launch, then every 6 h) — every update it offers is signature-verified
-before install — which is exactly the
-point of a security product.
+entirely on your machine — it **talks to your own devices**, and it reaches
+the internet for exactly two things, both from the project's GitHub
+releases: its update manifest (15 s after launch, then every 6 h — every
+update it offers is signature-verified before install), and firmware for the
+Flash page — once a board is connected there, it asks which signed firmware
+is published (and asks again if you switch to the dev channel), and pressing
+Flash downloads that image (checked against the pinned release key before a
+byte is written) — which is exactly the point of a security product.
 
 > **Sibling app.** [`../desktop`](../desktop) is the **SecuraCV Flasher** — a
 > focused native tool that flashes a Canary over USB with bundled `espflash`
@@ -19,11 +22,29 @@ point of a security product.
 The Lab is already local-first web + WebAssembly, so wrapping it is natural.
 Native earns its keep for the things a browser can't do well:
 
-- **Reliable USB flashing** — WebSerial is Chromium-only and flaky; native
-  serial (Rust `serialport`) is rock-solid. *(Phase 2 — stubbed today.)*
-- **Device discovery** — mDNS + Bluetooth LE to the Canaries. *(Phase 2.)*
-- **An always-on menubar companion** — live fleet status, native
-  notifications on signed events, the tamper-evident timeline. *(Phase 2.)*
+- **Reliable USB flashing** — WebSerial is Chromium-only and flaky, and the
+  OS webview has none at all. On macOS and Linux the Lab's Flash page flashes
+  through the app's own bundled `espflash` — the **Flasher's engine**, shared
+  as [`../desktop/flash-engine`](../desktop/flash-engine) rather than copied:
+  the same chip guard, signed-release check, first-contact erase and live
+  boot receipt, behind the same command names (`src-tauri/src/flash.rs`,
+  held to the Flasher's by `canary-local/tests/desktop_parity.test.js`).
+  The safety copy, rescue bench, local-file installs and the Vision module
+  burn stay in the Flasher. Linux needs the udev rule the `.deb` ships
+  ([`INSTALL.md`](INSTALL.md#serial-access-for-usb-flashing-one-time)).
+- **Device discovery** — an mDNS browse of `_securacv._tcp` finds every
+  Canary board on the network (desktop, live today — the Flasher's
+  `fleet_scan`, ported), beside the `/api/fleet` poll that finds a kernel.
+  Bluetooth LE discovery *(Phase 2.)*
+- **A menubar companion** — live fleet status in the menu bar /
+  system tray and native notifications when the fleet reports a device
+  going offline, coming back, losing its hub or a chain problem (desktop,
+  live today — coarse words only, see [`INSTALL.md`](INSTALL.md#the-menu-bar-companion)).
+  On macOS it keeps running in the menu bar after you close the window; on
+  Linux it runs while the Lab is open (a desktop may have no tray to keep it).
+  Notifications on *signed* events and the tamper-evident timeline wait on
+  pairing: "verified" means a chain walked against a key pinned at pairing,
+  and the Lab holds no such key yet. *(Phase 2.)*
 
 Tauri gives us all of that from **one frontend** shared with the website: a
 ~5 MB signed binary on the OS WebView, minimal attack surface (Rust) — a
@@ -43,11 +64,15 @@ desktop-lab/
   dist/                        the staged web root (generated, gitignored)
   src-tauri/
     tauri.conf.json            frontendDist -> ../dist, window -> canary-local/lab.html
+    tauri.{macos,linux}.conf.json  externalBin: the bundled espflash (those two only)
     Cargo.toml
-    build.rs
+    build.rs                   build stamp + the embedded flash.json catalog
     capabilities/              default.json + desktop.json (self-update perms)
     icons/                     generated from mascot.png
+    binaries/                  espflash-<triple>, fetched + sha256-checked by CI (gitignored)
+    packaging/                 canary-serial.rules — the Linux udev rule the .deb installs
     src/{main,lib}.rs          native shell + capability seam
+    src/flash.rs               native USB flashing: the Flasher's commands over ../desktop/flash-engine
     src/self_update.rs         signed self-update (desktop only, see below)
 ```
 
@@ -95,8 +120,19 @@ Linux dev deps (Ubuntu/Debian):
 
 ```bash
 sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
-  libayatana-appindicator3-dev librsvg2-dev patchelf
+  libayatana-appindicator3-dev librsvg2-dev libudev-dev patchelf
 ```
+
+A macOS or Linux build also needs the espflash sidecar where
+`tauri.{macos,linux}.conf.json` point: `src-tauri/binaries/espflash-<triple>`
+(`rustc -vV` prints the triple). The release workflow downloads the pinned,
+sha256-verified one (`desktop-release.yml`, "Bundle espflash sidecar"); for a
+compile-only check an empty executable file there is enough, which is what
+`desktop-lab-check.yml` does. A build running on that empty stub reports
+`serial: false` (`native_capabilities` checks the sidecar is a non-empty
+executable file, not just that the platform bundles one), so its Flash page
+shows the "not on this device" card; to flash from a dev build, put a real
+espflash 3.3.0 at that path.
 
 ## Build installers
 
@@ -145,10 +181,13 @@ do). Which button, when, and when not:
 ## Roadmap
 
 1. **This** — Tauri shell of the Lab, Mac/Linux installers, release pipeline.
-2. **Native USB flashing** (`serialport`) — replace WebSerial; the biggest
-   reliability win. Bundle `esptool`.
-3. **Menubar fleet companion** — mDNS/BLE status, native notifications on
-   signed events, the signed timeline.
+2. **Native USB flashing** — live on macOS + Linux: the Flasher's espflash
+   engine, shared (`desktop/flash-engine`), bundled per platform. Still to
+   come: the safety copy / change map and the rescue bench on this surface.
+3. **Menubar fleet companion** — live on desktop: tray status from the mDNS
+   browse and the fleet report, native notifications on fleet changes.
+   Still to come: BLE status, notifications on signed events and the signed
+   timeline (both wait on pairing a key with the kernel).
 4. Extend the same shared core to **iOS/iPad** (Tauri v2 mobile — **scaffolded**,
    see [`MOBILE.md`](MOBILE.md) or the rendered walkthrough
    [`ipad-guide.html`](ipad-guide.html); needs your Apple Developer account to

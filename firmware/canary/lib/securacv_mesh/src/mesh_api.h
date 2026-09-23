@@ -2,22 +2,24 @@
  * SecuraCV Canary — Mesh REST API JSON builders (PR-8)
  * Version 0.1.0
  *
- * Pure, I/O-free helpers that render the JSON bodies for the two GET
- * mesh endpoints:
+ * Pure, I/O-free helpers that render the JSON bodies for the GET mesh
+ * endpoints:
  *
- *   GET /api/mesh        → build_mesh_status_json()
- *   GET /api/mesh/peers  → build_mesh_peers_json()
+ *   GET /api/mesh         → build_mesh_status_json()
+ *   GET /api/mesh/peers   → build_mesh_peers_json()
+ *   GET /api/mesh/alerts  → build_mesh_alerts_json()   (F10)
  *
  * Why a separate, pure module:
  *   The HTTP handlers in securacv_network.cpp live behind
- *   FEATURE_MESH_NETWORK, which the dev/release CI envs compile out
- *   (platformio.ini sets -DFEATURE_MESH_NETWORK=0 for the only two envs
- *   CI builds). That means the handler bodies get ZERO CI compile
- *   coverage. Extracting the JSON-building logic here — taking plain
- *   structs/params, writing to a caller-supplied char buffer, no
- *   httpd_req_t, no ArduinoJson — lets the mesh host-test harness
- *   (which links every securacv_mesh src TU) compile and exercise the
- *   real response shape on every PR.
+ *   FEATURE_MESH_NETWORK. CI does compile them — [env:full]
+ *   (platformio.ini, -DFEATURE_MESH_NETWORK=1) is one of the canary's
+ *   build_envs in firmware/flavors.json, so the "PlatformIO Build" job
+ *   builds the handler bodies on every PR — but a compile proves only
+ *   that they build, not what they emit. Extracting the JSON-building
+ *   logic here — taking plain structs/params, writing to a
+ *   caller-supplied char buffer, no httpd_req_t, no ArduinoJson — lets
+ *   the mesh host-test harness (which links every securacv_mesh src TU)
+ *   exercise the real response shape on every PR.
  *
  * JSON is emitted by hand via snprintf so the module needs neither
  * ArduinoJson (device-only) nor Arduino String (device-only). The field
@@ -35,12 +37,26 @@
 
 #include "mesh_crypto.h"    /* OPERA_ID_LEN, FINGERPRINT_LEN */
 #include "mesh_pairing.h"   /* mesh_pairing::State, mesh_state_name */
+#include "mesh_alert.h"     /* mesh_alert::Record (F10) */
 
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
 
 namespace mesh_api {
+
+/* Response-buffer sizes the REST handlers allocate. Pinned by host tests
+ * against the worst-case body (test_mesh_session.cpp
+ * test_rest_buffers_fit_worst_case) so a new field cannot silently push a
+ * full table past its buffer and turn the endpoint into a 500:
+ *   PEERS_JSON_CAP  — 8 trusted peers (mesh_state::MAX_TRUSTED_PEERS),
+ *                     empty names (the handler has no name source), every
+ *                     number at its widest.
+ *   ALERTS_JSON_CAP — MAX_ALERTS_JSON rows (mesh_session::MAX_ALERT_HISTORY)
+ *                     at their widest. */
+constexpr size_t PEERS_JSON_CAP   = 1536;
+constexpr size_t MAX_ALERTS_JSON  = 16;
+constexpr size_t ALERTS_JSON_CAP  = 3072;
 
 /* ──────────────────────────────────────────────────────────────────────────
  * GET /api/mesh — status
@@ -73,8 +89,10 @@ bool build_mesh_status_json(char*  out,
 /* ──────────────────────────────────────────────────────────────────────────
  * GET /api/mesh/peers — peer list
  *
- * Emits {ok:true, peers:[{fingerprint, name, state, last_seen_sec, rssi}]}.
- * No per-peer alerts field (the UI does not read one).
+ * Emits {ok:true, peers:[{fingerprint, name, state, last_seen_sec, rssi,
+ * alerts_received}]}. alerts_received is the spec §8.2 per-peer field
+ * (verified TAMPER_ALERT frames from that peer this boot); the web UI
+ * does not read it today, but HA and the spec do.
  *
  * The handler builds an array of PeerView from the persisted trusted-peer
  * set, best-effort-joined against the live transport peer table. `state`
@@ -89,12 +107,46 @@ struct PeerView {
   const char* state;              /* "CONNECTED" / "STALE" / "OFFLINE" */
   uint32_t last_seen_sec;         /* seconds since last_seen; large if never */
   int      rssi;                  /* dBm; 0 if unknown */
+  uint32_t alerts_received;       /* verified TAMPER_ALERTs from this peer (F11) */
 };
 
 bool build_mesh_peers_json(char*  out,
                            size_t cap,
                            const PeerView* peers,
                            size_t          count);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * GET /api/mesh/alerts — received alert history (F10)
+ *
+ * Emits {ok:true, count:N, alerts:[{timestamp_ms, type, severity,
+ * sender_fp, sender_name, detail, witness_seq}]} in the order given
+ * (the session hands them over newest-first). The field names are the
+ * ones the web UI's loadOperaAlerts() reads — type, severity,
+ * sender_name, detail, timestamp_ms — plus sender_fp and witness_seq,
+ * which canary-wap also emits. `type` is always "TAMPER"
+ * (mesh_alert::type_name), `detail` is the template name for the kind
+ * (mesh_alert::kind_name — never sender-authored text), `sender_fp` is
+ * 16 lowercase hex chars, and `sender_name` is "" until a peer-metadata
+ * store exists (the UI renders "Unknown"). timestamp_ms is the
+ * receiver's uptime at receipt, the same basis canary-wap uses.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool build_mesh_alerts_json(char*                     out,
+                            size_t                    cap,
+                            const mesh_alert::Record* alerts,
+                            size_t                    count);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * POST /api/mesh/remove {fingerprint} — request parsing (F10-rekey)
+ *
+ * The web UI sends the `fingerprint` string GET /api/mesh/peers emitted:
+ * exactly FINGERPRINT_LEN*2 (16) hex digits. Upper case is accepted too.
+ * Returns false (out untouched) on null, any other length, or a non-hex
+ * character — the handler answers 400 invalid_fingerprint.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool parse_fingerprint_hex(const char* hex,
+                           uint8_t     out[mesh_crypto::FINGERPRINT_LEN]);
 
 }  /* namespace mesh_api */
 

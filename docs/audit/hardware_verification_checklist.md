@@ -110,6 +110,77 @@ host tests assert they do, on real radio.
     (audit O2)`. NVS does not contain an opera_secret entry.
   - Artifact: `docs/audit/repro/O2/`.
 
+- [ ] **K1 — identity-key posture is reported, and only the opt-in image refuses**
+  - Setup: one ESP32-S3 board with flash encryption NOT enabled, one with
+    it enabled (dev mode); the default `canary` image (`pio run -e release`)
+    and an opt-in image built from the same env with
+    `PLATFORMIO_BUILD_FLAGS=-DSECURACV_REQUIRE_FLASH_ENCRYPTION=1 pio run -e release`.
+    Not the provisioning kit's `[env:secure]`: no CI job builds it and, as
+    written, it lacks the shared include paths
+    (`firmware/provisioning/platformio_secure.ini`).
+  - Repro: boot each combination; press `f` on the console; `GET /api/status`.
+  - Expected:
+    - default image, FE-off board: boot log carries
+      `[WARN] Key at rest : plaintext-nvs - identity key at rest in plaintext NVS (Tier 0 default; ...)`,
+      the `f` card shows `KeyAtRest : plaintext-nvs`, `/api/status` and the
+      `j` manifest carry `"key_at_rest":"plaintext-nvs"`; provisioning
+      succeeds.
+    - default image, FE-on board: the `f` card's `FlashEnc` line reads
+      `ENABLED`, but the three surfaces STILL read `plaintext-nvs` and the
+      boot line is still `[WARN]`, now with `flash encryption is on but does
+      not cover NVS, and NVS encryption is not active`. Flash encryption
+      does not encrypt NVS and this build has no NVS encryption, so the key
+      is readable from a flash dump; a board reporting `nvs-encrypted` here
+      is a FAIL. Optional confirmation: read the `nvs` partition back with
+      `esptool.py read_flash 0x9000 0x5000` and find the `privkey` entry in
+      the clear.
+    - opt-in image, FE-off board: provisioning HALTS. The log carries
+      `[!!] identity key not loaded: flash encryption required by this
+      build but not active` (the load is refused before NVS is read, so it
+      prints whether or not a default image had already stored a key), then
+      `[!!] identity key not stored: ...` with the same reason, then
+      `Device provisioning failed`; NVS never gains a new `privkey` entry and
+      an existing one is left as it was.
+    - opt-in image, FE-on board: provisioning ALSO halts, the same two
+      lines with the reason `encrypted NVS required by this build but NVS
+      encryption is not active (flash encryption alone does not cover NVS)`.
+      Under `framework = arduino` the opt-in image refuses on every board —
+      that is the policy, not a fault.
+    - fresh-unit keygen vs the battery ADC (R18a): on a board with the
+      battery divider fitted and `FEATURE_POWER_MONITOR` on, erase NVS, boot
+      the default image once (first-boot keygen runs
+      `bootloader_random_enable()`/`_disable()` AFTER `power_start()` opened
+      the ADC), note the battery mV from the `b` console card (or
+      `current.voltage_mv` in `GET /api/battery/history`), then reboot
+      without erasing and note it again: the two readings agree
+      within normal ADC noise. A zero, pinned or wildly different first
+      reading is a FAIL (the disable powered down / reset the ADC under the
+      power monitor).
+  - Policy under test: `firmware/common/identity/key_at_rest.h`
+    (host-tested by `firmware/tests_host/test_key_at_rest.cpp`).
+  - Artifact: `docs/audit/repro/K1/`.
+
+- [ ] **K2 — chain head survives a power cut between record and persist**
+  - Setup: one board on the PIO `canary` image, NO SD card (so SD-wins cannot
+    mask the result); a bench supply you can cut.
+  - Repro: note `chain_seq` + `chain_head` from `/api/status`; trigger a
+    witness record; cut power inside the persist window (repeat ~20 times —
+    the window is one NVS blob write, so most cuts land before or after it).
+  - Expected: on every next boot `/api/status` reports EITHER the previous
+    {`chain_seq`, `chain_head`} pair OR the new one — never the new seq with
+    the old head or vice versa; the boot log carries no `[CHAIN]` mismatch
+    and the `t` self-test chain verify passes. A board upgraded from a
+    pre-blob image boots with its old seq/head (legacy fallback), and the
+    first persist moves it to the blob; `chain_st` appears in NVS, `seq` /
+    `chain` are left as they were. Re-upgrade: downgrade that board to the
+    pre-blob image, create records until its `chain_seq` passes the blob's,
+    then flash this image again — the boot log carries
+    `[WARN] Chain: legacy seq N is ahead of chain_st seq M` and
+    `/api/status` resumes at the older image's seq N, not at M.
+  - Codec + source order under test: `firmware/common/witness/chain_state.h`
+    (host-tested by `firmware/tests_host/test_chain_state.cpp`).
+  - Artifact: `docs/audit/repro/K2/`.
+
 - [ ] **O3 — transactional rekey on peer removal**
   - Setup: three Opera-member boards (A, B, C); A is the initiator.
   - Repro: from A, call `remove_peer(B.fingerprint)` via REST.
@@ -318,6 +389,34 @@ or ticks Beacon frames. Every row below assumes both.
     becomes "Alarm"`.
   - Repro: trigger a beacon alarm via the happy-path test above.
   - Post-fix expected: HA automation fires within one 30 s publish cycle.
+
+## SoftAP WPA2/WPA3 transition + PMF (F16) — on-device verification
+
+Code: `firmware/common/network/ap_security_policy.h` (host-tested), applied
+after every `WiFi.softAP()` in both trees. Owner: U1.
+
+- [ ] **WPA3 phone joins; the device says so**
+  - Setup: a `canary (PIO)` `full` image (IDF 5.5) and a canary-wap image;
+    a phone that supports WPA3.
+  - Expected: the phone joins `SecuraCV-XXXX`; `GET /api/wifi/status`
+    (canary) / `GET /api/wifi` (WAP) shows `ap_auth: "wpa2-wpa3"`. If it
+    shows `"wpa2"`, record `ap_auth_reason` (a core without SoftAP SAE, or
+    a driver refusal) — that is the finding.
+  - Artifact: `docs/audit/repro/F16/wpa3-join/`.
+- [ ] **WPA2-only client still joins**
+  - Setup: same images; a laptop or phone forced to WPA2.
+  - Expected: it joins and loads the dashboard (PMF is capable, never
+    required).
+  - Artifact: `docs/audit/repro/F16/wpa2-join/`.
+- [ ] **2.0.17-core builds report WPA2 honestly**
+  - Setup: a `canary (PIO)` `dev` or `release` image.
+  - Expected: `ap_auth: "wpa2"` with `ap_auth_reason` naming the missing
+    SoftAP SAE; any client joins as before.
+  - Artifact: `docs/audit/repro/F16/idf44-fallback/`.
+- [ ] **STA PMF**
+  - Setup: join the Canary to a PMF-capable router.
+  - Expected: `sta_pmf: true`; the association is stable.
+  - Artifact: `docs/audit/repro/F16/sta-pmf/`.
 
 ---
 

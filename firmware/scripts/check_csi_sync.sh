@@ -142,6 +142,26 @@ if [ -f "$GNSSTIME_CANONICAL" ]; then
     fi
 fi
 
+# Household time zone (repo sweep F28): same single-source pattern. The
+# canonical, header-only tz_rule (IANA -> POSIX table, rule validator, local
+# minute-of-day) lives at firmware/common/time/; the canary-wap sketch carries
+# a byte-identical staged copy so both firmware trees map a phone's zone to
+# the same rule and derive the same local day.
+TZRULE_CANONICAL="firmware/common/time/tz_rule.h"
+TZRULE_STAGED="$STAGED/tz_rule.h"
+if [ -f "$TZRULE_CANONICAL" ]; then
+    if [ ! -f "$TZRULE_STAGED" ]; then
+        echo "::error::Missing staged copy: $TZRULE_STAGED"
+        echo "         Run: cp $TZRULE_CANONICAL $TZRULE_STAGED"
+        drift=1
+    elif ! cmp -s "$TZRULE_CANONICAL" "$TZRULE_STAGED"; then
+        echo "::error::Drift detected: $TZRULE_STAGED differs from $TZRULE_CANONICAL"
+        echo "--- diff ($TZRULE_CANONICAL vs $TZRULE_STAGED) ---"
+        diff -u "$TZRULE_CANONICAL" "$TZRULE_STAGED" || true
+        drift=1
+    fi
+fi
+
 # ── One CSI HAL: the canary product's lib/securacv_csi is an adapter ──
 # firmware/canary/lib/securacv_csi/src/securacv_csi.cpp used to be a second
 # copy of csi_hal.cpp + csi_features.cpp (~1150 lines), kept equal to the
@@ -265,4 +285,4 @@ if [ "$drift" -ne 0 ]; then
     exit 1
 fi
 
-echo "CSI + identity + witness-store + provision-qr + gnss-time library copies are in sync; the canary CSI adapter is thin."
+echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule library copies are in sync; the canary CSI adapter is thin."

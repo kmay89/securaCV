@@ -215,6 +215,64 @@ function expectedFor(scenario) {
   };
 }
 
+// ---- normalization: sealed-log payloads -> records ------------------------
+// The kernel's GET /api/sealed-log serves each entry's stored payload bytes
+// verbatim — the SAME `payload_json` the evidence envelope carries — and the
+// tvOS Witness Wall draws its timeline from them with
+// TimelineScrub.records(fromSealedPayloads:), the Swift port of
+// normalizeEnvelope. These inputs pin that port: the kernel's own three
+// payloads (read — never written — from the kernel<->core anti-drift vector),
+// then every shape a ledger can hand a reader it did not choose: a failure
+// with and without its record_type, an event with no record_type, an
+// unknown event type, a zero bucket size, a system record that sorts first,
+// non-string zone/confidence/event_type, and the payloads that must be
+// COUNTED as unreadable rather than drawn or thrown on (null, a number, an
+// array, an out-of-range time, not JSON, no bucket, a non-string or null
+// record_type). Every event_type and failure_type here is one both
+// implementations spell alike; the formatting.humanize vectors pin the
+// humanizer itself.
+function normalizationVectors() {
+  const vector = JSON.parse(readFileSync(
+    join(repo, 'tests', 'fixtures', 'envelope', 'sealed_log_document_vector.json'), 'utf8'));
+  const tb = (t0, size) => ({ start_epoch_s: t0, size_s: size });
+  const inputs = vector.entries.map((e) => e.payload).concat([
+    JSON.stringify({ record_type: 'failure', failure_type: 'StorageFull', details: 'disk at 98%',
+      time_bucket: tb(BASE + 2 * H, 600) }),
+    JSON.stringify({ failure_type: 'sensor_disconnected', time_bucket: tb(BASE + 3 * H, 600) }),
+    JSON.stringify({ event_type: 'TamperDetected', zone_id: 'zone:gate', confidence: 0.97,
+      time_bucket: tb(BASE + 4 * H, 600) }),
+    JSON.stringify({ record_type: 'event', event_type: 'SolarFlareDetected', zone_id: 'zone:roof',
+      time_bucket: tb(BASE + 4 * H, 0) }),
+    JSON.stringify({ record_type: 'heartbeat', time_bucket: tb(BASE + 5 * H, 600) }),
+    JSON.stringify({ record_type: 'key_rotation', time_bucket: tb(BASE + 1 * H, 600) }),
+    JSON.stringify({ record_type: 'event', event_type: 'contact_state_change', zone_id: 7,
+      confidence: 'high', time_bucket: tb(BASE + 1 * H, 300) }),
+    JSON.stringify({ record_type: 'event', event_type: 7, time_bucket: tb(BASE + 6 * H, 600) }),
+    JSON.stringify({ record_type: 'event', time_bucket: tb(BASE + 6 * H, 600) }),
+    'null',
+    '42',
+    '[1,2,3]',
+    '{"record_type":"event","event_type":"BoundaryCrossingObjectLarge",'
+      + '"time_bucket":{"start_epoch_s":1e400,"size_s":600}}',
+    'not json at all',
+    JSON.stringify({ record_type: 'event', event_type: 'BoundaryCrossingObjectSmall' }),
+    JSON.stringify({ record_type: 42, time_bucket: tb(BASE, 600) }),
+    JSON.stringify({ record_type: null, event_type: 'TamperDetected', time_bucket: tb(BASE, 600) }),
+  ]);
+  const envelope = { ledgers: { sealed_events: { entries: inputs.map((p) => ({ payload_json: p })) } } };
+  const { records, unparsed } = T.normalizeEnvelope(envelope);
+  return {
+    inputs,
+    expected: {
+      unparsed,
+      records: records.map((r) => ({
+        t0: r.t0, size: r.size, kind: r.kind, label: r.label, family: r.family,
+        zone: r.zone, conf: r.conf, details: r.details,
+      })),
+    },
+  };
+}
+
 // Formatting and the small pure helpers, pinned once rather than per scenario.
 function formattingVectors() {
   const dict = JSON.parse(readFileSync(join(repo, 'spec', 'witness_dictionary.json'), 'utf8'));
@@ -247,6 +305,7 @@ const fixture = {
   layout_height: LAYOUT_HEIGHT,
   grid_min_gap: 22,
   formatting: formattingVectors(),
+  normalization: normalizationVectors(),
   scenarios: SCENARIOS.map((s) => ({
     name: s.name,
     why: s.why,

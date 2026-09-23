@@ -148,7 +148,7 @@ minutes.
 
 ### In development
 
-These designs are **render- and mesh-verified but not print-validated** — no
+These designs are **render- and mesh-checked but not print-validated** — no
 committed STLs yet (CI still renders and checks them on every change).
 Open the `.scad`, measure your hardware, and render locally; feedback and
 measurements welcome.

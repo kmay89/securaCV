@@ -32,7 +32,9 @@ canary-local/
   catalog.html          "The Case Catalog" — browse every enclosure (§4b)
   find.html             "Find your case" — three questions → one recommended case
   boards.html           "Boards" — every board + pin flags + wiring (§4g)
-  flash.html            "Flash over USB" — the real in-browser flasher
+  flash.html            "Flash over USB" — the real in-browser flasher (inside the
+                        desktop Lab app: the native bench, assets/flash-native.js,
+                        on the Flasher's espflash engine)
   wap.html              "First boot" — captive-portal setup, serial + MQTT (§4i)
   vision.html           "The Vision" — model load, aim card, tuning (§4k)
   eyes.html             "Through Canary eyes" — your webcam feeding the real firmware wasm

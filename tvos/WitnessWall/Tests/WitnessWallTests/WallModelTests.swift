@@ -27,16 +27,25 @@ private final class StubTransport: FleetTransport, @unchecked Sendable {
 }
 
 /// A transport that also serves a sealed log — the seam for proving the
-/// verify wiring (WallModel.refreshVerification) without a socket.
-private final class SealedLogTransport: FleetTransport, @unchecked Sendable {
+/// verify wiring (WallModel.refreshVerification) without a socket. It
+/// records the bearer each sealed-log request carried, and can play a hub
+/// that gates the route: with `acceptedToken` set, any other token (or
+/// none) is answered 401, exactly as the kernel answers.
+final class SealedLogTransport: FleetTransport, @unchecked Sendable {
     /// Fleet answers, consumed in order; the last one repeats.
     var fleetAnswers: [Result<String, Error>]
     let sealedLog: String?
+    var acceptedToken: String?
+    /// The token on every sealed-log request, in order (nil = none sent).
+    private(set) var tokensSent: [String?] = []
+    /// The base URL of every sealed-log request, in order.
+    private(set) var sealedLogBases: [URL] = []
     private var calls = 0
 
-    init(fleet: [Result<String, Error>], sealedLog: String?) {
+    init(fleet: [Result<String, Error>], sealedLog: String?, acceptedToken: String? = nil) {
         self.fleetAnswers = fleet
         self.sealedLog = sealedLog
+        self.acceptedToken = acceptedToken
     }
 
     func fetchFleet(from base: URL) async throws -> String {
@@ -48,10 +57,75 @@ private final class SealedLogTransport: FleetTransport, @unchecked Sendable {
         }
     }
 
-    func fetchSealedLog(from base: URL) async -> String? { sealedLog }
+    func fetchSealedLog(from base: URL, token: String?) async -> SealedLogFetch {
+        tokensSent.append(token)
+        sealedLogBases.append(base)
+        if let acceptedToken, token != acceptedToken { return .unauthorized }
+        guard let sealedLog else { return .absent }
+        return .document(sealedLog)
+    }
+}
+
+/// Pairings kept in memory — the model's pairing decisions, provable on a
+/// simulator host the Keychain may refuse (WallPairingTests covers the
+/// Keychain itself).
+final class MemoryPairingSecrets: PairingSecrets, @unchecked Sendable {
+    private var items: [String: Data] = [:]
+    func read(account: String) -> Data? { items[account] }
+    func write(_ data: Data, account: String) throws { items[account] = data }
+    func remove(account: String) { items[account] = nil }
+    var accounts: [String] { Array(items.keys).sorted() }
 }
 
 private let goodFleet = #"{"kernel":"kitchen-hub","devices":[{"name":"Front Door"},{"name":"Studio"}]}"#
+
+/// Pairings kept in memory by a store that refuses every write after the
+/// first `allowedWrites` — the Keychain saying no to a re-pair.
+final class RefusingPairingSecrets: PairingSecrets, @unchecked Sendable {
+    private let inner = MemoryPairingSecrets()
+    private var allowedWrites: Int
+    init(allowedWrites: Int) { self.allowedWrites = allowedWrites }
+    func read(account: String) -> Data? { inner.read(account: account) }
+    func write(_ data: Data, account: String) throws {
+        guard allowedWrites > 0 else { throw PairingError.keychain(-25_299) }
+        allowedWrites -= 1
+        try inner.write(data, account: account)
+    }
+    func remove(account: String) { inner.remove(account: account) }
+}
+
+/// A pairing receipt in `witness_api mint-viewer-token`'s shape.
+func receiptJSON(token: String, key: String, baseURL: String? = nil) -> String {
+    var fields = [
+        #""kernel":"witness-kernel""#,
+        #""sealed_log_token":"\#(token)""#,
+        #""verifying_key":"\#(key)""#,
+        #""token_id":"\#(token.prefix(8))""#,
+    ]
+    if let baseURL { fields.append(#""base_url":"\#(baseURL)""#) }
+    return "{" + fields.joined(separator: ",") + "}"
+}
+
+/// The kernel's own sealed-log document
+/// (tests/fixtures/envelope/sealed_log_document_vector.json): a log the core
+/// verifies, under a key the kernel really signed with, whose payloads carry
+/// the time buckets the timeline draws. Read from the checkout through
+/// #filePath — the iPhone tests' idiom — and skipped, never failed, when the
+/// checkout is not visible from the test host; witness-core's vectors test
+/// stays the durable gate for the document itself.
+func sharedSealedLogVector() throws -> String {
+    let repoRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()   // WitnessWallTests
+        .deletingLastPathComponent()   // Tests
+        .deletingLastPathComponent()   // WitnessWall
+        .deletingLastPathComponent()   // tvos
+        .deletingLastPathComponent()   // repo root
+    let url = repoRoot.appendingPathComponent("tests/fixtures/envelope/sealed_log_document_vector.json")
+    try XCTSkipUnless(FileManager.default.fileExists(atPath: url.path),
+                      "repo checkout not visible from the test host; " +
+                      "tvos/witness-core/tests/vectors.rs remains the gate for this document")
+    return try String(contentsOf: url, encoding: .utf8)
+}
 
 @MainActor
 final class WallModelTests: XCTestCase {
@@ -129,11 +203,12 @@ final class WallModelTests: XCTestCase {
         let porch = #"{"devices":[{"name":"Porch","online":true}]}"#
         let bedroom = #"{"devices":[{"name":"Bedroom 7\"","online":true}]}"#
         let defaults = scratchDefaults()
-        // Both well-known candidates fail (no hub), then each announced
-        // Canary answers for itself.
-        let m = model([
-            .failure(FleetError.unreachable("no hub")),
-            .failure(FleetError.unreachable("no wap")),
+        // Every well-known candidate fails (no hub, no WAP), then each
+        // announced Canary answers for itself.
+        let noHub: [Result<String, Error>] = WallModel.wellKnownCandidates.map { _ in
+            .failure(FleetError.unreachable("no hub"))
+        }
+        let m = model(noHub + [
             .success(porch),
             .success(bedroom),
         ], defaults: defaults, discover: { _ in
@@ -532,6 +607,236 @@ final class WallModelTests: XCTestCase {
             return XCTFail("expected .stale, got \(m.state)")
         }
         XCTAssertNil(m.report)
+    }
+
+    // MARK: Pairing — the viewer token goes where it was paired, and
+    // "Verified" means the pinned key.
+
+    private let viewerToken = String(repeating: "7", count: 64)
+    private let otherKey = String(repeating: "1", count: 64)
+
+    /// A single-source model over a sealed-log transport, with pairings in
+    /// memory (the model's decisions, not the Keychain's, are under test).
+    private func pairedModel(_ transport: SealedLogTransport,
+                             secrets: MemoryPairingSecrets = MemoryPairingSecrets(),
+                             sources: [String] = ["canary.local:8099"]) -> WallModel {
+        let defaults = scratchDefaults()
+        defaults.set(sources, forKey: "SecuraCVWallSources")
+        return WallModel(transport: transport, defaults: defaults, pollInterval: 0.01,
+                         pairings: PairedSourceStore(secrets: secrets), discover: { _ in [] })
+    }
+
+    func testAnUnpairedWallAsksWithoutATokenAndClaimsNothingPinned() async {
+        let transport = SealedLogTransport(fleet: [.success(goodFleet)], sealedLog: tamperedSealedLog)
+        let m = pairedModel(transport)
+        await m.refreshOnce()
+
+        XCTAssertEqual(transport.tokensSent, [nil], "no pairing, no bearer")
+        XCTAssertNotNil(m.report)
+        XCTAssertEqual(m.standing, .unpaired,
+                       "a walk against the log's own key is never a pinned claim")
+        XCTAssertNil(m.pairing)
+    }
+
+    func testAnUnpairedWallThatTheKernelRefusesHasNoVerdictAtAll() async {
+        // Today's kernel: the route is gated and an unpaired TV holds no
+        // token. That is the honest "no verdict" — not a refused pairing.
+        let transport = SealedLogTransport(fleet: [.success(goodFleet)], sealedLog: tamperedSealedLog,
+                                           acceptedToken: viewerToken)
+        let m = pairedModel(transport)
+        await m.refreshOnce()
+
+        XCTAssertNil(m.report)
+        XCTAssertEqual(m.standing, .none)
+    }
+
+    func testPairingSendsTheTokenToThatSourceAndNoOther() async throws {
+        let secrets = MemoryPairingSecrets()
+        let transport = SealedLogTransport(fleet: [.success(goodFleet)], sealedLog: tamperedSealedLog)
+        let m = pairedModel(transport, secrets: secrets)
+        XCTAssertNil(m.pair(receiptText: receiptJSON(token: viewerToken, key: otherKey)))
+        XCTAssertEqual(m.pairing?.verifyingKey, otherKey)
+        XCTAssertEqual(secrets.accounts, ["http://canary.local:8099"])
+
+        await m.refreshOnce()
+        XCTAssertEqual(transport.tokensSent, [viewerToken])
+
+        // Another source on the same TV — same Keychain, no pairing there —
+        // is asked without the token.
+        let elsewhere = SealedLogTransport(fleet: [.success(goodFleet)], sealedLog: tamperedSealedLog)
+        let other = pairedModel(elsewhere, secrets: secrets, sources: ["192.168.1.20:8799"])
+        await other.refreshOnce()
+        XCTAssertEqual(elsewhere.tokensSent, [nil], "a viewer token is never sent to a source it was not paired with")
+        XCTAssertNil(other.pairing)
+    }
+
+    func testAPairedWallWhoseTokenIsRefusedSaysSoAndCarriesNoVerdict() async {
+        let transport = SealedLogTransport(fleet: [.success(goodFleet)], sealedLog: tamperedSealedLog,
+                                           acceptedToken: String(repeating: "9", count: 64))
+        let m = pairedModel(transport)
+        XCTAssertNil(m.pair(receiptText: receiptJSON(token: viewerToken, key: otherKey)))
+        await m.refreshOnce()
+
+        XCTAssertEqual(transport.tokensSent, [viewerToken])
+        XCTAssertNil(m.report, "a refused read is no walk at all")
+        XCTAssertEqual(m.standing, .unauthorized, "a revoked pairing must never read as the calm self-report")
+    }
+
+    func testARefusingSourceIsAskedOnceNotEveryCycle() async {
+        // The kernel counts a refused (or missing) credential toward a
+        // per-address lockout that also closes /api/fleet: a Wall knocking
+        // every ten seconds would lock itself out of its own roll-call.
+        let transport = SealedLogTransport(fleet: [.success(goodFleet)], sealedLog: tamperedSealedLog,
+                                           acceptedToken: String(repeating: "9", count: 64))
+        let m = pairedModel(transport)
+        await m.refreshOnce()
+        await m.refreshOnce()
+        await m.refreshOnce()
+        XCTAssertEqual(transport.tokensSent.count, 1, "unpaired and refused: asked once")
+        XCTAssertEqual(m.standing, .none)
+
+        XCTAssertNil(m.pair(receiptText: receiptJSON(token: viewerToken, key: otherKey)))
+        await m.refreshOnce()
+        await m.refreshOnce()
+        XCTAssertEqual(transport.tokensSent, [nil, viewerToken],
+                       "a new pairing earns one new knock, and a refusal ends it again")
+        XCTAssertEqual(m.standing, .unauthorized, "the refusal is still said, not forgotten")
+
+        transport.acceptedToken = viewerToken
+        m.forgetPairing()
+        XCTAssertNil(m.pair(receiptText: receiptJSON(token: viewerToken, key: otherKey)))
+        await m.refreshOnce()
+        XCTAssertEqual(transport.tokensSent.last, .some(viewerToken))
+        XCTAssertEqual(m.standing, .keyChanged(pinned: otherKey,
+                                               served: "5866666666666666666666666666666666666666666666666666666666666666"))
+    }
+
+    func testThePinnedKeySigningAPassingLogIsTheOneVerifiedStanding() async throws {
+        let vector = try sharedSealedLogVector()
+        let key = try XCTUnwrap(VerificationStanding.servedKey(in: vector))
+        let transport = SealedLogTransport(fleet: [.success(goodFleet)], sealedLog: vector,
+                                           acceptedToken: viewerToken)
+        let m = pairedModel(transport)
+        XCTAssertNil(m.pair(receiptText: receiptJSON(token: viewerToken, key: key)))
+        await m.refreshOnce()
+
+        let report = try XCTUnwrap(m.report)
+        XCTAssertTrue(report.ok, "the kernel's own document verifies: \(report.message)")
+        XCTAssertEqual(report.verified, 3)
+        XCTAssertEqual(m.standing, .verified)
+    }
+
+    func testThePinnedKeyOverAnEmptyTailIsNeverVerified() async throws {
+        // The verifying key is public, and the Wall probes canary.local over
+        // cleartext HTTP: anything that answers there can serve the pinned
+        // key over an empty entry list, which walks clean with ZERO
+        // signatures checked. So can a genuine hub just after a checkpoint.
+        // Neither is "Verified", and neither lights the bird's snap.
+        let pinned = "5866666666666666666666666666666666666666666666666666666666666666"
+        let empty = #"{"verifying_key":"\#(pinned)","entries":[]}"#
+        let transport = SealedLogTransport(fleet: [.success(goodFleet)], sealedLog: empty,
+                                           acceptedToken: viewerToken)
+        let m = pairedModel(transport)
+        XCTAssertNil(m.pair(receiptText: receiptJSON(token: viewerToken, key: pinned)))
+        await m.refreshOnce()
+
+        let report = try XCTUnwrap(m.report, "the walk ran and is kept")
+        XCTAssertTrue(report.ok, report.message)
+        XCTAssertEqual(report.verified, 0)
+        XCTAssertEqual(m.standing, .pinnedNothingToCheck)
+        XCTAssertNotEqual(m.standing, .verified)
+        XCTAssertTrue(m.timeline.isEmpty)
+        guard case .live(let snapshot, _) = m.state else {
+            return XCTFail("expected .live, got \(m.state)")
+        }
+        XCTAssertFalse(WallCanary.inputs(fleet: snapshot, wallDown: false,
+                                         report: m.report, standing: m.standing).allVerified,
+                       "a walk that checked nothing never earns the full-verified snap")
+    }
+
+    func testAnotherKeyThanThePinnedOneIsAnAlarmEvenWhenItsWalkPasses() async throws {
+        // The log verifies — under a key this TV was never told to trust.
+        // That is the one passing walk that must alarm, not reassure.
+        let vector = try sharedSealedLogVector()
+        let served = try XCTUnwrap(VerificationStanding.servedKey(in: vector))
+        let transport = SealedLogTransport(fleet: [.success(goodFleet)], sealedLog: vector)
+        let m = pairedModel(transport)
+        XCTAssertNil(m.pair(receiptText: receiptJSON(token: viewerToken, key: otherKey)))
+        await m.refreshOnce()
+
+        XCTAssertEqual(m.report?.ok, true, "the walk itself is kept, not hidden")
+        XCTAssertEqual(m.standing, .keyChanged(pinned: otherKey, served: served))
+        XCTAssertTrue(m.standing.isAlarm)
+    }
+
+    func testForgettingDropsTheTokenAndThePinTogether() async {
+        let secrets = MemoryPairingSecrets()
+        let transport = SealedLogTransport(fleet: [.success(goodFleet)], sealedLog: tamperedSealedLog)
+        let m = pairedModel(transport, secrets: secrets)
+        XCTAssertNil(m.pair(receiptText: receiptJSON(token: viewerToken, key: otherKey)))
+        await m.refreshOnce()
+
+        m.forgetPairing()
+        XCTAssertNil(m.pairing)
+        XCTAssertEqual(secrets.accounts, [], "one item held both; nothing is left of either")
+        XCTAssertEqual(m.standing, .none)
+        XCTAssertNil(m.report)
+
+        await m.refreshOnce()
+        XCTAssertEqual(transport.tokensSent.last, .some(nil), "a forgotten pairing sends no token")
+        XCTAssertEqual(m.standing, .unpaired)
+    }
+
+    func testARePairTheKeychainRefusesKeepsThePairingItWouldHaveReplaced() async {
+        // "Nothing was saved" must stay true of a refused RE-pair: the old
+        // token and pin still stand, and the next walk still uses them.
+        let secrets = RefusingPairingSecrets(allowedWrites: 1)
+        let transport = SealedLogTransport(fleet: [.success(goodFleet)], sealedLog: tamperedSealedLog)
+        let defaults = scratchDefaults()
+        defaults.set(["canary.local:8099"], forKey: "SecuraCVWallSources")
+        let m = WallModel(transport: transport, defaults: defaults, pollInterval: 0.01,
+                          pairings: PairedSourceStore(secrets: secrets), discover: { _ in [] })
+        XCTAssertNil(m.pair(receiptText: receiptJSON(token: viewerToken, key: otherKey)))
+
+        let newToken = String(repeating: "8", count: 64)
+        let refused = m.pair(receiptText: receiptJSON(token: newToken, key: String(repeating: "2", count: 64)))
+        XCTAssertEqual(refused, PairingError.keychain(-25_299).localizedDescription)
+        XCTAssertEqual(m.pairing?.token, viewerToken, "the pairing it would have replaced still stands")
+        XCTAssertEqual(m.pairing?.verifyingKey, otherKey)
+        XCTAssertEqual(PairedSourceStore(secrets: secrets).pairing(for: "canary.local:8099")?.token, viewerToken)
+
+        await m.refreshOnce()
+        XCTAssertEqual(transport.tokensSent, [viewerToken])
+    }
+
+    func testAReceiptThatCannotPairSavesNothing() {
+        let secrets = MemoryPairingSecrets()
+        let m = pairedModel(SealedLogTransport(fleet: [.success(goodFleet)], sealedLog: nil), secrets: secrets)
+
+        XCTAssertNotNil(m.pair(receiptText: "not a receipt"))
+        XCTAssertNotNil(m.pair(receiptText: #"{"sealed_log_token":"\#(viewerToken)"}"#),
+                        "no verifying key, nothing to pin — refused")
+        XCTAssertEqual(secrets.accounts, [])
+        XCTAssertNil(m.pairing)
+    }
+
+    func testPairingNeedsOneSourceUnlessTheReceiptNamesIt() {
+        let secrets = MemoryPairingSecrets()
+        let m = pairedModel(SealedLogTransport(fleet: [.success(goodFleet)], sealedLog: nil),
+                            secrets: secrets, sources: ["a.local", "b.local"])
+
+        let problem = m.pair(receiptText: receiptJSON(token: viewerToken, key: otherKey))
+        XCTAssertEqual(problem, PairingError.noSingleSource.localizedDescription,
+                       "one pin cannot vouch for a merged wall")
+        XCTAssertEqual(secrets.accounts, [])
+
+        // A receipt that names its hub pairs it and points the Wall there.
+        XCTAssertNil(m.pair(receiptText: receiptJSON(token: viewerToken, key: otherKey,
+                                                     baseURL: "http://192.168.1.20:8799")))
+        m.stop()
+        XCTAssertEqual(m.sources, ["http://192.168.1.20:8799"])
+        XCTAssertEqual(secrets.accounts, ["http://192.168.1.20:8799"])
+        XCTAssertEqual(m.pairing?.verifyingKey, otherKey)
     }
 
     func testAGoodAddressIsPersistedSoAPowerCutHealsItself() {

@@ -190,6 +190,26 @@ final class TimelineScrubTests: XCTestCase {
         }
     }
 
+    /// The kernel's sealed-log payloads -> records: the Swift twin of
+    /// normalizeEnvelope (the bridge the tvOS Wall draws its timeline with),
+    /// over the fixture's inputs — the kernel's own three payloads plus every
+    /// hostile and system shape a ledger can carry.
+    func testSealedPayloadNormalizationMatchesTheFixture() throws {
+        let fx = try parityFixture()
+        let n = try XCTUnwrap(fx["normalization"] as? [String: Any], "fixture must carry normalization")
+        let inputs = try XCTUnwrap(n["inputs"] as? [String])
+        let expected = try XCTUnwrap(n["expected"] as? [String: Any])
+        let want = try records(from: try XCTUnwrap(expected["records"] as? [[String: Any]]))
+
+        let got = TimelineScrub.records(fromSealedPayloads: inputs)
+
+        XCTAssertEqual(got.unparsed, try XCTUnwrap(expected["unparsed"] as? Int), "unparsed count")
+        XCTAssertEqual(got.records.count, want.count, "record count")
+        for (i, pair) in zip(got.records, want).enumerated() {
+            XCTAssertEqual(pair.0, pair.1, "record \(i)")
+        }
+    }
+
     func testFormattingMatchesTheGeneratedFixture() throws {
         let fx = try parityFixture()
         let f = try XCTUnwrap(fx["formatting"] as? [String: Any])

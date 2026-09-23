@@ -120,11 +120,14 @@ jobs:
   #                        build_matrix.json lane (lint_build_matrix.py
   #                        refuses one). canary-sentinel carries it until its
   #                        bench checklist is green.
-  #   pip_extras         — extra pip packages (e.g. canary needs
-  #                        intelhex: esptool 4.11.0 bundled by the
-  #                        official espressif32 7.x platform imports it
-  #                        without declaring it, so bootloader.bin
-  #                        generation dies on a clean runner without it)
+  #   pip_extras         — extra pip packages (e.g. canary carries
+  #                        intelhex: a leftover from when its [env] floated
+  #                        on espressif32 ^7.x, whose bundled esptool 4.11.0
+  #                        imports it without declaring it and so killed
+  #                        bootloader.bin generation on a clean runner.
+  #                        Since 2026-09-22 canary pins 6.9.0 exactly
+  #                        (firmware/PLATFORMS.md); the extra is harmless
+  #                        and stays until a green run shows it unneeded)
   #   core_dir_groups    — map of env → group label; every env with the same
   #                        label shares ONE PLATFORMIO_CORE_DIR
   #                        (.pio-core-<label>), separate from the default.
@@ -310,6 +313,20 @@ jobs:
             done < <(jq -c '.size_guards // [] | .[]' <<< "$FLAVOR_JSON")
           done
 
+      - name: Compile the enclosure tamper contact (canary dev, compile-only)
+        # FEATURE_TAMPER_GPIO is 0 in every shipped canary env until the
+        # reed/hall pin is bench-validated, so no env above compiles the
+        # contact glue (main.cpp, csi_modules_integration.cpp). This
+        # rebuilds [env:dev] with the flag on and the touch pad moved to D4
+        # (-DTOUCH_PIN_NUM=5), exactly as canary_config.h's pin sanity
+        # demands. A compile gate only: nothing ships from it. [env:dev]
+        # sets no -DFEATURE_TAMPER_GPIO of its own (canary_config.h's
+        # default 0 applies), so the flag here is the only definition.
+        if: matrix.flavor.name == 'canary'
+        env:
+          PLATFORMIO_BUILD_FLAGS: -DVALIDATION_BUILD=1 -DFEATURE_TAMPER_GPIO=1 -DTOUCH_PIN_NUM=5
+        run: pio run -e dev
+
   pio-check:
     name: Static Analysis (${{ matrix.flavor.name }})
     needs: flavors
@@ -423,18 +440,21 @@ jobs:
           fi
           echo "canary-wap size: $SIZE / $SLOT bytes ($((SIZE * 100 / SLOT))% of OTA slot)"
 
-      - name: Compile firmware (Beacon channel gate)
+      - name: Compile firmware (Beacon channel + tamper contact gate)
         run: |
           # FEATURE_BEACON_CHANNEL is OFF by default, which previously meant
           # beacon_channel.cpp (and every #if FEATURE_BEACON_CHANNEL block in
           # the sketch) was never compile-verified in CI. This second pass
           # forces the flag ON so the Beacon scaffold — including its
           # append-only SD audit-log path (AGENTS.md Beacon invariant 9) —
-          # can't silently rot.
+          # can't silently rot. FEATURE_TAMPER_GPIO rides the same pass for
+          # the same reason: the enclosure contact (pinMode, the debounced
+          # loop feed, the live selftest probe) is off in every shipped
+          # profile until its pin is bench-validated.
           arduino-cli compile \
             --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi \
             --libraries firmware/common \
-            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DFEATURE_BEACON_CHANNEL=1 -DBOARD_HAS_PSRAM" \
+            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DFEATURE_BEACON_CHANNEL=1 -DFEATURE_TAMPER_GPIO=1 -DBOARD_HAS_PSRAM" \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
       - name: Compile firmware (DEV profile gate)
@@ -755,6 +775,16 @@ jobs:
           chmod +x firmware/scripts/check_mqtt_transport_sync.sh
           firmware/scripts/check_mqtt_transport_sync.sh
 
+      - name: Verify ap_security_policy.h stays identical in common/ and the canary-wap sketch
+        # The SoftAP / STA security request (WPA2/WPA3 transition + PMF
+        # capable, WPA2 fallback with a named reason — F16) lives once in
+        # common/network and is host-tested there; the wap sketch carries a
+        # byte-identical staged copy. Drift here means the two products put
+        # different security on the same setup network.
+        run: |
+          chmod +x firmware/scripts/check_ap_security_sync.sh
+          firmware/scripts/check_ap_security_sync.sh
+
       - name: Verify on-glass text stays inside the display font's glyph range
         # LVGL's built-in Montserrat covers 0x20-0x7F, 0xB0 and U+2022 only, and
         # draws a hollow box for anything else — no build error, and the browser
@@ -1069,14 +1099,24 @@ jobs:
             grep -q "ALL .* PASSED" "/tmp/host_tests/test_$name.log"
           }
 
-          # securacv_mesh suites — 7 of them now (mesh_state added with
-          # opera_secret NVS persistence). Each test links against
-          # every mesh src TU so internal symbols resolve.
-          for t in mesh_crypto mesh_envelope mesh_pairing mesh_session \
-                   mesh_transport mesh_beacon mesh_state mesh_channel_hop \
-                   mesh_hub_election; do
-            run_test $t \
-              firmware/canary/lib/securacv_mesh/test_${t}.cpp \
+          # securacv_mesh suites. Each test links against every mesh src
+          # TU so internal symbols resolve. The list is checked against
+          # the directory below, so a new test_mesh_*.cpp that is not
+          # added here fails the job instead of silently never running
+          # (the old "7 of them now" comment had drifted to 9).
+          MESH_TESTS="mesh_crypto mesh_envelope mesh_pairing mesh_session
+                      mesh_transport mesh_beacon mesh_state mesh_channel_hop
+                      mesh_hub_election mesh_alert mesh_rekey"
+          for f in firmware/canary/lib/securacv_mesh/test_mesh_*.cpp; do
+            n=$(basename "$f" .cpp); n=${n#test_}
+            case " ${MESH_TESTS//$'\n'/ } " in
+              *" $n "*) ;;
+              *) echo "::error file=$f::$f is not in MESH_TESTS — add it so CI runs it"; exit 1 ;;
+            esac
+          done
+          for t in $MESH_TESTS; do
+            run_test "$t" \
+              "firmware/canary/lib/securacv_mesh/test_${t}.cpp" \
               $MESH_SRC/*.cpp \
               -I $MESH_SRC
           done
@@ -1112,6 +1152,32 @@ jobs:
             $COMMON_SRC/csi_bundler.cpp \
             $COMMON_SRC/csi_witness_payload.cpp \
             -I $BLE_SRC -I $MESH_SRC -I $COMMON_SRC
+
+          # ble_scout_pairing (repo sweep F27) — the proximity pairing
+          # window FSM plus its path through ble_scout_on_advert (first
+          # strong unpaired advert pairs, single-shot, no MAC in the
+          # snapshot, dirty until the loop tick), so it links the same
+          # Scout + chokepoint set as ble_scout_broadcast.
+          run_test ble_scout_pairing \
+            firmware/canary/lib/securacv_ble_scan/test_ble_scout_pairing.cpp \
+            $BLE_SRC/ble_scan.cpp \
+            $BLE_SRC/ble_scout.cpp \
+            $BLE_SRC/ble_scout_state.cpp \
+            $BLE_SRC/ble_scout_key.cpp \
+            $MESH_SRC/mesh_crypto.cpp \
+            $COMMON_SRC/csi_event.cpp \
+            $COMMON_SRC/csi_module.cpp \
+            $COMMON_SRC/csi_bundler.cpp \
+            $COMMON_SRC/csi_witness_payload.cpp \
+            -I $BLE_SRC -I $MESH_SRC -I $COMMON_SRC
+
+          # ble_scout_registry_store — the versioned NVS blob the paired
+          # registry persists as (round trip, all-or-nothing refusal).
+          run_test ble_scout_registry_store \
+            firmware/canary/lib/securacv_ble_scan/test_ble_scout_registry_store.cpp \
+            $BLE_SRC/ble_scan.cpp \
+            $MESH_SRC/mesh_crypto.cpp \
+            -I $BLE_SRC -I $MESH_SRC
 
           # thermal_wd — standalone: the module compiles against
           # thermal_wd_host_stubs.h under CSI_TEST_HOST_BUILD and the
@@ -1799,6 +1865,21 @@ jobs:
         run: |
           python3 firmware/projects/canary-wap/tests_host/check_route_security.py
 
+      - name: Check canary (PIO) route security (every route gated or allowlisted)
+        # The canary tree's sibling of the step above, same matcher: every
+        # route registerHttpHandlers() adds (the captive-probe loop
+        # included) must reach auth_gate / auth_check / auth_check_optional
+        # / provisioning_gate_take — in an if/return, not ignored, and not
+        # below an unconditional return — or sit on the script's documented
+        # public allowlist. The two HTML pages are public shells whose
+        # bearer-token injection is decided per request by
+        # provisioning_gate.h's page_token_decide (F20 gap #11); the script
+        # fails any page call that does not pass page_token_inject(req), a
+        # registration inside registerHttpHandlers that does not use its
+        # `server` parameter, and a table larger than kRouteTableSlots.
+        run: |
+          python3 firmware/canary/scripts/check_route_security.py
+
       - name: Check canary-wap handler-table budget (no silent route drops)
         # esp_http_server drops registrations past max_uri_handlers and the
         # sketch ignores the error, so an under-sized budget 404s whole API
@@ -1810,8 +1891,9 @@ jobs:
 
       - name: Build + run canary-wap project host tests
         # The canary-wap project keeps its own host-test Makefile (mesh
-        # coexistence, chirp/beacon invariants, device signature, the
-        # captive-portal DNS response builder, the BLE OTA header policy).
+        # coexistence, the Opera pairing-frame classifier, chirp/beacon
+        # invariants, device signature, the captive-portal DNS response
+        # builder, the BLE OTA header policy).
         # Its `run` target builds and
         # runs every suite; each test exits non-zero on failure, so make's
         # exit code gates the job. Needs libcrypto for the beacon tamper

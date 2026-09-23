@@ -16,7 +16,7 @@
   ✓ Hash chain with domain separation (tamper-evident)
   ✓ Ed25519 signatures on every record
   ✓ Crypto self-test at boot + periodic verification
-  ✓ Time coarsening (5-second buckets, no precise timestamps)
+  ✓ Time coarsening (ten-minute buckets, no precise timestamps)
   ✓ Chain state persistence (survives power loss)
   ✓ Boot attestation record (identity proof on first record)
   ✓ Watchdog timer (hardware reset on hang)
@@ -128,6 +128,7 @@
 #include "health_log.h"
 #include "sd_storage.h"
 #include "gnss_time.h"  // NMEA UTC date/time -> validated Unix epoch (GPS-derived system clock)
+#include "tz_rule.h"    // household time zone: local minute-of-day for the CSI offset (F28)
 #include "csi_event.h"  // csi_event_set_clock_offset_minutes — wall-clock bucket alignment
 #include "nvs_store.h"
 #include "api_auth.h"
@@ -158,6 +159,7 @@
 #include "companion_pwa.h"
 #include "csi_integration.h"     // Boot the CSI library + HTTP endpoints
 #include "tamper_events_module.h" // system.integrity watcher (fed from loop())
+#include "contact_tamper.h"      // enclosure contact debounce (FEATURE_TAMPER_GPIO)
 #include "csi_mqtt.h"            // Optional MQTT bridge for HA integration
 #include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
 #include "csi_event_log.h"       // SD-backed event persistence + MQTT backfill
@@ -166,6 +168,9 @@
 #include "usb_evidence_drive.h" // USB evidence drive / update drop-zone (opt-in build)
 #include "setup_page_html.h"     // Static captive-portal "open canary.local" page
 #include "captive_probe.h"       // Pure per-platform connectivity-probe response policy
+#include "ap_security_policy.h"  // F16: SoftAP WPA2/WPA3 + PMF request (staged copy of firmware/common/network/, check_ap_security_sync.sh)
+#include <esp_wifi.h>             // F16: esp_wifi_get/set_config for the SoftAP security request
+#include <sdkconfig.h>            // F16: CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT (is SoftAP SAE in this core?)
 extern "C" {
 #include "qrcodegen.h"           // Vendored Nayuki QR encoder, MIT
 }
@@ -183,6 +188,7 @@ extern "C" {
 #include "hardware_state.h"
 #include "selftest_api.h"        // GET /api/selftest — wizard pre-flight aggregator
 #include "help_qr_logic.h"       // GET /api/help-qr — verdict → Help Desk URL (pure, host-tested)
+#include "status_tier_logic.h"   // /api/status status_tier — Good / Needs attention / Action required (pure, host-tested)
 #include "data_mgmt_api.h"      // SD rotation, chain backup/restore, integrity verify
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -395,6 +401,13 @@ static const uint32_t SD_SPI_SLOW = 1000000;
 
 static const int   AP_CHANNEL          = 1;
 static const int   AP_MAX_CLIENTS      = 1;  // Hardened: max 1 client for security
+// F16: ask the driver for WPA2/WPA3 transition + PMF-capable on the SoftAP
+// (ap_security_policy.h). Runtime fallback: a core without SoftAP SAE, or a
+// driver refusal, keeps WPA2-PSK, logs why, and /api/wifi + /api/device-info
+// report what is on the air as ap_auth.
+#ifndef CANARY_AP_WPA3_TRANSITION
+#define CANARY_AP_WPA3_TRANSITION 1
+#endif
 
 // Once the STA has held its association to the home network for this long, the
 // management SoftAP is torn down so the single 2.4 GHz radio runs STA + BLE —
@@ -441,7 +454,13 @@ static const uint32_t AP_DROP_GRACE_MS = 120000;
 // ════════════════════════════════════════════════════════════════════════════
 
 static const uint32_t RECORD_INTERVAL_MS   = 1000;    // Record emission rate (default)
-static const uint32_t TIME_BUCKET_MS       = 5000;    // Time coarsening bucket — the PRIVACY FLOOR (Invariant III)
+static const uint32_t TIME_BUCKET_MS       = config_logic::kTimeBucketFloorMs;
+                                                      // Time coarsening bucket — the PRIVACY FLOOR (Invariant III):
+                                                      // the ten-minute grid (600 000 ms), the same bucket canary-sense
+                                                      // chains and the kernel defaults to (600 s). Widened from 5 s on
+                                                      // 2026-09-22. Defined in config_logic.h so the host test pins it.
+static_assert(TIME_BUCKET_MS >= 600000u && TIME_BUCKET_MS % 600000u == 0,
+              "TIME_BUCKET_MS must be a whole multiple of the ten-minute grid (Invariant III)");
 static const uint32_t FIX_LOST_TIMEOUT_MS  = 3000;    // GPS fix timeout
 
 // ── Operator-configurable runtime settings (Device tab "Save Configuration",
@@ -589,6 +608,11 @@ struct WiFiStatus {
   uint32_t last_connect_ms;
   uint32_t connected_since_ms;
   char last_fail_reason[48];  // Human-readable reason for the most recent connect failure
+  // F16: what the SoftAP actually came up with ("wpa2-wpa3" / "wpa2"; "" before
+  // the first bring-up) and why; whether the STA link is PMF-capable.
+  char ap_auth[12];
+  const char* ap_auth_reason;
+  bool sta_pmf;
 };
 
 struct GnssFix {
@@ -864,6 +888,14 @@ static const uint32_t WIFI_RECONNECT_INTERVAL_MS = 30000;
 // (SKIP) apart from "init ran and the stack genuinely failed" (FAIL). Read
 // by selftest_api.h's probe_bluetooth; non-static so its extern resolves.
 volatile bool g_ble_init_attempted = false;
+
+#if FEATURE_TAMPER_GPIO
+// Enclosure tamper contact on TAMPER_PIN_DEFAULT (build_config.h): the
+// debounced state loop() feeds tamper_events_watch_contact(). Read by
+// selftest_api.h's probe_tamper (the live line); non-static so its extern
+// resolves.
+contact_tamper::State g_tamper_contact = contact_tamper::kInitial;
+#endif
 
 // The ENTIRE Bluetooth/BLE bring-up (stack init + radio activity) is deferred
 // out of the provisioning join window and out of setup() (see
@@ -1141,15 +1173,17 @@ static bool note_wall_clock(uint32_t unix_s);
 // the wall clock. The chokepoint coarsens timestamps into 10-minute day
 // buckets from monotonic uptime plus this offset; without it the "day"
 // started at boot, not midnight, so buckets and quiet hours were
-// session-relative. Derived from UTC — the device has no timezone setting
-// (repo sweep F28), so bucket 0 is UTC midnight, not the household's.
-// Recomputed on every pass with a set clock: cheap, keeps the offset
-// drift-corrected alongside the clock itself, and stays aligned across
-// millis() rollover because the offset and csi_event's own millis()-based
-// consumer wrap together. Loop task only — the offset is loop-owned
-// (csi_event.h).
+// session-relative. Derived from LOCAL wall time: the household time zone
+// (repo sweep F28 — csi_integration::set_timezone, seeded at provisioning)
+// when one is set, so bucket 0 and the quiet-hours window the dashboard
+// collects in local time are the household's midnight; UTC, exactly as
+// before, while none is. Recomputed on every pass with a set clock: cheap,
+// keeps the offset drift-corrected alongside the clock itself, carries DST
+// and zone changes without a flag, and stays aligned across millis()
+// rollover because the offset and csi_event's own millis()-based consumer
+// wrap together. Loop task only — the offset is loop-owned (csi_event.h).
 static void update_csi_clock_offset(time_t wall_now) {
-  const int32_t wall_min = (int32_t)((wall_now % 86400) / 60);
+  const int32_t wall_min = tz_rule::local_minute_of_day(wall_now);
   const int32_t mono_min = (int32_t)(millis() / 60000UL);
   csi_event_set_clock_offset_minutes(wall_min - mono_min);
 }
@@ -3408,6 +3442,24 @@ static esp_err_t handle_status(httpd_req_t* req) {
   doc["logs_stored"] = g_health.logs_stored;
   doc["unacked_count"] = g_health.logs_unacked;
 
+  // The headline dashboard's three-tier strip (ENTERPRISE_READINESS_TODO §2):
+  // one worst-first verdict + one reason CODE; the dashboard owns the words
+  // (COPY.tier). A missing card is not a fault, an erroring one is.
+  {
+    status_tier_logic::Inputs tin;
+    tin.crypto_healthy   = g_health.crypto_healthy;
+    tin.verify_failures  = g_health.verify_failures;
+    tin.safe_mode        = g_hw.safe_mode;
+    tin.sd_card_erroring = (g_hw.sd_state == SD_ERROR);
+    tin.last_reset_crash = g_hw.last_reset_was_crash;
+    tin.min_free_heap    = g_health.min_heap;
+    tin.low_heap_floor   = sys_monitor::HEAP_WARN_BYTES;
+    tin.logs_unacked     = g_health.logs_unacked;
+    const status_tier_logic::Verdict tv = status_tier_logic::evaluate(tin);
+    doc["status_tier"]   = tv.tier_code;
+    doc["status_reason"] = tv.reason_code;
+  }
+
   // GPS position data (safe even if GPS absent - returns zeros/false).
   // We surface the motion-filtered values here so a stationary mounted
   // device shows a stable lat/lon and 0 m/s, instead of the raw L76K jitter.
@@ -4190,7 +4242,7 @@ static void config_load_runtime() {
 // optional; only provided fields change. All values are clamped before use
 // AND before persistence, so NVS never holds an out-of-envelope value. The
 // time bucket is clamped to at least its compile-time floor — event timing is
-// never finer than the Invariant III minimum (5000 ms). The operator owns the
+// never finer than the Invariant III minimum (600 000 ms, ten minutes). The operator owns the
 // device and may retune it above that floor in either direction (Invariant
 // IV/sovereignty); the floor is the privacy guarantee, not a one-way ratchet.
 static esp_err_t handle_config_post(httpd_req_t* req) {
@@ -5873,6 +5925,10 @@ static esp_err_t handle_wifi_status(httpd_req_t* req) {
   doc["ap_only"] = g_wifi_ap_only;
   doc["connect_attempts"] = g_wifi_status.connect_attempts;
   doc["fail_reason"] = g_wifi_status.last_fail_reason;
+  // F16: what the SoftAP is actually broadcasting, and why.
+  doc["ap_auth"] = g_wifi_status.ap_auth[0] ? g_wifi_status.ap_auth : "unknown";
+  doc["ap_auth_reason"] = g_wifi_status.ap_auth_reason ? g_wifi_status.ap_auth_reason : "";
+  doc["sta_pmf"] = g_wifi_status.sta_pmf;
 
   if (g_wifi_status.sta_connected && g_wifi_status.connected_since_ms > 0) {
     doc["connected_sec"] = (millis() - g_wifi_status.connected_since_ms) / 1000;
@@ -6169,8 +6225,10 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   g_health.http_requests++;
   setup_wizard::touch();
 
-  // Read body (sized for ssid + password + token + optional device_name)
-  char content[384] = {0};
+  // Read body (sized for ssid + password + token + optional device_name +
+  // optional tz_iana — a maximal escaped password and SSID alone approach
+  // the old 384, so the zone got its own headroom rather than a squeeze).
+  char content[512] = {0};
   int ret = httpd_req_recv(req, content, sizeof(content) - 1);
 
   if (ret <= 0) {
@@ -6247,6 +6305,28 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
     }
   }
 
+  // Household time zone seed (repo sweep F28): the setup wizard sends the
+  // phone's own IANA zone (Intl.DateTimeFormat) — one hop over the setup
+  // network, no lookup service. Mapped on the device through the shared
+  // table and stored; an unknown or absent zone stores nothing and NEVER
+  // fails the join (a wrong clock is better than no network), and it never
+  // overwrites a zone that is already set by an unknown guess. The answer
+  // says what happened ("tz": set | unknown_zone | not_set | not_sent) so
+  // the wizard can tell the person their Canary is still on world time.
+  const char* tz_iana = body["tz_iana"] | "";
+  const char* tz_outcome = "not_sent";
+  if (tz_iana[0] != '\0') {
+    if (strlen(tz_iana) > tz_rule::MAX_IANA_LEN) {
+      tz_outcome = "unknown_zone";  // longer than any name the table holds
+    } else {
+      switch (csi_integration::set_timezone(nullptr, tz_iana)) {
+        case tz_rule::Resolve::OK:           tz_outcome = "set"; break;
+        case tz_rule::Resolve::UNKNOWN_ZONE: tz_outcome = "unknown_zone"; break;
+        default:                             tz_outcome = "not_set"; break;
+      }
+    }
+  }
+
   // Save credentials
   strncpy(g_wifi_creds.ssid, ssid, sizeof(g_wifi_creds.ssid) - 1);
   g_wifi_creds.ssid[sizeof(g_wifi_creds.ssid) - 1] = '\0';
@@ -6267,6 +6347,7 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   doc["ok"] = true;
   doc["message"] = "Credentials saved, attempting connection";
   doc["ssid"] = g_wifi_creds.ssid;
+  doc["tz"] = tz_outcome;
 
   String response;
   serializeJson(doc, response);
@@ -7463,6 +7544,7 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
     "\"born_exact\":%s,"
     "\"auth_required\":true,"
     "\"tls_enabled\":%s,"
+    "\"ap_auth\":\"%s\","
     "\"provisioning_gate\":\"physical_button\""
     "}",
     g_device.device_id,
@@ -7475,7 +7557,8 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
     (unsigned long)g_device.seq,
     (unsigned long)g_device.born_day,
     g_device.born_exact ? "true" : "false",
-    g_tls_enabled ? "true" : "false"
+    g_tls_enabled ? "true" : "false",
+    g_wifi_status.ap_auth[0] ? g_wifi_status.ap_auth : "unknown"
   );
 
   httpd_resp_set_type(req, "application/json");
@@ -9113,6 +9196,55 @@ static void wifi_connect_to_home() {
 
   // Start connection (non-blocking)
   WiFi.begin(g_wifi_creds.ssid, g_wifi_creds.password);
+  // F16: STA PMF capable, not required. The WAP builds only on IDF 5.x cores,
+  // where the driver is always PMF-capable (pmf_cfg.capable is documented as
+  // deprecated there), so nothing is written — reported for the bench.
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+  g_wifi_status.sta_pmf = true;
+#else
+  g_wifi_status.sta_pmf = false;  // not asserted on a pre-5 core; no write attempted
+#endif
+}
+
+// F16: SoftAP WPA2/WPA3 transition + PMF-capable, the same request the
+// canary (PIO) tree makes (ap_security_policy.h decides; this applies). Runs
+// right after every WiFi.softAP() — the Arduino call always brings the AP up
+// as WPA2-PSK — and before any client has joined, so the brief AP restart
+// esp_wifi_set_config causes disrupts nobody. Records what is on the air.
+#if defined(CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT) && CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT && \
+    ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+  #define WAP_SOFTAP_SAE_IN_BUILD 1
+#else
+  #define WAP_SOFTAP_SAE_IN_BUILD 0
+#endif
+static void wifi_apply_ap_security() {
+  namespace aps = canary::net::ap_security;
+  wifi_config_t c;
+  memset(&c, 0, sizeof(c));
+  size_t pw_len = 0;
+  if (esp_wifi_get_config(WIFI_IF_AP, &c) == ESP_OK) {
+    pw_len = strnlen((const char*)c.ap.password, sizeof(c.ap.password));
+  }
+  aps::Decision d = aps::decide(CANARY_AP_WPA3_TRANSITION != 0, WAP_SOFTAP_SAE_IN_BUILD != 0, pw_len);
+#if WAP_SOFTAP_SAE_IN_BUILD
+  if (d.mode == aps::AuthMode::WPA2_WPA3_TRANSITION) {
+    c.ap.authmode = WIFI_AUTH_WPA2_WPA3_PSK;
+    c.ap.pairwise_cipher = WIFI_CIPHER_TYPE_CCMP;
+    c.ap.pmf_cfg.capable = d.pmf_capable;
+    c.ap.pmf_cfg.required = d.pmf_required;  // never true: WPA2 clients must still join
+    const bool accepted = (esp_wifi_set_config(WIFI_IF_AP, &c) == ESP_OK);
+    d = aps::after_driver(d, accepted);
+    if (!accepted) {
+      log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "WPA3 SoftAP refused by driver", "WPA2-PSK kept");
+    }
+  }
+#endif
+  secure_zero(&c, sizeof(c));  // the read-back carries the AP passphrase
+  strncpy(g_wifi_status.ap_auth, d.label, sizeof(g_wifi_status.ap_auth) - 1);
+  g_wifi_status.ap_auth[sizeof(g_wifi_status.ap_auth) - 1] = '\0';
+  g_wifi_status.ap_auth_reason = d.reason;
+  Serial.printf("[WIFI] SoftAP security: %s (%s)\n", d.label, d.reason);
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "SoftAP security", d.label);
 }
 
 // F4 (coexistence): tear down the management SoftAP once the STA link is
@@ -9144,6 +9276,7 @@ static void wifi_raise_ap() {
     WiFi.mode(WIFI_STA);  // don't leave the radio half-configured in AP_STA with no AP up
     return;
   }
+  wifi_apply_ap_security();  // F16: WPA2/WPA3 transition + PMF when the core allows
   g_wifi_status.ap_active = true;
   g_health.wifi_active = true;
   IPAddress ip = WiFi.softAPIP();
@@ -9551,6 +9684,7 @@ static void wifi_init_provisioning() {
     log_health(SCV_LOG_ERROR, SCV_CAT_NETWORK, "WiFi AP start failed", nullptr);
     return;
   }
+  wifi_apply_ap_security();  // F16: WPA2/WPA3 transition + PMF when the core allows
 
   g_wifi_status.ap_active = true;
   g_health.wifi_active = true;
@@ -10382,6 +10516,11 @@ void setup() {
   }
 
   pinMode(BOOT_BUTTON_GPIO, INPUT_PULLUP);
+#if FEATURE_TAMPER_GPIO
+  // Enclosure contact: a reed/hall switch to GND, read through the internal
+  // pull-up; loop() debounces it (contact_tamper.h).
+  pinMode(TAMPER_PIN_DEFAULT, INPUT_PULLUP);
+#endif
 
   // Flush the witness chain (and mesh replay counters) before any safe-mode
   // recovery/retry reboot, mirroring the /api/reboot path. Without this a
@@ -10948,6 +11087,11 @@ void setup() {
   Serial.printf("[OK] Power policy: %s\n", power_policy::mode_name(power_policy::get_mode()));
   log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "Power policy initialized", nullptr);
   #endif
+
+  // Household time zone (repo sweep F28): apply the stored POSIX rule before
+  // the first clock sync, so the CSI day offset and the waking-hours gate read
+  // local time from the first pass. Nothing stored = TZ unset = UTC.
+  csi_integration::apply_timezone_from_nvs();
 
   // ════════════════════════════════════════════════════════════════════════════
   // PHASE 4: GNSS — Initialize serial, probe only if not in safe mode
@@ -11867,6 +12011,18 @@ void loop() {
        g_hw.last_reset_reason == ESP_RST_WDT) ? 1 : 0,
       (g_hw.last_reset_reason == ESP_RST_BROWNOUT) ? 1 : 0,
       (uint8_t)g_hw.sd_state);
+#if FEATURE_TAMPER_GPIO
+  // Enclosure contact: debounce the raw line, then feed the watcher the
+  // accepted state. It narrates `enclosure` on CLOSED -> OPEN only (the
+  // first sample is adopted — booting with the lid off is not an
+  // intrusion), and csi_mqtt's system.integrity bridge carries the row to
+  // Home Assistant as {"type":"enclosure"}.
+  contact_tamper::sample(&g_tamper_contact,
+                         digitalRead(TAMPER_PIN_DEFAULT) == TAMPER_ACTIVE,
+                         millis());
+  tamper_events_watch_contact(g_tamper_contact.open ? TAMPER_CONTACT_OPEN
+                                                    : TAMPER_CONTACT_CLOSED);
+#endif
 
   // Optional MQTT bridge — pump (no-op when disabled or unconfigured),
   // plus three cadence-gated publishers for the topics HA expects.

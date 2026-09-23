@@ -177,9 +177,12 @@ void csi_event_set_module_ceiling(const char* module_id, uint8_t override_per_ho
 /**
  * Align the chokepoint's `time_bucket` derivation to wall clock. Pass the
  * delta, in minutes, between the host's wall clock and our monotonic
- * uptime — i.e. `(wall_minutes_since_local_midnight) - (millis()/60000)`.
+ * uptime — i.e. `(wall_minutes_since_local_midnight) - (millis()/60000)`,
+ * where local midnight is the household time zone's (repo sweep F28:
+ * tz_rule::local_minute_of_day; UTC while no zone is set).
  *
- * Calling once per boot at first NTP / GPS sync is sufficient. Without
+ * Both hosts recompute it on every loop pass with a set clock, which keeps
+ * it drift-corrected and carries DST transitions and zone changes. Without
  * this call, time_bucket is consistent within a session but unaligned
  * with wall clock (rolls over at boot+0, not midnight).
  */

@@ -218,8 +218,11 @@ void apply_allow_list(csi_event_values_t* v, uint32_t allowed) {
  * canary-wap's update_csi_clock_offset), re-deriving the offset on every
  * pass with a set clock so it stays drift-corrected and survives millis()
  * rollover. Until the first GPS fix the offset is 0 and time_bucket is
- * session-relative; the offset is UTC-derived — no timezone setting exists
- * (repo sweep F28), so bucket 0 is UTC midnight, not the household's. */
+ * session-relative. The hosts derive the offset from LOCAL wall time
+ * (tz_rule::local_minute_of_day, common/time/tz_rule.h): once the household
+ * time zone is set (repo sweep F28) bucket 0 and the quiet-hours window are
+ * the household's midnight; while no zone is set it is UTC midnight, as
+ * before. The per-pass recompute is also what carries a DST change. */
 static int32_t s_clock_offset_minutes = 0;
 
 /* Quiet-hours gating state. Set by csi_event_set_quiet_window(); read at

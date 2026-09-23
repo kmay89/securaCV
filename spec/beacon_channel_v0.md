@@ -549,9 +549,9 @@ All endpoints Bearer-token-gated identically to `/api/mesh/*` and `/api/bluetoot
 
 | Storage | Where | Encrypted? |
 |---|---|---|
-| Beacon set (pubkeys, names, last_seen) | NVS | Yes — requires flash encryption (same gate as Opera secret) |
+| Beacon set (pubkeys, names, last_seen) | NVS | No — persisted only with flash encryption on (same gate as the Opera secret; an un-fused board keeps the set in RAM only), and plaintext NVS there too: flash encryption does not cover NVS, and NVS encryption is not available under `framework = arduino` (`docs/security/THREAT_MODEL.md`, the Opera mesh section) |
 | Audit log of record (received + originated) | `/beacon/audit.jsonl` on SD — pure append-only JSONL, chain-hashed like witness records; **never pruned, truncated, or rotated** | SD (plaintext JSONL; the embedded Ed25519 signatures + chain hashes make it tamper-evident) |
-| Audit recent-view cache | 64-entry NVS ring (newest entries only; the chain head spans every entry ever appended, so continuity stays provable past the ring boundary) | Yes (FE) |
+| Audit recent-view cache | 64-entry NVS ring (newest entries only; the chain head spans every entry ever appended, so continuity stays provable past the ring boundary) | No — the beacon set's gate and caveat: written only with flash encryption on, plaintext NVS there |
 | Per-pubkey rate-limit state | RAM only, rebuilt from audit log on boot | n/a |
 | Active alarm state | RAM only | n/a |
 | Last-selftest-seen map | RAM only | n/a |

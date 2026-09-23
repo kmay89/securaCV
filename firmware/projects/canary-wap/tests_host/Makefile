@@ -323,6 +323,15 @@ HELPQR_SRC = test_help_qr_logic.cpp
 $(HELPQR_BIN): $(HELPQR_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(HELPQR_SRC)
 
+# Status tier: the dashboard's Good / Needs attention / Action required strip
+# (status_tier_logic.h) — worst-first ranking, one reason code per tier, a
+# missing card is not a fault, and every code has a COPY.tier row.
+STATUSTIER_BIN = test_status_tier_logic
+STATUSTIER_SRC = test_status_tier_logic.cpp
+
+$(STATUSTIER_BIN): $(STATUSTIER_SRC) $(SRC_DIR)/status_tier_logic.h
+	$(CXX) $(CXXFLAGS) -o $@ $(STATUSTIER_SRC)
+
 # CSI L-LTF tone canonicalization (csi_subcarriers.h): the 52-tone map for
 # FFT-ordered 20 MHz and linear 40 MHz L-LTF sections, HT/non-HT parity,
 # first_word_invalid patching, and the zero-based order detector.
@@ -373,7 +382,7 @@ TAMPER_SOURCES = test_tamper_events_logic.cpp \
 $(TAMPER_BIN): $(TAMPER_SOURCES)
 	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -Wno-unused-parameter -I $(SRC_DIR) -o $@ $(TAMPER_SOURCES)
 
-run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(FLEET_BEACON_BIN) $(EVDRIVE_BIN) $(EVVERIFY_BIN) $(BLEOTA_BIN) $(HELPQR_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN) $(WITNESS_PAGE_BIN)
+run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(FLEET_BEACON_BIN) $(EVDRIVE_BIN) $(EVVERIFY_BIN) $(BLEOTA_BIN) $(HELPQR_BIN) $(STATUSTIER_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN) $(WITNESS_PAGE_BIN)
 	./$(BIN)
 	./$(CHIRP_INV_BIN)
 	./$(CHIRP_SEC_BIN)
@@ -396,6 +405,7 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 	./$(EVVERIFY_BIN)
 	./$(BLEOTA_BIN)
 	./$(HELPQR_BIN)
+	./$(STATUSTIER_BIN)
 	./$(CSI_SUBC_BIN)
 	for b in $(CSI_COMPAT_BINS); do ./$$b || exit 1; done
 	./$(CSI_TRAFFIC_BIN)
@@ -403,4 +413,26 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 	./$(WITNESS_PAGE_BIN) $(WITNESS_PAGE_FIXTURE)
 
 clean:
-	rm -f $(WITNESS_PAGE_BIN) $(EVVERIFY_BIN) $(BLEOTA_BIN) $(EVDRIVE_BIN) $(FLEET_BEACON_BIN) $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(HELPQR_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN)
+	rm -f $(WITNESS_PAGE_BIN) $(EVVERIFY_BIN) $(BLEOTA_BIN) $(EVDRIVE_BIN) $(FLEET_BEACON_BIN) $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(HELPQR_BIN) $(STATUSTIER_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN)
+
+# F14: canary-wap Opera pairing framing (mesh_pair_frame.h). Pairing frames
+# are [MessageType 8..12][exact Pair*Payload] and must be classified before
+# handle_received_message()'s 102-byte signed-header minimum, which used to
+# drop all of them. Pins exact-size accept, off-by-one reject, and that a
+# signed Opera (version 0), Chirp (0xC4) or Beacon (0xB1) frame is never
+# taken for a pairing frame. Pure header, no Arduino glue. Hooked into
+# `run` and `clean` by prerequisite so it adds no hunk to their lists.
+PAIR_FRAME_BIN = test_mesh_pair_frame
+PAIR_FRAME_SRC = test_mesh_pair_frame.cpp
+
+$(PAIR_FRAME_BIN): $(PAIR_FRAME_SRC) $(SRC_DIR)/mesh_pair_frame.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(PAIR_FRAME_SRC)
+
+.PHONY: run-pair-frame clean-pair-frame
+run-pair-frame: $(PAIR_FRAME_BIN)
+	./$(PAIR_FRAME_BIN)
+clean-pair-frame:
+	rm -f $(PAIR_FRAME_BIN)
+
+run: run-pair-frame
+clean: clean-pair-frame

@@ -33,9 +33,11 @@ struct Args {
     db: String,
     #[arg(long, default_value = "ruleset:v0.3.0")]
     ruleset_id: String,
-    /// Device key seed (must match witnessd).
-    #[arg(long, env = "DEVICE_KEY_SEED")]
-    device_key_seed: String,
+    /// Device key seed (must match witnessd). When absent, the seed file
+    /// witnessd keeps beside the database (`<db>.ed25519.seed`) is used, or
+    /// created there (mode 0600) on a fresh install.
+    #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
+    device_key_seed: Option<String>,
     #[arg(long, default_value = "vault/envelopes")]
     vault_path: String,
     /// Directory unsealed envelopes are written to (0600).
@@ -56,6 +58,15 @@ fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = Args::parse();
 
+    // --device-key-seed / DEVICE_KEY_SEED, else the seed file witnessd keeps
+    // beside the database, else a fresh one generated there. Only the source
+    // is logged; the console never sees a seed.
+    let device_key_seed = {
+        let resolved =
+            witness_kernel::crypto::resolve_device_seed(&args.db, args.device_key_seed.as_deref())?;
+        log::info!("device key seed: {}", resolved.source);
+        resolved.seed
+    };
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(&args.ruleset_id);
     let kernel_cfg = KernelConfig {
         db_path: args.db.clone(),
@@ -63,7 +74,7 @@ fn main() -> Result<()> {
         ruleset_hash,
         kernel_version: env!("CARGO_PKG_VERSION").to_string(),
         retention: Duration::from_secs(60 * 60 * 24 * 7),
-        device_key_seed: args.device_key_seed.clone(),
+        device_key_seed,
         zone_policy: ZonePolicy::default(),
     };
 

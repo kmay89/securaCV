@@ -64,9 +64,10 @@ class ScoutScanCallbacks : public NimBLEScanCallbacks {
     /* NimBLE addresses are little-endian in .getBase()->val (6 bytes).
      * ble_scout::ble_scout_on_advert hashes them in the order they
      * arrive; ble_scout_pair() must use the SAME byte order on the
-     * paired side. The setup UI (PR 5c) is the only producer of
-     * pair-time MACs and reads them via NimBLEAddress too, so this
-     * stays consistent. */
+     * paired side. Its only production caller is the proximity pairing
+     * window inside ble_scout_on_advert() itself (repo sweep F27), which
+     * passes these very bytes — so pair-time and scan-time hashes always
+     * agree, and no MAC is ever typed, stored or sent anywhere. */
     const uint8_t* mac  = device->getAddress().getBase()->val;
     const int8_t   rssi = (int8_t)device->getRSSI();
     const uint32_t now  = millis();

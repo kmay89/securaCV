@@ -67,6 +67,14 @@ Use a real RTSP source (camera, go2rtc, etc.) so Frigate can emit detections.
 docker compose up -d --build
 ```
 
+Or do steps 3 and 4 plus the acceptance check in one command, once step 1's
+password file exists and `.env` holds the password:
+
+```bash
+./up.sh            # build, start, wait for 1883 / 5000 / 8123, run ./verify_pipeline.sh
+./up.sh --no-verify
+```
+
 4) **Open the UIs**:
 
 - Home Assistant: http://localhost:8123

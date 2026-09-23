@@ -23,9 +23,7 @@ use std::time::{Duration, Instant};
 use image::GenericImageView;
 use url::Url;
 
-use super::compute_features_hash;
 use crate::frame::RawFrame;
-use crate::TimeBucket;
 
 const MAX_JPEG_BYTES: usize = 5 * 1024 * 1024;
 const RTP_JPEG_PAYLOAD_TYPE: u8 = 26;
@@ -184,16 +182,7 @@ impl HttpEsp32Source {
             self.frame_count += 1;
             self.last_frame_at = Some(now);
 
-            let timestamp_bucket = TimeBucket::now_10min()?;
-            let features_hash = compute_features_hash(&pixels, self.frame_count);
-
-            return Ok(RawFrame::new(
-                pixels,
-                width,
-                height,
-                timestamp_bucket,
-                features_hash,
-            ));
+            return super::raw_frame_at_capture(pixels, width, height, self.frame_count);
         }
     }
 
@@ -374,16 +363,7 @@ impl UdpEsp32Source {
             self.frame_count += 1;
             self.last_frame_at = Some(now);
 
-            let timestamp_bucket = TimeBucket::now_10min()?;
-            let features_hash = compute_features_hash(&pixels, self.frame_count);
-
-            return Ok(RawFrame::new(
-                pixels,
-                width,
-                height,
-                timestamp_bucket,
-                features_hash,
-            ));
+            return super::raw_frame_at_capture(pixels, width, height, self.frame_count);
         }
     }
 

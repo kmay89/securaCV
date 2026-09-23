@@ -91,8 +91,12 @@ StorageManager& storage_get_instance() {
 
 StorageManager::StorageManager()
   : m_spi(nullptr), m_mounted(false), m_needs_teardown(false),
-    m_mount_generation(0), m_consecutive_errors(0), m_last_check_ms(0),
+    m_lost_by_errors(false), m_mount_generation(0), m_consecutive_errors(0), m_last_check_ms(0),
     m_write_errors(0), m_read_errors(0), m_last_write_ms(0) {}
+
+uint8_t StorageManager::sdState() const {
+  return sd_mount_policy::sd_state_for_tamper(m_mounted, m_lost_by_errors);
+}
 
 bool StorageManager::mountInFlight() const {
   const uint8_t st = mount_state();
@@ -126,6 +130,7 @@ bool StorageManager::tryAdoptMount() {
   if (ok) {
     m_mounted = true;
     m_needs_teardown = false;
+    m_lost_by_errors = false;  // a working card again: that story is over
     m_mount_generation++;
     m_consecutive_errors = 0;
     ensureDirectories();
@@ -175,6 +180,7 @@ void StorageManager::end() {
   SD.end();
   m_mounted = false;
   m_needs_teardown = false;
+  m_lost_by_errors = false;  // an explicit unmount is ABSENT, not a failure
   witness_get_health().sd_healthy = false;
 }
 
@@ -210,6 +216,9 @@ void StorageManager::periodicCheck(bool msc_holds_card) {
     }
     m_read_errors++;
     m_mounted = false;
+    // The presence probe failed: the card left (ABSENT -> sd_remove), which
+    // outranks any earlier write-failure story.
+    m_lost_by_errors = false;
     witness_get_health().sd_healthy = false;
     Serial.println("[SD] Card removed or failed - will retry");
     if (sd_mount_policy::may_teardown(mountInFlight(), msc_holds_card)) {
@@ -238,6 +247,10 @@ void StorageManager::noteWriteFailure() {
     // next periodicCheck() pass, where the MSC gate is known.
     m_mounted = false;
     m_needs_teardown = true;
+    // ERROR, not ABSENT: the card was here and stopped taking writes — the
+    // canary-wap's SD_ERROR trigger, narrated as sd_error. Cleared by the
+    // next successful mount.
+    m_lost_by_errors = true;
     witness_get_health().sd_healthy = false;
     Serial.println("[SD] Consecutive write failures - card marked lost, remount will retry");
   }
@@ -329,6 +342,10 @@ bool storage_init(SPIClass* spi) {
 
 bool storage_is_mounted() {
   return storage_get_instance().isMounted();
+}
+
+uint8_t storage_sd_state() {
+  return storage_get_instance().sdState();
 }
 
 void storage_periodic_check(bool msc_holds_card) {

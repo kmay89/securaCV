@@ -52,11 +52,31 @@ on:
       - "canary-local/tools/gen_flash.py"
       - "desktop/hub-core/src/hub_disk.rs"
       - "desktop/src-tauri/src/lib.rs"
-      - "desktop/src-tauri/src/health.rs"
       - "desktop/src-tauri/src/we2.rs"
       - "desktop/src-tauri/src/we2_bench.rs"
       - "desktop/src-tauri/src/sscma.rs"
-      - "desktop/src-tauri/src/provisioning.rs"
+      # the flash engine both desktop apps share: desktop_parity reads its
+      # catalog guards, provisioning, health, change map, intake and pipeline
+      - "desktop/flash-engine/src/**"
+      # …and holds the two apps' flash-command wrappers, hosts, catalog embed,
+      # engine dependency and (absent) shell grants to each other
+      - "desktop/src-tauri/src/host.rs"
+      - "desktop/src-tauri/src/serial_monitor.rs"
+      - "desktop/src-tauri/Cargo.toml"
+      - "desktop/src-tauri/capabilities/**"
+      - "desktop-lab/src-tauri/src/flash.rs"
+      - "desktop-lab/src-tauri/build.rs"
+      # …and holds the Lab's espflash bundling to the Flasher's: pins and
+      # steps in both release workflows, the per-platform externalBin, the PR
+      # check's stub, and the one udev rule both .debs install
+      - ".github/workflows/desktop-release.yml"
+      - ".github/workflows/desktop-lab-check.yml"
+      - "desktop-lab/src-tauri/tauri.macos.conf.json"
+      - "desktop-lab/src-tauri/tauri.linux.conf.json"
+      - "desktop/src-tauri/packaging/canary-serial.rules"
+      - "desktop-lab/src-tauri/packaging/**"
+      # the secret drawer's backend names (desktop_parity pins app.js where())
+      - "desktop/src-tauri/src/secret_store.rs"
       - "desktop/src-tauri/build.rs"
       # the desktop frontend: desktop_parity.test.js reads its HTML/JS to keep
       # the two flashers in step (CLAUDE.md "two flashers, two frontends")
@@ -70,6 +90,17 @@ on:
       - "canary-local/witness-wall.html"
       - "canary-local/assets/witness-host.js"
       - "desktop-lab/src-tauri/src/lib.rs"
+      # the mDNS browse twin: both fleet.rs files + the mdns-sd lock pins
+      # (desktop_parity holds the Lab's fleet_scan to the Flasher's)
+      - "desktop/src-tauri/src/fleet.rs"
+      - "desktop-lab/src-tauri/src/fleet.rs"
+      - "desktop/src-tauri/Cargo.lock"
+      - "desktop-lab/src-tauri/Cargo.lock"
+      # the menu bar companion: lab_settings holds its words, its grants and
+      # its tray package (companion.rs, capabilities/, Cargo.toml)
+      - "desktop-lab/src-tauri/src/companion.rs"
+      - "desktop-lab/src-tauri/capabilities/**"
+      - "desktop-lab/src-tauri/Cargo.toml"
       - "scripts/check_witness_emulator_sync.sh"
       # self-update parity: endpoints/pubkeys in the app configs must match
       # the workflows that publish the rolling updater pointers
@@ -133,11 +164,31 @@ on:
       - "canary-local/tools/gen_flash.py"
       - "desktop/hub-core/src/hub_disk.rs"
       - "desktop/src-tauri/src/lib.rs"
-      - "desktop/src-tauri/src/health.rs"
       - "desktop/src-tauri/src/we2.rs"
       - "desktop/src-tauri/src/we2_bench.rs"
       - "desktop/src-tauri/src/sscma.rs"
-      - "desktop/src-tauri/src/provisioning.rs"
+      # the flash engine both desktop apps share: desktop_parity reads its
+      # catalog guards, provisioning, health, change map, intake and pipeline
+      - "desktop/flash-engine/src/**"
+      # …and holds the two apps' flash-command wrappers, hosts, catalog embed,
+      # engine dependency and (absent) shell grants to each other
+      - "desktop/src-tauri/src/host.rs"
+      - "desktop/src-tauri/src/serial_monitor.rs"
+      - "desktop/src-tauri/Cargo.toml"
+      - "desktop/src-tauri/capabilities/**"
+      - "desktop-lab/src-tauri/src/flash.rs"
+      - "desktop-lab/src-tauri/build.rs"
+      # …and holds the Lab's espflash bundling to the Flasher's: pins and
+      # steps in both release workflows, the per-platform externalBin, the PR
+      # check's stub, and the one udev rule both .debs install
+      - ".github/workflows/desktop-release.yml"
+      - ".github/workflows/desktop-lab-check.yml"
+      - "desktop-lab/src-tauri/tauri.macos.conf.json"
+      - "desktop-lab/src-tauri/tauri.linux.conf.json"
+      - "desktop/src-tauri/packaging/canary-serial.rules"
+      - "desktop-lab/src-tauri/packaging/**"
+      # the secret drawer's backend names (desktop_parity pins app.js where())
+      - "desktop/src-tauri/src/secret_store.rs"
       - "desktop/src-tauri/build.rs"
       # the desktop frontend: desktop_parity.test.js reads its HTML/JS to keep
       # the two flashers in step (CLAUDE.md "two flashers, two frontends")
@@ -151,6 +202,17 @@ on:
       - "canary-local/witness-wall.html"
       - "canary-local/assets/witness-host.js"
       - "desktop-lab/src-tauri/src/lib.rs"
+      # the mDNS browse twin: both fleet.rs files + the mdns-sd lock pins
+      # (desktop_parity holds the Lab's fleet_scan to the Flasher's)
+      - "desktop/src-tauri/src/fleet.rs"
+      - "desktop-lab/src-tauri/src/fleet.rs"
+      - "desktop/src-tauri/Cargo.lock"
+      - "desktop-lab/src-tauri/Cargo.lock"
+      # the menu bar companion: lab_settings holds its words, its grants and
+      # its tray package (companion.rs, capabilities/, Cargo.toml)
+      - "desktop-lab/src-tauri/src/companion.rs"
+      - "desktop-lab/src-tauri/capabilities/**"
+      - "desktop-lab/src-tauri/Cargo.toml"
       - "scripts/check_witness_emulator_sync.sh"
       # self-update parity: endpoints/pubkeys in the app configs must match
       # the workflows that publish the rolling updater pointers

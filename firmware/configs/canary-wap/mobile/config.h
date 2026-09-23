@@ -29,9 +29,8 @@
 #undef CONFIG_RECORD_INTERVAL_MS
 #define CONFIG_RECORD_INTERVAL_MS       5000    // 5 seconds (was 1s)
 
-// Increase time bucket for less precise (more private) timestamps
-#undef CONFIG_TIME_BUCKET_MS
-#define CONFIG_TIME_BUCKET_MS           10000   // 10 seconds (was 5s)
+// The time bucket is not overridden: the default is already the ten-minute
+// floor (Invariant III), and this profile's old 10 s widening sat below it.
 
 // Reduce mesh activity
 #undef CONFIG_MESH_HEARTBEAT_MS

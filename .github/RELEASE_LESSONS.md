@@ -12,6 +12,85 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-09-23 (b) — A second app bundling the same sidecar is two pins, two udev paths and two configs
+
+- **Symptom (caught before it was paid for):** the Lab gained the Flasher's
+  native USB flashing (A14) — the same `espflash` sidecar, spawned through the
+  shared `desktop/flash-engine`. Copying the Flasher's bundling naively would
+  have shipped three latent failures at once: (1) a second
+  `ESPFLASH_VERSION` + three `ESPFLASH_SHA256_*` pins in a second workflow,
+  free to drift from the Flasher's, so the two apps could flash with
+  different engines; (2) a Lab `.deb` installing the Flasher's udev rule at
+  the Flasher's path, `/usr/lib/udev/rules.d/61-securacv-canary.rules` —
+  and dpkg refuses to install a package that owns a path another installed
+  package already owns, so anyone with both apps would have had the second
+  install fail; (3) `externalBin` in the Lab's `tauri.conf.json`, which
+  tauri-build enforces for EVERY target it builds — including the iPad
+  shell's local recipe (`desktop-lab/MOBILE.md`), which would have died on a
+  missing `espflash-aarch64-apple-ios` that nothing could ever provide.
+- **Cause:** a sidecar is more than a binary. It is a pin set in a release
+  workflow, a Linux access rule in a package, and a config key the build
+  script checks — and each of those has an identity (a value, a path, a
+  target list) that a copy duplicates.
+- **Fix:** `desktop-release.yml` carries the Flasher's pins and bundling
+  steps with only the sidecar directory swapped, and
+  `canary-local/tests/desktop_parity.test.js` pins the four values and the
+  two step bodies equal across the two workflows. The udev rule is ONE file,
+  byte-equal in both apps (asserted), installed under two names
+  (`61-securacv-canary.rules` from the Flasher, `61-securacv-lab.rules` from
+  the Lab) — the rules are idempotent, so both present changes nothing.
+  The Lab's `externalBin` lives in `tauri.macos.conf.json` and
+  `tauri.linux.conf.json` (merged per target), the two platforms the release
+  bundles, and the Lab's `native_capabilities().serial` is scoped to the
+  same two, never to "any desktop". And both
+  workflows' macOS steps now prove the per-arch sidecars are their arch and
+  the universal one carries both — lesson (z) applied to `espflash`, which
+  had only ever been `file`'d.
+- **Review follow-up (same day):** the Linux step had only ever been
+  `file`'d too — both workflows now fail unless it reports an x86-64 ELF —
+  and the `cargo install` fallback, which no sha256 pin covers, ran on any
+  `curl` failure without a word; on both platforms, in both workflows, it
+  now prints a `::warning::`. The rule's two hand copies (the AppImage
+  heredocs in both `INSTALL.md`s) are held to the rules file by
+  `desktop_parity` too. And "the platform bundles it" is not "it is here":
+  the Lab's `serial` is also a runtime check that the sidecar is a
+  non-empty executable file where the spawn looks, so a dev build on the
+  empty compile-only stub never lights a bench that can only fail at spawn.
+  Still open: the pins live only in the two workflows, and neither app's
+  `release-targets.yml` watch covers them, so a pin bump alone marks
+  neither app as changed.
+- **Applies to:** every sidecar a second app bundles (espflash today;
+  rpiboot if the Lab ever flashes a Pi), and every packaged file two apps
+  share. Pin shared values in one test, not two workflows; give each
+  package its own installed path for a shared file; and scope a
+  build-script-enforced key to the targets that can satisfy it.
+
+## 2026-09-23 — A `-sys` crate that links nothing can still crash the app
+
+- **Symptom (caught before it was paid for):** the Lab's menu bar companion
+  turned on tauri's `tray-icon` feature. On Linux that brings in
+  `libappindicator-sys`, and the 2026-09-21 rule below ("diff the new
+  `-sys` deps against the apt block") found nothing to install — the crate
+  has no build script and links no library. It `dlopen`s
+  `libayatana-appindicator3` the first time a tray is built and **panics**
+  when no candidate loads; with the Lab's `panic = "abort"` release profile
+  that is a crash at launch on any desktop without the library (an AppImage
+  on a minimal distro, a `.deb` forced in without its depends).
+- **Cause:** a runtime-loaded library is invisible to every build-time
+  check. The build is green, the tests are green, and the dependency exists
+  only as a string inside the crate's loader.
+- **Fix:** the Lab's `.deb` depends on `libayatana-appindicator3-1`
+  (`tauri.conf.json`, asserted by `canary-local/tests/lab_settings.test.js`
+  whenever the feature is on), and `companion.rs` probes the loader's own
+  four library names with the same `libloading` before building the tray —
+  no library, no tray, the app runs on. **The general rule:** when a new
+  `-sys` crate shows up in the 2026-09-21 diff, read its source for
+  `dlopen`/`libloading` as well as its build script; a runtime library
+  belongs in the package's depends, and a loader that panics needs a probe
+  in front of it.
+- **Applies to:** the Lab (fixed). The Flasher carries no tray; if it ever
+  gains one, it needs the same depends line and the same probe.
+
 ## 2026-09-21 — A new native crate is a release-workflow edit, not just a Cargo.toml line
 
 - **Symptom (caught before it was paid for):** adding `serialport` to the
@@ -20,8 +99,11 @@ any platform.
   release build: the crate pulls `libudev-sys`, whose build script needs the
   `libudev-dev` system package, and the Lab's release workflow
   (`desktop-release.yml`) did not install it. Nothing on a PR would have
-  said so — `desktop-lab/src-tauri` has no PR-triggered CI; the first red
-  signal would have been the release run itself.
+  said so — `desktop-lab/src-tauri` had no PR-triggered CI; the first red
+  signal would have been the release run itself. (Closed 2026-09-22:
+  `desktop-lab-check.yml` now compiles, lints and tests the crate on every
+  PR that touches it or what it bundles, with the release workflow's own
+  apt block, so a crate that outgrows that block fails on the PR.)
 - **Cause:** each app's release workflow carries its own hand-listed
   Linux `apt-get install` block, and a crate's system-library needs live in
   the crate, not the workflow — so adding a dependency silently outgrows

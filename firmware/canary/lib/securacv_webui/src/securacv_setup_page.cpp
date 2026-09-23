@@ -120,6 +120,7 @@ textarea.txt{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;min-height:
 <div class="big-ok">✅</div>
 <h1 id="donetitle">Your Canary is on your Wi-Fi</h1>
 <p class="lead" id="donelead"></p>
+<p class="hint" id="tznote" role="status" style="display:none"></p>
 <ol class="steps">
 <li><b>1</b><span>Tap <strong>Done</strong> (top corner) to close this window.</span></li>
 <li><b>2</b><span>Put your phone back on your home Wi-Fi — it usually hops back by itself.</span></li>
@@ -216,12 +217,23 @@ $('showpw').addEventListener('click',function(){
   if(p.classList.contains('pw-masked')){p.classList.remove('pw-masked');this.textContent='Hide'}
   else{p.classList.add('pw-masked');this.textContent='Show'}
 });
-var polls=0,timer=null;
+var polls=0,timer=null,tzNote='';
+// What to say about the phone's time zone once the join is saved, from the
+// answer's "tz" (repo sweep F28; same words as the canary-wap wizard). The
+// join never waits on it: a zone the Canary could not take leaves it on
+// world time, and the finish line says so rather than implying all is set.
+function tzNotice(o,zone){
+  var named=zone?' ('+zone+')':'';
+  if(o==='unknown_zone')return 'Your phone’s time zone'+named+' isn’t in this Canary’s built-in list, so it keeps world time (UTC): quiet hours and the day’s summaries follow UTC.';
+  if(o==='not_set')return 'This Canary couldn’t store your phone’s time zone'+named+', so it keeps world time (UTC) for now.';
+  return '';
+}
 function showDone(ip){
   $('wizard').style.display='none';
   $('done').style.display='block';
   $('donelead').textContent=chosen?'It joined “'+chosen+'” and is settling onto its perch.':'It joined your network and is settling onto its perch.';
   if(ip)$('ipalt').innerHTML=' (or <span class="addr"></span>)',$('ipalt').querySelector('.addr').textContent=ip;
+  if(tzNote){$('tznote').textContent=tzNote;$('tznote').style.display='block'}
   loadHub();
 }
 function poll(){
@@ -245,9 +257,16 @@ $('join').addEventListener('click',function(){
   $('join').disabled=true;
   $('status').style.display='block';
   $('statustext').textContent='Sending it to “'+ssid+'” — takes about half a minute…';
-  fetch('/api/wifi/connect',{method:'POST',headers:hdrs(true),body:JSON.stringify({ssid:ssid,password:$('pass').value})})
+  // The phone's own time zone rides along (repo sweep F28) so quiet hours and
+  // the day's buckets start at the household's midnight: one hop over this
+  // setup network, mapped on the Canary. No zone, no field; never a blocker.
+  var join={ssid:ssid,password:$('pass').value},zone='';
+  try{zone=Intl.DateTimeFormat().resolvedOptions().timeZone||''}catch(e){}
+  if(zone&&zone.length<=47)join.tz_iana=zone;
+  fetch('/api/wifi/connect',{method:'POST',headers:hdrs(true),body:JSON.stringify(join)})
     .then(function(r){return r.json()}).then(function(d){
       if(!d||!d.ok){fail((d&&d.error)?('That didn’t save: '+d.error):'That didn’t save — try again.');return}
+      tzNote=tzNotice(d.tz,zone);
       polls=0;timer=setInterval(poll,2000);
     }).catch(function(){fail('Couldn’t reach the Canary — stay on its SecuraCV Wi-Fi network and try again.')});
 });

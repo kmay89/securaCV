@@ -85,6 +85,17 @@ void securacv_csi_modules_tamper_watch(int reset_was_crash,
                                        uint8_t sd_state);
 
 /**
+ * Feed the system.integrity watcher the enclosure contact's DEBOUNCED
+ * state (common/csi/src/contact_tamper.h owns the debounce) once per main
+ * loop — only on FEATURE_TAMPER_GPIO builds; a build that never calls this
+ * never emits `enclosure`. `enclosure_open` is 1 when the contact reads
+ * open, 0 when closed; mapped here onto tamper_events_module.h's
+ * TAMPER_CONTACT_OPEN / TAMPER_CONTACT_CLOSED. Same pre-init safety as
+ * the call above.
+ */
+void securacv_csi_modules_tamper_watch_contact(int enclosure_open);
+
+/**
  * Tear down the pipeline. Optional — only needed if the host wants
  * to disable module dispatch at runtime (e.g. user toggled a feature
  * flag mid-session). Releases any per-module state; safe to call

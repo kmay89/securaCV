@@ -16,6 +16,7 @@ on:
     paths:
       - "docker/sidecar/**"
       - "integrations/ha_frigate_mqtt/docker-compose.yml"
+      - "integrations/ha_frigate_mqtt/up.sh"
       - "src/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -26,6 +27,7 @@ on:
     paths:
       - "docker/sidecar/**"
       - "integrations/ha_frigate_mqtt/docker-compose.yml"
+      - "integrations/ha_frigate_mqtt/up.sh"
       - "src/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -55,7 +57,8 @@ jobs:
           shellcheck --shell=bash \
             docker/sidecar/entrypoint.sh \
             docker/sidecar/ci_e2e.sh \
-            docker/sidecar/verify_published_image.sh
+            docker/sidecar/verify_published_image.sh \
+            integrations/ha_frigate_mqtt/up.sh
 
       # The sidecar writes the kernel's config from a heredoc that the kernel
       # parses with deny_unknown_fields; this renders and parses it (and

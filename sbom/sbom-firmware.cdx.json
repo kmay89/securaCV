@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:40c12610-7bf7-5d34-bad7-53e87cbcc570",
+  "serialNumber": "urn:uuid:8a0aee1e-d943-57b8-b24c-f525e78c13a7",
   "version": 1,
   "metadata": {
     "tools": {
@@ -942,7 +942,7 @@
       "properties": [
         {
           "name": "securacv:build_paths",
-          "value": "arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (firmware.yml:build-arduino-cli-display); arduino-cli (flasher-release.yml:factory-images); platformio (platform_canary); platformio (platform_s3c3); sketch.yaml (canary_display/dash); sketch.yaml (canary_display/watch)"
+          "value": "arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (firmware.yml:build-arduino-cli-display); arduino-cli (flasher-release.yml:factory-images); platformio (platform_s3c3); sketch.yaml (canary_display/dash); sketch.yaml (canary_display/watch)"
         },
         {
           "name": "securacv:declared_in",
@@ -1436,40 +1436,6 @@
     },
     {
       "type": "platform",
-      "name": "platformio/espressif32",
-      "description": "PlatformIO platform package ([platform_canary] in firmware/envs/platformio/platforms.ini)",
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://registry.platformio.org/platforms/platformio/espressif32"
-        }
-      ],
-      "properties": [
-        {
-          "name": "securacv:envs",
-          "value": "canary:dev,canary:esp32-wroom,canary:esp32cam,canary:freenove-s3,canary:release,canary:release_ha"
-        },
-        {
-          "name": "securacv:exact_pin",
-          "value": "false"
-        },
-        {
-          "name": "securacv:platform_literal",
-          "value": "espressif32 @ ^7.0.0"
-        },
-        {
-          "name": "securacv:platforms_ini_section",
-          "value": "platform_canary"
-        },
-        {
-          "name": "securacv:version_spec",
-          "value": "^7.0.0"
-        }
-      ],
-      "bom-ref": "platform:platform_canary"
-    },
-    {
-      "type": "platform",
       "name": "pioarduino/platform-espressif32",
       "description": "PlatformIO platform package ([platform_core3] in firmware/envs/platformio/platforms.ini)",
       "externalReferences": [
@@ -1516,7 +1482,7 @@
       "properties": [
         {
           "name": "securacv:envs",
-          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-nightlight-c3,canary-display:canary-display-nightstand-s3,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes,canary-sentinel:canary-sentinel-lite,canary-vision:canary-vision-c3-super-mini,canary-vision:canary-vision-default,canary-vision:canary-vision-xiao-c3,canary-vision:canary-vision-xiao-s3"
+          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-nightlight-c3,canary-display:canary-display-nightstand-s3,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes,canary-sentinel:canary-sentinel-lite,canary-vision:canary-vision-c3-super-mini,canary-vision:canary-vision-default,canary-vision:canary-vision-xiao-c3,canary-vision:canary-vision-xiao-s3,canary:dev,canary:esp32-wroom,canary:esp32cam,canary:freenove-s3,canary:release,canary:release_ha"
         },
         {
           "name": "securacv:exact_pin",
@@ -1925,12 +1891,6 @@
       "dependsOn": []
     },
     {
-      "ref": "platform:platform_canary",
-      "dependsOn": [
-        "framework:arduino-esp32@2.0.17"
-      ]
-    },
-    {
       "ref": "platform:platform_core3",
       "dependsOn": [
         "framework:arduino-esp32@3.3.8"
@@ -1981,8 +1941,8 @@
         "lib:h2zero/NimBLE-Arduino@^2.3.8",
         "lib:knolleary/PubSubClient@^2.8",
         "lib:rweather/Crypto@^0.4.0",
-        "platform:platform_canary",
-        "platform:platform_core3"
+        "platform:platform_core3",
+        "platform:platform_s3c3"
       ]
     },
     {

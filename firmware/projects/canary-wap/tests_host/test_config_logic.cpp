@@ -24,17 +24,25 @@ static int g_failures = 0;
   } while (0)
 
 static void test_time_bucket() {
-  const uint32_t FLOOR = 5000;  // compile-time coarsening floor
+  // The floor the sketch ships (canary_wap.ino's TIME_BUCKET_MS is defined
+  // from this constant). Pinned here so a revert to a finer floor fails the
+  // test instead of passing against a local literal.
+  const uint32_t FLOOR = kTimeBucketFloorMs;
+  CHECK(FLOOR == 600000u);  // the ten-minute grid (Invariant III)
   // The privacy invariant: never finer than the floor. A request below it is
   // raised to the floor, so coarsening can only increase.
   CHECK(clamp_time_bucket_ms(1000, FLOOR) == FLOOR);
   CHECK(clamp_time_bucket_ms(0, FLOOR) == FLOOR);
   CHECK(clamp_time_bucket_ms(FLOOR, FLOOR) == FLOOR);
+  // A value persisted under the old 5 s floor is raised when it is loaded at
+  // boot (widen-only; config_load_runtime runs this clamp on every boot).
+  CHECK(clamp_time_bucket_ms(5000, FLOOR) == FLOOR);
+  CHECK(clamp_time_bucket_ms(30000, FLOOR) == FLOOR);
   // At or above the floor, the request is honored (coarser is allowed).
-  CHECK(clamp_time_bucket_ms(5001, FLOOR) == 5001);
-  CHECK(clamp_time_bucket_ms(30000, FLOOR) == 30000);
+  CHECK(clamp_time_bucket_ms(600001, FLOOR) == 600001);
+  CHECK(clamp_time_bucket_ms(3600000, FLOOR) == 3600000);
   // The result is NEVER below the floor for any input.
-  for (uint32_t v = 0; v < 6000; v += 137) {
+  for (uint32_t v = 0; v < 700000; v += 137) {
     CHECK(clamp_time_bucket_ms(v, FLOOR) >= FLOOR);
   }
 }

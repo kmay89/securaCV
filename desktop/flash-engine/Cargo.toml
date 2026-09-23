@@ -1,0 +1,47 @@
+# Standalone workspace root: like hub-core, hub-io and src-tauri, this declares
+# an empty [workspace] so Cargo doesn't fold it into the repo-root
+# witness-kernel workspace. Depended on by BOTH desktop apps through a path
+# dependency: ../src-tauri (the Flasher) and ../../desktop-lab/src-tauri (the
+# Lab's native flash path).
+[workspace]
+
+[package]
+name = "flash-engine"
+version = "0.1.0"
+description = "The tauri-free ESP32 flash engine both SecuraCV desktop apps share: catalog guards, release verification, NVS provisioning, the change map, intake checks, the espflash argv builders, the verify-provision-write pipeline and the serial boot-receipt monitor."
+authors = ["Errer Labs"]
+license = "Apache-2.0"
+repository = "https://github.com/kmay89/securaCV"
+edition = "2021"
+# The same floor as the two apps that build it (their Tauri 2 graph needs
+# 1.88); the engine itself uses `Option::is_none_or` (1.82) and
+# return-position `impl Trait` in traits (1.75).
+rust-version = "1.88"
+
+[lib]
+name = "flash_engine"
+
+# No Tauri, no webview, no GTK: every dependency here builds on a bare CI
+# runner, so PR CI tests the flash path the way it tests hub-core/hub-io
+# (desktop-hub-core.yml), instead of leaving it to the release build. Each one
+# was already in the Flasher's dependency graph at these versions, so the
+# Flasher gains no crate; the Lab gains only crates the Flasher already ships
+# (all pure Rust — no -sys crate beyond the libudev-sys it already had):
+#   serde / serde_json .. the catalog, the release manifest, the event payloads
+#   sha2 / ed25519-dalek  the release-byte verification (release.rs)
+#   tempfile ............ the private 0600 staging file espflash reads
+#   reqwest ............. the manifest fetch + factory-image download (rustls,
+#                         no OpenSSL) — the same pinned shape as both apps
+#   serialport .......... the port list and the boot-receipt monitor; on Linux
+#                         it links libudev (libudev-sys), which CI installs
+#   hub-core ............ the one spawn-failure translation every sidecar
+#                         shares (hub_sidecar::arch_mismatch_hint)
+[dependencies]
+hub-core = { path = "../hub-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+ed25519-dalek = "3"
+tempfile = "3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serialport = "4"

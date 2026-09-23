@@ -101,6 +101,43 @@ jobs:
     - name: Test with C2PA export feature
       run: cargo test --features c2pa-export
 
+  # Every benchmark in tests/bench_harness.rs is #[ignore], so build's "Run
+  # tests" only compiles them. This job runs them once, in release, and keeps
+  # the tables as an artifact. No threshold and no comparison, on purpose: it
+  # proves the harness still runs and hands a reviewer a table to read next to
+  # a change that claims to be faster. The numbers stay in the artifact —
+  # AGENTS.md rule 4, docs/BENCHMARKS.md. Its own job rather than steps of
+  # `build`: the release compile (thin LTO, Cargo.toml [profile.release]) runs
+  # in parallel instead of lengthening build, and its release target lands in
+  # this job's rust-cache entry instead of build's.
+  bench-harness:
+    name: Bench harness (release run, tables kept as an artifact)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+    - uses: actions/checkout@v7
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+    - name: Install libseccomp
+      uses: ./.github/actions/setup-libseccomp
+    - name: Build the harness (release)
+      run: cargo test --release --test bench_harness --no-run
+    # The run has its own bound, apart from the compile above, so a row that
+    # hangs (a sandbox child that never exits) stops here rather than at the
+    # job's limit. An explicit `shell: bash` runs with -o pipefail, so a row
+    # that fails still fails the step through the tee.
+    - name: Run the harness
+      timeout-minutes: 15
+      shell: bash
+      run: cargo test --release --test bench_harness -- --ignored --nocapture --test-threads=1 | tee bench_harness.md
+    # Uploaded when a row fails too: the tables printed before the failure
+    # are what a reviewer reads to diagnose it.
+    - name: Upload bench-harness output
+      if: success() || failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: bench-harness-stdout
+        path: bench_harness.md
+
   conformance:
     name: Chain conformance (fixture DB round-trip through log_verify)
     runs-on: ubuntu-latest

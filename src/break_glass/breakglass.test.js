@@ -369,3 +369,79 @@ describe('request-hash recomputation (served-path WYSIWYS)', () => {
     assert.equal(ctx.el('status-context').style.display, 'none');
   });
 });
+
+// First-time setup: the console's one-time policy bootstrap. The server
+// re-validates everything (src/break_glass/http.rs); these tests pin what
+// the page sends, when it refuses to send, and that a 201 unlocks step 2.
+describe('first-time setup (policy bootstrap)', () => {
+  const KEY_A = 'aa'.repeat(32);
+  const KEY_B = 'bb'.repeat(32);
+  function row(id, key) {
+    return { querySelector: (sel) => ({ value: sel === '.setup-id' ? id : key }) };
+  }
+  function withSetup(rows, n) {
+    const ctx = loadConsole();
+    ctx.sandbox.document.getElementById('setup-rows').children = rows;
+    ctx.sandbox.document.getElementById('setup-n').value = n;
+    ctx.sandbox.__calls = [];
+    return ctx;
+  }
+  function recordApi(ctx, status, json) {
+    ctx.sandbox.__apiResult = { status, json };
+    ctx.drive('api = async (m, p, b) => { __calls.push([m, p, b]); return __apiResult; };');
+  }
+  const plain = (v) => JSON.parse(JSON.stringify(v));
+
+  it('connect on 409 (no policy yet) shows the setup panel', async () => {
+    const ctx = loadConsole();
+    ctx.sandbox.document.getElementById('setup-rows').children = [];
+    ctx.sandbox.document.getElementById('token').value = 'tok';
+    ctx.stubApi(409, { error: 'policy_not_configured' });
+    await ctx.el('btn-connect').onclick();
+    assert.equal(ctx.el('p-setup').style.display, 'block');
+    assert.match(ctx.el('connect-msg').textContent, /Set one up below/);
+  });
+
+  it('posts {n, trustees} once and unlocks the request step on 201', async () => {
+    const ctx = withSetup([row('alice', KEY_A), row('bob', KEY_B.toUpperCase()), row('', '')], '2');
+    recordApi(ctx, 201, {
+      n: 2, m: 2, reason_codes: [],
+      trustees: [{ id: 'alice', public_key: KEY_A }, { id: 'bob', public_key: KEY_B }],
+    });
+    await ctx.el('btn-setup').onclick();
+    const calls = plain(ctx.sandbox.__calls);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0], ['POST', '/breakglass/policy', {
+      n: 2,
+      trustees: [{ id: 'alice', public_key: KEY_A }, { id: 'bob', public_key: KEY_B }],
+    }]);
+    assert.equal(ctx.el('p-setup').style.display, 'none', 'the setup panel closes once stored');
+    assert.match(ctx.el('setup-msg').textContent, /Policy stored/);
+    assert.match(ctx.el('connect-msg').textContent, /2 of its 2 trustees/);
+  });
+
+  it('a 409 on store (policy appeared meanwhile) names the consented change flow', async () => {
+    const ctx = withSetup([row('alice', KEY_A)], '1');
+    recordApi(ctx, 409, { error: 'policy_already_configured' });
+    await ctx.el('btn-setup').onclick();
+    assert.match(ctx.el('setup-msg').textContent, /policy propose/);
+  });
+
+  for (const [label, rows, n] of [
+    ['threshold above the trustee count', [row('alice', KEY_A)], '2'],
+    ['threshold zero', [row('alice', KEY_A)], '0'],
+    ['a short key', [row('alice', KEY_A.slice(2))], '1'],
+    ['a non-hex key', [row('alice', 'zz'.repeat(32))], '1'],
+    ['a duplicate name', [row('alice', KEY_A), row('alice', KEY_B)], '1'],
+    ['a key without a name', [row('', KEY_A)], '1'],
+    ['no trustees', [], '1'],
+  ]) {
+    it('refuses ' + label + ' without calling the server', async () => {
+      const ctx = withSetup(rows, n);
+      recordApi(ctx, 201, {});
+      await ctx.el('btn-setup').onclick();
+      assert.equal(ctx.sandbox.__calls.length, 0);
+      assert.match(ctx.el('setup-msg').className, /bad/);
+    });
+  }
+});

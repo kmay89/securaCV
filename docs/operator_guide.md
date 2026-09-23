@@ -189,8 +189,18 @@ cargo run --bin break_glass -- unseal \
 ### Break-glass web console
 
 `break_glass_serve` hosts a single-page console (default `http://127.0.0.1:8800/breakglass`)
-that walks the same four phases without file shuffling:
+that walks the same four phases without file shuffling, after a one-time setup:
 
+0. **First-time setup (once, before exposing the console).** On a database with no quorum
+   policy, Connect says so and opens a setup panel: each trustee's name and Ed25519 public key
+   (64 hex characters) and how many must agree. **Store policy** sends it to
+   `POST /breakglass/policy`, which validates it exactly as `break_glass policy set` does and
+   writes it through the same quorum-gated kernel path, so the policy history's first row is the
+   same `bootstrap` row. The route accepts only the **first** policy: once one exists it answers
+   `409 policy_already_configured`, and every change needs the current quorum's consent through
+   `break_glass policy propose` / `policy approve` / `policy set --approvals`. Whoever holds the
+   capability token first wins this moment, so **do the setup while the console is bound to
+   loopback (the default), before you expose it on a routable address** behind TLS.
 1. **Connect** with the capability token from the server's token file.
 2. **Open a request** — you name the envelope, the purpose, yourself, and a reason code; the
    server computes the request hash over all of it, and the page produces a **trustee signing

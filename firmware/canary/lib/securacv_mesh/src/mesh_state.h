@@ -11,8 +11,15 @@
  *                     means subsequent boots resume the role without
  *                     re-pairing every time.
  *
- *   • (PR follow-up) trusted-peer pubkeys + per-peer last_counter —
- *                     replay defense across reboots. Not in this PR.
+ *   • trusted_peers — trusted-peer pubkeys (save_/load_trusted_peers,
+ *                     below), so a reboot does not forget who is household.
+ *
+ *   • replay_ctrs   — per-peer last_counter, the replay defense across
+ *                     reboots (audit O1: the counter is the freshness
+ *                     mechanism).
+ *
+ *   • elected_hub   — the last hub election result, so the fleet resumes
+ *                     its role split without a fresh election.
  *
  * NVS layout (mirrors the existing canary "securacv" namespace used by
  * ble_scout_key, device_id, mic_muted, etc.):
@@ -20,6 +27,13 @@
  *     namespace = "securacv"
  *     keys:
  *       opera_secret   — 32-byte blob
+ *       trusted_peers  — blob (peer table)
+ *       replay_ctrs    — blob (per-peer counters)
+ *       elected_hub    — blob (election result)
+ *       opera_name     — string, <= 32 bytes (F10; flash-encryption gated
+ *                        like the four above)
+ *       mesh_enabled   — 1 byte (F10; NOT gated: a preference, not a
+ *                        secret — see MESH ENABLED FLAG below)
  *
  * Host build (CSI_TEST_HOST_BUILD): all functions compile as
  * deterministic stubs. load_opera_secret() always returns false (no
@@ -33,11 +47,33 @@
  * layer is the only legitimate caller.
  *
  * Privacy: the opera_secret is the household's single most sensitive
- * mesh-layer key. Production deployments should be paired with the
- * flash-encryption fuse blown so the NVS partition is encrypted on
- * disk (audit-O2 deferred work, same gate ble_scout_key sits behind).
- * This module does NOT enforce flash-encryption — it just trusts
- * NVS to be backed by encrypted storage when the gate is set.
+ * mesh-layer key — it exposes OTHER devices, not just this one. This
+ * module therefore ENFORCES the flash-encryption gate (audit O2): every
+ * save_ and load_ function below returns false when
+ * esp_flash_encryption_enabled()
+ * is false, so nothing household-shared is persisted on silicon without
+ * flash encryption, and firmware/scripts/regression_check.sh ("Mesh
+ * secret persistence is FE-gated") asserts the check stays in this file
+ * and mesh_network.cpp.
+ *
+ * That is ALL the gate buys. Flash encryption does not cover NVS: ESP-IDF
+ * encrypts only the app, otadata and nvs_keys partitions, and this tree's
+ * tables (partitions_ota.csv, the core's default_8MB.csv) leave nvs
+ * unflagged, so on a board WITH flash encryption these four entries still
+ * sit in plaintext on the flash chip. They would be ciphertext only under
+ * NVS encryption, which is not available under framework = arduino (the
+ * Arduino core's sdkconfig does not compile it in; roadmap item 9 is the
+ * route). So today the gate keeps the secret off un-fused boards; it does
+ * not make it confidential at rest on fused ones.
+ *
+ * The device's OWN identity key is deliberately NOT gated this way at the
+ * default tier: Tier 0 of docs/design/hardware_root_of_trust.md (§5.1,
+ * decisions §8 #1/#3/#4) keeps it in NVS, reports the posture as
+ * `key_at_rest` (plaintext-nvs on every board in this tree, for the reason
+ * above), and refuses only in images built with
+ * SECURACV_REQUIRE_FLASH_ENCRYPTION=1 — the decision is written down once
+ * in common/identity/key_at_rest.h. (ble_scout_key's per-device scout key
+ * and the API token are Tier-0 by the same reasoning and carry no gate.)
  */
 
 #ifndef SECURACV_MESH_STATE_H
@@ -55,8 +91,9 @@ namespace mesh_state {
  *
  * Returns false on:
  *   • null pointer
- *   • flash encryption disabled on this device (AGENTS.md project
- *     invariant — refuse to persist secrets on FE-off hardware)
+ *   • flash encryption disabled on this device (audit O2 — refuse to
+ *     persist household secrets on FE-off hardware; on FE-on hardware the
+ *     NVS entry is still plaintext, see the file comment above)
  *   • NVS write failure (corrupt partition / hardware fault)
  *
  * On the host build, always returns true (no-op success — tests use
@@ -166,7 +203,10 @@ struct ReplayEntry {
   uint64_t last_counter;
 };
 
-constexpr size_t MAX_REPLAY_ENTRIES = 8;
+/* Live counters for up to 8 trusted peers + up to 8 replay tombstones
+ * (mesh_session::MAX_REPLAY_COUNTERS, which main.cpp static_asserts
+ * against): 16 × 16 B = 256 B blob. */
+constexpr size_t MAX_REPLAY_ENTRIES = 16;
 
 bool save_replay_counters(const ReplayEntry* entries, size_t count);
 
@@ -212,6 +252,115 @@ bool load_elected_hub(uint8_t out[mesh_crypto::FINGERPRINT_LEN]);
 /* Erase the persisted elected-Hub fingerprint. Idempotent — succeeds
  * if already absent. On the host build, always returns true. */
 bool clear_elected_hub();
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * SINGLE TRUSTED-PEER REMOVAL  (F10)
+ *
+ * Drop ONE pubkey from the "trusted_peers" blob (read-modify-write:
+ * the remaining pubkeys are re-written in order, or the key is removed
+ * when none remain). Used when a peer's verified LEAVE_OPERA arrives and
+ * by peer removal. Same flash-encryption gate as save_trusted_peer():
+ * the blob is household-graph metadata, never read or re-written on an
+ * FE-off device.
+ *
+ * Returns true when the pubkey is gone afterwards — removed, or not
+ * present in the first place (idempotent). Returns false on a null
+ * pointer, FE disabled, or an NVS read/write failure (a malformed blob
+ * is a read failure: refuse rather than clobber). On the host build,
+ * always returns true (no-op success).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool remove_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * MESH ENABLED FLAG  (F10 — POST /api/mesh/enable)
+ *
+ * NVS key "mesh_enabled", one byte (1 = on, 0 = off). NOT flash-
+ * encryption gated: it is a user preference, not a secret and not
+ * household-identifying, and gating it would make "off" silently revert
+ * to "on" at every reboot of an FE-off dev board.
+ *
+ * load_mesh_enabled() returns true and writes *out only when the key is
+ * present; false (with *out untouched) when absent, on a null pointer,
+ * or on a read failure — callers default to enabled. On the host build
+ * load always returns false and save always returns true.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool save_mesh_enabled(bool enabled);
+bool load_mesh_enabled(bool* out);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * OPERA DISPLAY NAME  (F10 — POST /api/mesh/name)
+ *
+ * NVS key "opera_name", up to MAX_OPERA_NAME_BYTES (32) bytes, stored
+ * without the terminator. Flash-encryption gated like the rest of this
+ * namespace — the name a household gives its devices is identifying
+ * text, the same posture canary-wap's persist_opera_config applies. On
+ * an FE-off board save refuses (the name lasts until reboot) and load
+ * reports nothing stored.
+ *
+ * save_opera_name() rejects null / empty / over-long names (the REST
+ * handler validates first; this is the belt to its braces).
+ * load_opera_name() writes a NUL-terminated name into out (cap must be
+ * at least MAX_OPERA_NAME_BYTES + 1) and returns true only when a
+ * non-empty name was stored; on false out is untouched.
+ * clear_opera_name() is idempotent. Host build: save/clear → true,
+ * load → false.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr size_t MAX_OPERA_NAME_BYTES = 32;   /* == mesh_pairing::MAX_OPERA_NAME_LEN */
+
+bool save_opera_name(const char* name);
+bool load_opera_name(char* out, size_t cap);
+bool clear_opera_name();
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * ROTATION PERSISTENCE  (F10-rekey — CRYPTO: maintainer review required)
+ *
+ * Called from mesh_session's rekey-commit handler once this device has
+ * switched to a rotated opera_secret. Drops every forgotten peer's pubkey
+ * from "trusted_peers", THEN re-persists the NEW secret through the same
+ * flash-encryption gate as save_opera_secret().
+ *
+ * The order fails closed (review fix). opera_id travels in cleartext in
+ * every frame header and opera_secret buys nothing else on this tree, so
+ * a board that boots with the new secret while a forgotten device is
+ * still in trusted_peers accepts that device again as soon as it copies
+ * the new opera_id off the air. Removing first means a power cut between
+ * the writes leaves the OLD secret with the peer gone — never the new
+ * secret with the peer present. And if any removal fails, the new secret
+ * is not saved at all.
+ *
+ * When the new secret is not saved (a removal failed, FE off, NVS
+ * failure) the OLD one is cleared instead of left behind: a reboot must
+ * come up with no opera (re-pair) rather than silently rejoin with a
+ * secret the household just rotated away from. The live session keeps the
+ * rotated secret in RAM either way (canary-wap's O2 branch). On an FE-off
+ * board nothing was persisted to begin with, so this changes nothing
+ * there.
+ *
+ * Returns true iff every forgotten pubkey was removed AND the new secret
+ * was saved. Returns false on a null secret, on a null list with a
+ * non-zero count, or on any NVS refusal/failure. Host build: the stubs
+ * record the write order in test::journal() (below).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool persist_rotation(const uint8_t new_secret[mesh_crypto::OPERA_SECRET_LEN],
+                      const uint8_t (*forgotten_pubkeys)[mesh_crypto::PUBKEY_LEN],
+                      size_t forgotten_count);
+
+#ifdef CSI_TEST_HOST_BUILD
+/* Host-test hooks. The host stubs write nothing, so an ORDER of writes is
+ * invisible to a test; the stubs that stand in for the rotation's three
+ * writes append one letter each to a journal instead — 'R'
+ * remove_trusted_peer, 'S' save_opera_secret, 'C' clear_opera_secret — and
+ * remove_trusted_peer can be told to fail. */
+namespace test {
+const char* journal();
+void        reset_journal();
+void        fail_remove_trusted_peer(bool fail);
+}  /* namespace test */
+#endif
 
 }  /* namespace mesh_state */
 

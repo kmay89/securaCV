@@ -1,6 +1,6 @@
 # SecuraCV Canary Firmware — Feature Audit Matrix
 
-**Last updated:** 2026-09-23 (canary-sentinel listed as a variant — Phase 1a, compile-gated in CI and unreleased, deliberately not a dashboard column; see the note under the variant table). 2026-09-08 (MQTT broker TLS row added: one shared decision header, canary-wap CA-verified only — no fingerprint hook in esp_mqtt — and its old unverified `tls` bool now refuses until a CA lands; `firmware/canary`'s `securacv_mqtt` still plain. 2026-09-05 feature-truth pass: the two canary-wap dashboard columns collapsed into one — the PlatformIO lane builds the Arduino sketch via `src_dir`, so 43 of 65 cells were describing a deleted `src/` scaffold; canary-wap T3/T4 acoustic detection corrected to ✅; canary-vision / canary-sense WiFi AP corrected to ✅ and their first-time-setup wizard to ⚠️ for the shared headless setup portal. 2026-09-02: canary-display lane added to the dashboard and to `build_matrix.json` — the fleet viewer ships from more release buttons than any other product and had no column; see its note below the dashboard. 2026-07-11: `_securacv._tcp` mDNS fleet adverts with the canonical TXT schema + HA MQTT Identify buttons on canary-vision and canary-sense — compile/CI-verified, hardware bench validation pending. 2026-07-02: canary-sense witness signing — Ed25519 events + NVS hash chain + wap-schema chain/health trust surface + task watchdog; earlier same day: Phase 2 network stack + canary-vision robustness parity)
+**Last updated:** 2026-09-23 (canary-sentinel listed as a variant — Phase 1a, compile-gated in CI and unreleased, deliberately not a dashboard column; see the note under the variant table. Same day, new SoftAP WPA2/WPA3 transition + PMF row: ⚠️ for canary (PIO) and canary-wap — the request is made in both trees, but SoftAP SAE exists only on cores that enable it, so the 2.0.17-core builds stay WPA2 and report it; CI-compiled on #1704, no bench. Same day, canary (PIO) TLS row ❌→⚠️: self-signed HTTPS on 443 with a port-80 redirect in `[env:dev]`/`[env:full]`, CI-compiled on #1704, release pending the slot budget, no bench pass. Same day, canary (PIO) provisioning gate: BOOT tap → `GET /api/provisioning-receipt`, and the dashboard's bearer token withheld from home-LAN page loads — the dashboard row had read ✅ before the canary code existed while the endpoint table said ❌; both now read ⚠️ (code landed and CI-compiled on #1704, no bench pass) and turn ✅ with the U1 bench pass. 2026-09-08: MQTT broker TLS row added: one shared decision header, canary-wap CA-verified only — no fingerprint hook in esp_mqtt — and its old unverified `tls` bool now refuses until a CA lands; `firmware/canary`'s `securacv_mqtt` still plain. 2026-09-05 feature-truth pass: the two canary-wap dashboard columns collapsed into one — the PlatformIO lane builds the Arduino sketch via `src_dir`, so 43 of 65 cells were describing a deleted `src/` scaffold; canary-wap T3/T4 acoustic detection corrected to ✅; canary-vision / canary-sense WiFi AP corrected to ✅ and their first-time-setup wizard to ⚠️ for the shared headless setup portal. 2026-09-02: canary-display lane added to the dashboard and to `build_matrix.json` — the fleet viewer ships from more release buttons than any other product and had no column; see its note below the dashboard. 2026-07-11: `_securacv._tcp` mDNS fleet adverts with the canonical TXT schema + HA MQTT Identify buttons on canary-vision and canary-sense — compile/CI-verified, hardware bench validation pending. 2026-07-02: canary-sense witness signing — Ed25519 events + NVS hash chain + wap-schema chain/health trust surface + task watchdog; earlier same day: Phase 2 network stack + canary-vision robustness parity)
 **Original audit:** 2026-02-20
 **Companion docs:** [VARIANT_POLICY.md](VARIANT_POLICY.md) (lifecycle labels), [FIRMWARE_VARIANT_AUDIT.md](FIRMWARE_VARIANT_AUDIT.md) (risk analysis), [PARITY_PLAN.md](PARITY_PLAN.md) (ACTIVE ⇄ canary-wap parity closure program)
 
@@ -71,6 +71,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | SD graceful shutdown flush | ✅ | ✅ | ➖ | ➖ | ➖ | ➖ | ⚠️ |
 | SD status counters (`witness_count` / `health_count` / `unacked_count`) | ✅ | ✅ | ➖ | ➖ | ➖ | ➖ | ⚠️ |
 | WiFi AP (SecuraCV-XXXX SSID, device-unique password) | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ✅ |
+| SoftAP WPA2/WPA3 transition + PMF capable (F16; WPA2 where the core lacks SoftAP SAE, reported as `ap_auth`; CI-compiled, no bench) | ⚠️ | ⚠️ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | WiFi STA (home network dual-mode) | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ✅ |
 | Web UI (embedded PROGMEM dashboard) | ⚠️ | ✅ | ❌ | ❌ | ✅ | ➖ | ✅ |
 | Camera peek (MJPEG stream, no frame storage) | ⚠️ | ✅ | ➖ | ➖ | ➖ | ➖ | ✅ |
@@ -78,6 +79,8 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Mesh RSSI from ESP-NOW radio | ⚠️ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | BLE discovery (Opera/Chirp/Nearby) | ❌ | ✅ | ❌ | ❌ | ⚠️ | ➖ | ✅ |
 | BLE Scout (paired-beacon room attribution, hashed MAC, Kalman RSSI) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| BLE Scout pairing surface (proximity window, no MAC on the API, NVS-persisted registry) | ⚠️ | ❌ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Household time zone (POSIX TZ in NVS, seeded from the phone at setup, local day for CSI buckets / quiet hours) | ⚠️ | ⚠️ | ❌ | ❌ | ✅ | ➖ | ❌ |
 | RF presence detection | ❌ | ✅ | ❌ | ❌ | ❌ | ➖ | ✅ |
 | WiFi CSI sensing (motion / breathing / micro-activity) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | CSI module pipeline + privacy chokepoint + 10-min bundler (v1: presence, breathing, ribbon, daily summary, anomaly) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
@@ -125,10 +128,10 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Local/LAN update server option (air-gapped hosting) | ✅ | ✅ | ✅ | ⚠️ | ❌ | ⚠️ | ❌ |
 | API authentication (bearer token + HKDF derivation) | ✅ | ✅ | ❌ | ➖ | ❌ | ➖ | ✅ |
 | Rate limiting on HTTP API | ✅ | ✅ | ➖ | ➖ | ❌ | ➖ | ✅ |
-| TLS (HTTPS self-signed) | ❌ | ❌ | ❌ | ❌ | ❌ | ➖ | ✅ |
+| TLS (HTTPS self-signed; canary (PIO): dev/full CI-compiled, release pending slot budget, no bench) | ⚠️ | ❌ | ❌ | ❌ | ❌ | ➖ | ✅ |
 | Watchdog timer | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Watch profiles (runtime per-use-case presets, HA select) | ❌ | ❌ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| Provisioning gate (BOOT button) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ✅ |
+| Provisioning gate (BOOT button; on canary (PIO) one tap unlocks one home-LAN dashboard load or one receipt fetch — code landed and CI-compiled, ⚠️ until the U1 bench pass) | ⚠️ | ✅ | ❌ | ❌ | ❌ | ➖ | ✅ |
 | Release-build fail-closed guards¹ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ (archive-only) |
 
 > **¹ Release-guard macro names differ per tree:** the canary (PIO) tree
@@ -252,7 +255,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Max client limit (1) | ✅ Hardened | ❌ (4 clients) | ✅ (1 client) | ❌ (configurable) |
 | mDNS (canary.local + _securacv._tcp, device_id in TXT record) | ✅ | ✅ (2026-07: unique `canary-<name>.local` + catch-all + canonical `dt`/`role` TXT schema) | ✅ | ✅ (same sources as Arduino IDE via `src_dir`) |
 | Rate limiting on API | ✅ | ❌ | ✅ (120 req/min) | ❌ |
-| TLS (HTTPS) support | ✅ Self-signed cert | ❌ | ❌ | ❌ |
+| TLS (HTTPS) support | ✅ Self-signed cert | ❌ | ⚠️ ECDSA P-256 self-signed, `FEATURE_HTTPS` in dev/full (CI-compiled, release pending slot budget, no bench) | ❌ |
 | WiFi STA (home network connect) | ✅ | ❌ | ✅ (AP+STA dual mode) | ❌ |
 | Captive portal redirect | ✅ | ❌ | ❌ | ❌ |
 
@@ -263,7 +266,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | `GET /` (web dashboard) | ✅ Full PROGMEM UI | ✅ Minimal inline | ✅ web_ui_register_routes | ⚠️ |
 | `GET /api/status` | ✅ Full JSON | ✅ Basic JSON | ✅ http_register_standard_api | ⚠️ |
 | `GET /api/device-info` | ✅ | ❌ | ❌ | ❌ |
-| `GET /api/provisioning-receipt` | ✅ (BOOT button gated) | ❌ | ❌ | ❌ |
+| `GET /api/provisioning-receipt` | ✅ (BOOT button gated) | ❌ | ⚠️ (bearer or one BOOT tap; code landed and CI-compiled, ✅ after the U1 bench pass) | ❌ |
 | `GET /api/system` (sys metrics) | ✅ | ❌ | ❌ | ❌ |
 | `GET /api/chain` | ✅ | ❌ | ✅ | ❌ |
 | `GET /api/logs` | ✅ | ❌ | ✅ | ❌ |
@@ -286,10 +289,11 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | `POST /api/peek/stop` | ✅ | ❌ | ❌ | ❌ |
 | `GET /api/peek/status` | ✅ | ❌ | ❌ | ❌ |
 | `POST /api/peek/resolution` | ✅ | ❌ | ❌ | ❌ |
-| `GET /api/mesh` | ✅ | ❌ | ❌ | ❌ |
-| `GET /api/mesh/peers` | ✅ | ❌ | ❌ | ❌ |
-| `GET /api/mesh/alerts` | ✅ | ❌ | ❌ | ❌ |
-| Mesh pair/leave/remove endpoints | ✅ (6 endpoints) | ❌ | ❌ | ❌ |
+| `GET /api/mesh` | ✅ | ✅ | ✅ | ❌ |
+| `GET /api/mesh/peers` | ✅ | ✅ | ✅ (incl. per-peer `alerts_received`) | ❌ |
+| `GET /api/mesh/alerts` | ✅ | ⚠️ (+ `DELETE`) — route answers, but nothing in the WAP sends a TAMPER_ALERT (`broadcast_tamper_alert` has no caller), so the history stays empty | ⚠️ (+ `DELETE`; verified TAMPER_ALERT history, per boot) — radio proof pending: the transport peer table is never populated on a device, so no alert arrives over the air yet | ❌ |
+| Mesh pair/leave/remove endpoints | ✅ (6 endpoints) | ⚠️ (+ name, enable) — routes registered; the pairing fix is host-tested only and the X25519-over-Ed25519-keys defect predicts mismatched codes on a device (bench U1 Track C2) | ⚠️ pair ×4, leave, name, enable, remove — radio proof pending (U1 Track C2/C3) | ❌ |
+| `POST /api/mesh/remove` (rotates `opera_secret`, spec §5.6) | ✅ | ⚠️ route and rotation present, but no opera forms on a device until pairing is bench-proven (see the row above; U1 Track C2/C3) | ⚠️ ephemeral-X25519 rotation, host-tested; crypto review + bench pending (spec §5.6 PIO) | ❌ |
 | `GET /api/ble/status` | ✅ | ❌ | ❌ | ❌ |
 | `GET /api/nearby` | ✅ | ❌ | ❌ | ❌ |
 | `POST /api/chirp/send` | ✅ | ❌ | ❌ | ❌ |
@@ -360,7 +364,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Chirp channel | ✅ chirp_channel.cpp | ❌ | ⚠️ chirp_channel.h header | ⚠️ |
 | Hardware state & safe mode | ✅ hardware_state.h | ❌ | ❌ | ❌ |
 | API authentication (bearer token) | ✅ api_auth.h | ❌ | ✅ securacv_auth lib | ❌ |
-| Provisioning gate (BOOT button) | ✅ | ❌ | ❌ | ❌ |
+| Provisioning gate (BOOT button) | ✅ | ❌ | ⚠️ `common/network/provisioning_gate.h` (host-tested; firmware glue CI-compiled, no bench pass) | ❌ |
 | HKDF API token derivation | ✅ | ❌ | ✅ securacv_crypto::derive_api_token | ❌ |
 | Serial command handler | ✅ (h/i/s/t/g/c/m) | ❌ | ✅ (h/i/s/g/m/r) | ❌ |
 | Watchdog timer | ✅ | ❌ | ✅ | ⚠️ |
@@ -390,6 +394,12 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | `FEATURE_OTA_UPDATE` | ❌ | ❌ | ✅ | ❌ |
 | `FEATURE_HA_MQTT` | ❌ | ❌ | ✅ | ❌ |
 | `DEBUG_VERBOSE` / `DEBUG_*` | ✅ (5 flags) | ❌ | ✅ (5 flags) | ⚠️ |
+
+`FEATURE_TAMPER_GPIO` has a consumer in both trees: a reed/hall enclosure
+contact on the board map's `TAMPER_PIN_DEFAULT`, debounced
+(`common/csi/src/contact_tamper.h`) and narrated as the `system.integrity`
+`enclosure` kind. It is 0 in every shipped profile until the pin is
+bench-validated; CI compiles it on (`firmware.yml`, compile-only).
 
 ## Provisioning System
 
@@ -438,7 +448,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 Post-archive (2026-04), the ACTIVE canonical tree is `firmware/canary/` (PlatformIO). The WAP Snapshot tree — archived 2026-02-20 — was removed from the repository on 2026-05-29; its history remains in git and the WAP UX it captured lives on in the COMPATIBILITY tree (`firmware/projects/canary-wap/`).
 
 - **canary-wap (COMPATIBILITY)**: ~100% WAP parity; recently hardened (real ESP-NOW RSSI 2026-04, SD flush-on-unmount 2026-04). MQTT publish + HA Discovery is now present here too (`csi_mqtt.cpp`, compiled in the Arduino CLI build; HA side validated by `hassfest`) — see the 2026-06-09 reconciliation note in [PARITY_PLAN.md](PARITY_PLAN.md).
-- **canary (PIO, ACTIVE)**: ~88% feature parity — modular libs, MQTT + HA Discovery, WiFi STA, export, storage status counters (2026-04), HKDF-derived bearer token gating every SPA-driven endpoint (2026-04). Gaps: camera streaming, full GPS motion FSM, some web UI tabs.
+- **canary (PIO, ACTIVE)**: ~88% feature parity — modular libs, MQTT + HA Discovery, WiFi STA, export, storage status counters (2026-04), HKDF-derived bearer token gating every SPA-driven endpoint (2026-04). 2026-09: committed CSI events publish on the MQTT `events` topic with the canary-wap's exact body (`common/csi/src/csi_event_wire.h`) and an Ed25519 signature Home Assistant verifies against the key it pins from the health payload's `public_key`, plus the `system.integrity` tamper bridge (SD and enclosure kinds) — compile-checked in CI, bench pending; no SD event log / reconnect backfill yet. Gaps: camera streaming, full GPS motion FSM, some web UI tabs.
 - **canary-vision (SPECIALIZED)**: 2026-08 adds **watch profiles** — NVS-backed per-use-case presets (`room_presence` default, `litter_box`) behind an HA "Watch profile" select: one step applies the profile's tuning (score/lost/dwell/class seeds) and retargets the fleet beacon's ObjectClass token (person → animal); events/state/cfg payloads carry the profile key, the event vocabulary and signed envelope are unchanged (Invariant VI), presets host-unit-tested (`tests_host/test_vision_profiles.cpp`), litter-box alert automations + dashboard ship under `homeassistant/`. 2026-07 robustness parity with the S3 tree — supervised WiFi STA (exponential-backoff reconnect + outage reboot), WiFi power-save policy (⚠️ pending bench), heap monitor with 3-level degradation that stretches the inference cadence under pressure, and RSSI/heap HA diagnostic entities. 2026-07-11 adds the `_securacv._tcp` mDNS fleet advert (canonical TXT schema; `DEVICE_TYPE` is now the canonical hyphenated `canary-vision`) and the HA Identify button (bench validation pending).
 - **canary-sense (SPECIALIZED)**: Phase 2 landed 2026-07 — the MR60 radar witness now publishes: supervised WiFi STA, MQTT with LWT + HA discovery (presence / occupants / range band / radar-link health / illuminance; wellbeing builds add the P0 breathing lock and P1-gated BPM entities), NVS-backed runtime config, heap diagnostics, and the shared signed pull-OTA engine with HA update entity. OTA cells sit at ⚠️ until the engine is bench-proven on the ESP32-C6 (new MCU for the A/B flow). Ed25519 witness-chain signing landed 2026-07-02 (events signed over the v1 `sense` canonical + NVS hash chain + wap-schema chain/health trust surface) — ✅ in the dashboard. 2026-07-11 adds the `_securacv._tcp` mDNS fleet advert and the HA Identify button (bench validation pending).
 - **canary-wap PlatformIO lane**: not a separate variant and not a separate parity number. `firmware/projects/canary-wap/platformio.ini` sets `src_dir`/`include_dir` to `arduino/canary_wap`, so `pio run` and `arduino-cli compile` build the same sketch with the same profile (`-DHARDWARE_XIAO_ESP32S3 -DBUILD_PROFILE_FULL`); its parity is the canary-wap bullet above. (This line used to read "~40% parity — many implementations still skeleton", which described the `src/` scaffold that was deleted.)

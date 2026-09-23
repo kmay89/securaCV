@@ -8,6 +8,10 @@
 //! behind the trait.
 //!
 //! Invariants enforced here (independent of the transport):
+//! - The quorum policy can be **bootstrapped** here (`POST /breakglass/policy`)
+//!   only while none exists; once one does, the route answers 409 and every
+//!   change goes through the quorum-consented CLI flow (`break_glass policy
+//!   propose` / `approve` / `set --approvals`) — Invariant V.
 //! - The hash a trustee signs comes from the **server's** open session, never the
 //!   client request — a caller cannot redirect approvals at a different hash.
 //! - `unseal` proceeds only when the collected quorum is `ready`.
@@ -22,7 +26,7 @@ use anyhow::Result;
 use serde::Deserialize;
 use serde_json::json;
 
-use super::core::{Approval, QuorumPolicy, TrusteeId, UnlockRequest};
+use super::core::{Approval, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest};
 use super::session::BreakGlassSession;
 use crate::TimeBucket;
 
@@ -50,12 +54,32 @@ impl HttpReply {
     }
 }
 
+/// What a policy bootstrap did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PolicyBootstrap {
+    /// No policy existed; this one is now stored (with its bootstrap history row).
+    Stored,
+    /// A policy already exists. Nothing was written: changes need the current
+    /// quorum's consent, which this route does not carry.
+    AlreadyConfigured,
+}
+
 /// Kernel/vault operations the break-glass flow needs. Abstracted so the handler
 /// is testable without a real database or vault; the production implementation
 /// (in the server binary) wraps `Kernel` + `Vault`.
 pub trait BreakGlassOps {
     /// The configured quorum policy, or `None` if break-glass is not provisioned.
     fn policy(&self) -> Result<Option<QuorumPolicy>>;
+
+    /// Store the FIRST quorum policy — the bootstrap, which needs no approvals
+    /// because there is no quorum yet to consent. Must never replace an
+    /// existing policy: report [`PolicyBootstrap::AlreadyConfigured`] instead.
+    /// The default refuses, for a backend that cannot store one.
+    fn bootstrap_policy(&mut self, _policy: &QuorumPolicy) -> Result<PolicyBootstrap> {
+        Err(anyhow::anyhow!(
+            "this backend cannot store a quorum policy; use `break_glass policy set`"
+        ))
+    }
 
     /// The kernel's ruleset hash, bound into every [`UnlockRequest`].
     fn ruleset_hash(&self) -> [u8; 32];
@@ -88,6 +112,29 @@ struct OpenReq {
     case_ref: Option<String>,
 }
 
+/// The bootstrap body: the shape `GET /breakglass/policy` serves, minus the
+/// server-owned fields. `m` is optional and, when present, must equal the
+/// trustee count; `crypto_mode` defaults to classical, as `policy set` does on
+/// an empty database.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BootstrapReq {
+    n: u8,
+    #[serde(default)]
+    m: Option<u8>,
+    trustees: Vec<BootstrapTrustee>,
+    #[serde(default)]
+    crypto_mode: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BootstrapTrustee {
+    id: String,
+    /// hex-encoded 32-byte Ed25519 public key.
+    public_key: String,
+}
+
 #[derive(Deserialize)]
 struct ApproveReq {
     trustee: String,
@@ -108,9 +155,16 @@ pub fn handle_break_glass<O: BreakGlassOps>(
     body: &[u8],
 ) -> HttpReply {
     let policy = match ops.policy() {
-        Ok(Some(p)) => p,
-        Ok(None) => return HttpReply::error(409, "policy_not_configured"),
+        Ok(p) => p,
         Err(_) => return HttpReply::error(500, "policy_load_failed"),
+    };
+    // The one route that runs before a policy exists — and only then.
+    if (method, path) == ("POST", "/breakglass/policy") {
+        return bootstrap_policy(ops, policy.as_ref(), body);
+    }
+    let policy = match policy {
+        Some(p) => p,
+        None => return HttpReply::error(409, "policy_not_configured"),
     };
 
     match (method, path) {
@@ -147,6 +201,88 @@ fn policy_reply(policy: &QuorumPolicy) -> HttpReply {
             "reason_codes": crate::break_glass::REASON_CODES,
         }),
     )
+}
+
+/// The 409 every bootstrap attempt gets once a policy exists: changes need the
+/// current quorum's consent, which travels through the CLI, not this route.
+fn already_configured() -> HttpReply {
+    HttpReply::json(
+        409,
+        json!({
+            "error": "policy_already_configured",
+            "hint": "changes need the current quorum's consent: break_glass policy propose, \
+                     policy approve, then policy set --approvals",
+        }),
+    )
+}
+
+/// `POST /breakglass/policy`: store the first quorum policy. Validated exactly
+/// as `break_glass policy set` validates it (`QuorumPolicy::new`), and written
+/// through the same quorum-gated kernel path, so the policy-history row is the
+/// CLI's bootstrap row.
+fn bootstrap_policy<O: BreakGlassOps>(
+    ops: &mut O,
+    current: Option<&QuorumPolicy>,
+    body: &[u8],
+) -> HttpReply {
+    if current.is_some() {
+        return already_configured();
+    }
+    let req: BootstrapReq = match serde_json::from_slice(body) {
+        Ok(r) => r,
+        Err(_) => return HttpReply::error(400, "invalid_json"),
+    };
+    if req.trustees.iter().any(|t| t.id.len() > MAX_FIELD_LEN) {
+        return HttpReply::error(400, "field_too_long");
+    }
+    let invalid = |reason: String| {
+        HttpReply::json(422, json!({ "error": "invalid_policy", "reason": reason }))
+    };
+    let mut entries = Vec::with_capacity(req.trustees.len());
+    for trustee in &req.trustees {
+        let key = match hex::decode(trustee.public_key.trim()) {
+            Ok(bytes) => bytes,
+            Err(_) => return invalid(format!("trustee {}: public key is not hex", trustee.id)),
+        };
+        let public_key: [u8; 32] = match key.try_into() {
+            Ok(k) => k,
+            Err(_) => {
+                return invalid(format!(
+                    "trustee {}: public key must be 32 bytes (64 hex characters)",
+                    trustee.id
+                ))
+            }
+        };
+        entries.push(TrusteeEntry {
+            id: TrusteeId::new(&trustee.id),
+            public_key,
+        });
+    }
+    if req.m.is_some_and(|m| m as usize != entries.len()) {
+        return invalid("m does not match the number of trustees".to_string());
+    }
+    let mut policy = match QuorumPolicy::new(req.n, entries) {
+        Ok(p) => p,
+        Err(e) => return invalid(e.to_string()),
+    };
+    if let Some(mode) = req.crypto_mode.as_deref() {
+        policy.vault.crypto_mode = match mode.parse() {
+            Ok(m) => m,
+            Err(e) => return invalid(format!("{e}")),
+        };
+    }
+    match ops.bootstrap_policy(&policy) {
+        Ok(PolicyBootstrap::Stored) => {
+            let mut reply = policy_reply(&policy);
+            reply.status = 201;
+            reply
+        }
+        Ok(PolicyBootstrap::AlreadyConfigured) => already_configured(),
+        Err(e) => HttpReply::json(
+            500,
+            json!({ "error": "policy_store_failed", "reason": e.to_string() }),
+        ),
+    }
 }
 
 fn open_request<O: BreakGlassOps>(
@@ -377,6 +513,47 @@ mod tests {
             self.last_approval_count = approvals.len();
             Ok(PathBuf::from(output_dir).join(format!("{}.raw", request.vault_envelope_id)))
         }
+        fn bootstrap_policy(&mut self, policy: &QuorumPolicy) -> Result<PolicyBootstrap> {
+            if self.policy.is_some() {
+                return Ok(PolicyBootstrap::AlreadyConfigured);
+            }
+            self.policy = Some(policy.clone());
+            Ok(PolicyBootstrap::Stored)
+        }
+    }
+
+    fn unprovisioned() -> MockOps {
+        MockOps {
+            policy: None,
+            unseal_calls: 0,
+            last_approval_count: 0,
+        }
+    }
+
+    fn bootstrap_body(n: u8) -> Vec<u8> {
+        let (alice, bob, _) = two_of_two();
+        json!({
+            "n": n,
+            "trustees": [
+                { "id": "alice", "public_key": hex::encode(alice.verifying_key().to_bytes()) },
+                { "id": "bob", "public_key": hex::encode(bob.verifying_key().to_bytes()) },
+            ],
+        })
+        .to_string()
+        .into_bytes()
+    }
+
+    fn post_policy(ops: &mut MockOps, body: &[u8]) -> HttpReply {
+        let mut session = BreakGlassSession::new();
+        handle_break_glass(
+            ops,
+            &mut session,
+            "/out",
+            bucket(),
+            "POST",
+            "/breakglass/policy",
+            body,
+        )
     }
 
     fn two_of_two() -> (SigningKey, SigningKey, QuorumPolicy) {
@@ -569,11 +746,7 @@ mod tests {
 
     #[test]
     fn policy_not_configured_blocks_everything() {
-        let mut ops = MockOps {
-            policy: None,
-            unseal_calls: 0,
-            last_approval_count: 0,
-        };
+        let mut ops = unprovisioned();
         let mut session = BreakGlassSession::new();
         let reply = handle_break_glass(
             &mut ops,
@@ -586,6 +759,185 @@ mod tests {
         );
         assert_eq!(reply.status, 409);
         assert!(reply.body.contains("policy_not_configured"));
+    }
+
+    /// The console's one-time setup: the first POST stores the policy (and a
+    /// GET reads it back); every later POST is a 409 that names the consented
+    /// change flow, and changes nothing.
+    #[test]
+    fn policy_bootstrap_is_accepted_once_then_409() {
+        let mut ops = unprovisioned();
+        let reply = post_policy(&mut ops, &bootstrap_body(2));
+        assert_eq!(reply.status, 201, "{}", reply.body);
+        let v: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
+        assert_eq!(v["n"], 2);
+        assert_eq!(v["m"], 2);
+        assert_eq!(v["trustees"][1]["id"], "bob");
+        let stored = ops.policy.clone().expect("policy stored");
+        assert_eq!(stored.n, 2);
+
+        let mut session = BreakGlassSession::new();
+        let read = handle_break_glass(
+            &mut ops,
+            &mut session,
+            "/out",
+            bucket(),
+            "GET",
+            "/breakglass/policy",
+            b"",
+        );
+        assert_eq!(read.status, 200);
+        let v: serde_json::Value = serde_json::from_str(&read.body).unwrap();
+        assert_eq!(v["trustees"][0]["id"], "alice");
+
+        // A second bootstrap — even a different, valid policy — is refused.
+        let again = post_policy(&mut ops, &bootstrap_body(1));
+        assert_eq!(again.status, 409);
+        assert!(again.body.contains("policy_already_configured"));
+        assert!(again.body.contains("policy propose"), "{}", again.body);
+        assert_eq!(
+            ops.policy.as_ref().unwrap().full_commitment(),
+            stored.full_commitment(),
+            "a refused bootstrap changes nothing"
+        );
+    }
+
+    /// A backend that finds a policy the handler did not see (another process
+    /// bootstrapped first) reports it, and the reply is the same 409.
+    #[test]
+    fn policy_bootstrap_race_lost_is_409() {
+        struct LateOps(MockOps);
+        impl BreakGlassOps for LateOps {
+            fn policy(&self) -> Result<Option<QuorumPolicy>> {
+                Ok(None)
+            }
+            fn ruleset_hash(&self) -> [u8; 32] {
+                RULESET
+            }
+            fn authorize_unseal(
+                &mut self,
+                request: &UnlockRequest,
+                approvals: &[Approval],
+                now_bucket: TimeBucket,
+                output_dir: &str,
+            ) -> Result<PathBuf> {
+                self.0
+                    .authorize_unseal(request, approvals, now_bucket, output_dir)
+            }
+            fn bootstrap_policy(&mut self, _policy: &QuorumPolicy) -> Result<PolicyBootstrap> {
+                Ok(PolicyBootstrap::AlreadyConfigured)
+            }
+        }
+        let mut ops = LateOps(unprovisioned());
+        let mut session = BreakGlassSession::new();
+        let reply = handle_break_glass(
+            &mut ops,
+            &mut session,
+            "/out",
+            bucket(),
+            "POST",
+            "/breakglass/policy",
+            &bootstrap_body(2),
+        );
+        assert_eq!(reply.status, 409);
+        assert!(reply.body.contains("policy_already_configured"));
+    }
+
+    /// Validated exactly as `break_glass policy set` validates: threshold,
+    /// key length and encoding, duplicate ids, the crypto mode — and nothing
+    /// is stored on a refusal.
+    #[test]
+    fn policy_bootstrap_validates_like_policy_set() {
+        let (alice, _bob, _) = two_of_two();
+        let alice_hex = hex::encode(alice.verifying_key().to_bytes());
+        let cases: Vec<(serde_json::Value, u16)> = vec![
+            // threshold above the trustee count
+            (
+                json!({ "n": 3, "trustees": [{ "id": "alice", "public_key": alice_hex }] }),
+                422,
+            ),
+            // threshold zero
+            (
+                json!({ "n": 0, "trustees": [{ "id": "alice", "public_key": alice_hex }] }),
+                422,
+            ),
+            // not hex
+            (
+                json!({ "n": 1, "trustees": [{ "id": "alice", "public_key": "zz" }] }),
+                422,
+            ),
+            // 31 bytes
+            (
+                json!({ "n": 1, "trustees": [{ "id": "alice", "public_key": &alice_hex[2..] }] }),
+                422,
+            ),
+            // duplicate id
+            (
+                json!({ "n": 1, "trustees": [
+                    { "id": "alice", "public_key": alice_hex },
+                    { "id": "alice", "public_key": hex::encode([9u8; 32]) },
+                ] }),
+                422,
+            ),
+            // m disagrees with the roster
+            (
+                json!({ "n": 1, "m": 2, "trustees": [{ "id": "alice", "public_key": alice_hex }] }),
+                422,
+            ),
+            // unknown crypto mode
+            (
+                json!({ "n": 1, "crypto_mode": "rot13", "trustees": [{ "id": "alice", "public_key": alice_hex }] }),
+                422,
+            ),
+            // unknown field (the server owns everything else)
+            (json!({ "n": 1, "trustees": [], "vault": {} }), 400),
+            // no trustees
+            (json!({ "n": 1, "trustees": [] }), 422),
+        ];
+        for (body, status) in cases {
+            let mut ops = unprovisioned();
+            let reply = post_policy(&mut ops, body.to_string().as_bytes());
+            assert_eq!(reply.status, status, "{body} -> {}", reply.body);
+            assert!(ops.policy.is_none(), "{body} must store nothing");
+        }
+        let mut ops = unprovisioned();
+        assert_eq!(post_policy(&mut ops, b"{not json").status, 400);
+        assert!(ops.policy.is_none());
+    }
+
+    /// A backend that cannot store a policy (the trait default) says so.
+    #[test]
+    fn policy_bootstrap_default_backend_refuses() {
+        struct ReadOnlyOps;
+        impl BreakGlassOps for ReadOnlyOps {
+            fn policy(&self) -> Result<Option<QuorumPolicy>> {
+                Ok(None)
+            }
+            fn ruleset_hash(&self) -> [u8; 32] {
+                RULESET
+            }
+            fn authorize_unseal(
+                &mut self,
+                _request: &UnlockRequest,
+                _approvals: &[Approval],
+                _now_bucket: TimeBucket,
+                _output_dir: &str,
+            ) -> Result<PathBuf> {
+                Err(anyhow::anyhow!("not provisioned"))
+            }
+        }
+        let mut session = BreakGlassSession::new();
+        let reply = handle_break_glass(
+            &mut ReadOnlyOps,
+            &mut session,
+            "/out",
+            bucket(),
+            "POST",
+            "/breakglass/policy",
+            &bootstrap_body(2),
+        );
+        assert_eq!(reply.status, 500);
+        assert!(reply.body.contains("policy set"), "{}", reply.body);
     }
 
     #[test]

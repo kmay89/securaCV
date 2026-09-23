@@ -71,6 +71,7 @@ flatten_includes() {
   sed -i -E 's|#include "power/|#include "|g' "$f"
   sed -i -E 's|#include "story/|#include "|g' "$f"
   sed -i -E 's|#include "fleet_link/|#include "|g' "$f"
+  sed -i -E 's|#include "time/|#include "|g' "$f"
   # <config.h> is the FLAVOR config (angle brackets skip this dir on purpose);
   # in the flat sketch it lives as flavor_config.h to avoid colliding with the
   # composition header canary/config.h (-> config.h).
@@ -133,6 +134,9 @@ generate_shared() {
     "${FIRMWARE_ROOT}/common/provision_qr/provision_qr.h"
     "${FIRMWARE_ROOT}/common/fleet_selfreport/fleet_selfreport.h"
     "${FIRMWARE_ROOT}/common/network/wifi_join_policy.h"
+    # The fleet's IANA -> POSIX zone table (tz_auto.cpp's learner reads it;
+    # the canary and canary-wap seed their household zone from the same one).
+    "${FIRMWARE_ROOT}/common/time/tz_rule.h"
     # The onboarding pure helpers (QR/JSON escaping, unbiased password
     # alphabet). Canonical here since the display's include flipped to the
     # common path; the old byte-identical display copy (and the

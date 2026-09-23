@@ -4,10 +4,12 @@
 //! browser Lab's rescue behavior (canary-local: `validateBackupFile`, the
 //! backup naming, the image-magic hints) so the two surfaces agree.
 //!
-//! Kept dependency-free (std only) so it unit-tests WITHOUT the desktop stack
-//! (`rustc --test src/rescue.rs`), exactly like the `hub-core` crate. The Tauri
-//! commands in `lib.rs` wrap these builders with the `espflash` sidecar and the
-//! file dialogs — those are what a Mac / release-tag build validates end-to-end.
+//! Kept dependency-free (std only), and part of the tauri-free flash engine, so
+//! it unit-tests WITHOUT the desktop stack (`cargo test` in
+//! desktop/flash-engine), exactly like the `hub-core` crate. The Flasher's
+//! Tauri commands (desktop/src-tauri/src/lib.rs) wrap these builders with the
+//! `espflash` sidecar and the file dialogs — those are what a Mac /
+//! release-tag build validates end-to-end.
 
 /// A safe, descriptive backup filename: `securacv-backup-<chip>-<mac>-<stamp>.bin`.
 /// Every component is reduced to filename-safe characters so it can't produce a

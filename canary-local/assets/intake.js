@@ -261,7 +261,7 @@ export function flashAliasVerdict({ declaredBytes, head, probes } = {}) {
   // so it needs a probe at every candidate. A caller whose reads stopped short
   // (a flaky cable, a partial dump) gets "inconclusive" — missing evidence
   // must never read as a passed check. (Same rule as the desktop twin,
-  // desktop/src-tauri/src/intake.rs.)
+  // desktop/flash-engine/src/intake.rs.)
   const probed = new Set(probes.filter((p) => p && p.bytes).map((p) => p.atBytes));
   const unread = flashAliasCandidates(declaredBytes).find((at) => !probed.has(at));
   if (unread !== undefined) {

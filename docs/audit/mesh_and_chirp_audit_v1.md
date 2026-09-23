@@ -99,6 +99,8 @@ A removed peer is dropped from the local member list, but `opera_secret` is unch
 
 Invoke `rotate_opera_secret()` automatically from `remove_peer()` and expose it as `POST /api/mesh/rotate`.
 
+**PlatformIO tree (2026-09, F10-rekey option B — maintainer crypto review and bench pass pending):** the PIO mesh keeps no per-peer session key, so step 3's "encrypted under the existing session key" has nothing to use. `POST /api/mesh/remove` there runs an ephemeral X25519 exchange per rotation inside signed envelopes (`REKEY_OFFER/ACCEPT/SECRET/ACK`, msg_type 26–29; `firmware/canary/lib/securacv_mesh/src/mesh_rekey.{h,cpp}`), keeps canary-wap's ACK-under-the-old-`opera_id` ordering and 60 s drop-the-silent semantics, and is exercised two-sided by `test_mesh_rekey.cpp` plus session-level tests in `test_mesh_session.cpp`. Spec §5.6 carries the full description.
+
 ## 4. Chirp channel findings
 
 Chirp's spec is excellent; the implementation is well short of it. The spec promises a 6-layer abuse-prevention stack; the code implements roughly 1.5 of those layers.
@@ -557,7 +559,7 @@ header nonce (above).
 |---|---|---|---|---|
 | O1 | Medium | PR #450 | `mesh_network.cpp:561-572` | `test_mesh_opera_security::test_o1_counter_replay_protection` |
 | O2 | High | PR #450 | `mesh_network.cpp::flash_encryption_enabled` + `persist_opera_config`/`load_opera_config` | `test_mesh_opera_security::test_o2_load_refuses_when_fe_off` |
-| O3 | High | PR #450 (in-memory) + PR #454 (full transactional ACK) | `mesh_network.cpp::remove_peer` + `maybe_finalize_rekey` + `MSG_OPERA_REKEY{,_ACK}` cases | `test_mesh_opera_security::test_o3_rekey_commits_on_all_acks` + `test_o3_rekey_timeout_marks_unacked_stale` |
+| O3 | High | PR #450 (in-memory) + PR #454 (full transactional ACK); PIO tree: F10-rekey (review pending) | `mesh_network.cpp::remove_peer` + `maybe_finalize_rekey` + `MSG_OPERA_REKEY{,_ACK}` cases; PIO: `mesh_rekey.cpp` + `mesh_session::remove_peer` | `test_mesh_opera_security::test_o3_rekey_commits_on_all_acks` + `test_o3_rekey_timeout_marks_unacked_stale`; PIO: `test_mesh_rekey` + `test_mesh_session::test_rekey_*` |
 | C1 | Critical | PR #450 | `chirp_channel.cpp::handle_witness` (Ed25519::verify against carried `session_pubkey`) | `test_chirp_protocol_invariants::test_witness_canonical_layout` |
 | C2 | Critical | PR #450 | `chirp_channel.cpp::handle_witness` (initial `confirm_count = 0`; ignored on wire) | `test_chirp_security::test_c2_c3_no_self_count` |
 | C3 | Critical | PR #450 | `chirp_channel.cpp::handle_ack` (different-pubkey check) + `send_chirp` (initial 0) | `test_chirp_security::test_c2_c3_no_self_count` |

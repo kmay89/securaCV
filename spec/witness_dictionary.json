@@ -341,14 +341,44 @@
     ]
   },
   "known_divergences": {
-    "$comment": "Vocabularies that are NOT unified today and are deliberately NOT gated by the linter yet, because unifying them needs a design decision, not a rename. Recorded here so they are captured, not lost. Each maps to a discrepancy id from the inventory and a follow-up.",
+    "$comment": "Vocabularies that are NOT unified today and are deliberately NOT gated by the linter yet, because unifying them needs a design decision, not a rename. Recorded here so they are captured, not lost. Each maps to a discrepancy id from the inventory and a follow-up. One exception lives here because it sits beside the divergence it partly closes: tamper_vocabularies.system_integrity_kinds IS unified and IS gated (scripts/lint_dictionary_sync.py).",
     "tamper_vocabularies": {
-      "note": "Two disjoint 'tamper' vocabularies. Firmware publishes a semantic device-tamper `kind` (enclosure_tamper | temp_drift | camera_tamper) on securacv/<id>/tamper; these all fold to EventType::TamperDetected upstream. The HA integration separately models hardware/survivability tamper *types* (power_loss, enclosure, gpio, watchdog, ...) as its own binary sensors. Inventory D4/D5/D6: firmware `kind` never matches the HA sensor `type`, and the field is named `kind` vs `type`. Unifying these is a product decision tracked separately (relates to doc 11 device-model consolidation).",
+      "note": "Two 'tamper' vocabularies share securacv/<id>/tamper. (1) GATED: system_integrity_kinds below, the kinds the system.integrity csi_event module (firmware/common/csi/src/tamper_events_module, registered by canary-wap and by the canary PIO tree) can emit. They are the HA integration's tamper *types* verbatim (custom_components/securacv/const.py TAMPER_*): canary-wap's csi_mqtt bridges every system.integrity commit onto the tamper topic as {\"type\":\"<kind>\"}, which is exactly what HA's per-type binary sensors match (the canary PIO tree's csi_event_egress bridges its SD and enclosure kinds the same way; its boot story reaches that topic through the power-events classifier). scripts/lint_dictionary_sync.py requires the module's kind literals and its header's doctrine table to equal this list, each kind to be a const.py TAMPER_* value with its own per-type sensor and not in FUTURE_TAMPER_TYPES, and every narration copy (the HA timeline card, HA voice alerts, the canary-wap dashboard, the Apple apps' TamperKind) to know it. (2) firmware_kinds, the older semantic device-tamper `kind` (enclosure_tamper | temp_drift | camera_tamper) the canary PIO tree's sensing-witness drain publishes; these fold to EventType::TamperDetected upstream and are otherwise NOT unified with HA's types (inventory D4/D5/D6; unifying them is a product decision tracked separately, relates to doc 11 device-model consolidation). The one exception is firmware_kind_types: a kind that IS one of HA's tamper types also carries that word as `type` on the same payload (the touch pad's enclosure_tamper is HA's `enclosure`), gated like (1) on the HA side and required by the linter in the canary drain's code.",
       "firmware_kinds": [
         "enclosure_tamper",
         "temp_drift",
         "camera_tamper"
-      ]
+      ],
+      "firmware_kind_types": {
+        "enclosure_tamper": "enclosure"
+      },
+      "system_integrity_kinds": [
+        "unexpected_reboot",
+        "watchdog",
+        "power_loss",
+        "sd_error",
+        "sd_remove",
+        "enclosure"
+      ],
+      "system_integrity_hosts": {
+        "$comment": "Which kinds each host's feeds can produce. Boot kinds come from the reset reason every board has; sd_error / sd_remove need a live SD state (canary-wap: hardware_state.h SdState; canary: the storage lane via common/storage/sd_mount_policy.h sd_state_for_tamper, FEATURE_SD_STORAGE builds); enclosure needs a debounced contact state (common/csi/src/contact_tamper.h over the board map's TAMPER_PIN_DEFAULT), compiled only with FEATURE_TAMPER_GPIO=1, which no shipped profile sets until the pin is bench-validated. The linter requires every host list to be a subset of system_integrity_kinds, their union to equal it, and each host that lists an SD kind or enclosure to still pass the matching live feed.",
+        "canary-wap": [
+          "unexpected_reboot",
+          "watchdog",
+          "power_loss",
+          "sd_error",
+          "sd_remove",
+          "enclosure"
+        ],
+        "canary": [
+          "unexpected_reboot",
+          "watchdog",
+          "power_loss",
+          "sd_error",
+          "sd_remove",
+          "enclosure"
+        ]
+      }
     },
     "mqtt_topic_namespaces": {
       "note": "Three disjoint topic namespaces reflect the three-entity-universe finding (doc 11 section 1.1): the Rust PWK->HA bridge publishes under `witness/...` (zone tree + chain_problem/last_event/digest); firmware canaries and the HA integration use `securacv/<id>/...` (flat suffixes). These are not mirrors and must not be gated as if they were. Consolidation is doc 11 issue #930. Inventory D8/D9.",

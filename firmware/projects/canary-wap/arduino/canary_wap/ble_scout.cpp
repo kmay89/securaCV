@@ -14,6 +14,12 @@
  *      allow-listed fields. No hashed_id is published in v1 either —
  *      the label travels in the note field (sanitized ASCII at the
  *      chokepoint) and consumers correlate via label only.
+ *   3. Pairing (repo sweep F27) happens only through the proximity window:
+ *      ble_scout_on_advert() hands the MAC of the first strong unpaired
+ *      advert to ble_scout_pair() and nothing else. The HTTP surface arms
+ *      the window and reads back hashed_id + label copies; no API, log or
+ *      persisted byte carries a MAC. (This sketch has no pairing route yet:
+ *      the canary PIO tree's /api/scout is the only surface today.)
  *
  * VENDORED COPY — intentional divergence from the canonical library
  * (firmware/canary/lib/securacv_ble_scan/src/ble_scout.cpp), normalized away by
@@ -27,14 +33,17 @@
 #include "ble_scout.h"
 #include "ble_scout_state.h"
 #include "ble_scout_key.h"
+#include "ble_scout_registry_store.h"
 
 #include "csi_event.h"
 #include "csi_module.h"
 
 #include <string.h>
+#include <atomic>
 
 #ifndef CSI_TEST_HOST_BUILD
-  #include <Arduino.h>   /* millis() */
+  #include <Arduino.h>      /* millis(), portMUX */
+  #include <Preferences.h>  /* the paired-registry blob (loop task only) */
 #endif
 
 /* canary-wap defines FEATURE_BLE_SCAN in build_config.h, while the PIO
@@ -82,7 +91,73 @@ bool                s_radio_allowed = false;  /* NimBLE bring-up latch. csi_inte
                                                * only — the host path ignores it. */
 ble_scan::Registry  s_registry;
 PresenceTracker     s_tracker;
+pairing::Window     s_window;
 beacon_event_broadcast_fn s_broadcast_cb = nullptr;
+
+/* A pair/unpair changed the registry; the loop task (ble_scout_tick) owes
+ * the NVS blob. Set from the NimBLE host task (window pairing) and the HTTP
+ * task (unpair), cleared by the loop — hence atomic. */
+std::atomic<bool>   s_registry_dirty{false};
+
+/* Loop-task-only scratch for the persisted blob (kept off the stack). */
+uint8_t             s_blob[registry_store::BLOB_LEN];
+
+/* One lock for the registry, the presence tracker and the pairing window —
+ * three tasks touch them (see ble_scout.h "Threading"). Held only around
+ * the table operations themselves: hashing, event emits and NVS I/O run
+ * outside it. The host build is single-threaded. */
+#ifdef CSI_TEST_HOST_BUILD
+  #define SCOUT_LOCK()   do { } while (0)
+  #define SCOUT_UNLOCK() do { } while (0)
+#else
+  portMUX_TYPE      s_scout_mux = portMUX_INITIALIZER_UNLOCKED;
+  #define SCOUT_LOCK()   portENTER_CRITICAL(&s_scout_mux)
+  #define SCOUT_UNLOCK() portEXIT_CRITICAL(&s_scout_mux)
+#endif
+
+/* Copy a registry label out while the lock is held. */
+void copy_label(char out[ble_scan::MAX_LABEL_LEN + 1],
+                const ble_scan::PairedBeacon* p) {
+  if (p == nullptr) {
+    out[0] = '\0';
+    return;
+  }
+  memcpy(out, p->label, ble_scan::MAX_LABEL_LEN + 1);
+  out[ble_scan::MAX_LABEL_LEN] = '\0';
+}
+
+/* Loop task only: write the registry blob. Returns false when the write did
+ * not land (the caller keeps the dirty flag so the next tick retries). */
+bool persist_registry() {
+  SCOUT_LOCK();
+  const size_t n = registry_store::serialize(&s_registry, s_blob, sizeof(s_blob));
+  SCOUT_UNLOCK();
+  if (n == 0) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  return true;   /* no NVS on the host; serialize() above is the tested half */
+#else
+  Preferences prefs;
+  if (!prefs.begin(registry_store::NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  const size_t put = prefs.putBytes(registry_store::NVS_KEY, s_blob, n);
+  prefs.end();
+  return put == n;
+#endif
+}
+
+/* Init-time load of the persisted registry. A missing or malformed blob
+ * leaves the registry empty (deserialize is all-or-nothing). */
+void load_registry() {
+#ifndef CSI_TEST_HOST_BUILD
+  Preferences prefs;
+  if (!prefs.begin(registry_store::NVS_NAMESPACE, /*readOnly=*/true)) return;
+  const size_t got = prefs.getBytes(registry_store::NVS_KEY, s_blob, sizeof(s_blob));
+  prefs.end();
+  if (got != registry_store::BLOB_LEN) return;
+  SCOUT_LOCK();
+  (void)registry_store::deserialize(&s_registry, s_blob, got);
+  SCOUT_UNLOCK();
+#endif
+}
 
 inline uint32_t now_ms_impl() {
 #ifdef CSI_TEST_HOST_BUILD
@@ -227,8 +302,12 @@ bool ble_scout_init() {
       emit_initialized("failed");
       return false;
     }
+    SCOUT_LOCK();
     ble_scan::registry_init(&s_registry);
     presence_init(&s_tracker);
+    pairing::init(&s_window);
+    SCOUT_UNLOCK();
+    load_registry();
     s_inited = true;
   }
 
@@ -270,18 +349,74 @@ bool ble_scout_pair(const uint8_t mac[ble_scan::MAC_LEN],
   uint8_t hashed[ble_scan::HASHED_ID_LEN];
   if (!ble_scout_key_hash_beacon(mac, hashed)) return false;
 
-  return ble_scan::registry_add(&s_registry, hashed, label);
+  SCOUT_LOCK();
+  const bool ok = ble_scan::registry_add(&s_registry, hashed, label);
+  SCOUT_UNLOCK();
+  if (ok) s_registry_dirty.store(true);
+  return ok;
 }
 
 bool ble_scout_unpair(const uint8_t hashed_id[ble_scan::HASHED_ID_LEN]) {
   if (!s_inited) return false;
+  SCOUT_LOCK();
   presence_forget(&s_tracker, hashed_id);
-  return ble_scan::registry_remove(&s_registry, hashed_id);
+  const bool removed = ble_scan::registry_remove(&s_registry, hashed_id);
+  SCOUT_UNLOCK();
+  if (removed) s_registry_dirty.store(true);
+  return removed;
 }
 
 size_t ble_scout_count() {
   if (!s_inited) return 0;
-  return ble_scan::registry_count(&s_registry);
+  SCOUT_LOCK();
+  const size_t n = ble_scan::registry_count(&s_registry);
+  SCOUT_UNLOCK();
+  return n;
+}
+
+pairing::ArmResult ble_scout_pair_window_start(const char* label,
+                                               uint32_t    window_ms,
+                                               int         rssi_min,
+                                               uint32_t    now_ms) {
+  if (!s_inited) return pairing::ArmResult::NOT_READY;
+  SCOUT_LOCK();
+  pairing::ArmResult r;
+  if (ble_scan::registry_count(&s_registry) >= ble_scan::MAX_PAIRED_BEACONS) {
+    r = pairing::ArmResult::REGISTRY_FULL;
+  } else {
+    r = pairing::arm(&s_window, label, window_ms, rssi_min, now_ms);
+  }
+  SCOUT_UNLOCK();
+  return r;
+}
+
+bool ble_scout_pair_window_cancel(uint32_t now_ms) {
+  SCOUT_LOCK();
+  const bool canceled = pairing::cancel(&s_window, now_ms);
+  SCOUT_UNLOCK();
+  return canceled;
+}
+
+pairing::Status ble_scout_pair_window_status(uint32_t now_ms) {
+  SCOUT_LOCK();
+  const pairing::Status st = pairing::status(&s_window, now_ms);
+  SCOUT_UNLOCK();
+  return st;
+}
+
+size_t ble_scout_registry_snapshot(ble_scan::PairedBeacon* out, size_t max) {
+  if (out == nullptr || max == 0) return 0;
+  size_t n = 0;
+  SCOUT_LOCK();
+  for (size_t i = 0; i < ble_scan::MAX_PAIRED_BEACONS && n < max; ++i) {
+    if (s_registry.slots[i].in_use) out[n++] = s_registry.slots[i];
+  }
+  SCOUT_UNLOCK();
+  return n;
+}
+
+bool ble_scout_registry_dirty() {
+  return s_registry_dirty.load();
 }
 
 void ble_scout_tick(uint32_t now_ms) {
@@ -293,9 +428,12 @@ void ble_scout_tick(uint32_t now_ms) {
    * 16 beacons × 16 bytes = 256 bytes on the stack — well within
    * the tick handler's safety margin. */
   uint8_t departed_ids[ble_scan::MAX_PAIRED_BEACONS * ble_scan::HASHED_ID_LEN];
+  SCOUT_LOCK();
   size_t n = presence_on_tick(&s_tracker, now_ms,
                               departed_ids,
                               ble_scan::MAX_PAIRED_BEACONS);
+  (void)pairing::expire(&s_window, now_ms);
+  SCOUT_UNLOCK();
   /* Defensive cap: presence_on_tick returns the count of transitions
    * but only writes up to MAX_PAIRED_BEACONS ids into the buffer.
    * Today the buffer matches, so n ≤ MAX_PAIRED_BEACONS, but the
@@ -303,10 +441,19 @@ void ble_scout_tick(uint32_t now_ms) {
    * future buffer-size / tracker-size mismatch silently overrunning
    * the read. */
   for (size_t i = 0; i < n && i < ble_scan::MAX_PAIRED_BEACONS; ++i) {
-    const ble_scan::PairedBeacon* p =
-      ble_scan::registry_find(&s_registry,
-                              departed_ids + i * ble_scan::HASHED_ID_LEN);
-    emit_departed(p ? p->label : "");
+    char label[ble_scan::MAX_LABEL_LEN + 1];
+    SCOUT_LOCK();
+    copy_label(label,
+               ble_scan::registry_find(&s_registry,
+                                       departed_ids + i * ble_scan::HASHED_ID_LEN));
+    SCOUT_UNLOCK();
+    emit_departed(label);
+  }
+
+  /* NVS writes stay on this (loop) task. A failed write keeps the flag set
+   * and retries on the next ~1 Hz tick. */
+  if (s_registry_dirty.exchange(false) && !persist_registry()) {
+    s_registry_dirty.store(true);
   }
 }
 
@@ -320,13 +467,36 @@ void ble_scout_on_advert(const uint8_t mac[ble_scan::MAC_LEN],
 
   /* Drop adverts from non-paired beacons in O(N) registry lookup.
    * MAX_PAIRED_BEACONS=16 so this is ≤16 16-byte memcmps per advert —
-   * sub-microsecond on ESP32-S3. */
+   * sub-microsecond on ESP32-S3. An unpaired advert is first offered to
+   * the proximity pairing window (F27): the first one at/above the
+   * window's threshold claims it, and its MAC goes to ble_scout_pair()
+   * right here — the only place the raw bytes exist. Already-paired
+   * beacons never consume the window. */
+  char label[ble_scan::MAX_LABEL_LEN + 1] = {0};
+  PresenceEvent e = PresenceEvent::NONE;
+  bool pair_now = false;
+  SCOUT_LOCK();
   const ble_scan::PairedBeacon* paired =
     ble_scan::registry_find(&s_registry, hashed);
-  if (paired == nullptr) return;
+  if (paired != nullptr) {
+    copy_label(label, paired);
+    e = presence_on_advert(&s_tracker, hashed, rssi_dbm, now_ms);
+  } else {
+    pair_now = pairing::offer(&s_window, rssi_dbm, now_ms);
+    if (pair_now) memcpy(label, s_window.label, sizeof(label));
+  }
+  SCOUT_UNLOCK();
 
-  PresenceEvent e = presence_on_advert(&s_tracker, hashed, rssi_dbm, now_ms);
-  if (e == PresenceEvent::ARRIVED)  emit_arrived(paired->label);
+  if (pair_now) {
+    label[ble_scan::MAX_LABEL_LEN] = '\0';
+    const bool ok = ble_scout_pair(mac, label);
+    SCOUT_LOCK();
+    pairing::finish(&s_window, ok, hashed);
+    SCOUT_UNLOCK();
+    return;   /* presence starts with the beacon's next advert */
+  }
+
+  if (e == PresenceEvent::ARRIVED)  emit_arrived(label);
   /* DEPARTED isn't emitted here — it's a timer event surfaced by
    * ble_scout_tick(). on_advert only ever produces ARRIVED. */
 }

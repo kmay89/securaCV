@@ -538,14 +538,14 @@ existing: the integration listens for several signals no firmware publishes yet.
 
 | Tamper type | HA sensor | Firmware signal today | Status |
 |-------------|-----------|----------------------|--------|
-| `sd_remove` | SD Removed | Canary WAP publishes `sd_mounted` in health | Implemented |
-| `sd_error` | SD Error | Canary publishes `sd_errors` in health | Implemented |
+| `sd_remove` | SD Removed | both publish `{"type":"sd_remove"}` on the tamper topic when their `system.integrity` module sees a mounted card leave (the per-kind bridge: `csi_mqtt.cpp` on the WAP, `csi_event_egress.cpp` on the canary base); the canary base also publishes `sd_mounted` in its MQTT health once a card has mounted this boot (a card-less boot sends no key, so it never reads as removed). The WAP's `sd_mounted` is on its HTTP `/api/status`, not in its MQTT health | Implemented (canary base + WAP) |
+| `sd_error` | SD Error | both publish `{"type":"sd_error"}` on the tamper topic when their `system.integrity` module sees a mounted card fail; the canary base also publishes `sd_errors` in health | Implemented (canary base + WAP) |
 | `memory_critical` | Memory Critical | derived HA-side from published `free_heap` | Implemented |
-| `enclosure` | Enclosure Open | capacitive-touch tamper published on the tamper topic (as `enclosure_tamper`) | Experimental |
+| `enclosure` | Enclosure Open | a reed/hall enclosure contact on the board map's `TAMPER_PIN_DEFAULT`, on builds with `FEATURE_TAMPER_GPIO=1` (off in every shipped profile until the pin is bench-validated): both publish `{"type":"enclosure"}` on the tamper topic when their `system.integrity` module commits an opening, and the canary base also publishes `enclosure_open` in health. The canary base's capacitive-touch tamper is published on the tamper topic with `"kind":"enclosure_tamper","type":"enclosure"` | Experimental |
 | `power_loss` | Power Loss | canary base publishes `{"type":"power_loss"}` on the tamper topic at boot (power-events classifier, `canary_power_events.h`); Canary WAP publishes the same shape on the tamper topic when its `system.integrity` module commits a brownout-boot tamper (`csi_mqtt.cpp`'s per-kind bridge) | Implemented (canary base + WAP) |
 | `gps_jamming` | GPS Jamming | none found | Experimental |
 | `motion` | Unexpected Motion | none found (accelerometer signal not published) | Experimental |
-| `gpio` | GPIO Tamper | none found | Experimental |
+| `gpio` | GPIO Tamper | none by design: a tamper pin's contact is narrated as `enclosure` (one kind per physical fact) | Experimental |
 | `watchdog` | Watchdog Timeout | Canary WAP publishes `{"type":"watchdog"}` on the tamper topic when its `system.integrity` module classifies a watchdog reset at boot | Implemented (WAP) |
 | `unexpected_reboot` | Unexpected Reboot | canary base publishes `{"type":"unexpected_reboot"}` on the tamper topic at boot after a fault reset (power-events path); Canary WAP publishes the same shape from its `system.integrity` module after a panic reset | Implemented (canary base + WAP) |
 | `battery_remove` | — (no sensor) | none | Planned |
@@ -1092,6 +1092,36 @@ TOKEN=$(cat /config/api_token)
 curl -H "Authorization: Bearer $TOKEN" http://d0491a67-privacy-witness-kernel:8799/events
 ```
 
+### Viewer tokens (Witness Wall)
+
+A television cannot re-read a token file every ten minutes, so the kernel
+has a second, narrower credential for the tvOS Witness Wall: a **viewer
+token**, minted once by the operator and honored on exactly one route,
+`GET /api/sealed-log` (the non-queryable, size-capped, signed chain tail).
+Presented anywhere else — another path, another method — it is an invalid
+token that counts toward the per-address lockout, and `?token=` is refused
+for it as for every token.
+
+```bash
+witness_api mint-viewer-token --label "living room tv" --base-url http://192.168.1.20:8799
+# {"kernel":"witness-kernel","base_url":"http://192.168.1.20:8799","sealed_log_token":"<64 hex>","verifying_key":"<64 hex>","token_id":"<8 hex>"}
+witness_api revoke-viewer-token <token_id>
+```
+
+The command runs with the same `WITNESS_CONFIG` and `DEVICE_KEY_SEED` as
+the serving kernel. Its stdout is one JSON line, the pairing receipt, and
+the only copy of the token that will ever exist: the kernel keeps its
+sha256 in the viewer-token file — `api.viewer_token_path` /
+`WITNESS_API_VIEWER_TOKEN_PATH`, defaulting to `viewer_tokens.json` beside
+`api.token_path` — written `0600` and re-read on every request, so a mint
+or a revoke takes effect without a restart. The receipt carries the
+kernel's current verifying key, which the Wall pins at pairing: its
+"Verified" then means Ed25519 signatures checked against that pinned key,
+not whatever key the hub serves today. The Docker sidecar wraps both
+commands (`docker compose exec securacv entrypoint.sh mint-viewer-token …`,
+see [frigate_integration.md](frigate_integration.md)); the Home Assistant
+add-on reads the file but has no control that mints one yet.
+
 ### Endpoints
 
 | Endpoint | Method | Description |
@@ -1102,7 +1132,7 @@ curl -H "Authorization: Bearer $TOKEN" http://d0491a67-privacy-witness-kernel:87
 | `/status` | GET | Daemon status snapshot (retention, verify state) |
 | `/verify` | POST | Run sealed-log verification and return the `VerifyReport` |
 | `/export/bundle` | GET | Receipted export bundle (events reshaped for disclosure; correlation tokens stripped) |
-| `/api/sealed-log` | GET | Checkpoint-anchored sealed-log tail for read-only verifiers — stored bytes verbatim, size-capped, **no query parameters** (the log is non-queryable by design) |
+| `/api/sealed-log` | GET | Checkpoint-anchored sealed-log tail for read-only verifiers — stored bytes verbatim, size-capped, **no query parameters** (the log is non-queryable by design). The one route a [viewer token](#viewer-tokens-witness-wall) also opens |
 | `/health` | GET | Check daemon health (unauthenticated) |
 
 ### `/events/latest` Response (Event)

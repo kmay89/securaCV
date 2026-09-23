@@ -152,7 +152,7 @@ Then enable flash encryption on all fleet boards and proceed.
 
 ### C2. Opera pairing
 
-1. Board 1: `POST /api/mesh/enable`, then `/api/mesh/pair/start`.
+1. Board 1: `POST /api/mesh/enable` with `{"enabled": true}`, then `/api/mesh/pair/start`.
 2. Board 2: `/api/mesh/pair/join`; confirm on both (`/api/mesh/pair/confirm`).
 3. `GET /api/mesh/peers` on each — both list the other with fresh heartbeats.
 
@@ -161,13 +161,26 @@ Then enable flash encryption on all fleet boards and proceed.
 fresh for ≥30 minutes; pulling one board's power flips it to *stale* → *offline*
 on the survivor within the spec thresholds (90 s / 300 s).
 
+- [ ] **canary-wap boards:** pairing frames now carry a 1-byte type prefix
+  (`MSG_PAIR_*`, 8..12) and are classified before the 102-byte signed-frame
+  gate (`mesh_pair_frame.h`, F14). Before that fix no WAP pairing frame was
+  ever delivered, so this is the first bench run that can reach the code
+  screens at all.
+- [ ] **Both screens show the same 6-digit code.** A mismatch is not user
+  error: it points at the ephemeral-key derivation (both trees generate the
+  pairing ephemeral keys as Ed25519 keys and feed them to Curve25519, which
+  the host tests cannot see — their X25519 is a symmetric shim). Record it
+  against that open item rather than retrying.
+
 ### C3. Mesh behavior
 
 | Test | Expected |
 |---|---|
-| Witness/alert propagation | Event on board 1 raises a mesh alert on board 2 (`/api/mesh/alerts`) |
-| Peer removal | `/api/mesh/remove` on board 1 → opera secret rotates; removed board can no longer rejoin without re-pairing (audit O3) |
-| Tamper auto-revoke | Tamper alert from a paired member → survivor marks it `REVOKED` (v0.5 behavior) |
+| Witness/alert propagation | Event on board 1 raises a mesh alert on board 2 (`/api/mesh/alerts`). PlatformIO boards: an enclosure, temperature-drift or camera tamper record on board 1 shows on board 2 as `type: TAMPER`, `detail` = the kind, `sender_fp` = board 1, and board 1's row in board 2's `/api/mesh/peers` counts it in `alerts_received`; `DELETE /api/mesh/alerts` empties the list but not the counts |
+| Leave | `POST /api/mesh/leave` on board 2 → board 2 reports `NO_OPERA` and `notified: true`; board 1 drops board 2 from `/api/mesh/peers` without a reboot (signed `LEAVE_OPERA`, spec §4.2), and still does after a reboot |
+| Disable survives reboot | `POST /api/mesh/enable` `{"enabled": false}` → `state: DISABLED`, pairing refused with `mesh_disabled`; after a power cycle it is still `DISABLED` |
+| Peer removal | `/api/mesh/remove` on board 1 → opera secret rotates; removed board can no longer rejoin without re-pairing (audit O3). PlatformIO boards (F10-rekey, crypto review pending): `{"fingerprint": …}` answers `rekey: started`; within 60 s every survivor's `GET /api/mesh` shows the same NEW `opera_id`, the removed board still shows the old one and is no longer heard, and after a reboot the survivors come back on the new id; a survivor kept powered off through the window is dropped and must re-pair |
+| Tamper auto-revoke | Tamper alert from a paired member → survivor marks it `REVOKED` (v0.5 behavior; canary-wap only — the PlatformIO tree has no Beacon channel) |
 | Third board joins | 3-node opera stable; no crosstalk with a second, separately-paired opera (opera_id isolation) |
 
 ### C4. Chirp exchange

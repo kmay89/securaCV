@@ -8,7 +8,27 @@ set -euo pipefail
 #
 # Exit 0 = all checks pass
 # Exit 1 = regression detected
+#
+# --strict: every warning raised in a "Security:" or "Privacy:" section
+# counts as a failure (the release-readiness bar — "zero critical warnings",
+# firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md §7). Without it
+# (PR CI) those stay advisory. A strict pass is only meaningful because the
+# greps below match real call shapes, and because the accepted exceptions
+# (documented plaintext listeners, the display line's disclosed outbound
+# paths) live in reviewed allowlists that fail when an entry goes stale.
 # ═══════════════════════════════════════════════════════════════════
+
+STRICT=0
+for arg in "$@"; do
+  case "$arg" in
+    --strict) STRICT=1 ;;
+    -h|--help)
+      echo "usage: $0 [--strict]"
+      echo "  --strict  Security:/Privacy: warnings count as failures"
+      exit 0 ;;
+    *) echo "unknown argument: $arg (try --help)" >&2; exit 2 ;;
+  esac
+done
 
 
 # Resolve repo root (works from any working directory)
@@ -29,9 +49,52 @@ green()  { echo -e "\033[0;32m✓ $1\033[0m"; }
 yellow() { echo -e "\033[0;33m⚠ $1\033[0m"; }
 blue()   { echo -e "\033[0;34mℹ $1\033[0m"; }
 
+SECTION=""
+section()     { SECTION="$1"; echo "── $1 ──"; }
 check_pass()  { green "$1"; }
 check_fail()  { red "$1"; ERRORS=$((ERRORS + 1)); }
-check_warn()  { yellow "$1"; WARNINGS=$((WARNINGS + 1)); }
+# In --strict mode a Security:/Privacy: warning is a failure; everything else
+# (hardware pin sanity, build hygiene) stays a warning in both modes.
+check_warn()  {
+  if [ "$STRICT" -eq 1 ] && { [[ "$SECTION" == Security:* ]] || [[ "$SECTION" == Privacy:* ]]; }; then
+    check_fail "[strict] $1"
+  else
+    yellow "$1"; WARNINGS=$((WARNINGS + 1))
+  fi
+}
+
+# Drop hits whose CONTENT (after file:line:) starts as a comment — a leading
+# //, /*, * or # — so prose about a pattern is never mistaken for the pattern.
+# A trailing comment does NOT exempt a line of code.
+drop_comment_lines() {
+  awk '{ s = $0; sub(/^[^:]*:[0-9]+:/, "", s); if (s !~ /^[[:space:]]*(\/\/|\/\*|\*|#)/) print }'
+}
+
+# allowlist_filter "<entries>" < hits
+#   entries: one per line, "<path ERE><TAB><content ERE><TAB><reason>".
+#   Prints "HIT<TAB><hit>" for every hit no entry covers, and
+#   "STALE<TAB><path ERE>  <content ERE>" for every entry that covered
+#   nothing — an allowlist that cannot rot, like the route audits'.
+allowlist_filter() {
+  # Passed through the environment, not `awk -v`: -v expands backslash
+  # escapes, which would turn the entries' `\.` and `\(` into regex syntax.
+  ALLOWLIST_ENTRIES="$1" awk '
+    BEGIN {
+      n = split(ENVIRON["ALLOWLIST_ENTRIES"], E, "\n")
+      for (i = 1; i <= n; i++) {
+        if (E[i] ~ /^[[:space:]]*$/) continue
+        split(E[i], F, "\t"); P[i] = F[1]; C[i] = F[2]; used[i] = 0; live[i] = 1
+      }
+    }
+    {
+      file = $0; sub(/:[0-9]+:.*/, "", file)
+      content = $0; sub(/^[^:]*:[0-9]+:/, "", content)
+      covered = 0
+      for (i in live) if (file ~ P[i] && content ~ C[i]) { used[i] = 1; covered = 1 }
+      if (!covered) print "HIT\t" $0
+    }
+    END { for (i in live) if (!used[i]) print "STALE\t" P[i] "  " C[i] }'
+}
 
 echo "═══════════════════════════════════════════════════════════"
 echo "  SecuraCV Canary — Regression Guard"
@@ -50,7 +113,7 @@ if [ ${#SRC_DIRS[@]} -eq 0 ]; then
 fi
 
 # ── Check: Key files exist ──────────────────────────────────────
-echo "── File structure ──"
+section "File structure"
 
 # The live web UI is the canary-wap sketch's web_ui.h (checked by the
 # size gate below); the unbuilt common/web/web_ui.h scaffold that used to
@@ -74,7 +137,7 @@ done
 echo ""
 
 # ── Check: mbedTLS API compatibility (ESP32 Core 3.x) ──────────
-echo "── mbedTLS API (Core 3.x compatibility) ──"
+section "mbedTLS API (Core 3.x compatibility)"
 
 # ESP32 Arduino Core 3.x removed _ret suffix from mbedTLS functions.
 # Using _ret functions causes compile failure on Core 3.x.
@@ -92,7 +155,7 @@ fi
 echo ""
 
 # ── Check: No hardcoded AP password ────────────────────────────
-echo "── Security: AP password ──"
+section "Security: AP password"
 
 AP_HITS=$(grep -rn '"witness2026"' "${SRC_DIRS[@]}" 2>/dev/null | grep -v "//.*witness2026" | grep -v "LEGACY\|REMOVED\|OLD" || true)
 if [ -n "$AP_HITS" ]; then
@@ -126,7 +189,7 @@ report_privacy() {
   return 0  # never trip `set -e`; failures are tallied via check_fail/ERRORS
 }
 
-echo "── Privacy: MAC address handling (F-03) ──"
+section "Privacy: MAC address handling (F-03)"
 
 # 1) The device's own efuse MAC must never be formatted as a raw MAC string. A file
 #    that both reads the efuse MAC and contains a "%02X:..:%02X" format is emitting the
@@ -149,7 +212,7 @@ report_privacy "ESP.getEfuseMac() in a payload/log context" "$EFUSEMAC_HITS"
 
 echo ""
 
-echo "── Privacy: GPS precision coarsening (F-03) ──"
+section "Privacy: GPS precision coarsening (F-03)"
 
 # 1) Structured lat/lon emission (CBOR write_float / JSON ["lat"|"lon"] =) must pass
 #    through gps_coarsen_deg(); the no-fix "= 0.0" sentinels are exempt.
@@ -165,6 +228,41 @@ report_privacy "High-precision lat/lon format string (>=4 dp)" "$GPS_PREC"
 
 echo ""
 
+# ── Check: canary-wap event-time bucket floor (Invariant III) ──
+# The ten-minute floor is written once, in config_logic.h (kTimeBucketFloorMs,
+# pinned by its own static_assert and by test_config_logic.cpp). The sketch
+# must define TIME_BUCKET_MS from it and the Device tab's number field must
+# not offer a finer value, so the floor cannot drift back in one of the three
+# places while the other two stay green.
+echo "── Privacy: canary-wap time-bucket floor (Invariant III) ──"
+WAP_SKETCH_DIR="$PROJECTS_DIR/canary-wap/arduino/canary_wap"
+if [ -f "$WAP_SKETCH_DIR/config_logic.h" ]; then
+  TB_FLOOR=$(sed -nE 's/^constexpr uint32_t kTimeBucketFloorMs = ([0-9]+)u?;.*/\1/p' "$WAP_SKETCH_DIR/config_logic.h")
+  if [ -z "$TB_FLOOR" ]; then
+    check_fail "config_logic.h: no 'constexpr uint32_t kTimeBucketFloorMs = <ms>' line"
+  elif [ "$TB_FLOOR" -lt 600000 ] || [ $((TB_FLOOR % 600000)) -ne 0 ]; then
+    check_fail "config_logic.h: kTimeBucketFloorMs = ${TB_FLOOR} is not a whole multiple of the ten-minute grid"
+  else
+    if grep -qE '^static const uint32_t TIME_BUCKET_MS[[:space:]]*=[[:space:]]*config_logic::kTimeBucketFloorMs;' "$WAP_SKETCH_DIR/canary_wap.ino"; then
+      check_pass "canary_wap.ino TIME_BUCKET_MS is config_logic::kTimeBucketFloorMs (${TB_FLOOR} ms)"
+    else
+      check_fail "canary_wap.ino: TIME_BUCKET_MS must be defined as config_logic::kTimeBucketFloorMs, not a literal"
+    fi
+    UI_FIELD=$(grep -oE '<input[^>]*id="configTimeBucket"[^>]*>' "$WAP_SKETCH_DIR/web_ui.h" || true)
+    UI_MIN=$(printf '%s' "$UI_FIELD" | sed -nE 's/.* min="([0-9]+)".*/\1/p')
+    UI_VAL=$(printf '%s' "$UI_FIELD" | sed -nE 's/.* value="([0-9]+)".*/\1/p')
+    if [ -n "$UI_MIN" ] && [ "$UI_MIN" = "$TB_FLOOR" ] && [ -n "$UI_VAL" ] && [ "$UI_VAL" -ge "$TB_FLOOR" ]; then
+      check_pass "web_ui.h configTimeBucket min=${UI_MIN} value=${UI_VAL} (floor ${TB_FLOOR} ms)"
+    else
+      check_fail "web_ui.h configTimeBucket must have min=\"${TB_FLOOR}\" and a value at or above it (found min=\"${UI_MIN}\" value=\"${UI_VAL}\")"
+    fi
+  fi
+else
+  check_warn "canary-wap config_logic.h not found — time-bucket floor not checked"
+fi
+
+echo ""
+
 # Keyword filters below look at a hit's CONTENT, never its path: `grep -rn`
 # prefixes every line with `file:line:`, and a checkout path that happened to
 # contain "witness" or "transmit" (a worktree name, a user's home directory)
@@ -174,7 +272,7 @@ content_grep() { # content_grep <ERE> — case-insensitive match on the text aft
 }
 
 # ── Check: Token not in witness chain ──────────────────────────
-echo "── Security: Token isolation ──"
+section "Security: Token isolation"
 
 TOKEN_CHAIN_HITS=$(grep -rn 'api_token\|api_tkn' "${SRC_DIRS[@]}" 2>/dev/null | content_grep 'chain|witness|record|cbor|payload' | grep -v "//" || true)
 if [ -n "$TOKEN_CHAIN_HITS" ]; then
@@ -212,7 +310,7 @@ fi
 echo ""
 
 # ── Check: Constant-time comparison for auth ───────────────────
-echo "── Security: Auth implementation ──"
+section "Security: Auth implementation"
 
 # If Bearer auth exists, it MUST use constant-time comparison
 AUTH_PRESENT=$(grep -rn "Bearer\|Authorization\|authenticate" "${SRC_DIRS[@]}" 2>/dev/null | grep -v "//" | head -1 || true)
@@ -236,11 +334,13 @@ fi
 echo ""
 
 # ── Check: Camera pin definitions ──────────────────────────────
-echo "── Hardware: Camera configuration ──"
+section "Hardware: Camera configuration"
 
 # XIAO ESP32S3 Sense camera pins are specific. Wrong pins = camera init fails silently.
 if [ -f "$CONFIG_H" ]; then
-  CAM_PWDN=$(grep -n "CAM_PIN_PWDN\|PWDN_GPIO_NUM" "$CONFIG_H" 2>/dev/null | head -1 || true)
+  # The #define line itself — the first mention used to be the `#ifndef`
+  # guard above it, which carries no value and warned on every run.
+  CAM_PWDN=$(grep -nE "^[[:space:]]*#[[:space:]]*define[[:space:]]+(CAM_PIN_PWDN|PWDN_GPIO_NUM)\b" "$CONFIG_H" 2>/dev/null | head -1 || true)
   if [ -n "$CAM_PWDN" ]; then
     if echo "$CAM_PWDN" | grep -qE '[[:space:]=-]-1([[:space:]]|$)'; then
       check_pass "Camera PWDN pin set to -1 (correct for XIAO ESP32S3 Sense)"
@@ -257,7 +357,7 @@ fi
 echo ""
 
 # ── Check: SD card SPI pins ────────────────────────────────────
-echo "── Hardware: SD card SPI pins ──"
+section "Hardware: SD card SPI pins"
 
 # XIAO ESP32S3 Sense SD card SPI pins: CS=21, SCK=7, MISO=8, MOSI=9
 if [ -f "$CONFIG_H" ]; then
@@ -279,7 +379,7 @@ fi
 echo ""
 
 # ── Check: Feature flags defined ───────────────────────────────
-echo "── Architecture: Feature flags ──"
+section "Architecture: Feature flags"
 
 EXPECTED_FLAGS=(
   "FEATURE_SD_STORAGE"
@@ -300,29 +400,125 @@ done
 echo ""
 
 # ── Check: No outbound network connections ────────────────────
-echo "── Security: Zero phone-home ──"
+section "Security: Zero phone-home"
 
-# The device must NEVER initiate outbound connections.
-# WiFi.begin() connects to an external AP (station mode).
-# HTTPClient, WiFiClient, mqtt.connect() are outbound patterns.
-# WiFiAP, WiFi.softAP are acceptable (AP mode = inbound).
-OUTBOUND_HITS=$(grep -rEn 'WiFi\.begin\(|HTTPClient|WiFiClient[[:space:]]|WiFiClientSecure|mqtt\.connect\(|\.connect\(' "${SRC_DIRS[@]}" 2>/dev/null \
-  | grep -v "//.*WiFi\|WiFi\.softAP\|WiFiAP\|WiFiServer\|#if.*FEATURE_HA_MQTT\|#ifdef.*MQTT\|\.h:\|\.md:" \
-  | grep -v "FEATURE_MESH_NETWORK\|mesh\|example\|test" \
-  | head -10 || true)
+# Phone-home is a connection to a destination COMPILED INTO the firmware: a
+# string-literal URL or host handed to an HTTP client or a socket connect,
+# a literal time server, a literal name lookup. Those are the call shapes
+# matched here. A destination the OWNER provisions — the home router
+# (WiFi.begin with stored credentials), an MQTT broker host, a signed OTA
+# manifest — is an opt-in path gated by its feature flag and checked where it
+# lives (check_ota_channels.py, the mqtt_transport host tests); the old grep
+# flagged every WiFi.begin( and .connect( (WebAudio's node graph included),
+# fired on every run, and so guarded nothing. Destinations that ARE compiled
+# in and disclosed live in DISCLOSED_OUTBOUND below, each with its reason;
+# anything else fails --strict.
+DISCLOSED_OUTBOUND=$(printf '%s\t%s\t%s\n' \
+  'canary-display/.*(tz_auto\.cpp|main\.cpp|canary_display\.ino)$' 'configTzTime\([^)]*"pool\.ntp\.org", *"time\.nist\.gov"' \
+    'docs/security/SECURITY_MODEL.md display disclosed exception 1 (SNTP)' \
+  'canary-display/.*tz_auto\.cpp$' '\.begin\("http://ip-api\.com/' \
+    'docs/security/SECURITY_MODEL.md display disclosed exception 2 (timezone lookup, compile-time opt-in CD_TZ_WEB_LOOKUP)' \
+  'canary-display/.*wx_direct\.cpp$' 'http\.begin\(client, WX_HOST, 443,.*WX_HOST = "api\.open-meteo\.com"' \
+    'docs/security/SECURITY_MODEL.md display disclosed exception 3 (standalone weather: runtime opt-in on the glass, FEATURE_STANDALONE_WEATHER; a named destination, pinned to its value)')
+OUTBOUND_LITERAL=$(grep -rEn '\.begin\([[:space:]]*"(https?://|[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+")|\.connect\([[:space:]]*"|\.url[[:space:]]*=[[:space:]]*"https?://|config(Tz)?Time\([^)]*"|(esp_)?sntp_setservername\([^)]*"|getaddrinfo\([[:space:]]*"' "${SRC_DIRS[@]}" 2>/dev/null \
+  | grep -v "\.md:\|/tests_host/\|/test_\|/examples\?/\|\.pio/" \
+  | drop_comment_lines || true)
+
+# The usual way a compiled-in destination is written is behind a NAME —
+# `#define TELEMETRY_URL "https://…"` or `const char* WX_HOST = "api.…"` —
+# and handed to the same client calls; the literal grep above cannot see
+# that shape (the display's standalone-weather fetch is one). So resolve one
+# level: collect every name bound to a URL literal (with a host after the
+# scheme) or a dotted-host literal — a #define, backslash-continued or not,
+# or a char/String initializer — then flag every client call site that
+# passes one of those names. Each hit carries its resolution
+# ("⇐ NAME = "value" (file:line)") so a DISCLOSED_OUTBOUND entry can match
+# on the call text. Not resolved: a name bound to another name, or a
+# destination copied into a runtime variable first — owner-provisioned
+# destinations (broker host, OTA manifest URL) arrive that way and are
+# checked where they live (check_ota_channels.py, mqtt_transport tests).
+SRC_FILE_GLOBS=(--include='*.c' --include='*.cpp' --include='*.h' --include='*.hpp' --include='*.ino')
+DEST_FILES=$(grep -rlE "${SRC_FILE_GLOBS[@]}" '"((https?|mqtts?|wss?)://[A-Za-z0-9]|[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+")' "${SRC_DIRS[@]}" 2>/dev/null \
+  | grep -v "/tests_host/\|/test_\|/examples\?/\|\.pio/" || true)
+DEST_NAMES=""
+if [ -n "$DEST_FILES" ]; then
+  # One logical line per #define (continuations joined); comment lines skipped.
+  # shellcheck disable=SC2016  # an awk program run through xargs: $0 is awk's
+  DEST_NAMES=$(printf '%s\n' "$DEST_FILES" | tr '\n' '\0' | xargs -0 awk '
+    FNR == 1 { held = ""; held_at = 0 }
+    {
+      line = $0; at = FNR
+      if (held != "") { line = held " " line; at = held_at; held = "" }
+      if (line ~ /\\[[:space:]]*$/) { sub(/\\[[:space:]]*$/, "", line); held = line; held_at = at; next }
+      if (line ~ /^[[:space:]]*(\/\/|\/\*|\*)/) next
+      name = ""; val = ""
+      if (match(line, /^[[:space:]]*#[[:space:]]*define[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]+"[^"]*"/)) {
+        d = substr(line, RSTART, RLENGTH)
+        sub(/^[[:space:]]*#[[:space:]]*define[[:space:]]+/, "", d)
+        name = d; sub(/[[:space:]].*/, "", name)
+        val = d; sub(/^[^"]*/, "", val)
+      } else if (match(line, /(char|String|string|auto)[^=;(){}]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*(\[[^]]*\])?[[:space:]]*=[[:space:]]*"[^"]*"/)) {
+        d = substr(line, RSTART, RLENGTH)
+        val = d; sub(/^[^=]*=[[:space:]]*/, "", val)
+        name = d; sub(/[[:space:]]*(\[[^]]*\])?[[:space:]]*=.*/, "", name); sub(/.*[^A-Za-z0-9_]/, "", name)
+      }
+      if (name != "" && val ~ /^"((https?|mqtts?|wss?):\/\/[A-Za-z0-9][^"]*|[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+)"$/)
+        print name "\t" val "\t" FILENAME ":" at
+    }' || true)
+fi
+OUTBOUND_NAMED=""
+if [ -n "$DEST_NAMES" ]; then
+  OUTBOUND_NAMED=$(grep -rEn "${SRC_FILE_GLOBS[@]}" '\.begin\(|\.connect\(|\.url[[:space:]]*=|config(Tz)?Time\(|(esp_)?sntp_setservername\(|getaddrinfo\(|\.setServer\(' "${SRC_DIRS[@]}" 2>/dev/null \
+    | grep -v "/tests_host/\|/test_\|/examples\?/\|\.pio/" \
+    | drop_comment_lines \
+    | DEST_NAMES="$DEST_NAMES" awk '
+      # One hit per (call site, binding): a name bound in two places (a
+      # sketch mirror and its source) must have BOTH bindings covered, so
+      # changing one copy of a disclosed destination cannot hide.
+      BEGIN {
+        n = split(ENVIRON["DEST_NAMES"], L, "\n")
+        for (i = 1; i <= n; i++) {
+          split(L[i], F, "\t")
+          if (F[1] == "") continue
+          k = ++cnt[F[1]]; V[F[1], k] = F[2]; W[F[1], k] = F[3]
+        }
+      }
+      {
+        code = $0; sub(/^[^:]*:[0-9]+:/, "", code)
+        gsub(/"([^"\\]|\\.)*"/, "\"\"", code)   # string contents are not names
+        gsub(/\/\*[^*]*\*\//, " ", code)         # nor /* inline */ comments
+        sub(/\/\/.*/, "", code)                  # nor a trailing // comment
+        split("", seen)
+        while (match(code, /[A-Za-z_][A-Za-z0-9_]*/)) {
+          tok = substr(code, RSTART, RLENGTH); code = substr(code, RSTART + RLENGTH)
+          if ((tok in cnt) && !(tok in seen)) {
+            seen[tok] = 1
+            for (k = 1; k <= cnt[tok]; k++) print $0 "  ⇐ " tok " = " V[tok, k] " (" W[tok, k] ")"
+          }
+        }
+      }' || true)
+fi
+OUTBOUND_RAW=$(printf '%s\n%s\n' "$OUTBOUND_LITERAL" "$OUTBOUND_NAMED")
+OUTBOUND_SCAN=$(printf '%s\n' "$OUTBOUND_RAW" | sed '/^$/d' | allowlist_filter "$DISCLOSED_OUTBOUND")
+OUTBOUND_HITS=$(printf '%s\n' "$OUTBOUND_SCAN" | awk -F'\t' '$1=="HIT"{print $2}')
+OUTBOUND_STALE=$(printf '%s\n' "$OUTBOUND_SCAN" | awk -F'\t' '$1=="STALE"{print $2}')
 if [ -n "$OUTBOUND_HITS" ]; then
-  check_warn "Possible outbound network connections detected — verify these are gated by feature flags"
+  check_warn "Compiled-in outbound destination not on the disclosed list"
   echo "$OUTBOUND_HITS" | while read -r line; do blue "  $line"; done
   blue "  Principle 2: Device must make ZERO outbound connections by default"
   blue "  See: docs/security/THREAT_MODEL.md → Principle 2: Zero Phone-Home"
 else
-  check_pass "No ungated outbound network connection patterns found"
+  check_pass "No undisclosed compiled-in outbound destinations"
+fi
+if [ -n "$OUTBOUND_STALE" ]; then
+  check_warn "DISCLOSED_OUTBOUND entry matches nothing — remove or fix it"
+  echo "$OUTBOUND_STALE" | while read -r line; do blue "  $line"; done
 fi
 
 echo ""
 
 # ── Check: Private key never in API/export/log ────────────────
-echo "── Security: Private key isolation ──"
+section "Security: Private key isolation"
 
 # Ed25519 private key must never appear in any export, API response, log, or debug output.
 # This check looks for private key bytes being printed, serialized to JSON, written to
@@ -344,13 +540,19 @@ fi
 echo ""
 
 # ── Check: No raw MAC storage in presence detection ──────────
-echo "── Privacy: Presence detection MAC handling ──"
+section "Privacy: Presence detection MAC handling"
 
 # Presence detection must hash MACs before storage. Look for patterns
 # that store or transmit raw BSSID/MAC data.
+# Not matched (they carry no address): comment lines, std::atomic flag
+# stores (`s_bssid_known.store(true, ...)`), and log calls whose only
+# argument text is a string literal with no format specifier.
 RAW_MAC_STORE=$(grep -rEn 'bssid|BSSID|macAddress' "${SRC_DIRS[@]}" 2>/dev/null \
   | grep -i 'store\|save\|write\|persist\|sd\|nvs\|put\|append\|push_back\|log' \
   | grep -v "//\|hash\|fingerprint\|derive\|digest\|sha256\|\.h:\|\.md:" \
+  | drop_comment_lines \
+  | grep -vE '\.store\([[:space:]]*(true|false)[[:space:]]*[,)]' \
+  | grep -vE 'LOG[A-Z_]*\((known[[:space:]]*\?[[:space:]]*)?"[^"%]*"[[:space:]]*(:|\)|$)' \
   | head -10 || true)
 if [ -n "$RAW_MAC_STORE" ]; then
   check_warn "Raw MAC/BSSID may be stored without hashing — verify privacy compliance"
@@ -363,24 +565,47 @@ fi
 echo ""
 
 # ── Check: TLS required (no HTTP fallback) ────────────────────
-echo "── Security: TLS enforcement ──"
+section "Security: TLS enforcement"
 
-# Look for patterns that might serve HTTP without TLS redirect
-HTTP_FALLBACK=$(grep -rEn 'server\.begin[[:space:]]*\([[:space:]]*80|:80\b|HTTP_PORT[[:space:]]*=?[[:space:]]*80|listen.*80' "${SRC_DIRS[@]}" 2>/dev/null \
-  | grep -v "//\|redirect\|301\|https\|\.md:" \
-  | head -5 || true)
+# A plaintext HTTP listener is a server bound to port 80 that is not a
+# redirect-to-https server: an explicit `server_port = 80`, `WebServer(80)` /
+# `WebServer{80}`, `HTTP_PORT = 80`, `server.begin(80)`. (The old grep also
+# matched ":80" inside log strings and host-test fixtures.) THREAT_MODEL's
+# HTTP row accepts plaintext on the LAN by default; each accepted listener
+# is named in PLAINTEXT_OK with its reason, so a NEW plaintext listener fails
+# --strict instead of hiding in a warning nobody reads.
+PLAINTEXT_OK=$(printf '%s\t%s\t%s\n' \
+  'canary/lib/securacv_network/src/securacv_network\.cpp$' 'config\.server_port = 80;' \
+    'canary (PIO) plain server: the only server on release builds until FEATURE_HTTPS is flipped there (F15, maintainer decision); the HTTP-only fallback on dev/full when TLS is unavailable (tls_mode_reason says why)' \
+  'canary-wap/arduino/canary_wap/canary_wap\.ino$' 'config\.server_port = 80;' \
+    'canary-wap HTTP-only fallback when no TLS certificate is available' \
+  'canary-display/.*glass_web\.cpp$' 'new WebServer\(80\)' \
+    'display glass mirror: plaintext LAN, token-gated writes (THREAT_MODEL HTTP row)' \
+  '(common/network/setup_portal\.cpp|canary-display/.*provision\.cpp)$' 'WebServer server\{80\}' \
+    'first-boot setup portal: captive sheets cannot render a self-signed certificate (tls_policy.h)')
+HTTP_RAW=$(grep -rEn 'server_port[[:space:]]*=[[:space:]]*80\b|WebServer[^;]*[({][[:space:]]*80[[:space:]]*[)}]|HTTP_PORT[[:space:]]*=?[[:space:]]*80\b|server\.begin[[:space:]]*\([[:space:]]*80' "${SRC_DIRS[@]}" 2>/dev/null \
+  | grep -v "\.md:\|/tests_host/\|/test_\|\.pio/" \
+  | drop_comment_lines \
+  | grep -viE "redirect|301|307|https" || true)
+HTTP_SCAN=$(printf '%s\n' "$HTTP_RAW" | sed '/^$/d' | allowlist_filter "$PLAINTEXT_OK")
+HTTP_FALLBACK=$(printf '%s\n' "$HTTP_SCAN" | awk -F'\t' '$1=="HIT"{print $2}')
+HTTP_STALE=$(printf '%s\n' "$HTTP_SCAN" | awk -F'\t' '$1=="STALE"{print $2}')
 if [ -n "$HTTP_FALLBACK" ]; then
-  check_warn "HTTP port 80 listener found — verify it only serves 301 redirect to HTTPS"
+  check_warn "Plaintext HTTP listener on port 80 that is neither a redirect-to-https server nor on the reviewed list"
   echo "$HTTP_FALLBACK" | while read -r line; do blue "  $line"; done
-  blue "  Principle 7: TLS required for all API access"
+  blue "  Principle 7: TLS for API access — see docs/security/THREAT_MODEL.md (HTTP row)"
 else
-  check_pass "No unguarded HTTP listeners found"
+  check_pass "Every port-80 listener is a redirect-to-https server or a reviewed plaintext listener"
+fi
+if [ -n "$HTTP_STALE" ]; then
+  check_warn "PLAINTEXT_OK entry matches nothing — remove or fix it"
+  echo "$HTTP_STALE" | while read -r line; do blue "  $line"; done
 fi
 
 echo ""
 
 # ── Check: secure_defaults.h exists ──────────────────────────
-echo "── Security: Secure defaults header ──"
+section "Security: Secure defaults header"
 
 if [ -f "$CANARY_DIR/include/secure_defaults.h" ]; then
   check_pass "secure_defaults.h exists"
@@ -403,7 +628,7 @@ fi
 echo ""
 
 # ── Check: docs/security/SECURITY_MODEL.md exists ────────────
-echo "── Documentation: Security Model ──"
+section "Documentation: Security Model"
 
 REPO_ROOT="$(cd "$FIRMWARE_DIR/.." && pwd)"
 if [ -f "$REPO_ROOT/docs/security/SECURITY_MODEL.md" ]; then
@@ -427,7 +652,7 @@ fi
 echo ""
 
 # ── Check: No localStorage in web UI ──────────────────────────
-echo "── Security: Dashboard storage ──"
+section "Security: Dashboard storage"
 
 WEB_UI_FILES=$(find "$FIRMWARE_DIR" -name "web_ui.h" -o -name "securacv_webui.*" 2>/dev/null || true)
 STORAGE_HITS=""
@@ -450,10 +675,10 @@ fi
 echo ""
 
 # ── Check: GPS coordinate precision ───────────────────────────
-echo "── Privacy: GPS precision ──"
+section "Privacy: GPS precision"
 
 # SecuraCV coarsens GPS. Raw high-precision coordinates should not leak.
-GPS_PRECISION=$(grep -rn '%.8f\|%.7f\|%.6f' "${SRC_DIRS[@]}" 2>/dev/null | grep -i "lat\|lon\|gps" | grep -v "//" || true)
+GPS_PRECISION=$(grep -rn '%.8f\|%.7f\|%.6f' "${SRC_DIRS[@]}" 2>/dev/null | grep -i "lat\|lon\|gps" | grep -v "//\|\.md:" | drop_comment_lines || true)
 if [ -n "$GPS_PRECISION" ]; then
   check_warn "High-precision GPS format found (>5 decimal places) — verify coarsening is applied"
   echo "$GPS_PRECISION" | while read -r line; do blue "  $line"; done
@@ -464,7 +689,7 @@ fi
 echo ""
 
 # ── Check: Watchdog configuration ──────────────────────────────
-echo "── Reliability: Watchdog ──"
+section "Reliability: Watchdog"
 
 WDT_PRESENT=$(grep -rn "esp_task_wdt" "${SRC_DIRS[@]}" 2>/dev/null | head -1 || true)
 if [ -n "$WDT_PRESENT" ]; then
@@ -496,7 +721,7 @@ fi
 echo ""
 
 # ── Check: web_ui.h size ──────────────────────────────────────
-echo "── Build: web_ui.h size ──"
+section "Build: web_ui.h size"
 
 for wui in $(find "$FIRMWARE_DIR" -name "web_ui.h" 2>/dev/null); do
   LINES=$(wc -l < "$wui")
@@ -518,7 +743,7 @@ done
 echo ""
 
 # ── Check: No debug flags left on ─────────────────────────────
-echo "── Build: Debug flags ──"
+section "Build: Debug flags"
 
 DEBUG_FLAGS_ON=$(grep -rn '#define DEBUG_\w\+\s\+1' "$CANARY_DIR" 2>/dev/null | grep -v "platformio\|//.*#define" || true)
 if [ -n "$DEBUG_FLAGS_ON" ]; then
@@ -532,17 +757,20 @@ echo ""
 
 # ── Check: Mesh secret persistence is gated on flash encryption ────────
 # The ESP-NOW "Opera" mesh uses a long-lived shared secret (opera_secret). It must
-# NEVER be written to NVS unless flash encryption is on, or the secret sits in
-# plaintext at rest. The persistence layer (mesh_state.cpp) enforces this: its
-# save_*/load_* paths return false when !esp_flash_encryption_enabled(), so on an
-# FE-off board the secret is not persisted (the live in-RAM session is allowed for
-# the current boot by design — see firmware/canary/src/main.cpp on_pairing_succeeded
-# — but nothing confidential lands in unencrypted NVS). This guard asserts that FE
+# NEVER be written to NVS unless flash encryption is on. The persistence layer
+# (mesh_state.cpp) enforces this: its save_*/load_* paths return false when
+# !esp_flash_encryption_enabled(), so on an FE-off board the secret is not
+# persisted (the live in-RAM session is allowed for the current boot by design —
+# see firmware/canary/src/main.cpp on_pairing_succeeded). On an FE-ON board the
+# entry is still plaintext at rest: flash encryption does not cover NVS, and NVS
+# encryption is unavailable under framework = arduino (mesh_state.h; roadmap
+# item 9) — the gate keeps the secret off un-fused boards, it does not encrypt
+# it on fused ones. This guard asserts that FE
 # check is not silently removed from the mesh persistence/impl files. It does NOT,
 # and cannot statically, prove the *activation* path fails closed — see issue #610
 # C2 / the bench runbook for the on-device check, and the open design question of
 # whether live activation should also refuse on FE-off boards.
-echo "── Security: Mesh secret persistence is FE-gated ──"
+section "Security: Mesh secret persistence is FE-gated"
 
 MESH_IMPL_FILES=$(find "$FIRMWARE_DIR" -type f \( -name "mesh_network.cpp" -o -name "mesh_state.cpp" \) \
   -not -path "*/_archive/*" 2>/dev/null)
@@ -563,8 +791,43 @@ fi
 
 echo ""
 
+# ── Check: first-boot identity keygen seeds the RNG before RF is up ─────
+# Every tree generates its Ed25519 identity key during provisioning, BEFORE
+# WiFi/BT start — so esp_fill_random() has no RF entropy source yet and a bare
+# draw risks a predictable key on a fresh unit (roadmap §3.7 "Weak first-boot
+# entropy"; issue #921 / PR #994 fixed the three project trees, this guard
+# asserts the PIO canary tree stayed fixed too). The documented ESP-IDF pattern
+# is bootloader_random_enable() / esp_fill_random() / bootloader_random_disable()
+# around that one draw. This greps each keygen file for the enable CALL as a
+# statement on its own line (a comment that merely names the function does not
+# count); it cannot prove the call ORDER (enable must precede the draw, and must
+# never run while RF is up) — that is code review plus the U1 bench.
+echo "── Security: first-boot keygen is entropy-seeded ──"
+
+KEYGEN_FILES=(
+  "$CANARY_DIR/lib/securacv_crypto/src/securacv_crypto.cpp"
+  "$PROJECTS_DIR/canary-sense/src/witness.cpp"
+  "$PROJECTS_DIR/canary-vision/src/witness.cpp"
+  "$PROJECTS_DIR/canary-wap/arduino/canary_wap/canary_wap.ino"
+)
+
+for kf in "${KEYGEN_FILES[@]}"; do
+  rel=${kf#"$FIRMWARE_DIR/"}
+  if [ ! -f "$kf" ]; then
+    check_warn "Keygen file not found (moved?): $rel"
+    continue
+  fi
+  if grep -Eq '^[[:space:]]*bootloader_random_enable[[:space:]]*\([[:space:]]*\)[[:space:]]*;' "$kf"; then
+    check_pass "First-boot keygen seeds entropy: $rel"
+  else
+    check_fail "Keygen file '$rel' has no bootloader_random_enable() around its first-boot esp_fill_random() — predictable-key risk on fresh units (#921)"
+  fi
+done
+
+echo ""
+
 # ── Check: on-glass text stays inside the display font's alphabet ──
-echo "── Display: font glyph range ──"
+section "Display: font glyph range"
 
 # LVGL's built-in Montserrat covers 0x20-0x7F, 0xB0, U+2022 and the
 # FontAwesome symbols — nothing else. An out-of-range codepoint draws a
@@ -586,7 +849,7 @@ fi
 echo ""
 
 # ── Check: LESSONS_LEARNED.md exists ──────────────────────────
-echo "── Documentation: Lessons Learned ──"
+section "Documentation: Lessons Learned"
 
 if [ -f "$FIRMWARE_DIR/LESSONS_LEARNED.md" ]; then
   LL_LINES=$(wc -l < "$FIRMWARE_DIR/LESSONS_LEARNED.md")
@@ -609,7 +872,11 @@ if [ $ERRORS -gt 0 ]; then
   echo "Fix the errors above before merging."
   exit 1
 elif [ $WARNINGS -gt 0 ]; then
-  yellow "PASSED with $WARNINGS warnings"
+  if [ "$STRICT" -eq 1 ]; then
+    yellow "PASSED (--strict: no Security/Privacy warnings) with $WARNINGS other warnings"
+  else
+    yellow "PASSED with $WARNINGS warnings"
+  fi
   echo ""
   echo "Warnings are non-blocking but should be addressed."
   exit 0

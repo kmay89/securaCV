@@ -137,7 +137,9 @@ static bool s_discovery_sent = false;
 // Offline publish queue: tamper alerts and events that could not go out
 // (link down, or the send failed) wait here and replay in order once the
 // link is back — a broker outage used to reduce every tamper in the window
-// to at most the newest one (main.cpp's single pending slot). Storage is
+// to at most the newest one (main.cpp's single pending slot). When it is
+// full, events give way to tamper alerts (mqtt_offline_queue.h): the
+// committed csi_events csi_event_egress publishes cannot evict one. Storage is
 // allocated once, lazily, on the first push — PSRAM when the board has it,
 // heap otherwise; when the allocation fails the queue stays inert and the
 // publish functions report false so callers keep their own re-arm.
@@ -257,7 +259,8 @@ static bool publish_or_queue(mqtt_offline_queue::Kind kind, const char* topic,
   if (link_up && !s_offline_q.empty()) {
     // Records from the outage are still draining: join the back of the
     // queue so the replay stays in order instead of a fresh publish
-    // jumping ahead of older alerts. A payload too big for a slot falls
+    // jumping ahead of older alerts. A payload too big for a slot, or an
+    // event the full queue refuses (it keeps its tamper alerts), falls
     // through to the live send — delivery beats ordering there.
     if (s_offline_q.push(kind, retained, payload)) return true;
   }
