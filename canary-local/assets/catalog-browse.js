@@ -42,6 +42,10 @@ export function productSummary(product) {
     title: product.title || product.id,
     family: product.family || "universal",
     devices: product.device_compat || [],
+    // the workshop device that configures this case — generated, and null when
+    // no workshop device takes it (the workshop opens the WAP for a device it
+    // does not know, so a link built from `devices` could land on the wrong one)
+    workshop: product.workshop || null,
     klass: product.class || "primary",
     env: product.env || null,
     envLabel: envLabel(product),
@@ -52,6 +56,13 @@ export function productSummary(product) {
     alternatives: product.alternatives || [],
     preview: preview ? preview.preview : null,
   };
+}
+
+// "configure in the workshop →": the link for a summary, or null. Only a device
+// the workshop configures (the generated `workshop`) — workshop.js opens the WAP
+// for any id it does not know. The browse card and the finder's result share it.
+export function workshopHref(summary) {
+  return summary && summary.workshop ? `workshop.html#${summary.workshop}` : null;
 }
 
 // Derive the facet groups + their values (with product counts) from the
@@ -140,11 +151,11 @@ function card(product, byId) {
   scad.target = "_blank";
   scad.rel = "noopener";
   links.append(scad);
-  // a workshop device it maps to? offer the guided configurator
-  const dev = s.devices.find((d) => d && d !== "_universal");
-  if (dev) {
+  // a workshop device that takes it? offer the guided configurator
+  const ws = workshopHref(s);
+  if (ws) {
     const w = el("a", "cat-workshop", "configure in the workshop →");
-    w.href = `workshop.html#${dev}`;
+    w.href = ws;
     links.append(w);
   }
   body.append(links);

@@ -1099,9 +1099,13 @@ def workshop_main():
     n_pkgs = sum(len(d["packages"]) for d in devices.values())
     print(f"OK workshop.json: {len(devices)} devices, {n_pkgs} packages, "
           f"{n_opts} linked options")
+    return tuple(devices)
 
 
-workshop_main()
+# The devices the workshop configures — the catalog's "configure in the
+# workshop" link may name only one of these (workshop.js opens the WAP for a
+# device it does not know, so a link to any other device lands on the wrong one).
+WORKSHOP_DEVICES = workshop_main()
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -1459,6 +1463,12 @@ def catalog_main():
         family = (device_for(parsed["title"])
                   or (devices[0] if devices and devices != [UNIVERSAL_ID] else None)
                   or "universal")
+        # The workshop page that takes this product: the first workshop device
+        # one of its sets serves (its home or a claimant — the predicate the
+        # workshop's own packages use). None when no workshop device does: the
+        # display cases homed on their own boards have no workshop yet.
+        workshop = next((d for d in WORKSHOP_DEVICES
+                         if any(serves(s, d) for s in my_sets)), None)
         options = catalog_options(parsed, scad)
         vaxes = variant_axes_of(parsed)
         variants = [variant_from_set(s, scad) for s in my_sets]
@@ -1478,6 +1488,7 @@ def catalog_main():
             "title": parsed["title"],
             "family": family,
             "device_compat": devices,
+            "workshop": workshop,
             "class": "primary" if variants else "accessory",
             **({"env": env_by_scad[scad]} if env_by_scad.get(scad) else {}),
             "fit": "standard",  # → the shared tier (top-level `fit`)

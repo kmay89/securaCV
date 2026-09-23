@@ -160,6 +160,7 @@ enum axes into variant selectors instead of dropping everything that isn't
 { "products": [{
   "id": "vision", "scad": "canary_vision_enclosure.scad", // ← DEFAULT source; a variant may override (see below)
   "device_compat": ["canary-vision"], "family": "canary-vision",
+  "workshop": "canary-vision",                         // the workshop device that configures it, or null (the Lab links only to that)
   "env": { "cer": 2, "ip": "~IP54(weather)", "verified": false }, // ← NEW: rating as a field; verified flag (never badge a target as achieved)
   "fit_tier": "standard",                              // ← NEW: enum, bound to the coupon
   "variants": [                                        // axis 3 — discrete, change the part set

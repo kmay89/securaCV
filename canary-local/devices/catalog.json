@@ -58,6 +58,7 @@
    "device_compat": [
     "_universal"
    ],
+   "workshop": null,
    "class": "primary",
    "fit": "standard",
    "variant_axes": [],
@@ -97,6 +98,7 @@
    "device_compat": [
     "canary-display-nightlight-c3"
    ],
+   "workshop": null,
    "class": "primary",
    "fit": "standard",
    "variant_axes": [
@@ -240,6 +242,7 @@
    "device_compat": [
     "canary-display-nightstand-c6"
    ],
+   "workshop": null,
    "class": "primary",
    "fit": "standard",
    "variant_axes": [
@@ -334,6 +337,7 @@
    "device_compat": [
     "canary-vision"
    ],
+   "workshop": "canary-vision",
    "class": "primary",
    "fit": "standard",
    "variant_axes": [],
@@ -434,6 +438,7 @@
    "device_compat": [
     "canary-display-dash"
    ],
+   "workshop": "canary-display-dash",
    "class": "primary",
    "fit": "standard",
    "variant_axes": [
@@ -520,6 +525,7 @@
    "device_compat": [
     "_universal"
    ],
+   "workshop": null,
    "class": "primary",
    "fit": "standard",
    "variant_axes": [
@@ -568,6 +574,7 @@
    "device_compat": [
     "_universal"
    ],
+   "workshop": null,
    "class": "primary",
    "env": {
     "cer": 4,
@@ -629,6 +636,7 @@
    "device_compat": [
     "_universal"
    ],
+   "workshop": null,
    "class": "primary",
    "fit": "standard",
    "variant_axes": [],
@@ -678,6 +686,7 @@
    "device_compat": [
     "_universal"
    ],
+   "workshop": null,
    "class": "primary",
    "env": {
     "ip": "IP66/67/68 (from the bought Hammond box)",
@@ -744,6 +753,7 @@
    "device_compat": [
     "_universal"
    ],
+   "workshop": null,
    "class": "primary",
    "fit": "standard",
    "variant_axes": [],
@@ -793,6 +803,7 @@
    "device_compat": [
     "_universal"
    ],
+   "workshop": null,
    "class": "primary",
    "fit": "standard",
    "variant_axes": [],
@@ -835,6 +846,7 @@
    "device_compat": [
     "_universal"
    ],
+   "workshop": null,
    "class": "primary",
    "fit": "standard",
    "variant_axes": [],
@@ -907,6 +919,7 @@
    "device_compat": [
     "_universal"
    ],
+   "workshop": null,
    "class": "primary",
    "fit": "standard",
    "variant_axes": [],
@@ -957,6 +970,7 @@
    "device_compat": [
     "_universal"
    ],
+   "workshop": null,
    "class": "primary",
    "fit": "standard",
    "variant_axes": [],
@@ -995,6 +1009,7 @@
    "device_compat": [
     "_universal"
    ],
+   "workshop": null,
    "class": "primary",
    "env": {
     "cer": 2,
@@ -1101,6 +1116,7 @@
    "device_compat": [
     "canary-display-nightstand-s3"
    ],
+   "workshop": null,
    "class": "primary",
    "fit": "standard",
    "variant_axes": [
@@ -1223,6 +1239,7 @@
     "canary-display-dash7",
     "canary-display-nightstand7"
    ],
+   "workshop": null,
    "class": "primary",
    "env": {
     "env": "indoor; runs hot → print in PETG/ASA",
@@ -1604,6 +1621,7 @@
    "device_compat": [
     "canary-display-touch169"
    ],
+   "workshop": null,
    "class": "primary",
    "fit": "standard",
    "variant_axes": [],
@@ -1704,6 +1722,7 @@
    "device_compat": [
     "canary-sense"
    ],
+   "workshop": "canary-sense",
    "class": "primary",
    "env": {
     "cer": 2,
@@ -1944,6 +1963,7 @@
    "device_compat": [
     "canary-sense"
    ],
+   "workshop": "canary-sense",
    "class": "primary",
    "fit": "standard",
    "variant_axes": [],
@@ -1982,6 +2002,7 @@
    "device_compat": [
     "canary-sense"
    ],
+   "workshop": "canary-sense",
    "class": "primary",
    "fit": "standard",
    "variant_axes": [],
@@ -2030,6 +2051,7 @@
    "device_compat": [
     "_universal"
    ],
+   "workshop": null,
    "class": "primary",
    "fit": "standard",
    "variant_axes": [],
@@ -2068,6 +2090,7 @@
    "device_compat": [
     "_universal"
    ],
+   "workshop": null,
    "class": "primary",
    "fit": "standard",
    "variant_axes": [],
@@ -2123,6 +2146,7 @@
    "device_compat": [
     "_universal"
    ],
+   "workshop": null,
    "class": "primary",
    "fit": "standard",
    "variant_axes": [
@@ -2169,6 +2193,7 @@
    "device_compat": [
     "_universal"
    ],
+   "workshop": null,
    "class": "primary",
    "fit": "standard",
    "variant_axes": [],
@@ -2208,6 +2233,7 @@
    "device_compat": [
     "canary-vision"
    ],
+   "workshop": "canary-vision",
    "class": "primary",
    "env": {
     "cer": 2,
@@ -2366,6 +2392,7 @@
     "canary-vision-devkit",
     "canary-vision-xiao-s3"
    ],
+   "workshop": "canary-vision",
    "class": "primary",
    "env": {
     "cer": 2,
@@ -2683,6 +2710,7 @@
    "device_compat": [
     "_universal"
    ],
+   "workshop": null,
    "class": "primary",
    "fit": "standard",
    "variant_axes": [
@@ -2732,6 +2760,7 @@
    "device_compat": [
     "canary-wap"
    ],
+   "workshop": "canary-wap",
    "class": "primary",
    "env": {
     "cer": 2,
@@ -3125,6 +3154,7 @@
    "device_compat": [
     "canary-display-watch"
    ],
+   "workshop": "canary-display-watch",
    "class": "primary",
    "fit": "standard",
    "variant_axes": [],
@@ -3204,6 +3234,7 @@
    "device_compat": [
     "_universal"
    ],
+   "workshop": null,
    "class": "primary",
    "fit": "standard",
    "variant_axes": [],
