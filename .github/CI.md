@@ -30,7 +30,11 @@ or files anywhere in the tree, belongs in `lint.yml` (unfiltered,
 `ci-policy.yml → unfiltered_ok`). A test in a filtered workflow lists every
 file it reads outside the workflow's own trees in both path lists (R6) —
 otherwise an edit to that file alone runs nothing, and the red lands on the
-next unrelated PR. Neither half is machine-checked yet.
+next unrelated PR. Neither half is machine-checked yet, and the second is
+not yet true everywhere: canary-local.yml's lists cover every file its
+logic tests open, but some of those tests only check that a file outside
+them exists, and its drift-step generators read further (`gen_flash.py`
+reads `firmware/canary/**`).
 
 ## Speed & cost conventions
 

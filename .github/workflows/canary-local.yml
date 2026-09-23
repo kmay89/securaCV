@@ -51,6 +51,9 @@ on:
       # the family map: ecosystem.test.js pins the iPhone app's and the
       # desktop Flasher's copies to devices/ecosystem.json
       - "ios/Shared/EcosystemMap.swift"
+      # hatchery.test.js re-derives the iPhone app's name vectors from
+      # HatchSpec.swift (the job's gen_hatch_swift.mjs --check diffs it too)
+      - "ios/Shared/HatchSpec.swift"
       - "firmware/common/core/fleet_figures.h"
       - "docs/design/FLEET_FIGURES.md"
       - "firmware/flavors.json"
@@ -156,6 +159,11 @@ on:
       - "docs/blueprints/**"
       - "docs/hardware/enclosure/**"
       - "docs/hardware/bom_*.csv"
+      # gen_enclosures.py reads the nightly pricing snapshot and imports its
+      # URL checker from bom_pricing.py (test_bom_overlay.py and
+      # test_gen_enclosures_scratch.py run it, and so does the catalog drift step)
+      - "docs/hardware/pricing.json"
+      - "scripts/bom_pricing.py"
       - "docs/homeassistant_setup.md"
       - "custom_components/securacv/manifest.json"
       - "hacs.json"
@@ -174,6 +182,9 @@ on:
       - ".github/workflows/flasher-release.yml"
       - "firmware/scripts/build_flash_manifest.py"
       - "firmware/canary/lib/securacv_network/src/securacv_network.cpp"
+      # we2.test.js: the Vision model-release workflow reads the WE2 burn
+      # address from flash.json and never hardcodes a second copy
+      - ".github/workflows/vision-model-release.yml"
       - ".github/workflows/canary-local.yml"
   pull_request:
     paths:
@@ -217,6 +228,9 @@ on:
       # the family map: ecosystem.test.js pins the iPhone app's and the
       # desktop Flasher's copies to devices/ecosystem.json
       - "ios/Shared/EcosystemMap.swift"
+      # hatchery.test.js re-derives the iPhone app's name vectors from
+      # HatchSpec.swift (the job's gen_hatch_swift.mjs --check diffs it too)
+      - "ios/Shared/HatchSpec.swift"
       - "firmware/common/core/fleet_figures.h"
       - "docs/design/FLEET_FIGURES.md"
       - "firmware/flavors.json"
@@ -322,6 +336,11 @@ on:
       - "docs/blueprints/**"
       - "docs/hardware/enclosure/**"
       - "docs/hardware/bom_*.csv"
+      # gen_enclosures.py reads the nightly pricing snapshot and imports its
+      # URL checker from bom_pricing.py (test_bom_overlay.py and
+      # test_gen_enclosures_scratch.py run it, and so does the catalog drift step)
+      - "docs/hardware/pricing.json"
+      - "scripts/bom_pricing.py"
       - "docs/homeassistant_setup.md"
       - "custom_components/securacv/manifest.json"
       - "hacs.json"
@@ -340,6 +359,9 @@ on:
       - ".github/workflows/flasher-release.yml"
       - "firmware/scripts/build_flash_manifest.py"
       - "firmware/canary/lib/securacv_network/src/securacv_network.cpp"
+      # we2.test.js: the Vision model-release workflow reads the WE2 burn
+      # address from flash.json and never hardcodes a second copy
+      - ".github/workflows/vision-model-release.yml"
       - ".github/workflows/canary-local.yml"
 
 permissions:
