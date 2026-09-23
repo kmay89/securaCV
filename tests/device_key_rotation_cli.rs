@@ -847,3 +847,34 @@ fn help_never_prints_a_secret_from_the_environment() {
         assert_no_secrets(&out, &secrets);
     }
 }
+
+/// A write-side daemon given DEVICE_KEY_SEED uses it and writes NOTHING: a
+/// seed kept in a secret store (the sidecar's Docker secret, an add-on
+/// option) must not be copied onto the data volume beside the database.
+#[test]
+fn a_write_side_daemon_never_copies_an_environment_seed_to_disk() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("witness.db");
+    let db_str = db.to_str().expect("utf8 path");
+    let seed_file = seed_file_for(&db);
+
+    for start in ["first", "second"] {
+        let out = grove_ingest(db_str, &[("DEVICE_KEY_SEED", GENESIS_SEED)]);
+        assert!(out.status.success(), "{start} start failed\n{}", text(&out));
+        let all = text(&out);
+        assert!(all.contains("device key seed: DEVICE_KEY_SEED"), "{all}");
+        assert!(all.contains("Grove Vision 2 event appended"), "{all}");
+        assert!(
+            !seed_file.exists(),
+            "{start} start copied the environment seed to {}",
+            seed_file.display()
+        );
+        assert!(
+            !seed_file
+                .with_file_name("witness.ed25519.seed.new")
+                .exists(),
+            "no staging file either"
+        );
+        assert_no_secrets(&out, &[GENESIS_SEED]);
+    }
+}

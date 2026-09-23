@@ -53,18 +53,45 @@ pub fn generate_device_seed() -> String {
     format!("devkey:{}", seed_hex)
 }
 
-/// Resolve the device seed for a WRITE-SIDE process (`witnessd`, the bridges,
-/// `witness_api`, `break_glass_serve`): the environment wins, else the seed
-/// file beside the database (`<db>.ed25519.seed`), else a fresh seed is
-/// generated and persisted there at mode 0600. An environment seed is
-/// persisted to the file when no file exists yet (so every other process on
-/// the host can find it), and refused when the file already holds a
-/// *different* seed — two identities on one database is a configuration
-/// error, caught here rather than as a `device public key mismatch` at open.
+/// Resolve the device seed for a WRITE-SIDE process (the bridges,
+/// `witness_api`, `adapter_host`, `grove_vision2_ingest`,
+/// `break_glass_serve`): the environment wins, else the seed file beside the
+/// database (`<db>.ed25519.seed`), else a fresh seed is generated and
+/// persisted there at mode 0600.
+///
+/// Only a GENERATED seed is ever written. An environment seed is used as
+/// given and never copied to disk — a deployment that keeps its seed in a
+/// secret store (a Docker secret, an add-on option) must not find it on the
+/// data volume afterwards. When a seed file already exists, an environment
+/// seed that disagrees with it is refused: two identities on one database is
+/// a configuration error, caught here rather than as a `device public key
+/// mismatch` at open. `witnessd` alone keeps its historical behavior of also
+/// persisting an environment seed ([`resolve_device_seed_persisting_env`]).
 ///
 /// A database that can have no seed file (`:memory:`) resolves from the
 /// environment only.
 pub fn resolve_device_seed(db_path: &str, env_seed: Option<&str>) -> Result<ResolvedSeed> {
+    resolve_device_seed_inner(db_path, env_seed, false)
+}
+
+/// [`resolve_device_seed`] for `witnessd`, which has always written an
+/// environment seed to `<db>.ed25519.seed` when no file exists yet (so the
+/// seed file is where every later process on the host finds the identity).
+/// Kept for that one daemon so its on-disk behavior does not change; every
+/// other write-side process uses [`resolve_device_seed`], which never
+/// persists an environment seed.
+pub fn resolve_device_seed_persisting_env(
+    db_path: &str,
+    env_seed: Option<&str>,
+) -> Result<ResolvedSeed> {
+    resolve_device_seed_inner(db_path, env_seed, true)
+}
+
+fn resolve_device_seed_inner(
+    db_path: &str,
+    env_seed: Option<&str>,
+    persist_env: bool,
+) -> Result<ResolvedSeed> {
     let env_seed = env_seed.map(str::trim).filter(|s| !s.is_empty());
     let path = match device_key_path_for_db(db_path) {
         Ok(path) => path,
@@ -78,7 +105,24 @@ pub fn resolve_device_seed(db_path: &str, env_seed: Option<&str>) -> Result<Reso
             }
         }
     };
-    load_or_create_device_seed_with_source(&path, env_seed)
+    match env_seed {
+        Some(seed) if !persist_env => {
+            if let Some(stored) = read_seed_file(&path)? {
+                if stored != seed {
+                    return Err(anyhow!(
+                        "device key seed mismatch: DEVICE_KEY_SEED does not match the seed file \
+                         {} (two identities cannot share one log)",
+                        path.display()
+                    ));
+                }
+            }
+            Ok(ResolvedSeed {
+                seed: seed.to_string(),
+                source: SeedSource::Env,
+            })
+        }
+        _ => load_or_create_device_seed_with_source(&path, env_seed),
+    }
 }
 
 /// Find an EXISTING device seed without ever creating one: the environment
@@ -527,16 +571,49 @@ mod tests {
         assert_eq!(fourth.source, SeedSource::File(seed_path));
     }
 
-    /// An environment seed is persisted to the seed file when none exists, so
-    /// the file becomes the fallback for every other process on the host.
+    /// An environment seed is used as given and NEVER copied to disk by a
+    /// write-side daemon (a secret-store seed must not land on the data
+    /// volume); a seed file that already exists must agree with it.
     #[test]
-    fn resolve_device_seed_persists_env_seed_when_no_file_exists() {
+    fn resolve_device_seed_never_persists_an_env_seed() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("witness.db");
         let db = db.to_str().unwrap();
         let env_seed = "devkey:from_the_environment_with_entropy";
 
         let resolved = resolve_device_seed(db, Some(env_seed)).unwrap();
+        assert_eq!(resolved.seed, env_seed);
+        assert_eq!(resolved.source, SeedSource::Env);
+        assert!(
+            find_device_seed(db, None).unwrap().is_none(),
+            "no seed file may be written from the environment"
+        );
+        assert!(!device_key_path_for_db(db).unwrap().exists());
+
+        // A seed file that exists (witnessd wrote it) must agree.
+        load_or_create_device_seed(device_key_path_for_db(db).unwrap(), Some(env_seed)).unwrap();
+        assert_eq!(
+            resolve_device_seed(db, Some(env_seed)).unwrap().source,
+            SeedSource::Env
+        );
+        let err = resolve_device_seed(db, Some("devkey:a_different_seed_with_entropy_xy"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("mismatch"), "got: {err}");
+        assert!(!err.contains("devkey:"), "the error must not carry a seed");
+    }
+
+    /// witnessd keeps its historical behavior: an environment seed is
+    /// persisted beside the database when no file exists yet, so the file is
+    /// the fallback for every other process on the host.
+    #[test]
+    fn witnessd_resolution_persists_an_env_seed_when_no_file_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("witness.db");
+        let db = db.to_str().unwrap();
+        let env_seed = "devkey:from_the_environment_with_entropy";
+
+        let resolved = resolve_device_seed_persisting_env(db, Some(env_seed)).unwrap();
         assert_eq!(resolved.seed, env_seed);
         assert_eq!(resolved.source, SeedSource::Env);
 

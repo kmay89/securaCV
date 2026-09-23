@@ -38,8 +38,12 @@ Every process that opens the kernel resolves the device seed the same way
    `adapter_host`, `grove_vision2_ingest`, `break_glass_serve`), a fresh `devkey:` seed
    from the OS RNG, written to that file at mode 0600.
 
-An environment seed is written to the file when none exists yet, and a daemon refuses to
-start when the environment and the file disagree — two identities cannot share one log.
+Only a **generated** seed is written. A seed supplied through the environment is used as given
+and never copied to disk, so a deployment that keeps it in a secret store (a Docker secret, an
+add-on option) does not find it on the data volume afterwards. The one exception is `witnessd`,
+which keeps its historical behavior of writing an environment seed to the file when none exists
+yet. A daemon refuses to start when the environment and an existing file disagree — two
+identities cannot share one log.
 Daemons log which source they used (`device key seed: seed file …`), never the value.
 The verifier and export CLIs (`log_verify`, `export_verify`, `log_anchor`,
 `court_export`, `export_events`) try the file when no seed flag is given but never create
