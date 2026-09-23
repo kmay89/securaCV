@@ -1,9 +1,10 @@
 // SecuraCV Lab — native shell around the local-first `canary-local` Lab.
 //
-// v1 wraps the existing web Lab so it ships as a Mac/Linux app that runs
+// It wraps the existing web Lab so it ships as a Mac/Linux app that runs
 // entirely on your machine. The commands below are the seam where native
-// capabilities plug in next — the biggest win being reliable USB flashing
-// (replacing the browser's flaky WebSerial). See ../README.md.
+// capabilities plug in — USB flashing through the Flasher's bundled espflash
+// engine (src/flash.rs, desktop/flash-engine) replaces the WebSerial the OS
+// webview doesn't have. See ../README.md.
 //
 // Self-update (desktop only; iOS/iPadOS updates ride the App Store): the app
 // checks its release channel at launch and on a six-hour routine while it
@@ -47,14 +48,16 @@ fn app_info() -> AppInfo {
 
 // --- native device capabilities -----------------------------------------
 // Reliable serial flashing and LAN discovery are why a native app earns its
-// keep. Port ENUMERATION is live below (list_serial_ports), and the flash
-// commands are registered (src/flash.rs — the Flasher's commands over the
-// shared desktop/flash-engine). `serial` stays false until the espflash
-// sidecar is bundled and the flash page has a native path, so the frontend
-// never lights a "Flash over USB (native)" path that isn't there.
-// `serial_list` advertises what does exist, so the flash page can at least
-// show which ports the native shell sees while the browser path explains
-// itself. LAN discovery is two live
+// keep. Native FLASHING is live on macOS and Linux: the flash commands
+// (src/flash.rs — the Flasher's commands over the shared
+// desktop/flash-engine) run the espflash sidecar that the release bundles for
+// exactly those two platforms (tauri.{macos,linux}.conf.json externalBin,
+// desktop-release.yml "Bundle espflash sidecar"), and the Flash page mounts
+// its native bench (canary-local/assets/flash-native.js) when `serial` says
+// so. Anywhere else — the iPad shell, a Windows build nobody ships — `serial`
+// is false, so the page never lights a path that can only fail.
+// `serial_list` advertises the port list (list_serial_ports) on every desktop
+// build. LAN discovery is two live
 // commands on desktop: an mDNS browse that finds the boards (fleet_scan,
 // src/fleet.rs) and the /api/fleet poll that finds a kernel
 // (witness_discover). Bluetooth LE discovery is still future.
@@ -62,7 +65,10 @@ fn app_info() -> AppInfo {
 fn native_capabilities() -> serde_json::Value {
     serde_json::json!({
         "shell": "tauri",
-        "serial": false,      // native FLASHING: waits on the espflash sidecar
+        // Native FLASHING (src/flash.rs): only where the release bundles the
+        // espflash sidecar. desktop_parity.test.js refuses this unless the
+        // sidecar, its bundling step and the frontend path all exist.
+        "serial": cfg!(any(target_os = "macos", target_os = "linux")),
         // Native port enumeration (list_serial_ports). Desktop only:
         // MOBILE.md's contract is that generic USB serial does not exist on
         // iOS/iPadOS, so a mobile build neither registers the command nor

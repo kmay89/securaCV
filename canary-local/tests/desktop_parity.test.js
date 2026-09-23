@@ -2532,6 +2532,291 @@ test("native flashing: the Lab bundles the Flasher's espflash, pinned and packag
     "the two .debs install the rule at the same path — dpkg would refuse the second app");
 });
 
+// The text of a top-level JS function (declaration through its balanced
+// body) — the grabFn idiom above, for any source.
+const jsFnText = (src, name, where) => {
+  const i = src.indexOf("function " + name + "(");
+  assert.ok(i >= 0, `couldn't find function ${name} in ${where}`);
+  const b = src.indexOf("{", src.indexOf(")", i));
+  let d = 0;
+  for (let k = b; k < src.length; k++) {
+    if (src[k] === "{") d++;
+    else if (src[k] === "}" && --d === 0) return src.slice(i, k + 1);
+  }
+  assert.fail(`unbalanced function ${name} in ${where}`);
+};
+
+test("native flashing: the Lab's flash page gives the Flasher's diagnostics, and serial lights only where it works", () => {
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const nativeJs = read(join(CANARY, "assets/flash-native.js"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const labRs = read(join(ROOT, "desktop-lab/src-tauri/src/lib.rs"));
+
+  // 1. The espflash-aware classifier is the Flasher's, verbatim (the third
+  //    source beside app.js and flash-core.js) — and it names espflash's
+  //    real failures the way the Flasher does.
+  const nativeClassifier = jsFnText(nativeJs, "classifyFlashError", "flash-native.js");
+  assert.strictEqual(nativeClassifier, jsFnText(appJs, "classifyFlashError", "desktop/src/app.js"),
+    "flash-native.js classifyFlashError drifted from the Flasher's (desktop/src/app.js) — copy it back verbatim");
+  const classify = new Function(nativeClassifier + "\nreturn classifyFlashError;")();
+  const generic = "espflash exited with code 1. The board can't be bricked — " +
+    "put it back in download mode and try again.\n";
+  for (const [tail, kind] of [
+    ["Error: Failed to open serial port\nCaused by: Device or resource busy", "port-busy"],
+    ["Error: Permission denied (os error 13)", "permission"],
+    ["Error: Failed to connect to the device\nCaused by: No serial data received", "not-in-download"],
+    ["Error: Serial port disconnected\nCaused by: device not configured", "device-lost"],
+    ["", "unknown"],
+  ]) {
+    assert.strictEqual(classify(new Error(generic + tail)).kind, kind,
+      `flash-native.js misclassifies espflash's tail: ${tail.slice(0, 40) || "(none)"}`);
+  }
+  // The same retry rule (never `unknown`) and the same live-receipt rule.
+  const retrySet = (src, where) => {
+    const m = /const BAUD_RETRY_KINDS = new Set\(\[([^\]]*)\]\)/.exec(src);
+    assert.ok(m, `couldn't find BAUD_RETRY_KINDS in ${where}`);
+    return m[1].replace(/\s+/g, "");
+  };
+  assert.strictEqual(retrySet(nativeJs, "flash-native.js"), retrySet(appJs, "app.js"),
+    "the Lab retries a different set of failures down the baud ladder than the Flasher");
+  assert.match(nativeJs, /const requiresLiveReceipt = \(product\) => !product \|\| product\.serial_receipt !== false;/,
+    "flash-native.js must judge the live boot receipt by the Flasher's rule");
+  assert.match(appJs, /return !product \|\| product\.serial_receipt !== false;/, "the Flasher's live-receipt rule moved");
+
+  // 2. The Linux port hints the backend names are said as-is, not coached
+  //    as download mode: the frontends' OS-level pattern must match BOTH of
+  //    the engine's hints, in both apps.
+  const hint = (name) => {
+    const m = new RegExp(`pub const ${name}: &str =\\s*"([\\s\\S]*?)";`).exec(engineRs("port_hint"));
+    assert.ok(m, `couldn't parse ${name} from flash-engine port_hint.rs`);
+    // Rust → runtime text: line continuations folded, \" unescaped.
+    return m[1].replace(/\\\n\s*/g, "").replace(/\\"/g, '"');
+  };
+  const osLevelNative = /const OS_LEVEL_RE = (\/[^\n]*\/i);/.exec(nativeJs);
+  assert.ok(osLevelNative, "flash-native.js lost its OS-level (Linux hint) pattern");
+  assert.ok(appJs.includes(osLevelNative[1] + ".test(firstLine)"),
+    "flash-native.js and the Flasher's identify() must recognize the same OS-level causes");
+  const osRe = new Function(`return ${osLevelNative[1]};`)();
+  for (const name of ["PERMISSION_HINT", "BUSY_HINT"]) {
+    assert.ok(osRe.test(hint(name)), `the frontends' OS-level pattern no longer matches the engine's ${name}`);
+  }
+
+  // 3. Every event the pipeline and the monitor stream is heard — except
+  //    the change map, which needs a safety copy this bench doesn't take
+  //    (it sends no backup path, so the engine never emits it).
+  for (const e of ["flash:log", "flash:progress", "serial:status", "serial:log", "serial:receipt"]) {
+    assert.ok(nativeJs.includes(`listen("${e}"`), `the Lab's flash page never listens for ${e}`);
+  }
+  assert.match(nativeJs, /backupPath: "",/, "the native bench must say it has no safety copy (backupPath empty)");
+
+  // 4. The capability flips only where everything behind it exists: the
+  //    sidecar in the macOS + Linux configs, the release steps that fill it,
+  //    and a frontend that branches on it.
+  const serialCap = /"serial":\s*(.*),\s*$/m.exec(labRs);
+  assert.ok(serialCap, "couldn't find the Lab's serial capability");
+  if (serialCap[1].trim() !== "false") {
+    assert.strictEqual(serialCap[1].trim(), 'cfg!(any(target_os = "macos", target_os = "linux"))',
+      "the Lab may advertise native flashing only on the two platforms whose release bundles espflash");
+    for (const plat of ["macos", "linux"]) {
+      const conf = JSON.parse(read(join(ROOT, `desktop-lab/src-tauri/tauri.${plat}.conf.json`)));
+      assert.ok(((conf.bundle || {}).externalBin || []).includes("binaries/espflash"),
+        `serial is on, but tauri.${plat}.conf.json bundles no espflash`);
+    }
+    const labWf = read(join(ROOT, ".github/workflows/desktop-release.yml"));
+    for (const step of ["Bundle espflash sidecar (macOS universal)", "Bundle espflash sidecar (Linux x86_64)"]) {
+      assert.ok(labWf.includes(`- name: ${step}`), `serial is on, but desktop-release.yml has no "${step}" step`);
+    }
+    assert.match(flashJs, /import \{[^}]*\bmountNativeBench\b[^}]*\} from "\.\/flash-native\.js";/,
+      "serial is on, but the Flash page never loads its native bench");
+  }
+  // The page asks before it chooses, prefers the native engine, and an app
+  // that can't flash gets the in-app card — never the website's "get Chrome".
+  assert.match(flashJs, /const native = await probeNative\(\);\s*const nativeSerial = !!\(native && native\.serial\);/,
+    "flash.js must ask native_capabilities (probeNative) before choosing a path");
+  assert.match(flashJs, /mount\.append\(native \? renderNativeUnavailable\(native\) : renderUnsupported\(\)\);/,
+    "inside the Lab app, a build that can't flash must render the in-app card, not the website's");
+  assert.ok(flashJs.indexOf("probeNative()") < flashJs.indexOf('"serial" in navigator'),
+    "the native probe must come before the Web Serial check");
+  assert.match(nativeJs, /invoke\("native_capabilities"\)/, "flash-native.js must probe native_capabilities");
+});
+
+// A DOM just big enough for flash-native.js: elements with children, class
+// lists, text, listeners and the few properties the bench reads and writes.
+function fakeDocument() {
+  class Node {
+    constructor(tag) {
+      this.tagName = tag; this.children = []; this.parent = null; this._text = "";
+      this.className = ""; this.dataset = {}; this.style = {}; this.listeners = {};
+      this.value = ""; this.checked = false; this.disabled = false; this.type = ""; this.name = "";
+      this.scrollTop = 0; this.scrollHeight = 0; this.attrs = {};
+      const self = this;
+      this.classList = {
+        add: (...c) => { const s = new Set(self.className.split(/\s+/).filter(Boolean)); c.forEach((x) => s.add(x)); self.className = [...s].join(" "); },
+        remove: (...c) => { self.className = self.className.split(/\s+/).filter((x) => x && !c.includes(x)).join(" "); },
+        toggle: (c, on) => { const has = self.classList.contains(c); const want = on === undefined ? !has : !!on; if (want && !has) self.classList.add(c); if (!want && has) self.classList.remove(c); },
+        contains: (c) => self.className.split(/\s+/).includes(c),
+      };
+    }
+    append(...nodes) { for (const n of nodes) { if (n.parent) n.remove(); n.parent = this; this.children.push(n); } }
+    remove() { if (this.parent) { this.parent.children = this.parent.children.filter((c) => c !== this); this.parent = null; } }
+    set innerHTML(_) { for (const c of [...this.children]) c.remove(); this._text = ""; }
+    get textContent() { return this._text + this.children.map((c) => c.textContent).join(""); }
+    set textContent(t) { for (const c of [...this.children]) c.remove(); this._text = String(t); }
+    setAttribute(k, v) { this.attrs[k] = v; }
+    addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); }
+    fire(type) { for (const fn of this.listeners[type] || []) fn({ target: this }); }
+    *walk() { yield this; for (const c of this.children) yield* c.walk(); }
+    find(pred) { for (const n of this.walk()) if (pred(n)) return n; return null; }
+  }
+  return {
+    createElement: (tag) => new Node(tag),
+    createTextNode: (t) => { const n = new Node("#text"); n._text = String(t); return n; },
+  };
+}
+
+async function runNativeBench({ flashAnswers, detectAnswer }) {
+  const calls = [];
+  const flashQueue = [...(flashAnswers || [])];
+  const invoke = async (cmd, args) => {
+    calls.push([cmd, args]);
+    switch (cmd) {
+      case "native_capabilities": return { serial: true, serial_list: true };
+      // A non-USB port listed FIRST: only kind "usb" may be read as a Canary.
+      case "list_ports": return [{ name: "/dev/ttyS0", kind: "pci", vid: null, pid: null },
+                                 { name: "/dev/ttyACM0", kind: "usb", vid: 0x303a, pid: 0x1001, product: "USB JTAG/serial debug unit" }];
+      // Tauri rejects an invoke with the command's Err value itself — a
+      // plain string, not an Error — so the fakes throw strings too.
+      case "detect_chip":
+        if (typeof detectAnswer === "string") throw detectAnswer;
+        return { chip: "ESP32-S3", flash_bytes: 8 * 1024 * 1024, mac: "dc:54:75:c1:22:30", mac_check: { level: "clear", label: "ok" } };
+      case "fetch_manifest": {
+        const products = {};
+        for (const p of catalog.products) products[p.id] = { version: "9.9.9", chipFamily: p.chip };
+        return { schema: "securacv-flash-1", products };
+      }
+      case "flash": {
+        const next = flashQueue.shift();
+        if (typeof next === "string") throw next;
+        return next;
+      }
+      default: return null; // stop/start_serial_monitor
+    }
+  };
+  const doc = fakeDocument();
+  const saved = { window: globalThis.window, document: globalThis.document, setInterval: globalThis.setInterval };
+  const restore = () => Object.assign(globalThis, saved);
+  globalThis.document = doc;
+  globalThis.window = { __TAURI__: { core: { invoke }, event: { listen: async () => () => {} } } };
+  globalThis.setInterval = () => 0; // the 1 s port poll is driven by hand here
+  try {
+    const native = await import(pathToFileURL(join(CANARY, "assets/flash-native.js")).href);
+    assert.deepStrictEqual(await native.probeNative(), { serial: true, serial_list: true });
+    const mount = doc.createElement("div");
+    const form = { credentials: () => ({ ok: true, wifi: { ssid: "home", pass: "hunter22" }, mqtt: null, autoUpdate: true }), clear() {} };
+    await native.mountNativeBench(mount, { catalog, renderWifiFields: () => form });
+    const run = { calls, mount, doc, close: restore };
+    run.text = () => mount.textContent;
+    run.pick = async (id) => {
+      const name = catalog.products.find((p) => p.id === id).name;
+      const row = mount.find((n) => n.tagName === "label" && n.textContent.startsWith(name));
+      assert.ok(row, `the picker offers no ${id}`);
+      const radio = row.children[0];
+      assert.ok(!radio.disabled, `${id} is not selectable`);
+      radio.fire("change");
+      const go = mount.find((n) => n.tagName === "button" && n.textContent === "Flash my Canary");
+      go.fire("click");
+      await drain(); await drain();
+    };
+    return run;
+  } catch (e) {
+    restore();
+    throw e;
+  }
+}
+
+test("native flashing: the Lab's flash page drives the Flasher's commands with the Flasher's arguments", async () => {
+  const labFlash = read(join(ROOT, "desktop-lab/src-tauri/src/flash.rs"));
+  const camel = (s) => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+  const rustArgs = (src, fn) => {
+    const sig = new RegExp(`fn ${fn}\\(([\\s\\S]*?)\\)\\s*->`).exec(src);
+    assert.ok(sig, `couldn't parse fn ${fn}`);
+    // Argument names only: `name: Type` at the start of each argument (a
+    // generic's inner comma — State<'_, T> — starts no argument).
+    const flat = sig[1].split("\n").map((l) => l.replace(/\/\/.*$/, "").trim()).join(" ");
+    return [...flat.matchAll(/(?:^|,)\s*(\w+)\s*:/g)].map((m) => m[1])
+      .filter((a) => !["app", "state"].includes(a)).map(camel).sort();
+  };
+  const receipt = { target: "esp32-host", product_id: "securacv-canary", version: "9.9.9", release_sha256: "a".repeat(64),
+    installed_sha256: "b".repeat(64), bytes_written: 1, release_verification: "ed25519+sha256", channel: "stable",
+    chip_write_verified: true, provisioned: true };
+
+  // A transport fault at the top speed, then success one rung down.
+  const run = await runNativeBench({
+    flashAnswers: ["espflash exited with code 1. The board can't be bricked — put it back in download mode and try again.\nError: Failed to connect to the device\nCaused by: No serial data received", receipt],
+  });
+  try {
+  const order = run.calls.map(([c]) => c);
+  assert.ok(order.indexOf("list_ports") < order.indexOf("detect_chip"), "the bench must list ports before reading the board");
+  assert.deepStrictEqual(run.calls.find(([c]) => c === "detect_chip")[1], { port: "/dev/ttyACM0" },
+    "only the USB port is a Canary candidate (the Flasher's kind === \"usb\" filter)");
+  assert.deepStrictEqual(run.calls.find(([c]) => c === "fetch_manifest")[1], { manifestUrl: catalog.manifest_url },
+    "the bench must read the catalog's pinned stable manifest");
+  assert.match(run.text(), /Connected · ESP32-S3 · 8 MB flash on \/dev\/ttyACM0/);
+  // Only firmware for this silicon is offered.
+  for (const p of catalog.products) {
+    const offered = run.mount.find((n) => n.tagName === "label" && n.textContent.startsWith(p.name + " — "));
+    assert.strictEqual(!!offered, normChip(p.chip) === "ESP32S3", `${p.id} offered on an ESP32-S3: ${!!offered}`);
+  }
+  await run.pick("securacv-canary");
+  const flashes = run.calls.filter(([c]) => c === "flash").map(([, a]) => a);
+  assert.deepStrictEqual(flashes.map((a) => a.baud), [catalog.flash_baud || 921600, 460800],
+    "a not-in-download failure must retry one rung down the baud ladder, like the Flasher");
+  const args = flashes[1];
+  assert.deepStrictEqual(Object.keys(args).sort(), rustArgs(labFlash, "flash"),
+    "the bench's invoke(\"flash\") keys must be exactly the command's arguments (camelCased by Tauri)");
+  assert.strictEqual(args.productId, "securacv-canary");
+  assert.strictEqual(args.detectedChip, "ESP32-S3");
+  assert.strictEqual(args.eraseFirst, true, "first contact must default to the full erase, as in the Flasher");
+  assert.strictEqual(args.backupPath, "");
+  const provFields = [...engineRs("provisioning").matchAll(/^\s+pub (\w+):/gm)].map((m) => camel(m[1]));
+  const provStruct = /pub struct Provisioning \{([\s\S]*?)\n\}/.exec(engineRs("provisioning"))[1];
+  const structFields = [...provStruct.matchAll(/^\s+pub (\w+):/gm)].map((m) => camel(m[1])).sort();
+  assert.ok(provFields.length >= structFields.length);
+  assert.deepStrictEqual(Object.keys(args.provisioning).sort(), structFields,
+    "the bench's provisioning object must carry exactly the engine's Provisioning fields");
+  assert.strictEqual(args.provisioning.wifiSsid, "home");
+  assert.strictEqual(args.provisioning.wifiNvs, catalog.products.find((p) => p.id === "securacv-canary").wifi_nvs || "string");
+  const start = run.calls.find(([c]) => c === "start_serial_monitor");
+  assert.ok(start, "a successful flash must start the boot-receipt monitor");
+  assert.deepStrictEqual(Object.keys(start[1]).sort(), rustArgs(labFlash, "start_serial_monitor"));
+  assert.strictEqual(start[1].postFlash, true);
+  assert.strictEqual(start[1].vid, 0x303a);
+  assert.match(run.text(), /Written and verified by the chip \(ed25519\+sha256; stable channel/);
+  } finally { run.close(); }
+
+  // A refused permission is NOT retried at a gentler speed, and is named.
+  const denied = await runNativeBench({
+    flashAnswers: ["espflash exited with code 1. The board can't be bricked — put it back in download mode and try again.\nError: Permission denied (os error 13)"],
+  });
+  try {
+    await denied.pick("securacv-canary");
+    assert.strictEqual(denied.calls.filter(([c]) => c === "flash").length, 1, "a permission failure must not walk the baud ladder");
+    assert.match(denied.text(), /The system wouldn't grant access to the port/);
+    assert.ok(!denied.calls.some(([c]) => c === "start_serial_monitor"), "no monitor after a failed write");
+  } finally { denied.close(); }
+
+  // The backend's Linux hint is said as-is when the board can't be read.
+  const permHint = /pub const PERMISSION_HINT: &str =\s*"([\s\S]*?)";/.exec(engineRs("port_hint"))[1]
+    .replace(/\\\n\s*/g, "").replace(/\\"/g, '"'); // the string at runtime
+  const blocked = await runNativeBench({ detectAnswer: `${permHint}\n\nespflash said:\nError: Permission denied` });
+  try {
+    assert.ok(blocked.text().includes(`Found /dev/ttyACM0 — ${permHint}`),
+      "a Linux permission failure must show the backend's own hint, not download-mode coaching");
+    assert.ok(!/Put it in download mode/.test(blocked.text()));
+    assert.ok(!blocked.calls.some(([c]) => c === "fetch_manifest"), "nothing is fetched for a board that couldn't be read");
+  } finally { blocked.close(); }
+});
+
 // ── The derived birth certificate: one bird, one name, three surfaces ─────
 //
 // The Mac app can't import canary-local, so it inlines the derivation. That is

@@ -182,5 +182,7 @@ complete uninstall:
   (The `.deb`'s copy under `/usr/lib/udev/rules.d/` is removed with the
   package.)
 
-The Lab keeps all of its state locally and talks only to your own devices —
-the one thing it ever fetches on its own is its update manifest.
+The Lab keeps all of its state locally and talks to your own devices. It
+reaches the internet for two things only: its update manifest — the one thing
+it ever fetches on its own — and, when you press Flash, the signed firmware
+release you chose, from the project's GitHub releases.

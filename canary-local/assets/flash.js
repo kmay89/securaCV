@@ -32,6 +32,7 @@ import { chirp, chirpToggle } from "./chirp.js";
 import { minimalEnabled, minimalToggle } from "./minimal.js";
 import { mountBoardIdentity } from "./board-identity.js";
 import * as intake from "./intake.js";
+import { probeNative, mountNativeBench, renderNativeUnavailable } from "./flash-native.js";
 
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 const LESSON = "wap.html"; // the guided BOOT/RESET + PlatformIO/Arduino path
@@ -116,8 +117,15 @@ async function boot() {
   const mount = $("#flash");
   mount.innerHTML = "";
 
-  if (!("serial" in navigator)) {
-    mount.append(renderUnsupported());
+  // Inside the SecuraCV Lab app the OS webview has no Web Serial — but the
+  // native shell may flash through its own bundled espflash, the Flasher's
+  // engine (flash-native.js). Ask it (native_capabilities().serial) and
+  // believe the answer: an app build that can't flash (the iPad shell) gets
+  // the in-app "not on this device" card, never the website's "get Chrome".
+  const native = await probeNative();
+  const nativeSerial = !!(native && native.serial);
+  if (!nativeSerial && !("serial" in navigator)) {
+    mount.append(native ? renderNativeUnavailable(native) : renderUnsupported());
     return;
   }
 
@@ -147,6 +155,13 @@ async function boot() {
     guide.href = LESSON;
     box.append(guide);
     mount.append(box);
+    return;
+  }
+
+  if (nativeSerial) {
+    // The native bench, with the browser's own Wi-Fi / broker form.
+    await mountNativeBench(mount, { catalog: state.catalog, renderWifiFields });
+    mount.append(renderReassurance());
     return;
   }
 
