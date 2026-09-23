@@ -11,6 +11,7 @@
  *   - ensure_governor() makes a mesh-less build's gate real (the governor
  *     otherwise fails open: every reservation passes);
  *   - the WAP today (idle 10 Hz broadcast) is never denied;
+ *   - the gate starts a frame at 159 x100 and none at 160 x100;
  *   - one peer at the full 20 Hz stays steady under the 1.60 % ceiling;
  *   - eight peers asking 160 frames/s are held at the ceiling, the window
  *     never reads below the ledger, and the 30 s mesh heartbeat keeps its
@@ -32,6 +33,12 @@
 static_assert(std::is_same<decltype(&probe_airtime::reserve_probe_frame),
                            decltype(csi_probe::Config::airtime_gate)>::value,
               "reserve_probe_frame must fit csi_probe::Config::airtime_gate");
+/* The number FEATURES.md, docs/network_coexistence.md and
+ * docs/esp32_mesh_sensing_design.md state. Raising it also moves the probe
+ * onto the Beacon's airtime_saturated trouble line (beacon_channel.cpp,
+ * > 160 x100): change the docs and that line with it, never this alone. */
+static_assert(probe_airtime::PROBE_CEILING_PCT_X100 == 160,
+              "the probe's ceiling is the documented 1.60 %");
 
 static int g_failures = 0;
 #define EXPECT(c) do { if (!(c)) { std::fprintf(stderr, "FAIL %s:%d  %s\n", __FILE__, __LINE__, #c); ++g_failures; } } while (0)
@@ -120,6 +127,30 @@ void test_ensure_governor_brings_up_a_mesh_less_window() {
   std::printf("%s ensure_governor + framed cost\n", VERDICT(f0));
 }
 
+/* The gate itself, at its line: a window reading 159 x100 starts one more
+ * frame and a window reading 160 x100 starts none. Estimates are 192 us +
+ * 8 us a byte, so one urgent send of 19 975 B puts 159 992 us in the
+ * window and one of 19 976 B puts exactly 160 000 us. */
+void test_ceiling_is_one_point_six_zero_exactly() {
+  const int f0 = g_failures;
+  airtime_governor::init(airtime_governor::DEFAULT_CAP_PCT);
+  airtime_governor::force_reserve_urgent(50000, 19975);
+  EXPECT(airtime_governor::snapshot(50000).airtime_us == 159992u);
+  EXPECT(airtime_governor::airtime_pct_x100(50000) == 159);
+  EXPECT(probe_airtime::reserve_probe_frame(50000, 16));    /* under: sends */
+  EXPECT(airtime_governor::snapshot(50000).airtime_us == 159992u + 792u);
+  EXPECT(!probe_airtime::reserve_probe_frame(50000, 16));   /* 160: stops */
+
+  airtime_governor::init(airtime_governor::DEFAULT_CAP_PCT);
+  airtime_governor::force_reserve_urgent(50000, 19976);
+  EXPECT(airtime_governor::snapshot(50000).airtime_us == 160000u);
+  EXPECT(airtime_governor::airtime_pct_x100(50000) == 160);
+  EXPECT(!probe_airtime::reserve_probe_frame(50000, 16));   /* at the line */
+  /* ...while the routine cap still has 40 000 us for everyone else. */
+  EXPECT(airtime_governor::try_reserve_routine(50000, 60));
+  std::printf("%s ceiling: 159 x100 sends, 160 x100 stops\n", VERDICT(f0));
+}
+
 void test_wap_today_is_in_budget() {           /* broadcast-only at 10 Hz */
   const int f0 = g_failures;
   Run r = run(0, 60);
@@ -144,7 +175,10 @@ void test_over_budget_probe_leaves_heartbeats_their_room() {
   const int f0 = g_failures;
   Run r = run(8, 180);                         /* 160 frames/s = 12.7 % asked */
   EXPECT(r.st.sends_denied_airtime > 0);
-  EXPECT(r.max_x100 <= probe_airtime::PROBE_CEILING_PCT_X100 + 8);  /* + one frame */
+  /* The probe starts no frame at 160 x100, and one frame is 792 us, under
+   * 1 x100, so its frames stop at 160; a heartbeat (672 us) landing after
+   * the last frame makes 161. Absolute, not relative to the constant. */
+  EXPECT(r.max_x100 <= 161);
   EXPECT(r.hb_tries == 6 && r.hb_ok == r.hb_tries);
   EXPECT(r.max_under_us == 0);
   std::printf("%s 8 peers: held at %u x100, heartbeats %u/%u\n", VERDICT(f0), r.max_x100, r.hb_ok, r.hb_tries);
@@ -168,6 +202,7 @@ void test_probe_pump_installs_this_gate() {
 
 int main() {
   test_ensure_governor_brings_up_a_mesh_less_window();   /* must run first */
+  test_ceiling_is_one_point_six_zero_exactly();
   test_wap_today_is_in_budget();
   test_one_peer_at_full_rate_is_steady();
   test_over_budget_probe_leaves_heartbeats_their_room();
