@@ -97,6 +97,35 @@ def build_sense_event_canonical(
     ).encode("utf-8")
 
 
+def build_sentinel_event_canonical(
+    device_id: str,
+    seq: int,
+    event: str,
+    level: str,
+    confidence: int,
+    anomaly: int,
+    occupancy: str,
+    range_band: str,
+    modality_bits: int,
+    bucket_uptime_s: int,
+) -> bytes:
+    """canary-sentinel fused-claim event canonical (v1 `sentinel` kind).
+
+    Locked against `firmware/common/identity/device_signature.cpp`
+    (build_sentinel_canonical). Carries every coarse field the fusion
+    chokepoint publishes — ordinal level, 0..100 confidence, 0..100 anomaly
+    accumulator, 0/1/2+ occupancy, near/mid/far band, the bitmask of
+    corroborating modality classes, and the 10-minute uptime bucket — so
+    none of them can be edited on the broker without breaking the signature.
+    Integers are rendered in plain decimal, exactly as the firmware's
+    `%u` / `%lu` print them."""
+    return (
+        f"{SIG_PREFIX}|v{SCHEMA_V}|sentinel|{device_id}|{seq}|{event}|"
+        f"{level}|{confidence}|{anomaly}|{occupancy}|{range_band}|"
+        f"{modality_bits}|{bucket_uptime_s}"
+    ).encode("utf-8")
+
+
 def _verify_raw(
     pubkey_bytes: bytes, canonical: bytes, sig_b64url: str
 ) -> bool:
@@ -304,6 +333,62 @@ def verify_sense_event(
         return TrustVerdict(
             trusted=False, reason="unsigned",
             detail=f"Sense event payload has non-numeric scalar field: {err}",
+        )
+    return _verify_with_kind(trust_store, device_id, payload, canonical)
+
+
+def _canonical_uint(value: Any) -> int:
+    """An integer field exactly as the firmware prints it (`%u` / `%lu`):
+    a non-negative int. A bool, a float with a fraction, a negative number
+    or a string of junk is refused (ValueError) rather than coerced — the
+    firmware can only ever emit a plain unsigned decimal, so anything else
+    was not signed by it."""
+    if isinstance(value, bool):
+        raise ValueError(f"boolean where an unsigned integer belongs: {value!r}")
+    if isinstance(value, float):
+        if not value.is_integer():
+            raise ValueError(f"fractional value where an unsigned integer belongs: {value!r}")
+        value = int(value)
+    out = int(value)
+    if out < 0:
+        raise ValueError(f"negative value where an unsigned integer belongs: {value!r}")
+    return out
+
+
+def verify_sentinel_event(
+    trust_store: TrustStore, device_id: str, payload: dict[str, Any]
+) -> TrustVerdict:
+    """Verify a canary-sentinel fused-claim event publish. Required fields
+    on the canonical: seq, event, level, confidence, anomaly, occupancy,
+    range, modality_bits, bucket_uptime_s. Missing fields degrade to
+    unsigned (graceful), same policy as the other event verifiers."""
+    required = (
+        "seq", "event", "level", "confidence", "anomaly", "occupancy",
+        "range", "modality_bits", "bucket_uptime_s",
+    )
+    if not all(k in payload for k in required):
+        return TrustVerdict(
+            trusted=False,
+            reason="unsigned",
+            detail=f"Sentinel event payload missing required fields: {required}",
+        )
+    try:
+        canonical = build_sentinel_event_canonical(
+            device_id=device_id,
+            seq=_canonical_uint(payload["seq"]),
+            event=str(payload["event"]),
+            level=str(payload["level"]),
+            confidence=_canonical_uint(payload["confidence"]),
+            anomaly=_canonical_uint(payload["anomaly"]),
+            occupancy=str(payload["occupancy"]),
+            range_band=str(payload["range"]),
+            modality_bits=_canonical_uint(payload["modality_bits"]),
+            bucket_uptime_s=_canonical_uint(payload["bucket_uptime_s"]),
+        )
+    except (TypeError, ValueError) as err:
+        return TrustVerdict(
+            trusted=False, reason="unsigned",
+            detail=f"Sentinel event payload has a non-integer scalar field: {err}",
         )
     return _verify_with_kind(trust_store, device_id, payload, canonical)
 

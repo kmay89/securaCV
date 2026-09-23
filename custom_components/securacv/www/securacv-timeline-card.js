@@ -73,6 +73,8 @@
     "canary-vision": "camera",
     "canary-wap": "wifi-csi",
     "canary-contact": "contact",
+    // Fuses several media, so no single-medium glyph (const.py explains).
+    "canary-sentinel": "other",
   };
   const MODALITY_ALIASES = {
     csi: "wifi-csi",
