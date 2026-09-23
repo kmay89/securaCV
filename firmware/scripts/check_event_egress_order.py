@@ -47,7 +47,8 @@ and a deleted epoch bump or `not_owed()` call; rules 3-6 refuse those.
    `link.accepting`, that the body built, and the boot-story filter — so an
    `if (false ...` decoy, or a gate on the backlog, is refused. So a tamper
    alert never waits on the card or the backlog, and it queues through an
-   outage. The backfill pass (`s_backfill.pass(`) runs after the row is
+   outage. The bridge publishes with retained=false: a retained copy would
+   re-fire Home Assistant's edge-latched tamper sensors on every restart. The backfill pass (`s_backfill.pass(`) runs after the row is
    committed.
 
 The host test also takes three glue values from its model that the planner
@@ -69,6 +70,26 @@ cannot check for itself:
    `s_destination_epoch` under an `if` on the same flag that guards the
    offline queue's flush (`s_offline_q.clear(`), and
    `mqtt_destination_epoch()` returns it.
+
+Rule 3 holds the stretch from the dequeue to the bridge. The final review
+got past it with edits that never reach that stretch: a dequeue loop that
+stops, or a budget of zero, while a backfill runs; an early `return` from
+the pump; a link muted before the loop; and a boot-story filter that
+swallows every kind. Each one makes every tamper alert (and every row) wait
+for the whole backlog, and a long backfill then fills the 8-deep egress
+queue and drops them. So:
+
+7. The pump's prefix. Its link is `const` and comes from `current_link()`.
+   The dequeue loop's header is exactly
+   `for (int budget = kPumpBudget; budget > 0; --budget)`. Before that
+   loop, outside the card-poll `switch` and the epoch `if` (rule 5), no
+   statement reads the backfill's or the link's state (the rule-3 list),
+   and nothing leaves or loops (`return`, `continue`, `break`, `goto`,
+   `for`, `while`, `do`) but the opening `if (!s_queue) return;`.
+   `boot_story_bridged_elsewhere()` is one `return` of
+   `strcmp(kind, "...") == 0` terms, naming exactly the three boot kinds
+   the system.integrity story already narrates (`power_loss`, `watchdog`,
+   `unexpected_reboot`).
 
 ## It proves it bites
 
@@ -241,6 +262,7 @@ SIG_SEND_LIVE = r"\bsend_live\s*\([^)]*\)\s*(?:override\s*)?"
 SIG_SEND_BACKFILL = r"\bsend_backfill\s*\([^)]*\)\s*(?:override\s*)?"
 SIG_RELOAD = r"\bvoid\s+apply_pending_reload\s*\(\s*(?:void)?\s*\)"
 SIG_EPOCH = r"\buint32_t\s+mqtt_destination_epoch\s*\(\s*(?:void)?\s*\)"
+SIG_BOOT_STORY = r"\bbool\s+boot_story_bridged_elsewhere\s*\(\s*const\s+char\s*\*\s*kind\s*\)"
 
 # What the tamper bridge's `if` may test (each `&&` term, squashed).
 BRIDGE_TERMS = (
@@ -255,6 +277,11 @@ BACKLOG_STATE = ("s_backfill", "s_replay_run", "s_dest_epoch", "s_port", "csi_ev
 CONTROL_FLOW = r"\b(?:if|else|for|while|do|switch|return|continue|break|goto)\b"
 # The allocator's floor as NVS holds it, read atomically or plainly.
 FLOOR_READ = r"__atomic_load_n\(&s_id_floor_stored,[A-Z_]+\)|s_id_floor_stored"
+# Rule 7: the dequeue loop, squashed; what may not happen before it; and the
+# kinds the boot-story filter may name (system.integrity narrates these).
+PUMP_LOOP = "for(intbudget=kPumpBudget;budget>0;--budget)"
+PREFIX_FLOW = r"\b(?:return|continue|break|goto|for|while|do)\b"
+BOOT_STORY_KINDS = {"power_loss", "watchdog", "unexpected_reboot"}
 
 
 def the_body(code: str, signature: str, what: str, errors: list[str],
@@ -340,6 +367,11 @@ def check_pump_order(egress_src: str, errors: list[str]) -> None:
     if tamper > commit:
         errors.append(f"{where}: the tamper bridge must publish BEFORE the row is committed "
                       "to the planner — a tamper alert never waits on the card or the backlog")
+    bridge_args = call_args(body, "mqtt_publish_tamper(")
+    if bridge_args is None or len(bridge_args) != 2 or bridge_args[1] != "false":
+        errors.append(f"{where}: the tamper bridge publishes with retained=false — an event, "
+                      "not a state; a retained copy re-fires HA's edge-latched tamper sensors on "
+                      "every HA restart")
     if body.count("mqtt_publish_tamper(") != 1:
         errors.append(f"{where}: expected one tamper bridge publish (mqtt_publish_tamper), "
                       f"found {body.count('mqtt_publish_tamper(')} — a second one is either a "
@@ -468,6 +500,90 @@ def check_destination_epoch(mqtt_src: str, errors: list[str]) -> None:
             "event log's backfill drops its backlog on exactly the broker changes the queue does")
 
 
+def check_pump_prefix(egress_src: str, errors: list[str]) -> None:
+    """Rule 7: nothing before the dequeue loop can hold the rows back."""
+    code = blank_comments_and_strings(egress_src)
+    span = the_body(code, SIG_PUMP, f"{EGRESS_CPP}: csi_event_egress_pump()", errors,
+                    need="xQueueReceive(")
+    if span is None:
+        return
+    body = code[span[0]:span[1]]
+    where = f"{EGRESS_CPP}: csi_event_egress_pump()"
+    if not re.search(r"\bconst\s+csi_event_backfill::Link\s+link\s*=\s*current_link\s*\(\s*\)\s*;",
+                     body) or re.search(r"\blink\s*\.\s*\w+\s*(?:[-+*/|&^]?=(?!=)|\+\+|--)", body):
+        errors.append(f"{where}: the pump's link must be `const csi_event_backfill::Link link = "
+                      "current_link();` and never written — a link muted while a backfill runs "
+                      "holds every tamper alert behind the backlog")
+    deq = body.find("xQueueReceive(")
+    loops = [m for m in re.finditer(r"\bfor\s*\(", body) if m.start() < deq]
+    if not loops:
+        errors.append(f"{where}: the row dequeue must sit in the pump's budget loop")
+        return
+    loop = loops[-1]
+    close = matching_paren(body, loop.end() - 1)
+    if close < 0 or squash(body[loop.start():close + 1]) != PUMP_LOOP:
+        errors.append(f"{where}: the dequeue loop's header must be exactly `{PUMP_LOOP}` "
+                      "(squashed) — a budget or condition that looks at the backlog stops the "
+                      "rows, tamper alerts included, while a backfill runs")
+    # Before the loop: blank out the statements rules 3-5 already hold (the
+    # card-poll switch, the epoch `if`) and the opening `if (!s_queue) return;`,
+    # then refuse backlog/link state and any way out.
+    prefix = list(body[:loop.start()])
+
+    def blank(a: int, b: int) -> None:
+        for k in range(a, b):
+            if prefix[k] != "\n":
+                prefix[k] = " "
+
+    opening = re.match(r"(?:\s*#[^\n]*\n)*\s*if\s*\(\s*!\s*s_queue\s*\)\s*return\s*;", body)
+    if opening:
+        blank(0, opening.end())
+    sw = re.search(r"\bswitch\s*\(\s*csi_event_log::poll\(", body[:loop.start()])
+    if sw:
+        close_sw = matching_paren(body, body.find("(", sw.start()))
+        open_b = body.find("{", close_sw)
+        depth, end_b = 0, -1
+        for j in range(open_b, loop.start()):
+            if body[j] == "{":
+                depth += 1
+            elif body[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    end_b = j + 1
+                    break
+        if close_sw > 0 and end_b > 0:
+            blank(sw.start(), end_b)
+    call = body.find("s_backfill.not_owed(")
+    epoch_if = enclosing_if(body, call) if 0 <= call < loop.start() else None
+    if epoch_if:
+        blank(epoch_if[0], epoch_if[3])
+    rest = "".join(prefix)
+    for gate in BACKLOG_STATE:
+        if gate in rest:
+            errors.append(f"{where}: `{gate}` is read before the dequeue loop, outside the card "
+                          "poll and the broker-change check — the rows must not wait on it")
+    flow = re.search(PREFIX_FLOW, rest)
+    if flow:
+        errors.append(f"{where}: `{flow.group(0)}` before the dequeue loop — only "
+                      "`if (!s_queue) return;` may leave the pump before its rows")
+
+
+def check_boot_story_filter(egress_src: str, errors: list[str]) -> None:
+    """Rule 7: the bridge's one filter drops exactly the boot kinds."""
+    code = blank_comments_and_strings(egress_src)
+    span = the_body(code, SIG_BOOT_STORY, f"{EGRESS_CPP}: boot_story_bridged_elsewhere()", errors)
+    if span is None:
+        return
+    shape = squash(code[span[0]:span[1]])
+    kinds = re.findall(r'strcmp\(\s*kind\s*,\s*"([^"\\]*)"\s*\)', egress_src[span[0]:span[1]])
+    if not re.fullmatch(r'returnstrcmp\(kind,""\)==0(?:\|\|strcmp\(kind,""\)==0)*;', shape) or \
+            set(kinds) != BOOT_STORY_KINDS or len(kinds) != len(BOOT_STORY_KINDS):
+        errors.append(
+            f"{EGRESS_CPP}: boot_story_bridged_elsewhere() must be one `return` of "
+            "`strcmp(kind, \"...\") == 0` terms naming exactly "
+            f"{sorted(BOOT_STORY_KINDS)} — any other test, or kind, silences tamper bridges")
+
+
 def check(mqtt_src: str, egress_src: str) -> list[str]:
     errors: list[str] = []
     check_live_publish(mqtt_src, errors)
@@ -476,6 +592,8 @@ def check(mqtt_src: str, egress_src: str) -> list[str]:
     check_floor_glue(egress_src, errors)
     check_epoch_glue(egress_src, errors)
     check_destination_epoch(mqtt_src, errors)
+    check_pump_prefix(egress_src, errors)
+    check_boot_story_filter(egress_src, errors)
     return errors
 
 
@@ -592,6 +710,35 @@ MUTATIONS: list[tuple[str, Mutation]] = [
                              "if (!s_offline_q.empty() && destination_changed)"), e)),
     ("mqtt_destination_epoch() returns a constant",
      lambda m, e: (mutate_in(m, SIG_EPOCH, r"return\s+s_destination_epoch\s*;", "return 0;"), e)),
+    ("the tamper bridge is retained",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"(mqtt_publish_tamper\(\s*tb\s*,[^;]*?)false\s*\)",
+                                r"\1true)", need="xQueueReceive("))),
+    # The final review's edits: the rows held back before they reach rule 3.
+    ("the dequeue loop stops while a backfill runs",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"budget\s*>\s*0\s*;", "budget > 0 && s_replay_run == 0;",
+                                need="xQueueReceive("))),
+    ("the dequeue budget is zero while a backfill runs",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"int\s+budget\s*=\s*kPumpBudget",
+                                "int budget = s_replay_run ? 0 : kPumpBudget",
+                                need="xQueueReceive("))),
+    ("the pump returns before its rows while a backfill runs",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"(CommittedEvent\s+ev\s*;)",
+                                r"if (s_replay_run > 0) { s_replay_run += s_backfill.pass(link, s_port); "
+                                r"return; } \1", need="xQueueReceive("))),
+    ("the pump returns before its rows on a helper",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"(CommittedEvent\s+ev\s*;)",
+                                r"if (backlog_busy()) return; \1", need="xQueueReceive("))),
+    ("the pump mutes its link while a backfill runs",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP,
+                                r"const\s+(csi_event_backfill::Link\s+link\s*=\s*current_link\(\)\s*;)",
+                                r"\1 if (s_replay_run) link.accepting = false;",
+                                need="xQueueReceive("))),
+    ("the boot-story filter swallows every kind while a backfill runs",
+     lambda m, e: (m, mutate_in(e, SIG_BOOT_STORY, r"return\s+strcmp\(",
+                                "if (backlog_busy()) return true;\n  return strcmp("))),
+    ("the boot-story filter swallows an SD kind",
+     lambda m, e: (m, mutate_in(e, SIG_BOOT_STORY, r"(==\s*0)\s*;",
+                                r'\1 || strcmp(kind, "sd_removed") == 0;'))),
 ]
 
 

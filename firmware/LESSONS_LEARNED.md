@@ -2141,12 +2141,18 @@
   drain, a failed send), the ceiling cap itself, or the first-boot record.
   So does a failed-read count that a good read does not reset: a paced walk
   returns from inside its line loop, so a reset at the end of a chunk never
-  ran, and three isolated failures across a long backlog gave it up. The
-  test has to assume what it cannot check: that the MQTT layer refuses a
+  ran, and three isolated failures across a long backlog gave it up. A
+  reset on any bytes read is the opposite mistake: a bad sector cuts every
+  read that crosses it short at the same offset, so that walk never gives
+  up and holds every new row behind the sector. Only a whole line resets
+  the count, and the test pins both sides. The test has to assume what it
+  cannot check: that the MQTT layer refuses a
   live send while its queue holds records, that the tamper bridge publishes
   first, and that the glue hands the planner the allocator's floor and drops
   the backlog on a broker change. `firmware/scripts/check_event_egress_order.py`
-  holds the firmware source to all of it.
+  holds the firmware source to all of it, including the pump's code before
+  the dequeue loop, where a budget, an early return or a muted link would
+  hold every tamper alert behind the backlog.
   `test_csi_event_log_line.cpp` pins the format's bytes and refuses torn
   and glued lines, and `check_csi_sync.sh` fails if a second builder of the
   line appears. A watermark the receiver enforces belongs in storage that
