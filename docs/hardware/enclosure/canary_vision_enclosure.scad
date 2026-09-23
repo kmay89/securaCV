@@ -219,7 +219,7 @@ hinge_bolt_d = 5.0;  // M5 thumbscrew (GoPro standard)
 hinge_clear = 0.15;  // extra slot width on the bracket for printed fins that run +0.1 oversize  // [0:0.05:0.4]
 hinge_teeth = true;  // radial detent teeth on the mating faces — SAG-PROOF angle.
                      // Set false for smooth faces (full GoPro accessory compatibility).
-teeth_n     = 24;    // detent positions (24 -> 15 degree steps)
+teeth_n     = 24;    // castellation steps around the hinge, a tooth on every other one: it detents every 720 / teeth_n degrees (24 -> 12 positions, 30 degrees apart); keep it even
 teeth_h     = 0.6;   // tooth height
 
 /* [Bracket] — wall plate with three prongs (mates the case hinge) */

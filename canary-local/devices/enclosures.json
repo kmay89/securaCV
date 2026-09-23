@@ -2325,7 +2325,7 @@
       {
        "name": "teeth_n",
        "default": "24",
-       "comment": "detent positions (24 -> 15 degree steps)"
+       "comment": "castellation steps around the hinge, a tooth on every other one: it detents every 720 / teeth_n degrees (24 -> 12 positions, 30 degrees apart); keep it even"
       },
       {
        "name": "teeth_h",
@@ -4305,7 +4305,7 @@
       {
        "name": "teeth_n",
        "default": "24",
-       "comment": "detent positions around the hinge (360 / teeth_n degrees apart)"
+       "comment": "castellation steps around the hinge, a tooth on every other one: it detents every 720 / teeth_n degrees (24 -> 12 positions, 30 degrees apart); keep it even"
       },
       {
        "name": "teeth_h",
@@ -10774,7 +10774,7 @@
       {
        "name": "adh_rails",
        "default": "false",
-       "comment": "two smooth adhesive-strip zones on the back plate for a no-drill (Command-strip) mount; they cost the grille slots, and the bird keeps out of their way"
+       "comment": "two smooth adhesive-strip zones on the back plate for a no-drill (Command-strip) mount; they cost grille slots, and they need back_bird = false (the two are exclusive, asserted)"
       },
       {
        "name": "adh_rail_dx",

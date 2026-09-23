@@ -204,7 +204,7 @@ fin_r       = 7.5;   // fin end radius
 hinge_off   = 13.0;  // hinge axis stand-off from the top wall face
 hinge_bolt_d = 5.0;  // hinge bolt Ø (M5 at the default); its hole is cut 0.4 over
 hinge_teeth = true;  // radial detent teeth on the hinge's mating faces (the bracket carries the pockets); false = smooth faces
-teeth_n     = 24;    // detent positions around the hinge (360 / teeth_n degrees apart)
+teeth_n     = 24;    // castellation steps around the hinge, a tooth on every other one: it detents every 720 / teeth_n degrees (24 -> 12 positions, 30 degrees apart); keep it even
 teeth_h     = 0.6;   // tooth height
 
 /* [Bracket] */

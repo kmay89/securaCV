@@ -830,13 +830,13 @@ brand_maker_sz  =  3.0;  // the maker row is a footnote, not a third shout
 // plate has no other clear 70 mm column (the SD zone, boss pockets and
 // keyhole pads own the rest). Screw-mount builds can set adh_rails=false
 // and reclaim every slot.
-// OFF, and the mark took the space. The two smooth 17 x 74 zones were the
+// Default OFF, and the mark took the space. The two smooth 17 x 74 zones were the
 // only clear full-height columns on the plate, and they cost the grille 64
 // slots (~18 cm2) to buy a no-drill mount most builds do not use — while
 // making the back read as two blank rectangles. The bird now sits in that
-// clear middle instead. Set true for a Command-strip build and the bird
-// keeps out of the rails' way automatically (its keepout is asserted).
-adh_rails   = false;  // two smooth adhesive-strip zones on the back plate for a no-drill (Command-strip) mount; they cost the grille slots, and the bird keeps out of their way
+// clear middle instead, so the two cannot share it: a Command-strip build
+// sets adh_rails = true AND back_bird = false (the pair is asserted exclusive).
+adh_rails   = false;  // two smooth adhesive-strip zones on the back plate for a no-drill (Command-strip) mount; they cost grille slots, and they need back_bird = false (the two are exclusive, asserted)
 adh_rail_dx = 12.0;  // rail centers at ±this — the only clear full-height
                      // columns on the plate: inboard of the SD mouth, the
                      // boss head pockets and the keyhole pads (all asserted)

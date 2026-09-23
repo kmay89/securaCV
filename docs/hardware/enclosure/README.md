@@ -1065,8 +1065,8 @@ sealing, and no real wall-mount story. This design replaces it with a
 pitch, M5 axis):
 
 - **Sag-proof**: optional radial **detent teeth** (`hinge_teeth`, on by
-  default) interlock the mating faces in 15° steps — the set angle cannot
-  drift. Set `hinge_teeth = false` for smooth faces and full compatibility
+  default) interlock the mating faces every 30° (12 teeth on a 24-step
+  ring, `teeth_n`) — the set angle cannot drift. Set `hinge_teeth = false` for smooth faces and full compatibility
   with off-the-shelf GoPro accessories (arms, clamps, suction mounts…).
 - **Locked, not rubbed**: the angle clamps with an **M5 thumbscrew** (buy a
   GoPro-style knurled screw, or print the included `knob` over an M5 × 25

@@ -1393,7 +1393,7 @@
     {
      "id": "adh_rails",
      "type": "bool",
-     "label": "two smooth adhesive-strip zones on the back plate for a no-drill (Command-strip) mount; they cost the grille slots, and the bird keeps out of their way",
+     "label": "two smooth adhesive-strip zones on the back plate for a no-drill (Command-strip) mount; they cost grille slots, and they need back_bird = false (the two are exclusive, asserted)",
      "consequence": "",
      "audience": "user",
      "default": false
