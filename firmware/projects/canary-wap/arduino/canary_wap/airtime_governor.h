@@ -10,7 +10,9 @@
  * Each TX is recorded with its byte count. We estimate airtime per packet as
  *   airtime_us ≈ PHY_PREAMBLE_US + (bytes * 8) / PHY_BIT_RATE_MBPS
  * Then we sum airtime over a rolling 10-second window and compare against a
- * configurable cap (default 2%).
+ * configurable cap (default 2%). Sends are summed in 100 ms buckets, so the
+ * window holds every send at any rate and reads 10.0-10.1 s (a bucket
+ * leaves it with its newest send; the cap errs toward denying).
  *
  * Two send classes
  * ────────────────
@@ -24,7 +26,8 @@
  *
  * Telemetry
  * ─────────
- * `current_airtime_pct()` returns the rolling-window utilization (0-100).
+ * `airtime_pct_x100()` returns the rolling-window utilization as percent
+ * x 100 (215 = 2.15 %).
  * The firmware publishes this as `mesh_airtime_pct` over MQTT discovery
  * and the BLE console.
  *
