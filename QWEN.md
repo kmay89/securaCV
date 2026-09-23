@@ -122,12 +122,11 @@ beacon or chirp code, read the Beacon section of `AGENTS.md` in full first.
   time to serve stale CAD)
 - Changed `firmware/build_matrix.json`, a kernel-status tile in
   `tools/gen_kernel_status.py`, `viewer/verify_core.js`, an envelope
-  fixture or `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json`?
-  Same idea, other tool:
+  fixture or `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json`
+  (the Wall's parseFleet replays it)? Same idea, other tool:
   `python3 scripts/carry_to_site.py --site <website-checkout>` stamps the
   /checkup build matrix, the landing page's kernel-status grid and the
-  Witness Wall's vendored verifier with the fleet contract vectors its
-  parseFleet replays (the same weekly job runs it)
+  Witness Wall's vendored verifier (the same weekly job runs it)
 - Commit format: `<type>(<scope>): <description>` — `feat`, `fix`, `docs`,
   `test`, `refactor`, `chore`
 
