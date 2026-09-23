@@ -60,6 +60,7 @@
 #if FEATURE_CSI
 #include "securacv_csi.h"
 #include "csi_modules_integration.h"
+#include "csi_event_egress.h"  /* committed events -> MQTT events/tamper (F29) */
 #include "csi_event.h"  /* csi_event_set_clock_offset_minutes — wall-clock bucket alignment */
 
 /* csi_features_t is the canonical csi_types.h struct (securacv_csi.h
@@ -1168,6 +1169,10 @@ void setup() {
 
   // Initialize CSI sensing (motion / breathing / micro-activity)
 #if FEATURE_CSI
+  // Before any module can emit: restore the event-id floor (ids stay
+  // monotonic across reboots) and, on HA builds, arm the committed-event
+  // egress and its signer (csi_event_egress.h).
+  csi_event_egress_begin();
   Serial.println("[..] Initializing CSI environmental sensing...");
   sensing_init();
   csi_config_t csi_cfg = CSI_CONFIG_DEFAULT;
@@ -1707,11 +1712,11 @@ void loop() {
   // scripts/lint_dictionary_sync.py). A build without FEATURE_SD_STORAGE
   // feeds the pinned ABSENT constant and never emits an SD kind.
   //
-  // Where the rows go: a system.integrity commit reaches this host's RAM
-  // ring and whatever csi_event_on_committed override the build links.
-  // Home Assistant's SD Removed sensor also reads `sd_mounted` from the
-  // health payload (mqtt_publish_health_update), which does not depend on
-  // that override.
+  // Where the rows go: the RAM ring and, on HA builds, csi_event_egress's
+  // csi_event_on_committed override — the signed `events` topic, plus the
+  // tamper-topic bridge for the SD and enclosure kinds. Home Assistant's SD
+  // Removed sensor also reads `sd_mounted` from the health payload
+  // (mqtt_publish_health_update).
   {
     static const esp_reset_reason_t s_boot_rst = esp_reset_reason();
     // Same crash set as canary-wap's hardware_state.h reset_is_crash():
@@ -1960,6 +1965,13 @@ void loop() {
   // MQTT loop — handles reconnect and keepalive
   mqtt_loop();
 
+#if FEATURE_CSI
+  // Committed csi_events (presence, breathing, system.integrity tampers)
+  // -> securacv/{id}/events, signed, plus the per-kind tamper bridge. The
+  // override only queues; this loop-task pump is the one publisher.
+  csi_event_egress_pump();
+#endif
+
   // Publish status periodically
   if (mqtt_connected() && now - g_last_mqtt_status_ms >= MQTT_STATUS_INTERVAL_MS) {
     g_last_mqtt_status_ms = now;
@@ -1983,6 +1995,11 @@ void loop() {
   // matches the host mqtt_sensor adapter contract ({state, confidence,
   // kind}); the adapter routes it into the sealed log as TamperDetected.
   // Confidence is rescaled 0..100 -> 0..1 for the kernel's bounds check.
+  // A kind that IS one of Home Assistant's tamper types also carries
+  // `type` (spec/witness_dictionary.json firmware_kind_types): the touch
+  // pad's enclosure_tamper is HA's `enclosure`, so the Enclosure Open
+  // sensor lights — it matches `type`, never `kind`. temp_drift and
+  // camera_tamper have no HA type and stay kind-only.
   // Gated on mqtt_accepting(), not mqtt_connected(): during a broker
   // outage the publish buffers in the MQTT layer's offline queue, so each
   // alert leaves this one-deep pending slot within a loop pass instead of
@@ -1999,10 +2016,12 @@ void loop() {
         (kind == SENSING_WITNESS_TOUCH_TAMPER)  ? "enclosure_tamper" :
         (kind == SENSING_WITNESS_TEMP_DRIFT)    ? "temp_drift"
                                                 : "camera_tamper";
-    char payload[96];
+    const char* type_kv =
+        (kind == SENSING_WITNESS_TOUCH_TAMPER) ? ",\"type\":\"enclosure\"" : "";
+    char payload[112];
     snprintf(payload, sizeof(payload),
-             "{\"state\":\"on\",\"confidence\":%.2f,\"kind\":\"%s\"}",
-             (double)confidence / 100.0, kind_str);
+             "{\"state\":\"on\",\"confidence\":%.2f,\"kind\":\"%s\"%s}",
+             (double)confidence / 100.0, kind_str, type_kv);
     if (!mqtt_publish_tamper(payload)) {
       // False now means the offline queue itself refused (inert after a
       // failed allocation) — re-arm so the alert still survives; the

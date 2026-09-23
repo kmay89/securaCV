@@ -138,6 +138,25 @@ literals and to Home Assistant's per-type tamper sensors. Both firmware
 trees register the module and feed it a live SD state, so both can narrate
 `sd_error` and `sd_remove`.
 
+### MQTT `securacv/<id>/events`
+
+When a broker is configured, every committed row is also published on
+`securacv/<id>/events` as one JSON body built by
+`firmware/common/csi/src/csi_event_wire.h`. The canary-wap sketch
+(`csi_mqtt.cpp`) and the canary PIO tree (`src/csi_event_egress.cpp`) share
+that builder, and `firmware/tests_host/test_csi_event_wire.cpp` pins its
+bytes. The body carries an Ed25519 signature over the `event` canonical
+(`firmware/common/identity/device_signature`), which Home Assistant verifies
+against the device's pinned key; `"signed"` is `true` only when a signature
+rides the body. `system.integrity` rows are also republished on
+`securacv/<id>/tamper` as `{"type":"<kind>","severity":"tamper"}`, the shape
+the integration's per-type tamper sensors match. On the canary base that
+bridge carries the SD and enclosure kinds only: its boot story already
+reaches the tamper topic through the power-events classifier. The canary-wap
+also keeps an SD event log and backfills Home Assistant after a broker
+outage; the canary base relies on its MQTT offline queue (12 records), and
+SD backfill there is a recorded follow-up.
+
 ### `POST /api/events/dismiss`
 
 Tells the ring "the user marked this row as 'that was nothing.'" Local-only.

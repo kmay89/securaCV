@@ -28,6 +28,7 @@
 #include "csi_event_log.h"
 #include "api_auth.h"
 #include "device_signature.h"
+#include "csi_event_wire.h"         /* staged copy of firmware/common/csi/src — the shared events body */
 #include "mqtt_transport_logic.h"  /* staged copy of firmware/common/network/ — check_mqtt_transport_sync.sh */
 
 #include <Arduino.h>
@@ -610,9 +611,14 @@ bool connected() {
  * type-stable. ────────────────────────────────────────────────────── */
 
 /* Shared body builder so live publishes and backfill replays share one
- * wire shape. timestamp_ms is the device-monotonic millisecond mark
- * the event committed at — we publish that as the seconds figure HA
- * stores in `timestamp` (live: now; backfill: the event's first_seen_ms).
+ * wire shape — and, since F29, so this sketch and the canary PIO tree
+ * share it too: the body is built by csi_event_wire.h (staged from
+ * firmware/common/csi/src, byte-gated by check_csi_sync.sh; golden-tested
+ * in firmware/tests_host/test_csi_event_wire.cpp). This wrapper injects
+ * device_signature as the signer. timestamp_ms is the device-monotonic
+ * millisecond mark the event committed at — published as the seconds
+ * figure HA stores in `timestamp` (live: now; backfill: the event's
+ * first_seen_ms).
  *
  * is_replay flips the JSON's `replay` field so HA Device Triggers can
  * filter backfill traffic out of their match expressions and avoid
@@ -622,8 +628,16 @@ bool connected() {
  * replay flag still see the up-to-date state — only the trigger path
  * gates on it.
  *
+ * If signing fails (device_signature::init not called yet on a very
+ * early boot publish) the body goes out without sig fields and
+ * `"signed":false` — HA marks the device "unverified" but still accepts
+ * the publish.
+ *
  * Returns the byte count written, or 0 on overflow. */
 namespace {
+static_assert(csi_event_wire::SIG_B64URL_CAP == device_signature::SIG_B64URL_CAP,
+              "csi_event_wire's signature buffer must hold a device_signature sig");
+
 size_t build_event_body(char* body, size_t cap,
                         uint32_t                  event_id,
                         const char*               module_id,
@@ -634,93 +648,16 @@ size_t build_event_body(char* body, size_t cap,
                         uint32_t                  timestamp_ms,
                         uint16_t                  bundled_count,
                         bool                      is_replay) {
-  if (!values || !body || cap < 32) return 0;
-  const char* cat_s = (category == CSI_CATEGORY_AMBIENT) ? "ambient"
-                    : (category == CSI_CATEGORY_ANOMALY) ? "anomaly" : "event";
-  const char* priv_s = (privacy == CSI_PRIVACY_P2) ? "p2"
-                     : (privacy == CSI_PRIVACY_P1) ? "p1" : "p0";
-  const char* state_s = values->state_name[0] ? values->state_name : "unknown";
-  const uint32_t ts_sec = timestamp_ms / 1000UL;
-
-  /* Sign the canonical (device_id, event_id, state, category, privacy,
-   * motion, breath, bpm) tuple. HA's signature.py rebuilds the same
-   * canonical string from the parsed JSON to verify. If signing fails
-   * (e.g. device_signature::init wasn't called yet on a very early
-   * boot publish) we emit the body without sig fields — HA marks the
-   * device "unverified" but still accepts the publish. */
-  char sig_b64[device_signature::SIG_B64URL_CAP] = "";
-  const bool signed_ok = device_signature::sign_event(
-      event_id, state_s, cat_s, priv_s,
-      (int)values->motion_score,
-      (int)values->breathing_score,
-      (int)values->breathing_rate_bpm,
-      sig_b64, sizeof(sig_b64));
-
-  /* Schema note: event_id is published as a top-level field so HA's
-   * sig reconstructor can read it without parsing the MQTT topic. The
-   * field is monotonic per-device — HA can also use it to detect
-   * gaps / replays alongside the sig. */
-  char sig_kv[device_signature::SIG_B64URL_CAP + 64] = "";
-  int kv_n;
-  if (signed_ok) {
-    kv_n = snprintf(sig_kv, sizeof(sig_kv),
-             ",\"v\":%d,\"alg\":\"%s\",\"fp\":\"%s\",\"sig\":\"%s\"",
-             device_signature::SCHEMA_V,
-             device_signature::ALG_NAME,
-             device_signature::fingerprint_hex(),
-             sig_b64);
-  } else {
-    kv_n = snprintf(sig_kv, sizeof(sig_kv), ",\"v\":%d",
-             device_signature::SCHEMA_V);
-  }
-  /* Truncation guard (Gemini code-review #447): a clipped sig_kv
-   * gets appended verbatim via %s below and produces an invalid
-   * JSON payload (trailing `,"sig":"AAA` with no closing quote/brace).
-   * Clear on overflow so the outer body falls through with a clean
-   * `,"v":1` segment at worst — verify-side treats that as "unsigned"
-   * and the entity is marked unverified instead of accepting garbage. */
-  if (kv_n <= 0 || (size_t)kv_n >= sizeof(sig_kv)) {
-    sig_kv[0] = '\0';
-  }
-
-  const int n = snprintf(body, cap,
-    "{"
-      "\"event_id\":%lu,"
-      "\"event_type\":\"%s\","
-      "\"timestamp\":%lu,"
-      "\"zone\":\"\","
-      "\"confidence\":\"%s\","
-      "\"signed\":true,"
-      "\"module\":\"%s\","
-      "\"type\":\"%s\","
-      "\"category\":\"%s\","
-      "\"privacy\":\"%s\","
-      "\"state\":\"%s\","
-      "\"motion\":%u,"
-      "\"breathing\":%u,"
-      "\"bpm\":%u,"
-      "\"duration_sec\":%u,"
-      "\"bundled\":%u,"
-      "\"replay\":%s"
-      "%s"
-    "}",
-    (unsigned long)event_id,
-    state_s,
-    (unsigned long)ts_sec,
-    values->confidence[0] ? values->confidence : "tentative",
-    module_id ? module_id : "",
-    type_name ? type_name : "",
-    cat_s, priv_s,
-    state_s,
-    (unsigned)values->motion_score,
-    (unsigned)values->breathing_score,
-    (unsigned)values->breathing_rate_bpm,
-    (unsigned)values->duration_sec,
-    (unsigned)bundled_count,
-    is_replay ? "true" : "false",
-    sig_kv);
-  if (n <= 0 || (size_t)n >= cap) return 0;
-  return (size_t)n;
+  const csi_event_wire::Signer signer = {
+    &device_signature::sign_event,
+    device_signature::SCHEMA_V,
+    device_signature::ALG_NAME,
+    device_signature::fingerprint_hex(),
+  };
+  return csi_event_wire::build_event_body(body, cap, event_id, module_id,
+                                          type_name, category, privacy,
+                                          values, timestamp_ms, bundled_count,
+                                          is_replay, signer);
 }
 }  /* namespace */
 
@@ -774,23 +711,20 @@ void publish_event(uint32_t                  event_id,
    * on the phone while every HA tamper entity stayed silent. Republish it
    * here in the exact shape those sensors already parse: the per-type
    * sensor matches data.type == its kind, the general one fires on any
-   * publish and reads type/detail as attributes. state_name is
-   * chokepoint-sanitized ASCII, so no escaping is needed. LIVE emits
-   * only — the backfill replay path stays off this topic on purpose: it
-   * carries no is_replay marker, and re-firing tamper automations for
-   * old events is exactly what the replay flag exists to prevent. */
-  if (module_id && type_name
-      && strcmp(module_id, "system.integrity") == 0
-      && strcmp(type_name, "tamper") == 0
-      && values->state_name[0]) {
+   * publish and reads type/detail as attributes (the body is
+   * csi_event_wire::build_tamper_bridge_body, the same one the canary PIO
+   * tree publishes). state_name is chokepoint-sanitized ASCII, so no
+   * escaping is needed. LIVE emits only — the backfill replay path stays
+   * off this topic on purpose: it carries no is_replay marker, and
+   * re-firing tamper automations for old events is exactly what the
+   * replay flag exists to prevent. */
+  char tbody[128];
+  const size_t tn = csi_event_wire::build_tamper_bridge_body(
+      tbody, sizeof(tbody), module_id, type_name, values);
+  if (tn > 0) {
     char ttopic[192];
     build_topic(ttopic, sizeof(ttopic), "tamper");
-    char tbody[128];
-    const int tn = snprintf(tbody, sizeof(tbody),
-        "{\"type\":\"%s\",\"severity\":\"tamper\"}", values->state_name);
-    if (tn > 0 && (size_t)tn < sizeof(tbody)) {
-      publish_raw(ttopic, tbody, (size_t)tn, /*retain=*/false);
-    }
+    publish_raw(ttopic, tbody, tn, /*retain=*/false);
   }
 }
 

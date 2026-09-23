@@ -730,6 +730,26 @@ def _check_integrity_kinds(tv: dict, const_py: str) -> None:
                 f"{sorted(missing)} — every surface that names a tamper kind in "
                 f"words must know every kind the module can emit")
 
+    # (3b) The older `kind` words that also carry an HA `type`: the type
+    # must be a real per-type sensor key, and the canary drain that
+    # publishes the kind must still spell the type in code.
+    kind_types = tv.get("firmware_kind_types", {})
+    drain_rel = "firmware/canary/src/main.cpp"
+    drain_literals = "\n".join(_c_string_literals(read(drain_rel)))
+    for kind, typ in sorted(kind_types.items()):
+        if kind not in tv.get("firmware_kinds", []):
+            err(f"[drift] firmware_kind_types maps {kind!r}, which firmware_kinds does not list")
+        if typ not in consts.values() or typ in future:
+            err(f"[drift] firmware_kind_types {kind!r} -> {typ!r}: not a live const.py "
+                f"TAMPER_* value")
+        elif sensor_names and typ not in sensors:
+            err(f"[drift] firmware_kind_types {kind!r} -> {typ!r} has no per-type "
+                f"SecuraCVCanaryTamperTypeSensor in {bs_rel}")
+        if kind not in drain_literals or f'\\"type\\":\\"{typ}\\"' not in drain_literals:
+            err(f"[drift] {drain_rel}: the tamper drain no longer publishes {kind!r} "
+                f"with \"type\":\"{typ}\" — HA's per-type sensor matches `type`, "
+                f"never `kind`")
+
     # (4) Hosts.
     hosts = {h: ks for h, ks in tv.get("system_integrity_hosts", {}).items()
              if not h.startswith("$")}
