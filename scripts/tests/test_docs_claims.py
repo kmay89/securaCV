@@ -4,19 +4,24 @@
 docs/security/SECURITY_MODEL.md ships in every evidence export, and for a
 while it promised things the firmware did not do: zero outbound connections
 (the networked products open a broker socket, a daily signed-manifest check
-and SNTP), TLS on every hop (the flagship's device API is plain HTTP on port
-80; the WAP's HTTPS is an after-setup opt-in), Bluetooth compiled out (the
-shipped WAP profile compiles NimBLE), an API access code released by a button
-press (the flagship injects its token into `GET /`). THREAT_MODEL.md repeated
-them in its principles and its Definition of Done, firmware/FEATURES.md called
-the flagship's broker link plain after it had joined the shared TLS transport,
-and three product READMEs said the flashers had no field for a select both
-flashers already carried.
+and SNTP), TLS on every hop (the flagship's release images serve plain HTTP on
+port 80, its dev and full builds serve HTTPS only after setup, and the WAP's
+HTTPS is an after-setup opt-in), Bluetooth compiled out (the shipped WAP
+profile compiles NimBLE), an API access code released only by a button press
+(a set-up flagship also hands its token, with no press, to the first-boot
+wizard, a bearer caller and a request over its own access point).
+THREAT_MODEL.md repeated them in its principles and its Definition of Done,
+firmware/FEATURES.md called the flagship's broker link plain after it had
+joined the shared TLS transport, and three product READMEs said the flashers
+had no field for a select both flashers already carried.
 
 Each of those sentences was rewritten to the shipped posture, with the
 CHANGELOG's status words; the review of that rewrite retired three more
 (a client-certificate check no API performs, a GPS clock two products do
-not have, a derived BSSID no code sets). This test pins the retirement: the EXACT retired
+not have, a derived BSSID no code sets), and catching the rewrite up with the
+flagship's page-token gate (#1704) and Host guard (#1691) retired two of its
+own (no button press releasing the dashboard, the page handing its token to
+whoever loads it). This test pins the retirement: the EXACT retired
 sentences are the needles, so a later true sentence that happens to share a
 fragment ("not compiled in", "plain by default") cannot trip it, and a
 sentence that comes back verbatim — a merge that resurrects an old hunk, a
@@ -67,14 +72,18 @@ BANNED = (
      "GATT status service, BLE OTA v2 and the Scout scanner"),
     ("All communication between your phone/computer and the device is "
      "encrypted with TLS",
-     "the flagship's device API is plain HTTP on port 80; the WAP serves "
+     "the flagship's release images serve plain HTTP on port 80 (its dev and "
+     "full builds serve HTTPS only after setup, CI-compiled); the WAP serves "
      "HTTPS after setup and falls back to HTTP when it fails to start"),
     ("displayed only via physical button press",
-     "the flagship injects the API token into GET / and /setup for whoever "
-     "can load them; the WAP's landing page mints a one-tap session"),
+     "a set-up flagship hands the token to one page load per BOOT tap, but "
+     "also, with no press, to the first-boot wizard, a bearer caller and a "
+     "request over its own access point (provisioning_gate.h "
+     "page_token_policy); the WAP's landing page mints a one-tap session"),
     ("TLS is required for all API access (no HTTP fallback)",
      "plain HTTP is a stated posture: setup mode and start failure on the "
-     "WAP, the flagship's port 80, the displays' LAN page"),
+     "WAP, the flagship's release images (its dev and full builds redirect "
+     "port 80 to HTTPS after setup), the displays' LAN page"),
     ("`securacv_mqtt` still plain",
      "firmware/canary's securacv_mqtt rides the shared broker-TLS transport "
      "(plain / CA / pin / lab, fail-closed) since 2026-09-19"),
@@ -93,6 +102,18 @@ BANNED = (
     ("WiFi AP BSSID derived from device identity",
      "nothing in the firmware sets a derived or random MAC; the BSSID is the "
      "radio's factory address and carries Espressif's OUI"),
+    # Retired when the rewrite met the flagship it describes: it was written
+    # against a tree that had neither the page-token gate nor the Host guard.
+    ("no button press releases the dashboard",
+     "#1704: one BOOT tap unlocks one home-network page load with the token "
+     "(provisioning_gate.h page_token_decide spends the tap), and a request "
+     "over the flagship's own access point gets it with no tap"),
+    ("the page itself carries the API token to whoever can load",
+     "#1704: a set-up flagship withholds the token from a home-network load "
+     "of GET / and /setup unless it is the first-boot wizard, a bearer "
+     "caller, a request over its own access point or one spent BOOT tap; "
+     "#1691: never to a foreign Host, which the API's token check answers "
+     "403 {\"error\":\"host\"} except over the access point"),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -102,7 +123,7 @@ MUST_PASS = [
     "the broker socket is plain by default until you provision TLS",
     "BLE (NimBLE) is compiled into the shipped Canary WAP build",
     "the MINIMAL profile compiles it out; the code is not compiled in there",
-    "the flagship serves plain HTTP on port 80 on every interface",
+    "a release image serves plain HTTP on port 80",
     "the WAP serves HTTPS on port 443 once setup has completed",
     "set from the Broker encryption select in either flasher's broker block",
     "nothing outbound that is not disclosed, named and tested",
@@ -113,6 +134,10 @@ MUST_PASS = [
     "the AP's BSSID is the radio's factory MAC and carries Espressif's OUI",
     "the flagship and the WAP take their time from GPS",
     "no API asks the client for a certificate",
+    # The page-token prose that replaced the two retired flagship sentences.
+    "a home-network load after setup gets the page without its token",
+    "the page carries the API token only for the first-boot wizard, a bearer "
+    "caller, a request over the Canary's own access point or one BOOT tap",
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
 # up — the ban losing its teeth is the other failure mode.
@@ -131,6 +156,10 @@ MUST_FAIL = [
     "- **SNTP** on the display line — a witness's clock comes from GPS, a\n"
     "  display has none",
     "- WiFi AP BSSID derived from device identity (no manufacturer OUI leak)",
+    "it: no button press releases the dashboard, and the device cannot tell one\n"
+    "host on its network from another.",
+    "point and home network alike, and the page itself carries the API token to\n"
+    "whoever can load `GET /` or `/setup`. That token is a defense against",
 ]
 
 
