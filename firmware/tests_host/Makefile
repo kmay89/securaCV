@@ -73,6 +73,16 @@ WITSTORE_BIN  = $(BUILD_DIR)/test_witness_store_common
 WITHIST_HDRS = ../common/witness/witness_history.h $(WITSTORE_HDR)
 WITHIST_BIN  = $(BUILD_DIR)/test_witness_history
 
+# Witness history bridge (common/witness/witness_history_bridge.h, repo sweep
+# F35 — F26 stage 2): the httpd-task / loop-task handshake behind the
+# timeline's card pages — one outstanding request, the generation counter so a
+# late completion never answers the next request, the bounded wait, at most
+# 4 x 1 KiB read per loop pass, the resume-hint refusals and the linkage a page
+# reports — through deterministic interleavings and real threads (-pthread).
+# Pure header.
+WITHBR_HDRS = ../common/witness/witness_history_bridge.h $(WITHIST_HDRS)
+WITHBR_BIN  = $(BUILD_DIR)/test_witness_history_bridge
+
 # Household time zone (common/time/tz_rule.h, repo sweep F28): the fleet's one
 # IANA -> POSIX table (lifted from the display's tz_auto.cpp), the rule
 # validator, and the local minute-of-day the CSI clock offset keys on. glibc
@@ -204,6 +214,24 @@ EVWIRE_BIN  = $(BUILD_DIR)/test_csi_event_wire
 IDFLOOR_HDR = ../common/csi/src/csi_event_id_floor.h
 IDFLOOR_BIN = $(BUILD_DIR)/test_csi_event_id_floor
 
+# The SD event log's line format both trees write
+# (common/csi/src/csi_event_log_line.h, backlog F37): byte-exact goldens of
+# the canary-wap format it came from, round trip, torn and glued lines
+# refused, and both trees' adapters naming the same file and cap.
+EVLINE_HDRS = ../common/csi/src/csi_event_log_line.h ../common/csi/src/csi_event.h \
+              ../projects/canary-wap/arduino/canary_wap/csi_event_log.h \
+              ../canary/src/csi_event_log.h ../common/csi/src/csi_event_backfill.h
+EVLINE_BIN  = $(BUILD_DIR)/test_csi_event_log_line
+
+# The canary's reconnect backfill from that log
+# (common/csi/src/csi_event_backfill.h, backlog F37): whole outages, reboots
+# and card faults replayed against a model of Home Assistant's replay gate —
+# nothing it sends is ever refused, an outage longer than the MQTT offline
+# queue arrives whole and in id order, queued tamper alerts go first, and
+# each loop pass reads and sends a bounded amount.
+BACKFILL_HDRS = ../common/csi/src/csi_event_backfill.h $(EVLINE_HDRS) $(IDFLOOR_HDR)
+BACKFILL_BIN  = $(BUILD_DIR)/test_csi_event_backfill
+
 # The canary setup wizard's hub step (canary/lib/securacv_webui/src/
 # securacv_setup_page.cpp), the one UI that writes those fields: its script
 # is lifted out of the C++ raw string and driven against a stub DOM and a
@@ -212,6 +240,13 @@ IDFLOOR_BIN = $(BUILD_DIR)/test_csi_event_id_floor
 # back to plain. Runs with the C++ suites below; node is on every runner
 # this Makefile runs on.
 SETUPPAGE_JS = test_canary_setup_page.test.js
+
+# The canary dashboard's timeline (canary/lib/securacv_webui/src/
+# securacv_webui.cpp) paging into the SD card pages GET /api/witness serves
+# (repo sweep F35): the same lift-and-stub approach — a card row is badged
+# "from card, chain-linked" and never "Verified", the card page's next_hint
+# rides the next click as ?hint=, and "no card" retires Load More.
+TIMELINE_JS = test_canary_timeline.test.js
 
 # Shared headless setup portal (common/network): the pure timing choreography
 # (AP linger, quiet background retry, stuck-phone hint) plus the canonical
@@ -445,6 +480,9 @@ $(WITSTORE_BIN): $(WITSTORE_TEST) $(WITSTORE_HDR) Makefile | $(BUILD_DIR)
 $(WITHIST_BIN): test_witness_history.cpp $(WITHIST_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common/witness test_witness_history.cpp -o $@
 
+$(WITHBR_BIN): test_witness_history_bridge.cpp $(WITHBR_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -pthread -I ../common/witness test_witness_history_bridge.cpp -o $@
+
 $(TZRULE_BIN): test_tz_rule.cpp $(TZRULE_HDR) $(TZRULE_PORTAL) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common '-DPORTAL_SRC="$(TZRULE_PORTAL)"' test_tz_rule.cpp -o $@
 
@@ -492,6 +530,12 @@ $(EVWIRE_BIN): test_csi_event_wire.cpp $(EVWIRE_HDRS) Makefile | $(BUILD_DIR)
 
 $(IDFLOOR_BIN): test_csi_event_id_floor.cpp $(IDFLOOR_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) test_csi_event_id_floor.cpp -o $@
+
+$(EVLINE_BIN): test_csi_event_log_line.cpp $(EVLINE_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -I ../common/csi/src test_csi_event_log_line.cpp -o $@
+
+$(BACKFILL_BIN): test_csi_event_backfill.cpp $(BACKFILL_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -I ../common/csi/src test_csi_event_backfill.cpp -o $@
 
 $(PORTAL_BIN): test_setup_portal_logic.cpp $(PORTAL_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_setup_portal_logic.cpp -o $@
@@ -561,13 +605,14 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
 	./$(WITCHAIN_BIN)
 	./$(WITSTORE_BIN)
 	./$(WITHIST_BIN)
+	./$(WITHBR_BIN)
 	./$(TZRULE_BIN)
 	./$(CHAINST_BIN)
 	./$(USBONB_BIN)
@@ -584,6 +629,8 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(CONTACT_BIN)
 	./$(EVWIRE_BIN)
 	./$(IDFLOOR_BIN)
+	./$(EVLINE_BIN)
+	./$(BACKFILL_BIN)
 	./$(PORTAL_BIN)
 	./$(POWEREVT_BIN)
 	./$(SCENE_BIN)
@@ -607,6 +654,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(WXCORE_BIN)
 	./$(CSIHAL_BIN)
 	$(NODE) --test $(SETUPPAGE_JS)
+	$(NODE) --test $(TIMELINE_JS)
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -538,10 +538,10 @@ existing: the integration listens for several signals no firmware publishes yet.
 
 | Tamper type | HA sensor | Firmware signal today | Status |
 |-------------|-----------|----------------------|--------|
-| `sd_remove` | SD Removed | both publish `{"type":"sd_remove"}` on the tamper topic when their `system.integrity` module sees a mounted card leave (the per-kind bridge: `csi_mqtt.cpp` on the WAP, `csi_event_egress.cpp` on the canary base); the canary base also publishes `sd_mounted` in its MQTT health once a card has mounted this boot (a card-less boot sends no key, so it never reads as removed). The WAP's `sd_mounted` is on its HTTP `/api/status`, not in its MQTT health | Implemented (canary base + WAP) |
+| `sd_remove` | SD Removed | both publish `{"type":"sd_remove"}` on the tamper topic when their `system.integrity` module sees a mounted card leave (the per-kind bridge: `csi_mqtt.cpp` on the WAP, `csi_event_egress.cpp` on the canary base); both also publish `sd_mounted` in their MQTT health once a card has mounted this boot (a card-less boot sends no key, so it never reads as removed), so the sensor stays on until the card is back | Implemented (canary base + WAP) |
 | `sd_error` | SD Error | both publish `{"type":"sd_error"}` on the tamper topic when their `system.integrity` module sees a mounted card fail; the canary base also publishes `sd_errors` in health | Implemented (canary base + WAP) |
 | `memory_critical` | Memory Critical | derived HA-side from published `free_heap` | Implemented |
-| `enclosure` | Enclosure Open | a reed/hall enclosure contact on the board map's `TAMPER_PIN_DEFAULT`, on builds with `FEATURE_TAMPER_GPIO=1` (off in every shipped profile until the pin is bench-validated): both publish `{"type":"enclosure"}` on the tamper topic when their `system.integrity` module commits an opening, and the canary base also publishes `enclosure_open` in health. The canary base's capacitive-touch tamper is published on the tamper topic with `"kind":"enclosure_tamper","type":"enclosure"` | Experimental |
+| `enclosure` | Enclosure Open | a reed/hall enclosure contact on the board map's `TAMPER_PIN_DEFAULT`, on builds with `FEATURE_TAMPER_GPIO=1` (off in every shipped profile until the pin is bench-validated): both publish `{"type":"enclosure"}` on the tamper topic when their `system.integrity` module commits an opening, and both also publish `enclosure_open` in health, so the sensor stays on while the lid is off. The canary base's capacitive-touch tamper is published on the tamper topic with `"kind":"enclosure_tamper","type":"enclosure"` | Experimental |
 | `power_loss` | Power Loss | canary base publishes `{"type":"power_loss"}` on the tamper topic at boot (power-events classifier, `canary_power_events.h`); Canary WAP publishes the same shape on the tamper topic when its `system.integrity` module commits a brownout-boot tamper (`csi_mqtt.cpp`'s per-kind bridge) | Implemented (canary base + WAP) |
 | `gps_jamming` | GPS Jamming | none found | Experimental |
 | `motion` | Unexpected Motion | none found (accelerometer signal not published) | Experimental |
@@ -552,6 +552,16 @@ existing: the integration listens for several signals no firmware publishes yet.
 | `gps_spoof` | — (no sensor) | none | Planned |
 | `capacitive` | — (no sensor; folded into `enclosure` on-device) | touch pad tamper | Planned |
 | `audio_anomaly` | — (no sensor) | none | Planned |
+
+Each per-type sensor is set by the tamper topic and then follows the health
+payload's level for its kind on every health publish; an absent key reads as
+"clear". So a kind whose level the health does not carry lights its sensor
+only until the next health publish (once a minute on the WAP, stretched in
+its power-saving modes). Today that is
+the WAP's `sd_error`, `watchdog`, `power_loss` and `unexpected_reboot`; the
+canary base carries `sd_errors`, and holds `power_loss_detected` /
+`unexpected_reboot` in health for a while after boot, and its watchdog resets
+reach HA as `unexpected_reboot`.
 
 ---
 

@@ -5,7 +5,7 @@ its --site carry gained.
 
 What is pinned and why:
   • the ledger grew ADDITIVELY: every key that existed before `knobs`,
-    `seams_mm`, `board_registry` and `board_facts` did is emitted exactly as
+    `seams_mm`, `features_mm`, `board_registry` and `board_facts` did is emitted exactly as
     before (the website pins those bytes through a sha256 and its model tests
     read envelope_mm / dims_source), and every new object is keyed in sorted
     order, so the carry stays byte-reproducible;
@@ -17,6 +17,11 @@ What is pinned and why:
     the stacked-XIAO's, though both manifests name one case file;
   • `seams_mm` is the ledger's assembled.seams_fig_d verbatim, unrounded
     (decision 7: the AR models place seams in meters; the page rounds);
+  • `features_mm` is assembled_dims.json's features_fig_mm verbatim, on
+    exactly the figures that record any (the Combo's lens and radome window,
+    C15), and is refused — never carried — when the record is orphaned, was
+    measured on a different envelope than the ledger's, holds a number JSON
+    cannot carry, or places a feature off the face;
   • the board registry rides along whole — nine rows with their evidence rung,
     seven facts — so page copy can be pinned to it;
   • a registry correction reaches the ledger through the same generator that
@@ -58,7 +63,18 @@ LIB_REL = "docs/hardware/enclosure/" + LIB_NAME
 RELEASED = ["canary_wap_enclosure.scad", "canary_vision_enclosure.scad",
             "canary_vision_doorbell.scad", "canary_sense_enclosure.scad"]
 NEW_TOP = {"board_registry", "board_facts"}
-NEW_FIG = {"seams_mm", "knobs"}
+NEW_FIG = {"seams_mm", "knobs", "features_mm"}
+ASSEMBLED = ENC / "assembled_dims.json"
+# The face features gen_assembled_dims.py records (the case's own cut
+# variables, echoed back): the Combo's Ø10 lens aperture at (lens_x, lens_y)
+# and its 24 x 24 radome window at (rad_cx, rad_cy), each a center from the
+# measured envelope's min corner (x along w, z along h) and its extent.
+FEATURES = {
+    "device.canary-combo": {
+        "lens": {"h": 10.0, "w": 10.0, "x": 21.6, "z": 59.1},
+        "radome": {"h": 24.0, "w": 24.0, "x": 57.8, "z": 30.6},
+    },
+}
 # The devices gen_assembled_dims.py measures — the five released multi-part
 # devices, the two CAD-measured display cases (the Watch Station: drum rim,
 # then the snap-bezel face; the Dash: dock pads, back plate, frame) and the
@@ -133,8 +149,18 @@ def edit(root: Path, slug: str, fn) -> None:
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def distill(root: Path, figures_json: Path | None = None) -> dict:
-    return gbm.distill_cad_dims(figures_json, root / "devices", root)
+def distill(root: Path, figures_json: Path | None = None,
+            assembled_json: Path | None = None) -> dict:
+    return gbm.distill_cad_dims(figures_json, root / "devices", root, assembled_json)
+
+
+def assembled_copy(root: Path, fn) -> Path:
+    """assembled_dims.json, edited by `fn`, written into the scratch tree."""
+    data = json.loads(ASSEMBLED.read_text(encoding="utf-8"))
+    fn(data)
+    path = root / "assembled_dims.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
 
 
 class LedgerShape(unittest.TestCase):
@@ -180,6 +206,10 @@ class LedgerShape(unittest.TestCase):
         for fid, entry in self.dims["figures"].items():
             if "knobs" in entry:
                 self.assertEqual(list(entry["knobs"]), sorted(entry["knobs"]), fid)
+            if "features_mm" in entry:
+                self.assertEqual(list(entry["features_mm"]), sorted(entry["features_mm"]), fid)
+                for name, f in entry["features_mm"].items():
+                    self.assertEqual(list(f), ["h", "w", "x", "z"], f"{fid}.{name}")
 
     def test_seams_equal_the_ledger_unrounded(self):
         ledger = ledger_figures()
@@ -194,6 +224,24 @@ class LedgerShape(unittest.TestCase):
         # unrounded: 13.05 and 21.38 survive as the assembled generator measured them
         self.assertEqual(self.dims["figures"]["device.canary-wap"]["seams_mm"], [13.05])
         self.assertEqual(self.dims["figures"]["device.canary-vision"]["seams_mm"], [21.38])
+
+    def test_features_equal_the_assembled_record_verbatim(self):
+        # exactly the rows that record features, verbatim and unrounded, and
+        # only there — the pin is the Combo's, from its own cut variables
+        record = json.loads(ASSEMBLED.read_text(encoding="utf-8"))["devices"]
+        for fid, entry in self.dims["figures"].items():
+            feats = (record.get(fid) or {}).get("features_fig_mm")
+            if feats:
+                self.assertEqual(entry["features_mm"], feats, fid)
+            else:
+                self.assertNotIn("features_mm", entry, fid)
+        self.assertEqual({fid: e["features_mm"] for fid, e in self.dims["figures"].items()
+                          if "features_mm" in e}, FEATURES)
+        # measured on the ledger's own envelope: the lens and the window lie on
+        # the Combo's 86.4 x 73.6 face, where the site's model centers them
+        env = self.dims["figures"]["device.canary-combo"]["envelope_mm"]
+        self.assertEqual(record["device.canary-combo"]["fig"],
+                         {"w": env["w"], "d": env["d"], "h": env["h"]})
 
     def test_knobs_exactly_where_a_params_manifest_draws(self):
         drawn = {m["figure"] for m in manifests().values()
@@ -253,11 +301,15 @@ class LedgerShape(unittest.TestCase):
                     self.assertEqual(figs[fig]["knobs"][name], o.value, f"{fig}.{name}")
                     seen += 1
         self.assertGreaterEqual(seen, 54)
-        # owned, not carried: the Nightstand C6 owns its ws147 trio but draws no
-        # figure (its board is unmapped, no STL is committed), so the ledger has
-        # no home for its knobs — and it is the only such manifest
+        # owned, not carried: the Nightstand C6 owns its ws147 trio but its
+        # manifest names no figure (its board is unmapped, no STL is
+        # committed), so the ledger has no home for its knobs — and it is the
+        # only such manifest. Its pocket case IS drawn, for its Lab card, and
+        # that figure is carried like any sketch — without knobs, because
+        # knobs ride on the figure a manifest names.
         self.assertEqual(uncarried, {"canary-display-nightstand-c6"})
-        self.assertFalse(any("c6" in fid for fid in figs))
+        self.assertEqual([fid for fid in figs if "c6" in fid], ["device.canary-display-nightstand-c6"])
+        self.assertNotIn("knobs", figs["device.canary-display-nightstand-c6"])
         # the Touch 1.69's split line reaches the ledger as two more knobs
         t169 = figs["device.canary-display-touch169"]["knobs"]
         self.assertEqual((t169["aa_dx"], t169["aa_dy"]), (0.0, 0.0))
@@ -348,6 +400,50 @@ class ScratchTree(unittest.TestCase):
             self.assertIn("device.canary-wap", msg)
             self.assertIn("devices/canary-vision-devkit (canary_vision_enclosure.scad)", msg)
             self.assertIn("devices/canary-wap (canary_wap_enclosure.scad)", msg)
+
+    def test_features_the_ledger_has_no_figure_for_are_refused(self):
+        with _Tree() as root:
+            aj = assembled_copy(root, lambda d: d["devices"].__setitem__(
+                "device.canary-nowhere", d["devices"]["device.canary-combo"]))
+            with self.assertRaises(SystemExit) as cm:
+                distill(root, None, aj)
+            msg = str(cm.exception.code)
+            self.assertIn("device.canary-nowhere", msg)
+            self.assertIn("face features with no ledger home", msg)
+
+    def test_features_measured_on_another_envelope_are_refused(self):
+        # figures.json older than the record: the Combo grew 2 mm upstream and
+        # gen_figures.mjs was not re-run — the lens would land on the old box
+        with _Tree() as root:
+            aj = assembled_copy(root, lambda d: d["devices"]["device.canary-combo"]["fig"]
+                                .__setitem__("w", 88.4))
+            with self.assertRaises(SystemExit) as cm:
+                distill(root, None, aj)
+            msg = str(cm.exception.code)
+            self.assertIn("device.canary-combo", msg)
+            self.assertIn("gen_figures.mjs", msg)
+
+    def test_a_feature_number_json_cannot_carry_is_refused(self):
+        bad = {"nan": float("nan"), "inf": float("inf"), "string": "21.6", "bool": True,
+               "zero extent": None, "missing key": None, "off the face": None}
+        for what in bad:
+            def spoil(d, what=what):
+                lens = d["devices"]["device.canary-combo"]["features_fig_mm"]["lens"]
+                if what == "zero extent":
+                    lens["w"] = 0
+                elif what == "missing key":
+                    del lens["z"]
+                elif what == "off the face":
+                    lens["x"] = 84.0          # the Ø10 aperture past the 86.4 edge
+                else:
+                    lens["x"] = bad[what]
+            with self.subTest(what), _Tree() as root:
+                aj = assembled_copy(root, spoil)
+                with self.assertRaises(SystemExit) as cm:
+                    distill(root, None, aj)
+                msg = str(cm.exception.code)
+                self.assertIn("device.canary-combo", msg)
+                self.assertIn("'lens'", msg)
 
     def test_a_manifest_without_a_figure_or_without_params_contributes_nothing(self):
         with _Tree() as root:

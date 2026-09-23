@@ -2,6 +2,176 @@
 
 ## [Unreleased]
 
+### The Opera mesh can pair and carry frames in code, and no join text is cut on narrow glass (#1718)
+
+- **The PlatformIO Opera mesh's seven known blockers are fixed in code (F33).**
+  Nothing has run on two radios yet; the bench runbook now carries those
+  checks (U1 Tracks C2/C3).
+  - Pairing now makes real X25519 keys in both trees, so the two sides can
+    derive the same code (crypto review — maintainer to confirm).
+  - The radio's peer table is filled.
+  - The frame counter survives a reboot by reserving ahead in NVS, so a
+    rebooted device is not dropped as a replay.
+  - Pairing runs on the main loop.
+  - A removed device is refused for seven days, in both trees. The
+    PlatformIO tree also converges two removals made at once.
+  - The web UI shows an alert's age, not a made-up time of day.
+  - A PlatformIO device can found an opera.
+
+  Found and recorded: canary-wap's own session keys have the same
+  key-type bug, and the two trees still cannot pair with each other (F48).
+- **The display's first-boot join text is never cut to an ellipsis (F45).** On
+  the 172 px nightstand and the 180 px nightlight, the network name and
+  password split onto two rows when they do not fit one. Text is measured
+  with LVGL's own glyph metrics, so the name and key stay readable when
+  the QR code will not scan. The stuck-phone hint gets a row of its own.
+  The other join hints on narrow glass are F50.
+
+### Every released case's knobs explain themselves, the site stops denying the traffic it uses, and the hero gets its light (#1718, website #203)
+
+- **The released four's Customizer knobs all have help (C10, wave 2).**
+  Every knob on the WAP, Vision, doorbell and Sense cases now has help,
+  written from the geometry that uses it, except the option-list
+  selectors. Knobs without help across the catalog went from 535 to 347.
+  The 7" case's shared-help lines are split, and their debt list is empty.
+  The Lab and the website builder now read a knob's range the same way;
+  43 knobs had been a slider in one and raw text in the other. The
+  stud/keyhole interface has one group name, and the doorbell and the
+  Sense have presets. Defaults are unchanged, and no STL moves: the CSG of
+  every touched part is byte-identical.
+- **The website says what goes online (W16, website #203).** "Nothing phones
+  home" and its siblings are gone from the site. The FAQ now names each
+  routine trip: the signed-update check, the displays' clock sync, and the
+  desktop apps' own updates. It also names the iPhone companion's iCloud
+  default. "Architecturally incapable" names what is missing instead, and a
+  recording-consent notice sits on the store. A guard reads each page as
+  flowing text, so the old phrases cannot come back split across a line
+  break, a tag or an aside.
+- **The Vision's hero render gets baked ambient occlusion and colorways (W12,
+  website #203)**, behind an opt-in toggle on `/view-in-room`. The procedural
+  model stays the default. The weekly carry re-applies the colorways
+  without Blender. Nothing has been judged on a GPU or tried in AR on a
+  phone.
+
+### The canary keeps its events on the SD card and replays them after an outage (#1718)
+
+- **An outage longer than the offline queue no longer loses events (F37).**
+  With a card in, the canary logs every committed event to
+  `/EVENTS/today.ndjson` in the canary-wap's format, now one shared line
+  header for both trees. When the broker comes back and the offline queue
+  has drained, it replays what the broker has not seen, oldest first and a
+  little per loop pass. It never sends an id Home Assistant would refuse,
+  and never lets the backlog delay a tamper alert. The card is touched only
+  from the loop task, and only a card whose owner file names this device is
+  replayed. A canary-wap now leaves a canary's card alone. A guard holds the
+  firmware glue to what the host test models. Bench work (U1) is open.
+  Found on the way and recorded: the CSI bundler's ids live in a separate,
+  per-boot space that Home Assistant's replay gate already refuses (F46),
+  and the canary-wap's own backfill watermark resets every boot (F47).
+
+### The Lab draws every display case, and the CAD regen order follows what each step reads (#1718, website #203)
+
+- **Every display manifest's case has a Lab home (C13).** The Nightstand C6
+  and Nightstand 7 get registry cards; the C6 draws a new sketch of its
+  pocket case, and the Nightstand 7 draws the Dash 7's slab. The C3 case shows
+  on the existing Nightlight page through a new `lab.card` key (maintainer to
+  confirm). The manifest lint refuses a case with no card to live on. Every
+  display card's Web row now says the glass serves its mirror on :80 after
+  setup, not "first-boot portal only". The Fence Guard, an idea, draws as a
+  ghost. The Dash card's seat is re-derived from the CAD and held to it by a
+  test. Three Lab test files that no workflow ran now run in CI, and a guard
+  fails any test file no workflow runs. The website carries the C6 figure.
+- **The CAD regen runs `gen_enclosures.py` before the figures that read its
+  catalog (C14).** The order changed in `regen_cad.py`, `REGEN_ORDER`,
+  CLAUDE.md and the enclosure README together, and a test fails a step that
+  reads a file a later step writes. The catalog also ignores a measurement's
+  scratch `.scad` file.
+
+### The canary pages its timeline from the SD card, the display's join screen fits every panel, and the Combo's AR face comes from the CAD (#1718, website #203)
+
+- **The timeline reaches past the witness ring into the SD card (F35, F26
+  stage 2).** "Load More" pages older records from the card through a
+  loop-task bridge: one request at a time (a second gets `503
+  history_busy`), a bounded 3 s wait (`504 history_timeout`), at most
+  4 × 1 KiB of reading per loop pass, and a generation counter so a late
+  read never answers the next request. Rows from the card are badged "from
+  card, chain-linked", never "Verified" — no signature is checked on the
+  loop. The state machine is a host-tested pure header, and CI's canary
+  builds compile it; a card with more than 32 records is bench work (U1).
+- **The first-boot join screen is laid out from the panel (F43).** The dash's
+  "or join … password" caption no longer crosses the QR, and the same stack
+  fixes the round watch and the AMOLED 2.41, where the re-check found the
+  same defect. A host test covers every display env's panel; the emulator
+  builds are rebuilt. The nightstand's cut-off credentials line is recorded
+  as F45.
+- **The Combo's lens and radome window come from its CAD (C15).** The site
+  ledger carries each figure's measured face features as `features_mm`, and
+  the website's Combo model places them from it. On the website (#203): the
+  Vision lens, the WAP's screw heads and the doorbell's faceplate furniture
+  are no longer buried in other solids, with a guard that keeps every part
+  visible (W17); the download page names both of the Lab app's fetches from
+  GitHub releases (W18); and the glossary separates the quorum Vault from a
+  sealed snapshot (W19).
+
+### Firmware operations: OTA scripts that can deploy, a buildable secure image, the WAP's tamper state over MQTT, and the last 5-second buckets gone (#1718)
+
+- **The OTA deploy scripts send the bearer (F39).** `ota_deploy.py` and
+  `ota_deploy.sh` take it from `CANARY_TOKEN` or a no-echo prompt — never
+  argv, never printed — and, given `CANARY_TLS_FP`, speak HTTPS to 443 only
+  once the presented certificate's SHA-256 equals the pin; a TLS device with
+  no pin is refused and its fingerprint printed, and an HTTP-only build keeps
+  plain HTTP. Both were refused by every device before. 17 cases against a
+  fake Canary run in CI's Mesh + Scout host-test job.
+- **The Tier-1 secure image builds again (F42).** `[env:secure]` and
+  `[env:secure_ha]` extend the canary's build flags and resolve from
+  `firmware/canary`, and a compile-only CI step builds both. **Upgrade
+  note:** `partitions_secure.csv` no longer flags `nvs` as `encrypted` —
+  ESP-IDF does not support flash-encrypting NVS, and with the flag a fused
+  board could not open NVS at all. The key is still plaintext in NVS under
+  `framework = arduino` (F5); a `regression_check.sh` section refuses an
+  encrypted `nvs` row.
+- **canary-wap's MQTT health carries `enclosure_open` and `sd_mounted` (F41)**,
+  in the canary tree's names, so Home Assistant's per-type WAP tamper sensors
+  no longer re-clear at the next health publish. Its other per-type sensors
+  (SD error, watchdog, power loss, unexpected reboot) still do — recorded in
+  `docs/homeassistant_setup.md`.
+- **The canary's dead pre-build tripwire is gone (F40, option delete —
+  maintainer to confirm)**, and `regression_check.sh` now fails an
+  `extra_scripts` line PlatformIO would ignore or that points at a missing
+  file. **The last 5-second time-bucket constants are gone (F44, option
+  delete — maintainer to confirm):** an unused `DEFAULT_GPS_COARSENING_MS`
+  and the canary web UI's Device Configuration form, which had no backend; a
+  new Invariant III guard holds canary bucket constants to the ten-minute
+  grid.
+
+### Flashers: an espflash that cannot start says so, one pins file, and a gated Flasher crate (#1718)
+
+- **A bundled espflash that cannot start is its own error in both flashers
+  (A20):** "The app's flash engine couldn't start", with the system's reason,
+  instead of `unknown` and download-mode coaching — in the Flasher and in the
+  Lab, the same classifier in both.
+- **The espflash version and sha256 pins live once, in
+  `.github/espflash-pins.env` (A21)**, which both desktop release workflows
+  load and both apps' release-target watches name, so a pin bump alone now
+  marks both apps as changed. The load step has not yet run on a release
+  runner.
+- **The desktop Flasher crate is fmt- and clippy-clean and gated (A22).** Why
+  the Flasher still cannot read eFuses is written beside its disclosure: the
+  pinned espflash 3.3.0 has no such command (A12).
+
+### Home Assistant and the walls (#1718, website #203)
+
+- **The watch actions' refusals are translatable (HA9):** nine keys in a new
+  `exceptions` section of `strings.json`, the English unchanged; a test holds
+  the keys raised to the keys declared. **Watch speech says "the" once and
+  "1 day" (HA11)**, and the long roster points at `securacv.list_watches`
+  (HA10).
+- **Every wall probes `canary.local:8799` (A16)** — the Flasher, the Lab and
+  the website's walls now try the Apple TV's three addresses in its order.
+- **The iPhone's Alerts ribbon labels a cell with its records' own buckets
+  (A17)**, not the grid slot — wrong before in +5:45/+5:30 zones and on
+  25-hour days. The Swift is proven by CI only.
+
 ### Firmware keys: the canary reports where its identity key sits, first-boot keygen gets a hardware-RNG floor, and the chain head persists atomically
 
 - **The identity key's at-rest posture is reported, not assumed (F5).**

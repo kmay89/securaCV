@@ -518,6 +518,18 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       color: var(--accent);
       margin-top: 0.25rem;
     }
+    /* Rows read from the SD card (F35): chain-linked, never "Verified" —
+       no signature is checked on that path. */
+    .tl-chain-badge.card { background: rgba(255,255,255,0.06); color: var(--muted); }
+    .tl-chain-badge.unlinked { background: var(--warning-dim); color: var(--warning); }
+    .tl-divider {
+      font-size: 0.7rem;
+      color: var(--muted);
+      border-top: 1px dashed var(--border);
+      padding: 0.4rem 0 0.6rem;
+      margin-left: -20px;
+    }
+    .tl-note { font-size: 0.75rem; color: var(--muted); text-align: center; padding: 0 0.75rem 0.75rem; }
     .tl-thumb {
       width: 64px;
       height: 48px;
@@ -1204,6 +1216,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div class="tl-load-more" id="timelineLoadMore" style="display:none;">
           <button class="btn btn-secondary" onclick="loadMoreTimeline()">Load More</button>
         </div>
+        <div class="tl-note" id="timelineNote" style="display:none;"></div>
       </div>
     </div>
 
@@ -2380,29 +2393,11 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <div class="card">
         <div class="card-header">
           <div>
-            <div class="card-title">Device Configuration</div>
-            <div class="card-subtitle">Modify device settings</div>
+            <div class="card-title">Device</div>
+            <div class="card-subtitle">Restart the Canary</div>
           </div>
         </div>
-        <div class="form-group">
-          <label class="form-label">Record Interval (ms)</label>
-          <input type="number" class="form-input" id="configRecordInterval" value="1000" min="100" max="60000">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Time Bucket (ms)</label>
-          <input type="number" class="form-input" id="configTimeBucket" value="5000" min="1000" max="60000">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Log Level (min stored)</label>
-          <select class="form-input" id="configLogLevel">
-            <option value="0">Debug</option>
-            <option value="1" selected>Info</option>
-            <option value="2">Notice</option>
-            <option value="3">Warning</option>
-          </select>
-        </div>
         <div style="display:flex;gap:0.5rem;margin-top:1rem;">
-          <button class="btn btn-primary" onclick="saveConfig()">Save Configuration</button>
           <button class="btn btn-danger" onclick="confirmReboot()">Reboot Device</button>
         </div>
       </div>
@@ -2779,9 +2774,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // `let`, not `const`: a home-network load arrives with the placeholder
     // streamed EMPTY (X-CV-Token: withheld) and the owner may paste the token
     // from the recovery kit. It stays in this variable and is never
-    // persisted to browser storage or a cookie (regression_check.sh and
-    // pre_build.py fail on any such API name in a *webui* file — even in a
-    // comment, so this one does not spell them).
+    // persisted to browser storage or a cookie (regression_check.sh fails on
+    // any such API name in a *webui* file outside a whole-line comment; this
+    // comment does not spell them either).
     let CV_TOKEN = '__CV_TOKEN__';
     let currentPanel = 'status';
     let pendingAckSeq = null;
@@ -4806,6 +4801,14 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     const TIMELINE_PAGE_SIZE = 20;
     let timelineRecords = [];
     let timelineRefreshTimer = null;
+    // Where the next card page starts: the last card page's next_hint, echoed
+    // as ?hint= so each page costs one page of reads. The device re-checks it.
+    let timelineHint = null;
+    // Bumped by every reload of the list. A Load More page is appended only
+    // to the list it was asked for, never to one reloaded while it was out.
+    let timelineEpoch = 0;
+    // One Load More at a time: a card page can take up to 3 s.
+    let timelineMoreLoading = false;
 
     const RECORD_TYPES = {
       0: { name: 'Boot Attestation', icon: '⚡', css: 'boot' },
@@ -4834,8 +4837,11 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       try { await _loadTimelineImpl(); } finally { timelineLoading = false; }
     }
     async function _loadTimelineImpl() {
+      timelineEpoch++;
       timelinePage = 0;
       timelineRecords = [];
+      timelineHint = null;
+      setTimelineNote('');
       const list = document.getElementById('timelineList');
       list.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 
@@ -4886,17 +4892,20 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       renderTimeline(recs);
 
+      // The device says whether anything is older: more of the ring, or —
+      // on a Canary with a card — the history the card holds.
       document.getElementById('timelineLoadMore').style.display =
-        (recs.length >= TIMELINE_PAGE_SIZE && recs.length < ringTotal) ? 'block' : 'none';
+        (witData.more && recs.length > 0) ? 'block' : 'none';
 
       // Start auto-refresh while timeline panel is active. Paused once the
       // reader pages into history (timelinePage > 0) so a refresh doesn't
-      // collapse the list they are reading; leaving and re-entering the
-      // panel resumes it.
+      // collapse the list they are reading, and while a Load More is out
+      // (the first card page can take a few seconds); leaving and
+      // re-entering the panel resumes it.
       clearInterval(timelineRefreshTimer);
       timelineRefreshTimer = setInterval(() => {
         if (currentPanel === 'timeline') {
-          if (timelinePage === 0) loadTimeline();
+          if (timelinePage === 0 && !timelineMoreLoading) loadTimeline();
         } else {
           clearInterval(timelineRefreshTimer);
         }
@@ -4942,7 +4951,33 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         const isLast = i === records.length - 1;
         const timeSrc = r.time_source === 'gps' ? '🛰 GPS' : '⏱ Device';
         const hash = r.hash || r.chain_hash || '';
-        const verified = r.verified ? '✓' : '⚠';
+
+        // Rows from the card say where they came from and whether they chain
+        // to the next older record on it. Never "Verified": nothing on that
+        // path checks a signature.
+        let badgeCss = 'tl-chain-badge';
+        let badgeText;
+        if (r.source === 'sd') {
+          if (i === 0 || records[i - 1].source !== 'sd') {
+            html += '<div class="tl-divider">Older records, read from the SD card</div>';
+          }
+          if (r.linked === false) {
+            badgeCss += ' unlinked';
+            badgeText = '⚠ from card, not chain-linked (a gap or break below)';
+          } else if (r.linked === true) {
+            badgeCss += ' card';
+            badgeText = 'from card, chain-linked';
+          } else {
+            badgeCss += ' card';
+            badgeText = 'from card, oldest on the card';
+          }
+          if (r.joins_above === false) {
+            badgeText = '⚠ ' + badgeText.replace(/^⚠ /, '') + ' · not chain-linked to the record above';
+            badgeCss = 'tl-chain-badge unlinked';
+          }
+        } else {
+          badgeText = r.verified ? '✓' : '⚠';
+        }
 
         html += '<div class="tl-entry">';
         html += '<div class="tl-dot ' + typeInfo.css + '"></div>';
@@ -4950,7 +4985,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         html += '<div class="tl-body">';
         html += '<div class="tl-title">' + typeInfo.icon + ' ' + typeInfo.name + '</div>';
         html += '<div class="tl-meta">#' + escapeHtml(String(r.seq || '?')) + ' · TB:' + escapeHtml(String(r.time_bucket || '--')) + ' · ' + timeSrc + '</div>';
-        html += '<div class="tl-chain-badge">' + verified + ' ' + escapeHtml(truncHash(hash, 12)) + '</div>';
+        html += '<div class="' + badgeCss + '">' + escapeHtml(badgeText) + ' ' + escapeHtml(truncHash(hash, 12)) + '</div>';
         html += '</div>';
 
         html += '</div>';
@@ -4959,21 +4994,61 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       list.innerHTML = html;
     }
 
+    function setTimelineNote(text) {
+      const note = document.getElementById('timelineNote');
+      note.textContent = text;
+      note.style.display = text ? 'block' : 'none';
+    }
+
     async function loadMoreTimeline() {
-      // Page backward through the witness-record ring: ?before= is an
-      // exclusive seq bound, so each click fetches the window just older
-      // than what is on screen. The ring is bounded RAM (deeper history
-      // lives on the SD card; the HTTP task never touches SD), so the
-      // button retires once the ring runs dry.
+      // A second click while a page is out would ask for the same page
+      // again and append it twice: ignore it until the first one lands.
+      if (timelineMoreLoading) return;
+      timelineMoreLoading = true;
+      try { await _loadMoreTimelineImpl(); } finally { timelineMoreLoading = false; }
+    }
+    async function _loadMoreTimelineImpl() {
+      // Page backward: ?before= is an exclusive seq bound, so each click
+      // fetches the window just older than what is on screen. The ring
+      // (RAM) answers first; past its oldest record the device reads the SD
+      // card on its main loop and answers with a card page (source "sd"),
+      // whose next_hint the next click echoes as ?hint=.
       if (!timelineRecords.length) return;
+      const epoch = timelineEpoch;
       const oldest = timelineRecords[timelineRecords.length - 1].seq;
-      const data = await api('/api/witness?last=' + TIMELINE_PAGE_SIZE + '&before=' + oldest);
-      const more = (data && data.ok) ? (data.records || []).slice().reverse() : [];
+      let url = '/api/witness?last=' + TIMELINE_PAGE_SIZE + '&before=' + oldest;
+      if (timelineHint != null) url += '&hint=' + timelineHint;
+      const data = await api(url);
+      // The list was reloaded (Refresh, the panel re-entered) while this
+      // page was out: it belongs to a list that is gone. Drop it.
+      if (epoch !== timelineEpoch) return;
+      const loadMore = document.getElementById('timelineLoadMore');
+      if (!data || !data.ok) {
+        const err = data && data.error;
+        if (err === 'history_busy' || err === 'history_timeout') {
+          setTimelineNote('The Canary is busy reading its card. Try Load More again in a moment.');
+        } else if (err === 'no_card') {
+          setTimelineNote('Older records are on the SD card, and no card is mounted right now.');
+          loadMore.style.display = 'none';
+        } else {
+          setTimelineNote('Could not read older records' + (err ? ' (' + err + ')' : '') + '.');
+        }
+        return;
+      }
+      setTimelineNote('');
+      const more = (data.records || []).slice().reverse();
+      if (data.source === 'sd') {
+        timelineHint = data.next_hint;
+        if (more.length && data.joins === false) more[0].joins_above = false;
+        // An empty card page ends the paging: say why the button went.
+        if (!more.length) setTimelineNote('Nothing older is on the card.');
+      } else {
+        timelineHint = null;
+      }
       timelinePage++;
       timelineRecords = timelineRecords.concat(more);
       renderTimeline(timelineRecords);
-      document.getElementById('timelineLoadMore').style.display =
-        more.length < TIMELINE_PAGE_SIZE ? 'none' : 'block';
+      loadMore.style.display = (data.more && more.length > 0) ? 'block' : 'none';
     }
 
     // Acknowledgment
@@ -5011,16 +5086,6 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     // Settings
-    async function saveConfig() {
-      const config = {
-        record_interval_ms: parseInt(document.getElementById('configRecordInterval').value),
-        time_bucket_ms: parseInt(document.getElementById('configTimeBucket').value),
-        log_level: parseInt(document.getElementById('configLogLevel').value)
-      };
-      const data = await api('/api/config', 'POST', config);
-      alert(data.ok ? 'Configuration saved!' : 'Save failed: ' + (data.error || 'Unknown'));
-    }
-
     function confirmReboot() {
       if (confirm('Reboot the device? All unsaved data will be persisted first.')) {
         api('/api/reboot', 'POST');
@@ -5323,6 +5388,23 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }).join('');
     }
 
+    // An Opera alert's timestamp_ms is this Canary's uptime (millis()) when
+    // the alert arrived, not a date: it is shown as an age against the
+    // uptime_ms the same response carries, or not at all (F33 part 7).
+    // The subtraction is u32, like the firmware's, so it survives the
+    // millis() wrap every ~49.7 days.
+    function formatAlertAge(timestampMs, uptimeMs) {
+      const u32 = (v) => Number.isInteger(v) && v >= 0 && v <= 0xFFFFFFFF;
+      if (!u32(timestampMs) || !u32(uptimeMs)) return '';
+      const sec = Math.floor(((uptimeMs - timestampMs) >>> 0) / 1000);
+      if (sec < 60) return `received ${sec} s ago`;
+      const min = Math.floor(sec / 60);
+      if (min < 60) return `received ${min} min ago`;
+      const h = Math.floor(min / 60);
+      if (h < 24) return `received ${h} h ${min % 60} min ago`;
+      return `received ${Math.floor(h / 24)} d ${h % 24} h ago`;
+    }
+
     async function loadOperaAlerts() {
       const data = await api('/api/mesh/alerts');
       const list = document.getElementById('operaAlertsList');
@@ -5334,13 +5416,14 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       list.innerHTML = data.alerts.map(alert => {
         const levelClass = alert.severity >= 6 ? 'critical' : alert.severity >= 4 ? 'error' : 'warning';
+        const age = formatAlertAge(alert.timestamp_ms, data.uptime_ms);
         return `
           <div class="log-item ${levelClass}">
             <div class="log-level ${levelClass}">${alert.type || 'ALERT'}</div>
             <div class="log-content">
               <div class="log-message">From: ${escapeHtml(alert.sender_name || 'Unknown')}</div>
               <div class="log-detail">${escapeHtml(alert.detail || '')}</div>
-              <div class="log-meta">${formatTimestamp(alert.timestamp_ms)}</div>
+              ${age ? `<div class="log-meta">${age}</div>` : ''}
             </div>
           </div>
         `;

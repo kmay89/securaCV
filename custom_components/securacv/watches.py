@@ -359,14 +359,49 @@ def _num(value: float) -> str:
     return f"{value:.1f}"
 
 
+def _count(n: int, unit: str) -> str:
+    """A count and its unit, singular for one: "1 day", "14 days"."""
+    return f"{n} {unit}{'' if n == 1 else 's'}"
+
+
+def _label(label: Any) -> str:
+    """A watch's label as speech says it: its leading articles, in any
+    case and however many a stored row carries (earlier code could label a
+    watch "the The gate canary"), become one lowercase "the". A label
+    without an article is left as it is.
+    """
+    words = str(label).split()
+    lead = 0
+    while lead < len(words) and words[lead].lower() == "the":
+        lead += 1
+    if lead == 0:
+        return " ".join(words)
+    return " ".join(["the", *words[lead:]])
+
+
+def _the(label: Any) -> str:
+    """A watch's label as a noun phrase with exactly one article.
+
+    Labels already begin with "the" (``watch_runtime._make_label``), so
+    speech that wrote "the {label} watch" said "the the gate canary
+    watch". This is the label as said, with "the" put in front only when
+    it has none (the id fallback).
+    """
+    text = _label(label)
+    return text if text.split()[:1] == ["the"] else f"the {text}"
+
+
+def _sentence(phrase: str) -> str:
+    """``phrase`` capitalized to open a sentence."""
+    return phrase[:1].upper() + phrase[1:]
+
+
 def _duration_phrase(seconds: float) -> str:
     if seconds < 5400:
-        return f"{max(1, int(round(seconds / 60)))} minutes"
+        return _count(max(1, int(round(seconds / 60))), "minute")
     if seconds < 2 * DAY:
-        hours = int(round(seconds / 3600))
-        return f"{hours} hour{'' if hours == 1 else 's'}"
-    days = int(round(seconds / DAY))
-    return f"{days} days"
+        return _count(int(round(seconds / 3600)), "hour")
+    return _count(int(round(seconds / DAY)), "day")
 
 
 def days_left(watch: dict[str, Any], now: float) -> int:
@@ -380,7 +415,7 @@ def speak_started(watch: dict[str, Any]) -> str:
     days = max(1, int(round((watch["ends_at"] - watch["started_at"]) / DAY)))
     phrase = CONCERN_PHRASE.get(watch["concern"], "if anything changes")
     return (
-        f"Watching {watch['label']} for {days} day{'' if days == 1 else 's'} — "
+        f"Watching {_label(watch['label'])} for {days} day{'' if days == 1 else 's'} — "
         f"I'll tell you {phrase}. I'll get a feel for normal first, then it's "
         "on watch. It ends by itself, and I'll say so."
     )
@@ -388,12 +423,12 @@ def speak_started(watch: dict[str, Any]) -> str:
 
 def speak_fired(watch: dict[str, Any], verdict: dict[str, Any]) -> str:
     """What a watch says when it has something to report."""
-    label = watch["label"]
+    label = _the(watch["label"])
     if verdict["reason"] == "stopped":
-        return f"Something to flag on the {label} watch: {verdict['detail']}."
+        return f"Something to flag on {label} watch: {verdict['detail']}."
     if verdict["reason"] == "every":
-        return f"The {label} watch: {verdict['detail']}."
-    return f"The {label} watch has something unusual: {verdict['detail']}."
+        return f"{_sentence(label)} watch: {verdict['detail']}."
+    return f"{_sentence(label)} watch has something unusual: {verdict['detail']}."
 
 
 def speak_roster(watches: list[dict[str, Any]], now: float) -> str:
@@ -406,16 +441,18 @@ def speak_roster(watches: list[dict[str, Any]], now: float) -> str:
         soonest = min(live, key=lambda w: w.get("ends_at", 0.0))
         left = days_left(soonest, now)
         when = "ends today" if left == 0 else f"in {left} day{'' if left == 1 else 's'}"
+        # The rest are one action away; no dashboard lists watches.
         return (
             f"{len(live)} watches running. The next to finish is "
-            f"{soonest['label']}, {when}. The dashboard has the rest."
+            f"{_label(soonest['label'])}, {when}. The securacv.list_watches action "
+            "has the rest."
         )
     bits = []
     for watch in live:
         left = days_left(watch, now)
         when = "ends today" if left == 0 else f"{left} more day{'' if left == 1 else 's'}"
         settling = " — still getting a feel for normal" if now < watch.get("settle_until", 0) else ""
-        bits.append(f"{watch['label']}, {when}{settling}")
+        bits.append(f"{_label(watch['label'])}, {when}{settling}")
     if len(bits) == 1:
         return f"One watch: {bits[0]}."
     return f"{len(bits)} watches: " + "; ".join(bits) + "."
@@ -428,33 +465,33 @@ def speak_ending(watch: dict[str, Any]) -> str:
     learned enough to have an opinion: "still getting a feel for normal"
     rather than a reassuring number it did not earn.
     """
-    days = max(1, int(round((watch["ends_at"] - watch["started_at"]) / DAY)))
-    label = watch["label"]
+    span = _count(max(1, int(round((watch["ends_at"] - watch["started_at"]) / DAY))), "day")
+    label = _sentence(_the(watch["label"]))
     fired = int(watch.get("fired", 0))
     base = baseline(watch)
     obs_count = len(watch.get("observations", []))
 
     if obs_count == 0:
         return (
-            f"The {label} watch ended after {days} days. I never saw anything "
+            f"{label} watch ended after {span}. I never saw anything "
             "from it — worth checking it was reporting at all. Want me to keep "
             "going, or let it go?"
         )
     if base is None:
         return (
-            f"The {label} watch ended after {days} days. Only {obs_count} "
+            f"{label} watch ended after {span}. Only {obs_count} "
             "reading" + ("" if obs_count == 1 else "s") + " came in — not enough "
             "for me to have learned what normal looks like. Want me to keep "
             "going, or let it go?"
         )
     if fired == 0:
         return (
-            f"The {label} watch ended. {days} days, holding steady around "
+            f"{label} watch ended. {span}, holding steady around "
             f"{_num(base['median'])}, nothing unusual. Want me to keep going, "
             "or let it go?"
         )
     return (
-        f"The {label} watch ended. {days} days, usually around "
+        f"{label} watch ended. {span}, usually around "
         f"{_num(base['median'])}, and I flagged {fired} thing"
         f"{'' if fired == 1 else 's'}. Want me to keep going, or let it go?"
     )

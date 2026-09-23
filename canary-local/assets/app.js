@@ -1094,7 +1094,8 @@ function specsView(dev) {
     dl.append(el("dt", null, k), el("dd", null, v));
   };
   row("Board", dev.board);
-  if (dev.glass) row("Glass", `${dev.glass.panel} · touch ${dev.glass.touch}`);
+  // glass.touch is null on a panel with no touch layer (the 1.47" sticks)
+  if (dev.glass) row("Glass", `${dev.glass.panel} · ${dev.glass.touch ? `touch ${dev.glass.touch}` : "no touch"}`);
   const fig = deviceFigure(state.figures, dev.id);
   if (fig && fig.envelope_mm && fig.confidence !== "idea") {
     // the caliper row: mm · decimal inch · fractional inch, tap to cycle
@@ -1138,6 +1139,9 @@ function specsView(dev) {
 }
 
 // ── witness sheet: decoder cards (no glass to emulate — LEDs + chirps) ──
+// Also the sheet of a display with no browser twin of its own yet (the
+// Nightlight, the Nightstand C6, the Nightstand 7): the case, the parts and
+// the facts, without the witness-only tabs below.
 function buildWitnessSheet(ctx, side) {
   const dev = ctx.dev;
   const tabs = el("nav", "tabs");
@@ -1211,6 +1215,13 @@ function buildWitnessSheet(ctx, side) {
     },
     Specs: () => specsView(dev),
   };
+  if (dev.kind === "display") {
+    // A screen, no twin: the count-coded LED grammar, the piezo and the
+    // camera-scan join describe a screenless witness, not this glass.
+    delete views.Lights;
+    delete views.Sounds;
+    delete views.Joining;
+  }
   for (const name of Object.keys(views)) {
     const b = el("button", "tab", name);
     b.addEventListener("click", () => {

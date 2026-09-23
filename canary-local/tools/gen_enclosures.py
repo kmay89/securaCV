@@ -38,14 +38,18 @@ PREVIEW_DIR = REPO / "canary-local/enclosures/preview"
 # Which device each variant/design belongs to (the page groups by card).
 # The MANIFESTS decide: every devices/<slug>/device.json lists the printable
 # sets its hardware takes in cad.enclosure_sets, and inverted that is the
-# attribution. `device` is the first claimant in slug order — homed on its
-# family's device when the family is itself a manifest (canary-vision is the
-# Vision page for the DevKit and XIAO S3 hosts too; the display line has no
-# family device, so each display manifest is its own) — and `devices` lists
-# the claimants whenever `device` alone does not say them (the 7" case is the
-# Dash 7's and the Nightstand 7's). A set no manifest claims is universal.
-# `device` also drives the chooser's device↔enclosure pairing
-# (tests/chooser.test.js holds the chooser to it).
+# attribution. `device` is the first claimant in slug order, homed on the Lab
+# card that presents it: the card its `lab.card` names (the Nightlight's
+# manifest is canary-display-nightlight-c3, its card canary-nightlight), else
+# its family's device when the family is itself a manifest (canary-vision is
+# the Vision page for the DevKit and XIAO S3 hosts too; the display line has
+# no family device, so each display manifest is its own). `devices` lists the
+# claimants whenever `device` alone does not say them (the 7" case is the
+# Dash 7's and the Nightstand 7's; the C3 case is the Nightlight card's and
+# its manifest's — the flasher looks a case up by the manifest slug). A set
+# no manifest claims is universal. `device` also drives the chooser's
+# device↔enclosure pairing (tests/chooser.test.js holds the chooser to it,
+# and scripts/lint_device_manifests.py every home to a registry.json card).
 MANIFESTS = load_manifests(REPO)
 SET_OWNERS: dict[str, list[str]] = {}
 for _slug, _m in MANIFESTS.items():              # slug order — "first" is stable
@@ -54,8 +58,13 @@ for _slug, _m in MANIFESTS.items():              # slug order — "first" is sta
 
 
 def home(slug: str) -> str:
-    """The device page a manifest's sets land on: its family's, when the
-    family is a manifest of its own, else its own."""
+    """The Lab card a manifest's sets land on: the one its `lab.card` names,
+    else its family's, when the family is a manifest of its own, else its
+    own slug. (scripts/lint_device_manifests.py and tests/chooser.test.js
+    carry the same rule.)"""
+    card = (MANIFESTS[slug].get("lab") or {}).get("card")
+    if card:
+        return card
     fam = MANIFESTS[slug].get("family")
     return fam if fam in MANIFESTS else slug
 
@@ -78,7 +87,7 @@ DEVICE_OF = [
     (r"touch watch-display", "canary-display-touch169"),          # ESP32-S3-Touch-LCD-1.69
     (r"C6 display pocket", "canary-display-nightstand-c6"),       # ESP32-C6-LCD-1.47
     (r"S3 hallway stick", "canary-display-nightstand-s3"),        # ESP32-S3-LCD-1.47
-    (r"C3 pocket display", "canary-display-nightlight-c3"),       # ESP32-C3-LCD-1.47
+    (r"C3 pocket display", "canary-nightlight"),                  # ESP32-C3-LCD-1.47 (its card)
     (r"Sense bedside|Sense in-wall", "canary-sense"),
     (r"Thermal / outdoor", "canary-wap"),
     (r"Combo", "canary-vision"),
@@ -127,6 +136,25 @@ NON_PRODUCT_SCADS = {
     "canary_color_lib.scad",          # the COLORWAY registry — spool palettes,
                                       # not a part
 }
+
+
+def is_scratch_scad(name: str) -> bool:
+    """A throwaway .scad a generator writes BESIDE the case files while it
+    measures — never a product. scad_probe.py (gen_assembled_dims.py,
+    gen_hardware.py) renders from a hidden `.tmp_probe_<label>.scad` that
+    `include`s a case and deletes it afterwards, so running this generator
+    while one of those is on disk used to catalog a bogus product. Hidden
+    files and tmp-named files are skipped by name, whoever wrote them."""
+    return name.startswith(".") or name.lower().startswith(("tmp", "_tmp"))
+
+
+def case_scads(enc: Path | None = None) -> list[Path]:
+    """Every committed-looking .scad in the enclosure folder (ENC unless
+    given), sorted — the scratch files above excluded. NON_PRODUCT_SCADS (the
+    libraries and harnesses) is the catalog's further, curated exclusion."""
+    enc = ENC if enc is None else enc
+    return sorted(p for p in enc.glob("*.scad") if not is_scratch_scad(p.name))
+
 
 # Preview meshes rendered for in-development designs the device sheets
 # feature. part → -D part=<...>; coarse curves keep files small.
@@ -249,7 +277,7 @@ def parse_tables(md: str):
         # The scad behind the parts: shared per family prefix.
         scad = None
         m = re.match(r"(canary_[a-z]+(?:_[a-z]+)*?)_(?:enclosure|doorbell)", stls[0]["file"])
-        candidates = sorted(ENC.glob("*.scad"))
+        candidates = case_scads()
         for sc in candidates:
             if stls[0]["file"].startswith(sc.stem):
                 scad = sc.name
@@ -349,10 +377,20 @@ def parse_scad(path: Path):
             if em:
                 enum = re.findall(r'"([^"]*)"', em.group(1))
                 comment = comment[em.end():].strip()
-            rm = re.match(r"^\[(-?[\d.]+):(-?[\d.]+):(-?[\d.]+)\]", comment)
-            if rm:
+            # The range is the LAST [min:step:max] bracket anywhere in the
+            # comment — the rule gen_builder_manifest.parse_scad reads, so the
+            # house form `help  // [min:step:max]` reaches the Lab as well as
+            # the web builder. (Only a LEADING bracket used to count here: 43
+            # ranges the builder showed as sliders arrived in the Lab as a raw
+            # "// [..]" tail on the help. scripts/tests/test_enclosure_parsers.py
+            # holds the two parsers to one answer.)
+            rms = None if enum else list(re.finditer(
+                r"\[\s*(-?[\d.]+)\s*:\s*(-?[\d.]+)\s*:\s*(-?[\d.]+)\s*\]", comment))
+            if rms:
+                rm = rms[-1]
                 rng = [float(rm.group(1)), float(rm.group(2)), float(rm.group(3))]
-                comment = comment[rm.end():].strip()
+                comment = re.sub(r"\s*//\s*$", "",
+                                 (comment[:rm.start()] + comment[rm.end():]).strip())
             cur["params"].append({
                 "name": name, "default": val.strip('"'),
                 **({"enum": enum} if enum else {}),
@@ -1452,8 +1490,8 @@ def variant_from_set(s: dict, product_scad: str) -> dict:
 def catalog_main():
     md = (ENC / "README.md").read_text(errors="replace")
     sets = parse_tables(md)
-    scad_files = sorted(p.name for p in ENC.glob("*.scad")
-                        if p.name not in NON_PRODUCT_SCADS)
+    scad_files = [p.name for p in case_scads()
+                  if p.name not in NON_PRODUCT_SCADS]
     scads = {name: parse_scad(ENC / name) for name in scad_files}
     # Environment rating parsed from each model's own `// @env` header line.
     env_by_scad = {name: parse_env((ENC / name).read_text(errors="replace"))

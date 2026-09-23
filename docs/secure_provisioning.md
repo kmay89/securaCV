@@ -53,8 +53,8 @@ All tools are located in `firmware/provisioning/`:
 | `provision_canary.sh` | Full orchestration: virgin verify → burn keys → flash signed firmware → burn security eFuses → post-verify → generate manifest. Has `--dry-run` mode |
 | `create_manifest.py` | Fleet management: list provisioned devices, search by MAC, generate summary reports |
 | `sdkconfig.defaults.secure` | ESP-IDF Kconfig with BT disabled, Secure Boot v2 **prepared but not enabled**, Flash Encryption release mode, NVS encryption, anti-rollback, JTAG off |
-| `platformio_secure.ini` | PlatformIO environment config that wraps the security sdkconfig |
-| `partitions_secure.csv` | Partition table with OTA A/B slots and encrypted flags on sensitive partitions |
+| `platformio_secure.ini` | PlatformIO environment config that wraps the security sdkconfig (`[env:secure]`, `[env:secure_ha]`; `firmware/canary/platformio.ini` includes it, and CI compiles both envs, compile-only) |
+| `partitions_secure.csv` | Partition table with OTA A/B slots, an `nvs_keys` partition, and `encrypted` flags on the partitions flash encryption may cover — never on `nvs` |
 
 ---
 
@@ -158,7 +158,7 @@ Loss of signing key = bricked devices on next OTA.
 ### Step 2: Build Signed Firmware
 
 ```bash
-# Use secure PlatformIO environment
+# Use secure PlatformIO environment (from firmware/canary)
 pio run -e secure
 
 # Or with ESP-IDF directly
@@ -240,7 +240,7 @@ spiffs,    data, spiffs,   0x3D0000, 0x30000,
 
 ```
 # Name,    Type, SubType,  Offset,   Size,     Flags
-nvs,       data, nvs,      0x9000,   0x5000,   encrypted
+nvs,       data, nvs,      0x9000,   0x5000,
 otadata,   data, ota,      0xe000,   0x2000,
 app0,      app,  ota_0,    0x10000,  0x1E0000,
 app1,      app,  ota_1,    0x1F0000, 0x1E0000,
@@ -249,8 +249,19 @@ spiffs,    data, spiffs,   0x3D1000, 0x2F000,  encrypted
 ```
 
 Key differences:
-- `encrypted` flag on sensitive partitions
+- `encrypted` flag on `nvs_keys` and `spiffs` (app partitions are always
+  encrypted once flash encryption is on)
 - `nvs_keys` partition for NVS encryption key storage
+- `nvs` is **not** flagged `encrypted`, on purpose. ESP-IDF's flash-encryption
+  guide says the `nvs` partition cannot be encrypted, because the NVS library
+  is not directly compatible with flash encryption; NVS is protected by NVS
+  encryption instead (`CONFIG_NVS_ENCRYPTION`, keys in `nvs_keys`). With
+  flash encryption on, IDF v4.3 and later refuse to open an NVS partition
+  flagged `encrypted` (`ESP_ERR_NVS_WRONG_ENCRYPTION`), so the flag this table
+  used to carry would have left NVS unreadable on a fused board (F42). Under
+  `framework = arduino` there is no NVS encryption at all, so the identity key
+  stays plaintext at rest and the device reports it as `key_at_rest`
+  ([`design/hardware_root_of_trust.md`](design/hardware_root_of_trust.md)).
 
 ---
 

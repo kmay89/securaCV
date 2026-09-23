@@ -67,9 +67,9 @@ lp_d = 3.0;   lp_dx = 13.0;   lp_dy = -14.0;
 /* [Shared] */
 pcb_t = 1.0;  board_clear = 0.6;  cav_extra = 1.0;
 wall_t = 2.0;  floor_t = 2.0;  lid_t = 2.0;  lip_h = 4.0;  lip_t = 1.2;  corner_r = 3.0;
-floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp
-                   // notch there was the crack-starter in every flat-printed shell — a corner drop hinges the
-                   // floor about it along one layer boundary. 0 = the old square corner  // [0:0.2:1.2]
+floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner  // [0:0.2:1.2]
+                   // The sharp notch there was the crack-starter in every flat-printed shell — a corner drop
+                   // hinges the floor about it along one layer boundary.
 lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
                    // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 tol_slide = 0.20;  // catalog default — core_tol_slide(), canary_core_lib
@@ -87,6 +87,8 @@ clip_clear  = 0.25;  // beam face to board edge (a fit — tune on the coupon) �
 lid_edge  = 0.8;  // first (45°) stage of the show-face edge, mm — core_face_edge()  // [0:0.1:1.5]
 lid_edge2 = 0.8;  // second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]
 hood_len = 9.0;  hood_t = 1.8;
+
+/* [Stud/keyhole interface] — blind keyholes in the back */
 kh_extra   = 3.0;   // back thickening that hosts the keyhole pockets
 kh_head_d  = 7.0;   // screw-head pass hole — catalog standard, mount_kh_head_d(), canary_mount_lib
 kh_shank_d = 4.2;   // shank slot width — catalog standard, mount_kh_shank_d()

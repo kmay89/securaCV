@@ -42,8 +42,10 @@ the website's carried copies after a CAD change (`--site <website-checkout>
 --check` says whether they are current without writing anything). The carry
 includes `scad/cad-dims.json`, the CAD ledger the site's AR models and copy
 are pinned to: each figure's envelope and assembled seams from the fleet
-figures, each manifest-owned device's `cad.params` knobs resolved to numbers,
-and the board registry (`canary_board_lib.scad`) with its evidence rung.
+figures, the face features `gen_assembled_dims.py` measures (the Combo's lens
+aperture and radome window, as `features_mm`), each manifest-owned device's
+`cad.params` knobs resolved to numbers, and the board registry
+(`canary_board_lib.scad`) with its evidence rung.
 
 ## Table of contents
 
@@ -564,11 +566,11 @@ These dimensions were reconciled against **Seeed's official spec** and a
 **Changed a knob? Run the whole chain, not one link of it.** An STL is the
 first of eleven committed, byte-gated files a dimension moves — the assembled
 envelopes (`gen_assembled_dims.py`), the hardware ledger (`gen_hardware.py`),
-the fleet figures and their firmware and
+the enclosure catalog (`gen_enclosures.py` — the figures cite it as evidence,
+so it comes first), the fleet figures and their firmware and
 Swift mirrors (`gen_figures.mjs`), the flashers' models (`gen_device_glbs.mjs`),
-the display sketch mirror, `flash.json`, the web builder's manifest and the
-enclosure catalog — in a fixed order, with the emulator dist rebuild in the
-middle of it. [`scripts/regen_cad.py`](../../../scripts/regen_cad.py) is that
+the display sketch mirror, `flash.json` and the web builder's manifest — in a
+fixed order, with the emulator dist rebuild in the middle of it. [`scripts/regen_cad.py`](../../../scripts/regen_cad.py) is that
 order as one command, from the repo root:
 
 ```bash
@@ -1063,8 +1065,8 @@ sealing, and no real wall-mount story. This design replaces it with a
 pitch, M5 axis):
 
 - **Sag-proof**: optional radial **detent teeth** (`hinge_teeth`, on by
-  default) interlock the mating faces in 15° steps — the set angle cannot
-  drift. Set `hinge_teeth = false` for smooth faces and full compatibility
+  default) interlock the mating faces every 30° (12 teeth on a 24-step
+  ring, `teeth_n`) — the set angle cannot drift. Set `hinge_teeth = false` for smooth faces and full compatibility
   with off-the-shelf GoPro accessories (arms, clamps, suction mounts…).
 - **Locked, not rubbed**: the angle clamps with an **M5 thumbscrew** (buy a
   GoPro-style knurled screw, or print the included `knob` over an M5 × 25
@@ -1246,6 +1248,7 @@ screw.
 
 | Param | Default | Why you'd change it |
 |-------|--------:|---------------------|
+| `preset` | `"custom"` | `doorbell_weather` = the released build in one click — sealed, vented, weep, no extra light pipe, no tamper magnet (overrides the option checkboxes, which already default to it) |
 | `plate_wedge` / `plate_wedge_x` | 0 / 0 | wedge the plate vertically and/or left-right (corner installs) |
 | `btn_d` / `btn_bez_d` / `btn_body_l` | 12 / 16.5 / 18 | match YOUR button (depth is assert-checked against the cavity) |
 | `stack_sock_h`, `xiao_below`, `lens_dx/dy` | 6.5 / 5.5 / 0, 2.5 | **measure** your stack and lens, as with the Vision case |
@@ -1305,6 +1308,7 @@ exits the bottom wall at a height DERIVED from the seated stack
 
 | Param | Default | Why you'd change it |
 |-------|--------:|---------------------|
+| `preset` | `"custom"` | `sense_wall` = the released build on its hinge (LED + lux, unsealed); `sense_ceiling` = the same build flat on its keyholes, the MR60FDA2 fall build's mount (overrides the option checkboxes; `radar` stays yours) |
 | `radome_t` | 1.5 | radar window thickness; 1.5 ≈ half-wave in PETG/ASA (optimum) — avoid 0.7–1.1 (quarter-wave reflection band) |
 | `rad_win_x/y`, `rad_dx/dy` | 24×24 / 0, 6 | window size/position over the antenna — **measure** |
 | `radar_l/radar_w`, `stack_sock_h`, `xiao_below` | 44×36 / 6.5 / 5.5 | carrier + seated-stack dimensions — **measure** (the XIAO port height follows) |

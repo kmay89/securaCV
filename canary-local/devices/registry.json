@@ -26,7 +26,7 @@
       ],
       "network": {
         "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
-        "web": "first-boot portal, then the live glass mirror (/, /api)",
+        "web": "first-boot portal, then the on-LAN glass mirror on :80 (/, /tv, /api — incl. the iPhone app's settings writes and OTA)",
         "mqtt": "fleet subscriber + own heartbeat"
       },
       "emulator": {
@@ -118,7 +118,7 @@
       ],
       "network": {
         "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
-        "web": "first-boot portal only",
+        "web": "first-boot portal, then the on-LAN glass mirror on :80 (/, /tv, /api — incl. the iPhone app's settings writes and OTA)",
         "mqtt": "fleet subscriber + own heartbeat"
       },
       "emulator": {
@@ -214,7 +214,7 @@
       ],
       "network": {
         "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
-        "web": "first-boot portal only",
+        "web": "first-boot portal, then the on-LAN glass mirror on :80 (/, /tv, /api — incl. the iPhone app's settings writes and OTA)",
         "mqtt": "fleet subscriber + own heartbeat"
       },
       "emulator": {
@@ -250,6 +250,37 @@
       }
     },
     {
+      "id": "canary-display-nightstand-c6",
+      "family": "canary-display",
+      "kind": "display",
+      "name": "Canary Nightstand C6",
+      "tagline": "The Nightstand's portrait column on the C6 pin-header board — same look, a leaner budget.",
+      "board": "Waveshare ESP32-C6-LCD-1.47 (pin-header board)",
+      "glass": {
+        "w": 172,
+        "h": 320,
+        "round": false,
+        "panel": "ST7789 1.47\" IPS",
+        "touch": null
+      },
+      "senses": [],
+      "shows": [
+        "portrait witness column",
+        "living canary",
+        "ambient beacon",
+        "honest night"
+      ],
+      "network": {
+        "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
+        "web": "first-boot portal, then the on-LAN glass mirror on :80 (/, /tv, /api — incl. the iPhone app's settings writes and OTA)",
+        "mqtt": "fleet subscriber + own heartbeat"
+      },
+      "docs": [
+        "docs/hardware/display_nightstand_line.md"
+      ],
+      "status": "in development — CI-compiled, no browser twin of its own (the flasher links the S3 stick's, which shares its glass), bench pending"
+    },
+    {
       "id": "canary-display-touch169",
       "family": "canary-display",
       "kind": "display",
@@ -272,7 +303,7 @@
       ],
       "network": {
         "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
-        "web": "first-boot portal only",
+        "web": "first-boot portal, then the on-LAN glass mirror on :80 (/, /tv, /api — incl. the iPhone app's settings writes and OTA)",
         "mqtt": "fleet subscriber + own heartbeat"
       },
       "emulator": {
@@ -332,7 +363,7 @@
       ],
       "network": {
         "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
-        "web": "first-boot portal only",
+        "web": "first-boot portal, then the on-LAN glass mirror on :80 (/, /tv, /api — incl. the iPhone app's settings writes and OTA)",
         "mqtt": "fleet subscriber + own heartbeat"
       },
       "emulator": {
@@ -391,7 +422,7 @@
       ],
       "network": {
         "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
-        "web": "first-boot portal only",
+        "web": "first-boot portal, then the on-LAN glass mirror on :80 (/, /tv, /api — incl. the iPhone app's settings writes and OTA)",
         "mqtt": "fleet subscriber + own heartbeat"
       },
       "emulator": {
@@ -450,6 +481,37 @@
       }
     },
     {
+      "id": "canary-display-nightstand7",
+      "family": "canary-display",
+      "kind": "display",
+      "name": "Canary Nightstand 7",
+      "tagline": "The 7″ glass turned toward the bed — a drawn segment clock, red-shifted and alone after dark.",
+      "board": "Waveshare ESP32-S3-Touch-LCD-7",
+      "glass": {
+        "w": 800,
+        "h": 480,
+        "round": false,
+        "panel": "7\" 800×480 IPS (parallel RGB)",
+        "touch": "GT911 (5-point)"
+      },
+      "senses": [],
+      "shows": [
+        "drawn segment clock",
+        "complications",
+        "night clock focus",
+        "lantern"
+      ],
+      "network": {
+        "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
+        "web": "first-boot portal, then the on-LAN glass mirror on :80 (/, /tv, /api — incl. the iPhone app's settings writes and OTA)",
+        "mqtt": "fleet subscriber + own heartbeat"
+      },
+      "docs": [
+        "docs/hardware/display_nightstand_line.md"
+      ],
+      "status": "in development — CI-compiled; no browser twin yet (the Dash 7's shares its glass, not its face), bench pending"
+    },
+    {
       "id": "canary-nightlight",
       "family": "canary-display",
       "kind": "display",
@@ -472,7 +534,7 @@
       ],
       "network": {
         "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
-        "web": "first-boot portal + on-LAN /api/settings (the iPhone app's knobs)",
+        "web": "first-boot portal, then the on-LAN glass mirror on :80 (/, /tv, /api — incl. the iPhone app's settings writes and OTA)",
         "mqtt": "fleet subscriber + own heartbeat"
       },
       "docs": [

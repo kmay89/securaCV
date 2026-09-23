@@ -9,6 +9,7 @@
  */
 
 #include "mesh_state.h"
+#include "mesh_revocation.h"   /* BLOB_MAX (F33) */
 
 #include <string.h>
 
@@ -279,6 +280,162 @@ bool clear_trusted_peers() {
     ok = !prefs.isKey(NVS_KEY_PEERS);
   }
   prefs.end();
+  (void)clear_peer_macs();   /* the addresses go with the peers (F33) */
+  return ok;
+#endif
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * TRUSTED-PEER RADIO ADDRESSES (F33 part 1)
+ * "peer_macs" is 9 chars (within the 15-char NVS key budget).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+namespace peer_mac_blob {
+
+bool valid_len(size_t len) {
+  return len % PEER_MAC_ENTRY_LEN == 0 && len <= PEER_MACS_BLOB_MAX;
+}
+
+static size_t find(const uint8_t* blob, size_t len,
+                   const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN]) {
+  for (size_t off = 0; off < len; off += PEER_MAC_ENTRY_LEN) {
+    if (mesh_crypto::ct_equal(blob + off, fingerprint, mesh_crypto::FINGERPRINT_LEN)) {
+      return off;
+    }
+  }
+  return len;   /* not found */
+}
+
+bool upsert(uint8_t* blob, size_t* len,
+            const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN],
+            const uint8_t mac[PEER_MAC_LEN]) {
+  if (blob == nullptr || len == nullptr || fingerprint == nullptr || mac == nullptr) return false;
+  if (!valid_len(*len)) return false;
+  size_t off = find(blob, *len, fingerprint);
+  if (off == *len) {
+    if (*len + PEER_MAC_ENTRY_LEN > PEER_MACS_BLOB_MAX) return false;   /* full */
+    memcpy(blob + off, fingerprint, mesh_crypto::FINGERPRINT_LEN);
+    *len += PEER_MAC_ENTRY_LEN;
+  }
+  memcpy(blob + off + mesh_crypto::FINGERPRINT_LEN, mac, PEER_MAC_LEN);
+  return true;
+}
+
+bool remove(uint8_t* blob, size_t* len,
+            const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN]) {
+  if (blob == nullptr || len == nullptr || fingerprint == nullptr) return false;
+  if (!valid_len(*len)) return false;
+  const size_t off = find(blob, *len, fingerprint);
+  if (off == *len) return false;
+  memmove(blob + off, blob + off + PEER_MAC_ENTRY_LEN, *len - off - PEER_MAC_ENTRY_LEN);
+  *len -= PEER_MAC_ENTRY_LEN;
+  memset(blob + *len, 0, PEER_MAC_ENTRY_LEN);
+  return true;
+}
+
+bool decode(const uint8_t* blob, size_t len, PeerMac* out, size_t cap, size_t* count) {
+  if (count == nullptr) return false;
+  *count = 0;
+  if ((blob == nullptr && len > 0) || !valid_len(len)) return false;
+  const size_t n = len / PEER_MAC_ENTRY_LEN;
+  if (n > 0 && (out == nullptr || cap < n)) return false;
+  for (size_t i = 0; i < n; ++i) {
+    memcpy(out[i].fingerprint, blob + i * PEER_MAC_ENTRY_LEN, mesh_crypto::FINGERPRINT_LEN);
+    memcpy(out[i].mac, blob + i * PEER_MAC_ENTRY_LEN + mesh_crypto::FINGERPRINT_LEN, PEER_MAC_LEN);
+  }
+  *count = n;
+  return true;
+}
+
+}  /* namespace peer_mac_blob */
+
+#ifndef CSI_TEST_HOST_BUILD
+constexpr const char* NVS_KEY_PEER_MACS = "peer_macs";
+
+/* Read the current blob: true with *len = 0 when the key is absent; false on
+ * a read failure or a malformed blob (refuse rather than clobber — the same
+ * isKey() disambiguation as save_trusted_peer). */
+static bool read_peer_macs(Preferences& prefs, uint8_t* blob, size_t* len) {
+  *len = 0;
+  if (!prefs.isKey(NVS_KEY_PEER_MACS)) return true;
+  *len = prefs.getBytes(NVS_KEY_PEER_MACS, blob, PEER_MACS_BLOB_MAX);
+  return *len != 0 && peer_mac_blob::valid_len(*len);
+}
+#endif
+
+bool save_peer_mac(const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN],
+                   const uint8_t mac[PEER_MAC_LEN]) {
+  if (fingerprint == nullptr || mac == nullptr) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  if (!flash_encryption_enabled()) {
+    Serial.println("[ALERT][mesh_state] refused save_peer_mac — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    return false;
+  }
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  uint8_t blob[PEER_MACS_BLOB_MAX] = {0};
+  size_t len = 0;
+  bool ok = read_peer_macs(prefs, blob, &len) &&
+            peer_mac_blob::upsert(blob, &len, fingerprint, mac);
+  if (ok) ok = prefs.putBytes(NVS_KEY_PEER_MACS, blob, len) == len;
+  prefs.end();
+  return ok;
+#endif
+}
+
+bool load_peer_macs(PeerMac* out, size_t out_cap, size_t* out_count) {
+  if (out == nullptr || out_count == nullptr) return false;
+  *out_count = 0;
+  if (out_cap < MAX_TRUSTED_PEERS) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  if (!flash_encryption_enabled()) {
+    Serial.println("[ALERT][mesh_state] refused load_peer_macs — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    return false;
+  }
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/true)) return false;
+  uint8_t blob[PEER_MACS_BLOB_MAX] = {0};
+  size_t len = 0;
+  const bool read_ok = read_peer_macs(prefs, blob, &len);
+  prefs.end();
+  return read_ok && peer_mac_blob::decode(blob, len, out, out_cap, out_count);
+#endif
+}
+
+bool remove_peer_mac(const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN]) {
+  if (fingerprint == nullptr) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  if (!flash_encryption_enabled()) return false;
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  uint8_t blob[PEER_MACS_BLOB_MAX] = {0};
+  size_t len = 0;
+  bool ok = read_peer_macs(prefs, blob, &len);
+  if (ok && peer_mac_blob::remove(blob, &len, fingerprint)) {
+    ok = (len == 0) ? (prefs.remove(NVS_KEY_PEER_MACS) || !prefs.isKey(NVS_KEY_PEER_MACS))
+                    : prefs.putBytes(NVS_KEY_PEER_MACS, blob, len) == len;
+  }
+  prefs.end();
+  return ok;
+#endif
+}
+
+bool clear_peer_macs() {
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  const bool ok = prefs.remove(NVS_KEY_PEER_MACS) || !prefs.isKey(NVS_KEY_PEER_MACS);
+  prefs.end();
   return ok;
 #endif
 }
@@ -501,6 +658,11 @@ bool remove_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]) {
     ok = prefs.putBytes(NVS_KEY_PEERS, blob, new_bytes) == new_bytes;
   }
   prefs.end();
+  /* Its radio address goes too (F33), best effort: a stale entry binds
+   * nothing — bind_peer_mac refuses an untrusted fingerprint. */
+  uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
+  mesh_crypto::compute_fingerprint(pubkey, fp);
+  (void)remove_peer_mac(fp);
   return ok;
 #endif
 }
@@ -542,6 +704,105 @@ bool load_mesh_enabled(bool* out) {
   prefs.end();
   *out = (v != 0);
   return true;
+#endif
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * OUTBOUND COUNTER HIGH-WATER MARK (F33) — deliberately NOT FE-gated.
+ * "mesh_out_ctr" is 12 chars (within the 15-char NVS key budget).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+#ifndef CSI_TEST_HOST_BUILD
+constexpr const char* NVS_KEY_OUT_CTR = "mesh_out_ctr";
+#endif
+
+bool save_outbound_counter(uint64_t high_water) {
+#ifdef CSI_TEST_HOST_BUILD
+  (void)high_water;
+  return true;
+#else
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  const size_t put = prefs.putULong64(NVS_KEY_OUT_CTR, high_water);
+  /* The reservation is only as good as the write: read it back. */
+  const bool ok = put == sizeof(uint64_t) &&
+                  prefs.getULong64(NVS_KEY_OUT_CTR, high_water + 1) == high_water;
+  prefs.end();
+  return ok;
+#endif
+}
+
+bool load_outbound_counter(uint64_t* out) {
+  if (out == nullptr) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  return false;
+#else
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/true)) return false;
+  if (!prefs.isKey(NVS_KEY_OUT_CTR)) {
+    prefs.end();
+    return false;
+  }
+  *out = prefs.getULong64(NVS_KEY_OUT_CTR, 0);
+  prefs.end();
+  return true;
+#endif
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * REVOCATION DENY-LIST (F33) — FE-gated household-graph metadata.
+ * "mesh_revoked" is 12 chars (within the 15-char NVS key budget).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+#ifndef CSI_TEST_HOST_BUILD
+constexpr const char* NVS_KEY_REVOKED = "mesh_revoked";
+#endif
+
+bool save_revocations(const uint8_t* blob, size_t len) {
+  if (blob == nullptr && len > 0) return false;
+  if (len > mesh_revocation::BLOB_MAX) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  if (!flash_encryption_enabled()) {
+    Serial.println("[ALERT][mesh_state] refused save_revocations — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    return false;
+  }
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  bool ok;
+  if (len == 0) {
+    ok = prefs.remove(NVS_KEY_REVOKED) || !prefs.isKey(NVS_KEY_REVOKED);
+  } else {
+    ok = prefs.putBytes(NVS_KEY_REVOKED, blob, len) == len;
+  }
+  prefs.end();
+  return ok;
+#endif
+}
+
+bool load_revocations(uint8_t* out, size_t out_cap, size_t* out_len) {
+  if (out == nullptr || out_len == nullptr) return false;
+  *out_len = 0;
+  if (out_cap < mesh_revocation::BLOB_MAX) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  if (!flash_encryption_enabled()) {
+    Serial.println("[ALERT][mesh_state] refused load_revocations — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    return false;
+  }
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/true)) return false;
+  bool ok = true;
+  if (prefs.isKey(NVS_KEY_REVOKED)) {
+    *out_len = prefs.getBytes(NVS_KEY_REVOKED, out, out_cap);
+    ok = *out_len != 0;   /* present but unreadable: a read failure */
+  }
+  prefs.end();
+  return ok;
 #endif
 }
 

@@ -7,7 +7,7 @@
 # This partition table is designed for production devices with:
 # - OTA A/B slots for reliable firmware updates
 # - NVS encryption key storage
-# - Encrypted flags on sensitive partitions
+# - Encrypted flags on the partitions flash encryption may cover (never nvs)
 #
 # Partition sizes (4MB flash layout):
 # NOTE: this is a 4 MB layout. The XIAO ESP32-S3 Sense ships 8 MB flash — when
@@ -26,8 +26,17 @@
 #
 # Security notes:
 # - 'encrypted' flag marks partitions for flash encryption
-# - nvs partition stores device Ed25519 keypair (sensitive!)
-# - nvs_keys stores NVS encryption key (derived from eFuse)
+# - nvs partition stores device Ed25519 keypair (sensitive!), and is NOT
+#   flagged 'encrypted': NVS is not compatible with flash encryption. ESP-IDF
+#   protects it with NVS encryption (CONFIG_NVS_ENCRYPTION, keys in nvs_keys),
+#   and with flash encryption on, IDF v4.3+ refuses to open an NVS partition
+#   flagged 'encrypted' (ESP_ERR_NVS_WRONG_ENCRYPTION), so the flag made NVS
+#   unreadable on a fused board (F42). Under framework = arduino there is no
+#   NVS encryption, so the key stays plaintext at rest
+#   (common/identity/key_at_rest.h reports it; docs/design/
+#   hardware_root_of_trust.md).
+# - nvs_keys stores NVS encryption key (derived from eFuse); ESP-IDF says to
+#   flag it 'encrypted'
 # - spiffs may contain configuration (encrypt for safety)
 #
 # Phase 1 (development):
@@ -38,7 +47,7 @@
 #
 # ═══════════════════════════════════════════════════════════════
 # Name,    Type, SubType,  Offset,   Size,     Flags
-nvs,       data, nvs,      0x9000,   0x5000,   encrypted
+nvs,       data, nvs,      0x9000,   0x5000,
 otadata,   data, ota,      0xe000,   0x2000,
 app0,      app,  ota_0,    0x10000,  0x1E0000,
 app1,      app,  ota_1,    0x1F0000, 0x1E0000,

@@ -93,7 +93,7 @@ finger_t     = 1.0;   // finger thickness — the skirt is relieved to this behi
                       // fingers flex (a 2.35 wall did not); the snap lib's cycle budget gates it
 pcb_t        = 1.2;   // display PCB thickness — the skirt floats 0.2 over its rim
 
-/* [Mounting] */
+/* [Stud/keyhole interface] — a blind keyhole pocket in the drum back */
 kh_head_d  = 7.0;    // blind keyhole pocket in the drum back (wall mount) — catalog standard, canary_mount_lib
 kh_shank_d = 4.2;    // catalog standard — mount_kh_shank_d()
 kh_slot_l  = 8.0;    // catalog standard — mount_kh_slot_l() (a drifted 7.0 lived here: the head never finished its slide)

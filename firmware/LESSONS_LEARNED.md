@@ -1785,6 +1785,75 @@
   locally before pushing: it is the same gate CI runs.
 - **Date learned:** 2026-08
 
+### Two anchors that never meet: a card placed from the center, captions from the bottom
+
+- **What happened:** On the 800x480 dash the first-boot Join scene's
+  "or join … password" line ran across the lower edge of the QR card, into
+  the white quiet zone a phone's scanner needs empty — and the round watch's
+  network-name line did the same by 7 px. Seen in the emulator's preview of
+  the real firmware (F43); the other three emulated flavors happened to clear.
+- **Root cause:** each glass placed the card by an offset from the panel's
+  center and the captions by offsets from its bottom edge, as unrelated
+  literals. Nothing tied the card's bottom to the caption's top, so a card
+  size, a panel height or a type ladder with taller lines could close the
+  gap without anyone touching the scene — and on two glasses it already had.
+  The same literals left the AMOLED 2.41's two caption lines 2 px into each
+  other (a 16 px face in rows spaced for a 12 px one).
+- **Fix:** `include/canary/ui/onboard_layout.h` stacks title, card and both
+  caption lines from the panel's size and the labels' own line heights:
+  centered with even air on rectangular glass, inside the chord-safe band on
+  round glass, the QR canvas giving up pixels (never module pitch or its
+  white pad) when a window is short. `onboard_ui.cpp` asks it once per scene.
+- **Regression check:** `tests_host/test_onboard_layout.cpp` runs the stack
+  on every display env's panel (ini → pins.h) with both ladders (parsed from
+  `character.cpp`) and fails on any crossing; `canary-local/tests/onboard_probe.mjs`
+  reads the emulator's framebuffer on each flavor's Join scene and fails if
+  anything but the QR's black and the card's white is inside the card.
+- **Date learned:** 2026-09
+
+### An ellipsis is a fit to LVGL, and a dead end when the cut text is the way in
+
+- **What happened:** On the 172 px nightstand the Join scene's
+  "SecuraCV-XXXX  •  <key>" line (174 px of text in a 156 px row) drew as
+  "SecuraCV-XXXX  • ..." — the whole key gone — and the stuck-phone hint
+  as "can't join? forget it on..." (F45). A phone that cannot scan the QR has nothing else to
+  go on. The measuring also found two cuts nobody had seen: the round watch's
+  "pass  <key>" row overflows 142 px for the widest keys, and under the
+  Heirloom Character (14 px captions) its stuck-phone hint (171 px) does too.
+- **Root cause:** LONG_DOT turns "does not fit" into a tidy ellipsis — no
+  log, no assert, and in a screenshot it reads as a design choice. The rows
+  were sized by eye against one sample key on one ladder, so nothing asked
+  how wide the text could get: the key is random, a glyph's width depends on
+  the letter after it (kerning), and a Character can raise the caption size.
+- **And the second dead end, found in review:** the first fix split the
+  nightstand's rows the way round glass does — including round glass's rule
+  that a standing hint takes the key's row. So 45 s after the AP came up
+  the stuck-phone hint ("forget it on your phone") replaced the key, on
+  exactly the phone that now had to rejoin, and a probe that looked only
+  for the dots passed with the key gone. "Not cut" is not "on the glass":
+  check that the text is there, not only that nothing is truncated.
+- **Fix:** `onboard_layout.h`'s `join_lines()` decides what each row says
+  by measuring it the way LVGL lays it out (`lv_font_get_glyph_width`,
+  kerning included): joined only where it fits, else split like round glass;
+  longer forms before shorter ones, the row's own face before the default
+  Character's. It never falls back to the ellipsis. The name and the key
+  keep their rows while the scene is up — QR or no QR, hint or no hint; a
+  standing hint gets a note row of its own (`Stack::note_top`: under the key
+  on rectangular glass, the title's band on round glass, where the title
+  yields while it stands).
+- **Regression check:** `tests_host/test_onboard_layout.cpp` runs
+  `join_lines()` on every display env's glass and both ladders with LVGL's
+  own glyph metrics (`tests_host/montserrat_metrics.h`, generated from the
+  pinned LVGL by `firmware/scripts/gen_montserrat_metrics.py`, `--check`ed in
+  canary-local.yml) over the widest name and key the minting alphabet can
+  produce, found by a search rather than a guess, and requires the name and
+  the key on the glass with the stuck-phone hint up as well as without it;
+  `onboard_probe.mjs` fails on LONG_DOT's three baseline dots in each
+  emulated flavor's Join scene and reads the firmware's own labels
+  (`emu_screen_labels`) for the name and key it printed, with and without
+  the stuck-phone hint.
+- **Date learned:** 2026-09
+
 ---
 
 ## Network API: what a LAN token does and does not prove
@@ -2076,6 +2145,62 @@
   front; the pre-fix header fails the new checks. When a second kind of
   traffic starts sharing a bounded queue, decide the drop policy again in
   the same change.
+- **Date learned:** 2026-09
+
+### A replay watermark kept only in RAM starts over at every boot, and a torn log line reads as a record
+- **What happened:** Porting the canary-wap's SD event log and reconnect
+  backfill to the canary base (backlog F37) meant reading what it replays.
+  The canary-wap keys its backfill on `s_last_published_event_id`, which
+  lives in RAM and is 0 after a reboot, so the first reconnect of every boot
+  replays the oldest 64 lines of the log: ids Home Assistant verified long
+  ago, which its replay gate refuses. Its line parser also accepted a torn
+  last line (a power cut mid-append), and once the next append glued a
+  whole record onto the fragment, the pair parsed as the torn record's id
+  with the next record's fields.
+- **Root cause:** The watermark answered "what did this boot publish?" when
+  the receiver asks "what have you ever handed me?". The field scanner
+  looked each key up anywhere in the line and never checked that the line
+  was one record.
+- **Fix:** The canary base's backfill
+  (`common/csi/src/csi_event_backfill.h`, pure) never sends an id at or
+  below the highest one handed to the broker, and carries that watermark
+  across reboots as an NVS ceiling written with `csi_event_id_floor.h`'s
+  policy before an id goes out, kept at or below the allocator's floor so a
+  new boot's ids are never read as delivered. The line format moved into
+  `common/csi/src/csi_event_log_line.h`, shared by both trees, and its
+  parser refuses a line that does not start `{"id":`, end `}` and hold one
+  `{`; the canary's adapter also seals a torn tail with `'\n'` before the
+  next append. The canary-wap takes the parser fix with the shared header;
+  its RAM watermark is unchanged and recorded as a follow-up.
+- **Regression check:** `firmware/tests_host/test_csi_event_backfill.cpp`
+  replays outages, reboots and card faults against a model of HA's replay
+  gate and fails on any refused or repeated row. On every hand-over and
+  every loop pass it also checks that NVS already holds a ceiling above the
+  id and the watermark, and no higher than the allocator's floor. Mutating
+  any of these turns it red: the watermark skip or its boundary (`<=`; HA
+  accepts an EQUAL id, so `<` resends the last row after a remount),
+  persisting before the send on any route or the floor cap on any route,
+  the cursor staying put when a send is refused (a queue longer than one
+  drain, a failed send), the ceiling cap itself, or the first-boot record.
+  So does a failed-read count that a good read does not reset: a paced walk
+  returns from inside its line loop, so a reset at the end of a chunk never
+  ran, and three isolated failures across a long backlog gave it up. A
+  reset on any bytes read is the opposite mistake: a bad sector cuts every
+  read that crosses it short at the same offset, so that walk never gives
+  up and holds every new row behind the sector. Only a whole line resets
+  the count, and the test pins both sides. The test has to assume what it
+  cannot check: that the MQTT layer refuses a
+  live send while its queue holds records, that the tamper bridge publishes
+  first, and that the glue hands the planner the allocator's floor and drops
+  the backlog on a broker change. `firmware/scripts/check_event_egress_order.py`
+  holds the firmware source to all of it, including the pump's code before
+  the dequeue loop, where a budget, an early return or a muted link would
+  hold every tamper alert behind the backlog.
+  `test_csi_event_log_line.cpp` pins the format's bytes and refuses torn
+  and glued lines, and `check_csi_sync.sh` fails if a second builder of the
+  line appears. A watermark the receiver enforces belongs in storage that
+  outlives the sender's RAM, with the same "already past everything handed
+  out" invariant as the id floor.
 - **Date learned:** 2026-09
 
 ## How to Add an Entry

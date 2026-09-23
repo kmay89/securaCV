@@ -45,7 +45,13 @@ module dimensions the case is built around: the device manifests' cad.params
 loader so a registry reference is already a number, merged per figure the
 way that generator merges them per case (a shared key two manifests disagree
 on fails there, once, and so fails here). A figure no params-bearing
-manifest draws gets no `knobs` key — the doorbell today. Top-level
+manifest draws gets no `knobs` key — the doorbell today. And
+`features_mm`, the face features gen_assembled_dims.py measures off a case's
+own cut variables (assembled_dims.json `features_fig_mm` — the Combo's lens
+aperture and radome window today), verbatim and unrounded: each a center
+`x` along the envelope's w from its min edge, `z` along its h from its min
+edge, and its `w` x `h` extent, so the site's model places them from the CAD
+instead of a hand copy. Top-level
 `board_registry` ({id: {evidence, l, t, w}}) and `board_facts`
 ({brd_<name>: value}) carry canary_board_lib.scad's rows and measured facts,
 evidence rung included, so page copy that says "40 × 20 module" or "measured"
@@ -69,6 +75,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -128,7 +135,7 @@ CURATED = [
         "preset_controls": ["opt_camera", "opt_buzzer", "opt_led",
                             "opt_battery", "opt_gps", "opt_tamper",
                             "opt_touch", "opt_antenna", "opt_seal",
-                            "opt_mount"],
+                            "opt_mount", "opt_weep"],
         "part_labels": {
             "all": "Assembled preview (not for printing)",
             "base": "Base — the tub",
@@ -198,7 +205,7 @@ CURATED = [
         "preset_param": "preset",
         "preset_controls": ["opt_led", "opt_buzzer", "opt_vent", "opt_tamper",
                             "opt_hood", "opt_seal", "opt_mount",
-                            "mount_style"],
+                            "mount_style", "opt_weep"],
         "part_labels": {
             "all": "Assembled preview (not for printing)",
             "back": "Back shell",
@@ -261,10 +268,11 @@ CURATED = [
         "print_plan": "Print the Body, Face and Plate in PETG and the Gasket "
                       "in TPU. Aiming down a porch or across a corner? Set "
                       "the wedge angles before you print the Plate.",
-        "simple": ["part", "opt_seal", "opt_vent", "opt_led", "opt_tamper",
-                   "plate_wedge", "plate_wedge_x"],
-        "preset_param": None,
-        "preset_controls": [],
+        "simple": ["part", "preset", "opt_seal", "opt_vent", "opt_led",
+                   "opt_tamper", "plate_wedge", "plate_wedge_x"],
+        "preset_param": "preset",
+        "preset_controls": ["opt_seal", "opt_vent", "opt_led", "opt_tamper",
+                            "opt_weep"],
         "part_labels": {
             "all": "Assembled preview (not for printing)",
             "body": "Body",
@@ -285,7 +293,8 @@ CURATED = [
                       "the weather.",
         },
         "labels": {
-            "part": "Part to print", "opt_seal": "Weather seal",
+            "part": "Part to print", "preset": "Quick preset",
+            "opt_seal": "Weather seal",
             "opt_vent": "GORE vent", "opt_led": "Extra light pipe",
             "opt_tamper": "Tamper magnet",
             "plate_wedge": "Aim down", "plate_wedge_x": "Aim left / right",
@@ -296,7 +305,12 @@ CURATED = [
             "plate_wedge_x": "Turns the case toward the approach — corner "
                              "installs. Negative aims left.",
         },
-        "choices": {},
+        "choices": {
+            "preset": {
+                "custom": "Custom — pick the options yourself",
+                "doorbell_weather": "Outdoor — sealed, vented and drained (the released build)",
+            },
+        },
         "units": {"plate_wedge": "°", "plate_wedge_x": "°"},
     },
     {
@@ -313,11 +327,13 @@ CURATED = [
                       "radome, so keep its window one clean membrane. "
                       "Fall-detection builds mount flat on the ceiling via "
                       "keyholes; add the TPU Gasket only for sealed builds.",
-        "simple": ["part", "radar", "opt_led", "opt_lux", "opt_vent",
-                   "opt_tamper", "opt_seal", "opt_mount", "mount_style",
-                   "radome_t"],
-        "preset_param": None,
-        "preset_controls": [],
+        "simple": ["part", "preset", "radar", "opt_led", "opt_lux",
+                   "opt_vent", "opt_tamper", "opt_seal", "opt_mount",
+                   "mount_style", "radome_t"],
+        "preset_param": "preset",
+        "preset_controls": ["opt_led", "opt_lux", "opt_vent", "opt_tamper",
+                            "opt_seal", "opt_weep", "opt_mount",
+                            "mount_style"],
         "part_labels": {
             "all": "Assembled preview (not for printing)",
             "back": "Back shell",
@@ -340,7 +356,8 @@ CURATED = [
             "knob": "The hinge thumbscrew — same part the Vision case uses.",
         },
         "labels": {
-            "part": "Part to print", "radar": "Radar kit",
+            "part": "Part to print", "preset": "Quick preset",
+            "radar": "Radar kit",
             "opt_led": "Status LED", "opt_lux": "Light-sensor window",
             "opt_vent": "GORE vent", "opt_tamper": "Tamper magnet",
             "opt_seal": "Weather seal", "opt_mount": "Mounting",
@@ -356,6 +373,11 @@ CURATED = [
         # comment is better than the hint was and is already shown.
         "hints": {},
         "choices": {
+            "preset": {
+                "custom": "Custom — pick the options yourself",
+                "sense_wall": "Wall or stand — on the hinge (the released build)",
+                "sense_ceiling": "Ceiling — flat on its keyholes (the MR60FDA2 fall build)",
+            },
             "radar": {
                 "bha2": "MR60BHA2 — breathing & presence (wall or bedside)",
                 "fda2": "MR60FDA2 — fall detection (flat on the ceiling)",
@@ -650,6 +672,20 @@ def build_manifest() -> dict:
                     f"{sorted(lying)}, which is not its default/min/step/max "
                     f"{sorted(owned)} — a hint may not restate a number the "
                     f"source owns. Delete the number, or fix the source.")
+        # A preset overrides every option its _pre() wraps, and the builder
+        # grays exactly preset_controls while the preset is not "custom" — so
+        # the two are one list. The WAP's and the Vision's presets overrode
+        # opt_weep while the builder left its checkbox live: a control that
+        # did nothing, with nothing saying so.
+        overridden = set(re.findall(r"=\s*_pre\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,",
+                                    src.read_text(encoding="utf-8")))
+        if overridden and not spec["preset_param"]:
+            sys.exit(f"{spec['file']}: the source has a preset (_pre) but the "
+                     f"builder entry names no preset_param")
+        if spec["preset_param"] and overridden != set(spec["preset_controls"]):
+            sys.exit(f"{spec['file']}: the preset overrides {sorted(overridden)} "
+                     f"but preset_controls grays {sorted(spec['preset_controls'])} "
+                     f"— make them one list")
         for name, mapping in spec["choices"].items():
             opts = by_name.get(name, {}).get("options")
             if not opts:
@@ -753,6 +789,49 @@ def parse_colorways() -> list[dict]:
 REPO = HERE.parent.parent.parent
 FIGURES_JSON = REPO / "canary-local" / "devices" / "figures.json"
 DEVICES_DIR = REPO / "devices"
+# gen_assembled_dims.py's record, beside this file: where the face features
+# the site carries as `features_mm` are measured (figures.json carries the
+# assembled seams, not the features — gen_device_glbs.mjs reads them here too)
+ASSEMBLED_JSON = HERE / "assembled_dims.json"
+# the feature record's keys, and how far a carried number may sit from the
+# figure it is placed on (the ledger rounds envelopes to 0.001 mm;
+# gen_assembled_dims.py places features on the face to its own 0.01 TOL)
+FEATURE_KEYS = ("h", "w", "x", "z")
+FEATURE_TOL = 0.01
+
+
+def features_by_figure(assembled_json: Path | None = None) -> dict[str, dict]:
+    """{figure id: {"fig": the measured envelope, "features": {name: {h, w,
+    x, z}}}} — assembled_dims.json's face features (features_fig_mm), names
+    and keys sorted, for every row that records any.
+
+    A value this cannot carry as a number is refused, never passed along: a
+    record that is not exactly {x, z, w, h}, a bool, a string, NaN or an
+    infinity (Python's json reads NaN; the website's JSON.parse would not),
+    or a zero or negative extent. gen_assembled_dims.py refuses the same
+    things before it writes, so this fires only on a hand-edited record."""
+    data = json.loads((assembled_json or ASSEMBLED_JSON).read_text(encoding="utf-8"))
+    out: dict[str, dict] = {}
+    for fig_id, row in sorted((data.get("devices") or {}).items()):
+        feats = row.get("features_fig_mm")
+        if not feats:
+            continue
+        if not isinstance(feats, dict):
+            sys.exit(f"cad-dims.json carries {fig_id}'s face features, but assembled_dims.json's "
+                     f"features_fig_mm is {feats!r}, not {{name: {{x, z, w, h}}}}")
+        carried = {}
+        for name in sorted(feats):
+            f = feats[name]
+            if (not isinstance(f, dict) or set(f) != set(FEATURE_KEYS)
+                    or any(isinstance(v, bool) or not isinstance(v, (int, float))
+                           or not math.isfinite(v) for v in f.values())
+                    or f["w"] <= 0 or f["h"] <= 0):
+                sys.exit(f"cad-dims.json cannot carry {fig_id} feature {name!r}: {f!r} is not "
+                         "{x, z, w, h} as finite millimeters with a positive extent — "
+                         "regenerate assembled_dims.json (gen_assembled_dims.py)")
+            carried[name] = {k: f[k] for k in FEATURE_KEYS}
+        out[fig_id] = {"fig": row.get("fig"), "features": carried}
+    return out
 
 
 def knobs_by_figure(devices_dir: Path | None = None,
@@ -802,7 +881,7 @@ def knobs_by_figure(devices_dir: Path | None = None,
 
 
 def distill_cad_dims(figures_json: Path | None = None, devices_dir: Path | None = None,
-                     repo: Path | None = None) -> dict:
+                     repo: Path | None = None, assembled_json: Path | None = None) -> dict:
     """Reduce the fleet-figures ledger to what the website's 3D models need:
     per device/part envelope, confidence, and where the dims came from —
     plus the assembled seams, the manifest-owned knobs and the board
@@ -823,13 +902,23 @@ def distill_cad_dims(figures_json: Path | None = None, devices_dir: Path | None 
     gen_assembled_dims.py and not rounded here: the AR models place a seam
     in meters and the page rounds for copy, so a rounded seam would move a
     model that is byte-reproducible today. `knobs` and the two board tables
-    are documented on knobs_by_figure() and in the module docstring. The
-    optional arguments point a test at a scratch tree; the defaults are this
-    repository."""
+    are documented on knobs_by_figure() and in the module docstring.
+
+    `features_mm` is assembled_dims.json's features_fig_mm verbatim (read by
+    features_by_figure(), which refuses a number it cannot carry). A feature
+    is a position ON the envelope gen_assembled_dims.py measured, so it is
+    carried only onto a figure whose ledger envelope is that envelope, and
+    only where it lies on that figure's face: a figures.json older than the
+    record (gen_figures.mjs not re-run) would place a lens on a box it was
+    not measured on, and is refused rather than carried. A feature-bearing
+    row whose figure the ledger does not carry is refused too — its
+    features would vanish silently. The optional arguments point a test at a
+    scratch tree; the defaults are this repository."""
     import gen_cad_params as gcp   # lazy: it imports parse_scad from here
     repo = repo or REPO
     ledger = json.loads((figures_json or FIGURES_JSON).read_text(encoding="utf-8"))
     knobs = knobs_by_figure(devices_dir, repo)
+    features = features_by_figure(assembled_json)
     try:
         registry = gcp.parse_board_registry(repo / gcp.BOARD_LIB_REL)
     except gcp.RegistryError as e:
@@ -854,7 +943,15 @@ def distill_cad_dims(figures_json: Path | None = None, devices_dir: Path | None 
             entry["seams_mm"] = list(seams)
         if fig["id"] in knobs:
             entry["knobs"] = knobs.pop(fig["id"])
+        if fig["id"] in features:
+            entry["features_mm"] = _placed_features(fig["id"], env, features.pop(fig["id"]))
         figures[fig["id"]] = entry
+    if features:
+        # A measured row names a figure this ledger does not carry — its
+        # features would vanish silently, like an orphaned manifest's knobs.
+        sys.exit("face features with no ledger home: assembled_dims.json records features for "
+                 f"{', '.join(sorted(features))}, but the fleet-figures ledger carries no "
+                 "device/part envelope for that figure — regenerate figures.json (gen_figures.mjs)")
     if knobs:
         # A params-bearing manifest names a figure this ledger does not carry
         # (no envelope, or not a device/part) — its knobs would vanish silently.
@@ -884,6 +981,26 @@ def distill_cad_dims(figures_json: Path | None = None, devices_dir: Path | None 
         "board_facts": {name: fact.value for name, fact in sorted(registry.facts.items())},
         "figures": {k: figures[k] for k in sorted(figures)},
     }
+
+
+def _placed_features(fig_id: str, env: dict, rec: dict) -> dict:
+    """The features of one ledger figure, refused unless the ledger's envelope
+    is the one they were measured on and each lies on that envelope's face
+    (w x h), within FEATURE_TOL."""
+    measured = rec.get("fig") or {}
+    if any(not isinstance(measured.get(k), (int, float))
+           or abs(measured[k] - env[k]) > FEATURE_TOL for k in ("w", "h", "d")):
+        sys.exit(f"cad-dims.json cannot place {fig_id}'s face features: they are measured on "
+                 f"assembled_dims.json's {measured} envelope, but the ledger's is "
+                 f"{ {k: env[k] for k in ('w', 'h', 'd')} } — figures.json is older than the "
+                 "record; re-run gen_figures.mjs")
+    for name, f in rec["features"].items():
+        if (f["x"] - f["w"] / 2 < -FEATURE_TOL or f["x"] + f["w"] / 2 > env["w"] + FEATURE_TOL
+                or f["z"] - f["h"] / 2 < -FEATURE_TOL or f["z"] + f["h"] / 2 > env["h"] + FEATURE_TOL):
+            sys.exit(f"cad-dims.json cannot place {fig_id} feature {name!r} {f}: it does not lie "
+                     f"on the ledger's {env['w']} x {env['h']} face — regenerate "
+                     "assembled_dims.json (gen_assembled_dims.py)")
+    return rec["features"]
 
 
 SITE_HEADER = """\

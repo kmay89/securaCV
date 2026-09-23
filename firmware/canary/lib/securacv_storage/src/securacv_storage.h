@@ -10,9 +10,11 @@
  *
  * Threading contract: everything in this class except the worker's own
  * SD.begin() runs on the Arduino loopTask (the single writer of all SD
- * state — witness appends included). USB MSC raw-sector reads come from
- * the TinyUSB task, which is why teardown is policy-gated on MSC holding
- * the card.
+ * state — witness appends included). Reads are loop-task-only too: the one
+ * HTTP-side consumer, the timeline's card pages, reaches the card through
+ * the loop-task bridge in securacv_witness_history.cpp (F35), never
+ * directly. USB MSC raw-sector reads come from the TinyUSB task, which is
+ * why teardown is policy-gated on MSC holding the card.
  *
  * Copyright (c) 2026 ERRERlabs / Karl May
  * License: Apache-2.0

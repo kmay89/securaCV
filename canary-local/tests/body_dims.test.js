@@ -75,6 +75,16 @@ test("the Body row is the figure's envelope, with its source said beside it", as
   const ns = deviceFigure(ledger, "canary-display-nightstand-s3");
   assert.strictEqual(ns?.id, "device.canary-display-nightstand");
   assert.match(bodyText(byId.get("canary-display-nightstand-s3"), ns, null, same), /sketch · an estimate$/);
+  // …and a card whose manifest draws another device's figure resolves to it
+  // through the ledger's `manifests`: the Nightstand 7's Body row is the 7"
+  // slab it shares with the Dash 7, and the C6's is its own pocket case
+  const n7 = deviceFigure(ledger, "canary-display-nightstand7");
+  assert.strictEqual(n7?.id, "device.canary-display-dash7");
+  assert.match(bodyText(byId.get("canary-display-nightstand7"), n7, null, same), /sketch · an estimate$/);
+  assert.strictEqual(deviceFigure(ledger, "canary-display-nightstand-c6")?.id,
+    "device.canary-display-nightstand-c6");
+  assert.strictEqual(deviceFigure({ figures: [{ id: "device.x", role: "part", manifests: ["y"] }] }, "y"),
+    null, "only a device figure draws a card");
   assert.strictEqual(deviceFigure(ledger, "no-such-device"), null);
   assert.strictEqual(deviceFigure(null, watch.id), null);
 });

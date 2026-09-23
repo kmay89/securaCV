@@ -21,6 +21,10 @@
  *   • elected_hub   — the last hub election result, so the fleet resumes
  *                     its role split without a fresh election.
  *
+ *   • peer_macs     — each trusted peer's radio MAC (F33 part 1), so a
+ *                     reboot can put the peers back into mesh_transport's
+ *                     table; without it the transport drops their frames.
+ *
  * NVS layout (mirrors the existing canary "securacv" namespace used by
  * ble_scout_key, device_id, mic_muted, etc.):
  *
@@ -30,10 +34,15 @@
  *       trusted_peers  — blob (peer table)
  *       replay_ctrs    — blob (per-peer counters)
  *       elected_hub    — blob (election result)
+ *       peer_macs      — blob (fingerprint → radio MAC; F33, FE-gated)
  *       opera_name     — string, <= 32 bytes (F10; flash-encryption gated
  *                        like the four above)
  *       mesh_enabled   — 1 byte (F10; NOT gated: a preference, not a
  *                        secret — see MESH ENABLED FLAG below)
+ *       mesh_out_ctr   — u64 (F33; NOT gated: the outbound counter's
+ *                        reserve-ahead high-water mark)
+ *       mesh_revoked   — blob (F33; FE-gated: the §5.6 revocation
+ *                        deny-list, fingerprint + grace left)
  *
  * Host build (CSI_TEST_HOST_BUILD): all functions compile as
  * deterministic stubs. load_opera_secret() always returns false (no
@@ -182,10 +191,74 @@ bool load_trusted_peers(uint8_t* out_pubkeys,
                         size_t*  out_count);
 
 /* Erase the persisted trusted-peer list. Used on factory reset and
- * "un-pair all" UI. Idempotent — succeeds if the list was empty.
+ * "un-pair all" UI. Idempotent — succeeds if the list was empty. Also
+ * erases "peer_macs" (below), best effort: an address with no peer is
+ * meaningless, and the return value reports the pubkey list only.
  *
  * On the host build, always returns true (no-op success). */
 bool clear_trusted_peers();
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * TRUSTED-PEER RADIO ADDRESSES  (F33 part 1)
+ *
+ * mesh_transport accepts frames only from MACs in its peer table, and a
+ * pubkey says nothing about the address a peer transmits from, so the
+ * integration layer stores each trusted peer's radio MAC — learned when the
+ * pairing completes (mesh_session::get_paired_peer_mac) — and re-binds it
+ * at boot (mesh_session::bind_peer_mac). NVS key "peer_macs": up to
+ * MAX_TRUSTED_PEERS entries of fingerprint (8 B) || MAC (6 B), 14 B each,
+ * one entry per fingerprint. FE-gated like "trusted_peers": which radios a
+ * device trusts is household-graph metadata of the same class.
+ *
+ *   save_peer_mac()   — insert, or replace that fingerprint's address.
+ *                       False on null, FE off, a full table with a new
+ *                       fingerprint, or an NVS failure.
+ *   load_peer_macs()  — every stored entry; true with count 0 when none.
+ *                       False on null, cap < MAX_TRUSTED_PEERS, FE off, a
+ *                       read failure or a malformed blob.
+ *   remove_peer_mac() — drop one fingerprint's entry; true when it is gone
+ *                       afterwards (idempotent). remove_trusted_peer() calls
+ *                       it for the removed pubkey's fingerprint.
+ *   clear_peer_macs() — erase the key; idempotent.
+ * Host build: save/remove/clear → true, load → true with count 0.
+ *
+ * The blob edits are the pure peer_mac_blob:: helpers, host-tested
+ * (test_mesh_state).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr size_t PEER_MAC_LEN        = 6;
+constexpr size_t PEER_MAC_ENTRY_LEN  = mesh_crypto::FINGERPRINT_LEN + PEER_MAC_LEN;   /* 14 */
+constexpr size_t PEER_MACS_BLOB_MAX  = MAX_TRUSTED_PEERS * PEER_MAC_ENTRY_LEN;        /* 112 */
+
+struct PeerMac {
+  uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN];
+  uint8_t mac[PEER_MAC_LEN];
+};
+
+bool save_peer_mac(const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN],
+                   const uint8_t mac[PEER_MAC_LEN]);
+bool load_peer_macs(PeerMac* out, size_t out_cap, size_t* out_count);
+bool remove_peer_mac(const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN]);
+bool clear_peer_macs();
+
+namespace peer_mac_blob {
+/* A stored blob is well formed iff its length is a whole number of
+ * entries, at most PEER_MACS_BLOB_MAX. */
+bool valid_len(size_t len);
+/* Insert fingerprint → mac, or replace that fingerprint's MAC, in
+ * blob[0 .. *len) (capacity PEER_MACS_BLOB_MAX); *len is updated. False —
+ * blob untouched — on a malformed *len or a full blob with a new
+ * fingerprint. */
+bool upsert(uint8_t* blob, size_t* len,
+            const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN],
+            const uint8_t mac[PEER_MAC_LEN]);
+/* Drop that fingerprint's entry, keeping the others in order. Returns true
+ * when an entry was dropped; *len is updated. */
+bool remove(uint8_t* blob, size_t* len,
+            const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN]);
+/* Decode into out[] (cap entries); false on a malformed len. */
+bool decode(const uint8_t* blob, size_t len, PeerMac* out, size_t cap, size_t* count);
+}  /* namespace peer_mac_blob */
 
 /* ──────────────────────────────────────────────────────────────────────────
  * REPLAY COUNTERS — per-peer last_counter persistence
@@ -267,7 +340,8 @@ bool clear_elected_hub();
  * present in the first place (idempotent). Returns false on a null
  * pointer, FE disabled, or an NVS read/write failure (a malformed blob
  * is a read failure: refuse rather than clobber). On the host build,
- * always returns true (no-op success).
+ * always returns true (no-op success). Also drops the peer's "peer_macs"
+ * entry (F33), best effort — the return value is the pubkey's.
  * ────────────────────────────────────────────────────────────────────────── */
 
 bool remove_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]);
@@ -288,6 +362,46 @@ bool remove_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]);
 
 bool save_mesh_enabled(bool enabled);
 bool load_mesh_enabled(bool* out);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * OUTBOUND COUNTER HIGH-WATER MARK  (F33 part 3)
+ *
+ * NVS key "mesh_out_ctr", a u64: the highest outbound counter this device
+ * may have signed (mesh_session's reserve-ahead mark, written once per
+ * COUNTER_RESERVE_BLOCK frames by the session's reserve handler). NOT
+ * flash-encryption gated, like mesh_enabled: it is a count, not a secret
+ * and not household-identifying, and gating it would restart the counter
+ * at every reboot of an FE-off board — whose frames the peers then drop as
+ * replays of the counters they remember.
+ *
+ * save_outbound_counter() returns true only when the value is durably
+ * written (read back equal). load_outbound_counter() returns true and
+ * writes *out only when the key is present; false (out untouched) when
+ * absent, on a null pointer or a read failure. Host build: save → true,
+ * load → false.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool save_outbound_counter(uint64_t high_water);
+bool load_outbound_counter(uint64_t* out);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * REVOCATION DENY-LIST  (F33 part 6 — spec §5.6 REVOCATION_GRACE_MS)
+ *
+ * NVS key "mesh_revoked": mesh_session's deny-list as the
+ * mesh_revocation blob (≤ mesh_revocation::BLOB_MAX = 96 B: fingerprint ||
+ * remaining grace ms, per entry). FE-gated like trusted_peers — which
+ * devices a household threw out is household-graph metadata.
+ *
+ * save_revocations(): len 0 erases the key; otherwise writes the blob.
+ * False on a null blob with len > 0, len > BLOB_MAX, FE off or an NVS
+ * failure. load_revocations(): true with *out_len = 0 when nothing is
+ * stored; false on null pointers, a cap below BLOB_MAX, FE off or a read
+ * failure (a malformed blob is the session's to refuse). Host build:
+ * save → true, load → true with *out_len = 0.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool save_revocations(const uint8_t* blob, size_t len);
+bool load_revocations(uint8_t* out, size_t out_cap, size_t* out_len);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * OPERA DISPLAY NAME  (F10 — POST /api/mesh/name)

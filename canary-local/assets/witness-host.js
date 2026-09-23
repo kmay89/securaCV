@@ -15,12 +15,13 @@
 //     found fleet into the wall over the shared postMessage contract
 //     (tvos/EMBED_IN_APPS.md) — the same controller shape as the Flasher's
 //     (desktop/src/app.js). The kernel addresses stay first — the typed
-//     base, then the well-known `canary.local:8099` and `canary.local` —
-//     and the browsed boards come only after them: the kernel advertises no
-//     `_securacv._tcp`, and a WAP or display answers /api/fleet with a
-//     one-board self-report, so a board tried first would stand in for the
-//     kernel's whole fleet on every tick. All LAN traffic goes through the
-//     Rust commands, never a page fetch.
+//     base, then the well-known `canary.local:8099`, `canary.local:8799`
+//     (the kernel's own API port) and `canary.local`, in the Apple TV's
+//     order — and the browsed boards come only after them: the kernel
+//     advertises no `_securacv._tcp`, and a WAP or display answers
+//     /api/fleet with a one-board self-report, so a board tried first would
+//     stand in for the kernel's whole fleet on every tick. All LAN traffic
+//     goes through the Rust commands, never a page fetch.
 //   - In a BROWSER: no scanning (browsers can't reach the LAN like that);
 //     the emulator's own demo fleet + connect panel stand, and the status
 //     line stays quiet rather than pretending.
@@ -74,7 +75,7 @@ if (invoke && frame) {
   const bases = (sightings) => {
     const b = [];
     try { const k = localStorage.getItem("scv-kernel"); if (k && /^http:\/\//i.test(k)) b.push(k); } catch (_) {}
-    b.push("http://canary.local:8099", "http://canary.local");
+    b.push("http://canary.local:8099", "http://canary.local:8799", "http://canary.local");
     // Boards last: witness_discover returns the FIRST /api/fleet that
     // answers, and a board's answer is its own one-row self-report.
     b.push(...boardBases(sightings));

@@ -63,6 +63,63 @@ START_WATCH_SCHEMA = vol.Schema(
 END_WATCH_SCHEMA = vol.Schema({vol.Required(ATTR_WATCH): cv.string})
 LIST_WATCHES_SCHEMA = vol.Schema({})
 
+# Every refusal the actions raise, by the key strings.json's ``exceptions``
+# section (and translations/en.json, its byte-identical copy) declares it
+# under. The English is the message as raised — ``str(err)``, what the log
+# and an API client read. The frontend renders the refusal from the
+# translation key and placeholders instead, in the user's language once a
+# translations/<language>.json carries it (today only en.json exists).
+# Placeholder values carry their own quotes (``repr``), so no template
+# quotes a placeholder: hassfest refuses ``'{name}'`` in a translation.
+# tests/test_exception_translations.py holds this table and strings.json
+# word for word, pins every message as a user reads it, and fails on a
+# key that is raised but undeclared or declared but never raised.
+REFUSALS: dict[str, str] = {
+    "no_loaded_entry": (
+        "SecuraCV has no loaded entry, so nothing is running its watches. "
+        "Enable or reload the integration to use them."
+    ),
+    "watches_unreadable": (
+        "SecuraCV could not read its stored watches (the log has the reason), "
+        "so its watches are not available. Reload the integration to try again."
+    ),
+    "not_loaded_yet": (
+        "SecuraCV is not loaded yet, so its watches are not available. "
+        "Try again once the integration has started."
+    ),
+    "duration_unreadable": (
+        "Can't tell how long {duration} is. Give it in days, weeks, months, "
+        'seasons or years ("two weeks", "10 days"), or leave it out for '
+        "{default_days} days."
+    ),
+    "subject_empty": "Say what to keep an eye on: subject is empty.",
+    "watch_limit_reached": (
+        "Already running {count} watches, which is as many as the hub keeps. "
+        "End one with securacv.end_watch first."
+    ),
+    "watch_ref_empty": "Say which watch to end: its id or its label.",
+    "watch_not_found": (
+        "No watch is called {watch}. securacv.list_watches names the ones running."
+    ),
+    "watch_ambiguous": "{watch} names {count} watches ({ids}); end it by id.",
+}
+
+
+def _refusal(key: str, **placeholders: str) -> ServiceValidationError:
+    """The refusal ``key`` names: its English message, translatable.
+
+    The message is passed as well as the key, so ``str(err)`` is the
+    English above whether or not Home Assistant has this integration's
+    translations cached; the key, domain and placeholders are what the
+    frontend localizes from.
+    """
+    return ServiceValidationError(
+        REFUSALS[key].format(**placeholders),
+        translation_domain=DOMAIN,
+        translation_key=key,
+        translation_placeholders=placeholders or None,
+    )
+
 
 def watch_row(watch: dict[str, Any], now: float) -> dict[str, Any]:
     """One watch as an automation sees it: the model's own fields plus
@@ -96,21 +153,11 @@ def _require_restored(hass: HomeAssistant) -> None:
     if watch_runtime.watches_restored(hass):
         if watch_runtime.watches_hosted(hass):
             return
-        raise ServiceValidationError(
-            "SecuraCV has no loaded entry, so nothing is running its "
-            "watches. Enable or reload the integration to use them."
-        )
+        raise _refusal("no_loaded_entry")
     if watch_runtime.watches_unreadable(hass):
         # The rows are still on disk, unread: the bucket is not the truth.
-        raise ServiceValidationError(
-            "SecuraCV could not read its stored watches (the log has the "
-            "reason), so its watches are not available. Reload the "
-            "integration to try again."
-        )
-    raise ServiceValidationError(
-        "SecuraCV is not loaded yet, so its watches are not available. "
-        "Try again once the integration has started."
-    )
+        raise _refusal("watches_unreadable")
+    raise _refusal("not_loaded_yet")
 
 
 def _duration_or_refuse(value: Any) -> str | None:
@@ -126,10 +173,10 @@ def _duration_or_refuse(value: Any) -> str | None:
     if not text:
         return None
     if math.isnan(watches.parse_duration_days(text, default=math.nan)):
-        raise ServiceValidationError(
-            f"Can't tell how long {text!r} is. Give it in days, weeks, months, "
-            'seasons or years ("two weeks", "10 days"), or leave it out for '
-            f"{watches.DEFAULT_DAYS} days."
+        raise _refusal(
+            "duration_unreadable",
+            duration=repr(text),
+            default_days=str(watches.DEFAULT_DAYS),
         )
     return text
 
@@ -138,7 +185,7 @@ def _async_start_watch(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]
     _require_restored(hass)
     subject = str(call.data.get(ATTR_SUBJECT) or "").strip()
     if not subject:
-        raise ServiceValidationError("Say what to keep an eye on: subject is empty.")
+        raise _refusal("subject_empty")
     duration = _duration_or_refuse(call.data.get(ATTR_DURATION))
     now = time.time()
     try:
@@ -150,10 +197,7 @@ def _async_start_watch(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]
             concern=call.data.get(ATTR_CONCERN),
         )
     except watch_runtime.WatchLimitReached as err:
-        raise ServiceValidationError(
-            f"Already running {err.count} watches, which is as many as the hub "
-            f"keeps. End one with {DOMAIN}.{SERVICE_END_WATCH} first."
-        ) from err
+        raise _refusal("watch_limit_reached", count=str(err.count)) from err
     if device_id is None:
         # The voice path says this out loud; an automation has no ear, so
         # the log carries it — a watch nothing feeds can never fire.
@@ -170,18 +214,15 @@ def _async_end_watch(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     _require_restored(hass)
     ref = str(call.data.get(ATTR_WATCH) or "").strip()
     if not ref:
-        raise ServiceValidationError("Say which watch to end: its id or its label.")
+        raise _refusal("watch_ref_empty")
     now = time.time()
     try:
         watch = watch_runtime.async_end_watch(hass, ref, now)
     except watch_runtime.WatchNotFound as err:
-        raise ServiceValidationError(
-            f"No watch is called {ref!r}. {DOMAIN}.{SERVICE_LIST_WATCHES} names "
-            "the ones running."
-        ) from err
+        raise _refusal("watch_not_found", watch=repr(ref)) from err
     except watch_runtime.WatchAmbiguous as err:
-        raise ServiceValidationError(
-            f"{ref!r} names {len(err.ids)} watches ({', '.join(err.ids)}); end it by id."
+        raise _refusal(
+            "watch_ambiguous", watch=repr(ref), count=str(len(err.ids)), ids=", ".join(err.ids)
         ) from err
     return watch_row(watch, now)
 

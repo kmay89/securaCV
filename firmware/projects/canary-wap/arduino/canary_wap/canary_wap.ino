@@ -812,6 +812,12 @@ static MotionFilter g_motion = {0};
 // SD card
 static SPIClass g_sd_spi(FSPI);
 static bool g_sd_mounted = false;
+#if FEATURE_SD_STORAGE
+// Latched the first time a card mounts this boot: until then the MQTT health
+// omits sd_mounted, so a card-less boot never reads as a removal in HA (the
+// canary PIO tree's storage_mount_generation() > 0 rule, F41).
+static bool g_sd_mounted_this_boot = false;
+#endif
 
 // HTTP server
 static httpd_handle_t g_http_server = nullptr;
@@ -10632,6 +10638,7 @@ void setup() {
 
     if (sd_mount_safe(g_sd_spi, SD_CS_PIN, SD_SPI_FAST)) {
       g_sd_mounted = true;
+      g_sd_mounted_this_boot = true;
       g_health.sd_healthy = true;
 
       // Create directories if needed (non-critical)
@@ -11722,6 +11729,7 @@ void loop() {
       log_health(SCV_LOG_INFO, SCV_CAT_STORAGE, "SD card mounted", nullptr);
     }
     g_sd_mounted = sd_now;
+    if (sd_now) g_sd_mounted_this_boot = true;
     g_health.sd_healthy = sd_now;
   }
   #endif
@@ -12093,8 +12101,26 @@ void loop() {
         batt_ptr = &batt;
       }
       #endif
+      // The tamper levels HA's per-type Enclosure Open / SD Removed sensors
+      // follow on every health publish (F41). Without them each publish
+      // re-cleared a sensor the tamper topic had just set, while the lid was
+      // still open or the card still out. Same names and rules as the canary
+      // PIO tree's mqtt_publish_health_update: sd_mounted only once a card
+      // has mounted this boot, from the three-state (ERROR is still in the
+      // slot); enclosure_open from the debounced, adopted contact.
+      csi_mqtt::MqttTamperLevels tamper_lv = {-1, -1};
+      #if FEATURE_SD_STORAGE
+      if (g_sd_mounted_this_boot) {
+        tamper_lv.sd_mounted = (g_hw.sd_state != SD_ABSENT) ? 1 : 0;
+      }
+      #endif
+      #if FEATURE_TAMPER_GPIO
+      tamper_lv.enclosure_open =
+          (g_tamper_contact.adopted && g_tamper_contact.open) ? 1 : 0;
+      #endif
       csi_mqtt::publish_health((uint32_t)ESP.getFreeHeap(),
-                               (uint32_t)uptime_seconds(), batt_ptr);
+                               (uint32_t)uptime_seconds(), batt_ptr,
+                               &tamper_lv);
     }
 
 #if FEATURE_ACOUSTIC_EVENTS

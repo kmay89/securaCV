@@ -35,6 +35,13 @@ constexpr int kDiscDiameter = 240;
 // text laid to the mathematical edge reads as touching the rim.
 constexpr int kEdgeMargin = 5;
 
+// Side padding a RECTANGULAR panel keeps when the round-frame label helpers
+// run there (round_frame.cpp: the nightstand renders the shared modal
+// surfaces through the watch branch). A fitted row on rectangular glass is
+// the panel width minus twice this. Here, not in round_frame.cpp, so the
+// host tests measure text against the same row the glass fits it to.
+constexpr int kRectSidePad = 8;
+
 constexpr int iabs(int v) { return v < 0 ? -v : v; }
 
 // Binary-search step for the integer square root; 64-bit compare so r*r

@@ -8,7 +8,9 @@
  * and the MQTT bridge re-publishes whatever happens NEXT but loses
  * everything between the last successful HA update and the outage.
  *
- * Wire format (one event per line, terminated by '\n'):
+ * Wire format (one event per line, terminated by '\n'; marshalled and
+ * parsed by csi_event_log_line.h, shared with the canary PIO tree so a
+ * tool reads either device's card the same way):
  *
  *   {"id":12345,"first":<ms>,"last":<ms>,"cat":"event","priv":"p0",
  *    "module":"core.presence","type":"presence_changed","bundled":1,
@@ -16,6 +18,9 @@
  *    "bpm":0,"dur":7,"tb":54,"dom":"motion","dismissed":0}
  *
  * Path: /EVENTS/today.ndjson (sibling of /WITNESS, /HEALTH, /CHAIN).
+ * A card whose /EVENTS holds an owner file (/EVENTS/owner) belongs to a
+ * canary base, which binds its log to its witness key there. This device
+ * leaves that log alone: it does not append to it, replay it or truncate it.
  *
  * Lifecycle:
  *   - load_into_ring() runs once at boot after sd mount; reads

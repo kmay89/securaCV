@@ -263,6 +263,49 @@ fi
 
 echo ""
 
+# ── Check: canary time-bucket floor (Invariant III) ──
+# The canary tree's chain bucket is canary_config.h's TIME_BUCKET_MS, the
+# ten-minute grid. Two stragglers once offered the five-second grid it retired
+# (F44): an unused DEFAULT_GPS_COARSENING_MS 5000 in secure_defaults.h, and a
+# Device Configuration form whose Time Bucket field defaulted to 5000 and
+# posted to an /api/config route the canary never registered. Both are gone.
+# This holds the line: every canary `#define ..._MS <literal>` whose name says
+# BUCKET or COARSEN sits on the ten-minute grid, and a web-UI time-bucket
+# field, if one comes back, may not offer less than it.
+section "Privacy: canary time-bucket floor (Invariant III)"
+CANARY_TB_FLOOR=600000
+TB_BAD=""
+while IFS= read -r tb_line; do
+  [ -n "$tb_line" ] || continue
+  tb_val=$(printf '%s' "$tb_line" | sed -nE 's/.*#define[[:space:]]+[A-Z0-9_]+[[:space:]]+([0-9]+).*/\1/p')
+  if [ -z "$tb_val" ] || [ "$tb_val" -lt "$CANARY_TB_FLOOR" ] || [ $((tb_val % CANARY_TB_FLOOR)) -ne 0 ]; then
+    TB_BAD="${TB_BAD}${tb_line#"$FIRMWARE_DIR"/}\n"
+  fi
+done < <(grep -rnE '^[[:space:]]*#[[:space:]]*define[[:space:]]+[A-Z0-9_]*(BUCKET|COARSEN)[A-Z0-9_]*_MS[[:space:]]+[0-9]+' \
+           "$CANARY_DIR/include" "$CANARY_DIR/src" "$CANARY_DIR/lib" 2>/dev/null || true)
+if [ -n "$TB_BAD" ]; then
+  check_fail "canary time-bucket constant below or off the ten-minute grid (${CANARY_TB_FLOOR} ms):"
+  echo -e "$TB_BAD" | while read -r line; do [ -z "$line" ] || blue "  $line"; done
+else
+  check_pass "every canary BUCKET/COARSEN _MS literal is on the ten-minute grid"
+fi
+CANARY_TB_FIELDS=$(grep -rhoE '<input[^>]*id="configTimeBucket"[^>]*>' "$CANARY_DIR/lib" "$CANARY_DIR/src" 2>/dev/null || true)
+if [ -z "$CANARY_TB_FIELDS" ]; then
+  check_pass "canary web UI offers no time-bucket field (the bucket is not runtime-configurable)"
+else
+  while IFS= read -r tb_field; do
+    UI_MIN=$(printf '%s' "$tb_field" | sed -nE 's/.* min="([0-9]+)".*/\1/p')
+    UI_VAL=$(printf '%s' "$tb_field" | sed -nE 's/.* value="([0-9]+)".*/\1/p')
+    if [ -n "$UI_MIN" ] && [ "$UI_MIN" = "$CANARY_TB_FLOOR" ] && [ -n "$UI_VAL" ] && [ "$UI_VAL" -ge "$CANARY_TB_FLOOR" ]; then
+      check_pass "canary web UI configTimeBucket min=${UI_MIN} value=${UI_VAL} (floor ${CANARY_TB_FLOOR} ms)"
+    else
+      check_fail "canary web UI configTimeBucket must have min=\"${CANARY_TB_FLOOR}\" and a value at or above it (found min=\"${UI_MIN}\" value=\"${UI_VAL}\")"
+    fi
+  done <<< "$CANARY_TB_FIELDS"
+fi
+
+echo ""
+
 # Keyword filters below look at a hit's CONTENT, never its path: `grep -rn`
 # prefixes every line with `file:line:`, and a checkout path that happened to
 # contain "witness" or "transmit" (a worktree name, a user's home directory)
@@ -604,6 +647,28 @@ fi
 
 echo ""
 
+# ── Check: no partition table flags nvs `encrypted` ──────────────
+# NVS is not compatible with flash encryption: ESP-IDF protects it with NVS
+# encryption (CONFIG_NVS_ENCRYPTION, keys in an nvs_keys partition), and with
+# flash encryption on, IDF v4.3+ refuses to open an nvs partition flagged
+# `encrypted` (nvs_partition_lookup.cpp -> ESP_ERR_NVS_WRONG_ENCRYPTION). The
+# provisioning kit's partitions_secure.csv carried that flag, so its image
+# could not have opened NVS — the identity key's home — on a fused board
+# (F42). nvs_keys SHOULD be flagged; only the `nvs` subtype is refused here.
+section "Security: NVS partition not flash-encrypted"
+
+NVS_ENC_HITS=$(find "$FIRMWARE_DIR" -name "*.csv" -not -path "*/.pio/*" -print0 2>/dev/null \
+  | xargs -0 grep -nE '^[[:space:]]*[^#,]+,[[:space:]]*data[[:space:]]*,[[:space:]]*nvs[[:space:]]*,[^#]*encrypted' 2>/dev/null || true)
+if [ -n "$NVS_ENC_HITS" ]; then
+  check_fail "An nvs partition is flagged 'encrypted' — IDF refuses to open it once flash encryption is on:"
+  echo "$NVS_ENC_HITS" | while read -r line; do blue "  ${line#"$FIRMWARE_DIR"/}"; done
+  blue "  Fix: drop the flag; NVS is protected by NVS encryption (nvs_keys), not by flash encryption"
+else
+  check_pass "No partition table flags an nvs partition 'encrypted'"
+fi
+
+echo ""
+
 # ── Check: secure_defaults.h exists ──────────────────────────
 section "Security: Secure defaults header"
 
@@ -751,6 +816,64 @@ if [ -n "$DEBUG_FLAGS_ON" ]; then
   echo "$DEBUG_FLAGS_ON" | while read -r line; do blue "  $line"; done
 else
   check_pass "All DEBUG_ flags are 0 or undefined"
+fi
+
+echo ""
+
+# ── Check: PlatformIO extra_scripts can actually run ─────────────
+# firmware/canary/platformio.ini once set `extra_scripts = pre:../../scripts/
+# pre_build.py` under [platformio]: PlatformIO reads extra_scripts only in an
+# environment ([env] / [env:NAME]), and the path named a file that did not
+# exist, so the "pre-build tripwire" never ran and nothing said so (F40). The
+# tripwires it duplicated are this script's own sections above. Any .ini under
+# firmware/ that sets extra_scripts outside an environment fails here, and so
+# does a project platformio.ini whose script path does not resolve against the
+# project directory.
+section "Build: PlatformIO extra_scripts"
+
+XS_FOUND=0
+XS_BAD=""
+while IFS= read -r ini; do
+  while IFS=$'\t' read -r xs_sec xs_line xs_val; do
+    XS_FOUND=$((XS_FOUND + 1))
+    rel_ini="${ini#"$FIRMWARE_DIR"/}"
+    case "$xs_sec" in
+      env|env:*) ;;
+      *) XS_BAD="${XS_BAD}${rel_ini}:${xs_line}: extra_scripts under [${xs_sec}] is never read (it is an [env] option)\n" ;;
+    esac
+    if [ "$(basename "$ini")" = "platformio.ini" ]; then
+      for xs_tok in $xs_val; do
+        xs_path="${xs_tok#pre:}"
+        xs_path="${xs_path#post:}"
+        case "$xs_path" in *'$'*) continue ;; esac
+        if [ ! -f "$(dirname "$ini")/$xs_path" ]; then
+          XS_BAD="${XS_BAD}${rel_ini}:${xs_line}: extra_scripts names ${xs_path}, which does not exist\n"
+        fi
+      done
+    fi
+  done < <(awk '
+    /^[ \t]*[;#]/ { next }
+    /^\[[^]]+\][ \t]*$/ { sec = substr($0, 2, index($0, "]") - 2); inxs = 0; next }
+    /^[ \t]*extra_scripts[ \t]*=/ {
+      v = $0; sub(/^[^=]*=/, "", v); sub(/[ \t]*;.*/, "", v)
+      printf "%s\t%d\t%s\n", sec, NR, v; inxs = 1; next
+    }
+    inxs && /^[ \t]+[^ \t]/ {
+      v = $0; sub(/[ \t]*;.*/, "", v)
+      printf "%s\t%d\t%s\n", sec, NR, v; next
+    }
+    { inxs = 0 }
+  ' "$ini")
+done < <(find "$FIRMWARE_DIR" -name "*.ini" -not -path "*/.pio/*" 2>/dev/null | sort)
+
+if [ -n "$XS_BAD" ]; then
+  check_fail "PlatformIO extra_scripts that can never run:"
+  echo -e "$XS_BAD" | while read -r line; do [ -z "$line" ] || blue "  $line"; done
+  blue "  Fix: set extra_scripts under [env] with a path relative to the project, or drop it"
+elif [ "$XS_FOUND" -eq 0 ]; then
+  check_pass "No PlatformIO extra_scripts (source tripwires run in this script, in CI)"
+else
+  check_pass "Every PlatformIO extra_scripts entry sits in an environment and resolves"
 fi
 
 echo ""

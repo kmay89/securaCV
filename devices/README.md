@@ -48,6 +48,7 @@ the linter carries its own stdlib validator because CI has no `jsonschema`).
 | `cad.params` | the literal Customizer knobs of `cad.scad` (and of every `cad.also` file) this device asserts — the board and module dimensions the case is built around (`board_l`, `vm_w`, `stack_sock_h`), as plain numbers, strings or booleans, or as **references into the board registry** (`{"brd": "xiao", "dim": "l"}` is `brd_l("xiao")`; `{"brd_fn": "brd_xiao_w_measured"}` is that measured fact) that the generator resolves from `docs/hardware/enclosure/canary_board_lib.scad` before it writes. Never a selector (`host`, `radar`, `preset`, `part` — chosen per printable set at render time), never a computed value, never a design-language knob (`wall_t`, `corner_r` — case-owned, with `deviates:` reasons, `lint_design_lang.py`) | [`gen_cad_params.py`](../docs/hardware/enclosure/gen_cad_params.py) **writes** each value into the `.scad`'s literal (the token on the knob's own line, nothing else) and its `--check`, which this linter also runs, proves the file still says it; the knob must be one `gen_builder_manifest.parse_scad` accepts; a reference must name a `BRD_REGISTRY` row and column or a `brd_*()` fact the library defines; manifests sharing one `.scad` may each assert a subset and must agree on shared keys |
 | `emulator.flavor` | the browser twin | `build.sh` allowlist; `dist/canary-display-<flavor>.meta.json` exists; `build.sh` compiles this device's pins dir for that flavor; every dist display flavor is claimed |
 | `flasher.product` · `flasher.variants` | the browser-flasher catalog entries that install onto this hardware | `flash.json`: exists, `chip` == `board.mcu`, `tier.board_id` is this board, `flash_mb` agrees; every catalog product is claimed exactly once |
+| `lab.card` | the canary.local Lab card (`canary-local/devices/registry.json` id) that presents this hardware, **only** where it is not the default — the family's card when the family is itself a manifest, else the slug. Today one manifest needs it: the Nightlight's card is `canary-nightlight` (the id the Lab, its fleet figure and the scene builder share), its manifest `canary-display-nightlight-c3` (the flasher product and the build env), so `gen_enclosures.py` homes the C3 case on the card and lists the manifest under `devices` | `registry.json` has the card; a key that restates the default is refused; and, for every manifest, a claimed enclosure set lands on a card — a manifest whose home is no card fails, so a case cannot sit on a page the Lab does not have |
 | `site.page` · `site.model` | the website page and AR model | **shape only** — those files live in the `securacv_website` repository and cannot be verified from here |
 
 Plus a cross-file rule: every `firmware/build_matrix.json` product has a
@@ -62,8 +63,13 @@ catalog variant) — and `scripts/lint_device_manifests.py` prints it in its
 table. A device with no figure yet shows `—`; that is the gap, honestly.
 
 **A key whose value is unknown is omitted, not guessed.** No figure has been
-drawn for the four `canary` boards or the Nightstand C6; the Glance AMOLED has
-no enclosure yet; the C3 Super Mini has neither. Those keys are absent.
+drawn for the four `canary` boards; the Glance AMOLED has no enclosure yet;
+the C3 Super Mini has neither. Those keys are absent. One is absent by
+decision instead: the Nightstand C6's pocket case is drawn
+(`device.canary-display-nightstand-c6`, a sketch off its `.scad`, for its Lab
+card), but its manifest does not name that figure yet — naming it maps the
+C6 board in the firmware's figure table (`fleet_figures.h` and a
+`CANARY_FIGURE_HARDWARE` line in its `pins.h`), a firmware change of its own.
 
 **A knob that is a board fact references the registry; a knob that is a case
 measurement is a number.** `docs/hardware/enclosure/canary_board_lib.scad`
@@ -222,10 +228,11 @@ import them — `lint_build_matrix.py` applies the matrix's side of the join
   `gen_figures.mjs --check` say so — and the manifest names the `ws147` row
   for `board_l` / `board_w` / `pcb_t`, the **board trio only**; the four
   screen numbers stay literal knobs in the file, ownable and deliberately
-  not owned yet. The C6 draws no figure (its board is unmapped, no STL is
-  committed), so its knobs are **owned, not carried**: correct in the
-  `.scad`, absent from the website's `cad-dims.json` until a figure draws
-  it. A moved `ws147` row now moves all three 1.47 cases, and the test
+  not owned yet. The C6's manifest names no figure (its board is unmapped,
+  no STL is committed; the Lab's sketch of its case is a figure no manifest
+  names), so its knobs are **owned, not carried**: correct in the `.scad`,
+  absent from the website's `cad-dims.json` until its manifest's figure
+  draws it. A moved `ws147` row now moves all three 1.47 cases, and the test
   suite pins it. Not owned, by construction rather than by omission: the
   selectors (`headers`, `port`, `model`, `panel_variant`) and the **7" Dash
   / Nightstand** — "What a manifest cannot yet own" below says exactly why.
@@ -289,8 +296,8 @@ per generator — what is read from here, and what is still typed elsewhere:
 | `scripts/lint_build_matrix.py` | every `build_matrix.json` lane resolves to one manifest (by id, else flavor + env — the same function this linter uses); every manifest's `board.envs` is an `[env:NAME]` of its family's project | the feature-flag cells, which are `platformio.ini` / `canary_config.h` facts, not device facts |
 | `.github/workflows/firmware-release.yml`, `flasher-release.yml` | (not the manifests — `firmware/flavors.json` `release_envs`, via `flavor_envs.py --release --json`; roadmap item 23, landed in the same wave: neither workflow types a display env any more) | — |
 | [`docs/hardware/enclosure/gen_cad_params.py`](../docs/hardware/enclosure/gen_cad_params.py) (→ the case `.scad` literals) | `cad.params`: the board/module knobs of `cad.scad` and of every `cad.also` file (the Vision manifest owns `canary_vision_doorbell.scad` beside its own case — same knobs, same values, both written) — a number, or a reference the generator resolves from the board registry (`canary_board_lib.scad`, read and never written). The generator **writes** them into the file — the literal token on the knob's own line, nothing else — so the Customizer, `render.sh`, the fit check, the web builder's manifest and `lint_design_lang.py` all keep reading the same literal knob they always did; `--check` proves equality, and the first run over the committed tree changed zero bytes. A knob the builder's parser does not accept (computed, module-local, `[Hidden]`), a selector, a type mismatch, a two-knob line or a reference the registry does not define is refused by name. | walls, tolerances and every feature knob (the design-language canon — case-owned, explained with `deviates:`); the enum selectors (`host`, `radar`, `preset`, `part` — per printable set, in `render.sh` and the fit check); computed knobs (`board_stack_h`) and knobs read from a registry (`canary_s3_lcd7.scad`'s panel record — "What a manifest cannot yet own"); and `envelope_mm`, which is never an input — every case derives its outer size from board dims + walls, the ledger measures it off the STL (`gen_assembled_dims.py`), and the manifest reaches it through `figure` |
-| [`canary-local/tools/gen_enclosures.py`](../canary-local/tools/gen_enclosures.py) (→ `enclosures.json`, `catalog.json`, `workshop.json`) | `cad.enclosure_sets`, inverted: each set's `device` is the first manifest (slug order) that lists it — homed on its `family`'s device when the family is itself a manifest, so the DevKit's and the XIAO S3's cases stay on the `canary-vision` page — and `devices` every manifest that lists it whenever `device` alone does not say them (the 7" case serves the Dash 7 and the Nightstand 7); the catalog's `device_compat` is every claimant; the page-side twin is `canary-local/assets/enclosure-sets.js` | the README variant tables (names, parts, previews) and a table of README-name hints, consulted only for a set no manifest lists — and the linter fails any set homed that way, so a hint can only ever point at a missing claim |
-| [`docs/hardware/enclosure/gen_builder_manifest.py --site`](../docs/hardware/enclosure/gen_builder_manifest.py) (→ the website's `scad/cad-dims.json`) | `cad.params`, resolved and merged by `gen_cad_params.py` and joined through `figure` to the fleet figure it draws, carried as that figure's `knobs` (the DevKit's three land on its own figure, not the stacked-XIAO's, though both name one case); the carry refuses to run while a manifest disagrees with its case, so the site never reads a knob the released STLs were not rendered from | the envelopes and assembled seams (`seams_mm`, measured — `figures.json`, `gen_assembled_dims.py`); the board registry, carried whole with its evidence rung as `board_registry` / `board_facts` (`canary_board_lib.scad`); and reading those keys on the website side, which is the website repository's change |
+| [`canary-local/tools/gen_enclosures.py`](../canary-local/tools/gen_enclosures.py) (→ `enclosures.json`, `catalog.json`, `workshop.json`) | `cad.enclosure_sets`, inverted: each set's `device` is the first manifest (slug order) that lists it — homed on the Lab card its `lab.card` names (the C3 case on `canary-nightlight`), else on its `family`'s device when the family is itself a manifest, so the DevKit's and the XIAO S3's cases stay on the `canary-vision` page — and `devices` every manifest that lists it whenever `device` alone does not say them (the 7" case serves the Dash 7 and the Nightstand 7); the catalog's `device_compat` is every claimant; the page-side twin is `canary-local/assets/enclosure-sets.js` | the README variant tables (names, parts, previews) and a table of README-name hints, consulted only for a set no manifest lists — and the linter fails any set homed that way, so a hint can only ever point at a missing claim |
+| [`docs/hardware/enclosure/gen_builder_manifest.py --site`](../docs/hardware/enclosure/gen_builder_manifest.py) (→ the website's `scad/cad-dims.json`) | `cad.params`, resolved and merged by `gen_cad_params.py` and joined through `figure` to the fleet figure it draws, carried as that figure's `knobs` (the DevKit's three land on its own figure, not the stacked-XIAO's, though both name one case); the carry refuses to run while a manifest disagrees with its case, so the site never reads a knob the released STLs were not rendered from | the envelopes and assembled seams (`seams_mm`, measured — `figures.json`, `gen_assembled_dims.py`); an assembled case's face features (`features_mm`, the Combo's lens aperture and radome window — measured off the case's own cut variables by `gen_assembled_dims.py`, read from its `assembled_dims.json`); the board registry, carried whole with its evidence rung as `board_registry` / `board_facts` (`canary_board_lib.scad`); and reading those keys on the website side, which is the website repository's change |
 
 **Still typed, deliberately:** the confidence ladder (derived from evidence
 by the figures generator, never here), the emulator twin aliases in
@@ -354,12 +361,16 @@ linter; making the matrix generator read them is a wave of its own).
   `gen_enclosures.py` inverts `cad.enclosure_sets` (above, "What the
   manifests drive"), the linter refuses a set homed any other way, and each
   of the five sits on the device whose manifest lists it — the 7" case on
-  both the Dash 7 and the Nightstand 7. Two of those devices have no Lab
-  page to show it on yet: the Nightstand C6 has no `registry.json` entry,
-  and the C3 case's manifest (`canary-display-nightlight-c3`) and the
-  registry's `canary-nightlight` name one device two ways — before, the C6
-  case sat on the Watch's page and the C3's on every page; aligning the
-  registry is the follow-up. Two homings the regex had made by name are
+  both the Dash 7 and the Nightstand 7. Two of those devices had no Lab
+  page to show it on — the Nightstand C6 had no `registry.json` entry, and
+  the C3 case's manifest (`canary-display-nightlight-c3`) and the
+  registry's `canary-nightlight` named one device two ways. Both do now:
+  `registry.json` carries cards for the Nightstand C6 and the Nightstand 7,
+  and the C3 manifest names its card (`lab.card: canary-nightlight` — the
+  registry id stays, it is the id the Lab's figure and scene builder
+  share), so the C3 case is homed on the Nightlight's page and still listed
+  under the manifest's slug, where the flasher looks it up; the linter
+  refuses a claimed case whose home is no card. Two homings the regex had made by name are
   now stated in the Vision manifest instead, so neither moved: the combo
   witness (the case houses the Vision build beside a Sense one) and the
   Vision Pro mount — the reCamera bridge for the Vision line's Pro and

@@ -285,7 +285,20 @@ def _augment_ha_stubs() -> None:
         sys.modules["homeassistant.exceptions"] = exc_mod
     if not hasattr(exc_mod, "HomeAssistantError"):
         class _HomeAssistantError(Exception):
-            pass
+            """HA's constructor: a positional message plus the translation
+            triple (the repo-root conftest's stub has the same shape)."""
+
+            def __init__(
+                self,
+                *args,
+                translation_domain=None,
+                translation_key=None,
+                translation_placeholders=None,
+            ) -> None:
+                super().__init__(*args)
+                self.translation_domain = translation_domain
+                self.translation_key = translation_key
+                self.translation_placeholders = translation_placeholders
         exc_mod.HomeAssistantError = _HomeAssistantError
     if not hasattr(exc_mod, "ServiceValidationError"):
         class _ServiceValidationError(exc_mod.HomeAssistantError):

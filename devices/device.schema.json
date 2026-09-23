@@ -149,6 +149,18 @@
         }
       }
     },
+    "lab": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["card"],
+      "properties": {
+        "card": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "The canary.local Lab card (a canary-local/devices/registry.json `id`) that presents this hardware, when it is NOT the default one — the family's card when the family is itself a manifest (the Vision hosts), else this manifest's own slug. gen_enclosures.py homes every enclosure set this manifest claims on that card. Only the Nightlight needs it today: its card is `canary-nightlight` (the id the Lab, its fleet figure and the scene builder share), its manifest `canary-display-nightlight-c3` (the flasher product and build env). The linter refuses a card registry.json does not have, and one that restates the default."
+        }
+      }
+    },
     "site": {
       "type": "object",
       "additionalProperties": false,

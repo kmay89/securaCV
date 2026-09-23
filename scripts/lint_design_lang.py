@@ -28,10 +28,11 @@ which keeps a trailing `//` comment only on a line that holds ONE knob — so
 `a = 1;  b = 2;  // help` reaches neither knob (and the Lab's own parser,
 gen_enclosures.py, drops the whole line). 125 knobs had lost their help that
 way (audit 2026-09, C1). A line holding two or more knobs AND a trailing
-comment now fails: split it, one knob per line, each with its own help. The
-few lines the sweep deliberately left are listed in HELP_LINE_DEBT, which can
-only shrink: a new shared-help line fails, and so does a listed one that is
-gone (the entry must go with it).
+comment now fails: split it, one knob per line, each with its own help.
+HELP_LINE_DEBT held the few lines the first sweep deliberately left (the 7"
+case's four); the second (C10) split them, so the ledger is empty and can
+only stay that way: a new shared-help line fails, and so would a listed one
+that is gone (the entry must go with it).
 
 Fourth rule: a knob name keeps ONE meaning across the catalog. People (and
 agents) learn `usb_w` in one case and read it the same way in the next, so a
@@ -46,6 +47,28 @@ meaning through its help: a listed knob whose help does not say its meaning
 word — or says the other meaning's — fails, naming the name to use instead.
 A listed knob with no help passes: there is no meaning on it to transfer yet
 (writing that help is the parametric-UX backlog's next wave).
+
+Fifth rule: the stud/keyhole hanging interface keeps ONE group name. The
+README sells it as the part of the design language that transfers between
+parts, and the audit found it under 14 group names across 17 files (C10). A
+knob of the interface itself — the blind pocket's kh_* numbers, the T-stud's
+stud_* numbers (INTERFACE_KNOBS) — sits in a group named INTERFACE_GROUP
+(the builder's short name: text after " — " is a per-file note). The C3
+pocket case's egg hanger is exempt (INTERFACE_EXEMPT, with its reason).
+
+Sixth rule: a knob with a stated range keeps its whole help on its own line.
+The web builder draws such a knob as a slider with that line's help beside
+it, the Lab lists its range next to the same help, and neither reads the
+comment lines below. C10 moved six ranges off continuation lines onto their
+knobs, and the help on each of those lines had been wrapped mid-sentence
+("...cavity_cut): the sharp", "...the validated spot). The", "...; bond
+with"), so the knob came with half a sentence (review of C10). When a
+comment-only continuation follows a ranged knob, its help must end at a
+sentence boundary: parentheses closed, no dangling article, conjunction or
+preposition (RUN_ON_WORDS), and the continuation starting a new sentence (a
+capital letter or a digit). A knob without a range shows its help the same
+way but is not judged yet: help wrapped that way predates C10 in many
+files, and the rule starts where there is no debt.
 
 Run from the repo root:  python3 scripts/lint_design_lang.py
 """
@@ -159,18 +182,12 @@ def lint_file(path):
     return problems
 
 
-# Shared-help lines the 2026-09 sweep (C1) left alone ON PURPOSE, keyed by
-# (file, first knob on the line). The 7" case's sources are hashed by
-# gen_stamp.py and were kept out of that sweep by decision — its maintainer
-# owns every edit there. (gen_stamp's digest is comment-free and whitespace-
-# normalized, so splitting these lines re-stamps nothing: gen_stamp.py
-# --check stays green. That is the follow-up, and it deletes these entries.)
-HELP_LINE_DEBT = {
-    ("canary_s3_lcd7.scad", "bottom_open_w"),
-    ("canary_s3_lcd7.scad", "side_open_h"),
-    ("canary_s3_lcd7.scad", "lob_d"),
-    ("canary_s3_lcd7.scad", "gill_w"),
-}
+# Shared-help lines left alone ON PURPOSE, keyed by (file, first knob on the
+# line). The 2026-09 sweep (C1) left the 7" case's four — its sources are
+# hashed by gen_stamp.py — and C10 split them: gen_stamp's digest is
+# comment-free and whitespace-normalized, so the split re-stamped nothing
+# (gen_stamp.py --check stayed green). The ledger is paid off; it only shrinks.
+HELP_LINE_DEBT: set[tuple[str, str]] = set()
 
 
 # The fourth rule's table (DESIGN_RULES.md §10 states it for people). name ->
@@ -227,6 +244,79 @@ def lint_meanings(path):
     return problems
 
 
+# The fifth rule's table (DESIGN_RULES.md §10 states it for people).
+INTERFACE_GROUP = "Stud/keyhole interface"
+INTERFACE_KNOBS = {
+    "kh_head_d", "kh_shank_d", "kh_slot_l", "kh_head_h", "kh_face", "kh_click",
+    "stud_gap", "stud_d", "stud_head", "stud_head_t", "stud_stem_h",
+}
+INTERFACE_EXEMPT = {
+    "canary_c3_lcd147.scad": "its egg hanger is a through-cut screw hanger sized to the largest wall-"
+                             "screw head (kh_head_d 9.5), not the blind T-stud pocket",
+}
+
+
+def lint_interface_group(path):
+    """Fifth rule: every interface knob sits in the one interface group."""
+    if path.name in INTERFACE_EXEMPT:
+        return []
+    problems = []
+    for group in gen_builder_manifest.parse_scad(path, with_lines=True):
+        short = group["name"].split(" — ")[0].strip()
+        for param in group["params"]:
+            if param["name"] in INTERFACE_KNOBS and short != INTERFACE_GROUP:
+                problems.append(
+                    f"{path.name}:{param['line']}: `{param['name']}` is a knob of the catalog's "
+                    f"stud/keyhole interface, but it sits in the group [{group['name']}]. The "
+                    f"interface keeps one name everywhere it appears — put it under "
+                    f"/* [{INTERFACE_GROUP}] */ (a per-file note may follow the bracket) "
+                    "(DESIGN_RULES.md §10)")
+    return problems
+
+
+# The sixth rule's table: a help that ends on one of these words (an article,
+# a conjunction, a preposition, a relative pronoun) is a sentence cut off by
+# a line wrap, whatever the next line says.
+RUN_ON_WORDS = {
+    "a", "an", "the", "and", "or", "but", "nor", "so", "with", "of", "to", "in", "on",
+    "at", "for", "by", "from", "as", "into", "onto", "via", "per", "than", "that", "which",
+}
+
+
+def lint_ranged_help(path):
+    """Sixth rule: a knob with a stated range keeps its whole help on its line."""
+    problems = []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for group in gen_builder_manifest.parse_scad(path, with_lines=True):
+        for param in group["params"]:
+            desc = param.get("desc", "")
+            if "min" not in param or not desc:
+                continue
+            nxt = lines[param["line"]] if param["line"] < len(lines) else ""
+            cont = re.match(r"^\s+//\s*(\S.*)$", nxt)
+            if not cont:
+                continue
+            last = re.search(r"([A-Za-z]+)\W*$", desc)
+            cut = []
+            if desc.count("(") > desc.count(")"):
+                cut.append("an open parenthesis")
+            if desc.rstrip()[-1] in ",:;(":
+                cut.append(f"a trailing '{desc.rstrip()[-1]}'")
+            if last and last.group(1).lower() in RUN_ON_WORDS:
+                cut.append(f"a dangling '{last.group(1)}'")
+            if not re.match(r"[A-Z0-9]", cont.group(1)):
+                cut.append(f"a next line that goes on mid-sentence ('{cont.group(1)[:24]}…')")
+            if cut:
+                problems.append(
+                    f"{path.name}:{param['line']}: `{param['name']}` states a range, so the "
+                    "builder draws a slider and the Lab lists the range, each with this line's "
+                    f"help beside it — and neither reads further. Its help ends \"…{desc[-32:]}\" "
+                    f"with {' and '.join(cut)}, so the knob shows half a sentence. End the help "
+                    "at a sentence boundary on the knob's line, and start the next line with a "
+                    "new sentence (DESIGN_RULES.md §10)")
+    return problems
+
+
 def knob_lines(path):
     """{line number: [knob names]} as gen_builder_manifest.parse_scad sees them."""
     by_line = {}
@@ -272,20 +362,24 @@ def main():
         found, seen = lint_help_lines(path, HELP_LINE_DEBT)
         problems += found
         problems += lint_meanings(path)
+        problems += lint_interface_group(path)
+        problems += lint_ranged_help(path)
         debt_seen |= seen
     for name, knob in sorted(HELP_LINE_DEBT - debt_seen):
         problems.append(f"{name}: HELP_LINE_DEBT lists the shared-help line starting "
                         f"'{knob} =', which is gone — delete the entry (the ledger only shrinks)")
     if debt_seen:
         print(f"INFO: {len(debt_seen)} shared-help knob line(s) left by decision "
-              "(HELP_LINE_DEBT — the 7\" case's gen_stamp-hashed source)")
+              "(HELP_LINE_DEBT)")
     if problems:
         for p in problems:
             print(f"::error::design language: {p}")
         print(f"\ndesign language: {len(problems)} problem(s)")
         return 1
     print("design language OK — every canonical default conforms or explains itself, "
-          "every knob's help is on its own line, and every shared name keeps its meaning")
+          "every knob's help is on its own line, every ranged knob's help ends there, "
+          "every shared name keeps its meaning, and the stud/keyhole interface keeps its "
+          "one group name")
     return 0
 
 

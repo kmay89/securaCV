@@ -345,6 +345,22 @@ function classifyFlashError(err) {
   const msg = String((err && (err.message || err.name)) || err || "").toLowerCase();
   const has = (...subs) => subs.some((s) => msg.includes(s));
 
+  // The bundled espflash never started: the app's own engine failed, not the
+  // board (flash-engine sidecar.rs spawn_error, "could not start espflash: …";
+  // each app's host says "bundled espflash missing: …" when the sidecar can't
+  // even be resolved). Checked FIRST: the OS words such a failure in
+  // port-shaped terms ("Permission denied" for a file without its execute
+  // bit, "No such file or directory" for a missing loader), and the checks
+  // below would read those as the port's and coach dialout or download mode
+  // at a board that was never the problem.
+  if (has("could not start espflash", "bundled espflash missing"))
+    return { kind: "engine", title: "The app's flash engine couldn't start",
+      hint: "That's this app, not your board — the espflash engine it bundles wouldn't " +
+        "run on this computer, so download mode won't help. Install the newest release " +
+        "for this computer from securacv.com/download (the Mac download is universal, " +
+        "Apple Silicon and Intel; the Linux one is for x86-64 PCs). If the newest one " +
+        "fails the same way, please report it, with the reason the system gave." };
+
   if (has("failed to open serial port", "port is already open", "already open",
           "resource temporarily unavailable", "resource busy", "device or resource busy") ||
       (has("open") && has("access", "busy", "in use")))
@@ -395,6 +411,15 @@ function classifyFlashError(err) {
   return { kind: "unknown", title: null,
     hint: "If this keeps happening: unplug the board, plug it back in, put it in download " +
       "mode (hold BOOT, tap RESET, release BOOT), and retry." };
+}
+
+// The system's own reason a bundled espflash didn't start, out of the
+// backend's one-line spawn error (flash-engine sidecar.rs spawn_error keeps
+// the raw OS error last, after any hint): its "(os error N)" clause when it
+// has one, else everything after the first colon.
+function spawnReason(line) {
+  const os = /[^():]*\(os error \d+\)/.exec(line);
+  return (os ? os[0] : line.slice(line.indexOf(":") + 1)).trim();
 }
 
 // USB-serial bridge chips that need an OS driver (parity: flash-core.js
@@ -1088,7 +1113,10 @@ function witnessBoardBases(sightings) {
   return b;
 }
 // The kernel addresses first — the provisioned host, then the well-known
-// `canary.local:8099` and `canary.local` — and the browsed boards only after
+// three in the Apple TV's order (tvos WallModel.wellKnownCandidates): the hub
+// convention `canary.local:8099`, the kernel's own API port
+// `canary.local:8799` (what the Home Assistant add-on and the Docker sidecar
+// serve), then a bare `canary.local` — and the browsed boards only after
 // them: the kernel advertises no `_securacv._tcp`, and a WAP or display
 // answers /api/fleet with a one-board self-report, so a board tried first
 // would stand in for the kernel's whole fleet (witness_discover returns the
@@ -1097,7 +1125,7 @@ function witnessBases(sightings) {
   const bases = [];
   const host = $("mqtt-host") && $("mqtt-host").value && $("mqtt-host").value.trim();
   if (host) { bases.push("http://" + host + ":8099"); bases.push("http://" + host); }
-  bases.push("http://canary.local:8099", "http://canary.local");
+  bases.push("http://canary.local:8099", "http://canary.local:8799", "http://canary.local");
   bases.push(...witnessBoardBases(sightings));
   return [...new Set(bases)];
 }
@@ -2390,15 +2418,20 @@ async function identify(portInfo) {
     // the download-mode advice: for those it IS the fix.
     const c = classifyFlashError(e);
     const named = !osLevel && c.kind !== "unknown" && c.kind !== "not-in-download";
+    // A bundled espflash that never started (`engine`) is this app's failure,
+    // not the board's: it gets its own words and the system's reason, and no
+    // driver note — no port was ever opened.
+    const engine = c.kind === "engine";
+    const reason = engine ? ` (The system said: ${spawnReason(firstLine)})` : "";
     // A known USB-serial bridge that won't talk is usually a missing OS
     // driver — name the chip and the driver instead of coaching BOOT/RESET
     // at a port the OS can't even open properly (parity: usbBridgeInfo). The
     // browser appends its driver hint on every non-module failure too.
     const bridge = state.portInfo && usbBridgeInfo(state.portInfo.vid, state.portInfo.pid);
-    const bridgeNote = !osLevel && bridge ? " " + bridge.note : "";
+    const bridgeNote = !osLevel && !engine && bridge ? " " + bridge.note : "";
     setConn("failed",
       osLevel ? `Found ${port} — ${firstLine}`
-        : named ? `Found ${port} — ${c.title}. ${c.hint}${bridgeNote}`
+        : named ? `Found ${port} — ${c.title}. ${c.hint}${reason}${bridgeNote}`
           : `Found ${port} — couldn't read the chip. Put it in download mode.${bridgeNote}`);
     $("download-mode").classList.toggle("hidden", osLevel || named);
     $("recheck").classList.remove("hidden");

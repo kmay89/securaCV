@@ -50,16 +50,17 @@ lid_t = 2.4;         // lid thickness — the service-box duty build, chunky lik
 inner_pad = 8.0;     // interior margin around the board (wiring room)
 corner_r = 2.0;      // deviates: squared, utilitarian — the service box reads as gear, not decor
 lip_h = 3.0;  lip_t = 1.2;
-floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp
-                   // notch there was the crack-starter in every flat-printed shell — a corner drop hinges the
-                   // floor about it along one layer boundary. 0 = the old square corner  // [0:0.2:1.2]
+floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner  // [0:0.2:1.2]
+                   // The sharp notch there was the crack-starter in every flat-printed shell — a corner drop
+                   // hinges the floor about it along one layer boundary.
 lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
                    // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 boss_d = 12.0;       // fake conduit boss diameter (fits the body height; a true 1/2" boss needs a taller shell)
 boss_l = 6.0;        // boss protrusion
 screw_d = 1.6;  screw_head_d = 4.0;  screw_head_h = 1.6;
 post_d = 5.0;
-usb_w = 10.5;  usb_h = 6.5;
+usb_w = 10.5;
+usb_h = 6.5;
 
 /* [Camera knockout] */
 cam_ap_d   = 9.0;

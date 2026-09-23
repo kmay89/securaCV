@@ -12,6 +12,11 @@ on:
       - 'pyproject.toml'
       - 'requirements_test.txt'
       - '.github/workflows/python.yml'
+      # Firmware sources a test reads (test_wap_tamper_health.py builds the
+      # WAP's MQTT health from them), so a firmware-only edit that stops
+      # carrying a tamper level still runs the test that catches it.
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino'
   pull_request:
     branches: [main]
     paths:
@@ -20,6 +25,11 @@ on:
       - 'pyproject.toml'
       - 'requirements_test.txt'
       - '.github/workflows/python.yml'
+      # Firmware sources a test reads (test_wap_tamper_health.py builds the
+      # WAP's MQTT health from them), so a firmware-only edit that stops
+      # carrying a tamper level still runs the test that catches it.
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino'
 
 permissions:
   contents: read

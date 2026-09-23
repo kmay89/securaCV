@@ -25,10 +25,10 @@ mod hub;
 mod launch_guard;
 mod secret_store;
 mod serial_monitor;
-mod whoami;
 mod sscma;
 mod we2;
 mod we2_bench;
+mod whoami;
 
 // The ESP32 flash engine (desktop/flash-engine) — shared with the Lab and
 // PR-CI-tested on its own. Imported at the crate root under the names these
@@ -782,7 +782,11 @@ fn auto_backup_path(app: AppHandle, mac: String) -> Result<String, String> {
     Ok(dir
         .join(format!(
             "canary-{}-{stamp}.bin",
-            if safe_mac.is_empty() { "unknown".into() } else { safe_mac }
+            if safe_mac.is_empty() {
+                "unknown".into()
+            } else {
+                safe_mac
+            }
         ))
         .to_string_lossy()
         .to_string())
@@ -1242,11 +1246,7 @@ async fn health_check(
 /// rather than failing the connect. A passport that cannot be read must never
 /// be reported as a blank board — missing evidence is its own answer.
 #[tauri::command]
-async fn board_passport(
-    app: AppHandle,
-    port: String,
-    baud: u32,
-) -> Result<Value, String> {
+async fn board_passport(app: AppHandle, port: String, baud: u32) -> Result<Value, String> {
     // Each region is its own espflash spawn (bootloader re-sync included), so
     // the whole read runs 8–25 s — long enough that a silent label reads as a
     // hang. `passport:log` narrates each step; the frontend shows the line in
@@ -1271,8 +1271,7 @@ async fn board_passport(
     if let Some(otap) = entries.iter().find(|e| health::is_ota_data(e)) {
         if !slots.is_empty() {
             narrate("reading its update history…");
-            if let Ok(ob) =
-                read_region(&app, &port, otap.offset, otap.size.min(0x2000), baud).await
+            if let Ok(ob) = read_region(&app, &port, otap.offset, otap.size.min(0x2000), baud).await
             {
                 let o = health::parse_ota_data(&ob, slots.len() as u32);
                 ota_json = json!({
@@ -1574,9 +1573,15 @@ mod catalog_derivation_tests {
         let catalog: Value = serde_json::from_str(EMBEDDED_CATALOG).unwrap();
         let module = &catalog["we2_module"];
         let vid = u16::from_str_radix(
-            module["usb_vid"].as_str().unwrap().trim_start_matches("0x"), 16).unwrap();
+            module["usb_vid"].as_str().unwrap().trim_start_matches("0x"),
+            16,
+        )
+        .unwrap();
         let pid = u16::from_str_radix(
-            module["usb_pid"].as_str().unwrap().trim_start_matches("0x"), 16).unwrap();
+            module["usb_pid"].as_str().unwrap().trim_start_matches("0x"),
+            16,
+        )
+        .unwrap();
         assert!(crate::we2::is_module_usb(Some(vid), Some(pid)));
         assert!(!crate::we2::is_module_usb(Some(vid), Some(pid ^ 1)));
         assert!(!crate::we2::is_module_usb(None, None));
@@ -1593,8 +1598,7 @@ mod webview_boundary_tests {
         // webview-supplied destination gets exactly the JSON export's rules.
         let dir = tempfile::tempdir().expect("tempdir");
         let good = dir.path().join("canary-backup.bin");
-        let resolved =
-            validated_backup_path(good.to_str().unwrap()).expect("a dialog-shaped path");
+        let resolved = validated_backup_path(good.to_str().unwrap()).expect("a dialog-shaped path");
         assert_eq!(resolved.file_name().unwrap(), "canary-backup.bin");
 
         assert!(validated_backup_path("backup.bin").is_err(), "relative");
@@ -1611,7 +1615,10 @@ mod webview_boundary_tests {
         let sneaky = dir.path().join("sub/../canary-backup.bin");
         let resolved = validated_backup_path(sneaky.to_str().unwrap()).unwrap();
         assert!(!resolved.to_string_lossy().contains(".."));
-        assert_eq!(resolved.parent().unwrap(), dir.path().canonicalize().unwrap());
+        assert_eq!(
+            resolved.parent().unwrap(),
+            dir.path().canonicalize().unwrap()
+        );
     }
 
     #[test]
@@ -1624,15 +1631,21 @@ mod webview_boundary_tests {
         // Relative paths, non-.json targets, and missing folders are refused.
         assert!(validated_save_path("report.json").is_err());
         assert!(validated_save_path(dir.path().join("evil.sh").to_str().unwrap()).is_err());
-        assert!(validated_save_path(
-            dir.path().join("no-such-dir/report.json").to_str().unwrap()
-        )
-        .is_err());
+        assert!(
+            validated_save_path(dir.path().join("no-such-dir/report.json").to_str().unwrap())
+                .is_err()
+        );
 
         // `..` segments are resolved away, never written through blindly.
         std::fs::create_dir(dir.path().join("sub")).unwrap();
         let sneaky = dir.path().join("sub/../canary-report.json");
         let resolved = validated_save_path(sneaky.to_str().unwrap()).expect("canonicalized");
-        assert_eq!(resolved, dir.path().canonicalize().unwrap().join("canary-report.json"));
+        assert_eq!(
+            resolved,
+            dir.path()
+                .canonicalize()
+                .unwrap()
+                .join("canary-report.json")
+        );
     }
 }

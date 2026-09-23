@@ -119,7 +119,11 @@ top face the lid seats on.
 
 | Rule | Number | Enforced by |
 |---|---|---|
-| A knob's help sits on the knob's own line — the builder's parser keeps a trailing comment only on a one-knob line, so `a = 1;  b = 2;  // help` reaches neither | one knob per commented line | `lint_design_lang.py` (third rule); `HELP_LINE_DEBT` lists the 7" case's four lines, left by decision, and only shrinks |
+| A knob's help sits on the knob's own line — the builder's parser keeps a trailing comment only on a one-knob line, so `a = 1;  b = 2;  // help` reaches neither | one knob per commented line | `lint_design_lang.py` (third rule); its `HELP_LINE_DEBT` ledger is empty since C10 split the 7" case's four lines, and it only shrinks |
+| A knob's range is the last `[min:step:max]` bracket in its trailing comment — the house form is `help  // [min:step:max]` — and the web builder and the Lab read it the same way | one reading, two parsers | `scripts/tests/test_enclosure_parsers.py`: `gen_builder_manifest.parse_scad` and `gen_enclosures.py`'s `parse_scad` agree on every knob's range and help |
+| A knob with a range keeps its whole help on its own line — the builder draws a slider with that line's help beside it, the Lab lists the range with the same help, and neither reads the comment lines below, so a help wrapped mid-sentence shows as half a sentence | the help ends at a sentence boundary; a continuation starts a new one | `lint_design_lang.py` (sixth rule): a ranged knob followed by a continuation fails on an open parenthesis, a dangling article, conjunction or preposition (`RUN_ON_WORDS`), or a continuation that starts in lowercase. Knobs without a range are not judged yet |
+| The stud/keyhole hanging interface — the README's "two-stud wall-hanging interface", the part of the design language that transfers between parts — keeps ONE group name wherever its knobs appear (it had 14, across 17 files) | `/* [Stud/keyhole interface] */`, a per-file note after the bracket (the name: maintainer to confirm) | `lint_design_lang.py` (fifth rule, `INTERFACE_KNOBS`): an interface knob in any other group fails; the C3 pocket case's egg hanger is exempt by name (`INTERFACE_EXEMPT`: a through-cut screw hanger, not the blind pocket) |
+| A released case's preset grays out exactly the options it overrides — the builder locks `preset_controls` while the preset is not `custom`, the `.scad`'s `_pre()` decides what the preset overrides | one list (the doorbell's and the Sense's preset contents, added in C10: maintainer to confirm) | `gen_builder_manifest.py` refuses a mismatch; `scripts/tests/test_builder_presets.py` |
 | A knob name means one thing across the catalog — a reader who learned it in one case reads it the same way in the next, so a second meaning gets its own name | the table below | `lint_design_lang.py` (fourth rule, `KNOB_MEANINGS`): a listed knob whose help does not say its meaning, or says the other one, fails |
 
 | Name | Means | Not to be confused with |
@@ -162,8 +166,21 @@ top face the lid seats on.
   `scripts/regen_cad.py --previews <dir>` with previews of every affected
   part. Nothing has been changed: the per-case call is the maintainer's.
 - **Customizer help text** — the audit's parametric UX section. Done: every
-  shared-help line outside the 7" case is split one knob per line, and the
-  unambiguous comments above a knob are summarized onto it (681 → 536 knobs
-  without help). Open: help for the knobs that never had any (the released
-  four first), `[min:step:max]` ranges, one group name for the two-stud
-  interface, and presets for the doorbell and the Sense.
+  shared-help line is split one knob per line (the 7" case's four last), the
+  unambiguous comments above a knob are summarized onto it, every knob of the
+  released four has help except its eleven option-list selectors, the ranges
+  their sources state reach both parsers, the stud/keyhole interface has one
+  group name, and the doorbell and the Sense have presets (C1, then C10;
+  knobs without help, recounted with the builder's parser: 681 → 536 → 347,
+  the two new presets' selectors included).
+  Open: help for the 336 knobs of the development cases that still have
+  none (the 7" case's nine included), and the call below.
+  Found on the way (a maintainer call, nothing changed): OpenSCAD 2021.01's
+  own Customizer builds a slider or a dropdown only from a trailing comment
+  that is the bare bracket — probed with `openscad -o x.ast`, both
+  `// help  // [4:0.5:8]` and `// ["a","b"] text` come back
+  `Parameter("")`. So every range written with its help beside it (the house
+  form both repo parsers read) is a plain number box in the desktop
+  Customizer, and an option list with text after it (the WAP's `part`, every
+  `colorway`) loses its dropdown there. The Customizer's own description
+  slot is the comment line ABOVE a knob, which neither repo parser reads.

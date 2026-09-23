@@ -155,6 +155,9 @@ static bool s_discovery_sent = false;
 static mqtt_offline_queue::Queue s_offline_q;
 static bool s_offline_q_alloc_tried = false;
 static uint32_t s_drain_logged_replayed = 0;
+// mqtt_destination_epoch(): bumped on the main task by a reprovision that
+// changes the broker (apply_pending_reload), read on the same task.
+static uint32_t s_destination_epoch = 0;
 
 // NVS keys for MQTT credentials
 static const char* NVS_KEY_MQTT_HOST = "mqtt_host";
@@ -690,11 +693,14 @@ static void apply_pending_reload() {
   // that accepted them. If the endpoint or the account changed — or the
   // broker was removed — flush rather than drain stale security signals
   // to the wrong endpoint. A password rotation or TLS reprovision of the
-  // SAME host/port/user keeps the queue: destination unchanged.
-  if (!s_offline_q.empty() &&
-      (!s_creds.configured || !s_creds.enabled ||
-       strcmp(prev_host, s_creds.host) != 0 || prev_port != s_creds.port ||
-       strcmp(prev_user, s_creds.username) != 0)) {
+  // SAME host/port/user keeps the queue: destination unchanged. The epoch
+  // tells the SD event log's backfill the same thing about its own backlog.
+  const bool destination_changed =
+      !s_creds.configured || !s_creds.enabled ||
+      strcmp(prev_host, s_creds.host) != 0 || prev_port != s_creds.port ||
+      strcmp(prev_user, s_creds.username) != 0;
+  if (destination_changed) s_destination_epoch++;
+  if (!s_offline_q.empty() && destination_changed) {
     char detail[64];
     snprintf(detail, sizeof(detail), "broker changed; %u records discarded",
              (unsigned)s_offline_q.clear());
@@ -980,6 +986,20 @@ bool mqtt_publish_event(const char* json_payload) {
   if (!s_initialized || !s_creds.configured || !s_creds.enabled) return false;
   return publish_or_queue(mqtt_offline_queue::KIND_EVENT, s_topic_events,
                           json_payload, /*retained*/ false);
+}
+
+bool mqtt_publish_event_live(const char* json_payload) {
+  if (json_payload == nullptr || !s_initialized || !s_creds.configured ||
+      !s_creds.enabled) {
+    return false;
+  }
+  // The outage's queued records drain first (mqtt_loop), in order.
+  if (!s_mqtt.connected() || !s_offline_q.empty()) return false;
+  return s_mqtt.publish(s_topic_events, json_payload, /*retained*/ false);
+}
+
+uint32_t mqtt_destination_epoch() {
+  return s_destination_epoch;
 }
 
 bool mqtt_publish_health(const char* json_payload) {

@@ -164,19 +164,21 @@ What landed instead of a default-build gate:
 - **flash encryption does not cover NVS.** With it on, ESP-IDF encrypts only the app, otadata and
   `nvs_keys` partitions; this tree's tables leave `nvs` unflagged, so it is still written in
   plaintext, and flagging it `encrypted` does not help — plain NVS then refuses to open it
-  (`ESP_ERR_NVS_WRONG_ENCRYPTION`; IDF v4.4 `nvs_partition_lookup.cpp`), which is what
-  `provisioning/partitions_secure.csv` does today, so the kit's `[env:secure]` image could not
-  open NVS on a fused board at all (recorded in `platformio_secure.ini`, not fixed). The key is
-  ciphertext at rest only under **NVS encryption** on top of flash encryption;
+  (`ESP_ERR_NVS_WRONG_ENCRYPTION`; IDF v4.4 `nvs_partition_lookup.cpp`). That is what
+  `provisioning/partitions_secure.csv` did until F42, so the kit's `[env:secure]` image could not
+  have opened NVS on a fused board; the flag is gone now (ESP-IDF's flash-encryption guide: the
+  `nvs` partition cannot be encrypted). The key is ciphertext at rest only under
+  **NVS encryption** on top of flash encryption;
 - the policy is written down once, host-tested, in
   [`common/identity/key_at_rest.h`](common/identity/key_at_rest.h): the tier is `plaintext-nvs`
   unless flash encryption AND NVS encryption are both active; the default never refuses; an image
   built with `SECURACV_REQUIRE_FLASH_ENCRYPTION=1` (a Tier-3+ image) refuses to store **and** to
   load the key unless its NVS is actually encrypted, so it fails closed at provisioning — under
   `framework = arduino` that is **every** board, fused or not, by design. The provisioning kit's
-  `[env:secure]` sets the flag, but no CI job builds that env and, as written, it lacks the shared
-  `-I` paths (pre-existing; recorded in the file); bench row K1 builds the opt-in as a normal
-  canary env with `PLATFORMIO_BUILD_FLAGS=-DSECURACV_REQUIRE_FLASH_ENCRYPTION=1`;
+  `[env:secure]` sets the flag; since F42 it extends the canary `[env]` flags (it had replaced
+  them, losing the shared `-I` paths) and `firmware.yml` compiles it and `secure_ha`
+  (compile-only, no bench pass). Bench row K1 builds the opt-in as a normal canary env with
+  `PLATFORMIO_BUILD_FLAGS=-DSECURACV_REQUIRE_FLASH_ENCRYPTION=1`;
 - the posture is **self-reported** live as `key_at_rest` (`plaintext-nvs` | `nvs-encrypted` |
   `nvs-encrypted+secure-boot`) in `/api/status`, the health export, the `f` console card and the
   `j` self-manifest, with one `[WARN] Key at rest` boot line — `plaintext-nvs` on every PIO canary
@@ -408,8 +410,8 @@ Untapped / issues:
   closes for those builds with §1.1. CI-compiled (#1704), no bench pass. Not in this change: widening the 8-char
   AP password (below) — it is re-derived from the fingerprint every boot, so a new derivation
   changes every provisioned device's Wi-Fi password after an OTA and needs a derivation-version
-  marker first. The `"witness2026"` tripwires in `pre_build.py` / `regression_check.sh` match no
-  source today; they stay as the ratchet.
+  marker first. The `"witness2026"` tripwire in `regression_check.sh` (CI's "Regression Guards"
+  job) matches no source today; it stays as the ratchet.
 - **De-block the loop** — async `WiFi.scanNetworks(true,…)`, throttle/offload `MDNS.queryService`,
   move MQTT to its own task (subsumed by §1.2). **[P1]**
 - **[future] FTM ranging** (`esp_wifi_ftm_*`, S3 initiator/responder) → inter-Canary distance to

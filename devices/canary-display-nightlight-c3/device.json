@@ -41,5 +41,8 @@
   },
   "flasher": {
     "product": "securacv-canary-display-nightlight-c3"
+  },
+  "lab": {
+    "card": "canary-nightlight"
   }
 }

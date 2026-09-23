@@ -21,7 +21,7 @@ use <canary_mount_lib.scad>  // the stud/keyhole standard the studs template dri
 /* [What to render] */
 mode = "studs";      // ["studs","bracket","doorbell"]
 
-/* [Generic studs] */
+/* [Stud/keyhole interface] — the generic studs template */
 stud_gap = 30.0;     // set per case (the fit coupon's POCKET pair prints at 30)
 
 /* [Bracket] — mirror canary_vision_enclosure bracket defaults */

@@ -763,6 +763,22 @@ for (const id of Object.keys(HARDWARE_FIGURE)) {
   }
 }
 
+// Which manifests name each figure — carried in the ledger as the figure's
+// `manifests`, because a Lab card is a manifest slug while the figure it
+// draws can carry another device's id: the Nightstand 7 draws the Dash 7's
+// 7" slab (one board, one case, two products), and body-dims.js's
+// deviceFigure() resolves it through this list. Derived, never typed.
+const drawnBy = new Map();
+for (const m of manifests) {
+  if (!m.figure) continue;
+  if (!byIdBuilt.has(m.figure)) {
+    throw new Error(`figures: devices/${m.slug} names figure "${m.figure}", which is not a figure. `
+      + 'Fix the manifest or add the figure.');
+  }
+  if (!drawnBy.has(m.figure)) drawnBy.set(m.figure, []);
+  drawnBy.get(m.figure).push(m.slug);
+}
+
 /* The coarse map (CONFIG_FIGURE, above) is still typed here, because the
  * manifests cannot own it: they name boards, and a config directory is not
  * one board (canary-vision/default is compiled for four hosts; the WAP's
@@ -978,7 +994,8 @@ const ledger = {
     })),
     unmapped: hardwareGaps,
   },
-  figures: built.map(({ plan, picker, massing, ghost, ...rest }) => rest),
+  figures: built.map(({ plan, picker, massing, ghost, ...rest }) => (drawnBy.has(rest.id)
+    ? { ...rest, manifests: drawnBy.get(rest.id) } : rest)),
 };
 emit(OUT_JSON, `${JSON.stringify(ledger, null, 1)}\n`);
 

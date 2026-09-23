@@ -24,6 +24,7 @@
 #if FEATURE_SD_STORAGE
 #include "securacv_storage.h"
 #include "storage/sd_mount_policy.h"  // SD_TAMPER_* — the health payload's sd_mounted
+#include "securacv_witness_history.h"  // the timeline's card pages (F35), served below
 #endif
 
 #if FEATURE_WIFI_AP
@@ -59,12 +60,18 @@
 #include "contact_tamper.h"  /* enclosure contact debounce (common/csi/src) */
 #endif
 
-#if FEATURE_CSI
-#include "securacv_csi.h"
+/* Outside the FEATURE_CSI gate on purpose: loop()'s system.integrity tamper
+ * feed and syncClockFromGps()'s bucket offset run in every build, and their
+ * definitions (csi_modules_integration.cpp, csi_event.cpp) compile into every
+ * env, so a CSI-off build ([env:minimal], [env:secure]) needs these
+ * declarations too — without them main.cpp did not compile there (F42). */
 #include "csi_modules_integration.h"
-#include "csi_event_egress.h"  /* committed events -> MQTT events/tamper (F29) */
 #include "csi_event.h"  /* csi_event_set_clock_offset_minutes — wall-clock bucket alignment */
 #include "time/tz_rule.h"  /* local minute-of-day for that offset (household zone, F28) */
+
+#if FEATURE_CSI
+#include "securacv_csi.h"
+#include "csi_event_egress.h"  /* committed events -> MQTT events/tamper (F29) */
 
 /* csi_features_t is the canonical csi_types.h struct (securacv_csi.h
  * includes it rather than declaring a twin — roadmap 22), so the module
@@ -83,6 +90,7 @@ static_assert(sizeof(csi_features_t) == 36,
 #include "mesh_transport.h"
 #include "mesh_session.h"
 #include "mesh_state.h"
+#include "mesh_revocation.h"
 #endif
 
 #if FEATURE_ACOUSTIC_EVENTS
@@ -431,6 +439,52 @@ static void mesh_fp_hex(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
   out[mesh_crypto::FINGERPRINT_LEN * 2] = '\0';
 }
 
+/* The §5.6 revocation deny-list to NVS (F33 part 6, FE-gated): on every
+ * change and at the 5-minute cadence while it holds anything, so a reboot
+ * restores roughly the grace that was left (never less). */
+static bool g_revocations_stored = false;
+static void persist_revocations() {
+  if (mesh_session::revoked_count() == 0 && !g_revocations_stored) return;
+  uint8_t blob[mesh_revocation::BLOB_MAX];
+  const size_t n = mesh_session::encode_revocations(blob, sizeof(blob));
+  if (mesh_state::save_revocations(blob, n)) g_revocations_stored = (n > 0);
+}
+
+/* A device was deny-listed (F33 part 6): removed here, or named as removed
+ * by a verified REKEY_OFFER from a trusted peer — which this device honors
+ * at once, whether or not it takes part in that rotation. Drop it from NVS
+ * too, keep its counter as a tombstone, and persist the list. */
+static void on_mesh_peer_revoked(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                                 const uint8_t* pubkey) {
+  char hex[mesh_crypto::FINGERPRINT_LEN * 2 + 1];
+  mesh_fp_hex(fp, hex);
+  const bool dropped = pubkey == nullptr || mesh_state::remove_trusted_peer(pubkey);
+  persist_replay_counters();
+  persist_revocations();
+  log_health(dropped ? LOG_LEVEL_WARNING : LOG_LEVEL_ALERT, LOG_CAT_NETWORK,
+             "Opera peer revoked (7-day deny-list)", hex);
+}
+
+/* POST /api/mesh/pair/start found no opera, and the main loop is founding
+ * one (F33 part 4, spec §5.4). The secret must be durable BEFORE the session
+ * uses it — a false return creates nothing (the route answers
+ * opera_not_persisted) — because a household secret this device forgot at
+ * reboot would strand every device that joined it. FE-gated like every
+ * other opera_secret write; the route already refused on an FE-off board.
+ * The name is best effort, as on the joiner's side. */
+static bool on_mesh_opera_create(const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN],
+                                 const char* name) {
+  if (!mesh_state::save_opera_secret(secret)) {
+    Serial.println("[ERR] New opera not created: opera_secret could not be persisted");
+    return false;
+  }
+  if (name != nullptr && name[0] != '\0' && !mesh_state::save_opera_name(name)) {
+    Serial.println("[WARN] New opera's name not persisted");
+  }
+  Serial.println("[OK] New opera created and persisted (initiator pairing next)");
+  return true;
+}
+
 /* A trusted peer's verified LEAVE_OPERA arrived (F10). mesh_session has
  * already dropped it from the live table; drop the persisted copy too so
  * a reboot does not resurrect it. Runs on the main loop. */
@@ -494,6 +548,18 @@ static void register_paired_peer() {
   if (mesh_session::get_paired_peer_pubkey(peer_pub)) {
     const bool peer_save_ok = mesh_state::save_trusted_peer(peer_pub);
     const bool peer_set_ok  = mesh_session::register_trusted_peer(peer_pub);
+    /* Its radio address (F33 part 1): the session binds it into the
+     * transport table for this boot once this callback returns; persist it
+     * so the next boot can bind it too (FE-gated, like the pubkey). */
+    uint8_t peer_mac[mesh_transport::MESH_TRANSPORT_MAC_LEN];
+    if (mesh_session::get_paired_peer_mac(peer_mac)) {
+      uint8_t peer_fp[mesh_crypto::FINGERPRINT_LEN];
+      mesh_crypto::compute_fingerprint(peer_pub, peer_fp);
+      if (!mesh_state::save_peer_mac(peer_fp, peer_mac)) {
+        Serial.println("[WARN] Peer radio MAC not persisted — after a reboot "
+                       "this peer is not heard until it pairs again");
+      }
+    }
     if (peer_save_ok && peer_set_ok) {
       Serial.println("[OK] Peer pubkey persisted + registered for RX");
     } else if (peer_set_ok && !peer_save_ok) {
@@ -1054,6 +1120,20 @@ void setup() {
       mesh_session::start()) {
     Serial.println("[OK] Mesh layer active (mesh_transport + mesh_session)");
 
+    /* Outbound counter (F33 part 3): resume above every counter this device
+     * may have signed before the reboot, and persist each new reservation
+     * before its first counter is used — so peers, which remember our last
+     * counter, never drop our frames as replays after a reboot, and no
+     * counter is ever signed twice. BEFORE anything can send. Not FE-gated:
+     * a count, not a secret (mesh_state.h). */
+    {
+      uint64_t out_ctr = 0;
+      if (mesh_state::load_outbound_counter(&out_ctr)) {
+        mesh_session::restore_outbound_counter(out_ctr);
+      }
+      mesh_session::set_counter_reserve_handler(&mesh_state::save_outbound_counter);
+    }
+
     /* POST /api/mesh/enable persists the user's on/off choice (F10).
      * Absent key → enabled. Disabled stops the session but keeps the
      * membership, so the loads below still run. */
@@ -1100,6 +1180,23 @@ void setup() {
 #endif
     }
 
+    /* The revocation deny-list FIRST (F33 part 6): a device on it is not
+     * registered as trusted again below, even if an interrupted removal
+     * left its pubkey in NVS. */
+    {
+      uint8_t blob[mesh_revocation::BLOB_MAX];
+      size_t len = 0;
+      if (mesh_state::load_revocations(blob, sizeof(blob), &len) && len > 0) {
+        if (mesh_session::restore_revocations(blob, len)) {
+          g_revocations_stored = true;
+          Serial.printf("[OK] Restored %u revoked opera device(s) from NVS\n",
+                        (unsigned)mesh_session::revoked_count());
+        } else {
+          Serial.println("[WARN] Malformed revocation deny-list in NVS — ignored");
+        }
+      }
+    }
+
     /* Load persisted trusted peers (#480) and register each so this
      * boot's receive path can verify inbound BEACON_EVENT frames
      * from peers paired in previous sessions. Empty-list (first
@@ -1122,6 +1219,24 @@ void setup() {
         if (peers_count > 0) {
           Serial.printf("[OK] Registered %u/%u trusted peer pubkeys from NVS\n",
                         (unsigned)registered, (unsigned)peers_count);
+        }
+      }
+      /* Put the trusted peers' radio MACs back into the transport table
+       * (F33 part 1) — without them mesh_transport drops every frame they
+       * send (recv_dropped_no_peer) and broadcast() reaches nobody. An
+       * entry whose fingerprint is not a registered peer binds nothing. */
+      {
+        mesh_state::PeerMac macs[mesh_state::MAX_TRUSTED_PEERS];
+        size_t n_macs = 0;
+        if (mesh_state::load_peer_macs(macs, mesh_state::MAX_TRUSTED_PEERS, &n_macs)) {
+          size_t bound = 0;
+          for (size_t i = 0; i < n_macs; ++i) {
+            if (mesh_session::bind_peer_mac(macs[i].fingerprint, macs[i].mac)) ++bound;
+          }
+          if (n_macs > 0) {
+            Serial.printf("[OK] Bound %u/%u peer radio MACs from NVS\n",
+                          (unsigned)bound, (unsigned)n_macs);
+          }
         }
       }
       /* Wipe the local buffer — pubkeys aren't secret per se but a
@@ -1172,6 +1287,10 @@ void setup() {
     mesh_session::set_tamper_alert_handler(&on_mesh_tamper_alert);
     /* F10-rekey: a committed opera_secret rotation re-persists here. */
     mesh_session::set_rekey_commit_handler(&on_mesh_rekey_commit);
+    /* F33 part 6: the revocation deny-list. */
+    mesh_session::set_peer_revoked_handler(&on_mesh_peer_revoked);
+    /* F33 part 4: pair/start with no opera founds one; persisted first. */
+    mesh_session::set_opera_create_handler(&on_mesh_opera_create);
   } else {
     Serial.println("[WARN] Mesh layer init failed — broadcast disabled");
   }
@@ -1795,6 +1914,7 @@ void loop() {
     if ((int32_t)(now - s_last_replay_save_ms) >= 300000) {
       s_last_replay_save_ms = now;
       persist_replay_counters();
+      persist_revocations();   /* grace left, while the list holds anything */
     }
   }
 #endif
@@ -1821,6 +1941,13 @@ void loop() {
 #endif
     storage_periodic_check(msc_holds_card);
   }
+  // The timeline's card pages (F35): GET /api/witness posts one request to
+  // the history bridge and waits on the httpd task; this loop task — the SD
+  // owner — reads for it, at most 4 x 1 KiB per pass so a deep page takes a
+  // few passes rather than one long read (what a pass costs on a large card
+  // is bench U1's to measure). No request, no card or a mount in flight:
+  // nothing touches SD.
+  witness_history_service();
 #endif
 
   // Handle boot button (info print, factory reset)
@@ -1936,10 +2063,10 @@ void loop() {
   // feeds the pinned ABSENT constant and never emits an SD kind.
   //
   // Where the rows go: the RAM ring and, on HA builds, csi_event_egress's
-  // csi_event_on_committed override — the signed `events` topic, plus the
-  // tamper-topic bridge for the SD and enclosure kinds. Home Assistant's SD
-  // Removed sensor also reads `sd_mounted` from the health payload
-  // (mqtt_publish_health_update).
+  // csi_event_on_committed override — the SD event log, the signed `events`
+  // topic, plus the tamper-topic bridge for the SD and enclosure kinds. Home
+  // Assistant's SD Removed sensor also reads `sd_mounted` from the health
+  // payload (mqtt_publish_health_update).
   {
     static const esp_reset_reason_t s_boot_rst = esp_reset_reason();
     // Same crash set as canary-wap's hardware_state.h reset_is_crash():
@@ -2190,8 +2317,11 @@ void loop() {
 
 #if FEATURE_CSI
   // Committed csi_events (presence, breathing, system.integrity tampers)
-  // -> securacv/{id}/events, signed, plus the per-kind tamper bridge. The
-  // override only queues; this loop-task pump is the one publisher.
+  // -> the SD event log and securacv/{id}/events, signed, plus the per-kind
+  // tamper bridge; then one bounded backfill pass from the card (F37). The
+  // override only queues; this loop-task pump is the one publisher and the
+  // event log's one SD writer. After mqtt_loop(), so the offline queue
+  // drains before any backfill.
   csi_event_egress_pump();
 #endif
 

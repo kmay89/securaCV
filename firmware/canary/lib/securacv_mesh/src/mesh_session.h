@@ -158,6 +158,11 @@ bool is_enabled();
 
 /* ──────────────────────────────────────────────────────────────────────────
  * PAIRING ENTRY POINTS  (wrappers over mesh_pairing)
+ *
+ * Main-loop task, like every mutator here. The REST pairing handlers reach
+ * them only through the request slot below (PAIR_START / PAIR_JOIN /
+ * PAIR_CONFIRM / PAIR_CANCEL, F33 part 5); securacv_network.cpp poisons
+ * these four names so a direct call from the httpd task does not compile.
  * ────────────────────────────────────────────────────────────────────────── */
 
 bool start_pairing_initiator(const uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN],
@@ -184,6 +189,13 @@ uint32_t            pairing_confirmation_code();
  * Threading: must be called from the same task as process() (main
  * loop) — same task the PairedCallback fires from. */
 bool get_paired_peer_pubkey(uint8_t out[mesh_crypto::PUBKEY_LEN]);
+
+/* The pairing partner's radio MAC (F33 part 1), from AWAITING_CONFIRM on,
+ * like get_paired_peer_pubkey(). The integration layer persists it from its
+ * PairedCallback (mesh_state::save_peer_mac) so the next boot can bind it;
+ * the session binds it for this boot itself (bind_peer_mac, right after the
+ * callback returns, once the callback has registered the peer). */
+bool get_paired_peer_mac(uint8_t out[mesh_transport::MESH_TRANSPORT_MAC_LEN]);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * MAIN LOOP
@@ -242,6 +254,41 @@ bool set_opera_secret(const uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN])
 /* True iff set_opera_secret() has been called successfully. Integrations
  * check this before wiring the broadcast callback. */
 bool has_opera_secret();
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * OUTBOUND COUNTER PERSISTENCE  (F33 part 3 — reserve-ahead)
+ *
+ * Receivers persist every sender's last counter (replay_ctrs) and drop a
+ * frame whose counter is not above it, so a sender whose counter restarts
+ * after a reboot is deaf to them until it climbs back — and must never sign
+ * two frames with one counter. The counter is therefore reserved ahead:
+ *
+ *   • set_counter_reserve_handler(fn): fn(high) must durably store `high`
+ *     (main.cpp: mesh_state::save_outbound_counter) and return true. Before
+ *     the first counter above the current reservation is used, the session
+ *     calls fn(last + COUNTER_RESERVE_BLOCK); a false return refuses that
+ *     counter — the send fails — and the next send tries again. So NVS is
+ *     written once per COUNTER_RESERVE_BLOCK frames, not per frame, and no
+ *     counter is ever used that a reboot could reissue.
+ *   • restore_outbound_counter(high): at boot, BEFORE anything is sent,
+ *     with the last value the handler stored. The counter resumes above
+ *     it; the next send reserves a fresh block. A crash anywhere — after a
+ *     reserve and before the frame went out included — costs at most an
+ *     unused gap of counters, which receivers accept (they need only
+ *     "higher"), never a reuse.
+ *   • Without a handler (host tests that do not install one) the counter
+ *     is RAM-only, as before F33.
+ * deinit() resets the counter, the reservation and the handler;
+ * leave_opera() keeps them (see LEAVE). Main-loop task, like every sender.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr uint64_t COUNTER_RESERVE_BLOCK = 1024;
+
+typedef bool (*counter_reserve_fn)(uint64_t high_water);
+
+void     set_counter_reserve_handler(counter_reserve_fn fn);
+void     restore_outbound_counter(uint64_t persisted_high_water);
+uint64_t outbound_counter();   /* the last counter signed (0: none yet) */
 
 /* ──────────────────────────────────────────────────────────────────────────
  * STATUS ACCESSORS  (PR-8 — Mesh REST API)
@@ -360,6 +407,41 @@ constexpr size_t MAX_REPLAY_COUNTERS    = MAX_TRUSTED_PEERS + MAX_COUNTER_TOMBST
 bool   register_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]);
 void   clear_trusted_peers();
 size_t trusted_peer_count();
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * RADIO ADDRESSES — the transport peer table on the device (F33 part 1)
+ *
+ * mesh_transport delivers only frames from MACs in its table and
+ * broadcast() sends only to them; before F33 nothing but the host tests
+ * filled it, so on a device every frame dropped as recv_dropped_no_peer and
+ * every broadcast reached nobody. The session now keeps it in step with the
+ * trusted peers:
+ *   • bind_peer_mac(fp, mac) — a trusted peer's radio MAC goes into the
+ *     transport table and is remembered with the peer (it replaces an older
+ *     address of the same peer). Called at boot for every persisted
+ *     (fingerprint, MAC) pair (main.cpp, mesh_state peer_macs) and by the
+ *     session itself when a pairing completes. Refused for an untrusted
+ *     fingerprint, a broadcast/group/zero MAC, a MAC another peer holds, or
+ *     a full transport table.
+ *   • While a pairing runs, the partner's MAC — not a peer yet — is added
+ *     for the unicast replies, and pairing frames from an unknown MAC reach
+ *     the pairing state machine through the transport's unknown-sender hook
+ *     (nothing else from an unknown MAC does). A pairing that ends without a
+ *     new member takes the address out again.
+ *   • A peer that is dropped — a verified LEAVE, unregister, a removal or a
+ *     rotation that forgets it, clear_trusted_peers() — leaves the transport
+ *     table with it.
+ * online_peer_count(): trusted peers whose verified-frame MAC (PeerLink
+ * mac_known, below) is in the transport table in the ACTIVE window — a
+ * peer bound at boot that has not been heard this boot is NOT online, even
+ * though its fresh transport entry starts ACTIVE. GET /api/mesh uses it.
+ * Threading: bind_peer_mac is main-loop only (it mutates both tables);
+ * online_peer_count only reads, like get_peer_links().
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool   bind_peer_mac(const uint8_t fp [mesh_crypto::FINGERPRINT_LEN],
+                     const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN]);
+size_t online_peer_count();
 
 /* Drop ONE trusted peer by fingerprint (empties its slot and MAC binding;
  * its replay counter becomes a tombstone). Returns true iff an entry was
@@ -528,8 +610,10 @@ void     clear_alerts();
  * rotation over signed envelopes, the pure state machine in mesh_rekey.h).
  * The exclusion itself is every survivor unregistering the removed pubkey;
  * opera_id is cleartext, so the new secret alone does not lock the removed
- * device out, and a survivor that misses the window keeps trusting it with
- * no signal. The rotation kills every pre-removal frame for the survivors
+ * device out, and a survivor that misses every copy of the OFFER keeps
+ * trusting it with no signal (one that verifies any copy forgets it at
+ * once — the deny-list below). The rotation kills every pre-removal frame
+ * for the survivors
  * that switch (mesh_rekey.h spells this out):
  *   • the rotation is started first; only if it starts is the peer
  *     forgotten (trust entry + its transport MAC, so later broadcasts stop
@@ -553,6 +637,8 @@ void     clear_alerts();
  * it saves the secret, so an interrupted commit fails closed. The removed
  * peer's pubkey also comes back at once through `removed_pubkey_out`, for
  * the caller to drop from NVS right away (idempotent with the commit).
+ *
+ * The removed peer also goes on the revocation deny-list below (F33 part 6).
  *
  * Refusals: MESH_DISABLED (mesh off / not initialized), NO_OPERA, NOT_FOUND
  * (fp is not a trusted peer), IN_FLIGHT (a rotation is already running
@@ -589,6 +675,83 @@ typedef void (*rekey_commit_fn)(
 void set_rekey_commit_handler(rekey_commit_fn fn);
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * REVOCATION DENY-LIST  (F33 part 6 — spec §5.6 REVOCATION_GRACE_MS)
+ *
+ * A removed device is refused re-entry for mesh_revocation::
+ * REVOCATION_GRACE_MS (7 days): its pairing DISCOVER / OFFER is dropped
+ * before the pairing state machine sees it, and register_trusted_peer()
+ * refuses it. Recorded for:
+ *   • the peer remove_peer() removes on this device;
+ *   • the removed_fp of EVERY verified REKEY_OFFER this device hears — also
+ *     one it cannot join because a rotation of its own is running — which
+ *     is forgotten at once (trust entry, radio MAC, a place among our
+ *     survivors). So two removals made on two devices at once both hold on
+ *     every device that hears either OFFER, and neither rotation hands a
+ *     removed device a new secret (mesh_rekey.h: the concurrent rotations
+ *     themselves converge on the preceding initiator's secret).
+ * peer_revoked_fn fires on the main loop each time: `pubkey` is the
+ * forgotten peer's (nullptr when it was not trusted here) — drop it from
+ * NVS (mesh_state::remove_trusted_peer) and persist the list
+ * (encode_revocations → mesh_state::save_revocations). At boot, BEFORE the
+ * trusted peers are registered, restore_revocations() the stored blob; each
+ * entry's remaining grace counts from then (time powered off does not count
+ * down — the conservative direction). The list survives leave_opera();
+ * deinit() wipes it.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+typedef void (*peer_revoked_fn)(
+    const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+    const uint8_t* pubkey_or_null);
+
+void   set_peer_revoked_handler(peer_revoked_fn fn);
+bool   is_revoked(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN]);
+size_t revoked_count();
+/* mesh_revocation blob (≤ mesh_revocation::BLOB_MAX bytes); 0 when empty. */
+size_t encode_revocations(uint8_t* out, size_t cap);
+bool   restore_revocations(const uint8_t* blob, size_t len);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * OPERA CREATION  (F33 part 4 — POST /api/mesh/pair/start with no opera)
+ *
+ * Spec §5.4: "If no opera exists, the first device generates
+ * opera_secret = random_bytes(32)". Until F33 the PlatformIO tree could
+ * only join an opera, never found one; canary-wap creates one when
+ * pair/start finds none (start_pairing_initiator), and this is that path
+ * ported, on the same route and behind the same gates (bearer token, rate
+ * limit, flash encryption — all in the handler).
+ *
+ * PAIR_START with `create` set (the handler found no secret in NVS) runs
+ * on the main loop:
+ *   • the mesh must be on, no rotation may run (as for every PAIR_START),
+ *     and no pairing may be in progress (REFUSED — before anything is made);
+ *   • the session must have no opera: one it already holds (a join that
+ *     landed after the handler looked, or a secret NVS would not give
+ *     back) is never replaced — OPERA_EXISTS, the handler answers 409;
+ *   • the secret is drawn here, on the main loop, from the hardware RNG,
+ *     and never crosses tasks;
+ *   • the opera_create handler must persist it (main.cpp:
+ *     mesh_state::save_opera_secret, FE-gated; the name best effort)
+ *     BEFORE anything uses it. A false return — or no handler — creates
+ *     nothing: NOT_PERSISTED. A household secret that vanished at this
+ *     device's next reboot would strand every device that joined it.
+ *     (canary-wap keeps the opera in RAM when its save is refused; this
+ *     port fails closed instead.)
+ *   • then set_opera_secret() and the name DEFAULT_OPERA_NAME (canary-wap's
+ *     default; POST /api/mesh/name renames it), and the initiator pairing
+ *     starts as for an existing opera. RequestResult::created says the
+ *     opera is new. If the pairing then refuses to start (key generation),
+ *     the opera stays — created and persisted — and the status is REFUSED.
+ * deinit() drops the handler.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr const char DEFAULT_OPERA_NAME[] = "My Canary Opera";
+
+typedef bool (*opera_create_fn)(const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN],
+                                const char*   name);
+
+void set_opera_create_handler(opera_create_fn fn);
+
+/* ──────────────────────────────────────────────────────────────────────────
  * REST REQUEST SLOT  (review fix — the F10 REST mutators run on the main loop)
  *
  * Every mutator in this module belongs to the task that runs process()
@@ -596,13 +759,23 @@ void set_rekey_commit_handler(rekey_commit_fn fn);
  * the senders all run there and share the trusted-peer table, the rekey
  * context, the outbound counter and the opera binding without locks, by
  * design. The esp_http_server handlers run on the httpd task, so POST
- * /api/mesh/leave, /name, /enable, /remove and DELETE /api/mesh/alerts do
- * NOT call leave_opera / set_opera_name / set_enabled / remove_peer /
- * clear_alerts: they submit ONE request into this one-deep slot and wait;
- * process() executes it on the main loop — first thing, even while the
- * session is stopped, so enable and leave work while disabled — and
- * publishes the result. (securacv_network.cpp poisons those five names
- * after its mesh includes, so a direct call there does not compile.)
+ * /api/mesh/leave, /name, /enable, /remove, DELETE /api/mesh/alerts and —
+ * since F33 part 5 — the four pairing routes (POST /api/mesh/pair/start,
+ * /join, /confirm, /cancel) do NOT call leave_opera / set_opera_name /
+ * set_enabled / remove_peer / clear_alerts / start_pairing_initiator /
+ * start_pairing_joiner / confirm_pairing_code / cancel_pairing: they submit
+ * ONE request into this one-deep slot and wait (bounded); process()
+ * executes it on the main loop — first thing, even while the session is
+ * stopped, so enable and leave work while disabled — and publishes the
+ * result. (securacv_network.cpp poisons those nine names after its mesh
+ * includes, so a direct call there does not compile.)
+ *
+ * A late completion never answers the next request: only one request holds
+ * the slot at a time (a second submit is refused with 409 mesh_busy until
+ * the first is taken, withdrawn or abandoned), and a handler that gives up
+ * either withdraws a request that never ran or abandons a running one,
+ * whose result the main loop then discards before it frees the slot. The
+ * slot's state machine plays the part of a generation counter.
  *
  *   submit_request()      httpd task. false while another request holds
  *                         the slot (the handler answers 409 mesh_busy).
@@ -633,13 +806,26 @@ enum class RequestType : uint8_t {
   SET_ENABLED,    /* set_enabled(enabled) */
   CLEAR_ALERTS,   /* clear_alerts() */
   REMOVE,         /* remove_peer(fp) */
+  PAIR_START,     /* start_pairing_initiator(opera_secret, <the opera's name>) — F33;
+                   * with `create`, found a new opera first (OPERA CREATION) */
+  PAIR_JOIN,      /* start_pairing_joiner() — F33 */
+  PAIR_CONFIRM,   /* confirm_pairing_code() — F33 */
+  PAIR_CANCEL,    /* cancel_pairing() — F33 */
 };
 
 enum class RequestStatus : uint8_t {
   OK = 0,
-  REKEY_IN_FLIGHT,   /* LEAVE / SET_ENABLED {false} while a rotation runs */
+  REKEY_IN_FLIGHT,   /* LEAVE / SET_ENABLED {false} / PAIR_START / PAIR_JOIN
+                      * while a rotation runs */
   NO_OPERA,          /* SET_NAME with no opera */
   BAD_REQUEST,       /* NONE or an unknown type */
+  MESH_DISABLED,     /* PAIR_START / PAIR_JOIN / PAIR_CONFIRM while the mesh
+                      * is off (F33) */
+  REFUSED,           /* PAIR_START / PAIR_JOIN / PAIR_CONFIRM: the pairing
+                      * state machine refused (wrong state) (F33) */
+  OPERA_EXISTS,      /* PAIR_START {create} while the session holds an opera */
+  NOT_PERSISTED,     /* PAIR_START {create}: the new secret could not be
+                      * stored — no opera was created (F33 part 4) */
 };
 
 struct Request {
@@ -647,6 +833,12 @@ struct Request {
   bool        enabled;                                     /* SET_ENABLED */
   uint8_t     fp[mesh_crypto::FINGERPRINT_LEN];            /* REMOVE */
   char        name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];  /* SET_NAME */
+  /* PAIR_START: the opera secret to hand the joiner (the handler loads it
+   * from NVS). Wiped with the rest of the request body at every hand-off;
+   * the submitter wipes its own copy. Unused with `create`. */
+  uint8_t     opera_secret[mesh_crypto::OPERA_SECRET_LEN];
+  /* PAIR_START: there is no opera — create one (OPERA CREATION above). */
+  bool        create;
 };
 
 struct RequestResult {
@@ -656,6 +848,7 @@ struct RequestResult {
   bool          enabled;    /* SET_ENABLED: is_enabled() afterwards */
   RemoveResult  remove;     /* REMOVE */
   uint8_t       removed_pubkey[mesh_crypto::PUBKEY_LEN];  /* REMOVE, STARTED/COMMITTED */
+  bool          created;    /* PAIR_START {create}: a new opera exists now */
 };
 
 bool submit_request(const Request& req);

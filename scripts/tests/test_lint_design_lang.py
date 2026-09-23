@@ -2,11 +2,12 @@
 """Tests for scripts/lint_design_lang.py's knob-help and knob-name rules.
 
 The canon rules (a house value, or `deviates:` with a reason) are proven by
-the tree itself every run. The two rules below judge what
+the tree itself every run. The rules below judge what
 gen_builder_manifest.parse_scad KEEPS — the parser whose output the web
 builder and the Lab catalog carry — so each test writes a tiny case file and
-asks the lint what that parser would have dropped (the third rule) or which
-meaning it would have carried (the fourth).
+asks the lint what that parser would have dropped (the third rule), which
+meaning it would have carried (the fourth), which group it would have filed
+a knob under (the fifth) or where a ranged knob's help stops (the sixth).
 
 Run:  python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 """
@@ -82,6 +83,14 @@ class HelpLines(_Case):
             seen |= L.lint_help_lines(L.ENC / name, L.HELP_LINE_DEBT)[1]
         self.assertEqual(seen, set(L.HELP_LINE_DEBT))
 
+    def test_the_tree_has_no_shared_help_line(self):
+        # C10 split the 7" case's four, the last the ledger held: no case
+        # file may drop a help to a shared line now, the ledger included
+        self.assertEqual(L.HELP_LINE_DEBT, set())
+        for path in sorted(L.ENC.glob("canary_*.scad")):
+            if path.name not in L.SKIP:
+                self.assertEqual(L.lint_help_lines(path)[0], [], path.name)
+
 
 class Meanings(_Case):
     """Fourth rule: a shared knob name keeps one meaning, stated in its help."""
@@ -128,6 +137,87 @@ class Meanings(_Case):
         for path in sorted(L.ENC.glob("canary_*.scad")):
             if path.name not in L.SKIP:
                 self.assertEqual(L.lint_meanings(path), [], path.name)
+
+
+class InterfaceGroup(_Case):
+    """Fifth rule: the stud/keyhole interface keeps one group name."""
+
+    def test_the_old_names_fail(self):
+        # three of the 14 names the audit found, each holding interface knobs
+        p = self.scad('/* [Keyholes] — blind, seal-safe */\nkh_head_d = 7.0;  // pass hole\n'
+                      '/* [Mounting] */\nkh_face = 1.0;  // face web\n'
+                      '/* [Stud interface] — match the case */\nstud_gap = 36.0;  // spacing\n')
+        problems = L.lint_interface_group(p)
+        self.assertEqual([x.split(":", 2)[1] for x in problems], ["2", "4", "6"])
+        self.assertIn("Stud/keyhole interface", problems[0])
+
+    def test_the_one_name_passes_with_a_note_and_neighbors(self):
+        # a per-file note after the bracket is fine; so are the toggles and
+        # placements that ride along (opt_keyhole, kh_extra, kh_inset)
+        p = self.scad('/* [Stud/keyhole interface] — blind pockets in the back */\n'
+                      'opt_keyhole = true;  // one pocket\nkh_extra = 3.0;  // back thickening\n'
+                      'kh_head_d = 7.0;  // pass hole\nkh_inset = 12.0;  // centers\n'
+                      '/* [Engineering] */\nkh_lock = true;  // knockouts, not the interface\n')
+        self.assertEqual(L.lint_interface_group(p), [])
+
+    def test_the_exempt_file_is_named_with_its_reason(self):
+        self.assertIn("canary_c3_lcd147.scad", L.INTERFACE_EXEMPT)
+        p = self.scad('/* [Back face] */\nkh_head_d = 9.5;  // egg base\n', "canary_c3_lcd147.scad")
+        self.assertEqual(L.lint_interface_group(p), [])
+
+    def test_the_tree_is_clean(self):
+        for path in sorted(L.ENC.glob("canary_*.scad")):
+            if path.name not in L.SKIP:
+                self.assertEqual(L.lint_interface_group(path), [], path.name)
+
+
+class RangedHelp(_Case):
+    """Sixth rule: a ranged knob's help ends on its own line."""
+
+    def test_the_three_wraps_the_review_found_fail(self):
+        # the shapes C10 left: a next line going on in lowercase, a dangling
+        # "The" before a capitalized proper noun, a trailing preposition
+        p = self.scad(
+            '/* [Shell] */\n'
+            'floor_cove = 0.8;  // 45° cove, inside (cavity_cut): the sharp  // [0:0.2:1.2]\n'
+            '                   // notch there was the crack-starter\n'
+            'clip_dx = 5.25;  // clip centers (the validated spot). The  // [3:0.25:8]\n'
+            "                 // XIAO's castellated pads run to ±8.5\n"
+            'hood_seat = 0.6;  // groove the spigot presses into; bond with  // [0.4:0.1:1.0]\n'
+            '                  // neutral-cure silicone.\n')
+        problems = L.lint_ranged_help(p)
+        self.assertEqual([x.split(":", 2)[1] for x in problems], ["2", "4", "6"])
+        self.assertIn("mid-sentence", problems[0])
+        self.assertIn("dangling 'The'", problems[1])
+        self.assertIn("dangling 'with'", problems[2])
+
+    def test_an_open_parenthesis_fails(self):
+        p = self.scad('/* [Shell] */\ngasket = 0.3;  // stand-proud (~20 % squeeze;  // [0:0.1:1]\n'
+                      '               // TPU is incompressible)\n')
+        self.assertEqual(len(L.lint_ranged_help(p)), 1)
+
+    def test_a_whole_sentence_then_a_new_one_passes(self):
+        p = self.scad('/* [Shell] */\n'
+                      'floor_cove = 0.8;  // 45° cove, inside (cavity_cut); 0 = a square corner  // [0:0.2:1.2]\n'
+                      '                   // The sharp notch there was the crack-starter.\n'
+                      'hood_len = 9.0;  // rain-hood protrusion  // [5:0.5:15]\n'
+                      'hood_t = 1.8;  // hood wall\n')
+        self.assertEqual(L.lint_ranged_help(p), [])
+
+    def test_unranged_and_unwrapped_knobs_are_not_judged(self):
+        # no range: not this rule's (yet); a range with no continuation: whole by definition
+        p = self.scad('/* [Board] */\nboard_w = 17.5;  // a real board mics\n'
+                      '                 // 17.8 (canary_dock lesson)\n'
+                      'usb_h = 6.5;  // opening height for the\n'
+                      'lid_t = 2.0;  // lid  // [1:0.5:3]\n'
+                      '// an above-line comment for the next knob\n'
+                      'lid_h = 3.0;  // lid height  // [2:0.5:5]\n')
+        self.assertEqual(L.lint_ranged_help(p), [])
+
+    def test_the_tree_is_clean(self):
+        for path in sorted(L.ENC.glob("canary_*.scad")):
+            if path.name not in L.SKIP:
+                self.assertEqual(L.lint_ranged_help(path), [], path.name)
 
 
 if __name__ == "__main__":

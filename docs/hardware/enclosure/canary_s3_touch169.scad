@@ -113,8 +113,8 @@ opt_side = true;
 side_open_h = 16.0;   // side slot height — a tall slot, MEASURE
 side_open_dy = 0.0;   // side slot center offset (Y) — MEASURE
 
-/* [Mount] — the catalog's blind stud/keyhole standard; defaults cite
-   canary_mount_lib, and deviations earn their keep on the fit coupon */
+/* [Stud/keyhole interface] — the catalog's blind stud/keyhole standard */
+// defaults cite canary_mount_lib, and deviations earn their keep on the fit coupon
 opt_keyhole = true;    // one BLIND keyhole in the back (wall hang) — the pocket
                        // never breaches the cavity; a pad inside the plate
                        // hosts it (kh_pad_* below)

@@ -155,13 +155,53 @@ a signature rides the body. `system.integrity` rows are also republished on
 `securacv/<id>/tamper` as `{"type":"<kind>","severity":"tamper"}`, the shape
 the integration's per-type tamper sensors match. On the canary base that
 bridge carries the SD and enclosure kinds only: its boot story already
-reaches the tamper topic through the power-events classifier. The canary-wap
-also keeps an SD event log and backfills Home Assistant after a broker
-outage, marking those bodies `"replay":true`. The canary base relies on its
-MQTT offline queue (12 records), where tamper alerts outrank events: once
-the queue is full, a new row pushes out the oldest queued event, never a
-tamper alert. A body built while the broker is unreachable also says
-`"replay":true`. SD backfill on the canary base is a recorded follow-up.
+reaches the tamper topic through the power-events classifier.
+
+Both trees also keep an SD event log, `/EVENTS/today.ndjson`, one committed
+row per line in one shared format
+(`firmware/common/csi/src/csi_event_log_line.h`, so a tool reads either
+card), and backfill Home Assistant from it after a broker outage, marking
+those bodies `"replay":true`. On the canary base
+(`src/csi_event_egress.cpp` over the loop-task adapter
+`src/csi_event_log.cpp`; the rules are
+`firmware/common/csi/src/csi_event_backfill.h`, host-tested):
+
+- a row goes out live only when nothing older is waiting on the card;
+  otherwise it waits its turn, so a new row never overtakes an older one;
+- the backfill runs once the MQTT offline queue has drained (queued tamper
+  alerts first), walks the log in id order, sends at most two rows per loop
+  pass and about twenty a second, and never sends an id at or below the
+  highest one already handed to the broker, because Home Assistant's replay
+  gate refuses an `event_id` below the last one it verified. That watermark
+  survives a reboot through an NVS ceiling written with the event-id floor's
+  policy, so a reboot inside an outage skips at most ten undelivered rows
+  and republishes none. (Rows that pass through the bundler — presence,
+  `system.integrity` — take ids from its own space, 0x80000000 upward,
+  which restarts every boot and commits in bundle-close order; the gate
+  refuses such a row once a higher id is verified, live or replayed, and
+  the backfill skips it rather than send a refused id. And once one bundled
+  row has been handed over, the watermark sits in the bundler's space for
+  good: from then on the backfill sends no chokepoint-id row at all, in that
+  boot or after a reboot. One id space is an open item, and its fix has to
+  reset the stored watermark (NVS `csi.evsent`) and Home Assistant's mark.);
+- a row committed while the link was up but held behind the backlog is sent
+  with `"replay":false`, since it is news; everything else the backfill sends
+  says `"replay":true`;
+- the tamper-topic bridge publishes at commit, whatever the backfill is
+  doing;
+- the log is bound to the device's witness key by `/EVENTS/owner`; a card
+  whose log belongs to another device (or to a canary-wap) is left untouched
+  and not replayed. The canary-wap writes no owner file and leaves a card
+  that has one alone: it does not append to that log or replay it. A
+  canary-wap on firmware from before that rule does not know the file, and
+  would append its own rows to a canary's log, which that canary then
+  replays under its own key;
+- with no card, rows use the MQTT offline queue (12 records) as before, where
+  tamper alerts outrank events: once the queue is full, a new row pushes out
+  the oldest queued event, never a tamper alert. A body built while the
+  broker is unreachable says `"replay":true`. With no broker configured, rows
+  are logged and owed to nobody, and a broker configured later (or a changed
+  one) does not receive the old backlog.
 
 ### `POST /api/events/dismiss`
 

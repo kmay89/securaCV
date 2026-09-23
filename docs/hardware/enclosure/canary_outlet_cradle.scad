@@ -29,7 +29,7 @@ grip_lip = 1.2;      // inward LOCATING lip at the collar front (clearance-sized
                      // locates the wart, retention is friction — print the collar in
                      // TPU, or shrink the lip opening ~1 mm for a true snap grip)
 
-/* [T-studs] — match the standard Canary keyhole pockets */
+/* [Stud/keyhole interface] — T-studs matching the standard Canary keyhole pockets */
 stud_gap   = 30.0;   // stud spacing (vertical) — must fit the target case's kh_ys spread
 kh_face    = 1.0;    // target pocket's face web — canary_mount_lib mount_kh_face()
 

@@ -107,85 +107,14 @@ Action commit(Context& ctx) {
   return a;
 }
 
-/* The initiator's OFFER, rebuilt from the context — the first broadcast
- * and every retransmission carry the same bytes. */
-Action offer_action(const Context& ctx) {
-  Action a = none();
-  a.type = ActionType::BROADCAST_OFFER;
-  a.msg_type = MsgType::OFFER;
-  put_u32(a.payload, ctx.rekey_id);
-  memcpy(a.payload + REKEY_ID_LEN, ctx.eph_pub, EPH_LEN);
-  memcpy(a.payload + REKEY_ID_LEN + EPH_LEN, ctx.removed_fp, FP_LEN);
-  a.payload_len = OFFER_LEN;
-  return a;
+/* F33 part 6: a precedes b (the lower fingerprint wins a concurrent
+ * rotation). Fingerprints are public; memcmp is fine. */
+inline bool precedes(const uint8_t a[FP_LEN], const uint8_t b[FP_LEN]) {
+  return memcmp(a, b, FP_LEN) < 0;
 }
 
-Action on_offer(Context& ctx, const uint8_t my_fp[FP_LEN],
-                const uint8_t sender_fp[FP_LEN],
-                const uint8_t* p, size_t len, uint32_t now_ms) {
-  if (len != OFFER_LEN) return none();
-  const uint32_t rekey_id = get_u32(p);
-  const uint8_t* eph_pub_i  = p + REKEY_ID_LEN;
-  const uint8_t* removed_fp = p + REKEY_ID_LEN + EPH_LEN;
-
-  /* The device being removed takes no part: it keeps the old secret.
-   * What shuts it out is each survivor forgetting its pubkey at install
-   * (opera_id is cleartext — see mesh_rekey.h). */
-  if (fp_eq(removed_fp, my_fp)) return none();
-
-  if (ctx.role == Role::SURVIVOR) {
-    /* A retransmitted OFFER for the transaction we already joined gets
-     * the same ACCEPT again (same ephemeral key); anything else waits. */
-    if (ctx.rekey_id == rekey_id && fp_eq(ctx.initiator_fp, sender_fp) &&
-        memcmp(ctx.initiator_eph_pub, eph_pub_i, EPH_LEN) == 0) {
-      Action a = none();
-      a.type = ActionType::SEND_ACCEPT;
-      a.msg_type = MsgType::ACCEPT;
-      memcpy(a.dest_fp, sender_fp, FP_LEN);
-      put_u32(a.payload, rekey_id);
-      memcpy(a.payload + REKEY_ID_LEN, ctx.eph_pub, EPH_LEN);
-      a.payload_len = ACCEPT_LEN;
-      return a;
-    }
-    return none();
-  }
-  if (ctx.role != Role::IDLE) return none();   /* we are initiating our own */
-
-  context_init(ctx);
-  if (!mesh_crypto::x25519_generate_keypair(ctx.eph_pub, ctx.eph_priv)) {
-    context_init(ctx);
-    return none();
-  }
-  ctx.role       = Role::SURVIVOR;
-  ctx.rekey_id   = rekey_id;
-  ctx.started_ms = now_ms;
-  memcpy(ctx.initiator_fp, sender_fp, FP_LEN);
-  memcpy(ctx.initiator_eph_pub, eph_pub_i, EPH_LEN);
-  memcpy(ctx.removed_fp, removed_fp, FP_LEN);
-
-  Action a = none();
-  a.type = ActionType::SEND_ACCEPT;
-  a.msg_type = MsgType::ACCEPT;
-  memcpy(a.dest_fp, sender_fp, FP_LEN);
-  put_u32(a.payload, rekey_id);
-  memcpy(a.payload + REKEY_ID_LEN, ctx.eph_pub, EPH_LEN);
-  a.payload_len = ACCEPT_LEN;
-  return a;
-}
-
-Action on_accept(Context& ctx, const uint8_t sender_fp[FP_LEN],
-                 const uint8_t* p, size_t len) {
-  if (ctx.role != Role::INITIATOR || len != ACCEPT_LEN) return none();
-  if (get_u32(p) != ctx.rekey_id) return none();   /* stale or foreign rotation */
-  Survivor* s = find_survivor(ctx, sender_fp);
-  if (s == nullptr || s->acked) return none();      /* not a survivor / already done */
-  const uint8_t* eph_pub_s = p + REKEY_ID_LEN;
-  if (s->accepted && memcmp(s->eph_pub, eph_pub_s, EPH_LEN) != 0) {
-    return none();   /* a different key mid-transaction: ignore, never re-key */
-  }
-  memcpy(s->eph_pub, eph_pub_s, EPH_LEN);
-  s->accepted = true;
-
+/* The SECRET for one survivor whose ACCEPT (and ephemeral key) we hold. */
+Action secret_action(Context& ctx, Survivor* s) {
   uint8_t key[mesh_crypto::AEAD_KEY_LEN];
   if (!derive_key(ctx.eph_priv, s->eph_pub, ctx.rekey_id,
                   ctx.eph_pub, s->eph_pub, key)) {
@@ -212,7 +141,127 @@ Action on_accept(Context& ctx, const uint8_t sender_fp[FP_LEN],
     return none();
   }
   a.payload_len = SECRET_MSG_LEN;
+  s->secret_sent = true;
   return a;
+}
+
+bool all_acked(const Context& ctx) {
+  for (size_t i = 0; i < ctx.survivor_count; ++i) {
+    if (!ctx.survivors[i].acked) return false;
+  }
+  return true;
+}
+
+/* The initiator's OFFER, rebuilt from the context — the first broadcast
+ * and every retransmission carry the same bytes. */
+Action offer_action(const Context& ctx) {
+  Action a = none();
+  a.type = ActionType::BROADCAST_OFFER;
+  a.msg_type = MsgType::OFFER;
+  put_u32(a.payload, ctx.rekey_id);
+  memcpy(a.payload + REKEY_ID_LEN, ctx.eph_pub, EPH_LEN);
+  memcpy(a.payload + REKEY_ID_LEN + EPH_LEN, ctx.removed_fp, FP_LEN);
+  a.payload_len = OFFER_LEN;
+  return a;
+}
+
+/* Join an OFFER as a survivor from IDLE: fresh ephemeral keypair, ACCEPT. */
+Action join_offer(Context& ctx, const uint8_t sender_fp[FP_LEN], uint32_t rekey_id,
+                  const uint8_t* eph_pub_i, const uint8_t* removed_fp, uint32_t now_ms) {
+  context_init(ctx);
+  if (!mesh_crypto::x25519_generate_keypair(ctx.eph_pub, ctx.eph_priv)) {
+    context_init(ctx);
+    return none();
+  }
+  ctx.role       = Role::SURVIVOR;
+  ctx.rekey_id   = rekey_id;
+  ctx.started_ms = now_ms;
+  memcpy(ctx.initiator_fp, sender_fp, FP_LEN);
+  memcpy(ctx.initiator_eph_pub, eph_pub_i, EPH_LEN);
+  memcpy(ctx.removed_fp, removed_fp, FP_LEN);
+
+  Action a = none();
+  a.type = ActionType::SEND_ACCEPT;
+  a.msg_type = MsgType::ACCEPT;
+  memcpy(a.dest_fp, sender_fp, FP_LEN);
+  put_u32(a.payload, rekey_id);
+  memcpy(a.payload + REKEY_ID_LEN, ctx.eph_pub, EPH_LEN);
+  a.payload_len = ACCEPT_LEN;
+  return a;
+}
+
+Action on_offer(Context& ctx, const uint8_t my_fp[FP_LEN],
+                const uint8_t sender_fp[FP_LEN],
+                const uint8_t* p, size_t len, uint32_t now_ms) {
+  if (len != OFFER_LEN) return none();
+  const uint32_t rekey_id = get_u32(p);
+  const uint8_t* eph_pub_i  = p + REKEY_ID_LEN;
+  const uint8_t* removed_fp = p + REKEY_ID_LEN + EPH_LEN;
+
+  /* The device being removed takes no part: it keeps the old secret.
+   * What shuts it out is each survivor forgetting its pubkey at install
+   * (opera_id is cleartext — see mesh_rekey.h). F33: if it was running a
+   * rotation of its own it drops it — a removed device must not hand a
+   * new secret to survivors that would then follow it off the opera. */
+  if (fp_eq(removed_fp, my_fp)) {
+    if (ctx.role == Role::INITIATOR) context_init(ctx);
+    return none();
+  }
+
+  if (ctx.role == Role::SURVIVOR) {
+    /* A retransmitted OFFER for the transaction we already joined gets
+     * the same ACCEPT again (same ephemeral key). */
+    if (ctx.rekey_id == rekey_id && fp_eq(ctx.initiator_fp, sender_fp) &&
+        memcmp(ctx.initiator_eph_pub, eph_pub_i, EPH_LEN) == 0) {
+      Action a = none();
+      a.type = ActionType::SEND_ACCEPT;
+      a.msg_type = MsgType::ACCEPT;
+      memcpy(a.dest_fp, sender_fp, FP_LEN);
+      put_u32(a.payload, rekey_id);
+      memcpy(a.payload + REKEY_ID_LEN, ctx.eph_pub, EPH_LEN);
+      a.payload_len = ACCEPT_LEN;
+      return a;
+    }
+    /* F33: switch — we hold no secret yet (a SECRET ends the SURVIVOR
+     * role) — when this OFFER removes our initiator, precedes it, or is
+     * our initiator's newer rotation (it runs one at a time). */
+    const bool initiator_removed = fp_eq(removed_fp, ctx.initiator_fp);
+    const bool same_initiator    = fp_eq(sender_fp, ctx.initiator_fp);
+    if (initiator_removed || precedes(sender_fp, ctx.initiator_fp) ||
+        (same_initiator && ctx.rekey_id != rekey_id)) {
+      return join_offer(ctx, sender_fp, rekey_id, eph_pub_i, removed_fp, now_ms);
+    }
+    return none();
+  }
+  if (ctx.role == Role::INITIATOR) {
+    /* F33: a concurrent rotation. Yield to a preceding initiator while we
+     * have handed nothing out — our rotation ends uncommitted and we answer
+     * the winner. Otherwise keep ours; the other side yields to us when it
+     * hears our OFFER (or, both past handing out, the residual split). */
+    if (!handed_out(ctx) && precedes(sender_fp, ctx.initiator_fp)) {
+      return join_offer(ctx, sender_fp, rekey_id, eph_pub_i, removed_fp, now_ms);
+    }
+    return none();
+  }
+  return join_offer(ctx, sender_fp, rekey_id, eph_pub_i, removed_fp, now_ms);
+}
+
+Action on_accept(Context& ctx, const uint8_t sender_fp[FP_LEN],
+                 const uint8_t* p, size_t len, uint32_t now_ms) {
+  if (ctx.role != Role::INITIATOR || len != ACCEPT_LEN) return none();
+  if (get_u32(p) != ctx.rekey_id) return none();   /* stale or foreign rotation */
+  Survivor* s = find_survivor(ctx, sender_fp);
+  if (s == nullptr || s->acked) return none();      /* not a survivor / already done */
+  const uint8_t* eph_pub_s = p + REKEY_ID_LEN;
+  if (s->accepted && memcmp(s->eph_pub, eph_pub_s, EPH_LEN) != 0) {
+    return none();   /* a different key mid-transaction: ignore, never re-key */
+  }
+  memcpy(s->eph_pub, eph_pub_s, EPH_LEN);
+  s->accepted = true;
+  /* F33 part 6: inside the settle window the ACCEPT is kept, not answered;
+   * tick() sends its SECRET when the window closes. */
+  if ((uint32_t)(now_ms - ctx.started_ms) < REKEY_SETTLE_MS) return none();
+  return secret_action(ctx, s);
 }
 
 Action on_secret(Context& ctx, const uint8_t my_fp[FP_LEN],
@@ -257,11 +306,9 @@ Action on_ack(Context& ctx, const uint8_t sender_fp[FP_LEN],
   if (get_u32(p) != ctx.rekey_id) return none();
   Survivor* s = find_survivor(ctx, sender_fp);
   /* An ACK only counts from a survivor we actually sent a secret to. */
-  if (s == nullptr || !s->accepted) return none();
+  if (s == nullptr || !s->accepted || !s->secret_sent) return none();
   s->acked = true;
-  for (size_t i = 0; i < ctx.survivor_count; ++i) {
-    if (!ctx.survivors[i].acked) return none();
-  }
+  if (!all_acked(ctx)) return none();
   return commit(ctx);   /* everyone has it */
 }
 
@@ -273,6 +320,26 @@ void context_init(Context& ctx) {
 }
 
 bool in_progress(const Context& ctx) { return ctx.role != Role::IDLE; }
+
+bool handed_out(const Context& ctx) {
+  if (ctx.role != Role::INITIATOR) return false;
+  for (size_t i = 0; i < ctx.survivor_count; ++i) {
+    if (ctx.survivors[i].secret_sent) return true;
+  }
+  return false;
+}
+
+bool drop_survivor(Context& ctx, const uint8_t fp[FP_LEN]) {
+  if (ctx.role != Role::INITIATOR || fp == nullptr) return false;
+  for (size_t i = 0; i < ctx.survivor_count; ++i) {
+    if (!fp_eq(ctx.survivors[i].fp, fp)) continue;
+    for (size_t j = i + 1; j < ctx.survivor_count; ++j) ctx.survivors[j - 1] = ctx.survivors[j];
+    --ctx.survivor_count;
+    secure_zero(&ctx.survivors[ctx.survivor_count], sizeof(Survivor));
+    return true;
+  }
+  return false;
+}
 
 void wipe(Action& a) { secure_zero(&a, sizeof(a)); }
 
@@ -320,7 +387,7 @@ Action receive(Context&      ctx,
   if (my_fp == nullptr || sender_fp == nullptr || payload == nullptr) return none();
   switch (type) {
     case MsgType::OFFER:  return on_offer(ctx, my_fp, sender_fp, payload, payload_len, now_ms);
-    case MsgType::ACCEPT: return on_accept(ctx, sender_fp, payload, payload_len);
+    case MsgType::ACCEPT: return on_accept(ctx, sender_fp, payload, payload_len, now_ms);
     case MsgType::SECRET: return on_secret(ctx, my_fp, sender_fp, payload, payload_len);
     case MsgType::ACK:    return on_ack(ctx, sender_fp, payload, payload_len);
     default:              return none();
@@ -336,17 +403,33 @@ Action tick(Context& ctx, uint32_t now_ms) {
     context_init(ctx);
     return a;
   }
-  /* Initiator inside the window: re-broadcast the same OFFER every
-   * REKEY_RETRY_MS. While the role is INITIATOR some survivor has not
-   * ACKed yet (the last ACK commits at once), and the same OFFER heals
-   * each loss that leaves the survivor on the old opera_id: a lost OFFER
-   * (it answers now), a lost ACCEPT (it re-sends the same one) and a lost
-   * SECRET (its repeated ACCEPT draws a fresh SECRET). A lost ACK does not
-   * heal — that survivor already switched and drops old-id frames. */
-  if (ctx.role == Role::INITIATOR &&
-      (uint32_t)(now_ms - ctx.last_offer_ms) >= REKEY_RETRY_MS) {
-    ctx.last_offer_ms = now_ms;
-    return offer_action(ctx);
+  if (ctx.role == Role::INITIATOR) {
+    /* F33 part 6: the settle window has closed — answer the ACCEPTs it
+     * held, one per call. */
+    if ((uint32_t)(now_ms - ctx.started_ms) >= REKEY_SETTLE_MS) {
+      for (size_t i = 0; i < ctx.survivor_count; ++i) {
+        Survivor& s = ctx.survivors[i];
+        if (s.accepted && !s.secret_sent && !s.acked) {
+          Action a = secret_action(ctx, &s);
+          if (a.type != ActionType::NONE) return a;
+        }
+      }
+    }
+    /* Every survivor left has ACKed (drop_survivor can shrink the list
+     * under a running rotation): commit now. */
+    if (all_acked(ctx)) return commit(ctx);
+    /* Re-broadcast the same OFFER every REKEY_RETRY_MS. While the role is
+     * INITIATOR some survivor has not ACKed yet, and the same OFFER heals
+     * each loss that leaves the survivor on the old opera_id: a lost OFFER
+     * (it answers now), a lost ACCEPT (it re-sends the same one) and a lost
+     * SECRET (its repeated ACCEPT draws a fresh SECRET). A lost ACK does
+     * not heal — that survivor already switched and drops old-id frames.
+     * It also keeps a competing initiator hearing us inside its settle
+     * window. */
+    if ((uint32_t)(now_ms - ctx.last_offer_ms) >= REKEY_RETRY_MS) {
+      ctx.last_offer_ms = now_ms;
+      return offer_action(ctx);
+    }
   }
   return none();
 }

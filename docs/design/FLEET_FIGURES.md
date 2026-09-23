@@ -340,7 +340,10 @@ The generator refuses to emit a figure for a board whose pins header is
 missing that line, so the id and the pins can never drift apart. Boards we
 can't draw yet (the 4.3B and 4.3C housings, the C6 1.47″ board, the C3 Super
 Mini, the Sentinel line) are listed in the ledger's `hardware.unmapped` with
-the builds they cover — a gap you can query, not a silent `nullptr`.
+the builds they cover — a gap you can query, not a silent `nullptr`. (The
+C6's pocket case has a figure, drawn for its Lab card; the board stays
+unmapped until its manifest names it, because that line is what a C6 build
+would read as `my_figure()`.)
 
 **Which figure a board draws is not typed in the generator.** It is read from
 the device manifests (`devices/<slug>/device.json`, see `devices/README.md`):

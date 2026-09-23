@@ -143,7 +143,7 @@ has 4 gaps, Gold is where the UX wins live. Every finding below was verified in 
 | **entity-unavailable** | ❌ | MQTT entities have **no availability logic** — a dead Canary shows stale state / `unknown` forever, never `unavailable`, despite firmware publishing an LWT `securacv/<id>/status` availability topic we don't consume for this |
 | **reauthentication-flow** | ❌ | no `async_step_reauth`. Softened by the rotating-token-file re-read on 401 (`__init__.py:159-222`) — but a permanently wrong URL/token has no recovery path except delete-and-re-add |
 | **parallel-updates** | ❌ | `PARALLEL_UPDATES` not set in either platform |
-| action-exceptions | ⚠️ | the watch actions raise `ServiceValidationError` on every refusal (unknown or ambiguous watch, cap reached, integration not loaded yet, or no loaded entry running the watch tick) — with plain-English messages, not yet translatable (`translation_key`) |
+| action-exceptions | ✅ | the watch actions raise `ServiceValidationError` on every refusal — an empty subject or watch, a duration with no unit, the cap reached, an unknown or ambiguous watch, the integration not loaded yet, its stored watches unreadable, or no loaded entry running the watch tick — each with a translation key (backlog HA9; see exception-translations) |
 | test-coverage ≥95 % | ❌ | crypto/trust/API-token logic is well covered; setup, unload, entities, diagnostics, config flow are not |
 | docs-configuration/installation-parameters | ⚠️ | options flow (PKI menu) documented in `device_trust.md`, not in a parameters reference |
 
@@ -160,7 +160,7 @@ has 4 gaps, Gold is where the UX wins live. Every finding below was verified in 
 | entity-disabled-by-default | ❌ | noisy diagnostics (GPS, SD wear, transport per-type, radar link) all enabled by default |
 | entity-translations | ✅ | every entity class in `sensor.py` / `binary_sensor.py` sets `_attr_translation_key` and none sets `_attr_name`; `strings.json` declares all 40 keys with the names users already saw, `translations/en.json` is an identical copy, and `tests/test_entity_translations.py` holds both (backlog HA2, #1703) |
 | icon-translations | ❌ | `_attr_icon` + dynamic `icon` properties instead of `icons.json` |
-| exception-translations | ❌ | not used |
+| exception-translations | ⚠️ | the watch actions' nine refusals are raised with `translation_domain`, `translation_key` and placeholders, declared in the `exceptions` section of `strings.json` (`translations/en.json` an identical copy), and read in English exactly as before; `tests/test_exception_translations.py` fails on a key raised but undeclared or declared but never raised and pins every message (backlog HA9). Not yet: the coordinators' `UpdateFailed` messages (`__init__.py`) are plain English |
 | **reconfiguration-flow** | ❌ | no `async_step_reconfigure` (move the kernel to a new host ⇒ delete and re-add) |
 | **repair-issues** | ❌ | trust mismatches surface as `persistent_notification` (`__init__.py:707`) — invisible in the Repairs center, not actionable, not translatable. Chain breaks / silent devices / clock drift raise no repair issues at all (§7.2) |
 | stale-devices | ❌ | removed canaries live in the registry forever; no `async_remove_config_entry_device` |

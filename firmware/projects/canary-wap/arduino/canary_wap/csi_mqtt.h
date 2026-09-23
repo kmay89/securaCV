@@ -235,17 +235,39 @@ struct MqttBatteryInfo {
 };
 
 /**
+ * The tamper LEVELS the health publish carries (F41), in the canary PIO
+ * tree's field names (firmware/canary/src/main.cpp
+ * mqtt_publish_health_update). HA's per-type tamper sensors are set by the
+ * tamper topic's edge and then follow these levels on every health publish;
+ * without them each publish re-cleared a sensor whose lid was still open or
+ * whose card was still out. Each is -1 (key omitted), 0 or 1:
+ *   sd_mounted      1 while a card is in the slot (MOUNTED or ERROR — a
+ *                   failing card is SD Error's story, not SD Removed's),
+ *                   0 once it is gone; -1 until a card has mounted this boot
+ *                   (a card-less boot is a configuration, not a removal —
+ *                   HA reads an absent key as mounted).
+ *   enclosure_open  the debounced contact once adopted; -1 on builds without
+ *                   one (FEATURE_TAMPER_GPIO=0).
+ */
+struct MqttTamperLevels {
+  int8_t sd_mounted;
+  int8_t enclosure_open;
+};
+
+/**
  * Push the canonical health snapshot to {prefix}/{device_id}/health.
  * Schema (matches custom_components/securacv/sensor.py health handler):
  *   battery, battery_present, memory_free, uptime, firmware_version,
  *   public_key — plus charge_state, battery_health_pct, battery_mv
- *   when a battery is present.
+ *   when a battery is present, and sd_mounted / enclosure_open when
+ *   `tamper` reports them (binary_sensor.py's per-type tamper sensors).
  * The HA sensor derives "healthy/warning/critical" from battery +
  * memory_free; charging devices and mains-powered devices (battery
  * nullptr → battery=100) never trip the battery thresholds.
  */
 void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec,
-                    const MqttBatteryInfo* battery = nullptr);
+                    const MqttBatteryInfo* battery = nullptr,
+                    const MqttTamperLevels* tamper = nullptr);
 
 /**
  * Push the witness count to {prefix}/{device_id}/counts. Used by the

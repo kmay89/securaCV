@@ -98,6 +98,25 @@ test("every figure-routed display is the figure the ledger resolves, with a comm
   }
 });
 
+test("the display cards the manifests home cases on draw their own hardware", async () => {
+  // registry.json carries a card for every display manifest that claims a
+  // case (tests/chooser.test.js): the C6 draws its own pocket case, and the
+  // Nightstand 7 — one board, one case, two products — the Dash 7's slab,
+  // resolved through the figure's `manifests` (the manifest names the figure;
+  // the figure's own id and device are the Dash 7's)
+  const { FIGURE_BUILDERS } = await load();
+  const { deviceFigure } = await import("../assets/body-dims.js");
+  assert.deepStrictEqual(FIGURE_BUILDERS["canary-display-nightstand-c6"], ["device.canary-display-nightstand-c6", {}]);
+  assert.deepStrictEqual(FIGURE_BUILDERS["canary-display-nightstand7"], ["device.canary-display-dash7", {}]);
+  const dash7 = ledger.figures.find((f) => f.id === "device.canary-display-dash7");
+  assert.deepStrictEqual(dash7.manifests, ["canary-display-dash7", "canary-display-nightstand7"]);
+  assert.strictEqual(deviceFigure(ledger, "canary-display-nightstand7")?.id, "device.canary-display-dash7");
+  const n7 = JSON.parse(readFileSync(join(ROOT, "../devices/canary-display-nightstand7/device.json"), "utf8"));
+  assert.strictEqual(n7.figure, "device.canary-display-dash7", "the join is the manifest's own figure");
+  // an id or device match still wins: the Nightlight card is the C3 manifest's figure by id
+  assert.strictEqual(deviceFigure(ledger, "canary-nightlight")?.id, "device.canary-nightlight");
+});
+
 test("a figure builder lands the model centered, with the live glass on its face", async () => {
   const { buildFromFigure } = await load();
   const scene = fakeScene();
@@ -153,6 +172,28 @@ test("an idea stands in as a ghost, and a figure with no model as its envelope",
   }
 });
 
+test("an idea never has a body of its own: every concept card is its figure's ghost", async () => {
+  // The honesty invariant, on the Lab's 3D tier: an idea renders as a dashed
+  // ghost everywhere (docs/design/FLEET_FIGURES.md). The Fence Guard kept a
+  // solid hand-modeled slab — solar lid, antenna, clamp, LED — in BUILDERS
+  // while its own figure was a ghost, so the one card on the page that looked
+  // like a product you could buy was an idea. No builder for an idea, then:
+  // builderFor() falls through to the ledger, and the ledger says ghost.
+  const { BUILDERS, builderFor } = await load();
+  const { deviceFigure } = await import("../assets/body-dims.js");
+  const ideas = registry.devices.filter((d) => d.kind === "concept"
+    || deviceFigure(ledger, d.id)?.confidence === "idea");
+  assert.ok(ideas.some((d) => d.id === "canary-fence-guard"), "the Fence Guard is an idea");
+  for (const d of ideas) {
+    assert.strictEqual(BUILDERS[d.id], undefined,
+      `${d.id} is an idea with a body of its own — draw it as its figure's ghost`);
+    const scene = fakeScene();
+    await builderFor(d.id)(scene);
+    assert.ok(scene.parts.length > 0, `${d.id} draws its ghost`);
+    assert.ok(scene.parts.every((p) => p.lines && p.unlit), `${d.id} is edges only — no fill for an idea`);
+  }
+});
+
 test("no card asks for a file that is not there (the Lab's probes fail a page on any 4xx)", async () => {
   const { builderFor } = await load();
   const real = globalThis.fetch;
@@ -174,4 +215,51 @@ test("no card asks for a file that is not there (the Lab's probes fail a page on
     console.warn = warn;
   }
   assert.deepStrictEqual(missing, []);
+});
+
+// real-shapes.js realDash seats the Dash's three STLs by hand along the case's
+// face normal, from the module center outward. Its numbers were once a 16 mm
+// body and an 8.4 mm back while the CAD had moved on; they are re-derived now,
+// and held here to the ledger gen_assembled_dims.py measures off the same
+// .scad (docs/hardware/enclosure/assembled_dims.json, device.canary-display-
+// dash): depth fig.d from the dock pads to the face, seams_fig_d the pads'
+// and the back's thickness, face_fig_mm the aperture. The module center sits
+// total_t / 2 in front of the back plane (the fin face), so along the normal:
+// the pads' tips at −total_t/2 − pads, the back centered over [tips, seam 2],
+// the frame over [seam 2, face], the glass face_t behind the face. The
+// center's own position on the stand is not pinned here (it is the stand's
+// derivation, cited in the comment above realDash).
+test("the Dash card seats its case where the CAD ledger measures it", () => {
+  const REPO = join(ROOT, "..");
+  const src = readFileSync(join(ROOT, "assets/real-shapes.js"), "utf8");
+  const start = src.indexOf("async function realDash(");
+  assert.ok(start >= 0, "real-shapes.js still has realDash");
+  const body = src.slice(start, src.indexOf("\n}\n", start));
+  const num = (re, what) => {
+    const m = re.exec(body);
+    assert.ok(m, `realDash: ${what} not found`);
+    return m.slice(1).map(Number);
+  };
+  const [frameAt] = num(/seatPart\(scene, frame, \{[^}]*?D: off\((-?[\d.]+)\)/, "the frame's seat");
+  const [backAt] = num(/seatPart\(scene, back, \{[^}]*?D: off\((-?[\d.]+)\)/, "the back's seat");
+  const [glassAt] = num(/translate\(\.\.\.off\((-?[\d.]+)\)\)/, "the glass's seat");
+  const [glassW, glassH] = num(/screenPlane\(([\d.]+), ([\d.]+),/, "the glass plane");
+
+  const asm = JSON.parse(readFileSync(join(REPO, "docs/hardware/enclosure/assembled_dims.json"), "utf8"));
+  const row = asm.devices["device.canary-display-dash"];
+  assert.ok(row && row.scad === "canary_dash_display.scad", "the ledger measures the Dash off its case");
+  const enc = JSON.parse(readFileSync(join(ROOT, "devices/enclosures.json"), "utf8"));
+  const knob = (name) => Number(enc.scads[row.scad].groups.flatMap((g) => g.params)
+    .find((p) => p.name === name).default);
+
+  const [pads, backIn] = row.seams_fig_d;          // pads | back plate | frame
+  const totalT = row.fig.d - pads;                 // frame_h + back_t
+  const tips = -totalT / 2 - pads;
+  const close = (got, want, what) =>
+    assert.ok(Math.abs(got - want) < 0.01, `realDash ${what}: off(${got}), the ledger says ${want.toFixed(2)}`);
+  close(backAt, tips + backIn / 2, "back");
+  close(frameAt, tips + (backIn + row.fig.d) / 2, "frame");
+  close(glassAt, totalT / 2 - knob("face_t"), "glass");
+  close(glassW, row.face_fig_mm.w, "glass width");
+  close(glassH, row.face_fig_mm.h, "glass height");
 });

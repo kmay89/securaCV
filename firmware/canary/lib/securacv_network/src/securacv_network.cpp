@@ -94,6 +94,9 @@ static_assert((int)WIFI_AUTH_WPA2_WPA3_PSK == canary::net::ap_security::kAuthWpa
 
 #if FEATURE_SD_STORAGE
 #include "securacv_storage.h"
+// Card pages for the timeline (F35): handle_witness asks the loop task for
+// them through this bridge — the httpd task never opens a file on the card.
+#include "securacv_witness_history.h"
 #endif
 
 #if FEATURE_WATCHDOG
@@ -202,6 +205,7 @@ esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_c
                               status_code == 409 ? "409 Conflict" :
                               status_code == 413 ? "413 Payload Too Large" :
                               status_code == 503 ? "503 Service Unavailable" :
+                              status_code == 504 ? "504 Gateway Timeout" :
                               status_code == 500 ? "500 Internal Server Error" : "400 Bad Request");
   char response[128];
   snprintf(response, sizeof(response), "{\"ok\":false,\"error\":\"%s\"}", error_code);
@@ -2373,25 +2377,88 @@ static esp_err_t handle_chain(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
-// Serve the recent witness-record ring for the timeline UI. The ring is bounded
-// (display-only); the tamper-evident guarantee lives in the hash chain, and full
-// history is available via /api/export. Reads only in-RAM state — no SD, no camera.
+#if FEATURE_SD_STORAGE
+// A timeline page from the card (F35): records older than the ring, read by
+// the loop task through the bridge (securacv_witness_history.h) — this task
+// only posts the request and waits, at most WAIT_MS. Rows say where they came
+// from and whether they chain to the next older record on the card; they are
+// never "verified": no signature is checked on this path (the off-device
+// verifier, tools/verify_witness_log.py, is how a card is verified).
+static esp_err_t send_card_page(httpd_req_t* req, uint32_t before_seq, size_t last,
+                                bool has_hint, uint32_t hint, size_t ring_total) {
+  namespace whb = witness_history_bridge;
+  whb::Request q;
+  memset(&q, 0, sizeof(q));
+  q.before_seq = before_seq;
+  q.has_hint = has_hint;
+  q.hint = hint;
+  q.want = (uint8_t)((last == 0 || last > whb::PAGE_ROWS_MAX) ? whb::PAGE_ROWS_MAX : last);
+
+  const whb::Response* page = nullptr;
+  uint32_t gen = 0;
+  switch (witness_history_request(q, &page, &gen)) {
+    case WitnessHistoryWait::BUSY:    return http_send_error(req, 503, "history_busy");
+    case WitnessHistoryWait::TIMEOUT: return http_send_error(req, 504, "history_timeout");
+    case WitnessHistoryWait::PAGE:    break;
+  }
+  if (page->result != whb::Result::OK) {
+    const bool no_card = (page->result == whb::Result::NO_CARD);
+    witness_history_release(gen);
+    return no_card ? http_send_error(req, 503, "no_card")
+                   : http_send_error(req, 500, "history_read_failed");
+  }
+
+  // Build the answer while the page is ours, then free the slot before the
+  // (slower) send. Oldest -> newest, like the ring page.
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["source"] = "sd";
+  doc["total"] = ring_total;
+  JsonArray records = doc["records"].to<JsonArray>();
+  char hash[65];
+  for (size_t k = page->n; k-- > 0;) {
+    const size_t i = (size_t)page->first + k;
+    const witness_history::HistoryRow& row = page->rows[i];
+    JsonObject r = records.add<JsonObject>();
+    r["seq"] = row.seq;
+    r["type_name"] = record_type_name((RecordType)row.type);
+    hex_to_str(hash, row.ch, 32);
+    r["chain_hash"] = hash;
+    r["time_bucket"] = row.tb;
+    r["source"] = "sd";
+    if (page->linked[i] == whb::Link::NONE) r["linked"] = nullptr;  // nothing older on the card
+    else r["linked"] = (page->linked[i] == whb::Link::LINKED);
+  }
+  doc["next_hint"] = page->next_hint;
+  doc["more"] = page->more;
+  if (page->joins != whb::Link::NONE) doc["joins"] = (page->joins == whb::Link::LINKED);
+  doc["hint_refused"] = page->hint_refused;
+  doc["skipped"] = page->skipped;
+  witness_history_release(gen);
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+#endif  // FEATURE_SD_STORAGE
+
+// Serve the timeline: the recent witness-record ring, and — once a page asks
+// for records older than the ring holds — pages from the card (F35). The ring
+// is bounded RAM (display-only; the tamper-evident guarantee lives in the
+// hash chain). The card pages come from the loop task through the history
+// bridge: this handler reads only in-RAM state itself — no SD, no camera.
 static esp_err_t handle_witness(httpd_req_t* req) {
-  if (!rate_limit_check(req)) return ESP_OK;
-  if (!auth_gate(req)) return ESP_OK;
-  witness_get_health().http_requests++;
-
-  const size_t ring_size = witness_get_record_ring_size();
-  const size_t total = witness_get_record_count();
-  const size_t head  = witness_get_record_head();
-
-  // Optional ?last=N — clamp to [1, total]; default to all available records.
-  // Optional ?before=SEQ — exclusive upper bound: only records with
-  // seq < SEQ count toward the window. This is how the timeline's "Load
-  // More" pages backward through the ring (still RAM-only — paging deeper
-  // than the ring means SD, which this task never touches).
-  size_t want = total;
+  // Parse first (no side effects): whether this is a card page decides how
+  // the rate limiter counts it — an SD page counts as an action.
+  //   ?last=N    clamp to [1, total] (card pages: [1, PAGE_ROWS_MAX]).
+  //   ?before=S  exclusive upper bound: only records with seq < S — how the
+  //              timeline's "Load More" pages backward.
+  //   ?hint=H    the previous card page's next_hint: where the next one
+  //              starts. Client input — the bridge re-checks it before use.
+  size_t last = 0;          // 0 = not given
   uint32_t before_seq = 0;  // 0 = no bound
+  uint32_t hint = 0;
+  bool has_hint = false;
   size_t qlen = httpd_req_get_url_query_len(req);
   if (qlen > 0 && qlen < 128) {
     char query[128];
@@ -2399,14 +2466,55 @@ static esp_err_t handle_witness(httpd_req_t* req) {
       char val[12];
       if (httpd_query_key_value(query, "last", val, sizeof(val)) == ESP_OK) {
         int n = atoi(val);
-        if (n > 0 && (size_t)n < want) want = (size_t)n;
+        if (n > 0) last = (size_t)n;
       }
       if (httpd_query_key_value(query, "before", val, sizeof(val)) == ESP_OK) {
         long b = atol(val);
         if (b > 0) before_seq = (uint32_t)b;
       }
+      if (httpd_query_key_value(query, "hint", val, sizeof(val)) == ESP_OK &&
+          val[0] >= '0' && val[0] <= '9') {
+        char* end = nullptr;
+        const unsigned long h = strtoul(val, &end, 10);  // overflow: ULONG_MAX, past any file
+        if (end != nullptr && *end == '\0') {
+          hint = (uint32_t)h;
+          has_hint = true;
+        }
+      }
     }
   }
+
+  const size_t ring_size = witness_get_record_ring_size();
+  const size_t total = witness_get_record_count();
+  const size_t head  = witness_get_record_head();
+  uint32_t ring_oldest_seq = 0;
+  if (total > 0) {
+    WitnessRecord oldest;
+    if (witness_copy_record_at((head + ring_size - total) % ring_size, &oldest))
+      ring_oldest_seq = oldest.seq;
+  }
+
+#if FEATURE_SD_STORAGE
+  // Nothing below `before` is in the ring: the next records are on the card.
+  const bool card_page = before_seq > 0 && (total == 0 || before_seq <= ring_oldest_seq);
+#else
+  const bool card_page = false;
+#endif
+
+  if (!rate_limit_check(req, card_page)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+#if FEATURE_SD_STORAGE
+  if (card_page) return send_card_page(req, before_seq, last, has_hint, hint, total);
+#else
+  (void)has_hint;
+  (void)hint;
+  (void)ring_oldest_seq;
+#endif
+
+  size_t want = total;
+  if (last > 0 && last < want) want = last;
 
   // With a bound, shrink the window to the records older than it. Ring seqs
   // are contiguous ascending, so count the newest entries at or past the
@@ -2451,6 +2559,15 @@ static esp_err_t handle_witness(httpd_req_t* req) {
     r["payload_len"] = (uint32_t)rec.payload_len;
     r["verified"] = rec.verified;
   }
+
+  // Is anything older to page to? Older ring records below this window, or —
+  // on a build with a card — whatever precedes the ring's oldest record
+  // (seq 1 is the chain's first). A card page answers for itself.
+#if FEATURE_SD_STORAGE
+  doc["more"] = (want > 0) && (start > 0 || ring_oldest_seq > 1);
+#else
+  doc["more"] = (want > 0) && (start > 0);
+#endif
 
   String response;
   serializeJson(doc, response);
@@ -4934,14 +5051,13 @@ static esp_err_t handle_scout_unpair(httpd_req_t* req) {
 // [env:full] leg compiles these handlers but cannot run them.
 //
 // Threading: mesh_session's state belongs to the main loop (loop() runs
-// mesh_session::process()). The F10 mutators — leave, name, enable, alerts
-// DELETE, remove — therefore never run here: each handler hands ONE request
-// to mesh_session's request slot and waits for loop() to execute it
-// (mesh_call below; review fix). The pragma after this comment makes a
-// direct call to any of those five a compile error in the rest of this
-// file. The GET handlers only read. The four PR-8 pairing handlers still
-// call mesh_pairing entry points from this task — the posture PR-8
-// shipped with, an open item (spec §8.3).
+// mesh_session::process()). The mutators — leave, name, enable, alerts
+// DELETE, remove, and since F33 part 5 the four pairing routes (start, join,
+// confirm, cancel) — therefore never run here: each handler hands ONE
+// request to mesh_session's request slot and waits, bounded, for loop() to
+// execute it (mesh_call below). The pragma after this comment makes a
+// direct call to any of those nine a compile error in the rest of this
+// file. The GET handlers only read.
 //
 // MAC↔fingerprint join: the persisted trusted-peer set keys on Ed25519
 // pubkey (→ fingerprint), while the live transport peer table keys on
@@ -4951,7 +5067,10 @@ static esp_err_t handle_scout_unpair(httpd_req_t* req) {
 // below are the transport table's real numbers once a peer has spoken
 // this boot. A peer that has not yet sent a verified frame reports
 // OFFLINE/never — best-effort by design, documented in
-// spec/canary_mesh_network_v0.md §8.
+// spec/canary_mesh_network_v0.md §8. (The table itself is filled by
+// mesh_session from each peer's persisted radio MAC — F33 part 1 — so a
+// peer's entry exists from boot; the verified-frame MAC is what says it
+// has actually been heard.)
 // ════════════════════════════════════════════════════════════════════════════
 
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
@@ -4960,20 +5079,7 @@ static esp_err_t handle_scout_unpair(httpd_req_t* req) {
 // here to the end of this file, naming one is a compile error. Reach them
 // through mesh_call() / mesh_session::submit_request().
 #pragma GCC poison leave_opera set_opera_name set_enabled clear_alerts remove_peer
-
-// Number of online peers from the live transport table (peers seen within
-// the transport's ACTIVE window). Used for the status state mapping.
-static size_t mesh_count_online_peers() {
-  mesh_transport::Peer peers[16];
-  const size_t n = mesh_transport::list_peers(peers, sizeof(peers) / sizeof(peers[0]));
-  size_t online = 0;
-  for (size_t i = 0; i < n; ++i) {
-    if (peers[i].in_use && peers[i].state == mesh_transport::PeerState::ACTIVE) {
-      ++online;
-    }
-  }
-  return online;
-}
+#pragma GCC poison start_pairing_initiator start_pairing_joiner confirm_pairing_code cancel_pairing
 
 static esp_err_t handle_mesh_status(httpd_req_t* req) {
   if (!rate_limit_check(req)) return ESP_OK;
@@ -4990,7 +5096,11 @@ static esp_err_t handle_mesh_status(httpd_req_t* req) {
 
   const mesh_pairing::State pstate = mesh_session::pairing_state();
   const size_t peers_total  = mesh_session::trusted_peer_count();
-  const size_t peers_online = mesh_count_online_peers();
+  // Trusted peers heard this boot (verified frame) whose transport entry is
+  // in the ACTIVE window. Not the raw transport table any more: since F33
+  // the table holds every bound peer from boot, fresh entries start ACTIVE,
+  // and a peer that has said nothing is not online.
+  const size_t peers_online = mesh_session::online_peer_count();
 
   // alerts_received: verified TAMPER_ALERT frames from any peer this boot
   // (F10/F11 — counted only after signature + opera_id + replay checks).
@@ -5088,19 +5198,34 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
   return http_send_json(req, body);
 }
 
+static bool mesh_call(httpd_req_t* req, const mesh_session::Request& r,
+                      mesh_session::RequestResult* out, esp_err_t* rc);
+
+// The pairing routes' refusals from the main loop (F33 part 5): true, with
+// the error response sent through *rc, for any status but OK.
+static bool mesh_pair_refused(httpd_req_t* req, mesh_session::RequestStatus st,
+                              const char* refused_code, esp_err_t* rc) {
+  switch (st) {
+    case mesh_session::RequestStatus::OK:
+      return false;
+    case mesh_session::RequestStatus::MESH_DISABLED:
+      *rc = http_send_error(req, 400, "mesh_disabled");
+      return true;
+    case mesh_session::RequestStatus::REKEY_IN_FLIGHT:
+      // Pairing during a secret rotation would hand the joiner the secret
+      // being retired, or overwrite the one about to arrive (review fix).
+      *rc = http_send_error(req, 409, "rekey_in_flight");
+      return true;
+    default:
+      *rc = http_send_error(req, 400, refused_code);
+      return true;
+  }
+}
+
 static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
   if (!rate_limit_check(req, true)) return ESP_OK;
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
-
-  if (!mesh_session::is_enabled()) {
-    return http_send_error(req, 400, "mesh_disabled");
-  }
-  // Pairing during a secret rotation would hand the joiner the secret
-  // being retired — the one the removed device still holds (review fix).
-  if (mesh_session::rekey_in_progress()) {
-    return http_send_error(req, 409, "rekey_in_flight");
-  }
 
   // Flash-encryption gate: refuse to touch the opera_secret on FE-off
   // hardware (matches mesh_state's load/save posture).
@@ -5109,29 +5234,38 @@ static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
   }
 
   // "Add another" — an opera already exists. Load its secret straight
-  // from NVS into a local buffer, hand it to the pairing initiator, then
-  // zero the buffer. If no opera is persisted, there is nothing to add to.
-  uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN];
-  if (!mesh_state::load_opera_secret(opera_secret)) {
-    return http_send_error(req, 400, "no_opera");
+  // from NVS into the request, hand it to the main loop, then zero this
+  // copy (the session wipes its own). If no opera is persisted, the main
+  // loop founds one first (spec §5.4, F33 part 4 — canary-wap's
+  // create-on-start, behind the gates above): it draws the secret, has it
+  // persisted before anything uses it, and never replaces an opera the
+  // session already holds (opera_exists).
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::PAIR_START;
+  r.create = !mesh_state::load_opera_secret(r.opera_secret);
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  const bool ran = mesh_call(req, r, &res, &rc);
+  volatile uint8_t* z = r.opera_secret;   // regardless of outcome
+  for (size_t i = 0; i < sizeof(r.opera_secret); ++i) z[i] = 0;
+  if (!ran) return rc;
+  if (res.status == mesh_session::RequestStatus::OPERA_EXISTS) {
+    // A join landed after the load above, or NVS would not give back the
+    // secret the session holds: never found a second opera over it.
+    return http_send_error(req, 409, "opera_exists");
   }
-
-  char opera_name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
-  mesh_session::get_opera_name(opera_name, sizeof(opera_name));
-
-  const bool ok = mesh_session::start_pairing_initiator(
-      opera_secret, opera_name, millis());
-
-  // Zero the local secret copy regardless of outcome.
-  volatile uint8_t* z = opera_secret;
-  for (size_t i = 0; i < sizeof(opera_secret); ++i) z[i] = 0;
-
-  if (!ok) {
-    return http_send_error(req, 400, "pair_start_failed");
+  if (res.status == mesh_session::RequestStatus::NOT_PERSISTED) {
+    return http_send_error(req, 500, "opera_not_persisted");
   }
+  if (res.created) {
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Opera created", nullptr);
+  }
+  if (mesh_pair_refused(req, res.status, "pair_start_failed", &rc)) return rc;
 
   JsonDocument doc;
   doc["ok"] = true;
+  doc["created"] = res.created;
   doc["state"] = "PAIRING_INIT";
   String response;
   serializeJson(doc, response);
@@ -5143,24 +5277,19 @@ static esp_err_t handle_mesh_pair_join(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  if (!mesh_session::is_enabled()) {
-    return http_send_error(req, 400, "mesh_disabled");
-  }
-  // This device is a member mid-rotation: joining now would overwrite the
-  // secret it is about to receive (review fix).
-  if (mesh_session::rekey_in_progress()) {
-    return http_send_error(req, 409, "rekey_in_flight");
-  }
-
   // Flash-encryption gate: the joiner will receive + persist the
   // opera_secret on success, so refuse on FE-off hardware up front.
   if (!esp_flash_encryption_enabled()) {
     return http_send_error(req, 400, "no_flash_encryption");
   }
 
-  if (!mesh_session::start_pairing_joiner(millis())) {
-    return http_send_error(req, 400, "pair_join_failed");
-  }
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::PAIR_JOIN;
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  if (!mesh_call(req, r, &res, &rc)) return rc;
+  if (mesh_pair_refused(req, res.status, "pair_join_failed", &rc)) return rc;
 
   JsonDocument doc;
   doc["ok"] = true;
@@ -5175,7 +5304,13 @@ static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  if (!mesh_session::confirm_pairing_code(millis())) {
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::PAIR_CONFIRM;
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  if (!mesh_call(req, r, &res, &rc)) return rc;
+  if (res.status != mesh_session::RequestStatus::OK) {
     return http_send_error(req, 400, "confirm_failed");
   }
 
@@ -5191,7 +5326,12 @@ static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  mesh_session::cancel_pairing();
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::PAIR_CANCEL;
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  if (!mesh_call(req, r, &res, &rc)) return rc;
 
   JsonDocument doc;
   doc["ok"] = true;
@@ -5200,10 +5340,11 @@ static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
-// Run one F10 mutation on the main loop (review fix). mesh_session's state
-// belongs to the task that runs mesh_session::process() — loop() — and the
-// httpd task must not touch it, so these handlers validate what they can
-// locally, submit ONE request into mesh_session's one-deep slot and wait:
+// Run one mesh mutation on the main loop (review fix; F33 part 5 added the
+// four pairing routes). mesh_session's state belongs to the task that runs
+// mesh_session::process() — loop() — and the httpd task must not touch it,
+// so these handlers validate what they can locally, submit ONE request into
+// mesh_session's one-deep slot and wait:
 // loop() executes it inside its next mesh_session::process() pass, which a
 // healthy main loop reaches within milliseconds. Returns true with *out
 // filled; false after sending the error response itself (409 mesh_busy
@@ -5395,7 +5536,9 @@ static esp_err_t handle_mesh_alerts(httpd_req_t* req) {
   char* body = (char*)malloc(cap);
   if (body == nullptr) return http_send_error(req, 500, "oom");
   esp_err_t rc;
-  if (!mesh_api::build_mesh_alerts_json(body, cap, recs, n)) {
+  // millis(): the uptime each alert's timestamp_ms is measured against —
+  // the web UI shows an age, never a date (F33 part 7).
+  if (!mesh_api::build_mesh_alerts_json(body, cap, recs, n, (uint32_t)millis())) {
     rc = http_send_error(req, 500, "encode_failed");
   } else {
     rc = http_send_json(req, body);

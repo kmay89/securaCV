@@ -51,7 +51,11 @@ assumed). Neither is read off the cut geometry: each is the case's own
 variables, the ones its cuts are drawn at, echoed back. --check re-evaluates
 both with the envelope and refuses anything it cannot read back as the
 recorded number — so an edit through those variables is caught, and a cut
-moved without going through them is not.
+moved without going through them is not. The features also cross to the
+website: gen_builder_manifest.py --site carries them verbatim as the figure's
+`features_mm` in scad/cad-dims.json, where the site's AR model of the case
+places its lens and window (so a feature edit here is a carry, then that
+model's regeneration, like a seam).
 
 The render-and-parse-echo mechanics live in scad_probe.py, shared with
 gen_hardware.py and gen_enclosures.py --check-previews.

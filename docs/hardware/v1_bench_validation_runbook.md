@@ -153,6 +153,8 @@ Then enable flash encryption on all fleet boards and proceed.
 ### C2. Opera pairing
 
 1. Board 1: `POST /api/mesh/enable` with `{"enabled": true}`, then `/api/mesh/pair/start`.
+   A board with no opera founds one here (both trees; PlatformIO since F33,
+   answering `created: true` — the web UI's "Create Opera" button).
 2. Board 2: `/api/mesh/pair/join`; confirm on both (`/api/mesh/pair/confirm`).
 3. `GET /api/mesh/peers` on each — both list the other with fresh heartbeats.
 
@@ -166,11 +168,25 @@ on the survivor within the spec thresholds (90 s / 300 s).
   gate (`mesh_pair_frame.h`, F14). Before that fix no WAP pairing frame was
   ever delivered, so this is the first bench run that can reach the code
   screens at all.
-- [ ] **Both screens show the same 6-digit code.** A mismatch is not user
-  error: it points at the ephemeral-key derivation (both trees generate the
-  pairing ephemeral keys as Ed25519 keys and feed them to Curve25519, which
-  the host tests cannot see — their X25519 is a symmetric shim). Record it
-  against that open item rather than retrying.
+- [ ] **Both screens show the same 6-digit code.** Until F33 they could not:
+  both trees generated the pairing ephemeral keys as Ed25519 keys and fed
+  them to Curve25519, and the host tests hid it behind an X25519 shim. F33
+  makes them clamped X25519 keys in both trees and the host tests run a real
+  X25519 (crypto review pending). A mismatch now is a defect, not user error:
+  record it against F33 rather than retrying. Pair like with like — a
+  PlatformIO board and a canary-wap board still cannot pair with each other
+  (different frame numbering, and canary-wap runs the key through HKDF; spec
+  §5.3).
+- [ ] **PlatformIO boards hear each other at all.** Before F33 nothing on a
+  device filled the ESP-NOW transport's peer table, so every frame was
+  dropped. Now a pairing binds the partner's radio address: after step 3,
+  `peers_online` counts the other board once it has been heard this boot.
+  Power-cycle both: they are heard again without re-pairing (NVS
+  `peer_macs`).
+- [ ] **A reboot does not silence a PlatformIO board.** Power-cycle board 1,
+  then raise a tamper alert on it (C3's first row): board 2 shows it at once.
+  Before F33 board 1's outbound counter restarted at zero and board 2 dropped
+  its frames as replays (spec §3.3, `mesh_out_ctr`).
 
 ### C3. Mesh behavior
 
@@ -180,6 +196,9 @@ on the survivor within the spec thresholds (90 s / 300 s).
 | Leave | `POST /api/mesh/leave` on board 2 → board 2 reports `NO_OPERA` and `notified: true`; board 1 drops board 2 from `/api/mesh/peers` without a reboot (signed `LEAVE_OPERA`, spec §4.2), and still does after a reboot |
 | Disable survives reboot | `POST /api/mesh/enable` `{"enabled": false}` → `state: DISABLED`, pairing refused with `mesh_disabled`; after a power cycle it is still `DISABLED` |
 | Peer removal | `/api/mesh/remove` on board 1 → opera secret rotates; removed board can no longer rejoin without re-pairing (audit O3). PlatformIO boards (F10-rekey, crypto review pending): `{"fingerprint": …}` answers `rekey: started`; within 60 s every survivor's `GET /api/mesh` shows the same NEW `opera_id`, the removed board still shows the old one and is no longer heard, and after a reboot the survivors come back on the new id; a survivor kept powered off through the window is dropped and must re-pair |
+| Removed board refused re-entry | After a removal, the removed board's pairing attempts are refused for 7 days (spec §5.6 `REVOCATION_GRACE_MS`, F33, both trees): it never gets a code from the board it was removed on — nor, on PlatformIO, from any board that heard the rotation — also after that board reboots (flash encryption on) |
+| Two removals at once (PlatformIO) | With four or more boards, remove board 3 on board 1 and board 4 on board 2 within a few seconds of each other: within two minutes (one rotation, or two when a yielded removal is announced again) every survivor's `GET /api/mesh` shows the same new `opera_id`, and neither removed board is heard (F33, crypto review pending). A split onto two ids is the stated residual; record how the removals were timed. canary-wap boards can still split here (known limit, spec §5.6) |
+| Alert age in the web UI | Board 2's Opera alert list shows board 1's alert as "received N s ago" / "N min ago", never a time of day (the timestamp is board 2's uptime; F33) |
 | Tamper auto-revoke | Tamper alert from a paired member → survivor marks it `REVOKED` (v0.5 behavior; canary-wap only — the PlatformIO tree has no Beacon channel) |
 | Third board joins | 3-node opera stable; no crosstalk with a second, separately-paired opera (opera_id isolation) |
 

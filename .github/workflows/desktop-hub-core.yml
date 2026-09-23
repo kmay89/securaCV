@@ -177,6 +177,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: stable
+          components: rustfmt, clippy
+      - name: Format check
+        # The three crates in the matrix above have always been held to
+        # rustfmt and clippy; this one was compiled and tested but never
+        # linted, so it drifted (unformatted files, two clippy errors on a
+        # current toolchain) with nothing to say so. rustfmt needs no build,
+        # so it goes first and fails fast.
+        working-directory: desktop/src-tauri
+        run: cargo fmt --check
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: desktop/src-tauri -> target
@@ -217,6 +226,11 @@ jobs:
       - name: cargo check
         working-directory: desktop/src-tauri
         run: cargo check --all-targets
+      - name: Clippy (warnings are errors)
+        # The matrix crates' rule, on the app crate too. Runs after check so
+        # the dependency graph it reuses is already built and cached.
+        working-directory: desktop/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
       - name: cargo test
         # `check` proves the crate compiles; it never runs an assertion. The
         # modules whose logic decides something — whether a previous launch

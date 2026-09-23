@@ -53,10 +53,12 @@ same network. The post-flash appear can therefore be **real**:
    immediately, then `discoverAndPopulate()`.
 2. `discoverAndPopulate()` polls the Rust command **`witness_discover(bases)`**
    for ~30s (the board takes a moment to boot + join Wi-Fi). Candidate bases are,
-   in order: the provisioned host (the MQTT/HA host field), `canary.local:8099`
-   and `canary.local`, then every board the Fleet tab's `fleet_scan` mDNS browse
-   heard (`_securacv._tcp`). The kernel's addresses come first because the
-   kernel advertises no `_securacv._tcp` (`witnessBases()` in `desktop/src/app.js`).
+   in order: the provisioned host (the MQTT/HA host field), the Apple TV's
+   well-known three — `canary.local:8099`, the kernel's own port
+   `canary.local:8799`, then `canary.local` — then every board the Fleet tab's
+   `fleet_scan` mDNS browse heard (`_securacv._tcp`). The kernel's addresses
+   come first because the kernel advertises no `_securacv._tcp`
+   (`witnessBases()` in `desktop/src/app.js`).
 3. **`witness_discover`** (native, `reqwest`) GETs `{base}/api/fleet` on each
    candidate and returns the first that answers. No CSP applies (native), and
    `.local` resolves via the OS — **no mDNS crate**. It reuses the existing

@@ -346,6 +346,22 @@ def test_the_cap_is_honored_and_both_surfaces_name_end_watch() -> None:
     assert len(_bucket(hass)) == watches.MAX_WATCHES
 
 
+def test_every_action_the_speech_names_is_a_registered_action() -> None:
+    """Speech that sends a person somewhere must send them somewhere real:
+    the answer at the cap names securacv.end_watch, and a roster too long
+    to read out names securacv.list_watches (HA10: it named a dashboard
+    that lists no watches). Every string literal in the speech modules is
+    read, so a renamed or invented action is caught wherever it is said."""
+    named: set[str] = set()
+    for module in ("watches.py", "intent.py", "voice.py"):
+        tree = ast.parse((PACKAGE_DIR / module).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                named |= set(re.findall(rf"\b{DOMAIN}\.([a-z_]+)", node.value))
+    assert {services.SERVICE_END_WATCH, services.SERVICE_LIST_WATCHES} <= named
+    assert named <= set(services.SERVICES), sorted(named - set(services.SERVICES))
+
+
 def test_ids_stay_unique_after_an_end_in_the_same_second() -> None:
     hass = _hass()
     first = _call(hass, "start_watch", {"subject": "the gate canary"})
@@ -377,7 +393,7 @@ def test_end_watch_by_id_removes_exactly_that_watch_and_announces_it(delivered) 
     assert len(delivered) == 1
     title, message = delivered[0]
     assert title == "SecuraCV: a watch was ended early"
-    assert "the gate canary" in message
+    assert message.startswith("The gate canary watch ended"), message
 
 
 @pytest.mark.parametrize("ref", ["the gate canary", "The Gate Canary", "gate canary", "  my gate   canary "])

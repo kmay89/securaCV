@@ -32,10 +32,12 @@ any platform.
   workflow, a Linux access rule in a package, and a config key the build
   script checks — and each of those has an identity (a value, a path, a
   target list) that a copy duplicates.
-- **Fix:** `desktop-release.yml` carries the Flasher's pins and bundling
-  steps with only the sidecar directory swapped, and
-  `canary-local/tests/desktop_parity.test.js` pins the four values and the
-  two step bodies equal across the two workflows. The udev rule is ONE file,
+- **Fix:** `desktop-release.yml` carries the Flasher's bundling steps with
+  only the sidecar directory swapped, and
+  `canary-local/tests/desktop_parity.test.js` holds the two step bodies
+  equal across the two workflows. (The four pins were first copied into
+  both workflows and held equal by that test; they now live in one file —
+  see "Closed" below.) The udev rule is ONE file,
   byte-equal in both apps (asserted), installed under two names
   (`61-securacv-canary.rules` from the Flasher, `61-securacv-lab.rules` from
   the Lab) — the rules are idempotent, so both present changes nothing.
@@ -56,14 +58,28 @@ any platform.
   the Lab's `serial` is also a runtime check that the sidecar is a
   non-empty executable file where the spawn looks, so a dev build on the
   empty compile-only stub never lights a bench that can only fail at spawn.
-  Still open: the pins live only in the two workflows, and neither app's
-  `release-targets.yml` watch covers them, so a pin bump alone marks
-  neither app as changed.
+- **Closed (A21, same day):** the gap this entry left open — the pins
+  lived only inside the two workflows, and neither app's
+  `release-targets.yml` watch covered them, so a pin bump alone marked
+  neither app as changed and "Update everything" reported "nothing to do"
+  for a new flash engine — is shut. `ESPFLASH_VERSION` and the three
+  `ESPFLASH_SHA256_*` live in ONE file, `.github/espflash-pins.env`, which
+  both workflows read in an identical "Load the espflash pins" step
+  (parsed, never sourced: only the four keys, each in its shape, reach
+  `$GITHUB_ENV`, and a missing, doubled, malformed or stranger line fails
+  the release) before either bundle step, which keep their sha256 checks
+  and lipo / x86-64 proofs unchanged. Both apps' watches name the file.
+  `desktop_parity` holds the step equal across the workflows, refuses a
+  second copy of any pin in either one, and RUNS the step against the
+  real file and seven bad ones; `test_release_plan.py` fails any target
+  whose release reads a `.github/*.env` its watch doesn't name.
 - **Applies to:** every sidecar a second app bundles (espflash today;
   rpiboot if the Lab ever flashes a Pi), and every packaged file two apps
-  share. Pin shared values in one test, not two workflows; give each
-  package its own installed path for a shared file; and scope a
-  build-script-enforced key to the targets that can satisfy it.
+  share. Pin shared values in one file both workflows read, and name that
+  file in every app's watch that ships it — a value inside a workflow is a
+  release input no watch can see; give each package its own installed path
+  for a shared file; and scope a build-script-enforced key to the targets
+  that can satisfy it.
 
 ## 2026-09-23 — A `-sys` crate that links nothing can still crash the app
 

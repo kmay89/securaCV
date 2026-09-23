@@ -19,6 +19,10 @@
  *   8. ed25519_generate_keypair produces non-zero pubkey + privkey on
  *      first call, and distinct values across calls.
  *   9. active_backend() returns HOST_TEST_SHIM under CSI_TEST_HOST_BUILD.
+ *  10. X25519 is REAL on the host (F33 part 2): the RFC 7748 §5.2 and §6.1
+ *      vectors hold through x25519_derive / the keypair generator, two
+ *      generated keypairs agree, and Ed25519-generated keys do NOT — the
+ *      exact bug pairing shipped with, which the old host shim hid.
  *
  * Build:
  *   g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
@@ -261,23 +265,118 @@ void test_active_backend_is_host_shim() {
 
 /* ── X25519 ECDH ───────────────────────────────────────────────────────── */
 
+void from_hex(const char* hex, uint8_t* out, size_t n) {
+  for (size_t i = 0; i < n; ++i) {
+    unsigned v = 0;
+    assert(std::sscanf(hex + 2 * i, "%2x", &v) == 1);
+    out[i] = (uint8_t)v;
+  }
+}
+
+/* RFC 7748 §5 clamping — what x25519_generate_keypair applies. The
+ * RFC's X25519() clamps inside; x25519_derive (like rweather's
+ * Curve25519::eval on the device) takes the scalar as given. */
+void clamp(uint8_t k[32]) {
+  k[0]  &= 0xF8;
+  k[31]  = (uint8_t)((k[31] & 0x7F) | 0x40);
+}
+
+void test_x25519_rfc7748_vectors() {
+  /* §5.2, the two single-shot vectors. The second u has bit 255 set:
+   * it must be masked, not reduced into a different point. */
+  struct { const char* k; const char* u; const char* out; } v[] = {
+    {"a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4",
+     "e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c",
+     "c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552"},
+    {"4b66e9d4d1b4673c5ad22691957d6af5c11b6421e0ea01d42ca4169e7918ba0d",
+     "e5210f12786811d3f4b7959d0538ae2c31dbe7106fc03c3efc4cd549c715a493",
+     "95cbde9476e8907d7aade45cb4b873f88b595a68799fa152e6f8f7647aac7957"},
+  };
+  for (const auto& t : v) {
+    uint8_t k[32], u[32], want[32], got[32];
+    from_hex(t.k, k, 32); from_hex(t.u, u, 32); from_hex(t.out, want, 32);
+    clamp(k);
+    assert(mesh_crypto::x25519_derive(k, u, got));
+    assert(std::memcmp(got, want, 32) == 0);
+  }
+
+  /* §5.2, the iterated vector: k = u = 9; k' = X25519(k, u), u = old k.
+   * After 1 iteration and after 1000. */
+  uint8_t k[32] = {9}, u[32] = {9}, next[32];
+  uint8_t want1[32], want1000[32];
+  from_hex("422c8e7a6227d7bca1350b3e2bb7279f7897b87bb6854b783c60e80311ae3079", want1, 32);
+  from_hex("684cf59ba83309552800ef566f2f4d3c1c3887c49360e3875f2eb94d99532c51", want1000, 32);
+  for (int i = 1; i <= 1000; ++i) {
+    uint8_t kc[32];
+    std::memcpy(kc, k, 32);
+    clamp(kc);
+    assert(mesh_crypto::x25519_derive(kc, u, next));
+    std::memcpy(u, k, 32);
+    std::memcpy(k, next, 32);
+    if (i == 1) assert(std::memcmp(k, want1, 32) == 0);
+  }
+  assert(std::memcmp(k, want1000, 32) == 0);
+
+  /* §6.1 — Alice and Bob: each public key is priv * 9, and both sides
+   * derive the same K. */
+  uint8_t a[32], ap[32], b[32], bp[32], shared[32];
+  from_hex("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a", a, 32);
+  from_hex("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a", ap, 32);
+  from_hex("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb", b, 32);
+  from_hex("de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f", bp, 32);
+  from_hex("4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742", shared, 32);
+  clamp(a); clamp(b);
+  const uint8_t nine[32] = {9};
+  uint8_t out[32];
+  assert(mesh_crypto::x25519_derive(a, nine, out) && std::memcmp(out, ap, 32) == 0);
+  assert(mesh_crypto::x25519_derive(b, nine, out) && std::memcmp(out, bp, 32) == 0);
+  assert(mesh_crypto::x25519_derive(a, bp, out) && std::memcmp(out, shared, 32) == 0);
+  assert(mesh_crypto::x25519_derive(b, ap, out) && std::memcmp(out, shared, 32) == 0);
+
+  /* A non-canonical u (p itself, once bit 255 is masked) is refused, as
+   * rweather's eval() refuses it. */
+  uint8_t p[32];
+  std::memset(p, 0xFF, 32);
+  p[0] = 0xED; p[31] = 0x7F;
+  assert(!mesh_crypto::x25519_derive(a, p, out));
+  std::printf("PASS test_x25519_rfc7748_vectors  (5.2 x2, 5.2 iterated x1000, 6.1)\n");
+}
+
 void test_x25519_mutual_dh_symmetric() {
   /* The core DH property: both peers compute the same shared secret
-   * from (own_priv, peer_pub). The host shim is constructed to honor
-   * this property without doing real ECDH; the device path delegates
-   * to rweather's Curve25519::eval which has the property by construction. */
-  uint8_t priv_a[mesh_crypto::PRIVKEY_LEN], pub_a[mesh_crypto::PUBKEY_LEN];
-  uint8_t priv_b[mesh_crypto::PRIVKEY_LEN], pub_b[mesh_crypto::PUBKEY_LEN];
+   * from (own_priv, peer_pub) — with REAL X25519 keypairs. The host
+   * X25519 is the RFC 7748 ladder, not a shim, so this holds for the
+   * reason it holds on a device. */
+  for (int round = 0; round < 8; ++round) {
+    uint8_t priv_a[mesh_crypto::PRIVKEY_LEN], pub_a[mesh_crypto::PUBKEY_LEN];
+    uint8_t priv_b[mesh_crypto::PRIVKEY_LEN], pub_b[mesh_crypto::PUBKEY_LEN];
+    assert(mesh_crypto::x25519_generate_keypair(pub_a, priv_a));
+    assert(mesh_crypto::x25519_generate_keypair(pub_b, priv_b));
+    assert(std::memcmp(pub_a, pub_b, mesh_crypto::PUBKEY_LEN) != 0);
+
+    uint8_t shared_ab[mesh_crypto::X25519_SHARED_LEN];
+    uint8_t shared_ba[mesh_crypto::X25519_SHARED_LEN];
+    assert(mesh_crypto::x25519_derive(priv_a, pub_b, shared_ab));
+    assert(mesh_crypto::x25519_derive(priv_b, pub_a, shared_ba));
+    assert(std::memcmp(shared_ab, shared_ba, mesh_crypto::X25519_SHARED_LEN) == 0);
+  }
+  std::printf("PASS test_x25519_mutual_dh_symmetric\n");
+}
+
+void test_x25519_over_ed25519_keys_disagrees() {
+  /* F33 part 2, the bug itself: X25519 over Ed25519-generated keys. On a
+   * device an Ed25519 pub is an Edwards point from SHA-512(seed), not
+   * seed * 9, so the two sides land on different values; on the host the
+   * Ed25519 pub is a hash of the seed, likewise not seed * 9. The old
+   * host X25519 shim agreed anyway — which is how pairing shipped this. */
+  uint8_t priv_a[32], pub_a[32], priv_b[32], pub_b[32];
   assert(mesh_crypto::ed25519_generate_keypair(pub_a, priv_a));
   assert(mesh_crypto::ed25519_generate_keypair(pub_b, priv_b));
-  assert(std::memcmp(pub_a, pub_b, mesh_crypto::PUBKEY_LEN) != 0);
-
-  uint8_t shared_ab[mesh_crypto::X25519_SHARED_LEN];
-  uint8_t shared_ba[mesh_crypto::X25519_SHARED_LEN];
-  assert(mesh_crypto::x25519_derive(priv_a, pub_b, shared_ab));
-  assert(mesh_crypto::x25519_derive(priv_b, pub_a, shared_ba));
-  assert(std::memcmp(shared_ab, shared_ba, mesh_crypto::X25519_SHARED_LEN) == 0);
-  std::printf("PASS test_x25519_mutual_dh_symmetric\n");
+  uint8_t s1[32], s2[32];
+  const bool ok1 = mesh_crypto::x25519_derive(priv_a, pub_b, s1);
+  const bool ok2 = mesh_crypto::x25519_derive(priv_b, pub_a, s2);
+  assert(!(ok1 && ok2 && std::memcmp(s1, s2, 32) == 0));
+  std::printf("PASS test_x25519_over_ed25519_keys_disagrees\n");
 }
 
 void test_x25519_rejects_zero_pubkey() {
@@ -285,7 +384,7 @@ void test_x25519_rejects_zero_pubkey() {
    * either rejects it or yields a zero shared, which is a known
    * weak key — both paths in mesh_crypto refuse it. */
   uint8_t priv[mesh_crypto::PRIVKEY_LEN], pub[mesh_crypto::PUBKEY_LEN];
-  assert(mesh_crypto::ed25519_generate_keypair(pub, priv));
+  assert(mesh_crypto::x25519_generate_keypair(pub, priv));
   uint8_t zero_pub[mesh_crypto::PUBKEY_LEN] = {0};
   uint8_t shared[mesh_crypto::X25519_SHARED_LEN];
   assert(!mesh_crypto::x25519_derive(priv, zero_pub, shared));
@@ -399,14 +498,20 @@ void test_aead_aad_only_no_plaintext() {
 }
 
 void test_x25519_generate_keypair_host_contract() {
-  /* F10-rekey: the X25519 keypair generator the rotation uses. On the
-   * host it shares the shim derivation x25519_derive() mirrors, so two
-   * generated keypairs agree on a shared value; on device it is real
-   * clamped Curve25519 (review + bench prove that side). */
+  /* The X25519 keypair generator pairing (F33) and the rotation (F10)
+   * use: the private scalar is clamped per RFC 7748 §5 and the public key
+   * is that scalar times the base point — the same sequence as the
+   * device path, on the host ladder. */
   uint8_t pa[32], ka[32], pb[32], kb[32];
   assert(mesh_crypto::x25519_generate_keypair(pa, ka));
   assert(mesh_crypto::x25519_generate_keypair(pb, kb));
   assert(std::memcmp(pa, pb, 32) != 0);
+  assert((ka[0] & 0x07) == 0 && (ka[31] & 0x80) == 0 && (ka[31] & 0x40) != 0);
+  assert((kb[0] & 0x07) == 0 && (kb[31] & 0x80) == 0 && (kb[31] & 0x40) != 0);
+  const uint8_t nine[32] = {9};
+  uint8_t pub_again[32];
+  assert(mesh_crypto::x25519_derive(ka, nine, pub_again));
+  assert(std::memcmp(pub_again, pa, 32) == 0);
   uint8_t s1[32], s2[32];
   assert(mesh_crypto::x25519_derive(ka, pb, s1));
   assert(mesh_crypto::x25519_derive(kb, pa, s2));
@@ -439,7 +544,9 @@ int main() {
   test_ed25519_verify_rejects_tampered_message();
   test_ed25519_verify_rejects_wrong_pubkey();
   test_active_backend_is_host_shim();
+  test_x25519_rfc7748_vectors();
   test_x25519_mutual_dh_symmetric();
+  test_x25519_over_ed25519_keys_disagrees();
   test_x25519_rejects_zero_pubkey();
   test_x25519_generate_keypair_host_contract();
   test_aead_encrypt_decrypt_roundtrip();

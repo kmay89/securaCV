@@ -52,7 +52,9 @@
     "tamper_events_module.h",
     "contact_tamper.h",
     "csi_event_wire.h",
-    "csi_event_id_floor.h"
+    "csi_event_id_floor.h",
+    "csi_event_log_line.h",
+    "csi_event_backfill.h"
   ],
   "build": {
     "srcDir": "src",

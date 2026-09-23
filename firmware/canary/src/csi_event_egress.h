@@ -17,14 +17,23 @@
  * the committed row into a bounded FreeRTOS queue (never blocks, counts
  * what it drops); csi_event_egress_pump() drains it on the loop task.
  *
- * Persistence: the MQTT layer's bounded offline queue (F9) carries events
- * across a broker outage, as far as its 12 slots allow. Tamper alerts
- * outrank events there (mqtt_offline_queue.h), so a burst of committed
- * rows cannot push a queued SD or enclosure alert out, and a body built
- * while the link is down says `"replay":true`. There is no SD event log /
- * reconnect backfill on this tree yet (the canary-wap's csi_event_log is
- * SD.h-bound and single-writer rules differ here) — a recorded follow-up,
- * not a silent gap.
+ * Persistence (backlog F37): with a card in, every row the pump drains is
+ * appended to the SD event log (/EVENTS/today.ndjson, the canary-wap's line
+ * format — src/csi_event_log.cpp, loop task only under this tree's
+ * single-writer SD rule). A row goes out live when nothing older waits on
+ * the card; otherwise it waits there, and once the broker is back and the
+ * MQTT layer's offline queue has drained, the backfill replays the card in
+ * id order, a bounded amount per loop pass, marked `"replay":true` unless
+ * the row was committed while the link was up. It never sends an id at or
+ * below the highest one already handed to the broker (HA's replay gate
+ * would refuse it); that watermark survives a reboot as an NVS ceiling
+ * written with the event-id floor's policy. The rules are the pure
+ * common/csi/src/csi_event_backfill.h, host-tested. Without a card (or with
+ * another device's log on it) rows take the MQTT layer's bounded offline
+ * queue (F9) as before: 12 slots, where tamper alerts outrank events
+ * (mqtt_offline_queue.h), and a body built while the link is down says
+ * `"replay":true`. The tamper-topic bridge publishes at commit either way,
+ * so a backlog never delays a tamper alert.
  *
  * Event-id continuity: csi_event_on_id_advance writes the allocator's
  * floor to NVS (common/csi/src/csi_event_id_floor.h: before the first id
@@ -42,12 +51,15 @@ extern "C" {
 
 /* Setup, loop task, before the CSI modules register: restore the event-id
  * floor from NVS and — on FEATURE_HA_MQTT builds — hand the witness
- * identity to device_signature and create the egress queue. */
+ * identity to device_signature, create the egress queue and restore the
+ * backfill's delivery watermark. */
 void csi_event_egress_begin(void);
 
-/* Loop task, after mqtt_loop(): publish up to a few queued commits on
- * securacv/<id>/events (and a system.integrity tamper on
- * securacv/<id>/tamper). A no-op without FEATURE_HA_MQTT. */
+/* Loop task, after mqtt_loop(): log up to a few queued commits to the SD
+ * event log and publish them on securacv/<id>/events (and a
+ * system.integrity tamper on securacv/<id>/tamper), then run one bounded
+ * backfill pass. The only caller of the SD event log. A no-op without
+ * FEATURE_HA_MQTT. */
 void csi_event_egress_pump(void);
 
 #ifdef __cplusplus

@@ -235,7 +235,7 @@ so — see D2 below.)
   backfill). Wiring canary event egress is F29; the queue gives that
   transport its loss bound the day it gets callers. Roadmap item 17
   updated (#1697).
-- [ ] **F44 [code+decision] Two 5-second time-bucket stragglers contradict the
+- [x] **F44 [code+decision] Two 5-second time-bucket stragglers contradict the
   ten-minute floor.** The IR-TIMEBUCKET decision (option B — maintainer to
   confirm; `docs/IMPROVEMENT_ROADMAP.md` §3, "Landed in wave 4") made
   600 000 ms the floor and default of both firmwares' witness chains in
@@ -256,6 +256,12 @@ so — see D2 below.)
   only the canary-wap field to the floor today. Neither site reaches the
   chain (`canary_config.h`'s `TIME_BUCKET_MS` is 600000). The choice
   between deleting and widening, at each site, is the maintainer's.
+  *Done (#1718, option delete both — maintainer to confirm):* the unused
+  `DEFAULT_GPS_COARSENING_MS` and its floor are deleted, and so is the canary
+  web UI's back-end-less Device Configuration form (its live Reboot button
+  stays). `regression_check.sh`'s new "Privacy: canary time-bucket floor
+  (Invariant III)" section fails a canary bucket constant off the ten-minute
+  grid and holds any time-bucket field to min=600000.
 
 ### Mesh / fleet / beacon
 
@@ -381,7 +387,7 @@ so — see D2 below.)
   gateway-trust entry is a plain cosigner, pinned by
   `test_gateway_trust_confers_no_privilege` and
   `test_source_grants_gateway_trust_nothing`.
-- [ ] **F33 [code] The PIO Opera mesh has not yet carried a frame over a
+- [x] **F33 [code] The PIO Opera mesh has not yet carried a frame over a
   radio.** Found while landing F10/F14 and not fixed there; each needs its
   own change and a bench (U1 Tracks C2/C3). (1) `mesh_transport`'s peer
   table is never populated on a device — no `add_peer` caller outside host
@@ -402,6 +408,28 @@ so — see D2 below.)
   network (Opera / ESP-NOW)" row still reads ✅ for canary-wap although (2)
   and (6) hold there too; `features_dashboard_guard` refuses a downgrade, so
   lowering that cell is a maintainer's edit.
+  *Done in code (#1718):* all seven parts. Nothing has run on two radios yet.
+  - (2) Pairing ephemerals are clamped X25519 keys in both trees. The PIO
+    host X25519 is now a real RFC 7748 ladder, and a host test shows two
+    independent keypairs agree on the secret and the code (crypto review —
+    maintainer to confirm).
+  - (1) The transport peer table fills from pairing and NVS `peer_macs`.
+  - (3) The outbound counter reserves ahead in NVS (`mesh_out_ctr`), so no
+    counter is signed twice and a rebooted sender is not dropped as a
+    replay.
+  - (5) The four pairing routes run on the loop's request slot.
+  - (6) The §5.6 seven-day deny-list is in both trees. PIO also converges
+    two concurrent removals: a settle window, lower-fingerprint precedence
+    and OFFER propagation (crypto review — maintainer to confirm). Since
+    27bd7ea, a removal reaches NVS and the health log once, not once per
+    resent OFFER.
+  - (7) The web UI shows an alert's age.
+  - (4) `pair/start` founds an opera on a PIO device that holds none, on the
+    existing route and gates.
+
+  FEATURES.md's mesh cell is untouched (the maintainer's call). Bench (U1):
+  Tracks C2/C3, whose rows the runbook now carries. Found here and recorded
+  as F48 and F49.
 
 ### Network surface & provisioning
 
@@ -488,7 +516,7 @@ so — see D2 below.)
   canary dev rebuild and the WAP Beacon leg, and the catalog's pin status stays
   "planned". Bench (U1): pin, polarity (the NC reed held open by the
   magnet) and the debounce policy. (Re-scope recorded in #1699.) (#1704)
-- [ ] **F39 [code] The canary's OTA deploy scripts cannot deploy.**
+- [x] **F39 [code] The canary's OTA deploy scripts cannot deploy.**
   `firmware/canary/scripts/ota_deploy.py` and `ota_deploy.sh` POST the image
   to `/api/ota` with no `Authorization` header, and `handle_ota` answers
   `auth_gate()` first (`securacv_network.cpp`), so every device refuses
@@ -497,7 +525,16 @@ so — see D2 below.)
   #1704, not introduced there. Take the bearer the way the other operator
   tools do (an env var or a prompt, never an argv literal), and with F15
   on, speak HTTPS to 443 with the device's pinned `tls_cert_fp`.
-- [ ] **F40 [code+decision] The canary tree's pre-build tripwire never
+  *Done (#1718):* both scripts take the bearer from `CANARY_TOKEN` or a
+  no-echo prompt (never argv, never printed; the shell passes it to curl on
+  stdin), and with `CANARY_TLS_FP` speak HTTPS to 443 only after the presented
+  certificate's DER SHA-256 equals the pin; an unpinned TLS device is refused
+  with its fingerprint printed, and an HTTP-only build keeps plain HTTP.
+  `test_ota_deploy.py` (17 cases against a fake Canary) runs in the Mesh +
+  Scout host-test job, with shellcheck. The pin comes from the operator (the
+  recovery kit's `tls_cert_fp`), not from `/api/status`, which would hand the
+  token to an unverified peer. Bench (U1): a real push both ways.
+- [x] **F40 [code+decision] The canary tree's pre-build tripwire never
   runs.** `firmware/canary/platformio.ini` sets
   `extra_scripts = pre:../../scripts/pre_build.py` under `[platformio]`,
   where PlatformIO does not read `extra_scripts` (it is an `[env]` option),
@@ -513,6 +550,11 @@ so — see D2 below.)
   note point at the wrong path too), or port it: `[env]` placement, a
   correct path, `env.subst("$PROJECT_DIR")` in place of `__file__`, and the
   comment filter. Maintainer to choose.
+  *Done (#1718, option delete — maintainer to confirm):* the dead line and
+  `firmware/scripts/pre_build.py` are removed, and every pointer to it now
+  names `regression_check.sh`, whose new "Build: PlatformIO extra_scripts"
+  section fails an `extra_scripts` outside `[env]` or one that points at a
+  missing file.
 
 ### Parity & sub-projects
 
@@ -616,7 +658,7 @@ so — see D2 below.)
   mounted this boot; a present-but-failing card is not called removed).
   Bench (U1): a live card pull and a write failure on a canary base.
   (#1704)
-- [ ] **F26 [code+decision] Timeline history deeper than the witness ring.**
+- [x] **F26 [code+decision] Timeline history deeper than the witness ring.**
   F7 pages the 32-record RAM ring; the full history sits in
   `/WITNESS/records.jsonl` on the SD card, and the HTTP task never touches
   SD (the `handle_witness` contract). Decided (option B, staged —
@@ -628,6 +670,8 @@ so — see D2 below.)
   `docs/design/witness_history_bridge.md`. Stage 2 — the loop-task bridge,
   the `handle_witness` extension and the timeline UI — is designed and NOT
   built: F35. Until then deep history remains the export/unseal tools' job.
+  *Done (#1718):* stage 2 is F35; the design doc now reads both stages built,
+  no bench pass (option B, staged — maintainer to confirm).
 - [x] **F27 [code+decision] The canary tree has no Scout pairing surface** —
   done (option B — maintainer to confirm), with the premise corrected: nothing
   anywhere ever called `ble_scout_pair()` — the WAP's "PR 5c setup UI" never
@@ -695,7 +739,7 @@ so — see D2 below.)
   firmware-side MQTT contract fixture (the WAP's `csi_mqtt.cpp` discovery /
   retained templates checked against the HA parsers in pytest, with QoS
   written down as the delivery bound).
-- [ ] **F35 [code] Build the timeline history bridge (F26 stage 2).** The
+- [x] **F35 [code] Build the timeline history bridge (F26 stage 2).** The
   loop-task SD read bridge `docs/design/witness_history_bridge.md` specifies
   over F26's walker: one outstanding request (a second gets
   `503 history_busy`), a 3 s bounded wait with a generation counter so a
@@ -705,6 +749,15 @@ so — see D2 below.)
   badged "from card, chain-linked" — never the ring's "Verified", since no
   per-row signature is checked on the loop. Proof is CI's canary compile
   plus U1 with a card holding more than 32 records.
+  *Done (#1718):* the bridge is built as specified, as a pure header
+  (`firmware/common/witness/witness_history_bridge.h`, host-tested): one
+  request slot (503 `history_busy`), a generation counter so a late walk never
+  answers the next request, a 3 s bounded wait (504 `history_timeout`), at
+  most 4 × 1 KiB per loop pass, a past-EOF hint refused before any read.
+  `handle_witness` is extended (no new route); the web UI's Load More pages
+  into the card, rows badged "from card, chain-linked", never "Verified".
+  CI-compiled on #1718 (897182d: the canary matrix and its OTA-slot size
+  guards); bench (U1): a card holding more than 32 records.
 - [ ] **F36 [code+human] Tighten Scout proximity pairing (F27 follow-up).**
   The window pairs the first single qualifying advert. Two tightenings need
   real advert data first (U1): an N-advert confirmation (several qualifying
@@ -713,7 +766,7 @@ so — see D2 below.)
   advert cannot win the window (it needs the advert payload passed into
   `ble_scout_on_advert()`, which today takes only MAC, RSSI and time). The
   WAP carries the same pairing module and could adopt the route after.
-- [ ] **F37 [code] Canary SD event log + reconnect backfill (F29 follow-up,
+- [x] **F37 [code] Canary SD event log + reconnect backfill (F29 follow-up,
   "F29b" in #1704's commits).** F29 chose persistence option (a): a
   committed event outlives a broker outage only as far as the 12-slot
   offline queue holds it. Port canary-wap's SD event log and its
@@ -722,7 +775,33 @@ so — see D2 below.)
   rule, then replay from the card once the broker returns
   (`firmware/canary/CONSOLIDATION.md` gap row 16). Bench (U1): an outage
   longer than the queue.
-- [ ] **F41 [code] canary-wap's MQTT health does not carry its tamper
+  *Done (#1718):* with a card in, the canary logs every committed csi_event
+  to `/EVENTS/today.ndjson` in the canary-wap's line format. Both trees now
+  marshal and parse it through one header,
+  `common/csi/src/csi_event_log_line.h`, which also refuses torn and glued
+  lines. Once the broker returns and the offline queue has drained, the
+  canary replays what the broker has not seen, in id order and a bounded
+  amount per loop pass. The rules are the pure
+  `common/csi/src/csi_event_backfill.h`, host-tested against a model of Home
+  Assistant's replay gate:
+  - no id at or below the highest one already handed over is sent;
+  - a new row never overtakes an older one waiting on the card;
+  - the watermark survives reboots as an NVS ceiling capped at the
+    allocator's floor;
+  - queued tamper alerts go first, and the tamper bridge publishes at
+    commit.
+
+  The card is touched only from the loop task, and only while storage
+  reports it mounted with no mount in flight. A log is used only when
+  `/EVENTS/owner` names this device's witness key, and the canary-wap now
+  leaves such a card alone in turn. The failed-read give-up counts
+  consecutive failures, and a whole line resets it. No broker, or a changed
+  broker, drops the backlog. `firmware/scripts/check_event_egress_order.py`
+  (33 self-test mutations) holds the firmware glue to what the host test
+  models. Compile beyond the 2.0.17 syntax harness is CI's. Bench (U1): the
+  F37 rows in `hardware_verification_checklist.md`. Found here and recorded
+  as F46 and F47.
+- [x] **F41 [code] canary-wap's MQTT health does not carry its tamper
   state.** `csi_mqtt::publish_health()` sends heap, uptime and the battery;
   `enclosure_open` and `sd_mounted` reach only the HTTP `/api/health`
   document. HA's per-type WAP tamper sensors set from F29's tamper-topic
@@ -731,7 +810,18 @@ so — see D2 below.)
   health (the canary tree already does) or stop the health from clearing a
   tamper-type sensor. F29's "MQTT-discovery triggers for the canary events
   topic" clause is the same surface and could land with it.
-- [ ] **F42 [code] The Tier-1 secure build is not buildable as written.**
+  *Done (#1718):* `csi_mqtt::publish_health()` carries `sd_mounted` (once a
+  card has mounted this boot) and `enclosure_open` (once the contact is
+  adopted) in the canary tree's names; the worst-case body is 323 bytes,
+  inside the 384-byte buffer. HA needed no change:
+  `tests/test_wap_tamper_health.py` reproduces the re-clear against the old
+  firmware's keys. Still open (maintainer's call, in
+  `docs/homeassistant_setup.md`): the WAP health carries no level for
+  `sd_error`, watchdog, power-loss, unexpected-reboot or `tamper_detected`, so
+  those sensors still clear at the next publish. The MQTT-discovery triggers
+  clause of F29 was not attempted. Bench (U1): a lid opening and an SD pull
+  held across two publishes.
+- [x] **F42 [code] The Tier-1 secure build is not buildable as written.**
   `firmware/provisioning/platformio_secure.ini` `[env:secure]` replaces
   the canary `[env]` build flags instead of extending `${env.build_flags}`,
   so it loses the include paths the witness and crypto sources need, and no
@@ -742,14 +832,109 @@ so — see D2 below.)
   unreadable. Fix both, and add a compile-only CI leg so it cannot rot
   again. Bench (U1): K1/K2 of the hardware checklist on a fused board. The
   key-at-rest decision itself is F38.
-- [ ] **F43 [code] The dash display's join screen draws its caption over
+  *Done (#1718):* both secure envs extend `${env.build_flags}` and resolve
+  through `firmware/canary/platformio.ini`'s `extra_configs`;
+  `partitions_secure.csv` drops `encrypted` from `nvs` (ESP-IDF 4.4.7: "The
+  nvs partition cannot be encrypted"); `main.cpp`'s always-used includes moved
+  above the `FEATURE_CSI` gate (which also fixes `[env:minimal]`).
+  `firmware.yml`'s canary leg compiles both envs, and `regression_check.sh`
+  refuses an encrypted `nvs` row. The key still sits in plaintext NVS under
+  `framework = arduino` (F5, F38). Bench (U1): K1/K2 on a fused board.
+- [x] **F43 [code] The dash display's join screen draws its caption over
   the QR.** On the 800×480 dash flavor, the first-boot join scene's "or join
   … password" caption crosses the QR code's lower edge (`onboard_ui`
   layout). Seen in the emulator's preview of the real firmware by the
   fw-emu-portal package (#1703), so it is visible without hardware; a phone
   may still read the code, but the layout is wrong. Re-check every display
   flavor's join scene once fixed.
+  *Done (#1718):* the Join scene is stacked from the panel size and the
+  labels' line heights by a pure header (`include/canary/ui/onboard_layout.h`)
+  — centered on rectangular glass, inside the chord band on round glass, and
+  on a short window only the QR canvas shrinks. The re-check of every emulated
+  flavor found the round watch (network-name line 7 px inside the card) and
+  the AMOLED 2.41 (captions overlapping by 2 px) had the same defect; the same
+  stack fixes both. Guards: `tests_host/test_onboard_layout.cpp` (every
+  display env's panel) and a framebuffer check in `onboard_probe.mjs`; the
+  emulator dist is rebuilt. Bench (U1): the panels themselves, and a phone
+  scanning the watch's smaller card.
 
+- [x] **F45 [code] The nightstand join screen cuts off the only text way in.**
+  On the 172 px nightstand (and the C6 and the nightlight at 180 px), the
+  joined credentials line "SecuraCV-XXXX  •  <password>" (172 px of text in a
+  156 px row) and the stuck-phone hint (207 px) end in an ellipsis. When the
+  QR fails, that text is the only way to join, so this glass dead-ends.
+  Pre-existing; found by F43's re-check of every flavor (#1718). Split small
+  rectangular glass the way round glass already is (network name on one
+  line, password or hint on the next) when the joined line is wider than
+  its row, through the same `onboard_layout.h` stack and its host test.
+  *Done (#1718):* `join_lines()` keeps the joined line only where it fits its
+  row. It measures the way LVGL lays a line out, kerning included, from a
+  generated metrics header (`gen_montserrat_metrics.py`, `--check`ed in CI).
+  Otherwise it splits the line into the name, then `pass  <key>`. Each row
+  tries shorter forms before a smaller face, and none ever ends in an
+  ellipsis. The name and key stay on the glass with and without the QR or
+  the stuck-phone hint, and the hint gets a row of its own. On the round
+  watch that row is the title's band, a visible change. Three more cuts
+  were fixed by the same measure. The host test runs every display env with
+  both type ladders, using the widest name and key the minting alphabet can
+  make. `onboard_probe.mjs` fails on an ellipsis and reads the firmware's
+  own labels, the hint included (4242eb7). The emulator dist is rebuilt.
+  Bench (U1): real 172/180 px glass. Found here: F50.
+- [ ] **F46 [code] The CSI bundler's event ids live outside the chokepoint
+  id space.** Found by F37 (#1718). Rows that pass through the CSI bundler
+  (presence, and the system.integrity tampers, since they carry a state)
+  take ids from `common/csi/src/csi_bundler.cpp`'s own space, 0x80000000
+  upward. No floor covers that space, it restarts every boot, and it
+  commits in bundle-close order. Home Assistant's replay gate therefore
+  already refuses many canary events live: the chokepoint ids after any
+  bundle, and every bundle id after a reboot until the new boot passes the
+  old ids. F29's "no reused ids" holds only for chokepoint ids. The backfill
+  mirrors the gate and skips those rows rather than send ids it would
+  refuse, so F37 does little across reboots until there is one id space.
+  Also, the first bundled row handed over moves `csi.evsent` and the
+  watermark into the bundler's space for good, so on that device the
+  backfill never sends a chokepoint-id row again
+  (`test_one_bundled_row_moves_the_watermark_for_good` pins today's
+  behavior). Recommended: allocate bundle ids from the chokepoint allocator
+  at commit time, in both trees and the open-row display. The fix must
+  reset or migrate `csi.evsent` and Home Assistant's stored mark.
+- [ ] **F47 [code] canary-wap's backfill watermark lives in RAM.** Found by
+  F37 (#1718). Its first reconnect after every boot replays up to 64 ids
+  Home Assistant refuses. It could adopt the canary's
+  `common/csi/src/csi_event_backfill.h` (NVS ceiling, id-floor cap). A
+  smaller one found in the same review: when an unbuildable row is the
+  last whole line before a power cut's torn tail, the canary's walk stays
+  pending and re-reads the fragment about once per loop pass until the next
+  committed row seals it. Nothing is lost, and the next row goes out.
+- [ ] **F48 [code+decision] canary-wap's mesh crypto and its interop with the
+  PIO tree.** Found by F33 (#1718). canary-wap's AUTH exchange still runs
+  X25519 over long-term Ed25519 keys, the bug class F33 part 2 fixed for
+  pairing, and its rotation encrypts under those session keys. canary-wap
+  also HKDFs the pairing key where the PIO tree and spec §5.3 use it raw,
+  and it numbers pairing frames differently, so the two trees cannot pair
+  with each other. Concurrent removals on canary-wap cannot converge without
+  a wire change: `MSG_OPERA_REKEY` names no removed device and has no
+  announcement phase. Crypto review and a wire decision first, then code in
+  both trees and a cross-tree host test.
+- [ ] **F49 [code] Mesh leftovers from F33.** (1) The canary's health-log
+  list passes `millis()` to `formatTimestamp`, the same uptime-as-time-of-day
+  rendering F33 part 7 fixed for alerts. (2) The joiner side's
+  `CodeReadyCallback` never fires: the code arrives on `SEND_ACCEPT`, and
+  dispatch reports only `NOTIFY_CODE_READY`. The web UI reads the code from
+  `GET /api/mesh`, so no user sees it today. (3) There is no radio-MAC
+  learning from opera frames, so a changed MAC means a re-pair. (4) Some
+  PIO residual splits remain: both initiators already handed out, a mutual
+  removal, or a lost ACK. A random-loss probe split 3 of 60 runs at 5%
+  frame loss (spec §5.6 states it).
+- [ ] **F50 [code] The display's other join hints still cut on narrow glass.**
+  Found by F45 (#1718). The Fail-stage hints from `join_failure_hint` measure
+  175-219 px at 12 px ("your router may be out of addresses" is 219), so
+  they are cut on the round watch's 142 px band and on the 156/164 px
+  portrait rows. The PhoneJoined hint ("no page? open 192.168.4.1") is
+  182 px under Heirloom on those rows. Carry them through `join_lines()` /
+  `fit_line()` with narrow forms. Also, on the round watch's no-QR path,
+  the title band appears to overlap the top of the bird, inferred from the
+  numbers only. The emulator always renders the QR, so it was not seen.
 ---
 
 ## 2. Apps (desktop Flasher, Lab, iOS, tvOS)
@@ -938,11 +1123,18 @@ so — see D2 below.)
   since native fails closed silently on a malformed field. `MODEL_ADDR` and
   `DEV_FLASH_MANIFEST_URL` stay deliberate constants, still diffed by the
   test.
-- [ ] **A12 [code] Desktop Flasher lacks the eFuse-read diagnostic** the
+- [x] **A12 [code] Desktop Flasher lacks the eFuse-read diagnostic** the
   browser flasher has (espflash has no fuse-read; the parity test currently
   forces a "browser-only" disclosure). Needs an espflash upstream check or a
   raw-command implementation — investigate, then either implement or record
   why not beside the disclosure.
+  *Investigated, not implemented (#1718):* the pinned espflash 3.3.0 CLI has
+  no register, eFuse or security-info read (`board-info` prints no security
+  field; the library declares `GET_SECURITY_INFO` but never sends it). The
+  reason is recorded beside the parity test's browser-only disclosure and tied
+  to the pin. espflash 4.x's `board-info` prints part of it (not
+  `SECURE_VERSION` or `DIS_DOWNLOAD_MANUAL_ENCRYPT`), so the item reopens with
+  an espflash bump, which needs a bench flash per board.
 - [ ] **A13 [human-gated by U3/certs] macOS signing/notarization** — both Mac
   apps ship unsigned until `ENABLE_MACOS_SIGNING` + certs exist
   (`desktop-lab/README.md`, `desktop/INSTALL.md`).
@@ -1005,18 +1197,31 @@ so — see D2 below.)
   key; removing the passcode disables the key, as documented. Then a real
   canary-wap seal followed by an unseal on the phone, a `.svlt` opened from
   Files or Mail, and the app-switcher snapshot blank while a frame is up.
-- [ ] **A16 [code] Mirror the Wall's `canary.local:8799` probe on the other
+- [x] **A16 [code] Mirror the Wall's `canary.local:8799` probe on the other
   walls.** A2 added it to the Apple TV's well-known candidates only; the
   desktop Flasher's wall, the Lab's `witness-host.js` / `tv-emulator.js`
   and the website's `tv/app.js` do not probe it yet. The website test pins
   its two lists against each other, so this is a cross-repo change.
-- [ ] **A17 [code] The iPhone's timeline labels cells from the local grid.**
+  *Done (#1718, website #203):* every wall — the Flasher, the Lab host and
+  companion defaults, and the website's `tv/app.js` / `js/tv-emulator.js`
+  (re-vendored into both apps) — probes `canary.local:8099`, `:8799`, then
+  `canary.local`, in the Apple TV's order; `desktop_parity.test.js` and a new
+  test pin them all to the Swift literal, and the website test pins its two
+  lists. Not done (maintainer's call): probing a provisioned or typed host on
+  `:8799`.
+- [x] **A17 [code] The iPhone's timeline labels cells from the local grid.**
   `ios/Sources/SecuraCV/Views/Components/TimelineScrubView.swift` (~:47,
   the day's audio-graph clock) prints `dayT0 + cell × bucket`, the rule the
   Wall had until its review fix: in zones whose offset is not a multiple of
   the bucket (+5:45, +5:30) and on 25-hour days that is not the record's
   sealed bucket. Port the Wall's rule — print each record's own sealed
   bucket (`WallTimeline.sealedBuckets`).
+  *Done (#1718):* `TimelineCellBuckets` in `TimelineScrubView.swift` labels a
+  lit cell with its records' own buckets (oldest first) and only an empty cell
+  with its slot; tap/drag now scroll to the cell's newest record.
+  `TimelineCellBucketsTests.swift` covers +5:45, +5:30 and a 25-hour day.
+  Wording says "own bucket", not "sealed" (the ribbon's alert notebook makes
+  no sealing claim). Swift is CI-only (iOS self-heal job).
 - [ ] **A18 [code+decision] The Wall cannot walk an add-on or root-image
   install.** The Home Assistant add-on honors `/config/viewer_tokens.json`
   but has no control that mints a viewer token (running `witness_api`
@@ -1031,7 +1236,7 @@ so — see D2 below.)
   Wall now asks a refusing source once per session and stays clear of it;
   other tokenless pollers still can lock themselves out. Decide whether the
   lockout should cover the unauthenticated routes.
-- [ ] **A20 [code] A bundled espflash that cannot run reads as "unknown"
+- [x] **A20 [code] A bundled espflash that cannot run reads as "unknown"
   in both flashers.** When the sidecar is present but cannot execute (the
   wrong CPU, a missing loader), `identify()` in the Flasher
   (`desktop/src/app.js`) and in the Lab (`canary-local/assets/flash-native.js`)
@@ -1039,13 +1244,25 @@ so — see D2 below.)
   Details text names the cause. Give the spawn failure its own kind and
   words in both frontends (two flashers, two frontends — CLAUDE.md). From
   the rust-flash package's open items (#1704).
-- [ ] **A21 [code] The espflash pins do not mark either app as changed.** The
+  *Done (#1718):* a new `engine` kind in both frontends' error classifier
+  (`desktop/src/app.js`, `canary-local/assets/flash-native.js`), checked
+  first: "The app's flash engine couldn't start", with the system's reason
+  (`spawnReason()`) and no driver or download-mode coaching. `desktop_parity`
+  builds the errors from the Rust that produces them. A real spawn failure has
+  not been seen on a machine (bench).
+- [x] **A21 [code] The espflash pins do not mark either app as changed.** The
   bundled espflash's version and sha256 live only in
   `desktop-release.yml` and `desktop-flasher-release.yml`, and neither app's
   `.github/release-targets.yml` watch names them, so a pin bump alone
   releases nothing. One pins file both workflows read and both watches name
   closes it (`.github/RELEASE_LESSONS.md` 2026-09-23 (b) records the lesson).
-- [ ] **A22 [code] The desktop Flasher's crate fails clippy and fmt, and no
+  *Done (#1718):* `.github/espflash-pins.env` holds the version and the three
+  sha256 pins once; both release workflows load it with a parse-don't-source
+  step that fails on a malformed line, and both apps' `release-targets.yml`
+  watches name it. `desktop_parity` refuses a pin inside either workflow. The
+  load step has not yet run on a release runner — a build-only dispatch of
+  each workflow proves it.
+- [x] **A22 [code] The desktop Flasher's crate fails clippy and fmt, and no
   PR job runs either.** `desktop/src-tauri` fails
   `cargo clippy --all-targets -- -D warnings` on two findings, both in files
   #1704 did not change: `whoami.rs`'s `decode_hex` trips
@@ -1060,6 +1277,10 @@ so — see D2 below.)
   the two findings, format the crate in a commit of its own, then add the
   Lab job's Format check and Clippy steps to `tauri-crate-check`. From the
   rust-apps and rust-flash packages' open items (#1704).
+  *Done (#1718):* `desktop/src-tauri` is `cargo fmt`- and `clippy -D
+  warnings`-clean on rustc 1.98.1 (`is_multiple_of`; the dead
+  `clamp_threshold` and its test removed); `desktop-hub-core.yml`'s `cargo
+  check (src-tauri)` job now runs a format check and clippy.
 
 ---
 
@@ -1184,24 +1405,41 @@ so — see D2 below.)
   Frigate config once a real camera is on the bench (today: one placeholder
   camera, `demo`, on an RTSP path nothing serves — Frigate starts it and
   logs ffmpeg errors for it, so the config parses but never detects).
-- [ ] **HA9 [code] Make the watch actions' refusals translatable.** HA5's
+- [x] **HA9 [code] Make the watch actions' refusals translatable.** HA5's
   `securacv.*` actions raise `ServiceValidationError` with plain-English
   messages and no `translation_key`, so a non-English install reads
   English errors (strategy/11's action-exceptions row reads ⚠️ for it).
   Give each refusal a key in an `exceptions` section of `strings.json`
   (copied to `translations/en.json`) and raise with the translation
   domain, key and placeholders.
-- [ ] **HA10 [code] The watch roster points at a dashboard that doesn't
+  *Done (#1718):* all nine refusals the watch actions raise go through
+  `services._refusal()` with `translation_domain`, `translation_key` and
+  `translation_placeholders`; the keys live in a new `exceptions` section of
+  `strings.json`, `translations/en.json` is a byte-identical copy, and the
+  English is unchanged word for word. `tests/test_exception_translations.py`
+  scans the package: every raise carries a literal key and the keys raised
+  equal the keys declared. strategy/11's action-exceptions row reads ✅; its
+  exception-translations row stays ⚠️ until `__init__.py`'s three
+  `UpdateFailed` messages are translated. hassfest is CI's.
+- [x] **HA10 [code] The watch roster points at a dashboard that doesn't
   exist.** `watches.speak_roster` ends its summary of four or more watches
   with "The dashboard has the rest.", and no dashboard lists watches. Point
   it at `securacv.list_watches` (HA5) instead, and update
   `tests/test_watches.py`, which pins the current sentence.
-- [ ] **HA11 [code] Watch notifications double the article and say "1
+  *Done (#1718):* the summary now ends "The securacv.list_watches action has
+  the rest." A new test holds every `securacv.<action>` named in `watches.py`,
+  `intent.py` and `voice.py` to a registered action.
+- [x] **HA11 [code] Watch notifications double the article and say "1
   days".** Every watch label starts with "the "
   (`watch_runtime._make_label`), and `watches.speak_ending` /
   `speak_fired` write "The {label} watch", so a notification reads "The
   the gate canary watch ended after 1 days" — the plural is wrong too. Fix
   the speech in `watches.py` and pin both cases in a test.
+  *Done (#1718):* every `speak_*` function says the label's article once
+  (`_label`/`_the` helpers) and counts in the singular for one (`_count`) —
+  including `_duration_phrase`'s "1 minutes". Pinned in
+  `tests/test_watches.py`. Left: an early end still rounds up to "after 1
+  day"; the notification title shows a stored doubled label as stored.
 - [ ] **HA12 [decision] The kernel device's double "SecuraCV" prefix.** HA2
   kept "SecuraCV Last Event" and "SecuraCV Adapter Host" (keys
   `kernel_last_event`, `adapter_stats`) byte-identical. Dropping the prefix
@@ -1348,7 +1586,7 @@ so — see D2 below.)
   `ANTHROPIC_API_KEY` under Settings → Secrets and variables → Actions in both
   repos (and under Dependabot secrets if bot PRs should be reviewed). Until
   then a green "Canary Reviewer" check means nothing was reviewed.
-- [ ] **W12 [code] Blender hero bake, milestone 2** (W5 landed milestone 1).
+- [x] **W12 [code] Blender hero bake, milestone 2** (W5 landed milestone 1).
   Written up in `docs/render-roadmap.md` ("the hero's baked AO and a page
   opt-in (milestone 2)") and not built: a scripted Cycles-CPU AO bake exported
   as a same-origin PNG that `scripts/bake-hero.mjs` patches in by relative URI
@@ -1359,6 +1597,18 @@ so — see D2 below.)
   centered one). Needs Blender 4.0+ with numpy on a workstation. CI never runs
   Blender, so a ledger move of more than 1 mm turns
   `tests/hero-models.test.mjs` red until someone re-bakes.
+  *Done (website #203):* `blender/bake_hero.py --bake-ao` runs a Cycles-CPU
+  AO bake over one atlas across both parts (512 px, 256 samples, 40 mm rays;
+  57 s here, a 77 KB PNG). `scripts/bake-hero.mjs` patches the PNG into
+  `models/hero/canary-vision.glb` by relative URI and adds the carried
+  registry's colorways as `KHR_materials_variants`. `/view-in-room` gains an
+  opt-in "Hero render" toggle, off by default, that places the hero's
+  hotspots about its own origin and names the lens opening, since the hero
+  draws no camera. `tests/hero-models.test.mjs` grew from 10 to 17 tests
+  (18 with the hotspot-label guard). A colorway carry needs no Blender:
+  "Update everything" runs `bake-hero.mjs --patch-only`. Not judged on a GPU
+  and not tried in AR on a phone. The roadmap says so, and W13 keeps the GPU
+  half.
 - [ ] **W13 [code, needs a GPU session] Render quality — W9's GPU half.** (1)
   Cinematic mode: the route is decided in `docs/render-roadmap.md` (a WebGL2
   path tracer, `three-gpu-pathtracer` on `three-mesh-bvh`, lazily imported on
@@ -1400,7 +1650,25 @@ so — see D2 below.)
   email plus the privacy policy's date (M4 / L3), which need facts only a
   human has. Give each fix a guard in `tests/legal-claims.test.mjs`, as W7
   did.
-- [ ] **W17 [code] Model and copy drift found while building W4, not fixed
+  *Code half done (website #203):*
+  - "Architecturally incapable" names what is missing.
+  - The phone-home family and its siblings ("LAN-only", "local-only",
+    "never online") are gone from the site. The FAQ names each routine
+    trip online and the iPhone companion's iCloud default.
+  - A recording-consent notice, pinned verbatim, is on the store and on
+    First Flights.
+  - `tests/legal-claims.test.mjs` scans each surface as flowing text, so an
+    aside, a tag, a line break or a no-break-space entity cannot split a
+    phrase.
+
+  Still open (human): the contact mailing address, a role email and the
+  privacy policy's date (M4/L3). Recorded for the same founder pass: the
+  privacy policy says the site fetches nothing external, while every page
+  loads Google Fonts. The audit's monorepo follow-up list (the Lab's
+  "nothing here phones anywhere" footers, `hatch.json`'s motto,
+  `docs/FAQ.md`, `docs/getting_started_canary.md`) and Compare's unsourced
+  "auto-deletes in 24 h" cell are the wave-4 claims-followup package.
+- [x] **W17 [code] Model and copy drift found while building W4, not fixed
   there** (website PR #202). (1) `scripts/make-canary-glb.mjs` draws the
   Vision's lens barrel and glass under a solid Ø13 accent disc, so the lens
   renders as a flat yellow disc. (2) `scripts/make-canary-wap-glb.mjs` puts
@@ -1415,7 +1683,17 @@ so — see D2 below.)
   The Combo AR model's lens and radome positions are hand-kept CAD values
   until C15 carries the measured features. A model edit regenerates and
   commits its `.glb` in the same change.
-- [ ] **W18 [code] The Lab download page says the app fetches only its update
+  *Done (website #203):* (1) the Vision lens is a nested EPS ladder, no longer
+  a flat disc; (2) the WAP's screw heads sit proud of the lid, and a new
+  models-test guard (every non-shell part keeps a visible cap) also found and
+  fixed the doorbell faceplate hiding its lens bezel, grille, vents and LED
+  ring; (3) `js/lab.js` says render-checked, and a site-wide copy sweep
+  refuses "verified" for renders, meshes and prints; (4) the Showroom's Watch
+  is a snap bezel and the Combo's face parts sit on the CAD's numbers; (5)
+  closes with C15. The three changed models are regenerated byte-for-byte.
+  Noticed, not changed: the Showroom Combo's vboard/vcam at x −22.1 where the
+  CAD's `v_cx` is −21.6.
+- [x] **W18 [code] The Lab download page says the app fetches only its update
   manifest** (`download.html`, "Local-first, always": "talks only to your own
   devices … The one thing it fetches for itself is its own update manifest,
   from the project's public GitHub releases"). Since A14 (#1704), once a board
@@ -1435,7 +1713,14 @@ so — see D2 below.)
   check …"), which predates A14. A new website PR from origin/main, with a
   guard in `tests/legal-claims.test.mjs` that fails on "the one thing it
   fetches".
-- [ ] **W19 [code] The website glossary's "The Vault" conflates sealed
+  *Done (website #203):* the "Local-first, always" block says the Lab reaches
+  the internet for two things only, both from the project's public GitHub
+  releases: its update manifest and the firmware for its Flash page, checked
+  against the pinned release key before a byte is written. The USB-flashing
+  sentence stays future tense until a published Lab release carries A14
+  (review option A — maintainer to confirm); `legal-claims.test.mjs` bans the
+  old sentences. Rewrite it in the present tense with the A14 Lab release.
+- [x] **W19 [code] The website glossary's "The Vault" conflates sealed
   snapshots with the quorum Vault** (`scripts/lib/glossary.mjs`, rendered
   into `glossary.html` and `llms-full.txt`): "The sealed store where raw
   snapshots live. Sealed means no one — including you, including us — can
@@ -1454,6 +1739,12 @@ so — see D2 below.)
   `tests/legal-claims.test.mjs` to read through the aside (it scans the
   generated `glossary.html`; `scripts/` is out of its scope by design). A new
   website PR from origin/main.
+  *Done (website #203):* "The Vault" is the witness kernel's sealed store of
+  raw frames, opened only through break-glass by a quorum of trustees; a new
+  "Sealed snapshot" term is one Canary WAP frame sealed to one person's key,
+  opened on the holder's own device, not the Vault and no quorum.
+  `glossary.html`, `llms-full.txt` and `llms.txt` are regenerated, and the
+  tests hold the split.
 
 ---
 
@@ -1578,6 +1869,31 @@ major, by theme") — work its themes, then tick here.
   help is only a `[4:0.5:8]` range, and `gen_enclosures.py` reads a range only
   at the start of a comment, so wave 1 left it alone rather than risk its
   slider. `DESIGN_RULES.md` §11 "Customizer help text" names the first four.
+  *Wave 2 done (#1718, website #203):*
+  - The 7" case's shared-help lines are split and `HELP_LINE_DEBT` is
+    empty. The Dash's and the J-box's `usb_w`/`usb_h` are split.
+  - Every knob in the released four (WAP, Vision, doorbell, Sense) has help
+    read off the geometry that uses it, except the option-list selectors.
+  - Stated ranges sit on their knob's line, and `gen_enclosures.py` reads a
+    range where the builder does (43 knobs had been a slider in one and raw
+    text in the other).
+  - One group name, "Stud/keyhole interface", across 16 files, held by a
+    new `lint_design_lang.py` rule.
+  - Presets for the doorbell (`doorbell_weather`) and the Sense
+    (`sense_wall`, `sense_ceiling`), with defaults unchanged (preset
+    contents and the group name: maintainer to confirm). A new check
+    refuses a preset that overrides a control the builder does not gray
+    out. It caught the WAP's and the Vision's presets leaving `opt_weep`
+    live.
+  - Knobs without help: 535 → 347 of 1743. The CSG of every touched part
+    is byte-identical to the base.
+
+  Still open: the 336 development-case knobs without help, and a
+  maintainer call. The OpenSCAD 2021.01 desktop Customizer makes a slider
+  or dropdown only for a bare bracket comment, so the house `help // [range]`
+  form gives plain boxes there (`DESIGN_RULES.md` §11). The J-box's pigtail
+  `usb_w`/`usb_h` needs a name of its own, and multi-line group headers are
+  still invisible to the Lab's parser.
 - [ ] **C11 [decision] Raise the lid ribs, or leave them** (C3's rib half; the
   audit's "Ribs proportioned backwards"). The evidence is recorded and no rib
   changed: `DESIGN_RULES.md` §11's "Lid rib proportions" table gives the
@@ -1608,7 +1924,7 @@ major, by theme") — work its themes, then tick here.
   and shrinks `KNOWN_DRIFT`, whose `--check` fails when a listed entry stops
   happening. Same pass: `bom_canary_display.csv`'s D-ENC1 still describes the
   Dash back's retired keyholes and M4 pair.
-- [ ] **C13 [code] Lab display-line leftovers from #1703.** (1)
+- [x] **C13 [code] Lab display-line leftovers from #1703.** (1)
   `canary-local/devices/registry.json` lags the display manifests:
   `canary-display-nightstand-c6`, `canary-display-nightstand7` and
   `canary-display-nightlight-c3` have no registry card (the C3's differs from
@@ -1622,7 +1938,28 @@ major, by theme") — work its themes, then tick here.
   from `total_t`. (4) `canary-local/tools/figures/massing.mjs` comments still
   call the 1.47" S3 stick's USB shell `usb_w` / `usb_h`, the names C2 gave to
   the wall opening.
-- [ ] **C14 [code] The CAD regen order runs `gen_figures` before a file it
+  *Done (#1718, website #203):* (1) the Nightstand C6 and the Nightstand 7
+  get registry cards (no twins, so the flashers' links do not move); the C6
+  draws a new sketch figure of its pocket case, the Nightstand 7 draws the
+  Dash 7's slab through a new `figures.json` `manifests` join, and the C3
+  manifest names its existing card with a new `lab.card` key rather than
+  adding a second one (option "lab.card join" — maintainer to confirm).
+  `lint_device_manifests.py` now refuses a claimed case whose home is no
+  registry card, and the chooser, board-identity and figure tests pass on the
+  aligned registry. Every display card's Web row said "first-boot portal
+  only", but every flavor serves the glass mirror on :80 after provisioning;
+  all nine now say so, and a test ties the row to the firmware. (2) The Fence
+  Guard draws as a ghost like every other idea. (3) `realDash`'s seat is
+  re-derived from `total_t` and the 9.0 mm back, and a test holds it to the
+  ledger's assembled row. (4) `massing.mjs` names the shell
+  `usb_shell_w` / `usb_shell_h`. Also: `scene_figures.test.js`,
+  `body_dims.test.js` and `device_models.test.js` were run by no workflow;
+  `canary-local.yml` now runs them, and `canary_local.test.js` fails any test
+  file there that no `node --test` command names. The website carries the
+  C6 figure in `scad/cad-dims.json`. Open: the C6 manifest's `figure` (a
+  firmware change with a dist rebuild), and the Dash stand's fin, which
+  overlaps the back's two lower dock pads as modeled.
+- [x] **C14 [code] The CAD regen order runs `gen_figures` before a file it
   reads.** `scripts/regen_cad.py` (and CLAUDE.md's order) runs
   `gen_figures.mjs` at step 6 and `gen_enclosures.py` at step 11, but
   `gen_figures.mjs` reads `canary-local/devices/catalog.json`, which
@@ -1634,7 +1971,13 @@ major, by theme") — work its themes, then tick here.
   `gen_enclosures.py`'s catalog globs `docs/hardware/enclosure/*.scad`, so
   running it while `gen_assembled_dims.py` has its `.tmp_assembled_*.scad` on
   disk adds a bogus product.
-- [ ] **C15 [code] Carry the Combo's measured face features to the website.**
+  *Done (#1718):* `gen_enclosures.py` now runs before `gen_figures.mjs`, and
+  the order moved together in `scripts/regen_cad.py`, `gen_cad_params.py`'s
+  `REGEN_ORDER`, CLAUDE.md and the enclosure README. A test fails any step
+  that reads (by quoted path) a file a later step writes. The catalog skips
+  scratch `.scad` files (`.tmp_probe_*` and any dot- or tmp-named file), and
+  a test builds the catalog with strays on disk and gets the same bytes.
+- [x] **C15 [code] Carry the Combo's measured face features to the website.**
   `gen_assembled_dims.py` records the Combo's lens aperture and radome window
   as face `features` (the case's own `lens_x` / `lens_y` and `rad_cx` /
   `rad_cy`, re-evaluated by `--check`) and the fleet figure draws them there,
@@ -1646,6 +1989,12 @@ major, by theme") — work its themes, then tick here.
   no fit-check module and no committed STLs: its seat is read from its own
   datums and no closing gate proves it, so it stays a prototype until C7
   prints it.
+  *Done (#1718, website #203):* `distill_cad_dims()` carries each figure's
+  measured face features as an additive `features_mm` (verbatim, unrounded)
+  and refuses a malformed, stale or off-face record;
+  `test_gen_builder_manifest_site` pins the key and each refusal. The
+  website's `make-canary-combo-glb.mjs` places the lens and radome window from
+  it through `cad-dims.mjs`, and the models test holds them there.
 
 ---
 

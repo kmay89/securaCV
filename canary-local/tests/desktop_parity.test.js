@@ -21,7 +21,9 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { readFileSync, readdirSync } = require("node:fs");
+const { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } = require("node:fs");
+const { tmpdir } = require("node:os");
+const { spawnSync } = require("node:child_process");
 const { join } = require("node:path");
 const { pathToFileURL } = require("node:url");
 const vm = require("node:vm");
@@ -1321,9 +1323,27 @@ test("the board's own firmware claim never waives the first-contact erase", () =
 });
 
 test("the eFuse gap between the two flashers is stated, not hidden", () => {
-  // The browser reads the chip's security fuses; espflash has no fuse-read
-  // command, so the desktop app genuinely cannot. That's acceptable — silently
-  // omitting it is not, because a missing check reads as a passed check.
+  // The browser reads the chip's security fuses (six READ_REGs at eFuse block
+  // 0 through esptool-js); the desktop app genuinely cannot. That's
+  // acceptable — silently omitting it is not, because a missing check reads
+  // as a passed check.
+  //
+  // Why it cannot (A12, checked against the espflash 3.3.0 source rather than
+  // assumed; the full record is docs/unflashed_board_intake.md, "Where the
+  // two flashers differ"): the app runs the espflash CLI, and 3.3.0's
+  // subcommands are board-info, checksum-md5, completions, erase-flash,
+  // erase-parts, erase-region, flash, hold-in-reset, monitor,
+  // partition-table, read-flash, reset, save-image and write-bin — none reads
+  // a register or an eFuse. board-info prints chip + revision, crystal, flash
+  // size, features and MAC; it reads eFuses for the revision and MAC but
+  // prints no security field. Its library can send READ_REG and names the
+  // ROM's GET_SECURITY_INFO, but never sends that in 3.3.0 and exposes
+  // neither on the command line. From espflash 4.0.0, board-info prints a
+  // "Security Information" block (GET_SECURITY_INFO: secure boot, flash
+  // encryption, JTAG, a USB-disable flag — not SECURE_VERSION or
+  // DIS_DOWNLOAD_MANUAL_ENCRYPT), which is the route to a partial native
+  // check — so the pin bump that makes it possible must revisit this
+  // disclosure, and fails here until it does.
   const browser = read(join(CANARY, "assets/flash.js"));
   const html = read(join(ROOT, "desktop/src/index.html"));
   assert.match(browser, /efuseBlock0Addrs|readSecurityEfuses/,
@@ -1333,6 +1353,16 @@ test("the eFuse gap between the two flashers is stated, not hidden", () => {
     "the user assuming it ran");
   assert.match(html, /browser-only/,
     "desktop flasher's fuse-gap note no longer names the gap");
+  const pinned = /^ESPFLASH_VERSION=(\d+)\.(\d+)\.(\d+)$/m.exec(read(join(ROOT, ".github/espflash-pins.env")));
+  assert.ok(pinned, "couldn't read ESPFLASH_VERSION from .github/espflash-pins.env");
+  assert.ok(Number(pinned[1]) < 4,
+    `the desktop apps now bundle espflash ${pinned.slice(1).join(".")}, whose board-info prints the ROM's ` +
+    "security info — the \"no fuse-read command\" disclosure (desktop/src/index.html #coldstart-efuse) and " +
+    "docs/unflashed_board_intake.md are no longer the whole truth. Revisit A12: read what board-info now " +
+    "reports, match each field to the browser's, disclose the rest, then move this bound");
+  const doc = read(join(ROOT, "docs/unflashed_board_intake.md"));
+  assert.ok(doc.includes(`the version both desktop apps bundle (${pinned.slice(1).join(".")}, pinned in`),
+    "docs/unflashed_board_intake.md names a different espflash than the pins file — its eFuse record is about another engine");
 });
 
 test("health check: native parsers pin the browser's byte-magics, and the UI reaches the command", () => {
@@ -2171,6 +2201,9 @@ const WALL_SIGHTINGS = [
   { deviceId: "canary-sense-3", host: "canary-sense-3.local", ip: "fe80::1", port: 1 },
 ];
 const WALL_BOARDS = ["http://192.168.1.50:80", "http://192.168.1.51", "http://canary-sense-3.local"];
+// The Apple TV's well-known candidates (tvos WallModel.wellKnownCandidates),
+// as bases — the test after the run test holds every monorepo wall to them.
+const WALL_WELL_KNOWN = ["http://canary.local:8099", "http://canary.local:8799", "http://canary.local"];
 const wallInvoke = (calls, sightings, caps) => async (cmd, args) => {
   calls.push([cmd, args]);
   if (cmd === "native_capabilities") return caps;
@@ -2237,12 +2270,13 @@ test("witness wall: both apps try the kernel before any browsed board, and say w
   // (tvos/discovery/DISCOVERY.md). So a browsed board tried ahead of the
   // kernel would replace the kernel's whole fleet on the wall, every tick.
   // Both hosts: browse first, then the typed kernel, the well-known
-  // canary.local:8099 and canary.local, and only then the boards they heard.
+  // canary.local:8099, canary.local:8799 and canary.local, and only then the
+  // boards they heard.
   const hosts = [
     ["Lab witness-host.js", () => runLabWall("http://192.168.1.10:8099", WALL_SIGHTINGS),
-      ["http://192.168.1.10:8099", "http://canary.local:8099", "http://canary.local"]],
+      ["http://192.168.1.10:8099", ...WALL_WELL_KNOWN]],
     ["Flasher app.js", () => runFlasherWall("192.168.1.10", WALL_SIGHTINGS),
-      ["http://192.168.1.10:8099", "http://192.168.1.10", "http://canary.local:8099", "http://canary.local"]],
+      ["http://192.168.1.10:8099", "http://192.168.1.10", ...WALL_WELL_KNOWN]],
   ];
   const statuses = [];
   for (const [name, run, kernel] of hosts) {
@@ -2266,10 +2300,42 @@ test("witness wall: both apps try the kernel before any browsed board, and say w
                              ["Flasher app.js", () => runFlasherWall("", [])]]) {
     const { calls, status } = await run();
     const poll = calls.find(([c]) => c === "witness_discover");
-    assert.deepStrictEqual(Array.from(poll[1].bases), ["http://canary.local:8099", "http://canary.local"],
+    assert.deepStrictEqual(Array.from(poll[1].bases), WALL_WELL_KNOWN,
       `${name}: with no typed kernel and nothing heard, only the well-known addresses are tried`);
     assert.match(status, /nothing answering yet/, `${name} must keep the "nothing answering yet" status when nothing announced`);
   }
+});
+
+test("witness wall: every wall here probes the Apple TV's well-known addresses, in its order", () => {
+  // The Wall (tvos WallModel.wellKnownCandidates) is the reference: the hub
+  // convention port, the kernel's own API port (8799 — the Home Assistant
+  // add-on and the Docker sidecar serve it), then the bare device; the first
+  // address that serves a fleet wins. The desktop Flasher, the Lab's wall
+  // host, the Lab's menu bar companion and the vendored web emulator must
+  // try the same three in the same order — a list one surface forgot is a
+  // kernel that surface never finds. (The website's tests/tv-wall.test.mjs
+  // pins its TV app to the emulator's list, which this file pins here.)
+  const swift = read(join(ROOT, "tvos/WitnessWall/Sources/WitnessWall/WallModel.swift"));
+  const tv = /static let wellKnownCandidates = \[([^\]]*)\]/.exec(swift);
+  assert.ok(tv, "tvos WallModel.swift lost `static let wellKnownCandidates` — re-point this test at it");
+  const tvBases = [...tv[1].matchAll(/"([^"]+)"/g)].map((x) => `http://${x[1]}`);
+  assert.deepStrictEqual(WALL_WELL_KNOWN, tvBases,
+    "the monorepo walls' well-known list drifted from the Apple TV's wellKnownCandidates");
+
+  // The Lab's menu bar companion polls these until the wall host names one.
+  const companion = read(join(ROOT, "desktop-lab/src-tauri/src/companion.rs"));
+  const defaults = /const DEFAULT_BASES: \[&str; \d+\] = \[([^\]]*)\];/.exec(companion);
+  assert.ok(defaults, "companion.rs lost `const DEFAULT_BASES` — re-point this test at it");
+  assert.deepStrictEqual([...defaults[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]), tvBases,
+    "the Lab companion's DEFAULT_BASES must be the Apple TV's list, in its order");
+
+  // The vendored web emulator (canonical in the website repo; both app copies
+  // are byte-identical — the sync guard proves that).
+  const emu = read(join(CANARY, "witness/tv-emulator.js"));
+  const known = /const WELL_KNOWN = \[([^\]]*)\];/.exec(emu);
+  assert.ok(known, "the vendored tv-emulator.js lost `const WELL_KNOWN` — re-point this test at it");
+  assert.deepStrictEqual([...known[1].matchAll(/'([^']+)'/g)].map((x) => x[1]), tvBases,
+    "the vendored emulator's WELL_KNOWN drifted from the Apple TV's — change the website's js/tv-emulator.js, then scripts/vendor_witness_emulator.sh");
 });
 
 test("mDNS browse: the Lab's fleet_scan is the Flasher's, in lockstep", () => {
@@ -2464,23 +2530,6 @@ test("native flashing: the Lab bundles the Flasher's espflash, pinned and packag
   const flasherWf = read(join(ROOT, ".github/workflows/desktop-flasher-release.yml"));
   const labWf = read(join(ROOT, ".github/workflows/desktop-release.yml"));
 
-  // 1. One flash engine: the same version and the same three sha256 pins.
-  const pins = ["ESPFLASH_VERSION", "ESPFLASH_SHA256_AARCH64_APPLE_DARWIN",
-    "ESPFLASH_SHA256_X86_64_APPLE_DARWIN", "ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU"];
-  const pin = (wf, key, label) => {
-    const m = new RegExp(`\\n  ${key}: "([^"]+)"`).exec(wf);
-    assert.ok(m, `couldn't find the workflow-level ${key} in ${label}`);
-    return m[1];
-  };
-  for (const key of pins) {
-    assert.strictEqual(pin(labWf, key, "desktop-release.yml"), pin(flasherWf, key, "desktop-flasher-release.yml"),
-      `${key} differs between the Lab's and the Flasher's release — the two apps would ship different flash engines`);
-  }
-  assert.match(pin(flasherWf, "ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU", "desktop-flasher-release.yml"), /^[0-9a-f]{64}$/,
-    "the espflash pins must be full sha256 digests");
-
-  // 2. The same bundling steps, sidecar directory aside — sha check, lipo and
-  //    the per-arch/universal architecture proof included.
   const step = (wf, name, label) => {
     const i = wf.indexOf(`      - name: ${name}\n`);
     assert.ok(i >= 0, `${label} has no "${name}" step`);
@@ -2488,6 +2537,92 @@ test("native flashing: the Lab bundles the Flasher's espflash, pinned and packag
     const end = rest.search(/\n      - name: |\n      # ──/);
     return (end >= 0 ? rest.slice(0, end) : rest).trimEnd();
   };
+
+  // 1. One flash engine, pinned in ONE file both workflows read
+  //    (.github/espflash-pins.env, A21) — never a second copy in either
+  //    workflow, where it could drift and where no release-targets.yml watch
+  //    would see a bump.
+  const PINS = ".github/espflash-pins.env";
+  const pinKeys = ["ESPFLASH_VERSION", "ESPFLASH_SHA256_AARCH64_APPLE_DARWIN",
+    "ESPFLASH_SHA256_X86_64_APPLE_DARWIN", "ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU"];
+  const pinLines = read(join(ROOT, PINS)).split("\n").filter((l) => l && !l.startsWith("#"));
+  const pins = Object.fromEntries(pinLines.map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
+  assert.deepStrictEqual(Object.keys(pins).sort(), [...pinKeys].sort(),
+    `${PINS} must pin exactly the espflash version and the three per-target sha256s, once each`);
+  assert.strictEqual(pinLines.length, pinKeys.length, `${PINS} pins a key twice`);
+  assert.match(pins.ESPFLASH_VERSION, /^\d+\.\d+\.\d+$/, "ESPFLASH_VERSION must be a plain x.y.z version");
+  for (const key of pinKeys.slice(1)) {
+    assert.match(pins[key], /^[0-9a-f]{64}$/, `${key} must be a full sha256 digest`);
+  }
+  for (const [label, wf] of [["desktop-release.yml", labWf], ["desktop-flasher-release.yml", flasherWf]]) {
+    assert.doesNotMatch(wf, /^\s+ESPFLASH_(?:VERSION|SHA256_\w+):/m,
+      `${label} pins espflash itself again — the one copy lives in ${PINS}`);
+  }
+  // Both read it through the same step, before either bundle step runs.
+  const loadName = "Load the espflash pins";
+  const load = step(labWf, loadName, "desktop-release.yml");
+  assert.strictEqual(load, step(flasherWf, loadName, "desktop-flasher-release.yml"),
+    `the Lab's "${loadName}" step drifted from the Flasher's — keep them identical`);
+  assert.ok(load.includes(`pins=${PINS}\n`), `"${loadName}" must read ${PINS}`);
+  for (const [label, wf] of [["desktop-release.yml", labWf], ["desktop-flasher-release.yml", flasherWf]]) {
+    const at = wf.indexOf(`- name: ${loadName}\n`);
+    for (const name of ["Bundle espflash sidecar (macOS universal)", "Bundle espflash sidecar (Linux x86_64)"]) {
+      assert.ok(at >= 0 && at < wf.indexOf(`- name: ${name}\n`), `${label} must load the pins before "${name}"`);
+    }
+  }
+  // Run the step exactly as the release does — on the real file, and on the
+  // shapes it must refuse — so a parse that only ever runs on a release
+  // runner is exercised on every PR that touches it.
+  const runBody = /\n        run: \|\n([\s\S]*)$/.exec(load);
+  assert.ok(runBody, `couldn't find the run: block of "${loadName}"`);
+  const script = runBody[1].split("\n").map((l) => l.replace(/^ {10}/, "")).join("\n");
+  const runLoad = (pinsText) => {
+    const dir = mkdtempSync(join(tmpdir(), "espflash-pins-"));
+    try {
+      mkdirSync(join(dir, ".github"));
+      writeFileSync(join(dir, PINS), pinsText);
+      const envFile = join(dir, "github_env");
+      writeFileSync(envFile, "");
+      const r = spawnSync("bash", ["-c", script], { cwd: dir, env: { PATH: process.env.PATH, GITHUB_ENV: envFile }, encoding: "utf8" });
+      return { status: r.status, env: read(envFile), out: (r.stdout || "") + (r.stderr || "") };
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  };
+  const real = read(join(ROOT, PINS));
+  const ok = runLoad(real);
+  assert.strictEqual(ok.status, 0, `"${loadName}" refused the real ${PINS}: ${ok.out}`);
+  assert.deepStrictEqual(ok.env.split("\n").filter(Boolean).sort(),
+    pinKeys.map((k) => `${k}=${pins[k]}`).sort(), `"${loadName}" must export exactly the four pins`);
+  const sha = pins.ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU;
+  for (const [why, text] of [
+    ["a missing pin", real.replace(/^ESPFLASH_SHA256_X86_64_APPLE_DARWIN=.*\n/m, "")],
+    ["a pin given twice", real + `ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU=${sha}\n`],
+    ["a short digest", real.replace(sha, sha.slice(1))],
+    ["an uppercase digest", real.replace(sha, sha.toUpperCase())],
+    ["a quoted version", real.replace(/^ESPFLASH_VERSION=(.*)$/m, 'ESPFLASH_VERSION="$1"')],
+    ["a stranger key", real + "ESPFLASH_EXTRA=1\n"],
+    ["shell in the file", real + "$(touch pwned)\n"],
+  ]) {
+    const bad = runLoad(text);
+    assert.notStrictEqual(bad.status, 0, `"${loadName}" accepted ${why}`);
+    assert.match(bad.out, /::error file=\.github\/espflash-pins\.env::/, `"${loadName}" must name ${PINS} when it refuses ${why}`);
+  }
+  // Every sha256 the bundle steps look up is one the file pins: the macOS
+  // step derives ESPFLASH_SHA256_<TRIPLE> from each triple it fetches, the
+  // Linux step names its variable outright.
+  const macStep = step(flasherWf, "Bundle espflash sidecar (macOS universal)", "desktop-flasher-release.yml");
+  const fetched = [...macStep.matchAll(/^\s+fetch ([a-z0-9_-]+)$/gm)].map((m) => m[1]);
+  assert.deepStrictEqual(fetched, ["aarch64-apple-darwin", "x86_64-apple-darwin"], "the macOS step fetches a different set of slices");
+  for (const triple of fetched) {
+    const key = `ESPFLASH_SHA256_${triple.toUpperCase().replace(/-/g, "_")}`;
+    assert.ok(key in pins, `the macOS step verifies espflash-${triple} against ${key}, which ${PINS} doesn't pin`);
+  }
+  const linuxVars = [...step(flasherWf, "Bundle espflash sidecar (Linux x86_64)", "desktop-flasher-release.yml")
+    .matchAll(/\$\{(ESPFLASH_\w+)\}/g)].map((m) => m[1]);
+  assert.ok(linuxVars.includes("ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU"), "the Linux step lost its sha256 check variable");
+  for (const v of linuxVars) assert.ok(v in pins, `the Linux step reads ${v}, which ${PINS} doesn't pin`);
+
+  // 2. The same bundling steps, sidecar directory aside — sha check, lipo and
+  //    the per-arch/universal architecture proof included.
   for (const name of ["Bundle espflash sidecar (macOS universal)", "Bundle espflash sidecar (Linux x86_64)"]) {
     const lab = step(labWf, name, "desktop-release.yml");
     const flasher = step(flasherWf, name, "desktop-flasher-release.yml");
@@ -2572,6 +2707,10 @@ const jsFnText = (src, name, where) => {
   assert.fail(`unbalanced function ${name} in ${where}`);
 };
 
+// Does a frontend's BAUD_RETRY_KINDS name `engine`?
+const BAUD_RETRY_SET_HAS_ENGINE = (src) =>
+  /const BAUD_RETRY_KINDS = new Set\(\[[^\]]*"engine"/.test(src);
+
 test("native flashing: the Lab's flash page gives the Flasher's diagnostics, and serial lights only where it works", () => {
   const appJs = read(join(ROOT, "desktop/src/app.js"));
   const nativeJs = read(join(CANARY, "assets/flash-native.js"));
@@ -2597,6 +2736,63 @@ test("native flashing: the Lab's flash page gives the Flasher's diagnostics, and
     assert.strictEqual(classify(new Error(generic + tail)).kind, kind,
       `flash-native.js misclassifies espflash's tail: ${tail.slice(0, 40) || "(none)"}`);
   }
+  // A bundled espflash that cannot start (the wrong CPU, a missing loader, a
+  // file without its execute bit) is its own kind in both frontends — never
+  // `unknown` (which coaches download mode) and never the port's `permission`.
+  // The errors are built from the Rust that produces them, so a reworded
+  // spawn_error or host message fails here instead of silently falling back.
+  const archHint = /pub const ARCH_MISMATCH_HINT: &str =\s*"([\s\S]*?)";/
+    .exec(read(join(ROOT, "desktop/hub-core/src/hub_sidecar.rs")));
+  assert.ok(archHint, "couldn't parse ARCH_MISMATCH_HINT from hub-core hub_sidecar.rs");
+  const archText = archHint[1].replace(/\\\n\s*/g, "").replace(/\\"/g, '"');
+  const sidecarRs = engineRs("sidecar");
+  const withHint = /format!\("could not start \{name\}: \{hint\} \(\{raw\}\)"\)/;
+  const bare = /format!\("could not start \{name\}: \{raw\}"\)/;
+  assert.match(sidecarRs, withHint, "spawn_error's hinted wording moved — the frontends match its prefix");
+  assert.match(sidecarRs, bare, "spawn_error's bare wording moved — the frontends match its prefix");
+  const flasherHostRs = read(join(ROOT, "desktop/src-tauri/src/host.rs"));
+  const labFlashRs = read(join(ROOT, "desktop-lab/src-tauri/src/flash.rs"));
+  for (const [label, src] of [["desktop host.rs", flasherHostRs], ["desktop-lab flash.rs", labFlashRs]]) {
+    assert.match(src, /\.map_err\(\|e\| format!\("bundled espflash missing: \{e\}"\)\)/,
+      `${label}'s unresolvable-sidecar wording moved — the frontends match its prefix`);
+  }
+  assert.strictEqual(jsFnText(nativeJs, "spawnReason", "flash-native.js"),
+    jsFnText(appJs, "spawnReason", "desktop/src/app.js"),
+    "flash-native.js spawnReason drifted from the Flasher's — copy it back verbatim");
+  const reasonOf = new Function(jsFnText(appJs, "spawnReason", "desktop/src/app.js") + "\nreturn spawnReason;")();
+  const classifyFlasher = new Function(jsFnText(appJs, "classifyFlashError", "desktop/src/app.js") +
+    "\nreturn classifyFlashError;")();
+  for (const [err, reason] of [
+    // macOS given a slice-less binary, and Linux's twin: spawn_error's hint.
+    [`could not start espflash: ${archText} (Bad CPU type in executable (os error 86))`,
+      "Bad CPU type in executable (os error 86)"],
+    [`could not start espflash: ${archText} (Exec format error (os error 8))`, "Exec format error (os error 8)"],
+    // A dynamically linked espflash whose loader is missing reports ENOENT…
+    ["could not start espflash: No such file or directory (os error 2)", "No such file or directory (os error 2)"],
+    // …and one without its execute bit reports EACCES — port-shaped words.
+    ["could not start espflash: Permission denied (os error 13)", "Permission denied (os error 13)"],
+    ["bundled espflash missing: current executable path has no parent", "current executable path has no parent"],
+  ]) {
+    for (const [where, fn] of [["flash-native.js", classify], ["desktop/src/app.js", classifyFlasher]]) {
+      const c = fn(err);
+      assert.strictEqual(c.kind, "engine", `${where} reads a sidecar that never started as ${c.kind}: ${err.slice(0, 60)}`);
+      assert.doesNotMatch(c.hint, /hold BOOT/, `${where} coaches download mode for a sidecar that never started`);
+    }
+    assert.strictEqual(reasonOf(err), reason, `spawnReason lost the system's reason in: ${err.slice(0, 60)}`);
+  }
+  // …while espflash that RAN and was refused the port keeps the port's kind.
+  assert.strictEqual(classify(new Error(generic + "Error: Permission denied (os error 13)")).kind, "permission");
+  assert.ok(!BAUD_RETRY_SET_HAS_ENGINE(nativeJs) && !BAUD_RETRY_SET_HAS_ENGINE(appJs),
+    "a sidecar that cannot start fails identically at every speed — never retry `engine`");
+  // Both identify() calls say it with the system's reason and no driver note
+  // (the port was never opened, so a USB-bridge driver can't be the cause).
+  for (const [where, src] of [["desktop/src/app.js", appJs], ["flash-native.js", nativeJs]]) {
+    assert.ok(src.includes('const engine = c.kind === "engine";'), `${where} identify() lost the engine kind`);
+    assert.ok(src.includes('const reason = engine ? ` (The system said: ${spawnReason(firstLine)})` : "";'),
+      `${where} identify() must give the system's reason for a sidecar that never started`);
+    assert.ok(src.includes("!osLevel && !engine && bridge"), `${where} identify() must not blame a USB driver when the engine never started`);
+  }
+
   // withoutLocalFile() rewrites ONE sentence of that verbatim classifier (the
   // "local .bin under Advanced" install lives in the Flasher, not here). If
   // app.js rewords it, the replace silently does nothing — so the sentence it
@@ -2951,6 +3147,23 @@ test("native flashing: the Lab's flash page drives the Flasher's commands with t
     assert.ok(!/Put it in download mode/.test(blocked.text()));
     assert.ok(!blocked.calls.some(([c]) => c === "fetch_manifest"), "nothing is fetched for a board that couldn't be read");
   } finally { blocked.close(); }
+
+  // A bundled espflash that never started reads as the app's engine, with the
+  // system's reason — not as download mode, and not as the CP210x driver the
+  // bridge note would otherwise blame (the port was never opened).
+  const stuck = await runNativeBench({
+    detectAnswer: "could not start espflash: No such file or directory (os error 2)",
+    ports: [{ name: "/dev/ttyUSB0", kind: "usb", vid: 0x10c4, pid: 0xea60, product: "CP2102 USB to UART Bridge Controller" }],
+  });
+  try {
+    assert.match(stuck.text(), /Found \/dev\/ttyUSB0 — The app's flash engine couldn't start\. That's this app, not your board/);
+    assert.ok(stuck.text().includes("(The system said: No such file or directory (os error 2))"),
+      "the Lab must say the system's reason for a sidecar that never started");
+    assert.ok(!/Put it in download mode|hold BOOT, tap RESET/.test(stuck.text()),
+      "a sidecar that never started must not coach download mode");
+    assert.ok(!/Silicon Labs|driver/i.test(stuck.text()), "a sidecar that never started must not blame the USB driver");
+    assert.ok(!stuck.calls.some(([c]) => c === "fetch_manifest"), "nothing is fetched for a board that couldn't be read");
+  } finally { stuck.close(); }
 
   // The camera module's own port is recognized by the catalog's USB id and
   // never read as an ESP32 (the Flasher short-circuits on the same id).

@@ -11,12 +11,15 @@
 // tests exercise exactly what the page runs.
 
 // The device's fleet figure: `device.<id>` where one exists, else the one
-// device figure drawn for it (the ledger's `device`).
+// device figure drawn for it (the ledger's `device`), else the figure its
+// device manifest names (the ledger's `manifests` — the Nightstand 7 draws
+// the Dash 7's 7" slab: one board, one case, two products).
 export function deviceFigure(ledger, devId) {
   const figs = ledger?.figures;
   if (!Array.isArray(figs)) return null;
   return figs.find((f) => f.id === `device.${devId}`)
     || figs.find((f) => f.role === "device" && f.device === devId)
+    || figs.find((f) => f.role === "device" && (f.manifests || []).includes(devId))
     || null;
 }
 

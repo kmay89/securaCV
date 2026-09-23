@@ -71,7 +71,7 @@ hardware root of trust closes.
 
 `firmware/provisioning/` ships real tooling — `generate_keys.sh` (RSA-3072 Secure
 Boot key + XTS-AES flash-encryption key), `sdkconfig.defaults.secure`,
-`partitions_secure.csv` (encrypted partitions + `nvs_keys`), `provision_canary.sh`
+`partitions_secure.csv` (`nvs_keys` + `spiffs` flagged `encrypted`, `nvs` deliberately not), `provision_canary.sh`
 (virgin-verify → burn → flash → post-verify, with `--dry-run`), and
 `verify_device.py` (reads the security eFuses). [`secure_provisioning.md`](../secure_provisioning.md)
 documents the eFuse target state. The firmware full audit

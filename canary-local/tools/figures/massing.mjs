@@ -593,8 +593,8 @@ export const FIGURES = [
       // reason this product is shaped the way it is (it hangs off an outlet
       // rather than standing on a surface). A figure that left it off would
       // read as a different, free-standing device.
-      const usbW = 12.0;                 // series-A shell width  (usb_w)
-      const usbH = 4.5;                  // series-A shell height (usb_h)
+      const usbW = 12.0;                 // series-A shell width  (usb_shell_w)
+      const usbH = 4.5;                  // series-A shell height (usb_shell_h)
       const usbFree = 12.2;              // usb_proud 14.0 - usb_wall 1.8
       // The shell straddles the PCB, so it centers on the board's mid-plane:
       // z_usb = face_t + lcd_rise + pcb_t/2 back from the face.
@@ -612,6 +612,55 @@ export const FIGURES = [
           size: [19.39, 0.9, 36.28], r: 1.5 },
         { kind: 'box', m: 'lit', face: 'y', at: [(E.w - 17.39) / 2, E.d - 0.4, (E.h - 32.35) / 2],
           size: [17.39, 0.4, 32.35], r: 1 },
+      ];
+    },
+  },
+  {
+    id: 'device.canary-display-nightstand-c6',
+    title: 'Canary Nightstand C6',
+    role: 'device', of: 'canary-display-nightstand-c6',
+    // The C6-LCD-1.47 pocket case (canary_c6_display.scad) in the build the
+    // file defaults to and its Lab preview renders: headers="none", the
+    // stripped board. The case is still in development (its dev_*.stl export
+    // is gitignored), so the wall is the sketch part; the numbers are the
+    // SCAD's own derived ones (its echo: "outer 25.12 x 41.17 x 14.05"):
+    //   xo    = board_w 20.32 + 2*tol_slide 0.20 + 2*wall 2.2       = 25.12
+    //   yo    = board_l 36.37 + 2*tol_slide 0.20 + 2*wall 2.2       = 41.17
+    //   depth = face_t 2.0 + lcd_rise 3.65 + pcb_t 1.6 + back_stack 4.8
+    //           + back_t 2.0                                          = 14.05
+    // What makes it read as this case and not its 1.47 siblings is its
+    // outline: the "ears" (the BOOT/RST channels bulge each side wall) and
+    // the "chin" (the back-mounted USB-C shell's overhang bulges the bottom
+    // wall). No plug stands off it — the S3 stick ends in a series-A plug,
+    // this board takes its cable in a socket.
+    // The C6 manifest does not name this figure yet: naming it maps the C6
+    // board in the firmware's figure table (fleet_figures.h, and a
+    // CANARY_FIGURE_HARDWARE line in the board's pins.h) — a firmware change
+    // of its own. Today it draws the Lab card.
+    sketch: { w: 25.12, d: 14.05, h: 41.17 },
+    sketchNote: 'the C6-LCD-1.47 pocket case in canary_c6_display.scad, stripped-board build '
+      + '(headers="none", the file default): shell 25.12 x 41.17 (board cavity + 2.2 mm walls), '
+      + '14.05 mm deep (bezel 12.05 + back 2.0), plus the 1.0 mm button ears and the 1.1 mm '
+      + 'USB-C chin; no committed case STL yet',
+    build: (E) => {
+      const backT = 2.0;       // back_t — the snap-on back, its own print
+      const earBump = 1.0;     // ear_bump = btn_proud 1.8 + tol_slide 0.2 + ear_skin 1.2 - wall 2.2
+      const earW = 7.4;        // ear_w = btn_ch_w 3.4 + 4
+      const earZ = 7.0 + 2.4;  // btn_up 7.0 from the board's USB end, which sits tol_slide + wall up
+      const chin = 1.1;        // chin_bump = usb_proud 1.9 + tol_slide 0.2 + ear_skin 1.2 - wall 2.2
+      const chinW = 13.15;     // chin_w = usb_shell_w 9.15 + 4
+      const faceY = E.d - 1.0; // the glass stands where its 1.47 siblings' does
+      return [
+        { kind: 'box', m: 'shell2', face: 'y', at: [0, 0, 0], size: [E.w, backT, E.h], r: 3 },
+        { kind: 'box', m: 'shell', face: 'y', at: [0, backT - EPS, 0], size: [E.w, faceY - backT + EPS, E.h], r: 3 },
+        // the two ears and the chin, bezel bulges the whole bezel deep
+        { kind: 'box', m: 'shell', face: 'y', at: [-earBump, backT, earZ - earW / 2], size: [earBump + EPS, faceY - backT, earW] },
+        { kind: 'box', m: 'shell', face: 'y', at: [E.w - EPS, backT, earZ - earW / 2], size: [earBump + EPS, faceY - backT, earW] },
+        { kind: 'box', m: 'shell', face: 'y', at: [(E.w - chinW) / 2, backT, -chin], size: [chinW, faceY - backT, chin + EPS] },
+        // the 1.47" module under the face (lcm 19.39 x 36.28) and the window
+        // onto its active area (aa 17.39 x 32.35), centered as the bezel cuts it
+        { kind: 'box', m: 'glass', face: 'y', at: [(E.w - 19.39) / 2, faceY, (E.h - 36.28) / 2], size: [19.39, 0.9, 36.28], r: 1.5 },
+        { kind: 'box', m: 'lit', face: 'y', at: [(E.w - 17.39) / 2, E.d - 0.4, (E.h - 32.35) / 2], size: [17.39, 0.4, 32.35], r: 1 },
       ];
     },
   },

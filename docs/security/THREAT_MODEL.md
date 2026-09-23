@@ -569,13 +569,28 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     survivor that misses the 60 s window is dropped and re-pairs. There,
     `opera_id` is a cleartext header field and `opera_secret` buys nothing
     else, so the removed device is shut out by each survivor
-    **unregistering its pubkey**, not by the new secret: a survivor that
-    missed the window (or aborted without its SECRET) keeps trusting the
-    removed device indefinitely, with no signal. The rotation's own gain is
-    that every pre-removal frame is dead to the survivors that switched,
-    across a re-pair too. Host-tested; **maintainer crypto review and the
-    U1 Track C3 bench pass are pending**, and the §5.6 revocation deny-list
-    is implemented in neither tree.
+    **unregistering its pubkey**, not by the new secret. Since F33 a device
+    unregisters it as soon as it verifies an OFFER naming it, so only a
+    survivor that missed every copy of the OFFER for the whole window keeps
+    trusting the removed device, indefinitely and with no signal. The
+    rotation's own gain is that every pre-removal frame is dead to the
+    survivors that switched, across a re-pair too. Two removals made on two
+    devices at once converge on one secret (F33: a settle window before any
+    secret goes out, the lower initiator fingerprint wins, every OFFER's
+    removal holds on every device that hears it); an initiator that already
+    handed out its secret before hearing the other OFFER, or two devices
+    removing each other, can still split the household, and a host
+    random-loss probe still split a few percent of runs. Host-tested;
+    **maintainer crypto review and the U1 Track C3 bench pass are pending**.
+  - The §5.6 `REVOCATION_GRACE_MS` deny-list (F33, both trees,
+    `mesh_revocation.{h,cpp}` staged byte-identical): a removed device's
+    pairing attempts are refused for 7 days, persisted FE-gated with the
+    grace left (time powered off does not count down). The PlatformIO tree
+    also deny-lists the device named by every verified OFFER; canary-wap
+    records only removals made on itself, because its rotation message does
+    not name the removed device, and two concurrent removals on canary-wap
+    devices can still split that household (a wire change). Host-tested;
+    crypto review and bench pending.
 
 ### Chirp channel (anonymous, community, soft-alert)
 
@@ -692,11 +707,17 @@ firmware or UI source.
   restates the commit rule on a mirror, not the sketch's own code. Open: the PlatformIO
   rotation's maintainer crypto review; the bench passes (the checklist's O3
   row; `docs/hardware/v1_bench_validation_runbook.md` Track C3); the §5.6
-  `REVOCATION_GRACE_MS` deny-list, in neither tree; and a pairing that
+  `REVOCATION_GRACE_MS` deny-list (F33: in both trees, host-tested, the
+  Opera section above), and convergence of two concurrent removals on
+  canary-wap, which needs a wire change; and a pairing that
   completes on a device, which both rotations need first — #1704 found that
-  both trees run pairing's X25519 on Ed25519-generated keys and that the
-  PlatformIO transport's peer table is never populated outside host tests
-  (read from the source, not yet seen on a bench).
+  both trees ran pairing's X25519 on Ed25519-generated keys (fixed by F33:
+  clamped X25519 ephemerals in both trees, host-tested against a real X25519
+  — crypto review pending) and that the PlatformIO transport's peer table was
+  never populated outside host tests (fixed by F33: each trusted peer's radio
+  MAC is bound from pairing and NVS, spec §8.3; host-tested, not yet seen on
+  a bench). canary-wap's AUTH session keys still run X25519 over the
+  long-term Ed25519 keys (spec §5.3 note).
 - Beacon pairing flow (spec §3.3: `PAIR_OFFER`, ephemeral X25519 +
   confirmation code) is a stub. Nothing writes a beacon-set entry or a peer's
   X25519 key, so the two-device co-sign path — whose transport is encrypted —

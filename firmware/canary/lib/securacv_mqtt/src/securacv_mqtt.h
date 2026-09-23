@@ -181,6 +181,21 @@ bool mqtt_publish_status(const char* json_payload);
 // Events: discrete event record (QoS 0, buffered across broker outages)
 bool mqtt_publish_event(const char* json_payload);
 
+// Events, live link only (the SD event log's backfill and its live path,
+// csi_event_egress / common/csi/src/csi_event_backfill.h): true when the
+// link took the body. Never buffers — false while the link is down, while
+// the offline queue still holds records from an outage (those go first, in
+// order: a queued tamper alert is never overtaken), or when the send
+// failed. The caller's copy stays on the card and is retried.
+bool mqtt_publish_event_live(const char* json_payload);
+
+// Bumped by every reprovision that changes the broker a record would be
+// delivered to (host, port or user changed, or the broker removed) — the
+// same test that flushes the offline queue. A caller holding undelivered
+// records of its own (the SD event log's backfill) drops them on a change:
+// what waited for one broker is not the next one's to see.
+uint32_t mqtt_destination_epoch();
+
 // Health: system metrics (QoS 0, every 60s)
 bool mqtt_publish_health(const char* json_payload);
 

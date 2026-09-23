@@ -107,6 +107,10 @@ test("enclosureForProduct: a case's every manifest claimant finds it, not only t
   // and the C6 board is framed by its own pocket case, not the Watch's drum
   assert.strictEqual(enclosureForProduct(enclosures, "securacv-canary-display-nightstand-c6")?.id,
     "c6-display-pocket-case");
+  // the C3's case is homed on the Nightlight's Lab card (canary-nightlight),
+  // and the flasher still finds it under the product's own slug
+  assert.strictEqual(enclosureForProduct(enclosures, "securacv-canary-display-nightlight-c3")?.id,
+    "c3-pocket-display-case");
 });
 
 test("buildIdentityPanel: renders the white card with color-coded pin rows", async () => {

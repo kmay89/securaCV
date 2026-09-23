@@ -327,6 +327,24 @@ jobs:
           PLATFORMIO_BUILD_FLAGS: -DVALIDATION_BUILD=1 -DFEATURE_TAMPER_GPIO=1 -DTOUCH_PIN_NUM=5
         run: pio run -e dev
 
+      - name: Compile the provisioning kit's secure envs (canary, compile-only)
+        # [env:secure] / [env:secure_ha] live in
+        # firmware/provisioning/platformio_secure.ini, which
+        # firmware/canary/platformio.ini pulls in through extra_configs: the
+        # Tier 3/4 image (SECURACV_REQUIRE_FLASH_ENCRYPTION=1,
+        # partitions_secure.csv, CSI off). No workflow compiled them, and they
+        # had stopped compiling unseen — their build_flags replaced the
+        # canary [env] include paths, and main.cpp needed FEATURE_CSI (F42).
+        # A compile gate only: neither env is in flavors.json, so no size
+        # guard, release, flasher catalog, SBOM row or OTA manifest touches
+        # them, and firmware-release.yml builds its canary envs by name.
+        if: matrix.flavor.name == 'canary'
+        env:
+          PLATFORMIO_BUILD_FLAGS: -DVALIDATION_BUILD=1
+        run: |
+          pio run -e secure
+          pio run -e secure_ha
+
   pio-check:
     name: Static Analysis (${{ matrix.flavor.name }})
     needs: flavors
@@ -1106,7 +1124,7 @@ jobs:
           # (the old "7 of them now" comment had drifted to 9).
           MESH_TESTS="mesh_crypto mesh_envelope mesh_pairing mesh_session
                       mesh_transport mesh_beacon mesh_state mesh_channel_hop
-                      mesh_hub_election mesh_alert mesh_rekey"
+                      mesh_hub_election mesh_alert mesh_rekey mesh_revocation"
           for f in firmware/canary/lib/securacv_mesh/test_mesh_*.cpp; do
             n=$(basename "$f" .cpp); n=${n#test_}
             case " ${MESH_TESTS//$'\n'/ } " in
@@ -1120,6 +1138,12 @@ jobs:
               $MESH_SRC/*.cpp \
               -I $MESH_SRC
           done
+
+          # The canary web UI's Opera alert list (securacv_webui.cpp): each
+          # alert's timestamp_ms is the receiver's uptime, shown as an age
+          # against the uptime_ms of the JSON test_mesh_session pins, never
+          # as a date (F33 part 7). node is preinstalled on ubuntu-latest.
+          node --test firmware/tests_host/test_canary_mesh_alerts.test.js
 
           # ble_scan + ble_scout_state — pure-logic, only link
           # ble_scan.cpp / ble_scout_state.cpp from the lib, plus
@@ -1854,6 +1878,21 @@ jobs:
         run: |
           python3 -m pip install --quiet pytest cryptography
           python3 -m pytest firmware/scripts/test_ota_release.py -q
+
+      - name: Run the canary OTA deploy script tests (bearer + TLS pin)
+        # firmware/canary/scripts/ota_deploy.py and ota_deploy.sh push a dev
+        # build to the dev-only POST /api/ota, which answers auth_gate()
+        # first. They once sent no Authorization header at all, so every
+        # device refused them (F39). The tests run both scripts against a
+        # fake Canary on localhost (plain HTTP, and self-signed HTTPS with the
+        # right, a wrong and no tls_cert_fp pin) and fail when the bearer is
+        # missing, reaches an unpinned or mismatched certificate, or is
+        # printed. curl and openssl ship on the runner; shellcheck keeps the
+        # shell script clean.
+        run: |
+          python3 -m pip install --quiet pytest cryptography
+          python3 -m pytest firmware/canary/scripts/test_ota_deploy.py -q
+          shellcheck firmware/canary/scripts/ota_deploy.sh
 
       - name: Check canary-wap route security (every route gated or allowlisted)
         # Static fail-closed guard: every HTTP route the sketch registers

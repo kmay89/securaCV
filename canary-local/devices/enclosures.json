@@ -558,7 +558,10 @@
    "for": "Waveshare ESP32-C3-LCD-1.47 (portrait; the C6 sibling's exact outline + panel, plus a TF slot and an RGB LED), three board builds: `headers=\"pillars\"` (the board as Waveshare ships it — brass corner pillars on, headers not soldered; the press bosses span the measured 2.8 mm to land on the flat pillar tops and hold the board against the bezel, and the lid skirt is notched around each pillar), `\"none\"` (stripped, pillars unscrewed — the shallowest case), or `\"male\"` (down-facing headers + pillars — deepest, thin skirt clear of the pin rows). Three PETG spools, and the slots are roles: slot 1 body = YELLOW (bezel and lid both), slot 2 mark = BLACK, slot 3 light = WHITE. The white does the job of Waveshare's clear-acrylic sandwich: measured off the hardware at 1 mm behind the glass front, 2.8 mm tall, and it is ONE continuous U — up both long walls, around both far corners, across the LED's end wall — white through the full wall depth with no ties crossing it. Both earlier cuts are lessons kept: outer-skin webs chop the strip into dashes, inboard ribs put black slats in the light path, and a strip that stops short of the corners goes dark exactly where it turns. The black is the branding: the lid's back carries the \"Canary\" wordmark, debossed and filled at zero clearance so the AMS fuses it. The wordmark alone, not the bird — [`canary_mark_lib.scad`](./canary_mark_lib.scad) states a ~30 mm minimum for the mark's interior detail and this lid is 25.12 mm across. It carries the mark and the wall hanger (`lid_back`): the plate is 41 mm tall and the wordmark takes four of them, so the hanger sits high and the word reads below it. The hanger is an egg — [`canary_vent_lib.scad`](./canary_vent_lib.scad)'s house ovoid, mounted upright (wide base down, crown up). A round keyhole admits exactly one head size and a real wall screw did not fit the old Ø7 one; an egg tapers continuously, so one opening takes a range of heads — offer the head into the base, let the case drop, and the flank carries the screw to the crown, which is sized to the shank and will not give the head back. The through cut is asserted clear of the press bosses and the skirt's snap band. The glass is located, not clamped: bosses cut to the exact component stack (no preload), and the face touches the panel only on a land over the module border — the innermost 0.5 mm of lip is relieved 0.25 so the window rim never puts a contact line on the glass edge. BOOT/RST are printed-in-place flexure paddles: a press pad cut free by a 0.55 mm slot on three sides, hinged at its USB end, a boss on its back over the actuator — press it with a fingertip, no tool, nothing internal exposed, and the pad sits recessed so a pocket squeeze lands on the ear rim instead. USB-C is a true stadium hugging the shell at ~0.05 mm per side with a chamfered rim for the plug's overmold (the recessed ring it replaced left a 0.4 mm floor over the insertion slot and broke out on the first print). The front face itself prints flat on the plate, with no modeled foot relief: the \"face edge chamfer\" this file used to carry was an untapered cut, so what it drew was a 0.80 mm square rabbet around the whole first-layer perimeter — an overhang, on the one surface a person looks at, giving up a fifth of the face plate's bed contact (403.62 mm² where flat gives 508.15) to duplicate a ~0.2 mm elephant-foot compensation the slicer already applies. [`check_foot_relief.py`](./check_foot_relief.py) measures every exported mesh and fails the build if a stepped foot comes back; a real taper still passes. Keyed lid: the board's M2 pillar pattern is asymmetric, so offered the wrong way round the skirt lands on the USB shell and refuses to close — the error is physical, not a rattle you discover later. Asymmetric snap nubs give it a real click. microSD swaps with the lid off (the slot mouth faces down-board; no wall window could pass a card). Two plates, not one with a flag: `gen_3mf.py c3` cuts the case for the board as Waveshare ships it, `gen_3mf.py c3-male` cuts it for a board with the headers soldered on — 3.00 mm deeper in the bezel (12.25 → 15.25) with press bosses 3.00 mm longer (4.80 → 7.80) and a thin skirt clear of the pin rows, same outline. They are not interchangeable on a finished print, so the board they were cut for is in the filename; `-bezel` / `-lid` suffixes split either one when you are iterating on one half. It also fits the USB-A board (`port=\"usb_a\"` — the ESP32-S3-LCD-1.47, same PCB outline, same panel, same buttons, but the board ends in a series-A male plug): `gen_3mf.py c3-usba` / `c3-usba-male`. The port axis is the only difference and it is additive — every USB-C part renders vertex-for-vertex identical to before it existed. Four things move with it: the opening becomes a rectangle (a stadium leaves a series-A shell's square corners nowhere to go), it centers on the PCB mid-plane because the plug straddles the board rather than sitting on its back, the chin bulge disappears (nothing to swallow — the plug goes through and stands outside), and the root gains an inward drop collar (outward would spend the very insertion length it protects; the assert caught that on the first cut, at 8.8 mm against an 11.0 floor). The interesting one is the light ring: a series-A plug sits low enough to land on the band, so rather than shortening the ring on every wall or stopping it at this one — the U this case abandoned when print 3 showed the pipe going dark where it turns — the ring dives under the plug, keeping 1.55 mm of white running beneath the opening. Still one closed ring, and the band's part count is what proves it. Not offered in the `pillars` build: that is a measured claim about the C3's brass standoffs and nobody has had an S3 in hand to say the same",
    "status": "in-development",
    "note": "3 filaments, snap lid, keyed, 2 boards × 3 board builds, `gen_3mf.py c3` / `c3-male` / `c3-usba` / `c3-usba-male`",
-   "device": "canary-display-nightlight-c3",
+   "device": "canary-nightlight",
+   "devices": [
+    "canary-display-nightlight-c3"
+   ],
    "preview": "preview_dev_c3_147.png",
    "parts": [],
    "scad": "canary_c3_lcd147.scad"
@@ -831,7 +834,12 @@
       {
        "name": "hood_reach",
        "default": "4.0",
-       "comment": "how far the awning's drip edge stands off the wall  // [2:0.5:8]"
+       "range": [
+        2.0,
+        0.5,
+        8.0
+       ],
+       "comment": "how far the awning's drip edge stands off the wall"
       }
      ]
     },
@@ -852,41 +860,6 @@
         "tabs",
         "both"
        ]
-      },
-      {
-       "name": "kh_extra",
-       "default": "3.0",
-       "comment": "back thickening that hosts the keyhole pockets"
-      },
-      {
-       "name": "kh_head_d",
-       "default": "7.0",
-       "comment": "screw-head pass hole (fits #6 / M3.5 pan head) — mount_kh_head_d()"
-      },
-      {
-       "name": "kh_shank_d",
-       "default": "4.2",
-       "comment": "shank slot width — mount_kh_shank_d()"
-      },
-      {
-       "name": "kh_slot_l",
-       "default": "8.0",
-       "comment": "slot travel (slot runs toward +X = UP when the USB faces down) — mount_kh_slot_l()"
-      },
-      {
-       "name": "kh_head_h",
-       "default": "3.5",
-       "comment": "total pocket depth (face web + head cavity) — mount_kh_head_h()"
-      },
-      {
-       "name": "kh_face",
-       "default": "1.0",
-       "comment": "face web thickness the screw head grips behind — mount_kh_face()"
-      },
-      {
-       "name": "kh_inset",
-       "default": "10.0",
-       "comment": "keyhole centers at x = ±(inner_l/2 − kh_inset); auto-merges to one on small cases"
       },
       {
        "name": "tab_l",
@@ -921,6 +894,47 @@
      ]
     },
     {
+     "name": "Stud/keyhole interface",
+     "note": "blind keyhole pockets in a thickened back (seal-safe)",
+     "params": [
+      {
+       "name": "kh_extra",
+       "default": "3.0",
+       "comment": "back thickening that hosts the keyhole pockets"
+      },
+      {
+       "name": "kh_head_d",
+       "default": "7.0",
+       "comment": "screw-head pass hole (fits #6 / M3.5 pan head) — mount_kh_head_d()"
+      },
+      {
+       "name": "kh_shank_d",
+       "default": "4.2",
+       "comment": "shank slot width — mount_kh_shank_d()"
+      },
+      {
+       "name": "kh_slot_l",
+       "default": "8.0",
+       "comment": "slot travel (slot runs toward +X = UP when the USB faces down) — mount_kh_slot_l()"
+      },
+      {
+       "name": "kh_head_h",
+       "default": "3.5",
+       "comment": "total pocket depth (face web + head cavity) — mount_kh_head_h()"
+      },
+      {
+       "name": "kh_face",
+       "default": "1.0",
+       "comment": "face web thickness the screw head grips behind — mount_kh_face()"
+      },
+      {
+       "name": "kh_inset",
+       "default": "10.0",
+       "comment": "keyhole centers at x = ±(inner_l/2 − kh_inset); auto-merges to one on small cases"
+      }
+     ]
+    },
+    {
      "name": "Aesthetics",
      "note": "",
      "params": [
@@ -939,12 +953,22 @@
       {
        "name": "lid_edge",
        "default": "0.8",
-       "comment": "45° chamfer around the lid's top edge (0 = sharp slab)  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "45° chamfer around the lid's top edge (0 = sharp slab)"
       },
       {
        "name": "lid_edge2",
        "default": "0.8",
-       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you"
       },
       {
        "name": "opt_mark",
@@ -973,7 +997,8 @@
       },
       {
        "name": "label_dy",
-       "default": "-10.0"
+       "default": "-10.0",
+       "comment": "label center Y offset from the LID center"
       },
       {
        "name": "label_rot",
@@ -982,7 +1007,8 @@
       },
       {
        "name": "label_font",
-       "default": "Liberation Sans:style=Bold"
+       "default": "Liberation Sans:style=Bold",
+       "comment": "the font label_text is set in (it must be installed)"
       },
       {
        "name": "e_camera",
@@ -1081,12 +1107,18 @@
       },
       {
        "name": "batt_w",
-       "default": "34.0"
+       "default": "34.0",
+       "comment": "bay width across the case (Y) — the cell's 34"
       },
       {
        "name": "batt_h",
        "default": "6.0",
-       "comment": "bay height — keep >= 1 mm over the nominal cell for LiPo swelling  // [4:0.5:12]"
+       "range": [
+        4.0,
+        0.5,
+        12.0
+       ],
+       "comment": "bay height — keep >= 1 mm over the nominal cell for LiPo swelling"
       },
       {
        "name": "batt_gap",
@@ -1111,15 +1143,18 @@
      "params": [
       {
        "name": "gps_l",
-       "default": "16.0"
+       "default": "16.0",
+       "comment": "GPS module length (X): the bay's cradle rim is drawn 0.4 a side around it"
       },
       {
        "name": "gps_w",
-       "default": "16.0"
+       "default": "16.0",
+       "comment": "GPS module width (Y); with the GPS fitted the cavity is at least this + 1"
       },
       {
        "name": "gps_h",
-       "default": "4.0"
+       "default": "4.0",
+       "comment": "GPS module height — the cavity keeps 1 mm over it"
       },
       {
        "name": "gps_gap",
@@ -1181,7 +1216,12 @@
       {
        "name": "floor_cove",
        "default": "0.8",
-       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+       "range": [
+        0.0,
+        0.2,
+        1.2
+       ],
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
       },
       {
        "name": "lid_key",
@@ -1267,15 +1307,17 @@
       {
        "name": "tray_l",
        "default": "24.0",
-       "comment": "desiccant tray footprint"
+       "comment": "desiccant tray footprint length"
       },
       {
        "name": "tray_w",
-       "default": "18.0"
+       "default": "18.0",
+       "comment": "desiccant tray footprint width"
       },
       {
        "name": "tray_h",
-       "default": "8.0"
+       "default": "8.0",
+       "comment": "desiccant tray height (1.2 floor, slotted)"
       }
      ]
     },
@@ -1290,7 +1332,8 @@
       },
       {
        "name": "standoff_d",
-       "default": "4.0"
+       "default": "4.0",
+       "comment": "PCB standoff Ø — one under each board corner"
       },
       {
        "name": "post_d",
@@ -1340,12 +1383,22 @@
       {
        "name": "usb_w",
        "default": "12.0",
-       "comment": "opening width: clears rugged USB-C cable boots (connector body ~8.9 mm)  // [9:0.5:14]"
+       "range": [
+        9.0,
+        0.5,
+        14.0
+       ],
+       "comment": "opening width: clears rugged USB-C cable boots (connector body ~8.9 mm)"
       },
       {
        "name": "usb_h",
        "default": "6.5",
-       "comment": "opening height: boot clearance (connector body ~3.2 mm) — slim if cable is bare  // [4:0.5:8]"
+       "range": [
+        4.0,
+        0.5,
+        8.0
+       ],
+       "comment": "opening height: boot clearance (connector body ~3.2 mm) — slim if cable is bare"
       },
       {
        "name": "usb_web",
@@ -1371,7 +1424,12 @@
       {
        "name": "cam_fov",
        "default": "66",
-       "comment": "lens diagonal field of view (OV2640 on the Sense: 66°)  // [40:1:120]"
+       "range": [
+        40.0,
+        1.0,
+        120.0
+       ],
+       "comment": "lens diagonal field of view (OV2640 on the Sense: 66°)"
       },
       {
        "name": "cam_lens_h",
@@ -1390,11 +1448,13 @@
       },
       {
        "name": "cam_dx",
-       "default": "0.0"
+       "default": "0.0",
+       "comment": "camera window center X, from the board center"
       },
       {
        "name": "cam_dy",
-       "default": "0.0"
+       "default": "0.0",
+       "comment": "camera window center Y, from the board center"
       },
       {
        "name": "lp_d",
@@ -1403,11 +1463,13 @@
       },
       {
        "name": "lp_dx",
-       "default": "5.0"
+       "default": "5.0",
+       "comment": "light-pipe port center X, from the board center"
       },
       {
        "name": "lp_dy",
-       "default": "5.0"
+       "default": "5.0",
+       "comment": "light-pipe port center Y, from the board center"
       },
       {
        "name": "vent_pad_d",
@@ -1416,7 +1478,8 @@
       },
       {
        "name": "vent_pad_depth",
-       "default": "0.8"
+       "default": "0.8",
+       "comment": "GORE-vent recess depth into the lid's outer face — core_vent_pad_depth()"
       },
       {
        "name": "vent_hole_d",
@@ -1425,19 +1488,23 @@
       },
       {
        "name": "vent_ring_d",
-       "default": "6.0"
+       "default": "6.0",
+       "comment": "Ø of the ring the vent holes sit on — core_vent_ring_d()"
       },
       {
        "name": "vent_holes",
-       "default": "10"
+       "default": "10",
+       "comment": "hole count around that ring — core_vent_holes()"
       },
       {
        "name": "vent_dx",
-       "default": "7.0"
+       "default": "7.0",
+       "comment": "buzzer vent center X, from the board center"
       },
       {
        "name": "vent_dy",
-       "default": "-4.0"
+       "default": "-4.0",
+       "comment": "buzzer vent center Y, from the board center"
       },
       {
        "name": "touch_d",
@@ -1451,11 +1518,13 @@
       },
       {
        "name": "touch_dx",
-       "default": "-3.0"
+       "default": "-3.0",
+       "comment": "cap-touch window center X, from the board center"
       },
       {
        "name": "touch_dy",
-       "default": "-5.0"
+       "default": "-5.0",
+       "comment": "cap-touch window center Y, from the board center"
       }
      ]
     },
@@ -1480,11 +1549,13 @@
       },
       {
        "name": "mag_dx",
-       "default": "-6.0"
+       "default": "-6.0",
+       "comment": "magnet pocket center X, from the board center"
       },
       {
        "name": "mag_dy",
-       "default": "5.0"
+       "default": "5.0",
+       "comment": "magnet pocket center Y, from the board center"
       }
      ]
     },
@@ -1525,7 +1596,12 @@
       {
        "name": "clip_dx",
        "default": "5.25",
-       "comment": "clip centers at board_cx ± clip_dx (5.25 = board_l/4, the validated spot). The"
+       "range": [
+        3.0,
+        0.25,
+        8.0
+       ],
+       "comment": "clip centers at board_cx ± clip_dx (5.25 = board_l/4, the validated spot)"
       },
       {
        "name": "clip_over",
@@ -1976,7 +2052,12 @@
       {
        "name": "cam_fov",
        "default": "62",
-       "comment": "lens diagonal field of view (OV5647-62; the 160° fisheye needs no hood)  // [40:1:160]"
+       "range": [
+        40.0,
+        1.0,
+        160.0
+       ],
+       "comment": "lens diagonal field of view (OV5647-62; the 160° fisheye needs no hood)"
       },
       {
        "name": "cam_disc_d",
@@ -2027,7 +2108,12 @@
       {
        "name": "floor_cove",
        "default": "0.8",
-       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+       "range": [
+        0.0,
+        0.2,
+        1.2
+       ],
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
       },
       {
        "name": "lid_key",
@@ -2113,7 +2199,8 @@
      "params": [
       {
        "name": "post_d",
-       "default": "5.0"
+       "default": "5.0",
+       "comment": "corner screw post Ø — the front screws thread into these (auto-fattened for inserts and larger screws)"
       },
       {
        "name": "screw_size",
@@ -2152,12 +2239,22 @@
       {
        "name": "usb_w",
        "default": "12.0",
-       "comment": "opening width: clears rugged cable boots (USB-C body ~8.9 — port_usbc_shell_w())  // [9:0.5:14]"
+       "range": [
+        9.0,
+        0.5,
+        14.0
+       ],
+       "comment": "opening width: clears rugged cable boots (USB-C body ~8.9 — port_usbc_shell_w())"
       },
       {
        "name": "usb_h",
        "default": "6.5",
-       "comment": "opening height: boot clearance (the shell is 3.26)  // [4:0.5:8]"
+       "range": [
+        4.0,
+        0.5,
+        8.0
+       ],
+       "comment": "opening height: boot clearance (the shell is 3.26)"
       },
       {
        "name": "usb_z",
@@ -2213,7 +2310,12 @@
       {
        "name": "hinge_clear",
        "default": "0.15",
-       "comment": "extra slot width on the bracket for printed fins that run +0.1 oversize  // [0:0.05:0.4]"
+       "range": [
+        0.0,
+        0.05,
+        0.4
+       ],
+       "comment": "extra slot width on the bracket for printed fins that run +0.1 oversize"
       },
       {
        "name": "hinge_teeth",
@@ -2223,7 +2325,7 @@
       {
        "name": "teeth_n",
        "default": "24",
-       "comment": "detent positions (24 -> 15 degree steps)"
+       "comment": "castellation steps around the hinge, a tooth on every other one: it detents every 720 / teeth_n degrees (24 -> 12 positions, 30 degrees apart); keep it even"
       },
       {
        "name": "teeth_h",
@@ -2260,10 +2362,17 @@
        "name": "bracket_tripod",
        "default": "true",
        "comment": "captive 1/4-20 nut pocket behind the center fin (tripod mount)"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Stud/keyhole interface",
+     "note": "blind keyhole pockets in a thickened back (seal-safe)",
+     "params": [
       {
        "name": "kh_extra",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "back thickening that hosts the keyhole pockets"
       },
       {
        "name": "kh_head_d",
@@ -2303,45 +2412,63 @@
      "params": [
       {
        "name": "gasket_w",
-       "default": "1.6"
+       "default": "1.6",
+       "comment": "gasket groove width in the back's rim (the printed gasket is 0.5 narrower)"
       },
       {
        "name": "gasket_groove",
-       "default": "1.2"
+       "default": "1.2",
+       "comment": "groove depth into the back shell's rim"
       },
       {
        "name": "gasket_proud",
-       "default": "0.3"
+       "default": "0.3",
+       "comment": "how far the printed gasket stands proud of its groove, uncompressed — what the front screws squeeze"
       },
       {
        "name": "skirt_h",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "drip-edge skirt drop over the back shell's wall (sheds water off the seam)"
       },
       {
        "name": "skirt_t",
-       "default": "1.6"
+       "default": "1.6",
+       "comment": "drip-edge skirt wall thickness"
       },
       {
        "name": "usb_cover",
-       "default": "true"
+       "default": "true",
+       "comment": "(seal mode) shallow recess framing the USB opening(s) for a flanged silicone plug; the xiao host's one recess spans both ports"
       },
       {
        "name": "usb_cov_pad",
-       "default": "2.0"
+       "default": "2.0",
+       "comment": "recess margin around the USB opening(s)"
       },
       {
        "name": "usb_cov_dep",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "recess depth into the outer wall face"
       },
       {
        "name": "weep_d",
        "default": "2.0",
-       "comment": "weep bore (canary_core_lib weep_d)  // [1.5:0.5:3]"
+       "range": [
+        1.5,
+        0.5,
+        3.0
+       ],
+       "comment": "weep bore (canary_core_lib weep_d)"
       },
       {
        "name": "hood_len",
        "default": "9.0",
-       "comment": "rain-hood protrusion from the front face  // [5:0.5:15]"
+       "range": [
+        5.0,
+        0.5,
+        15.0
+       ],
+       "comment": "rain-hood protrusion from the front face"
       },
       {
        "name": "hood_t",
@@ -2351,7 +2478,12 @@
       {
        "name": "hood_seat",
        "default": "0.6",
-       "comment": "groove in the front's show face the hood's spigot presses into (tol_press); bond with"
+       "range": [
+        0.4,
+        0.1,
+        1.0
+       ],
+       "comment": "groove in the front's show face the hood's spigot presses into (tol_press); bond with neutral-cure silicone"
       },
       {
        "name": "lp_d",
@@ -2360,11 +2492,13 @@
       },
       {
        "name": "lp_dx",
-       "default": "8.0"
+       "default": "8.0",
+       "comment": "light-pipe port center X, from the module center"
       },
       {
        "name": "lp_dy",
-       "default": "-8.0"
+       "default": "-8.0",
+       "comment": "light-pipe port center Y, from the module center"
       },
       {
        "name": "vent_pad_d",
@@ -2373,7 +2507,8 @@
       },
       {
        "name": "vent_pad_depth",
-       "default": "0.8"
+       "default": "0.8",
+       "comment": "GORE-seat recess depth into the front's outer face — core_vent_pad_depth()"
       },
       {
        "name": "vent_hole_d",
@@ -2382,7 +2517,8 @@
       },
       {
        "name": "vent_ring_d",
-       "default": "6.0"
+       "default": "6.0",
+       "comment": "Ø of the ring the vent holes sit on — core_vent_ring_d()"
       },
       {
        "name": "vent_holes",
@@ -2391,11 +2527,13 @@
       },
       {
        "name": "vent_dx",
-       "default": "-8.0"
+       "default": "-8.0",
+       "comment": "vent cluster center X, from the module center"
       },
       {
        "name": "vent_dy",
-       "default": "-8.0"
+       "default": "-8.0",
+       "comment": "vent cluster center Y, from the module center"
       },
       {
        "name": "mag_d",
@@ -2404,35 +2542,43 @@
       },
       {
        "name": "mag_h",
-       "default": "3.2"
+       "default": "3.2",
+       "comment": "magnet thickness, and the pocket ring's height off the front's inside face"
       },
       {
        "name": "mag_dx",
-       "default": "8.0"
+       "default": "8.0",
+       "comment": "magnet pocket center X, from the module center"
       },
       {
        "name": "mag_dy",
-       "default": "8.0"
+       "default": "8.0",
+       "comment": "magnet pocket center Y, from the module center"
       },
       {
        "name": "clip_w",
-       "default": "6.0"
+       "default": "6.0",
+       "comment": "board-clip tab width along the board edge — snap_boardclip default"
       },
       {
        "name": "clip_t",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "clip beam thickness — snap_boardclip default; edgeclip() asserts its insertion strain"
       },
       {
        "name": "clip_hook",
-       "default": "0.5"
+       "default": "0.5",
+       "comment": "lip overhang over the board top — snap_boardclip default"
       },
       {
        "name": "clip_hook_h",
-       "default": "1.2"
+       "default": "1.2",
+       "comment": "lip + 45° lead-in height above the board top — snap_boardclip default"
       },
       {
        "name": "clip_clear",
-       "default": "0.25"
+       "default": "0.25",
+       "comment": "beam face to board edge (a fit — tune on the coupon) — snap_boardclip default"
       }
      ]
     },
@@ -2455,12 +2601,22 @@
       {
        "name": "lid_edge",
        "default": "0.8",
-       "comment": "45° chamfer around the front's top edge  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "45° chamfer around the front's top edge"
       },
       {
        "name": "lid_edge2",
        "default": "0.8",
-       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you"
       },
       {
        "name": "label_text",
@@ -2469,27 +2625,33 @@
       },
       {
        "name": "label_size",
-       "default": "5.0"
+       "default": "5.0",
+       "comment": "label text height"
       },
       {
        "name": "label_depth",
-       "default": "0.5"
+       "default": "0.5",
+       "comment": "deboss depth (prints as crisp first-layer voids — the front prints face-down)"
       },
       {
        "name": "label_dx",
-       "default": "0.0"
+       "default": "0.0",
+       "comment": "label center X offset from the FRONT's center (not the module center)"
       },
       {
        "name": "label_dy",
-       "default": "-14.0"
+       "default": "-14.0",
+       "comment": "label center Y offset from the FRONT's center"
       },
       {
        "name": "label_rot",
-       "default": "0"
+       "default": "0",
+       "comment": "label rotation (degrees)"
       },
       {
        "name": "label_font",
-       "default": "Liberation Sans:style=Bold"
+       "default": "Liberation Sans:style=Bold",
+       "comment": "the font label_text is set in (it must be installed)"
       },
       {
        "name": "opt_mark",
@@ -2567,7 +2729,8 @@
       },
       {
        "name": "mid_gap",
-       "default": "2.0"
+       "default": "2.0",
+       "comment": "devkit host: gap between the camera + module column and the DevKit column"
       },
       {
        "name": "usb_soff",
@@ -2731,7 +2894,21 @@
      ]
     },
     {
-     "name": "Options",
+     "name": "Preset",
+     "note": "quick configs; choose \"custom\" to use the option checkboxes",
+     "params": [
+      {
+       "name": "preset",
+       "default": "custom",
+       "enum": [
+        "custom",
+        "doorbell_weather"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Options (applied when preset = custom)",
      "note": "",
      "params": [
       {
@@ -2762,7 +2939,12 @@
       {
        "name": "weep_d",
        "default": "2.0",
-       "comment": "weep bore  // [1.5:0.5:3]"
+       "range": [
+        1.5,
+        0.5,
+        3.0
+       ],
+       "comment": "weep bore"
       },
       {
        "name": "seal_mid_posts",
@@ -2773,6 +2955,26 @@
        "name": "head_seal",
        "default": "false",
        "comment": "O-ring under each face screw head (the posts stand INSIDE the gasket line, so a"
+      },
+      {
+       "name": "e_seal",
+       "default": "_pre(opt_seal,   true)"
+      },
+      {
+       "name": "e_vent",
+       "default": "_pre(opt_vent,   true)"
+      },
+      {
+       "name": "e_led",
+       "default": "_pre(opt_led,    false)"
+      },
+      {
+       "name": "e_tamper",
+       "default": "_pre(opt_tamper, false)"
+      },
+      {
+       "name": "e_weep",
+       "default": "_pre(opt_weep,   true)"
       },
       {
        "name": "vm_l",
@@ -2826,7 +3028,8 @@
       },
       {
        "name": "board_clear",
-       "default": "0.6"
+       "default": "0.6",
+       "comment": "clearance around the camera carrier and the module (per side across the case; once below the module)"
       }
      ]
     },
@@ -2836,15 +3039,18 @@
      "params": [
       {
        "name": "cam_hole_x",
-       "default": "21.0"
+       "default": "21.0",
+       "comment": "camera post grid (X) — the Pi-cam v1.3 hole pattern"
       },
       {
        "name": "cam_hole_y",
-       "default": "12.5"
+       "default": "12.5",
+       "comment": "camera post grid (Y)"
       },
       {
        "name": "cam_post_d",
-       "default": "3.6"
+       "default": "3.6",
+       "comment": "camera post diameter"
       },
       {
        "name": "cam_post_h",
@@ -2863,7 +3069,8 @@
       },
       {
        "name": "cam_screw_d",
-       "default": "1.6"
+       "default": "1.6",
+       "comment": "pilot bored down each camera post for its screw"
       },
       {
        "name": "lens_dx",
@@ -2872,11 +3079,13 @@
       },
       {
        "name": "lens_dy",
-       "default": "2.5"
+       "default": "2.5",
+       "comment": "lens center Y offset from the camera-board center — MEASURE"
       },
       {
        "name": "cam_ap_d",
-       "default": "10.0"
+       "default": "10.0",
+       "comment": "lens aperture Ø through the face"
       },
       {
        "name": "cam_disc_d",
@@ -2885,7 +3094,8 @@
       },
       {
        "name": "cam_disc_t",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "clear-disc thickness (the disc sits 0.2 recessed below the face)"
       }
      ]
     },
@@ -2946,11 +3156,13 @@
       },
       {
        "name": "lip_h",
-       "default": "4.0"
+       "default": "4.0",
+       "comment": "how far the face's lip drops into the body"
       },
       {
        "name": "lip_t",
-       "default": "1.2"
+       "default": "1.2",
+       "comment": "lip wall thickness"
       },
       {
        "name": "cav_extra",
@@ -2960,7 +3172,12 @@
       {
        "name": "floor_cove",
        "default": "0.8",
-       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+       "range": [
+        0.0,
+        0.2,
+        1.2
+       ],
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
       },
       {
        "name": "lid_key",
@@ -2994,7 +3211,8 @@
       },
       {
        "name": "usb_exit_h",
-       "default": "7.0"
+       "default": "7.0",
+       "comment": "the cable exit oval's height (Y); usb_exit_w is its length"
       },
       {
        "name": "usb_exit_dx",
@@ -3034,11 +3252,13 @@
       },
       {
        "name": "insert_d",
-       "default": "3.5"
+       "default": "3.5",
+       "comment": "(m2) heat-set insert OD — its bore is cut 0.3 under it; other sizes read the registry"
       },
       {
        "name": "insert_h",
-       "default": "4.0"
+       "default": "4.0",
+       "comment": "(m2) insert length; other sizes read the registry"
       },
       {
        "name": "lid_ribs",
@@ -3047,11 +3267,13 @@
       },
       {
        "name": "lid_rib_w",
-       "default": "2.5"
+       "default": "2.5",
+       "comment": "rib ring width"
       },
       {
        "name": "lid_rib_h",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "rib depth below the face — asserted within the headroom over the stack (lid_headroom)"
       },
       {
        "name": "foot_cham",
@@ -3066,7 +3288,8 @@
      "params": [
       {
        "name": "post_d",
-       "default": "5.0"
+       "default": "5.0",
+       "comment": "corner screw post Ø — the face screws thread into these (auto-fattened for inserts and larger screws)"
       },
       {
        "name": "screw_size",
@@ -3110,24 +3333,35 @@
      "params": [
       {
        "name": "gasket_w",
-       "default": "1.6"
+       "default": "1.6",
+       "comment": "gasket groove width in the body's rim (the printed gasket is 0.5 narrower)"
       },
       {
        "name": "gasket_groove",
-       "default": "1.2"
+       "default": "1.2",
+       "comment": "groove depth into the body's rim"
       },
       {
        "name": "gasket_proud",
-       "default": "0.3"
+       "default": "0.3",
+       "comment": "how far the printed gasket stands proud of its groove, uncompressed — what the face screws squeeze"
       },
       {
        "name": "skirt_h",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "drip-edge skirt drop over the body's wall (sheds water off the seam)"
       },
       {
        "name": "skirt_t",
-       "default": "1.6"
-      },
+       "default": "1.6",
+       "comment": "drip-edge skirt wall thickness"
+      }
+     ]
+    },
+    {
+     "name": "Wall plate + security screw",
+     "note": "",
+     "params": [
       {
        "name": "plate_t",
        "default": "4.0",
@@ -3136,13 +3370,39 @@
       {
        "name": "plate_wedge",
        "default": "0",
-       "comment": "vertical wedge: camera tilts down the approach  // [0:5:15]"
+       "range": [
+        0.0,
+        5.0,
+        15.0
+       ],
+       "comment": "vertical wedge: camera tilts down the approach"
       },
       {
        "name": "plate_wedge_x",
        "default": "0",
-       "comment": "horizontal wedge: aims left/right (corner installs)  // [-15:5:15]"
+       "range": [
+        -15.0,
+        5.0,
+        15.0
+       ],
+       "comment": "horizontal wedge: aims left/right (corner installs)"
       },
+      {
+       "name": "sec_screw_d",
+       "default": "2.2",
+       "comment": "security screw (M2 self-tap; use a Torx/security drive)"
+      },
+      {
+       "name": "plate_screw_d",
+       "default": "4.2",
+       "comment": "wall screws (#8 / M4 PAN head — the seats are flat counterbores)"
+      }
+     ]
+    },
+    {
+     "name": "Stud/keyhole interface",
+     "note": "the plate's T-studs and the body's blind pockets",
+     "params": [
       {
        "name": "stud_y",
        "default": "40.0",
@@ -3177,16 +3437,6 @@
        "name": "kh_extra",
        "default": "3.0",
        "comment": "body back thickening that hosts the pockets"
-      },
-      {
-       "name": "sec_screw_d",
-       "default": "2.2",
-       "comment": "security screw (M2 self-tap; use a Torx/security drive)"
-      },
-      {
-       "name": "plate_screw_d",
-       "default": "4.2",
-       "comment": "wall screws (#8 / M4 PAN head — the seats are flat counterbores)"
       }
      ]
     },
@@ -3228,27 +3478,33 @@
       },
       {
        "name": "label_size",
-       "default": "4.5"
+       "default": "4.5",
+       "comment": "label text height (the wordmark's size too, with opt_mark)"
       },
       {
        "name": "label_depth",
-       "default": "0.5"
+       "default": "0.5",
+       "comment": "deboss depth into the face"
       },
       {
        "name": "label_dx",
-       "default": "0.0"
+       "default": "0.0",
+       "comment": "label center X offset from the FACE's center (not the module center)"
       },
       {
        "name": "label_dy",
-       "default": "-26.0"
+       "default": "-26.0",
+       "comment": "label center Y offset from the FACE's center"
       },
       {
        "name": "label_rot",
-       "default": "0"
+       "default": "0",
+       "comment": "label rotation (degrees)"
       },
       {
        "name": "label_font",
-       "default": "Liberation Sans:style=Bold"
+       "default": "Liberation Sans:style=Bold",
+       "comment": "the font label_text is set in (it must be installed)"
       }
      ]
     },
@@ -3258,23 +3514,28 @@
      "params": [
       {
        "name": "lp_d",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "light-pipe diameter (hole = lp_d + 2*tol_press) — core_lightpipe_d()"
       },
       {
        "name": "lp_dx",
-       "default": "8.0"
+       "default": "8.0",
+       "comment": "light-pipe port center X, from the module center"
       },
       {
        "name": "lp_dy",
-       "default": "-8.0"
+       "default": "-8.0",
+       "comment": "light-pipe port center Y, from the module center"
       },
       {
        "name": "vent_pad_d",
-       "default": "12.0"
+       "default": "12.0",
+       "comment": "GORE-vent seat Ø on the face's outer side — core_vent_pad_d()"
       },
       {
        "name": "vent_pad_depth",
-       "default": "0.8"
+       "default": "0.8",
+       "comment": "that seat's recess depth — core_vent_pad_depth()"
       },
       {
        "name": "vent_hole_d",
@@ -3283,7 +3544,8 @@
       },
       {
        "name": "vent_ring_d",
-       "default": "6.0"
+       "default": "6.0",
+       "comment": "Ø of the ring the vent holes sit on — core_vent_ring_d()"
       },
       {
        "name": "vent_holes",
@@ -3293,48 +3555,57 @@
       {
        "name": "vent_dx",
        "default": "0.0",
-       "comment": "vent/sound cluster ON the face's vertical axis — the"
+       "comment": "vent cluster center X, from the module center; 0 keeps it on the face's vertical axis"
       },
       {
        "name": "vent_dy",
        "default": "-8.0",
-       "comment": "camera → grille → button rhythm of a real doorbell"
+       "comment": "vent cluster center Y, from the module center"
       },
       {
        "name": "mag_d",
-       "default": "6.0"
+       "default": "6.0",
+       "comment": "tamper MAGNET diameter (pocket = mag_d + 2*tol_press — press fit)"
       },
       {
        "name": "mag_h",
-       "default": "3.2"
+       "default": "3.2",
+       "comment": "magnet thickness, and the pocket ring's height off the face's inside"
       },
       {
        "name": "mag_dx",
-       "default": "8.0"
+       "default": "8.0",
+       "comment": "magnet pocket center X, from the module center"
       },
       {
        "name": "mag_dy",
-       "default": "8.0"
+       "default": "8.0",
+       "comment": "magnet pocket center Y, from the module center"
       },
       {
        "name": "clip_w",
-       "default": "6.0"
+       "default": "6.0",
+       "comment": "board-clip tab width along the board edge — snap_boardclip default"
       },
       {
        "name": "clip_t",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "clip beam thickness — snap_boardclip default; the lib asserts its insertion strain"
       },
       {
        "name": "clip_hook",
-       "default": "0.5"
+       "default": "0.5",
+       "comment": "lip overhang over the board top — snap_boardclip default"
       },
       {
        "name": "clip_hook_h",
-       "default": "1.2"
+       "default": "1.2",
+       "comment": "lip + 45° lead-in height above the board top — snap_boardclip default"
       },
       {
        "name": "clip_clear",
-       "default": "0.25"
+       "default": "0.25",
+       "comment": "beam face to board edge (a fit — tune on the coupon) — snap_boardclip default"
       }
      ]
     },
@@ -3342,10 +3613,6 @@
      "name": "Quality",
      "note": "",
      "params": [
-      {
-       "name": "e_seal",
-       "default": "opt_seal"
-      },
       {
        "name": "wall_eff",
        "default": "e_seal ? max(wall_t, gasket_w + 2*core_min_wall()) : wall_t",
@@ -3479,7 +3746,22 @@
      ]
     },
     {
-     "name": "Options",
+     "name": "Preset",
+     "note": "quick configs; choose \"custom\" to use the option checkboxes",
+     "params": [
+      {
+       "name": "preset",
+       "default": "custom",
+       "enum": [
+        "custom",
+        "sense_wall",
+        "sense_ceiling"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Options (applied when preset = custom)",
      "note": "",
      "params": [
       {
@@ -3515,7 +3797,12 @@
       {
        "name": "weep_d",
        "default": "2.0",
-       "comment": "weep bore  // [1.5:0.5:3]"
+       "range": [
+        1.5,
+        0.5,
+        3.0
+       ],
+       "comment": "weep bore"
       },
       {
        "name": "seal_mid_posts",
@@ -3529,7 +3816,8 @@
       },
       {
        "name": "opt_mount",
-       "default": "true"
+       "default": "true",
+       "comment": "mounting features per mount_style"
       },
       {
        "name": "mount_style",
@@ -3541,16 +3829,36 @@
        ]
       },
       {
+       "name": "e_led",
+       "default": "_pre(opt_led,     true,    true)"
+      },
+      {
+       "name": "e_lux",
+       "default": "_pre(opt_lux,     true,    true)"
+      },
+      {
+       "name": "e_vent",
+       "default": "_pre(opt_vent,    false,   false)"
+      },
+      {
+       "name": "e_tamper",
+       "default": "_pre(opt_tamper,  false,   false)"
+      },
+      {
        "name": "e_seal",
-       "default": "opt_seal"
+       "default": "_pre(opt_seal,    false,   false)"
+      },
+      {
+       "name": "e_weep",
+       "default": "_pre(opt_weep,    false,   false)"
       },
       {
        "name": "e_mount",
-       "default": "opt_mount"
+       "default": "_pre(opt_mount,   true,    true)"
       },
       {
        "name": "m_style",
-       "default": "mount_style"
+       "default": "_pre(mount_style, \"hinge\", \"keyhole\")"
       }
      ]
     },
@@ -3614,11 +3922,13 @@
       },
       {
        "name": "pcb_t",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "carrier PCB thickness — the board clips hook over it"
       },
       {
        "name": "board_clear",
-       "default": "0.6"
+       "default": "0.6",
+       "comment": "clearance around the carrier (per side across the case; the +Y end stops sit this far past its top edge)"
       },
       {
        "name": "xiao_usb_z",
@@ -3634,7 +3944,12 @@
       {
        "name": "radome_t",
        "default": "1.5",
-       "comment": "membrane — 1.5 ≈ half-wave in PETG/ASA at 60 GHz (low-reflection optimum); 0.7–1.1 is the quarter-wave band (~20 % reflection) and is refused  // [1.3:0.1:1.7]"
+       "range": [
+        1.3,
+        0.1,
+        1.7
+       ],
+       "comment": "membrane — 1.5 ≈ half-wave in PETG/ASA at 60 GHz (low-reflection optimum); 0.7–1.1 is the quarter-wave band (~20 % reflection) and is refused"
       },
       {
        "name": "rad_win_x",
@@ -3669,11 +3984,13 @@
       },
       {
        "name": "lp_dx",
-       "default": "13.0"
+       "default": "13.0",
+       "comment": "light-pipe port center X, from the board center (asserted clear of the window)"
       },
       {
        "name": "lp_dy",
-       "default": "-14.0"
+       "default": "-14.0",
+       "comment": "light-pipe port center Y, from the board center"
       },
       {
        "name": "lux_d",
@@ -3687,19 +4004,23 @@
       },
       {
        "name": "lux_dx",
-       "default": "-13.0"
+       "default": "-13.0",
+       "comment": "lux aperture center X, from the board center (asserted clear of the window)"
       },
       {
        "name": "lux_dy",
-       "default": "-14.0"
+       "default": "-14.0",
+       "comment": "lux aperture center Y, from the board center"
       },
       {
        "name": "vent_pad_d",
-       "default": "12.0"
+       "default": "12.0",
+       "comment": "GORE-vent seat Ø on the front's outer face — core_vent_pad_d()"
       },
       {
        "name": "vent_pad_depth",
-       "default": "0.8"
+       "default": "0.8",
+       "comment": "that seat's recess depth — core_vent_pad_depth()"
       },
       {
        "name": "vent_hole_d",
@@ -3708,23 +4029,28 @@
       },
       {
        "name": "vent_ring_d",
-       "default": "6.0"
+       "default": "6.0",
+       "comment": "Ø of the ring the vent holes sit on — core_vent_ring_d()"
       },
       {
        "name": "vent_holes",
-       "default": "10"
+       "default": "10",
+       "comment": "hole count around that ring — core_vent_holes()"
       },
       {
        "name": "vent_dx",
-       "default": "0.0"
+       "default": "0.0",
+       "comment": "vent cluster center X, from the board center (asserted clear of the window)"
       },
       {
        "name": "vent_dy",
-       "default": "-17.0"
+       "default": "-17.0",
+       "comment": "vent cluster center Y, from the board center"
       },
       {
        "name": "mag_d",
-       "default": "6.0"
+       "default": "6.0",
+       "comment": "tamper MAGNET diameter (pocket = mag_d + 2*tol_press — press fit)"
       },
       {
        "name": "mag_h",
@@ -3734,12 +4060,12 @@
       {
        "name": "mag_dx",
        "default": "18.0",
-       "comment": "mag_h below the front's inner face, so parts on the carrier under"
+       "comment": "magnet pocket center X, from the board center (asserted clear of the window)"
       },
       {
        "name": "mag_dy",
        "default": "-14.0",
-       "comment": "(mag_dx, mag_dy) must stay >= 1 mm below radar_front_h — MEASURE. (13, 14)"
+       "comment": "magnet pocket center Y, from the board center"
       }
      ]
     },
@@ -3749,11 +4075,13 @@
      "params": [
       {
        "name": "wall_t",
-       "default": "2.0"
+       "default": "2.0",
+       "comment": "side wall thickness (auto-thickened in seal mode) — core_wall()"
       },
       {
        "name": "floor_t",
-       "default": "2.0"
+       "default": "2.0",
+       "comment": "back thickness"
       },
       {
        "name": "lid_t",
@@ -3762,24 +4090,33 @@
       },
       {
        "name": "lip_h",
-       "default": "4.0"
+       "default": "4.0",
+       "comment": "front lip insertion into the back shell"
       },
       {
        "name": "lip_t",
-       "default": "1.2"
+       "default": "1.2",
+       "comment": "lip wall thickness"
       },
       {
        "name": "corner_r",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "outside corner radius — core_corner_r()"
       },
       {
        "name": "cav_extra",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "headroom over the carrier's tallest part; raise it for more antenna-to-radome gap (asserted >= 3 mm)"
       },
       {
        "name": "floor_cove",
        "default": "0.8",
-       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+       "range": [
+        0.0,
+        0.2,
+        1.2
+       ],
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
       },
       {
        "name": "lid_key",
@@ -3815,15 +4152,18 @@
      "params": [
       {
        "name": "screw_insert",
-       "default": "false"
+       "default": "false",
+       "comment": "heat-set inserts in the screw posts, sized by screw_size (the posts fatten; the screws become machine screws)"
       },
       {
        "name": "insert_d",
-       "default": "3.5"
+       "default": "3.5",
+       "comment": "(m2) heat-set insert OD — its bore is cut 0.3 under it; other sizes read the registry"
       },
       {
        "name": "insert_h",
-       "default": "4.0"
+       "default": "4.0",
+       "comment": "(m2) insert length; other sizes read the registry"
       },
       {
        "name": "lid_ribs",
@@ -3832,19 +4172,23 @@
       },
       {
        "name": "lid_rib_w",
-       "default": "2.5"
+       "default": "2.5",
+       "comment": "rib ring width"
       },
       {
        "name": "lid_rib_h",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "rib depth below the front — must stay within cav_extra (asserted)"
       },
       {
        "name": "foot_cham",
-       "default": "0.5"
+       "default": "0.5",
+       "comment": "45° chamfer on the back's bottom edge: elephant-foot + delamination guard (0 = off)"
       },
       {
        "name": "kh_lock",
-       "default": "true"
+       "default": "true",
+       "comment": "(keyhole mounts) anti-lift knockouts, as on the Vision: a 0.6 mm web at the back face, pierced with #4/M3 on install"
       }
      ]
     },
@@ -3854,7 +4198,8 @@
      "params": [
       {
        "name": "post_d",
-       "default": "5.0"
+       "default": "5.0",
+       "comment": "corner screw post Ø — the front screws thread into these (auto-fattened for inserts and larger screws)"
       },
       {
        "name": "screw_size",
@@ -3899,7 +4244,12 @@
       {
        "name": "usb_w",
        "default": "12.0",
-       "comment": "clears rugged cable boots (the receptacle face sits ~2.6 mm behind the wall)  // [9:0.5:14]"
+       "range": [
+        9.0,
+        0.5,
+        14.0
+       ],
+       "comment": "clears rugged cable boots (the receptacle face sits ~2.6 mm behind the wall)"
       },
       {
        "name": "usb_h",
@@ -3908,11 +4258,13 @@
         4.0,
         0.5,
         8.0
-       ]
+       ],
+       "comment": "opening height: boot clearance around the XIAO port's axis"
       },
       {
        "name": "usb_dx",
-       "default": "0.0"
+       "default": "0.0",
+       "comment": "the opening's offset along the bottom wall, from the carrier center"
       }
      ]
     },
@@ -3922,35 +4274,43 @@
      "params": [
       {
        "name": "prong_t",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "fin thickness (GoPro standard)"
       },
       {
        "name": "prong_pitch",
-       "default": "6.35"
+       "default": "6.35",
+       "comment": "fin center spacing (GoPro standard)"
       },
       {
        "name": "fin_r",
-       "default": "7.5"
+       "default": "7.5",
+       "comment": "fin end radius"
       },
       {
        "name": "hinge_off",
-       "default": "13.0"
+       "default": "13.0",
+       "comment": "hinge axis stand-off from the top wall face"
       },
       {
        "name": "hinge_bolt_d",
-       "default": "5.0"
+       "default": "5.0",
+       "comment": "hinge bolt Ø (M5 at the default); its hole is cut 0.4 over"
       },
       {
        "name": "hinge_teeth",
-       "default": "true"
+       "default": "true",
+       "comment": "radial detent teeth on the hinge's mating faces (the bracket carries the pockets); false = smooth faces"
       },
       {
        "name": "teeth_n",
-       "default": "24"
+       "default": "24",
+       "comment": "castellation steps around the hinge, a tooth on every other one: it detents every 720 / teeth_n degrees (24 -> 12 positions, 30 degrees apart); keep it even"
       },
       {
        "name": "teeth_h",
-       "default": "0.6"
+       "default": "0.6",
+       "comment": "tooth height"
       }
      ]
     },
@@ -3960,33 +4320,39 @@
      "params": [
       {
        "name": "br_x",
-       "default": "46.0"
+       "default": "46.0",
+       "comment": "bracket plate width (along the hinge axis)"
       },
       {
        "name": "br_y",
-       "default": "34.0"
+       "default": "34.0",
+       "comment": "bracket plate height"
       },
       {
        "name": "br_t",
-       "default": "4.0"
+       "default": "4.0",
+       "comment": "bracket plate thickness"
       },
       {
        "name": "br_screw_d",
-       "default": "4.2"
+       "default": "4.2",
+       "comment": "wall-screw clearance at the plate's four corners, 90° countersunk for a #8 flat head (Ø8.3)"
       },
       {
        "name": "bracket_tripod",
-       "default": "true"
+       "default": "true",
+       "comment": "captive hex-nut pocket under the center fin, for a tripod screw"
       }
      ]
     },
     {
-     "name": "Keyholes",
-     "note": "blind, seal-safe (flush ceiling/wall mount)",
+     "name": "Stud/keyhole interface",
+     "note": "blind keyhole pockets, seal-safe (flush ceiling/wall mount)",
      "params": [
       {
        "name": "kh_extra",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "back thickening that hosts the keyhole pockets"
       },
       {
        "name": "kh_head_d",
@@ -4015,7 +4381,8 @@
       },
       {
        "name": "kh_inset",
-       "default": "12.0"
+       "default": "12.0",
+       "comment": "pocket centers at y = ±(inner_y/2 − kh_inset), on the X centerline; one centered pocket on a case too short for two"
       }
      ]
     },
@@ -4025,35 +4392,43 @@
      "params": [
       {
        "name": "gasket_w",
-       "default": "1.6"
+       "default": "1.6",
+       "comment": "gasket groove width in the back's rim (the printed gasket is 0.5 narrower)"
       },
       {
        "name": "gasket_groove",
-       "default": "1.2"
+       "default": "1.2",
+       "comment": "groove depth into the back shell's rim"
       },
       {
        "name": "gasket_proud",
-       "default": "0.3"
+       "default": "0.3",
+       "comment": "how far the printed gasket stands proud of its groove, uncompressed — what the front screws squeeze"
       },
       {
        "name": "skirt_h",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "drip-edge skirt drop over the back shell's wall (sheds water off the seam)"
       },
       {
        "name": "skirt_t",
-       "default": "1.6"
+       "default": "1.6",
+       "comment": "drip-edge skirt wall thickness"
       },
       {
        "name": "usb_cover",
-       "default": "true"
+       "default": "true",
+       "comment": "(seal mode) shallow recess framing the USB opening for a flanged silicone plug"
       },
       {
        "name": "usb_cov_pad",
-       "default": "2.0"
+       "default": "2.0",
+       "comment": "recess margin around the USB opening"
       },
       {
        "name": "usb_cov_dep",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "recess depth into the outer wall face"
       }
      ]
     },
@@ -4075,12 +4450,18 @@
       },
       {
        "name": "lid_edge",
-       "default": "0.8"
+       "default": "0.8",
+       "comment": "first (45°) stage of the show-face edge, mm — core_face_edge()"
       },
       {
        "name": "lid_edge2",
        "default": "0.8",
-       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you"
       },
       {
        "name": "opt_mark",
@@ -4094,27 +4475,33 @@
       },
       {
        "name": "label_size",
-       "default": "4.5"
+       "default": "4.5",
+       "comment": "label text height (the wordmark's size too, with opt_mark)"
       },
       {
        "name": "label_depth",
-       "default": "0.5"
+       "default": "0.5",
+       "comment": "deboss depth into the front"
       },
       {
        "name": "label_dx",
-       "default": "0.0"
+       "default": "0.0",
+       "comment": "label center X offset from the FRONT's center — keep it out of the radome window"
       },
       {
        "name": "label_dy",
-       "default": "-24.0"
+       "default": "-24.0",
+       "comment": "label center Y offset from the FRONT's center"
       },
       {
        "name": "label_rot",
-       "default": "0"
+       "default": "0",
+       "comment": "label rotation (degrees)"
       },
       {
        "name": "label_font",
-       "default": "Liberation Sans:style=Bold"
+       "default": "Liberation Sans:style=Bold",
+       "comment": "the font label_text is set in (it must be installed)"
       }
      ]
     },
@@ -4426,7 +4813,12 @@
       {
        "name": "tilt",
        "default": "25",
-       "comment": "stand recline from vertical  // [15:5:35]"
+       "range": [
+        15.0,
+        5.0,
+        35.0
+       ],
+       "comment": "stand recline from vertical"
       }
      ]
     },
@@ -4463,7 +4855,12 @@
       {
        "name": "pry_ang",
        "default": "0",
-       "comment": "degrees, 0 = +X  // [0:15:345]"
+       "range": [
+        0.0,
+        15.0,
+        345.0
+       ],
+       "comment": "degrees, 0 = +X"
       },
       {
        "name": "snap_w",
@@ -4503,8 +4900,8 @@
      ]
     },
     {
-     "name": "Mounting",
-     "note": "",
+     "name": "Stud/keyhole interface",
+     "note": "a blind keyhole pocket in the drum back",
      "params": [
       {
        "name": "kh_head_d",
@@ -4758,7 +5155,12 @@
       {
        "name": "stalk_tilt",
        "default": "12",
-       "comment": "stalk lean (degrees, toward the front)  // [0:2:20]"
+       "range": [
+        0.0,
+        2.0,
+        20.0
+       ],
+       "comment": "stalk lean (degrees, toward the front)"
       }
      ]
     },
@@ -5141,8 +5543,8 @@
      ]
     },
     {
-     "name": "T-studs",
-     "note": "match the standard Canary keyhole pockets",
+     "name": "Stud/keyhole interface",
+     "note": "T-studs matching the standard Canary keyhole pockets",
      "params": [
       {
        "name": "stud_gap",
@@ -5312,7 +5714,12 @@
       {
        "name": "roof_ang",
        "default": "30",
-       "comment": "panel angle  // [15:5:45]"
+       "range": [
+        15.0,
+        5.0,
+        45.0
+       ],
+       "comment": "panel angle"
       },
       {
        "name": "roof_stop_t",
@@ -5322,7 +5729,12 @@
       {
        "name": "roof_drain_w",
        "default": "6.0",
-       "comment": "three drain notches at bed level through that stop (0 = none)  // [0:1:12]"
+       "range": [
+        0.0,
+        1.0,
+        12.0
+       ],
+       "comment": "three drain notches at bed level through that stop (0 = none)"
       }
      ]
     },
@@ -5403,12 +5815,22 @@
       {
        "name": "lid_edge",
        "default": "0.8",
-       "comment": "first (45°) stage of the show-face edge, mm — core_face_edge()  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "first (45°) stage of the show-face edge, mm — core_face_edge()"
       },
       {
        "name": "lid_edge2",
        "default": "0.8",
-       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you"
       },
       {
        "name": "foot_cham",
@@ -5417,7 +5839,12 @@
       {
        "name": "floor_cove",
        "default": "0.8",
-       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+       "range": [
+        0.0,
+        0.2,
+        1.2
+       ],
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
       },
       {
        "name": "lid_key",
@@ -5694,7 +6121,12 @@
       {
        "name": "floor_cove",
        "default": "0.8",
-       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+       "range": [
+        0.0,
+        0.2,
+        1.2
+       ],
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
       },
       {
        "name": "lid_key",
@@ -5754,13 +6186,29 @@
       {
        "name": "lid_edge",
        "default": "0.8",
-       "comment": "first (45°) stage of the show-face edge, mm — core_face_edge()  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "first (45°) stage of the show-face edge, mm — core_face_edge()"
       },
       {
        "name": "lid_edge2",
        "default": "0.8",
-       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
-      },
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you"
+      }
+     ]
+    },
+    {
+     "name": "Stud/keyhole interface",
+     "note": "blind keyholes in the back",
+     "params": [
       {
        "name": "kh_extra",
        "default": "3.0",
@@ -6088,12 +6536,22 @@
       {
        "name": "lid_edge",
        "default": "0.8",
-       "comment": "first (45°) stage of the cover's edge break, mm — the house face edge, core_face_edge()  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "first (45°) stage of the cover's edge break, mm — the house face edge, core_face_edge()"
       },
       {
        "name": "lid_edge2",
        "default": "0.8",
-       "comment": "second (~66°) stage, mm: what makes the edge read as a roundover instead of a bevel — core_face_edge2()  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "second (~66°) stage, mm: what makes the edge read as a roundover instead of a bevel — core_face_edge2()"
       }
      ]
     },
@@ -6378,8 +6836,8 @@
      ]
     },
     {
-     "name": "T-stud interface",
-     "note": "",
+     "name": "Stud/keyhole interface",
+     "note": "the adapter's T-studs",
      "params": [
       {
        "name": "stud_gap",
@@ -6704,7 +7162,12 @@
       {
        "name": "floor_cove",
        "default": "0.8",
-       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+       "range": [
+        0.0,
+        0.2,
+        1.2
+       ],
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
       },
       {
        "name": "lid_key",
@@ -6724,6 +7187,14 @@
       {
        "name": "post_d",
        "default": "5.0"
+      },
+      {
+       "name": "usb_w",
+       "default": "10.5"
+      },
+      {
+       "name": "usb_h",
+       "default": "6.5"
       }
      ]
     },
@@ -6845,7 +7316,12 @@
       {
        "name": "rib_h",
        "default": "2.0",
-       "comment": "back rib height  // [1:0.5:6]"
+       "range": [
+        1.0,
+        0.5,
+        6.0
+       ],
+       "comment": "back rib height"
       }
      ]
     },
@@ -7099,8 +7575,8 @@
      ]
     },
     {
-     "name": "Keyhole mounts",
-     "note": "blind, seal-safe (never reach the cavity)",
+     "name": "Stud/keyhole interface",
+     "note": "blind keyhole pockets, seal-safe (never reach the cavity)",
      "params": [
       {
        "name": "kh_x",
@@ -7346,6 +7822,14 @@
        "name": "usb_dx",
        "default": "0.0",
        "comment": "USB-C slot center offset — MEASURE"
+      },
+      {
+       "name": "usb_w",
+       "default": "12.0"
+      },
+      {
+       "name": "usb_h",
+       "default": "6.5"
       },
       {
        "name": "term_open",
@@ -8414,7 +8898,7 @@
      ]
     },
     {
-     "name": "Mount",
+     "name": "Stud/keyhole interface",
      "note": "",
      "params": [
       {
@@ -8520,7 +9004,12 @@
       {
        "name": "pry_w",
        "default": "6.0",
-       "comment": "notch width  // [4:1:10]"
+       "range": [
+        4.0,
+        1.0,
+        10.0
+       ],
+       "comment": "notch width"
       },
       {
        "name": "nub_w",
@@ -9856,11 +10345,33 @@
      "params": [
       {
        "name": "opt_bottom_ports",
-       "default": "true"
+       "default": "true",
+       "comment": "open the bottom (−Y) wall's channel over the USB/UART cluster"
+      },
+      {
+       "name": "bottom_open_w",
+       "default": "96.0",
+       "comment": "width (X) of that wide channel over the bottom cluster"
+      },
+      {
+       "name": "bottom_open_dx",
+       "default": "0.0",
+       "comment": "its center offset from the board center, along the bottom wall"
       },
       {
        "name": "opt_side_ports",
-       "default": "true"
+       "default": "true",
+       "comment": "open the tall slot in each short (±X) wall (CAN/RS485/battery)"
+      },
+      {
+       "name": "side_open_h",
+       "default": "40.0",
+       "comment": "height (Y) of the tall slot on each short wall"
+      },
+      {
+       "name": "side_open_dy",
+       "default": "0.0",
+       "comment": "its center offset from the board center, along the short wall"
       }
      ]
     },
@@ -9921,7 +10432,8 @@
      "params": [
       {
        "name": "vent_beat",
-       "default": "##.###."
+       "default": "##.###.",
+       "comment": "hits and rests, one character per station, read left to right across a row (# = egg, . = rest)"
       },
       {
        "name": "vent_beat_shift",
@@ -10011,9 +10523,34 @@
      "note": "",
      "params": [
       {
+       "name": "lob_d",
+       "default": "9.0",
+       "comment": "bezel lobe (screw ear) Ø"
+      },
+      {
+       "name": "lob_o",
+       "default": "3.0",
+       "comment": "lobe center's diagonal offset outboard of the cavity corner"
+      },
+      {
        "name": "m3_nom",
        "default": "3.0",
        "comment": "M3 shank"
+      },
+      {
+       "name": "lob_pilot",
+       "default": "2.7",
+       "comment": "self-tap pilot down each full-height corner post (undersize on purpose, so the thread forms)"
+      },
+      {
+       "name": "cb_d",
+       "default": "6.0",
+       "comment": "screw-head counterbore Ø on each bezel ear's front (the frame's back-plate head pockets are cut 0.4 over it)"
+      },
+      {
+       "name": "cb_h",
+       "default": "2.0",
+       "comment": "head counterbore depth into the bezel ear"
       },
       {
        "name": "screw_c",
@@ -10251,7 +10788,8 @@
      "params": [
       {
        "name": "adh_rails",
-       "default": "false"
+       "default": "false",
+       "comment": "two smooth adhesive-strip zones on the back plate for a no-drill (Command-strip) mount; they cost grille slots, and they need back_bird = false (the two are exclusive, asserted)"
       },
       {
        "name": "adh_rail_dx",
@@ -10281,7 +10819,8 @@
      "params": [
       {
        "name": "back_bird",
-       "default": "true"
+       "default": "true",
+       "comment": "deboss the Canary mark (canary_mark_lib's bird) into the middle of the back plate"
       },
       {
        "name": "bird_h",
@@ -10353,7 +10892,8 @@
      "params": [
       {
        "name": "soc_win",
-       "default": "false"
+       "default": "false",
+       "comment": "open a window through the back plate over the WROOM-1 shield can, so its printed FCC/IC grant numbers read on the case (certifies nothing; position from the panel record, ±2 mm)"
       },
       {
        "name": "soc_grow",
@@ -10398,6 +10938,21 @@
        "comment": "carry vents only; SD access is through the back plate"
       },
       {
+       "name": "gill_w",
+       "default": "2.4",
+       "comment": "DOCK KEY slot width: the stand's studs mate them, so do not move it"
+      },
+      {
+       "name": "gill_l",
+       "default": "9.0",
+       "comment": "side-gill length, and the portrait dock-key slots' length"
+      },
+      {
+       "name": "gill_rake",
+       "default": "0",
+       "comment": "side-gill rake, degrees; 0 (vertical slots) prints cleanest"
+      },
+      {
        "name": "gill_vw",
        "default": "3.6",
        "comment": "side-gill egg base width — area matches the old"
@@ -10409,7 +10964,8 @@
       },
       {
        "name": "dock_keys",
-       "default": "true"
+       "default": "true",
+       "comment": "cut the dock-keying slots the desk dock's centering studs rise into (bottom wall in landscape, side walls in portrait)"
       },
       {
        "name": "dock_key_dx",
@@ -10453,15 +11009,18 @@
       },
       {
        "name": "pal_body",
-       "default": "Black"
+       "default": "Black",
+       "comment": "BODY filament, named as you load it in the slicer (the render-time echo prints it)"
       },
       {
        "name": "pal_ink",
-       "default": "White"
+       "default": "White",
+       "comment": "INK filament, named as you load it in the slicer (the render-time echo prints it)"
       },
       {
        "name": "pal_accent",
-       "default": "Signal Yellow"
+       "default": "Signal Yellow",
+       "comment": "ACCENT filament, named as you load it in the slicer (the render-time echo prints it)"
       },
       {
        "name": "pal_body_rgb",
@@ -10512,7 +11071,8 @@
       },
       {
        "name": "bezel_ink_t",
-       "default": "0.6"
+       "default": "0.6",
+       "comment": "how deep the INK reaches in from the front face: a visible-surface depth (0.6 = three layers at 0.2)"
       },
       {
        "name": "bezel_color",
@@ -10608,7 +11168,8 @@
      "params": [
       {
        "name": "port_labels",
-       "default": "true"
+       "default": "true",
+       "comment": "name each opening on the outer skin beside it (deboss floors read in the body color through the accent skin)"
       },
       {
        "name": "port_lbl_a",
@@ -10622,7 +11183,8 @@
       },
       {
        "name": "rating_stamp",
-       "default": "true"
+       "default": "true",
+       "comment": "deboss the rating spec block on the back plate's lower band"
       },
       {
        "name": "rating_lines",
@@ -10661,7 +11223,8 @@
       },
       {
        "name": "plug_tether",
-       "default": "true"
+       "default": "true",
+       "comment": "leash the BOOT/RESET plug: a strap in a flush top-wall channel, its arrowhead barb through an anchor hole beside the window (costs one exhaust slot)"
       },
       {
        "name": "plug_teth_dx",
@@ -10680,7 +11243,8 @@
       },
       {
        "name": "sd_tether",
-       "default": "true"
+       "default": "true",
+       "comment": "leash the SD cover: a strap off the cap, its arrowhead barb through an anchor hole in the plate, so a peeled cover dangles captive"
       },
       {
        "name": "sd_teth_gap",
@@ -10699,7 +11263,8 @@
       },
       {
        "name": "port_tether",
-       "default": "true"
+       "default": "true",
+       "comment": "leash the port fitments (grommet, blank): the same strap and arrowhead barb, anchored beside their own port"
       },
       {
        "name": "port_teth_dx",
@@ -10719,7 +11284,8 @@
      "params": [
       {
        "name": "port_scoop",
-       "default": "true"
+       "default": "true",
+       "comment": "fingernail dish in the skin just outboard of the grommet's flange, so a port fitment can be peeled back out"
       },
       {
        "name": "port_scoop_dx",
@@ -10764,19 +11330,22 @@
       {
        "name": "edge_vent_n",
        "default": "16",
-       "comment": "shadow gills: count / pitch / pill w x h / band"
+       "comment": "shadow gills: count"
       },
       {
        "name": "edge_vent_pitch",
-       "default": "8.0"
+       "default": "8.0",
+       "comment": "shadow gills: pitch"
       },
       {
        "name": "edge_vent_w",
-       "default": "2.6"
+       "default": "2.6",
+       "comment": "shadow gills: pill width"
       },
       {
        "name": "edge_vent_h",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "shadow gills: pill height"
       },
       {
        "name": "edge_vent_z",
@@ -10796,7 +11365,8 @@
      "params": [
       {
        "name": "opt_stand",
-       "default": "true"
+       "default": "true",
+       "comment": "lay the desk dock out with the other parts in the default view (part = \"stand\" renders it alone either way)"
       },
       {
        "name": "stand_ang",
@@ -10906,7 +11476,8 @@
      "params": [
       {
        "name": "qr_bleed",
-       "default": "0.02"
+       "default": "0.02",
+       "comment": "how far neighboring QR module cells overlap, so no two cutter squares share an exact edge"
       },
       {
        "name": "qr_help",
@@ -10969,7 +11540,8 @@
      "params": [
       {
        "name": "stamp_show",
-       "default": "true"
+       "default": "true",
+       "comment": "deboss the build stamp (REV + SRC, from canary_s3_lcd7_stamp.scad) into the back plate's inner face"
       },
       {
        "name": "stamp_depth",
@@ -11608,7 +12180,13 @@
        "name": "side_open_dy",
        "default": "0.0",
        "comment": "side slot center offset (Y) — MEASURE"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Stud/keyhole interface",
+     "note": "the catalog's blind stud/keyhole standard",
+     "params": [
       {
        "name": "opt_keyhole",
        "default": "true",
@@ -11728,7 +12306,12 @@
       {
        "name": "pry_w",
        "default": "4.0",
-       "comment": "notch width  // [3:0.5:8]"
+       "range": [
+        3.0,
+        0.5,
+        8.0
+       ],
+       "comment": "notch width"
       }
      ]
     },
@@ -11864,8 +12447,8 @@
      ]
     },
     {
-     "name": "Stud interface",
-     "note": "match the target case's keyholes",
+     "name": "Stud/keyhole interface",
+     "note": "T-studs matching the target case's keyholes",
      "params": [
       {
        "name": "stud_gap",
@@ -11975,8 +12558,8 @@
      ]
     },
     {
-     "name": "Stud interface",
-     "note": "match the target case's keyholes (36 = field case)",
+     "name": "Stud/keyhole interface",
+     "note": "T-studs matching the target case's keyholes (36 = field case)",
      "params": [
       {
        "name": "stud_gap",
@@ -12156,8 +12739,8 @@
      ]
     },
     {
-     "name": "T-stud keyhole interface — matches canary_mount_lib exactly",
-     "note": "",
+     "name": "Stud/keyhole interface",
+     "note": "T-stud keyhole pockets, matching canary_mount_lib exactly",
      "params": [
       {
        "name": "kh_head_d",
@@ -12239,8 +12822,8 @@
      ]
     },
     {
-     "name": "Interface dims — mirror the case defaults",
-     "note": "",
+     "name": "Stud/keyhole interface",
+     "note": "mirror the case defaults",
      "params": [
       {
        "name": "stud_gap",
@@ -12276,7 +12859,13 @@
        "name": "kh_click",
        "default": "0.25",
        "comment": "detent bump proud of the head-channel ceiling (0 = no click) — catalog standard, canary_mount_lib"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Interface dims — mirror the case defaults",
+     "note": "",
+     "params": [
       {
        "name": "clip_w",
        "default": "6.0",
@@ -12433,27 +13022,52 @@
       {
        "name": "glyph_h",
        "default": "34.0",
-       "comment": "bird height, in mark_span units (about 30 x 32 mm on the plate). Leave it: the bed face is sized for this  // [24:1:40]"
+       "range": [
+        24.0,
+        1.0,
+        40.0
+       ],
+       "comment": "bird height, in mark_span units (about 30 x 32 mm on the plate). Leave it: the bed face is sized for this"
       },
       {
        "name": "glyph_rib",
        "default": "0.7",
-       "comment": "stroke width in mm, and THE number this station tests. Blobbed and closed up: smaller. Broken or missing: bigger. Under ~0.42 is thinner than one extrusion and will not print  // [0.42:0.02:1.2]"
+       "range": [
+        0.42,
+        0.02,
+        1.2
+       ],
+       "comment": "stroke width in mm, and THE number this station tests. Blobbed and closed up: smaller. Broken or missing: bigger. Under ~0.42 is thinner than one extrusion and will not print"
       },
       {
        "name": "glyph_depth",
        "default": "0.5",
-       "comment": "how deep the bird is sunk, in mm — the same depth every case label uses. Too shallow and one bridged layer closes it back up  // [0.2:0.1:1.2]"
+       "range": [
+        0.2,
+        0.1,
+        1.2
+       ],
+       "comment": "how deep the bird is sunk, in mm — the same depth every case label uses. Too shallow and one bridged layer closes it back up"
       },
       {
        "name": "glyph_dx",
        "default": "-26.5",
-       "comment": "bird center, mm from the plate center across the plate  // [-40:0.5:40]"
+       "range": [
+        -40.0,
+        0.5,
+        40.0
+       ],
+       "comment": "bird center, mm from the plate center across the plate"
       },
       {
        "name": "glyph_dy",
        "default": "12.0",
-       "comment": "bird center, mm from the plate center up the plate  // [-30:0.5:30]"
+       "range": [
+        -30.0,
+        0.5,
+        30.0
+       ],
+       "comment": "bird center, mm from the plate center up the plate"
       }
      ]
     },
@@ -12634,7 +13248,12 @@
       {
        "name": "n_bays",
        "default": "4",
-       "comment": "number of XIAO bays  // [2:1:10]"
+       "range": [
+        2.0,
+        1.0,
+        10.0
+       ],
+       "comment": "number of XIAO bays"
       },
       {
        "name": "recline",
@@ -12818,8 +13437,8 @@
      ]
     },
     {
-     "name": "Generic studs",
-     "note": "",
+     "name": "Stud/keyhole interface",
+     "note": "the generic studs template",
      "params": [
       {
        "name": "stud_gap",

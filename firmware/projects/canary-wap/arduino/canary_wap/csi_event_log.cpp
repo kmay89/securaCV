@@ -18,6 +18,7 @@
  */
 
 #include "csi_event_log.h"
+#include "csi_event_log_line.h"  // the line format, shared with the canary PIO tree
 
 #include <Arduino.h>
 #include <FS.h>
@@ -68,10 +69,11 @@ constexpr const char* TMP_PATH = "/EVENTS/today.ndjson.tmp";
  * card, so the cleanup needs to run on the actual first-ready edge). */
 void reconcile_truncate_remnants();
 
-/* True when an SD card is mounted AND the directory exists. We
- * re-check on every call rather than caching because SD can
- * hot-unplug; the cost is one cardType() lookup + one exists() per
- * event, negligible vs the write. SD.cardType() returns CARD_NONE
+/* True when an SD card is mounted, the directory exists, and the card
+ * is not a canary base's (no owner file). We re-check on every call
+ * rather than caching because SD can hot-unplug; the cost is one
+ * cardType() lookup + two exists() per event, negligible vs the
+ * write. SD.cardType() returns CARD_NONE
  * when nothing is mounted, so it doubles as the readiness check
  * without us needing to peek at hardware_state's globals.
  *
@@ -82,6 +84,7 @@ void reconcile_truncate_remnants();
  * cleanup pass before any append() can call head_truncate. */
 bool sd_path_ready() {
   static bool s_reconciled = false;
+  static bool s_foreign_said = false;
   /* A background mount attempt owns the global SD object (hardware_state.h
    * mount worker): the card struct is mid-initialization, so SD.cardType()
    * can read a garbage non-CARD_NONE value and the SD.open below would race
@@ -91,6 +94,20 @@ bool sd_path_ready() {
   }
   if (SD.cardType() == CARD_NONE) {
     s_reconciled = false;
+    s_foreign_said = false;
+    return false;
+  }
+  /* A canary base's card: its /EVENTS log is bound to that canary's witness
+   * key by the owner file (csi_event_log_line.h). This device writes none,
+   * so the log is not its own. Leave it alone: no append, since the canary
+   * would sign these rows as its own, and no backfill, since this device
+   * would replay the canary's history as its own. Checked before the
+   * truncate reconcile, so the canary's scratch file is never touched. */
+  if (SD.exists(csi_event_log_line::kOwnerPath)) {
+    if (!s_foreign_said) {
+      Serial.println("[EVT-LOG] /EVENTS belongs to a canary base (owner file) - event log off for this card");
+      s_foreign_said = true;
+    }
     return false;
   }
   if (!SD.exists(DIR_PATH)) {
@@ -227,105 +244,6 @@ void reconcile_truncate_remnants() {
   }
 }
 
-/* Marshal one record to the line-delimited JSON shape documented in
- * csi_event_log.h. Returns the byte count (including trailing '\n'),
- * or 0 on overflow. The shape mirrors what csi_mqtt::publish_event
- * produces so a future "publish from log" path is one snprintf. */
-size_t marshal_line(const csi_event_record_t* rec, char* out, size_t cap) {
-  if (!rec || !out || cap < 32) return 0;
-  const char* cat = (rec->category == CSI_CATEGORY_AMBIENT) ? "ambient"
-                  : (rec->category == CSI_CATEGORY_ANOMALY) ? "anomaly" : "event";
-  const char* priv = (rec->privacy == CSI_PRIVACY_P2) ? "p2"
-                   : (rec->privacy == CSI_PRIVACY_P1) ? "p1" : "p0";
-  const int n = snprintf(out, cap,
-    "{\"id\":%lu,\"first\":%lu,\"last\":%lu,"
-     "\"cat\":\"%s\",\"priv\":\"%s\","
-     "\"module\":\"%s\",\"type\":\"%s\","
-     "\"bundled\":%u,\"state\":\"%s\",\"conf\":\"%s\","
-     "\"motion\":%u,\"breathing\":%u,\"bpm\":%u,"
-     "\"dur\":%u,\"tb\":%u,\"dom\":\"%s\",\"dismissed\":%u}\n",
-    (unsigned long)rec->event_id,
-    (unsigned long)rec->first_seen_ms,
-    (unsigned long)rec->last_seen_ms,
-    cat, priv,
-    rec->module_id, rec->type_name,
-    (unsigned)rec->bundled_count,
-    rec->values.state_name[0]      ? rec->values.state_name      : "",
-    rec->values.confidence[0]      ? rec->values.confidence      : "",
-    (unsigned)rec->values.motion_score,
-    (unsigned)rec->values.breathing_score,
-    (unsigned)rec->values.breathing_rate_bpm,
-    (unsigned)rec->values.duration_sec,
-    (unsigned)rec->values.time_bucket,
-    rec->values.dominant_signal[0] ? rec->values.dominant_signal : "",
-    (unsigned)rec->values.dismissed);
-  if (n <= 0 || (size_t)n >= cap) return 0;
-  return (size_t)n;
-}
-
-/* Mini scanner to pull one int field by name. Returns dflt on miss.
- * Hand-rolled rather than ArduinoJson — same shape as the parser
- * pattern used by csi_mqtt and /api/settings. */
-long json_int(const char* line, const char* key, long dflt) {
-  /* Build "key" with surrounding quotes so we don't accidentally
-   * match a substring of another field name. */
-  char needle[32];
-  const int kn = snprintf(needle, sizeof(needle), "\"%s\":", key);
-  if (kn <= 0 || (size_t)kn >= sizeof(needle)) return dflt;
-  const char* k = strstr(line, needle);
-  if (!k) return dflt;
-  const char* p = k + kn;
-  while (*p == ' ' || *p == '\t' || *p == '"') p++;
-  char* end = nullptr;
-  long v = strtol(p, &end, 10);
-  return (end == p) ? dflt : v;
-}
-
-void json_str(const char* line, const char* key, char* out, size_t cap) {
-  if (!out || cap == 0) return;
-  out[0] = '\0';
-  char needle[32];
-  const int kn = snprintf(needle, sizeof(needle), "\"%s\":\"", key);
-  if (kn <= 0 || (size_t)kn >= sizeof(needle)) return;
-  const char* k = strstr(line, needle);
-  if (!k) return;
-  const char* p = k + kn;
-  size_t i = 0;
-  while (*p && *p != '"' && i < cap - 1) out[i++] = *p++;
-  out[i] = '\0';
-}
-
-bool parse_line(const char* line, csi_event_record_t* out) {
-  if (!line || !out) return false;
-  memset(out, 0, sizeof(*out));
-  out->event_id      = (uint32_t)json_int(line, "id",       0);
-  if (out->event_id == 0) return false;  /* unparseable / blank line */
-  out->first_seen_ms = (uint32_t)json_int(line, "first",    0);
-  out->last_seen_ms  = (uint32_t)json_int(line, "last",     0);
-  out->bundled_count = (uint16_t)json_int(line, "bundled",  1);
-  char cat[12]  = {};
-  char priv[4]  = {};
-  json_str(line, "cat",  cat,  sizeof(cat));
-  json_str(line, "priv", priv, sizeof(priv));
-  out->category = (strcmp(cat, "ambient") == 0) ? CSI_CATEGORY_AMBIENT
-                : (strcmp(cat, "anomaly") == 0) ? CSI_CATEGORY_ANOMALY
-                                                : CSI_CATEGORY_EVENT;
-  out->privacy = (strcmp(priv, "p2") == 0) ? CSI_PRIVACY_P2
-               : (strcmp(priv, "p1") == 0) ? CSI_PRIVACY_P1 : CSI_PRIVACY_P0;
-  json_str(line, "module", out->module_id, sizeof(out->module_id));
-  json_str(line, "type",   out->type_name, sizeof(out->type_name));
-  json_str(line, "state",  out->values.state_name, sizeof(out->values.state_name));
-  json_str(line, "conf",   out->values.confidence, sizeof(out->values.confidence));
-  json_str(line, "dom",    out->values.dominant_signal, sizeof(out->values.dominant_signal));
-  out->values.motion_score        = (uint8_t)json_int(line, "motion",    0);
-  out->values.breathing_score     = (uint8_t)json_int(line, "breathing", 0);
-  out->values.breathing_rate_bpm  = (uint8_t)json_int(line, "bpm",       0);
-  out->values.duration_sec        = (uint16_t)json_int(line, "dur",      0);
-  out->values.time_bucket         = (uint16_t)json_int(line, "tb",       0);
-  out->values.dismissed           = (uint8_t)json_int(line, "dismissed", 0);
-  return true;
-}
-
 }  /* namespace */
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -362,7 +280,7 @@ bool append(const csi_event_record_t* rec) {
   head_truncate_if_oversized();
 
   char line[512];
-  const size_t n = marshal_line(rec, line, sizeof(line));
+  const size_t n = csi_event_log_line::marshal(rec, line, sizeof(line));
   if (n == 0) return false;
 
   /* FILE_APPEND on the Arduino-ESP32 SD library opens for write and
@@ -395,7 +313,7 @@ size_t iterate_since(uint32_t since_event_id, iterate_cb_t cb, void* user) {
     if (c == '\n') {
       line[li] = '\0';
       csi_event_record_t rec;
-      if (parse_line(line, &rec) && rec.event_id > since_event_id) {
+      if (csi_event_log_line::parse(line, &rec) && rec.event_id > since_event_id) {
         if (!cb(&rec, user)) { f.close(); return emitted; }
         emitted++;
       }
@@ -407,7 +325,7 @@ size_t iterate_since(uint32_t since_event_id, iterate_cb_t cb, void* user) {
   if (li > 0 && emitted < BACKFILL_MAX) {
     line[li] = '\0';
     csi_event_record_t rec;
-    if (parse_line(line, &rec) && rec.event_id > since_event_id) {
+    if (csi_event_log_line::parse(line, &rec) && rec.event_id > since_event_id) {
       if (cb(&rec, user)) emitted++;
     }
   }
