@@ -46,6 +46,7 @@ from .const import (
     MODEL_KERNEL,
     MODEL_CANARY,
     # Tamper types
+    ALL_TAMPER_TYPES,
     TAMPER_POWER_LOSS,
     TAMPER_SD_REMOVE,
     TAMPER_SD_ERROR,
@@ -57,6 +58,7 @@ from .const import (
     TAMPER_REBOOT,
     TAMPER_MEMORY,
     # Transport types
+    ALL_TRANSPORTS,
     TRANSPORT_WIFI_AP,
     TRANSPORT_WIFI_STA,
     TRANSPORT_MQTT,
@@ -84,6 +86,38 @@ from .health_metrics import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Per-type entity tables ({type: icon}), keyed by the ADVERTISED lists in
+# const.py (ALL_TAMPER_TYPES / ALL_TRANSPORTS): the discovery callback below
+# iterates those lists and looks each type up here, so a type that is
+# advertised but has no row fails loudly (KeyError) instead of silently
+# creating nothing, and a row for a FUTURE_* type is dead weight the
+# feature-flag test rejects (tests/test_feature_flags.py;
+# scripts/lint_feature_flags.sh check B is the shell-side second opinion).
+# Entity creation order is list order. The display names live in
+# strings.json / translations/<lang>.json under entity.binary_sensor.
+# tamper_<type> and transport_<type> — not here.
+TAMPER_TYPE_SENSORS: dict[str, str] = {
+    TAMPER_POWER_LOSS: "mdi:power-plug-off",
+    TAMPER_SD_REMOVE: "mdi:sd-off",
+    TAMPER_SD_ERROR: "mdi:alert-circle",
+    TAMPER_GPS_JAMMING: "mdi:crosshairs-off",
+    TAMPER_MOTION: "mdi:motion-sensor",
+    TAMPER_ENCLOSURE: "mdi:package-variant-closed-remove",
+    TAMPER_GPIO: "mdi:alert-circle",
+    TAMPER_WATCHDOG: "mdi:timer-alert",
+    TAMPER_REBOOT: "mdi:restart-alert",
+    TAMPER_MEMORY: "mdi:memory",
+}
+
+TRANSPORT_SENSORS: dict[str, str] = {
+    TRANSPORT_WIFI_AP: "mdi:access-point",
+    TRANSPORT_WIFI_STA: "mdi:wifi",
+    TRANSPORT_MQTT: "mdi:message-arrow-right",
+    TRANSPORT_BLE: "mdi:bluetooth",
+    TRANSPORT_MESH: "mdi:lan",
+    TRANSPORT_CHIRP: "mdi:bird",
+}
 
 
 def _read_trust_view(
@@ -199,30 +233,24 @@ async def _setup_mqtt_binary_sensors(
         # never create the sensors that the periodic health flags feed.
         if topic_type in (TOPIC_TAMPER, TOPIC_HEALTH) and "tamper_sensors" not in entities_added[device_id]:
             entities_added[device_id].add("tamper_sensors")
-            new_entities.extend([
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_POWER_LOSS, "Power Loss", "mdi:power-plug-off"),
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_SD_REMOVE, "SD Removed", "mdi:sd-off"),
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_SD_ERROR, "SD Error", "mdi:alert-circle"),
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_GPS_JAMMING, "GPS Jamming", "mdi:crosshairs-off"),
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_MOTION, "Unexpected Motion", "mdi:motion-sensor"),
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_ENCLOSURE, "Enclosure Open", "mdi:package-variant-closed-remove"),
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_GPIO, "GPIO Tamper", "mdi:alert-circle"),
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_WATCHDOG, "Watchdog Timeout", "mdi:timer-alert"),
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_REBOOT, "Unexpected Reboot", "mdi:restart-alert"),
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_MEMORY, "Memory Critical", "mdi:memory"),
-            ])
+            # Iterate the ADVERTISED list, not the table: an advertised type
+            # without a row raises here, by design.
+            new_entities.extend(
+                SecuraCVCanaryTamperTypeSensor(
+                    prefix, device_id, entry, tamper_type, TAMPER_TYPE_SENSORS[tamper_type]
+                )
+                for tamper_type in ALL_TAMPER_TYPES
+            )
 
         # Transport health sensors (created on first transport message)
         if topic_type == TOPIC_TRANSPORT and "transport_sensors" not in entities_added[device_id]:
             entities_added[device_id].add("transport_sensors")
-            new_entities.extend([
-                SecuraCVCanaryTransportSensor(prefix, device_id, entry, TRANSPORT_WIFI_AP, "WiFi AP", "mdi:access-point"),
-                SecuraCVCanaryTransportSensor(prefix, device_id, entry, TRANSPORT_WIFI_STA, "WiFi Station", "mdi:wifi"),
-                SecuraCVCanaryTransportSensor(prefix, device_id, entry, TRANSPORT_MQTT, "MQTT", "mdi:message-arrow-right"),
-                SecuraCVCanaryTransportSensor(prefix, device_id, entry, TRANSPORT_BLE, "Bluetooth", "mdi:bluetooth"),
-                SecuraCVCanaryTransportSensor(prefix, device_id, entry, TRANSPORT_MESH, "Mesh Network", "mdi:lan"),
-                SecuraCVCanaryTransportSensor(prefix, device_id, entry, TRANSPORT_CHIRP, "Chirp Network", "mdi:bird"),
-            ])
+            new_entities.extend(
+                SecuraCVCanaryTransportSensor(
+                    prefix, device_id, entry, transport, TRANSPORT_SENSORS[transport]
+                )
+                for transport in ALL_TRANSPORTS
+            )
 
         # Motion + occupancy. These exist so the HomeKit Bridge (and any
         # other consumer) sees the standard device classes rather than a
@@ -275,8 +303,12 @@ class SecuraCVKernelOnlineSensor(CoordinatorEntity, BinarySensorEntity):
     """Binary sensor for kernel connectivity status."""
 
     # With has_entity_name, HA prefixes the device name ("SecuraCV Privacy
-    # Witness Kernel"), so the entity name must not repeat the brand.
-    _attr_name = "Online"
+    # Witness Kernel"), so the entity name must not repeat the brand. Names
+    # are looked up in translations/<lang>.json by translation key
+    # (strings.json is the source copy); no entity here sets _attr_name,
+    # which would bypass the translation. tests/test_entity_translations.py
+    # holds every key to a strings.json entry and pins the rendered names.
+    _attr_translation_key = "kernel_online"
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_icon = "mdi:server-network"
     _attr_has_entity_name = True
@@ -313,7 +345,7 @@ class SecuraCVKernelStorageReplaceSensor(CoordinatorEntity, BinarySensorEntity):
     as the Storage Health sensor, so it never flaps on transient readings.
     """
 
-    _attr_name = "Storage Replacement Recommended"
+    _attr_translation_key = "storage_replace"
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_icon = "mdi:sd-alert"
     _attr_has_entity_name = True
@@ -368,15 +400,15 @@ class SecuraCVCanaryBinarySensorBase(BinarySensorEntity):
         prefix: str,
         device_id: str,
         entry: ConfigEntry,
-        name_suffix: str,
         key: str,
     ) -> None:
-        """Initialize."""
+        """Initialize; `key` is both the unique_id suffix and the translation
+        key (strings.json entity.binary_sensor.<key>.name)."""
         self._prefix = prefix
         self._device_id = device_id
         self._entry = entry
         self._attr_unique_id = f"{DOMAIN}_canary_{device_id}_{key}"
-        self._attr_name = name_suffix
+        self._attr_translation_key = key
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -397,7 +429,7 @@ class SecuraCVCanaryOnlineSensor(SecuraCVCanaryBinarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "Online", "online")
+        super().__init__(prefix, device_id, entry, "online")
         self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:
@@ -444,7 +476,7 @@ class SecuraCVCanaryChainValidSensor(SecuraCVCanaryBinarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "Chain Valid", "chain_valid")
+        super().__init__(prefix, device_id, entry, "chain_valid")
         # Unknown until a chain publish is actually verified. Defaulting to
         # "on" would say "verified" about a chain nobody has checked yet —
         # inverted from the project's honesty rule. HA renders None honestly
@@ -491,7 +523,7 @@ class SecuraCVCanaryTamperSensor(SecuraCVCanaryBinarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "Tamper", "tamper")
+        super().__init__(prefix, device_id, entry, "tamper")
         self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:
@@ -565,11 +597,10 @@ class SecuraCVCanaryTamperTypeSensor(SecuraCVCanaryBinarySensorBase):
         device_id: str,
         entry: ConfigEntry,
         tamper_type: str,
-        display_name: str,
         icon: str,
     ) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, display_name, f"tamper_{tamper_type}")
+        super().__init__(prefix, device_id, entry, f"tamper_{tamper_type}")
         self._tamper_type = tamper_type
         self._attr_icon = icon
         self._attr_is_on = False
@@ -661,10 +692,20 @@ class SecuraCVCanaryTamperTypeSensor(SecuraCVCanaryBinarySensorBase):
                 **unsigned_trust_attrs(self.hass, self._entry, self._device_id),
             }
             self.async_write_ha_state()
-        except TypeError:
+        except TypeError as err:
             # Unexpected value types inside an otherwise well-shaped dict
-            # (e.g. "sd_errors" as a string) — skip this publish.
-            pass
+            # (e.g. "sd_errors" as a string) — skip this publish, state
+            # untouched. Debug, not warning: a malformed publish from an
+            # untrusted local broker must not be able to spam the log (the
+            # same reason parse_mqtt_json returns None silently), but a
+            # firmware field-type regression has to be visible with the
+            # securacv logger at debug.
+            _LOGGER.debug(
+                "Ignoring health publish for %s: unexpected field type in tamper fields (%s)",
+                self._device_id,
+                err,
+                exc_info=True,
+            )
 
 
 class SecuraCVCanarySDReplaceSensor(SecuraCVCanaryBinarySensorBase):
@@ -680,7 +721,7 @@ class SecuraCVCanarySDReplaceSensor(SecuraCVCanaryBinarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "SD Replacement Recommended", "sd_replace")
+        super().__init__(prefix, device_id, entry, "sd_replace")
         self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:
@@ -718,11 +759,10 @@ class SecuraCVCanaryTransportSensor(SecuraCVCanaryBinarySensorBase):
         device_id: str,
         entry: ConfigEntry,
         transport_type: str,
-        display_name: str,
         icon: str,
     ) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, display_name, f"transport_{transport_type}")
+        super().__init__(prefix, device_id, entry, f"transport_{transport_type}")
         self._transport_type = transport_type
         self._attr_icon = icon
         self._attr_is_on = False
@@ -791,8 +831,8 @@ class SecuraCVCanaryProjectedSensorBase(SecuraCVCanaryBinarySensorBase):
     _signal: str = ""
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry,
-                 name_suffix: str, key: str) -> None:
-        super().__init__(prefix, device_id, entry, name_suffix, key)
+                 key: str) -> None:
+        super().__init__(prefix, device_id, entry, key)
         self._attr_is_on = False
         self._cancel_clear = None
 
@@ -868,7 +908,7 @@ class SecuraCVCanaryMotionSensor(SecuraCVCanaryProjectedSensorBase):
     _signal = "motion"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
-        super().__init__(prefix, device_id, entry, "Motion", "motion")
+        super().__init__(prefix, device_id, entry, "motion")
 
 
 class SecuraCVCanaryOccupancySensor(SecuraCVCanaryProjectedSensorBase):
@@ -886,7 +926,7 @@ class SecuraCVCanaryOccupancySensor(SecuraCVCanaryProjectedSensorBase):
     _signal = "occupancy"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
-        super().__init__(prefix, device_id, entry, "Occupancy", "occupancy")
+        super().__init__(prefix, device_id, entry, "occupancy")
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to events and to the retained state snapshot."""
@@ -926,7 +966,7 @@ class SecuraCVCanaryMeshConnectedSensor(SecuraCVCanaryBinarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "Mesh Connected", "mesh_connected")
+        super().__init__(prefix, device_id, entry, "mesh_connected")
         self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:
@@ -958,10 +998,18 @@ class SecuraCVCanaryMeshConnectedSensor(SecuraCVCanaryBinarySensorBase):
                 **unsigned_trust_attrs(self.hass, self._entry, self._device_id),
             }
             self.async_write_ha_state()
-        except TypeError:
+        except TypeError as err:
             # Unexpected value types inside an otherwise well-shaped dict
-            # (e.g. "peers" as a number) — skip this publish.
-            pass
+            # (e.g. "peers" as a number) — skip this publish, state
+            # untouched. Debug for the same reason as the tamper handler:
+            # never let an untrusted broker spam the log, never hide a
+            # firmware regression from someone who turned debug on.
+            _LOGGER.debug(
+                "Ignoring mesh publish for %s: unexpected field type in mesh payload (%s)",
+                self._device_id,
+                err,
+                exc_info=True,
+            )
 
 
 class SecuraCVCanaryChirpActiveSensor(SecuraCVCanaryBinarySensorBase):
@@ -975,7 +1023,7 @@ class SecuraCVCanaryChirpActiveSensor(SecuraCVCanaryBinarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "Chirp Active", "chirp_active")
+        super().__init__(prefix, device_id, entry, "chirp_active")
         self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:

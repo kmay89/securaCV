@@ -23,16 +23,20 @@ repo via its entrypoint:
 1) **Set up MQTT credentials** (anonymous access is disabled by default):
 
 ```bash
+# Choose the password and write it to .env FIRST (or copy .env.example to
+# .env and set it there): Compose interpolates every service when it loads
+# docker-compose.yml — even for the one-off `run` below — and the frigate and
+# securacv services require SECURACV_MQTT_PASSWORD, so without it every
+# `docker compose` command stops before it starts anything.
+echo 'SECURACV_MQTT_PASSWORD=<the password>' >> .env
 # Create the password file BEFORE starting the broker (mosquitto exits if the
 # configured password_file is missing, so it can't be created via `exec` on a
-# running broker). You'll be prompted for the password.
+# running broker). You'll be prompted for the password: type the same one.
 docker compose run --rm --no-deps --entrypoint sh mosquitto -c \
   'mosquitto_passwd -c /mosquitto/config/passwd securacv &&
    chown mosquitto:mosquitto /mosquitto/config/passwd &&
    chmod 600 /mosquitto/config/passwd'
 docker compose up -d mosquitto
-# Tell the frigate and securacv services the password you chose:
-echo 'SECURACV_MQTT_PASSWORD=<the password>' >> .env
 ```
 
 The `.env` value is injected into the SecuraCV bridges
@@ -107,6 +111,9 @@ mosquitto_sub -h localhost -u securacv -P <password> -t 'witness/#' -v
     real `log_verify` against the SQLCipher-encrypted DB.
   - `./ci_smoke.sh` — the real `frigate_bridge` binary ingesting a `frigate/events`
     message from a live mosquitto broker (run `BRIDGE_BIN=path/to/frigate_bridge ./ci_smoke.sh`).
+- **Tick-as-you-go bring-up:** [`RUNBOOK.md`](RUNBOOK.md) walks one bring-up of
+  this stack step by step with the expected output of each command (derived from
+  the files here, not a recorded run — it says so in its header).
 - **Manual operator smoke check:** `./verify_pipeline.sh` against the live 4-container
   stack above. It confirms Frigate is publishing and `frigate_bridge` is ingesting; it
   does not read the encrypted `witness.db` directly, expect vault envelopes, or build a

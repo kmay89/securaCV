@@ -58,9 +58,11 @@ TRANSPORT_CHIRP = "chirp"           # Community alert network
 TRANSPORT_LORA = "lora"             # Future: LoRa radio
 TRANSPORT_AUDIO = "audio"           # Future: SCQCS audio squawks
 
-# The advertised transport set. scripts/lint_feature_flags.sh (check B)
-# greps this list to enforce that no FUTURE_* transport is ever advertised;
-# the registry is docs/feature-flags.md.
+# The advertised transport set: binary_sensor.py creates one transport
+# sensor for each entry (its TRANSPORT_SENSORS table is keyed by this list),
+# and tests/test_feature_flags.py plus scripts/lint_feature_flags.sh (check B)
+# enforce that no FUTURE_* transport is ever advertised; the registry is
+# docs/feature-flags.md.
 ALL_TRANSPORTS = [
     TRANSPORT_WIFI_AP,
     TRANSPORT_WIFI_STA,
@@ -95,10 +97,29 @@ TAMPER_REBOOT = "unexpected_reboot"        # Unexpected reboot
 TAMPER_MEMORY = "memory_critical"          # Critical memory exhaustion
 TAMPER_AUDIO = "audio_anomaly"             # Future: unusual audio (jamming?)
 
+# The advertised tamper set: binary_sensor.py creates one per-type tamper
+# sensor for each entry (its TAMPER_TYPE_SENSORS table is keyed by this
+# list), and tests/test_feature_flags.py plus scripts/lint_feature_flags.sh
+# (check B) enforce that no FUTURE_* tamper type is ever advertised; the
+# registry is docs/feature-flags.md.
+ALL_TAMPER_TYPES = [
+    TAMPER_POWER_LOSS,
+    TAMPER_SD_REMOVE,
+    TAMPER_SD_ERROR,
+    TAMPER_GPS_JAMMING,
+    TAMPER_MOTION,
+    TAMPER_ENCLOSURE,
+    TAMPER_GPIO,
+    TAMPER_WATCHDOG,
+    TAMPER_REBOOT,
+    TAMPER_MEMORY,
+]
+
 # Declared for forward-compatibility but NOT implemented: no firmware emits
 # these, and no tamper sensor is created for them — the integration never
-# advertises a tamper type no device can raise. Wire one end-to-end
-# (binary_sensor.py's per-type tamper list) before moving it out of this list.
+# advertises a tamper type no device can raise. Wire one end-to-end (a row in
+# binary_sensor.py's TAMPER_TYPE_SENSORS and a health/tamper field the
+# firmware actually publishes) before moving it up to ALL_TAMPER_TYPES.
 FUTURE_TAMPER_TYPES = [
     TAMPER_AUDIO,
 ]

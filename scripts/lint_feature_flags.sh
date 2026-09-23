@@ -11,9 +11,12 @@ set -euo pipefail
 #      feature). Catches features that linger after their code is deleted.
 #
 #   B) "Never advertise unbuilt" — no FUTURE_* transport may appear in
-#      ALL_TRANSPORTS in custom_components/securacv/const.py. Locks in the
-#      flag-report F-07 fix so a device can never advertise a transport no
-#      firmware can report on.
+#      ALL_TRANSPORTS, and no FUTURE_* tamper type in ALL_TAMPER_TYPES, in
+#      custom_components/securacv/const.py. Locks in the flag-report F-07 fix
+#      so a device can never advertise a transport no firmware can report on
+#      (or a tamper type no device can raise). The in-package twin of this
+#      check is custom_components/securacv/tests/test_feature_flags.py, which
+#      also proves the lists are complete and the entity tables match them.
 #
 #   C) Registry completeness — every Cargo [features] key must be listed in the
 #      central registry docs/feature-flags.md, so the index can't drift behind
@@ -81,36 +84,62 @@ for feat in $features; do
   fi
 done
 
-# B) FUTURE_* transports must not leak into ALL_TRANSPORTS.
-#    Pull the identifiers inside the ALL_TRANSPORTS = [ ... ] list and flag any
-#    whose name matches a FUTURE_* transport constant.
-all_block="$(awk '
-  /ALL_TRANSPORTS[[:space:]]*=/ { grab = 1 }
-  grab { print }
-  grab && /\]/ { exit }
-' "$CONST_PY")"
+# B) FUTURE_* members must not leak into the advertised ALL_* list.
+#    Pull the identifiers inside the `<ALL_LIST> = [ ... ]` block and flag any
+#    whose name matches a member of the matching `<FUTURE_LIST> = [ ... ]`.
+#    Run once per list pair: transports and tamper types.
+#
+#    $1 = ALL_* list name, $2 = FUTURE_* list name, $3 = constant prefix
+#    (the `TRANSPORT_` / `TAMPER_` stem the members are spelled with),
+#    $4 = the noun for the failure message.
+check_never_advertise() {
+  local all_name=$1 future_name=$2 prefix=$3 noun=$4
+  local all_block future_block future_members member
 
-# The FUTURE list is explicitly declared; read its members and assert none are
-# present in the ALL_TRANSPORTS block.
-future_block="$(awk '
-  /FUTURE_TRANSPORTS[[:space:]]*=/ { grab = 1 }
-  grab { print }
-  grab && /\]/ { exit }
-' "$CONST_PY")"
-
-# `|| true` so an empty FUTURE_TRANSPORTS (every future transport promoted into
-# ALL_TRANSPORTS, which the registry tells you to do) doesn't fail the pipeline
-# under `set -euo pipefail`.
-future_members="$(echo "$future_block" | grep -oE 'TRANSPORT_[A-Z_]+' | grep -v 'FUTURE_TRANSPORTS' | sort -u || true)"
-
-for member in $future_members; do
-  if echo "$all_block" | grep -qE "\b${member}\b"; then
-    fail "future transport '${member}' appears in ALL_TRANSPORTS (${CONST_PY}). Devices must never advertise an unbuilt transport — keep it in FUTURE_TRANSPORTS until wired end-to-end."
+  all_block="$(awk -v name="$all_name" '
+    $0 ~ ("^" name "[[:space:]]*=") { grab = 1 }
+    grab { print }
+    grab && /\]/ { exit }
+  ' "$CONST_PY")"
+  if [ -z "$all_block" ]; then
+    fail "no '${all_name} = [' block parsed from ${CONST_PY} (list renamed or moved?)"
+    return
   fi
-done
+
+  # The FUTURE list is explicitly declared; read its members and assert none
+  # are present in the ALL_* block.
+  future_block="$(awk -v name="$future_name" '
+    $0 ~ ("^" name "[[:space:]]*=") { grab = 1 }
+    grab { print }
+    grab && /\]/ { exit }
+  ' "$CONST_PY")"
+
+  # `\b` anchors each match at the start of a word: unanchored, the header
+  # line's FUTURE_TAMPER_TYPES yields the bare token TAMPER_TYPES as a
+  # spurious "member". `|| true` so an empty FUTURE_* list (every future
+  # member promoted into the ALL_* list, which the registry tells you to do)
+  # doesn't fail the pipeline under `set -euo pipefail`.
+  future_members="$(echo "$future_block" | grep -oE "\b${prefix}[A-Z_]+" | sort -u || true)"
+
+  for member in $future_members; do
+    # Every parsed member must be a constant const.py defines; anything else
+    # means this parser read a token that is not a list member, and a check
+    # built on a misread list proves nothing.
+    if ! grep -qE "^${member}[[:space:]]*=" "$CONST_PY"; then
+      fail "parsed '${member}' from ${future_name} in ${CONST_PY}, but no such constant is defined there (the FUTURE_* parser misread the list)."
+      continue
+    fi
+    if echo "$all_block" | grep -qE "\b${member}\b"; then
+      fail "future ${noun} '${member}' appears in ${all_name} (${CONST_PY}). Devices must never advertise an unbuilt ${noun} — keep it in ${future_name} until wired end-to-end."
+    fi
+  done
+}
+
+check_never_advertise ALL_TRANSPORTS FUTURE_TRANSPORTS TRANSPORT_ transport
+check_never_advertise ALL_TAMPER_TYPES FUTURE_TAMPER_TYPES TAMPER_ "tamper type"
 
 if [ "$EXIT_CODE" -eq 0 ]; then
-  echo "[flag-lint] OK: ${feat_count} Cargo features referenced + registered; no FUTURE_* transport advertised."
+  echo "[flag-lint] OK: ${feat_count} Cargo features referenced + registered; no FUTURE_* transport or tamper type advertised."
 fi
 
 exit "$EXIT_CODE"

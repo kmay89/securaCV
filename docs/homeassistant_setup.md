@@ -237,6 +237,14 @@ Within 30 seconds of the Canary connecting to MQTT:
    attributes with `verified: false`, `trust_reason: unsigned`, so a
    dashboard can tell an unsigned publish from a verified one.
 
+   The names in bold are what Home Assistant renders after the device
+   name; they come from each entity's translation key, not from the code.
+   To rename one, edit `custom_components/securacv/strings.json`, copy it
+   over `translations/en.json` (a test keeps the two byte-identical), and
+   mirror the rename in this list and in the names
+   `tests/test_entity_translations.py` pins; other languages go in their
+   own `translations/<lang>.json`.
+
    Sensors:
    - **Witness Count** — total witness records created (`witness_count`; signed `counts` topic)
    - **Chain Length** — hash-chain length, with `latest_hash` and `algorithm` (`chain_length`; signed `chain` topic)
