@@ -143,7 +143,7 @@ has 4 gaps, Gold is where the UX wins live. Every finding below was verified in 
 | **entity-unavailable** | ❌ | MQTT entities have **no availability logic** — a dead Canary shows stale state / `unknown` forever, never `unavailable`, despite firmware publishing an LWT `securacv/<id>/status` availability topic we don't consume for this |
 | **reauthentication-flow** | ❌ | no `async_step_reauth`. Softened by the rotating-token-file re-read on 401 (`__init__.py:159-222`) — but a permanently wrong URL/token has no recovery path except delete-and-re-add |
 | **parallel-updates** | ❌ | `PARALLEL_UPDATES` not set in either platform |
-| action-exceptions | ⚠️ | the watch actions raise `ServiceValidationError` on every refusal (unknown or ambiguous watch, cap reached, integration not loaded yet) — with plain-English messages, not yet translatable (`translation_key`) |
+| action-exceptions | ⚠️ | the watch actions raise `ServiceValidationError` on every refusal (unknown or ambiguous watch, cap reached, integration not loaded yet, or no loaded entry running the watch tick) — with plain-English messages, not yet translatable (`translation_key`) |
 | test-coverage ≥95 % | ❌ | crypto/trust/API-token logic is well covered; setup, unload, entities, diagnostics, config flow are not |
 | docs-configuration/installation-parameters | ⚠️ | options flow (PKI menu) documented in `device_trust.md`, not in a parameters reference |
 

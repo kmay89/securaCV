@@ -235,10 +235,10 @@ def fleet_snapshot(hass: HomeAssistant) -> list[dict[str, Any]]:
     """Plain-dict view of every config entry's runtime state.
 
     hass.data[DOMAIN] maps entry_id -> entry_data, plus domain-level values
-    (``_frontend_registered``, the ``watches`` list, the watch Store); only
-    dicts that carry a ``devices`` slice are entries. This is what
-    ``voice.fleet_brief`` reads, for the intents and for binding a watch's
-    subject to a Canary.
+    (``_frontend_registered``, the ``watches`` list, the watch Store, the
+    tick hosts); only dicts that carry a ``devices`` slice are entries.
+    This is what ``voice.fleet_brief`` reads, for the intents and for
+    binding a watch's subject to a Canary.
     """
     entries: list[dict[str, Any]] = []
     for entry_data in hass.data.get(DOMAIN, {}).values():
@@ -268,6 +268,33 @@ def watches_restored(hass: HomeAssistant) -> bool:
     the persisted truth and changes to it are being written back."""
     domain_data = hass.data.get(DOMAIN)
     return isinstance(domain_data, dict) and bool(domain_data.get("_watches_loaded"))
+
+
+def add_watch_host(hass: HomeAssistant, entry_id: str) -> None:
+    """Record that ``entry_id`` runs the watch tick (``async_tick``).
+
+    The actions are registered once per hub (``async_setup``), but the
+    tick is scheduled per config entry and canceled when that entry
+    unloads. Without a live host a started watch would be recorded but
+    never evaluated, delivered or expired, so the actions ask
+    ``watches_hosted`` before accepting one.
+    """
+    hosts = hass.data.setdefault(DOMAIN, {}).setdefault("_watch_hosts", set())
+    hosts.add(entry_id)
+
+
+def remove_watch_host(hass: HomeAssistant, entry_id: str) -> None:
+    """Forget ``entry_id`` as a tick host (its tick has been canceled)."""
+    domain_data = hass.data.get(DOMAIN)
+    hosts = domain_data.get("_watch_hosts") if isinstance(domain_data, dict) else None
+    if isinstance(hosts, set):
+        hosts.discard(entry_id)
+
+
+def watches_hosted(hass: HomeAssistant) -> bool:
+    """Whether at least one loaded config entry is running the watch tick."""
+    domain_data = hass.data.get(DOMAIN)
+    return isinstance(domain_data, dict) and bool(domain_data.get("_watch_hosts"))
 
 
 def watches_unreadable(hass: HomeAssistant) -> bool:

@@ -635,7 +635,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         from homeassistant.helpers.event import async_track_time_interval
 
-        from .watch_runtime import TICK_INTERVAL_SECONDS, async_tick
+        from .watch_runtime import TICK_INTERVAL_SECONDS, add_watch_host, async_tick
 
         @callback
         def _watch_tick(_now: Any) -> None:
@@ -654,6 +654,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 timedelta(seconds=TICK_INTERVAL_SECONDS),
             )
         )
+        add_watch_host(hass, entry.entry_id)
     except Exception:  # noqa: BLE001 - watches are optional, setup is not
         _LOGGER.debug("watch tick not scheduled", exc_info=True)
 
@@ -673,9 +674,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a SecuraCV config entry."""
     entry_data = hass.data[DOMAIN].get(entry.entry_id, {})
 
-    # Unsubscribe from MQTT topics
+    # Unsubscribe from MQTT topics (and cancel the watch tick, which rides
+    # the same list). This entry no longer runs the tick either way, even
+    # if the platform unload below fails.
     for unsub in entry_data.get("unsub_mqtt", []):
         unsub()
+    from .watch_runtime import remove_watch_host
+
+    remove_watch_host(hass, entry.entry_id)
 
     # Unload platforms
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

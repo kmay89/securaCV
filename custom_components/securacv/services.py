@@ -82,15 +82,24 @@ def watch_row(watch: dict[str, Any], now: float) -> dict[str, Any]:
 
 
 def _require_restored(hass: HomeAssistant) -> None:
-    """Refuse, with the reason, until the persisted roster is in memory.
+    """Refuse, with the reason, until the persisted roster is in memory
+    and a loaded entry is running the watch tick.
 
     Before the restore the bucket is not the truth (a start would be
     written over by the rows about to be read back, a list would answer
     "nothing" for watches that exist), so an early call is an error the
-    automation can see rather than a quietly wrong answer.
+    automation can see rather than a quietly wrong answer. After the last
+    entry unloads the restore flag stays set but nothing evaluates,
+    delivers or expires a watch any more, so a start would record a
+    promise nobody keeps; that is refused by name too.
     """
     if watch_runtime.watches_restored(hass):
-        return
+        if watch_runtime.watches_hosted(hass):
+            return
+        raise ServiceValidationError(
+            "SecuraCV has no loaded entry, so nothing is running its "
+            "watches. Enable or reload the integration to use them."
+        )
     if watch_runtime.watches_unreadable(hass):
         # The rows are still on disk, unread: the bucket is not the truth.
         raise ServiceValidationError(

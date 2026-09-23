@@ -44,7 +44,14 @@ from .test_intent_start_watch import DEVICES, GATE, _start  # noqa: E402
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse  # noqa: E402
 from homeassistant.exceptions import ServiceValidationError  # noqa: E402
 
-from .. import async_setup, async_setup_entry, services, watch_runtime, watches  # noqa: E402
+from .. import (  # noqa: E402
+    async_setup,
+    async_setup_entry,
+    async_unload_entry,
+    services,
+    watch_runtime,
+    watches,
+)
 from ..const import (  # noqa: E402
     CONF_ENABLE_MQTT,
     CONF_SETUP_MODE,
@@ -88,7 +95,12 @@ def _hass(*, with_entry: bool = True) -> HomeAssistant:
     async def _forward(entry, platforms):
         return True
 
-    hass.config_entries = types.SimpleNamespace(async_forward_entry_setups=_forward)
+    async def _unload(entry, platforms):
+        return True
+
+    hass.config_entries = types.SimpleNamespace(
+        async_forward_entry_setups=_forward, async_unload_platforms=_unload
+    )
     assert run(async_setup(hass, {})) is True
     if with_entry:
         assert run(async_setup_entry(hass, ENTRY)) is True
@@ -483,6 +495,45 @@ def test_every_action_refuses_until_the_integration_has_loaded() -> None:
         with pytest.raises(ServiceValidationError, match="not loaded yet"):
             _call(hass, service, data)
     assert "watches" not in hass.data.get(DOMAIN, {})
+
+
+def test_every_action_refuses_once_no_entry_runs_the_tick(delivered) -> None:
+    """The actions outlive their entries (registered once, in async_setup),
+    and the restore flag outlives them too. The tick does not: it is
+    canceled with the entry that scheduled it. After the last entry
+    unloads, a start would record a watch that nothing evaluates, delivers
+    or expires, so every action refuses by name until an entry is back."""
+    hass = _hass()
+    _call(hass, "start_watch", {"subject": "the gate canary"})
+    assert run(async_unload_entry(hass, ENTRY)) is True
+    assert watch_runtime.watches_restored(hass), "the restore flag stays set"
+    assert not watch_runtime.watches_hosted(hass)
+    for service, data in (
+        ("start_watch", {"subject": "the back door"}),
+        ("end_watch", {"watch": "the gate canary"}),
+        ("list_watches", {}),
+    ):
+        with pytest.raises(ServiceValidationError, match="no loaded entry"):
+            _call(hass, service, data)
+    assert [w["label"] for w in _bucket(hass)] == ["the gate canary"], "nothing changed"
+
+    assert run(async_setup_entry(hass, ENTRY)) is True
+    hass.data[DOMAIN]["e1"]["devices"] = dict(DEVICES)
+    rows = _call(hass, "list_watches")["watches"]
+    assert [row["label"] for row in rows] == ["the gate canary"], "the roster is still there"
+
+
+def test_one_entry_unloading_leaves_the_other_s_tick_hosting() -> None:
+    hass = _hass()
+    other = types.SimpleNamespace(entry_id="e2", data=dict(ENTRY.data))
+    assert run(async_setup_entry(hass, other)) is True
+    assert run(async_unload_entry(hass, ENTRY)) is True
+    assert watch_runtime.watches_hosted(hass)
+    _call(hass, "start_watch", {"subject": "the gate canary"})
+    assert len(_bucket(hass)) == 1
+    assert run(async_unload_entry(hass, other)) is True
+    with pytest.raises(ServiceValidationError, match="no loaded entry"):
+        _call(hass, "list_watches")
 
 
 # ── The tick, around an announcement that could not be made ─────────────
