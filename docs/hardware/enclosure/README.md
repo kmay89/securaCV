@@ -1248,6 +1248,7 @@ screw.
 
 | Param | Default | Why you'd change it |
 |-------|--------:|---------------------|
+| `preset` | `"custom"` | `doorbell_weather` = the released build in one click — sealed, vented, weep, no extra light pipe, no tamper magnet (overrides the option checkboxes, which already default to it) |
 | `plate_wedge` / `plate_wedge_x` | 0 / 0 | wedge the plate vertically and/or left-right (corner installs) |
 | `btn_d` / `btn_bez_d` / `btn_body_l` | 12 / 16.5 / 18 | match YOUR button (depth is assert-checked against the cavity) |
 | `stack_sock_h`, `xiao_below`, `lens_dx/dy` | 6.5 / 5.5 / 0, 2.5 | **measure** your stack and lens, as with the Vision case |
@@ -1307,6 +1308,7 @@ exits the bottom wall at a height DERIVED from the seated stack
 
 | Param | Default | Why you'd change it |
 |-------|--------:|---------------------|
+| `preset` | `"custom"` | `sense_wall` = the released build on its hinge (LED + lux, unsealed); `sense_ceiling` = the same build flat on its keyholes, the MR60FDA2 fall build's mount (overrides the option checkboxes; `radar` stays yours) |
 | `radome_t` | 1.5 | radar window thickness; 1.5 ≈ half-wave in PETG/ASA (optimum) — avoid 0.7–1.1 (quarter-wave reflection band) |
 | `rad_win_x/y`, `rad_dx/dy` | 24×24 / 0, 6 | window size/position over the antenna — **measure** |
 | `radar_l/radar_w`, `stack_sock_h`, `xiao_below` | 44×36 / 6.5 / 5.5 | carrier + seated-stack dimensions — **measure** (the XIAO port height follows) |

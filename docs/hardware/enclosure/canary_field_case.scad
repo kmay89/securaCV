@@ -110,7 +110,7 @@ vent_x = 30.0;   // vent position X — over the plug room beyond the board's US
                  // on every close; the lens keep-out and the wall are asserted
 vent_y = 0.0;    // vent position Y (see vent_x)
 
-/* [Keyhole mounts] — blind, seal-safe (never reach the cavity) */
+/* [Stud/keyhole interface] — blind keyhole pockets, seal-safe (never reach the cavity) */
 kh_x = 18.0;         // +/- X of the two keyholes
 kh_head_d = 8.0;     // deviates: head Ø8.0 is a STATED deviation from
                      // mount_kh_head_d() = 7.0: a field case gets hung on found hardware, and Ø8

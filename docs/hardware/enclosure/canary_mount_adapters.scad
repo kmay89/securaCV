@@ -20,7 +20,7 @@ use <canary_mount_lib.scad>  // the stud/keyhole standard this file carries arou
 /* [What to render] */
 part = "corner";     // ["corner","magnet","pole","template"]
 
-/* [T-stud interface] */
+/* [Stud/keyhole interface] — the adapter's T-studs */
 stud_gap = 30.0;     // stud spacing — match the target case's keyhole pockets
 kh_face  = 1.0;      // target pocket's face web — canary_mount_lib mount_kh_face()
 

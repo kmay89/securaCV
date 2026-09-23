@@ -135,7 +135,7 @@ CURATED = [
         "preset_controls": ["opt_camera", "opt_buzzer", "opt_led",
                             "opt_battery", "opt_gps", "opt_tamper",
                             "opt_touch", "opt_antenna", "opt_seal",
-                            "opt_mount"],
+                            "opt_mount", "opt_weep"],
         "part_labels": {
             "all": "Assembled preview (not for printing)",
             "base": "Base — the tub",
@@ -205,7 +205,7 @@ CURATED = [
         "preset_param": "preset",
         "preset_controls": ["opt_led", "opt_buzzer", "opt_vent", "opt_tamper",
                             "opt_hood", "opt_seal", "opt_mount",
-                            "mount_style"],
+                            "mount_style", "opt_weep"],
         "part_labels": {
             "all": "Assembled preview (not for printing)",
             "back": "Back shell",
@@ -268,10 +268,11 @@ CURATED = [
         "print_plan": "Print the Body, Face and Plate in PETG and the Gasket "
                       "in TPU. Aiming down a porch or across a corner? Set "
                       "the wedge angles before you print the Plate.",
-        "simple": ["part", "opt_seal", "opt_vent", "opt_led", "opt_tamper",
-                   "plate_wedge", "plate_wedge_x"],
-        "preset_param": None,
-        "preset_controls": [],
+        "simple": ["part", "preset", "opt_seal", "opt_vent", "opt_led",
+                   "opt_tamper", "plate_wedge", "plate_wedge_x"],
+        "preset_param": "preset",
+        "preset_controls": ["opt_seal", "opt_vent", "opt_led", "opt_tamper",
+                            "opt_weep"],
         "part_labels": {
             "all": "Assembled preview (not for printing)",
             "body": "Body",
@@ -292,7 +293,8 @@ CURATED = [
                       "the weather.",
         },
         "labels": {
-            "part": "Part to print", "opt_seal": "Weather seal",
+            "part": "Part to print", "preset": "Quick preset",
+            "opt_seal": "Weather seal",
             "opt_vent": "GORE vent", "opt_led": "Extra light pipe",
             "opt_tamper": "Tamper magnet",
             "plate_wedge": "Aim down", "plate_wedge_x": "Aim left / right",
@@ -303,7 +305,12 @@ CURATED = [
             "plate_wedge_x": "Turns the case toward the approach — corner "
                              "installs. Negative aims left.",
         },
-        "choices": {},
+        "choices": {
+            "preset": {
+                "custom": "Custom — pick the options yourself",
+                "doorbell_weather": "Outdoor — sealed, vented and drained (the released build)",
+            },
+        },
         "units": {"plate_wedge": "°", "plate_wedge_x": "°"},
     },
     {
@@ -320,11 +327,13 @@ CURATED = [
                       "radome, so keep its window one clean membrane. "
                       "Fall-detection builds mount flat on the ceiling via "
                       "keyholes; add the TPU Gasket only for sealed builds.",
-        "simple": ["part", "radar", "opt_led", "opt_lux", "opt_vent",
-                   "opt_tamper", "opt_seal", "opt_mount", "mount_style",
-                   "radome_t"],
-        "preset_param": None,
-        "preset_controls": [],
+        "simple": ["part", "preset", "radar", "opt_led", "opt_lux",
+                   "opt_vent", "opt_tamper", "opt_seal", "opt_mount",
+                   "mount_style", "radome_t"],
+        "preset_param": "preset",
+        "preset_controls": ["opt_led", "opt_lux", "opt_vent", "opt_tamper",
+                            "opt_seal", "opt_weep", "opt_mount",
+                            "mount_style"],
         "part_labels": {
             "all": "Assembled preview (not for printing)",
             "back": "Back shell",
@@ -347,7 +356,8 @@ CURATED = [
             "knob": "The hinge thumbscrew — same part the Vision case uses.",
         },
         "labels": {
-            "part": "Part to print", "radar": "Radar kit",
+            "part": "Part to print", "preset": "Quick preset",
+            "radar": "Radar kit",
             "opt_led": "Status LED", "opt_lux": "Light-sensor window",
             "opt_vent": "GORE vent", "opt_tamper": "Tamper magnet",
             "opt_seal": "Weather seal", "opt_mount": "Mounting",
@@ -363,6 +373,11 @@ CURATED = [
         # comment is better than the hint was and is already shown.
         "hints": {},
         "choices": {
+            "preset": {
+                "custom": "Custom — pick the options yourself",
+                "sense_wall": "Wall or stand — on the hinge (the released build)",
+                "sense_ceiling": "Ceiling — flat on its keyholes (the MR60FDA2 fall build)",
+            },
             "radar": {
                 "bha2": "MR60BHA2 — breathing & presence (wall or bedside)",
                 "fda2": "MR60FDA2 — fall detection (flat on the ceiling)",
@@ -657,6 +672,20 @@ def build_manifest() -> dict:
                     f"{sorted(lying)}, which is not its default/min/step/max "
                     f"{sorted(owned)} — a hint may not restate a number the "
                     f"source owns. Delete the number, or fix the source.")
+        # A preset overrides every option its _pre() wraps, and the builder
+        # grays exactly preset_controls while the preset is not "custom" — so
+        # the two are one list. The WAP's and the Vision's presets overrode
+        # opt_weep while the builder left its checkbox live: a control that
+        # did nothing, with nothing saying so.
+        overridden = set(re.findall(r"=\s*_pre\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,",
+                                    src.read_text(encoding="utf-8")))
+        if overridden and not spec["preset_param"]:
+            sys.exit(f"{spec['file']}: the source has a preset (_pre) but the "
+                     f"builder entry names no preset_param")
+        if spec["preset_param"] and overridden != set(spec["preset_controls"]):
+            sys.exit(f"{spec['file']}: the preset overrides {sorted(overridden)} "
+                     f"but preset_controls grays {sorted(spec['preset_controls'])} "
+                     f"— make them one list")
         for name, mapping in spec["choices"].items():
             opts = by_name.get(name, {}).get("options")
             if not opts:

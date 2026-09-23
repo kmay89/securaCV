@@ -87,6 +87,8 @@ clip_clear  = 0.25;  // beam face to board edge (a fit — tune on the coupon) �
 lid_edge  = 0.8;  // first (45°) stage of the show-face edge, mm — core_face_edge()  // [0:0.1:1.5]
 lid_edge2 = 0.8;  // second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]
 hood_len = 9.0;  hood_t = 1.8;
+
+/* [Stud/keyhole interface] — blind keyholes in the back */
 kh_extra   = 3.0;   // back thickening that hosts the keyhole pockets
 kh_head_d  = 7.0;   // screw-head pass hole — catalog standard, mount_kh_head_d(), canary_mount_lib
 kh_shank_d = 4.2;   // shank slot width — catalog standard, mount_kh_shank_d()

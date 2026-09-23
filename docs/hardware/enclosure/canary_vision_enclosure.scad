@@ -229,8 +229,8 @@ br_t        = 4.0;   // plate thickness
 br_screw_d  = 4.2;   // countersunk wall screws (#8 / M4)
 bracket_tripod = true; // captive 1/4-20 nut pocket behind the center fin (tripod mount)
 
-/* [Keyholes] — blind pockets in a thickened back (seal-safe); the catalog's
-   one hanging interface — canary_mount_lib owns the drawing and the numbers */
+/* [Stud/keyhole interface] — blind keyhole pockets in a thickened back (seal-safe) */
+// the catalog's one hanging interface — canary_mount_lib owns the drawing and the numbers
 kh_extra   = 3.0;    // back thickening that hosts the keyhole pockets
 kh_head_d  = 7.0;    // catalog standard — mount_kh_head_d()
 kh_shank_d = 4.2;    // catalog standard — mount_kh_shank_d()

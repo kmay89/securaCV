@@ -84,7 +84,8 @@
         "opt_touch",
         "opt_antenna",
         "opt_seal",
-        "opt_mount"
+        "opt_mount",
+        "opt_weep"
       ],
       "part_labels": {
         "all": "Assembled preview (not for printing)",
@@ -137,7 +138,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "44d3bfb93b2ed13bdec94d82bb963e3a67980809c8620563f2a64fcf760274b4",
+      "sha256": "6a02e360b94f962a5cedd9e4102f569ff4c030ee99b3ac52beebd3f75507eda2",
       "groups": [
         {
           "name": "What to render",
@@ -336,6 +337,47 @@
               "desc": ""
             },
             {
+              "name": "tab_l",
+              "type": "number",
+              "default": 10.0,
+              "desc": "ear length along the wall"
+            },
+            {
+              "name": "tab_w",
+              "type": "number",
+              "default": 8.0,
+              "desc": "ear protrusion from the wall"
+            },
+            {
+              "name": "tab_t",
+              "type": "number",
+              "default": 3.0,
+              "desc": "ear thickness"
+            },
+            {
+              "name": "tab_hole_d",
+              "type": "number",
+              "default": 3.6,
+              "desc": "through-hole (M3 / #6)"
+            },
+            {
+              "name": "tab_cb_d",
+              "type": "number",
+              "default": 7.0,
+              "desc": "pan-head counterbore diameter"
+            },
+            {
+              "name": "tab_cb_h",
+              "type": "number",
+              "default": 1.0,
+              "desc": "counterbore depth"
+            }
+          ]
+        },
+        {
+          "name": "Stud/keyhole interface",
+          "params": [
+            {
               "name": "kh_extra",
               "type": "number",
               "default": 3.0,
@@ -376,42 +418,6 @@
               "type": "number",
               "default": 10.0,
               "desc": "keyhole centers at x = ±(inner_l/2 − kh_inset); auto-merges to one on small cases"
-            },
-            {
-              "name": "tab_l",
-              "type": "number",
-              "default": 10.0,
-              "desc": "ear length along the wall"
-            },
-            {
-              "name": "tab_w",
-              "type": "number",
-              "default": 8.0,
-              "desc": "ear protrusion from the wall"
-            },
-            {
-              "name": "tab_t",
-              "type": "number",
-              "default": 3.0,
-              "desc": "ear thickness"
-            },
-            {
-              "name": "tab_hole_d",
-              "type": "number",
-              "default": 3.6,
-              "desc": "through-hole (M3 / #6)"
-            },
-            {
-              "name": "tab_cb_d",
-              "type": "number",
-              "default": 7.0,
-              "desc": "pan-head counterbore diameter"
-            },
-            {
-              "name": "tab_cb_h",
-              "type": "number",
-              "default": 1.0,
-              "desc": "counterbore depth"
             }
           ]
         },
@@ -1189,7 +1195,8 @@
         "opt_hood",
         "opt_seal",
         "opt_mount",
-        "mount_style"
+        "mount_style",
+        "opt_weep"
       ],
       "part_labels": {
         "all": "Assembled preview (not for printing)",
@@ -1239,7 +1246,7 @@
         }
       },
       "units": {},
-      "sha256": "e1ff511bdee39e126de1802fa036c0fea8bf314fdce7f53d854119fc1c8a1ea3",
+      "sha256": "cf045a79a374102d38a471634a1bb34373e8e35152dcc7f204b8d346413291ae",
       "groups": [
         {
           "name": "What to render",
@@ -1877,7 +1884,7 @@
           ]
         },
         {
-          "name": "Keyholes",
+          "name": "Stud/keyhole interface",
           "params": [
             {
               "name": "kh_extra",
@@ -2285,6 +2292,7 @@
       "print_plan": "Print the Body, Face and Plate in PETG and the Gasket in TPU. Aiming down a porch or across a corner? Set the wedge angles before you print the Plate.",
       "simple": [
         "part",
+        "preset",
         "opt_seal",
         "opt_vent",
         "opt_led",
@@ -2292,8 +2300,14 @@
         "plate_wedge",
         "plate_wedge_x"
       ],
-      "preset_param": null,
-      "preset_controls": [],
+      "preset_param": "preset",
+      "preset_controls": [
+        "opt_seal",
+        "opt_vent",
+        "opt_led",
+        "opt_tamper",
+        "opt_weep"
+      ],
       "part_labels": {
         "all": "Assembled preview (not for printing)",
         "body": "Body",
@@ -2310,6 +2324,7 @@
       },
       "labels": {
         "part": "Part to print",
+        "preset": "Quick preset",
         "opt_seal": "Weather seal",
         "opt_vent": "GORE vent",
         "opt_led": "Extra light pipe",
@@ -2321,12 +2336,17 @@
         "plate_wedge": "Tilts the whole case downward — porches and walk-ups. 15° is the safe maximum.",
         "plate_wedge_x": "Turns the case toward the approach — corner installs. Negative aims left."
       },
-      "choices": {},
+      "choices": {
+        "preset": {
+          "custom": "Custom — pick the options yourself",
+          "doorbell_weather": "Outdoor — sealed, vented and drained (the released build)"
+        }
+      },
       "units": {
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "658b1f7ac3e92dc6ec07076a835e0c41c4b08811f12b094528b00b9b07ef45e0",
+      "sha256": "ceb965e16fb913f93d858c427667531a0501fc3f07216e95051da45c52eb46c7",
       "groups": [
         {
           "name": "What to render",
@@ -2347,7 +2367,22 @@
           ]
         },
         {
-          "name": "Options",
+          "name": "Preset",
+          "params": [
+            {
+              "name": "preset",
+              "type": "string",
+              "default": "custom",
+              "options": [
+                "custom",
+                "doorbell_weather"
+              ],
+              "desc": ""
+            }
+          ]
+        },
+        {
+          "name": "Options (applied when preset = custom)",
           "params": [
             {
               "name": "opt_seal",
@@ -2851,7 +2886,7 @@
           ]
         },
         {
-          "name": "Wall plate + T-stud hooks + security screw",
+          "name": "Wall plate + security screw",
           "params": [
             {
               "name": "plate_t",
@@ -2877,6 +2912,23 @@
               "max": 15,
               "desc": "horizontal wedge: aims left/right (corner installs)"
             },
+            {
+              "name": "sec_screw_d",
+              "type": "number",
+              "default": 2.2,
+              "desc": "security screw (M2 self-tap; use a Torx/security drive)"
+            },
+            {
+              "name": "plate_screw_d",
+              "type": "number",
+              "default": 4.2,
+              "desc": "wall screws (#8 / M4 PAN head — the seats are flat counterbores)"
+            }
+          ]
+        },
+        {
+          "name": "Stud/keyhole interface",
+          "params": [
             {
               "name": "stud_y",
               "type": "number",
@@ -2918,18 +2970,6 @@
               "type": "number",
               "default": 3.0,
               "desc": "body back thickening that hosts the pockets"
-            },
-            {
-              "name": "sec_screw_d",
-              "type": "number",
-              "default": 2.2,
-              "desc": "security screw (M2 self-tap; use a Torx/security drive)"
-            },
-            {
-              "name": "plate_screw_d",
-              "type": "number",
-              "default": 4.2,
-              "desc": "wall screws (#8 / M4 PAN head — the seats are flat counterbores)"
             }
           ]
         },
@@ -3180,6 +3220,7 @@
       "print_plan": "Print the Back and Front in PETG — the Front IS the radome, so keep its window one clean membrane. Fall-detection builds mount flat on the ceiling via keyholes; add the TPU Gasket only for sealed builds.",
       "simple": [
         "part",
+        "preset",
         "radar",
         "opt_led",
         "opt_lux",
@@ -3190,8 +3231,17 @@
         "mount_style",
         "radome_t"
       ],
-      "preset_param": null,
-      "preset_controls": [],
+      "preset_param": "preset",
+      "preset_controls": [
+        "opt_led",
+        "opt_lux",
+        "opt_vent",
+        "opt_tamper",
+        "opt_seal",
+        "opt_weep",
+        "opt_mount",
+        "mount_style"
+      ],
       "part_labels": {
         "all": "Assembled preview (not for printing)",
         "back": "Back shell",
@@ -3210,6 +3260,7 @@
       },
       "labels": {
         "part": "Part to print",
+        "preset": "Quick preset",
         "radar": "Radar kit",
         "opt_led": "Status LED",
         "opt_lux": "Light-sensor window",
@@ -3222,6 +3273,11 @@
       },
       "hints": {},
       "choices": {
+        "preset": {
+          "custom": "Custom — pick the options yourself",
+          "sense_wall": "Wall or stand — on the hinge (the released build)",
+          "sense_ceiling": "Ceiling — flat on its keyholes (the MR60FDA2 fall build)"
+        },
         "radar": {
           "bha2": "MR60BHA2 — breathing & presence (wall or bedside)",
           "fda2": "MR60FDA2 — fall detection (flat on the ceiling)"
@@ -3235,7 +3291,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "6311e7485a84904b1b03fde52d0cf0859102b42f686d8acf373e86742c02799f",
+      "sha256": "ba6d07d8c49bfff51c445699ef2a0db85a0c4c8d67dd9adeb8f66745c0500531",
       "groups": [
         {
           "name": "What to render",
@@ -3257,7 +3313,23 @@
           ]
         },
         {
-          "name": "Options",
+          "name": "Preset",
+          "params": [
+            {
+              "name": "preset",
+              "type": "string",
+              "default": "custom",
+              "options": [
+                "custom",
+                "sense_wall",
+                "sense_ceiling"
+              ],
+              "desc": ""
+            }
+          ]
+        },
+        {
+          "name": "Options (applied when preset = custom)",
           "params": [
             {
               "name": "opt_led",
@@ -3878,7 +3950,7 @@
           ]
         },
         {
-          "name": "Keyholes",
+          "name": "Stud/keyhole interface",
           "params": [
             {
               "name": "kh_extra",
@@ -4187,7 +4259,7 @@
         "glyph_rib": "mm",
         "glyph_depth": "mm"
       },
-      "sha256": "f27ba93d7701ef028299be13933bf58a480023edea6e5f3a8636232ab528db80",
+      "sha256": "1565bad55b41629896499796591e4040020579c7d5d5e4fd534d7a1df4f73942",
       "groups": [
         {
           "name": "What to render",
@@ -4230,7 +4302,7 @@
           ]
         },
         {
-          "name": "Interface dims — mirror the case defaults",
+          "name": "Stud/keyhole interface",
           "params": [
             {
               "name": "stud_gap",
@@ -4273,7 +4345,12 @@
               "type": "number",
               "default": 0.25,
               "desc": "detent bump proud of the head-channel ceiling (0 = no click) — catalog standard, canary_mount_lib"
-            },
+            }
+          ]
+        },
+        {
+          "name": "Interface dims — mirror the case defaults",
+          "params": [
             {
               "name": "clip_w",
               "type": "number",

@@ -153,7 +153,7 @@ btn_ch_w  = 3.4;               // actuator channel width (Y) — hugs the black 
 btn_body_w = 5.2;              // shallow relief width for the switch's metal body — MEASURE
 btn_body_p = 0.4;              // metal body overhang past the PCB edge — MEASURE
 
-/* [Mount] */
+/* [Stud/keyhole interface] */
 opt_keyhole = true;            // one blind keyhole in the back (wall hang)
 // catalog standard — canary_mount_lib. This file had drifted to slot 7.0 /
 // depth 3.0: a slide the standard stud's head never finishes and a pocket it

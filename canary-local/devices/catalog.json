@@ -1732,6 +1732,16 @@
    "fit": "standard",
    "variant_axes": [
     {
+     "param": "preset",
+     "values": [
+      "custom",
+      "sense_wall",
+      "sense_ceiling"
+     ],
+     "default": "custom",
+     "audience": "user"
+    },
+    {
      "param": "radar",
      "values": [
       "bha2",
@@ -1944,7 +1954,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 139,
+   "engineering_param_count": 144,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -1952,7 +1962,7 @@
     "released": 1,
     "options": 18,
     "user_options": 12,
-    "variant_axes": 1
+    "variant_axes": 2
    }
   },
   {
@@ -2241,7 +2251,17 @@
     "verified": false
    },
    "fit": "standard",
-   "variant_axes": [],
+   "variant_axes": [
+    {
+     "param": "preset",
+     "values": [
+      "custom",
+      "doorbell_weather"
+     ],
+     "default": "custom",
+     "audience": "user"
+    }
+   ],
    "variants": [
     {
      "id": "vision-doorbell",
@@ -2371,7 +2391,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 132,
+   "engineering_param_count": 136,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2379,7 +2399,7 @@
     "released": 1,
     "options": 11,
     "user_options": 9,
-    "variant_axes": 0
+    "variant_axes": 1
    }
   },
   {

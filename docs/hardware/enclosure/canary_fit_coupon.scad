@@ -73,7 +73,7 @@ tol_slide = 0.20;   // catalog default — core_tol_slide(), canary_core_lib
 tol_press = 0.10;   // catalog default — core_tol_press(), canary_core_lib
 tol_hole  = 0.30;   // catalog default — core_tol_hole(), canary_core_lib
 
-/* [Interface dims — mirror the case defaults] */
+/* [Stud/keyhole interface] — mirror the case defaults */
 stud_gap = 30.0;  // the coupon's print-tested gap (canary_mount_lib's header cites it)
 kh_head_d  = 7.0;   // screw-head pass hole — catalog standard, mount_kh_head_d(), canary_mount_lib
 kh_shank_d = 4.2;   // shank slot width — catalog standard, mount_kh_shank_d()
@@ -81,6 +81,8 @@ kh_slot_l  = 8.0;   // slot travel — catalog standard, mount_kh_slot_l()
 kh_head_h  = 3.5;   // total pocket depth (face web + head cavity) — catalog standard, mount_kh_head_h()
 kh_face    = 1.0;   // face web the screw head grips behind — catalog standard, mount_kh_face()
 kh_click = 0.25;  // detent bump proud of the head-channel ceiling (0 = no click) — catalog standard, canary_mount_lib
+
+/* [Interface dims — mirror the case defaults] */
 clip_w      = 6.0;   // board-clip tab width along the board edge — the WAP clip, snap_boardclip default, canary_snap_lib
 clip_t      = 1.0;   // clip beam thickness — the WAP clip, snap_boardclip default
 clip_hook   = 0.5;   // lip overhang over the board top — the WAP clip, snap_boardclip default

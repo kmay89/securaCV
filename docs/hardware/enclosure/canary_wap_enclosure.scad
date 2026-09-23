@@ -99,6 +99,15 @@ hood_reach    = 4.0;   // how far the awning's drip edge stands off the wall  //
 /* [Mounting — opt-in; case hangs with the USB end facing DOWN] */
 opt_mount   = false;  // wall-mount features (keyholes thicken the case back by `kh_extra`)
 mount_style = "keyhole"; // ["keyhole","tabs","both"]
+// external screw tabs — four ears on the ±Y walls, fully outside the seal envelope
+tab_l       = 10.0;   // ear length along the wall
+tab_w       = 8.0;    // ear protrusion from the wall
+tab_t       = 3.0;    // ear thickness
+tab_hole_d  = 3.6;    // through-hole (M3 / #6)
+tab_cb_d    = 7.0;    // pan-head counterbore diameter
+tab_cb_h    = 1.0;    // counterbore depth
+
+/* [Stud/keyhole interface] — blind keyhole pockets in a thickened back (seal-safe) */
 // keyholes — BLIND pockets in a thickened back; they never breach the cavity (seal-safe).
 // Defaults are the catalog's stud/keyhole standard (canary_mount_lib) — deviations
 // earn their keep on the fit coupon, not in a quiet knob edit
@@ -109,13 +118,6 @@ kh_slot_l   = 8.0;    // slot travel (slot runs toward +X = UP when the USB face
 kh_head_h   = 3.5;    // total pocket depth (face web + head cavity) — mount_kh_head_h()
 kh_face     = 1.0;    // face web thickness the screw head grips behind — mount_kh_face()
 kh_inset    = 10.0;   // keyhole centers at x = ±(inner_l/2 − kh_inset); auto-merges to one on small cases
-// external screw tabs — four ears on the ±Y walls, fully outside the seal envelope
-tab_l       = 10.0;   // ear length along the wall
-tab_w       = 8.0;    // ear protrusion from the wall
-tab_t       = 3.0;    // ear thickness
-tab_hole_d  = 3.6;    // through-hole (M3 / #6)
-tab_cb_d    = 7.0;    // pan-head counterbore diameter
-tab_cb_h    = 1.0;    // counterbore depth
 
 /* [Aesthetics] */
 colorway    = "graphite"; // ["graphite","canary","snow","forest","midnight"] assembled-preview spool set (canary_color_lib; single-part exports carry no color)

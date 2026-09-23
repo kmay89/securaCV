@@ -138,5 +138,37 @@ class Meanings(_Case):
                 self.assertEqual(L.lint_meanings(path), [], path.name)
 
 
+class InterfaceGroup(_Case):
+    """Fifth rule: the stud/keyhole interface keeps one group name."""
+
+    def test_the_old_names_fail(self):
+        # three of the 14 names the audit found, each holding interface knobs
+        p = self.scad('/* [Keyholes] — blind, seal-safe */\nkh_head_d = 7.0;  // pass hole\n'
+                      '/* [Mounting] */\nkh_face = 1.0;  // face web\n'
+                      '/* [Stud interface] — match the case */\nstud_gap = 36.0;  // spacing\n')
+        problems = L.lint_interface_group(p)
+        self.assertEqual([x.split(":", 2)[1] for x in problems], ["2", "4", "6"])
+        self.assertIn("Stud/keyhole interface", problems[0])
+
+    def test_the_one_name_passes_with_a_note_and_neighbors(self):
+        # a per-file note after the bracket is fine; so are the toggles and
+        # placements that ride along (opt_keyhole, kh_extra, kh_inset)
+        p = self.scad('/* [Stud/keyhole interface] — blind pockets in the back */\n'
+                      'opt_keyhole = true;  // one pocket\nkh_extra = 3.0;  // back thickening\n'
+                      'kh_head_d = 7.0;  // pass hole\nkh_inset = 12.0;  // centers\n'
+                      '/* [Engineering] */\nkh_lock = true;  // knockouts, not the interface\n')
+        self.assertEqual(L.lint_interface_group(p), [])
+
+    def test_the_exempt_file_is_named_with_its_reason(self):
+        self.assertIn("canary_c3_lcd147.scad", L.INTERFACE_EXEMPT)
+        p = self.scad('/* [Back face] */\nkh_head_d = 9.5;  // egg base\n', "canary_c3_lcd147.scad")
+        self.assertEqual(L.lint_interface_group(p), [])
+
+    def test_the_tree_is_clean(self):
+        for path in sorted(L.ENC.glob("canary_*.scad")):
+            if path.name not in L.SKIP:
+                self.assertEqual(L.lint_interface_group(path), [], path.name)
+
+
 if __name__ == "__main__":
     unittest.main()

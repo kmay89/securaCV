@@ -23,7 +23,7 @@ use <canary_snap_lib.scad>   // beam-strain arithmetic for the belt leaf spring
 /* [What to render] */
 part = "all";        // ["clip","molle","all"]
 
-/* [Stud interface] — match the target case's keyholes (36 = field case) */
+/* [Stud/keyhole interface] — T-studs matching the target case's keyholes (36 = field case) */
 stud_gap  = 36.0;
 // ecosystem-standard T-stud (canary_mount_lib): stem 1.4 + cone 1.2 + head
 // 0.8 = 3.4 total — mount_stud_d/head/cap/stem() are the knob defaults

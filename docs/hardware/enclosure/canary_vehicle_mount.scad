@@ -26,7 +26,7 @@ use <canary_mount_lib.scad>  // the stud/keyhole standard this file carries arou
 /* [What to render] */
 part = "all";        // ["dash","vent","all"]
 
-/* [Stud interface] — match the target case's keyholes */
+/* [Stud/keyhole interface] — T-studs matching the target case's keyholes */
 stud_gap  = 36.0;    // center-to-center of the two T-studs
 // ecosystem-standard T-stud (canary_mount_lib, the interface's one home):
 // stem 1.4 (= kh_face 1.0 + 0.4 slide) + cone 1.2 + head 0.8 = 3.4 total,

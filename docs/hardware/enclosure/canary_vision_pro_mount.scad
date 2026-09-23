@@ -52,7 +52,7 @@ plate_h = 64.0;
 plate_t = 7.0;
 plate_r = 4.0;     // corner rounding
 
-/* [T-stud keyhole interface — matches canary_mount_lib exactly] */
+/* [Stud/keyhole interface] — T-stud keyhole pockets, matching canary_mount_lib exactly */
 kh_head_d  = 7.0;   // head pass hole (Ø6.6 stud head) — mount_kh_head_d()
 kh_shank_d = 4.2;   // slot width (Ø4 stud stem) — mount_kh_shank_d()
 kh_slot_l  = 8.0;   // slot travel — mount_kh_slot_l()

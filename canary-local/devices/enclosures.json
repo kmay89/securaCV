@@ -862,6 +862,42 @@
        ]
       },
       {
+       "name": "tab_l",
+       "default": "10.0",
+       "comment": "ear length along the wall"
+      },
+      {
+       "name": "tab_w",
+       "default": "8.0",
+       "comment": "ear protrusion from the wall"
+      },
+      {
+       "name": "tab_t",
+       "default": "3.0",
+       "comment": "ear thickness"
+      },
+      {
+       "name": "tab_hole_d",
+       "default": "3.6",
+       "comment": "through-hole (M3 / #6)"
+      },
+      {
+       "name": "tab_cb_d",
+       "default": "7.0",
+       "comment": "pan-head counterbore diameter"
+      },
+      {
+       "name": "tab_cb_h",
+       "default": "1.0",
+       "comment": "counterbore depth"
+      }
+     ]
+    },
+    {
+     "name": "Stud/keyhole interface",
+     "note": "blind keyhole pockets in a thickened back (seal-safe)",
+     "params": [
+      {
        "name": "kh_extra",
        "default": "3.0",
        "comment": "back thickening that hosts the keyhole pockets"
@@ -895,36 +931,6 @@
        "name": "kh_inset",
        "default": "10.0",
        "comment": "keyhole centers at x = ±(inner_l/2 − kh_inset); auto-merges to one on small cases"
-      },
-      {
-       "name": "tab_l",
-       "default": "10.0",
-       "comment": "ear length along the wall"
-      },
-      {
-       "name": "tab_w",
-       "default": "8.0",
-       "comment": "ear protrusion from the wall"
-      },
-      {
-       "name": "tab_t",
-       "default": "3.0",
-       "comment": "ear thickness"
-      },
-      {
-       "name": "tab_hole_d",
-       "default": "3.6",
-       "comment": "through-hole (M3 / #6)"
-      },
-      {
-       "name": "tab_cb_d",
-       "default": "7.0",
-       "comment": "pan-head counterbore diameter"
-      },
-      {
-       "name": "tab_cb_h",
-       "default": "1.0",
-       "comment": "counterbore depth"
       }
      ]
     },
@@ -2356,7 +2362,13 @@
        "name": "bracket_tripod",
        "default": "true",
        "comment": "captive 1/4-20 nut pocket behind the center fin (tripod mount)"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Stud/keyhole interface",
+     "note": "blind keyhole pockets in a thickened back (seal-safe)",
+     "params": [
       {
        "name": "kh_extra",
        "default": "3.0",
@@ -2882,7 +2894,21 @@
      ]
     },
     {
-     "name": "Options",
+     "name": "Preset",
+     "note": "quick configs; choose \"custom\" to use the option checkboxes",
+     "params": [
+      {
+       "name": "preset",
+       "default": "custom",
+       "enum": [
+        "custom",
+        "doorbell_weather"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Options (applied when preset = custom)",
      "note": "",
      "params": [
       {
@@ -2929,6 +2955,26 @@
        "name": "head_seal",
        "default": "false",
        "comment": "O-ring under each face screw head (the posts stand INSIDE the gasket line, so a"
+      },
+      {
+       "name": "e_seal",
+       "default": "_pre(opt_seal,   true)"
+      },
+      {
+       "name": "e_vent",
+       "default": "_pre(opt_vent,   true)"
+      },
+      {
+       "name": "e_led",
+       "default": "_pre(opt_led,    false)"
+      },
+      {
+       "name": "e_tamper",
+       "default": "_pre(opt_tamper, false)"
+      },
+      {
+       "name": "e_weep",
+       "default": "_pre(opt_weep,   true)"
       },
       {
        "name": "vm_l",
@@ -3309,7 +3355,13 @@
        "name": "skirt_t",
        "default": "1.6",
        "comment": "drip-edge skirt wall thickness"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Wall plate + security screw",
+     "note": "",
+     "params": [
       {
        "name": "plate_t",
        "default": "4.0",
@@ -3335,6 +3387,22 @@
        ],
        "comment": "horizontal wedge: aims left/right (corner installs)"
       },
+      {
+       "name": "sec_screw_d",
+       "default": "2.2",
+       "comment": "security screw (M2 self-tap; use a Torx/security drive)"
+      },
+      {
+       "name": "plate_screw_d",
+       "default": "4.2",
+       "comment": "wall screws (#8 / M4 PAN head — the seats are flat counterbores)"
+      }
+     ]
+    },
+    {
+     "name": "Stud/keyhole interface",
+     "note": "the plate's T-studs and the body's blind pockets",
+     "params": [
       {
        "name": "stud_y",
        "default": "40.0",
@@ -3369,16 +3437,6 @@
        "name": "kh_extra",
        "default": "3.0",
        "comment": "body back thickening that hosts the pockets"
-      },
-      {
-       "name": "sec_screw_d",
-       "default": "2.2",
-       "comment": "security screw (M2 self-tap; use a Torx/security drive)"
-      },
-      {
-       "name": "plate_screw_d",
-       "default": "4.2",
-       "comment": "wall screws (#8 / M4 PAN head — the seats are flat counterbores)"
       }
      ]
     },
@@ -3556,10 +3614,6 @@
      "note": "",
      "params": [
       {
-       "name": "e_seal",
-       "default": "opt_seal"
-      },
-      {
        "name": "wall_eff",
        "default": "e_seal ? max(wall_t, gasket_w + 2*core_min_wall()) : wall_t",
        "comment": "1.2 mm cheek each side of the groove"
@@ -3692,7 +3746,22 @@
      ]
     },
     {
-     "name": "Options",
+     "name": "Preset",
+     "note": "quick configs; choose \"custom\" to use the option checkboxes",
+     "params": [
+      {
+       "name": "preset",
+       "default": "custom",
+       "enum": [
+        "custom",
+        "sense_wall",
+        "sense_ceiling"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Options (applied when preset = custom)",
      "note": "",
      "params": [
       {
@@ -3760,16 +3829,36 @@
        ]
       },
       {
+       "name": "e_led",
+       "default": "_pre(opt_led,     true,    true)"
+      },
+      {
+       "name": "e_lux",
+       "default": "_pre(opt_lux,     true,    true)"
+      },
+      {
+       "name": "e_vent",
+       "default": "_pre(opt_vent,    false,   false)"
+      },
+      {
+       "name": "e_tamper",
+       "default": "_pre(opt_tamper,  false,   false)"
+      },
+      {
        "name": "e_seal",
-       "default": "opt_seal"
+       "default": "_pre(opt_seal,    false,   false)"
+      },
+      {
+       "name": "e_weep",
+       "default": "_pre(opt_weep,    false,   false)"
       },
       {
        "name": "e_mount",
-       "default": "opt_mount"
+       "default": "_pre(opt_mount,   true,    true)"
       },
       {
        "name": "m_style",
-       "default": "mount_style"
+       "default": "_pre(mount_style, \"hinge\", \"keyhole\")"
       }
      ]
     },
@@ -4257,8 +4346,8 @@
      ]
     },
     {
-     "name": "Keyholes",
-     "note": "blind, seal-safe (flush ceiling/wall mount)",
+     "name": "Stud/keyhole interface",
+     "note": "blind keyhole pockets, seal-safe (flush ceiling/wall mount)",
      "params": [
       {
        "name": "kh_extra",
@@ -4811,8 +4900,8 @@
      ]
     },
     {
-     "name": "Mounting",
-     "note": "",
+     "name": "Stud/keyhole interface",
+     "note": "a blind keyhole pocket in the drum back",
      "params": [
       {
        "name": "kh_head_d",
@@ -5454,8 +5543,8 @@
      ]
     },
     {
-     "name": "T-studs",
-     "note": "match the standard Canary keyhole pockets",
+     "name": "Stud/keyhole interface",
+     "note": "T-studs matching the standard Canary keyhole pockets",
      "params": [
       {
        "name": "stud_gap",
@@ -6103,7 +6192,13 @@
         1.5
        ],
        "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Stud/keyhole interface",
+     "note": "blind keyholes in the back",
+     "params": [
       {
        "name": "kh_extra",
        "default": "3.0",
@@ -6731,8 +6826,8 @@
      ]
     },
     {
-     "name": "T-stud interface",
-     "note": "",
+     "name": "Stud/keyhole interface",
+     "note": "the adapter's T-studs",
      "params": [
       {
        "name": "stud_gap",
@@ -7465,8 +7560,8 @@
      ]
     },
     {
-     "name": "Keyhole mounts",
-     "note": "blind, seal-safe (never reach the cavity)",
+     "name": "Stud/keyhole interface",
+     "note": "blind keyhole pockets, seal-safe (never reach the cavity)",
      "params": [
       {
        "name": "kh_x",
@@ -8788,7 +8883,7 @@
      ]
     },
     {
-     "name": "Mount",
+     "name": "Stud/keyhole interface",
      "note": "",
      "params": [
       {
@@ -12070,7 +12165,13 @@
        "name": "side_open_dy",
        "default": "0.0",
        "comment": "side slot center offset (Y) — MEASURE"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Stud/keyhole interface",
+     "note": "the catalog's blind stud/keyhole standard",
+     "params": [
       {
        "name": "opt_keyhole",
        "default": "true",
@@ -12331,8 +12432,8 @@
      ]
     },
     {
-     "name": "Stud interface",
-     "note": "match the target case's keyholes",
+     "name": "Stud/keyhole interface",
+     "note": "T-studs matching the target case's keyholes",
      "params": [
       {
        "name": "stud_gap",
@@ -12442,8 +12543,8 @@
      ]
     },
     {
-     "name": "Stud interface",
-     "note": "match the target case's keyholes (36 = field case)",
+     "name": "Stud/keyhole interface",
+     "note": "T-studs matching the target case's keyholes (36 = field case)",
      "params": [
       {
        "name": "stud_gap",
@@ -12623,8 +12724,8 @@
      ]
     },
     {
-     "name": "T-stud keyhole interface — matches canary_mount_lib exactly",
-     "note": "",
+     "name": "Stud/keyhole interface",
+     "note": "T-stud keyhole pockets, matching canary_mount_lib exactly",
      "params": [
       {
        "name": "kh_head_d",
@@ -12706,8 +12807,8 @@
      ]
     },
     {
-     "name": "Interface dims — mirror the case defaults",
-     "note": "",
+     "name": "Stud/keyhole interface",
+     "note": "mirror the case defaults",
      "params": [
       {
        "name": "stud_gap",
@@ -12743,7 +12844,13 @@
        "name": "kh_click",
        "default": "0.25",
        "comment": "detent bump proud of the head-channel ceiling (0 = no click) — catalog standard, canary_mount_lib"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Interface dims — mirror the case defaults",
+     "note": "",
+     "params": [
       {
        "name": "clip_w",
        "default": "6.0",
@@ -13315,8 +13422,8 @@
      ]
     },
     {
-     "name": "Generic studs",
-     "note": "",
+     "name": "Stud/keyhole interface",
+     "note": "the generic studs template",
      "params": [
       {
        "name": "stud_gap",

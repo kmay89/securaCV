@@ -48,6 +48,14 @@ word — or says the other meaning's — fails, naming the name to use instead.
 A listed knob with no help passes: there is no meaning on it to transfer yet
 (writing that help is the parametric-UX backlog's next wave).
 
+Fifth rule: the stud/keyhole hanging interface keeps ONE group name. The
+README sells it as the part of the design language that transfers between
+parts, and the audit found it under 14 group names across 17 files (C10). A
+knob of the interface itself — the blind pocket's kh_* numbers, the T-stud's
+stud_* numbers (INTERFACE_KNOBS) — sits in a group named INTERFACE_GROUP
+(the builder's short name: text after " — " is a per-file note). The C3
+pocket case's egg hanger is exempt (INTERFACE_EXEMPT, with its reason).
+
 Run from the repo root:  python3 scripts/lint_design_lang.py
 """
 
@@ -222,6 +230,36 @@ def lint_meanings(path):
     return problems
 
 
+# The fifth rule's table (DESIGN_RULES.md §10 states it for people).
+INTERFACE_GROUP = "Stud/keyhole interface"
+INTERFACE_KNOBS = {
+    "kh_head_d", "kh_shank_d", "kh_slot_l", "kh_head_h", "kh_face", "kh_click",
+    "stud_gap", "stud_d", "stud_head", "stud_head_t", "stud_stem_h",
+}
+INTERFACE_EXEMPT = {
+    "canary_c3_lcd147.scad": "its egg hanger is a through-cut screw hanger sized to the largest wall-"
+                             "screw head (kh_head_d 9.5), not the blind T-stud pocket",
+}
+
+
+def lint_interface_group(path):
+    """Fifth rule: every interface knob sits in the one interface group."""
+    if path.name in INTERFACE_EXEMPT:
+        return []
+    problems = []
+    for group in gen_builder_manifest.parse_scad(path, with_lines=True):
+        short = group["name"].split(" — ")[0].strip()
+        for param in group["params"]:
+            if param["name"] in INTERFACE_KNOBS and short != INTERFACE_GROUP:
+                problems.append(
+                    f"{path.name}:{param['line']}: `{param['name']}` is a knob of the catalog's "
+                    f"stud/keyhole interface, but it sits in the group [{group['name']}]. The "
+                    f"interface keeps one name everywhere it appears — put it under "
+                    f"/* [{INTERFACE_GROUP}] */ (a per-file note may follow the bracket) "
+                    "(DESIGN_RULES.md §10)")
+    return problems
+
+
 def knob_lines(path):
     """{line number: [knob names]} as gen_builder_manifest.parse_scad sees them."""
     by_line = {}
@@ -267,6 +305,7 @@ def main():
         found, seen = lint_help_lines(path, HELP_LINE_DEBT)
         problems += found
         problems += lint_meanings(path)
+        problems += lint_interface_group(path)
         debt_seen |= seen
     for name, knob in sorted(HELP_LINE_DEBT - debt_seen):
         problems.append(f"{name}: HELP_LINE_DEBT lists the shared-help line starting "
@@ -280,7 +319,8 @@ def main():
         print(f"\ndesign language: {len(problems)} problem(s)")
         return 1
     print("design language OK — every canonical default conforms or explains itself, "
-          "every knob's help is on its own line, and every shared name keeps its meaning")
+          "every knob's help is on its own line, every shared name keeps its meaning, "
+          "and the stud/keyhole interface keeps its one group name")
     return 0
 
 
