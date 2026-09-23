@@ -89,11 +89,19 @@ def _require_restored(hass: HomeAssistant) -> None:
     "nothing" for watches that exist), so an early call is an error the
     automation can see rather than a quietly wrong answer.
     """
-    if not watch_runtime.watches_restored(hass):
+    if watch_runtime.watches_restored(hass):
+        return
+    if watch_runtime.watches_unreadable(hass):
+        # The rows are still on disk, unread: the bucket is not the truth.
         raise ServiceValidationError(
-            "SecuraCV is not loaded yet, so its watches are not available. "
-            "Try again once the integration has started."
+            "SecuraCV could not read its stored watches (the log has the "
+            "reason), so its watches are not available. Reload the "
+            "integration to try again."
         )
+    raise ServiceValidationError(
+        "SecuraCV is not loaded yet, so its watches are not available. "
+        "Try again once the integration has started."
+    )
 
 
 def _duration_or_refuse(value: Any) -> str | None:

@@ -432,7 +432,9 @@ What to expect:
   name it doesn't know. It never guesses. An early end is announced the
   same way an expiry is, with what the watch learned.
 - Until the integration has loaded, all three refuse with a message rather
-  than answering from an empty list.
+  than answering from an empty list. The same goes if the stored watches
+  could not be read. The file is left as it is, nothing is written over
+  it, and reloading the integration tries again.
 - There are no actions for pinning, rotating or unpinning a device key.
   Those stay in the options flow on purpose
   ([why](device_trust.md#why-pin-rotate-and-unpin-are-not-actions)).

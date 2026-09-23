@@ -61,6 +61,9 @@ STORAGE_KEY = "securacv_watches"
 SAVE_DELAY_SECONDS = 10
 
 _VALID_STATES = (watches.STATE_SETTLING, watches.STATE_WATCHING, watches.STATE_ENDED)
+# The longest span make_watch can build (it clamps days to [1, 365]); a
+# stored row that runs longer did not come from it. tests pin the two.
+MAX_WATCH_SPAN_SECONDS = 365 * watches.DAY
 
 
 def _bucket(hass: HomeAssistant) -> list[dict[str, Any]]:
@@ -248,10 +251,18 @@ def fleet_snapshot(hass: HomeAssistant) -> list[dict[str, Any]]:
 
 
 def watches_restored(hass: HomeAssistant) -> bool:
-    """Whether the restore has run on this hub — i.e. the bucket is the
-    persisted truth and changes to it are being written back."""
+    """Whether the restore has succeeded on this hub — i.e. the bucket is
+    the persisted truth and changes to it are being written back."""
     domain_data = hass.data.get(DOMAIN)
     return isinstance(domain_data, dict) and bool(domain_data.get("_watches_loaded"))
+
+
+def watches_unreadable(hass: HomeAssistant) -> bool:
+    """Whether the last restore attempt could not read the store (it is
+    left alone on disk, and nothing is written back until a restore
+    succeeds)."""
+    domain_data = hass.data.get(DOMAIN)
+    return isinstance(domain_data, dict) and bool(domain_data.get("_watches_unreadable"))
 
 
 @callback
@@ -462,8 +473,9 @@ def _coerce_watch(row: Any) -> tuple[dict[str, Any] | None, str]:
     """One stored row as a watch dict, or ``(None, why)``.
 
     Strict about the fields the engine computes with (identity, subject,
-    the three timestamps, the observation pairs) and lenient about the
-    ones it can safely default (concern, sensitivity, state, counters):
+    the three timestamps and how they relate, the observation pairs) and
+    lenient about the ones it can safely default (concern, sensitivity,
+    state, counters):
     a half-written or hand-edited store yields fewer watches, never wrong
     ones. A bad observation pair drops that one reading, not the watch.
     """
@@ -484,6 +496,19 @@ def _coerce_watch(row: Any) -> tuple[dict[str, Any] | None, str]:
         if number is None:
             return None, f"{watch_id}: {key} is not a number"
         times[key] = number
+    # The shape make_watch guarantees, checked without the clock (a hub can
+    # boot with a wrong one): it ends after it starts, runs at most a year,
+    # and settles inside its own span. A row outside that would run as a
+    # watch the engine could never have built, such as a ten-year one.
+    # watches.extend is wired to no surface yet; wiring it (it counts a
+    # year from "now", not from the start) must widen this bound with it.
+    started_at, ends_at = times["started_at"], times["ends_at"]
+    if ends_at < started_at:
+        return None, f"{watch_id}: ends_at is before started_at"
+    if ends_at - started_at > MAX_WATCH_SPAN_SECONDS + 1.0:  # a second of float slack
+        return None, f"{watch_id}: runs longer than a year"
+    if not started_at <= times["settle_until"] <= ends_at:
+        return None, f"{watch_id}: settle_until is outside the watch"
     raw_observations = row.get("observations", [])
     if not isinstance(raw_observations, list):
         return None, f"{watch_id}: observations is not a list"
@@ -559,22 +584,39 @@ def restore_watches(raw: Any) -> list[dict[str, Any]]:
 async def async_load_watches(hass: HomeAssistant) -> list[dict[str, Any]]:
     """Restore the bucket from the store, once per Home Assistant instance.
 
-    Idempotent: a second config entry, or a reload, finds it already done
-    and leaves the live bucket alone. Anything already in the bucket — a
-    watch spoken in the moment between the integration importing and this
-    restore — is kept behind the restored rows rather than thrown away. A
-    store that cannot be read yields a warning and an empty bucket; the
-    next save then writes a readable one, so a corrupt file heals itself.
+    Idempotent: once a restore has succeeded, a second config entry or a
+    reload finds it done and leaves the live bucket alone (and of two
+    setups reading at once, the first to finish wins). Anything already
+    in the bucket, such as a watch spoken between the integration
+    importing and this restore, is kept behind the restored rows rather
+    than thrown away.
+
+    A file HA finds corrupt never reaches here as an error: HA's Store
+    renames it ``.corrupt.<time>``, raises a repair issue and returns
+    None, which restores nothing. Any other failure to read (an OSError,
+    a stored version this code cannot migrate after a downgrade) leaves
+    the restore NOT done: saves stay off, so the rows still on disk are
+    never written over by a near-empty bucket; the actions say why they
+    refuse; the next setup (a reload) tries again. Cancellation leaves it
+    not done too.
     """
     domain_data = hass.data.setdefault(DOMAIN, {})
     if domain_data.get("_watches_loaded"):
         return _bucket(hass)
-    domain_data["_watches_loaded"] = True
     try:
         raw = await _store(hass).async_load()
-    except Exception:  # noqa: BLE001 - a corrupt store must not stop setup
-        _LOGGER.warning("stored watches could not be read; starting with none", exc_info=True)
-        raw = None
+    except Exception:  # noqa: BLE001 - watches are optional, setup is not
+        domain_data["_watches_unreadable"] = True
+        _LOGGER.warning(
+            "stored watches could not be read, so they are left on disk untouched "
+            "and nothing is written back this session; watches started now are "
+            "kept in memory only, and a reload of the integration tries again",
+            exc_info=True,
+        )
+        return _bucket(hass)
+    if domain_data.get("_watches_loaded"):
+        # Another setup's restore finished while this one was reading.
+        return _bucket(hass)
     restored = restore_watches(raw)
     restored_ids = {watch["id"] for watch in restored}
     existing = domain_data.get("watches")
@@ -586,6 +628,8 @@ async def async_load_watches(hass: HomeAssistant) -> list[dict[str, Any]]:
         )
         del restored[watches.MAX_WATCHES:]
     domain_data["watches"] = restored
+    domain_data.pop("_watches_unreadable", None)
+    domain_data["_watches_loaded"] = True
     if restored:
         _LOGGER.debug("restored %d watch(es)", len(restored))
     return restored

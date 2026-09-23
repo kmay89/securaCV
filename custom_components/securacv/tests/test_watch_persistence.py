@@ -14,6 +14,7 @@ integration's real setup.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import logging
 import time
@@ -318,27 +319,151 @@ def test_a_watch_spoken_before_the_restore_is_neither_lost_nor_written_over_the_
     assert [w["id"] for w in _stored(saved)] == ids
 
 
-def test_a_corrupt_store_warns_and_heals_on_the_next_save(monkeypatch, caplog) -> None:
-    saved: dict[str, dict] = {}
+def test_a_store_that_cannot_be_read_is_never_written_over(monkeypatch, caplog) -> None:
+    """HA's Store quarantines a corrupt file itself (renamed, a repair
+    issue, None returned), so a load that RAISES is something else: an
+    OSError, a version this code cannot migrate after a downgrade. The rows
+    are still on disk. Marking the restore done anyway would let the next
+    start write a near-empty bucket over them, so it is not: saves stay
+    off, the actions say why they refuse, and a reload tries again."""
+    saved = _persistent_storage(monkeypatch)
+    saved[watch_runtime.STORAGE_KEY] = {"version": 1, "watches": [_bound_watch("on-disk")]}
+    on_disk = copy.deepcopy(saved)
+    readable = False
+    working_store = watch_runtime.Store
 
-    class _BrokenStore:
-        def __init__(self, hass, version, key) -> None:
-            self._key = key
-
+    class _FlakyStore(working_store):
         async def async_load(self):
-            raise RuntimeError("unreadable JSON")
+            if not readable:
+                raise OSError("Input/output error")
+            return await super().async_load()
 
-        def async_delay_save(self, data_func, delay: float = 0) -> None:
-            saved[self._key] = copy.deepcopy(data_func())
-
-    monkeypatch.setattr(watch_runtime, "Store", _BrokenStore)
+    monkeypatch.setattr(watch_runtime, "Store", _FlakyStore)
     with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
         hass = _boot()
-    assert _bucket(hass) == []
     assert any("could not be read" in r.getMessage() for r in caplog.records)
+    assert hass.data[DOMAIN].get("watches", []) == []
+    assert not watch_runtime.watches_restored(hass)
+    assert watch_runtime.watches_unreadable(hass)
 
+    # Voice still starts a watch (in memory); nothing reaches the disk.
     _start(hass, "the gate canary")
-    assert len(_stored(saved)) == 1, "the store is writable again — it heals itself"
+    watch_runtime.async_tick(hass, time.time())
+    assert saved == on_disk, "the unread rows were written over"
+
+    # The actions refuse with the reason, not "not loaded yet".
+    from homeassistant.core import ServiceCall
+    from homeassistant.exceptions import ServiceValidationError
+
+    from .. import async_setup
+
+    run(async_setup(hass, {}))
+    handler = hass.services.registered[(DOMAIN, "list_watches")].func
+    try:
+        handler(ServiceCall(DOMAIN, "list_watches", {}))
+    except ServiceValidationError as err:
+        assert "could not read its stored watches" in str(err)
+    else:
+        raise AssertionError("list_watches answered from a bucket that is not the truth")
+
+    # A reload whose read succeeds restores the rows, keeps the spoken
+    # watch behind them, and turns saves back on.
+    readable = True
+    assert run(async_setup_entry(hass, SECOND_ENTRY)) is True
+    assert watch_runtime.watches_restored(hass)
+    assert not watch_runtime.watches_unreadable(hass)
+    ids = [w["id"] for w in _bucket(hass)]
+    assert ids[0] == "on-disk" and len(ids) == 2
+    watch_runtime.async_schedule_save(hass)
+    assert [w["id"] for w in _stored(saved)] == ids
+
+
+def test_a_file_ha_quarantined_as_corrupt_restores_nothing_and_saves_flow(monkeypatch) -> None:
+    """What HA's Store hands back after renaming a corrupt file: None. That
+    is a clean, empty start, so the restore is done and saves write."""
+    saved = _persistent_storage(monkeypatch)
+    hass = _boot()
+    assert _bucket(hass) == []
+    assert watch_runtime.watches_restored(hass)
+    _start(hass, "the gate canary")
+    assert len(_stored(saved)) == 1
+
+
+def test_a_canceled_restore_is_not_marked_done(monkeypatch) -> None:
+    class _CanceledStore:
+        def __init__(self, hass, version, key) -> None:
+            pass
+
+        async def async_load(self):
+            raise asyncio.CancelledError
+
+        def async_delay_save(self, data_func, delay: float = 0) -> None:
+            raise AssertionError("nothing may be written after a canceled restore")
+
+    monkeypatch.setattr(watch_runtime, "Store", _CanceledStore)
+    hass = HomeAssistant()
+    hass.data = {}
+    try:
+        run(watch_runtime.async_load_watches(hass))
+    except asyncio.CancelledError:
+        pass
+    assert not watch_runtime.watches_restored(hass)
+    watch_runtime.async_schedule_save(hass)  # a no-op, not a write
+
+
+def test_two_setups_reading_at_once_restore_once(monkeypatch) -> None:
+    """Of two restores in flight together, the first to finish wins; the
+    second must not swap in a second copy of the same rows, or the objects
+    the tick and the event path already hold would stop being the bucket."""
+    saved = _persistent_storage(monkeypatch)
+    saved[watch_runtime.STORAGE_KEY] = {"version": 1, "watches": [_bound_watch("w1")]}
+    working_store = watch_runtime.Store
+
+    class _SlowStore(working_store):
+        async def async_load(self):
+            await asyncio.sleep(0)
+            return await super().async_load()
+
+    monkeypatch.setattr(watch_runtime, "Store", _SlowStore)
+    hass = HomeAssistant()
+    hass.data = {}
+
+    async def _both():
+        return await asyncio.gather(
+            watch_runtime.async_load_watches(hass), watch_runtime.async_load_watches(hass)
+        )
+
+    first, second = run(_both())
+    assert first is second is _bucket(hass)
+    assert [w["id"] for w in _bucket(hass)] == ["w1"]
+
+
+def test_a_row_the_engine_could_not_have_built_is_dropped(caplog) -> None:
+    """"Fewer watches, never wrong ones": make_watch clamps a watch to a
+    year and settles it inside its own span, so a stored row outside that
+    shape is dropped with a warning instead of running as, say, a
+    ten-year watch. Checked without the clock, which can be wrong at boot."""
+    longest = watches.make_watch("longest", "the gate", {"kind": "event", "ref": GATE}, NOW, days=10_000)
+    shortest = watches.make_watch("shortest", "the gate", {"kind": "event", "ref": GATE}, NOW, days=0)
+    assert longest["ends_at"] - longest["started_at"] == watch_runtime.MAX_WATCH_SPAN_SECONDS
+    assert shortest["settle_until"] == shortest["ends_at"], "the tightest legal settle"
+    rows = [
+        longest,
+        shortest,
+        dict(_bound_watch("far"), ends_at=NOW + 3650 * DAY),
+        dict(_bound_watch("backwards"), ends_at=NOW - DAY),
+        dict(_bound_watch("settles-late"), settle_until=NOW + 15 * DAY),
+        dict(_bound_watch("settles-early"), settle_until=NOW - 1),
+    ]
+    with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+        restored = watch_runtime.restore_watches({"watches": rows})
+    assert [w["id"] for w in restored] == ["longest", "shortest"]
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 4, warnings
+    assert any("far: runs longer than a year" in w for w in warnings)
+    assert any("backwards: ends_at is before started_at" in w for w in warnings)
+    assert any("settles-late: settle_until is outside" in w for w in warnings)
+    assert any("settles-early: settle_until is outside" in w for w in warnings)
 
 
 def test_existing_start_path_still_works_without_any_setup() -> None:
