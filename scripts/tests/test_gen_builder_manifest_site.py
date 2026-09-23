@@ -60,10 +60,12 @@ RELEASED = ["canary_wap_enclosure.scad", "canary_vision_enclosure.scad",
 NEW_TOP = {"board_registry", "board_facts"}
 NEW_FIG = {"seams_mm", "knobs"}
 # The devices gen_assembled_dims.py measures — the five released multi-part
-# devices and the two CAD-measured display cases (the Watch Station: drum rim,
-# then the snap-bezel face; the Dash: dock pads, back plate, frame) — and
-# their seams as the ledger states them (figure-depth mm, unrounded).
+# devices, the two CAD-measured display cases (the Watch Station: drum rim,
+# then the snap-bezel face; the Dash: dock pads, back plate, frame) and the
+# CAD-measured Combo (the back, keyhole thickening included, to its rim) —
+# and their seams as the ledger states them (figure-depth mm, unrounded).
 SEAMS = {
+    "device.canary-combo": [24.38],
     "device.canary-display-dash": [6, 9],
     "device.canary-display-watch": [21],
     "device.canary-sense": [19.5],
@@ -396,6 +398,9 @@ class SiteCarry(unittest.TestCase):
         for model in gbm.CURATED:
             self.assertIn(f"scad/{model['file']}", names)
         self.assertIn("scad/canary_watch_station.scad", names)      # REFERENCE_SCADS
+        self.assertIn("scad/canary_dash_display.scad", names)       # ...the two the AR
+        self.assertIn("scad/canary_combo.scad", names)              # Dash + Combo trace
+        self.assertIn("scad/canary_cradle_lib.scad", names)         # the Dash's use<> dep
         self.assertIn("scad/canary_board_lib.scad", names)          # a use<> dep
         self.assertEqual(names[-3:], ["scad/colorways.json", "scad/cad-dims.json",
                                       "js/builder-data.js"])

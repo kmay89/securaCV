@@ -25,6 +25,8 @@ const FIGDIR = join(ROOT, "figures");
 
 const led = JSON.parse(readFileSync(join(ROOT, "devices/figures.json"), "utf8"));
 const registry = JSON.parse(readFileSync(join(ROOT, "devices/registry.json"), "utf8"));
+const catalog = JSON.parse(readFileSync(join(ROOT, "devices/catalog.json"), "utf8"));
+const scadOfProduct = new Map(catalog.products.map((p) => [p.id, p.scad]));
 const byId = new Map(led.figures.map((f) => [f.id, f]));
 const led2hw = new Map(led.hardware.mapped.map((m) => [m.hardware, m]));
 
@@ -174,10 +176,65 @@ test("a CAD-measured in-development figure is its assembled_dims row, and stays 
     const released = f.evidence.catalog_variants.some((v) => v.status === "released");
     assert.strictEqual(f.confidence, released ? "confirmed" : "prototype",
       `${f.id} is ${released ? "released but unprintable" : "in development"} on its evidence`);
+    // ...and that evidence is THIS case's. The figure is measured off one
+    // .scad, so the only catalog variants that may speak for it are the ones
+    // cut from that .scad — a sibling product's released variant under the
+    // same device (the Combo is a canary-vision build; the Vision's cases are
+    // released) must never promote it.
+    for (const v of f.evidence.catalog_variants) {
+      assert.strictEqual(scadOfProduct.get(v.product), row.scad,
+        `${f.id} cites ${v.product}/${v.variant}, which is not cut from ${row.scad}`);
+    }
+    const ownVariants = catalog.products.filter((p) => p.scad === row.scad)
+      .flatMap((p) => (p.variants || []).filter((v) => (v.device || "_universal") === f.device)
+        .map((v) => `${p.id}/${v.id}`));
+    assert.deepStrictEqual(f.evidence.catalog_variants.map((v) => `${v.product}/${v.variant}`).sort(),
+      ownVariants.sort(), `${f.id} cites every variant cut from ${row.scad}, and only those`);
     checked++;
   }
   assert.ok(checked > 0, "the Watch Station is measured off its CAD, not sketched");
   assert.strictEqual(byId.get("device.canary-display-watch").dims_source, "assembled-cad");
+  // The Combo: a canary-vision build whose device has released cases — on
+  // its own evidence it is in development, so it is a prototype
+  const combo = byId.get("device.canary-combo");
+  assert.strictEqual(combo.dims_source, "assembled-cad", "the Combo is measured off its CAD, not sketched");
+  assert.strictEqual(combo.device, "canary-vision");
+  assert.ok(combo.evidence.catalog_variants.length > 0, "the Combo cites its own catalog entry");
+  assert.strictEqual(combo.confidence, "prototype", "the Combo does not borrow the Vision's released cases");
+});
+
+test("a CAD-measured figure draws its face features at the case's own cut variables", async () => {
+  // The Combo's lens and radome window sit off-center, at lens_x/lens_y and
+  // rad_cx/rad_cy — positions its case derives from the two stacks. They are
+  // re-evaluated with the envelope (features_fig_mm: a center on the measured
+  // envelope and an extent), so the massing must draw each exactly there, at
+  // exactly that size, and MOVE when the record moves (no literal standing in).
+  const { FIGURES } = await import("../tools/figures/massing.mjs");
+  const asm = JSON.parse(readFileSync(join(REPO, "docs/hardware/enclosure/assembled_dims.json"), "utf8"));
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  const footprint = (s) => (s.kind === "box"
+    ? { x: s.at[0] + s.size[0] / 2, z: s.at[2] + s.size[2] / 2, w: s.size[0], h: s.size[2] }
+    : { x: s.at[0], z: s.at[2], w: 2 * s.r, h: 2 * s.r });
+  const drawnAt = (fig, row, features) => fig
+    .build({ ...row.fig }, {}, { seams: row.seams_fig_d, face: row.face_fig_mm, features })
+    .map(footprint);
+  let checked = 0;
+  for (const fig of FIGURES) {
+    const row = fig.assembled ? asm.devices[fig.id] : null;
+    if (!row || !row.features_fig_mm) continue;
+    const shifted = Object.fromEntries(Object.entries(row.features_fig_mm)
+      .map(([k, f]) => [k, { ...f, x: f.x + 1, z: f.z - 1 }]));
+    for (const [features, why] of [[row.features_fig_mm, "measured"], [shifted, "moved"]]) {
+      const drawn = drawnAt(fig, row, features);
+      for (const [name, f] of Object.entries(features)) {
+        const hits = drawn.filter((d) => near(d.x, f.x) && near(d.z, f.z) && near(d.w, f.w) && near(d.h, f.h));
+        assert.strictEqual(hits.length, 1,
+          `${fig.id} draws its ${name} once, ${f.w} x ${f.h} at (${f.x}, ${f.z}) — the ${why} feature`);
+      }
+    }
+    checked++;
+  }
+  assert.ok(checked >= 1, "the Combo draws its lens and radome from the measured features");
 });
 
 test("a CAD-measured figure draws its glass in the CAD's measured face aperture", async () => {

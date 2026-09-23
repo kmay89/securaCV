@@ -23,7 +23,7 @@
  },
  "counts": {
   "idea": 15,
-  "prototype": 9,
+  "prototype": 10,
   "confirmed": 1,
   "shipping": 25
  },
@@ -732,6 +732,56 @@
    "rev": "a3438690",
    "svg": "canary-local/figures/device.canary-clime.svg",
    "glyph": "canary-local/figures/device.canary-clime.glyph.svg"
+  },
+  {
+   "id": "device.canary-combo",
+   "title": "Canary Combo",
+   "role": "device",
+   "device": "canary-vision",
+   "family": "canary-vision",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "prototype",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [],
+    "catalog_variants": [
+     {
+      "product": "combo",
+      "variant": "combo-witness",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "default"
+    ]
+   },
+   "dims_source": "assembled-cad",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 86.4,
+    "d": 26.38,
+    "h": 73.6
+   },
+   "assembled": {
+    "placement": "front() at z = base_d: the echo's base_d + lid_t + mount_extra, the posts shortened by the head pads they carry, the lid-key rib to the rim",
+    "seams_fig_d": [
+     24.38
+    ]
+   },
+   "traced_to": [],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 4,
+   "rev": "6846c406",
+   "svg": "canary-local/figures/device.canary-combo.svg",
+   "glyph": "canary-local/figures/device.canary-combo.glyph.svg"
   },
   {
    "id": "device.canary-curbwatch",
