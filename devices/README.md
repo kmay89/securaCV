@@ -64,10 +64,14 @@ table. A device with no figure yet shows `—`; that is the gap, honestly.
 
 **A key whose value is unknown is omitted, not guessed.** No figure has been
 drawn for the four `canary` boards; the Glance AMOLED has no enclosure yet;
-the C3 Super Mini has neither. Those keys are absent. One is absent by
-decision instead: the Nightstand C6's pocket case is drawn
-(`device.canary-display-nightstand-c6`, a sketch off its `.scad`, for its Lab
-card), but its manifest does not name that figure yet — naming it maps the
+the C3 Super Mini has neither. Those keys are absent. The two Sentinel
+manifests (`canary-sentinel`, `canary-sentinel-lite`) carry less still. The
+family is Phase 1a, compile-gated and marked `unreleased` in `flavors.json`,
+so they name the board, its peripherals and the env CI compiles, and no
+more: no figure, case, flasher product or emulator flavor exists for them
+yet. One is absent by decision instead: the Nightstand C6's pocket case is
+drawn (`device.canary-display-nightstand-c6`, a sketch off its `.scad`, for
+its Lab card), but its manifest does not name that figure yet — naming it maps the
 C6 board in the firmware's figure table (`fleet_figures.h` and a
 `CANARY_FIGURE_HARDWARE` line in its `pins.h`), a firmware change of its own.
 
@@ -156,16 +160,25 @@ import them — `lint_build_matrix.py` applies the matrix's side of the join
   `build_matrix.json` / `flash.json` name as the published image that PR CI
   does not build (none today: the flagship's `release_ha` is in
   `build_envs`, so the shipped image and its OTA-slot guard run on every
-  PR). Debug-only envs (`*-debug`, `minimal`, `standalone`) that CI does not
-  build are not listed.
+  PR). Envs no `flavors.json` list builds are not listed: the debug envs
+  (`*-debug`), the WAP's `mobile`, the canary's `minimal`, `standalone`,
+  `dev_ha` and `usb-onboard`, its compile-only `secure` / `secure_ha` (a
+  `firmware.yml` step, not a flavor env) and the Sentinel's window /
+  hallway / demo-head presets (door's image with other preset data).
 - **`peripherals` come from the registry's pins header**, even for the
   `canary` and `canary-wap` trees, whose builds carry their pins in build
   flags and the sketch rather than compiling `boards/<id>/pins/pins.h`. The
   header is still the declared capability map for that board
   (`firmware/scripts/check_board_registry.py` keeps it honest).
-- **Website paths are declared, not verified.** Only the three glTF models
-  that exist today (`canary-vision`, `canary-sense`, `canary-watch`) are
-  named; no per-device page exists yet, so `site.page` is absent everywhere.
+- **Website paths are declared, not verified.** The `canary-vision`,
+  `canary-sense` and `canary-display-watch` manifests name a glTF model. The
+  website carries more than that: the WAP's and the 4.3" Dash's models exist
+  with no `site.model` key yet (a one-line, shape-only manifest edit each,
+  deliberately not made here); the doorbell's has no manifest of its own
+  (its case rides the Vision manifest's `cad.also`, and `site.model` holds
+  one model); and the Combo's has no manifest to name it either (its catalog
+  variant is a `canary-vision` build).
+  No per-device page exists yet, so `site.page` is absent everywhere.
 - **A shared case is owned as a union of subsets.** Several manifests may
   name one `cad.scad` (the three Vision hosts; the 7" Dash and Nightstand).
   Each asserts the knobs about *its* hardware in `cad.params` —
