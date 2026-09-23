@@ -202,6 +202,35 @@ void test_persist_rotation_host_stub() {
   std::printf("PASS test_persist_rotation_host_stub\n");
 }
 
+void test_persist_rotation_fails_closed() {
+  /* Review finding (fw-mesh #5): the secret used to be saved BEFORE the
+   * forgotten pubkeys were removed, so a power cut between the writes
+   * booted a survivor with the new secret AND the removed device still
+   * trusted — and opera_id is cleartext, so the removed device could copy
+   * the new one off the air. Order is now remove, remove, …, save. */
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x71 + i);
+  uint8_t pks[2][mesh_crypto::PUBKEY_LEN] = {{1}, {2}};
+
+  mesh_state::test::reset_journal();
+  assert(mesh_state::persist_rotation(secret, pks, 2));
+  assert(std::strcmp(mesh_state::test::journal(), "RRS") == 0);
+
+  mesh_state::test::reset_journal();
+  assert(mesh_state::persist_rotation(secret, nullptr, 0));
+  assert(std::strcmp(mesh_state::test::journal(), "S") == 0);
+
+  /* A removal that fails: every removal is still tried, the new secret is
+   * NOT saved, and the rotated-away one is cleared — the next boot comes
+   * up with no opera rather than the new secret beside a stale member. */
+  mesh_state::test::reset_journal();
+  mesh_state::test::fail_remove_trusted_peer(true);
+  assert(!mesh_state::persist_rotation(secret, pks, 2));
+  assert(std::strcmp(mesh_state::test::journal(), "RRC") == 0);
+  mesh_state::test::reset_journal();   /* also clears the failure switch */
+  std::printf("PASS test_persist_rotation_fails_closed\n");
+}
+
 }  /* namespace */
 
 int main() {
@@ -219,6 +248,7 @@ int main() {
   test_opera_name_host_stub();
   test_remove_trusted_peer_host_stub();
   test_persist_rotation_host_stub();
+  test_persist_rotation_fails_closed();
   std::printf("\nALL MESH_STATE TESTS PASSED\n");
   return 0;
 }

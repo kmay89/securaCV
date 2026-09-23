@@ -125,6 +125,13 @@ static rekey_commit_fn          s_rekey_commit_cb = nullptr;
 /* opera_secret rotation (F10-rekey). One transaction at a time, as
  * initiator or survivor. Wiped by deinit(), leave_opera() and disable. */
 static mesh_rekey::Context      s_rekey;
+/* Initiator only: the removed peer's pubkey. It leaves the trusted table at
+ * remove_peer(), but its NVS entry must still be dropped BEFORE the new
+ * secret is persisted (mesh_state::persist_rotation fails closed), so the
+ * commit hands it to the rekey-commit handler along with the dropped
+ * survivors. Wiped with s_rekey (reset_rekey). */
+static uint8_t                  s_rekey_removed_pub[mesh_crypto::PUBKEY_LEN];
+static bool                     s_rekey_removed_pub_set = false;
 
 static_assert(static_cast<uint8_t>(mesh_rekey::MsgType::OFFER)  ==
               static_cast<uint8_t>(mesh_envelope::MsgType::REKEY_OFFER),  "rekey msg_type drift");
@@ -356,6 +363,13 @@ static void reset_alerts() {
   s_alert_count = 0;
 }
 
+/* End any rotation in flight, without committing it. */
+static void reset_rekey() {
+  mesh_rekey::context_init(s_rekey);
+  secure_zero(s_rekey_removed_pub, sizeof(s_rekey_removed_pub));
+  s_rekey_removed_pub_set = false;
+}
+
 /* Build [1-byte session msg type][signed envelope] for an
  * opera-authenticated send. Bumps the outbound counter. Returns the total
  * frame length, or 0 when there is no opera or signing/serialization
@@ -417,13 +431,19 @@ static void send_rekey_frame(const mesh_rekey::Action& a, bool broadcast,
 
 /* Switch to a rotated secret: rebind opera_id (the outbound counter is
  * kept — receivers track it per fingerprint), forget the listed peers,
- * and hand the secret + their pubkeys to the integration layer. */
+ * and hand the secret + the pubkeys of every peer this rotation dropped to
+ * the integration layer — `already_forgotten_pub` (the initiator's removed
+ * peer, dropped from the table at start) first, when given. */
 static void install_rotated_secret(const uint8_t new_secret[mesh_crypto::OPERA_SECRET_LEN],
                                    const uint8_t (*fps)[mesh_crypto::FINGERPRINT_LEN],
-                                   size_t        n_fps) {
+                                   size_t        n_fps,
+                                   const uint8_t* already_forgotten_pub) {
   set_opera_secret(new_secret);
   uint8_t forgotten[MAX_TRUSTED_PEERS][mesh_crypto::PUBKEY_LEN];
   size_t  n_forgotten = 0;
+  if (already_forgotten_pub != nullptr) {
+    memcpy(forgotten[n_forgotten++], already_forgotten_pub, mesh_crypto::PUBKEY_LEN);
+  }
   for (size_t i = 0; i < n_fps && n_forgotten < MAX_TRUSTED_PEERS; ++i) {
     if (forget_peer(fps[i], forgotten[n_forgotten])) ++n_forgotten;
   }
@@ -444,11 +464,19 @@ static void apply_rekey_action(mesh_rekey::Action& a, uint32_t now_ms) {
       /* ORDER MATTERS: the ACK must verify under the opera_id the
        * initiator still holds, so it goes out before the switch. */
       send_rekey_frame(a, /*broadcast=*/false, now_ms);
-      install_rotated_secret(a.new_secret, &a.removed_fp, 1);
+      install_rotated_secret(a.new_secret, &a.removed_fp, 1, nullptr);
       break;
-    case mesh_rekey::ActionType::COMMIT:
-      install_rotated_secret(a.new_secret, a.dropped, a.dropped_count);
+    case mesh_rekey::ActionType::COMMIT: {
+      /* Consume the removed peer's stashed pubkey before the handler runs. */
+      uint8_t removed_pub[mesh_crypto::PUBKEY_LEN];
+      const bool have_removed = s_rekey_removed_pub_set;
+      memcpy(removed_pub, s_rekey_removed_pub, sizeof(removed_pub));
+      secure_zero(s_rekey_removed_pub, sizeof(s_rekey_removed_pub));
+      s_rekey_removed_pub_set = false;
+      install_rotated_secret(a.new_secret, a.dropped, a.dropped_count,
+                             have_removed ? removed_pub : nullptr);
       break;
+    }
     case mesh_rekey::ActionType::ABORT:
     case mesh_rekey::ActionType::NONE:
     default:
@@ -691,7 +719,7 @@ void deinit() {
   s_enabled          = true;
   s_last_process_ms  = 0;
   reset_alerts();
-  mesh_rekey::context_init(s_rekey);
+  reset_rekey();
   secure_zero(&s_slot_req,    sizeof(s_slot_req));
   secure_zero(&s_slot_result, sizeof(s_slot_result));
   __atomic_store_n(&s_slot_state, (uint8_t)SLOT_IDLE, __ATOMIC_RELEASE);
@@ -734,7 +762,7 @@ void set_enabled(bool enabled) {
     if (s_running && pairing_in_progress()) cancel_pairing();
     /* A rotation cannot finish while stopped; drop it (the REST handler
      * refuses to disable mid-rotation, so this is the last resort). */
-    mesh_rekey::context_init(s_rekey);
+    reset_rekey();
     s_enabled = false;
     stop();
     return;
@@ -1156,7 +1184,7 @@ bool leave_opera(uint32_t now_ms) {
     if (n > 0) notified = mesh_transport::broadcast(frame, n) > 0;
   }
   if (s_running && pairing_in_progress()) cancel_pairing();
-  mesh_rekey::context_init(s_rekey);   /* leaving ends any rotation */
+  reset_rekey();                       /* leaving ends any rotation */
   clear_trusted_peers();               /* their counters stay as tombstones */
   s_opera_id_set     = false;
   secure_zero(s_opera_id,  sizeof(s_opera_id));
@@ -1256,6 +1284,8 @@ RemoveResult remove_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
   if (a.type == mesh_rekey::ActionType::NONE) return RemoveResult::FAILED;
 
   forget_peer(fp, removed_pubkey_out);
+  memcpy(s_rekey_removed_pub, removed_pubkey_out, sizeof(s_rekey_removed_pub));
+  s_rekey_removed_pub_set = true;
   const RemoveResult r = (a.type == mesh_rekey::ActionType::COMMIT)
                              ? RemoveResult::COMMITTED
                              : RemoveResult::STARTED;

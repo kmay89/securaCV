@@ -4213,7 +4213,8 @@ static esp_err_t handle_mesh_remove(httpd_req_t* req) {
     default:                                    return http_send_error(req, 500, "rekey_failed");
   }
   // The removed peer's own NVS entry (FE-gated), dropped now so a reboot
-  // mid-rotation does not bring it back.
+  // mid-rotation does not bring it back; the rotation's commit drops it
+  // again (idempotent) before it persists the new secret.
   const bool persisted = mesh_state::remove_trusted_peer(res.removed_pubkey);
   log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "Opera peer removed",
              rr == mesh_session::RemoveResult::COMMITTED ? "secret rotated locally"

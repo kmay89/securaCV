@@ -281,26 +281,49 @@ bool clear_opera_name();
  * ROTATION PERSISTENCE  (F10-rekey — CRYPTO: maintainer review required)
  *
  * Called from mesh_session's rekey-commit handler once this device has
- * switched to a rotated opera_secret. Re-persists the NEW secret through
- * the same flash-encryption gate as save_opera_secret() and drops every
- * forgotten peer's pubkey from "trusted_peers".
+ * switched to a rotated opera_secret. Drops every forgotten peer's pubkey
+ * from "trusted_peers", THEN re-persists the NEW secret through the same
+ * flash-encryption gate as save_opera_secret().
  *
- * When the new secret cannot be saved (FE off, NVS failure) the OLD one
- * is cleared instead of left behind: a reboot must come up with no opera
- * (re-pair) rather than silently rejoin with a secret the household just
- * rotated away from. The live session keeps the rotated secret in RAM
- * either way (canary-wap's O2 branch). On an FE-off board nothing was
- * persisted to begin with, so this changes nothing there.
+ * The order fails closed (review fix). opera_id travels in cleartext in
+ * every frame header and opera_secret buys nothing else on this tree, so
+ * a board that boots with the new secret while a forgotten device is
+ * still in trusted_peers accepts that device again as soon as it copies
+ * the new opera_id off the air. Removing first means a power cut between
+ * the writes leaves the OLD secret with the peer gone — never the new
+ * secret with the peer present. And if any removal fails, the new secret
+ * is not saved at all.
  *
- * Returns true iff the new secret was saved AND every forgotten pubkey
- * was removed. Returns false on a null secret, on a null list with a
- * non-zero count, or on any NVS refusal/failure. Host build: validates
- * the arguments, then returns true.
+ * When the new secret is not saved (a removal failed, FE off, NVS
+ * failure) the OLD one is cleared instead of left behind: a reboot must
+ * come up with no opera (re-pair) rather than silently rejoin with a
+ * secret the household just rotated away from. The live session keeps the
+ * rotated secret in RAM either way (canary-wap's O2 branch). On an FE-off
+ * board nothing was persisted to begin with, so this changes nothing
+ * there.
+ *
+ * Returns true iff every forgotten pubkey was removed AND the new secret
+ * was saved. Returns false on a null secret, on a null list with a
+ * non-zero count, or on any NVS refusal/failure. Host build: the stubs
+ * record the write order in test::journal() (below).
  * ────────────────────────────────────────────────────────────────────────── */
 
 bool persist_rotation(const uint8_t new_secret[mesh_crypto::OPERA_SECRET_LEN],
                       const uint8_t (*forgotten_pubkeys)[mesh_crypto::PUBKEY_LEN],
                       size_t forgotten_count);
+
+#ifdef CSI_TEST_HOST_BUILD
+/* Host-test hooks. The host stubs write nothing, so an ORDER of writes is
+ * invisible to a test; the stubs that stand in for the rotation's three
+ * writes append one letter each to a journal instead — 'R'
+ * remove_trusted_peer, 'S' save_opera_secret, 'C' clear_opera_secret — and
+ * remove_trusted_peer can be told to fail. */
+namespace test {
+const char* journal();
+void        reset_journal();
+void        fail_remove_trusted_peer(bool fail);
+}  /* namespace test */
+#endif
 
 }  /* namespace mesh_state */
 

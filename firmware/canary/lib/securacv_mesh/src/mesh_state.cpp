@@ -41,7 +41,25 @@ inline bool flash_encryption_enabled() {
 }
 #endif
 
+#ifdef CSI_TEST_HOST_BUILD
+/* Host-test journal (mesh_state.h test::). */
+char s_journal[64] = {0};
+bool s_fail_remove = false;
+void journal_add(char op) {
+  const size_t n = strlen(s_journal);
+  if (n + 1 < sizeof(s_journal)) { s_journal[n] = op; s_journal[n + 1] = '\0'; }
+}
+#endif
+
 }  /* namespace */
+
+#ifdef CSI_TEST_HOST_BUILD
+namespace test {
+const char* journal()                   { return s_journal; }
+void        reset_journal()             { s_journal[0] = '\0'; s_fail_remove = false; }
+void        fail_remove_trusted_peer(bool fail) { s_fail_remove = fail; }
+}  /* namespace test */
+#endif
 
 bool save_opera_secret(const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN]) {
   if (secret == nullptr) return false;
@@ -50,6 +68,7 @@ bool save_opera_secret(const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN]) {
   /* Host build: succeed silently — tests use in-memory state, not NVS.
    * The flash-encryption gate is a hardware-only concern, not a logic
    * concern; we don't simulate it on host. */
+  journal_add('S');
   return true;
 #else
   if (!flash_encryption_enabled()) {
@@ -105,6 +124,7 @@ bool load_opera_secret(uint8_t out[mesh_crypto::OPERA_SECRET_LEN]) {
 
 bool clear_opera_secret() {
 #ifdef CSI_TEST_HOST_BUILD
+  journal_add('C');
   return true;
 #else
   Preferences prefs;
@@ -435,7 +455,8 @@ bool remove_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]) {
   if (pubkey == nullptr) return false;
 
 #ifdef CSI_TEST_HOST_BUILD
-  return true;
+  journal_add('R');
+  return !s_fail_remove;
 #else
   if (!flash_encryption_enabled()) {
     Serial.println("[ALERT][mesh_state] refused remove_trusted_peer — "
@@ -599,14 +620,17 @@ bool persist_rotation(const uint8_t new_secret[mesh_crypto::OPERA_SECRET_LEN],
   if (new_secret == nullptr) return false;
   if (forgotten_count > 0 && forgotten_pubkeys == nullptr) return false;
 
+  /* Forgotten peers FIRST (fail closed — see mesh_state.h): a board must
+   * never boot holding the new secret and a peer that rotation dropped. */
+  bool removed_all = true;
+  for (size_t i = 0; i < forgotten_count; ++i) {
+    removed_all = remove_trusted_peer(forgotten_pubkeys[i]) && removed_all;
+  }
   /* save_opera_secret() carries the flash-encryption gate. */
-  bool ok = save_opera_secret(new_secret);
+  const bool ok = removed_all && save_opera_secret(new_secret);
   if (!ok) {
     /* Never leave the rotated-away secret as the one a reboot loads. */
     clear_opera_secret();
-  }
-  for (size_t i = 0; i < forgotten_count; ++i) {
-    ok = remove_trusted_peer(forgotten_pubkeys[i]) && ok;
   }
   return ok;
 }

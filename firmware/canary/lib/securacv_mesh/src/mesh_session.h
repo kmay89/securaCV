@@ -540,9 +540,13 @@ void     clear_alerts();
  * replay counters by fingerprint, not by opera_id.
  *
  * The handler receives the new secret (persist it — mesh_state::
- * persist_rotation, FE-gated) and the pubkeys of every peer this device
- * just forgot (drop them from NVS). The removed peer's own pubkey comes
- * back through `removed_pubkey_out` instead, for the caller to drop.
+ * persist_rotation, FE-gated) and the pubkeys of every peer this rotation
+ * dropped, for NVS: on a survivor, the removed device; on the initiator,
+ * the removed device (again — it left the table at start) followed by
+ * every survivor that did not ACK. persist_rotation drops them all BEFORE
+ * it saves the secret, so an interrupted commit fails closed. The removed
+ * peer's pubkey also comes back at once through `removed_pubkey_out`, for
+ * the caller to drop from NVS right away (idempotent with the commit).
  *
  * Refusals: DISABLED (mesh off / not initialized), NO_OPERA, NOT_FOUND
  * (fp is not a trusted peer), IN_FLIGHT (a rotation is already running

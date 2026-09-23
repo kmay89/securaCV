@@ -412,9 +412,13 @@ authenticated by the sender's long-term Ed25519 key:
 
 On a switch the outbound counter is **kept**: receivers track the per-peer
 counter by fingerprint, not by `opera_id`, so resetting it would get the
-next frames dropped as replays. The new secret is re-persisted through the
-flash-encryption gate (§5.5); if that save is refused, the old secret is
-cleared rather than left for the next boot. The ephemeral keys come from a
+next frames dropped as replays. On commit each device first drops from NVS
+every peer the rotation dropped (on the initiator: the removed device and
+any survivor that did not ACK; on a survivor: the removed device), and only
+then re-persists the new secret through the flash-encryption gate (§5.5):
+a power cut between the writes leaves the old secret without the dropped
+peer, never the new secret beside it. If a removal or the save is refused,
+the old secret is cleared rather than left for the next boot. The ephemeral keys come from a
 dedicated X25519 generator (`mesh_crypto::x25519_generate_keypair`, RFC 7748
 clamping) — not the Ed25519 generator pairing uses.
 

@@ -1949,13 +1949,19 @@ void test_rekey_session_as_initiator() {
 
   /* B ACKs under the OLD opera_id; the session commits. */
   assert(g_commits.empty());
+  mesh_state::test::reset_journal();
   flen = build_signed_session_frame(b_pub, b_priv, S, 3, mesh_envelope::MsgType::REKEY_ACK,
                                     inst.payload, inst.payload_len, frame, sizeof(frame));
   inject_from(mac_b, frame, flen);
   assert(g_commits.size() == 1);
   assert(std::memcmp(g_commits[0].secret, inst.new_secret, 32) == 0);
-  assert(g_commits[0].forgotten.empty());
+  /* The commit hands over the removed X once more (it left the table at
+   * start) so persist_rotation drops it from NVS BEFORE saving the new
+   * secret: remove, then save (review fix — fail closed). */
+  assert(g_commits[0].forgotten.size() == 1);
+  assert(std::memcmp(g_commits[0].forgotten[0].data(), x_pub, 32) == 0);
   assert(g_commits[0].persisted);
+  assert(std::strcmp(mesh_state::test::journal(), "RS") == 0);
   assert(!mesh_session::rekey_in_progress());
   uint8_t new_id[mesh_crypto::OPERA_ID_LEN], expect_id[mesh_crypto::OPERA_ID_LEN];
   assert(mesh_session::get_opera_id(new_id));
@@ -2153,9 +2159,11 @@ void test_rekey_timeout_and_no_survivors() {
   mesh_session::process(t0 + mesh_rekey::REKEY_TIMEOUT_MS - 1);
   assert(g_commits.empty());
   mesh_session::process(t0 + mesh_rekey::REKEY_TIMEOUT_MS);
-  /* Nobody answered: commit anyway, forgetting both silent survivors. */
+  /* Nobody answered: commit anyway, forgetting both silent survivors —
+   * after the removed X, which leads the list. */
   assert(g_commits.size() == 1);
-  assert(g_commits[0].forgotten.size() == 2);
+  assert(g_commits[0].forgotten.size() == 3);
+  assert(std::memcmp(g_commits[0].forgotten[0].data(), x_pub, 32) == 0);
   assert(mesh_session::trusted_peer_count() == 0);
   assert(!mesh_session::rekey_in_progress());
   uint8_t id[16], expect[16];
@@ -2169,9 +2177,13 @@ void test_rekey_timeout_and_no_survivors() {
   g_commits.clear();
   uint8_t fp_b[8];
   mesh_crypto::compute_fingerprint(b_pub, fp_b);
+  mesh_state::test::reset_journal();
   assert(mesh_session::remove_peer(fp_b, t0, out) == mesh_session::RemoveResult::COMMITTED);
   assert(g_commits.size() == 1);
-  assert(g_commits[0].forgotten.empty());
+  /* Even the at-once commit drops B from NVS before it saves the secret. */
+  assert(g_commits[0].forgotten.size() == 1);
+  assert(std::memcmp(g_commits[0].forgotten[0].data(), b_pub, 32) == 0);
+  assert(std::strcmp(mesh_state::test::journal(), "RS") == 0);
   assert(!mesh_session::rekey_in_progress());
   assert(mesh_session::trusted_peer_count() == 0);
   assert(mesh_session::get_opera_id(id));
