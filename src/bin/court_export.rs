@@ -108,8 +108,18 @@ struct KitAnchor {
 
 fn open_db(args: &Args) -> Result<Connection> {
     // Mirrors log_verify: explicit --db-key wins; otherwise derive from the
-    // device key seed exactly as the kernel does; otherwise open unkeyed.
-    let db_key: Option<String> = match (&args.db_key, &args.device_key_seed) {
+    // device key seed exactly as the kernel does; otherwise the seed file
+    // beside the database is tried (database key only); otherwise open
+    // unkeyed.
+    let seed_for_db_key: Option<String> = match (&args.db_key, &args.device_key_seed) {
+        (Some(_), _) => None,
+        (None, Some(seed)) => Some(seed.clone()),
+        (None, None) => witness_kernel::crypto::find_device_seed(&args.db, None)?.map(|found| {
+            eprintln!("court_export: database key from the {}", found.source);
+            found.seed
+        }),
+    };
+    let db_key: Option<String> = match (&args.db_key, seed_for_db_key.as_deref()) {
         (Some(key), _) => Some(key.clone()),
         (None, Some(seed)) => {
             let signing_key = witness_kernel::signing_key_from_seed(seed)?;

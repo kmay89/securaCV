@@ -1434,16 +1434,26 @@ impl SignatureKeyMaterial {
 
 impl Kernel {
     pub fn open(cfg: &KernelConfig) -> Result<Self> {
+        let db_key_seed = db_key_seed_from_env();
+        Self::open_with_db_key_seed(cfg, db_key_seed.as_ref().map(|s| s.as_str()))
+    }
+
+    /// [`Kernel::open`] with the independent DB-key secret passed explicitly
+    /// instead of read from [`DB_KEY_SEED_ENV`]. For the key ceremony
+    /// (`break_glass rotate-identity --rekey-db-to`), which re-keys the
+    /// database and must then open it under the new secret without mutating
+    /// its own process environment.
+    pub(crate) fn open_with_db_key_seed(
+        cfg: &KernelConfig,
+        db_key_seed: Option<&str>,
+    ) -> Result<Self> {
         let db_path = if cfg.db_path == ":memory:" {
             shared_memory_uri()
         } else {
             cfg.db_path.clone()
         };
         let device_key = signing_key_from_seed(&cfg.device_key_seed)?;
-        let db_key = resolve_db_encryption_key(
-            &device_key,
-            db_key_seed_from_env().as_ref().map(|s| s.as_str()),
-        );
+        let db_key = resolve_db_encryption_key(&device_key, db_key_seed);
         let conn = open_db_connection_with_key(&db_path, Some(&db_key))?;
         let sealed_log = Box::new(
             SqliteSealedLogStore::open_with_key(&db_path, Some(&db_key))?

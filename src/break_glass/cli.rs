@@ -227,6 +227,75 @@ enum Command {
         device_key_seed: String,
     },
 
+    /// Rotate the device signing identity (ceremony C7 in
+    /// docs/security/CEREMONY_RUNBOOK.md): appends a KeyRotation record
+    /// signed by the retiring key, records the successor in the
+    /// genesis-anchored lineage, and replaces the seed file so witnessd
+    /// restarts under the new identity. Prints public keys only — a seed is
+    /// never printed. Stop every process that opens the database first.
+    /// Prerequisite: the database key must be independent of the signing key
+    /// (SECURACV_DB_KEY_SEED set, after `rekey-db`), or pass --rekey-db-to.
+    RotateIdentity {
+        #[arg(long, default_value = "witness.db")]
+        db: String,
+        #[arg(long, default_value = "ruleset:v0.3.0")]
+        ruleset_id: String,
+        /// Current device key seed (must match witnessd). When absent,
+        /// --seed-file, else the seed file beside the database
+        /// (`<db>.ed25519.seed`), is read.
+        #[arg(long, env = "DEVICE_KEY_SEED")]
+        device_key_seed: Option<String>,
+        /// Mint the successor seed from the OS RNG and write it to the seed
+        /// file (recommended — the seed never crosses a shell or a terminal).
+        #[arg(long, conflicts_with = "new_seed")]
+        generate: bool,
+        /// Use this successor seed instead of minting one. The seed file(s)
+        /// are replaced when one exists (or --seed-file is given); otherwise
+        /// set the new value as DEVICE_KEY_SEED where the kernel runs.
+        #[arg(
+            long,
+            env = "NEW_DEVICE_KEY_SEED",
+            value_name = "SEED",
+            required_unless_present = "generate"
+        )]
+        new_seed: Option<String>,
+        /// A seed file kept somewhere other than beside the database (an
+        /// add-on or sidecar key file): read for the current seed when no
+        /// seed is passed, and replaced with the successor. The seed file
+        /// beside the database is replaced too whenever it exists.
+        #[arg(long, value_name = "PATH")]
+        seed_file: Option<String>,
+        /// When the database key is still derived from the signing key
+        /// (SECURACV_DB_KEY_SEED unset), re-key the database to this
+        /// independent secret first — exactly what `rekey-db` does. Start
+        /// every process with SECURACV_DB_KEY_SEED set to it afterwards.
+        #[arg(long, env = "SECURACV_NEW_DB_KEY_SEED", value_name = "SECRET")]
+        rekey_db_to: Option<String>,
+    },
+
+    /// Re-encrypt the kernel database under a key derived from an independent
+    /// secret — the value SECURACV_DB_KEY_SEED will carry from then on. This
+    /// is the storage prerequisite for `rotate-identity` (docs/db_key_rotation.md),
+    /// and also how the independent secret itself is rotated. Offline: stop
+    /// every process that opens the database first. Prints no key material.
+    RekeyDb {
+        #[arg(long, default_value = "witness.db")]
+        db: String,
+        /// Device key seed the current database key derives from (honors
+        /// SECURACV_DB_KEY_SEED when set, exactly as `db-key` does). When
+        /// absent and --old-db-key is not given, the seed file beside the
+        /// database is used.
+        #[arg(long, env = "DEVICE_KEY_SEED")]
+        old_device_key_seed: Option<String>,
+        /// The current SQLCipher key (hex), as `db-key` prints it. Takes
+        /// precedence over --old-device-key-seed.
+        #[arg(long, env = "SECURACV_DB_KEY", value_name = "HEX")]
+        old_db_key: Option<String>,
+        /// The new independent DB-key secret (what SECURACV_DB_KEY_SEED will be).
+        #[arg(long, env = "SECURACV_NEW_DB_KEY_SEED", value_name = "SECRET")]
+        new_db_key_seed: String,
+    },
+
     /// Rehearse a full break-glass (request → approve → authorize → seal →
     /// unseal) in a throwaway sandbox — temp database, temp vault, and ephemeral
     /// trustee keys, all discarded afterward. Proves the machinery works on this
@@ -637,6 +706,40 @@ pub fn run() -> Result<()> {
         } => {
             let _stage = ui.stage("Vault doctor");
             cmd_doctor(&db, &vault_path, &device_key_seed)
+        }
+        Command::RotateIdentity {
+            db,
+            ruleset_id,
+            device_key_seed,
+            generate,
+            new_seed,
+            seed_file,
+            rekey_db_to,
+        } => {
+            let _stage = ui.stage("Rotate device identity");
+            cmd_rotate_identity(
+                &db,
+                &ruleset_id,
+                device_key_seed.as_deref(),
+                generate,
+                new_seed.as_deref(),
+                seed_file.as_deref(),
+                rekey_db_to.as_deref(),
+            )
+        }
+        Command::RekeyDb {
+            db,
+            old_device_key_seed,
+            old_db_key,
+            new_db_key_seed,
+        } => {
+            let _stage = ui.stage("Re-key database");
+            cmd_rekey_db(
+                &db,
+                old_device_key_seed.as_deref(),
+                old_db_key.as_deref(),
+                &new_db_key_seed,
+            )
         }
         Command::Drill {
             threshold,
@@ -1633,6 +1736,282 @@ fn cmd_db_key(device_key_seed: &str) -> Result<()> {
          same channel; never paste it into a shared chat. Pass it as --db-key or SECURACV_DB_KEY."
     );
     println!("{}", key.as_str());
+    Ok(())
+}
+
+/// Re-encrypt the database at `db_path` from the key `source` derives to the
+/// key derived from `new_secret` (the value `SECURACV_DB_KEY_SEED` carries
+/// afterwards). Refuses a missing database, an empty secret, and a no-op.
+fn rekey_database(db_path: &str, source: &DbKeySource, new_secret: &str) -> Result<()> {
+    let new_secret = new_secret.trim();
+    if new_secret.is_empty() {
+        return Err(anyhow!("the new DB-key secret is empty"));
+    }
+    if !std::path::Path::new(db_path).is_file() {
+        return Err(anyhow!("no kernel database at {}", db_path));
+    }
+    let old = match source {
+        DbKeySource::Seed(seed) => derive_db_key_hex(seed)?,
+        DbKeySource::Hex(key) => zeroize::Zeroizing::new(key.trim().to_string()),
+        DbKeySource::None => {
+            return Err(anyhow!(
+                "no current database key: pass --old-device-key-seed (or DEVICE_KEY_SEED), \
+                 --old-db-key, or keep the seed file beside the database"
+            ))
+        }
+    };
+    let new = crate::derive_db_encryption_key_from_secret(new_secret.as_bytes());
+    if old.as_str() == new.as_str() {
+        return Err(anyhow!(
+            "the current key source already derives the key this secret would (is \
+             SECURACV_DB_KEY_SEED already set to the new secret? unset it for this command) — \
+             nothing to do"
+        ));
+    }
+    crate::rekey_database_file(db_path, &old, &new)
+}
+
+fn cmd_rekey_db(
+    db_path: &str,
+    old_device_key_seed: Option<&str>,
+    old_db_key: Option<&str>,
+    new_db_key_seed: &str,
+) -> Result<()> {
+    let source = match (old_db_key, old_device_key_seed) {
+        (Some(key), _) => DbKeySource::Hex(key.to_string()),
+        (None, Some(seed)) => DbKeySource::Seed(seed.to_string()),
+        (None, None) => match crate::crypto::find_device_seed(db_path, None)? {
+            Some(found) => {
+                eprintln!("current database key derived from the {}", found.source);
+                DbKeySource::Seed(found.seed)
+            }
+            None => DbKeySource::None,
+        },
+    };
+    rekey_database(db_path, &source, new_db_key_seed)?;
+    println!(
+        "Re-keyed {} under the key derived from the new independent secret.",
+        db_path
+    );
+    println!(
+        "Next: start every process that opens this database with SECURACV_DB_KEY_SEED set to \
+         that secret. Verifiers keep taking the derived key from `break_glass db-key` as \
+         --db-key; the signing seed is unchanged."
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_rotate_identity(
+    db_path: &str,
+    ruleset_id: &str,
+    device_key_seed: Option<&str>,
+    generate: bool,
+    new_seed: Option<&str>,
+    seed_file: Option<&str>,
+    rekey_db_to: Option<&str>,
+) -> Result<()> {
+    use crate::crypto;
+    use std::path::PathBuf;
+
+    let default_seed_path = crypto::device_key_path_for_db(db_path).ok();
+
+    // The retiring identity: the flag / DEVICE_KEY_SEED, else --seed-file,
+    // else the seed file beside the database. Never generated — a rotation
+    // needs the key that signs today.
+    let current: zeroize::Zeroizing<String> =
+        match device_key_seed.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(seed) => zeroize::Zeroizing::new(seed.to_string()),
+            None => {
+                let from_file = match seed_file {
+                    Some(path) => crypto::read_device_seed_file(std::path::Path::new(path))?,
+                    None => crypto::find_device_seed(db_path, None)?.map(|found| found.seed),
+                };
+                zeroize::Zeroizing::new(from_file.ok_or_else(|| {
+                    anyhow!(
+                        "no current device key seed: pass --device-key-seed (or DEVICE_KEY_SEED), \
+                     or keep the seed file at {}",
+                        seed_file
+                            .map(str::to_string)
+                            .unwrap_or_else(|| default_seed_path
+                                .as_ref()
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_else(|| "<db>.ed25519.seed".to_string()))
+                    )
+                })?)
+            }
+        };
+    if !std::path::Path::new(db_path).is_file() {
+        return Err(anyhow!(
+            "no kernel database at {} — a rotation needs an existing log (opening a fresh one \
+             would provision it under the retiring seed)",
+            db_path
+        ));
+    }
+
+    // The successor, validated the way the kernel validates a seed (placeholder
+    // and length rules) before anything is written — including a re-key.
+    let successor = zeroize::Zeroizing::new(if generate {
+        crypto::generate_device_seed()
+    } else {
+        new_seed
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow!("pass --generate or --new-seed"))?
+            .to_string()
+    });
+    let successor_public = crate::signing_key_from_seed(&successor)
+        .map_err(|err| anyhow!("successor seed rejected: {err}"))?
+        .verifying_key();
+    if successor_public == crate::signing_key_from_seed(&current)?.verifying_key() {
+        return Err(anyhow!(
+            "the successor seed derives the current device key — nothing to rotate"
+        ));
+    }
+
+    // Storage prerequisite (docs/db_key_rotation.md): the database key must not
+    // follow the signing key, or the rotated identity could not open the log.
+    // The kernel is opened with the secret passed explicitly (never by
+    // rewriting this process's environment).
+    let env_db_secret = crate::db_key_seed_from_env();
+    if env_db_secret.is_none() && rekey_db_to.is_none() {
+        return Err(anyhow!(
+            "the database key is still derived from the signing key (SECURACV_DB_KEY_SEED is \
+             unset), so a rotated identity could not open it. Run `break_glass rekey-db` and \
+             start every process with SECURACV_DB_KEY_SEED set — or pass --rekey-db-to <secret> \
+             to do that step now (docs/db_key_rotation.md)"
+        ));
+    }
+    let cfg = kernel_config(db_path, ruleset_id, &current);
+
+    // Preflight: the current seed must open the log (a retired seed is refused
+    // here, before a re-key or a staged file can happen).
+    drop(Kernel::open_with_db_key_seed(
+        &cfg,
+        env_db_secret.as_ref().map(|s| s.as_str()),
+    )?);
+
+    let db_secret: zeroize::Zeroizing<String> = match rekey_db_to {
+        Some(secret) => {
+            rekey_database(db_path, &DbKeySource::Seed(current.to_string()), secret)?;
+            eprintln!(
+                "database re-keyed under the independent secret; start every process with \
+                 SECURACV_DB_KEY_SEED set to it"
+            );
+            zeroize::Zeroizing::new(secret.trim().to_string())
+        }
+        None => env_db_secret.expect("checked above"),
+    };
+
+    // Every seed file that must follow the identity: --seed-file, and the seed
+    // file beside the database whenever one exists (witnessd reads it and
+    // refuses a DEVICE_KEY_SEED that disagrees with it). --generate always
+    // writes one, since the successor exists nowhere else.
+    let mut targets: Vec<PathBuf> = Vec::new();
+    if let Some(path) = seed_file {
+        targets.push(PathBuf::from(path));
+    }
+    if let Some(default) = &default_seed_path {
+        if (default.exists() || (generate && targets.is_empty())) && !targets.contains(default) {
+            targets.push(default.clone());
+        }
+    }
+
+    // Stage the successor on disk BEFORE the rotation commits: after the commit
+    // the retiring seed can no longer open the log, so the new seed must
+    // already be durable. Each staged file is a fresh 0600 `<file>.new` beside
+    // the live one, which stays untouched until the rename below.
+    let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let discard = |staged: &[(PathBuf, PathBuf)]| {
+        for (staged_path, _) in staged {
+            let _ = std::fs::remove_file(staged_path);
+        }
+    };
+    for target in &targets {
+        match crypto::stage_seed_file(target, &successor) {
+            Ok(staged_path) => staged.push((staged_path, target.clone())),
+            Err(err) => {
+                discard(&staged);
+                return Err(err);
+            }
+        }
+    }
+
+    let mut kernel = match Kernel::open_with_db_key_seed(&cfg, Some(db_secret.as_str())) {
+        Ok(kernel) => kernel,
+        Err(err) => {
+            // Nothing was written to the log: the staged successor is not an
+            // identity anything expects, so it is safe to discard.
+            discard(&staged);
+            return Err(err);
+        }
+    };
+    let retiring = kernel.device_verifying_key();
+    if let Err(err) = kernel.rotate_device_identity(&successor) {
+        // The rotation may have written part of its record before failing, so
+        // the staged successor is KEPT rather than guessed about.
+        let kept: Vec<String> = staged
+            .iter()
+            .map(|(staged_path, _)| staged_path.display().to_string())
+            .collect();
+        if kept.is_empty() {
+            return Err(err);
+        }
+        return Err(anyhow!(
+            "device key rotation failed: {err}. The staged successor seed was kept at {}: if \
+             the log still opens with the current seed the rotation did not take effect and \
+             the staged file can be removed; if it does not, move the staged file over the \
+             live one",
+            kept.join(", ")
+        ));
+    }
+    drop(kernel);
+
+    for (staged_path, target) in &staged {
+        crypto::commit_seed_file(staged_path, target).map_err(|err| {
+            anyhow!(
+                "the identity rotated but the seed file could not be replaced: {}. The \
+                 successor seed is in {} — move it over {} by hand before starting the kernel; \
+                 the retiring seed can no longer open the log",
+                err,
+                staged_path.display(),
+                target.display()
+            )
+        })?;
+    }
+
+    // Prove the successor reopens the log, and read the epoch back from the
+    // genesis-anchored lineage (which also proves the new row chains).
+    let reopened = Kernel::open_with_db_key_seed(
+        &kernel_config(db_path, ruleset_id, &successor),
+        Some(db_secret.as_str()),
+    )
+    .map_err(|err| anyhow!("post-rotation reopen with the successor seed failed: {err}"))?;
+    let active = reopened.device_verifying_key();
+    let epoch = crate::reconstruct_device_key_lineage(&reopened.conn)?
+        .len()
+        .saturating_sub(1);
+
+    println!("Rotated device identity (lineage epoch {})", epoch);
+    println!(
+        "  retiring public key: {}",
+        hex::encode(retiring.to_bytes())
+    );
+    println!("  current public key:  {}", hex::encode(active.to_bytes()));
+    if targets.is_empty() {
+        println!("  seed file: none — set the new seed as DEVICE_KEY_SEED where the kernel runs");
+    }
+    for target in &targets {
+        println!("  seed file: {} (replaced, mode 0600)", target.display());
+    }
+    println!(
+        "Next: restart every process that opens {}. Where DEVICE_KEY_SEED is exported, update \
+         it (or unset it so the seed file is used) — a retired seed cannot reopen the log. \
+         Verifiers pinned to the genesis key keep verifying across the rotation; \
+         `log_verify --lineage` shows the new epoch. Post-quantum (pqc-signatures) keys are \
+         not rotated.",
+        db_path
+    );
     Ok(())
 }
 

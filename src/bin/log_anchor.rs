@@ -191,8 +191,18 @@ enum OpenMode {
 
 fn open(args: &Args, mode: OpenMode) -> Result<Connection> {
     // SQLCipher key: explicit --db-key wins; otherwise derive it from the
-    // device key seed exactly as the kernel does (same logic as log_verify).
-    let db_key: Option<String> = match (&args.db_key, &args.device_key_seed) {
+    // device key seed exactly as the kernel does (same logic as log_verify);
+    // with neither flag, the seed file beside the database is tried
+    // (database key only).
+    let seed_for_db_key: Option<String> = match (&args.db_key, &args.device_key_seed) {
+        (Some(_), _) => None,
+        (None, Some(seed)) => Some(seed.clone()),
+        (None, None) => witness_kernel::crypto::find_device_seed(&args.db, None)?.map(|found| {
+            eprintln!("log_anchor: database key from the {}", found.source);
+            found.seed
+        }),
+    };
+    let db_key: Option<String> = match (&args.db_key, seed_for_db_key.as_deref()) {
         (Some(key), _) => Some(key.clone()),
         (None, Some(seed)) => {
             let signing_key = witness_kernel::signing_key_from_seed(seed)?;

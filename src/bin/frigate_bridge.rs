@@ -255,9 +255,16 @@ fn main() -> Result<()> {
     );
     log::info!("  Labels: {}", allowed_labels.join(", "));
 
-    // Open kernel
-    let device_key_seed =
-        std::env::var("DEVICE_KEY_SEED").map_err(|_| anyhow!("DEVICE_KEY_SEED must be set"))?;
+    // Open kernel. The seed comes from DEVICE_KEY_SEED, else the seed file
+    // witnessd keeps beside the database, else a fresh one is generated there
+    // (never logged — only its source is).
+    let device_key_seed = {
+        let env_seed = std::env::var("DEVICE_KEY_SEED").ok();
+        let resolved =
+            witness_kernel::crypto::resolve_device_seed(&args.db_path, env_seed.as_deref())?;
+        log::info!("device key seed: {}", resolved.source);
+        resolved.seed
+    };
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(&args.ruleset_id);
     let cfg = KernelConfig {
         db_path: args.db_path.clone(),

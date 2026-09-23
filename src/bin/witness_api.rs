@@ -5,7 +5,7 @@
 //! 2. Serves the Event API
 //! 3. Does NOT ingest RTSP streams
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use std::sync::mpsc;
 
 use witness_kernel::{
@@ -27,9 +27,16 @@ fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let kernel_version = env!("CARGO_PKG_VERSION");
-    let device_key_seed =
-        std::env::var("DEVICE_KEY_SEED").map_err(|_| anyhow!("DEVICE_KEY_SEED must be set"))?;
     let config = witness_kernel::config::WitnessApiConfig::load()?;
+    // DEVICE_KEY_SEED, else the seed file witnessd keeps beside the database,
+    // else a fresh one generated there. Only the source is logged.
+    let device_key_seed = {
+        let env_seed = std::env::var("DEVICE_KEY_SEED").ok();
+        let resolved =
+            witness_kernel::crypto::resolve_device_seed(&config.db_path, env_seed.as_deref())?;
+        log::info!("device key seed: {}", resolved.source);
+        resolved.seed
+    };
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(&config.ruleset_id);
 
     let cfg = KernelConfig {

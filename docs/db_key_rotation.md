@@ -26,10 +26,67 @@ When `SECURACV_DB_KEY_SEED` is set (non-empty), the kernel derives the DB key fr
 signing key. The encrypted database now decrypts regardless of the signing key, which
 is the **storage-layer prerequisite** for rotating the device identity.
 
+## Where the device seed lives
+
+Every process that opens the kernel resolves the device seed the same way
+(`crypto::resolve_device_seed`):
+
+1. `DEVICE_KEY_SEED` (or the binary's `--device-key-seed` flag), else
+2. the seed file beside the database — `<db>.ed25519.seed`, e.g.
+   `witness.ed25519.seed` for `witness.db` — else
+3. for the write-side daemons only (`witnessd`, `witness_api`, `frigate_bridge`,
+   `adapter_host`, `grove_vision2_ingest`, `break_glass_serve`), a fresh `devkey:` seed
+   from the OS RNG, written to that file at mode 0600.
+
+An environment seed is written to the file when none exists yet, and a daemon refuses to
+start when the environment and the file disagree — two identities cannot share one log.
+Daemons log which source they used (`device key seed: seed file …`), never the value.
+The verifier and export CLIs (`log_verify`, `export_verify`, `log_anchor`,
+`court_export`, `export_events`) try the file when no seed flag is given but never create
+one; the four verifiers use it for the database key only — a file beside the log under
+audit is not an out-of-band identity anchor.
+
+On Unix the seed file must be private to its owner. A file with any group or other
+permission bit (after a `chmod 644`, or a copy made under a lax umask) is **refused**, and
+the error names the fix: `chmod 600 <file>`.
+
 ## Rotating the device signing identity
 
-Decoupling the DB key (above) removes the *storage* blocker. The device **signing**
-identity is rotated with [`Kernel::rotate_device_identity`], which keeps the entire
+Decoupling the DB key (above) removes the *storage* blocker. The operator command is
+`break_glass rotate-identity`; stop every process that opens the database first:
+
+```bash
+export SECURACV_DB_KEY_SEED="<the independent DB secret>"   # prerequisite, see below
+break_glass rotate-identity --db witness.db --generate
+```
+
+What it does, in order:
+
+1. Reads the **retiring** seed — `--device-key-seed` / `DEVICE_KEY_SEED`, else
+   `--seed-file`, else `<db>.ed25519.seed` — and opens the log with it. A retired seed is
+   refused here, before anything changes.
+2. Mints the successor from the OS RNG (`--generate`), or takes `--new-seed <seed>` /
+   `NEW_DEVICE_KEY_SEED`, and validates it the way the kernel validates any seed.
+3. **Stages** the successor as `<file>.new` (fresh, mode 0600, fsynced) beside every seed
+   file that must follow the identity: `--seed-file`, and `<db>.ed25519.seed` whenever it
+   exists (`--generate` always writes that one). The successor is durable on disk before
+   the retiring seed stops opening the log.
+4. Calls [`Kernel::rotate_device_identity`], renames each staged file over the live one,
+   and reopens the log under the successor before reporting success.
+5. Prints the retiring and current public keys and the lineage epoch — never a seed.
+
+With `--new-seed` and no seed file anywhere, none is written: set the new value as
+`DEVICE_KEY_SEED` where the kernel runs. A deployment that exports `DEVICE_KEY_SEED` from its
+own key file (the HA add-on, the Docker sidecar) points `--seed-file` at that file. Restart
+every process afterwards. A `<file>.new` left by an interrupted ceremony blocks the next one
+until it is resolved: if the log still opens with the current seed, the staged seed was never
+activated and can be removed; otherwise move it over the live file.
+
+`--rekey-db-to <secret>` (or `SECURACV_NEW_DB_KEY_SEED`) performs the DB-key prerequisite in
+the same ceremony when `SECURACV_DB_KEY_SEED` is not set yet: exactly what `rekey-db` does
+([below](#rotating-the-db-key-itself)), after the preflight open and before the rotation.
+
+The library call underneath is [`Kernel::rotate_device_identity`], which keeps the entire
 hash-chained log verifiable across the change:
 
 ```rust
@@ -76,8 +133,9 @@ verified, so a tampered checkpoint key is rejected rather than trusted.
 > **Prerequisite — decouple the DB key first.** Because the default DB key is derived
 > from the signing key, you must set `SECURACV_DB_KEY_SEED` (independent secret) *before*
 > rotating; otherwise the rotated signing key would derive a different DB key and the
-> encrypted database would no longer open. Reopening a rotated log with a **retired** seed
-> is rejected with `device public key mismatch`.
+> encrypted database would no longer open. `rotate-identity` refuses to start without it
+> unless `--rekey-db-to` is given. Reopening a rotated log with a **retired** seed is
+> rejected with `device public key mismatch`.
 
 > **Scope / limitations.** Rotation applies to the **sealed event log + checkpoints**,
 > and remains verifiable across retention **pruning**: the key lineage survives pruning in
@@ -91,15 +149,24 @@ verified, so a tampered checkpoint key is rejected rather than trusted.
 > `SECURACV_DB_KEY`, which the verifier CLIs accept as the already-derived 64-char
 > hex key directly.
 
-> `SECURACV_DB_KEY_SEED` is a *seed* the key is derived from. It is different from
-> `SECURACV_DB_KEY`, which the verifier CLIs accept as the already-derived 64-char
-> hex key directly.
-
 ## Rotating the DB key itself
 
 To change the database encryption key (e.g. migrating an existing DB from a
 signing-key-derived key to an independent secret, or rotating the independent
-secret), use `rekey_database_file()` **while the database is not open**:
+secret), stop every process that opens the database and run `break_glass rekey-db`:
+
+```bash
+break_glass rekey-db --db witness.db --new-db-key-seed "<new independent secret>"
+```
+
+The current key is `--old-db-key <hex>` (as `break_glass db-key` prints it), else derived
+from `--old-device-key-seed` / `DEVICE_KEY_SEED` — honoring `SECURACV_DB_KEY_SEED` when it is
+set, so rotating an already-independent secret works the same way — else from the seed file
+beside the database. The new secret can come from `SECURACV_NEW_DB_KEY_SEED` instead of the
+flag, which keeps it out of shell history. Re-keying to the key the database already has is
+refused as a no-op; no key material is printed.
+
+The command wraps `rekey_database_file()`, which must run **while the database is not open**:
 
 ```rust
 use witness_kernel::{derive_db_encryption_key, derive_db_encryption_key_from_secret,
@@ -120,11 +187,12 @@ opens only with the new key.
 Typical migration to a decoupled key:
 
 1. Stop all processes using the database.
-2. `rekey_database_file(db, old_signing_derived_key, new_secret_derived_key)`.
+2. `break_glass rekey-db --db <db> --new-db-key-seed <secret>` (the library call is
+   `rekey_database_file(db, old_signing_derived_key, new_secret_derived_key)`).
 3. Start the kernel with `SECURACV_DB_KEY_SEED` set to the new secret.
 
 After this the DB key is independent of the signing key — the prerequisite for rotating
-`DEVICE_KEY_SEED` itself via [`Kernel::rotate_device_identity`] (see
+`DEVICE_KEY_SEED` itself with `break_glass rotate-identity` (see
 [Rotating the device signing identity](#rotating-the-device-signing-identity) above).
 
 ## Verifier CLIs
@@ -134,4 +202,7 @@ After this the DB key is independent of the signing key — the prerequisite for
 key directly via `--db-key` / `SECURACV_DB_KEY`. `break_glass db-key
 --device-key-seed …` prints the key the kernel derives (honoring
 `SECURACV_DB_KEY_SEED` when set), which is how an operator hands a verifier
-the database key without the signing seed.
+the database key without the signing seed. Run on the device itself with
+neither `--db-key` nor a seed, the first four derive the database key from the
+seed file beside the database (never the verifying key: that still comes from
+`--public-key` / `--public-key-file`, or the database, labeled self-consistent).

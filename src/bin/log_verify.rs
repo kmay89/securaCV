@@ -119,8 +119,24 @@ fn main() -> Result<()> {
     let ui = ui::Ui::from_args(Some(&args.ui), is_tty, !stdout_is_tty);
 
     // SQLCipher key: explicit --db-key wins; otherwise derive it from the
-    // device key seed exactly as the kernel/bridges do.
-    let db_key: Option<String> = match (&args.db_key, &args.device_key_seed) {
+    // device key seed exactly as the kernel/bridges do; with neither flag,
+    // the seed file witnessd keeps beside the database is tried. A file
+    // beside the database under audit is not an out-of-band identity anchor
+    // (and after a rotation it holds the CURRENT key, not genesis), so it
+    // only ever supplies the database key — the verifying key still comes
+    // from --public-key / --public-key-file or the database itself.
+    let seed_for_db_key: Option<String> = match (&args.db_key, &args.device_key_seed) {
+        (Some(_), _) => None,
+        (None, Some(seed)) => Some(seed.clone()),
+        (None, None) => witness_kernel::crypto::find_device_seed(&args.db, None)?.map(|found| {
+            eprintln!(
+                "log_verify: database key from the {} (it does not anchor identity)",
+                found.source
+            );
+            found.seed
+        }),
+    };
+    let db_key: Option<String> = match (&args.db_key, seed_for_db_key.as_deref()) {
         (Some(key), _) => Some(key.clone()),
         (None, Some(seed)) => {
             let signing_key = witness_kernel::signing_key_from_seed(seed)?;

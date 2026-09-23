@@ -116,8 +116,11 @@ Source of truth: `spec/invariants.md`. A re-implementation that violates any inv
   required at runtime and MUST reject the MVP placeholder seed (`src/lib.rs:815, 2016`;
   test `device_key_seed_rejects_mvp_placeholder` at `src/lib.rs:2948`).
 - **REQ-KRNL-003 (Implemented):** Persistence is **SQLCipher** (encrypted SQLite). The DB
-  encryption key is currently derived from the device signing key via `derive_db_encryption_key`
-  (see flag report — coupling blocks key rotation; REQ-KRNL-072).
+  encryption key is derived from the device signing key via `derive_db_encryption_key` by default,
+  or from an independent secret when `SECURACV_DB_KEY_SEED` is set (`resolve_db_encryption_key`) —
+  the decoupling that lets the signing identity rotate. `break_glass rekey-db` (over
+  `rekey_database_file`) moves an existing database between keys offline
+  (`docs/db_key_rotation.md`; REQ-KRNL-072).
 - **REQ-KRNL-004 (Implemented):** `log_verify` (bin) validates the hash chain **and** Ed25519
   signatures and detects tampering; `tamper_demo` (bin) demonstrates a modified log failing
   verification. Acceptance: `cargo run --bin demo` then
@@ -228,9 +231,15 @@ Source of truth: `spec/invariants.md`. A re-implementation that violates any inv
   features: `pqc-signatures` (ML-DSA-44), `pqc-vault` (ML-KEM), `pqc-tls`. A `SignatureSet`/
   `SignatureMode` abstraction carries scheme IDs (`ED25519_SCHEME_ID`, `PQ_SCHEME_MLDSA44`). Doc:
   `docs/pqc_mode.md`. (Not surfaced in `v1-roadmap.md` — see flag report.)
-- **REQ-KRNL-072 (Partial — known gap):** Device key is **seed-derived from config**, not
-  hardware-backed or rotated; `derive_db_encryption_key` couples the DB key to the signing key.
-  Rotation is blocked until these are decoupled.
+- **REQ-KRNL-072 (Partial — hardware-backed keys only):** The device key is **seed-derived**: the
+  seed is generated from the OS RNG on first start and kept at mode 0600 in `<db>.ed25519.seed`
+  (`crypto::resolve_device_seed` — `DEVICE_KEY_SEED`, else that file, else generate; a seed file
+  any other user can read is refused), or supplied by the deployment. It **rotates**:
+  `Kernel::rotate_device_identity` records a retiring-key-signed `KeyRotation` and a
+  genesis-anchored key lineage so the log verifies across the boundary, and `break_glass
+  rotate-identity` / `break_glass rekey-db` are the operator commands (the DB key is decoupled via
+  `SECURACV_DB_KEY_SEED`, REQ-KRNL-003). **Open:** hardware-backed keys (TPM / Secure Element /
+  eFuse), which need hardware to validate.
 
 #### A.9 CLI binaries (must all exist and run)
 - **REQ-KRNL-080 (Implemented):** Binaries in `src/bin/`: `witnessd` (daemon), `log_verify`,

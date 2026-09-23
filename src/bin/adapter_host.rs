@@ -504,8 +504,15 @@ fn main() -> Result<()> {
         ));
     }
 
-    let device_key_seed =
-        std::env::var("DEVICE_KEY_SEED").map_err(|_| anyhow!("DEVICE_KEY_SEED must be set"))?;
+    // DEVICE_KEY_SEED, else the seed file witnessd keeps beside the database,
+    // else a fresh one generated there. Only the source is logged.
+    let device_key_seed = {
+        let env_seed = std::env::var("DEVICE_KEY_SEED").ok();
+        let resolved =
+            witness_kernel::crypto::resolve_device_seed(&file.db_path, env_seed.as_deref())?;
+        log::info!("device key seed: {}", resolved.source);
+        resolved.seed
+    };
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(&file.ruleset_id);
     let kernel_cfg = KernelConfig {
         db_path: file.db_path.clone(),
