@@ -1469,7 +1469,11 @@ static const char* kProbePaths[] = {
 // (GET /api/provisioning-receipt, F20 gap #11) + 6 mesh endpoints (PR-8)
 // when the mesh feature is compiled in. Each registered httpd_uri_t needs
 // a slot; register_route() names any that does not get one. The same table
-// goes on whichever server is primary (TLS or plain), so one budget.
+// goes on whichever server is primary (TLS or plain), so one budget — and
+// every registration in registerHttpHandlers uses its `server` parameter,
+// never m_http_server (nullptr there on FEATURE_HTTPS builds).
+// firmware/canary/scripts/check_route_security.py enforces both: it counts
+// every #if branch against these two numbers and fails a member handle.
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
 static const uint16_t kRouteTableSlots = 60;
 #else
