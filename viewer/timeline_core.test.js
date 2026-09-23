@@ -463,6 +463,29 @@ describe('cross-language parity fixture', () => {
     });
   }
 
+  it('reproduces the sealed-payload normalization the Wall ports', () => {
+    // The Swift twin (TimelineScrub.records(fromSealedPayloads:)) reads the
+    // kernel's /api/sealed-log payloads; this is the same fold through
+    // normalizeEnvelope, over the same inputs, so the two cannot drift.
+    const n = fx.normalization;
+    assert.ok(Array.isArray(n.inputs) && n.inputs.length > 0, 'fixture must carry normalization inputs');
+    assert.equal(typeof n.expected.unparsed, 'number', 'fixture must carry an unparsed count');
+    const envelope = { ledgers: { sealed_events: { entries: n.inputs.map((p) => ({ payload_json: p })) } } };
+    const { records, unparsed } = T.normalizeEnvelope(envelope);
+    assert.equal(unparsed, n.expected.unparsed);
+    assert.deepEqual(records.map((r) => ({
+      t0: r.t0, size: r.size, kind: r.kind, label: r.label, family: r.family,
+      zone: r.zone, conf: r.conf, details: r.details,
+    })), n.expected.records);
+    // The kernel's own three payloads lead the inputs, and every one of them
+    // is drawn: the sealed log the Wall verifies DOES carry time buckets.
+    const kernel = load('tests/fixtures/envelope/sealed_log_document_vector.json');
+    assert.deepEqual(n.inputs.slice(0, kernel.entries.length), kernel.entries.map((e) => e.payload));
+    for (const r of n.expected.records.slice(0, kernel.entries.length)) {
+      assert.ok(Number.isInteger(r.t0) && r.size === 600, 'a kernel payload carries its bucket');
+    }
+  });
+
   it('reproduces the pinned formatting vectors', () => {
     const f = fx.formatting;
     for (const [raw, want] of Object.entries(f.humanize)) assert.equal(T.humanizeWords(raw), want, raw);

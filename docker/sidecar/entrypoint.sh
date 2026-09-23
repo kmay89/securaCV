@@ -3,13 +3,15 @@
 #
 # Supervises the three daemons that turn Frigate MQTT events into a sealed,
 # privacy-preserving witness log:
-#   witness_api        — event API + capability token (loopback :8799)
+#   witness_api        — event API + capability token (:8799, loopback by default)
 #   frigate_bridge     — Frigate MQTT events → sealed log
 #   event_mqtt_bridge  — sealed log → HA MQTT Discovery sensors (optional);
 #                        also keeps the fleet roll-call (/data/fleet_peers.json,
 #                        the Canaries it hears on the broker) that witness_api's
 #                        GET /api/fleet serves. No witnessd runs here — Frigate
-#                        owns the cameras — and the API stays on loopback.
+#                        owns the cameras — and the API stays on loopback
+#                        unless SECURACV_API_BIND=all opts it onto the LAN
+#                        for the Witness Wall.
 #
 # Environment contract (only FRIGATE_MQTT_HOST is required):
 #   FRIGATE_MQTT_HOST       broker hostname Frigate publishes to   (required*)
@@ -33,6 +35,10 @@
 #   MQTT_TOPIC_PREFIX       state topic prefix                     (witness)
 #   POLL_INTERVAL           publisher poll seconds                 (30)
 #   BROKER_WAIT_SECS        max seconds to wait for the broker     (30)
+#   SECURACV_API_BIND       loopback|all — all makes /api/fleet     (loopback)
+#                           reachable on the LAN for the Witness Wall
+#                           (binds 0.0.0.0:8799 in the container; you still
+#                           publish the port yourself, the image EXPOSEs none)
 #   DEVICE_KEY_SEED         64-hex signing seed; if unset, read from
 #                           /run/secrets/device_key_seed, then /data/device_key,
 #                           else auto-generated and persisted (0600)
@@ -40,6 +46,10 @@
 # Subcommands:
 #   entrypoint.sh           run the sidecar (default)
 #   entrypoint.sh doctor    diagnose broker/Frigate/sealed-log health
+#   entrypoint.sh mint-viewer-token --label <s> [--base-url <url>]
+#   entrypoint.sh revoke-viewer-token <id>
+#                           pair (or unpair) a Witness Wall for verification;
+#                           run inside the running container, see viewer_token
 set -euo pipefail
 
 DATA_DIR="${DATA_DIR:-/data}"
@@ -124,6 +134,42 @@ resolve_device_key_seed() {
     echo "$seed"
 }
 
+# Where witness_api listens inside the container, from SECURACV_API_BIND.
+# Sets API_BIND_MODE and API_ADDR for the callers (run's config block, the
+# doctor's report) and, in `all` mode only, exports the kernel's cleartext
+# acknowledgment: witness_api refuses a non-loopback bind without
+# WITNESS_API_ALLOW_INSECURE=1 (src/api/mod.rs), so the two must flip
+# together — a bind alone would make the container refuse to start. Not a
+# $(...) helper on purpose: the export has to land in this shell.
+#
+#   loopback (default)  127.0.0.1:8799 — reachable from this container only,
+#                       as the HEALTHCHECK and `docker compose exec` use it.
+#   all                 0.0.0.0:8799 — the add-on's posture (run.sh binds all
+#                       interfaces with the host port disabled): every data
+#                       endpoint still needs the rotating capability token,
+#                       and the one open read, GET /api/fleet (names, online
+#                       state, coarse room words; no events, no keys), is
+#                       what the Apple TV Witness Wall polls. Nothing is
+#                       published until you map the port in compose.
+configure_api_bind() {
+    API_BIND_MODE="${SECURACV_API_BIND:-loopback}"
+    case "$API_BIND_MODE" in
+        loopback)
+            API_ADDR="127.0.0.1:8799"
+            ;;
+        all)
+            API_ADDR="0.0.0.0:8799"
+            export WITNESS_API_ALLOW_INSECURE=1
+            ;;
+        *)
+            die "SECURACV_API_BIND='$API_BIND_MODE' is not a bind mode.
+  Use 'loopback' (the default: the API answers inside this container only)
+  or 'all' (0.0.0.0:8799 in the container, for the Witness Wall — then
+  publish the port yourself with  ports: - \"8799:8799\"  in compose)."
+            ;;
+    esac
+}
+
 tcp_check() {
     local host="$1" port="$2"
     (exec 3<>"/dev/tcp/${host}/${port}") 2>/dev/null
@@ -188,9 +234,21 @@ doctor() {
     prefix="${FRIGATE_TOPIC_PREFIX:-frigate}"
     topic="${FRIGATE_MQTT_TOPIC:-${prefix}/events}"
     local listen_secs="${DOCTOR_LISTEN_SECS:-30}"
+    configure_api_bind
 
     echo "SecuraCV sidecar doctor"
     echo "  broker: $addr   frigate topic: $topic"
+    echo "  api bind: $API_BIND_MODE ($API_ADDR inside the container)"
+    if [ "$API_BIND_MODE" = "all" ]; then
+        # The Wall adds only http:// to a bare host and would otherwise poll
+        # port 80, and its own search looks at canary.local, not at a docker
+        # host — so the address is typed, and typed with the port.
+        echo "  witness wall: publish the port (ports: - \"8799:8799\" in compose), then"
+        echo "                type  http://<docker-host-ip>:8799  into the Wall — with the port"
+    else
+        echo "  witness wall: unreachable (loopback). SECURACV_API_BIND=all plus a published"
+        echo "                8799 opens GET /api/fleet to the LAN — docs/frigate_integration.md"
+    fi
     echo
 
     # 1) Broker TCP reachability
@@ -286,6 +344,33 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# viewer tokens — pair a Witness Wall for verification
+# ---------------------------------------------------------------------------
+
+# viewer_token SUBCOMMAND [ARGS...] — witness_api's mint-viewer-token /
+# revoke-viewer-token, run against the config the running sidecar rendered
+# and with its device key, so a receipt pins the key the sealed log is
+# signed with. Run it inside the running container:
+#   docker compose exec securacv entrypoint.sh mint-viewer-token \
+#       --label "living room tv" --base-url http://<docker-host-ip>:8799
+# stdout is the pairing receipt, one JSON line and the token's only copy;
+# the kernel keeps its sha256 in /data/viewer_tokens.json (beside the
+# capability token, 0600) and reads that file per request, so a mint or a
+# revoke takes effect without a restart. Never generates a key: a receipt
+# that pinned a fresh one would pin a key nothing signs with.
+viewer_token() {
+    [ -s "$CONFIG_FILE" ] \
+        || die "no $CONFIG_FILE yet: start the sidecar once (docker compose up -d), then run this inside it (docker compose exec securacv entrypoint.sh $1 ...)"
+    if [ -z "${DEVICE_KEY_SEED:-}" ] && [ ! -s /run/secrets/device_key_seed ] && [ ! -s "$KEY_FILE" ]; then
+        die "no device key (DEVICE_KEY_SEED, /run/secrets/device_key_seed or $KEY_FILE): a receipt must pin the key the running sidecar signs with"
+    fi
+    DEVICE_KEY_SEED=$(resolve_device_key_seed)
+    export DEVICE_KEY_SEED
+    export WITNESS_CONFIG="$CONFIG_FILE"
+    exec witness_api "$@"
+}
+
+# ---------------------------------------------------------------------------
 # run — supervise the three daemons
 # ---------------------------------------------------------------------------
 
@@ -313,7 +398,14 @@ run() {
         fleet_peers_api=", \"fleet_peers_path\": \"$FLEET_PEERS_FILE\""
     fi
 
-    log "broker=$addr topic=$topic retention=${retention_days}d bucket=${bucket_min}m publish=$publish"
+    # Resolved before the broker wait so a mistyped mode fails in the first
+    # line of the log, not after thirty seconds of waiting for mosquitto.
+    configure_api_bind
+
+    log "broker=$addr topic=$topic retention=${retention_days}d bucket=${bucket_min}m publish=$publish api_bind=$API_BIND_MODE"
+    if [ "$API_BIND_MODE" = "all" ]; then
+        log "SECURACV_API_BIND=all: witness_api binds $API_ADDR, so GET /api/fleet (names, online state, coarse room words; no events, no keys) reads without a token to anything that reaches a published 8799 — every other endpoint still needs the rotating capability token. The image exposes no port: map it yourself (ports: - \"8799:8799\") and type http://<docker-host-ip>:8799 into the Witness Wall."
+    fi
 
     # The broker may still be starting: compose `depends_on` (and the e2e
     # harness) only order container startup, they don't wait for mosquitto
@@ -335,7 +427,7 @@ run() {
   "db_path": "$DB_PATH",
   "ruleset_id": "ruleset:frigate_v1",
   "api": {
-    "addr": "127.0.0.1:8799",
+    "addr": "$API_ADDR",
     "token_path": "$TOKEN_FILE"$fleet_peers_api
   },
   "retention": {
@@ -416,7 +508,7 @@ EOF
         event_mqtt_bridge "${pub_args[@]}" &
         pids+=($!)
         log "event_mqtt_bridge started (PID ${pids[-1]})"
-        log "fleet roll-call: $FLEET_PEERS_FILE (GET /api/fleet on the loopback API lists the Canaries the bridge hears)"
+        log "fleet roll-call: $FLEET_PEERS_FILE (GET /api/fleet on $API_ADDR lists the Canaries the bridge hears)"
     else
         log "HA Discovery publishing disabled (SECURACV_PUBLISH=$publish); no bridge listens for Canaries, so GET /api/fleet lists this kernel only (an earlier roll-call file is kept for its pins, not served)"
     fi
@@ -433,5 +525,6 @@ EOF
 case "${1:-run}" in
     doctor) doctor ;;
     run) run ;;
+    mint-viewer-token|revoke-viewer-token) viewer_token "$@" ;;
     *) exec "$@" ;;
 esac

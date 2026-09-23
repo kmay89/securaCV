@@ -174,6 +174,7 @@ fn main() -> Result<()> {
         addr: config.api_addr.clone(),
         token_path: config.api_token_path.clone(),
         fleet_peers_path: config.api_fleet_peers_path.clone(),
+        viewer_token_path: config.api_viewer_token_path.clone(),
         rate_limit_per_minute: config.api_rate_limit_per_minute,
         // Explicit opt-in required to expose the plaintext API off-loopback.
         allow_insecure: std::env::var("WITNESS_API_ALLOW_INSECURE")
@@ -1615,6 +1616,7 @@ mod tests {
             api_addr: "127.0.0.1:0".to_string(),
             api_token_path: None,
             api_fleet_peers_path: None,
+            api_viewer_token_path: None,
             api_rate_limit_per_minute: witness_kernel::api::DEFAULT_API_RATE_LIMIT_PER_MINUTE,
             ingest: IngestSettings {
                 backend: IngestBackend::Rtsp,

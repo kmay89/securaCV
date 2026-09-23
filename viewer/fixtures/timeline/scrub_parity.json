@@ -149,6 +149,155 @@
       }
     ]
   },
+  "normalization": {
+    "inputs": [
+      "{\"record_type\":\"event\",\"event_type\":\"BoundaryCrossingObjectLarge\",\"zone_id\":\"zone:a\",\"time_bucket\":{\"start_epoch_s\":1700000400,\"size_s\":600}}",
+      "{\"record_type\":\"event\",\"event_type\":\"BoundaryCrossingObjectLarge\",\"zone_id\":\"zone:b\",\"time_bucket\":{\"start_epoch_s\":1700001000,\"size_s\":600}}",
+      "{\"record_type\":\"heartbeat\",\"time_bucket\":{\"start_epoch_s\":1700001600,\"size_s\":600}}",
+      "{\"record_type\":\"failure\",\"failure_type\":\"StorageFull\",\"details\":\"disk at 98%\",\"time_bucket\":{\"start_epoch_s\":1750816800,\"size_s\":600}}",
+      "{\"failure_type\":\"sensor_disconnected\",\"time_bucket\":{\"start_epoch_s\":1750820400,\"size_s\":600}}",
+      "{\"event_type\":\"TamperDetected\",\"zone_id\":\"zone:gate\",\"confidence\":0.97,\"time_bucket\":{\"start_epoch_s\":1750824000,\"size_s\":600}}",
+      "{\"record_type\":\"event\",\"event_type\":\"SolarFlareDetected\",\"zone_id\":\"zone:roof\",\"time_bucket\":{\"start_epoch_s\":1750824000,\"size_s\":0}}",
+      "{\"record_type\":\"heartbeat\",\"time_bucket\":{\"start_epoch_s\":1750827600,\"size_s\":600}}",
+      "{\"record_type\":\"key_rotation\",\"time_bucket\":{\"start_epoch_s\":1750813200,\"size_s\":600}}",
+      "{\"record_type\":\"event\",\"event_type\":\"contact_state_change\",\"zone_id\":7,\"confidence\":\"high\",\"time_bucket\":{\"start_epoch_s\":1750813200,\"size_s\":300}}",
+      "{\"record_type\":\"event\",\"event_type\":7,\"time_bucket\":{\"start_epoch_s\":1750831200,\"size_s\":600}}",
+      "{\"record_type\":\"event\",\"time_bucket\":{\"start_epoch_s\":1750831200,\"size_s\":600}}",
+      "null",
+      "42",
+      "[1,2,3]",
+      "{\"record_type\":\"event\",\"event_type\":\"BoundaryCrossingObjectLarge\",\"time_bucket\":{\"start_epoch_s\":1e400,\"size_s\":600}}",
+      "not json at all",
+      "{\"record_type\":\"event\",\"event_type\":\"BoundaryCrossingObjectSmall\"}",
+      "{\"record_type\":42,\"time_bucket\":{\"start_epoch_s\":1750809600,\"size_s\":600}}",
+      "{\"record_type\":null,\"event_type\":\"TamperDetected\",\"time_bucket\":{\"start_epoch_s\":1750809600,\"size_s\":600}}"
+    ],
+    "expected": {
+      "unparsed": 8,
+      "records": [
+        {
+          "t0": 1700000400,
+          "size": 600,
+          "kind": "event",
+          "label": "Large object crossed boundary",
+          "family": "move",
+          "zone": "zone:a",
+          "conf": null,
+          "details": ""
+        },
+        {
+          "t0": 1700001000,
+          "size": 600,
+          "kind": "event",
+          "label": "Large object crossed boundary",
+          "family": "move",
+          "zone": "zone:b",
+          "conf": null,
+          "details": ""
+        },
+        {
+          "t0": 1700001600,
+          "size": 600,
+          "kind": "heartbeat",
+          "label": "Heartbeat",
+          "family": "other",
+          "zone": "",
+          "conf": null,
+          "details": ""
+        },
+        {
+          "t0": 1750813200,
+          "size": 600,
+          "kind": "system",
+          "label": "Key rotation",
+          "family": "other",
+          "zone": "",
+          "conf": null,
+          "details": ""
+        },
+        {
+          "t0": 1750813200,
+          "size": 300,
+          "kind": "event",
+          "label": "Contact state change",
+          "family": "touch",
+          "zone": "",
+          "conf": null,
+          "details": ""
+        },
+        {
+          "t0": 1750816800,
+          "size": 600,
+          "kind": "gap",
+          "label": "Storage full",
+          "family": "gap",
+          "zone": "",
+          "conf": null,
+          "details": "disk at 98%"
+        },
+        {
+          "t0": 1750820400,
+          "size": 600,
+          "kind": "gap",
+          "label": "Sensor disconnected",
+          "family": "gap",
+          "zone": "",
+          "conf": null,
+          "details": ""
+        },
+        {
+          "t0": 1750824000,
+          "size": 600,
+          "kind": "event",
+          "label": "Tamper detected",
+          "family": "tamper",
+          "zone": "zone:gate",
+          "conf": 0.97,
+          "details": ""
+        },
+        {
+          "t0": 1750824000,
+          "size": 600,
+          "kind": "event",
+          "label": "Solar flare detected",
+          "family": "other",
+          "zone": "zone:roof",
+          "conf": null,
+          "details": ""
+        },
+        {
+          "t0": 1750827600,
+          "size": 600,
+          "kind": "heartbeat",
+          "label": "Heartbeat",
+          "family": "other",
+          "zone": "",
+          "conf": null,
+          "details": ""
+        },
+        {
+          "t0": 1750831200,
+          "size": 600,
+          "kind": "event",
+          "label": "7",
+          "family": "other",
+          "zone": "",
+          "conf": null,
+          "details": ""
+        },
+        {
+          "t0": 1750831200,
+          "size": 600,
+          "kind": "event",
+          "label": "Undefined",
+          "family": "other",
+          "zone": "",
+          "conf": null,
+          "details": ""
+        }
+      ]
+    }
+  },
   "scenarios": [
     {
       "name": "ordinary-day",

@@ -114,6 +114,16 @@ targets:
       - path: ../../ios/Shared/CanaryMood.swift
       - path: ../../ios/Shared/CanaryActor.swift
       - path: ../../ios/Sources/SecuraCV/Model/CanaryMoodKeeper.swift
+      # THE SHAPE OF A DAY — the same timeline model the phone's Alerts ribbon
+      # and the offline evidence viewer draw (TimelineScrub, pinned to the
+      # viewer's timeline_core.js by viewer/fixtures/timeline/scrub_parity.json),
+      # with the two files it needs: the event vocabulary its labels come
+      # from, and the alert record its phone-side bridge reads. All three are
+      # Foundation-only. The Wall feeds it the sealed log it verified against
+      # its pinned key (WallModel.timeline) and nothing else.
+      - path: ../../ios/Shared/TimelineScrub.swift
+      - path: ../../ios/Shared/EventVocabulary.swift
+      - path: ../../ios/Shared/AlertRecord.swift
     dependencies:
       # XcodeGen embeds an extension dependency via an "Embed App Extensions"
       # phase — the Top Shelf provider ships INSIDE the app, and the existing

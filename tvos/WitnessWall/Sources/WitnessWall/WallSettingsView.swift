@@ -2,8 +2,10 @@
 //
 //  The same controls the Mac app's Witness Wall view offers, arranged the way
 //  tvOS arranges settings: which room this TV serves, how the wall dresses,
-//  what earns a banner, and where the fleet answers. Four sections, no more —
-//  everything else the Wall decides from the data, on purpose.
+//  what earns a banner, where the fleet answers, and — the one section the
+//  Mac view has no twin for — the pairing that lets this TV verify the hub's
+//  sealed record itself. Everything else the Wall decides from the data, on
+//  purpose; the pairing's decisions live in WallModel.pair / forgetPairing.
 //
 //  The header chips (WallView.stylePicker) stay: a click there cycles profile
 //  or skin without opening anything. This panel is where you SEE the choices —
@@ -25,6 +27,10 @@ struct WallSettingsView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var typedAddress = ""
+    /// The pasted pairing receipt, and the sentence the model answered with
+    /// when it could not pair (nil while there is nothing to say).
+    @State private var receiptText = ""
+    @State private var pairingProblem: String?
 
     var body: some View {
         NavigationStack {
@@ -90,6 +96,43 @@ struct WallSettingsView: View {
                     // but serve no fleet endpoint, and a promise that finds
                     // them would be false. A hub is how THOSE reach a wall.
                     Text("The Wall finds your Canaries by itself — a hub at canary.local, or any Canary that publishes a fleet report on your network. This field is only for a hub that lives somewhere else; typing one replaces the found set. Wherever it points, the Wall talks to your Canaries and nothing else — never a cloud of ours.")
+                }
+
+                Section {
+                    if let pairing = model.pairing {
+                        LabeledContent("Paired", value: "key \(pairing.keyPrefix)… · \(pairing.pairedAt.formatted(date: .abbreviated, time: .shortened))")
+                        if let tokenID = pairing.tokenID {
+                            LabeledContent("Viewer token", value: tokenID)
+                        }
+                        Button("Forget pairing", role: .destructive) {
+                            model.forgetPairing()
+                        }
+                    }
+                    TextField("Pairing receipt — one line, starts with {", text: $receiptText)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    Button(model.pairing == nil ? "Pair for verification" : "Pair again") {
+                        if let problem = model.pair(receiptText: receiptText) {
+                            pairingProblem = problem
+                        } else {
+                            pairingProblem = nil
+                            receiptText = ""
+                            dismiss()
+                        }
+                    }
+                    .disabled(receiptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if let pairingProblem {
+                        Text(pairingProblem)
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                    }
+                } header: {
+                    Text("Verification")
+                } footer: {
+                    // What the pairing is, what it opens, and what forgetting
+                    // does — the whole promise, so nobody pastes a secret
+                    // into a television without knowing what it can read.
+                    Text("To check your hub's sealed record on this Apple TV — Ed25519 signatures against a key pinned now — mint a viewer token on the hub (witness_api mint-viewer-token --label \"living room tv\"; the Docker sidecar: docker compose exec securacv entrypoint.sh mint-viewer-token …) and paste the one line it prints; your iPhone's keyboard can paste here. The token opens the sealed record and nothing else. Forgetting deletes the token and the pinned key from this Apple TV; revoke it on the hub too.")
                 }
 
                 Section("About") {

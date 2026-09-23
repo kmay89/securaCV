@@ -38,14 +38,17 @@ The Witness Wall shows **the verified record, not the footage**:
 - **Your fleet, breathing.** Each Canary is a calm tile — online, healthy,
   chain intact — not a video pane. Presence and trust, at a glance, from
   across the room. (Never a "flock." Always the *fleet*.)
-- **The verified timeline.** `motion in Zone A · 3:14pm · sealed & verified ✓`.
+- **The verified timeline.** `motion in Zone A · 3:10–3:20 pm · sealed & verified ✓`
+  — a bucket range, never an instant: the record is coarse by design
+  (Invariant III), and the Wall prints the window it sealed.
   Semantic events from the Privacy Witness Kernel, rendered as plain language.
   The Ed25519 hash-chain is checked as it scrolls; a tampered or missing link
   shows up *here*, on the shared screen, not buried in a log.
 - **Chain health as ambient calm.** A quiet, ever-present "chain intact
   through 4:02 pm" heartbeat — the time is the TV's own receipt, and the word
   becomes "verified" only once the chain has been checked against a key
-  pinned at pairing. The reassurance the whole product is built to give,
+  pinned at pairing (a viewer-token receipt minted on the hub and pasted into
+  the Wall's settings; a hub signing with any other key is an alarm). The reassurance the whole product is built to give,
   finally sitting where the household can see it.
 - **Ambient mode (the magic).** When idle, the Apple TV becomes a witness
   screensaver — the fleet slowly breathing, the chain growing link by link,
