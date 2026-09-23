@@ -63,6 +63,14 @@ static bool     s_opera_id_set       = false;
 static uint8_t  s_opera_id [mesh_crypto::OPERA_ID_LEN];
 static uint8_t  s_sender_fp[mesh_crypto::FINGERPRINT_LEN];
 static uint64_t s_outbound_counter   = 0;
+/* Reserve-ahead persistence of the outbound counter (F33 part 3). Every
+ * counter this device signs is <= s_counter_reserved, and — once the
+ * integration layer installs s_counter_reserve_cb — s_counter_reserved is
+ * durable BEFORE the first counter above the previous reservation is used.
+ * So after any reboot restore_outbound_counter(<persisted value>) resumes
+ * past every counter ever signed. Only 0 means "nothing reserved". */
+static uint64_t          s_counter_reserved  = 0;
+static counter_reserve_fn s_counter_reserve_cb = nullptr;
 
 /* Opera display name (PR-8; persisted since F10). Surfaced by GET
  * /api/mesh so the UI can label the opera. This module keeps only the
@@ -450,6 +458,27 @@ static void reset_rekey() {
   s_rekey_removed_pub_set = false;
 }
 
+/* The next outbound counter (F33 part 3). With a reserve handler installed
+ * a counter is never used before it is durably reserved: crossing the
+ * reservation first persists a new high-water mark COUNTER_RESERVE_BLOCK
+ * ahead, and a refused persist refuses the counter — the frame is not sent
+ * rather than signed under a counter a reboot could hand out again. NVS is
+ * written once per block, not per frame. */
+static bool next_outbound_counter(uint64_t* out) {
+  const uint64_t next = s_outbound_counter + 1;
+  if (next == 0) return false;   /* 2^64 frames: never, but never wrap */
+  if (s_counter_reserve_cb != nullptr && next > s_counter_reserved) {
+    const uint64_t high = (s_outbound_counter > UINT64_MAX - COUNTER_RESERVE_BLOCK)
+                              ? UINT64_MAX
+                              : s_outbound_counter + COUNTER_RESERVE_BLOCK;
+    if (!s_counter_reserve_cb(high)) return false;
+    s_counter_reserved = high;
+  }
+  s_outbound_counter = next;
+  *out = next;
+  return true;
+}
+
 /* Build [1-byte session msg type][signed envelope] for an
  * opera-authenticated send. Bumps the outbound counter. Returns the total
  * frame length, or 0 when there is no opera or signing/serialization
@@ -467,7 +496,7 @@ static size_t build_signed_frame(mesh_envelope::MsgType type,
   header.msg_type  = static_cast<uint8_t>(type);
   memcpy(header.opera_id,  s_opera_id,  sizeof(header.opera_id));
   memcpy(header.sender_fp, s_sender_fp, sizeof(header.sender_fp));
-  header.counter   = ++s_outbound_counter;
+  if (!next_outbound_counter(&header.counter)) return 0;
   header.timestamp = now_ms;
   out[0] = static_cast<uint8_t>(type);
   const size_t env_len = mesh_envelope::serialize_signed(
@@ -821,6 +850,8 @@ void deinit() {
   secure_zero(s_opera_id,  sizeof(s_opera_id));
   secure_zero(s_sender_fp, sizeof(s_sender_fp));
   s_outbound_counter = 0;
+  s_counter_reserved = 0;
+  s_counter_reserve_cb = nullptr;
   s_opera_name[0]    = '\0';
   s_enabled          = true;
   s_last_process_ms  = 0;
@@ -1008,14 +1039,12 @@ void process(uint32_t now_ms) {
  *                      s_device_pub) truncated. Cached at first
  *                      set_opera_secret() since device_pub doesn't
  *                      change post-init().
- *   s_outbound_counter — monotonic per-process, RAM only — NOT
- *                      persisted. Receivers DO persist their per-peer
- *                      last_counter (mesh_state replay_ctrs), so after
- *                      this device reboots, a peer that restored a
- *                      higher last_counter drops this device's frames as
- *                      replays until the counter climbs past it. Open
- *                      item (F14 report): persist or epoch the outbound
- *                      counter.
+ *   s_outbound_counter — monotonic, and since F33 part 3 durable by
+ *                      reserve-ahead (next_outbound_counter): receivers
+ *                      persist their per-peer last_counter (mesh_state
+ *                      replay_ctrs), so a sender that restarted its
+ *                      counter after a reboot had its frames dropped as
+ *                      replays until it climbed past them.
  * ────────────────────────────────────────────────────────────────────────── */
 
 
@@ -1032,6 +1061,17 @@ bool set_opera_secret(const uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN])
 bool has_opera_secret() {
   return s_opera_id_set;
 }
+
+void set_counter_reserve_handler(counter_reserve_fn fn) { s_counter_reserve_cb = fn; }
+
+void restore_outbound_counter(uint64_t persisted_high_water) {
+  /* Every counter signed before the reboot is <= the persisted mark. */
+  if (persisted_high_water > s_outbound_counter) s_outbound_counter = persisted_high_water;
+  /* Nothing above it is reserved yet: the next send reserves a new block. */
+  s_counter_reserved = s_outbound_counter;
+}
+
+uint64_t outbound_counter() { return s_outbound_counter; }
 
 bool get_opera_id(uint8_t out[mesh_crypto::OPERA_ID_LEN]) {
   if (out == nullptr || !s_opera_id_set) return false;
@@ -1076,7 +1116,7 @@ bool send_beacon_event(mesh_beacon::BeaconState state,
   header.msg_type  = static_cast<uint8_t>(mesh_envelope::MsgType::BEACON_EVENT);
   memcpy(header.opera_id,  s_opera_id,  sizeof(header.opera_id));
   memcpy(header.sender_fp, s_sender_fp, sizeof(header.sender_fp));
-  header.counter   = ++s_outbound_counter;
+  if (!next_outbound_counter(&header.counter)) return false;
   header.timestamp = now_ms;
 
   /* 3. Serialize + sign. The signed frame is HEADER_LEN(38) +
@@ -1303,7 +1343,7 @@ bool send_channel_lock(uint8_t channel,
   header.msg_type  = static_cast<uint8_t>(mesh_envelope::MsgType::CHANNEL_LOCK);
   memcpy(header.opera_id,  s_opera_id,  sizeof(header.opera_id));
   memcpy(header.sender_fp, s_sender_fp, sizeof(header.sender_fp));
-  header.counter   = ++s_outbound_counter;
+  if (!next_outbound_counter(&header.counter)) return false;
   header.timestamp = now_ms;
 
   uint8_t session_frame[1 + mesh_envelope::MAX_FRAME_LEN];
@@ -1338,7 +1378,7 @@ bool send_hub_election(mesh_hub_election::Event event,
   header.msg_type  = static_cast<uint8_t>(mesh_envelope::MsgType::HUB_ELECTION);
   memcpy(header.opera_id,  s_opera_id,  sizeof(header.opera_id));
   memcpy(header.sender_fp, s_sender_fp, sizeof(header.sender_fp));
-  header.counter   = ++s_outbound_counter;
+  if (!next_outbound_counter(&header.counter)) return false;
   header.timestamp = now_ms;
 
   uint8_t session_frame[1 + mesh_envelope::MAX_FRAME_LEN];

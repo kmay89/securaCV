@@ -707,6 +707,48 @@ bool load_mesh_enabled(bool* out) {
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * OUTBOUND COUNTER HIGH-WATER MARK (F33) — deliberately NOT FE-gated.
+ * "mesh_out_ctr" is 12 chars (within the 15-char NVS key budget).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+#ifndef CSI_TEST_HOST_BUILD
+constexpr const char* NVS_KEY_OUT_CTR = "mesh_out_ctr";
+#endif
+
+bool save_outbound_counter(uint64_t high_water) {
+#ifdef CSI_TEST_HOST_BUILD
+  (void)high_water;
+  return true;
+#else
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  const size_t put = prefs.putULong64(NVS_KEY_OUT_CTR, high_water);
+  /* The reservation is only as good as the write: read it back. */
+  const bool ok = put == sizeof(uint64_t) &&
+                  prefs.getULong64(NVS_KEY_OUT_CTR, high_water + 1) == high_water;
+  prefs.end();
+  return ok;
+#endif
+}
+
+bool load_outbound_counter(uint64_t* out) {
+  if (out == nullptr) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  return false;
+#else
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/true)) return false;
+  if (!prefs.isKey(NVS_KEY_OUT_CTR)) {
+    prefs.end();
+    return false;
+  }
+  *out = prefs.getULong64(NVS_KEY_OUT_CTR, 0);
+  prefs.end();
+  return true;
+#endif
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * OPERA DISPLAY NAME (F10) — FE-gated household-identifying text.
  * "opera_name" is 10 chars (within the 15-char NVS key budget).
  * ────────────────────────────────────────────────────────────────────────── */

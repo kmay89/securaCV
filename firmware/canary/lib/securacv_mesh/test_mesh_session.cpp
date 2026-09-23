@@ -2906,6 +2906,179 @@ void test_failed_pairing_removes_partner_address() {
   std::printf("PASS test_failed_pairing_removes_partner_address\n");
 }
 
+/* ── F33 part 3 — the outbound counter survives a reboot ──────────────── */
+
+/* A fake NVS for mesh_state::save/load_outbound_counter. */
+uint32_t g_ctr_clock = 0;   /* the transport's virtual clock for these tests */
+uint64_t g_nvs_ctr = 0;
+bool     g_nvs_has = false;
+int      g_nvs_writes = 0;
+bool     g_nvs_fail = false;
+bool fake_reserve(uint64_t high) {
+  if (g_nvs_fail) return false;
+  g_nvs_ctr = high;
+  g_nvs_has = true;
+  ++g_nvs_writes;
+  return true;
+}
+
+uint64_t frame_counter(const std::vector<uint8_t>& f) {
+  assert(f.size() > 1 + mesh_envelope::OFFSET_COUNTER + 8);
+  uint64_t v = 0;
+  for (int i = 7; i >= 0; --i) v = (v << 8) | f[1 + mesh_envelope::OFFSET_COUNTER + i];
+  return v;
+}
+
+/* Boot the singleton as the same device (same keys), the way main.cpp
+ * does: restore the persisted mark BEFORE anything sends, then install
+ * the reserve handler. RAM state from the previous "life" is gone. */
+const uint8_t kCtrPeer[6] = {0x24, 0x0A, 0xC4, 0x00, 0x05, 0x01};
+void boot_device(const uint8_t pub[32], const uint8_t priv[32], const uint8_t S[32]) {
+  reset_world();
+  mesh_session::deinit();
+  assert(mesh_session::init(pub, priv));
+  assert(mesh_session::start());
+  assert(mesh_session::set_opera_secret(S));
+  if (g_nvs_has) mesh_session::restore_outbound_counter(g_nvs_ctr);
+  mesh_session::set_counter_reserve_handler(fake_reserve);
+  assert(mesh_transport::add_peer(kCtrPeer));   /* someone to broadcast to */
+  /* reset_world() rewound the transport clock; keep it moving forward so
+   * the storm limiter's window logic sees real time. */
+  g_ctr_clock += 60000;
+  mesh_transport::test::set_now_ms(g_ctr_clock);
+}
+
+/* How many sends reach the durable mark from here. A counter already past
+ * the mark is itself the bug (a counter used before it was reserved). */
+size_t sends_to_mark() {
+  assert(mesh_session::outbound_counter() <= g_nvs_ctr);
+  return (size_t)(g_nvs_ctr - mesh_session::outbound_counter());
+}
+
+/* Sends `n` alerts; returns the counters that went on air. The virtual
+ * clock steps 20 ms per send so the transport's storm limiter (100/s)
+ * never trips. */
+std::vector<uint64_t> send_alerts(size_t n) {
+  std::vector<uint64_t> used;
+  for (size_t i = 0; i < n; ++i) {
+    g_ctr_clock += 20;
+    mesh_transport::test::set_now_ms(g_ctr_clock);
+    g_outs.clear();
+    if (mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 3, (uint32_t)i, 10)) {
+      assert(g_outs.size() == 1);
+      used.push_back(frame_counter(g_outs[0].bytes));
+    }
+  }
+  return used;
+}
+
+void test_outbound_counter_reserve_ahead() {
+  uint8_t pub[32], priv[32], S[32];
+  assert(mesh_crypto::ed25519_generate_keypair(pub, priv));
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0xC1 + i);
+  g_nvs_ctr = 0; g_nvs_has = false; g_nvs_writes = 0; g_nvs_fail = false;
+  const uint64_t B = mesh_session::COUNTER_RESERVE_BLOCK;
+
+  /* Life 1: 2500 frames cost ceil(2500 / B) NVS writes, not 2500, and the
+   * persisted mark is always at or above every counter used. */
+  boot_device(pub, priv, S);
+  std::vector<uint64_t> used = send_alerts(2500);
+  assert(used.size() == 2500 && used.front() == 1 && used.back() == 2500);
+  assert(g_nvs_writes == (int)((2500 + B - 1) / B));
+  assert(g_nvs_ctr >= 2500);
+  uint64_t max_used = used.back();
+
+  /* Crash between reserve and use, at every point of a block: send up to
+   * the edge of the reservation, then the frame that crosses it (the new
+   * reservation is written, the frame is "lost" — never went on air),
+   * crash, reboot. The first counter after the reboot is above every
+   * counter used AND above the reserved one: no reuse, whatever was lost. */
+  for (int round = 0; round < 3; ++round) {
+    const uint64_t edge = g_nvs_ctr;
+    std::vector<uint64_t> more = send_alerts(sends_to_mark());
+    if (!more.empty()) max_used = more.back();
+    assert(mesh_session::outbound_counter() == edge);
+    const int writes_before = g_nvs_writes;
+    g_outs.clear();
+    mesh_transport::test::set_now_ms(g_ctr_clock += 20);
+    assert(mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 3, 0, 10));
+    assert(g_nvs_writes == writes_before + 1);      /* reserved, then used */
+    const uint64_t lost = frame_counter(g_outs[0].bytes);
+    assert(lost == edge + 1 && g_nvs_ctr == edge + B);
+    /* CRASH: RAM gone. */
+    boot_device(pub, priv, S);
+    std::vector<uint64_t> after = send_alerts(1);
+    assert(after.size() == 1);
+    assert(after[0] > max_used && after[0] > lost);
+    max_used = after[0];
+  }
+
+  /* A crash right after a reboot, before anything was sent, and again:
+   * each reboot resumes above the persisted mark, never below. */
+  const uint64_t mark = g_nvs_ctr;
+  boot_device(pub, priv, S);
+  boot_device(pub, priv, S);
+  std::vector<uint64_t> after = send_alerts(1);
+  assert(after.size() == 1 && after[0] > mark && after[0] > max_used);
+  max_used = after[0];
+
+  /* A refused reservation refuses the frame (fail closed), and nothing is
+   * used past the durable mark; the next send that can persist goes on. */
+  const uint64_t edge = g_nvs_ctr;
+  send_alerts(sends_to_mark());
+  g_nvs_fail = true;
+  g_outs.clear();
+  mesh_transport::test::set_now_ms(g_ctr_clock += 20);
+  assert(!mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 3, 0, 10));
+  assert(g_outs.empty() && mesh_session::outbound_counter() == edge);
+  boot_device(pub, priv, S);               /* crash while NVS was failing */
+  g_nvs_fail = false;
+  after = send_alerts(1);
+  assert(after.size() == 1 && after[0] == edge + 1);   /* edge+1 was never used */
+
+  /* End to end: a receiver that remembers this sender's last counter (its
+   * replay_ctrs) accepts the rebooted sender's next frame. */
+  const uint64_t last_seen = after[0];
+  boot_device(pub, priv, S);
+  g_outs.clear();
+  mesh_transport::test::set_now_ms(g_ctr_clock += 20);
+  assert(mesh_session::send_tamper_alert(mesh_alert::Kind::CAMERA_TAMPER, 6, 42, 10));
+  const std::vector<uint8_t> post_reboot = g_outs[0].bytes;
+  uint8_t rx_pub[32], rx_priv[32];
+  stand_up_session(S, rx_pub, rx_priv);
+  mesh_session::set_tamper_alert_handler(on_alert_rx);
+  uint8_t tx_fp[8];
+  mesh_crypto::compute_fingerprint(pub, tx_fp);
+  assert(mesh_session::register_trusted_peer(pub));
+  assert(mesh_session::restore_replay_counter(tx_fp, last_seen));
+  const uint8_t tx_mac[6] = {0x24, 0x0A, 0xC4, 0x00, 0x05, 0x02};
+  assert(mesh_session::bind_peer_mac(tx_fp, tx_mac));
+  mesh_transport::test::inject_recv(tx_mac, post_reboot.data(), post_reboot.size(), -40);
+  mesh_transport::process();
+  assert(g_alerts_rx.size() == 1 && g_alerts_rx[0].witness_seq == 42);
+  std::printf("PASS test_outbound_counter_reserve_ahead  (%d NVS writes)\n", g_nvs_writes);
+}
+
+/* Without the reservation the same reboot reuses counters — the bug. Kept
+ * as a control so the test above is known to see the difference. */
+void test_outbound_counter_without_reservation_restarts() {
+  uint8_t pub[32], priv[32], S[32];
+  assert(mesh_crypto::ed25519_generate_keypair(pub, priv));
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0xD1 + i);
+  reset_world();
+  mesh_session::deinit();
+  assert(mesh_session::init(pub, priv) && mesh_session::start() && mesh_session::set_opera_secret(S));
+  assert(mesh_transport::add_peer(kCtrPeer));
+  std::vector<uint64_t> used = send_alerts(5);
+  reset_world();
+  mesh_session::deinit();
+  assert(mesh_session::init(pub, priv) && mesh_session::start() && mesh_session::set_opera_secret(S));
+  assert(mesh_transport::add_peer(kCtrPeer));
+  std::vector<uint64_t> after = send_alerts(1);
+  assert(after[0] <= used.back());   /* a reused counter: dropped as a replay */
+  std::printf("PASS test_outbound_counter_without_reservation_restarts\n");
+}
+
 int main() {
   std::srand(0xC51F0);
   test_start_initiator_emits_discover_init();
@@ -2967,6 +3140,9 @@ int main() {
   test_pairing_over_the_air_as_initiator();
   test_pairing_over_the_air_as_joiner();
   test_failed_pairing_removes_partner_address();
+  /* F33 part 3 — the outbound counter survives a reboot. */
+  test_outbound_counter_reserve_ahead();
+  test_outbound_counter_without_reservation_restarts();
   std::printf("\nALL MESH_SESSION TESTS PASSED\n");
   return 0;
 }

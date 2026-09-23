@@ -39,6 +39,8 @@
  *                        like the four above)
  *       mesh_enabled   — 1 byte (F10; NOT gated: a preference, not a
  *                        secret — see MESH ENABLED FLAG below)
+ *       mesh_out_ctr   — u64 (F33; NOT gated: the outbound counter's
+ *                        reserve-ahead high-water mark)
  *
  * Host build (CSI_TEST_HOST_BUILD): all functions compile as
  * deterministic stubs. load_opera_secret() always returns false (no
@@ -358,6 +360,27 @@ bool remove_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]);
 
 bool save_mesh_enabled(bool enabled);
 bool load_mesh_enabled(bool* out);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * OUTBOUND COUNTER HIGH-WATER MARK  (F33 part 3)
+ *
+ * NVS key "mesh_out_ctr", a u64: the highest outbound counter this device
+ * may have signed (mesh_session's reserve-ahead mark, written once per
+ * COUNTER_RESERVE_BLOCK frames by the session's reserve handler). NOT
+ * flash-encryption gated, like mesh_enabled: it is a count, not a secret
+ * and not household-identifying, and gating it would restart the counter
+ * at every reboot of an FE-off board — whose frames the peers then drop as
+ * replays of the counters they remember.
+ *
+ * save_outbound_counter() returns true only when the value is durably
+ * written (read back equal). load_outbound_counter() returns true and
+ * writes *out only when the key is present; false (out untouched) when
+ * absent, on a null pointer or a read failure. Host build: save → true,
+ * load → false.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool save_outbound_counter(uint64_t high_water);
+bool load_outbound_counter(uint64_t* out);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * OPERA DISPLAY NAME  (F10 — POST /api/mesh/name)

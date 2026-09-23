@@ -251,6 +251,41 @@ bool set_opera_secret(const uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN])
 bool has_opera_secret();
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * OUTBOUND COUNTER PERSISTENCE  (F33 part 3 — reserve-ahead)
+ *
+ * Receivers persist every sender's last counter (replay_ctrs) and drop a
+ * frame whose counter is not above it, so a sender whose counter restarts
+ * after a reboot is deaf to them until it climbs back — and must never sign
+ * two frames with one counter. The counter is therefore reserved ahead:
+ *
+ *   • set_counter_reserve_handler(fn): fn(high) must durably store `high`
+ *     (main.cpp: mesh_state::save_outbound_counter) and return true. Before
+ *     the first counter above the current reservation is used, the session
+ *     calls fn(last + COUNTER_RESERVE_BLOCK); a false return refuses that
+ *     counter — the send fails — and the next send tries again. So NVS is
+ *     written once per COUNTER_RESERVE_BLOCK frames, not per frame, and no
+ *     counter is ever used that a reboot could reissue.
+ *   • restore_outbound_counter(high): at boot, BEFORE anything is sent,
+ *     with the last value the handler stored. The counter resumes above
+ *     it; the next send reserves a fresh block. A crash anywhere — after a
+ *     reserve and before the frame went out included — costs at most an
+ *     unused gap of counters, which receivers accept (they need only
+ *     "higher"), never a reuse.
+ *   • Without a handler (host tests that do not install one) the counter
+ *     is RAM-only, as before F33.
+ * deinit() resets the counter, the reservation and the handler;
+ * leave_opera() keeps them (see LEAVE). Main-loop task, like every sender.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr uint64_t COUNTER_RESERVE_BLOCK = 1024;
+
+typedef bool (*counter_reserve_fn)(uint64_t high_water);
+
+void     set_counter_reserve_handler(counter_reserve_fn fn);
+void     restore_outbound_counter(uint64_t persisted_high_water);
+uint64_t outbound_counter();   /* the last counter signed (0: none yet) */
+
+/* ──────────────────────────────────────────────────────────────────────────
  * STATUS ACCESSORS  (PR-8 — Mesh REST API)
  *
  * Thin, read-only getters the GET /api/mesh + GET /api/mesh/peers handlers

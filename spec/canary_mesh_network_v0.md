@@ -122,7 +122,17 @@ ciphertext = ChaCha20-Poly1305(message_key, nonce, plaintext)
 - **Message Counter** (authoritative): Monotonic 64-bit counter per peer.
   Receivers reject any message with `counter <= last_seen_counter_for_peer`.
   Counter state is persisted to NVS so reboots do not reset the receiver's
-  expectations.
+  expectations. The **sender's** counter must survive a reboot too, or the
+  receivers drop its frames as replays until it climbs back past what they
+  remember (and a counter must never be signed twice). v0.3 (F33, PlatformIO
+  tree): the sender reserves ahead — before it uses the first counter above
+  its persisted high-water mark it persists a new mark 1024 counters ahead
+  (NVS `mesh_out_ctr`, §12.3), and at boot it resumes above the persisted
+  mark. NVS is written once per 1024 frames; a crash anywhere, including
+  between a reservation and its first frame, costs an unused gap (receivers
+  need only "higher"), never a reuse; a reservation that cannot be persisted
+  refuses the frame. canary-wap keeps per-peer `msg_counter_tx` in RAM and
+  resets it at every re-authentication (its session model) — unchanged.
 - **Nonce Tracking**: Last 64 nonces cached to detect concurrent duplicates.
 - **Timestamp field**: Retained in the wire format for diagnostic and
   debugging purposes. **Not security-bearing in v0.2.** Earlier revisions
@@ -840,7 +850,9 @@ peers' counters and — v0.3 — the tombstones of dropped peers, §4.2),
 6 B radio MAC), F33), all behind the flash-encryption gate (§5.5), plus
 `mesh_enabled` (1 B), which is **not** gated: it is a preference, and gating
 it would make "off" silently revert to "on" at every reboot of an FE-off
-board. The `opera_id` is not stored; it is derived from the secret at boot.
+board — and `mesh_out_ctr` (u64, F33, §3.3), the outbound counter's
+reserve-ahead high-water mark, not gated either: a count, not a secret, and
+gating it would restart the counter at every reboot of an FE-off board. The `opera_id` is not stored; it is derived from the secret at boot.
 
 ## 13. Conformance
 

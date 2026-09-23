@@ -1073,6 +1073,20 @@ void setup() {
       mesh_session::start()) {
     Serial.println("[OK] Mesh layer active (mesh_transport + mesh_session)");
 
+    /* Outbound counter (F33 part 3): resume above every counter this device
+     * may have signed before the reboot, and persist each new reservation
+     * before its first counter is used — so peers, which remember our last
+     * counter, never drop our frames as replays after a reboot, and no
+     * counter is ever signed twice. BEFORE anything can send. Not FE-gated:
+     * a count, not a secret (mesh_state.h). */
+    {
+      uint64_t out_ctr = 0;
+      if (mesh_state::load_outbound_counter(&out_ctr)) {
+        mesh_session::restore_outbound_counter(out_ctr);
+      }
+      mesh_session::set_counter_reserve_handler(&mesh_state::save_outbound_counter);
+    }
+
     /* POST /api/mesh/enable persists the user's on/off choice (F10).
      * Absent key → enabled. Disabled stops the session but keeps the
      * membership, so the loads below still run. */
