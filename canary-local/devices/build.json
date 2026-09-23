@@ -1171,7 +1171,7 @@
    },
    "assembly": {
     "source": "docs/hardware/enclosure/README.md §Assembly",
-    "caveat": "Watch station — v0.2-dev, in development. Render- and mesh-verified, not print-validated: these steps follow the CAD (canary_watch_station.scad), not a built unit. Measure your display disc (disc_d) and the XIAO's USB position before you print.",
+    "caveat": "Watch station — v0.2-dev, in development. Render- and mesh-checked, not print-validated: these steps follow the CAD (canary_watch_station.scad), not a built unit. Measure your display disc (disc_d) and the XIAO's USB position before you print.",
     "steps": [
      "Set the stand on the desk. It prints upright with no supports: a full-depth divot bored normal to the 25° reclined face, two thumb scallops to lift the puck back out, and a chin slot that passes the USB-C cable into the open channel under the base. (Wall-mounting instead? Skip the stand — the drum's blind keyhole hangs the puck on a single screw.)",
      "Rest the drum in the cradle. It sinks 11 mm into the divot, so it cannot rock or roll, and its USB slot lands in the chin channel.",
@@ -1278,7 +1278,7 @@
    },
    "assembly": {
     "source": "docs/hardware/enclosure/README.md §Assembly",
-    "caveat": "Dashboard display case — in development. Render- and mesh-verified, not print-validated: these steps follow the CAD (canary_dash_display.scad), not a built unit, and its panel dimensions are nominal — measure your Waveshare ESP32-S3-Touch-LCD-4.3 before you print.",
+    "caveat": "Dashboard display case — in development. Render- and mesh-checked, not print-validated: these steps follow the CAD (canary_dash_display.scad), not a built unit, and its panel dimensions are nominal — measure your Waveshare ESP32-S3-Touch-LCD-4.3 before you print.",
     "steps": [
      "Set the desk cradle down. It prints flat with no hardware: the front lip and back rail form the bottom-edge channel and the fin takes the 25° lean. (Wall-mounting instead? Screw the printed wall cradle to the wall with its two screws; the finished case clicks onto it.)",
      "Lay the bezel frame face-down — it prints that way, so the A-surface is your build plate. Its 2.5 mm lip retains the glass; the USB-C slot is in the bottom wall and the chimney vents are in the top wall.",

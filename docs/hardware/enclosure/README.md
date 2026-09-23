@@ -186,7 +186,7 @@ measurements welcome.
 ## Assembly
 <a id="assembly-watch-station"></a>
 
-**Watch station — v0.2-dev, in development.** Render- and mesh-verified,
+**Watch station — v0.2-dev, in development.** Render- and mesh-checked,
 **not print-validated**: these steps follow the CAD
 ([`canary_watch_station.scad`](./canary_watch_station.scad)), not a built
 unit. Measure your display disc (`disc_d`) and the XIAO's USB position before
@@ -218,7 +218,7 @@ you print.
 ## Assembly
 <a id="assembly-dashboard-display"></a>
 
-**Dashboard display case — in development.** Render- and mesh-verified,
+**Dashboard display case — in development.** Render- and mesh-checked,
 **not print-validated**: these steps follow the CAD
 ([`canary_dash_display.scad`](./canary_dash_display.scad)), not a built unit,
 and its panel dimensions are nominal — measure your Waveshare
