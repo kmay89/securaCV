@@ -1753,7 +1753,7 @@ major, by theme") — work its themes, then tick here.
   and shrinks `KNOWN_DRIFT`, whose `--check` fails when a listed entry stops
   happening. Same pass: `bom_canary_display.csv`'s D-ENC1 still describes the
   Dash back's retired keyholes and M4 pair.
-- [ ] **C13 [code] Lab display-line leftovers from #1703.** (1)
+- [x] **C13 [code] Lab display-line leftovers from #1703.** (1)
   `canary-local/devices/registry.json` lags the display manifests:
   `canary-display-nightstand-c6`, `canary-display-nightstand7` and
   `canary-display-nightlight-c3` have no registry card (the C3's differs from
@@ -1767,7 +1767,28 @@ major, by theme") — work its themes, then tick here.
   from `total_t`. (4) `canary-local/tools/figures/massing.mjs` comments still
   call the 1.47" S3 stick's USB shell `usb_w` / `usb_h`, the names C2 gave to
   the wall opening.
-- [ ] **C14 [code] The CAD regen order runs `gen_figures` before a file it
+  *Done (#1718, website #203):* (1) the Nightstand C6 and the Nightstand 7
+  get registry cards (no twins, so the flashers' links do not move); the C6
+  draws a new sketch figure of its pocket case, the Nightstand 7 draws the
+  Dash 7's slab through a new `figures.json` `manifests` join, and the C3
+  manifest names its existing card with a new `lab.card` key rather than
+  adding a second one (option "lab.card join" — maintainer to confirm).
+  `lint_device_manifests.py` now refuses a claimed case whose home is no
+  registry card, and the chooser, board-identity and figure tests pass on the
+  aligned registry. Every display card's Web row said "first-boot portal
+  only", but every flavor serves the glass mirror on :80 after provisioning;
+  all nine now say so, and a test ties the row to the firmware. (2) The Fence
+  Guard draws as a ghost like every other idea. (3) `realDash`'s seat is
+  re-derived from `total_t` and the 9.0 mm back, and a test holds it to the
+  ledger's assembled row. (4) `massing.mjs` names the shell
+  `usb_shell_w` / `usb_shell_h`. Also: `scene_figures.test.js`,
+  `body_dims.test.js` and `device_models.test.js` were run by no workflow;
+  `canary-local.yml` now runs them, and `canary_local.test.js` fails any test
+  file there that no `node --test` command names. The website carries the
+  C6 figure in `scad/cad-dims.json`. Open: the C6 manifest's `figure` (a
+  firmware change with a dist rebuild), and the Dash stand's fin, which
+  overlaps the back's two lower dock pads as modeled.
+- [x] **C14 [code] The CAD regen order runs `gen_figures` before a file it
   reads.** `scripts/regen_cad.py` (and CLAUDE.md's order) runs
   `gen_figures.mjs` at step 6 and `gen_enclosures.py` at step 11, but
   `gen_figures.mjs` reads `canary-local/devices/catalog.json`, which
@@ -1779,6 +1800,12 @@ major, by theme") — work its themes, then tick here.
   `gen_enclosures.py`'s catalog globs `docs/hardware/enclosure/*.scad`, so
   running it while `gen_assembled_dims.py` has its `.tmp_assembled_*.scad` on
   disk adds a bogus product.
+  *Done (#1718):* `gen_enclosures.py` now runs before `gen_figures.mjs`, and
+  the order moved together in `scripts/regen_cad.py`, `gen_cad_params.py`'s
+  `REGEN_ORDER`, CLAUDE.md and the enclosure README. A test fails any step
+  that reads (by quoted path) a file a later step writes. The catalog skips
+  scratch `.scad` files (`.tmp_probe_*` and any dot- or tmp-named file), and
+  a test builds the catalog with strays on disk and gets the same bytes.
 - [x] **C15 [code] Carry the Combo's measured face features to the website.**
   `gen_assembled_dims.py` records the Combo's lens aperture and radome window
   as face `features` (the case's own `lens_x` / `lens_y` and `rad_cx` /

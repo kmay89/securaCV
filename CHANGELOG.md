@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### The Lab draws every display case, and the CAD regen order follows what each step reads (#1718, website #203)
+
+- **Every display manifest's case has a Lab home (C13).** The Nightstand C6
+  and Nightstand 7 get registry cards; the C6 draws a new sketch of its
+  pocket case, and the Nightstand 7 draws the Dash 7's slab. The C3 case shows
+  on the existing Nightlight page through a new `lab.card` key (maintainer to
+  confirm). The manifest lint refuses a case with no card to live on. Every
+  display card's Web row now says the glass serves its mirror on :80 after
+  setup, not "first-boot portal only". The Fence Guard, an idea, draws as a
+  ghost. The Dash card's seat is re-derived from the CAD and held to it by a
+  test. Three Lab test files that no workflow ran now run in CI, and a guard
+  fails any test file no workflow runs. The website carries the C6 figure.
+- **The CAD regen runs `gen_enclosures.py` before the figures that read its
+  catalog (C14).** The order changed in `regen_cad.py`, `REGEN_ORDER`,
+  CLAUDE.md and the enclosure README together, and a test fails a step that
+  reads a file a later step writes. The catalog also ignores a measurement's
+  scratch `.scad` file.
+
 ### The canary pages its timeline from the SD card, the display's join screen fits every panel, and the Combo's AR face comes from the CAD (#1718, website #203)
 
 - **The timeline reaches past the witness ring into the SD card (F35, F26
