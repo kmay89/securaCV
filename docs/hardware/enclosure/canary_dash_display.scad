@@ -44,7 +44,8 @@ bez_lip = 2.5;       // bezel overlap onto the glass edge
 
 /* [USB / terminals] — positions along the BOTTOM wall, from panel center */
 usb_dx   = 0.0;      // USB-C slot center offset — MEASURE
-usb_w    = 12.0;  usb_h = 6.5;
+usb_w    = 12.0;
+usb_h    = 6.5;
 term_open = false;   // also open the CAN/RS485 terminal zone (a parting-line notch to the rear rim; the back plate closes it)
 // term_h is the connector zone's height: the notch must clear it (asserted
 // below), and the back plate covers everything above it

@@ -82,6 +82,14 @@ class HelpLines(_Case):
             seen |= L.lint_help_lines(L.ENC / name, L.HELP_LINE_DEBT)[1]
         self.assertEqual(seen, set(L.HELP_LINE_DEBT))
 
+    def test_the_tree_has_no_shared_help_line(self):
+        # C10 split the 7" case's four, the last the ledger held: no case
+        # file may drop a help to a shared line now, the ledger included
+        self.assertEqual(L.HELP_LINE_DEBT, set())
+        for path in sorted(L.ENC.glob("canary_*.scad")):
+            if path.name not in L.SKIP:
+                self.assertEqual(L.lint_help_lines(path)[0], [], path.name)
+
 
 class Meanings(_Case):
     """Fourth rule: a shared knob name keeps one meaning, stated in its help."""

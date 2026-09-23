@@ -28,10 +28,11 @@ which keeps a trailing `//` comment only on a line that holds ONE knob — so
 `a = 1;  b = 2;  // help` reaches neither knob (and the Lab's own parser,
 gen_enclosures.py, drops the whole line). 125 knobs had lost their help that
 way (audit 2026-09, C1). A line holding two or more knobs AND a trailing
-comment now fails: split it, one knob per line, each with its own help. The
-few lines the sweep deliberately left are listed in HELP_LINE_DEBT, which can
-only shrink: a new shared-help line fails, and so does a listed one that is
-gone (the entry must go with it).
+comment now fails: split it, one knob per line, each with its own help.
+HELP_LINE_DEBT held the few lines the first sweep deliberately left (the 7"
+case's four); the second (C10) split them, so the ledger is empty and can
+only stay that way: a new shared-help line fails, and so would a listed one
+that is gone (the entry must go with it).
 
 Fourth rule: a knob name keeps ONE meaning across the catalog. People (and
 agents) learn `usb_w` in one case and read it the same way in the next, so a
@@ -159,18 +160,12 @@ def lint_file(path):
     return problems
 
 
-# Shared-help lines the 2026-09 sweep (C1) left alone ON PURPOSE, keyed by
-# (file, first knob on the line). The 7" case's sources are hashed by
-# gen_stamp.py and were kept out of that sweep by decision — its maintainer
-# owns every edit there. (gen_stamp's digest is comment-free and whitespace-
-# normalized, so splitting these lines re-stamps nothing: gen_stamp.py
-# --check stays green. That is the follow-up, and it deletes these entries.)
-HELP_LINE_DEBT = {
-    ("canary_s3_lcd7.scad", "bottom_open_w"),
-    ("canary_s3_lcd7.scad", "side_open_h"),
-    ("canary_s3_lcd7.scad", "lob_d"),
-    ("canary_s3_lcd7.scad", "gill_w"),
-}
+# Shared-help lines left alone ON PURPOSE, keyed by (file, first knob on the
+# line). The 2026-09 sweep (C1) left the 7" case's four — its sources are
+# hashed by gen_stamp.py — and C10 split them: gen_stamp's digest is
+# comment-free and whitespace-normalized, so the split re-stamped nothing
+# (gen_stamp.py --check stayed green). The ledger is paid off; it only shrinks.
+HELP_LINE_DEBT: set[tuple[str, str]] = set()
 
 
 # The fourth rule's table (DESIGN_RULES.md §10 states it for people). name ->
@@ -278,7 +273,7 @@ def main():
                         f"'{knob} =', which is gone — delete the entry (the ledger only shrinks)")
     if debt_seen:
         print(f"INFO: {len(debt_seen)} shared-help knob line(s) left by decision "
-              "(HELP_LINE_DEBT — the 7\" case's gen_stamp-hashed source)")
+              "(HELP_LINE_DEBT)")
     if problems:
         for p in problems:
             print(f"::error::design language: {p}")

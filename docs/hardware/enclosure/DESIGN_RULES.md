@@ -119,7 +119,7 @@ top face the lid seats on.
 
 | Rule | Number | Enforced by |
 |---|---|---|
-| A knob's help sits on the knob's own line — the builder's parser keeps a trailing comment only on a one-knob line, so `a = 1;  b = 2;  // help` reaches neither | one knob per commented line | `lint_design_lang.py` (third rule); `HELP_LINE_DEBT` lists the 7" case's four lines, left by decision, and only shrinks |
+| A knob's help sits on the knob's own line — the builder's parser keeps a trailing comment only on a one-knob line, so `a = 1;  b = 2;  // help` reaches neither | one knob per commented line | `lint_design_lang.py` (third rule); its `HELP_LINE_DEBT` ledger is empty since C10 split the 7" case's four lines, and it only shrinks |
 | A knob name means one thing across the catalog — a reader who learned it in one case reads it the same way in the next, so a second meaning gets its own name | the table below | `lint_design_lang.py` (fourth rule, `KNOB_MEANINGS`): a listed knob whose help does not say its meaning, or says the other one, fails |
 
 | Name | Means | Not to be confused with |
@@ -162,8 +162,8 @@ top face the lid seats on.
   `scripts/regen_cad.py --previews <dir>` with previews of every affected
   part. Nothing has been changed: the per-case call is the maintainer's.
 - **Customizer help text** — the audit's parametric UX section. Done: every
-  shared-help line outside the 7" case is split one knob per line, and the
-  unambiguous comments above a knob are summarized onto it (681 → 536 knobs
-  without help). Open: help for the knobs that never had any (the released
-  four first), `[min:step:max]` ranges, one group name for the two-stud
-  interface, and presets for the doorbell and the Sense.
+  shared-help line is split one knob per line (the 7" case's four last, in
+  C10), and the unambiguous comments above a knob are summarized onto it
+  (681 → 536 knobs without help in C1). Open: help for the knobs that never
+  had any (the released four first), `[min:step:max]` ranges, one group name
+  for the two-stud interface, and presets for the doorbell and the Sense.

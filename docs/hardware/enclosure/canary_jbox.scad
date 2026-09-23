@@ -59,7 +59,8 @@ boss_d = 12.0;       // fake conduit boss diameter (fits the body height; a true
 boss_l = 6.0;        // boss protrusion
 screw_d = 1.6;  screw_head_d = 4.0;  screw_head_h = 1.6;
 post_d = 5.0;
-usb_w = 10.5;  usb_h = 6.5;
+usb_w = 10.5;
+usb_h = 6.5;
 
 /* [Camera knockout] */
 cam_ap_d   = 9.0;

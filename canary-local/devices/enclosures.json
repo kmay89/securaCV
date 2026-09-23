@@ -6727,6 +6727,14 @@
       {
        "name": "post_d",
        "default": "5.0"
+      },
+      {
+       "name": "usb_w",
+       "default": "10.5"
+      },
+      {
+       "name": "usb_h",
+       "default": "6.5"
       }
      ]
     },
@@ -7349,6 +7357,14 @@
        "name": "usb_dx",
        "default": "0.0",
        "comment": "USB-C slot center offset — MEASURE"
+      },
+      {
+       "name": "usb_w",
+       "default": "12.0"
+      },
+      {
+       "name": "usb_h",
+       "default": "6.5"
       },
       {
        "name": "term_open",
@@ -9859,11 +9875,33 @@
      "params": [
       {
        "name": "opt_bottom_ports",
-       "default": "true"
+       "default": "true",
+       "comment": "open the bottom (−Y) wall's channel over the USB/UART cluster"
+      },
+      {
+       "name": "bottom_open_w",
+       "default": "96.0",
+       "comment": "width (X) of that wide channel over the bottom cluster"
+      },
+      {
+       "name": "bottom_open_dx",
+       "default": "0.0",
+       "comment": "its center offset from the board center, along the bottom wall"
       },
       {
        "name": "opt_side_ports",
-       "default": "true"
+       "default": "true",
+       "comment": "open the tall slot in each short (±X) wall (CAN/RS485/battery)"
+      },
+      {
+       "name": "side_open_h",
+       "default": "40.0",
+       "comment": "height (Y) of the tall slot on each short wall"
+      },
+      {
+       "name": "side_open_dy",
+       "default": "0.0",
+       "comment": "its center offset from the board center, along the short wall"
       }
      ]
     },
@@ -9924,7 +9962,8 @@
      "params": [
       {
        "name": "vent_beat",
-       "default": "##.###."
+       "default": "##.###.",
+       "comment": "hits and rests, one character per station, read left to right across a row (# = egg, . = rest)"
       },
       {
        "name": "vent_beat_shift",
@@ -10014,9 +10053,34 @@
      "note": "",
      "params": [
       {
+       "name": "lob_d",
+       "default": "9.0",
+       "comment": "bezel lobe (screw ear) Ø"
+      },
+      {
+       "name": "lob_o",
+       "default": "3.0",
+       "comment": "lobe center's diagonal offset outboard of the cavity corner"
+      },
+      {
        "name": "m3_nom",
        "default": "3.0",
        "comment": "M3 shank"
+      },
+      {
+       "name": "lob_pilot",
+       "default": "2.7",
+       "comment": "self-tap pilot down each full-height corner post (undersize on purpose, so the thread forms)"
+      },
+      {
+       "name": "cb_d",
+       "default": "6.0",
+       "comment": "screw-head counterbore Ø on each bezel ear's front (the frame's back-plate head pockets are cut 0.4 over it)"
+      },
+      {
+       "name": "cb_h",
+       "default": "2.0",
+       "comment": "head counterbore depth into the bezel ear"
       },
       {
        "name": "screw_c",
@@ -10254,7 +10318,8 @@
      "params": [
       {
        "name": "adh_rails",
-       "default": "false"
+       "default": "false",
+       "comment": "two smooth adhesive-strip zones on the back plate for a no-drill (Command-strip) mount; they cost the grille slots, and the bird keeps out of their way"
       },
       {
        "name": "adh_rail_dx",
@@ -10284,7 +10349,8 @@
      "params": [
       {
        "name": "back_bird",
-       "default": "true"
+       "default": "true",
+       "comment": "deboss the Canary mark (canary_mark_lib's bird) into the middle of the back plate"
       },
       {
        "name": "bird_h",
@@ -10356,7 +10422,8 @@
      "params": [
       {
        "name": "soc_win",
-       "default": "false"
+       "default": "false",
+       "comment": "open a window through the back plate over the WROOM-1 shield can, so its printed FCC/IC grant numbers read on the case (certifies nothing; position from the panel record, ±2 mm)"
       },
       {
        "name": "soc_grow",
@@ -10401,6 +10468,21 @@
        "comment": "carry vents only; SD access is through the back plate"
       },
       {
+       "name": "gill_w",
+       "default": "2.4",
+       "comment": "DOCK KEY slot width (the stand's studs mate them — do"
+      },
+      {
+       "name": "gill_l",
+       "default": "9.0",
+       "comment": "side-gill length, and the portrait dock-key slots' length"
+      },
+      {
+       "name": "gill_rake",
+       "default": "0",
+       "comment": "side-gill rake, degrees. 0: vertical slots print"
+      },
+      {
        "name": "gill_vw",
        "default": "3.6",
        "comment": "side-gill egg base width — area matches the old"
@@ -10412,7 +10494,8 @@
       },
       {
        "name": "dock_keys",
-       "default": "true"
+       "default": "true",
+       "comment": "cut the dock-keying slots the desk dock's centering studs rise into (bottom wall in landscape, side walls in portrait)"
       },
       {
        "name": "dock_key_dx",
@@ -10456,15 +10539,18 @@
       },
       {
        "name": "pal_body",
-       "default": "Black"
+       "default": "Black",
+       "comment": "BODY filament, named as you load it in the slicer (the render-time echo prints it)"
       },
       {
        "name": "pal_ink",
-       "default": "White"
+       "default": "White",
+       "comment": "INK filament, named as you load it in the slicer (the render-time echo prints it)"
       },
       {
        "name": "pal_accent",
-       "default": "Signal Yellow"
+       "default": "Signal Yellow",
+       "comment": "ACCENT filament, named as you load it in the slicer (the render-time echo prints it)"
       },
       {
        "name": "pal_body_rgb",
@@ -10515,7 +10601,8 @@
       },
       {
        "name": "bezel_ink_t",
-       "default": "0.6"
+       "default": "0.6",
+       "comment": "how deep the INK reaches in from the front face: a visible-surface depth (0.6 = three layers at 0.2)"
       },
       {
        "name": "bezel_color",
@@ -10611,7 +10698,8 @@
      "params": [
       {
        "name": "port_labels",
-       "default": "true"
+       "default": "true",
+       "comment": "name each opening on the outer skin beside it (deboss floors read in the body color through the accent skin)"
       },
       {
        "name": "port_lbl_a",
@@ -10625,7 +10713,8 @@
       },
       {
        "name": "rating_stamp",
-       "default": "true"
+       "default": "true",
+       "comment": "deboss the rating spec block on the back plate's lower band"
       },
       {
        "name": "rating_lines",
@@ -10664,7 +10753,8 @@
       },
       {
        "name": "plug_tether",
-       "default": "true"
+       "default": "true",
+       "comment": "leash the BOOT/RESET plug: a strap in a flush top-wall channel, its arrowhead barb through an anchor hole beside the window (costs one exhaust slot)"
       },
       {
        "name": "plug_teth_dx",
@@ -10683,7 +10773,8 @@
       },
       {
        "name": "sd_tether",
-       "default": "true"
+       "default": "true",
+       "comment": "leash the SD cover: a strap off the cap, its arrowhead barb through an anchor hole in the plate, so a peeled cover dangles captive"
       },
       {
        "name": "sd_teth_gap",
@@ -10702,7 +10793,8 @@
       },
       {
        "name": "port_tether",
-       "default": "true"
+       "default": "true",
+       "comment": "leash the port fitments (grommet, blank): the same strap and arrowhead barb, anchored beside their own port"
       },
       {
        "name": "port_teth_dx",
@@ -10722,7 +10814,8 @@
      "params": [
       {
        "name": "port_scoop",
-       "default": "true"
+       "default": "true",
+       "comment": "fingernail dish in the skin just outboard of the grommet's flange, so a port fitment can be peeled back out"
       },
       {
        "name": "port_scoop_dx",
@@ -10767,19 +10860,22 @@
       {
        "name": "edge_vent_n",
        "default": "16",
-       "comment": "shadow gills: count / pitch / pill w x h / band"
+       "comment": "shadow gills: count"
       },
       {
        "name": "edge_vent_pitch",
-       "default": "8.0"
+       "default": "8.0",
+       "comment": "shadow gills: pitch"
       },
       {
        "name": "edge_vent_w",
-       "default": "2.6"
+       "default": "2.6",
+       "comment": "shadow gills: pill width"
       },
       {
        "name": "edge_vent_h",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "shadow gills: pill height"
       },
       {
        "name": "edge_vent_z",
@@ -10799,7 +10895,8 @@
      "params": [
       {
        "name": "opt_stand",
-       "default": "true"
+       "default": "true",
+       "comment": "lay the desk dock out with the other parts in the default view (part = \"stand\" renders it alone either way)"
       },
       {
        "name": "stand_ang",
@@ -10909,7 +11006,8 @@
      "params": [
       {
        "name": "qr_bleed",
-       "default": "0.02"
+       "default": "0.02",
+       "comment": "how far neighboring QR module cells overlap, so no two cutter squares share an exact edge"
       },
       {
        "name": "qr_help",
@@ -10972,7 +11070,8 @@
      "params": [
       {
        "name": "stamp_show",
-       "default": "true"
+       "default": "true",
+       "comment": "deboss the build stamp (REV + SRC, from canary_s3_lcd7_stamp.scad) into the back plate's inner face"
       },
       {
        "name": "stamp_depth",

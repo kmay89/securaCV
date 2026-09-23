@@ -450,10 +450,12 @@ win_margin = 1.0;    // window opened this much beyond the active area on each
 // openings, offsets from the board center along their wall.
 // NOMINAL — MEASURE. The bottom (−Y) wall carries the USB/UART cluster; the
 // two short (±X) walls carry CAN/RS485/battery. Set opt_* to open them.
-opt_bottom_ports = true;
-bottom_open_w = 96.0;   bottom_open_dx = 0.0;   // wide channel over the bottom cluster
-opt_side_ports = true;
-side_open_h = 40.0;     side_open_dy = 0.0;     // tall slot on each short wall
+opt_bottom_ports = true;   // open the bottom (−Y) wall's channel over the USB/UART cluster
+bottom_open_w  = 96.0;     // width (X) of that wide channel over the bottom cluster
+bottom_open_dx = 0.0;      // its center offset from the board center, along the bottom wall
+opt_side_ports = true;     // open the tall slot in each short (±X) wall (CAN/RS485/battery)
+side_open_h    = 40.0;     // height (Y) of the tall slot on each short wall
+side_open_dy   = 0.0;      // its center offset from the board center, along the short wall
 
 /* [Ventilation] */
 // MUST let the backlight/SoC heat convect out.
@@ -561,7 +563,7 @@ vent_pitch_y = 10.2;     // row pitch
 // Hits and rests, one character per station, read left to right across a row.
 // Any two characters would do; '#' and '.' are chosen because the pattern is
 // legible AS a pattern in the source, which is where it gets edited.
-vent_beat  = "##.###.";
+vent_beat  = "##.###.";  // hits and rests, one character per station, read left to right across a row (# = egg, . = rest)
 vent_beat_shift = 1;  // stations the pattern rotates per row.
                       // ONE, and the reason is what it does to the rows above
                       // and below rather than anything about the row itself.
@@ -611,9 +613,12 @@ r_out  = 6.0;    // deviates: display-frame radius class — scaled to the 7-inc
 // cavity, so the screw threads into solid material the entire way — not across
 // an empty gap). Heads sit in a counterbore on the bezel's outboard ears,
 // clear of the glass.
-lob_d = 9.0;  lob_o = 3.0;   // lobe Ø / diagonal offset outboard of the cavity corner
+lob_d = 9.0;                 // bezel lobe (screw ear) Ø
+lob_o = 3.0;                 // lobe center's diagonal offset outboard of the cavity corner
 m3_nom = 3.0;                // M3 shank
-lob_pilot = 2.7;  cb_d = 6.0;  cb_h = 2.0;
+lob_pilot = 2.7;             // self-tap pilot down each full-height corner post (undersize on purpose, so the thread forms)
+cb_d = 6.0;                  // screw-head counterbore Ø on each bezel ear's front (the frame's back-plate head pockets are cut 0.4 over it)
+cb_h = 2.0;                  // head counterbore depth into the bezel ear
 // Clearance is DERIVED from the coupon's SCREW tolerance, so dialing tol_hole
 // after a coupon print actually moves this hole. (Self-tap pilots are not:
 // lob_pilot/m3_pilot are undersize on purpose, so the thread forms.)
@@ -831,7 +836,7 @@ brand_maker_sz  =  3.0;  // the maker row is a footnote, not a third shout
 // making the back read as two blank rectangles. The bird now sits in that
 // clear middle instead. Set true for a Command-strip build and the bird
 // keeps out of the rails' way automatically (its keepout is asserted).
-adh_rails   = false;
+adh_rails   = false;  // two smooth adhesive-strip zones on the back plate for a no-drill (Command-strip) mount; they cost the grille slots, and the bird keeps out of their way
 adh_rail_dx = 12.0;  // rail centers at ±this — the only clear full-height
                      // columns on the plate: inboard of the SD mouth, the
                      // boss head pockets and the keyhole pads (all asserted)
@@ -850,7 +855,7 @@ adh_mark_w  = 0.8;   // outline moat width
 // there would have to protrude below z = 0. Every other graphic on this face
 // (brand words, rating block, QR) is a deboss for the same reason, and they
 // all share one floor depth so a single tool change serves the lot.
-back_bird   = true;
+back_bird   = true;  // deboss the Canary mark (canary_mark_lib's bird) into the middle of the back plate
 // THE PLATE IS THE BADGE'S, and everything else is laid out around it. That
 // is the reordering this revision is: the mark used to be sized to whatever
 // gap the QR and the SD mouth left over (32 mm, "the clear middle runs about
@@ -943,7 +948,7 @@ sd_l  = 40.0;   // length along the slide direction
 //   is a second record — but that record's entry is scaled off the vendor
 //   drawing rather than calipered, ±2 mm, which is why soc_grow is not tight.
 //   A BATTERY BUILD CAN STILL TAKE IT AWAY (soc_bat_clash, below).
-soc_win  = false;
+soc_win  = false;  // open a window through the back plate over the WROOM-1 shield can, so its printed FCC/IC grant numbers read on the case (certifies nothing; position from the panel record, ±2 mm)
 soc_grow = 1.2;  // plate cut back beyond the can on every side. Two jobs: it
                  // is the tolerance on a ±2 mm position (see the panel
                  // record's own warning), and it keeps the cut off the can's
@@ -981,11 +986,14 @@ gill_n  = 0;         // SIDE GILLS OFF — they printed ugly on the first case
                      // survive this untouched — verified, not assumed.
                      // Was 7. Set it back if a build needs the side area.
 gill_y0 = -33.0;     // carry vents only; SD access is through the back plate
-gill_w = 2.4;  gill_l = 9.0;  gill_rake = 0;    // rake 0: vertical slots print
+gill_w = 2.4;        // DOCK KEY slot width (the stand's studs mate them — do
+                     // not move); the top wall's flank exhaust slots share
+                     // it. The visible side gills themselves are eggs,
+                     // gill_vw wide (below)
+gill_l = 9.0;        // side-gill length, and the portrait dock-key slots' length
+gill_rake = 0;       // side-gill rake, degrees. 0: vertical slots print
                      // cleanest; the raked look read as slashes and bought
-                     // nothing thermally. gill_w still sizes the DOCK KEY
-                     // slots (the stand's studs mate them — do not move);
-                     // the visible side gills themselves are eggs:
+                     // nothing thermally
 gill_vw = 3.6;       // side-gill egg base width — area matches the old
                      // 2.4-wide pill (21.2 vs 20.4 mm2), upright when
                      // wall-mounted so a drip running down the wall parts
@@ -1005,7 +1013,7 @@ frame_vent_flank_n = 4;  // exhaust slots per side, flanking the button window
 //              past the end of the gill row (asserted), engaged by studs on
 //              the dock's well ribs — which sit stand_rib_drop below the pad
 //              plane so those studs clear the solid bottom wall in landscape.
-dock_keys   = true;
+dock_keys   = true;  // cut the dock-keying slots the desk dock's centering studs rise into (bottom wall in landscape, side walls in portrait)
 dock_key_dx = 40.4;   // tracks stand_rib_x (asserted within half a rib) — both
                       // came in from 46.5/47.7 when the r9.05 corner shrank
                       // the side wall's flat span.
@@ -1140,9 +1148,9 @@ label_font  = "Liberation Sans:style=Bold";
 print_colors = true;   // build the per-filament parts and color the preview
 // Names are what you load in the slicer; they appear in the render-time echo
 // so the printed part and the recipe cannot disagree about what goes where.
-pal_body   = "Black";
-pal_ink    = "White";
-pal_accent = "Signal Yellow";
+pal_body   = "Black";  // BODY filament, named as you load it in the slicer (the render-time echo prints it)
+pal_ink    = "White";  // INK filament, named as you load it in the slicer (the render-time echo prints it)
+pal_accent = "Signal Yellow";  // ACCENT filament, named as you load it in the slicer (the render-time echo prints it)
 // Preview RGB only — these never reach the mesh, they just make `frame_color`
 // look like the real thing so a palette can be judged before it is printed.
 //
@@ -1236,7 +1244,7 @@ qr_dark_on_light = pal_lum(qr_mod_rgb) < pal_lum(qr_field_rgb);
 // depth, not a structural one: 0.6 is three layers at 0.2 and matches the
 // existing front-ring swap band exactly, so the AMS build and the
 // single-extruder build put their color boundary in the same place.
-bezel_ink_t = 0.6;
+bezel_ink_t = 0.6;  // how deep the INK reaches in from the front face: a visible-surface depth (0.6 = three layers at 0.2)
 // (ink_groups / accent_groups — the back-plate group lists — live UP at the
 //  palette, above the QR block: OpenSCAD hoists function definitions but not
 //  variable assignments, and the QR's derived polarity has to read them.)
@@ -1292,7 +1300,7 @@ side_dy   = 0.0;      // its center along that wall, + = toward the top edge.
 // Port labels: which opening is which, embossed on the outer skin beside it
 // (deboss floors read in the body color through the accent skin, so on a
 // two-color print the words come out colored for free — no extra swap).
-port_labels = true;
+port_labels = true;  // name each opening on the outer skin beside it (deboss floors read in the body color through the accent skin)
 // A label names what is BEHIND the wall, not what the cable happens to be.
 // The bottom exit sits on the panel's real USB-C, so "USB" there is true and
 // the assert below holds it to the panel record. The side exit is a cable
@@ -1323,7 +1331,7 @@ port_lbl_b  = "";       // beside the side exit — a hole, so it says nothing
 // wall mount, hidden behind the dock's fin when docked, and right there when
 // you pick the case up — which is exactly when you want it. Deboss, so it
 // never wears off and never needs a sticker.
-rating_stamp = true;
+rating_stamp = true;  // deboss the rating spec block on the back plate's lower band
 // The maker line's YEAR is taken from the build stamp, not typed. Both end up
 // molded into the same part, so a hand-typed year is a second thing that can
 // disagree with the first — and it would go stale on 1 January without anyone
@@ -1371,7 +1379,7 @@ btn_pip_dz = 0.0;    // tower center offset across the wall band, from the windo
 // takes the station of the innermost -x exhaust slot — the flank-vent loop
 // drops any slot the anchor needs (one, at stock dims), so the leash costs
 // exactly one exhaust slot and the echo says so.
-plug_tether  = true;
+plug_tether  = true;  // leash the BOOT/RESET plug: a strap in a flush top-wall channel, its arrowhead barb through an anchor hole beside the window (costs one exhaust slot)
 plug_teth_dx = -21.5;  // anchor center from the window center — the innermost
                        // -x flank slot's station (btn_w/2 + 9). Negative =
                        // the -x side, matching the SD leash's "anchor at the
@@ -1400,7 +1408,7 @@ sd_lip    = 1.2;     // countersunk rim: 45° reach AND depth around the opening
 // below the outer skin, so a wall or mounting strip never pinches it, and
 // the anchor hole is what the FRAME must carry — print the case AFTER this
 // change or the barb has nowhere to go (gated: sd_tether_hole/sd_tether_barb).
-sd_tether    = true;
+sd_tether    = true;  // leash the SD cover: a strap off the cap, its arrowhead barb through an anchor hole in the plate, so a peeled cover dangles captive
 sd_teth_gap  = 3.5;  // countersink rim outer edge → anchor hole center
 sd_teth_hole = 3.2;  // anchor hole Ø through the plate (the Ø2.8 shaft rides
                      // loose in it; the Ø4.6 arrowhead squeezes through once)
@@ -1416,7 +1424,7 @@ sd_teth_head = 4.6;  // arrowhead Ø — 1.4x the hole: firm thumb-push in, stay
 //   reason: 1.2 mm of 90-95A through the AMS's long PTFE path buckles and
 //   jams the hub (see bambu_p2s_bringup.md §0). Only "TPU for AMS" 68D
 //   feeds through, and that is too stiff to be a leash.
-port_tether  = true;
+port_tether  = true;  // leash the port fitments (grommet, blank): the same strap and arrowhead barb, anchored beside their own port
 port_teth_dx = -12.6;  // anchor hole center along the wall, from the port
                        // center — asserted clear of the brand words below
 port_teth_cb = 1.4;    // counterbore depth at the anchor's OUTER mouth. The
@@ -1440,7 +1448,7 @@ port_teth_cb = 1.4;    // counterbore depth at the anchor's OUTER mouth. The
 // It sits on the side AWAY from the leash anchor, so the nail peels the
 // fitment off its strap rather than against it — and that is the only side
 // with room: the anchor leaves 2.2 mm on its own side, this one has ~12.
-port_scoop    = true;
+port_scoop    = true;  // fingernail dish in the skin just outboard of the grommet's flange, so a port fitment can be peeled back out
 port_scoop_dx = 11.0;  // scoop center from the port center — just past the
                        // flange edge at usb_open_w/2 + grom_lip = 8.8, so
                        // the dish undercuts the flange's rim by ~1.2 mm
@@ -1463,10 +1471,10 @@ edge_text_l = "SECURACV";  // front-view left of the port
 edge_text_r = "CANARY";    // front-view right
 edge_text_size = 7.0;
 edge_lbl_depth = 1.0;   // deboss depth into the frame_wall skin (web asserted)
-edge_vent_n = 16;       // shadow gills: count / pitch / pill w x h / band
-edge_vent_pitch = 8.0;
-edge_vent_w = 2.6;
-edge_vent_h = 3.0;
+edge_vent_n = 16;       // shadow gills: count
+edge_vent_pitch = 8.0; // shadow gills: pitch
+edge_vent_w = 2.6;     // shadow gills: pill width
+edge_vent_h = 3.0;     // shadow gills: pill height
 edge_vent_z = 18.7;     // band center across the wall — behind the grommet's
                         // outer flange, shy of the back plate (both asserted)
 vent_gap  = 8.0;     // clear space between the port flange and each word
@@ -1476,7 +1484,7 @@ vent_gap  = 8.0;     // clear space between the port flange and each word
 // to the frame's DERIVED outer depth, so editing the frame's stack re-sizes
 // the dock with it. A reference frame STL measures 23.5 mm against the
 // derived 24.0 — stand_clear covers both without rattle.
-opt_stand = true;
+opt_stand = true;  // lay the desk dock out with the other parts in the default view (part = "stand" renders it alone either way)
 stand_ang     = 20;    // recline from vertical
 stand_w       = 174.0; // dock width — DELIBERATELY narrower than the case, so
                        // the side-wall gills stay in clear air and the case
@@ -1565,7 +1573,7 @@ qr_n = len(qr_bits());             // symbol size — defined HERE, above every 
 // POINT, which no bleed can fix and no nozzle can trace. Both are handled
 // in qr_field2d by a morphological opening; this knob is the union overlap
 // that feeds it. See that module for the decode tests.
-qr_bleed = 0.02;
+qr_bleed = 0.02;  // how far neighboring QR module cells overlap, so no two cutter squares share an exact edge
 qr_help = true;   // deboss the help QR into the deck
 qr_cell = 1.6;    // module size — 4 line-widths at a 0.4 mm nozzle
 qr_dx   = 43.5;   // field center, plate coords (+x = front-view right wing)
@@ -1681,7 +1689,7 @@ qr_back_reach = qr_n*qr_back_cell/2 + 4*qr_back_cell;   // field/2 + quiet zone,
 // Prints as the last layers of the plate, opening upward into the cavity —
 // no bridge, no support. Mirrored in x because this face is read from the
 // cavity side.
-stamp_show  = true;
+stamp_show  = true;  // deboss the build stamp (REV + SRC, from canary_s3_lcd7_stamp.scad) into the back plate's inner face
 stamp_depth = 0.5;   // of back_t; the plate keeps 2.5 under it
 stamp_dy    = 49.0;  // the clear band above the grille. Its floor is not a
                      // constant: the top egg row's center is at

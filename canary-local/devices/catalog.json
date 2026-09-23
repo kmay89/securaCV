@@ -504,7 +504,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 30,
+   "engineering_param_count": 32,
    "alternatives": [
     "s3_lcd7"
    ],
@@ -900,7 +900,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 27,
+   "engineering_param_count": 29,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -1313,7 +1313,7 @@
     {
      "id": "opt_bottom_ports",
      "type": "bool",
-     "label": "opt_bottom_ports",
+     "label": "open the bottom (−Y) wall's channel over the USB/UART cluster",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1321,7 +1321,7 @@
     {
      "id": "opt_side_ports",
      "type": "bool",
-     "label": "opt_side_ports",
+     "label": "open the tall slot in each short (±X) wall (CAN/RS485/battery)",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1393,7 +1393,7 @@
     {
      "id": "adh_rails",
      "type": "bool",
-     "label": "adh_rails",
+     "label": "two smooth adhesive-strip zones on the back plate for a no-drill (Command-strip) mount; they cost the grille slots, and the bird keeps out of their way",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -1401,7 +1401,7 @@
     {
      "id": "back_bird",
      "type": "bool",
-     "label": "back_bird",
+     "label": "deboss the Canary mark (canary_mark_lib's bird) into the middle of the back plate",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1409,7 +1409,7 @@
     {
      "id": "soc_win",
      "type": "bool",
-     "label": "soc_win",
+     "label": "open a window through the back plate over the WROOM-1 shield can, so its printed FCC/IC grant numbers read on the case (certifies nothing; position from the panel record, ±2 mm)",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -1417,7 +1417,7 @@
     {
      "id": "dock_keys",
      "type": "bool",
-     "label": "dock_keys",
+     "label": "cut the dock-keying slots the desk dock's centering studs rise into (bottom wall in landscape, side walls in portrait)",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1493,7 +1493,7 @@
     {
      "id": "port_labels",
      "type": "bool",
-     "label": "port_labels",
+     "label": "name each opening on the outer skin beside it (deboss floors read in the body color through the accent skin)",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1501,7 +1501,7 @@
     {
      "id": "rating_stamp",
      "type": "bool",
-     "label": "rating_stamp",
+     "label": "deboss the rating spec block on the back plate's lower band",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1509,7 +1509,7 @@
     {
      "id": "plug_tether",
      "type": "bool",
-     "label": "plug_tether",
+     "label": "leash the BOOT/RESET plug: a strap in a flush top-wall channel, its arrowhead barb through an anchor hole beside the window (costs one exhaust slot)",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1517,7 +1517,7 @@
     {
      "id": "sd_tether",
      "type": "bool",
-     "label": "sd_tether",
+     "label": "leash the SD cover: a strap off the cap, its arrowhead barb through an anchor hole in the plate, so a peeled cover dangles captive",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1525,7 +1525,7 @@
     {
      "id": "port_tether",
      "type": "bool",
-     "label": "port_tether",
+     "label": "leash the port fitments (grommet, blank): the same strap and arrowhead barb, anchored beside their own port",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1533,7 +1533,7 @@
     {
      "id": "port_scoop",
      "type": "bool",
-     "label": "port_scoop",
+     "label": "fingernail dish in the skin just outboard of the grommet's flange, so a port fitment can be peeled back out",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1541,7 +1541,7 @@
     {
      "id": "opt_stand",
      "type": "bool",
-     "label": "opt_stand",
+     "label": "lay the desk dock out with the other parts in the default view (part = \"stand\" renders it alone either way)",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1581,7 +1581,7 @@
     {
      "id": "stamp_show",
      "type": "bool",
-     "label": "stamp_show",
+     "label": "deboss the build stamp (REV + SRC, from canary_s3_lcd7_stamp.scad) into the back plate's inner face",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1600,7 +1600,7 @@
      "default": "none"
     }
    ],
-   "engineering_param_count": 294,
+   "engineering_param_count": 306,
    "alternatives": [
     "dash_display"
    ],
