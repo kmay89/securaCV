@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -59,8 +60,16 @@ class ScratchNames(unittest.TestCase):
 
     def test_the_committed_folder_has_no_scratch_file(self):
         # a scratch file committed by accident would be skipped here and
-        # carried nowhere else — say so instead of hiding it
-        stray = [p.name for p in ge.ENC.glob("*.scad") if ge.is_scratch_scad(p.name)]
+        # carried nowhere else — say so instead of hiding it. The names come
+        # from the index, not the disk: a probe in flight (a parallel regen)
+        # is on disk for the length of one render, and is not a commit.
+        try:
+            listed = subprocess.run(
+                ["git", "ls-files", "--", "*.scad"], cwd=ge.ENC, check=True,
+                capture_output=True, text=True).stdout.split()
+        except (OSError, subprocess.CalledProcessError):
+            listed = [p.name for p in ge.ENC.glob("*.scad")]  # no git: the disk
+        stray = [Path(n).name for n in listed if ge.is_scratch_scad(Path(n).name)]
         self.assertEqual(stray, [])
 
 
