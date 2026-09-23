@@ -127,7 +127,7 @@ enum Command {
         #[arg(long, default_value = "ruleset:v0.3.0")]
         ruleset_id: String,
         /// Device key seed (must match witnessd)
-        #[arg(long, env = "DEVICE_KEY_SEED")]
+        #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
         device_key_seed: String,
         #[arg(
             long,
@@ -149,12 +149,13 @@ enum Command {
         /// Device key seed — used only to derive the database encryption key
         /// (like log_verify). Every kernel-created database is encrypted, so
         /// this (or --db-key) is needed to read a real deployment's ledger.
-        #[arg(long, env = "DEVICE_KEY_SEED")]
+        #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
         device_key_seed: Option<String>,
         /// Explicit SQLCipher key (hex), overriding the seed derivation.
         #[arg(
             long,
             env = "SECURACV_DB_KEY",
+            hide_env_values = true,
             conflicts_with = "device_key_seed",
             value_name = "HEX"
         )]
@@ -179,12 +180,13 @@ enum Command {
         output_dir: String,
         /// Device key seed — used only to derive the database encryption key
         /// (like log_verify); needed to open a real deployment's database.
-        #[arg(long, env = "DEVICE_KEY_SEED")]
+        #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
         device_key_seed: Option<String>,
         /// Explicit SQLCipher key (hex), overriding the seed derivation.
         #[arg(
             long,
             env = "SECURACV_DB_KEY",
+            hide_env_values = true,
             conflicts_with = "device_key_seed",
             value_name = "HEX"
         )]
@@ -205,7 +207,7 @@ enum Command {
     /// when the database is keyed by an independent secret.
     DbKey {
         /// Device key seed (must match witnessd)
-        #[arg(long, env = "DEVICE_KEY_SEED")]
+        #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
         device_key_seed: String,
     },
 
@@ -223,7 +225,7 @@ enum Command {
         vault_path: String,
         /// Device key seed (must match witnessd) — needed to open the encrypted
         /// kernel database.
-        #[arg(long, env = "DEVICE_KEY_SEED")]
+        #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
         device_key_seed: String,
     },
 
@@ -243,7 +245,7 @@ enum Command {
         /// Current device key seed (must match witnessd). When absent,
         /// --seed-file, else the seed file beside the database
         /// (`<db>.ed25519.seed`), is read.
-        #[arg(long, env = "DEVICE_KEY_SEED")]
+        #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
         device_key_seed: Option<String>,
         /// Mint the successor seed from the OS RNG and write it to the seed
         /// file (recommended — the seed never crosses a shell or a terminal).
@@ -255,6 +257,7 @@ enum Command {
         #[arg(
             long,
             env = "NEW_DEVICE_KEY_SEED",
+            hide_env_values = true,
             value_name = "SEED",
             required_unless_present = "generate"
         )]
@@ -269,7 +272,12 @@ enum Command {
         /// (SECURACV_DB_KEY_SEED unset), re-key the database to this
         /// independent secret first — exactly what `rekey-db` does. Start
         /// every process with SECURACV_DB_KEY_SEED set to it afterwards.
-        #[arg(long, env = "SECURACV_NEW_DB_KEY_SEED", value_name = "SECRET")]
+        #[arg(
+            long,
+            env = "SECURACV_NEW_DB_KEY_SEED",
+            hide_env_values = true,
+            value_name = "SECRET"
+        )]
         rekey_db_to: Option<String>,
     },
 
@@ -285,14 +293,24 @@ enum Command {
         /// SECURACV_DB_KEY_SEED when set, exactly as `db-key` does). When
         /// absent and --old-db-key is not given, the seed file beside the
         /// database is used.
-        #[arg(long, env = "DEVICE_KEY_SEED")]
+        #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
         old_device_key_seed: Option<String>,
         /// The current SQLCipher key (hex), as `db-key` prints it. Takes
         /// precedence over --old-device-key-seed.
-        #[arg(long, env = "SECURACV_DB_KEY", value_name = "HEX")]
+        #[arg(
+            long,
+            env = "SECURACV_DB_KEY",
+            hide_env_values = true,
+            value_name = "HEX"
+        )]
         old_db_key: Option<String>,
         /// The new independent DB-key secret (what SECURACV_DB_KEY_SEED will be).
-        #[arg(long, env = "SECURACV_NEW_DB_KEY_SEED", value_name = "SECRET")]
+        #[arg(
+            long,
+            env = "SECURACV_NEW_DB_KEY_SEED",
+            hide_env_values = true,
+            value_name = "SECRET"
+        )]
         new_db_key_seed: String,
     },
 
@@ -325,7 +343,7 @@ enum Command {
         #[arg(long, default_value = "ruleset:v0.3.0")]
         ruleset_id: String,
         /// Device key seed (must match witnessd)
-        #[arg(long, env = "DEVICE_KEY_SEED")]
+        #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
         device_key_seed: String,
         /// Setup-draft file (defaults to `<db>.setup-draft.json`)
         #[arg(long)]
@@ -363,7 +381,7 @@ enum TrusteeCommand {
         #[arg(long, default_value = "ruleset:v0.3.0")]
         ruleset_id: String,
         /// Device key seed (must match witnessd)
-        #[arg(long, env = "DEVICE_KEY_SEED")]
+        #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
         device_key_seed: String,
         /// Setup-draft file (defaults to `<db>.setup-draft.json`)
         #[arg(long)]
@@ -398,7 +416,7 @@ enum PolicyCommand {
         #[arg(long, default_value = "ruleset:v0.3.0")]
         ruleset_id: String,
         /// Device key seed (must match witnessd)
-        #[arg(long, env = "DEVICE_KEY_SEED")]
+        #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
         device_key_seed: String,
     },
 
@@ -424,7 +442,7 @@ enum PolicyCommand {
         #[arg(long, default_value = "ruleset:v0.3.0")]
         ruleset_id: String,
         /// Device key seed (must match witnessd)
-        #[arg(long, env = "DEVICE_KEY_SEED")]
+        #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
         device_key_seed: String,
     },
 
@@ -449,12 +467,13 @@ enum PolicyCommand {
         db: String,
         /// Device key seed — used only to derive the database encryption key.
         /// An observer holding only the database key passes --db-key instead.
-        #[arg(long, env = "DEVICE_KEY_SEED")]
+        #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
         device_key_seed: Option<String>,
         /// Explicit SQLCipher key (hex), overriding the seed derivation.
         #[arg(
             long,
             env = "SECURACV_DB_KEY",
+            hide_env_values = true,
             conflicts_with = "device_key_seed",
             value_name = "HEX"
         )]
@@ -477,12 +496,13 @@ enum PolicyCommand {
         #[arg(long, value_name = "PATH", conflicts_with = "public_key")]
         public_key_file: Option<String>,
         /// Device key seed — used only to derive the database encryption key.
-        #[arg(long, env = "DEVICE_KEY_SEED")]
+        #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
         device_key_seed: Option<String>,
         /// Explicit SQLCipher key (hex), overriding the seed derivation.
         #[arg(
             long,
             env = "SECURACV_DB_KEY",
+            hide_env_values = true,
             conflicts_with = "device_key_seed",
             value_name = "HEX"
         )]

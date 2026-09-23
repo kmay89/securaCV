@@ -74,7 +74,12 @@ struct Args {
     #[arg(long, value_name = "PATH", conflicts_with = "pq_public_key")]
     pq_public_key_file: Option<String>,
     /// SQLCipher database encryption key (hex-encoded, 32 bytes)
-    #[arg(long, value_name = "HEX", env = "SECURACV_DB_KEY")]
+    #[arg(
+        long,
+        value_name = "HEX",
+        env = "SECURACV_DB_KEY",
+        hide_env_values = true
+    )]
     db_key: Option<String>,
 
     /// Path to the signed external high-water-mark
@@ -92,7 +97,12 @@ struct Args {
     /// and the verifying key (when no --public-key/--public-key-file is
     /// given), so `DEVICE_KEY_SEED=... log_verify --db witness.db` works
     /// against a bridge-produced encrypted log.
-    #[arg(long, value_name = "SEED", env = "DEVICE_KEY_SEED")]
+    #[arg(
+        long,
+        value_name = "SEED",
+        env = "DEVICE_KEY_SEED",
+        hide_env_values = true
+    )]
     device_key_seed: Option<String>,
 }
 

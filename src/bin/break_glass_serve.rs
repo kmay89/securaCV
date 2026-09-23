@@ -36,7 +36,7 @@ struct Args {
     /// Device key seed (must match witnessd). When absent, the seed file
     /// witnessd keeps beside the database (`<db>.ed25519.seed`) is used, or
     /// created there (mode 0600) on a fresh install.
-    #[arg(long, env = "DEVICE_KEY_SEED")]
+    #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
     device_key_seed: Option<String>,
     #[arg(long, default_value = "vault/envelopes")]
     vault_path: String,

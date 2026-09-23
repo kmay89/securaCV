@@ -41,7 +41,7 @@ struct Args {
     ruleset_id: String,
     /// Device key seed (must match witnessd). When absent, the seed file
     /// witnessd keeps beside the database (`<db>.ed25519.seed`) is used.
-    #[arg(long, env = "DEVICE_KEY_SEED")]
+    #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
     device_key_seed: Option<String>,
     /// Output file path for the export artifact.
     #[arg(long, default_value = "witness_export.json")]

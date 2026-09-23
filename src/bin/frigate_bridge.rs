@@ -83,7 +83,7 @@ struct Args {
     mqtt_username: Option<String>,
 
     /// MQTT password for authentication.
-    #[arg(long, env = "MQTT_PASSWORD")]
+    #[arg(long, env = "MQTT_PASSWORD", hide_env_values = true)]
     mqtt_password: Option<String>,
 
     /// Enable TLS for MQTT (required for mqtts:// brokers).

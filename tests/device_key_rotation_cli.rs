@@ -732,3 +732,118 @@ fn rotate_identity_replaces_a_custom_seed_file_and_the_one_beside_the_database()
     assert!(out.status.success(), "{}", text(&out));
     assert!(text(&out).contains("VALID"), "{}", text(&out));
 }
+
+/// Every environment variable that carries a secret VALUE (a seed, a
+/// database key or its secret, a password, a bearer token). A clap argument
+/// bound to one must set `hide_env_values = true`, or `--help` prints the
+/// live value from the environment (`[env: DEVICE_KEY_SEED=devkey:…]`).
+/// `*_PATH` variables name a file and are not secrets.
+const SECRET_ENV_VARS: &[&str] = &[
+    "DEVICE_KEY_SEED",
+    "NEW_DEVICE_KEY_SEED",
+    "SECURACV_DB_KEY",
+    "SECURACV_DB_KEY_SEED",
+    "SECURACV_NEW_DB_KEY_SEED",
+    "MQTT_PASSWORD",
+    "BUSYBAR_TOKEN",
+    "WITNESS_API_TOKEN",
+];
+
+fn rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(dir).expect("read src dir") {
+        let path = entry.expect("dir entry").path();
+        if path.is_dir() {
+            rust_sources(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// The class guard: no `#[arg(...)]` anywhere under `src/` binds a secret
+/// environment variable without hiding its value from `--help`.
+#[test]
+fn no_cli_argument_prints_a_secret_env_value_in_help() {
+    let mut files = Vec::new();
+    rust_sources(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut files,
+    );
+    let mut offenders = Vec::new();
+    let mut checked = 0usize;
+    for file in &files {
+        let source = std::fs::read_to_string(file).expect("read source");
+        let mut rest = source.as_str();
+        while let Some(start) = rest.find("#[arg(") {
+            let tail = &rest[start..];
+            let end = tail.find(")]").map(|i| i + 2).unwrap_or(tail.len());
+            let attribute = &tail[..end];
+            for var in SECRET_ENV_VARS {
+                if attribute.contains(&format!("env = \"{var}\"")) {
+                    checked += 1;
+                    if !attribute.contains("hide_env_values = true") {
+                        offenders.push(format!("{}: {var}", file.display()));
+                    }
+                }
+            }
+            rest = &tail[end..];
+        }
+    }
+    assert!(
+        checked >= 30,
+        "the scan found only {checked} secret-bound arguments; the attribute parser is broken"
+    );
+    assert!(
+        offenders.is_empty(),
+        "these arguments print a secret env value in --help (add `hide_env_values = true`):\n{}",
+        offenders.join("\n")
+    );
+}
+
+/// The behavior the guard protects: `--help` with every secret variable set
+/// names the variables but prints none of their values.
+#[test]
+fn help_never_prints_a_secret_from_the_environment() {
+    const DB_KEY_HEX: &str = "5ec2e75ec2e75ec2e75ec2e75ec2e75ec2e75ec2e75ec2e75ec2e75ec2e75ec2";
+    let envs = [
+        ("DEVICE_KEY_SEED", GENESIS_SEED),
+        ("NEW_DEVICE_KEY_SEED", SUCCESSOR_SEED),
+        ("SECURACV_NEW_DB_KEY_SEED", DB_SECRET),
+        ("SECURACV_DB_KEY_SEED", DB_SECRET_2),
+        ("SECURACV_DB_KEY", DB_KEY_HEX),
+    ];
+    let secrets = [
+        GENESIS_SEED,
+        SUCCESSOR_SEED,
+        DB_SECRET,
+        DB_SECRET_2,
+        DB_KEY_HEX,
+    ];
+    for (bin, args) in [
+        (
+            env!("CARGO_BIN_EXE_break_glass"),
+            &["rotate-identity", "--help"][..],
+        ),
+        (
+            env!("CARGO_BIN_EXE_break_glass"),
+            &["rekey-db", "--help"][..],
+        ),
+        (env!("CARGO_BIN_EXE_break_glass"), &["db-key", "--help"][..]),
+        (
+            env!("CARGO_BIN_EXE_break_glass"),
+            &["receipts", "--help"][..],
+        ),
+        (env!("CARGO_BIN_EXE_log_verify"), &["--help"][..]),
+        (env!("CARGO_BIN_EXE_export_events"), &["--help"][..]),
+        (env!("CARGO_BIN_EXE_break_glass_serve"), &["--help"][..]),
+    ] {
+        let out = run(bin, args, &envs);
+        assert!(out.status.success(), "{bin} {args:?}\n{}", text(&out));
+        let all = text(&out);
+        assert!(
+            all.contains("[env: DEVICE_KEY_SEED]"),
+            "{bin} {args:?} should still name the variable\n{all}"
+        );
+        assert_no_secrets(&out, &secrets);
+    }
+}

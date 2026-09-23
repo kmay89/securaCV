@@ -51,12 +51,13 @@ struct Args {
     output_dir: PathBuf,
     /// Device key seed — used only to derive the database encryption key
     /// (like log_verify). Not needed for an unencrypted database.
-    #[arg(long, env = "DEVICE_KEY_SEED")]
+    #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
     device_key_seed: Option<String>,
     /// Explicit SQLCipher key (hex), overriding the seed derivation.
     #[arg(
         long,
         env = "SECURACV_DB_KEY",
+        hide_env_values = true,
         conflicts_with = "device_key_seed",
         value_name = "HEX"
     )]

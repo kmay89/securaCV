@@ -57,14 +57,24 @@ struct Args {
     #[arg(long, value_name = "PATH", conflicts_with = "pq_public_key")]
     pq_public_key_file: Option<String>,
     /// SQLCipher database encryption key (hex-encoded, 32 bytes)
-    #[arg(long, value_name = "HEX", env = "SECURACV_DB_KEY")]
+    #[arg(
+        long,
+        value_name = "HEX",
+        env = "SECURACV_DB_KEY",
+        hide_env_values = true
+    )]
     db_key: Option<String>,
     /// Device key seed (as used by the kernel/bridges). Derives the SQLCipher
     /// key (when --db-key is not given) and the verifying key (when no
     /// --public-key/--public-key-file is given) — same semantics as
     /// log_verify, so `DEVICE_KEY_SEED=... export_verify --db witness.db
     /// --bundle ...` verifies an owner self-export with the seed alone.
-    #[arg(long, value_name = "SEED", env = "DEVICE_KEY_SEED")]
+    #[arg(
+        long,
+        value_name = "SEED",
+        env = "DEVICE_KEY_SEED",
+        hide_env_values = true
+    )]
     device_key_seed: Option<String>,
     /// Also verify a C2PA Content Credentials sidecar manifest against the
     /// bundle bytes (docs/design/c2pa_export.md).
