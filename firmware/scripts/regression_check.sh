@@ -532,12 +532,15 @@ echo ""
 
 # ── Check: Mesh secret persistence is gated on flash encryption ────────
 # The ESP-NOW "Opera" mesh uses a long-lived shared secret (opera_secret). It must
-# NEVER be written to NVS unless flash encryption is on, or the secret sits in
-# plaintext at rest. The persistence layer (mesh_state.cpp) enforces this: its
-# save_*/load_* paths return false when !esp_flash_encryption_enabled(), so on an
-# FE-off board the secret is not persisted (the live in-RAM session is allowed for
-# the current boot by design — see firmware/canary/src/main.cpp on_pairing_succeeded
-# — but nothing confidential lands in unencrypted NVS). This guard asserts that FE
+# NEVER be written to NVS unless flash encryption is on. The persistence layer
+# (mesh_state.cpp) enforces this: its save_*/load_* paths return false when
+# !esp_flash_encryption_enabled(), so on an FE-off board the secret is not
+# persisted (the live in-RAM session is allowed for the current boot by design —
+# see firmware/canary/src/main.cpp on_pairing_succeeded). On an FE-ON board the
+# entry is still plaintext at rest: flash encryption does not cover NVS, and NVS
+# encryption is unavailable under framework = arduino (mesh_state.h; roadmap
+# item 9) — the gate keeps the secret off un-fused boards, it does not encrypt
+# it on fused ones. This guard asserts that FE
 # check is not silently removed from the mesh persistence/impl files. It does NOT,
 # and cannot statically, prove the *activation* path fails closed — see issue #610
 # C2 / the bench runbook for the on-device check, and the open design question of

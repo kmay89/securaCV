@@ -112,22 +112,40 @@ host tests assert they do, on real radio.
 
 - [ ] **K1 — identity-key posture is reported, and only the opt-in image refuses**
   - Setup: one ESP32-S3 board with flash encryption NOT enabled, one with
-    it enabled (dev mode); the default `canary` image and the provisioning
-    kit's `[env:secure]` image (`SECURACV_REQUIRE_FLASH_ENCRYPTION=1`).
+    it enabled (dev mode); the default `canary` image (`pio run -e release`)
+    and an opt-in image built from the same env with
+    `PLATFORMIO_BUILD_FLAGS=-DSECURACV_REQUIRE_FLASH_ENCRYPTION=1 pio run -e release`.
+    Not the provisioning kit's `[env:secure]`: no CI job builds it and, as
+    written, it lacks the shared include paths
+    (`firmware/provisioning/platformio_secure.ini`).
   - Repro: boot each combination; press `f` on the console; `GET /api/status`.
   - Expected:
     - default image, FE-off board: boot log carries
-      `[WARN] Key at rest : plaintext-nvs`, the `f` card shows
-      `KeyAtRest : plaintext-nvs`, `/api/status` and the `j` manifest carry
-      `"key_at_rest":"plaintext-nvs"`; provisioning succeeds.
-    - default image, FE-on board: the same three surfaces read
-      `flash-encrypted` (or `flash-encrypted+secure-boot`), the boot line is
-      `[INFO]`.
-    - `[env:secure]` image, FE-off board: provisioning HALTS with
-      `[!!] identity key not stored: flash encryption required by this
-      build but not active` (or `not loaded`, when a default image had
-      already written one) followed by `Device provisioning failed`; NVS
-      never gains a new `privkey` entry.
+      `[WARN] Key at rest : plaintext-nvs - identity key at rest in plaintext NVS (Tier 0 default; ...)`,
+      the `f` card shows `KeyAtRest : plaintext-nvs`, `/api/status` and the
+      `j` manifest carry `"key_at_rest":"plaintext-nvs"`; provisioning
+      succeeds.
+    - default image, FE-on board: the `f` card's `FlashEnc` line reads
+      `ENABLED`, but the three surfaces STILL read `plaintext-nvs` and the
+      boot line is still `[WARN]`, now with `flash encryption is on but does
+      not cover NVS, and NVS encryption is not active`. Flash encryption
+      does not encrypt NVS and this build has no NVS encryption, so the key
+      is readable from a flash dump; a board reporting `nvs-encrypted` here
+      is a FAIL. Optional confirmation: read the `nvs` partition back with
+      `esptool.py read_flash 0x9000 0x5000` and find the `privkey` entry in
+      the clear.
+    - opt-in image, FE-off board: provisioning HALTS. The log carries
+      `[!!] identity key not loaded: flash encryption required by this
+      build but not active` (the load is refused before NVS is read, so it
+      prints whether or not a default image had already stored a key), then
+      `[!!] identity key not stored: ...` with the same reason, then
+      `Device provisioning failed`; NVS never gains a new `privkey` entry and
+      an existing one is left as it was.
+    - opt-in image, FE-on board: provisioning ALSO halts, the same two
+      lines with the reason `encrypted NVS required by this build but NVS
+      encryption is not active (flash encryption alone does not cover NVS)`.
+      Under `framework = arduino` the opt-in image refuses on every board —
+      that is the policy, not a fault.
   - Policy under test: `firmware/common/identity/key_at_rest.h`
     (host-tested by `firmware/tests_host/test_key_at_rest.cpp`).
   - Artifact: `docs/audit/repro/K1/`.

@@ -201,10 +201,12 @@ BIRTHDAY_HDR = ../common/identity/birth_day.h
 BIRTHDAY_BIN = $(BUILD_DIR)/test_birth_day
 
 # Key-at-rest policy (common/identity/key_at_rest.h): the tier / wire label /
-# allow-refuse decision for the identity key's NVS home from {flash
-# encryption, secure boot, SECURACV_REQUIRE_FLASH_ENCRYPTION}. Pins that the
-# Tier-0 default never refuses, that the opt-in image refuses load AND persist
-# symmetrically, and that the labels are wire-safe. Pure header, no Arduino.
+# allow-refuse decision / boot line for the identity key's NVS home from {flash
+# encryption, NVS encryption, secure boot, SECURACV_REQUIRE_FLASH_ENCRYPTION}.
+# Pins that flash encryption alone is still plaintext NVS, that the Tier-0
+# default never refuses, that the opt-in image refuses load AND persist
+# symmetrically unless NVS is encrypted, and that the labels are wire-safe.
+# Pure header, no Arduino.
 KEYREST_HDR = ../common/identity/key_at_rest.h
 KEYREST_BIN = $(BUILD_DIR)/test_key_at_rest
 

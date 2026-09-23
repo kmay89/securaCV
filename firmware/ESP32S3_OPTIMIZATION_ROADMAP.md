@@ -145,8 +145,9 @@ reconnect. This is a far better default than the current deep-sleep-and-cold-rec
 ### 1.5 Protect the key at rest and in hardware (the "crypto signing everything" lever)
 
 The product's spine is Ed25519-signed, hash-chained records. The **device identity key sits in
-plaintext NVS** ([`securacv_crypto.cpp:354`](canary/lib/securacv_crypto/src/securacv_crypto.cpp))
-with **no flash encryption and no secure boot** in the default build. Physical read of the flash →
+plaintext NVS** ([`securacv_crypto.cpp:376`](canary/lib/securacv_crypto/src/securacv_crypto.cpp))
+with **no flash encryption and no secure boot** in the default build — and burning flash encryption
+would not change that: flash encryption does not cover NVS (below). Physical read of the flash →
 key extraction → the attacker can forge records *forward* from that point (not rewrite anchored
 history — [`SECURITY_MODEL.md`](../docs/security/SECURITY_MODEL.md)). "Keys never leave the
 device" ([`secure_defaults.h`](canary/include/secure_defaults.h) Principle 1) is enforced only
@@ -158,22 +159,33 @@ against the *software* export path, not against at-rest confidentiality.
 ever burned, un-brickable), with flash encryption opt-in at Tier 3 (dev mode) / Tier 4 (release).
 What landed instead of a default-build gate:
 
+- **flash encryption does not cover NVS.** With it on, ESP-IDF encrypts only the app, otadata and
+  `nvs_keys` partitions; this tree's tables leave `nvs` unflagged, so it is still written in
+  plaintext, and flagging it `encrypted` does not help — plain NVS then refuses to open it
+  (`ESP_ERR_NVS_WRONG_ENCRYPTION`; IDF v4.4 `nvs_partition_lookup.cpp`), which is what
+  `provisioning/partitions_secure.csv` does today, so the kit's `[env:secure]` image could not
+  open NVS on a fused board at all (recorded in `platformio_secure.ini`, not fixed). The key is
+  ciphertext at rest only under **NVS encryption** on top of flash encryption;
 - the policy is written down once, host-tested, in
-  [`common/identity/key_at_rest.h`](common/identity/key_at_rest.h): the default never refuses;
-  an image built with `SECURACV_REQUIRE_FLASH_ENCRYPTION=1` (the provisioning kit's `[env:secure]`,
-  i.e. a Tier-3+ image) refuses to store **and** to load the key on flash-encryption-off silicon,
-  so it fails closed at provisioning — the same O2 posture `mesh_state` applies to the household
-  secret;
-- the posture is **self-reported** live from the eFuses as `key_at_rest`
-  (`plaintext-nvs` | `flash-encrypted` | `flash-encrypted+secure-boot`) in `/api/status`, the
-  health export, the `f` console card and the `j` self-manifest, with one `[WARN] Key at rest`
-  boot line on a Tier-0 board;
+  [`common/identity/key_at_rest.h`](common/identity/key_at_rest.h): the tier is `plaintext-nvs`
+  unless flash encryption AND NVS encryption are both active; the default never refuses; an image
+  built with `SECURACV_REQUIRE_FLASH_ENCRYPTION=1` (a Tier-3+ image) refuses to store **and** to
+  load the key unless its NVS is actually encrypted, so it fails closed at provisioning — under
+  `framework = arduino` that is **every** board, fused or not, by design. The provisioning kit's
+  `[env:secure]` sets the flag, but no CI job builds that env and, as written, it lacks the shared
+  `-I` paths (pre-existing; recorded in the file); bench row K1 builds the opt-in as a normal
+  canary env with `PLATFORMIO_BUILD_FLAGS=-DSECURACV_REQUIRE_FLASH_ENCRYPTION=1`;
+- the posture is **self-reported** live as `key_at_rest` (`plaintext-nvs` | `nvs-encrypted` |
+  `nvs-encrypted+secure-boot`) in `/api/status`, the health export, the `f` console card and the
+  `j` self-manifest, with one `[WARN] Key at rest` boot line — `plaintext-nvs` on every PIO canary
+  image today, because the NVS-encryption fact is false in this build;
 - the "NVS encryption now" quick win this section used to promise is **not achievable in the PIO
   canary tree**: `framework = arduino` ships a precompiled core + bootloader, so
   `CONFIG_NVS_ENCRYPTION` / `CONFIG_SECURE_FLASH_ENC_ENABLED` in any `sdkconfig.defaults` are inert
-  here (only the ESP-IDF project `canary-ota` has NVS encryption on), and NVS encryption is only
-  meaningful under flash encryption anyway (the `nvs_keys` partition must itself be encrypted).
-  It needs the arduino-as-IDF-component migration (item 9) and is then a Tier-3 concern.
+  here (the 2.0.17 core's own sdkconfig leaves `CONFIG_SECURE_FLASH_ENC_ENABLED` unset, and NVS
+  encryption depends on it; only the ESP-IDF project `canary-ota` has NVS encryption on). It needs
+  the arduino-as-IDF-component migration (item 9) and is then a Tier-3 concern — and the point
+  where `key_at_rest.h`'s NVS-encryption fact learns to read true.
 
 The ESP32-S3's DS/HMAC peripherals remain unused by design (§8 #4: Ed25519 under FE/NVS
 encryption is the default; a DS-bound RSA key only where non-extractability is required) — see
@@ -568,7 +580,7 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 5 | (fixed) SD glitch disabled logging until reboot — bounded mount worker + periodic remount | **P0** | Storage | `securacv_storage.cpp` | Durable logging survives transient faults |
 | 6 | CSI dies under modem-sleep; probe unwired | **P0** | WiFi/CSI | `power_policy.cpp:73` | Reliable CSI on battery + lone devices |
 | 7 | (fixed) Camera init/deinit raced peek task — lifecycle mutex in CameraManager | **P0** | Camera | `securacv_camera.cpp` | Removes a crash vector |
-| 8 | (decided) Plaintext identity key at Tier 0 is the accepted default (`hardware_root_of_trust.md` §8 #1/#3/#4); fail-closed via `SECURACV_REQUIRE_FLASH_ENCRYPTION` on Tier-3+ images; posture self-reported (`key_at_rest`) | **P0→P1** | Crypto | `securacv_crypto.cpp:354` | Posture stated, not assumed; FE dev-mode (Tier 3) → FE+SB (Tier 4) stay opt-in |
+| 8 | (decided) Plaintext identity key at Tier 0 is the accepted default (`hardware_root_of_trust.md` §8 #1/#3/#4); fail-closed via `SECURACV_REQUIRE_FLASH_ENCRYPTION` on Tier-3+ images (refuses unless NVS is encrypted — flash encryption alone does not cover NVS, so every board under `framework = arduino`); posture self-reported (`key_at_rest`, `plaintext-nvs` everywhere today) | **P0→P1** | Crypto | `securacv_crypto.cpp:376` | Posture stated, not assumed; at-rest encryption needs NVS encryption (item 9), FE dev-mode (Tier 3) → FE+SB (Tier 4) stay opt-in |
 | 9 | Unify on core-3.x / IDF-5.x toolchain | **P1** | Build | `platformio.ini` | Unblocks §3.2–3.4, §1.4, WPA3, new drivers |
 | 10 | Dual-core task model (sensing + durability) | **P1** | Core | `main.cpp:1480` | Bounded loop latency, no WDT thrash |
 | 11 | One 8 MB partition table + `witness_log` | **P1** | Flash | `partitions_ota.csv` | Ends the table matrix; card-independent durability |

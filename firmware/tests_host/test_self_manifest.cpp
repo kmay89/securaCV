@@ -216,9 +216,9 @@ static void test_key_at_rest_optional() {
   f.key_at_rest = nullptr;
   manifest::build(f, buf, sizeof buf);
   CHECK(!has(std::string(buf), "key_at_rest"));   // the key itself is gone
-  f.key_at_rest = "flash-encrypted+secure-boot";
+  f.key_at_rest = "nvs-encrypted+secure-boot";
   manifest::build(f, buf, sizeof buf);
-  CHECK(has(std::string(buf), "\"key_at_rest\":\"flash-encrypted+secure-boot\""));
+  CHECK(has(std::string(buf), "\"key_at_rest\":\"nvs-encrypted+secure-boot\""));
   // It sits with the identity facts, before health, so the pubkey/fingerprint
   // block and the posture read together.
   std::string s(buf);

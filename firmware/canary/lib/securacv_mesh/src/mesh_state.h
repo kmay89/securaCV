@@ -46,14 +46,26 @@
  * mesh-layer key — it exposes OTHER devices, not just this one. This
  * module therefore ENFORCES the flash-encryption gate (audit O2): every
  * save_*/load_* below returns false when esp_flash_encryption_enabled()
- * is false, so nothing household-shared ever lands in plaintext NVS, and
- * firmware/scripts/regression_check.sh ("Mesh secret persistence is
- * FE-gated") asserts the check stays in this file and mesh_network.cpp.
+ * is false, so nothing household-shared is persisted on silicon without
+ * flash encryption, and firmware/scripts/regression_check.sh ("Mesh
+ * secret persistence is FE-gated") asserts the check stays in this file
+ * and mesh_network.cpp.
+ *
+ * That is ALL the gate buys. Flash encryption does not cover NVS: ESP-IDF
+ * encrypts only the app, otadata and nvs_keys partitions, and this tree's
+ * tables (partitions_ota.csv, the core's default_8MB.csv) leave nvs
+ * unflagged, so on a board WITH flash encryption these four entries still
+ * sit in plaintext on the flash chip. They would be ciphertext only under
+ * NVS encryption, which is not available under framework = arduino (the
+ * Arduino core's sdkconfig does not compile it in; roadmap item 9 is the
+ * route). So today the gate keeps the secret off un-fused boards; it does
+ * not make it confidential at rest on fused ones.
  *
  * The device's OWN identity key is deliberately NOT gated this way at the
  * default tier: Tier 0 of docs/design/hardware_root_of_trust.md (§5.1,
- * decisions §8 #1/#3/#4) keeps it in NVS on un-fused silicon, reports the
- * posture as `key_at_rest`, and refuses only in images built with
+ * decisions §8 #1/#3/#4) keeps it in NVS, reports the posture as
+ * `key_at_rest` (plaintext-nvs on every board in this tree, for the reason
+ * above), and refuses only in images built with
  * SECURACV_REQUIRE_FLASH_ENCRYPTION=1 — the decision is written down once
  * in common/identity/key_at_rest.h. (ble_scout_key's per-device scout key
  * and the API token are Tier-0 by the same reasoning and carry no gate.)
@@ -75,7 +87,8 @@ namespace mesh_state {
  * Returns false on:
  *   • null pointer
  *   • flash encryption disabled on this device (audit O2 — refuse to
- *     persist household secrets on FE-off hardware; file comment above)
+ *     persist household secrets on FE-off hardware; on FE-on hardware the
+ *     NVS entry is still plaintext, see the file comment above)
  *   • NVS write failure (corrupt partition / hardware fault)
  *
  * On the host build, always returns true (no-op success — tests use

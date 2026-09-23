@@ -3212,8 +3212,10 @@ static void handle_serial_commands() {
 #if HAVE_FLASH_ENCRYPT
       Serial.printf("  FlashEnc  : %s\n", esp_flash_encryption_enabled() ? "ENABLED" : "off");
 #endif
-      // The tier the two lines above add up to, as the wire label the device
-      // also reports in /api/status and the self-manifest (key_at_rest.h).
+      // Where the key's bytes actually sit, as the wire label the device also
+      // reports in /api/status and the self-manifest (key_at_rest.h). NOT what
+      // the FlashEnc line above implies: flash encryption does not cover NVS,
+      // so a fused board still reads plaintext-nvs in this tree.
       Serial.printf("  KeyAtRest : %s\n", crypto_key_at_rest_label());
       Serial.printf("  Console   : %u diag cmds · policy %s\n",
                     (unsigned)kConsoleCommandCount,

@@ -84,9 +84,9 @@ struct Facts {
   uint32_t born_day = 0;
   bool born_exact = false;
   // Where the device's identity key sleeps, as the wire label from
-  // common/identity/key_at_rest.h ("plaintext-nvs" | "flash-encrypted" |
-  // "flash-encrypted+secure-boot"; "hw-bound" reserved). A posture statement
-  // read live from the eFuses, never key material. Optional and additive:
+  // common/identity/key_at_rest.h ("plaintext-nvs" | "nvs-encrypted" |
+  // "nvs-encrypted+secure-boot"; "hw-bound" reserved). A posture statement
+  // read live on the device, never key material. Optional and additive:
   // nullptr (an image that does not report it) omits the key entirely, so an
   // older reader sees exactly the object it always did.
   const char* key_at_rest = nullptr;

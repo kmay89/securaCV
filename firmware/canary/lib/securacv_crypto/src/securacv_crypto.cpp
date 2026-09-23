@@ -340,6 +340,18 @@ static key_at_rest::Facts key_at_rest_facts() {
 #if CRYPTO_HAVE_FLASH_ENCRYPT
   f.flash_encryption = esp_flash_encryption_enabled();
 #endif
+  // Flash encryption does NOT encrypt NVS (ESP-IDF encrypts only the app,
+  // otadata and nvs_keys partitions; this tree's tables leave nvs unflagged,
+  // so it is written in plaintext). NVS is ciphertext only under NVS
+  // encryption, which the Arduino core this tree builds on does not compile
+  // in (2.0.17's precompiled sdkconfig leaves CONFIG_SECURE_FLASH_ENC_ENABLED,
+  // and with it CONFIG_NVS_ENCRYPTION, unset). So on every canary image the
+  // key's NVS is plaintext, fused board or not, and this fact is false — set
+  // here, not read, so no core's sdkconfig can make it claim more. It learns
+  // to read true with the arduino-as-IDF-component migration (roadmap item 9)
+  // — until then false is also the safe direction: it can only make an
+  // opt-in image refuse, never make any image claim more than it has.
+  f.nvs_encryption = false;
 #if CRYPTO_HAVE_SECURE_BOOT
   f.secure_boot = esp_secure_boot_enabled();
 #endif
@@ -351,9 +363,20 @@ const char* crypto_key_at_rest_label() {
   return key_at_rest::wire_label(key_at_rest::classify(key_at_rest_facts()));
 }
 
+void crypto_print_key_at_rest() {
+  // Level and text are key_at_rest::boot_level()/boot_text() verbatim — the
+  // same decide() nvs_load_key()/nvs_store_key() apply, host-tested — so the
+  // line cannot say INFO over a plaintext key or drift from the policy.
+  const key_at_rest::Facts f = key_at_rest_facts();
+  Serial.printf("[%s] Key at rest : %s - %s\n", key_at_rest::boot_level(f),
+                key_at_rest::wire_label(key_at_rest::classify(f)),
+                key_at_rest::boot_text(f));
+}
+
 bool nvs_load_key(uint8_t priv[32]) {
-  // Rule 2 of key_at_rest.h: an image that requires flash encryption refuses
-  // to USE a stored key on hardware without it, symmetrically with the store.
+  // Rule 2 of key_at_rest.h: an image that requires the key encrypted at rest
+  // refuses to USE a stored key unless NVS is actually encrypted (flash
+  // encryption alone is not enough), symmetrically with the store.
   const key_at_rest::Decision d = key_at_rest::decide(key_at_rest_facts());
   if (!d.allow_load) {
     Serial.printf("[!!] identity key not loaded: %s\n", d.reason);

@@ -416,11 +416,16 @@
 #define NVS_KEY_PRIV      "privkey"
 // Where that key may sleep. 0 (every canary env): the accepted Tier-0 default —
 // the key is stored and loaded on any silicon and the posture is reported as
-// `key_at_rest`. 1 (provisioning/platformio_secure.ini [env:secure], a Tier 3/4
-// image): refuse to store AND to load the identity key when flash encryption is
-// not active, so the image fails closed at provisioning instead of quietly
-// running with a plaintext key. Decided in common/identity/key_at_rest.h
-// (host-tested); deliberately not a FEATURE_* flag — it changes no feature set.
+// `key_at_rest`. 1 (a Tier 3/4 image — provisioning/platformio_secure.ini
+// [env:secure] sets it; K1 builds it as a normal env plus
+// PLATFORMIO_BUILD_FLAGS=-DSECURACV_REQUIRE_FLASH_ENCRYPTION=1): refuse to
+// store AND to load the identity key unless its NVS is actually encrypted, so
+// the image fails closed at provisioning instead of quietly running with a
+// plaintext key. Flash encryption alone does NOT satisfy it — flash encryption
+// does not cover NVS, and NVS encryption is not available under
+// framework = arduino — so today such an image refuses on every board, by
+// design. Decided in common/identity/key_at_rest.h (host-tested); deliberately
+// not a FEATURE_* flag — it changes no feature set.
 #ifndef SECURACV_REQUIRE_FLASH_ENCRYPTION
   #define SECURACV_REQUIRE_FLASH_ENCRYPTION 0
 #endif
