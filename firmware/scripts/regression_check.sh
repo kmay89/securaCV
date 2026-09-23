@@ -458,11 +458,11 @@ section "Security: Zero phone-home"
 # anything else fails --strict.
 DISCLOSED_OUTBOUND=$(printf '%s\t%s\t%s\n' \
   'canary-display/.*(tz_auto\.cpp|main\.cpp|canary_display\.ino)$' 'configTzTime\([^)]*"pool\.ntp\.org", *"time\.nist\.gov"' \
-    'docs/security/SECURITY_MODEL.md display disclosed exception 1 (SNTP)' \
+    'docs/security/SECURITY_MODEL.md disclosed outbound path 3 (SNTP, the display line)' \
   'canary-display/.*tz_auto\.cpp$' '\.begin\("http://ip-api\.com/' \
-    'docs/security/SECURITY_MODEL.md display disclosed exception 2 (timezone lookup, compile-time opt-in CD_TZ_WEB_LOOKUP)' \
+    'docs/security/SECURITY_MODEL.md disclosed outbound path 4 (timezone lookup, the display line: compile-time opt-in CD_TZ_WEB_LOOKUP)' \
   'canary-display/.*wx_direct\.cpp$' 'http\.begin\(client, WX_HOST, 443,.*WX_HOST = "api\.open-meteo\.com"' \
-    'docs/security/SECURITY_MODEL.md display disclosed exception 3 (standalone weather: runtime opt-in on the glass, FEATURE_STANDALONE_WEATHER; a named destination, pinned to its value)')
+    'docs/security/SECURITY_MODEL.md disclosed outbound path 5 (standalone weather, the display line: runtime opt-in on the glass, FEATURE_STANDALONE_WEATHER; a named destination, pinned to its value)')
 OUTBOUND_LITERAL=$(grep -rEn '\.begin\([[:space:]]*"(https?://|[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+")|\.connect\([[:space:]]*"|\.url[[:space:]]*=[[:space:]]*"https?://|config(Tz)?Time\([^)]*"|(esp_)?sntp_setservername\([^)]*"|getaddrinfo\([[:space:]]*"' "${SRC_DIRS[@]}" 2>/dev/null \
   | grep -v "\.md:\|/tests_host/\|/test_\|/examples\?/\|\.pio/" \
   | drop_comment_lines || true)
