@@ -2,6 +2,27 @@
  "generated_by": "docs/hardware/enclosure/gen_assembled_dims.py",
  "note": "Assembled outer envelopes, measured off the union of each device's parts rendered from its case source in their assembled positions (the fit-checked ones where the case has a fit check; `placement` says which). gen_figures.mjs reads these for multi-part device figures instead of stacking part depths, which overstates any nesting assembly, and for in-development figures declared `assembled` instead of a typed sketch. Regenerate after any edit to the cases these unions include.",
  "devices": {
+  "device.canary-display-dash": {
+   "scad": "canary_dash_display.scad",
+   "overrides": {
+    "part": "back"
+   },
+   "placement": "total_t = frame_h + back_t: back as modeled (dock pads on its wall face), frame turned face-out with its rim on the back's inner face",
+   "mm_scad": [
+    118.1,
+    77.997,
+    25.6
+   ],
+   "fig": {
+    "w": 118.1,
+    "d": 25.6,
+    "h": 77.997
+   },
+   "seams_fig_d": [
+    6.0,
+    9.0
+   ]
+  },
   "device.canary-display-watch": {
    "scad": "canary_watch_station.scad",
    "overrides": {

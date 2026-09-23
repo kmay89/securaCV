@@ -492,12 +492,31 @@ export const FIGURES = [
     id: 'device.canary-display-dash',
     title: 'Canary Dash',
     role: 'device', of: 'canary-display-dash',
-    board: 'waveshare_4_3b',
-    build: (E) => [
-      { kind: 'box', m: 'shell', face: 'y', at: [0, 0, 0], size: [E.w, E.d * 0.7, E.h], r: 4 },
-      { kind: 'box', m: 'glass', face: 'y', at: [3, E.d * 0.7, 3], size: [E.w - 6, E.d * 0.3 - 0.4, E.h - 6], r: 2.5 },
-      { kind: 'box', m: 'lit', face: 'y', at: [6.5, E.d - 0.4, 6.5], size: [E.w - 13, 0.4, E.h - 13], r: 1.5 },
-    ],
+    // The printed Dash case (canary_dash_display.scad), measured off its CAD
+    // as assembled (assembled_dims.json): the back with its four dock pads
+    // on the wall face, the frame seated on it. This used to be drawn from
+    // the vendor board mesh (`board: 'waveshare_4_3b'`, 118 x 79 x 38.9 —
+    // the Waveshare board with its own case, not ours), while the Lab's
+    // registry typed a third number for the case (113.7 x 73.6 x 16.0) that
+    // had lost its corner lobes, its thicker back and its pads. One source
+    // now: the case the Dash is sold to be printed in.
+    assembled: true,
+    frame: 'scad-wall',
+    build: (E, P, A) => {
+      const [s0, s1] = A.seams;   // pad tips -> back plate -> frame
+      // the view window: the bezel lip frames it, and the glass is the
+      // whole story from across the room — inset the same on all four sides
+      const win = 8.4;            // (out outline - view window) / 2, with the corner lobes
+      return [
+        // the dock pads' shadow gap: four low pads, massed as one inset block
+        // — what holds the case off the wall, not a thicker back
+        { kind: 'box', m: 'dark', face: 'y', at: [E.w * 0.18, 0, E.h * 0.22], size: [E.w * 0.64, s0 + EPS, E.h * 0.56], r: 3 },
+        { kind: 'box', m: 'shell2', face: 'y', at: [0, s0, 0], size: [E.w, s1 - s0 + EPS, E.h], r: 5 },
+        { kind: 'box', m: 'shell', face: 'y', at: [0, s1, 0], size: [E.w, E.d - s1, E.h], r: 5 },
+        { kind: 'box', m: 'glass', face: 'y', at: [win, E.d - EPS, win], size: [E.w - 2 * win, 0.4, E.h - 2 * win], r: 2 },
+        { kind: 'box', m: 'lit', face: 'y', at: [win + 3, E.d + 0.4 - EPS, win + 3], size: [E.w - 2 * win - 6, 0.4, E.h - 2 * win - 6], r: 1.5 },
+      ];
+    },
   },
   {
     id: 'device.canary-display-nightstand',

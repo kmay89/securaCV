@@ -16,11 +16,7 @@
         "panel": "GC9A01 1.28\" IPS",
         "touch": "CST816S"
       },
-      "body_mm": {
-        "d": 49,
-        "depth": 23.2,
-        "stand_tilt_deg": 25
-      },
+      "stand_knob": "tilt",
       "senses": [],
       "shows": [
         "witness halo",
@@ -112,12 +108,7 @@
         "panel": "4.3\" 800×480 IPS (parallel RGB)",
         "touch": "GT911"
       },
-      "body_mm": {
-        "w": 113.7,
-        "h": 73.6,
-        "depth": 16.0,
-        "stand_tilt_deg": 25
-      },
+      "stand_knob": "stand_ang",
       "senses": [],
       "shows": [
         "witness cards",

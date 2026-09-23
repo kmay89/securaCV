@@ -187,8 +187,10 @@ parts vertically, beneath the fidelity of small mounting offsets; the
 ledger still publishes the exact measured number).
 
 An **in-development case whose CAD states its own seat** (the Watch
-Station: drum + snap bezel, the bezel's nubs drawn from the drum rim) is
-measured the same way even though its STLs are not committed — its figure
+Station: drum + snap bezel, the bezel's nubs drawn from the drum rim; the
+Dash: back + frame, stacked as the file's own `total_t = frame_h + back_t`,
+dock pads included) is measured the same way even though its STLs are not
+committed — its figure
 declares `assembled: true`, reads its envelope and seams from its
 `gen_assembled_dims.py` row, and the ledger records
 `dims_source: "assembled-cad"`. That is what lets a manifest knob edit move

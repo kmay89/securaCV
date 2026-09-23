@@ -178,7 +178,7 @@ NUMBERS = {
     "canary_sense_enclosure.scad": ["xiao_below", "vm_front_h", "ant_h", "pcb_t", "board_clear",
                                     "xiao_usb_z"],
     # measured stack numbers with no registry home
-    "canary_watch_station.scad": ["disc_t", "disp_back", "xiao_t"],
+    "canary_watch_station.scad": ["disc_t", "disp_back", "xiao_t", "tilt"],
     # the 4.3 panel has no registry row: MEASURE placeholders, owned as the
     # numbers they are today — documented, not blessed
     "canary_dash_display.scad": ["panel_l", "panel_w", "glass_t", "stack_t"],
@@ -356,9 +356,10 @@ class CommittedTreeIsAFixedPoint(unittest.TestCase):
     def test_cli_check_exit_code(self):
         with redirect_stdout(io.StringIO()) as out:
             self.assertEqual(gcp.main(["--check"]), 0)
-        # 54 + the C6's trio + the 1.69's two offsets + the doorbell's eleven;
-        # 8 files + the C6 + the doorbell; 29 references + 3 + 8
-        self.assertIn("70 manifest-owned knobs across 10 case file(s)", out.getvalue())
+        # 54 + the C6's trio + the 1.69's two offsets + the doorbell's eleven
+        # + the Watch's stand recline; 8 files + the C6 + the doorbell;
+        # 29 references + 3 + 8
+        self.assertIn("71 manifest-owned knobs across 10 case file(s)", out.getvalue())
         self.assertIn("(40 of them resolved from canary_board_lib.scad)", out.getvalue())
 
     def test_the_printed_order_names_the_carry_and_its_check(self):

@@ -850,29 +850,30 @@
      "nightstand7",
      "touch169",
      "watch"
-    ],
-    "vendor_board": {
-     "key": "waveshare_4_3b",
-     "vendor": "Waveshare",
-     "mpn": "ESP32-S3-Touch-LCD-4.3B",
-     "mesh_committed": true,
-     "vendor_step": false
-    }
+    ]
    },
-   "dims_source": "board-cad",
+   "dims_source": "assembled-cad",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 118,
-    "d": 38.9,
-    "h": 79
+    "w": 118.1,
+    "d": 25.6,
+    "h": 77.997
+   },
+   "assembled": {
+    "placement": "total_t = frame_h + back_t: back as modeled (dock pads on its wall face), frame turned face-out with its rim on the back's inner face",
+    "seams_fig_d": [
+     6,
+     9
+    ]
    },
    "traced_to": [],
    "drift_guard": {
     "plan_tol_mm": 0.75,
-    "depth_tol_mm": 4
+    "depth_tol_mm": 4,
+    "height_tol_mm": 2.5
    },
-   "solids": 3,
-   "rev": "9bb5e13f",
+   "solids": 5,
+   "rev": "d2ef7976",
    "svg": "canary-local/figures/device.canary-display-dash.svg",
    "glyph": "canary-local/figures/device.canary-display-dash.glyph.svg"
   },

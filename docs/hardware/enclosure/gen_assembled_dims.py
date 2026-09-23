@@ -143,6 +143,35 @@ DEVICES = {
         "placement": ("bezel() seated frame: face underside on the drum rim, bezel at z = drum_h "
                       "(the nubs' own datum, drum_z = drum_h + bezel_z)"),
     },
+    "device.canary-display-dash": {
+        # The Dash case (in development, no committed STLs, no fit-check
+        # module), measured where its own file states the stack: the frame
+        # is modeled face at z = 0 with its rear rim at frame_h, the back
+        # with its OUTER (wall) face at z = 0 and its dock pads standing
+        # cr_pad_h() below that ("the shadow gap the case floats off the
+        # wall", canary_cradle_lib), and the file derives the assembled
+        # thickness as total_t = frame_h + back_t — the number its echo
+        # prints and its stand's channel is cut to; the M2 screws run from
+        # the back's outer counterbores into the frame's rim lobes. So: the
+        # back as modeled, the frame turned face-out (a rotation about Y, so
+        # +Y stays up — the USB wall stays at the bottom) with its rim on
+        # the back's inner face. The pads are in the envelope: they are how
+        # far the case stands off the wall on its cradle. This replaces the
+        # registry's hand-typed body_mm (113.7 x 73.6 x 16.0, which had lost
+        # the corner screw lobes, the thicker back and the pads) and the
+        # figure's vendor-board envelope (the Waveshare board, not the case).
+        "scad": "canary_dash_display.scad",
+        "overrides": {"part": '"back"'},
+        "body": ("union() { back(); "
+                 "translate([0, 0, back_t + frame_h]) rotate([0, 180, 0]) frame(); }"),
+        # the back's frame puts z = 0 at its outer face, so the union's back
+        # plane is the pad tips at -cr_pad_h(): the seams are measured from
+        # there — the pad band, then the back plate, then the frame out to
+        # the face
+        "seams": "[cr_pad_h(), cr_pad_h() + back_t]",
+        "placement": ("total_t = frame_h + back_t: back as modeled (dock pads on its wall face), "
+                      "frame turned face-out with its rim on the back's inner face"),
+    },
 }
 
 

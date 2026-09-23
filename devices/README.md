@@ -199,7 +199,9 @@ import them — `lint_build_matrix.py` applies the matrix's side of the join
   `brd_l("ws147")` and kin, MEASURE caveat and all — the row's `drawing` rung
   says the same). The Watch Station names `brd_l("round_disp")` for `disc_d`
   and copies its three measured stack numbers (`disc_t`, `disp_back`,
-  `xiao_t`). The Touch 1.69 names the `ws169` row for `pcb_w` / `pcb_h` /
+  `xiao_t`) — and its stand recline, `tilt`, the one non-board knob a
+  manifest owns: it retired the Lab registry's hand-typed `stand_tilt_deg`,
+  so the number the Lab shows is the literal the stand is cut to. The Touch 1.69 names the `ws169` row for `pcb_w` / `pcb_h` /
   `pcb_t` and the `brd_ws169_glass_*()` facts for `glass_w` / `glass_h` —
   **crosswise**: the registry's axes follow the board's along-USB length,
   which is that case's Y, so the case's X-width is the registry's glass
@@ -229,11 +231,13 @@ import them — `lint_build_matrix.py` applies the matrix's side of the join
   / Nightstand** — "What a manifest cannot yet own" below says exactly why.
   One caution beside the Watch's knobs:
   `canary_watch_station.scad` is a `REFERENCE_SCADS` carry
-  (`gen_builder_manifest.py --site` copies it to the website, sha256-pinned)
-  and its fleet figure is a hand-authored `sketch` in
-  `canary-local/tools/figures/massing.mjs`, not an STL measurement — so the
-  first real edit to a Watch knob moves the website's carried copy, and the
-  figure will **not** follow the CAD until someone draws it from the parts.
+  (`gen_builder_manifest.py --site` copies it to the website, sha256-pinned),
+  so the first real edit to a Watch knob moves the website's carried copy.
+  Its fleet figure now follows the CAD: it is measured off the case as
+  seated (`gen_assembled_dims.py`, `dims_source: "assembled-cad"`), so a
+  knob edit that moves the drum turns `gen_assembled_dims.py --check` red
+  until the ledger is regenerated. The Dash figure is measured the same
+  way.
 
 ## What a manifest cannot yet own
 
