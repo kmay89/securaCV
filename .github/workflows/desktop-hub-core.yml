@@ -97,6 +97,15 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
       - name: Install fmt + clippy
         run: rustup component add rustfmt clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        # Every other cargo job in the repo caches; this one built three
+        # crates' dependency graphs cold on every run (flash-engine alone
+        # locks 164 packages: reqwest, rustls, serialport). One entry per
+        # crate, the same per-matrix key shape as desktop-release.yml.
+        # hub-core commits no Cargo.lock, so its key follows its Cargo.toml.
+        with:
+          workspaces: desktop/${{ matrix.crate }} -> target
+          key: ${{ matrix.crate }}
       - name: Format check
         run: cargo fmt --check
       - name: Clippy (warnings are errors)
