@@ -134,8 +134,8 @@ REFS = {
     ("canary_vision_enclosure.scad", "cam_w"): 'brd_w("ov5647")',
     ("canary_vision_enclosure.scad", "cam_h"): 'brd_l("ov5647")',
     ("canary_vision_enclosure.scad", "pcb_t"): 'brd_t("grove_v2")',
-    ("canary_sense_enclosure.scad", "vm_l"): 'brd_l("mr60")',
-    ("canary_sense_enclosure.scad", "vm_w"): 'brd_w("mr60")',
+    ("canary_sense_enclosure.scad", "radar_l"): 'brd_l("mr60")',
+    ("canary_sense_enclosure.scad", "radar_w"): 'brd_w("mr60")',
     ("canary_sense_enclosure.scad", "xiao_l"): 'brd_l("xiao")',
     ("canary_sense_enclosure.scad", "xiao_w"): 'brd_w("xiao")',
     ("canary_sense_enclosure.scad", "stack_sock_h"): "brd_stack_sock_measured()",
@@ -175,7 +175,7 @@ REFS = {
 NUMBERS = {
     "canary_wap_enclosure.scad": ["board_h", "board_clear", "stack_camera", "stack_plain"],
     "canary_vision_enclosure.scad": ["xiao_below", "vm_front_h", "board_clear", "stack_h"],
-    "canary_sense_enclosure.scad": ["xiao_below", "vm_front_h", "ant_h", "pcb_t", "board_clear",
+    "canary_sense_enclosure.scad": ["xiao_below", "radar_front_h", "ant_h", "pcb_t", "board_clear",
                                     "xiao_usb_z"],
     # measured stack numbers with no registry home
     "canary_watch_station.scad": ["disc_t", "disp_back", "xiao_t"],

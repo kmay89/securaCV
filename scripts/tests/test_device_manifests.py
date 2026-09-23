@@ -221,9 +221,9 @@ class LintCatchesRealMistakes(unittest.TestCase):
     def test_cad_params_reference_to_an_unknown_row_is_refused(self):
         with _Mutated() as devices:
             edit(devices, "canary-sense", lambda d: d["cad"]["params"].__setitem__(
-                "vm_l", {"brd": "mr60x", "dim": "l"}))
+                "radar_l", {"brd": "mr60x", "dim": "l"}))
             _, errors = ldm.lint(devices_dir=devices)
-        hits = [e for e in errors if "cad.params.vm_l" in e]
+        hits = [e for e in errors if "cad.params.radar_l" in e]
         self.assertEqual(len(hits), 1, errors)
         self.assertIn('BRD_REGISTRY has no row "mr60x"', hits[0])
         self.assertIn("devices/canary-sense", hits[0])

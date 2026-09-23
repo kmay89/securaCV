@@ -38,7 +38,8 @@ opt_hood = false;    // rain hood over the lens
 opt_led  = true;     // one light pipe (wire to either stack's LED)
 
 /* [Vision stack] — Grove Vision AI V2 + stacked XIAO. MEASURE */
-vm_l = 40.0;  vm_w = 20.0;   // measured Grove 1x2 form — brd_l/brd_w("grove_v2"), canary_board_lib
+vm_l = 40.0;                 // Grove Vision AI V2 length — the measured 1x2 form, brd_l("grove_v2"), canary_board_lib
+vm_w = 20.0;                 // Grove Vision AI V2 width — the measured 1x2 form, brd_w("grove_v2")
                              // (was 25x25 — same fix as the Vision/doorbell cases; the registry
                              // pins the wrong square dead in board_selfcheck)
 cam_w = 25.0;  cam_h = 24.0;
@@ -52,7 +53,8 @@ xiao_w = 17.8;         // the measured XIAO — sets the corner pins that catch 
 xiao_below = 5.5;      // air under a stacked XIAO's USB face: shell + half a plug overmold + clearance
 
 /* [Sense stack] — MR60BHA2 carrier + stacked XIAO C6. MEASURE */
-sm_l = 44.0;  sm_w = 36.0;   // brd_l/brd_w("mr60"), canary_board_lib
+sm_l = 44.0;                 // MR60 carrier length — brd_l("mr60"), canary_board_lib
+sm_w = 36.0;                 // MR60 carrier width — brd_w("mr60"), canary_board_lib
 s_stack_sock = 6.5;          // brd_stack_sock_measured() — same decision as v_stack_sock
 s_front_h = 3.5;
 ant_h = 1.2;
@@ -70,15 +72,27 @@ floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_
                    // floor about it along one layer boundary. 0 = the old square corner  // [0:0.2:1.2]
 lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
                    // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
-tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;   // the catalog trio — core_tol_*(), canary_core_lib
+tol_slide = 0.20;  // catalog default — core_tol_slide(), canary_core_lib
+tol_press = 0.10;  // catalog default — core_tol_press(), canary_core_lib
+tol_hole  = 0.30;  // catalog default — core_tol_hole(), canary_core_lib
 post_d = 5.0;  screw_d = 1.6;  screw_head_d = 4.0;  screw_head_h = 2.0;
-usb_w = 12.0;  usb_h = 6.5;   // 12: clears rugged cable boots (the WAP's validated opening)
+usb_w = 12.0;  // opening width — 12 clears rugged cable boots (the WAP's validated opening)
+usb_h = 6.5;   // opening height — boot clearance (the WAP's validated opening)
 gasket_w = 1.6;  gasket_groove = 1.2;  gasket_proud = 0.3;  skirt_h = 3.0;  skirt_t = 1.6;
-clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;   // snap_boardclip defaults — canary_snap_lib runs the strain budget as an assert
+clip_w      = 6.0;   // board-clip tab width along the board edge — snap_boardclip default, canary_snap_lib
+clip_t      = 1.0;   // clip beam thickness — snap_boardclip default; canary_snap_lib runs the strain budget as an assert
+clip_hook   = 0.5;   // lip overhang over the board top — snap_boardclip default
+clip_hook_h = 1.2;   // lip + 45° lead-in height above the board top — snap_boardclip default
+clip_clear  = 0.25;  // beam face to board edge (a fit — tune on the coupon) — snap_boardclip default
 lid_edge  = 0.8;  // first (45°) stage of the show-face edge, mm — core_face_edge()  // [0:0.1:1.5]
 lid_edge2 = 0.8;  // second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]
 hood_len = 9.0;  hood_t = 1.8;
-kh_extra = 3.0;  kh_head_d = 7.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;  kh_head_h = 3.5;  kh_face = 1.0;   // catalog standard — mount_kh_*(), canary_mount_lib
+kh_extra   = 3.0;   // back thickening that hosts the keyhole pockets
+kh_head_d  = 7.0;   // screw-head pass hole — catalog standard, mount_kh_head_d(), canary_mount_lib
+kh_shank_d = 4.2;   // shank slot width — catalog standard, mount_kh_shank_d()
+kh_slot_l  = 8.0;   // slot travel — catalog standard, mount_kh_slot_l()
+kh_head_h  = 3.5;   // total pocket depth (face web + head cavity) — catalog standard, mount_kh_head_h()
+kh_face    = 1.0;   // face web the screw head grips behind — catalog standard, mount_kh_face()
 opt_mount = true;    // blind keyholes in the back
 
 /* [Aesthetics] */

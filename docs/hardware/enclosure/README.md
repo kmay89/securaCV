@@ -1245,7 +1245,7 @@ exits the bottom wall at a height DERIVED from the seated stack
 |-------|--------:|---------------------|
 | `radome_t` | 1.5 | radar window thickness; 1.5 ≈ half-wave in PETG/ASA (optimum) — avoid 0.7–1.1 (quarter-wave reflection band) |
 | `rad_win_x/y`, `rad_dx/dy` | 24×24 / 0, 6 | window size/position over the antenna — **measure** |
-| `vm_l/vm_w`, `stack_sock_h`, `xiao_below` | 44×36 / 6.5 / 5.5 | carrier + seated-stack dimensions — **measure** (the XIAO port height follows) |
+| `radar_l/radar_w`, `stack_sock_h`, `xiao_below` | 44×36 / 6.5 / 5.5 | carrier + seated-stack dimensions — **measure** (the XIAO port height follows) |
 | `screw_size` / `screw_head` / `head_seal` | m2 / pan / off | fastener from the catalog registry; O-ring under each head in seal mode |
 | `lux_dx/dy`, `lp_dx/dy` | — | sensor/LED positions from the board center |
 | `opt_seal`, `mount_style` | off / hinge | same systems as the Vision case |

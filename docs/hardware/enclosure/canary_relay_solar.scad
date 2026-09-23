@@ -97,11 +97,18 @@ strap_t = 2.0;       // channel depth
 
 /* [Shell / tolerances / fasteners] */
 wall_t = 2.0;  floor_t = 2.0;  lid_t = 2.0;  lip_h = 4.0;  lip_t = 1.2;  corner_r = 3.0;
-tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;   // the catalog trio — core_tol_*(), canary_core_lib
+tol_slide = 0.20;  // catalog default — core_tol_slide(), canary_core_lib
+tol_press = 0.10;  // catalog default — core_tol_press(), canary_core_lib
+tol_hole  = 0.30;  // catalog default — core_tol_hole(), canary_core_lib
 post_d = 5.0;  screw_d = 1.6;  screw_head_d = 4.0;  screw_head_h = 2.0;
 gasket_w = 1.6;  gasket_groove = 1.2;  gasket_proud = 0.3;  skirt_h = 3.0;  skirt_t = 1.6;
-usb_w = 12.0;  usb_h = 6.5;   // service USB opening, bottom wall (plug when deployed); 12 clears a boot
-clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;   // snap_boardclip defaults — canary_snap_lib runs the strain budget as an assert
+usb_w = 12.0;  // service USB opening width, bottom wall (plug when deployed); 12 clears a boot
+usb_h = 6.5;   // service USB opening height — boot clearance
+clip_w      = 6.0;   // board-clip tab width along the board edge — snap_boardclip default, canary_snap_lib
+clip_t      = 1.0;   // clip beam thickness — snap_boardclip default; canary_snap_lib runs the strain budget as an assert
+clip_hook   = 0.5;   // lip overhang over the board top — snap_boardclip default
+clip_hook_h = 1.2;   // lip + 45° lead-in height above the board top — snap_boardclip default
+clip_clear  = 0.25;  // beam face to board edge (a fit — tune on the coupon) — snap_boardclip default
 standoff_h = 3.0;
 lid_edge  = 0.8;  // first (45°) stage of the show-face edge, mm — core_face_edge()  // [0:0.1:1.5]
 lid_edge2 = 0.8;  // second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]

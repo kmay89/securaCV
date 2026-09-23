@@ -114,10 +114,28 @@ top face the lid seats on.
 | Board dimensions come from the registry, measured where measured | `brd_*()` | `canary_board_lib`, `board_selfcheck()` |
 | Envelopes published to the website and the figures are measured off the committed meshes, never typed | — | `gen_assembled_dims.py`, `gen_figures.mjs --check`, the website's `ar-dims` test |
 
-## 10. What is still open
+## 10. Knobs and their help
+
+| Rule | Number | Enforced by |
+|---|---|---|
+| A knob's help sits on the knob's own line — the builder's parser keeps a trailing comment only on a one-knob line, so `a = 1;  b = 2;  // help` reaches neither | one knob per commented line | `lint_design_lang.py` (third rule); `HELP_LINE_DEBT` lists the 7" case's four lines, left by decision, and only shrinks |
+| A knob name means one thing across the catalog — a reader who learned it in one case reads it the same way in the next, so a second meaning gets its own name | the table below | `lint_design_lang.py` (fourth rule, `KNOB_MEANINGS`): a listed knob whose help does not say its meaning, or says the other one, fails |
+
+| Name | Means | Not to be confused with |
+|---|---|---|
+| `usb_w` / `usb_h` | the wall opening a USB cable's plug **and boot** pass through (12 × 6.5 in most case files) | `usb_shell_w` / `usb_shell_h` — the connector shell, or an opening sized to it (the display cases); `usb_slot_w` / `usb_slot_h` — the watch station's side slot |
+| `vm_l` / `vm_w` / `vm_front_h` | the Grove Vision AI V2 module (40 × 20) | `radar_l` / `radar_w` / `radar_front_h` — the MR60 radar carrier (44 × 36) in the Sense and its gang plate |
+| `skirt_t` | the rain (drip-edge) skirt's wall | `finger_t` — the watch station bezel's snap fingers |
+| `clip_w` | the snap board-clip's tab width (6.0, `snap_boardclip`) | `leaf_w` — the wear clip's belt-clip width (45.0) |
+
+## 11. What is still open
 
 - **Lid rib proportions.** Every lid's rib ring is pinned by a 1.0 mm
   headroom, now asserted; making the ribs taller means growing `cav_extra`
   on each case, which moves the released envelopes. A per-case decision.
-- **Customizer help text and naming collisions** — the audit's parametric
-  UX section.
+- **Customizer help text** — the audit's parametric UX section. Done: every
+  shared-help line outside the 7" case is split one knob per line, and the
+  unambiguous comments above a knob are summarized onto it (681 → 536 knobs
+  without help). Open: help for the knobs that never had any (the released
+  four first), `[min:step:max]` ranges, one group name for the two-stud
+  interface, and presets for the doorbell and the Sense.

@@ -137,7 +137,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "b0d0c9706f80b548c38bc6f0f21f4659fdbb177eb55de134de63fdad7880a271",
+      "sha256": "8f38a2d5336cc66a9e039a652d70d5336051964be79e412bda611385dd1e0661",
       "groups": [
         {
           "name": "What to render",
@@ -953,7 +953,8 @@
             {
               "name": "vent_pad_d",
               "type": "number",
-              "default": 12.0
+              "default": 12.0,
+              "desc": "GORE-vent recess Ø (the buzzer + pressure vent: the recess seats an adhesive vent)"
             },
             {
               "name": "vent_pad_depth",
@@ -989,7 +990,8 @@
             {
               "name": "touch_d",
               "type": "number",
-              "default": 12.0
+              "default": 12.0,
+              "desc": "cap-touch window Ø — local lid thinning so capacitance couples through (opt_touch)"
             },
             {
               "name": "touch_wall",
@@ -3123,7 +3125,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "3e7aa2c185b59bd4d60c0e821407c4ad7a9fc9f592ed24870a8d655ca35e7d34",
+      "sha256": "4fb891b9914d7a609fb241582696bcf94440deca8d024c55fcde882646921620",
       "groups": [
         {
           "name": "What to render",
@@ -3241,13 +3243,13 @@
           "name": "Boards",
           "params": [
             {
-              "name": "vm_l",
+              "name": "radar_l",
               "type": "number",
               "default": 44.0,
               "desc": "carrier length (Y; XIAO/USB edge down) — brd_l(\"mr60\"), canary_board_lib"
             },
             {
-              "name": "vm_w",
+              "name": "radar_w",
               "type": "number",
               "default": 36.0,
               "desc": "carrier width (X) — brd_w(\"mr60\")"
@@ -3277,7 +3279,7 @@
               "desc": "air under the XIAO's outward (USB) face: the shell (3.3) plus half a plug's"
             },
             {
-              "name": "vm_front_h",
+              "name": "radar_front_h",
               "type": "number",
               "default": 3.5,
               "desc": "carrier front-side TALLEST part (connectors etc.) — MEASURE"
@@ -3442,7 +3444,7 @@
               "name": "mag_dy",
               "type": "number",
               "default": -14.0,
-              "desc": "(mag_dx, mag_dy) must stay >= 1 mm below vm_front_h — MEASURE. (13, 14)"
+              "desc": "(mag_dx, mag_dy) must stay >= 1 mm below radar_front_h — MEASURE. (13, 14)"
             }
           ]
         },
@@ -4013,7 +4015,7 @@
         "glyph_rib": "mm",
         "glyph_depth": "mm"
       },
-      "sha256": "d8e072e0a10ad94711a205eb909b03a57cd3eaf72da1f642e5f73ed4755b731c",
+      "sha256": "f27ba93d7701ef028299be13933bf58a480023edea6e5f3a8636232ab528db80",
       "groups": [
         {
           "name": "What to render",
@@ -4067,27 +4069,32 @@
             {
               "name": "kh_head_d",
               "type": "number",
-              "default": 7.0
+              "default": 7.0,
+              "desc": "screw-head pass hole — catalog standard, mount_kh_head_d(), canary_mount_lib"
             },
             {
               "name": "kh_shank_d",
               "type": "number",
-              "default": 4.2
+              "default": 4.2,
+              "desc": "shank slot width — catalog standard, mount_kh_shank_d()"
             },
             {
               "name": "kh_slot_l",
               "type": "number",
-              "default": 8.0
+              "default": 8.0,
+              "desc": "slot travel — catalog standard, mount_kh_slot_l()"
             },
             {
               "name": "kh_head_h",
               "type": "number",
-              "default": 3.5
+              "default": 3.5,
+              "desc": "total pocket depth (face web + head cavity) — catalog standard, mount_kh_head_h()"
             },
             {
               "name": "kh_face",
               "type": "number",
-              "default": 1.0
+              "default": 1.0,
+              "desc": "face web the screw head grips behind — catalog standard, mount_kh_face()"
             },
             {
               "name": "kh_click",
@@ -4098,27 +4105,32 @@
             {
               "name": "clip_w",
               "type": "number",
-              "default": 6.0
+              "default": 6.0,
+              "desc": "board-clip tab width along the board edge — the WAP clip, snap_boardclip default, canary_snap_lib"
             },
             {
               "name": "clip_t",
               "type": "number",
-              "default": 1.0
+              "default": 1.0,
+              "desc": "clip beam thickness — the WAP clip, snap_boardclip default"
             },
             {
               "name": "clip_hook",
               "type": "number",
-              "default": 0.5
+              "default": 0.5,
+              "desc": "lip overhang over the board top — the WAP clip, snap_boardclip default"
             },
             {
               "name": "clip_hook_h",
               "type": "number",
-              "default": 1.2
+              "default": 1.2,
+              "desc": "lip + 45° lead-in height above the board top — the WAP clip, snap_boardclip default"
             },
             {
               "name": "clip_clear",
               "type": "number",
-              "default": 0.25
+              "default": 0.25,
+              "desc": "beam face to board edge — the WAP clip, snap_boardclip default"
             },
             {
               "name": "clip_bw",
@@ -4129,17 +4141,20 @@
             {
               "name": "pcb_t",
               "type": "number",
-              "default": 1.2
+              "default": 1.2,
+              "desc": "board thickness at the CLIP station — the WAP's XIAO, brd_t(\"xiao\")"
             },
             {
               "name": "standoff_h",
               "type": "number",
-              "default": 3.5
+              "default": 3.5,
+              "desc": "3.5 = the WAP's standoff (beam 4.7: the measured 17.8 board under budget)"
             },
             {
               "name": "standoff_d",
               "type": "number",
-              "default": 4.0
+              "default": 4.0,
+              "desc": "width of the standoff rail under each board edge at the CLIP station"
             },
             {
               "name": "clip_over",
@@ -4166,12 +4181,14 @@
             {
               "name": "insert_d",
               "type": "number",
-              "default": 3.5
+              "default": 3.5,
+              "desc": "knurl OD; the station bores it 0.3 under (3.2, the M2 short-series hole)"
             },
             {
               "name": "insert_h",
               "type": "number",
-              "default": 4.0
+              "default": 4.0,
+              "desc": "insert length (M2 short series: 3.5 x 4.0)"
             },
             {
               "name": "mag_d",
@@ -4196,27 +4213,32 @@
             {
               "name": "gasket_w",
               "type": "number",
-              "default": 1.6
+              "default": 1.6,
+              "desc": "gasket groove width — the catalog gasket recipe (the strip prints 0.5 narrower)"
             },
             {
               "name": "gasket_groove",
               "type": "number",
-              "default": 1.2
+              "default": 1.2,
+              "desc": "gasket groove depth — the catalog gasket recipe"
             },
             {
               "name": "gasket_proud",
               "type": "number",
-              "default": 0.3
+              "default": 0.3,
+              "desc": "gasket stand-proud — matches the catalog gasket recipe (20 % squeeze, ~86 % fill)"
             },
             {
               "name": "usb_w",
               "type": "number",
-              "default": 12.0
+              "default": 12.0,
+              "desc": "opening width — the WAP case's USB-C opening (clears rugged cable boots); cut via port_bridge_profile2d, canary_port_lib"
             },
             {
               "name": "usb_h",
               "type": "number",
-              "default": 6.5
+              "default": 6.5,
+              "desc": "opening height — the WAP case's boot clearance"
             },
             {
               "name": "port_wall",

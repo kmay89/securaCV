@@ -57,15 +57,17 @@ xiao_t    = 4.4;     // XIAO seated proud of the socket: PCB + USB shell (measur
 xiao_gap  = 1.2;     // clearance under the XIAO's USB shell (boot-button room)
 bore_clear = 0.7;    // bore radial clearance over disc_d (back parts sweep Ø43.9)
 usb_ang   = 270;     // XIAO USB direction, degrees (0 = +X; 270 = -Y = chin/front in the stand)
-usb_w     = 11.0;    // side-slot width (USB-C plug shells run ~10.5)
-usb_h     = 7.0;
+usb_slot_w = 11.0;   // side-slot width (USB-C plug shells run ~10.5)
+usb_slot_h = 7.0;    // side-slot height
 
 /* [Battery] — optional LiPo laid on the drum floor (display has JST + charger) */
 opt_batt = false;
-batt_l = 30.0;  batt_w = 20.0;  batt_h = 3.4;   // 302030-class cell — MEASURE
+batt_l = 30.0;       // cell length — 302030-class cell, MEASURE
+batt_w = 20.0;       // cell width — 302030-class cell, MEASURE
+batt_h = 3.4;        // cell thickness — 302030-class cell, MEASURE
 
 /* [Puck] */
-wall_t   = 2.3;      // deviates: the bezel's snap fingers seat through this drum wall — tuned as a set with snap_depth/skirt_t
+wall_t   = 2.3;      // deviates: the bezel's snap fingers seat through this drum wall — tuned as a set with snap_depth/finger_t
 back_t   = 2.5;      // drum back plate
 bez_t    = 2.2;      // bezel face plate thickness
 bez_ap_d = 39.4;     // face aperture — shows the full Ø37.7 glass, covers the PCB rim
@@ -87,7 +89,7 @@ snap_depth   = 2.6;   // slot center below the drum rim
 snap_proud   = 0.3;   // nub stand-proud of the skirt: 0.15 of working interference over the bore
                       // (0.4 needed 0.25 of finger travel — 9 % strain on the 2.35 mm skirt)
 skirt_dep    = 4.0;   // bezel skirt reach into the bore (capped: the skirt must float over the PCB rim)
-skirt_t      = 1.0;   // finger thickness — the skirt is relieved to this behind the nubs so the
+finger_t     = 1.0;   // finger thickness — the skirt is relieved to this behind the nubs so the
                       // fingers flex (a 2.35 wall did not); the snap lib's cycle budget gates it
 pcb_t        = 1.2;   // display PCB thickness — the skirt floats 0.2 over its rim
 
@@ -134,8 +136,8 @@ puck_len = drum_h + bez_t;                   // full seated length, back cap →
 assert(bez_ap_d < disc_d - 3, "aperture must land on the display's trim ring");
 assert(bez_ap_d < skirt_od - 3, "skirt wall too thin — shrink bez_ap_d");
 assert(kh_head_h + 1.5 <= back_t + kh_extra, "keyhole pocket must stay blind (head_h + 1.5 web, canary_mount_lib) — raise kh_extra");
-assert(usb_cz - usb_h/2 > 1.0, "USB slot digs into the drum back — raise xiao_gap");
-assert(usb_cz + usb_h/2 < z_pcb, "USB slot reaches the display PCB — check stack");
+assert(usb_cz - usb_slot_h/2 > 1.0, "USB slot digs into the drum back — raise xiao_gap");
+assert(usb_cz + usb_slot_h/2 < z_pcb, "USB slot reaches the display PCB — check stack");
 assert(!opt_batt || sqrt(pow(batt_l/2,2) + pow(batt_w/2 + 2,2)) < bore_d/2, "battery too large for the bore");
 echo(str("Canary Watch station v0.2-dev — drum Ø", drum_d, " x ", puck_len,
          " mm (bore Ø", bore_d, ", USB slot z ", usb_cz, "), stand tilt ", tilt, " deg"));
@@ -147,12 +149,12 @@ echo(str("Canary Watch station v0.2-dev — drum Ø", drum_d, " x ", puck_len,
 // the four snap windows, mid-wall between the USB slot (270°) and keyhole (90°)
 function snap_angs() = [45, 135, 225, 315];
 // the bezel's fingers are a snap worked at every service: the lib's CYCLE
-// budget, on the finger's real numbers (thickness skirt_t, travel = the nub's
+// budget, on the finger's real numbers (thickness finger_t, travel = the nub's
 // interference over the bore, free length = the slit length)
 snap_defl = skirt_od/2 + snap_proud - bore_d/2;
-assert(snap_strain(skirt_t, snap_defl, skirt_dep - 0.6) <= snap_budget_cycle(),
-       str("bezel fingers strain ", round(snap_strain(skirt_t, snap_defl, skirt_dep - 0.6)*1000)/10,
-           " % — over the ", round(snap_budget_cycle()*1000)/10, " % cycle budget: thin skirt_t or shrink snap_proud"));
+assert(snap_strain(finger_t, snap_defl, skirt_dep - 0.6) <= snap_budget_cycle(),
+       str("bezel fingers strain ", round(snap_strain(finger_t, snap_defl, skirt_dep - 0.6)*1000)/10,
+           " % — over the ", round(snap_budget_cycle()*1000)/10, " % cycle budget: thin finger_t or shrink snap_proud"));
 assert(!pry_notch || min([for (a = snap_angs()) abs(((pry_ang - a + 540) % 360) - 180)]) >= 20,
        "pry_ang lands on a snap window — keep it 20 degrees off snap_angs()");
 assert(!pry_notch || abs(((pry_ang - usb_ang + 540) % 360) - 180) >= 25, "pry_ang lands on the USB slot");
@@ -166,7 +168,7 @@ module drum() {
         translate([0, 0, floor_z]) cylinder(d = bore_d, h = drum_h);
         // XIAO USB-C slot through the wall at the measured shell height
         rotate([0, 0, usb_ang]) translate([drum_d/2 - wall_t/2, 0, usb_cz])
-            cube([wall_t*3, usb_w, usb_h], center = true);
+            cube([wall_t*3, usb_slot_w, usb_slot_h], center = true);
         // snap windows for the bezel nubs
         for (a = snap_angs()) rotate([0, 0, a])
             translate([drum_d/2 - wall_t/2, 0, drum_h - snap_depth])
@@ -212,9 +214,9 @@ module bezel() {
             translate([0, 0, -skirt_dep]) difference() {
                 cylinder(d = skirt_od, h = skirt_dep + 0.01);
                 translate([0, 0, -0.1]) cylinder(d = bez_ap_d, h = skirt_dep + 0.2);
-                // relieve the skirt to skirt_t over the finger span so the fingers
+                // relieve the skirt to finger_t over the finger span so the fingers
                 // are beams, not a wall; slits leave a 0.6 root under the face
-                translate([0, 0, -0.1]) cylinder(d = skirt_od - 2*skirt_t, h = skirt_dep - 0.6);
+                translate([0, 0, -0.1]) cylinder(d = skirt_od - 2*finger_t, h = skirt_dep - 0.6);
                 for (a = snap_angs()) rotate([0, 0, a + 45])
                     translate([skirt_od/2 - 3, -0.6, -0.1]) cube([6, 1.2, skirt_dep - 0.6]);
             }
