@@ -150,7 +150,12 @@ Where the build differs from the first draft of this design, and why:
   before the pass returns, so no handle is held across a pass in which the
   loop appends, remounts or tears down. A page records the file size and
   the mount generation it started on; a remount, a card swap or a shrunken
-  file mid-page ends it as an I/O error (`500 history_read_failed`).
+  file mid-page ends it as an I/O error (`500 history_read_failed`). The
+  first open tells a missing file from a failed one (`Open::MISSING` /
+  `FAILED`): only a definite "no such file" (`errno` `ENOENT` under the
+  Arduino FS call) is an empty page. A card pulled but not yet noticed, a
+  filesystem error or no free file handle is the same `500`, so it never
+  passes for an empty history that would quietly retire Load More.
 - **A timed-out walk is dropped, not finished**: the abandon mark stops the
   loop reading for a page nobody will read.
 - **Pages read up to two records they do not return**, so every row's
@@ -199,8 +204,9 @@ badges `source:"sd"` rows **"from card, chain-linked"** — never the ring's
 verifications per page on the loop task would be the stall the per-pass cap
 exists to prevent). A row whose `linked` is false says so, the card's oldest
 record says that, a `joins:false` page flags its newest row, and a divider
-marks where the card rows begin. Busy and timeout leave Load More in place
-with a note; "no card" retires it. `firmware/tests_host/test_canary_timeline.test.js`
+marks where the card rows begin. Busy, timeout and a failed read leave Load
+More in place with a note; "no card" retires it with a note, and so does an
+empty card page ("Nothing older is on the card."). `firmware/tests_host/test_canary_timeline.test.js`
 lifts those functions out of the raw string and pins that behavior.
 
 ## What stays honest

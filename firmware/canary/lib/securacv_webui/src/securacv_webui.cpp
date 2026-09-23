@@ -5022,6 +5022,8 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (data.source === 'sd') {
         timelineHint = data.next_hint;
         if (more.length && data.joins === false) more[0].joins_above = false;
+        // An empty card page ends the paging: say why the button went.
+        if (!more.length) setTimelineNote('Nothing older is on the card.');
       } else {
         timelineHint = null;
       }

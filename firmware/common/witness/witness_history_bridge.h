@@ -128,7 +128,17 @@ struct Request {
 enum class Result : uint8_t {
   OK       = 0,  // a page (possibly empty: no history file, or nothing older)
   NO_CARD  = 1,  // no card mounted — nothing was read
-  IO_ERROR = 2,  // a read failed, or the card or file changed under the page
+  IO_ERROR = 2,  // an open or a read failed, or the card or file changed under the page
+};
+
+// What opening the history file for a pass found. Only a definite "no such
+// file" is MISSING; every other failure is FAILED, so a card that went away
+// unnoticed, a filesystem error or no free file handle is reported as an I/O
+// error and never passes for an empty history.
+enum class Open : uint8_t {
+  OK      = 0,  // open; *size is the file's size
+  MISSING = 1,  // the card holds no history file
+  FAILED  = 2,  // the open failed for any other reason
 };
 
 enum class Link : int8_t {
@@ -373,7 +383,8 @@ inline void finish_page(Slot* s) {
  *
  *   Card     card();                  READY / BUSY / ABSENT (see Card)
  *   uint32_t card_token();            changes on every (re)mount
- *   bool     open(uint32_t* size);    open the history file for this pass
+ *   Open     open(uint32_t* size);    open the history file for this pass
+ *                                     (OK / MISSING / FAILED, see Open)
  *   size_t   read(uint32_t off, char* buf, size_t len);  bytes read at off
  *   void     close();
  *
@@ -399,10 +410,15 @@ inline void service(Slot* s, Io& io, char* buf) {
   if (!s->started) {
     s->started = true;
     s->card_token = io.card_token();
-    if (!io.open(&size)) {  // no history file: an empty page
+    const Open opened = io.open(&size);
+    if (opened == Open::MISSING) {  // no history file: an empty page
       s->file_size = 0;
       detail::plan(s);
       detail::finish_page(s);
+      return;
+    }
+    if (opened != Open::OK) {  // not "no file": the open itself failed
+      detail::fail(s, Result::IO_ERROR);
       return;
     }
     s->file_size = size;
@@ -412,7 +428,7 @@ inline void service(Slot* s, Io& io, char* buf) {
       detail::fail(s, Result::IO_ERROR);
       return;
     }
-    if (!io.open(&size)) {
+    if (io.open(&size) != Open::OK) {  // gone or failing mid-page
       detail::fail(s, Result::IO_ERROR);
       return;
     }

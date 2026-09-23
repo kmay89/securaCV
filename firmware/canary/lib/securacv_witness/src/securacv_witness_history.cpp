@@ -15,6 +15,7 @@
 #include <Arduino.h>
 #include <FS.h>
 #include <SD.h>
+#include <errno.h>
 #include "securacv_storage.h"
 
 namespace whb = witness_history_bridge;
@@ -39,11 +40,21 @@ struct CardIo {
     return storage_is_mounted() ? whb::Card::READY : whb::Card::ABSENT;
   }
   uint32_t card_token() { return storage_mount_generation(); }
-  bool open(uint32_t* size) {
+  whb::Open open(uint32_t* size) {
+    errno = 0;
     f = SD.open("/WITNESS/records.jsonl", FILE_READ);
-    if (!f) return false;
+    if (!f) {
+      // The Arduino FS call folds "no such file" and "the card did not
+      // answer" into one false. The VFS underneath (the core's vfs_api.cpp
+      // tries stat(), then opendir()) leaves FATFS's errno: ENOENT only for
+      // a path that is not there, EIO / ENODEV for a card that failed,
+      // ENFILE with no free handle. Only a definite ENOENT is an empty
+      // history; anything else, errno 0 included (the SD object had no
+      // mount point), is an I/O error the client is told about.
+      return errno == ENOENT ? whb::Open::MISSING : whb::Open::FAILED;
+    }
     *size = (uint32_t)f.size();
-    return true;
+    return whb::Open::OK;
   }
   size_t read(uint32_t off, char* buf, size_t len) {
     if (!f.seek(off)) return 0;

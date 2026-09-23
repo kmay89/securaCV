@@ -98,7 +98,8 @@ struct MemIo {
   std::string file;
   wb::Card state = wb::Card::READY;
   uint32_t token = 1;
-  bool exists = true;
+  bool exists = true;                  // false: open() answers MISSING
+  bool open_fails = false;             // true: open() answers FAILED
   bool is_open = false;
   size_t opens = 0, reads = 0, pass_reads = 0, max_len = 0;
   size_t fail_on_read = 0;          // the Nth read (1-based) comes back short
@@ -107,13 +108,14 @@ struct MemIo {
 
   wb::Card card() { return state; }
   uint32_t card_token() { return token; }
-  bool open(uint32_t* size) {
+  wb::Open open(uint32_t* size) {
     CHECK(!is_open);
-    if (!exists) return false;
+    if (!exists) return wb::Open::MISSING;
+    if (open_fails) return wb::Open::FAILED;
     is_open = true;
     opens++;
     *size = (uint32_t)file.size();
-    return true;
+    return wb::Open::OK;
   }
   size_t read(uint32_t off, char* buf, size_t len) {
     CHECK(is_open);
@@ -732,6 +734,34 @@ static void test_card_states() {
     wb::init(&s);
     const Page p = run(&s, io, req(100, 10, true, 5000));
     CHECK(p.got && p.result == wb::Result::OK && p.seqs.empty() && !p.more);
+  }
+  {  // The first open fails for another reason (a card pulled but not yet
+     // noticed, a filesystem error, no free handle): an I/O error, never an
+     // empty page that would quietly retire Load More.
+    MemIo io;
+    io.file = b.file;
+    io.open_fails = true;
+    wb::Slot s;
+    wb::init(&s);
+    const Page p = run(&s, io, req(100, 10));
+    CHECK(p.got && p.result == wb::Result::IO_ERROR && p.seqs.empty() && !p.more);
+    CHECK(p.passes == 1 && io.reads == 0);
+  }
+  {  // The file is gone, or its open fails, mid-page: an I/O error either way.
+    for (int gone = 0; gone < 2; ++gone) {
+      MemIo io;
+      io.file = b.file;
+      wb::Slot s;
+      wb::init(&s);
+      const uint32_t g = wb::begin(&s, req(100, 20));
+      pass(&s, io);
+      if (gone) io.exists = false;
+      else io.open_fails = true;
+      pass(&s, io);
+      const wb::Response* p = wb::poll(&s, g);
+      CHECK(p != nullptr && p->result == wb::Result::IO_ERROR && p->n == 0);
+      wb::end(&s, g, false);
+    }
   }
   {  // Remounted (or another card) mid-page.
     MemIo io;

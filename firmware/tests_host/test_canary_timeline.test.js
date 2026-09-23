@@ -126,8 +126,25 @@ test("busy and timeout keep Load More; no card retires it", async () => {
     assert.strictEqual(el("timelineLoadMore").style.display, "block");
     assert.strictEqual(t.records.length, 20);
   }
+  // A card that failed to read (500): say so, and keep the button to retry.
+  queue.push({ ok: false, error: "history_read_failed" });
+  await t.loadMoreTimeline();
+  assert.match(el("timelineNote").textContent, /Could not read older records \(history_read_failed\)/);
+  assert.strictEqual(el("timelineLoadMore").style.display, "block");
   queue.push({ ok: false, error: "no_card" });
   await t.loadMoreTimeline();
   assert.match(el("timelineNote").textContent, /no card is mounted/);
   assert.strictEqual(el("timelineLoadMore").style.display, "none");
+});
+
+test("an empty card page retires Load More and says why", async () => {
+  const { t, el, queue } = harness();
+  ringOnScreen(t);
+  el("timelineLoadMore").style.display = "block";
+  queue.push({ ok: true, source: "sd", total: 32, next_hint: 0, more: false, records: [] });
+  await t.loadMoreTimeline();
+  assert.strictEqual(el("timelineLoadMore").style.display, "none");
+  assert.match(el("timelineNote").textContent, /Nothing older is on the card/);
+  assert.strictEqual(el("timelineNote").style.display, "block");
+  assert.strictEqual(t.records.length, 20);
 });
