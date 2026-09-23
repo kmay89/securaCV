@@ -2453,6 +2453,85 @@ test("native flashing: the Lab's flash commands are the Flasher's, on the same e
   }
 });
 
+test("native flashing: the Lab bundles the Flasher's espflash, pinned and packaged the same way", () => {
+  // A sidecar is a pin set, a Linux access rule and a build-checked config
+  // key (RELEASE_LESSONS 2026-09-23 (b)); a second app bundling it copies all
+  // three, so all three are held to the Flasher's here.
+  const flasherWf = read(join(ROOT, ".github/workflows/desktop-flasher-release.yml"));
+  const labWf = read(join(ROOT, ".github/workflows/desktop-release.yml"));
+
+  // 1. One flash engine: the same version and the same three sha256 pins.
+  const pins = ["ESPFLASH_VERSION", "ESPFLASH_SHA256_AARCH64_APPLE_DARWIN",
+    "ESPFLASH_SHA256_X86_64_APPLE_DARWIN", "ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU"];
+  const pin = (wf, key, label) => {
+    const m = new RegExp(`\\n  ${key}: "([^"]+)"`).exec(wf);
+    assert.ok(m, `couldn't find the workflow-level ${key} in ${label}`);
+    return m[1];
+  };
+  for (const key of pins) {
+    assert.strictEqual(pin(labWf, key, "desktop-release.yml"), pin(flasherWf, key, "desktop-flasher-release.yml"),
+      `${key} differs between the Lab's and the Flasher's release — the two apps would ship different flash engines`);
+  }
+  assert.match(pin(flasherWf, "ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU", "desktop-flasher-release.yml"), /^[0-9a-f]{64}$/,
+    "the espflash pins must be full sha256 digests");
+
+  // 2. The same bundling steps, sidecar directory aside — sha check, lipo and
+  //    the per-arch/universal architecture proof included.
+  const step = (wf, name, label) => {
+    const i = wf.indexOf(`      - name: ${name}\n`);
+    assert.ok(i >= 0, `${label} has no "${name}" step`);
+    const rest = wf.slice(i + 1);
+    const end = rest.search(/\n      - name: |\n      # ──/);
+    return (end >= 0 ? rest.slice(0, end) : rest).trimEnd();
+  };
+  for (const name of ["Bundle espflash sidecar (macOS universal)", "Bundle espflash sidecar (Linux x86_64)"]) {
+    const lab = step(labWf, name, "desktop-release.yml");
+    const flasher = step(flasherWf, name, "desktop-flasher-release.yml");
+    assert.match(lab, /desktop-lab\/src-tauri\/binaries/, `the Lab's "${name}" must fill the Lab's binaries/`);
+    assert.strictEqual(lab.replaceAll("desktop-lab/src-tauri", "desktop/src-tauri"), flasher,
+      `the Lab's "${name}" step drifted from the Flasher's — keep them identical but for the sidecar directory`);
+    assert.match(flasher, /sha256sum -c -/, `"${name}" must verify the download against its pin`);
+  }
+  assert.match(step(labWf, "Bundle espflash sidecar (macOS universal)", "desktop-release.yml"),
+    /lipo -archs "\$bin\/espflash-universal-apple-darwin"/,
+    "the universal espflash must be PROVEN to carry both slices (RELEASE_LESSONS (z))");
+  // The steps run before the bundle is built.
+  assert.ok(labWf.indexOf("Bundle espflash sidecar (Linux x86_64)") < labWf.indexOf("- name: Build & publish (unsigned)"),
+    "the Lab must bundle espflash before tauri-action builds the app");
+
+  // 3. Where Tauri looks: externalBin on exactly the platforms the release
+  //    bundles (macOS + Linux), never in the base config — tauri-build
+  //    enforces externalBin for every target, and no iOS espflash exists.
+  const labConf = JSON.parse(read(join(ROOT, "desktop-lab/src-tauri/tauri.conf.json")));
+  assert.strictEqual(labConf.bundle.externalBin, undefined,
+    "the Lab's base tauri.conf.json must not name externalBin — the iPad shell's build would demand an iOS espflash");
+  for (const plat of ["macos", "linux"]) {
+    const conf = JSON.parse(read(join(ROOT, `desktop-lab/src-tauri/tauri.${plat}.conf.json`)));
+    assert.deepStrictEqual(conf.bundle.externalBin, ["binaries/espflash"],
+      `desktop-lab tauri.${plat}.conf.json must bundle binaries/espflash`);
+  }
+  const flasherConf = JSON.parse(read(join(ROOT, "desktop/src-tauri/tauri.conf.json")));
+  assert.ok((flasherConf.bundle.externalBin || []).includes("binaries/espflash"), "the Flasher lost its espflash externalBin");
+  // The sidecar the PR check stubs is the one the Linux config names.
+  const labCheck = read(join(ROOT, ".github/workflows/desktop-lab-check.yml"));
+  assert.match(labCheck, /want="binaries\/espflash-\$\(rustc -vV/,
+    "desktop-lab-check.yml must stub binaries/espflash-<host triple>, or tauri-build refuses to compile the crate");
+
+  // 4. One udev rule, byte-equal, installed by each .deb under its OWN path:
+  //    dpkg refuses a package that owns a path another installed package owns.
+  const rules = (p) => readFileSync(join(ROOT, p));
+  assert.ok(rules("desktop-lab/src-tauri/packaging/canary-serial.rules")
+    .equals(rules("desktop/src-tauri/packaging/canary-serial.rules")),
+  "the Lab's canary-serial.rules drifted from the Flasher's — copy it back byte for byte");
+  const debFiles = (conf) => (((conf.bundle || {}).linux || {}).deb || {}).files || {};
+  const labDest = Object.entries(debFiles(labConf)).find(([, src]) => src === "packaging/canary-serial.rules");
+  const flasherDest = Object.entries(debFiles(flasherConf)).find(([, src]) => src === "packaging/canary-serial.rules");
+  assert.ok(labDest && flasherDest, "both .debs must install packaging/canary-serial.rules");
+  assert.match(labDest[0], /^\/usr\/lib\/udev\/rules\.d\/6[0-9]-[a-z-]+\.rules$/, "the Lab's rule must land in udev's rules.d, before ModemManager's 77-mm-*");
+  assert.notStrictEqual(labDest[0], flasherDest[0],
+    "the two .debs install the rule at the same path — dpkg would refuse the second app");
+});
+
 // ── The derived birth certificate: one bird, one name, three surfaces ─────
 //
 // The Mac app can't import canary-local, so it inlines the derivation. That is

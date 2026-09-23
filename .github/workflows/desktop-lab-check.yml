@@ -98,6 +98,27 @@ jobs:
         # ships is missing or empty, which is the first thing this job proves.
         working-directory: desktop-lab
         run: node scripts/stage-frontend.mjs
+      - name: Stub the bundled espflash sidecar
+        # tauri-build refuses to run until every externalBin in the config it
+        # merges (tauri.linux.conf.json here) exists on disk — it is checking
+        # the BUNDLE, which is desktop-release.yml's job (it downloads the
+        # pinned, sha256-verified espflash). This job only wants the
+        # compiler's opinion of the Rust, so give the build script an empty
+        # file to find, exactly as desktop-hub-core.yml does for the Flasher.
+        # Never executed, never packaged, never leaves the runner: cargo check
+        # and cargo test produce no bundle. Create only what is missing.
+        working-directory: desktop-lab/src-tauri
+        run: |
+          set -euo pipefail
+          mkdir -p binaries
+          want="binaries/espflash-$(rustc -vV | awk '/^host:/{print $2}')"
+          if [ -e "$want" ]; then
+            echo "have    $want"
+          else
+            : > "$want"
+            chmod +x "$want"
+            echo "stubbed $want"
+          fi
       - name: Format check
         working-directory: desktop-lab/src-tauri
         run: cargo fmt --check

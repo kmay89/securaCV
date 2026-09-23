@@ -219,6 +219,17 @@ jobs:
             "$bin/espflash-aarch64-apple-darwin" "$bin/espflash-x86_64-apple-darwin"
           chmod +x "$bin/espflash-universal-apple-darwin"
           file "$bin"/espflash-*
+          # A file NAMED universal is not a universal file (RELEASE_LESSONS
+          # (z): a one-slice lipo succeeds). Prove each per-arch sidecar is its
+          # arch and the universal one carries both, or an Intel or Apple
+          # Silicon Mac gets "Bad CPU type" the first time it flashes.
+          [ "$(lipo -archs "$bin/espflash-aarch64-apple-darwin")" = "arm64" ] \
+            || { echo "::error::espflash-aarch64-apple-darwin is not an arm64 binary"; exit 1; }
+          [ "$(lipo -archs "$bin/espflash-x86_64-apple-darwin")" = "x86_64" ] \
+            || { echo "::error::espflash-x86_64-apple-darwin is not an x86_64 binary"; exit 1; }
+          archs=" $(lipo -archs "$bin/espflash-universal-apple-darwin") "
+          case "$archs" in *" arm64 "*) ;; *) echo "::error::universal espflash lacks arm64:$archs"; exit 1;; esac
+          case "$archs" in *" x86_64 "*) ;; *) echo "::error::universal espflash lacks x86_64:$archs"; exit 1;; esac
 
       - name: Bundle espflash sidecar (Linux x86_64)
         if: matrix.platform == 'ubuntu-22.04'

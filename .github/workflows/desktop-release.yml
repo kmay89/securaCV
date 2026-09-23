@@ -48,6 +48,23 @@ concurrency:
 permissions:
   contents: write
 
+env:
+  # The flash engine the Lab bundles for its native USB flashing — the SAME
+  # espflash, pinned the same way, as the Flasher's release
+  # (desktop-flasher-release.yml). canary-local/tests/desktop_parity.test.js
+  # pins these four values equal to that workflow's, so the two apps can never
+  # ship different flash engines. Bump both together, deliberately.
+  ESPFLASH_VERSION: "3.3.0"
+  # sha256 of each prebuilt espflash release asset for ESPFLASH_VERSION.
+  # GitHub release assets are MUTABLE (an asset can be replaced without the
+  # tag moving), and these binaries are bundled as sidecars inside the signed,
+  # self-updating app — so verify the download before trusting it, and fail
+  # the release on any mismatch. Recompute when ESPFLASH_VERSION changes:
+  #   curl -fL .../espflash-<triple>.zip | sha256sum
+  ESPFLASH_SHA256_AARCH64_APPLE_DARWIN: "e2b6b7f1c48c89069c23b425ce9ed368b242de52e0080d31155bb220847f794a"
+  ESPFLASH_SHA256_X86_64_APPLE_DARWIN: "7b18f89e0e584da8024b09ac5ba9400481a505fc59b0ad15c47254adb50a5ded"
+  ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU: "83611abe54c8e3d8c5a6b44948f4505b9cee05505577e2d9276e35a51e503d64"
+
 jobs:
   build:
     strategy:
@@ -83,7 +100,8 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             libudev-dev \
-            patchelf
+            patchelf \
+            file curl unzip
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
@@ -107,6 +125,85 @@ jobs:
       - name: Install Tauri CLI
         working-directory: desktop-lab
         run: npm ci
+
+      # ── the bundled flash engine (the Flasher's steps, the same pins) ──────
+      # Fetch the prebuilt espflash for each arch and drop it where Tauri looks
+      # for a sidecar: binaries/espflash-<target-triple> (tauri.conf.json
+      # externalBin). A universal macOS build needs ALL THREE: the per-arch
+      # sidecars (aarch64 + x86_64) while it compiles each slice, AND a lipo'd
+      # universal one at bundle time. Falls back to `cargo install` if the
+      # release asset naming ever changes, so the pipeline can't silently
+      # break. These two steps are desktop-flasher-release.yml's, with the
+      # sidecar directory swapped; desktop_parity.test.js holds them equal.
+      - name: Bundle espflash sidecar (macOS universal)
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://github.com/esp-rs/espflash/releases/download/v${ESPFLASH_VERSION}"
+          bin=desktop-lab/src-tauri/binaries
+          mkdir -p "$bin"
+          fetch() {
+            local triple="$1" out="$bin/espflash-$1"
+            if curl -fL "$base/espflash-$triple.zip" -o e.zip 2>/dev/null; then
+              # Verify the prebuilt asset against its pinned sha256 before we
+              # trust it — a mutable release asset must not silently change the
+              # flash engine we bundle. The env var name is the triple upcased.
+              local var want
+              var="ESPFLASH_SHA256_$(printf '%s' "$triple" | tr 'a-z-' 'A-Z_')"
+              want="${!var:-}"
+              [ -n "$want" ] || { echo "::error::no pinned sha256 for espflash-$triple (add ${var})"; exit 1; }
+              echo "${want}  e.zip" | sha256sum -c - \
+                || { echo "::error::espflash-$triple.zip sha256 mismatch — refusing to bundle an unverified flash engine"; exit 1; }
+              rm -rf ex && unzip -q e.zip -d ex
+              cp "$(find ex -type f -name espflash | head -n1)" "$out"
+            else
+              echo "prebuilt for $triple not found; cargo install fallback"
+              cargo install espflash --version "$ESPFLASH_VERSION" --locked --target "$triple" --root "cargo-$triple"
+              cp "cargo-$triple/bin/espflash" "$out"
+            fi
+            chmod +x "$out"
+          }
+          fetch aarch64-apple-darwin
+          fetch x86_64-apple-darwin
+          # Universal slice for the bundle step.
+          lipo -create -output "$bin/espflash-universal-apple-darwin" \
+            "$bin/espflash-aarch64-apple-darwin" "$bin/espflash-x86_64-apple-darwin"
+          chmod +x "$bin/espflash-universal-apple-darwin"
+          file "$bin"/espflash-*
+          # A file NAMED universal is not a universal file (RELEASE_LESSONS
+          # (z): a one-slice lipo succeeds). Prove each per-arch sidecar is its
+          # arch and the universal one carries both, or an Intel or Apple
+          # Silicon Mac gets "Bad CPU type" the first time it flashes.
+          [ "$(lipo -archs "$bin/espflash-aarch64-apple-darwin")" = "arm64" ] \
+            || { echo "::error::espflash-aarch64-apple-darwin is not an arm64 binary"; exit 1; }
+          [ "$(lipo -archs "$bin/espflash-x86_64-apple-darwin")" = "x86_64" ] \
+            || { echo "::error::espflash-x86_64-apple-darwin is not an x86_64 binary"; exit 1; }
+          archs=" $(lipo -archs "$bin/espflash-universal-apple-darwin") "
+          case "$archs" in *" arm64 "*) ;; *) echo "::error::universal espflash lacks arm64:$archs"; exit 1;; esac
+          case "$archs" in *" x86_64 "*) ;; *) echo "::error::universal espflash lacks x86_64:$archs"; exit 1;; esac
+
+      - name: Bundle espflash sidecar (Linux x86_64)
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://github.com/esp-rs/espflash/releases/download/v${ESPFLASH_VERSION}"
+          triple="x86_64-unknown-linux-gnu"
+          out="desktop-lab/src-tauri/binaries/espflash-$triple"
+          mkdir -p desktop-lab/src-tauri/binaries
+          if curl -fL "$base/espflash-$triple.zip" -o e.zip 2>/dev/null; then
+            # Verify the mutable release asset before bundling it (see macOS).
+            echo "${ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU}  e.zip" | sha256sum -c - \
+              || { echo "::error::espflash-$triple.zip sha256 mismatch — refusing to bundle an unverified flash engine"; exit 1; }
+            unzip -q e.zip -d ex
+            cp "$(find ex -type f -name espflash | head -n1)" "$out"
+          else
+            cargo install espflash --version "$ESPFLASH_VERSION" --locked --root cargo-linux
+            cp cargo-linux/bin/espflash "$out"
+          fi
+          chmod +x "$out"
+          file "$out"
 
       - name: All three version files agree
         # On the RELEASE path, not just in lint: a pushed `app-v*` tag, or a

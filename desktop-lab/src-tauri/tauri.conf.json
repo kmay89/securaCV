@@ -52,7 +52,10 @@
           "libgtk-3-0",
           "libayatana-appindicator3-1",
           "libdbus-1-3"
-        ]
+        ],
+        "files": {
+          "/usr/lib/udev/rules.d/61-securacv-lab.rules": "packaging/canary-serial.rules"
+        }
       }
     },
     "macOS": {

@@ -53,11 +53,15 @@ desktop-lab/
   dist/                        the staged web root (generated, gitignored)
   src-tauri/
     tauri.conf.json            frontendDist -> ../dist, window -> canary-local/lab.html
+    tauri.{macos,linux}.conf.json  externalBin: the bundled espflash (those two only)
     Cargo.toml
-    build.rs
+    build.rs                   build stamp + the embedded flash.json catalog
     capabilities/              default.json + desktop.json (self-update perms)
     icons/                     generated from mascot.png
+    binaries/                  espflash-<triple>, fetched + sha256-checked by CI (gitignored)
+    packaging/                 canary-serial.rules — the Linux udev rule the .deb installs
     src/{main,lib}.rs          native shell + capability seam
+    src/flash.rs               native USB flashing: the Flasher's commands over ../desktop/flash-engine
     src/self_update.rs         signed self-update (desktop only, see below)
 ```
 
@@ -105,8 +109,15 @@ Linux dev deps (Ubuntu/Debian):
 
 ```bash
 sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
-  libayatana-appindicator3-dev librsvg2-dev patchelf
+  libayatana-appindicator3-dev librsvg2-dev libudev-dev patchelf
 ```
+
+A macOS or Linux build also needs the espflash sidecar where
+`tauri.{macos,linux}.conf.json` point: `src-tauri/binaries/espflash-<triple>`
+(`rustc -vV` prints the triple). The release workflow downloads the pinned,
+sha256-verified one (`desktop-release.yml`, "Bundle espflash sidecar"); for a
+compile-only check an empty executable file there is enough, which is what
+`desktop-lab-check.yml` does.
 
 ## Build installers
 

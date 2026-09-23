@@ -66,6 +66,15 @@ on:
       - "desktop/src-tauri/capabilities/**"
       - "desktop-lab/src-tauri/src/flash.rs"
       - "desktop-lab/src-tauri/build.rs"
+      # …and holds the Lab's espflash bundling to the Flasher's: pins and
+      # steps in both release workflows, the per-platform externalBin, the PR
+      # check's stub, and the one udev rule both .debs install
+      - ".github/workflows/desktop-release.yml"
+      - ".github/workflows/desktop-lab-check.yml"
+      - "desktop-lab/src-tauri/tauri.macos.conf.json"
+      - "desktop-lab/src-tauri/tauri.linux.conf.json"
+      - "desktop/src-tauri/packaging/canary-serial.rules"
+      - "desktop-lab/src-tauri/packaging/**"
       # the secret drawer's backend names (desktop_parity pins app.js where())
       - "desktop/src-tauri/src/secret_store.rs"
       - "desktop/src-tauri/build.rs"
@@ -169,6 +178,15 @@ on:
       - "desktop/src-tauri/capabilities/**"
       - "desktop-lab/src-tauri/src/flash.rs"
       - "desktop-lab/src-tauri/build.rs"
+      # …and holds the Lab's espflash bundling to the Flasher's: pins and
+      # steps in both release workflows, the per-platform externalBin, the PR
+      # check's stub, and the one udev rule both .debs install
+      - ".github/workflows/desktop-release.yml"
+      - ".github/workflows/desktop-lab-check.yml"
+      - "desktop-lab/src-tauri/tauri.macos.conf.json"
+      - "desktop-lab/src-tauri/tauri.linux.conf.json"
+      - "desktop/src-tauri/packaging/canary-serial.rules"
+      - "desktop-lab/src-tauri/packaging/**"
       # the secret drawer's backend names (desktop_parity pins app.js where())
       - "desktop/src-tauri/src/secret_store.rs"
       - "desktop/src-tauri/build.rs"

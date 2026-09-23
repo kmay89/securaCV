@@ -83,6 +83,41 @@ named `SecuraCV.Lab_…`.)
   sudo apt install ./SecuraCV.Lab_*_amd64.deb
   ```
 
+### Serial access for USB flashing (one time)
+
+Flashing a **Canary** from the Lab's Flash page needs two things from Linux
+that macOS grants for free: permission to open the USB serial device, and
+**ModemManager keeping its hands off it**. ModemManager probes a just-plugged
+board (or one re-enumerating after the post-flash reset) as if it were a
+modem — it can hold the port for ~30 s and its probing can reset the board
+mid-boot, so the flash verifies but the live boot receipt never arrives.
+This is the same rule the SecuraCV Flasher ships.
+
+- **`.deb` users:** the rule ships with the package
+  (`/usr/lib/udev/rules.d/61-securacv-lab.rules` — the Flasher's `.deb`
+  installs the identical rule as `61-securacv-canary.rules`, and having both
+  is harmless) and fixes both — just **replug the board** after installing.
+- **AppImage / other users:** add it once (skip this if you already added it
+  for the Flasher — it is the same file):
+
+  ```sh
+  sudo tee /etc/udev/rules.d/61-securacv-canary.rules >/dev/null <<'EOF'
+  ATTRS{idVendor}=="303a", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", MODE="0666", TAG+="uaccess"
+  ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", MODE="0666", TAG+="uaccess"
+  EOF
+  sudo udevadm control --reload-rules && sudo udevadm trigger
+  ```
+
+  Then replug the board. (`303a` is the Canary's own ESP32 USB port;
+  `1a86:55d3` is the Grove Vision AI V2 camera module.)
+
+- **Fallback for the permission half only:** add yourself to the `dialout`
+  group and log back in — but note this does *not* stop ModemManager:
+
+  ```sh
+  sudo usermod -aG dialout "$USER"   # then log out and back in
+  ```
+
 ---
 
 ## The menu bar companion
@@ -130,7 +165,7 @@ the macOS `.app` and the Linux **AppImage**; `.deb` users update through
 - **Linux AppImage:** delete the file.
 - **Linux .deb:** `sudo apt remove securacv-lab`.
 
-Two small things stay behind (no secrets in either) — remove them too for a
+A few small things stay behind (no secrets in any of them) — remove them too for a
 complete uninstall:
 
 - **The app data folder** — the self-updater's journal
@@ -142,6 +177,10 @@ complete uninstall:
     `~/Library/Caches/com.securacv.lab`
   - Linux: inside the app data folder above, plus
     `~/.cache/com.securacv.lab`
+- **The Linux udev rule**, only if you added it by hand for the AppImage and
+  no longer run the Flasher either: `/etc/udev/rules.d/61-securacv-canary.rules`.
+  (The `.deb`'s copy under `/usr/lib/udev/rules.d/` is removed with the
+  package.)
 
 The Lab keeps all of its state locally and talks only to your own devices —
 the one thing it ever fetches on its own is its update manifest.
