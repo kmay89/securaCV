@@ -12,10 +12,13 @@ your router.
 - The mesh now **follows the radio's current channel** instead of pinning
   itself to channel 1 or 6. When STA is associated with your home WiFi, the
   mesh rides on that channel; the radio never has to retune mid-send.
-- An **airtime governor** caps routine mesh traffic (heartbeats, gossip) at
-  **≤ 2%** of any rolling 10-second window. Urgent traffic — tamper alerts,
-  `OFFLINE_IMMINENT`, power-loss notifications — bypasses the cap but is
-  still counted, so the `mesh_airtime_pct` telemetry stays honest.
+- An **airtime governor** caps routine traffic (heartbeats, gossip, and the
+  WAP's CSI active probe) at **≤ 2%** of any rolling 10-second window, by
+  its own estimate of airtime. The probe stops at 1.60 % of that window so
+  the heartbeats and presence beacons keep their room. Urgent traffic —
+  tamper alerts, `OFFLINE_IMMINENT`, power-loss notifications — bypasses
+  the cap but is still counted, so the `mesh_airtime_pct` telemetry stays
+  honest.
 
 If you only care about the upshot: **a SecuraCV deployment with a handful of
 Canaries should be undetectable in your router's airtime stats.**
@@ -82,13 +85,35 @@ airtime_us ≈ 192us preamble + (bytes * 8) / 1 Mbps
 ```
 
 (1 Mbps is the conservative fallback rate ESP-NOW uses for broadcasts; real
-unicast traffic is faster, so we never under-count.)
+unicast traffic is faster.) It is an estimate, not a measurement of the air,
+and it counts only the bytes the caller passes: the CSI probe adds its ~59 B
+of ESP-NOW framing (a 16 B probe is charged as 75 B, 792 µs), while the mesh,
+chirp and Beacon callers pass header + payload and do not yet, so their
+estimates run about 59 B a frame short.
+
+Sends are summed in 100 ms buckets: a send joins the newest bucket when it
+falls in the same 100 ms, and a bucket leaves the window with its newest
+send. The 256-slot ring therefore reaches back at least 25.6 s at any send
+rate, so nothing still in the window is ever overwritten, and the window
+reads 10.0–10.1 s — never less, so the cap can only err toward denying.
+(The ring used to hold one slot per send; above 25.6 reservations a second
+it dropped in-window sends and the cap stopped holding.)
 
 Routine traffic — heartbeats every 30 s, presence beacons every 60 s,
-gossip — calls `try_reserve_routine()`. If the projected airtime in the
-rolling 10-second window would exceed the cap (default 2%), the send is
+gossip, and the WAP's CSI active probe (a 10 Hz broadcast today, ~0.8 % by
+the estimate) — calls `try_reserve_routine()`. If the projected airtime in
+the rolling 10-second window would exceed the cap (default 2%), the send is
 denied and the caller skips this tick. The peer-stale timer is 90 s, so a
 few skipped heartbeats are harmless.
+
+The probe goes through `probe_airtime.h`, which also stops it once the
+window reads 1.60 %: a probe fanned out to a full peer table asks for far
+more than the cap, and without the ceiling it took every microsecond the
+window freed, so heartbeats and presence were refused outright. The rest of
+the 2 % (at least 0.32 %, since the last probe frame may land just past the
+line) stays for them. On a build without the mesh (the DEV and MINIMAL
+profiles), the probe also brings the governor up itself; otherwise nothing
+would, and every reservation would pass.
 
 Urgent traffic — tamper alerts, power-loss alerts, `OFFLINE_IMMINENT` —
 calls `force_reserve_urgent()`. It always sends, but its cost is recorded
@@ -142,7 +167,12 @@ Host-side unit tests (no ESP32 required):
 make -C firmware/projects/canary-wap/tests_host
 ```
 
-Should print `OK  all mesh coexistence tests passed`.
+Should print `ALL MESH COEXISTENCE TESTS PASSED` (the channel policy and
+the governor's window) and `test_csi_probe_airtime: ALL PASSED` (the real
+probe scheduler under the real governor: the WAP's 10 Hz broadcast is never
+denied, one peer at 20 Hz stays steady, and eight peers are held at the
+1.60 % ceiling while the heartbeat keeps its room). Both are host tests of
+the estimate; whether it matches real air is a bench question.
 
 In the field, with two Canaries paired into one Opera, both in STA on the
 home network:
