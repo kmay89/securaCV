@@ -1,18 +1,24 @@
 // SecuraCV Lab — native shell around the local-first `canary-local` Lab.
 //
-// v1 wraps the existing web Lab so it ships as a Mac/Linux app that runs
+// It wraps the existing web Lab so it ships as a Mac/Linux app that runs
 // entirely on your machine. The commands below are the seam where native
-// capabilities plug in next — the biggest win being reliable USB flashing
-// (replacing the browser's flaky WebSerial). See ../README.md.
+// capabilities plug in — USB flashing through the Flasher's bundled espflash
+// engine (src/flash.rs, desktop/flash-engine) replaces the WebSerial the OS
+// webview doesn't have. See ../README.md.
 //
 // Self-update (desktop only; iOS/iPadOS updates ride the App Store): the app
 // checks its release channel at launch and on a six-hour routine while it
 // stays open — see src/self_update.rs for the shape, copied from the Flasher.
-// Local-first still means local-first: the only thing the Lab ever fetches on
-// its own is its update manifest, from the project's releases.
+// Local-first still means local-first: the Lab reaches the internet only for
+// the project's GitHub releases — its update manifest, and, on the Flash
+// page, which signed firmware is published (read once a board is connected)
+// and the image the user presses Flash for (src/flash.rs, the engine's
+// net.rs).
 
 #[cfg(desktop)]
 mod companion;
+#[cfg(desktop)]
+mod flash;
 #[cfg(desktop)]
 mod fleet;
 #[cfg(desktop)]
@@ -45,21 +51,30 @@ fn app_info() -> AppInfo {
 
 // --- native device capabilities -----------------------------------------
 // Reliable serial flashing and LAN discovery are why a native app earns its
-// keep. Port ENUMERATION is live below (list_serial_ports); the flash
-// engine itself — the Flasher's espflash sidecar
-// (desktop/src-tauri/src/lib.rs) — is the remaining piece, and `serial`
-// stays false until it lands so the frontend never lights a "Flash over
-// USB (native)" path that isn't there. `serial_list` advertises what does
-// exist, so the flash page can at least show which ports the native shell
-// sees while the browser path explains itself. LAN discovery is two live
+// keep. Native FLASHING is live on macOS and Linux: the flash commands
+// (src/flash.rs — the Flasher's commands over the shared
+// desktop/flash-engine) run the espflash sidecar that the release bundles for
+// exactly those two platforms (tauri.{macos,linux}.conf.json externalBin,
+// desktop-release.yml "Bundle espflash sidecar"), and the Flash page mounts
+// its native bench (canary-local/assets/flash-native.js) when `serial` says
+// so. Anywhere else — the iPad shell, a Windows build nobody ships — `serial`
+// is false, so the page never lights a path that can only fail. On macOS and
+// Linux it is ALSO a runtime answer (espflash_bundled): the platform bundles
+// espflash, and the file is really there next to this binary.
+// `serial_list` advertises the port list (list_serial_ports) on every desktop
+// build. LAN discovery is two live
 // commands on desktop: an mDNS browse that finds the boards (fleet_scan,
 // src/fleet.rs) and the /api/fleet poll that finds a kernel
 // (witness_discover). Bluetooth LE discovery is still future.
 #[tauri::command]
-fn native_capabilities() -> serde_json::Value {
+fn native_capabilities(app: tauri::AppHandle) -> serde_json::Value {
     serde_json::json!({
         "shell": "tauri",
-        "serial": false,      // native FLASHING: waits on the espflash sidecar
+        // Native FLASHING (src/flash.rs): only where the release bundles the
+        // espflash sidecar, AND only while that sidecar is really there to
+        // run. desktop_parity.test.js refuses this unless the sidecar, its
+        // bundling step and the frontend path all exist.
+        "serial": cfg!(any(target_os = "macos", target_os = "linux")) && espflash_bundled(&app),
         // Native port enumeration (list_serial_ports). Desktop only:
         // MOBILE.md's contract is that generic USB serial does not exist on
         // iOS/iPadOS, so a mobile build neither registers the command nor
@@ -85,57 +100,32 @@ fn native_capabilities() -> serde_json::Value {
     })
 }
 
-/// One serial port as the OS reports it. Field-for-field the Flasher's
-/// `PortDto` (`desktop/src-tauri/src/lib.rs`) — one wire shape, two crates,
-/// so a frontend port picker written against either app reads the other's
-/// answer unchanged. Desktop only, like the crate behind it (Cargo.toml).
-#[cfg(desktop)]
-#[derive(serde::Serialize)]
-struct PortDto {
-    /// OS port path, e.g. `/dev/tty.usbmodem1101` or `/dev/ttyACM0`.
-    name: String,
-    /// "usb" | "bluetooth" | "pci" | "unknown" — USB is what a Canary is.
-    kind: String,
-    vid: Option<u16>,
-    pid: Option<u16>,
-    product: Option<String>,
-    manufacturer: Option<String>,
+/// The runtime half of `serial`: is the bundled espflash really next to this
+/// binary (src/flash.rs `espflash_bundled` — a non-empty executable file,
+/// resolved where the spawn will look)? Compile-time `cfg!` alone says only
+/// that the RELEASE bundles one; a dev build on the empty compile-only stub,
+/// a repackaged binary or a deleted file would still advertise a flash path
+/// whose every board read fails at spawn.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn espflash_bundled(app: &tauri::AppHandle) -> bool {
+    flash::espflash_bundled(app)
+}
+
+/// No espflash is bundled here (the iPad shell, an unshipped Windows build).
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn espflash_bundled(_app: &tauri::AppHandle) -> bool {
+    false
 }
 
 /// Serial ports the OS can see this instant. No Web Serial permission prompt,
-/// no Chromium — just the platform enumerating its own devices. Lockstep twin
-/// of the Flasher's `list_ports`; kept under the name this seam always
-/// promised (`list_serial_ports`).
+/// no Chromium — just the platform enumerating its own devices. The Flasher's
+/// `list_ports` (one engine, one wire shape: flash_engine::ports), kept under
+/// the name this seam always promised; `list_ports` itself is registered too
+/// (src/flash.rs), so either frontend's port picker works here unchanged.
 #[cfg(desktop)]
 #[tauri::command]
-fn list_serial_ports() -> Result<Vec<PortDto>, String> {
-    let ports =
-        serialport::available_ports().map_err(|e| format!("could not list serial ports: {e}"))?;
-    let mut out = Vec::new();
-    for p in ports {
-        use serialport::SerialPortType::*;
-        let (kind, vid, pid, product, manufacturer) = match &p.port_type {
-            UsbPort(info) => (
-                "usb",
-                Some(info.vid),
-                Some(info.pid),
-                info.product.clone(),
-                info.manufacturer.clone(),
-            ),
-            BluetoothPort => ("bluetooth", None, None, None, None),
-            PciPort => ("pci", None, None, None, None),
-            Unknown => ("unknown", None, None, None, None),
-        };
-        out.push(PortDto {
-            name: p.port_name,
-            kind: kind.to_string(),
-            vid,
-            pid,
-            product,
-            manufacturer,
-        });
-    }
-    Ok(out)
+fn list_serial_ports() -> Result<Vec<flash_engine::ports::PortDto>, String> {
+    flash_engine::ports::list_ports()
 }
 
 /// Only ever talk to a host that can be on this network: `.local`-style
@@ -263,13 +253,25 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
+        // The espflash sidecar is spawned from Rust (src/flash.rs); the shell
+        // plugin's state must exist for that, and the webview gets no grant.
+        .plugin(tauri_plugin_shell::init())
         .manage(std::sync::Mutex::new(self_update::UpdateGate::default()))
         .manage(companion::Companion::default())
+        .manage(flash_engine::monitor::SerialMonitorState::default())
+        .manage(flash::Sidecars::default())
         .invoke_handler(tauri::generate_handler![
             app_version,
             app_info,
             native_capabilities,
             list_serial_ports,
+            flash::list_ports,
+            flash::detect_chip,
+            flash::fetch_manifest,
+            flash::flash,
+            flash::start_serial_monitor,
+            flash::serial_monitor_send,
+            flash::stop_serial_monitor,
             witness_discover,
             fleet::fleet_scan,
             companion::companion_set_bases,
@@ -353,6 +355,12 @@ pub fn run() {
             } = &_event
             {
                 companion::show_main(_app);
+            }
+            // A quitting Lab takes its running espflash with it, so no sidecar
+            // is left holding a board's serial port (src/flash.rs: Sidecars).
+            #[cfg(desktop)]
+            if let tauri::RunEvent::Exit = &_event {
+                flash::Sidecars::kill_all(_app);
             }
             // Cmd-Q / the app menu's Quit never pass through CloseRequested —
             // they request an application exit directly, and this is the only

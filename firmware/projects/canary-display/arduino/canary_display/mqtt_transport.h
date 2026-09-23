@@ -45,7 +45,7 @@ namespace canary::net::mqtt_tls {
 // NVS keys, in the SAME namespace as the product's runtime_config
 // (mqtt_host / mqtt_port / mqtt_user / mqtt_pass live in "securacv"), so
 // the flashers seed all of them as one row. Contract shared with
-// canary-local/assets/flash-core.js and desktop/src-tauri/src/provisioning.rs.
+// canary-local/assets/flash-core.js and desktop/flash-engine/src/provisioning.rs.
 constexpr const char* NVS_KEY_MODE = "mqtt_tls";  // u8  — Mode
 constexpr const char* NVS_KEY_CA   = "mqtt_ca";   // str — PEM certificate
 constexpr const char* NVS_KEY_FP   = "mqtt_fp";   // str — SHA-256 pin, any accepted spelling

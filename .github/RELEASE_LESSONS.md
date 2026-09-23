@@ -12,6 +12,59 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-09-23 (b) — A second app bundling the same sidecar is two pins, two udev paths and two configs
+
+- **Symptom (caught before it was paid for):** the Lab gained the Flasher's
+  native USB flashing (A14) — the same `espflash` sidecar, spawned through the
+  shared `desktop/flash-engine`. Copying the Flasher's bundling naively would
+  have shipped three latent failures at once: (1) a second
+  `ESPFLASH_VERSION` + three `ESPFLASH_SHA256_*` pins in a second workflow,
+  free to drift from the Flasher's, so the two apps could flash with
+  different engines; (2) a Lab `.deb` installing the Flasher's udev rule at
+  the Flasher's path, `/usr/lib/udev/rules.d/61-securacv-canary.rules` —
+  and dpkg refuses to install a package that owns a path another installed
+  package already owns, so anyone with both apps would have had the second
+  install fail; (3) `externalBin` in the Lab's `tauri.conf.json`, which
+  tauri-build enforces for EVERY target it builds — including the iPad
+  shell's local recipe (`desktop-lab/MOBILE.md`), which would have died on a
+  missing `espflash-aarch64-apple-ios` that nothing could ever provide.
+- **Cause:** a sidecar is more than a binary. It is a pin set in a release
+  workflow, a Linux access rule in a package, and a config key the build
+  script checks — and each of those has an identity (a value, a path, a
+  target list) that a copy duplicates.
+- **Fix:** `desktop-release.yml` carries the Flasher's pins and bundling
+  steps with only the sidecar directory swapped, and
+  `canary-local/tests/desktop_parity.test.js` pins the four values and the
+  two step bodies equal across the two workflows. The udev rule is ONE file,
+  byte-equal in both apps (asserted), installed under two names
+  (`61-securacv-canary.rules` from the Flasher, `61-securacv-lab.rules` from
+  the Lab) — the rules are idempotent, so both present changes nothing.
+  The Lab's `externalBin` lives in `tauri.macos.conf.json` and
+  `tauri.linux.conf.json` (merged per target), the two platforms the release
+  bundles, and the Lab's `native_capabilities().serial` is scoped to the
+  same two, never to "any desktop". And both
+  workflows' macOS steps now prove the per-arch sidecars are their arch and
+  the universal one carries both — lesson (z) applied to `espflash`, which
+  had only ever been `file`'d.
+- **Review follow-up (same day):** the Linux step had only ever been
+  `file`'d too — both workflows now fail unless it reports an x86-64 ELF —
+  and the `cargo install` fallback, which no sha256 pin covers, ran on any
+  `curl` failure without a word; on both platforms, in both workflows, it
+  now prints a `::warning::`. The rule's two hand copies (the AppImage
+  heredocs in both `INSTALL.md`s) are held to the rules file by
+  `desktop_parity` too. And "the platform bundles it" is not "it is here":
+  the Lab's `serial` is also a runtime check that the sidecar is a
+  non-empty executable file where the spawn looks, so a dev build on the
+  empty compile-only stub never lights a bench that can only fail at spawn.
+  Still open: the pins live only in the two workflows, and neither app's
+  `release-targets.yml` watch covers them, so a pin bump alone marks
+  neither app as changed.
+- **Applies to:** every sidecar a second app bundles (espflash today;
+  rpiboot if the Lab ever flashes a Pi), and every packaged file two apps
+  share. Pin shared values in one test, not two workflows; give each
+  package its own installed path for a shared file; and scope a
+  build-script-enforced key to the targets that can satisfy it.
+
 ## 2026-09-23 — A `-sys` crate that links nothing can still crash the app
 
 - **Symptom (caught before it was paid for):** the Lab's menu bar companion

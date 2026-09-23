@@ -17,7 +17,8 @@ name: Lab crate check
 # The paths cover the crate AND what the app bundles: frontend-stage.json
 # mirrors canary-local/ and docs/hardware/enclosure/ into the web root the
 # codegen embeds, so a change there is an input to this compile exactly as
-# much as a .rs edit is.
+# much as a .rs edit is — and the flash engine (desktop/flash-engine, with
+# hub-core) is compiled into the crate, so it is an input too.
 on:
   push:
     branches: [ main ]
@@ -25,6 +26,10 @@ on:
       - 'desktop-lab/**'
       - 'canary-local/**'
       - 'docs/hardware/enclosure/**'
+      # The native flash path compiles the shared engine (and the hub-core
+      # helper it uses) into this crate — an edit there is an edit here.
+      - 'desktop/flash-engine/**'
+      - 'desktop/hub-core/**'
       - '.github/workflows/desktop-lab-check.yml'
   pull_request:
     branches: [ main ]
@@ -32,6 +37,10 @@ on:
       - 'desktop-lab/**'
       - 'canary-local/**'
       - 'docs/hardware/enclosure/**'
+      # The native flash path compiles the shared engine (and the hub-core
+      # helper it uses) into this crate — an edit there is an edit here.
+      - 'desktop/flash-engine/**'
+      - 'desktop/hub-core/**'
       - '.github/workflows/desktop-lab-check.yml'
 
 # Read-only token: this workflow only checks out and runs cargo — it needs
@@ -89,6 +98,27 @@ jobs:
         # ships is missing or empty, which is the first thing this job proves.
         working-directory: desktop-lab
         run: node scripts/stage-frontend.mjs
+      - name: Stub the bundled espflash sidecar
+        # tauri-build refuses to run until every externalBin in the config it
+        # merges (tauri.linux.conf.json here) exists on disk — it is checking
+        # the BUNDLE, which is desktop-release.yml's job (it downloads the
+        # pinned, sha256-verified espflash). This job only wants the
+        # compiler's opinion of the Rust, so give the build script an empty
+        # file to find, exactly as desktop-hub-core.yml does for the Flasher.
+        # Never executed, never packaged, never leaves the runner: cargo check
+        # and cargo test produce no bundle. Create only what is missing.
+        working-directory: desktop-lab/src-tauri
+        run: |
+          set -euo pipefail
+          mkdir -p binaries
+          want="binaries/espflash-$(rustc -vV | awk '/^host:/{print $2}')"
+          if [ -e "$want" ]; then
+            echo "have    $want"
+          else
+            : > "$want"
+            chmod +x "$want"
+            echo "stubbed $want"
+          fi
       - name: Format check
         working-directory: desktop-lab/src-tauri
         run: cargo fmt --check

@@ -121,6 +121,12 @@ targets:
       # editing frontend-stage.json, keep this list in step.
       - canary-local
       - docs/hardware/enclosure
+      # The native flash path compiles the shared ESP32 flash engine (and the
+      # hub-core helper it uses) into the Lab, so an engine change is a Lab
+      # change. (flash.json, which build.rs also embeds, is under canary-local
+      # above.)
+      - desktop/flash-engine
+      - desktop/hub-core
 
   - name: tvos
     label: Witness Wall (Apple TV)

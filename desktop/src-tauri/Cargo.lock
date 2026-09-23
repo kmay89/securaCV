@@ -1251,6 +1251,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
+name = "flash-engine"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "hub-core",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "serialport",
+ "sha2 0.11.0",
+ "tempfile",
+]
+
+[[package]]
 name = "flate2"
 version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3835,6 +3849,7 @@ version = "0.11.9"
 dependencies = [
  "base64 0.23.1",
  "ed25519-dalek",
+ "flash-engine",
  "getrandom 0.4.3",
  "hub-core",
  "hub-io",

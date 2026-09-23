@@ -2288,8 +2288,8 @@ async function pollPorts() {
 }
 
 // The monitor's native side follows the board by port name first, then by
-// VID/PID when the name changes across a reboot (matching_port in
-// serial_monitor.rs). Mirror that here so the status bar and the monitor
+// VID/PID when the name changes across a reboot (matching_port in the
+// flash engine's monitor.rs). Mirror that here so the status bar and the monitor
 // always agree on whether the board is still with us.
 function trackPresenceWhileMonitoring(usb) {
   const byName = state.port ? usb.find((p) => p.name === state.port) : null;
@@ -4691,7 +4691,7 @@ function feedSenseTune(chunk) {
 // looksLikeGarbage). The desktop hard-coded one speed with no control and no
 // self-heal, so a board running a non-catalog console rate showed mojibake
 // with nothing to turn. The Rust side already accepts any speed in
-// 1_200..=2_000_000 (serial_monitor.rs), so this is purely the missing
+// 1_200..=2_000_000 (flash-engine monitor.rs), so this is purely the missing
 // frontend half.
 const CONSOLE_BAUDS = [115200, 74880, 9600, 230400, 460800, 921600];
 

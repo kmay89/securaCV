@@ -10,8 +10,7 @@ edition = "2021"
 rust-version = "1.88"
 
 # The Tauri app links the local Lab frontend (../../canary-local) into a
-# native shell. See ../README.md for the architecture and roadmap
-# (native USB flashing + a menubar fleet companion come next).
+# native shell. See ../README.md for the architecture and roadmap.
 
 [lib]
 name = "securacv_lab_lib"
@@ -33,7 +32,11 @@ serde_json = "1"
 # LAN fleet discovery (witness_discover): same pinned shape as the Flasher's
 # (desktop/src-tauri/Cargo.toml) — rustls, JSON only, no default features.
 # Local-first still means local-first: this client only ever GETs /api/fleet
-# on LAN addresses the frontend hands it, never anything on the internet.
+# on LAN addresses the frontend hands it, never anything on the internet. (The
+# flash engine's own client — flash-engine net.rs — reads the firmware release
+# manifest from GitHub once a board is connected on the Flash page, i.e. which
+# signed firmware is published, and downloads the image when the user presses
+# Flash.)
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 # Self-update, the same shape as the Flasher (desktop/): the updater plugin
 # polls the rolling `lab-latest` release pointer, the dialog plugin asks the
@@ -47,15 +50,22 @@ tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 # Only for the recheck timer (tauri's async runtime is tokio already).
 tokio = { version = "1", features = ["time"] }
-# Native serial port enumeration — the same crate and major the Flasher uses
-# (desktop/src-tauri/Cargo.toml): the OS lists its own devices, no Web Serial
-# permission prompt, no Chromium. Desktop only — MOBILE.md's contract is that
-# generic USB serial does not exist on iOS/iPadOS, and Android's
-# available_ports() reports enumeration unsupported, so mobile builds carry
-# neither the crate nor the command. Listing only for now; the flash engine
-# (the Flasher's espflash sidecar) is the follow-up that flips the `serial`
-# capability to true.
-serialport = "4"
+# Native USB flashing (src/flash.rs): the Flasher's ESP32 flash engine,
+# shared rather than copied — desktop/flash-engine holds the catalog chip
+# guard, release verification, NVS provisioning, the espflash invocation, the
+# pipeline and the boot-receipt monitor, and brings `serialport` (the OS's own
+# port list; libudev-sys on Linux, already in the release apt block) with it.
+# Every crate it adds to this lock is pure Rust (sha2 / ed25519-dalek and
+# their curve25519 tree; hub-core is std-only). Desktop only — MOBILE.md's
+# contract is that generic USB serial does not exist on iOS/iPadOS, and
+# Android's available_ports() reports enumeration unsupported, so mobile
+# builds carry neither the engine nor the commands.
+flash-engine = { path = "../../desktop/flash-engine" }
+# The bundled espflash sidecar (tauri.conf.json externalBin), spawned from
+# RUST only (src/flash.rs) — the same plugin the Flasher carries. The webview
+# holds no shell grant (capabilities/default.json): Rust-side
+# `shell().sidecar()` resolves by externalBin alone.
+tauri-plugin-shell = "2"
 # LAN discovery by mDNS (fleet_scan, src/fleet.rs): a real browse of
 # `_securacv._tcp` — the same crate and minor as the Flasher's
 # (desktop/src-tauri/Cargo.toml), pure Rust on std sockets, no -sys crate.

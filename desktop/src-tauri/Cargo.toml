@@ -38,6 +38,12 @@ serde_json = "1"
 # orchestrates (src/hub.rs).
 hub-core = { path = "../hub-core" }
 hub-io = { path = "../hub-io" }
+# The ESP32 flash engine — catalog guards, release verification, NVS
+# provisioning, the change map, intake, the espflash argv, the flash pipeline
+# and the boot-receipt monitor — shared with the Lab (desktop-lab/src-tauri)
+# and PR-CI-tested on its own; this app keeps the Tauri commands over it and
+# the sidecar spawn (launch_guard::spawn_tracked).
+flash-engine = { path = "../flash-engine" }
 base64 = "0.23"
 ed25519-dalek = "3"
 # OS randomness for the whoami challenge nonce. Already in the lock via
