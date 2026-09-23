@@ -2572,6 +2572,10 @@ const jsFnText = (src, name, where) => {
   assert.fail(`unbalanced function ${name} in ${where}`);
 };
 
+// Does a frontend's BAUD_RETRY_KINDS name `engine`?
+const BAUD_RETRY_SET_HAS_ENGINE = (src) =>
+  /const BAUD_RETRY_KINDS = new Set\(\[[^\]]*"engine"/.test(src);
+
 test("native flashing: the Lab's flash page gives the Flasher's diagnostics, and serial lights only where it works", () => {
   const appJs = read(join(ROOT, "desktop/src/app.js"));
   const nativeJs = read(join(CANARY, "assets/flash-native.js"));
@@ -2597,6 +2601,63 @@ test("native flashing: the Lab's flash page gives the Flasher's diagnostics, and
     assert.strictEqual(classify(new Error(generic + tail)).kind, kind,
       `flash-native.js misclassifies espflash's tail: ${tail.slice(0, 40) || "(none)"}`);
   }
+  // A bundled espflash that cannot start (the wrong CPU, a missing loader, a
+  // file without its execute bit) is its own kind in both frontends — never
+  // `unknown` (which coaches download mode) and never the port's `permission`.
+  // The errors are built from the Rust that produces them, so a reworded
+  // spawn_error or host message fails here instead of silently falling back.
+  const archHint = /pub const ARCH_MISMATCH_HINT: &str =\s*"([\s\S]*?)";/
+    .exec(read(join(ROOT, "desktop/hub-core/src/hub_sidecar.rs")));
+  assert.ok(archHint, "couldn't parse ARCH_MISMATCH_HINT from hub-core hub_sidecar.rs");
+  const archText = archHint[1].replace(/\\\n\s*/g, "").replace(/\\"/g, '"');
+  const sidecarRs = engineRs("sidecar");
+  const withHint = /format!\("could not start \{name\}: \{hint\} \(\{raw\}\)"\)/;
+  const bare = /format!\("could not start \{name\}: \{raw\}"\)/;
+  assert.match(sidecarRs, withHint, "spawn_error's hinted wording moved — the frontends match its prefix");
+  assert.match(sidecarRs, bare, "spawn_error's bare wording moved — the frontends match its prefix");
+  const flasherHostRs = read(join(ROOT, "desktop/src-tauri/src/host.rs"));
+  const labFlashRs = read(join(ROOT, "desktop-lab/src-tauri/src/flash.rs"));
+  for (const [label, src] of [["desktop host.rs", flasherHostRs], ["desktop-lab flash.rs", labFlashRs]]) {
+    assert.match(src, /\.map_err\(\|e\| format!\("bundled espflash missing: \{e\}"\)\)/,
+      `${label}'s unresolvable-sidecar wording moved — the frontends match its prefix`);
+  }
+  assert.strictEqual(jsFnText(nativeJs, "spawnReason", "flash-native.js"),
+    jsFnText(appJs, "spawnReason", "desktop/src/app.js"),
+    "flash-native.js spawnReason drifted from the Flasher's — copy it back verbatim");
+  const reasonOf = new Function(jsFnText(appJs, "spawnReason", "desktop/src/app.js") + "\nreturn spawnReason;")();
+  const classifyFlasher = new Function(jsFnText(appJs, "classifyFlashError", "desktop/src/app.js") +
+    "\nreturn classifyFlashError;")();
+  for (const [err, reason] of [
+    // macOS given a slice-less binary, and Linux's twin: spawn_error's hint.
+    [`could not start espflash: ${archText} (Bad CPU type in executable (os error 86))`,
+      "Bad CPU type in executable (os error 86)"],
+    [`could not start espflash: ${archText} (Exec format error (os error 8))`, "Exec format error (os error 8)"],
+    // A dynamically linked espflash whose loader is missing reports ENOENT…
+    ["could not start espflash: No such file or directory (os error 2)", "No such file or directory (os error 2)"],
+    // …and one without its execute bit reports EACCES — port-shaped words.
+    ["could not start espflash: Permission denied (os error 13)", "Permission denied (os error 13)"],
+    ["bundled espflash missing: current executable path has no parent", "current executable path has no parent"],
+  ]) {
+    for (const [where, fn] of [["flash-native.js", classify], ["desktop/src/app.js", classifyFlasher]]) {
+      const c = fn(err);
+      assert.strictEqual(c.kind, "engine", `${where} reads a sidecar that never started as ${c.kind}: ${err.slice(0, 60)}`);
+      assert.doesNotMatch(c.hint, /hold BOOT/, `${where} coaches download mode for a sidecar that never started`);
+    }
+    assert.strictEqual(reasonOf(err), reason, `spawnReason lost the system's reason in: ${err.slice(0, 60)}`);
+  }
+  // …while espflash that RAN and was refused the port keeps the port's kind.
+  assert.strictEqual(classify(new Error(generic + "Error: Permission denied (os error 13)")).kind, "permission");
+  assert.ok(!BAUD_RETRY_SET_HAS_ENGINE(nativeJs) && !BAUD_RETRY_SET_HAS_ENGINE(appJs),
+    "a sidecar that cannot start fails identically at every speed — never retry `engine`");
+  // Both identify() calls say it with the system's reason and no driver note
+  // (the port was never opened, so a USB-bridge driver can't be the cause).
+  for (const [where, src] of [["desktop/src/app.js", appJs], ["flash-native.js", nativeJs]]) {
+    assert.ok(src.includes('const engine = c.kind === "engine";'), `${where} identify() lost the engine kind`);
+    assert.ok(src.includes('const reason = engine ? ` (The system said: ${spawnReason(firstLine)})` : "";'),
+      `${where} identify() must give the system's reason for a sidecar that never started`);
+    assert.ok(src.includes("!osLevel && !engine && bridge"), `${where} identify() must not blame a USB driver when the engine never started`);
+  }
+
   // withoutLocalFile() rewrites ONE sentence of that verbatim classifier (the
   // "local .bin under Advanced" install lives in the Flasher, not here). If
   // app.js rewords it, the replace silently does nothing — so the sentence it
@@ -2951,6 +3012,23 @@ test("native flashing: the Lab's flash page drives the Flasher's commands with t
     assert.ok(!/Put it in download mode/.test(blocked.text()));
     assert.ok(!blocked.calls.some(([c]) => c === "fetch_manifest"), "nothing is fetched for a board that couldn't be read");
   } finally { blocked.close(); }
+
+  // A bundled espflash that never started reads as the app's engine, with the
+  // system's reason — not as download mode, and not as the CP210x driver the
+  // bridge note would otherwise blame (the port was never opened).
+  const stuck = await runNativeBench({
+    detectAnswer: "could not start espflash: No such file or directory (os error 2)",
+    ports: [{ name: "/dev/ttyUSB0", kind: "usb", vid: 0x10c4, pid: 0xea60, product: "CP2102 USB to UART Bridge Controller" }],
+  });
+  try {
+    assert.match(stuck.text(), /Found \/dev\/ttyUSB0 — The app's flash engine couldn't start\. That's this app, not your board/);
+    assert.ok(stuck.text().includes("(The system said: No such file or directory (os error 2))"),
+      "the Lab must say the system's reason for a sidecar that never started");
+    assert.ok(!/Put it in download mode|hold BOOT, tap RESET/.test(stuck.text()),
+      "a sidecar that never started must not coach download mode");
+    assert.ok(!/Silicon Labs|driver/i.test(stuck.text()), "a sidecar that never started must not blame the USB driver");
+    assert.ok(!stuck.calls.some(([c]) => c === "fetch_manifest"), "nothing is fetched for a board that couldn't be read");
+  } finally { stuck.close(); }
 
   // The camera module's own port is recognized by the catalog's USB id and
   // never read as an ESP32 (the Flasher short-circuits on the same id).

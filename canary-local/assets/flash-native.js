@@ -86,6 +86,22 @@ function classifyFlashError(err) {
   const msg = String((err && (err.message || err.name)) || err || "").toLowerCase();
   const has = (...subs) => subs.some((s) => msg.includes(s));
 
+  // The bundled espflash never started: the app's own engine failed, not the
+  // board (flash-engine sidecar.rs spawn_error, "could not start espflash: …";
+  // each app's host says "bundled espflash missing: …" when the sidecar can't
+  // even be resolved). Checked FIRST: the OS words such a failure in
+  // port-shaped terms ("Permission denied" for a file without its execute
+  // bit, "No such file or directory" for a missing loader), and the checks
+  // below would read those as the port's and coach dialout or download mode
+  // at a board that was never the problem.
+  if (has("could not start espflash", "bundled espflash missing"))
+    return { kind: "engine", title: "The app's flash engine couldn't start",
+      hint: "That's this app, not your board — the espflash engine it bundles wouldn't " +
+        "run on this computer, so download mode won't help. Install the newest release " +
+        "for this computer from securacv.com/download (the Mac download is universal, " +
+        "Apple Silicon and Intel; the Linux one is for x86-64 PCs). If the newest one " +
+        "fails the same way, please report it, with the reason the system gave." };
+
   if (has("failed to open serial port", "port is already open", "already open",
           "resource temporarily unavailable", "resource busy", "device or resource busy") ||
       (has("open") && has("access", "busy", "in use")))
@@ -136,6 +152,15 @@ function classifyFlashError(err) {
   return { kind: "unknown", title: null,
     hint: "If this keeps happening: unplug the board, plug it back in, put it in download " +
       "mode (hold BOOT, tap RESET, release BOOT), and retry." };
+}
+
+// The system's own reason a bundled espflash didn't start, out of the
+// backend's one-line spawn error (flash-engine sidecar.rs spawn_error keeps
+// the raw OS error last, after any hint): its "(os error N)" clause when it
+// has one, else everything after the first colon.
+function spawnReason(line) {
+  const os = /[^():]*\(os error \d+\)/.exec(line);
+  return (os ? os[0] : line.slice(line.indexOf(":") + 1)).trim();
 }
 
 // The one sentence of that classifier's download advice this bench can't
@@ -312,10 +337,14 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
       const osLevel = OS_LEVEL_RE.test(firstLine);
       const c = classifyFlashError(e);
       const named = !osLevel && c.kind !== "unknown" && c.kind !== "not-in-download";
+      // The Flasher's rule for a bundled espflash that never started: the
+      // app's failure, said with the system's reason and no driver note.
+      const engine = c.kind === "engine";
+      const reason = engine ? ` (The system said: ${spawnReason(firstLine)})` : "";
       const bridge = core.usbBridgeInfo(portInfo.vid, portInfo.pid);
-      const bridgeNote = !osLevel && bridge ? " " + bridge.note : "";
+      const bridgeNote = !osLevel && !engine && bridge ? " " + bridge.note : "";
       setConn(osLevel ? `Found ${port} — ${firstLine}`
-        : named ? `Found ${port} — ${c.title}. ${withoutLocalFile(c.hint)}${bridgeNote}`
+        : named ? `Found ${port} — ${c.title}. ${withoutLocalFile(c.hint)}${reason}${bridgeNote}`
           : `Found ${port} — couldn't read the chip. Put it in download mode ` +
             `(hold BOOT, tap RESET, release BOOT), then read it again.${bridgeNote}`);
       recheck.classList.remove("flash-hidden");
