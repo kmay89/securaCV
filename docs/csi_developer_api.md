@@ -154,8 +154,11 @@ the integration's per-type tamper sensors match. On the canary base that
 bridge carries the SD and enclosure kinds only: its boot story already
 reaches the tamper topic through the power-events classifier. The canary-wap
 also keeps an SD event log and backfills Home Assistant after a broker
-outage; the canary base relies on its MQTT offline queue (12 records), and
-SD backfill there is a recorded follow-up.
+outage, marking those bodies `"replay":true`. The canary base relies on its
+MQTT offline queue (12 records), where tamper alerts outrank events: once
+the queue is full, a new row pushes out the oldest queued event, never a
+tamper alert. A body built while the broker is unreachable also says
+`"replay":true`. SD backfill on the canary base is a recorded follow-up.
 
 ### `POST /api/events/dismiss`
 

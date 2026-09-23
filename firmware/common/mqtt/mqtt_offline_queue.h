@@ -14,10 +14,14 @@
  *
  * Bounds and drop policy: fixed slot count and per-slot payload capacity
  * in caller-provided storage — this header allocates nothing. When full,
- * the OLDEST record is dropped to admit the new one (the newest events
- * are the ones a responder acts on) and the drop is counted. A payload
- * over the slot capacity is refused and counted, never truncated — a
- * truncated JSON payload would parse as junk downstream.
+ * a tamper alert outranks an event: the OLDEST event is dropped to admit
+ * the new record; with no event queued, a new tamper alert drops the
+ * oldest tamper alert (the newest are the ones a responder acts on), and
+ * a new event is refused. So routine traffic cannot push a queued tamper
+ * alert out, however fast it commits. Every drop and refusal is counted.
+ * Order among the records kept is unchanged. A payload over the slot
+ * capacity is refused and counted, never truncated — a truncated JSON
+ * payload would parse as junk downstream.
  *
  * Pure: no Arduino, no globals, no clock. Single-task use (the MQTT loop
  * task owns push and drain both) — no locking inside. Host-tested by
@@ -46,7 +50,7 @@ enum Kind : uint8_t {
 struct Stats {
   uint32_t queued;            /* pushes accepted (lifetime) */
   uint32_t replayed;          /* records drained by pop after a publish */
-  uint32_t dropped_overflow;  /* oldest records dropped to admit newer */
+  uint32_t dropped_overflow;  /* records dropped or refused on a full queue */
   uint32_t dropped_oversize;  /* pushes refused: payload over slot capacity */
   uint32_t dropped_flushed;   /* records discarded by clear() (broker changed) */
 };
@@ -86,9 +90,10 @@ class Queue {
   size_t size() const { return m_size; }
   bool empty() const { return m_size == 0; }
 
-  /* Enqueue one payload. Overflow drops the OLDEST record (counted) to
-   * admit this one. Refuses (counted) a payload over the slot capacity
-   * or an inert queue. */
+  /* Enqueue one payload. On a full queue the oldest EVENT makes room;
+   * with none queued, a tamper alert displaces the oldest tamper alert and
+   * an event is refused (all counted in dropped_overflow). Refuses
+   * (counted) a payload over the slot capacity, and an inert queue. */
   bool push(Kind kind, bool retained, const char* payload) {
     if (m_slot_count == 0 || payload == nullptr) return false;
     const size_t len = strlen(payload);
@@ -97,8 +102,12 @@ class Queue {
       return false;
     }
     if (m_size == m_slot_count) {
-      m_head = (m_head + 1) % m_slot_count;  /* drop oldest */
-      m_size--;
+      size_t victim = 0;  /* logical index; 0 = oldest */
+      if (!oldest_of(KIND_EVENT, &victim) && kind != KIND_TAMPER) {
+        m_stats.dropped_overflow++;  /* never displace a tamper alert */
+        return false;
+      }
+      remove_at(victim);
       m_stats.dropped_overflow++;
     }
     uint8_t* slot = slot_at((m_head + m_size) % m_slot_count);
@@ -161,6 +170,34 @@ class Queue {
   };
 
   uint8_t* slot_at(size_t index) const { return m_slots + index * m_slot_stride; }
+
+  /* Physical slot of the record `logical` places behind the oldest. */
+  size_t phys(size_t logical) const { return (m_head + logical) % m_slot_count; }
+
+  /* Logical index of the oldest queued record of `kind`, if any. */
+  bool oldest_of(Kind kind, size_t* logical) const {
+    for (size_t i = 0; i < m_size; ++i) {
+      SlotHeader hdr;
+      memcpy(&hdr, slot_at(phys(i)), sizeof(hdr));
+      if (hdr.kind == static_cast<uint8_t>(kind)) {
+        *logical = i;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /* Drop the record at `logical`, keeping the others in order: the
+   * records older than it each move one slot toward the tail, then the
+   * head advances past the freed slot. Rare (only on a full queue), and
+   * at most slot_count-1 slot copies. */
+  void remove_at(size_t logical) {
+    for (size_t i = logical; i > 0; --i) {
+      memcpy(slot_at(phys(i)), slot_at(phys(i - 1)), m_slot_stride);
+    }
+    m_head = (m_head + 1) % m_slot_count;
+    m_size--;
+  }
 
   uint8_t* m_slots;
   size_t   m_slot_stride;

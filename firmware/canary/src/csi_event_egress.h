@@ -18,9 +18,13 @@
  * what it drops); csi_event_egress_pump() drains it on the loop task.
  *
  * Persistence: the MQTT layer's bounded offline queue (F9) carries events
- * across a broker outage. There is no SD event log / reconnect backfill on
- * this tree yet (the canary-wap's csi_event_log is SD.h-bound and single-
- * writer rules differ here) — a recorded follow-up, not a silent gap.
+ * across a broker outage, as far as its 12 slots allow. Tamper alerts
+ * outrank events there (mqtt_offline_queue.h), so a burst of committed
+ * rows cannot push a queued SD or enclosure alert out, and a body built
+ * while the link is down says `"replay":true`. There is no SD event log /
+ * reconnect backfill on this tree yet (the canary-wap's csi_event_log is
+ * SD.h-bound and single-writer rules differ here) — a recorded follow-up,
+ * not a silent gap.
  *
  * Event-id continuity: csi_event_on_id_advance writes the allocator's
  * floor to NVS (common/csi/src/csi_event_id_floor.h: before the first id

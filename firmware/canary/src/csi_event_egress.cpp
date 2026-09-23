@@ -166,6 +166,13 @@ extern "C" void csi_event_egress_pump(void) {
    * without publishing, so a broker configured later is not flooded with
    * stale history. */
   const bool accepting = mqtt_accepting();
+  /* A body built while the link is down goes into the MQTT layer's offline
+   * queue and reaches the broker only after a reconnect, possibly much
+   * later: mark it `"replay":true`, the canary-wap's flag for its
+   * reconnect backfill, so a trigger that gates on it does not fire late
+   * for an old event. (HA's per-type tamper sensors read the separate
+   * tamper topic.) */
+  const bool deferred = accepting && !mqtt_connected();
   const uint32_t dropped = __atomic_load_n(&s_dropped, __ATOMIC_RELAXED);
   if (dropped != s_dropped_said) {
     s_dropped_said = dropped;
@@ -187,7 +194,7 @@ extern "C" void csi_event_egress_pump(void) {
         body, sizeof(body), rec.event_id, rec.module_id, rec.type_name,
         (csi_event_category_t)rec.category, (csi_privacy_class_t)rec.privacy,
         &rec.values, rec.committed_ms, /*bundled_count=*/1,
-        /*is_replay=*/false, signer);
+        /*is_replay=*/deferred, signer);
     if (n == 0) continue;
     mqtt_publish_event(body);
     /* The per-kind tamper bridge, as the canary-wap's csi_mqtt: HA's
