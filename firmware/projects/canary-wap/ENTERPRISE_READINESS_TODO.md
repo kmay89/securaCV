@@ -104,22 +104,22 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
         (`/api/selftest`) plus the "Save your recovery kit" block, which walks
         the BOOT-tap gate and downloads the provisioning receipt JSON.
 
-- [ ] **Simple status language** — open until the strip below is CI-green
+- [x] **Simple status language** — the strip below is CI-green (#1704); it
+      has not been seen on a device, and its labels await the maintainer
   - [x] Plain-language status text + “Advanced details” expanders: the
         headline dashboard (`csi_dashboard_html.h`) already keeps the live
         numbers behind collapsed `<details>` ("How is it sensing?", "Details"),
         and every user-facing string lives in its `COPY` bank, gated by
         `firmware/scripts/microcopy_lint.sh` (banned jargon, tooltip coverage,
         reading grade).
-  - [ ] “Good / Needs attention / Action required” strip (2026-09): the
+  - [x] “Good / Needs attention / Action required” strip (2026-09): the
         verdict is decided by `arduino/canary_wap/status_tier_logic.h`
         (worst-first, one reason code per tier, a missing card is not a fault;
         host-tested in `tests_host/test_status_tier_logic.cpp`), served as
         `status_tier` / `status_reason` on `GET /api/status`, and rendered
         under the topbar from `COPY.tier` (`web_assets_gz.h` regenerated).
-        Code and host test landed; **CI compile pending** — tick this box
-        when the PR's `firmware.yml` Arduino CLI build is green. Not yet seen
-        on a device. Label wording: option "the checklist's own three labels"
+        Code and host test landed, and CI-compiled on #1704 (the Arduino
+        CLI and PlatformIO canary-wap builds). Not yet seen on a device. Label wording: option "the checklist's own three labels"
         — maintainer to confirm (changing them is a `COPY` edit only).
 
 - [ ] **Recovery-safe flows**

@@ -405,7 +405,7 @@ Untapped / issues:
   (default 1) is the knob. **Caveat:** SoftAP SAE exists only where the core's prebuilt sdkconfig
   enables it — an IDF 5 feature, so on the 2.0.17 core (dev/release) the AP stays WPA2 and says
   so (`ap_auth` / `ap_auth_reason` in `/api/wifi/status`, `ap_auth` in `/api/status`); the row
-  closes for those builds with §1.1. CI compile pending, no bench pass. Not in this change: widening the 8-char
+  closes for those builds with §1.1. CI-compiled (#1704), no bench pass. Not in this change: widening the 8-char
   AP password (below) — it is re-derived from the fingerprint every boot, so a new derivation
   changes every provisioned device's Wi-Fi password after an OTA and needs a derivation-version
   marker first. The `"witness2026"` tripwires in `pre_build.py` / `regression_check.sh` match no
@@ -548,7 +548,7 @@ Genuinely solid. Gaps:
   first-boot setup, a bearer-authenticated request, a SoftAP-subnet peer, or by spending a BOOT
   tap (one tap = one page load or one receipt fetch, 30 s;
   [`common/network/provisioning_gate.h`](common/network/provisioning_gate.h), host-tested); a
-  home-LAN load gets the page without it. CI compile pending, no bench pass.
+  home-LAN load gets the page without it. CI-compiled (#1704), no bench pass.
 - **AP password is exactly 8 chars** (`"cv-"` + 5), the WPA2 floor — ~28.7 bits of entropy. Widen
   to 10–12 chars from the same fingerprint for headroom. **[P2]**
 - **Untapped UX:** Improv-WiFi / WebUSB provisioning, SSE/WebSocket event streams instead of poll,
