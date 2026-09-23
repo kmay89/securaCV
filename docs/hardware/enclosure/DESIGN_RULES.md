@@ -113,6 +113,7 @@ top face the lid seats on.
 | The two halves of every released case are intersected in their assembled position and must come out empty | `seat_lift` 0.1 | `canary_case_fitcheck.scad`, nine variants in CI |
 | Board dimensions come from the registry, measured where measured | `brd_*()` | `canary_board_lib`, `board_selfcheck()` |
 | Envelopes published to the website and the figures are measured off the committed meshes, never typed | — | `gen_assembled_dims.py`, `gen_figures.mjs --check`, the website's `ar-dims` test |
+| Hardware counts are derived and gated: every committed preset's `HARDWARE —` echo is parsed into `hardware.json`, and its fasteners are joined against the BOM CSVs | CSV qty ≥ echoed qty, per preset | `gen_hardware.py --check` (a new disagreement fails; a known one is listed in `hardware.json` `bom_drift` for the CSV's owner) |
 
 ## 10. Knobs and their help
 
@@ -130,9 +131,36 @@ top face the lid seats on.
 
 ## 11. What is still open
 
-- **Lid rib proportions.** Every lid's rib ring is pinned by a 1.0 mm
-  headroom, now asserted; making the ribs taller means growing `cav_extra`
-  on each case, which moves the released envelopes. A per-case decision.
+- **Lid rib proportions — a maintainer decision, with the evidence
+  recorded.** Every released lid carries `lid_rib_h` 1.0 / `lid_rib_w` 2.5,
+  and each case asserts the rib against the headroom over its tallest
+  component (PLS-4). The headroom each committed preset actually leaves,
+  read off the CAD by `gen_hardware.py` (the bound is the variable that
+  case's own assert reads) and held to this table by its `--check`:
+
+  | Set (`hardware.json`) | Rib h | Headroom | Bound | Slack | Note |
+  |---|---|---|---|---|---|
+  | `doorbell` | 1.00 | 1.00 | `lid_headroom` | 0.00 | pinned |
+  | `sense` | 1.00 | 1.00 | `cav_extra` | 0.00 | pinned |
+  | `vision.devkit_indoor` | 1.00 | 1.00 | `lid_headroom` | 0.00 | pinned (`cav_d` = `cav_d_min`) |
+  | `vision.xiao_indoor` | 1.00 | 1.38 | `lid_headroom` | 0.38 | the USB rule set `cav_d` above `cav_d_min` |
+  | `vision.xiao_weather` | 1.00 | 4.58 | `lid_headroom` | 3.58 | the USB rule set `cav_d` above `cav_d_min` |
+  | `wap.battery_full` | 1.00 | 1.00 | `lid_headroom` | 0.00 | pinned; `batt_hold` |
+  | `wap.battery_weather` | 1.00 | 1.35 | `lid_headroom` | 0.35 | the USB rule set `cav_h` above `cav_h_min`; `batt_hold` |
+  | `wap.compact_plain` | 1.00 | 1.85 | `lid_headroom` | 0.85 | the USB rule set `cav_h` above `cav_h_min` |
+
+  So no single per-file literal can rise anywhere without either growing
+  `cav_extra` (which moves the released envelopes and every figure and AR
+  model after them) or becoming preset-derived. The WAP's rib is also not
+  free where headroom exists: over the battery bay it doubles as the
+  hold-down (`batt_hold`), whose face sits at `batt_h` to keep the 1 mm
+  swelling allowance. If the stiffness is wanted, the honest mechanism is a
+  bool `lid_rib_fill` — the rib grows to the preset's own slack, the WAP's
+  battery sets excluded — which leaves the four pinned presets
+  byte-identical and moves only the slack presets' lids and fronts (their
+  envelopes do not move; ribs are internal), shipped through
+  `scripts/regen_cad.py --previews <dir>` with previews of every affected
+  part. Nothing has been changed: the per-case call is the maintainer's.
 - **Customizer help text** — the audit's parametric UX section. Done: every
   shared-help line outside the 7" case is split one knob per line, and the
   unambiguous comments above a knob are summarized onto it (681 → 536 knobs

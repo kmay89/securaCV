@@ -53,8 +53,8 @@ spec = importlib.util.spec_from_file_location("regen_cad", SCRIPT)
 rc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(rc)  # type: ignore[union-attr]
 
-ORDER = ["gen_cad_params", "lint_design_lang", "render", "gen_assembled_dims", "gen_figures",
-         "gen_device_glbs", "setup_regen", "gen_flash", "gen_builder_manifest", "gen_enclosures",
+ORDER = ["gen_cad_params", "lint_design_lang", "render", "gen_assembled_dims", "gen_hardware",
+         "gen_figures", "gen_device_glbs", "setup_regen", "gen_flash", "gen_builder_manifest", "gen_enclosures",
          "gen_stamp", "gen_mark_svg"]
 ENC = "docs/hardware/enclosure"
 CHECKS = {
@@ -62,6 +62,7 @@ CHECKS = {
     "lint_design_lang": ("python3", "scripts/lint_design_lang.py"),
     "render": None,
     "gen_assembled_dims": ("python3", f"{ENC}/gen_assembled_dims.py", "--check"),
+    "gen_hardware": ("python3", f"{ENC}/gen_hardware.py", "--check"),
     "gen_figures": ("node", "canary-local/tools/figures/gen_figures.mjs", "--check"),
     "gen_device_glbs": ("node", "canary-local/tools/figures/gen_device_glbs.mjs", "--check"),
     "setup_regen": ("./setup.sh", "regen"),
@@ -151,7 +152,8 @@ class TheOrderIsTheDerivedOrder(unittest.TestCase):
             self.assertTrue(s.report_only)
             self.assertEqual(s.cmd, s.check)
             self.assertIn("--check", s.cmd)
-        self.assertEqual([s.name for s in rc.STEPS if s.needs_openscad], ["render", "gen_assembled_dims"])
+        self.assertEqual([s.name for s in rc.STEPS if s.needs_openscad],
+                         ["render", "gen_assembled_dims", "gen_hardware"])
         self.assertEqual([s.name for s in rc.STEPS if s.conditional], ["setup_regen"])
 
     def test_every_command_names_a_file_in_the_tree(self):
@@ -198,7 +200,7 @@ class OpenScadIsRefusedUpFront(unittest.TestCase):
         code, out, rec = run_main([], which=None)
         self.assertEqual(code, 1)
         self.assertEqual(rec.calls, [])
-        self.assertIn("step 3 (render) and step 4 (gen_assembled_dims)", out)
+        self.assertIn("step 3 (render), step 4 (gen_assembled_dims) and step 5 (gen_hardware)", out)
         self.assertIn("no Actions button", out)
         self.assertIn('"Enclosure CAD"', out)
         self.assertIn("--from render", out)
@@ -234,10 +236,14 @@ class OpenScadIsRefusedUpFront(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             code, out, rec = run_main(["--previews", td], which=None)
         self.assertEqual(code, 1)
-        self.assertIn("step 3 (render), step 4 (gen_assembled_dims) and --previews need OpenSCAD", out)
+        self.assertIn("step 3 (render), step 4 (gen_assembled_dims), step 5 (gen_hardware) and "
+                      "--previews need OpenSCAD", out)
         code, out, rec = run_main(["--check", "--from", "gen_assembled_dims"], which=None)
         self.assertEqual(code, 1)
-        self.assertIn("step 4 (gen_assembled_dims) needs OpenSCAD", out)
+        self.assertIn("step 4 (gen_assembled_dims) and step 5 (gen_hardware) need OpenSCAD", out)
+        code, out, rec = run_main(["--check", "--from", "gen_hardware"], which=None)
+        self.assertEqual(code, 1)
+        self.assertIn("step 5 (gen_hardware) needs OpenSCAD", out)
 
     def test_from_past_the_openscad_steps_runs_without_openscad(self):
         code, out, rec = run_main(["--from", "gen_figures"], which=None)
@@ -250,9 +256,9 @@ class CheckRunsEveryCheckFormInOrder(unittest.TestCase):
         code, out, rec = run_main(["--check"])
         self.assertEqual(code, 0)
         self.assertEqual(rec.argvs(), [list(CHECKS[n]) for n in ORDER if CHECKS[n] is not None])
-        self.assertIn("[3/12] render  check: (no check form)", out)
+        self.assertIn("[3/13] render  check: (no check form)", out)
         self.assertIn("4 generated file(s) reproduce byte-for-byte", out)
-        self.assertIn("check complete — 12 step(s)", out)
+        self.assertIn("check complete — 13 step(s)", out)
         # the check forms run where CI runs them
         cwds = {a[0] if a[0] != "python3" and a[0] != "node" else a[1]: c for a, c in rec.calls}
         self.assertEqual(cwds["./setup.sh"], str(rc.REPO / "firmware/projects/canary-display"))
@@ -264,8 +270,8 @@ class CheckRunsEveryCheckFormInOrder(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(rec.argvs(), [list(CHECKS[n]) for n in
                                        ("gen_cad_params", "lint_design_lang", "gen_assembled_dims",
-                                        "gen_figures")])
-        self.assertIn("FIRST FAILURE at step 5 (gen_figures)", out)
+                                        "gen_hardware", "gen_figures")])
+        self.assertIn("FIRST FAILURE at step 6 (gen_figures)", out)
         self.assertIn("--from gen_figures", out)
 
     def test_gen_enclosures_check_restores_the_committed_bytes(self):
@@ -282,7 +288,7 @@ class CheckRunsEveryCheckFormInOrder(unittest.TestCase):
             rules = [("gen_enclosures.py", fake_generator)]
             code, out, rec = run_main(["--check", "--from", "gen_enclosures"], rules, repo=root)
             self.assertEqual(code, 1)
-            self.assertIn("FIRST FAILURE at step 10 (gen_enclosures)", out)
+            self.assertIn("FIRST FAILURE at step 11 (gen_enclosures)", out)
             self.assertIn("catalog.json would change", out)
             self.assertIn("tree's bytes were put back", out)
             for o in rc.ENCLOSURE_OUTPUTS:
@@ -315,7 +321,7 @@ class CheckRunsEveryCheckFormInOrder(unittest.TestCase):
             code, out, rec = run_main(["--check", "--from", "setup_regen"],
                                       [("setup.sh regen", drifted)], repo=root)
             self.assertEqual(code, 1)
-            self.assertIn("FIRST FAILURE at step 7 (setup_regen)", out)
+            self.assertIn("FIRST FAILURE at step 8 (setup_regen)", out)
             for name in ("fleet_figures.h", "main.cpp", "new.cpp"):
                 self.assertIn(name, out)
             self.assertEqual(sorted(f.name for f in sketch.iterdir()), ["fleet_figures.h", "main.cpp"])
@@ -347,7 +353,7 @@ class CheckRunsEveryCheckFormInOrder(unittest.TestCase):
             rules = [(f"--site {td} --check", const(1, "2 of 16 website carries are not current"))]
             code, out, rec = run_main(["--check", "--from", "gen_flash", "--site", td], rules)
             self.assertEqual(code, 1)
-            self.assertIn("FIRST FAILURE at step 9 (gen_builder_manifest)", out)
+            self.assertIn("FIRST FAILURE at step 10 (gen_builder_manifest)", out)
             self.assertIn("--from gen_builder_manifest", out)
             self.assertEqual(rec.argvs()[-1], ["python3", f"{ENC}/gen_builder_manifest.py",
                                                "--site", td, "--check"])
@@ -380,6 +386,7 @@ class AFullRunFollowsTheOrderAndStopsForTheDist(unittest.TestCase):
             ["python3", "scripts/lint_design_lang.py"],
             ["./render.sh", "--no-png"],
             ["python3", f"{ENC}/gen_assembled_dims.py"],
+            ["python3", f"{ENC}/gen_hardware.py"],
             ["node", "canary-local/tools/figures/gen_figures.mjs"],
             ["node", "canary-local/tools/figures/gen_device_glbs.mjs"],
             ["./setup.sh", "regen"],
@@ -387,7 +394,7 @@ class AFullRunFollowsTheOrderAndStopsForTheDist(unittest.TestCase):
         cwd_of = {tuple(a): c for a, c in rec.calls}
         self.assertEqual(cwd_of[("./render.sh", "--no-png")], str(rc.REPO / ENC))
         self.assertEqual(cwd_of[("./setup.sh", "regen")], str(rc.REPO / "firmware/projects/canary-display"))
-        self.assertIn("STOPPED at step 7 (setup_regen) — not a failure", out)
+        self.assertIn("STOPPED at step 8 (setup_regen) — not a failure", out)
         self.assertIn('Actions -> "Rebuild emulator dist (pinned emsdk)"', out)
         self.assertIn("--from gen_flash", out)
         self.assertIn("fleet_figures.h, firmware/common/core/fleet_figures_art.h moved", out)
@@ -400,7 +407,7 @@ class AFullRunFollowsTheOrderAndStopsForTheDist(unittest.TestCase):
         self.assertEqual(code, 0)
         argvs = rec.argvs()
         self.assertNotIn(["./setup.sh", "regen"], argvs)
-        self.assertEqual(argvs[6:], [
+        self.assertEqual(argvs[7:], [
             ["python3", "canary-local/tools/gen_flash.py"],
             ["python3", f"{ENC}/gen_builder_manifest.py"],
             ["python3", "canary-local/tools/gen_enclosures.py"],
@@ -408,7 +415,7 @@ class AFullRunFollowsTheOrderAndStopsForTheDist(unittest.TestCase):
             ["python3", f"{ENC}/gen_mark_svg.py", "--check"],
         ])
         self.assertIn("did not move", out)
-        self.assertIn("run complete — 12 step(s)", out)
+        self.assertIn("run complete — 13 step(s)", out)
 
     def test_from_skips_exactly_the_earlier_steps_and_site_reaches_the_builder(self):
         with tempfile.TemporaryDirectory() as td:
@@ -421,7 +428,7 @@ class AFullRunFollowsTheOrderAndStopsForTheDist(unittest.TestCase):
                 ["python3", f"{ENC}/gen_stamp.py", "--check"],
                 ["python3", f"{ENC}/gen_mark_svg.py", "--check"],
             ])
-        self.assertIn("steps 8..12 of 12 (from gen_flash)", out)
+        self.assertIn("steps 9..13 of 13 (from gen_flash)", out)
 
     def test_render_log_is_judged_by_the_ci_grep(self):
         for bad in ("WARNING: variable board_w was assigned on line 154 but was overwritten",
@@ -443,7 +450,7 @@ class AFullRunFollowsTheOrderAndStopsForTheDist(unittest.TestCase):
         rules = self.RENDER_OK + [("gen_device_glbs.mjs", const(1))]
         code, out, rec = run_main([], rules)
         self.assertEqual(code, 1)
-        self.assertIn("FAILED at step 6 (gen_device_glbs)", out)
+        self.assertIn("FAILED at step 7 (gen_device_glbs)", out)
         self.assertIn("resume: python3 scripts/regen_cad.py --from gen_device_glbs", out)
         self.assertEqual(rec.argvs()[-1], ["node", "canary-local/tools/figures/gen_device_glbs.mjs"])
 
@@ -641,7 +648,7 @@ class PreviewsCoverEveryPartWithRenderShsSelectors(unittest.TestCase):
             self.assertEqual(argvs.index(renders[0]), 0)            # before gen_flash.py
             self.assertEqual(argvs[12], ["python3", "canary-local/tools/gen_flash.py"])
             self.assertIn("renders after step 1 (gen_cad_params), which --from gen_flash skips", out)
-            self.assertIn("[8/12] previews", out)
+            self.assertIn("[9/13] previews", out)
             self.assertIn("12 PNG(s) in", out)
             self.assertIn("run complete — 5 step(s)", out)
         # a clean tree at the resume point says so — the previews were the

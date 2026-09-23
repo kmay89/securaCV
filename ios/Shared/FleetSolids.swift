@@ -142,12 +142,14 @@ public struct FleetMassing: Sendable {
       FleetSolid(kind: .box, material: "lit", axis: "y", at: [4.65, 12.6, 6.5], size: [36.7, 0.4, 49], r: 1.5, h: 0, fullDetailOnly: false),
   ]),
   "device.canary-display-dash": FleetMassing(
-    id: "device.canary-display-dash", rev: "9bb5e13f", ghost: false,
-    envelope: [118, 38.9, 79],
+    id: "device.canary-display-dash", rev: "f344cfc8", ghost: false,
+    envelope: [118.1, 25.6, 77.997],
     solids: [
-      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [118, 27.229999999999997, 79], r: 4, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .box, material: "glass", axis: "y", at: [3, 27.229999999999997, 3], size: [112, 11.27, 73], r: 2.5, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .box, material: "lit", axis: "y", at: [6.5, 38.5, 6.5], size: [105, 0.4, 66], r: 1.5, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "dark", axis: "y", at: [21.258, 0, 17.15934], size: [75.584, 6.05, 43.67832000000001], r: 3, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 6, 0], size: [118.1, 3.05, 77.997], r: 5, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 9, 0], size: [118.1, 16.6, 77.997], r: 5, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "glass", axis: "y", at: [8.399999999999999, 25.55, 8.398499999999999], size: [101.3, 0.4, 61.2], r: 2, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "lit", axis: "y", at: [11.399999999999999, 25.95, 11.398499999999999], size: [95.3, 0.4, 55.2], r: 1.5, h: 0, fullDetailOnly: false),
   ]),
   "device.canary-display-dash7": FleetMassing(
     id: "device.canary-display-dash7", rev: "cdff74a9", ghost: false,
@@ -175,12 +177,13 @@ public struct FleetMassing: Sendable {
       FleetSolid(kind: .box, material: "lit", axis: "y", at: [5, 16.6, 5], size: [36.13, 0.4, 28.13], r: 1.5, h: 0, fullDetailOnly: false),
   ]),
   "device.canary-display-watch": FleetMassing(
-    id: "device.canary-display-watch", rev: "17e158d1", ghost: false,
-    envelope: [49, 23.2, 49],
+    id: "device.canary-display-watch", rev: "c673b27b", ghost: false,
+    envelope: [49, 23.19, 49],
     solids: [
-      FleetSolid(kind: .cyl, material: "shell", axis: "y", at: [24.5, 0, 24.5], size: [], r: 24.5, h: 20.8, fullDetailOnly: false),
-      FleetSolid(kind: .cyl, material: "glass", axis: "y", at: [24.5, 20.75, 24.5], size: [], r: 21, h: 2, fullDetailOnly: false),
-      FleetSolid(kind: .cyl, material: "lit", axis: "y", at: [24.5, 22.8, 24.5], size: [], r: 17.5, h: 0.4, fullDetailOnly: false),
+      FleetSolid(kind: .cyl, material: "shell2", axis: "y", at: [24.5, 0, 24.5], size: [], r: 24.5, h: 21, fullDetailOnly: false),
+      FleetSolid(kind: .cyl, material: "shell", axis: "y", at: [24.5, 20.95, 24.5], size: [], r: 24.5, h: 2.240000000000001, fullDetailOnly: false),
+      FleetSolid(kind: .cyl, material: "glass", axis: "y", at: [24.5, 23.14, 24.5], size: [], r: 19.7, h: 0.4, fullDetailOnly: false),
+      FleetSolid(kind: .cyl, material: "lit", axis: "y", at: [24.5, 23.54, 24.5], size: [], r: 17.5, h: 0.4, fullDetailOnly: false),
   ]),
   "device.canary-feeder": FleetMassing(
     id: "device.canary-feeder", rev: "bc53a17d", ghost: true,

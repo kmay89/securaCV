@@ -7,9 +7,10 @@
 // (no glass) get their decoder cards — LED grammar, chirp meanings,
 // setup path. Everything works offline; nothing phones anywhere.
 
-import { DeviceScene, BUILDERS } from "./scene3d.js";
+import { DeviceScene, builderFor } from "./scene3d.js";
 import { buildFinishPicker, startFinishShowcase, hasUserChoice } from "./finishes.js";
 import { fmtLen, UNIT_MODES } from "./assembly-rules.js";
+import { deviceFigure, standTilt, bodyText } from "./body-dims.js";
 import { upgradeRealShape } from "./real-shapes.js";
 import { buildEnclosureLab } from "./enclosure-lab.js";
 import { buildBuildIt } from "./build-it.js";
@@ -56,6 +57,11 @@ async function main() {
     .then((r) => r.json())
     .catch(() => null);
   state.boards = await fetch("devices/boards.json")
+    .then((r) => r.json())
+    .catch(() => null);
+  // the fleet-figure ledger (gen_figures.mjs, generated from the CAD): the
+  // Body row reads its measured envelope rather than a second, typed copy
+  state.figures = await fetch("devices/figures.json")
     .then((r) => r.json())
     .catch(() => null);
   state.assembly = await fetch("devices/assembly.json")
@@ -111,7 +117,8 @@ function renderCards() {
     grid.append(card);
 
     const scene = new DeviceScene(cv, null);
-    (BUILDERS[dev.id] || BUILDERS["canary-wap"])(scene);
+    // the device's own body, or its fleet figure — never another device's
+    builderFor(dev.id)(scene);
     upgradeRealShape(scene, dev.id);
     scene.start();
     state.cards.set(dev.id, { scene, dev });
@@ -159,7 +166,7 @@ async function openSheet(dev) {
     dispose: [],
   };
   state.sheet = ctx;
-  (BUILDERS[dev.id] || BUILDERS["canary-wap"])(ctx.scene);
+  builderFor(dev.id)(ctx.scene);
   upgradeRealShape(ctx.scene, dev.id);
   ctx.scene.start();
 
@@ -1062,18 +1069,17 @@ function specsView(dev) {
   };
   row("Board", dev.board);
   if (dev.glass) row("Glass", `${dev.glass.panel} · touch ${dev.glass.touch}`);
-  if (dev.body_mm) {
+  const fig = deviceFigure(state.figures, dev.id);
+  if (fig && fig.envelope_mm && fig.confidence !== "idea") {
     // the caliper row: mm · decimal inch · fractional inch, tap to cycle
-    // (same persisted setting the Assemble tab's parts list uses)
-    const b = dev.body_mm;
+    // (same persisted setting the Assemble tab's parts list uses). An idea
+    // gets no dimensions: it is a ghost everywhere, and a size is a claim.
+    const tilt = standTilt(dev, state.enclosures);
     const dd = el("dd", "unit-cycle");
     dd.title = "tap to cycle mm / inches / all";
     const paint = () => {
       const mode = localStorage.getItem("scv-units") || "all";
-      const f = (mm) => fmtLen(mm, mode);
-      dd.textContent = b.d
-        ? `Ø ${f(b.d)}  ×  ${f(b.depth)} deep · stand ${b.stand_tilt_deg}°`
-        : `${f(b.w)}  ×  ${f(b.h)}  ×  ${f(b.depth)} · stand ${b.stand_tilt_deg}°`;
+      dd.textContent = bodyText(dev, fig, tilt, (mm) => fmtLen(mm, mode));
     };
     dd.addEventListener("click", () => {
       const cur = localStorage.getItem("scv-units") || "all";

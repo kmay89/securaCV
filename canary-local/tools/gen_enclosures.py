@@ -15,14 +15,15 @@ Optionally (--render, needs openscad) renders coarse PREVIEW meshes for a
 curated set of in-development designs into canary-local/enclosures/preview/
 so the lab can show them in 3D. These are explicitly preview meshes —
 docs/hardware/enclosure keeps its "committed STLs are print-validated"
-policy; nothing is written there.
+policy; nothing is written there. --check-previews (needs openscad; writes
+nothing) re-renders each one and fails if a committed mesh's bounding box no
+longer matches its source — the enclosure CI runs it.
 
-Run:  python3 canary-local/tools/gen_enclosures.py [--render]
+Run:  python3 canary-local/tools/gen_enclosures.py [--render | --check-previews]
 CI:   regenerates and diffs (drift gate, same idea as the emulator dist).
 """
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -308,23 +309,80 @@ def parse_scad(path: Path):
 
 
 # ── preview mesh rendering (openscad; coarse curves, binary STL) ─────────
-def render_previews():
-    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+# The render goes through docs/hardware/enclosure/scad_probe.py — the same
+# clean-render rule (ERROR/WARNING in the log = nothing was rendered) and the
+# same STL reader gen_assembled_dims.py measures with.
+sys.path.insert(0, str(ENC))
+import scad_probe  # noqa: E402
+
+# bbox agreement --check-previews requires, mm (gen_assembled_dims.py's TOL)
+PREVIEW_TOL = 0.01
+
+
+def _preview_jobs():
+    """(scad, out, -D defines) for every committed preview mesh, in order."""
     for scad, parts in RENDER_PRESETS.items():
         for part in parts:
             out = PREVIEW_DIR / f"{Path(scad).stem}_{part}.stl"
-            cmd = [
-                "openscad", "-o", str(out),
-                "-D", f'part="{part}"',
-                "-D", "$fa=6", "-D", "$fs=0.8",
-                "--export-format", "binstl",
-                str(ENC / scad),
-            ]
-            print("render:", out.name)
-            subprocess.run(cmd, check=True, capture_output=True)
+            yield scad, out, {"part": f'"{part}"', "$fa": "6", "$fs": "0.8"}
+
+
+def render_previews():
+    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    for scad, out, defines in _preview_jobs():
+        print("render:", out.name)
+        try:
+            scad_probe.render(ENC / scad, defines, keep=out, label=out.name)
+        except scad_probe.ProbeError as e:
+            sys.exit(f"gen_enclosures: {e}")
+
+
+def check_previews():
+    """The committed preview meshes still ARE their sources.
+
+    canary-local/enclosures/preview/*.stl are loaded by the Lab (the device
+    sheets' 3D cards, real-shapes.js, the assembly viewer) and were rendered
+    once by --render — and nothing re-rendered them: no workflow named the
+    folder, and one test pinned one drum diameter within 1.5 mm. A .scad
+    edit that moved a Watch or Dash part left the Lab showing the old shape
+    with every gate green. This re-renders each one exactly as --render does
+    and compares bounding boxes (deterministic, unlike OpenSCAD's STL bytes)
+    at PREVIEW_TOL; a missing or stray mesh fails too. Run in enclosure.yml,
+    where OpenSCAD is installed. Returns the process exit code."""
+    bad = []
+    want = set()
+    for scad, out, defines in _preview_jobs():
+        want.add(out.name)
+        rel = out.relative_to(REPO)
+        if not out.exists():
+            bad.append(f"{rel}: missing — run gen_enclosures.py --render")
+            continue
+        try:
+            fresh = scad_probe.render(ENC / scad, defines, label=out.name).bbox
+        except scad_probe.ProbeError as e:
+            bad.append(str(e))
+            continue
+        have = scad_probe.stl_bbox(out)
+        if any(abs(a - b) > PREVIEW_TOL for a, b in zip(fresh, have)):
+            bad.append(f"{rel}: committed {have} mm vs {fresh} mm rendered from {scad} "
+                       "— the source moved; run gen_enclosures.py --render and commit")
+        else:
+            print(f"ok: {rel} {have} mm")
+    for stray in sorted(PREVIEW_DIR.glob("*.stl")):
+        if stray.name not in want:
+            bad.append(f"{stray.relative_to(REPO)}: stray — no RENDER_PRESETS entry renders it")
+    for b in bad:
+        print(f"::error::{b}")
+    if bad:
+        return 1
+    print(f"preview meshes OK ({len(want)} parts)")
+    return 0
 
 
 def main():
+    if "--check-previews" in sys.argv:
+        # a check writes nothing — not the catalogs below, not the meshes
+        sys.exit(check_previews())
     md = (ENC / "README.md").read_text(errors="replace")
     sets = parse_tables(md)
     scads = {}

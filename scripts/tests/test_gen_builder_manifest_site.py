@@ -59,9 +59,13 @@ RELEASED = ["canary_wap_enclosure.scad", "canary_vision_enclosure.scad",
             "canary_vision_doorbell.scad", "canary_sense_enclosure.scad"]
 NEW_TOP = {"board_registry", "board_facts"}
 NEW_FIG = {"seams_mm", "knobs"}
-# The five multi-part devices gen_assembled_dims.py measures, and their seams
-# as the ledger states them (figure-depth mm, unrounded).
+# The devices gen_assembled_dims.py measures — the five released multi-part
+# devices and the two CAD-measured display cases (the Watch Station: drum rim,
+# then the snap-bezel face; the Dash: dock pads, back plate, frame) — and
+# their seams as the ledger states them (figure-depth mm, unrounded).
 SEAMS = {
+    "device.canary-display-dash": [6, 9],
+    "device.canary-display-watch": [21],
     "device.canary-sense": [19.5],
     "device.canary-vision": [21.38],
     "device.canary-vision-devkit": [16.5],

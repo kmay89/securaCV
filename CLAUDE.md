@@ -46,7 +46,7 @@
     `initialism`, `aria-labelledby`. The linter's `ALLOW` list asserts it.
   - See [`AGENTS.md`](AGENTS.md) rule 3b, the canonical statement.
 
-## Generated files — there are TWENTY-NINE, not a handful
+## Generated files — THIRTY-ODD, not a handful (derive the count, never type it)
 
 Committed generators whose output CI regenerates and byte-diffs. Editing a
 source without re-running the right one leaves a gate to find it, and the
@@ -84,7 +84,7 @@ page as `wap.html` embeds it, and it reads that page from
 `gen_wap.py` **then** `gen_csp.py`; running only the first leaves
 `gen_csp.py --check` red with a message that names the second.
 
-**The recipe above does not find the thirtieth, and it can't:** the WASM
+**The recipe above misses one more, and it can't find it:** the WASM
 emulator's `canary-local/emulator/dist/*.js` is generated and committed like
 the rest, but its generator is a compiler and its *inputs are firmware
 sources*. There is no `gen_*.py` or `make-*.mjs` to grep for. So an ordinary
@@ -144,6 +144,7 @@ devices/<slug>/device.json cad.params
   → lint_design_lang.py          (the literal-knob canon still holds)
   → render.sh --no-png           (the STLs; OpenSCAD 2021.01)
   → gen_assembled_dims.py        (assembled envelopes, measured off the fit-checked unions)
+  → gen_hardware.py              (each preset's HARDWARE echo + lid-rib headroom → hardware.json; BOM join)
   → gen_figures.mjs              (figures.json, the SVGs, fleet_figures.h / _art.h, FleetFigures.swift)
   → gen_device_glbs.mjs          (the two flashers' models)
   → firmware/projects/canary-display/setup.sh regen   (only when fleet_figures*.h moved) — then STOP

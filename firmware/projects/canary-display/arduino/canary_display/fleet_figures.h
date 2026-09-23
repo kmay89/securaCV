@@ -63,7 +63,7 @@ inline constexpr FigureRef kFigures[] = {
   { "canary-nightstand7", "device.canary-display-dash7", "cdff74a9", "prototype" },
   { "canary-sense", "device.canary-sense", "423b3305", "shipping" },
   { "canary-vision", "device.canary-vision", "0d4ba02d", "shipping" },
-  { "canary-watch", "device.canary-display-watch", "17e158d1", "prototype" },
+  { "canary-watch", "device.canary-display-watch", "c673b27b", "prototype" },
   { "canary_wap", "device.canary-wap", "85a6140a", "shipping" },
   { "canary_wap_mobile", "device.canary-wap", "85a6140a", "shipping" },
 };
@@ -77,13 +77,13 @@ inline constexpr HardwareRef kHardware[] = {
   { "waveshare-esp32c3-lcd147", "device.canary-nightlight", "27f621f7", "prototype", false },  // 1 build
   { "waveshare-esp32s3-amoled241", "device.canary-display-amoled241", "8c939c25", "prototype", false },  // 1 build
   { "waveshare-esp32s3-lcd147", "device.canary-display-nightstand", "c361481b", "prototype", false },  // 1 build
-  { "waveshare-esp32s3-lcd43", "device.canary-display-dash", "9bb5e13f", "prototype", false },  // 2 builds
+  { "waveshare-esp32s3-lcd43", "device.canary-display-dash", "f344cfc8", "prototype", false },  // 2 builds
   { "waveshare-esp32s3-lcd7", "device.canary-display-dash7", "cdff74a9", "prototype", true },  // 2 builds — shared by canary-dash + canary-nightstand7
   { "waveshare-esp32s3-touch-lcd169", "device.canary-display-touch169", "72fa8cf1", "prototype", false },  // 1 build
   { "xiao-esp32c3", "device.canary-vision", "0d4ba02d", "shipping", false },  // 1 build
   { "xiao-esp32c6-mr60", "device.canary-sense", "423b3305", "shipping", false },  // 3 builds
   { "xiao-esp32s3", "device.canary-vision", "0d4ba02d", "shipping", false },  // 1 build
-  { "xiao-esp32s3-round", "device.canary-display-watch", "17e158d1", "prototype", false },  // 3 builds
+  { "xiao-esp32s3-round", "device.canary-display-watch", "c673b27b", "prototype", false },  // 3 builds
 };
 inline constexpr size_t kHardwareCount = sizeof(kHardware) / sizeof(kHardware[0]);
 

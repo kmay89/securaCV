@@ -1,6 +1,6 @@
 // canary-local/assets/real-shapes.js — the device cards, from the real files.
 //
-// Upgrades a display card's procedural approximation to the ACTUAL parts:
+// Upgrades a display card's fleet-figure massing to the ACTUAL parts:
 // the OpenSCAD-rendered preview meshes in enclosures/preview/ (drum, bezel
 // and stand for the watch; frame, back and stand for the dash — the same
 // geometry gen_enclosures.py renders from docs/hardware/enclosure/*.scad).
@@ -9,9 +9,11 @@
 // (flip to face the viewer), the stands print flat (tip upright), the drum
 // prints back-plate-down (its z is already the device axis).
 //
-// The procedural builder has already run when this fires — if a fetch
-// fails (offline copy without the preview dir), the card simply keeps the
-// approximation. Real shapes are an upgrade, never a dependency.
+// The card's builder has already run when this fires — if a fetch fails
+// (offline copy without the preview dir), the card simply keeps the figure
+// (or the procedural body). Real shapes are an upgrade, never a dependency;
+// scene3d's figure builders check the scene's build generation, so a figure
+// model that lands AFTER this has replaced the card adds nothing.
 
 import { parseSTL } from "./stl.js";
 import { M4, screenPlane } from "./scene3d.js";

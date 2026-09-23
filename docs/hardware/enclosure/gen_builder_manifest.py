@@ -807,9 +807,11 @@ def distill_cad_dims(figures_json: Path | None = None, devices_dir: Path | None 
 
     Provenance travels per figure, because the ledger is mixed: a
     dims_source of "stl" is read from committed STL bounding boxes,
-    "board-cad" from a vendor board mesh — and "sketch" is a massing
-    ESTIMATE for an in-development design, carried so the site can show
-    the design honestly, never as a measured fact. The sketch_note rides
+    "board-cad" from a vendor board mesh, "assembled-cad" is measured off an
+    in-development case's .scad by gen_assembled_dims.py (no committed STL,
+    so still a prototype) — and "sketch" is a massing ESTIMATE for an
+    in-development design, carried so the site can show the design
+    honestly, never as a measured fact. The sketch_note rides
     along for exactly that reason; a consumer that treats a sketch figure
     like an stl one is misreading the ledger, not this file.
 
@@ -863,7 +865,9 @@ def distill_cad_dims(figures_json: Path | None = None, devices_dir: Path | None 
                    "(canary-local/devices/figures.json). Provenance is PER "
                    "FIGURE via dims_source: \"stl\" envelopes are read from "
                    "committed STL bounding boxes, \"board-cad\" from vendor "
-                   "board meshes, and \"sketch\" figures are massing estimates "
+                   "board meshes, \"assembled-cad\" is measured off an "
+                   "in-development case's CAD (no committed STL: a "
+                   "prototype), and \"sketch\" figures are massing estimates "
                    "for in-development designs (sketch_note says more) — "
                    "honest previews, not measurements. The website's model "
                    "tests pin the AR models to these numbers and surface the "
