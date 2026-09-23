@@ -511,13 +511,13 @@ fn run_inspections(
             println!(
                 "lineage: OK ({} epoch(s)); trusted key {}…",
                 lineage.epochs.len(),
-                verify_helpers::key_prefix(&lineage.trusted_public_key)
+                verify_helpers::key_prefix(&lineage.anchored_public_key)
             );
         } else {
             println!(
                 "lineage: BROKEN — entries signed after the first invalid epoch cannot be \
                  attributed to this device. Last trusted key: {}…",
-                verify_helpers::key_prefix(&lineage.trusted_public_key)
+                verify_helpers::key_prefix(&lineage.anchored_public_key)
             );
             let explanation = verify_explain::explain_failure(FailureKind::KeyRotationInvalid);
             println!("  What this means: {}", explanation.what);
