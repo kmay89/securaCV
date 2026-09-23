@@ -50,7 +50,11 @@ an exemption must be visible and reviewable, with a comment saying why):
       `system_python_ok`, `<workflow>.yml:<job>`); a local composite
       action that carries the setup-python step itself
       (`./.github/actions/setup-platformio`) satisfies the rule for the
-      job that uses it
+      job that uses it. The reason half is machine-checked on the raw
+      text (yaml.safe_load drops comments): a literal `python-version:`
+      (not a `${{ }}` expression) needs a trailing `# ...` or a comment
+      line above it inside the same step, in workflows and in the local
+      composite actions alike
   R10 toolchain provisioning is a composite action under .github/actions/,
       never a `run:` block copied between jobs — the machine-checked half:
       a job that `pip install`s PlatformIO or fetches the Emscripten SDK
@@ -97,6 +101,10 @@ _COMMAND_BOUNDARY_RE = re.compile(r"\|\||&&|;|\||\$\(|\(|`")
 # R8 (comment half): a `uses:` line pinned to a 40-hex SHA, with whatever
 # follows the SHA captured so the trailing comment can be checked.
 SHA_USES_LINE_RE = re.compile(r"uses:\s*([^\s#]+)@([0-9a-f]{40})(.*)$")
+
+# R9 (reason half): a `python-version:` key (not `python-version-file:`), in
+# block or flow style, with whatever follows its colon captured.
+PYTHON_VERSION_LINE_RE = re.compile(r"(?<![\w.-])python-version\s*:(.*)$")
 
 # R10: the toolchains that have a composite action, and how an inline copy
 # of their setup looks in COMMAND position. Each entry: (label, predicate on
@@ -545,6 +553,64 @@ def check_sha_pin_comments(path: str, label: str) -> list[str]:
     return problems
 
 
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def _reason_above(lines: list[str], idx: int) -> bool:
+    """A full comment line above lines[idx], inside the step that holds it.
+
+    Walks up from the pin to the line that opens its step (`- ...` at a
+    shallower indent), or to a job-level key, whichever comes first. A
+    trailing comment on some other line (a `uses: x@<sha> # v2`) is not a
+    reason for the pin and does not count.
+    """
+    pin_indent = _indent(lines[idx])
+    for line in reversed(lines[:idx]):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            return True
+        indent = _indent(line)
+        if indent < pin_indent and (stripped.startswith("- ") or indent <= 2):
+            return False
+    return False
+
+
+def check_python_version_reasons(path: str, label: str) -> list[str]:
+    """R9 (reason half): an explicit `python-version` says why.
+
+    R9's default is `python-version-file: pyproject.toml`, the repo's one
+    interpreter range; a job that pins a literal version instead has to say
+    why, or the pin outlives its reason and nobody can tell. yaml.safe_load
+    discards comments, so like check_sha_pin_comments this reads the raw
+    text. An expression (`${{ inputs.python-version }}`) is exempt: the
+    literal, and its reason, live where the value is chosen. A key with no
+    value on its line (an `inputs:` declaration) is not a pin.
+    """
+    problems = []
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    for idx, line in enumerate(lines):
+        if line.lstrip().startswith("#"):
+            continue
+        m = PYTHON_VERSION_LINE_RE.search(line)
+        if not m:
+            continue
+        value = m.group(1).strip()
+        if not value or value.startswith("#") or value.startswith("${{"):
+            continue
+        if re.search(r"\s#\s*\S", m.group(1)) or _reason_above(lines, idx):
+            continue
+        problems.append(
+            f"{label}:{idx + 1}: R9 — explicit python-version with no reason; "
+            f"say why in a comment on or above the line, or use "
+            f"`python-version-file: pyproject.toml`."
+        )
+    return problems
+
+
 def check_composite_actions(policy: dict) -> list[str]:
     """R4/R8 also apply to steps inside local composite actions."""
     problems = []
@@ -557,6 +623,7 @@ def check_composite_actions(policy: dict) -> list[str]:
         problems.extend(
             check_action_pins(rel, {"(composite)": {"steps": steps}}, policy))
         problems.extend(check_sha_pin_comments(path, rel))
+        problems.extend(check_python_version_reasons(path, rel))
     return problems
 
 
@@ -600,6 +667,8 @@ def main() -> int:
         all_problems.extend(check_workflow(path, policy))
         all_problems.extend(
             check_sha_pin_comments(path, os.path.basename(path)))
+        all_problems.extend(
+            check_python_version_reasons(path, os.path.basename(path)))
     all_problems.extend(check_composite_actions(policy))
 
     if all_problems:
