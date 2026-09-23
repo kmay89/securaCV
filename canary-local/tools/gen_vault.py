@@ -188,6 +188,8 @@ MAX_APPROVALS = int(grab(CORE_RS, r"MAX_APPROVALS:\s*usize\s*=\s*(\d+)", "MAX_AP
 must(CORE_RS, "trustees_used.len() >= policy.n", "the 'distinct approvals >= n' grant rule")
 must(CORE_RS, "pub n: u8", "QuorumPolicy.n (threshold)")
 must(CORE_RS, "pub m: u8", "QuorumPolicy.m (member count)")
+must(HTTP_RS, '("POST", "/breakglass/policy")', "the one-time policy bootstrap route")
+must(HTTP_RS, "policy_already_configured", "the bootstrap's 409 once a policy exists")
 
 DOMAIN_APPROVAL = grab(SIGS_RS, r'DOMAIN_TRUSTEE_APPROVAL:\s*&str\s*=\s*"([^"]+)"', "trustee approval domain")
 DOMAIN_TOKEN = grab(SIGS_RS, r'DOMAIN_BREAK_GLASS_TOKEN:\s*&str\s*=\s*"([^"]+)"', "break-glass token domain")
@@ -219,6 +221,7 @@ QUORUM = {
     ],
     "http": [
         {"method": "GET", "path": "/breakglass/policy", "desc": "the policy (public keys only): {n, m, trustees}"},
+        {"method": "POST", "path": "/breakglass/policy", "desc": "one-time bootstrap: store the FIRST policy ({n, trustees: [{id, public_key}], crypto_mode?}), validated as `policy set` validates it; 409 policy_already_configured once one exists — changes need the current quorum's consent through the CLI"},
         {"method": "POST", "path": "/breakglass/request", "desc": "open a session ({envelope, purpose, requested_by?+reason?, case_ref?}) — requested_by and reason are optional together (a partial pair, or case_ref alone, is refused as 400 partial_operator_context); returns the request_hash plus every field it binds, so trustees can be handed the full preimage"},
         {"method": "GET", "path": "/breakglass/status", "desc": "{envelope, purpose, requested_by, reason, case_ref, ruleset_hash, time_bucket, request_hash, needed, collected, ready}"},
         {"method": "POST", "path": "/breakglass/approve", "desc": "verify + count one trustee's Ed25519 signature"},

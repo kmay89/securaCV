@@ -189,8 +189,11 @@ Source of truth: `spec/invariants.md`. A re-implementation that violates any inv
   `vault.seal_frame()` (`src/bin/witnessd.rs:87-98,111,180,237-255,471-490`). Sealing is **opt-in
   and gated**: it runs only when `BREAK_GLASS_SEAL_TOKEN` supplies a valid token JSON and a frame
   is buffered (Invariant I/V: drain requires a break-glass token). A rebuild MUST implement the
-  seal path; the remaining work is UX/config (no setup UI; crypto-mode default + key handling tie
-  into REQ-KRNL-072), not the encryption itself.
+  seal path. The trustee/quorum setup has a UI: the served break-glass console's one-time setup
+  panel stores the first policy (`POST /breakglass/policy`, 409 once one exists; changes stay on
+  the quorum-consented CLI flow). What remains is seal-side config (enabling sealing still means
+  supplying `BREAK_GLASS_SEAL_TOKEN`) and the crypto-mode default + key handling (REQ-KRNL-072),
+  not the encryption itself.
 
 #### A.6 Evidence envelope & canonical JSON (interchange format — reproduce exactly)
 - **REQ-KRNL-050 (Implemented):** A single versioned, self-verifying **evidence envelope**

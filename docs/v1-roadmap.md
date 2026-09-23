@@ -116,7 +116,8 @@ Rationale: Signed log is easier to demonstrate end-to-end without designing enve
 - Device signing key is still seed-derived (an OS-RNG seed kept 0600, rotatable by command),
   not hardware-backed. (The DB key is no longer coupled to it — see the B2 note below.)
 - Vault sealing is wired but opt-in/UX-gated; the remaining gap is key management (see the
-  device-key item above) and a trustee/seal setup UI — not the encryption itself.
+  device-key item above) and a seal setup UI (the trustee/quorum setup is the served console's
+  one-time bootstrap panel) — not the encryption itself.
 
 | Step | Deliverable | Est. Effort |
 |------|-------------|-------------|

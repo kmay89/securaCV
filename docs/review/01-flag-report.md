@@ -156,6 +156,11 @@ document the token/crypto-mode config path, and build the trustee/seal setup UX 
 > opt-in"). What remains is **not a flag**: the full non-CLI **trustee/seal setup wizard** is a
 > roadmap **P2** product feature, separate from this correctness gap.
 
+> **Status 2026-09.** The trustee half of that wizard landed: the served console's one-time setup
+> panel bootstraps the quorum policy (`POST /breakglass/policy`, accepted only while none exists,
+> 409 afterwards; changes stay on the quorum-consented CLI flow — option (b), maintainer to
+> confirm). Enabling sealing (`BREAK_GLASS_SEAL_TOKEN`) is still configuration, not a UI.
+
 ### F-06 — Divergent firmware partition tables; risky flash assumptions
 **Evidence.** Three different layouts for the "same" device family:
 - `firmware/canary/partitions_ota.csv`: app0/app1 = `0x1E0000` (1.96 MB) each + 192 KB spiffs.

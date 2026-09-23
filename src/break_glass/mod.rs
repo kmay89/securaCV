@@ -18,6 +18,6 @@ pub use core::{
     BreakGlassToken, BreakGlassTokenFile, OperatorContext, PolicyChangeProposal, QuorumPolicy,
     TrusteeEntry, TrusteeId, UnlockRequest, MAX_FIELD_LEN, REASON_CODES,
 };
-pub use http::{handle_break_glass, BreakGlassOps, HttpReply};
+pub use http::{handle_break_glass, BreakGlassOps, HttpReply, PolicyBootstrap};
 pub use server::{BreakGlassServer, BreakGlassServerConfig};
 pub use session::{ApprovalRejection, BreakGlassSession, SessionStatus};

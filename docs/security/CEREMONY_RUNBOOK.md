@@ -199,6 +199,17 @@ decided in advance (see step 2).
    parties out of band (**PROC**). This is what makes their `log_verify`
    verdict `valid` rather than `self-consistent; identity unverified`.
 
+**Served-console variant.** `break_glass_serve` bound to loopback (its
+default) shows a one-time setup panel while no policy exists; **Store policy**
+posts the roster to `POST /breakglass/policy`, validated as `policy set`
+validates it and written as the same `bootstrap` history row (**CODE**). It is
+accepted only while no policy exists — afterwards `409
+policy_already_configured` (**CODE**), and changes go through C2. Whoever
+holds the capability token first wins the bootstrap, so run it before the
+console is reachable on a routable address (**PROC**). The panel takes public
+keys only, and it neither reads nor clears an `init` setup draft — use the
+panel or the draft (steps 1–2 and 4), not both. Steps 3 and 5–7 still apply.
+
 **Exceptions.** Draft already complete → re-run `init` (it reports state).
 Key-reuse refusal → not an exception; choose another key. A trustee who cannot
 confirm their fingerprint → do not enroll them (E-entry).
@@ -658,6 +669,7 @@ rotate per bucket automatically.
 |---|---|---|
 | Sign what you see (WYSIWYS approval) | **CODE** | `approve --request` recomputes and displays; served signer page recomputes in-browser |
 | Quorum-gated policy mutation | **CODE** (procedural against a host-level actor) | `policy set --approvals`, prior-era commitment from the stored policy |
+| Console bootstrap limited to the first policy | **CODE** | `POST /breakglass/policy` → `409 policy_already_configured` once a policy exists (re-read from the database) |
 | Bootstrap labeled in history | **CODE** | history row `bootstrap` |
 | Complete-roster commit at issuance | **CODE** | `trustee enroll` |
 | Single-use token; bucket-bounded redemption | **CODE** | durable nonce burn; same-bucket rule with receipted denial |

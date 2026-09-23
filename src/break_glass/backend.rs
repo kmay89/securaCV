@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Result};
 use zeroize::Zeroize;
 
-use super::http::BreakGlassOps;
+use super::http::{BreakGlassOps, PolicyBootstrap};
 use crate::break_glass::{Approval, BreakGlass, QuorumPolicy, UnlockRequest};
 use crate::{Kernel, KernelConfig, TimeBucket, Vault, VaultConfig};
 
@@ -56,6 +56,21 @@ impl KernelVaultOps {
 impl BreakGlassOps for KernelVaultOps {
     fn policy(&self) -> Result<Option<QuorumPolicy>> {
         Ok(self.kernel.break_glass_policy().cloned())
+    }
+
+    /// The console's one-time setup. Re-reads the stored policy first: the CLI
+    /// may have bootstrapped one since this kernel was opened, and the copy in
+    /// memory would not know. The write goes through [`Self::set_policy`], the
+    /// quorum-gated path, so the history row is the CLI's bootstrap row and a
+    /// live policy could not be replaced here even if this check were skipped.
+    fn bootstrap_policy(&mut self, policy: &QuorumPolicy) -> Result<PolicyBootstrap> {
+        if self.kernel.break_glass_policy().is_some()
+            || crate::verify::load_break_glass_policy(&self.kernel.conn)?.is_some()
+        {
+            return Ok(PolicyBootstrap::AlreadyConfigured);
+        }
+        self.set_policy(policy)?;
+        Ok(PolicyBootstrap::Stored)
     }
 
     fn ruleset_hash(&self) -> [u8; 32] {
