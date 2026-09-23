@@ -544,11 +544,18 @@ static bool forget_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
  * place among our survivors, so it gets no new secret from us. The
  * integration layer hears of it (NVS: drop the pubkey, persist the list). */
 static void revoke_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN], uint32_t now_ms) {
+  /* An initiator resends its OFFER every REKEY_RETRY_MS until the SECRET, so
+   * the same removal arrives here more than once. Only the first copy (or a
+   * device still trusted) reaches the integration layer: its callback writes
+   * NVS and logs a health row, once per removal, not once per resend. */
+  const bool already_listed = mesh_revocation::contains(s_revoked, fp, now_ms);
   mesh_revocation::add(s_revoked, fp, now_ms);
   uint8_t pub[mesh_crypto::PUBKEY_LEN];
   const bool was_trusted = forget_peer(fp, pub);
   mesh_rekey::drop_survivor(s_rekey, fp);
-  if (s_peer_revoked_cb) s_peer_revoked_cb(fp, was_trusted ? pub : nullptr);
+  if (s_peer_revoked_cb && (was_trusted || !already_listed)) {
+    s_peer_revoked_cb(fp, was_trusted ? pub : nullptr);
+  }
 }
 
 /* Sign and send one rekey payload: broadcast, or unicast to dest_fp's

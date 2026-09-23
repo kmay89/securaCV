@@ -3063,6 +3063,13 @@ void test_outbound_counter_reserve_ahead() {
   mesh_transport::test::set_now_ms(g_ctr_clock += 20);
   assert(!mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 3, 0, 10));
   assert(g_outs.empty() && mesh_session::outbound_counter() == edge);
+  /* And again, with NVS still failing: a refused reservation is not a held
+   * one. Code that marked the block reserved before its persist succeeded
+   * would sign this frame above the durable mark, and the reboot below would
+   * then reuse that counter. */
+  mesh_transport::test::set_now_ms(g_ctr_clock += 20);
+  assert(!mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 3, 0, 10));
+  assert(g_outs.empty() && mesh_session::outbound_counter() == edge);
   boot_device(pub, priv, S);               /* crash while NVS was failing */
   g_nvs_fail = false;
   after = send_alerts(1);
@@ -3571,7 +3578,16 @@ void test_concurrent_offer_propagates_and_yields() {
   mesh_rekey::Action w_sec = mesh_rekey::receive(cw, fp_w, mesh_rekey::MsgType::ACCEPT, fp_a,
                                                  pl, plen, 150 + mesh_rekey::REKEY_SETTLE_MS);
   assert(w_sec.type == mesh_rekey::ActionType::SEND_SECRET);
-  flen = build_signed_session_frame(w_pub, w_priv, S, 2, mesh_envelope::MsgType::REKEY_SECRET,
+  /* W resends its OFFER (it does every REKEY_RETRY_MS until the SECRET).
+   * Y is already deny-listed and forgotten, so the resend reaches the
+   * integration layer no second time: each callback writes NVS and logs a
+   * health row, and a removal would otherwise log one per resend. */
+  flen = build_signed_session_frame(w_pub, w_priv, S, 2, mesh_envelope::MsgType::REKEY_OFFER,
+                                    w_offer.payload, w_offer.payload_len, frame, sizeof(frame));
+  inject_from(mac_w, frame, flen);
+  assert(mesh_session::is_revoked(fp_y));
+  assert(g_revoked.size() == 1);
+  flen = build_signed_session_frame(w_pub, w_priv, S, 3, mesh_envelope::MsgType::REKEY_SECRET,
                                     w_sec.payload, w_sec.payload_len, frame, sizeof(frame));
   g_outs.clear();
   mesh_session::process(150 + mesh_rekey::REKEY_SETTLE_MS);
