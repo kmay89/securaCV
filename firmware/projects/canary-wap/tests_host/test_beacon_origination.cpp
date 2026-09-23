@@ -28,14 +28,15 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
 
-// The real receive path, for the source-level pin in
-// test_source_grants_gateway_trust_nothing. The Makefile passes the absolute
-// path; a hand build from tests_host/ falls back to the relative one.
+#include "beacon_source_scan.h"
+
+// The real receive path, for the source-level pins (beacon_source_scan.h). The
+// Makefile passes the absolute path; a hand build from tests_host/ falls back
+// to the relative one.
 #ifndef BEACON_CHANNEL_CPP
 #define BEACON_CHANNEL_CPP "../arduino/canary_wap/beacon_channel.cpp"
 #endif
@@ -833,38 +834,6 @@ void test_gateway_trust_confers_no_privilege() {
          "the gateway's sixth alert is rate-limited like any member's");
 }
 
-// Strip // and /* */ comments (string and char literals kept intact), so
-// the source pin below reads code, not prose about the code.
-std::string strip_comments(const std::string& src) {
-  std::string out;
-  enum { CODE, LINE, BLOCK, STR, CHR } st = CODE;
-  for (size_t i = 0; i < src.size(); i++) {
-    const char c = src[i];
-    const char n = (i + 1 < src.size()) ? src[i + 1] : '\0';
-    switch (st) {
-      case CODE:
-        if (c == '/' && n == '/') { st = LINE; i++; }
-        else if (c == '/' && n == '*') { st = BLOCK; i++; }
-        else { if (c == '"') st = STR; else if (c == '\'') st = CHR; out += c; }
-        break;
-      case LINE:
-        if (c == '\n') { st = CODE; out += c; }
-        break;
-      case BLOCK:
-        if (c == '*' && n == '/') { st = CODE; i++; }
-        else if (c == '\n') out += c;
-        break;
-      case STR:
-      case CHR:
-        out += c;
-        if (c == '\\' && n) { out += n; i++; }
-        else if ((st == STR && c == '"') || (st == CHR && c == '\'')) st = CODE;
-        break;
-    }
-  }
-  return out;
-}
-
 // The mirror above could drift from the firmware; this reads the firmware.
 // Nothing in beacon_channel.cpp's code may name the gateway trust level or
 // the attestation structure, and every trust_level it reads or writes is
@@ -876,12 +845,11 @@ std::string strip_comments(const std::string& src) {
 // root, a separately named build, a per-deployment legal review); when it is
 // taken, this pin is the thing that has to change on purpose.
 void test_source_grants_gateway_trust_nothing() {
-  std::ifstream f(BEACON_CHANNEL_CPP);
-  EXPECT(f.good(), "beacon_channel.cpp is readable (source pin fails closed)");
-  if (!f.good()) return;
-  std::stringstream ss;
-  ss << f.rdbuf();
-  const std::string code = strip_comments(ss.str());
+  bool ok = false;
+  const std::string src = beacon_source_scan::read_source(BEACON_CHANNEL_CPP, &ok);
+  EXPECT(ok, "beacon_channel.cpp is readable (source pin fails closed)");
+  if (!ok) return;
+  const std::string code = beacon_source_scan::strip_comments(src);
   EXPECT(code.find("trust_level") != std::string::npos,
          "the scan sees the receive path's trust checks (sanity)");
   EXPECT(code.find("BCN_TRUST_GATEWAY") == std::string::npos,

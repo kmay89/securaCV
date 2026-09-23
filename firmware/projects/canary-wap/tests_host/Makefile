@@ -57,7 +57,9 @@ BEACON_SOLO_SRC = test_beacon_solo_origination.cpp
 # names, the cosigner gate (sign a CANCEL only for the alarm this device
 # holds), the emitted header following the signed canonical, the originator
 # adopting its own frame, and the wire struct sizes. Includes the REAL
-# Arduino-free beacon_wire.h + beacon_cancel_policy.h, not a mirror.
+# Arduino-free beacon_wire.h + beacon_cancel_policy.h, not a mirror — and reads
+# the real beacon_channel.cpp (beacon_source_scan.h; its path is passed in, so
+# the pins fail closed) to pin the call sites that use those helpers.
 BEACON_CANCEL_BIN = test_beacon_cancel_origination
 BEACON_CANCEL_SRC = test_beacon_cancel_origination.cpp
 
@@ -214,14 +216,14 @@ $(CHIRP_INV_BIN): $(CHIRP_INV_SRC)
 $(CHIRP_SEC_BIN): $(CHIRP_SEC_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(CHIRP_SEC_SRC)
 
-$(BEACON_ORIG_BIN): $(BEACON_ORIG_SRC)
+$(BEACON_ORIG_BIN): $(BEACON_ORIG_SRC) beacon_source_scan.h
 	$(CXX) $(CXXFLAGS) -DBEACON_CHANNEL_CPP='"$(abspath $(SRC_DIR))/beacon_channel.cpp"' -o $@ $(BEACON_ORIG_SRC)
 
 $(BEACON_SOLO_BIN): $(BEACON_SOLO_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_SOLO_SRC)
 
-$(BEACON_CANCEL_BIN): $(BEACON_CANCEL_SRC) $(SRC_DIR)/beacon_wire.h $(SRC_DIR)/beacon_cancel_policy.h
-	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(BEACON_CANCEL_SRC)
+$(BEACON_CANCEL_BIN): $(BEACON_CANCEL_SRC) $(SRC_DIR)/beacon_wire.h $(SRC_DIR)/beacon_cancel_policy.h beacon_source_scan.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DBEACON_CHANNEL_CPP='"$(abspath $(SRC_DIR))/beacon_channel.cpp"' -o $@ $(BEACON_CANCEL_SRC)
 
 $(BEACON_AAD_BIN): $(BEACON_AAD_SRC) $(SRC_DIR)/beacon_wire.h $(SRC_DIR)/beacon_cosign_aad.h
 	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(BEACON_AAD_SRC)

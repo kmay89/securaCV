@@ -15,12 +15,18 @@
 //     for a CANCEL canonical) and passing the receive path's header rules
 //   - the originator adopting its own frame (raise on ALERT, clear on a
 //     CANCEL that names the alarm), with no rate input by construction
-//   - the wire struct sizes, so a moved struct cannot silently change size.
+//   - the wire struct sizes, so a moved struct cannot silently change size,
+//   - and, by reading the REAL beacon_channel.cpp (beacon_source_scan.h), that
+//     the firmware calls these helpers where it must: the emitter's header, the
+//     solo path's BOOT gate, the cosigner gate before a request is stashed, no
+//     rate charge on adoption, and the AEAD associated data at all four COSIGN
+//     call sites. A test of a helper alone passes whatever its caller does.
 //
 /* Build & run (the canary-wap tests_host Makefile's `run` target does this):
  *
  *   g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror \
  *       -I firmware/projects/canary-wap/arduino/canary_wap \
+ *       -DBEACON_CHANNEL_CPP='"firmware/projects/canary-wap/arduino/canary_wap/beacon_channel.cpp"' \
  *       firmware/projects/canary-wap/tests_host/test_beacon_cancel_origination.cpp \
  *       -o /tmp/test_beacon_cancel_origination && /tmp/test_beacon_cancel_origination
  */
@@ -29,9 +35,17 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 #include "beacon_wire.h"
 #include "beacon_cancel_policy.h"
+#include "beacon_source_scan.h"
+
+// The real firmware, for the call-site pins. The Makefile passes the absolute
+// path; a hand build from tests_host/ falls back to the relative one.
+#ifndef BEACON_CHANNEL_CPP
+#define BEACON_CHANNEL_CPP "../arduino/canary_wap/beacon_channel.cpp"
+#endif
 
 using namespace beacon_channel;
 using namespace beacon_cancel_policy;
@@ -308,6 +322,142 @@ void test_wire_layout() {
          "BeaconCosignRequestPayload field offsets");
 }
 
+
+// ── The firmware's call sites (reads the real beacon_channel.cpp) ───────────
+
+// Everything above tests the policy helpers. A helper test cannot fail when
+// the firmware stops calling the helper, calls it with the wrong argument, or
+// calls it after the point it was meant to guard — a review mutated five such
+// call sites in beacon_channel.cpp and every host suite stayed green. These
+// pins read the comment-stripped source instead. They are exact on purpose:
+// a call site that changes shape changes its pin in the same commit.
+void test_source_call_sites_follow_the_policy() {
+  using namespace beacon_source_scan;
+  bool ok = false;
+  const std::string src = read_source(BEACON_CHANNEL_CPP, &ok);
+  EXPECT(ok, "beacon_channel.cpp is readable (source pins fail closed)");
+  if (!ok) return;
+  const std::string code = strip_comments(src);
+  const std::string all = squeeze(code);
+  auto body = [&](const char* name) {
+    const std::string b = squeeze(function_body(code, name));
+    if (b.empty()) std::fprintf(stderr, "  no definition of %s() found\n", name);
+    return b;
+  };
+
+  // (1) One emitter for ALERT-class frames, and its header follows the signed
+  // canonical. The bug this pins: the COSIGN_RESP handler wrote
+  // BEACON_MSG_ALERT into every header, so a CANCEL went out as an ALERT
+  // header over a CANCEL canonical and every receiver dropped it.
+  const std::string emit = body("emit_signed_frame");
+  EXPECT(!emit.empty(), "emit_signed_frame() is defined");
+  EXPECT(emit.find("hdr->msg_type=beacon_cancel_policy::frame_header_msg_type(c);") != std::string::npos,
+         "the emitted header's msg_type comes from frame_header_msg_type(canonical)");
+  EXPECT(emit.find("hdr->flags=beacon_cancel_policy::frame_header_flags(c,solo);") != std::string::npos,
+         "the emitted header's flags come from frame_header_flags(canonical, solo)");
+  EXPECT(count(emit, "hdr->msg_type=") == 1 && count(emit, "hdr->flags=") == 1,
+         "the emitter sets msg_type and flags exactly once each");
+  EXPECT(emit.find("BEACON_MSG_ALERT") == std::string::npos,
+         "the emitter never names BEACON_MSG_ALERT");
+  EXPECT(all.find("->msg_type=BEACON_MSG_ALERT") == std::string::npos,
+         "no frame header anywhere in beacon_channel.cpp is assigned BEACON_MSG_ALERT");
+  EXPECT(count(all, "hdr->payload_len=sizeof(BeaconAlertCanonical)+2*BEACON_SIGNATURE_SIZE;") == 1 &&
+         emit.find("hdr->payload_len=sizeof(BeaconAlertCanonical)+2*BEACON_SIGNATURE_SIZE;") != std::string::npos,
+         "emit_signed_frame is the only place an ALERT-class frame is assembled");
+  // Every emission is adopted by its originator, with the same signatures.
+  EXPECT(count(all, "emit_signed_frame(") == 4 && count(all, "adopt_emitted_frame(") == 4,
+         "three emission sites, each paired with an adoption (plus the two definitions)");
+  EXPECT(before(body("handle_cosign_resp_frame"),
+                "emit_signed_frame(emitted,sig_originator,plaintext,false,hdr_nonce,frame_id);",
+                "adopt_emitted_frame(emitted,sig_originator,plaintext,hdr_nonce,frame_id);"),
+         "the dual-signed emission is not SOLO-flagged and is adopted after it is sent");
+  EXPECT(before(body("originate_alert_solo"), "emit_signed_frame(canonical,sig,sig,true,hdr_nonce,frame_id);",
+                "adopt_emitted_frame(canonical,sig,sig,hdr_nonce,frame_id);"),
+         "the solo ALERT is SOLO-flagged and adopted");
+  EXPECT(before(body("originate_cancel_solo"), "emit_signed_frame(canonical,sig,sig,true,hdr_nonce,frame_id);",
+                "adopt_emitted_frame(canonical,sig,sig,hdr_nonce,frame_id);"),
+         "the solo CANCEL is SOLO-flagged and adopted");
+
+  // (2) The solo CANCEL is gated on the physical BOOT button (invariant 2).
+  const std::string solo_cancel = body("originate_cancel_solo");
+  const std::string dual_cancel = body("originate_cancel");
+  const std::string gates = body("cancel_gates_pass");
+  EXPECT(solo_cancel.find("cancel_gates_pass(clr_template,true)") != std::string::npos,
+         "originate_cancel_solo runs the gates as the solo path (solo = true)");
+  EXPECT(dual_cancel.find("cancel_gates_pass(clr_template,false)") != std::string::npos,
+         "originate_cancel runs the gates as the two-device path (solo = false)");
+  EXPECT(gates.find("constboolboot_held=solo?boot_button_held():false;") != std::string::npos,
+         "cancel_gates_pass reads the BOOT pin on the solo path");
+  EXPECT(gates.find("beacon_cancel_policy::decide_cancel_origination(g_active_alarm_valid,time_synced,solo,paired_cosigner_available(),boot_held);") != std::string::npos,
+         "cancel_gates_pass hands the policy its inputs in the policy's order");
+  EXPECT(before(solo_cancel, "cancel_gates_pass(", "rate_check_and_record(g_device_fp,false)"),
+         "the solo CANCEL charges its bucket only after every gate passed");
+  EXPECT(solo_cancel.find("g_active_alarm_nonce,g_device_fp,g_device_fp,true);") != std::string::npos,
+         "the solo CANCEL canonical names the active alarm and this device as both signers, solo");
+  EXPECT(dual_cancel.find("g_active_alarm_nonce,g_device_fp,NO_COSIGNER_YET,false);") != std::string::npos &&
+         dual_cancel.find("returnoriginate_canonical(canonical);") != std::string::npos,
+         "the dual CANCEL canonical names the active alarm and goes through the cosign flow");
+  EXPECT(before(body("originate_alert_solo"), "if(!boot_button_held()){", "Ed25519::sign("),
+         "the solo ALERT checks the BOOT pin before it signs anything");
+
+  // (3) The cosigner gate runs before a request is stashed for the user.
+  const std::string req = body("handle_cosign_req_frame");
+  const std::string gate_call =
+      "if(!beacon_cancel_policy::cosign_request_acceptable(candidate.msg_type,candidate.template_id,"
+      "candidate.ref_canceled_nonce,g_active_alarm_valid,g_active_alarm_nonce))";
+  EXPECT(req.find(gate_call + "{") != std::string::npos,
+         "handle_cosign_req_frame asks cosign_request_acceptable about the decrypted canonical");
+  EXPECT(block_after(req, gate_call).find("return;") != std::string::npos,
+         "a refused request returns");
+  EXPECT(before(req, gate_call, "g_pending_cosign_in.valid=true;"),
+         "the gate runs before the request is stashed for the user to confirm");
+
+  // (4) Adopting its own frame charges the originator nothing.
+  const std::string adopt = body("adopt_emitted_frame");
+  EXPECT(!adopt.empty() && adopt.find("rate_check") == std::string::npos,
+         "adopt_emitted_frame calls no rate_check_* (the origination already charged)");
+  EXPECT(adopt.find("chain_audit_entry(&entry);") != std::string::npos &&
+         adopt.find("remember_frame(frame_id);") != std::string::npos,
+         "adopt_emitted_frame audits the frame and remembers it for replay dedup");
+  EXPECT(adopt.find("beacon_cancel_policy::adopt_effect(c.msg_type,references_active_alarm(&c))") != std::string::npos,
+         "adopt_emitted_frame takes its state effect from the policy");
+  EXPECT(before(body("originate_canonical"), "rate_check_and_record(g_device_fp,false)", "Ed25519::sign("),
+         "the two-device origination charges this device's bucket before it signs");
+
+  // (5) The AEAD binds the clear routing fields — at the primitive and at all
+  // four call sites, each with the builder for its own direction.
+  EXPECT(before(body("cosign_encrypt"), "aead.addAuthData(aad,aad_len);", "aead.encrypt("),
+         "cosign_encrypt binds the associated data before it encrypts");
+  EXPECT(before(body("cosign_decrypt"), "aead.addAuthData(aad,aad_len);", "aead.decrypt("),
+         "cosign_decrypt binds the associated data before it decrypts");
+  EXPECT(body("cosign_decrypt").find("aead.checkTag(tag,16);") != std::string::npos,
+         "cosign_decrypt checks the tag");
+  EXPECT(count(all, "cosign_encrypt(") == 3 && count(all, "cosign_decrypt(") == 3,
+         "two encrypt and two decrypt call sites (plus the definitions) — a new one needs a pin");
+  EXPECT(before(body("originate_canonical"),
+                "beacon_cosign_aad::cosign_req_aad(aad,req->originator_fp,req->candidate_cosigner_fp,req->ciphertext_len);",
+                "cosign_encrypt(candidate->x25519_pubkey,aad,sizeof(aad),"),
+         "COSIGN_REQ send: request AAD built from the frame's own fields, then encrypted under it");
+  EXPECT(before(req,
+                "beacon_cosign_aad::cosign_req_aad(aad,req->originator_fp,req->candidate_cosigner_fp,req->ciphertext_len);",
+                "cosign_decrypt(orig->x25519_pubkey,aad,sizeof(aad),"),
+         "COSIGN_REQ receive: request AAD built from the received fields, then decrypted under it");
+  const std::string pend = body("cosign_pending_request");
+  EXPECT(before(pend, "resp->accept=confirm?1:0;",
+                "beacon_cosign_aad::cosign_resp_aad(aad,resp->originator_fp,resp->cosigner_fp,resp->accept);") &&
+         before(pend, "beacon_cosign_aad::cosign_resp_aad(aad,resp->originator_fp,resp->cosigner_fp,resp->accept);",
+                "cosign_encrypt(orig->x25519_pubkey,aad,sizeof(aad),"),
+         "COSIGN_RESP send: the accept byte is set, bound as AAD, then encrypted under it");
+  const std::string resp = body("handle_cosign_resp_frame");
+  EXPECT(before(resp,
+                "beacon_cosign_aad::cosign_resp_aad(aad,resp->originator_fp,resp->cosigner_fp,resp->accept);",
+                "cosign_decrypt(cosigner->x25519_pubkey,aad,sizeof(aad),"),
+         "COSIGN_RESP receive: response AAD built from the received fields, then decrypted under it");
+  EXPECT(before(resp, "cosign_decrypt(", "if(!resp->accept){"),
+         "the accept byte is acted on only after the tag has authenticated it");
+  EXPECT(body("ecdh_session_key").find("beacon_cosign_aad::shared_secret_is_zero(shared)") != std::string::npos,
+         "ecdh_session_key refuses an all-zero shared secret");
+}
 }  // namespace
 
 int main() {
@@ -319,6 +469,7 @@ int main() {
   test_emitted_header_follows_the_canonical();
   test_originator_adopts_its_own_frame();
   test_wire_layout();
+  test_source_call_sites_follow_the_policy();
 
   if (failures == 0) {
     std::printf("ALL %d beacon cancel origination checks PASSED\n", checks);
