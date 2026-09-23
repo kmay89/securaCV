@@ -440,6 +440,14 @@ the backfill.
     not used`; the card's `/EVENTS` is unchanged afterwards; events still
     publish live.
   - Artifact: `docs/audit/repro/F37/foreign-card/`.
+- [ ] **A canary's card in a canary-wap is left alone**
+  - Setup: a card the canary base has written its event log to (it holds
+    `/EVENTS/owner`); a canary-wap on firmware carrying the owner rule.
+  - Expected: the canary-wap's serial log says `[EVT-LOG] /EVENTS belongs to
+    a canary base (owner file) - event log off for this card`; after events
+    commit on the canary-wap, the card's `/EVENTS` is unchanged; back in the
+    canary, the backfill sends none of the canary-wap's rows.
+  - Artifact: `docs/audit/repro/F37/canary-card-in-wap/`.
 
 ## SoftAP WPA2/WPA3 transition + PMF (F16) — on-device verification
 

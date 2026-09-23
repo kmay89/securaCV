@@ -20,13 +20,17 @@
  * directly.
  *
  * Ownership: the log's lines carry no device id, so the directory keeps
- * /EVENTS/owner, one line naming this device's witness-key fingerprint. A
- * log whose owner file does not name this device (another device's card, a
- * canary-wap card, a card from before a factory reset) is left untouched
- * and unused — the backfill signs what it replays with this device's key,
- * and another device's history must never go out under it. The witness log
- * refuses such a card for the same reason (securacv_witness.cpp's fork
- * guard).
+ * /EVENTS/owner (csi_event_log_line::kOwnerPath), one line naming this
+ * device's witness-key fingerprint. A log whose owner file does not name
+ * this device (another device's card, a canary-wap card, a card from before
+ * a factory reset) is left untouched and unused. The backfill signs what it
+ * replays with this device's key, and another device's history must not go
+ * out under it. The witness log refuses such a card for the same reason
+ * (securacv_witness.cpp's fork guard). The canary-wap writes no owner file,
+ * and leaves alone any card that has one, so its rows never land in this
+ * log. That holds only for canary-wap firmware that knows the file. An
+ * older canary-wap still appends to a canary's log, and its rows would then
+ * go out under this key. The gap closes as canary-wap devices update.
  *
  * Crash model (the canary-wap's csi_event_log.cpp, ported): FILE_APPEND and
  * close per line, so a power cut loses at most the line in flight; a torn

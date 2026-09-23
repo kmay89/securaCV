@@ -18,6 +18,9 @@
  *    "bpm":0,"dur":7,"tb":54,"dom":"motion","dismissed":0}
  *
  * Path: /EVENTS/today.ndjson (sibling of /WITNESS, /HEALTH, /CHAIN).
+ * A card whose /EVENTS holds an owner file (/EVENTS/owner) belongs to a
+ * canary base, which binds its log to its witness key there. This device
+ * leaves that log alone: it does not append to it, replay it or truncate it.
  *
  * Lifecycle:
  *   - load_into_ring() runs once at boot after sd mount; reads

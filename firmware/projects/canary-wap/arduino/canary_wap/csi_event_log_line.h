@@ -49,6 +49,13 @@ namespace csi_event_log_line {
 /* Where both trees keep the log (sibling of /WITNESS, /HEALTH, /CHAIN). */
 constexpr const char* kDirPath = "/EVENTS";
 constexpr const char* kLogPath = "/EVENTS/today.ndjson";
+/* The log's owner: one line naming the witness-key fingerprint of the
+ * canary base that claimed it. The canary replays its log signed with that
+ * key, so it uses only a log that names it. The canary-wap writes no owner
+ * file, and leaves alone any card that has one. Without that, its rows
+ * would land in a canary's log, and it would replay the canary's history as
+ * its own. */
+constexpr const char* kOwnerPath = "/EVENTS/owner";
 
 /* One line, '\n' and NUL included, always fits this many bytes: the widest
  * record (every name at CSI_EVENT_NAME_MAX - 1, every number at its type's

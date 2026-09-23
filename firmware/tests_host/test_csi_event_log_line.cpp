@@ -205,6 +205,12 @@ static int test_both_trees_write_the_same_file() {
   // the same size, so one tool and one retention story cover both cards.
   CHECK_STR(csi_event_log::LOG_PATH, csi_event_log_line::kLogPath);
   CHECK(csi_event_log::MAX_BYTES == csi_event_log::kMaxBytes);
+  // The owner file's name is on cards already: renaming it would orphan
+  // every canary's claim, and each would then refuse its own log as
+  // foreign. It lives in the log's directory.
+  CHECK_STR(csi_event_log_line::kOwnerPath, "/EVENTS/owner");
+  CHECK(std::strncmp(csi_event_log_line::kOwnerPath, csi_event_log_line::kDirPath,
+                     std::strlen(csi_event_log_line::kDirPath)) == 0);
   return 0;
 }
 

@@ -69,10 +69,11 @@ constexpr const char* TMP_PATH = "/EVENTS/today.ndjson.tmp";
  * card, so the cleanup needs to run on the actual first-ready edge). */
 void reconcile_truncate_remnants();
 
-/* True when an SD card is mounted AND the directory exists. We
- * re-check on every call rather than caching because SD can
- * hot-unplug; the cost is one cardType() lookup + one exists() per
- * event, negligible vs the write. SD.cardType() returns CARD_NONE
+/* True when an SD card is mounted, the directory exists, and the card
+ * is not a canary base's (no owner file). We re-check on every call
+ * rather than caching because SD can hot-unplug; the cost is one
+ * cardType() lookup + two exists() per event, negligible vs the
+ * write. SD.cardType() returns CARD_NONE
  * when nothing is mounted, so it doubles as the readiness check
  * without us needing to peek at hardware_state's globals.
  *
@@ -83,6 +84,7 @@ void reconcile_truncate_remnants();
  * cleanup pass before any append() can call head_truncate. */
 bool sd_path_ready() {
   static bool s_reconciled = false;
+  static bool s_foreign_said = false;
   /* A background mount attempt owns the global SD object (hardware_state.h
    * mount worker): the card struct is mid-initialization, so SD.cardType()
    * can read a garbage non-CARD_NONE value and the SD.open below would race
@@ -92,6 +94,20 @@ bool sd_path_ready() {
   }
   if (SD.cardType() == CARD_NONE) {
     s_reconciled = false;
+    s_foreign_said = false;
+    return false;
+  }
+  /* A canary base's card: its /EVENTS log is bound to that canary's witness
+   * key by the owner file (csi_event_log_line.h). This device writes none,
+   * so the log is not its own. Leave it alone: no append, since the canary
+   * would sign these rows as its own, and no backfill, since this device
+   * would replay the canary's history as its own. Checked before the
+   * truncate reconcile, so the canary's scratch file is never touched. */
+  if (SD.exists(csi_event_log_line::kOwnerPath)) {
+    if (!s_foreign_said) {
+      Serial.println("[EVT-LOG] /EVENTS belongs to a canary base (owner file) - event log off for this card");
+      s_foreign_said = true;
+    }
     return false;
   }
   if (!SD.exists(DIR_PATH)) {

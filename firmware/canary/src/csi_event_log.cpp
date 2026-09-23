@@ -30,12 +30,12 @@ namespace {
 
 using csi_event_log_line::kDirPath;
 using csi_event_log_line::kLogPath;
+/* One line: the fingerprint of the witness key the log belongs to. */
+using csi_event_log_line::kOwnerPath;
 
 /* The retention rewrite's scratch copy, next to the log so the commit is a
  * rename inside one directory (canary-wap's crash model). */
 constexpr const char* kTmpPath = "/EVENTS/today.ndjson.tmp";
-/* One line: the fingerprint of the witness key the log belongs to. */
-constexpr const char* kOwnerPath = "/EVENTS/owner";
 
 bool     s_open = false;      // the log is usable now
 bool     s_reported = false;  // what the last poll told the planner

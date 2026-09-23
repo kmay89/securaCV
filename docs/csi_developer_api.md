@@ -188,7 +188,11 @@ those bodies `"replay":true`. On the canary base
   doing;
 - the log is bound to the device's witness key by `/EVENTS/owner`; a card
   whose log belongs to another device (or to a canary-wap) is left untouched
-  and not replayed;
+  and not replayed. The canary-wap writes no owner file and leaves a card
+  that has one alone: it does not append to that log or replay it. A
+  canary-wap on firmware from before that rule does not know the file, and
+  would append its own rows to a canary's log, which that canary then
+  replays under its own key;
 - with no card, rows use the MQTT offline queue (12 records) as before, where
   tamper alerts outrank events: once the queue is full, a new row pushes out
   the oldest queued event, never a tamper alert. A body built while the
