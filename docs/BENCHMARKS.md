@@ -84,11 +84,13 @@ itself is inside every sample, which matters most for the shortest calls.
 ## Where a run's output goes
 
 1. **The terminal**, for the person who ran it.
-2. **The CI artifact.** The `build` job of
+2. **The CI artifact.** The `bench-harness` job of
    [`rust.yml`](../.github/workflows/rust.yml) runs the harness once in
-   release and uploads its stdout as `bench-harness-stdout`. That run proves
-   the harness still runs and hands a reviewer a table to read beside a change
-   that claims to be faster; it has no threshold and compares nothing.
+   release and uploads its stdout as `bench-harness-stdout`, also when a row
+   fails. That run proves the harness still runs and hands a reviewer a table
+   to read beside a change that claims to be faster; it has no threshold and
+   compares nothing. The run itself is bounded at 15 minutes, apart from the
+   compile, so a hung row fails the job instead of holding it.
 3. **The PR or issue**, as a comment with the `host:` line intact — when a
    change is about speed, the before/after tables belong in its review thread.
 
