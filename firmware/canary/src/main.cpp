@@ -19,6 +19,7 @@
 #include "securacv_witness.h"
 #include "securacv_gps.h"
 #include "gnss/gps_privacy.h"  // gps_coarsen_deg() — operator-facing GPS coarsening (Invariant III)
+#include "network/provisioning_gate.h"  // BOOT-tap gate behind /api/provisioning-receipt (F20 gap #11)
 
 #if FEATURE_SD_STORAGE
 #include "securacv_storage.h"
@@ -356,6 +357,18 @@ static contact_tamper::State g_tamper_contact = contact_tamper::kInitial;
 
 // Device-unique AP password (derived from pubkey fingerprint)
 static char g_ap_password[16];
+
+// Physical-presence gate (F20 gap #11). Opened by a short BOOT tap in
+// handle_boot_button(); the network lib takes it — from the receipt handler
+// or from a home-LAN page load, whichever asks first — through the hooks
+// registered in setup(). The State is this file's because the BOOT button is.
+static canary::net::provisioning_gate::State g_prov_gate = {0};
+static bool prov_gate_take_hook() {
+  return canary::net::provisioning_gate::take(g_prov_gate, millis(), PROVISIONING_GATE_TTL_MS);
+}
+static bool prov_gate_is_open_hook() {
+  return canary::net::provisioning_gate::is_open(g_prov_gate, millis(), PROVISIONING_GATE_TTL_MS);
+}
 
 // Serial command helpers
 static void handle_serial_commands();
@@ -855,9 +868,41 @@ void setup() {
 #endif
     Serial.println("[..] Starting WiFi Access Point...");
     ScvNetworkManager& net = network_get_instance();
+    // Wire the BOOT-tap gate before any route can be served (unregistered
+    // hooks read as closed, so the order is belt-and-braces, not load-bearing).
+    network_set_provisioning_gate_hooks(prov_gate_take_hook, prov_gate_is_open_hook);
     if (net.begin(ap_ssid, g_ap_password, device.device_id)) {
       Serial.println("[OK] WiFi AP active");
 #if FEATURE_HTTP_SERVER
+#if FEATURE_HTTPS
+      // F15: self-signed TLS. Skipped during first-boot setup (WAP parity) —
+      // captive mini-browsers (iOS CNA, Android) render a blank page on a
+      // self-signed certificate, and the AP is the security boundary before
+      // any home Wi-Fi exists. Setup completes WITHOUT a reboot
+      // (setup_mark_complete keeps this server up so the wizard's success
+      // screen survives), so HTTPS is only tried at the next boot, whenever
+      // that is; until then /api/status tls_mode_reason says "setup
+      // finished; HTTPS is tried at the next reboot" (tls_policy::live_reason).
+      // A failure is not fatal: the server falls back to HTTP-only and
+      // tls_mode_reason says why.
+#if FEATURE_SETUP_WIZARD
+      const bool tls_skip_for_setup = setup_is_first_boot();
+#else
+      const bool tls_skip_for_setup = false;
+#endif
+      if (tls_skip_for_setup) {
+        Serial.println("[..] SETUP MODE: HTTP only so the captive portal renders");
+      } else {
+        Serial.println("[..] Preparing TLS certificate...");
+#if FEATURE_WATCHDOG
+        esp_task_wdt_reset();  // first TLS boot generates a P-256 key (untimed; D1 records it)
+#endif
+        if (!net.initTls()) {
+          Serial.printf("[WARN] TLS unavailable (%s) — API traffic is NOT encrypted\n",
+                        net.getTlsModeReason());
+        }
+      }
+#endif
       Serial.println("[..] Starting HTTP server...");
       net.startHttpServer();
 #endif
@@ -1512,13 +1557,22 @@ void setup() {
   ScvNetworkManager& network = network_get_instance();
   Serial.printf("║  WiFi AP    : %-45s  ║\n", device.ap_ssid);
   Serial.printf("║  Password   : %-45s  ║\n", g_ap_password);
-  Serial.printf("║  Dashboard  : http://%-39s  ║\n", network.getStatus().ap_ip);
   {
+    // F15: the scheme the dashboard is actually served on.
+    const char* scheme = network.isTlsEnabled() ? "https" : "http";
+    char dash_url[64];
+    snprintf(dash_url, sizeof(dash_url), "%s://%s", scheme, network.getStatus().ap_ip);
+    Serial.printf("║  Dashboard  : %-45s  ║\n", dash_url);
     const char* host = network.getMdnsHostname();
     char mdns_url[64];
-    snprintf(mdns_url, sizeof(mdns_url), "http://%s.local",
+    snprintf(mdns_url, sizeof(mdns_url), "%s://%s.local", scheme,
              (host && host[0]) ? host : "canary");
     Serial.printf("║  mDNS       : %-45s  ║\n", mdns_url);
+    if (network.isTlsEnabled()) {
+      char fp_short[24];
+      snprintf(fp_short, sizeof(fp_short), "%.16s...", network.getTlsCertFp());
+      Serial.printf("║  TLS cert fp: %-45s  ║\n", fp_short);
+    }
   }
 #endif
 #if FEATURE_POWER_MONITOR
@@ -1538,7 +1592,7 @@ void setup() {
 #endif
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
   Serial.println("║  Commands: h=help, i=identity, s=status, g=gps, r=data       ║");
-  Serial.println("║  BOOT: short=info, 5s hold=factory reset                     ║");
+  Serial.println("║  BOOT: tap=provisioning gate, 2s=info, 5s=factory reset      ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
 #if FEATURE_CONSOLE_THEME
   // The warm hello: the canary greets whoever just plugged in and points them
@@ -2139,16 +2193,58 @@ static void handle_boot_button() {
     if (duration >= BOOT_MEDIUM_PRESS_MS) {
       // Medium hold: print device info
       print_status();
-    }
+    } else {
 #if FEATURE_USB_ONBOARD
-    else {
-      // Short press: the physical confirmation for USB onboarding. This is the
-      // trust keystone — the ONLY thing that lets the HID keyboard type, and
-      // only while it is ARMED (a no-op otherwise).
-      usb_onboard::confirm();
-    }
+      // A tap that answers the console's armed USB-onboarding request ('u',
+      // a 15 s window the owner opened on purpose) is that confirmation and
+      // nothing else: it must not also open the provisioning gate. Read
+      // before usb_onboard::confirm() below moves Armed → Launched. (A tap
+      // from Idle is both the one-tap help launch and a gate open — see
+      // docs/design/usb_onboard.md.)
+      const bool tap_is_usb_confirm =
+          usb_onboard::state() == usb_onboard::State::Armed;
+#else
+      const bool tap_is_usb_confirm = false;
 #endif
-    // (Short press is otherwise reserved for future use / provisioning gate.)
+      if (duration >= BOOT_SHORT_PRESS_MS && tap_is_usb_confirm) {
+        Serial.println("[AUTH] BOOT tap confirmed USB onboarding; provisioning gate left closed");
+      } else if (duration >= BOOT_SHORT_PRESS_MS) {
+        // Short tap: open the provisioning gate (F20 gap #11, WAP parity).
+        // One tap admits exactly ONE consumer within PROVISIONING_GATE_TTL_MS:
+        // one GET /api/provisioning-receipt, or one home-LAN dashboard load
+        // with its credential — whichever asks first (page_token_decide).
+        canary::net::provisioning_gate::open(g_prov_gate, millis());
+        Serial.printf("[AUTH] Provisioning gate OPENED (one receipt fetch or one LAN page load, %lu seconds)\n",
+                      (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000));
+        log_health(LOG_LEVEL_INFO, LOG_CAT_USER, "Provisioning gate opened", "BOOT button");
+        // Blink the user LED 3x to confirm. Skipped while an SD mount attempt
+        // is in flight: on the XIAO ESP32-S3 the LED shares GPIO21 with the SD
+        // chip-select, and driving it mid-transaction on the mount worker
+        // would glitch CS and corrupt the mount (mirrors the WAP sketch).
+#ifdef LED_BUILTIN
+        bool led_ok = true;
+#if FEATURE_SD_STORAGE
+        led_ok = !storage_mount_in_flight();
+#endif
+        if (led_ok) {
+          for (int i = 0; i < 3; i++) {
+            digitalWrite(LED_BUILTIN, HIGH);
+            delay(100);
+            digitalWrite(LED_BUILTIN, LOW);
+            delay(100);
+          }
+        }
+#endif
+      }
+#if FEATURE_USB_ONBOARD
+      // Short press is ALSO the physical confirmation for USB onboarding. This
+      // is the trust keystone — the ONLY thing that lets the HID keyboard
+      // type (from Idle, Armed or Launched; a no-op when the feature is Off).
+      // Independent latch from the provisioning gate above, which an Armed
+      // confirmation leaves closed.
+      usb_onboard::confirm();
+#endif
+    }
   }
 }
 

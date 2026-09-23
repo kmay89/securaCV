@@ -223,6 +223,40 @@ int main() {
     CHECK(std::strstr(p, "sd_remove") != nullptr);
   }
 
+  // ── a long broker outage never stalls the producer ──
+  // ENTERPRISE_READINESS_TODO §6 "Operational failover": buffering must not
+  // block witness generation. The queue's half of that promise: with the
+  // broker down and NOTHING draining, every fitting push is accepted at once
+  // (it never waits for, or refuses on, a consumer), the queue stays at its
+  // bound, each overflow is counted, and what survives is the newest records
+  // in order. (The chain itself never touches this queue — the MQTT layer is
+  // its only caller.)
+  {
+    Queue outage;
+    CHECK(outage.init(storage, sizeof(storage), kPayload));
+    const uint32_t kPushes = 10000;
+    uint32_t accepted = 0;
+    for (uint32_t i = 0; i < kPushes; ++i) {
+      char rec[16];
+      std::snprintf(rec, sizeof(rec), "ev%u", (unsigned)i);
+      if (outage.push(mqtt_offline_queue::KIND_EVENT, false, rec)) ++accepted;
+      CHECK(outage.size() <= outage.capacity());
+    }
+    CHECK(accepted == kPushes);
+    CHECK(outage.size() == outage.capacity());
+    CHECK(outage.stats().queued == kPushes);
+    CHECK(outage.stats().dropped_overflow == kPushes - outage.capacity());
+    CHECK(outage.stats().replayed == 0);
+    for (uint32_t i = kPushes - (uint32_t)outage.capacity(); i < kPushes; ++i) {
+      char want[16];
+      std::snprintf(want, sizeof(want), "ev%u", (unsigned)i);
+      CHECK(outage.front(nullptr, nullptr, &p));
+      CHECK(std::strcmp(p, want) == 0);
+      outage.pop_front();
+    }
+    CHECK(outage.empty());
+  }
+
   // ── re-init resets contents and counters ──
   CHECK(q.push(mqtt_offline_queue::KIND_EVENT, false, "stale"));
   CHECK(q.init(storage, sizeof(storage), kPayload));

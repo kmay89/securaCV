@@ -775,6 +775,16 @@ jobs:
           chmod +x firmware/scripts/check_mqtt_transport_sync.sh
           firmware/scripts/check_mqtt_transport_sync.sh
 
+      - name: Verify ap_security_policy.h stays identical in common/ and the canary-wap sketch
+        # The SoftAP / STA security request (WPA2/WPA3 transition + PMF
+        # capable, WPA2 fallback with a named reason — F16) lives once in
+        # common/network and is host-tested there; the wap sketch carries a
+        # byte-identical staged copy. Drift here means the two products put
+        # different security on the same setup network.
+        run: |
+          chmod +x firmware/scripts/check_ap_security_sync.sh
+          firmware/scripts/check_ap_security_sync.sh
+
       - name: Verify on-glass text stays inside the display font's glyph range
         # LVGL's built-in Montserrat covers 0x20-0x7F, 0xB0 and U+2022 only, and
         # draws a hollow box for anything else — no build error, and the browser
@@ -1818,6 +1828,21 @@ jobs:
         # by the handler-table overflow).
         run: |
           python3 firmware/projects/canary-wap/tests_host/check_route_security.py
+
+      - name: Check canary (PIO) route security (every route gated or allowlisted)
+        # The canary tree's sibling of the step above, same matcher: every
+        # route registerHttpHandlers() adds (the captive-probe loop
+        # included) must reach auth_gate / auth_check / auth_check_optional
+        # / provisioning_gate_take — in an if/return, not ignored, and not
+        # below an unconditional return — or sit on the script's documented
+        # public allowlist. The two HTML pages are public shells whose
+        # bearer-token injection is decided per request by
+        # provisioning_gate.h's page_token_decide (F20 gap #11); the script
+        # fails any page call that does not pass page_token_inject(req), a
+        # registration inside registerHttpHandlers that does not use its
+        # `server` parameter, and a table larger than kRouteTableSlots.
+        run: |
+          python3 firmware/canary/scripts/check_route_security.py
 
       - name: Check canary-wap handler-table budget (no silent route drops)
         # esp_http_server drops registrations past max_uri_handlers and the

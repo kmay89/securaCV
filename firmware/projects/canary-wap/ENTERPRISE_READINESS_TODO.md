@@ -9,6 +9,15 @@ This checklist is based on a repository audit focused on:
 
 Reference baseline inventory: [`firmware/FIRMWARE_VARIANT_AUDIT.md`](../../FIRMWARE_VARIANT_AUDIT.md) (canonical-path and rot-risk analysis).
 
+> **Status reconciliation (2026-09-23).** Every box that was still open was
+> re-checked against the tree. A box is ticked only when the claim is proven
+> by a host test, a lint, or a CI compile, and the evidence is named under
+> it; stale boxes whose work landed elsewhere are ticked with that pointer.
+> Three boxes can only be closed by a person with hardware or Docker and are
+> labeled **U1 / human** so they stop reading like code debt. What is left
+> open is either its own change (named) or waiting on a maintainer decision
+> (named).
+
 ## 0) Where the toolchain checks actually run
 
 The first version of this list recorded which tools were missing from the
@@ -95,13 +104,38 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
         (`/api/selftest`) plus the "Save your recovery kit" block, which walks
         the BOOT-tap gate and downloads the provisioning receipt JSON.
 
-- [ ] **Simple status language**
-  - Replace technical-only labels with plain-language status text + “Advanced details” expanders.
-  - Add “Good / Needs attention / Action required” health summary strip.
+- [ ] **Simple status language** — open until the strip below is CI-green
+  - [x] Plain-language status text + “Advanced details” expanders: the
+        headline dashboard (`csi_dashboard_html.h`) already keeps the live
+        numbers behind collapsed `<details>` ("How is it sensing?", "Details"),
+        and every user-facing string lives in its `COPY` bank, gated by
+        `firmware/scripts/microcopy_lint.sh` (banned jargon, tooltip coverage,
+        reading grade).
+  - [ ] “Good / Needs attention / Action required” strip (2026-09): the
+        verdict is decided by `arduino/canary_wap/status_tier_logic.h`
+        (worst-first, one reason code per tier, a missing card is not a fault;
+        host-tested in `tests_host/test_status_tier_logic.cpp`), served as
+        `status_tier` / `status_reason` on `GET /api/status`, and rendered
+        under the topbar from `COPY.tier` (`web_assets_gz.h` regenerated).
+        Code and host test landed; **CI compile pending** — tick this box
+        when the PR's `firmware.yml` Arduino CLI build is green. Not yet seen
+        on a device. Label wording: option "the checklist's own three labels"
+        — maintainer to confirm (changing them is a `COPY` edit only).
 
 - [ ] **Recovery-safe flows**
-  - Guided factory-reset confirmation UX (with explicit data-loss warning).
-  - Credential reset path without requiring serial monitor for normal users.
+  - [ ] Guided factory-reset confirmation UX (with explicit data-loss warning).
+        **Open — its own change, blocked on a maintainer decision:** today the
+        WAP has no factory-reset route at all (BOOT held ≥ 3 s is the only
+        path). Whether `POST /api/factory-reset` may exist is the decision;
+        the recommendation is yes, but only behind the Bearer credential AND
+        a BOOT-tap `provisioning_gate_take()` (a remote credential alone must
+        never be able to wipe a witness), with a two-step confirmation in the
+        companion PWA, `total_handlers` raised, and both route audits kept
+        green.
+  - [x] Credential reset path without the serial monitor: one BOOT tap
+        releases the provisioning receipt (`GET /api/provisioning-receipt`,
+        one tap = one fetch), which re-reveals the API token and the AP
+        password; the wizard's "Save your recovery kit" block walks it.
 
 - [x] **Provisioning confirmation artifacts**
   - [x] Downloadable setup receipt — `/api/provisioning-receipt` (BOOT-tap gated),
@@ -118,13 +152,30 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
   composite action on every PR; `firmware-release.yml` publishes from the same
   matrix. Profiles are the `CANARY_PROFILE_*` defines the sketch reads.
 
-- [ ] **Stabilize Arduino dependency pinning**
-  - Lock tested ESP32 core version and library versions in docs + CI scripts.
-  - Add explicit compatibility notes for NimBLE/ArduinoJson/Crypto versions.
+- [ ] **Stabilize Arduino dependency pinning** — the docs half is done; the CI
+  half is the open sub-item below
+  - [x] Tested core + libraries locked in the docs: `arduino/canary_wap/sketch.yaml` pins
+        `esp32:esp32 (3.3.8)` and lists ArduinoJson / Crypto / NimBLE-Arduino;
+        the firmware SBOM (`scripts/gen_firmware_sbom.py --check --validate`,
+        `lint.yml`) asserts the pins against the workflows' rows.
+  - [x] Compatibility notes: `README.md` "Install Libraries" names
+        ArduinoJson 7.x, Crypto, and NimBLE-Arduino **2.3.8 or later** (1.x
+        compiles with Bluetooth silently disabled).
+  - [ ] Locked in the CI scripts too: the WAP's Arduino-CLI CI rows still
+        build on the weekly "latest" core while the sketch pins 3.3.8, so the
+        box's "in docs + CI scripts" is not met yet.
+        [`firmware/PLATFORMS.md`](../../PLATFORMS.md) records pinning those
+        rows as a release decision for the maintainer, not a lint's call.
 
-- [ ] **Split oversized `web_ui.h` payload**
-  - Break monolithic PROGMEM UI into chunked assets (html/css/js) to reduce compile/link risk.
-  - Add memory-size budget checks during build.
+- [x] **Split oversized `web_ui.h` payload** — superseded by the gzip
+  shipping model.
+  - [x] The raw PROGMEM literals (`web_ui.h`, `csi_dashboard_html.h`,
+        `companion_pwa.h`) are compiled OUT; the device serves the generated,
+        byte-gated `web_assets_gz.h` (`gen_web_assets_gz.py --check` in
+        `firmware.yml`; `regression_check.sh` reports "shipped gzip").
+  - [x] Size budgets: `firmware/flavors.json` `size_guards` (the 0x330000 OTA
+        slot) and the Arduino CLI job's "Check binary size against the OTA
+        slot" step in `firmware.yml`.
 
 - [x] **Add static analysis pass that actually runs in CI** — `cppcheck` runs
   in `firmware.yml` and `csi_module_disable_matrix.yml` and fails the job on
@@ -134,20 +185,32 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
 
 ## 4) PlatformIO parity and promotion path
 
-- [ ] **Match Arduino and PlatformIO feature behavior**
-  - Validate feature-flag parity (WiFi AP/STA, MQTT, camera peek, SD, BLE, mesh).
-  - Build a parity checklist and run through each release candidate.
+- [x] **Match Arduino and PlatformIO feature behavior**
+  - [x] Feature-flag parity is structural now: `platformio.ini` sets
+        `src_dir = arduino/canary_wap`, so `pio run` and `arduino-cli compile`
+        build the same files (`firmware/FEATURES.md` 2026-09-05 note — the two
+        canary-wap columns collapsed into one).
+  - [x] Parity checklist: the `FEATURES.md` dashboard plus
+        [`firmware/PARITY_PLAN.md`](../../PARITY_PLAN.md) §4. The live parity
+        debt is `canary (PIO)` ↔ canary-wap (backlog F20), not Arduino ↔
+        PlatformIO.
 
 - [ ] **PlatformIO environment hardening**
-  - Keep `dev`, `release`, `dev_ha`, `release_ha`, `minimal` envs green.
-  - Add size, RAM, and boot-time budgets per environment.
+  - [x] Envs green: every `firmware/flavors.json` `build_envs` entry is built
+        by `firmware.yml` on every PR.
+  - [x] Size and RAM budgets: `flavors.json` `size_guards` (per-slot) and
+        `.github/workflows/ram_audit.yml`.
+  - [ ] Boot-time budget per environment — **U1 / human**: needs a board on
+        the bench and a stopwatch-grade serial capture; no CI runner can
+        measure it.
 
 - [x] **Release artifacts** — `firmware-release.yml` emits binaries, checksums
   and the Ed25519-signed manifest (refusing to publish without the key).
-- [ ] **SBOM** — `.github/workflows/sbom.yml` generates the Rust and Node
-  inventories; the firmware SBOM is still a hand-written component list that
-  no longer matches the build files it cites (`docs/IMPROVEMENT_ROADMAP.md`
-  item 35).
+- [x] **SBOM** — `.github/workflows/sbom.yml` generates the Rust and Node
+  inventories; the firmware SBOM is now generated and committed
+  (`scripts/gen_firmware_sbom.py`, checked with `--check --validate` in
+  `lint.yml`; [`sbom/README.md`](../../../sbom/README.md)) — the hand-written
+  list this box described is gone (`docs/IMPROVEMENT_ROADMAP.md` item 35).
 
 ---
 
@@ -164,7 +227,11 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
   - [x] `--no-default-features` build (note: `Cargo.toml` defines no `default` feature, so this is the same build as the default one)
   - [x] `--features backend-tract` build
 
-- [ ] **Backend audit trail**
+- [ ] **Backend audit trail** — **open, its own change** (lives in the
+  kernel, not this firmware): a `docs/security/backend_audit.md` row per
+  detector backend (the default pure-Rust path; `backend-tract` behind its
+  cargo feature) and a `cargo test` asserting every non-pure-Rust backend is
+  feature-gated.
   - Document audit results for each enabled detector backend.
   - Ensure all non-pure-Rust backends remain feature-gated.
 
@@ -173,18 +240,44 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
 ## 6) Home Assistant + Frigate + MQTT backbone
 
 - [ ] **Make integration runnable in one command**
-  - Provide a single script to spin up broker + Frigate + HA and perform health checks.
-  - Keep `integrations/ha_frigate_mqtt/verify_pipeline.sh` as final acceptance gate.
+  - [x] Single script: `integrations/ha_frigate_mqtt/up.sh` (2026-09) checks
+        the broker password file and `.env`, builds and starts the stack,
+        waits for 1883 / 5000 / 8123, then runs `verify_pipeline.sh`.
+        Shellcheck-clean (`docker-sidecar.yml` lint job).
+  - [x] `verify_pipeline.sh` stays the final acceptance gate (`up.sh` ends in it).
+  - [ ] First real run on a Docker host — **U1 / human** (no runner here
+        starts Frigate + Home Assistant).
 
 - [ ] **Device-to-broker contract tests**
-  - Validate retained topics, QoS expectations, payload schemas, and reconnect behavior.
-  - Verify HA entity discovery and Frigate event topic compatibility.
+  - [x] Frigate event topic compatibility: `cargo test --test frigate_mqtt_e2e`
+        (`tests/frigate_mqtt_e2e.rs`) and `ci_smoke.sh` against a live broker
+        (`rust.yml`).
+  - [x] Payload schemas on the Home Assistant side:
+        `custom_components/securacv/tests/test_mqtt_payload_hardening.py`
+        (18 cases, stubbed HA).
+  - [ ] **Open, its own change:** a firmware-side fixture — the WAP
+        `csi_mqtt.cpp` discovery / retained payload templates extracted into a
+        pytest fixture checked against the HA parsers; and QoS written down as
+        the delivery bound (QoS 0 everywhere today). Reconnect behavior is
+        bench (U1).
 
 - [ ] **Operational failover behavior**
-  - Confirm local witness recording continues when broker is down.
-  - Buffer/retry strategy must not block witness chain generation.
+  - [ ] Confirm local witness recording continues when the broker is down —
+        bench (**U1**): a live broker-down run.
+  - [x] Buffering must not block chain generation: the chain never calls into
+        MQTT; the bounded offline queue (`firmware/common/mqtt/mqtt_offline_queue.h`)
+        drops the oldest record instead of waiting, and
+        `firmware/tests_host/test_mqtt_offline_queue.cpp` now pins it — 10 000
+        pushes with nothing draining are all accepted, the queue stays at its
+        bound, every overflow is counted, the newest survive in order. The WAP
+        additionally backfills from the SD event log once the broker returns
+        (`csi_mqtt.cpp`).
 
-- [ ] **User-friendly setup profile presets**
+- [ ] **User-friendly setup profile presets** — **open, its own change,
+  blocked on a maintainer decision:** what "Frigate bridge mode" means on the
+  device (device-side vs hub-side) must be defined before the three presets
+  (each a `/api/mqtt/config` body with plain-language tradeoff copy in the
+  companion PWA close-out, microcopy lint + gzip regen) can be written.
   - “Local-only (default)”
   - “Home Assistant + MQTT”
   - “Frigate bridge mode”
@@ -194,10 +287,10 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
 
 ## 7) Suggested acceptance criteria (Definition of Done)
 
-- [ ] Nontechnical user can unbox device and complete setup in <10 minutes with only phone browser.
+- [ ] Nontechnical user can unbox device and complete setup in <10 minutes with only phone browser. — **U1 / human** (a timed usability run with hardware and a phone).
 - [x] Arduino build path compiles in CI for documented profiles.
 - [x] PlatformIO release environments compile (smoke tests on hardware are still manual — `docs/V1_BENCH_TEST_RUNBOOK.md`).
 - [x] Witness-kernel tests/clippy pass in CI (`rust.yml`); the doc gate is tracked above.
-- [ ] HA+Frigate+MQTT verification script passes end-to-end.
-- [ ] Security/privacy regression checks return zero critical warnings for release builds.
+- [ ] HA+Frigate+MQTT verification script passes end-to-end. — **U1 / human** (needs Docker + Frigate: `integrations/ha_frigate_mqtt/up.sh`). The automated halves already run in CI: `cargo test --test frigate_mqtt_e2e` and `ci_smoke.sh` (`rust.yml`).
+- [x] Security/privacy regression checks return zero critical warnings for release builds. — `firmware/scripts/regression_check.sh --strict` counts every Security/Privacy warning as a failure; its four false-positive greps (camera PWDN, outbound, raw MAC, GPS format) now match real call shapes, the outbound check also resolves a destination written behind a name (`#define` or a const initializer handed to a client call — the display's disclosed standalone-weather fetch is the one such path today, pinned to its host), the documented plaintext listeners and the display line's disclosed outbound paths sit in reviewed allowlists that fail when stale, and the strict run passes today. Wired into `firmware-release.yml` (a release refuses on it); PR CI keeps the advisory mode.
 

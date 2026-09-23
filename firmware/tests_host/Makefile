@@ -95,6 +95,37 @@ SDMOUNT_BIN = $(BUILD_DIR)/test_sd_mount_policy
 WIFIJOIN_HDR = ../common/network/wifi_join_policy.h
 WIFIJOIN_BIN = $(BUILD_DIR)/test_wifi_join_policy
 
+# BOOT-tap provisioning gate + page-token policy
+# (common/network/provisioning_gate.h): one tap admits exactly one consumer
+# (atomic exchange), the gate self-closes after its TTL, millis()==0 is a
+# real tap, and the dashboard's bearer credential is WITHHELD from a LAN
+# request that carries no grant (setup / bearer / SoftAP subnet / an unspent
+# tap, which the page load then spends — one tap, one consumer across the
+# page and receipt paths), and the dual-stack socket's ::ffff:a.b.c.d peer
+# address unwraps to IPv4 while a true IPv6 address reads as unknown.
+# Consumed by the canary tree's securacv_network + main.cpp; the canary-wap
+# sketch keeps an inline copy of the two gate operations to this contract.
+PROVGATE_HDR = ../common/network/provisioning_gate.h
+PROVGATE_BIN = $(BUILD_DIR)/test_provisioning_gate
+
+# Self-signed HTTPS surface decisions (common/network/tls_policy.h, F15):
+# HTTPS-with-port-80-redirect vs HTTP-only and the reason /api/status
+# reports, the redirect Location builder (refuses truncation, foreign hosts
+# and control bytes), the plain-HTTP exemptions (six connectivity probes
+# always, / and /setup only during the wizard), and the certificate pin's
+# hex form. Consumed by the canary tree's securacv_network.
+TLSPOL_HDR = ../common/network/tls_policy.h
+TLSPOL_BIN = $(BUILD_DIR)/test_tls_policy
+
+# SoftAP / STA security request (common/network/ap_security_policy.h, F16):
+# WPA2/WPA3 transition only for knob && SoftAP SAE in the core && an
+# 8+ character passphrase; PMF capable in every row and required in none; a
+# driver refusal reported as WPA2; the scan/auth label table. Consumed by the
+# canary tree's securacv_network and, as a byte-identical staged copy
+# (check_ap_security_sync.sh), by the canary-wap sketch.
+APSEC_HDR = ../common/network/ap_security_policy.h
+APSEC_BIN = $(BUILD_DIR)/test_ap_security_policy
+
 # MQTT broker transport decision (common/network/mqtt_transport_logic.h): the
 # ONE place the fleet decides whether the broker socket is plain, TLS with a
 # verified CA, TLS pinned to a certificate fingerprint, or the explicit lab
@@ -390,6 +421,15 @@ $(SDMOUNT_BIN): test_sd_mount_policy.cpp $(SDMOUNT_HDR) Makefile | $(BUILD_DIR)
 $(WIFIJOIN_BIN): test_wifi_join_policy.cpp $(WIFIJOIN_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_wifi_join_policy.cpp
 
+$(PROVGATE_BIN): test_provisioning_gate.cpp $(PROVGATE_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_provisioning_gate.cpp
+
+$(TLSPOL_BIN): test_tls_policy.cpp $(TLSPOL_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_tls_policy.cpp
+
+$(APSEC_BIN): test_ap_security_policy.cpp $(APSEC_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_ap_security_policy.cpp
+
 $(MQTTTLS_BIN): test_mqtt_transport_logic.cpp $(MQTTTLS_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_mqtt_transport_logic.cpp -o $@
 
@@ -473,7 +513,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -484,6 +524,9 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(BOOTPOL_BIN)
 	./$(SDMOUNT_BIN)
 	./$(WIFIJOIN_BIN)
+	./$(PROVGATE_BIN)
+	./$(TLSPOL_BIN)
+	./$(APSEC_BIN)
 	./$(MQTTTLS_BIN)
 	./$(MQTTFIELDS_BIN)
 	./$(MQTTQUEUE_BIN)

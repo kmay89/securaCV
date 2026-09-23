@@ -361,6 +361,20 @@ Untapped / issues:
   legacy fallback macro was deleted from [`canary_config.h`](canary/include/canary_config.h) and
   `begin()` now requires an explicit credential.)
   The IDF OTA sub-project already sets `pmf_cfg`; the main firmware doesn't. **[P1, unblocked by §1.1]**
+  *Update 2026-09 (F16, option (b) — maintainer to confirm):* landed with a caveat. Both trees now
+  ask for WPA2/WPA3 **transition** on the SoftAP (SAE for capable clients, WPA2 for the rest), PMF
+  capable and never required, after every `WiFi.softAP()`
+  ([`common/network/ap_security_policy.h`](common/network/ap_security_policy.h), host-tested;
+  the WAP carries a byte-identical staged copy), and the STA asks for PMF capable / not required
+  (read back first, written only when needed; always capable on IDF 5). `CANARY_AP_WPA3_TRANSITION`
+  (default 1) is the knob. **Caveat:** SoftAP SAE exists only where the core's prebuilt sdkconfig
+  enables it — an IDF 5 feature, so on the 2.0.17 core (dev/release) the AP stays WPA2 and says
+  so (`ap_auth` / `ap_auth_reason` in `/api/wifi/status`, `ap_auth` in `/api/status`); the row
+  closes for those builds with §1.1. CI compile pending, no bench pass. Not in this change: widening the 8-char
+  AP password (below) — it is re-derived from the fingerprint every boot, so a new derivation
+  changes every provisioned device's Wi-Fi password after an OTA and needs a derivation-version
+  marker first. The `"witness2026"` tripwires in `pre_build.py` / `regression_check.sh` match no
+  source today; they stay as the ratchet.
 - **De-block the loop** — async `WiFi.scanNetworks(true,…)`, throttle/offload `MDNS.queryService`,
   move MQTT to its own task (subsumed by §1.2). **[P1]**
 - **[future] FTM ranging** (`esp_wifi_ftm_*`, S3 initiator/responder) → inter-Canary distance to
@@ -458,11 +472,28 @@ Genuinely solid. Gaps:
 
 - **No TLS anywhere** (no `esp_https_server`/`httpd_ssl`) — all REST + the MJPEG peek stream are
   plaintext on the LAN; a self-signed pinned cert (as the archived WAP snapshot had) closes it. **[P1]**
+  *Update 2026-09 (F15, option (b) — maintainer to confirm):* landed for `[env:dev]` and
+  `[env:full]` — `httpd_ssl` on 443 with an on-device ECDSA P-256 self-signed certificate (the
+  WAP's CN / validity / serial / NVS layout), a port-80 server that keeps the connectivity probes
+  and 307-redirects the rest, TLS skipped during first-boot setup, the MJPEG stream run in the
+  handler over TLS, and `tls_enabled` / `tls_cert_fp` / `tls_mode_reason` in `/api/status` and
+  the receipt. Every core capability is detected (`__has_include` + Kconfig + mbedTLS config), so
+  a core without it compiles HTTP-only and says why. **Release pending** the size-guard delta;
+  **bench Track D open**. Fallback if the IDF 4.4 core lacks x509write: option (c), the
+  certificate provisioned by the flashers' NVS builders.
 - **Auth coverage is good — the MJPEG stream *is* gated.** `handle_peek_stream` calls `auth_gate`
   first ([`securacv_network.cpp:1700`](canary/lib/securacv_network/src/securacv_network.cpp)), so the
   peek stream is **not** an open privacy hole. The main intentionally-ungated handler is `handle_ui`
   (it serves the SPA and carries the token). Worth a periodic sweep that no *new* handler is added
   without `auth_gate`, but there is no open endpoint today. **[P2 — hygiene]**
+  *Update 2026-09 (F20 gap #11, option D — maintainer to confirm):* the sweep is now a CI gate —
+  [`canary/scripts/check_route_security.py`](canary/scripts/check_route_security.py) fails any
+  route that reaches no credential gate and is not on its documented public allowlist. And
+  `handle_ui` / `/setup` no longer hand the token to every caller: it is injected only for
+  first-boot setup, a bearer-authenticated request, a SoftAP-subnet peer, or by spending a BOOT
+  tap (one tap = one page load or one receipt fetch, 30 s;
+  [`common/network/provisioning_gate.h`](common/network/provisioning_gate.h), host-tested); a
+  home-LAN load gets the page without it. CI compile pending, no bench pass.
 - **AP password is exactly 8 chars** (`"cv-"` + 5), the WPA2 floor — ~28.7 bits of entropy. Widen
   to 10–12 chars from the same fingerprint for headroom. **[P2]**
 - **Untapped UX:** Improv-WiFi / WebUSB provisioning, SSE/WebSocket event streams instead of poll,
@@ -516,7 +547,8 @@ confirmed against a real CI build log before anyone acts loudly on them:
   (they'd need the pioarduino custom-sdkconfig path, which is another reason to do §1.1 first).
   **Check a verbose build for whether the file is consumed.**
 - **Confirm the two ungated HTTP handlers** (`handle_ui`, `/api/peek/stream`) before shipping —
-  §3.8 item 2.
+  §3.8 item 2. (2026-09: the stream is `auth_gate`d and `handle_ui` withholds the token off-AP;
+  both are now pinned by `canary/scripts/check_route_security.py`.)
 - **SD 20 MHz** is reliable on the reference wiring; validate on hardware with the specific card
   mix before raising the default, keeping the slow-init fallback ladder.
 - Everything tagged **[unblocked by §1.1]** presumes the core-3.x migration; on the legacy 2.0.17
@@ -548,8 +580,8 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 18 | HW key protection (HMAC/DS peripheral) + entropy seed + atomic chain head | **P1** | Crypto | `securacv_crypto.cpp:136` | Real at-rest + anti-forgery guarantees |
 | 19 | Migrate audio→`i2s_pdm`, IR→`rmt_rx` | **P1** | Audio/IR | `securacv_audio.cpp:56` | Forward-compat; built-in HPF/callbacks |
 | 20 | esp-dsp / esp-nn for audio DSP + TFLite | **P1** | Audio/Vision | `securacv_audio.cpp:339` | Several-fold DSP; ~500→~60 ms Invoke |
-| 21 | WPA3/PMF + per-device AP password | **P1** | WiFi | `canary_config.h:276` | Closes plaintext-AP + shared-secret exposure |
-| 22 | TLS on the HTTP/peek surface | **P1** | Web | `securacv_network.cpp` | Encrypted LAN API + stream |
+| 21 | WPA3/PMF + per-device AP password (password: done; WPA2/WPA3 transition + PMF landed 2026-09 — WPA2 until a device on the 2.0.17 core reports SoftAP SAE, see §3.4) | **P1** | WiFi | `canary_config.h:276` | Closes plaintext-AP + shared-secret exposure |
+| 22 | TLS on the HTTP/peek surface (landed dev/full 2026-09; release pending size; bench Track D open) | **P1** | Web | `securacv_network.cpp` | Encrypted LAN API + stream |
 | 23 | Camera SCCB standby + XCLK gating/tuning | **P1** | Camera | `securacv_camera.cpp:111` | Lower idle draw + self-heat; OV5640 headroom |
 | 24 | OV5640/OV3660 tuning parity + PID map fix | **P1** | Camera | `securacv_camera.cpp:392` | Correct image on shipped sensors |
 | 25 | Graceful sleep teardown + `gpio_hold` + PSRAM down | **P1** | Power | `securacv_lowpower.cpp:213` | µA deep-sleep floor; no SD corruption |

@@ -74,7 +74,9 @@ something like:
 The four characters at the end are unique to your Canary. Tap the
 network and enter the **AP password** from your card. (The password is
 *not* `password` and *not* the device ID — it's the eight-character
-string printed under the QR code.)
+string printed under the QR code.) Newer firmware offers WPA3 to phones
+that support it; an older phone that only knows WPA2 still joins the same
+way.
 
 Your phone will **stay** connected — the Canary answers your phone's
 "is there internet here?" check so it won't drop the network or warn you
@@ -501,6 +503,44 @@ Home Assistant can discover it):
 
 The dashboard URL becomes `http://canary-<your-id>.local` once it joins
 your home network.
+
+**Before you switch over, save your recovery kit.** On the dashboard, tap
+**Settings → Save recovery kit**. It downloads `canary-recovery-kit.json`:
+the device ID, the dashboard's access token, and the Canary's own Wi-Fi
+name and password. Keep it somewhere private — anyone holding it can use
+the dashboard, and the iPhone app pairs from it.
+
+**Why the dashboard asks to be unlocked on your home network.** The page
+you load carries the key that every button on it uses. Over the Canary's
+own Wi-Fi only your phone can reach it, so the key comes with the page.
+On your home network any device could load that page, so the Canary sends
+it *without* the key and shows a banner with three ways in:
+
+- tap the **BOOT** button on the Canary, then reload within 30 seconds
+  (one tap unlocks one page load; reloading it later needs another tap);
+- join the Canary's own Wi-Fi (`SecuraCV-XXXX`) while it is still
+  broadcasting (it stops once your home Wi-Fi is working); or
+- paste the token from your recovery kit into the banner. It is kept only
+  for that browser tab, never saved.
+
+Each BOOT tap unlocks exactly one thing within those 30 seconds: one
+page load, or one app or browser fetching the recovery kit — whichever
+asks first. A page you unlocked with the tap can save the recovery kit
+without a second tap; the iPhone app fetching the kit on its own needs a
+fresh tap. That is how you get the kit back later without a USB cable. *(New in 2026-09; checked by automated tests, with its first automated build pending; not
+yet on a bench device.)*
+
+**Encrypted dashboard (development and full images only, for now).** On
+those images the Canary serves its dashboard over `https://` once setup
+is done; typing `http://` sends you there. Setup itself stays on plain
+`http://`, because the phone's sign-in sheet shows a blank page for a
+certificate it does not recognize. Your browser will warn that the
+certificate is not trusted: the Canary made it for itself, and the iPhone
+app checks it against the fingerprint in your recovery kit instead. A
+factory reset makes a new certificate, so pair the iPhone app again
+afterwards. The standard release image does not turn this on yet.
+*(New in 2026-09; its first automated build is pending, and it is not yet on a bench
+device.)*
 
 ---
 
