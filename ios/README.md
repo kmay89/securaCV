@@ -35,8 +35,14 @@ and reliable **background notifications**. These are the exact capabilities the
   the app deliberately doesn't duplicate that surface. A self-describing
   config schema the app could render is a roadmap idea, not a shipped one.
 - **Frozen OS primitives only** — Network.framework, CoreBluetooth, Keychain
-  (generic-password items today; Secure Enclave-backed keys are a roadmap item,
-  not a shipped one), CloudKit, UserNotifications, ActivityKit, CryptoKit. The
+  (generic-password items, `ThisDeviceOnly`), the Secure Enclave, CloudKit,
+  UserNotifications, ActivityKit, CryptoKit. Precisely what the Enclave does
+  here: it holds only P-256 keys, so no SecuraCV secret (X25519, Ed25519) can
+  live in it — it WRAPS the one whose exposure is media, the sealed-snapshot
+  key, behind Face ID / Touch ID / the passcode (`Security/EnclaveCustody.swift`;
+  a software wrapper of the same format where there is no Enclave or no
+  passcode, labeled as such in the Keys tab). Per-device tokens stay plain
+  generic-password items by design: they are read on every 10–20 s poll. The
   load-bearing frameworks are a decade stable; the churn is at the fashionable
   edges we avoid.
 - **Nightly self-heal** (`.github/workflows/ios-selfheal.yml`) rebuilds + tests
@@ -57,7 +63,8 @@ ios/
     SecuraCV/Transport/    Discovery (mDNS), DeviceAPI (HTTP), BLEConsole (CoreBluetooth)
     SecuraCV/Security/     Keychain (+ VaultKeyStore), DeviceStore, ChainVerifier (Ed25519
                            on-device), SnapshotVault (.svlt unseal — CryptoKit twin of
-                           tools/unseal_snapshot.py, pinned by tools/fixtures/vault/)
+                           tools/unseal_snapshot.py, pinned by tools/fixtures/vault/),
+                           EnclaveCustody (the snapshot key, wrapped through the Secure Enclave)
     SecuraCV/Cloud/        CloudSync (CloudKit private DB — the user's own iCloud)
     SecuraCV/Alerts/       AlertCenter (interruption levels), Heartbeat (provably-alive)
     SecuraCV/Native/       LiveActivity, WatchLink (WCSession → wrist), HomeKitBridge,

@@ -21,6 +21,9 @@ struct KeysView: View {
     /// Unseal screen without a second copy of it: the push is a path append,
     /// and an already-open screen is left alone (it consumes the file itself).
     @State private var path = NavigationPath()
+    /// The snapshot key's custody, read on appear (public/first-byte reads
+    /// only — never an unwrap, never a prompt). Nil when there is no key.
+    @State private var snapshotCustody: String?
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -48,6 +51,10 @@ struct KeysView: View {
                 Section {
                     NavigationLink(value: KeysRoute.unseal) {
                         Label("Unseal a snapshot", systemImage: "lock.open.rotation")
+                    }
+                    if let snapshotCustody {
+                        Label("Snapshot key: \(snapshotCustody)", systemImage: "lock.shield")
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
                 } header: {
                     Text("Sealed snapshots")
@@ -99,9 +106,20 @@ struct KeysView: View {
                 case .unseal: UnsealView()
                 }
             }
-            .onAppear { openUnsealIfFilePending() }
+            .onAppear {
+                snapshotCustody = Self.custodyNote(VaultKeyStore.app)
+                openUnsealIfFilePending()
+            }
             .onChange(of: store.pendingSealedSnapshot) { _, _ in openUnsealIfFilePending() }
         }
+    }
+
+    /// Where the snapshot key's protection lives, in a few words — or nil
+    /// when this phone has no snapshot key. Static + pure over the store so
+    /// the tests can hold the copy to the custody it names.
+    nonisolated static func custodyNote(_ keys: VaultKeyStore) -> String? {
+        guard keys.exists else { return nil }
+        return keys.custody?.shortLabel ?? "Keychain · this device only"
     }
 
     /// A `.svlt` arrived (RootView's `.onOpenURL`): make sure the Unseal

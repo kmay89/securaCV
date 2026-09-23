@@ -217,32 +217,37 @@ final class UnsealFlowTests: XCTestCase {
     // MARK: - VaultKeyStore
 
     func testNoKeyUntilOneIsCreated() throws {
-        let store = VaultKeyStore(slots: MemorySlots())
+        let store = memoryVaultKeys()
         XCTAssertFalse(store.exists)
         XCTAssertNil(store.publicKeyHex)
         XCTAssertNil(store.keyIDHex)
+        XCTAssertNil(store.custody)
         XCTAssertNil(try store.privateKey())
     }
 
     func testCreatedOnceThenKept() throws {
         let slots = MemorySlots()
-        let store = VaultKeyStore(slots: slots)
+        let store = memoryVaultKeys(slots)
         let first = try store.generateIfNeeded()
         let again = try store.generateIfNeeded()
         XCTAssertEqual(first.rawRepresentation, again.rawRepresentation, "never a silent second key")
-        let pub = first.publicKey.rawRepresentation
+        let pub = first.rawRepresentation
         XCTAssertEqual(store.publicKeyHex, ChainVerifier.hex(pub))
         XCTAssertEqual(store.publicKeyHex?.count, 64)
         XCTAssertEqual(store.keyIDHex, ChainVerifier.hex(Data(SHA256.hash(data: pub).prefix(8))))
-        XCTAssertEqual(slots.items.count, 2, "the private key and its public twin, nothing else")
+        XCTAssertEqual(try store.privateKey()?.publicKey.rawRepresentation, pub)
+        XCTAssertEqual(slots.items.count, 2, "the private key's record and its public twin, nothing else")
     }
 
     func testForgetRemovesEverything() throws {
         let slots = MemorySlots()
-        let store = VaultKeyStore(slots: slots)
+        let wrapperSlots = MemorySlots()
+        let store = memoryVaultKeys(slots, wrapperSlots: wrapperSlots)
         try store.generateIfNeeded()
+        XCTAssertFalse(wrapperSlots.items.isEmpty)
         store.forget()
         XCTAssertTrue(slots.items.isEmpty)
+        XCTAssertTrue(wrapperSlots.items.isEmpty, "the wrapping key goes with the key it wrapped")
         XCTAssertFalse(store.exists)
     }
 
@@ -250,7 +255,7 @@ final class UnsealFlowTests: XCTestCase {
         let slots = MemorySlots()
         let key = Curve25519.KeyAgreement.PrivateKey()
         slots.items[VaultKeyStore.account] = key.rawRepresentation
-        let store = VaultKeyStore(slots: slots)
+        let store = memoryVaultKeys(slots)
         XCTAssertEqual(store.publicKeyRaw, key.publicKey.rawRepresentation)
         XCTAssertEqual(slots.items[VaultKeyStore.publicAccount], key.publicKey.rawRepresentation)
     }
@@ -258,14 +263,14 @@ final class UnsealFlowTests: XCTestCase {
     func testStoredBytesThatAreNotAKeyAreNeverOne() {
         let slots = MemorySlots()
         slots.items[VaultKeyStore.account] = Data(count: 5)
-        XCTAssertThrowsError(try VaultKeyStore(slots: slots).privateKey())
+        XCTAssertThrowsError(try memoryVaultKeys(slots).privateKey())
     }
 
     // MARK: - UnsealModel
 
     @MainActor
-    func testTheModelOpensOnlyItsOwnKeysFilesAndEveryExitDiscards() throws {
-        let keys = VaultKeyStore(slots: MemorySlots())
+    func testTheModelOpensOnlyItsOwnKeysFilesAndEveryExitDiscards() async throws {
+        let keys = memoryVaultKeys()
         let model = UnsealModel(keys: keys)
         let jpeg = Data("not really a jpeg".utf8)
 
@@ -275,37 +280,47 @@ final class UnsealFlowTests: XCTestCase {
         let stray = try SnapshotSealer.seal(plain: jpeg,
                                             recipient: Curve25519.KeyAgreement.PrivateKey().publicKey,
                                             trigger: .test, bucket: 3)
-        model.unseal(data: stray)
+        await model.unseal(data: stray)
         XCTAssertNil(model.frame)
         XCTAssertNotNil(model.problem)
         model.problem = nil
 
         model.createKey()
         XCTAssertEqual(model.keyIDHex, keys.keyIDHex)
+        XCTAssertEqual(model.custody, .software, "the simulator-safe wrapper these tests inject")
         let key = try XCTUnwrap(try keys.privateKey())
         let ours = try SnapshotSealer.seal(plain: jpeg, recipient: key.publicKey,
                                            trigger: .motion, bucket: 3)
 
-        model.unseal(data: ours)
+        await model.unseal(data: ours)
         XCTAssertEqual(model.frame?.jpeg, jpeg)
         XCTAssertEqual(model.frame?.header.trigger, .motion)
         XCTAssertNil(model.problem)
         model.discard()
         XCTAssertNil(model.frame, "Done / background / disappear all come here")
 
-        // A file sealed to another key: no frame, a reason naming both ids.
+        // A file sealed to another key: refused before any unwrap (so on a
+        // device, before any Face ID prompt), with a reason naming both ids.
         let ourID = try XCTUnwrap(keys.keyIDHex)
-        model.unseal(data: stray)
+        await model.unseal(data: stray)
         XCTAssertNil(model.frame)
         XCTAssertEqual(model.problem?.contains(ourID), true)
         model.problem = nil
 
         // Forgetting the key takes an open frame with it.
-        model.unseal(data: ours)
+        await model.unseal(data: ours)
         XCTAssertNotNil(model.frame)
         model.forgetKey()
         XCTAssertNil(model.frame)
         XCTAssertNil(model.keyIDHex)
         XCTAssertFalse(keys.exists)
     }
+}
+
+/// A VaultKeyStore that never touches the Keychain or the Secure Enclave:
+/// in-memory slots, wrapped by the software wrapper over its own in-memory
+/// slots — the branch the simulator takes (EnclaveCustodyTests).
+func memoryVaultKeys(_ slots: MemorySlots = MemorySlots(),
+                     wrapperSlots: MemorySlots = MemorySlots()) -> VaultKeyStore {
+    VaultKeyStore(slots: slots, preferred: SoftwareWrapper(slots: wrapperSlots))
 }

@@ -312,6 +312,8 @@ final class UnsealModel: ObservableObject {
 
     @Published private(set) var keyIDHex: String?
     @Published private(set) var publicKeyHex: String?
+    /// Where the key's protection lives — nil before a key exists.
+    @Published private(set) var custody: CustodyKind?
     @Published private(set) var canaries: [CanarySnapshots] = []
     @Published private(set) var loading = false
     /// What the screen is doing right now, when it is doing something.
@@ -326,14 +328,24 @@ final class UnsealModel: ObservableObject {
         self.keys = keys
     }
 
-    /// Where the key lives, in one honest line.
+    /// Where the key lives, in one honest line (CustodyKind.label: "wrapped
+    /// by", never "decrypted in").
     var custodyLine: String {
-        "Kept in this phone's Keychain, device-only — it never syncs to iCloud."
+        (custody?.label ?? "Kept in this phone's Keychain, device-only.")
+            + " It never syncs to iCloud."
     }
 
     func load() {
+        // A key from before custody wrapping is wrapped now, silently:
+        // wrapping needs no presence, only the wrapping key's public half.
+        do {
+            try keys.migrateIfNeeded()
+        } catch {
+            problem = "Couldn't protect this phone's snapshot key (\(error.localizedDescription))."
+        }
         keyIDHex = keys.keyIDHex
         publicKeyHex = keys.publicKeyHex
+        custody = keys.custody
     }
 
     func createKey() {
@@ -414,7 +426,7 @@ final class UnsealModel: ObservableObject {
         defer { busy = nil }
         do {
             let data = try await api.vaultDownload(name: item.name)
-            unseal(data: data)
+            await unseal(data: data)
         } catch {
             problem = error.localizedDescription
         }
@@ -429,7 +441,7 @@ final class UnsealModel: ObservableObject {
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         do {
             let data = try Data(contentsOf: url)
-            unseal(data: data)
+            Task { await unseal(data: data) }
         } catch {
             problem = "Couldn't read \(url.lastPathComponent): \(error.localizedDescription)"
         }
@@ -452,11 +464,21 @@ final class UnsealModel: ObservableObject {
         return file.hasPrefix(inbox + "/")
     }
 
-    /// The one decrypt path. The private key is read for exactly this and
-    /// dropped when the function returns; the frame goes to `frame`.
-    func unseal(data: Data) {
+    /// The one decrypt path. Every check that needs no private key runs
+    /// first (header, length, key id — public key only), so a file this
+    /// phone cannot open never asks for Face ID. Then presence, once, when
+    /// the key's custody needs it; then the unwrap and the tag. The private
+    /// key is held for exactly this and dropped when the function returns;
+    /// the frame goes to `frame`.
+    func unseal(data: Data) async {
         do {
-            guard let key = try keys.privateKey() else {
+            guard let publicKey = keys.publicKeyRaw else {
+                problem = "This phone has no snapshot key, so nothing can be opened here."
+                return
+            }
+            try SnapshotSealer.precheck(file: data, recipientPublicKey: publicKey)
+            let context = try await keys.authenticate(reason: "Open a sealed snapshot")
+            guard let key = try keys.privateKey(context: context) else {
                 problem = "This phone has no snapshot key, so nothing can be opened here."
                 return
             }

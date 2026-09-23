@@ -257,10 +257,12 @@ enum SnapshotSealer {
                                        outputByteCount: 32)
     }
 
-    /// Open a sealed file with the operator's private key. Every check is
-    /// in the same order as unseal_snapshot.py's cmd_unseal: header bounds,
-    /// body length, key id, then the tag.
-    static func unseal(file: Data, key: Curve25519.KeyAgreement.PrivateKey) throws -> UnsealedFrame {
+    /// Every check an unseal makes BEFORE it needs the private key, in
+    /// unseal_snapshot.py's cmd_unseal order: header bounds, body length,
+    /// key id. Public-key only, so the Unseal screen runs it before asking
+    /// for Face ID — a file sealed to some other key never prompts.
+    @discardableResult
+    static func precheck(file: Data, recipientPublicKey operatorPub: Data) throws -> SvltHeader {
         let header = try SvltHeader.parse(file)
         let expectedBody = header.ctLen + SvltHeader.tagSize
         let actualBody = file.count - SvltHeader.size
@@ -268,12 +270,19 @@ enum SnapshotSealer {
             throw SnapshotVaultError.lengthMismatch(expected: SvltHeader.size + expectedBody,
                                                     actual: file.count)
         }
-        let operatorPub = key.publicKey.rawRepresentation
         let ourID = keyID(ofRawPublicKey: operatorPub)
         guard ourID == header.keyID else {
             throw SnapshotVaultError.keyIDMismatch(file: header.keyIDHex,
                                                    key: ChainVerifier.hex(ourID))
         }
+        return header
+    }
+
+    /// Open a sealed file with the operator's private key: `precheck`, then
+    /// the tag.
+    static func unseal(file: Data, key: Curve25519.KeyAgreement.PrivateKey) throws -> UnsealedFrame {
+        let operatorPub = key.publicKey.rawRepresentation
+        let header = try precheck(file: file, recipientPublicKey: operatorPub)
         let ephemeral: Curve25519.KeyAgreement.PublicKey
         let shared: SharedSecret
         do {

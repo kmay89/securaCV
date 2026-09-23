@@ -126,6 +126,15 @@
   <key>NSHomeKitUsageDescription</key>
   <string>Add your Canaries to Apple Home so they can trigger your automations. Only coarse status is shared — never footage.</string>
 
+  <!-- Face ID: opening a sealed snapshot unwraps the phone's snapshot key
+       through the Secure Enclave, and that Enclave key is created with
+       `.userPresence` (Security/EnclaveCustody.swift) — Face ID, Touch ID
+       or the passcode. iOS requires this string before Face ID may be
+       offered at all; without it the prompt would fall back to the
+       passcode on every open. Nothing about the face reaches the app. -->
+  <key>NSFaceIDUsageDescription</key>
+  <string>SecuraCV asks for Face ID before it opens a sealed snapshot, so only you can use the key this device keeps for them.</string>
+
   <!-- No microphone usage string, on purpose: the app records nothing and
        has no talk feature. If two-way talk ever lands, the mic string, the
        session plumbing, and the UI arrive together in that change. -->

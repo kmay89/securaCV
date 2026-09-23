@@ -157,9 +157,15 @@ without a computer:
 
 - **Create key** makes the X25519 key on the phone and keeps it in the
   Keychain, this device only (`ThisDeviceOnly` — it never rides iCloud
-  Keychain). The private half has no export path; forgetting it is a
+  Keychain), wrapped through the Secure Enclave where the phone has one and
+  a passcode is set: opening a snapshot then asks for Face ID, Touch ID or
+  the passcode. (The Enclave holds only P-256 keys, so it wraps the X25519
+  key rather than holding it; the key is in app memory for the length of an
+  unseal. Without an Enclave the same envelope uses a software key, and the
+  Keys tab says so.) The private half has no export path; forgetting it is a
   destructive, confirmed step, because every frame sealed to it is then
-  unreadable for good.
+  unreadable for good — and removing the phone's passcode disables an
+  Enclave-wrapped key the same way.
 - **Register this phone's key** sends only the public half to a paired
   canary-wap (`POST /api/vault/key`), and the screen shows, per Canary,
   whether the key it holds is this phone's (the 16-hex key id is compared).

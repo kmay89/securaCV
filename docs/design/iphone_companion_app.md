@@ -63,7 +63,7 @@ is the reason people trust the whole system. That is §5b, and it is the point.
 | **"Maximally useful to manage everything, not complicated."** | One screen answers "is everything OK?" (the fleet health ladder: `Ok/Notice/Warn/Alert/Tamper`). Depth is *revealed*, not *presented*. §3. |
 | **"Once set up, the way to get alerts and even cloud."** | On your network: subscribe to MQTT / the SSE witness stream / BLE — zero cloud. Away from home: the *only* invariant-legal cloud touch is a **metadata-only wake relay** — a token, never footage, never event content. §5. |
 | **"Apple hidden email + OTP login, like Anthropic — but don't own the data; do it on device / an iCloud job."** | The app needs **no account to work locally** (matches the "no account" promise). Where a contactable identity is genuinely required, use **Sign in with Apple + Hide My Email** so we only ever see a relay address. The "iCloud job that runs" is literally **CloudKit's private database** — your data lives in *your* iCloud; we cannot read it. §4. |
-| **"Own their data."** | Secrets (per-device tokens, the vault private key) live in **Secure Enclave / Keychain**. Sealed `.svlt` snapshots are encrypted to *your* public key and can be unsealed **on the phone** — the one place decryption is allowed. We are structurally unable to. §4, §6. |
+| **"Own their data."** | Secrets (per-device tokens, the snapshot private key) live in the **Keychain**, device-only — the snapshot key wrapped through the **Secure Enclave**. Sealed `.svlt` snapshots are encrypted to *your* public key and can be unsealed **on the phone** — the one place decryption is allowed. We are structurally unable to. §4, §6. |
 
 ---
 
@@ -150,7 +150,8 @@ also away from home (opt-in relay, §5). Honesty about reach is a feature.
 **④ Keys.** The part no web SPA can do well. Your vault **trustee** role
 (approve / deny a break-glass request from another trustee, N-of-M), and — when
 *you* are the key holder — **unseal a `.svlt` snapshot right here**, decrypted
-in Secure Enclave, shown once, never written to the cloud. Plus the pinned-key
+on the phone with a key unwrapped through the Secure Enclave (behind Face ID,
+Touch ID or the passcode), shown once, never written anywhere. Plus the pinned-key
 trust list (TOFU): what "Verified" means for each device, and a visible,
 auditable "this key changed" alarm.
 
@@ -214,7 +215,13 @@ ecosystem. There is no password, no username, no profile, nothing to breach —
 because there is almost nothing stored.
 
 **Layer 3 — Secrets stay on the device that owns them.** Per-device tokens and,
-above all, the **vault private key**, live in the **Secure Enclave / Keychain**.
+above all, the **sealed-snapshot private key** live in the **Keychain**,
+device-only, and the snapshot key is also **unwrapped through the Secure
+Enclave**. Precisely: the Enclave holds only P-256 keys, so the X25519 snapshot
+key cannot live in it; an Enclave P-256 key that needs Face ID, Touch ID or the
+passcode is what unwraps the Keychain item holding it, and the key is in app
+memory only for the length of an unseal (`ios/Sources/SecuraCV/Security/EnclaveCustody.swift`).
+Tokens are not wrapped, by design: they are read on every poll.
 The sealed-snapshot promise is *"the Canary holds only your public key, so it is
 structurally unable to open them — only you can."* The phone is the natural
 "you." **Open question flagged loudly:** iCloud Keychain would sync that private
@@ -223,7 +230,8 @@ Default should be **device-bound, non-syncing** key material with an explicit,
 well-explained opt-in to iCloud-Keychain sync — never silent. (§10.)
 
 The net: **we own nothing.** Locally there's no account. Your fleet metadata is
-in your iCloud. Your secrets are in your Enclave. The only thing that ever
+in your iCloud. Your secrets are on your phone — the one that opens a
+snapshot wrapped by its Enclave. The only thing that ever
 touches a SecuraCV-adjacent server is a contentless wake token — and even that
 is optional and self-hostable.
 
@@ -442,7 +450,8 @@ never have to trust us not to do.
    CryptoKit (mirror `lib/witness-chain.js`); local notifications on Wi-Fi.
 4. **BLE.** CoreBluetooth against the GATT console (Service `8fc1cee0-…`,
    Snapshot char `8fc1cee1-…`, bonded) + chirp/beacon scan — off-grid status.
-5. **Keys.** Secure-Enclave unseal of `.svlt`; trustee approve/deny flow (see
+5. **Keys.** On-phone unseal of `.svlt` (key unwrapped through the Secure
+   Enclave); trustee approve/deny flow (see
    `docs/design/vault_operator_ux_v1_1.md`).
 6. **CloudKit sync** of device list / rules / digests (private DB).
 7. **Away tier.** Sign in with Apple + Hide-My-Email / OTP; the metadata-only
@@ -471,8 +480,12 @@ only you hold.
 
 ## 10. Open decisions (settle before building past Phase 5)
 
-1. **Vault private key sync.** Device-bound only, or opt-in iCloud-Keychain sync?
-   (Recommendation: device-bound default, loud explicit opt-in.)
+1. **Sealed-snapshot private key sync.** Device-bound only, or opt-in
+   iCloud-Keychain sync? (Recommendation: device-bound default, loud explicit
+   opt-in.) Shipped: device-bound — `ThisDeviceOnly`, and Enclave-wrapped where
+   the phone has a Secure Enclave and a passcode, which cannot sync by
+   construction (an Enclave key never leaves its device). An opt-in would have
+   to be a separate, software-wrapped copy.
 2. **Relay: hosted default + self-host, or self-host only?** Trades reach for
    "zero third party by default."
 3. **Away-tier identity:** Sign in with Apple only, or also email-OTP from day
