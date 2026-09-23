@@ -53,8 +53,8 @@ const LAYER_MM = 0.2; // README §Suggested print settings
 // note is printing a case, not maintaining the Lab, so the note says what they
 // get and the how-to-vendor pointer goes to the console for whoever is.
 export const SLICER_ABSENT_NOTE =
-  "Exact toolpath time needs the optional slicer engine, which this build " +
-  "doesn't include — the modeled estimate stands.";
+  "Exact toolpath time needs the optional slicer engine, which this copy of " +
+  "the Lab doesn't include — the modeled estimate stands.";
 export const SLICER_ABSENT_CONSOLE =
   "enclosure lab: Kiri:Moto is not vendored, so ⚡ slice for exact time keeps " +
   "the modeled estimate. Vendoring it is a deliberate decision (it needs " +
@@ -950,8 +950,9 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
       "print time and energy are a transparent physical model for your rig " +
       "(volumetric flow → time; average duty-cycle power → energy), carrying " +
       "the ± band shown. For a true toolpath time, hit ⚡ slice for exact time — " +
-      "when this build includes the optional offline Kiri:Moto slicer it hands " +
-      "it the geometry and upgrades the time in place; otherwise the estimate stands."));
+      "the button hands the geometry to the optional offline Kiri:Moto slicer " +
+      "when this copy of the Lab includes it and upgrades the time in place; " +
+      "otherwise the estimate stands."));
 
     // hand off to the bench: the print's done, now build it
     stage2.hidden = true;

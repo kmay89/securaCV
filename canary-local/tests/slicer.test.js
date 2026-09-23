@@ -81,6 +81,12 @@ test("no engine: the Lab's note is user voice; the vendor pointer is console-onl
   assert.match(SLICER_ABSENT_NOTE, /estimate stands/);
   assert.doesNotMatch(SLICER_ABSENT_NOTE, /vendor|tools\/|\.sh\b|assets\/|README/i,
     "maintainer instructions leaked into user-facing copy");
+  // the note shares a card with the cost-to-build panel and a "now build it"
+  // hand-off: "this build" reads as the person's device, so it names the Lab
+  assert.doesNotMatch(SLICER_ABSENT_NOTE, /\bthis build\b/i, "'this build' is ambiguous beside a device's build");
+  assert.match(SLICER_ABSENT_NOTE, /this copy of the Lab/);
+  // kiri_slice_probe.mjs (CI, in a browser) finds the note on the page by this pattern
+  assert.match(SLICER_ABSENT_NOTE, /optional slicer engine.*estimate stands/i);
   assert.match(SLICER_ABSENT_CONSOLE, /tools\/vendor_kiri\.sh/);
   assert.match(SLICER_ABSENT_CONSOLE, /vendor\/kiri\/README\.md/);
 
