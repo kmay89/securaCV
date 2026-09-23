@@ -142,6 +142,17 @@ struct RootView: View {
         // route (and any anchor in it) itself, so routing logic never
         // leaks into the shell.
         .onOpenURL { url in
+            // The second door: a sealed snapshot (.svlt) opened from Files,
+            // Mail or AirDrop lands on the Unseal screen, which reads it —
+            // the URL is a pointer, and only the Keys tab ever dereferences
+            // it. Any other file URL is ignored, not guessed at.
+            if url.isFileURL {
+                if url.pathExtension.lowercased() == SvltFile.fileExtension {
+                    store.pendingSealedSnapshot = url
+                    section = .keys
+                }
+                return
+            }
             if let route = AppRoute(url: url) { store.pendingRoute = route }
         }
         // Arriving on a section is the moment its one orientation line can

@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""Generate the cross-language sealed-snapshot (.svlt) parity fixture.
+
+  python3 tools/gen_svlt_parity.py           # write the fixture
+  python3 tools/gen_svlt_parity.py --check   # fail if it is stale
+
+The fixture pins ONE sealed file, byte for byte, produced by the python
+reference (tools/unseal_snapshot.py: X25519 -> HKDF-SHA256 -> ChaCha20-
+Poly1305 with the 64-byte header as AAD) from FIXED, TEST-ONLY key material:
+the operator key, the ephemeral key and the nonce are all derived from
+public strings below, so the output is reproducible and no randomness is
+involved. The iOS app's CryptoKit port (ios/Sources/SecuraCV/Security/
+SnapshotVault.swift, asserted by SnapshotVaultTests) must decrypt `file_hex`
+with `operator_priv_hex` to a plaintext whose SHA-256 is `plaintext_sha256`,
+AND re-seal the plaintext with the same ephemeral key and nonce to the same
+`file_hex` — a construction that differs in any byte (salt order, info
+string, AAD) fails at the tag, so the pin is the strongest kind: the bytes.
+
+`golden_header_hex` is the SAME constant test_vault_logic.cpp (C++) and
+test_unseal_snapshot.py (python) share; carrying it here lets the Swift test
+pin the header layout as the third language without retyping it.
+
+Lives under tools/fixtures/, beside its generator and NOT under tests/:
+rust.yml and detect-eval.yml both filter on `tests/**`, so a fixture there
+dispatches the whole Rust matrix for a file no cargo target opens (the same
+reason viewer/fixtures/timeline/ is where it is).
+
+The keys here are test vectors, not secrets: never register
+`operator_pub_hex` on a real Canary.
+
+Requires: pip install cryptography
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import sys
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.x25519 import (
+    X25519PrivateKey,
+    X25519PublicKey,
+)
+from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import unseal_snapshot as us  # noqa: E402
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+OUT = os.path.join(HERE, "fixtures", "vault", "svlt_parity.json")
+
+# The same golden header test_vault_logic.cpp and test_unseal_snapshot.py
+# share verbatim (trigger=T3 smoke, bucket=87, key_id=01..08, ephemeral=
+# A0..BF, nonce=C0..CB, ct_len=128000). Retyped here on purpose: the python
+# test asserts this copy equals its own, so the three languages hold one hex.
+GOLDEN_HEADER_HEX = (
+    "53564c54"  # "SVLT"
+    "01"        # version
+    "01"        # trigger t3 smoke
+    "57"        # bucket 87
+    "00"        # reserved
+    "0102030405060708"
+    "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf"
+    "c0c1c2c3c4c5c6c7c8c9cacb"
+    "00f40100"  # ct_len 128000 LE
+)
+
+TRIGGER = 9      # "test" — the manual /api/vault/test capture
+BUCKET = 87      # 14:30-ish local, the golden header's bucket
+
+
+def _clamped_scalar(label: bytes) -> bytes:
+    """A fixed X25519 private scalar from a public label, pre-clamped
+    (RFC 7748 §5) so python and CryptoKit start from identical bytes and
+    neither side's clamping can be a source of drift."""
+    raw = bytearray(hashlib.sha256(label).digest())
+    raw[0] &= 248
+    raw[31] &= 127
+    raw[31] |= 64
+    return bytes(raw)
+
+
+OPERATOR_PRIV = _clamped_scalar(b"securacv svlt parity: operator key (TEST ONLY)")
+EPHEMERAL_PRIV = _clamped_scalar(b"securacv svlt parity: ephemeral key (TEST ONLY)")
+NONCE = hashlib.sha256(b"securacv svlt parity: nonce (TEST ONLY)").digest()[:12]
+# 3 KiB of a recognizable pattern: enough to be a real ciphertext, small
+# enough that the hex stays a readable diff.
+PLAINTEXT = bytes(range(256)) * 12
+
+
+def _pub_raw(priv: X25519PrivateKey) -> bytes:
+    return priv.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+
+
+def build() -> dict:
+    operator = X25519PrivateKey.from_private_bytes(OPERATOR_PRIV)
+    operator_pub = _pub_raw(operator)
+    eph = X25519PrivateKey.from_private_bytes(EPHEMERAL_PRIV)
+    eph_pub = _pub_raw(eph)
+
+    shared = eph.exchange(X25519PublicKey.from_public_bytes(operator_pub))
+    key = us.derive_key(shared, eph_pub, operator_pub)
+    key_id = us.key_id_of(operator_pub)
+    header = us.build_header(TRIGGER, BUCKET, key_id, eph_pub, NONCE, len(PLAINTEXT))
+    sealed = ChaCha20Poly1305(key).encrypt(NONCE, PLAINTEXT, header)
+    file_bytes = header + sealed
+
+    # Prove the reference can open what it just wrote before pinning it.
+    back = operator.exchange(X25519PublicKey.from_public_bytes(eph_pub))
+    plain = ChaCha20Poly1305(us.derive_key(back, eph_pub, operator_pub)).decrypt(
+        NONCE, sealed, header
+    )
+    if plain != PLAINTEXT:
+        raise SystemExit("gen_svlt_parity: the reference could not round-trip its own file")
+
+    return {
+        "_comment": (
+            "Generated by tools/gen_svlt_parity.py — do not edit. TEST-ONLY keys; "
+            "never register operator_pub_hex on a real Canary. Asserted by "
+            "tools/test_unseal_snapshot.py and ios SnapshotVaultTests."
+        ),
+        "construction": "X25519 -> HKDF-SHA256(salt=eph_pub||op_pub, info=securacv/vault/seal/v1) "
+                        "-> ChaCha20-Poly1305(aad=64-byte header); file = header||ct||tag",
+        "operator_priv_hex": OPERATOR_PRIV.hex(),
+        "operator_pub_hex": operator_pub.hex(),
+        "key_id_hex": key_id.hex(),
+        "ephemeral_priv_hex": EPHEMERAL_PRIV.hex(),
+        "ephemeral_pub_hex": eph_pub.hex(),
+        "nonce_hex": NONCE.hex(),
+        "trigger": TRIGGER,
+        "trigger_tag": us.TRIGGERS[TRIGGER],
+        "bucket": BUCKET,
+        "plaintext_len": len(PLAINTEXT),
+        "plaintext_sha256": hashlib.sha256(PLAINTEXT).hexdigest(),
+        "plaintext_hex": PLAINTEXT.hex(),
+        "header_hex": header.hex(),
+        "file_hex": file_bytes.hex(),
+        "golden_header_hex": GOLDEN_HEADER_HEX,
+    }
+
+
+def render() -> bytes:
+    return (json.dumps(build(), indent=2, sort_keys=True) + "\n").encode("ascii")
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--check", action="store_true",
+                   help="exit 1 if the committed fixture differs from a fresh render")
+    args = p.parse_args()
+
+    fresh = render()
+    if args.check:
+        try:
+            with open(OUT, "rb") as fh:
+                on_disk = fh.read()
+        except FileNotFoundError:
+            print(f"gen_svlt_parity: {os.path.relpath(OUT)} is missing — run without --check",
+                  file=sys.stderr)
+            return 1
+        if on_disk != fresh:
+            print(f"gen_svlt_parity: {os.path.relpath(OUT)} is stale — "
+                  "run python3 tools/gen_svlt_parity.py and commit it", file=sys.stderr)
+            return 1
+        print(f"gen_svlt_parity: {os.path.relpath(OUT)} is fresh")
+        return 0
+
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    with open(OUT, "wb") as fh:
+        fh.write(fresh)
+    print(f"wrote {os.path.relpath(OUT)} ({len(fresh)} bytes)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

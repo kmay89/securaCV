@@ -84,8 +84,16 @@ policy saying how many of them must sign for a break-glass request to
 authorize. Configured once, then rehearsed — see the Operator's Bench in
 the Lab.
 
-**The Vault** — The sealed store of raw snapshots that break-glass opens.
-→ [sealed snapshot vault](sealed_snapshot_vault.md)
+**The Vault** — The kernel's sealed store of raw frames that break-glass
+opens — by quorum, never by one person.
+→ [`spec/break_glass.md`](../spec/break_glass.md)
+
+**Sealed snapshot** — Not the Vault. One camera frame a canary-wap seals when
+an alarm it was armed for fires, encrypted to one person's X25519 key; the
+Canary keeps only the public half, so it cannot open its own file. Being
+single-recipient by construction, it is opened by that key's holder alone —
+with `tools/unseal_snapshot.py`, or on the iPhone app's Keys tab.
+→ [sealed snapshots](sealed_snapshot_vault.md)
 
 **Coarse timestamps** — Event times are bucketed (10-minute windows) on
 purpose, so the log can prove *that* something happened without becoming a

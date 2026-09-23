@@ -419,7 +419,9 @@ The app **cannot**, by construction, ever grow:
 - a cross-device history search or "follow this person" (Inv. VII);
 - precise timestamps or a map pin on an event (Inv. III);
 - a SecuraCV-hosted footage store or "cloud DVR" (Inv. IV);
-- a way for one person to unseal the vault alone (Inv. V — always N-of-M).
+- a way for one person to break-glass the kernel's evidence vault alone
+  (Inv. V — always N-of-M). A *sealed snapshot* is not that vault: it is one
+  frame a Canary encrypted to one phone's key, opened on that phone (§4 ④).
 
 Writing these down is part of the spec: an app that *can't* do them is one users
 never have to trust us not to do.

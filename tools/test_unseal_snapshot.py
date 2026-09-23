@@ -10,12 +10,19 @@ Covers:
   - seal -> unseal round-trip through the real X25519/HKDF/ChaCha20-Poly1305
     path (the exact construction vault_snapshot.cpp implements on-device).
   - Negatives: wrong private key, tampered ciphertext, tampered header
-    (AAD), truncated file, malformed headers.
+    (AAD) — including the reserved byte parse_header never looks at, so the
+    AAD must be the file's own header bytes — truncated file, malformed
+    headers.
+  - tools/fixtures/vault/svlt_parity.json (tools/gen_svlt_parity.py): the
+    committed fixture is fresh, carries this file's golden header, and its
+    sealed bytes open with the fixed test-only key to the pinned plaintext —
+    the same file ios SnapshotVaultTests opens with CryptoKit.
 
 Prints "ALL unseal_snapshot TESTS PASSED" on success (CI marker).
 """
 
 import hashlib
+import json
 import sys
 
 from cryptography.hazmat.primitives import serialization
@@ -26,6 +33,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import (
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 from cryptography.exceptions import InvalidTag
 
+import gen_svlt_parity as gp
 import unseal_snapshot as us
 
 # Shared verbatim with test_vault_logic.cpp — trigger=T3(1), bucket=87,
@@ -94,19 +102,24 @@ def test_malformed_headers() -> None:
 
     raises(lambda: us.parse_header(bytes(golden[:63])), "short buffer rejected")
 
-    bad = bytearray(golden); bad[0] = ord("X")
+    bad = bytearray(golden)
+    bad[0] = ord("X")
     raises(lambda: us.parse_header(bytes(bad)), "bad magic rejected")
 
-    bad = bytearray(golden); bad[4] = 2
+    bad = bytearray(golden)
+    bad[4] = 2
     raises(lambda: us.parse_header(bytes(bad)), "unknown version rejected")
 
-    bad = bytearray(golden); bad[5] = 6  # 4/5 are motion/mesh now; 6 is unused
+    bad = bytearray(golden)
+    bad[5] = 6  # 4/5 are motion/mesh now; 6 is unused
     raises(lambda: us.parse_header(bytes(bad)), "unknown trigger rejected")
 
-    bad = bytearray(golden); bad[6] = 144
+    bad = bytearray(golden)
+    bad[6] = 144
     raises(lambda: us.parse_header(bytes(bad)), "bucket 144 rejected")
 
-    bad = bytearray(golden); bad[60:64] = (0).to_bytes(4, "little")
+    bad = bytearray(golden)
+    bad[60:64] = (0).to_bytes(4, "little")
     raises(lambda: us.parse_header(bytes(bad)), "zero ct_len rejected")
 
     bad = bytearray(golden)
@@ -114,7 +127,8 @@ def test_malformed_headers() -> None:
     raises(lambda: us.parse_header(bytes(bad)), "oversize ct_len rejected")
 
     # test trigger (9) is valid
-    ok = bytearray(golden); ok[5] = 9
+    ok = bytearray(golden)
+    ok[5] = 9
     check(us.parse_header(bytes(ok))["trigger_tag"] == "test",
           "test trigger (9) accepted")
 
@@ -197,13 +211,77 @@ def test_roundtrip_and_negatives() -> None:
     raises(lambda: unseal_blob(bytes(tampered), operator),
            "tampered header (AAD) fails the tag")
 
+    # The reserved byte (7) is not validated by parse_header, so it is ONLY
+    # the AAD that catches it — which holds only when the AAD is the file's
+    # own header bytes, never one rebuilt from the parsed fields (a rebuild
+    # writes 0 there and would open this file). Every port owes this case;
+    # ios SnapshotVaultTests pins it for the CryptoKit one.
+    tampered = bytearray(blob)
+    tampered[7] ^= 0x01
+    check(us.parse_header(bytes(tampered[:us.HEADER_SIZE]))["trigger"] == h["trigger"],
+          "reserved-byte flip still parses (so only the tag can catch it)")
+    raises(lambda: unseal_blob(bytes(tampered), operator),
+           "tampered reserved byte (AAD) fails the tag")
+
     raises(lambda: unseal_blob(blob[:-1], operator), "truncated file rejected")
+
+
+def test_parity_fixture() -> None:
+    print("cross-language parity fixture (tools/fixtures/vault/svlt_parity.json)")
+    check(gp.GOLDEN_HEADER_HEX == GOLDEN_HEADER_HEX,
+          "generator carries this file's golden header verbatim")
+    try:
+        with open(gp.OUT, "rb") as fh:
+            on_disk = fh.read()
+    except FileNotFoundError:
+        check(False, "fixture exists (run python3 tools/gen_svlt_parity.py)")
+        return
+    check(on_disk == gp.render(), "committed fixture is fresh (gen_svlt_parity.py --check)")
+
+    fx = json.loads(on_disk)
+    check(fx["golden_header_hex"] == GOLDEN_HEADER_HEX, "fixture carries the golden header")
+    blob = bytes.fromhex(fx["file_hex"])
+    operator = X25519PrivateKey.from_private_bytes(bytes.fromhex(fx["operator_priv_hex"]))
+    operator_pub = operator.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    check(operator_pub.hex() == fx["operator_pub_hex"], "operator public key matches")
+    check(us.key_id_of(operator_pub).hex() == fx["key_id_hex"], "key id matches")
+
+    h = us.parse_header(blob[:us.HEADER_SIZE])
+    check(h["trigger"] == fx["trigger"] and h["trigger_tag"] == fx["trigger_tag"],
+          "fixture header trigger")
+    check(h["time_bucket"] == fx["bucket"], "fixture header bucket")
+    check(h["ephemeral_pub"].hex() == fx["ephemeral_pub_hex"], "fixture header ephemeral pub")
+    check(h["nonce"].hex() == fx["nonce_hex"], "fixture header nonce")
+    check(blob[:us.HEADER_SIZE].hex() == fx["header_hex"], "fixture header bytes")
+
+    plain = unseal_blob(blob, operator)
+    check(hashlib.sha256(plain).hexdigest() == fx["plaintext_sha256"],
+          "fixture unseals to the pinned plaintext sha256")
+    check(plain.hex() == fx["plaintext_hex"] and len(plain) == fx["plaintext_len"],
+          "fixture unseals to the pinned plaintext bytes")
+
+    # The strongest pin: re-sealing with the fixed ephemeral key and nonce
+    # must reproduce the file byte for byte — what the Swift side does too.
+    eph = X25519PrivateKey.from_private_bytes(bytes.fromhex(fx["ephemeral_priv_hex"]))
+    eph_pub = eph.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    shared = eph.exchange(X25519PublicKey.from_public_bytes(operator_pub))
+    key = us.derive_key(shared, eph_pub, operator_pub)
+    nonce = bytes.fromhex(fx["nonce_hex"])
+    header = us.build_header(fx["trigger"], fx["bucket"], us.key_id_of(operator_pub),
+                             eph_pub, nonce, len(plain))
+    check(header + ChaCha20Poly1305(key).encrypt(nonce, plain, header) == blob,
+          "re-sealing with the fixed ephemeral key + nonce reproduces file_hex")
 
 
 def main() -> int:
     test_golden_header()
     test_malformed_headers()
     test_roundtrip_and_negatives()
+    test_parity_fixture()
     if _failures:
         print(f"{_failures} FAILURE(S)", file=sys.stderr)
         return 1

@@ -55,12 +55,14 @@ ios/
     SecuraCV/App/          entry, FleetStore (the one observable)
     SecuraCV/Model/        Witness, witness-chain, FleetRollup (mirror fleet_model.h + api.md)
     SecuraCV/Transport/    Discovery (mDNS), DeviceAPI (HTTP), BLEConsole (CoreBluetooth)
-    SecuraCV/Security/     Keychain, DeviceStore, ChainVerifier (Ed25519 on-device)
+    SecuraCV/Security/     Keychain (+ VaultKeyStore), DeviceStore, ChainVerifier (Ed25519
+                           on-device), SnapshotVault (.svlt unseal — CryptoKit twin of
+                           tools/unseal_snapshot.py, pinned by tools/fixtures/vault/)
     SecuraCV/Cloud/        CloudSync (CloudKit private DB — the user's own iCloud)
     SecuraCV/Alerts/       AlertCenter (interruption levels), Heartbeat (provably-alive)
     SecuraCV/Native/       LiveActivity, WatchLink (WCSession → wrist), HomeKitBridge,
                            MediaRoute, FleetIntents (Siri / Shortcuts / Action button)
-    SecuraCV/Views/        Today / Fleet / Alerts / Keys + Pair + DeviceDetail
+    SecuraCV/Views/        Today / Fleet / Alerts / Keys (+ Unseal) + Pair + DeviceDetail
     SecuraCVWidgets/       Dynamic Island / Live Activity UI
     SecuraCVNotificationService/  NSE: shape the content-free wake into a shown alert
     SecuraCVWatch/         SecuraCV on your wrist: WristStore + 3 screens (glance/heartbeat/about)
@@ -393,5 +395,8 @@ every Apple target in the repo (`ENABLE_IOS_BUILD`, `APPLE_DEVELOPMENT_TEAM`,
 ## What it will never do (invariant guardrails)
 
 No live video wall, no face/plate/"who was that" search, no precise timestamps
-on an event, no SecuraCV-hosted footage, no solo vault unseal. An app that
-*can't* do these is one nobody has to trust us not to do. See the RFC §7.
+on an event, no SecuraCV-hosted footage, no solo break-glass of the kernel's
+evidence vault (N-of-M). An app that *can't* do these is one nobody has to
+trust us not to do. See the RFC §7. (A *sealed snapshot* is a different thing:
+one frame a Canary encrypted to this phone's key alone, which the Keys tab
+opens on the phone, shows once and discards — `docs/sealed_snapshot_vault.md`.)
