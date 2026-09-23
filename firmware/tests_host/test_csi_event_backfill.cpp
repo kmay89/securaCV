@@ -8,11 +8,26 @@
 // (custom_components/securacv/sensor.py `_replay_gate`: a verified events
 // body whose event_id is below the last verified one is refused).
 //
-// The properties: the backfill never sends an id HA's gate would refuse,
-// across reboots too; an outage longer than the offline queue still
-// reaches HA whole and in id order; queued tamper alerts go first and a
-// live tamper alert never waits on a backlog; every loop pass does bounded
-// work.
+// The properties:
+//   - the backfill never sends an id HA's gate would refuse, across reboots
+//     too;
+//   - an outage longer than the offline queue still reaches HA whole and in
+//     id order;
+//   - when the MQTT layer refuses a publish (the queue is still draining, or
+//     the send failed), the walk stays on that row;
+//   - every loop pass does bounded work.
+//
+// What this file cannot prove. The model does two things on the planner's
+// behalf:
+//   - World::publish refuses a live publish while the offline queue holds
+//     records, so queued tamper alerts and events go first;
+//   - Host::tick publishes a tamper alert before it commits the row.
+// In the firmware those are securacv_mqtt.cpp's mqtt_publish_event_live()
+// and csi_event_egress_pump(). firmware/scripts/check_event_egress_order.py,
+// run by check_csi_sync.sh, holds that source to them. The scenarios here
+// that involve tamper alerts check only the planner's side of the contract:
+// it keeps a row it could not send, and it holds a tamper row's events copy
+// in id order.
 //
 // Build/run: make -C firmware/tests_host (the CI "host tests" job).
 
@@ -155,7 +170,8 @@ struct World : Port {
   }
   // mqtt_publish_event_live(): refuses while the link is down, while the
   // offline queue still holds records (they go first, in order), or when
-  // the send itself fails.
+  // the send itself fails. The refusal is securacv_mqtt.cpp's, modeled here;
+  // firmware/scripts/check_event_egress_order.py holds the source to it.
   Sent publish(const csi_event_record_t& rec, bool replay, bool backfill) {
     if (rec.event_id == unbuildable_id) return Sent::kNever;
     if (!configured || !connected) return Sent::kNotNow;
@@ -448,7 +464,8 @@ static int test_outage_longer_than_the_queue() {
   w.connected = true;
   const size_t first_backfill = w.wire.size();
   h.drain();
-  // Queued tamper alerts reached the broker before any backfilled row.
+  // Queued tamper alerts reached the broker before any backfilled row
+  // (through the model's queue refusal: see the file header).
   size_t tampers_seen = 0;
   for (size_t i = first_backfill; i < w.wire.size(); ++i) {
     if (w.wire[i].tamper) {
@@ -498,7 +515,11 @@ static int test_rows_during_the_backlog_wait_their_turn() {
   return 0;
 }
 
-static int test_live_tamper_alert_never_waits_on_the_backlog() {
+static int test_tamper_rows_events_copy_waits_its_turn() {
+  // The tamper-topic publish below is Host::tick's, standing in for
+  // csi_event_egress_pump() (see the file header). What this checks is the
+  // planner's side: the row's events copy waits behind the backlog and
+  // nothing is refused.
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
@@ -1211,7 +1232,7 @@ int main() {
   RUN(test_steady_state_is_live);
   RUN(test_outage_longer_than_the_queue);
   RUN(test_rows_during_the_backlog_wait_their_turn);
-  RUN(test_live_tamper_alert_never_waits_on_the_backlog);
+  RUN(test_tamper_rows_events_copy_waits_its_turn);
   RUN(test_reboot_mid_outage_never_republishes);
   RUN(test_new_boot_ids_are_not_mistaken_for_delivered);
   RUN(test_first_boot_of_this_firmware);

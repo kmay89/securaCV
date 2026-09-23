@@ -293,12 +293,25 @@ if [ "$evline_hits" != "$evline_want" ]; then
     drift=1
 fi
 
+# ── The SD event log backfill's glue (backlog F37) ──
+# test_csi_event_backfill.cpp runs the planner against a model. The model
+# refuses a live publish while the MQTT offline queue holds records, and
+# publishes the tamper bridge before it commits the row. Those two are the
+# firmware's job (securacv_mqtt.cpp, csi_event_egress.cpp), and this check
+# holds the source to them. Each run it also mutates the source in memory,
+# to prove the check bites.
+if ! python3 firmware/scripts/check_event_egress_order.py; then
+    drift=1
+fi
+
 if [ "$drift" -ne 0 ]; then
     echo ""
     echo "The committed copies under $STAGED/ must match their canonical sources,"
     echo "and the canary CSI library must stay a thin adapter over them."
     echo "Re-stage with: firmware/projects/canary-wap/setup.sh arduino"
+    echo "(An event egress order error above is a rule about the source, not a copy:"
+    echo " fix the code it names.)"
     exit 1
 fi
 
-echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule library copies are in sync; the canary CSI adapter is thin; the event-log line has one builder."
+echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule library copies are in sync; the canary CSI adapter is thin; the event-log line has one builder; the event egress keeps its order."
