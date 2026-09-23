@@ -201,8 +201,9 @@ Integration testing
   [Feature-Parity Dashboard](../firmware/FEATURES.md), which still marks
   canary-sense partial pending ESP32-C6 bench validation. That bench pass
   rides with the hardware-validation blocker above.
-- **Encrypted-vault UX / key management** — sealing is wired (opt-in); the trustee/seal setup UI
-  and hardware-backed keys are v1.1
+- **Encrypted-vault UX / key management** — sealing is wired (opt-in), the device key rotates by
+  operator command (`break_glass rotate-identity`), and the trustee/quorum setup is the served
+  console's one-time bootstrap panel; the seal setup UI and hardware-backed keys are v1.1
 - **Real-time performance guarantees** — benchmark, don't promise ([how, and why no number is published](BENCHMARKS.md))
 - **Remote attestation** — future
 

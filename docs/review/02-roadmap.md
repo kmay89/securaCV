@@ -123,6 +123,10 @@ Each phase lists **deliverable → user-facing acceptance → invariant guardrai
 - **Hardware-backed keys**: decouple DB key from signing key (F-04 prerequisite), then Secure
   Element / ESP32-S3 **eFuse + flash encryption + secure boot** (the secure partition table already
   anticipates `nvs_keys` from eFuse). *Acceptance:* device key not recoverable from a config seed.
+  *Status 2026-09:* the prerequisite is done — the DB key is already decoupled through
+  `SECURACV_DB_KEY_SEED`, and the kernel now rotates the signing identity and re-keys the database
+  by operator command (`break_glass rotate-identity`, `break_glass rekey-db`; option (a),
+  maintainer to confirm; F-04). The hardware-backed half is open and needs hardware.
 - **Firmware privacy fixes** (F-03): salted/rotating presence tokens instead of raw MAC; GPS
   coarsening; grep guardrails. *Guardrail:* Inv. II/III — these are conformance bugs, fix before
   selling hardware.

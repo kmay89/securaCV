@@ -559,7 +559,9 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   encrypted — so, under `framework = arduino`, on every board. The
   decision is written once in `firmware/common/identity/key_at_rest.h`.
 - Peer removal auto-rotates `opera_secret` and invalidates existing sessions
-  (v0.2 audit O3).
+  (v0.2 audit O3; on canary-wap that is now spec v0.3's transactional flow,
+  #454, and on the PlatformIO tree the variant below — "Outstanding work"
+  has what neither has proven yet).
   - PlatformIO tree (spec §5.6 PlatformIO subsection, `mesh_rekey.{h,cpp}`):
     no per-peer session keys exist there, so the rotation runs an
     ephemeral X25519 exchange per removal inside signed envelopes, the ACK
@@ -660,7 +662,7 @@ firmware or UI source.
 | Spoofed origination | yes (Ed25519) | yes (Ed25519, v0.2) | yes (dual Ed25519) |
 | Replay | yes (counter) | yes (1024-entry dedup + freshness) | yes (dedup + freshness) |
 | Sybil flood | yes (opera_id isolation) | yes (per-pubkey rate + unique-pubkey set) | yes (two-pubkey rule + audit) |
-| Physical extraction of opera_secret | yes (FE gate) | n/a | n/a |
+| Physical extraction of opera_secret | partial (the FE gate keeps it off un-fused boards; NVS is not encrypted, so a fused board still holds it in plaintext) | n/a | n/a |
 | Compromised device originates fake alarm | n/a | partial (suppress vote) | yes (two-pubkey rule) |
 | Reserved-tone or reserved-phrase impersonation | n/a | yes (lint) | yes (lint, color, frequencies) |
 | Hawaii-style operator error | n/a | n/a | yes (two-person rule, msgType=Exercise distinct from Alert) |
@@ -673,9 +675,22 @@ firmware or UI source.
   `dispatch_espnow_message()`, and the shared ESP-NOW receive path forwards
   to Chirp only. Wiring it needs an explicit user opt-in and a `COSIGN_REQ`
   small enough for the 250-byte receive buffer (today 310 bytes).
-- Full transactional opera_secret rekey ACK protocol (v0.2 implements the
-  minimum-correct in-memory rotation; spec §5.6 documents the full flow for
-  v0.3).
+- `opera_secret` rotation on peer removal is implemented in both firmware
+  trees. canary-wap runs spec §5.6's
+  transactional flow (#454: the new secret under each survivor's session
+  key, the ACK sent under the old `opera_id`, commit on every ACK or at
+  60 s, an unacked peer marked `PEER_STALE`); the PlatformIO tree runs its
+  own ephemeral-X25519 variant over signed envelopes (#1704, the Opera
+  section above). Neither has run on a radio: the PlatformIO rotation is
+  host-tested two-sided (`test_mesh_rekey`), and canary-wap's host test
+  restates the commit rule on a mirror, not the sketch's own code. Open: the PlatformIO
+  rotation's maintainer crypto review; the bench passes (the checklist's O3
+  row; `docs/hardware/v1_bench_validation_runbook.md` Track C3); the §5.6
+  `REVOCATION_GRACE_MS` deny-list, in neither tree; and a pairing that
+  completes on a device, which both rotations need first — #1704 found that
+  both trees run pairing's X25519 on Ed25519-generated keys and that the
+  PlatformIO transport's peer table is never populated outside host tests
+  (read from the source, not yet seen on a bench).
 - Beacon pairing flow (spec §3.3: `PAIR_OFFER`, ephemeral X25519 +
   confirmation code) is a stub. Nothing writes a beacon-set entry or a peer's
   X25519 key, so the two-device co-sign path — whose transport is encrypted —

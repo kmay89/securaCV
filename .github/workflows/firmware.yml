@@ -1891,8 +1891,9 @@ jobs:
 
       - name: Build + run canary-wap project host tests
         # The canary-wap project keeps its own host-test Makefile (mesh
-        # coexistence, chirp/beacon invariants, device signature, the
-        # captive-portal DNS response builder, the BLE OTA header policy).
+        # coexistence, the Opera pairing-frame classifier, chirp/beacon
+        # invariants, device signature, the captive-portal DNS response
+        # builder, the BLE OTA header policy).
         # Its `run` target builds and
         # runs every suite; each test exits non-zero on failure, so make's
         # exit code gates the job. Needs libcrypto for the beacon tamper
