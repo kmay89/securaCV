@@ -73,8 +73,9 @@ What it does, in order:
    `NEW_DEVICE_KEY_SEED`, and validates it the way the kernel validates any seed.
 3. **Stages** the successor as `<file>.new` (fresh, mode 0600, fsynced) beside every seed
    file that must follow the identity: `--seed-file`, and `<db>.ed25519.seed` whenever it
-   exists (`--generate` always writes that one). The successor is durable on disk before
-   the retiring seed stops opening the log.
+   exists (`--generate` always writes that one; two spellings of one file are one target). The
+   file and its directory entry are fsynced, so the successor is durable on disk before the
+   retiring seed stops opening the log.
 4. Calls [`Kernel::rotate_device_identity`], renames each staged file over the live one,
    and reopens the log under the successor before reporting success.
 5. Prints the retiring, current and genesis public keys and the lineage epoch — never a seed.
@@ -88,7 +89,8 @@ activated and can be removed; otherwise move it over the live file.
 
 `--rekey-db-to <secret>` (or `SECURACV_NEW_DB_KEY_SEED`) performs the DB-key prerequisite in
 the same ceremony when `SECURACV_DB_KEY_SEED` is not set yet: exactly what `rekey-db` does
-([below](#rotating-the-db-key-itself)), after the preflight open and before the rotation.
+([below](#rotating-the-db-key-itself)), after the preflight open and the staging and before the
+rotation, so a staging refusal leaves the database untouched.
 
 The library call underneath is [`Kernel::rotate_device_identity`], which keeps the entire
 hash-chained log verifiable across the change:

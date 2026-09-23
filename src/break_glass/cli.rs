@@ -1911,28 +1911,21 @@ fn cmd_rotate_identity(
         env_db_secret.as_ref().map(|s| s.as_str()),
     )?);
 
-    let db_secret: zeroize::Zeroizing<String> = match rekey_db_to {
-        Some(secret) => {
-            rekey_database(db_path, &DbKeySource::Seed(current.to_string()), secret)?;
-            eprintln!(
-                "database re-keyed under the independent secret; start every process with \
-                 SECURACV_DB_KEY_SEED set to it"
-            );
-            zeroize::Zeroizing::new(secret.trim().to_string())
-        }
-        None => env_db_secret.expect("checked above"),
-    };
-
     // Every seed file that must follow the identity: --seed-file, and the seed
     // file beside the database whenever one exists (witnessd reads it and
     // refuses a DEVICE_KEY_SEED that disagrees with it). --generate always
     // writes one, since the successor exists nowhere else.
+    // Two spellings of one file (`--seed-file ./witness.ed25519.seed` beside
+    // `--db witness.db`) are one target, compared by canonical directory.
     let mut targets: Vec<PathBuf> = Vec::new();
     if let Some(path) = seed_file {
         targets.push(PathBuf::from(path));
     }
     if let Some(default) = &default_seed_path {
-        if (default.exists() || (generate && targets.is_empty())) && !targets.contains(default) {
+        let already_named = targets
+            .iter()
+            .any(|target| canonical_seed_path(target) == canonical_seed_path(default));
+        if (default.exists() || (generate && targets.is_empty())) && !already_named {
             targets.push(default.clone());
         }
     }
@@ -1956,6 +1949,27 @@ fn cmd_rotate_identity(
             }
         }
     }
+
+    // The optional re-key runs only once every successor file is staged, so a
+    // staging refusal (a `.new` left by an earlier ceremony) leaves the
+    // database exactly as it was. The rotation has not started: a failed
+    // re-key discards the staged successor.
+    let db_secret: zeroize::Zeroizing<String> = match rekey_db_to {
+        Some(secret) => {
+            if let Err(err) =
+                rekey_database(db_path, &DbKeySource::Seed(current.to_string()), secret)
+            {
+                discard(&staged);
+                return Err(err);
+            }
+            eprintln!(
+                "database re-keyed under the independent secret; start every process with \
+                 SECURACV_DB_KEY_SEED set to it"
+            );
+            zeroize::Zeroizing::new(secret.trim().to_string())
+        }
+        None => env_db_secret.expect("checked above"),
+    };
 
     let mut kernel = match Kernel::open_with_db_key_seed(&cfg, Some(db_secret.as_str())) {
         Ok(kernel) => kernel,
@@ -2039,6 +2053,20 @@ fn cmd_rotate_identity(
         db_path
     );
     Ok(())
+}
+
+/// `path` with its directory canonicalized (the file itself may not exist
+/// yet), so two spellings of one seed file compare equal. Falls back to the
+/// path as given when the directory cannot be resolved.
+fn canonical_seed_path(path: &std::path::Path) -> std::path::PathBuf {
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => std::path::Path::new("."),
+    };
+    match (parent.canonicalize(), path.file_name()) {
+        (Ok(dir), Some(name)) => dir.join(name),
+        _ => path.to_path_buf(),
+    }
 }
 
 // Doctor status glyphs (ASCII-safe meaning is clear even if a terminal drops the

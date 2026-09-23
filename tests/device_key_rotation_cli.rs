@@ -948,3 +948,87 @@ fn a_write_side_daemon_never_copies_an_environment_seed_to_disk() {
         assert_no_secrets(&out, &[GENESIS_SEED]);
     }
 }
+
+/// `--seed-file ./witness.ed25519.seed` beside `--db witness.db` names the
+/// seed file beside the database a second time: it is ONE target, staged and
+/// replaced once. And a staging refusal (a `.new` left by an interrupted
+/// ceremony) happens before `--rekey-db-to` touches the database.
+#[test]
+fn rotate_identity_treats_two_spellings_of_one_seed_file_as_one_and_stages_before_rekey() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("witness.db");
+    build_db(&db);
+    let seed_file = write_genesis_seed_file(&db);
+    let staged = seed_file.with_file_name("witness.ed25519.seed.new");
+
+    // A leftover staged file refuses the ceremony — and the database is not
+    // re-keyed: the genesis-derived key still opens it.
+    std::fs::write(&staged, "devkey:left-by-an-interrupted-ceremony-0000\n").expect("stale .new");
+    let out = command(
+        env!("CARGO_BIN_EXE_break_glass"),
+        &[
+            "rotate-identity",
+            "--db",
+            "witness.db",
+            "--ruleset-id",
+            "ruleset:test",
+            "--generate",
+            "--rekey-db-to",
+            DB_SECRET,
+        ],
+        &[],
+    )
+    .current_dir(dir.path())
+    .stdin(Stdio::null())
+    .output()
+    .expect("spawn break_glass");
+    assert!(!out.status.success(), "{}", text(&out));
+    let all = text(&out);
+    assert!(all.contains("a staged seed file already exists"), "{all}");
+    assert!(!all.contains("database re-keyed"), "{all}");
+    let db_str = db.to_str().expect("utf8 path");
+    let out = log_verify(&["--db", db_str], &[("DEVICE_KEY_SEED", GENESIS_SEED)]);
+    assert!(
+        out.status.success(),
+        "the refused ceremony must leave the database key alone\n{}",
+        text(&out)
+    );
+    std::fs::remove_file(&staged).expect("clear the stale .new");
+
+    // Two spellings of the seed file beside the database: one target.
+    let out = command(
+        env!("CARGO_BIN_EXE_break_glass"),
+        &[
+            "rotate-identity",
+            "--db",
+            "witness.db",
+            "--ruleset-id",
+            "ruleset:test",
+            "--generate",
+            "--rekey-db-to",
+            DB_SECRET,
+            "--seed-file",
+            "./witness.ed25519.seed",
+        ],
+        &[],
+    )
+    .current_dir(dir.path())
+    .stdin(Stdio::null())
+    .output()
+    .expect("spawn break_glass");
+    assert!(
+        out.status.success(),
+        "rotate-identity failed\n{}",
+        text(&out)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        stdout.matches("seed file:").count(),
+        1,
+        "one file, replaced once\n{stdout}"
+    );
+    let successor = read_seed(&seed_file);
+    assert_ne!(successor, GENESIS_SEED);
+    assert!(!staged.exists(), "no .new file may be left behind");
+    assert_no_secrets(&out, &[GENESIS_SEED, &successor, DB_SECRET]);
+}

@@ -289,8 +289,9 @@ fn staged_seed_path(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
-/// Stage a replacement seed at `<path>.new` — a fresh mode-0600 file, fsynced —
-/// without touching `path`. Returns the staged path for [`commit_seed_file`].
+/// Stage a replacement seed at `<path>.new` — a fresh mode-0600 file, fsynced,
+/// and its directory fsynced so the new entry is durable too — without
+/// touching `path`. Returns the staged path for [`commit_seed_file`].
 /// A rotation stages the successor BEFORE the kernel commits the rotation, so
 /// the new seed is durable on disk before the old one stops opening the log.
 /// Refuses when a staged file already exists: it may hold a successor from a
@@ -307,11 +308,39 @@ pub fn stage_seed_file(path: &Path, seed: &str) -> Result<PathBuf> {
             path.display()
         ));
     }
+    // The file's own fsync does not make its NEW directory entry durable:
+    // without the directory fsync a power loss could drop `<path>.new`
+    // after the rotation committed. Nothing has used the staged seed yet,
+    // so a failure here removes it rather than leaving it to block the next
+    // ceremony.
+    if let Err(err) = sync_parent_dir(&staged) {
+        let _ = fs::remove_file(&staged);
+        return Err(err);
+    }
     Ok(staged)
 }
 
+/// Fsync the directory holding `path`, so a file created or renamed in it
+/// survives a power loss (POSIX makes no promise for the entry otherwise).
+fn sync_parent_dir(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        let parent = if parent.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            parent
+        };
+        fs::File::open(parent)
+            .and_then(|dir| dir.sync_all())
+            .map_err(|e| anyhow!("failed to fsync directory {}: {}", parent.display(), e))?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
 /// Atomically move a staged seed file over `path` (rename), then fsync the
-/// directory so the rename itself is durable.
+/// directory (best effort) so the rename itself is durable.
 pub fn commit_seed_file(staged: &Path, path: &Path) -> Result<()> {
     fs::rename(staged, path).map_err(|e| {
         anyhow!(
@@ -321,14 +350,9 @@ pub fn commit_seed_file(staged: &Path, path: &Path) -> Result<()> {
             e
         )
     })?;
-    #[cfg(unix)]
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            if let Ok(dir) = fs::File::open(parent) {
-                let _ = dir.sync_all();
-            }
-        }
-    }
+    // Best effort: the rename has happened and the staged file is gone, so an
+    // error here must not be reported as "the seed was not replaced".
+    let _ = sync_parent_dir(path);
     Ok(())
 }
 
