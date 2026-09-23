@@ -380,7 +380,8 @@ compelled.
 Adversary must know the AP password (device-unique, derived from
 fingerprint). Even if connected: API auth required, exponential backoff on
 failures, and HTTPS once setup has completed (plain HTTP during setup, on
-the flagship's port 80 and on the display line's LAN page).
+the flagship's release images — its dev and full builds redirect port 80 to
+HTTPS after setup — and on the display line's LAN page).
 
 **PASS if:** Network proximity alone grants no access.
 
@@ -573,7 +574,8 @@ To change any security-hardened default, a developer must:
    people, and its two passive scanners (presence, Nearby) keep no MAC,
    OUI or name from other people's devices
 7. The WAP serves HTTPS after setup; plain HTTP is a stated posture (setup
-   mode and start failure on the WAP, both logged; the flagship's port 80;
+   mode and start failure on the WAP, both logged; the flagship's release
+   images, its dev and full builds redirecting port 80 to HTTPS after setup;
    the displays' LAN page), never a silent downgrade of a TLS session
 8. Evidence is verifiable offline without any ERRERlabs service
 9. Regression checks enforce all ten principles automatically
