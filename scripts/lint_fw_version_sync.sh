@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# lint_fw_version_sync.sh — one firmware version, typed in six places.
+# lint_fw_version_sync.sh — one firmware version, typed in seven places.
 #
 # Every fw-v* release tags ONE version for every Canary firmware (docs/firmware_ota.md),
-# but the string is spelled out in six headers/sketches:
+# but the string is spelled out in seven headers/sketches:
 #
 #   firmware/canary/include/canary_config.h                        FIRMWARE_VERSION
 #   firmware/projects/canary-display/include/canary/version.h      CANARY_FW_VERSION
 #   firmware/projects/canary-display/arduino/canary_display/version.h  (staged copy)
 #   firmware/projects/canary-sense/include/canary/version.h        CANARY_FW_VERSION
+#   firmware/projects/canary-sentinel/include/canary/version.h     CANARY_FW_VERSION (compiled, not released)
 #   firmware/projects/canary-vision/include/canary/version.h       CANARY_FW_VERSION
 #   firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino FIRMWARE_VERSION ("X.Y.Z-wap")
 #
@@ -26,6 +27,7 @@ declare -a FILES=(
   "firmware/projects/canary-display/include/canary/version.h|#define CANARY_FW_VERSION"
   "firmware/projects/canary-display/arduino/canary_display/version.h|#define CANARY_FW_VERSION"
   "firmware/projects/canary-sense/include/canary/version.h|#define CANARY_FW_VERSION"
+  "firmware/projects/canary-sentinel/include/canary/version.h|#define CANARY_FW_VERSION"
   "firmware/projects/canary-vision/include/canary/version.h|#define CANARY_FW_VERSION"
   "firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino|FIRMWARE_VERSION *="
 )
@@ -63,4 +65,4 @@ if [ "$fail" -ne 0 ]; then
   echo "lint_fw_version_sync: FAIL"
   exit 1
 fi
-echo "lint_fw_version_sync: OK — all six firmware version strings agree on $canonical"
+echo "lint_fw_version_sync: OK — all seven firmware version strings agree on $canonical"

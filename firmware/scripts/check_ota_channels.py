@@ -74,6 +74,15 @@ UNPUBLISHED: dict[str, str] = {
         "canary-vision-c3-super-mini env (C3 Super Mini) — compile-tested "
         "port, no bench validation yet; channel turns on with a Hardware "
         "Test Report",
+    # canary-sentinel (F22 Phase 1a): compiled by CI, released by nothing —
+    # flavors.json marks it `unreleased`. Its two tier products poll these
+    # until the project README's bench checklist is green.
+    "manifest-canary-sentinel.json":
+        "canary-sentinel Standard/Heavy (C6) — Phase 1a compile-gated, not "
+        "released; channel turns on when the bench checklist is green",
+    "manifest-canary-sentinel-lite.json":
+        "canary-sentinel Lite (C3) — Phase 1a compile-gated, not released; "
+        "channel turns on when the bench checklist is green",
 }
 
 

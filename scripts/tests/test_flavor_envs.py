@@ -263,6 +263,18 @@ class LintCatchesRealMistakes(unittest.TestCase):
         self.assertTrue(any("canary-display-zz" in p and "not in build_envs" in p
                             for p in problems), problems)
 
+    def test_unreleased_needs_a_reason_and_no_release_envs(self):
+        ok = {"name": "canary-x", "build_envs": ["canary-x-a"],
+              "unreleased": "bench pending"}
+        self.assertEqual(fe.validate([ok]), [])
+        blank = dict(ok, unreleased="  ")
+        self.assertTrue(any("non-empty reason" in p for p in fe.validate([blank])))
+        both = display_entry({}, [], ["canary-display-dash7"],
+                             ["canary-display-dash7"])
+        both["unreleased"] = "bench pending"
+        self.assertTrue(any("`unreleased` AND release_envs" in p
+                            for p in fe.validate([both])), fe.validate([both]))
+
     def test_release_env_without_flasher_product_is_rejected(self):
         # An env CI builds but the flasher catalog has never heard of.
         entry = display_entry({}, [], ["canary-display-playground"],

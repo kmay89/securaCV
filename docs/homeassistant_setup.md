@@ -297,6 +297,19 @@ device also announces acoustic entities via MQTT discovery:
      into the device's witness chain with its source, so an investigator can
      later verify when the mic was off and who turned it off.
 
+Canary Sentinel (the multi-sensor fusion guardian) is **not released yet** —
+its Phase 1a firmware is compiled by CI but has not run on a bench
+([project README](../firmware/projects/canary-sentinel/README.md)). When a
+unit is built by hand, its own discovery announces **Presence** and
+**Anomaly** binary sensors, a **Channel blinded** problem sensor, **Level**,
+**Confidence**, **Anomaly score**, **Occupancy**, **Range band** and
+**Corroborating modalities** sensors, the uptime / RSSI / free-heap
+diagnostics and the firmware update entity — all from the coarse fused
+claim, never a raw measurement. Its events are signed over their own
+`sentinel` canonical, which the integration verifies like every other signed
+kind; its **Last Event** reads `level_changed`, and its sensing modality
+shows as "Other sensor" because it fuses several media at once.
+
 ### Step 4b: Add the verified-✓ timeline card
 
 For the "single pane of glass" view, add the bundled Lovelace card: edit a

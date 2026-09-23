@@ -23,7 +23,7 @@ against the sprawl becoming a maintenance nightmare.
 | `firmware/projects/canary-ota/` | 16 | **The retired standalone OTA harness** (ESP-IDF). Signed updates ship from `firmware/common/ota/` now; this tree is kept for the tooling under `tools/`. | Superseded — see README OTA row |
 | `firmware/projects/canary-tincan/` | 14 | **Canary Tincan** — the two-can acoustic-link experiment; host-tested core, Arduino sketch. | No |
 | `firmware/projects/canary-companion/` | 9 | **Canary Companion** — host-tested headers for the companion-device contract; no board build. | No |
-| `firmware/projects/canary-sentinel/` | 7 | **Canary Sentinel** — *Phase 0*: multi-sensor fusion core, host-tested, no released build. | No |
+| `firmware/projects/canary-sentinel/` | 29 | **Canary Sentinel** — *Phase 1a*: multi-sensor fusion core, host-tested; carries canary-sense's network/witness stack (pinned to it by `firmware/scripts/check_sentinel_net_sync.sh`), compile-gated in CI, no released build. | No — the net stack is a pinned copy of canary-sense's |
 | `firmware/projects/canary-fence-guard/` | 3 | **Canary Fence Guard** — *concept*; nothing builds yet. | No |
 
 File counts are `git ls-files <tree> | wc -l` on 2026-09-02; they will drift,

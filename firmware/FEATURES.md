@@ -1,6 +1,6 @@
 # SecuraCV Canary Firmware — Feature Audit Matrix
 
-**Last updated:** 2026-09-08 (MQTT broker TLS row added: one shared decision header, canary-wap CA-verified only — no fingerprint hook in esp_mqtt — and its old unverified `tls` bool now refuses until a CA lands; `firmware/canary`'s `securacv_mqtt` still plain. 2026-09-05 feature-truth pass: the two canary-wap dashboard columns collapsed into one — the PlatformIO lane builds the Arduino sketch via `src_dir`, so 43 of 65 cells were describing a deleted `src/` scaffold; canary-wap T3/T4 acoustic detection corrected to ✅; canary-vision / canary-sense WiFi AP corrected to ✅ and their first-time-setup wizard to ⚠️ for the shared headless setup portal. 2026-09-02: canary-display lane added to the dashboard and to `build_matrix.json` — the fleet viewer ships from more release buttons than any other product and had no column; see its note below the dashboard. 2026-07-11: `_securacv._tcp` mDNS fleet adverts with the canonical TXT schema + HA MQTT Identify buttons on canary-vision and canary-sense — compile/CI-verified, hardware bench validation pending. 2026-07-02: canary-sense witness signing — Ed25519 events + NVS hash chain + wap-schema chain/health trust surface + task watchdog; earlier same day: Phase 2 network stack + canary-vision robustness parity)
+**Last updated:** 2026-09-23 (canary-sentinel listed as a variant — Phase 1a, compile-gated in CI and unreleased, deliberately not a dashboard column; see the note under the variant table). 2026-09-08 (MQTT broker TLS row added: one shared decision header, canary-wap CA-verified only — no fingerprint hook in esp_mqtt — and its old unverified `tls` bool now refuses until a CA lands; `firmware/canary`'s `securacv_mqtt` still plain. 2026-09-05 feature-truth pass: the two canary-wap dashboard columns collapsed into one — the PlatformIO lane builds the Arduino sketch via `src_dir`, so 43 of 65 cells were describing a deleted `src/` scaffold; canary-wap T3/T4 acoustic detection corrected to ✅; canary-vision / canary-sense WiFi AP corrected to ✅ and their first-time-setup wizard to ⚠️ for the shared headless setup portal. 2026-09-02: canary-display lane added to the dashboard and to `build_matrix.json` — the fleet viewer ships from more release buttons than any other product and had no column; see its note below the dashboard. 2026-07-11: `_securacv._tcp` mDNS fleet adverts with the canonical TXT schema + HA MQTT Identify buttons on canary-vision and canary-sense — compile/CI-verified, hardware bench validation pending. 2026-07-02: canary-sense witness signing — Ed25519 events + NVS hash chain + wap-schema chain/health trust surface + task watchdog; earlier same day: Phase 2 network stack + canary-vision robustness parity)
 **Original audit:** 2026-02-20
 **Companion docs:** [VARIANT_POLICY.md](VARIANT_POLICY.md) (lifecycle labels), [FIRMWARE_VARIANT_AUDIT.md](FIRMWARE_VARIANT_AUDIT.md) (risk analysis), [PARITY_PLAN.md](PARITY_PLAN.md) (ACTIVE ⇄ canary-wap parity closure program)
 
@@ -14,7 +14,20 @@
 | **canary-sense** | `firmware/projects/canary-sense/` | SPECIALIZED |
 | **canary-display** | `firmware/projects/canary-display/` | SPECIALIZED |
 | **canary-ota** | `firmware/projects/canary-ota/` | SPECIALIZED |
+| **canary-sentinel** | `firmware/projects/canary-sentinel/` | SPECIALIZED (Phase 1a — compile-gated, unreleased; not a dashboard column) |
 | **snapshot (removed)** | _(deleted 2026-05-29; history in git)_ | REMOVED (was ARCHIVED 2026-02-20) |
+
+> **Why canary-sentinel has no dashboard column yet.** Its Phase 1a firmware
+> carries canary-sense's network/witness stack (pinned to it by
+> `firmware/scripts/check_sentinel_net_sync.sh`) plus its own signed
+> `sentinel` canonical, and CI compiles its `door` (C6) and `lite` (C3) envs —
+> but nothing has run on hardware and nothing ships (`firmware/flavors.json`
+> marks it `unreleased`). A column would be a row of cells that each read
+> "compiles; never run", which this table has no symbol for and which a ✅
+> would overstate. What it has, where it is proven, and what is still bench-
+> or Phase-1b-bound (the WiFi-RF / CSI / BLE channels are not built) is the
+> phase table in [its README](projects/canary-sentinel/README.md#phases--what-is-proven-where).
+> It gets a column with its first bench-verified capability.
 
 > **One canary-wap column, because there is one canary-wap source tree.** The
 > project once had a second, PlatformIO-only `src/` tree; per

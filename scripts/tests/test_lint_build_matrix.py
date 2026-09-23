@@ -92,6 +92,34 @@ class LintCatchesRealMistakes(unittest.TestCase):
         errors = lbm.device_join_errors(matrix, flavors, mutated, REPO)
         self.assertTrue(any("canary-display-nope" in e and "[env:" in e for e in errors), errors)
 
+    def test_a_shipping_product_without_a_lane_fails(self):
+        matrix, flavors, _manifests = _tree()
+        extra = flavors + [{"name": "canary-nope", "build_envs": ["x"]}]
+        errors = lbm.lane_coverage_errors(matrix, extra)
+        self.assertTrue(any("'canary-nope' has no lane" in e for e in errors), errors)
+
+    def test_an_unreleased_product_needs_no_lane(self):
+        matrix, flavors, _manifests = _tree()
+        extra = flavors + [{"name": "canary-nope", "build_envs": ["x"],
+                            "unreleased": "bench pending"}]
+        self.assertEqual(lbm.lane_coverage_errors(matrix, extra), [])
+
+    def test_an_unreleased_product_may_not_have_a_lane(self):
+        matrix, flavors, _manifests = _tree()
+        mutated = copy.deepcopy(flavors)
+        next(f for f in mutated if f["name"] == "canary-sense")["unreleased"] = "x"
+        errors = lbm.lane_coverage_errors(matrix, mutated)
+        self.assertTrue(any("'canary-sense' `unreleased`" in e for e in errors), errors)
+
+    def test_the_tree_carries_an_unreleased_product(self):
+        # canary-sentinel is compiled (flavors.json) and deliberately laneless;
+        # if it ships, this test is the reminder to give it a real lane.
+        matrix, flavors, _manifests = _tree()
+        sentinel = next(f for f in flavors if f["name"] == "canary-sentinel")
+        self.assertTrue(sentinel["unreleased"].strip())
+        self.assertNotIn("canary-sentinel",
+                         {p.get("flavor", p["id"]) for p in matrix["products"]})
+
     def test_manifest_family_outside_flavors_json_fails(self):
         matrix, flavors, manifests = _tree()
         mutated = copy.deepcopy(manifests)
