@@ -44,6 +44,7 @@ static constexpr const char* MODEL         = CS_MODEL;
 
 // -------------------- Timing --------------------
 static constexpr uint32_t HEARTBEAT_MS = CS_HEARTBEAT_MS;
+static constexpr uint32_t WATCHDOG_TIMEOUT_SEC = CS_WATCHDOG_TIMEOUT_SEC;
 
 // Ambient light (BH1750) sample cadence — lux feeds tamper corroboration
 // ("lights-out + presence"), not a high-rate channel.

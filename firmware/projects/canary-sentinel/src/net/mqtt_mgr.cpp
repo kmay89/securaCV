@@ -39,6 +39,9 @@ static canary::net::mqtt_tls::BrokerTransport s_broker_tls;
 // (SENT_WATCHDOG_TIMEOUT_SEC) instead of resting on PubSubClient's library
 // default, so the socket timeout is a provable input to the WDT budget.
 static constexpr uint16_t MQTT_SOCKET_TIMEOUT_SEC = 5;
+static_assert(canary::net::mqtt_tls::kConnectTimeoutSec + canary::net::mqtt_tls::kHandshakeTimeoutSec +
+                  MQTT_SOCKET_TIMEOUT_SEC < WATCHDOG_TIMEOUT_SEC,
+              "one bounded broker connect must fit inside the task watchdog");
 static Topics g_topics{};
 static bool discovery_done = false;
 
