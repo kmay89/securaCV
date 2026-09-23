@@ -96,7 +96,11 @@ struct Args {
     /// operators: derives the SQLCipher key (when --db-key is not given)
     /// and the verifying key (when no --public-key/--public-key-file is
     /// given), so `DEVICE_KEY_SEED=... log_verify --db witness.db` works
-    /// against a bridge-produced encrypted log.
+    /// against a bridge-produced encrypted log. The seed anchors identity
+    /// only while it derives the genesis key: after `break_glass
+    /// rotate-identity` the current seed derives a later epoch's key, and
+    /// the run verifies self-anchored instead (it says so and names the
+    /// epoch) — pin the genesis key with --public-key for `valid`.
     #[arg(
         long,
         value_name = "SEED",
@@ -188,6 +192,32 @@ fn main() -> Result<()> {
                 witness_kernel::verifying_key_from_seed(seed).map(|key| hex::encode(key.to_bytes()))
             })
             .transpose()?,
+    };
+    // A seed-derived key is the genesis anchor only for the log that seed
+    // created. After a rotation the CURRENT seed derives a later epoch's key;
+    // treating it as genesis fails the lineage check with a tamper-looking
+    // error on a legitimately rotated log. It cannot stand in for the genesis
+    // pin either — a retired key (often the reason for rotating) could have
+    // forged history before it — so the run falls back to the database's own
+    // genesis, labeled self-anchored, and says why.
+    let public_key_hex = match (
+        &public_key_hex,
+        args.public_key.is_none() && args.public_key_file.is_none(),
+    ) {
+        (Some(seed_key_hex), true) => match rotated_epoch_of(&conn, seed_key_hex) {
+            Some(epoch) => {
+                eprintln!(
+                    "log_verify: the device key seed derives the lineage epoch {epoch} key, not \
+                     the genesis key — this log's identity was rotated, and a seed anchors \
+                     identity only for the log it created. Verifying self-anchored (from the \
+                     database's genesis key); pin the genesis key with --public-key or \
+                     --public-key-file for a `valid` verdict (docs/db_key_rotation.md)."
+                );
+                None
+            }
+            None => public_key_hex,
+        },
+        _ => public_key_hex,
     };
     let pq_public_key_hex: Option<String> = match (&args.pq_public_key, &args.pq_public_key_file) {
         (Some(hex), _) => Some(hex.clone()),
@@ -368,6 +398,22 @@ fn main() -> Result<()> {
 /// `--lineage` / `--checkpoints` inspection mode: per-item reports that keep
 /// going past failures (the full verifier fails closed at the first problem;
 /// these answer "where exactly, and what is still trustworthy?").
+/// The rotation epoch (>= 1) at which `seed_key_hex` appears in the lineage
+/// reconstructed from the database's genesis key, or `None` when the key IS
+/// the genesis key, is not in that lineage, or the lineage cannot be read (the
+/// full run then reports the real cause).
+fn rotated_epoch_of(conn: &Connection, seed_key_hex: &str) -> Option<i64> {
+    let seed_key: [u8; 32] = hex::decode(seed_key_hex.trim()).ok()?.try_into().ok()?;
+    if witness_kernel::genesis_device_public_key(conn).ok()? == seed_key {
+        return None;
+    }
+    witness_kernel::reconstruct_device_key_lineage(conn)
+        .ok()?
+        .into_iter()
+        .find(|epoch| epoch.epoch > 0 && epoch.public_key == seed_key)
+        .map(|epoch| epoch.epoch)
+}
+
 fn run_inspections(
     conn: &Connection,
     args: &Args,

@@ -2008,6 +2008,7 @@ fn cmd_rotate_identity(
     )
     .map_err(|err| anyhow!("post-rotation reopen with the successor seed failed: {err}"))?;
     let active = reopened.device_verifying_key();
+    let genesis = crate::genesis_device_public_key(&reopened.conn)?;
     let epoch = crate::reconstruct_device_key_lineage(&reopened.conn)?
         .len()
         .saturating_sub(1);
@@ -2018,6 +2019,10 @@ fn cmd_rotate_identity(
         hex::encode(retiring.to_bytes())
     );
     println!("  current public key:  {}", hex::encode(active.to_bytes()));
+    println!(
+        "  genesis public key:  {} (the identity anchor verifiers pin)",
+        hex::encode(genesis)
+    );
     if targets.is_empty() {
         println!("  seed file: none — set the new seed as DEVICE_KEY_SEED where the kernel runs");
     }
@@ -2027,9 +2032,10 @@ fn cmd_rotate_identity(
     println!(
         "Next: restart every process that opens {}. Where DEVICE_KEY_SEED is exported, update \
          it (or unset it so the seed file is used) — a retired seed cannot reopen the log. \
-         Verifiers pinned to the genesis key keep verifying across the rotation; \
-         `log_verify --lineage` shows the new epoch. Post-quantum (pqc-signatures) keys are \
-         not rotated.",
+         Verify with the genesis key pinned (`log_verify --public-key <genesis public key>`): \
+         it reports VALID across the rotation, while the new seed alone now verifies only \
+         self-anchored. `log_verify --lineage` shows the new epoch. Post-quantum \
+         (pqc-signatures) keys are not rotated.",
         db_path
     );
     Ok(())

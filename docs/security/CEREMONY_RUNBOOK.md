@@ -569,9 +569,9 @@ Four different keys; the ceremony depends on which.
   `<file>.new` beside every seed file that must follow the identity
   (`--seed-file`, and `<db>.ed25519.seed` whenever it exists) *before* the
   rotation commits, renamed over the live file after it, and proven by a
-  reopen; the command prints the retiring and current public keys and the
-  lineage epoch, never a seed (**CODE**). `--new-seed` takes an
-  operator-chosen successor instead. Prerequisite: `SECURACV_DB_KEY_SEED` set
+  reopen; the command prints the retiring, current and genesis public keys
+  (the genesis key is the one verifiers pin) and the lineage epoch, never a
+  seed (**CODE**). `--new-seed` takes an operator-chosen successor instead. Prerequisite: `SECURACV_DB_KEY_SEED` set
   as an independent secret so the database key does not change with the
   device key — the command refuses without it unless `--rekey-db-to <secret>`
   re-keys the database in the same ceremony (**CODE**). A rotation produces a
@@ -582,9 +582,12 @@ Four different keys; the ceremony depends on which.
   point `--seed-file` at them), redistribute the pin and lineage
   (`log_verify --lineage`) to every relying party; note that post-quantum keys
   are not rotated. `receipts`, `policy history`, and `log_verify` all verify
-  rows under the genesis-anchored lineage, so rows signed before the rotation
-  stay VALID and the §3 checklist does not fire a Class D exception on a
-  legitimate rotation (**CODE**).
+  rows under the genesis-anchored lineage, so with the genesis key pinned rows
+  signed before the rotation stay VALID and the §3 checklist does not fire a
+  Class D exception on a legitimate rotation (**CODE**). `log_verify` handed
+  only the new seed says the seed derives a later epoch and verifies
+  self-anchored — `self-consistent; identity unverified`, not a failure
+  (**CODE**); the genesis pin is what makes it `valid`.
 - **Database encryption key** → `break_glass rekey-db --db <db>
   --new-db-key-seed <secret>` (or `SECURACV_NEW_DB_KEY_SEED`) with the
   database closed (**CODE**, over `rekey_database_file`): the current key is

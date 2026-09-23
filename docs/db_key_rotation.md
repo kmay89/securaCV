@@ -77,7 +77,7 @@ What it does, in order:
    the retiring seed stops opening the log.
 4. Calls [`Kernel::rotate_device_identity`], renames each staged file over the live one,
    and reopens the log under the successor before reporting success.
-5. Prints the retiring and current public keys and the lineage epoch — never a seed.
+5. Prints the retiring, current and genesis public keys and the lineage epoch — never a seed.
 
 With `--new-seed` and no seed file anywhere, none is written: set the new value as
 `DEVICE_KEY_SEED` where the kernel runs. A deployment that exports `DEVICE_KEY_SEED` from its
@@ -210,3 +210,12 @@ the database key without the signing seed. Run on the device itself with
 neither `--db-key` nor a seed, the first four derive the database key from the
 seed file beside the database (never the verifying key: that still comes from
 `--public-key` / `--public-key-file`, or the database, labeled self-consistent).
+
+After a rotation, verify with the **genesis** key pinned — `log_verify --public-key <genesis>`
+(`rotate-identity` prints it) reports `valid` across the boundary. A seed anchors identity only
+for the log it created: `log_verify` given the *current* seed (`DEVICE_KEY_SEED` or
+`--device-key-seed`) finds that it derives a later lineage epoch's key, says which, and verifies
+self-anchored (`self-consistent; identity unverified`) instead of failing the lineage check. A
+retired key could have forged history before its successor, so the current key is not treated
+as a substitute for the genesis pin. The genesis seed still derives the anchor and verifies
+`valid`, even though it can no longer open the log for writing.

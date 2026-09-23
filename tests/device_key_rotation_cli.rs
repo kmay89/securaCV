@@ -232,6 +232,13 @@ fn rotate_identity_generate_rotates_replaces_seed_file_and_keeps_the_log_verifia
         "{stdout}"
     );
     assert!(stdout.contains("current public key:"), "{stdout}");
+    assert!(
+        stdout.contains(&format!(
+            "genesis public key:  {}",
+            genesis_public_key_hex()
+        )),
+        "the ceremony prints the pin verifiers need\n{stdout}"
+    );
     assert!(stdout.contains("lineage epoch 1"), "{stdout}");
     assert!(
         stdout.contains("seed file:") && stdout.contains("replaced"),
@@ -338,6 +345,69 @@ fn rotate_identity_generate_rotates_replaces_seed_file_and_keeps_the_log_verifia
     );
     assert!(out.status.success(), "{}", text(&out));
     assert!(text(&out).contains("epoch 1"), "{}", text(&out));
+
+    // The operator does what "Next:" says and exports the NEW seed, then
+    // verifies with it. The seed derives epoch 1's key, not genesis: the run
+    // must not fail as if the log were tampered, and must not claim identity
+    // either — it verifies self-anchored and names the epoch.
+    for envs in [
+        vec![
+            ("DEVICE_KEY_SEED", successor.as_str()),
+            ("SECURACV_DB_KEY_SEED", DB_SECRET),
+        ],
+        vec![("SECURACV_DB_KEY_SEED", DB_SECRET)],
+    ] {
+        let args: Vec<&str> = if envs.len() == 2 {
+            vec!["--db", db_str]
+        } else {
+            vec!["--db", db_str, "--device-key-seed", successor.as_str()]
+        };
+        let out = log_verify(&args, &envs);
+        assert!(
+            out.status.success(),
+            "log_verify with the successor seed failed\n{}",
+            text(&out)
+        );
+        let all = text(&out);
+        assert!(all.contains("lineage epoch 1 key"), "{all}");
+        assert!(all.contains("SELF-CONSISTENT"), "{all}");
+        assert!(!all.contains("VALID (identity anchored"), "{all}");
+        assert_no_secrets(&out, &[GENESIS_SEED, &successor, DB_SECRET]);
+    }
+    let out = log_verify(
+        &["--db", db_str, "--json"],
+        &[
+            ("DEVICE_KEY_SEED", successor.as_str()),
+            ("SECURACV_DB_KEY_SEED", DB_SECRET),
+        ],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    let report: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("--json prints the report");
+    assert_eq!(report["chain_valid"], true, "{}", text(&out));
+    assert_eq!(report["identity_verified"], false, "{}", text(&out));
+    assert_eq!(
+        report["verdict"],
+        "self-consistent; identity unverified",
+        "{}",
+        text(&out)
+    );
+
+    // The genesis seed still derives the genesis key — the identity anchor —
+    // so it verifies VALID (read-only; it can no longer open the log).
+    let out = log_verify(
+        &["--db", db_str],
+        &[
+            ("DEVICE_KEY_SEED", GENESIS_SEED),
+            ("SECURACV_DB_KEY_SEED", DB_SECRET),
+        ],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    assert!(
+        text(&out).contains("VALID (identity anchored"),
+        "{}",
+        text(&out)
+    );
 }
 
 #[test]
