@@ -8,8 +8,9 @@
 // state of the tree:
 //   · engine vendored (assets/vendor/kiri/engine.js present) → the time tile
 //     flips to a real "sliced by Kiri:Moto" toolpath time;
-//   · engine absent → the button degrades to the honest "isn't vendored" note
-//     and the estimate stands.
+//   · engine absent → the button degrades to the honest note (enclosure-lab.js
+//     SLICER_ABSENT_NOTE: "…needs the optional slicer engine… the modeled
+//     estimate stands") and the estimate stands.
 // Either way: zero page errors. So this both verifies the real slice once the
 // engine lands AND pins the fail-closed contract in a real browser until then.
 //
@@ -120,7 +121,7 @@ try {
       fail("engine vendored but no sliced result — note: " + note + " | label: " + timeLabel);
     console.log("  engine vendored → sliced:", note);
   } else {
-    if (!/vendor|isn.t vendored|not vendored/i.test(note))
+    if (!/optional slicer engine.*estimate stands/i.test(note))
       fail("engine absent but note wasn't the graceful fallback — got: " + note);
     const timeAfter = await page.$eval(".est-totals .est-big:first-child b", (b) => b.textContent.trim());
     if (timeAfter !== timeBefore) fail("estimate time changed with no engine present");

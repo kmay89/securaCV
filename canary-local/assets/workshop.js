@@ -930,6 +930,8 @@ function renderAssemble(root) {
   const asm = state.build.devices?.[state.dev]?.assembly;
   if (asm) {
     root.append(el("h4", null, "Assembly"));
+    // an in-development build's status line (README prose above step 1)
+    if (asm.caveat) root.append(el("p", "muted", asm.caveat));
     const ol = el("ol", "asm-steps");
     for (const s of asm.steps) ol.append(el("li", null, s));
     root.append(ol);

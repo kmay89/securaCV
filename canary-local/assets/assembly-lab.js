@@ -42,6 +42,10 @@ export function buildAssemblyLab(asmData, buildData, deviceId) {
     "every part is the real thing — the printed STLs, the vendor board, and fasteners built to the BOM's sizes. " +
     "The step captions are the enclosure catalog's own assembly steps. The choreography (how they move) is staged."));
   wrap.append(ribbon);
+  // an in-development build says so where its steps are shown (README prose
+  // above step 1, carried in build.json as `caveat`)
+  const caveat = buildData?.devices?.[deviceId]?.assembly?.caveat;
+  if (caveat) wrap.append(el("p", "muted asm-caveat", caveat));
 
   // the drafting gate: the same ordering rules CI enforces, shown not hidden —
   // internals before shells, seals before lids, fasteners last & outermost
