@@ -711,6 +711,47 @@ size_t encode_revocations(uint8_t* out, size_t cap);
 bool   restore_revocations(const uint8_t* blob, size_t len);
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * OPERA CREATION  (F33 part 4 — POST /api/mesh/pair/start with no opera)
+ *
+ * Spec §5.4: "If no opera exists, the first device generates
+ * opera_secret = random_bytes(32)". Until F33 the PlatformIO tree could
+ * only join an opera, never found one; canary-wap creates one when
+ * pair/start finds none (start_pairing_initiator), and this is that path
+ * ported, on the same route and behind the same gates (bearer token, rate
+ * limit, flash encryption — all in the handler).
+ *
+ * PAIR_START with `create` set (the handler found no secret in NVS) runs
+ * on the main loop:
+ *   • the mesh must be on, no rotation may run (as for every PAIR_START),
+ *     and no pairing may be in progress (REFUSED — before anything is made);
+ *   • the session must have no opera: one it already holds (a join that
+ *     landed after the handler looked, or a secret NVS would not give
+ *     back) is never replaced — OPERA_EXISTS, the handler answers 409;
+ *   • the secret is drawn here, on the main loop, from the hardware RNG,
+ *     and never crosses tasks;
+ *   • the opera_create handler must persist it (main.cpp:
+ *     mesh_state::save_opera_secret, FE-gated; the name best effort)
+ *     BEFORE anything uses it. A false return — or no handler — creates
+ *     nothing: NOT_PERSISTED. A household secret that vanished at this
+ *     device's next reboot would strand every device that joined it.
+ *     (canary-wap keeps the opera in RAM when its save is refused; this
+ *     port fails closed instead.)
+ *   • then set_opera_secret() and the name DEFAULT_OPERA_NAME (canary-wap's
+ *     default; POST /api/mesh/name renames it), and the initiator pairing
+ *     starts as for an existing opera. RequestResult::created says the
+ *     opera is new. If the pairing then refuses to start (key generation),
+ *     the opera stays — created and persisted — and the status is REFUSED.
+ * deinit() drops the handler.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr const char DEFAULT_OPERA_NAME[] = "My Canary Opera";
+
+typedef bool (*opera_create_fn)(const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN],
+                                const char*   name);
+
+void set_opera_create_handler(opera_create_fn fn);
+
+/* ──────────────────────────────────────────────────────────────────────────
  * REST REQUEST SLOT  (review fix — the F10 REST mutators run on the main loop)
  *
  * Every mutator in this module belongs to the task that runs process()
@@ -765,7 +806,8 @@ enum class RequestType : uint8_t {
   SET_ENABLED,    /* set_enabled(enabled) */
   CLEAR_ALERTS,   /* clear_alerts() */
   REMOVE,         /* remove_peer(fp) */
-  PAIR_START,     /* start_pairing_initiator(opera_secret, <the opera's name>) — F33 */
+  PAIR_START,     /* start_pairing_initiator(opera_secret, <the opera's name>) — F33;
+                   * with `create`, found a new opera first (OPERA CREATION) */
   PAIR_JOIN,      /* start_pairing_joiner() — F33 */
   PAIR_CONFIRM,   /* confirm_pairing_code() — F33 */
   PAIR_CANCEL,    /* cancel_pairing() — F33 */
@@ -781,6 +823,9 @@ enum class RequestStatus : uint8_t {
                       * is off (F33) */
   REFUSED,           /* PAIR_START / PAIR_JOIN / PAIR_CONFIRM: the pairing
                       * state machine refused (wrong state) (F33) */
+  OPERA_EXISTS,      /* PAIR_START {create} while the session holds an opera */
+  NOT_PERSISTED,     /* PAIR_START {create}: the new secret could not be
+                      * stored — no opera was created (F33 part 4) */
 };
 
 struct Request {
@@ -790,8 +835,10 @@ struct Request {
   char        name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];  /* SET_NAME */
   /* PAIR_START: the opera secret to hand the joiner (the handler loads it
    * from NVS). Wiped with the rest of the request body at every hand-off;
-   * the submitter wipes its own copy. */
+   * the submitter wipes its own copy. Unused with `create`. */
   uint8_t     opera_secret[mesh_crypto::OPERA_SECRET_LEN];
+  /* PAIR_START: there is no opera — create one (OPERA CREATION above). */
+  bool        create;
 };
 
 struct RequestResult {
@@ -801,6 +848,7 @@ struct RequestResult {
   bool          enabled;    /* SET_ENABLED: is_enabled() afterwards */
   RemoveResult  remove;     /* REMOVE */
   uint8_t       removed_pubkey[mesh_crypto::PUBKEY_LEN];  /* REMOVE, STARTED/COMMITTED */
+  bool          created;    /* PAIR_START {create}: a new opera exists now */
 };
 
 bool submit_request(const Request& req);

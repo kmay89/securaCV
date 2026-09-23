@@ -360,6 +360,19 @@ opera_secret = random_bytes(32)
 opera_id = SHA-256("securacv:opera:id:v0" || opera_secret)[0:16]
 ```
 
+Both trees found an opera on `POST /api/mesh/pair/start` when the device
+holds none, and then start the initiator pairing with it. canary-wap names it
+`"My Canary Opera"` (or the request's `name`) and keeps it in RAM if the
+flash-encryption-gated save is refused. The PlatformIO tree (v0.3, F33) does
+the same on the same route, behind the gates that route already had (bearer
+token, rate limit, flash encryption), with the same default name (it takes
+no `name`; `POST /api/mesh/name` renames), but fails closed: the
+secret is drawn on the main loop and persisted before anything uses it, and
+if it cannot be persisted no opera is created (`opera_not_persisted`) — a
+secret the founding device forgot at its next reboot would strand every
+device that joined it. It never replaces an opera the device already holds
+(`opera_exists`). §8.3 has the route.
+
 ### 5.5 Flash Encryption Requirement — v0.2
 
 Provisioning a new Opera, joining an existing Opera, and loading a stored
@@ -697,7 +710,22 @@ running and its result discarded). A late result never answers a later
 request: the slot holds one request at a time and discards an abandoned
 one's result before it frees. The pairing routes' `mesh_disabled` and
 `rekey_in_flight` refusals are now decided on the main loop, after the
-handler's own `no_flash_encryption` / `no_opera` checks.
+handler's own `no_flash_encryption` check.
+
+**`pair/start` founds an opera (v0.3, F33):** with no opera secret in NVS
+the route no longer answers `no_opera`: the main loop founds one (§5.4) —
+it draws the secret, has main.cpp persist it (NVS `opera_secret`, with the
+default name `"My Canary Opera"` in `opera_name`, best effort), installs it
+and starts the initiator pairing, answering `{ok, created: true, state:
+"PAIRING_INIT"}` (`created: false` when it added to an existing opera).
+Errors, besides the others above: `opera_not_persisted` (500 — the secret
+could not be stored; nothing was created), `opera_exists` (409 — the
+session holds an opera NVS did not return, e.g. a join that finished
+meanwhile; it is never replaced, and a retry adds to it), and
+`pair_start_failed` (400 — a pairing is already running, and nothing was
+created; or, rarely, the pairing's key generation failed after the opera
+was created and persisted — `GET /api/mesh` then shows it). No new route: the web UI's "Create Opera" button and the Home
+Assistant wizard's "Add another Canary" already call it.
 
 **`remove` (F10-rekey — crypto review and bench pending):** body
 `{"fingerprint": "<16 hex>"}`, the string `GET /api/mesh/peers` emits. It
@@ -971,4 +999,5 @@ An implementation conforms to this specification if it:
   revocation deny-list in both trees (`mesh_revoked`, `revoked`, §12.3) and
   convergence of two concurrent removals in the PIO tree (§5.6); PIO
   `GET /api/mesh/alerts` adds `uptime_ms`, and the web UI shows an alert's
-  age instead of a made-up time of day (§8.3).
+  age instead of a made-up time of day (§8.3); PIO `pair/start` founds an
+  opera when the device holds none (§5.4, §8.3).

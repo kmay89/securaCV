@@ -5235,24 +5235,37 @@ static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
 
   // "Add another" — an opera already exists. Load its secret straight
   // from NVS into the request, hand it to the main loop, then zero this
-  // copy (the session wipes its own). If no opera is persisted, there is
-  // nothing to add to.
+  // copy (the session wipes its own). If no opera is persisted, the main
+  // loop founds one first (spec §5.4, F33 part 4 — canary-wap's
+  // create-on-start, behind the gates above): it draws the secret, has it
+  // persisted before anything uses it, and never replaces an opera the
+  // session already holds (opera_exists).
   mesh_session::Request r;
   memset(&r, 0, sizeof(r));
   r.type = mesh_session::RequestType::PAIR_START;
-  if (!mesh_state::load_opera_secret(r.opera_secret)) {
-    return http_send_error(req, 400, "no_opera");
-  }
+  r.create = !mesh_state::load_opera_secret(r.opera_secret);
   mesh_session::RequestResult res;
   esp_err_t rc = ESP_OK;
   const bool ran = mesh_call(req, r, &res, &rc);
   volatile uint8_t* z = r.opera_secret;   // regardless of outcome
   for (size_t i = 0; i < sizeof(r.opera_secret); ++i) z[i] = 0;
   if (!ran) return rc;
+  if (res.status == mesh_session::RequestStatus::OPERA_EXISTS) {
+    // A join landed after the load above, or NVS would not give back the
+    // secret the session holds: never found a second opera over it.
+    return http_send_error(req, 409, "opera_exists");
+  }
+  if (res.status == mesh_session::RequestStatus::NOT_PERSISTED) {
+    return http_send_error(req, 500, "opera_not_persisted");
+  }
+  if (res.created) {
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Opera created", nullptr);
+  }
   if (mesh_pair_refused(req, res.status, "pair_start_failed", &rc)) return rc;
 
   JsonDocument doc;
   doc["ok"] = true;
+  doc["created"] = res.created;
   doc["state"] = "PAIRING_INIT";
   String response;
   serializeJson(doc, response);

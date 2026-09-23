@@ -73,6 +73,10 @@ static uint64_t s_outbound_counter   = 0;
 static uint64_t          s_counter_reserved  = 0;
 static counter_reserve_fn s_counter_reserve_cb = nullptr;
 
+/* Persists a newly created opera's secret (F33 part 4; mesh_session.h
+ * OPERA CREATION). No handler, no creation. */
+static opera_create_fn s_opera_create_cb = nullptr;
+
 /* Opera display name (PR-8; persisted since F10). Surfaced by GET
  * /api/mesh so the UI can label the opera. This module keeps only the
  * RAM copy; the integration layer persists it (mesh_state
@@ -934,6 +938,7 @@ void deinit() {
   s_outbound_counter = 0;
   s_counter_reserved = 0;
   s_counter_reserve_cb = nullptr;
+  s_opera_create_cb  = nullptr;
   s_opera_name[0]    = '\0';
   s_enabled          = true;
   s_last_process_ms  = 0;
@@ -1186,6 +1191,8 @@ bool has_opera_secret() {
 }
 
 void set_counter_reserve_handler(counter_reserve_fn fn) { s_counter_reserve_cb = fn; }
+
+void set_opera_create_handler(opera_create_fn fn) { s_opera_create_cb = fn; }
 
 void restore_outbound_counter(uint64_t persisted_high_water) {
   /* Every counter signed before the reboot is <= the persisted mark. */
@@ -1776,7 +1783,33 @@ static void execute_request(const Request& req, uint32_t now_ms, RequestResult* 
         break;
       }
       bool ok;
-      if (req.type == RequestType::PAIR_START) {
+      if (req.type == RequestType::PAIR_START && req.create) {
+        /* F33 part 4 — spec §5.4: found an opera (mesh_session.h OPERA
+         * CREATION). Every refusal comes before the secret exists. */
+        if (s_opera_id_set) {
+          res->status = RequestStatus::OPERA_EXISTS;   /* never replaced */
+          break;
+        }
+        if (!s_running || pairing_in_progress()) {
+          res->status = RequestStatus::REFUSED;
+          break;
+        }
+        uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+        mesh_crypto::fill_random(secret, sizeof(secret));
+        /* Durable first: a secret this device forgets at reboot would
+         * strand every device that joins it. */
+        if (s_opera_create_cb == nullptr ||
+            !s_opera_create_cb(secret, DEFAULT_OPERA_NAME)) {
+          secure_zero(secret, sizeof(secret));
+          res->status = RequestStatus::NOT_PERSISTED;
+          break;
+        }
+        set_opera_secret(secret);   /* cannot refuse: s_running implies init */
+        set_opera_name(DEFAULT_OPERA_NAME);
+        res->created = true;
+        ok = start_pairing_initiator(secret, DEFAULT_OPERA_NAME, now_ms);
+        secure_zero(secret, sizeof(secret));
+      } else if (req.type == RequestType::PAIR_START) {
         char name[sizeof(s_opera_name)];
         memcpy(name, s_opera_name, sizeof(name));   /* start_* re-caches it */
         ok = start_pairing_initiator(req.opera_secret, name, now_ms);

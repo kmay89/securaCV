@@ -465,6 +465,26 @@ static void on_mesh_peer_revoked(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
              "Opera peer revoked (7-day deny-list)", hex);
 }
 
+/* POST /api/mesh/pair/start found no opera, and the main loop is founding
+ * one (F33 part 4, spec §5.4). The secret must be durable BEFORE the session
+ * uses it — a false return creates nothing (the route answers
+ * opera_not_persisted) — because a household secret this device forgot at
+ * reboot would strand every device that joined it. FE-gated like every
+ * other opera_secret write; the route already refused on an FE-off board.
+ * The name is best effort, as on the joiner's side. */
+static bool on_mesh_opera_create(const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN],
+                                 const char* name) {
+  if (!mesh_state::save_opera_secret(secret)) {
+    Serial.println("[ERR] New opera not created: opera_secret could not be persisted");
+    return false;
+  }
+  if (name != nullptr && name[0] != '\0' && !mesh_state::save_opera_name(name)) {
+    Serial.println("[WARN] New opera's name not persisted");
+  }
+  Serial.println("[OK] New opera created and persisted (initiator pairing next)");
+  return true;
+}
+
 /* A trusted peer's verified LEAVE_OPERA arrived (F10). mesh_session has
  * already dropped it from the live table; drop the persisted copy too so
  * a reboot does not resurrect it. Runs on the main loop. */
@@ -1269,6 +1289,8 @@ void setup() {
     mesh_session::set_rekey_commit_handler(&on_mesh_rekey_commit);
     /* F33 part 6: the revocation deny-list. */
     mesh_session::set_peer_revoked_handler(&on_mesh_peer_revoked);
+    /* F33 part 4: pair/start with no opera founds one; persisted first. */
+    mesh_session::set_opera_create_handler(&on_mesh_opera_create);
   } else {
     Serial.println("[WARN] Mesh layer init failed — broadcast disabled");
   }

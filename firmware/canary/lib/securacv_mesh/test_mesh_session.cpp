@@ -44,6 +44,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #ifndef CSI_TEST_HOST_BUILD
@@ -3119,6 +3120,155 @@ void on_failed_abandoning() {
   if (g_abandon_in_failed) mesh_session::abandon_request();
 }
 
+/* F33 part 4 — spec §5.4: POST /api/mesh/pair/start on a device with no
+ * opera founds one on the main loop (canary-wap's create-on-start). The
+ * secret is drawn there, persisted through the handler BEFORE anything uses
+ * it, and is the one a joiner then receives; nothing is created when it
+ * cannot be persisted, and an opera the session holds is never replaced. */
+int                  g_create_calls = 0;
+bool                 g_create_ok    = true;
+std::vector<uint8_t> g_created_secret;
+std::string          g_created_name;
+bool on_opera_create(const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN], const char* name) {
+  ++g_create_calls;
+  g_created_secret.assign(secret, secret + mesh_crypto::OPERA_SECRET_LEN);
+  g_created_name = name != nullptr ? name : "";
+  return g_create_ok;
+}
+
+void test_rest_pair_start_creates_opera() {
+  uint8_t pub[32], priv[32];
+  stand_up_session(nullptr, pub, priv);
+  mesh_session::RequestResult res;
+  mesh_session::Request create = make_request(mesh_session::RequestType::PAIR_START);
+  create.create = true;
+  g_create_calls = 0;
+
+  /* No handler: nothing can be persisted, so nothing is created. */
+  g_outs.clear();
+  assert(mesh_session::submit_request(create));
+  mesh_session::process(10);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::NOT_PERSISTED && !res.created);
+  assert(!mesh_session::has_opera_secret());
+  assert(mesh_session::pairing_state() == mesh_pairing::State::IDLE && g_outs.empty());
+
+  /* The handler cannot persist (NVS refused): still nothing. */
+  mesh_session::set_opera_create_handler(on_opera_create);
+  g_create_ok = false;
+  assert(mesh_session::submit_request(create));
+  mesh_session::process(11);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::NOT_PERSISTED && !res.created);
+  assert(g_create_calls == 1 && !mesh_session::has_opera_secret());
+  assert(mesh_session::pairing_state() == mesh_pairing::State::IDLE && g_outs.empty());
+
+  /* Mesh off: refused before a secret exists. */
+  mesh_session::Request off = make_request(mesh_session::RequestType::SET_ENABLED);
+  off.enabled = false;
+  assert(mesh_session::submit_request(off));
+  mesh_session::process(12);
+  assert(mesh_session::take_request_result(&res));
+  g_create_ok = true;
+  assert(mesh_session::submit_request(create));
+  mesh_session::process(13);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::MESH_DISABLED && g_create_calls == 1);
+  mesh_session::Request on = make_request(mesh_session::RequestType::SET_ENABLED);
+  on.enabled = true;
+  assert(mesh_session::submit_request(on));
+  mesh_session::process(14);
+  assert(mesh_session::take_request_result(&res) && res.enabled);
+
+  /* Created: the persisted secret IS the opera (its opera_id derives from
+   * it), under canary-wap's default name, and the initiator pairing runs. */
+  assert(mesh_session::submit_request(create));
+  mesh_session::process(20);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::OK && res.created);
+  assert(g_create_calls == 2 && g_created_secret.size() == 32);
+  bool all_zero = true;
+  for (uint8_t b : g_created_secret) all_zero = all_zero && b == 0;
+  assert(!all_zero);
+  assert(mesh_session::has_opera_secret());
+  uint8_t id[mesh_crypto::OPERA_ID_LEN], want[mesh_crypto::OPERA_ID_LEN];
+  assert(mesh_session::get_opera_id(id));
+  mesh_crypto::compute_opera_id(g_created_secret.data(), want);
+  assert(std::memcmp(id, want, sizeof(id)) == 0);
+  assert(g_created_name == mesh_session::DEFAULT_OPERA_NAME);
+  char name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
+  mesh_session::get_opera_name(name, sizeof(name));
+  assert(std::strcmp(name, "My Canary Opera") == 0);
+  assert(mesh_session::pairing_state() == mesh_pairing::State::DISCOVERING_INITIATOR);
+
+  /* The joiner receives that very secret (a pure joiner, over the air). */
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x00, 0x04, 0x01};
+  const uint8_t mac_j[6] = {0x24, 0x0A, 0xC4, 0x00, 0x04, 0x02};
+  uint8_t j_pub[32], j_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+  mesh_pairing::PairingContext cj;
+  mesh_pairing::context_init(cj);
+  mesh_pairing::Action a = mesh_pairing::start_joiner(cj, j_pub, j_priv, 30);
+  const std::vector<uint8_t> disc = wire(a);
+  g_outs.clear();
+  mesh_transport::test::inject_recv(mac_j, disc.data(), disc.size(), -40);
+  mesh_transport::process();
+  const std::vector<uint8_t> offer = last_to(mac_j);
+  feed_pure(cj, me, offer, 31, &a);
+  assert(a.type == mesh_pairing::ActionType::SEND_ACCEPT);
+  const std::vector<uint8_t> accept = wire(a);
+  mesh_transport::test::inject_recv(mac_j, accept.data(), accept.size(), -40);
+  mesh_transport::process();
+  assert(mesh_session::confirm_pairing_code(32));
+  const std::vector<uint8_t> conf_i = last_to(mac_j);
+  a = mesh_pairing::confirm_code(cj, 32);
+  const std::vector<uint8_t> conf_j = wire(a);
+  mesh_transport::test::inject_recv(mac_j, conf_j.data(), conf_j.size(), -40);
+  mesh_transport::process();
+  const std::vector<uint8_t> complete = last_to(mac_j);
+  feed_pure(cj, me, conf_i, 33, &a);
+  feed_pure(cj, me, complete, 33, &a);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+  uint8_t got[32];
+  assert(mesh_pairing::consume_opera_secret(cj, got));
+  assert(std::memcmp(got, g_created_secret.data(), 32) == 0);
+  mesh_session::process(34);
+
+  /* An opera the session holds is never replaced — a join that landed
+   * after the handler looked, or a secret NVS would not give back. */
+  assert(mesh_session::submit_request(create));
+  mesh_session::process(40);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::OPERA_EXISTS && !res.created);
+  assert(g_create_calls == 2);
+  assert(mesh_session::get_opera_id(id) && std::memcmp(id, want, sizeof(id)) == 0);
+
+  /* A pairing in progress (joining, no opera yet): refused before a secret
+   * exists. */
+  stand_up_session(nullptr, pub, priv);
+  mesh_session::set_opera_create_handler(on_opera_create);
+  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::PAIR_JOIN)));
+  mesh_session::process(50);
+  assert(mesh_session::take_request_result(&res) &&
+         res.status == mesh_session::RequestStatus::OK);
+  assert(mesh_session::submit_request(create));
+  mesh_session::process(51);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::REFUSED && !res.created);
+  assert(g_create_calls == 2 && !mesh_session::has_opera_secret());
+  assert(mesh_session::pairing_state() == mesh_pairing::State::DISCOVERING_JOINER);
+  /* deinit() drops the handler: a fresh session creates nothing until the
+   * integration layer installs one again. */
+  mesh_session::deinit();
+  assert(mesh_session::init(pub, priv));
+  assert(mesh_session::start());
+  assert(mesh_session::submit_request(create));
+  mesh_session::process(60);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::NOT_PERSISTED && g_create_calls == 2);
+  std::printf("PASS test_rest_pair_start_creates_opera\n");
+}
+
 void test_rest_pairing_requests() {
   uint8_t S[32];
   for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0xE1 + i);
@@ -3517,6 +3667,7 @@ int main() {
   test_outbound_counter_without_reservation_restarts();
   /* F33 part 5 — the pairing routes run on the main loop. */
   test_rest_pairing_requests();
+  test_rest_pair_start_creates_opera();
   /* F33 part 6 — the revocation deny-list; concurrent removals. */
   test_revocation_deny_list();
   test_concurrent_offer_propagates_and_yields();
