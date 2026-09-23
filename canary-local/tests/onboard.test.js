@@ -29,7 +29,7 @@ const REPO = join(ROOT, "..");
 const read = (p) => readFileSync(p, "utf8");
 const PROVISION = read(join(REPO, "firmware/projects/canary-display/src/net/provision.cpp"));
 const PORTAL_SRC = /PORTAL_HTML\[\]\s+PROGMEM\s*=\s*R"HTML\(([\s\S]*?)\)HTML"/.exec(PROVISION)[1];
-const PORTAL_SCRIPT = /<script\b[^>]*>([\s\S]*?)<\/script\s*>/i.exec(PORTAL_SRC)[1];
+const PORTAL_SCRIPT = /<script\b[^>]*>([\s\S]*?)<\/script\b[^>]*>/i.exec(PORTAL_SRC)[1];
 const DATA = JSON.parse(read(join(ROOT, "devices/display_portal.json")));
 
 const phone = () => import("../assets/onboard-phone.js");
