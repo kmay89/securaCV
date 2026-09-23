@@ -315,11 +315,30 @@ You don't have to remember these; CI does. Listed so a red run makes sense.
 | Every updater URL in a published `latest.json` resolves | the consistency guards in `desktop-flasher-release.yml` + `desktop-lab-updater-pointer.yml` |
 | An app release says what it changes, in the body and in the updater notes | `desktop/scripts/release_notes.py` (lint + both app workflows) |
 | Each self-updating app polls its own rolling pointer (`flasher-latest`, `lab-latest`), never `releases/latest`, and the workflow that advances it names the same tag | `desktop_parity.test.js` |
+| The committed firmware SBOM matches the build inputs, validates against CycloneDX 1.5, and its two Arduino core axes (workflow rows, `sketch.yaml` profiles) agree | `scripts/gen_firmware_sbom.py --check --validate` (lint.yml) + `--verify-with-pio` in `sbom.yml` |
 
 ## Things no button can do for you
 
 - **The OTA key ceremony.** It makes your master signing key; it has to happen on
   your machine.
+- **Promoting the CloudKit schema.** A new field on a synced record
+  (`PairedDevice.tlsCertFP`, the TLS pin the iPhone app dials through)
+  exists in DEVELOPMENT from its first write and is **rejected by
+  PRODUCTION until promoted** — and `CloudSync.push` swallows that error by
+  design, so an unpromoted release silently stops fleet sync for every user,
+  with nothing in any log. `ios/scripts/cloudkit_schema.sh check` must be
+  green before an iPhone/iPad release; run `ios/scripts/cloudkit_schema.sh
+  promote` from a machine with the CloudKit CLI token. A red `check` is a
+  release blocker, not a warning (`.github/RELEASE_LESSONS.md`, 2026-09-08).
+- **Rebuilding the emulator dist after a firmware VERSION bump.** A bump
+  moves `canary-local/emulator/dist/` (the stamp is compiled in and written
+  to each `meta.json`), and the toolchain that rebuilds it is pinned to an
+  emsdk most machines cannot install. Before the master button: dispatch
+  **Actions → "Rebuild emulator dist (pinned emsdk)"** on the branch, pull
+  its commit, then regenerate `flash.json` (`gen_flash.py` embeds the
+  artifact stamps — run it *after* the rebuild, or the catalog goes stale
+  in the same push). The order and the two symptoms of getting it wrong are
+  in `CLAUDE.md`, "Generated files".
 - **Apple signing.** `ENABLE_IOS_BUILD` / `ENABLE_TVOS_BUILD` plus the `APPLE_*`
   secrets need a developer account. Until then those targets are honest no-ops.
   **Which certificate signs which app, and which secret carries it, is in
