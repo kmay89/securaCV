@@ -27,8 +27,10 @@ part = "all";        // ["clip","molle","all"]
 stud_gap  = 36.0;
 // ecosystem-standard T-stud (canary_mount_lib): stem 1.4 + cone 1.2 + head
 // 0.8 = 3.4 total — mount_stud_d/head/cap/stem() are the knob defaults
-stud_d    = 4.0;  stud_head = 6.6;  stud_head_t = 0.8;
-stud_stem_h = 1.4;
+stud_d    = 4.0;     // stem diameter — mount_stud_d()
+stud_head = 6.6;     // head disc diameter — mount_stud_head()
+stud_head_t = 0.8;   // head disc thickness — mount_stud_cap()
+stud_stem_h = 1.4;   // stem height — mount_stud_stem()
 
 /* [Belt clip] */
 clip_w    = 45.0;    // width (extrusion length)
@@ -41,8 +43,10 @@ nub_h     = 1.2;     // grip nub at the leaf tip
 
 /* [MOLLE plate] */
 mp_w = 55.0;  mp_l = 90.0;  mp_t = 3.0;
-slot_w = 27.0;  slot_h = 3.5;  slot_pitch = 38.1;   // PALS grid: 1" webbing rows spaced 1" apart = 38.1 mm
-                                                     // center-to-center (25.4 let only one row pass)
+slot_w = 27.0;       // webbing slot long side — clears 1" (25.4 mm) PALS webbing
+slot_h = 3.5;        // webbing slot short side
+slot_pitch = 38.1;   // PALS grid: 1" webbing rows spaced 1" apart = 38.1 mm
+                     // center-to-center (25.4 let only one row pass)
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;

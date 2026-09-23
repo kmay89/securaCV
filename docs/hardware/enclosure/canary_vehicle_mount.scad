@@ -42,7 +42,9 @@ tol_slide = 0.20;  tol_press = 0.10;
 /* [Dash plate] */
 dash_l = 110.0;  dash_w = 70.0;  dash_t = 4.0;
 dash_tilt = 10;      // riser angle (case leans back toward the cabin)
-vhb_w = 20.0;  vhb_l = 60.0;  vhb_rec = 0.6;   // 3M VHB strip registers
+vhb_w = 20.0;        // 3M VHB strip register width
+vhb_l = 60.0;        // 3M VHB strip register length
+vhb_rec = 0.6;       // 3M VHB strip register recess depth
 tether_w = 8.0;  tether_l = 4.0;
 
 /* [Vent clip] */

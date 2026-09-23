@@ -114,10 +114,22 @@ top face the lid seats on.
 | Board dimensions come from the registry, measured where measured | `brd_*()` | `canary_board_lib`, `board_selfcheck()` |
 | Envelopes published to the website and the figures are measured off the committed meshes, never typed | — | `gen_assembled_dims.py`, `gen_figures.mjs --check`, the website's `ar-dims` test |
 
-## 10. What is still open
+## 10. Knobs and their help
+
+| Rule | Number | Enforced by |
+|---|---|---|
+| A knob's help sits on the knob's own line — the builder's parser keeps a trailing comment only on a one-knob line, so `a = 1;  b = 2;  // help` reaches neither | one knob per commented line | `lint_design_lang.py` (third rule); `HELP_LINE_DEBT` lists the 7" case's four lines, left by decision, and only shrinks |
+
+## 11. What is still open
 
 - **Lid rib proportions.** Every lid's rib ring is pinned by a 1.0 mm
   headroom, now asserted; making the ribs taller means growing `cav_extra`
   on each case, which moves the released envelopes. A per-case decision.
-- **Customizer help text and naming collisions** — the audit's parametric
-  UX section.
+- **Customizer help text** — the audit's parametric UX section. Done: every
+  shared-help line outside the 7" case is split one knob per line, and the
+  unambiguous comments above a knob are summarized onto it (681 → 536 knobs
+  without help). Open: help for the knobs that never had any (the released
+  four first), `[min:step:max]` ranges, one group name for the two-stud
+  interface, and presets for the doorbell and the Sense.
+- **Naming collisions** — `usb_w`/`usb_h`, `vm_*`, `skirt_t` and `clip_w`
+  each mean two things across the catalog.

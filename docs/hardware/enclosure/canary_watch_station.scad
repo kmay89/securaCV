@@ -62,7 +62,9 @@ usb_h     = 7.0;
 
 /* [Battery] — optional LiPo laid on the drum floor (display has JST + charger) */
 opt_batt = false;
-batt_l = 30.0;  batt_w = 20.0;  batt_h = 3.4;   // 302030-class cell — MEASURE
+batt_l = 30.0;       // cell length — 302030-class cell, MEASURE
+batt_w = 20.0;       // cell width — 302030-class cell, MEASURE
+batt_h = 3.4;        // cell thickness — 302030-class cell, MEASURE
 
 /* [Puck] */
 wall_t   = 2.3;      // deviates: the bezel's snap fingers seat through this drum wall — tuned as a set with snap_depth/skirt_t

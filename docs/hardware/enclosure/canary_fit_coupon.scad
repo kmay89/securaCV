@@ -75,19 +75,33 @@ tol_hole  = 0.30;   // catalog default — core_tol_hole(), canary_core_lib
 
 /* [Interface dims — mirror the case defaults] */
 stud_gap = 30.0;  // the coupon's print-tested gap (canary_mount_lib's header cites it)
-kh_head_d = 7.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;  kh_head_h = 3.5;  kh_face = 1.0;  // catalog standard — mount_kh_*(), canary_mount_lib
+kh_head_d  = 7.0;   // screw-head pass hole — catalog standard, mount_kh_head_d(), canary_mount_lib
+kh_shank_d = 4.2;   // shank slot width — catalog standard, mount_kh_shank_d()
+kh_slot_l  = 8.0;   // slot travel — catalog standard, mount_kh_slot_l()
+kh_head_h  = 3.5;   // total pocket depth (face web + head cavity) — catalog standard, mount_kh_head_h()
+kh_face    = 1.0;   // face web the screw head grips behind — catalog standard, mount_kh_face()
 kh_click = 0.25;  // detent bump proud of the head-channel ceiling (0 = no click) — catalog standard, canary_mount_lib
-clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;  // the WAP clip — snap_boardclip defaults, canary_snap_lib
+clip_w      = 6.0;   // board-clip tab width along the board edge — the WAP clip, snap_boardclip default, canary_snap_lib
+clip_t      = 1.0;   // clip beam thickness — the WAP clip, snap_boardclip default
+clip_hook   = 0.5;   // lip overhang over the board top — the WAP clip, snap_boardclip default
+clip_hook_h = 1.2;   // lip + 45° lead-in height above the board top — the WAP clip, snap_boardclip default
+clip_clear  = 0.25;  // beam face to board edge — the WAP clip, snap_boardclip default
 clip_bw = 17.5;   // the WAP's board width — the CLIP station is its coupon verbatim
-pcb_t = 1.2;  standoff_h = 3.5;  standoff_d = 4.0;   // 3.5 = the WAP's standoff (beam 4.7: the measured 17.8 board under budget)
+pcb_t = 1.2;        // board thickness at the CLIP station — the WAP's XIAO, brd_t("xiao")
+standoff_h = 3.5;   // 3.5 = the WAP's standoff (beam 4.7: the measured 17.8 board under budget)
+standoff_d = 4.0;   // width of the standoff rail under each board edge at the CLIP station
 clip_over = 0.15;   // the measured board's extra half-width — brd_xiao_w_measured() - clip_bw, per side
 screw_d = 1.6;  screw_head_d = 4.0;
 screw_step = 0.15;   // pilot ladder: three holes at screw_d − step / screw_d / + step
-insert_d = 3.5;  insert_h = 4.0;   // knurl OD; the station bores it 0.3 under (3.2, the M2 short-series hole)
+insert_d = 3.5;     // knurl OD; the station bores it 0.3 under (3.2, the M2 short-series hole)
+insert_h = 4.0;     // insert length (M2 short series: 3.5 x 4.0)
 mag_d = 6.0;  lp_d = 3.0;
 lip_t = 1.2;  lip_h = 4.0;
-gasket_w = 1.6;  gasket_groove = 1.2;  gasket_proud = 0.3;   // matches the catalog gasket recipe (20 % squeeze, ~86 % fill)
-usb_w = 12.0;  usb_h = 6.5;   // the WAP case's USB-C opening (clears rugged cable boots); cut via port_bridge_profile2d, canary_port_lib
+gasket_w      = 1.6;   // gasket groove width — the catalog gasket recipe (the strip prints 0.5 narrower)
+gasket_groove = 1.2;   // gasket groove depth — the catalog gasket recipe
+gasket_proud  = 0.3;   // gasket stand-proud — matches the catalog gasket recipe (20 % squeeze, ~86 % fill)
+usb_w = 12.0;       // opening width — the WAP case's USB-C opening (clears rugged cable boots); cut via port_bridge_profile2d, canary_port_lib
+usb_h = 6.5;        // opening height — the WAP case's boot clearance
 port_wall = 2.0;              // case-typical wall the PORT opening is cut through
 
 /* [Coupon] */

@@ -22,6 +22,17 @@ Second rule: a module the libraries own may not be redefined in a case file.
 Four copies of the vent cluster had already forked once (hole size drifted on
 two outdoor cases); the de-fork stays de-forked.
 
+Third rule: a knob's help stays on the knob's own line. The web builder and
+the Lab catalog read Customizer help through gen_builder_manifest.parse_scad,
+which keeps a trailing `//` comment only on a line that holds ONE knob — so
+`a = 1;  b = 2;  // help` reaches neither knob (and the Lab's own parser,
+gen_enclosures.py, drops the whole line). 125 knobs had lost their help that
+way (audit 2026-09, C1). A line holding two or more knobs AND a trailing
+comment now fails: split it, one knob per line, each with its own help. The
+few lines the sweep deliberately left are listed in HELP_LINE_DEBT, which can
+only shrink: a new shared-help line fails, and so does a listed one that is
+gone (the entry must go with it).
+
 Run from the repo root:  python3 scripts/lint_design_lang.py
 """
 
@@ -31,6 +42,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ENC = ROOT / "docs" / "hardware" / "enclosure"
+sys.path.insert(0, str(ENC))
+# The parser whose output the web builder and the Lab catalog carry: the help
+# rules below judge what IT keeps, so they cannot disagree with it.
+import gen_builder_manifest  # noqa: E402
 
 # The canon: parameter names (both naming dialects) -> the house value and
 # the core/mount function that states it. Keep this in step with the
@@ -130,18 +145,78 @@ def lint_file(path):
     return problems
 
 
+# Shared-help lines the 2026-09 sweep (C1) left alone ON PURPOSE, keyed by
+# (file, first knob on the line). The 7" case's sources are hashed by
+# gen_stamp.py and were kept out of that sweep by decision — its maintainer
+# owns every edit there. (gen_stamp's digest is comment-free and whitespace-
+# normalized, so splitting these lines re-stamps nothing: gen_stamp.py
+# --check stays green. That is the follow-up, and it deletes these entries.)
+HELP_LINE_DEBT = {
+    ("canary_s3_lcd7.scad", "bottom_open_w"),
+    ("canary_s3_lcd7.scad", "side_open_h"),
+    ("canary_s3_lcd7.scad", "lob_d"),
+    ("canary_s3_lcd7.scad", "gill_w"),
+}
+
+
+def knob_lines(path):
+    """{line number: [knob names]} as gen_builder_manifest.parse_scad sees them."""
+    by_line = {}
+    for group in gen_builder_manifest.parse_scad(path, with_lines=True):
+        for param in group["params"]:
+            by_line.setdefault(param["line"], []).append(param["name"])
+    return by_line
+
+
+def lint_help_lines(path, debt=frozenset()):
+    """Third rule: no line holds two or more knobs AND a trailing help.
+
+    Returns (problems, debt entries seen) — main() fails an entry never seen.
+    """
+    problems, seen = [], set()
+    lines = path.read_text().splitlines()
+    for lineno, names in sorted(knob_lines(path).items()):
+        if len(names) < 2:
+            continue
+        # the same split parse_scad makes: everything after the first `//`
+        comment = (lines[lineno - 1].split("//", 1) + [""])[1]
+        if not comment.strip():
+            continue
+        if (path.name, names[0]) in debt:
+            seen.add((path.name, names[0]))
+        else:
+            problems.append(
+                f"{path.name}:{lineno}: {len(names)} knobs ({', '.join(names)}) share one "
+                "trailing help, and the builder's parser keeps help only on a one-knob "
+                "line — so none of them gets it. Split the line, one knob per line, and "
+                "give each its own help (a group comment becomes one per knob, each "
+                "citing its own fact; a `deviates:` reason stays on its knob's line)")
+    return problems, seen
+
+
 def main():
     problems = selfcheck()
+    debt_seen = set()
     for path in sorted(ENC.glob("canary_*.scad")):
         if path.name in SKIP:
             continue
         problems += lint_file(path)
+        found, seen = lint_help_lines(path, HELP_LINE_DEBT)
+        problems += found
+        debt_seen |= seen
+    for name, knob in sorted(HELP_LINE_DEBT - debt_seen):
+        problems.append(f"{name}: HELP_LINE_DEBT lists the shared-help line starting "
+                        f"'{knob} =', which is gone — delete the entry (the ledger only shrinks)")
+    if debt_seen:
+        print(f"INFO: {len(debt_seen)} shared-help knob line(s) left by decision "
+              "(HELP_LINE_DEBT — the 7\" case's gen_stamp-hashed source)")
     if problems:
         for p in problems:
             print(f"::error::design language: {p}")
         print(f"\ndesign language: {len(problems)} problem(s)")
         return 1
-    print("design language OK — every canonical default conforms or explains itself")
+    print("design language OK — every canonical default conforms or explains itself, "
+          "and every knob's help is on its own line")
     return 0
 
 

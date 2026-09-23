@@ -478,7 +478,7 @@ pad_boss_d = 2.6;  // press boss Ø on the pad's back — rides inside the
 // proportion to their stiffness, so at the new 1.8 N/mm beam against a ~9 N/mm
 // switch, the worst-case 0.45 compresses the switch about 0.12 — under half
 // its travel. That split is computed, not measured; see pad_k's caveat.
-pad_boss_l = 0.65;
+pad_boss_l = 0.65; // press boss reach — keeps the boss on the actuator across the board's whole X float
 /* [Press dot] — the pip on the pad face. It is now the BUTTON, not a label.
    ⚠️ THE DOT STANDS PROUD, and that is a deliberate reversal. Every version
    of this paddle until now kept the whole press surface BELOW the ear face —
@@ -591,7 +591,7 @@ seam_dz = 0.0;       // black between the glass front and the band's start
 // 3.8 -> 3.4 gave a little back to buy the closed ring, and moving the start
 // to the glass means ALL 3.4 is inside the light gap. Net against where this
 // began: 0.75 mm more lit white, and it goes all the way around.
-seam_h  = 3.4;
+seam_h  = 3.4;       // light band thickness — a cap: a build whose vents need the wall derives it down
 band_clear = 0;      // per-face drop-in clearance. ZERO by default now: the
                      // ring is co-printed, and a co-printed band wants no
                      // clearance at all — the AMS fuses filaments that meet,
@@ -1127,7 +1127,7 @@ vent_z1 = bez_h - (snap_depth + snap_h/2) - 0.8;
 // before it stops being a slot — and the cap lands exactly on it by
 // construction, which is the correct answer: the most band a build can carry
 // is the amount that leaves its vents at the floor and not a micron under.
-vent_min_h = 1.5;
+vent_min_h = 1.5;    // vent floor — the thinnest wall slot that is still a slot; caps the band
 seam_room = vent_z1 - vent_min_h - 0.8 - seam_z0;   // what the vents leave
 seam_h_eff = opt_vent ? min(seam_h, seam_room) : seam_h;
 vent_z0 = seam_z0 + seam_h_eff + 0.8;

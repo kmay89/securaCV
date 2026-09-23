@@ -265,7 +265,7 @@ lp_d           = 3.0;   // light-pipe diameter (3 mm pipe -> 3.2 mm hole at defa
 lp_dx          = 5.0;
 lp_dy          = 5.0;
 // Buzzer + pressure vent (recess seats an adhesive GORE vent; ring of holes passes sound/pressure)
-vent_pad_d     = 12.0;
+vent_pad_d     = 12.0;  // GORE-vent recess Ø (the buzzer + pressure vent: the recess seats an adhesive vent)
 vent_pad_depth = 0.8;
 vent_hole_d    = 1.0;   // fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm); the
                         // membrane behind them seals, so the holes only need to pass sound + pressure
@@ -274,7 +274,7 @@ vent_holes     = 10;
 vent_dx        = 7.0;
 vent_dy        = -4.0;
 // Cap-touch window — local thinning so capacitance couples through the lid (when opt_touch)
-touch_d        = 12.0;
+touch_d        = 12.0;  // cap-touch window Ø — local lid thinning so capacitance couples through (opt_touch)
 touch_wall     = 0.8;   // remaining lid thickness at the pad
 touch_dx       = -3.0;
 touch_dy       = -5.0;

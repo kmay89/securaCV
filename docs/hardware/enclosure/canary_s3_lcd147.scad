@@ -170,13 +170,13 @@ usb_clear = 0.35;  // per-side clearance around the shell in its opening
 
 // The plug-end wall, and how far it is cut back so a recessed receptacle
 // housing does not foul the case before the plug is home.
-usb_wall = 1.8;
+usb_wall = 1.8;    // plug-end wall thickness — thin, so a recessed receptacle housing clears before the plug is home
 // Chamfer depth on the outer face around the opening. Bounded by how much
 // wall there is above and below the plug — the shell straddles the board, so
 // its bottom edge sits only a couple of millimeters above the bezel face and
 // a greedy relief cuts straight through it. The two asserts below hold the
 // line; if you want more relief, you need a deeper case, not a bigger number.
-usb_relief = 0.5;
+usb_relief = 0.5;  // chamfer depth on the outer face around the opening — bounded by the wall above and below the plug
 
 /* [Drop collar] — the reason this case exists in one piece */
 collar_on = true;
@@ -204,7 +204,7 @@ ear_skin = 1.1;      // wall skin left outside a button clearance channel
 // somebody has measured where the slot mouth actually is — which the product
 // photos do not tell us. Turn it on after measuring `sd_from_usb`, and the
 // assert below will make sure it does not land on the mark.
-sd_window = false;
+sd_window = false; // permanent window in the back over the SD slot — OFF by default: measure sd_from_usb first
 sd_from_usb = 15.0;  // slot MOUTH center, down from the plug-end edge — MEASURE
 sd_w = 13.0;         // window width (card is 11 mm + finger room)
 sd_l = 9.0;          // window length along the board
@@ -252,7 +252,7 @@ light_seam = true;
 //
 // Either way the outer line is CONTINUOUS — the ties across the seam are ribs
 // hidden behind the strip, not breaks in it. See seam_web_ribs.
-light_band = true;
+light_band = true; // fill the seam with a white PETG light-pipe strip (co-printed, or pressed in as part fil_light)
 band_clear = 0.10;   // per-face clearance; 0 for a co-printed band
 // Measured off the board (kmay89), stated as the SIDE ELEVATION because that
 // is what you look at: 1 mm of black, then 3 mm of white, then black to the
@@ -306,7 +306,7 @@ mark_depth = 0.7;    // deboss depth; the accent inlay fills it flush
 // whose beak (-63) and tail (+67) are themselves off-center in design units,
 // while the wordmark centers on 0. That leaves the right margin ~0.2 mm
 // tighter than the left at every size. Nudge the group back.
-mark_dx = -0.10;
+mark_dx = -0.10;   // lockup X nudge — evens out a right margin ~0.2 mm tighter than the left
 mark_dy = 0;         // CENTERED. It used to sit high to clear the LED window;
                      // with the light moved to the side seam the back is one
                      // clean face and the mark can have the middle of it.
@@ -384,7 +384,7 @@ preload = 0.25;      // compliant squeeze on the PCB (rib crush), not a clamp
 // is still free: the pin rows run down the long edges, and the rib has to
 // stand INBOARD of them. The assert in the derived block is what checks it,
 // and this is the number it tells you to change.
-rib_inset = 3.2;
+rib_inset = 3.2;   // where the compliant ribs land, in from the cavity wall — must stand inboard of the pin rows
 rib_w = 1.2;         // rib thickness across the board — the crushing face
 
 /* [Tolerances] */
@@ -586,7 +586,7 @@ assert(mark_hi <= plate_y/2 - 1.0 && mark_lo >= -plate_y/2 + 1.0,
 // Deliberately a hair pessimistic, because the failure it guards against is a
 // mark hanging off the plate — which is exactly what shipped before it existed,
 // unnoticed, because the only check here was vertical.
-mark_adv = 0.875;
+mark_adv = 0.875;  // wordmark per-character advance, as a fraction of cap height — an estimate, a hair pessimistic
 mark_word_chars = 8;                       // "securaCV"
 function mark_word_w(h) = mark_word_chars * mark_adv * h * mark_word_ratio();
 // The bird's width comes from the library's own bbox, stroke caps included.
@@ -625,7 +625,7 @@ assert(mark_w <= plate_x - 2.0,
 // `usb_r` is the corner break only. A series-A shell's corners are close to
 // sharp; a few tenths keeps the printed opening from needing an elephant's
 // foot allowance and is invisible against the shell.
-usb_r = 0.35;
+usb_r = 0.35;      // corner break of the series-A opening only — the shell's corners are close to sharp
 module usb_a_2d(w, h, r = usb_r) {
     offset(r = r) offset(r = -r) square([w, h], center = true);
 }

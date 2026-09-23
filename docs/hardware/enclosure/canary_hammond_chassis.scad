@@ -38,16 +38,19 @@ plate_w = 88.0;
 plate_t = 2.4;
 
 /* [Boards] — nominal; MEASURE (same meanings as the device enclosures) */
-wap_l = 21.0;  wap_w = 17.5;  wap_pcb = 1.2;  // XIAO spec — brd_l/brd_w/brd_t("xiao");
+wap_l = 21.0;                                 // XIAO length — the spec, brd_l("xiao")
+wap_w = 17.5;                                 // XIAO width — the spec, brd_w("xiao");
                                               // the clips' clip_clear absorbs the
                                               // measured 17.8 (brd_xiao_w_measured())
+wap_pcb = 1.2;                                // XIAO PCB thickness — the spec, brd_t("xiao")
 // The Grove module is what it is — a fixed arithmetic input, not a knob — so
 // its size comes from the registry instead of a retype. This file carried the
 // wrong 25 x 25 long after three siblings measured 40 x 20; the registry (and
 // its board_selfcheck()) is why that cannot happen a fourth time.
 vm_l  = brd_l("grove_v2");                   // Grove Vision AI V2, measured 40
 vm_w  = brd_w("grove_v2");                   // ... x 20 (the 1x2 form, not a square)
-sm_l  = 44.0;  sm_w  = 36.0;                 // MR60BHA2 carrier — brd_l/brd_w("mr60")
+sm_l  = 44.0;                                // MR60BHA2 carrier length — brd_l("mr60")
+sm_w  = 36.0;                                // MR60BHA2 carrier width — brd_w("mr60")
 stack_sock_h = 11.5;                          // seated-XIAO stack height (module underside
                                               // -> XIAO underside): measured 6.5 per
                                               // canary_board_lib brd_stack_sock_measured();

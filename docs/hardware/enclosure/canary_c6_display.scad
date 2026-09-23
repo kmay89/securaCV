@@ -158,7 +158,11 @@ opt_keyhole = true;            // one blind keyhole in the back (wall hang)
 // catalog standard — canary_mount_lib. This file had drifted to slot 7.0 /
 // depth 3.0: a slide the standard stud's head never finishes and a pocket it
 // bottoms out in 0.4 early. The knobs stay tunable; the lib is the default.
-kh_head_d = 7.0; kh_shank_d = 4.2; kh_slot_l = 8.0; kh_head_h = 3.5; kh_face = 1.0;
+kh_head_d = 7.0;               // screw-head pass hole — catalog standard, mount_kh_head_d()
+kh_shank_d = 4.2;              // shank slot width — catalog standard, mount_kh_shank_d()
+kh_slot_l = 8.0;               // slot travel — catalog standard, mount_kh_slot_l() (a drifted 7.0 lived here)
+kh_head_h = 3.5;               // total pocket depth — catalog standard, mount_kh_head_h() (a drifted 3.0 lived here)
+kh_face = 1.0;                 // face web the screw head grips behind — catalog standard, mount_kh_face()
 
 /* [Ventilation] — let the backlight/regulator heat convect out (side slots +
    a back grille). Even this small board runs warm on full brightness. */
@@ -169,7 +173,9 @@ vent_w = 1.4;        // slot width
 
 /* [Print tolerances] — the catalog defaults (core_tol_* in canary_core_lib);
    tune with canary_fit_coupon.scad */
-tol_slide = 0.20; tol_press = 0.10; tol_hole = 0.30;
+tol_slide = 0.20;  // catalog default — core_tol_slide() in canary_core_lib
+tol_press = 0.10;  // catalog default — core_tol_press() in canary_core_lib
+tol_hole  = 0.30;  // catalog default — core_tol_hole() in canary_core_lib
 
 /* [Shell] */
 wall   = 2.2;    // deviates: snap-shell wall — the band pocket (snap_depth 1.4) + the 0.8 web behind it

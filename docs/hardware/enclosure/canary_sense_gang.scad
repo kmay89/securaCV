@@ -53,14 +53,24 @@ rad_dx    = 0.0;
 rad_dy    = 6.0;
 
 /* [Face features] — offsets from the board center */
-lp_d   = 3.0;  lp_dx  = 13.0;  lp_dy  = -14.0;   // WS2812 light pipe
-lux_d  = 3.5;  lux_dx = -13.0; lux_dy = -14.0;   // BH1750 aperture
+lp_d   = 3.0;     // WS2812 light pipe Ø
+lp_dx  = 13.0;    // WS2812 light pipe X offset from the board center
+lp_dy  = -14.0;   // WS2812 light pipe Y offset from the board center
+lux_d  = 3.5;     // BH1750 aperture Ø
+lux_dx = -13.0;   // BH1750 aperture X offset from the board center
+lux_dy = -14.0;   // BH1750 aperture Y offset from the board center
 
 /* [Board snap clips] */
-clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;  // the WAP's proven 1.0/0.5 — canary_snap_lib gates the strain
+clip_w      = 6.0;   // board-clip tab width along the carrier edge — snap_boardclip default
+clip_t      = 1.0;   // clip beam thickness — the WAP's proven 1.0; canary_snap_lib gates the strain
+clip_hook   = 0.5;   // lip overhang over the carrier top — the WAP's proven 0.5
+clip_hook_h = 1.2;   // lip + 45° lead-in height above the carrier top — snap_boardclip default
+clip_clear  = 0.25;  // beam face to carrier edge (a fit — tune on the coupon) — snap_boardclip default
 
 /* [Print tolerances] */
-tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;  // catalog trio — core_tol_*(), canary_core_lib
+tol_slide = 0.20;  // catalog default — core_tol_slide(), canary_core_lib
+tol_press = 0.10;  // catalog default — core_tol_press(), canary_core_lib
+tol_hole  = 0.30;  // catalog default — core_tol_hole(), canary_core_lib
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;

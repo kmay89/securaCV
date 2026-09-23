@@ -78,7 +78,7 @@
     "slider"
    ],
    "options": [],
-   "engineering_param_count": 17,
+   "engineering_param_count": 20,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -312,7 +312,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 74,
+   "engineering_param_count": 82,
    "alternatives": [
     "s3_touch169",
     "watch_station"
@@ -415,7 +415,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 45,
+   "engineering_param_count": 65,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -499,7 +499,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 22,
+   "engineering_param_count": 30,
    "alternatives": [
     "s3_lcd7"
    ],
@@ -607,7 +607,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 49,
+   "engineering_param_count": 66,
    "alternatives": [
     "hammond_chassis",
     "relay_solar"
@@ -659,7 +659,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 27,
+   "engineering_param_count": 47,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -722,7 +722,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 21,
+   "engineering_param_count": 26,
    "alternatives": [
     "field_case",
     "relay_solar"
@@ -774,7 +774,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 30,
+   "engineering_param_count": 36,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -888,7 +888,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 18,
+   "engineering_param_count": 27,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -1079,7 +1079,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 52,
+   "engineering_param_count": 62,
    "alternatives": [
     "field_case",
     "hammond_chassis"
@@ -1157,7 +1157,7 @@
     {
      "id": "sd_window",
      "type": "bool",
-     "label": "sd_window",
+     "label": "permanent window in the back over the SD slot — OFF by default: measure sd_from_usb first",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -1181,7 +1181,7 @@
     {
      "id": "light_band",
      "type": "bool",
-     "label": "light_band",
+     "label": "fill the seam with a white PETG light-pipe strip (co-printed, or pressed in as part fil_light)",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1681,7 +1681,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 62,
+   "engineering_param_count": 64,
    "alternatives": [
     "c6_display",
     "watch_station"
@@ -1962,7 +1962,7 @@
     "plate"
    ],
    "options": [],
-   "engineering_param_count": 21,
+   "engineering_param_count": 35,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2188,7 +2188,7 @@
     "vent"
    ],
    "options": [],
-   "engineering_param_count": 12,
+   "engineering_param_count": 15,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -3179,7 +3179,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 63,
+   "engineering_param_count": 66,
    "alternatives": [
     "s3_touch169",
     "c6_display"
@@ -3221,7 +3221,7 @@
     "molle"
    ],
    "options": [],
-   "engineering_param_count": 9,
+   "engineering_param_count": 15,
    "alternatives": [],
    "remix_of": null,
    "counts": {
