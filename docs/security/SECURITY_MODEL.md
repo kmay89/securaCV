@@ -326,8 +326,9 @@ certificate generated on the device and kept in its NVS: from the first
 boot after setup completes they serve HTTPS on 443 and 307-redirect port 80
 there, except the connectivity probes phones and laptops send, and a build,
 core or certificate step that cannot do TLS serves plain HTTP and says why in
-`/api/status` `tls_mode_reason`. Those builds are compiled by CI and have
-never run on hardware. The flagship's release images (`release`,
+`/api/status` `tls_mode_reason`. CI compiles `dev` and `full`; `dev_ha` and
+`usb-onboard` inherit the flag from `dev` and no workflow builds them; none
+of the four has run on hardware. The flagship's release images (`release`,
 `release_ha` and the board envs built on them) stay plain HTTP on port 80
 until the size budget shows HTTPS fits and the maintainer turns it on, and
 the displays' LAN page and the headless products' setup portals are plain
@@ -349,9 +350,11 @@ SHA-256 fingerprint (which products support which is in
 [`docs/FIRMWARE_VARIANT_AUDIT.md`](../FIRMWARE_VARIANT_AUDIT.md)). An
 incomplete TLS setup refuses to connect rather than quietly downgrading, and
 the unverified "lab" mode exists only as a mode chosen by name that warns on
-every connect. On the flagship, provisioning the broker password over
-`POST /api/mqtt/config` crosses the LAN in the clear like the rest of the
-device API. This is compile-tested, host-tested, not yet bench-tested.
+every connect. On the flagship's release images, and on its HTTPS builds
+until the first boot after setup or when HTTPS fails to start, provisioning
+the broker password over `POST /api/mqtt/config` crosses the LAN in the
+clear like the rest of the device API. This is compile-tested, host-tested,
+not yet bench-tested.
 
 **One read on the hub is open on purpose: the fleet roll-call**
 (`GET /api/fleet`). It answers anyone who can reach the kernel's port with
@@ -375,7 +378,7 @@ liveness proof against someone who can publish on your MQTT broker
 | **Law enforcement** (without the physical device) | There is no ERRERlabs server to subpoena. A Canary talks only to the broker and hub you run and to the update host, which sees an anonymous manifest fetch; the evidence lives on the device and on your hub. |
 | **Network observers** | They see the disclosed paths and nothing else: a broker session (readable on the wire until you provision TLS), a daily signed-manifest fetch and, on the display line, SNTP. No path carries an identifier beyond what your own broker login already is. |
 | **Other WiFi users** | Each device has a unique, randomly derived password. |
-| **Remote attackers** | Nothing listens beyond your network and nothing is exposed to the internet; the outbound paths are client-initiated to hosts you chose. Encryption on the device's own API is an opt-in — the WAP's HTTPS after setup, the flagship's `FEATURE_HTTPS` builds after setup, the kernel's `api-tls` — and the MQTT broker link is TLS only once you provision it (plain by default). |
+| **Remote attackers** | Nothing listens beyond your network and nothing is exposed to the internet; the outbound paths are client-initiated to hosts you chose. Encryption on the device's own API is an opt-in — the WAP's HTTPS after setup, the flagship's `FEATURE_HTTPS` builds from the first boot after setup, the kernel's `api-tls` — and the MQTT broker link is TLS only once you provision it (plain by default). |
 | **ERRERlabs under court order** | We cannot comply because we have nothing — no keys, no data, no access. |
 
 ---
@@ -389,7 +392,7 @@ The device uses well-vetted, standard cryptographic primitives:
 | Device identity & record signing | Ed25519 | Arduino Crypto (Rhys Weatherley) |
 | Chain integrity & domain separation | SHA-256 | mbedTLS (ESP-IDF) |
 | API token derivation | HMAC-SHA256 / HKDF | mbedTLS (ESP-IDF) |
-| Transport encryption (opt-in: the WAP's HTTPS after setup; the flagship's `FEATURE_HTTPS` builds after setup; the kernel's `api-tls` feature) | TLS 1.2+ (RSA-2048 self-signed on the WAP; ECDSA P-256 self-signed on the flagship's `FEATURE_HTTPS` builds, CI-compiled and never run on hardware) | mbedTLS (ESP-IDF); rustls (kernel) |
+| Transport encryption (opt-in: the WAP's HTTPS after setup; the flagship's `FEATURE_HTTPS` builds from the first boot after setup; the kernel's `api-tls` feature) | TLS 1.2+ (RSA-2048 self-signed on the WAP; ECDSA P-256 self-signed on the flagship's `FEATURE_HTTPS` builds, CI-compiled in `dev` and `full` and never run on hardware) | mbedTLS (ESP-IDF); rustls (kernel) |
 | Broker link (MQTT over TLS, when provisioned) | TLS 1.2+; CA chain verification on all five products; SHA-256 certificate pin and a named unverified lab mode on canary-display (not the plain-only nightstand-c6), canary-sense, canary-vision and the `firmware/canary` flagship; canary-wap is CA-only (esp_mqtt has no pin hook). Compile-tested, host-tested, not bench-tested | mbedTLS via WiFiClientSecure (display / sense / vision / flagship) and esp-tls (canary-wap) |
 | At-rest event database (kernel) | SQLCipher (AES-256), key derived from the device seed | SQLCipher via rusqlite |
 

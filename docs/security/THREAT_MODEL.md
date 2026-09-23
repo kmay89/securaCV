@@ -187,8 +187,8 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 | Cloud | None. The outbound paths are the four in Principle 2 — broker, signed-manifest check, SNTP, opt-in forecast — to hosts the owner chose |
 | mDNS | Local network only: the device's own AP, or the home LAN once joined (`_securacv._tcp`) |
 | Setup Wi-Fi (SoftAP) | Device-unique passphrase, max 1 client. Since 2026-09 (F16) both firmware trees ask the driver for WPA2/WPA3 transition with PMF capable (never required, so a WPA2-only phone still joins) and fall back to WPA2-PSK where the core lacks SoftAP SAE — expected on the IDF 4.4 core the `canary (PIO)` dev/release builds use — reporting what is on the air as `ap_auth` in `/api/wifi/status` and `/api/status` (WAP: `/api/wifi`, `/api/device-info`). CI-compiled (#1704), never run on hardware. The `canary (PIO)` passphrase is 8 characters, the WPA2 floor; widening it is a separate decision because it is re-derived every boot and would change every provisioned device's password |
-| HTTP | Plaintext on the LAN by default (token-authenticated); TLS is an owner opt-in on the WAP (`tls_enabled`) and the kernel (`api-tls` feature) — not "TLS only". The `canary (PIO)` dev/full builds (`FEATURE_HTTPS=1`, 2026-09) serve a self-signed ECDSA P-256 certificate on 443 after first-boot setup and redirect port 80 there; release builds stay plaintext until the size budget is read, and a build or core that cannot do TLS falls back to plaintext and says why in `/api/status` `tls_mode_reason` — CI-compiled (#1704), never run on hardware. The iPhone app pins the receipt's `tls_cert_fp` (`PinnedTrustDelegate`), refuses an https device it cannot check, and offers a plain-http credential push only behind a disclosure the owner switches on |
-| MQTT broker link | Plain by default — the broker password crosses the LAN in the clear until the owner provisions TLS, and on the flagship the provisioning request itself (`POST /api/mqtt/config`) rides the plain device API. CA-verified or SHA-256-pinned TLS per product, refusing to connect on an incomplete setup; the lab mode is chosen by name and warns on every connect. Per-variant table: `docs/FIRMWARE_VARIANT_AUDIT.md`. Compile-tested, host-tested, not bench-tested against a TLS broker |
+| HTTP | Plaintext on the LAN by default (token-authenticated); TLS is an owner opt-in on the WAP (`tls_enabled`) and the kernel (`api-tls` feature) — not "TLS only". The `canary (PIO)` dev/full builds (`FEATURE_HTTPS=1`, 2026-09) serve a self-signed ECDSA P-256 certificate on 443 from the first boot after setup and redirect port 80 there; release builds stay plaintext until the size budget is read, and a build or core that cannot do TLS falls back to plaintext and says why in `/api/status` `tls_mode_reason` — CI-compiled (#1704), never run on hardware. The iPhone app pins the receipt's `tls_cert_fp` (`PinnedTrustDelegate`), refuses an https device it cannot check, and offers a plain-http credential push only behind a disclosure the owner switches on |
+| MQTT broker link | Plain by default — the broker password crosses the LAN in the clear until the owner provisions TLS, and on the flagship's release images the provisioning request itself (`POST /api/mqtt/config`) rides the plain device API. CA-verified or SHA-256-pinned TLS per product, refusing to connect on an incomplete setup; the lab mode is chosen by name and warns on every connect. Per-variant table: `docs/FIRMWARE_VARIANT_AUDIT.md`. Compile-tested, host-tested, not bench-tested against a TLS broker |
 | Fleet roll-call (`GET /api/fleet`) | The one open read on the hub: rate-limited, no token. It serves the kernel's own row and — when `api.fleet_peers_path` is set — each Canary the MQTT bridge heard, in the contract's coarse words only (name, online, chain verdict, product, and presence/occupants/breathing while proven online); never an event, a zone or key material. The origin allow-list stops other websites' scripts, not a client that can reach the port, so the port stays loopback by default and is the owner's to expose (the add-on's disabled 8799 host port; the Docker sidecar's `SECURACV_API_BIND=all` plus a port mapping the image does not `EXPOSE` — the switch also exports the kernel's cleartext acknowledgment, which never relaxes the token on any other route). What the roll-call says is bounded by the MQTT broker, not proven past it: a peer with publish rights can replay a captured signed publish (held to one window per missed chain advance), invent ids, or put a real id into `degraded` — see `tvos/discovery/DISCOVERY.md`. The summary file behind it is `0600` and size-bounded |
 | Viewer credential (`GET /api/sealed-log`, the Witness Wall) | A second, narrower bearer credential beside the rotating capability token, because a TV cannot re-read a token file: minted by the operator (`witness_api mint-viewer-token`, printed once as a pairing receipt that also carries the kernel's verifying key for the Wall to pin), long-lived until revoked by id, and honored on exactly one route — the non-queryable, size-capped, signed sealed-log tail (Invariant VII bounds what it reads). Presented on any other path or method it is an invalid token that counts toward the per-address lockout, and a good viewer read never clears that count (only a capability-token success does), so the narrower credential cannot reset the lockout that guards the wider one; `?token=` is refused for it as for every token. At rest only its sha256 (`viewer_tokens.json`, `0600`, beside the capability token), compared in constant time and re-read per request, so a revocation lands on the next poll. Whoever holds it reads the coarse sealed record (event types, zones, 10-minute buckets) — the reason it is a credential and not an open read like the roll-call — and over plaintext HTTP it can be sniffed on the LAN like the capability token; TLS stays the owner's opt-in (`api-tls`). What the Wall's "Verified" proves is *authorship* — every served entry signed by the pinned key and linked from the served anchor — not that the tail is *current* or *complete*: the served `checkpoint_head` is unsigned and the document carries no signed time or high-water mark, so a captured genuine document replayed later, or a genuine one cut short at either end, still walks clean against the pin, and the Wall keeps no last-walked head across polls. A signed head (or high-water mark) in the document is the roadmap item that closes it; not built |
 | Camera | Preview only (evidence is metadata, not video) |
@@ -378,10 +378,12 @@ compelled.
 
 **Result:** Device runs its own AP — it is not on a shared network.
 Adversary must know the AP password (device-unique, derived from
-fingerprint). Even if connected: API auth required, exponential backoff on
-failures, and HTTPS once setup has completed (plain HTTP during setup, on
-the flagship's release images — its dev and full builds redirect port 80 to
-HTTPS after setup — and on the display line's LAN page).
+fingerprint). Even if connected: API auth required (on the flagship a peer
+on its own AP is handed the page token, so there the AP password is the
+whole boundary), exponential backoff on failures, and HTTPS once setup has
+completed (plain HTTP during setup, on the flagship's release images — its
+dev and full builds redirect port 80 to HTTPS from the first boot after
+setup — and on the display line's LAN page).
 
 **PASS if:** Network proximity alone grants no access.
 
@@ -573,10 +575,12 @@ To change any security-hardened default, a developer must:
    name and fleet-beacon state, never a serial or anything about other
    people, and its two passive scanners (presence, Nearby) keep no MAC,
    OUI or name from other people's devices
-7. The WAP serves HTTPS after setup; plain HTTP is a stated posture (setup
+7. The WAP serves HTTPS after setup, and the flagship's dev and full builds
+   from the first boot after setup; plain HTTP is a stated posture (setup
    mode and start failure on the WAP, both logged; the flagship's release
-   images, its dev and full builds redirecting port 80 to HTTPS after setup;
-   the displays' LAN page), never a silent downgrade of a TLS session
+   images, and its dev and full builds during setup and on a TLS start
+   failure, named in `tls_mode_reason`; the displays' LAN page), never a
+   silent downgrade of a TLS session
 8. Evidence is verifiable offline without any ERRERlabs service
 9. Regression checks enforce all ten principles automatically
 10. The transparency document passes the "would Moxie sign this?" test
