@@ -26,6 +26,14 @@ from unittest import mock
 TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS))
 
+# NOTE: importing gen_enclosures RUNS it — build_main() and catalog_main() are
+# module-level calls, so this import (and test_bom_overlay.py's, which unittest
+# discovery imports first) rewrites the real build.json, workshop.json and
+# catalog.json: on a current tree the bytes do not move, on a stale one they
+# are silently brought current. So the catalog on disk is never evidence of
+# anything here; whether the COMMITTED catalog is current is canary-local.yml's
+# "Enclosure catalog drift" step (regenerate, then `git diff --exit-code`),
+# which runs before this suite in the same job.
 import gen_enclosures as ge  # noqa: E402
 
 # What scad_probe.probe() writes, verbatim in shape: the include, the
@@ -58,8 +66,9 @@ class ScratchNames(unittest.TestCase):
 
 class CatalogIgnoresStrays(unittest.TestCase):
     def _catalog(self, enc: Path, out: Path) -> dict:
-        # the generator's module-level paths, pointed at a scratch copy — the
-        # real catalog.json is never written by this test (REPO only names it)
+        # the generator's module-level paths, pointed at `enc`, writing `out`:
+        # THIS call never writes the real catalog.json (REPO only names it in
+        # the log line) — the import above already did, see the note there
         with mock.patch.object(ge, "ENC", enc), mock.patch.object(ge, "CATALOG_JSON", out), \
                 mock.patch.object(ge, "REPO", out.parent), mock.patch("builtins.print"):
             ge.catalog_main()
@@ -76,14 +85,14 @@ class CatalogIgnoresStrays(unittest.TestCase):
             (enc / ".tmp_probe_device_canary_wap.scad").write_text(PROBE_TEXT, encoding="utf-8")
             (enc / "tmp_scratch.scad").write_text(PROBE_TEXT, encoding="utf-8")
             dirty = self._catalog(enc, Path(td) / "dirty.json")
+            real = self._catalog(ge.ENC, Path(td) / "real.json")
         ids = [p["id"] for p in dirty["products"]]
         self.assertFalse([i for i in ids if "tmp" in i], ids)
         self.assertEqual(dirty, clean)
-        # and the clean run is the committed catalog: the copy is the real folder
-        committed = json.loads((TOOLS.parents[1] / "canary-local/devices/catalog.json")
-                               .read_text(encoding="utf-8"))
-        self.assertEqual([p["id"] for p in clean["products"]],
-                         [p["id"] for p in committed["products"]])
+        # and the copy IS the real folder: the clean run equals a run over
+        # docs/hardware/enclosure itself (a copy missing a file would make
+        # clean and dirty equally wrong, and the comparison above vacuous)
+        self.assertEqual(clean, real)
 
 
 if __name__ == "__main__":
