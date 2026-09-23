@@ -986,14 +986,14 @@ gill_n  = 0;         // SIDE GILLS OFF — they printed ugly on the first case
                      // survive this untouched — verified, not assumed.
                      // Was 7. Set it back if a build needs the side area.
 gill_y0 = -33.0;     // carry vents only; SD access is through the back plate
-gill_w = 2.4;        // DOCK KEY slot width (the stand's studs mate them — do
-                     // not move); the top wall's flank exhaust slots share
-                     // it. The visible side gills themselves are eggs,
-                     // gill_vw wide (below)
+gill_w = 2.4;        // DOCK KEY slot width: the stand's studs mate them, so do not move it
+                     // The top wall's flank exhaust slots share it. The
+                     // visible side gills themselves are eggs, gill_vw wide
+                     // (below).
 gill_l = 9.0;        // side-gill length, and the portrait dock-key slots' length
-gill_rake = 0;       // side-gill rake, degrees. 0: vertical slots print
-                     // cleanest; the raked look read as slashes and bought
-                     // nothing thermally
+gill_rake = 0;       // side-gill rake, degrees; 0 (vertical slots) prints cleanest
+                     // The raked look read as slashes and bought nothing
+                     // thermally.
 gill_vw = 3.6;       // side-gill egg base width — area matches the old
                      // 2.4-wide pill (21.2 vs 20.4 mm2), upright when
                      // wall-mounted so a drip running down the wall parts

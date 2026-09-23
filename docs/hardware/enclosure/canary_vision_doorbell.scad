@@ -235,9 +235,9 @@ vent_pad_depth = 0.8;   // that seat's recess depth — core_vent_pad_depth()
 vent_hole_d    = 1.0;   // fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm)
 vent_ring_d    = 6.0;   // Ø of the ring the vent holes sit on — core_vent_ring_d()
 vent_holes     = 10;    // more, smaller holes recover the open area at 1.0 mm
-vent_dx        = 0.0;    // vent cluster center X, from the module center: 0 puts the vent/sound
-                         // cluster ON the face's vertical axis — the camera → grille → button
-                         // rhythm of a real doorbell (off-axis it read as an accidental drill pattern)
+vent_dx        = 0.0;    // vent cluster center X, from the module center; 0 keeps it on the face's vertical axis
+                         // That axis is the camera → grille → button rhythm of a real doorbell;
+                         // off-axis, the cluster read as an accidental drill pattern.
 vent_dy        = -8.0;   // vent cluster center Y, from the module center
 mag_d  = 6.0;      // tamper MAGNET diameter (pocket = mag_d + 2*tol_press — press fit)
 mag_h  = 3.2;      // magnet thickness, and the pocket ring's height off the face's inside

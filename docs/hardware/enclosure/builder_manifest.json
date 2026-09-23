@@ -2346,7 +2346,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "bf167d0acf0b3bffc93966aa404277b0bb7a8686c6280e6ea641766cc4dbff32",
+      "sha256": "9869e0df57092822d6e7c3f343736ed58cb84a6859d638bded8a9cad4a679902",
       "groups": [
         {
           "name": "What to render",
@@ -3106,7 +3106,7 @@
               "name": "vent_dx",
               "type": "number",
               "default": 0.0,
-              "desc": "vent cluster center X, from the module center: 0 puts the vent/sound"
+              "desc": "vent cluster center X, from the module center; 0 keeps it on the face's vertical axis"
             },
             {
               "name": "vent_dy",

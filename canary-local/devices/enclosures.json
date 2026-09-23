@@ -3555,7 +3555,7 @@
       {
        "name": "vent_dx",
        "default": "0.0",
-       "comment": "vent cluster center X, from the module center: 0 puts the vent/sound"
+       "comment": "vent cluster center X, from the module center; 0 keeps it on the face's vertical axis"
       },
       {
        "name": "vent_dy",
@@ -10940,7 +10940,7 @@
       {
        "name": "gill_w",
        "default": "2.4",
-       "comment": "DOCK KEY slot width (the stand's studs mate them — do"
+       "comment": "DOCK KEY slot width: the stand's studs mate them, so do not move it"
       },
       {
        "name": "gill_l",
@@ -10950,7 +10950,7 @@
       {
        "name": "gill_rake",
        "default": "0",
-       "comment": "side-gill rake, degrees. 0: vertical slots print"
+       "comment": "side-gill rake, degrees; 0 (vertical slots) prints cleanest"
       },
       {
        "name": "gill_vw",
