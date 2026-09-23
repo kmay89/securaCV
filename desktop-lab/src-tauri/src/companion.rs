@@ -485,7 +485,7 @@ pub fn tray_rows(snap: Option<&FleetSnapshot>) -> Vec<String> {
         return vec!["No Canaries found yet".to_string()];
     }
     let mut rows: Vec<&DeviceRow> = s.devices.values().collect();
-    rows.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    rows.sort_by_key(|r| r.name.to_lowercase());
     let mut out: Vec<String> = rows
         .iter()
         .take(MAX_ROWS)
