@@ -1748,6 +1748,17 @@ jobs:
         run: |
           python3 firmware/projects/canary-wap/tests_host/check_route_security.py
 
+      - name: Check canary (PIO) route security (every route gated or allowlisted)
+        # The canary tree's sibling of the step above, same matcher: every
+        # route registerHttpHandlers() adds (the captive-probe loop
+        # included) must reach auth_gate / auth_check / auth_check_optional
+        # / provisioning_gate_take, or sit on the script's documented public
+        # allowlist. The two HTML pages are public shells whose bearer-token
+        # injection is decided per request by provisioning_gate.h's
+        # page_token_policy (F20 gap #11).
+        run: |
+          python3 firmware/canary/scripts/check_route_security.py
+
       - name: Check canary-wap handler-table budget (no silent route drops)
         # esp_http_server drops registrations past max_uri_handlers and the
         # sketch ignores the error, so an under-sized budget 404s whole API

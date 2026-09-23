@@ -14,6 +14,17 @@
 #if FEATURE_WIFI_AP || FEATURE_HTTP_SERVER
 
 #include <ArduinoJson.h>
+// F20 gap #11: BOOT-tap provisioning gate + the page-token policy (pure,
+// host-tested) and the salted hardware pseudonym the receipt carries instead
+// of a MAC (privacy Invariant III). Both live under firmware/common on the
+// project's -I path.
+#include "network/provisioning_gate.h"
+#include "identity/device_pseudonym.h"
+// getpeername()/getsockname() + the AP/STA netif addresses for the
+// interface-scoped page-token policy and the receipt's base_url (the address
+// the request actually arrived on).
+#include <lwip/sockets.h>
+#include <esp_netif.h>
 
 #if FEATURE_SD_STORAGE
 #include "securacv_storage.h"
@@ -829,8 +840,128 @@ static bool auth_gate(httpd_req_t* req) {
   return true;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// PROVISIONING GATE (F20 gap #11) — hooks + interface scoping
+// ════════════════════════════════════════════════════════════════════════════
+//
+// main.cpp owns the gate State (it owns the BOOT button) and registers these
+// two hooks at boot. Unregistered == closed, so the receipt and the page
+// token fail closed on a build that never wires the button.
+
+static network_gate_fn_t s_gate_take    = nullptr;
+static network_gate_fn_t s_gate_is_open = nullptr;
+
+void network_set_provisioning_gate_hooks(network_gate_fn_t take,
+                                         network_gate_fn_t is_open) {
+  s_gate_take    = take;
+  s_gate_is_open = is_open;
+}
+
+static bool provisioning_gate_take()    { return s_gate_take    ? s_gate_take()    : false; }
+static bool provisioning_gate_is_open() { return s_gate_is_open ? s_gate_is_open() : false; }
+
+// Host-order a.b.c.d from an IPAddress (WiFi.softAPIP() and friends).
+static uint32_t ip4_host_order(const IPAddress& ip) {
+  return ((uint32_t)ip[0] << 24) | ((uint32_t)ip[1] << 16) |
+         ((uint32_t)ip[2] << 8)  |  (uint32_t)ip[3];
+}
+
+// Host-order value of an lwIP/esp_netif IPv4 word. The word is network byte
+// order in memory, so the first byte is the first octet — no ntohl macro
+// dependency, and the same on every core.
+static uint32_t be_word_host_order(const void* word) {
+  const uint8_t* b = (const uint8_t*)word;
+  return ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) |
+         ((uint32_t)b[2] << 8)  |  (uint32_t)b[3];
+}
+
+// Host-order IPv4 of a sockaddr, or 0 for anything that is not AF_INET
+// (IPv6, link-local, unknown).
+static uint32_t sockaddr_ip4_host_order(const struct sockaddr_storage& ss) {
+  if (ss.ss_family != AF_INET) return 0;
+  const struct sockaddr_in* sin = (const struct sockaddr_in*)&ss;
+  return be_word_host_order(&sin->sin_addr.s_addr);
+}
+
+// Address + netmask of one default netif ("WIFI_AP_DEF" / "WIFI_STA_DEF"),
+// host order; both 0 when the netif is absent or has no address. esp_netif
+// reads the same on the IDF 4.4 (Arduino 2.0.17) and IDF 5.x cores — the
+// Arduino WiFi class's subnet-mask accessor does not exist on the older one.
+static void netif_ip4(const char* ifkey, uint32_t* ip, uint32_t* mask) {
+  *ip = 0;
+  *mask = 0;
+  esp_netif_t* nif = esp_netif_get_handle_from_ifkey(ifkey);
+  if (!nif) return;
+  esp_netif_ip_info_t info;
+  memset(&info, 0, sizeof(info));
+  if (esp_netif_get_ip_info(nif, &info) != ESP_OK) return;
+  *ip = be_word_host_order(&info.ip.addr);
+  *mask = be_word_host_order(&info.netmask.addr);
+}
+
+// True only when this request provably came over the Canary's own Wi-Fi:
+// the AP is up, the socket's LOCAL address is the AP address, the peer is
+// inside the AP subnet, and the home network (if joined) does not overlap
+// it — provisioning_gate::request_on_softap, host-tested. Anything else,
+// IPv6 and link-local included, is "not AP", i.e. the home LAN, where the
+// page token is withheld: a wrong match here would re-open the disclosure.
+// The AP is dropped once the STA settles (dropAp), so this grant only exists
+// while the AP is up; the SPA banner says so.
+static bool from_ap_subnet(httpd_req_t* req) {
+  if (!(WiFi.getMode() & WIFI_AP)) return false;
+  const int fd = httpd_req_to_sockfd(req);
+  if (fd < 0) return false;
+  struct sockaddr_storage peer_ss;
+  struct sockaddr_storage local_ss;
+  socklen_t plen = sizeof(peer_ss);
+  socklen_t llen = sizeof(local_ss);
+  memset(&peer_ss, 0, sizeof(peer_ss));
+  memset(&local_ss, 0, sizeof(local_ss));
+  if (getpeername(fd, (struct sockaddr*)&peer_ss, &plen) != 0) return false;
+  if (getsockname(fd, (struct sockaddr*)&local_ss, &llen) != 0) return false;
+  uint32_t ap_ip, ap_mask, sta_ip, sta_mask;
+  netif_ip4("WIFI_AP_DEF", &ap_ip, &ap_mask);
+  netif_ip4("WIFI_STA_DEF", &sta_ip, &sta_mask);
+  return canary::net::provisioning_gate::request_on_softap(
+      sockaddr_ip4_host_order(peer_ss), sockaddr_ip4_host_order(local_ss),
+      ap_ip, ap_mask, sta_ip, sta_mask);
+}
+
+// A valid bearer on this request. Fails closed when the device credential
+// is not provisioned: AuthManager::checkOptional against an EMPTY expected
+// token would accept "Authorization: Bearer " (a zero-length constant-time
+// compare is equal), and here that would hand out the receipt.
+static bool bearer_present_and_valid(httpd_req_t* req) {
+  const char* token = auth_get_token();
+  if (!token || token[0] == '\0') return false;
+  return auth_check_optional(req, token);
+}
+
+// Dotted IPv4 of the interface this request arrived on (getsockname), so the
+// receipt's base_url points at the address the client can actually reach —
+// the STA address for a LAN caller, the AP address for an AP caller. Falls
+// back to the SoftAP address when the socket cannot say.
+static void local_addr_of(httpd_req_t* req, char* out, size_t cap) {
+  uint32_t local = 0;
+  const int fd = httpd_req_to_sockfd(req);
+  if (fd >= 0) {
+    struct sockaddr_storage ss;
+    socklen_t len = sizeof(ss);
+    memset(&ss, 0, sizeof(ss));
+    if (getsockname(fd, (struct sockaddr*)&ss, &len) == 0) {
+      local = sockaddr_ip4_host_order(ss);
+    }
+  }
+  if (local == 0) local = ip4_host_order(WiFi.softAPIP());
+  snprintf(out, cap, "%u.%u.%u.%u",
+           (unsigned)((local >> 24) & 0xFF), (unsigned)((local >> 16) & 0xFF),
+           (unsigned)((local >> 8) & 0xFF),  (unsigned)(local & 0xFF));
+}
+
 // Forward declarations for HTTP handlers
 static esp_err_t handle_ui(httpd_req_t* req);
+// BOOT-tap gated provisioning receipt (F20 gap #11; WAP parity).
+static esp_err_t handle_provisioning_receipt(httpd_req_t* req);
 // Captive-portal probes + first-boot setup wizard (see the CAPTIVE-PORTAL
 // section below for the per-platform strategy).
 static esp_err_t handle_captive_probe(httpd_req_t* req);
@@ -952,13 +1083,14 @@ bool ScvNetworkManager::startHttpServer() {
   // leaves that slot spare, which is cheaper than a dropped route) + 4
   // OTA-pull + 9 peek + 1 sensing + 4 vision + 4 audio + 2 diagnostics + 1
   // power + 1 thermal = 45 base, + 8 captive-portal routes (6 OS connectivity
-  // probes + /setup + the wildcard fallback) + 6 mesh endpoints (PR-8) when
-  // the mesh feature is compiled in. Each registered httpd_uri_t needs a
-  // slot; register_route() names any that does not get one.
+  // probes + /setup + the wildcard fallback) + 1 provisioning receipt
+  // (GET /api/provisioning-receipt, F20 gap #11) + 6 mesh endpoints (PR-8)
+  // when the mesh feature is compiled in. Each registered httpd_uri_t needs
+  // a slot; register_route() names any that does not get one.
   #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
-  config.max_uri_handlers = 59;
+  config.max_uri_handlers = 60;
   #else
-  config.max_uri_handlers = 53;
+  config.max_uri_handlers = 54;
   #endif
   config.recv_wait_timeout = 30;
   config.send_wait_timeout = 30;
@@ -1004,6 +1136,11 @@ void ScvNetworkManager::registerHttpHandlers() {
     httpd_uri_t probe = { .uri = p, .method = HTTP_GET, .handler = handle_captive_probe };
     register_route(m_http_server, &probe);
   }
+
+  // Provisioning receipt: bearer OR one BOOT tap (the handler gates itself;
+  // firmware/canary/scripts/check_route_security.py lists it as self-gating).
+  httpd_uri_t receipt = { .uri = "/api/provisioning-receipt", .method = HTTP_GET, .handler = handle_provisioning_receipt };
+  register_route(m_http_server, &receipt);
 
   // API endpoints
   httpd_uri_t status = { .uri = "/api/status", .method = HTTP_GET, .handler = handle_status };
@@ -1208,7 +1345,15 @@ void ScvNetworkManager::registerHttpHandlers() {
 // fragments fast, so we stream prefix/token/suffix as three chunks rather
 // than allocating a rendered copy. Shared by the dashboard (/) and the
 // first-boot setup wizard (/setup + the captive-portal probe paths).
-static esp_err_t send_html_with_token(httpd_req_t* req, const char* html) {
+//
+// `inject` is the page-token policy's verdict (page_token_inject below).
+// When it is false the placeholder is streamed EMPTY and the response
+// carries `X-CV-Token: withheld`: the SPA's api() helper already skips the
+// Authorization header for an empty/placeholder token and renders the
+// unlock banner (tap BOOT, use the Canary's own Wi-Fi, or paste the kit
+// token). This is what stops any device on the home LAN from reading the
+// credential out of view-source (F20 gap #11).
+static esp_err_t send_html_with_token(httpd_req_t* req, const char* html, bool inject) {
   httpd_resp_set_type(req, "text/html");
   // no-store: captive sheets cache aggressively, and a cached copy of this
   // page carries the PREVIOUS Canary's bearer token when the same phone
@@ -1224,8 +1369,9 @@ static esp_err_t send_html_with_token(httpd_req_t* req, const char* html) {
     return httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN);
   }
 
-  const char* token = auth_get_token();
+  const char* token = inject ? auth_get_token() : "";
   if (!token) token = "";
+  if (!inject) httpd_resp_set_hdr(req, "X-CV-Token", "withheld");
   const size_t token_len = strlen(token);
   const size_t prefix_len = needle - html;
 
@@ -1243,9 +1389,110 @@ static esp_err_t send_html_with_token(httpd_req_t* req, const char* html) {
   return httpd_resp_send_chunk(req, NULL, 0);
 }
 
+// The page-token policy for this request (provisioning_gate::page_token_policy,
+// host-tested): inject while the first-boot wizard is active, for a
+// bearer-authenticated caller, for a peer inside the live SoftAP subnet, or
+// while the BOOT-tap gate is open — PEEKED, never taken, so loading the page
+// cannot spend the tap the receipt fetch needs. Everything else (the home
+// LAN) gets the page without the credential.
+static bool page_token_inject(httpd_req_t* req) {
+  using canary::net::provisioning_gate::PageToken;
+  using canary::net::provisioning_gate::page_token_policy;
+  const bool setup_active = setup_is_active() || setup_is_first_boot();
+  const bool bearer_ok    = bearer_present_and_valid(req);
+  const bool on_ap        = from_ap_subnet(req);
+  const bool gate_open    = provisioning_gate_is_open();
+  const char* why = nullptr;
+  const PageToken verdict = page_token_policy(setup_active, bearer_ok, on_ap, gate_open, &why);
+  if (verdict == PageToken::WITHHOLD) {
+    Serial.printf("[AUTH] page token withheld (%s)\n", why ? why : "");
+  }
+  return verdict == PageToken::INJECT;
+}
+
 static esp_err_t handle_ui(httpd_req_t* req) {
   witness_get_health().http_requests++;
-  return send_html_with_token(req, CANARY_UI_HTML);
+  return send_html_with_token(req, CANARY_UI_HTML, page_token_inject(req));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PROVISIONING RECEIPT (F20 gap #11) — bearer OR one BOOT tap
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The WAP's receipt shape (canary_wap.ino send_provisioning_receipt), which
+// the iOS app's ProvisioningReceipt parses: device_id, base_url, token,
+// pubkey_fp, firmware, hw_token, ap_ssid, ap_password, tls_cert_fp,
+// provisioned_at. tls_cert_fp is empty until the TLS server lands (F15);
+// the app refuses an https base_url that carries no pin, so the scheme and
+// the pin move together.
+
+static esp_err_t send_provisioning_receipt(httpd_req_t* req) {
+  DeviceIdentity& device = witness_get_device();
+  ScvNetworkManager& net = network_get_instance();
+
+  char fp_hex[17];
+  hex_to_str(fp_hex, device.pubkey_fp, 8);
+  // Privacy (Invariant III): salted pseudonym, never the raw MAC.
+  char hw_token[device_pseudonym::HEX_LEN + 1];
+  if (!device_pseudonym::device_id_hex(hw_token, sizeof(hw_token))) hw_token[0] = '\0';
+  char addr[16];
+  local_addr_of(req, addr, sizeof(addr));
+  char base_url[32];
+  snprintf(base_url, sizeof(base_url), "http://%s", addr);
+  char provisioned_at[24];
+  snprintf(provisioned_at, sizeof(provisioned_at), "boot:%lu", (unsigned long)device.boot_count);
+
+  JsonDocument doc;
+  doc["device_id"]      = device.device_id;
+  doc["base_url"]       = base_url;
+  doc["token"]          = auth_get_token();
+  doc["pubkey_fp"]      = fp_hex;
+  doc["firmware"]       = FIRMWARE_VERSION;
+  doc["hw_token"]       = hw_token;
+  doc["ap_ssid"]        = net.getApSsid();
+  doc["ap_password"]    = net.getApPassword();
+  doc["tls_cert_fp"]    = "";
+  doc["provisioned_at"] = provisioned_at;
+
+  String response;
+  serializeJson(doc, response);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  return httpd_resp_sendstr(req, response.c_str());
+}
+
+static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
+  witness_get_health().http_requests++;
+
+  // A valid bearer always gets the receipt (the SPA's "Save recovery kit"
+  // button, the iOS app re-syncing) — silently checked through
+  // auth_check_optional(), no 401 on miss, refused outright while the
+  // credential is unprovisioned.
+  if (bearer_present_and_valid(req)) {
+    return send_provisioning_receipt(req);
+  }
+
+  // No bearer: consume the physical gate in ONE atomic step (a second poll,
+  // or a second consumer on another task, reads it closed).
+  if (!provisioning_gate_take()) {
+    char body[256];
+    if (!canary::net::provisioning_gate::build_gate_refusal_json(
+            body, sizeof(body), PROVISIONING_GATE_TTL_MS)) {
+      // Truncation guard: never ship half-JSON to the app.
+      return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                 "Failed to build provisioning gate response");
+    }
+    witness_get_health().http_errors++;
+    httpd_resp_set_status(req, "403 Forbidden");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_sendstr(req, body);
+  }
+
+  esp_err_t result = send_provisioning_receipt(req);
+  Serial.println("[AUTH] Provisioning receipt served. Gate closed.");
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Provisioning receipt served", "BOOT gate");
+  return result;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1306,7 +1553,7 @@ static esp_err_t handle_captive_probe(httpd_req_t* req) {
   // for the retry, not declare Success. Only a live STA link earns Apple's
   // Success token (which lets the sheet close cleanly and stop nagging).
   if (setup_is_active() || !network_get_instance().getStatus().sta_connected) {
-    return send_html_with_token(req, CANARY_SETUP_HTML);
+    return send_html_with_token(req, CANARY_SETUP_HTML, page_token_inject(req));
   }
   httpd_resp_set_type(req, "text/html");
   return httpd_resp_sendstr(req, kAppleSuccessBody);
@@ -1316,7 +1563,7 @@ static esp_err_t handle_captive_probe(httpd_req_t* req) {
 // too (canary.local/setup), not only through the captive sheet.
 static esp_err_t handle_setup_page(httpd_req_t* req) {
   witness_get_health().http_requests++;
-  return send_html_with_token(req, CANARY_SETUP_HTML);
+  return send_html_with_token(req, CANARY_SETUP_HTML, page_token_inject(req));
 }
 
 // Wildcard fallback, registered LAST. While setup is active every stray
@@ -1371,6 +1618,12 @@ static esp_err_t handle_status(httpd_req_t* req) {
 
   doc["logs_stored"] = health.logs_stored;
   doc["unacked_count"] = health.logs_unacked;
+
+  // F20 gap #11: "boot_button" once main.cpp has wired the BOOT-tap hooks;
+  // "unwired" means the receipt can only be fetched with the bearer and a
+  // home-LAN page load can never be unlocked by a tap (fails closed, and the
+  // bench can see it instead of guessing).
+  doc["provisioning_gate"] = (s_gate_take && s_gate_is_open) ? "boot_button" : "unwired";
 
   String response;
   serializeJson(doc, response);

@@ -461,6 +461,13 @@ Genuinely solid. Gaps:
   peek stream is **not** an open privacy hole. The main intentionally-ungated handler is `handle_ui`
   (it serves the SPA and carries the token). Worth a periodic sweep that no *new* handler is added
   without `auth_gate`, but there is no open endpoint today. **[P2 — hygiene]**
+  *Update 2026-09 (F20 gap #11, option D — maintainer to confirm):* the sweep is now a CI gate —
+  [`canary/scripts/check_route_security.py`](canary/scripts/check_route_security.py) fails any
+  route that reaches no credential gate and is not on its documented public allowlist. And
+  `handle_ui` / `/setup` no longer hand the token to every caller: it is injected only for
+  first-boot setup, a bearer-authenticated request, a SoftAP-subnet peer, or while a BOOT tap's
+  30 s gate is open ([`common/network/provisioning_gate.h`](common/network/provisioning_gate.h),
+  host-tested); a home-LAN load gets the page without it. Compile-tested, no bench pass.
 - **AP password is exactly 8 chars** (`"cv-"` + 5), the WPA2 floor — ~28.7 bits of entropy. Widen
   to 10–12 chars from the same fingerprint for headroom. **[P2]**
 - **Untapped UX:** Improv-WiFi / WebUSB provisioning, SSE/WebSocket event streams instead of poll,
@@ -514,7 +521,8 @@ confirmed against a real CI build log before anyone acts loudly on them:
   (they'd need the pioarduino custom-sdkconfig path, which is another reason to do §1.1 first).
   **Check a verbose build for whether the file is consumed.**
 - **Confirm the two ungated HTTP handlers** (`handle_ui`, `/api/peek/stream`) before shipping —
-  §3.8 item 2.
+  §3.8 item 2. (2026-09: the stream is `auth_gate`d and `handle_ui` withholds the token off-AP;
+  both are now pinned by `canary/scripts/check_route_security.py`.)
 - **SD 20 MHz** is reliable on the reference wiring; validate on hardware with the specific card
   mix before raising the default, keeping the slow-init fallback ladder.
 - Everything tagged **[unblocked by §1.1]** presumes the core-3.x migration; on the legacy 2.0.17

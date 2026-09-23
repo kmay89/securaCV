@@ -50,7 +50,7 @@ Derived from the post-archive Feature-Parity Dashboard in [FEATURES.md](../FEATU
 | 8 | RF presence detection | ❌ | `canary_wap/rf_presence.{h,cpp}` | Medium | Low |
 | 9 | Chirp channel body | ⚠️ header only | `canary_wap/chirp_channel.cpp` (+ now-fixed real RSSI) | Medium | Low |
 | 10 | Hardware state & safe mode | ❌ | `canary_wap/hardware_state.h` (+ now-fixed SD flush) | Low | Medium (boot safety) |
-| 11 | Provisioning gate (BOOT button) | ❌ | `canary_wap/*` gate logic | Low | High (unauthenticated `/api/provisioning-receipt`) |
+| 11 | Provisioning gate (BOOT button) | ✅ (2026-09, option D — maintainer to confirm: BOOT tap → one `GET /api/provisioning-receipt`; the dashboard's bearer token is injected only for first-boot setup, a bearer-authenticated request, a SoftAP-subnet peer or an open gate, never for a bare home-LAN load; compile-tested in CI, no bench pass; the WAP's session-cookie model is the Phase 6 follow-up) | `canary_wap/*` gate logic → `firmware/common/network/provisioning_gate.h` | Low | High — corrected: the canary never had an unauthenticated receipt route (it had none at all); the real exposure was `GET /` and `GET /setup` putting the bearer token in the HTML for any home-LAN caller |
 | 12 | Audible chirp / buzzer alerts | ❌ | `canary_wap/audible_chirp.h` | Low | Low |
 | 13 | WiFi presence detection | ❌ | `canary_wap/wifi_presence.h` | Medium | Medium (MAC hygiene) |
 | 14 | System monitor (temp / heap / PSRAM) | ❌ | `canary_wap/sys_monitor.h` | Low | Low |
@@ -89,7 +89,7 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
 
 ### Phase 2.5 — SPA token wiring (this PR)
 
-- ✅ `handle_ui` performs a one-shot byte-swap of `__CV_TOKEN__` in the HTML template with `auth_get_token()` before sending the SPA, so the rendered page carries the per-device bearer credential.
+- ✅ `handle_ui` performs a one-shot byte-swap of `__CV_TOKEN__` in the HTML template with `auth_get_token()` before sending the SPA, so the rendered page carries the per-device bearer credential. *(Since gap #11, 2026-09: only when `provisioning_gate.h`'s `page_token_policy` grants it — see Phase 3 below; a home-LAN load with no grant gets an empty token.)*
 - ✅ SPA `api()` helper threads `Authorization: Bearer cv_…` into every `fetch()` call. Defensive guard skips the header if the placeholder survived (e.g. dev preview), so the server's fail-closed 503 surfaces cleanly.
 - ✅ `auth_gate` wired into the 9 remaining SPA-driven read endpoints:
   - `GET /api/status`, `GET /api/chain`, `GET /api/logs`
@@ -120,9 +120,28 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
 
 ### Phase 3 — Provisioning gate + hardware state
 
-- Port `hardware_state.h` safe-mode / shutdown FSM into a new `securacv_runtime` component.
-- Port the BOOT-button provisioning gate so `/api/provisioning-receipt` is gated by a physical button press.
-- Flip gaps #10 and #11.
+- Port `hardware_state.h` safe-mode / shutdown FSM into a new `securacv_runtime` component. **Open** (gap #10).
+- ✅ 2026-09 (gap #11, option D — maintainer to confirm): the BOOT-button
+  provisioning gate. The gate itself is the pure header
+  `firmware/common/network/provisioning_gate.h` (host-tested in
+  `firmware/tests_host/test_provisioning_gate.cpp`: one tap admits exactly one
+  consumer through an atomic exchange, a 30 s TTL, the `millis()==0` sentinel,
+  uint32 wraparound). `main.cpp` opens it on a short BOOT tap and hands
+  take/peek hooks to the network lib. `GET /api/provisioning-receipt` answers
+  a valid bearer, or consumes one tap; otherwise 403
+  `physical_confirmation_required` with the TTL (the WAP's receipt shape, the
+  one the iOS app parses). The same header's `page_token_policy` decides per
+  request whether `/` and `/setup` carry the bearer token: first-boot setup,
+  bearer-authenticated, a peer inside the live SoftAP subnet (IPv4 only,
+  conservative), or an open gate (peeked, never taken). A home-LAN load with
+  none of those gets the page with an empty token, `X-CV-Token: withheld`,
+  and a banner naming the three unlocks. `firmware/canary/scripts/check_route_security.py`
+  (in `firmware.yml`) now fails any route that reaches no credential gate and
+  is not on its documented public allowlist.
+- **Follow-up (Phase 6, with the web UI port):** the WAP's one-shot pair token
+  + 24 h HttpOnly `cv_session` cookie (option A), so a home-LAN reload stops
+  needing a fresh BOOT tap each time.
+- Flip gap #10 when the runtime component lands; gap #11 is flipped.
 
 ### Phase 4 — Mesh + CSI mesh sensing v1 ✅
 

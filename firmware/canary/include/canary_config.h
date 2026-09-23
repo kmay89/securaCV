@@ -381,6 +381,11 @@
 #define BOOT_SHORT_PRESS_MS      50      // Debounce floor for short press
 #define BOOT_LONG_PRESS_MS       5000    // Hold for factory reset
 #define BOOT_MEDIUM_PRESS_MS     2000    // Medium hold for info print
+// A short BOOT tap opens the provisioning gate for this long (WAP parity):
+// a browser polling GET /api/provisioning-receipt every 2 s reliably catches
+// it and a captive-portal interstitial cannot time the user out. Still
+// single-use — the first receipt fetch closes it (provisioning_gate.h).
+#define PROVISIONING_GATE_TTL_MS 30000
 
 // ════════════════════════════════════════════════════════════════
 // SD CARD SPI SPEEDS

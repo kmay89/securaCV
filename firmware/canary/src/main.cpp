@@ -19,6 +19,7 @@
 #include "securacv_witness.h"
 #include "securacv_gps.h"
 #include "gnss/gps_privacy.h"  // gps_coarsen_deg() — operator-facing GPS coarsening (Invariant III)
+#include "network/provisioning_gate.h"  // BOOT-tap gate behind /api/provisioning-receipt (F20 gap #11)
 
 #if FEATURE_SD_STORAGE
 #include "securacv_storage.h"
@@ -343,6 +344,18 @@ static volatile uint8_t g_tamper_pending_confidence = 0; /* 0..100 */
 
 // Device-unique AP password (derived from pubkey fingerprint)
 static char g_ap_password[16];
+
+// Physical-presence gate (F20 gap #11). Opened by a short BOOT tap in
+// handle_boot_button(); the network lib takes it from the receipt handler
+// and peeks it from the page handlers through the hooks registered in
+// setup(). The State is this file's because the BOOT button is.
+static canary::net::provisioning_gate::State g_prov_gate = {0};
+static bool prov_gate_take_hook() {
+  return canary::net::provisioning_gate::take(g_prov_gate, millis(), PROVISIONING_GATE_TTL_MS);
+}
+static bool prov_gate_is_open_hook() {
+  return canary::net::provisioning_gate::is_open(g_prov_gate, millis(), PROVISIONING_GATE_TTL_MS);
+}
 
 // Serial command helpers
 static void handle_serial_commands();
@@ -839,6 +852,9 @@ void setup() {
 #endif
     Serial.println("[..] Starting WiFi Access Point...");
     ScvNetworkManager& net = network_get_instance();
+    // Wire the BOOT-tap gate before any route can be served (unregistered
+    // hooks read as closed, so the order is belt-and-braces, not load-bearing).
+    network_set_provisioning_gate_hooks(prov_gate_take_hook, prov_gate_is_open_hook);
     if (net.begin(ap_ssid, g_ap_password, device.device_id)) {
       Serial.println("[OK] WiFi AP active");
 #if FEATURE_HTTP_SERVER
@@ -1509,7 +1525,7 @@ void setup() {
 #endif
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
   Serial.println("║  Commands: h=help, i=identity, s=status, g=gps, r=data       ║");
-  Serial.println("║  BOOT: short=info, 5s hold=factory reset                     ║");
+  Serial.println("║  BOOT: tap=provisioning gate, 2s=info, 5s=factory reset      ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
 #if FEATURE_CONSOLE_THEME
   // The warm hello: the canary greets whoever just plugged in and points them
@@ -2060,16 +2076,43 @@ static void handle_boot_button() {
     if (duration >= BOOT_MEDIUM_PRESS_MS) {
       // Medium hold: print device info
       print_status();
-    }
-#if FEATURE_USB_ONBOARD
-    else {
-      // Short press: the physical confirmation for USB onboarding. This is the
-      // trust keystone — the ONLY thing that lets the HID keyboard type, and
-      // only while it is ARMED (a no-op otherwise).
-      usb_onboard::confirm();
-    }
+    } else {
+      if (duration >= BOOT_SHORT_PRESS_MS) {
+        // Short tap: open the provisioning gate (F20 gap #11, WAP parity).
+        // One tap admits exactly one GET /api/provisioning-receipt within
+        // PROVISIONING_GATE_TTL_MS, and lets the dashboard load WITH its
+        // credential from the home LAN for the same window.
+        canary::net::provisioning_gate::open(g_prov_gate, millis());
+        Serial.printf("[AUTH] Provisioning gate OPENED (receipt available for %lu seconds)\n",
+                      (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000));
+        log_health(LOG_LEVEL_INFO, LOG_CAT_USER, "Provisioning gate opened", "BOOT button");
+        // Blink the user LED 3x to confirm. Skipped while an SD mount attempt
+        // is in flight: on the XIAO ESP32-S3 the LED shares GPIO21 with the SD
+        // chip-select, and driving it mid-transaction on the mount worker
+        // would glitch CS and corrupt the mount (mirrors the WAP sketch).
+#ifdef LED_BUILTIN
+        bool led_ok = true;
+#if FEATURE_SD_STORAGE
+        led_ok = !storage_mount_in_flight();
 #endif
-    // (Short press is otherwise reserved for future use / provisioning gate.)
+        if (led_ok) {
+          for (int i = 0; i < 3; i++) {
+            digitalWrite(LED_BUILTIN, HIGH);
+            delay(100);
+            digitalWrite(LED_BUILTIN, LOW);
+            delay(100);
+          }
+        }
+#endif
+      }
+#if FEATURE_USB_ONBOARD
+      // Short press is ALSO the physical confirmation for USB onboarding. This
+      // is the trust keystone — the ONLY thing that lets the HID keyboard
+      // type, and only while it is ARMED (a no-op otherwise). Independent
+      // latch from the provisioning gate above.
+      usb_onboard::confirm();
+#endif
+    }
   }
 }
 

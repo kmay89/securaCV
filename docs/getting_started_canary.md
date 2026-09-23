@@ -502,6 +502,29 @@ Home Assistant can discover it):
 The dashboard URL becomes `http://canary-<your-id>.local` once it joins
 your home network.
 
+**Before you switch over, save your recovery kit.** On the dashboard, tap
+**Settings → Save recovery kit**. It downloads `canary-recovery-kit.json`:
+the device ID, the dashboard's access token, and the Canary's own Wi-Fi
+name and password. Keep it somewhere private — anyone holding it can use
+the dashboard, and the iPhone app pairs from it.
+
+**Why the dashboard asks to be unlocked on your home network.** The page
+you load carries the key that every button on it uses. Over the Canary's
+own Wi-Fi only your phone can reach it, so the key comes with the page.
+On your home network any device could load that page, so the Canary sends
+it *without* the key and shows a banner with three ways in:
+
+- tap the **BOOT** button on the Canary, then reload within 30 seconds;
+- join the Canary's own Wi-Fi (`SecuraCV-XXXX`) while it is still
+  broadcasting (it stops once your home Wi-Fi is working); or
+- paste the token from your recovery kit into the banner. It is kept only
+  for that browser tab, never saved.
+
+Each BOOT tap also lets exactly one app or browser fetch the recovery kit
+within those 30 seconds — that is how you get it back later without a
+USB cable. *(New in 2026-09; checked by automated builds and tests, not
+yet on a bench device.)*
+
 ---
 
 ## Optional: Home Assistant

@@ -146,6 +146,13 @@ public:
   // HTTP server handle (for external handlers)
   httpd_handle_t getHttpServer() const { return m_http_server; }
 
+  // The SoftAP credentials as broadcast right now (the first-boot setup SSID
+  // while unprovisioned, the device SSID after). Read by the provisioning
+  // receipt (GET /api/provisioning-receipt) — the one place the AP password
+  // is ever put on the wire, and only behind a bearer or a BOOT tap.
+  const char* getApSsid() const { return m_ap_ssid; }
+  const char* getApPassword() const { return m_ap_password; }
+
 private:
   void registerHttpHandlers();
 
@@ -191,6 +198,20 @@ httpd_handle_t network_get_http_server();
 // HTTP response helpers
 esp_err_t http_send_json(httpd_req_t* req, const char* json);
 esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_code);
+
+// ════════════════════════════════════════════════════════════════════════════
+// PROVISIONING GATE HOOKS (F20 gap #11)
+// ════════════════════════════════════════════════════════════════════════════
+// The physical-presence gate (firmware/common/network/provisioning_gate.h)
+// is owned by main.cpp, which owns the BOOT button. The network lib reaches
+// it through this hook pair: `take` consumes the tap (the receipt handler),
+// `is_open` only peeks (the page handlers, so loading the dashboard cannot
+// spend the tap the receipt fetch needs). Both read as "closed" until
+// main.cpp registers them, so a build that never wires the button fails
+// closed: the receipt answers 403 and the page token is withheld off-AP.
+typedef bool (*network_gate_fn_t)(void);
+void network_set_provisioning_gate_hooks(network_gate_fn_t take,
+                                         network_gate_fn_t is_open);
 
 // ════════════════════════════════════════════════════════════════════════════
 // WIFI POWER MANAGEMENT
