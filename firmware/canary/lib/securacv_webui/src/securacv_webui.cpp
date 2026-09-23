@@ -1619,8 +1619,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       <!-- Paired beacons (BLE Scout, [env:full] builds; repo sweep F27).
            Hidden unless GET /api/scout answers. No MAC is ever shown or
-           sent: the Canary pairs whichever unpaired tag it hears loudest
-           while the window is open, and keeps only a coded ID + the name. -->
+           sent: the Canary pairs the FIRST unpaired Bluetooth device it
+           hears at or above the window's signal threshold (not the loudest
+           one), and keeps only a coded ID + the name. -->
       <div class="card" id="scoutCard" style="display:none;">
         <div class="card-header">
           <div>
@@ -1643,6 +1644,8 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </div>
           <div class="card-subtitle" id="scoutPairMsg" style="margin-top:0.5rem;">
             Press Pair, then hold the tag against the Canary for up to 60 seconds.
+            Keep your phone and any other Canary a step back: the first unpaired
+            device this close is the one that pairs.
           </div>
         </div>
       </div>

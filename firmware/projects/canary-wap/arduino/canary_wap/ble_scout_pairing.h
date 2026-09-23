@@ -16,11 +16,16 @@
  * behind its portMUX (the window is armed by the HTTP task, offered to by
  * the NimBLE host task, and expired by the loop task).
  *
- * Threat note (documented, bounded): at the default -45 dBm a phone held
- * within a few centimeters by someone else during the window could pair
- * instead. The window is short (<= 60 s), the threshold floor is clamped
- * (never looser than -70 dBm), the owner chose the label, and unpair is
- * one tap. Already-paired beacons never consume the window.
+ * Threat note (documented, bounded): the first single qualifying advert
+ * wins, with no debounce and no strongest-wins rule, and the caller sees no
+ * advert payload. So at the default -45 dBm the owner's own phone (in hand
+ * after pressing Pair), a neighboring Canary's fleet-link advert on the
+ * same shelf, or a phone held within a few centimeters by someone else
+ * could pair instead of the tag. The window is short (<= 60 s), the
+ * threshold floor is clamped (never looser than -70 dBm), the owner chose
+ * the label, and unpair is one tap. Already-paired beacons never consume
+ * the window. A multi-advert confirmation and a fleet-link/Chirp payload
+ * filter wait on bench data (U1).
  *
  * Host test: firmware/canary/lib/securacv_ble_scan/test_ble_scout_pairing.cpp
  * (the firmware.yml "Mesh + Scout Host Tests" job).

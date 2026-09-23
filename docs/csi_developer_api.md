@@ -435,12 +435,25 @@ hash as 32 lowercase hex characters; the same tag has a different
   `paired` (then `hashed_id` names the new tag), `failed` (every slot
   full), `expired`, `canceled`.
 
-Limits worth saying out loud: at −45 dBm someone else's phone held right
-against the Canary during the window could pair instead — the window is at
-most 60 s, the name is yours, and forgetting a tag is one call. Most phones
+Limits worth saying out loud: the window pairs the **first** single advert
+at or above the threshold from any unpaired device. There is no debounce
+and no strongest-wins rule, and the scan callback sees only an address and
+a signal level, not what kind of device sent it. So three things other
+than the tag can win at −45 dBm:
+
+- **your own phone**, in your hand after you pressed Pair;
+- **another Canary** on the same shelf, whose fleet-link adverts are
+  unpaired Bluetooth adverts like any other;
+- someone else's phone held right against the Canary.
+
+The window is at most 60 s, the name is yours, and forgetting the wrong
+device is one call (`POST /api/scout/unpair`), so the remedy is to unpair
+and pair again with the phone and other Canaries a step back. Most phones
 rotate their Bluetooth address every few minutes, so a paired phone stops
-matching; a tag with a fixed address is the reliable choice. A live pair
-against a real beacon is bench work (U1).
+matching; a tag with a fixed address is the reliable choice. Requiring two
+or three qualifying adverts from the same device, and skipping adverts that
+parse as a fleet-link or Chirp beacon, are the planned tightenings; both
+wait on a live pair against a real beacon, which is bench work (U1).
 
 ```bash
 curl -X POST http://canary.local/api/scout/pair/start \
