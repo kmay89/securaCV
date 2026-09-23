@@ -24,8 +24,9 @@ name = "flash_engine"
 # No Tauri, no webview, no GTK: every dependency here builds on a bare CI
 # runner, so PR CI tests the flash path the way it tests hub-core/hub-io
 # (desktop-hub-core.yml), instead of leaving it to the release build. Each one
-# is already in BOTH apps' dependency graphs at these majors, so depending on
-# this crate adds no new crate to either app:
+# was already in the Flasher's dependency graph at these versions, so the
+# Flasher gains no crate; the Lab gains only crates the Flasher already ships
+# (all pure Rust — no -sys crate beyond the libudev-sys it already had):
 #   serde / serde_json .. the catalog, the release manifest, the event payloads
 #   sha2 / ed25519-dalek  the release-byte verification (release.rs)
 #   tempfile ............ the private 0600 staging file espflash reads

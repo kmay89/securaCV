@@ -2674,7 +2674,7 @@ function fakeDocument() {
   };
 }
 
-async function runNativeBench({ flashAnswers, detectAnswer }) {
+async function runNativeBench({ flashAnswers, detectAnswer, ports }) {
   const calls = [];
   const flashQueue = [...(flashAnswers || [])];
   const invoke = async (cmd, args) => {
@@ -2682,7 +2682,7 @@ async function runNativeBench({ flashAnswers, detectAnswer }) {
     switch (cmd) {
       case "native_capabilities": return { serial: true, serial_list: true };
       // A non-USB port listed FIRST: only kind "usb" may be read as a Canary.
-      case "list_ports": return [{ name: "/dev/ttyS0", kind: "pci", vid: null, pid: null },
+      case "list_ports": return ports || [{ name: "/dev/ttyS0", kind: "pci", vid: null, pid: null },
                                  { name: "/dev/ttyACM0", kind: "usb", vid: 0x303a, pid: 0x1001, product: "USB JTAG/serial debug unit" }];
       // Tauri rejects an invoke with the command's Err value itself — a
       // plain string, not an Error — so the fakes throw strings too.
@@ -2706,7 +2706,12 @@ async function runNativeBench({ flashAnswers, detectAnswer }) {
   const saved = { window: globalThis.window, document: globalThis.document, setInterval: globalThis.setInterval };
   const restore = () => Object.assign(globalThis, saved);
   globalThis.document = doc;
-  globalThis.window = { __TAURI__: { core: { invoke }, event: { listen: async () => () => {} } } };
+  const heard = {};
+  const listen = async (evt, cb) => {
+    (heard[evt] = heard[evt] || []).push(cb);
+    return () => { heard[evt] = (heard[evt] || []).filter((f) => f !== cb); };
+  };
+  globalThis.window = { __TAURI__: { core: { invoke }, event: { listen } } };
   globalThis.setInterval = () => 0; // the 1 s port poll is driven by hand here
   try {
     const native = await import(pathToFileURL(join(CANARY, "assets/flash-native.js")).href);
@@ -2715,6 +2720,7 @@ async function runNativeBench({ flashAnswers, detectAnswer }) {
     const form = { credentials: () => ({ ok: true, wifi: { ssid: "home", pass: "hunter22" }, mqtt: null, autoUpdate: true }), clear() {} };
     await native.mountNativeBench(mount, { catalog, renderWifiFields: () => form });
     const run = { calls, mount, doc, close: restore };
+    run.emit = (evt, payload) => { for (const cb of heard[evt] || []) cb({ payload }); };
     run.text = () => mount.textContent;
     run.pick = async (id) => {
       const name = catalog.products.find((p) => p.id === id).name;
@@ -2792,6 +2798,12 @@ test("native flashing: the Lab's flash page drives the Flasher's commands with t
   assert.strictEqual(start[1].postFlash, true);
   assert.strictEqual(start[1].vid, 0x303a);
   assert.match(run.text(), /Written and verified by the chip \(ed25519\+sha256; stable channel/);
+  // The board's own receipt, as the monitor streams it: `firmware` is the
+  // version string the self-manifest reports.
+  run.emit("serial:receipt", { target: "esp32-host", ready: true,
+    manifest: { schema: "securacv.canary.manifest/v1", board: "canary", firmware: "9.9.9" } });
+  assert.match(run.text(), /✓ canary booted and answered with its receipt · firmware 9\.9\.9\./,
+    "the Lab must read the board's receipt the way the Flasher does");
   } finally { run.close(); }
 
   // A refused permission is NOT retried at a gentler speed, and is named.
@@ -2815,6 +2827,16 @@ test("native flashing: the Lab's flash page drives the Flasher's commands with t
     assert.ok(!/Put it in download mode/.test(blocked.text()));
     assert.ok(!blocked.calls.some(([c]) => c === "fetch_manifest"), "nothing is fetched for a board that couldn't be read");
   } finally { blocked.close(); }
+
+  // The camera module's own port is recognized by the catalog's USB id and
+  // never read as an ESP32 (the Flasher short-circuits on the same id).
+  const vid = parseInt(String(catalog.we2_module.usb_vid).replace(/^0x/i, ""), 16);
+  const pid = parseInt(String(catalog.we2_module.usb_pid).replace(/^0x/i, ""), 16);
+  const module = await runNativeBench({ ports: [{ name: "/dev/ttyUSB0", kind: "usb", vid, pid, product: "USB Single Serial" }] });
+  try {
+    assert.ok(!module.calls.some(([c]) => c === "detect_chip"), "the Vision module's port must not be read with board-info");
+    assert.match(module.text(), /Grove Vision AI V2 camera module/);
+  } finally { module.close(); }
 });
 
 // ── The derived birth certificate: one bird, one name, three surfaces ─────

@@ -21,9 +21,12 @@
 // classifier below to app.js's by text and runs both over espflash's words.
 //
 // What this bench does NOT carry from the Flasher: the automatic full-chip
-// safety copy (and so the change map drawn from it), the rescue bench, the
-// local-file install and the Vision module burn. Those stay in the Flasher;
-// the card says so, and says where.
+// safety copy (and so the change map drawn from it), room presets (detection
+// dials / radar reflexes — it sends the engine empty dials, which writes no
+// dial keys), the minted API token and fleet book (the Lab has no secret
+// drawer, so the firmware derives its own token as always), the rescue
+// bench, the local-file install and the Vision module burn. Those stay in the
+// Flasher; the card says so, and says where.
 
 import * as core from "./flash-core.js";
 
@@ -188,8 +191,9 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
   const note = el("p", "flash-note flash-note-soft flash-hidden");
   head.append(conn, portRow, recheck, note);
   head.append(el("p", "fineprint",
-    "The automatic safety copy, the rescue bench, local-file installs and the Vision " +
-    "camera module live in the SecuraCV Flasher (securacv.com/download)."));
+    "The automatic safety copy, room presets, the fleet book, the rescue bench, " +
+    "local-file installs and the Vision camera module live in the SecuraCV Flasher " +
+    "(securacv.com/download)."));
 
   const pick = el("section", "flash-card flash-hidden");
   const flashCard = el("section", "flash-card flash-hidden");
@@ -249,10 +253,26 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     await identify(chosen);
   };
 
+  // The Grove Vision AI V2 camera module enumerates as its own USB port (the
+  // catalog's we2_module USB id). It is not an ESP32 — reading it with
+  // board-info would fail and coach download mode at a board that has none.
+  // The Flasher recognizes it by the same id before it reads anything.
+  const we2 = catalog.we2_module || {};
+  const hexId = (v) => parseInt(String(v || "").replace(/^0x/i, ""), 16);
+  const isVisionModule = (p) =>
+    p.vid != null && p.pid != null && Number(p.vid) === hexId(we2.usb_vid) && Number(p.pid) === hexId(we2.usb_pid);
+
   // ── read the board: detect_chip, exactly as the Flasher asks ─────────────
   const identify = async (portInfo) => {
     const port = portInfo.name;
     const label = portInfo.product ? `${port} (${portInfo.product})` : port;
+    if (isVisionModule(portInfo)) {
+      st.failedPort = port; // nothing to read here; wait for a replug
+      setConn(`Found ${port} — that’s the Grove Vision AI V2 camera module. Its model ` +
+        "is loaded with the SecuraCV Flasher (securacv.com/download); plug the Canary " +
+        "itself in here to flash its firmware.");
+      return;
+    }
     st.detecting = true;
     setConn(`Found ${label} — reading chip…`);
     showNote("");
@@ -294,8 +314,14 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     }
   };
 
-  recheck.addEventListener("click", () => {
+  recheck.addEventListener("click", async () => {
     if (st.busy) return;
+    // The monitor owns the port after a flash; reading the board means
+    // taking it back first.
+    if (st.monitoring) {
+      try { await invoke("stop_serial_monitor"); } catch { /* already stopped */ }
+      st.monitoring = false;
+    }
     st.failedPort = null;
     st.chip = null;
     pollPorts();
@@ -334,7 +360,8 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     devChk.type = "checkbox";
     devChk.checked = st.devChannel;
     dev.append(devChk, document.createTextNode(
-      " Dev channel — the rolling fw-dev-latest prerelease, checksum-verified, not the pinned stable release"));
+      " Dev channel — the rolling fw-dev-latest prerelease, cut ahead of stable and verified " +
+      "exactly the same way (chip guard, SHA-256, the release signature)"));
     devChk.addEventListener("change", async () => {
       if (st.busy) { devChk.checked = st.devChannel; return; }
       st.devChannel = devChk.checked;
@@ -343,6 +370,12 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
       await refreshManifest();
       renderPick();
     });
+    // Loud on purpose, like the Flasher's banner: nobody should flash a
+    // prerelease without a line saying so.
+    if (st.devChannel) {
+      pick.append(el("p", "flash-note",
+        "DEV CHANNEL — fw-dev-latest, not the pinned stable release. Untick it below to go back."));
+    }
     if (st.manifestError) pick.append(el("p", "flash-note", st.manifestError));
     const products = core.productsForChip(catalog, st.chip);
     if (!products.length) {
@@ -546,7 +579,12 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     // one deliberate reboot of a native-USB board so its boot streams from
     // the first line, then a pure observer that rides out re-enumeration.
     const unlisteners = [];
-    unlisteners.push(await listen("serial:status", (ev) => { status.textContent = String(ev.payload); }));
+    unlisteners.push(await listen("serial:status", (ev) => {
+      status.textContent = String(ev.payload);
+      // The monitor thread only ends when stopped; hand the port back to the
+      // poll then (the Flasher reads the same word).
+      if (String(ev.payload).toLowerCase().includes("stopped")) st.monitoring = false;
+    }));
     unlisteners.push(await listen("serial:log", (ev) => {
       boot.textContent = (boot.textContent + String(ev.payload)).slice(-16 * 1024);
       boot.scrollTop = boot.scrollHeight;
@@ -554,7 +592,9 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     unlisteners.push(await listen("serial:receipt", (ev) => {
       const r = ev.payload || {};
       const m = r.manifest || {};
-      const fw = m.firmware && (m.firmware.version || m.firmware.fw) ? ` · firmware ${m.firmware.version || m.firmware.fw}` : "";
+      // The self-manifest's `firmware` is the version string the board
+      // reports (securacv.canary.manifest/v1) — the Flasher reads it as such.
+      const fw = typeof m.firmware === "string" && m.firmware ? ` · firmware ${m.firmware}` : "";
       status.textContent = r.ready
         ? `✓ ${m.board || product.name} booted and answered with its receipt${fw}.`
         : `The board answered${fw} — still waiting for everything it reports to come up.`;
