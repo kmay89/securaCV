@@ -593,8 +593,8 @@ export const FIGURES = [
       // reason this product is shaped the way it is (it hangs off an outlet
       // rather than standing on a surface). A figure that left it off would
       // read as a different, free-standing device.
-      const usbW = 12.0;                 // series-A shell width  (usb_w)
-      const usbH = 4.5;                  // series-A shell height (usb_h)
+      const usbW = 12.0;                 // series-A shell width  (usb_shell_w)
+      const usbH = 4.5;                  // series-A shell height (usb_shell_h)
       const usbFree = 12.2;              // usb_proud 14.0 - usb_wall 1.8
       // The shell straddles the PCB, so it centers on the board's mid-plane:
       // z_usb = face_t + lcd_rise + pcb_t/2 back from the face.

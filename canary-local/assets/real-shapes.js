@@ -115,12 +115,32 @@ async function realWatch(scene) {
   scene.dist = 185;
 }
 
-// canary_dash_display.scad — the panel sits in the stand's channel, back
-// against the 25° fin. Bottom-rear edge at (y −5.19, z 4) with the back
-// plane on the fin face (the SCAD's own derivation); module center works
-// out to (0, 4.04, 42.73) in the stand frame for the 118.1 × 78 × 16 body.
-// (As committed, the 6 mm rear rail's top corner pokes ~2.4 mm into that
-// plane — flagged in the scad; the overlap is buried inside the channel.)
+// canary_dash_display.scad — the case sits in the stand's channel, its back
+// plane on the 25°-reclined fin, derived from the SCAD's own numbers (not
+// eyeballed, and not the 16 mm body / 8.4 mm back these once were):
+//   total_t = frame_h + back_t = (face_t 2.4 + cav_t 14.2) + 3.0 = 19.6
+//     (cav_t = glass_t 3.2 + stack_t 8.0 + 3.0 rear clearance)
+//   stand(): chan_w = total_t + 2 = 21.6, chan_back = −stand_d/2 + 16 + chan_w
+//     = −1.4, fin_y = chan_back + 4·cos25° + 0.8 = 3.03; the fin's front face
+//     meets the base top (z = stand_t = 4) at y = −1.38 — the case's
+//     bottom-rear edge, where the SCAD derives the fin to hold its back plane.
+//   Up that face by half the case height (78.0 / 2 with the corner lobes —
+//     the frame and back meshes are 118.1 × 78.0), then forward along the
+//     face normal by total_t / 2: module center (0, 6.22, 43.49) in the
+//     stand's frame.
+// Offsets along the face normal from that center: the back as modeled (its
+// 9.0 mm mesh is back_t 3.0 plus the 6.0 dock pads on the wall face, z −6…3),
+// outer face on the back plane (−9.8) → bbox center −11.3; the frame's rim on
+// the back's inner face (−6.8) and its face at +9.8 → center +1.5; the glass
+// 2.4 (face_t) behind the face → +7.35. The same seat gen_assembled_dims.py
+// measures ("back as modeled, frame turned face-out with its rim on the back's
+// inner face"). The rear rail stands 0.38 mm clear of the back plane at its
+// top (set back by 6·tan25° + 0.4 in the SCAD). The two lower dock pads
+// (cradle_dx 38, cradle_dy 16) sit behind the back plane where the fin is:
+// the SCAD's stand derives the fin from total_t alone, so as modeled they
+// overlap it (OpenSCAD's intersection of stand() with back() at this seat
+// is two pad-sized solids) — buried inside the fin here, and a CAD question
+// for the stand, not for this card.
 async function realDash(scene) {
   const [frame, back, stand] = await Promise.all([
     load("canary_dash_display_frame.stl"),
@@ -132,15 +152,15 @@ async function realDash(scene) {
   const cS = stand.bbox.center;                          // (0, 0, 21.87)
   const A = 65 * Math.PI / 180;                          // recline: module ẑ = Rx(65°)·ẑ
   const Ra = M4.rotX(A);
-  const C = [0, 4.04 - cS[1], 42.73 - cS[2]];            // module center (derivation above)
+  const C = [0, 6.22 - cS[1], 43.49 - cS[2]];            // module center (derivation above)
   const w = [0, -Math.cos(25 * Math.PI / 180), Math.sin(25 * Math.PI / 180)]; // face normal
   const off = (s) => [C[0], C[1] + w[1] * s, C[2] + w[2] * s];
   seatPart(scene, stand, { G, D: [0, 0, 0], color: shell2(), gloss: 0.18 });
-  seatPart(scene, frame, { G, D: off(1.2), R: M4.mul(Ra, rotXpi), gloss: 0.22 });  // face-down print → face out
-  seatPart(scene, back, { G, D: off(-6.8), R: Ra, color: shell2(), gloss: 0.22 });
+  seatPart(scene, frame, { G, D: off(1.5), R: M4.mul(Ra, rotXpi), gloss: 0.22 });  // face-down print → face out
+  seatPart(scene, back, { G, D: off(-11.3), R: Ra, color: shell2(), gloss: 0.22 }); // pads toward the fin
   scene.addMesh(screenPlane(101.3, 61.2, false), {       // glass behind the 2.5 mm bezel lip
     screen: true,
-    model: M4.mul(G, M4.mul(M4.translate(...off(5.55)), Ra)),
+    model: M4.mul(G, M4.mul(M4.translate(...off(7.35)), Ra)),
   });
   scene.dist = 270;
 }
