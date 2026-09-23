@@ -6,8 +6,10 @@
 
 // Witness identity + tamper-evident chain for the fusion guardian — the
 // canary-sense witness (src/witness.cpp there), with the event canonical
-// swapped for the `sentinel` kind. The key and chain plumbing is canary-sense's
-// function for function; firmware/scripts/check_sentinel_net_sync.sh pins it.
+// swapped for the `sentinel` kind. src/witness.cpp is canary-sense's byte for
+// byte but for the event canonical's call sites (the two signatures below and
+// the one call that builds or signs the canonical);
+// firmware/scripts/check_sentinel_net_sync.sh pins it.
 //
 // Identity: an Ed25519 keypair generated from the hardware RNG on first
 // boot and persisted in NVS (namespace "securacv", key "privkey") — the
@@ -56,8 +58,9 @@ bool sign_event_envelope(uint32_t             seq,
                          char*                out,
                          size_t               cap);
 
-// Advance the hash chain over the same canonical bytes that are signed,
-// then persist head + length to NVS.
+// Advance the hash chain over the same canonical bytes that are signed —
+// one message, one record: the chain never attests to something the event
+// signature did not cover — then persist head + length to NVS.
 void chain_advance(uint32_t             seq,
                    const SentinelClaim& claim,
                    uint32_t             bucket_uptime_s);

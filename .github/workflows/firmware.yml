@@ -627,9 +627,13 @@ jobs:
         # instead of promoting them to firmware/common. A copy is only safe if
         # it cannot drift: this pins the shared files byte-identical,
         # wifi_mgr.cpp but for its setup-network product name, and mqtt_mgr /
-        # witness function by function (transport, trust surface, OTA latches,
-        # key + chain persistence) — so a fix to canary-sense that misses the
-        # sentinel is a red build, not two products quietly diverging.
+        # witness as whole files but for a named list of product regions (the
+        # payloads, the event canonical's call sites, sense's radar dials and
+        # identify button) — so the TLS gate, client ID, OTA command parser,
+        # key names and chain construction are pinned, and a fix to
+        # canary-sense that misses the sentinel is a red build, not two
+        # products quietly diverging. scripts/tests/test_check_sentinel_net_sync.py
+        # (lint.yml) is the mutation proof.
         run: |
           chmod +x firmware/scripts/check_sentinel_net_sync.sh
           firmware/scripts/check_sentinel_net_sync.sh

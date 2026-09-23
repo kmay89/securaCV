@@ -164,10 +164,12 @@ projects/canary-sentinel/
                                  # canary-sense's, byte-identical (pinned)
     net/mqtt_mgr.h               # the sentinel's publishers over canary-sense's transport
   src/main.cpp                   # reads sensors -> Vote -> fusion engine -> emit_claim()
-  src/witness.cpp                # canary-sense's key/chain plumbing (pinned per function),
-                                 #   signing + chaining the `sentinel` canonical
-  src/net/mqtt_mgr.cpp           # canary-sense's transport + trust surface (pinned per
-                                 #   function), the sentinel's state/heartbeat payloads
+  src/witness.cpp                # canary-sense's key/chain plumbing (pinned whole-file but
+                                 #   the event canonical's call sites), signing + chaining
+                                 #   the `sentinel` canonical
+  src/net/mqtt_mgr.cpp           # canary-sense's transport + trust surface (pinned whole-
+                                 #   file but the payloads) + the sentinel's state and
+                                 #   heartbeat payloads
   src/ha/ha_discovery.cpp        # the sentinel's HA entity set
   src/net/{wifi,mdns,ota}_mgr.cpp src/runtime_config.cpp src/diagnostics.cpp
                                  # canary-sense's (wifi_mgr: all but the setup-network name)
@@ -214,9 +216,19 @@ key/chain plumbing are canary-sense's, carried rather than promoted to
 `firmware/common` (a common/net promotion would move canary-sense,
 canary-vision and their sketch mirrors — its own milestone).
 `firmware/scripts/check_sentinel_net_sync.sh` runs in `firmware.yml` and fails
-on any drift: the shared files byte-identical, `wifi_mgr.cpp` but for its
-setup-network product name, and `mqtt_mgr.cpp` / `witness.cpp` function by
-function. Fix canary-sense first, then carry the change here.
+on any drift outside a short, named list of product regions: the shared files
+byte-identical, `wifi_mgr.cpp` but for its setup-network product name, and
+`mqtt_mgr.cpp` / `witness.cpp` as whole files but for the heartbeat/state
+payloads, the event canonical's call sites (`sense` vs `sentinel`) and — in
+canary-sense's copy only — its radar-dial and identify-button features, which
+Phase 1a does not wire. So the connect path (TLS gate, LWT, the MAC-free
+client ID), the socket timeout, the OTA command parser, the witness domain
+strings, NVS key names and chain construction are all pinned, and so is any
+function canary-sense adds later. Each region may only set aside lines of the
+shape it names, so a fix landed inside one still fails the pin;
+`scripts/tests/test_check_sentinel_net_sync.py` (in `lint.yml`) proves both
+directions with mutation cases. Fix canary-sense first, then carry the change
+here.
 
 ## About the creator
 

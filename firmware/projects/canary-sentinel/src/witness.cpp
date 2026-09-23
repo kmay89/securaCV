@@ -210,8 +210,6 @@ void chain_advance(uint32_t             seq,
                    uint32_t             bucket_uptime_s) {
   if (!s_ready) return;
 
-  // The same canonical bytes the event signature covers — one message, one
-  // record: the chain can never attest to something the signature did not.
   char canonical[256];
   const size_t n = device_signature::build_sentinel_canonical(
       seq, claim.event, claim.level, claim.confidence, claim.anomaly,
