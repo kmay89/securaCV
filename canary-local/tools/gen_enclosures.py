@@ -377,10 +377,20 @@ def parse_scad(path: Path):
             if em:
                 enum = re.findall(r'"([^"]*)"', em.group(1))
                 comment = comment[em.end():].strip()
-            rm = re.match(r"^\[(-?[\d.]+):(-?[\d.]+):(-?[\d.]+)\]", comment)
-            if rm:
+            # The range is the LAST [min:step:max] bracket anywhere in the
+            # comment — the rule gen_builder_manifest.parse_scad reads, so the
+            # house form `help  // [min:step:max]` reaches the Lab as well as
+            # the web builder. (Only a LEADING bracket used to count here: 43
+            # ranges the builder showed as sliders arrived in the Lab as a raw
+            # "// [..]" tail on the help. scripts/tests/test_enclosure_parsers.py
+            # holds the two parsers to one answer.)
+            rms = None if enum else list(re.finditer(
+                r"\[\s*(-?[\d.]+)\s*:\s*(-?[\d.]+)\s*:\s*(-?[\d.]+)\s*\]", comment))
+            if rms:
+                rm = rms[-1]
                 rng = [float(rm.group(1)), float(rm.group(2)), float(rm.group(3))]
-                comment = comment[rm.end():].strip()
+                comment = re.sub(r"\s*//\s*$", "",
+                                 (comment[:rm.start()] + comment[rm.end():]).strip())
             cur["params"].append({
                 "name": name, "default": val.strip('"'),
                 **({"enum": enum} if enum else {}),

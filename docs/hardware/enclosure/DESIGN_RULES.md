@@ -120,6 +120,7 @@ top face the lid seats on.
 | Rule | Number | Enforced by |
 |---|---|---|
 | A knob's help sits on the knob's own line — the builder's parser keeps a trailing comment only on a one-knob line, so `a = 1;  b = 2;  // help` reaches neither | one knob per commented line | `lint_design_lang.py` (third rule); its `HELP_LINE_DEBT` ledger is empty since C10 split the 7" case's four lines, and it only shrinks |
+| A knob's range is the last `[min:step:max]` bracket in its trailing comment — the house form is `help  // [min:step:max]` — and the web builder and the Lab read it the same way | one reading, two parsers | `scripts/tests/test_enclosure_parsers.py`: `gen_builder_manifest.parse_scad` and `gen_enclosures.py`'s `parse_scad` agree on every knob's range and help |
 | A knob name means one thing across the catalog — a reader who learned it in one case reads it the same way in the next, so a second meaning gets its own name | the table below | `lint_design_lang.py` (fourth rule, `KNOB_MEANINGS`): a listed knob whose help does not say its meaning, or says the other one, fails |
 
 | Name | Means | Not to be confused with |
@@ -167,3 +168,12 @@ top face the lid seats on.
   (681 → 536 knobs without help in C1). Open: help for the knobs that never
   had any (the released four first), `[min:step:max]` ranges, one group name
   for the two-stud interface, and presets for the doorbell and the Sense.
+  Found on the way (a maintainer call, nothing changed): OpenSCAD 2021.01's
+  own Customizer builds a slider or a dropdown only from a trailing comment
+  that is the bare bracket — probed with `openscad -o x.ast`, both
+  `// help  // [4:0.5:8]` and `// ["a","b"] text` come back
+  `Parameter("")`. So every range written with its help beside it (the house
+  form both repo parsers read) is a plain number box in the desktop
+  Customizer, and an option list with text after it (the WAP's `part`, every
+  `colorway`) loses its dropdown there. The Customizer's own description
+  slot is the comment line ABOVE a knob, which neither repo parser reads.

@@ -834,7 +834,12 @@
       {
        "name": "hood_reach",
        "default": "4.0",
-       "comment": "how far the awning's drip edge stands off the wall  // [2:0.5:8]"
+       "range": [
+        2.0,
+        0.5,
+        8.0
+       ],
+       "comment": "how far the awning's drip edge stands off the wall"
       }
      ]
     },
@@ -942,12 +947,22 @@
       {
        "name": "lid_edge",
        "default": "0.8",
-       "comment": "45° chamfer around the lid's top edge (0 = sharp slab)  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "45° chamfer around the lid's top edge (0 = sharp slab)"
       },
       {
        "name": "lid_edge2",
        "default": "0.8",
-       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you"
       },
       {
        "name": "opt_mark",
@@ -1089,7 +1104,12 @@
       {
        "name": "batt_h",
        "default": "6.0",
-       "comment": "bay height — keep >= 1 mm over the nominal cell for LiPo swelling  // [4:0.5:12]"
+       "range": [
+        4.0,
+        0.5,
+        12.0
+       ],
+       "comment": "bay height — keep >= 1 mm over the nominal cell for LiPo swelling"
       },
       {
        "name": "batt_gap",
@@ -1343,12 +1363,22 @@
       {
        "name": "usb_w",
        "default": "12.0",
-       "comment": "opening width: clears rugged USB-C cable boots (connector body ~8.9 mm)  // [9:0.5:14]"
+       "range": [
+        9.0,
+        0.5,
+        14.0
+       ],
+       "comment": "opening width: clears rugged USB-C cable boots (connector body ~8.9 mm)"
       },
       {
        "name": "usb_h",
        "default": "6.5",
-       "comment": "opening height: boot clearance (connector body ~3.2 mm) — slim if cable is bare  // [4:0.5:8]"
+       "range": [
+        4.0,
+        0.5,
+        8.0
+       ],
+       "comment": "opening height: boot clearance (connector body ~3.2 mm) — slim if cable is bare"
       },
       {
        "name": "usb_web",
@@ -1374,7 +1404,12 @@
       {
        "name": "cam_fov",
        "default": "66",
-       "comment": "lens diagonal field of view (OV2640 on the Sense: 66°)  // [40:1:120]"
+       "range": [
+        40.0,
+        1.0,
+        120.0
+       ],
+       "comment": "lens diagonal field of view (OV2640 on the Sense: 66°)"
       },
       {
        "name": "cam_lens_h",
@@ -1979,7 +2014,12 @@
       {
        "name": "cam_fov",
        "default": "62",
-       "comment": "lens diagonal field of view (OV5647-62; the 160° fisheye needs no hood)  // [40:1:160]"
+       "range": [
+        40.0,
+        1.0,
+        160.0
+       ],
+       "comment": "lens diagonal field of view (OV5647-62; the 160° fisheye needs no hood)"
       },
       {
        "name": "cam_disc_d",
@@ -2155,12 +2195,22 @@
       {
        "name": "usb_w",
        "default": "12.0",
-       "comment": "opening width: clears rugged cable boots (USB-C body ~8.9 — port_usbc_shell_w())  // [9:0.5:14]"
+       "range": [
+        9.0,
+        0.5,
+        14.0
+       ],
+       "comment": "opening width: clears rugged cable boots (USB-C body ~8.9 — port_usbc_shell_w())"
       },
       {
        "name": "usb_h",
        "default": "6.5",
-       "comment": "opening height: boot clearance (the shell is 3.26)  // [4:0.5:8]"
+       "range": [
+        4.0,
+        0.5,
+        8.0
+       ],
+       "comment": "opening height: boot clearance (the shell is 3.26)"
       },
       {
        "name": "usb_z",
@@ -2216,7 +2266,12 @@
       {
        "name": "hinge_clear",
        "default": "0.15",
-       "comment": "extra slot width on the bracket for printed fins that run +0.1 oversize  // [0:0.05:0.4]"
+       "range": [
+        0.0,
+        0.05,
+        0.4
+       ],
+       "comment": "extra slot width on the bracket for printed fins that run +0.1 oversize"
       },
       {
        "name": "hinge_teeth",
@@ -2339,12 +2394,22 @@
       {
        "name": "weep_d",
        "default": "2.0",
-       "comment": "weep bore (canary_core_lib weep_d)  // [1.5:0.5:3]"
+       "range": [
+        1.5,
+        0.5,
+        3.0
+       ],
+       "comment": "weep bore (canary_core_lib weep_d)"
       },
       {
        "name": "hood_len",
        "default": "9.0",
-       "comment": "rain-hood protrusion from the front face  // [5:0.5:15]"
+       "range": [
+        5.0,
+        0.5,
+        15.0
+       ],
+       "comment": "rain-hood protrusion from the front face"
       },
       {
        "name": "hood_t",
@@ -2458,12 +2523,22 @@
       {
        "name": "lid_edge",
        "default": "0.8",
-       "comment": "45° chamfer around the front's top edge  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "45° chamfer around the front's top edge"
       },
       {
        "name": "lid_edge2",
        "default": "0.8",
-       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you"
       },
       {
        "name": "label_text",
@@ -2765,7 +2840,12 @@
       {
        "name": "weep_d",
        "default": "2.0",
-       "comment": "weep bore  // [1.5:0.5:3]"
+       "range": [
+        1.5,
+        0.5,
+        3.0
+       ],
+       "comment": "weep bore"
       },
       {
        "name": "seal_mid_posts",
@@ -3139,12 +3219,22 @@
       {
        "name": "plate_wedge",
        "default": "0",
-       "comment": "vertical wedge: camera tilts down the approach  // [0:5:15]"
+       "range": [
+        0.0,
+        5.0,
+        15.0
+       ],
+       "comment": "vertical wedge: camera tilts down the approach"
       },
       {
        "name": "plate_wedge_x",
        "default": "0",
-       "comment": "horizontal wedge: aims left/right (corner installs)  // [-15:5:15]"
+       "range": [
+        -15.0,
+        5.0,
+        15.0
+       ],
+       "comment": "horizontal wedge: aims left/right (corner installs)"
       },
       {
        "name": "stud_y",
@@ -3518,7 +3608,12 @@
       {
        "name": "weep_d",
        "default": "2.0",
-       "comment": "weep bore  // [1.5:0.5:3]"
+       "range": [
+        1.5,
+        0.5,
+        3.0
+       ],
+       "comment": "weep bore"
       },
       {
        "name": "seal_mid_posts",
@@ -3637,7 +3732,12 @@
       {
        "name": "radome_t",
        "default": "1.5",
-       "comment": "membrane — 1.5 ≈ half-wave in PETG/ASA at 60 GHz (low-reflection optimum); 0.7–1.1 is the quarter-wave band (~20 % reflection) and is refused  // [1.3:0.1:1.7]"
+       "range": [
+        1.3,
+        0.1,
+        1.7
+       ],
+       "comment": "membrane — 1.5 ≈ half-wave in PETG/ASA at 60 GHz (low-reflection optimum); 0.7–1.1 is the quarter-wave band (~20 % reflection) and is refused"
       },
       {
        "name": "rad_win_x",
@@ -3902,7 +4002,12 @@
       {
        "name": "usb_w",
        "default": "12.0",
-       "comment": "clears rugged cable boots (the receptacle face sits ~2.6 mm behind the wall)  // [9:0.5:14]"
+       "range": [
+        9.0,
+        0.5,
+        14.0
+       ],
+       "comment": "clears rugged cable boots (the receptacle face sits ~2.6 mm behind the wall)"
       },
       {
        "name": "usb_h",
@@ -4083,7 +4188,12 @@
       {
        "name": "lid_edge2",
        "default": "0.8",
-       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you"
       },
       {
        "name": "opt_mark",
@@ -4429,7 +4539,12 @@
       {
        "name": "tilt",
        "default": "25",
-       "comment": "stand recline from vertical  // [15:5:35]"
+       "range": [
+        15.0,
+        5.0,
+        35.0
+       ],
+       "comment": "stand recline from vertical"
       }
      ]
     },
@@ -4466,7 +4581,12 @@
       {
        "name": "pry_ang",
        "default": "0",
-       "comment": "degrees, 0 = +X  // [0:15:345]"
+       "range": [
+        0.0,
+        15.0,
+        345.0
+       ],
+       "comment": "degrees, 0 = +X"
       },
       {
        "name": "snap_w",
@@ -4761,7 +4881,12 @@
       {
        "name": "stalk_tilt",
        "default": "12",
-       "comment": "stalk lean (degrees, toward the front)  // [0:2:20]"
+       "range": [
+        0.0,
+        2.0,
+        20.0
+       ],
+       "comment": "stalk lean (degrees, toward the front)"
       }
      ]
     },
@@ -5315,7 +5440,12 @@
       {
        "name": "roof_ang",
        "default": "30",
-       "comment": "panel angle  // [15:5:45]"
+       "range": [
+        15.0,
+        5.0,
+        45.0
+       ],
+       "comment": "panel angle"
       },
       {
        "name": "roof_stop_t",
@@ -5325,7 +5455,12 @@
       {
        "name": "roof_drain_w",
        "default": "6.0",
-       "comment": "three drain notches at bed level through that stop (0 = none)  // [0:1:12]"
+       "range": [
+        0.0,
+        1.0,
+        12.0
+       ],
+       "comment": "three drain notches at bed level through that stop (0 = none)"
       }
      ]
     },
@@ -5406,12 +5541,22 @@
       {
        "name": "lid_edge",
        "default": "0.8",
-       "comment": "first (45°) stage of the show-face edge, mm — core_face_edge()  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "first (45°) stage of the show-face edge, mm — core_face_edge()"
       },
       {
        "name": "lid_edge2",
        "default": "0.8",
-       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you"
       },
       {
        "name": "foot_cham",
@@ -5757,12 +5902,22 @@
       {
        "name": "lid_edge",
        "default": "0.8",
-       "comment": "first (45°) stage of the show-face edge, mm — core_face_edge()  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "first (45°) stage of the show-face edge, mm — core_face_edge()"
       },
       {
        "name": "lid_edge2",
        "default": "0.8",
-       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you"
       },
       {
        "name": "kh_extra",
@@ -6091,12 +6246,22 @@
       {
        "name": "lid_edge",
        "default": "0.8",
-       "comment": "first (45°) stage of the cover's edge break, mm — the house face edge, core_face_edge()  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "first (45°) stage of the cover's edge break, mm — the house face edge, core_face_edge()"
       },
       {
        "name": "lid_edge2",
        "default": "0.8",
-       "comment": "second (~66°) stage, mm: what makes the edge read as a roundover instead of a bevel — core_face_edge2()  // [0:0.1:1.5]"
+       "range": [
+        0.0,
+        0.1,
+        1.5
+       ],
+       "comment": "second (~66°) stage, mm: what makes the edge read as a roundover instead of a bevel — core_face_edge2()"
       }
      ]
     },
@@ -6856,7 +7021,12 @@
       {
        "name": "rib_h",
        "default": "2.0",
-       "comment": "back rib height  // [1:0.5:6]"
+       "range": [
+        1.0,
+        0.5,
+        6.0
+       ],
+       "comment": "back rib height"
       }
      ]
     },
@@ -8539,7 +8709,12 @@
       {
        "name": "pry_w",
        "default": "6.0",
-       "comment": "notch width  // [4:1:10]"
+       "range": [
+        4.0,
+        1.0,
+        10.0
+       ],
+       "comment": "notch width"
       },
       {
        "name": "nub_w",
@@ -11830,7 +12005,12 @@
       {
        "name": "pry_w",
        "default": "4.0",
-       "comment": "notch width  // [3:0.5:8]"
+       "range": [
+        3.0,
+        0.5,
+        8.0
+       ],
+       "comment": "notch width"
       }
      ]
     },
@@ -12535,27 +12715,52 @@
       {
        "name": "glyph_h",
        "default": "34.0",
-       "comment": "bird height, in mark_span units (about 30 x 32 mm on the plate). Leave it: the bed face is sized for this  // [24:1:40]"
+       "range": [
+        24.0,
+        1.0,
+        40.0
+       ],
+       "comment": "bird height, in mark_span units (about 30 x 32 mm on the plate). Leave it: the bed face is sized for this"
       },
       {
        "name": "glyph_rib",
        "default": "0.7",
-       "comment": "stroke width in mm, and THE number this station tests. Blobbed and closed up: smaller. Broken or missing: bigger. Under ~0.42 is thinner than one extrusion and will not print  // [0.42:0.02:1.2]"
+       "range": [
+        0.42,
+        0.02,
+        1.2
+       ],
+       "comment": "stroke width in mm, and THE number this station tests. Blobbed and closed up: smaller. Broken or missing: bigger. Under ~0.42 is thinner than one extrusion and will not print"
       },
       {
        "name": "glyph_depth",
        "default": "0.5",
-       "comment": "how deep the bird is sunk, in mm — the same depth every case label uses. Too shallow and one bridged layer closes it back up  // [0.2:0.1:1.2]"
+       "range": [
+        0.2,
+        0.1,
+        1.2
+       ],
+       "comment": "how deep the bird is sunk, in mm — the same depth every case label uses. Too shallow and one bridged layer closes it back up"
       },
       {
        "name": "glyph_dx",
        "default": "-26.5",
-       "comment": "bird center, mm from the plate center across the plate  // [-40:0.5:40]"
+       "range": [
+        -40.0,
+        0.5,
+        40.0
+       ],
+       "comment": "bird center, mm from the plate center across the plate"
       },
       {
        "name": "glyph_dy",
        "default": "12.0",
-       "comment": "bird center, mm from the plate center up the plate  // [-30:0.5:30]"
+       "range": [
+        -30.0,
+        0.5,
+        30.0
+       ],
+       "comment": "bird center, mm from the plate center up the plate"
       }
      ]
     },
@@ -12736,7 +12941,12 @@
       {
        "name": "n_bays",
        "default": "4",
-       "comment": "number of XIAO bays  // [2:1:10]"
+       "range": [
+        2.0,
+        1.0,
+        10.0
+       ],
+       "comment": "number of XIAO bays"
       },
       {
        "name": "recline",
