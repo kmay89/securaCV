@@ -114,12 +114,21 @@ check_never_advertise() {
     grab && /\]/ { exit }
   ' "$CONST_PY")"
 
-  # `|| true` so an empty FUTURE_* list (every future member promoted into the
-  # ALL_* list, which the registry tells you to do) doesn't fail the pipeline
-  # under `set -euo pipefail`.
-  future_members="$(echo "$future_block" | grep -oE "${prefix}[A-Z_]+" | grep -v "$future_name" | sort -u || true)"
+  # `\b` anchors each match at the start of a word: unanchored, the header
+  # line's FUTURE_TAMPER_TYPES yields the bare token TAMPER_TYPES as a
+  # spurious "member". `|| true` so an empty FUTURE_* list (every future
+  # member promoted into the ALL_* list, which the registry tells you to do)
+  # doesn't fail the pipeline under `set -euo pipefail`.
+  future_members="$(echo "$future_block" | grep -oE "\b${prefix}[A-Z_]+" | sort -u || true)"
 
   for member in $future_members; do
+    # Every parsed member must be a constant const.py defines; anything else
+    # means this parser read a token that is not a list member, and a check
+    # built on a misread list proves nothing.
+    if ! grep -qE "^${member}[[:space:]]*=" "$CONST_PY"; then
+      fail "parsed '${member}' from ${future_name} in ${CONST_PY}, but no such constant is defined there (the FUTURE_* parser misread the list)."
+      continue
+    fi
     if echo "$all_block" | grep -qE "\b${member}\b"; then
       fail "future ${noun} '${member}' appears in ${all_name} (${CONST_PY}). Devices must never advertise an unbuilt ${noun} — keep it in ${future_name} until wired end-to-end."
     fi
