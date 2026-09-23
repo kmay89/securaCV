@@ -2575,6 +2575,16 @@ test("native flashing: the Lab's flash page gives the Flasher's diagnostics, and
     assert.strictEqual(classify(new Error(generic + tail)).kind, kind,
       `flash-native.js misclassifies espflash's tail: ${tail.slice(0, 40) || "(none)"}`);
   }
+  // withoutLocalFile() rewrites ONE sentence of that verbatim classifier (the
+  // "local .bin under Advanced" install lives in the Flasher, not here). If
+  // app.js rewords it, the replace silently does nothing — so the sentence it
+  // replaces must still be in the download hint, word for word.
+  const replaced = /const withoutLocalFile = \(hint\) =>\s*hint\.replace\("([^"]+)",/.exec(nativeJs);
+  assert.ok(replaced, "couldn't find flash-native.js withoutLocalFile's replace");
+  const downloadHint = classify(new Error("download failed: connection reset"));
+  assert.strictEqual(downloadHint.kind, "download");
+  assert.ok(downloadHint.hint.includes(replaced[1]),
+    "the Flasher's download hint no longer says the sentence withoutLocalFile replaces — reword both");
   // The same retry rule (never `unknown`) and the same live-receipt rule.
   const retrySet = (src, where) => {
     const m = /const BAUD_RETRY_KINDS = new Set\(\[([^\]]*)\]\)/.exec(src);
@@ -2730,9 +2740,14 @@ function fakeDocument() {
 
 async function runNativeBench({ flashAnswers, detectAnswer, ports }) {
   const calls = [];
+  // Every command and every touch of the form, in order — so a test can say
+  // what happened BEFORE the flash (the password cleared) and after it (the
+  // form redrawn from its Wi-Fi memory).
+  const timeline = [];
   const flashQueue = [...(flashAnswers || [])];
   const invoke = async (cmd, args) => {
     calls.push([cmd, args]);
+    timeline.push(cmd);
     switch (cmd) {
       case "native_capabilities": return { serial: true, serial_list: true };
       // A non-USB port listed FIRST: only kind "usb" may be read as a Canary.
@@ -2771,9 +2786,12 @@ async function runNativeBench({ flashAnswers, detectAnswer, ports }) {
     const native = await import(pathToFileURL(join(CANARY, "assets/flash-native.js")).href);
     assert.deepStrictEqual(await native.probeNative(), { serial: true, serial_list: true });
     const mount = doc.createElement("div");
-    const form = { credentials: () => ({ ok: true, wifi: { ssid: "home", pass: "hunter22" }, mqtt: null, autoUpdate: true }), clear() {} };
-    await native.mountNativeBench(mount, { catalog, renderWifiFields: () => form });
-    const run = { calls, mount, doc, close: restore };
+    const form = {
+      credentials: () => { timeline.push("form:read"); return { ok: true, wifi: { ssid: "home", pass: "hunter22" }, mqtt: null, autoUpdate: true }; },
+      clear() { timeline.push("form:clear"); },
+    };
+    await native.mountNativeBench(mount, { catalog, renderWifiFields: () => { timeline.push("form:draw"); return form; } });
+    const run = { calls, timeline, mount, doc, close: restore };
     run.emit = (evt, payload) => { for (const cb of heard[evt] || []) cb({ payload }); };
     run.text = () => mount.textContent;
     run.pick = async (id) => {
@@ -2851,7 +2869,19 @@ test("native flashing: the Lab's flash page drives the Flasher's commands with t
   assert.deepStrictEqual(Object.keys(start[1]).sort(), rustArgs(labFlash, "start_serial_monitor"));
   assert.strictEqual(start[1].postFlash, true);
   assert.strictEqual(start[1].vid, 0x303a);
-  assert.match(run.text(), /Written and verified by the chip \(ed25519\+sha256; stable channel/);
+  // Who checked what: the app verified the release signature; espflash and
+  // the chip only confirmed the write. The chip is never credited with the
+  // Ed25519 check ("verified" is the signature's word alone).
+  assert.match(run.text(), /Written, and espflash confirmed the write on the chip · release signature verified against the pinned key \(ed25519\+sha256\) · stable channel · installed SHA-256 b{16}…\. Your settings were sealed/);
+  assert.ok(!/verified by the chip/i.test(run.text()), "the success text must not credit the chip with the release check");
+  // The Wi-Fi password leaves the DOM the moment it is read — before the
+  // first write, not after a success — and the form is drawn afresh once the
+  // attempt ends, so a retry pre-fills from memory instead of re-reading an
+  // emptied field (which would provision, and remember, an empty password).
+  const tl = run.timeline;
+  assert.ok(tl.indexOf("form:read") < tl.indexOf("form:clear") && tl.indexOf("form:clear") < tl.indexOf("flash"),
+    "the bench must clear the Wi-Fi password right after reading it, before flashing (flash.js does)");
+  assert.ok(tl.lastIndexOf("form:draw") > tl.lastIndexOf("flash"), "the form must be redrawn after the attempt");
   // The board's own receipt, as the monitor streams it: `firmware` is the
   // version string the self-manifest reports.
   run.emit("serial:receipt", { target: "esp32-host", ready: true,
@@ -2869,7 +2899,25 @@ test("native flashing: the Lab's flash page drives the Flasher's commands with t
     assert.strictEqual(denied.calls.filter(([c]) => c === "flash").length, 1, "a permission failure must not walk the baud ladder");
     assert.match(denied.text(), /The system wouldn't grant access to the port/);
     assert.ok(!denied.calls.some(([c]) => c === "start_serial_monitor"), "no monitor after a failed write");
+    // A FAILED flash strands no password either.
+    const dtl = denied.timeline;
+    assert.ok(dtl.indexOf("form:clear") > -1 && dtl.indexOf("form:clear") < dtl.indexOf("flash"),
+      "a failed flash must not leave the Wi-Fi password in the DOM");
+    assert.ok(dtl.lastIndexOf("form:draw") > dtl.lastIndexOf("flash"), "the form must be redrawn after a failure");
   } finally { denied.close(); }
+
+  // A download failure's advice points at the Flasher for a local .bin — this
+  // bench has no "Advanced" local-file install to send anyone to.
+  const offline = await runNativeBench({
+    flashAnswers: ["download failed: error sending request for url (connection reset)"],
+  });
+  try {
+    await offline.pick("securacv-canary");
+    assert.match(offline.text(), /Couldn't download the firmware image/);
+    assert.ok(offline.text().includes("A local .bin can be installed with the SecuraCV Flasher."),
+      "the download advice must point at the Flasher for a local .bin");
+    assert.ok(!/under Advanced/.test(offline.text()), "the Lab has no Advanced local-file install to point at");
+  } finally { offline.close(); }
 
   // The backend's Linux hint is said as-is when the board can't be read.
   const permHint = /pub const PERMISSION_HINT: &str =\s*"([\s\S]*?)";/.exec(engineRs("port_hint"))[1]

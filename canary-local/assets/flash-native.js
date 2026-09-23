@@ -144,6 +144,16 @@ const withoutLocalFile = (hint) =>
   hint.replace(" You can also install a local .bin under Advanced.",
     " A local .bin can be installed with the SecuraCV Flasher.");
 
+// Who checked what, said apart. The APP checked the release before a byte was
+// written (flash-engine release.rs: its SHA-256, and its Ed25519 signature
+// against the key pinned in the catalog); espflash and the chip only confirmed
+// the write landed. "Verified" is kept for the signature check alone — the
+// engine reports `checksum-only` when no release key is pinned, and that is
+// said as a checksum, never as verified.
+const releaseCheck = (how) => how === "ed25519+sha256"
+  ? "release signature verified against the pinned key (ed25519+sha256)"
+  : "release SHA-256 matched — no release key is pinned, so no signature was checked";
+
 // Only these failures are worth a slower retry — the Flasher's rule
 // (app.js BAUD_RETRY_KINDS). A bad image, a busy port or a refused permission
 // fails identically at every speed; `unknown` is excluded because retrying it
@@ -305,7 +315,7 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
       const bridge = core.usbBridgeInfo(portInfo.vid, portInfo.pid);
       const bridgeNote = !osLevel && bridge ? " " + bridge.note : "";
       setConn(osLevel ? `Found ${port} — ${firstLine}`
-        : named ? `Found ${port} — ${c.title}. ${c.hint}${bridgeNote}`
+        : named ? `Found ${port} — ${c.title}. ${withoutLocalFile(c.hint)}${bridgeNote}`
           : `Found ${port} — couldn't read the chip. Put it in download mode ` +
             `(hold BOOT, tap RESET, release BOOT), then read it again.${bridgeNote}`);
       recheck.classList.remove("flash-hidden");
@@ -412,7 +422,18 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     if (!product) { flashCard.classList.add("flash-hidden"); return; }
     flashCard.classList.remove("flash-hidden");
     flashCard.append(el("h2", null, `Install ${product.name}`));
-    const form = renderWifiFields(flashCard, product);
+    // The browser's form, in a box of its own so it can be drawn afresh after
+    // every attempt: onFlash clears the Wi-Fi password the moment it reads it
+    // (never left in the DOM), and a retry from that cleared field would
+    // provision — and remember — an empty password. A fresh draw pre-fills it
+    // from the form's Wi-Fi memory, as the browser's own retry does.
+    const formBox = el("div");
+    flashCard.append(formBox);
+    const form = { current: renderWifiFields(formBox, product) };
+    const redrawForm = () => {
+      formBox.innerHTML = "";
+      form.current = renderWifiFields(formBox, product);
+    };
     const eraseRow = el("label", "flash-row");
     const erase = el("input");
     erase.type = "checkbox";
@@ -436,7 +457,7 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     log.append(pre);
     flashCard.append(stage, bar, log);
     const line = (t) => { pre.textContent += t + "\n"; pre.scrollTop = pre.scrollHeight; };
-    go.addEventListener("click", () => onFlash({ product, form, erase, go, stage, bar, fill, line }));
+    go.addEventListener("click", () => onFlash({ product, form, redrawForm, erase, go, stage, bar, fill, line }));
   };
 
   const baudLadder = () => {
@@ -466,12 +487,17 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     throw lastErr;
   };
 
-  const onFlash = async ({ product, form, erase, go, stage, bar, fill, line }) => {
+  const onFlash = async ({ product, form, redrawForm, erase, go, stage, bar, fill, line }) => {
     if (st.busy) return;
     const fit = core.flashFitVerdict(product, st.flashBytes);
     if (!fit.fits) { stage.textContent = `✗ ${fit.why}`; return; }
-    const creds = form.credentials();
+    const creds = form.current.credentials();
     if (!creds.ok) return; // the form already says what to fix
+    // Never leave the password sitting in the DOM — cleared the moment it is
+    // read, as flash.js does, so a failed flash (download mode, a busy port)
+    // doesn't strand it there. The form is redrawn (pre-filled from its Wi-Fi
+    // memory) once the attempt ends, success or not.
+    form.current.clear();
     const mqtt = creds.mqtt || {};
     // The Flasher's provisioning object (app.js readProvisioning), from the
     // browser's form: identity + broker when this firmware reads them, the
@@ -526,7 +552,6 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
         // No safety copy on this bench, so no change map: absent, honestly.
         backupPath: "",
       }), line);
-      form.clear();
       fill.style.width = "100%";
       await renderReceipt(product, receipt);
     } catch (e) {
@@ -547,6 +572,7 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     } finally {
       unlisten();
       unlistenProgress();
+      redrawForm();
       go.disabled = false;
       go.textContent = "Flash my Canary";
       st.busy = false;
@@ -564,9 +590,10 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     result.classList.remove("flash-hidden");
     result.append(el("h2", null, `${product.name} v${receipt.version} is on the board`));
     result.append(el("p", "muted",
-      `Written and verified by the chip (${receipt.release_verification}; ` +
-      `${receipt.channel} channel; installed SHA-256 ${String(receipt.installed_sha256).slice(0, 16)}…).` +
-      (receipt.provisioned ? " Your settings were sealed into the image; their values are never logged." : "")));
+      `${receipt.chip_write_verified ? "Written, and espflash confirmed the write on the chip" : "Written"} · ` +
+      `${releaseCheck(receipt.release_verification)} · ${receipt.channel} channel · ` +
+      `installed SHA-256 ${String(receipt.installed_sha256).slice(0, 16)}…` +
+      (receipt.provisioned ? ". Your settings were sealed into the image; their values are never logged." : "")));
     const status = el("p", "flash-stage", "");
     const boot = el("pre", "flash-console-tall");
     result.append(status, boot);
