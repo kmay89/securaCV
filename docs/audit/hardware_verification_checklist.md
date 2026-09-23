@@ -150,13 +150,19 @@ or ticks Beacon frames. Every row below assumes both.
     `BEACON_STATE_ALARM` for A's alert.
   - Check first: A itself shows `Alarm` (`GET /api/beacon` on A,
     HA `sensor.canary_<A>_beacon_state`) — the originator adopts its own
-    ALERT at hop 0; before the CANCEL pass it stayed `Normal`.
+    ALERT at hop 0; before the CANCEL pass it stayed `Normal`. B, the
+    cosigner, shows `Alarm` too — it resolves its own fingerprint to its own
+    key (spec §7.1 step 5); before the review follow-up it dropped the frame
+    it had co-signed, stayed `Normal`, and refused the CANCEL below.
   - Repro: on A, `POST /api/beacon/cancel` with `{"reason":"false_alarm"}`.
     B's UI shows the cosign prompt for the all-clear; B confirms.
   - Expected: A emits a dual-signed `BEACON_MSG_CANCEL`
     (`template_id = 0x82`, header `msg_type = 2`) naming the alarm's nonce.
     A, B and C each move to `BEACON_STATE_SUPERVISORY`; each audit log
     gains the CANCEL (A's at `hop_count = 0`).
+  - Two-device variant: with only A and B paired (each in the other's set,
+    no C), the same CANCEL completes — B is A's only candidate, B holds the
+    alarm, B confirms, and both leave `Alarm`.
   - Negative: on a fourth board D that never received the ALERT, a
     COSIGN_REQ for that CANCEL is refused before its user is asked (health
     log: "COSIGN_REQ refused").

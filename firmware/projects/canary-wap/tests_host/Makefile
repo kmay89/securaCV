@@ -38,9 +38,13 @@ CHIRP_SEC_SRC = test_chirp_security.cpp
 # unsigned header nonce now says), and a frame
 # outside the freshness window — and that CANCEL/UPDATE only act on the
 # alarm they name, drills bank against their own rate bucket, and a replayed
-# SELFTEST_OK cannot keep a dead neighbor supervised-healthy. Also pins that
-# CAP-gateway trust confers no privilege — in the mirror, and by reading the
-# real beacon_channel.cpp (its path is passed in, so the pin fails closed).
+# SELFTEST_OK cannot keep a dead neighbor supervised-healthy; and that the
+# cosigner of a frame holds its alarm (its own fingerprint resolves to its own
+# key) and so can cosign that alarm's CANCEL, checked against the real
+# beacon_cancel_policy.h. Also pins that CAP-gateway trust confers no
+# privilege — in the mirror, and by reading the real beacon_channel.cpp (its
+# path is passed in, so the pin fails closed), which is also read to hold the
+# receive path's signer resolution to the mirror's.
 BEACON_ORIG_BIN = test_beacon_origination
 BEACON_ORIG_SRC = test_beacon_origination.cpp
 
@@ -216,8 +220,8 @@ $(CHIRP_INV_BIN): $(CHIRP_INV_SRC)
 $(CHIRP_SEC_BIN): $(CHIRP_SEC_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(CHIRP_SEC_SRC)
 
-$(BEACON_ORIG_BIN): $(BEACON_ORIG_SRC) beacon_source_scan.h
-	$(CXX) $(CXXFLAGS) -DBEACON_CHANNEL_CPP='"$(abspath $(SRC_DIR))/beacon_channel.cpp"' -o $@ $(BEACON_ORIG_SRC)
+$(BEACON_ORIG_BIN): $(BEACON_ORIG_SRC) beacon_source_scan.h $(SRC_DIR)/beacon_wire.h $(SRC_DIR)/beacon_cancel_policy.h
+	$(CXX) $(CXXFLAGS) -I $(SRC_DIR) -DBEACON_CHANNEL_CPP='"$(abspath $(SRC_DIR))/beacon_channel.cpp"' -o $@ $(BEACON_ORIG_SRC)
 
 $(BEACON_SOLO_BIN): $(BEACON_SOLO_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_SOLO_SRC)

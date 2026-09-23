@@ -393,6 +393,7 @@ The cosign request includes the originator's `boot_button_state` (whether the BO
 A network all-clear is a `BEACON_MSG_CANCEL` frame, originated by an explicit user action and answering to the same rules as an ALERT:
 
 - **Two-device path** (`POST /api/beacon/cancel`). The canonical carries `msg_type = Cancel`; one of the all-clear templates (`0x80`–`0x82`, chosen by the request's `reason`: `resolved`, `safe` or `false_alarm`); urgency `Past` and severity `Minor` (the §4 defaults for those templates); scope `Private`; and `ref_canceled_nonce` = the frame nonce of the alarm this device holds (§5.4). It goes through the §6.1 cosign flow unchanged.
+- **The cosigner holds the alarm it cosigned.** A beacon set holds peers only (§3.3), so a receiver resolves its own fingerprint to its own pubkey (§7.1 step 5): the cosigner of an ALERT enters `Alarm` when the dual-signed frame arrives, like every other member. Without that, the cosigner dropped the very frame it had signed, held no nonce, and refused the CANCEL below — and in a two-device set the cosigner is the only candidate, so no network CANCEL could complete.
 - **The cosigner only signs a CANCEL for an alarm it holds.** Before its user is asked, a cosigner checks that the CANCEL carries an all-clear template and that `ref_canceled_nonce` is non-zero and equals the nonce of its own active alarm. A cosigner never attests an all-clear for an alarm it did not see. Cosign requests for `Update` or `Exercise` are refused until each has its own reviewed origination path.
 - **Solo path** (`POST /api/beacon/cancel-solo`). §6.2 with `msg_type = Cancel`: the physical BOOT button held at the moment of origination, `BCN_FLAG_SOLO_ORIGIN` on the header, `certainty = Observed`, one signature in both slots, and refused while a fresh paired cosigner is available.
 - **The emitted header follows the signed canonical.** The header `msg_type` and flags are derived from the canonical, so a CANCEL is emitted as a CANCEL; receivers drop a header that disagrees with the signed `msg_type`.
@@ -410,7 +411,7 @@ Every received Beacon frame goes through:
 2. `version` recognized? Drop if not.
 3. Bloom-filter dedup on `nonce`? Drop if duplicate.
 4. `effective` within `time(nullptr) ± BEACON_FRESHNESS_S` (default ±300 s)? Drop if not. If `time(nullptr) < 1700000000` (unsynced), accept but flag `unverifiable_timestamp = true`.
-5. Both `originator_fp` and `cosigner_fp` in local beacon set with `trust_level != revoked`? Drop if not.
+5. Both `originator_fp` and `cosigner_fp` in local beacon set with `trust_level != revoked`? Drop if not. This device's own fingerprint also resolves — to its own pubkey — because the set holds peers only (§3.3) and a frame this device co-signed names itself; that slot is still verified in steps 7–8, and step 6 still applies.
 6. `originator_fp != cosigner_fp`? Drop if equal.
 7. `Ed25519::verify(sig_originator, originator_pubkey, canonical)` succeeds? Drop if not.
 8. `Ed25519::verify(sig_cosigner, cosigner_pubkey, canonical)` succeeds? Drop if not.
@@ -635,6 +636,7 @@ What Beacon never shares:
 - v0.1 (2026-05-11): Initial draft.
 - 2026-09: §6.5 cancel origination (two-device and solo `BEACON_MSG_CANCEL`, cosigner gate, originator self-adoption); §10 gains `/api/beacon/originate-solo`, `/api/beacon/cancel-solo` and `/api/beacon/silence`; §5.2 frame size corrected to 224 B.
 - 2026-09: §6.3 — the co-sign envelope binds its clear routing fields as associated data and refuses an all-zero X25519 shared secret.
+- 2026-09: §7.1 step 5 — a receiver's own fingerprint resolves to its own key, so the cosigner of an alarm holds it and can cosign its CANCEL (§6.5).
 
 ---
 

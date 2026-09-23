@@ -12,8 +12,10 @@
  *
  * Critical security properties (per spec/beacon_channel_v0.md):
  *  - Every BEACON_MSG_ALERT requires two distinct Ed25519 signatures over
- *    the canonical alert body, from two distinct device pubkeys, both of
- *    which must be present in the local beacon set with trust_level != REVOKED.
+ *    the canonical alert body, from two distinct device pubkeys, each of
+ *    which must be present in the local beacon set with trust_level !=
+ *    REVOKED — or be this device's own (resolve_signer: the set holds peers
+ *    only, so the cosigner of a frame would otherwise drop its own alarm).
  *  - Originator never counts itself; the cosigner must explicitly sign.
  *  - Self-test heartbeat (BEACON_MSG_SELFTEST_OK) cadenced daily; receivers
  *    surface Trouble if a known set member's selftest is absent for >36h.
@@ -439,6 +441,35 @@ static const BeaconSetEntry* find_set_entry_by_fp(const uint8_t* fp) {
     }
   }
   return nullptr;
+}
+
+// A signer named in a received ALERT-class frame, resolved to the key its
+// signature slot verifies against. The beacon set holds peers only — pairing
+// adds the OTHER device's key (spec §3.3) — so a frame this device co-signed
+// names one fingerprint no set entry carries: its own. Resolving only set
+// entries made the cosigner drop the alarm its own user had just confirmed:
+// it never entered ALARM, held no nonce, and so could never cosign that
+// alarm's CANCEL (cosign_request_acceptable) — in a two-device set, nobody
+// could. This device's fingerprint therefore resolves to its own pubkey. The
+// slot is still verified against that key, so only a frame this device
+// really signed gets through, and the two-distinct-keys rule is unchanged: a
+// non-solo frame naming the same fingerprint twice is still dropped.
+struct FrameSigner {
+  const uint8_t* pubkey;        // verifies this signer's signature slot
+  const BeaconSetEntry* entry;  // its beacon-set entry; nullptr for this device
+};
+
+static bool resolve_signer(const uint8_t* fp, FrameSigner* out) {
+  if (memcmp(fp, g_device_fp, DEVICE_FP_SIZE) == 0) {
+    out->pubkey = g_device_pubkey;
+    out->entry = nullptr;
+    return true;
+  }
+  const BeaconSetEntry* e = find_set_entry_by_fp(fp);
+  if (!e || e->trust_level == BCN_TRUST_REVOKED) return false;
+  out->pubkey = e->device_pubkey;
+  out->entry = e;
+  return true;
 }
 
 static bool rate_check_and_record(const uint8_t* fp, bool is_exercise) {
@@ -1273,20 +1304,27 @@ static void handle_alert_frame(const uint8_t* data, size_t len) {
     }
   }
 
-  // Originator must be in the local beacon set (for solo, same lookup
-  // covers the "cosigner" since they're the same pubkey).
-  const BeaconSetEntry* a = find_set_entry_by_fp(canonical->originator_fp);
-  const BeaconSetEntry* b = is_solo ? a
-                                    : find_set_entry_by_fp(canonical->cosigner_fp);
-  if (!a || !b) return;
-  if (a->trust_level == BCN_TRUST_REVOKED) return;
-  if (b->trust_level == BCN_TRUST_REVOKED) return;
+  // Each signer must be a non-revoked member of the local beacon set, or this
+  // device itself (resolve_signer — the cosigner of a frame holds its alarm
+  // too). For solo, the originator lookup covers the "cosigner", since they
+  // are the same pubkey.
+  FrameSigner a = {nullptr, nullptr};
+  FrameSigner b = {nullptr, nullptr};
+  if (!resolve_signer(canonical->originator_fp, &a)) return;
+  if (is_solo) {
+    b = a;
+  } else if (!resolve_signer(canonical->cosigner_fp, &b)) {
+    return;
+  }
   if (!is_solo && memcmp(canonical->originator_fp, canonical->cosigner_fp,
                          DEVICE_FP_SIZE) == 0) {
     return;  // Standard dual-pubkey frame with collapsed signers is malformed.
   }
 
-  if (signer_selftest_stale(a) || signer_selftest_stale(b)) {
+  // Supervised health is a set member's property; this device is not
+  // supervised by its own selftest map.
+  if ((a.entry && signer_selftest_stale(a.entry)) ||
+      (b.entry && signer_selftest_stale(b.entry))) {
     health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
                "beacon: rejected frame — a signer's selftest is older than 36 h");
     return;
@@ -1298,8 +1336,8 @@ static void handle_alert_frame(const uint8_t* data, size_t len) {
   uint8_t buf[64 + sizeof(BeaconAlertCanonical)];
   size_t cl = build_alert_canonical(canonical, buf, sizeof(buf));
   if (cl == 0) return;
-  if (!Ed25519::verify(sig_a, a->device_pubkey, buf, cl)) return;
-  if (!Ed25519::verify(sig_b, b->device_pubkey, buf, cl)) return;
+  if (!Ed25519::verify(sig_a, a.pubkey, buf, cl)) return;
+  if (!Ed25519::verify(sig_b, b.pubkey, buf, cl)) return;
 
   // Wall-clock freshness (spec §7.1 step 4).
   time_t now = time(nullptr);

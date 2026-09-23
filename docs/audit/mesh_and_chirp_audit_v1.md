@@ -504,6 +504,23 @@ is the hardware checklist's "CANCEL propagates" row; no board can run it
 until the channel is wired into the sketch loop (`init()`, `update()` and the
 ESP-NOW dispatch still have no callers).
 
+Review follow-up to the CANCEL pass (2026-09): the cosigner of an alarm never
+held it. `handle_alert_frame` looked both signers up in the beacon set, which
+holds peers only (spec §3.3), so the device that co-signed an ALERT dropped
+that very frame, and the strict cosigner gate then refused the alarm's CANCEL
+on it; in a two-device set the cosigner is the only candidate, so no network
+CANCEL could complete. Receivers now resolve their own fingerprint to their
+own pubkey (`resolve_signer`; the slot is still verified and two distinct
+fingerprints are still required — spec §7.1 step 5, §6.5). Pinned in the
+mirror (`test_cosigner_holds_the_alarm_it_cosigned`,
+`test_self_as_signer_grants_nothing_else`, against the real
+`cosign_request_acceptable`) and in the real source
+(`test_source_resolves_this_device_as_a_signer`). The same review found the
+CANCEL pass's guards tested the policy helpers but not the firmware's calls to
+them; `test_source_call_sites_follow_the_policy` now pins the call sites
+(emitter header, the solo BOOT gate, the cosigner gate before a request is
+stashed, no charge on adoption, the COSIGN associated data at all four sites).
+
 Deferred by decision (2026-09), not open: the CAP gateway upstream-attestation
 path (`spec/beacon_cap_gateway_v0.md` §2.3). Gateway-trust keys are ordinary
 two-pubkey signers and get nothing more — no solo without the BOOT-button

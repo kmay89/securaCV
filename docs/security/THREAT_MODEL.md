@@ -571,6 +571,13 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   `certainty = Observed` so receivers can see it and downweight it. That
   gate stops a remote key thief, not software running on the device itself.
   Spec: `spec/beacon_channel_v0.md`.
+- Receivers accept a frame only when both signers resolve to a non-revoked
+  beacon-set member — or to the receiving device itself: a set holds peers
+  only, so the device that co-signed an alarm resolves its own fingerprint to
+  its own pubkey and holds that alarm, which is what lets it cosign the
+  alarm's CANCEL (spec §6.5, §7.1 step 5). That slot is still verified
+  against the device's own key, so only a frame it really signed gets
+  through, and two distinct fingerprints are still required.
 - Co-sign requests and responses (`COSIGN_REQ`/`COSIGN_RESP`) are encrypted
   to the peer — X25519 ECDH, a domain-labeled SHA-256 key, ChaCha20-Poly1305
   — with the clear routing fields (fingerprints, length, the `accept` byte)
