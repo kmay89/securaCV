@@ -50,6 +50,9 @@ on:
       - "firmware/boards/boards.json"
       - "firmware/envs/**"
       - "canary-local/tools/gen_flash.py"
+      # the display host test's LVGL font metrics are generated from the
+      # emulator's pinned LVGL checkout (checked after the build below)
+      - "firmware/scripts/gen_montserrat_metrics.py"
       - "desktop/hub-core/src/hub_disk.rs"
       - "desktop/src-tauri/src/lib.rs"
       - "desktop/src-tauri/src/we2.rs"
@@ -170,6 +173,9 @@ on:
       - "firmware/boards/boards.json"
       - "firmware/envs/**"
       - "canary-local/tools/gen_flash.py"
+      # the display host test's LVGL font metrics are generated from the
+      # emulator's pinned LVGL checkout (checked after the build below)
+      - "firmware/scripts/gen_montserrat_metrics.py"
       - "desktop/hub-core/src/hub_disk.rs"
       - "desktop/src-tauri/src/lib.rs"
       - "desktop/src-tauri/src/we2.rs"
@@ -576,6 +582,11 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+      # R9: the Montserrat metrics drift step below runs a (stdlib-only)
+      # Python generator against the LVGL checkout this job fetches.
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -692,6 +703,12 @@ jobs:
             echo "::error::emulator dist/ artifacts do not match a rebuild from this tree — run canary-local/emulator/build.sh all and commit the result (no emsdk 6.0.3 where you are? Actions → 'Rebuild emulator dist (pinned emsdk)' on your branch does the same and pushes the result, or apply the PATCH: lines above)"
             exit 1
           fi
+      - name: Montserrat metrics drift (the display host test measures text with LVGL's own font data)
+        # tests_host/montserrat_metrics.h carries the glyph advances and
+        # kerning the Join scene's no-ellipsis proof measures with (F45); it
+        # is generated from the LVGL checkout the build above just fetched
+        # (build.sh's pin), which the firmware.yml host-test job does not have.
+        run: python3 firmware/scripts/gen_montserrat_metrics.py --check
       - name: Voice preview drift check (index.html matches voice_score.h)
         # The Canary Voice sound preview (canary-local/voice/index.html) is
         # GENERATED from the firmware header by the real compiler — never

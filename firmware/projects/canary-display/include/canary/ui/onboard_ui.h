@@ -35,7 +35,10 @@ void onboard_ui_stage(ObStage st, const char* detail);
 
 // Append/replace the small hint line on the current scene (e.g. the manual
 // "or visit 192.168.4.1" fallback if the captive sheet never popped).
-void onboard_ui_hint(const char* line);
+// `narrow` is an optional shorter form: on small glass's Join scene the row
+// shows `line` when it fits and `narrow` when it does not (onboard_layout.h's
+// join_lines — never an ellipsis).
+void onboard_ui_hint(const char* line, const char* narrow = nullptr);
 
 // Drive the stage's animation (breath / sweep). Call every loop pass.
 void onboard_ui_tick(uint32_t now_ms);

@@ -1811,6 +1811,35 @@
   anything but the QR's black and the card's white is inside the card.
 - **Date learned:** 2026-09
 
+### An ellipsis is a fit to LVGL, and a dead end when the cut text is the way in
+
+- **What happened:** On the 172 px nightstand the Join scene's
+  "SecuraCV-XXXX  •  <key>" line (174 px of text in a 156 px row) drew as
+  "SecuraCV-XXXX  • ..." — the whole key gone — and the stuck-phone hint
+  as "can't join? forget it on..." (F45). A phone that cannot scan the QR has nothing else to
+  go on. The measuring also found two cuts nobody had seen: the round watch's
+  "pass  <key>" row overflows 142 px for the widest keys, and under the
+  Heirloom Character (14 px captions) its stuck-phone hint (171 px) does too.
+- **Root cause:** LONG_DOT turns "does not fit" into a tidy ellipsis — no
+  log, no assert, and in a screenshot it reads as a design choice. The rows
+  were sized by eye against one sample key on one ladder, so nothing asked
+  how wide the text could get: the key is random, a glyph's width depends on
+  the letter after it (kerning), and a Character can raise the caption size.
+- **Fix:** `onboard_layout.h`'s `join_lines()` decides what each row says
+  by measuring it the way LVGL lays it out (`lv_font_get_glyph_width`,
+  kerning included): joined only where it fits, else split like round glass;
+  longer forms before shorter ones, the row's own face before the default
+  Character's. It never falls back to the ellipsis.
+- **Regression check:** `tests_host/test_onboard_layout.cpp` runs
+  `join_lines()` on every display env's glass and both ladders with LVGL's
+  own glyph metrics (`tests_host/montserrat_metrics.h`, generated from the
+  pinned LVGL by `firmware/scripts/gen_montserrat_metrics.py`, `--check`ed in
+  canary-local.yml) over the widest name and key the minting alphabet can
+  produce, found by a search rather than a guess; `onboard_probe.mjs` fails
+  on LONG_DOT's three baseline dots in each emulated flavor's Join scene,
+  with and without the stuck-phone hint.
+- **Date learned:** 2026-09
+
 ---
 
 ## Network API: what a LAN token does and does not prove

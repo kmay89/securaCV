@@ -96,8 +96,8 @@ bool s_glass = false;
 void ui_stage(canary::ui::ObStage st, const char* detail) {
   if (s_glass) canary::ui::onboard_ui_stage(st, detail);
 }
-void ui_hint(const char* line) {
-  if (s_glass) canary::ui::onboard_ui_hint(line);
+void ui_hint(const char* line, const char* narrow = nullptr) {
+  if (s_glass) canary::ui::onboard_ui_hint(line, narrow);
 }
 void ui_pump() {
   if (s_glass) lv_timer_handler();
@@ -918,7 +918,11 @@ void provision_run(bool glass_ok) {
           // (round_frame fits it; ~142 px) — every word here is measured.
           ui_hint("forget it on your phone");
 #elif defined(CD_FLAVOR_WATCH)
-          ui_hint("can't join? forget it on your phone");
+          // Portrait glass: the whole line where the row holds it (240 px
+          // and up); the round glass's words on the 172/180 px ones, where
+          // it rides under the network name it means (F45).
+          ui_hint("can't join? forget it on your phone",
+                  "forget it on your phone");
 #else
           ui_hint("can't join? on your phone, forget this network - then scan again");
 #endif

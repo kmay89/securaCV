@@ -11,7 +11,9 @@
 //     its first-boot line on serial and raises "SecuraCV-XXXX" with the key it
 //     printed; the glass's Join scene shows its QR card with nothing painted
 //     over it (read off the framebuffer — F43, see joinCard; --shots saves
-//     onboard_join_<flavor>.png); the phone's wrong key is refused and the
+//     onboard_join_<flavor>.png) and no line cut to an ellipsis, before and
+//     after the 45 s stuck-phone hint (F45, see joinEllipses; --shots saves
+//     onboard_join_hint_<flavor>.png); the phone's wrong key is refused and the
 //     right one joins; the captive DNS answers A with 192.168.4.1 and AAAA
 //     with no data; the OS
 //     probe gets the 302; GET / serves PORTAL_HTML byte-for-byte as
@@ -139,6 +141,110 @@ function joinCard() {
   return { panel: [w, h], box: [x0, y0, x1, y1], stray, first };
 }
 
+// Every line LVGL cut to an ellipsis on the glass, read off the framebuffer
+// (runs in the page). A fitted label that cannot hold its text ends in
+// LONG_DOT's "..." — three period glyphs sitting alone on the line's
+// baseline, evenly spaced, with nothing after them. On the 172 px nightstand
+// the joined "SecuraCV-XXXX  •  <key>" line lost its key that way and the
+// stuck-phone hint its tail (F45); when the QR does not scan, that text is
+// the only way in. Text ink is anything brighter than 40: the halo ring
+// (col_edge at no more than 70 % opacity, ~27) stays under it, and the QR
+// card (the pure-white box, see joinCard) is left out. Returns the [x, y] of
+// each ellipsis' first dot.
+function joinEllipses() {
+  const cv = document.getElementById("glass");
+  const w = cv.width, h = cv.height;
+  const px = cv.getContext("2d").getImageData(0, 0, w, h).data;
+  const white = (i) => px[i] === 255 && px[i + 1] === 255 && px[i + 2] === 255;
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!white((y * w + x) * 4)) continue;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  const ink = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (x1 >= 0 && x >= x0 && x <= x1 && y >= y0 && y <= y1) continue;
+      const i = (y * w + x) * 4;
+      if (Math.max(px[i], px[i + 1], px[i + 2]) > 40) ink[y * w + x] = 1;
+    }
+  }
+  const at = (x, y) => x >= 0 && y >= 0 && x < w && y < h && ink[y * w + x] === 1;
+  // Dots: small blobs (a period is at most 4x4 px in any face the glass
+  // sets) with nothing inked just above them (a '?', ':' or '!') or just
+  // below them (an 'i' or 'j' tittle's stem).
+  const seen = new Uint8Array(w * h);
+  const dots = [];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!ink[y * w + x] || seen[y * w + x]) continue;
+      let bx0 = x, bx1 = x, by0 = y, by1 = y;
+      const stack = [[x, y]];
+      seen[y * w + x] = 1;
+      while (stack.length) {
+        const [cx, cy] = stack.pop();
+        if (cx < bx0) bx0 = cx;
+        if (cx > bx1) bx1 = cx;
+        if (cy < by0) by0 = cy;
+        if (cy > by1) by1 = cy;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = cx + dx, ny = cy + dy;
+            if (at(nx, ny) && !seen[ny * w + nx]) { seen[ny * w + nx] = 1; stack.push([nx, ny]); }
+          }
+        }
+      }
+      if (bx1 - bx0 > 3 || by1 - by0 > 3) continue;
+      let alone = true;
+      for (let cx = bx0 - 1; cx <= bx1 + 1 && alone; cx++) {
+        for (let cy = by0 - 6; cy < by0 && alone; cy++) if (at(cx, cy)) alone = false;
+        for (let cy = by1 + 1; cy <= by1 + 3 && alone; cy++) if (at(cx, cy)) alone = false;
+      }
+      if (alone) dots.push({ x0: bx0, x1: bx1, y0: by0, y1: by1 });
+    }
+  }
+  // Three on one baseline, one pitch apart, and the line ends there.
+  dots.sort((a, b) => a.y1 - b.y1 || a.x0 - b.x0);
+  const found = [];
+  for (let i = 0; i + 2 < dots.length; i++) {
+    const a = dots[i], b = dots[i + 1], c = dots[i + 2];
+    if (Math.abs(a.y1 - b.y1) > 1 || Math.abs(b.y1 - c.y1) > 1) continue;
+    const p1 = b.x0 - a.x0, p2 = c.x0 - b.x0;
+    if (p1 < 2 || p1 > 7 || Math.abs(p1 - p2) > 1) continue;
+    let end = true;
+    for (let cx = c.x1 + 1; cx <= c.x1 + 6 && end; cx++) {
+      for (let cy = c.y1 - 10; cy <= c.y1 && end; cy++) if (at(cx, cy)) end = false;
+    }
+    if (end) found.push([a.x0, a.y0]);
+  }
+  return found;
+}
+
+// The text ink under the QR card, as one number that changes when a line
+// does (runs in the page): how the probe knows the stuck-phone hint drew.
+function inkUnderCard() {
+  const cv = document.getElementById("glass");
+  const w = cv.width, h = cv.height;
+  const px = cv.getContext("2d").getImageData(0, 0, w, h).data;
+  let y1 = -1;
+  for (let i = 0; i < w * h; i++) {
+    if (px[4 * i] === 255 && px[4 * i + 1] === 255 && px[4 * i + 2] === 255) y1 = Math.floor(i / w);
+  }
+  let sig = 0;
+  for (let y = y1 + 1; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (Math.max(px[i], px[i + 1], px[i + 2]) > 40) sig = (sig * 31 + y * w + x) % 1000000007;
+    }
+  }
+  return sig;
+}
+
 // ── 1. the harness, per flavor ──────────────────────────────────────────────
 async function walkHarness(flavor) {
   const page = await browser.newPage({ viewport: { width: 1000, height: 620 } });
@@ -183,6 +289,22 @@ async function walkHarness(flavor) {
     check(card && card.stray === 0,
       `the join scene paints over its QR card: ${card ? `${card.stray} px not the QR's black/white inside ` +
         `card ${JSON.stringify(card.box)} on ${card.panel.join("x")}, first at ${JSON.stringify(card.first)}` : "card gone"}`);
+    // F45: no line of the Join scene ends in an ellipsis — then nobody
+    // joins for 45 s and the stuck-phone hint takes its row; still none.
+    const cut = await E(joinEllipses);
+    check(cut.length === 0, `the join scene cuts ${cut.length} line(s) to an ellipsis (first dots at ` +
+      `${JSON.stringify(cut)}) — the credentials must be readable when the QR is not (F45)`);
+    const before = await E(inkUnderCard);
+    await E(() => window.__emu.stepTime(46000));
+    await until(async () => (await E(inkUnderCard)) !== before, "the stuck-phone hint on the glass", 20000);
+    await new Promise((r) => setTimeout(r, 400));
+    if (SHOTS) {
+      const png = await E(() => document.getElementById("glass").toDataURL("image/png"));
+      await writeFile(`${SHOTS}/onboard_join_hint_${flavor}.png`, Buffer.from(png.split(",")[1], "base64"));
+    }
+    const cutHint = await E(joinEllipses);
+    check(cutHint.length === 0, `with the stuck-phone hint up the join scene cuts ${cutHint.length} line(s) ` +
+      `to an ellipsis (first dots at ${JSON.stringify(cutHint)}) (F45)`);
 
     // The phone joins: the radio checks the key the firmware chose.
     check(await E((a) => window.__emu.phoneJoin(a.ssid, "wrongkey"), ap) === -1, "a wrong AP key was not refused");
@@ -270,7 +392,8 @@ async function walkHarness(flavor) {
       "the display's MQTT status after onboarding", 30000);
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/onboard_${flavor}.png` });
     if (errors.length) throw new Error("page errors:\n" + errors.slice(0, 8).join("\n"));
-    console.log(`ONBOARD_PROBE_OK[${flavor}] ${ap.ssid}: join card clean, refused wrong key, captive DNS+302, served page pinned, ` +
+    console.log(`ONBOARD_PROBE_OK[${flavor}] ${ap.ssid}: join card clean, no line cut (with and without the stuck hint), ` +
+      `refused wrong key, captive DNS+302, served page pinned, ` +
       `3 verdicts from firmware, persisted on success, boot resumed`);
   } catch (e) {
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/onboard_${flavor}_fail.png` }).catch(() => {});
