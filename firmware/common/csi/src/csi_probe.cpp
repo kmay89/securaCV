@@ -233,8 +233,9 @@ void deinit() {
 #ifndef CSI_TEST_HOST_BUILD
   driver_del_peer(BROADCAST_MAC);
   /* We intentionally do NOT call esp_now_deinit(): another component
-   * (e.g. the mesh in PR 2) may also be using ESP-NOW. The peer list
-   * cleanup above is sufficient to stop our traffic. */
+   * (the mesh, the chirp or the Beacon channel) may also be using
+   * ESP-NOW. The peer list cleanup above is sufficient to stop our
+   * traffic. */
 #endif
   s_initialized = false;
 }
@@ -243,11 +244,11 @@ bool start() {
   if (!s_initialized) return false;
   s_running = true;
   /* Stagger the initial send time for each peer across one period so a
-   * batch of pre-registered peers (e.g. restored from NVS by PR 2 mesh)
-   * doesn't all transmit on the same first tick. j=0 fires immediately;
-   * subsequent peers fire at evenly-spaced phases. The steady state is
-   * preserved by the per-peer next_send_ms = now + period scheduling in
-   * process(). */
+   * batch of pre-registered peers (e.g. a sketch that adds them before
+   * start()) doesn't all transmit on the same first tick. j=0 fires
+   * immediately; subsequent peers fire at evenly-spaced phases. The
+   * steady state is preserved by the per-peer next_send_ms = now + period
+   * scheduling in process(). */
   const uint32_t t = now_ms();
   const size_t   peers = peer_count();
   const uint32_t period =
