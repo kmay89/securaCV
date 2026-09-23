@@ -594,9 +594,11 @@ the original list:
   `render.sh`, the fit check, `lint_design_lang.py`) is untouched;
 - `gen_builder_manifest.py --site` carries the resolved knobs, the measured
   seams and the board registry into the website's `cad-dims.json` beside the
-  envelopes it always carried (wave 3); the glTF generators keep pinning to
-  the measured envelope, and reading the new keys is the website repo's
-  change, still open;
+  envelopes it always carried (wave 3); the glTF generators pin to the
+  measured envelope and, since website PR #197 (2026-09-20), place seams and
+  modules from `seams_mm` and `knobs` and pin page copy to `board_registry`
+  (the website's `scripts/lib/cad-dims.mjs`, held by its
+  `tests/models.test.mjs` and `tests/ar-dims.test.mjs`);
 - the emulator `build.sh` still types its flavor allowlist — the manifests
   **prove** it (every `emulator.flavor` is in the allowlist and every dist
   flavor is claimed) rather than drive it; the boot probe loops over the
