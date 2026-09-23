@@ -100,7 +100,8 @@ is already at parity ✅) are omitted.
   shape — `httpd_ssl` on 443 serving every route, a port-80 server that keeps the six OS
   connectivity probes and 307-redirects the rest, TLS skipped during first-boot setup — with an
   on-device **ECDSA P-256** self-signed certificate (the WAP's CN / validity / serial / NVS
-  layout; ~1 s keygen instead of RSA-2048's 30-60 s). `FEATURE_HTTPS=1` in `[env:dev]` and
+  layout; a keygen expected to be far shorter than RSA-2048's 30-60 s — untimed until Track D D1
+  records the serial `[TLS] Certificate generation took … ms` line). `FEATURE_HTTPS=1` in `[env:dev]` and
   `[env:full]` only, so CI compiles it on IDF 4.4 and 5.5; release stays off until the
   size-guard log gives the slot delta. Never run on hardware: the dashboard cell is ⚠️, not ✅.
   Fallback if the dev leg shows the 2.0.17 core lacks x509write: option (c), certificate + key

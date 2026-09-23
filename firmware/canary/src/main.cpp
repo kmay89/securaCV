@@ -859,13 +859,16 @@ void setup() {
       Serial.println("[OK] WiFi AP active");
 #if FEATURE_HTTP_SERVER
 #if FEATURE_HTTPS
-      // F15: self-signed TLS. Skipped during first-boot setup — captive
-      // mini-browsers (iOS CNA, Android) render a blank page on a
-      // self-signed certificate, the AP is the security boundary before any
-      // home Wi-Fi exists, and setup completes with a reboot, so the next
-      // boot comes up on HTTPS (WAP parity). A failure is not fatal: the
-      // server falls back to HTTP-only and /api/status tls_mode_reason says
-      // why.
+      // F15: self-signed TLS. Skipped during first-boot setup (WAP parity) —
+      // captive mini-browsers (iOS CNA, Android) render a blank page on a
+      // self-signed certificate, and the AP is the security boundary before
+      // any home Wi-Fi exists. Setup completes WITHOUT a reboot
+      // (setup_mark_complete keeps this server up so the wizard's success
+      // screen survives), so HTTPS is only tried at the next boot, whenever
+      // that is; until then /api/status tls_mode_reason says "setup
+      // finished; HTTPS is tried at the next reboot" (tls_policy::live_reason).
+      // A failure is not fatal: the server falls back to HTTP-only and
+      // tls_mode_reason says why.
 #if FEATURE_SETUP_WIZARD
       const bool tls_skip_for_setup = setup_is_first_boot();
 #else
@@ -876,7 +879,7 @@ void setup() {
       } else {
         Serial.println("[..] Preparing TLS certificate...");
 #if FEATURE_WATCHDOG
-        esp_task_wdt_reset();  // first TLS boot generates a P-256 key (~1 s)
+        esp_task_wdt_reset();  // first TLS boot generates a P-256 key (untimed; D1 records it)
 #endif
         if (!net.initTls()) {
           Serial.printf("[WARN] TLS unavailable (%s) — API traffic is NOT encrypted\n",

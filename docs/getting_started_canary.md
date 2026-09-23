@@ -527,7 +527,7 @@ Each BOOT tap unlocks exactly one thing within those 30 seconds: one
 page load, or one app or browser fetching the recovery kit — whichever
 asks first. A page you unlocked with the tap can save the recovery kit
 without a second tap; the iPhone app fetching the kit on its own needs a
-fresh tap. That is how you get the kit back later without a USB cable. *(New in 2026-09; checked by automated builds and tests, not
+fresh tap. That is how you get the kit back later without a USB cable. *(New in 2026-09; checked by automated tests, with its first automated build pending; not
 yet on a bench device.)*
 
 **Encrypted dashboard (development and full images only, for now).** On
@@ -539,7 +539,7 @@ certificate is not trusted: the Canary made it for itself, and the iPhone
 app checks it against the fingerprint in your recovery kit instead. A
 factory reset makes a new certificate, so pair the iPhone app again
 afterwards. The standard release image does not turn this on yet.
-*(New in 2026-09; checked by automated builds only, not yet on a bench
+*(New in 2026-09; its first automated build is pending, and it is not yet on a bench
 device.)*
 
 ---

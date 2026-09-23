@@ -10,11 +10,21 @@
 //                               reports, so a device that fell back to HTTP
 //                               says why instead of leaving the bench to guess.
 //   build_redirect_location() — the port-80 server's Location header. Refuses
-//                               (returns false) on truncation or on a target
-//                               that would not be this device, so the handler
-//                               answers 500 instead of a truncated or foreign
-//                               redirect (the WAP's fixed 128-byte snprintf
-//                               silently truncates; this does not copy that).
+//                               (returns false) on truncation or on a
+//                               MALFORMED target (userinfo, a path, whitespace
+//                               or a control byte in the host), so the handler
+//                               answers 500 instead of a truncated or
+//                               header-splitting redirect (the WAP's fixed
+//                               128-byte snprintf silently truncates; this does
+//                               not copy that). It does not check that a
+//                               well-formed Host names THIS device: `Host:
+//                               other.example` is echoed back to the browser
+//                               that sent it, as any Host-based redirect is.
+//   live_reason()             — the reason /api/status reports later in the same
+//                               boot: a start-up "setup wizard active" becomes
+//                               "setup finished; HTTPS is tried at the next
+//                               reboot" once setup completes (it does not
+//                               reboot), instead of going stale.
 //   plain_http_exempt()       — the paths that must stay on plain HTTP: the six
 //                               OS connectivity probes always (no OS sends them
 //                               over TLS), and / and /setup while the setup
@@ -64,10 +74,32 @@ inline Mode decide(bool feature_on, bool server_lib_present,
   return out;
 }
 
-// A host this device answers to: a DNS-ish name or dotted IPv4 made only of
+// True when decide() ruled HTTPS out ONLY because the setup wizard was
+// active — the build and the core could serve it (the setup check comes
+// after those two and before the certificate, so this is exactly the case
+// in which decide() answered with the wizard reason).
+inline bool deferred_for_setup(bool feature_on, bool server_lib_present, bool setup_active) {
+  return feature_on && server_lib_present && setup_active;
+}
+
+// What /api/status says NOW. decide() runs once, when the server starts, but
+// setup can finish later WITHOUT a reboot (setup_mark_complete keeps the
+// server up so the wizard's success screen survives), and the start-up
+// "setup wizard active" reason would then be stale for the rest of the boot.
+// HTTPS is only tried at the next boot, so the live reason says that.
+inline const char* live_reason(const char* start_reason, bool deferred_for_setup_at_start,
+                               bool setup_active_now) {
+  if (deferred_for_setup_at_start && !setup_active_now) {
+    return "setup finished; HTTPS is tried at the next reboot";
+  }
+  return start_reason;
+}
+
+// A syntactically plain host: a DNS-ish name or dotted IPv4 made only of
 // [A-Za-z0-9.-], or a bracketed IPv6 literal of hex digits, ':' and '.'.
 // Anything else (userinfo '@', a path, whitespace, a control byte, an empty
-// string) is not a host we will put in a Location header.
+// string) is not a host we will put in a Location header. Syntax only — it
+// does not decide whether the name is this device's.
 inline bool host_is_plain(const char* host, size_t len) {
   if (!host || len == 0) return false;
   if (host[0] == '[') {

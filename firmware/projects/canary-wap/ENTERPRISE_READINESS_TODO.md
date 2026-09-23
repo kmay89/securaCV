@@ -104,22 +104,23 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
         (`/api/selftest`) plus the "Save your recovery kit" block, which walks
         the BOOT-tap gate and downloads the provisioning receipt JSON.
 
-- [x] **Simple status language**
+- [ ] **Simple status language** — open until the strip below is CI-green
   - [x] Plain-language status text + “Advanced details” expanders: the
         headline dashboard (`csi_dashboard_html.h`) already keeps the live
         numbers behind collapsed `<details>` ("How is it sensing?", "Details"),
         and every user-facing string lives in its `COPY` bank, gated by
         `firmware/scripts/microcopy_lint.sh` (banned jargon, tooltip coverage,
         reading grade).
-  - [x] “Good / Needs attention / Action required” strip (2026-09): the
+  - [ ] “Good / Needs attention / Action required” strip (2026-09): the
         verdict is decided by `arduino/canary_wap/status_tier_logic.h`
         (worst-first, one reason code per tier, a missing card is not a fault;
         host-tested in `tests_host/test_status_tier_logic.cpp`), served as
         `status_tier` / `status_reason` on `GET /api/status`, and rendered
         under the topbar from `COPY.tier` (`web_assets_gz.h` regenerated).
-        Compile proof: the `firmware.yml` Arduino CLI build; not yet seen on a
-        device. The three labels are the wording this checklist asked for —
-        changing them is a maintainer's call and a `COPY` edit only.
+        Code and host test landed; **CI compile pending** — tick this box
+        when the PR's `firmware.yml` Arduino CLI build is green. Not yet seen
+        on a device. Label wording: option "the checklist's own three labels"
+        — maintainer to confirm (changing them is a `COPY` edit only).
 
 - [ ] **Recovery-safe flows**
   - [ ] Guided factory-reset confirmation UX (with explicit data-loss warning).
@@ -151,18 +152,20 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
   composite action on every PR; `firmware-release.yml` publishes from the same
   matrix. Profiles are the `CANARY_PROFILE_*` defines the sketch reads.
 
-- [x] **Stabilize Arduino dependency pinning**
-  - [x] Tested core + libraries locked: `arduino/canary_wap/sketch.yaml` pins
+- [ ] **Stabilize Arduino dependency pinning** — the docs half is done; the CI
+  half is the open sub-item below
+  - [x] Tested core + libraries locked in the docs: `arduino/canary_wap/sketch.yaml` pins
         `esp32:esp32 (3.3.8)` and lists ArduinoJson / Crypto / NimBLE-Arduino;
         the firmware SBOM (`scripts/gen_firmware_sbom.py --check --validate`,
         `lint.yml`) asserts the pins against the workflows' rows.
   - [x] Compatibility notes: `README.md` "Install Libraries" names
         ArduinoJson 7.x, Crypto, and NimBLE-Arduino **2.3.8 or later** (1.x
         compiles with Bluetooth silently disabled).
-  - Residual, on purpose: the WAP's Arduino-CLI CI rows build on the weekly
-    "latest" core while the sketch pins 3.3.8 —
-    [`firmware/PLATFORMS.md`](../../PLATFORMS.md) records it as a release
-    decision for the maintainer, not a lint's call.
+  - [ ] Locked in the CI scripts too: the WAP's Arduino-CLI CI rows still
+        build on the weekly "latest" core while the sketch pins 3.3.8, so the
+        box's "in docs + CI scripts" is not met yet.
+        [`firmware/PLATFORMS.md`](../../PLATFORMS.md) records pinning those
+        rows as a release decision for the maintainer, not a lint's call.
 
 - [x] **Split oversized `web_ui.h` payload** — superseded by the gzip
   shipping model.

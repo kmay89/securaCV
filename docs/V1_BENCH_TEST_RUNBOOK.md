@@ -109,7 +109,7 @@ present. Confirm the v1 image actually runs it.
 
 | # | Step | Expected | Artifact |
 |---|---|---|---|
-| D1 | Build the v1 image with the HTTPS config enabled + a provisioned/generated cert. `canary (PIO)`: `pio run -e dev` or `-e full` (`FEATURE_HTTPS=1`; the first TLS boot generates an ECDSA P-256 certificate, serial `[TLS] Cert fingerprint: …`); `release` does not enable it yet | serial: `[HTTPS] Server started on port 443`; `GET /api/status` → `tls_enabled: true` (else `tls_mode_reason` says why) | serial log |
+| D1 | Build the v1 image with the HTTPS config enabled + a provisioned/generated cert. `canary (PIO)`: `pio run -e dev` or `-e full` (`FEATURE_HTTPS=1`; the first TLS boot generates an ECDSA P-256 certificate, serial `[TLS] Certificate generation took … ms` then `[TLS] Cert fingerprint: …` — record the ms figure, the docs carry no measured keygen time yet); `release` does not enable it yet | serial: `[HTTPS] Server started on port 443`; `GET /api/status` → `tls_enabled: true` (else `tls_mode_reason` says why) | serial log |
 | D2 | `curl -k https://canary-<name>.local/api/v1/info` | 200 with the API payload over TLS | curl output |
 | D3 | `curl -I http://canary-<name>.local/` | redirect to HTTPS (captive portal exempt) | curl output |
 | D4 | Compare presented cert fingerprint to the serial-logged `Cert fingerprint` | match | both values |

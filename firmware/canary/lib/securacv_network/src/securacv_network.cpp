@@ -219,6 +219,13 @@ ScvNetworkManager::ScvNetworkManager()
   m_tls_key_der_len = 0;
   m_tls_cert_fp_hex[0] = '\0';
   m_tls_reason = "initTls() not called (first-boot setup, or FEATURE_HTTPS=0)";
+  m_tls_deferred_for_setup = false;
+}
+
+const char* ScvNetworkManager::getTlsModeReason() const {
+  return canary::net::tls_policy::live_reason(
+      m_tls_reason, m_tls_deferred_for_setup,
+      setup_is_active() || setup_is_first_boot());
 }
 
 // F4 grace window: keep the SoftAP up this long after the STA link reports
@@ -1122,8 +1129,10 @@ static void local_addr_of(httpd_req_t* req, char* out, size_t cap) {
 // The WAP's layout and naming (canary_wap.ino tls_*: CN=securacv-<fp>,
 // O=SecuraCV, OU=Canary; validity 2020-01-01..2050-01-01; serial 1; DER in
 // NVS keys tls_cert / tls_key) with one deliberate difference, option (b):
-// an ECDSA P-256 key instead of RSA-2048 — about a second of keygen instead
-// of 30-60 s, ~0.5 KB of DER instead of ~2 KB, a smaller handshake. Clients
+// an ECDSA P-256 key instead of RSA-2048 — expected to be far quicker than
+// RSA-2048's 30-60 s (untimed: the "[TLS] Certificate generation took" line
+// is what Track D D1 records), ~0.5 KB of DER instead of ~2 KB, a smaller
+// handshake. Clients
 // never see the difference: the iPhone app pins the SHA-256 of the
 // certificate DER (tls_cert_fp), whatever the key type.
 //
@@ -1293,7 +1302,14 @@ bool ScvNetworkManager::initTls() {
     char device_fp[17];
     hex_to_str(device_fp, witness_get_device().pubkey_fp, 8);
     const char* why = nullptr;
-    if (!tls_generate_self_signed(device_fp, &cert, &cert_len, &key, &key_len, &why)) {
+    const uint32_t gen_started_ms = millis();
+    const bool generated =
+        tls_generate_self_signed(device_fp, &cert, &cert_len, &key, &key_len, &why);
+    // The keygen time is not measured anywhere else: this line is what the
+    // bench (Track D D1) records, so the doc figure can become a number.
+    Serial.printf("[TLS] Certificate generation took %lu ms\n",
+                  (unsigned long)(millis() - gen_started_ms));
+    if (!generated) {
       m_tls_reason = why;
       Serial.println("[TLS] Certificate generation FAILED — HTTP only");
       log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "TLS unavailable", why);
@@ -1488,6 +1504,8 @@ bool ScvNetworkManager::startHttpServer() {
       FEATURE_HTTPS != 0, SECURACV_HAS_HTTPS_SERVER != 0,
       m_tls_cert_der != nullptr && m_tls_key_der != nullptr, setup_active, &why);
   m_tls_reason = why;
+  m_tls_deferred_for_setup = canary::net::tls_policy::deferred_for_setup(
+      FEATURE_HTTPS != 0, SECURACV_HAS_HTTPS_SERVER != 0, setup_active);
 
 #if SECURACV_HAS_HTTPS_SERVER
   if (mode == Mode::HTTPS_REDIRECT) {
@@ -2180,11 +2198,13 @@ static esp_err_t handle_status(httpd_req_t* req) {
   doc["logs_stored"] = health.logs_stored;
   doc["unacked_count"] = health.logs_unacked;
 
-  // F20 gap #11: "boot_button" once main.cpp has wired the BOOT-tap hooks;
+  // F20 gap #11: "physical_button" (the WAP's /api/device-info value for the
+  // same field, so a client reads one vocabulary) once main.cpp has wired the
+  // BOOT-tap hooks;
   // "unwired" means the receipt can only be fetched with the bearer and a
   // home-LAN page load can never be unlocked by a tap (fails closed, and the
   // bench can see it instead of guessing).
-  doc["provisioning_gate"] = (s_gate_take && s_gate_is_open) ? "boot_button" : "unwired";
+  doc["provisioning_gate"] = (s_gate_take && s_gate_is_open) ? "physical_button" : "unwired";
 
   // F15: what actually came up, and why — a device that fell back to HTTP
   // says so here instead of leaving the bench to guess (tls_policy::decide).

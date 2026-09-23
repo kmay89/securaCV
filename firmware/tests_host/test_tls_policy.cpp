@@ -4,9 +4,11 @@
 // The rows that matter most:
 //   * decide(): HTTPS only when the build, the core, the certificate and the
 //     wizard all allow it, with the reason naming the FIRST fact that did not;
-//   * the port-80 Location builder refuses truncation, foreign hosts, a
-//     non-origin-form target and control bytes, drops ":port", and keeps the
-//     query string;
+//   * the port-80 Location builder refuses truncation, a malformed host
+//     (falling back to the arrived-on address), a non-origin-form target and
+//     control bytes, drops ":port", and keeps the query string — and it echoes
+//     a well-formed Host as-is (syntax only; it does not decide which names
+//     are this device's);
 //   * the six connectivity probes are always exempt from the redirect, / and
 //     /setup only while the wizard runs;
 //   * fingerprint_hex is 64 lowercase hex chars.
@@ -75,7 +77,7 @@ static void redirect_uses_host_header_and_keeps_query() {
   CHECK(std::strcmp(out, "https://[fe80::1]/x") == 0, "got %s", out);
 }
 
-static void redirect_falls_back_on_a_foreign_or_missing_host() {
+static void redirect_falls_back_on_a_malformed_or_missing_host() {
   char out[128];
   CHECK(build_redirect_location(out, sizeof(out), nullptr, "192.168.4.1", "/setup"), "null host");
   CHECK(std::strcmp(out, "https://192.168.4.1/setup") == 0, "got %s", out);
@@ -89,6 +91,30 @@ static void redirect_falls_back_on_a_foreign_or_missing_host() {
   CHECK(!build_redirect_location(out, sizeof(out), "a b", "no good", "/"),
         "neither host usable → refused");
   CHECK(out[0] == '\0', "refused output is emptied");
+  // Syntax only: a well-formed Host that is not this device's name is echoed
+  // back to the browser that sent it (pinned so a change is deliberate).
+  CHECK(build_redirect_location(out, sizeof(out), "other.example", "192.168.4.1", "/"),
+        "well-formed other host");
+  CHECK(std::strcmp(out, "https://other.example/") == 0, "echoed as-is: %s", out);
+}
+
+// Setup completes without a reboot, so the start-up reason must not go stale.
+static void live_reason_follows_setup_completion() {
+  CHECK(deferred_for_setup(true, true, true), "only the wizard ruled HTTPS out → deferred");
+  CHECK(!deferred_for_setup(false, true, true), "FEATURE_HTTPS=0 is the reason, not the wizard");
+  CHECK(!deferred_for_setup(true, false, true), "no esp_https_server is the reason, not the wizard");
+  CHECK(!deferred_for_setup(true, true, false), "no wizard, nothing deferred");
+
+  const char* start = nullptr;
+  CHECK(decide(true, true, false, true, &start) == Mode::HTTP_ONLY, "setup → HTTP only");
+  CHECK(live_reason(start, true, true) == start, "still in setup → the start-up reason");
+  const char* later = live_reason(start, true, false);
+  CHECK(later != start && std::strstr(later, "next reboot") != nullptr,
+        "setup finished → says HTTPS waits for the next reboot: %s", later);
+  const char* build_off = nullptr;
+  decide(false, true, false, false, &build_off);
+  CHECK(live_reason(build_off, false, false) == build_off,
+        "a reason that was not the wizard never changes");
 }
 
 static void redirect_refuses_truncation_and_bad_targets() {
@@ -155,7 +181,8 @@ int main() {
   decide_every_row();
   decide_names_the_first_blocker();
   redirect_uses_host_header_and_keeps_query();
-  redirect_falls_back_on_a_foreign_or_missing_host();
+  redirect_falls_back_on_a_malformed_or_missing_host();
+  live_reason_follows_setup_completion();
   redirect_refuses_truncation_and_bad_targets();
   probes_always_exempt();
   pages_exempt_only_during_setup();

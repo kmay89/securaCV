@@ -368,7 +368,7 @@ Untapped / issues:
   (default 1) is the knob. **Caveat:** SoftAP SAE exists only where the core's prebuilt sdkconfig
   enables it — an IDF 5 feature, so on the 2.0.17 core (dev/release) the AP stays WPA2 and says
   so (`ap_auth` / `ap_auth_reason` in `/api/wifi/status`, `ap_auth` in `/api/status`); the row
-  closes for those builds with §1.1. Compile-tested only. Not in this change: widening the 8-char
+  closes for those builds with §1.1. CI compile pending, no bench pass. Not in this change: widening the 8-char
   AP password (below) — it is re-derived from the fingerprint every boot, so a new derivation
   changes every provisioned device's Wi-Fi password after an OTA and needs a derivation-version
   marker first. The `"witness2026"` tripwires in `pre_build.py` / `regression_check.sh` match no

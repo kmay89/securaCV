@@ -148,8 +148,11 @@ public:
   // the provisioning receipt's tls_cert_fp hands the iPhone app.
   const char* getTlsCertFp() const { return m_tls_cert_fp_hex; }
   // Why the server is (or is not) serving HTTPS — tls_policy::decide's
-  // reason, or the certificate step's failure. Never null.
-  const char* getTlsModeReason() const { return m_tls_reason; }
+  // reason, or the certificate step's failure, made live by
+  // tls_policy::live_reason: once a setup that deferred HTTPS has finished
+  // (setup completes without a reboot), it says HTTPS waits for the next
+  // reboot instead of "setup wizard active". Never null.
+  const char* getTlsModeReason() const;
   // The TLS server handle (null when HTTP-only). Handlers compare
   // req->handle against it to pick the TLS-safe streaming path.
   httpd_handle_t getHttpsServer() const { return m_https_server; }
@@ -224,6 +227,7 @@ private:
   size_t m_tls_key_der_len;
   char m_tls_cert_fp_hex[65];
   const char* m_tls_reason;
+  bool m_tls_deferred_for_setup;  // HTTPS ruled out only by the wizard, at start
 };
 
 // ════════════════════════════════════════════════════════════════════════════
