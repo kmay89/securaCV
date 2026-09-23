@@ -9,8 +9,8 @@
 //
 // The Join scene (onboard_ui.cpp) stacks four things, top to bottom: the
 // title line, the white QR card, the credentials line, and the line under
-// it (the coach hint; on split glass the password or the hint — what each
-// row SAYS is join_lines() below, F45). Each glass used to place
+// it (the coach hint; on split glass the key — what each row SAYS is
+// join_lines() below, F45). Each glass used to place
 // them with its own literals — the card by an offset from the center, the
 // captions by offsets from the bottom edge — and nothing related the two.
 // On the 800x480 dash the "or join ... password" line landed 14 px inside
@@ -52,8 +52,10 @@ namespace canary::ui::onboardlayout {
 constexpr int kMinGap = 2;
 
 // Width the round glass's lowest line keeps: the chord of the band the
-// password / coach line rides. provision.cpp writes its round-glass hints
-// to it ("forget it on your phone", "open 192.168.4.1").
+// password / coach line rides, and (the window is symmetric) of the title's
+// band. provision.cpp writes its round-glass hints to it ("open 192.168.4.1"
+// on the low band; "forget it on your phone" on the Join scene's note row,
+// the title's band).
 constexpr int kRoundLowRowW = 142;
 
 // The join code's module count. provision_core.h's payload for the
@@ -99,6 +101,13 @@ struct Stack {
   int qr;         // QR canvas granted (<= Rows::card.qr, >= its qr_floor)
   int creds_top;  // y of the credentials line's top
   int hint_top;   // y of the hint / password line's top
+  // y of the note line's top: where a standing hint goes when the
+  // credentials take both low rows (join_lines' `note`). On rectangular
+  // glass the row under them, in the bottom margin; round glass has no
+  // latitude under them that holds kRoundLowRowW, so the title's band
+  // (the window is symmetric: it holds the same chord). Not part of the
+  // window `fits` speaks for — the host test proves it on every panel.
+  int note_top;
   bool fits;      // everything inside the window with the minimum air
 };
 
@@ -150,10 +159,11 @@ inline Stack join_stack(const Glass& g, const Rows& r) {
   s.qr = qr;
   s.creds_top = s.card_top + card + share;
   s.hint_top = s.creds_top + r.creds_h;
+  s.note_top = g.round ? s.title_top : s.hint_top + r.hint_h;
   return s;
 }
 
-// ── What the two low rows say (F45) ───────────────────────────────────────
+// ── What the text rows say (F45) ──────────────────────────────────────────
 //
 // Round glass has always split the credentials: the network name on the
 // credentials row, "pass  <key>" on the row under it — no latitude that low
@@ -167,9 +177,17 @@ inline Stack join_stack(const Glass& g, const Rows& r) {
 //  * Rectangular glass keeps the joined line when it fits its row in the
 //    row's own face; otherwise it splits the way round glass does. Round
 //    glass always splits.
-//  * Split: the network name on the credentials row; on the row under it a
-//    standing hint (it outranks the key, as it always has on round glass),
-//    else "pass  <key>". Joined: the hint row holds the hint or nothing.
+//  * The network name and the key stay on the glass for as long as the
+//    scene is up — QR or no QR, hint or no hint. Nothing displaces them: the
+//    glass cannot tell a code that scans from one that does not, and the
+//    stuck-phone hint ("forget it on your phone") is exactly when the phone
+//    needs the key again. (Round glass used to let a standing hint take the
+//    key's row; that was the same dead end.)
+//  * Split: the network name on the credentials row, "pass  <key>" on the
+//    row under it, and a standing hint on the note row (Stack::note_top: the
+//    row under those on rectangular glass, the title's band on round glass,
+//    where the title yields while the hint stands). Joined: the hint row
+//    holds the hint or nothing, and the note row is empty.
 //  * Nothing is cut. A row tries its forms longest first in its own face —
 //    the hint then its narrow form, "pass  <key>" then the bare key — and
 //    only when none fits steps down to the floor face (the default
@@ -250,8 +268,9 @@ struct Line {
 
 struct JoinLines {
   bool split;  // the credentials span both rows
-  Line creds;  // the credentials row
-  Line low;    // the row under it: key, hint, or nothing
+  Line creds;  // the credentials row: the joined line or the network name
+  Line low;    // the row under it: the key (split), else the hint or nothing
+  Line note;   // the note row (split only): the standing hint, or nothing
 };
 
 inline void set_line(Line& out, const char* text, bool floor, bool fits) {
@@ -281,12 +300,12 @@ inline void fit_line(Line& out, const char* const* forms, int n, int row_w,
   set_line(out, last, true, last[0] == '\0');
 }
 
-// The Join scene's two low rows on small glass (see the rule above).
-// creds_w / low_w are the widths the rows are fitted to (rf_row_width);
-// hint is the live coach line ("" for none) and hint_narrow its shorter form
-// (may be null).
+// The Join scene's text rows on small glass (see the rule above).
+// creds_w / low_w / note_w are the widths the three rows are fitted to
+// (rf_row_width at creds_top, hint_top, note_top); hint is the live coach
+// line ("" for none) and hint_narrow its shorter form (may be null).
 template <class Measure>
-inline JoinLines join_lines(bool round, int creds_w, int low_w,
+inline JoinLines join_lines(bool round, int creds_w, int low_w, int note_w,
                             const char* ssid, const char* pass,
                             const char* hint, const char* hint_narrow,
                             Measure measure) {
@@ -294,22 +313,28 @@ inline JoinLines join_lines(bool round, int creds_w, int low_w,
   char joined[kLineCap];
   snprintf(joined, sizeof(joined), kJoinedFmt, ssid, pass);
   j.split = round || measure(joined, false) > creds_w;
+  const bool hinted = hint != nullptr && hint[0] != '\0';
+  const char* hints[2] = {hint, hint_narrow};
   if (j.split) {
-    const char* forms[1] = {ssid};
-    fit_line(j.creds, forms, 1, creds_w, measure);
-  } else {
-    set_line(j.creds, joined, false, true);
-  }
-  if (hint != nullptr && hint[0] != '\0') {
-    const char* forms[2] = {hint, hint_narrow};
-    fit_line(j.low, forms, 2, low_w, measure);
-  } else if (j.split) {
+    const char* name[1] = {ssid};
+    fit_line(j.creds, name, 1, creds_w, measure);
     char labeled[kLineCap];
     snprintf(labeled, sizeof(labeled), kPassFmt, pass);
-    const char* forms[2] = {labeled, pass};
-    fit_line(j.low, forms, 2, low_w, measure);
+    const char* key[2] = {labeled, pass};
+    fit_line(j.low, key, 2, low_w, measure);
+    if (hinted) {
+      fit_line(j.note, hints, 2, note_w, measure);
+    } else {
+      set_line(j.note, "", false, true);
+    }
   } else {
-    set_line(j.low, "", false, true);
+    set_line(j.creds, joined, false, true);
+    if (hinted) {
+      fit_line(j.low, hints, 2, low_w, measure);
+    } else {
+      set_line(j.low, "", false, true);
+    }
+    set_line(j.note, "", false, true);
   }
   return j;
 }

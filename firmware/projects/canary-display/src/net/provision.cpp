@@ -914,13 +914,15 @@ void provision_run(bool glass_ok) {
           // leaving a correct QR on the glass being ignored.
           ctx.stuck_hinted = true;
 #if defined(CD_FLAVOR_WATCH) && !defined(CD_FLAVOR_NIGHTSTAND)
-          // Round glass: the hint rides the password line's low band
-          // (round_frame fits it; ~142 px) — every word here is measured.
+          // Round glass: the hint takes the title's band over the card (the
+          // Join scene's note row — the name and the key keep theirs, F45),
+          // which holds the low band's ~142 px — every word here is measured.
           ui_hint("forget it on your phone");
 #elif defined(CD_FLAVOR_WATCH)
           // Portrait glass: the whole line where the row holds it (240 px
           // and up); the round glass's words on the 172/180 px ones, where
-          // it rides under the network name it means (F45).
+          // it rides under the network name and the key, on a row of its
+          // own (F45).
           ui_hint("can't join? forget it on your phone",
                   "forget it on your phone");
 #else

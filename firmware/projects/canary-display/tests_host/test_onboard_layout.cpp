@@ -12,6 +12,10 @@
 // network name and key the unit can mint (a search over the minting
 // alphabet, kerning included) and on the stuck-phone hint provision.cpp
 // actually sets, and every row must fit the width the glass fits it to.
+// The name and the key must be on the glass in every one of those cases —
+// with the stuck-phone hint standing too: that hint is exactly when the
+// phone needs the key again, and when the QR does not scan (or never
+// rendered: join_lines does not depend on it) the text is the only way in.
 // Text is measured with LVGL's own Montserrat data (montserrat_metrics.h,
 // generated from the pinned LVGL by firmware/scripts/gen_montserrat_metrics.py)
 // the way lv_font_get_glyph_width reads it — never an estimated width.
@@ -546,9 +550,10 @@ static int band_chord_px(int dia, int top, int h) {
 
 static const char* face_name(bool floor) { return floor ? "floor" : "own"; }
 
-// F45 on small glass: what join_lines() puts on the two low rows, for the
+// F45 on small glass: what join_lines() puts on the text rows, for the
 // widest network name and key the unit can mint and for the stuck-phone
-// hint, fits the rows the labels are fitted to.
+// hint, fits the rows the labels are fitted to — and the name and the key
+// are always among them.
 static void check_rows(const Env& e, int which, const Stack& s, const Rows& r,
                        bool round, int fam) {
   const char* n = e.name.c_str();
@@ -570,6 +575,9 @@ static void check_rows(const Env& e, int which, const Stack& s, const Rows& r,
             : e.w - 2 * roundframe::kRectSidePad;
   const int low_w = round ? band_chord_px(dia, s.hint_top - y0, r.hint_h)
                           : e.w - 2 * roundframe::kRectSidePad;
+  // The note row carries the caption face too (onboard_ui's s_note).
+  const int note_w = round ? band_chord_px(dia, s.note_top - y0, r.hint_h)
+                           : e.w - 2 * roundframe::kRectSidePad;
   const Measure m = {own, floor};
   const std::vector<std::string>& hints =
       round ? g_minted.hint_round : g_minted.hint_small;
@@ -603,29 +611,45 @@ static void check_rows(const Env& e, int which, const Stack& s, const Rows& r,
   JoinLines typ_hint = {};
   for (int u = 0; u < 3; u++) {
     for (int h = 0; h < 2; h++) {
-      const JoinLines j = join_lines(round, creds_w, low_w, ssids[u], keys[u],
-                                     h ? hint : "", h ? narrow : nullptr, m);
+      const JoinLines j =
+          join_lines(round, creds_w, low_w, note_w, ssids[u], keys[u],
+                     h ? hint : "", h ? narrow : nullptr, m);
       CHECK(j.creds.fits && m(j.creds.text, j.creds.floor) <= creds_w,
             "%s/%s: credentials row \"%s\" (%s face) is cut on a %d px row",
             n, lad_name, j.creds.text, face_name(j.creds.floor), creds_w);
       CHECK(j.low.fits && m(j.low.text, j.low.floor) <= low_w,
             "%s/%s: the row under it, \"%s\" (%s face), is cut on a %d px row",
             n, lad_name, j.low.text, face_name(j.low.floor), low_w);
+      CHECK(j.note.fits && m(j.note.text, j.note.floor) <= note_w,
+            "%s/%s: the note row, \"%s\" (%s face), is cut on a %d px row", n,
+            lad_name, j.note.text, face_name(j.note.floor), note_w);
       CHECK(round ? j.split : true, "%s: round glass must split", n);
       if (!j.split) {
         CHECK(m(j.creds.text, false) <= creds_w && !j.creds.floor,
               "%s/%s: joined line kept though it does not fit", n, lad_name);
       }
+      // The name and the key are on the glass, hint or no hint: joined on
+      // the credentials row, or split over it and the row under it.
+      CHECK(std::strstr(j.creds.text, ssids[u]) != nullptr &&
+                std::strstr(j.split ? j.low.text : j.creds.text, keys[u]) !=
+                    nullptr,
+            "%s/%s: %s, the rows say \"%s\" | \"%s\" — the name or the key "
+            "(%s) is not on the glass",
+            n, lad_name, h ? "with the stuck-phone hint up" : "no hint",
+            j.creds.text, j.low.text, keys[u]);
+      // The hint, when one stands, is on the glass too: the row under a
+      // joined line, the note row on split glass. Nothing else is.
+      const char* hint_row = j.split ? j.note.text : j.low.text;
+      const char* free_row = j.split ? "" : j.note.text;
       if (h == 0) {
-        // No hint: the key is on the glass, labeled or bare.
-        CHECK(j.split ? (std::strstr(j.low.text, keys[u]) != nullptr)
-                      : (std::strstr(j.creds.text, keys[u]) != nullptr &&
-                         j.low.text[0] == '\0'),
-              "%s/%s: the key is not on the glass", n, lad_name);
+        CHECK(hint_row[0] == '\0' && free_row[0] == '\0',
+              "%s/%s: no hint, yet a row says \"%s\"", n, lad_name,
+              hint_row[0] ? hint_row : free_row);
       } else {
-        CHECK(std::strcmp(j.low.text, hint) == 0 ||
-                  (narrow != nullptr && std::strcmp(j.low.text, narrow) == 0),
-              "%s/%s: the hint row shows \"%s\"", n, lad_name, j.low.text);
+        CHECK((std::strcmp(hint_row, hint) == 0 ||
+               (narrow != nullptr && std::strcmp(hint_row, narrow) == 0)) &&
+                  free_row[0] == '\0',
+              "%s/%s: the hint row shows \"%s\"", n, lad_name, hint_row);
       }
       if (u == 0 && h == 0) typ = j;
       if (u == 0 && h == 1) typ_hint = j;
@@ -633,12 +657,14 @@ static void check_rows(const Env& e, int which, const Stack& s, const Rows& r,
   }
   char joined[kLineCap];
   std::snprintf(joined, sizeof(joined), kJoinedFmt, ssids[0], keys[0]);
-  std::printf("  %20s rows %3d/%3d  joined %3d px -> %-6s \"%s\" | \"%s\"%s  "
-              "hint \"%s\"%s\n",
-              "", creds_w, low_w, text_px(*own, joined),
+  const Line& typ_hint_line = typ_hint.split ? typ_hint.note : typ_hint.low;
+  std::printf("  %20s rows %3d/%3d/%3d  joined %3d px -> %-6s \"%s\" | \"%s\"%s"
+              "  hint \"%s\"%s on the %s row\n",
+              "", creds_w, low_w, note_w, text_px(*own, joined),
               typ.split ? "split" : "joined", typ.creds.text, typ.low.text,
-              typ.low.floor ? " (floor)" : "", typ_hint.low.text,
-              typ_hint.low.floor ? " (floor)" : "");
+              typ.low.floor ? " (floor)" : "", typ_hint_line.text,
+              typ_hint_line.floor ? " (floor)" : "",
+              typ_hint.split ? "note" : "hint");
 }
 
 // Wide glass keeps one worded credentials line and a separate hint line,
@@ -705,10 +731,10 @@ static void check_glass(const Env& e, int which, int also) {
   std::snprintf(who, sizeof(who), also ? "%s +%d" : "%s", e.name.c_str() + 15,
                 also);
   std::printf("  %-18s %3dx%-3d %s %-8s title %3d  card %3d..%3d (qr %3d)  "
-              "creds %3d  hint %3d..%3d\n",
+              "creds %3d  hint %3d..%3d  note %3d\n",
               who, e.w, e.h, round ? "round" : "rect ", lad_name, s.title_top,
               s.card_top, s.card_top + s.card, s.qr, s.creds_top, s.hint_top,
-              s.hint_top + r.hint_h);
+              s.hint_top + r.hint_h, s.note_top);
   const char* n = e.name.c_str();
   CHECK(s.fits, "%s/%s: the stack does not fit its window", n, lad_name);
   CHECK(s.title_top >= 0, "%s/%s: title above the glass", n, lad_name);
@@ -728,6 +754,19 @@ static void check_glass(const Env& e, int which, int also) {
         qr_floor(r.card.qr), r.card.qr);
   CHECK(s.qr / kJoinQrModules == r.card.qr / kJoinQrModules,
         "%s/%s: the join code's module pitch changed", n, lad_name);
+  // The note row (a standing hint on split small glass, onboard_ui's
+  // s_note): the title's band on round glass, the row under the hint row
+  // on rectangular glass — never crossing a row, never off the glass.
+  if (round) {
+    CHECK(s.note_top == s.title_top, "%s/%s: round note row at %d, title at %d",
+          n, lad_name, s.note_top, s.title_top);
+  } else if (small) {
+    CHECK(s.note_top >= s.hint_top + r.hint_h,
+          "%s/%s: the note row crosses the hint line", n, lad_name);
+    CHECK(s.note_top + r.hint_h + kMinGap <= e.h,
+          "%s/%s: the note row (%d..%d) leaves the %d px glass", n, lad_name,
+          s.note_top, s.note_top + r.hint_h, e.h);
+  }
   if (round) {
     const int dia = e.w < e.h ? e.w : e.h;
     // The card's corners stay inside the disc (house rim margin).
@@ -742,6 +781,8 @@ static void check_glass(const Env& e, int which, int also) {
           "%s/%s: credentials band too narrow", n, lad_name);
     CHECK(band_chord_px(dia, s.title_top, r.title_h) >= kRoundLowRowW,
           "%s/%s: title band too narrow", n, lad_name);
+    CHECK(band_chord_px(dia, s.note_top, r.hint_h) >= kRoundLowRowW,
+          "%s/%s: note band too narrow", n, lad_name);
   } else {
     // Rectangular glass: the stack sits centered (the hint line reserved).
     const int top = s.title_top;
@@ -783,9 +824,10 @@ static void test_f43_pins() {
   Rows wr = {18, kSmallGlassCard, 15, 15};
   Stack w = join_stack(watch, wr);
   CHECK(w.fits && w.title_top == 30 && w.card_top == 50 && w.card == 128 &&
-            w.qr == 112 && w.creds_top == 180 && w.hint_top == 195,
-        "watch stack %d/%d/%d/%d/%d", w.title_top, w.card_top, w.card,
-        w.creds_top, w.hint_top);
+            w.qr == 112 && w.creds_top == 180 && w.hint_top == 195 &&
+            w.note_top == 30,
+        "watch stack %d/%d/%d/%d/%d/%d", w.title_top, w.card_top, w.card,
+        w.creds_top, w.hint_top, w.note_top);
   CHECK(round_low_row_bottom(240, 15, kRoundLowRowW) == 210,
         "low row bottom %d", round_low_row_bottom(240, 15, kRoundLowRowW));
   CHECK(band_chord_px(240, 195, 15) >= kRoundLowRowW &&
@@ -817,39 +859,66 @@ static void test_f45_pins() {
   CHECK(text_px(*f12, hint) == 205 && text_px(*f12, narrow) == 140,
         "portrait hints %d / %d px", text_px(*f12, hint),
         text_px(*f12, narrow));
-  // 172 px nightstand, default ladder: split, name then key; the hint takes
-  // its narrow form in the row's own face.
-  JoinLines j = join_lines(false, ns_row, ns_row, ssid, key, "", nullptr, std12);
+  // 172 px nightstand, default ladder: split, name then key; the note row
+  // is empty.
+  JoinLines j =
+      join_lines(false, ns_row, ns_row, ns_row, ssid, key, "", nullptr, std12);
   CHECK(j.split && std::strcmp(j.creds.text, ssid) == 0 &&
             std::strcmp(j.low.text, "pass  p7Rm2Kqf") == 0 && !j.creds.floor &&
-            !j.low.floor,
-        "nightstand rows \"%s\" | \"%s\"", j.creds.text, j.low.text);
-  j = join_lines(false, ns_row, ns_row, ssid, key, hint, narrow, std12);
-  CHECK(j.split && std::strcmp(j.low.text, narrow) == 0 && !j.low.floor,
-        "nightstand hint row \"%s\"", j.low.text);
+            !j.low.floor && j.note.text[0] == '\0',
+        "nightstand rows \"%s\" | \"%s\" | \"%s\"", j.creds.text,
+        j.low.text, j.note.text);
+  // ...and 45 s on, with the stuck-phone hint up (the review's case: it
+  // used to take the key's row, so a phone told to forget the network lost
+  // the key it needs to rejoin): the name and the key keep their rows, and
+  // the hint's narrow form takes the note row in the row's own face.
+  j = join_lines(false, ns_row, ns_row, ns_row, ssid, key, hint, narrow, std12);
+  CHECK(j.split && std::strcmp(j.creds.text, ssid) == 0 &&
+            std::strcmp(j.low.text, "pass  p7Rm2Kqf") == 0 &&
+            std::strcmp(j.note.text, narrow) == 0 && !j.note.floor,
+        "nightstand with the hint \"%s\" | \"%s\" | \"%s\"", j.creds.text,
+        j.low.text, j.note.text);
   // 240 px touch169: the joined line fits (174 <= 224) and stays; the whole
-  // hint fits too.
-  j = join_lines(false, 224, 224, ssid, key, hint, narrow, std12);
+  // hint fits too, on the row under it.
+  j = join_lines(false, 224, 224, 224, ssid, key, hint, narrow, std12);
   CHECK(!j.split && std::strcmp(j.creds.text, joined) == 0 &&
-            std::strcmp(j.low.text, hint) == 0,
+            std::strcmp(j.low.text, hint) == 0 && j.note.text[0] == '\0',
         "touch169 rows \"%s\" | \"%s\"", j.creds.text, j.low.text);
+  // ...but the widest unit splits there, and the key still keeps its row.
+  j = join_lines(false, 224, 224, 224, "SecuraCV-WWWW", "WWWWWWWW", hint,
+                 narrow, std12);
+  CHECK(j.split && std::strcmp(j.creds.text, "SecuraCV-WWWW") == 0 &&
+            std::strstr(j.low.text, "WWWWWWWW") != nullptr &&
+            std::strcmp(j.note.text, hint) == 0,
+        "touch169 widest unit with the hint \"%s\" | \"%s\" | \"%s\"",
+        j.creds.text, j.low.text, j.note.text);
   // Heirloom on the nightstand (14 px caption): neither hint form fits in
   // 14 px, so the narrow one steps down to the default Character's 12 px.
   const Measure heir = {f14, f12};
-  j = join_lines(false, ns_row, ns_row, ssid, key, hint, narrow, heir);
-  CHECK(j.low.fits && j.low.floor && std::strcmp(j.low.text, narrow) == 0,
-        "heirloom nightstand hint \"%s\" (%s)", j.low.text,
-        face_name(j.low.floor));
+  j = join_lines(false, ns_row, ns_row, ns_row, ssid, key, hint, narrow, heir);
+  CHECK(j.note.fits && j.note.floor && std::strcmp(j.note.text, narrow) == 0 &&
+            std::strstr(j.low.text, key) != nullptr,
+        "heirloom nightstand hint \"%s\" (%s), key row \"%s\"", j.note.text,
+        face_name(j.note.floor), j.low.text);
+  // The round watch: the hint used to take the password's low band; now the
+  // title's band (the same 142 px) carries it and "pass  <key>" stays.
+  const Measure watch12 = {f12, f12};
+  j = join_lines(true, 174, kRoundLowRowW, kRoundLowRowW, ssid, key,
+                 g_minted.hint_round[0].c_str(), nullptr, watch12);
+  CHECK(j.split && std::strcmp(j.low.text, "pass  p7Rm2Kqf") == 0 &&
+            std::strcmp(j.note.text, g_minted.hint_round[0].c_str()) == 0,
+        "round watch with the hint \"%s\" | \"%s\"", j.low.text,
+        j.note.text);
   // A key too wide for "pass  " drops the label before the face: 8 x 'W'
   // on the round watch's 142 px low band.
-  const Measure watch12 = {f12, f12};
-  j = join_lines(true, 174, kRoundLowRowW, ssid, "WWWWWWWW", "", nullptr,
-                 watch12);
+  j = join_lines(true, 174, kRoundLowRowW, kRoundLowRowW, ssid, "WWWWWWWW", "",
+                 nullptr, watch12);
   CHECK(j.split && std::strcmp(j.low.text, "WWWWWWWW") == 0 && !j.low.floor,
         "wide key on round glass \"%s\"", j.low.text);
   // And the degenerate case says so rather than claiming a fit.
-  j = join_lines(false, 40, 40, ssid, key, "", nullptr, std12);
-  CHECK(!j.creds.fits && !j.low.fits, "a 40 px row claimed to fit");
+  j = join_lines(false, 40, 40, 40, ssid, key, hint, narrow, std12);
+  CHECK(!j.creds.fits && !j.low.fits && !j.note.fits,
+        "a 40 px row claimed to fit");
 }
 
 // ── degenerate glass: the lines still never cross ─────────────────────────

@@ -1825,19 +1825,33 @@
   were sized by eye against one sample key on one ladder, so nothing asked
   how wide the text could get: the key is random, a glyph's width depends on
   the letter after it (kerning), and a Character can raise the caption size.
+- **And the second dead end, found in review:** the first fix split the
+  nightstand's rows the way round glass does — including round glass's rule
+  that a standing hint takes the key's row. So 45 s after the AP came up
+  the stuck-phone hint ("forget it on your phone") replaced the key, on
+  exactly the phone that now had to rejoin, and a probe that looked only
+  for the dots passed with the key gone. "Not cut" is not "on the glass":
+  check that the text is there, not only that nothing is truncated.
 - **Fix:** `onboard_layout.h`'s `join_lines()` decides what each row says
   by measuring it the way LVGL lays it out (`lv_font_get_glyph_width`,
   kerning included): joined only where it fits, else split like round glass;
   longer forms before shorter ones, the row's own face before the default
-  Character's. It never falls back to the ellipsis.
+  Character's. It never falls back to the ellipsis. The name and the key
+  keep their rows while the scene is up — QR or no QR, hint or no hint; a
+  standing hint gets a note row of its own (`Stack::note_top`: under the key
+  on rectangular glass, the title's band on round glass, where the title
+  yields while it stands).
 - **Regression check:** `tests_host/test_onboard_layout.cpp` runs
   `join_lines()` on every display env's glass and both ladders with LVGL's
   own glyph metrics (`tests_host/montserrat_metrics.h`, generated from the
   pinned LVGL by `firmware/scripts/gen_montserrat_metrics.py`, `--check`ed in
   canary-local.yml) over the widest name and key the minting alphabet can
-  produce, found by a search rather than a guess; `onboard_probe.mjs` fails
-  on LONG_DOT's three baseline dots in each emulated flavor's Join scene,
-  with and without the stuck-phone hint.
+  produce, found by a search rather than a guess, and requires the name and
+  the key on the glass with the stuck-phone hint up as well as without it;
+  `onboard_probe.mjs` fails on LONG_DOT's three baseline dots in each
+  emulated flavor's Join scene and reads the firmware's own labels
+  (`emu_screen_labels`) for the name and key it printed, with and without
+  the stuck-phone hint.
 - **Date learned:** 2026-09
 
 ---

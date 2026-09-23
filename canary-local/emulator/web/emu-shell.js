@@ -254,6 +254,8 @@ export class CanaryEmulator {
         "number", "string", "string", "string", "string",
       ]),
       udpSend: M.cwrap("emu_udp_send_hex", "number", ["number", "string"]),
+      // What the glass says (emu_bindings.cpp): a pointer, decoded page-side.
+      screenLabels: M.cwrap("emu_screen_labels", "number", []),
     };
 
     if (seed != null) this.c.seed(seed >>> 0);
@@ -409,6 +411,19 @@ export class CanaryEmulator {
       ssid: hexDecode(j.ssid_hex), pass: hexDecode(j.pass_hex),
       channel: j.channel, maxStations: j.max, stations: j.stations,
     };
+  }
+
+  /** What the glass says: every label on the active screen as the firmware
+   *  holds it — {x, y, w, h, shown, opa, text} (emu_screen_labels). `shown`
+   *  is false when it or a parent is hidden; a line LVGL cut to an ellipsis
+   *  reads with its "..." (LVGL 8 rewrites the label's own text). The
+   *  framebuffer can show THAT a line is there; this says which one. */
+  async screenLabels() {
+    if (!this.c || this.dead) return [];
+    const ptr = await this.c.screenLabels();
+    if (!ptr) return [];
+    return JSON.parse(this.module.UTF8ToString(ptr)).map(({ text_hex, shown, ...l }) =>
+      ({ ...l, shown: shown === 1, text: hexDecode(text_hex) }));
   }
 
   /** The phone asks the AP to associate: 1 joined · 0 no such network ·

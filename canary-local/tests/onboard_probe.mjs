@@ -11,9 +11,10 @@
 //     its first-boot line on serial and raises "SecuraCV-XXXX" with the key it
 //     printed; the glass's Join scene shows its QR card with nothing painted
 //     over it (read off the framebuffer — F43, see joinCard; --shots saves
-//     onboard_join_<flavor>.png) and no line cut to an ellipsis, before and
-//     after the 45 s stuck-phone hint (F45, see joinEllipses; --shots saves
-//     onboard_join_hint_<flavor>.png); the phone's wrong key is refused and the
+//     onboard_join_<flavor>.png), no line cut to an ellipsis, and the network
+//     name and key it printed readable on the glass, before and after the
+//     45 s stuck-phone hint (F45, see joinEllipses and credsOnGlass; --shots
+//     saves onboard_join_hint_<flavor>.png); the phone's wrong key is refused and the
 //     right one joins; the captive DNS answers A with 192.168.4.1 and AAAA
 //     with no data; the OS
 //     probe gets the 302; GET / serves PORTAL_HTML byte-for-byte as
@@ -225,24 +226,27 @@ function joinEllipses() {
   return found;
 }
 
-// The text ink under the QR card, as one number that changes when a line
-// does (runs in the page): how the probe knows the stuck-phone hint drew.
-function inkUnderCard() {
+// What the glass says, from the firmware's own labels (emu-shell's
+// screenLabels): the lines that draw — shown, fully faded in, inside the
+// panel — as { x, y, w, h, text }.
+async function glassLines() {
   const cv = document.getElementById("glass");
-  const w = cv.width, h = cv.height;
-  const px = cv.getContext("2d").getImageData(0, 0, w, h).data;
-  let y1 = -1;
-  for (let i = 0; i < w * h; i++) {
-    if (px[4 * i] === 255 && px[4 * i + 1] === 255 && px[4 * i + 2] === 255) y1 = Math.floor(i / w);
-  }
-  let sig = 0;
-  for (let y = y1 + 1; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4;
-      if (Math.max(px[i], px[i + 1], px[i + 2]) > 40) sig = (sig * 31 + y * w + x) % 1000000007;
-    }
-  }
-  return sig;
+  const labels = await window.__emu.screenLabels();
+  return labels.filter((l) => l.shown && l.opa >= 250 && l.text !== "" && l.x >= 0 && l.y >= 0 &&
+    l.x + l.w <= cv.width && l.y + l.h <= cv.height);
+}
+
+// The setup network's name and key, readable on the glass (runs here, on
+// glassLines' answer): some line that draws holds each one whole. A line
+// LVGL cut to an ellipsis holds its "..." instead of its tail (LVGL 8
+// rewrites the label's text), and a line a hint displaced is gone — both
+// fail. When the QR does not scan, this text is the only way in (F45).
+function credsOnGlass(lines, ap) {
+  const has = (s) => lines.some((l) => l.text.includes(s));
+  const missing = [];
+  if (!has(ap.ssid)) missing.push(`the network name ${ap.ssid}`);
+  if (!has(ap.pass)) missing.push(`the key ${ap.pass}`);
+  return missing;
 }
 
 // ── 1. the harness, per flavor ──────────────────────────────────────────────
@@ -289,14 +293,22 @@ async function walkHarness(flavor) {
     check(card && card.stray === 0,
       `the join scene paints over its QR card: ${card ? `${card.stray} px not the QR's black/white inside ` +
         `card ${JSON.stringify(card.box)} on ${card.panel.join("x")}, first at ${JSON.stringify(card.first)}` : "card gone"}`);
-    // F45: no line of the Join scene ends in an ellipsis — then nobody
-    // joins for 45 s and the stuck-phone hint takes its row; still none.
+    // F45: no line of the Join scene ends in an ellipsis, and the name and
+    // key the firmware printed are on the glass — then nobody joins for 45 s
+    // and the stuck-phone hint comes up; still none cut, and the name and
+    // key still there (the hint once took the key's row: a phone told to
+    // forget the network lost the key it needed to rejoin).
     const cut = await E(joinEllipses);
     check(cut.length === 0, `the join scene cuts ${cut.length} line(s) to an ellipsis (first dots at ` +
       `${JSON.stringify(cut)}) — the credentials must be readable when the QR is not (F45)`);
-    const before = await E(inkUnderCard);
+    const lines = await E(glassLines);
+    const gone = credsOnGlass(lines, ap);
+    check(gone.length === 0, `the join scene does not show ${gone.join(" or ")} (lines: ` +
+      `${JSON.stringify(lines.map((l) => l.text))}) (F45)`);
+    const said = JSON.stringify(lines.map((l) => l.text));
     await E(() => window.__emu.stepTime(46000));
-    await until(async () => (await E(inkUnderCard)) !== before, "the stuck-phone hint on the glass", 20000);
+    await until(async () => JSON.stringify((await E(glassLines)).map((l) => l.text)) !== said,
+      "the stuck-phone hint on the glass", 20000);
     await new Promise((r) => setTimeout(r, 400));
     if (SHOTS) {
       const png = await E(() => document.getElementById("glass").toDataURL("image/png"));
@@ -305,6 +317,11 @@ async function walkHarness(flavor) {
     const cutHint = await E(joinEllipses);
     check(cutHint.length === 0, `with the stuck-phone hint up the join scene cuts ${cutHint.length} line(s) ` +
       `to an ellipsis (first dots at ${JSON.stringify(cutHint)}) (F45)`);
+    const hintLines = await E(glassLines);
+    const goneHint = credsOnGlass(hintLines, ap);
+    check(goneHint.length === 0, `with the stuck-phone hint up the join scene no longer shows ` +
+      `${goneHint.join(" or ")} (lines: ${JSON.stringify(hintLines.map((l) => l.text))}) — the phone ` +
+      `needs the key to rejoin, and the QR may not scan (F45)`);
 
     // The phone joins: the radio checks the key the firmware chose.
     check(await E((a) => window.__emu.phoneJoin(a.ssid, "wrongkey"), ap) === -1, "a wrong AP key was not refused");
@@ -392,7 +409,8 @@ async function walkHarness(flavor) {
       "the display's MQTT status after onboarding", 30000);
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/onboard_${flavor}.png` });
     if (errors.length) throw new Error("page errors:\n" + errors.slice(0, 8).join("\n"));
-    console.log(`ONBOARD_PROBE_OK[${flavor}] ${ap.ssid}: join card clean, no line cut (with and without the stuck hint), ` +
+    console.log(`ONBOARD_PROBE_OK[${flavor}] ${ap.ssid}: join card clean, no line cut and name + key on the glass ` +
+      `(with and without the stuck hint), ` +
       `refused wrong key, captive DNS+302, served page pinned, ` +
       `3 verdicts from firmware, persisted on success, boot resumed`);
   } catch (e) {

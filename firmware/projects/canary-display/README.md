@@ -342,10 +342,12 @@ first-boot Join scene's two low rows carry the setup network's name and key —
 the only way in when the QR does not scan — so they never lean on the
 ellipsis: `onboard_layout.h`'s `join_lines()` keeps the joined
 `SecuraCV-XXXX  •  <key>` line only where it fits its row, splits it the way
-round glass does everywhere else (name, then key or hint), tries shorter forms
+round glass does everywhere else (name, then key), tries shorter forms
 before a smaller face, and steps a row down to the default Character's
-caption only when nothing else fits (F45). The host test measures every glass
-and ladder with LVGL's own glyph metrics
+caption only when nothing else fits (F45). Nothing displaces the name or the
+key while the scene is up: a standing hint gets the note row (under the key
+on rectangular glass, the title's band on round glass). The host test
+measures every glass and ladder with LVGL's own glyph metrics
 ([`tests_host/montserrat_metrics.h`](tests_host/montserrat_metrics.h),
 generated from the pinned LVGL by `firmware/scripts/gen_montserrat_metrics.py`)
 over the widest name and key the unit can mint.
