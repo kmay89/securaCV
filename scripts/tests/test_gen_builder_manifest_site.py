@@ -398,6 +398,9 @@ class SiteCarry(unittest.TestCase):
         for model in gbm.CURATED:
             self.assertIn(f"scad/{model['file']}", names)
         self.assertIn("scad/canary_watch_station.scad", names)      # REFERENCE_SCADS
+        self.assertIn("scad/canary_dash_display.scad", names)       # ...the two the AR
+        self.assertIn("scad/canary_combo.scad", names)              # Dash + Combo trace
+        self.assertIn("scad/canary_cradle_lib.scad", names)         # the Dash's use<> dep
         self.assertIn("scad/canary_board_lib.scad", names)          # a use<> dep
         self.assertEqual(names[-3:], ["scad/colorways.json", "scad/cad-dims.json",
                                       "js/builder-data.js"])

@@ -229,15 +229,18 @@ import them — `lint_build_matrix.py` applies the matrix's side of the join
   suite pins it. Not owned, by construction rather than by omission: the
   selectors (`headers`, `port`, `model`, `panel_variant`) and the **7" Dash
   / Nightstand** — "What a manifest cannot yet own" below says exactly why.
-  One caution beside the Watch's knobs:
-  `canary_watch_station.scad` is a `REFERENCE_SCADS` carry
-  (`gen_builder_manifest.py --site` copies it to the website, sha256-pinned),
-  so the first real edit to a Watch knob moves the website's carried copy.
-  Its fleet figure now follows the CAD: it is measured off the case as
+  One caution beside the Watch's and the Dash's knobs:
+  `canary_watch_station.scad` and `canary_dash_display.scad` are
+  `REFERENCE_SCADS` carries (`gen_builder_manifest.py --site` copies them to
+  the website, sha256-pinned — the sources its AR models trace), so the
+  first real edit to a Watch or Dash knob moves the website's carried copy.
+  Their fleet figures follow the CAD: each is measured off its case as
   seated (`gen_assembled_dims.py`, `dims_source: "assembled-cad"`), so a
-  knob edit that moves the drum turns `gen_assembled_dims.py --check` red
-  until the ledger is regenerated. The Dash figure is measured the same
-  way.
+  knob edit that moves the case turns `gen_assembled_dims.py --check` red
+  until the ledger is regenerated. `canary_combo.scad` is carried and
+  measured the same way, though no manifest owns its knobs: the Combo has
+  no device of its own (its catalog variant is a `canary-vision` build), so
+  its figure draws no board and carries no `knobs`.
 
 ## What a manifest cannot yet own
 

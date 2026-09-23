@@ -703,8 +703,11 @@ def build_manifest() -> dict:
 # carry-and-pin contract as the builder models — before this list existed,
 # canary_watch_station.scad had been hand-copied into the site's /scad with
 # no pin, no generator and no test: an edit here left the copy silently
-# stale forever.
-REFERENCE_SCADS = ["canary_watch_station.scad"]
+# stale forever. The Dash and the Combo joined when their fleet figures
+# became CAD-measured (gen_assembled_dims.py rows) and the site's AR models
+# of them became buildable: a model traces the ledger's numbers, and the
+# ledger traces these sources.
+REFERENCE_SCADS = ["canary_watch_station.scad", "canary_dash_display.scad", "canary_combo.scad"]
 
 # The colorway registry (canary_color_lib.scad) — parsed here so the palette
 # crosses to every non-scad consumer from its one home: the manifest embeds
