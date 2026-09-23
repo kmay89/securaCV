@@ -72,6 +72,9 @@ on:
       # both .debs install
       - ".github/workflows/desktop-release.yml"
       - ".github/espflash-pins.env"
+      # …and the Flasher's eFuse-gap record, which names the pinned version
+      # (desktop_parity ties the disclosure to the pin — A12)
+      - "docs/unflashed_board_intake.md"
       - ".github/workflows/desktop-lab-check.yml"
       - "desktop-lab/src-tauri/tauri.macos.conf.json"
       - "desktop-lab/src-tauri/tauri.linux.conf.json"
@@ -186,6 +189,9 @@ on:
       # both .debs install
       - ".github/workflows/desktop-release.yml"
       - ".github/espflash-pins.env"
+      # …and the Flasher's eFuse-gap record, which names the pinned version
+      # (desktop_parity ties the disclosure to the pin — A12)
+      - "docs/unflashed_board_intake.md"
       - ".github/workflows/desktop-lab-check.yml"
       - "desktop-lab/src-tauri/tauri.macos.conf.json"
       - "desktop-lab/src-tauri/tauri.linux.conf.json"

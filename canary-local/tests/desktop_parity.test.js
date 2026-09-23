@@ -1323,9 +1323,27 @@ test("the board's own firmware claim never waives the first-contact erase", () =
 });
 
 test("the eFuse gap between the two flashers is stated, not hidden", () => {
-  // The browser reads the chip's security fuses; espflash has no fuse-read
-  // command, so the desktop app genuinely cannot. That's acceptable — silently
-  // omitting it is not, because a missing check reads as a passed check.
+  // The browser reads the chip's security fuses (six READ_REGs at eFuse block
+  // 0 through esptool-js); the desktop app genuinely cannot. That's
+  // acceptable — silently omitting it is not, because a missing check reads
+  // as a passed check.
+  //
+  // Why it cannot (A12, checked against the espflash 3.3.0 source rather than
+  // assumed; the full record is docs/unflashed_board_intake.md, "Where the
+  // two flashers differ"): the app runs the espflash CLI, and 3.3.0's
+  // subcommands are board-info, checksum-md5, completions, erase-flash,
+  // erase-parts, erase-region, flash, hold-in-reset, monitor,
+  // partition-table, read-flash, reset, save-image and write-bin — none reads
+  // a register or an eFuse. board-info prints chip + revision, crystal, flash
+  // size, features and MAC; it reads eFuses for the revision and MAC but
+  // prints no security field. Its library can send READ_REG and names the
+  // ROM's GET_SECURITY_INFO, but never sends that in 3.3.0 and exposes
+  // neither on the command line. From espflash 4.0.0, board-info prints a
+  // "Security Information" block (GET_SECURITY_INFO: secure boot, flash
+  // encryption, JTAG, a USB-disable flag — not SECURE_VERSION or
+  // DIS_DOWNLOAD_MANUAL_ENCRYPT), which is the route to a partial native
+  // check — so the pin bump that makes it possible must revisit this
+  // disclosure, and fails here until it does.
   const browser = read(join(CANARY, "assets/flash.js"));
   const html = read(join(ROOT, "desktop/src/index.html"));
   assert.match(browser, /efuseBlock0Addrs|readSecurityEfuses/,
@@ -1335,6 +1353,16 @@ test("the eFuse gap between the two flashers is stated, not hidden", () => {
     "the user assuming it ran");
   assert.match(html, /browser-only/,
     "desktop flasher's fuse-gap note no longer names the gap");
+  const pinned = /^ESPFLASH_VERSION=(\d+)\.(\d+)\.(\d+)$/m.exec(read(join(ROOT, ".github/espflash-pins.env")));
+  assert.ok(pinned, "couldn't read ESPFLASH_VERSION from .github/espflash-pins.env");
+  assert.ok(Number(pinned[1]) < 4,
+    `the desktop apps now bundle espflash ${pinned.slice(1).join(".")}, whose board-info prints the ROM's ` +
+    "security info — the \"no fuse-read command\" disclosure (desktop/src/index.html #coldstart-efuse) and " +
+    "docs/unflashed_board_intake.md are no longer the whole truth. Revisit A12: read what board-info now " +
+    "reports, match each field to the browser's, disclose the rest, then move this bound");
+  const doc = read(join(ROOT, "docs/unflashed_board_intake.md"));
+  assert.ok(doc.includes(`the version both desktop apps bundle (${pinned.slice(1).join(".")}, pinned in`),
+    "docs/unflashed_board_intake.md names a different espflash than the pins file — its eFuse record is about another engine");
 });
 
 test("health check: native parsers pin the browser's byte-magics, and the UI reaches the command", () => {
