@@ -1268,7 +1268,7 @@ RemoveResult remove_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
                          uint32_t      now_ms,
                          uint8_t       removed_pubkey_out[mesh_crypto::PUBKEY_LEN]) {
   if (fp == nullptr || removed_pubkey_out == nullptr) return RemoveResult::NOT_FOUND;
-  if (!s_initialized || !s_running) return RemoveResult::DISABLED;
+  if (!s_initialized || !s_running) return RemoveResult::MESH_DISABLED;
   if (!s_opera_id_set)              return RemoveResult::NO_OPERA;
   if (mesh_rekey::in_progress(s_rekey)) return RemoveResult::IN_FLIGHT;
   /* A pairing in flight would hand its joiner the secret this rotation is

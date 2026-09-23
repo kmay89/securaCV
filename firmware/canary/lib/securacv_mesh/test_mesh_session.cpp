@@ -2161,7 +2161,7 @@ void test_rekey_refusals_and_forgeries() {
   assert(mesh_session::register_trusted_peer(y_pub));
   assert(mesh_session::register_trusted_peer(z_pub));
   mesh_session::set_enabled(false);
-  assert(mesh_session::remove_peer(fp_y, 0, out) == mesh_session::RemoveResult::DISABLED);
+  assert(mesh_session::remove_peer(fp_y, 0, out) == mesh_session::RemoveResult::MESH_DISABLED);
   mesh_session::set_enabled(true);
   assert(mesh_session::trusted_peer_count() == 2);   /* refusals changed nothing */
 

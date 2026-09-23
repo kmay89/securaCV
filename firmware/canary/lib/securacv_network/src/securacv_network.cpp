@@ -5456,7 +5456,7 @@ static esp_err_t handle_mesh_remove(httpd_req_t* req) {
     case mesh_session::RemoveResult::STARTED:
     case mesh_session::RemoveResult::COMMITTED:
       break;
-    case mesh_session::RemoveResult::DISABLED:  return http_send_error(req, 400, "mesh_disabled");
+    case mesh_session::RemoveResult::MESH_DISABLED:  return http_send_error(req, 400, "mesh_disabled");
     case mesh_session::RemoveResult::NO_OPERA:  return http_send_error(req, 400, "no_opera");
     case mesh_session::RemoveResult::NOT_FOUND: return http_send_error(req, 404, "unknown_peer");
     case mesh_session::RemoveResult::IN_FLIGHT: return http_send_error(req, 409, "rekey_in_flight");

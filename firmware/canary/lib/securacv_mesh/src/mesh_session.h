@@ -554,7 +554,7 @@ void     clear_alerts();
  * peer's pubkey also comes back at once through `removed_pubkey_out`, for
  * the caller to drop from NVS right away (idempotent with the commit).
  *
- * Refusals: DISABLED (mesh off / not initialized), NO_OPERA, NOT_FOUND
+ * Refusals: MESH_DISABLED (mesh off / not initialized), NO_OPERA, NOT_FOUND
  * (fp is not a trusted peer), IN_FLIGHT (a rotation is already running
  * on this device, as initiator or survivor), FAILED (key generation),
  * PAIRING (a pairing exchange is in progress — it would hand the joiner
@@ -567,7 +567,7 @@ void     clear_alerts();
 enum class RemoveResult : uint8_t {
   STARTED = 0,
   COMMITTED,
-  DISABLED,
+  MESH_DISABLED,  // not DISABLED: Arduino's esp32-hal-gpio.h #defines DISABLED 0x00
   NO_OPERA,
   NOT_FOUND,
   IN_FLIGHT,
