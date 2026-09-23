@@ -17,6 +17,11 @@ Two lanes:
 Delivery is a ``persistent_notification``, the same lane the integration
 already uses for a key mismatch: local, no cloud, no new dependency.
 
+Starting, listing and ending go through here too (``async_start_watch``,
+``async_watch_bucket``, ``async_end_watch``): the voice intents and the
+``securacv.*`` actions share one path, so a watch is the same object
+however it began and every change is persisted the same way.
+
 Persistence: the bucket lives in ``hass.data[DOMAIN]["watches"]`` and is
 mirrored to HA's ``Store`` (``.storage/securacv_watches``) by coalesced,
 delayed saves, then restored once per HA instance by ``async_load_watches``
@@ -34,7 +39,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.storage import Store
 
-from . import watches
+from . import voice, watches
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -122,6 +127,33 @@ def _notify(hass: HomeAssistant, title: str, message: str, note_id: str) -> None
     )
 
 
+def _async_expire(hass: HomeAssistant, bucket: list[dict[str, Any]], now: float) -> bool:
+    """Announce and evict every watch past its end. Returns whether any went.
+
+    A watch that ends says so — silence is never rendered as safety — and
+    the summary reports what it actually learned. The eviction follows the
+    announcement, never precedes it: a watch whose ending could not be
+    delivered stays for the next pass to try again.
+    """
+    evicted = False
+    for watch in list(bucket):
+        try:
+            if now < watch.get("ends_at", 0.0):
+                continue
+            _notify(
+                hass,
+                "SecuraCV: a watch ended",
+                watches.speak_ending(watch),
+                f"securacv_watch_end_{watch['id']}",
+            )
+        except Exception:  # noqa: BLE001 - one bad watch must not stop the rest
+            _LOGGER.debug("watch ending not announced for %s", watch.get("id"), exc_info=True)
+            continue
+        bucket.remove(watch)
+        evicted = True
+    return evicted
+
+
 @callback
 def async_tick(hass: HomeAssistant, now: float | None = None) -> None:
     """Evaluate every watch: deliver what fired, announce what ended."""
@@ -130,21 +162,9 @@ def async_tick(hass: HomeAssistant, now: float | None = None) -> None:
     if not bucket:
         return
 
-    ended: list[dict[str, Any]] = []
+    _async_expire(hass, bucket, now)
     for watch in list(bucket):
         try:
-            if now >= watch.get("ends_at", 0.0):
-                # A watch that ends says so — silence is never rendered as
-                # safety. The summary reports what it actually learned.
-                _notify(
-                    hass,
-                    "SecuraCV: a watch ended",
-                    watches.speak_ending(watch),
-                    f"securacv_watch_end_{watch['id']}",
-                )
-                ended.append(watch)
-                continue
-
             watches.refresh_state(watch, now)
             verdict = watches.evaluate(watch, now)
             if verdict.get("fire"):
@@ -158,13 +178,212 @@ def async_tick(hass: HomeAssistant, now: float | None = None) -> None:
         except Exception:  # noqa: BLE001 - one bad watch must not stop the rest
             _LOGGER.debug("watch tick failed for %s", watch.get("id"), exc_info=True)
 
-    for watch in ended:
-        if watch in bucket:
-            bucket.remove(watch)
-
     # State transitions, fired counts and evictions all happened above;
     # one coalesced write carries them.
     async_schedule_save(hass)
+
+
+# ── Starting, listing, ending: the one path every surface shares ────────
+
+
+class WatchError(Exception):
+    """A refusal the calling surface turns into its own words."""
+
+
+class WatchLimitReached(WatchError):
+    """The bounded roster is full (watches.MAX_WATCHES)."""
+
+    def __init__(self, count: int) -> None:
+        super().__init__(f"already running {count} watches, which is as many as the hub keeps")
+        self.count = count
+
+
+class WatchNotFound(WatchError):
+    """No watch has that id or label."""
+
+    def __init__(self, ref: str) -> None:
+        super().__init__(f"no watch is called {ref!r}")
+        self.ref = ref
+
+
+class WatchAmbiguous(WatchError):
+    """More than one watch has that label; the caller must use an id."""
+
+    def __init__(self, ref: str, ids: list[str]) -> None:
+        super().__init__(f"{ref!r} names {len(ids)} watches ({', '.join(ids)})")
+        self.ref = ref
+        self.ids = ids
+
+
+def fleet_snapshot(hass: HomeAssistant) -> list[dict[str, Any]]:
+    """Plain-dict view of every config entry's runtime state.
+
+    hass.data[DOMAIN] maps entry_id -> entry_data, plus domain-level values
+    (``_frontend_registered``, the ``watches`` list, the watch Store); only
+    dicts that carry a ``devices`` slice are entries. This is what
+    ``voice.fleet_brief`` reads, for the intents and for binding a watch's
+    subject to a Canary.
+    """
+    entries: list[dict[str, Any]] = []
+    for entry_data in hass.data.get(DOMAIN, {}).values():
+        if not isinstance(entry_data, dict) or "devices" not in entry_data:
+            continue
+        kernel: dict[str, Any] | None = None
+        coordinator = entry_data.get("coordinator")
+        if coordinator is not None:
+            kernel = {
+                "ok": bool(getattr(coordinator, "last_update_success", False)),
+                "latest_event": (getattr(coordinator, "data", None) or {}).get(
+                    "latest_event"
+                ),
+            }
+        entries.append(
+            {
+                "devices": entry_data.get("devices", {}),
+                "verify": entry_data.get("verify", {}),
+                "kernel": kernel,
+            }
+        )
+    return entries
+
+
+def watches_restored(hass: HomeAssistant) -> bool:
+    """Whether the restore has run on this hub — i.e. the bucket is the
+    persisted truth and changes to it are being written back."""
+    domain_data = hass.data.get(DOMAIN)
+    return isinstance(domain_data, dict) and bool(domain_data.get("_watches_loaded"))
+
+
+@callback
+def async_watch_bucket(hass: HomeAssistant, now: float | None = None) -> list[dict[str, Any]]:
+    """The bucket, created on demand.
+
+    With ``now``, anything already past its end is announced and evicted
+    first — the same path the tick takes, so a person who asks in the
+    minutes before a tick still hears the ending rather than losing it.
+    """
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    bucket = domain_data.get("watches")
+    if not isinstance(bucket, list):
+        bucket = []
+        domain_data["watches"] = bucket
+    if now is not None and _async_expire(hass, bucket, now):
+        async_schedule_save(hass)
+    return bucket
+
+
+def _new_id(bucket: list[dict[str, Any]], now: float) -> str:
+    """``w<n>-<epoch>``, unique within the bucket.
+
+    An id is how an automation ends a watch, so two starts in the same
+    second after an eviction must not share one.
+    """
+    taken = {watch.get("id") for watch in bucket}
+    n = len(bucket) + 1
+    while f"w{n}-{int(now)}" in taken:
+        n += 1
+    return f"w{n}-{int(now)}"
+
+
+def _label_key(text: Any) -> str:
+    """A label as a person would match it: case, spacing and the leading
+    article do not count."""
+    key = " ".join(str(text or "").lower().split())
+    for filler in ("the ", "my "):
+        if key.startswith(filler):
+            key = key[len(filler):]
+    return key
+
+
+@callback
+def async_start_watch(
+    hass: HomeAssistant,
+    subject_text: str,
+    duration_text: str | None = None,
+    now: float | None = None,
+    *,
+    concern: str | None = None,
+) -> tuple[dict[str, Any], str | None]:
+    """Start a watch the way a person would say it. Returns (watch, device_id).
+
+    The subject binds to a Canary when its words name one — friendly names
+    too, exactly as DeviceCheck matches them, because a serial-like
+    device_id is not a word anyone says. Otherwise the watch is created
+    against the spoken subject as kind "unbound" and ``device_id`` is None,
+    so the caller can say plainly that nothing feeds it yet: never a silent
+    no-op. ``concern`` overrides the one read off the wording. Raises
+    ``WatchLimitReached`` at the cap.
+    """
+    now = time.time() if now is None else now
+    subject_text = str(subject_text or "").strip()
+    if not subject_text:
+        raise ValueError("a watch needs a subject")
+    bucket = async_watch_bucket(hass, now)
+    if len(bucket) >= watches.MAX_WATCHES:
+        raise WatchLimitReached(len(bucket))
+    days = watches.parse_duration_days(duration_text)
+    if concern is None:
+        concern = watches.concern_from_text(subject_text)
+    label = subject_text
+    for filler in ("the ", "my "):
+        if label.startswith(filler):
+            label = label[len(filler):]
+    label = "the " + label
+
+    brief = voice.fleet_brief(fleet_snapshot(hass), now)
+    device_id = voice.match_device(
+        brief.get("device_ids") or [], subject_text, brief.get("device_names")
+    )
+    subject = (
+        {"kind": "event", "ref": device_id}
+        if device_id
+        else {"kind": "unbound", "ref": subject_text}
+    )
+    watch = watches.make_watch(
+        _new_id(bucket, now), label, subject, now, days=days, concern=concern
+    )
+    bucket.append(watch)
+    async_schedule_save(hass)
+    return watch, device_id
+
+
+@callback
+def async_end_watch(hass: HomeAssistant, ref: str, now: float | None = None) -> dict[str, Any]:
+    """End a watch early and remove it; returns the watch, marked ended.
+
+    ``ref`` is matched as an id first, then as a label (case, spacing and
+    the leading article do not count). An ambiguous label is refused
+    rather than guessed — ending is the silencing direction, so this never
+    picks for you. The early end is announced like an expiry, with what
+    the watch learned: whoever set it up may not be whoever (or whatever
+    automation) ended it, and a watch that ends says so.
+    """
+    now = time.time() if now is None else now
+    ref = str(ref or "").strip()
+    bucket = _bucket(hass)
+    matches = [watch for watch in bucket if watch.get("id") == ref]
+    if not matches and ref:
+        key = _label_key(ref)
+        matches = [watch for watch in bucket if _label_key(watch.get("label")) == key]
+    if not matches:
+        raise WatchNotFound(ref)
+    if len(matches) > 1:
+        raise WatchAmbiguous(ref, [str(watch.get("id")) for watch in matches])
+    watch = matches[0]
+    bucket.remove(watch)
+    watch["ends_at"] = min(float(watch.get("ends_at", now)), now)
+    watch["state"] = watches.STATE_ENDED
+    async_schedule_save(hass)
+    try:
+        _notify(
+            hass,
+            "SecuraCV: a watch was ended early",
+            watches.speak_ending(watch),
+            f"securacv_watch_end_{watch['id']}",
+        )
+    except Exception:  # noqa: BLE001 - the end was asked for; the notice is best-effort
+        _LOGGER.debug("early end not announced for %s", watch.get("id"), exc_info=True)
+    return watch
 
 
 # ── Persistence ─────────────────────────────────────────────────────────
@@ -175,7 +394,7 @@ def _store(hass: HomeAssistant) -> Store:
 
     It sits beside the entry dicts and the ``watches`` list; every reader
     of ``hass.data[DOMAIN]`` that iterates values already skips anything
-    that is not an entry dict (intent._snapshot), so a Store object there
+    that is not an entry dict (fleet_snapshot), so a Store object there
     is inert to them.
     """
     domain_data = hass.data.setdefault(DOMAIN, {})

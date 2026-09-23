@@ -128,7 +128,7 @@ has 4 gaps, Gold is where the UX wins live. Every finding below was verified in 
 | common-modules | ⚠️ | coordinators live in `__init__.py` (679 lines), no `coordinator.py` / `entity.py` split |
 | appropriate-polling | ⚠️ | 30 s HTTP poll of a loopback API whose data changes on 10-minute buckets; and a push path (MQTT) exists for the same data (§4.3) |
 | docs-* (5 rules) | ⚠️ | `docs/homeassistant_setup.md` is strong but not structured per-rule (install/removal/actions) |
-| **action-setup** | ❌ | **The integration registers no services at all.** Verify-now / export / pin-device exist only as MQTT button, wizard endpoints, and options-flow forms — none are automatable as `securacv.*` actions |
+| **action-setup** | ✅/⚠️ | Three watch actions — `securacv.start_watch`, `securacv.end_watch`, `securacv.list_watches` (response only) — registered once in `async_setup` (`services.py`, 2026-09), so they exist before any entry loads. Verify-now / export are still only an MQTT button and wizard endpoints; pin / rotate / unpin stay options-flow forms on purpose (`docs/device_trust.md`, "Why pin, rotate and unpin are not actions") |
 | **entity-event-setup** | ❌ | Subscriptions are made in `async_added_to_hass` (correct) but the unsubscribe callbacks are **discarded** — see §2.5 bug #1 |
 | **runtime-data** | ❌ | legacy `hass.data[DOMAIN][entry_id]` dict (`__init__.py:395`) instead of typed `entry.runtime_data` |
 | config-flow-test-coverage | ❌ | zero config-flow tests (see §2.4 on the test harness) |
@@ -143,7 +143,7 @@ has 4 gaps, Gold is where the UX wins live. Every finding below was verified in 
 | **entity-unavailable** | ❌ | MQTT entities have **no availability logic** — a dead Canary shows stale state / `unknown` forever, never `unavailable`, despite firmware publishing an LWT `securacv/<id>/status` availability topic we don't consume for this |
 | **reauthentication-flow** | ❌ | no `async_step_reauth`. Softened by the rotating-token-file re-read on 401 (`__init__.py:159-222`) — but a permanently wrong URL/token has no recovery path except delete-and-re-add |
 | **parallel-updates** | ❌ | `PARALLEL_UPDATES` not set in either platform |
-| action-exceptions | ❌ (latent) | no actions exist yet; when added they must raise translatable `HomeAssistantError`/`ServiceValidationError` |
+| action-exceptions | ⚠️ | the watch actions raise `ServiceValidationError` on every refusal (unknown or ambiguous watch, cap reached, integration not loaded yet) — with plain-English messages, not yet translatable (`translation_key`) |
 | test-coverage ≥95 % | ❌ | crypto/trust/API-token logic is well covered; setup, unload, entities, diagnostics, config flow are not |
 | docs-configuration/installation-parameters | ⚠️ | options flow (PKI menu) documented in `device_trust.md`, not in a parameters reference |
 
@@ -535,8 +535,8 @@ unused `ssl` map.
 **Phase 1 — One architecture (the decision work):**
 Supervisor discovery handshake add-on→integration (§4.2) · adopt/suppress mechanics
 for the three universes (§6.1) · push-fed coordinators (§4.3) · reauth + reconfigure
-flows · services (`verify`, `export_evidence`, `pin_device`) registered in
-`async_setup` · entity translations + icons.json (kill the dead strings) ·
+flows · services (`verify`, `export_evidence`) registered in `async_setup` beside
+the watch actions (never `pin_device` — `device_trust.md`) · entity translations + icons.json (kill the dead strings) ·
 `via_device` tree (§6.2) · add-on store presentation (DOCS.md, icon, CHANGELOG,
 option translations, `homeassistant:` min) · s6 service supervision + `apparmor.txt` ·
 in-repo `brand/` folder (done 2026-09-08; a home-assistant/brands PR stays optional, for pre-2026.3 installs) ·

@@ -171,8 +171,13 @@ Voice can **start** a watch but not end one early. Starting only ever adds
 attention — the worst a stray sentence from a television can do is tell you
 slightly too much for a fortnight, and it expires on its own. Ending
 *removes* attention, which is the silencing direction, so it stays on an
-authenticated surface for the same reason voice can't mute an Alert. The
-rule underneath: **voice may make you better informed, never less.**
+authenticated surface for the same reason voice can't mute an Alert. That
+surface is the `securacv.end_watch` action (by the watch's id or its label,
+from **Developer tools → Actions** or an automation); it announces the early
+end the same way an expiry is announced. `securacv.start_watch` and
+`securacv.list_watches` do the other two halves from an automation — see
+[Actions](homeassistant_setup.md#actions). The rule underneath: **voice may
+make you better informed, never less.**
 
 **The rituals** — said at a moment, not to run a query:
 
@@ -302,7 +307,10 @@ transcripts transient, queries only, and never a Canary.
   (`custom_components/securacv/intent.py`). "Disarm the siren" isn't a
   sentence it knows, and there is no handler it could reach if it were.
   Anything that changes the security posture stays on authenticated
-  surfaces.
+  surfaces. (The integration's Home Assistant actions are a different
+  thing: `securacv.start_watch`, `end_watch` and `list_watches` are for
+  automations, none of them is a voice intent, and none of them touches
+  the security posture — see [Actions](homeassistant_setup.md#actions).)
 - **No identity questions.** "Who was at the gate?" has no answer anywhere
   in the system — that's Invariant II, not a missing feature.
 - **No cloud assistants on this page.** Alexa/Google integration requires a

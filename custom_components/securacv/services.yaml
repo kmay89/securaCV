@@ -1,0 +1,75 @@
+# The securacv.* actions. Watches only — pinning, rotating and unpinning a
+# device key stay human-only in the options flow (docs/device_trust.md,
+# "Why pin, rotate and unpin are not actions"). The names and descriptions
+# are repeated in strings.json / translations/en.json, which is what Home
+# Assistant renders; keep the three in step.
+
+start_watch:
+  name: Start a watch
+  description: >-
+    Starts a bounded, self-expiring watch on something the fleet already
+    senses. Adds attention only: it cannot arm, disarm or unseal anything,
+    and it never turns on new sensing. Returns the watch, including the id
+    that End a watch takes.
+  fields:
+    subject:
+      name: Subject
+      description: >-
+        What to keep an eye on, the way you would say it. A Canary's name
+        binds the watch to that device's witness events; anything else is
+        accepted but stays unfed until something in the fleet reports it.
+      required: true
+      example: "the gate canary"
+      selector:
+        text:
+    duration:
+      name: Duration
+      description: >-
+        How long, in words: "two weeks", "10 days", "a month". 14 days if
+        left out; never longer than a year.
+      required: false
+      example: "two weeks"
+      selector:
+        text:
+    concern:
+      name: Concern
+      description: >-
+        What to tell you about. Left out, it is read off the subject's
+        wording ("if it stops reporting"), or it is "if anything changes".
+      required: false
+      example: unusual
+      selector:
+        select:
+          options:
+            - value: stopped
+              label: "if it stops"
+            - value: unusual
+              label: "if anything changes"
+            - value: more
+              label: "if it goes up"
+            - value: less
+              label: "if it drops"
+            - value: every
+              label: "every time"
+
+end_watch:
+  name: End a watch
+  description: >-
+    Ends a watch early and removes it. Name it by its id (from Start a
+    watch or List watches) or by its label; a label two watches share is
+    refused rather than guessed. The early end is announced like an
+    expiry. Returns the watch as it ended.
+  fields:
+    watch:
+      name: Watch
+      description: The watch's id, or its label as you said it.
+      required: true
+      example: "the gate canary"
+      selector:
+        text:
+
+list_watches:
+  name: List watches
+  description: >-
+    Returns the watches currently running, each with its state, what it is
+    bound to and how many days it has left. Response only.

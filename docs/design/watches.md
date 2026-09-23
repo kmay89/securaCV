@@ -9,7 +9,9 @@
 > mirrored to Home Assistant's `Store` (`.storage/securacv_watches`) so a
 > hub restart keeps every watch, its baseline and its history — a watch
 > that ended while the hub was down is announced by the first tick rather
-> than silently gone. **Not yet real:** numeric subjects (a soil-moisture
+> than silently gone. Automations start, end and list watches through the
+> `securacv.start_watch` / `end_watch` / `list_watches` actions, on the same
+> start path voice uses. **Not yet real:** numeric subjects (a soil-moisture
 > sensor is accepted but nothing feeds it). A watch whose subject nothing
 > reports says so when you start it rather than pretending.
 
@@ -144,8 +146,10 @@ allowed to *create* — but the split is asymmetric, and deliberately:
   on its own. That failure direction is safe.
 - **Ending a watch early: not allowed by voice.** That *removes*
   attention, which is the silencing direction — the same reason voice
-  cannot mute an Alert. Ending early happens on an authenticated surface.
-  Expiry is automatic, so this is rarely needed anyway.
+  cannot mute an Alert. Ending early happens on an authenticated surface:
+  the `securacv.end_watch` action, by id or label, which refuses a label two
+  watches share rather than guessing and announces the early end like an
+  expiry. Expiry is automatic, so this is rarely needed anyway.
 
 The rule underneath, worth stating once because it generalizes: **voice may
 make you better informed, never less.**
@@ -210,6 +214,7 @@ reasons to build them well:
 | Voice: start a watch, list watches | `intent.py` + sentences | **built** |
 | Feeding event-kind watches + tick + delivery | `watch_runtime.py` | **built** |
 | Persistence across restarts | `watch_runtime.py` → HA `Store`, `.storage/securacv_watches` (coalesced saves; restored on setup, expired ones announced by the first tick) | **built** |
+| Automations: `securacv.start_watch` / `securacv.end_watch` / `securacv.list_watches` actions (one start path with voice; no trust actions — [why](../device_trust.md#why-pin-rotate-and-unpin-are-not-actions)) | `services.py` → `watch_runtime.py` | **built** |
 | Numeric subjects (an HA sensor like soil moisture) | integration glue | next |
 | Recipes in the UI, end-of-watch summary card | Lovelace | after that |
 

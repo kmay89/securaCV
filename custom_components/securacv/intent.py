@@ -36,7 +36,6 @@ from homeassistant.helpers import intent
 from homeassistant.util import dt as dt_util
 
 from . import voice, watch_runtime, watches
-from .const import DOMAIN
 
 INTENT_FLEET_STATUS = "SecuracvFleetStatus"
 INTENT_LAST_EVENT = "SecuracvLastEvent"
@@ -89,34 +88,9 @@ def _pending_updates(hass: HomeAssistant) -> list[str]:
     return sorted(names)
 
 
-def _snapshot(hass: HomeAssistant) -> list[dict[str, Any]]:
-    """Plain-dict view of every config entry's runtime state.
-
-    hass.data[DOMAIN] maps entry_id -> entry_data, plus a couple of
-    domain-level flags (e.g. ``_frontend_registered``); only dicts that
-    carry a ``devices`` slice are entries.
-    """
-    entries: list[dict[str, Any]] = []
-    for entry_data in hass.data.get(DOMAIN, {}).values():
-        if not isinstance(entry_data, dict) or "devices" not in entry_data:
-            continue
-        kernel: dict[str, Any] | None = None
-        coordinator = entry_data.get("coordinator")
-        if coordinator is not None:
-            kernel = {
-                "ok": bool(getattr(coordinator, "last_update_success", False)),
-                "latest_event": (getattr(coordinator, "data", None) or {}).get(
-                    "latest_event"
-                ),
-            }
-        entries.append(
-            {
-                "devices": entry_data.get("devices", {}),
-                "verify": entry_data.get("verify", {}),
-                "kernel": kernel,
-            }
-        )
-    return entries
+# The plain-dict view of hass.data the briefs are built from lives in
+# watch_runtime.fleet_snapshot, shared with the watch start path.
+_snapshot = watch_runtime.fleet_snapshot
 
 
 class _BriefIntentHandler(intent.IntentHandler):
@@ -301,29 +275,16 @@ class HelpIntentHandler(intent.IntentHandler):
 # early: starting only ever ADDS attention (a stray sentence from a
 # television costs you a fortnight of being told slightly too much, and
 # the watch expires on its own), while ending removes it — the silencing
-# direction, which stays on authenticated surfaces for the same reason
-# voice cannot mute an Alert. The rule underneath: voice may make you
-# better informed, never less.
+# direction, which stays on authenticated surfaces (the securacv.end_watch
+# action, services.py) for the same reason voice cannot mute an Alert. The
+# rule underneath: voice may make you better informed, never less.
 #
 # Storage: the bucket is hass.data[DOMAIN]["watches"], mirrored to HA's
 # Store by watch_runtime (coalesced saves, restored on setup), so a watch
-# survives a Home Assistant restart. Every change made here schedules a
-# save; the cap (watches.MAX_WATCHES) bounds the roster and the restore.
-
-
-def _watch_bucket(hass: HomeAssistant, now: float | None = None) -> list[dict[str, Any]]:
-    """The live watches, purged of anything already expired."""
-    domain_data = hass.data.setdefault(DOMAIN, {})
-    bucket = domain_data.get("watches")
-    if not isinstance(bucket, list):
-        bucket = []
-        domain_data["watches"] = bucket
-    if now is not None:
-        alive = [w for w in bucket if now < w.get("ends_at", 0.0)]
-        if len(alive) != len(bucket):
-            bucket[:] = alive
-            watch_runtime.async_schedule_save(hass)
-    return bucket
+# survives a Home Assistant restart. Starting goes through
+# watch_runtime.async_start_watch — the same path the securacv.start_watch
+# action takes (services.py) — so a spoken watch and an automated one are
+# the same object, capped (watches.MAX_WATCHES) and persisted the same way.
 
 
 def _slot_text(intent_obj: intent.Intent, name: str) -> str:
@@ -358,44 +319,20 @@ class StartWatchIntentHandler(intent.IntentHandler):
             )
             return response
 
-        now = time.time()
-        bucket = _watch_bucket(hass, now)
-        if len(bucket) >= watches.MAX_WATCHES:
-            response.async_set_speech(
-                f"I'm already running {len(bucket)} watches, which is as many "
-                "as I'll keep. End one on the dashboard and ask me again."
-            )
-            return response
-        days = watches.parse_duration_days(duration_text)
-        concern = watches.concern_from_text(subject_text)
-        label = subject_text
-        for filler in ("the ", "my "):
-            if label.startswith(filler):
-                label = label[len(filler):]
-        label = "the " + label
-
-        # Bind to a Canary if the words name one; otherwise the watch is
+        # Binds to a Canary if the words name one; otherwise the watch is
         # created against the spoken subject and the answer says plainly
         # that nothing is feeding it yet — never a silent no-op.
-        brief = voice.fleet_brief(_snapshot(hass), now)
-        # Friendly names too, exactly as DeviceCheck does: a serial-like
-        # device_id is not a word anyone says, so without them "watch the
-        # gate canary" binds to nothing and the watch can never fire.
-        device_id = voice.match_device(
-            brief.get("device_ids") or [], subject_text, brief.get("device_names")
-        )
-        subject = (
-            {"kind": "event", "ref": device_id}
-            if device_id
-            else {"kind": "unbound", "ref": subject_text}
-        )
-
-        watch = watches.make_watch(
-            f"w{len(bucket) + 1}-{int(now)}", label, subject, now,
-            days=days, concern=concern,
-        )
-        bucket.append(watch)
-        watch_runtime.async_schedule_save(hass)
+        try:
+            watch, device_id = watch_runtime.async_start_watch(
+                hass, subject_text, duration_text, time.time()
+            )
+        except watch_runtime.WatchLimitReached as err:
+            response.async_set_speech(
+                f"I'm already running {err.count} watches, which is as many "
+                "as I'll keep. End one with the securacv.end_watch action "
+                "and ask me again."
+            )
+            return response
 
         speech = watches.speak_started(watch)
         if not device_id:
@@ -418,6 +355,6 @@ class ListWatchesIntentHandler(intent.IntentHandler):
         response = intent_obj.create_response()
         now = time.time()
         response.async_set_speech(
-            watches.speak_roster(_watch_bucket(intent_obj.hass, now), now)
+            watches.speak_roster(watch_runtime.async_watch_bucket(intent_obj.hass, now), now)
         )
         return response
