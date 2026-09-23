@@ -1522,7 +1522,7 @@ so — see D2 below.)
   `ANTHROPIC_API_KEY` under Settings → Secrets and variables → Actions in both
   repos (and under Dependabot secrets if bot PRs should be reviewed). Until
   then a green "Canary Reviewer" check means nothing was reviewed.
-- [ ] **W12 [code] Blender hero bake, milestone 2** (W5 landed milestone 1).
+- [x] **W12 [code] Blender hero bake, milestone 2** (W5 landed milestone 1).
   Written up in `docs/render-roadmap.md` ("the hero's baked AO and a page
   opt-in (milestone 2)") and not built: a scripted Cycles-CPU AO bake exported
   as a same-origin PNG that `scripts/bake-hero.mjs` patches in by relative URI
@@ -1533,6 +1533,18 @@ so — see D2 below.)
   centered one). Needs Blender 4.0+ with numpy on a workstation. CI never runs
   Blender, so a ledger move of more than 1 mm turns
   `tests/hero-models.test.mjs` red until someone re-bakes.
+  *Done (website #203):* `blender/bake_hero.py --bake-ao` runs a Cycles-CPU
+  AO bake over one atlas across both parts (512 px, 256 samples, 40 mm rays;
+  57 s here, a 77 KB PNG). `scripts/bake-hero.mjs` patches the PNG into
+  `models/hero/canary-vision.glb` by relative URI and adds the carried
+  registry's colorways as `KHR_materials_variants`. `/view-in-room` gains an
+  opt-in "Hero render" toggle, off by default, that places the hero's
+  hotspots about its own origin and names the lens opening, since the hero
+  draws no camera. `tests/hero-models.test.mjs` grew from 10 to 17 tests
+  (18 with the hotspot-label guard). A colorway carry needs no Blender:
+  "Update everything" runs `bake-hero.mjs --patch-only`. Not judged on a GPU
+  and not tried in AR on a phone. The roadmap says so, and W13 keeps the GPU
+  half.
 - [ ] **W13 [code, needs a GPU session] Render quality — W9's GPU half.** (1)
   Cinematic mode: the route is decided in `docs/render-roadmap.md` (a WebGL2
   path tracer, `three-gpu-pathtracer` on `three-mesh-bvh`, lazily imported on
@@ -1574,6 +1586,24 @@ so — see D2 below.)
   email plus the privacy policy's date (M4 / L3), which need facts only a
   human has. Give each fix a guard in `tests/legal-claims.test.mjs`, as W7
   did.
+  *Code half done (website #203):*
+  - "Architecturally incapable" names what is missing.
+  - The phone-home family and its siblings ("LAN-only", "local-only",
+    "never online") are gone from the site. The FAQ names each routine
+    trip online and the iPhone companion's iCloud default.
+  - A recording-consent notice, pinned verbatim, is on the store and on
+    First Flights.
+  - `tests/legal-claims.test.mjs` scans each surface as flowing text, so an
+    aside, a tag, a line break or a no-break-space entity cannot split a
+    phrase.
+
+  Still open (human): the contact mailing address, a role email and the
+  privacy policy's date (M4/L3). Recorded for the same founder pass: the
+  privacy policy says the site fetches nothing external, while every page
+  loads Google Fonts. The audit's monorepo follow-up list (the Lab's
+  "nothing here phones anywhere" footers, `hatch.json`'s motto,
+  `docs/FAQ.md`, `docs/getting_started_canary.md`) and Compare's unsourced
+  "auto-deletes in 24 h" cell are the wave-4 claims-followup package.
 - [x] **W17 [code] Model and copy drift found while building W4, not fixed
   there** (website PR #202). (1) `scripts/make-canary-glb.mjs` draws the
   Vision's lens barrel and glass under a solid Ø13 accent disc, so the lens
@@ -1775,6 +1805,31 @@ major, by theme") — work its themes, then tick here.
   help is only a `[4:0.5:8]` range, and `gen_enclosures.py` reads a range only
   at the start of a comment, so wave 1 left it alone rather than risk its
   slider. `DESIGN_RULES.md` §11 "Customizer help text" names the first four.
+  *Wave 2 done (#1718, website #203):*
+  - The 7" case's shared-help lines are split and `HELP_LINE_DEBT` is
+    empty. The Dash's and the J-box's `usb_w`/`usb_h` are split.
+  - Every knob in the released four (WAP, Vision, doorbell, Sense) has help
+    read off the geometry that uses it, except the option-list selectors.
+  - Stated ranges sit on their knob's line, and `gen_enclosures.py` reads a
+    range where the builder does (43 knobs had been a slider in one and raw
+    text in the other).
+  - One group name, "Stud/keyhole interface", across 16 files, held by a
+    new `lint_design_lang.py` rule.
+  - Presets for the doorbell (`doorbell_weather`) and the Sense
+    (`sense_wall`, `sense_ceiling`), with defaults unchanged (preset
+    contents and the group name: maintainer to confirm). A new check
+    refuses a preset that overrides a control the builder does not gray
+    out. It caught the WAP's and the Vision's presets leaving `opt_weep`
+    live.
+  - Knobs without help: 535 → 347 of 1743. The CSG of every touched part
+    is byte-identical to the base.
+
+  Still open: the 336 development-case knobs without help, and a
+  maintainer call. The OpenSCAD 2021.01 desktop Customizer makes a slider
+  or dropdown only for a bare bracket comment, so the house `help // [range]`
+  form gives plain boxes there (`DESIGN_RULES.md` §11). The J-box's pigtail
+  `usb_w`/`usb_h` needs a name of its own, and multi-line group headers are
+  still invisible to the Lab's parser.
 - [ ] **C11 [decision] Raise the lid ribs, or leave them** (C3's rib half; the
   audit's "Ribs proportioned backwards"). The evidence is recorded and no rib
   changed: `DESIGN_RULES.md` §11's "Lid rib proportions" table gives the

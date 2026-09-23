@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Every released case's knobs explain themselves, the site stops denying the traffic it uses, and the hero gets its light (#1718, website #203)
+
+- **The released four's Customizer knobs all have help (C10, wave 2).**
+  Every knob on the WAP, Vision, doorbell and Sense cases now has help,
+  written from the geometry that uses it, except the option-list
+  selectors. Knobs without help across the catalog went from 535 to 347.
+  The 7" case's shared-help lines are split, and their debt list is empty.
+  The Lab and the website builder now read a knob's range the same way;
+  43 knobs had been a slider in one and raw text in the other. The
+  stud/keyhole interface has one group name, and the doorbell and the
+  Sense have presets. Defaults are unchanged, and no STL moves: the CSG of
+  every touched part is byte-identical.
+- **The website says what goes online (W16, website #203).** "Nothing phones
+  home" and its siblings are gone from the site. The FAQ now names each
+  routine trip: the signed-update check, the displays' clock sync, and the
+  desktop apps' own updates. It also names the iPhone companion's iCloud
+  default. "Architecturally incapable" names what is missing instead, and a
+  recording-consent notice sits on the store. A guard reads each page as
+  flowing text, so the old phrases cannot come back split across a line
+  break, a tag or an aside.
+- **The Vision's hero render gets baked ambient occlusion and colorways (W12,
+  website #203)**, behind an opt-in toggle on `/view-in-room`. The procedural
+  model stays the default. The weekly carry re-applies the colorways
+  without Blender. Nothing has been judged on a GPU or tried in AR on a
+  phone.
+
 ### The canary keeps its events on the SD card and replays them after an outage (#1718)
 
 - **An outage longer than the offline queue no longer loses events (F37).**
