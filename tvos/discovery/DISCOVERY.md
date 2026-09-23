@@ -74,8 +74,9 @@ the document's `verifying_key` is the endpoint's **claim** about itself,
 so a client may say "Verified" only after comparing it (or, across a key
 rotation, the signed lineage in `rotation_records`) against a key **pinned
 at pairing** — the repo-wide verified-means-Ed25519-vs-pinned-key
-discipline — and proves continuity across polls by remembering the last
-head it walked. A walk that trusts the served key verifies internal
+discipline — and should prove continuity across polls by remembering the
+last head it walked (the Wall does not yet; see "What "Verified" proves"
+below). A walk that trusts the served key verifies internal
 consistency, not provenance, and must not wear the word.
 
 The credential the Wall holds is a **viewer token**, not the capability
@@ -116,6 +117,22 @@ paired Wall whose standing is verified also draws the record's day shape —
 the evidence viewer's timeline model (`ios/Shared/TimelineScrub.swift`,
 parity-pinned to `viewer/timeline_core.js`), bucket ranges only — and
 draws nothing of the kind from an unpinned, failed or re-keyed walk.
+
+**What "Verified" proves, and what it does not.** It proves *authorship*:
+every entry the Wall was served is signed by the pinned key, and the
+entries link from the served anchor. It does **not** prove the served tail
+is *current* or *complete*. The anchor (`checkpoint_head`) is unsigned,
+and the document carries no signed time or high-water mark, so a genuine
+document captured earlier (it crosses the LAN in cleartext unless the
+owner turned on TLS) and replayed later still walks clean against the pin,
+and so does a genuine one cut short — entries dropped from its end, or its
+start moved to a later entry with the anchor set to match. The time in
+"Verified through <time>" is this TV's receipt time, not a time the hub
+signed. The Wall does not yet remember the last head it walked, so it
+cannot even notice a tail that went backward between polls. Closing that
+takes a signed head (or signed high-water mark) in the document itself —
+roadmap work, not built.
+
 Everything above about
 `/api/fleet` being coarse and unauthenticated is exactly why this endpoint
 is separate — and gated: the sealed log is how a *display* gets to say

@@ -57,7 +57,10 @@ categories are simply **empty**, and this app sits in all three:
    only when every signature checked against that pinned key and at least
    one did (a log naming the pinned key over an empty tail reads "Paired ·
    nothing sealed to check" — the key is public, so an empty list proves
-   nothing); a log signed
+   nothing). "Verified" proves who signed what the Wall was served, not
+   that the tail is current or complete: the document carries no signed
+   time or head, so a replayed or cut-short genuine log still walks clean
+   (tvos/discovery/DISCOVERY.md, "What 'Verified' proves"). A log signed
    by any other key is an alarm ("Your hub's signing key changed since this
    Apple TV was paired"), a revoked token a warning, and an unpaired Wall
    still labels the fleet's status as the devices' own report ("Your fleet
