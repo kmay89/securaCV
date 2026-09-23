@@ -57,6 +57,8 @@ on:
       - "desktop/src-tauri/src/we2_bench.rs"
       - "desktop/src-tauri/src/sscma.rs"
       - "desktop/src-tauri/src/provisioning.rs"
+      # the secret drawer's backend names (desktop_parity pins app.js where())
+      - "desktop/src-tauri/src/secret_store.rs"
       - "desktop/src-tauri/build.rs"
       # the desktop frontend: desktop_parity.test.js reads its HTML/JS to keep
       # the two flashers in step (CLAUDE.md "two flashers, two frontends")
@@ -138,6 +140,8 @@ on:
       - "desktop/src-tauri/src/we2_bench.rs"
       - "desktop/src-tauri/src/sscma.rs"
       - "desktop/src-tauri/src/provisioning.rs"
+      # the secret drawer's backend names (desktop_parity pins app.js where())
+      - "desktop/src-tauri/src/secret_store.rs"
       - "desktop/src-tauri/build.rs"
       # the desktop frontend: desktop_parity.test.js reads its HTML/JS to keep
       # the two flashers in step (CLAUDE.md "two flashers, two frontends")

@@ -184,6 +184,19 @@ sensitive, so here is the complete list:
   in a file: on macOS open **Keychain Access** and delete the entries whose
   service is **"SecuraCV Flasher"** (saved Wi-Fi/broker passwords and
   per-Canary API tokens). They survive an app reinstall by design.
+  - Linux: the store is your desktop's keyring, reached through the
+    freedesktop Secret Service — GNOME Keyring (open **Passwords and Keys**,
+    also called Seahorse) or KDE Wallet (**KWalletManager**). Delete the
+    entries whose service is **"SecuraCV Flasher"**. If the keyring is
+    locked, saving a password makes it ask to be unlocked first.
+  - A Linux session with **no** Secret Service (a minimal window manager, a
+    headless box, a keyring daemon that isn't running) has no OS store to
+    offer. The app checks at launch and, when nothing answers, keeps the
+    passwords you choose to remember in its own local settings instead —
+    the WebKit storage under `~/.local/share/com.securacv.flasher/` — and
+    the "Remember" note beside the checkbox says so rather than naming a
+    keyring. Once a keyring answers on a later launch, the app moves those
+    saved passwords into it and removes the local copies.
 - **Webview data** (window preferences, no secrets):
   - macOS: `~/Library/WebKit/com.securacv.flasher`,
     `~/Library/Caches/com.securacv.flasher`,

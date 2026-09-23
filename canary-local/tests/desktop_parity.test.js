@@ -871,6 +871,53 @@ test("device API token: both flashers mint the same credential shape and seed th
   assert.match(flashJs, /apiTokenToNvs/, "browser flasher no longer seeds the device API token");
 });
 
+test("secret drawer: the consent copy names exactly the stores the native side can answer", () => {
+  // app.js words every "Remember" note from secretStore.where(), keyed on the
+  // string secret_backend returns. A backend the Rust side can answer but
+  // where() doesn't name falls through to "this app's local settings" — a
+  // consent note that understates where a password went; a name where()
+  // knows but Rust never returns is dead copy. One set, both sides.
+  const storeRs = read(join(ROOT, "desktop/src-tauri/src/secret_store.rs"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const strings = (text) => new Set([...text.matchAll(/"([a-z-]+)"/g)].map((m) => m[1]));
+  const sorted = (set) => [...set].sort();
+
+  const contract = /fn backend_names_are_the_contract\(\)[\s\S]*?matches!\(\s*backend\(\),([^)]*)\)/.exec(storeRs);
+  assert.ok(contract, "secret_store.rs lost backend_names_are_the_contract — re-point this gate at its new home");
+  const names = strings(contract[1]);
+  assert.ok(names.has("none"), "the backend contract must keep \"none\" — the fail-closed answer");
+
+  // Every name the native side can actually return is in the contract:
+  // backend()'s per-platform tail expressions and probe_backend()'s arms.
+  // (A whole-fn slice, to the closing col-0 brace: nativeFnBody stops at the
+  // first attribute, and backend()'s arms are each behind a #[cfg].)
+  const rsFn = (name) => {
+    const m = new RegExp(`\\n(?:pub\\s+)?(?:async\\s+)?fn\\s+${name}\\s*\\(`).exec(storeRs);
+    assert.ok(m, `couldn't find fn ${name} in desktop/src-tauri/src/secret_store.rs`);
+    const rest = storeRs.slice(m.index + 1);
+    return rest.slice(0, rest.indexOf("\n}\n"));
+  };
+  const tails = [...rsFn("backend").matchAll(/^\s*"([a-z-]+)"\s*$/gm)].map((m) => m[1]);
+  const arms = [...rsFn("probe_backend").matchAll(/=>\s*"([a-z-]+)"/g)].map((m) => m[1]);
+  assert.ok(tails.length >= 3, "couldn't read backend()'s per-platform answers out of secret_store.rs");
+  assert.ok(arms.length >= 2, "couldn't read probe_backend()'s answers out of secret_store.rs");
+  for (const a of [...tails, ...arms]) {
+    assert.ok(names.has(a), `secret_store.rs can answer "${a}" but its contract test doesn't list it`);
+  }
+  // The Linux answer is PROBED, and the probe fails closed to "none".
+  assert.match(rsFn("probe_backend"), /_ => "none"/,
+    "probe_backend() must fall back to \"none\" on any failure — a wrong \"secret-service\" makes the consent note a promise the app can't keep");
+
+  // where(): every non-"none" name gets its own wording; "none" is the fallback.
+  const where = /\n  where\(\) \{([\s\S]*?)\n  \},/.exec(appJs);
+  assert.ok(where, "desktop app.js secretStore.where() moved — re-point this gate at it");
+  const worded = new Set([...where[1].matchAll(/this\.backend === "([a-z-]+)"/g)].map((m) => m[1]));
+  assert.match(where[1], /: "this app's local settings";/,
+    "where() must end on the honest no-store wording");
+  assert.deepStrictEqual(sorted(new Set([...worded, "none"])), sorted(names),
+    "desktop app.js where() and secret_store.rs name different secret stores");
+});
+
 test("dev channel: BOTH flashers give the user a control, not just a constant", () => {
   // RELEASE_LESSONS 2026-07-24: copy parity without CAPABILITY parity is worse
   // than divergence. The dev channel had the reverse problem — the browser

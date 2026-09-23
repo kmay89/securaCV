@@ -59,13 +59,29 @@ libc = "0.2.189"
 mdns-sd = "0.21"
 
 # The secret drawer behind setup profiles and per-device API tokens: the OS
-# credential store, platform-gated so the Linux CI check compiles with no new
-# system libraries (secret_store.rs answers "none" there and the frontend
-# falls back to its prefs file, saying so out loud).
+# credential store, one keyring feature set per platform. On Linux it is the
+# freedesktop Secret Service (GNOME Keyring, KDE Wallet's bridge) over D-Bus
+# through keyring's synchronous `dbus-secret-service` backend — libdbus-1 is
+# ALREADY linked by tao (dbus 0.9 / libdbus-sys in this lock), so this adds
+# no -sys crate and no apt package. `crypto-rust` must be KEYRING's feature:
+# keyring picks the session type from its own feature flags, and without one
+# it opens a Plain session — every secret crossing the session bus in the
+# clear. With it the session is DH + AES, in pure Rust (no OpenSSL). Cargo
+# writes the lock from the feature's weak `secret-service?/crypto-rust` half
+# too, so the lock also lists the async backend's zbus 4 tree; none of it is
+# built on any target (`cargo tree -e normal --target all -i zbus@4.4.0`
+# prints nothing). A desktop without a Secret Service still gets a build
+# that runs: secret_store.rs PROBES the bus once and answers "none" when
+# nothing serves it, and the frontend falls back to its local settings,
+# saying so out loud. Kept on keyring 3 on purpose: the macOS/Windows
+# branches have no CI, and a 4.x migration should be its own PR compiled on
+# a Mac.
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 
 [features]
 # By default Tauri uses a custom protocol on Windows/Linux; nothing to gate

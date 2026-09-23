@@ -175,10 +175,12 @@ function rosterAdd(entry) {
 // ── the secret drawer ────────────────────────────────────────────────────────
 // Where the setup profile's passwords and each Canary's API token live: the
 // OS credential store when this platform has one (macOS Keychain, Windows
-// Credential Manager), else this app's own prefs file — and the consent copy
-// names which, instead of pretending. Keys are namespaced and URI-encoded
-// (an SSID can hold spaces/emoji); prefs.secretKeys tracks every key ever
-// written so "Reset the app's memory" can sweep the OS store too.
+// Credential Manager, or a freedesktop Secret Service on Linux — which the
+// Rust side PROBES, so a desktop without one answers "none"), else this
+// app's own prefs file — and the consent copy names which, instead of
+// pretending. Keys are namespaced and URI-encoded (an SSID can hold
+// spaces/emoji); prefs.secretKeys tracks every key ever written so "Reset
+// the app's memory" can sweep the OS store too.
 const secretStore = {
   backend: "none",
   _ready: null,
@@ -188,12 +190,46 @@ const secretStore = {
   init() {
     this._ready = this._ready || (async () => {
       try { this.backend = await invoke("secret_backend"); } catch (_) { this.backend = "none"; }
+      await this._adopt();
     })();
     return this._ready;
+  },
+  // Passwords saved while this platform had no OS store (every Linux build
+  // before the Secret Service backend, or a session whose keyring wasn't
+  // running) sit in the prefs file. Once a store answers, move them in —
+  // the consent note now names the store, so leaving them in the weaker
+  // place would make it half true. One pass per launch, stopping at the
+  // first refusal (a locked keyring the user declined to unlock): the
+  // prefs copy is only dropped after the store accepted it, so nothing is
+  // ever lost, and the next launch simply tries again. It runs inside
+  // init(), so no accessor can race it and write a newer value that this
+  // pass would then overwrite with the old one.
+  async _adopt() {
+    if (this.backend === "none" || !prefs.secrets) return;
+    let moved = 0;
+    for (const [key, value] of Object.entries(prefs.secrets)) {
+      if (!value) continue;
+      try {
+        await invoke("secret_set", { key, value });
+      } catch (e) {
+        // A key the drawer refuses by shape can never move — keep it where
+        // it is (get() still reads it) and carry on with the rest.
+        if (String(e).includes("bad secret key")) continue;
+        break;
+      }
+      delete prefs.secrets[key];
+      moved++;
+      this.track(key, true);
+    }
+    if (moved) {
+      savePrefs();
+      logEvent("info", `Moved ${moved} saved credential${moved === 1 ? "" : "s"} into ${this.where()}.`);
+    }
   },
   where() {
     return this.backend === "keychain" ? "your Mac's Keychain"
       : this.backend === "credential-manager" ? "Windows Credential Manager"
+      : this.backend === "secret-service" ? "your desktop's keyring (GNOME Keyring or KDE Wallet, via Secret Service)"
       : "this app's local settings";
   },
   key(...parts) { return parts.map((p) => encodeURIComponent(String(p))).join(":"); },
