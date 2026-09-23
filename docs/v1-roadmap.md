@@ -199,7 +199,7 @@ Integration testing
   rides with the hardware-validation blocker above.
 - **Encrypted-vault UX / key management** — sealing is wired (opt-in); the trustee/seal setup UI
   and hardware-backed keys are v1.1
-- **Real-time performance guarantees** — benchmark, don't promise
+- **Real-time performance guarantees** — benchmark, don't promise ([how, and why no number is published](BENCHMARKS.md))
 - **Remote attestation** — future
 
 (RTSP was previously listed here as a stretch goal. Under the canonical "everything documented
@@ -227,7 +227,7 @@ the v1 Definition and Acceptance Criteria.)
   `device_pseudonym` and GPS through `gps_coarsen_deg`; `regression_check.sh` hard-fails on either)
 
 ### Nice to have:
-- [ ] Performance benchmarks
+- [x] Performance benchmark harness (numbers deliberately unpublished — AGENTS.md rule 4) — [BENCHMARKS.md](BENCHMARKS.md)
 
 ### Explicitly out of scope:
 - [ ] GPU acceleration

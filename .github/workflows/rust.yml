@@ -100,6 +100,23 @@ jobs:
     # behavior, same rationale as the adapter job.
     - name: Test with C2PA export feature
       run: cargo test --features c2pa-export
+    # bench-harness: every benchmark in tests/bench_harness.rs is #[ignore],
+    # so "Run tests" above ran only its two guard tests. Run the benchmarks
+    # once here, in release, and
+    # keep the tables as an artifact. No threshold and no comparison, on
+    # purpose: this proves the harness still runs and hands a reviewer a
+    # table to read next to a change that claims to be faster. The numbers
+    # stay in the artifact — AGENTS.md rule 4, docs/BENCHMARKS.md. An
+    # explicit `shell: bash` runs with -o pipefail, so a row that fails still
+    # fails the step through the tee.
+    - name: bench-harness
+      shell: bash
+      run: cargo test --release --test bench_harness -- --ignored --nocapture --test-threads=1 | tee bench_harness.md
+    - name: Upload bench-harness output
+      uses: actions/upload-artifact@v7
+      with:
+        name: bench-harness-stdout
+        path: bench_harness.md
 
   conformance:
     name: Chain conformance (fixture DB round-trip through log_verify)
