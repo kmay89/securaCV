@@ -318,6 +318,11 @@ async function walkHarness(flavor) {
     check(cutHint.length === 0, `with the stuck-phone hint up the join scene cuts ${cutHint.length} line(s) ` +
       `to an ellipsis (first dots at ${JSON.stringify(cutHint)}) (F45)`);
     const hintLines = await E(glassLines);
+    // A changed label is not enough: on round glass the title yields as the
+    // hint arrives, so the wait above passes even if the hint never draws.
+    // Every form of it (round, portrait, wide) says "forget".
+    check(hintLines.some((l) => /\bforget\b/i.test(l.text)), `the stuck-phone hint never reached the glass ` +
+      `(lines: ${JSON.stringify(hintLines.map((l) => l.text))}) (F45)`);
     const goneHint = credsOnGlass(hintLines, ap);
     check(goneHint.length === 0, `with the stuck-phone hint up the join scene no longer shows ` +
       `${goneHint.join(" or ")} (lines: ${JSON.stringify(hintLines.map((l) => l.text))}) — the phone ` +

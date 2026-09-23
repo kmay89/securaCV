@@ -56,7 +56,8 @@ the QR does not scan (or never rendered) that text is the only way in, and the
 stuck-phone hint ("forget it on your phone") comes up exactly when the phone
 needs the key again. On that glass the hint gets a row of its own: under the
 key on the nightstand and nightlight, the title's band on the round watch
-(the title yields while the hint stands — the card says "scan me" by itself).
+(the title yields while the hint stands: with the QR up, the card speaks for
+itself; without one, the hint replaces "On your phone").
 No row is ever cut to an ellipsis (F45).
 
 The last step is the payoff of the whole discovery program: the moment WiFi
