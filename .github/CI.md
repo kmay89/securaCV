@@ -19,11 +19,22 @@ introducing PR — the rules below can't rot by forgetting.
 | R7 | A paths filter includes the workflow's own file | Editing a workflow must run it — the classic "merged a broken workflow that never triggered" gap |
 | R8 | Third-party actions (any owner outside `actions/` and `github/`) are pinned to a full commit SHA with a `# <version>` comment | A tag is a mutable ref in someone else's hands — a compromised or careless owner can move it under a run that holds secrets. SHA pins make the supply chain content-addressed; Dependabot bumps the pin and comment together. Exemptions: `ci-policy.yml → third_party_tag_ok`, each with a reason |
 | R10 | Toolchain setup is a composite action under `.github/actions/` — PlatformIO (`setup-platformio`), the Arduino CLI + ESP32 core (`setup-arduino-esp32`), the Emscripten SDK (`setup-emsdk`), libseccomp (`setup-libseccomp`), and the freshness workflows' open-or-comment issue (`issue-dedup`). A job passes its pins and cache key as inputs; it never `pip install`s PlatformIO or fetches emsdk in a `run:` block | The same setup used to be typed into four PlatformIO jobs, two emsdk jobs and nine cargo jobs, and copies drift: a fix (an interpreter pin, a cache path, the emsdk activation-every-run rule) lands in one and not the others, and the emulator refresh workflow's whole promise — byte-identical output to the CI rebuild — depends on the two being the same steps. The checker catches the easy half (an inline PlatformIO install or emsdk fetch); a new toolchain hand-rolled somewhere else is on the reviewer. A composite action that runs Python carries its own `actions/setup-python` step (R9 counts it for the calling job). Exemptions: `ci-policy.yml → inline_toolchain_ok` |
-| R9 | A job that runs Python — `python3`, `pip`, `ruff`, `mypy`, `pytest`, directly or through a script — has an `actions/setup-python` step, normally `python-version-file: pyproject.toml`, placed right after checkout | The runner image's `python3` is whatever `ubuntu-latest` ships this month and it moves under you (24.04 went to 3.12 while `pyproject.toml` targets 3.11), and packages that merely happen to be preinstalled there (PyYAML) are not on the setup-python interpreter — so a job `pip install`s what it imports. `pyproject.toml`'s `requires-python` is the ONE interpreter range for the repo's tooling (a floor and a ceiling: the versions the tests have actually run on — setup-python picks the newest release inside it, so an open floor would drift to whatever CPython shipped last month): move it there and every job follows. A job that needs a specific interpreter (PlatformIO, the Vela compiler) may pin `python-version` explicitly and says why in a comment. The checker sees commands in `run:` blocks; a Python call hidden inside a shell script is on the reviewer. Exemptions: `ci-policy.yml → system_python_ok` (`<workflow>.yml:<job>`) |
+| R9 | A job that runs Python — `python3`, `pip`, `ruff`, `mypy`, `pytest`, directly or through a script — has an `actions/setup-python` step, normally `python-version-file: pyproject.toml`, placed right after checkout | The runner image's `python3` is whatever `ubuntu-latest` ships this month and it moves under you (24.04 went to 3.12 while `pyproject.toml` targets 3.11), and packages that merely happen to be preinstalled there (PyYAML) are not on the setup-python interpreter — so a job `pip install`s what it imports. `pyproject.toml`'s `requires-python` is the ONE interpreter range for the repo's tooling (a floor and a ceiling: the versions the tests have actually run on — setup-python picks the newest release inside it, so an open floor would drift to whatever CPython shipped last month): move it there and every job follows. A job that needs a specific interpreter (PlatformIO, the Vela compiler) may pin `python-version` explicitly and says why in a comment. The checker sees commands in `run:` blocks, and refuses an explicit `python-version` with no reason comment on its line or above it inside the same step (a `${{ }}` expression is exempt: the reason lives where the value is chosen); a Python call hidden inside a shell script is on the reviewer, and so is whether the comment is a real reason. Exemptions: `ci-policy.yml → system_python_ok` (`<workflow>.yml:<job>`) |
 
 Exemptions live in `.github/ci-policy.yml`, never in the checker — each
 one carries a comment saying why. Run the checker locally with
 `python3 .github/scripts/ci_policy_check.py` (needs `pyyaml`).
+
+**What a path filter must cover (R5, R6).** A check whose input is prose,
+or files anywhere in the tree, belongs in `lint.yml` (unfiltered,
+`ci-policy.yml → unfiltered_ok`). A test in a filtered workflow lists every
+file it reads outside the workflow's own trees in both path lists (R6) —
+otherwise an edit to that file alone runs nothing, and the red lands on the
+next unrelated PR. Neither half is machine-checked yet, and the second is
+not yet true everywhere: canary-local.yml's lists cover every file its
+logic tests open, but some of those tests only check that a file outside
+them exists, and its drift-step generators read further (`gen_flash.py`
+reads `firmware/canary/**`).
 
 ## Speed & cost conventions
 
@@ -46,7 +57,16 @@ one carries a comment saying why. Run the checker locally with
   source (`cargo install <tool>`) cache the built binary under a weekly
   key — pattern in audit.yml / sbom.yml.
 - **Node** jobs installing from a lockfile use `setup-node`'s
-  `cache: npm` with an explicit `cache-dependency-path`.
+  `cache: npm` with an explicit `cache-dependency-path`. A job that runs
+  node at all (`node --test`, a `.mjs` generator, `npx`) sets it up with
+  `actions/setup-node@v7` — the image's node moves with the image, like
+  its `python3` — on `node-version: "22"` (the major the page and host
+  tests run) unless a comment says why. Three jobs are on `20` with no
+  reason written down yet: `desktop-release.yml` and
+  `desktop-flasher-release.yml` (`build`, the two app releases) and
+  `sbom.yml` (`generate-sbom`). They are the known exceptions until
+  someone moves them or writes the reason next to the pin. Not
+  machine-checked yet; the reviewer holds it.
 - **One-off big downloads** (Emscripten SDK, Playwright Chromium) get an
   `actions/cache` entry — pinned-version keys for pinned tools, weekly
   keys for floating ones (see canary-local.yml).
@@ -77,7 +97,8 @@ one carries a comment saying why. Run the checker locally with
    false`, plus a `main_queue_ok` entry saying why order matters.
 3. `timeout-minutes` on every job.
 4. Path-filter `push`/`pull_request` identically, and include
-   `.github/workflows/<your-file>.yml` in the filter.
+   `.github/workflows/<your-file>.yml` in the filter — and every file a
+   test in it reads outside those paths (above).
 5. Pin `actions/`/`github/` actions to a major tag; pin every other
    action to its 40-hex commit SHA with a `# <version>` comment
    (resolve with `git ls-remote … 'refs/tags/<tag>^{}'`).
@@ -89,4 +110,4 @@ one carries a comment saying why. Run the checker locally with
    it (R10) instead of pasting its steps.
 
 The policy check tells you about 1–6 and the easy half of 8 on the PR if
-you forget; 7 is on the reviewer.
+you forget; 7, and the files-a-test-reads half of 4, are on the reviewer.
