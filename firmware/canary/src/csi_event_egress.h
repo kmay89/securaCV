@@ -22,10 +22,11 @@
  * this tree yet (the canary-wap's csi_event_log is SD.h-bound and single-
  * writer rules differ here) — a recorded follow-up, not a silent gap.
  *
- * Event-id continuity: csi_event_on_id_advance persists the allocator's
- * floor to NVS every 10 ids and begin() restores it, so ids stay monotonic
- * across reboots (HA's replay detection keys on them), exactly as the
- * canary-wap does.
+ * Event-id continuity: csi_event_on_id_advance writes the allocator's
+ * floor to NVS (common/csi/src/csi_event_id_floor.h: before the first id
+ * of each boot and every 10 ids after) and begin() restores it, so ids
+ * stay monotonic across reboots (HA's replay detection keys on them), with
+ * the same policy as the canary-wap.
  */
 
 #ifndef SECURACV_CSI_EVENT_EGRESS_H

@@ -51,7 +51,8 @@
     "ble_events_module.h",
     "tamper_events_module.h",
     "contact_tamper.h",
-    "csi_event_wire.h"
+    "csi_event_wire.h",
+    "csi_event_id_floor.h"
   ],
   "build": {
     "srcDir": "src",

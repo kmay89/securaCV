@@ -140,6 +140,13 @@ CONTACT_BIN = $(BUILD_DIR)/test_contact_tamper
 EVWIRE_HDRS = ../common/csi/src/csi_event_wire.h ../common/csi/src/csi_event.h
 EVWIRE_BIN  = $(BUILD_DIR)/test_csi_event_wire
 
+# When both trees write the csi_event id allocator's floor to NVS
+# (common/csi/src/csi_event_id_floor.h): modeled boots prove no id is ever
+# handed out twice across a reboot (HA's replay gate refuses a reused one),
+# including a boot that allocates fewer than a stride of ids.
+IDFLOOR_HDR = ../common/csi/src/csi_event_id_floor.h
+IDFLOOR_BIN = $(BUILD_DIR)/test_csi_event_id_floor
+
 # The canary setup wizard's hub step (canary/lib/securacv_webui/src/
 # securacv_setup_page.cpp), the one UI that writes those fields: its script
 # is lifted out of the C++ raw string and driven against a stub DOM and a
@@ -398,6 +405,9 @@ $(CONTACT_BIN): test_contact_tamper.cpp $(CONTACT_HDR) Makefile | $(BUILD_DIR)
 $(EVWIRE_BIN): test_csi_event_wire.cpp $(EVWIRE_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -I ../common/csi/src test_csi_event_wire.cpp -o $@
 
+$(IDFLOOR_BIN): test_csi_event_id_floor.cpp $(IDFLOOR_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) test_csi_event_id_floor.cpp -o $@
+
 $(PORTAL_BIN): test_setup_portal_logic.cpp $(PORTAL_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_setup_portal_logic.cpp -o $@
 
@@ -463,7 +473,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -479,6 +489,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(MQTTQUEUE_BIN)
 	./$(CONTACT_BIN)
 	./$(EVWIRE_BIN)
+	./$(IDFLOOR_BIN)
 	./$(PORTAL_BIN)
 	./$(POWEREVT_BIN)
 	./$(SCENE_BIN)

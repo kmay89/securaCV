@@ -51,6 +51,7 @@
 #include <csi_types.h>
 #include <csi_module.h>
 #include <csi_event.h>
+#include "csi_event_id_floor.h"   // when to write the id floor (common/csi, host-tested)
 #include <csi_bundler.h>          // snapshot_open() — live rows for /api/events/today
 
 /* The four v1 modules ship with the library. After the Phase-4 flattening
@@ -552,17 +553,20 @@ void apply_filter_foreign_from_nvs() {
  * commit removes that workaround by persisting the allocator's next-
  * id to NVS and restoring at boot.
  *
- * Persist cadence: every CSI_ID_PERSIST_STRIDE allocations we write
- * "current next_id + STRIDE" to NVS. After a reboot we restore from
- * that persisted value, then continue from there. Worst case we skip
- * up to STRIDE ids (never reuse one), and NVS write traffic stays
- * bounded — at the per-module hourly ceiling (~6 events/hour) and
- * STRIDE=10 we churn ~14 NVS writes/day, well inside the cell wear
- * budget. ────────────────────────────────────────────────────────── */
+ * Persist cadence: common/csi/src/csi_event_id_floor.h, shared with the
+ * canary PIO tree and host-tested across modeled reboots.
+ * g_id_floor_stored is the value NVS holds; an allocation at or past it
+ * writes "id + STRIDE" before the id goes out, so NVS is always above
+ * every id handed out. After a reboot we restore from that value, and
+ * the boot's first allocation writes again. Worst case a reboot skips
+ * up to STRIDE ids (never reuses one): the scheme this replaced wrote
+ * only every STRIDE ids and reused the ids of any boot shorter than
+ * that. NVS write traffic stays bounded: one write per boot, plus ~14/day
+ * at the per-module hourly ceiling (~6 events/hour, STRIDE=10), well
+ * inside the cell wear budget. ────────────────────────────────────── */
 
 constexpr const char*    NVS_KEY_EVENT_ID = "ev.next";
-constexpr uint32_t       CSI_ID_PERSIST_STRIDE = 10;
-uint32_t                 g_id_persisted_at = 0;
+uint32_t                 g_id_floor_stored = 0;
 
 void apply_event_id_floor_from_nvs() {
   Preferences prefs;
@@ -571,18 +575,17 @@ void apply_event_id_floor_from_nvs() {
   prefs.end();
   if (persisted > 0) {
     csi_event_set_event_id_floor(persisted);
-    g_id_persisted_at = persisted;
+    g_id_floor_stored = persisted;
   }
 }
 
-void persist_event_id_floor(uint32_t next_id) {
+void persist_event_id_floor(uint32_t new_id) {
   Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return;
-  /* Persist next_id + STRIDE so a reboot between persists at most
-   * skips STRIDE ids forward but never rewinds into the live range. */
-  prefs.putULong(NVS_KEY_EVENT_ID, (unsigned long)(next_id + CSI_ID_PERSIST_STRIDE));
+  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return;  // retried next id
+  const uint32_t next_floor = csi_event_id_floor::floor_for(new_id);
+  const bool wrote = prefs.putULong(NVS_KEY_EVENT_ID, (unsigned long)next_floor) > 0;
   prefs.end();
-  g_id_persisted_at = next_id;
+  if (wrote) g_id_floor_stored = next_floor;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -2754,19 +2757,18 @@ extern "C" void csi_event_on_committed(uint32_t                  event_id,
 /* ──────────────────────────────────────────────────────────────────────────
  * STRONG OVERRIDE — csi_event_on_id_advance
  *
- * Fires on every event-id allocation. We throttle-persist the next-id
- * to NVS every CSI_ID_PERSIST_STRIDE advances so a subsequent boot can
- * resume from "persisted + safety_margin" via apply_event_id_floor_from_nvs.
+ * Fires on every event-id allocation. We throttle-persist the floor to
+ * NVS (csi_event_id_floor.h's STRIDE) so a subsequent boot can resume
+ * from "persisted + safety_margin" via apply_event_id_floor_from_nvs.
  * Without this, a reboot resets g_next_event_id to 1 and csi_mqtt's
  * reconnect-backfill watermark loses the ability to disambiguate
  * previous-boot vs current-boot events. ──────────────────────────── */
 
 extern "C" void csi_event_on_id_advance(uint32_t new_id) {
-  /* Cheap modulo gate so we don't hit NVS on every event. STRIDE=10
-   * means worst-case loss is 10 ids on a hard reset; NVS writes stay
-   * around ~14/day at the per-module hourly ceiling, well inside the
-   * cell wear budget. */
-  if (new_id < g_id_persisted_at + CSI_ID_PERSIST_STRIDE) return;
+  /* Cheap gate so we don't hit NVS on every event: one write per boot
+   * plus one per STRIDE ids (csi_event_id_floor.h). Worst-case loss is
+   * STRIDE ids on a hard reset, and none is ever reused. */
+  if (!csi_event_id_floor::must_persist(g_id_floor_stored, new_id)) return;
   persist_event_id_floor(new_id);
 }
 

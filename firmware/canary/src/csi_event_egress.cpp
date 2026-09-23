@@ -11,6 +11,7 @@
 #include <Preferences.h>
 
 #include "csi_event.h"
+#include "csi_event_id_floor.h"
 
 #if FEATURE_HA_MQTT
 #include <freertos/FreeRTOS.h>
@@ -26,13 +27,14 @@
 namespace {
 
 /* ── Event-id floor (NVS) ─────────────────────────────────────────────────
- * Same scheme as the canary-wap's csi_integration.cpp: every STRIDE
- * allocations, persist "next id + STRIDE"; a reboot resumes from there, so
- * an id is skipped at worst and never reused. */
+ * The policy is common/csi/src/csi_event_id_floor.h, shared with the
+ * canary-wap's csi_integration.cpp and host-tested across modeled reboots:
+ * s_id_floor_stored is the value NVS holds, and an allocation at or past
+ * it writes id + STRIDE before the id goes out. So NVS is always above
+ * every id handed out, and a reboot skips ids at worst and reuses none. */
 constexpr const char* kNvsNamespace = "securacv";
 constexpr const char* kNvsKeyEventId = "csi.evid";
-constexpr uint32_t    kIdPersistStride = 10;
-uint32_t              s_id_persisted_at = 0;
+uint32_t              s_id_floor_stored = 0;
 
 void restore_event_id_floor() {
   Preferences prefs;
@@ -41,16 +43,17 @@ void restore_event_id_floor() {
   prefs.end();
   if (persisted > 0) {
     csi_event_set_event_id_floor(persisted);
-    s_id_persisted_at = persisted;
+    s_id_floor_stored = persisted;
   }
 }
 
-void persist_event_id_floor(uint32_t next_id) {
+void persist_event_id_floor(uint32_t new_id) {
   Preferences prefs;
-  if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
-  prefs.putULong(kNvsKeyEventId, (unsigned long)(next_id + kIdPersistStride));
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;  // retried next id
+  const uint32_t next_floor = csi_event_id_floor::floor_for(new_id);
+  const bool wrote = prefs.putULong(kNvsKeyEventId, (unsigned long)next_floor) > 0;
   prefs.end();
-  s_id_persisted_at = next_id;
+  if (wrote) s_id_floor_stored = next_floor;
 }
 
 #if FEATURE_HA_MQTT
@@ -101,8 +104,8 @@ bool boot_story_bridged_elsewhere(const char* kind) {
 /* ── Strong overrides of csi_event.cpp's weak hooks ───────────────────── */
 
 extern "C" void csi_event_on_id_advance(uint32_t new_id) {
-  /* Cheap gate so NVS sees ~1 write per STRIDE events. */
-  if (new_id < s_id_persisted_at + kIdPersistStride) return;
+  /* One NVS write per boot that allocates, plus one per STRIDE ids. */
+  if (!csi_event_id_floor::must_persist(s_id_floor_stored, new_id)) return;
   persist_event_id_floor(new_id);
 }
 
