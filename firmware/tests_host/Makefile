@@ -99,7 +99,10 @@ WIFIJOIN_BIN = $(BUILD_DIR)/test_wifi_join_policy
 # (common/network/provisioning_gate.h): one tap admits exactly one consumer
 # (atomic exchange), the gate self-closes after its TTL, millis()==0 is a
 # real tap, and the dashboard's bearer credential is WITHHELD from a LAN
-# request that carries no grant (setup / bearer / SoftAP subnet / open gate).
+# request that carries no grant (setup / bearer / SoftAP subnet / an unspent
+# tap, which the page load then spends — one tap, one consumer across the
+# page and receipt paths), and the dual-stack socket's ::ffff:a.b.c.d peer
+# address unwraps to IPv4 while a true IPv6 address reads as unknown.
 # Consumed by the canary tree's securacv_network + main.cpp; the canary-wap
 # sketch keeps an inline copy of the two gate operations to this contract.
 PROVGATE_HDR = ../common/network/provisioning_gate.h

@@ -346,9 +346,9 @@ static volatile uint8_t g_tamper_pending_confidence = 0; /* 0..100 */
 static char g_ap_password[16];
 
 // Physical-presence gate (F20 gap #11). Opened by a short BOOT tap in
-// handle_boot_button(); the network lib takes it from the receipt handler
-// and peeks it from the page handlers through the hooks registered in
-// setup(). The State is this file's because the BOOT button is.
+// handle_boot_button(); the network lib takes it — from the receipt handler
+// or from a home-LAN page load, whichever asks first — through the hooks
+// registered in setup(). The State is this file's because the BOOT button is.
 static canary::net::provisioning_gate::State g_prov_gate = {0};
 static bool prov_gate_take_hook() {
   return canary::net::provisioning_gate::take(g_prov_gate, millis(), PROVISIONING_GATE_TTL_MS);
@@ -2112,13 +2112,27 @@ static void handle_boot_button() {
       // Medium hold: print device info
       print_status();
     } else {
-      if (duration >= BOOT_SHORT_PRESS_MS) {
+#if FEATURE_USB_ONBOARD
+      // A tap that answers the console's armed USB-onboarding request ('u',
+      // a 15 s window the owner opened on purpose) is that confirmation and
+      // nothing else: it must not also open the provisioning gate. Read
+      // before usb_onboard::confirm() below moves Armed → Launched. (A tap
+      // from Idle is both the one-tap help launch and a gate open — see
+      // docs/design/usb_onboard.md.)
+      const bool tap_is_usb_confirm =
+          usb_onboard::state() == usb_onboard::State::Armed;
+#else
+      const bool tap_is_usb_confirm = false;
+#endif
+      if (duration >= BOOT_SHORT_PRESS_MS && tap_is_usb_confirm) {
+        Serial.println("[AUTH] BOOT tap confirmed USB onboarding; provisioning gate left closed");
+      } else if (duration >= BOOT_SHORT_PRESS_MS) {
         // Short tap: open the provisioning gate (F20 gap #11, WAP parity).
-        // One tap admits exactly one GET /api/provisioning-receipt within
-        // PROVISIONING_GATE_TTL_MS, and lets the dashboard load WITH its
-        // credential from the home LAN for the same window.
+        // One tap admits exactly ONE consumer within PROVISIONING_GATE_TTL_MS:
+        // one GET /api/provisioning-receipt, or one home-LAN dashboard load
+        // with its credential — whichever asks first (page_token_decide).
         canary::net::provisioning_gate::open(g_prov_gate, millis());
-        Serial.printf("[AUTH] Provisioning gate OPENED (receipt available for %lu seconds)\n",
+        Serial.printf("[AUTH] Provisioning gate OPENED (one receipt fetch or one LAN page load, %lu seconds)\n",
                       (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000));
         log_health(LOG_LEVEL_INFO, LOG_CAT_USER, "Provisioning gate opened", "BOOT button");
         // Blink the user LED 3x to confirm. Skipped while an SD mount attempt
@@ -2143,8 +2157,9 @@ static void handle_boot_button() {
 #if FEATURE_USB_ONBOARD
       // Short press is ALSO the physical confirmation for USB onboarding. This
       // is the trust keystone — the ONLY thing that lets the HID keyboard
-      // type, and only while it is ARMED (a no-op otherwise). Independent
-      // latch from the provisioning gate above.
+      // type (from Idle, Armed or Launched; a no-op when the feature is Off).
+      // Independent latch from the provisioning gate above, which an Armed
+      // confirmation leaves closed.
       usb_onboard::confirm();
 #endif
     }

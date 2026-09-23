@@ -9,6 +9,9 @@
 //   * millis()==0 is stored as 1, never as "closed";
 //   * the 49-day uint32 wrap of millis() does not turn a fresh tap stale;
 //   * LAN + nothing → WITHHOLD; every grant (setup / bearer / AP / gate) → INJECT;
+//   * one tap is ONE consumer across the page and receipt paths: five LAN
+//     page loads after a tap inject once, and whichever of page load /
+//     receipt fetch comes first leaves nothing for the other;
 //   * ipv4_in_subnet / request_on_softap answer false for every "not provably
 //     over the Canary's own Wi-Fi" input (wrong interface, overlapping home
 //     subnet, unusable mask, AP down);
@@ -20,6 +23,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <functional>
 
 using namespace canary::net::provisioning_gate;
 
@@ -122,6 +126,88 @@ static void reason_pointer_is_optional() {
         "nullptr reason is accepted");
   CHECK(page_token_policy(true, true, true, true, nullptr) == PageToken::INJECT,
         "all grants together still INJECT");
+}
+
+// ── one tap, one consumer, across the page and receipt paths ────────────────
+//
+// The firmware's two consumers, modeled exactly as the handlers run them:
+//   page load    → page_token_decide(setup, bearer, on_ap, take-hook)
+//   receipt GET  → bearer ? served : take-hook ? served : 403
+// (handle_provisioning_receipt: `if (bearer_present_and_valid) serve;
+//  if (!provisioning_gate_take()) 403; serve`).
+
+struct Taker {
+  State* s;
+  uint32_t now;
+  int calls;
+  bool operator()() {
+    ++calls;
+    return take(*s, now, kTtl);
+  }
+};
+
+static bool lan_page_load(State& s, uint32_t now, int* take_calls = nullptr) {
+  Taker t{&s, now, 0};
+  const bool inject = page_token_decide(false, false, false, std::ref(t)) == PageToken::INJECT;
+  if (take_calls) *take_calls = t.calls;
+  return inject;
+}
+
+static bool receipt_fetch(State& s, uint32_t now, bool bearer_ok) {
+  if (bearer_ok) return true;
+  return take(s, now, kTtl);
+}
+
+static void one_tap_unlocks_exactly_one_lan_page_load() {
+  State s{0};
+  open(s, 1000);
+  int injected = 0;
+  for (int i = 0; i < 5; ++i) {
+    if (lan_page_load(s, 1000 + (uint32_t)i * 100)) ++injected;
+  }
+  CHECK(injected == 1, "one tap, five LAN page loads → exactly one INJECT, got %d", injected);
+  CHECK(!is_open(s, 1600, kTtl), "the page load spent the tap");
+  CHECK(!receipt_fetch(s, 1700, false), "and the tapless receipt fetch is refused afterwards");
+  // The page that won holds the bearer, so its Save-recovery-kit still works.
+  CHECK(receipt_fetch(s, 1800, true), "a bearer-carrying receipt fetch needs no tap");
+}
+
+static void receipt_first_leaves_nothing_for_a_page_load() {
+  State s{0};
+  open(s, 1000);
+  CHECK(receipt_fetch(s, 1200, false), "the app's receipt fetch spends the tap");
+  CHECK(!lan_page_load(s, 1300), "a LAN page load after it is withheld");
+}
+
+static void standing_grants_never_spend_the_tap() {
+  State s{0};
+  open(s, 1000);
+  Taker t{&s, 1100, 0};
+  CHECK(page_token_decide(true, false, false, std::ref(t)) == PageToken::INJECT, "setup → INJECT");
+  CHECK(page_token_decide(false, true, false, std::ref(t)) == PageToken::INJECT, "bearer → INJECT");
+  CHECK(page_token_decide(false, false, true, std::ref(t)) == PageToken::INJECT, "SoftAP → INJECT");
+  CHECK(t.calls == 0, "no standing grant touches the gate, %d take calls", t.calls);
+  CHECK(is_open(s, 1100, kTtl), "the tap is still there for the one consumer that needs it");
+  int calls = -1;
+  CHECK(lan_page_load(s, 1200, &calls), "a LAN load then spends it");
+  CHECK(calls == 1, "exactly one take per decision, got %d", calls);
+}
+
+static void no_tap_withholds_and_names_the_reason() {
+  State s{0};
+  int calls = -1;
+  CHECK(!lan_page_load(s, 1000, &calls), "no tap → WITHHOLD");
+  CHECK(calls == 1, "the gate was asked once, got %d", calls);
+  open(s, 2000);
+  Taker t{&s, 2100, 0};
+  const char* why = nullptr;
+  CHECK(page_token_decide(false, false, false, std::ref(t), &why) == PageToken::INJECT, "tap → INJECT");
+  CHECK(why && std::strstr(why, "gate") != nullptr, "reason names the gate");
+  CHECK(page_token_decide(false, false, false, std::ref(t), &why) == PageToken::WITHHOLD, "spent → WITHHOLD");
+  CHECK(why && std::strstr(why, "withheld") != nullptr, "reason names the withhold");
+  // An expired tap grants nothing either.
+  open(s, 3000);
+  CHECK(!lan_page_load(s, 3000 + kTtl), "an expired tap → WITHHOLD");
 }
 
 // ── subnet check ────────────────────────────────────────────────────────────
@@ -277,6 +363,10 @@ int main() {
   lan_with_no_grant_withholds();
   every_single_grant_injects();
   reason_pointer_is_optional();
+  one_tap_unlocks_exactly_one_lan_page_load();
+  receipt_first_leaves_nothing_for_a_page_load();
+  standing_grants_never_spend_the_tap();
+  no_tap_withholds_and_names_the_reason();
   ap_subnet_match_is_conservative();
   request_on_softap_needs_the_ap_interface_and_no_overlap();
   v4_and_v4_mapped_addresses_unwrap();

@@ -997,8 +997,9 @@ void network_set_provisioning_gate_hooks(network_gate_fn_t take,
   s_gate_is_open = is_open;
 }
 
+// Every grant TAKES the gate (one tap = one consumer). The is_open hook is
+// only a wiring check for /api/status; nothing here grants on a peek.
 static bool provisioning_gate_take()    { return s_gate_take    ? s_gate_take()    : false; }
-static bool provisioning_gate_is_open() { return s_gate_is_open ? s_gate_is_open() : false; }
 
 // Host-order a.b.c.d from an IPAddress (WiFi.softAPIP() and friends).
 static uint32_t ip4_host_order(const IPAddress& ip) {
@@ -1861,23 +1862,34 @@ static esp_err_t send_html_with_token(httpd_req_t* req, const char* html, bool i
   return httpd_resp_send_chunk(req, NULL, 0);
 }
 
-// The page-token policy for this request (provisioning_gate::page_token_policy,
+// The page-token decision for this request (provisioning_gate::page_token_decide,
 // host-tested): inject while the first-boot wizard is active, for a
 // bearer-authenticated caller, for a peer inside the live SoftAP subnet, or
-// while the BOOT-tap gate is open — PEEKED, never taken, so loading the page
-// cannot spend the tap the receipt fetch needs. Everything else (the home
-// LAN) gets the page without the credential.
+// by SPENDING an unspent BOOT tap — taken, never peeked, so one tap unlocks
+// exactly one home-LAN page load (or, if the app asks first, one receipt
+// fetch; never both). The page that got the token holds the bearer, so its
+// "Save recovery kit" needs no second tap. Everything else (the home LAN)
+// gets the page without the credential.
 static bool page_token_inject(httpd_req_t* req) {
   using canary::net::provisioning_gate::PageToken;
-  using canary::net::provisioning_gate::page_token_policy;
+  using canary::net::provisioning_gate::page_token_decide;
   const bool setup_active = setup_is_active() || setup_is_first_boot();
   const bool bearer_ok    = bearer_present_and_valid(req);
   const bool on_ap        = from_ap_subnet(req);
-  const bool gate_open    = provisioning_gate_is_open();
+  bool tap_spent = false;
   const char* why = nullptr;
-  const PageToken verdict = page_token_policy(setup_active, bearer_ok, on_ap, gate_open, &why);
+  const PageToken verdict = page_token_decide(
+      setup_active, bearer_ok, on_ap,
+      [&tap_spent]() {
+        tap_spent = provisioning_gate_take();
+        return tap_spent;
+      },
+      &why);
   if (verdict == PageToken::WITHHOLD) {
     Serial.printf("[AUTH] page token withheld (%s)\n", why ? why : "");
+  } else if (tap_spent) {
+    Serial.println("[AUTH] page token handed to one page load on a BOOT tap. Gate closed.");
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Page token unlocked", "BOOT gate");
   }
   return verdict == PageToken::INJECT;
 }

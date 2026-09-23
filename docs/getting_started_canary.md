@@ -516,15 +516,18 @@ own Wi-Fi only your phone can reach it, so the key comes with the page.
 On your home network any device could load that page, so the Canary sends
 it *without* the key and shows a banner with three ways in:
 
-- tap the **BOOT** button on the Canary, then reload within 30 seconds;
+- tap the **BOOT** button on the Canary, then reload within 30 seconds
+  (one tap unlocks one page load; reloading it later needs another tap);
 - join the Canary's own Wi-Fi (`SecuraCV-XXXX`) while it is still
   broadcasting (it stops once your home Wi-Fi is working); or
 - paste the token from your recovery kit into the banner. It is kept only
   for that browser tab, never saved.
 
-Each BOOT tap also lets exactly one app or browser fetch the recovery kit
-within those 30 seconds — that is how you get it back later without a
-USB cable. *(New in 2026-09; checked by automated builds and tests, not
+Each BOOT tap unlocks exactly one thing within those 30 seconds: one
+page load, or one app or browser fetching the recovery kit — whichever
+asks first. A page you unlocked with the tap can save the recovery kit
+without a second tap; the iPhone app fetching the kit on its own needs a
+fresh tap. That is how you get the kit back later without a USB cable. *(New in 2026-09; checked by automated builds and tests, not
 yet on a bench device.)*
 
 **Encrypted dashboard (development and full images only, for now).** On

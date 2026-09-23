@@ -23,9 +23,11 @@
 // out of view-source. The policy withholds it unless the request is one of:
 // the first-boot setup wizard, a bearer-authenticated caller, a request that
 // provably arrived over the Canary's own Wi-Fi (request_on_softap below: the
-// device-unique AP password + max 1 client is that boundary), or the gate is
-// open (peeked, never taken — loading the page must not spend the tap the
-// receipt fetch needs).
+// device-unique AP password + max 1 client is that boundary), or an unspent
+// BOOT tap — which the page load then SPENDS (page_token_decide). The tap is
+// one consumer across both paths: one page load or one receipt fetch,
+// whichever asks first. A page that got the token already holds the bearer,
+// so its "Save recovery kit" fetch needs no second tap.
 #pragma once
 
 #include <stddef.h>
@@ -51,7 +53,9 @@ inline void open(State& s, uint32_t now_ms) {
   __atomic_store_n(&s.opened_at_ms, stamp(now_ms), __ATOMIC_RELEASE);
 }
 
-// Peek: true while the gate is open. Does NOT consume the tap.
+// Peek: true while the gate is open. Does NOT consume the tap, so it is for
+// status and tests only — never a grant (a grant that peeks lets one tap
+// admit many consumers; page_token_decide takes instead).
 inline bool is_open(const State& s, uint32_t now_ms, uint32_t ttl_ms) {
   const uint32_t opened = __atomic_load_n(&s.opened_at_ms, __ATOMIC_ACQUIRE);
   if (opened == 0) return false;
@@ -82,6 +86,8 @@ enum class PageToken : uint8_t {
 // The order is the order of the reasons a reader sees on the wire: the most
 // specific, physically-attested grant first. `reason` (optional) names the
 // branch for the serial log; it is a string literal, never freed.
+// `gate_open` means "a tap was spent on THIS request" — the firmware never
+// calls this with a peeked gate; it goes through page_token_decide below.
 inline PageToken page_token_policy(bool setup_active, bool bearer_ok,
                                    bool from_ap_subnet, bool gate_open,
                                    const char** reason = nullptr) {
@@ -102,6 +108,27 @@ inline PageToken page_token_policy(bool setup_active, bool bearer_ok,
   }
   if (reason) *reason = why;
   return out;
+}
+
+// The page handlers' whole decision. `take_gate` (a callable returning bool:
+// the firmware passes its take() hook) is called only when none of the three
+// standing grants applies, and then exactly once — so a first-boot, bearer
+// or SoftAP load never spends a tap, and a home-LAN load that is unlocked by
+// a tap spends it. An earlier version PEEKED the gate here: one tap then
+// unlocked every page load for the whole TTL, and each of those pages could
+// fetch the receipt (AP password included) with the bearer it had been
+// handed — one tap, any number of consumers, which is the opposite of the
+// contract at the top of this file.
+template <typename TakeGate>
+inline PageToken page_token_decide(bool setup_active, bool bearer_ok,
+                                   bool from_ap_subnet, TakeGate take_gate,
+                                   const char** reason = nullptr) {
+  if (page_token_policy(setup_active, bearer_ok, from_ap_subnet, false, reason) ==
+      PageToken::INJECT) {
+    return PageToken::INJECT;
+  }
+  const bool took = take_gate();
+  return page_token_policy(false, false, false, took, reason);
 }
 
 // A netmask is a contiguous run of leading ones: ~mask + 1 is a power of

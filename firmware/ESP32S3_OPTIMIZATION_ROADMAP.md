@@ -488,9 +488,10 @@ Genuinely solid. Gaps:
   [`canary/scripts/check_route_security.py`](canary/scripts/check_route_security.py) fails any
   route that reaches no credential gate and is not on its documented public allowlist. And
   `handle_ui` / `/setup` no longer hand the token to every caller: it is injected only for
-  first-boot setup, a bearer-authenticated request, a SoftAP-subnet peer, or while a BOOT tap's
-  30 s gate is open ([`common/network/provisioning_gate.h`](common/network/provisioning_gate.h),
-  host-tested); a home-LAN load gets the page without it. Compile-tested, no bench pass.
+  first-boot setup, a bearer-authenticated request, a SoftAP-subnet peer, or by spending a BOOT
+  tap (one tap = one page load or one receipt fetch, 30 s;
+  [`common/network/provisioning_gate.h`](common/network/provisioning_gate.h), host-tested); a
+  home-LAN load gets the page without it. CI compile pending, no bench pass.
 - **AP password is exactly 8 chars** (`"cv-"` + 5), the WPA2 floor — ~28.7 bits of entropy. Widen
   to 10–12 chars from the same fingerprint for headroom. **[P2]**
 - **Untapped UX:** Improv-WiFi / WebUSB provisioning, SSE/WebSocket event streams instead of poll,

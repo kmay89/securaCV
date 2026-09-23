@@ -249,9 +249,11 @@ esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_c
 // ════════════════════════════════════════════════════════════════════════════
 // The physical-presence gate (firmware/common/network/provisioning_gate.h)
 // is owned by main.cpp, which owns the BOOT button. The network lib reaches
-// it through this hook pair: `take` consumes the tap (the receipt handler),
-// `is_open` only peeks (the page handlers, so loading the dashboard cannot
-// spend the tap the receipt fetch needs). Both read as "closed" until
+// it through this hook pair: `take` consumes the tap — the receipt handler
+// and the page handlers both take it, so one tap is one consumer (one
+// home-LAN page load or one receipt fetch, whichever asks first). `is_open`
+// only peeks and grants nothing; /api/status uses the pair to report that
+// the button is wired. Both read as "closed" until
 // main.cpp registers them, so a build that never wires the button fails
 // closed: the receipt answers 403 and the page token is withheld off-AP.
 typedef bool (*network_gate_fn_t)(void);

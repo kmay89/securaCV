@@ -50,7 +50,7 @@ Derived from the post-archive Feature-Parity Dashboard in [FEATURES.md](../FEATU
 | 8 | RF presence detection | ❌ | `canary_wap/rf_presence.{h,cpp}` | Medium | Low |
 | 9 | Chirp channel body | ⚠️ header only | `canary_wap/chirp_channel.cpp` (+ now-fixed real RSSI) | Medium | Low |
 | 10 | Hardware state & safe mode | ❌ | `canary_wap/hardware_state.h` (+ now-fixed SD flush) | Low | Medium (boot safety) |
-| 11 | Provisioning gate (BOOT button) | ✅ (2026-09, option D — maintainer to confirm: BOOT tap → one `GET /api/provisioning-receipt`; the dashboard's bearer token is injected only for first-boot setup, a bearer-authenticated request, a SoftAP-subnet peer or an open gate, never for a bare home-LAN load; compile-tested in CI, no bench pass; the WAP's session-cookie model is the Phase 6 follow-up) | `canary_wap/*` gate logic → `firmware/common/network/provisioning_gate.h` | Low | High — corrected: the canary never had an unauthenticated receipt route (it had none at all); the real exposure was `GET /` and `GET /setup` putting the bearer token in the HTML for any home-LAN caller |
+| 11 | Provisioning gate (BOOT button) | ✅ (2026-09, option D — maintainer to confirm: BOOT tap → one consumer, one `GET /api/provisioning-receipt` or one home-LAN page load, whichever asks first; the dashboard's bearer token is injected only for first-boot setup, a bearer-authenticated request, a SoftAP-subnet peer or a spent tap, never for a bare home-LAN load; CI compile pending, no bench pass; the WAP's session-cookie model is the Phase 6 follow-up) | `canary_wap/*` gate logic → `firmware/common/network/provisioning_gate.h` | Low | High — corrected: the canary never had an unauthenticated receipt route (it had none at all); the real exposure was `GET /` and `GET /setup` putting the bearer token in the HTML for any home-LAN caller |
 | 12 | Audible chirp / buzzer alerts | ❌ | `canary_wap/audible_chirp.h` | Low | Low |
 | 13 | WiFi presence detection | ❌ | `canary_wap/wifi_presence.h` | Medium | Medium (MAC hygiene) |
 | 14 | System monitor (temp / heap / PSRAM) | ❌ | `canary_wap/sys_monitor.h` | Low | Low |
@@ -132,8 +132,11 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
   `physical_confirmation_required` with the TTL (the WAP's receipt shape, the
   one the iOS app parses). The same header's `page_token_policy` decides per
   request whether `/` and `/setup` carry the bearer token: first-boot setup,
-  bearer-authenticated, a peer inside the live SoftAP subnet (IPv4 only,
-  conservative), or an open gate (peeked, never taken). A home-LAN load with
+  bearer-authenticated, a peer inside the live SoftAP subnet (IPv4, or the
+  IPv4-mapped `::ffff:a.b.c.d` the dual-stack httpd socket reports;
+  conservative), or an unspent BOOT tap, which the page load then takes —
+  one tap is one consumer across both paths, a page load or a receipt
+  fetch, whichever asks first (`page_token_decide`). A home-LAN load with
   none of those gets the page with an empty token, `X-CV-Token: withheld`,
   and a banner naming the three unlocks. `firmware/canary/scripts/check_route_security.py`
   (in `firmware.yml`) now fails any route that reaches no credential gate and
