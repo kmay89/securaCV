@@ -1617,6 +1617,36 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- Paired beacons (BLE Scout, [env:full] builds; repo sweep F27).
+           Hidden unless GET /api/scout answers. No MAC is ever shown or
+           sent: the Canary pairs whichever unpaired tag it hears loudest
+           while the window is open, and keeps only a coded ID + the name. -->
+      <div class="card" id="scoutCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Paired beacons</div>
+            <div class="card-subtitle">
+              Bluetooth tags this Canary listens for, to tell you which room
+              they are in. It keeps a coded ID and your name for each tag,
+              never the tag's address. Most phones change their Bluetooth
+              address every few minutes, so a tag works best.
+            </div>
+          </div>
+        </div>
+        <div class="log-list" id="scoutList"></div>
+        <div class="form-group" style="margin-top:1rem;">
+          <label class="form-label" for="scoutLabel">Name for the new tag</label>
+          <div style="display:flex;gap:0.5rem;">
+            <input type="text" class="form-input" id="scoutLabel" maxlength="23" placeholder="Keys" style="flex:1;">
+            <button class="btn btn-primary" id="scoutPairBtn" onclick="scoutPairStart()">Pair a tag</button>
+            <button class="btn btn-ghost" id="scoutCancelBtn" onclick="scoutPairCancel()" style="display:none;">Cancel</button>
+          </div>
+          <div class="card-subtitle" id="scoutPairMsg" style="margin-top:0.5rem;">
+            Press Pair, then hold the tag against the Canary for up to 60 seconds.
+          </div>
+        </div>
+      </div>
+
       <!-- Diagnostics -->
       <div class="card">
         <div class="card-header">
@@ -2719,7 +2749,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (panel === 'opera') refreshOpera();
       else if (panel === 'community') refreshChirpStatus();
       else if (panel === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); }
-      else if (panel === 'sensing') { refreshSensing(); refreshThermal(); }
+      else if (panel === 'sensing') { refreshSensing(); refreshThermal(); refreshScout(); }
       else if (panel === 'status') refreshLiveSensing();
       else if (panel === 'settings') refreshOtaStatus();
 
@@ -3676,6 +3706,83 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       setT('thwThrMin', h.throttled_min || 0);
       setT('thwPauses', h.pause_events || 0);
       setT('thwSensor', d.sensor_ok ? 'OK' : 'FAULT');
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Paired beacons — /api/scout (BLE Scout proximity pairing, F27)
+    // ════════════════════════════════════════════════════════════════
+    let scoutPoll = null;
+    async function refreshScout() {
+      const card = document.getElementById('scoutCard');
+      if (!card) return;
+      const d = await api('/api/scout');
+      if (!d || d.ok !== true) { card.style.display = 'none'; return; }
+      card.style.display = '';
+      const list = document.getElementById('scoutList');
+      const beacons = d.beacons || [];
+      if (beacons.length === 0) {
+        list.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;text-align:center;padding:1rem;">No tags paired yet</p>';
+      } else {
+        list.innerHTML = beacons.map(b =>
+          '<div class="log-item" style="padding:0.75rem;display:flex;justify-content:space-between;align-items:center;">' +
+          '<strong>' + escapeHtml(b.label || '(no name)') + '</strong>' +
+          '<button class="btn btn-danger btn-sm" data-id="' + escapeHtml(b.hashed_id) + '" onclick="scoutUnpair(this.dataset.id)">Forget</button>' +
+          '</div>').join('');
+      }
+      scoutPairStatus();
+    }
+
+    function scoutShowWindow(st) {
+      const msg = document.getElementById('scoutPairMsg');
+      const armed = st && st.state === 'armed';
+      document.getElementById('scoutPairBtn').disabled = armed;
+      document.getElementById('scoutCancelBtn').style.display = armed ? '' : 'none';
+      if (!st || !msg) return;
+      if (armed) msg.textContent = 'Listening for "' + st.label + '": hold the tag against the Canary (' + st.remaining_s + ' s left).';
+      else if (st.state === 'paired') msg.textContent = 'Paired "' + st.label + '".';
+      else if (st.state === 'expired') msg.textContent = 'No tag came close enough in time. Try again, holding it right against the Canary.';
+      else if (st.state === 'failed') msg.textContent = 'Could not pair: every slot is in use. Forget a tag first.';
+      else if (st.state === 'canceled') msg.textContent = 'Pairing canceled.';
+      if (!armed && scoutPoll) { clearInterval(scoutPoll); scoutPoll = null; }
+    }
+
+    async function scoutPairStatus() {
+      const st = await api('/api/scout/pair/status');
+      if (!st || st.ok !== true) return;
+      const wasArmed = !!scoutPoll;
+      scoutShowWindow(st);
+      if (st.state === 'armed' && !scoutPoll && currentPanel === 'sensing') {
+        scoutPoll = setInterval(scoutPairStatus, 2000);
+      }
+      if (wasArmed && st.state === 'paired') refreshScout();
+    }
+
+    async function scoutPairStart() {
+      const label = document.getElementById('scoutLabel').value.trim();
+      const msg = document.getElementById('scoutPairMsg');
+      if (!label) { msg.textContent = 'Give the tag a name first.'; return; }
+      const r = await api('/api/scout/pair/start', 'POST', { label: label, window_s: 60 });
+      if (!r || r.ok !== true) {
+        const why = { bad_label: 'Use up to 23 plain letters, numbers or punctuation.',
+                      window_busy: 'Already listening for a tag.',
+                      registry_full: 'Every slot is in use. Forget a tag first.' };
+        msg.textContent = why[r && r.error] || ('Could not start pairing: ' + ((r && r.error) || 'unknown'));
+        return;
+      }
+      scoutShowWindow(r);
+      if (!scoutPoll) scoutPoll = setInterval(scoutPairStatus, 2000);
+    }
+
+    async function scoutPairCancel() {
+      const r = await api('/api/scout/pair/cancel', 'POST');
+      if (r && r.ok === true) scoutShowWindow(r);
+    }
+
+    async function scoutUnpair(id) {
+      if (!confirm('Forget this tag? It will stop reporting which room it is in.')) return;
+      const r = await api('/api/scout/unpair', 'POST', { hashed_id: id });
+      if (r && r.ok !== true) alert('Could not forget the tag: ' + (r.error || 'unknown'));
+      refreshScout();
     }
 
     // ════════════════════════════════════════════════════════════════

@@ -51,9 +51,13 @@ STAGED_DIR="${REPO_ROOT}/firmware/projects/canary-wap/arduino/canary_wap"
 #   ble_heap_guard.h + bt_defaults.h are in this set on purpose: the canonical
 #   lib gained a copy when the boot-loop crash fix was ported into its Scout
 #   init site, and the OOM threshold must never fork between the two trees.
+#   ble_scout_pairing.h + ble_scout_registry_store.h (repo sweep F27) are the
+#   pairing window and the persisted-registry blob format ble_scout.cpp
+#   compiles in both trees: one window rule and one NVS contract.
 BYTE_FILES=(
     ble_scan.h ble_scan.cpp
     ble_scout.h
+    ble_scout_pairing.h ble_scout_registry_store.h
     ble_scout_key.h ble_scout_key.cpp
     ble_scout_state.h ble_scout_state.cpp
     ble_heap_guard.h bt_defaults.h

@@ -75,6 +75,11 @@
 #include <math.h>    /* lroundf */
 #include <stdarg.h>  /* thermal_json_append */
 #endif
+// BLE Scout pairing surface (repo sweep F27). Same gate as the Scout lib
+// itself: platformio.ini lib_ignores securacv_ble_scan outside [env:full].
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+#include "ble_scout.h"
+#endif
 
 // Mesh REST API (PR-8). Gated on FEATURE_MESH_NETWORK — the dev/release
 // CI envs build with this OFF, so these handlers get no CI compile
@@ -917,6 +922,15 @@ static esp_err_t handle_battery_history(httpd_req_t* req);
 static esp_err_t handle_thermal(httpd_req_t* req);
 #endif
 
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+// BLE Scout paired beacons + the proximity pairing window (F27).
+static esp_err_t handle_scout_list(httpd_req_t* req);
+static esp_err_t handle_scout_pair_start(httpd_req_t* req);
+static esp_err_t handle_scout_pair_status(httpd_req_t* req);
+static esp_err_t handle_scout_pair_cancel(httpd_req_t* req);
+static esp_err_t handle_scout_unpair(httpd_req_t* req);
+#endif
+
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
 // Mesh / opera REST API (PR-8). Six endpoints only — status, peers, and
 // the four pairing steps. remove/leave/name/enable/alerts-DELETE are
@@ -955,10 +969,14 @@ bool ScvNetworkManager::startHttpServer() {
   // probes + /setup + the wildcard fallback) + 6 mesh endpoints (PR-8) when
   // the mesh feature is compiled in. Each registered httpd_uri_t needs a
   // slot; register_route() names any that does not get one.
+  // + 5 BLE Scout pairing endpoints (F27) when FEATURE_BLE_SCAN is compiled in.
   #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
   config.max_uri_handlers = 59;
   #else
   config.max_uri_handlers = 53;
+  #endif
+  #if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+  config.max_uri_handlers += 5;
   #endif
   config.recv_wait_timeout = 30;
   config.send_wait_timeout = 30;
@@ -1165,6 +1183,24 @@ void ScvNetworkManager::registerHttpHandlers() {
   #if FEATURE_THERMAL_WATCHDOG
   httpd_uri_t thermal_ep = { .uri = "/api/thermal", .method = HTTP_GET, .handler = handle_thermal };
   register_route(m_http_server, &thermal_ep);
+  #endif
+
+  #if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+  // BLE Scout pairing (F27). 5 endpoints — see the SCOUT section below.
+  httpd_uri_t scout_list_ep = { .uri = "/api/scout", .method = HTTP_GET, .handler = handle_scout_list };
+  register_route(m_http_server, &scout_list_ep);
+
+  httpd_uri_t scout_pair_start_ep = { .uri = "/api/scout/pair/start", .method = HTTP_POST, .handler = handle_scout_pair_start };
+  register_route(m_http_server, &scout_pair_start_ep);
+
+  httpd_uri_t scout_pair_status_ep = { .uri = "/api/scout/pair/status", .method = HTTP_GET, .handler = handle_scout_pair_status };
+  register_route(m_http_server, &scout_pair_status_ep);
+
+  httpd_uri_t scout_pair_cancel_ep = { .uri = "/api/scout/pair/cancel", .method = HTTP_POST, .handler = handle_scout_pair_cancel };
+  register_route(m_http_server, &scout_pair_cancel_ep);
+
+  httpd_uri_t scout_unpair_ep = { .uri = "/api/scout/unpair", .method = HTTP_POST, .handler = handle_scout_unpair };
+  register_route(m_http_server, &scout_unpair_ep);
   #endif
 
   #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
@@ -3623,6 +3659,183 @@ static esp_err_t handle_thermal(httpd_req_t* req) {
 }
 
 #endif // FEATURE_THERMAL_WATCHDOG
+
+// ════════════════════════════════════════════════════════════════════════════
+// BLE SCOUT PAIRING (repo sweep F27, option B — proximity pairing window)
+//
+//   GET  /api/scout               — paired beacons: [{hashed_id, label}]
+//   POST /api/scout/pair/start    — {label, window_s<=60, rssi_min=-45}: arm
+//   GET  /api/scout/pair/status   — the window: state, remaining_s, result
+//   POST /api/scout/pair/cancel   — cancel an armed window
+//   POST /api/scout/unpair        — {hashed_id}: forget a beacon
+//
+// No MAC crosses this API in either direction. The window is armed here and
+// the pairing happens inside the NimBLE scan callback (ble_scout_on_advert:
+// the first advert from an unpaired beacon at/above rssi_min), which hashes
+// the MAC with the per-device key and discards it. hashed_id is that keyed
+// hash as 32 lowercase hex characters — unlinkable to the same tag on any
+// other device. Every access to the registry/window goes through
+// ble_scout.cpp's portMUX; the NVS write of the registry blob happens later
+// on the loop task (ble_scout_tick), never on this HTTP task.
+// ════════════════════════════════════════════════════════════════════════════
+
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+
+// Read a small JSON body (the Scout bodies are < 128 bytes).
+static bool scout_read_body(httpd_req_t* req, JsonDocument& input, esp_err_t* sent) {
+  char body[192];
+  if (req->content_len == 0) {
+    *sent = http_send_error(req, 400, "empty_body");
+    return false;
+  }
+  if (req->content_len >= sizeof(body)) {
+    *sent = http_send_error(req, 413, "body_too_large");
+    return false;
+  }
+  size_t total = 0;
+  while (total < req->content_len) {
+    const int r = httpd_req_recv(req, body + total, req->content_len - total);
+    if (r <= 0) {
+      *sent = http_send_error(req, 400, "empty_body");
+      return false;
+    }
+    total += (size_t)r;
+  }
+  body[total] = '\0';
+  if (deserializeJson(input, body) != DeserializationError::Ok) {
+    *sent = http_send_error(req, 400, "invalid_json");
+    return false;
+  }
+  return true;
+}
+
+static esp_err_t handle_scout_list(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  ble_scan::PairedBeacon snap[ble_scan::MAX_PAIRED_BEACONS];
+  const size_t n = ble_scout::ble_scout_registry_snapshot(snap, ble_scan::MAX_PAIRED_BEACONS);
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["count"] = (unsigned)n;
+  doc["max"] = (unsigned)ble_scan::MAX_PAIRED_BEACONS;
+  JsonArray arr = doc["beacons"].to<JsonArray>();
+  for (size_t i = 0; i < n; ++i) {
+    char hex[2 * ble_scan::HASHED_ID_LEN + 1];
+    ble_scout::pairing::id_to_hex(snap[i].hashed_id, hex);
+    JsonObject o = arr.add<JsonObject>();
+    o["hashed_id"] = hex;
+    o["label"] = snap[i].label;
+  }
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static void scout_status_json(JsonDocument& doc, const ble_scout::pairing::Status& st) {
+  doc["ok"] = true;
+  doc["state"] = ble_scout::pairing::state_name(st.state);
+  doc["label"] = st.label;
+  doc["window_s"] = (unsigned)(st.window_ms / 1000u);
+  doc["remaining_s"] = (unsigned)((st.remaining_ms + 999u) / 1000u);
+  doc["rssi_min"] = (int)st.rssi_min;
+  if (st.state == ble_scout::pairing::State::PAIRED) {
+    char hex[2 * ble_scan::HASHED_ID_LEN + 1];
+    ble_scout::pairing::id_to_hex(st.paired_id, hex);
+    doc["hashed_id"] = hex;
+  }
+}
+
+static esp_err_t handle_scout_pair_start(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  JsonDocument input;
+  esp_err_t sent = ESP_OK;
+  if (!scout_read_body(req, input, &sent)) return sent;
+
+  const char* label = input["label"];
+  const int window_s = input["window_s"] | 60;
+  const int rssi_min = input["rssi_min"] | (int)ble_scout::pairing::DEFAULT_RSSI_MIN;
+  if (window_s <= 0) {
+    return http_send_error(req, 400, "bad_window");
+  }
+  // Over 60 s is clamped to 60 s (the window FSM clamps too; this keeps the
+  // multiply from wrapping on an absurd value).
+  const uint32_t window_ms = (uint32_t)(window_s > 60 ? 60 : window_s) * 1000u;
+
+  const uint32_t now = millis();
+  switch (ble_scout::ble_scout_pair_window_start(label, window_ms, rssi_min, now)) {
+    case ble_scout::pairing::ArmResult::OK:            break;
+    case ble_scout::pairing::ArmResult::BUSY:          return http_send_error(req, 409, "window_busy");
+    case ble_scout::pairing::ArmResult::BAD_LABEL:     return http_send_error(req, 400, "bad_label");
+    case ble_scout::pairing::ArmResult::REGISTRY_FULL: return http_send_error(req, 409, "registry_full");
+    case ble_scout::pairing::ArmResult::NOT_READY:     return http_send_error(req, 503, "scout_not_ready");
+  }
+
+  JsonDocument doc;
+  scout_status_json(doc, ble_scout::ble_scout_pair_window_status(now));
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_scout_pair_status(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  JsonDocument doc;
+  scout_status_json(doc, ble_scout::ble_scout_pair_window_status(millis()));
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_scout_pair_cancel(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  const uint32_t now = millis();
+  const bool canceled = ble_scout::ble_scout_pair_window_cancel(now);
+  JsonDocument doc;
+  scout_status_json(doc, ble_scout::ble_scout_pair_window_status(now));
+  doc["canceled"] = canceled;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_scout_unpair(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  JsonDocument input;
+  esp_err_t sent = ESP_OK;
+  if (!scout_read_body(req, input, &sent)) return sent;
+
+  uint8_t id[ble_scan::HASHED_ID_LEN];
+  if (!ble_scout::pairing::id_from_hex(input["hashed_id"] | "", id)) {
+    return http_send_error(req, 400, "bad_hashed_id");
+  }
+  if (!ble_scout::ble_scout_unpair(id)) {
+    return http_send_error(req, 404, "not_paired");
+  }
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["count"] = (unsigned)ble_scout::ble_scout_count();
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+#endif // FEATURE_BLE_SCAN
 
 // ════════════════════════════════════════════════════════════════════════════
 // MESH / OPERA REST API (PR-8)

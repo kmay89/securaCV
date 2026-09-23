@@ -364,3 +364,54 @@ unusual activity matters most.
 The host wires this in `firmware/projects/canary-wap/arduino/canary_wap/
 csi_integration.cpp::register_v1_modules()` (boot-time NVS read) and
 the `/api/settings` POST handler (live re-apply on dashboard change).
+
+---
+
+## BLE Scout pairing (canary PIO tree, `[env:full]`)
+
+Unlike the rest of this page, these five routes live in the **canary
+PlatformIO tree** (`firmware/canary/lib/securacv_network/src/securacv_network.cpp`),
+compiled only where `FEATURE_BLE_SCAN=1` (`[env:full]`). The canary-wap
+sketch carries the same Scout module and pairing window but no route for it
+yet. All five are bearer-auth gated and rate limited like every other `/api`
+route.
+
+Pairing is a **proximity window**, never a typed address (repo sweep F27,
+option B — maintainer to confirm): arm a window with a name, hold the tag
+against the Canary, and the first advert from a beacon that is not already
+paired, at or above the signal threshold, pairs inside the Bluetooth scan
+callback. The MAC is hashed there with the device's own key and dropped, so
+**no MAC crosses this API in either direction**. `hashed_id` is that keyed
+hash as 32 lowercase hex characters; the same tag has a different
+`hashed_id` on every other Canary. The paired list persists across reboots
+(one versioned NVS blob, written from the loop task).
+
+| Route | Body | Answer |
+| --- | --- | --- |
+| `GET /api/scout` | — | `{ok, count, max, beacons:[{hashed_id, label}]}` |
+| `POST /api/scout/pair/start` | `{label, window_s?, rssi_min?}` | the window status below; `400 bad_label` / `400 bad_window` / `409 window_busy` / `409 registry_full` / `503 scout_not_ready` |
+| `GET /api/scout/pair/status` | — | `{ok, state, label, window_s, remaining_s, rssi_min, hashed_id?}` |
+| `POST /api/scout/pair/cancel` | — | the window status plus `canceled` (bool) |
+| `POST /api/scout/unpair` | `{hashed_id}` | `{ok, count}`; `400 bad_hashed_id` / `404 not_paired` |
+
+- `label`: 1 to 23 printable ASCII characters (refused, not rewritten).
+- `window_s`: default and maximum 60 (larger values are clamped to 60,
+  smaller than 5 to 5).
+- `rssi_min`: default −45 dBm ("held against it"), clamped to −70..−20 dBm
+  so a window can never pair "anything in the house".
+- `state`: `idle`, `armed`, `pairing` (an advert won; finishing),
+  `paired` (then `hashed_id` names the new tag), `failed` (every slot
+  full), `expired`, `canceled`.
+
+Limits worth saying out loud: at −45 dBm someone else's phone held right
+against the Canary during the window could pair instead — the window is at
+most 60 s, the name is yours, and forgetting a tag is one call. Most phones
+rotate their Bluetooth address every few minutes, so a paired phone stops
+matching; a tag with a fixed address is the reliable choice. A live pair
+against a real beacon is bench work (U1).
+
+```bash
+curl -X POST http://canary.local/api/scout/pair/start \
+     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+     -d '{"label": "Keys"}'
+```
