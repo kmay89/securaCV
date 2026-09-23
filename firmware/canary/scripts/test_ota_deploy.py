@@ -99,6 +99,9 @@ class FakeCanary:
             cert, key, self.cert_fp = _self_signed(tmp)
             srv = ThreadingHTTPServer(("127.0.0.1", 0), handler)
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            # The same floor ota_deploy.py's client sets; the fake Canary
+            # never offers what the device and the script refuse.
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
             ctx.load_cert_chain(cert, key)
             srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
             srv.handle_error = lambda *a: None  # handshake-only probes are expected
