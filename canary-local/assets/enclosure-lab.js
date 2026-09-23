@@ -47,6 +47,19 @@ const PREVIEW_BASE = "enclosures/preview/";
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 const LAYER_MM = 0.2; // README §Suggested print settings
 
+// "⚡ slice for exact time" with no slicer engine present. Deliberately not
+// vendored (assets/vendor/kiri/README.md, "Status"): the person reading the
+// note is printing a case, not maintaining the Lab, so the note says what they
+// get and the how-to-vendor pointer goes to the console for whoever is.
+export const SLICER_ABSENT_NOTE =
+  "Exact toolpath time needs the optional slicer engine, which this build " +
+  "doesn't include — the modeled estimate stands.";
+export const SLICER_ABSENT_CONSOLE =
+  "enclosure lab: Kiri:Moto is not vendored, so ⚡ slice for exact time keeps " +
+  "the modeled estimate. Vendoring it is a deliberate decision (it needs " +
+  "cross-origin isolation for the whole Lab) — see " +
+  "canary-local/assets/vendor/kiri/README.md and canary-local/tools/vendor_kiri.sh.";
+
 const PART_COLORS = [
   [0.36, 0.62, 0.64],   // teal (the enclosure previews' own palette)
   [0.85, 0.72, 0.25],   // canary brass
@@ -799,9 +812,8 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
       sliceNote.textContent = "slicing…";
       try {
         if (!(await slicerAvailable())) {
-          sliceNote.textContent =
-            "Kiri:Moto engine isn't vendored yet — showing the model estimate. " +
-            "Vendor it with tools/vendor_kiri.sh (see assets/vendor/kiri).";
+          sliceNote.textContent = SLICER_ABSENT_NOTE;
+          console.info(SLICER_ABSENT_CONSOLE);
           sliceBtn.disabled = false;
           return;
         }
@@ -937,8 +949,8 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
       "print time and energy are a transparent physical model for your rig " +
       "(volumetric flow → time; average duty-cycle power → energy), carrying " +
       "the ± band shown. For a true toolpath time, hit ⚡ slice for exact time — " +
-      "it hands the geometry to a vendored, offline Kiri:Moto and upgrades the " +
-      "time in place; until that engine is vendored, the estimate stands."));
+      "when this build includes the optional offline Kiri:Moto slicer it hands " +
+      "it the geometry and upgrades the time in place; otherwise the estimate stands."));
 
     // hand off to the bench: the print's done, now build it
     stage2.hidden = true;

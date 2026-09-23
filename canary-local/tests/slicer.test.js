@@ -70,3 +70,25 @@ test("no vendored engine ⇒ loadEngine/sliceSeconds resolve null, never throw",
   const bytes = new Uint8Array(84).buffer; // an empty binary-STL header; never reached
   assert.strictEqual(await sliceSeconds(bytes, {}), null, "falls back, no throw");
 });
+
+// C8, closed as intended: the engine is deliberately not vendored. The note a
+// person sees when they press the slice button speaks to someone printing a
+// case — what they get — and never tells them to run a maintainer script; that
+// pointer goes to the console, and the decision is recorded atop the vendor
+// README where the next person to consider vendoring will read it first.
+test("no engine: the Lab's note is user voice; the vendor pointer is console-only", async () => {
+  const { SLICER_ABSENT_NOTE, SLICER_ABSENT_CONSOLE } = await import("../assets/enclosure-lab.js");
+  assert.match(SLICER_ABSENT_NOTE, /estimate stands/);
+  assert.doesNotMatch(SLICER_ABSENT_NOTE, /vendor|tools\/|\.sh\b|assets\/|README/i,
+    "maintainer instructions leaked into user-facing copy");
+  assert.match(SLICER_ABSENT_CONSOLE, /tools\/vendor_kiri\.sh/);
+  assert.match(SLICER_ABSENT_CONSOLE, /vendor\/kiri\/README\.md/);
+
+  const { readFileSync } = require("node:fs");
+  const { join } = require("node:path");
+  const readme = readFileSync(join(__dirname, "../assets/vendor/kiri/README.md"), "utf8");
+  const head = readme.split("\n## ")[0];
+  assert.match(head, /Status \(\d{4}-\d{2}\): deliberately not vendored/,
+    "the decision is stated at the top of the vendor README");
+  assert.match(head, /SharedArrayBuffer/, "…with its blocker named");
+});
