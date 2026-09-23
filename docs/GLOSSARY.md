@@ -401,7 +401,7 @@ event vocabulary and signed witness record stay identical across profiles.
 | "verified" loosely | "heard," "reported," "presence" | "Verified" is reserved for a checked Ed25519 signature against a pinned key. |
 | face recognition, plate reading, gait, re-ID, demographics | — | Not disabled — **absent**. Invariant II; never implement. |
 | "secure" as a bare adjective | the specific property | Say what can't happen and what still has to be true. |
-| performance claims without benchmarks | "varies by hardware; benchmark first" | Claims discipline; CI fact-tests enforce it on the site. |
+| performance claims without benchmarks | "varies by hardware; benchmark first" | Claims discipline. On the site, review keeps them out (no site test looks for them); here, `scripts/lint_bench_rows.py` fails the build on a pasted [benchmark](BENCHMARKS.md) table. |
 
 ---
 
