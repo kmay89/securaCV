@@ -96,6 +96,25 @@ struct TrustedPeer {
 };
 static TrustedPeer s_trusted_peers[MAX_TRUSTED_PEERS];
 
+/* Replay tombstones (review fix). A peer that leaves or is removed used to
+ * take its last_counter with it; re-registering the same device into the
+ * same, un-rotated opera restarted the counter at 0, so every frame it had
+ * signed before it left — its LEAVE, alerts, beacon events, REKEY_OFFER —
+ * verified once more as fresh. Dropping a trusted peer now parks
+ * (fingerprint, last_counter) here and register_trusted_peer() re-applies
+ * it. Bounded: when full, the oldest tombstone is evicted. Reported by
+ * get_replay_counters() and rebuilt by restore_replay_counter(), so they
+ * persist in NVS replay_ctrs beside the live counters. Wiped by deinit()
+ * only — leave_opera() keeps them, for the leaver's own re-pair. */
+struct CounterTombstone {
+  uint8_t  sender_fp[mesh_crypto::FINGERPRINT_LEN];
+  uint64_t last_counter;
+  uint32_t stamp;    /* insertion order, for oldest-first eviction */
+  bool     in_use;
+};
+static CounterTombstone s_tombstones[MAX_COUNTER_TOMBSTONES];
+static uint32_t         s_tombstone_stamp = 0;
+
 static beacon_event_received_fn s_beacon_event_cb = nullptr;
 static channel_lock_received_fn s_channel_lock_cb = nullptr;
 static hub_election_received_fn s_hub_election_cb = nullptr;
@@ -243,6 +262,55 @@ static TrustedPeer* find_trusted_peer(
   return nullptr;
 }
 
+static CounterTombstone* find_tombstone(
+    const uint8_t sender_fp[mesh_crypto::FINGERPRINT_LEN]) {
+  for (size_t i = 0; i < MAX_COUNTER_TOMBSTONES; ++i) {
+    if (!s_tombstones[i].in_use) continue;
+    if (mesh_crypto::ct_equal(s_tombstones[i].sender_fp, sender_fp,
+                              mesh_crypto::FINGERPRINT_LEN)) {
+      return &s_tombstones[i];
+    }
+  }
+  return nullptr;
+}
+
+/* Park a counter for a fingerprint that is no longer trusted. Keeps the
+ * higher of an existing tombstone and `counter`; a zero counter (the peer
+ * never got a frame through) needs no tombstone. Returns true iff a
+ * tombstone was created or raised. */
+static bool tombstone_put(const uint8_t sender_fp[mesh_crypto::FINGERPRINT_LEN],
+                          uint64_t      counter) {
+  if (counter == 0) return false;
+  CounterTombstone* t = find_tombstone(sender_fp);
+  if (t != nullptr) {
+    if (counter <= t->last_counter) return false;
+    t->last_counter = counter;
+    t->stamp = ++s_tombstone_stamp;
+    return true;
+  }
+  for (size_t i = 0; i < MAX_COUNTER_TOMBSTONES; ++i) {
+    if (!s_tombstones[i].in_use) { t = &s_tombstones[i]; break; }
+  }
+  if (t == nullptr) {   /* full: evict the oldest */
+    t = &s_tombstones[0];
+    for (size_t i = 1; i < MAX_COUNTER_TOMBSTONES; ++i) {
+      if (s_tombstones[i].stamp < t->stamp) t = &s_tombstones[i];
+    }
+  }
+  memcpy(t->sender_fp, sender_fp, mesh_crypto::FINGERPRINT_LEN);
+  t->last_counter = counter;
+  t->stamp        = ++s_tombstone_stamp;
+  t->in_use       = true;
+  return true;
+}
+
+/* Drop a trusted-peer slot, keeping its replay counter as a tombstone. The
+ * one place a slot is emptied outside deinit(). */
+static void drop_trusted_slot(TrustedPeer* p) {
+  tombstone_put(p->sender_fp, p->last_counter);
+  memset(p, 0, sizeof(*p));
+}
+
 /* True while a pairing exchange is between start_* and a terminal state.
  * Used so disable/leave only cancel a pairing that is actually running
  * (cancel() from IDLE would fire a spurious FailedCallback). */
@@ -300,7 +368,7 @@ static bool forget_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
   if (p == nullptr) return false;
   memcpy(pubkey_out, p->pubkey, mesh_crypto::PUBKEY_LEN);
   if (p->mac_known) mesh_transport::remove_peer(p->mac);
-  memset(p, 0, sizeof(*p));
+  drop_trusted_slot(p);
   return true;
 }
 
@@ -607,6 +675,8 @@ void deinit() {
    * recorded frame whose counter is <= the cached last_counter — a
    * real (if narrow) freshness violation. */
   memset(s_trusted_peers, 0, sizeof(s_trusted_peers));
+  memset(s_tombstones, 0, sizeof(s_tombstones));
+  s_tombstone_stamp = 0;
   s_beacon_event_cb = nullptr;
   s_channel_lock_cb = nullptr;
   s_hub_election_cb = nullptr;
@@ -855,7 +925,8 @@ bool register_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]) {
    * naive re-register call would zero last_counter and re-open the
    * replay window between (old last_counter, 0]. Callers that NEED
    * to rotate a peer's pubkey should clear_trusted_peers() first
-   * and re-add the entire set. */
+   * and re-add the entire set (the counters survive that as
+   * tombstones). */
   for (size_t i = 0; i < MAX_TRUSTED_PEERS; ++i) {
     if (s_trusted_peers[i].in_use &&
         mesh_crypto::ct_equal(s_trusted_peers[i].sender_fp, fp,
@@ -869,7 +940,14 @@ bool register_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]) {
     if (!s_trusted_peers[i].in_use) {
       memcpy(s_trusted_peers[i].pubkey,    pubkey, mesh_crypto::PUBKEY_LEN);
       memcpy(s_trusted_peers[i].sender_fp, fp,     sizeof(fp));
+      /* A device that was trusted before resumes from its tombstone —
+       * everything it signed before it was dropped stays a replay. */
       s_trusted_peers[i].last_counter = 0;
+      CounterTombstone* t = find_tombstone(fp);
+      if (t != nullptr) {
+        s_trusted_peers[i].last_counter = t->last_counter;
+        memset(t, 0, sizeof(*t));
+      }
       /* No verified frame yet this registration — the liveness join
        * reports the peer OFFLINE until one arrives. */
       memset(s_trusted_peers[i].mac, 0, sizeof(s_trusted_peers[i].mac));
@@ -882,6 +960,9 @@ bool register_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]) {
 }
 
 void clear_trusted_peers() {
+  for (size_t i = 0; i < MAX_TRUSTED_PEERS; ++i) {
+    if (s_trusted_peers[i].in_use) drop_trusted_slot(&s_trusted_peers[i]);
+  }
   memset(s_trusted_peers, 0, sizeof(s_trusted_peers));
 }
 
@@ -889,7 +970,7 @@ bool unregister_trusted_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN]) {
   if (fp == nullptr) return false;
   TrustedPeer* p = find_trusted_peer(fp);
   if (p == nullptr) return false;
-  memset(p, 0, sizeof(*p));
+  drop_trusted_slot(p);
   return true;
 }
 
@@ -910,6 +991,13 @@ size_t get_replay_counters(uint8_t (*out_fps)[mesh_crypto::FINGERPRINT_LEN],
     if (!s_trusted_peers[i].in_use) continue;
     memcpy(out_fps[n], s_trusted_peers[i].sender_fp, mesh_crypto::FINGERPRINT_LEN);
     out_counters[n] = s_trusted_peers[i].last_counter;
+    ++n;
+  }
+  /* Tombstones persist too, so a reboot does not re-open their window. */
+  for (size_t i = 0; i < MAX_COUNTER_TOMBSTONES && n < out_cap; ++i) {
+    if (!s_tombstones[i].in_use) continue;
+    memcpy(out_fps[n], s_tombstones[i].sender_fp, mesh_crypto::FINGERPRINT_LEN);
+    out_counters[n] = s_tombstones[i].last_counter;
     ++n;
   }
   return n;
@@ -942,7 +1030,8 @@ bool restore_replay_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
       return false;
     }
   }
-  return false;
+  /* Not a trusted peer (any more): the persisted entry was a tombstone. */
+  return tombstone_put(fp, counter);
 }
 
 void set_beacon_event_handler(beacon_event_received_fn fn) {
@@ -1036,11 +1125,14 @@ bool leave_opera(uint32_t now_ms) {
   }
   if (s_running && pairing_in_progress()) cancel_pairing();
   mesh_rekey::context_init(s_rekey);   /* leaving ends any rotation */
-  clear_trusted_peers();
+  clear_trusted_peers();               /* their counters stay as tombstones */
   s_opera_id_set     = false;
   secure_zero(s_opera_id,  sizeof(s_opera_id));
   secure_zero(s_sender_fp, sizeof(s_sender_fp));
-  s_outbound_counter = 0;
+  /* s_outbound_counter is deliberately KEPT: receivers keep this device's
+   * last counter as a tombstone across the leave, so after a re-pair into
+   * the same opera its frames must keep counting up from where they were,
+   * not restart at 1 and be dropped as replays. */
   s_opera_name[0]    = '\0';
   reset_alerts();
   return notified;

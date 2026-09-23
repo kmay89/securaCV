@@ -204,10 +204,18 @@ A receiver that verifies it — signature against the sender's pinned pubkey,
 nothing else, so a peer can only ever remove itself. It needs no rekey: the
 leaver discards its own `opera_secret`, and the survivors' opera is unchanged.
 (Removing *another* device is §5.6 and does rotate the secret.) Like every
-opera frame it is replay-protected by the counter; the one residual case is a
-receiver that has since re-registered the same device into the same,
-un-rotated opera (registration restarts that peer's counter at 0), where a
-recorded LEAVE can drop the device's entry again — never add one.
+opera frame it is replay-protected by the counter, and that protection
+outlives the trust entry: in the PlatformIO tree a receiver that drops a
+peer — on its LEAVE, a removal or a rotation — keeps the peer's last
+counter as a **tombstone** (persisted in `replay_ctrs` with the live
+counters, §12.3), and re-registering the same device re-applies it. So a
+re-pair into the same, un-rotated opera does not re-open the window:
+everything the device signed before it left — the LEAVE, its alerts,
+beacon events, a `REKEY_OFFER` — stays a replay. For the same reason the
+leaver keeps its own outbound counter across the leave, so its frames after
+a re-pair continue above the tombstone its peers hold. (Before the fix,
+registration restarted the counter at 0 and each of those recorded frames
+verified once more — review finding, fw-mesh.)
 
 #### REKEY_OFFER / REKEY_ACCEPT / REKEY_SECRET / REKEY_ACK — v0.3 (PlatformIO)
 The `opera_secret` rotation that `remove` runs (§5.6, PlatformIO subsection).
@@ -562,9 +570,14 @@ keys, `MSG_OPERA_REKEY`); the two trees do not rotate each other.
 **`leave`:** the device signs a `LEAVE_OPERA` (§4.2) under the opera it is
 leaving and broadcasts it (best effort — the response carries
 `notified: true|false`), then forgets everything opera-scoped: the secret,
-the trusted peers, the replay counters, the elected hub and the name, in RAM
-and in NVS (`persisted: false` if an NVS clear failed). Survivors that verify
-the frame drop the leaver's trust entry, in RAM and in NVS. No rekey (§4.2).
+the trusted peers, the elected hub and the name, in RAM and in NVS
+(`persisted: false` if an NVS clear failed). It keeps only replay-defense
+state: the peers' last counters (as tombstones, in RAM and in NVS
+`replay_ctrs`) and its own outbound counter, so a later re-pair into the
+same opera can neither be fed the peers' old frames nor have its own new
+frames dropped (§4.2). Survivors that verify the frame drop the leaver's
+trust entry, in RAM and in NVS, and keep its counter as a tombstone. No
+rekey (§4.2).
 
 **`name`:** 1–32 printable-ASCII bytes, refused with `no_opera` when the
 device holds no opera. **Local only** — it renames this device's label for
@@ -732,7 +745,9 @@ mesh_peer_count  | 1 byte  | Number of peers
 
 The PlatformIO tree (`mesh_state.cpp`, NVS namespace `securacv`) stores:
 `opera_secret` (32 B), `trusted_peers` (up to 8 × 32 B pubkeys),
-`replay_ctrs` (per-peer counters), `elected_hub` (8 B) and — v0.3 —
+`replay_ctrs` (up to 16 × (8 B fingerprint + 8 B counter): the trusted
+peers' counters and — v0.3 — the tombstones of dropped peers, §4.2),
+`elected_hub` (8 B) and — v0.3 —
 `opera_name` (up to 32 B), all behind the flash-encryption gate (§5.5), plus
 `mesh_enabled` (1 B), which is **not** gated: it is a preference, and gating
 it would make "off" silently revert to "on" at every reboot of an FE-off
@@ -762,4 +777,5 @@ An implementation conforms to this specification if it:
   `POST /api/mesh/remove` with an ephemeral-X25519 `opera_secret` rotation,
   `REKEY_OFFER/ACCEPT/SECRET/ACK` (§4.2, §5.6 PlatformIO subsection) — crypto
   review and bench pass pending; the §5.6 revocation deny-list is stated as
-  not implemented.
+  not implemented; PIO replay tombstones — a dropped peer's counter survives
+  its re-pair, and the leaver keeps its outbound counter (§4.2, §8.3, §12.3).

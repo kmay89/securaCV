@@ -361,10 +361,14 @@ static void derive_ap_password(const uint8_t fingerprint[8], char* password, siz
  * pairing kicks off). */
 static void persist_replay_counters() {
 #if FEATURE_MESH_NETWORK
-  uint8_t fps[mesh_session::MAX_TRUSTED_PEERS][mesh_crypto::FINGERPRINT_LEN];
-  uint64_t ctrs[mesh_session::MAX_TRUSTED_PEERS];
+  /* Live counters AND the replay tombstones of dropped peers, so a reboot
+   * does not re-open a left/removed device's window either. */
+  static_assert(mesh_state::MAX_REPLAY_ENTRIES >= mesh_session::MAX_REPLAY_COUNTERS,
+                "replay_ctrs must hold every live counter and tombstone");
+  uint8_t fps[mesh_session::MAX_REPLAY_COUNTERS][mesh_crypto::FINGERPRINT_LEN];
+  uint64_t ctrs[mesh_session::MAX_REPLAY_COUNTERS];
   const size_t n = mesh_session::get_replay_counters(fps, ctrs,
-                                                     mesh_session::MAX_TRUSTED_PEERS);
+                                                     mesh_session::MAX_REPLAY_COUNTERS);
   if (n == 0) return;
   const size_t save_count = (n > mesh_state::MAX_REPLAY_ENTRIES)
                           ? mesh_state::MAX_REPLAY_ENTRIES : n;
@@ -407,6 +411,9 @@ static void on_mesh_peer_left(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
   char hex[mesh_crypto::FINGERPRINT_LEN * 2 + 1];
   mesh_fp_hex(fp, hex);
   const bool persisted = mesh_state::remove_trusted_peer(pubkey);
+  /* Its last counter is now a tombstone; persist it now rather than at the
+   * next 5-minute save, so a reboot in between cannot re-open its window. */
+  persist_replay_counters();
   Serial.printf("[MESH] Peer %s left the opera (%s)\n", hex,
                 persisted ? "removed from NVS" : "NVS removal refused/failed");
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Opera peer left", hex);
@@ -440,6 +447,8 @@ static void on_mesh_rekey_commit(const uint8_t new_secret[mesh_crypto::OPERA_SEC
                                  const uint8_t (*forgotten)[mesh_crypto::PUBKEY_LEN],
                                  size_t n_forgotten) {
   const bool persisted = mesh_state::persist_rotation(new_secret, forgotten, n_forgotten);
+  /* Every peer the rotation dropped keeps its counter as a tombstone. */
+  persist_replay_counters();
   char detail[48];
   snprintf(detail, sizeof(detail), "forgot %u peer(s)%s", (unsigned)n_forgotten,
            persisted ? "" : "; NOT persisted");

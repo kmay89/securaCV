@@ -166,7 +166,10 @@ struct ReplayEntry {
   uint64_t last_counter;
 };
 
-constexpr size_t MAX_REPLAY_ENTRIES = 8;
+/* Live counters for up to 8 trusted peers + up to 8 replay tombstones
+ * (mesh_session::MAX_REPLAY_COUNTERS, which main.cpp static_asserts
+ * against): 16 × 16 B = 256 B blob. */
+constexpr size_t MAX_REPLAY_ENTRIES = 16;
 
 bool save_replay_counters(const ReplayEntry* entries, size_t count);
 

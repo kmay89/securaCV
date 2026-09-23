@@ -3934,10 +3934,13 @@ static esp_err_t handle_mesh_leave(httpd_req_t* req) {
 
   const bool notified = mesh_session::leave_opera(millis());
   // Each clear is idempotent; AND them so a real NVS failure is reported
-  // rather than hidden behind a local wipe that did happen.
+  // rather than hidden behind a local wipe that did happen. replay_ctrs is
+  // deliberately NOT cleared: the counters are replay defense, not
+  // membership — the session keeps them as tombstones so a later re-pair
+  // into this opera cannot be fed the peers' old frames, and the entries
+  // already in NVS restore as exactly those tombstones at the next boot.
   bool cleared = mesh_state::clear_opera_secret();
   cleared = mesh_state::clear_trusted_peers()   && cleared;
-  cleared = mesh_state::clear_replay_counters() && cleared;
   cleared = mesh_state::clear_elected_hub()     && cleared;
   cleared = mesh_state::clear_opera_name()      && cleared;
   mesh_transport::clear_peers();

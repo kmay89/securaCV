@@ -1540,6 +1540,140 @@ void test_peer_left_dispatch() {
   std::printf("PASS test_peer_left_dispatch\n");
 }
 
+/* Review finding (fw-mesh #1): a LEAVE followed by a re-pair into the same,
+ * un-rotated opera must not re-open the replay window. Before the fix the
+ * receiver dropped X's last_counter with X, re-registration restarted it at
+ * 0, and X's recorded pre-leave alert and LEAVE both verified again. */
+void test_replay_tombstones_across_leave_and_repair() {
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x3D + i);
+  uint8_t rx_pub[mesh_crypto::PUBKEY_LEN], rx_priv[mesh_crypto::PRIVKEY_LEN];
+  stand_up_session(secret, rx_pub, rx_priv);
+  mesh_session::set_peer_left_handler(on_peer_left);
+  mesh_session::set_tamper_alert_handler(on_alert_rx);
+
+  uint8_t x_pub[mesh_crypto::PUBKEY_LEN], x_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(x_pub, x_priv));
+  uint8_t x_fp[mesh_crypto::FINGERPRINT_LEN];
+  mesh_crypto::compute_fingerprint(x_pub, x_fp);
+  assert(mesh_session::register_trusted_peer(x_pub));
+  const uint8_t mac[6] = {0x02, 0x4D, 0x4D, 0x4D, 0x4D, 0x4D};
+
+  /* X alerts (counter 40), then leaves (counter 41); the receiver drops X. */
+  uint8_t alert40[1 + mesh_envelope::MAX_FRAME_LEN], leave41[1 + mesh_envelope::MAX_FRAME_LEN];
+  const size_t alert40_len = build_alert_frame(x_pub, x_priv, secret, 40,
+                                               mesh_alert::Kind::ENCLOSURE_TAMPER, 6, 7,
+                                               alert40, sizeof(alert40));
+  const size_t leave41_len = build_signed_session_frame(x_pub, x_priv, secret, 41,
+                                                        mesh_envelope::MsgType::LEAVE_OPERA,
+                                                        nullptr, 0, leave41, sizeof(leave41));
+  inject_from(mac, alert40, alert40_len);
+  inject_from(mac, leave41, leave41_len);
+  assert(mesh_session::alerts_received() == 1);
+  assert(g_left.size() == 1);
+  assert(mesh_session::trusted_peer_count() == 0);
+
+  /* X's counter outlives its trust entry, and is what gets persisted. */
+  uint8_t fps[mesh_session::MAX_REPLAY_COUNTERS][mesh_crypto::FINGERPRINT_LEN];
+  uint64_t ctrs[mesh_session::MAX_REPLAY_COUNTERS];
+  static_assert(mesh_state::MAX_REPLAY_ENTRIES >= mesh_session::MAX_REPLAY_COUNTERS,
+                "replay_ctrs must hold every live counter and tombstone");
+  assert(mesh_session::get_replay_counters(fps, ctrs, mesh_session::MAX_REPLAY_COUNTERS) == 1);
+  assert(std::memcmp(fps[0], x_fp, sizeof(x_fp)) == 0);
+  assert(ctrs[0] == 41);
+
+  /* X re-pairs into the same opera: re-registered, counter resumes at 41. */
+  assert(mesh_session::register_trusted_peer(x_pub));
+  assert(mesh_session::get_replay_counters(fps, ctrs, mesh_session::MAX_REPLAY_COUNTERS) == 1);
+  assert(ctrs[0] == 41);   /* the live entry now carries it; tombstone consumed */
+
+  /* Both recorded frames are replays now. */
+  inject_from(mac, alert40, alert40_len);
+  assert(mesh_session::alerts_received() == 1);
+  assert(g_alerts_rx.size() == 1);
+  inject_from(mac, leave41, leave41_len);
+  assert(g_left.size() == 1);
+  assert(mesh_session::trusted_peer_count() == 1);
+
+  /* X's genuine new traffic (its counter kept counting) still flows. */
+  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  size_t flen = build_alert_frame(x_pub, x_priv, secret, 42,
+                                  mesh_alert::Kind::TEMP_DRIFT, 3, 8, frame, sizeof(frame));
+  inject_from(mac, frame, flen);
+  assert(mesh_session::alerts_received() == 2);
+
+  /* Across a reboot (main.cpp restores every persisted replay_ctrs entry
+   * after registering the persisted peers): an entry for a fingerprint that
+   * is no longer trusted comes back as a tombstone, which a later
+   * registration applies. */
+  stand_up_session(secret, rx_pub, rx_priv);             /* "reboot": RAM gone */
+  mesh_session::set_tamper_alert_handler(on_alert_rx);
+  assert(mesh_session::restore_replay_counter(x_fp, 42));
+  assert(!mesh_session::restore_replay_counter(x_fp, 41));   /* never lowers */
+  assert(mesh_session::trusted_peer_count() == 0);
+  assert(mesh_session::register_trusted_peer(x_pub));
+  inject_from(mac, frame, flen);                          /* counter 42: replay */
+  assert(g_alerts_rx.empty());
+  flen = build_alert_frame(x_pub, x_priv, secret, 43,
+                           mesh_alert::Kind::TEMP_DRIFT, 3, 9, frame, sizeof(frame));
+  inject_from(mac, frame, flen);
+  assert(g_alerts_rx.size() == 1);
+
+  /* clear_trusted_peers() (what leave_opera uses) tombstones too. */
+  mesh_session::clear_trusted_peers();
+  assert(mesh_session::get_replay_counters(fps, ctrs, mesh_session::MAX_REPLAY_COUNTERS) == 1);
+  assert(ctrs[0] == 43);
+
+  /* The tombstone table is bounded: past MAX_COUNTER_TOMBSTONES the oldest
+   * goes, the rest stay. X (tombstoned first, just above) is the oldest. */
+  for (size_t i = 0; i < mesh_session::MAX_COUNTER_TOMBSTONES; ++i) {
+    uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
+    std::memset(fp, (int)(0xA0 + i), sizeof(fp));
+    assert(mesh_session::restore_replay_counter(fp, 100 + i));
+  }
+  const size_t n = mesh_session::get_replay_counters(fps, ctrs, mesh_session::MAX_REPLAY_COUNTERS);
+  assert(n == mesh_session::MAX_COUNTER_TOMBSTONES);
+  for (size_t i = 0; i < n; ++i) assert(std::memcmp(fps[i], x_fp, sizeof(x_fp)) != 0);
+  /* ...and a zero counter (a peer that never got a frame through) parks nothing. */
+  uint8_t z_fp[mesh_crypto::FINGERPRINT_LEN];
+  std::memset(z_fp, 0x5A, sizeof(z_fp));
+  assert(!mesh_session::restore_replay_counter(z_fp, 0));
+  std::printf("PASS test_replay_tombstones_across_leave_and_repair\n");
+}
+
+/* The leaver's side of the same fix: leave_opera() keeps the outbound
+ * counter, so after a re-pair this device's frames continue ABOVE the
+ * tombstone its peers hold for it instead of restarting at 1. */
+void test_leave_keeps_outbound_counter() {
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x4E + i);
+  uint8_t a_pub[mesh_crypto::PUBKEY_LEN], a_priv[mesh_crypto::PRIVKEY_LEN];
+  stand_up_session(secret, a_pub, a_priv);
+  uint8_t b_pub[mesh_crypto::PUBKEY_LEN], b_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(b_pub, b_priv));
+  assert(mesh_session::register_trusted_peer(b_pub));
+  const uint8_t b_mac[6] = {0x02, 0x5E, 0x5E, 0x5E, 0x5E, 0x5E};
+  assert(mesh_transport::add_peer(b_mac));
+
+  g_outs.clear();
+  assert(mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 3, 0, 100));   /* 1 */
+  assert(mesh_session::leave_opera(200));                                               /* 2 */
+  assert(g_outs.size() == 2);
+  /* Re-pair into the same opera. */
+  assert(mesh_session::set_opera_secret(secret));
+  assert(mesh_session::register_trusted_peer(b_pub));
+  g_outs.clear();
+  assert(mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 3, 0, 300));
+  assert(g_outs.size() == 1);
+  mesh_envelope::Header hdr;
+  const uint8_t* pl = nullptr;
+  size_t plen = 0;
+  assert(mesh_envelope::parse_and_verify(g_outs[0].bytes.data() + 1, g_outs[0].bytes.size() - 1,
+                                         a_pub, &hdr, &pl, &plen));
+  assert(hdr.counter == 3);
+  std::printf("PASS test_leave_keeps_outbound_counter\n");
+}
+
 void test_build_mesh_alerts_json() {
   mesh_alert::Record recs[2];
   std::memset(recs, 0, sizeof(recs));
@@ -2014,6 +2148,9 @@ int main() {
   test_enable_disable();
   test_leave_opera();
   test_peer_left_dispatch();
+  /* Review fix — replay tombstones survive leave / re-pair / reboot. */
+  test_replay_tombstones_across_leave_and_repair();
+  test_leave_keeps_outbound_counter();
   test_build_mesh_alerts_json();
   test_build_mesh_status_json_disabled();
   test_rest_buffers_fit_worst_case();

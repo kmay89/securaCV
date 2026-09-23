@@ -325,8 +325,9 @@ size_t get_peer_links(PeerLink* out, size_t cap);
  *   • payload length doesn't match the BEACON_EVENT wire format.
  *
  * register_trusted_peer() — copies the 32-byte pubkey into the local
- * table, computes its fingerprint, and zeroes the per-peer
- * last_counter. Returns false if the table is full
+ * table, computes its fingerprint, and starts the per-peer last_counter
+ * at 0 — or at that fingerprint's tombstone, when the device was trusted
+ * before (below). Returns false if the table is full
  * (MAX_TRUSTED_PEERS) OR the same pubkey is already registered (the
  * call would otherwise reset last_counter and allow replay). Idempotent
  * across boots: the integration layer persists the pubkey list and the
@@ -334,32 +335,47 @@ size_t get_peer_links(PeerLink* out, size_t cap);
  * restores both at boot (main.cpp: register every stored pubkey, then
  * restore_replay_counter; counters are re-saved every 5 minutes).
  *
- * clear_trusted_peers() — wipes the table. Used on opera-secret-
- * rotation and at deinit().
+ * clear_trusted_peers() — empties the table (leave_opera() uses it);
+ * every dropped peer's counter survives as a tombstone (below).
+ *
+ * Replay tombstones: dropping a trusted peer — a verified LEAVE,
+ * unregister_trusted_peer(), a removal or a rotation that forgets it,
+ * clear_trusted_peers() — keeps its last_counter as a tombstone, and
+ * register_trusted_peer() re-applies it to the same fingerprint. So a
+ * device re-paired into the same, un-rotated opera cannot have anything
+ * it signed before it was dropped replayed as fresh (its old LEAVE
+ * included). At most MAX_COUNTER_TOMBSTONES are kept (oldest evicted);
+ * only deinit() wipes them. They ride the same NVS replay_ctrs blob as
+ * the live counters (get_replay_counters / restore_replay_counter).
  * ────────────────────────────────────────────────────────────────────────── */
 
-constexpr size_t MAX_TRUSTED_PEERS = 8;
+constexpr size_t MAX_TRUSTED_PEERS      = 8;
+constexpr size_t MAX_COUNTER_TOMBSTONES = 8;
+/* Live counters + tombstones: what get_replay_counters() can return. */
+constexpr size_t MAX_REPLAY_COUNTERS    = MAX_TRUSTED_PEERS + MAX_COUNTER_TOMBSTONES;
 
 bool   register_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]);
 void   clear_trusted_peers();
 size_t trusted_peer_count();
 
-/* Drop ONE trusted peer by fingerprint (zeroes its slot, including its
- * replay counter and MAC binding). Returns true iff an entry was removed.
- * Used by the verified-LEAVE_OPERA receive path and by peer removal. The
- * NVS copy is the integration layer's (mesh_state::remove_trusted_peer). */
+/* Drop ONE trusted peer by fingerprint (empties its slot and MAC binding;
+ * its replay counter becomes a tombstone). Returns true iff an entry was
+ * removed. Used by the verified-LEAVE_OPERA receive path and by peer
+ * removal. The NVS copy is the integration layer's
+ * (mesh_state::remove_trusted_peer). */
 bool   unregister_trusted_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN]);
 
-/* Snapshot the per-peer replay counters for NVS persistence.
- * out must hold at least MAX_TRUSTED_PEERS entries. Returns the
- * number of in-use entries written. */
+/* Snapshot the replay counters for NVS persistence: every trusted peer's,
+ * then every tombstone's. out must hold MAX_REPLAY_COUNTERS entries to
+ * get them all. Returns the number of entries written. */
 size_t get_replay_counters(uint8_t (*out_fps)[mesh_crypto::FINGERPRINT_LEN],
                            uint64_t* out_counters,
                            size_t    out_cap);
 
-/* Restore a peer's last_counter from NVS. Looks up by fingerprint;
- * updates if found AND the persisted counter > current. Returns true
- * if the counter was updated. */
+/* Restore a counter from NVS, after the trusted peers are registered. A
+ * trusted fingerprint's last_counter is raised to it; any other
+ * fingerprint becomes (or raises) a tombstone. Returns true if a counter
+ * or tombstone was raised or created. */
 bool   restore_replay_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
                               uint64_t counter);
 
@@ -426,8 +442,12 @@ void set_hub_election_handler(hub_election_received_fn fn);
  *      under the current opera_id and broadcasts it — best effort, the
  *      return value says whether any peer took the frame;
  *   2. then cancels any pairing and wipes every opera-scoped RAM item:
- *      opera_id / sender_fp binding, outbound counter, trusted-peer
- *      table, opera name, alert history and counter.
+ *      opera_id / sender_fp binding, trusted-peer table, opera name,
+ *      alert history and counter. Two things are KEPT on purpose: the
+ *      dropped peers' replay counters (as tombstones — see the receive
+ *      side above) and this device's outbound counter, which peers keep
+ *      as a tombstone for it, so after a re-pair into the same opera its
+ *      frames keep counting up rather than restart and be dropped.
  * NVS is the integration layer's (mesh_state::clear_*). No rekey is
  * needed: the LEAVER discards its own copy of the secret; the survivors'
  * opera is unchanged. (Removing SOMEONE ELSE is the rekey path, spec
