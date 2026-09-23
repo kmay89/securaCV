@@ -21,7 +21,10 @@ Native earns its keep for the things a browser can't do well:
 
 - **Reliable USB flashing** — WebSerial is Chromium-only and flaky; native
   serial (Rust `serialport`) is rock-solid. *(Phase 2 — stubbed today.)*
-- **Device discovery** — mDNS + Bluetooth LE to the Canaries. *(Phase 2.)*
+- **Device discovery** — an mDNS browse of `_securacv._tcp` finds every
+  Canary board on the network (desktop, live today — the Flasher's
+  `fleet_scan`, ported), beside the `/api/fleet` poll that finds a kernel.
+  Bluetooth LE discovery *(Phase 2.)*
 - **An always-on menubar companion** — live fleet status, native
   notifications on signed events, the tamper-evident timeline. *(Phase 2.)*
 
@@ -147,8 +150,9 @@ do). Which button, when, and when not:
 1. **This** — Tauri shell of the Lab, Mac/Linux installers, release pipeline.
 2. **Native USB flashing** (`serialport`) — replace WebSerial; the biggest
    reliability win. Bundle `esptool`.
-3. **Menubar fleet companion** — mDNS/BLE status, native notifications on
-   signed events, the signed timeline.
+3. **Menubar fleet companion** — mDNS status (the browse itself is live on
+   desktop; BLE still to come), native notifications on signed events, the
+   signed timeline.
 4. Extend the same shared core to **iOS/iPad** (Tauri v2 mobile — **scaffolded**,
    see [`MOBILE.md`](MOBILE.md) or the rendered walkthrough
    [`ipad-guide.html`](ipad-guide.html); needs your Apple Developer account to

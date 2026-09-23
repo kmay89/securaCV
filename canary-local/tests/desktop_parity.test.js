@@ -2031,6 +2031,58 @@ test("witness wall: both apps discover the LAN fleet the same way, one emulator,
     "vendored tv-emulator.js drifted between the Flasher and the Lab — run scripts/vendor_witness_emulator.sh");
 });
 
+test("mDNS browse: the Lab's fleet_scan is the Flasher's, in lockstep", () => {
+  // The Lab ported the Flasher's browse of _securacv._tcp as a twin (same
+  // command, DTO, constant, code) so a frontend written against either app
+  // reads the other's answer unchanged. A retyped copy drifts quietly — the
+  // failure would be a board one app lists and the other never hears.
+  const flasherFleet = read(join(ROOT, "desktop/src-tauri/src/fleet.rs"));
+  const labFleet = read(join(ROOT, "desktop-lab/src-tauri/src/fleet.rs"));
+  const labRs = read(join(ROOT, "desktop-lab/src-tauri/src/lib.rs"));
+  const norm = (t) => t.replace(/\s+/g, " ").trim();
+  const item = (src, re, what) => {
+    const m = re.exec(src);
+    assert.ok(m, `couldn't find ${what}`);
+    return norm(m[0]);
+  };
+  const pieces = [
+    [/const SERVICE_TYPE: &str = "[^"]*";/, "SERVICE_TYPE"],
+    [/pub struct FleetSighting \{[\s\S]*?\n\}/, "struct FleetSighting"],
+    [/#\[derive\([^)]*\)\]\s*#\[serde\([^)]*\)\]\s*pub struct FleetSighting/, "FleetSighting's derive/serde attributes"],
+    [/#\[tauri::command\]\s*pub async fn fleet_scan\(timeout_ms: Option<u64>\)[\s\S]*?\n\}/, "fn fleet_scan"],
+    [/fn scan_blocking\(wait_ms: u64\)[\s\S]*?\n\}/, "fn scan_blocking"],
+  ];
+  for (const [re, what] of pieces) {
+    assert.strictEqual(item(labFleet, re, `${what} in desktop-lab fleet.rs`),
+      item(flasherFleet, re, `${what} in desktop fleet.rs`),
+      `desktop-lab fleet.rs ${what} drifted from the Flasher's — copy it back verbatim`);
+  }
+  assert.match(labFleet, /const SERVICE_TYPE: &str = "_securacv\._tcp\.local\.";/,
+    "the Lab must browse the service every board advertises");
+  // Only the browse is ported: the Flasher's device calls carry bearer tokens
+  // from its secret drawer, and the Lab has no drawer to keep them in.
+  const labFleetCode = labFleet.replace(/\/\/.*$/gm, "");
+  assert.doesNotMatch(labFleetCode, /fn\s+(?:fleet_device_call|device_whoami)\b|bearer_auth|Authorization|token/i,
+    "desktop-lab fleet.rs must not grow the Flasher's token-bearing device calls");
+  // Desktop-only, and honestly advertised: the module and the command exist
+  // only where the capability says so.
+  assert.match(labRs, /#\[cfg\(desktop\)\]\s*mod fleet;/, "desktop-lab lib.rs must gate mod fleet on desktop");
+  assert.match(labRs, /"mdns":\s*cfg!\(desktop\)/, "desktop-lab native_capabilities must report mdns as cfg!(desktop)");
+  const handlers = [...labRs.matchAll(/invoke_handler\(tauri::generate_handler!\[([\s\S]*?)\]\)/g)].map((m) => m[1]);
+  assert.strictEqual(handlers.length, 2, "expected a desktop and a non-desktop invoke_handler in desktop-lab lib.rs");
+  assert.ok(handlers[0].includes("fleet::fleet_scan"), "the desktop handler must register fleet::fleet_scan");
+  assert.ok(!handlers[1].includes("fleet_scan"), "the mobile handler must not register fleet_scan (no mdns there)");
+  // The frontend asks before it browses, then feeds the boards to the poll.
+  const labHost = read(join(CANARY, "assets/witness-host.js"));
+  assert.match(labHost, /invoke\("fleet_scan"/, "Lab witness-host.js no longer browses mDNS (fleet_scan)");
+  assert.match(labHost, /caps\.mdns/, "Lab witness-host.js must gate the browse on the mdns capability");
+  // One crate version on both sides of the twin.
+  const mdnsVer = (lock) => (/name = "mdns-sd"\nversion = "([^"]+)"/.exec(read(join(ROOT, lock))) || [])[1];
+  assert.ok(mdnsVer("desktop/src-tauri/Cargo.lock"), "the Flasher's lock lost mdns-sd");
+  assert.strictEqual(mdnsVer("desktop-lab/src-tauri/Cargo.lock"), mdnsVer("desktop/src-tauri/Cargo.lock"),
+    "the two apps lock different mdns-sd versions — the twin is no longer the same browse");
+});
+
 // ── The derived birth certificate: one bird, one name, three surfaces ─────
 //
 // The Mac app can't import canary-local, so it inlines the derivation. That is

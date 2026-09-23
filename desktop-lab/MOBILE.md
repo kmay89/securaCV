@@ -93,7 +93,7 @@ iOS is the strictest surface, and the layer already accounts for it (see the
 | Capability | iOS |
 |---|---|
 | **USB flashing** | ❌ Apple blocks generic USB-serial. The **Flash bench is hidden on iOS**; it points to the desktop app instead. |
-| **Discovery (mDNS / BLE)** | ✅ native (CoreBluetooth / Bonjour) — live fleet on your phone. |
+| **Discovery (mDNS / BLE)** | ❌ not yet — the mDNS browse (`fleet_scan`) is **desktop-only today**: an iOS browse needs the multicast entitlement and `NSBonjourServices` first, so a mobile build neither registers the command nor reports `mdns`. BLE discovery isn't built on any surface yet. The `/api/fleet` poll (`witness_discover`, over a typed kernel address and `canary.local`) is the one discovery path a mobile build carries. |
 | **Notifications** | ✅ native — alerts on signed events. |
 | **Sealed local storage** | ✅ Keychain-backed. |
 

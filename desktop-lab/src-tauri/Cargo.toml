@@ -51,6 +51,13 @@ tokio = { version = "1", features = ["time"] }
 # (the Flasher's espflash sidecar) is the follow-up that flips the `serial`
 # capability to true.
 serialport = "4"
+# LAN discovery by mDNS (fleet_scan, src/fleet.rs): a real browse of
+# `_securacv._tcp` — the same crate and minor as the Flasher's
+# (desktop/src-tauri/Cargo.toml), pure Rust on std sockets, no -sys crate.
+# The OS resolver alone can find `.local` HOSTNAMES but cannot enumerate a
+# service, and vision/sense announce mDNS-only. Desktop only: an iOS browse
+# needs the multicast entitlement + NSBonjourServices (MOBILE.md).
+mdns-sd = "0.21"
 
 [profile.release]
 panic = "abort"

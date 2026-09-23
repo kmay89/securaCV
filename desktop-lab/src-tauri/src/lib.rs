@@ -12,6 +12,8 @@
 // its own is its update manifest, from the project's releases.
 
 #[cfg(desktop)]
+mod fleet;
+#[cfg(desktop)]
 mod self_update;
 
 #[tauri::command]
@@ -47,7 +49,10 @@ fn app_info() -> AppInfo {
 // stays false until it lands so the frontend never lights a "Flash over
 // USB (native)" path that isn't there. `serial_list` advertises what does
 // exist, so the flash page can at least show which ports the native shell
-// sees while the browser path explains itself.
+// sees while the browser path explains itself. LAN discovery is two live
+// commands on desktop: an mDNS browse that finds the boards (fleet_scan,
+// src/fleet.rs) and the /api/fleet poll that finds a kernel
+// (witness_discover). Bluetooth LE discovery is still future.
 #[tauri::command]
 fn native_capabilities() -> serde_json::Value {
     serde_json::json!({
@@ -60,8 +65,13 @@ fn native_capabilities() -> serde_json::Value {
         // only fail.
         "serial_list": cfg!(desktop),
         // LAN fleet discovery is live: witness_discover polls /api/fleet on
-        // the LAN (the DISCOVERY.md contract). mDNS browse + BLE stay future.
+        // the LAN (the DISCOVERY.md contract), on every build.
         "discovery": true,
+        // The mDNS browse of `_securacv._tcp` (fleet_scan, the Flasher's
+        // twin). Desktop only — iOS needs the multicast entitlement and
+        // NSBonjourServices first (MOBILE.md), so a mobile build neither
+        // registers the command nor advertises it. BLE is still future.
+        "mdns": cfg!(desktop),
         "notifications": false,
         // Signed self-update via the rolling lab-latest pointer (desktop
         // builds only — the App Store owns updates on iOS/iPadOS).
@@ -190,7 +200,10 @@ fn base_ok(base: &str) -> bool {
 /// (`canary-local/tests/desktop_parity.test.js` pins that). Unlike the
 /// browser Lab (which can't scan a LAN), the native shell can reach it
 /// directly; `.local` hostnames resolve through the OS resolver (Bonjour /
-/// avahi), so no mDNS crate is needed. ONE pass over the candidate bases,
+/// avahi), so this command needs no mDNS of its own — on desktop the
+/// frontend adds the boards `fleet_scan` browsed (src/fleet.rs) to the
+/// candidates, and the typed kernel base stays first because the kernel
+/// advertises no `_securacv._tcp`. ONE pass over the candidate bases,
 /// first `/api/fleet` that answers wins; the frontend polls while the Witness
 /// Wall bench is open. Coarse presence/health only — see
 /// `tvos/discovery/DISCOVERY.md`.
@@ -250,6 +263,7 @@ pub fn run() {
             native_capabilities,
             list_serial_ports,
             witness_discover,
+            fleet::fleet_scan,
             self_update::check_update,
             self_update::install_update,
             self_update::read_update_journal,
