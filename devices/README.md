@@ -352,13 +352,15 @@ linter; making the matrix generator read them is a wave of its own).
   and the C3 case's manifest (`canary-display-nightlight-c3`) and the
   registry's `canary-nightlight` name one device two ways — before, the C6
   case sat on the Watch's page and the C3's on every page; aligning the
-  registry is the follow-up. Two homings moved with them, both
-  stated rather than guessed: the Vision manifest now lists the combo
-  witness (the regex had put it on the Vision page deliberately; the case
-  houses the Vision build beside a Sense one), and the Vision Pro mount — a
-  reCamera bridge that only landed on the Vision page because its name
-  starts with "Vision" — is universal until a `canary-vision-pro` manifest
-  claims it. The **selector** half (option A — a `cad.render_plan` of
+  registry is the follow-up. Two homings the regex had made by name are
+  now stated in the Vision manifest instead, so neither moved: the combo
+  witness (the case houses the Vision build beside a Sense one) and the
+  Vision Pro mount — the reCamera bridge for the Vision line's Pro and
+  Lite tiers
+  ([`canary_vision_pro_recamera.md`](../docs/hardware/canary_vision_pro_recamera.md)),
+  which run no Canary firmware and so can never have a manifest of their
+  own; left unclaimed it would turn universal and show on every device
+  page. The **selector** half (option A — a `cad.render_plan` of
   `{set, overrides: {host, preset, part}, parts}` per manifest, generating
   `render.sh`'s set list, `gen_assembled_dims.py`'s overrides and
   `enclosure.yml`'s fit families, each with a `--check`) is **not built**:

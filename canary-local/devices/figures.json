@@ -411,6 +411,11 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
      }
     ],
     "firmware_configs": [],
@@ -628,11 +633,6 @@
      {
       "product": "vehicle_mount",
       "variant": "vehicle-mount-kit",
-      "status": "in-development"
-     },
-     {
-      "product": "vision_pro_mount",
-      "variant": "vision-pro-mount",
       "status": "in-development"
      },
      {
@@ -1586,6 +1586,11 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -1684,6 +1689,11 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -1783,6 +1793,11 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -2050,6 +2065,11 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -2131,6 +2151,11 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -2212,6 +2237,11 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -2293,6 +2323,11 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -2508,6 +2543,11 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -2589,6 +2629,11 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -2670,6 +2715,11 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -2751,6 +2801,11 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -2832,6 +2887,11 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -3414,11 +3474,6 @@
      {
       "product": "vehicle_mount",
       "variant": "vehicle-mount-kit",
-      "status": "in-development"
-     },
-     {
-      "product": "vision_pro_mount",
-      "variant": "vision-pro-mount",
       "status": "in-development"
      },
      {

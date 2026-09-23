@@ -127,7 +127,10 @@ test("device pages list what the manifests give them, and the chooser agrees", a
   assert.ok(page("canary-display-nightstand7").includes("7-touch-dashboard-case"));
   // …and a family's own page lists its host variants' cases (the DevKit's)
   const vision = page("canary-vision");
-  for (const id of ["vision-xiao-indoor", "vision-devkit-indoor", "vision-doorbell", "combo-witness"]) {
+  // (the Vision Pro mount is a reCamera bridge, not a case for every board: the
+  // manifest's claim keeps it here rather than universal on every page)
+  for (const id of ["vision-xiao-indoor", "vision-devkit-indoor", "vision-doorbell", "combo-witness",
+    "vision-pro-mount"]) {
     assert.ok(vision.includes(id), `canary-vision page lists ${id}`);
   }
   // every chooser pairing is one the manifests make — or a universal case

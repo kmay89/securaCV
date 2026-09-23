@@ -617,7 +617,7 @@
    "for": "bridges a Seeed reCamera Pro onto the shared stud interface: keyhole pockets on the back (hangs on any existing stud surface in this catalog), 1/4\"-20 tripod counterbore and/or magnet pocket on the front (reCamera's confirmed mount options, [Canary Vision Pro doc](../canary_vision_pro_recamera.md)). No confirmed body dimensions yet — mounting interface only",
    "status": "in-development",
    "note": "measure your screw/nut; no bench unit yet",
-   "device": null,
+   "device": "canary-vision",
    "preview": "preview_dev_visionpro.png",
    "parts": [],
    "scad": "canary_vision_pro_mount.scad"
