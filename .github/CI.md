@@ -59,9 +59,14 @@ reads `firmware/canary/**`).
 - **Node** jobs installing from a lockfile use `setup-node`'s
   `cache: npm` with an explicit `cache-dependency-path`. A job that runs
   node at all (`node --test`, a `.mjs` generator, `npx`) sets it up with
-  `actions/setup-node@v7`, `node-version: "22"` (the major the page and
-  host tests run) — the image's node moves with the image, like its
-  `python3`. Not machine-checked yet; the reviewer holds it.
+  `actions/setup-node@v7` — the image's node moves with the image, like
+  its `python3` — on `node-version: "22"` (the major the page and host
+  tests run) unless a comment says why. Three jobs are on `20` with no
+  reason written down yet: `desktop-release.yml` and
+  `desktop-flasher-release.yml` (`build`, the two app releases) and
+  `sbom.yml` (`generate-sbom`). They are the known exceptions until
+  someone moves them or writes the reason next to the pin. Not
+  machine-checked yet; the reviewer holds it.
 - **One-off big downloads** (Emscripten SDK, Playwright Chromium) get an
   `actions/cache` entry — pinned-version keys for pinned tools, weekly
   keys for floating ones (see canary-local.yml).
