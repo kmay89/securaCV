@@ -216,3 +216,50 @@ test("no card asks for a file that is not there (the Lab's probes fail a page on
   }
   assert.deepStrictEqual(missing, []);
 });
+
+// real-shapes.js realDash seats the Dash's three STLs by hand along the case's
+// face normal, from the module center outward. Its numbers were once a 16 mm
+// body and an 8.4 mm back while the CAD had moved on; they are re-derived now,
+// and held here to the ledger gen_assembled_dims.py measures off the same
+// .scad (docs/hardware/enclosure/assembled_dims.json, device.canary-display-
+// dash): depth fig.d from the dock pads to the face, seams_fig_d the pads'
+// and the back's thickness, face_fig_mm the aperture. The module center sits
+// total_t / 2 in front of the back plane (the fin face), so along the normal:
+// the pads' tips at −total_t/2 − pads, the back centered over [tips, seam 2],
+// the frame over [seam 2, face], the glass face_t behind the face. The
+// center's own position on the stand is not pinned here (it is the stand's
+// derivation, cited in the comment above realDash).
+test("the Dash card seats its case where the CAD ledger measures it", () => {
+  const REPO = join(ROOT, "..");
+  const src = readFileSync(join(ROOT, "assets/real-shapes.js"), "utf8");
+  const start = src.indexOf("async function realDash(");
+  assert.ok(start >= 0, "real-shapes.js still has realDash");
+  const body = src.slice(start, src.indexOf("\n}\n", start));
+  const num = (re, what) => {
+    const m = re.exec(body);
+    assert.ok(m, `realDash: ${what} not found`);
+    return m.slice(1).map(Number);
+  };
+  const [frameAt] = num(/seatPart\(scene, frame, \{[^}]*?D: off\((-?[\d.]+)\)/, "the frame's seat");
+  const [backAt] = num(/seatPart\(scene, back, \{[^}]*?D: off\((-?[\d.]+)\)/, "the back's seat");
+  const [glassAt] = num(/translate\(\.\.\.off\((-?[\d.]+)\)\)/, "the glass's seat");
+  const [glassW, glassH] = num(/screenPlane\(([\d.]+), ([\d.]+),/, "the glass plane");
+
+  const asm = JSON.parse(readFileSync(join(REPO, "docs/hardware/enclosure/assembled_dims.json"), "utf8"));
+  const row = asm.devices["device.canary-display-dash"];
+  assert.ok(row && row.scad === "canary_dash_display.scad", "the ledger measures the Dash off its case");
+  const enc = JSON.parse(readFileSync(join(ROOT, "devices/enclosures.json"), "utf8"));
+  const knob = (name) => Number(enc.scads[row.scad].groups.flatMap((g) => g.params)
+    .find((p) => p.name === name).default);
+
+  const [pads, backIn] = row.seams_fig_d;          // pads | back plate | frame
+  const totalT = row.fig.d - pads;                 // frame_h + back_t
+  const tips = -totalT / 2 - pads;
+  const close = (got, want, what) =>
+    assert.ok(Math.abs(got - want) < 0.01, `realDash ${what}: off(${got}), the ledger says ${want.toFixed(2)}`);
+  close(backAt, tips + backIn / 2, "back");
+  close(frameAt, tips + (backIn + row.fig.d) / 2, "frame");
+  close(glassAt, totalT / 2 - knob("face_t"), "glass");
+  close(glassW, row.face_fig_mm.w, "glass width");
+  close(glassH, row.face_fig_mm.h, "glass height");
+});

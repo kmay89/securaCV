@@ -132,15 +132,16 @@ async function realWatch(scene) {
 // 9.0 mm mesh is back_t 3.0 plus the 6.0 dock pads on the wall face, z −6…3),
 // outer face on the back plane (−9.8) → bbox center −11.3; the frame's rim on
 // the back's inner face (−6.8) and its face at +9.8 → center +1.5; the glass
-// 2.4 (face_t) behind the face → +7.35. The same seat gen_assembled_dims.py
+// 2.4 (face_t) behind the face → +7.4. The same seat gen_assembled_dims.py
 // measures ("back as modeled, frame turned face-out with its rim on the back's
-// inner face"). The rear rail stands 0.38 mm clear of the back plane at its
-// top (set back by 6·tan25° + 0.4 in the SCAD). The two lower dock pads
-// (cradle_dx 38, cradle_dy 16) sit behind the back plane where the fin is:
-// the SCAD's stand derives the fin from total_t alone, so as modeled they
-// overlap it (OpenSCAD's intersection of stand() with back() at this seat
-// is two pad-sized solids) — buried inside the fin here, and a CAD question
-// for the stand, not for this card.
+// inner face"); tests/scene_figures.test.js holds these three offsets and the
+// glass plane to that ledger row. The rear rail stands 0.38 mm clear of the
+// back plane at its top (set back by 6·tan25° + 0.4 in the SCAD). The two
+// lower dock pads (cradle_dx 38, cradle_dy 16) sit behind the back plane
+// where the fin is: the SCAD's stand derives the fin from total_t alone, so
+// as modeled they overlap it (OpenSCAD's intersection of stand() with back()
+// at this seat is two pad-sized solids) — buried inside the fin here, and a
+// CAD question for the stand, not for this card.
 async function realDash(scene) {
   const [frame, back, stand] = await Promise.all([
     load("canary_dash_display_frame.stl"),
@@ -160,7 +161,7 @@ async function realDash(scene) {
   seatPart(scene, back, { G, D: off(-11.3), R: Ra, color: shell2(), gloss: 0.22 }); // pads toward the fin
   scene.addMesh(screenPlane(101.3, 61.2, false), {       // glass behind the 2.5 mm bezel lip
     screen: true,
-    model: M4.mul(G, M4.mul(M4.translate(...off(7.35)), Ra)),
+    model: M4.mul(G, M4.mul(M4.translate(...off(7.4)), Ra)),
   });
   scene.dist = 270;
 }
