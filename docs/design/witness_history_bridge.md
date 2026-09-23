@@ -206,7 +206,11 @@ exists to prevent). A row whose `linked` is false says so, the card's oldest
 record says that, a `joins:false` page flags its newest row, and a divider
 marks where the card rows begin. Busy, timeout and a failed read leave Load
 More in place with a note; "no card" retires it with a note, and so does an
-empty card page ("Nothing older is on the card."). `firmware/tests_host/test_canary_timeline.test.js`
+empty card page ("Nothing older is on the card."). One Load More is out at
+a time: a second click while a card page is pending is ignored, the 5 s
+auto-refresh skips while one is out, and a page that lands after the list
+was reloaded (Refresh, the panel re-entered) is dropped rather than appended
+below a newer oldest row. `firmware/tests_host/test_canary_timeline.test.js`
 lifts those functions out of the raw string and pins that behavior.
 
 ## What stays honest

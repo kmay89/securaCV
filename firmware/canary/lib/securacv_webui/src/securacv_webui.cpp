@@ -4804,6 +4804,11 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // Where the next card page starts: the last card page's next_hint, echoed
     // as ?hint= so each page costs one page of reads. The device re-checks it.
     let timelineHint = null;
+    // Bumped by every reload of the list. A Load More page is appended only
+    // to the list it was asked for, never to one reloaded while it was out.
+    let timelineEpoch = 0;
+    // One Load More at a time: a card page can take up to 3 s.
+    let timelineMoreLoading = false;
 
     const RECORD_TYPES = {
       0: { name: 'Boot Attestation', icon: '⚡', css: 'boot' },
@@ -4832,6 +4837,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       try { await _loadTimelineImpl(); } finally { timelineLoading = false; }
     }
     async function _loadTimelineImpl() {
+      timelineEpoch++;
       timelinePage = 0;
       timelineRecords = [];
       timelineHint = null;
@@ -4893,12 +4899,13 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       // Start auto-refresh while timeline panel is active. Paused once the
       // reader pages into history (timelinePage > 0) so a refresh doesn't
-      // collapse the list they are reading; leaving and re-entering the
-      // panel resumes it.
+      // collapse the list they are reading, and while a Load More is out
+      // (the first card page can take a few seconds); leaving and
+      // re-entering the panel resumes it.
       clearInterval(timelineRefreshTimer);
       timelineRefreshTimer = setInterval(() => {
         if (currentPanel === 'timeline') {
-          if (timelinePage === 0) loadTimeline();
+          if (timelinePage === 0 && !timelineMoreLoading) loadTimeline();
         } else {
           clearInterval(timelineRefreshTimer);
         }
@@ -4994,16 +5001,27 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     async function loadMoreTimeline() {
+      // A second click while a page is out would ask for the same page
+      // again and append it twice: ignore it until the first one lands.
+      if (timelineMoreLoading) return;
+      timelineMoreLoading = true;
+      try { await _loadMoreTimelineImpl(); } finally { timelineMoreLoading = false; }
+    }
+    async function _loadMoreTimelineImpl() {
       // Page backward: ?before= is an exclusive seq bound, so each click
       // fetches the window just older than what is on screen. The ring
       // (RAM) answers first; past its oldest record the device reads the SD
       // card on its main loop and answers with a card page (source "sd"),
       // whose next_hint the next click echoes as ?hint=.
       if (!timelineRecords.length) return;
+      const epoch = timelineEpoch;
       const oldest = timelineRecords[timelineRecords.length - 1].seq;
       let url = '/api/witness?last=' + TIMELINE_PAGE_SIZE + '&before=' + oldest;
       if (timelineHint != null) url += '&hint=' + timelineHint;
       const data = await api(url);
+      // The list was reloaded (Refresh, the panel re-entered) while this
+      // page was out: it belongs to a list that is gone. Drop it.
+      if (epoch !== timelineEpoch) return;
       const loadMore = document.getElementById('timelineLoadMore');
       if (!data || !data.ok) {
         const err = data && data.error;
