@@ -25,7 +25,7 @@ Standard configuration for the Canary Wireless Access Point witness device.
 
 ## Privacy Settings
 
-- **Time Coarsening**: 5-second buckets
+- **Time Coarsening**: ten-minute buckets
 - **RF Presence**: No MAC address storage
 - **Session Rotation**: Every 4 hours
 

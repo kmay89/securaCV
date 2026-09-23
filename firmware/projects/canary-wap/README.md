@@ -225,7 +225,7 @@ curl http://192.168.4.1/api/status
 
 - **No Raw Video Storage:** Camera is for witness events only
 - **No MAC Addresses Stored:** RF detection counts devices, not identities
-- **Time Buckets:** Coarsened timestamps (5s default, 10s mobile)
+- **Time Buckets:** Coarsened timestamps (ten-minute buckets in every build profile)
 - **Local-First:** All data stays on device unless explicitly exported
 - **Session Rotation:** Tokens rotate every 4 hours
 
