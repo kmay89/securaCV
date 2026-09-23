@@ -80,7 +80,7 @@ function envelopeFor(fig) {
     return {
       E: { w: asm.fig.w, d: asm.fig.d, h: asm.fig.h },
       parts: {},
-      assembled: { seams: asm.seams_fig_d, face: asm.face_fig_mm },
+      assembled: { seams: asm.seams_fig_d, face: asm.face_fig_mm, features: asm.features_fig_mm },
     };
   }
   if (fig.board) {
@@ -318,7 +318,9 @@ export function builtDeviceFigures() {
 
 export function buildOne(fig) {
   const { E, parts, assembled } = envelopeFor(fig);
-  const solids = fig.build(E, parts, assembled ? { seams: assembled.seams, face: assembled.face } : undefined);
+  const solids = fig.build(E, parts, assembled
+    ? { seams: assembled.seams, face: assembled.face, features: assembled.features }
+    : undefined);
   return buildGlb(fig, solids, E);
 }
 

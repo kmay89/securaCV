@@ -63,10 +63,15 @@ class Result(NamedTuple):
     diag: str                        # stdout + stderr (+ the .echo file for echo exports)
     echoes: list[str]                # every `ECHO: …` payload, in order
     bbox: list[float] | None         # [x, y, z] mm, 3 dp — binstl exports only
+    # the bbox's min corner [x, y, z] in the rendered file's own frame, mm,
+    # 3 dp — binstl exports only. What turns a coordinate the case echoes
+    # (a feature center) into a position on the measured envelope without
+    # assuming the outline is centered on the origin
+    lo: list[float] | None = None
 
 
-def stl_bbox(path: Path) -> list[float]:
-    """[x, y, z] extent of a binary STL, rounded to 0.001 mm."""
+def stl_bounds(path: Path) -> tuple[list[float], list[float]]:
+    """(min corner, max corner) of a binary STL, [x, y, z] each, unrounded."""
     raw = Path(path).read_bytes()
     (n,) = struct.unpack_from("<I", raw, 80)
     lo = [float("inf")] * 3
@@ -83,6 +88,12 @@ def stl_bbox(path: Path) -> list[float]:
                 if c > hi[a]:
                     hi[a] = c
         off += 50
+    return lo, hi
+
+
+def stl_bbox(path: Path) -> list[float]:
+    """[x, y, z] extent of a binary STL, rounded to 0.001 mm."""
+    lo, hi = stl_bounds(path)
     return [round(hi[a] - lo[a], 3) for a in range(3)]
 
 
@@ -110,8 +121,12 @@ def render(src: Path, defines: dict[str, str] | None = None, *, export: str = "b
             diag += out.read_text(encoding="utf-8", errors="replace")
         if DIRTY.search(diag) or not out.exists():
             raise ProbeError(f"{label}: dirty render, nothing measured\n{diag}")
-        bbox = stl_bbox(out) if export != "echo" else None
-    return Result(diag=diag, echoes=_ECHO.findall(diag), bbox=bbox)
+        bbox = lo = None
+        if export != "echo":
+            lo_raw, hi_raw = stl_bounds(out)
+            bbox = [round(hi_raw[a] - lo_raw[a], 3) for a in range(3)]
+            lo = [round(v, 3) for v in lo_raw]
+    return Result(diag=diag, echoes=_ECHO.findall(diag), bbox=bbox, lo=lo)
 
 
 def probe(label: str, scad: str, overrides: dict[str, str], body: str = "", *,

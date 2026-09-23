@@ -104,12 +104,28 @@ function firmwareConfigs(deviceId) {
 }
 
 const catalogByDevice = new Map();
+const productScad = new Map();   // catalog product id -> the case source it is cut from
 for (const p of catalog.products) {
+  productScad.set(p.id, p.scad);
   for (const v of p.variants || []) {
     const key = v.device || '_universal';
     if (!catalogByDevice.has(key)) catalogByDevice.set(key, []);
     catalogByDevice.get(key).push({ product: p.id, variant: v.id, status: v.status });
   }
+}
+
+// The catalog evidence a figure's verdict may cite. A device's variants, by
+// default — but a figure MEASURED off one in-development case (`assembled`)
+// is that case and nothing else, so it cites only the variants cut from the
+// .scad it was measured from. Without that, the Combo (a canary-vision build
+// in the catalog, measured off canary_combo.scad) would borrow the Vision's
+// RELEASED variants and read `confirmed` — a promotion no evidence about the
+// Combo supports. For the Watch and the Dash the filter changes nothing:
+// every variant of their device is cut from the case they are measured off.
+function catalogEvidence(fig, assembled) {
+  const variants = catalogByDevice.get(fig.of) || [];
+  if (!fig.assembled) return variants;
+  return variants.filter((v) => productScad.get(v.product) === assembled.scad);
 }
 
 function confidenceFor(fig, evidence) {
@@ -197,7 +213,12 @@ function envelopeFor(fig) {
       // `face`: the aperture the CAD cuts in the outer face (view window,
       // bezel bore), measured with the envelope — the massing draws the
       // glass in it rather than retyping the inset
-      assembled: { placement: asm.placement, mm: asm.mm_scad, seams: asm.seams_fig_d, face: asm.face_fig_mm },
+      // `features`: off-center marks the CAD cuts in the face (the Combo's
+      // lens and radome window), each a measured center on the envelope
+      assembled: {
+        placement: asm.placement, mm: asm.mm_scad, seams: asm.seams_fig_d,
+        face: asm.face_fig_mm, features: asm.features_fig_mm, scad: asm.scad,
+      },
     };
   }
   if (fig.board) {
@@ -364,14 +385,16 @@ function emit(path, contents) {
 
 function buildOne(fig) {
   const { E, parts, source, stls, assembled } = envelopeFor(fig);
-  const solids = fig.build(E, parts, assembled ? { seams: assembled.seams, face: assembled.face } : undefined);
+  const solids = fig.build(E, parts, assembled
+    ? { seams: assembled.seams, face: assembled.face, features: assembled.features }
+    : undefined);
   guardCoplanar(fig, solids);
 
   const dev = registry.devices.find((d) => d.id === fig.of);
   const evidence = {
     registry_kind: dev?.kind ?? (fig.of === '_universal' ? 'universal' : null),
     committed_stls: stls.map((s) => s.file),
-    catalog_variants: catalogByDevice.get(fig.of) || [],
+    catalog_variants: catalogEvidence(fig, assembled),
     firmware_configs: fig.role === 'board' ? [] : firmwareConfigs(fig.of),
   };
   if (fig.board || fig.role === 'board') {

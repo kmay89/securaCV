@@ -264,6 +264,44 @@ export const FIGURES = [
     },
   },
 
+  /* ══════════════════════════════════════════════ Canary Combo ══════ */
+  {
+    id: 'device.canary-combo',
+    title: 'Canary Combo',
+    // The radar + camera witness (canary_combo.scad, v0.1-dev): the Vision
+    // stack beside the Sense stack in one housing, lens on the left column,
+    // radome window on the right. In development, with no committed STLs, so
+    // it is MEASURED off its CAD as seated (assembled_dims.json — the front
+    // at z = base_d, where the file's own echo, head pads and lid key put
+    // it: 86.4 x 73.6 x 26.38 today), not sketched from that echo. The lens
+    // and the radome window are drawn where front() cuts them (A.features,
+    // measured with the envelope), so a moved stack moves the drawing.
+    // `of` is the catalog's own answer (the combo-witness variant is a
+    // canary-vision build); the ladder reads THIS case's catalog entry, not
+    // the Vision's released ones (gen_figures.mjs, catalogEvidence).
+    role: 'device', of: 'canary-vision',
+    assembled: true,
+    frame: 'scad-wall',
+    build: (E, P, A) => {
+      const [s0] = A.seams;   // the back's rim: the front plate rides from here out
+      const { lens, radome } = A.features;
+      return [
+        // the back (its keyhole thickening included) and the front plate on it
+        { kind: 'box', m: 'shell2', face: 'y', at: [0, 0, 0], size: [E.w, s0, E.h], r: 3 },
+        { kind: 'box', m: 'shell', face: 'y', at: [0, s0 - EPS, 0], size: [E.w, E.d - s0 + EPS, E.h], r: 3 },
+        // the lens in its aperture, and the radome window — the radar looks
+        // through a blind thinning, invisible from outside, drawn proud here
+        // exactly as the Sense figure draws its own
+        { kind: 'disc', m: 'lens', axis: 'y', at: [lens.x, E.d - EPS, lens.z], r: lens.w / 2, h: 1.4 },
+        {
+          kind: 'box', m: 'radome', face: 'y',
+          at: [radome.x - radome.w / 2, E.d - EPS, radome.z - radome.h / 2],
+          size: [radome.w, 0.9, radome.h], r: 1.5,
+        },
+      ];
+    },
+  },
+
   /* ═════════════════════════════════════════════════ Canary WAP ══════ */
   {
     id: 'part.wap.base',
