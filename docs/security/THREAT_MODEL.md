@@ -562,10 +562,19 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
 ### Beacon channel (NEW v0.2 — supervised harm-reduction)
 
 - Persistent device Ed25519 identity (same key as Opera/witness records).
-- **Two-pubkey cryptographic co-signing on origination.** Every Beacon frame
-  carries two Ed25519 signatures from two distinct device pubkeys. No
-  single compromised device can originate a Beacon. Spec:
-  `spec/beacon_channel_v0.md`.
+- **Two-pubkey cryptographic co-signing on origination.** Every Beacon
+  ALERT/UPDATE/CANCEL frame carries two Ed25519 signatures from two distinct
+  device pubkeys, so no single device's key can originate a Beacon on its
+  own. The one exception is the solo-degraded path (spec §6.2): a device
+  with no fresh paired cosigner may originate alone only while its physical
+  BOOT button is held, and the frame must carry `BCN_FLAG_SOLO_ORIGIN` and
+  `certainty = Observed` so receivers can see it and downweight it. That
+  gate stops a remote key thief, not software running on the device itself.
+  Spec: `spec/beacon_channel_v0.md`.
+- Co-sign requests and responses (`COSIGN_REQ`/`COSIGN_RESP`) are encrypted
+  to the peer — X25519 ECDH, a domain-labeled SHA-256 key, ChaCha20-Poly1305
+  — with the clear routing fields (fingerprints, length, the `accept` byte)
+  bound as associated data and an all-zero shared secret refused (spec §6.3).
 - Narrow life-safety template set (~13 templates). No authority/government
   templates, no mutual-aid templates.
 - CAP-aligned wire fields. Always `scope = Private`. Never IPAWS/WEA/EAS.
@@ -603,11 +612,18 @@ firmware or UI source.
 
 ### Outstanding work (tracked)
 
-- Beacon REST endpoints (`/api/beacon/*`) not yet wired into `canary_wap.ino`
-  (deferred; gated behind `FEATURE_BEACON_CHANNEL`).
+- Beacon channel runtime not wired into the `canary_wap` loop: the REST
+  routes are registered (behind `FEATURE_BEACON_CHANNEL`, Bearer-gated), but
+  nothing calls `beacon_channel::init()`, `set_enabled()`, `update()` or
+  `dispatch_espnow_message()`, and the shared ESP-NOW receive path forwards
+  to Chirp only. Wiring it needs an explicit user opt-in and a `COSIGN_REQ`
+  small enough for the 250-byte receive buffer (today 310 bytes).
 - Full transactional opera_secret rekey ACK protocol (v0.2 implements the
   minimum-correct in-memory rotation; spec §5.6 documents the full flow for
   v0.3).
-- Beacon pairing transport encryption.
+- Beacon pairing flow (spec §3.3: `PAIR_OFFER`, ephemeral X25519 +
+  confirmation code) is a stub. Nothing writes a beacon-set entry or a peer's
+  X25519 key, so the two-device co-sign path — whose transport is encrypted —
+  has no reachable input on any device.
 - Bloom-filter nonce dedup for Chirp.
 - Persistent origin signature across Chirp relays.

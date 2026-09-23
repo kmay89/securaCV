@@ -18,11 +18,12 @@
  * See spec/beacon_channel_v0.md for the full specification and
  * spec/beacon_cap_gateway_v0.md for the deferred CAP interop layer.
  *
- * Status: scaffolding (v0.1). Full integration with the application loop and
- * REST surface is gated behind a separate FEATURE_BEACON_CHANNEL build flag
- * (default OFF). When wired up, the REST endpoints MUST follow the
- * Bearer-token template trampoline pattern used by /api/mesh/* and
- * /api/bluetooth/*.
+ * Status: everything below is gated behind FEATURE_BEACON_CHANNEL (default
+ * OFF). The REST surface is wired — beacon_api.h registers /api/beacon/...
+ * from canary_wap.ino, every route behind the Bearer-token trampoline
+ * (bcn_auth_gated) the /api/mesh and /api/bluetooth routes use. The runtime
+ * loop is not: nothing in the sketch calls init(), set_enabled(), update()
+ * or dispatch_espnow_message() yet (beacon_channel.cpp "Known limitations").
  */
 
 #ifndef SECURACV_BEACON_CHANNEL_H

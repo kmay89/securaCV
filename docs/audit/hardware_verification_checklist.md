@@ -127,6 +127,12 @@ host tests assert they do, on real radio.
 
 ## Beacon channel v0 — three-board repro
 
+**Blocked until two code items land** (see "Still open" in
+`docs/audit/mesh_and_chirp_audit_v1.md` §9.1): the §3.3 pairing flow is a
+stub, so no board can be "paired into the same beacon set" yet, and the
+channel's runtime is not wired into the sketch loop, so no board receives
+or ticks Beacon frames. Every row below assumes both.
+
 - [ ] **Two-pubkey origination, happy path**
   - Setup: three boards paired into the same beacon set (A, B, C).
     `FEATURE_BEACON_CHANNEL` enabled in the build.
@@ -180,11 +186,14 @@ host tests assert they do, on real radio.
 
 - [ ] **X25519 keypair persistence across reboot**
   - Setup: two paired boards (A, B). FE enabled.
-  - Repro: capture A's `x25519_pubkey` via `GET /api/beacon/set` on B.
-    Reboot A. After reboot, query again.
-  - Post-fix expected: A's `x25519_pubkey` is identical to pre-reboot.
-    A successful COSIGN_REQ→RESP exchange completes after reboot
-    without re-pairing.
+  - Repro: note A's `fingerprint` in `GET /api/beacon/set` on B (the
+    route lists fingerprints, names and trust levels — not X25519 keys, and
+    it should not grow one for this check). Complete one COSIGN_REQ→RESP
+    exchange (A originates, B confirms). Reboot A. Originate again from A.
+  - Post-fix expected: A's fingerprint on B is unchanged, and the
+    post-reboot COSIGN_REQ→RESP exchange completes without re-pairing — B
+    can only decrypt A's request if A kept the X25519 keypair B stored at
+    pairing.
   - Pre-fix (v0.3 before PR #454): the pubkey would change every
     reboot, breaking cosign decrypt at B.
   - Artifact: `docs/audit/repro/beacon/x25519_persistence/`.

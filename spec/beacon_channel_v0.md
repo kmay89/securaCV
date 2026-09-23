@@ -376,6 +376,8 @@ The `BEACON_COSIGN_REQUEST` and `BEACON_COSIGN_RESPONSE` messages are device-to-
 If both devices are in the same Opera: use the existing Opera session key.
 If they are only Beacon-paired: derive a fresh ChaCha20-Poly1305 session key via X25519 ECDH between device pubkeys.
 
+The clear routing fields that travel beside the ciphertext are bound as ChaCha20-Poly1305 associated data, so none of them can be rewritten in flight: a `COSIGN_REQ` binds `msg_type || originator_fp || candidate_cosigner_fp || ciphertext_len` (little-endian), a `COSIGN_RESP` binds `msg_type || originator_fp || cosigner_fp || accept`. An all-zero X25519 shared secret (a low-order peer key) is refused. (The firmware implements the X25519 path only; the Opera-session-key variant above is not built.)
+
 The cosigner MUST decrypt, parse the canonical, display it to the user, and only sign after explicit confirmation. The cosigner UI MUST display:
 - The originator's device name (from local beacon set entry).
 - The full template text.
@@ -632,6 +634,7 @@ What Beacon never shares:
 
 - v0.1 (2026-05-11): Initial draft.
 - 2026-09: §6.5 cancel origination (two-device and solo `BEACON_MSG_CANCEL`, cosigner gate, originator self-adoption); §10 gains `/api/beacon/originate-solo`, `/api/beacon/cancel-solo` and `/api/beacon/silence`; §5.2 frame size corrected to 224 B.
+- 2026-09: §6.3 — the co-sign envelope binds its clear routing fields as associated data and refuses an all-zero X25519 shared secret.
 
 ---
 

@@ -1,12 +1,14 @@
 /*
- * SecuraCV Canary — Beacon Channel implementation (skeleton)
+ * SecuraCV Canary — Beacon Channel implementation
  *
- * Status: scaffolding (v0.1). Implements the public API surface defined in
- * beacon_channel.h with the cryptographic origination, verification, and
- * NFPA-72 state-surface paths in place. Networking glue (REST endpoints,
- * MQTT discovery, audio pattern playback) is wired through but not enabled
- * by default — `FEATURE_BEACON_CHANNEL` is OFF in `build_config.h` and must
- * be explicitly turned on per build target.
+ * Status: compiled only with FEATURE_BEACON_CHANNEL (OFF by default in
+ * build_config.h; firmware.yml's "Beacon channel gate" leg compiles it with
+ * the flag ON). Implements the public API in beacon_channel.h: two-pubkey
+ * origination (ALERT and CANCEL) and the BOOT-button solo path, the
+ * encrypted COSIGN exchange, the receive-path validation, the NFPA-72 state
+ * surface and the chain-hashed audit log. The REST routes are registered
+ * (beacon_api.h, Bearer-gated, from canary_wap.ino); the runtime loop is
+ * not wired yet — see "Known limitations" below.
  *
  * Critical security properties (per spec/beacon_channel_v0.md):
  *  - Every BEACON_MSG_ALERT requires two distinct Ed25519 signatures over
@@ -21,16 +23,28 @@
  *    record is /beacon/audit.jsonl on SD (pure append — never truncated or
  *    rotated, per AGENTS.md Beacon invariant 9), with a 64-entry NVS ring
  *    serving as the bounded recent-view cache for the API/UI.
+ *  - COSIGN_REQ/RESP are encrypted to the peer (X25519 ECDH -> SHA-256 with a
+ *    domain label -> ChaCha20-Poly1305, spec §6.3), with the clear routing
+ *    fields bound as associated data (beacon_cosign_aad.h) and an all-zero
+ *    shared secret refused.
  *
- * Known limitations (tracked for v0.3):
- *  - The CAP gateway path is specified in spec/beacon_cap_gateway_v0.md but
- *    not implemented; gateway pubkeys with trust_level == BCN_TRUST_GATEWAY
- *    are accepted in the beacon set but the upstream-signature path is not
- *    wired.
- *  - Pairing's encrypted COSIGN_REQ channel currently uses an unencrypted
- *    broadcast for the COSIGN_REQ message; a follow-up will wrap it in a
- *    ChaCha20-Poly1305 envelope keyed by X25519 ECDH between the device
- *    pubkeys.
+ * Known limitations — what is actually open (each is a backlog item):
+ *  1. The runtime loop is not wired. init(), set_enabled(), update() and
+ *     dispatch_espnow_message() have no callers in canary_wap.ino, and
+ *     mesh_network.cpp forwards received ESP-NOW frames to the Chirp
+ *     dispatcher only, so nothing demultiplexes BEACON_MAGIC (0xB1). Wiring
+ *     it also needs an explicit user opt-in for set_enabled(), and a
+ *     COSIGN_REQ that fits the shared receive path: its frame is 310 bytes
+ *     (ciphertext[160] reserved for a 72-byte canonical), over the 250-byte
+ *     ESP-NOW v1 payload that mesh_network's receive buffer holds.
+ *  2. The spec §3.3 pairing flow is a stub. start_pair_init/join and
+ *     confirm_pair only move the state machine, PAIR_OFFER and REVOKE frames
+ *     are dropped, and nothing writes a beacon-set entry or sets
+ *     has_x25519_pubkey. So pick_cosign_candidate() has no input and the
+ *     (implemented, encrypted) two-device path cannot run on any device.
+ *  3. The CAP gateway upstream-attestation path
+ *     (spec/beacon_cap_gateway_v0.md) is not implemented. Gateway-trust
+ *     entries are verified exactly like cosigners and get nothing more.
  */
 
 #include "beacon_channel.h"
@@ -42,6 +56,7 @@
 #include "health_log.h"
 #include "beacon_audit_recover.h"
 #include "beacon_cancel_policy.h"
+#include "beacon_cosign_aad.h"
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <esp_flash_encrypt.h>
@@ -301,6 +316,13 @@ static bool ecdh_session_key(const uint8_t* their_x25519_pubkey,
   if (!Curve25519::eval(shared, g_x25519_privkey, their_x25519_pubkey)) {
     return false;
   }
+  // A low-order peer key yields an all-zero secret — a key anyone can
+  // compute. Refuse it here rather than rely on what eval() promises.
+  if (beacon_cosign_aad::shared_secret_is_zero(shared)) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_CRYPTO,
+               "beacon: X25519 shared secret is all-zero (low-order peer key) — refused");
+    return false;
+  }
   // Domain-separate so the same shared secret can't be cross-purposed.
   static const char LABEL[] = "securacv:beacon:cosign:v0";
   mbedtls_sha256_context ctx;
@@ -310,15 +332,19 @@ static bool ecdh_session_key(const uint8_t* their_x25519_pubkey,
   mbedtls_sha256_update(&ctx, shared, 32);
   mbedtls_sha256_finish(&ctx, out_key);
   mbedtls_sha256_free(&ctx);
+  memset(shared, 0, sizeof(shared));
   return true;
 }
 
 // Encrypt `plaintext_len` bytes of `plaintext` to the recipient identified by
 // `their_x25519_pubkey`. `nonce` (12 B) is written to the output; `tag` (16 B)
-// is also written. `out_ciphertext` is at least `plaintext_len` bytes.
+// is also written. `out_ciphertext` is at least `plaintext_len` bytes. `aad`
+// is the message's clear routing fields (beacon_cosign_aad), bound into the
+// tag so none of them can be altered in flight without failing decryption.
 //
 // Returns true on success, false if ECDH failed.
 static bool cosign_encrypt(const uint8_t* their_x25519_pubkey,
+                           const uint8_t* aad, size_t aad_len,
                            const uint8_t* plaintext, size_t plaintext_len,
                            uint8_t nonce[12], uint8_t tag[16],
                            uint8_t* out_ciphertext) {
@@ -328,12 +354,15 @@ static bool cosign_encrypt(const uint8_t* their_x25519_pubkey,
   ChaChaPoly aead;
   aead.setKey(key, 32);
   aead.setIV(nonce, 12);
+  aead.addAuthData(aad, aad_len);
   aead.encrypt(out_ciphertext, plaintext, plaintext_len);
   aead.computeTag(tag, 16);
+  memset(key, 0, sizeof(key));
   return true;
 }
 
 static bool cosign_decrypt(const uint8_t* their_x25519_pubkey,
+                           const uint8_t* aad, size_t aad_len,
                            const uint8_t* ciphertext, size_t ciphertext_len,
                            const uint8_t nonce[12], const uint8_t tag[16],
                            uint8_t* out_plaintext) {
@@ -342,8 +371,11 @@ static bool cosign_decrypt(const uint8_t* their_x25519_pubkey,
   ChaChaPoly aead;
   aead.setKey(key, 32);
   aead.setIV(nonce, 12);
+  aead.addAuthData(aad, aad_len);
   aead.decrypt(out_plaintext, ciphertext, ciphertext_len);
-  return aead.checkTag(tag, 16);
+  const bool ok = aead.checkTag(tag, 16);
+  memset(key, 0, sizeof(key));
+  return ok;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1052,7 +1084,10 @@ static void handle_cosign_req_frame(const uint8_t* data, size_t len) {
 
   uint8_t plaintext[sizeof(BeaconAlertCanonical)];
   if (req->ciphertext_len != sizeof(BeaconAlertCanonical)) return;
-  if (!cosign_decrypt(orig->x25519_pubkey,
+  uint8_t aad[beacon_cosign_aad::REQ_AAD_LEN];
+  beacon_cosign_aad::cosign_req_aad(aad, req->originator_fp,
+                                    req->candidate_cosigner_fp, req->ciphertext_len);
+  if (!cosign_decrypt(orig->x25519_pubkey, aad, sizeof(aad),
                       req->ciphertext, req->ciphertext_len,
                       req->nonce, req->tag, plaintext)) {
     health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
@@ -1134,7 +1169,10 @@ static void handle_cosign_resp_frame(const uint8_t* data, size_t len) {
   if (!cosigner->has_x25519_pubkey) return;
 
   uint8_t plaintext[64];
-  if (!cosign_decrypt(cosigner->x25519_pubkey,
+  uint8_t aad[beacon_cosign_aad::RESP_AAD_LEN];
+  beacon_cosign_aad::cosign_resp_aad(aad, resp->originator_fp, resp->cosigner_fp,
+                                     resp->accept);
+  if (!cosign_decrypt(cosigner->x25519_pubkey, aad, sizeof(aad),
                       resp->ciphertext, sizeof(plaintext),
                       resp->nonce, resp->tag, plaintext)) {
     health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
@@ -1637,7 +1675,10 @@ static bool originate_canonical(BeaconAlertCanonical& canonical) {
   memcpy(req->originator_fp, g_device_fp, DEVICE_FP_SIZE);
   memcpy(req->candidate_cosigner_fp, candidate->fingerprint, DEVICE_FP_SIZE);
   req->ciphertext_len = sizeof(BeaconAlertCanonical);
-  if (!cosign_encrypt(candidate->x25519_pubkey,
+  uint8_t aad[beacon_cosign_aad::REQ_AAD_LEN];
+  beacon_cosign_aad::cosign_req_aad(aad, req->originator_fp,
+                                    req->candidate_cosigner_fp, req->ciphertext_len);
+  if (!cosign_encrypt(candidate->x25519_pubkey, aad, sizeof(aad),
                       (const uint8_t*)&canonical, sizeof(BeaconAlertCanonical),
                       req->nonce, req->tag, req->ciphertext)) {
     g_pending_origination.valid = false;
@@ -1720,7 +1761,11 @@ bool cosign_pending_request(bool confirm) {
     if (cl == 0) { g_pending_cosign_in.valid = false; return false; }
     Ed25519::sign(plaintext, g_device_privkey, g_device_pubkey, buf, cl);
   }
-  if (!cosign_encrypt(orig->x25519_pubkey, plaintext, sizeof(plaintext),
+  uint8_t aad[beacon_cosign_aad::RESP_AAD_LEN];
+  beacon_cosign_aad::cosign_resp_aad(aad, resp->originator_fp, resp->cosigner_fp,
+                                     resp->accept);
+  if (!cosign_encrypt(orig->x25519_pubkey, aad, sizeof(aad),
+                      plaintext, sizeof(plaintext),
                       resp->nonce, resp->tag, resp->ciphertext)) {
     g_pending_cosign_in.valid = false;
     return false;
