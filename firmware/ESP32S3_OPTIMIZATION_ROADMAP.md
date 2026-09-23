@@ -408,8 +408,8 @@ Untapped / issues:
   closes for those builds with §1.1. CI-compiled (#1704), no bench pass. Not in this change: widening the 8-char
   AP password (below) — it is re-derived from the fingerprint every boot, so a new derivation
   changes every provisioned device's Wi-Fi password after an OTA and needs a derivation-version
-  marker first. The `"witness2026"` tripwires in `pre_build.py` / `regression_check.sh` match no
-  source today; they stay as the ratchet.
+  marker first. The `"witness2026"` tripwire in `regression_check.sh` (CI's "Regression Guards"
+  job) matches no source today; it stays as the ratchet.
 - **De-block the loop** — async `WiFi.scanNetworks(true,…)`, throttle/offload `MDNS.queryService`,
   move MQTT to its own task (subsumed by §1.2). **[P1]**
 - **[future] FTM ranging** (`esp_wifi_ftm_*`, S3 initiator/responder) → inter-Canary distance to

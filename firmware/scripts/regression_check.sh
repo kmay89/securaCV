@@ -755,6 +755,64 @@ fi
 
 echo ""
 
+# ── Check: PlatformIO extra_scripts can actually run ─────────────
+# firmware/canary/platformio.ini once set `extra_scripts = pre:../../scripts/
+# pre_build.py` under [platformio]: PlatformIO reads extra_scripts only in an
+# environment ([env] / [env:NAME]), and the path named a file that did not
+# exist, so the "pre-build tripwire" never ran and nothing said so (F40). The
+# tripwires it duplicated are this script's own sections above. Any .ini under
+# firmware/ that sets extra_scripts outside an environment fails here, and so
+# does a project platformio.ini whose script path does not resolve against the
+# project directory.
+section "Build: PlatformIO extra_scripts"
+
+XS_FOUND=0
+XS_BAD=""
+while IFS= read -r ini; do
+  while IFS=$'\t' read -r xs_sec xs_line xs_val; do
+    XS_FOUND=$((XS_FOUND + 1))
+    rel_ini="${ini#"$FIRMWARE_DIR"/}"
+    case "$xs_sec" in
+      env|env:*) ;;
+      *) XS_BAD="${XS_BAD}${rel_ini}:${xs_line}: extra_scripts under [${xs_sec}] is never read (it is an [env] option)\n" ;;
+    esac
+    if [ "$(basename "$ini")" = "platformio.ini" ]; then
+      for xs_tok in $xs_val; do
+        xs_path="${xs_tok#pre:}"
+        xs_path="${xs_path#post:}"
+        case "$xs_path" in *'$'*) continue ;; esac
+        if [ ! -f "$(dirname "$ini")/$xs_path" ]; then
+          XS_BAD="${XS_BAD}${rel_ini}:${xs_line}: extra_scripts names ${xs_path}, which does not exist\n"
+        fi
+      done
+    fi
+  done < <(awk '
+    /^[ \t]*[;#]/ { next }
+    /^\[[^]]+\][ \t]*$/ { sec = substr($0, 2, index($0, "]") - 2); inxs = 0; next }
+    /^[ \t]*extra_scripts[ \t]*=/ {
+      v = $0; sub(/^[^=]*=/, "", v); sub(/[ \t]*;.*/, "", v)
+      printf "%s\t%d\t%s\n", sec, NR, v; inxs = 1; next
+    }
+    inxs && /^[ \t]+[^ \t]/ {
+      v = $0; sub(/[ \t]*;.*/, "", v)
+      printf "%s\t%d\t%s\n", sec, NR, v; next
+    }
+    { inxs = 0 }
+  ' "$ini")
+done < <(find "$FIRMWARE_DIR" -name "*.ini" -not -path "*/.pio/*" 2>/dev/null | sort)
+
+if [ -n "$XS_BAD" ]; then
+  check_fail "PlatformIO extra_scripts that can never run:"
+  echo -e "$XS_BAD" | while read -r line; do [ -z "$line" ] || blue "  $line"; done
+  blue "  Fix: set extra_scripts under [env] with a path relative to the project, or drop it"
+elif [ "$XS_FOUND" -eq 0 ]; then
+  check_pass "No PlatformIO extra_scripts (source tripwires run in this script, in CI)"
+else
+  check_pass "Every PlatformIO extra_scripts entry sits in an environment and resolves"
+fi
+
+echo ""
+
 # ── Check: Mesh secret persistence is gated on flash encryption ────────
 # The ESP-NOW "Opera" mesh uses a long-lived shared secret (opera_secret). It must
 # NEVER be written to NVS unless flash encryption is on. The persistence layer

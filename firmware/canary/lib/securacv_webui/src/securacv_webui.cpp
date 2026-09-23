@@ -2779,9 +2779,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // `let`, not `const`: a home-network load arrives with the placeholder
     // streamed EMPTY (X-CV-Token: withheld) and the owner may paste the token
     // from the recovery kit. It stays in this variable and is never
-    // persisted to browser storage or a cookie (regression_check.sh and
-    // pre_build.py fail on any such API name in a *webui* file — even in a
-    // comment, so this one does not spell them).
+    // persisted to browser storage or a cookie (regression_check.sh fails on
+    // any such API name in a *webui* file outside a whole-line comment; this
+    // comment does not spell them either).
     let CV_TOKEN = '__CV_TOKEN__';
     let currentPanel = 'status';
     let pendingAckSeq = null;
