@@ -800,14 +800,18 @@ void publish_chain(uint32_t length, const uint8_t* latest_hash_32) {
 }
 
 void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec,
-                    const MqttBatteryInfo* battery) {
+                    const MqttBatteryInfo* battery,
+                    const MqttTamperLevels* tamper) {
   char topic[192];
   build_topic(topic, sizeof(topic), "health");
   /* battery=100 with battery_present=false reflects mains power, so the
    * HA "healthy/warning/critical" derivation always has a number to
    * compare. With a battery wired (power_monitor HW ADC mode) the .ino
    * passes the real state and HA gets SoC, charge state, and the
-   * cycle-fade health estimate. */
+   * cycle-fade health estimate. The object is closed below, after the
+   * optional tamper levels. Worst case (battery, the 11-char
+   * "discharging", 10-digit counters, a 23-char firmware version, both
+   * levels): 323 bytes, so 384 still fits with room to spare. */
   char body[384];
   int n;
   if (battery) {
@@ -821,8 +825,7 @@ void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec,
         "\"memory_free\":%lu,"
         "\"uptime\":%lu,"
         "\"firmware_version\":\"%s\","
-        "\"public_key\":\"%s\""
-      "}",
+        "\"public_key\":\"%s\"",
       (unsigned)battery->soc_pct,
       battery->charge_state ? battery->charge_state : "unknown",
       (unsigned)battery->health_pct,
@@ -839,15 +842,32 @@ void publish_health(uint32_t free_heap_bytes, uint32_t uptime_sec,
         "\"memory_free\":%lu,"
         "\"uptime\":%lu,"
         "\"firmware_version\":\"%s\","
-        "\"public_key\":\"%s\""
-      "}",
+        "\"public_key\":\"%s\"",
       (unsigned long)free_heap_bytes,
       (unsigned long)uptime_sec,
       s_firmware_version,
       s_public_key_hex);
   }
   if (n <= 0 || (size_t)n >= sizeof(body)) return;
-  publish_raw(topic, body, (size_t)n, /*retain=*/true);
+  size_t len = (size_t)n;
+  /* The tamper levels (F41), each only when the .ino reports it — see
+   * MqttTamperLevels for why an absent key is the right answer. */
+  if (tamper && tamper->sd_mounted >= 0) {
+    n = snprintf(body + len, sizeof(body) - len, ",\"sd_mounted\":%s",
+                 tamper->sd_mounted ? "true" : "false");
+    if (n <= 0 || (size_t)n >= sizeof(body) - len) return;
+    len += (size_t)n;
+  }
+  if (tamper && tamper->enclosure_open >= 0) {
+    n = snprintf(body + len, sizeof(body) - len, ",\"enclosure_open\":%s",
+                 tamper->enclosure_open ? "true" : "false");
+    if (n <= 0 || (size_t)n >= sizeof(body) - len) return;
+    len += (size_t)n;
+  }
+  if (len + 1 >= sizeof(body)) return;
+  body[len++] = '}';
+  body[len] = '\0';
+  publish_raw(topic, body, len, /*retain=*/true);
 }
 
 void publish_update_state(const char* json_payload) {
