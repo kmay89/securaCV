@@ -96,7 +96,9 @@ uint32_t head_truncate(bool* broken) {
     return 0;
   }
   bool ok = true;
-  size_t copied = 0;
+#if FEATURE_WATCHDOG
+  size_t since_feed = 0;  // bytes copied since the last watchdog feed
+#endif
   while (f.available()) {
     const int n = f.read(s_stream, sizeof(s_stream));
     if (n <= 0) break;
@@ -104,10 +106,15 @@ uint32_t head_truncate(bool* broken) {
       ok = false;
       break;
     }
-    copied += (size_t)n;
 #if FEATURE_WATCHDOG
-    // ~190 KB of copy on the loop task: keep its watchdog fed.
-    if ((copied % (16u * sizeof(s_stream))) == 0) esp_task_wdt_reset();
+    // ~190 KB of copy on the loop task: feed its watchdog every 16 KiB. The
+    // count restarts at each feed. A running total tested for a multiple
+    // of 16 KiB would never hit one again after a single short read.
+    since_feed += (size_t)n;
+    if (since_feed >= 16u * sizeof(s_stream)) {
+      esp_task_wdt_reset();
+      since_feed = 0;
+    }
 #endif
   }
   f.close();
@@ -198,12 +205,19 @@ bool open_card(const char* owner_fp) {
   return true;
 }
 
+/* The storage manager's rule: a mounted card, and no background mount
+ * attempt in flight (it owns the SD object while it runs). poll() latches
+ * it once per pump pass, and append() and read_at() ask it again on every
+ * call. A run of failed writes (storage_note_write_failure) marks the card
+ * lost at once, mid-pass, and the rest of the pass must not touch it. */
+bool card_usable() {
+  return storage_is_mounted() && !storage_mount_in_flight();
+}
+
 }  // namespace
 
 Card poll(const char* owner_fp, uint32_t* size, uint32_t* tail_id) {
-  // The storage manager's rule: a mounted card, and no background mount
-  // attempt in flight (it owns the SD object while it runs).
-  const bool usable = storage_is_mounted() && !storage_mount_in_flight();
+  const bool usable = card_usable();
   bool opened_now = false;
   if (!usable) {
     s_open = false;
@@ -232,7 +246,7 @@ Card poll(const char* owner_fp, uint32_t* size, uint32_t* tail_id) {
 
 csi_event_backfill::AppendResult append(const char* line, size_t len) {
   csi_event_backfill::AppendResult r = {false, s_size, 0};
-  if (!s_open || !line || len == 0) return r;
+  if (!s_open || !card_usable() || !line || len == 0) return r;
 
   if (s_size >= kMaxBytes) {
     bool broken = false;
@@ -279,7 +293,7 @@ csi_event_backfill::AppendResult append(const char* line, size_t len) {
 }
 
 size_t read_at(uint32_t off, char* buf, size_t cap) {
-  if (!s_open || !buf || cap == 0) return 0;
+  if (!s_open || !card_usable() || !buf || cap == 0) return 0;
   File f = SD.open(kLogPath, FILE_READ);
   if (!f) return 0;
   size_t got = 0;

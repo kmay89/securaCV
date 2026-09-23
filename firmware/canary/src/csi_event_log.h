@@ -13,9 +13,11 @@
  * nothing touches SD.* while a background mount attempt runs. Every entry
  * point here is called from csi_event_egress_pump() on the loop task, and
  * poll() refuses the card unless storage_is_mounted() and no mount is in
- * flight; nothing else in this file opens the card. Committed rows reach
- * the pump through csi_event_egress's FreeRTOS queue, so a commit on the
- * NimBLE host task never gets here directly.
+ * flight. append() and read_at() ask again on every call, because a run of
+ * failed writes marks the card lost mid-pass. Nothing else in this file
+ * opens the card. Committed rows reach the pump through csi_event_egress's
+ * FreeRTOS queue, so a commit on the NimBLE host task never gets here
+ * directly.
  *
  * Ownership: the log's lines carry no device id, so the directory keeps
  * /EVENTS/owner, one line naming this device's witness-key fingerprint. A
