@@ -396,6 +396,7 @@ def carry_verifier(site: Path) -> list[Path]:
             shutil.copyfile(FIXTURES / sub / f, dest)
             written.append(dest)
     dest = site / "tests" / "fixtures" / SITE_FLEET_VECTORS
+    dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(FLEET_VECTORS, dest)
     written.append(dest)
     dest = vendor / "PROVENANCE.txt"

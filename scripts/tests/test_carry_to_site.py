@@ -27,8 +27,10 @@ What is pinned and why:
     resolves the way that test resolves it (so the website's existing sha256
     check covers the new file with no edit there), a renamed upstream file
     still lands at that path, the upstream file keeps the shape the website's
-    replay reads, and a missing upstream file stops the carry before it writes
-    a byte.
+    replay reads, and a missing upstream file stops the verifier carry before
+    it writes any of its files (in a default run the builds and kernel-status
+    carries ahead of it have already written theirs; the job's set -e keeps
+    that run from being committed).
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
@@ -342,17 +344,31 @@ class EndToEnd(unittest.TestCase):
         prov = (self.tmp / "tv" / "vendor" / "PROVENANCE.txt").read_text(encoding="utf-8")
         self.assertIn(f"  fleet_contract_vectors.json  sha256:{sha256(self.tmp / SITE_VECTORS)}\n", prov)
 
-    def test_missing_upstream_vectors_stop_the_carry_before_any_write(self):
-        # The upstream file moved and FLEET_VECTORS did not follow: the carry
-        # names the missing file and writes nothing, rather than dying half
-        # way through and leaving the site with a partial carry.
+    def test_missing_upstream_vectors_stop_the_verifier_carry_before_any_of_its_writes(self):
+        # The upstream file moved and FLEET_VECTORS did not follow: the
+        # verifier carry names the missing file and writes none of its files,
+        # rather than dying half way through and leaving a partial carry.
+        # The claim is the verifier carry's, not the whole run's: in a default
+        # run (what the weekly job runs) the builds and kernel-status carries
+        # go first and have already written theirs, so both forms are pinned.
         missing = UPSTREAM_VECTORS.with_name("no_such_fleet_contract_vectors.json")
         self.assertFalse(missing.exists())
-        before = self.snapshot()
-        with mock.patch.object(cs, "FLEET_VECTORS", missing):
-            with self.assertRaises(SystemExit):
-                self.run_carry("--only", "verifier")
-        self.assertEqual(self.snapshot(), before, "a failed carry left a partial copy behind")
+
+        def verifier_files(snap: dict) -> dict:
+            return {p: b for p, b in snap.items() if p.startswith(("tv/", "tests/"))}
+
+        for extra in (("--only", "verifier"), ()):
+            with self.subTest(run=" ".join(extra) or "default (every carry)"):
+                before = self.snapshot()
+                with mock.patch.object(cs, "FLEET_VECTORS", missing):
+                    with self.assertRaises(SystemExit) as stop:
+                        self.run_carry(*extra)
+                self.assertIn("no_such_fleet_contract_vectors.json", str(stop.exception.code))
+                after = self.snapshot()
+                self.assertEqual(verifier_files(after), verifier_files(before),
+                                 "a failed verifier carry left a partial copy behind")
+                if extra:
+                    self.assertEqual(after, before, "--only verifier left a write behind")
 
     def test_refuses_a_directory_that_is_not_the_website(self):
         other = Path(tempfile.mkdtemp(prefix="not_site_"))
