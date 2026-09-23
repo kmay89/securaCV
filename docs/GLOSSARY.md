@@ -353,19 +353,27 @@ screen for homes and venues, not a wall of live feeds. It reads a hub's fleet
 roll-call (`GET /api/fleet`, next entry). From a Home Assistant add-on
 install that takes two steps: enable the kernel's 8799 host port (it ships
 disabled, and enabling it opens the roll-call to your LAN) and type
-`http://<host>:8799` into the Wall once.
+`http://<host>:8799` into the Wall once. It says *Verified* only once it is
+paired: the operator mints a viewer token on the hub (`witness_api
+mint-viewer-token`), whose one-line receipt carries a token good for
+`GET /api/sealed-log` alone and the kernel's key, which the Wall pins; an
+unpaired Wall shows the devices' own report. The add-on has no control that
+mints one yet, so an add-on install gets the roll-call, not a walk.
 → [tvOS docs](tvos/README.md),
-[Home Assistant setup](homeassistant_setup.md#witness-wall-the-fleet-roll-call)
+[Home Assistant setup](homeassistant_setup.md#witness-wall-the-fleet-roll-call),
+[viewer tokens](homeassistant_setup.md#viewer-tokens-witness-wall)
 
-**The fleet roll-call** — `GET /api/fleet`: the one token-free read on a hub
-or a networked Canary, in coarse words only — name, online, chain verdict,
+**The fleet roll-call** — `GET /api/fleet`: the coarse fleet read a hub, a
+Canary WAP and a Canary Display each answer without a token (on the hub, the
+only route besides the `/health` liveness check that needs none), in coarse
+words only — name, online, chain verdict,
 product, and the per-room presence / occupants / breathing words while a peer
 is proven online; never an event, a zone or a key. From the Home Assistant
 add-on it lists the kernel first, then every Canary the MQTT bridge has heard
 and pinned. `online` means a signed, chain-advancing publish verified against
 the pinned key within the last 180 s — stronger than a heartbeat, not a
-liveness proof. Browsers reach it through an origin allow-list, which is why
-the route also answers the CORS preflight.
+liveness proof. Each source answers the CORS preflight; the hub admits
+browser pages from an origin allow-list, the boards any origin.
 → [`tvos/discovery/DISCOVERY.md`](../tvos/discovery/DISCOVERY.md) (the
 contract), [`src/fleet_peers.rs`](../src/fleet_peers.rs)
 
@@ -431,17 +439,21 @@ and `scripts/regen_cad.py` runs everything downstream of an edit in order.
 **Broker TLS mode** — How a Canary's MQTT link is protected, one NVS byte:
 `0` plain (what every Canary ships with), `1` CA-verified, `2` SHA-256
 fingerprint pin, `3` lab (no verification — chosen by name, warns on every
-connect). Stored as `mqtt_tls` on canary-display / -sense / -vision and the
-`firmware/canary` flagship, and as `mqtt.tlsmode` on canary-wap, which honors
-`0` and `1` only. Fail-closed: a mode missing its CA or pin refuses to connect
-rather than downgrading. Per-variant truth:
+connect). Stored as `mqtt_tls` (the CA in `mqtt_ca`, the pin in `mqtt_fp`)
+on canary-display / -sense / -vision, the `firmware/canary` flagship and the
+unreleased canary-sentinel's Phase 1a build, and as `mqtt.tlsmode` on
+canary-wap, which honors `0` and `1` only. Fail-closed: a mode missing its
+CA or pin refuses to connect rather than downgrading. Per-variant truth:
 [`FIRMWARE_VARIANT_AUDIT.md`](FIRMWARE_VARIANT_AUDIT.md); compile-tested by
 CI and host-tested, not bench-tested against a TLS broker.
 
-**TLS pin** — `tls_cert_fp`: the SHA-256 fingerprint of a Canary WAP's
-self-signed HTTPS certificate, carried in the pairing receipt and the pairing
-QR. The iPhone app dials an https Canary only through that pin (an exact
-match on the leaf certificate) and refuses one it has no pin for. Not the
+**TLS pin** — `tls_cert_fp`: the SHA-256 fingerprint of a Canary's
+self-signed HTTPS certificate, on a Canary that serves HTTPS — a Canary WAP
+built with its HTTPS server, or a `firmware/canary` flagship built with
+`FEATURE_HTTPS` (its dev builds since 2026-09; off in release, not yet
+bench-tested). It is carried in the provisioning receipt (and the WAP's
+pairing QR). The iPhone app dials an https Canary only through that pin (an
+exact match on the leaf certificate) and refuses one it has no pin for. Not the
 broker pin (`mqtt_fp`, above), which protects the other direction.
 → [`ios/README.md`](../ios/README.md)
 

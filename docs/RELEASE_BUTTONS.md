@@ -338,7 +338,10 @@ You don't have to remember these; CI does. Listed so a red run makes sense.
   its commit, then regenerate `flash.json` (`gen_flash.py` embeds the
   artifact stamps — run it *after* the rebuild, or the catalog goes stale
   in the same push). The order and the two symptoms of getting it wrong are
-  in `CLAUDE.md`, "Generated files".
+  in `CLAUDE.md`, "Generated files". The same bump moves the committed
+  firmware SBOM, which carries `FIRMWARE_VERSION`: run
+  `python3 scripts/gen_firmware_sbom.py` and commit
+  `sbom/sbom-firmware.cdx.json` with it, or `lint.yml`'s `--check` fails.
 - **Apple signing.** `ENABLE_IOS_BUILD` / `ENABLE_TVOS_BUILD` plus the `APPLE_*`
   secrets need a developer account. Until then those targets are honest no-ops.
   **Which certificate signs which app, and which secret carries it, is in
