@@ -9,6 +9,7 @@
  */
 
 #include "mesh_state.h"
+#include "mesh_revocation.h"   /* BLOB_MAX (F33) */
 
 #include <string.h>
 
@@ -745,6 +746,63 @@ bool load_outbound_counter(uint64_t* out) {
   *out = prefs.getULong64(NVS_KEY_OUT_CTR, 0);
   prefs.end();
   return true;
+#endif
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * REVOCATION DENY-LIST (F33) — FE-gated household-graph metadata.
+ * "mesh_revoked" is 12 chars (within the 15-char NVS key budget).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+#ifndef CSI_TEST_HOST_BUILD
+constexpr const char* NVS_KEY_REVOKED = "mesh_revoked";
+#endif
+
+bool save_revocations(const uint8_t* blob, size_t len) {
+  if (blob == nullptr && len > 0) return false;
+  if (len > mesh_revocation::BLOB_MAX) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  if (!flash_encryption_enabled()) {
+    Serial.println("[ALERT][mesh_state] refused save_revocations — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    return false;
+  }
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  bool ok;
+  if (len == 0) {
+    ok = prefs.remove(NVS_KEY_REVOKED) || !prefs.isKey(NVS_KEY_REVOKED);
+  } else {
+    ok = prefs.putBytes(NVS_KEY_REVOKED, blob, len) == len;
+  }
+  prefs.end();
+  return ok;
+#endif
+}
+
+bool load_revocations(uint8_t* out, size_t out_cap, size_t* out_len) {
+  if (out == nullptr || out_len == nullptr) return false;
+  *out_len = 0;
+  if (out_cap < mesh_revocation::BLOB_MAX) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  if (!flash_encryption_enabled()) {
+    Serial.println("[ALERT][mesh_state] refused load_revocations — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    return false;
+  }
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/true)) return false;
+  bool ok = true;
+  if (prefs.isKey(NVS_KEY_REVOKED)) {
+    *out_len = prefs.getBytes(NVS_KEY_REVOKED, out, out_cap);
+    ok = *out_len != 0;   /* present but unreadable: a read failure */
+  }
+  prefs.end();
+  return ok;
 #endif
 }
 

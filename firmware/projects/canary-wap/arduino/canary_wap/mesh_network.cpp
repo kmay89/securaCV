@@ -13,6 +13,7 @@
 #include "mesh_network.h"
 #include "mesh_pair_frame.h"       // F14: [type][payload] pairing framing + classifier
 #include "mesh_pair_crypto.h"      // F33: clamped X25519 pairing keys, session key, 6-digit code
+#include "mesh_revocation.h"       // F33: spec §5.6 REVOCATION_GRACE_MS deny-list (staged, shared)
 #include "mesh_channel_policy.h"
 #include "csi_mem.h"
 #include "airtime_governor.h"
@@ -80,6 +81,7 @@ static const char* NVS_FLEET_SECRET = "opera_sec";
 static const char* NVS_FLEET_NAME = "opera_name";
 static const char* NVS_PEER_COUNT = "peer_cnt";
 static const char* NVS_PEER_PREFIX = "peer_";   // peer_0, peer_1, etc.
+static const char* NVS_REVOKED = "revoked";     // F33: the §5.6 deny-list blob
 
 // ════════════════════════════════════════════════════════════════════════════
 // STATE
@@ -98,6 +100,16 @@ static char g_device_name[MAX_PEER_NAME_LEN + 1];
 static OperaConfig g_opera_config;
 static OperaPeer g_peers[MAX_OPERA_SIZE];
 static uint8_t g_peer_count = 0;
+
+// F33 part 6: spec §5.6's REVOCATION_GRACE_MS deny-list (mesh_revocation.h,
+// the PlatformIO tree's module, staged byte-identical). A device this one
+// removed is refused by the pairing handlers and add_peer() for 7 days, even
+// by a freshly rotated opera. Persisted FE-gated under NVS_REVOKED at every
+// removal and every 5 minutes while it holds anything; restored in init().
+// (This tree's MSG_OPERA_REKEY does not name the removed device, so another
+// member cannot learn of the removal from the rotation — see the spec.)
+static mesh_revocation::List g_revoked;
+static bool g_revoked_stored = false;
 
 // BLE-Scout BEACON_EVENT handler (canary-wap parity for PIO
 // mesh_session::set_beacon_event_handler). nullptr means inbound
@@ -261,6 +273,9 @@ static bool persist_opera_config();
 static bool load_opera_config();
 static bool persist_peers();
 static bool load_peers();
+static void persist_revocations();
+static void load_revocations();
+static bool is_revoked_pubkey(const uint8_t* pubkey);
 static void store_alert(const MeshAlert* alert);
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -406,6 +421,10 @@ static OperaPeer* find_peer_by_fingerprint(const uint8_t* fp) {
 
 static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name) {
   if (g_peer_count >= MAX_OPERA_SIZE) {
+    return false;
+  }
+  // F33: a deny-listed device is not taken back inside its grace.
+  if (is_revoked_pubkey(pubkey)) {
     return false;
   }
 
@@ -978,6 +997,12 @@ static void handle_pair_discover(const uint8_t* mac, const uint8_t* payload) {
 
   const PairDiscoverPayload* discover = (const PairDiscoverPayload*)payload;
 
+  // F33 (spec §5.6): a removed device is refused as a pairing partner for
+  // REVOCATION_GRACE_MS — no OFFER goes back to it.
+  if (is_revoked_pubkey(discover->pubkey)) {
+    return;
+  }
+
   // If we're initiator and they're joiner, send offer
   if (g_pairing.role == PAIR_ROLE_INITIATOR && discover->role == PAIR_ROLE_JOINER) {
     // Ephemeral X25519 keypair for this pairing session (F33 — crypto
@@ -1017,6 +1042,11 @@ static void handle_pair_offer(const uint8_t* mac, const uint8_t* payload) {
   }
 
   const PairOfferPayload* offer = (const PairOfferPayload*)payload;
+
+  // F33 (spec §5.6): nor is an opera offered by a device this one removed.
+  if (is_revoked_pubkey(offer->device_pubkey)) {
+    return;
+  }
 
   memcpy(g_pairing.peer_pubkey, offer->device_pubkey, PUBKEY_SIZE);
   memcpy(g_pairing.peer_mac, mac, 6);
@@ -1360,6 +1390,7 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
 
   // Load persisted config
   load_opera_config();
+  load_revocations();   // F33: the §5.6 deny-list
   if (g_opera_config.configured) {
     load_peers();
   }
@@ -1421,6 +1452,17 @@ void update() {
   mesh_channel_policy::poll_radio();
 
   uint32_t now = millis();
+
+  // F33: drop deny-list entries whose grace has run out, and keep the stored
+  // copy's remaining time current while the list holds anything.
+  mesh_revocation::expire(g_revoked, now);
+  {
+    static uint32_t s_last_revoked_save = 0;
+    if ((uint32_t)(now - s_last_revoked_save) >= 300000u) {
+      s_last_revoked_save = now;
+      persist_revocations();
+    }
+  }
 
   // Process received messages
   if (g_rx_pending) {
@@ -1626,6 +1668,10 @@ uint8_t get_online_peer_count() {
 bool remove_peer(const uint8_t* fingerprint) {
   for (uint8_t i = 0; i < g_peer_count; i++) {
     if (memcmp(g_peers[i].fingerprint, fingerprint, FINGERPRINT_SIZE) == 0) {
+      // The slot is about to be overwritten by the shift below.
+      uint8_t removed_fp[FINGERPRINT_SIZE];
+      memcpy(removed_fp, g_peers[i].fingerprint, FINGERPRINT_SIZE);
+
       // Remove from ESP-NOW
       esp_now_del_peer(g_peers[i].mac_addr);
 
@@ -1636,6 +1682,10 @@ bool remove_peer(const uint8_t* fingerprint) {
       g_peer_count--;
 
       persist_peers();
+
+      // F33 (spec §5.6): refused re-entry for REVOCATION_GRACE_MS.
+      mesh_revocation::add(g_revoked, removed_fp, millis());
+      persist_revocations();
 
       // ── audit O3 closure: transactional opera_secret rotation ──
       //
@@ -2024,6 +2074,53 @@ size_t send_channel_lock(uint8_t channel, mesh_channel_hop::Reason reason) {
 
 void set_channel_lock_handler(channel_lock_handler_fn fn) {
   g_channel_lock_handler = fn;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// REVOCATION DENY-LIST PERSISTENCE (F33 part 6 — spec §5.6)
+// ════════════════════════════════════════════════════════════════════════════
+
+static bool is_revoked_pubkey(const uint8_t* pubkey) {
+  uint8_t fp[FINGERPRINT_SIZE];
+  compute_fingerprint(pubkey, fp);
+  return mesh_revocation::contains(g_revoked, fp, millis());
+}
+
+// FE-gated like the peer list: which devices a household threw out is
+// household-graph metadata. Stored as fingerprint || grace-left (ms); on an
+// FE-off board the list lasts until reboot.
+static void persist_revocations() {
+  static_assert(FINGERPRINT_SIZE == mesh_revocation::FP_LEN, "deny-list key width");
+  if (!flash_encryption_enabled()) return;
+  if (mesh_revocation::count(g_revoked, millis()) == 0 && !g_revoked_stored) return;
+  uint8_t blob[mesh_revocation::BLOB_MAX];
+  const size_t n = mesh_revocation::encode(g_revoked, millis(), blob, sizeof(blob));
+  g_prefs.begin(NVS_NS, false);
+  bool ok;
+  if (n == 0) {
+    ok = g_prefs.remove(NVS_REVOKED) || !g_prefs.isKey(NVS_REVOKED);
+  } else {
+    ok = g_prefs.putBytes(NVS_REVOKED, blob, n) == n;
+  }
+  g_prefs.end();
+  if (ok) g_revoked_stored = (n > 0);
+}
+
+static void load_revocations() {
+  mesh_revocation::init(g_revoked);
+  if (!flash_encryption_enabled()) return;
+  g_prefs.begin(NVS_NS, true);
+  uint8_t blob[mesh_revocation::BLOB_MAX];
+  size_t got = 0;
+  if (g_prefs.isKey(NVS_REVOKED)) {
+    got = g_prefs.getBytes(NVS_REVOKED, blob, sizeof(blob));
+  }
+  g_prefs.end();
+  // Each entry's remaining grace counts from now (time off does not count
+  // down — the conservative direction); a malformed blob is ignored.
+  if (got > 0 && mesh_revocation::decode(g_revoked, blob, got, millis())) {
+    g_revoked_stored = true;
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

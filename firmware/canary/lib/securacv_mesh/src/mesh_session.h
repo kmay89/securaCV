@@ -610,8 +610,10 @@ void     clear_alerts();
  * rotation over signed envelopes, the pure state machine in mesh_rekey.h).
  * The exclusion itself is every survivor unregistering the removed pubkey;
  * opera_id is cleartext, so the new secret alone does not lock the removed
- * device out, and a survivor that misses the window keeps trusting it with
- * no signal. The rotation kills every pre-removal frame for the survivors
+ * device out, and a survivor that misses every copy of the OFFER keeps
+ * trusting it with no signal (one that verifies any copy forgets it at
+ * once — the deny-list below). The rotation kills every pre-removal frame
+ * for the survivors
  * that switch (mesh_rekey.h spells this out):
  *   • the rotation is started first; only if it starts is the peer
  *     forgotten (trust entry + its transport MAC, so later broadcasts stop
@@ -635,6 +637,8 @@ void     clear_alerts();
  * it saves the secret, so an interrupted commit fails closed. The removed
  * peer's pubkey also comes back at once through `removed_pubkey_out`, for
  * the caller to drop from NVS right away (idempotent with the commit).
+ *
+ * The removed peer also goes on the revocation deny-list below (F33 part 6).
  *
  * Refusals: MESH_DISABLED (mesh off / not initialized), NO_OPERA, NOT_FOUND
  * (fp is not a trusted peer), IN_FLIGHT (a rotation is already running
@@ -669,6 +673,42 @@ typedef void (*rekey_commit_fn)(
     size_t        forgotten_count);
 
 void set_rekey_commit_handler(rekey_commit_fn fn);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * REVOCATION DENY-LIST  (F33 part 6 — spec §5.6 REVOCATION_GRACE_MS)
+ *
+ * A removed device is refused re-entry for mesh_revocation::
+ * REVOCATION_GRACE_MS (7 days): its pairing DISCOVER / OFFER is dropped
+ * before the pairing state machine sees it, and register_trusted_peer()
+ * refuses it. Recorded for:
+ *   • the peer remove_peer() removes on this device;
+ *   • the removed_fp of EVERY verified REKEY_OFFER this device hears — also
+ *     one it cannot join because a rotation of its own is running — which
+ *     is forgotten at once (trust entry, radio MAC, a place among our
+ *     survivors). So two removals made on two devices at once both hold on
+ *     every device that hears either OFFER, and neither rotation hands a
+ *     removed device a new secret (mesh_rekey.h: the concurrent rotations
+ *     themselves converge on the preceding initiator's secret).
+ * peer_revoked_fn fires on the main loop each time: `pubkey` is the
+ * forgotten peer's (nullptr when it was not trusted here) — drop it from
+ * NVS (mesh_state::remove_trusted_peer) and persist the list
+ * (encode_revocations → mesh_state::save_revocations). At boot, BEFORE the
+ * trusted peers are registered, restore_revocations() the stored blob; each
+ * entry's remaining grace counts from then (time powered off does not count
+ * down — the conservative direction). The list survives leave_opera();
+ * deinit() wipes it.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+typedef void (*peer_revoked_fn)(
+    const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+    const uint8_t* pubkey_or_null);
+
+void   set_peer_revoked_handler(peer_revoked_fn fn);
+bool   is_revoked(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN]);
+size_t revoked_count();
+/* mesh_revocation blob (≤ mesh_revocation::BLOB_MAX bytes); 0 when empty. */
+size_t encode_revocations(uint8_t* out, size_t cap);
+bool   restore_revocations(const uint8_t* blob, size_t len);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * REST REQUEST SLOT  (review fix — the F10 REST mutators run on the main loop)

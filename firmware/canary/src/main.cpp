@@ -90,6 +90,7 @@ static_assert(sizeof(csi_features_t) == 36,
 #include "mesh_transport.h"
 #include "mesh_session.h"
 #include "mesh_state.h"
+#include "mesh_revocation.h"
 #endif
 
 #if FEATURE_ACOUSTIC_EVENTS
@@ -436,6 +437,32 @@ static void mesh_fp_hex(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
     out[2 * i + 1] = kHex[fp[i] & 0xF];
   }
   out[mesh_crypto::FINGERPRINT_LEN * 2] = '\0';
+}
+
+/* The §5.6 revocation deny-list to NVS (F33 part 6, FE-gated): on every
+ * change and at the 5-minute cadence while it holds anything, so a reboot
+ * restores roughly the grace that was left (never less). */
+static bool g_revocations_stored = false;
+static void persist_revocations() {
+  if (mesh_session::revoked_count() == 0 && !g_revocations_stored) return;
+  uint8_t blob[mesh_revocation::BLOB_MAX];
+  const size_t n = mesh_session::encode_revocations(blob, sizeof(blob));
+  if (mesh_state::save_revocations(blob, n)) g_revocations_stored = (n > 0);
+}
+
+/* A device was deny-listed (F33 part 6): removed here, or named as removed
+ * by a verified REKEY_OFFER from a trusted peer — which this device honors
+ * at once, whether or not it takes part in that rotation. Drop it from NVS
+ * too, keep its counter as a tombstone, and persist the list. */
+static void on_mesh_peer_revoked(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                                 const uint8_t* pubkey) {
+  char hex[mesh_crypto::FINGERPRINT_LEN * 2 + 1];
+  mesh_fp_hex(fp, hex);
+  const bool dropped = pubkey == nullptr || mesh_state::remove_trusted_peer(pubkey);
+  persist_replay_counters();
+  persist_revocations();
+  log_health(dropped ? LOG_LEVEL_WARNING : LOG_LEVEL_ALERT, LOG_CAT_NETWORK,
+             "Opera peer revoked (7-day deny-list)", hex);
 }
 
 /* A trusted peer's verified LEAVE_OPERA arrived (F10). mesh_session has
@@ -1133,6 +1160,23 @@ void setup() {
 #endif
     }
 
+    /* The revocation deny-list FIRST (F33 part 6): a device on it is not
+     * registered as trusted again below, even if an interrupted removal
+     * left its pubkey in NVS. */
+    {
+      uint8_t blob[mesh_revocation::BLOB_MAX];
+      size_t len = 0;
+      if (mesh_state::load_revocations(blob, sizeof(blob), &len) && len > 0) {
+        if (mesh_session::restore_revocations(blob, len)) {
+          g_revocations_stored = true;
+          Serial.printf("[OK] Restored %u revoked opera device(s) from NVS\n",
+                        (unsigned)mesh_session::revoked_count());
+        } else {
+          Serial.println("[WARN] Malformed revocation deny-list in NVS — ignored");
+        }
+      }
+    }
+
     /* Load persisted trusted peers (#480) and register each so this
      * boot's receive path can verify inbound BEACON_EVENT frames
      * from peers paired in previous sessions. Empty-list (first
@@ -1223,6 +1267,8 @@ void setup() {
     mesh_session::set_tamper_alert_handler(&on_mesh_tamper_alert);
     /* F10-rekey: a committed opera_secret rotation re-persists here. */
     mesh_session::set_rekey_commit_handler(&on_mesh_rekey_commit);
+    /* F33 part 6: the revocation deny-list. */
+    mesh_session::set_peer_revoked_handler(&on_mesh_peer_revoked);
   } else {
     Serial.println("[WARN] Mesh layer init failed — broadcast disabled");
   }
@@ -1846,6 +1892,7 @@ void loop() {
     if ((int32_t)(now - s_last_replay_save_ms) >= 300000) {
       s_last_replay_save_ms = now;
       persist_replay_counters();
+      persist_revocations();   /* grace left, while the list holds anything */
     }
   }
 #endif

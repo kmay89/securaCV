@@ -459,3 +459,30 @@ clean-pair-crypto:
 
 run: run-pair-crypto
 clean: clean-pair-crypto
+
+# F33 part 6: the spec §5.6 REVOCATION_GRACE_MS deny-list. mesh_revocation is
+# the PlatformIO tree's module, staged byte-identical (check_mesh_sync.sh);
+# its behavior suite runs here against the STAGED copy, and
+# test_mesh_revocation_wap pins what mesh_network.cpp does with it (records on
+# remove, refuses in the pairing handlers and add_peer, restores / expires /
+# persists, FE-gated) by reading the real file (beacon_source_scan.h).
+REVOC_WAP_BIN    = test_mesh_revocation_wap
+REVOC_WAP_SRC    = test_mesh_revocation_wap.cpp
+REVOC_STAGED_BIN = test_mesh_revocation_staged
+REVOC_STAGED_SRC = ../../../canary/lib/securacv_mesh/test_mesh_revocation.cpp
+
+$(REVOC_WAP_BIN): $(REVOC_WAP_SRC) $(SRC_DIR)/mesh_revocation.h $(SRC_DIR)/mesh_revocation.cpp $(SRC_DIR)/mesh_network.cpp beacon_source_scan.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(REVOC_WAP_SRC) $(SRC_DIR)/mesh_revocation.cpp
+
+$(REVOC_STAGED_BIN): $(REVOC_STAGED_SRC) $(SRC_DIR)/mesh_revocation.h $(SRC_DIR)/mesh_revocation.cpp
+	$(CXX) $(CXXFLAGS) -Werror -DCSI_TEST_HOST_BUILD -I $(SRC_DIR) -o $@ $(REVOC_STAGED_SRC) $(SRC_DIR)/mesh_revocation.cpp
+
+.PHONY: run-revocation clean-revocation
+run-revocation: $(REVOC_WAP_BIN) $(REVOC_STAGED_BIN)
+	./$(REVOC_WAP_BIN)
+	./$(REVOC_STAGED_BIN)
+clean-revocation:
+	rm -f $(REVOC_WAP_BIN) $(REVOC_STAGED_BIN)
+
+run: run-revocation
+clean: clean-revocation

@@ -13,12 +13,15 @@
  * opera_id rides in CLEARTEXT in every frame header; frames are
  * authenticated only by the sender's Ed25519 key.
  * So what excludes the removed device is each survivor UNREGISTERING its
- * pubkey (ACK_AND_INSTALL / COMMIT forget it), not the new secret — the
- * removed device can copy the new opera_id off the air, and it is still
- * accepted by any survivor that did not unregister it: one that missed the
- * whole window, or one that answered the OFFER but aborted at 60 s without
- * its SECRET. Such a survivor trusts the removed device indefinitely, and
- * nothing tells it (the initiator just drops it at commit). What the
+ * pubkey, not the new secret — the removed device can copy the new
+ * opera_id off the air, and it is still accepted by any survivor that did
+ * not unregister it. Since F33 part 6 the session unregisters (and
+ * deny-lists) the removed device as soon as it verifies an OFFER naming it,
+ * so a survivor that answered but aborted at 60 s without its SECRET no
+ * longer keeps it; what is left is a survivor that missed EVERY copy of the
+ * OFFER for the whole window. That one trusts the removed device
+ * indefinitely, and nothing tells it (the initiator just drops it at
+ * commit). What the
  * rotation does buy: every frame signed before the removal carries the old
  * opera_id, so it is dead to every survivor that switched — also across a
  * later re-pair of the removed device — and a survivor that missed the
@@ -53,6 +56,8 @@
  *                                                         fail the initiator's opera_id
  *                                                         check), THEN install + drop
  *                                                         removed_fp
+ *   (no SECRET goes out before REKEY_SETTLE_MS — see "two removals" below;
+ *   ACCEPTs that arrive sooner are held and answered then)
  *   all survivors ACKed → COMMIT
  *   every 5 s until then → the same OFFER again (review fix): a lost
  *                         OFFER, ACCEPT or SECRET heals — the survivor
@@ -79,12 +84,41 @@
  * INSTALL/COMMIT. Two contexts in one process run the whole exchange host
  * side (test_mesh_rekey.cpp).
  *
- * Deliberate limits (spec §5.6 PIO note): one rotation at a time per
- * device (a second remove is refused while one is in flight, and a
- * survivor ignores a second OFFER); two users removing peers from two
- * devices inside the same 60 s window can leave the household split
- * between two new secrets (the losing side re-pairs). The spec's
- * REVOCATION_GRACE_MS deny-list is not implemented in either tree.
+ * One rotation at a time per device (a second remove is refused while one
+ * is in flight). Two removals from two devices at once (F33 part 6 — CRYPTO:
+ * maintainer to confirm; bench U1 Track C3) converge on ONE new secret
+ * instead of splitting the household between two:
+ *   • SETTLE: an initiator hands out no secret for REKEY_SETTLE_MS after it
+ *     starts — longer than the OFFER retransmit period, so two initiators
+ *     that start close together each hear the other's OFFER (or its
+ *     retransmit) while neither has handed anything out. ACCEPTs that arrive
+ *     meanwhile are kept and answered when the window closes (tick()).
+ *   • PRECEDENCE: of two concurrent rotations, the one whose initiator's
+ *     fingerprint is lower (memcmp) wins. An initiator that hears a
+ *     preceding OFFER before it has handed out a secret YIELDS: it drops
+ *     its own rotation (nothing committed; its removed peer stays forgotten
+ *     and deny-listed by the session) and answers the winner as a survivor.
+ *     A survivor still waiting for its SECRET switches to a preceding OFFER.
+ *   • An OFFER that names THIS device as removed ends this device's own
+ *     rotation (a removed device must not take survivors with it), and a
+ *     survivor drops a rotation whose initiator an OFFER names as removed.
+ *   • The session deny-lists and forgets every OFFER's removed_fp, even one
+ *     it does not join, and drop_survivor() takes it out of a running
+ *     rotation, so neither removal is undone by the other rotation (spec
+ *     §5.6 REVOCATION_GRACE_MS; mesh_revocation.h).
+ *   • A yielded initiator's session announces its removal again once the
+ *     winner's rotation is over (mesh_session: reannounce), so a winner
+ *     that never heard the first OFFER still drops that device.
+ * What remains (stated, not hidden): if an initiator had already handed out
+ * its secret before it heard a preceding OFFER — every copy of both OFFERs
+ * lost for a whole settle window — neither yields and the household splits
+ * as before; the losing side re-pairs, and cannot re-pair the removed
+ * devices for REVOCATION_GRACE_MS. A lost ACK still drops a survivor that
+ * switched (above), and two devices that remove EACH OTHER can still end
+ * on two secrets, by arrival order. The host simulation
+ * (test_mesh_rekey.cpp, test_two_removals_converge) drives ten orderings of
+ * two removals to one secret; it is a lossless model with scheduled
+ * drops, not a radio, and random frame loss still splits some runs.
  */
 
 #ifndef SECURACV_MESH_REKEY_H
@@ -100,6 +134,10 @@ namespace mesh_rekey {
 
 constexpr uint32_t REKEY_TIMEOUT_MS = 60u * 1000u;   /* canary-wap REKEY_TIMEOUT_MS */
 constexpr uint32_t REKEY_RETRY_MS   = 5u * 1000u;    /* initiator OFFER re-broadcast */
+/* F33 part 6: no SECRET until this long after start — one retransmit
+ * period plus a second, so a competing initiator hears at least one of our
+ * OFFERs (and we one of its) before anything is handed out. */
+constexpr uint32_t REKEY_SETTLE_MS  = REKEY_RETRY_MS + 1000u;
 constexpr size_t   MAX_SURVIVORS    = 8;             /* == mesh_session::MAX_TRUSTED_PEERS */
 constexpr size_t   FP_LEN           = mesh_crypto::FINGERPRINT_LEN;
 constexpr size_t   EPH_LEN          = mesh_crypto::PUBKEY_LEN;
@@ -161,6 +199,7 @@ struct Survivor {
   uint8_t fp[FP_LEN];
   uint8_t eph_pub[EPH_LEN];
   bool    accepted;
+  bool    secret_sent;   /* F33: a SECRET went out (settle window closed) */
   bool    acked;
 };
 
@@ -186,6 +225,16 @@ struct Context {
 void context_init(Context& ctx);
 bool in_progress(const Context& ctx);
 void wipe(Action& a);
+
+/* F33 part 6. True once this initiator has sent any survivor its SECRET —
+ * from then on it no longer yields to a competing rotation. */
+bool handed_out(const Context& ctx);
+
+/* F33 part 6. Initiator: take `fp` out of the running rotation (a competing
+ * OFFER removed it). No SECRET is sent to it, the commit does not wait for
+ * its ACK, and it is not reported as dropped (the session already forgot
+ * it). Returns true when it was a survivor. */
+bool drop_survivor(Context& ctx, const uint8_t fp[FP_LEN]);
 
 /* Initiator: begin a rotation after `removed_fp` was dropped locally.
  * `survivor_fps` are the remaining trusted peers. Returns
@@ -216,8 +265,11 @@ Action receive(Context&      ctx,
 
 /* Timeout + retransmit driver. Once REKEY_TIMEOUT_MS has passed:
  * initiator → COMMIT (dropping the non-ACKed), survivor → ABORT. Before
- * that, an initiator gets BROADCAST_OFFER — the same OFFER again — every
- * REKEY_RETRY_MS. NONE otherwise. */
+ * that, an initiator gets, in this order: SEND_SECRET for a survivor whose
+ * ACCEPT arrived inside the settle window (one per call — call tick()
+ * until it returns NONE); COMMIT once every remaining survivor has ACKed
+ * (drop_survivor can empty the list); BROADCAST_OFFER — the same OFFER
+ * again — every REKEY_RETRY_MS. NONE otherwise. */
 Action tick(Context& ctx, uint32_t now_ms);
 
 }  /* namespace mesh_rekey */

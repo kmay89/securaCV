@@ -407,7 +407,9 @@ re-distribute the new secret to remaining members:
 
 The removed device's pubkey is recorded in a local revocation list and
 refused acceptance into future pairing flows for `REVOCATION_GRACE_MS`
-(default 7 days), even by a freshly-rotated opera.
+(default 7 days), even by a freshly-rotated opera. (Implemented in both
+trees since v0.3, F33 — "The revocation deny-list" at the end of this
+section; crypto review and bench pass pending.)
 
 Caveat: the removed device, while it still has the *old* `opera_secret`,
 cannot impersonate a current member because the surviving members no longer
@@ -439,7 +441,11 @@ authenticated by the sender's long-term Ed25519 key:
    `k = SHA-256("securacv:opera:rekey:key:v0" || X25519(eph_i, eph_pub_s) ||
    rekey_id || eph_pub_i || eph_pub_s)` and sends that survivor
    `REKEY_SECRET` = ChaCha20-Poly1305 under `k`, random 96-bit nonce,
-   AAD `rekey_id || initiator_fp || survivor_fp`.
+   AAD `rekey_id || initiator_fp || survivor_fp`. Since v0.3 (F33) no
+   `REKEY_SECRET` goes out before `REKEY_SETTLE_MS` (6 s, one OFFER
+   retransmit period plus a second) after the start; ACCEPTs that arrive
+   sooner are held and answered when the window closes (concurrent
+   removals, below).
 4. The survivor decrypts, sends `REKEY_ACK {rekey_id}` **under the old
    `opera_id`, before switching** (an ACK under the new id would fail the
    initiator's `opera_id` check — the ordering canary-wap learned), then
@@ -452,7 +458,8 @@ authenticated by the sender's long-term Ed25519 key:
    heal: that survivor has already switched and drops old-`opera_id`
    frames, so it holds the new secret but the initiator drops it. A
    survivor that never gets its SECRET aborts at its own 60 s mark and
-   keeps the old secret.
+   keeps the old secret (since F33 it has already forgotten the removed
+   device — it did so on the OFFER, below).
 
 On a switch the outbound counter is **kept**: receivers track the per-peer
 counter by fingerprint, not by `opera_id`, so resetting it would get the
@@ -473,10 +480,12 @@ frames are authenticated by the sender's Ed25519 key alone. So the step that act
 device is each survivor **unregistering its pubkey** (at install, and on
 the initiator at `remove`), not the new secret: the removed device can
 copy the new `opera_id` off the air, and it stays accepted by any survivor
-that did not unregister it — one that missed the whole 60 s window, or one
-that answered the OFFER but aborted without its SECRET. Such a survivor
-trusts the removed device indefinitely and gets no signal that it was
-itself dropped. What the rotation does buy: every frame signed before the
+that did not unregister it. Since v0.3 (F33) a device unregisters and
+deny-lists the removed device as soon as it verifies an OFFER naming it, so
+a survivor that answered the OFFER but aborted without its SECRET no longer
+keeps it; what remains is a survivor that missed every copy of the OFFER for
+the whole 60 s window. Such a survivor trusts the removed device
+indefinitely and gets no signal that it was itself dropped. What the rotation does buy: every frame signed before the
 removal carries the old `opera_id` and is dead to every survivor that
 switched — also across a later re-pair of the removed device — and a
 survivor that missed the rotation is visibly split onto the old id instead
@@ -485,12 +494,71 @@ The §5.6 caveat above ("cannot impersonate a current member because the
 surviving members no longer accept frames carrying the old `opera_id`")
 therefore describes canary-wap's session-key design, not this tree.
 
-Deliberate limits: one rotation at a time per device (a second `remove` is
-refused, a survivor ignores a second OFFER); two users removing peers from
-two devices inside the same 60 s window can split the household between two
-new secrets, and the losing side re-pairs. **The `REVOCATION_GRACE_MS`
-deny-list above is not implemented in either tree** — a removed device can
-be re-paired by a user who walks it through pairing again.
+**Concurrent removals (v0.3, F33 — crypto review and U1 Track C3 bench
+pass pending).** One rotation at a time per device still holds (a second
+`remove` is refused while one runs). Two users removing peers from two
+devices inside the same 60 s window used to split the household between two
+new secrets; the PlatformIO tree now converges them on one:
+
+- **Settle.** No SECRET before `REKEY_SETTLE_MS` (step 3), so two initiators
+  that start close together each hear the other's OFFER, or its retransmit,
+  while neither has handed anything out.
+- **Precedence.** Of two concurrent rotations the one whose initiator's
+  fingerprint is lower (bytewise) wins. An initiator that hears a preceding
+  OFFER before it has handed out a secret yields: its rotation ends
+  uncommitted and it answers the winner as a survivor. A survivor still
+  waiting for its SECRET switches to a preceding OFFER, and drops a rotation
+  whose initiator another OFFER names as removed. An OFFER that names this
+  device as removed ends this device's own rotation.
+- **Propagation.** Every device that verifies an OFFER deny-lists and
+  forgets its `removed_fp` — also one it cannot join because a rotation of
+  its own is running — and a running rotation drops that device from its
+  survivors. So neither rotation hands either removed device the new
+  secret.
+- **Re-announce.** A yielded initiator starts its removal again once the
+  winning rotation is over, so a winner that never heard the first OFFER
+  still drops that device.
+
+What remains, stated rather than hidden: two initiators that have both
+handed out a secret before hearing each other (every copy of both OFFERs
+lost for a whole settle window) still split, and the losing side re-pairs;
+two devices that remove *each other* can end on two secrets by arrival
+order; and a lost ACK still drops a survivor (step 5). The host simulation
+(`test_mesh_rekey.cpp`, `test_two_removals_converge`) converges ten
+orderings of two removals, each with scheduled losses, on one secret; it
+models no random radio loss, and a random-loss probe run while writing it
+(not committed) still split a few percent of runs at 5 % frame loss, more at
+higher loss. None of it has run on radios.
+
+canary-wap cannot converge concurrent removals without a wire change: its
+`MSG_OPERA_REKEY` carries the new secret directly, with no announcement
+phase to settle in and no field naming the removed device, so neither
+precedence nor propagation has anything to act on. Two removals from two
+canary-wap devices inside one window can still split that household. It
+gets the deny-list only (below).
+
+**The revocation deny-list (v0.3, F33 — both trees; crypto review and bench
+pass pending).** `mesh_revocation.{h,cpp}` in the PlatformIO mesh library,
+staged byte-identical into the canary-wap sketch
+(`firmware/scripts/check_mesh_sync.sh`): at most 8 fingerprints, each
+refused for `REVOCATION_GRACE_MS` = 7 days; a full list evicts the entry
+with the least grace left, so the removal just made always fits. Time is
+uptime, like every mesh timeout; the list is persisted as
+(fingerprint, remaining ms) — at each removal and every 5 minutes while it
+holds anything — and restored with that remaining time from the next boot's
+clock, so time powered off does not count down (a device that is off for a
+day denies for a day longer — the conservative direction). Persisted behind
+the flash-encryption gate like the peer list (§5.5, §12.3); on an FE-off
+board it lasts until reboot.
+
+- PlatformIO: records the peer removed on this device and the `removed_fp`
+  of every verified OFFER it hears (propagation, above); refuses a
+  deny-listed device's pairing DISCOVER / OFFER before the pairing state
+  machine sees it, and refuses it as a trusted peer. The list survives
+  leaving the opera.
+- canary-wap: records the peer removed on this device; refuses it in the
+  pairing handlers (DISCOVER, OFFER) and in `add_peer`. It cannot learn of
+  a removal made on another member (the rotation does not name the device).
 
 ## 6. Alert Propagation
 
@@ -851,13 +919,17 @@ The PlatformIO tree (`mesh_state.cpp`, NVS namespace `securacv`) stores:
 `replay_ctrs` (up to 16 × (8 B fingerprint + 8 B counter): the trusted
 peers' counters and — v0.3 — the tombstones of dropped peers, §4.2),
 `elected_hub` (8 B) and — v0.3 —
-`opera_name` (up to 32 B) and `peer_macs` (up to 8 × (8 B fingerprint +
-6 B radio MAC), F33), all behind the flash-encryption gate (§5.5), plus
+`opera_name` (up to 32 B), `peer_macs` (up to 8 × (8 B fingerprint +
+6 B radio MAC), F33) and `mesh_revoked` (the §5.6 deny-list: up to 8 ×
+(8 B fingerprint + 4 B remaining ms, little-endian), F33), all behind the
+flash-encryption gate (§5.5), plus
 `mesh_enabled` (1 B), which is **not** gated: it is a preference, and gating
 it would make "off" silently revert to "on" at every reboot of an FE-off
 board — and `mesh_out_ctr` (u64, F33, §3.3), the outbound counter's
 reserve-ahead high-water mark, not gated either: a count, not a secret, and
 gating it would restart the counter at every reboot of an FE-off board. The `opera_id` is not stored; it is derived from the secret at boot.
+canary-wap (NVS namespace `mesh`) stores the same deny-list blob under
+`revoked` (F33), behind its flash-encryption gate.
 
 ## 13. Conformance
 
@@ -885,3 +957,11 @@ An implementation conforms to this specification if it:
   review and bench pass pending; the §5.6 revocation deny-list is stated as
   not implemented; PIO replay tombstones — a dropped peer's counter survives
   its re-pair, and the leaver keeps its outbound counter (§4.2, §8.3, §12.3).
+- v0.3, F33 (2026-09-23; maintainer crypto review and the U1 Track C2/C3
+  bench passes pending — none of it has run on radios): pairing ephemerals
+  are clamped X25519 keys in both trees (§5.3); the PIO transport peer table
+  is filled from pairing and NVS `peer_macs` (§8.3, §12.3); the PIO outbound
+  counter reserves ahead in `mesh_out_ctr` (§3.3, §12.3); the four PIO
+  pairing routes run on the main loop's request slot (§8.3); the §5.6
+  revocation deny-list in both trees (`mesh_revoked`, `revoked`, §12.3) and
+  convergence of two concurrent removals in the PIO tree (§5.6).

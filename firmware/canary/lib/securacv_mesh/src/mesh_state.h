@@ -41,6 +41,8 @@
  *                        secret — see MESH ENABLED FLAG below)
  *       mesh_out_ctr   — u64 (F33; NOT gated: the outbound counter's
  *                        reserve-ahead high-water mark)
+ *       mesh_revoked   — blob (F33; FE-gated: the §5.6 revocation
+ *                        deny-list, fingerprint + grace left)
  *
  * Host build (CSI_TEST_HOST_BUILD): all functions compile as
  * deterministic stubs. load_opera_secret() always returns false (no
@@ -381,6 +383,25 @@ bool load_mesh_enabled(bool* out);
 
 bool save_outbound_counter(uint64_t high_water);
 bool load_outbound_counter(uint64_t* out);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * REVOCATION DENY-LIST  (F33 part 6 — spec §5.6 REVOCATION_GRACE_MS)
+ *
+ * NVS key "mesh_revoked": mesh_session's deny-list as the
+ * mesh_revocation blob (≤ mesh_revocation::BLOB_MAX = 96 B: fingerprint ||
+ * remaining grace ms, per entry). FE-gated like trusted_peers — which
+ * devices a household threw out is household-graph metadata.
+ *
+ * save_revocations(): len 0 erases the key; otherwise writes the blob.
+ * False on a null blob with len > 0, len > BLOB_MAX, FE off or an NVS
+ * failure. load_revocations(): true with *out_len = 0 when nothing is
+ * stored; false on null pointers, a cap below BLOB_MAX, FE off or a read
+ * failure (a malformed blob is the session's to refuse). Host build:
+ * save → true, load → true with *out_len = 0.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool save_revocations(const uint8_t* blob, size_t len);
+bool load_revocations(uint8_t* out, size_t out_cap, size_t* out_len);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * OPERA DISPLAY NAME  (F10 — POST /api/mesh/name)

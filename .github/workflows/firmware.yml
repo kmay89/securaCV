@@ -1124,7 +1124,7 @@ jobs:
           # (the old "7 of them now" comment had drifted to 9).
           MESH_TESTS="mesh_crypto mesh_envelope mesh_pairing mesh_session
                       mesh_transport mesh_beacon mesh_state mesh_channel_hop
-                      mesh_hub_election mesh_alert mesh_rekey"
+                      mesh_hub_election mesh_alert mesh_rekey mesh_revocation"
           for f in firmware/canary/lib/securacv_mesh/test_mesh_*.cpp; do
             n=$(basename "$f" .cpp); n=${n#test_}
             case " ${MESH_TESTS//$'\n'/ } " in
