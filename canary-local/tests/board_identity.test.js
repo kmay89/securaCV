@@ -94,6 +94,21 @@ test("enclosureForProduct: display + camera products surface the product they be
   assert.strictEqual(watch.device, "canary-display-watch");
 });
 
+test("enclosureForProduct: a case's every manifest claimant finds it, not only the first", async () => {
+  const { enclosureForProduct } = await mod();
+  // the 7" case is the Dash 7's AND the Nightstand 7's (devices/*/device.json)
+  assert.strictEqual(enclosureForProduct(enclosures, "securacv-canary-display-nightstand7")?.id,
+    "7-touch-dashboard-case");
+  assert.strictEqual(enclosureForProduct(enclosures, "securacv-canary-display-dash7")?.id,
+    "7-touch-dashboard-case");
+  // the XIAO S3 host shares the Vision's XIAO cases
+  assert.match(enclosureForProduct(enclosures, "securacv-canary-vision-xiao-s3")?.id || "",
+    /^vision-xiao-/);
+  // and the C6 board is framed by its own pocket case, not the Watch's drum
+  assert.strictEqual(enclosureForProduct(enclosures, "securacv-canary-display-nightstand-c6")?.id,
+    "c6-display-pocket-case");
+});
+
 test("buildIdentityPanel: renders the white card with color-coded pin rows", async () => {
   const { buildIdentityPanel } = await mod();
   const watch = flash.products.find((p) => p.id === "securacv-canary-display-watch");

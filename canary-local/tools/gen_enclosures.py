@@ -26,6 +26,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from _devices import load_manifests
 from _tooling import repo_root
 
 REPO = repo_root()
@@ -34,18 +35,49 @@ OUT_JSON = REPO / "canary-local/devices/enclosures.json"
 PREVIEW_DIR = REPO / "canary-local/enclosures/preview"
 
 # Which device each variant/design belongs to (the page groups by card).
-# "family" also drives the chooser's device↔enclosure pairing.
+# The MANIFESTS decide: every devices/<slug>/device.json lists the printable
+# sets its hardware takes in cad.enclosure_sets, and inverted that is the
+# attribution. `device` is the first claimant in slug order — homed on its
+# family's device when the family is itself a manifest (canary-vision is the
+# Vision page for the DevKit and XIAO S3 hosts too; the display line has no
+# family device, so each display manifest is its own) — and `devices` lists
+# the claimants whenever `device` alone does not say them (the 7" case is the
+# Dash 7's and the Nightstand 7's). A set no manifest claims is universal.
+# `device` also drives the chooser's device↔enclosure pairing
+# (tests/chooser.test.js holds the chooser to it).
+MANIFESTS = load_manifests(REPO)
+SET_OWNERS: dict[str, list[str]] = {}
+for _slug, _m in MANIFESTS.items():              # slug order — "first" is stable
+    for _set in (_m.get("cad") or {}).get("enclosure_sets", []):
+        SET_OWNERS.setdefault(_set, []).append(_slug)
+
+
+def home(slug: str) -> str:
+    """The device page a manifest's sets land on: its family's, when the
+    family is a manifest of its own, else its own."""
+    fam = MANIFESTS[slug].get("family")
+    return fam if fam in MANIFESTS else slug
+
+
+# Name hints — consulted ONLY for a set no manifest claims, and never trusted
+# there: scripts/lint_device_manifests.py fails any set whose device no
+# manifest claims. So a new README row that LOOKS like a device's (a "WAP ·
+# mini") goes red until that device's manifest lists it, instead of being
+# homed by its name — the way the display cases once landed on the Watch and
+# Dash pages.
 DEVICE_OF = [
     (r"^WAP", "canary-wap"),
-    (r"^Vision", "canary-vision"),
+    (r"^Vision ·", "canary-vision"),     # the variant rows — not "Vision Pro mount"
     (r"^Sense", "canary-sense"),
     (r"Watch station", "canary-display-watch"),
     (r"Dashboard display", "canary-display-dash"),
-    # board-specific firmware-display cases → their display device page (not
+    # board-specific firmware-display cases → their own display device (not
     # universal, or they'd show on every WAP/Vision/Sense/hub page)
-    (r"7. touch dashboard case", "canary-display-dash"),   # ESP32-S3-Touch-LCD-7
-    (r"touch watch-display", "canary-display-watch"),      # ESP32-S3-Touch-LCD-1.69
-    (r"C6 display pocket", "canary-display-watch"),        # ESP32-C6-LCD-1.47 (glance)
+    (r"7. touch dashboard case", "canary-display-dash7"),         # ESP32-S3-Touch-LCD-7
+    (r"touch watch-display", "canary-display-touch169"),          # ESP32-S3-Touch-LCD-1.69
+    (r"C6 display pocket", "canary-display-nightstand-c6"),       # ESP32-C6-LCD-1.47
+    (r"S3 hallway stick", "canary-display-nightstand-s3"),        # ESP32-S3-LCD-1.47
+    (r"C3 pocket display", "canary-display-nightlight-c3"),       # ESP32-C3-LCD-1.47
     (r"Sense bedside|Sense in-wall", "canary-sense"),
     (r"Thermal / outdoor", "canary-wap"),
     (r"Combo", "canary-vision"),
@@ -150,11 +182,32 @@ def part_note(filename: str) -> str:
     return "prints flat as modeled — no supports by design"
 
 
-def device_for(name: str) -> str | None:
+def device_for(name: str, set_id: str | None = None) -> str | None:
+    """The device a set belongs to: its first manifest claimant's home, else
+    the name hint (which the manifest lint then refuses). Without a set id —
+    the catalog's product titles — only the hints speak."""
+    owners = SET_OWNERS.get(set_id) if set_id else None
+    if owners:
+        return home(owners[0])
     for pat, dev in DEVICE_OF:
         if re.search(pat, name):
             return dev
     return None
+
+
+def attribution(name: str, set_id: str) -> dict:
+    """A set's `device`, plus `devices` — every claimant — whenever the
+    device alone does not name them all."""
+    owners = SET_OWNERS.get(set_id, [])
+    dev = device_for(name, set_id)
+    return {"device": dev, **({"devices": owners} if owners and owners != [dev] else {})}
+
+
+def serves(s: dict, dev: str) -> bool:
+    """Does set `s` belong on device `dev`'s page — its device, or any
+    manifest that claims it? (canary-local/assets/enclosure-sets.js is the
+    page-side twin.)"""
+    return dev == s.get("device") or dev in s.get("devices", ())
 
 
 # ── README variant tables ────────────────────────────────────────────────
@@ -211,12 +264,13 @@ def parse_tables(md: str):
             cand = ENC / f"{fam}_enclosure.scad"
             if cand.exists():
                 scad = cand.name
+        set_id = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
         sets.append({
-            "id": re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-"),
+            "id": set_id,
             "name": name,
             "for": re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", c[1]),
             "status": "released",
-            "device": device_for(name),
+            **attribution(name, set_id),
             "preview": preview_of(c[2]),
             "parts": stls,
             "scad": scad,
@@ -235,13 +289,14 @@ def parse_tables(md: str):
         if not srcs:
             continue
         scad = srcs[0]["file"]
+        set_id = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
         entry = {
-            "id": re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-"),
+            "id": set_id,
             "name": name,
             "for": raw.split("—", 1)[1].strip() if "—" in raw else "",
             "status": "in-development",
             "note": re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", c[1]),
-            "device": device_for(name),
+            **attribution(name, set_id),
             "preview": preview_of(c[2]),
             "parts": [],
             "scad": scad,
@@ -925,7 +980,7 @@ def sets_as_packages(sets, dev, exclude=()):
     package (committed, print-validated); in-dev sets ride along marked."""
     out = []
     for s in sets:
-        if s["device"] != dev or s["id"] in exclude or not s["parts"]:
+        if not serves(s, dev) or s["id"] in exclude or not s["parts"]:
             continue
         out.append({
             "id": s["id"],
@@ -1397,8 +1452,10 @@ def catalog_main():
     for scad in scad_files:
         parsed = scads[scad]
         my_sets = sets_by_scad.get(scad, [])
-        # Canonical device ids; universal (nullable) sets normalize to _universal.
-        devices = sorted({s.get("device") or UNIVERSAL_ID for s in my_sets})
+        # Canonical device ids — every manifest that claims one of the
+        # product's sets; universal (nullable) sets normalize to _universal.
+        devices = sorted({d for s in my_sets
+                          for d in (s.get("devices") or [s.get("device") or UNIVERSAL_ID])})
         family = (device_for(parsed["title"])
                   or (devices[0] if devices and devices != [UNIVERSAL_ID] else None)
                   or "universal")

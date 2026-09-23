@@ -411,11 +411,6 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
-     },
-     {
-      "product": "vision_pro_mount",
-      "variant": "vision-pro-mount",
-      "status": "in-development"
      }
     ],
     "firmware_configs": [],
@@ -566,11 +561,6 @@
       "status": "in-development"
      },
      {
-      "product": "c3_lcd147",
-      "variant": "c3-pocket-display-case",
-      "status": "in-development"
-     },
-     {
       "product": "dock",
       "variant": "fleet-provisioning-dock",
       "status": "in-development"
@@ -621,11 +611,6 @@
       "status": "in-development"
      },
      {
-      "product": "s3_lcd147",
-      "variant": "s3-hallway-stick-case",
-      "status": "in-development"
-     },
-     {
       "product": "shop_tools",
       "variant": "shop-tools",
       "status": "in-development"
@@ -643,6 +628,11 @@
      {
       "product": "vehicle_mount",
       "variant": "vehicle-mount-kit",
+      "status": "in-development"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
       "status": "in-development"
      },
      {
@@ -834,11 +824,6 @@
       "product": "dash_display",
       "variant": "dashboard-display-case",
       "status": "in-development"
-     },
-     {
-      "product": "s3_lcd7",
-      "variant": "7-touch-dashboard-case",
-      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -892,7 +877,13 @@
    "evidence": {
     "registry_kind": "display",
     "committed_stls": [],
-    "catalog_variants": [],
+    "catalog_variants": [
+     {
+      "product": "s3_lcd7",
+      "variant": "7-touch-dashboard-case",
+      "status": "in-development"
+     }
+    ],
     "firmware_configs": [
      "amoled241",
      "dash",
@@ -934,7 +925,13 @@
    "evidence": {
     "registry_kind": "display",
     "committed_stls": [],
-    "catalog_variants": [],
+    "catalog_variants": [
+     {
+      "product": "s3_lcd147",
+      "variant": "s3-hallway-stick-case",
+      "status": "in-development"
+     }
+    ],
     "firmware_configs": [
      "amoled241",
      "dash",
@@ -976,7 +973,13 @@
    "evidence": {
     "registry_kind": "display",
     "committed_stls": [],
-    "catalog_variants": [],
+    "catalog_variants": [
+     {
+      "product": "s3_touch169",
+      "variant": "1-69-touch-watch-display-puck",
+      "status": "in-development"
+     }
+    ],
     "firmware_configs": [
      "amoled241",
      "dash",
@@ -1019,16 +1022,6 @@
     "registry_kind": "display",
     "committed_stls": [],
     "catalog_variants": [
-     {
-      "product": "c6_display",
-      "variant": "c6-display-pocket-case",
-      "status": "in-development"
-     },
-     {
-      "product": "s3_touch169",
-      "variant": "1-69-touch-watch-display-puck",
-      "status": "in-development"
-     },
      {
       "product": "watch_station",
       "variant": "watch-station",
@@ -1593,11 +1586,6 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
-     },
-     {
-      "product": "vision_pro_mount",
-      "variant": "vision-pro-mount",
-      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -1696,11 +1684,6 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
-     },
-     {
-      "product": "vision_pro_mount",
-      "variant": "vision-pro-mount",
-      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -1800,11 +1783,6 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
-     },
-     {
-      "product": "vision_pro_mount",
-      "variant": "vision-pro-mount",
-      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -2072,11 +2050,6 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
-     },
-     {
-      "product": "vision_pro_mount",
-      "variant": "vision-pro-mount",
-      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -2158,11 +2131,6 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
-     },
-     {
-      "product": "vision_pro_mount",
-      "variant": "vision-pro-mount",
-      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -2244,11 +2212,6 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
-     },
-     {
-      "product": "vision_pro_mount",
-      "variant": "vision-pro-mount",
-      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -2330,11 +2293,6 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
-     },
-     {
-      "product": "vision_pro_mount",
-      "variant": "vision-pro-mount",
-      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -2550,11 +2508,6 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
-     },
-     {
-      "product": "vision_pro_mount",
-      "variant": "vision-pro-mount",
-      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -2636,11 +2589,6 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
-     },
-     {
-      "product": "vision_pro_mount",
-      "variant": "vision-pro-mount",
-      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -2722,11 +2670,6 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
-     },
-     {
-      "product": "vision_pro_mount",
-      "variant": "vision-pro-mount",
-      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -2808,11 +2751,6 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
-     },
-     {
-      "product": "vision_pro_mount",
-      "variant": "vision-pro-mount",
-      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -2894,11 +2832,6 @@
       "product": "vision_enclosure",
       "variant": "vision-mount-kit",
       "status": "released"
-     },
-     {
-      "product": "vision_pro_mount",
-      "variant": "vision-pro-mount",
-      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -3414,11 +3347,6 @@
       "status": "in-development"
      },
      {
-      "product": "c3_lcd147",
-      "variant": "c3-pocket-display-case",
-      "status": "in-development"
-     },
-     {
       "product": "dock",
       "variant": "fleet-provisioning-dock",
       "status": "in-development"
@@ -3469,11 +3397,6 @@
       "status": "in-development"
      },
      {
-      "product": "s3_lcd147",
-      "variant": "s3-hallway-stick-case",
-      "status": "in-development"
-     },
-     {
       "product": "shop_tools",
       "variant": "shop-tools",
       "status": "in-development"
@@ -3491,6 +3414,11 @@
      {
       "product": "vehicle_mount",
       "variant": "vehicle-mount-kit",
+      "status": "in-development"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
       "status": "in-development"
      },
      {

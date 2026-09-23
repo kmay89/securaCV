@@ -34,6 +34,7 @@ import {
   ELECTRICITY_DEFAULT,
 } from "./print-guide.js";
 import { sliceSeconds, slicerAvailable } from "./slicer.js";
+import { setServes } from "./enclosure-sets.js";
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -89,7 +90,7 @@ function cssToRgb(css) {
 }
 
 export function enclosuresFor(encData, deviceId) {
-  const mine = encData.sets.filter((s) => s.device === deviceId);
+  const mine = encData.sets.filter((s) => setServes(s, deviceId));
   const universal = encData.sets.filter((s) => !s.device);
   return { mine, universal };
 }

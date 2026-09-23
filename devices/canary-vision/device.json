@@ -25,7 +25,8 @@
       "vision-xiao-indoor",
       "vision-xiao-weather",
       "vision-mount-kit",
-      "vision-doorbell"
+      "vision-doorbell",
+      "combo-witness"
     ],
     "params": {
       "vm_l": {
