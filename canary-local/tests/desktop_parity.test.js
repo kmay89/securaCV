@@ -1855,6 +1855,147 @@ test("broker TLS: both flashers offer the mode, the CA and the fingerprint, and 
     "provisioning.rs Provisioning must stay un-Debug so a CA can never be formatted into a log");
 });
 
+test("broker TLS: both flashers' receipts name the sealed mode the same way", async () => {
+  // Wave 6 sealed mqtt_tls / mqtt_ca / mqtt_fp on both sides and neither
+  // receipt said so. Now each flasher prints ONE line about the broker TLS
+  // it SEALED — sealed, never connected: the firmware decides the transport
+  // at connect time (mqtt_transport_logic.h) and the boot self-manifest
+  // carries no transport field. The two flashers share no UI code, so the
+  // four-row table lives twice (flash-core.js MQTT_TLS_RECEIPT,
+  // desktop/flash-engine/src/broker_receipt.rs MODE_LABELS — the engine both
+  // desktop apps flash with) and this test is the only thing holding the
+  // copies equal: it must fail on either one changing alone.
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const coreJs = read(join(CANARY, "assets/flash-core.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  const provRs = engineRs("provisioning");
+  const receiptRs = engineRs("broker_receipt");
+  const engineLibRs = engineRs("lib");
+  const flashRs = engineRs("flash");
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+
+  // ONE table. The Rust literals are read as source text, one per line (the
+  // way the select's options are matched above), so a rustfmt split or a
+  // hand edit to either copy alone fails here by name.
+  const labels = /pub\(crate\) const MODE_LABELS: \[&str; 4\] = \[\n([\s\S]*?)\n\];/.exec(receiptRs);
+  assert.ok(labels, "broker_receipt.rs lost MODE_LABELS (the native receipt table)");
+  const rustLabels = labels[1].split("\n").map((l) => {
+    const m = /^ {4}"([^"]+)",$/.exec(l);
+    assert.ok(m, `MODE_LABELS must be four single-line literals, one per line — got ${JSON.stringify(l)}`);
+    return m[1];
+  });
+  assert.strictEqual(rustLabels.length, 4, "the firmware knows four modes (mqtt_transport_logic.h kModeCount)");
+  assert.deepStrictEqual([...core.MQTT_TLS_RECEIPT], rustLabels, "the receipt table differs between the two flashers");
+  const unknown = /pub\(crate\) const MODE_UNKNOWN: &str =\n\s+"([^"]+)";/.exec(receiptRs);
+  assert.ok(unknown, "broker_receipt.rs lost MODE_UNKNOWN");
+  assert.strictEqual(core.MQTT_TLS_RECEIPT_UNKNOWN, unknown[1], "the unknown-mode line differs between the two flashers");
+  // Keyed by the firmware's byte, in its order; each row says what was
+  // sealed, never that anything connected; the lab row keeps its warnings.
+  assert.match(rustLabels[0], /^plain MQTT — not encrypted/);
+  assert.ok(rustLabels[1].includes("{N} bytes of PEM") && !rustLabels[1].includes("{FP}"), "row 1 carries the CA's byte count only");
+  assert.ok(rustLabels[2].includes("{FP}") && !rustLabels[2].includes("{N}"), "row 2 carries the pin only");
+  assert.match(rustLabels[3], /NOT verified/);
+  assert.match(rustLabels[3], /warns on every connect/);
+  for (const row of rustLabels) {
+    assert.ok(!/connected|verified link|encrypted link/i.test(row), `a receipt row claims a connection: ${row}`);
+  }
+
+  // The byte count is the SEALED string's length on both sides — the trimmed
+  // PEM plus the newline build_nvs / mqttProvisioningToNvs append. Proven for
+  // ONE paste: the Rust tests' PEM fixture through the browser's builder and
+  // formatter gives a number, and the Rust test pins broker_tls_summary (and
+  // the NVS string item it writes) to that same literal.
+  const pemConst = /const PEM: &str = "((?:[^"\\]|\\.)+)";/.exec(provRs);
+  assert.ok(pemConst, "provisioning.rs tests lost their PEM fixture");
+  const pem = JSON.parse(`"${pemConst[1]}"`);
+  const prov = core.mqttProvisioningToNvs({ mqttHost: "h", mqttPort: 8883, mqttTls: 1, mqttCa: `  ${pem}\n\n` });
+  assert.strictEqual(prov.strings.mqtt_ca, pem.trim() + "\n");
+  const sealedBytes = new TextEncoder().encode(prov.strings.mqtt_ca).length;
+  assert.strictEqual(core.brokerTlsReceipt(prov), rustLabels[1].replace("{N}", String(sealedBytes)));
+  assert.ok(provRs.includes(`assert_eq!(broker_tls_summary(&ca), Some((1, ${sealedBytes}, String::new())));`),
+    `provisioning.rs's broker_tls_summary test must pin the CA fixture to ${sealedBytes} sealed bytes — the number the browser computes for the same paste`);
+  assert.match(provRs, /let ca_sealed_len = if ca\.is_empty\(\) \{ 0 \} else \{ ca\.len\(\) \+ 1 \};/,
+    "native must count the trimmed PEM + the newline build_nvs appends");
+  assert.match(provRs, /writer\.string\("mqtt_ca", &format!\("\{ca\}\\n"\)\)/,
+    "build_nvs no longer seals trimmed PEM + newline — the count above describes bytes that are not written");
+  assert.match(provRs, /pub\(crate\) fn broker_tls_summary\(config: &Provisioning\) -> Option<\(u8, usize, String\)> \{\n\s+if config\.mqtt_host\.is_empty\(\) \{\n\s+return None;/,
+    "native: no broker host sealed, no receipt line");
+
+  // Native: the log line rides under the broker branch of the engine's
+  // `flash` only (both desktop apps run it), is built from the summary + the
+  // std-only formatter (never a config field), and the sealed line stopped
+  // saying "values not logged" now that a pin is printed. The receipt
+  // carries it; the Flasher's local-file path (still in its lib.rs) carries
+  // None.
+  assert.match(engineLibRs, /^pub mod broker_receipt;$/m, "flash-engine lib.rs must register the receipt module");
+  const flashFn = nativeFnBody(flashRs, "flash");
+  assert.ok(flashFn.includes("(passwords not logged)"), "the sealed line must say passwords, not values, are withheld");
+  assert.ok(!nativeRs.includes("values not logged"), "'values not logged' is false once the pin is printed");
+  const branch = /\n( +)if broker \{\n([\s\S]*?)\n\1\}/.exec(flashFn);
+  assert.ok(branch, "flash-engine flash.rs lost its `if broker {` branch");
+  assert.match(branch[2], /if let Some\(\(mode, ca_bytes, fingerprint\)\) = provisioning::broker_tls_summary\(config\)/);
+  assert.match(branch[2], /let line = broker_receipt::broker_tls_receipt\(mode, ca_bytes, &fingerprint\);/);
+  assert.match(branch[2], /emit\(format!\("  broker link: \{line\}"\)\);/);
+  assert.match(branch[2], /broker_tls = Some\(BrokerTlsReceipt \{\n\s+mode,\n\s+ca_bytes,\n\s+fingerprint,\n\s+line,\n\s+\}\);/);
+  assert.strictEqual(nativeRs.split("broker link:").length - 1, 1, "the broker line is emitted in exactly one place — the engine's broker branch");
+  assert.ok(!/config\.mqtt_(?:ca|pass|host|fp|user)\b/.test(flashFn.replace(/config\.mqtt_host\.is_empty\(\)/g, "")),
+    "flash() must not format a broker field of the config into a log line");
+  assert.ok(!/config\.wifi_pass/.test(flashFn), "flash() must never touch the Wi-Fi password");
+  assert.match(flashRs, /pub struct FlashReceipt \{[\s\S]*?pub broker_tls: Option<BrokerTlsReceipt>,\n\}/, "the engine's FlashReceipt lost broker_tls");
+  assert.match(flashRs, /#\[derive\(Serialize\)\]\npub struct BrokerTlsReceipt \{\n\s+mode: u8,\n\s+ca_bytes: usize,\n\s+fingerprint: String,\n\s+line: String,\n\}/,
+    "BrokerTlsReceipt must serialize mode / ca_bytes / fingerprint / line in snake_case, like the rest of the receipt");
+  assert.match(nativeFnBody(libRs, "flash_local_file"), /broker_tls: None,/, "a local file seals nothing — its receipt carries None");
+  // The Lab's flash command returns the engine's receipt as-is, so its
+  // frontend sees the same broker_tls field the Flasher's does.
+  assert.match(nativeFnBody(read(join(ROOT, "desktop-lab/src-tauri/src/flash.rs")), "flash"),
+    /flash_engine::flash::flash\(&TauriHost\(app\), bundled_catalog\(\), request\)\.await/,
+    "the Lab must return the engine's receipt unchanged");
+
+  // Neither formatter can be handed the PEM: native takes a length, the
+  // browser measures the builder's sealed string and nothing else of it; and
+  // the std-only module never names the config, a password or the host.
+  assert.match(receiptRs, /pub\(crate\) fn broker_tls_receipt\(mode: u8, ca_sealed_len: usize, fp: &str\) -> String/,
+    "the native formatter takes the CA's sealed LENGTH, never the PEM");
+  assert.ok(!/mqtt_pass|wifi_pass|mqtt_host|Provisioning/.test(receiptRs),
+    "broker_receipt.rs must not know the config, a password or the host");
+  assert.ok(!/^use /m.test(receiptRs.split("#[cfg(test)]")[0]),
+    "broker_receipt.rs is std-only — `rustc --edition 2021 --test` compiles it alone, without the engine's dependencies");
+  const fmt = /export function brokerTlsReceipt\(prov\) \{([\s\S]*?)\n\}/.exec(coreJs);
+  assert.ok(fmt, "flash-core.js lost brokerTlsReceipt");
+  const caLines = fmt[1].split("\n").filter((l) => l.includes("mqtt_ca"));
+  assert.deepStrictEqual(caLines.map((l) => l.trim()),
+    ["const caBytes = strings.mqtt_ca ? new TextEncoder().encode(strings.mqtt_ca).length : 0;"],
+    "the browser formatter touches the sealed CA on one line — to measure it — and reports nothing else of it");
+  assert.ok(!/mqtt_pass|mqttPass|mqttCa\b|mqtt_host\b(?!\))/.test(fmt[1].replace("if (!strings.mqtt_host) return null;", "")),
+    "the browser formatter must not read a password, the form's CA, or print the host");
+
+  // Desktop UI: a fourth receipt row, rendered from the RETURNED receipt
+  // (host.broker_tls.line), never from the form.
+  assert.match(html, /<div id="receipt-host-broker" class="receipt pending hidden">/, "index.html lost #receipt-host-broker");
+  const render = /function renderReceipts\(forceVision = false\) \{([\s\S]*?)\n\}/.exec(appJs);
+  assert.ok(render, "desktop renderReceipts moved");
+  assert.match(render[1], /const brokerTls = host && host\.broker_tls;/, "the desktop row reads the writer's receipt");
+  assert.match(render[1], /\$\("receipt-host-broker"\)\.classList\.toggle\("hidden", !brokerTls\);/, "hidden when no broker host was sealed");
+  assert.match(render[1], /setReceipt\("receipt-host-broker", true, "✓ " \+ brokerTls\.line\)/, "the desktop renders the line as returned");
+  assert.ok(!/mqtt-tls|mqtt-ca|mqtt-fp|MQTT_TLS\b|readProvisioning/.test(render[1]), "the desktop receipt must never read the form");
+
+  // Browser: computed beside the sealed prov, handed to the done card with
+  // the form's broker object nulled the way the Wi-Fi credentials already
+  // are (it carries mqttPass and the CA PEM), and rendered as the hub line.
+  assert.match(flashJs, /bakedBroker = core\.brokerTlsReceipt\(prov\);/, "the browser line comes from the sealed prov, not the form");
+  const call = /setPhase\(phaseDone\(\{ \.\.\.opts,([\s\S]*?)\}\)\);/.exec(flashJs);
+  assert.ok(call, "flash.js lost the phaseDone call");
+  for (const kv of ["wifi: null", "mqtt: null", "provBroker: bakedBroker"]) {
+    assert.ok(call[1].includes(kv), `the done card must be handed ${kv}`);
+  }
+  const done = /function phaseDone\(opts\) \{([\s\S]*?)\n\}/.exec(flashJs);
+  assert.ok(done, "flash.js phaseDone moved");
+  assert.match(done[1], /if \(opts\.provBroker\) \{/, "the browser done card lost its hub line");
+  assert.ok(done[1].includes("` Hub baked in — ${opts.provBroker}`"), "the browser must render the hub line as computed");
+  assert.ok(!/opts\.mqtt\b/.test(done[1]), "the done card must not reach into the form's broker object");
+});
+
 test("broker TLS: the catalog's broker_tls is the firmware's own build fact, and both flashers gate on it", () => {
   // The nightstand-c6 is built with -DCANARY_MQTT_PLAIN_ONLY and its
   // mqtt_mgr.cpp REFUSES a provisioned TLS mode at boot (never a plain

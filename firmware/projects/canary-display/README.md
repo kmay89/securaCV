@@ -196,8 +196,12 @@ cataloged in
 The broker socket is plain by default — exactly what every unit shipped with
 — and can be switched to TLS per unit through three NVS keys in the same
 `securacv` namespace as `mqtt_host` / `mqtt_port` / `mqtt_user` / `mqtt_pass`
-(the flashers' NVS builders seed them; there is no form field or on-device
-setting yet):
+(set from the *Broker encryption* select in either flasher's broker block —
+the CA box or fingerprint field appears for the mode that uses it, and
+`canary-local/tests/desktop_parity.test.js` pins the two forms equal — or
+by writing the three keys yourself; the nightstand-c6 is offered *Plain*
+only in both flashers, with the reason quoted below; the on-glass onboarding
+still provisions Wi-Fi only):
 
 | NVS key | Type | Meaning |
 |---|---|---|

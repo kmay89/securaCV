@@ -11,7 +11,9 @@
 //! What lives here:
 //!   * the pure decisions — [`catalog`] (chip guard, release origin, the
 //!     manifest allow-list), [`release`] (size/SHA-256/Ed25519),
-//!     [`provisioning`] (NVS sealed into the image), [`changemap`] +
+//!     [`provisioning`] (NVS sealed into the image) and [`broker_receipt`]
+//!     (the one line a receipt says about the broker TLS it sealed —
+//!     std-only, held equal to the browser flasher's table), [`changemap`] +
 //!     [`health`] (what an install touches), [`intake`] (is this board what it
 //!     claims), [`rescue`] (espflash argv builders), [`port_hint`] (Linux port
 //!     diagnostics), [`image`] (the offset-0 guard + private staging);
@@ -28,6 +30,7 @@
 //! The command NAMES, argument names, DTOs and event names the two apps expose
 //! are held identical by `canary-local/tests/desktop_parity.test.js`.
 
+pub mod broker_receipt;
 pub mod catalog;
 pub mod changemap;
 pub mod flash;

@@ -1,6 +1,6 @@
 # SecuraCV Canary Firmware — Feature Audit Matrix
 
-**Last updated:** 2026-09-23 (canary (PIO) `GET /api/witness` row ❌→⚠️: the route had served the RAM ring all along, and now pages past it into the SD card through the loop-task history bridge (F35; host-tested state machine, CI-compiled by the `firmware.yml` canary matrix on #1718, no bench pass). Same day, canary-sentinel listed as a variant — Phase 1a, compile-gated in CI and unreleased, deliberately not a dashboard column; see the note under the variant table. Same day, new SoftAP WPA2/WPA3 transition + PMF row: ⚠️ for canary (PIO) and canary-wap — the request is made in both trees, but SoftAP SAE exists only on cores that enable it, so the 2.0.17-core builds stay WPA2 and report it; CI-compiled on #1704, no bench. Same day, canary (PIO) TLS row ❌→⚠️: self-signed HTTPS on 443 with a port-80 redirect in `[env:dev]`/`[env:full]`, CI-compiled on #1704, release pending the slot budget, no bench pass. Same day, canary (PIO) provisioning gate: BOOT tap → `GET /api/provisioning-receipt`, and the dashboard's bearer token withheld from home-LAN page loads — the dashboard row had read ✅ before the canary code existed while the endpoint table said ❌; both now read ⚠️ (code landed and CI-compiled on #1704, no bench pass) and turn ✅ with the U1 bench pass. 2026-09-08: MQTT broker TLS row added: one shared decision header, canary-wap CA-verified only — no fingerprint hook in esp_mqtt — and its old unverified `tls` bool now refuses until a CA lands; `firmware/canary`'s `securacv_mqtt` still plain. 2026-09-05 feature-truth pass: the two canary-wap dashboard columns collapsed into one — the PlatformIO lane builds the Arduino sketch via `src_dir`, so 43 of 65 cells were describing a deleted `src/` scaffold; canary-wap T3/T4 acoustic detection corrected to ✅; canary-vision / canary-sense WiFi AP corrected to ✅ and their first-time-setup wizard to ⚠️ for the shared headless setup portal. 2026-09-02: canary-display lane added to the dashboard and to `build_matrix.json` — the fleet viewer ships from more release buttons than any other product and had no column; see its note below the dashboard. 2026-07-11: `_securacv._tcp` mDNS fleet adverts with the canonical TXT schema + HA MQTT Identify buttons on canary-vision and canary-sense — compile/CI-verified, hardware bench validation pending. 2026-07-02: canary-sense witness signing — Ed25519 events + NVS hash chain + wap-schema chain/health trust surface + task watchdog; earlier same day: Phase 2 network stack + canary-vision robustness parity)
+**Last updated:** 2026-09-23 (canary (PIO) `GET /api/witness` row ❌→⚠️: the route had served the RAM ring all along, and now pages past it into the SD card through the loop-task history bridge (F35; host-tested state machine, CI-compiled by the `firmware.yml` canary matrix on #1718, no bench pass). Same day, canary-sentinel listed as a variant — Phase 1a, compile-gated in CI and unreleased, deliberately not a dashboard column; see the note under the variant table. Same day, new SoftAP WPA2/WPA3 transition + PMF row: ⚠️ for canary (PIO) and canary-wap — the request is made in both trees, but SoftAP SAE exists only on cores that enable it, so the 2.0.17-core builds stay WPA2 and report it; CI-compiled on #1704, no bench. Same day, canary (PIO) TLS row ❌→⚠️: self-signed HTTPS on 443 with a port-80 redirect in `[env:dev]`/`[env:full]`, CI-compiled on #1704, release pending the slot budget, no bench pass. Same day, canary (PIO) provisioning gate: BOOT tap → `GET /api/provisioning-receipt`, and the dashboard's bearer token withheld from home-LAN page loads — the dashboard row had read ✅ before the canary code existed while the endpoint table said ❌; both now read ⚠️ (code landed and CI-compiled on #1704, no bench pass) and turn ✅ with the U1 bench pass. 2026-09-19: `firmware/canary`'s `securacv_mqtt` rides the shared broker-TLS transport — plain / CA-verified / SHA-256-pinned / named lab mode, fail-closed — provisioned by the device itself (setup wizard hub step, `POST /api/mqtt/config`, `POST`/`DELETE /api/mqtt/ca`); its `release_ha` image — the one CI-built canary env that compiles the lib (`dev_ha` compiles it too but is not in `flavors.json`'s `build_envs`) — is built and slot-guarded on every PR. Compile-tested by CI, decision and wizard host-tested, not bench-tested against a TLS broker. Also: canary-wap's HTTPS cell corrected to ⚠️ (a runtime, after-setup opt-in with an HTTP fallback), and the CSI active-probe row restated to the code's rates. 2026-09-08: MQTT broker TLS row added: one shared decision header, canary-wap CA-verified only — no fingerprint hook in esp_mqtt — and its old unverified `tls` bool now refuses until a CA lands; `firmware/canary`'s `securacv_mqtt` joined on 2026-09-19. 2026-09-05 feature-truth pass: the two canary-wap dashboard columns collapsed into one — the PlatformIO lane builds the Arduino sketch via `src_dir`, so 43 of 65 cells were describing a deleted `src/` scaffold; canary-wap T3/T4 acoustic detection corrected to ✅; canary-vision / canary-sense WiFi AP corrected to ✅ and their first-time-setup wizard to ⚠️ for the shared headless setup portal. 2026-09-02: canary-display lane added to the dashboard and to `build_matrix.json` — the fleet viewer ships from more release buttons than any other product and had no column; see its note below the dashboard. 2026-07-11: `_securacv._tcp` mDNS fleet adverts with the canonical TXT schema + HA MQTT Identify buttons on canary-vision and canary-sense — compile/CI-verified, hardware bench validation pending. 2026-07-02: canary-sense witness signing — Ed25519 events + NVS hash chain + wap-schema chain/health trust surface + task watchdog; earlier same day: Phase 2 network stack + canary-vision robustness parity)
 **Original audit:** 2026-02-20
 **Companion docs:** [VARIANT_POLICY.md](VARIANT_POLICY.md) (lifecycle labels), [FIRMWARE_VARIANT_AUDIT.md](FIRMWARE_VARIANT_AUDIT.md) (risk analysis), [PARITY_PLAN.md](PARITY_PLAN.md) (ACTIVE ⇄ canary-wap parity closure program)
 
@@ -84,7 +84,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | RF presence detection | ❌ | ✅ | ❌ | ❌ | ❌ | ➖ | ✅ |
 | WiFi CSI sensing (motion / breathing / micro-activity) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | CSI module pipeline + privacy chokepoint + 10-min bundler (v1: presence, breathing, ribbon, daily summary, anomaly) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
-| CSI active probe (50 Hz ESP-NOW unicast, deterministic frame rate) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| CSI active probe (ESP-NOW unicast at 20 Hz per paired peer, low-rate broadcast while unpaired — 10 Hz on the WAP; deterministic frame rate; not yet airtime-governed, `csi_probe.h`; the WAP drives it — the flagship compiles `csi_probe.cpp` but nothing in its tree calls `csi_probe::init()`) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | Multi-link fusion (2-link confirmation gate, motion direction, breathing median) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | Multipath shimmer filter (RSSI swing >8 dB without Doppler → reject) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | CSI watchdog (5 s silence → rx toggle; 3× escalation → WiFi restart) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
@@ -119,7 +119,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Battery health history (NVS-persisted charge cycles, voltage extremes) | ✅ | ✅ | ❌ | ➖ | ❌ | ➖ | ❌ |
 | Chirp channel (broadcast beacon) | ⚠️ | ✅ | ❌ | ❌ | ⚠️ | ➖ | ✅ |
 | MQTT publish + HA Discovery | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ❌ |
-| MQTT broker TLS — CA-verified or SHA-256-pinned socket, fail-closed, lab opt-in warns every connect ([per-variant audit](../docs/FIRMWARE_VARIANT_AUDIT.md); compile-tested, no bench pass) | ❌ | ⚠️ | ✅ | ✅ | ✅ | ➖ | ❌ |
+| MQTT broker TLS — CA-verified or SHA-256-pinned socket, fail-closed, lab opt-in warns every connect ([per-variant audit](../docs/FIRMWARE_VARIANT_AUDIT.md); compile-tested, no bench pass) | ✅ | ⚠️ | ✅ | ✅ | ✅ | ➖ | ❌ |
 | mDNS fleet advert (`_securacv._tcp`, canonical TXT schema incl. `dt`/`role` + broker gossip) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ➖ | ❌ |
 | Remote identify blink (HA `Identify` button on MQTT variants; HTTP `/api/identify` on WAP) | ❌ | ✅ | ✅ | ✅ | ❌ | ➖ | ❌ |
 | OTA A/B with rollback safety | ✅ | ✅ | ✅ | ⚠️ | ✅ | ✅ | ❌ |
@@ -128,7 +128,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Local/LAN update server option (air-gapped hosting) | ✅ | ✅ | ✅ | ⚠️ | ❌ | ⚠️ | ❌ |
 | API authentication (bearer token + HKDF derivation) | ✅ | ✅ | ❌ | ➖ | ❌ | ➖ | ✅ |
 | Rate limiting on HTTP API | ✅ | ✅ | ➖ | ➖ | ❌ | ➖ | ✅ |
-| TLS (HTTPS self-signed; canary (PIO): dev/full CI-compiled, release pending slot budget, no bench) | ⚠️ | ❌ | ❌ | ❌ | ❌ | ➖ | ✅ |
+| TLS (HTTPS self-signed; canary (PIO): dev/full CI-compiled, release pending slot budget, no bench; canary-wap: after-setup runtime opt-in, HTTP fallback logged) | ⚠️ | ⚠️ | ❌ | ❌ | ❌ | ➖ | ✅ |
 | Watchdog timer | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Watch profiles (runtime per-use-case presets, HA select) | ❌ | ❌ | ✅ | ❌ | ❌ | ➖ | ❌ |
 | Provisioning gate (BOOT button; on canary (PIO) one tap unlocks one home-LAN dashboard load or one receipt fetch — code landed and CI-compiled, ⚠️ until the U1 bench pass) | ⚠️ | ✅ | ❌ | ❌ | ❌ | ➖ | ✅ |
@@ -190,6 +190,25 @@ Single-row-per-capability summary across every non-archived variant. This is the
 > (`glass_web.cpp`) — there is no bearer credential to leak. Cells reflect
 > the PlatformIO tree (`firmware/projects/canary-display/`), which is
 > compile/CI-verified; the generated Arduino sketch is byte-synced to it.
+
+> **canary (PIO) MQTT broker TLS cell (2026-09-19):** `release_ha` only —
+> the one CI-built canary env that compiles `lib/securacv_mqtt` (`dev_ha`
+> compiles it too but is not built on PRs), built and OTA-slot-guarded on
+> every PR. The flashers do not seed its rows
+> (`broker_nvs=false`: this tree stores its credentials as blobs, not the
+> fleet's strings); the device provisions itself through the setup wizard's
+> hub step, `POST /api/mqtt/config` and `POST`/`DELETE /api/mqtt/ca`, judged
+> at save time by the shared decision. Compile-tested by PR CI; the
+> decision, the API's field judgment and the wizard are host-tested; no
+> bench pass against a TLS broker.
+
+> **canary-wap HTTPS cell:** ⚠️ because it is a runtime opt-in, not the
+> build's posture — compile-gated on `esp_https_server.h`, enabled after
+> setup when the device certificate loads (`init_tls_cert()`), HTTP-only
+> during first-boot setup by design and again when the HTTPS server fails
+> to start (`[HTTPS] Server start FAILED — falling back to HTTP`, logged).
+> The pairing receipt and QR carry the certificate fingerprint the iPhone
+> app pins.
 
 ---
 
@@ -411,7 +430,7 @@ bench-validated; CI compiles it on (`firmware.yml`, compile-only).
 | `create_manifest.py` | ✅ | Fleet device manifest management |
 | `platformio_secure.ini` | ✅ | Secure Boot v2 + Flash Encryption env; compile-only in CI (F42), no bench pass |
 | `partitions_secure.csv` | ✅ | OTA A/B + `nvs_keys`; `nvs` itself is not flagged `encrypted` (NVS encryption, not flash encryption, protects it — none under `framework = arduino`) |
-| BT disabled at compile time | ✅ | CVE-2025-27840 mitigation |
+| BT disabled at compile time | ✅ | in the `firmware/provisioning/platformio_secure.ini` env only (`-DFEATURE_BLUETOOTH=0`), not the shipped profiles — CVE-2025-27840 mitigation |
 
 ## Home Assistant Integration
 

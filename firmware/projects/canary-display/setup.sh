@@ -134,6 +134,10 @@ generate_shared() {
     "${FIRMWARE_ROOT}/common/provision_qr/provision_qr.h"
     "${FIRMWARE_ROOT}/common/fleet_selfreport/fleet_selfreport.h"
     "${FIRMWARE_ROOT}/common/network/wifi_join_policy.h"
+    # The Host-header guard glass_web.cpp gates writes and the CSRF token
+    # with (shared with the canary tree's securacv_network; host-tested once
+    # in firmware/tests_host).
+    "${FIRMWARE_ROOT}/common/network/host_guard.h"
     # The fleet's IANA -> POSIX zone table (tz_auto.cpp's learner reads it;
     # the canary and canary-wap seed their household zone from the same one).
     "${FIRMWARE_ROOT}/common/time/tz_rule.h"

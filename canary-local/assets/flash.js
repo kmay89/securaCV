@@ -4215,7 +4215,7 @@ async function startFlash(opts) {
     // settings region in the same pass as the firmware. If we can't locate
     // that region, the install continues — never block a flash on a
     // convenience.
-    let wifiFile = null, wifiSsid = null, seededDials = null, seededReflex = null, bakedDeviceId = "", bakedApiToken = null;
+    let wifiFile = null, wifiSsid = null, seededDials = null, seededReflex = null, bakedDeviceId = "", bakedApiToken = null, bakedBroker = null;
     // The auto-update choice (a boolean when the confirm card's checkbox was
     // shown) is a thing to seed by itself: checked or not, the human
     // answered, and the OTA engine reads that answer out of NVS on boot.
@@ -4258,6 +4258,11 @@ async function startFlash(opts) {
         // certificate's Ring ID (this line is reached only on a successful bake).
         bakedDeviceId = prov.strings.dev_id || "";
         bakedApiToken = apiToken;
+        // The broker TLS mode as SEALED — from the builder's output, never the
+        // form — is the one line the done card says about the hub; null when
+        // no broker host was written. Same table as the native Flasher's
+        // receipt (core.MQTT_TLS_RECEIPT).
+        bakedBroker = core.brokerTlsReceipt(prov);
       } catch (e) {
         box.stage("Couldn’t bake the settings (" + String(e.message || e) +
           ") — continuing; everything is still tunable after boot");
@@ -4365,7 +4370,11 @@ async function startFlash(opts) {
     setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings,
       shaHex, shaSigned, sigVerified, sigChecked, bytesWritten: bytes.length,
       wifiSsid, seededDials, seededReflex, provDeviceId: bakedDeviceId,
-      apiToken: bakedApiToken, wifi: null }));
+      apiToken: bakedApiToken, provBroker: bakedBroker,
+      // opts.mqtt carries the broker password and the CA PEM: like the Wi-Fi
+      // credentials (wifi: null) they must not ride into the done card's
+      // closures — the sealed, public receipt line above is all it needs.
+      wifi: null, mqtt: null }));
   } catch (e) {
     state.busy = false;
     // Self-heal write-time failures too: a flaky cable can sync at 921600 but
@@ -4584,6 +4593,17 @@ function phaseDone(opts) {
       `No network was baked in — this Canary asks for WiFi itself on first boot ` +
       `(its own screen, or the setup network it raises).`));
     box.append(w);
+  }
+  if (opts.provBroker) {
+    // What was SEALED for the hub link, in the same words the native
+    // Flasher's receipt uses (core.MQTT_TLS_RECEIPT, held equal to
+    // broker_receipt.rs by desktop_parity.test.js): the mode, a CA's byte
+    // count or the public pin — never the PEM, a password, or a claim that
+    // anything connected (the boot receipt cannot see the transport).
+    const b = el("p", "muted");
+    b.append(el("span", "flash-check", "✓"));
+    b.append(document.createTextNode(` Hub baked in — ${opts.provBroker}`));
+    box.append(b);
   }
   if (opts.apiToken) {
     // Shown ONCE, here — deliberately not remembered by this page (the

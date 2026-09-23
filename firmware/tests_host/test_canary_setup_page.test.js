@@ -270,6 +270,35 @@ test("the API's refusal text is shown, never a secret, and a refused save leaves
   assert.strictEqual($("mtls").value, "2");
 });
 
+// ── the credential-carry rule lives in the API; the page renders its answer ──
+// A stored broker password never follows the link to a new host or port
+// (mqtt_tls_fields::credential_carry, host-tested in test_mqtt_tls_fields.cpp).
+// The page does NOT re-implement that rule: it posts what the person typed,
+// and when the Canary answers 400 password_required_for_new_host it shows
+// the API's reason — which names the password box — re-enables the button
+// for the retry, and posts nothing further.
+test("a new hub address with no password: the 400 password_required_for_new_host reason is shown, the button comes back, nothing else is posted", async () => {
+  const reason = "moving the hub link to a new address or port needs the hub password typed again; a stored password is never carried to a new endpoint";
+  const { $, calls } = await boot({
+    "GET /api/wifi/status": onWifi,
+    "GET /api/mqtt/status": { ok: true, host: "hub.lan", port: 8883, tls_mode: 2, ca_set: false, fp_set: true },
+    "POST /api/mqtt/config": { ok: false, error: "password_required_for_new_host", reason },
+  });
+  $("mhost").value = "other.lan";
+  $("mqttsave").fire("click");
+  await settle();
+  const body = configBody(calls);
+  assert.strictEqual(body.host, "other.lan");
+  assert.ok(!("password" in body), "no password typed, none sent: the device judges the carry, not the page");
+  assert.ok(!("tls" in body), "an untouched select still sends no tls");
+  assert.strictEqual(calls.filter((c) => c.method === "POST").length, 1, "one POST in total: no CA trip, no second config");
+  assert.match($("mqttmsg").textContent, /^Couldn’t save: /);
+  assert.ok($("mqttmsg").textContent.includes(reason), "the API's reason is shown verbatim: " + $("mqttmsg").textContent);
+  assert.ok($("mqttmsg").textContent.includes("password"), "and it names the password box");
+  assert.strictEqual($("mqttsave").disabled, false, "the Save button is re-enabled for the retry");
+  assert.notStrictEqual($("rebootnow").style.display, "block", "a refused save offers no Restart");
+});
+
 test("the success line and the Restart button no longer contradict each other", () => {
   assert.match(script, /the hub link needs no restart/);
   assert.match(script, /Restart only when you are done here/);

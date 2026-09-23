@@ -503,6 +503,7 @@ async fn flash_local_file(
             channel: "local",
             chip_write_verified: true,
             provisioned: false,
+            broker_tls: None,
         })
     } else {
         Err(flash_engine::flash::write_failure(code, &tail))

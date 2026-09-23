@@ -37,7 +37,7 @@ user on this list.**
 | **Casual** | Curious roommate, opposing party in civil dispute | Physical access, basic technical skills | Device-unique credentials, TLS, auth lockout |
 | **Sophisticated** | Corporate adversary, determined stalker, corrupt official | Targeted attacks, social engineering, legal compulsion | No remote access surface, no cloud dependency, key isolation |
 | **Institutional** | Law enforcement, intelligence agency, state actor | Compelled cooperation orders, supply chain compromise, RF surveillance, forensic analysis | Zero phone-home, no ERRERlabs-held secrets, append-only chain |
-| **Systemic** | Compromised update channel, supply chain backdoor, manufacturer coercion | Silent, persistent, potentially affecting all devices | User-initiated OTA only, reproducible builds, open source |
+| **Systemic** | Compromised update channel, supply chain backdoor, manufacturer coercion | Silent, persistent, potentially affecting all devices | Owner-controlled signed OTA (Auto Update an explicit opt-in), reproducible builds, open source |
 
 ---
 
@@ -45,7 +45,7 @@ user on this list.**
 
 ### 1. Keys Never Leave the Device
 
-The Ed25519 private key is generated on the ESP32-S3's hardware RNG
+The Ed25519 private key is generated on the ESP32-family chip's hardware RNG
 and stored in NVS. It is **never**:
 - Transmitted over WiFi, USB, or any interface
 - Included in exports, logs, diagnostics, or crash dumps
@@ -73,25 +73,68 @@ physical extraction as the separately-documented trade it is.
 
 ### 2. Zero Phone-Home
 
-The device makes **zero outbound network connections**:
-- No DNS lookups
-- No NTP sync (time comes from GPS)
-- No telemetry, analytics, or crash reporting
-- No update checks (OTA is user-initiated)
-- No cloud sync, MQTT publish (off by default), or HTTP requests
+**Nothing outbound that is not disclosed and named.** No Canary
+contacts ERRERlabs, a cloud, an analytics or crash-report service, and a
+WAP used as its own access point opens no outbound socket at all: it runs
+a WiFi Access Point and is a **server**, never a client. A product on a
+home network opens exactly these paths, and nothing else:
 
-The device runs a WiFi Access Point. It is a **server**, never a client.
+- **The MQTT broker the owner points it at** (sense, vision, the
+  `firmware/canary` flagship, the WAP's bridge) — plain by default;
+  CA-verified or SHA-256-pinned TLS when provisioned, refusing to connect
+  on an incomplete setup rather than downgrading
+  (`firmware/common/network/mqtt_transport_logic.h`, host-tested)
+- **A daily, jittered signed-manifest check** on every product with
+  pull-OTA — an anonymous HTTPS GET that installs nothing; Install is a
+  button and the per-device Auto Update switch an explicit opt-in
+  (`docs/firmware_ota.md`; the fetch's URL policy is pinned by
+  `firmware/common/ota/test_ota_logic.cpp`)
+- **SNTP** on the display line — the flagship and the WAP take time from
+  GPS; sense and vision have no clock source of their own (no GPS, no
+  SNTP; sense stamps `ts_ms` from uptime); the displays have no GPS.
+  Two host literals in the display firmware's `tz_auto.cpp`
+  (`pool.ntp.org`, `time.nist.gov`), with no host test of their own
+- **The opt-in standalone forecast** on the two 7" displays, switched on
+  at the glass only and pinned by `firmware/tests_host/test_wx_core.cpp`
+
+DNS resolves only those hosts. There is no telemetry, no cloud sync and no
+other HTTP request. The user-facing list, with each path's test, is
+[`SECURITY_MODEL.md`](SECURITY_MODEL.md#the-networked-products-disclosed-outbound-paths).
 
 **Rationale:** Any outbound connection reveals the device exists, creates
 interceptable metadata, creates a disruptable dependency, and enables
-server-side coercion.
+server-side coercion — so each one is a listed, reviewed exception, never a
+default.
+
+**Review rule:** a new outbound path is a change to this list and to the
+matching entry in `SECURITY_MODEL.md`, with a host test pinning its request
+shape as `test_wx_core.cpp` does for the forecast.
+`firmware/scripts/regression_check.sh` greps the trees for a new client
+socket and points here.
 
 ### 3. No Identifier Leaks
 
-- WiFi AP BSSID derived from device identity (no manufacturer OUI leak)
+- The AP's name ("Canary-XXXX") carries no manufacturer identity or
+  serial. Its BSSID is the radio's factory MAC and carries Espressif's
+  OUI: nothing in the firmware sets a derived or random address, so the
+  radio discloses the chip vendor, as every ESP32 does, and nothing more
 - No probe responses containing manufacturer information
-- BLE OFF by default (binary blobs not compiled in)
-- No mDNS/SSDP/UPnP beyond local AP network
+- BLE advertising carries the device's own name and the SecuraCV service
+  UUID; the fleet beacon and Chirp add a manufacturer-data field under
+  the Bluetooth SIG's reserved test id `0xFFFF` holding type, flags,
+  battery, health, chain height and the two fingerprint bytes already in
+  the name (`fleet_beacon.h`) — never a serial. The advertising address
+  is the chip's public BLE address (Espressif's OUI), the same disclosure
+  as the Wi-Fi radio's factory MAC. BLE is compiled into the WAP's FULL
+  and DEV profiles (MINIMAL compiles it out); the `firmware/canary`
+  flagship builds it out of `release` / `release_ha`, and its `full` env
+  compiles the Scout scanner and the GATT status service
+- mDNS (`_securacv._tcp`) only on the network the device is on — its own
+  AP, or the LAN it was joined to; no SSDP/UPnP
+- The CSI HAL holds one identifier, the BSSID of the router it is
+  associated with, only to keep other transmitters out of its window; it
+  is compared in place, never copied into a slot, stat, log line or wire
+  format, and wiped on `deinit()`
 - GPS coordinates use configurable coarsening
 - Presence detection hashes MACs — never stores or transmits raw MACs
 - SD card files contain no filesystem-level device identifiers
@@ -123,7 +166,8 @@ Fork detection: divergent chains from same device are detectable
 
 ### 6. Privacy by Architecture, Not Policy
 
-- BLE is not "disabled by policy" — the binary blobs are not compiled in
+- Broker TLS is not "recommended" — an incomplete TLS setup refuses to
+  connect; there is no fallback to plain to be talked into
 - Raw MACs are not "deleted after use" — they are hashed before storage
 - GPS is not "anonymized in post-processing" — it is coarsened at capture
 - Private keys are not "access-controlled" — there is no read interface
@@ -136,14 +180,15 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 
 | Surface | Decision |
 |---------|----------|
-| Bluetooth | REMOVED at compile time (no binary blobs) |
+| Bluetooth | BLE (NimBLE) in the WAP's FULL profile (and, reduced to the pairing channel — with the BLE OTA and the presence listener that ride it — and the status service, in DEV; MINIMAL compiles it out), gated on `HW_HAS_BLE`: owner pairing / provisioning, the GATT status service, signed BLE OTA v2, the Scout scanner that attributes rooms to the owner's own paired beacons by hashed MAC, and two passive scanners — BLE presence (listen-only, feeding the same presence pipeline as the WiFi one; no MAC, OUI or name kept from the scanner) and Nearby discovery of other Canaries by service UUID (everything else counted only). Nothing classes or tracks other people's devices. The S3 / C3 the BLE-bearing builds run on have no Classic (BR/EDR) radio; the classic-ESP32 boards have one and no build compiles a stack for it. The `firmware/canary` flagship's `release` / `release_ha` images have `FEATURE_BLE_STATUS=0` / `FEATURE_BLE_SCAN=0`; its `full` env compiles the Scout scanner and the GATT status service (`securacv_ble_scan`, `securacv_ble_status`), the only BLE code in that tree |
 | USB Serial | Disabled in production |
 | JTAG | Disabled via eFuse |
-| OTA | User-initiated only, signed binaries. The WAP's BLE OTA (protocol v2) puts product and version under the release signature and enforces the same anti-rollback floor as the pull path; a downgrade or a legacy v1 header needs the owner's BOOT-button break-glass and is logged as a bypass (`docs/firmware_ota.md`) |
-| Cloud | No outbound connections |
-| mDNS | Local AP only |
+| OTA | Owner-initiated by default: the device checks a signed manifest daily and installs nothing; Install is a button, and the per-device Auto Update switch is an explicit owner opt-in (off by default). Every install verifies the Ed25519 release signature and the version floor first. The WAP's BLE OTA (protocol v2) puts product and version under the release signature and enforces the same anti-rollback floor as the pull path; a downgrade or a legacy v1 header needs the owner's BOOT-button break-glass and is logged as a bypass (`docs/firmware_ota.md`) |
+| Cloud | None. The outbound paths are the four in Principle 2 — broker, signed-manifest check, SNTP, opt-in forecast — to hosts the owner chose |
+| mDNS | Local network only: the device's own AP, or the home LAN once joined (`_securacv._tcp`) |
 | Setup Wi-Fi (SoftAP) | Device-unique passphrase, max 1 client. Since 2026-09 (F16) both firmware trees ask the driver for WPA2/WPA3 transition with PMF capable (never required, so a WPA2-only phone still joins) and fall back to WPA2-PSK where the core lacks SoftAP SAE — expected on the IDF 4.4 core the `canary (PIO)` dev/release builds use — reporting what is on the air as `ap_auth` in `/api/wifi/status` and `/api/status` (WAP: `/api/wifi`, `/api/device-info`). CI-compiled (#1704), never run on hardware. The `canary (PIO)` passphrase is 8 characters, the WPA2 floor; widening it is a separate decision because it is re-derived every boot and would change every provisioned device's password |
-| HTTP | Plaintext on the LAN by default (token-authenticated); TLS is an owner opt-in on the WAP (`tls_enabled`) and the kernel (`api-tls` feature) — not "TLS only". The `canary (PIO)` dev/full builds (`FEATURE_HTTPS=1`, 2026-09) serve a self-signed ECDSA P-256 certificate on 443 after first-boot setup and redirect port 80 there; release builds stay plaintext until the size budget is read, and a build or core that cannot do TLS falls back to plaintext and says why in `/api/status` `tls_mode_reason` — CI-compiled (#1704), never run on hardware |
+| HTTP | Plaintext on the LAN by default (token-authenticated); TLS is an owner opt-in on the WAP (`tls_enabled`) and the kernel (`api-tls` feature) — not "TLS only". The `canary (PIO)` dev/full builds (`FEATURE_HTTPS=1`, 2026-09) serve a self-signed ECDSA P-256 certificate on 443 after first-boot setup and redirect port 80 there; release builds stay plaintext until the size budget is read, and a build or core that cannot do TLS falls back to plaintext and says why in `/api/status` `tls_mode_reason` — CI-compiled (#1704), never run on hardware. The iPhone app pins the receipt's `tls_cert_fp` (`PinnedTrustDelegate`), refuses an https device it cannot check, and offers a plain-http credential push only behind a disclosure the owner switches on |
+| MQTT broker link | Plain by default — the broker password crosses the LAN in the clear until the owner provisions TLS, and on the flagship the provisioning request itself (`POST /api/mqtt/config`) rides the plain device API. CA-verified or SHA-256-pinned TLS per product, refusing to connect on an incomplete setup; the lab mode is chosen by name and warns on every connect. Per-variant table: `docs/FIRMWARE_VARIANT_AUDIT.md`. Compile-tested, host-tested, not bench-tested against a TLS broker |
 | Fleet roll-call (`GET /api/fleet`) | The one open read on the hub: rate-limited, no token. It serves the kernel's own row and — when `api.fleet_peers_path` is set — each Canary the MQTT bridge heard, in the contract's coarse words only (name, online, chain verdict, product, and presence/occupants/breathing while proven online); never an event, a zone or key material. The origin allow-list stops other websites' scripts, not a client that can reach the port, so the port stays loopback by default and is the owner's to expose (the add-on's disabled 8799 host port; the Docker sidecar's `SECURACV_API_BIND=all` plus a port mapping the image does not `EXPOSE` — the switch also exports the kernel's cleartext acknowledgment, which never relaxes the token on any other route). What the roll-call says is bounded by the MQTT broker, not proven past it: a peer with publish rights can replay a captured signed publish (held to one window per missed chain advance), invent ids, or put a real id into `degraded` — see `tvos/discovery/DISCOVERY.md`. The summary file behind it is `0600` and size-bounded |
 | Viewer credential (`GET /api/sealed-log`, the Witness Wall) | A second, narrower bearer credential beside the rotating capability token, because a TV cannot re-read a token file: minted by the operator (`witness_api mint-viewer-token`, printed once as a pairing receipt that also carries the kernel's verifying key for the Wall to pin), long-lived until revoked by id, and honored on exactly one route — the non-queryable, size-capped, signed sealed-log tail (Invariant VII bounds what it reads). Presented on any other path or method it is an invalid token that counts toward the per-address lockout, and a good viewer read never clears that count (only a capability-token success does), so the narrower credential cannot reset the lockout that guards the wider one; `?token=` is refused for it as for every token. At rest only its sha256 (`viewer_tokens.json`, `0600`, beside the capability token), compared in constant time and re-read per request, so a revocation lands on the next poll. Whoever holds it reads the coarse sealed record (event types, zones, 10-minute buckets) — the reason it is a credential and not an open read like the roll-call — and over plaintext HTTP it can be sniffed on the LAN like the capability token; TLS stays the owner's opt-in (`api-tls`). What the Wall's "Verified" proves is *authorship* — every served entry signed by the pinned key and linked from the served anchor — not that the tail is *current* or *complete*: the served `checkpoint_head` is unsigned and the document carries no signed time or high-water mark, so a captured genuine document replayed later, or a genuine one cut short at either end, still walks clean against the pin, and the Wall keeps no last-walked head across polls. A signed head (or high-water mark) in the document is the roadmap item that closes it; not built |
 | Camera | Preview only (evidence is metadata, not video) |
@@ -184,7 +229,8 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 | GPS no fix | Record events without location |
 | Chain verify fail | Create tamper event, alert user, keep recording |
 | Auth failure | Lock out with exponential backoff |
-| TLS cert expired | Reject connection (no HTTP fallback) |
+| TLS client cannot verify the WAP's self-signed certificate | The iPhone app pins the receipt's `tls_cert_fp` and refuses an https Canary whose certificate does not match or that has no pin on record (`DeviceAPI.swift`, `PinnedTrustDelegate`); browsers show their self-signed warning. No API asks the client for a certificate — the kernel's rustls config is `with_no_client_auth()` and the WAP's `httpd_ssl_config_t` carries only the server certificate and key |
+| HTTPS server fails to start on the WAP | Serves plain HTTP and logs `[HTTPS] Server start FAILED — falling back to HTTP`; setup mode is HTTP-only by design (both stated, never silent) |
 | Firmware corrupt | Refuse to boot **on the opt-in secure-provisioning tier only** (secure boot is NOT enabled on default builds — see [Scope of this principle](#scope-of-this-principle)); the default tier relies on the OTA signature check before the image is written |
 | Watchdog trigger | Reboot, resume from last good state |
 | NVS corruption | Generate new identity (fresh start) |
@@ -210,15 +256,15 @@ physically destroy the device.
 │                   TRUSTED BOUNDARY                       │
 │                                                          │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │  ESP32-S3    │  │  Ed25519     │  │  Witness     │  │
+│  │  ESP32 family│  │  Ed25519     │  │  Witness     │  │
 │  │  Hardware RNG│  │  Private Key │  │  Chain       │  │
 │  │  (key gen)   │  │  (NVS only)  │  │  (append)    │  │
 │  └──────────────┘  └──────────────┘  └──────────────┘  │
 │                                                          │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
 │  │  Secure Boot │  │  Flash       │  │  GPS Time    │  │
-│  │  (firmware   │  │  Encryption  │  │  Source      │  │
-│  │   verify)    │  │  (data at    │  │  (no NTP)    │  │
+│  │  (firmware   │  │  Encryption  │  │  (SNTP on    │  │
+│  │   verify)    │  │  (data at    │  │  glass only) │  │
 │  │              │  │   rest)      │  │              │  │
 │  └──────────────┘  └──────────────┘  └──────────────┘  │
 │                                                          │
@@ -227,7 +273,7 @@ physically destroy the device.
 ┌─────────────────────────────────────────────────────────┐
 │              ACKNOWLEDGED TRUST ASSUMPTIONS               │
 │                                                          │
-│  • Espressif ESP32-S3 silicon (Chinese manufacturer)     │
+│  • Espressif ESP32-family silicon (Chinese manufacturer) │
 │  • Espressif WiFi binary blobs (closed-source)           │
 │  • ESP32 ROM bootloader (Espressif, not modifiable)      │
 │  • mbedTLS implementation (bundled with ESP-IDF)         │
@@ -332,8 +378,9 @@ compelled.
 
 **Result:** Device runs its own AP — it is not on a shared network.
 Adversary must know the AP password (device-unique, derived from
-fingerprint). Even if connected: TLS encryption required, API auth
-required, exponential backoff on failures.
+fingerprint). Even if connected: API auth required, exponential backoff on
+failures, and HTTPS once setup has completed (plain HTTP during setup, on
+the flagship's port 80 and on the display line's LAN page).
 
 **PASS if:** Network proximity alone grants no access.
 
@@ -375,7 +422,9 @@ SD card encryption, RISC-V open silicon.
 firmware update.
 
 **Result:**
-- OTA updates are user-initiated, never automatic
+- OTA is owner-initiated by default: the device checks a signed manifest
+  daily and installs nothing; Install is a button, and the per-device Auto
+  Update switch is an explicit opt-in (off by default)
 - Update binary must be signed
 - User can refuse any update with no consequence
 - User can build from source and compare binary hash
@@ -511,12 +560,21 @@ To change any security-hardened default, a developer must:
 ## Definition of Done (Security)
 
 1. `SECURITY_MODEL.md` exists and is included in every evidence export
-2. No outbound network connections exist in any code path
+2. Every outbound path is one of the disclosed set in Principle 2, each
+   named with its host test or its lack of one; `regression_check.sh`
+   greps for a new client socket
 3. Ed25519 private key has no read/export interface of any kind
 4. All cryptographic operations use vetted libraries (no custom crypto)
 5. All security-sensitive defaults are hardened (see `secure_defaults.h`)
-6. BLE binary blobs are not compiled in by default
-7. TLS is required for all API access (no HTTP fallback)
+6. BLE is compiled only where a profile names it (the WAP's FULL and DEV
+   profiles, gated on `HW_HAS_BLE`; the flagship's `full` env, Scout
+   scanner and status service only); its adverts carry the device's own
+   name and fleet-beacon state, never a serial or anything about other
+   people, and its two passive scanners (presence, Nearby) keep no MAC,
+   OUI or name from other people's devices
+7. The WAP serves HTTPS after setup; plain HTTP is a stated posture (setup
+   mode and start failure on the WAP, both logged; the flagship's port 80;
+   the displays' LAN page), never a silent downgrade of a TLS session
 8. Evidence is verifiable offline without any ERRERlabs service
 9. Regression checks enforce all ten principles automatically
 10. The transparency document passes the "would Moxie sign this?" test

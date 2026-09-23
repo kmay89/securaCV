@@ -171,6 +171,11 @@ jobs:
   #                        slot precisely because only the S3 watch bin
   #                        was guarded. Each entry runs right after the
   #                        env whose .pio/build/<env>/ dir it names.
+  #                        flavor_envs.py refuses a guard whose env is not
+  #                        in build_envs, sharded or not (a guard on an env
+  #                        PR CI never compiles would fire first on the
+  #                        release artifact), in the `flavors` job below
+  #                        and in lint.yml.
   # ──────────────────────────────────────────────────────────────────
   flavors:
     name: Load flavor manifest
@@ -1442,25 +1447,6 @@ jobs:
               -o /tmp/settings_policy
           /tmp/settings_policy | tee /tmp/settings_policy.log
           grep -q "ALL .* PASSED" /tmp/settings_policy.log
-
-      - name: Build + run canary-display Host guard host test
-        # The LAN web API's Host check (canary/net/host_guard.h): the Origin
-        # + CSRF write guard compares the browser's own headers with each
-        # other, which DNS rebinding satisfies (a public domain re-pointed at
-        # the glass arrives with Origin == Host), so writes, the CSRF token
-        # and the per-witness reads also require a Host that can only mean
-        # this device — an IP literal, the .local name, a single label, or a
-        # private-use suffix. Pins every way a household reaches the glass
-        # true, every registrable public domain false, and degenerate or
-        # oversized authorities foreign rather than a free pass.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-display/include \
-              firmware/projects/canary-display/tests_host/test_host_guard.cpp \
-              -o /tmp/host_guard
-          /tmp/host_guard | tee /tmp/host_guard.log
-          grep -q "ALL .* PASSED" /tmp/host_guard.log
 
       - name: Build + run Canary Link core host test
         # The generic authenticated-datagram layer under the Tin Can's strings

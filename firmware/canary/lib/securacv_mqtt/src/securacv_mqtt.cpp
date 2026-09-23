@@ -797,8 +797,14 @@ bool mqtt_load_credentials(MqttCredentials* creds) {
 }
 
 // The credential row, inside a session the caller opened. Every write is
-// checked: a row that half-landed must fail the request, not answer ok.
-static bool write_credentials(NvsManager& nvs, const MqttCredentials* creds) {
+// checked — a removal too, the way PinClear is — so a row that half-landed
+// fails the request rather than answering ok. A username or password the
+// body gave is written; one it omitted STANDS when the carry says keep
+// (the same endpoint) and is REMOVED otherwise (a new host or port: the
+// stored broker password must not follow the link — mqtt_tls_fields.h,
+// credential_carry).
+static bool write_credentials(NvsManager& nvs, const MqttCredentials* creds,
+                              const MqttCredentialCarry& carry) {
   const size_t host_len = strlen(creds->host);
   bool ok = nvs.putBytes(NVS_KEY_MQTT_HOST, creds->host, host_len) == host_len;
   ok = (nvs.putUInt(NVS_KEY_MQTT_PORT, creds->port) == sizeof(uint32_t)) && ok;
@@ -806,20 +812,27 @@ static bool write_credentials(NvsManager& nvs, const MqttCredentials* creds) {
   const size_t user_len = strlen(creds->username);
   if (user_len > 0) {
     ok = (nvs.putBytes(NVS_KEY_MQTT_USER, creds->username, user_len) == user_len) && ok;
+  } else if (!carry.keep_user) {
+    ok = (!nvs.isKey(NVS_KEY_MQTT_USER) || nvs.remove(NVS_KEY_MQTT_USER)) && ok;
   }
   const size_t pass_len = strlen(creds->password);
   if (pass_len > 0) {
     ok = (nvs.putBytes(NVS_KEY_MQTT_PASS, creds->password, pass_len) == pass_len) && ok;
+  } else if (!carry.keep_pass) {
+    ok = (!nvs.isKey(NVS_KEY_MQTT_PASS) || nvs.remove(NVS_KEY_MQTT_PASS)) && ok;
   }
 
   ok = (nvs.putBool(NVS_KEY_MQTT_EN, creds->enabled) == 1) && ok;
   return ok;
 }
 
-bool mqtt_save_config(const MqttCredentials* creds, const MqttTlsWrite* tls) {
+bool mqtt_save_config(const MqttCredentials* creds, const MqttTlsWrite* tls,
+                      const MqttCredentialCarry* carry) {
   using namespace canary::net::mqtt_tls;
   namespace tf = canary::net::mqtt_tls_fields;
   if (creds == nullptr) return false;
+  // nullptr = keep whatever the body omitted (the same-endpoint answer).
+  const MqttCredentialCarry keep = carry ? *carry : MqttCredentialCarry{true, true};
 
   const bool set_fp   = tls != nullptr && tls->set_fp;
   const bool clear_fp = tls != nullptr && tls->clear_fp;
@@ -842,7 +855,7 @@ bool mqtt_save_config(const MqttCredentials* creds, const MqttTlsWrite* tls) {
       case tf::Write::PinSet:      ok = nvs.putString(NVS_KEY_FP, tls->fp_canonical) > 0; break;
       case tf::Write::PinClear:    ok = !nvs.isKey(NVS_KEY_FP) || nvs.remove(NVS_KEY_FP); break;
       case tf::Write::ModeSet:     ok = nvs.putUChar(NVS_KEY_MODE, tls->mode) == 1; break;
-      case tf::Write::Credentials: ok = write_credentials(nvs, creds); break;
+      case tf::Write::Credentials: ok = write_credentials(nvs, creds, keep); break;
     }
   }
   nvs.end();
@@ -869,7 +882,7 @@ bool mqtt_save_config(const MqttCredentials* creds, const MqttTlsWrite* tls) {
 }
 
 bool mqtt_save_credentials(const MqttCredentials* creds) {
-  return mqtt_save_config(creds, nullptr);
+  return mqtt_save_config(creds, nullptr, nullptr);
 }
 
 bool mqtt_clear_credentials() {
@@ -893,6 +906,15 @@ bool mqtt_clear_credentials() {
 // BROKER TRANSPORT (TLS) — writer and reporter for mqtt_tls / mqtt_ca / mqtt_fp
 // ════════════════════════════════════════════════════════════════════════════
 
+// The CA is read back into this buffer only to learn whether it FITS — the
+// same kCaBufBytes the transport's load() reads it into, so ca_set means
+// exactly "load() will hand mbedTLS this CA". A static, not a stack frame:
+// 3 KB on the HTTP task's stack is what the CA route avoided too. Only the
+// HTTP task calls mqtt_tls_read_current (status / config), and the buffer
+// is wiped before the session closes; a CA is public, but a probe buffer
+// need not keep it.
+static char s_ca_probe[canary::net::mqtt_tls::kCaBufBytes];
+
 bool mqtt_tls_read_current(MqttTlsCurrent* out) {
   using namespace canary::net::mqtt_tls;
   if (!out) return false;
@@ -902,7 +924,17 @@ bool mqtt_tls_read_current(MqttTlsCurrent* out) {
   if (!nvs.beginReadOnly()) return false;
 
   out->mode_byte = nvs.getUChar(NVS_KEY_MODE, 0);
-  out->ca_set = nvs.isKey(NVS_KEY_CA);
+  if (nvs.isKey(NVS_KEY_CA)) {
+    // isKey alone said "set" for a CA the connect would read back as empty
+    // (longer than the buffer, or not string-typed) — plan() then called a
+    // CA-verified mode Ok for a unit whose connect refuses CaMissing. Read
+    // it the way load() does: getString copies a value that fits and
+    // returns 0 for one that does not.
+    const size_t got = nvs.getString(NVS_KEY_CA, s_ca_probe, sizeof(s_ca_probe));
+    memset(s_ca_probe, 0, sizeof(s_ca_probe));
+    out->ca_set = got > 0;
+    out->ca_unreadable = got == 0;
+  }
   out->fp_set = nvs.isKey(NVS_KEY_FP);
   if (out->fp_set && nvs.getString(NVS_KEY_FP, out->fp, sizeof(out->fp)) == 0) {
     // Set but unreadable (or too long for the buffer): the transport's

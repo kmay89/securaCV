@@ -96,7 +96,7 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
   - `GET /api/status`, `GET /api/chain`, `GET /api/logs`
   - `GET /api/wifi/status`, `GET /api/mqtt/status` (`FEATURE_HA_MQTT`)
   - `POST /api/peek/start`, `GET /api/peek/stream`, `POST /api/peek/stop`, `GET /api/peek/status` (`FEATURE_CAMERA_PEEK`)
-- Carve-out still unauthenticated: `GET /` (the SPA shell itself — must be reachable to receive the token). `GET /api/wifi/scan` was later brought under `auth_gate` like its sibling WiFi endpoints — the setup wizard and SPA both send the bearer token, so the carve-out was never needed.
+- Carve-out still unauthenticated: `GET /` (the SPA shell itself — must be reachable to receive the token; since the 2026-09 security sweep the token is injected only for a `Host` that names this device — see "Later additions" below). `GET /api/wifi/scan` was later brought under `auth_gate` like its sibling WiFi endpoints — the setup wizard and SPA both send the bearer token, so the carve-out was never needed.
 - Bearer credential remains confined to `securacv_auth`; `regression_check.sh` "Token isolation" rule still greps clean.
 - Gap #1 flipped to ✅.
 
@@ -118,6 +118,69 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
   route registration now goes through `register_route()`, which names a
   registration the handler table dropped on the serial log, and the
   `max_uri_handlers` budget counts the dev-only `POST /api/ota`.
+- 2026-09 (security sweep, roadmap row 12 follow-up): three hardenings of
+  the same API, each decided in a pure header and host-tested, with the
+  HTTP glue compile-tested by CI's `release_ha` leg only (no bench pass).
+  - **A stored broker password never follows the link to a new endpoint.**
+    `POST /api/mqtt/config` always rewrote host / port / enabled but kept a
+    stored username / password the body omitted, so `{"host":"<elsewhere>"}`
+    from any bearer holder repointed the link AND sent the household's
+    broker password to the new host in the next CONNECT packet. The rule is
+    `mqtt_tls_fields::credential_carry` (host-tested): an endpoint is host +
+    port (host trimmed and case-insensitive); the **same** endpoint keeps
+    whatever the body omitted (a `/setup` re-run that changes only the
+    password, or only the username, works as before); a **new** host or
+    port carries nothing — the stored username and password are removed
+    unless the body supplies them again (`write_credentials` removes with
+    `nvs.isKey` → `nvs.remove`, checked like every other write, inside the
+    one write session, still pin → mode → credentials) — and is **refused
+    before any write** with `400 {ok:false, error:"password_required_for_new_host",
+    reason:…}` when a password is stored and the body gives none. A fresh
+    unit, or a row with no stored password, moves freely. A port-only change
+    (the wizard's *use 8883* button on a unit that already holds a password)
+    therefore asks for the password again — deliberate; the reason sentence
+    names the password box. The setup page does **not** re-implement the
+    rule: it renders the API's `reason` (pinned by the page test), and
+    because it posts the CA **before** the config, a refused config can
+    leave a freshly uploaded CA stored — harmless (the credential row is
+    untouched; the retry re-sends the CA).
+  - **The `Host` a request targeted must name this device.** No canary route
+    checked it, so a DNS-rebinding page (a public domain re-pointed at the
+    Canary's LAN address) loaded `GET /` same-origin, read `__CV_TOKEN__`
+    out of the HTML and could drive every gated route, the two broker
+    writers included. The display's `host_guard.h` now lives at
+    `firmware/common/network/host_guard.h` (one header, one host test in
+    `firmware/tests_host`), and `securacv_network` applies it in two places:
+    `send_html_with_token` serves the page with an **empty** token for a
+    foreign Host (the page's fetch helper then sends no `Authorization`, so
+    the failure shows on the dashboard rather than as a blank 403), and
+    `auth_gate` answers `403 {"error":"host"}` before the token compare. A
+    missing or oversize Host is foreign. **One exemption, by interface, never
+    by name:** a request that arrived over the Canary's own softAP (local
+    address = the AP address and the peer in the AP subnet). The captive DNS
+    redirector runs for the AP's lifetime and answers every non-`.local` name
+    with the AP address, so the phone's captive sheet loads the wizard under
+    its OS's probe name (`captive.apple.com`) and calls the API under it —
+    the hub step included, after `setup_mark_complete()` has fired. Over the
+    AP that Host is this device by construction, and a rebinding page has
+    nowhere to load from. **The trade, the same one the display took
+    (`glass_web.cpp`, note 2b):** a household that reaches the Canary by a
+    public split-horizon name (`canary.example.com` → a LAN address) gets the
+    tokenless dashboard and 403 on the API, and must use the IP, the
+    `.local` name, a single label or a private-suffix alias (`.lan`,
+    `.internal`, `.home.arpa`) instead. Chrome's Local Network Access
+    prompt narrows the attack on its own; Firefox and Safari do not.
+  - **An honest CA verdict.** `mqtt_tls_read_current` reported `ca_set` from
+    `isKey` alone, while the transport's `load()` reads a stored CA longer
+    than its buffer back as empty — so the API called a CA-verified mode Ok
+    for a unit whose connect would refuse `CaMissing`. The reader now sets
+    `ca_set` only when the stored CA fits the same 3072-byte buffer and
+    `ca_unreadable` for a key it cannot read back; `plan()` refuses a
+    CA-verified mode over an unreadable CA with `Verdict::CaUnreadable` →
+    `409 {ok:false, error:"ca_unreadable", reason:"… DELETE /api/mqtt/ca
+    and upload it again"}`, and `GET /api/mqtt/status` reports
+    `ca_unreadable:true` (absent otherwise). Reachable only through a
+    third-party NVS writer — both flashers and the API cap at 3071 bytes.
 
 ### Phase 3 — Provisioning gate + hardware state
 

@@ -107,11 +107,18 @@ bool mqtt_clear_credentials();
 // What NVS holds now, for the API's save-time judgment and for status:
 // the mode byte (0 when absent), the stored pin as-is ("" when absent;
 // "?" for a set-but-unreadable key, as the transport itself reports it),
-// and whether a CA is present. Never the CA itself.
+// and whether a CA is present AND readable. `ca_set` is true only when the
+// stored CA fits the transport's buffer (kCaBufBytes) — what load() will
+// actually hand mbedTLS; a key that exists but does not fit (a third-party
+// NVS writer; both flashers and the API cap at 3071) sets `ca_unreadable`
+// instead, so the API can refuse a CA-verified mode over it the way the
+// connect would, and say so (409 ca_unreadable: DELETE and upload again).
+// Never the CA itself.
 struct MqttTlsCurrent {
   uint8_t mode_byte;
   bool    fp_set;
   bool    ca_set;
+  bool    ca_unreadable;
   char    fp[128];
 };
 bool mqtt_tls_read_current(MqttTlsCurrent* out);
@@ -127,6 +134,17 @@ struct MqttTlsWrite {
   bool        clear_fp;
 };
 
+// What the credential row may carry over from what NVS already holds,
+// exactly as mqtt_tls_fields::credential_carry decided (host-tested): a
+// stored username / password the body omitted STANDS when `keep_*` is true
+// (the same endpoint) and is REMOVED when false (a new host or port — a
+// stored broker password never follows the link to an address it was not
+// given for). A body that supplies a field always writes it.
+struct MqttCredentialCarry {
+  bool keep_user;
+  bool keep_pass;
+};
+
 // One request, one NVS session, one reload. Writes the TLS keys FIRST (the
 // pin, then the mode byte — mqtt_tls_fields::write_order, host-tested) and
 // the credentials LAST, stops at the first failed write, closes the session
@@ -134,10 +152,13 @@ struct MqttTlsWrite {
 // re-reads NVS and reconnects the moment it sees the flag, and shares this
 // NVS handle — can never observe the new credentials next to the old (plain)
 // mode byte, nor close the handle under a write still in flight. `tls` may
-// be nullptr (credentials only). Returns false when NVS could not be opened
-// or a write failed; a reload is raised either way, so the link follows what
-// NVS actually holds.
-bool mqtt_save_config(const MqttCredentials* creds, const MqttTlsWrite* tls);
+// be nullptr (credentials only); `carry` may be nullptr (keep everything the
+// body omitted — the pre-sweep semantics, right only for the SAME endpoint;
+// the API always passes the rule's answer). Returns false when NVS could not
+// be opened or a write (a removal included) failed; a reload is raised
+// either way, so the link follows what NVS actually holds.
+bool mqtt_save_config(const MqttCredentials* creds, const MqttTlsWrite* tls,
+                      const MqttCredentialCarry* carry);
 
 // Store / forget the broker CA. `pem` has already passed
 // mqtt_tls_fields::check_ca and ends in '\n' (the caller adds it, as the

@@ -19,7 +19,7 @@ use crate::catalog::{Catalog, DEV_FLASH_MANIFEST_URL};
 use crate::host::{run_capture, run_streaming, run_streaming_with_tail, FlashHost};
 use crate::image::{read_safety_copy, stage_firmware};
 use crate::provisioning::Provisioning;
-use crate::{changemap, intake, port_hint, provisioning, release, rescue, sidecar};
+use crate::{broker_receipt, changemap, intake, port_hint, provisioning, release, rescue, sidecar};
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -39,6 +39,24 @@ pub struct FlashReceipt {
     pub channel: &'static str,
     pub chip_write_verified: bool,
     pub provisioned: bool,
+    /// The broker TLS mode that was SEALED (never a connection — the boot
+    /// manifest carries no transport field, so nothing can vouch for the
+    /// link). `None` when no broker host was sealed, and for a local file.
+    pub broker_tls: Option<BrokerTlsReceipt>,
+}
+
+/// What the receipt says about the sealed broker TLS: the firmware's mode
+/// byte, the CA's byte count as written (0 when none), the fingerprint as
+/// written (empty when none; public data), and the one line both flashers
+/// print for it (broker_receipt::MODE_LABELS — the UI renders `line` as
+/// returned so the desktop and the browser use the same words). Never the
+/// PEM, never a password. Built only here, so the fields stay private.
+#[derive(Serialize)]
+pub struct BrokerTlsReceipt {
+    mode: u8,
+    ca_bytes: usize,
+    fingerprint: String,
+    line: String,
 }
 
 /// What `detect_chip` reports: the canonical chip name — the "you can't pick the
@@ -310,7 +328,7 @@ pub async fn flash<H: FlashHost>(
     // Provision only after verifying the untouched release. The installed hash
     // records the exact per-device image we actually hand to espflash.
     let mut bytes = downloaded.to_vec();
-    let provisioned = if let Some(config) = provisioning.as_ref() {
+    let (provisioned, broker_tls) = if let Some(config) = provisioning.as_ref() {
         provisioning::patch_factory_image(&mut bytes, config)?;
         // Name what was ACTUALLY sealed. This line used to claim "Wi-Fi + MQTT"
         // whenever any provisioning reached it — and for an on-glass display the
@@ -331,14 +349,33 @@ pub async fn flash<H: FlashHost>(
             (false, false) => "settings",
         };
         emit(format!(
-            "✓ {what} sealed into the image's settings partition (values not logged)"
+            "✓ {what} sealed into the image's settings partition (passwords not logged)"
         ));
         if !wifi {
             emit("  no network baked in — this board asks for Wi-Fi itself on first boot".into());
         }
-        true
+        let mut broker_tls = None;
+        if broker {
+            // Name the broker TLS mode that was SEALED — the mode, a CA's byte
+            // count or the pin (public data), in the same words the browser's
+            // done card uses (broker_receipt.rs, held equal to flash-core.js by
+            // desktop_parity.test.js). Never the PEM, a password or the host,
+            // and never a claim that anything connected: the firmware decides
+            // that at connect time and the boot receipt cannot see it.
+            if let Some((mode, ca_bytes, fingerprint)) = provisioning::broker_tls_summary(config) {
+                let line = broker_receipt::broker_tls_receipt(mode, ca_bytes, &fingerprint);
+                emit(format!("  broker link: {line}"));
+                broker_tls = Some(BrokerTlsReceipt {
+                    mode,
+                    ca_bytes,
+                    fingerprint,
+                    line,
+                });
+            }
+        }
+        (true, broker_tls)
     } else {
-        false
+        (false, None)
     };
     let installed_sha = release::sha256_hex(&bytes);
 
@@ -493,6 +530,7 @@ pub async fn flash<H: FlashHost>(
             channel,
             chip_write_verified: true,
             provisioned,
+            broker_tls,
         })
     } else {
         Err(write_failure(code, &tail))

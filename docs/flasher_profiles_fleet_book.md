@@ -19,7 +19,14 @@ The Canary form and the hub form share one memory:
   board that refuses TLS (the plain-only nightstand-c6) shows Plain for that
   flash without overwriting the remembered mode, and a board with no broker
   block leaves it alone. The one value not carried forward is the lab
-  (unverified) TLS mode: a per-flash choice, never preselected.
+  (unverified) TLS mode: a per-flash choice, never preselected. After a
+  flash, the installation receipt names the broker encryption mode that was
+  sealed — for the CA mode the certificate's byte count, for the pin mode
+  the SHA-256 fingerprint itself (public data: the broker presents that
+  certificate to every client on the LAN) — never the PEM or a password, and
+  never a claim that the board connected; the browser flasher's done card
+  says the same line (the flash engine's `broker_receipt.rs` and
+  `flash-core.js`, held equal by `desktop_parity.test.js`).
 - **Secrets** now persist too, with consent: the "Remember" checkbox under
   each form routes the Wi-Fi password (keyed by SSID, so two homes don't
   overwrite each other), the broker password (keyed by host + user), and the

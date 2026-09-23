@@ -444,10 +444,14 @@
   browser's, and DNS rebinding makes them agree for the attacker: a page on a
   public domain re-pointed at the device's LAN IP arrives with Origin == Host,
   reads the CSRF token from `/api/settings` as same-origin, and writes.
-- **Fix:** `canary/net/host_guard.h` — the Host must be something that can only
-  mean this device on this network (an IP literal, `.local`, a single label, or
-  a private-use suffix); a public domain is foreign for the writes, the token,
-  and the per-witness reads. Header-only, host-tested, no Arduino.
+- **Fix:** `firmware/common/network/host_guard.h` — the Host must be something
+  that can only mean this device on this network (an IP literal, `.local`, a
+  single label, or a private-use suffix); a public domain is foreign for the
+  writes, the token, and the per-witness reads. Header-only, host-tested once
+  (`firmware/tests_host/test_host_guard.cpp`), no Arduino. The canary tree's
+  device API (`securacv_network`) applies the same header to its bearer token
+  and every token-gated route, exempting only requests that arrive over its
+  own setup AP, where its captive DNS answers every name with the AP address.
 - **Rule:** A same-site check needs one side the attacker cannot choose.
   Against rebinding that side is the device's own identity, never a second
   header from the same request.

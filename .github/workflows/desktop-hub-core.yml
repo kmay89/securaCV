@@ -141,10 +141,11 @@ jobs:
 
   # Self-contained pure modules that live inside the release-only tauri crate
   # (desktop/src-tauri) but depend on nothing but `std`, so `rustc --test` runs
-  # their unit tests on a plain runner. (rescue.rs, port_hint.rs and health.rs
-  # used to be compiled here the same way; they moved into desktop/flash-engine,
-  # whose `cargo test` in the matrix above runs them with the rest of the flash
-  # path.)
+  # their unit tests on a plain runner. (rescue.rs, port_hint.rs, health.rs and
+  # broker_receipt.rs — the four-row broker TLS receipt table both flashers
+  # print — used to be compiled here the same way; they moved into
+  # desktop/flash-engine, whose `cargo test` in the matrix above runs them
+  # with the rest of the flash path.)
   # Compile the ACTUAL Tauri crate. Until this existed, PR CI compiled exactly
   # three files out of desktop/src-tauri (below, as pure modules) and nothing
   # else — so a change to hub.rs could be reviewed, merged, and only discovered

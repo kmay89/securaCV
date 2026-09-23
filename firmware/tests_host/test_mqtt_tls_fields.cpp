@@ -9,6 +9,8 @@
 // ca_pem_looks_valid() — never a second regex or a second table — so a save
 // that succeeds is a save that connects (or is the lab opt-in, which warns).
 // And no text this header returns may carry the pin or the PEM it judged.
+// Since the security sweep it also holds the credential-carry rule: a stored
+// broker password never follows the link to a new host or port.
 
 #include "../canary/lib/securacv_mqtt/src/mqtt_tls_fields.h"
 
@@ -312,10 +314,143 @@ static void config_writes_land_tls_first_and_credentials_last() {
   CHECK(nothing.count == 0, "no credentials and no TLS field: nothing to write");
 }
 
+// ── A stored password never follows the link to a new host or port ──────────
+// The security sweep found POST /api/mqtt/config {"host":"<elsewhere>"}
+// keeping the STORED username and password (the writer skipped empty fields)
+// and the reload sending them to the new host in the next CONNECT packet.
+// credential_carry() is the one rule; the API refuses on `refuse` before any
+// write and the writer removes what is not kept.
+static void a_stored_password_is_never_carried_to_a_new_endpoint() {
+  // Same endpoint: whatever the body omitted stands — the /setup re-run that
+  // changes only the password (test_canary_setup_page.test.js: "changing
+  // only the hub password") or only the username ("re-saved in CA mode with
+  // the box empty") keeps the other half of the row.
+  CredentialCarry c = credential_carry("hub.lan", 8883, true, "hub.lan", 8883, /*pass_given=*/false);
+  CHECK(!c.refuse && c.keep_user && c.keep_pass, "same host and port, no password in the body: keep both");
+  c = credential_carry("hub.lan", 8883, true, "hub.lan", 8883, true);
+  CHECK(!c.refuse && c.keep_user && c.keep_pass, "same endpoint with a new password: the username still stands");
+
+  // The host compares the way DNS does — trimmed, case-insensitive — so a
+  // person retyping the address is not asked for the password again.
+  c = credential_carry("hub.lan", 8883, true, "  Hub.LAN ", 8883, false);
+  CHECK(!c.refuse && c.keep_pass, "trimmed, case-insensitive host is the same endpoint");
+  c = credential_carry("Homeassistant.Local", 1883, true, "homeassistant.local", 1883, false);
+  CHECK(!c.refuse && c.keep_pass, "case only");
+  CHECK(same_broker_host("a.b", "A.B") && !same_broker_host("a.b", "a.b.") && !same_broker_host("", "") &&
+            !same_broker_host(nullptr, "a") && !same_broker_host("a", nullptr) && !same_broker_host("ab", "a"),
+        "the compare: case-folded, no suffix games, two empties are not an endpoint");
+
+  // A new host with a stored password and no password in the body is the
+  // finding itself: refused, nothing kept, nothing written.
+  c = credential_carry("hub.lan", 8883, true, "attacker.example", 8883, false);
+  CHECK(c.refuse, "new host + stored password + no password in the body: REFUSED");
+  CHECK(!c.keep_user && !c.keep_pass, "and nothing is carried");
+  // A port change alone is a new endpoint (the wizard's 'use 8883' button on
+  // a unit that already holds a password asks for it again — deliberate).
+  c = credential_carry("hub.lan", 1883, true, "hub.lan", 8883, false);
+  CHECK(c.refuse, "new port only + stored password + no password: REFUSED");
+  c = credential_carry("hub.lan", 1883, true, "HUB.LAN", 8883, false);
+  CHECK(c.refuse, "same host, different port is still a new endpoint");
+
+  // A new host WITH a password in the body: allowed, and the stored row is
+  // not carried — the username is kept only if the body gives it (the
+  // writer writes what the body carries and removes the rest).
+  c = credential_carry("hub.lan", 8883, true, "other.lan", 8883, true);
+  CHECK(!c.refuse, "new host with a password typed again: allowed");
+  CHECK(!c.keep_user && !c.keep_pass, "the stored user and password do not follow; only the body's land");
+
+  // A fresh unit has nothing to carry and nothing to refuse — the first-time
+  // CA-mode save posts no password at all (test_canary_setup_page.test.js:
+  // "a fresh unit set to CA mode") and must succeed.
+  c = credential_carry("", 1883, false, "homeassistant.local", 8883, false);
+  CHECK(!c.refuse && !c.keep_user && !c.keep_pass, "fresh unit (empty stored host), no password: allowed, nothing kept");
+  c = credential_carry(nullptr, 1883, false, "homeassistant.local", 1883, false);
+  CHECK(!c.refuse && !c.keep_user && !c.keep_pass, "fresh unit (null stored host): the same");
+  // A stray stored password with no stored host is still a fresh unit: the
+  // load path never reads a password without a host, so nothing to carry.
+  c = credential_carry("", 1883, true, "hub.lan", 1883, false);
+  CHECK(!c.refuse, "no stored host = fresh, whatever else the row claims");
+
+  // An anonymous-broker row (a username, no password) moving to a new host is
+  // allowed — there is no secret to protect — and the username goes with the
+  // old endpoint unless the body resupplies it.
+  c = credential_carry("hub.lan", 1883, false, "other.lan", 1883, false);
+  CHECK(!c.refuse, "stored user, no stored password, new host: allowed");
+  CHECK(!c.keep_user, "the stored username is removed unless the body gives one");
+  CHECK(!c.keep_pass, "no password to keep either way");
+
+  // The verdict the API answers with: a code the page can key on and a
+  // sentence that names the password box — never a host, never a secret.
+  Decision none;
+  CHECK(std::strcmp(error_code(Verdict::PasswordRequiredForNewHost), "password_required_for_new_host") == 0,
+        "error code");
+  const char* why = reason(Verdict::PasswordRequiredForNewHost, none);
+  CHECK(echoes(why, "password"), "the reason names the password: %s", why);
+  CHECK(echoes(why, "never carried"), "and says the stored one is not carried: %s", why);
+  CHECK(!echoes(why, "hub.lan") && !echoes(why, "attacker"), "constant text, no host in it");
+}
+
+// ── A CA the firmware cannot read back is named, never a free pass ──────────
+// mqtt_tls_read_current used to report ca_set from isKey alone, while the
+// transport's load() reads a stored CA longer than its buffer back as EMPTY:
+// plan() said tls-ca Ok for a unit whose connect would refuse CaMissing. Now
+// the reader sets ca_unreadable for a key it cannot read, and plan() refuses
+// a CA-verified mode over it with a verdict that says what to do (409).
+static void an_unreadable_stored_ca_is_named_not_passed() {
+  Current cur;
+  cur.ca_set = false;        // not usable...
+  cur.ca_unreadable = true;  // ...but the key is there
+  Plan p;
+  Request req;
+  req.has_mode = true;
+  req.mode = 1;
+  Verdict v = plan(cur, req, p);
+  CHECK(v == Verdict::CaUnreadable, "CA mode over an unreadable CA is CaUnreadable, not Refused/CaMissing");
+  CHECK(!p.set_mode && !p.set_fp && !p.clear_fp, "and plans no write");
+  CHECK(p.decision.transport == Transport::Refused, "the decision is a refusal");
+  CHECK(std::strcmp(error_code(v), "ca_unreadable") == 0, "error code");
+  Decision none;
+  const char* why = reason(v, p.decision);
+  CHECK(echoes(why, "DELETE /api/mqtt/ca"), "the reason says how out: %s", why);
+  CHECK(echoes(why, "upload it again"), "and to upload again: %s", why);
+  CHECK(!echoes(why, "no CA"), "it does not claim no CA is stored");
+
+  // A unit already in CA mode whose stored CA turned unreadable: a host-only
+  // body is judged the same way (the connect would refuse).
+  Current stored_ca_mode;
+  stored_ca_mode.mode_byte = 1;
+  stored_ca_mode.ca_unreadable = true;
+  Request host_only;
+  CHECK(plan(stored_ca_mode, host_only, p) == Verdict::CaUnreadable, "stored mode 1 + unreadable CA + host-only body: CaUnreadable");
+
+  // Modes that do not read the CA are unaffected by an unreadable one.
+  req.mode = 0;
+  CHECK(plan(cur, req, p) == Verdict::Ok, "plain does not need the CA");
+  req.mode = 3;
+  CHECK(plan(cur, req, p) == Verdict::Ok, "lab does not need the CA");
+  req.mode = 2;
+  req.fp = kFpBare;
+  CHECK(plan(cur, req, p) == Verdict::Ok, "pin mode with a pin does not need the CA");
+
+  // A genuinely missing CA is still the plain CaMissing refusal.
+  Current nothing;
+  Request ca_mode;
+  ca_mode.has_mode = true;
+  ca_mode.mode = 1;
+  v = plan(nothing, ca_mode, p);
+  CHECK(v == Verdict::Refused && p.decision.reason == Reason::CaMissing, "no key at all: Refused / CaMissing as before");
+  // And a readable one is Ok, as before.
+  Current fine;
+  fine.ca_set = true;
+  CHECK(plan(fine, ca_mode, p) == Verdict::Ok, "a readable CA: Ok");
+  (void)none;
+}
+
 // ── Every verdict has a code; every non-Ok verdict has text ─────────────────
 static void every_verdict_has_a_code_and_text() {
   const Verdict all[] = {Verdict::Ok, Verdict::ModeInvalid, Verdict::FingerprintMalformed,
-                         Verdict::Refused, Verdict::CaTooLarge, Verdict::CaMalformed};
+                         Verdict::Refused, Verdict::CaTooLarge, Verdict::CaMalformed,
+                         Verdict::CaUnreadable, Verdict::PasswordRequiredForNewHost};
   Decision refused;
   refused.transport = Transport::Refused;
   refused.reason = Reason::CaMissing;
@@ -343,6 +478,8 @@ int main() {
   a_stored_malformed_pin_is_named_as_such();
   ca_upload_is_bounded_and_pem_shaped();
   config_writes_land_tls_first_and_credentials_last();
+  a_stored_password_is_never_carried_to_a_new_endpoint();
+  an_unreadable_stored_ca_is_named_not_passed();
   every_verdict_has_a_code_and_text();
   if (g_failures) {
     std::printf("test_mqtt_tls_fields: %d FAILED\n", g_failures);
