@@ -18,9 +18,16 @@ import XCTest
 
 /// A dictionary standing in for the Keychain (see `SecretSlots`).
 final class MemorySlots: SecretSlots {
+    struct Refused: Error {}
     var items: [String: Data] = [:]
+    /// Accounts whose writes fail — the way a real Keychain add can — and,
+    /// per the `SecretSlots` contract, leave the previous value untouched.
+    var refusing: Set<String> = []
     func get(_ account: String) -> Data? { items[account] }
-    func set(_ data: Data, _ account: String) throws { items[account] = data }
+    func set(_ data: Data, _ account: String) throws {
+        if refusing.contains(account) { throw Refused() }
+        items[account] = data
+    }
     func delete(_ account: String) { items[account] = nil }
 }
 

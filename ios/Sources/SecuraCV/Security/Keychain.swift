@@ -21,16 +21,26 @@ import Security
 struct Keychain {
     enum KError: Error { case status(OSStatus) }
 
+    /// Store `data`, replacing any value already there — atomically. An
+    /// existing item is updated in place (SecItemUpdate either replaces the
+    /// value or leaves the old one), and a new one is added only when there
+    /// was none. Never delete-then-add: if the add then failed, the previous
+    /// value would be gone, and for the snapshot key that is every snapshot
+    /// ever sealed to it.
     static func set(_ data: Data, account: String, service: String) throws {
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
-        SecItemDelete(base as CFDictionary)
-        var add = base
-        add[kSecValueData as String] = data
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        let fields: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        let updated = SecItemUpdate(base as CFDictionary, fields as CFDictionary)
+        if updated == errSecSuccess { return }
+        guard updated == errSecItemNotFound else { throw KError.status(updated) }
+        let add = base.merging(fields) { _, new in new }
         let status = SecItemAdd(add as CFDictionary, nil)
         guard status == errSecSuccess else { throw KError.status(status) }
     }
@@ -114,6 +124,10 @@ enum PinnedKeyStore {
 /// unsigned (scripts/heal.sh, CODE_SIGNING_ALLOWED=NO), and whether an
 /// unsigned simulator app may use the Keychain at all is the host's call,
 /// not the code's — a test that leaned on it would test the runner.
+///
+/// Contract: `set` replaces atomically — when it throws, the previous value
+/// is still there. The snapshot key's in-place migration (raw → wrapped)
+/// relies on it: a failed wrap must leave the raw key, never nothing.
 protocol SecretSlots {
     func get(_ account: String) -> Data?
     func set(_ data: Data, _ account: String) throws

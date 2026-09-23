@@ -186,6 +186,26 @@ final class EnclaveCustodyTests: XCTestCase {
         XCTAssertEqual(try store.privateKey()?.rawRepresentation, legacy.rawRepresentation)
     }
 
+    func testAFailedWrapWriteKeepsTheRawKey() throws {
+        let slots = MemorySlots()
+        let legacy = Curve25519.KeyAgreement.PrivateKey()
+        slots.items[VaultKeyStore.account] = legacy.rawRepresentation
+        slots.items[VaultKeyStore.publicAccount] = legacy.publicKey.rawRepresentation
+        let store = memoryVaultKeys(slots)
+        slots.refusing = [VaultKeyStore.account]
+
+        XCTAssertThrowsError(try store.migrateIfNeeded(), "the refused write surfaces")
+        XCTAssertEqual(slots.items[VaultKeyStore.account], legacy.rawRepresentation,
+                       "a failed migration leaves the raw key, never nothing")
+        XCTAssertEqual(try store.privateKey()?.rawRepresentation, legacy.rawRepresentation,
+                       "and the key still opens (the read's best-effort wrap failed quietly)")
+        XCTAssertNil(store.custody, "still the pre-custody layout")
+
+        slots.refusing = []
+        XCTAssertTrue(try store.migrateIfNeeded(), "the next attempt wraps it")
+        XCTAssertEqual(try store.privateKey()?.rawRepresentation, legacy.rawRepresentation)
+    }
+
     func testTheFirstReadOfARawKeyAlsoWrapsIt() throws {
         let slots = MemorySlots()
         let legacy = Curve25519.KeyAgreement.PrivateKey()
