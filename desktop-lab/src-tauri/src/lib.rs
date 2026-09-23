@@ -55,20 +55,23 @@ fn app_info() -> AppInfo {
 // desktop-release.yml "Bundle espflash sidecar"), and the Flash page mounts
 // its native bench (canary-local/assets/flash-native.js) when `serial` says
 // so. Anywhere else — the iPad shell, a Windows build nobody ships — `serial`
-// is false, so the page never lights a path that can only fail.
+// is false, so the page never lights a path that can only fail. On macOS and
+// Linux it is ALSO a runtime answer (espflash_bundled): the platform bundles
+// espflash, and the file is really there next to this binary.
 // `serial_list` advertises the port list (list_serial_ports) on every desktop
 // build. LAN discovery is two live
 // commands on desktop: an mDNS browse that finds the boards (fleet_scan,
 // src/fleet.rs) and the /api/fleet poll that finds a kernel
 // (witness_discover). Bluetooth LE discovery is still future.
 #[tauri::command]
-fn native_capabilities() -> serde_json::Value {
+fn native_capabilities(app: tauri::AppHandle) -> serde_json::Value {
     serde_json::json!({
         "shell": "tauri",
         // Native FLASHING (src/flash.rs): only where the release bundles the
-        // espflash sidecar. desktop_parity.test.js refuses this unless the
-        // sidecar, its bundling step and the frontend path all exist.
-        "serial": cfg!(any(target_os = "macos", target_os = "linux")),
+        // espflash sidecar, AND only while that sidecar is really there to
+        // run. desktop_parity.test.js refuses this unless the sidecar, its
+        // bundling step and the frontend path all exist.
+        "serial": cfg!(any(target_os = "macos", target_os = "linux")) && espflash_bundled(&app),
         // Native port enumeration (list_serial_ports). Desktop only:
         // MOBILE.md's contract is that generic USB serial does not exist on
         // iOS/iPadOS, so a mobile build neither registers the command nor
@@ -92,6 +95,23 @@ fn native_capabilities() -> serde_json::Value {
         // builds only — the App Store owns updates on iOS/iPadOS).
         "self_update": cfg!(desktop)
     })
+}
+
+/// The runtime half of `serial`: is the bundled espflash really next to this
+/// binary (src/flash.rs `espflash_bundled` — a non-empty executable file,
+/// resolved where the spawn will look)? Compile-time `cfg!` alone says only
+/// that the RELEASE bundles one; a dev build on the empty compile-only stub,
+/// a repackaged binary or a deleted file would still advertise a flash path
+/// whose every board read fails at spawn.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn espflash_bundled(app: &tauri::AppHandle) -> bool {
+    flash::espflash_bundled(app)
+}
+
+/// No espflash is bundled here (the iPad shell, an unshipped Windows build).
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn espflash_bundled(_app: &tauri::AppHandle) -> bool {
+    false
 }
 
 /// Serial ports the OS can see this instant. No Web Serial permission prompt,

@@ -2615,8 +2615,25 @@ test("native flashing: the Lab's flash page gives the Flasher's diagnostics, and
   const serialCap = /"serial":\s*(.*),\s*$/m.exec(labRs);
   assert.ok(serialCap, "couldn't find the Lab's serial capability");
   if (serialCap[1].trim() !== "false") {
-    assert.strictEqual(serialCap[1].trim(), 'cfg!(any(target_os = "macos", target_os = "linux"))',
-      "the Lab may advertise native flashing only on the two platforms whose release bundles espflash");
+    assert.strictEqual(serialCap[1].trim(),
+      'cfg!(any(target_os = "macos", target_os = "linux")) && espflash_bundled(&app)',
+      "the Lab may advertise native flashing only on the two platforms whose release bundles espflash, " +
+      "and only while that espflash is really there (a compile-time cfg! alone lights the bench on a " +
+      "dev build's empty stub, where every board read fails at spawn)");
+    // The runtime half: resolved where the spawn looks (the shell plugin's
+    // own sidecar() path), and refused unless it is a non-empty executable
+    // file (the engine's looks_runnable, unit-tested there).
+    assert.match(labRs, /#\[cfg\(any\(target_os = "macos", target_os = "linux"\)\)\]\s*fn espflash_bundled\(app: &tauri::AppHandle\) -> bool \{\s*flash::espflash_bundled\(app\)\s*\}/,
+      "lib.rs espflash_bundled must ask src/flash.rs on the platforms that bundle espflash");
+    const labFlashRs = read(join(ROOT, "desktop-lab/src-tauri/src/flash.rs"));
+    const bundled = /pub fn espflash_bundled\(app: &AppHandle\) -> bool \{([\s\S]*?)\n\}/.exec(labFlashRs);
+    assert.ok(bundled, "src/flash.rs lost espflash_bundled");
+    assert.match(bundled[1], /app\.shell\(\)\.sidecar\(ESPFLASH\)/,
+      "espflash_bundled must resolve the path the spawn uses (shell().sidecar(ESPFLASH))");
+    assert.match(bundled[1], /flash_engine::sidecar::looks_runnable\(/,
+      "espflash_bundled must refuse a missing, empty or non-executable sidecar (looks_runnable)");
+    assert.match(engineRs("sidecar"), /pub fn looks_runnable\(path: &std::path::Path\) -> bool \{[\s\S]*?meta\.len\(\) == 0/,
+      "the engine's looks_runnable must refuse the empty compile-only stub");
     for (const plat of ["macos", "linux"]) {
       const conf = JSON.parse(read(join(ROOT, `desktop-lab/src-tauri/tauri.${plat}.conf.json`)));
       assert.ok(((conf.bundle || {}).externalBin || []).includes("binaries/espflash"),

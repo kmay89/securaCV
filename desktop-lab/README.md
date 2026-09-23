@@ -127,7 +127,11 @@ A macOS or Linux build also needs the espflash sidecar where
 (`rustc -vV` prints the triple). The release workflow downloads the pinned,
 sha256-verified one (`desktop-release.yml`, "Bundle espflash sidecar"); for a
 compile-only check an empty executable file there is enough, which is what
-`desktop-lab-check.yml` does.
+`desktop-lab-check.yml` does. A build running on that empty stub reports
+`serial: false` (`native_capabilities` checks the sidecar is a non-empty
+executable file, not just that the platform bundles one), so its Flash page
+shows the "not on this device" card; to flash from a dev build, put a real
+espflash 3.3.0 at that path.
 
 ## Build installers
 

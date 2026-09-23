@@ -151,6 +151,23 @@ impl FlashHost for TauriHost {
     }
 }
 
+/// Whether the bundled espflash is really next to this binary, where the
+/// spawn in [`TauriHost::espflash`] will look for it. The path is asked of
+/// the shell plugin itself (`sidecar(ESPFLASH)` resolves it exactly as the
+/// spawn does), so this check and the spawn can never disagree about where
+/// the file lives. `native_capabilities` gates `serial` on it: a dev build on
+/// the empty compile-only stub, a repackaged app or a deleted file must not
+/// light a bench whose every board read would fail at spawn — the Flash page
+/// then shows its "not on this device" card instead of coaching download mode
+/// for a board that was never the problem.
+pub fn espflash_bundled(app: &AppHandle) -> bool {
+    let Ok(cmd) = app.shell().sidecar(ESPFLASH) else {
+        return false;
+    };
+    let program = std::process::Command::from(cmd).get_program().to_owned();
+    flash_engine::sidecar::looks_runnable(std::path::Path::new(&program))
+}
+
 // ── the commands: the Flasher's names, arguments and DTOs ───────────────────
 
 /// Serial ports the OS can see this instant — the Flasher's `list_ports`,
