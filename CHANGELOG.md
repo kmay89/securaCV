@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### The canary pages its timeline from the SD card, the display's join screen fits every panel, and the Combo's AR face comes from the CAD (#1718, website #203)
+
+- **The timeline reaches past the witness ring into the SD card (F35, F26
+  stage 2).** "Load More" pages older records from the card through a
+  loop-task bridge: one request at a time (a second gets `503
+  history_busy`), a bounded 3 s wait (`504 history_timeout`), at most
+  4 × 1 KiB of reading per loop pass, and a generation counter so a late
+  read never answers the next request. Rows from the card are badged "from
+  card, chain-linked", never "Verified" — no signature is checked on the
+  loop. The state machine is a host-tested pure header; the device compile
+  is CI's, and a card with more than 32 records is bench work (U1).
+- **The first-boot join screen is laid out from the panel (F43).** The dash's
+  "or join … password" caption no longer crosses the QR, and the same stack
+  fixes the round watch and the AMOLED 2.41, where the re-check found the
+  same defect. A host test covers every display env's panel; the emulator
+  builds are rebuilt. The nightstand's cut-off credentials line is recorded
+  as F45.
+- **The Combo's lens and radome window come from its CAD (C15).** The site
+  ledger carries each figure's measured face features as `features_mm`, and
+  the website's Combo model places them from it. On the website (#203): the
+  Vision lens, the WAP's screw heads and the doorbell's faceplate furniture
+  are no longer buried in other solids, with a guard that keeps every part
+  visible (W17); the download page names both of the Lab app's fetches from
+  GitHub releases (W18); and the glossary separates the quorum Vault from a
+  sealed snapshot (W19).
+
 ### Firmware operations: OTA scripts that can deploy, a buildable secure image, the WAP's tamper state over MQTT, and the last 5-second buckets gone (#1718)
 
 - **The OTA deploy scripts send the bearer (F39).** `ota_deploy.py` and

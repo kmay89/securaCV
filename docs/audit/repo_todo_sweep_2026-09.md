@@ -636,7 +636,7 @@ so — see D2 below.)
   mounted this boot; a present-but-failing card is not called removed).
   Bench (U1): a live card pull and a write failure on a canary base.
   (#1704)
-- [ ] **F26 [code+decision] Timeline history deeper than the witness ring.**
+- [x] **F26 [code+decision] Timeline history deeper than the witness ring.**
   F7 pages the 32-record RAM ring; the full history sits in
   `/WITNESS/records.jsonl` on the SD card, and the HTTP task never touches
   SD (the `handle_witness` contract). Decided (option B, staged —
@@ -648,6 +648,8 @@ so — see D2 below.)
   `docs/design/witness_history_bridge.md`. Stage 2 — the loop-task bridge,
   the `handle_witness` extension and the timeline UI — is designed and NOT
   built: F35. Until then deep history remains the export/unseal tools' job.
+  *Done (#1718):* stage 2 is F35; the design doc now reads both stages built,
+  no bench pass (option B, staged — maintainer to confirm).
 - [x] **F27 [code+decision] The canary tree has no Scout pairing surface** —
   done (option B — maintainer to confirm), with the premise corrected: nothing
   anywhere ever called `ble_scout_pair()` — the WAP's "PR 5c setup UI" never
@@ -715,7 +717,7 @@ so — see D2 below.)
   firmware-side MQTT contract fixture (the WAP's `csi_mqtt.cpp` discovery /
   retained templates checked against the HA parsers in pytest, with QoS
   written down as the delivery bound).
-- [ ] **F35 [code] Build the timeline history bridge (F26 stage 2).** The
+- [x] **F35 [code] Build the timeline history bridge (F26 stage 2).** The
   loop-task SD read bridge `docs/design/witness_history_bridge.md` specifies
   over F26's walker: one outstanding request (a second gets
   `503 history_busy`), a 3 s bounded wait with a generation counter so a
@@ -725,6 +727,15 @@ so — see D2 below.)
   badged "from card, chain-linked" — never the ring's "Verified", since no
   per-row signature is checked on the loop. Proof is CI's canary compile
   plus U1 with a card holding more than 32 records.
+  *Done (#1718):* the bridge is built as specified, as a pure header
+  (`firmware/common/witness/witness_history_bridge.h`, host-tested): one
+  request slot (503 `history_busy`), a generation counter so a late walk never
+  answers the next request, a 3 s bounded wait (504 `history_timeout`), at
+  most 4 × 1 KiB per loop pass, a past-EOF hint refused before any read.
+  `handle_witness` is extended (no new route); the web UI's Load More pages
+  into the card, rows badged "from card, chain-linked", never "Verified".
+  Compile is CI's (the canary matrix and the OTA-slot size guards); bench
+  (U1): a card holding more than 32 records.
 - [ ] **F36 [code+human] Tighten Scout proximity pairing (F27 follow-up).**
   The window pairs the first single qualifying advert. Two tightenings need
   real advert data first (U1): an N-advert confirmation (several qualifying
@@ -781,14 +792,33 @@ so — see D2 below.)
   `firmware.yml`'s canary leg compiles both envs, and `regression_check.sh`
   refuses an encrypted `nvs` row. The key still sits in plaintext NVS under
   `framework = arduino` (F5, F38). Bench (U1): K1/K2 on a fused board.
-- [ ] **F43 [code] The dash display's join screen draws its caption over
+- [x] **F43 [code] The dash display's join screen draws its caption over
   the QR.** On the 800×480 dash flavor, the first-boot join scene's "or join
   … password" caption crosses the QR code's lower edge (`onboard_ui`
   layout). Seen in the emulator's preview of the real firmware by the
   fw-emu-portal package (#1703), so it is visible without hardware; a phone
   may still read the code, but the layout is wrong. Re-check every display
   flavor's join scene once fixed.
+  *Done (#1718):* the Join scene is stacked from the panel size and the
+  labels' line heights by a pure header (`include/canary/ui/onboard_layout.h`)
+  — centered on rectangular glass, inside the chord band on round glass, and
+  on a short window only the QR canvas shrinks. The re-check of every emulated
+  flavor found the round watch (network-name line 7 px inside the card) and
+  the AMOLED 2.41 (captions overlapping by 2 px) had the same defect; the same
+  stack fixes both. Guards: `tests_host/test_onboard_layout.cpp` (every
+  display env's panel) and a framebuffer check in `onboard_probe.mjs`; the
+  emulator dist is rebuilt. Bench (U1): the panels themselves, and a phone
+  scanning the watch's smaller card.
 
+- [ ] **F45 [code] The nightstand join screen cuts off the only text way in.**
+  On the 172 px nightstand (and the C6 and the nightlight at 180 px), the
+  joined credentials line "SecuraCV-XXXX  •  <password>" (172 px of text in a
+  156 px row) and the stuck-phone hint (207 px) end in an ellipsis. When the
+  QR fails, that text is the only way to join, so this glass dead-ends.
+  Pre-existing; found by F43's re-check of every flavor (#1718). Split small
+  rectangular glass the way round glass already is (network name on one
+  line, password or hint on the next) when the joined line is wider than
+  its row, through the same `onboard_layout.h` stack and its host test.
 ---
 
 ## 2. Apps (desktop Flasher, Lab, iOS, tvOS)
@@ -1492,7 +1522,7 @@ so — see D2 below.)
   email plus the privacy policy's date (M4 / L3), which need facts only a
   human has. Give each fix a guard in `tests/legal-claims.test.mjs`, as W7
   did.
-- [ ] **W17 [code] Model and copy drift found while building W4, not fixed
+- [x] **W17 [code] Model and copy drift found while building W4, not fixed
   there** (website PR #202). (1) `scripts/make-canary-glb.mjs` draws the
   Vision's lens barrel and glass under a solid Ø13 accent disc, so the lens
   renders as a flat yellow disc. (2) `scripts/make-canary-wap-glb.mjs` puts
@@ -1507,7 +1537,17 @@ so — see D2 below.)
   The Combo AR model's lens and radome positions are hand-kept CAD values
   until C15 carries the measured features. A model edit regenerates and
   commits its `.glb` in the same change.
-- [ ] **W18 [code] The Lab download page says the app fetches only its update
+  *Done (website #203):* (1) the Vision lens is a nested EPS ladder, no longer
+  a flat disc; (2) the WAP's screw heads sit proud of the lid, and a new
+  models-test guard (every non-shell part keeps a visible cap) also found and
+  fixed the doorbell faceplate hiding its lens bezel, grille, vents and LED
+  ring; (3) `js/lab.js` says render-checked, and a site-wide copy sweep
+  refuses "verified" for renders, meshes and prints; (4) the Showroom's Watch
+  is a snap bezel and the Combo's face parts sit on the CAD's numbers; (5)
+  closes with C15. The three changed models are regenerated byte-for-byte.
+  Noticed, not changed: the Showroom Combo's vboard/vcam at x −22.1 where the
+  CAD's `v_cx` is −21.6.
+- [x] **W18 [code] The Lab download page says the app fetches only its update
   manifest** (`download.html`, "Local-first, always": "talks only to your own
   devices … The one thing it fetches for itself is its own update manifest,
   from the project's public GitHub releases"). Since A14 (#1704), once a board
@@ -1527,7 +1567,14 @@ so — see D2 below.)
   check …"), which predates A14. A new website PR from origin/main, with a
   guard in `tests/legal-claims.test.mjs` that fails on "the one thing it
   fetches".
-- [ ] **W19 [code] The website glossary's "The Vault" conflates sealed
+  *Done (website #203):* the "Local-first, always" block says the Lab reaches
+  the internet for two things only, both from the project's public GitHub
+  releases: its update manifest and the firmware for its Flash page, checked
+  against the pinned release key before a byte is written. The USB-flashing
+  sentence stays future tense until a published Lab release carries A14
+  (review option A — maintainer to confirm); `legal-claims.test.mjs` bans the
+  old sentences. Rewrite it in the present tense with the A14 Lab release.
+- [x] **W19 [code] The website glossary's "The Vault" conflates sealed
   snapshots with the quorum Vault** (`scripts/lib/glossary.mjs`, rendered
   into `glossary.html` and `llms-full.txt`): "The sealed store where raw
   snapshots live. Sealed means no one — including you, including us — can
@@ -1546,6 +1593,12 @@ so — see D2 below.)
   `tests/legal-claims.test.mjs` to read through the aside (it scans the
   generated `glossary.html`; `scripts/` is out of its scope by design). A new
   website PR from origin/main.
+  *Done (website #203):* "The Vault" is the witness kernel's sealed store of
+  raw frames, opened only through break-glass by a quorum of trustees; a new
+  "Sealed snapshot" term is one Canary WAP frame sealed to one person's key,
+  opened on the holder's own device, not the Vault and no quorum.
+  `glossary.html`, `llms-full.txt` and `llms.txt` are regenerated, and the
+  tests hold the split.
 
 ---
 
@@ -1726,7 +1779,7 @@ major, by theme") — work its themes, then tick here.
   `gen_enclosures.py`'s catalog globs `docs/hardware/enclosure/*.scad`, so
   running it while `gen_assembled_dims.py` has its `.tmp_assembled_*.scad` on
   disk adds a bogus product.
-- [ ] **C15 [code] Carry the Combo's measured face features to the website.**
+- [x] **C15 [code] Carry the Combo's measured face features to the website.**
   `gen_assembled_dims.py` records the Combo's lens aperture and radome window
   as face `features` (the case's own `lens_x` / `lens_y` and `rad_cx` /
   `rad_cy`, re-evaluated by `--check`) and the fleet figure draws them there,
@@ -1738,6 +1791,12 @@ major, by theme") — work its themes, then tick here.
   no fit-check module and no committed STLs: its seat is read from its own
   datums and no closing gate proves it, so it stays a prototype until C7
   prints it.
+  *Done (#1718, website #203):* `distill_cad_dims()` carries each figure's
+  measured face features as an additive `features_mm` (verbatim, unrounded)
+  and refuses a malformed, stale or off-face record;
+  `test_gen_builder_manifest_site` pins the key and each refusal. The
+  website's `make-canary-combo-glb.mjs` places the lens and radome window from
+  it through `cad-dims.mjs`, and the models test holds them there.
 
 ---
 
