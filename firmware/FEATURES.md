@@ -409,8 +409,8 @@ bench-validated; CI compiles it on (`firmware.yml`, compile-only).
 | `verify_device.py` | ✅ | eFuse verification (pre/post provisioning) |
 | `provision_canary.sh` | ✅ | Full workflow with --dry-run |
 | `create_manifest.py` | ✅ | Fleet device manifest management |
-| `platformio_secure.ini` | ✅ | Secure Boot v2 + Flash Encryption env |
-| `partitions_secure.csv` | ✅ | OTA A/B + encrypted NVS |
+| `platformio_secure.ini` | ✅ | Secure Boot v2 + Flash Encryption env; compile-only in CI (F42), no bench pass |
+| `partitions_secure.csv` | ✅ | OTA A/B + `nvs_keys`; `nvs` itself is not flagged `encrypted` (NVS encryption, not flash encryption, protects it — none under `framework = arduino`) |
 | BT disabled at compile time | ✅ | CVE-2025-27840 mitigation |
 
 ## Home Assistant Integration

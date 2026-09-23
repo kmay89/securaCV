@@ -59,12 +59,18 @@
 #include "contact_tamper.h"  /* enclosure contact debounce (common/csi/src) */
 #endif
 
-#if FEATURE_CSI
-#include "securacv_csi.h"
+/* Outside the FEATURE_CSI gate on purpose: loop()'s system.integrity tamper
+ * feed and syncClockFromGps()'s bucket offset run in every build, and their
+ * definitions (csi_modules_integration.cpp, csi_event.cpp) compile into every
+ * env, so a CSI-off build ([env:minimal], [env:secure]) needs these
+ * declarations too — without them main.cpp did not compile there (F42). */
 #include "csi_modules_integration.h"
-#include "csi_event_egress.h"  /* committed events -> MQTT events/tamper (F29) */
 #include "csi_event.h"  /* csi_event_set_clock_offset_minutes — wall-clock bucket alignment */
 #include "time/tz_rule.h"  /* local minute-of-day for that offset (household zone, F28) */
+
+#if FEATURE_CSI
+#include "securacv_csi.h"
+#include "csi_event_egress.h"  /* committed events -> MQTT events/tamper (F29) */
 
 /* csi_features_t is the canonical csi_types.h struct (securacv_csi.h
  * includes it rather than declaring a twin — roadmap 22), so the module

@@ -115,9 +115,14 @@ host tests assert they do, on real radio.
     it enabled (dev mode); the default `canary` image (`pio run -e release`)
     and an opt-in image built from the same env with
     `PLATFORMIO_BUILD_FLAGS=-DSECURACV_REQUIRE_FLASH_ENCRYPTION=1 pio run -e release`.
-    Not the provisioning kit's `[env:secure]`: no CI job builds it and, as
-    written, it lacks the shared include paths
-    (`firmware/provisioning/platformio_secure.ini`).
+    The provisioning kit's `[env:secure]`
+    (`firmware/provisioning/platformio_secure.ini`) sets the same flag and,
+    since F42, compiles in CI (compile-only), but it is a different image —
+    `partitions_secure.csv`, CSI off — so this row stays on `release`. On a
+    fused board, `pio run -e secure` is also the check that its `nvs`
+    partition now opens (F42 dropped the `encrypted` flag that made IDF
+    refuse it): boot it and expect the opt-in refusal lines below, not an
+    NVS open failure.
   - Repro: boot each combination; press `f` on the console; `GET /api/status`.
   - Expected:
     - default image, FE-off board: boot log carries

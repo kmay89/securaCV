@@ -647,6 +647,28 @@ fi
 
 echo ""
 
+# ── Check: no partition table flags nvs `encrypted` ──────────────
+# NVS is not compatible with flash encryption: ESP-IDF protects it with NVS
+# encryption (CONFIG_NVS_ENCRYPTION, keys in an nvs_keys partition), and with
+# flash encryption on, IDF v4.3+ refuses to open an nvs partition flagged
+# `encrypted` (nvs_partition_lookup.cpp -> ESP_ERR_NVS_WRONG_ENCRYPTION). The
+# provisioning kit's partitions_secure.csv carried that flag, so its image
+# could not have opened NVS — the identity key's home — on a fused board
+# (F42). nvs_keys SHOULD be flagged; only the `nvs` subtype is refused here.
+section "Security: NVS partition not flash-encrypted"
+
+NVS_ENC_HITS=$(find "$FIRMWARE_DIR" -name "*.csv" -not -path "*/.pio/*" -print0 2>/dev/null \
+  | xargs -0 grep -nE '^[[:space:]]*[^#,]+,[[:space:]]*data[[:space:]]*,[[:space:]]*nvs[[:space:]]*,[^#]*encrypted' 2>/dev/null || true)
+if [ -n "$NVS_ENC_HITS" ]; then
+  check_fail "An nvs partition is flagged 'encrypted' — IDF refuses to open it once flash encryption is on:"
+  echo "$NVS_ENC_HITS" | while read -r line; do blue "  ${line#"$FIRMWARE_DIR"/}"; done
+  blue "  Fix: drop the flag; NVS is protected by NVS encryption (nvs_keys), not by flash encryption"
+else
+  check_pass "No partition table flags an nvs partition 'encrypted'"
+fi
+
+echo ""
+
 # ── Check: secure_defaults.h exists ──────────────────────────
 section "Security: Secure defaults header"
 

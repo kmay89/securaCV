@@ -327,6 +327,24 @@ jobs:
           PLATFORMIO_BUILD_FLAGS: -DVALIDATION_BUILD=1 -DFEATURE_TAMPER_GPIO=1 -DTOUCH_PIN_NUM=5
         run: pio run -e dev
 
+      - name: Compile the provisioning kit's secure envs (canary, compile-only)
+        # [env:secure] / [env:secure_ha] live in
+        # firmware/provisioning/platformio_secure.ini, which
+        # firmware/canary/platformio.ini pulls in through extra_configs: the
+        # Tier 3/4 image (SECURACV_REQUIRE_FLASH_ENCRYPTION=1,
+        # partitions_secure.csv, CSI off). No workflow compiled them, and they
+        # had stopped compiling unseen — their build_flags replaced the
+        # canary [env] include paths, and main.cpp needed FEATURE_CSI (F42).
+        # A compile gate only: neither env is in flavors.json, so no size
+        # guard, release, flasher catalog, SBOM row or OTA manifest touches
+        # them, and firmware-release.yml builds its canary envs by name.
+        if: matrix.flavor.name == 'canary'
+        env:
+          PLATFORMIO_BUILD_FLAGS: -DVALIDATION_BUILD=1
+        run: |
+          pio run -e secure
+          pio run -e secure_ha
+
   pio-check:
     name: Static Analysis (${{ matrix.flavor.name }})
     needs: flavors
