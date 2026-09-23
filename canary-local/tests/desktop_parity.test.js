@@ -24,6 +24,7 @@ const assert = require("node:assert");
 const { readFileSync, readdirSync } = require("node:fs");
 const { join } = require("node:path");
 const { pathToFileURL } = require("node:url");
+const vm = require("node:vm");
 
 const ROOT = join(__dirname, "..", "..");     // repo root
 const CANARY = join(__dirname, "..");         // canary-local/
@@ -2029,6 +2030,118 @@ test("witness wall: both apps discover the LAN fleet the same way, one emulator,
   const b = read(join(CANARY, "witness/tv-emulator.js"));
   assert.strictEqual(a, b,
     "vendored tv-emulator.js drifted between the Flasher and the Lab — run scripts/vendor_witness_emulator.sh");
+});
+
+// Run each app's wall controller against one stubbed native side and report
+// what it asked for and what it told the user. The Lab's host is small enough
+// to run whole; the Flasher's controller is lifted out of app.js with the two
+// helpers it calls. Source-level regexes can't see ORDER or wording drift —
+// running them can.
+const WALL_SIGHTINGS = [
+  { deviceId: "canary-wap-1", host: "canary-wap-1.local", ip: "192.168.1.50", port: 80 },
+  { deviceId: "canary-display-2", host: "canary-display-2.local", ip: "192.168.1.51", port: 1 },
+  { deviceId: "canary-sense-3", host: "canary-sense-3.local", ip: "fe80::1", port: 1 },
+];
+const WALL_BOARDS = ["http://192.168.1.50:80", "http://192.168.1.51", "http://canary-sense-3.local"];
+const wallInvoke = (calls, sightings, caps) => async (cmd, args) => {
+  calls.push([cmd, args]);
+  if (cmd === "native_capabilities") return caps;
+  if (cmd === "fleet_scan") return sightings;
+  if (cmd === "witness_discover") throw "no kernel answered on the LAN yet";
+  if (cmd === "companion_set_bases") return null;
+  throw new Error(`the wall invoked an unexpected command: ${cmd}`);
+};
+const wallStatusEl = () => ({ textContent: "", classList: { toggle() {} } });
+async function runLabWall(typedBase, sightings) {
+  const calls = [];
+  const scan = wallStatusEl();
+  const frame = { src: "", contentWindow: { postMessage() {} } };
+  const ctx = {
+    document: {
+      getElementById: (id) => (id === "witness-frame" ? frame : id === "wall-scan" ? scan : null),
+      addEventListener() {},
+      hidden: false,
+    },
+    localStorage: { getItem: (k) => (k === "scv-kernel" ? typedBase : null) },
+    location: { search: "" },
+    URLSearchParams,
+    setTimeout: () => 0,
+    clearTimeout() {},
+    addEventListener() {},
+  };
+  ctx.window = ctx;
+  ctx.__TAURI__ = { core: { invoke: wallInvoke(calls, sightings, { mdns: true, notifications: false }) } };
+  vm.runInNewContext(read(join(CANARY, "assets/witness-host.js")), ctx);
+  for (let i = 0; i < 10 && !calls.some(([c]) => c === "witness_discover"); i++) {
+    await new Promise((r) => setImmediate(r));
+  }
+  await new Promise((r) => setImmediate(r));
+  return { calls, status: scan.textContent };
+}
+async function runFlasherWall(typedHost, sightings) {
+  const src = read(join(ROOT, "desktop/src/app.js"));
+  const grab = (re, what) => {
+    const m = re.exec(src);
+    assert.ok(m, `desktop/src/app.js lost ${what} — re-point the wall test at it`);
+    return m[0];
+  };
+  const code = [
+    grab(/\nfunction witnessBoardBases\([\s\S]*?\n\}\n/, "witnessBoardBases()"),
+    grab(/\nfunction witnessBases\([\s\S]*?\n\}\n/, "witnessBases()"),
+    grab(/\nconst witnessDiscovery = \{[\s\S]*?\n\};\n/, "the witnessDiscovery controller"),
+  ].join("\n");
+  const calls = [];
+  const scan = wallStatusEl();
+  const els = {
+    "mqtt-host": { value: typedHost || "" },
+    "fleet-scan-status": scan,
+    "witness-frame": { contentWindow: { postMessage() {} } },
+  };
+  const wall = new Function("$", "invoke", "witnessName", `${code}\nreturn witnessDiscovery;`)(
+    (id) => els[id] || null, wallInvoke(calls, sightings, {}), () => "New Canary");
+  await wall.tick();
+  return { calls, status: scan.textContent };
+}
+
+test("witness wall: both apps try the kernel before any browsed board, and say what they heard", async () => {
+  // witness_discover returns the FIRST base whose /api/fleet answers, and a
+  // WAP or display answers with a one-board self-report
+  // (tvos/discovery/DISCOVERY.md). So a browsed board tried ahead of the
+  // kernel would replace the kernel's whole fleet on the wall, every tick.
+  // Both hosts: browse first, then the typed kernel, the well-known
+  // canary.local:8099 and canary.local, and only then the boards they heard.
+  const hosts = [
+    ["Lab witness-host.js", () => runLabWall("http://192.168.1.10:8099", WALL_SIGHTINGS),
+      ["http://192.168.1.10:8099", "http://canary.local:8099", "http://canary.local"]],
+    ["Flasher app.js", () => runFlasherWall("192.168.1.10", WALL_SIGHTINGS),
+      ["http://192.168.1.10:8099", "http://192.168.1.10", "http://canary.local:8099", "http://canary.local"]],
+  ];
+  const statuses = [];
+  for (const [name, run, kernel] of hosts) {
+    const { calls, status } = await run();
+    const order = calls.map(([c]) => c);
+    const scanAt = order.indexOf("fleet_scan");
+    const pollAt = order.indexOf("witness_discover");
+    assert.ok(scanAt >= 0, `${name}'s wall no longer browses mDNS (fleet_scan) before it polls`);
+    assert.ok(pollAt > scanAt, `${name}'s wall must browse (fleet_scan) BEFORE it polls witness_discover`);
+    // (Array.from: the Lab's list is built in the vm's realm, with its own Array.prototype.)
+    assert.deepStrictEqual(Array.from(calls[pollAt][1].bases), [...kernel, ...WALL_BOARDS],
+      `${name}: the kernel addresses must come before every browsed board, boards in browse order`);
+    assert.match(status, /^3 Canaries announced on this network — none serves the fleet document yet\.$/,
+      `${name} must say the boards it heard, not "nothing answering yet"`);
+    statuses.push(status);
+  }
+  assert.strictEqual(statuses[0], statuses[1], "the two walls word the heard-but-no-fleet status differently");
+
+  // Nobody announcing: no board bases, and the honest "nothing answering".
+  for (const [name, run] of [["Lab witness-host.js", () => runLabWall(null, [])],
+                             ["Flasher app.js", () => runFlasherWall("", [])]]) {
+    const { calls, status } = await run();
+    const poll = calls.find(([c]) => c === "witness_discover");
+    assert.deepStrictEqual(Array.from(poll[1].bases), ["http://canary.local:8099", "http://canary.local"],
+      `${name}: with no typed kernel and nothing heard, only the well-known addresses are tried`);
+    assert.match(status, /nothing answering yet/, `${name} must keep the "nothing answering yet" status when nothing announced`);
+  }
 });
 
 test("mDNS browse: the Lab's fleet_scan is the Flasher's, in lockstep", () => {

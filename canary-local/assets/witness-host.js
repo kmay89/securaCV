@@ -14,10 +14,13 @@
 //     resolves via the OS — Bonjour on macOS, avahi on Linux) and posts the
 //     found fleet into the wall over the shared postMessage contract
 //     (tvos/EMBED_IN_APPS.md) — the same controller shape as the Flasher's
-//     (desktop/src/app.js). The typed kernel base stays first: the kernel
-//     advertises no `_securacv._tcp`, so the browse finds boards and the
-//     poll finds the kernel. All LAN traffic goes through the Rust
-//     commands, never a page fetch.
+//     (desktop/src/app.js). The kernel addresses stay first — the typed
+//     base, then the well-known `canary.local:8099` and `canary.local` —
+//     and the browsed boards come only after them: the kernel advertises no
+//     `_securacv._tcp`, and a WAP or display answers /api/fleet with a
+//     one-board self-report, so a board tried first would stand in for the
+//     kernel's whole fleet on every tick. All LAN traffic goes through the
+//     Rust commands, never a page fetch.
 //   - In a BROWSER: no scanning (browsers can't reach the LAN like that);
 //     the emulator's own demo fleet + connect panel stand, and the status
 //     line stays quiet rather than pretending.
@@ -71,8 +74,10 @@ if (invoke && frame) {
   const bases = (sightings) => {
     const b = [];
     try { const k = localStorage.getItem("scv-kernel"); if (k && /^http:\/\//i.test(k)) b.push(k); } catch (_) {}
-    b.push(...boardBases(sightings));
     b.push("http://canary.local:8099", "http://canary.local");
+    // Boards last: witness_discover returns the FIRST /api/fleet that
+    // answers, and a board's answer is its own one-row self-report.
+    b.push(...boardBases(sightings));
     return [...new Set(b)];
   };
   // The menu bar companion polls the same kernel addresses in the

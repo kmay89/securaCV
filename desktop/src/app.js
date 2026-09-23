@@ -1049,28 +1049,54 @@ function announceToWitness(product) {
 }
 
 // The real thing: because this is the native app, not a sandboxed browser, we
-// can reach the LAN and populate the wall with the REAL fleet. The Rust
+// can reach the LAN and populate the wall with the REAL fleet. Each tick
+// browses mDNS for `_securacv._tcp` (`fleet_scan`), then the Rust
 // `witness_discover` command does the LAN reach (no CSP; `.local` resolves via
 // the OS — Bonjour on macOS, avahi on Linux). ONE controller owns all of it:
 //   - opening the Fleet tab starts a continuous scan (and stops on tab leave),
 //     so the tab shows your actual Canaries without ever flashing anything;
 //   - a successful flash triggers a fast 30 s burst with the new device
 //     highlighted, while the board boots and joins Wi-Fi.
+// The Lab's wall host (canary-local/assets/witness-host.js) is the same
+// controller; desktop_parity.test.js runs both and holds them to one answer.
 // If nothing answers (or an older firmware build), the wall keeps its demo /
 // simulated state. Every path is wrapped: discovery can NEVER affect flashing.
-function witnessBases() {
+//
+// Where each browsed board might serve /api/fleet. IPv4 when the browse
+// resolved one (a bare IPv6 literal would need brackets, and a link-local
+// one a zone), else its own `.local` hostname. A board still on the old
+// port-1 "formality" advert serves its page on :80 (the fleet book probes
+// it the same way).
+function witnessBoardBases(sightings) {
+  const b = [];
+  for (const s of sightings || []) {
+    if (!s) continue;
+    const addr = s.ip && !String(s.ip).includes(":") ? s.ip : s.host;
+    if (!addr) continue;
+    b.push(s.port && s.port !== 1 ? `http://${addr}:${s.port}` : `http://${addr}`);
+  }
+  return b;
+}
+// The kernel addresses first — the provisioned host, then the well-known
+// `canary.local:8099` and `canary.local` — and the browsed boards only after
+// them: the kernel advertises no `_securacv._tcp`, and a WAP or display
+// answers /api/fleet with a one-board self-report, so a board tried first
+// would stand in for the kernel's whole fleet (witness_discover returns the
+// FIRST base that answers).
+function witnessBases(sightings) {
   const bases = [];
   const host = $("mqtt-host") && $("mqtt-host").value && $("mqtt-host").value.trim();
   if (host) { bases.push("http://" + host + ":8099"); bases.push("http://" + host); }
   bases.push("http://canary.local:8099", "http://canary.local");
-  return bases;
+  bases.push(...witnessBoardBases(sightings));
+  return [...new Set(bases)];
 }
 const witnessDiscovery = {
   timer: null,        // next scheduled tick
   scanning: false,    // continuous mode (fleet tab open)
   burstUntil: 0,      // fast-poll deadline after a flash
   highlight: null,    // device name to highlight on next find
-  inFlight: false,    // a witness_discover call is running (they can take ~8 s)
+  inFlight: false,    // a browse + witness_discover tick is running (it can take ~10 s)
   found: false,
   // "/" = our own origin: the LAN fleet (device names, who is home) goes to
   // our wall iframe and nowhere else, even if something else were framed.
@@ -1084,8 +1110,11 @@ const witnessDiscovery = {
   async tick() {
     if (this.inFlight) return this.schedule();
     this.inFlight = true;
+    let sightings = [];
+    try { sightings = (await invoke("fleet_scan", { timeoutMs: 2500 })) || []; }
+    catch (_) { /* no multicast here, or nobody announcing — the poll still runs */ }
     let fleet = null;
-    try { fleet = await invoke("witness_discover", { bases: witnessBases() }); }
+    try { fleet = await invoke("witness_discover", { bases: witnessBases(sightings) }); }
     catch (_) { /* nothing answering yet, or an older build without the command */ }
     this.inFlight = false;
     if (fleet) {
@@ -1094,6 +1123,11 @@ const witnessDiscovery = {
       this.highlight = null;
       this.found = true;
       this.status("● Live — " + (n || "your") + " Canar" + (n === 1 ? "y" : "ies") + " on your network", true);
+    } else if (!this.found && sightings.length) {
+      // Heard, but nobody serves /api/fleet: sense/vision run no HTTP server,
+      // so an announcement is not a fleet — say what is true.
+      const n = sightings.length;
+      this.status(n + " Canar" + (n === 1 ? "y" : "ies") + " announced on this network — none serves the fleet document yet.");
     } else if (!this.found) {
       this.status("Scanning your network for Canaries… nothing answering yet — flash one, or make sure a Canary is on this Wi-Fi.");
     }
