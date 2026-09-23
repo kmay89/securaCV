@@ -42,8 +42,10 @@ the website's carried copies after a CAD change (`--site <website-checkout>
 --check` says whether they are current without writing anything). The carry
 includes `scad/cad-dims.json`, the CAD ledger the site's AR models and copy
 are pinned to: each figure's envelope and assembled seams from the fleet
-figures, each manifest-owned device's `cad.params` knobs resolved to numbers,
-and the board registry (`canary_board_lib.scad`) with its evidence rung.
+figures, the face features `gen_assembled_dims.py` measures (the Combo's lens
+aperture and radome window, as `features_mm`), each manifest-owned device's
+`cad.params` knobs resolved to numbers, and the board registry
+(`canary_board_lib.scad`) with its evidence rung.
 
 ## Table of contents
 
