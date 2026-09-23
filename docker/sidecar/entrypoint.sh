@@ -46,6 +46,10 @@
 # Subcommands:
 #   entrypoint.sh           run the sidecar (default)
 #   entrypoint.sh doctor    diagnose broker/Frigate/sealed-log health
+#   entrypoint.sh mint-viewer-token --label <s> [--base-url <url>]
+#   entrypoint.sh revoke-viewer-token <id>
+#                           pair (or unpair) a Witness Wall for verification;
+#                           run inside the running container, see viewer_token
 set -euo pipefail
 
 DATA_DIR="${DATA_DIR:-/data}"
@@ -340,6 +344,33 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# viewer tokens — pair a Witness Wall for verification
+# ---------------------------------------------------------------------------
+
+# viewer_token SUBCOMMAND [ARGS...] — witness_api's mint-viewer-token /
+# revoke-viewer-token, run against the config the running sidecar rendered
+# and with its device key, so a receipt pins the key the sealed log is
+# signed with. Run it inside the running container:
+#   docker compose exec securacv entrypoint.sh mint-viewer-token \
+#       --label "living room tv" --base-url http://<docker-host-ip>:8799
+# stdout is the pairing receipt, one JSON line and the token's only copy;
+# the kernel keeps its sha256 in /data/viewer_tokens.json (beside the
+# capability token, 0600) and reads that file per request, so a mint or a
+# revoke takes effect without a restart. Never generates a key: a receipt
+# that pinned a fresh one would pin a key nothing signs with.
+viewer_token() {
+    [ -s "$CONFIG_FILE" ] \
+        || die "no $CONFIG_FILE yet: start the sidecar once (docker compose up -d), then run this inside it (docker compose exec securacv entrypoint.sh $1 ...)"
+    if [ -z "${DEVICE_KEY_SEED:-}" ] && [ ! -s /run/secrets/device_key_seed ] && [ ! -s "$KEY_FILE" ]; then
+        die "no device key (DEVICE_KEY_SEED, /run/secrets/device_key_seed or $KEY_FILE): a receipt must pin the key the running sidecar signs with"
+    fi
+    DEVICE_KEY_SEED=$(resolve_device_key_seed)
+    export DEVICE_KEY_SEED
+    export WITNESS_CONFIG="$CONFIG_FILE"
+    exec witness_api "$@"
+}
+
+# ---------------------------------------------------------------------------
 # run — supervise the three daemons
 # ---------------------------------------------------------------------------
 
@@ -494,5 +525,6 @@ EOF
 case "${1:-run}" in
     doctor) doctor ;;
     run) run ;;
+    mint-viewer-token|revoke-viewer-token) viewer_token "$@" ;;
     *) exec "$@" ;;
 esac

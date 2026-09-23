@@ -16,7 +16,12 @@
 #      with 8799 published on the runner's loopback serves /api/fleet to a
 #      curl OUTSIDE the container (the Witness Wall's path), and /events
 #      without a token still answers 401 there (the bind never relaxed
-#      authentication).
+#      authentication);
+#   7. a viewer token minted in that container (`entrypoint.sh
+#      mint-viewer-token`, what a Wall owner runs) opens GET /api/sealed-log
+#      across the published port and nothing else: the served key is the
+#      one its receipt pins, /events answers 401 to it, and after
+#      `revoke-viewer-token` the sealed log does too.
 #
 # Usage (repo root): docker/sidecar/ci_e2e.sh [image-tag]
 set -euo pipefail
@@ -182,6 +187,54 @@ if [ "$lan_events_status" = "401" ]; then
 else
     echo "❌ /events answered HTTP ${lan_events_status:-<none>} without a token (expected 401)" >&2
     docker logs "$SIDECAR_LAN" >&2 || true
+    exit 1
+fi
+echo "==> Pairing a Wall: mint a viewer token inside the LAN-mode sidecar"
+# stdout is the receipt alone (one JSON line); the token's only copy.
+receipt=$(docker exec "$SIDECAR_LAN" entrypoint.sh mint-viewer-token \
+    --label "ci wall" --base-url "http://127.0.0.1:${LAN_PORT}" || true)
+viewer_token=$(printf '%s' "$receipt" | jq -r '.sealed_log_token // empty' 2>/dev/null || true)
+viewer_id=$(printf '%s' "$receipt" | jq -r '.token_id // empty' 2>/dev/null || true)
+pinned_key=$(printf '%s' "$receipt" | jq -r '.verifying_key // empty' 2>/dev/null || true)
+if ! [[ "$viewer_token" =~ ^[0-9a-f]{64}$ && "$pinned_key" =~ ^[0-9a-f]{64}$ && -n "$viewer_id" ]]; then
+    echo "❌ mint-viewer-token printed no usable receipt: ${receipt:-<nothing>}" >&2
+    docker logs "$SIDECAR_LAN" >&2 || true
+    exit 1
+fi
+
+echo "==> Checking the viewer token opens GET /api/sealed-log across the published port"
+sealed_doc=$(curl -fsS -H "Authorization: Bearer $viewer_token" \
+    "http://127.0.0.1:${LAN_PORT}/api/sealed-log" || true)
+served_key=$(printf '%s' "$sealed_doc" | jq -r '.verifying_key // empty' 2>/dev/null || true)
+if [ -n "$served_key" ] && [ "$served_key" = "$pinned_key" ]; then
+    echo "✓ the viewer token reads the sealed log, signed by the key its receipt pins"
+else
+    echo "❌ viewer-token sealed-log read failed or served another key (pinned $pinned_key, served ${served_key:-<none>})" >&2
+    docker logs "$SIDECAR_LAN" >&2 || true
+    exit 1
+fi
+
+echo "==> Checking the viewer token opens nothing else"
+viewer_events_status=$(curl -s -o /dev/null -w '%{http_code}' \
+    -H "Authorization: Bearer $viewer_token" "http://127.0.0.1:${LAN_PORT}/events" || true)
+if [ "$viewer_events_status" = "401" ]; then
+    echo "✓ /events answers 401 to a viewer token"
+else
+    echo "❌ /events answered HTTP ${viewer_events_status:-<none>} to a viewer token (expected 401)" >&2
+    exit 1
+fi
+
+echo "==> Revoking it: the next sealed-log read is refused"
+if ! docker exec "$SIDECAR_LAN" entrypoint.sh revoke-viewer-token "$viewer_id"; then
+    echo "❌ revoke-viewer-token $viewer_id failed" >&2
+    exit 1
+fi
+revoked_status=$(curl -s -o /dev/null -w '%{http_code}' \
+    -H "Authorization: Bearer $viewer_token" "http://127.0.0.1:${LAN_PORT}/api/sealed-log" || true)
+if [ "$revoked_status" = "401" ]; then
+    echo "✓ a revoked viewer token answers 401, no restart needed"
+else
+    echo "❌ a revoked viewer token answered HTTP ${revoked_status:-<none>} (expected 401)" >&2
     exit 1
 fi
 docker rm -f "$SIDECAR_LAN" >/dev/null 2>&1 || true

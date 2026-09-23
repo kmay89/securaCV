@@ -168,6 +168,29 @@ the rotating capability token, exactly as on loopback. Any value other
 than `loopback` or `all` refuses to start, so a typo never silently means
 loopback.
 
+**Listed is not verified: pair the Wall for the sealed log.** The roll-call
+says who is there; checking the sealed log's Ed25519 signatures on the TV
+needs the log itself, and `GET /api/sealed-log` wants a credential. The
+rotating capability token dies within ten minutes, so the Wall holds a
+*viewer token* instead — minted once, good for that one read and nothing
+else. With the sidecar running:
+
+```bash
+docker compose exec securacv entrypoint.sh mint-viewer-token \
+    --label "living room tv" --base-url http://<docker-host-ip>:8799
+```
+
+It prints one JSON line, the pairing receipt (the token, the kernel's
+current verifying key, a short id), and that line is the token's only copy:
+the kernel keeps its sha256 in `/data/viewer_tokens.json` (`0600`, beside
+the capability token) and re-reads the file on every request, so neither a
+mint nor a revoke needs a restart. The Wall takes the receipt under
+Settings → Pair for verification ([`tvos/README.md`](../tvos/README.md));
+`docker compose exec securacv entrypoint.sh revoke-viewer-token <id>` takes
+it back. A viewer token presented anywhere but `GET /api/sealed-log` is a
+bad token (and counts toward the lockout); like the capability token it
+crosses the LAN in cleartext unless you build the kernel with `api-tls`.
+
 Verify the sealed log from the host at any time:
 
 ```bash

@@ -1017,6 +1017,36 @@ TOKEN=$(cat /config/api_token)
 curl -H "Authorization: Bearer $TOKEN" http://d0491a67-privacy-witness-kernel:8799/events
 ```
 
+### Viewer tokens (Witness Wall)
+
+A television cannot re-read a token file every ten minutes, so the kernel
+has a second, narrower credential for the tvOS Witness Wall: a **viewer
+token**, minted once by the operator and honored on exactly one route,
+`GET /api/sealed-log` (the non-queryable, size-capped, signed chain tail).
+Presented anywhere else — another path, another method — it is an invalid
+token that counts toward the per-address lockout, and `?token=` is refused
+for it as for every token.
+
+```bash
+witness_api mint-viewer-token --label "living room tv" --base-url http://192.168.1.20:8799
+# {"kernel":"witness-kernel","base_url":"http://192.168.1.20:8799","sealed_log_token":"<64 hex>","verifying_key":"<64 hex>","token_id":"<8 hex>"}
+witness_api revoke-viewer-token <token_id>
+```
+
+The command runs with the same `WITNESS_CONFIG` and `DEVICE_KEY_SEED` as
+the serving kernel. Its stdout is one JSON line, the pairing receipt, and
+the only copy of the token that will ever exist: the kernel keeps its
+sha256 in the viewer-token file — `api.viewer_token_path` /
+`WITNESS_API_VIEWER_TOKEN_PATH`, defaulting to `viewer_tokens.json` beside
+`api.token_path` — written `0600` and re-read on every request, so a mint
+or a revoke takes effect without a restart. The receipt carries the
+kernel's current verifying key, which the Wall pins at pairing: its
+"Verified" then means Ed25519 signatures checked against that pinned key,
+not whatever key the hub serves today. The Docker sidecar wraps both
+commands (`docker compose exec securacv entrypoint.sh mint-viewer-token …`,
+see [frigate_integration.md](frigate_integration.md)); the Home Assistant
+add-on reads the file but has no control that mints one yet.
+
 ### Endpoints
 
 | Endpoint | Method | Description |
@@ -1027,7 +1057,7 @@ curl -H "Authorization: Bearer $TOKEN" http://d0491a67-privacy-witness-kernel:87
 | `/status` | GET | Daemon status snapshot (retention, verify state) |
 | `/verify` | POST | Run sealed-log verification and return the `VerifyReport` |
 | `/export/bundle` | GET | Receipted export bundle (events reshaped for disclosure; correlation tokens stripped) |
-| `/api/sealed-log` | GET | Checkpoint-anchored sealed-log tail for read-only verifiers — stored bytes verbatim, size-capped, **no query parameters** (the log is non-queryable by design) |
+| `/api/sealed-log` | GET | Checkpoint-anchored sealed-log tail for read-only verifiers — stored bytes verbatim, size-capped, **no query parameters** (the log is non-queryable by design). The one route a [viewer token](#viewer-tokens-witness-wall) also opens |
 | `/health` | GET | Check daemon health (unauthenticated) |
 
 ### `/events/latest` Response (Event)

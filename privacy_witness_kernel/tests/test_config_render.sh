@@ -56,7 +56,7 @@ assert_eq() {
 # The key sets src/config.rs accepts. deny_unknown_fields means a key
 # outside these is a startup error, so a new key added to a heredoc must be
 # added to the Rust struct first — and then here.
-API_KEYS=(addr token_path rate_limit_per_minute fleet_peers_path)
+API_KEYS=(addr token_path rate_limit_per_minute fleet_peers_path viewer_token_path)
 WITNESS_API_TOP_KEYS=(db_path ruleset_id api zones retention)
 WITNESSD_TOP_KEYS=(db_path ruleset_id api ingest rtsp file v4l2 esp32 detect
                    zones retention health storage clock storage_health)
