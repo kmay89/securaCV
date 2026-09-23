@@ -1047,17 +1047,30 @@ size_t get_replay_counters(uint8_t (*out_fps)[mesh_crypto::FINGERPRINT_LEN],
                            size_t    out_cap) {
   if (out_fps == nullptr || out_counters == nullptr) return 0;
   size_t n = 0;
+  /* Tombstones persist too, so a reboot does not re-open their window.
+   * Oldest first, then the live counters: restoring the blob in order
+   * (main.cpp) re-creates tombstones in the same age order, and a live
+   * entry that comes back as a tombstone (the device left the opera before
+   * the next save) comes back as the newest — so if the table overflows,
+   * eviction still takes the oldest. */
+  uint32_t after = 0;   /* emit in stamp order: each pass takes the next-oldest */
+  for (size_t k = 0; k < MAX_COUNTER_TOMBSTONES && n < out_cap; ++k) {
+    const CounterTombstone* next = nullptr;
+    for (size_t i = 0; i < MAX_COUNTER_TOMBSTONES; ++i) {
+      const CounterTombstone& t = s_tombstones[i];
+      if (!t.in_use || t.stamp <= after) continue;
+      if (next == nullptr || t.stamp < next->stamp) next = &t;
+    }
+    if (next == nullptr) break;
+    memcpy(out_fps[n], next->sender_fp, mesh_crypto::FINGERPRINT_LEN);
+    out_counters[n] = next->last_counter;
+    after = next->stamp;
+    ++n;
+  }
   for (size_t i = 0; i < MAX_TRUSTED_PEERS && n < out_cap; ++i) {
     if (!s_trusted_peers[i].in_use) continue;
     memcpy(out_fps[n], s_trusted_peers[i].sender_fp, mesh_crypto::FINGERPRINT_LEN);
     out_counters[n] = s_trusted_peers[i].last_counter;
-    ++n;
-  }
-  /* Tombstones persist too, so a reboot does not re-open their window. */
-  for (size_t i = 0; i < MAX_COUNTER_TOMBSTONES && n < out_cap; ++i) {
-    if (!s_tombstones[i].in_use) continue;
-    memcpy(out_fps[n], s_tombstones[i].sender_fp, mesh_crypto::FINGERPRINT_LEN);
-    out_counters[n] = s_tombstones[i].last_counter;
     ++n;
   }
   return n;

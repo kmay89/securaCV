@@ -368,9 +368,11 @@ size_t trusted_peer_count();
  * (mesh_state::remove_trusted_peer). */
 bool   unregister_trusted_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN]);
 
-/* Snapshot the replay counters for NVS persistence: every trusted peer's,
- * then every tombstone's. out must hold MAX_REPLAY_COUNTERS entries to
- * get them all. Returns the number of entries written. */
+/* Snapshot the replay counters for NVS persistence: every tombstone,
+ * oldest first, then every trusted peer's live counter — the order in
+ * which restore_replay_counter() calls rebuild the same tombstone ages.
+ * out must hold MAX_REPLAY_COUNTERS entries to get them all. Returns the
+ * number of entries written. */
 size_t get_replay_counters(uint8_t (*out_fps)[mesh_crypto::FINGERPRINT_LEN],
                            uint64_t* out_counters,
                            size_t    out_cap);

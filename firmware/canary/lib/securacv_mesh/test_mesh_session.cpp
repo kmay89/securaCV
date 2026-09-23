@@ -1724,11 +1724,64 @@ void test_replay_tombstones_across_leave_and_repair() {
   const size_t n = mesh_session::get_replay_counters(fps, ctrs, mesh_session::MAX_REPLAY_COUNTERS);
   assert(n == mesh_session::MAX_COUNTER_TOMBSTONES);
   for (size_t i = 0; i < n; ++i) assert(std::memcmp(fps[i], x_fp, sizeof(x_fp)) != 0);
+  /* Reported oldest first, whatever slot each landed in (0xA7 took X's). */
+  for (size_t i = 0; i < n; ++i) assert(fps[i][0] == 0xA0 + i);
   /* ...and a zero counter (a peer that never got a frame through) parks nothing. */
   uint8_t z_fp[mesh_crypto::FINGERPRINT_LEN];
   std::memset(z_fp, 0x5A, sizeof(z_fp));
   assert(!mesh_session::restore_replay_counter(z_fp, 0));
   std::printf("PASS test_replay_tombstones_across_leave_and_repair\n");
+}
+
+/* The persisted order keeps tombstone ages across a reboot: tombstones
+ * oldest first, then the live counters. If a device leaves its opera and
+ * reboots before the next save, its peers' LIVE counters come back as
+ * tombstones — as the newest ones, so an overflow evicts older tombstones,
+ * not them. */
+void test_replay_tombstones_keep_age_across_reboot() {
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x2C + i);
+  uint8_t pub[mesh_crypto::PUBKEY_LEN], priv[mesh_crypto::PRIVKEY_LEN];
+  stand_up_session(secret, pub, priv);
+
+  /* 8 old tombstones (fps 0xB0.., counters 200..), then 8 live peers. */
+  for (size_t i = 0; i < mesh_session::MAX_COUNTER_TOMBSTONES; ++i) {
+    uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
+    std::memset(fp, (int)(0xB0 + i), sizeof(fp));
+    assert(mesh_session::restore_replay_counter(fp, 200 + i));
+  }
+  uint8_t live_pub[mesh_session::MAX_TRUSTED_PEERS][mesh_crypto::PUBKEY_LEN];
+  uint8_t live_fp [mesh_session::MAX_TRUSTED_PEERS][mesh_crypto::FINGERPRINT_LEN];
+  for (size_t i = 0; i < mesh_session::MAX_TRUSTED_PEERS; ++i) {
+    uint8_t lp[mesh_crypto::PRIVKEY_LEN];
+    assert(mesh_crypto::ed25519_generate_keypair(live_pub[i], lp));
+    mesh_crypto::compute_fingerprint(live_pub[i], live_fp[i]);
+    assert(mesh_session::register_trusted_peer(live_pub[i]));
+    assert(mesh_session::restore_replay_counter(live_fp[i], 500 + i));
+  }
+
+  uint8_t fps[mesh_session::MAX_REPLAY_COUNTERS][mesh_crypto::FINGERPRINT_LEN];
+  uint64_t ctrs[mesh_session::MAX_REPLAY_COUNTERS];
+  const size_t n = mesh_session::get_replay_counters(fps, ctrs, mesh_session::MAX_REPLAY_COUNTERS);
+  assert(n == mesh_session::MAX_REPLAY_COUNTERS);
+  for (size_t i = 0; i < mesh_session::MAX_COUNTER_TOMBSTONES; ++i) {
+    assert(fps[i][0] == 0xB0 + i && ctrs[i] == 200 + i);   /* oldest first */
+  }
+  for (size_t i = mesh_session::MAX_COUNTER_TOMBSTONES; i < n; ++i) {
+    assert(ctrs[i] >= 500);                                 /* then the live ones */
+  }
+
+  /* "Reboot" after a leave that NVS never saw: no trusted peers any more,
+   * the whole blob restores in order, and the overflow evicts the OLD
+   * tombstones — every former live peer keeps its counter. */
+  stand_up_session(secret, pub, priv);
+  for (size_t i = 0; i < n; ++i) mesh_session::restore_replay_counter(fps[i], ctrs[i]);
+  uint8_t fps2[mesh_session::MAX_REPLAY_COUNTERS][mesh_crypto::FINGERPRINT_LEN];
+  uint64_t ctrs2[mesh_session::MAX_REPLAY_COUNTERS];
+  const size_t n2 = mesh_session::get_replay_counters(fps2, ctrs2, mesh_session::MAX_REPLAY_COUNTERS);
+  assert(n2 == mesh_session::MAX_COUNTER_TOMBSTONES);
+  for (size_t i = 0; i < n2; ++i) assert(ctrs2[i] >= 500);
+  std::printf("PASS test_replay_tombstones_keep_age_across_reboot\n");
 }
 
 /* The leaver's side of the same fix: leave_opera() keeps the outbound
@@ -2556,6 +2609,7 @@ int main() {
   test_peer_left_dispatch();
   /* Review fix — replay tombstones survive leave / re-pair / reboot. */
   test_replay_tombstones_across_leave_and_repair();
+  test_replay_tombstones_keep_age_across_reboot();
   test_leave_keeps_outbound_counter();
   test_build_mesh_alerts_json();
   test_build_mesh_status_json_disabled();
