@@ -881,29 +881,21 @@ class BrokerTls(unittest.TestCase):
         self.assertTrue(step["restart"])
         self.assertIs(step["install"], False)
 
-    def test_the_docs_point_at_the_flag_and_do_not_retype_the_names(self):
+    def test_the_plan_spells_the_names_the_docs_may_not(self):
         # The add-on's two option names and the two file names are spelled
         # in the plan's own `what` / `options` / `requires_files` and nowhere else in
         # prose: a doc that retyped them would go stale the day the add-on
         # renamed one, and `--dry-run --with broker_tls` narrates them for
-        # whoever needs them. The docs that need a reader to act point at
-        # its flag instead. (`keyfile` is matched as a code token because the
-        # NetworkManager keyfile, a different thing, is prose in the docs.)
+        # whoever needs them. This is the plan half: the names ARE here.
+        # The prose half (no doc under docs/ nor README.md retypes them, and
+        # one points at the flag) is scripts/tests/test_hub_plan_prose.py,
+        # which runs in lint.yml: its input is any Markdown file, and this
+        # suite runs only in canary-local.yml, whose path filter a docs-only
+        # PR never reaches.
         step = next(s for s in REAL_PLAN["steps"] if s["id"] == "broker-tls")
         for name in ("certfile", "keyfile"):
             self.assertIn(name, step["what"])
             self.assertIn(name, step["options"])
-        repo = Path(hsa.__file__).resolve().parents[2]
-        prose = sorted((repo / "docs").rglob("*.md")) + [repo / "README.md"]
-        retyped, pointers = {}, 0
-        for md in prose:
-            text = md.read_text(encoding="utf-8")
-            hits = [n for n in ("certfile", "`keyfile`", "fullchain.pem", "privkey.pem") if n in text]
-            if hits:
-                retyped[str(md.relative_to(repo))] = hits
-            pointers += "--with broker_tls" in text
-        self.assertEqual(retyped, {}, "the plan is the one place these names are spelled")
-        self.assertGreater(pointers, 0, "no doc points at the flag at all")
 
     def test_it_runs_last_so_a_missing_certificate_never_stops_the_core_plan(self):
         ids = [
