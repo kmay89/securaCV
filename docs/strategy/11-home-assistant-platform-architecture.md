@@ -19,7 +19,7 @@ Short answer: the **cryptography and the pipeline are ahead of the market; the H
 projection of them is behind our own engine**. We ship three parallel entity universes
 that don't know about each other, we poll where we could push, the wizard/options/config-flow
 overlap three ways, and a handful of Quality Scale basics (subscription cleanup,
-availability, reauth, entity translations, repairs) are missing — while genuinely hard
+availability, reauth, repairs) are missing (entity translations were too, until backlog HA2) — while genuinely hard
 things (signed exports, offline verification, TOFU device PKI, broker credential
 hygiene) are already done well. The fix is not more features; it is **one architecture
 decision** (add-on = engine, integration = the single product face, paired by
@@ -158,7 +158,7 @@ has 4 gaps, Gold is where the UX wins live. Every finding below was verified in 
 | entity-device-class | ✅ | tamper/problem/connectivity/temperature used well |
 | diagnostics | ⚠️ | exists but **no `async_redact_data`** — dumps full kernel URL, full latest event, full device status incl. LAN IPs (`diagnostics.py`) |
 | entity-disabled-by-default | ❌ | noisy diagnostics (GPS, SD wear, transport per-type, radar link) all enabled by default |
-| **entity-translations** | ❌ | **no entity sets `translation_key`; every `_attr_name` is hardcoded English — and the `entity:` block shipped in `strings.json`/`translations/en.json` is dead data that never binds** |
+| entity-translations | ✅ | every entity class in `sensor.py` / `binary_sensor.py` sets `_attr_translation_key` and none sets `_attr_name`; `strings.json` declares all 40 keys with the names users already saw, `translations/en.json` is an identical copy, and `tests/test_entity_translations.py` holds both (backlog HA2, #1703) |
 | icon-translations | ❌ | `_attr_icon` + dynamic `icon` properties instead of `icons.json` |
 | exception-translations | ❌ | not used |
 | **reconfiguration-flow** | ❌ | no `async_step_reconfigure` (move the kernel to a new host ⇒ delete and re-add) |
@@ -410,7 +410,7 @@ SecuraCV Kernel  (service device; sw_version, storage diags, chain sensor,
 ### 6.3 Naming and translation plan
 
 All entities get `_attr_translation_key`; names move to `strings.json` `entity:`
-(which already exists and is currently dead); icons move to `icons.json` with
+(done for the names in #1703, backlog HA2 — the block is live now); icons move to `icons.json` with
 state-based icons (chain ok/broken, tamper types). `en.json` stays generated from
 `strings.json`. This unlocks community translations — a real lever for a
 privacy product with strong EU resonance.
@@ -536,7 +536,7 @@ unused `ssl` map.
 Supervisor discovery handshake add-on→integration (§4.2) · adopt/suppress mechanics
 for the three universes (§6.1) · push-fed coordinators (§4.3) · reauth + reconfigure
 flows · services (`verify`, `export_evidence`) registered in `async_setup` beside
-the watch actions (never `pin_device` — `device_trust.md`) · entity translations + icons.json (kill the dead strings) ·
+the watch actions (never `pin_device` — `device_trust.md`) · icons.json (the entity translations landed in #1703, backlog HA2) ·
 `via_device` tree (§6.2) · add-on store presentation (DOCS.md, icon, CHANGELOG,
 option translations, `homeassistant:` min) · s6 service supervision + `apparmor.txt` ·
 in-repo `brand/` folder (done 2026-09-08; a home-assistant/brands PR stays optional, for pre-2026.3 installs) ·
