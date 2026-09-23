@@ -1614,6 +1614,42 @@ static void execute_request(const Request& req, uint32_t now_ms, RequestResult* 
     case RequestType::REMOVE:
       res->remove = remove_peer(req.fp, now_ms, res->removed_pubkey);
       break;
+    /* F33 part 5: the four pairing routes. The gates the handlers used to
+     * read from the httpd task — enabled, a rotation in flight — are read
+     * here, on the task that owns them. */
+    case RequestType::PAIR_START:
+    case RequestType::PAIR_JOIN: {
+      if (!s_enabled || !s_initialized) {
+        res->status = RequestStatus::MESH_DISABLED;
+        break;
+      }
+      /* Pairing during a rotation would hand the joiner the secret being
+       * retired, or (joining) overwrite the one about to arrive. */
+      if (mesh_rekey::in_progress(s_rekey)) {
+        res->status = RequestStatus::REKEY_IN_FLIGHT;
+        break;
+      }
+      bool ok;
+      if (req.type == RequestType::PAIR_START) {
+        char name[sizeof(s_opera_name)];
+        memcpy(name, s_opera_name, sizeof(name));   /* start_* re-caches it */
+        ok = start_pairing_initiator(req.opera_secret, name, now_ms);
+      } else {
+        ok = start_pairing_joiner(now_ms);
+      }
+      if (!ok) res->status = RequestStatus::REFUSED;
+      break;
+    }
+    case RequestType::PAIR_CONFIRM:
+      if (!s_running) {
+        res->status = RequestStatus::MESH_DISABLED;
+        break;
+      }
+      if (!confirm_pairing_code(now_ms)) res->status = RequestStatus::REFUSED;
+      break;
+    case RequestType::PAIR_CANCEL:
+      cancel_pairing();   /* a no-op when nothing runs or the mesh is off */
+      break;
     case RequestType::NONE:
     default:
       res->status = RequestStatus::BAD_REQUEST;

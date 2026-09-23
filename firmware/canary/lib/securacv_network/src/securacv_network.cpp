@@ -5051,14 +5051,13 @@ static esp_err_t handle_scout_unpair(httpd_req_t* req) {
 // [env:full] leg compiles these handlers but cannot run them.
 //
 // Threading: mesh_session's state belongs to the main loop (loop() runs
-// mesh_session::process()). The F10 mutators — leave, name, enable, alerts
-// DELETE, remove — therefore never run here: each handler hands ONE request
-// to mesh_session's request slot and waits for loop() to execute it
-// (mesh_call below; review fix). The pragma after this comment makes a
-// direct call to any of those five a compile error in the rest of this
-// file. The GET handlers only read. The four PR-8 pairing handlers still
-// call mesh_pairing entry points from this task — the posture PR-8
-// shipped with, an open item (spec §8.3).
+// mesh_session::process()). The mutators — leave, name, enable, alerts
+// DELETE, remove, and since F33 part 5 the four pairing routes (start, join,
+// confirm, cancel) — therefore never run here: each handler hands ONE
+// request to mesh_session's request slot and waits, bounded, for loop() to
+// execute it (mesh_call below). The pragma after this comment makes a
+// direct call to any of those nine a compile error in the rest of this
+// file. The GET handlers only read.
 //
 // MAC↔fingerprint join: the persisted trusted-peer set keys on Ed25519
 // pubkey (→ fingerprint), while the live transport peer table keys on
@@ -5080,6 +5079,7 @@ static esp_err_t handle_scout_unpair(httpd_req_t* req) {
 // here to the end of this file, naming one is a compile error. Reach them
 // through mesh_call() / mesh_session::submit_request().
 #pragma GCC poison leave_opera set_opera_name set_enabled clear_alerts remove_peer
+#pragma GCC poison start_pairing_initiator start_pairing_joiner confirm_pairing_code cancel_pairing
 
 static esp_err_t handle_mesh_status(httpd_req_t* req) {
   if (!rate_limit_check(req)) return ESP_OK;
@@ -5198,19 +5198,34 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
   return http_send_json(req, body);
 }
 
+static bool mesh_call(httpd_req_t* req, const mesh_session::Request& r,
+                      mesh_session::RequestResult* out, esp_err_t* rc);
+
+// The pairing routes' refusals from the main loop (F33 part 5): true, with
+// the error response sent through *rc, for any status but OK.
+static bool mesh_pair_refused(httpd_req_t* req, mesh_session::RequestStatus st,
+                              const char* refused_code, esp_err_t* rc) {
+  switch (st) {
+    case mesh_session::RequestStatus::OK:
+      return false;
+    case mesh_session::RequestStatus::MESH_DISABLED:
+      *rc = http_send_error(req, 400, "mesh_disabled");
+      return true;
+    case mesh_session::RequestStatus::REKEY_IN_FLIGHT:
+      // Pairing during a secret rotation would hand the joiner the secret
+      // being retired, or overwrite the one about to arrive (review fix).
+      *rc = http_send_error(req, 409, "rekey_in_flight");
+      return true;
+    default:
+      *rc = http_send_error(req, 400, refused_code);
+      return true;
+  }
+}
+
 static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
   if (!rate_limit_check(req, true)) return ESP_OK;
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
-
-  if (!mesh_session::is_enabled()) {
-    return http_send_error(req, 400, "mesh_disabled");
-  }
-  // Pairing during a secret rotation would hand the joiner the secret
-  // being retired — the one the removed device still holds (review fix).
-  if (mesh_session::rekey_in_progress()) {
-    return http_send_error(req, 409, "rekey_in_flight");
-  }
 
   // Flash-encryption gate: refuse to touch the opera_secret on FE-off
   // hardware (matches mesh_state's load/save posture).
@@ -5219,26 +5234,22 @@ static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
   }
 
   // "Add another" — an opera already exists. Load its secret straight
-  // from NVS into a local buffer, hand it to the pairing initiator, then
-  // zero the buffer. If no opera is persisted, there is nothing to add to.
-  uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN];
-  if (!mesh_state::load_opera_secret(opera_secret)) {
+  // from NVS into the request, hand it to the main loop, then zero this
+  // copy (the session wipes its own). If no opera is persisted, there is
+  // nothing to add to.
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::PAIR_START;
+  if (!mesh_state::load_opera_secret(r.opera_secret)) {
     return http_send_error(req, 400, "no_opera");
   }
-
-  char opera_name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
-  mesh_session::get_opera_name(opera_name, sizeof(opera_name));
-
-  const bool ok = mesh_session::start_pairing_initiator(
-      opera_secret, opera_name, millis());
-
-  // Zero the local secret copy regardless of outcome.
-  volatile uint8_t* z = opera_secret;
-  for (size_t i = 0; i < sizeof(opera_secret); ++i) z[i] = 0;
-
-  if (!ok) {
-    return http_send_error(req, 400, "pair_start_failed");
-  }
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  const bool ran = mesh_call(req, r, &res, &rc);
+  volatile uint8_t* z = r.opera_secret;   // regardless of outcome
+  for (size_t i = 0; i < sizeof(r.opera_secret); ++i) z[i] = 0;
+  if (!ran) return rc;
+  if (mesh_pair_refused(req, res.status, "pair_start_failed", &rc)) return rc;
 
   JsonDocument doc;
   doc["ok"] = true;
@@ -5253,24 +5264,19 @@ static esp_err_t handle_mesh_pair_join(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  if (!mesh_session::is_enabled()) {
-    return http_send_error(req, 400, "mesh_disabled");
-  }
-  // This device is a member mid-rotation: joining now would overwrite the
-  // secret it is about to receive (review fix).
-  if (mesh_session::rekey_in_progress()) {
-    return http_send_error(req, 409, "rekey_in_flight");
-  }
-
   // Flash-encryption gate: the joiner will receive + persist the
   // opera_secret on success, so refuse on FE-off hardware up front.
   if (!esp_flash_encryption_enabled()) {
     return http_send_error(req, 400, "no_flash_encryption");
   }
 
-  if (!mesh_session::start_pairing_joiner(millis())) {
-    return http_send_error(req, 400, "pair_join_failed");
-  }
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::PAIR_JOIN;
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  if (!mesh_call(req, r, &res, &rc)) return rc;
+  if (mesh_pair_refused(req, res.status, "pair_join_failed", &rc)) return rc;
 
   JsonDocument doc;
   doc["ok"] = true;
@@ -5285,7 +5291,13 @@ static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  if (!mesh_session::confirm_pairing_code(millis())) {
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::PAIR_CONFIRM;
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  if (!mesh_call(req, r, &res, &rc)) return rc;
+  if (res.status != mesh_session::RequestStatus::OK) {
     return http_send_error(req, 400, "confirm_failed");
   }
 
@@ -5301,7 +5313,12 @@ static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  mesh_session::cancel_pairing();
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::PAIR_CANCEL;
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  if (!mesh_call(req, r, &res, &rc)) return rc;
 
   JsonDocument doc;
   doc["ok"] = true;
@@ -5310,10 +5327,11 @@ static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
-// Run one F10 mutation on the main loop (review fix). mesh_session's state
-// belongs to the task that runs mesh_session::process() — loop() — and the
-// httpd task must not touch it, so these handlers validate what they can
-// locally, submit ONE request into mesh_session's one-deep slot and wait:
+// Run one mesh mutation on the main loop (review fix; F33 part 5 added the
+// four pairing routes). mesh_session's state belongs to the task that runs
+// mesh_session::process() — loop() — and the httpd task must not touch it,
+// so these handlers validate what they can locally, submit ONE request into
+// mesh_session's one-deep slot and wait:
 // loop() executes it inside its next mesh_session::process() pass, which a
 // healthy main loop reaches within milliseconds. Returns true with *out
 // filled; false after sending the error response itself (409 mesh_busy

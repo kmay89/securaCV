@@ -3079,6 +3079,142 @@ void test_outbound_counter_without_reservation_restarts() {
   std::printf("PASS test_outbound_counter_without_reservation_restarts\n");
 }
 
+/* ── F33 part 5 — the pairing routes run on the main loop ─────────────── */
+
+bool g_abandon_in_failed = false;
+void on_failed_abandoning() {
+  on_failed();
+  /* The handler gives up while its request is still RUNNING. */
+  if (g_abandon_in_failed) mesh_session::abandon_request();
+}
+
+void test_rest_pairing_requests() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0xE1 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  mesh_session::set_failed_callback(on_failed_abandoning);
+  mesh_session::set_opera_name("Hearth");
+  mesh_session::RequestResult res;
+
+  /* Nothing runs until the main loop's process(). */
+  mesh_session::Request join = make_request(mesh_session::RequestType::PAIR_JOIN);
+  assert(mesh_session::submit_request(join));
+  assert(mesh_session::pairing_state() == mesh_pairing::State::IDLE);
+  mesh_session::process(10);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.type == mesh_session::RequestType::PAIR_JOIN);
+  assert(res.status == mesh_session::RequestStatus::OK);
+  assert(mesh_session::pairing_state() == mesh_pairing::State::DISCOVERING_JOINER);
+
+  /* A second start while one runs is refused by the state machine. */
+  assert(mesh_session::submit_request(join));
+  mesh_session::process(11);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::REFUSED);
+  /* So is a confirm with no code on screen. */
+  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::PAIR_CONFIRM)));
+  mesh_session::process(12);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::REFUSED);
+
+  /* Cancel runs on the main loop and fires the FailedCallback there. */
+  g_failed_fired = false;
+  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::PAIR_CANCEL)));
+  assert(!g_failed_fired);
+  mesh_session::process(13);
+  assert(g_failed_fired);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.type == mesh_session::RequestType::PAIR_CANCEL &&
+         res.status == mesh_session::RequestStatus::OK);
+
+  /* PAIR_START carries the secret and uses the opera's own name. */
+  mesh_session::Request start = make_request(mesh_session::RequestType::PAIR_START);
+  std::memcpy(start.opera_secret, S, sizeof(S));
+  g_outs.clear();
+  assert(mesh_session::submit_request(start));
+  mesh_session::process(20);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::OK);
+  assert(mesh_session::pairing_state() == mesh_pairing::State::DISCOVERING_INITIATOR);
+  assert(g_outs.size() == 1);
+  mesh_pairing::PairDiscoverPayload disc;
+  std::memcpy(&disc, g_outs[0].bytes.data() + 1, sizeof(disc));
+  assert(std::strcmp(disc.device_name, "Hearth") == 0);
+  char name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
+  mesh_session::get_opera_name(name, sizeof(name));
+  assert(std::strcmp(name, "Hearth") == 0);
+
+  /* A late completion never answers the next request: the handler gives
+   * up while the CANCEL runs; its result is dropped, and the next request
+   * gets its own. */
+  g_abandon_in_failed = true;
+  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::PAIR_CANCEL)));
+  mesh_session::process(21);
+  g_abandon_in_failed = false;
+  assert(mesh_session::pairing_state() == mesh_pairing::State::FAILED);   /* it did run */
+  assert(!mesh_session::take_request_result(&res));                     /* result dropped */
+  assert(mesh_session::submit_request(join));
+  mesh_session::process(22);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.type == mesh_session::RequestType::PAIR_JOIN &&
+         res.status == mesh_session::RequestStatus::OK);
+
+  /* A request withdrawn before the main loop took it never runs. */
+  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::PAIR_CANCEL)));
+  assert(mesh_session::withdraw_request());
+  mesh_session::process(23);
+  assert(!mesh_session::take_request_result(&res));
+  assert(mesh_session::pairing_state() == mesh_pairing::State::DISCOVERING_JOINER);
+
+  /* While the mesh is off: start / join / confirm say MESH_DISABLED (the
+   * disable canceled the running pairing). */
+  mesh_session::Request off = make_request(mesh_session::RequestType::SET_ENABLED);
+  off.enabled = false;
+  assert(mesh_session::submit_request(off));
+  mesh_session::process(30);
+  assert(mesh_session::take_request_result(&res) && !res.enabled);
+  const mesh_session::RequestType gated[] = {mesh_session::RequestType::PAIR_START,
+                                             mesh_session::RequestType::PAIR_JOIN,
+                                             mesh_session::RequestType::PAIR_CONFIRM};
+  for (mesh_session::RequestType t : gated) {
+    mesh_session::Request r = make_request(t);
+    std::memcpy(r.opera_secret, S, sizeof(S));
+    assert(mesh_session::submit_request(r));
+    mesh_session::process(31);
+    assert(mesh_session::take_request_result(&res));
+    assert(res.status == mesh_session::RequestStatus::MESH_DISABLED);
+  }
+  assert(mesh_session::pairing_state() != mesh_pairing::State::DISCOVERING_INITIATOR);
+  mesh_session::Request on = make_request(mesh_session::RequestType::SET_ENABLED);
+  on.enabled = true;
+  assert(mesh_session::submit_request(on));
+  mesh_session::process(32);
+  assert(mesh_session::take_request_result(&res) && res.enabled);
+
+  /* While a rotation runs: start / join say REKEY_IN_FLIGHT. */
+  uint8_t b_pub[32], b_priv[32], x_pub[32], x_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(b_pub, b_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(x_pub, x_priv));
+  assert(mesh_session::register_trusted_peer(b_pub));
+  assert(mesh_session::register_trusted_peer(x_pub));
+  mesh_session::Request rm = make_request(mesh_session::RequestType::REMOVE);
+  mesh_crypto::compute_fingerprint(x_pub, rm.fp);
+  assert(mesh_session::submit_request(rm));
+  mesh_session::process(40);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.remove == mesh_session::RemoveResult::STARTED);
+  assert(mesh_session::submit_request(start));
+  mesh_session::process(41);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::REKEY_IN_FLIGHT);
+  assert(mesh_session::submit_request(join));
+  mesh_session::process(42);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::REKEY_IN_FLIGHT);
+  std::printf("PASS test_rest_pairing_requests\n");
+}
+
 int main() {
   std::srand(0xC51F0);
   test_start_initiator_emits_discover_init();
@@ -3143,6 +3279,8 @@ int main() {
   /* F33 part 3 — the outbound counter survives a reboot. */
   test_outbound_counter_reserve_ahead();
   test_outbound_counter_without_reservation_restarts();
+  /* F33 part 5 — the pairing routes run on the main loop. */
+  test_rest_pairing_requests();
   std::printf("\nALL MESH_SESSION TESTS PASSED\n");
   return 0;
 }

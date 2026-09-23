@@ -616,15 +616,20 @@ The REST implementation in the PlatformIO tree (`firmware/canary`, gated on
 `Authorization: Bearer` token
 and pass through the same rate limiter as the rest of the REST API. The
 five F10 mutations — `leave`, `name`, `enable`, alerts `DELETE`, `remove` —
-run on the main loop that owns `mesh_session`'s state, not on the HTTP
-server's task: each handler validates its body, hands one request to a
-one-deep slot and waits for the main loop's next `mesh_session::process()`
-to execute it (a direct call from the handler file does not compile).
-Two extra errors follow from that: `mesh_busy` (409 — another mesh
-request holds the slot) and `mesh_timeout` (503 — the main loop did not
-reach it in time; the request was withdrawn and did not run). The four
-PR-8 pairing handlers still call the pairing entry points from the HTTP
-task — an open item.
+and, since v0.3 (F33), the four pairing routes — `pair/start`, `pair/join`,
+`pair/confirm`, `pair/cancel` — run on the main loop that owns
+`mesh_session`'s state, not on the HTTP server's task: each handler
+validates its body, hands one request to a one-deep slot and waits (at most
+about 3 s, twice) for the main loop's next `mesh_session::process()` to
+execute it (a direct call from the handler file does not compile). Two
+extra errors follow from that: `mesh_busy` (409 — another mesh request
+holds the slot) and `mesh_timeout` (503 — the main loop did not reach it in
+time; the request was withdrawn and did not run, or it was abandoned while
+running and its result discarded). A late result never answers a later
+request: the slot holds one request at a time and discards an abandoned
+one's result before it frees. The pairing routes' `mesh_disabled` and
+`rekey_in_flight` refusals are now decided on the main loop, after the
+handler's own `no_flash_encryption` / `no_opera` checks.
 
 **`remove` (F10-rekey — crypto review and bench pending):** body
 `{"fingerprint": "<16 hex>"}`, the string `GET /api/mesh/peers` emits. It

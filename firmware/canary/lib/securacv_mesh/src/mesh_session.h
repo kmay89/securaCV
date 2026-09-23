@@ -158,6 +158,11 @@ bool is_enabled();
 
 /* ──────────────────────────────────────────────────────────────────────────
  * PAIRING ENTRY POINTS  (wrappers over mesh_pairing)
+ *
+ * Main-loop task, like every mutator here. The REST pairing handlers reach
+ * them only through the request slot below (PAIR_START / PAIR_JOIN /
+ * PAIR_CONFIRM / PAIR_CANCEL, F33 part 5); securacv_network.cpp poisons
+ * these four names so a direct call from the httpd task does not compile.
  * ────────────────────────────────────────────────────────────────────────── */
 
 bool start_pairing_initiator(const uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN],
@@ -673,13 +678,23 @@ void set_rekey_commit_handler(rekey_commit_fn fn);
  * the senders all run there and share the trusted-peer table, the rekey
  * context, the outbound counter and the opera binding without locks, by
  * design. The esp_http_server handlers run on the httpd task, so POST
- * /api/mesh/leave, /name, /enable, /remove and DELETE /api/mesh/alerts do
- * NOT call leave_opera / set_opera_name / set_enabled / remove_peer /
- * clear_alerts: they submit ONE request into this one-deep slot and wait;
- * process() executes it on the main loop — first thing, even while the
- * session is stopped, so enable and leave work while disabled — and
- * publishes the result. (securacv_network.cpp poisons those five names
- * after its mesh includes, so a direct call there does not compile.)
+ * /api/mesh/leave, /name, /enable, /remove, DELETE /api/mesh/alerts and —
+ * since F33 part 5 — the four pairing routes (POST /api/mesh/pair/start,
+ * /join, /confirm, /cancel) do NOT call leave_opera / set_opera_name /
+ * set_enabled / remove_peer / clear_alerts / start_pairing_initiator /
+ * start_pairing_joiner / confirm_pairing_code / cancel_pairing: they submit
+ * ONE request into this one-deep slot and wait (bounded); process()
+ * executes it on the main loop — first thing, even while the session is
+ * stopped, so enable and leave work while disabled — and publishes the
+ * result. (securacv_network.cpp poisons those nine names after its mesh
+ * includes, so a direct call there does not compile.)
+ *
+ * A late completion never answers the next request: only one request holds
+ * the slot at a time (a second submit is refused with 409 mesh_busy until
+ * the first is taken, withdrawn or abandoned), and a handler that gives up
+ * either withdraws a request that never ran or abandons a running one,
+ * whose result the main loop then discards before it frees the slot. The
+ * slot's state machine plays the part of a generation counter.
  *
  *   submit_request()      httpd task. false while another request holds
  *                         the slot (the handler answers 409 mesh_busy).
@@ -710,13 +725,22 @@ enum class RequestType : uint8_t {
   SET_ENABLED,    /* set_enabled(enabled) */
   CLEAR_ALERTS,   /* clear_alerts() */
   REMOVE,         /* remove_peer(fp) */
+  PAIR_START,     /* start_pairing_initiator(opera_secret, <the opera's name>) — F33 */
+  PAIR_JOIN,      /* start_pairing_joiner() — F33 */
+  PAIR_CONFIRM,   /* confirm_pairing_code() — F33 */
+  PAIR_CANCEL,    /* cancel_pairing() — F33 */
 };
 
 enum class RequestStatus : uint8_t {
   OK = 0,
-  REKEY_IN_FLIGHT,   /* LEAVE / SET_ENABLED {false} while a rotation runs */
+  REKEY_IN_FLIGHT,   /* LEAVE / SET_ENABLED {false} / PAIR_START / PAIR_JOIN
+                      * while a rotation runs */
   NO_OPERA,          /* SET_NAME with no opera */
   BAD_REQUEST,       /* NONE or an unknown type */
+  MESH_DISABLED,     /* PAIR_START / PAIR_JOIN / PAIR_CONFIRM while the mesh
+                      * is off (F33) */
+  REFUSED,           /* PAIR_START / PAIR_JOIN / PAIR_CONFIRM: the pairing
+                      * state machine refused (wrong state) (F33) */
 };
 
 struct Request {
@@ -724,6 +748,10 @@ struct Request {
   bool        enabled;                                     /* SET_ENABLED */
   uint8_t     fp[mesh_crypto::FINGERPRINT_LEN];            /* REMOVE */
   char        name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];  /* SET_NAME */
+  /* PAIR_START: the opera secret to hand the joiner (the handler loads it
+   * from NVS). Wiped with the rest of the request body at every hand-off;
+   * the submitter wipes its own copy. */
+  uint8_t     opera_secret[mesh_crypto::OPERA_SECRET_LEN];
 };
 
 struct RequestResult {
