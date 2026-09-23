@@ -1158,6 +1158,10 @@ fn handle_connection(
     // that counts toward the lockout like any bad token. The file is read
     // per request; a malformed one is logged and treated as empty (fail
     // closed: no viewer is admitted through a file the kernel cannot read).
+    // A good viewer read does NOT clear the address's failure history: the
+    // lockout guards the capability token too, and a holder of the narrower
+    // credential must not be able to reset it by slipping a read between
+    // every four capability-token guesses. Only a capability success clears.
     if let Some(viewer_path) = &cfg.viewer_token_path {
         let viewers = ViewerTokenSet::load(viewer_path).unwrap_or_else(|err| {
             log::warn!("viewer token file ignored: {err:#}");
@@ -1165,7 +1169,6 @@ fn handle_connection(
         });
         if let Some(entry) = viewers.matches(&token) {
             if request.method == "GET" && request.path == "/api/sealed-log" {
-                auth_tracker.clear_on_success(&peer.ip());
                 write_sealed_log_document(&mut stream, kernel)?;
                 return Ok(());
             }
@@ -2397,8 +2400,9 @@ mod tests {
 
         // Every other token-gated door: the viewer token is a bad token
         // there. The tracker locks an address on its fifth failure, so the
-        // six refusals are split by a successful viewer read, which also
-        // proves a good read clears the failure history.
+        // six refusals are split by a successful CAPABILITY read — the one
+        // success that clears the history (a viewer read does not; see
+        // viewer_reads_never_reset_the_lockout_that_guards_the_capability_token).
         let refused = |method: &str, path: &str| -> Result<()> {
             let (headers, body) = api.request_with_headers(method, path, false, &bearer)?;
             assert!(
@@ -2414,7 +2418,7 @@ mod tests {
         for path in ["/events", "/events/latest", "/digest", "/status"] {
             refused("GET", path)?;
         }
-        let (headers, _) = api.request_with_headers("GET", "/api/sealed-log", false, &bearer)?;
+        let (headers, _) = api.get("/api/sealed-log", true)?;
         assert!(headers.contains("200 OK"), "headers: {headers}");
         refused("GET", "/export/bundle")?;
         // POST /verify is the one token-gated write; the viewer never gets it.
@@ -2501,6 +2505,34 @@ mod tests {
         assert!(
             response.contains("429 Too Many Requests"),
             "response: {response}"
+        );
+        assert!(response.contains("auth_locked"), "response: {response}");
+        Ok(())
+    }
+
+    #[test]
+    fn viewer_reads_never_reset_the_lockout_that_guards_the_capability_token() -> Result<()> {
+        // The narrower credential must not weaken the lockout on the wider
+        // one: four capability-token guesses, a good viewer read, one more
+        // guess — and the address is locked, exactly as with no read between.
+        let (api, _path, bearer) = viewer_api()?;
+        let guess = format!("Authorization: Bearer {}\r\n", "0".repeat(64));
+        for _ in 0..4 {
+            let (headers, body) = api.request_with_headers("GET", "/events", false, &guess)?;
+            assert!(headers.contains("401 Unauthorized"), "headers: {headers}");
+            assert!(body.contains("invalid_token"), "body: {body}");
+        }
+        let (headers, _) = api.request_with_headers("GET", "/api/sealed-log", false, &bearer)?;
+        assert!(headers.contains("200 OK"), "headers: {headers}");
+        let (headers, _) = api.request_with_headers("GET", "/events", false, &guess)?;
+        assert!(headers.contains("401 Unauthorized"), "headers: {headers}");
+        // Locked: answered before the request is read (see the misuse test).
+        let mut stream = TcpStream::connect(api.handle().addr)?;
+        let mut response = String::new();
+        stream.read_to_string(&mut response)?;
+        assert!(
+            response.contains("429 Too Many Requests"),
+            "a viewer read between guesses must not reset the count: {response}"
         );
         assert!(response.contains("auth_locked"), "response: {response}");
         Ok(())
