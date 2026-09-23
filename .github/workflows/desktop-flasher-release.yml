@@ -33,18 +33,10 @@ permissions:
   contents: read
 
 env:
-  # esptool's Rust sibling. Pinned so a board is only ever written by a flash
-  # engine we chose on purpose. Bump deliberately.
-  ESPFLASH_VERSION: "3.3.0"
-  # sha256 of each prebuilt espflash release asset for ESPFLASH_VERSION. GitHub
-  # release assets are MUTABLE (an asset can be replaced without the tag
-  # moving), and these binaries are bundled as sidecars inside the signed,
-  # self-updating app — so verify the download before trusting it, and fail the
-  # release on any mismatch. Recompute when ESPFLASH_VERSION changes:
-  #   curl -fL .../espflash-<triple>.zip | sha256sum
-  ESPFLASH_SHA256_AARCH64_APPLE_DARWIN: "e2b6b7f1c48c89069c23b425ce9ed368b242de52e0080d31155bb220847f794a"
-  ESPFLASH_SHA256_X86_64_APPLE_DARWIN: "7b18f89e0e584da8024b09ac5ba9400481a505fc59b0ad15c47254adb50a5ded"
-  ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU: "83611abe54c8e3d8c5a6b44948f4505b9cee05505577e2d9276e35a51e503d64"
+  # The bundled flash engine (espflash) is pinned — its version and the sha256
+  # of each prebuilt asset — in .github/espflash-pins.env, the ONE file this
+  # workflow and the Lab's (desktop-release.yml) both read, in their "Load the
+  # espflash pins" step. Bump it there, deliberately.
   # raspberrypi/usbboot ref for the rpiboot sidecar + mass-storage gadget.
   # Pinned to a real upstream tag (was empty, which tracked the moving default
   # branch — a supply-chain gap, since a poisoned branch HEAD would ship inside
@@ -183,6 +175,42 @@ jobs:
       # compiles each slice, AND a lipo'd universal one at bundle time. Falls
       # back to `cargo install` if the release asset naming ever changes, so the
       # pipeline can't silently break.
+      - name: Load the espflash pins
+        # The version and per-target sha256s the two bundle steps below check
+        # against live in ONE file both desktop apps' releases read
+        # (.github/espflash-pins.env), which both apps' release-targets.yml
+        # watches name. Parsed, never sourced: only the four expected keys,
+        # each in its expected shape, reach $GITHUB_ENV, and anything else in
+        # the file fails the release here instead of bundling around it.
+        # Identical in both workflows (desktop_parity.test.js holds it so and
+        # runs it against the file).
+        shell: bash
+        run: |
+          set -euo pipefail
+          pins=.github/espflash-pins.env
+          want="ESPFLASH_VERSION ESPFLASH_SHA256_AARCH64_APPLE_DARWIN ESPFLASH_SHA256_X86_64_APPLE_DARWIN ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU"
+          seen=" " version=""
+          while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in ''|'#'*) continue;; esac
+            key="${line%%=*}" value="${line#*=}"
+            case " $want " in *" $key "*) ;; *) echo "::error file=$pins::not an espflash pin: $line"; exit 1;; esac
+            case "$seen" in *" $key "*) echo "::error file=$pins::$key is pinned twice"; exit 1;; esac
+            if [ "$key" = ESPFLASH_VERSION ]; then
+              [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+                || { echo "::error file=$pins::ESPFLASH_VERSION is not an x.y.z version: $value"; exit 1; }
+              version="$value"
+            else
+              [[ "$value" =~ ^[0-9a-f]{64}$ ]] \
+                || { echo "::error file=$pins::$key is not a sha256 digest: $value"; exit 1; }
+            fi
+            seen="$seen$key "
+            echo "$key=$value" >> "$GITHUB_ENV"
+          done < "$pins"
+          for key in $want; do
+            case "$seen" in *" $key "*) ;; *) echo "::error file=$pins::$key is missing"; exit 1;; esac
+          done
+          echo "espflash $version and every per-target sha256 loaded from $pins"
+
       - name: Bundle espflash sidecar (macOS universal)
         if: matrix.platform == 'macos-latest'
         shell: bash

@@ -21,7 +21,9 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { readFileSync, readdirSync } = require("node:fs");
+const { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } = require("node:fs");
+const { tmpdir } = require("node:os");
+const { spawnSync } = require("node:child_process");
 const { join } = require("node:path");
 const { pathToFileURL } = require("node:url");
 const vm = require("node:vm");
@@ -2464,23 +2466,6 @@ test("native flashing: the Lab bundles the Flasher's espflash, pinned and packag
   const flasherWf = read(join(ROOT, ".github/workflows/desktop-flasher-release.yml"));
   const labWf = read(join(ROOT, ".github/workflows/desktop-release.yml"));
 
-  // 1. One flash engine: the same version and the same three sha256 pins.
-  const pins = ["ESPFLASH_VERSION", "ESPFLASH_SHA256_AARCH64_APPLE_DARWIN",
-    "ESPFLASH_SHA256_X86_64_APPLE_DARWIN", "ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU"];
-  const pin = (wf, key, label) => {
-    const m = new RegExp(`\\n  ${key}: "([^"]+)"`).exec(wf);
-    assert.ok(m, `couldn't find the workflow-level ${key} in ${label}`);
-    return m[1];
-  };
-  for (const key of pins) {
-    assert.strictEqual(pin(labWf, key, "desktop-release.yml"), pin(flasherWf, key, "desktop-flasher-release.yml"),
-      `${key} differs between the Lab's and the Flasher's release — the two apps would ship different flash engines`);
-  }
-  assert.match(pin(flasherWf, "ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU", "desktop-flasher-release.yml"), /^[0-9a-f]{64}$/,
-    "the espflash pins must be full sha256 digests");
-
-  // 2. The same bundling steps, sidecar directory aside — sha check, lipo and
-  //    the per-arch/universal architecture proof included.
   const step = (wf, name, label) => {
     const i = wf.indexOf(`      - name: ${name}\n`);
     assert.ok(i >= 0, `${label} has no "${name}" step`);
@@ -2488,6 +2473,92 @@ test("native flashing: the Lab bundles the Flasher's espflash, pinned and packag
     const end = rest.search(/\n      - name: |\n      # ──/);
     return (end >= 0 ? rest.slice(0, end) : rest).trimEnd();
   };
+
+  // 1. One flash engine, pinned in ONE file both workflows read
+  //    (.github/espflash-pins.env, A21) — never a second copy in either
+  //    workflow, where it could drift and where no release-targets.yml watch
+  //    would see a bump.
+  const PINS = ".github/espflash-pins.env";
+  const pinKeys = ["ESPFLASH_VERSION", "ESPFLASH_SHA256_AARCH64_APPLE_DARWIN",
+    "ESPFLASH_SHA256_X86_64_APPLE_DARWIN", "ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU"];
+  const pinLines = read(join(ROOT, PINS)).split("\n").filter((l) => l && !l.startsWith("#"));
+  const pins = Object.fromEntries(pinLines.map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
+  assert.deepStrictEqual(Object.keys(pins).sort(), [...pinKeys].sort(),
+    `${PINS} must pin exactly the espflash version and the three per-target sha256s, once each`);
+  assert.strictEqual(pinLines.length, pinKeys.length, `${PINS} pins a key twice`);
+  assert.match(pins.ESPFLASH_VERSION, /^\d+\.\d+\.\d+$/, "ESPFLASH_VERSION must be a plain x.y.z version");
+  for (const key of pinKeys.slice(1)) {
+    assert.match(pins[key], /^[0-9a-f]{64}$/, `${key} must be a full sha256 digest`);
+  }
+  for (const [label, wf] of [["desktop-release.yml", labWf], ["desktop-flasher-release.yml", flasherWf]]) {
+    assert.doesNotMatch(wf, /^\s+ESPFLASH_(?:VERSION|SHA256_\w+):/m,
+      `${label} pins espflash itself again — the one copy lives in ${PINS}`);
+  }
+  // Both read it through the same step, before either bundle step runs.
+  const loadName = "Load the espflash pins";
+  const load = step(labWf, loadName, "desktop-release.yml");
+  assert.strictEqual(load, step(flasherWf, loadName, "desktop-flasher-release.yml"),
+    `the Lab's "${loadName}" step drifted from the Flasher's — keep them identical`);
+  assert.ok(load.includes(`pins=${PINS}\n`), `"${loadName}" must read ${PINS}`);
+  for (const [label, wf] of [["desktop-release.yml", labWf], ["desktop-flasher-release.yml", flasherWf]]) {
+    const at = wf.indexOf(`- name: ${loadName}\n`);
+    for (const name of ["Bundle espflash sidecar (macOS universal)", "Bundle espflash sidecar (Linux x86_64)"]) {
+      assert.ok(at >= 0 && at < wf.indexOf(`- name: ${name}\n`), `${label} must load the pins before "${name}"`);
+    }
+  }
+  // Run the step exactly as the release does — on the real file, and on the
+  // shapes it must refuse — so a parse that only ever runs on a release
+  // runner is exercised on every PR that touches it.
+  const runBody = /\n        run: \|\n([\s\S]*)$/.exec(load);
+  assert.ok(runBody, `couldn't find the run: block of "${loadName}"`);
+  const script = runBody[1].split("\n").map((l) => l.replace(/^ {10}/, "")).join("\n");
+  const runLoad = (pinsText) => {
+    const dir = mkdtempSync(join(tmpdir(), "espflash-pins-"));
+    try {
+      mkdirSync(join(dir, ".github"));
+      writeFileSync(join(dir, PINS), pinsText);
+      const envFile = join(dir, "github_env");
+      writeFileSync(envFile, "");
+      const r = spawnSync("bash", ["-c", script], { cwd: dir, env: { PATH: process.env.PATH, GITHUB_ENV: envFile }, encoding: "utf8" });
+      return { status: r.status, env: read(envFile), out: (r.stdout || "") + (r.stderr || "") };
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  };
+  const real = read(join(ROOT, PINS));
+  const ok = runLoad(real);
+  assert.strictEqual(ok.status, 0, `"${loadName}" refused the real ${PINS}: ${ok.out}`);
+  assert.deepStrictEqual(ok.env.split("\n").filter(Boolean).sort(),
+    pinKeys.map((k) => `${k}=${pins[k]}`).sort(), `"${loadName}" must export exactly the four pins`);
+  const sha = pins.ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU;
+  for (const [why, text] of [
+    ["a missing pin", real.replace(/^ESPFLASH_SHA256_X86_64_APPLE_DARWIN=.*\n/m, "")],
+    ["a pin given twice", real + `ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU=${sha}\n`],
+    ["a short digest", real.replace(sha, sha.slice(1))],
+    ["an uppercase digest", real.replace(sha, sha.toUpperCase())],
+    ["a quoted version", real.replace(/^ESPFLASH_VERSION=(.*)$/m, 'ESPFLASH_VERSION="$1"')],
+    ["a stranger key", real + "ESPFLASH_EXTRA=1\n"],
+    ["shell in the file", real + "$(touch pwned)\n"],
+  ]) {
+    const bad = runLoad(text);
+    assert.notStrictEqual(bad.status, 0, `"${loadName}" accepted ${why}`);
+    assert.match(bad.out, /::error file=\.github\/espflash-pins\.env::/, `"${loadName}" must name ${PINS} when it refuses ${why}`);
+  }
+  // Every sha256 the bundle steps look up is one the file pins: the macOS
+  // step derives ESPFLASH_SHA256_<TRIPLE> from each triple it fetches, the
+  // Linux step names its variable outright.
+  const macStep = step(flasherWf, "Bundle espflash sidecar (macOS universal)", "desktop-flasher-release.yml");
+  const fetched = [...macStep.matchAll(/^\s+fetch ([a-z0-9_-]+)$/gm)].map((m) => m[1]);
+  assert.deepStrictEqual(fetched, ["aarch64-apple-darwin", "x86_64-apple-darwin"], "the macOS step fetches a different set of slices");
+  for (const triple of fetched) {
+    const key = `ESPFLASH_SHA256_${triple.toUpperCase().replace(/-/g, "_")}`;
+    assert.ok(key in pins, `the macOS step verifies espflash-${triple} against ${key}, which ${PINS} doesn't pin`);
+  }
+  const linuxVars = [...step(flasherWf, "Bundle espflash sidecar (Linux x86_64)", "desktop-flasher-release.yml")
+    .matchAll(/\$\{(ESPFLASH_\w+)\}/g)].map((m) => m[1]);
+  assert.ok(linuxVars.includes("ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU"), "the Linux step lost its sha256 check variable");
+  for (const v of linuxVars) assert.ok(v in pins, `the Linux step reads ${v}, which ${PINS} doesn't pin`);
+
+  // 2. The same bundling steps, sidecar directory aside — sha check, lipo and
+  //    the per-arch/universal architecture proof included.
   for (const name of ["Bundle espflash sidecar (macOS universal)", "Bundle espflash sidecar (Linux x86_64)"]) {
     const lab = step(labWf, name, "desktop-release.yml");
     const flasher = step(flasherWf, name, "desktop-flasher-release.yml");

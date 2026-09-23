@@ -126,13 +126,16 @@ sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
 A macOS or Linux build also needs the espflash sidecar where
 `tauri.{macos,linux}.conf.json` point: `src-tauri/binaries/espflash-<triple>`
 (`rustc -vV` prints the triple). The release workflow downloads the pinned,
-sha256-verified one (`desktop-release.yml`, "Bundle espflash sidecar"); for a
+sha256-verified one (`desktop-release.yml`, "Bundle espflash sidecar"; the
+version and sha256s live in
+[`.github/espflash-pins.env`](../.github/espflash-pins.env), shared with the
+Flasher's release); for a
 compile-only check an empty executable file there is enough, which is what
 `desktop-lab-check.yml` does. A build running on that empty stub reports
 `serial: false` (`native_capabilities` checks the sidecar is a non-empty
 executable file, not just that the platform bundles one), so its Flash page
 shows the "not on this device" card; to flash from a dev build, put a real
-espflash 3.3.0 at that path.
+espflash of the version that file pins at that path.
 
 ## Build installers
 

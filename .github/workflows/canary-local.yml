@@ -66,10 +66,12 @@ on:
       - "desktop/src-tauri/capabilities/**"
       - "desktop-lab/src-tauri/src/flash.rs"
       - "desktop-lab/src-tauri/build.rs"
-      # …and holds the Lab's espflash bundling to the Flasher's: pins and
-      # steps in both release workflows, the per-platform externalBin, the PR
-      # check's stub, and the one udev rule both .debs install
+      # …and holds the Lab's espflash bundling to the Flasher's: the one pins
+      # file and the steps in both release workflows that read it, the
+      # per-platform externalBin, the PR check's stub, and the one udev rule
+      # both .debs install
       - ".github/workflows/desktop-release.yml"
+      - ".github/espflash-pins.env"
       - ".github/workflows/desktop-lab-check.yml"
       - "desktop-lab/src-tauri/tauri.macos.conf.json"
       - "desktop-lab/src-tauri/tauri.linux.conf.json"
@@ -178,10 +180,12 @@ on:
       - "desktop/src-tauri/capabilities/**"
       - "desktop-lab/src-tauri/src/flash.rs"
       - "desktop-lab/src-tauri/build.rs"
-      # …and holds the Lab's espflash bundling to the Flasher's: pins and
-      # steps in both release workflows, the per-platform externalBin, the PR
-      # check's stub, and the one udev rule both .debs install
+      # …and holds the Lab's espflash bundling to the Flasher's: the one pins
+      # file and the steps in both release workflows that read it, the
+      # per-platform externalBin, the PR check's stub, and the one udev rule
+      # both .debs install
       - ".github/workflows/desktop-release.yml"
+      - ".github/espflash-pins.env"
       - ".github/workflows/desktop-lab-check.yml"
       - "desktop-lab/src-tauri/tauri.macos.conf.json"
       - "desktop-lab/src-tauri/tauri.linux.conf.json"

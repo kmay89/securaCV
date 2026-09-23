@@ -94,7 +94,9 @@ matching tag:
 git tag flasher-v0.1.0 && git push origin flasher-v0.1.0
 ```
 
-The workflow downloads the espflash sidecars, builds a **universal** macOS
+The workflow downloads the espflash sidecars — the version and per-target
+sha256s pinned in [`.github/espflash-pins.env`](../.github/espflash-pins.env),
+the one file the Lab's release reads too — builds a **universal** macOS
 `.dmg` plus Linux `.AppImage`/`.deb`, and publishes a GitHub release with the
 `latest.json` self-update manifest. You can also run it from the Actions tab
 (**Run workflow**) for a smoke build.
