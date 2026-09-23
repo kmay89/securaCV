@@ -504,6 +504,59 @@ void apply_quiet_hours_from_nvs() {
   csi_event_set_quiet_window((uint16_t)qh_start, (uint16_t)qh_end, qh_en);
 }
 
+/* Household time zone (repo sweep F28). NVS "csi"/"tz" holds the POSIX rule;
+ * "tz.iana" the IANA name it was mapped from (for the dashboard to show), and
+ * is removed when a rule is typed directly. Applied with setenv + tzset only —
+ * configTzTime would also start SNTP, which this device deliberately lacks.
+ * A missing or invalid stored value sets nothing: TZ stays unset = UTC. */
+constexpr const char* NVS_KEY_TZ      = "tz";
+constexpr const char* NVS_KEY_TZ_IANA = "tz.iana";
+
+void apply_tz_rule(const char* rule) {
+  setenv("TZ", rule, 1);
+  tzset();
+}
+
+void apply_tz_from_nvs() {
+  Preferences tprefs;
+  if (!tprefs.begin(SETTINGS_NS, /*readOnly=*/true)) return;
+  char rule[tz_rule::MAX_POSIX_LEN + 1] = {0};
+  if (tprefs.isKey(NVS_KEY_TZ)) tprefs.getString(NVS_KEY_TZ, rule, sizeof(rule));
+  tprefs.end();
+  if (tz_rule::posix_valid(rule)) apply_tz_rule(rule);
+}
+
+/* Persist + apply. Returns the resolution; nothing is written unless OK. */
+tz_rule::Resolve store_tz(const char* posix, const char* iana) {
+  char rule[tz_rule::MAX_POSIX_LEN + 1] = {0};
+  const tz_rule::Resolve r = tz_rule::resolve(posix, iana, rule);
+  if (r != tz_rule::Resolve::OK) return r;
+  Preferences tprefs;
+  if (!tprefs.begin(SETTINGS_NS, /*readOnly=*/false)) return tz_rule::Resolve::BAD_RULE;
+  tprefs.putString(NVS_KEY_TZ, rule);
+  const bool typed = posix != nullptr && posix[0] != '\0';
+  if (!typed && iana != nullptr && strlen(iana) <= tz_rule::MAX_IANA_LEN) {
+    tprefs.putString(NVS_KEY_TZ_IANA, iana);
+  } else if (tprefs.isKey(NVS_KEY_TZ_IANA)) {
+    tprefs.remove(NVS_KEY_TZ_IANA);
+  }
+  tprefs.end();
+  apply_tz_rule(rule);
+  return tz_rule::Resolve::OK;
+}
+
+/* Forget the zone: both keys removed, TZ unset — UTC again, as before F28. */
+tz_rule::Resolve clear_tz() {
+  Preferences tprefs;
+  if (!tprefs.begin(SETTINGS_NS, /*readOnly=*/false)) return tz_rule::Resolve::BAD_RULE;
+  if (tprefs.isKey(NVS_KEY_TZ))      tprefs.remove(NVS_KEY_TZ);
+  if (tprefs.isKey(NVS_KEY_TZ_IANA)) tprefs.remove(NVS_KEY_TZ_IANA);
+  tprefs.end();
+  unsetenv("TZ");
+  tzset();
+  return tz_rule::Resolve::OK;
+}
+
 /* Restore the persisted privacy ceiling at boot. Without this every
  * reboot reverts to P0 and the user has to re-consent to P1/P2 every
  * power cycle, which made the Tuning Lab effectively unreachable.
@@ -1046,6 +1099,15 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
   const int32_t privacy_raw = prefs.getInt("cp.pc", (int32_t)CSI_PRIVACY_P0);
   /* Transmitter filter (default on). */
   const bool    filter_foreign = prefs.getBool(NVS_KEY_FILTER_FOREIGN, true);
+  /* Household time zone (F28): "" while unset (the device keeps UTC). Both
+   * values passed posix_valid / the IANA table on the way in, so they
+   * carry no quote or backslash and print into the JSON as-is. */
+  char tz[tz_rule::MAX_POSIX_LEN + 1] = {0};
+  char tz_iana[tz_rule::MAX_IANA_LEN + 1] = {0};
+  if (prefs.isKey(NVS_KEY_TZ))      prefs.getString(NVS_KEY_TZ, tz, sizeof(tz));
+  if (prefs.isKey(NVS_KEY_TZ_IANA)) prefs.getString(NVS_KEY_TZ_IANA, tz_iana, sizeof(tz_iana));
+  if (!tz_rule::posix_valid(tz)) tz[0] = '\0';
+  if (tz_rule::posix_for_iana(tz_iana) == nullptr) tz_iana[0] = '\0';
   prefs.end();
 
   /* Map preset index back to a stable string for the dashboard. The
@@ -1059,14 +1121,15 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
                           : (privacy_raw == (int32_t)CSI_PRIVACY_P1) ? "p1"
                           : "p0";
 
-  char buf[320];
+  char buf[448];
   snprintf(buf, sizeof(buf),
     "{\"pet_mode\":%s,\"preset\":\"%s\",\"sensitivity\":%ld,"
      "\"quiet_hours\":{\"enabled\":%s,\"start_min\":%ld,\"end_min\":%ld},"
-     "\"privacy_ceiling\":\"%s\",\"filter_foreign\":%s}",
+     "\"privacy_ceiling\":\"%s\",\"filter_foreign\":%s,"
+     "\"tz\":\"%s\",\"tz_iana\":\"%s\"}",
     pet_mode ? "true" : "false", preset_str, (long)sensitivity,
     qh_enabled ? "true" : "false", (long)qh_start, (long)qh_end,
-    privacy_str, filter_foreign ? "true" : "false");
+    privacy_str, filter_foreign ? "true" : "false", tz, tz_iana);
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, buf, -1);
   return ESP_OK;
@@ -1082,8 +1145,9 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
    * QUOTED key in every case so a body like {"not_pet_mode": true}
    * doesn't accidentally match. Buffer sized for the full payload:
    *   pet_mode + preset + sensitivity + quiet_hours{enabled, start, end}
-   * is ~130 chars; 256 leaves comfortable headroom for future keys. */
-  char body[256];
+   * is ~130 chars; 384 leaves room for the household time zone (F28:
+   * "tz" up to 47 chars, "tz_iana" up to 47) on top. */
+  char body[384];
   const int got = httpd_req_recv(req, body, sizeof(body) - 1);
   if (got <= 0) {
     httpd_resp_set_status(req, "400 Bad Request");
@@ -1093,6 +1157,39 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
   body[got] = '\0';
 
   bool wrote_anything = false;
+
+  /* "tz": a POSIX rule, or "tz_iana": an IANA zone the shared table maps
+   * (repo sweep F28); "tz":"" alone clears the zone (back to UTC). Handled
+   * FIRST and all-or-nothing: an unknown zone or an invalid rule is refused
+   * by name before any other key in the body is written, so a 400 never
+   * leaves half a settings change on disk. */
+  if (strstr(body, "\"tz\"") != nullptr || strstr(body, "\"tz_iana\"") != nullptr) {
+    char tz[tz_rule::MAX_POSIX_LEN + 1] = {0};
+    char tz_iana[tz_rule::MAX_IANA_LEN + 1] = {0};
+    const bool tz_key   = strstr(body, "\"tz\"") != nullptr;
+    const bool iana_key = strstr(body, "\"tz_iana\"") != nullptr;
+    if ((tz_key && !tz_rule::json_string_field(body, "\"tz\"", tz, sizeof(tz))) ||
+        (iana_key && !tz_rule::json_string_field(body, "\"tz_iana\"", tz_iana, sizeof(tz_iana)))) {
+      httpd_resp_set_status(req, "400 Bad Request");
+      httpd_resp_send(req, "{\"ok\":false,\"reason\":\"bad time zone\"}", -1);
+      return ESP_OK;
+    }
+    const tz_rule::Resolve r = (tz_key && tz[0] == '\0' && tz_iana[0] == '\0')
+                                   ? clear_tz()
+                                   : store_tz(tz, tz_iana);
+    if (r == tz_rule::Resolve::UNKNOWN_ZONE) {
+      httpd_resp_set_status(req, "400 Bad Request");
+      httpd_resp_send(req, "{\"ok\":false,\"reason\":\"unknown zone\"}", -1);
+      return ESP_OK;
+    }
+    if (r != tz_rule::Resolve::OK) {
+      httpd_resp_set_status(req, "400 Bad Request");
+      httpd_resp_send(req, "{\"ok\":false,\"reason\":\"bad time zone\"}", -1);
+      return ESP_OK;
+    }
+    wrote_anything = true;
+  }
+
   Preferences prefs;
   if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) {
     httpd_resp_set_status(req, "500 Internal Server Error");
@@ -2780,6 +2877,14 @@ namespace csi_integration {
 
 void set_legacy_features_hook(legacy_features_hook_t hook) {
   g_legacy_hook = hook;
+}
+
+void apply_timezone_from_nvs() {
+  apply_tz_from_nvs();
+}
+
+tz_rule::Resolve set_timezone(const char* posix, const char* iana) {
+  return store_tz(posix, iana);
 }
 
 unsigned int sse_client_count() {

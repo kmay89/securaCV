@@ -1633,6 +1633,39 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- Paired beacons (BLE Scout, [env:full] builds; repo sweep F27).
+           Hidden unless GET /api/scout answers. No MAC is ever shown or
+           sent: the Canary pairs the FIRST unpaired Bluetooth device it
+           hears at or above the window's signal threshold (not the loudest
+           one), and keeps only a coded ID + the name. -->
+      <div class="card" id="scoutCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Paired beacons</div>
+            <div class="card-subtitle">
+              Bluetooth tags this Canary listens for, to tell you which room
+              they are in. It keeps a coded ID and your name for each tag,
+              never the tag's address. Most phones change their Bluetooth
+              address every few minutes, so a tag works best.
+            </div>
+          </div>
+        </div>
+        <div class="log-list" id="scoutList"></div>
+        <div class="form-group" style="margin-top:1rem;">
+          <label class="form-label" for="scoutLabel">Name for the new tag</label>
+          <div style="display:flex;gap:0.5rem;">
+            <input type="text" class="form-input" id="scoutLabel" maxlength="23" placeholder="Keys" style="flex:1;">
+            <button class="btn btn-primary" id="scoutPairBtn" onclick="scoutPairStart()">Pair a tag</button>
+            <button class="btn btn-ghost" id="scoutCancelBtn" onclick="scoutPairCancel()" style="display:none;">Cancel</button>
+          </div>
+          <div class="card-subtitle" id="scoutPairMsg" style="margin-top:0.5rem;">
+            Press Pair, then hold the tag against the Canary for up to 60 seconds.
+            Keep your phone and any other Canary a step back: the first unpaired
+            device this close is the one that pairs.
+          </div>
+        </div>
+      </div>
+
       <!-- Diagnostics -->
       <div class="card">
         <div class="card-header">
@@ -2374,6 +2407,30 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- Household time zone (repo sweep F28). The Canary's day — its
+           10-minute buckets and quiet hours — follows this zone; world time
+           (UTC) until one is set. Set at setup from the phone; changed here. -->
+      <div class="card" id="tzCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Time zone</div>
+            <div class="card-subtitle" id="tzNow">--</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+          <button class="btn btn-secondary" id="tzUseBrowser" onclick="tzUseBrowser()">Use this browser's time zone</button>
+          <button class="btn btn-ghost" onclick="tzSet({tz: ''})">Back to world time (UTC)</button>
+        </div>
+        <div class="form-group" style="margin-top:1rem;">
+          <label class="form-label" for="tzRule">Or a POSIX rule (advanced)</label>
+          <div style="display:flex;gap:0.5rem;">
+            <input type="text" class="form-input" id="tzRule" maxlength="47" placeholder="EST5EDT,M3.2.0,M11.1.0" style="flex:1;">
+            <button class="btn btn-secondary" onclick="tzSetRule()">Set</button>
+          </div>
+        </div>
+        <div class="card-subtitle" id="tzMsg" style="margin-top:0.5rem;"></div>
+      </div>
+
       <!-- Software Update Card (signed pull-OTA; hidden on builds without it) -->
       <div class="card" id="otaCard" style="display:none;">
         <div class="card-header">
@@ -2757,9 +2814,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (panel === 'opera') refreshOpera();
       else if (panel === 'community') refreshChirpStatus();
       else if (panel === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); }
-      else if (panel === 'sensing') { refreshSensing(); refreshThermal(); }
+      else if (panel === 'sensing') { refreshSensing(); refreshThermal(); refreshScout(); }
       else if (panel === 'status') refreshLiveSensing();
-      else if (panel === 'settings') refreshOtaStatus();
+      else if (panel === 'settings') { refreshOtaStatus(); loadTz(); }
 
       // Stop OTA status polling when leaving settings (refreshOtaStatus
       // restarts it if an install is still running next time we look)
@@ -3757,6 +3814,124 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       setT('thwThrMin', h.throttled_min || 0);
       setT('thwPauses', h.pause_events || 0);
       setT('thwSensor', d.sensor_ok ? 'OK' : 'FAULT');
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Household time zone — /api/settings (repo sweep F28)
+    // ════════════════════════════════════════════════════════════════
+    function browserZone() {
+      try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { return ''; }
+    }
+    function tzShow(d) {
+      const here = d.tz_iana || d.tz;
+      document.getElementById('tzNow').textContent = here
+        ? 'Days and quiet hours follow ' + here + '.'
+        : 'Days and quiet hours follow world time (UTC). No time zone is set.';
+      const z = browserZone();
+      const btn = document.getElementById('tzUseBrowser');
+      btn.style.display = (!z || z === d.tz_iana) ? 'none' : '';
+      btn.textContent = 'Use ' + z;
+    }
+    async function loadTz() {
+      const card = document.getElementById('tzCard');
+      if (!card) return;
+      const d = await api('/api/settings');
+      if (!d || d.ok !== true) { card.style.display = 'none'; return; }
+      card.style.display = '';
+      tzShow(d);
+    }
+    async function tzSet(body) {
+      const msg = document.getElementById('tzMsg');
+      const d = await api('/api/settings', 'POST', body);
+      if (d && d.ok === true) { tzShow(d); msg.textContent = 'Saved. The next reading uses it.'; return; }
+      const why = { unknown_zone: 'This Canary does not know that zone yet. Enter its POSIX rule instead.',
+                    bad_time_zone: 'This Canary cannot read that rule. A zone with summer time needs both change dates, like EST5EDT,M3.2.0,M11.1.0.' };
+      msg.textContent = why[d && d.error] || ('Could not save: ' + ((d && d.error) || 'unknown'));
+    }
+    function tzUseBrowser() {
+      const z = browserZone();
+      if (z) tzSet({ tz_iana: z });
+    }
+    function tzSetRule() {
+      const v = document.getElementById('tzRule').value.trim();
+      if (v) tzSet({ tz: v });
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Paired beacons — /api/scout (BLE Scout proximity pairing, F27)
+    // ════════════════════════════════════════════════════════════════
+    let scoutPoll = null;
+    async function refreshScout() {
+      const card = document.getElementById('scoutCard');
+      if (!card) return;
+      const d = await api('/api/scout');
+      if (!d || d.ok !== true) { card.style.display = 'none'; return; }
+      card.style.display = '';
+      const list = document.getElementById('scoutList');
+      const beacons = d.beacons || [];
+      if (beacons.length === 0) {
+        list.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;text-align:center;padding:1rem;">No tags paired yet</p>';
+      } else {
+        list.innerHTML = beacons.map(b =>
+          '<div class="log-item" style="padding:0.75rem;display:flex;justify-content:space-between;align-items:center;">' +
+          '<strong>' + escapeHtml(b.label || '(no name)') + '</strong>' +
+          '<button class="btn btn-danger btn-sm" data-id="' + escapeHtml(b.hashed_id) + '" onclick="scoutUnpair(this.dataset.id)">Forget</button>' +
+          '</div>').join('');
+      }
+      scoutPairStatus();
+    }
+
+    function scoutShowWindow(st) {
+      const msg = document.getElementById('scoutPairMsg');
+      const armed = st && st.state === 'armed';
+      document.getElementById('scoutPairBtn').disabled = armed;
+      document.getElementById('scoutCancelBtn').style.display = armed ? '' : 'none';
+      if (!st || !msg) return;
+      if (armed) msg.textContent = 'Listening for "' + st.label + '": hold the tag against the Canary (' + st.remaining_s + ' s left).';
+      else if (st.state === 'paired') msg.textContent = 'Paired "' + st.label + '".';
+      else if (st.state === 'expired') msg.textContent = 'No tag came close enough in time. Try again, holding it right against the Canary.';
+      else if (st.state === 'failed') msg.textContent = 'Could not pair: every slot is in use. Forget a tag first.';
+      else if (st.state === 'canceled') msg.textContent = 'Pairing canceled.';
+      if (!armed && scoutPoll) { clearInterval(scoutPoll); scoutPoll = null; }
+    }
+
+    async function scoutPairStatus() {
+      const st = await api('/api/scout/pair/status');
+      if (!st || st.ok !== true) return;
+      const wasArmed = !!scoutPoll;
+      scoutShowWindow(st);
+      if (st.state === 'armed' && !scoutPoll && currentPanel === 'sensing') {
+        scoutPoll = setInterval(scoutPairStatus, 2000);
+      }
+      if (wasArmed && st.state === 'paired') refreshScout();
+    }
+
+    async function scoutPairStart() {
+      const label = document.getElementById('scoutLabel').value.trim();
+      const msg = document.getElementById('scoutPairMsg');
+      if (!label) { msg.textContent = 'Give the tag a name first.'; return; }
+      const r = await api('/api/scout/pair/start', 'POST', { label: label, window_s: 60 });
+      if (!r || r.ok !== true) {
+        const why = { bad_label: 'Use up to 23 plain letters, numbers or punctuation.',
+                      window_busy: 'Already listening for a tag.',
+                      registry_full: 'Every slot is in use. Forget a tag first.' };
+        msg.textContent = why[r && r.error] || ('Could not start pairing: ' + ((r && r.error) || 'unknown'));
+        return;
+      }
+      scoutShowWindow(r);
+      if (!scoutPoll) scoutPoll = setInterval(scoutPairStatus, 2000);
+    }
+
+    async function scoutPairCancel() {
+      const r = await api('/api/scout/pair/cancel', 'POST');
+      if (r && r.ok === true) scoutShowWindow(r);
+    }
+
+    async function scoutUnpair(id) {
+      if (!confirm('Forget this tag? It will stop reporting which room it is in.')) return;
+      const r = await api('/api/scout/unpair', 'POST', { hashed_id: id });
+      if (r && r.ok !== true) alert('Could not forget the tag: ' + (r.error || 'unknown'));
+      refreshScout();
     }
 
     // ════════════════════════════════════════════════════════════════

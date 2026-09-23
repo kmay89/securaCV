@@ -18,6 +18,7 @@
 // a `struct csi_features` forward declaration would silently create a
 // different type, exactly the bug that broke an earlier rev of this file.
 #include <csi_types.h>
+#include "tz_rule.h"   // household time zone (F28), staged from firmware/common/time
 
 namespace csi_integration {
 
@@ -243,6 +244,30 @@ bool pair_token_consume(const char* hex);
  * reach for this signature.
  * ────────────────────────────────────────────────────────────────────────── */
 void hex_encode(const uint8_t* in, size_t len, char* out);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Household time zone (repo sweep F28)
+ *
+ * One POSIX TZ rule in NVS (namespace "csi", key "tz"; the IANA name it came
+ * from, when it came from one, in "tz.iana"), applied with setenv("TZ") +
+ * tzset() — never configTzTime, which would also start SNTP, and this device
+ * has none. localtime / localtime_r then answer in household time for every
+ * reader of the local clock: the CSI day offset (update_csi_clock_offset), the
+ * waking-hours self-test gate (canary_wap.ino), and Chirp night mode
+ * (chirp_channel::is_night_mode, 22:00-06:00: templates not marked
+ * night_allowed are refused, and GET /api/chirp reports night_mode). All
+ * three ran on UTC before this setting existed and follow the household
+ * zone once one is set. No stored rule = no TZ set = UTC, exactly as before.
+ *
+ * apply_timezone_from_nvs(): boot, before the first clock sync.
+ * set_timezone(posix, iana): the provisioning seed (/api/wifi/connect's
+ * tz_iana) and POST /api/settings. Resolution is tz_rule::resolve — a typed
+ * POSIX rule wins, an IANA name maps through the shared table, an unknown
+ * zone or a rule outside the strict POSIX grammar (tz_rule::posix_valid)
+ * stores nothing. Persists, then applies.
+ * ────────────────────────────────────────────────────────────────────────── */
+void apply_timezone_from_nvs();
+tz_rule::Resolve set_timezone(const char* posix, const char* iana);
 
 }  /* namespace csi_integration */
 

@@ -23,6 +23,23 @@
  *   ble_scout_tick()          — drive LOST_MS detection; called from main loop
  *   ble_scout_module()        — csi_module_t* for the registry runtime
  *
+ * Proximity pairing window (repo sweep F27) — the only pairing surface:
+ *   ble_scout_pair_window_start(label, window_ms, rssi_min, now_ms)
+ *   ble_scout_pair_window_cancel(now_ms) / ble_scout_pair_window_status()
+ *   ble_scout_registry_snapshot(out, max) — hashed_id + label copies
+ *   ble_scout_registry_dirty()            — a pair/unpair awaits its NVS write
+ *   The first advert from an unpaired beacon at/above the threshold inside
+ *   an armed window is paired from ble_scout_on_advert() via
+ *   ble_scout_pair() — the MAC never leaves the scan callback. The
+ *   registry persists as one NVS blob (ble_scout_registry_store.h),
+ *   written from ble_scout_tick() on the loop task and loaded at init.
+ *
+ * Threading: the registry, the presence tracker and the window are touched
+ * by the HTTP task (window start/cancel/status, snapshot, unpair), the
+ * NimBLE host task (on_advert) and the loop task (tick). Every access is
+ * serialized behind one portMUX inside ble_scout.cpp; hashing, event emits
+ * and NVS I/O stay outside it.
+ *
  * Internal entry point (called by the NimBLE scan TU):
  *   ble_scout_on_advert(mac, rssi, now_ms)
  *     Drives the presence state machine + emits arrived/departed
@@ -33,6 +50,7 @@
 #define SECURACV_BLE_SCOUT_H
 
 #include "ble_scan.h"
+#include "ble_scout_pairing.h"
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -71,6 +89,30 @@ bool ble_scout_unpair(const uint8_t hashed_id[ble_scan::HASHED_ID_LEN]);
 
 /* Number of currently paired beacons. */
 size_t ble_scout_count();
+
+/* Arm the proximity pairing window (see the header comment). window_ms is
+ * clamped to [5 s, 60 s] (0 = 60 s) and rssi_min to [-70, -20] dBm.
+ * Returns BUSY while a window is armed, BAD_LABEL for an empty, over-long
+ * or non-printable-ASCII label. Callable from any task. */
+pairing::ArmResult ble_scout_pair_window_start(const char* label,
+                                               uint32_t    window_ms,
+                                               int         rssi_min,
+                                               uint32_t    now_ms);
+
+/* Cancel an armed window. Returns true if it was armed and is now
+ * canceled. Callable from any task. */
+bool ble_scout_pair_window_cancel(uint32_t now_ms);
+
+/* A copy of the window's state (never a pointer into it). */
+pairing::Status ble_scout_pair_window_status(uint32_t now_ms);
+
+/* Copy up to `max` in-use registry slots into `out` (hashed_id + label
+ * only — there is no MAC to copy). Returns the number written. */
+size_t ble_scout_registry_snapshot(ble_scan::PairedBeacon* out, size_t max);
+
+/* True while a pair/unpair has changed the registry and the loop task has
+ * not yet written the NVS blob (ble_scout_tick). */
+bool ble_scout_registry_dirty();
 
 /* Drive the presence-timer side of the state machine. Should be
  * called from the same task as the CSI module dispatcher (the

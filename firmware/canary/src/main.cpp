@@ -64,6 +64,7 @@
 #include "csi_modules_integration.h"
 #include "csi_event_egress.h"  /* committed events -> MQTT events/tamper (F29) */
 #include "csi_event.h"  /* csi_event_set_clock_offset_minutes — wall-clock bucket alignment */
+#include "time/tz_rule.h"  /* local minute-of-day for that offset (household zone, F28) */
 
 /* csi_features_t is the canonical csi_types.h struct (securacv_csi.h
  * includes it rather than declaring a twin — roadmap 22), so the module
@@ -258,15 +259,16 @@ static const uint32_t GPS_FIX_STALE_MS = 30UL * 1000UL;  // RMC arrives ~1 Hz
 // the wall clock. The chokepoint coarsens timestamps into 10-minute day
 // buckets from monotonic uptime plus this offset; without it the "day"
 // started at boot, not midnight, so buckets and quiet hours were
-// session-relative. Derived from UTC — the device has no timezone setting
-// (repo sweep F28), so bucket 0 is UTC midnight, not the household's.
-// Recomputed on every pass with a set clock: cheap, keeps the offset
-// drift-corrected alongside the clock itself, and stays aligned across
-// millis() rollover because the offset and csi_event's own millis()-based
-// consumer wrap together. Loop task only — the offset is loop-owned
-// (csi_event.h).
+// session-relative. Derived from LOCAL wall time: the household time zone
+// (repo sweep F28 — setup_set_tz, seeded at provisioning) when one is set,
+// so bucket 0 is the household's midnight; UTC, exactly as before, while
+// none is. Recomputed on every pass with a set clock: cheap, keeps the offset
+// drift-corrected alongside the clock itself, carries DST and zone changes
+// without a flag, and stays aligned across millis() rollover because the
+// offset and csi_event's own millis()-based consumer wrap together. Loop
+// task only — the offset is loop-owned (csi_event.h).
 static void updateCsiClockOffset(time_t wall_now) {
-  const int32_t wall_min = (int32_t)((wall_now % 86400) / 60);
+  const int32_t wall_min = tz_rule::local_minute_of_day(wall_now);
   const int32_t mono_min = (int32_t)(millis() / 60000UL);
   csi_event_set_clock_offset_minutes(wall_min - mono_min);
 }
@@ -830,6 +832,10 @@ void setup() {
       Serial.printf("[OK] Device name: %s\n", dev_name);
     }
   }
+  // Household time zone (repo sweep F28): apply the stored rule before the
+  // GPS clock is ever read, so the CSI day offset is local from the first
+  // pass. Nothing stored = TZ unset = UTC.
+  setup_apply_tz();
 #endif
 
   // USB "plug me in" onboarding (opt-in USB-OTG build). Brings up the HID

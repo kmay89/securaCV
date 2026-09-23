@@ -245,7 +245,13 @@ $('join').addEventListener('click',function(){
   $('join').disabled=true;
   $('status').style.display='block';
   $('statustext').textContent='Sending it to “'+ssid+'” — takes about half a minute…';
-  fetch('/api/wifi/connect',{method:'POST',headers:hdrs(true),body:JSON.stringify({ssid:ssid,password:$('pass').value})})
+  // The phone's own time zone rides along (repo sweep F28) so quiet hours and
+  // the day's buckets start at the household's midnight: one hop over this
+  // setup network, mapped on the Canary. No zone, no field; never a blocker.
+  var join={ssid:ssid,password:$('pass').value},zone='';
+  try{zone=Intl.DateTimeFormat().resolvedOptions().timeZone||''}catch(e){}
+  if(zone&&zone.length<=47)join.tz_iana=zone;
+  fetch('/api/wifi/connect',{method:'POST',headers:hdrs(true),body:JSON.stringify(join)})
     .then(function(r){return r.json()}).then(function(d){
       if(!d||!d.ok){fail((d&&d.error)?('That didn’t save: '+d.error):'That didn’t save — try again.');return}
       polls=0;timer=setInterval(poll,2000);

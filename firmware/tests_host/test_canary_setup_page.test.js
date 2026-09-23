@@ -91,7 +91,7 @@ function makeElement(id, value) {
 // Run the page's script once against canned API answers. `routes` maps a
 // "METHOD /path" to either a JSON value or an Error (a route the firmware
 // does not have: r.json() rejects the way a 404 HTML body would).
-async function boot(routes) {
+async function boot(routes, opts) {
   const values = seedValues();
   const els = new Map();
   const document = {
@@ -112,8 +112,9 @@ async function boot(routes) {
     });
   };
   // eslint-disable-next-line no-new-func
-  new Function("document", "fetch", "setInterval", "clearInterval", script)(
-    document, fetch, () => 0, () => {});
+  // `Intl` is the host's unless a test swaps it (the time zone seed, F28).
+  new Function("document", "fetch", "setInterval", "clearInterval", "Intl", script)(
+    document, fetch, () => 0, () => {}, (opts && opts.Intl) || Intl);
   await settle();
   return { $: (id) => document.getElementById(id), calls, values };
 }
@@ -272,4 +273,41 @@ test("the API's refusal text is shown, never a secret, and a refused save leaves
 test("the success line and the Restart button no longer contradict each other", () => {
   assert.match(script, /the hub link needs no restart/);
   assert.match(script, /Restart only when you are done here/);
+});
+
+// ── the household time zone seed (repo sweep F28) ──────────────────────────
+// The join carries the phone's own IANA zone as tz_iana, beside — never in
+// place of — the credentials; a browser that cannot tell sends no field.
+async function joinBody(opts) {
+  const { $, calls } = await boot({
+    "GET /api/wifi/scan": { networks: [] },
+    "POST /api/wifi/connect": { ok: true },
+  }, opts);
+  $("ssid").value = "Home";
+  $("ssid").fire("input");
+  $("pass").value = "hunter2";
+  $("join").fire("click");
+  await settle();
+  const c = calls.filter((x) => x.key === "POST /api/wifi/connect");
+  assert.strictEqual(c.length, 1, "exactly one join POST");
+  return JSON.parse(c[0].body);
+}
+
+test("the join sends the phone's time zone as tz_iana with the credentials", async () => {
+  const fakeIntl = { DateTimeFormat: () => ({ resolvedOptions: () => ({ timeZone: "Europe/Berlin" }) }) };
+  const body = await joinBody({ Intl: fakeIntl });
+  assert.strictEqual(body.ssid, "Home");
+  assert.strictEqual(body.password, "hunter2");
+  assert.strictEqual(body.tz_iana, "Europe/Berlin");
+});
+
+test("a browser that cannot name its zone sends no tz_iana, and the join still goes", async () => {
+  for (const intl of [
+    { DateTimeFormat: () => ({ resolvedOptions: () => ({}) }) },
+    { DateTimeFormat: () => { throw new Error("no Intl"); } },
+    { DateTimeFormat: () => ({ resolvedOptions: () => ({ timeZone: "X".repeat(48) }) }) },
+  ]) {
+    const body = await joinBody({ Intl: intl });
+    assert.deepStrictEqual(Object.keys(body).sort(), ["password", "ssid"]);
+  }
 });

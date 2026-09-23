@@ -321,6 +321,24 @@ setup_arduino() {
         print_warn "gnss_time not found at ${gnss_src} — sketch will not compile until firmware/common/gnss/ is restored"
     fi
 
+    # The household time zone table + validator (IANA -> POSIX rule, the local
+    # minute-of-day the CSI clock offset keys on; repo sweep F28) is a single
+    # canonical, header-only source shared with the PIO canary tree and the
+    # display. Stage a byte-identical copy next to the sketch;
+    # check_csi_sync.sh guards the two against drift.
+    local time_src="${FIRMWARE_ROOT}/common/time"
+    if [ -f "${time_src}/tz_rule.h" ]; then
+        cp "${time_src}/tz_rule.h" "${arduino_dir}/" 2>/dev/null || true
+        if [ -f "${arduino_dir}/tz_rule.h" ]; then
+            print_success "Copied tz_rule header"
+        else
+            print_error "Failed to stage tz_rule header to ${arduino_dir}"
+            return 1
+        fi
+    else
+        print_warn "tz_rule not found at ${time_src} — sketch will not compile until firmware/common/time/ is restored"
+    fi
+
     print_success "Arduino IDE setup complete!"
     echo ""
     echo "Arduino IDE Instructions:"

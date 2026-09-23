@@ -79,6 +79,8 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Mesh RSSI from ESP-NOW radio | ⚠️ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | BLE discovery (Opera/Chirp/Nearby) | ❌ | ✅ | ❌ | ❌ | ⚠️ | ➖ | ✅ |
 | BLE Scout (paired-beacon room attribution, hashed MAC, Kalman RSSI) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| BLE Scout pairing surface (proximity window, no MAC on the API, NVS-persisted registry) | ⚠️ | ❌ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| Household time zone (POSIX TZ in NVS, seeded from the phone at setup, local day for CSI buckets / quiet hours) | ⚠️ | ⚠️ | ❌ | ❌ | ✅ | ➖ | ❌ |
 | RF presence detection | ❌ | ✅ | ❌ | ❌ | ❌ | ➖ | ✅ |
 | WiFi CSI sensing (motion / breathing / micro-activity) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | CSI module pipeline + privacy chokepoint + 10-min bundler (v1: presence, breathing, ribbon, daily summary, anomaly) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |

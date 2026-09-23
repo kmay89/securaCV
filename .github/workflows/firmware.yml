@@ -1143,6 +1143,32 @@ jobs:
             $COMMON_SRC/csi_witness_payload.cpp \
             -I $BLE_SRC -I $MESH_SRC -I $COMMON_SRC
 
+          # ble_scout_pairing (repo sweep F27) — the proximity pairing
+          # window FSM plus its path through ble_scout_on_advert (first
+          # strong unpaired advert pairs, single-shot, no MAC in the
+          # snapshot, dirty until the loop tick), so it links the same
+          # Scout + chokepoint set as ble_scout_broadcast.
+          run_test ble_scout_pairing \
+            firmware/canary/lib/securacv_ble_scan/test_ble_scout_pairing.cpp \
+            $BLE_SRC/ble_scan.cpp \
+            $BLE_SRC/ble_scout.cpp \
+            $BLE_SRC/ble_scout_state.cpp \
+            $BLE_SRC/ble_scout_key.cpp \
+            $MESH_SRC/mesh_crypto.cpp \
+            $COMMON_SRC/csi_event.cpp \
+            $COMMON_SRC/csi_module.cpp \
+            $COMMON_SRC/csi_bundler.cpp \
+            $COMMON_SRC/csi_witness_payload.cpp \
+            -I $BLE_SRC -I $MESH_SRC -I $COMMON_SRC
+
+          # ble_scout_registry_store — the versioned NVS blob the paired
+          # registry persists as (round trip, all-or-nothing refusal).
+          run_test ble_scout_registry_store \
+            firmware/canary/lib/securacv_ble_scan/test_ble_scout_registry_store.cpp \
+            $BLE_SRC/ble_scan.cpp \
+            $MESH_SRC/mesh_crypto.cpp \
+            -I $BLE_SRC -I $MESH_SRC
+
           # thermal_wd — standalone: the module compiles against
           # thermal_wd_host_stubs.h under CSI_TEST_HOST_BUILD and the
           # test provides the clock, sensor, NVS map, and log capture.
