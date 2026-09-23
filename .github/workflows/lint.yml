@@ -167,6 +167,18 @@ jobs:
         # research docs) and allowlists only the files that state the rule or
         # test for it.
         run: python3 scripts/lint_fleet_word.py
+      - name: No benchmark number committed (AGENTS.md rule 4)
+        # tests/bench_harness.rs prints Markdown tables, and docs/BENCHMARKS.md
+        # says no number a run prints is ever committed. The check's input is
+        # Markdown anywhere in the tree, so it lives here, unfiltered: as a
+        # Rust test it would run only when rust.yml's path filter saw a Rust
+        # change, so a docs-only PR that pasted a table would merge green and
+        # the red would land on the next unrelated Rust PR or on the release
+        # tag's `cargo test`.
+        # It reads the row names from the harness's ROW_NAMES and refuses
+        # (exit 2) a source it cannot parse rather than pass with nothing to
+        # look for; scripts/tests/test_lint_bench_rows.py pins the shapes.
+        run: python3 scripts/lint_bench_rows.py
       - name: CloudKit container — named, never defaulted, fully deployed
         # CKContainer.default() reads an entitlement and raises an ObjC
         # CKException when there isn't one. Swift can't catch that, so an

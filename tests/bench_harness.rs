@@ -16,9 +16,10 @@
 //! ("no performance claim without a benchmark") has a corollary this file
 //! enforces by giving a number nowhere to live: a run's output goes to the
 //! terminal or a CI artifact, never into the tree, and
-//! [`benchmarks_doc_carries_no_measured_rows`] is the guard. What each row
-//! measures, what it deliberately does not, and where the output goes is in
-//! `docs/BENCHMARKS.md`.
+//! `scripts/lint_bench_rows.py` (Repo Lints, unfiltered) is the guard: it reads
+//! `ROW_NAMES` below and fails on a measured row, or the append trailer, in
+//! any Markdown file. What each row measures, what it deliberately does not,
+//! and where the output goes is in `docs/BENCHMARKS.md`.
 //!
 //! No new dependency: `std::time::Instant`, the eval metrics, and crates the
 //! kernel already depends on (`tempfile`, `hex`, `anyhow`). A criterion bench
@@ -39,7 +40,9 @@ use witness_kernel::{
 };
 
 /// Row names, exactly as the tables print them. `ROW_NAMES` is what the
-/// rule-4 guard below scans the docs for.
+/// rule-4 guard, `scripts/lint_bench_rows.py`, reads and scans the tree's
+/// Markdown for, so keep each name a plain `const ROW_X: &str = "...";` and
+/// list it in `ROW_NAMES`: the lint refuses a shape it cannot read.
 const ROW_APPEND: &str = "append_event_checked";
 const ROW_VERIFY: &str = "run_full_verify";
 const ROW_ENVELOPE_BUILD: &str = "build_evidence_envelope_for_api";
@@ -118,6 +121,13 @@ fn print_host() {
 }
 
 fn print_table(title: &str, rows: &[(&str, LatencyStats)]) {
+    for (name, _) in rows {
+        assert!(
+            ROW_NAMES.contains(name),
+            "row {name:?} is not in ROW_NAMES, so scripts/lint_bench_rows.py would not \
+             know to look for it: give it a ROW_* constant and list it in ROW_NAMES"
+        );
+    }
     println!();
     println!("### {title}");
     println!("| row | n | mean ms | p50 ms | p95 ms | p99 ms | max ms |");
@@ -462,74 +472,14 @@ mod sandbox_row {
     }
 }
 
-// -------------------- the rule-4 guard (not ignored) --------------------
-
-/// Every Markdown file a reader could take a number from: all of `docs/`
-/// (recursively) and the root README.
-fn markdown_docs(root: &std::path::Path) -> Vec<std::path::PathBuf> {
-    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-        let entries =
-            std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()));
-        for entry in entries {
-            let path = entry.expect("dir entry").path();
-            if path.is_dir() {
-                walk(&path, out);
-            } else if path.extension().is_some_and(|ext| ext == "md") {
-                out.push(path);
-            }
-        }
-    }
-    let mut out = vec![root.join("README.md")];
-    walk(&root.join("docs"), &mut out);
-    out
-}
-
-/// A run's table must never be pasted into the tree. This scans every
-/// Markdown file under `docs/` and the root README for a table row whose
-/// first cell is one of this file's row names (backticks or not) and whose
-/// second cell is a number, which is exactly the shape the tables above
-/// print. Prose, or a table that names a row and describes it, is fine; a
-/// measured row is a performance claim, and AGENTS.md rule 4 says those live
-/// next to the run that produced them, not in a document that outlives it.
-#[test]
-fn benchmarks_doc_carries_no_measured_rows() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let docs = markdown_docs(root);
-    assert!(
-        docs.iter().any(|p| p.ends_with("docs/BENCHMARKS.md")),
-        "the scan must cover docs/BENCHMARKS.md"
-    );
-    for path in docs {
-        let rel = path.strip_prefix(root).unwrap_or(&path).display();
-        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {rel}: {e}"));
-        for (idx, line) in text.lines().enumerate() {
-            let cells: Vec<&str> = line
-                .trim()
-                .trim_matches('|')
-                .split('|')
-                .map(|c| c.trim().trim_matches('`'))
-                .collect();
-            let is_measured_row = cells.len() >= 2
-                && ROW_NAMES.contains(&cells[0])
-                && cells[1].parse::<f64>().is_ok();
-            assert!(
-                !is_measured_row,
-                "{rel}:{}: a measured benchmark row is committed to the tree ({line:?}). \
-                 AGENTS.md rule 4: numbers stay with the run that produced them \
-                 (docs/BENCHMARKS.md, 'Where a run's output goes').",
-                idx + 1
-            );
-        }
-    }
-}
+// -------------------- row names (not ignored) --------------------
 
 #[test]
-fn row_names_are_counted_and_unique() {
-    // Every table prints its row name from one of the constants above, so
-    // ROW_NAMES is the list the guard scans for. Pin the count so a new row
-    // has to add its constant here (and so falls under the guard), and the
-    // uniqueness so two rows never print the same name.
-    assert_eq!(ROW_NAMES.len(), 7);
+fn row_names_are_unique() {
+    // Every table prints its row name from ROW_NAMES (print_table refuses any
+    // other name, so a row printed under an unlisted name fails its own run),
+    // and scripts/lint_bench_rows.py reads the same list. Two rows sharing a
+    // name would make their tables indistinguishable in a pasted run.
     let mut sorted = ROW_NAMES.to_vec();
     sorted.sort_unstable();
     sorted.dedup();

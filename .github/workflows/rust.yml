@@ -101,7 +101,7 @@ jobs:
     - name: Test with C2PA export feature
       run: cargo test --features c2pa-export
     # bench-harness: every benchmark in tests/bench_harness.rs is #[ignore],
-    # so "Run tests" above ran only its two guard tests. Run the benchmarks
+    # so "Run tests" above only compiled them. Run the benchmarks
     # once here, in release, and
     # keep the tables as an artifact. No threshold and no comparison, on
     # purpose: this proves the harness still runs and hands a reviewer a

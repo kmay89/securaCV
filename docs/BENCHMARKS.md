@@ -93,16 +93,21 @@ itself is inside every sample, which matters most for the shortest calls.
    change is about speed, the before/after tables belong in its review thread.
 
 Nowhere else. **No number from a run is committed anywhere in the tree**: not
-this page, not a README, not a doc comment. `tests/bench_harness.rs` carries a
-test (`benchmarks_doc_carries_no_measured_rows`, not ignored) that fails if a
-measured row — one of the harness's row names followed by a number, the shape
-the tables print — lands in any Markdown file under `docs/` or in the root
-README. It catches a pasted table, not a number retyped into prose; that part
-is review. The guard reads this repository only: the website is bound by its
-own never-overclaim rule, and no test there looks for a pasted table, so on
-the site it is kept out by review. If a document needs to say something about
-speed, it links to the artifact or the thread and says `measured on <host> in
-<run>`.
+this page, not a README, not a doc comment. The guard is
+[`scripts/lint_bench_rows.py`](../scripts/lint_bench_rows.py), a step of the
+**Repo Lints** workflow's `scripts/lint_*.sh` job
+([`lint.yml`](../.github/workflows/lint.yml)), which runs on every pull request
+whatever it touches. It fails if a measured row — one of the harness's row
+names followed by a number, the shape the tables print, blockquoted or not —
+or the append row's `total:` trailer lands in any Markdown file in the
+repository. It reads the row names from `ROW_NAMES` in the harness, and the
+harness refuses to print a row whose name is not listed there, so a new row is
+under the guard from its first run. It catches a pasted table, not a number
+retyped into prose; that part is review. The guard reads this repository
+only: the website is bound by its own never-overclaim rule, and no test there
+looks for a pasted table, so on the site it is kept out by review. If a
+document needs to say something about speed, it links to the artifact or the
+thread and says `measured on <host> in <run>`.
 
 ## What this does not cover
 
