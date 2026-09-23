@@ -7,10 +7,10 @@
  * history lives on the card, one witness_store::line_build line per record,
  * appended oldest-first by the loop task. Reading it from an HTTP request
  * means a bridge to the loop task (the storage contract makes the loop the
- * single SD owner) — designed in docs/design/witness_history_bridge.md and
- * NOT built yet. This header is the part of that design that can be proven
- * without hardware: given the file one chunk at a time, NEWEST bytes first,
- * produce the rows of one page, newest first.
+ * single SD owner): witness_history_bridge.h beside this file (F35), designed
+ * in docs/design/witness_history_bridge.md. This header is the walker it
+ * drives: given the file one chunk at a time, NEWEST bytes first, produce the
+ * rows of one page, newest first.
  *
  * Contract:
  *   - The caller reads chunks backward: each feed() gets the bytes
@@ -40,8 +40,8 @@
  *
  * Pure hosted C++ (no Arduino/ESP-IDF). Host test:
  * firmware/tests_host/test_witness_history.cpp, against files built with
- * witness_store::line_build. Canonical here; the PIO canary tree would
- * include it via -I ../common when the bridge lands.
+ * witness_store::line_build. Canonical here; the PIO canary tree includes it
+ * (through the bridge) via -I ../common.
  */
 
 #ifndef WITNESS_HISTORY_H

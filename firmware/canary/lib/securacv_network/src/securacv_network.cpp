@@ -94,6 +94,9 @@ static_assert((int)WIFI_AUTH_WPA2_WPA3_PSK == canary::net::ap_security::kAuthWpa
 
 #if FEATURE_SD_STORAGE
 #include "securacv_storage.h"
+// Card pages for the timeline (F35): handle_witness asks the loop task for
+// them through this bridge — the httpd task never opens a file on the card.
+#include "securacv_witness_history.h"
 #endif
 
 #if FEATURE_WATCHDOG
@@ -202,6 +205,7 @@ esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_c
                               status_code == 409 ? "409 Conflict" :
                               status_code == 413 ? "413 Payload Too Large" :
                               status_code == 503 ? "503 Service Unavailable" :
+                              status_code == 504 ? "504 Gateway Timeout" :
                               status_code == 500 ? "500 Internal Server Error" : "400 Bad Request");
   char response[128];
   snprintf(response, sizeof(response), "{\"ok\":false,\"error\":\"%s\"}", error_code);
@@ -2373,25 +2377,88 @@ static esp_err_t handle_chain(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
-// Serve the recent witness-record ring for the timeline UI. The ring is bounded
-// (display-only); the tamper-evident guarantee lives in the hash chain, and full
-// history is available via /api/export. Reads only in-RAM state — no SD, no camera.
+#if FEATURE_SD_STORAGE
+// A timeline page from the card (F35): records older than the ring, read by
+// the loop task through the bridge (securacv_witness_history.h) — this task
+// only posts the request and waits, at most WAIT_MS. Rows say where they came
+// from and whether they chain to the next older record on the card; they are
+// never "verified": no signature is checked on this path (the off-device
+// verifier, tools/verify_witness_log.py, is how a card is verified).
+static esp_err_t send_card_page(httpd_req_t* req, uint32_t before_seq, size_t last,
+                                bool has_hint, uint32_t hint, size_t ring_total) {
+  namespace whb = witness_history_bridge;
+  whb::Request q;
+  memset(&q, 0, sizeof(q));
+  q.before_seq = before_seq;
+  q.has_hint = has_hint;
+  q.hint = hint;
+  q.want = (uint8_t)((last == 0 || last > whb::PAGE_ROWS_MAX) ? whb::PAGE_ROWS_MAX : last);
+
+  const whb::Response* page = nullptr;
+  uint32_t gen = 0;
+  switch (witness_history_request(q, &page, &gen)) {
+    case WitnessHistoryWait::BUSY:    return http_send_error(req, 503, "history_busy");
+    case WitnessHistoryWait::TIMEOUT: return http_send_error(req, 504, "history_timeout");
+    case WitnessHistoryWait::PAGE:    break;
+  }
+  if (page->result != whb::Result::OK) {
+    const bool no_card = (page->result == whb::Result::NO_CARD);
+    witness_history_release(gen);
+    return no_card ? http_send_error(req, 503, "no_card")
+                   : http_send_error(req, 500, "history_read_failed");
+  }
+
+  // Build the answer while the page is ours, then free the slot before the
+  // (slower) send. Oldest -> newest, like the ring page.
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["source"] = "sd";
+  doc["total"] = ring_total;
+  JsonArray records = doc["records"].to<JsonArray>();
+  char hash[65];
+  for (size_t k = page->n; k-- > 0;) {
+    const size_t i = (size_t)page->first + k;
+    const witness_history::HistoryRow& row = page->rows[i];
+    JsonObject r = records.add<JsonObject>();
+    r["seq"] = row.seq;
+    r["type_name"] = record_type_name((RecordType)row.type);
+    hex_to_str(hash, row.ch, 32);
+    r["chain_hash"] = hash;
+    r["time_bucket"] = row.tb;
+    r["source"] = "sd";
+    if (page->linked[i] == whb::Link::NONE) r["linked"] = nullptr;  // nothing older on the card
+    else r["linked"] = (page->linked[i] == whb::Link::LINKED);
+  }
+  doc["next_hint"] = page->next_hint;
+  doc["more"] = page->more;
+  if (page->joins != whb::Link::NONE) doc["joins"] = (page->joins == whb::Link::LINKED);
+  doc["hint_refused"] = page->hint_refused;
+  doc["skipped"] = page->skipped;
+  witness_history_release(gen);
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+#endif  // FEATURE_SD_STORAGE
+
+// Serve the timeline: the recent witness-record ring, and — once a page asks
+// for records older than the ring holds — pages from the card (F35). The ring
+// is bounded RAM (display-only; the tamper-evident guarantee lives in the
+// hash chain). The card pages come from the loop task through the history
+// bridge: this handler reads only in-RAM state itself — no SD, no camera.
 static esp_err_t handle_witness(httpd_req_t* req) {
-  if (!rate_limit_check(req)) return ESP_OK;
-  if (!auth_gate(req)) return ESP_OK;
-  witness_get_health().http_requests++;
-
-  const size_t ring_size = witness_get_record_ring_size();
-  const size_t total = witness_get_record_count();
-  const size_t head  = witness_get_record_head();
-
-  // Optional ?last=N — clamp to [1, total]; default to all available records.
-  // Optional ?before=SEQ — exclusive upper bound: only records with
-  // seq < SEQ count toward the window. This is how the timeline's "Load
-  // More" pages backward through the ring (still RAM-only — paging deeper
-  // than the ring means SD, which this task never touches).
-  size_t want = total;
+  // Parse first (no side effects): whether this is a card page decides how
+  // the rate limiter counts it — an SD page counts as an action.
+  //   ?last=N    clamp to [1, total] (card pages: [1, PAGE_ROWS_MAX]).
+  //   ?before=S  exclusive upper bound: only records with seq < S — how the
+  //              timeline's "Load More" pages backward.
+  //   ?hint=H    the previous card page's next_hint: where the next one
+  //              starts. Client input — the bridge re-checks it before use.
+  size_t last = 0;          // 0 = not given
   uint32_t before_seq = 0;  // 0 = no bound
+  uint32_t hint = 0;
+  bool has_hint = false;
   size_t qlen = httpd_req_get_url_query_len(req);
   if (qlen > 0 && qlen < 128) {
     char query[128];
@@ -2399,14 +2466,55 @@ static esp_err_t handle_witness(httpd_req_t* req) {
       char val[12];
       if (httpd_query_key_value(query, "last", val, sizeof(val)) == ESP_OK) {
         int n = atoi(val);
-        if (n > 0 && (size_t)n < want) want = (size_t)n;
+        if (n > 0) last = (size_t)n;
       }
       if (httpd_query_key_value(query, "before", val, sizeof(val)) == ESP_OK) {
         long b = atol(val);
         if (b > 0) before_seq = (uint32_t)b;
       }
+      if (httpd_query_key_value(query, "hint", val, sizeof(val)) == ESP_OK &&
+          val[0] >= '0' && val[0] <= '9') {
+        char* end = nullptr;
+        const unsigned long h = strtoul(val, &end, 10);  // overflow: ULONG_MAX, past any file
+        if (end != nullptr && *end == '\0') {
+          hint = (uint32_t)h;
+          has_hint = true;
+        }
+      }
     }
   }
+
+  const size_t ring_size = witness_get_record_ring_size();
+  const size_t total = witness_get_record_count();
+  const size_t head  = witness_get_record_head();
+  uint32_t ring_oldest_seq = 0;
+  if (total > 0) {
+    WitnessRecord oldest;
+    if (witness_copy_record_at((head + ring_size - total) % ring_size, &oldest))
+      ring_oldest_seq = oldest.seq;
+  }
+
+#if FEATURE_SD_STORAGE
+  // Nothing below `before` is in the ring: the next records are on the card.
+  const bool card_page = before_seq > 0 && (total == 0 || before_seq <= ring_oldest_seq);
+#else
+  const bool card_page = false;
+#endif
+
+  if (!rate_limit_check(req, card_page)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+#if FEATURE_SD_STORAGE
+  if (card_page) return send_card_page(req, before_seq, last, has_hint, hint, total);
+#else
+  (void)has_hint;
+  (void)hint;
+  (void)ring_oldest_seq;
+#endif
+
+  size_t want = total;
+  if (last > 0 && last < want) want = last;
 
   // With a bound, shrink the window to the records older than it. Ring seqs
   // are contiguous ascending, so count the newest entries at or past the
@@ -2451,6 +2559,15 @@ static esp_err_t handle_witness(httpd_req_t* req) {
     r["payload_len"] = (uint32_t)rec.payload_len;
     r["verified"] = rec.verified;
   }
+
+  // Is anything older to page to? Older ring records below this window, or —
+  // on a build with a card — whatever precedes the ring's oldest record
+  // (seq 1 is the chain's first). A card page answers for itself.
+#if FEATURE_SD_STORAGE
+  doc["more"] = (want > 0) && (start > 0 || ring_oldest_seq > 1);
+#else
+  doc["more"] = (want > 0) && (start > 0);
+#endif
 
   String response;
   serializeJson(doc, response);

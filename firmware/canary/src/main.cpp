@@ -24,6 +24,7 @@
 #if FEATURE_SD_STORAGE
 #include "securacv_storage.h"
 #include "storage/sd_mount_policy.h"  // SD_TAMPER_* — the health payload's sd_mounted
+#include "securacv_witness_history.h"  // the timeline's card pages (F35), served below
 #endif
 
 #if FEATURE_WIFI_AP
@@ -1827,6 +1828,12 @@ void loop() {
 #endif
     storage_periodic_check(msc_holds_card);
   }
+  // The timeline's card pages (F35): GET /api/witness posts one request to
+  // the history bridge and waits on the httpd task; this loop task — the SD
+  // owner — reads for it, at most 4 x 1 KiB per pass so a deep page takes a
+  // few passes, never one long stall. No request, no card or a mount in
+  // flight: nothing touches SD.
+  witness_history_service();
 #endif
 
   // Handle boot button (info print, factory reset)
