@@ -117,6 +117,7 @@ look failed on the phone — hard-won WAP lesson.)
 | Pure helpers (QR/JSON escaping, password alphabet, captive DNS, probe policy) | `firmware/common/network/provision_core.h` (host-tested) — included directly from common/; the display's former byte-identical copy and its sync gate are gone (the Arduino sketch stages it flat via `setup.sh regen`) |
 | State machine + AP + portal | `src/net/provision.cpp` (`FEATURE_ONBOARDING`) |
 | Glass scenes | `src/ui/onboard_ui.cpp` — own LVGL screen, auto-deleted at handoff |
+| Join-scene geometry | `include/canary/ui/onboard_layout.h` — title, QR card and caption lines stacked from the panel and the fonts' line heights, never crossing (host-tested on every display env's panel by `tests_host/test_onboard_layout.cpp`; `canary-local/tests/onboard_probe.mjs` checks the card is clean on each emulated flavor) |
 | NVS persistence | `canary::cfg::set_wifi_credentials()` (success only) |
 | Boot hook | `main.cpp`: placeholder creds → `provision_run()` before the watchdog arms |
 | Captive mechanics provenance | canary-wap wizard, `LESSONS_LEARNED` §captive-portal |

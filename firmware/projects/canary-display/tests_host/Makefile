@@ -219,6 +219,19 @@ ROUNDFRAME11_SRC = test_round_frame_cpp11.cpp
 $(ROUNDFRAME11_BIN): $(ROUNDFRAME11_SRC)
 	$(CXX) -std=gnu++11 -O2 -Wall -Wextra $(INC) -o $@ $(ROUNDFRAME11_SRC)
 
+# The first-boot Join scene's stack (canary/ui/onboard_layout.h): on every
+# display env's panel (the ini -> each board's pins.h) with both type ladders
+# (parsed from character.cpp), the title, QR card and caption lines never
+# cross or leave the glass — F43, the dash's "or join ... password" line drawn
+# inside the QR card. Reads the tree through FW_DIR; built at gnu++11 like the
+# Round Frame contract, since the core-2.0.17 sketch compiles the header there.
+ONBOARD_BIN = test_onboard_layout
+ONBOARD_SRC = test_onboard_layout.cpp
+
+$(ONBOARD_BIN): $(ONBOARD_SRC) ../include/canary/ui/onboard_layout.h
+	$(CXX) -std=gnu++11 -O2 -Wall -Wextra $(INC) -I ../../../common \
+	  '-DFW_DIR="$(abspath ../../..)"' -o $@ $(ONBOARD_SRC)
+
 # The LAN write policy (canary/net/settings_policy.h): the /api/set keys the
 # display refuses from the network for every caller — the standalone-weather
 # opt-in (wx_direct, the glass's one opt-in outbound path) and its coarse
@@ -245,7 +258,7 @@ HOSTGUARD_SRC = test_host_guard.cpp
 $(HOSTGUARD_BIN): $(HOSTGUARD_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(HOSTGUARD_SRC)
 
-run:$(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN) $(POLICY_BIN) $(HOSTGUARD_BIN)
+run:$(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN) $(ONBOARD_BIN) $(POLICY_BIN) $(HOSTGUARD_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
@@ -267,8 +280,9 @@ run:$(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCA
 	./$(MOTION_BIN)
 	./$(ROUNDFRAME_BIN)
 	./$(ROUNDFRAME11_BIN)
+	./$(ONBOARD_BIN)
 	./$(POLICY_BIN)
 	./$(HOSTGUARD_BIN)
 
 clean:
-	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN) $(POLICY_BIN) $(HOSTGUARD_BIN)
+	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN) $(ONBOARD_BIN) $(POLICY_BIN) $(HOSTGUARD_BIN)

@@ -1785,6 +1785,32 @@
   locally before pushing: it is the same gate CI runs.
 - **Date learned:** 2026-08
 
+### Two anchors that never meet: a card placed from the center, captions from the bottom
+
+- **What happened:** On the 800x480 dash the first-boot Join scene's
+  "or join … password" line ran across the lower edge of the QR card, into
+  the white quiet zone a phone's scanner needs empty — and the round watch's
+  network-name line did the same by 7 px. Seen in the emulator's preview of
+  the real firmware (F43); the other three emulated flavors happened to clear.
+- **Root cause:** each glass placed the card by an offset from the panel's
+  center and the captions by offsets from its bottom edge, as unrelated
+  literals. Nothing tied the card's bottom to the caption's top, so a card
+  size, a panel height or a type ladder with taller lines could close the
+  gap without anyone touching the scene — and on two glasses it already had.
+  The same literals left the AMOLED 2.41's two caption lines 2 px into each
+  other (a 16 px face in rows spaced for a 12 px one).
+- **Fix:** `include/canary/ui/onboard_layout.h` stacks title, card and both
+  caption lines from the panel's size and the labels' own line heights:
+  centered with even air on rectangular glass, inside the chord-safe band on
+  round glass, the QR canvas giving up pixels (never module pitch or its
+  white pad) when a window is short. `onboard_ui.cpp` asks it once per scene.
+- **Regression check:** `tests_host/test_onboard_layout.cpp` runs the stack
+  on every display env's panel (ini → pins.h) with both ladders (parsed from
+  `character.cpp`) and fails on any crossing; `canary-local/tests/onboard_probe.mjs`
+  reads the emulator's framebuffer on each flavor's Join scene and fails if
+  anything but the QR's black and the card's white is inside the card.
+- **Date learned:** 2026-09
+
 ---
 
 ## Network API: what a LAN token does and does not prove

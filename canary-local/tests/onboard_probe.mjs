@@ -9,8 +9,11 @@
 //
 //  1. The harness, per committed display flavor (?meet=1): the firmware says
 //     its first-boot line on serial and raises "SecuraCV-XXXX" with the key it
-//     printed; the phone's wrong key is refused and the right one joins; the
-//     captive DNS answers A with 192.168.4.1 and AAAA with no data; the OS
+//     printed; the glass's Join scene shows its QR card with nothing painted
+//     over it (read off the framebuffer — F43, see joinCard; --shots saves
+//     onboard_join_<flavor>.png); the phone's wrong key is refused and the
+//     right one joins; the captive DNS answers A with 192.168.4.1 and AAAA
+//     with no data; the OS
 //     probe gets the 302; GET / serves PORTAL_HTML byte-for-byte as
 //     devices/display_portal.json pins it; /scan lists the staged LAN
 //     strongest-first with the display's zone; a wrong key and an absent SSID
@@ -25,7 +28,7 @@
 //
 // Uses playwright (or playwright-core with PW_EXECUTABLE set).
 import { createServer } from "node:http";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, mkdir, writeFile } from "node:fs/promises";
 import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -56,6 +59,7 @@ const FLAVORS = (await readdir(DIST))
   .sort();
 const RUN = ONLY ? FLAVORS.filter((f) => f === ONLY) : FLAVORS;
 if (!RUN.length) { console.error(`ONBOARD_PROBE_FAIL: no dist bundle for ${ONLY || "any flavor"}`); process.exit(1); }
+if (SHOTS) await mkdir(SHOTS, { recursive: true });
 
 // Allowlist, not sanitization (same stance as the sibling probes).
 const SERVABLE = new Map();
@@ -96,6 +100,45 @@ const until = async (fn, what, timeout = 60000, every = 250) => {
   }
 };
 
+// The Join scene's QR card, read off the framebuffer the firmware drew (runs
+// in the page). The card is the only pure-white paint on a Quiet Glass first
+// boot (text inks top out below it), so its bounding box is the card; inside
+// that box, past the rounded corners, every pixel must be the QR's own black
+// or the card's white. A caption, hint or title laid across the card shows up
+// as anti-aliased gray there — the F43 defect, where the dash's "or join …
+// password" line crossed the card's lower edge (the quiet zone a phone's
+// scanner needs empty).
+function joinCard() {
+  const cv = document.getElementById("glass");
+  const w = cv.width, h = cv.height;
+  const px = cv.getContext("2d").getImageData(0, 0, w, h).data;
+  const white = (i) => px[i] === 255 && px[i + 1] === 255 && px[i + 2] === 255;
+  const black = (i) => px[i] === 0 && px[i + 1] === 0 && px[i + 2] === 0;
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!white((y * w + x) * 4)) continue;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  if (x1 - x0 < 64 || y1 - y0 < 64) return null;  // no card (yet)
+  const R = 12;  // onboard_ui's 10 px card radius + its anti-aliased edge
+  let stray = 0, first = null;
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      if ((x < x0 + R || x > x1 - R) && (y < y0 + R || y > y1 - R)) continue;
+      const i = (y * w + x) * 4;
+      if (white(i) || black(i)) continue;
+      stray++;
+      if (!first) first = [x, y];
+    }
+  }
+  return { panel: [w, h], box: [x0, y0, x1, y1], stray, first };
+}
+
 // ── 1. the harness, per flavor ──────────────────────────────────────────────
 async function walkHarness(flavor) {
   const page = await browser.newPage({ viewport: { width: 1000, height: 620 } });
@@ -127,6 +170,19 @@ async function walkHarness(flavor) {
     check(ap.channel === PORTAL.ap.channel && ap.maxStations === PORTAL.ap.max_stations,
       `SoftAP channel/max ${ap.channel}/${ap.maxStations}`);
     check(!s0.includes("The canary is singing"), "boot finished while the portal should hold it");
+
+    // The Join scene as the glass draws it: the QR card is up and nothing
+    // else paints over it. Read after the scene's 260 ms text fade settles.
+    await until(() => E(joinCard), "the join QR card on the glass", 20000);
+    await new Promise((r) => setTimeout(r, 800));
+    const card = await E(joinCard);
+    if (SHOTS) {
+      const png = await E(() => document.getElementById("glass").toDataURL("image/png"));
+      await writeFile(`${SHOTS}/onboard_join_${flavor}.png`, Buffer.from(png.split(",")[1], "base64"));
+    }
+    check(card && card.stray === 0,
+      `the join scene paints over its QR card: ${card ? `${card.stray} px not the QR's black/white inside ` +
+        `card ${JSON.stringify(card.box)} on ${card.panel.join("x")}, first at ${JSON.stringify(card.first)}` : "card gone"}`);
 
     // The phone joins: the radio checks the key the firmware chose.
     check(await E((a) => window.__emu.phoneJoin(a.ssid, "wrongkey"), ap) === -1, "a wrong AP key was not refused");
@@ -214,7 +270,7 @@ async function walkHarness(flavor) {
       "the display's MQTT status after onboarding", 30000);
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/onboard_${flavor}.png` });
     if (errors.length) throw new Error("page errors:\n" + errors.slice(0, 8).join("\n"));
-    console.log(`ONBOARD_PROBE_OK[${flavor}] ${ap.ssid}: refused wrong key, captive DNS+302, served page pinned, ` +
+    console.log(`ONBOARD_PROBE_OK[${flavor}] ${ap.ssid}: join card clean, refused wrong key, captive DNS+302, served page pinned, ` +
       `3 verdicts from firmware, persisted on success, boot resumed`);
   } catch (e) {
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/onboard_${flavor}_fail.png` }).catch(() => {});

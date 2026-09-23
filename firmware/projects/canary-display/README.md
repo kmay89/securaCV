@@ -308,6 +308,7 @@ include/canary/
   ui/motion_core.h    the motion engine's pure half (tier, curves, governor)
   ui/motion.h         its LVGL half (gates, veil, glide, weather field)
   ui/round_frame_core.h  the circle's geometry engine (pure, host-tested)
+  ui/onboard_layout.h the first-boot Join scene's stack (pure, host-tested)
 src/                  implementations; hal+ui TUs are flavor-gated
 ```
 
