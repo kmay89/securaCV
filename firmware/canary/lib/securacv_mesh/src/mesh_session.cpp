@@ -146,6 +146,30 @@ static mesh_alert::Record s_alert_ring[MAX_ALERT_HISTORY];
 static size_t             s_alert_head  = 0;
 static size_t             s_alert_count = 0;
 
+/* REST request slot (review fix; see mesh_session.h). s_slot_state is the
+ * only field both tasks race on, and it moves by __atomic builtins; the
+ * request and result bodies belong to whoever owns the current state:
+ *   IDLE      nobody          → CLAIMED by submit_request (httpd)
+ *   CLAIMED   one writer      (submit filling the request, or a withdraw /
+ *                             take / abandon wiping a body) → PENDING / IDLE
+ *   PENDING   nobody writes   → RUNNING by process() (main loop), or back
+ *                             through CLAIMED to IDLE by a withdraw
+ *   RUNNING   main loop       → DONE when it publishes the result, or
+ *                             ABANDONED by the httpd side giving up
+ *   DONE      httpd reader    → through CLAIMED to IDLE (take / abandon)
+ *   ABANDONED main loop       → IDLE once it has wiped the result. */
+enum SlotState : uint8_t {
+  SLOT_IDLE = 0,
+  SLOT_CLAIMED,
+  SLOT_PENDING,
+  SLOT_RUNNING,
+  SLOT_DONE,
+  SLOT_ABANDONED,
+};
+static uint8_t       s_slot_state = SLOT_IDLE;
+static Request       s_slot_req;
+static RequestResult s_slot_result;
+
 /* ──────────────────────────────────────────────────────────────────────────
  * INTERNAL HELPERS
  * ────────────────────────────────────────────────────────────────────────── */
@@ -668,6 +692,9 @@ void deinit() {
   s_last_process_ms  = 0;
   reset_alerts();
   mesh_rekey::context_init(s_rekey);
+  secure_zero(&s_slot_req,    sizeof(s_slot_req));
+  secure_zero(&s_slot_result, sizeof(s_slot_result));
+  __atomic_store_n(&s_slot_state, (uint8_t)SLOT_IDLE, __ATOMIC_RELEASE);
   /* PR 5c-4: wipe the trusted-peer table + handler so a deinit()/init()
    * cycle doesn't carry stale peers or replay counters into the next
    * session. The pubkeys aren't secret but the staleness alone would
@@ -791,8 +818,13 @@ bool get_paired_peer_pubkey(uint8_t out[mesh_crypto::PUBKEY_LEN]) {
  * MAIN LOOP
  * ────────────────────────────────────────────────────────────────────────── */
 
+static void drain_request(uint32_t now_ms);   /* REST request slot, below */
+
 void process(uint32_t now_ms) {
   s_last_process_ms = now_ms;
+  /* A queued REST request runs first, and even while stopped: enabling
+   * and leaving must work on a disabled mesh. */
+  drain_request(now_ms);
   if (!s_running) return;
   mesh_pairing::Action a = mesh_pairing::tick(s_ctx, now_ms);
   dispatch_action(a);
@@ -1198,6 +1230,9 @@ RemoveResult remove_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
   if (!s_initialized || !s_running) return RemoveResult::DISABLED;
   if (!s_opera_id_set)              return RemoveResult::NO_OPERA;
   if (mesh_rekey::in_progress(s_rekey)) return RemoveResult::IN_FLIGHT;
+  /* A pairing in flight would hand its joiner the secret this rotation is
+   * about to retire — the one the removed device still holds. */
+  if (pairing_in_progress())            return RemoveResult::PAIRING;
   if (find_trusted_peer(fp) == nullptr) return RemoveResult::NOT_FOUND;
 
   /* Everyone else who stays. */
@@ -1231,5 +1266,117 @@ RemoveResult remove_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
 bool rekey_in_progress() { return mesh_rekey::in_progress(s_rekey); }
 
 void set_rekey_commit_handler(rekey_commit_fn fn) { s_rekey_commit_cb = fn; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * REST REQUEST SLOT (review fix) — see mesh_session.h and the state table
+ * at s_slot_state.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+static inline uint8_t slot_load() {
+  return __atomic_load_n(&s_slot_state, __ATOMIC_ACQUIRE);
+}
+static inline void slot_store(uint8_t v) {
+  __atomic_store_n(&s_slot_state, v, __ATOMIC_RELEASE);
+}
+static inline bool slot_cas(uint8_t from, uint8_t to) {
+  return __atomic_compare_exchange_n(&s_slot_state, &from, to, /*weak=*/false,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+}
+
+bool submit_request(const Request& req) {
+  if (!slot_cas(SLOT_IDLE, SLOT_CLAIMED)) return false;
+  s_slot_req = req;
+  s_slot_req.name[sizeof(s_slot_req.name) - 1] = '\0';
+  slot_store(SLOT_PENDING);
+  return true;
+}
+
+bool take_request_result(RequestResult* out) {
+  if (out == nullptr) return false;
+  if (!slot_cas(SLOT_DONE, SLOT_CLAIMED)) return false;
+  *out = s_slot_result;
+  secure_zero(&s_slot_result, sizeof(s_slot_result));
+  slot_store(SLOT_IDLE);
+  return true;
+}
+
+bool withdraw_request() {
+  if (!slot_cas(SLOT_PENDING, SLOT_CLAIMED)) return false;
+  secure_zero(&s_slot_req, sizeof(s_slot_req));
+  slot_store(SLOT_IDLE);
+  return true;
+}
+
+void abandon_request() {
+  if (withdraw_request()) return;                      /* never ran */
+  if (slot_cas(SLOT_RUNNING, SLOT_ABANDONED)) return;  /* its result is dropped */
+  if (slot_cas(SLOT_DONE, SLOT_CLAIMED)) {             /* finished meanwhile */
+    secure_zero(&s_slot_result, sizeof(s_slot_result));
+    slot_store(SLOT_IDLE);
+  }
+}
+
+/* Main loop: run one request against the session. */
+static void execute_request(const Request& req, uint32_t now_ms, RequestResult* res) {
+  res->type   = req.type;
+  res->status = RequestStatus::OK;
+  switch (req.type) {
+    case RequestType::LEAVE:
+      /* Leaving mid-rotation would split the survivors: the ones that
+       * already installed keep the new secret, the rest abort. */
+      if (mesh_rekey::in_progress(s_rekey)) {
+        res->status = RequestStatus::REKEY_IN_FLIGHT;
+        break;
+      }
+      res->notified = leave_opera(now_ms);
+      /* The radio peer table goes too: nothing to talk to without an opera. */
+      mesh_transport::clear_peers();
+      break;
+    case RequestType::SET_NAME:
+      if (!s_opera_id_set) {
+        res->status = RequestStatus::NO_OPERA;
+        break;
+      }
+      set_opera_name(req.name);
+      break;
+    case RequestType::SET_ENABLED:
+      /* A rotation cannot finish while the mesh is off. */
+      if (!req.enabled && mesh_rekey::in_progress(s_rekey)) {
+        res->status  = RequestStatus::REKEY_IN_FLIGHT;
+        res->enabled = s_enabled;
+        break;
+      }
+      set_enabled(req.enabled);
+      res->enabled = s_enabled;
+      break;
+    case RequestType::CLEAR_ALERTS:
+      clear_alerts();
+      break;
+    case RequestType::REMOVE:
+      res->remove = remove_peer(req.fp, now_ms, res->removed_pubkey);
+      break;
+    case RequestType::NONE:
+    default:
+      res->status = RequestStatus::BAD_REQUEST;
+      break;
+  }
+}
+
+static void drain_request(uint32_t now_ms) {
+  if (!slot_cas(SLOT_PENDING, SLOT_RUNNING)) return;
+  Request req = s_slot_req;
+  secure_zero(&s_slot_req, sizeof(s_slot_req));
+  RequestResult res;
+  memset(&res, 0, sizeof(res));
+  execute_request(req, now_ms, &res);
+  secure_zero(&req, sizeof(req));
+  s_slot_result = res;
+  secure_zero(&res, sizeof(res));
+  if (!slot_cas(SLOT_RUNNING, SLOT_DONE)) {
+    /* ABANDONED: the handler gave up; nobody will read this result. */
+    secure_zero(&s_slot_result, sizeof(s_slot_result));
+    slot_store(SLOT_IDLE);
+  }
+}
 
 }  /* namespace mesh_session */

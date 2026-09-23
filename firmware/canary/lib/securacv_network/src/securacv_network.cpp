@@ -3676,9 +3676,15 @@ static esp_err_t handle_thermal(httpd_req_t* req) {
 // builders so the response shape stays under host-test coverage; CI's
 // [env:full] leg compiles these handlers but cannot run them.
 //
-// Threading: like the pairing handlers, these call into mesh_session from
-// the httpd task, not the main loop the module's send contract names —
-// the posture PR-8 shipped with; see spec §8.3.
+// Threading: mesh_session's state belongs to the main loop (loop() runs
+// mesh_session::process()). The F10 mutators — leave, name, enable, alerts
+// DELETE, remove — therefore never run here: each handler hands ONE request
+// to mesh_session's request slot and waits for loop() to execute it
+// (mesh_call below; review fix). The pragma after this comment makes a
+// direct call to any of those five a compile error in the rest of this
+// file. The GET handlers only read. The four PR-8 pairing handlers still
+// call mesh_pairing entry points from this task — the posture PR-8
+// shipped with, an open item (spec §8.3).
 //
 // MAC↔fingerprint join: the persisted trusted-peer set keys on Ed25519
 // pubkey (→ fingerprint), while the live transport peer table keys on
@@ -3692,6 +3698,11 @@ static esp_err_t handle_thermal(httpd_req_t* req) {
 // ════════════════════════════════════════════════════════════════════════════
 
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
+
+// The main-loop-only mesh_session mutators (see "Threading" above): from
+// here to the end of this file, naming one is a compile error. Reach them
+// through mesh_call() / mesh_session::submit_request().
+#pragma GCC poison leave_opera set_opera_name set_enabled clear_alerts remove_peer
 
 // Number of online peers from the live transport table (peers seen within
 // the transport's ACTIVE window). Used for the status state mapping.
@@ -3828,6 +3839,11 @@ static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
   if (!mesh_session::is_enabled()) {
     return http_send_error(req, 400, "mesh_disabled");
   }
+  // Pairing during a secret rotation would hand the joiner the secret
+  // being retired — the one the removed device still holds (review fix).
+  if (mesh_session::rekey_in_progress()) {
+    return http_send_error(req, 409, "rekey_in_flight");
+  }
 
   // Flash-encryption gate: refuse to touch the opera_secret on FE-off
   // hardware (matches mesh_state's load/save posture).
@@ -3872,6 +3888,11 @@ static esp_err_t handle_mesh_pair_join(httpd_req_t* req) {
 
   if (!mesh_session::is_enabled()) {
     return http_send_error(req, 400, "mesh_disabled");
+  }
+  // This device is a member mid-rotation: joining now would overwrite the
+  // secret it is about to receive (review fix).
+  if (mesh_session::rekey_in_progress()) {
+    return http_send_error(req, 409, "rekey_in_flight");
   }
 
   // Flash-encryption gate: the joiner will receive + persist the
@@ -3922,17 +3943,63 @@ static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
+// Run one F10 mutation on the main loop (review fix). mesh_session's state
+// belongs to the task that runs mesh_session::process() — loop() — and the
+// httpd task must not touch it, so these handlers validate what they can
+// locally, submit ONE request into mesh_session's one-deep slot and wait:
+// loop() executes it inside its next mesh_session::process() pass, which a
+// healthy main loop reaches within milliseconds. Returns true with *out
+// filled; false after sending the error response itself (409 mesh_busy
+// when another request holds the slot, 503 mesh_timeout when the main
+// loop did not get to it — withdrawn, so it never runs).
+static constexpr uint32_t kMeshCallStepMs = 10;
+static constexpr uint32_t kMeshCallWaitMs = 3000;
+
+static bool mesh_call(httpd_req_t* req, const mesh_session::Request& r,
+                      mesh_session::RequestResult* out, esp_err_t* rc) {
+  if (!mesh_session::submit_request(r)) {
+    *rc = http_send_error(req, 409, "mesh_busy");
+    return false;
+  }
+  for (uint32_t waited = 0; waited < kMeshCallWaitMs; waited += kMeshCallStepMs) {
+    if (mesh_session::take_request_result(out)) return true;
+    vTaskDelay(pdMS_TO_TICKS(kMeshCallStepMs));
+  }
+  if (!mesh_session::withdraw_request()) {
+    // The main loop took it just now: its result lands within that same
+    // process() call. Wait once more, then give up for good.
+    for (uint32_t waited = 0; waited < kMeshCallWaitMs; waited += kMeshCallStepMs) {
+      if (mesh_session::take_request_result(out)) return true;
+      vTaskDelay(pdMS_TO_TICKS(kMeshCallStepMs));
+    }
+    mesh_session::abandon_request();
+  }
+  *rc = http_send_error(req, 503, "mesh_timeout");
+  return false;
+}
+
 // POST /api/mesh/leave — forget this device's opera (F10). The session
 // signs a LEAVE_OPERA under the opera it is leaving (best effort — the
 // survivors drop only this device's trust entry), then wipes its RAM
-// state; the NVS copies go here. No rekey: the leaver discards its own
-// secret, and a signed LEAVE can only remove its signer.
+// state and the radio peer table, on the main loop; the NVS copies go
+// here. No rekey: the leaver discards its own secret, and a signed LEAVE
+// can only remove its signer. Refused (409) while a secret rotation runs —
+// leaving mid-rotation would split the survivors.
 static esp_err_t handle_mesh_leave(httpd_req_t* req) {
   if (!rate_limit_check(req, true)) return ESP_OK;
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  const bool notified = mesh_session::leave_opera(millis());
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::LEAVE;
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  if (!mesh_call(req, r, &res, &rc)) return rc;
+  if (res.status == mesh_session::RequestStatus::REKEY_IN_FLIGHT) {
+    return http_send_error(req, 409, "rekey_in_flight");
+  }
+  const bool notified = res.notified;
   // Each clear is idempotent; AND them so a real NVS failure is reported
   // rather than hidden behind a local wipe that did happen. replay_ctrs is
   // deliberately NOT cleared: the counters are replay defense, not
@@ -3943,7 +4010,6 @@ static esp_err_t handle_mesh_leave(httpd_req_t* req) {
   cleared = mesh_state::clear_trusted_peers()   && cleared;
   cleared = mesh_state::clear_elected_hub()     && cleared;
   cleared = mesh_state::clear_opera_name()      && cleared;
-  mesh_transport::clear_peers();
   log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "Left opera",
              notified ? "peers notified" : "no peer took the LEAVE frame");
 
@@ -3986,12 +4052,18 @@ static esp_err_t handle_mesh_name(httpd_req_t* req) {
     const unsigned char c = (unsigned char)name[i];
     if (c < 0x20 || c > 0x7E) return http_send_error(req, 400, "invalid_name");
   }
-  if (!mesh_session::has_opera()) {
+
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::SET_NAME;
+  memcpy(r.name, name, len);   // len <= MAX_OPERA_NAME_LEN; r.name[len] stays '\0'
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  if (!mesh_call(req, r, &res, &rc)) return rc;
+  if (res.status == mesh_session::RequestStatus::NO_OPERA) {
     return http_send_error(req, 400, "no_opera");
   }
-
-  mesh_session::set_opera_name(name);
-  const bool persisted = mesh_state::save_opera_name(name);
+  const bool persisted = mesh_state::save_opera_name(r.name);
 
   JsonDocument doc;
   doc["ok"] = true;
@@ -4023,20 +4095,26 @@ static esp_err_t handle_mesh_enable(httpd_req_t* req) {
     return http_send_error(req, 400, "missing_enabled_bool");
   }
   const bool want = input["enabled"].as<bool>();
+
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type    = mesh_session::RequestType::SET_ENABLED;
+  r.enabled = want;
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  if (!mesh_call(req, r, &res, &rc)) return rc;
   // A rotation cannot finish while the mesh is off; refuse rather than
   // strand the survivors (F10-rekey). It ends within 60 s either way.
-  if (!want && mesh_session::rekey_in_progress()) {
+  if (res.status == mesh_session::RequestStatus::REKEY_IN_FLIGHT) {
     return http_send_error(req, 409, "rekey_in_flight");
   }
-
-  mesh_session::set_enabled(want);
   const bool persisted = mesh_state::save_mesh_enabled(want);
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK,
              want ? "Mesh enabled" : "Mesh disabled", "via /api/mesh/enable");
 
   JsonDocument doc;
   doc["ok"] = true;
-  doc["enabled"] = mesh_session::is_enabled();
+  doc["enabled"] = res.enabled;
   doc["persisted"] = persisted;
   String response;
   serializeJson(doc, response);
@@ -4069,15 +4147,20 @@ static esp_err_t handle_mesh_alerts(httpd_req_t* req) {
   return rc;
 }
 
-// DELETE /api/mesh/alerts — clear the history (F10). The per-peer and
-// opera-wide alerts_received counters keep counting for the boot
-// (canary-wap parity).
+// DELETE /api/mesh/alerts — clear the history (F10), on the main loop that
+// writes it. The per-peer and opera-wide alerts_received counters keep
+// counting for the boot (canary-wap parity).
 static esp_err_t handle_mesh_alerts_clear(httpd_req_t* req) {
   if (!rate_limit_check(req, true)) return ESP_OK;
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  mesh_session::clear_alerts();
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::CLEAR_ALERTS;
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  if (!mesh_call(req, r, &res, &rc)) return rc;
   return http_send_json(req, "{\"ok\":true}");
 }
 
@@ -4087,7 +4170,8 @@ static esp_err_t handle_mesh_alerts_clear(httpd_req_t* req) {
 // get the new secret over an ephemeral-X25519 exchange inside signed
 // envelopes and this device commits on all ACKs or at the 60 s timeout
 // (the rekey-commit handler re-persists it). rekey:"committed" means there
-// was nobody left to tell and the secret rotated locally at once.
+// was nobody left to tell and the secret rotated locally at once. Runs on
+// the main loop (mesh_call); refused while a pairing runs.
 // CRYPTO: maintainer review required before merge; bench-gated U1 C3.
 static esp_err_t handle_mesh_remove(httpd_req_t* req) {
   if (!rate_limit_check(req, true)) return ESP_OK;
@@ -4106,15 +4190,18 @@ static esp_err_t handle_mesh_remove(httpd_req_t* req) {
   if (!input["fingerprint"].is<const char*>()) {
     return http_send_error(req, 400, "missing_fingerprint");
   }
-  uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
-  if (!mesh_api::parse_fingerprint_hex(input["fingerprint"].as<const char*>(), fp)) {
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::REMOVE;
+  if (!mesh_api::parse_fingerprint_hex(input["fingerprint"].as<const char*>(), r.fp)) {
     return http_send_error(req, 400, "invalid_fingerprint");
   }
 
-  uint8_t removed_pub[mesh_crypto::PUBKEY_LEN];
-  const mesh_session::RemoveResult r =
-      mesh_session::remove_peer(fp, millis(), removed_pub);
-  switch (r) {
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  if (!mesh_call(req, r, &res, &rc)) return rc;
+  const mesh_session::RemoveResult rr = res.remove;
+  switch (rr) {
     case mesh_session::RemoveResult::STARTED:
     case mesh_session::RemoveResult::COMMITTED:
       break;
@@ -4122,18 +4209,19 @@ static esp_err_t handle_mesh_remove(httpd_req_t* req) {
     case mesh_session::RemoveResult::NO_OPERA:  return http_send_error(req, 400, "no_opera");
     case mesh_session::RemoveResult::NOT_FOUND: return http_send_error(req, 404, "unknown_peer");
     case mesh_session::RemoveResult::IN_FLIGHT: return http_send_error(req, 409, "rekey_in_flight");
+    case mesh_session::RemoveResult::PAIRING:   return http_send_error(req, 409, "pairing_in_progress");
     default:                                    return http_send_error(req, 500, "rekey_failed");
   }
-  // The removed peer's own NVS entry (FE-gated); the rotated secret and
-  // any survivor dropped at commit persist through the commit handler.
-  const bool persisted = mesh_state::remove_trusted_peer(removed_pub);
+  // The removed peer's own NVS entry (FE-gated), dropped now so a reboot
+  // mid-rotation does not bring it back.
+  const bool persisted = mesh_state::remove_trusted_peer(res.removed_pubkey);
   log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "Opera peer removed",
-             r == mesh_session::RemoveResult::COMMITTED ? "secret rotated locally"
-                                                        : "secret rotation started");
+             rr == mesh_session::RemoveResult::COMMITTED ? "secret rotated locally"
+                                                         : "secret rotation started");
 
   JsonDocument doc;
   doc["ok"] = true;
-  doc["rekey"] = (r == mesh_session::RemoveResult::COMMITTED) ? "committed" : "started";
+  doc["rekey"] = (rr == mesh_session::RemoveResult::COMMITTED) ? "committed" : "started";
   doc["persisted"] = persisted;
   String response;
   serializeJson(doc, response);

@@ -2309,6 +2309,166 @@ void test_rekey_frames_speak_only_for_their_signer_once() {
   std::printf("PASS test_rekey_frames_speak_only_for_their_signer_once\n");
 }
 
+/* Review finding (fw-mesh #3/#4): the F10 REST mutators ran on the httpd
+ * task against state the main loop mutates. They now go through a
+ * one-deep request slot that process() drains. Single-threaded here: the
+ * test plays the httpd side (submit / take / withdraw / abandon) and the
+ * main loop (process) in turn. */
+bool g_abandon_in_commit = false;
+void on_rekey_commit_abandoning(const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN],
+                                const uint8_t (*pks)[mesh_crypto::PUBKEY_LEN], size_t n) {
+  on_rekey_commit(secret, pks, n);
+  /* The handler gives up while the request is still RUNNING. */
+  if (g_abandon_in_commit) mesh_session::abandon_request();
+}
+
+mesh_session::Request make_request(mesh_session::RequestType t) {
+  mesh_session::Request r;
+  std::memset(&r, 0, sizeof(r));
+  r.type = t;
+  return r;
+}
+
+void test_rest_request_slot() {
+  uint8_t pub[32], priv[32];
+  stand_up_session(nullptr, pub, priv);
+  mesh_session::RequestResult res;
+
+  /* Empty slot: nothing to take, nothing to withdraw. */
+  assert(!mesh_session::take_request_result(&res));
+  assert(!mesh_session::withdraw_request());
+
+  /* Nothing runs until the main loop's process(); the slot is one deep. */
+  mesh_session::Request name = make_request(mesh_session::RequestType::SET_NAME);
+  std::strcpy(name.name, "Porch");
+  assert(mesh_session::submit_request(name));
+  assert(!mesh_session::submit_request(make_request(mesh_session::RequestType::CLEAR_ALERTS)));
+  assert(!mesh_session::take_request_result(&res));
+  mesh_session::process(10);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.type == mesh_session::RequestType::SET_NAME);
+  assert(res.status == mesh_session::RequestStatus::NO_OPERA);   /* no opera yet */
+  assert(!mesh_session::take_request_result(&res));               /* taken once */
+
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x93 + i);
+  assert(mesh_session::set_opera_secret(S));
+  assert(mesh_session::submit_request(name));
+  mesh_session::process(20);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::OK);
+  char got[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
+  mesh_session::get_opera_name(got, sizeof(got));
+  assert(std::strcmp(got, "Porch") == 0);
+
+  /* A request withdrawn before the main loop took it never runs. */
+  mesh_session::Request off = make_request(mesh_session::RequestType::SET_ENABLED);
+  off.enabled = false;
+  assert(mesh_session::submit_request(off));
+  assert(mesh_session::withdraw_request());
+  mesh_session::process(30);
+  assert(!mesh_session::take_request_result(&res));
+  assert(mesh_session::is_enabled());
+
+  /* Enable runs even while the session is stopped (process drains first). */
+  assert(mesh_session::submit_request(off));
+  mesh_session::process(40);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::OK && !res.enabled);
+  assert(!mesh_session::is_running());
+  mesh_session::Request on = make_request(mesh_session::RequestType::SET_ENABLED);
+  on.enabled = true;
+  assert(mesh_session::submit_request(on));
+  mesh_session::process(50);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.enabled && mesh_session::is_running());
+
+  /* A finished result nobody collects: abandon frees the slot. */
+  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::CLEAR_ALERTS)));
+  mesh_session::process(60);
+  assert(!mesh_session::withdraw_request());   /* already ran */
+  mesh_session::abandon_request();
+  assert(!mesh_session::take_request_result(&res));
+  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::NONE)));
+  mesh_session::process(70);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::BAD_REQUEST);
+
+  /* REMOVE through the slot; the rotation it starts refuses LEAVE and
+   * SET_ENABLED {false} (they would strand it), and a second REMOVE. */
+  mesh_session::set_rekey_commit_handler(on_rekey_commit_abandoning);
+  g_commits.clear();
+  uint8_t b_pub[32], b_priv[32], x_pub[32], x_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(b_pub, b_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(x_pub, x_priv));
+  assert(mesh_session::register_trusted_peer(b_pub));
+  assert(mesh_session::register_trusted_peer(x_pub));
+  mesh_session::Request rm = make_request(mesh_session::RequestType::REMOVE);
+  mesh_crypto::compute_fingerprint(x_pub, rm.fp);
+  assert(mesh_session::submit_request(rm));
+  mesh_session::process(1000);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.remove == mesh_session::RemoveResult::STARTED);
+  assert(std::memcmp(res.removed_pubkey, x_pub, 32) == 0);
+  assert(mesh_session::rekey_in_progress());
+
+  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::LEAVE)));
+  mesh_session::process(1001);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::REKEY_IN_FLIGHT);
+  assert(mesh_session::has_opera());
+  assert(mesh_session::submit_request(off));
+  mesh_session::process(1002);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::REKEY_IN_FLIGHT);
+  assert(res.enabled && mesh_session::is_enabled());
+  mesh_session::process(1000 + mesh_rekey::REKEY_TIMEOUT_MS);   /* commit */
+  assert(!mesh_session::rekey_in_progress());
+  assert(g_commits.size() == 1);
+
+  assert(mesh_session::trusted_peer_count() == 0);   /* silent B dropped */
+
+  /* REMOVE is refused while a pairing runs: the joiner would get the
+   * secret the rotation is about to retire. */
+  assert(mesh_session::register_trusted_peer(b_pub));
+  mesh_crypto::compute_fingerprint(b_pub, rm.fp);
+  assert(mesh_session::start_pairing_joiner(1100));
+  assert(mesh_session::submit_request(rm));
+  mesh_session::process(1101);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.remove == mesh_session::RemoveResult::PAIRING);
+  assert(mesh_session::trusted_peer_count() == 1);
+  assert(!mesh_session::rekey_in_progress());
+  mesh_session::cancel_pairing();
+
+  /* The handler gives up while its request is RUNNING — here from inside
+   * the zero-survivor commit that REMOVE triggers. The request completes,
+   * its result is dropped, and the slot frees itself. */
+  g_commits.clear();
+  g_abandon_in_commit = true;
+  assert(mesh_session::submit_request(rm));
+  mesh_session::process(1200);
+  g_abandon_in_commit = false;
+  assert(g_commits.size() == 1);                     /* it did run */
+  assert(mesh_session::trusted_peer_count() == 0);
+  assert(!mesh_session::take_request_result(&res));  /* result discarded */
+  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::CLEAR_ALERTS)));
+  mesh_session::process(1201);
+  assert(mesh_session::take_request_result(&res));
+
+  /* LEAVE through the slot forgets the opera and the radio peer table. */
+  const uint8_t mac[6] = {0x02, 0x93, 0x93, 0x93, 0x93, 0x93};
+  assert(mesh_transport::add_peer(mac));
+  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::LEAVE)));
+  mesh_session::process(1300);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::OK);
+  assert(res.notified);                              /* the peer took the LEAVE */
+  assert(!mesh_session::has_opera());
+  assert(!mesh_transport::has_peer(mac));
+  std::printf("PASS test_rest_request_slot\n");
+}
+
 void test_parse_fingerprint_hex() {
   uint8_t fp[8];
   std::memset(fp, 0xEE, sizeof(fp));
@@ -2381,6 +2541,8 @@ int main() {
   /* Review fix — a verified frame speaks only for its signer, once. */
   test_verified_frame_speaks_only_for_its_signer();
   test_rekey_frames_speak_only_for_their_signer_once();
+  /* Review fix — the F10 REST mutators run on the main loop. */
+  test_rest_request_slot();
   test_parse_fingerprint_hex();
   std::printf("\nALL MESH_SESSION TESTS PASSED\n");
   return 0;

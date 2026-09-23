@@ -53,6 +53,9 @@
  *     pairing state machine + mesh_transport send paths directly.
  *   • mesh_session::process() is meant to be called from the main loop
  *     at any reasonable cadence (>= 10 Hz).
+ *   • Every mutator belongs to that same task. Another task (the REST
+ *     handlers on the httpd task) reaches the F10 mutators only through
+ *     the request slot at the end of this header, which process() drains.
  */
 
 #ifndef SECURACV_MESH_SESSION_H
@@ -543,11 +546,12 @@ void     clear_alerts();
  *
  * Refusals: DISABLED (mesh off / not initialized), NO_OPERA, NOT_FOUND
  * (fp is not a trusted peer), IN_FLIGHT (a rotation is already running
- * on this device, as initiator or survivor), FAILED (key generation).
- * Threading: the send contract above says main-loop task; POST
- * /api/mesh/remove calls this from the httpd task, the same posture the
- * PR-8 pairing handlers ship with (spec §8.3). Marshaling the REST entry
- * points onto the main loop is an open item for the crypto review.
+ * on this device, as initiator or survivor), FAILED (key generation),
+ * PAIRING (a pairing exchange is in progress — it would hand the joiner
+ * the secret this rotation is about to retire).
+ * Threading: main-loop task, like every mutator here. POST
+ * /api/mesh/remove reaches it through the request slot below, never
+ * directly from the httpd task.
  * ────────────────────────────────────────────────────────────────────────── */
 
 enum class RemoveResult : uint8_t {
@@ -558,6 +562,7 @@ enum class RemoveResult : uint8_t {
   NOT_FOUND,
   IN_FLIGHT,
   FAILED,
+  PAIRING,
 };
 
 RemoveResult remove_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
@@ -572,6 +577,81 @@ typedef void (*rekey_commit_fn)(
     size_t        forgotten_count);
 
 void set_rekey_commit_handler(rekey_commit_fn fn);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * REST REQUEST SLOT  (review fix — the F10 REST mutators run on the main loop)
+ *
+ * Every mutator in this module belongs to the task that runs process()
+ * (the main loop): the receive path, the pairing and rotation ticks and
+ * the senders all run there and share the trusted-peer table, the rekey
+ * context, the outbound counter and the opera binding without locks, by
+ * design. The esp_http_server handlers run on the httpd task, so POST
+ * /api/mesh/leave, /name, /enable, /remove and DELETE /api/mesh/alerts do
+ * NOT call leave_opera / set_opera_name / set_enabled / remove_peer /
+ * clear_alerts: they submit ONE request into this one-deep slot and wait;
+ * process() executes it on the main loop — first thing, even while the
+ * session is stopped, so enable and leave work while disabled — and
+ * publishes the result. (securacv_network.cpp poisons those five names
+ * after its mesh includes, so a direct call there does not compile.)
+ *
+ *   submit_request()      httpd task. false while another request holds
+ *                         the slot (the handler answers 409 mesh_busy).
+ *   take_request_result() httpd task. true once the result is ready; copies
+ *                         it out and frees the slot.
+ *   withdraw_request()    httpd task, after a wait timed out: true iff the
+ *                         request had not started — it is gone and will
+ *                         never run. false once process() has taken it: the
+ *                         result lands within that same process() call.
+ *   abandon_request()     httpd task, last resort: a request that already
+ *                         runs finishes, its result is discarded and the
+ *                         slot frees itself.
+ *
+ * Execution refuses what would strand a rotation: LEAVE and SET_ENABLED
+ * {false} while one runs (REKEY_IN_FLIGHT); REMOVE while a pairing runs
+ * (RemoveResult::PAIRING). SET_NAME without an opera is NO_OPERA.
+ *
+ * The slot state moves by GCC __atomic builtins (acquire/release, a
+ * compare-exchange at every hand-off) — the pattern securacv_audio's mute
+ * request uses. The request and result bodies are only touched by the
+ * side that owns the current state, and wiped when they change hands.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+enum class RequestType : uint8_t {
+  NONE = 0,
+  LEAVE,          /* leave_opera() */
+  SET_NAME,       /* set_opera_name(name) */
+  SET_ENABLED,    /* set_enabled(enabled) */
+  CLEAR_ALERTS,   /* clear_alerts() */
+  REMOVE,         /* remove_peer(fp) */
+};
+
+enum class RequestStatus : uint8_t {
+  OK = 0,
+  REKEY_IN_FLIGHT,   /* LEAVE / SET_ENABLED {false} while a rotation runs */
+  NO_OPERA,          /* SET_NAME with no opera */
+  BAD_REQUEST,       /* NONE or an unknown type */
+};
+
+struct Request {
+  RequestType type;
+  bool        enabled;                                     /* SET_ENABLED */
+  uint8_t     fp[mesh_crypto::FINGERPRINT_LEN];            /* REMOVE */
+  char        name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];  /* SET_NAME */
+};
+
+struct RequestResult {
+  RequestType   type;
+  RequestStatus status;
+  bool          notified;   /* LEAVE: some peer took the signed LEAVE */
+  bool          enabled;    /* SET_ENABLED: is_enabled() afterwards */
+  RemoveResult  remove;     /* REMOVE */
+  uint8_t       removed_pubkey[mesh_crypto::PUBKEY_LEN];  /* REMOVE, STARTED/COMMITTED */
+};
+
+bool submit_request(const Request& req);
+bool take_request_result(RequestResult* out);
+bool withdraw_request();
+void abandon_request();
 
 }  /* namespace mesh_session */
 

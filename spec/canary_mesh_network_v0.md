@@ -547,10 +547,17 @@ The REST implementation in the PlatformIO tree (`firmware/canary`, gated on
 `POST /api/mesh/enable`, `GET /api/mesh/alerts`, `DELETE /api/mesh/alerts`
 (F10), and `POST /api/mesh/remove` (F10-rekey, below). All require a valid
 `Authorization: Bearer` token
-and pass through the same rate limiter as the rest of the REST API. Like the
-PR-8 pairing handlers, they call into `mesh_session` from the HTTP server's
-task rather than marshaling onto the main loop the module's send contract
-names — a known posture, not a new one.
+and pass through the same rate limiter as the rest of the REST API. The
+five F10 mutations — `leave`, `name`, `enable`, alerts `DELETE`, `remove` —
+run on the main loop that owns `mesh_session`'s state, not on the HTTP
+server's task: each handler validates its body, hands one request to a
+one-deep slot and waits for the main loop's next `mesh_session::process()`
+to execute it (a direct call from the handler file does not compile).
+Two extra errors follow from that: `mesh_busy` (409 — another mesh
+request holds the slot) and `mesh_timeout` (503 — the main loop did not
+reach it in time; the request was withdrawn and did not run). The four
+PR-8 pairing handlers still call the pairing entry points from the HTTP
+task — an open item.
 
 **`remove` (F10-rekey — crypto review and bench pending):** body
 `{"fingerprint": "<16 hex>"}`, the string `GET /api/mesh/peers` emits. It
@@ -562,9 +569,11 @@ forgets the peer only if the rotation started. Responses: `{ok, rekey:
 "started"}` (survivors are being re-keyed; the commit lands within 60 s),
 `{ok, rekey: "committed"}` (nobody left to tell — rotated locally at once),
 `persisted` for the removed peer's NVS entry; errors `unknown_peer` (404),
-`rekey_in_flight` (409 — one rotation at a time; `enable {false}` is refused
-with the same code while one runs), `no_opera`, `mesh_disabled`,
-`invalid_fingerprint`. canary-wap's rotation is its own (per-peer session
+`rekey_in_flight` (409 — one rotation at a time; `enable {false}`, `leave`,
+`pair/start` and `pair/join` are refused with the same code while one runs,
+since each would strand or split it), `pairing_in_progress` (409 — a
+pairing in flight would hand its joiner the secret being retired),
+`no_opera`, `mesh_disabled`, `invalid_fingerprint`. canary-wap's rotation is its own (per-peer session
 keys, `MSG_OPERA_REKEY`); the two trees do not rotate each other.
 
 **`leave`:** the device signs a `LEAVE_OPERA` (§4.2) under the opera it is
