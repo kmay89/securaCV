@@ -413,7 +413,7 @@ if (tv && stage) {
   function appearDevice(dev, label) {
     if (!liveFleet) { liveFleet = homeTiles.map((t) => ({ name: t.n, online: true })); if (!liveHost) liveHost = 'your fleet'; setLive(true, liveHost); }
     if (liveFleet.some((d) => d.name === dev.name)) { showToast(dev.name + ' is already in the fleet'); return; }
-    liveFleet.push({ name: dev.name, online: dev.online !== false });
+    liveFleet.push({ name: dev.name, online: dev.online === true });
     justAppeared = dev.name;
     // Jump to the home wall for the "it appeared!" moment — unless a host
     // pinned the edition to its use case; then the pinned view updates in place.
@@ -433,7 +433,9 @@ if (tv && stage) {
   function applyFleet(data, highlight) {
     const devs = Array.isArray(data) ? data : ((data && (data.devices || data.canaries || data.fleet)) || []);
     if (!devs.length) return;
-    liveFleet = devs.map((x) => ({ name: String(x.name || x.id || x.hostname || 'Canary').slice(0, 40), online: x.online !== false }));
+    // Only `name` is required; a silent `online` is NOT a presence claim (securaCV
+    // tvos/discovery/DISCOVERY.md, fleet_contract_vectors.json) — the tile reads offline.
+    liveFleet = devs.map((x) => ({ name: String(x.name || x.id || x.hostname || 'Canary').slice(0, 40), online: x.online === true }));
     liveHost = 'your LAN';
     setLive(true, liveHost);
     if (highlight) justAppeared = String(highlight).slice(0, 40);
@@ -487,7 +489,8 @@ if (tv && stage) {
       const data = await res.json();
       const devices = Array.isArray(data) ? data : (data.devices || data.canaries || data.fleet || []);
       if (!devices.length) throw new Error('kernel returned no devices');
-      liveFleet = devices.map((d) => ({ name: d.name || d.id || d.hostname || 'Canary', online: d.online !== false }));
+      // Same contract as tv/app.js parseFleet: a silent `online` is not presence.
+      liveFleet = devices.map((d) => ({ name: d.name || d.id || d.hostname || 'Canary', online: d.online === true }));
       liveHost = shown; setLive(true, shown); render(); renderDevices(); showJson(data);
       setStatus('Connected — ' + liveFleet.length + ' Canaries from ' + shown + '. They drive the fleet above now.', 'ok');
       lastNames = liveFleet.map((d) => d.name); startPoll(url);

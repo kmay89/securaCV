@@ -6,7 +6,8 @@
 // Coverage: MQTT wildcard matching (the shell's broker semantics), the
 // witness canonical/signature format (must equal what trust.cpp
 // rebuilds before Ed25519::verify — pinned here as a golden string),
-// LED cadence translation, and registry ↔ dist artifact integrity.
+// LED cadence translation, registry ↔ dist artifact integrity, and the
+// vendored Witness Wall against the fleet contract.
 const { test } = require("node:test");
 const assert = require("node:assert");
 const { readFileSync, existsSync, readdirSync } = require("node:fs");
@@ -190,6 +191,38 @@ test("fw_train matches the firmware tree's CANARY_FW_VERSION", () => {
   const m = vh.match(/CANARY_FW_VERSION "([^"]+)"/);
   assert.ok(m, "version.h parses");
   assert.strictEqual(reg.fw_train, m[1]);
+});
+
+// Both apps iframe the website's Witness Wall emulator, vendored byte for byte
+// (witness/PROVENANCE.txt). The fleet contract it reads is
+// tvos/discovery/DISCOVERY.md: only `name` is required, and a silent `online`
+// is NOT a presence claim. The website fixed its canonical copy after the apps
+// had vendored it, and nothing here noticed, because
+// scripts/check_witness_emulator_sync.sh compares the two app copies with each
+// other, never with the contract. So replay the contract's own vectors through
+// every `online:` the vendored emulator derives from a fleet row, in both apps.
+test("both apps' vendored Witness Wall reads a silent `online` as offline", () => {
+  const { vectors } = JSON.parse(readFileSync(
+    join(ROOT, "../tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"), "utf8"));
+  assert.ok(vectors.length >= 3, "the contract vectors parse");
+  for (const rel of ["witness/tv-emulator.js", "../desktop/src/witness/tv-emulator.js"]) {
+    const src = readFileSync(join(ROOT, rel), "utf8");
+    const sites = [...src.matchAll(/online:\s*([A-Za-z_$][\w$]*)\.online\s*([!=]==)\s*(true|false)\b/g)];
+    assert.ok(sites.length >= 3,
+      `${rel}: ${sites.length} fleet-row \`online\` derivations found (appear, witness:fleet, connect)`);
+    for (const [expr, row, op, lit] of sites) {
+      const derive = new Function(row, `return ${row}.online ${op} ${lit};`);
+      for (const x of vectors) {
+        const body = JSON.parse(x.input);
+        const rows = Array.isArray(body) ? body : body.devices;
+        rows.forEach((r, i) => assert.strictEqual(derive(r), x.normalized.devices[i].online,
+          `${rel}: \`${expr}\` reads vector "${x.name}" row ${i} ${JSON.stringify(r)} wrong — ` +
+          "a silent `online` is never a presence claim; re-vendor with scripts/vendor_witness_emulator.sh"));
+      }
+    }
+    assert.doesNotMatch(src, /online[^,;\n]*(!==\s*false|===\s*undefined\s*\?\s*true|\?\?\s*true)/,
+      `${rel} still defaults a silent \`online\` to present in some other shape`);
+  }
 });
 
 // ── CI wiring: a test file here is a gate only once CI runs it ─────────────
