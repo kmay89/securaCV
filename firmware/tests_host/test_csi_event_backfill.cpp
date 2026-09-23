@@ -676,6 +676,46 @@ static int test_interleaved_id_spaces_are_never_refused() {
   return 0;
 }
 
+static int test_one_bundled_row_moves_the_watermark_for_good() {
+  // A LIMITATION pinned so the docs' statement of it stays true, not a goal.
+  // Handing over one bundler id (0x80000000 up, a space no floor covers)
+  // moves the ceiling and the watermark into the bundler's space. From then
+  // on the backfill sends no chokepoint row, in that boot or the next. The
+  // fix that makes one id space (an open item) changes this test, and has
+  // to reset csi.evsent when it lands.
+  World w; Planner p; Allocator a;
+  a.boot();
+  p.begin(w.nvs_ceiling, a.stored, w);
+  open_card(w, p);
+  Host h{w, p, a};
+  h.check_floor_cap = false;
+  for (int i = 0; i < 3; ++i) h.tick(1);             // live: 1..3
+  const uint32_t bundle = 0x80000000u;
+  CHECK(p.commit(row(bundle, h.now), h.link(), w) == Route::kLive);
+  CHECK(p.watermark() == bundle);
+  CHECK(w.nvs_ceiling == bundle + csi_event_id_floor::kStride);
+  w.connected = false;
+  for (int i = 0; i < 4; ++i) h.tick(1);             // held: 4..7
+  w.connected = true;
+  h.drain();
+  CHECK(p.stats().replayed == 0);
+  for (uint32_t id = 4; id <= 7; ++id) CHECK(times_accepted(w.ha, id) == 0);
+  Planner q;
+  a.boot();
+  q.begin(w.nvs_ceiling, a.stored, w);
+  open_card(w, q);
+  CHECK(q.watermark() > bundle);
+  Host h2{w, q, a};
+  h2.check_floor_cap = false;
+  w.connected = false;
+  for (int i = 0; i < 2; ++i) h2.tick(1);            // the next boot's rows
+  w.connected = true;
+  h2.drain();
+  CHECK(q.stats().replayed == 0);
+  CHECK(w.ha.refused_backfill.empty());
+  return 0;
+}
+
 static int test_retention_cut_moves_the_cursor() {
   World w; Planner p; Allocator a;
   w.cap_bytes = 4096;
@@ -1237,6 +1277,7 @@ int main() {
   RUN(test_new_boot_ids_are_not_mistaken_for_delivered);
   RUN(test_first_boot_of_this_firmware);
   RUN(test_interleaved_id_spaces_are_never_refused);
+  RUN(test_one_bundled_row_moves_the_watermark_for_good);
   RUN(test_retention_cut_moves_the_cursor);
   RUN(test_no_broker_then_a_broker_is_not_flooded);
   RUN(test_broker_change_drops_the_backlog);

@@ -408,9 +408,13 @@ carry a state) take ids from the bundler's own space — 0x80000000 upward,
 restarting every boot, covered by no floor — and commit when their bundle
 closes, not in id order. Home Assistant's replay gate refuses a row whose
 id is below one it already verified, live or not, and the backfill skips
-exactly those rows. So judge "whole" against the rows HA could accept; a
-`replay` verdict on a LIVE row is that pre-existing id-space problem, not
-the backfill.
+exactly those rows. The first bundled row that goes out also moves the
+backfill's watermark into the bundler's space for good. After that, the
+backfill never sends a chokepoint-id row again on that canary, in the same
+boot or after a reboot; only live rows still go out. So judge "whole"
+against the rows HA could accept, on a canary whose presence module has
+not yet reported. A `replay` verdict on a LIVE row is that pre-existing
+id-space problem, not the backfill.
 
 - [ ] **An outage longer than the offline queue arrives whole**
   - Setup: an HA-enabled canary image (`release_ha`) with a card in,

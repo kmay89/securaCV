@@ -98,7 +98,16 @@ static_assert(kReadChunk >= csi_event_log_line::kLineMax,
  * next boot's ids start at the floor, and a ceiling above it would read
  * them as already delivered. An id at or above the floor (the bundler's
  * ids, which no floor covers, or one handed out after a failed floor write)
- * gets the plain stride. */
+ * gets the plain stride.
+ *
+ * A bundler id therefore moves the ceiling, and the watermark, into the
+ * bundler's space (0x8000000A and up) the first time one is handed over,
+ * and nothing lowers them again. From then on, on that device, every
+ * chokepoint id reads as delivered: the backfill never sends a chokepoint
+ * row again, in that boot or after a reboot (the live path still does).
+ * The watermark cannot fall back into the chokepoint space by itself. So
+ * the fix that makes one id space (an open item) must reset csi.evsent,
+ * and Home Assistant's stored mark, when it lands. */
 inline uint32_t ceiling_for(uint32_t id, uint32_t id_floor) {
   const uint32_t c = csi_event_id_floor::floor_for(id);
   return (id_floor > id && id_floor < c) ? id_floor : c;

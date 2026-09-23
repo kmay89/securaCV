@@ -179,8 +179,11 @@ those bodies `"replay":true`. On the canary base
   `system.integrity` — take ids from its own space, 0x80000000 upward,
   which restarts every boot and commits in bundle-close order; the gate
   refuses such a row once a higher id is verified, live or replayed, and
-  the backfill skips it rather than send a refused id. One id space is an
-  open item.);
+  the backfill skips it rather than send a refused id. And once one bundled
+  row has been handed over, the watermark sits in the bundler's space for
+  good: from then on the backfill sends no chokepoint-id row at all, in that
+  boot or after a reboot. One id space is an open item, and its fix has to
+  reset the stored watermark (NVS `csi.evsent`) and Home Assistant's mark.);
 - a row committed while the link was up but held behind the backlog is sent
   with `"replay":false`, since it is news; everything else the backfill sends
   says `"replay":true`;
