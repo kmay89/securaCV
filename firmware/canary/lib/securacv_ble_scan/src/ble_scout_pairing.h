@@ -248,7 +248,9 @@ inline void id_to_hex(const uint8_t id[ble_scan::HASHED_ID_LEN],
 /* Strict: exactly 32 hex digits (either case), nothing after. */
 inline bool id_from_hex(const char* hex, uint8_t out[ble_scan::HASHED_ID_LEN]) {
   if (hex == nullptr || strlen(hex) != 2 * ble_scan::HASHED_ID_LEN) return false;
-  uint8_t tmp[ble_scan::HASHED_ID_LEN];
+  /* Zeroed although the loop writes every byte: cppcheck cannot see that
+   * and fails canary-wap's static analysis on the memcpy (uninitvar). */
+  uint8_t tmp[ble_scan::HASHED_ID_LEN] = {0};
   for (size_t i = 0; i < 2 * ble_scan::HASHED_ID_LEN; ++i) {
     const char c = hex[i];
     uint8_t v;
