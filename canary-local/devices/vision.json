@@ -22,7 +22,7 @@
       "web": "SPA on device (LittleFS)",
       "mqtt": "presence/dwelling/confidence + signed chain"
     },
-    "status": "released \u2014 print-validated enclosure, fw 2.2.0",
+    "status": "released \u2014 print-validated enclosure",
     "docs": [
       "docs/hardware/canary_vision_getting_started.md",
       "docs/hardware/grove_vision_ai_v2_guide.md"
