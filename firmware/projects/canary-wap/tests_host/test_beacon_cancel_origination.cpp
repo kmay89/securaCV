@@ -457,6 +457,25 @@ void test_source_call_sites_follow_the_policy() {
          "the accept byte is acted on only after the tag has authenticated it");
   EXPECT(body("ecdh_session_key").find("beacon_cosign_aad::shared_secret_is_zero(shared)") != std::string::npos,
          "ecdh_session_key refuses an all-zero shared secret");
+
+  // (6) Key material is wiped with secure_zero on every exit path — a
+  // memset of a buffer about to leave scope is a dead store the optimizer
+  // deletes. One wipe per return statement, and no memset at all.
+  const std::string ecdh = body("ecdh_session_key");
+  const std::string enc = body("cosign_encrypt");
+  const std::string dec = body("cosign_decrypt");
+  EXPECT(!ecdh.empty() && count(ecdh, "return") == 3 &&
+         count(ecdh, "beacon_cosign_aad::secure_zero(shared,sizeof(shared));return") == 3,
+         "ecdh_session_key wipes the shared secret right before each of its three returns");
+  EXPECT(count(enc, "return") == 2 &&
+         count(enc, "beacon_cosign_aad::secure_zero(key,sizeof(key));return") == 2,
+         "cosign_encrypt wipes the session key right before each return");
+  EXPECT(count(dec, "return") == 2 &&
+         count(dec, "beacon_cosign_aad::secure_zero(key,sizeof(key));return") == 2,
+         "cosign_decrypt wipes the session key right before each return");
+  EXPECT(ecdh.find("memset(") == std::string::npos && enc.find("memset(") == std::string::npos &&
+         dec.find("memset(") == std::string::npos,
+         "no key wipe in the COSIGN crypto path is a plain memset");
 }
 }  // namespace
 

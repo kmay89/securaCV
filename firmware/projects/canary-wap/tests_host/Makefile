@@ -70,7 +70,8 @@ BEACON_CANCEL_SRC = test_beacon_cancel_origination.cpp
 # Beacon COSIGN envelope associated data (beacon_cosign_aad.h): the clear
 # routing fields both ends bind into the ChaCha20-Poly1305 tag (layout, byte
 # order, every field an attacker could flip changes the bytes, REQ/RESP
-# domain separation) and the all-zero X25519 shared-secret refusal.
+# domain separation), the all-zero X25519 shared-secret refusal, and
+# secure_zero (the key wipe the optimizer cannot delete).
 BEACON_AAD_BIN = test_beacon_cosign_aad
 BEACON_AAD_SRC = test_beacon_cosign_aad.cpp
 

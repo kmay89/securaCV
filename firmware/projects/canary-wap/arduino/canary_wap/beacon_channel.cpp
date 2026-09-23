@@ -319,8 +319,11 @@ static bool ecdh_session_key(const uint8_t* their_x25519_pubkey,
                              uint8_t out_key[32]) {
   // Compute the shared secret via X25519, then HKDF-SHA256 it down to a
   // 32-byte session key with a domain-separated label.
+  // Every exit path wipes `shared` with secure_zero: a memset of a buffer
+  // about to leave scope is a dead store the optimizer deletes.
   uint8_t shared[32];
   if (!Curve25519::eval(shared, g_x25519_privkey, their_x25519_pubkey)) {
+    beacon_cosign_aad::secure_zero(shared, sizeof(shared));
     return false;
   }
   // A low-order peer key yields an all-zero secret — a key anyone can
@@ -328,6 +331,7 @@ static bool ecdh_session_key(const uint8_t* their_x25519_pubkey,
   if (beacon_cosign_aad::shared_secret_is_zero(shared)) {
     health_log(SCV_LOG_WARNING, SCV_CAT_CRYPTO,
                "beacon: X25519 shared secret is all-zero (low-order peer key) — refused");
+    beacon_cosign_aad::secure_zero(shared, sizeof(shared));
     return false;
   }
   // Domain-separate so the same shared secret can't be cross-purposed.
@@ -339,7 +343,7 @@ static bool ecdh_session_key(const uint8_t* their_x25519_pubkey,
   mbedtls_sha256_update(&ctx, shared, 32);
   mbedtls_sha256_finish(&ctx, out_key);
   mbedtls_sha256_free(&ctx);
-  memset(shared, 0, sizeof(shared));
+  beacon_cosign_aad::secure_zero(shared, sizeof(shared));
   return true;
 }
 
@@ -356,7 +360,10 @@ static bool cosign_encrypt(const uint8_t* their_x25519_pubkey,
                            uint8_t nonce[12], uint8_t tag[16],
                            uint8_t* out_ciphertext) {
   uint8_t key[32];
-  if (!ecdh_session_key(their_x25519_pubkey, key)) return false;
+  if (!ecdh_session_key(their_x25519_pubkey, key)) {
+    beacon_cosign_aad::secure_zero(key, sizeof(key));
+    return false;
+  }
   esp_fill_random(nonce, 12);
   ChaChaPoly aead;
   aead.setKey(key, 32);
@@ -364,7 +371,7 @@ static bool cosign_encrypt(const uint8_t* their_x25519_pubkey,
   aead.addAuthData(aad, aad_len);
   aead.encrypt(out_ciphertext, plaintext, plaintext_len);
   aead.computeTag(tag, 16);
-  memset(key, 0, sizeof(key));
+  beacon_cosign_aad::secure_zero(key, sizeof(key));
   return true;
 }
 
@@ -374,14 +381,17 @@ static bool cosign_decrypt(const uint8_t* their_x25519_pubkey,
                            const uint8_t nonce[12], const uint8_t tag[16],
                            uint8_t* out_plaintext) {
   uint8_t key[32];
-  if (!ecdh_session_key(their_x25519_pubkey, key)) return false;
+  if (!ecdh_session_key(their_x25519_pubkey, key)) {
+    beacon_cosign_aad::secure_zero(key, sizeof(key));
+    return false;
+  }
   ChaChaPoly aead;
   aead.setKey(key, 32);
   aead.setIV(nonce, 12);
   aead.addAuthData(aad, aad_len);
   aead.decrypt(out_plaintext, ciphertext, ciphertext_len);
   const bool ok = aead.checkTag(tag, 16);
-  memset(key, 0, sizeof(key));
+  beacon_cosign_aad::secure_zero(key, sizeof(key));
   return ok;
 }
 

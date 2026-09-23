@@ -20,7 +20,11 @@
  * Also here: the all-zero shared-secret check. X25519 against a low-order
  * peer key yields an all-zero secret — a session key an attacker knows.
  * ecdh_session_key refuses it explicitly rather than rely on what the
- * Curve25519 library's eval() promises.
+ * Curve25519 library's eval() promises. And secure_zero, which wipes the
+ * shared secret and the session key on every exit path of ecdh_session_key,
+ * cosign_encrypt and cosign_decrypt: a plain memset of a buffer that is about
+ * to go out of scope is a dead store the optimizer may delete (it does, at
+ * -O2 and -Os).
  *
  * Copyright (c) 2026 ERRERlabs / Karl May
  * License: Apache-2.0
@@ -76,6 +80,16 @@ inline bool shared_secret_is_zero(const uint8_t shared[32]) {
   uint8_t acc = 0;
   for (size_t i = 0; i < 32; i++) acc |= shared[i];
   return acc == 0;
+}
+
+// Zero `n` bytes at `p` in a way the optimizer keeps. Each store goes through
+// a volatile pointer, and the empty asm with a "memory" clobber stops the
+// compiler from assuming the bytes are dead afterward. Same technique as
+// device_pseudonym.h's secure_zero and rf_presence.cpp's secure_wipe.
+inline void secure_zero(void* p, size_t n) {
+  volatile uint8_t* vp = static_cast<volatile uint8_t*>(p);
+  while (n--) *vp++ = 0;
+  __asm__ __volatile__("" ::: "memory");
 }
 
 }  // namespace beacon_cosign_aad

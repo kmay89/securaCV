@@ -1,6 +1,6 @@
 // Host test for beacon_cosign_aad.h — the associated data the Beacon COSIGN
 // envelope binds into its ChaCha20-Poly1305 tag (spec/beacon_channel_v0.md
-// §6.3), and the all-zero X25519 shared-secret refusal.
+// §6.3), the all-zero X25519 shared-secret refusal, and secure_zero.
 //
 // The AEAD and X25519 calls themselves live in beacon_channel.cpp against the
 // Arduino Crypto library, which is not vendored here; what this pins is the
@@ -105,6 +105,31 @@ void test_zero_shared_secret_refused() {
   EXPECT(!shared_secret_is_zero(full), "an all-0xFF secret is not zero");
 }
 
+// secure_zero is what wipes the X25519 shared secret and the session key in
+// beacon_channel.cpp. That the optimizer keeps its stores is a property of the
+// volatile writes (a plain memset there is deleted at -O2/-Os — see the review
+// fix commit); what a host test can pin is that it zeroes exactly the bytes
+// it is given, for every length the firmware uses and the edge ones.
+void test_secure_zero_wipes_exactly_n_bytes() {
+  const size_t lens[] = {0, 1, 16, 31, 32};
+  for (size_t n : lens) {
+    uint8_t buf[40];
+    std::memset(buf, 0xA5, sizeof(buf));
+    secure_zero(buf + 4, n);
+    bool zeroed = true;
+    for (size_t i = 0; i < n; i++) zeroed = zeroed && buf[4 + i] == 0;
+    bool untouched = true;
+    for (size_t i = 0; i < 4; i++) untouched = untouched && buf[i] == 0xA5;
+    for (size_t i = 4 + n; i < sizeof(buf); i++) untouched = untouched && buf[i] == 0xA5;
+    EXPECT(zeroed, "secure_zero zeroes every byte it is given");
+    EXPECT(untouched, "secure_zero writes nothing outside the range it is given");
+  }
+  uint8_t key[32];
+  std::memset(key, 0x5C, sizeof(key));
+  secure_zero(key, sizeof(key));
+  EXPECT(shared_secret_is_zero(key), "a wiped 32-byte key reads as all zero");
+}
+
 }  // namespace
 
 int main() {
@@ -112,6 +137,7 @@ int main() {
   test_resp_layout();
   test_every_clear_field_is_bound();
   test_zero_shared_secret_refused();
+  test_secure_zero_wipes_exactly_n_bytes();
   if (failures == 0) {
     std::printf("ALL %d beacon cosign AAD checks PASSED\n", checks);
     return 0;
