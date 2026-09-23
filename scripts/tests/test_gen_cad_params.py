@@ -363,19 +363,38 @@ class CommittedTreeIsAFixedPoint(unittest.TestCase):
         self.assertIn("(40 of them resolved from canary_board_lib.scad)", out.getvalue())
 
     def test_the_printed_order_names_the_carry_and_its_check(self):
-        # REGEN_ORDER is what a write and a failed --check print. Step 9 must
+        # REGEN_ORDER is what a write and a failed --check print. Step 10 must
         # say the carry has a check form (`--site <checkout> --check` names a
         # stale carry, writing nothing), or the operator carries to find out.
         order = gcp.REGEN_ORDER
         self.assertIn("python3 scripts/regen_cad.py --previews <dir> [--site <website checkout>]",
                       order)
-        self.assertIn("9. python3 docs/hardware/enclosure/gen_builder_manifest.py "
+        self.assertIn("10. python3 docs/hardware/enclosure/gen_builder_manifest.py "
                       "[--site <website checkout>]", order)
         self.assertIn("--site <website checkout> --check names a stale carry", order)
         lines = order.splitlines()
-        nine = next(i for i, ln in enumerate(lines) if ln.lstrip().startswith("9. "))
-        self.assertIn("--check names a stale carry", lines[nine + 1])
-        self.assertTrue(lines[nine + 2].lstrip().startswith("10. "))
+        ten = next(i for i, ln in enumerate(lines) if ln.lstrip().startswith("10. "))
+        self.assertIn("--check names a stale carry", lines[ten + 1])
+        self.assertEqual(len(lines), ten + 2, "the carry and its check close the order")
+
+    def test_the_printed_order_is_regen_cads_order(self):
+        # The prose order and the runnable one cannot disagree: every generator
+        # REGEN_ORDER names appears in scripts/regen_cad.py's STEPS in the same
+        # relative order — gen_enclosures.py BEFORE gen_figures.mjs, which reads
+        # the catalog.json it writes.
+        spec = importlib.util.spec_from_file_location("regen_cad", REPO / "scripts" / "regen_cad.py")
+        rc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rc)  # type: ignore[union-attr]
+        script_of = {}
+        for s in rc.STEPS:
+            for a in s.cmd:
+                if a.endswith((".py", ".mjs", ".sh")):
+                    script_of[Path(a).name] = s.name
+        named = [script_of[m] for m in re.findall(r"([A-Za-z0-9_]+\.(?:py|mjs)|render\.sh|setup\.sh)",
+                                                  gcp.REGEN_ORDER)
+                 if m in script_of and m != "regen_cad.py"]
+        self.assertEqual(named, [n for n in rc.STEP_NAMES if n in named])
+        self.assertLess(named.index("gen_enclosures"), named.index("gen_figures"))
 
 
 class BoardRegistry(unittest.TestCase):

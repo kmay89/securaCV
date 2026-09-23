@@ -566,11 +566,11 @@ These dimensions were reconciled against **Seeed's official spec** and a
 **Changed a knob? Run the whole chain, not one link of it.** An STL is the
 first of eleven committed, byte-gated files a dimension moves — the assembled
 envelopes (`gen_assembled_dims.py`), the hardware ledger (`gen_hardware.py`),
-the fleet figures and their firmware and
+the enclosure catalog (`gen_enclosures.py` — the figures cite it as evidence,
+so it comes first), the fleet figures and their firmware and
 Swift mirrors (`gen_figures.mjs`), the flashers' models (`gen_device_glbs.mjs`),
-the display sketch mirror, `flash.json`, the web builder's manifest and the
-enclosure catalog — in a fixed order, with the emulator dist rebuild in the
-middle of it. [`scripts/regen_cad.py`](../../../scripts/regen_cad.py) is that
+the display sketch mirror, `flash.json` and the web builder's manifest — in a
+fixed order, with the emulator dist rebuild in the middle of it. [`scripts/regen_cad.py`](../../../scripts/regen_cad.py) is that
 order as one command, from the repo root:
 
 ```bash

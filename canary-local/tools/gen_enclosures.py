@@ -128,6 +128,25 @@ NON_PRODUCT_SCADS = {
                                       # not a part
 }
 
+
+def is_scratch_scad(name: str) -> bool:
+    """A throwaway .scad a generator writes BESIDE the case files while it
+    measures — never a product. scad_probe.py (gen_assembled_dims.py,
+    gen_hardware.py) renders from a hidden `.tmp_probe_<label>.scad` that
+    `include`s a case and deletes it afterwards, so running this generator
+    while one of those is on disk used to catalog a bogus product. Hidden
+    files and tmp-named files are skipped by name, whoever wrote them."""
+    return name.startswith(".") or name.lower().startswith(("tmp", "_tmp"))
+
+
+def case_scads(enc: Path | None = None) -> list[Path]:
+    """Every committed-looking .scad in the enclosure folder (ENC unless
+    given), sorted — the scratch files above excluded. NON_PRODUCT_SCADS (the
+    libraries and harnesses) is the catalog's further, curated exclusion."""
+    enc = ENC if enc is None else enc
+    return sorted(p for p in enc.glob("*.scad") if not is_scratch_scad(p.name))
+
+
 # Preview meshes rendered for in-development designs the device sheets
 # feature. part → -D part=<...>; coarse curves keep files small.
 RENDER_PRESETS = {
@@ -249,7 +268,7 @@ def parse_tables(md: str):
         # The scad behind the parts: shared per family prefix.
         scad = None
         m = re.match(r"(canary_[a-z]+(?:_[a-z]+)*?)_(?:enclosure|doorbell)", stls[0]["file"])
-        candidates = sorted(ENC.glob("*.scad"))
+        candidates = case_scads()
         for sc in candidates:
             if stls[0]["file"].startswith(sc.stem):
                 scad = sc.name
@@ -1452,8 +1471,8 @@ def variant_from_set(s: dict, product_scad: str) -> dict:
 def catalog_main():
     md = (ENC / "README.md").read_text(errors="replace")
     sets = parse_tables(md)
-    scad_files = sorted(p.name for p in ENC.glob("*.scad")
-                        if p.name not in NON_PRODUCT_SCADS)
+    scad_files = [p.name for p in case_scads()
+                  if p.name not in NON_PRODUCT_SCADS]
     scads = {name: parse_scad(ENC / name) for name in scad_files}
     # Environment rating parsed from each model's own `// @env` header line.
     env_by_scad = {name: parse_env((ENC / name).read_text(errors="replace"))
