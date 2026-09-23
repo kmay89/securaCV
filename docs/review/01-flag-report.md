@@ -240,8 +240,10 @@ multi-path mesh resilience story has unbuilt legs. **Fix:** scope mesh claims to
 >   capture-time privacy steps — is closed: the RTSP (GStreamer/FFmpeg) and file (`file`/`file_ffmpeg`)
 >   backends now all emit through one shared gate, `ingest::raw_frame_at_capture` (coarsen bucket +
 >   feature hash + `RawFrame`), covered by a contract test. The `ffmpeg` path stays the CI-exercised
->   canonical decoder (`ingest-rtsp` + `tests/rtsp_e2e.rs`, #666). *Follow-up:* the feature-gated
->   `esp32` / `v4l2` sources still inline the equivalent sequence and should adopt the same gate.
+>   canonical decoder (`ingest-rtsp` + `tests/rtsp_e2e.rs`, #666). The feature-gated `esp32` and
+>   `v4l2` sources emit through the same gate too (2026-09), and a source-text test
+>   (`every_frame_source_emits_through_the_capture_gate`) fails the default build if any file in
+>   `src/ingest/` re-implements the sequence inline.
 > - **F-12 ✅ Resolved (#673/#706)** — the badge half was fixed in #673 (`README.md:5` now `v1-rc`,
 >   no longer "core works end-to-end" beside an unshipped v1). The dangling
 >   `<!-- TODO: add a screenshot … -->` at `README.md:26` is gone: the verified-✓ timeline card
