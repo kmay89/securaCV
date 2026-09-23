@@ -44,7 +44,7 @@
     ],
     "category": "Utility",
     "shortDescription": "The local-first Canary workshop.",
-    "longDescription": "Meet your Canary before you meet your Canary. The SecuraCV Lab runs the real firmware, live 3D device cards, and symptom-first fix-it flows entirely on your own machine. Local-first: it talks to your own devices; the one thing it fetches on its own is its update manifest, and every update it offers is signature-verified before install. It flashes a Canary over USB with the SecuraCV Flasher's bundled espflash engine, downloading the signed firmware you choose from the project's GitHub releases only when you press Flash.",
+    "longDescription": "Meet your Canary before you meet your Canary. The SecuraCV Lab runs the real firmware, live 3D device cards, and symptom-first fix-it flows entirely on your own machine. Local-first: it talks to your own devices, and it reaches the internet only for the project's GitHub releases: its update manifest (every update it offers is signature-verified before install), and firmware for the Flash page. It flashes a Canary over USB with the SecuraCV Flasher's bundled espflash engine: once a board is connected, it asks which signed firmware is published, and pressing Flash downloads that image and checks it against the pinned release key before a byte is written.",
     "linux": {
       "deb": {
         "depends": [

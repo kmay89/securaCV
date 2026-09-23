@@ -2657,6 +2657,39 @@ test("native flashing: the Lab's flash page gives the Flasher's diagnostics, and
   assert.match(nativeJs, /invoke\("native_capabilities"\)/, "flash-native.js must probe native_capabilities");
 });
 
+// RELEASE_LESSONS 2026-09-03: a network claim lives on more surfaces than the
+// file being edited, and nothing held them together — so this does. The
+// native bench asks GitHub which firmware is published as soon as a board is
+// read (identify → refreshManifest, and again on the dev toggle), BEFORE
+// anyone presses Flash; every Lab surface that states what the app fetches
+// must say that, and none may keep the old "only when you press Flash" / "the
+// one thing it fetches on its own" wording that became false with it.
+test("the Lab's network claim says what the native bench fetches, on every surface", () => {
+  const nativeJs = read(join(CANARY, "assets/flash-native.js"));
+  assert.match(nativeJs, /recheck\.classList\.remove\("flash-hidden"\);\s*await refreshManifest\(\);\s*renderPick\(\);/,
+    "the bench's manifest read moved — if it now waits for Flash, the claim below may say so again");
+  // Comments and prose flattened: `#` / `//` line markers dropped, whitespace folded.
+  const flat = (t) => t.replace(/^\s*(?:#|\/\/)\s?/gm, "").replace(/\s+/g, " ");
+  const surfaces = [
+    ["desktop-lab/README.md", 1],
+    ["desktop-lab/INSTALL.md", 1],
+    ["desktop-lab/src-tauri/tauri.conf.json", 1], // the .deb/AppImage store text
+    ["desktop-lab/ipad-guide.html", 1],
+    ["desktop-lab/src-tauri/Cargo.toml", 1],
+    ["desktop-lab/src-tauri/src/lib.rs", 1],
+    [".github/workflows/desktop-release.yml", 3], // the three release bodies
+  ];
+  for (const [path, want] of surfaces) {
+    const text = flat(read(join(ROOT, path)));
+    assert.strictEqual(text.split("which signed firmware is published").length - 1, want,
+      `${path} must say the Lab asks which signed firmware is published once a board is connected (${want}×)`);
+    for (const stale of [/only when (?:you press|the user presses) Flash/i, /fetches on its own/i,
+      /the one thing it (?:ever )?fetches/i]) {
+      assert.ok(!stale.test(text), `${path} still claims ${stale} — the bench fetches the release manifest before Flash`);
+    }
+  }
+});
+
 // A DOM just big enough for flash-native.js: elements with children, class
 // lists, text, listeners and the few properties the bench reads and writes.
 function fakeDocument() {

@@ -280,7 +280,7 @@ jobs:
           tagName: ${{ (github.event_name == 'push' || inputs.publish) && 'app-v__VERSION__' || '' }}
           releaseName: "SecuraCV Lab v__VERSION__"
           releaseBody: |
-            The **SecuraCV Lab**, as a native app — local-first; it talks to your own devices, the one thing it fetches on its own is its update manifest, and it downloads a signed firmware release only when you press Flash.
+            The **SecuraCV Lab**, as a native app — local-first; it talks to your own devices and reaches the internet only for the project's GitHub releases: its update manifest, and firmware for the Flash page (once a board is connected it asks which signed firmware is published; pressing Flash downloads that image).
 
             - **macOS**: download the `.dmg` (universal — Apple Silicon & Intel).
             - **Linux**: `.AppImage` (runs anywhere) or `.deb` (Debian/Ubuntu).
@@ -453,7 +453,7 @@ jobs:
           tagName: ${{ (github.event_name == 'push' || inputs.publish) && 'app-v__VERSION__' || '' }}
           releaseName: "SecuraCV Lab v__VERSION__"
           releaseBody: |
-            The **SecuraCV Lab**, as a native app — local-first; it talks to your own devices, the one thing it fetches on its own is its update manifest, and it downloads a signed firmware release only when you press Flash.
+            The **SecuraCV Lab**, as a native app — local-first; it talks to your own devices and reaches the internet only for the project's GitHub releases: its update manifest, and firmware for the Flash page (once a board is connected it asks which signed firmware is published; pressing Flash downloads that image).
 
             - **macOS**: download the `.dmg` (universal — Apple Silicon & Intel).
             - **Linux**: `.AppImage` (runs anywhere) or `.deb` (Debian/Ubuntu).
@@ -572,7 +572,7 @@ jobs:
             echo
             echo "---"
             echo
-            echo "The **SecuraCV Lab**, as a native app — local-first; it talks to your own devices, the one thing it fetches on its own is its update manifest, and it downloads a signed firmware release only when you press Flash."
+            echo "The **SecuraCV Lab**, as a native app — local-first; it talks to your own devices and reaches the internet only for the project's GitHub releases: its update manifest, and firmware for the Flash page (once a board is connected it asks which signed firmware is published; pressing Flash downloads that image)."
             echo
             echo "- **macOS**: download the \`.dmg\` (universal — Apple Silicon & Intel)."
             echo "- **Linux**: \`.AppImage\` (runs anywhere) or \`.deb\` (Debian/Ubuntu)."

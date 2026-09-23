@@ -183,6 +183,7 @@ complete uninstall:
   package.)
 
 The Lab keeps all of its state locally and talks to your own devices. It
-reaches the internet for two things only: its update manifest — the one thing
-it ever fetches on its own — and, when you press Flash, the signed firmware
-release you chose, from the project's GitHub releases.
+reaches the internet for two things only, both from the project's GitHub
+releases: its update manifest (shortly after launch, then every six hours),
+and firmware for the Flash page — once a board is connected there, it asks
+which signed firmware is published, and pressing Flash downloads that image.

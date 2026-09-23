@@ -9,8 +9,11 @@
 // Self-update (desktop only; iOS/iPadOS updates ride the App Store): the app
 // checks its release channel at launch and on a six-hour routine while it
 // stays open — see src/self_update.rs for the shape, copied from the Flasher.
-// Local-first still means local-first: the only thing the Lab ever fetches on
-// its own is its update manifest, from the project's releases.
+// Local-first still means local-first: the Lab reaches the internet only for
+// the project's GitHub releases — its update manifest, and, on the Flash
+// page, which signed firmware is published (read once a board is connected)
+// and the image the user presses Flash for (src/flash.rs, the engine's
+// net.rs).
 
 #[cfg(desktop)]
 mod companion;

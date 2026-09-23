@@ -4,12 +4,13 @@ A native **Mac & Linux** application that wraps the local-first
 [`canary-local`](../canary-local) Lab in a [Tauri](https://tauri.app) shell.
 It runs the real firmware emulator, 3D device cards, and fix-it flows
 entirely on your machine — it **talks to your own devices**, and it reaches
-the internet for exactly two things: the one thing it fetches on its own, its
-update manifest from GitHub (15 s after launch, then every 6 h — every update
-it offers is signature-verified before install), and, when you press Flash on
-the Flash page, that firmware's signed release from the project's GitHub
-releases (checked against the pinned release key before a byte is written) —
-which is exactly the point of a security product.
+the internet for exactly two things, both from the project's GitHub
+releases: its update manifest (15 s after launch, then every 6 h — every
+update it offers is signature-verified before install), and firmware for the
+Flash page — once a board is connected there, it asks which signed firmware
+is published (and asks again if you switch to the dev channel), and pressing
+Flash downloads that image (checked against the pinned release key before a
+byte is written) — which is exactly the point of a security product.
 
 > **Sibling app.** [`../desktop`](../desktop) is the **SecuraCV Flasher** — a
 > focused native tool that flashes a Canary over USB with bundled `espflash`

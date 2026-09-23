@@ -33,8 +33,10 @@ serde_json = "1"
 # (desktop/src-tauri/Cargo.toml) — rustls, JSON only, no default features.
 # Local-first still means local-first: this client only ever GETs /api/fleet
 # on LAN addresses the frontend hands it, never anything on the internet. (The
-# flash engine's own client — flash-engine net.rs — fetches the pinned
-# firmware release from GitHub, and only when the user presses Flash.)
+# flash engine's own client — flash-engine net.rs — reads the firmware release
+# manifest from GitHub once a board is connected on the Flash page, i.e. which
+# signed firmware is published, and downloads the image when the user presses
+# Flash.)
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 # Self-update, the same shape as the Flasher (desktop/): the updater plugin
 # polls the rolling `lab-latest` release pointer, the dialog plugin asks the
