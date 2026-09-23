@@ -154,6 +154,12 @@ beacon or chirp code, read the Beacon section of `AGENTS.md` in full first.
   `python3 scripts/carry_to_site.py --site <website-checkout>` stamps the
   /checkup build matrix, the landing page's kernel-status grid and the
   Witness Wall's vendored verifier (the same weekly job runs it)
+- Touched a `platformio.ini` (or a file its `extra_configs` reads), a
+  `library.json` / `library.properties`, a sketch's `sketch.yaml` profile
+  pins, or a workflow's `esp32:esp32` core-version row?
+  `python3 scripts/gen_firmware_sbom.py` and commit
+  `sbom/sbom-firmware.cdx.json` — CI runs `--check --validate` and refuses a
+  tree whose two Arduino core axes disagree
 - Commit format: `<type>(<scope>): <description>` — `feat`, `fix`, `docs`,
   `test`, `refactor`, `chore`
 
@@ -184,6 +190,11 @@ beacon or chirp code, read the Beacon section of `AGENTS.md` in full first.
 | Which products/envs ship | `firmware/flavors.json` |
 | Board hardware-verification status | `firmware/boards/boards.json` — `verified` vs `compile-tested` |
 | Release targets | `.github/release-targets.yml` — add a target there, not in workflow YAML |
+| The firmware SBOM | `sbom/sbom-firmware.cdx.json`, generated from the build inputs by `scripts/gen_firmware_sbom.py` and committed; how it is derived: `sbom/README.md` |
+| The broker-transport decision (plain / CA / pin / lab, fail-closed) | `firmware/common/network/mqtt_transport_logic.h` — one header every product applies; per-variant truth in `docs/FIRMWARE_VARIANT_AUDIT.md` |
+| The fleet roll-call (`GET /api/fleet`) | `src/fleet_peers.rs` + `src/api/mod.rs` on the hub, `firmware/common/fleet_selfreport/` on a Canary; the contract is `tvos/discovery/DISCOVERY.md` |
+| The hub plan (`--with …`) | `canary-local/tools/hub_seed_apply.py` (the plan and its executor; `--dry-run` narrates a step) and `hub_host_provision.sh` (the host runner) |
+| The witness page contract (`GET /api/v1/witness`) | `spec/witness_api_v1.md`, with `spec/fixtures/witness_page_v1.json` byte-compared by a firmware host test and a Swift XCTest |
 
 ## CI gates you will trip
 
@@ -194,6 +205,8 @@ These run on every PR. Run the relevant one locally before you push.
 | `scripts/lint_docs_index.py` | Every doc reachable from `docs/README.md`; no dead links |
 | `scripts/lint_md_links.py` | Every relative link and `#anchor` in every tracked `.md` resolves — including the ~160 files outside `docs/` |
 | `scripts/lint_fleet_word.py` | A group of Canaries is a *fleet* — the banned bird-group word fails the build (rule 3, now deterministic) |
+| `scripts/lint_spelling.py` | US spellings everywhere (rule 3b); the banned forms live in its regex and nowhere else |
+| `scripts/lint_glossary_status.py` | The glossary's device-line Status column equals the verdict `figures.json` derives (or an honest non-ladder label); a new table row needs a `ROW_MAP` entry in the same commit |
 | `scripts/lint_dictionary_sync.py` | Rust/Python/JS/firmware vocabularies match `spec/witness_dictionary.json` |
 | `scripts/gen_agent_entrypoints.py --check` | Vendor agent files match this file's brief block |
 | `scripts/lint_no_impersonation.sh` | No red, no reserved emergency tones, no official-alert phrasing |
@@ -203,6 +216,7 @@ These run on every PR. Run the relevant one locally before you push.
 | `scripts/lint_feature_flags.sh` | Feature-flag hygiene |
 | `scripts/lint_version_sync.sh`, `desktop/scripts/check_app_versions.py` | One version per app across `tauri.conf.json` / `package.json` / `Cargo.toml` |
 | `scripts/lint_bom.py` | BOM CSVs schema-clean and wired to the generator |
+| `scripts/gen_firmware_sbom.py --check --validate` | The committed firmware SBOM matches the build inputs, validates against CycloneDX 1.5, and the workflow core rows agree with the `sketch.yaml` profiles |
 | `scripts/lint_cloudkit_container.py` | No `CKContainer.default()`; the container identifier matches both entitlements files |
 
 Full list: [`.github/workflows/lint.yml`](.github/workflows/lint.yml) and
