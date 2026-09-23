@@ -356,7 +356,12 @@ def test_verify_sentinel_event_missing_required_field():
 @pytest.mark.parametrize(
     "field,junk",
     [("confidence", "high"), ("anomaly", -1), ("modality_bits", True),
-     ("seq", 7.5), ("bucket_uptime_s", None)],
+     ("seq", 7.5), ("bucket_uptime_s", None),
+     # Spellings Python's int() forgives but `%u` never prints.
+     ("seq", " 7\n"), ("seq", "+7"), ("confidence", "8_2"),
+     ("seq", "\u0667"), ("modality_bits", "011"), ("anomaly", "-0"),
+     ("anomaly", float("nan")), ("bucket_uptime_s", float("inf")),
+     ("bucket_uptime_s", [1200])],
 )
 def test_verify_sentinel_event_refuses_non_uint_scalars(field, junk):
     """The firmware prints these with %u / %lu; anything that is not a plain
@@ -370,6 +375,54 @@ def test_verify_sentinel_event_refuses_non_uint_scalars(field, junk):
     verdict = verify_sentinel_event(ts, "sentinel01", payload)
     assert verdict.trusted is False
     assert verdict.reason == "unsigned"
+
+
+@pytest.mark.parametrize(
+    "field,loose",
+    [("seq", " 7\n"), ("seq", "+7"), ("seq", "07"), ("seq", "\u0667"),
+     ("confidence", "8_2"), ("confidence", "82 "), ("bucket_uptime_s", "1_200"),
+     ("modality_bits", "011")],
+)
+def test_sentinel_loose_spelling_of_a_signed_value_is_not_trusted(field, loose):
+    """Each of these parses (int()) to exactly the golden value, so a lenient
+    reader would call the golden signature valid while the Last Event
+    attributes showed a string the device never sent. Under a PINNED key the
+    verdict must still be "unsigned" — the parse refuses before any key is
+    consulted."""
+    _priv, pub = _make_keypair()
+    hass = HomeAssistant()
+    ts = TrustStore(hass, entry_id="abc")
+    run(ts.async_load())
+    _pin(ts, "sentinel01", pub)
+    payload = _sentinel_payload(
+        fp=ts.get("sentinel01").fingerprint_hex, sig=SENTINEL_GOLDEN_SIG
+    )
+    payload[field] = loose
+    verdict = verify_sentinel_event(ts, "sentinel01", payload)
+    assert verdict.trusted is False
+    assert verdict.reason == "unsigned"
+
+
+@pytest.mark.parametrize(
+    "field,spelling",
+    [("seq", "7"), ("seq", 7.0), ("confidence", "82"), ("anomaly", "0"),
+     ("bucket_uptime_s", 1200.0)],
+)
+def test_sentinel_plain_decimal_spellings_still_verify(field, spelling):
+    """The firmware's own form as a string, and an integral JSON float, are
+    the same value — refusing them would be a false negative."""
+    _priv, pub = _make_keypair()
+    hass = HomeAssistant()
+    ts = TrustStore(hass, entry_id="abc")
+    run(ts.async_load())
+    _pin(ts, "sentinel01", pub)
+    payload = _sentinel_payload(
+        fp=ts.get("sentinel01").fingerprint_hex, sig=SENTINEL_GOLDEN_SIG
+    )
+    payload[field] = spelling
+    verdict = verify_sentinel_event(ts, "sentinel01", payload)
+    assert verdict.trusted is True
+    assert verdict.reason == "ok"
 
 
 def test_verify_chain_happy_path():
