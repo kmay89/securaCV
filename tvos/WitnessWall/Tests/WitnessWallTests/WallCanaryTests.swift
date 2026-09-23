@@ -5,8 +5,9 @@
 //  engine inputs and the one ambient sentence — so that is what these pin.
 //  The load-bearing rules: a field the Wall cannot name stays at its honest
 //  zero, "verified" feeds the bird only when this TV walked the chain
-//  itself, chain trouble is the alarm that hides the bird entirely, and
-//  the sentence never words an alarm.
+//  itself against the key pinned at pairing, chain trouble (or a changed
+//  key) is the alarm that hides the bird entirely, and the sentence never
+//  words an alarm.
 
 import XCTest
 import UIKit
@@ -69,21 +70,41 @@ final class WallCanaryTests: XCTestCase {
         XCTAssertFalse(fine.linksDown)
     }
 
-    func testTheBirdNeverClaimsVerifiedUntilAKeyIsPinned() {
+    func testTheBirdClaimsVerifiedOnlyAgainstAPinnedKey() {
         // "Verified" is an Ed25519 signature checked against a PINNED key —
-        // nothing looser (AGENTS.md). Today's walk checks the key the log
-        // itself supplied, so the engine's anxiety-snapping full-verified
-        // input stays off — even for a walk that passes with everyone
-        // online. A passing walk is still never an alarm.
-        let walked = WallCanary.inputs(fleet: fleet([("porch", true, "ok")]),
-                                       wallDown: false, report: report(ok: true))
-        XCTAssertFalse(walked.allVerified)
-        XCTAssertFalse(walked.alarmUnacked)
+        // nothing looser (AGENTS.md). The engine's anxiety-snapping
+        // full-verified input lights for .verified alone: a walk that
+        // passes against the key the log itself supplied (unpaired) earns
+        // calm the slow way, and so does everything else.
+        let pinned = WallCanary.inputs(fleet: fleet([("porch", true, "ok")]),
+                                       wallDown: false, report: report(ok: true),
+                                       standing: .verified)
+        XCTAssertTrue(pinned.allVerified)
+        XCTAssertFalse(pinned.alarmUnacked)
+
+        for standing: VerificationStanding in [.none, .unpaired, .unauthorized, .failedAgainstPin] {
+            let i = WallCanary.inputs(fleet: fleet([("porch", true, "ok")]),
+                                      wallDown: false, report: report(ok: true),
+                                      standing: standing)
+            XCTAssertFalse(i.allVerified, "\(standing) is not a pinned claim")
+        }
 
         let selfReport = WallCanary.inputs(fleet: fleet([("porch", true, "ok")]),
                                            wallDown: false, report: nil)
         XCTAssertFalse(selfReport.allVerified,
                        "a device's self-stamp is its own word, not a verdict")
+    }
+
+    func testAKeyOtherThanThePinnedOneHidesTheBird() {
+        // The walk passed — under a key this TV was never told to trust.
+        // That is an alarm, and the alarm hides the bird.
+        let changed = WallCanary.inputs(
+            fleet: fleet([("porch", true, "ok")]),
+            wallDown: false, report: report(ok: true),
+            standing: .keyChanged(pinned: String(repeating: "1", count: 64),
+                                  served: String(repeating: "2", count: 64)))
+        XCTAssertTrue(changed.alarmUnacked)
+        XCTAssertFalse(changed.allVerified)
     }
 
     func testAPassingWalkNeverMasksADevicesOwnAlarm() {

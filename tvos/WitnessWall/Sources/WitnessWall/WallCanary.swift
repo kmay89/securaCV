@@ -15,18 +15,20 @@
 //                     posture is always Calling, never Searching.
 //    linksDown      — a device that cannot reach its hub, or a wall that
 //                     lost its own source (the stale state).
-//    allVerified    — never claimed on this surface, yet. The repo reserves
-//                     "verified" for an Ed25519 signature checked against a
-//                     key PINNED at pairing — nothing looser — and today
-//                     this TV walks a served log against the key the log
-//                     itself supplied. A passing walk is real evidence and
-//                     the header phrases it carefully ("not yet pinned");
-//                     the engine's full-verified snap (anxiety to zero at
-//                     once) is a stronger claim than that, so the bird
-//                     earns calm the slow way. The day pairing pins a key,
-//                     this is the field that lights up.
+//    allVerified    — claimed ONLY for VerificationStanding.verified: this
+//                     TV walked the hub's sealed log and every signature
+//                     checked against the key PINNED at pairing (the
+//                     viewer-token receipt, WallPairing) — the repo's one
+//                     meaning of "verified". A walk against the key the log
+//                     itself supplied (an unpaired source) is real evidence
+//                     and the header phrases it carefully ("not yet
+//                     pinned"), but the engine's full-verified snap
+//                     (anxiety to zero at once) is a stronger claim than
+//                     that, so an unpaired bird earns calm the slow way.
 //    alarmUnacked   — the Wall's real alarm: a chain that did not verify
-//                     (this TV's own verdict, or a device saying so).
+//                     (this TV's own verdict, or a device saying so), or a
+//                     hub whose log is signed by another key than the one
+//                     pinned at pairing (VerificationStanding.keyChanged).
 //                     There is no acknowledgment on a wall, so the alarm
 //                     holds the stage until the state clears — the bird is
 //                     .hidden whenever that alarm is live, including while
@@ -48,17 +50,19 @@ enum WallCanary {
     /// engine's linksDown weight and nothing invented on top.
     static func inputs(fleet: FleetSnapshot,
                        wallDown: Bool,
-                       report: VerifyReport?) -> CanaryMoodInputs {
+                       report: VerifyReport?,
+                       standing: VerificationStanding = .none) -> CanaryMoodInputs {
         var i = CanaryMoodInputs()
         i.lostWitnesses = fleet.devices.filter { !$0.online }.count
         i.linksDown = wallDown || fleet.devices.contains { $0.hubState == .down }
-        // Never claimed yet: the engine's full-verified snap is reserved
-        // for a chain walked against a key pinned at pairing ("verified"
-        // means nothing looser — AGENTS.md), and today's walk checks the
-        // key the log itself supplied. A FAILED walk is still a real alarm
-        // below — the same asymmetry the header banner speaks.
-        i.allVerified = false
-        i.alarmUnacked = report?.ok == false || fleet.hasChainTrouble
+        // The engine's full-verified snap is reserved for a chain walked
+        // against a key pinned at pairing ("verified" means nothing looser
+        // — AGENTS.md); an unpaired walk checks the key the log itself
+        // supplied and never earns it. A FAILED walk, or a hub signing with
+        // a key other than the pinned one, is a real alarm below — the same
+        // asymmetry the header banner speaks.
+        i.allVerified = standing == .verified
+        i.alarmUnacked = report?.ok == false || fleet.hasChainTrouble || standing.isAlarm
         return i
     }
 

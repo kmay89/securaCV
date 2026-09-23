@@ -54,7 +54,7 @@ GET /api/fleet        →  200 application/json
 - **No secrets, no raw media** — this is coarse fleet *presence and health*,
   exactly what the Witness Wall renders. It is not an evidence API.
 
-### The optional verification endpoint (the kernel serves it, token-gated)
+### The optional verification endpoint (the kernel serves it to a paired Wall)
 
 The native tvOS app also asks its source, every poll cycle, for
 
@@ -76,15 +76,37 @@ rotation, the signed lineage in `rotation_records`) against a key **pinned
 at pairing** — the repo-wide verified-means-Ed25519-vs-pinned-key
 discipline — and proves continuity across polls by remembering the last
 head it walked. A walk that trusts the served key verifies internal
-consistency, not provenance, and must not wear the word. No firmware serves it, and the TV sends no token
-yet, so for the Wall its absence (or a 401) remains an answer, not an
-error: the Wall phrases the fleet's status as the devices' own report
-("Your fleet reported in through <this TV's own receipt time>", with the
-device's self-stamped `verified_through` shown only as "Device reports …",
-because the firmware fills that field with the literal word "now") and
-reserves the word "Verified" for a chain it actually walked against a key
-pinned at pairing. The day the TV holds a token, its
-verification lights up with no app change. Everything above about
+consistency, not provenance, and must not wear the word.
+
+The credential the Wall holds is a **viewer token**, not the capability
+token: that one rotates every ten minutes in a file a television cannot
+read. The operator mints a viewer token once on the hub (`witness_api
+mint-viewer-token --label <room>`; `entrypoint.sh mint-viewer-token` in
+the Docker sidecar) and pastes the one line it prints — the pairing
+receipt, `{"sealed_log_token", "verifying_key", "token_id", "base_url"?}`
+— into the Wall's Settings → Verification. The kernel honors that token on
+`GET /api/sealed-log` alone (anywhere else it is a bad token that counts
+toward the lockout), keeps only its sha256, and re-reads the file per
+request, so `revoke-viewer-token <id>` lands on the next poll. The Wall
+keeps the token and the receipt's key as ONE Keychain item per source,
+sends the bearer only to that source and never across a redirect, and
+folds every walk into a standing (`WallPairing.swift`): **verified** only
+when the log's key is the pinned key and every signature checked;
+**key changed** — an alarm, not a quiet downgrade — when the log is signed
+by any other key (the core deliberately does not follow rotations, so a
+re-keyed hub reads this way until it is re-paired); **refused** when the
+hub no longer accepts the token. A source that refuses the Wall — a 401
+for a revoked token, or for no token at all — is asked once per session,
+not every cycle: the kernel counts each refusal toward a per-address
+lockout that closes `/api/fleet` as well, and a Wall that kept knocking
+would lock itself out of its own roll-call. No firmware serves the endpoint, and an
+unpaired Wall sends no token, so for them its absence (or a 401) remains
+an answer, not an error: the Wall phrases the fleet's status as the
+devices' own report ("Your fleet reported in through <this TV's own
+receipt time>", with the device's self-stamped `verified_through` shown
+only as "Device reports …", because the firmware fills that field with the
+literal word "now"), and a walk it did run against the log's own key is
+labeled "not yet pinned". Everything above about
 `/api/fleet` being coarse and unauthenticated is exactly why this endpoint
 is separate — and gated: the sealed log is how a *display* gets to say
 something cryptographic instead of repeating the wire, and the full coarse
