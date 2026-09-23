@@ -18,12 +18,23 @@
 
 namespace config_logic {
 
+// The compile-time floor of the event-time bucket: the ten-minute grid
+// (Invariant III). canary_wap.ino defines TIME_BUCKET_MS FROM this constant
+// (and static_asserts it), test_config_logic.cpp pins its value, and
+// regression_check.sh holds the Device tab's configTimeBucket min= to it, so a
+// revert to a finer floor fails a gate instead of shipping quietly.
+constexpr uint32_t kTimeBucketFloorMs = 600000u;  // ten minutes
+static_assert(kTimeBucketFloorMs >= 600000u && kTimeBucketFloorMs % 600000u == 0,
+              "time-bucket floor must be a whole multiple of the ten-minute grid "
+              "(Invariant III)");
+
 // Event-time coarsening bucket (Invariant III). The user may only widen it
 // (more coarsening = more privacy); a request below the compile-time floor is
 // raised to the floor. Privacy can therefore only increase, never decrease.
-// The floor is the ten-minute grid (TIME_BUCKET_MS = 600 000 ms as shipped);
-// a persisted value from before the floor widened is raised at boot by the
-// same clamp — widen-only, so an in-place upgrade cannot lower it.
+// The value loaded from NVS passes through this clamp at every boot, so one
+// persisted under the old 5 s floor runs at the floor from the first boot
+// after an in-place upgrade (widen-only). NVS itself keeps the old number
+// until a save writes a different value; the boot clamp makes that harmless.
 inline uint32_t clamp_time_bucket_ms(uint32_t requested_ms, uint32_t floor_ms) {
   return requested_ms < floor_ms ? floor_ms : requested_ms;
 }
