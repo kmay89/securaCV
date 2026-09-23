@@ -113,27 +113,31 @@ tagging v1):**
 Rationale: Signed log is easier to demonstrate end-to-end without designing envelope formats and media storage semantics. The vault seal path is wired into `witnessd` (opt-in via `BREAK_GLASS_SEAL_TOKEN`); v1 leads with the signed log for the headline end-to-end demo, with vault sealing available as the optional sealed-evidence path.
 
 **Remaining crypto gaps to close:**
-- Device signing key is still seed-derived from config, not hardware-backed. (The DB key is
-  no longer coupled to it — see the B2 note below.)
+- Device signing key is still seed-derived (an OS-RNG seed kept 0600, rotatable by command),
+  not hardware-backed. (The DB key is no longer coupled to it — see the B2 note below.)
 - Vault sealing is wired but opt-in/UX-gated; the remaining gap is key management (see the
-  device-key item above) and a trustee/seal setup UI — not the encryption itself.
+  device-key item above) and a seal setup UI (the trustee/quorum setup is the served console's
+  one-time bootstrap panel) — not the encryption itself.
 
 | Step | Deliverable | Est. Effort |
 |------|-------------|-------------|
 | B1 | **Done:** Ed25519 log signing in kernel + CLI paths | ✅ |
-| B2 | Device key generation + secure storage (replace seed-derived key) | 3-5 days |
+| B2 | **Done except hardware-backed keys:** OS-RNG device seed kept 0600 beside the database and resolved the same way by every write-side daemon; rotation and DB re-key are operator commands (`break_glass rotate-identity` / `rekey-db`). **Open:** hardware-backed keys (TPM / Secure Element) — needs hardware | hardware only |
 | B3 | **Done:** `log_verify` validates Ed25519 signatures | ✅ |
 | B4 | **Done:** Tampering demo (`tamper_demo` binary: modify log, verify fails) | ✅ |
 
-**B2 note:** The **storage-layer prerequisite** — decoupling the SQLCipher DB key from the device
-signing key — is now **done**. Set `SECURACV_DB_KEY_SEED` to an independent secret and the kernel
-derives the DB key from it (`resolve_db_encryption_key`) instead of the Ed25519 signing key, so the
-DB key no longer pins the identity; `rekey_database_file()` rotates the DB key itself in place. See
-[`docs/db_key_rotation.md`](db_key_rotation.md). **Still open** before signing-key rotation
-works end-to-end: `Kernel::open` pins the device public key in `device_metadata` and rejects a
-mismatching identity, so rotation also needs identity-rotation support (record the new key, keep the
-log verifiable across the boundary). Beyond that, the higher bar is **hardware-backed keys**
-(TPM/Secure Element), which needs hardware to validate.
+**B2 note:** The software half is **done**. The SQLCipher DB key is decoupled from the device
+signing key (`SECURACV_DB_KEY_SEED` → `resolve_db_encryption_key`). The signing identity rotates
+in the kernel: `Kernel::rotate_device_identity` appends a retiring-key-signed `KeyRotation` record
+and a genesis-anchored `device_key_history` row, so the log verifies across the boundary, and
+`Kernel::open` accepts the current epoch's seed and refuses a retired one. Both are operator
+commands — `break_glass rekey-db` and `break_glass rotate-identity` (the successor seed is staged
+0600 and fsynced before the rotation commits, and never printed). The seed is generated from the OS
+RNG and kept 0600 in `<db>.ed25519.seed`; every write-side daemon resolves it the same way
+(`DEVICE_KEY_SEED`, else that file, else generate) and a seed file any other user can read is
+refused. See [`docs/db_key_rotation.md`](db_key_rotation.md). **Still open:** the higher bar of
+**hardware-backed keys** (TPM/Secure Element), which needs hardware to validate. (The commands'
+home — `break_glass` subcommands, option (a) — is for the maintainer to confirm.)
 
 **Total:** ~2-3 weeks
 

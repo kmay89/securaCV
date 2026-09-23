@@ -207,6 +207,31 @@
     <div id="policy-view" style="margin-top:10px"></div>
   </section>
 
+  <!-- First-time setup: shown only while no quorum policy exists. -->
+  <section class="panel operator-only" id="p-setup" style="display:none">
+    <h2>First-time setup · choose your trustees</h2>
+    <p class="sub">Nothing can be opened until you say who the trustees are and how many of them must
+      agree. Add each trustee's name and public key, then pick the number needed.</p>
+    <p class="tech">One-time bootstrap (<code class="k">POST /breakglass/policy</code>), accepted only
+      while no policy exists and recorded as the first row of the signed policy history. Once it is
+      stored, changes need the current trustees' consent: <code class="k">break_glass policy propose</code>,
+      <code class="k">policy approve</code>, then <code class="k">policy set --approvals</code>. Do this
+      before the console is reachable from any other machine.</p>
+    <table style="margin-top:8px">
+      <thead><tr><th style="width:160px">Trustee name</th><th>Public key (64 hex characters)</th><th style="width:40px"></th></tr></thead>
+      <tbody id="setup-rows"></tbody>
+    </table>
+    <div class="row" style="margin-top:10px">
+      <div style="flex:0 0 auto"><button class="btn" id="btn-setup-add">Add trustee</button></div>
+    </div>
+    <label for="setup-n">Trustees needed to open the vault</label>
+    <input type="text" id="setup-n" class="mono" inputmode="numeric" placeholder="2" autocomplete="off" style="max-width:120px" />
+    <div class="row" style="margin-top:10px">
+      <div style="flex:0 0 auto"><button class="btn primary" id="btn-setup">Store policy</button></div>
+    </div>
+    <div class="banner" id="setup-msg"></div>
+  </section>
+
   <!-- 2. Request -->
   <section class="panel step-off operator-only" id="p-request">
     <h2>2 · Open an unlock request</h2>
@@ -388,8 +413,20 @@ $("btn-connect").onclick = guarded("btn-connect", "connect-msg", async () => {
   if (!state.token) { banner("connect-msg", "bad", "Enter the capability token first."); return; }
   const { status, json } = await api("GET", "/breakglass/policy");
   if (status === 401) { banner("connect-msg", "bad", "Token rejected (401). Check the token file."); return; }
-  if (status === 409) { banner("connect-msg", "warn", "No quorum policy is configured. Set one with `break_glass policy set`."); return; }
+  if (status === 409) {
+    banner("connect-msg", "warn", "No quorum policy is configured yet. Set one up below (one time), " +
+      "or with `break_glass policy set`.");
+    showSetup();
+    return;
+  }
   if (status !== 200) { banner("connect-msg", "bad", "Unexpected response (" + status + ")."); return; }
+  policyLoaded(json);
+});
+
+// A stored policy (read on connect, or just bootstrapped): show it and
+// unlock the request step.
+function policyLoaded(json) {
+  $("p-setup").style.display = "none";
   state.trustees = (json.trustees || []).map((t) => t.id);
   renderPolicy(json);
   // Reason vocabulary comes from the server (enumerated once, in the
@@ -405,6 +442,71 @@ $("btn-connect").onclick = guarded("btn-connect", "connect-msg", async () => {
     json.n + " of its " + json.m + " trustees agree.");
   enableStep("p-request");
   setStep(2);
+}
+
+// First-time setup (bootstrap). The server validates everything again; these
+// checks only catch typos before the one-time write.
+function addSetupRow() {
+  const tr = document.createElement("tr");
+  const idTd = document.createElement("td");
+  const id = document.createElement("input");
+  id.type = "text"; id.className = "mono setup-id"; id.placeholder = "alice"; id.autocomplete = "off";
+  idTd.appendChild(id);
+  const keyTd = document.createElement("td");
+  const key = document.createElement("input");
+  key.type = "text"; key.className = "mono setup-key"; key.placeholder = "64 hex chars";
+  key.autocomplete = "off"; key.spellcheck = false;
+  keyTd.appendChild(key);
+  const rmTd = document.createElement("td");
+  const rm = document.createElement("button");
+  rm.className = "btn"; rm.textContent = "×"; rm.title = "Remove this trustee";
+  rm.onclick = () => { tr.remove(); };
+  rmTd.appendChild(rm);
+  tr.appendChild(idTd); tr.appendChild(keyTd); tr.appendChild(rmTd);
+  $("setup-rows").appendChild(tr);
+}
+function showSetup() {
+  $("p-setup").style.display = "block";
+  if (!$("setup-rows").children.length) { addSetupRow(); addSetupRow(); }
+}
+$("btn-setup-add").onclick = addSetupRow;
+$("btn-setup").onclick = guarded("btn-setup", "setup-msg", async () => {
+  clearBanner("setup-msg");
+  const trustees = [];
+  const seen = new Set();
+  for (const tr of $("setup-rows").children) {
+    const id = tr.querySelector(".setup-id").value.trim();
+    const key = tr.querySelector(".setup-key").value.trim().toLowerCase();
+    if (!id && !key) continue;
+    if (!id) { banner("setup-msg", "bad", "Every trustee needs a name."); return; }
+    if (seen.has(id)) { banner("setup-msg", "bad", "Trustee names must be unique (" + id + ")."); return; }
+    if (!/^[0-9a-f]{64}$/.test(key)) {
+      banner("setup-msg", "bad", "The public key for " + id + " must be exactly 64 hex characters.");
+      return;
+    }
+    seen.add(id);
+    trustees.push({ id, public_key: key });
+  }
+  const n = Number($("setup-n").value.trim());
+  if (!trustees.length) { banner("setup-msg", "bad", "Add at least one trustee."); return; }
+  if (!Number.isInteger(n) || n < 1 || n > trustees.length) {
+    banner("setup-msg", "bad", "Trustees needed must be a whole number from 1 to " + trustees.length + ".");
+    return;
+  }
+  if (!confirm("Store this policy? This is one-time: afterwards, changing it needs " + n +
+    " of these " + trustees.length + " trustees to approve.")) return;
+  const { status, json } = await api("POST", "/breakglass/policy", { n, trustees });
+  if (status === 201) {
+    banner("setup-msg", "ok", "Policy stored — recorded as the first entry of the signed policy history.");
+    policyLoaded(json);
+    return;
+  }
+  if (status === 409) {
+    banner("setup-msg", "warn", "A policy already exists, so this one was not stored. Reconnect to load it; " +
+      "changes need the current trustees' consent (break_glass policy propose / approve / set --approvals).");
+    return;
+  }
+  banner("setup-msg", "bad", "Could not store the policy (" + status + "): " + (json.reason || json.error || ""));
 });
 
 function renderPolicy(p) {

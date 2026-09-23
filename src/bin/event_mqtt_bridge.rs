@@ -72,7 +72,7 @@ struct Args {
     api_token_path: Option<PathBuf>,
 
     /// Capability token value (overrides token path).
-    #[arg(long, env = "WITNESS_API_TOKEN")]
+    #[arg(long, env = "WITNESS_API_TOKEN", hide_env_values = true)]
     api_token: Option<String>,
 
     /// MQTT broker address.
@@ -89,7 +89,7 @@ struct Args {
     mqtt_username: Option<String>,
 
     /// MQTT password for authentication.
-    #[arg(long, env = "MQTT_PASSWORD")]
+    #[arg(long, env = "MQTT_PASSWORD", hide_env_values = true)]
     mqtt_password: Option<String>,
 
     /// Enable TLS for MQTT (required for mqtts:// brokers).

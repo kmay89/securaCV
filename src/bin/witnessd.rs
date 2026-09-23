@@ -53,8 +53,17 @@ fn main() -> Result<()> {
     witness_kernel::set_sqlite_synchronous(config.storage_health.sqlite_synchronous);
     let device_key_seed = {
         let provided_seed = std::env::var("DEVICE_KEY_SEED").ok();
-        let key_path = witness_kernel::crypto::device_key_path_for_db(&config.db_path)?;
-        witness_kernel::crypto::load_or_create_device_seed(&key_path, provided_seed.as_deref())?
+        // witnessd alone writes an environment seed to <db>.ed25519.seed when
+        // no file exists yet, as it always has; every other daemon persists
+        // only a seed it generated.
+        let resolved = witness_kernel::crypto::resolve_device_seed_persisting_env(
+            &config.db_path,
+            provided_seed.as_deref(),
+        )?;
+        // Log where the identity came from (the environment, or which seed
+        // file) so an operator can find it; the seed value is never logged.
+        log::info!("device key seed: {}", resolved.source);
+        resolved.seed
     };
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(&config.ruleset_id);
 

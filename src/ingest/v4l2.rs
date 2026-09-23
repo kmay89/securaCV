@@ -18,9 +18,8 @@ use anyhow::{anyhow, Context, Result};
 use ouroboros::self_referencing;
 use std::time::{Duration, Instant};
 
-use super::{compute_features_hash, normalize::normalize_to_rgb, normalize::PixelFormat};
+use super::{normalize::normalize_to_rgb, normalize::PixelFormat};
 use crate::frame::RawFrame;
-use crate::TimeBucket;
 
 /// Configuration for a V4L2 source.
 #[derive(Clone, Debug)]
@@ -153,22 +152,17 @@ impl SyntheticV4l2Source {
     fn next_frame(&mut self) -> Result<RawFrame> {
         self.frame_count += 1;
 
-        // Coarsen timestamp at capture time (10-minute buckets)
-        let timestamp_bucket = TimeBucket::now_10min()?;
-
         // Generate synthetic pixel data
         let pixels = self.generate_synthetic_pixels();
 
-        // Compute non-invertible feature hash
-        let features_hash = compute_features_hash(&pixels, self.frame_count);
-
-        Ok(RawFrame::new(
+        // The shared capture gate coarsens the timestamp (10-minute bucket)
+        // and computes the non-invertible feature hash.
+        super::raw_frame_at_capture(
             pixels,
             self.config.width,
             self.config.height,
-            timestamp_bucket,
-            features_hash,
-        ))
+            self.frame_count,
+        )
     }
 
     /// Generate synthetic pixel data for testing.
@@ -345,7 +339,6 @@ impl DeviceV4l2Source {
         self.frame_count += 1;
         self.last_frame_at = Some(Instant::now());
 
-        let timestamp_bucket = TimeBucket::now_10min()?;
         let rgb = normalize_to_rgb(
             buf,
             self.active_width,
@@ -355,15 +348,8 @@ impl DeviceV4l2Source {
         .inspect_err(|err| {
             self.last_error = Some(err.to_string());
         })?;
-        let features_hash = compute_features_hash(&rgb, self.frame_count);
 
-        Ok(RawFrame::new(
-            rgb,
-            self.active_width,
-            self.active_height,
-            timestamp_bucket,
-            features_hash,
-        ))
+        super::raw_frame_at_capture(rgb, self.active_width, self.active_height, self.frame_count)
     }
 
     fn is_healthy(&self) -> bool {

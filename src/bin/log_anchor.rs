@@ -57,13 +57,14 @@ struct Args {
 
     /// Device key seed — used only to derive the database encryption key
     /// (like log_verify). Not needed for an unencrypted database.
-    #[arg(long, env = "DEVICE_KEY_SEED", global = true)]
+    #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true, global = true)]
     device_key_seed: Option<String>,
 
     /// Explicit SQLCipher key (hex), overriding the seed derivation.
     #[arg(
         long,
         env = "SECURACV_DB_KEY",
+        hide_env_values = true,
         conflicts_with = "device_key_seed",
         global = true,
         value_name = "HEX"
@@ -191,8 +192,18 @@ enum OpenMode {
 
 fn open(args: &Args, mode: OpenMode) -> Result<Connection> {
     // SQLCipher key: explicit --db-key wins; otherwise derive it from the
-    // device key seed exactly as the kernel does (same logic as log_verify).
-    let db_key: Option<String> = match (&args.db_key, &args.device_key_seed) {
+    // device key seed exactly as the kernel does (same logic as log_verify);
+    // with neither flag, the seed file beside the database is tried
+    // (database key only).
+    let seed_for_db_key: Option<String> = match (&args.db_key, &args.device_key_seed) {
+        (Some(_), _) => None,
+        (None, Some(seed)) => Some(seed.clone()),
+        (None, None) => witness_kernel::crypto::find_device_seed(&args.db, None)?.map(|found| {
+            eprintln!("log_anchor: database key from the {}", found.source);
+            found.seed
+        }),
+    };
+    let db_key: Option<String> = match (&args.db_key, seed_for_db_key.as_deref()) {
         (Some(key), _) => Some(key.clone()),
         (None, Some(seed)) => {
             let signing_key = witness_kernel::signing_key_from_seed(seed)?;

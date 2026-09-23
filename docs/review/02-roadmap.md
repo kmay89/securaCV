@@ -12,7 +12,8 @@
 > §2 reconciliation actions are largely done (see the note under that table); §3 phase headings now
 > carry status. The HA timeline/verified-✓ UI shipped (#689); what remains for the productization arc
 > is the **break-glass/trustee setup UI** (and the deferred README screenshot, F-12) plus the
-> hardware/key work in **P3–P4**.
+> hardware/key work in **P3–P4**. *(2026-09: the setup UI landed as the served console's one-time
+> bootstrap panel — see P2.)*
 
 ## 1. Strategic verdict: **focus, then productize — do not expand**
 
@@ -96,8 +97,11 @@ Each phase lists **deliverable → user-facing acceptance → invariant guardrai
 <!-- One-click HA add-on install: ✅ DONE — pre-built multi-arch image + publish workflow (#671),
      publicly-installable release gate wired into CI (#677/#680). HA verified-✓ timeline + chain-status
      Lovelace card: ✅ DONE (custom_components/securacv/www/securacv-timeline-card.js + YAML fallback;
-     helper logic unit-tested in the viewer CI job). Remaining P2: the README screenshot (F-12,
-     deferred — needs an HA+browser capture) and the break-glass/trustee setup UI (F-05). -->
+     helper logic unit-tested in the viewer CI job). Break-glass/trustee setup UI (F-05): ✅ DONE
+     (2026-09) as usage + bootstrap — the served console runs request → approve → unseal and its
+     one-time setup panel stores the first quorum policy; policy changes stay on the
+     quorum-consented CLI flow by design. Remaining P2: the README screenshot (F-12, deferred —
+     needs an HA+browser capture). -->
 
 - **One-click HA add-on install** (no `curl | bash`), pre-built Docker images. *Acceptance:*
   install from the HA add-on store. *Guardrail:* local-only; no cloud custody (Inv. IV).
@@ -107,7 +111,12 @@ Each phase lists **deliverable → user-facing acceptance → invariant guardrai
   experience, not raw sensors; the missing README screenshot (F-12) is the one residual gap.
   *Guardrail:* coarse buckets, zone IDs only (Inv. III).
 - **Break-glass / trustee setup UI** (no CLI) — the evidence flow must be usable under stress by a
-  non-dev. *Guardrail:* N-of-M quorum, immutable receipts (Inv. V).
+  non-dev. *Guardrail:* N-of-M quorum, immutable receipts (Inv. V). ✅ DONE (usage + bootstrap
+  setup): `break_glass_serve`'s console runs request → approve → unseal with per-trustee signing
+  links, and its one-time setup panel stores the first quorum policy (`POST /breakglass/policy`,
+  refused with 409 once a policy exists). Policy *changes* stay on the quorum-consented CLI flow
+  (`policy propose` / `approve` / `set --approvals`): an HTTP change path would widen the Invariant V
+  surface. (Option (b) — maintainer to confirm.)
 
 ### P3 — Productize hardware & harden keys
 - **Pre-flashed Canary kit** (primary revenue line; serves at-risk + mainstream personas).

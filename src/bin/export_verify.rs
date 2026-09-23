@@ -57,14 +57,24 @@ struct Args {
     #[arg(long, value_name = "PATH", conflicts_with = "pq_public_key")]
     pq_public_key_file: Option<String>,
     /// SQLCipher database encryption key (hex-encoded, 32 bytes)
-    #[arg(long, value_name = "HEX", env = "SECURACV_DB_KEY")]
+    #[arg(
+        long,
+        value_name = "HEX",
+        env = "SECURACV_DB_KEY",
+        hide_env_values = true
+    )]
     db_key: Option<String>,
     /// Device key seed (as used by the kernel/bridges). Derives the SQLCipher
     /// key (when --db-key is not given) and the verifying key (when no
     /// --public-key/--public-key-file is given) — same semantics as
     /// log_verify, so `DEVICE_KEY_SEED=... export_verify --db witness.db
     /// --bundle ...` verifies an owner self-export with the seed alone.
-    #[arg(long, value_name = "SEED", env = "DEVICE_KEY_SEED")]
+    #[arg(
+        long,
+        value_name = "SEED",
+        env = "DEVICE_KEY_SEED",
+        hide_env_values = true
+    )]
     device_key_seed: Option<String>,
     /// Also verify a C2PA Content Credentials sidecar manifest against the
     /// bundle bytes (docs/design/c2pa_export.md).
@@ -103,8 +113,21 @@ fn main() -> Result<()> {
 
     // SQLCipher key: explicit --db-key wins; otherwise derive it from the
     // device key seed exactly as the kernel/bridges do (same logic as
-    // log_verify).
-    let db_key: Option<String> = match (&args.db_key, &args.device_key_seed) {
+    // log_verify); with neither flag, the seed file beside the database is
+    // tried — for the database key only, never as an identity anchor (it is
+    // not out-of-band, and after a rotation it holds the current key).
+    let seed_for_db_key: Option<String> = match (&args.db_key, &args.device_key_seed) {
+        (Some(_), _) => None,
+        (None, Some(seed)) => Some(seed.clone()),
+        (None, None) => witness_kernel::crypto::find_device_seed(&args.db, None)?.map(|found| {
+            eprintln!(
+                "export_verify: database key from the {} (it does not anchor identity)",
+                found.source
+            );
+            found.seed
+        }),
+    };
+    let db_key: Option<String> = match (&args.db_key, seed_for_db_key.as_deref()) {
         (Some(key), _) => Some(key.clone()),
         (None, Some(seed)) => {
             let signing_key = witness_kernel::signing_key_from_seed(seed)?;

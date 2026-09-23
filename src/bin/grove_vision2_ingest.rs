@@ -4,7 +4,7 @@
 //! event_type, time_bucket, zone_id, confidence.
 //! Any extra fields are rejected and logged as conformance alarms.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use clap::Parser;
 use std::io::{self, BufRead};
 use std::path::Path;
@@ -49,8 +49,15 @@ fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = Args::parse();
 
-    let device_key_seed =
-        std::env::var("DEVICE_KEY_SEED").map_err(|_| anyhow!("DEVICE_KEY_SEED must be set"))?;
+    // DEVICE_KEY_SEED, else the seed file witnessd keeps beside the database,
+    // else a fresh one generated there. Only the source is logged.
+    let device_key_seed = {
+        let env_seed = std::env::var("DEVICE_KEY_SEED").ok();
+        let resolved =
+            witness_kernel::crypto::resolve_device_seed(&args.db_path, env_seed.as_deref())?;
+        log::info!("device key seed: {}", resolved.source);
+        resolved.seed
+    };
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(&args.ruleset_id);
     let cfg = KernelConfig {
         db_path: args.db_path.clone(),

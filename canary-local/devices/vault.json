@@ -280,6 +280,11 @@
       },
       {
         "method": "POST",
+        "path": "/breakglass/policy",
+        "desc": "one-time bootstrap: store the FIRST policy ({n, trustees: [{id, public_key}], crypto_mode?}), validated as `policy set` validates it; 409 policy_already_configured once one exists \u2014 changes need the current quorum's consent through the CLI"
+      },
+      {
+        "method": "POST",
         "path": "/breakglass/request",
         "desc": "open a session ({envelope, purpose, requested_by?+reason?, case_ref?}) \u2014 requested_by and reason are optional together (a partial pair, or case_ref alone, is refused as 400 partial_operator_context); returns the request_hash plus every field it binds, so trustees can be handed the full preimage"
       },

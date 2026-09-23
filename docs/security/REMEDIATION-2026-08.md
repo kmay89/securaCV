@@ -477,7 +477,13 @@ needs it, with the procedural stand-in the runbook uses meanwhile.
 - **No operator command for device-key rotation or database re-keying.**
   `Kernel::rotate_device_identity` and `rekey_database_file` are library
   APIs; nothing in `src/bin`, the HA add-on, or `scripts/` calls them. A
-  rotation ceremony is therefore not scriptable today.
+  rotation ceremony is therefore not scriptable today. *(Closed in the
+  2026-09 key-ceremony pass: `break_glass rotate-identity` and `break_glass
+  rekey-db` wrap them — the successor seed is staged 0600 and fsynced before
+  the rotation commits, renamed into place after it, and never printed — and
+  a device seed file any other user can read is now refused naming `chmod
+  600`; tests in `tests/device_key_rotation_cli.rs` and `src/crypto/mod.rs`.
+  Runbook C7 is **CODE**.)*
 - **No keyguard migration or passphrase rotation.** `SECURACV_VAULT_PASSPHRASE`
   wraps a *fresh* master key; there is no command to wrap an existing
   plaintext `master.key` or to change the passphrase, and `break_glass doctor`
