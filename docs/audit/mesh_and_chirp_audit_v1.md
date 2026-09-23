@@ -396,7 +396,7 @@ The Beacon channel is the harm-reduction layer specified in `spec/beacon_channel
 - [x] `spec/beacon_channel_v0.md` reviewed for non-impersonation, no-PII, no-authority-templates.
 - [x] `spec/beacon_cap_gateway_v0.md` reviewed; implementation deferred by decision — not to a version: it is gated on a trust-root decision, a separately named build and a per-deployment legal review (`spec/beacon_cap_gateway_v0.md` §6).
 - [x] Beacon origination requires two distinct device pubkeys cryptographically (`test_beacon_origination.cpp` passes).
-- [x] Solo-degraded path requires physical BOOT button and marks `certainty = Observed`. (Firmware: `originate_alert_solo` and, since 2026-09, `originate_cancel_solo`; receivers enforce the SOLO flag, `certainty = Observed` and originator == cosigner — `test_beacon_solo_origination.cpp`.)
+- [x] Solo-degraded path requires physical BOOT button and marks `certainty = Observed`. (Firmware: `originate_alert_solo` and, since 2026-09, `originate_cancel_solo`; receivers enforce the SOLO flag, `certainty = Observed` and originator == cosigner — `test_beacon_solo_origination.cpp`. The BOOT hold is enforced by the originating device only and is not on the wire, so it stops a remote API caller, not a holder of the device's key — spec §6.2 security note, §14.2.)
 - [x] `audible_chirp.h` has `PATTERN_BEACON` (3 ascending tones, ≤600 ms, ≠ any reserved emergency-broadcast tone).
 - [x] Lint script passes (no WEA tone, no forbidden phrases). `scripts/lint_no_impersonation.sh` + `scripts/lint_cap_mapping.sh`.
 - [x] HA MQTT discovery surfaces `beacon.state` four-state NFPA enum + `beacon_airtime_pct` + `beacon_active_template`.

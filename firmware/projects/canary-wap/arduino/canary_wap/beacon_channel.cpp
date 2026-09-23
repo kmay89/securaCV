@@ -1833,12 +1833,14 @@ bool cosign_pending_request(bool confirm) {
 // visibly downweight it (one notch lower in the urgency UI; "solo
 // origination" badge in the audit log).
 //
-// The physical BOOT button check is the real protection — a software-only
-// attacker who exfiltrates the device key still cannot make a remote
-// device's BOOT pin transition from idle to held without physical access.
-// Receivers don't enforce this; we rely on every device playing by the
-// protocol when it's in our local beacon_set. Compromised devices get
-// REVOKED via `revoke_beacon_set_entry()` per the standard recovery path.
+// What the BOOT check protects, exactly: a caller of THIS device's REST API
+// who is not at the device cannot make its BOOT pin read held. Receivers
+// cannot see the pin — on a solo frame they check only the SOLO flag,
+// certainty = Observed and originator == cosigner (handle_alert_frame) — so
+// the check does NOT stop anyone holding this device's Ed25519 key, who can
+// sign a solo ALERT or CANCEL on any radio in range (spec §6.2 security note,
+// §14.2). A compromised key is REVOKED via `revoke_beacon_set_entry()`, the
+// standard recovery path.
 // ════════════════════════════════════════════════════════════════════════════
 
 static uint8_t g_boot_gpio = 0;  // ESP32-S3 BOOT button default
@@ -1882,9 +1884,9 @@ bool originate_alert_solo(BeaconTemplate template_id, BeaconUrgency urgency,
   if (!rate_check_and_record(g_device_fp, /*is_exercise=*/false)) return false;
 
   // ── Physical attestation: BOOT button MUST be held right now ──
-  // This is the load-bearing security check for the solo path. The user
-  // is physically present at the device pressing BOOT; a software-only
-  // attacker cannot fake that.
+  // The solo path's gate on this device: the user is physically present
+  // pressing BOOT, which a remote API caller cannot fake. It is not on the
+  // wire, so it is no defense against a stolen key (see the block above).
   if (!boot_button_held()) {
     health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
                "beacon: solo origination refused — BOOT button not held");

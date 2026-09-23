@@ -562,15 +562,23 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
 ### Beacon channel (NEW v0.2 — supervised harm-reduction)
 
 - Persistent device Ed25519 identity (same key as Opera/witness records).
-- **Two-pubkey cryptographic co-signing on origination.** Every Beacon
+- **Two-pubkey cryptographic co-signing on origination.** A standard Beacon
   ALERT/UPDATE/CANCEL frame carries two Ed25519 signatures from two distinct
-  device pubkeys, so no single device's key can originate a Beacon on its
-  own. The one exception is the solo-degraded path (spec §6.2): a device
-  with no fresh paired cosigner may originate alone only while its physical
-  BOOT button is held, and the frame must carry `BCN_FLAG_SOLO_ORIGIN` and
-  `certainty = Observed` so receivers can see it and downweight it. That
-  gate stops a remote key thief, not software running on the device itself.
-  Spec: `spec/beacon_channel_v0.md`.
+  paired device pubkeys. The exception is the solo-degraded path (spec §6.2):
+  a frame flagged `BCN_FLAG_SOLO_ORIGIN`, with `certainty = Observed` and
+  originator == cosigner, carries one key's signature in both slots. Those
+  three are the only solo rules a receiver checks — they are what is on the
+  wire — and receivers accept such a frame from any non-revoked set member,
+  shown downweighted. The BOOT-button hold and the "no fresh paired
+  cosigner" rule are enforced by the originating firmware, not on receive.
+  So they stop a caller of the device's REST API who is not physically at
+  the device. They do not stop anyone holding that device's Ed25519 private
+  key (readable from flash on the default tier — Scenario 4 above): with it,
+  a solo ALERT, or a solo CANCEL naming a live alarm's clear-text header
+  nonce, can be signed on any ESP32 in radio range, and every set member in
+  range accepts it. Nor do they stop software running on the device itself.
+  Recovery is revoking the key (spec §3.4; listed in spec §14.2 "Not
+  mitigated"). Spec: `spec/beacon_channel_v0.md`.
 - Receivers accept a frame only when both signers resolve to a non-revoked
   beacon-set member — or to the receiving device itself: a set holds peers
   only, so the device that co-signed an alarm resolves its own fingerprint to

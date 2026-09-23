@@ -332,7 +332,8 @@ Beacon via the **physical BOOT button cosigner** pattern:
 3. Device verifies the BOOT GPIO state is LOW in real time. If the button
    was released, the origination is refused with
    `reason="boot_button_not_held"`. This real-time hardware check is the
-   load-bearing security gate for the solo path.
+   load-bearing gate against a caller who is not at the device — and it runs
+   only on the originating device (see the security note below).
 4. The canonical is constructed with:
    - `originator_fp` == `cosigner_fp` == this device's pubkey fingerprint
    - `certainty = Observed` (firmware-forced; the spec invariant is
@@ -355,15 +356,21 @@ This makes the trust gradient visible: receivers can downweight solo
 Beacons without rejecting them. The Beacon audit log records the
 SOLO flag for after-action review.
 
-**Security note.** The solo path's physical-attestation property protects
-against a software-only attacker who exfiltrates the device's Ed25519
-private key: even with the private key, an attacker on a different
-device cannot remotely transition the target device's BOOT GPIO to LOW.
-It does NOT protect against a software-only attacker on the same device
-or against a physical attacker present at the device. Standard recovery
-in those scenarios is operational: any beacon-set member can
-`POST /api/beacon/revoke` to mark the compromised device
-`trust_level = REVOKED`.
+**Security note.** Receivers cannot see the BOOT button. On a solo frame
+they check only what is on the wire (step 6): the `SOLO_ORIGIN` flag,
+`certainty = Observed`, `originator_fp == cosigner_fp`, and the signature
+against a non-revoked beacon-set entry. The BOOT-held check (step 3) and the
+no-fresh-cosigner rule are enforced by the originating firmware, so they
+stop a remote caller of that device's REST API — someone who is not at the
+device cannot make its BOOT GPIO read LOW — and nothing more. They do NOT
+protect against anyone holding the device's Ed25519 private key: with the
+key, a solo ALERT, or a solo CANCEL naming a live alarm's clear-text header
+nonce (§5.4), can be signed on any radio in range, and every set member in
+range accepts it. Nor do they protect against software running on the
+device, or a physical attacker at it. Recovery in all of these is
+operational: any beacon-set member can `POST /api/beacon/revoke` to mark
+the compromised device `trust_level = REVOKED` (§3.4). §14.2 lists this as
+not mitigated.
 
 **Rate limit.** Solo originations count against the same
 `MAX_ORIGINATIONS_PER_PUBKEY_24H` budget as standard originations (the
@@ -386,7 +393,7 @@ The cosigner MUST decrypt, parse the canonical, display it to the user, and only
 
 ### 6.4 Anti-coercion guard
 
-The cosign request includes the originator's `boot_button_state` (whether the BOOT button is currently pressed). If a cosigner receives a request where the originator claims `boot_button_state = 0` but the receiver's UI sees signs of duress (e.g., very fast repeated requests), the receiver MAY refuse silently. This is a soft mitigation — the real defense against coercion is operational, not cryptographic.
+The cosign request includes the originator's `boot_button_state` (whether the BOOT button is currently pressed). If a cosigner receives a request where the originator claims `boot_button_state = 0` but the receiver's UI sees signs of duress (e.g., very fast repeated requests), the receiver MAY refuse silently. This is a soft mitigation — the real defense against coercion is operational, not cryptographic. (Not implemented: the firmware's `BeaconCosignRequestPayload` carries no `boot_button_state` field, and no frame carries the BOOT state to a receiver — see the §6.2 security note.)
 
 ### 6.5 Cancel origination
 
@@ -623,6 +630,7 @@ What Beacon never shares:
 | Radio jamming | Physical-layer attack, outside protocol scope. Beacon falls into `Trouble` if airtime saturated. |
 | Long-range RF triangulation of beacon-set members | Acknowledged. Fingerprints are persistent identifiers; this is the same trade-off the existing Opera mesh accepts. |
 | Insider abuse of `BCN_CLR_FALSE_ALARM` to suppress real alarms | Insiders are by definition cosigners; revocation is the recourse. Audit log is signed and retains the history. |
+| One member's stolen device key forging solo frames | The solo path's BOOT-button and no-fresh-cosigner gates run on the originating device and nothing about them is on the wire (§6.2 security note). A holder of one member's Ed25519 private key — readable from flash on a device without flash encryption — can sign a solo ALERT, or a solo CANCEL naming a live alarm's clear-text nonce, on any radio in range, and receivers accept it (shown downweighted: `certainty = Observed`, solo badge). Revocation is the recourse (§3.4); the audit log records the SOLO flag. |
 
 ## 15. Future work
 
@@ -637,6 +645,7 @@ What Beacon never shares:
 - 2026-09: §6.5 cancel origination (two-device and solo `BEACON_MSG_CANCEL`, cosigner gate, originator self-adoption); §10 gains `/api/beacon/originate-solo`, `/api/beacon/cancel-solo` and `/api/beacon/silence`; §5.2 frame size corrected to 224 B.
 - 2026-09: §6.3 — the co-sign envelope binds its clear routing fields as associated data and refuses an all-zero X25519 shared secret.
 - 2026-09: §7.1 step 5 — a receiver's own fingerprint resolves to its own key, so the cosigner of an alarm holds it and can cosign its CANCEL (§6.5).
+- 2026-09: §6.2 security note corrected — receivers check only the SOLO flag, `certainty = Observed` and originator == cosigner, so the BOOT and no-cosigner gates stop a remote API caller, not a key holder; §14.2 gains that row; §6.4 notes `boot_button_state` is not implemented.
 
 ---
 
