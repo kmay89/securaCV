@@ -890,8 +890,8 @@ class BrokerTls(unittest.TestCase):
         # The prose half (no doc under docs/ nor README.md retypes them, and
         # one points at the flag) is scripts/tests/test_hub_plan_prose.py,
         # which runs in lint.yml: its input is any Markdown file, and this
-        # suite runs only in canary-local.yml, whose path filter a docs-only
-        # PR never reaches.
+        # suite runs only in canary-local.yml, whose filter names a dozen
+        # docs, not docs/**, so a PR touching only other docs never runs it.
         step = next(s for s in REAL_PLAN["steps"] if s["id"] == "broker-tls")
         for name in ("certfile", "keyfile"):
             self.assertIn(name, step["what"])

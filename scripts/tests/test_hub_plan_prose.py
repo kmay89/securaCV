@@ -15,7 +15,7 @@ Why here and not beside the plan's other tests: the input is Markdown
 anywhere under docs/. This gate used to be the second half of a test in
 canary-local/tools/tests/test_hub_seed_apply.py, which runs only in
 canary-local.yml, and that workflow's path filter names a dozen specific docs,
-not docs/**. So a docs-only PR that retyped `fullchain.pem` would merge green,
+not docs/**. So a PR that retyped `fullchain.pem` in any other doc would merge green,
 and the first red would land on the next unrelated canary.local PR. Repo Lints
 (lint.yml) is unfiltered, so the check runs where its input changes — the
 same argument as scripts/lint_bench_rows.py. The plan half (the names ARE in
