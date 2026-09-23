@@ -66,6 +66,32 @@ WORKFLOW_TRIGGERS = [
     (REPO / ".github" / "workflows" / "tvos.yml", "ios/Shared/**"),
 ]
 
+# The same rule for what the Wall's tests READ. A test that loads a
+# repo-relative fixture through #filePath (`appendingPathComponent("tests/…")`)
+# is held to that file, so a change to it must run the Wall's job — and
+# tvos.yml's filter is "tvos/**", which a fixture elsewhere is not under. The
+# set is derived from the test sources: any string handed to
+# appendingPathComponent that names an existing file in the checkout.
+WALL_TESTS = REPO / "tvos" / "WitnessWall" / "Tests"
+WALL_WORKFLOW = REPO / ".github" / "workflows" / "tvos.yml"
+FIXTURE_READ = re.compile(r'appendingPathComponent\("([^"]+/[^"]+)"\)')
+
+
+def wall_test_fixtures() -> list[str]:
+    """Repo-relative files outside tvos/ that the Wall's Swift tests read."""
+    found = set()
+    for swift in sorted(WALL_TESTS.rglob("*.swift")):
+        for rel in FIXTURE_READ.findall(swift.read_text(encoding="utf-8")):
+            if not rel.startswith("tvos/") and (REPO / rel).is_file():
+                found.add(rel)
+    return sorted(found)
+
+
+def watches(filters: list[str], rel: str) -> int:
+    """How many path-filter entries cover `rel` (exactly, or by a /** glob)."""
+    return sum(1 for f in filters
+               if f == rel or (f.endswith("/**") and rel.startswith(f[:-2])))
+
 
 def marked_files() -> list[Path]:
     """Every shared file that has declared itself part of the parity set."""
@@ -136,6 +162,23 @@ def main() -> int:
                   "`on.pull_request.paths`.")
         else:
             print(f"{rel}: rebuilds when {glob} changes ✅")
+
+    fixtures = wall_test_fixtures()
+    filters = re.findall(r'^\s*-\s*"([^"]+)"\s*$',
+                         WALL_WORKFLOW.read_text(encoding="utf-8"), re.MULTILINE)
+    wall_rel = WALL_WORKFLOW.relative_to(REPO)
+    for rel in fixtures:
+        hits = watches(filters, rel)
+        if hits < 2:
+            failed = True
+            print(f"::error::the Witness Wall's tests read {rel}, but only {hits} of "
+                  f"{wall_rel}'s 2 path filters (push and pull_request) watch it. A "
+                  "change to that fixture would then run none of the Wall's tests.")
+            print(f'         Add `- "{rel}"` under BOTH `on.push.paths` and '
+                  "`on.pull_request.paths`.")
+    if fixtures and not failed:
+        print(f"{wall_rel}: reruns when any of the {len(fixtures)} fixture(s) "
+              "the Wall's tests read changes ✅")
 
     if failed:
         return 1
