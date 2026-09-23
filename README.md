@@ -53,7 +53,7 @@ Requires Home Assistant 2024.4.1 or newer. On Home Assistant OS, run this from t
 
 `curl -fsSL https://raw.githubusercontent.com/kmay89/securaCV/main/scripts/install.sh | bash`
 
-One idempotent, narrated command installs and wires the whole stack — Mosquitto with a `canary` broker login, Home Assistant's MQTT connection, Frigate with a curated config, the Privacy Witness Kernel, the SecuraCV integration and its config entry, blueprints, and dashboards — and it is safe to re-run.
+One idempotent, narrated command installs and wires the whole stack — Mosquitto with a `canary` broker login, Home Assistant's MQTT connection, Frigate with a curated config, the Privacy Witness Kernel, the SecuraCV integration and its config entry, blueprints, and dashboards — and it is safe to re-run. The broker listens plain on `1883` by default, so the `canary` password crosses your LAN in the clear until you ask for more: `--with broker_tls` adds the broker's TLS listener from a certificate you supply, and the Canaries are then provisioned for it (Step 3 of the setup guide).
 
 Prefer clicking? Add [the SecuraCV app repository](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV) (`https://github.com/kmay89/securaCV`) and [the integration via HACS](https://my.home-assistant.io/redirect/hacs_repository/?owner=kmay89&repository=securacv-homeassistant&category=integration) in one click each, then install **Privacy Witness Kernel** and let its setup wizard finish the job — it can install Mosquitto and Frigate (`https://github.com/blakeblackshear/frigate-hass-addons`) itself if they are missing.
 
@@ -119,7 +119,7 @@ The important promise is not that tampering is impossible. It is that tampering 
 - **Canary Cards.** Radar and witness state can render as standardized, privacy-classed cards across Lab, display, and Home Assistant surfaces. See [Canary Cards](docs/standard/CANARY_CARDS.md).
 - **SecuraCV Lab.** Browser demos model real firmware behavior, display surfaces, onboarding, power/bench behavior, and the MR60BHA2 radar placement pipeline. Try [the Lab](https://kmay89.github.io/securaCV/canary-local/).
 - **USB onboarding design.** Experimental USB-OTG builds provide a read-only drive with `START-HERE.html`, consented one-tap help launch, and recovery/unseal flows. It is off in stock profiles. See [USB onboarding](docs/design/usb_onboard.md).
-- **Supply-chain transparency.** Published firmware artifacts and browser-flasher factory images carry SLSA provenance attestations recorded in Rekor, complementing checksums and device-side OTA verification. See [supply-chain transparency](docs/supply_chain_transparency.md).
+- **Supply-chain transparency.** Published firmware artifacts and browser-flasher factory images carry SLSA provenance attestations recorded in Rekor, complementing checksums and device-side OTA verification. The firmware bill of materials is derived from the build inputs and committed (`sbom/sbom-firmware.cdx.json`), byte-gated and CycloneDX 1.5 schema-validated on every PR; the Rust and Node SBOMs are attached to every release. See [supply-chain transparency](docs/supply_chain_transparency.md) and [`sbom/README.md`](sbom/README.md).
 
 ---
 
@@ -135,7 +135,7 @@ Canaries are small, local witnesses that corroborate the kernel instead of trust
 | **Canary Display** | Watch and wall display surfaces with calm status, QR onboarding concepts, Lab parity, and living-canary health cues. | [`firmware/projects/canary-display/`](firmware/projects/canary-display/) |
 | **Canary OTA** | The signed-update engine every active firmware consumes — Ed25519 release signature, SHA-256, A/B rollback, HA update entity — lives in [`firmware/common/ota/`](firmware/common/ota/) ([docs/firmware_ota.md](docs/firmware_ota.md)); `canary-ota/` is the historical ESP-IDF harness it was promoted from. | [`firmware/common/ota/`](firmware/common/ota/) |
 
-Build plans, BOMs, enclosure notes, and bench procedures are collected in [hardware docs](docs/hardware/README.md). Firmware capability status is tracked in [firmware features](firmware/FEATURES.md).
+Build plans, BOMs, enclosure notes, and bench procedures are collected in [hardware docs](docs/hardware/README.md). Firmware capability status: [`firmware/build_matrix.json`](firmware/build_matrix.json) is the generated truth per build; [firmware features](firmware/FEATURES.md) is the narrative audit matrix, which can lag it.
 
 ---
 
