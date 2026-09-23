@@ -124,6 +124,7 @@
   #define HW_HAS_BT_CLASSIC     0   // C3 has no Classic Bluetooth radio
   #define HW_HAS_BLE            1   // C3 supports Bluetooth Low Energy 5.0
   #define HW_HAS_PDM_MIC        0   // Plain XIAO C3 has no onboard microphone
+  #define HW_HAS_TAMPER_INPUT   0   // board map: HAS_TAMPER_INPUT 0
   #define HW_CPU_CORES          1
   #define HW_MAX_GPIO           21
 #elif defined(HARDWARE_XIAO_ESP32S3)
@@ -134,6 +135,7 @@
   #define HW_HAS_BT_CLASSIC     0   // S3 has no Classic Bluetooth radio
   #define HW_HAS_BLE            1   // S3 supports Bluetooth Low Energy 5.0
   #define HW_HAS_PDM_MIC        1   // XIAO ESP32-S3 Sense onboard PDM mic (GPIO 41/42)
+  #define HW_HAS_TAMPER_INPUT   1   // board map: TAMPER_PIN_DEFAULT on D3
   #define HW_CPU_CORES          2
   #define HW_MAX_GPIO           48
 #endif
@@ -152,7 +154,9 @@
   #define FEATURE_HTTP_SERVER   0
   #define FEATURE_MDNS_BROKER_GOSSIP 0   // no networking in MINIMAL
   #define FEATURE_CAMERA_PEEK   0
+  #ifndef FEATURE_TAMPER_GPIO   // -D overridable: CI's compile-only gate sets 1
   #define FEATURE_TAMPER_GPIO   0
+  #endif
   #define FEATURE_WATCHDOG      1
   #define FEATURE_STATE_LOG     1
   #define FEATURE_MESH_NETWORK  0
@@ -193,7 +197,9 @@
   #define FEATURE_HTTP_SERVER   1
   #define FEATURE_MDNS_BROKER_GOSSIP 1   // advertise broker/bport so displays self-discover
   #define FEATURE_CAMERA_PEEK   0   // Skip camera (saves ~20s)
+  #ifndef FEATURE_TAMPER_GPIO   // -D overridable: CI's compile-only gate sets 1
   #define FEATURE_TAMPER_GPIO   0
+  #endif
   #define FEATURE_WATCHDOG      1
   #define FEATURE_STATE_LOG     1
   #define FEATURE_MESH_NETWORK  0   // Skip mesh (saves ~15s)
@@ -229,7 +235,9 @@
   #define FEATURE_HTTP_SERVER   1
   #define FEATURE_MDNS_BROKER_GOSSIP 1   // advertise broker/bport so displays self-discover
   #define FEATURE_CAMERA_PEEK   HW_HAS_CAMERA    // ESP32-C3 has no camera interface
+  #ifndef FEATURE_TAMPER_GPIO   // -D overridable: CI's compile-only gate sets 1
   #define FEATURE_TAMPER_GPIO   0
+  #endif
   #define FEATURE_WATCHDOG      1
   #define FEATURE_STATE_LOG     1
   #define FEATURE_MESH_NETWORK  1
@@ -260,6 +268,28 @@
   #define DEBUG_VERIFY          0
   #define DEBUG_HTTP            0
 
+#endif
+
+// ════════════════════════════════════════════════════════════════════════════
+// ENCLOSURE TAMPER CONTACT (FEATURE_TAMPER_GPIO — off in every profile)
+// ════════════════════════════════════════════════════════════════════════════
+// A reed / hall switch on the board map's tamper pin, debounced by
+// contact_tamper.h and narrated as the system.integrity `enclosure` kind
+// (tamper_events_module). OFF in every shipped profile until the pin is
+// bench-validated; CI compiles it with -DFEATURE_TAMPER_GPIO=1 in a
+// compile-only leg (firmware.yml). The pin and its polarity are the board
+// map's (firmware/boards/xiao-esp32s3-sense/pins/pins.h TAMPER_PIN_DEFAULT /
+// TAMPER_ACTIVE — the level that means "enclosure open"). This sketch does
+// not include that header, so the values are restated here and
+// firmware/scripts/check_board_registry.py holds the two equal.
+#if FEATURE_TAMPER_GPIO && !HW_HAS_TAMPER_INPUT
+  #error "FEATURE_TAMPER_GPIO=1 but this hardware target's board map declares no tamper input (HAS_TAMPER_INPUT 0). Build it for the XIAO ESP32-S3, or leave the flag off."
+#endif
+#ifndef TAMPER_PIN_DEFAULT
+  #define TAMPER_PIN_DEFAULT    4     // D3, INPUT_PULLUP
+#endif
+#ifndef TAMPER_ACTIVE
+  #define TAMPER_ACTIVE         LOW   // pin level that reads "enclosure open"
 #endif
 
 // ════════════════════════════════════════════════════════════════════════════

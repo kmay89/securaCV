@@ -1,6 +1,7 @@
 #!/bin/bash
 # Host test for firmware/common/core/feature_sanity.h — asserts the #error
-# checks fire (and don't fire) for representative flag combinations.
+# checks fire (and don't fire) for representative flag combinations — plus
+# the canary tree's own tamper-contact pin sanity in canary_config.h.
 set -u
 if ! command -v g++ >/dev/null 2>&1; then
   echo "Error: g++ is required to run the feature-sanity tests." >&2
@@ -98,6 +99,32 @@ for pair in "xiao-esp32s3-round watch" "waveshare-esp32s3-lcd43 dash"; do
     fail=$((fail+1)); echo "FAIL: display $2 config on $1"
   fi
 done
+
+# The canary PIO tree does not include feature_sanity.h — its pins live in
+# firmware/canary/include/canary_config.h, which carries the tamper
+# contact's own pin sanity. The collision that bit in practice: the touch
+# pad and the tamper contact both default to D3/GPIO4.
+C=firmware/canary/include/canary_config.h
+expect_canary() { # expect_canary <ok|err> <desc> <defines...>
+  local want=$1 desc=$2; shift 2
+  local flags=(); for d in "$@"; do flags+=("-D$d"); done
+  if echo "#include \"$C\"" | g++ -x c++ -fsyntax-only -I. "${flags[@]}" - 2>/dev/null; then
+    got=ok
+  else
+    got=err
+  fi
+  if [ "$got" = "$want" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL[$want!=$got]: canary $desc"; fi
+}
+expect_canary ok  "tamper off (every shipped env)"
+expect_canary ok  "tamper on, nothing else on its pin"  FEATURE_TAMPER_GPIO=1
+expect_canary err "tamper + touch, pad left on default"  FEATURE_TAMPER_GPIO=1 FEATURE_TOUCH=1
+expect_canary err "tamper + touch on the same pin"       FEATURE_TAMPER_GPIO=1 FEATURE_TOUCH=1 TOUCH_PIN_NUM=4
+expect_canary ok  "tamper + touch moved to D4 (CI gate)" FEATURE_TAMPER_GPIO=1 FEATURE_TOUCH=1 TOUCH_PIN_NUM=5
+expect_canary err "tamper on a camera pin (freenove)"    FEATURE_TAMPER_GPIO=1 CAM_PIN_SIOD=4
+expect_canary err "tamper on the SD chip select"         FEATURE_TAMPER_GPIO=1 TAMPER_PIN_DEFAULT=21
+expect_canary ok  "freenove map pin, SD off"             FEATURE_TAMPER_GPIO=1 TAMPER_PIN_DEFAULT=21 FEATURE_SD_STORAGE=0 CAM_PIN_SIOD=4
+expect_canary err "tamper on a board with no input"      FEATURE_TAMPER_GPIO=1 HAS_TAMPER_INPUT=0
+expect_canary err "tamper on the BOOT button"            FEATURE_TAMPER_GPIO=1 TAMPER_PIN_DEFAULT=0
 
 echo "sanity header tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] && echo "ALL FEATURE_SANITY TESTS PASSED"

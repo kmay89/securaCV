@@ -239,8 +239,21 @@
   #define MIC_PIN_DATA   41
 #endif
 
-// Tamper detection
-#define TAMPER_GPIO    2
+// Enclosure tamper contact (FEATURE_TAMPER_GPIO, off in every shipped env).
+// The pin and its polarity are the board map's: firmware/boards/
+// xiao-esp32s3-sense/pins/pins.h TAMPER_PIN_DEFAULT (D3 / GPIO4,
+// INPUT_PULLUP) and TAMPER_ACTIVE (the level that reads "enclosure open").
+// This tree does not include that header, so the values are restated here
+// and firmware/scripts/check_board_registry.py holds them equal; the
+// board-port envs pass their own map's pin with -DTAMPER_PIN_DEFAULT=N.
+// (This replaced a `TAMPER_GPIO 2` literal that nothing read — GPIO2 is the
+// canary-wap's buzzer, never the tamper line.)
+#ifndef TAMPER_PIN_DEFAULT
+  #define TAMPER_PIN_DEFAULT  4
+#endif
+#ifndef TAMPER_ACTIVE
+  #define TAMPER_ACTIVE       LOW
+#endif
 
 // Boot button
 #define BOOT_BUTTON_GPIO  0
@@ -300,6 +313,44 @@
   #endif
   #ifndef CAM_PIN_PCLK
     #define CAM_PIN_PCLK    13
+  #endif
+#endif
+
+// ─── Tamper contact pin sanity ───────────────────────────────────
+// The contact is read with digitalRead() on a pin set to INPUT_PULLUP, so
+// it must own that pin outright. Every pin this header knows is checked;
+// the one that bit in practice is the touch pad, whose default
+// (securacv_touch.h TOUCH_PIN_NUM) is the same D3 / GPIO4 — the build plan
+// (docs/hardware/canary_peripheral_build_plan.md §5.1) moves the pad to
+// D4 / GPIO5 when both are fitted.
+#if FEATURE_TAMPER_GPIO
+  #if defined(HAS_TAMPER_INPUT) && !HAS_TAMPER_INPUT
+    #error "FEATURE_TAMPER_GPIO=1 but this board's map declares no tamper input (HAS_TAMPER_INPUT=0)."
+  #endif
+  #if FEATURE_TOUCH && !defined(TOUCH_PIN_NUM)
+    #error "FEATURE_TAMPER_GPIO=1 with FEATURE_TOUCH=1: the touch pad's default pin is the tamper contact's D3/GPIO4. Move the pad explicitly, e.g. -DTOUCH_PIN_NUM=5 (D4)."
+  #endif
+  #if FEATURE_TOUCH && defined(TOUCH_PIN_NUM) && (TOUCH_PIN_NUM == TAMPER_PIN_DEFAULT)
+    #error "FEATURE_TAMPER_GPIO=1: TOUCH_PIN_NUM and TAMPER_PIN_DEFAULT are the same pin."
+  #endif
+  #if FEATURE_SD_STORAGE && (TAMPER_PIN_DEFAULT == SD_CS_PIN || TAMPER_PIN_DEFAULT == SD_SCK_PIN || \
+                             TAMPER_PIN_DEFAULT == SD_MISO_PIN || TAMPER_PIN_DEFAULT == SD_MOSI_PIN)
+    #error "FEATURE_TAMPER_GPIO=1: TAMPER_PIN_DEFAULT is one of the SD card's SPI pins."
+  #endif
+  #if FEATURE_CAMERA_PEEK && (TAMPER_PIN_DEFAULT == CAM_PIN_XCLK || TAMPER_PIN_DEFAULT == CAM_PIN_SIOD || \
+      TAMPER_PIN_DEFAULT == CAM_PIN_SIOC || TAMPER_PIN_DEFAULT == CAM_PIN_VSYNC ||                        \
+      TAMPER_PIN_DEFAULT == CAM_PIN_HREF || TAMPER_PIN_DEFAULT == CAM_PIN_PCLK ||                         \
+      TAMPER_PIN_DEFAULT == CAM_PIN_D0 || TAMPER_PIN_DEFAULT == CAM_PIN_D1 ||                             \
+      TAMPER_PIN_DEFAULT == CAM_PIN_D2 || TAMPER_PIN_DEFAULT == CAM_PIN_D3 ||                             \
+      TAMPER_PIN_DEFAULT == CAM_PIN_D4 || TAMPER_PIN_DEFAULT == CAM_PIN_D5 ||                             \
+      TAMPER_PIN_DEFAULT == CAM_PIN_D6 || TAMPER_PIN_DEFAULT == CAM_PIN_D7)
+    #error "FEATURE_TAMPER_GPIO=1: TAMPER_PIN_DEFAULT is one of the camera's pins (a board-port env must pass its own map's pin with -DTAMPER_PIN_DEFAULT=N)."
+  #endif
+  #if FEATURE_GNSS && (TAMPER_PIN_DEFAULT == GPS_RX_PIN || TAMPER_PIN_DEFAULT == GPS_TX_PIN)
+    #error "FEATURE_TAMPER_GPIO=1: TAMPER_PIN_DEFAULT is one of the GNSS UART pins."
+  #endif
+  #if TAMPER_PIN_DEFAULT == BOOT_BUTTON_GPIO
+    #error "FEATURE_TAMPER_GPIO=1: TAMPER_PIN_DEFAULT is the BOOT button."
   #endif
 #endif
 

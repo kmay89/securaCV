@@ -466,11 +466,11 @@ existing: the integration listens for several signals no firmware publishes yet.
 | `sd_remove` | SD Removed | canary base publishes `sd_mounted` in its MQTT health once a card has mounted this boot (a card-less boot sends no key, so it never reads as removed); Canary WAP publishes `{"type":"sd_remove"}` on the tamper topic when its `system.integrity` module sees a mounted card leave (`csi_mqtt.cpp`'s per-kind bridge). The WAP's `sd_mounted` is on its HTTP `/api/status`, not in its MQTT health | Implemented (canary base + WAP) |
 | `sd_error` | SD Error | canary base publishes `sd_errors` in health; Canary WAP publishes `{"type":"sd_error"}` on the tamper topic when its `system.integrity` module sees a mounted card fail | Implemented (canary base + WAP) |
 | `memory_critical` | Memory Critical | derived HA-side from published `free_heap` | Implemented |
-| `enclosure` | Enclosure Open | capacitive-touch tamper published on the tamper topic (as `enclosure_tamper`) | Experimental |
+| `enclosure` | Enclosure Open | a reed/hall enclosure contact on the board map's `TAMPER_PIN_DEFAULT`, on builds with `FEATURE_TAMPER_GPIO=1` (off in every shipped profile until the pin is bench-validated): canary base publishes `enclosure_open` in health; Canary WAP publishes `{"type":"enclosure"}` on the tamper topic when its `system.integrity` module commits an opening (`csi_mqtt.cpp`'s per-kind bridge). The canary base's capacitive-touch tamper is published on the tamper topic as `enclosure_tamper` | Experimental |
 | `power_loss` | Power Loss | canary base publishes `{"type":"power_loss"}` on the tamper topic at boot (power-events classifier, `canary_power_events.h`); Canary WAP publishes the same shape on the tamper topic when its `system.integrity` module commits a brownout-boot tamper (`csi_mqtt.cpp`'s per-kind bridge) | Implemented (canary base + WAP) |
 | `gps_jamming` | GPS Jamming | none found | Experimental |
 | `motion` | Unexpected Motion | none found (accelerometer signal not published) | Experimental |
-| `gpio` | GPIO Tamper | none found | Experimental |
+| `gpio` | GPIO Tamper | none by design: a tamper pin's contact is narrated as `enclosure` (one kind per physical fact) | Experimental |
 | `watchdog` | Watchdog Timeout | Canary WAP publishes `{"type":"watchdog"}` on the tamper topic when its `system.integrity` module classifies a watchdog reset at boot | Implemented (WAP) |
 | `unexpected_reboot` | Unexpected Reboot | canary base publishes `{"type":"unexpected_reboot"}` on the tamper topic at boot after a fault reset (power-events path); Canary WAP publishes the same shape from its `system.integrity` module after a panic reset | Implemented (canary base + WAP) |
 | `battery_remove` | — (no sensor) | none | Planned |

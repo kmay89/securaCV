@@ -378,6 +378,12 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | `FEATURE_HA_MQTT` | ❌ | ❌ | ✅ | ❌ |
 | `DEBUG_VERBOSE` / `DEBUG_*` | ✅ (5 flags) | ❌ | ✅ (5 flags) | ⚠️ |
 
+`FEATURE_TAMPER_GPIO` has a consumer in both trees: a reed/hall enclosure
+contact on the board map's `TAMPER_PIN_DEFAULT`, debounced
+(`common/csi/src/contact_tamper.h`) and narrated as the `system.integrity`
+`enclosure` kind. It is 0 in every shipped profile until the pin is
+bench-validated; CI compiles it on (`firmware.yml`, compile-only).
+
 ## Provisioning System
 
 | Component | Status | Notes |

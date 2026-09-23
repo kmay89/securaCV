@@ -53,6 +53,10 @@
 #endif
 #endif
 
+#if FEATURE_TAMPER_GPIO
+#include "contact_tamper.h"  /* enclosure contact debounce (common/csi/src) */
+#endif
+
 #if FEATURE_CSI
 #include "securacv_csi.h"
 #include "csi_modules_integration.h"
@@ -339,6 +343,13 @@ static uint32_t g_ota_next_check_ms = 0;
 static volatile bool g_tamper_publish_pending = false;
 static volatile uint8_t g_tamper_pending_kind = 0;       /* sensing_witness_kind_t */
 static volatile uint8_t g_tamper_pending_confidence = 0; /* 0..100 */
+#endif
+
+#if FEATURE_TAMPER_GPIO
+/* Enclosure tamper contact on TAMPER_PIN_DEFAULT (canary_config.h): the
+ * debounced state loop() feeds the system.integrity watcher. Loop task
+ * only. */
+static contact_tamper::State g_tamper_contact = contact_tamper::kInitial;
 #endif
 
 // Device-unique AP password (derived from pubkey fingerprint)
@@ -1269,6 +1280,15 @@ void setup() {
   }
 #endif
 
+#if FEATURE_TAMPER_GPIO
+  // Enclosure tamper contact: a reed/hall switch to GND on the board map's
+  // pin, read through the internal pull-up and debounced in loop()
+  // (contact_tamper.h). canary_config.h refuses to build it on a pin the
+  // touch pad, SD, camera, GNSS or BOOT button already owns.
+  pinMode(TAMPER_PIN_DEFAULT, INPUT_PULLUP);
+  Serial.printf("[OK] Enclosure contact on GPIO%d\n", (int)TAMPER_PIN_DEFAULT);
+#endif
+
   // Initialize IR remote-control activity detection (RMT RX)
 #if FEATURE_IR_RMT
   Serial.println("[..] Initializing IR remote-control detection...");
@@ -1714,6 +1734,27 @@ void loop() {
                                       rst_brownout ? 1 : 0,
                                       sd_state);
   }
+
+#if FEATURE_TAMPER_GPIO
+  // Enclosure contact: debounce the raw line, feed the watcher the accepted
+  // state (it narrates `enclosure` on CLOSED -> OPEN only; the first sample
+  // is adopted, so booting with the lid off is not an intrusion), and keep
+  // DeviceIdentity.tamper_active as the standing condition — it drives the
+  // health payload's tamper_detected, the fleet beacon's tamper flag and the
+  // trust card, which had no writer before this contact existed.
+  {
+    const contact_tamper::Transition tr = contact_tamper::sample(
+        &g_tamper_contact, digitalRead(TAMPER_PIN_DEFAULT) == TAMPER_ACTIVE,
+        millis());
+    securacv_csi_modules_tamper_watch_contact(g_tamper_contact.open ? 1 : 0);
+    if (tr == contact_tamper::Transition::OPENED) {
+      witness_get_device().tamper_active = true;
+      witness_get_health().tamper_events++;
+    } else if (tr == contact_tamper::Transition::CLOSED) {
+      witness_get_device().tamper_active = false;
+    }
+  }
+#endif
 
 #if FEATURE_ACOUSTIC_EVENTS
   #if FEATURE_POWER_POLICY
@@ -2214,6 +2255,12 @@ static void mqtt_publish_health_update() {
   doc["boot_count"] = device.boot_count;
   doc["firmware_version"] = FIRMWARE_VERSION;
   doc["tamper_detected"] = device.tamper_active;
+#if FEATURE_TAMPER_GPIO
+  /* The contact's live (debounced) level, which HA's Enclosure Open sensor
+   * reads from health — so it stands while the lid is off instead of
+   * lasting only until the next health publish. */
+  doc["enclosure_open"] = g_tamper_contact.adopted && g_tamper_contact.open;
+#endif
 
   /* Power lineage flags, held for kIncidentHoldMs after boot: the tamper
    * topic's one-shot message is non-retained, so a hub that reboots slower

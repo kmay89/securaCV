@@ -581,14 +581,22 @@ _INTEGRITY_KIND_RE = re.compile(r"[a-z][a-z0-9_]*")
 # The header's doctrine table: ` *   sd_remove         — the card left ...`
 # (three spaces after the star; prose lines in the same comment have one).
 _INTEGRITY_DOCTRINE_RE = re.compile(r"^ \*   ([a-z][a-z0-9_]*)\s+—\s", re.M)
-# Where each host feeds the module a live SD state. A host whose dictionary
-# list names an SD kind must still be passing one, or the list is a promise
-# its firmware no longer keeps.
-_INTEGRITY_SD_KINDS = frozenset({"sd_error", "sd_remove"})
-_INTEGRITY_SD_FEEDS = {
-    "canary-wap": ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
-                   "(uint8_t)g_hw.sd_state"),
-    "canary": ("firmware/canary/src/main.cpp", "storage_sd_state()"),
+# Where each host feeds the module a live state. A host whose dictionary
+# list names a kind that needs a feed (an SD kind, the enclosure contact)
+# must still be passing it — in code, not in a comment — or the list is a
+# promise its firmware no longer keeps.
+_INTEGRITY_FEEDS = {
+    "sd": (frozenset({"sd_error", "sd_remove"}), {
+        "canary-wap": ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+                       "(uint8_t)g_hw.sd_state"),
+        "canary": ("firmware/canary/src/main.cpp", "storage_sd_state()"),
+    }),
+    "enclosure contact": (frozenset({"enclosure"}), {
+        "canary-wap": ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+                       "tamper_events_watch_contact("),
+        "canary": ("firmware/canary/src/main.cpp",
+                   "securacv_csi_modules_tamper_watch_contact("),
+    }),
 }
 
 
@@ -636,8 +644,8 @@ def _check_integrity_kinds(tv: dict, const_py: str) -> None:
     const.py TAMPER_* value with its own per-type binary sensor and is not a
     fenced FUTURE_TAMPER_TYPES entry; (3) every narration surface knows every
     kind (superset — a table may narrate kinds this module never emits);
-    (4) the per-host lists partition nothing new and each host that claims an
-    SD kind still feeds the module a live SD state.
+    (4) the per-host lists add nothing the dictionary lacks, cover it, and
+    each host that claims a fed kind (SD, enclosure) still passes that feed.
     """
     declared = tv.get("system_integrity_kinds")
     if not declared:
@@ -736,16 +744,18 @@ def _check_integrity_kinds(tv: dict, const_py: str) -> None:
         if extra:
             err(f"[drift] system_integrity_hosts[{host!r}] lists {sorted(extra)}, "
                 f"which system_integrity_kinds does not")
-        if set(ks) & _INTEGRITY_SD_KINDS:
-            feed = _INTEGRITY_SD_FEEDS.get(host)
+        for what, (needs, feeds) in _INTEGRITY_FEEDS.items():
+            if not set(ks) & needs:
+                continue
+            feed = feeds.get(host)
             if feed is None:
-                err(f"[drift] system_integrity_hosts[{host!r}] lists an SD kind but "
-                    f"the linter knows no SD feed for that host — add it to "
-                    f"_INTEGRITY_SD_FEEDS")
+                err(f"[drift] system_integrity_hosts[{host!r}] lists {sorted(set(ks) & needs)} "
+                    f"but the linter knows no {what} feed for that host — add it to "
+                    f"_INTEGRITY_FEEDS")
             elif feed[1] not in _c_code(read(feed[0])):
-                err(f"[drift] system_integrity_hosts[{host!r}] lists an SD kind but "
-                    f"{feed[0]} no longer feeds the watcher a live SD state "
-                    f"({feed[1]!r} not found)")
+                err(f"[drift] system_integrity_hosts[{host!r}] lists {sorted(set(ks) & needs)} "
+                    f"but {feed[0]} no longer feeds the watcher a live {what} state "
+                    f"({feed[1]!r} not found in code)")
     if union != want:
         err(f"[drift] system_integrity_hosts cover {sorted(union)}, not "
             f"system_integrity_kinds {sorted(want)} — a kind no host can emit "

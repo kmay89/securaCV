@@ -468,12 +468,14 @@ extern "C" bool securacv_csi_modules_init(void) {
   /* Scheduled 10-min empty-room baseline calibration (PR 4a). */
   csi_module_register(meta_empty_room_baseline_module());
   /* system.integrity — per-kind tamper narration (watchdog / power_loss /
-   * unexpected_reboot, and sd_error / sd_remove from the storage lane's
-   * live state) through the chokepoint, same module the canary-wap sketch
-   * registers. Unconditional: every board has a reset reason, and a build
+   * unexpected_reboot, sd_error / sd_remove from the storage lane's live
+   * state, and enclosure from the tamper contact on FEATURE_TAMPER_GPIO
+   * builds) through the chokepoint, same module the canary-wap sketch
+   * registers. Unconditional: every board has a reset reason, a build
    * without FEATURE_SD_STORAGE feeds a constant and never sees an SD
-   * transition. Fed from main.cpp's loop() via
-   * securacv_csi_modules_tamper_watch(). */
+   * transition, and a build without the contact never feeds one. Fed from
+   * main.cpp's loop() via securacv_csi_modules_tamper_watch() and
+   * securacv_csi_modules_tamper_watch_contact(). */
   csi_module_register(tamper_events_module());
 
 #if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
@@ -570,6 +572,14 @@ extern "C" void securacv_csi_modules_tamper_watch(int reset_was_crash,
    * where CSI init runs late or fails. */
   tamper_events_watch(reset_was_crash, reset_was_watchdog,
                       reset_was_brownout, sd_state);
+}
+
+extern "C" void securacv_csi_modules_tamper_watch_contact(int enclosure_open) {
+  /* Pass-through, not gated on s_initialized — same reason as above: the
+   * watcher's adopt-first rule makes an early call harmless, and a gate
+   * here would only lose the adoption. */
+  tamper_events_watch_contact(enclosure_open ? TAMPER_CONTACT_OPEN
+                                             : TAMPER_CONTACT_CLOSED);
 }
 
 extern "C" void securacv_csi_modules_deinit(void) {

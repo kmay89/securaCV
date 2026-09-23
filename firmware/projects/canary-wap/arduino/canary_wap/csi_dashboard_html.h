@@ -2088,6 +2088,7 @@ async function fetchToday() {
         sd_error: 'Storage card failing',
         watchdog: 'Recovered from a system hang',
         unexpected_reboot: 'Rebooted unexpectedly',
+        enclosure: 'Enclosure opened',
       })[e.state] || e.state;
       if (e.state === 'active') activeCount++;
       if (e.state === 'empty')  quietCount++;

@@ -353,23 +353,26 @@
         "watchdog",
         "power_loss",
         "sd_error",
-        "sd_remove"
+        "sd_remove",
+        "enclosure"
       ],
       "system_integrity_hosts": {
-        "$comment": "Which kinds each host's feeds can produce. Boot kinds come from the reset reason every board has; sd_error / sd_remove need a live SD state (canary-wap: hardware_state.h SdState; canary: the storage lane via common/storage/sd_mount_policy.h sd_state_for_tamper, FEATURE_SD_STORAGE builds). The linter requires every host list to be a subset of system_integrity_kinds and their union to equal it.",
+        "$comment": "Which kinds each host's feeds can produce. Boot kinds come from the reset reason every board has; sd_error / sd_remove need a live SD state (canary-wap: hardware_state.h SdState; canary: the storage lane via common/storage/sd_mount_policy.h sd_state_for_tamper, FEATURE_SD_STORAGE builds); enclosure needs a debounced contact state (common/csi/src/contact_tamper.h over the board map's TAMPER_PIN_DEFAULT), compiled only with FEATURE_TAMPER_GPIO=1, which no shipped profile sets until the pin is bench-validated. The linter requires every host list to be a subset of system_integrity_kinds, their union to equal it, and each host that lists an SD kind or enclosure to still pass the matching live feed.",
         "canary-wap": [
           "unexpected_reboot",
           "watchdog",
           "power_loss",
           "sd_error",
-          "sd_remove"
+          "sd_remove",
+          "enclosure"
         ],
         "canary": [
           "unexpected_reboot",
           "watchdog",
           "power_loss",
           "sd_error",
-          "sd_remove"
+          "sd_remove",
+          "enclosure"
         ]
       }
     },

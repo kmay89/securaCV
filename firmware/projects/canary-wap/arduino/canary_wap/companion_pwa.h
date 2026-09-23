@@ -1436,6 +1436,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
       },
       tamper: (p) => {
         if (p.status === 'absent') return 'Tamper monitoring isn\'t enabled in this build. It\'s optional — to get physical-tamper alerts, enable the tamper input and wire a reed/contact switch to the tamper pin.';
+        if (p.status === 'pass' && p.metric && p.metric.open === true) return 'The enclosure reads open. Close the lid before you mount the Canary — opening it after that is recorded as a tamper.';
         return '';
       },
       gpio: (p) => (p.status === 'fail' || p.status === 'skip')
