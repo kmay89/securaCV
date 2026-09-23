@@ -38,7 +38,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // The srcdoc transform, byte-for-byte the one gen_display_portal.py applies
 // when it writes devices/display_portal.json (whose <style> hash fleet.html's
 // CSP carries): script blocks out, to a fixed point, then style=/on*=
-// attributes out of every start tag.
+// attributes out of every start tag, also to a fixed point.
 const SCRIPT_BLOCK_RE = /<script\b[^>]*>[\s\S]*?<\/script\b[^>]*>/gi;
 const TAG_RE = /<[a-zA-Z][^>]*>/g;
 const INLINE_ATTR_RE = /\s(?:style|on[a-z]+)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi;
@@ -49,7 +49,15 @@ export function stripPortal(html) {
     if (next === s) break;
     s = next;
   }
-  return s.replace(TAG_RE, (tag) => tag.replace(INLINE_ATTR_RE, ""));
+  // Attributes too, to a fixed point: removing one can splice a new one
+  // together (`<a  onx="1"onclick=2>` leaves `<a onclick=2>` after one pass).
+  return s.replace(TAG_RE, (tag) => {
+    for (;;) {
+      const next = tag.replace(INLINE_ATTR_RE, "");
+      if (next === tag) return tag;
+      tag = next;
+    }
+  });
 }
 
 // The zone presets the portal's own script carries (`var TZS=[...]`: label,

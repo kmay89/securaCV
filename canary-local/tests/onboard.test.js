@@ -29,7 +29,7 @@ const REPO = join(ROOT, "..");
 const read = (p) => readFileSync(p, "utf8");
 const PROVISION = read(join(REPO, "firmware/projects/canary-display/src/net/provision.cpp"));
 const PORTAL_SRC = /PORTAL_HTML\[\]\s+PROGMEM\s*=\s*R"HTML\(([\s\S]*?)\)HTML"/.exec(PROVISION)[1];
-const PORTAL_SCRIPT = /<script>([\s\S]*?)<\/script>/.exec(PORTAL_SRC)[1];
+const PORTAL_SCRIPT = /<script\b[^>]*>([\s\S]*?)<\/script\s*>/i.exec(PORTAL_SRC)[1];
 const DATA = JSON.parse(read(join(ROOT, "devices/display_portal.json")));
 
 const phone = () => import("../assets/onboard-phone.js");
@@ -74,6 +74,9 @@ test("stripPortal: the Lab's runtime transform is the generator's, byte for byte
   // A nested script cannot re-form after one pass; attributes go from every tag.
   assert.strictEqual(stripPortal("<p>a</p><scr<script>x</script>ipt>y</script>"), "<p>a</p>");
   assert.strictEqual(stripPortal('<div class="a" style="x" onclick=\'y\'>t</div>'), '<div class="a">t</div>');
+  // Nor can an attribute: removing one must not splice a live handler together.
+  assert.strictEqual(stripPortal('<a  onfoo="1"onclick=2>t</a>'), '<a>t</a>');
+  assert.strictEqual(stripPortal('<A ONCLICK="x" Style=y>t</A>'), '<A>t</A>');
 });
 
 test("zone presets: the phone reads the portal script's TZS, and preselects as it does", async () => {

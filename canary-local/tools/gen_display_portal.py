@@ -57,7 +57,8 @@ from gen_csp import scan_inline  # noqa: E402  (the census gen_csp.py applies to
 
 # The runtime transform, mirrored byte-for-byte by onboard-phone.js
 # stripPortal(): script blocks out (to a fixed point — one pass is not a
-# sanitizer), then style=/on*= attributes out of every start tag.
+# sanitizer), then style=/on*= attributes out of every start tag, also to a
+# fixed point.
 SCRIPT_BLOCK_RE = re.compile(r"<script\b[^>]*>[\s\S]*?</script\b[^>]*>", re.IGNORECASE)
 TAG_RE = re.compile(r"<[a-zA-Z][^>]*>")
 INLINE_ATTR_RE = re.compile(r"""\s(?:style|on[a-z]+)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)""", re.IGNORECASE)
@@ -69,7 +70,17 @@ def strip_portal(html: str) -> str:
         if stripped == html:
             break
         html = stripped
-    return TAG_RE.sub(lambda m: INLINE_ATTR_RE.sub("", m.group(0)), html)
+    return TAG_RE.sub(lambda m: _strip_attrs(m.group(0)), html)
+
+
+def _strip_attrs(tag: str) -> str:
+    # To a fixed point as well: removing one attribute can splice a new one
+    # together (`<a  onx="1"onclick=2>` leaves `<a onclick=2>` after a pass).
+    while True:
+        stripped = INLINE_ATTR_RE.sub("", tag)
+        if stripped == tag:
+            return tag
+        tag = stripped
 
 
 _CACHE: dict = {}
