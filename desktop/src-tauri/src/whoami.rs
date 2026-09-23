@@ -69,7 +69,7 @@ pub fn nonce_ok(nonce: &str) -> bool {
 }
 
 pub(crate) fn decode_hex(value: &str) -> Option<Vec<u8>> {
-    if value.len() % 2 != 0 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if !value.len().is_multiple_of(2) || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     (0..value.len())
@@ -85,7 +85,10 @@ pub enum Proof {
     /// A valid signature from a key that is NOT the one we expected. The
     /// loudest possible outcome: something is answering for this device_id
     /// with a different identity.
-    WrongKey { seen_fp: String, expected_fp: String },
+    WrongKey {
+        seen_fp: String,
+        expected_fp: String,
+    },
     /// Reached it, but the answer doesn't verify.
     BadSignature,
     /// The device doesn't offer the endpoint (older firmware) or didn't
@@ -134,7 +137,10 @@ pub fn check_answer(
     let sig_bytes: [u8; 64] = sig[..].try_into().expect("checked length");
     let signature = Signature::from_bytes(&sig_bytes);
     let canonical = whoami_canonical(device_id, nonce);
-    if verifying_key.verify(canonical.as_bytes(), &signature).is_err() {
+    if verifying_key
+        .verify(canonical.as_bytes(), &signature)
+        .is_err()
+    {
         return Proof::BadSignature;
     }
     // The signature is good. Now: is it the RIGHT key? Verifying a signature
@@ -219,7 +225,10 @@ mod tests {
         let (pk, sig) = answer("canary_wap_a1", &nonce, &impostor);
         let expected = pubkey_fingerprint(key().verifying_key().as_bytes());
         match check_answer("canary_wap_a1", &nonce, &pk, &sig, &expected) {
-            Proof::WrongKey { seen_fp, expected_fp } => {
+            Proof::WrongKey {
+                seen_fp,
+                expected_fp,
+            } => {
                 assert_ne!(seen_fp, expected_fp);
                 assert_eq!(expected_fp, expected);
             }
@@ -274,7 +283,10 @@ mod tests {
             ("00", sig.as_str()), // right alphabet, wrong length
         ] {
             assert!(
-                matches!(check_answer("canary_wap_a1", &nonce, p, s, ""), Proof::Unavailable(_)),
+                matches!(
+                    check_answer("canary_wap_a1", &nonce, p, s, ""),
+                    Proof::Unavailable(_)
+                ),
                 "malformed input must be Unavailable, not proof"
             );
         }
@@ -295,7 +307,12 @@ mod tests {
         h.update(b"securacv:pubkey:fingerprint");
         h.update([0x00u8]);
         h.update(pubkey);
-        let want: String = h.finalize().iter().take(8).map(|b| format!("{b:02x}")).collect();
+        let want: String = h
+            .finalize()
+            .iter()
+            .take(8)
+            .map(|b| format!("{b:02x}"))
+            .collect();
         assert_eq!(pubkey_fingerprint(&pubkey), want);
         assert_eq!(pubkey_fingerprint(&pubkey).len(), 16);
 
@@ -304,7 +321,12 @@ mod tests {
         let mut h2 = Sha256::new();
         h2.update(b"securacv:pubkey:fingerprint");
         h2.update(pubkey);
-        let without: String = h2.finalize().iter().take(8).map(|b| format!("{b:02x}")).collect();
+        let without: String = h2
+            .finalize()
+            .iter()
+            .take(8)
+            .map(|b| format!("{b:02x}"))
+            .collect();
         assert_ne!(pubkey_fingerprint(&pubkey), without);
     }
 
@@ -319,7 +341,13 @@ mod tests {
         assert!(nonce_ok(&"a".repeat(64)));
         assert!(!nonce_ok(&"a".repeat(65)));
         assert!(!nonce_ok("short"));
-        assert!(!nonce_ok("ABCDEF0123456789"), "uppercase is refused by the device");
-        assert!(!nonce_ok("ghijklmnopqrstuv"), "non-hex is refused by the device");
+        assert!(
+            !nonce_ok("ABCDEF0123456789"),
+            "uppercase is refused by the device"
+        );
+        assert!(
+            !nonce_ok("ghijklmnopqrstuv"),
+            "non-hex is refused by the device"
+        );
     }
 }

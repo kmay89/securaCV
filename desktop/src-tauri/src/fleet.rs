@@ -326,7 +326,12 @@ pub async fn device_whoami(
             }))
         }
     };
-    let field = |k: &str| body.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let field = |k: &str| {
+        body.get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
     // Bind to the device_id WE expected, not the one the answer claims —
     // otherwise a responder could sign for whatever identity it liked and
     // the canonical would happily agree with it.
@@ -351,7 +356,10 @@ pub async fn device_whoami(
         crate::whoami::Proof::Answered => {
             "answered a fresh challenge with its identity key".to_string()
         }
-        crate::whoami::Proof::WrongKey { seen_fp, expected_fp } => format!(
+        crate::whoami::Proof::WrongKey {
+            seen_fp,
+            expected_fp,
+        } => format!(
             "a DIFFERENT key answered for this device id (saw {seen_fp}, expected {expected_fp})"
         ),
         crate::whoami::Proof::BadSignature => {
