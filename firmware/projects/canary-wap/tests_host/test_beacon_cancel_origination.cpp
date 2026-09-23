@@ -6,6 +6,9 @@
 // beacon_cancel_policy.h the firmware compiles, so a moved field or a changed
 // decision fails here first. It pins:
 //   - reason -> all-clear template (0x80 / 0x81 / 0x82), unknown refused
+//   - the cancel request body: defaults only for absent fields, every present
+//     field well formed or refused by name (and beacon_api.h's adapter pinned
+//     to feed that validation, not ArduinoJson's `| default`)
 //   - the canonical a CANCEL signs (msg_type, CAP defaults, scope, reference,
 //     TTL, solo forcing certainty = Observed and one fingerprint for both)
 //   - the refusal order the REST layer names reasons from
@@ -27,6 +30,7 @@
  *   g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror \
  *       -I firmware/projects/canary-wap/arduino/canary_wap \
  *       -DBEACON_CHANNEL_CPP='"firmware/projects/canary-wap/arduino/canary_wap/beacon_channel.cpp"' \
+ *       -DBEACON_API_H='"firmware/projects/canary-wap/arduino/canary_wap/beacon_api.h"' \
  *       firmware/projects/canary-wap/tests_host/test_beacon_cancel_origination.cpp \
  *       -o /tmp/test_beacon_cancel_origination && /tmp/test_beacon_cancel_origination
  */
@@ -42,9 +46,12 @@
 #include "beacon_source_scan.h"
 
 // The real firmware, for the call-site pins. The Makefile passes the absolute
-// path; a hand build from tests_host/ falls back to the relative one.
+// paths; a hand build from tests_host/ falls back to the relative ones.
 #ifndef BEACON_CHANNEL_CPP
 #define BEACON_CHANNEL_CPP "../arduino/canary_wap/beacon_channel.cpp"
+#endif
+#ifndef BEACON_API_H
+#define BEACON_API_H "../arduino/canary_wap/beacon_api.h"
 #endif
 
 using namespace beacon_channel;
@@ -136,6 +143,93 @@ void test_solo_cancel_canonical() {
          "solo CANCEL names this device as both signers");
   EXPECT(c.msg_type == BEACON_MSG_CANCEL, "solo CANCEL is still msg_type = Cancel");
   EXPECT(c.expires == NOW + 30ULL * 60ULL, "solo TTL honored");
+}
+
+// ── The REST body ───────────────────────────────────────────────────────────
+
+BodyField absent() { return BodyField{FIELD_ABSENT, 0, nullptr}; }
+BodyField integer(int32_t v) { return BodyField{FIELD_INTEGER, v, nullptr}; }
+BodyField text(const char* t) { return BodyField{FIELD_STRING, 0, t}; }
+BodyField other() { return BodyField{FIELD_OTHER, 0, nullptr}; }
+
+// A review found the old parser defaulted malformed fields silently: a
+// non-object body ([] or "x") originated a default CANCEL, ttl_minutes "abc"
+// or 30.5 became 15, and certainty 260 was narrowed to uint8_t and passed as
+// 4. Every one of those is now refused by name.
+void test_cancel_request_body() {
+  CancelRequestFields f{};
+  EXPECT(validate_cancel_request(true, absent(), absent(), absent(), &f) == nullptr &&
+         f.tpl == BCN_CLR_RESOLVED && f.certainty == BCN_CERT_LIKELY && f.ttl_minutes == 15,
+         "an empty object takes the defaults: resolved, Likely, 15 minutes");
+  EXPECT(validate_cancel_request(true, text("false_alarm"), text("Observed"), integer(30), &f) == nullptr &&
+         f.tpl == BCN_CLR_FALSE_ALARM && f.certainty == BCN_CERT_OBSERVED && f.ttl_minutes == 30,
+         "well-formed fields are used as given");
+
+  EXPECT(validate_cancel_request(false, absent(), absent(), absent(), &f) != nullptr,
+         "a body that is not a JSON object ([] or \"x\") is refused, not defaulted");
+
+  EXPECT(validate_cancel_request(true, text("clear"), absent(), absent(), &f) != nullptr &&
+         validate_cancel_request(true, integer(1), absent(), absent(), &f) != nullptr &&
+         validate_cancel_request(true, other(), absent(), absent(), &f) != nullptr,
+         "a reason that is not one of the three words is refused");
+
+  for (int32_t c = 0; c <= 4; c++) {
+    EXPECT(validate_cancel_request(true, absent(), integer(c), absent(), &f) == nullptr &&
+           f.certainty == (uint8_t)c, "certainty 0..4 as an integer is accepted");
+  }
+  EXPECT(validate_cancel_request(true, absent(), integer(260), absent(), &f) != nullptr,
+         "certainty 260 is refused — range-checked as an int, not narrowed to 4");
+  EXPECT(validate_cancel_request(true, absent(), integer(5), absent(), &f) != nullptr &&
+         validate_cancel_request(true, absent(), integer(-1), absent(), &f) != nullptr,
+         "certainty just outside 0..4 is refused");
+  const char* labels[] = {"Observed", "Likely", "Possible", "Unlikely", "Unknown"};
+  for (uint8_t i = 0; i < 5; i++) {
+    EXPECT(validate_cancel_request(true, absent(), text(labels[i]), absent(), &f) == nullptr &&
+           f.certainty == i, "each CAP certainty label maps to its code");
+  }
+  EXPECT(validate_cancel_request(true, absent(), text("observed"), absent(), &f) != nullptr &&
+         validate_cancel_request(true, absent(), text("sure"), absent(), &f) != nullptr,
+         "an unknown certainty label is refused, not mapped to Unknown");
+  EXPECT(validate_cancel_request(true, absent(), other(), absent(), &f) != nullptr,
+         "a certainty that is a float, bool, array or object is refused");
+
+  EXPECT(validate_cancel_request(true, absent(), absent(), integer(1), &f) == nullptr &&
+         f.ttl_minutes == 1, "ttl_minutes 1 is accepted");
+  EXPECT(validate_cancel_request(true, absent(), absent(), integer(1440), &f) == nullptr &&
+         f.ttl_minutes == 1440, "ttl_minutes 1440 is accepted");
+  EXPECT(validate_cancel_request(true, absent(), absent(), integer(0), &f) != nullptr &&
+         validate_cancel_request(true, absent(), absent(), integer(1441), &f) != nullptr &&
+         validate_cancel_request(true, absent(), absent(), integer(-3), &f) != nullptr,
+         "ttl_minutes outside 1..1440 is refused");
+  EXPECT(validate_cancel_request(true, absent(), absent(), text("abc"), &f) != nullptr,
+         "ttl_minutes \"abc\" is refused, not defaulted to 15");
+  EXPECT(validate_cancel_request(true, absent(), absent(), other(), &f) != nullptr,
+         "ttl_minutes 30.5 (or any non-integer) is refused, not defaulted to 15");
+  EXPECT(validate_cancel_request(true, absent(), absent(), absent(), nullptr) != nullptr,
+         "no output slot is an error, not a crash");
+}
+
+// The adapter in beacon_api.h is the only part that touches ArduinoJson, so
+// it is what could reintroduce a silent default; this reads it.
+void test_source_cancel_body_adapter() {
+  using namespace beacon_source_scan;
+  bool ok = false;
+  const std::string src = read_source(BEACON_API_H, &ok);
+  EXPECT(ok, "beacon_api.h is readable (source pin fails closed)");
+  if (!ok) return;
+  const std::string code = strip_comments(src);
+  const std::string rd = squeeze(function_body(code, "read_cancel_request"));
+  const std::string cf = squeeze(function_body(code, "classify_field"));
+  EXPECT(!rd.empty() && !cf.empty(), "read_cancel_request() and classify_field() are defined");
+  EXPECT(rd.find("is_object=doc.is<JsonObjectConst>();") != std::string::npos,
+         "the adapter tells the policy whether the body is a JSON object");
+  EXPECT(rd.find("beacon_cancel_policy::validate_cancel_request(is_object,classify_field(doc[\"reason\"]),"
+                 "classify_field(doc[\"certainty\"]),classify_field(doc[\"ttl_minutes\"]),&f)") != std::string::npos,
+         "every field goes through classify_field into validate_cancel_request");
+  EXPECT(rd.find("|") == std::string::npos && rd.find("parse_certainty(") == std::string::npos,
+         "no ArduinoJson `| default` and no narrowing parse_certainty in the cancel body path");
+  EXPECT(cf.find("v.is<int32_t>()") != std::string::npos && cf.find("v.as<int32_t>()") != std::string::npos,
+         "an integer is classified only when it fits int32_t (a float or bool is FIELD_OTHER)");
 }
 
 // ── Refusal order ───────────────────────────────────────────────────────────
@@ -481,6 +575,8 @@ void test_source_call_sites_follow_the_policy() {
 
 int main() {
   test_reason_maps_to_all_clear_template();
+  test_cancel_request_body();
+  test_source_cancel_body_adapter();
   test_dual_cancel_canonical();
   test_solo_cancel_canonical();
   test_refusal_order();

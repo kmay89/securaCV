@@ -400,41 +400,52 @@ inline esp_err_t handle_cosign(httpd_req_t* req) {
       : send_error(req, "no pending cosign request");
 }
 
-// Body shared by the two network-cancel routes. Every field is optional and
-// an empty body takes the defaults: reason "resolved" (BCN_CLR_RESOLVED),
-// ttl_minutes 15. An unknown reason is refused, not defaulted — an all-clear
-// that says something the operator did not choose is worse than none. The
-// TTL is bounded so the frame cannot be born expired (receivers drop
-// now > expires) or outlive a day.
+// Body shared by the two network-cancel routes. The rules — every field
+// optional, an empty body takes the defaults, a present field is used only
+// when well formed and is otherwise refused by name, never defaulted — are
+// beacon_cancel_policy::validate_cancel_request (host-tested). This adapter
+// only reads the body and classifies each field's JSON type.
 struct CancelRequest {
   beacon_channel::BeaconTemplate tpl;
   uint8_t certainty;
   uint32_t ttl_minutes;
 };
 
+static beacon_cancel_policy::BodyField classify_field(JsonVariantConst v) {
+  beacon_cancel_policy::BodyField f = {beacon_cancel_policy::FIELD_ABSENT, 0, nullptr};
+  if (v.isNull()) return f;
+  if (v.is<const char*>()) {
+    f.kind = beacon_cancel_policy::FIELD_STRING;
+    f.text = v.as<const char*>();
+  } else if (v.is<int32_t>()) {  // false for a float, a bool, or an out-of-range integer
+    f.kind = beacon_cancel_policy::FIELD_INTEGER;
+    f.integer = v.as<int32_t>();
+  } else {
+    f.kind = beacon_cancel_policy::FIELD_OTHER;
+  }
+  return f;
+}
+
 static const char* read_cancel_request(httpd_req_t* req, CancelRequest* out) {
   char body[192];
   const int len = httpd_req_recv(req, body, sizeof(body) - 1);
   if (len < 0) return "body read failed";
   JsonDocument doc;
+  bool is_object = true;  // an empty body is an empty object: all defaults
   if (len > 0) {
     body[len] = '\0';
     if (deserializeJson(doc, body)) return "invalid JSON";
+    is_object = doc.is<JsonObjectConst>();
   }
-  beacon_cancel_policy::CancelReason reason = beacon_cancel_policy::CANCEL_REASON_RESOLVED;
-  if (!doc["reason"].isNull()) {
-    const char* r = doc["reason"].is<const char*>() ? doc["reason"].as<const char*>() : nullptr;
-    if (!beacon_cancel_policy::parse_cancel_reason(r, &reason)) {
-      return "reason must be resolved, safe or false_alarm";
-    }
+  beacon_cancel_policy::CancelRequestFields f = {beacon_channel::BCN_CLR_RESOLVED, 0, 0};
+  if (const char* err = beacon_cancel_policy::validate_cancel_request(
+          is_object, classify_field(doc["reason"]), classify_field(doc["certainty"]),
+          classify_field(doc["ttl_minutes"]), &f)) {
+    return err;
   }
-  out->tpl = beacon_cancel_policy::cancel_template_for(reason);
-  out->certainty = doc["certainty"].isNull()
-      ? (uint8_t)beacon_channel::BCN_CERT_LIKELY
-      : parse_certainty(doc["certainty"]);
-  if (out->certainty > beacon_channel::BCN_CERT_UNKNOWN) return "certainty out of range";
-  out->ttl_minutes = (uint32_t)(doc["ttl_minutes"] | 15);
-  if (out->ttl_minutes == 0 || out->ttl_minutes > 1440) return "ttl_minutes must be 1..1440";
+  out->tpl = f.tpl;
+  out->certainty = f.certainty;
+  out->ttl_minutes = f.ttl_minutes;
   return nullptr;
 }
 

@@ -6,7 +6,9 @@
  * live here so a host g++ run (tests_host/test_beacon_cancel_origination.cpp)
  * can pin them:
  *
- *   - which all-clear template a reason names (spec §4: 0x80–0x82),
+ *   - which all-clear template a reason names (spec §4: 0x80–0x82), and
+ *     what a cancel request body may hold (every field checked, none
+ *     silently defaulted from a malformed value),
  *   - the canonical a CANCEL signs (spec §5.2 / §5.4: msg_type = Cancel,
  *     ref_canceled_nonce naming the alarm in force, CAP defaults for the
  *     all-clear templates, scope = Private, solo forces certainty = Observed),
@@ -71,6 +73,104 @@ inline bool is_cancel_template(uint8_t id) {
   return id == beacon_channel::BCN_CLR_RESOLVED ||
          id == beacon_channel::BCN_CLR_SAFE ||
          id == beacon_channel::BCN_CLR_FALSE_ALARM;
+}
+
+// ── The REST body ───────────────────────────────────────────────────────────
+
+// What one optional field of a cancel request holds, as the REST layer
+// classified it (beacon_api.h classify_field, over ArduinoJson). The adapter
+// only classifies; every decision is here, where the host test reaches it.
+enum FieldKind : uint8_t {
+  FIELD_ABSENT  = 0,  // key missing, or JSON null
+  FIELD_INTEGER = 1,  // a JSON integer that fits in int32_t (`integer`)
+  FIELD_STRING  = 2,  // a JSON string (`text`, non-null)
+  FIELD_OTHER   = 3,  // anything else: a float, bool, array, object, or an
+                      // integer outside int32_t
+};
+
+struct BodyField {
+  FieldKind kind;
+  int32_t integer;
+  const char* text;
+};
+
+struct CancelRequestFields {
+  beacon_channel::BeaconTemplate tpl;
+  uint8_t certainty;
+  uint32_t ttl_minutes;
+};
+
+// The CAP certainty labels (spec §5.2), exact spelling.
+inline bool parse_certainty_label(const char* s, uint8_t* out) {
+  if (!s || !out) return false;
+  if (strcmp(s, "Observed") == 0) { *out = beacon_channel::BCN_CERT_OBSERVED; return true; }
+  if (strcmp(s, "Likely") == 0)   { *out = beacon_channel::BCN_CERT_LIKELY;   return true; }
+  if (strcmp(s, "Possible") == 0) { *out = beacon_channel::BCN_CERT_POSSIBLE; return true; }
+  if (strcmp(s, "Unlikely") == 0) { *out = beacon_channel::BCN_CERT_UNLIKELY; return true; }
+  if (strcmp(s, "Unknown") == 0)  { *out = beacon_channel::BCN_CERT_UNKNOWN;  return true; }
+  return false;
+}
+
+static const uint32_t CANCEL_TTL_DEFAULT_MIN = 15;
+static const uint32_t CANCEL_TTL_MAX_MIN = 1440;
+
+// Validate a cancel request body. Every field is optional and an empty body
+// is an empty object, taking the defaults: reason "resolved", certainty
+// Likely, ttl_minutes 15. A field that is present is used only if it is
+// well formed — a malformed one is refused by name, never replaced with the
+// default, because an all-clear that says something the operator did not
+// choose is worse than none:
+//   - the body must be a JSON object (not an array, string or number);
+//   - reason: one of resolved / safe / false_alarm;
+//   - certainty: a CAP label or an integer 0..4, range-checked as an int
+//     before it is narrowed (260 is refused, not wrapped to 4);
+//   - ttl_minutes: an integer 1..1440 (so the frame is neither born expired
+//     nor outlives a day) — not a string, not a fraction.
+// Returns nullptr and fills `out`, or the refusal the REST layer sends.
+inline const char* validate_cancel_request(bool body_is_object,
+                                           const BodyField& reason,
+                                           const BodyField& certainty,
+                                           const BodyField& ttl_minutes,
+                                           CancelRequestFields* out) {
+  if (!out) return "internal error";
+  if (!body_is_object) return "body must be a JSON object";
+
+  CancelReason r = CANCEL_REASON_RESOLVED;
+  if (reason.kind != FIELD_ABSENT) {
+    if (reason.kind != FIELD_STRING || !parse_cancel_reason(reason.text, &r)) {
+      return "reason must be resolved, safe or false_alarm";
+    }
+  }
+
+  uint8_t cert = beacon_channel::BCN_CERT_LIKELY;
+  if (certainty.kind == FIELD_INTEGER) {
+    if (certainty.integer < beacon_channel::BCN_CERT_OBSERVED ||
+        certainty.integer > beacon_channel::BCN_CERT_UNKNOWN) {
+      return "certainty out of range";
+    }
+    cert = (uint8_t)certainty.integer;
+  } else if (certainty.kind == FIELD_STRING) {
+    if (!parse_certainty_label(certainty.text, &cert)) {
+      return "certainty must be Observed, Likely, Possible, Unlikely, Unknown or 0..4";
+    }
+  } else if (certainty.kind != FIELD_ABSENT) {
+    return "certainty must be Observed, Likely, Possible, Unlikely, Unknown or 0..4";
+  }
+
+  uint32_t ttl = CANCEL_TTL_DEFAULT_MIN;
+  if (ttl_minutes.kind == FIELD_INTEGER) {
+    if (ttl_minutes.integer < 1 || (uint32_t)ttl_minutes.integer > CANCEL_TTL_MAX_MIN) {
+      return "ttl_minutes must be 1..1440";
+    }
+    ttl = (uint32_t)ttl_minutes.integer;
+  } else if (ttl_minutes.kind != FIELD_ABSENT) {
+    return "ttl_minutes must be an integer 1..1440";
+  }
+
+  out->tpl = cancel_template_for(r);
+  out->certainty = cert;
+  out->ttl_minutes = ttl;
+  return nullptr;
 }
 
 // ── Refusal order ───────────────────────────────────────────────────────────

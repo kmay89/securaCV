@@ -57,7 +57,9 @@ BEACON_SOLO_BIN = test_beacon_solo_origination
 BEACON_SOLO_SRC = test_beacon_solo_origination.cpp
 
 # Beacon CANCEL origination (beacon_cancel_policy.h): reason -> all-clear
-# template, the canonical a CANCEL signs, the refusal order the REST layer
+# template, the cancel request body (malformed fields refused, not
+# defaulted — beacon_api.h's adapter is read and pinned too), the canonical a
+# CANCEL signs, the refusal order the REST layer
 # names, the cosigner gate (sign a CANCEL only for the alarm this device
 # holds), the emitted header following the signed canonical, the originator
 # adopting its own frame, and the wire struct sizes. Includes the REAL
@@ -228,7 +230,7 @@ $(BEACON_SOLO_BIN): $(BEACON_SOLO_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_SOLO_SRC)
 
 $(BEACON_CANCEL_BIN): $(BEACON_CANCEL_SRC) $(SRC_DIR)/beacon_wire.h $(SRC_DIR)/beacon_cancel_policy.h beacon_source_scan.h
-	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DBEACON_CHANNEL_CPP='"$(abspath $(SRC_DIR))/beacon_channel.cpp"' -o $@ $(BEACON_CANCEL_SRC)
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DBEACON_CHANNEL_CPP='"$(abspath $(SRC_DIR))/beacon_channel.cpp"' -DBEACON_API_H='"$(abspath $(SRC_DIR))/beacon_api.h"' -o $@ $(BEACON_CANCEL_SRC)
 
 $(BEACON_AAD_BIN): $(BEACON_AAD_SRC) $(SRC_DIR)/beacon_wire.h $(SRC_DIR)/beacon_cosign_aad.h
 	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(BEACON_AAD_SRC)

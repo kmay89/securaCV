@@ -538,7 +538,7 @@ All endpoints Bearer-token-gated identically to `/api/mesh/*` and `/api/bluetoot
 | `/api/beacon/originate` | POST | Begin two-pubkey origination flow (template_id, urgency, severity) |
 | `/api/beacon/originate-solo` | POST | Solo-degraded origination (§6.2) — the BOOT button must be held |
 | `/api/beacon/cosign` | POST | Confirm a pending cosign request (originator_fp, decision) |
-| `/api/beacon/cancel` | POST | Originate a `BEACON_MSG_CANCEL` for the current active alarm over the two-pubkey cosign flow (§6.5); body `reason` (`resolved` \| `safe` \| `false_alarm`), `certainty`, `ttl_minutes`, all optional |
+| `/api/beacon/cancel` | POST | Originate a `BEACON_MSG_CANCEL` for the current active alarm over the two-pubkey cosign flow (§6.5); body `reason` (`resolved` \| `safe` \| `false_alarm`), `certainty` (CAP label or 0–4), `ttl_minutes` (integer 1–1440), all optional; a field that is present but malformed is refused, never defaulted |
 | `/api/beacon/cancel-solo` | POST | Solo `BEACON_MSG_CANCEL` (§6.2, §6.5) — the BOOT button must be held; `certainty` is forced to `Observed` |
 | `/api/beacon/silence` | POST | Local mute: stand this device down; sends no frame (§6.5) |
 | `/api/beacon/active` | GET | Active alarms and active cosign requests |
