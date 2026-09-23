@@ -100,8 +100,10 @@ indicative seed values only.
 > **Pin definitions are authoritative in firmware**, not here — see
 > [`firmware/boards/`](../../firmware/boards/). This area documents the hardware
 > *build*; the pin map uses the firmware defaults, but check the
-> **Firmware-Support column** in the build plan — some peripherals (RGB LED,
-> tamper) are pin-defined but not yet driven by code.
+> **Firmware-Support column** in the build plan. The RGB LED is pin-defined
+> but not yet driven by code. The enclosure tamper contact is read only by
+> builds with `FEATURE_TAMPER_GPIO=1`, which is off in every shipped profile
+> until the pin is bench-validated.
 
 For getting a finished device online, see
 [`../getting_started_canary.md`](../getting_started_canary.md).
