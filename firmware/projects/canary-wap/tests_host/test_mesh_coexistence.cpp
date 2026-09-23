@@ -241,6 +241,27 @@ static void test_governor_bucket_ages_out_with_its_newest_send() {
   EXPECT(s.urgent_sends == 1);
 }
 
+// A reader whose clock trails the newest send still counts the sends
+// before its `now`. The WAP's MQTT publish does this: loop() takes
+// `now = millis()` early, the mesh, chirp and probe record later sends,
+// then snapshot(now) runs. Ten 75 B probe frames at 20000..20090 and a
+// 60 B heartbeat at 20095 share one bucket stamped 20095; a reader at
+// 20050 must see at least the six frames sent by then. A bucket stamped
+// after `now` was skipped whole, so the window read 0.
+static void test_governor_trailing_reader_keeps_the_newest_bucket() {
+  airtime_governor::init(2);
+  const uint32_t frame = airtime_governor::estimate_airtime_us(75);   // 792 us
+  const uint32_t hb = airtime_governor::estimate_airtime_us(60);      // 672 us
+  for (uint32_t t = 20000; t <= 20090; t += 10) {
+    EXPECT(airtime_governor::try_reserve_routine(t, 75));
+  }
+  EXPECT(airtime_governor::try_reserve_routine(20095, 60));
+  const airtime_governor::Stats s = airtime_governor::snapshot(20050);
+  EXPECT(s.airtime_us >= 6 * frame);            // never below the truth
+  EXPECT(s.airtime_us <= 10 * frame + hb);      // over by at most one bucket
+  EXPECT(airtime_governor::airtime_pct_x100(20050) >= (6 * frame) / 1000);
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // main
 // ─────────────────────────────────────────────────────────────────────────
@@ -259,6 +280,7 @@ int main() {
   test_governor_ring_covers_window_at_any_rate();
   test_governor_cap_holds_above_default();
   test_governor_bucket_ages_out_with_its_newest_send();
+  test_governor_trailing_reader_keeps_the_newest_bucket();
 
   if (g_failures == 0) {
     std::printf("OK  all mesh coexistence tests passed\n");
