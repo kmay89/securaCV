@@ -1109,14 +1109,14 @@ jobs:
                       mesh_hub_election mesh_alert mesh_rekey"
           for f in firmware/canary/lib/securacv_mesh/test_mesh_*.cpp; do
             n=$(basename "$f" .cpp); n=${n#test_}
-            case " $(echo $MESH_TESTS) " in
+            case " ${MESH_TESTS//$'\n'/ } " in
               *" $n "*) ;;
               *) echo "::error file=$f::$f is not in MESH_TESTS — add it so CI runs it"; exit 1 ;;
             esac
           done
           for t in $MESH_TESTS; do
-            run_test $t \
-              firmware/canary/lib/securacv_mesh/test_${t}.cpp \
+            run_test "$t" \
+              "firmware/canary/lib/securacv_mesh/test_${t}.cpp" \
               $MESH_SRC/*.cpp \
               -I $MESH_SRC
           done

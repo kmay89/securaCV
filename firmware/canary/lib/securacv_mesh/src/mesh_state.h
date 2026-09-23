@@ -49,7 +49,8 @@
  * Privacy: the opera_secret is the household's single most sensitive
  * mesh-layer key — it exposes OTHER devices, not just this one. This
  * module therefore ENFORCES the flash-encryption gate (audit O2): every
- * save_*/load_* below returns false when esp_flash_encryption_enabled()
+ * save_ and load_ function below returns false when
+ * esp_flash_encryption_enabled()
  * is false, so nothing household-shared is persisted on silicon without
  * flash encryption, and firmware/scripts/regression_check.sh ("Mesh
  * secret persistence is FE-gated") asserts the check stays in this file
