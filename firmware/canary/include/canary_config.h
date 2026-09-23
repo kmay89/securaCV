@@ -329,6 +329,15 @@
 #define AP_CHANNEL           1
 #define AP_MAX_CONNECTIONS   1    // Hardened: max 1 client for security isolation
 
+// F16: ask the driver for WPA2/WPA3 transition + PMF-capable on the SoftAP
+// (common/network/ap_security_policy.h). Runtime fallback: when the core's
+// prebuilt sdkconfig lacks SoftAP SAE (expected on the IDF 4.4 core) or the
+// driver refuses the config, the AP stays WPA2-PSK, the reason is logged, and
+// /api/wifi/status + /api/status report what is on the air as ap_auth.
+#ifndef CANARY_AP_WPA3_TRANSITION
+  #define CANARY_AP_WPA3_TRANSITION 1
+#endif
+
 // FEATURE_HTTPS ports: the TLS server, and the plain server that keeps the
 // OS connectivity probes and 307-redirects everything else to https://.
 #define HTTPS_PORT           443

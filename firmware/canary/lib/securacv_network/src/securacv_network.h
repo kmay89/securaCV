@@ -49,6 +49,12 @@ struct WiFiStatus {
   uint32_t connect_attempts;
   uint32_t last_connect_ms;
   uint32_t connected_since_ms;
+  // F16: what the SoftAP actually came up with ("wpa2-wpa3" or "wpa2";
+  // "" before the first AP bring-up) and why; whether the STA link is
+  // PMF-capable. See common/network/ap_security_policy.h.
+  char ap_auth[12];
+  const char* ap_auth_reason;
+  bool sta_pmf;
 };
 
 // ════════════════════════════════════════════════════════════════════════════

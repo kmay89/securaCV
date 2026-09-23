@@ -166,6 +166,9 @@
 #include "usb_evidence_drive.h" // USB evidence drive / update drop-zone (opt-in build)
 #include "setup_page_html.h"     // Static captive-portal "open canary.local" page
 #include "captive_probe.h"       // Pure per-platform connectivity-probe response policy
+#include "ap_security_policy.h"  // F16: SoftAP WPA2/WPA3 + PMF request (staged copy of firmware/common/network/, check_ap_security_sync.sh)
+#include <esp_wifi.h>             // F16: esp_wifi_get/set_config for the SoftAP security request
+#include <sdkconfig.h>            // F16: CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT (is SoftAP SAE in this core?)
 extern "C" {
 #include "qrcodegen.h"           // Vendored Nayuki QR encoder, MIT
 }
@@ -395,6 +398,13 @@ static const uint32_t SD_SPI_SLOW = 1000000;
 
 static const int   AP_CHANNEL          = 1;
 static const int   AP_MAX_CLIENTS      = 1;  // Hardened: max 1 client for security
+// F16: ask the driver for WPA2/WPA3 transition + PMF-capable on the SoftAP
+// (ap_security_policy.h). Runtime fallback: a core without SoftAP SAE, or a
+// driver refusal, keeps WPA2-PSK, logs why, and /api/wifi + /api/device-info
+// report what is on the air as ap_auth.
+#ifndef CANARY_AP_WPA3_TRANSITION
+#define CANARY_AP_WPA3_TRANSITION 1
+#endif
 
 // Once the STA has held its association to the home network for this long, the
 // management SoftAP is torn down so the single 2.4 GHz radio runs STA + BLE —
@@ -589,6 +599,11 @@ struct WiFiStatus {
   uint32_t last_connect_ms;
   uint32_t connected_since_ms;
   char last_fail_reason[48];  // Human-readable reason for the most recent connect failure
+  // F16: what the SoftAP actually came up with ("wpa2-wpa3" / "wpa2"; "" before
+  // the first bring-up) and why; whether the STA link is PMF-capable.
+  char ap_auth[12];
+  const char* ap_auth_reason;
+  bool sta_pmf;
 };
 
 struct GnssFix {
@@ -5873,6 +5888,10 @@ static esp_err_t handle_wifi_status(httpd_req_t* req) {
   doc["ap_only"] = g_wifi_ap_only;
   doc["connect_attempts"] = g_wifi_status.connect_attempts;
   doc["fail_reason"] = g_wifi_status.last_fail_reason;
+  // F16: what the SoftAP is actually broadcasting, and why.
+  doc["ap_auth"] = g_wifi_status.ap_auth[0] ? g_wifi_status.ap_auth : "unknown";
+  doc["ap_auth_reason"] = g_wifi_status.ap_auth_reason ? g_wifi_status.ap_auth_reason : "";
+  doc["sta_pmf"] = g_wifi_status.sta_pmf;
 
   if (g_wifi_status.sta_connected && g_wifi_status.connected_since_ms > 0) {
     doc["connected_sec"] = (millis() - g_wifi_status.connected_since_ms) / 1000;
@@ -7463,6 +7482,7 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
     "\"born_exact\":%s,"
     "\"auth_required\":true,"
     "\"tls_enabled\":%s,"
+    "\"ap_auth\":\"%s\","
     "\"provisioning_gate\":\"physical_button\""
     "}",
     g_device.device_id,
@@ -7475,7 +7495,8 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
     (unsigned long)g_device.seq,
     (unsigned long)g_device.born_day,
     g_device.born_exact ? "true" : "false",
-    g_tls_enabled ? "true" : "false"
+    g_tls_enabled ? "true" : "false",
+    g_wifi_status.ap_auth[0] ? g_wifi_status.ap_auth : "unknown"
   );
 
   httpd_resp_set_type(req, "application/json");
@@ -9107,6 +9128,55 @@ static void wifi_connect_to_home() {
 
   // Start connection (non-blocking)
   WiFi.begin(g_wifi_creds.ssid, g_wifi_creds.password);
+  // F16: STA PMF capable, not required. The WAP builds only on IDF 5.x cores,
+  // where the driver is always PMF-capable (pmf_cfg.capable is documented as
+  // deprecated there), so nothing is written — reported for the bench.
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+  g_wifi_status.sta_pmf = true;
+#else
+  g_wifi_status.sta_pmf = false;  // not asserted on a pre-5 core; no write attempted
+#endif
+}
+
+// F16: SoftAP WPA2/WPA3 transition + PMF-capable, the same request the
+// canary (PIO) tree makes (ap_security_policy.h decides; this applies). Runs
+// right after every WiFi.softAP() — the Arduino call always brings the AP up
+// as WPA2-PSK — and before any client has joined, so the brief AP restart
+// esp_wifi_set_config causes disrupts nobody. Records what is on the air.
+#if defined(CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT) && CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT && \
+    ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+  #define WAP_SOFTAP_SAE_IN_BUILD 1
+#else
+  #define WAP_SOFTAP_SAE_IN_BUILD 0
+#endif
+static void wifi_apply_ap_security() {
+  namespace aps = canary::net::ap_security;
+  wifi_config_t c;
+  memset(&c, 0, sizeof(c));
+  size_t pw_len = 0;
+  if (esp_wifi_get_config(WIFI_IF_AP, &c) == ESP_OK) {
+    pw_len = strnlen((const char*)c.ap.password, sizeof(c.ap.password));
+  }
+  aps::Decision d = aps::decide(CANARY_AP_WPA3_TRANSITION != 0, WAP_SOFTAP_SAE_IN_BUILD != 0, pw_len);
+#if WAP_SOFTAP_SAE_IN_BUILD
+  if (d.mode == aps::AuthMode::WPA2_WPA3_TRANSITION) {
+    c.ap.authmode = WIFI_AUTH_WPA2_WPA3_PSK;
+    c.ap.pairwise_cipher = WIFI_CIPHER_TYPE_CCMP;
+    c.ap.pmf_cfg.capable = d.pmf_capable;
+    c.ap.pmf_cfg.required = d.pmf_required;  // never true: WPA2 clients must still join
+    const bool accepted = (esp_wifi_set_config(WIFI_IF_AP, &c) == ESP_OK);
+    d = aps::after_driver(d, accepted);
+    if (!accepted) {
+      log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "WPA3 SoftAP refused by driver", "WPA2-PSK kept");
+    }
+  }
+#endif
+  secure_zero(&c, sizeof(c));  // the read-back carries the AP passphrase
+  strncpy(g_wifi_status.ap_auth, d.label, sizeof(g_wifi_status.ap_auth) - 1);
+  g_wifi_status.ap_auth[sizeof(g_wifi_status.ap_auth) - 1] = '\0';
+  g_wifi_status.ap_auth_reason = d.reason;
+  Serial.printf("[WIFI] SoftAP security: %s (%s)\n", d.label, d.reason);
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "SoftAP security", d.label);
 }
 
 // F4 (coexistence): tear down the management SoftAP once the STA link is
@@ -9138,6 +9208,7 @@ static void wifi_raise_ap() {
     WiFi.mode(WIFI_STA);  // don't leave the radio half-configured in AP_STA with no AP up
     return;
   }
+  wifi_apply_ap_security();  // F16: WPA2/WPA3 transition + PMF when the core allows
   g_wifi_status.ap_active = true;
   g_health.wifi_active = true;
   IPAddress ip = WiFi.softAPIP();
@@ -9545,6 +9616,7 @@ static void wifi_init_provisioning() {
     log_health(SCV_LOG_ERROR, SCV_CAT_NETWORK, "WiFi AP start failed", nullptr);
     return;
   }
+  wifi_apply_ap_security();  // F16: WPA2/WPA3 transition + PMF when the core allows
 
   g_wifi_status.ap_active = true;
   g_health.wifi_active = true;

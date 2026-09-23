@@ -713,6 +713,16 @@ jobs:
           chmod +x firmware/scripts/check_mqtt_transport_sync.sh
           firmware/scripts/check_mqtt_transport_sync.sh
 
+      - name: Verify ap_security_policy.h stays identical in common/ and the canary-wap sketch
+        # The SoftAP / STA security request (WPA2/WPA3 transition + PMF
+        # capable, WPA2 fallback with a named reason — F16) lives once in
+        # common/network and is host-tested there; the wap sketch carries a
+        # byte-identical staged copy. Drift here means the two products put
+        # different security on the same setup network.
+        run: |
+          chmod +x firmware/scripts/check_ap_security_sync.sh
+          firmware/scripts/check_ap_security_sync.sh
+
       - name: Verify on-glass text stays inside the display font's glyph range
         # LVGL's built-in Montserrat covers 0x20-0x7F, 0xB0 and U+2022 only, and
         # draws a hollow box for anything else — no build error, and the browser

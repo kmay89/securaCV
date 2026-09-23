@@ -359,6 +359,20 @@ Untapped / issues:
   legacy fallback macro was deleted from [`canary_config.h`](canary/include/canary_config.h) and
   `begin()` now requires an explicit credential.)
   The IDF OTA sub-project already sets `pmf_cfg`; the main firmware doesn't. **[P1, unblocked by §1.1]**
+  *Update 2026-09 (F16, option (b) — maintainer to confirm):* landed with a caveat. Both trees now
+  ask for WPA2/WPA3 **transition** on the SoftAP (SAE for capable clients, WPA2 for the rest), PMF
+  capable and never required, after every `WiFi.softAP()`
+  ([`common/network/ap_security_policy.h`](common/network/ap_security_policy.h), host-tested;
+  the WAP carries a byte-identical staged copy), and the STA asks for PMF capable / not required
+  (read back first, written only when needed; always capable on IDF 5). `CANARY_AP_WPA3_TRANSITION`
+  (default 1) is the knob. **Caveat:** SoftAP SAE exists only where the core's prebuilt sdkconfig
+  enables it — an IDF 5 feature, so on the 2.0.17 core (dev/release) the AP stays WPA2 and says
+  so (`ap_auth` / `ap_auth_reason` in `/api/wifi/status`, `ap_auth` in `/api/status`); the row
+  closes for those builds with §1.1. Compile-tested only. Not in this change: widening the 8-char
+  AP password (below) — it is re-derived from the fingerprint every boot, so a new derivation
+  changes every provisioned device's Wi-Fi password after an OTA and needs a derivation-version
+  marker first. The `"witness2026"` tripwires in `pre_build.py` / `regression_check.sh` match no
+  source today; they stay as the ratchet.
 - **De-block the loop** — async `WiFi.scanNetworks(true,…)`, throttle/offload `MDNS.queryService`,
   move MQTT to its own task (subsumed by §1.2). **[P1]**
 - **[future] FTM ranging** (`esp_wifi_ftm_*`, S3 initiator/responder) → inter-Canary distance to
@@ -563,7 +577,7 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 18 | HW key protection (HMAC/DS peripheral) + entropy seed + atomic chain head | **P1** | Crypto | `securacv_crypto.cpp:136` | Real at-rest + anti-forgery guarantees |
 | 19 | Migrate audio→`i2s_pdm`, IR→`rmt_rx` | **P1** | Audio/IR | `securacv_audio.cpp:56` | Forward-compat; built-in HPF/callbacks |
 | 20 | esp-dsp / esp-nn for audio DSP + TFLite | **P1** | Audio/Vision | `securacv_audio.cpp:339` | Several-fold DSP; ~500→~60 ms Invoke |
-| 21 | WPA3/PMF + per-device AP password | **P1** | WiFi | `canary_config.h:276` | Closes plaintext-AP + shared-secret exposure |
+| 21 | WPA3/PMF + per-device AP password (password: done; WPA2/WPA3 transition + PMF landed 2026-09 — WPA2 until a device on the 2.0.17 core reports SoftAP SAE, see §3.4) | **P1** | WiFi | `canary_config.h:276` | Closes plaintext-AP + shared-secret exposure |
 | 22 | TLS on the HTTP/peek surface (landed dev/full 2026-09; release pending size; bench Track D open) | **P1** | Web | `securacv_network.cpp` | Encrypted LAN API + stream |
 | 23 | Camera SCCB standby + XCLK gating/tuning | **P1** | Camera | `securacv_camera.cpp:111` | Lower idle draw + self-heat; OV5640 headroom |
 | 24 | OV5640/OV3660 tuning parity + PID map fix | **P1** | Camera | `securacv_camera.cpp:392` | Correct image on shipped sensors |

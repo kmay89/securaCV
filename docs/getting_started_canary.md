@@ -74,7 +74,9 @@ something like:
 The four characters at the end are unique to your Canary. Tap the
 network and enter the **AP password** from your card. (The password is
 *not* `password` and *not* the device ID — it's the eight-character
-string printed under the QR code.)
+string printed under the QR code.) Newer firmware offers WPA3 to phones
+that support it; an older phone that only knows WPA2 still joins the same
+way.
 
 Your phone will **stay** connected — the Canary answers your phone's
 "is there internet here?" check so it won't drop the network or warn you

@@ -283,6 +283,34 @@ host tests assert they do, on real radio.
   - Repro: trigger a beacon alarm via the happy-path test above.
   - Post-fix expected: HA automation fires within one 30 s publish cycle.
 
+## SoftAP WPA2/WPA3 transition + PMF (F16) — on-device verification
+
+Code: `firmware/common/network/ap_security_policy.h` (host-tested), applied
+after every `WiFi.softAP()` in both trees. Owner: U1.
+
+- [ ] **WPA3 phone joins; the device says so**
+  - Setup: a `canary (PIO)` `full` image (IDF 5.5) and a canary-wap image;
+    a phone that supports WPA3.
+  - Expected: the phone joins `SecuraCV-XXXX`; `GET /api/wifi/status`
+    (canary) / `GET /api/wifi` (WAP) shows `ap_auth: "wpa2-wpa3"`. If it
+    shows `"wpa2"`, record `ap_auth_reason` (a core without SoftAP SAE, or
+    a driver refusal) — that is the finding.
+  - Artifact: `docs/audit/repro/F16/wpa3-join/`.
+- [ ] **WPA2-only client still joins**
+  - Setup: same images; a laptop or phone forced to WPA2.
+  - Expected: it joins and loads the dashboard (PMF is capable, never
+    required).
+  - Artifact: `docs/audit/repro/F16/wpa2-join/`.
+- [ ] **2.0.17-core builds report WPA2 honestly**
+  - Setup: a `canary (PIO)` `dev` or `release` image.
+  - Expected: `ap_auth: "wpa2"` with `ap_auth_reason` naming the missing
+    SoftAP SAE; any client joins as before.
+  - Artifact: `docs/audit/repro/F16/idf44-fallback/`.
+- [ ] **STA PMF**
+  - Setup: join the Canary to a PMF-capable router.
+  - Expected: `sta_pmf: true`; the association is stable.
+  - Artifact: `docs/audit/repro/F16/sta-pmf/`.
+
 ---
 
 When every box above has a corresponding artifact in

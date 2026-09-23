@@ -39,6 +39,27 @@
 #include "network/tls_policy.h"
 #include <esp_idf_version.h>
 #include <sdkconfig.h>
+
+// F16: SoftAP WPA2/WPA3 transition + PMF, STA PMF. The AP-side PMF config and
+// SoftAP SAE exist only on cores whose prebuilt sdkconfig enables SoftAP SAE
+// (an IDF 5.x feature; the IDF 4.4 core has no ap.pmf_cfg at all), so the
+// whole AP write compiles out elsewhere and ap_security::decide reports why.
+#include "network/ap_security_policy.h"
+#include <esp_wifi.h>
+#if defined(CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT) && CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT && \
+    ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+  #define CANARY_SOFTAP_SAE_IN_BUILD 1
+#else
+  #define CANARY_SOFTAP_SAE_IN_BUILD 0
+#endif
+// label_for() maps ESP-IDF's auth-mode numbers without including esp_wifi;
+// pin the ones the firmware relies on to the real enum.
+static_assert((int)WIFI_AUTH_OPEN == canary::net::ap_security::kAuthOpen,
+              "ap_security_policy.h: WIFI_AUTH_OPEN renumbered");
+static_assert((int)WIFI_AUTH_WPA2_PSK == canary::net::ap_security::kAuthWpa2Psk,
+              "ap_security_policy.h: WIFI_AUTH_WPA2_PSK renumbered");
+static_assert((int)WIFI_AUTH_WPA2_WPA3_PSK == canary::net::ap_security::kAuthWpa2Wpa3Psk,
+              "ap_security_policy.h: WIFI_AUTH_WPA2_WPA3_PSK renumbered");
 #if FEATURE_HTTPS && __has_include("esp_https_server.h") && \
     defined(CONFIG_ESP_HTTPS_SERVER_ENABLE) && CONFIG_ESP_HTTPS_SERVER_ENABLE
   #include "esp_https_server.h"
@@ -293,6 +314,75 @@ static void start_mdns(const char* device_id) {
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "mDNS started", fqdn);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// F16: SOFTAP / STA SECURITY (ap_security_policy.h, host-tested)
+// ════════════════════════════════════════════════════════════════════════════
+
+// Called right after every WiFi.softAP() (begin, raiseAp): the Arduino call
+// always brings the AP up as WPA2-PSK; this asks the driver for WPA2/WPA3
+// transition + PMF-capable when the policy allows it, and records what is
+// actually on the air. Both call sites run before any client has joined, so
+// the brief AP restart esp_wifi_set_config causes disrupts nobody.
+static void apply_ap_security(WiFiStatus& st) {
+  namespace aps = canary::net::ap_security;
+  wifi_config_t c;
+  memset(&c, 0, sizeof(c));
+  size_t pw_len = 0;
+  if (esp_wifi_get_config(WIFI_IF_AP, &c) == ESP_OK) {
+    pw_len = strnlen((const char*)c.ap.password, sizeof(c.ap.password));
+  }
+  aps::Decision d = aps::decide(CANARY_AP_WPA3_TRANSITION != 0, CANARY_SOFTAP_SAE_IN_BUILD != 0, pw_len);
+#if CANARY_SOFTAP_SAE_IN_BUILD
+  if (d.mode == aps::AuthMode::WPA2_WPA3_TRANSITION) {
+    c.ap.authmode = WIFI_AUTH_WPA2_WPA3_PSK;
+    c.ap.pairwise_cipher = WIFI_CIPHER_TYPE_CCMP;
+    c.ap.pmf_cfg.capable = d.pmf_capable;
+    c.ap.pmf_cfg.required = d.pmf_required;  // never true: WPA2 clients must still join
+    const bool accepted = (esp_wifi_set_config(WIFI_IF_AP, &c) == ESP_OK);
+    d = aps::after_driver(d, accepted);
+    if (!accepted) {
+      log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
+                 "WPA3 SoftAP refused by driver", "WPA2-PSK kept");
+    }
+  }
+#endif
+  secure_zero(&c, sizeof(c));  // the read-back carries the AP passphrase
+  strncpy(st.ap_auth, d.label, sizeof(st.ap_auth) - 1);
+  st.ap_auth[sizeof(st.ap_auth) - 1] = '\0';
+  st.ap_auth_reason = d.reason;
+  Serial.printf("[WIFI] SoftAP security: %s (%s)\n", d.label, d.reason);
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "SoftAP security", d.label);
+}
+
+// Called right after WiFi.begin(): the STA side asks for PMF capable, not
+// required (a required PMF would refuse every router without it). On IDF 5.x
+// the driver is always PMF-capable (pmf_cfg.capable is documented as
+// deprecated there), so nothing is written. On IDF 4.4 the config is read
+// back and written only when it does not already say capable — a needless
+// esp_wifi_set_config restarts the association.
+static bool ensure_sta_pmf_capable() {
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+  return true;
+#else
+  wifi_config_t c;
+  memset(&c, 0, sizeof(c));
+  bool capable = false;
+  if (esp_wifi_get_config(WIFI_IF_STA, &c) == ESP_OK) {
+    capable = c.sta.pmf_cfg.capable;
+    if (!capable) {
+      c.sta.pmf_cfg.capable = true;
+      c.sta.pmf_cfg.required = false;
+      capable = (esp_wifi_set_config(WIFI_IF_STA, &c) == ESP_OK);
+      if (!capable) {
+        log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "STA PMF config refused", nullptr);
+      }
+    }
+  }
+  secure_zero(&c, sizeof(c));  // the read-back carries the home Wi-Fi passphrase
+  return capable;
+#endif
+}
+
 bool ScvNetworkManager::begin(const char* ap_ssid, const char* ap_password,
                            const char* device_id) {
   // Load saved credentials
@@ -376,6 +466,7 @@ bool ScvNetworkManager::begin(const char* ap_ssid, const char* ap_password,
     log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "WiFi AP start failed", nullptr);
     return false;
   }
+  apply_ap_security(m_status);  // F16: WPA2/WPA3 transition + PMF when the core allows
 
   m_status.ap_active = true;
   witness_get_health().wifi_active = true;
@@ -511,6 +602,7 @@ void ScvNetworkManager::connectToHome() {
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, msg, nullptr);
 
   WiFi.begin(m_creds.ssid, m_creds.password);
+  m_status.sta_pmf = ensure_sta_pmf_capable();  // F16: PMF capable, not required
 }
 
 void ScvNetworkManager::updateStatus() {
@@ -688,6 +780,7 @@ void ScvNetworkManager::raiseAp() {
     WiFi.mode(WIFI_STA);  // don't leave the radio half-configured in AP_STA with no AP up
     return;
   }
+  apply_ap_security(m_status);  // F16: same request as begin()
   m_status.ap_active = true;
   witness_get_health().wifi_active = true;
   IPAddress ip = WiFi.softAPIP();
@@ -2068,6 +2161,10 @@ static esp_err_t handle_status(httpd_req_t* req) {
     doc["tls_enabled"] = net.isTlsEnabled();
     doc["tls_cert_fp"] = net.isTlsEnabled() ? net.getTlsCertFp() : "";
     doc["tls_mode_reason"] = net.getTlsModeReason();
+    // F16: SoftAP / STA security as it actually came up.
+    const WiFiStatus& ws = net.getStatus();
+    doc["ap_auth"] = ws.ap_auth[0] ? ws.ap_auth : "unknown";
+    doc["sta_pmf"] = ws.sta_pmf;
   }
 
   String response;
@@ -3120,6 +3217,11 @@ static esp_err_t handle_wifi_status(httpd_req_t* req) {
     doc["rssi"] = status.rssi;
   }
   doc["ap_clients"] = status.ap_clients;
+  // F16: what the SoftAP is actually broadcasting, and why (a core without
+  // SoftAP SAE, or a driver refusal, stays WPA2 and says so here).
+  doc["ap_auth"] = status.ap_auth[0] ? status.ap_auth : "unknown";
+  doc["ap_auth_reason"] = status.ap_auth_reason ? status.ap_auth_reason : "";
+  doc["sta_pmf"] = status.sta_pmf;
 
   String response;
   serializeJson(doc, response);
@@ -3142,7 +3244,9 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
     net["ssid"] = WiFi.SSID(i);
     net["rssi"] = WiFi.RSSI(i);
     net["channel"] = WiFi.channel(i);
-    net["encryption"] = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "open" : "wpa";
+    // F16: the real auth mode ("open" stays "open": the setup page keys its
+    // lock icon off exactly that value).
+    net["encryption"] = canary::net::ap_security::label_for((int)WiFi.encryptionType(i));
   }
 
   WiFi.scanDelete();
