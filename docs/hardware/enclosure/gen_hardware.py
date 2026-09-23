@@ -34,9 +34,11 @@ correct: this generator reports, it never edits them.
 THE RIB HEADROOM. Each set also records its lid rib (lid_rib_h / lid_rib_w)
 and the headroom its own PLS-4 assert holds the rib to (`lid_headroom`, or
 `cav_extra` on the Sense, whose assert reads that) — read from the case,
-never recomputed here. DESIGN_RULES.md §10 publishes those numbers for the
-per-case rib decision; --check holds that table to this ledger, so the prose
-cannot drift from the CAD.
+never recomputed here. DESIGN_RULES.md publishes those numbers for the
+per-case rib decision (the "Lid rib proportions" table under "What is still
+open" — cited by title, never by section number, so a new section above it
+cannot silently retarget the citation); --check holds that table to this
+ledger, so the prose cannot drift from the CAD.
 
 Mechanics (the include-beside-the-case probe, the clean-render rule) are
 scad_probe.py's, shared with gen_assembled_dims.py. The probe asks for the
@@ -59,6 +61,8 @@ REPO = HERE.parent.parent.parent
 HW = REPO / "docs/hardware"
 OUT = HERE / "hardware.json"
 DESIGN_RULES = HERE / "DESIGN_RULES.md"
+# How every message names the rib table: by its title, not its section number.
+RIB_TABLE = 'DESIGN_RULES.md "Lid rib proportions" table'
 
 FASTENERS = ("screw", "insert", "security-screw", "wall-screw", "bolt")
 
@@ -66,7 +70,7 @@ FASTENERS = ("screw", "insert", "security-screw", "wall-screw", "bolt")
 # top-level echo, so any part gives it; the WAP shield is the exception, its
 # render adds the longer screws that replace the lid's), plus one
 # screw_insert=true set per case family, because INS1 is billed for exactly
-# that option. `rib` marks the eight preset sets whose headroom §10 publishes;
+# that option. `rib` marks the eight preset sets whose headroom RIB_TABLE publishes;
 # `join` the kinds the BOM join reads from this set, `join_text` an optional
 # filter on the item text (the shield set only adds its replacement screws).
 _WAP = "canary_wap_enclosure.scad"
@@ -303,7 +307,7 @@ def build() -> dict:
     }
 
 
-# DESIGN_RULES.md §10 table rows: | `<set>` | <h> | <headroom> | `<bound>` | <slack> | …
+# RIB_TABLE rows: | `<set>` | <h> | <headroom> | `<bound>` | <slack> | …
 _RULE_ROW = re.compile(r"^\s*\| `([a-z0-9_.+-]+)` \| ([0-9.]+) \| ([0-9.]+) \| `(\w+)` \| ([0-9.]+) \|",
                        re.M)
 
@@ -316,17 +320,47 @@ def check_design_rules(sets: dict) -> list[str]:
     for sid, rib in sorted(want.items()):
         got = rows.get(sid)
         if got is None:
-            bad.append(f"DESIGN_RULES.md §10 has no headroom row for `{sid}`")
+            bad.append(f"{RIB_TABLE} has no headroom row for `{sid}`")
             continue
         h, headroom, bound, slack = got
         if (abs(h - rib["h"]) > 0.005 or abs(headroom - rib["headroom"]) > 0.005
                 or bound != rib["bound"] or abs(slack - rib["slack"]) > 0.005):
-            bad.append(f"DESIGN_RULES.md §10 `{sid}` says rib {h} / headroom {headroom} "
+            bad.append(f"{RIB_TABLE}: `{sid}` says rib {h} / headroom {headroom} "
                        f"({bound}) / slack {slack}; the CAD says {rib['h']} / {rib['headroom']} "
                        f"({rib['bound']}) / {rib['slack']}")
     for sid in sorted(set(rows) - set(want)):
-        bad.append(f"DESIGN_RULES.md §10 has a headroom row for `{sid}`, which is not a rib set here")
+        bad.append(f"{RIB_TABLE} has a headroom row for `{sid}`, which is not a rib set here")
     return bad
+
+
+def stale_message(have: dict, fresh: dict) -> str:
+    """Name what moved, by source: a set whose echoed hardware (or rib) changed
+    is the CAD's; a set whose only change is its `bom` join (or a drift line) is
+    a BOM CSV's. Sending a reader to the .scad for a CSV edit wastes their time."""
+    old, new = have.get("sets", {}), fresh["sets"]
+    cad, bom = [], []
+    for sid in sorted(set(old) | set(new)):
+        a, b = old.get(sid), new.get(sid)
+        if a == b:
+            continue
+        if a is None or b is None or {k: v for k, v in a.items() if k != "bom"} != \
+                {k: v for k, v in b.items() if k != "bom"}:
+            cad.append(sid)
+        else:
+            bom.append(sid)
+    # A drift line can move with no set's `bom` moving (a row's detail text);
+    # name the sets whose drift lines differ, still as the BOM's.
+    was = {json.dumps(d, sort_keys=True): d["set"] for d in have.get("bom_drift") or []}
+    now = {json.dumps(d, sort_keys=True): d["set"] for d in fresh["bom_drift"]}
+    bom = sorted(set(bom) | {was.get(k) or now[k] for k in set(was) ^ set(now)} - set(cad))
+    parts = []
+    if cad:
+        parts.append(f"the CAD's hardware moved ({', '.join(cad)})")
+    if bom:
+        parts.append(f"a BOM quantity or row moved ({', '.join(bom)})")
+    if not parts:
+        parts.append("its text moved")
+    return "hardware.json is stale — " + "; ".join(parts) + "; regenerate"
 
 
 def main() -> int:
@@ -348,11 +382,7 @@ def main() -> int:
         if not OUT.exists():
             bad.insert(0, "hardware.json is missing — run gen_hardware.py")
         elif OUT.read_text(encoding="utf-8") != text:
-            have = json.loads(OUT.read_text(encoding="utf-8"))
-            moved = sorted(k for k in set(have.get("sets", {})) | set(fresh["sets"])
-                           if have.get("sets", {}).get(k) != fresh["sets"].get(k))
-            bad.insert(0, "hardware.json is stale — the CAD's hardware moved"
-                          + (f" ({', '.join(moved)})" if moved else "") + "; regenerate")
+            bad.insert(0, stale_message(json.loads(OUT.read_text(encoding="utf-8")), fresh))
         for b in bad:
             print(f"::error::gen_hardware: {b}")
         if bad:

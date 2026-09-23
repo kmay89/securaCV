@@ -116,8 +116,9 @@ jobs:
       # committed preset (and the screw_insert option INS1 bills), fails if
       # hardware.json is stale, joins the fasteners against the BOM CSVs
       # (a NEW disagreement fails; the known ones are listed in hardware.json
-      # for the CSV's owner), and holds DESIGN_RULES.md §10's lid-rib
-      # headroom table to the CAD. Echo only — no CGAL — so it is seconds.
+      # for the CSV's owner), and holds DESIGN_RULES.md's "Lid rib
+      # proportions" headroom table to the CAD. Echo only — no CGAL — so it
+      # is seconds.
       - name: Hardware counts match the CAD (and the BOMs are no worse)
         run: python3 gen_hardware.py --check
 

@@ -12,8 +12,8 @@ render half runs in enclosure.yml (`gen_hardware.py --check`).
     reports a short row and an unbilled fastener, honors a set's join
     filter, and never reads a non-fastener;
   • the committed ledger agrees with itself: its drift is exactly
-    KNOWN_DRIFT, its eight rib sets are the table DESIGN_RULES.md §10 prints,
-    and a table that disagrees is caught.
+    KNOWN_DRIFT, its eight rib sets are the "Lid rib proportions" table
+    DESIGN_RULES.md prints, and a table that disagrees is caught.
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
@@ -158,6 +158,35 @@ class TheCommittedLedgerAgreesWithItself(unittest.TestCase):
                 bad = gh.check_design_rules(self.led["sets"])
         self.assertEqual(len(bad), 1)
         self.assertIn("vision.xiao_weather", bad[0])
+        self.assertNotIn("§", bad[0])  # cited by title: a renumbered section cannot retarget it
+
+
+class TheStaleMessageNamesTheSourceThatMoved(unittest.TestCase):
+    """A BOM CSV edit must not be reported as the CAD's hardware moving."""
+
+    def setUp(self):
+        self.led = json.loads((ENC / "hardware.json").read_text(encoding="utf-8"))
+
+    def _moved(self, edit) -> str:
+        fresh = json.loads(json.dumps(self.led))
+        edit(fresh)
+        return gh.stale_message(self.led, fresh)
+
+    def test_a_bom_quantity_is_named_as_the_bom(self):
+        def edit(f):
+            f["sets"]["wap.compact_plain+inserts"]["bom"]["INS1"]["bom"] = 3
+            f["bom_drift"].append({"set": "wap.compact_plain+inserts", "csv": "bom_canary_wap.csv",
+                                   "what": "short INS1", "detail": "x"})
+        msg = self._moved(edit)
+        self.assertIn("a BOM quantity or row moved (wap.compact_plain+inserts)", msg)
+        self.assertNotIn("CAD", msg)
+
+    def test_an_echoed_count_is_named_as_the_cad(self):
+        def edit(f):
+            f["sets"]["wap.compact_plain+inserts"]["items"][1]["qty"] = 5
+        msg = self._moved(edit)
+        self.assertIn("the CAD's hardware moved (wap.compact_plain+inserts)", msg)
+        self.assertNotIn("BOM", msg)
 
 
 if __name__ == "__main__":
