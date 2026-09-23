@@ -63,6 +63,41 @@ for (const [dev, d] of Object.entries(asm.devices)) {
   });
 }
 
+// ── the README → build.json → Assemble join ──────────────────────────────
+// gen_enclosures.py lifts every '## Assembly' block of the catalog README into
+// build.json (and refuses a block it cannot attribute, or two blocks for one
+// device). This pins the other half: every block landed on a device the
+// Assemble tab choreographs, and nothing choreographed lacks its block.
+test("every README §Assembly block is carried into build.json, one per choreographed device", () => {
+  const readme = readFileSync(join(REPO, "docs/hardware/enclosure/README.md"), "utf8");
+  const blocks = readme.match(/^## Assembly\s*$/gm) || [];
+  const carried = Object.keys(build.devices).filter((d) => build.devices[d].assembly).sort();
+  assert.strictEqual(carried.length, blocks.length,
+    `${blocks.length} README '## Assembly' blocks but ${carried.length} carried into build.json`);
+  assert.deepStrictEqual(carried, Object.keys(asm.devices).sort(),
+    "the devices with catalog steps are exactly the devices the Assemble tab choreographs");
+});
+
+// The two in-development display builds (Watch station, Dash) quote the
+// catalog for every step. Their status caveat is README prose ABOVE the
+// numbered list, so it travels as `caveat` — never as a step a later print
+// validation would have to find and delete from the middle of the build.
+for (const [dev, vocab] of [["canary-display-watch", /Round Display/], ["canary-display-dash", /4\.3″ panel/]]) {
+  test(`${dev}: every step quotes the catalog, with the dev caveat beside the steps`, () => {
+    const a = build.devices[dev].assembly;
+    assert.ok(a, `${dev}: no README §Assembly carried into build.json`);
+    assert.match(a.steps.join(" "), vocab, "the block landed on the right device");
+    assert.match(a.caveat || "", /not print-validated/, "the dev caveat is carried");
+    for (const s of a.steps) {
+      assert.doesNotMatch(s, /print-validated|in development/i, `caveat leaked into a step: ${s.slice(0, 60)}`);
+    }
+    const d = asm.devices[dev];
+    assert.deepStrictEqual(d.steps.map((s) => s.readmeStep), a.steps.map((_, i) => i),
+      "choreography step i quotes README step i");
+    assert.match(d.assembly_source, /README\.md §Assembly/);
+  });
+}
+
 // ── physical sanity, pinned after the field reports (the four bugs) ──────
 // Ground truth: canary_wap_enclosure.scad (battery_weather) — board parks
 // at the −X USB wall (board_cx −38.75), battery bay is central (batt_cx

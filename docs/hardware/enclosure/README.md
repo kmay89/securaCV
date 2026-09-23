@@ -49,6 +49,7 @@ and the board registry (`canary_board_lib.scad`) with its evidence rung.
 
 - [The complete file map](#the-complete-file-map) — every file, one line each
 - [Pick your variant](#pick-your-variant) — gallery with previews + 3D viewers
+- In-development assembly: [Watch station](#assembly-watch-station) · [Dashboard display case](#assembly-dashboard-display) — step by step from the CAD, not yet print-validated
 - [Engineering & materials](#engineering--materials-security-build) — durability, materials, thermal kit, finish
 - [Best-practice printing tips](./printing_best_practices.md) — the *why* behind a good print: strength, fit, finish, durability (slicer-agnostic)
 - [Printing in PETG — Cura guide](./printing_petg_cura.md) — reasoned settings sheet, per-model cheat-sheet, importable profile
@@ -181,6 +182,66 @@ measurements welcome.
 | **Fleet provisioning dock** — N numbered reclined bays for bare XIAOs beside a USB hub (v1 runbook fleet flashing) | `n_bays` parametric | <img src="./preview_dev_dock.png" width="230"> | [`canary_dock.scad`](./canary_dock.scad) |
 | **Shop tools** — heat-set insert press guide (keeps inserts square) + doorbell button accent ring | tiny prints | — | [`canary_shop_tools.scad`](./canary_shop_tools.scad) |
 | **Paper install templates** — 1:1 SVGs ([studs](./template_studs.svg) · [bracket](./template_bracket.svg) · [doorbell](./template_doorbell.svg)): print ON PAPER at 100 % (verify the 20 mm square), tape to the wall, drill | no plastic needed | — | [`canary_templates_2d.scad`](./canary_templates_2d.scad) |
+
+## Assembly
+<a id="assembly-watch-station"></a>
+
+**Watch station — v0.2-dev, in development.** Render- and mesh-verified,
+**not print-validated**: these steps follow the CAD
+([`canary_watch_station.scad`](./canary_watch_station.scad)), not a built
+unit. Measure your display disc (`disc_d`) and the XIAO's USB position before
+you print.
+
+1. Set the **stand** on the desk. It prints upright with no supports: a
+   full-depth divot bored normal to the 25° reclined face, two thumb scallops
+   to lift the puck back out, and a chin slot that passes the USB-C cable into
+   the open channel under the base. (Wall-mounting instead? Skip the stand —
+   the drum's blind keyhole hangs the puck on a single screw.)
+2. Rest the **drum** in the cradle. It sinks 11 mm into the divot, so it
+   cannot rock or roll, and its USB slot lands in the chin channel.
+3. Pin the **XIAO ESP32-S3** into the Round Display's back socket. It rides
+   the display's own two 7-pin headers — component side away from the
+   display, USB-C at the disc edge. Zero wiring: the display's charger, RTC
+   and microSD come along.
+4. Lower the stack into the **bore**, display face up, USB-C aligned to the
+   side slot. The Ø43.0 disc slides down the Ø44.4 bore (measured from the
+   vendor CAD — the disc is 43 mm, not the marketing 39) and its trim ring
+   stops 0.4 mm below the rim. *(battery build, opt_batt)* Before you lower
+   it, tape the protected LiPo between the fence rails on the drum floor and
+   plug it into the display's JST 1.25 — check the polarity first; vendor
+   pigtails vary.
+5. Snap the **bezel** home. Its skirt drops into the bore over the disc edge
+   and the four nubs click into the wall slots — no fasteners. The aperture
+   shows the full glass and lands on the display's trim ring; to open it
+   again, lift the bezel at the fingernail notch in the drum rim.
+
+## Assembly
+<a id="assembly-dashboard-display"></a>
+
+**Dashboard display case — in development.** Render- and mesh-verified,
+**not print-validated**: these steps follow the CAD
+([`canary_dash_display.scad`](./canary_dash_display.scad)), not a built unit,
+and its panel dimensions are nominal — measure your Waveshare
+ESP32-S3-Touch-LCD-4.3 before you print.
+
+1. Set the **desk cradle** down. It prints flat with no hardware: the front
+   lip and back rail form the bottom-edge channel and the fin takes the 25°
+   lean. (Wall-mounting instead? Screw the printed **wall cradle** to the
+   wall with its two screws; the finished case clicks onto it.)
+2. Lay the **bezel frame** face-down — it prints that way, so the A-surface
+   is your build plate. Its 2.5 mm lip retains the glass; the USB-C slot is in
+   the bottom wall and the chimney vents are in the top wall.
+3. Drop the **4.3″ panel** in face-first: the glass lands against the bezel
+   lip, the rear stack faces you, and the USB-C port lines up with the
+   bottom-wall slot. Waveshare publishes no full mechanical drawing, so the
+   pocket is cut to nominal numbers — if the panel binds or rattles, measure
+   it and re-render before you go further.
+4. Close the **vented back**, dock pads facing out — they are what clicks
+   onto the wall cradle.
+5. Drive the **4 × M2 × 8 self-tappers** from the back, through the
+   counterbores and into the corner lobes outside the panel cavity — snug
+   diagonally first, then a final quarter-turn. Don't crank them: M2
+   self-taps strip printed posts beyond ~0.3 N·m.
 
 ## Engineering & materials (security build)
 

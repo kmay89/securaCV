@@ -528,7 +528,9 @@ def resolve_recipe(formula, refs):
 
 def parse_assembly(md):
     """Every '## Assembly' block → numbered steps; device inferred from the
-    block's own vocabulary (deterministic keywords, tested)."""
+    block's own vocabulary (deterministic keywords, tested in
+    tests/assembly.test.js). Anything before the first numbered step — the
+    in-development blocks' status caveat — is prose, never a step."""
     out = {}
     for m in re.finditer(r"^## Assembly\s*$(.*?)(?=^## |\Z)", md, re.M | re.S):
         body = m.group(1)
@@ -538,21 +540,45 @@ def parse_assembly(md):
         if not steps:
             continue
         text = body.lower()
-        # The radar vocabulary comes FIRST because it is the most specific:
-        # a Sense block legitimately mentions the same magnets and discs the
-        # WAP and Vision nets match on, while nothing but the Sense says
-        # "radome" — with radar last, the Sense's own §Assembly would be
-        # claimed by whichever broader net matched first.
-        if "radar" in text or "mr60" in text or "radome" in text:
+        # The two display builds come FIRST: their blocks name the product in
+        # the caveat line, and the Watch's battery step says "LiPo", which the
+        # WAP net below would otherwise claim. Then the radar vocabulary,
+        # because it is the most specific of the rest: a Sense block
+        # legitimately mentions the same magnets and discs the WAP and Vision
+        # nets match on, while nothing but the Sense says "radome" — with
+        # radar last, the Sense's own §Assembly would be claimed by whichever
+        # broader net matched first.
+        if "watch station" in text or "round display" in text:
+            dev = "canary-display-watch"
+        elif "dashboard display" in text or "touch-lcd-4.3" in text:
+            dev = "canary-display-dash"
+        elif "radar" in text or "mr60" in text or "radome" in text:
             dev = "canary-sense"
         elif "ov5647" in text or "grove" in text or "lens" in text:
             dev = "canary-vision"
         elif "lipo" in text or "wire channel" in text or "magnet" in text:
             dev = "canary-wap"
         else:
-            continue
+            # A block no net claims used to be dropped here without a word —
+            # which is how two devices' steps sat unpublished. Refuse instead.
+            raise SystemExit(
+                "build.json: a README '## Assembly' block matches no device "
+                f"vocabulary (first step: {steps[0][:60]!r}) — add a net in "
+                "parse_assembly")
+        if dev in out:
+            raise SystemExit(
+                f"build.json: two README '## Assembly' blocks infer {dev} — "
+                "the second would silently replace the first")
+        # The prose above step 1 (an in-development block's status caveat)
+        # rides along as its own field, so every surface that shows the steps
+        # can show the caveat with them instead of dropping it.
+        caveat = re.split(r"^\d+\.\s", body, maxsplit=1, flags=re.M)[0]
+        caveat = re.sub(r"<[^>]+>", "", caveat)                       # anchors
+        caveat = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", caveat)     # links → text
+        caveat = re.sub(r"\s+", " ", re.sub(r"[*`]", "", caveat)).strip()
         out[dev] = {
             "source": "docs/hardware/enclosure/README.md §Assembly",
+            **({"caveat": caveat} if caveat else {}),
             "steps": steps,
         }
     return out
