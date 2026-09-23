@@ -30,12 +30,15 @@ namespace {
 constexpr const char* NVS_NAMESPACE = "securacv";
 constexpr const char* NVS_KEY_OPERA = "opera_secret";
 
-/* Project invariant (AGENTS.md §"NVS write paths"): persisting the
+/* Project invariant (spec/canary_mesh_network_v0.md §5.5; audit O2 in
+ * docs/security/THREAT_MODEL.md "Opera mesh"): persisting the
  * household opera_secret to NVS requires flash encryption to be
- * active. canary-wap's mesh_network.cpp:1053 enforces the same check
+ * active. canary-wap's mesh_network.cpp enforces the same check
  * on its opera_config write/load paths. Devices without FE blown
  * simply cannot store an opera_secret — the user must complete
- * pairing on every boot until the eFuse is committed. */
+ * pairing on every boot until the eFuse is committed. The device's
+ * own identity key is a different question with a different answer
+ * (Tier 0 by decision; common/identity/key_at_rest.h). */
 inline bool flash_encryption_enabled() {
   return esp_flash_encryption_enabled();
 }

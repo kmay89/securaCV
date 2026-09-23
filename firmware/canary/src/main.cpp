@@ -3148,6 +3148,7 @@ static void emit_self_manifest() {
   f.boots          = dev.boot_count;
   f.born_day       = dev.born_day;
   f.born_exact     = dev.born_exact;
+  f.key_at_rest    = crypto_key_at_rest_label();
   f.health         = health;
   {
     // Heat, from the shared thermal provider (never Arduino's temperatureRead()
@@ -3590,6 +3591,11 @@ static void handle_serial_commands() {
 #if HAVE_FLASH_ENCRYPT
       Serial.printf("  FlashEnc  : %s\n", esp_flash_encryption_enabled() ? "ENABLED" : "off");
 #endif
+      // Where the key's bytes actually sit, as the wire label the device also
+      // reports in /api/status and the self-manifest (key_at_rest.h). NOT what
+      // the FlashEnc line above implies: flash encryption does not cover NVS,
+      // so a fused board still reads plaintext-nvs in this tree.
+      Serial.printf("  KeyAtRest : %s\n", crypto_key_at_rest_label());
       Serial.printf("  Console   : %u diag cmds · policy %s\n",
                     (unsigned)kConsoleCommandCount,
                     testcon::table_is_safe(kConsoleCommands, kConsoleCommandCount)

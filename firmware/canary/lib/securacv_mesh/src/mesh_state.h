@@ -11,8 +11,15 @@
  *                     means subsequent boots resume the role without
  *                     re-pairing every time.
  *
- *   • (PR follow-up) trusted-peer pubkeys + per-peer last_counter —
- *                     replay defense across reboots. Not in this PR.
+ *   • trusted_peers — trusted-peer pubkeys (save_/load_trusted_peers,
+ *                     below), so a reboot does not forget who is household.
+ *
+ *   • replay_ctrs   — per-peer last_counter, the replay defense across
+ *                     reboots (audit O1: the counter is the freshness
+ *                     mechanism).
+ *
+ *   • elected_hub   — the last hub election result, so the fleet resumes
+ *                     its role split without a fresh election.
  *
  * NVS layout (mirrors the existing canary "securacv" namespace used by
  * ble_scout_key, device_id, mic_muted, etc.):
@@ -20,6 +27,13 @@
  *     namespace = "securacv"
  *     keys:
  *       opera_secret   — 32-byte blob
+ *       trusted_peers  — blob (peer table)
+ *       replay_ctrs    — blob (per-peer counters)
+ *       elected_hub    — blob (election result)
+ *       opera_name     — string, <= 32 bytes (F10; flash-encryption gated
+ *                        like the four above)
+ *       mesh_enabled   — 1 byte (F10; NOT gated: a preference, not a
+ *                        secret — see MESH ENABLED FLAG below)
  *
  * Host build (CSI_TEST_HOST_BUILD): all functions compile as
  * deterministic stubs. load_opera_secret() always returns false (no
@@ -33,11 +47,32 @@
  * layer is the only legitimate caller.
  *
  * Privacy: the opera_secret is the household's single most sensitive
- * mesh-layer key. Production deployments should be paired with the
- * flash-encryption fuse blown so the NVS partition is encrypted on
- * disk (audit-O2 deferred work, same gate ble_scout_key sits behind).
- * This module does NOT enforce flash-encryption — it just trusts
- * NVS to be backed by encrypted storage when the gate is set.
+ * mesh-layer key — it exposes OTHER devices, not just this one. This
+ * module therefore ENFORCES the flash-encryption gate (audit O2): every
+ * save_*/load_* below returns false when esp_flash_encryption_enabled()
+ * is false, so nothing household-shared is persisted on silicon without
+ * flash encryption, and firmware/scripts/regression_check.sh ("Mesh
+ * secret persistence is FE-gated") asserts the check stays in this file
+ * and mesh_network.cpp.
+ *
+ * That is ALL the gate buys. Flash encryption does not cover NVS: ESP-IDF
+ * encrypts only the app, otadata and nvs_keys partitions, and this tree's
+ * tables (partitions_ota.csv, the core's default_8MB.csv) leave nvs
+ * unflagged, so on a board WITH flash encryption these four entries still
+ * sit in plaintext on the flash chip. They would be ciphertext only under
+ * NVS encryption, which is not available under framework = arduino (the
+ * Arduino core's sdkconfig does not compile it in; roadmap item 9 is the
+ * route). So today the gate keeps the secret off un-fused boards; it does
+ * not make it confidential at rest on fused ones.
+ *
+ * The device's OWN identity key is deliberately NOT gated this way at the
+ * default tier: Tier 0 of docs/design/hardware_root_of_trust.md (§5.1,
+ * decisions §8 #1/#3/#4) keeps it in NVS, reports the posture as
+ * `key_at_rest` (plaintext-nvs on every board in this tree, for the reason
+ * above), and refuses only in images built with
+ * SECURACV_REQUIRE_FLASH_ENCRYPTION=1 — the decision is written down once
+ * in common/identity/key_at_rest.h. (ble_scout_key's per-device scout key
+ * and the API token are Tier-0 by the same reasoning and carry no gate.)
  */
 
 #ifndef SECURACV_MESH_STATE_H
@@ -55,8 +90,9 @@ namespace mesh_state {
  *
  * Returns false on:
  *   • null pointer
- *   • flash encryption disabled on this device (AGENTS.md project
- *     invariant — refuse to persist secrets on FE-off hardware)
+ *   • flash encryption disabled on this device (audit O2 — refuse to
+ *     persist household secrets on FE-off hardware; on FE-on hardware the
+ *     NVS entry is still plaintext, see the file comment above)
  *   • NVS write failure (corrupt partition / hardware fault)
  *
  * On the host build, always returns true (no-op success — tests use

@@ -757,12 +757,15 @@ echo ""
 
 # ── Check: Mesh secret persistence is gated on flash encryption ────────
 # The ESP-NOW "Opera" mesh uses a long-lived shared secret (opera_secret). It must
-# NEVER be written to NVS unless flash encryption is on, or the secret sits in
-# plaintext at rest. The persistence layer (mesh_state.cpp) enforces this: its
-# save_*/load_* paths return false when !esp_flash_encryption_enabled(), so on an
-# FE-off board the secret is not persisted (the live in-RAM session is allowed for
-# the current boot by design — see firmware/canary/src/main.cpp on_pairing_succeeded
-# — but nothing confidential lands in unencrypted NVS). This guard asserts that FE
+# NEVER be written to NVS unless flash encryption is on. The persistence layer
+# (mesh_state.cpp) enforces this: its save_*/load_* paths return false when
+# !esp_flash_encryption_enabled(), so on an FE-off board the secret is not
+# persisted (the live in-RAM session is allowed for the current boot by design —
+# see firmware/canary/src/main.cpp on_pairing_succeeded). On an FE-ON board the
+# entry is still plaintext at rest: flash encryption does not cover NVS, and NVS
+# encryption is unavailable under framework = arduino (mesh_state.h; roadmap
+# item 9) — the gate keeps the secret off un-fused boards, it does not encrypt
+# it on fused ones. This guard asserts that FE
 # check is not silently removed from the mesh persistence/impl files. It does NOT,
 # and cannot statically, prove the *activation* path fails closed — see issue #610
 # C2 / the bench runbook for the on-device check, and the open design question of
@@ -785,6 +788,41 @@ else
     fi
   done <<< "$MESH_IMPL_FILES"
 fi
+
+echo ""
+
+# ── Check: first-boot identity keygen seeds the RNG before RF is up ─────
+# Every tree generates its Ed25519 identity key during provisioning, BEFORE
+# WiFi/BT start — so esp_fill_random() has no RF entropy source yet and a bare
+# draw risks a predictable key on a fresh unit (roadmap §3.7 "Weak first-boot
+# entropy"; issue #921 / PR #994 fixed the three project trees, this guard
+# asserts the PIO canary tree stayed fixed too). The documented ESP-IDF pattern
+# is bootloader_random_enable() / esp_fill_random() / bootloader_random_disable()
+# around that one draw. This greps each keygen file for the enable CALL as a
+# statement on its own line (a comment that merely names the function does not
+# count); it cannot prove the call ORDER (enable must precede the draw, and must
+# never run while RF is up) — that is code review plus the U1 bench.
+echo "── Security: first-boot keygen is entropy-seeded ──"
+
+KEYGEN_FILES=(
+  "$CANARY_DIR/lib/securacv_crypto/src/securacv_crypto.cpp"
+  "$PROJECTS_DIR/canary-sense/src/witness.cpp"
+  "$PROJECTS_DIR/canary-vision/src/witness.cpp"
+  "$PROJECTS_DIR/canary-wap/arduino/canary_wap/canary_wap.ino"
+)
+
+for kf in "${KEYGEN_FILES[@]}"; do
+  rel=${kf#"$FIRMWARE_DIR/"}
+  if [ ! -f "$kf" ]; then
+    check_warn "Keygen file not found (moved?): $rel"
+    continue
+  fi
+  if grep -Eq '^[[:space:]]*bootloader_random_enable[[:space:]]*\([[:space:]]*\)[[:space:]]*;' "$kf"; then
+    check_pass "First-boot keygen seeds entropy: $rel"
+  else
+    check_fail "Keygen file '$rel' has no bootloader_random_enable() around its first-boot esp_fill_random() — predictable-key risk on fresh units (#921)"
+  fi
+done
 
 echo ""
 

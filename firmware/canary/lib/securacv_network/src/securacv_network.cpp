@@ -2259,6 +2259,9 @@ static esp_err_t handle_status(httpd_req_t* req) {
   doc["uptime_sec"] = uptime_seconds();
   doc["boot_count"] = device.boot_count;
   doc["chain_seq"] = device.seq;
+  // Where the identity key sleeps, read live from the eFuses (a wire label,
+  // never key material — common/identity/key_at_rest.h).
+  doc["key_at_rest"] = crypto_key_at_rest_label();
   doc["witness_count"] = health.records_created;
   doc["free_heap"] = ESP.getFreeHeap();
   doc["min_heap"] = health.min_heap;
@@ -2546,9 +2549,9 @@ static esp_err_t handle_reboot(httpd_req_t* req) {
 
   log_health(LOG_LEVEL_NOTICE, LOG_CAT_USER, "Reboot requested", nullptr);
 
-  DeviceIdentity& device = witness_get_device();
-  nvs_store_u32(NVS_KEY_SEQ, device.seq);
-  nvs_store_bytes(NVS_KEY_CHAIN, device.chain_head, 32);
+  // The witness lib owns chain persistence (one atomic blob — never the
+  // legacy seq/chain pair from here, which was the second torn-write site).
+  witness_persist_chain_state();
 
   JsonDocument doc;
   doc["ok"] = true;
@@ -3290,6 +3293,7 @@ static esp_err_t handle_export(httpd_req_t* req) {
   doc["ruleset"] = RULESET_ID;
   doc["export_time_ms"] = millis();
   doc["chain_seq"] = device.seq;
+  doc["key_at_rest"] = crypto_key_at_rest_label();
   doc["records_total"] = health.records_created;
 
   char pubkey_hex[65];

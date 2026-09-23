@@ -47,6 +47,14 @@ DEVSIG_BIN = $(BUILD_DIR)/test_device_signature_common
 WITCHAIN_HDR = ../common/witness/witness_chain.h
 WITCHAIN_BIN = $(BUILD_DIR)/test_witness_chain_core
 
+# Atomic chain-state blob (common/witness/chain_state.h): {seq, head} as ONE
+# NVS entry so a power cut can no longer tear the pair. Pins the 39-byte
+# layout (golden bytes), the CRC-16/CCITT-FALSE seal (every single-bit flip
+# and the 0x00<->0xFF substitution Fletcher would miss are rejected), and the
+# boot-time source order (blob > legacy pair > genesis). Pure header.
+CHAINST_HDR = ../common/witness/chain_state.h
+CHAINST_BIN = $(BUILD_DIR)/test_chain_state
+
 # Canonical witness-store pure logic (common/witness/witness_store.h):
 # the /WITNESS/records.jsonl byte-exact line format + SD-wins boot
 # reconciliation, consumed by the PIO canary tree directly and by the
@@ -265,6 +273,16 @@ MANIFEST_BIN = $(BUILD_DIR)/test_self_manifest
 BIRTHDAY_HDR = ../common/identity/birth_day.h
 BIRTHDAY_BIN = $(BUILD_DIR)/test_birth_day
 
+# Key-at-rest policy (common/identity/key_at_rest.h): the tier / wire label /
+# allow-refuse decision / boot line for the identity key's NVS home from {flash
+# encryption, NVS encryption, secure boot, SECURACV_REQUIRE_FLASH_ENCRYPTION}.
+# Pins that flash encryption alone is still plaintext NVS, that the Tier-0
+# default never refuses, that the opt-in image refuses load AND persist
+# symmetrically unless NVS is encrypted, and that the labels are wire-safe.
+# Pure header, no Arduino.
+KEYREST_HDR = ../common/identity/key_at_rest.h
+KEYREST_BIN = $(BUILD_DIR)/test_key_at_rest
+
 # Coarse optical feature classifiers (canary-vision optical_features.h): pins
 # the invariant-safe coarsening of the person-detection model's box geometry —
 # aspect ratio -> posture, area fraction -> proximity, count -> occupancy
@@ -436,6 +454,9 @@ $(USBONB_BIN): test_usb_onboard_logic.cpp $(USBONB_HDR) Makefile | $(BUILD_DIR)
 $(TESTCON_BIN): test_test_console.cpp $(TESTCON_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_test_console.cpp -o $@
 
+$(CHAINST_BIN): test_chain_state.cpp $(CHAINST_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_chain_state.cpp -o $@
+
 $(BOOTPOL_BIN): test_boot_policy.cpp $(BOOTPOL_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_boot_policy.cpp -o $@
 
@@ -493,6 +514,9 @@ $(MANIFEST_BIN): test_self_manifest.cpp $(MANIFEST_HDR) Makefile | $(BUILD_DIR)
 $(BIRTHDAY_BIN): test_birth_day.cpp $(BIRTHDAY_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_birth_day.cpp -o $@
 
+$(KEYREST_BIN): test_key_at_rest.cpp $(KEYREST_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_key_at_rest.cpp -o $@
+
 $(OPTFEAT_BIN): test_optical_features.cpp $(OPTFEAT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(OPTFEAT_INC) test_optical_features.cpp -o $@
 
@@ -537,7 +561,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(WITHIST_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -545,6 +569,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(WITSTORE_BIN)
 	./$(WITHIST_BIN)
 	./$(TZRULE_BIN)
+	./$(CHAINST_BIN)
 	./$(USBONB_BIN)
 	./$(TESTCON_BIN)
 	./$(BOOTPOL_BIN)
@@ -566,6 +591,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(FLEETSR_BIN)
 	./$(MANIFEST_BIN)
 	./$(BIRTHDAY_BIN)
+	./$(KEYREST_BIN)
 	./$(OPTFEAT_BIN)
 	./$(VISION_PIPE_BIN)
 	./$(VISPROF_BIN)

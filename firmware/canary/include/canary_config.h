@@ -496,6 +496,33 @@
 
 #define NVS_MAIN_NS       "securacv"
 #define NVS_KEY_PRIV      "privkey"
+// Where that key may sleep. 0 (every canary env): the accepted Tier-0 default —
+// the key is stored and loaded on any silicon and the posture is reported as
+// `key_at_rest`. 1 (a Tier 3/4 image — provisioning/platformio_secure.ini
+// [env:secure] sets it; K1 builds it as a normal env plus
+// PLATFORMIO_BUILD_FLAGS=-DSECURACV_REQUIRE_FLASH_ENCRYPTION=1): refuse to
+// store AND to load the identity key unless its NVS is actually encrypted, so
+// the image fails closed at provisioning instead of quietly running with a
+// plaintext key. Flash encryption alone does NOT satisfy it — flash encryption
+// does not cover NVS, and NVS encryption is not available under
+// framework = arduino — so today such an image refuses on every board, by
+// design. Decided in common/identity/key_at_rest.h (host-tested); deliberately
+// not a FEATURE_* flag — it changes no feature set.
+#ifndef SECURACV_REQUIRE_FLASH_ENCRYPTION
+  #define SECURACV_REQUIRE_FLASH_ENCRYPTION 0
+#endif
+// Chain state. NVS_KEY_CHAINST is the live entry: {seq, chain head} as ONE
+// 39-byte blob (common/witness/chain_state.h) so a power cut cannot tear the
+// pair — NVS commits a blob atomically. NVS_KEY_SEQ / NVS_KEY_CHAIN are the
+// legacy two-entry layout: still READ as the fallback when no blob exists (so
+// an image upgrade keeps its chain) and never written again by this image (so
+// a downgrade still boots — from a pair that goes stale after the first blob
+// persist, so the older image forks the chain there; the SD-wins
+// reconciliation covers that only when a card is present). On the re-upgrade,
+// a legacy seq AHEAD of the blob's means that older image ran since the last
+// blob write, and boot resumes from its pair instead of re-signing its seqs
+// (chain_state::choose()).
+#define NVS_KEY_CHAINST   "chain_st"
 #define NVS_KEY_SEQ       "seq"
 #define NVS_KEY_BOOTS     "boots"
 #define NVS_KEY_CHAIN     "chain"

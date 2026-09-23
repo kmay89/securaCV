@@ -538,7 +538,26 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   authoritative freshness mechanism).
 - `opera_secret` storage requires flash encryption enabled
   (eFuse `FLASH_CRYPT_CNT > 0`); load/save paths refuse on FE-off devices
-  and log loudly (v0.2 audit O2).
+  and log loudly (v0.2 audit O2). That keeps the secret off un-fused
+  boards; it does **not** make it confidential at rest on fused ones.
+  Flash encryption does not cover NVS (ESP-IDF encrypts only the app,
+  OTA-data and NVS-key partitions), so on an FE-on board the persisted
+  `opera_secret`, trusted peers, replay counters and hub election are
+  still plaintext on the flash chip. They would be ciphertext only under
+  NVS encryption, which is not available under `framework = arduino`
+  (roadmap item 9 in `firmware/ESP32S3_OPTIMIZATION_ROADMAP.md`).
+- The device's **own identity key** is deliberately not gated the same way:
+  it exposes only this device, and Tier 0 of the
+  [root-of-trust ladder](../design/hardware_root_of_trust.md) keeps it in
+  NVS by decision (§8 #1/#3/#4). The PIO canary image (`firmware/canary`)
+  reports the posture live as `key_at_rest` (`plaintext-nvs` /
+  `nvs-encrypted` / `nvs-encrypted+secure-boot`) in `/api/status` and the
+  self-manifest — `plaintext-nvs` on every board today, fused or not, for
+  the reason above; canary-wap and the other trees do not report it yet.
+  Only images built with `SECURACV_REQUIRE_FLASH_ENCRYPTION=1` (Tier 3+)
+  refuse to store or load it, and they refuse unless NVS is actually
+  encrypted — so, under `framework = arduino`, on every board. The
+  decision is written once in `firmware/common/identity/key_at_rest.h`.
 - Peer removal auto-rotates `opera_secret` and invalidates existing sessions
   (v0.2 audit O3).
   - PlatformIO tree (spec §5.6 PlatformIO subsection, `mesh_rekey.{h,cpp}`):
