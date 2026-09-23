@@ -124,7 +124,14 @@ enum class MsgType : uint8_t {
   LEAVE_OPERA    = 25,   /* F10 — "I am leaving"; empty payload. A verified
                           * LEAVE removes only the SIGNER's own trust entry
                           * at each receiver (spec §4.2, §8.3). */
-  /* 26..255 reserved for future use. */
+  /* F10-rekey — opera_secret rotation on peer removal (mesh_rekey.h,
+   * spec §5.6 PIO). All four ride signed envelopes under the CURRENT
+   * opera_id. */
+  REKEY_OFFER    = 26,   /* initiator → all: rekey_id, ephemeral X25519 pub, removed fp */
+  REKEY_ACCEPT   = 27,   /* survivor → initiator: rekey_id, ephemeral X25519 pub */
+  REKEY_SECRET   = 28,   /* initiator → survivor: rekey_id, nonce, AEAD(new secret) */
+  REKEY_ACK      = 29,   /* survivor → initiator, sent BEFORE it switches */
+  /* 30..255 reserved for future use. */
 };
 
 /* ──────────────────────────────────────────────────────────────────────────

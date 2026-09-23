@@ -538,6 +538,13 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   and log loudly (v0.2 audit O2).
 - Peer removal auto-rotates `opera_secret` and invalidates existing sessions
   (v0.2 audit O3).
+  - PlatformIO tree (spec §5.6 PlatformIO subsection, `mesh_rekey.{h,cpp}`):
+    no per-peer session keys exist there, so the rotation runs an
+    ephemeral X25519 exchange per removal inside signed envelopes, the ACK
+    going out under the old `opera_id` before a survivor switches; a
+    survivor that misses the 60 s window is dropped and re-pairs. Host-tested;
+    **maintainer crypto review and the U1 Track C3 bench pass are pending**,
+    and the §5.6 revocation deny-list is implemented in neither tree.
 
 ### Chirp channel (anonymous, community, soft-alert)
 

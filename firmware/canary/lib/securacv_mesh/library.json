@@ -1,7 +1,7 @@
 {
     "name": "securacv_mesh",
     "version": "0.1.0",
-    "description": "SecuraCV Opera mesh on ESP-NOW — transport + peer table, Ed25519-signed envelope, pairing, the opera session (beacon events, channel lock, hub election, tamper alerts, leave), NVS state and the REST JSON builders.",
+    "description": "SecuraCV Opera mesh on ESP-NOW — transport + peer table, Ed25519-signed envelope, pairing, the opera session (beacon events, channel lock, hub election, tamper alerts, leave, secret rotation on removal), NVS state and the REST JSON builders.",
     "keywords": ["securacv", "esp-now", "mesh", "transport"],
     "repository": {
         "type": "git",

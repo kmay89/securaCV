@@ -101,6 +101,22 @@ static channel_lock_received_fn s_channel_lock_cb = nullptr;
 static hub_election_received_fn s_hub_election_cb = nullptr;
 static peer_left_fn             s_peer_left_cb    = nullptr;
 static tamper_alert_received_fn s_tamper_alert_cb = nullptr;
+static rekey_commit_fn          s_rekey_commit_cb = nullptr;
+
+/* opera_secret rotation (F10-rekey). One transaction at a time, as
+ * initiator or survivor. Wiped by deinit(), leave_opera() and disable. */
+static mesh_rekey::Context      s_rekey;
+
+static_assert(static_cast<uint8_t>(mesh_rekey::MsgType::OFFER)  ==
+              static_cast<uint8_t>(mesh_envelope::MsgType::REKEY_OFFER),  "rekey msg_type drift");
+static_assert(static_cast<uint8_t>(mesh_rekey::MsgType::ACCEPT) ==
+              static_cast<uint8_t>(mesh_envelope::MsgType::REKEY_ACCEPT), "rekey msg_type drift");
+static_assert(static_cast<uint8_t>(mesh_rekey::MsgType::SECRET) ==
+              static_cast<uint8_t>(mesh_envelope::MsgType::REKEY_SECRET), "rekey msg_type drift");
+static_assert(static_cast<uint8_t>(mesh_rekey::MsgType::ACK)    ==
+              static_cast<uint8_t>(mesh_envelope::MsgType::REKEY_ACK),    "rekey msg_type drift");
+static_assert(mesh_rekey::MAX_SURVIVORS >= MAX_TRUSTED_PEERS,
+              "every other trusted peer must fit in a rotation");
 
 /* Alert channel state (F10). Opera-wide lifetime counter for the boot,
  * plus a ring of the most recent MAX_ALERT_HISTORY records (s_alert_head
@@ -275,6 +291,80 @@ static size_t build_signed_frame(mesh_envelope::MsgType type,
   return env_len == 0 ? 0 : 1 + env_len;
 }
 
+/* Forget a trusted peer entirely: copy out its pubkey, drop its transport
+ * MAC when one is bound (so later broadcasts stop reaching it), then
+ * unregister it. Returns false when fp is not trusted. */
+static bool forget_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                        uint8_t       pubkey_out[mesh_crypto::PUBKEY_LEN]) {
+  TrustedPeer* p = find_trusted_peer(fp);
+  if (p == nullptr) return false;
+  memcpy(pubkey_out, p->pubkey, mesh_crypto::PUBKEY_LEN);
+  if (p->mac_known) mesh_transport::remove_peer(p->mac);
+  memset(p, 0, sizeof(*p));
+  return true;
+}
+
+/* Sign and send one rekey payload: broadcast, or unicast to dest_fp's
+ * verified MAC (broadcast when none is bound yet). Signed under the
+ * CURRENT opera_id — the ACK ordering depends on it. */
+static void send_rekey_frame(const mesh_rekey::Action& a, bool broadcast,
+                             uint32_t now_ms) {
+  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  const size_t n = build_signed_frame(
+      static_cast<mesh_envelope::MsgType>(static_cast<uint8_t>(a.msg_type)),
+      a.payload, a.payload_len, now_ms, frame, sizeof(frame));
+  if (n == 0) return;
+  const TrustedPeer* dest = broadcast ? nullptr : find_trusted_peer(a.dest_fp);
+  if (dest != nullptr && dest->mac_known) {
+    mesh_transport::send_to_peer(dest->mac, frame, n);
+  } else {
+    mesh_transport::broadcast(frame, n);
+  }
+  secure_zero(frame, sizeof(frame));
+}
+
+/* Switch to a rotated secret: rebind opera_id (the outbound counter is
+ * kept — receivers track it per fingerprint), forget the listed peers,
+ * and hand the secret + their pubkeys to the integration layer. */
+static void install_rotated_secret(const uint8_t new_secret[mesh_crypto::OPERA_SECRET_LEN],
+                                   const uint8_t (*fps)[mesh_crypto::FINGERPRINT_LEN],
+                                   size_t        n_fps) {
+  set_opera_secret(new_secret);
+  uint8_t forgotten[MAX_TRUSTED_PEERS][mesh_crypto::PUBKEY_LEN];
+  size_t  n_forgotten = 0;
+  for (size_t i = 0; i < n_fps && n_forgotten < MAX_TRUSTED_PEERS; ++i) {
+    if (forget_peer(fps[i], forgotten[n_forgotten])) ++n_forgotten;
+  }
+  if (s_rekey_commit_cb) s_rekey_commit_cb(new_secret, forgotten, n_forgotten);
+}
+
+/* Apply one mesh_rekey::Action, then wipe it (it may carry the secret). */
+static void apply_rekey_action(mesh_rekey::Action& a, uint32_t now_ms) {
+  switch (a.type) {
+    case mesh_rekey::ActionType::BROADCAST_OFFER:
+      send_rekey_frame(a, /*broadcast=*/true, now_ms);
+      break;
+    case mesh_rekey::ActionType::SEND_ACCEPT:
+    case mesh_rekey::ActionType::SEND_SECRET:
+      send_rekey_frame(a, /*broadcast=*/false, now_ms);
+      break;
+    case mesh_rekey::ActionType::ACK_AND_INSTALL:
+      /* ORDER MATTERS: the ACK must verify under the opera_id the
+       * initiator still holds, so it goes out before the switch. */
+      send_rekey_frame(a, /*broadcast=*/false, now_ms);
+      install_rotated_secret(a.new_secret, &a.removed_fp, 1);
+      break;
+    case mesh_rekey::ActionType::COMMIT:
+      install_rotated_secret(a.new_secret, a.dropped, a.dropped_count);
+      break;
+    case mesh_rekey::ActionType::ABORT:
+    case mesh_rekey::ActionType::NONE:
+    default:
+      break;
+  }
+  mesh_rekey::wipe(a);
+}
+
 /* Dispatch a verified opera-authenticated frame by envelope msg_type.
  * Called from on_opera_frame after parse_and_verify + counter check
  * have both passed. */
@@ -337,6 +427,21 @@ static void dispatch_verified(TrustedPeer&               peer,
       if (s_tamper_alert_cb) {
         s_tamper_alert_cb(peer.sender_fp, kind, severity, witness_seq);
       }
+      break;
+    }
+    case mesh_envelope::MsgType::REKEY_OFFER:
+    case mesh_envelope::MsgType::REKEY_ACCEPT:
+    case mesh_envelope::MsgType::REKEY_SECRET:
+    case mesh_envelope::MsgType::REKEY_ACK: {
+      if (payload == nullptr) return;
+      /* Copy the sender fp: a COMMIT below may forget `peer`'s slot. */
+      uint8_t sender_fp[mesh_crypto::FINGERPRINT_LEN];
+      memcpy(sender_fp, peer.sender_fp, sizeof(sender_fp));
+      mesh_rekey::Action a = mesh_rekey::receive(
+          s_rekey, s_sender_fp,
+          static_cast<mesh_rekey::MsgType>(hdr.msg_type),
+          sender_fp, payload, payload_len, s_last_process_ms);
+      apply_rekey_action(a, s_last_process_ms);
       break;
     }
     case mesh_envelope::MsgType::LEAVE_OPERA: {
@@ -494,6 +599,7 @@ void deinit() {
   s_enabled          = true;
   s_last_process_ms  = 0;
   reset_alerts();
+  mesh_rekey::context_init(s_rekey);
   /* PR 5c-4: wipe the trusted-peer table + handler so a deinit()/init()
    * cycle doesn't carry stale peers or replay counters into the next
    * session. The pubkeys aren't secret but the staleness alone would
@@ -506,6 +612,7 @@ void deinit() {
   s_hub_election_cb = nullptr;
   s_peer_left_cb    = nullptr;
   s_tamper_alert_cb = nullptr;
+  s_rekey_commit_cb = nullptr;
   s_running = false;
   s_initialized = false;
 }
@@ -528,6 +635,9 @@ void set_enabled(bool enabled) {
     /* Tear down a pairing in flight while we can still dispatch its
      * NOTIFY_FAILED (cancel_pairing is a no-op once stopped). */
     if (s_running && pairing_in_progress()) cancel_pairing();
+    /* A rotation cannot finish while stopped; drop it (the REST handler
+     * refuses to disable mid-rotation, so this is the last resort). */
+    mesh_rekey::context_init(s_rekey);
     s_enabled = false;
     stop();
     return;
@@ -616,6 +726,10 @@ void process(uint32_t now_ms) {
   if (!s_running) return;
   mesh_pairing::Action a = mesh_pairing::tick(s_ctx, now_ms);
   dispatch_action(a);
+  /* Rotation timeout: initiator commits (dropping the non-ACKed),
+   * survivor aborts and keeps the old secret. */
+  mesh_rekey::Action r = mesh_rekey::tick(s_rekey, now_ms);
+  apply_rekey_action(r, now_ms);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -921,6 +1035,7 @@ bool leave_opera(uint32_t now_ms) {
     if (n > 0) notified = mesh_transport::broadcast(frame, n) > 0;
   }
   if (s_running && pairing_in_progress()) cancel_pairing();
+  mesh_rekey::context_init(s_rekey);   /* leaving ends any rotation */
   clear_trusted_peers();
   s_opera_id_set     = false;
   secure_zero(s_opera_id,  sizeof(s_opera_id));
@@ -978,5 +1093,51 @@ void clear_alerts() {
   s_alert_head  = 0;
   s_alert_count = 0;
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * F10-rekey — PEER REMOVAL WITH opera_secret ROTATION
+ * CRYPTO: maintainer review required before merge; bench-gated.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+RemoveResult remove_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                         uint32_t      now_ms,
+                         uint8_t       removed_pubkey_out[mesh_crypto::PUBKEY_LEN]) {
+  if (fp == nullptr || removed_pubkey_out == nullptr) return RemoveResult::NOT_FOUND;
+  if (!s_initialized || !s_running) return RemoveResult::DISABLED;
+  if (!s_opera_id_set)              return RemoveResult::NO_OPERA;
+  if (mesh_rekey::in_progress(s_rekey)) return RemoveResult::IN_FLIGHT;
+  if (find_trusted_peer(fp) == nullptr) return RemoveResult::NOT_FOUND;
+
+  /* Everyone else who stays. */
+  uint8_t survivors[MAX_TRUSTED_PEERS][mesh_crypto::FINGERPRINT_LEN];
+  size_t  n = 0;
+  for (size_t i = 0; i < MAX_TRUSTED_PEERS; ++i) {
+    if (!s_trusted_peers[i].in_use) continue;
+    if (mesh_crypto::ct_equal(s_trusted_peers[i].sender_fp, fp,
+                              mesh_crypto::FINGERPRINT_LEN)) continue;
+    memcpy(survivors[n++], s_trusted_peers[i].sender_fp, mesh_crypto::FINGERPRINT_LEN);
+  }
+
+  uint8_t id_bytes[4];
+  mesh_crypto::fill_random(id_bytes, sizeof(id_bytes));
+  const uint32_t rekey_id = (uint32_t)id_bytes[0] | ((uint32_t)id_bytes[1] << 8) |
+                            ((uint32_t)id_bytes[2] << 16) | ((uint32_t)id_bytes[3] << 24);
+
+  /* Start FIRST: a refused start must not leave the peer half-removed. */
+  mesh_rekey::Action a = mesh_rekey::start(s_rekey, s_sender_fp, fp,
+                                           survivors, n, rekey_id, now_ms);
+  if (a.type == mesh_rekey::ActionType::NONE) return RemoveResult::FAILED;
+
+  forget_peer(fp, removed_pubkey_out);
+  const RemoveResult r = (a.type == mesh_rekey::ActionType::COMMIT)
+                             ? RemoveResult::COMMITTED
+                             : RemoveResult::STARTED;
+  apply_rekey_action(a, now_ms);
+  return r;
+}
+
+bool rekey_in_progress() { return mesh_rekey::in_progress(s_rekey); }
+
+void set_rekey_commit_handler(rekey_commit_fn fn) { s_rekey_commit_cb = fn; }
 
 }  /* namespace mesh_session */

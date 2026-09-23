@@ -157,6 +157,28 @@ bool x25519_derive(const uint8_t our_priv[PRIVKEY_LEN],
                    const uint8_t peer_pub[PUBKEY_LEN],
                    uint8_t shared_out[X25519_SHARED_LEN]);
 
+/* Generate a fresh X25519 keypair for x25519_derive() (F10-rekey).
+ *
+ * This is NOT ed25519_generate_keypair(): an Ed25519 public key is an
+ * Edwards-curve point derived from SHA-512(seed), not the Curve25519
+ * u-coordinate of the seed times the base point, so feeding Ed25519 keys
+ * to x25519_derive() gives the two sides DIFFERENT shared values on a
+ * real device. Device path: 32 bytes from esp_fill_random(), clamped per
+ * RFC 7748 (rweather's Curve25519::eval does not clamp), pub =
+ * Curve25519::eval(priv, basepoint), retried on the (negligible) eval
+ * refusal. Host path: the same deterministic shim as the Ed25519 keypair
+ * (pub = SHA-256("securacv:host-shim:pub" || priv)), which is what the
+ * host x25519_derive shim reconstructs — so a two-sided host test agrees.
+ * TEST USE ONLY on the host (rand()). Returns false only on null pointers
+ * or a device RNG/eval failure. */
+bool x25519_generate_keypair(uint8_t pub_out [PUBKEY_LEN],
+                             uint8_t priv_out[PRIVKEY_LEN]);
+
+/* Fill `out` with `len` random bytes: esp_fill_random() on device (RF
+ * must be up for full entropy — true whenever the mesh is running),
+ * rand() on host (TEST ONLY). Used for fresh opera secrets (F10-rekey). */
+void fill_random(uint8_t* out, size_t len);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * ChaCha20-Poly1305 AEAD
  *

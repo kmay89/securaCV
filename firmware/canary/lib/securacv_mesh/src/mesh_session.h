@@ -5,9 +5,10 @@
  * Singleton glue layer that wires mesh_transport (raw ESP-NOW recv/send)
  * to mesh_pairing (pure state machine) and to the opera-authenticated
  * traffic on top of it: beacon events, channel lock, hub election,
- * tamper alerts and leave (this file), each with its payload codec in
- * its own pure module (mesh_beacon, mesh_channel_hop, mesh_hub_election,
- * mesh_alert).
+ * tamper alerts, leave and opera_secret rotation on removal (this file),
+ * each with its payload codec or state machine in its own pure module
+ * (mesh_beacon, mesh_channel_hop, mesh_hub_election, mesh_alert,
+ * mesh_rekey).
  *
  * Wire envelope:
  *   • Every mesh-session frame is prefixed with a 1-byte MsgType.
@@ -63,6 +64,7 @@
 #include "mesh_channel_hop.h"
 #include "mesh_hub_election.h"
 #include "mesh_alert.h"
+#include "mesh_rekey.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -490,6 +492,66 @@ void     set_tamper_alert_handler(tamper_alert_received_fn fn);
 uint32_t alerts_received();
 size_t   get_alerts(mesh_alert::Record* out, size_t cap);
 void     clear_alerts();
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * PEER REMOVAL WITH opera_secret ROTATION  (F10-rekey — POST /api/mesh/remove)
+ *
+ * CRYPTO: maintainer review required before merge; bench-gated (U1 Track C3).
+ *
+ * remove_peer() drops a trusted peer AND rotates the household secret so
+ * the removed device's copy stops working (spec §5.6; option B of the plan
+ * — an ephemeral X25519 exchange per rotation over signed envelopes, the
+ * pure state machine in mesh_rekey.h):
+ *   • the rotation is started first; only if it starts is the peer
+ *     forgotten (trust entry + its transport MAC, so later broadcasts stop
+ *     reaching it) — a refused start leaves the table untouched;
+ *   • no survivors left → the new secret is installed at once
+ *     (COMMITTED); otherwise an OFFER goes out (STARTED) and the session
+ *     finishes the exchange from its receive path and process() timeout;
+ *   • on this device's commit — all ACKs, or the 60 s timeout — it
+ *     switches to the new secret, forgets every survivor that did not ACK,
+ *     and fires the rekey-commit handler. A survivor does the same when it
+ *     installs: it sends its ACK under the OLD opera_id first, then
+ *     switches, forgets the removed device and fires the same handler.
+ * The outbound counter is NOT reset on a switch: receivers key their
+ * replay counters by fingerprint, not by opera_id.
+ *
+ * The handler receives the new secret (persist it — mesh_state::
+ * persist_rotation, FE-gated) and the pubkeys of every peer this device
+ * just forgot (drop them from NVS). The removed peer's own pubkey comes
+ * back through `removed_pubkey_out` instead, for the caller to drop.
+ *
+ * Refusals: DISABLED (mesh off / not initialized), NO_OPERA, NOT_FOUND
+ * (fp is not a trusted peer), IN_FLIGHT (a rotation is already running
+ * on this device, as initiator or survivor), FAILED (key generation).
+ * Threading: the send contract above says main-loop task; POST
+ * /api/mesh/remove calls this from the httpd task, the same posture the
+ * PR-8 pairing handlers ship with (spec §8.3). Marshaling the REST entry
+ * points onto the main loop is an open item for the crypto review.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+enum class RemoveResult : uint8_t {
+  STARTED = 0,
+  COMMITTED,
+  DISABLED,
+  NO_OPERA,
+  NOT_FOUND,
+  IN_FLIGHT,
+  FAILED,
+};
+
+RemoveResult remove_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                         uint32_t      now_ms,
+                         uint8_t       removed_pubkey_out[mesh_crypto::PUBKEY_LEN]);
+
+bool rekey_in_progress();
+
+typedef void (*rekey_commit_fn)(
+    const uint8_t new_secret[mesh_crypto::OPERA_SECRET_LEN],
+    const uint8_t (*forgotten_pubkeys)[mesh_crypto::PUBKEY_LEN],
+    size_t        forgotten_count);
+
+void set_rekey_commit_handler(rekey_commit_fn fn);
 
 }  /* namespace mesh_session */
 

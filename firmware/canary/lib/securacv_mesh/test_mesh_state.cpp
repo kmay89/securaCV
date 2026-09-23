@@ -189,6 +189,19 @@ void test_remove_trusted_peer_host_stub() {
   std::printf("PASS test_remove_trusted_peer_host_stub\n");
 }
 
+void test_persist_rotation_host_stub() {
+  /* F10-rekey: the integration layer's re-persist through the FE gate.
+   * Host stub validates arguments and succeeds. */
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x70 + i);
+  uint8_t pks[2][mesh_crypto::PUBKEY_LEN] = {{1}, {2}};
+  assert(mesh_state::persist_rotation(secret, nullptr, 0));
+  assert(mesh_state::persist_rotation(secret, pks, 2));
+  assert(!mesh_state::persist_rotation(nullptr, pks, 2));
+  assert(!mesh_state::persist_rotation(secret, nullptr, 1));
+  std::printf("PASS test_persist_rotation_host_stub\n");
+}
+
 }  /* namespace */
 
 int main() {
@@ -205,6 +218,7 @@ int main() {
   test_mesh_enabled_host_stub();
   test_opera_name_host_stub();
   test_remove_trusted_peer_host_stub();
+  test_persist_rotation_host_stub();
   std::printf("\nALL MESH_STATE TESTS PASSED\n");
   return 0;
 }

@@ -589,4 +589,26 @@ bool clear_opera_name() {
 #endif
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * ROTATION PERSISTENCE (F10-rekey) — CRYPTO: maintainer review required.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool persist_rotation(const uint8_t new_secret[mesh_crypto::OPERA_SECRET_LEN],
+                      const uint8_t (*forgotten_pubkeys)[mesh_crypto::PUBKEY_LEN],
+                      size_t forgotten_count) {
+  if (new_secret == nullptr) return false;
+  if (forgotten_count > 0 && forgotten_pubkeys == nullptr) return false;
+
+  /* save_opera_secret() carries the flash-encryption gate. */
+  bool ok = save_opera_secret(new_secret);
+  if (!ok) {
+    /* Never leave the rotated-away secret as the one a reboot loads. */
+    clear_opera_secret();
+  }
+  for (size_t i = 0; i < forgotten_count; ++i) {
+    ok = remove_trusted_peer(forgotten_pubkeys[i]) && ok;
+  }
+  return ok;
+}
+
 }  /* namespace mesh_state */

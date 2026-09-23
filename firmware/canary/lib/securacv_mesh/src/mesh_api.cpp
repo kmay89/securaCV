@@ -157,6 +157,29 @@ bool build_mesh_peers_json(char*  out,
   return true;
 }
 
+static int hex_nibble(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+bool parse_fingerprint_hex(const char* hex,
+                           uint8_t     out[mesh_crypto::FINGERPRINT_LEN]) {
+  if (hex == nullptr || out == nullptr) return false;
+  constexpr size_t N = mesh_crypto::FINGERPRINT_LEN;
+  if (strnlen(hex, 2 * N + 1) != 2 * N) return false;
+  uint8_t tmp[N];
+  for (size_t i = 0; i < N; ++i) {
+    const int hi = hex_nibble(hex[2 * i]);
+    const int lo = hex_nibble(hex[2 * i + 1]);
+    if (hi < 0 || lo < 0) return false;
+    tmp[i] = (uint8_t)((hi << 4) | lo);
+  }
+  memcpy(out, tmp, N);
+  return true;
+}
+
 bool build_mesh_alerts_json(char*                     out,
                             size_t                    cap,
                             const mesh_alert::Record* alerts,

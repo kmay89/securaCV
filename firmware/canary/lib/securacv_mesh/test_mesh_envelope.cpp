@@ -255,7 +255,8 @@ void test_le_byte_order_pinned() {
 
 void test_msgtype_values_pinned() {
   /* The byte at offset 1 of every signed frame (and the session prefix
-   * byte) — wire-stable, never renumber. LEAVE_OPERA (F10) is 25. */
+   * byte) — wire-stable, never renumber. LEAVE_OPERA (F10) is 25; the
+   * rekey messages (F10-rekey) are 26..29. */
   using M = mesh_envelope::MsgType;
   assert(static_cast<uint8_t>(M::HEARTBEAT)        == 16);
   assert(static_cast<uint8_t>(M::CSI_FEATURES)     == 17);
@@ -267,6 +268,10 @@ void test_msgtype_values_pinned() {
   assert(static_cast<uint8_t>(M::CHANNEL_LOCK)     == 23);
   assert(static_cast<uint8_t>(M::HUB_ELECTION)     == 24);
   assert(static_cast<uint8_t>(M::LEAVE_OPERA)      == 25);
+  assert(static_cast<uint8_t>(M::REKEY_OFFER)      == 26);
+  assert(static_cast<uint8_t>(M::REKEY_ACCEPT)     == 27);
+  assert(static_cast<uint8_t>(M::REKEY_SECRET)     == 28);
+  assert(static_cast<uint8_t>(M::REKEY_ACK)        == 29);
   std::printf("PASS test_msgtype_values_pinned\n");
 }
 

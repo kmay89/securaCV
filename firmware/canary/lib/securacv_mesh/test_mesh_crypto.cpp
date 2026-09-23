@@ -398,6 +398,30 @@ void test_aead_aad_only_no_plaintext() {
   std::printf("PASS test_aead_aad_only_no_plaintext\n");
 }
 
+void test_x25519_generate_keypair_host_contract() {
+  /* F10-rekey: the X25519 keypair generator the rotation uses. On the
+   * host it shares the shim derivation x25519_derive() mirrors, so two
+   * generated keypairs agree on a shared value; on device it is real
+   * clamped Curve25519 (review + bench prove that side). */
+  uint8_t pa[32], ka[32], pb[32], kb[32];
+  assert(mesh_crypto::x25519_generate_keypair(pa, ka));
+  assert(mesh_crypto::x25519_generate_keypair(pb, kb));
+  assert(std::memcmp(pa, pb, 32) != 0);
+  uint8_t s1[32], s2[32];
+  assert(mesh_crypto::x25519_derive(ka, pb, s1));
+  assert(mesh_crypto::x25519_derive(kb, pa, s2));
+  assert(std::memcmp(s1, s2, 32) == 0);
+  assert(!mesh_crypto::x25519_generate_keypair(nullptr, ka));
+  assert(!mesh_crypto::x25519_generate_keypair(pa, nullptr));
+
+  uint8_t r1[32] = {0}, r2[32] = {0};
+  mesh_crypto::fill_random(r1, sizeof(r1));
+  mesh_crypto::fill_random(r2, sizeof(r2));
+  assert(std::memcmp(r1, r2, 32) != 0);
+  mesh_crypto::fill_random(nullptr, 8);   /* no crash */
+  std::printf("PASS test_x25519_generate_keypair_host_contract\n");
+}
+
 }  /* namespace */
 
 int main() {
@@ -417,6 +441,7 @@ int main() {
   test_active_backend_is_host_shim();
   test_x25519_mutual_dh_symmetric();
   test_x25519_rejects_zero_pubkey();
+  test_x25519_generate_keypair_host_contract();
   test_aead_encrypt_decrypt_roundtrip();
   test_aead_rejects_tampered_ciphertext();
   test_aead_rejects_tampered_aad();

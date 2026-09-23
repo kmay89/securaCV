@@ -274,6 +274,31 @@ bool save_opera_name(const char* name);
 bool load_opera_name(char* out, size_t cap);
 bool clear_opera_name();
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * ROTATION PERSISTENCE  (F10-rekey — CRYPTO: maintainer review required)
+ *
+ * Called from mesh_session's rekey-commit handler once this device has
+ * switched to a rotated opera_secret. Re-persists the NEW secret through
+ * the same flash-encryption gate as save_opera_secret() and drops every
+ * forgotten peer's pubkey from "trusted_peers".
+ *
+ * When the new secret cannot be saved (FE off, NVS failure) the OLD one
+ * is cleared instead of left behind: a reboot must come up with no opera
+ * (re-pair) rather than silently rejoin with a secret the household just
+ * rotated away from. The live session keeps the rotated secret in RAM
+ * either way (canary-wap's O2 branch). On an FE-off board nothing was
+ * persisted to begin with, so this changes nothing there.
+ *
+ * Returns true iff the new secret was saved AND every forgotten pubkey
+ * was removed. Returns false on a null secret, on a null list with a
+ * non-zero count, or on any NVS refusal/failure. Host build: validates
+ * the arguments, then returns true.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool persist_rotation(const uint8_t new_secret[mesh_crypto::OPERA_SECRET_LEN],
+                      const uint8_t (*forgotten_pubkeys)[mesh_crypto::PUBKEY_LEN],
+                      size_t forgotten_count);
+
 }  /* namespace mesh_state */
 
 #endif  /* SECURACV_MESH_STATE_H */

@@ -276,8 +276,8 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | `GET /api/mesh` | ✅ | ✅ | ✅ | ❌ |
 | `GET /api/mesh/peers` | ✅ | ✅ | ✅ (incl. per-peer `alerts_received`) | ❌ |
 | `GET /api/mesh/alerts` | ✅ | ✅ (+ `DELETE`) | ✅ (+ `DELETE`; verified TAMPER_ALERT history, per boot) | ❌ |
-| Mesh pair/leave/remove endpoints | ✅ (6 endpoints) | ✅ (+ name, enable) | ⚠️ pair ×4, leave, name, enable — `remove` not yet (next row) | ❌ |
-| `POST /api/mesh/remove` (rotates `opera_secret`, spec §5.6) | ✅ | ✅ | ❌ rekey not ported (spec §8.3) | ❌ |
+| Mesh pair/leave/remove endpoints | ✅ (6 endpoints) | ✅ (+ name, enable) | ⚠️ pair ×4, leave, name, enable, remove — radio proof pending (U1 Track C2/C3) | ❌ |
+| `POST /api/mesh/remove` (rotates `opera_secret`, spec §5.6) | ✅ | ✅ | ⚠️ ephemeral-X25519 rotation, host-tested; crypto review + bench pending (spec §5.6 PIO) | ❌ |
 | `GET /api/ble/status` | ✅ | ❌ | ❌ | ❌ |
 | `GET /api/nearby` | ✅ | ❌ | ❌ | ❌ |
 | `POST /api/chirp/send` | ✅ | ❌ | ❌ | ❌ |

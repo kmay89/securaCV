@@ -429,6 +429,24 @@ static void on_mesh_tamper_alert(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
   log_health(LOG_LEVEL_ALERT, LOG_CAT_NETWORK, "Opera tamper alert", detail);
 }
 
+/* This device switched to a rotated opera_secret (F10-rekey — as the
+ * initiator of a POST /api/mesh/remove, or as a survivor of someone
+ * else's). Re-persist the new secret through the flash-encryption gate
+ * and drop every peer the session just forgot from NVS. On a refused save
+ * mesh_state clears the rotated-away secret rather than leave it for the
+ * next boot; the live session keeps the new one in RAM either way.
+ * CRYPTO: maintainer review required; bench-gated (U1 Track C3). */
+static void on_mesh_rekey_commit(const uint8_t new_secret[mesh_crypto::OPERA_SECRET_LEN],
+                                 const uint8_t (*forgotten)[mesh_crypto::PUBKEY_LEN],
+                                 size_t n_forgotten) {
+  const bool persisted = mesh_state::persist_rotation(new_secret, forgotten, n_forgotten);
+  char detail[48];
+  snprintf(detail, sizeof(detail), "forgot %u peer(s)%s", (unsigned)n_forgotten,
+           persisted ? "" : "; NOT persisted");
+  log_health(persisted ? LOG_LEVEL_WARNING : LOG_LEVEL_ALERT, LOG_CAT_NETWORK,
+             "Opera secret rotated", detail);
+}
+
 /* Persist + register the just-paired peer's pubkey. Both roles need it:
  * the joiner to accept the initiator's frames, the initiator to accept the
  * joiner's. Same "save first, set unconditionally" posture as the
@@ -1076,6 +1094,8 @@ void setup() {
      * FEATURE_CSI too. */
     mesh_session::set_peer_left_handler(&on_mesh_peer_left);
     mesh_session::set_tamper_alert_handler(&on_mesh_tamper_alert);
+    /* F10-rekey: a committed opera_secret rotation re-persists here. */
+    mesh_session::set_rekey_commit_handler(&on_mesh_rekey_commit);
   } else {
     Serial.println("[WARN] Mesh layer init failed — broadcast disabled");
   }

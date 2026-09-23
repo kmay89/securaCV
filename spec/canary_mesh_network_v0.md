@@ -6,8 +6,10 @@ Last Updated: 2026-09-23
 
 > **v0.3 summary** (PlatformIO tree, `firmware/canary/lib/securacv_mesh`):
 > `LEAVE_OPERA` (§4.2), a compact template-only `TAMPER_ALERT` payload
-> (§4.3), and the REST surface the web UIs already call — leave, name,
-> enable, alerts GET/DELETE — reconciled in §8.1/§8.3. See §14.
+> (§4.3), the REST surface the web UIs already call — leave, name,
+> enable, alerts GET/DELETE — reconciled in §8.1/§8.3, and `remove` with an
+> ephemeral-X25519 `opera_secret` rotation (§4.2 `REKEY_*`, §5.6 PIO;
+> **crypto review and bench pass pending**). See §14.
 
 > **v0.2 hardening summary** (see `docs/audit/mesh_and_chirp_audit_v1.md`
 > findings O1–O3):
@@ -207,6 +209,18 @@ receiver that has since re-registered the same device into the same,
 un-rotated opera (registration restarts that peer's counter at 0), where a
 recorded LEAVE can drop the device's entry again — never add one.
 
+#### REKEY_OFFER / REKEY_ACCEPT / REKEY_SECRET / REKEY_ACK — v0.3 (PlatformIO)
+The `opera_secret` rotation that `remove` runs (§5.6, PlatformIO subsection).
+All four ride opera-authenticated envelopes under the **current** `opera_id`
+(msg_type 26–29); multi-byte integers are little-endian:
+```cddl
+rekey_offer  = [ rekey_id: u32, eph_pub: bstr .size 32, removed_fp: bstr .size 8 ]  ; 44 B, broadcast
+rekey_accept = [ rekey_id: u32, eph_pub: bstr .size 32 ]                             ; 36 B, to the initiator
+rekey_secret = [ rekey_id: u32, nonce: bstr .size 12,
+                 ciphertext: bstr .size 32, tag: bstr .size 16 ]                    ; 64 B, to one survivor
+rekey_ack    = [ rekey_id: u32 ]                                                     ;  4 B, to the initiator
+```
+
 ### 4.3 Alert Messages
 
 #### TAMPER_ALERT
@@ -354,6 +368,55 @@ accept frames carrying the old `opera_id` after rotation. The old
 `opera_secret` is forensically useful (for log decryption) but operationally
 inert.
 
+#### PlatformIO tree — ephemeral rotation (v0.3, F10-rekey option B)
+
+> **Status: implemented and host-tested; maintainer crypto review and the
+> U1 Track C3 bench pass are both still required before this counts as
+> shipped.**
+
+The PlatformIO mesh keeps **no per-peer session keys** (its frames are
+Ed25519-signed only, and the pairing X25519 key is wiped at `PAIRED`), so
+step 4 above cannot encrypt "under that member's existing session key". It
+runs an ephemeral exchange per rotation instead
+(`firmware/canary/lib/securacv_mesh/src/mesh_rekey.{h,cpp}`), every message
+inside a signed opera envelope so each ephemeral public key is
+authenticated by the sender's long-term Ed25519 key:
+
+1. The initiator generates `new_opera_secret = random_bytes(32)` and an
+   ephemeral X25519 keypair, drops the removed peer (trust entry and radio
+   address), and broadcasts `REKEY_OFFER {rekey_id, eph_pub_i, removed_fp}`.
+   The removed device ignores an OFFER that names it.
+2. Each survivor answers `REKEY_ACCEPT {rekey_id, eph_pub_s}` with its own
+   ephemeral keypair.
+3. For each ACCEPT the initiator derives
+   `k = SHA-256("securacv:opera:rekey:key:v0" || X25519(eph_i, eph_pub_s) ||
+   rekey_id || eph_pub_i || eph_pub_s)` and sends that survivor
+   `REKEY_SECRET` = ChaCha20-Poly1305 under `k`, random 96-bit nonce,
+   AAD `rekey_id || initiator_fp || survivor_fp`.
+4. The survivor decrypts, sends `REKEY_ACK {rekey_id}` **under the old
+   `opera_id`, before switching** (an ACK under the new id would fail the
+   initiator's `opera_id` check — the ordering canary-wap learned), then
+   installs the new secret, drops `removed_fp` and re-persists.
+5. The initiator commits when every survivor has ACKed, or at 60 s; a
+   survivor that did not ACK is dropped and must re-pair (canary-wap's
+   accepted trade-off). A survivor that never gets its SECRET aborts at its
+   own 60 s mark and keeps the old secret.
+
+On a switch the outbound counter is **kept**: receivers track the per-peer
+counter by fingerprint, not by `opera_id`, so resetting it would get the
+next frames dropped as replays. The new secret is re-persisted through the
+flash-encryption gate (§5.5); if that save is refused, the old secret is
+cleared rather than left for the next boot. The ephemeral keys come from a
+dedicated X25519 generator (`mesh_crypto::x25519_generate_keypair`, RFC 7748
+clamping) — not the Ed25519 generator pairing uses.
+
+Deliberate limits: one rotation at a time per device (a second `remove` is
+refused, a survivor ignores a second OFFER); two users removing peers from
+two devices inside the same 60 s window can split the household between two
+new secrets, and the losing side re-pairs. **The `REVOCATION_GRACE_MS`
+deny-list above is not implemented in either tree** — a removed device can
+be re-paired by a user who walks it through pairing again.
+
 ## 6. Alert Propagation
 
 ### 6.1 Broadcast Behavior
@@ -470,24 +533,31 @@ The REST implementation in the PlatformIO tree (`firmware/canary`, gated on
 `FEATURE_MESH_NETWORK`, compiled in CI by `[env:full]`) diverges from
 §8.1/§8.2 as described here; the normative tables describe the target shape.
 
-**Endpoints implemented (11 registrations):** `GET /api/mesh`,
+**Endpoints implemented (12 registrations):** `GET /api/mesh`,
 `GET /api/mesh/peers`, `POST /api/mesh/pair/{start,join,confirm,cancel}`
-(PR-8), and — since F10 — `POST /api/mesh/leave`, `POST /api/mesh/name`,
-`POST /api/mesh/enable`, `GET /api/mesh/alerts` and
-`DELETE /api/mesh/alerts`. All require a valid `Authorization: Bearer` token
+(PR-8), `POST /api/mesh/leave`, `POST /api/mesh/name`,
+`POST /api/mesh/enable`, `GET /api/mesh/alerts`, `DELETE /api/mesh/alerts`
+(F10), and `POST /api/mesh/remove` (F10-rekey, below). All require a valid
+`Authorization: Bearer` token
 and pass through the same rate limiter as the rest of the REST API. Like the
 PR-8 pairing handlers, they call into `mesh_session` from the HTTP server's
 task rather than marshaling onto the main loop the module's send contract
 names — a known posture, not a new one.
 
-**Endpoint still deferred:** `POST /api/mesh/remove`. §5.6 requires that
-removing a peer **atomically rotate `opera_secret` and re-key the surviving
-members**. That transaction exists in the canary-wap tree
-(`firmware/projects/canary-wap/.../mesh_network.cpp`) but is not ported to
-the PlatformIO mesh layer. Shipping a `remove` that drops a peer from the
-local table *without* re-keying would be a security misrepresentation — the
-removed device would keep a working `opera_secret` — so the route is not
-registered rather than shipped as a no-op. The web UI tolerates it 404ing.
+**`remove` (F10-rekey — crypto review and bench pending):** body
+`{"fingerprint": "<16 hex>"}`, the string `GET /api/mesh/peers` emits. It
+never drops a peer without rotating: §5.6 requires that removing a peer
+rotate `opera_secret` and hand the new one to the survivors, and a `remove`
+that only edited the local table would leave the removed device a working
+secret — so the PIO route starts the §5.6 PlatformIO rotation first and
+forgets the peer only if the rotation started. Responses: `{ok, rekey:
+"started"}` (survivors are being re-keyed; the commit lands within 60 s),
+`{ok, rekey: "committed"}` (nobody left to tell — rotated locally at once),
+`persisted` for the removed peer's NVS entry; errors `unknown_peer` (404),
+`rekey_in_flight` (409 — one rotation at a time; `enable {false}` is refused
+with the same code while one runs), `no_opera`, `mesh_disabled`,
+`invalid_fingerprint`. canary-wap's rotation is its own (per-peer session
+keys, `MSG_OPERA_REKEY`); the two trees do not rotate each other.
 
 **`leave`:** the device signs a `LEAVE_OPERA` (§4.2) under the opera it is
 leaving and broadcasts it (best effort — the response carries
@@ -688,4 +758,8 @@ An implementation conforms to this specification if it:
   `TAMPER_ALERT` payload, sent and received (§4.3, §8.3); §8.1 reconciled
   with the routes the web UIs call (`remove` takes a `{fingerprint}` body;
   `enable`, `name`, alerts `DELETE` added); PIO REST leave/name/enable/alerts
-  (§8.3); `opera_name` and `mesh_enabled` NVS keys (§12.3).
+  (§8.3); `opera_name` and `mesh_enabled` NVS keys (§12.3); PIO
+  `POST /api/mesh/remove` with an ephemeral-X25519 `opera_secret` rotation,
+  `REKEY_OFFER/ACCEPT/SECRET/ACK` (§4.2, §5.6 PlatformIO subsection) — crypto
+  review and bench pass pending; the §5.6 revocation deny-list is stated as
+  not implemented.

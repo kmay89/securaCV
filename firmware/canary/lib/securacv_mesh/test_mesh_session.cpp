@@ -37,6 +37,7 @@
 #include "mesh_api.h"
 #include "mesh_state.h"
 #include "mesh_alert.h"
+#include "mesh_rekey.h"
 
 #include <cassert>
 #include <cstdio>
@@ -1620,6 +1621,360 @@ void test_build_mesh_status_json_disabled() {
   std::printf("PASS test_build_mesh_status_json_disabled\n");
 }
 
+/* ────────────────────────────────────────────────────────────────────────
+ * F10-rekey — remove_peer + opera_secret rotation through the session.
+ * CRYPTO: maintainer review required before merge; bench-gated.
+ * The session (a singleton) plays one side; a pure mesh_rekey::Context
+ * held by the test plays the other, with the test signing its frames.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+struct CommitRecord {
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  std::vector<std::vector<uint8_t>> forgotten;
+  bool persisted;
+};
+std::vector<CommitRecord> g_commits;
+
+void on_rekey_commit(const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN],
+                     const uint8_t (*pks)[mesh_crypto::PUBKEY_LEN], size_t n) {
+  CommitRecord c;
+  std::memcpy(c.secret, secret, sizeof(c.secret));
+  for (size_t i = 0; i < n; ++i) c.forgotten.emplace_back(pks[i], pks[i] + mesh_crypto::PUBKEY_LEN);
+  /* The integration layer's re-persist through the FE gate (host stub). */
+  c.persisted = mesh_state::persist_rotation(secret, pks, n);
+  g_commits.push_back(c);
+}
+
+bool parse_session_frame(const std::vector<uint8_t>& f,
+                         const uint8_t signer_pub[mesh_crypto::PUBKEY_LEN],
+                         mesh_envelope::Header* hdr,
+                         const uint8_t** payload, size_t* plen) {
+  return f.size() > 1 &&
+         mesh_envelope::parse_and_verify(f.data() + 1, f.size() - 1, signer_pub,
+                                         hdr, payload, plen);
+}
+
+void test_rekey_session_as_initiator() {
+  uint8_t S[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x61 + i);
+  uint8_t a_pub[mesh_crypto::PUBKEY_LEN], a_priv[mesh_crypto::PRIVKEY_LEN];
+  stand_up_session(S, a_pub, a_priv);          /* this device: A, the initiator */
+  mesh_session::set_rekey_commit_handler(on_rekey_commit);
+  g_commits.clear();
+
+  uint8_t b_pub[32], b_priv[32], x_pub[32], x_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(b_pub, b_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(x_pub, x_priv));
+  assert(mesh_session::register_trusted_peer(b_pub));
+  assert(mesh_session::register_trusted_peer(x_pub));
+  uint8_t fp_a[8], fp_b[8], fp_x[8];
+  mesh_crypto::compute_fingerprint(a_pub, fp_a);
+  mesh_crypto::compute_fingerprint(b_pub, fp_b);
+  mesh_crypto::compute_fingerprint(x_pub, fp_x);
+
+  /* Both peers speak once so their MACs are bound. */
+  const uint8_t mac_b[6] = {0x02, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B};
+  const uint8_t mac_x[6] = {0x02, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C};
+  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  size_t flen = build_alert_frame(b_pub, b_priv, S, 1, mesh_alert::Kind::TEMP_DRIFT, 3, 0, frame, sizeof(frame));
+  inject_from(mac_b, frame, flen);
+  flen = build_alert_frame(x_pub, x_priv, S, 1, mesh_alert::Kind::TEMP_DRIFT, 3, 0, frame, sizeof(frame));
+  inject_from(mac_x, frame, flen);
+
+  uint8_t old_id[mesh_crypto::OPERA_ID_LEN];
+  assert(mesh_session::get_opera_id(old_id));
+
+  g_outs.clear();
+  uint8_t removed_pub[mesh_crypto::PUBKEY_LEN] = {0};
+  assert(mesh_session::remove_peer(fp_x, 1000, removed_pub) ==
+         mesh_session::RemoveResult::STARTED);
+  assert(std::memcmp(removed_pub, x_pub, sizeof(x_pub)) == 0);
+  assert(mesh_session::trusted_peer_count() == 1);
+  assert(mesh_session::rekey_in_progress());
+  /* X's transport MAC is gone: the OFFER (and every later broadcast)
+   * reaches B only. */
+  assert(!mesh_transport::has_peer(mac_x));
+  assert(g_outs.size() == 1);
+  assert(std::memcmp(g_outs[0].mac, mac_b, 6) == 0);
+  mesh_envelope::Header hdr;
+  const uint8_t* pl = nullptr;
+  size_t plen = 0;
+  assert(parse_session_frame(g_outs[0].bytes, a_pub, &hdr, &pl, &plen));
+  assert(hdr.msg_type == static_cast<uint8_t>(mesh_envelope::MsgType::REKEY_OFFER));
+  assert(std::memcmp(hdr.opera_id, old_id, sizeof(old_id)) == 0);
+
+  /* B's side of the exchange. */
+  mesh_rekey::Context cb;
+  mesh_rekey::context_init(cb);
+  mesh_rekey::Action acc = mesh_rekey::receive(cb, fp_b, mesh_rekey::MsgType::OFFER,
+                                               fp_a, pl, plen, 0);
+  assert(acc.type == mesh_rekey::ActionType::SEND_ACCEPT);
+  flen = build_signed_session_frame(b_pub, b_priv, S, 2, mesh_envelope::MsgType::REKEY_ACCEPT,
+                                    acc.payload, acc.payload_len, frame, sizeof(frame));
+  g_outs.clear();
+  inject_from(mac_b, frame, flen);
+  /* The session answers with B's SECRET, unicast to B's verified MAC. */
+  assert(g_outs.size() == 1);
+  assert(std::memcmp(g_outs[0].mac, mac_b, 6) == 0);
+  assert(parse_session_frame(g_outs[0].bytes, a_pub, &hdr, &pl, &plen));
+  assert(hdr.msg_type == static_cast<uint8_t>(mesh_envelope::MsgType::REKEY_SECRET));
+  mesh_rekey::Action inst = mesh_rekey::receive(cb, fp_b, mesh_rekey::MsgType::SECRET,
+                                                fp_a, pl, plen, 0);
+  assert(inst.type == mesh_rekey::ActionType::ACK_AND_INSTALL);
+  assert(std::memcmp(inst.removed_fp, fp_x, 8) == 0);
+
+  /* B ACKs under the OLD opera_id; the session commits. */
+  assert(g_commits.empty());
+  flen = build_signed_session_frame(b_pub, b_priv, S, 3, mesh_envelope::MsgType::REKEY_ACK,
+                                    inst.payload, inst.payload_len, frame, sizeof(frame));
+  inject_from(mac_b, frame, flen);
+  assert(g_commits.size() == 1);
+  assert(std::memcmp(g_commits[0].secret, inst.new_secret, 32) == 0);
+  assert(g_commits[0].forgotten.empty());
+  assert(g_commits[0].persisted);
+  assert(!mesh_session::rekey_in_progress());
+  uint8_t new_id[mesh_crypto::OPERA_ID_LEN], expect_id[mesh_crypto::OPERA_ID_LEN];
+  assert(mesh_session::get_opera_id(new_id));
+  mesh_crypto::compute_opera_id(inst.new_secret, expect_id);
+  assert(std::memcmp(new_id, expect_id, sizeof(new_id)) == 0);
+  assert(std::memcmp(new_id, old_id, sizeof(new_id)) != 0);
+  /* B is still trusted (re-registration is not needed: the table is keyed
+   * by device key, not by opera); X is not. */
+  assert(mesh_session::trusted_peer_count() == 1);
+  assert(!mesh_session::unregister_trusted_peer(fp_x));
+
+  /* After commit a frame under the OLD opera_id is rejected, one under
+   * the NEW is accepted. */
+  mesh_session::set_tamper_alert_handler(on_alert_rx);
+  g_alerts_rx.clear();
+  flen = build_alert_frame(b_pub, b_priv, S, 4, mesh_alert::Kind::ENCLOSURE_TAMPER, 6, 1, frame, sizeof(frame));
+  inject_from(mac_b, frame, flen);
+  assert(g_alerts_rx.empty());
+  flen = build_alert_frame(b_pub, b_priv, inst.new_secret, 5, mesh_alert::Kind::ENCLOSURE_TAMPER, 6, 2, frame, sizeof(frame));
+  inject_from(mac_b, frame, flen);
+  assert(g_alerts_rx.size() == 1);
+
+  /* The outbound counter was NOT reset by the switch (receivers keep
+   * per-fingerprint counters): OFFER=1, SECRET=2, so the next is 3. */
+  g_outs.clear();
+  assert(mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 3, 0, 2000));
+  assert(g_outs.size() == 1);
+  assert(parse_session_frame(g_outs[0].bytes, a_pub, &hdr, &pl, &plen));
+  assert(hdr.counter == 3);
+  assert(std::memcmp(hdr.opera_id, new_id, sizeof(new_id)) == 0);
+  mesh_rekey::wipe(inst);
+  std::printf("PASS test_rekey_session_as_initiator\n");
+}
+
+void test_rekey_session_as_survivor() {
+  uint8_t S[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x81 + i);
+  uint8_t b_pub[32], b_priv[32];
+  stand_up_session(S, b_pub, b_priv);          /* this device: B, a survivor */
+  mesh_session::set_rekey_commit_handler(on_rekey_commit);
+  g_commits.clear();
+
+  uint8_t i_pub[32], i_priv[32], x_pub[32], x_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(i_pub, i_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(x_pub, x_priv));
+  assert(mesh_session::register_trusted_peer(i_pub));
+  assert(mesh_session::register_trusted_peer(x_pub));
+  uint8_t fp_b[8], fp_i[8], fp_x[8];
+  mesh_crypto::compute_fingerprint(b_pub, fp_b);
+  mesh_crypto::compute_fingerprint(i_pub, fp_i);
+  mesh_crypto::compute_fingerprint(x_pub, fp_x);
+  uint8_t old_id[mesh_crypto::OPERA_ID_LEN];
+  assert(mesh_session::get_opera_id(old_id));
+
+  /* The initiator's side. */
+  mesh_rekey::Context ci;
+  mesh_rekey::context_init(ci);
+  const uint8_t surv[1][8] = {{fp_b[0], fp_b[1], fp_b[2], fp_b[3], fp_b[4], fp_b[5], fp_b[6], fp_b[7]}};
+  mesh_rekey::Action offer = mesh_rekey::start(ci, fp_i, fp_x, surv, 1, 555, 0);
+  assert(offer.type == mesh_rekey::ActionType::BROADCAST_OFFER);
+
+  const uint8_t mac_i[6] = {0x02, 0x1D, 0x1D, 0x1D, 0x1D, 0x1D};
+  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  size_t flen = build_signed_session_frame(i_pub, i_priv, S, 1, mesh_envelope::MsgType::REKEY_OFFER,
+                                           offer.payload, offer.payload_len, frame, sizeof(frame));
+  g_outs.clear();
+  inject_from(mac_i, frame, flen);
+  assert(mesh_session::rekey_in_progress());
+  /* ACCEPT back to the initiator's MAC, under the old opera_id. */
+  assert(g_outs.size() == 1);
+  assert(std::memcmp(g_outs[0].mac, mac_i, 6) == 0);
+  mesh_envelope::Header hdr;
+  const uint8_t* pl = nullptr;
+  size_t plen = 0;
+  assert(parse_session_frame(g_outs[0].bytes, b_pub, &hdr, &pl, &plen));
+  assert(hdr.msg_type == static_cast<uint8_t>(mesh_envelope::MsgType::REKEY_ACCEPT));
+  mesh_rekey::Action sec = mesh_rekey::receive(ci, fp_i, mesh_rekey::MsgType::ACCEPT,
+                                               fp_b, pl, plen, 0);
+  assert(sec.type == mesh_rekey::ActionType::SEND_SECRET);
+
+  flen = build_signed_session_frame(i_pub, i_priv, S, 2, mesh_envelope::MsgType::REKEY_SECRET,
+                                    sec.payload, sec.payload_len, frame, sizeof(frame));
+  g_outs.clear();
+  inject_from(mac_i, frame, flen);
+  /* THE ORDERING: exactly one frame — the ACK — signed under the OLD
+   * opera_id, so the initiator (still on the old one) can verify it. */
+  assert(g_outs.size() == 1);
+  assert(parse_session_frame(g_outs[0].bytes, b_pub, &hdr, &pl, &plen));
+  assert(hdr.msg_type == static_cast<uint8_t>(mesh_envelope::MsgType::REKEY_ACK));
+  assert(std::memcmp(hdr.opera_id, old_id, sizeof(old_id)) == 0);
+  /* ...and only then did B switch. */
+  assert(!mesh_session::rekey_in_progress());
+  mesh_rekey::Action commit = mesh_rekey::receive(ci, fp_i, mesh_rekey::MsgType::ACK,
+                                                  fp_b, pl, plen, 0);
+  assert(commit.type == mesh_rekey::ActionType::COMMIT);
+  assert(g_commits.size() == 1);
+  assert(std::memcmp(g_commits[0].secret, commit.new_secret, 32) == 0);
+  uint8_t new_id[mesh_crypto::OPERA_ID_LEN], expect_id[mesh_crypto::OPERA_ID_LEN];
+  assert(mesh_session::get_opera_id(new_id));
+  mesh_crypto::compute_opera_id(commit.new_secret, expect_id);
+  assert(std::memcmp(new_id, expect_id, sizeof(new_id)) == 0);
+  /* B dropped the removed device and told the integration layer which
+   * pubkey to take out of NVS; the initiator stays trusted. */
+  assert(g_commits[0].forgotten.size() == 1);
+  assert(std::memcmp(g_commits[0].forgotten[0].data(), x_pub, 32) == 0);
+  assert(mesh_session::trusted_peer_count() == 1);
+  assert(!mesh_session::unregister_trusted_peer(fp_x));
+  mesh_rekey::wipe(commit);
+  std::printf("PASS test_rekey_session_as_survivor\n");
+}
+
+void test_rekey_refusals_and_forgeries() {
+  uint8_t pub[32], priv[32];
+  stand_up_session(nullptr, pub, priv);
+  mesh_session::set_rekey_commit_handler(on_rekey_commit);
+  g_commits.clear();
+  uint8_t y_pub[32], y_priv[32], z_pub[32], z_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(y_pub, y_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(z_pub, z_priv));
+  uint8_t fp_y[8], fp_z[8], out[32];
+  mesh_crypto::compute_fingerprint(y_pub, fp_y);
+  mesh_crypto::compute_fingerprint(z_pub, fp_z);
+
+  assert(mesh_session::remove_peer(fp_y, 0, out) == mesh_session::RemoveResult::NO_OPERA);
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0xB1 + i);
+  assert(mesh_session::set_opera_secret(S));
+  assert(mesh_session::remove_peer(fp_y, 0, out) == mesh_session::RemoveResult::NOT_FOUND);
+  assert(mesh_session::register_trusted_peer(y_pub));
+  assert(mesh_session::register_trusted_peer(z_pub));
+  mesh_session::set_enabled(false);
+  assert(mesh_session::remove_peer(fp_y, 0, out) == mesh_session::RemoveResult::DISABLED);
+  mesh_session::set_enabled(true);
+  assert(mesh_session::trusted_peer_count() == 2);   /* refusals changed nothing */
+
+  assert(mesh_session::remove_peer(fp_y, 10, out) == mesh_session::RemoveResult::STARTED);
+  assert(mesh_session::remove_peer(fp_z, 11, out) == mesh_session::RemoveResult::IN_FLIGHT);
+  assert(mesh_session::trusted_peer_count() == 1);   /* z untouched */
+  /* Disabling mid-rotation drops it (the REST layer refuses first). */
+  mesh_session::set_enabled(false);
+  assert(!mesh_session::rekey_in_progress());
+  mesh_session::set_enabled(true);
+
+  /* Inbound REKEY_OFFERs that must not engage this device: from an
+   * unregistered sender, and a forged one claiming a trusted sender. */
+  uint8_t w_pub[32], w_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(w_pub, w_priv));
+  uint8_t fp_w[8], fp_me[8];
+  mesh_crypto::compute_fingerprint(w_pub, fp_w);
+  mesh_crypto::compute_fingerprint(pub, fp_me);
+  mesh_rekey::Context cw;
+  mesh_rekey::context_init(cw);
+  const uint8_t surv[1][8] = {{fp_me[0], fp_me[1], fp_me[2], fp_me[3], fp_me[4], fp_me[5], fp_me[6], fp_me[7]}};
+  mesh_rekey::Action offer = mesh_rekey::start(cw, fp_w, fp_y, surv, 1, 9, 0);
+  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  size_t flen = build_signed_session_frame(w_pub, w_priv, S, 1, mesh_envelope::MsgType::REKEY_OFFER,
+                                           offer.payload, offer.payload_len, frame, sizeof(frame));
+  const uint8_t mac_w[6] = {0x02, 0x3A, 0x3A, 0x3A, 0x3A, 0x3A};
+  g_outs.clear();
+  inject_from(mac_w, frame, flen);
+  assert(g_outs.empty());
+  assert(!mesh_session::rekey_in_progress());
+  /* Signed by Z's key but tampered after signing. */
+  mesh_rekey::Context cz;
+  mesh_rekey::context_init(cz);
+  offer = mesh_rekey::start(cz, fp_z, fp_y, surv, 1, 10, 0);
+  flen = build_signed_session_frame(z_pub, z_priv, S, 1, mesh_envelope::MsgType::REKEY_OFFER,
+                                    offer.payload, offer.payload_len, frame, sizeof(frame));
+  frame[mesh_session::MSGTYPE_HEADER_LEN + mesh_envelope::OFFSET_PAYLOAD] ^= 0x01;
+  inject_from(mac_w, frame, flen);
+  assert(g_outs.empty());
+  assert(!mesh_session::rekey_in_progress());
+  std::printf("PASS test_rekey_refusals_and_forgeries\n");
+}
+
+void test_rekey_timeout_and_no_survivors() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0xC1 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  mesh_session::set_rekey_commit_handler(on_rekey_commit);
+  g_commits.clear();
+  uint8_t b_pub[32], b_priv[32], c_pub[32], c_priv[32], x_pub[32], x_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(b_pub, b_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(c_pub, c_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(x_pub, x_priv));
+  assert(mesh_session::register_trusted_peer(b_pub));
+  assert(mesh_session::register_trusted_peer(c_pub));
+  assert(mesh_session::register_trusted_peer(x_pub));
+  uint8_t fp_x[8], out[32];
+  mesh_crypto::compute_fingerprint(x_pub, fp_x);
+
+  const uint32_t t0 = 5000;
+  assert(mesh_session::remove_peer(fp_x, t0, out) == mesh_session::RemoveResult::STARTED);
+  mesh_session::process(t0 + mesh_rekey::REKEY_TIMEOUT_MS - 1);
+  assert(g_commits.empty());
+  mesh_session::process(t0 + mesh_rekey::REKEY_TIMEOUT_MS);
+  /* Nobody answered: commit anyway, forgetting both silent survivors. */
+  assert(g_commits.size() == 1);
+  assert(g_commits[0].forgotten.size() == 2);
+  assert(mesh_session::trusted_peer_count() == 0);
+  assert(!mesh_session::rekey_in_progress());
+  uint8_t id[16], expect[16];
+  assert(mesh_session::get_opera_id(id));
+  mesh_crypto::compute_opera_id(g_commits[0].secret, expect);
+  assert(std::memcmp(id, expect, 16) == 0);
+  /* A dropped survivor can be re-registered after it re-pairs. */
+  assert(mesh_session::register_trusted_peer(b_pub));
+
+  /* No survivors at all: rotate locally, at once. */
+  g_commits.clear();
+  uint8_t fp_b[8];
+  mesh_crypto::compute_fingerprint(b_pub, fp_b);
+  assert(mesh_session::remove_peer(fp_b, t0, out) == mesh_session::RemoveResult::COMMITTED);
+  assert(g_commits.size() == 1);
+  assert(g_commits[0].forgotten.empty());
+  assert(!mesh_session::rekey_in_progress());
+  assert(mesh_session::trusted_peer_count() == 0);
+  assert(mesh_session::get_opera_id(id));
+  mesh_crypto::compute_opera_id(g_commits[0].secret, expect);
+  assert(std::memcmp(id, expect, 16) == 0);
+  std::printf("PASS test_rekey_timeout_and_no_survivors\n");
+}
+
+void test_parse_fingerprint_hex() {
+  uint8_t fp[8];
+  std::memset(fp, 0xEE, sizeof(fp));
+  assert(mesh_api::parse_fingerprint_hex("0011223344556677", fp));
+  const uint8_t want[8] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77};
+  assert(std::memcmp(fp, want, 8) == 0);
+  assert(mesh_api::parse_fingerprint_hex("AABBCCDDEEFF0011", fp));
+  assert(fp[0] == 0xAA && fp[7] == 0x11);
+  uint8_t keep[8];
+  std::memcpy(keep, fp, 8);
+  assert(!mesh_api::parse_fingerprint_hex("001122334455667", fp));     /* 15 */
+  assert(!mesh_api::parse_fingerprint_hex("00112233445566778", fp));   /* 17 */
+  assert(!mesh_api::parse_fingerprint_hex("00112233445566zz", fp));
+  assert(!mesh_api::parse_fingerprint_hex("", fp));
+  assert(!mesh_api::parse_fingerprint_hex(nullptr, fp));
+  assert(std::memcmp(fp, keep, 8) == 0);   /* untouched on false */
+  std::printf("PASS test_parse_fingerprint_hex\n");
+}
+
 }  /* namespace */
 
 int main() {
@@ -1662,6 +2017,12 @@ int main() {
   test_build_mesh_alerts_json();
   test_build_mesh_status_json_disabled();
   test_rest_buffers_fit_worst_case();
+  /* F10-rekey — remove_peer + rotation (CRYPTO: maintainer review). */
+  test_rekey_session_as_initiator();
+  test_rekey_session_as_survivor();
+  test_rekey_refusals_and_forgeries();
+  test_rekey_timeout_and_no_survivors();
+  test_parse_fingerprint_hex();
   std::printf("\nALL MESH_SESSION TESTS PASSED\n");
   return 0;
 }

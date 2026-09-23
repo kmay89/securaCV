@@ -919,10 +919,10 @@ static esp_err_t handle_thermal(httpd_req_t* req);
 #endif
 
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
-// Mesh / opera REST API (PR-8, F10). Eleven registrations: status, peers,
-// the four pairing steps, leave, name, enable, and alerts GET + DELETE.
-// remove is deferred until the opera_secret rekey is ported (see
-// spec/canary_mesh_network_v0.md §8.3).
+// Mesh / opera REST API (PR-8, F10, F10-rekey). Twelve registrations:
+// status, peers, the four pairing steps, leave, name, enable, alerts GET +
+// DELETE, and remove (which rotates opera_secret — spec §5.6 PIO; crypto
+// review + bench pending, see spec/canary_mesh_network_v0.md §8.3).
 static esp_err_t handle_mesh_status(httpd_req_t* req);
 static esp_err_t handle_mesh_peers(httpd_req_t* req);
 static esp_err_t handle_mesh_pair_start(httpd_req_t* req);
@@ -934,6 +934,7 @@ static esp_err_t handle_mesh_name(httpd_req_t* req);
 static esp_err_t handle_mesh_enable(httpd_req_t* req);
 static esp_err_t handle_mesh_alerts(httpd_req_t* req);
 static esp_err_t handle_mesh_alerts_clear(httpd_req_t* req);
+static esp_err_t handle_mesh_remove(httpd_req_t* req);
 #endif
 
 // esp_http_server drops a registration past max_uri_handlers and returns an
@@ -959,12 +960,12 @@ bool ScvNetworkManager::startHttpServer() {
   // leaves that slot spare, which is cheaper than a dropped route) + 4
   // OTA-pull + 9 peek + 1 sensing + 4 vision + 4 audio + 2 diagnostics + 1
   // power + 1 thermal = 45 base, + 8 captive-portal routes (6 OS connectivity
-  // probes + /setup + the wildcard fallback) + 11 mesh registrations (PR-8's
-  // 6 + F10's leave/name/enable/alerts GET/alerts DELETE) when the mesh
-  // feature is compiled in. Each registered httpd_uri_t needs a slot;
-  // register_route() names any that does not get one.
+  // probes + /setup + the wildcard fallback) + 12 mesh registrations (PR-8's
+  // 6 + F10's leave/name/enable/alerts GET/alerts DELETE + F10-rekey's
+  // remove) when the mesh feature is compiled in. Each registered
+  // httpd_uri_t needs a slot; register_route() names any that does not get one.
   #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
-  config.max_uri_handlers = 64;
+  config.max_uri_handlers = 65;
   #else
   config.max_uri_handlers = 53;
   #endif
@@ -1176,7 +1177,7 @@ void ScvNetworkManager::registerHttpHandlers() {
   #endif
 
   #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
-  // Mesh / opera REST API (PR-8, F10). 11 registrations — see spec §8.1.
+  // Mesh / opera REST API (PR-8, F10, F10-rekey). 12 registrations — see spec §8.1.
   httpd_uri_t mesh_status_ep = { .uri = "/api/mesh", .method = HTTP_GET, .handler = handle_mesh_status };
   register_route(m_http_server, &mesh_status_ep);
 
@@ -1209,6 +1210,9 @@ void ScvNetworkManager::registerHttpHandlers() {
 
   httpd_uri_t mesh_alerts_clear_ep = { .uri = "/api/mesh/alerts", .method = HTTP_DELETE, .handler = handle_mesh_alerts_clear };
   register_route(m_http_server, &mesh_alerts_clear_ep);
+
+  httpd_uri_t mesh_remove_ep = { .uri = "/api/mesh/remove", .method = HTTP_POST, .handler = handle_mesh_remove };
+  register_route(m_http_server, &mesh_remove_ep);
   #endif
 
   // Wildcard fallback — MUST stay the last registration, so every exact
@@ -3650,7 +3654,7 @@ static esp_err_t handle_thermal(httpd_req_t* req) {
 // ════════════════════════════════════════════════════════════════════════════
 // MESH / OPERA REST API (PR-8, F10)
 //
-// Eleven registrations, all auth-gated + rate-limited, all using the
+// Twelve registrations, all auth-gated + rate-limited, all using the
 // existing {ok:...} JSON convention via http_send_json / http_send_error:
 //
 //   GET    /api/mesh              — opera status (refreshOpera reads this)
@@ -3664,10 +3668,9 @@ static esp_err_t handle_thermal(httpd_req_t* req) {
 //   POST   /api/mesh/enable {enabled} — mesh on/off, NVS-persisted (F10)
 //   GET    /api/mesh/alerts       — received TAMPER_ALERT history (F10)
 //   DELETE /api/mesh/alerts       — clear that history (counters keep counting) (F10)
-//
-// POST /api/mesh/remove {fingerprint} is NOT registered here: removing a
-// peer must rotate opera_secret (spec §5.6), and that transaction is not
-// ported to this tree yet — spec §8.3.
+//   POST   /api/mesh/remove {fingerprint} — drop a peer AND rotate opera_secret
+//                                  (spec §5.6 PIO, F10-rekey option B; CRYPTO:
+//                                  maintainer review + bench pending)
 //
 // The JSON-rendering for the GET endpoints lives in the pure mesh_api
 // builders so the response shape stays under host-test coverage; CI's
@@ -4017,6 +4020,11 @@ static esp_err_t handle_mesh_enable(httpd_req_t* req) {
     return http_send_error(req, 400, "missing_enabled_bool");
   }
   const bool want = input["enabled"].as<bool>();
+  // A rotation cannot finish while the mesh is off; refuse rather than
+  // strand the survivors (F10-rekey). It ends within 60 s either way.
+  if (!want && mesh_session::rekey_in_progress()) {
+    return http_send_error(req, 409, "rekey_in_flight");
+  }
 
   mesh_session::set_enabled(want);
   const bool persisted = mesh_state::save_mesh_enabled(want);
@@ -4068,6 +4076,65 @@ static esp_err_t handle_mesh_alerts_clear(httpd_req_t* req) {
 
   mesh_session::clear_alerts();
   return http_send_json(req, "{\"ok\":true}");
+}
+
+// POST /api/mesh/remove {fingerprint} — drop a peer AND rotate
+// opera_secret (spec §5.6; F10-rekey option B). The session starts the
+// rotation first and forgets the peer only if it started; the survivors
+// get the new secret over an ephemeral-X25519 exchange inside signed
+// envelopes and this device commits on all ACKs or at the 60 s timeout
+// (the rekey-commit handler re-persists it). rekey:"committed" means there
+// was nobody left to tell and the secret rotated locally at once.
+// CRYPTO: maintainer review required before merge; bench-gated U1 C3.
+static esp_err_t handle_mesh_remove(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  char body[96];
+  const int recv = httpd_req_recv(req, body, sizeof(body) - 1);
+  if (recv <= 0) return http_send_error(req, 400, "empty_body");
+  body[recv] = '\0';
+
+  JsonDocument input;
+  if (deserializeJson(input, body) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+  if (!input["fingerprint"].is<const char*>()) {
+    return http_send_error(req, 400, "missing_fingerprint");
+  }
+  uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
+  if (!mesh_api::parse_fingerprint_hex(input["fingerprint"].as<const char*>(), fp)) {
+    return http_send_error(req, 400, "invalid_fingerprint");
+  }
+
+  uint8_t removed_pub[mesh_crypto::PUBKEY_LEN];
+  const mesh_session::RemoveResult r =
+      mesh_session::remove_peer(fp, millis(), removed_pub);
+  switch (r) {
+    case mesh_session::RemoveResult::STARTED:
+    case mesh_session::RemoveResult::COMMITTED:
+      break;
+    case mesh_session::RemoveResult::DISABLED:  return http_send_error(req, 400, "mesh_disabled");
+    case mesh_session::RemoveResult::NO_OPERA:  return http_send_error(req, 400, "no_opera");
+    case mesh_session::RemoveResult::NOT_FOUND: return http_send_error(req, 404, "unknown_peer");
+    case mesh_session::RemoveResult::IN_FLIGHT: return http_send_error(req, 409, "rekey_in_flight");
+    default:                                    return http_send_error(req, 500, "rekey_failed");
+  }
+  // The removed peer's own NVS entry (FE-gated); the rotated secret and
+  // any survivor dropped at commit persist through the commit handler.
+  const bool persisted = mesh_state::remove_trusted_peer(removed_pub);
+  log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "Opera peer removed",
+             r == mesh_session::RemoveResult::COMMITTED ? "secret rotated locally"
+                                                        : "secret rotation started");
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["rekey"] = (r == mesh_session::RemoveResult::COMMITTED) ? "committed" : "started";
+  doc["persisted"] = persisted;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
 }
 
 #endif // FEATURE_MESH_NETWORK

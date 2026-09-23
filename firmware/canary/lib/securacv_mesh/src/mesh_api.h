@@ -136,6 +136,18 @@ bool build_mesh_alerts_json(char*                     out,
                             const mesh_alert::Record* alerts,
                             size_t                    count);
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * POST /api/mesh/remove {fingerprint} — request parsing (F10-rekey)
+ *
+ * The web UI sends the `fingerprint` string GET /api/mesh/peers emitted:
+ * exactly FINGERPRINT_LEN*2 (16) hex digits. Upper case is accepted too.
+ * Returns false (out untouched) on null, any other length, or a non-hex
+ * character — the handler answers 400 invalid_fingerprint.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool parse_fingerprint_hex(const char* hex,
+                           uint8_t     out[mesh_crypto::FINGERPRINT_LEN]);
+
 }  /* namespace mesh_api */
 
 #endif  /* SECURACV_MESH_API_H */
