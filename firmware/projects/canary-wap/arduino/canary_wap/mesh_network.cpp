@@ -12,6 +12,7 @@
 
 #include "mesh_network.h"
 #include "mesh_pair_frame.h"       // F14: [type][payload] pairing framing + classifier
+#include "mesh_pair_crypto.h"      // F33: clamped X25519 pairing keys, session key, 6-digit code
 #include "mesh_channel_policy.h"
 #include "csi_mem.h"
 #include "airtime_governor.h"
@@ -61,7 +62,6 @@ static void secure_wipe(void* ptr, size_t len) {
 // fleet name; the wire string is deliberately unchanged.
 static const char* DOMAIN_FLEET_ID = "securacv:opera:id:v0";
 static const char* DOMAIN_AUTH = "securacv:mesh:auth:v0";
-static const char* DOMAIN_SESSION = "securacv:mesh:session:v0";
 static const char* DOMAIN_MESSAGE = "securacv:mesh:message:v0";
 static const char* DOMAIN_PAIR_CONFIRM = "securacv:pair:confirm:v0";
 
@@ -312,31 +312,14 @@ static void compute_opera_id(const uint8_t* secret, uint8_t* id_out) {
 }
 
 static bool derive_session_key(const uint8_t* local_priv, const uint8_t* peer_pub, uint8_t* key_out) {
-  // Perform X25519 ECDH key exchange
-  // Note: Ed25519 keys must be converted to Curve25519 for X25519
-  // The Crypto library's Curve25519 does this conversion internally
-
-  uint8_t shared_secret[32];
-
-  // Perform X25519 scalar multiplication: shared = local_priv * peer_pub
-  // Curve25519::eval() computes the Diffie-Hellman shared secret
-  if (!Curve25519::eval(shared_secret, local_priv, peer_pub)) {
-    secure_wipe(shared_secret, sizeof(shared_secret));
-    return false;
-  }
-
-  // Derive session key using HKDF-SHA256 for proper key derivation
-  const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-  int ret = mbedtls_hkdf(md,
-                         nullptr, 0,  // No salt
-                         shared_secret, sizeof(shared_secret),
-                         (const uint8_t*)DOMAIN_SESSION, strlen(DOMAIN_SESSION),
-                         key_out, SESSION_KEY_SIZE);
-
-  // Clear sensitive data
-  secure_wipe(shared_secret, sizeof(shared_secret));
-
-  return ret == 0;
+  // X25519 then HKDF-SHA256 (info "securacv:mesh:session:v0", no salt) —
+  // mesh_pair_crypto.h, host-tested. X25519 needs X25519 keys on BOTH
+  // sides: Curve25519::eval does not convert Ed25519 keys (the comment that
+  // used to sit here said it did). Pairing's ephemerals are X25519 since
+  // F33; the AUTH callers below still pass the long-term Ed25519 identity
+  // keys — an open item, see mesh_pair_crypto.h.
+  static_assert(SESSION_KEY_SIZE == mesh_pair_crypto::KEY_LEN, "session key width");
+  return mesh_pair_crypto::derive_session_key(local_priv, peer_pub, key_out);
 }
 
 static bool encrypt_message(const uint8_t* key, const uint8_t* plaintext, size_t len,
@@ -997,9 +980,15 @@ static void handle_pair_discover(const uint8_t* mac, const uint8_t* payload) {
 
   // If we're initiator and they're joiner, send offer
   if (g_pairing.role == PAIR_ROLE_INITIATOR && discover->role == PAIR_ROLE_JOINER) {
-    // Generate ephemeral keypair for this pairing session
-    Ed25519::generatePrivateKey(g_pairing.ephemeral_privkey);
-    Ed25519::derivePublicKey(g_pairing.ephemeral_pubkey, g_pairing.ephemeral_privkey);
+    // Ephemeral X25519 keypair for this pairing session (F33 — crypto
+    // review, maintainer to confirm): clamped Curve25519, NOT Ed25519 —
+    // X25519 over Ed25519 keys gave the two sides different session keys.
+    if (!mesh_pair_crypto::generate_keypair(g_pairing.ephemeral_pubkey,
+                                            g_pairing.ephemeral_privkey,
+                                            esp_fill_random)) {
+      cancel_pairing();
+      return;
+    }
 
     memcpy(g_pairing.peer_pubkey, discover->pubkey, PUBKEY_SIZE);
     memcpy(g_pairing.peer_mac, mac, 6);
@@ -1032,17 +1021,25 @@ static void handle_pair_offer(const uint8_t* mac, const uint8_t* payload) {
   memcpy(g_pairing.peer_pubkey, offer->device_pubkey, PUBKEY_SIZE);
   memcpy(g_pairing.peer_mac, mac, 6);
 
-  // Generate our ephemeral keypair
-  Ed25519::generatePrivateKey(g_pairing.ephemeral_privkey);
-  Ed25519::derivePublicKey(g_pairing.ephemeral_pubkey, g_pairing.ephemeral_privkey);
+  // Our ephemeral X25519 keypair (F33: clamped Curve25519, not Ed25519).
+  if (!mesh_pair_crypto::generate_keypair(g_pairing.ephemeral_pubkey,
+                                          g_pairing.ephemeral_privkey,
+                                          esp_fill_random)) {
+    cancel_pairing();
+    return;
+  }
 
-  // Derive session key from ephemeral keys
-  derive_session_key(g_pairing.ephemeral_privkey, offer->ephemeral_pubkey, g_pairing.session_key);
+  // Derive session key from ephemeral keys — a refused X25519 (low-order
+  // or non-canonical peer key) ends the pairing instead of showing a code
+  // computed from a stale buffer.
+  if (!derive_session_key(g_pairing.ephemeral_privkey, offer->ephemeral_pubkey,
+                          g_pairing.session_key)) {
+    cancel_pairing();
+    return;
+  }
 
   // Compute confirmation code
-  uint8_t code_hash[32];
-  sha256_domain(DOMAIN_PAIR_CONFIRM, g_pairing.session_key, SESSION_KEY_SIZE, code_hash);
-  g_pairing.confirmation_code = ((uint32_t)code_hash[0] << 16 | (uint32_t)code_hash[1] << 8 | code_hash[2]) % 1000000;
+  g_pairing.confirmation_code = mesh_pair_crypto::confirmation_code(g_pairing.session_key);
 
   // Send accept with our ephemeral key
   PairOfferPayload accept;  // Reuse structure
@@ -1075,12 +1072,14 @@ static void handle_pair_accept(const uint8_t* mac, const uint8_t* payload) {
   const PairOfferPayload* accept = (const PairOfferPayload*)payload;
 
   // Derive session key from ephemeral keys
-  derive_session_key(g_pairing.ephemeral_privkey, accept->ephemeral_pubkey, g_pairing.session_key);
+  if (!derive_session_key(g_pairing.ephemeral_privkey, accept->ephemeral_pubkey,
+                          g_pairing.session_key)) {
+    cancel_pairing();
+    return;
+  }
 
-  // Compute confirmation code (should match joiner's)
-  uint8_t code_hash[32];
-  sha256_domain(DOMAIN_PAIR_CONFIRM, g_pairing.session_key, SESSION_KEY_SIZE, code_hash);
-  g_pairing.confirmation_code = ((uint32_t)code_hash[0] << 16 | (uint32_t)code_hash[1] << 8 | code_hash[2]) % 1000000;
+  // Compute confirmation code (matches the joiner's: same session key)
+  g_pairing.confirmation_code = mesh_pair_crypto::confirmation_code(g_pairing.session_key);
 
   g_mesh_state = MESH_PAIRING_CONFIRM;
   g_pairing.code_displayed = true;

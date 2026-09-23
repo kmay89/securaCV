@@ -436,3 +436,26 @@ clean-pair-frame:
 
 run: run-pair-frame
 clean: clean-pair-frame
+
+# F33 part 2 (crypto review — maintainer to confirm): canary-wap Opera pairing
+# key agreement (mesh_pair_crypto.h). The header compiles here as the sketch
+# compiles it, against REAL X25519 / HKDF-SHA256 / SHA-256 (OpenSSL, behind the
+# rweather and mbedTLS names in stubs/pair_crypto) — no mock of the key
+# exchange: two independently generated keypairs must reach the same session
+# key and 6-digit code, and the pre-fix Ed25519 keys must not. Also reads the
+# real mesh_network.cpp (beacon_source_scan.h; its path is passed in, so the
+# pins fail closed) to pin that the pairing handlers use the header.
+PAIR_CRYPTO_BIN = test_mesh_pair_crypto
+PAIR_CRYPTO_SRC = test_mesh_pair_crypto.cpp
+
+$(PAIR_CRYPTO_BIN): $(PAIR_CRYPTO_SRC) $(SRC_DIR)/mesh_pair_crypto.h $(SRC_DIR)/mesh_network.cpp beacon_source_scan.h stubs/pair_crypto/Curve25519.h stubs/pair_crypto/mbedtls/md.h stubs/pair_crypto/mbedtls/hkdf.h
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/pair_crypto -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(PAIR_CRYPTO_SRC) -lcrypto
+
+.PHONY: run-pair-crypto clean-pair-crypto
+run-pair-crypto: $(PAIR_CRYPTO_BIN)
+	./$(PAIR_CRYPTO_BIN)
+clean-pair-crypto:
+	rm -f $(PAIR_CRYPTO_BIN)
+
+run: run-pair-crypto
+clean: clean-pair-crypto

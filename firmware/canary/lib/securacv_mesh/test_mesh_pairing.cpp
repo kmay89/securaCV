@@ -8,10 +8,14 @@
  *   3. Code is always in [0, 999_999].
  *   4. Wire-compat regression: session_key = 32×0x00 produces code
  *      884555 (independently computed via openssl).
- *   5. Symmetric mutual-DH pairing: two simulated peers run the host
- *      X25519 shim, derive the same session_key, and therefore compute
- *      the same confirmation code — the only property the user
- *      visually verifies.
+ *   5. Symmetric mutual-DH pairing: two simulated peers run X25519 on
+ *      real X25519 keypairs, derive the same session_key, and therefore
+ *      compute the same confirmation code — the only property the user
+ *      visually verifies. The host X25519 is the RFC 7748 ladder, not a
+ *      shim (F33 part 2): test_pairing_codes_match_through_real_x25519
+ *      drives the state machine's own keygen + DH on independently
+ *      generated keys, so Ed25519-generated ephemerals (the bug pairing
+ *      shipped with) fail it.
  *   6. Wire-format struct sizes match the static_asserts in the header
  *      (a runtime check duplicating the compile-time assert so a CI
  *      log surface flags this loudly if the header gets edited).
@@ -101,8 +105,8 @@ void test_symmetric_mutual_dh_produces_same_code() {
    * visually verify both screens display the same 6 digits. */
   uint8_t pub_a[mesh_crypto::PUBKEY_LEN], priv_a[mesh_crypto::PRIVKEY_LEN];
   uint8_t pub_b[mesh_crypto::PUBKEY_LEN], priv_b[mesh_crypto::PRIVKEY_LEN];
-  assert(mesh_crypto::ed25519_generate_keypair(pub_a, priv_a));
-  assert(mesh_crypto::ed25519_generate_keypair(pub_b, priv_b));
+  assert(mesh_crypto::x25519_generate_keypair(pub_a, priv_a));
+  assert(mesh_crypto::x25519_generate_keypair(pub_b, priv_b));
 
   uint8_t session_a[mesh_pairing::SESSION_KEY_LEN];
   uint8_t session_b[mesh_pairing::SESSION_KEY_LEN];
@@ -345,6 +349,75 @@ void test_full_handshake_succeeds() {
   std::printf("PASS test_full_handshake_succeeds  (code=%06u)\n", code_init);
 }
 
+/* F33 part 2 (crypto review — maintainer to confirm): two devices with
+ * independently generated keys reach the SAME 6-digit code through the
+ * state machine's own ephemeral keygen and x25519_derive — the real code
+ * path, on the host's real X25519 (no DH mock). Also checks that each
+ * offered ephemeral pub is its private scalar times the base point, i.e.
+ * an X25519 key and not an Ed25519 one. Before the fix the ephemerals came
+ * from ed25519_generate_keypair(): this test fails on that revision. */
+void test_pairing_codes_match_through_real_x25519() {
+  const uint8_t nine[32] = {9};
+  for (int round = 0; round < 16; ++round) {
+    mesh_pairing::PairingContext ci, cj;
+    mesh_pairing::context_init(ci);
+    mesh_pairing::context_init(cj);
+    uint8_t pub_i[32], priv_i[32], pub_j[32], priv_j[32];
+    assert(mesh_crypto::ed25519_generate_keypair(pub_i, priv_i));
+    assert(mesh_crypto::ed25519_generate_keypair(pub_j, priv_j));
+    uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+    for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(round * 31 + i);
+    const uint8_t mac_i[6] = {0x02, 0, 0, 0, 1, (uint8_t)round};
+    const uint8_t mac_j[6] = {0x02, 0, 0, 0, 2, (uint8_t)round};
+
+    mesh_pairing::Action a = mesh_pairing::start_initiator(ci, pub_i, priv_i, secret, "Home", 10);
+    assert(a.type == mesh_pairing::ActionType::BROADCAST_DISCOVER);
+    a = mesh_pairing::start_joiner(cj, pub_j, priv_j, 10);
+    InFlight dj; must(action_to_inflight(a, &dj));
+
+    /* Each ephemeral is an X25519 key: pub == priv * 9. */
+    uint8_t chk[32];
+    assert(mesh_crypto::x25519_derive(ci.ephem_privkey, nine, chk));
+    assert(std::memcmp(chk, ci.ephem_pubkey, 32) == 0);
+    assert(mesh_crypto::x25519_derive(cj.ephem_privkey, nine, chk));
+    assert(std::memcmp(chk, cj.ephem_pubkey, 32) == 0);
+    assert(std::memcmp(ci.ephem_pubkey, cj.ephem_pubkey, 32) != 0);
+
+    a = mesh_pairing::receive(ci, mac_j, dj.type, dj.bytes.data(), dj.bytes.size(), 20);
+    InFlight of; must(action_to_inflight(a, &of));
+    a = mesh_pairing::receive(cj, mac_i, of.type, of.bytes.data(), of.bytes.size(), 30);
+    assert(a.type == mesh_pairing::ActionType::SEND_ACCEPT);
+    const uint32_t code_j = a.confirmation_code;
+    InFlight ac; must(action_to_inflight(a, &ac));
+    a = mesh_pairing::receive(ci, mac_j, ac.type, ac.bytes.data(), ac.bytes.size(), 40);
+    assert(a.type == mesh_pairing::ActionType::NOTIFY_CODE_READY);
+    const uint32_t code_i = a.confirmation_code;
+
+    /* The property the user checks by eye — and the session keys behind it. */
+    assert(code_i == code_j);
+    assert(std::memcmp(ci.session_key, cj.session_key, mesh_pairing::SESSION_KEY_LEN) == 0);
+    assert(code_i == mesh_pairing::compute_confirmation_code(ci.session_key));
+
+    /* And the handshake completes: the joiner decrypts the secret. */
+    a = mesh_pairing::confirm_code(ci, 50);
+    InFlight cfi; must(action_to_inflight(a, &cfi));
+    a = mesh_pairing::confirm_code(cj, 50);
+    InFlight cfj; must(action_to_inflight(a, &cfj));
+    a = mesh_pairing::receive(ci, mac_j, cfj.type, cfj.bytes.data(), cfj.bytes.size(), 60);
+    assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
+    InFlight cp; must(action_to_inflight(a, &cp));
+    /* The initiator's CONFIRM verifies on the joiner (same session key). */
+    a = mesh_pairing::receive(cj, mac_i, cfi.type, cfi.bytes.data(), cfi.bytes.size(), 65);
+    assert(cj.state == mesh_pairing::State::AWAITING_COMPLETE);
+    a = mesh_pairing::receive(cj, mac_i, cp.type, cp.bytes.data(), cp.bytes.size(), 70);
+    assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+    uint8_t got[mesh_crypto::OPERA_SECRET_LEN];
+    assert(mesh_pairing::consume_opera_secret(cj, got));
+    assert(std::memcmp(got, secret, sizeof(secret)) == 0);
+  }
+  std::printf("PASS test_pairing_codes_match_through_real_x25519  (16 independent pairs)\n");
+}
+
 void test_handshake_aborts_on_tampered_confirm_hash() {
   /* Drive the handshake to the CONFIRM step, then corrupt the joiner's
    * confirmation_hash before the initiator receives it. Initiator must
@@ -469,6 +542,7 @@ int main() {
   test_confirmation_hash_distinguishes_code();
   test_wire_format_struct_sizes();
   test_full_handshake_succeeds();
+  test_pairing_codes_match_through_real_x25519();
   test_handshake_aborts_on_tampered_confirm_hash();
   test_timeout_after_5_minutes();
   test_cancel_wipes_state();

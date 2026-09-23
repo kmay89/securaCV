@@ -694,9 +694,12 @@ firmware or UI source.
   row; `docs/hardware/v1_bench_validation_runbook.md` Track C3); the §5.6
   `REVOCATION_GRACE_MS` deny-list, in neither tree; and a pairing that
   completes on a device, which both rotations need first — #1704 found that
-  both trees run pairing's X25519 on Ed25519-generated keys and that the
-  PlatformIO transport's peer table is never populated outside host tests
-  (read from the source, not yet seen on a bench).
+  both trees ran pairing's X25519 on Ed25519-generated keys (fixed by F33:
+  clamped X25519 ephemerals in both trees, host-tested against a real X25519
+  — crypto review pending) and that the PlatformIO transport's peer table is
+  never populated outside host tests (read from the source, not yet seen on a
+  bench). canary-wap's AUTH session keys still run X25519 over the long-term
+  Ed25519 keys (spec §5.3 note).
 - Beacon pairing flow (spec §3.3: `PAIR_OFFER`, ephemeral X25519 +
   confirmation code) is a stub. Nothing writes a beacon-set entry or a peer's
   X25519 key, so the two-device co-sign path — whose transport is encrypted —

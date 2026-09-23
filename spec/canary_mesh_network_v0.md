@@ -321,6 +321,27 @@ encrypted_opera_secret = ChaCha20-Poly1305(
 )
 ```
 
+**Ephemeral keys (v0.3, F33 — crypto review pending, maintainer to
+confirm).** `initiator_ephemeral` and `joiner_ephemeral` are X25519 keys:
+32 random bytes clamped per RFC 7748 §5 (the low three bits cleared, bit 255
+cleared, bit 254 set), with the public key the clamped scalar times the base
+point. Until F33 both trees generated them with the **Ed25519** generator and
+ran X25519 over the result; an Ed25519 public key is an Edwards point derived
+from SHA-512 of the seed, not the seed times the X25519 base point, so the two
+sides derived different session keys and the codes could not match on a
+device. The PlatformIO tree now uses `mesh_crypto::x25519_generate_keypair`
+(and its host tests run a real X25519, the RFC 7748 ladder, rather than a shim
+that agreed whatever the keys were); canary-wap uses
+`mesh_pair_crypto::generate_keypair` (`mesh_pair_crypto.h`). Two divergences
+remain, both open: canary-wap feeds the X25519 output through HKDF-SHA256
+(`"securacv:mesh:session:v0"`) before the code and the AEAD, where the formula
+above and the PlatformIO tree use it directly — so the two trees still would
+not show the same code to each other (they also number the pairing frames
+differently, §8.3); and canary-wap's AUTH exchange (§3.1) still runs X25519
+over the long-term Ed25519 identity keys, the same class of bug, in the
+per-peer session keys its §5.6 rekey encrypts under. Neither tree has paired
+on a radio yet (U1 Track C2).
+
 ### 5.4 Creating a New Opera
 
 If no opera exists, the first device generates:
@@ -433,7 +454,7 @@ a power cut between the writes leaves the old secret without the dropped
 peer, never the new secret beside it. If a removal or the save is refused,
 the old secret is cleared rather than left for the next boot. The ephemeral keys come from a
 dedicated X25519 generator (`mesh_crypto::x25519_generate_keypair`, RFC 7748
-clamping) — not the Ed25519 generator pairing uses.
+clamping) — the generator pairing uses too since F33 (§5.3).
 
 **What the rotation does and does not buy here.** In this tree
 `opera_secret` has one use besides being handed on at pairing — deriving

@@ -69,8 +69,8 @@
  *         rekey_id LE || initiator_fp || survivor_fp     (binds the
  *         ciphertext to this rotation and this recipient)
  *
- * The ephemeral keys come from mesh_crypto::x25519_generate_keypair(),
- * not the Ed25519 generator pairing uses (see that function's comment).
+ * The ephemeral keys come from mesh_crypto::x25519_generate_keypair() —
+ * the generator pairing uses too since F33 (see that function's comment).
  *
  * This module is the pure state machine (shape = mesh_pairing): it holds
  * no globals, does no I/O and does no signing. mesh_session wraps each
