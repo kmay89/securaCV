@@ -206,7 +206,8 @@ jobs:
               rm -rf ex && unzip -q e.zip -d ex
               cp "$(find ex -type f -name espflash | head -n1)" "$out"
             else
-              echo "prebuilt for $triple not found; cargo install fallback"
+              # No sha256 pin covers a source build: never silent (see Linux).
+              echo "::warning::prebuilt espflash-$triple not downloadable; building espflash $ESPFLASH_VERSION from crates.io instead (no sha256 pin covers this path)"
               cargo install espflash --version "$ESPFLASH_VERSION" --locked --target "$triple" --root "cargo-$triple"
               cp "cargo-$triple/bin/espflash" "$out"
             fi
@@ -247,11 +248,21 @@ jobs:
             unzip -q e.zip -d ex
             cp "$(find ex -type f -name espflash | head -n1)" "$out"
           else
+            # No sha256 pin covers a source build, so it must never happen
+            # silently (RELEASE_LESSONS principles 2 and 4): say so on the run.
+            echo "::warning::prebuilt espflash-$triple not downloadable; building espflash $ESPFLASH_VERSION from crates.io instead (no sha256 pin covers this path)"
             cargo install espflash --version "$ESPFLASH_VERSION" --locked --root cargo-linux
             cp cargo-linux/bin/espflash "$out"
           fi
           chmod +x "$out"
-          file "$out"
+          # A file NAMED for x86_64 Linux is not one: prove it, or a bad
+          # download ships as an espflash that fails at its first spawn.
+          desc="$(file -b "$out")"
+          echo "$out: $desc"
+          case "$desc" in
+            *"ELF 64-bit"*"x86-64"*) ;;
+            *) echo "::error::espflash-$triple is not an x86-64 ELF executable: $desc"; exit 1;;
+          esac
 
       # ── the Pi USB-boot on-ramp (design doc §7 step 6) ─────────────────────
       # Build Raspberry Pi's official rpiboot host tool and vendor its signed

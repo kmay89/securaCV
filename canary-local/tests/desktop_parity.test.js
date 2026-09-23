@@ -2534,6 +2534,28 @@ test("native flashing: the Lab bundles the Flasher's espflash, pinned and packag
   assert.match(labDest[0], /^\/usr\/lib\/udev\/rules\.d\/6[0-9]-[a-z-]+\.rules$/, "the Lab's rule must land in udev's rules.d, before ModemManager's 77-mm-*");
   assert.notStrictEqual(labDest[0], flasherDest[0],
     "the two .debs install the rule at the same path — dpkg would refuse the second app");
+  // …and the heredoc each INSTALL.md hands an AppImage user to paste is the
+  // same rule (RELEASE_LESSONS principle 13: a hand copy nothing ties to the
+  // file is a copy that drifts).
+  const ruleLines = rules("desktop/src-tauri/packaging/canary-serial.rules").toString("utf8")
+    .split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+  assert.ok(ruleLines.length >= 2, "couldn't read the rule lines out of canary-serial.rules");
+  for (const doc of ["desktop/INSTALL.md", "desktop-lab/INSTALL.md"]) {
+    const m = /sudo tee \/etc\/udev\/rules\.d\/61-securacv-canary\.rules >\/dev\/null <<'EOF'\n([\s\S]*?)\n\s*EOF\n/
+      .exec(read(join(ROOT, doc)));
+    assert.ok(m, `${doc} lost its udev-rule heredoc`);
+    assert.deepStrictEqual(m[1].split("\n").map((l) => l.trim()).filter(Boolean), ruleLines,
+      `${doc}'s udev-rule heredoc drifted from packaging/canary-serial.rules — paste the rule lines back`);
+  }
+  // The Linux step proves what it bundled is an x86-64 ELF, and a source
+  // build (which no sha256 pin covers) is never silent — both workflows, as
+  // the step-equality check above keeps them.
+  const linuxStep = step(labWf, "Bundle espflash sidecar (Linux x86_64)", "desktop-release.yml");
+  assert.match(linuxStep, /\*"ELF 64-bit"\*"x86-64"\*\) ;;/, "the Linux espflash must be proven an x86-64 ELF");
+  for (const name of ["Bundle espflash sidecar (macOS universal)", "Bundle espflash sidecar (Linux x86_64)"]) {
+    assert.match(step(labWf, name, "desktop-release.yml"), /echo "::warning::prebuilt espflash-\$triple not downloadable;[^\n]*\n\s*cargo install espflash/,
+      `"${name}"'s cargo-install fallback must announce itself with a ::warning::`);
+  }
 });
 
 // The text of a top-level JS function (declaration through its balanced

@@ -46,6 +46,19 @@ any platform.
   workflows' macOS steps now prove the per-arch sidecars are their arch and
   the universal one carries both — lesson (z) applied to `espflash`, which
   had only ever been `file`'d.
+- **Review follow-up (same day):** the Linux step had only ever been
+  `file`'d too — both workflows now fail unless it reports an x86-64 ELF —
+  and the `cargo install` fallback, which no sha256 pin covers, ran on any
+  `curl` failure without a word; on both platforms, in both workflows, it
+  now prints a `::warning::`. The rule's two hand copies (the AppImage
+  heredocs in both `INSTALL.md`s) are held to the rules file by
+  `desktop_parity` too. And "the platform bundles it" is not "it is here":
+  the Lab's `serial` is also a runtime check that the sidecar is a
+  non-empty executable file where the spawn looks, so a dev build on the
+  empty compile-only stub never lights a bench that can only fail at spawn.
+  Still open: the pins live only in the two workflows, and neither app's
+  `release-targets.yml` watch covers them, so a pin bump alone marks
+  neither app as changed.
 - **Applies to:** every sidecar a second app bundles (espflash today;
   rpiboot if the Lab ever flashes a Pi), and every packaged file two apps
   share. Pin shared values in one test, not two workflows; give each
