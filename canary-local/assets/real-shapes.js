@@ -132,9 +132,17 @@ async function realWatch(scene) {
 // 9.0 mm mesh is back_t 3.0 plus the 6.0 dock pads on the wall face, z −6…3),
 // outer face on the back plane (−9.8) → bbox center −11.3; the frame's rim on
 // the back's inner face (−6.8) and its face at +9.8 → center +1.5; the glass
-// 2.4 (face_t) behind the face → +7.4. The same seat gen_assembled_dims.py
-// measures ("back as modeled, frame turned face-out with its rim on the back's
-// inner face"); tests/scene_figures.test.js holds these three offsets and the
+// 2.4 (face_t) behind the face → +7.4, the bezel lip's rear face, where the
+// panel rests. screenPlane is square-cornered at the aperture's size, and the
+// SCAD cuts the aperture with r = 2 corners (rrect2d(view_l, view_w, 2)), so
+// four corner slivers of the glass (4 − π ≈ 0.86 mm² each) lie on that rear
+// face — hidden from every angle, the lip's solid 2.4 mm in front of them and
+// the back plate behind. A nudge off the plane small enough not to show would
+// be below what WebGL promises to resolve: its floor is a 16-bit depth
+// buffer, about 0.2 mm at the card's 270 mm (near plane 5 mm).
+// The same seat gen_assembled_dims.py measures ("back as modeled, frame
+// turned face-out with its rim on the back's inner face");
+// tests/scene_figures.test.js holds these three offsets and the
 // glass plane to that ledger row. The rear rail stands 0.38 mm clear of the
 // back plane at its top (set back by 6·tan25° + 0.4 in the SCAD). The two
 // lower dock pads (cradle_dx 38, cradle_dy 16) sit behind the back plane
