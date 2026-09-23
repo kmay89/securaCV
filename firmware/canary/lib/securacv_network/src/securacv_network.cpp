@@ -3900,8 +3900,9 @@ static esp_err_t handle_mqtt_config(httpd_req_t* req) {
   // credentials last, one reload after the session closes (mqtt_save_config
   // walks mqtt_tls_fields::write_order, host-tested). Two sessions with the
   // credentials first would let the main task reconnect with the NEW
-  // password on the OLD, plain socket in the gap between them, and close the
-  // shared NVS handle under the second write.
+  // password on the OLD, plain socket in the gap between them. (The main
+  // task can no longer close this task's handle mid-session: NvsManager
+  // holds its lock from begin() to end().)
   const MqttTlsWrite tls_write = {tls_plan.set_mode, tls_plan.mode, tls_plan.set_fp, tls_plan.fp,
                                   tls_plan.clear_fp};
   const bool any_tls = tls_plan.set_mode || tls_plan.set_fp || tls_plan.clear_fp;

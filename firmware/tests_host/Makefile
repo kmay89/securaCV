@@ -330,6 +330,18 @@ BIRTHDAY_BIN = $(BUILD_DIR)/test_birth_day
 KEYREST_HDR = ../common/identity/key_at_rest.h
 KEYREST_BIN = $(BUILD_DIR)/test_key_at_rest
 
+# NvsManager session depth (canary/lib/securacv_crypto/src/nvs_session_depth.h):
+# the count that lets the canary hold one lock from begin() to end() across
+# its loop, httpd and OTA tasks. Pins that a nested end() never closes the
+# outer session's handle, that a write inside a read-only session gets a
+# writable handle, that an end() with no session is a no-op, that a failed
+# begin adds no session, that the wait sits under the loop's task watchdog
+# (canary_config.h), and — through a model of begin()/end() over a fake
+# recursive mutex — that the lock's count is the depth and one task's end()
+# cannot close another's session. Pure header; the real mutex is CI-compiled.
+NVSDEPTH_HDR = ../canary/lib/securacv_crypto/src/nvs_session_depth.h ../canary/include/canary_config.h
+NVSDEPTH_BIN = $(BUILD_DIR)/test_nvs_session_depth
+
 # Coarse optical feature classifiers (canary-vision optical_features.h): pins
 # the invariant-safe coarsening of the person-detection model's box geometry —
 # aspect ratio -> posture, area fraction -> proximity, count -> occupancy
@@ -575,6 +587,9 @@ $(BIRTHDAY_BIN): test_birth_day.cpp $(BIRTHDAY_HDR) Makefile | $(BUILD_DIR)
 $(KEYREST_BIN): test_key_at_rest.cpp $(KEYREST_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_key_at_rest.cpp -o $@
 
+$(NVSDEPTH_BIN): test_nvs_session_depth.cpp $(NVSDEPTH_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../canary/lib/securacv_crypto/src -I ../canary/include test_nvs_session_depth.cpp -o $@
+
 $(OPTFEAT_BIN): test_optical_features.cpp $(OPTFEAT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(OPTFEAT_INC) test_optical_features.cpp -o $@
 
@@ -619,7 +634,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -654,6 +669,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(MANIFEST_BIN)
 	./$(BIRTHDAY_BIN)
 	./$(KEYREST_BIN)
+	./$(NVSDEPTH_BIN)
 	./$(OPTFEAT_BIN)
 	./$(VISION_PIPE_BIN)
 	./$(VISPROF_BIN)

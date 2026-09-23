@@ -35,7 +35,12 @@
 // NVS MANAGER IMPLEMENTATION
 // ════════════════════════════════════════════════════════════════════════════
 
-NvsManager::NvsManager() : m_open(false), m_readOnly(false) {}
+// begin() fails soft after this wait; it must never be what trips the task
+// watchdog the loop is subscribed to (nvs_session_depth.h, host-tested too).
+static_assert(nvs_session::kSessionWaitMs < WATCHDOG_TIMEOUT_SEC * 1000u,
+              "an NvsManager session wait must sit under the loop's task watchdog");
+
+NvsManager::NvsManager() : m_lock(xSemaphoreCreateRecursiveMutex()), m_session() {}
 
 NvsManager::~NvsManager() {
   end();
@@ -46,24 +51,56 @@ NvsManager& NvsManager::instance() {
   return s_instance;
 }
 
+// Takes the lock and KEEPS it on success, until the matching end(): the
+// session belongs to this task until then. Every false return has given back
+// the take it made, so a caller that got false owes no end() (none calls one).
 bool NvsManager::begin(bool readOnly) {
-  if (m_open) {
-    if (m_readOnly && !readOnly) {
-      m_prefs.end();
-      m_open = false;
-    } else {
-      return true;
+  if (m_lock != nullptr &&
+      xSemaphoreTakeRecursive(m_lock, pdMS_TO_TICKS(nvs_session::kSessionWaitMs)) != pdTRUE) {
+    // Another task held a session for the whole wait. A session is NVS reads
+    // and writes only (no send, no delay, no wait on another task), so this
+    // is a leaked session — a begin() without its end() on some path — or a
+    // stalled flash: say so once per boot, then fail soft. (Two tasks timing
+    // out together may both print; nothing else rides on the flag.)
+    static volatile bool s_wait_reported = false;
+    if (!s_wait_reported) {
+      s_wait_reported = true;
+      Serial.printf("[NVS] session wait timed out: another task held the settings store for %lu ms\n",
+                    (unsigned long)nvs_session::kSessionWaitMs);
     }
+    return false;
   }
-  m_open = m_prefs.begin(NVS_MAIN_NS, readOnly);
-  m_readOnly = readOnly;
-  return m_open;
+  const nvs_session::Begin action = nvs_session::on_begin(m_session, readOnly);
+  bool ok = true;
+  switch (action) {
+    case nvs_session::Begin::Open:
+      ok = m_prefs.begin(NVS_MAIN_NS, readOnly);
+      break;
+    case nvs_session::Begin::ReopenRw:
+      m_prefs.end();
+      ok = m_prefs.begin(NVS_MAIN_NS, false);
+      break;
+    case nvs_session::Begin::Keep:
+    case nvs_session::Begin::Refuse:
+      break;
+  }
+  if (!nvs_session::commit_begin(m_session, action, readOnly, ok)) {
+    if (m_lock != nullptr) xSemaphoreGiveRecursive(m_lock);
+    return false;
+  }
+  return true;
 }
 
+// The zero-wait take tells the cases apart: it succeeds at once when this task
+// holds the lock (its own session, or a nested one) or when nobody does (the
+// depth is then 0 and this end() is a no-op), and fails when another task
+// holds a session — which is not this task's to close.
 void NvsManager::end() {
-  if (m_open) {
-    m_prefs.end();
-    m_open = false;
+  if (m_lock != nullptr && xSemaphoreTakeRecursive(m_lock, 0) != pdTRUE) return;
+  const nvs_session::End e = nvs_session::on_end(m_session);
+  if (e == nvs_session::End::Close) m_prefs.end();
+  if (m_lock != nullptr) {
+    for (uint8_t i = 0; i < nvs_session::end_gives(e); i++) xSemaphoreGiveRecursive(m_lock);
   }
 }
 
@@ -114,7 +151,7 @@ size_t NvsManager::getString(const char* key, char* buf, size_t maxLen) {
 }
 
 size_t NvsManager::putString(const char* key, const char* value) {
-  if (key == nullptr || value == nullptr || !m_open || m_readOnly) return 0;
+  if (key == nullptr || value == nullptr || !m_session.open || m_session.read_only) return 0;
   return m_prefs.putString(key, value);
 }
 
