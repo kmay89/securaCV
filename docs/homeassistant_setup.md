@@ -423,7 +423,8 @@ The action and its fields don't change.
 What to expect:
 
 - A watch started this way is the same object as one you spoke: the same
-  cap on how many run at once, kept across restarts, delivered as a
+  cap on how many run at once, kept across a clean restart (a crash or
+  power cut can lose the last few seconds of changes), delivered as a
   persistent notification, and it ends by itself and says so.
 - A subject that no Canary's name matches is accepted but cannot fire until
   something reports it. The returned watch says `subject.kind: unbound`, and

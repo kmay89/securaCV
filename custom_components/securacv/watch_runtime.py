@@ -22,12 +22,15 @@ Starting, listing and ending go through here too (``async_start_watch``,
 ``securacv.*`` actions share one path, so a watch is the same object
 however it began and every change is persisted the same way.
 
-Persistence: the bucket lives in ``hass.data[DOMAIN]["watches"]`` and is
-mirrored to HA's ``Store`` (``.storage/securacv_watches``) by coalesced,
-delayed saves, then restored once per HA instance by ``async_load_watches``
-during setup — so a watch survives a hub restart. A watch that ended while
-the hub was down is restored too, and the first tick announces it rather
-than letting it vanish.
+Persistence: the bucket lives in ``hass.data[DOMAIN]["watches"]``. It is
+mirrored to HA's ``Store`` (``.storage/securacv_watches``) by one queued
+write at a time, which lands within ``SAVE_DELAY_SECONDS`` of the first
+change and is never pushed back. ``async_load_watches`` restores it once
+per HA instance during setup. So a watch survives a clean restart (HA
+flushes a queued write on the way down), and a crash or power cut loses
+at most the last few seconds of changes. A watch that ended while the hub
+was down is restored too, and the first tick announces it rather than
+letting it vanish.
 """
 from __future__ import annotations
 
@@ -55,10 +58,20 @@ EVENT_RATE_WINDOW_SECONDS = watches.DAY
 
 # Persistence. One domain-level store, not one per config entry: watches
 # are domain-scoped and bind by device_id. Saves are delayed and coalesced
-# so a busy event stream does not hammer the hub's flash.
+# so a busy event stream does not hammer the hub's flash, and THROTTLED
+# rather than debounced so it cannot postpone them either: HA's
+# Store.async_delay_save moves the write to now + delay on every call, and
+# every bound event and every tick asks for one, so under a steady stream
+# nothing would reach disk until a lull. One write is queued at a time and
+# never re-armed; it reads the live bucket when it lands, so every change
+# made while it waited rides along, and one made after it queues the next.
 STORAGE_VERSION = 1
 STORAGE_KEY = "securacv_watches"
 SAVE_DELAY_SECONDS = 10
+# A queued write that never landed (it raised before reading the bucket)
+# must not stop saves for the rest of the session: after this long the
+# mark is treated as stale and a new write is queued.
+SAVE_REQUEUE_SECONDS = 6 * SAVE_DELAY_SECONDS
 
 _VALID_STATES = (watches.STATE_SETTLING, watches.STATE_WATCHING, watches.STATE_ENDED)
 # The longest span make_watch can build (it clamps days to [1, 365]); a
@@ -436,6 +449,13 @@ def _store(hass: HomeAssistant) -> Store:
 
 
 def _data_to_save(hass: HomeAssistant) -> dict[str, Any]:
+    """What the queued write stores, read when it lands (HA calls this
+    from its executor at write time). The queue mark is cleared FIRST: a
+    change after that queues the next write, and one before it is in the
+    snapshot taken below."""
+    domain_data = hass.data.get(DOMAIN)
+    if isinstance(domain_data, dict):
+        domain_data.pop("_watch_save_queued_at", None)
     return {
         "version": STORAGE_VERSION,
         "watches": [dict(watch) for watch in _bucket(hass)],
@@ -444,20 +464,31 @@ def _data_to_save(hass: HomeAssistant) -> dict[str, Any]:
 
 @callback
 def async_schedule_save(hass: HomeAssistant) -> None:
-    """Queue one coalesced write of the bucket. Never raises.
+    """Make sure a write of the bucket is queued. Never raises.
 
-    Persistence must not be able to break a tick or an intent, so any
-    surprise is logged at debug and the in-memory bucket stays the truth
-    for this session. Silently a no-op until ``async_load_watches`` has
-    run: a write before the restore would overwrite the very rows the
-    restore is about to read back.
+    A no-op while one is already queued: that write reads the live bucket
+    when it lands, and re-arming HA's debounce would only push it back
+    (see SAVE_REQUEUE_SECONDS for the one exception). Persistence must not
+    be able to break a tick or an intent, so any surprise is logged at
+    debug and the in-memory bucket stays the truth for this session.
+    Silently a no-op until ``async_load_watches`` has succeeded: a write
+    before the restore would overwrite the very rows the restore is about
+    to read back.
     """
     domain_data = hass.data.get(DOMAIN)
     if not isinstance(domain_data, dict) or not domain_data.get("_watches_loaded"):
         return
+    now = time.monotonic()
+    queued_at = domain_data.get("_watch_save_queued_at")
+    if isinstance(queued_at, float) and now - queued_at < SAVE_REQUEUE_SECONDS:
+        return
+    # Marked before the call: a store that writes through at once (as the
+    # test stub does) clears the mark again from _data_to_save.
+    domain_data["_watch_save_queued_at"] = now
     try:
         _store(hass).async_delay_save(lambda: _data_to_save(hass), SAVE_DELAY_SECONDS)
     except Exception:  # noqa: BLE001 - persistence is best-effort, the bucket is not
+        domain_data.pop("_watch_save_queued_at", None)
         _LOGGER.debug("watch save not scheduled", exc_info=True)
 
 

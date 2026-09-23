@@ -466,6 +466,53 @@ def test_a_row_the_engine_could_not_have_built_is_dropped(caplog) -> None:
     assert any("settles-early: settle_until is outside" in w for w in warnings)
 
 
+def test_a_busy_event_stream_cannot_postpone_the_write(monkeypatch) -> None:
+    """HA's Store.async_delay_save is a debounce: every call moves the write
+    to now + delay. Every bound event and every tick asks for a save, so
+    re-arming it on each would keep a busy watch off disk until a lull,
+    and a crash in the meantime would lose everything since the last one.
+    One write is queued at a time and never re-armed. It reads the live
+    bucket when it lands, so nothing made while it waited is lost."""
+    queued: list = []
+
+    class _QueueingStore:
+        """Records the queued writes instead of performing them."""
+
+        def __init__(self, hass, version, key) -> None:
+            pass
+
+        async def async_load(self):
+            return None
+
+        def async_delay_save(self, data_func, delay: float = 0) -> None:
+            queued.append((data_func, delay))
+
+    monkeypatch.setattr(watch_runtime, "Store", _QueueingStore)
+    hass = _boot()
+    _start(hass, "the gate canary")
+    assert [delay for _f, delay in queued] == [watch_runtime.SAVE_DELAY_SECONDS]
+    watch = _bucket(hass)[0]
+
+    for i in range(50):
+        watch_runtime.async_observe_event(hass, GATE, watch["started_at"] + 60 + i)
+    watch_runtime.async_tick(hass, watch["started_at"] + 120)
+    assert len(queued) == 1, "re-arming the debounce would push the write back each time"
+
+    # The write lands and carries every change made while it was queued...
+    written = queued[0][0]()
+    assert len(written["watches"][0]["observations"]) == 50
+    # ...and the next change queues the next write.
+    watch_runtime.async_observe_event(hass, GATE, watch["started_at"] + 200)
+    assert len(queued) == 2
+
+    # A queued write that never lands (it raised before reading the bucket)
+    # does not stop saves for the session: the mark goes stale.
+    later = time.monotonic() + watch_runtime.SAVE_REQUEUE_SECONDS + 1
+    monkeypatch.setattr(time, "monotonic", lambda: later)
+    watch_runtime.async_observe_event(hass, GATE, watch["started_at"] + 300)
+    assert len(queued) == 3
+
+
 def test_existing_start_path_still_works_without_any_setup() -> None:
     """test_intent_start_watch.py never boots: a bare HomeAssistant() with
     no store and no restore must keep starting watches (saves simply wait

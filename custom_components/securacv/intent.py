@@ -280,8 +280,10 @@ class HelpIntentHandler(intent.IntentHandler):
 # rule underneath: voice may make you better informed, never less.
 #
 # Storage: the bucket is hass.data[DOMAIN]["watches"], mirrored to HA's
-# Store by watch_runtime (coalesced saves, restored on setup), so a watch
-# survives a Home Assistant restart. Starting goes through
+# Store by watch_runtime (one queued write at a time, landing within ten
+# seconds; restored on setup), so a watch survives a clean Home Assistant
+# restart and a crash loses at most the last few seconds of changes.
+# Starting goes through
 # watch_runtime.async_start_watch — the same path the securacv.start_watch
 # action takes (services.py) — so a spoken watch and an automated one are
 # the same object, capped (watches.MAX_WATCHES) and persisted the same way.

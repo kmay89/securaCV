@@ -7,9 +7,11 @@
 > events feed observations, a five-minute tick evaluates and delivers,
 > expiry announces itself as a persistent notification, and the roster is
 > mirrored to Home Assistant's `Store` (`.storage/securacv_watches`) so a
-> hub restart keeps every watch, its baseline and its history — a watch
-> that ended while the hub was down is announced by the first tick rather
-> than silently gone. Automations start, end and list watches through the
+> clean restart keeps every watch, its baseline and its history. A crash or
+> power cut loses at most the last few seconds of changes, because the write
+> lands within ten seconds and a busy event stream cannot postpone it. A
+> watch that ended while the hub was down is announced by the first tick
+> rather than silently gone. Automations start, end and list watches through the
 > `securacv.start_watch` / `end_watch` / `list_watches` actions, on the same
 > start path voice uses. **Not yet real:** numeric subjects (a soil-moisture
 > sensor is accepted but nothing feeds it). A watch whose subject nothing
@@ -213,7 +215,7 @@ reasons to build them well:
 | Duration parsing ("two weeks", "until October") | same | **built, host-tested** |
 | Voice: start a watch, list watches | `intent.py` + sentences | **built** |
 | Feeding event-kind watches + tick + delivery | `watch_runtime.py` | **built** |
-| Persistence across restarts | `watch_runtime.py` → HA `Store`, `.storage/securacv_watches` (coalesced saves; restored on setup, expired ones announced by the first tick) | **built** |
+| Persistence across restarts | `watch_runtime.py` → HA `Store`, `.storage/securacv_watches` (one queued write at a time, landing within ten seconds and never pushed back; restored on setup, expired ones announced by the first tick; a store that cannot be read is left untouched) | **built** |
 | Automations: `securacv.start_watch` / `securacv.end_watch` / `securacv.list_watches` actions (one start path with voice; no trust actions — [why](../device_trust.md#why-pin-rotate-and-unpin-are-not-actions)) | `services.py` → `watch_runtime.py` | **built** |
 | Numeric subjects (an HA sensor like soil moisture) | integration glue | next |
 | Recipes in the UI, end-of-watch summary card | Lovelace | after that |
