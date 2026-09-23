@@ -393,7 +393,7 @@ def test_end_watch_by_id_removes_exactly_that_watch_and_announces_it(delivered) 
     assert len(delivered) == 1
     title, message = delivered[0]
     assert title == "SecuraCV: a watch was ended early"
-    assert "the gate canary" in message
+    assert message.startswith("The gate canary watch ended"), message
 
 
 @pytest.mark.parametrize("ref", ["the gate canary", "The Gate Canary", "gate canary", "  my gate   canary "])
