@@ -605,7 +605,8 @@ def check_python_version_reasons(path: str, label: str) -> list[str]:
             continue
         problems.append(
             f"{label}:{idx + 1}: R9 — explicit python-version with no reason; "
-            f"say why in a comment on or above the line, or use "
+            f"say why in a comment on the line, or on a comment line above "
+            f"it inside the same step, or use "
             f"`python-version-file: pyproject.toml`."
         )
     return problems

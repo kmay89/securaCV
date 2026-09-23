@@ -229,6 +229,22 @@ class R9PythonVersionReason(unittest.TestCase):
         self.assertEqual(len(probs), 1, probs)
         self.assertIn("wf.yml:13: R9", probs[0])
         self.assertIn("python-version-file: pyproject.toml", probs[0])
+        # the message names where a reason counts, so a comment above the
+        # step's own `- ` line (refused below) is not a mystery
+        self.assertIn("inside the same step", probs[0])
+
+    def test_a_comment_above_the_step_itself_is_not_a_reason(self):
+        # This repo often comments above a step's `- name:` line; for a pin,
+        # that comment sits outside the step and does not count.
+        probs = self._reasons("""
+            # the add-on image's interpreter
+            - name: Set up Python
+              uses: actions/setup-python@v7
+              with:
+                python-version: '3.11'
+        """)
+        self.assertEqual(len(probs), 1, probs)
+        self.assertIn("inside the same step", probs[0])
 
     def test_a_trailing_comment_is_a_reason(self):
         self.assertEqual(self._reasons("""
