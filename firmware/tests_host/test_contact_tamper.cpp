@@ -136,6 +136,31 @@ static int test_millis_wrap_is_safe() {
   return 0;
 }
 
+static int test_hold_that_ends_before_the_wrap_is_seen_after_it() {
+  // The case the test above cannot tell apart from a naive
+  // `now < since + hold` compare: here since + hold does NOT wrap, but a
+  // slow loop (150 ms per pass, e.g. behind an SD write) only reaches the
+  // fifth sample after millis() wrapped. The naive compare then reads a
+  // small `now` as "hold not yet elapsed" for ~49 days; wrap-safe
+  // (now - since) reads 600 ms.
+  State s = kInitial;
+  uint32_t now = 0xFFFFFE00u - 150u;
+  int fired = 0;
+  sample(&s, false, now);
+  now += 150;                    // candidate starts at 0xFFFFFE00
+  // Samples at 0xFFFFFE00, +150, +300, +450 (all before the wrap), then
+  // +600 = 0x58 after it: the fifth sample, 600 ms into the run.
+  Transition tr = hold(&s, true, 4, &now, 150, &fired);
+  CHECK(tr == Transition::NONE);
+  CHECK(fired == 0);
+  CHECK(now < 0x100u);           // the next sample lands past the wrap
+  tr = hold(&s, true, 1, &now, 150, &fired);
+  CHECK(tr == Transition::OPENED);
+  CHECK(fired == 1);
+  CHECK(s.open);
+  return 0;
+}
+
 static int test_zero_debounce_acts_as_one_sample() {
   const Policy p = {0, 0};
   State s = kInitial;
@@ -158,6 +183,7 @@ int main() {
   if (test_opened_after_debounce_and_hold_then_closed()) return 1;
   if (test_one_sample_back_restarts_the_hold()) return 1;
   if (test_millis_wrap_is_safe()) return 1;
+  if (test_hold_that_ends_before_the_wrap_is_seen_after_it()) return 1;
   if (test_zero_debounce_acts_as_one_sample()) return 1;
   if (test_default_policy_is_the_documented_one()) return 1;
   std::printf("test_contact_tamper: %d checks passed\n", g_checks);
