@@ -73,7 +73,7 @@ opt_weep   = false;   // Ø2 weep at the bottom wall's floor corner (seal mode):
 weep_d     = 2.0;     // weep bore  // [1.5:0.5:3]
 seal_mid_posts = false; // (seal mode) one extra screw post mid-way along each ±X wall
 head_seal  = false;   // (seal mode) O-ring under each front screw head — needs screw_head = "pan"
-opt_mount  = true;
+opt_mount  = true;    // mounting features per mount_style
 mount_style = "hinge"; // ["hinge","keyhole","both"]
 e_seal  = opt_seal;
 e_mount = opt_mount;
@@ -100,8 +100,8 @@ xiao_below   = 5.5;  // air under the XIAO's outward (USB) face: the shell (3.3)
                      // overmold below the shell axis plus clearance
 radar_front_h = 3.5; // carrier front-side TALLEST part (connectors etc.) — MEASURE
 ant_h        = 1.2;  // antenna (AiP package) top above the PCB — MEASURE; sets the radome air gap
-pcb_t    = 1.0;
-board_clear = 0.6;
+pcb_t    = 1.0;    // carrier PCB thickness — the board clips hook over it
+board_clear = 0.6; // clearance around the carrier (per side across the case; the +Y end stops sit this far past its top edge)
 xiao_usb_z  = 0.0;   // extra lift of the XIAO port relative to its DERIVED axis (the XIAO's
                      // outward face minus half a shell) — a measured correction
 
@@ -116,38 +116,40 @@ rad_dy    = 6.0;     //   (the array usually sits toward the top half of the car
 
 /* [Front-face features] — offsets from the BOARD center; keep them OUT of the window */
 lp_d   = 3.0;        // WS2812 light pipe (press fit)
-lp_dx  = 13.0;
-lp_dy  = -14.0;
+lp_dx  = 13.0;      // light-pipe port center X, from the board center (asserted clear of the window)
+lp_dy  = -14.0;     // light-pipe port center Y, from the board center
 lux_d  = 3.5;        // BH1750 light aperture (open hole; glue a clear disc behind it when sealing)
 lux_disc_d = 0;      // 0 = bare hole; > 0 cuts a recessed seat on the outer face for a glued clear
                      // disc of that diameter (6 mm x 1 mm is easy to find) — use it with opt_seal
-lux_dx = -13.0;
-lux_dy = -14.0;
-vent_pad_d     = 12.0;
-vent_pad_depth = 0.8;
+lux_dx = -13.0;     // lux aperture center X, from the board center (asserted clear of the window)
+lux_dy = -14.0;     // lux aperture center Y, from the board center
+vent_pad_d     = 12.0;  // GORE-vent seat Ø on the front's outer face — core_vent_pad_d()
+vent_pad_depth = 0.8;   // that seat's recess depth — core_vent_pad_depth()
 vent_hole_d    = 1.0;   // fine holes — insect-resistant (see README thermal/outdoor kit)
-vent_ring_d    = 6.0;
-vent_holes     = 10;
-vent_dx        = 0.0;
-vent_dy        = -17.0;
-mag_d  = 6.0;
+vent_ring_d    = 6.0;   // Ø of the ring the vent holes sit on — core_vent_ring_d()
+vent_holes     = 10;    // hole count around that ring — core_vent_holes()
+vent_dx        = 0.0;   // vent cluster center X, from the board center (asserted clear of the window)
+vent_dy        = -17.0; // vent cluster center Y, from the board center
+mag_d  = 6.0;       // tamper MAGNET diameter (pocket = mag_d + 2*tol_press — press fit)
 mag_h  = 2.2;        // pocket depth — a 6 x 2 mm disc is standard; the pocket ring descends
-mag_dx = 18.0;       // mag_h below the front's inner face, so parts on the carrier under
-mag_dy = -14.0;      // (mag_dx, mag_dy) must stay >= 1 mm below radar_front_h — MEASURE. (13, 14)
+                     // mag_h below the front's inner face, so parts on the carrier under
+                     // (mag_dx, mag_dy) must stay >= 1 mm below radar_front_h — MEASURE. (13, 14)
                      // put a NdFeB disc 2 mm INSIDE the radome window; every face feature is
                      // now asserted >= 1 mm clear of it
+mag_dx = 18.0;       // magnet pocket center X, from the board center (asserted clear of the window)
+mag_dy = -14.0;      // magnet pocket center Y, from the board center
 
 /* [Shell] */
-wall_t   = 2.0;
-floor_t  = 2.0;
+wall_t   = 2.0;    // side wall thickness (auto-thickened in seal mode) — core_wall()
+floor_t  = 2.0;    // back thickness
 lid_t    = 2.0;      // face thickness OUTSIDE the radome window
-lip_h    = 4.0;
-lip_t    = 1.2;
-corner_r = 3.0;
-cav_extra = 1.0;
-floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp
+lip_h    = 4.0;    // front lip insertion into the back shell
+lip_t    = 1.2;    // lip wall thickness
+corner_r = 3.0;    // outside corner radius — core_corner_r()
+cav_extra = 1.0;   // headroom over the carrier's tallest part; raise it for more antenna-to-radome gap (asserted >= 3 mm)
+floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp  // [0:0.2:1.2]
                    // notch there was the crack-starter in every flat-printed shell — a corner drop hinges the
-                   // floor about it along one layer boundary. 0 = the old square corner  // [0:0.2:1.2]
+                   // floor about it along one layer boundary. 0 = the old square corner
 lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
                    // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 
@@ -157,17 +159,17 @@ tol_press = 0.10;    // press fits: magnet, light pipe — core_tol_press()
 tol_hole  = 0.30;    // clearance holes: front screws — core_tol_hole()
 
 /* [Engineering] (see README "Engineering & materials") */
-screw_insert = false;
-insert_d     = 3.5;
-insert_h     = 4.0;
+screw_insert = false;   // heat-set inserts in the screw posts, sized by screw_size (the posts fatten; the screws become machine screws)
+insert_d     = 3.5;     // (m2) heat-set insert OD — its bore is cut 0.3 under it; other sizes read the registry
+insert_h     = 4.0;     // (m2) insert length; other sizes read the registry
 lid_ribs     = true;   // rib ring auto-clears the radome window
-lid_rib_w    = 2.5;
-lid_rib_h    = 1.0;
-foot_cham    = 0.5;
-kh_lock      = true;
+lid_rib_w    = 2.5;     // rib ring width
+lid_rib_h    = 1.0;     // rib depth below the front — must stay within cav_extra (asserted)
+foot_cham    = 0.5;     // 45° chamfer on the back's bottom edge: elephant-foot + delamination guard (0 = off)
+kh_lock      = true;    // (keyhole mounts) anti-lift knockouts, as on the Vision: a 0.6 mm web at the back face, pierced with #4/M3 on install
 
 /* [Screw posts] */
-post_d       = 5.0;
+post_d       = 5.0;   // corner screw post Ø — the front screws thread into these (auto-fattened for inserts and larger screws)
 screw_size   = "m2";  // ["m2","m2.5","m3"] front screw — the core lib's registry sets pilot, clearance,
                       // head seat, insert bore and post floor; "m2" keeps the validated numbers below
 screw_head   = "pan"; // ["pan","flat"] pan = flat-floored seat (what head_seal needs), flat = 90° countersink
@@ -177,48 +179,48 @@ screw_head_h = 2.0;   // (m2 pan) seat depth; the front carries a pad under it (
 
 /* [USB-C port] — the stacked XIAO's port, bottom (-Y) wall */
 usb_w  = 12.0;       // clears rugged cable boots (the receptacle face sits ~2.6 mm behind the wall)  // [9:0.5:14]
-usb_h  = 6.5;        // [4:0.5:8]
-usb_dx = 0.0;
+usb_h  = 6.5;        // opening height: boot clearance around the XIAO port's axis  // [4:0.5:8]
+usb_dx = 0.0;        // the opening's offset along the bottom wall, from the carrier center
 
 /* [Hinge — GoPro-compatible, top wall (aim the beam; ceiling->bed for wellbeing)] */
-prong_t     = 3.0;
-prong_pitch = 6.35;
-fin_r       = 7.5;
-hinge_off   = 13.0;
-hinge_bolt_d = 5.0;
-hinge_teeth = true;
-teeth_n     = 24;
-teeth_h     = 0.6;
+prong_t     = 3.0;   // fin thickness (GoPro standard)
+prong_pitch = 6.35;  // fin center spacing (GoPro standard)
+fin_r       = 7.5;   // fin end radius
+hinge_off   = 13.0;  // hinge axis stand-off from the top wall face
+hinge_bolt_d = 5.0;  // hinge bolt Ø (M5 at the default); its hole is cut 0.4 over
+hinge_teeth = true;  // radial detent teeth on the hinge's mating faces (the bracket carries the pockets); false = smooth faces
+teeth_n     = 24;    // detent positions around the hinge (360 / teeth_n degrees apart)
+teeth_h     = 0.6;   // tooth height
 
 /* [Bracket] */
-br_x        = 46.0;
-br_y        = 34.0;
-br_t        = 4.0;
-br_screw_d  = 4.2;
-bracket_tripod = true;
+br_x        = 46.0;  // bracket plate width (along the hinge axis)
+br_y        = 34.0;  // bracket plate height
+br_t        = 4.0;   // bracket plate thickness
+br_screw_d  = 4.2;   // wall-screw clearance at the plate's four corners, 90° countersunk for a #8 flat head (Ø8.3)
+bracket_tripod = true; // captive hex-nut pocket under the center fin, for a tripod screw
 
 /* [Keyholes] — blind, seal-safe (flush ceiling/wall mount) */
-kh_extra   = 3.0;
+kh_extra   = 3.0;    // back thickening that hosts the keyhole pockets
 kh_head_d  = 7.0;    // screw-head pass hole (#6 / M3.5 pan head) — mount_kh_head_d()
 kh_shank_d = 4.2;    // shank slot width — mount_kh_shank_d()
 kh_slot_l  = 8.0;    // slot travel (toward +Y = UP on the wall) — mount_kh_slot_l()
 kh_head_h  = 3.5;    // total pocket depth (face web + head cavity) — mount_kh_head_h()
 kh_face    = 1.0;    // face web the screw head grips behind — mount_kh_face()
-kh_inset   = 12.0;
+kh_inset   = 12.0;   // pocket centers at y = ±(inner_y/2 − kh_inset), on the X centerline; one centered pocket on a case too short for two
 
 /* [Weather sealing] */
-gasket_w      = 1.6;
-gasket_groove = 1.2;
-gasket_proud  = 0.3;
-skirt_h       = 3.0;
-skirt_t       = 1.6;
-usb_cover     = true;
-usb_cov_pad   = 2.0;
-usb_cov_dep   = 1.0;
+gasket_w      = 1.6;  // gasket groove width in the back's rim (the printed gasket is 0.5 narrower)
+gasket_groove = 1.2;  // groove depth into the back shell's rim
+gasket_proud  = 0.3;  // how far the printed gasket stands proud of its groove, uncompressed — what the front screws squeeze
+skirt_h       = 3.0;  // drip-edge skirt drop over the back shell's wall (sheds water off the seam)
+skirt_t       = 1.6;  // drip-edge skirt wall thickness
+usb_cover     = true; // (seal mode) shallow recess framing the USB opening for a flanged silicone plug
+usb_cov_pad   = 2.0;  // recess margin around the USB opening
+usb_cov_dep   = 1.0;  // recess depth into the outer wall face
 
 /* [Aesthetics] */
 colorway    = "graphite"; // ["graphite","canary","snow","forest","midnight"] assembled-preview spool set (canary_color_lib; single-part exports carry no color)
-lid_edge    = 0.8;
+lid_edge    = 0.8;   // first (45°) stage of the show-face edge, mm — core_face_edge()
 lid_edge2   = 0.8;   // second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]
 // The wordmark sits where label_text would (label_dx/dy/rot/size/depth place
 // it), gated by the mark library's measured type metrics; the radome rule
@@ -226,12 +228,12 @@ lid_edge2   = 0.8;   // second (~66°) stage of the show-face edge, mm — ON is
 opt_mark    = false; // deboss the house wordmark instead of a custom label (exclusive with label_text)
                      // any label: keep it OUT of the window
 label_text  = "";    // debossed label — placed at label_dx/dy; keep it OUT of the radome window
-label_size  = 4.5;
-label_depth = 0.5;
-label_dx    = 0.0;
-label_dy    = -24.0;
-label_rot   = 0;
-label_font  = "Liberation Sans:style=Bold";
+label_size  = 4.5;   // label text height (the wordmark's size too, with opt_mark)
+label_depth = 0.5;   // deboss depth into the front
+label_dx    = 0.0;   // label center X offset from the FRONT's center — keep it out of the radome window
+label_dy    = -24.0; // label center Y offset from the FRONT's center
+label_rot   = 0;     // label rotation (degrees)
+label_font  = "Liberation Sans:style=Bold";  // the font label_text is set in (it must be installed)
 
 /* [Board snap clips] */
 clip_w      = 6.0;   // tab width along the carrier edge — snap_boardclip defaults, canary_snap_lib

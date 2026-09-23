@@ -730,7 +730,7 @@
     {
      "id": "opt_mount",
      "group": "Options",
-     "label": "opt_mount",
+     "label": "mounting features per mount_style",
      "consequence": "",
      "audience": "user",
      "default": true,

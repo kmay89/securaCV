@@ -1858,7 +1858,7 @@
     {
      "id": "opt_mount",
      "type": "bool",
-     "label": "opt_mount",
+     "label": "mounting features per mount_style",
      "consequence": "",
      "audience": "user",
      "default": true,
@@ -1890,7 +1890,7 @@
     {
      "id": "screw_insert",
      "type": "bool",
-     "label": "screw_insert",
+     "label": "heat-set inserts in the screw posts, sized by screw_size (the posts fatten; the screws become machine screws)",
      "consequence": "",
      "audience": "engineering",
      "default": false
@@ -1906,7 +1906,7 @@
     {
      "id": "kh_lock",
      "type": "bool",
-     "label": "kh_lock",
+     "label": "(keyhole mounts) anti-lift knockouts, as on the Vision: a 0.6 mm web at the back face, pierced with #4/M3 on install",
      "consequence": "",
      "audience": "engineering",
      "default": true
@@ -1914,7 +1914,7 @@
     {
      "id": "hinge_teeth",
      "type": "bool",
-     "label": "hinge_teeth",
+     "label": "radial detent teeth on the hinge's mating faces (the bracket carries the pockets); false = smooth faces",
      "consequence": "",
      "audience": "engineering",
      "default": true
@@ -1922,7 +1922,7 @@
     {
      "id": "bracket_tripod",
      "type": "bool",
-     "label": "bracket_tripod",
+     "label": "captive hex-nut pocket under the center fin, for a tripod screw",
      "consequence": "",
      "audience": "engineering",
      "default": true
@@ -1930,7 +1930,7 @@
     {
      "id": "usb_cover",
      "type": "bool",
-     "label": "usb_cover",
+     "label": "(seal mode) shallow recess framing the USB opening for a flanged silicone plug",
      "consequence": "",
      "audience": "engineering",
      "default": true
@@ -2677,7 +2677,7 @@
     {
      "id": "usb_cover",
      "type": "bool",
-     "label": "usb_cover",
+     "label": "(seal mode) shallow recess framing the USB opening(s) for a flanged silicone plug; the xiao host's one recess spans both ports",
      "consequence": "",
      "audience": "engineering",
      "default": true

@@ -159,9 +159,9 @@ lid_t    = 2.0;    // front face thickness
 lip_h    = 4.0;    // front lip insertion into the back shell
 lip_t    = 1.2;    // lip wall thickness
 corner_r = 3.0;    // outside corner radius
-floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp
+floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp  // [0:0.2:1.2]
                    // notch there was the crack-starter in every flat-printed shell — a corner drop hinges the
-                   // floor about it along one layer boundary. 0 = the old square corner  // [0:0.2:1.2]
+                   // floor about it along one layer boundary. 0 = the old square corner
 lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
                    // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 standoff_h = 3.5;  // PCBs sit this high off the back (RAISE if DevKit has soldered pin headers!)
@@ -187,7 +187,7 @@ foot_cham    = 0.5;     // 45° chamfer on the back's bottom edge: elephant-foot
 kh_lock      = true;    // (keyhole mounts) anti-lift knockouts: 0.6 mm web, pierce with #4/M3 on install
 
 /* [Screw posts] (front screws into the back shell corners) */
-post_d       = 5.0;
+post_d       = 5.0;   // corner screw post Ø — the front screws thread into these (auto-fattened for inserts and larger screws)
 screw_size   = "m2";  // ["m2","m2.5","m3"] front screw — the core lib's screw registry sets pilot, clearance,
                       // head seat, insert bore and post floor; "m2" keeps the validated numbers below
 screw_head   = "pan"; // ["pan","flat"] the head in the bag: pan = flat-floored counterbore (the BOM's
@@ -231,7 +231,7 @@ bracket_tripod = true; // captive 1/4-20 nut pocket behind the center fin (tripo
 
 /* [Keyholes] — blind pockets in a thickened back (seal-safe); the catalog's
    one hanging interface — canary_mount_lib owns the drawing and the numbers */
-kh_extra   = 3.0;
+kh_extra   = 3.0;    // back thickening that hosts the keyhole pockets
 kh_head_d  = 7.0;    // catalog standard — mount_kh_head_d()
 kh_shank_d = 4.2;    // catalog standard — mount_kh_shank_d()
 kh_slot_l  = 8.0;    // catalog standard — mount_kh_slot_l()
@@ -240,58 +240,58 @@ kh_face    = 1.0;    // catalog standard — mount_kh_face()
 kh_inset   = 12.0;   // pocket centers at y = ±(inner_y/2 − kh_inset), on the X centerline
 
 /* [Weather sealing] */
-gasket_w      = 1.6;
-gasket_groove = 1.2;
-gasket_proud  = 0.3;
-skirt_h       = 3.0;
-skirt_t       = 1.6;
-usb_cover     = true;
-usb_cov_pad   = 2.0;
-usb_cov_dep   = 1.0;
+gasket_w      = 1.6;  // gasket groove width in the back's rim (the printed gasket is 0.5 narrower)
+gasket_groove = 1.2;  // groove depth into the back shell's rim
+gasket_proud  = 0.3;  // how far the printed gasket stands proud of its groove, uncompressed — what the front screws squeeze
+skirt_h       = 3.0;  // drip-edge skirt drop over the back shell's wall (sheds water off the seam)
+skirt_t       = 1.6;  // drip-edge skirt wall thickness
+usb_cover     = true; // (seal mode) shallow recess framing the USB opening(s) for a flanged silicone plug; the xiao host's one recess spans both ports
+usb_cov_pad   = 2.0;  // recess margin around the USB opening(s)
+usb_cov_dep   = 1.0;  // recess depth into the outer wall face
 weep_d        = 2.0;  // weep bore (canary_core_lib weep_d)  // [1.5:0.5:3]
 hood_len      = 9.0;  // rain-hood protrusion from the front face  // [5:0.5:15]
 hood_t        = 1.8;  // hood wall thickness
-hood_seat     = 0.6;  // groove in the front's show face the hood's spigot presses into (tol_press); bond with
+hood_seat     = 0.6;  // groove in the front's show face the hood's spigot presses into (tol_press); bond with  // [0.4:0.1:1.0]
                       // neutral-cure silicone. The hood is its OWN part: a hood grown on the front had no
                       // printable orientation (face-down it stood on 9 mm of hood; face-up the whole
-                      // 4,000 mm2 inner face was an unsupported ceiling over four post tips)  // [0.4:0.1:1.0]
+                      // 4,000 mm2 inner face was an unsupported ceiling over four post tips)
 
 /* [Front-face features] — offsets are measured FROM THE MODULE CENTER so they
    stay valid for both hosts. Measure your build! */
 lp_d   = 3.0;      // light-pipe diameter (hole = lp_d + 2*tol_press)
-lp_dx  = 8.0;
-lp_dy  = -8.0;
+lp_dx  = 8.0;      // light-pipe port center X, from the module center
+lp_dy  = -8.0;     // light-pipe port center Y, from the module center
 vent_pad_d     = 12.0;  // GORE seat (outer face)
-vent_pad_depth = 0.8;
+vent_pad_depth = 0.8;   // GORE-seat recess depth into the front's outer face — core_vent_pad_depth()
 vent_hole_d    = 1.0;   // fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm)
-vent_ring_d    = 6.0;
+vent_ring_d    = 6.0;   // Ø of the ring the vent holes sit on — core_vent_ring_d()
 vent_holes     = 10;    // more, smaller holes recover the open area at 1.0 mm
-vent_dx        = -8.0;
-vent_dy        = -8.0;
+vent_dx        = -8.0;  // vent cluster center X, from the module center
+vent_dy        = -8.0;  // vent cluster center Y, from the module center
 mag_d  = 6.0;      // tamper MAGNET diameter (pocket = mag_d + 2*tol_press)
-mag_h  = 3.2;
-mag_dx = 8.0;
-mag_dy = 8.0;
+mag_h  = 3.2;      // magnet thickness, and the pocket ring's height off the front's inside face
+mag_dx = 8.0;      // magnet pocket center X, from the module center
+mag_dy = 8.0;      // magnet pocket center Y, from the module center
 
 /* [Board snap clips] — the WAP's print-proven numbers (the canary_snap_lib
    snap_boardclip defaults); the strain gate in edgeclip() holds them honest */
-clip_w      = 6.0;
-clip_t      = 1.0;
-clip_hook   = 0.5;
-clip_hook_h = 1.2;
-clip_clear  = 0.25;
+clip_w      = 6.0;   // board-clip tab width along the board edge — snap_boardclip default
+clip_t      = 1.0;   // clip beam thickness — snap_boardclip default; edgeclip() asserts its insertion strain
+clip_hook   = 0.5;   // lip overhang over the board top — snap_boardclip default
+clip_hook_h = 1.2;   // lip + 45° lead-in height above the board top — snap_boardclip default
+clip_clear  = 0.25;  // beam face to board edge (a fit — tune on the coupon) — snap_boardclip default
 
 /* [Aesthetics] */
 colorway    = "graphite"; // ["graphite","canary","snow","forest","midnight"] assembled-preview spool set (canary_color_lib; single-part exports carry no color)
 lid_edge    = 0.8;   // 45° chamfer around the front's top edge  // [0:0.1:1.5]
 lid_edge2   = 0.8;   // second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]
 label_text  = "";    // debossed front label ("" = off; needs the font installed)
-label_size  = 5.0;
-label_depth = 0.5;
-label_dx    = 0.0;
-label_dy    = -14.0;
-label_rot   = 0;
-label_font  = "Liberation Sans:style=Bold";
+label_size  = 5.0;   // label text height
+label_depth = 0.5;   // deboss depth (prints as crisp first-layer voids — the front prints face-down)
+label_dx    = 0.0;   // label center X offset from the FRONT's center (not the module center)
+label_dy    = -14.0; // label center Y offset from the FRONT's center
+label_rot   = 0;     // label rotation (degrees)
+label_font  = "Liberation Sans:style=Bold";  // the font label_text is set in (it must be installed)
 // The bird lands at the label position; exclusive with label_text — the
 // front carries one identity, not two.
 opt_mark    = false; // deboss the house mark (the canary_mark_lib bird) instead of a custom label
@@ -338,7 +338,7 @@ bot_margin  = max(board_clear, tol_slide + lip_t + 0.2);
 // Posts always sit in true X-margins beside the boards.
 col_cam = max(cam_w + 2*board_clear, vm_w + 2*(clip_stack + board_clear) + 0.5);
 col_dk  = dk_w + 2*(clip_stack + board_clear) + 0.5;
-mid_gap = 2.0;
+mid_gap = 2.0;  // devkit host: gap between the camera + module column and the DevKit column
 inner_x = has_dk ? col_cam + mid_gap + col_dk + 2*post_corner
                  : col_cam + 2*post_corner;
 inner_y = has_dk ? max(3 + cam_h + 2 + vm_l + 1.5 + 1.5, dk_l + bot_margin + board_clear + 6.0)

@@ -130,9 +130,9 @@ label_text  = "";     // debossed lid label, e.g. "CANARY" ("" = off; needs the 
 label_size  = 5.0;    // text height
 label_depth = 0.5;    // deboss depth (prints as crisp first-layer voids, lid prints face-down)
 label_dx    = 0.0;    // label center offset from the LID center (not the board center)
-label_dy    = -10.0;
+label_dy    = -10.0;  // label center Y offset from the LID center
 label_rot   = 0;      // label rotation (degrees)
-label_font  = "Liberation Sans:style=Bold";
+label_font  = "Liberation Sans:style=Bold";  // the font label_text is set in (it must be installed)
 
 // effective flags (a preset overrides the checkboxes above)
 function _pre(c, f, p, w) = (preset == "battery_full")    ? f
@@ -164,7 +164,7 @@ board_stack_h  = e_camera ? stack_camera : stack_plain;
 
 /* [Battery] (LiPo, placed beside the board) */
 batt_l         = 50.0;  // 503450 ~ 50 x 34 x 5 mm
-batt_w         = 34.0;
+batt_w         = 34.0;  // bay width across the case (Y) — the cell's 34
 batt_h         = 6.0;   // bay height — keep >= 1 mm over the nominal cell for LiPo swelling  // [4:0.5:12]
 batt_gap       = 2.5;   // gap between board zone and battery zone
 batt_wire_w    = 4.0;   // lead channel notched into the bay ribs, hugs the +Y wall (0 = off)
@@ -173,9 +173,9 @@ batt_hold      = true;  // lid-side ribs over the bay that stop the cell bouncin
                         // batt_h stays (the cell used to sit under ~8 mm of free air)
 
 /* [GPS module] (L76K, internal bay after the board/battery) */
-gps_l          = 16.0;
-gps_w          = 16.0;
-gps_h          = 4.0;
+gps_l          = 16.0;  // GPS module length (X): the bay's cradle rim is drawn 0.4 a side around it
+gps_w          = 16.0;  // GPS module width (Y); with the GPS fitted the cavity is at least this + 1
+gps_h          = 4.0;   // GPS module height — the cavity keeps 1 mm over it
 gps_gap        = 2.3;   // rim fuses into the battery rib at 2.3 (a larger gap leaves a slot the slicer can't print)
 
 /* [Antenna] external u.FL/SMA bulkhead hole on the far (+X) wall */
@@ -189,9 +189,9 @@ lid_t          = 2.0;   // lid top thickness
 lip_h          = 4.0;   // how far the lid lip drops into the base
 lip_t          = 1.2;   // lid lip wall thickness
 corner_r       = 3.0;   // outside corner radius
-floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp
+floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp  // [0:0.2:1.2]
                    // notch there was the crack-starter in every flat-printed shell — a corner drop hinges the
-                   // floor about it along one layer boundary. 0 = the old square corner  // [0:0.2:1.2]
+                   // floor about it along one layer boundary. 0 = the old square corner
 lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
                    // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 
@@ -224,15 +224,15 @@ kh_lock      = true;    // (keyhole mounts) two anti-lift knockout bosses: 0.6 m
 sh_gap   = 6.0;    // shield air gap above the lid
 sh_over  = 6.0;    // shield overhang beyond the case walls (shade + rain shadow)
 sh_t     = 1.6;    // shield panel thickness
-tray_l   = 24.0;   // desiccant tray footprint
-tray_w   = 18.0;
-tray_h   = 8.0;
+tray_l   = 24.0;   // desiccant tray footprint length
+tray_w   = 18.0;   // desiccant tray footprint width
+tray_h   = 8.0;    // desiccant tray height (1.2 floor, slotted)
 
 /* [Standoffs / screw posts] */
 standoff_h     = 3.5;   // PCB sits this high off the floor (clearance for bottom parts). 3.5, not
                         // 3.0: the clip beam is standoff + PCB, and at 4.7 mm the MEASURED 17.8
                         // board inserts at 4.4 % strain; at 4.2 it was 5.5 % against a 4.5 % budget
-standoff_d     = 4.0;
+standoff_d     = 4.0;   // PCB standoff Ø — one under each board corner
 post_d         = 5.0;   // corner screw posts (lid screws thread into these; auto-fattened for larger screws)
 screw_size     = "m2";  // ["m2","m2.5","m3"] lid screw — the catalog screw registry (canary_core_lib) sets
                         // pilot, clearance, head seat, insert bore and post floor; "m2" keeps the three
@@ -258,26 +258,26 @@ cam_fov        = 66;    // lens diagonal field of view (OV2640 on the Sense: 66�
 cam_lens_h     = 6.0;   // lens front above the PCB top (Sense expansion board + OV2640 module) — MEASURE
 cam_disc_d     = 12.0;  // clear-disc diameter (seat = disc + 2*tol_slide; 0 = no seat, bare hole)
 cam_disc_t     = 1.0;   // clear-disc thickness (disc sits 0.2 recessed below the lid face)
-cam_dx         = 0.0;
-cam_dy         = 0.0;
+cam_dx         = 0.0;   // camera window center X, from the board center
+cam_dy         = 0.0;   // camera window center Y, from the board center
 // Light-pipe / status-LED port (press fit: hole = lp_d + 2*tol_press)
 lp_d           = 3.0;   // light-pipe diameter (3 mm pipe -> 3.2 mm hole at default tol_press)
-lp_dx          = 5.0;
-lp_dy          = 5.0;
+lp_dx          = 5.0;   // light-pipe port center X, from the board center
+lp_dy          = 5.0;   // light-pipe port center Y, from the board center
 // Buzzer + pressure vent (recess seats an adhesive GORE vent; ring of holes passes sound/pressure)
 vent_pad_d     = 12.0;  // GORE-vent recess Ø (the buzzer + pressure vent: the recess seats an adhesive vent)
-vent_pad_depth = 0.8;
+vent_pad_depth = 0.8;   // GORE-vent recess depth into the lid's outer face — core_vent_pad_depth()
 vent_hole_d    = 1.0;   // fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm); the
                         // membrane behind them seals, so the holes only need to pass sound + pressure
-vent_ring_d    = 6.0;
-vent_holes     = 10;
-vent_dx        = 7.0;
-vent_dy        = -4.0;
+vent_ring_d    = 6.0;   // Ø of the ring the vent holes sit on — core_vent_ring_d()
+vent_holes     = 10;    // hole count around that ring — core_vent_holes()
+vent_dx        = 7.0;   // buzzer vent center X, from the board center
+vent_dy        = -4.0;  // buzzer vent center Y, from the board center
 // Cap-touch window — local thinning so capacitance couples through the lid (when opt_touch)
 touch_d        = 12.0;  // cap-touch window Ø — local lid thinning so capacitance couples through (opt_touch)
 touch_wall     = 0.8;   // remaining lid thickness at the pad
-touch_dx       = -3.0;
-touch_dy       = -5.0;
+touch_dx       = -3.0;  // cap-touch window center X, from the board center
+touch_dy       = -5.0;  // cap-touch window center Y, from the board center
 
 /* [Tamper magnet] — blind pocket on the LID underside, over the board's reed/Hall switch */
 mag_d          = 6.0;   // MAGNET diameter (pocket = mag_d + 2*tol_press — press fit; add a drop of glue)
@@ -285,8 +285,8 @@ mag_h          = 2.2;   // pocket depth — a 6 x 2 mm disc is standard
 mag_under      = 6.0;   // tallest part on the board UNDER the pocket: the Sense expansion board's top
                         // (camera excluded — keep the pocket off the lens) — MEASURE. The cavity grows
                         // to keep 1 mm between it and the pocket ring
-mag_dx         = -6.0;
-mag_dy         = 5.0;
+mag_dx         = -6.0;  // magnet pocket center X, from the board center
+mag_dy         = 5.0;   // magnet pocket center Y, from the board center
 
 /* [Board snap clips] — press-fit retention so the PCB clicks in with NO screws */
 board_clips    = true;  // cantilever tabs hook over the board's two long edges
@@ -298,10 +298,10 @@ clip_t         = 1.0;   // beam thickness — thinner = easier flex (tune to you
 clip_hook      = 0.5;   // how far the lip overhangs the board top
 clip_hook_h    = 1.2;   // lip + 45° lead-in height above the board top
 clip_clear     = 0.25;  // gap between tab inner face and the board edge (a fit — tune on the coupon)
-clip_dx        = 5.25;  // clip centers at board_cx ± clip_dx (5.25 = board_l/4, the validated spot). The
+clip_dx        = 5.25;  // clip centers at board_cx ± clip_dx (5.25 = board_l/4, the validated spot). The  // [3:0.25:8]
                         // XIAO's castellated pads run to ±8.5 along each long edge, so a 6 mm tab here
                         // sits over three pads: solder wires from the UNDERSIDE and keep the top pad
-                        // flat, or a fillet stops the lip latching  // [3:0.25:8]
+                        // flat, or a fillet stops the lip latching
 clip_over      = 0.15;  // extra lip travel per side for the MEASURED board (brd_xiao_w_measured() 17.8
                         // vs the drawn 17.5) — fed to the strain gate, not to the drawing
 
