@@ -6,8 +6,9 @@
 // Coverage: MQTT wildcard matching (the shell's broker semantics), the
 // witness canonical/signature format (must equal what trust.cpp
 // rebuilds before Ed25519::verify — pinned here as a golden string),
-// LED cadence translation, registry ↔ dist artifact integrity, and the
-// vendored Witness Wall against the fleet contract.
+// LED cadence translation, registry ↔ dist artifact integrity, the cards'
+// status prose against the train, and the vendored Witness Wall against the
+// fleet contract.
 const { test } = require("node:test");
 const assert = require("node:assert");
 const { readFileSync, existsSync, readdirSync } = require("node:fs");
@@ -191,6 +192,26 @@ test("fw_train matches the firmware tree's CANARY_FW_VERSION", () => {
   const m = vh.match(/CANARY_FW_VERSION "([^"]+)"/);
   assert.ok(m, "version.h parses");
   assert.strictEqual(reg.fw_train, m[1]);
+});
+
+// A card's status is prose, and prose that names a firmware version drifts the
+// moment the train moves: the Vision card still said "fw 2.2.0" with the
+// unified train at 2.4.15, on the Lab and on the website's lab.html, which
+// renders this file live. The train lives in `fw_train` (held to
+// version.h above); a status string may repeat it, never contradict it.
+test("no card's status names a firmware version other than fw_train", () => {
+  const reg = JSON.parse(readFileSync(join(ROOT, "devices/registry.json"), "utf8"));
+  let statuses = 0;
+  for (const dev of reg.devices) {
+    if (typeof dev.status !== "string") continue;
+    statuses++;
+    for (const [, v] of dev.status.matchAll(/\bv?(\d+\.\d+\.\d+)\b/g)) {
+      assert.strictEqual(v, reg.fw_train,
+        `${dev.id}: status "${dev.status}" names fw ${v}, but the registry's train is ${reg.fw_train} ` +
+        `— drop the version from the status (the card's train is fw_train), don't retype it`);
+    }
+  }
+  assert.ok(statuses >= 5, `the registry's cards still carry a status (${statuses})`);
 });
 
 // Both apps iframe the website's Witness Wall emulator, vendored byte for byte
