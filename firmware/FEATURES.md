@@ -20,9 +20,9 @@
 > **Why canary-sentinel has no dashboard column yet.** Its Phase 1a firmware
 > carries canary-sense's network/witness stack (pinned to it by
 > `firmware/scripts/check_sentinel_net_sync.sh`) plus its own signed
-> `sentinel` canonical, and CI compiles its `door` (C6) and `lite` (C3) envs —
-> but nothing has run on hardware and nothing ships (`firmware/flavors.json`
-> marks it `unreleased`). A column would be a row of cells that each read
+> `sentinel` canonical, and its `door` (C6) and `lite` (C3) envs are
+> compile-gated in CI — but nothing has run on hardware and nothing ships
+> (`firmware/flavors.json` marks it `unreleased`). A column would be a row of cells that each read
 > "compiles; never run", which this table has no symbol for and which a ✅
 > would overstate. What it has, where it is proven, and what is still bench-
 > or Phase-1b-bound (the WiFi-RF / CSI / BLE channels are not built) is the

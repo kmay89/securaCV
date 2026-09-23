@@ -74,7 +74,7 @@ UNPUBLISHED: dict[str, str] = {
         "canary-vision-c3-super-mini env (C3 Super Mini) — compile-tested "
         "port, no bench validation yet; channel turns on with a Hardware "
         "Test Report",
-    # canary-sentinel (F22 Phase 1a): compiled by CI, released by nothing —
+    # canary-sentinel (F22 Phase 1a): compile-gated in CI, released by nothing —
     # flavors.json marks it `unreleased`. One product per PRESET (the preset
     # is compile-time data, so a shared channel would install one preset's
     # image on another's hardware); each polls its own manifest until the

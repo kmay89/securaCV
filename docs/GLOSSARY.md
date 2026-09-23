@@ -200,7 +200,7 @@ truth is [`firmware/build_matrix.json`](../firmware/build_matrix.json).
 | **Canary Vision** | shipping | Camera + on-device person detection, reports to Home Assistant. |
 | **Canary Sense** | shipping | Presence and breathing radar (60 GHz MR60BHA2) — care and wellbeing without a camera to point. |
 | **Canary Pool** | design | *Design-stage* — an outdoor pool/spa water-chemistry node (pH · ORP · water temp · TDS) that publishes to the fleet; the Dash already renders its cards. ESP32 + Atlas EZO or industrial differential probes. See [pool water-monitor research](research/pool_water_monitor.md). |
-| **Canary Sentinel** | design | *Phase 1a — fusion core host-tested; the signed network/witness firmware compiles in CI but has not run on hardware; no released build.* Multi-sensor fusion guardian: PIR + radar + WiFi CSI + WiFi/BLE + light, scored for corroboration across physically independent channels. Lite / Standard / Heavy tiers. See `firmware/FIRMWARE_VARIANT_AUDIT.md`. |
+| **Canary Sentinel** | design | *Phase 1a — fusion core host-tested; the signed network/witness firmware is compile-gated in CI but has not run on hardware; no released build.* Multi-sensor fusion guardian: PIR + radar + WiFi CSI + WiFi/BLE + light, scored for corroboration across physically independent channels. Lite / Standard / Heavy tiers. See `firmware/FIRMWARE_VARIANT_AUDIT.md`. |
 | **Canary Display** | prototype | The wall displays and dashes — the ambient surface a household actually looks at. |
 | **Canary OTA** | software | The signed pull-update path, with rollback. |
 | **Canary Fence Guard** | idea | *Concept — nothing builds yet.* Boundary/perimeter variant. |

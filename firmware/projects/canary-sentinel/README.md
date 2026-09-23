@@ -10,9 +10,9 @@ host-tested fusion brain, three cost tiers, five presets.
 > preset→engine mapping are proven without hardware in `firmware/tests_host`
 > (under `-Wall -Wextra -Werror`, run by the host-tests CI job). Phase 1a wires
 > the network/witness path — canary-sense's stack, carried here and pinned to
-> it — and the project is in `firmware/flavors.json` so CI's PlatformIO leg
-> compiles the `door` (C6) and `lite` (C3) envs and holds each image to its
-> OTA slot. It has no release envs, no flasher product and no published OTA
+> it — and the project is in `firmware/flavors.json`, so its `door` (C6) and
+> `lite` (C3) envs are compile-gated by CI's PlatformIO leg, which also holds
+> each image to its OTA slot. It has no release envs, no flasher product and no published OTA
 > channel (its `firmware/flavors.json` entry is marked `unreleased`): it ships
 > when the bench checklist below is green. The onboard-radio channels are Phase 1b and are
 > not built. See the phase table below for exactly what is proven where.
@@ -121,7 +121,7 @@ dedicated fusion modality is a later dictionary decision.
 | Phase | Scope | Status | Proven by |
 |---|---|---|---|
 | **0** | fusion brain, presets, board pins, envs | landed | `make -C firmware/tests_host` (fusion + door / mailbox-lite preset suites) |
-| **1a** | network/witness path: `sentinel` canonical + chain, MQTT events + retained state, HA discovery, signed pull-OTA, setup portal, mDNS | **compile-tested by CI** — `door` (C6, core 3) and `lite` (C3, core 2) in `firmware.yml`'s PlatformIO leg with OTA-slot size guards; **not run on hardware** | the canonical: host test + HA pytest golden vector; the copy of canary-sense's stack: `firmware/scripts/check_sentinel_net_sync.sh`; the compile: CI only (no local ESP32 toolchain) |
+| **1a** | network/witness path: `sentinel` canonical + chain, MQTT events + retained state, HA discovery, signed pull-OTA, setup portal, mDNS | **compile-gated in CI** — `door` (C6, core 3) and `lite` (C3, core 2) in `firmware.yml`'s PlatformIO leg with OTA-slot size guards; **not run on hardware** | the canonical: host test + HA pytest golden vector; the copy of canary-sense's stack: `firmware/scripts/check_sentinel_net_sync.sh`; the compile: CI only (no local ESP32 toolchain) |
 | **1b** | onboard-radio channels: WiFi-RF, WiFi-CSI, BLE (and the fleet-link BLE beacon) | **bench-bound, NOT built** — radio coexistence with the STA link and the CSI HAL on the C6 are unproven | nothing yet; the adapter call sites in `src/main.cpp` are comments |
 | **2** | bench-tuned presets, release envs, OTA channels — one per preset (each env already names its own product and manifest, all declared unpublished) | not started | the bench checklist below, then a release |
 

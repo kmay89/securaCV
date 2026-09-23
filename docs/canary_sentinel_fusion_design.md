@@ -5,8 +5,8 @@ fusion brain (`firmware/common/fusion/sentinel_fusion.*`) is in the tree and
 host-tested (`firmware/tests_host/test_sentinel_fusion.cpp`, under
 `-Wall -Wextra -Werror`), and the project now carries canary-sense's
 network/witness stack (signed `sentinel` canonical, MQTT + HA discovery,
-pull-OTA, setup portal), compiled by CI's PlatformIO leg for the `door` (C6)
-and `lite` (C3) envs. The onboard-radio channels (WiFi-RF, CSI, BLE) are
+pull-OTA, setup portal), compile-gated by CI's PlatformIO leg for the `door`
+(C6) and `lite` (C3) envs. The onboard-radio channels (WiFi-RF, CSI, BLE) are
 Phase 1b and not built. **Hardware bench validation is pending** — see the
 project README checklist and phase table. This document is the spec the
 firmware is built to; where a number is a bench question it is marked
