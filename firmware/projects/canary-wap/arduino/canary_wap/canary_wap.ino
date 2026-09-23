@@ -8560,12 +8560,18 @@ static void start_http_server() {
   const int ble_discovery_handlers = 0;
 #endif
   const int fleet_handlers = 2;       // /api/fleet GET + OPTIONS (DISCOVERY.md)
+#if FEATURE_BEACON_CHANNEL
+  const int beacon_handlers = 16;     // beacon_api::register_routes (/api/beacon/*)
+#else
+  const int beacon_handlers = 0;
+#endif
   const int handler_headroom = 24;    // Reserve for future additions
   const int total_handlers = base_handlers + csi_handlers + wifi_presence_handlers
       + rf_presence_handlers + datamgmt_handlers + household_handlers
       + audible_chirp_handlers + audio_handlers + camera_handlers + qr_handlers
       + vault_handlers + mesh_handlers + chirp_handlers + bluetooth_handlers
-      + ble_discovery_handlers + fleet_handlers + handler_headroom;
+      + ble_discovery_handlers + fleet_handlers + beacon_handlers
+      + handler_headroom;
 
   // ── Start HTTPS server (port 443) if TLS cert is available ──
 #if SECURACV_HAS_HTTPS_SERVER

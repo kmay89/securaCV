@@ -3,9 +3,9 @@ set -euo pipefail
 # securaCV CAP-mapping conformance lint
 #
 # Verifies that every Beacon template ID declared in
-# firmware/projects/canary-wap/arduino/canary_wap/beacon_channel.h
-# has a corresponding entry in the CAP mapping table in
-# spec/beacon_cap_gateway_v0.md.
+# firmware/projects/canary-wap/arduino/canary_wap/beacon_wire.h (the
+# Arduino-free wire header beacon_channel.h includes) has a corresponding
+# entry in the CAP mapping table in spec/beacon_cap_gateway_v0.md.
 #
 # Spec rule (spec/beacon_cap_gateway_v0.md §2.5): every Beacon template
 # MUST map to a CAP (category, responseType, urgency, severity, certainty)
@@ -16,7 +16,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-HEADER="firmware/projects/canary-wap/arduino/canary_wap/beacon_channel.h"
+HEADER="firmware/projects/canary-wap/arduino/canary_wap/beacon_wire.h"
 SPEC="spec/beacon_cap_gateway_v0.md"
 
 if [ ! -f "$HEADER" ]; then
@@ -32,7 +32,15 @@ fi
 # `BCN_*_* = 0xNN,` pattern in the BeaconTemplate enum.
 templates=$(grep -E '^\s*BCN_[A-Z_]+\s*=\s*0x[0-9A-Fa-f]+' "$HEADER" \
             | sed -E 's/^\s*(BCN_[A-Z_]+)\s*=.*$/\1/' \
-            | grep -v BCN_TPL_INVALID)
+            | grep -v BCN_TPL_INVALID || true)
+
+# Finding nothing is a failure, not a pass: it means the enum moved out of
+# $HEADER (it did once — beacon_channel.h -> beacon_wire.h), and a lint that
+# checks zero templates would say every template is mapped.
+if [ -z "$templates" ]; then
+  echo "[cap-lint][FAIL] no BCN_* template ids found in $HEADER — did the BeaconTemplate enum move?"
+  exit 1
+fi
 
 EXIT_CODE=0
 missing=""

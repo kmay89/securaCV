@@ -73,6 +73,13 @@ STATIC_FLAGS = dict(
 CONFIGS = [("FULL", "XIAO_ESP32S3"), ("DEV", "XIAO_ESP32S3"),
            ("FULL", "XIAO_ESP32C3")]
 
+# The same configs again with the Beacon channel compiled in — the build
+# firmware.yml's "Beacon channel gate" leg compiles (-DFEATURE_BEACON_CHANNEL=1).
+# Its 16 /api/beacon/* routes were once registered against a budget that
+# did not count them, which is exactly the silent-drop this script exists
+# to catch; modeling only the flag-off build could not see it.
+BEACON_FLAGS = dict(FEATURE_BEACON_CHANNEL=1)
+
 
 def resolve_flags(profile, target):
     flags = dict(STATIC_FLAGS)
@@ -248,10 +255,14 @@ def main():
                     for p in list(SKETCH.glob("*.h")) + list(SKETCH.glob("*.cpp"))}
 
     problems = []
-    for profile, target in CONFIGS:
-        flags = resolve_flags(profile, target)
+    runs = [(p, t, {}) for p, t in CONFIGS] + \
+           [(p, t, BEACON_FLAGS) for p, t in CONFIGS]
+    for profile, base_target, extra in runs:
+        flags = resolve_flags(profile, base_target)
+        flags.update(extra)
         flags["_PROFILE"] = profile
-        flags["_TARGET"] = target
+        flags["_TARGET"] = base_target
+        target = base_target + ("+beacon" if extra else "")
 
         # Registrations executed directly on the main active server. The
         # redirect server (g_http_server) has its own 12-slot budget (6 captive
