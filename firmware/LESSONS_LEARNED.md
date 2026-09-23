@@ -43,9 +43,12 @@
   `/api/export` and the MQTT chain publish). A reviewer read the sentence,
   not the tree, and was right to. Widening the chain's floor to the
   ten-minute grid was a product decision (both firmwares, their config
-  floors, six places of operator copy); it was taken on 2026-09-22, and
-  the spec's §3 now names one floor — the contract's job was to stop
-  overclaiming first, which it did.
+  floors, six places of operator copy); it was decided on 2026-09-22,
+  maintainer to confirm. The contract's job was to stop overclaiming first,
+  which it did. The widening's first draft of §3 then overclaimed again: it
+  called the grid "one floor, met on both clocks", but each record's `seq`
+  at a one-second cadence still places it finely. A wider bucket is not a
+  coarse chain. §3 now says so, and keeps coarsening a reader's duty.
   The app pins `tls_cert_fp` and refuses an https device without it; the
   rollout prefers the bonded BLE lane and discloses plain http.
 - **Guidance:** a contract that exists only as "what the other side sends
