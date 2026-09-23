@@ -253,6 +253,23 @@ void test_le_byte_order_pinned() {
   std::printf("PASS test_le_byte_order_pinned\n");
 }
 
+void test_msgtype_values_pinned() {
+  /* The byte at offset 1 of every signed frame (and the session prefix
+   * byte) — wire-stable, never renumber. LEAVE_OPERA (F10) is 25. */
+  using M = mesh_envelope::MsgType;
+  assert(static_cast<uint8_t>(M::HEARTBEAT)        == 16);
+  assert(static_cast<uint8_t>(M::CSI_FEATURES)     == 17);
+  assert(static_cast<uint8_t>(M::TAMPER_ALERT)     == 18);
+  assert(static_cast<uint8_t>(M::POWER_ALERT)      == 19);
+  assert(static_cast<uint8_t>(M::OFFLINE_IMMINENT) == 20);
+  assert(static_cast<uint8_t>(M::WITNESS_RECORD)   == 21);
+  assert(static_cast<uint8_t>(M::BEACON_EVENT)     == 22);
+  assert(static_cast<uint8_t>(M::CHANNEL_LOCK)     == 23);
+  assert(static_cast<uint8_t>(M::HUB_ELECTION)     == 24);
+  assert(static_cast<uint8_t>(M::LEAVE_OPERA)      == 25);
+  std::printf("PASS test_msgtype_values_pinned\n");
+}
+
 }  /* namespace */
 
 int main() {
@@ -266,6 +283,7 @@ int main() {
   test_frame_too_short_rejected();
   test_empty_payload_roundtrip();
   test_le_byte_order_pinned();
+  test_msgtype_values_pinned();
   std::printf("\nALL MESH_ENVELOPE TESTS PASSED\n");
   return 0;
 }

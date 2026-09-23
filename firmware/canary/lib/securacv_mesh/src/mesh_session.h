@@ -61,6 +61,7 @@
 #include "mesh_beacon.h"
 #include "mesh_channel_hop.h"
 #include "mesh_hub_election.h"
+#include "mesh_alert.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -123,9 +124,30 @@ void set_code_ready_callback(CodeReadyCallback cb);
 bool init(const uint8_t device_pubkey [mesh_crypto::PUBKEY_LEN],
           const uint8_t device_privkey[mesh_crypto::PRIVKEY_LEN]);
 void deinit();
+/* start() refuses (returns false) while the mesh is disabled — see
+ * set_enabled() below — so "disabled" always implies "not running". */
 bool start();
 void stop();
 bool is_running();
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * ENABLE / DISABLE  (F10 — POST /api/mesh/enable)
+ *
+ * The user-facing on/off switch. set_enabled(false) cancels any pairing
+ * in flight and stops the session: no send, no receive dispatch, no
+ * pairing tick (the opera membership itself is kept — disabling is not
+ * leaving). set_enabled(true) restarts the session when init() has run.
+ * is_enabled() feeds GET /api/mesh's `enabled` and mesh_state_name()'s
+ * "DISABLED".
+ *
+ * The flag is RAM state here; its persistence is the integration layer's
+ * job (mesh_state::save_mesh_enabled / load_mesh_enabled — NVS key
+ * "mesh_enabled", not flash-encryption gated because it is a preference,
+ * not a secret). deinit() resets it to enabled.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+void set_enabled(bool enabled);
+bool is_enabled();
 
 /* ──────────────────────────────────────────────────────────────────────────
  * PAIRING ENTRY POINTS  (wrappers over mesh_pairing)
@@ -232,13 +254,15 @@ bool get_opera_id(uint8_t out[mesh_crypto::OPERA_ID_LEN]);
  * status handler ("does this device belong to an opera?"). */
 bool has_opera();
 
-/* RAM-only opera display name. set_opera_name() caches into a module-
- * static buffer (NOT persisted to NVS — opera_name is cosmetic and the
- * mesh layer deliberately keeps no extra NVS keys for it). The name is
- * known at opera-create / opera-join time; on a fresh boot before any
- * pairing has run this cycle, get_opera_name() returns an empty string.
- * get_opera_name() always null-terminates `out` (writes "" when cap>0
- * and no name is cached). */
+/* Opera display name. set_opera_name() caches into a module-static
+ * buffer; this module does not touch NVS. The integration layer persists
+ * it through mesh_state::save_opera_name() (NVS key "opera_name",
+ * flash-encryption gated like the rest of the household metadata) and
+ * restores it at boot with load_opera_name() → set_opera_name(). The name
+ * is local-only: POST /api/mesh/name renames this device's label for the
+ * opera and does not propagate to peers. On an FE-off board the save is
+ * refused, so the name lasts until reboot. get_opera_name() always
+ * null-terminates `out` (writes "" when cap>0 and no name is cached). */
 void set_opera_name(const char* name);
 void get_opera_name(char* out, size_t cap);
 
@@ -262,9 +286,13 @@ bool send_beacon_event(mesh_beacon::BeaconState state,
  * httpd task, same as trusted_peer_count() — a torn 6-byte MAC read can
  * at worst garble one row of a status view for one poll. */
 struct PeerLink {
-  uint8_t fp [mesh_crypto::FINGERPRINT_LEN];
-  uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN];
-  bool    mac_known;
+  uint8_t  fp [mesh_crypto::FINGERPRINT_LEN];
+  uint8_t  mac[mesh_transport::MESH_TRANSPORT_MAC_LEN];
+  bool     mac_known;
+  /* Verified TAMPER_ALERT frames from this peer since it was registered
+   * (per boot — not persisted). Counted only after signature, opera_id
+   * and replay checks pass, so a forgery or a replay cannot inflate it. */
+  uint32_t alerts_received;
 };
 size_t get_peer_links(PeerLink* out, size_t cap);
 
@@ -309,6 +337,12 @@ constexpr size_t MAX_TRUSTED_PEERS = 8;
 bool   register_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]);
 void   clear_trusted_peers();
 size_t trusted_peer_count();
+
+/* Drop ONE trusted peer by fingerprint (zeroes its slot, including its
+ * replay counter and MAC binding). Returns true iff an entry was removed.
+ * Used by the verified-LEAVE_OPERA receive path and by peer removal. The
+ * NVS copy is the integration layer's (mesh_state::remove_trusted_peer). */
+bool   unregister_trusted_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN]);
 
 /* Snapshot the per-peer replay counters for NVS persistence.
  * out must hold at least MAX_TRUSTED_PEERS entries. Returns the
@@ -377,6 +411,81 @@ typedef void (*hub_election_received_fn)(
     const uint8_t              elected_fp[mesh_crypto::FINGERPRINT_LEN]);
 
 void set_hub_election_handler(hub_election_received_fn fn);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * LEAVE  (F10 — POST /api/mesh/leave)
+ *
+ * leave_opera() makes this device forget its opera:
+ *   1. if it holds an opera, it signs a LEAVE_OPERA frame (empty payload)
+ *      under the current opera_id and broadcasts it — best effort, the
+ *      return value says whether any peer took the frame;
+ *   2. then cancels any pairing and wipes every opera-scoped RAM item:
+ *      opera_id / sender_fp binding, outbound counter, trusted-peer
+ *      table, opera name, alert history and counter.
+ * NVS is the integration layer's (mesh_state::clear_*). No rekey is
+ * needed: the LEAVER discards its own copy of the secret; the survivors'
+ * opera is unchanged. (Removing SOMEONE ELSE is the rekey path, spec
+ * §5.6 — a different operation.)
+ *
+ * Receive side: a LEAVE_OPERA frame that passes signature + opera_id +
+ * replay checks, with a zero-length payload, makes this session
+ * unregister the SIGNER (and only the signer) and then fire the
+ * peer-left handler with the signer's fingerprint and pubkey so the
+ * integration layer can drop it from NVS. A peer can therefore only ever
+ * remove itself.
+ *
+ * Threading: leave_opera() sends and mutates the counter — same task
+ * contract as send_beacon_event(). The handler runs on the process()
+ * task.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool leave_opera(uint32_t now_ms);
+
+typedef void (*peer_left_fn)(
+    const uint8_t sender_fp[mesh_crypto::FINGERPRINT_LEN],
+    const uint8_t sender_pubkey[mesh_crypto::PUBKEY_LEN]);
+
+void set_peer_left_handler(peer_left_fn fn);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * TAMPER ALERTS  (F10 — the alerts channel; GET/DELETE /api/mesh/alerts)
+ *
+ * send_tamper_alert() builds a signed TAMPER_ALERT envelope carrying the
+ * 6-byte mesh_alert payload (kind, severity, witness_seq — no free text)
+ * and broadcasts it to every paired peer. Same return contract and task
+ * contract as send_beacon_event(): false before set_opera_secret(), while
+ * disabled, on an invalid payload (severity > 7), or when no peer took it.
+ *
+ * Receive side: a verified TAMPER_ALERT (signature + opera_id + replay
+ * checks passed, payload decodes) increments the sender's
+ * PeerLink.alerts_received and the opera-wide alerts_received(), pushes a
+ * mesh_alert::Record into a RAM ring of MAX_ALERT_HISTORY entries
+ * (oldest overwritten), then fires the tamper-alert handler. A malformed
+ * payload is dropped silently and counts nothing.
+ *
+ * get_alerts() copies the ring newest-first. clear_alerts() empties the
+ * history only; the per-peer and opera-wide counters keep counting for
+ * the boot (canary-wap parity: its DELETE clears history, not
+ * g_alerts_received). Nothing here is persisted — per boot, by design.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr size_t MAX_ALERT_HISTORY = 16;
+
+bool send_tamper_alert(mesh_alert::Kind kind,
+                       uint8_t          severity,
+                       uint32_t         witness_seq,
+                       uint32_t         now_ms);
+
+typedef void (*tamper_alert_received_fn)(
+    const uint8_t    sender_fp[mesh_crypto::FINGERPRINT_LEN],
+    mesh_alert::Kind kind,
+    uint8_t          severity,
+    uint32_t         witness_seq);
+
+void     set_tamper_alert_handler(tamper_alert_received_fn fn);
+uint32_t alerts_received();
+size_t   get_alerts(mesh_alert::Record* out, size_t cap);
+void     clear_alerts();
 
 }  /* namespace mesh_session */
 

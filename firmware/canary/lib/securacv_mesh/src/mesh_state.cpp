@@ -427,4 +427,166 @@ bool clear_elected_hub() {
 #endif
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * SINGLE TRUSTED-PEER REMOVAL (F10)
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool remove_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]) {
+  if (pubkey == nullptr) return false;
+
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  if (!flash_encryption_enabled()) {
+    Serial.println("[ALERT][mesh_state] refused remove_trusted_peer — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    return false;
+  }
+
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  if (!prefs.isKey(NVS_KEY_PEERS)) {   /* nothing persisted: already gone */
+    prefs.end();
+    return true;
+  }
+  uint8_t blob[PEERS_BLOB_MAX];
+  const size_t cur_bytes = prefs.getBytes(NVS_KEY_PEERS, blob, sizeof(blob));
+  if (cur_bytes == 0 || cur_bytes % mesh_crypto::PUBKEY_LEN != 0) {
+    prefs.end();   /* read failure / partial write — refuse, don't clobber */
+    return false;
+  }
+  const size_t cur_count = cur_bytes / mesh_crypto::PUBKEY_LEN;
+
+  /* Compact the survivors in place, preserving order. */
+  size_t kept = 0;
+  for (size_t i = 0; i < cur_count; ++i) {
+    const uint8_t* entry = blob + i * mesh_crypto::PUBKEY_LEN;
+    if (mesh_crypto::ct_equal(entry, pubkey, mesh_crypto::PUBKEY_LEN)) continue;
+    if (kept != i) {
+      memmove(blob + kept * mesh_crypto::PUBKEY_LEN, entry, mesh_crypto::PUBKEY_LEN);
+    }
+    ++kept;
+  }
+  bool ok;
+  if (kept == cur_count) {
+    ok = true;                                   /* not present: idempotent */
+  } else if (kept == 0) {
+    ok = prefs.remove(NVS_KEY_PEERS) || !prefs.isKey(NVS_KEY_PEERS);
+  } else {
+    const size_t new_bytes = kept * mesh_crypto::PUBKEY_LEN;
+    ok = prefs.putBytes(NVS_KEY_PEERS, blob, new_bytes) == new_bytes;
+  }
+  prefs.end();
+  return ok;
+#endif
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * MESH ENABLED FLAG (F10) — a preference, deliberately NOT FE-gated.
+ * "mesh_enabled" is 12 chars (within the 15-char NVS key budget).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+#ifndef CSI_TEST_HOST_BUILD
+constexpr const char* NVS_KEY_MESH_ENABLED = "mesh_enabled";
+#endif
+
+bool save_mesh_enabled(bool enabled) {
+#ifdef CSI_TEST_HOST_BUILD
+  (void)enabled;
+  return true;
+#else
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  const size_t put = prefs.putUChar(NVS_KEY_MESH_ENABLED, enabled ? 1 : 0);
+  prefs.end();
+  return put == 1;
+#endif
+}
+
+bool load_mesh_enabled(bool* out) {
+  if (out == nullptr) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  return false;
+#else
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/true)) return false;
+  if (!prefs.isKey(NVS_KEY_MESH_ENABLED)) {
+    prefs.end();
+    return false;                                /* absent → caller defaults on */
+  }
+  const uint8_t v = prefs.getUChar(NVS_KEY_MESH_ENABLED, 1);
+  prefs.end();
+  *out = (v != 0);
+  return true;
+#endif
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * OPERA DISPLAY NAME (F10) — FE-gated household-identifying text.
+ * "opera_name" is 10 chars (within the 15-char NVS key budget).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+#ifndef CSI_TEST_HOST_BUILD
+constexpr const char* NVS_KEY_OPERA_NAME = "opera_name";
+#endif
+
+bool save_opera_name(const char* name) {
+  if (name == nullptr) return false;
+  const size_t len = strnlen(name, MAX_OPERA_NAME_BYTES + 1);
+  if (len == 0 || len > MAX_OPERA_NAME_BYTES) return false;
+
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  if (!flash_encryption_enabled()) {
+    Serial.println("[ALERT][mesh_state] refused save_opera_name — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    return false;
+  }
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  const size_t put = prefs.putBytes(NVS_KEY_OPERA_NAME, name, len);
+  prefs.end();
+  return put == len;
+#endif
+}
+
+bool load_opera_name(char* out, size_t cap) {
+  if (out == nullptr || cap < MAX_OPERA_NAME_BYTES + 1) return false;
+
+#ifdef CSI_TEST_HOST_BUILD
+  return false;
+#else
+  if (!flash_encryption_enabled()) {
+    Serial.println("[ALERT][mesh_state] refused load_opera_name — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    return false;
+  }
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/true)) return false;
+  char temp[MAX_OPERA_NAME_BYTES];
+  const size_t got = prefs.isKey(NVS_KEY_OPERA_NAME)
+                   ? prefs.getBytes(NVS_KEY_OPERA_NAME, temp, sizeof(temp))
+                   : 0;
+  prefs.end();
+  if (got == 0 || got > MAX_OPERA_NAME_BYTES) return false;
+  memcpy(out, temp, got);
+  out[got] = '\0';
+  return true;
+#endif
+}
+
+bool clear_opera_name() {
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  bool ok = prefs.remove(NVS_KEY_OPERA_NAME);
+  if (!ok) ok = !prefs.isKey(NVS_KEY_OPERA_NAME);
+  prefs.end();
+  return ok;
+#endif
+}
+
 }  /* namespace mesh_state */

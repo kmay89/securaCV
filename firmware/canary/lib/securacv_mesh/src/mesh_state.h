@@ -213,6 +213,67 @@ bool load_elected_hub(uint8_t out[mesh_crypto::FINGERPRINT_LEN]);
  * if already absent. On the host build, always returns true. */
 bool clear_elected_hub();
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * SINGLE TRUSTED-PEER REMOVAL  (F10)
+ *
+ * Drop ONE pubkey from the "trusted_peers" blob (read-modify-write:
+ * the remaining pubkeys are re-written in order, or the key is removed
+ * when none remain). Used when a peer's verified LEAVE_OPERA arrives and
+ * by peer removal. Same flash-encryption gate as save_trusted_peer():
+ * the blob is household-graph metadata, never read or re-written on an
+ * FE-off device.
+ *
+ * Returns true when the pubkey is gone afterwards — removed, or not
+ * present in the first place (idempotent). Returns false on a null
+ * pointer, FE disabled, or an NVS read/write failure (a malformed blob
+ * is a read failure: refuse rather than clobber). On the host build,
+ * always returns true (no-op success).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool remove_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * MESH ENABLED FLAG  (F10 — POST /api/mesh/enable)
+ *
+ * NVS key "mesh_enabled", one byte (1 = on, 0 = off). NOT flash-
+ * encryption gated: it is a user preference, not a secret and not
+ * household-identifying, and gating it would make "off" silently revert
+ * to "on" at every reboot of an FE-off dev board.
+ *
+ * load_mesh_enabled() returns true and writes *out only when the key is
+ * present; false (with *out untouched) when absent, on a null pointer,
+ * or on a read failure — callers default to enabled. On the host build
+ * load always returns false and save always returns true.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool save_mesh_enabled(bool enabled);
+bool load_mesh_enabled(bool* out);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * OPERA DISPLAY NAME  (F10 — POST /api/mesh/name)
+ *
+ * NVS key "opera_name", up to MAX_OPERA_NAME_BYTES (32) bytes, stored
+ * without the terminator. Flash-encryption gated like the rest of this
+ * namespace — the name a household gives its devices is identifying
+ * text, the same posture canary-wap's persist_opera_config applies. On
+ * an FE-off board save refuses (the name lasts until reboot) and load
+ * reports nothing stored.
+ *
+ * save_opera_name() rejects null / empty / over-long names (the REST
+ * handler validates first; this is the belt to its braces).
+ * load_opera_name() writes a NUL-terminated name into out (cap must be
+ * at least MAX_OPERA_NAME_BYTES + 1) and returns true only when a
+ * non-empty name was stored; on false out is untouched.
+ * clear_opera_name() is idempotent. Host build: save/clear → true,
+ * load → false.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr size_t MAX_OPERA_NAME_BYTES = 32;   /* == mesh_pairing::MAX_OPERA_NAME_LEN */
+
+bool save_opera_name(const char* name);
+bool load_opera_name(char* out, size_t cap);
+bool clear_opera_name();
+
 }  /* namespace mesh_state */
 
 #endif  /* SECURACV_MESH_STATE_H */

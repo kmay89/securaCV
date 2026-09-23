@@ -36,6 +36,7 @@
 #include "mesh_beacon.h"
 #include "mesh_api.h"
 #include "mesh_state.h"
+#include "mesh_alert.h"
 
 #include <cassert>
 #include <cstdio>
@@ -999,11 +1000,13 @@ void test_build_mesh_peers_json() {
   views[0].state = "CONNECTED";
   views[0].last_seen_sec = 12;
   views[0].rssi = -42;
+  views[0].alerts_received = 3;
   std::strcpy(views[1].fingerprint, "8899aabbccddeeff");
   views[1].name[0] = '\0';
   views[1].state = "OFFLINE";
   views[1].last_seen_sec = 0xFFFFFFFFu;
   views[1].rssi = 0;
+  views[1].alerts_received = 0;
 
   char buf[1024];
   assert(mesh_api::build_mesh_peers_json(buf, sizeof(buf), views, 2));
@@ -1014,6 +1017,9 @@ void test_build_mesh_peers_json() {
   assert(std::strstr(buf, "\"rssi\":-42") != nullptr);
   assert(std::strstr(buf, "\"fingerprint\":\"8899aabbccddeeff\"") != nullptr);
   assert(std::strstr(buf, "\"name\":\"\"") != nullptr);
+  /* Spec §8.2 per-peer alert count (F11 residual). */
+  assert(std::strstr(buf, "\"rssi\":-42,\"alerts_received\":3}") != nullptr);
+  assert(std::strstr(buf, "\"rssi\":0,\"alerts_received\":0}") != nullptr);
 
   /* Empty peer list still yields a valid envelope. */
   assert(mesh_api::build_mesh_peers_json(buf, sizeof(buf), nullptr, 0));
@@ -1030,6 +1036,588 @@ void test_build_mesh_json_buffer_too_small() {
       mesh_pairing::State::IDLE, 0, 0, 0, 0));
   assert(!mesh_api::build_mesh_peers_json(tiny, sizeof(tiny), nullptr, 0));
   std::printf("PASS test_build_mesh_json_buffer_too_small\n");
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+ * F10 — enable/disable, leave, the alerts channel (+ F11 attribution)
+ * ──────────────────────────────────────────────────────────────────────── */
+
+struct ReceivedAlert {
+  uint8_t          fp[mesh_crypto::FINGERPRINT_LEN];
+  mesh_alert::Kind kind;
+  uint8_t          severity;
+  uint32_t         witness_seq;
+};
+std::vector<ReceivedAlert> g_alerts_rx;
+
+void on_alert_rx(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                 mesh_alert::Kind kind, uint8_t severity, uint32_t seq) {
+  ReceivedAlert r;
+  std::memcpy(r.fp, fp, sizeof(r.fp));
+  r.kind = kind;
+  r.severity = severity;
+  r.witness_seq = seq;
+  g_alerts_rx.push_back(r);
+}
+
+struct LeftPeer {
+  uint8_t fp [mesh_crypto::FINGERPRINT_LEN];
+  uint8_t pub[mesh_crypto::PUBKEY_LEN];
+  size_t  trusted_at_callback;
+};
+std::vector<LeftPeer> g_left;
+
+void on_peer_left(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                  const uint8_t pub[mesh_crypto::PUBKEY_LEN]) {
+  LeftPeer l;
+  std::memcpy(l.fp, fp, sizeof(l.fp));
+  std::memcpy(l.pub, pub, sizeof(l.pub));
+  l.trusted_at_callback = mesh_session::trusted_peer_count();
+  g_left.push_back(l);
+}
+
+/* Generic sender-side builder: [session msg-type][signed envelope] for
+ * any opera-authenticated msg_type + payload, signed by sender_*. The
+ * TAMPER_ALERT / LEAVE_OPERA twin of build_beacon_frame. */
+size_t build_signed_session_frame(const uint8_t sender_pub[mesh_crypto::PUBKEY_LEN],
+                                  const uint8_t sender_priv[mesh_crypto::PRIVKEY_LEN],
+                                  const uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN],
+                                  uint64_t counter,
+                                  mesh_envelope::MsgType type,
+                                  const uint8_t* payload, size_t payload_len,
+                                  uint8_t* out_frame, size_t out_cap) {
+  mesh_envelope::Header h;
+  h.version  = mesh_envelope::PROTOCOL_VERSION;
+  h.msg_type = static_cast<uint8_t>(type);
+  mesh_crypto::compute_opera_id(opera_secret, h.opera_id);
+  mesh_crypto::compute_fingerprint(sender_pub, h.sender_fp);
+  h.counter   = counter;
+  h.timestamp = 12345;
+  if (out_cap < 1 + mesh_envelope::MAX_FRAME_LEN) return 0;
+  out_frame[0] = static_cast<uint8_t>(type);
+  const size_t n = mesh_envelope::serialize_signed(
+      h, payload, payload_len, sender_priv, sender_pub,
+      out_frame + 1, out_cap - 1);
+  return n == 0 ? 0 : 1 + n;
+}
+
+size_t build_alert_frame(const uint8_t pub[mesh_crypto::PUBKEY_LEN],
+                         const uint8_t priv[mesh_crypto::PRIVKEY_LEN],
+                         const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN],
+                         uint64_t counter, mesh_alert::Kind kind,
+                         uint8_t severity, uint32_t seq,
+                         uint8_t* out, size_t cap) {
+  uint8_t payload[mesh_alert::PAYLOAD_LEN];
+  if (!mesh_alert::encode(kind, severity, seq, payload, sizeof(payload))) return 0;
+  return build_signed_session_frame(pub, priv, secret, counter,
+                                    mesh_envelope::MsgType::TAMPER_ALERT,
+                                    payload, sizeof(payload), out, cap);
+}
+
+/* Fresh receiver session with its own device keypair (returned) and the
+ * given opera secret already set. */
+void stand_up_session(const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN],
+                      uint8_t pub[mesh_crypto::PUBKEY_LEN],
+                      uint8_t priv[mesh_crypto::PRIVKEY_LEN]) {
+  reset_world();
+  mesh_session::deinit();
+  assert(mesh_crypto::ed25519_generate_keypair(pub, priv));
+  assert(mesh_session::init(pub, priv));
+  mesh_session::set_paired_callback(on_paired);
+  mesh_session::set_failed_callback(on_failed);
+  mesh_session::set_code_ready_callback(on_code_ready);
+  assert(mesh_session::start());
+  if (secret != nullptr) assert(mesh_session::set_opera_secret(secret));
+  g_alerts_rx.clear();
+  g_left.clear();
+}
+
+void inject_from(const uint8_t mac[6], const uint8_t* frame, size_t len) {
+  mesh_transport::add_peer(mac);   /* drain_ring forwards known MACs only */
+  mesh_transport::test::inject_recv(mac, frame, len, -50);
+  mesh_transport::process();
+}
+
+void test_tamper_alert_roundtrip() {
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x31 + i);
+  uint8_t rx_pub[mesh_crypto::PUBKEY_LEN], rx_priv[mesh_crypto::PRIVKEY_LEN];
+  stand_up_session(secret, rx_pub, rx_priv);
+
+  uint8_t tx_pub[mesh_crypto::PUBKEY_LEN], tx_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(tx_pub, tx_priv));
+  assert(mesh_session::register_trusted_peer(tx_pub));
+  uint8_t tx_fp[mesh_crypto::FINGERPRINT_LEN];
+  mesh_crypto::compute_fingerprint(tx_pub, tx_fp);
+  mesh_session::set_tamper_alert_handler(on_alert_rx);
+
+  /* The receive path stamps records with the latest process() clock. */
+  mesh_session::process(4242);
+
+  const uint8_t mac[6] = {0x02, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5};
+  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  size_t flen = build_alert_frame(tx_pub, tx_priv, secret, /*counter=*/5,
+                                  mesh_alert::Kind::CAMERA_TAMPER, 6, 777,
+                                  frame, sizeof(frame));
+  assert(flen == 1 + mesh_envelope::HEADER_LEN + mesh_alert::PAYLOAD_LEN
+                   + mesh_envelope::SIGNATURE_LEN);
+  inject_from(mac, frame, flen);
+
+  /* Handler fired with the sender's fingerprint + decoded payload. */
+  assert(g_alerts_rx.size() == 1);
+  assert(std::memcmp(g_alerts_rx[0].fp, tx_fp, sizeof(tx_fp)) == 0);
+  assert(g_alerts_rx[0].kind == mesh_alert::Kind::CAMERA_TAMPER);
+  assert(g_alerts_rx[0].severity == 6);
+  assert(g_alerts_rx[0].witness_seq == 777);
+
+  /* F11: opera-wide AND per-peer attribution. */
+  assert(mesh_session::alerts_received() == 1);
+  mesh_session::PeerLink links[mesh_session::MAX_TRUSTED_PEERS];
+  assert(mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS) == 1);
+  assert(links[0].alerts_received == 1);
+
+  /* History ring holds the record. */
+  mesh_alert::Record recs[mesh_session::MAX_ALERT_HISTORY];
+  assert(mesh_session::get_alerts(recs, mesh_session::MAX_ALERT_HISTORY) == 1);
+  assert(recs[0].timestamp_ms == 4242);
+  assert(std::memcmp(recs[0].sender_fp, tx_fp, sizeof(tx_fp)) == 0);
+  assert(recs[0].kind == mesh_alert::Kind::CAMERA_TAMPER);
+  assert(recs[0].severity == 6);
+  assert(recs[0].witness_seq == 777);
+
+  /* A replay (same counter) does not double-count. */
+  inject_from(mac, frame, flen);
+  assert(g_alerts_rx.size() == 1);
+  assert(mesh_session::alerts_received() == 1);
+
+  /* A forgery (payload bit flipped under a fresh counter) counts nothing. */
+  flen = build_alert_frame(tx_pub, tx_priv, secret, 6,
+                           mesh_alert::Kind::ENCLOSURE_TAMPER, 6, 778,
+                           frame, sizeof(frame));
+  frame[mesh_session::MSGTYPE_HEADER_LEN + mesh_envelope::OFFSET_PAYLOAD] ^= 0x01;
+  inject_from(mac, frame, flen);
+  assert(mesh_session::alerts_received() == 1);
+
+  /* A correctly-signed but malformed payload (7 bytes) counts nothing. */
+  uint8_t bad_payload[mesh_alert::PAYLOAD_LEN + 1] = {0, 6, 1, 0, 0, 0, 0};
+  flen = build_signed_session_frame(tx_pub, tx_priv, secret, 7,
+                                    mesh_envelope::MsgType::TAMPER_ALERT,
+                                    bad_payload, sizeof(bad_payload),
+                                    frame, sizeof(frame));
+  inject_from(mac, frame, flen);
+  assert(mesh_session::alerts_received() == 1);
+  assert(g_alerts_rx.size() == 1);
+
+  /* A second genuine alert: counters 2, history newest-first. */
+  mesh_session::process(5000);
+  flen = build_alert_frame(tx_pub, tx_priv, secret, 8,
+                           mesh_alert::Kind::TEMP_DRIFT, 3, 0,
+                           frame, sizeof(frame));
+  inject_from(mac, frame, flen);
+  assert(mesh_session::alerts_received() == 2);
+  assert(mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS) == 1);
+  assert(links[0].alerts_received == 2);
+  assert(mesh_session::get_alerts(recs, mesh_session::MAX_ALERT_HISTORY) == 2);
+  assert(recs[0].kind == mesh_alert::Kind::TEMP_DRIFT && recs[0].timestamp_ms == 5000);
+  assert(recs[1].kind == mesh_alert::Kind::CAMERA_TAMPER);
+  /* cap is honored. */
+  assert(mesh_session::get_alerts(recs, 1) == 1);
+  assert(recs[0].kind == mesh_alert::Kind::TEMP_DRIFT);
+
+  /* DELETE semantics: history empties, the lifetime counters stay. */
+  mesh_session::clear_alerts();
+  assert(mesh_session::get_alerts(recs, mesh_session::MAX_ALERT_HISTORY) == 0);
+  assert(mesh_session::alerts_received() == 2);
+  assert(mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS) == 1);
+  assert(links[0].alerts_received == 2);
+
+  /* deinit wipes counters and history. */
+  mesh_session::deinit();
+  assert(mesh_session::alerts_received() == 0);
+  assert(mesh_session::get_alerts(recs, mesh_session::MAX_ALERT_HISTORY) == 0);
+  std::printf("PASS test_tamper_alert_roundtrip\n");
+}
+
+void test_alert_ring_wraps_newest_first() {
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x71 + i);
+  uint8_t rx_pub[mesh_crypto::PUBKEY_LEN], rx_priv[mesh_crypto::PRIVKEY_LEN];
+  stand_up_session(secret, rx_pub, rx_priv);
+  uint8_t tx_pub[mesh_crypto::PUBKEY_LEN], tx_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(tx_pub, tx_priv));
+  assert(mesh_session::register_trusted_peer(tx_pub));
+
+  const uint8_t mac[6] = {0x02, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5};
+  const size_t total = mesh_session::MAX_ALERT_HISTORY + 3;
+  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  for (size_t i = 1; i <= total; ++i) {
+    const size_t flen = build_alert_frame(tx_pub, tx_priv, secret, i,
+                                          mesh_alert::Kind::ENCLOSURE_TAMPER, 6,
+                                          (uint32_t)(1000 + i), frame, sizeof(frame));
+    inject_from(mac, frame, flen);
+  }
+  assert(mesh_session::alerts_received() == total);
+  mesh_alert::Record recs[mesh_session::MAX_ALERT_HISTORY + 4];
+  const size_t n = mesh_session::get_alerts(recs, sizeof(recs) / sizeof(recs[0]));
+  assert(n == mesh_session::MAX_ALERT_HISTORY);
+  for (size_t k = 0; k < n; ++k) {
+    assert(recs[k].witness_seq == (uint32_t)(1000 + total - k));
+  }
+  std::printf("PASS test_alert_ring_wraps_newest_first\n");
+}
+
+void test_send_tamper_alert() {
+  uint8_t pub[mesh_crypto::PUBKEY_LEN], priv[mesh_crypto::PRIVKEY_LEN];
+  stand_up_session(nullptr, pub, priv);
+  const uint8_t peer_mac[6] = {0x02, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5};
+  assert(mesh_transport::add_peer(peer_mac));
+
+  /* No opera yet → refused, nothing on the air. */
+  g_outs.clear();
+  assert(!mesh_session::send_tamper_alert(mesh_alert::Kind::ENCLOSURE_TAMPER, 6, 1, 10));
+  assert(g_outs.empty());
+
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x91 + i);
+  assert(mesh_session::set_opera_secret(secret));
+
+  assert(mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 3, 4321, 20));
+  assert(g_outs.size() == 1);
+  const std::vector<uint8_t>& f = g_outs[0].bytes;
+  assert(f[0] == static_cast<uint8_t>(mesh_envelope::MsgType::TAMPER_ALERT));
+  mesh_envelope::Header hdr;
+  const uint8_t* payload = nullptr;
+  size_t plen = 0;
+  assert(mesh_envelope::parse_and_verify(f.data() + 1, f.size() - 1, pub,
+                                         &hdr, &payload, &plen));
+  assert(hdr.msg_type == static_cast<uint8_t>(mesh_envelope::MsgType::TAMPER_ALERT));
+  assert(hdr.counter == 1);
+  uint8_t expect_id[mesh_crypto::OPERA_ID_LEN];
+  mesh_crypto::compute_opera_id(secret, expect_id);
+  assert(std::memcmp(hdr.opera_id, expect_id, sizeof(expect_id)) == 0);
+  mesh_alert::Kind k;
+  uint8_t sev = 0;
+  uint32_t seq = 0;
+  assert(mesh_alert::decode(payload, plen, &k, &sev, &seq));
+  assert(k == mesh_alert::Kind::TEMP_DRIFT && sev == 3 && seq == 4321);
+
+  /* Invalid severity → refused before anything is signed. */
+  g_outs.clear();
+  assert(!mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 8, 1, 30));
+  assert(g_outs.empty());
+
+  /* Disabled → refused; re-enabled → sends again. */
+  mesh_session::set_enabled(false);
+  assert(!mesh_session::is_enabled());
+  assert(!mesh_session::is_running());
+  assert(!mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 3, 1, 40));
+  assert(g_outs.empty());
+  mesh_session::set_enabled(true);
+  assert(mesh_session::is_enabled());
+  assert(mesh_session::is_running());
+  assert(mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 3, 1, 50));
+  assert(g_outs.size() == 1);
+  std::printf("PASS test_send_tamper_alert\n");
+}
+
+void test_enable_disable() {
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x51 + i);
+  uint8_t rx_pub[mesh_crypto::PUBKEY_LEN], rx_priv[mesh_crypto::PRIVKEY_LEN];
+  stand_up_session(secret, rx_pub, rx_priv);
+  uint8_t tx_pub[mesh_crypto::PUBKEY_LEN], tx_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(tx_pub, tx_priv));
+  assert(mesh_session::register_trusted_peer(tx_pub));
+  mesh_session::set_tamper_alert_handler(on_alert_rx);
+  assert(mesh_session::is_enabled());
+
+  /* Disabling while a pairing runs tears the pairing down. */
+  g_failed_fired = false;
+  assert(mesh_session::start_pairing_joiner(100));
+  mesh_session::set_enabled(false);
+  assert(g_failed_fired);
+  assert(mesh_session::pairing_state() == mesh_pairing::State::FAILED);
+  assert(!mesh_session::is_running());
+  /* "disabled ⇒ not running": start() refuses, pairing refuses. */
+  assert(!mesh_session::start());
+  assert(!mesh_session::is_running());
+  assert(!mesh_session::start_pairing_joiner(200));
+
+  /* Inbound verified frames are not dispatched while disabled. */
+  const uint8_t mac[6] = {0x02, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5};
+  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  size_t flen = build_alert_frame(tx_pub, tx_priv, secret, 1,
+                                  mesh_alert::Kind::ENCLOSURE_TAMPER, 6, 1,
+                                  frame, sizeof(frame));
+  inject_from(mac, frame, flen);
+  assert(g_alerts_rx.empty());
+  assert(mesh_session::alerts_received() == 0);
+
+  /* GET /api/mesh reports DISABLED (membership is kept — not a leave). */
+  assert(mesh_session::has_opera());
+  char buf[512];
+  assert(mesh_api::build_mesh_status_json(
+      buf, sizeof(buf), mesh_session::is_enabled(), mesh_session::has_opera(),
+      nullptr, "", mesh_session::pairing_state(), 1, 1, 0, 0));
+  assert(std::strstr(buf, "\"state\":\"DISABLED\"") != nullptr);
+  assert(std::strstr(buf, "\"enabled\":false") != nullptr);
+
+  /* Re-enabled: the same peer's next frame is dispatched again. */
+  mesh_session::set_enabled(true);
+  assert(mesh_session::is_running());
+  flen = build_alert_frame(tx_pub, tx_priv, secret, 2,
+                           mesh_alert::Kind::ENCLOSURE_TAMPER, 6, 2,
+                           frame, sizeof(frame));
+  inject_from(mac, frame, flen);
+  assert(g_alerts_rx.size() == 1);
+  assert(mesh_session::alerts_received() == 1);
+
+  /* deinit restores the default (enabled). */
+  mesh_session::set_enabled(false);
+  mesh_session::deinit();
+  assert(mesh_session::is_enabled());
+  std::printf("PASS test_enable_disable\n");
+}
+
+void test_leave_opera() {
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x13 + i);
+  /* This device = A. */
+  uint8_t a_pub[mesh_crypto::PUBKEY_LEN], a_priv[mesh_crypto::PRIVKEY_LEN];
+  stand_up_session(secret, a_pub, a_priv);
+  mesh_session::set_opera_name("Home");
+  uint8_t b_pub[mesh_crypto::PUBKEY_LEN], b_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(b_pub, b_priv));
+  assert(mesh_session::register_trusted_peer(b_pub));
+  const uint8_t b_mac[6] = {0x02, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5};
+  assert(mesh_transport::add_peer(b_mac));
+
+  g_outs.clear();
+  assert(mesh_session::leave_opera(5000));
+  /* Exactly one frame: LEAVE_OPERA, empty payload, signed by A under the
+   * opera_id it is leaving. */
+  assert(g_outs.size() == 1);
+  const std::vector<uint8_t> leave = g_outs[0].bytes;
+  assert(leave[0] == static_cast<uint8_t>(mesh_envelope::MsgType::LEAVE_OPERA));
+  assert(leave[0] == 25);
+  assert(leave.size() == 1 + mesh_envelope::MIN_FRAME_LEN);
+  mesh_envelope::Header hdr;
+  const uint8_t* payload = nullptr;
+  size_t plen = 99;
+  assert(mesh_envelope::parse_and_verify(leave.data() + 1, leave.size() - 1, a_pub,
+                                         &hdr, &payload, &plen));
+  assert(plen == 0);
+  uint8_t expect_id[mesh_crypto::OPERA_ID_LEN];
+  mesh_crypto::compute_opera_id(secret, expect_id);
+  assert(std::memcmp(hdr.opera_id, expect_id, sizeof(expect_id)) == 0);
+
+  /* A has forgotten everything opera-scoped. */
+  assert(!mesh_session::has_opera());
+  uint8_t id[mesh_crypto::OPERA_ID_LEN];
+  assert(!mesh_session::get_opera_id(id));
+  assert(mesh_session::trusted_peer_count() == 0);
+  char name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
+  mesh_session::get_opera_name(name, sizeof(name));
+  assert(name[0] == '\0');
+  assert(mesh_session::alerts_received() == 0);
+  g_outs.clear();
+  assert(!mesh_session::send_beacon_event(mesh_beacon::BeaconState::ARRIVED, "x", 6000));
+  assert(!mesh_session::send_tamper_alert(mesh_alert::Kind::ENCLOSURE_TAMPER, 6, 1, 6000));
+  assert(g_outs.empty());
+
+  /* Leaving again with no opera: local no-op, nothing sent. */
+  assert(!mesh_session::leave_opera(7000));
+  assert(g_outs.empty());
+
+  /* Second context: B, still in the opera, verifies A's LEAVE and drops
+   * exactly A. */
+  mesh_session::deinit();
+  assert(mesh_session::init(b_pub, b_priv));
+  assert(mesh_session::start());
+  assert(mesh_session::set_opera_secret(secret));
+  assert(mesh_session::register_trusted_peer(a_pub));
+  g_left.clear();
+  mesh_session::set_peer_left_handler(on_peer_left);
+  const uint8_t a_mac[6] = {0x02, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5};
+  inject_from(a_mac, leave.data(), leave.size());
+  assert(g_left.size() == 1);
+  uint8_t a_fp[mesh_crypto::FINGERPRINT_LEN];
+  mesh_crypto::compute_fingerprint(a_pub, a_fp);
+  assert(std::memcmp(g_left[0].fp, a_fp, sizeof(a_fp)) == 0);
+  assert(std::memcmp(g_left[0].pub, a_pub, sizeof(a_pub)) == 0);
+  assert(mesh_session::trusted_peer_count() == 0);
+  std::printf("PASS test_leave_opera\n");
+}
+
+void test_peer_left_dispatch() {
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x27 + i);
+  uint8_t rx_pub[mesh_crypto::PUBKEY_LEN], rx_priv[mesh_crypto::PRIVKEY_LEN];
+  stand_up_session(secret, rx_pub, rx_priv);
+  mesh_session::set_peer_left_handler(on_peer_left);
+
+  uint8_t x_pub[mesh_crypto::PUBKEY_LEN], x_priv[mesh_crypto::PRIVKEY_LEN];
+  uint8_t y_pub[mesh_crypto::PUBKEY_LEN], y_priv[mesh_crypto::PRIVKEY_LEN];
+  uint8_t z_pub[mesh_crypto::PUBKEY_LEN], z_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(x_pub, x_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(y_pub, y_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(z_pub, z_priv));
+  assert(mesh_session::register_trusted_peer(x_pub));
+  assert(mesh_session::register_trusted_peer(y_pub));
+  uint8_t x_fp[mesh_crypto::FINGERPRINT_LEN], y_fp[mesh_crypto::FINGERPRINT_LEN];
+  mesh_crypto::compute_fingerprint(x_pub, x_fp);
+  mesh_crypto::compute_fingerprint(y_pub, y_fp);
+
+  const uint8_t mac[6] = {0x02, 0x11, 0x12, 0x13, 0x14, 0x15};
+  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+
+  /* Forged LEAVE claiming to be X (signature broken): ignored. */
+  size_t flen = build_signed_session_frame(x_pub, x_priv, secret, 1,
+                                           mesh_envelope::MsgType::LEAVE_OPERA,
+                                           nullptr, 0, frame, sizeof(frame));
+  frame[flen - 1] ^= 0x01;
+  inject_from(mac, frame, flen);
+  assert(g_left.empty());
+  assert(mesh_session::trusted_peer_count() == 2);
+
+  /* LEAVE from an unknown sender Z: ignored. */
+  flen = build_signed_session_frame(z_pub, z_priv, secret, 1,
+                                    mesh_envelope::MsgType::LEAVE_OPERA,
+                                    nullptr, 0, frame, sizeof(frame));
+  inject_from(mac, frame, flen);
+  assert(g_left.empty());
+  assert(mesh_session::trusted_peer_count() == 2);
+
+  /* LEAVE under a DIFFERENT opera (right key, wrong opera_id): ignored. */
+  uint8_t other_secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(other_secret); ++i) other_secret[i] = (uint8_t)(0xA7 + i);
+  flen = build_signed_session_frame(x_pub, x_priv, other_secret, 2,
+                                    mesh_envelope::MsgType::LEAVE_OPERA,
+                                    nullptr, 0, frame, sizeof(frame));
+  inject_from(mac, frame, flen);
+  assert(g_left.empty());
+  assert(mesh_session::trusted_peer_count() == 2);
+
+  /* A correctly-signed LEAVE carrying a payload is malformed: ignored. */
+  const uint8_t junk[1] = {0x00};
+  flen = build_signed_session_frame(x_pub, x_priv, secret, 3,
+                                    mesh_envelope::MsgType::LEAVE_OPERA,
+                                    junk, sizeof(junk), frame, sizeof(frame));
+  inject_from(mac, frame, flen);
+  assert(g_left.empty());
+  assert(mesh_session::trusted_peer_count() == 2);
+
+  /* A genuine LEAVE from X removes X — and only X — before the handler
+   * runs, and hands the handler X's fingerprint + pubkey. */
+  flen = build_signed_session_frame(x_pub, x_priv, secret, 4,
+                                    mesh_envelope::MsgType::LEAVE_OPERA,
+                                    nullptr, 0, frame, sizeof(frame));
+  inject_from(mac, frame, flen);
+  assert(g_left.size() == 1);
+  assert(std::memcmp(g_left[0].fp, x_fp, sizeof(x_fp)) == 0);
+  assert(std::memcmp(g_left[0].pub, x_pub, sizeof(x_pub)) == 0);
+  assert(g_left[0].trusted_at_callback == 1);
+  assert(mesh_session::trusted_peer_count() == 1);
+  mesh_session::PeerLink links[mesh_session::MAX_TRUSTED_PEERS];
+  assert(mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS) == 1);
+  assert(std::memcmp(links[0].fp, y_fp, sizeof(y_fp)) == 0);
+
+  /* Replaying it changes nothing (X is no longer a trusted sender). */
+  inject_from(mac, frame, flen);
+  assert(g_left.size() == 1);
+  assert(mesh_session::trusted_peer_count() == 1);
+
+  /* X can be re-registered (a re-pair) after leaving. */
+  assert(mesh_session::register_trusted_peer(x_pub));
+  assert(mesh_session::trusted_peer_count() == 2);
+
+  /* unregister_trusted_peer: by fingerprint, exactly once. */
+  assert(mesh_session::unregister_trusted_peer(y_fp));
+  assert(!mesh_session::unregister_trusted_peer(y_fp));
+  assert(!mesh_session::unregister_trusted_peer(nullptr));
+  assert(mesh_session::trusted_peer_count() == 1);
+  std::printf("PASS test_peer_left_dispatch\n");
+}
+
+void test_build_mesh_alerts_json() {
+  mesh_alert::Record recs[2];
+  std::memset(recs, 0, sizeof(recs));
+  recs[0].timestamp_ms = 90000;
+  for (size_t i = 0; i < 8; ++i) recs[0].sender_fp[i] = (uint8_t)(0x10 + i);
+  recs[0].kind = mesh_alert::Kind::CAMERA_TAMPER;
+  recs[0].severity = 6;
+  recs[0].witness_seq = 4242;
+  recs[1].timestamp_ms = 1;
+  recs[1].kind = static_cast<mesh_alert::Kind>(0x55);
+  recs[1].severity = 3;
+
+  char buf[1024];
+  assert(mesh_api::build_mesh_alerts_json(buf, sizeof(buf), recs, 2));
+  /* The exact field names the web UI's loadOperaAlerts() reads. */
+  assert(std::strstr(buf, "{\"ok\":true,\"count\":2,\"alerts\":[{") == buf);
+  assert(std::strstr(buf, "{\"timestamp_ms\":90000,\"type\":\"TAMPER\",\"severity\":6,"
+                          "\"sender_fp\":\"1011121314151617\",\"sender_name\":\"\","
+                          "\"detail\":\"camera_tamper\",\"witness_seq\":4242}") != nullptr);
+  assert(std::strstr(buf, "\"detail\":\"unknown\"") != nullptr);
+
+  /* Empty history is a valid envelope. */
+  assert(mesh_api::build_mesh_alerts_json(buf, sizeof(buf), nullptr, 0));
+  assert(std::strcmp(buf, "{\"ok\":true,\"count\":0,\"alerts\":[]}") == 0);
+
+  /* Overflow fails cleanly; null records with count>0 refused. */
+  char tiny[16];
+  assert(!mesh_api::build_mesh_alerts_json(tiny, sizeof(tiny), recs, 2));
+  assert(!mesh_api::build_mesh_alerts_json(buf, sizeof(buf), nullptr, 1));
+  std::printf("PASS test_build_mesh_alerts_json\n");
+}
+
+void test_rest_buffers_fit_worst_case() {
+  /* The handlers allocate exactly these caps; a full table of the widest
+   * rows must fit (else the endpoint 500s with encode_failed). */
+  static_assert(mesh_session::MAX_ALERT_HISTORY <= mesh_api::MAX_ALERTS_JSON,
+                "alert cap pinned for MAX_ALERTS_JSON rows");
+  static_assert(mesh_state::MAX_TRUSTED_PEERS == 8, "peer cap pinned for 8 rows");
+  mesh_api::PeerView views[mesh_state::MAX_TRUSTED_PEERS];
+  for (size_t i = 0; i < mesh_state::MAX_TRUSTED_PEERS; ++i) {
+    std::strcpy(views[i].fingerprint, "ffffffffffffffff");
+    views[i].name[0] = '\0';
+    views[i].state = "CONNECTED";
+    views[i].last_seen_sec = 0xFFFFFFFFu;
+    views[i].rssi = -128;
+    views[i].alerts_received = 0xFFFFFFFFu;
+  }
+  std::vector<char> buf(mesh_api::PEERS_JSON_CAP);
+  assert(mesh_api::build_mesh_peers_json(buf.data(), buf.size(), views,
+                                         mesh_state::MAX_TRUSTED_PEERS));
+  /* ...and the pre-F11 1024-byte buffer would NOT have held it. */
+  char old_buf[1024];
+  assert(!mesh_api::build_mesh_peers_json(old_buf, sizeof(old_buf), views,
+                                          mesh_state::MAX_TRUSTED_PEERS));
+
+  mesh_alert::Record recs[mesh_api::MAX_ALERTS_JSON];
+  for (size_t i = 0; i < mesh_api::MAX_ALERTS_JSON; ++i) {
+    recs[i].timestamp_ms = 0xFFFFFFFFu;
+    std::memset(recs[i].sender_fp, 0xFF, sizeof(recs[i].sender_fp));
+    recs[i].kind = mesh_alert::Kind::ENCLOSURE_TAMPER;   /* longest name */
+    recs[i].severity = 7;
+    recs[i].witness_seq = 0xFFFFFFFFu;
+  }
+  std::vector<char> abuf(mesh_api::ALERTS_JSON_CAP);
+  assert(mesh_api::build_mesh_alerts_json(abuf.data(), abuf.size(), recs,
+                                          mesh_api::MAX_ALERTS_JSON));
+  std::printf("PASS test_rest_buffers_fit_worst_case  (alerts=%zu B, peers=%zu B)\n",
+              std::strlen(abuf.data()), std::strlen(buf.data()));
+}
+
+void test_build_mesh_status_json_disabled() {
+  char buf[512];
+  assert(mesh_api::build_mesh_status_json(
+      buf, sizeof(buf), /*enabled=*/false, /*has_opera=*/true, nullptr, "Home",
+      mesh_pairing::State::IDLE, 2, 2, 5, 0));
+  assert(std::strstr(buf, "\"state\":\"DISABLED\"") != nullptr);
+  assert(std::strstr(buf, "\"enabled\":false") != nullptr);
+  assert(std::strstr(buf, "\"alerts_received\":5") != nullptr);
+  std::printf("PASS test_build_mesh_status_json_disabled\n");
 }
 
 }  /* namespace */
@@ -1064,6 +1652,16 @@ int main() {
   test_build_mesh_status_json_no_opera_empty_id();
   test_build_mesh_peers_json();
   test_build_mesh_json_buffer_too_small();
+  /* F10 — enable, leave, the alerts channel; F11 attribution. */
+  test_tamper_alert_roundtrip();
+  test_alert_ring_wraps_newest_first();
+  test_send_tamper_alert();
+  test_enable_disable();
+  test_leave_opera();
+  test_peer_left_dispatch();
+  test_build_mesh_alerts_json();
+  test_build_mesh_status_json_disabled();
+  test_rest_buffers_fit_worst_case();
   std::printf("\nALL MESH_SESSION TESTS PASSED\n");
   return 0;
 }

@@ -76,10 +76,11 @@
 #include <stdarg.h>  /* thermal_json_append */
 #endif
 
-// Mesh REST API (PR-8). Gated on FEATURE_MESH_NETWORK — the dev/release
-// CI envs build with this OFF, so these handlers get no CI compile
-// coverage; the JSON-building logic is therefore factored into the pure
-// mesh_api builders, which the securacv_mesh host tests exercise.
+// Mesh REST API (PR-8, F10). Gated on FEATURE_MESH_NETWORK, which only
+// [env:full] turns on; CI compiles that env (flavors.json build_envs), so
+// the handlers build on every PR. What they EMIT is proven separately:
+// the JSON-building logic lives in the pure mesh_api builders, which the
+// securacv_mesh host tests exercise.
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
 #include "mesh_session.h"
 #include "mesh_state.h"
@@ -918,15 +919,21 @@ static esp_err_t handle_thermal(httpd_req_t* req);
 #endif
 
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
-// Mesh / opera REST API (PR-8). Six endpoints only — status, peers, and
-// the four pairing steps. remove/leave/name/enable/alerts-DELETE are
-// deferred (see spec/canary_mesh_network_v0.md §8).
+// Mesh / opera REST API (PR-8, F10). Eleven registrations: status, peers,
+// the four pairing steps, leave, name, enable, and alerts GET + DELETE.
+// remove is deferred until the opera_secret rekey is ported (see
+// spec/canary_mesh_network_v0.md §8.3).
 static esp_err_t handle_mesh_status(httpd_req_t* req);
 static esp_err_t handle_mesh_peers(httpd_req_t* req);
 static esp_err_t handle_mesh_pair_start(httpd_req_t* req);
 static esp_err_t handle_mesh_pair_join(httpd_req_t* req);
 static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req);
 static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req);
+static esp_err_t handle_mesh_leave(httpd_req_t* req);
+static esp_err_t handle_mesh_name(httpd_req_t* req);
+static esp_err_t handle_mesh_enable(httpd_req_t* req);
+static esp_err_t handle_mesh_alerts(httpd_req_t* req);
+static esp_err_t handle_mesh_alerts_clear(httpd_req_t* req);
 #endif
 
 // esp_http_server drops a registration past max_uri_handlers and returns an
@@ -952,11 +959,12 @@ bool ScvNetworkManager::startHttpServer() {
   // leaves that slot spare, which is cheaper than a dropped route) + 4
   // OTA-pull + 9 peek + 1 sensing + 4 vision + 4 audio + 2 diagnostics + 1
   // power + 1 thermal = 45 base, + 8 captive-portal routes (6 OS connectivity
-  // probes + /setup + the wildcard fallback) + 6 mesh endpoints (PR-8) when
-  // the mesh feature is compiled in. Each registered httpd_uri_t needs a
-  // slot; register_route() names any that does not get one.
+  // probes + /setup + the wildcard fallback) + 11 mesh registrations (PR-8's
+  // 6 + F10's leave/name/enable/alerts GET/alerts DELETE) when the mesh
+  // feature is compiled in. Each registered httpd_uri_t needs a slot;
+  // register_route() names any that does not get one.
   #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
-  config.max_uri_handlers = 59;
+  config.max_uri_handlers = 64;
   #else
   config.max_uri_handlers = 53;
   #endif
@@ -1168,7 +1176,7 @@ void ScvNetworkManager::registerHttpHandlers() {
   #endif
 
   #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
-  // Mesh / opera REST API (PR-8). 6 endpoints — see spec §8.
+  // Mesh / opera REST API (PR-8, F10). 11 registrations — see spec §8.1.
   httpd_uri_t mesh_status_ep = { .uri = "/api/mesh", .method = HTTP_GET, .handler = handle_mesh_status };
   register_route(m_http_server, &mesh_status_ep);
 
@@ -1186,6 +1194,21 @@ void ScvNetworkManager::registerHttpHandlers() {
 
   httpd_uri_t mesh_pair_cancel_ep = { .uri = "/api/mesh/pair/cancel", .method = HTTP_POST, .handler = handle_mesh_pair_cancel };
   register_route(m_http_server, &mesh_pair_cancel_ep);
+
+  httpd_uri_t mesh_leave_ep = { .uri = "/api/mesh/leave", .method = HTTP_POST, .handler = handle_mesh_leave };
+  register_route(m_http_server, &mesh_leave_ep);
+
+  httpd_uri_t mesh_name_ep = { .uri = "/api/mesh/name", .method = HTTP_POST, .handler = handle_mesh_name };
+  register_route(m_http_server, &mesh_name_ep);
+
+  httpd_uri_t mesh_enable_ep = { .uri = "/api/mesh/enable", .method = HTTP_POST, .handler = handle_mesh_enable };
+  register_route(m_http_server, &mesh_enable_ep);
+
+  httpd_uri_t mesh_alerts_ep = { .uri = "/api/mesh/alerts", .method = HTTP_GET, .handler = handle_mesh_alerts };
+  register_route(m_http_server, &mesh_alerts_ep);
+
+  httpd_uri_t mesh_alerts_clear_ep = { .uri = "/api/mesh/alerts", .method = HTTP_DELETE, .handler = handle_mesh_alerts_clear };
+  register_route(m_http_server, &mesh_alerts_clear_ep);
   #endif
 
   // Wildcard fallback — MUST stay the last registration, so every exact
@@ -3625,21 +3648,34 @@ static esp_err_t handle_thermal(httpd_req_t* req) {
 #endif // FEATURE_THERMAL_WATCHDOG
 
 // ════════════════════════════════════════════════════════════════════════════
-// MESH / OPERA REST API (PR-8)
+// MESH / OPERA REST API (PR-8, F10)
 //
-// Six endpoints, all auth-gated + rate-limited, all using the existing
-// {ok:...} JSON convention via http_send_json / http_send_error:
+// Eleven registrations, all auth-gated + rate-limited, all using the
+// existing {ok:...} JSON convention via http_send_json / http_send_error:
 //
-//   GET  /api/mesh              — opera status (refreshOpera reads this)
-//   GET  /api/mesh/peers        — peer list
-//   POST /api/mesh/pair/start   — begin pairing as the initiator (add another)
-//   POST /api/mesh/pair/join    — begin pairing as the joiner (new device)
-//   POST /api/mesh/pair/confirm — user confirmed the 6-digit code matches
-//   POST /api/mesh/pair/cancel  — abort an in-progress pairing
+//   GET    /api/mesh              — opera status (refreshOpera reads this)
+//   GET    /api/mesh/peers        — peer list
+//   POST   /api/mesh/pair/start   — begin pairing as the initiator (add another)
+//   POST   /api/mesh/pair/join    — begin pairing as the joiner (new device)
+//   POST   /api/mesh/pair/confirm — user confirmed the 6-digit code matches
+//   POST   /api/mesh/pair/cancel  — abort an in-progress pairing
+//   POST   /api/mesh/leave        — forget the opera + signed LEAVE_OPERA notify (F10)
+//   POST   /api/mesh/name {name}  — rename this device's opera label, local only (F10)
+//   POST   /api/mesh/enable {enabled} — mesh on/off, NVS-persisted (F10)
+//   GET    /api/mesh/alerts       — received TAMPER_ALERT history (F10)
+//   DELETE /api/mesh/alerts       — clear that history (counters keep counting) (F10)
 //
-// The JSON-rendering for the two GET endpoints lives in the pure
-// mesh_api builders so the response shape stays under host-test coverage
-// even though CI compiles FEATURE_MESH_NETWORK out (dev/release envs).
+// POST /api/mesh/remove {fingerprint} is NOT registered here: removing a
+// peer must rotate opera_secret (spec §5.6), and that transaction is not
+// ported to this tree yet — spec §8.3.
+//
+// The JSON-rendering for the GET endpoints lives in the pure mesh_api
+// builders so the response shape stays under host-test coverage; CI's
+// [env:full] leg compiles these handlers but cannot run them.
+//
+// Threading: like the pairing handlers, these call into mesh_session from
+// the httpd task, not the main loop the module's send contract names —
+// the posture PR-8 shipped with; see spec §8.3.
 //
 // MAC↔fingerprint join: the persisted trusted-peer set keys on Ed25519
 // pubkey (→ fingerprint), while the live transport peer table keys on
@@ -3685,15 +3721,15 @@ static esp_err_t handle_mesh_status(httpd_req_t* req) {
   const size_t peers_total  = mesh_session::trusted_peer_count();
   const size_t peers_online = mesh_count_online_peers();
 
-  // alerts_received: opera-level alert count is not yet tracked in the
-  // PIO mesh session (deferred with the alerts endpoints) — report 0.
-  const uint32_t alerts_received = 0;
+  // alerts_received: verified TAMPER_ALERT frames from any peer this boot
+  // (F10/F11 — counted only after signature + opera_id + replay checks).
+  const uint32_t alerts_received = mesh_session::alerts_received();
   const uint32_t pairing_code    = mesh_session::pairing_confirmation_code();
 
   char body[512];
   if (!mesh_api::build_mesh_status_json(
           body, sizeof(body),
-          /*enabled=*/true, has_opera,
+          mesh_session::is_enabled(), has_opera,
           have_id ? opera_id : nullptr,
           opera_name, pstate,
           peers_total, peers_online, alerts_received, pairing_code)) {
@@ -3742,15 +3778,18 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
     views[i].state        = "OFFLINE";     // until a verified frame joins it
     views[i].last_seen_sec = 0xFFFFFFFFu;  // "never" (UI shows 'never')
     views[i].rssi          = 0;
+    views[i].alerts_received = 0;          // until the session has a link row
 
     // fp → last verified MAC → live transport entry. A peer that has
     // not sent a verified frame this boot, or whose MAC has left the
     // transport table, keeps the OFFLINE/never defaults above.
     for (size_t l = 0; l < n_links; ++l) {
-      if (!links[l].mac_known ||
-          memcmp(links[l].fp, fp, mesh_crypto::FINGERPRINT_LEN) != 0) {
+      if (memcmp(links[l].fp, fp, mesh_crypto::FINGERPRINT_LEN) != 0) {
         continue;
       }
+      // Per-peer alert attribution (F11) does not depend on liveness.
+      views[i].alerts_received = links[l].alerts_received;
+      if (!links[l].mac_known) break;
       for (size_t t = 0; t < n_live; ++t) {
         if (!live[t].in_use ||
             memcmp(live[t].mac, links[l].mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) != 0) {
@@ -3769,7 +3808,9 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
     }
   }
 
-  char body[1024];
+  // Sized for 8 worst-case rows (host-test pinned, mesh_api.h). 1024 held
+  // the pre-F11 row; the alerts_received field needs the headroom.
+  char body[mesh_api::PEERS_JSON_CAP];
   if (!mesh_api::build_mesh_peers_json(body, sizeof(body), views, count)) {
     return http_send_error(req, 500, "encode_failed");
   }
@@ -3780,6 +3821,10 @@ static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
   if (!rate_limit_check(req, true)) return ESP_OK;
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
+
+  if (!mesh_session::is_enabled()) {
+    return http_send_error(req, 400, "mesh_disabled");
+  }
 
   // Flash-encryption gate: refuse to touch the opera_secret on FE-off
   // hardware (matches mesh_state's load/save posture).
@@ -3821,6 +3866,10 @@ static esp_err_t handle_mesh_pair_join(httpd_req_t* req) {
   if (!rate_limit_check(req, true)) return ESP_OK;
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
+
+  if (!mesh_session::is_enabled()) {
+    return http_send_error(req, 400, "mesh_disabled");
+  }
 
   // Flash-encryption gate: the joiner will receive + persist the
   // opera_secret on success, so refuse on FE-off hardware up front.
@@ -3868,6 +3917,157 @@ static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req) {
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
+}
+
+// POST /api/mesh/leave — forget this device's opera (F10). The session
+// signs a LEAVE_OPERA under the opera it is leaving (best effort — the
+// survivors drop only this device's trust entry), then wipes its RAM
+// state; the NVS copies go here. No rekey: the leaver discards its own
+// secret, and a signed LEAVE can only remove its signer.
+static esp_err_t handle_mesh_leave(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  const bool notified = mesh_session::leave_opera(millis());
+  // Each clear is idempotent; AND them so a real NVS failure is reported
+  // rather than hidden behind a local wipe that did happen.
+  bool cleared = mesh_state::clear_opera_secret();
+  cleared = mesh_state::clear_trusted_peers()   && cleared;
+  cleared = mesh_state::clear_replay_counters() && cleared;
+  cleared = mesh_state::clear_elected_hub()     && cleared;
+  cleared = mesh_state::clear_opera_name()      && cleared;
+  mesh_transport::clear_peers();
+  log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "Left opera",
+             notified ? "peers notified" : "no peer took the LEAVE frame");
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["notified"] = notified;
+  doc["persisted"] = cleared;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// POST /api/mesh/name {name} — this device's label for its opera (F10).
+// Local only: nothing is sent to peers. Printable ASCII, 1..32 bytes.
+// Persisted through the flash-encryption gate; on an FE-off board the
+// rename holds until reboot and the response says persisted:false.
+static esp_err_t handle_mesh_name(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  char body[128];
+  const int recv = httpd_req_recv(req, body, sizeof(body) - 1);
+  if (recv <= 0) return http_send_error(req, 400, "empty_body");
+  body[recv] = '\0';
+
+  JsonDocument input;
+  if (deserializeJson(input, body) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+  if (!input["name"].is<const char*>()) {
+    return http_send_error(req, 400, "missing_name");
+  }
+  const char* name = input["name"].as<const char*>();
+  const size_t len = strnlen(name, mesh_pairing::MAX_OPERA_NAME_LEN + 1);
+  if (len == 0 || len > mesh_pairing::MAX_OPERA_NAME_LEN) {
+    return http_send_error(req, 400, "invalid_name");
+  }
+  for (size_t i = 0; i < len; ++i) {
+    const unsigned char c = (unsigned char)name[i];
+    if (c < 0x20 || c > 0x7E) return http_send_error(req, 400, "invalid_name");
+  }
+  if (!mesh_session::has_opera()) {
+    return http_send_error(req, 400, "no_opera");
+  }
+
+  mesh_session::set_opera_name(name);
+  const bool persisted = mesh_state::save_opera_name(name);
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["persisted"] = persisted;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// POST /api/mesh/enable {enabled} — mesh on/off (F10). Disabling stops
+// the session (and cancels a pairing in flight) without leaving the
+// opera; the choice is persisted (NVS "mesh_enabled", a preference, not
+// FE-gated) and re-applied at boot.
+static esp_err_t handle_mesh_enable(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  char body[64];
+  const int recv = httpd_req_recv(req, body, sizeof(body) - 1);
+  if (recv <= 0) return http_send_error(req, 400, "empty_body");
+  body[recv] = '\0';
+
+  JsonDocument input;
+  if (deserializeJson(input, body) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+  if (!input["enabled"].is<bool>()) {
+    return http_send_error(req, 400, "missing_enabled_bool");
+  }
+  const bool want = input["enabled"].as<bool>();
+
+  mesh_session::set_enabled(want);
+  const bool persisted = mesh_state::save_mesh_enabled(want);
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK,
+             want ? "Mesh enabled" : "Mesh disabled", "via /api/mesh/enable");
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["enabled"] = mesh_session::is_enabled();
+  doc["persisted"] = persisted;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// GET /api/mesh/alerts — the received-alert history, newest first (F10).
+static esp_err_t handle_mesh_alerts(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  static_assert(mesh_session::MAX_ALERT_HISTORY <= mesh_api::MAX_ALERTS_JSON,
+                "ALERTS_JSON_CAP is pinned for MAX_ALERTS_JSON rows");
+  mesh_alert::Record recs[mesh_session::MAX_ALERT_HISTORY];
+  const size_t n = mesh_session::get_alerts(recs, mesh_session::MAX_ALERT_HISTORY);
+
+  // Worst-case body (host-test pinned, mesh_api.h) — heap, not the httpd
+  // task's stack.
+  const size_t cap = mesh_api::ALERTS_JSON_CAP;
+  char* body = (char*)malloc(cap);
+  if (body == nullptr) return http_send_error(req, 500, "oom");
+  esp_err_t rc;
+  if (!mesh_api::build_mesh_alerts_json(body, cap, recs, n)) {
+    rc = http_send_error(req, 500, "encode_failed");
+  } else {
+    rc = http_send_json(req, body);
+  }
+  free(body);
+  return rc;
+}
+
+// DELETE /api/mesh/alerts — clear the history (F10). The per-peer and
+// opera-wide alerts_received counters keep counting for the boot
+// (canary-wap parity).
+static esp_err_t handle_mesh_alerts_clear(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  mesh_session::clear_alerts();
+  return http_send_json(req, "{\"ok\":true}");
 }
 
 #endif // FEATURE_MESH_NETWORK

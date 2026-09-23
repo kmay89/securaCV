@@ -37,6 +37,13 @@ namespace mesh_session {
 
 static bool                       s_initialized = false;
 static bool                       s_running     = false;
+/* User on/off switch (F10). "Disabled" implies "not running": start()
+ * refuses while this is false. Reset to true by deinit(). */
+static bool                       s_enabled     = true;
+/* now_ms of the latest process() call — the receive path's clock (the
+ * transport recv callback carries no timestamp). Used to stamp received
+ * alerts; off by at most one main-loop pass. */
+static uint32_t                   s_last_process_ms = 0;
 static mesh_pairing::PairingContext s_ctx;
 static uint8_t                    s_device_pub [mesh_crypto::PUBKEY_LEN];
 static uint8_t                    s_device_priv[mesh_crypto::PRIVKEY_LEN];
@@ -57,11 +64,12 @@ static uint8_t  s_opera_id [mesh_crypto::OPERA_ID_LEN];
 static uint8_t  s_sender_fp[mesh_crypto::FINGERPRINT_LEN];
 static uint64_t s_outbound_counter   = 0;
 
-/* RAM-only opera display name (PR-8). Cosmetic — surfaced by GET
- * /api/mesh so the UI can label the opera. Deliberately NOT persisted to
- * NVS (no extra key); on a cold boot it stays empty until pairing
- * repopulates it. Wiped on deinit() alongside the other opera-auth
- * state so a deinit()/init() cycle starts with no stale name. */
+/* Opera display name (PR-8; persisted since F10). Surfaced by GET
+ * /api/mesh so the UI can label the opera. This module keeps only the
+ * RAM copy; the integration layer persists it (mesh_state
+ * save_/load_opera_name, NVS key "opera_name", FE-gated) and seeds it
+ * at boot. Wiped on deinit() and leave_opera() alongside the other
+ * opera-auth state so neither path leaves a stale name. */
 static char     s_opera_name[mesh_pairing::MAX_OPERA_NAME_LEN + 1] = {0};
 
 /* Receive-side state (PR 5c-4). Trusted-peer table — small fixed
@@ -81,12 +89,27 @@ struct TrustedPeer {
    * live transport table's liveness/RSSI. */
   uint8_t  mac[mesh_transport::MESH_TRANSPORT_MAC_LEN];
   bool     mac_known;
+  /* Verified TAMPER_ALERT frames from this peer (F11 residual). Counted
+   * in dispatch_verified, i.e. only after signature + opera_id + replay
+   * checks — the same trust argument as the MAC binding above. */
+  uint32_t alerts_received;
 };
 static TrustedPeer s_trusted_peers[MAX_TRUSTED_PEERS];
 
 static beacon_event_received_fn s_beacon_event_cb = nullptr;
 static channel_lock_received_fn s_channel_lock_cb = nullptr;
 static hub_election_received_fn s_hub_election_cb = nullptr;
+static peer_left_fn             s_peer_left_cb    = nullptr;
+static tamper_alert_received_fn s_tamper_alert_cb = nullptr;
+
+/* Alert channel state (F10). Opera-wide lifetime counter for the boot,
+ * plus a ring of the most recent MAX_ALERT_HISTORY records (s_alert_head
+ * is the next write slot). clear_alerts() empties the ring and keeps the
+ * counters; deinit() and leave_opera() wipe both. */
+static uint32_t           s_alerts_received = 0;
+static mesh_alert::Record s_alert_ring[MAX_ALERT_HISTORY];
+static size_t             s_alert_head  = 0;
+static size_t             s_alert_count = 0;
 
 /* ──────────────────────────────────────────────────────────────────────────
  * INTERNAL HELPERS
@@ -167,7 +190,8 @@ static void dispatch_action(const mesh_pairing::Action& a) {
       /* Cache the opera name the joiner learned from the OFFER (the
        * initiator already cached its own at start_pairing_initiator;
        * re-caching here is harmless and is the only place the joiner
-       * sees it). RAM-only — never written to NVS. */
+       * sees it). This module never writes NVS; the PairedCallback
+       * persists it (mesh_state::save_opera_name, FE-gated). */
       set_opera_name(s_ctx.opera_name);
       uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN];
       const bool have_secret =
@@ -203,10 +227,58 @@ static TrustedPeer* find_trusted_peer(
   return nullptr;
 }
 
+/* True while a pairing exchange is between start_* and a terminal state.
+ * Used so disable/leave only cancel a pairing that is actually running
+ * (cancel() from IDLE would fire a spurious FailedCallback). */
+static bool pairing_in_progress() {
+  switch (s_ctx.state) {
+    case mesh_pairing::State::IDLE:
+    case mesh_pairing::State::PAIRED:
+    case mesh_pairing::State::FAILED:
+      return false;
+    default:
+      return true;
+  }
+}
+
+static void reset_alerts() {
+  s_alerts_received = 0;
+  memset(s_alert_ring, 0, sizeof(s_alert_ring));
+  s_alert_head  = 0;
+  s_alert_count = 0;
+}
+
+/* Build [1-byte session msg type][signed envelope] for an
+ * opera-authenticated send. Bumps the outbound counter. Returns the total
+ * frame length, or 0 when there is no opera or signing/serialization
+ * fails. Used by the F10 senders; the three pre-F10 senders keep their
+ * own inline copies of the same sequence. */
+static size_t build_signed_frame(mesh_envelope::MsgType type,
+                                 const uint8_t*         payload,
+                                 size_t                 payload_len,
+                                 uint32_t               now_ms,
+                                 uint8_t*               out,
+                                 size_t                 out_cap) {
+  if (!s_opera_id_set || out == nullptr || out_cap < 1) return 0;
+  mesh_envelope::Header header;
+  header.version   = mesh_envelope::PROTOCOL_VERSION;
+  header.msg_type  = static_cast<uint8_t>(type);
+  memcpy(header.opera_id,  s_opera_id,  sizeof(header.opera_id));
+  memcpy(header.sender_fp, s_sender_fp, sizeof(header.sender_fp));
+  header.counter   = ++s_outbound_counter;
+  header.timestamp = now_ms;
+  out[0] = static_cast<uint8_t>(type);
+  const size_t env_len = mesh_envelope::serialize_signed(
+      header, payload, payload_len,
+      s_device_priv, s_device_pub,
+      out + 1, out_cap - 1);
+  return env_len == 0 ? 0 : 1 + env_len;
+}
+
 /* Dispatch a verified opera-authenticated frame by envelope msg_type.
  * Called from on_opera_frame after parse_and_verify + counter check
  * have both passed. */
-static void dispatch_verified(const TrustedPeer&         peer,
+static void dispatch_verified(TrustedPeer&               peer,
                               const mesh_envelope::Header& hdr,
                               const uint8_t*             payload,
                               size_t                     payload_len) {
@@ -242,6 +314,42 @@ static void dispatch_verified(const TrustedPeer&         peer,
         return;
       }
       s_hub_election_cb(peer.sender_fp, event, elected_fp);
+      break;
+    }
+    case mesh_envelope::MsgType::TAMPER_ALERT: {
+      mesh_alert::Kind kind;
+      uint8_t          severity    = 0;
+      uint32_t         witness_seq = 0;
+      if (!mesh_alert::decode(payload, payload_len,
+                              &kind, &severity, &witness_seq)) {
+        return;   /* malformed payload — drop silently, count nothing */
+      }
+      peer.alerts_received++;
+      s_alerts_received++;
+      mesh_alert::Record& r = s_alert_ring[s_alert_head];
+      r.timestamp_ms = s_last_process_ms;
+      memcpy(r.sender_fp, peer.sender_fp, sizeof(r.sender_fp));
+      r.kind        = kind;
+      r.severity    = severity;
+      r.witness_seq = witness_seq;
+      s_alert_head = (s_alert_head + 1) % MAX_ALERT_HISTORY;
+      if (s_alert_count < MAX_ALERT_HISTORY) ++s_alert_count;
+      if (s_tamper_alert_cb) {
+        s_tamper_alert_cb(peer.sender_fp, kind, severity, witness_seq);
+      }
+      break;
+    }
+    case mesh_envelope::MsgType::LEAVE_OPERA: {
+      if (payload_len != 0) return;   /* LEAVE carries no payload */
+      /* Copy out before unregistering: `peer` is the slot being zeroed. */
+      uint8_t fp    [mesh_crypto::FINGERPRINT_LEN];
+      uint8_t pubkey[mesh_crypto::PUBKEY_LEN];
+      memcpy(fp,     peer.sender_fp, sizeof(fp));
+      memcpy(pubkey, peer.pubkey,    sizeof(pubkey));
+      /* The frame verified under the SIGNER's key, so this can only ever
+       * remove the signer's own entry. */
+      unregister_trusted_peer(fp);
+      if (s_peer_left_cb) s_peer_left_cb(fp, pubkey);
       break;
     }
     default:
@@ -383,6 +491,9 @@ void deinit() {
   secure_zero(s_sender_fp, sizeof(s_sender_fp));
   s_outbound_counter = 0;
   s_opera_name[0]    = '\0';
+  s_enabled          = true;
+  s_last_process_ms  = 0;
+  reset_alerts();
   /* PR 5c-4: wipe the trusted-peer table + handler so a deinit()/init()
    * cycle doesn't carry stale peers or replay counters into the next
    * session. The pubkeys aren't secret but the staleness alone would
@@ -393,12 +504,15 @@ void deinit() {
   s_beacon_event_cb = nullptr;
   s_channel_lock_cb = nullptr;
   s_hub_election_cb = nullptr;
+  s_peer_left_cb    = nullptr;
+  s_tamper_alert_cb = nullptr;
   s_running = false;
   s_initialized = false;
 }
 
 bool start() {
   if (!s_initialized) return false;
+  if (!s_enabled) return false;   /* disabled ⇒ not running */
   s_running = true;
   return true;
 }
@@ -408,6 +522,21 @@ void stop() {
 }
 
 bool is_running() { return s_running; }
+
+void set_enabled(bool enabled) {
+  if (!enabled) {
+    /* Tear down a pairing in flight while we can still dispatch its
+     * NOTIFY_FAILED (cancel_pairing is a no-op once stopped). */
+    if (s_running && pairing_in_progress()) cancel_pairing();
+    s_enabled = false;
+    stop();
+    return;
+  }
+  s_enabled = true;
+  if (s_initialized) start();
+}
+
+bool is_enabled() { return s_enabled; }
 
 void set_paired_callback    (PairedCallback     cb) { s_paired_cb     = cb; }
 void set_failed_callback    (FailedCallback     cb) { s_failed_cb     = cb; }
@@ -427,7 +556,8 @@ bool start_pairing_initiator(const uint8_t opera_secret[mesh_crypto::OPERA_SECRE
   if (a.type == mesh_pairing::ActionType::NONE) return false;
   /* Cache the opera display name for GET /api/mesh. The initiator knows
    * it up front (it's the existing opera's name); the joiner learns it
-   * from the OFFER and caches it on NOTIFY_PAIRED. RAM-only. */
+   * from the OFFER and caches it on NOTIFY_PAIRED. RAM copy only — see
+   * s_opera_name for where it is persisted. */
   set_opera_name(opera_name);
   dispatch_action(a);
   return true;
@@ -482,6 +612,7 @@ bool get_paired_peer_pubkey(uint8_t out[mesh_crypto::PUBKEY_LEN]) {
  * ────────────────────────────────────────────────────────────────────────── */
 
 void process(uint32_t now_ms) {
+  s_last_process_ms = now_ms;
   if (!s_running) return;
   mesh_pairing::Action a = mesh_pairing::tick(s_ctx, now_ms);
   dispatch_action(a);
@@ -635,6 +766,14 @@ void clear_trusted_peers() {
   memset(s_trusted_peers, 0, sizeof(s_trusted_peers));
 }
 
+bool unregister_trusted_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN]) {
+  if (fp == nullptr) return false;
+  TrustedPeer* p = find_trusted_peer(fp);
+  if (p == nullptr) return false;
+  memset(p, 0, sizeof(*p));
+  return true;
+}
+
 size_t trusted_peer_count() {
   size_t n = 0;
   for (size_t i = 0; i < MAX_TRUSTED_PEERS; ++i) {
@@ -665,6 +804,7 @@ size_t get_peer_links(PeerLink* out, size_t cap) {
     memcpy(out[n].fp,  s_trusted_peers[i].sender_fp, mesh_crypto::FINGERPRINT_LEN);
     memcpy(out[n].mac, s_trusted_peers[i].mac,       mesh_transport::MESH_TRANSPORT_MAC_LEN);
     out[n].mac_known = s_trusted_peers[i].mac_known;
+    out[n].alerts_received = s_trusted_peers[i].alerts_received;
     ++n;
   }
   return n;
@@ -758,6 +898,80 @@ bool send_hub_election(mesh_hub_election::Event event,
 
 void set_hub_election_handler(hub_election_received_fn fn) {
   s_hub_election_cb = fn;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * F10 — LEAVE + TAMPER ALERTS
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool leave_opera(uint32_t now_ms) {
+  bool notified = false;
+  if (s_initialized && s_running && s_opera_id_set) {
+    /* Signed under the CURRENT opera_id before we forget it, so the
+     * survivors can verify it. Best effort: nobody listening is fine. */
+    uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+    const size_t n = build_signed_frame(mesh_envelope::MsgType::LEAVE_OPERA,
+                                        nullptr, 0, now_ms,
+                                        frame, sizeof(frame));
+    if (n > 0) notified = mesh_transport::broadcast(frame, n) > 0;
+  }
+  if (s_running && pairing_in_progress()) cancel_pairing();
+  clear_trusted_peers();
+  s_opera_id_set     = false;
+  secure_zero(s_opera_id,  sizeof(s_opera_id));
+  secure_zero(s_sender_fp, sizeof(s_sender_fp));
+  s_outbound_counter = 0;
+  s_opera_name[0]    = '\0';
+  reset_alerts();
+  return notified;
+}
+
+void set_peer_left_handler(peer_left_fn fn) {
+  s_peer_left_cb = fn;
+}
+
+bool send_tamper_alert(mesh_alert::Kind kind,
+                       uint8_t          severity,
+                       uint32_t         witness_seq,
+                       uint32_t         now_ms) {
+  if (!s_initialized || !s_running) return false;
+  if (!s_opera_id_set)             return false;
+
+  uint8_t payload[mesh_alert::PAYLOAD_LEN];
+  if (!mesh_alert::encode(kind, severity, witness_seq,
+                          payload, sizeof(payload))) {
+    return false;
+  }
+  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  const size_t n = build_signed_frame(mesh_envelope::MsgType::TAMPER_ALERT,
+                                      payload, sizeof(payload), now_ms,
+                                      frame, sizeof(frame));
+  if (n == 0) return false;
+  return mesh_transport::broadcast(frame, n) > 0;
+}
+
+void set_tamper_alert_handler(tamper_alert_received_fn fn) {
+  s_tamper_alert_cb = fn;
+}
+
+uint32_t alerts_received() { return s_alerts_received; }
+
+size_t get_alerts(mesh_alert::Record* out, size_t cap) {
+  if (out == nullptr) return 0;
+  size_t n = 0;
+  /* Newest first: walk back from the slot before the write head. */
+  for (size_t k = 0; k < s_alert_count && n < cap; ++k) {
+    const size_t idx = (s_alert_head + MAX_ALERT_HISTORY - 1 - k) % MAX_ALERT_HISTORY;
+    out[n++] = s_alert_ring[idx];
+  }
+  return n;
+}
+
+void clear_alerts() {
+  /* History only — the lifetime counters keep counting (WAP parity). */
+  memset(s_alert_ring, 0, sizeof(s_alert_ring));
+  s_alert_head  = 0;
+  s_alert_count = 0;
 }
 
 }  /* namespace mesh_session */

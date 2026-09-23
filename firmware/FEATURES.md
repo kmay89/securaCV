@@ -273,10 +273,11 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | `POST /api/peek/stop` | ✅ | ❌ | ❌ | ❌ |
 | `GET /api/peek/status` | ✅ | ❌ | ❌ | ❌ |
 | `POST /api/peek/resolution` | ✅ | ❌ | ❌ | ❌ |
-| `GET /api/mesh` | ✅ | ❌ | ❌ | ❌ |
-| `GET /api/mesh/peers` | ✅ | ❌ | ❌ | ❌ |
-| `GET /api/mesh/alerts` | ✅ | ❌ | ❌ | ❌ |
-| Mesh pair/leave/remove endpoints | ✅ (6 endpoints) | ❌ | ❌ | ❌ |
+| `GET /api/mesh` | ✅ | ✅ | ✅ | ❌ |
+| `GET /api/mesh/peers` | ✅ | ✅ | ✅ (incl. per-peer `alerts_received`) | ❌ |
+| `GET /api/mesh/alerts` | ✅ | ✅ (+ `DELETE`) | ✅ (+ `DELETE`; verified TAMPER_ALERT history, per boot) | ❌ |
+| Mesh pair/leave/remove endpoints | ✅ (6 endpoints) | ✅ (+ name, enable) | ⚠️ pair ×4, leave, name, enable — `remove` not yet (next row) | ❌ |
+| `POST /api/mesh/remove` (rotates `opera_secret`, spec §5.6) | ✅ | ✅ | ❌ rekey not ported (spec §8.3) | ❌ |
 | `GET /api/ble/status` | ✅ | ❌ | ❌ | ❌ |
 | `GET /api/nearby` | ✅ | ❌ | ❌ | ❌ |
 | `POST /api/chirp/send` | ✅ | ❌ | ❌ | ❌ |

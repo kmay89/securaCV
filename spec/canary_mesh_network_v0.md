@@ -1,8 +1,13 @@
-# Canary Mesh Network Protocol v0.2 (Opera Protocol)
+# Canary Mesh Network Protocol v0.3 (Opera Protocol)
 
-Status: Draft v0.2
+Status: Draft v0.3
 Intended Status: Normative
-Last Updated: 2026-05-11
+Last Updated: 2026-09-23
+
+> **v0.3 summary** (PlatformIO tree, `firmware/canary/lib/securacv_mesh`):
+> `LEAVE_OPERA` (§4.2), a compact template-only `TAMPER_ALERT` payload
+> (§4.3), and the REST surface the web UIs already call — leave, name,
+> enable, alerts GET/DELETE — reconciled in §8.1/§8.3. See §14.
 
 > **v0.2 hardening summary** (see `docs/audit/mesh_and_chirp_audit_v1.md`
 > findings O1–O3):
@@ -186,6 +191,22 @@ auth_response_payload = {
 }
 ```
 
+#### LEAVE_OPERA — v0.3
+Sent once by a member that is leaving (`POST /api/mesh/leave`), signed under
+the opera it is leaving, with no payload:
+```cddl
+leave_opera_payload = nil        ; PlatformIO: zero-length payload, msg_type 25
+```
+A receiver that verifies it — signature against the sender's pinned pubkey,
+`opera_id`, per-peer counter — removes the **signer's own** trust entry and
+nothing else, so a peer can only ever remove itself. It needs no rekey: the
+leaver discards its own `opera_secret`, and the survivors' opera is unchanged.
+(Removing *another* device is §5.6 and does rotate the secret.) Like every
+opera frame it is replay-protected by the counter; the one residual case is a
+receiver that has since re-registered the same device into the same,
+un-rotated opera (registration restarts that peer's counter at 0), where a
+recorded LEAVE can drop the device's entry again — never add one.
+
 ### 4.3 Alert Messages
 
 #### TAMPER_ALERT
@@ -198,6 +219,17 @@ tamper_alert_payload = {
   detail: tstr .size (0..64)
 }
 ```
+
+**PlatformIO tree (v0.3) — compact, template-only payload.** The PIO sender
+(`mesh_session::send_tamper_alert`, envelope msg_type 18) carries a fixed
+6-byte payload (`mesh_alert.h`): `kind` u8 (0 `enclosure_tamper`, 1
+`temp_drift`, 2 `camera_tamper` — the dictionary's firmware tamper `kind`
+vocabulary), `severity` u8 (0–7, LogLevel), `witness_seq` u32 LE (0 = none).
+There is **no free-text `detail` on the wire**: a receiver renders the kind's
+template name and never shows sender-authored text. Any other length, or a
+severity above 7, is dropped. canary-wap sends its own struct (with a 64-byte
+`detail`) under its own outer type (`MSG_TAMPER_ALERT = 4`), so the two trees
+do not exchange alerts — see §8.3.
 
 #### POWER_ALERT
 Broadcast on power loss detection:
@@ -387,12 +419,20 @@ PEER_REMOVED        → Removed from opera (pending deletion)
 | `/api/mesh` | GET | Mesh status and peer list |
 | `/api/mesh/peers` | GET | Detailed peer information |
 | `/api/mesh/alerts` | GET | Recent mesh alerts |
+| `/api/mesh/alerts` | DELETE | Clear the alert history |
 | `/api/mesh/pair/start` | POST | Enter pairing mode (initiator) |
 | `/api/mesh/pair/join` | POST | Enter join mode (joiner) |
 | `/api/mesh/pair/confirm` | POST | Confirm pairing code |
 | `/api/mesh/pair/cancel` | POST | Cancel pairing |
 | `/api/mesh/leave` | POST | Leave current opera |
-| `/api/mesh/remove/:fp` | POST | Remove peer from opera |
+| `/api/mesh/name` | POST | Rename the opera, body `{"name": "..."}` |
+| `/api/mesh/enable` | POST | Mesh on/off, body `{"enabled": true\|false}` |
+| `/api/mesh/remove` | POST | Remove a peer from the opera, body `{"fingerprint": "<16 hex>"}` |
+
+v0.3: this table now lists the routes both web UIs call and the canary-wap
+server registers (`securacv_webui.cpp` and `web_ui.h` send `remove` with a
+`{fingerprint}` body, not the `/remove/:fp` path v0.2 listed; `enable`,
+`name` and the alerts `DELETE` were missing).
 
 ### 8.2 Response Formats
 
@@ -424,29 +464,69 @@ PEER_REMOVED        → Removed from opera (pending deletion)
 }
 ```
 
-### 8.3 v0 Implementation Notes (PR-8)
+### 8.3 v0 Implementation Notes (PR-8, F10)
 
-The first REST implementation (PlatformIO `firmware/canary`, gated on
-`FEATURE_MESH_NETWORK`) ships the **pairing happy-path only**. The following
-diverge from §8.1/§8.2 above and are reconciled here rather than in the
-normative tables, which describe the eventual target shape.
+The REST implementation in the PlatformIO tree (`firmware/canary`, gated on
+`FEATURE_MESH_NETWORK`, compiled in CI by `[env:full]`) diverges from
+§8.1/§8.2 as described here; the normative tables describe the target shape.
 
-**Endpoints implemented now (6):** `GET /api/mesh`, `GET /api/mesh/peers`,
-and `POST /api/mesh/pair/{start,join,confirm,cancel}`. All require a valid
-`Authorization: Bearer` token and pass through the same rate limiter as the
-rest of the REST API.
+**Endpoints implemented (11 registrations):** `GET /api/mesh`,
+`GET /api/mesh/peers`, `POST /api/mesh/pair/{start,join,confirm,cancel}`
+(PR-8), and — since F10 — `POST /api/mesh/leave`, `POST /api/mesh/name`,
+`POST /api/mesh/enable`, `GET /api/mesh/alerts` and
+`DELETE /api/mesh/alerts`. All require a valid `Authorization: Bearer` token
+and pass through the same rate limiter as the rest of the REST API. Like the
+PR-8 pairing handlers, they call into `mesh_session` from the HTTP server's
+task rather than marshaling onto the main loop the module's send contract
+names — a known posture, not a new one.
 
-**Endpoints deferred to a follow-up PR:** `GET /api/mesh/alerts`,
-`POST /api/mesh/leave`, and `POST /api/mesh/remove/:fp`. `remove` is
-deliberately deferred because §5.6 requires that removing a peer
-**atomically rotate `opera_secret` and re-key the surviving members**
-(`MSG_OPERA_REKEY` + ACK). That transaction is already implemented in the
-canary-wap tree (`firmware/projects/canary-wap/.../mesh_network.cpp`) but is
-not yet ported to the PlatformIO mesh layer. Shipping a `remove` endpoint
-that drops a peer from the local table *without* re-keying would be a
-security misrepresentation — the removed device would retain a working
-`opera_secret` — so the endpoint is omitted entirely rather than shipped as
-a no-op. The web UI tolerates these routes 404ing.
+**Endpoint still deferred:** `POST /api/mesh/remove`. §5.6 requires that
+removing a peer **atomically rotate `opera_secret` and re-key the surviving
+members**. That transaction exists in the canary-wap tree
+(`firmware/projects/canary-wap/.../mesh_network.cpp`) but is not ported to
+the PlatformIO mesh layer. Shipping a `remove` that drops a peer from the
+local table *without* re-keying would be a security misrepresentation — the
+removed device would keep a working `opera_secret` — so the route is not
+registered rather than shipped as a no-op. The web UI tolerates it 404ing.
+
+**`leave`:** the device signs a `LEAVE_OPERA` (§4.2) under the opera it is
+leaving and broadcasts it (best effort — the response carries
+`notified: true|false`), then forgets everything opera-scoped: the secret,
+the trusted peers, the replay counters, the elected hub and the name, in RAM
+and in NVS (`persisted: false` if an NVS clear failed). Survivors that verify
+the frame drop the leaver's trust entry, in RAM and in NVS. No rekey (§4.2).
+
+**`name`:** 1–32 printable-ASCII bytes, refused with `no_opera` when the
+device holds no opera. **Local only** — it renames this device's label for
+the opera and is not propagated to peers. Persisted to NVS `opera_name`
+through the flash-encryption gate (§12.3); on an FE-off board the rename
+holds until reboot and the response says `persisted: false`.
+
+**`enable`:** body `{"enabled": bool}`. Disabling stops the session — no
+send, no receive dispatch, a pairing in flight is canceled — without
+leaving the opera; `GET /api/mesh` then reports `state: "DISABLED"`, and
+`pair/start` / `pair/join` answer `mesh_disabled`. The choice is persisted
+to NVS `mesh_enabled` (a preference, not flash-encryption gated) and applied
+at boot.
+
+**Alerts:** the PIO tree now **sends** `TAMPER_ALERT` (§4.3) — a device's
+own enclosure, temperature-drift or camera tamper witness record queues one
+to the opera, drained on the main loop — and **receives** it: a frame that
+passes signature, `opera_id` and replay checks and decodes is counted
+against the sender (`alerts_received` per peer and opera-wide), kept in a
+16-entry RAM history, and written to the health log at `LOG_LEVEL_ALERT`,
+`LOG_CAT_NETWORK` with the sender's fingerprint (§6.3). `GET /api/mesh/alerts`
+returns `{ok, count, alerts:[{timestamp_ms, type, severity, sender_fp,
+sender_name, detail, witness_seq}]}` newest first: `type` is `"TAMPER"`,
+`detail` is the kind's template name, `timestamp_ms` is the receiver's uptime
+at receipt (the canary-wap basis too), and `sender_name` is `""` until a
+peer-metadata store exists. `DELETE` clears the history; the counters keep
+counting. Counters and history are **per boot** — not persisted. Relay
+(§6.1 step 3), `POWER_ALERT` and `OFFLINE_IMMINENT` are not implemented.
+**Not wire-interoperable with canary-wap:** the two trees number the outer
+frame type differently (PIO 18 vs WAP `MSG_TAMPER_ALERT = 4`) and carry
+different payloads; nothing here delivers alerts across trees (the WAP's own
+`broadcast_tamper_alert` has no caller, so it sends none either).
 
 **`GET /api/mesh` field set:** the implementation emits the exact fields the
 canary web UI consumes — `ok, state, opera_id, opera_name, has_opera,
@@ -458,9 +538,9 @@ visual-match step.
 
 **Peer fields:** `fingerprint` is derived from the persisted trusted-peer
 public keys (`mesh_crypto::fingerprint`). `name` is best-effort and may be
-empty (the UI falls back to "Unknown Device"); per-peer `name` and
-`alerts_received` attribution remain placeholders pending a peer-metadata
-store and an implemented alert message type. `state`/`last_seen_sec`/`rssi`
+empty (the UI falls back to "Unknown Device") — a placeholder pending a
+peer-metadata store. `alerts_received` is the §8.2 per-peer count of
+verified `TAMPER_ALERT` frames this boot. `state`/`last_seen_sec`/`rssi`
 are real joins against the ESP-NOW transport peer table:
 `mesh_session` records the source MAC of every **fully verified**
 opera-authenticated frame against the sender's fingerprint (signature,
@@ -580,6 +660,14 @@ mesh_peers       | 1024 B  | Serialized peer list
 mesh_peer_count  | 1 byte  | Number of peers
 ```
 
+The PlatformIO tree (`mesh_state.cpp`, NVS namespace `securacv`) stores:
+`opera_secret` (32 B), `trusted_peers` (up to 8 × 32 B pubkeys),
+`replay_ctrs` (per-peer counters), `elected_hub` (8 B) and — v0.3 —
+`opera_name` (up to 32 B), all behind the flash-encryption gate (§5.5), plus
+`mesh_enabled` (1 B), which is **not** gated: it is a preference, and gating
+it would make "off" silently revert to "on" at every reboot of an FE-off
+board. The `opera_id` is not stored; it is derived from the secret at boot.
+
 ## 13. Conformance
 
 An implementation conforms to this specification if it:
@@ -594,3 +682,10 @@ An implementation conforms to this specification if it:
 ## 14. Changelog
 
 - v0.1 (2026-02-02): Initial draft
+- v0.2 (2026-05-11): audit O1–O3 hardening (counter-anchored freshness,
+  flash-encryption gate, rekey on removal) — summary at the top.
+- v0.3 (2026-09-23): `LEAVE_OPERA` (§4.2); the PlatformIO compact
+  `TAMPER_ALERT` payload, sent and received (§4.3, §8.3); §8.1 reconciled
+  with the routes the web UIs call (`remove` takes a `{fingerprint}` body;
+  `enable`, `name`, alerts `DELETE` added); PIO REST leave/name/enable/alerts
+  (§8.3); `opera_name` and `mesh_enabled` NVS keys (§12.3).

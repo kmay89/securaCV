@@ -115,7 +115,10 @@ enum class MsgType : uint8_t {
   BEACON_EVENT   = 22,   /* PR 5c — ble.scout arrived/departed broadcast */
   CHANNEL_LOCK   = 23,   /* PR 4b — coordinated channel-hop proposal */
   HUB_ELECTION   = 24,   /* PR 4c — Hub failover election broadcast */
-  /* 25..255 reserved for future use. */
+  LEAVE_OPERA    = 25,   /* F10 — "I am leaving"; empty payload. A verified
+                          * LEAVE removes only the SIGNER's own trust entry
+                          * at each receiver (spec §4.2, §8.3). */
+  /* 26..255 reserved for future use. */
 };
 
 /* ──────────────────────────────────────────────────────────────────────────

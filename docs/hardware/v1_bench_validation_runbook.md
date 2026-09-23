@@ -152,7 +152,7 @@ Then enable flash encryption on all fleet boards and proceed.
 
 ### C2. Opera pairing
 
-1. Board 1: `POST /api/mesh/enable`, then `/api/mesh/pair/start`.
+1. Board 1: `POST /api/mesh/enable` with `{"enabled": true}`, then `/api/mesh/pair/start`.
 2. Board 2: `/api/mesh/pair/join`; confirm on both (`/api/mesh/pair/confirm`).
 3. `GET /api/mesh/peers` on each — both list the other with fresh heartbeats.
 
@@ -165,9 +165,11 @@ on the survivor within the spec thresholds (90 s / 300 s).
 
 | Test | Expected |
 |---|---|
-| Witness/alert propagation | Event on board 1 raises a mesh alert on board 2 (`/api/mesh/alerts`) |
+| Witness/alert propagation | Event on board 1 raises a mesh alert on board 2 (`/api/mesh/alerts`). PlatformIO boards: an enclosure, temperature-drift or camera tamper record on board 1 shows on board 2 as `type: TAMPER`, `detail` = the kind, `sender_fp` = board 1, and board 1's row in board 2's `/api/mesh/peers` counts it in `alerts_received`; `DELETE /api/mesh/alerts` empties the list but not the counts |
+| Leave | `POST /api/mesh/leave` on board 2 → board 2 reports `NO_OPERA` and `notified: true`; board 1 drops board 2 from `/api/mesh/peers` without a reboot (signed `LEAVE_OPERA`, spec §4.2), and still does after a reboot |
+| Disable survives reboot | `POST /api/mesh/enable` `{"enabled": false}` → `state: DISABLED`, pairing refused with `mesh_disabled`; after a power cycle it is still `DISABLED` |
 | Peer removal | `/api/mesh/remove` on board 1 → opera secret rotates; removed board can no longer rejoin without re-pairing (audit O3) |
-| Tamper auto-revoke | Tamper alert from a paired member → survivor marks it `REVOKED` (v0.5 behavior) |
+| Tamper auto-revoke | Tamper alert from a paired member → survivor marks it `REVOKED` (v0.5 behavior; canary-wap only — the PlatformIO tree has no Beacon channel) |
 | Third board joins | 3-node opera stable; no crosstalk with a second, separately-paired opera (opera_id isolation) |
 
 ### C4. Chirp exchange

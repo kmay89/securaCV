@@ -237,7 +237,7 @@ enum class State : uint8_t {
  * `state` string from GET /api/mesh and branch on it. The exact strings
  * the UI checks (securacv_webui.cpp refreshOpera / startPairingPoll) are:
  *
- *   "DISABLED"        — mesh feature compiled out / disabled
+ *   "DISABLED"        — mesh switched off (POST /api/mesh/enable; F10)
  *   "NO_OPERA"        — mesh enabled, but no opera joined yet
  *   "CONNECTING"      — opera joined, no peers online yet
  *   "ACTIVE"          — opera joined, ≥1 peer online

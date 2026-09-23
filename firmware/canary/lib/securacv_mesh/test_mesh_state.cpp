@@ -143,6 +143,52 @@ void test_elected_hub_null_handling() {
   std::printf("PASS test_elected_hub_null_handling\n");
 }
 
+void test_mesh_enabled_host_stub() {
+  /* F10: load reports "nothing stored" (callers default to enabled) and
+   * leaves the output untouched; save is a no-op success. */
+  bool v = false;
+  assert(!mesh_state::load_mesh_enabled(&v));
+  assert(v == false);
+  v = true;
+  assert(!mesh_state::load_mesh_enabled(&v));
+  assert(v == true);
+  assert(!mesh_state::load_mesh_enabled(nullptr));
+  assert(mesh_state::save_mesh_enabled(false));
+  assert(mesh_state::save_mesh_enabled(true));
+  std::printf("PASS test_mesh_enabled_host_stub\n");
+}
+
+void test_opera_name_host_stub() {
+  /* F10: load → false with out untouched; save/clear → true; save
+   * still validates its input on the host (null / empty / over-long). */
+  char out[mesh_state::MAX_OPERA_NAME_BYTES + 1];
+  std::memset(out, 0x5A, sizeof(out));
+  assert(!mesh_state::load_opera_name(out, sizeof(out)));
+  for (size_t i = 0; i < sizeof(out); ++i) assert(out[i] == 0x5A);
+  assert(!mesh_state::load_opera_name(nullptr, sizeof(out)));
+  assert(!mesh_state::load_opera_name(out, mesh_state::MAX_OPERA_NAME_BYTES));
+
+  assert(mesh_state::save_opera_name("Home"));
+  assert(!mesh_state::save_opera_name(nullptr));
+  assert(!mesh_state::save_opera_name(""));
+  char longname[mesh_state::MAX_OPERA_NAME_BYTES + 2];
+  std::memset(longname, 'A', sizeof(longname) - 1);
+  longname[sizeof(longname) - 1] = '\0';          /* 33 chars */
+  assert(!mesh_state::save_opera_name(longname));
+  longname[mesh_state::MAX_OPERA_NAME_BYTES] = '\0';  /* exactly 32 */
+  assert(mesh_state::save_opera_name(longname));
+  assert(mesh_state::clear_opera_name());
+  std::printf("PASS test_opera_name_host_stub\n");
+}
+
+void test_remove_trusted_peer_host_stub() {
+  uint8_t pubkey[mesh_crypto::PUBKEY_LEN];
+  for (size_t i = 0; i < sizeof(pubkey); ++i) pubkey[i] = (uint8_t)(0x60 + i);
+  assert(mesh_state::remove_trusted_peer(pubkey));   /* host: no-op success */
+  assert(!mesh_state::remove_trusted_peer(nullptr));
+  std::printf("PASS test_remove_trusted_peer_host_stub\n");
+}
+
 }  /* namespace */
 
 int main() {
@@ -156,6 +202,9 @@ int main() {
   test_elected_hub_load_returns_false_on_host();
   test_elected_hub_save_and_clear_on_host();
   test_elected_hub_null_handling();
+  test_mesh_enabled_host_stub();
+  test_opera_name_host_stub();
+  test_remove_trusted_peer_host_stub();
   std::printf("\nALL MESH_STATE TESTS PASSED\n");
   return 0;
 }
