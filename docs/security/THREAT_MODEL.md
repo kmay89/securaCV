@@ -542,9 +542,16 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     no per-peer session keys exist there, so the rotation runs an
     ephemeral X25519 exchange per removal inside signed envelopes, the ACK
     going out under the old `opera_id` before a survivor switches; a
-    survivor that misses the 60 s window is dropped and re-pairs. Host-tested;
-    **maintainer crypto review and the U1 Track C3 bench pass are pending**,
-    and the §5.6 revocation deny-list is implemented in neither tree.
+    survivor that misses the 60 s window is dropped and re-pairs. There,
+    `opera_id` is a cleartext header field and `opera_secret` buys nothing
+    else, so the removed device is shut out by each survivor
+    **unregistering its pubkey**, not by the new secret: a survivor that
+    missed the window (or aborted without its SECRET) keeps trusting the
+    removed device indefinitely, with no signal. The rotation's own gain is
+    that every pre-removal frame is dead to the survivors that switched,
+    across a re-pair too. Host-tested; **maintainer crypto review and the
+    U1 Track C3 bench pass are pending**, and the §5.6 revocation deny-list
+    is implemented in neither tree.
 
 ### Chirp channel (anonymous, community, soft-alert)
 

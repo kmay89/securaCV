@@ -427,6 +427,25 @@ the old secret is cleared rather than left for the next boot. The ephemeral keys
 dedicated X25519 generator (`mesh_crypto::x25519_generate_keypair`, RFC 7748
 clamping) — not the Ed25519 generator pairing uses.
 
+**What the rotation does and does not buy here.** In this tree
+`opera_secret` has one use besides being handed on at pairing — deriving
+`opera_id` — and `opera_id` travels in cleartext in every frame header;
+frames are authenticated by the sender's Ed25519 key alone. So the step that actually excludes the removed
+device is each survivor **unregistering its pubkey** (at install, and on
+the initiator at `remove`), not the new secret: the removed device can
+copy the new `opera_id` off the air, and it stays accepted by any survivor
+that did not unregister it — one that missed the whole 60 s window, or one
+that answered the OFFER but aborted without its SECRET. Such a survivor
+trusts the removed device indefinitely and gets no signal that it was
+itself dropped. What the rotation does buy: every frame signed before the
+removal carries the old `opera_id` and is dead to every survivor that
+switched — also across a later re-pair of the removed device — and a
+survivor that missed the rotation is visibly split onto the old id instead
+of silently in step.
+The §5.6 caveat above ("cannot impersonate a current member because the
+surviving members no longer accept frames carrying the old `opera_id`")
+therefore describes canary-wap's session-key design, not this tree.
+
 Deliberate limits: one rotation at a time per device (a second `remove` is
 refused, a survivor ignores a second OFFER); two users removing peers from
 two devices inside the same 60 s window can split the household between two
@@ -571,10 +590,12 @@ task — an open item.
 **`remove` (F10-rekey — crypto review and bench pending):** body
 `{"fingerprint": "<16 hex>"}`, the string `GET /api/mesh/peers` emits. It
 never drops a peer without rotating: §5.6 requires that removing a peer
-rotate `opera_secret` and hand the new one to the survivors, and a `remove`
-that only edited the local table would leave the removed device a working
-secret — so the PIO route starts the §5.6 PlatformIO rotation first and
-forgets the peer only if the rotation started. Responses: `{ok, rekey:
+rotate `opera_secret` and hand the new one to the survivors — so the PIO
+route starts the §5.6 PlatformIO rotation first and forgets the peer only
+if the rotation started. (In this tree the exclusion itself is every
+survivor unregistering the removed pubkey; the rotation is what makes the
+removed device's earlier frames dead — §5.6, "What the rotation does and
+does not buy here".) Responses: `{ok, rekey:
 "started"}` (survivors are being re-keyed; the commit lands within 60 s),
 `{ok, rekey: "committed"}` (nobody left to tell — rotated locally at once),
 `persisted` for the removed peer's NVS entry; errors `unknown_peer` (404),

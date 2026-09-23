@@ -521,10 +521,14 @@ void     clear_alerts();
  *
  * CRYPTO: maintainer review required before merge; bench-gated (U1 Track C3).
  *
- * remove_peer() drops a trusted peer AND rotates the household secret so
- * the removed device's copy stops working (spec §5.6; option B of the plan
- * — an ephemeral X25519 exchange per rotation over signed envelopes, the
- * pure state machine in mesh_rekey.h):
+ * remove_peer() drops a trusted peer AND rotates the household secret
+ * (spec §5.6; option B of the plan — an ephemeral X25519 exchange per
+ * rotation over signed envelopes, the pure state machine in mesh_rekey.h).
+ * The exclusion itself is every survivor unregistering the removed pubkey;
+ * opera_id is cleartext, so the new secret alone does not lock the removed
+ * device out, and a survivor that misses the window keeps trusting it with
+ * no signal. The rotation kills every pre-removal frame for the survivors
+ * that switch (mesh_rekey.h spells this out):
  *   • the rotation is started first; only if it starts is the peer
  *     forgotten (trust entry + its transport MAC, so later broadcasts stop
  *     reaching it) — a refused start leaves the table untouched;

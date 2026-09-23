@@ -128,8 +128,9 @@ Action on_offer(Context& ctx, const uint8_t my_fp[FP_LEN],
   const uint8_t* eph_pub_i  = p + REKEY_ID_LEN;
   const uint8_t* removed_fp = p + REKEY_ID_LEN + EPH_LEN;
 
-  /* The device being removed takes no part: it keeps the old secret,
-   * which stops working the moment the survivors switch. */
+  /* The device being removed takes no part: it keeps the old secret.
+   * What shuts it out is each survivor forgetting its pubkey at install
+   * (opera_id is cleartext — see mesh_rekey.h). */
   if (fp_eq(removed_fp, my_fp)) return none();
 
   if (ctx.role == Role::SURVIVOR) {

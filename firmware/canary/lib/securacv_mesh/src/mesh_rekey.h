@@ -5,9 +5,26 @@
  * CRYPTO: maintainer review required before merge; bench-gated (U1 Track C3).
  *
  * Spec §5.6 requires that removing a peer rotate the household
- * opera_secret and hand the new one to every remaining member, so the
- * removed device's copy stops working (its frames carry the old opera_id,
- * which the survivors no longer accept). canary-wap does this with
+ * opera_secret and hand the new one to every remaining member.
+ *
+ * What the rotation does and does NOT buy on this tree (review fix — so
+ * the crypto review weighs the right property): besides being handed on
+ * at pairing, opera_secret has exactly one use here, deriving opera_id, and
+ * opera_id rides in CLEARTEXT in every frame header; frames are
+ * authenticated only by the sender's Ed25519 key.
+ * So what excludes the removed device is each survivor UNREGISTERING its
+ * pubkey (ACK_AND_INSTALL / COMMIT forget it), not the new secret — the
+ * removed device can copy the new opera_id off the air, and it is still
+ * accepted by any survivor that did not unregister it: one that missed the
+ * whole window, or one that answered the OFFER but aborted at 60 s without
+ * its SECRET. Such a survivor trusts the removed device indefinitely, and
+ * nothing tells it (the initiator just drops it at commit). What the
+ * rotation does buy: every frame signed before the removal carries the old
+ * opera_id, so it is dead to every survivor that switched — also across a
+ * later re-pair of the removed device — and a survivor that missed the
+ * rotation is split onto the old id rather than silently still in step.
+ *
+ * canary-wap does this with
  * per-peer SESSION keys it keeps for every member. The PlatformIO mesh
  * keeps none — its frames are only Ed25519-signed, and the pairing X25519
  * session key is wiped at PAIRED — so this is option B of the F10-rekey
