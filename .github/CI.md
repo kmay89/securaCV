@@ -25,6 +25,13 @@ Exemptions live in `.github/ci-policy.yml`, never in the checker — each
 one carries a comment saying why. Run the checker locally with
 `python3 .github/scripts/ci_policy_check.py` (needs `pyyaml`).
 
+**What a path filter must cover (R5, R6).** A check whose input is prose,
+or files anywhere in the tree, belongs in `lint.yml` (unfiltered,
+`ci-policy.yml → unfiltered_ok`). A test in a filtered workflow lists every
+file it reads outside the workflow's own trees in both path lists (R6) —
+otherwise an edit to that file alone runs nothing, and the red lands on the
+next unrelated PR. Neither half is machine-checked yet.
+
 ## Speed & cost conventions
 
 - **Arduino/ESP32 builds** go through the shared composite action
@@ -81,7 +88,8 @@ one carries a comment saying why. Run the checker locally with
    false`, plus a `main_queue_ok` entry saying why order matters.
 3. `timeout-minutes` on every job.
 4. Path-filter `push`/`pull_request` identically, and include
-   `.github/workflows/<your-file>.yml` in the filter.
+   `.github/workflows/<your-file>.yml` in the filter — and every file a
+   test in it reads outside those paths (above).
 5. Pin `actions/`/`github/` actions to a major tag; pin every other
    action to its 40-hex commit SHA with a `# <version>` comment
    (resolve with `git ls-remote … 'refs/tags/<tag>^{}'`).
@@ -93,4 +101,4 @@ one carries a comment saying why. Run the checker locally with
    it (R10) instead of pasting its steps.
 
 The policy check tells you about 1–6 and the easy half of 8 on the PR if
-you forget; 7 is on the reviewer.
+you forget; 7, and the files-a-test-reads half of 4, are on the reviewer.
