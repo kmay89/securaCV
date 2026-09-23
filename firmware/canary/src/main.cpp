@@ -1831,8 +1831,9 @@ void loop() {
   // The timeline's card pages (F35): GET /api/witness posts one request to
   // the history bridge and waits on the httpd task; this loop task — the SD
   // owner — reads for it, at most 4 x 1 KiB per pass so a deep page takes a
-  // few passes, never one long stall. No request, no card or a mount in
-  // flight: nothing touches SD.
+  // few passes rather than one long read (what a pass costs on a large card
+  // is bench U1's to measure). No request, no card or a mount in flight:
+  // nothing touches SD.
   witness_history_service();
 #endif
 

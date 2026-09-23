@@ -619,43 +619,77 @@ static void test_late_completion_never_answers_the_next_request() {
   report("late_completion_never_answers_the_next_request", f0);
 }
 
-// The httpd task's wait is bounded by WAIT_MS whatever the loop does.
+// The httpd task's wait is bounded by WAIT_MS on the clock, whatever the loop
+// does and however long each sleep really takes.
 static void test_wait_is_bounded() {
   const int f0 = g_fail;
   const Built b = build(1, 200);
   wb::Slot s;
   wb::init(&s);
+  uint32_t clock = 0, slept = 0, sleeps = 0;
+  auto now = [&]() { return clock; };
 
   // A stalled loop (a camera peek, a remount): the wait gives up at exactly
-  // the budget, in WAIT_STEP_MS sleeps.
+  // 3 s, in 10 ms sleeps.
   const uint32_t g1 = wb::begin(&s, req(100, 20));
-  uint32_t slept = 0, sleeps = 0;
-  const wb::Response* p = wb::wait(&s, g1, wb::WAIT_MS, wb::WAIT_STEP_MS,
-                                   [&](uint32_t ms) { slept += ms; sleeps++; });
+  const wb::Response* p = wb::wait(&s, g1, wb::WAIT_MS, wb::WAIT_STEP_MS, now,
+                                   [&](uint32_t ms) { clock += ms; slept += ms; sleeps++; });
   CHECK(p == nullptr);
-  CHECK(slept == wb::WAIT_MS);
-  CHECK(sleeps == wb::WAIT_MS / wb::WAIT_STEP_MS);
+  CHECK(slept == 3000 && clock == 3000);
+  CHECK(sleeps == 300);
   wb::end(&s, g1, true);
+
+  // Every sleep overruns (a higher-priority task holds the core): the wait
+  // still ends by the clock — at its first poll at or past 3 s, having asked
+  // for fewer sleeps, not after 300 of them.
+  const uint32_t g2 = wb::begin(&s, req(100, 20));
+  clock = 0;
+  slept = 0;
+  sleeps = 0;
+  p = wb::wait(&s, g2, wb::WAIT_MS, wb::WAIT_STEP_MS, now,
+               [&](uint32_t ms) { clock += ms + 15; slept += ms; sleeps++; });
+  CHECK(p == nullptr);
+  CHECK(clock >= 3000 && clock < 3000 + 10 + 15);  // one sleep's overrun at most
+  CHECK(sleeps == 120);                            // 3000 / 25, rounded up
+  wb::end(&s, g2, true);
+
+  // One sleep that runs past the whole budget: no second sleep.
+  const uint32_t g3 = wb::begin(&s, req(100, 20));
+  clock = 0;
+  sleeps = 0;
+  p = wb::wait(&s, g3, wb::WAIT_MS, wb::WAIT_STEP_MS, now,
+               [&](uint32_t) { clock += 4000; sleeps++; });
+  CHECK(p == nullptr && sleeps == 1);
+  wb::end(&s, g3, true);
+
+  // The clock wraps mid-wait (millis() after ~49 days): still 3 s.
+  const uint32_t g4 = wb::begin(&s, req(100, 20));
+  clock = UINT32_MAX - 1000;
+  const uint32_t start = clock;
+  p = wb::wait(&s, g4, wb::WAIT_MS, wb::WAIT_STEP_MS, now,
+               [&](uint32_t ms) { clock += ms; });
+  CHECK(p == nullptr && (uint32_t)(clock - start) == 3000);
+  wb::end(&s, g4, true);
 
   // A healthy loop: one pass per sleep, the page long before the budget.
   MemIo io;
   io.file = b.file;
-  const uint32_t g2 = wb::begin(&s, req(100, 20));
-  slept = 0;
-  p = wb::wait(&s, g2, wb::WAIT_MS, wb::WAIT_STEP_MS, [&](uint32_t ms) {
-    slept += ms;
+  const uint32_t g5 = wb::begin(&s, req(100, 20));
+  clock = 0;
+  p = wb::wait(&s, g5, wb::WAIT_MS, wb::WAIT_STEP_MS, now, [&](uint32_t ms) {
+    clock += ms;
     pass(&s, io);
   });
   CHECK(p != nullptr && p->n == 20 && p->rows[p->first].seq == 99);
-  CHECK(slept < wb::WAIT_MS);
-  wb::end(&s, g2, false);
+  CHECK(clock < wb::WAIT_MS);
+  wb::end(&s, g5, false);
 
   // An odd budget still ends exactly on it.
-  const uint32_t g3 = wb::begin(&s, req(100, 20));
-  slept = 0;
-  CHECK(wb::wait(&s, g3, 25, 10, [&](uint32_t ms) { slept += ms; }) == nullptr);
-  CHECK(slept == 25);
-  wb::end(&s, g3, true);
+  const uint32_t g6 = wb::begin(&s, req(100, 20));
+  clock = 0;
+  CHECK(wb::wait(&s, g6, 25, 10, now, [&](uint32_t ms) { clock += ms; }) == nullptr);
+  CHECK(clock == 25);
+  wb::end(&s, g6, true);
   report("wait_is_bounded", f0);
 }
 
@@ -881,9 +915,14 @@ static void test_threads() {
         std::this_thread::sleep_for(std::chrono::microseconds(200));
         continue;
       }
-      const wb::Response* p = wb::wait(&s, gen, impatient ? 1 : 2000, 1, [](uint32_t ms) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
-      });
+      const wb::Response* p = wb::wait(
+          &s, gen, impatient ? 1 : 2000, 1,
+          [] {
+            return (uint32_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now().time_since_epoch())
+                .count();
+          },
+          [](uint32_t ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); });
       if (p == nullptr) {
         timeouts++;
         wb::end(&s, gen, true);

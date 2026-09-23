@@ -22,8 +22,9 @@
  *   httpd task  begin()  claims the slot (0 = another request is outstanding:
  *                        the handler answers 503 history_busy), publishes the
  *                        request under a new generation;
- *               wait()   polls for THAT generation's page for at most
- *                        WAIT_MS (the handler answers 504 history_timeout);
+ *               wait()   polls for THAT generation's page until WAIT_MS
+ *                        have passed on the clock (the handler answers
+ *                        504 history_timeout);
  *               end()    frees the slot — after building the answer from the
  *                        page, or after the wait ran out (`gave_up`: the loop
  *                        drops the walk at its next pass, reading nothing
@@ -95,13 +96,20 @@
 
 namespace witness_history_bridge {
 
-// The httpd task's bounded wait for a page, and its poll step.
+// The httpd task's bounded wait for a page, and its poll step. The budget is
+// measured on a clock (wait()'s now_ms), not by adding up the sleeps asked
+// for: a preempted sleep runs long, and the wait still gives up on time.
 constexpr uint32_t WAIT_MS      = 3000;
 constexpr uint32_t WAIT_STEP_MS = 10;
 
-// The loop task's budget per pass: at most this many reads of READ_LEN bytes.
-// A deep page takes a few passes, never one long stall — the task watchdog
-// and the sensing cadence stay where they were.
+// The loop task's budget per pass: at most this many reads of READ_LEN bytes,
+// so a deep page takes a few passes rather than one long read. That is the
+// design intent for the task watchdog and the sensing cadence; what a pass
+// costs on a card is for the bench (U1) to measure — with FATFS fast seek off
+// in the 2.0.17 core and the file reopened every pass, the pass's first seek
+// (and any seek back into an earlier cluster) walks the cluster chain from
+// the file's start, so a pass's cost also grows with the file's size, not
+// only with the bytes it reads.
 constexpr size_t READS_PER_PASS = 4;
 constexpr size_t READ_LEN       = witness_history::CHUNK;  // 1 KiB
 
@@ -217,22 +225,28 @@ inline const Response* poll(const Slot* s, uint32_t gen) {
 }
 
 /**
- * Wait at most `budget_ms` for the page of `gen`, sleeping `step_ms` at a time
- * through `sleep_ms(ms)` (vTaskDelay on the device). nullptr when the budget
- * ran out.
+ * Wait for the page of `gen` until `budget_ms` have passed on `now_ms()` (a
+ * millisecond clock; wrap-safe), sleeping at most `step_ms` at a time through
+ * `sleep_ms(ms)` (vTaskDelay on the device). nullptr when the budget ran out.
+ *
+ * The budget is time that passed, not the sum of the sleeps asked for: a
+ * sleep that runs long (the task preempted by a higher-priority one) counts
+ * as long as it ran. The wait gives up at its first poll at or past the
+ * budget, so it can overrun by what one sleep overran — never by more
+ * sleeps.
  */
-template <class SleepFn>
+template <class NowFn, class SleepFn>
 inline const Response* wait(const Slot* s, uint32_t gen, uint32_t budget_ms,
-                            uint32_t step_ms, SleepFn sleep_ms) {
+                            uint32_t step_ms, NowFn now_ms, SleepFn sleep_ms) {
   if (step_ms == 0) step_ms = 1;
-  uint32_t waited = 0;
+  const uint32_t t0 = now_ms();
   for (;;) {
     const Response* page = poll(s, gen);
     if (page != nullptr) return page;
+    const uint32_t waited = (uint32_t)(now_ms() - t0);
     if (waited >= budget_ms) return nullptr;
-    const uint32_t d = (budget_ms - waited < step_ms) ? budget_ms - waited : step_ms;
-    sleep_ms(d);
-    waited += d;
+    const uint32_t left = budget_ms - waited;
+    sleep_ms(left < step_ms ? left : step_ms);
   }
 }
 

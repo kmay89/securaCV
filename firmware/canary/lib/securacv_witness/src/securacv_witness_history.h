@@ -28,11 +28,13 @@
 enum class WitnessHistoryWait : uint8_t {
   PAGE    = 0,  // *page is valid until witness_history_release(*gen)
   BUSY    = 1,  // another request is outstanding: 503 history_busy
-  TIMEOUT = 2,  // no page within WAIT_MS: 504 history_timeout (the loop drops it)
+  TIMEOUT = 2,  // no page after WAIT_MS by the clock: 504 history_timeout (the loop drops it)
 };
 
-// httpd task. Post `req` and wait, at most witness_history_bridge::WAIT_MS,
-// for its page. On PAGE, build the answer from *page, then call
+// httpd task. Post `req` and wait for its page until
+// witness_history_bridge::WAIT_MS have passed on millis() (the wait gives up
+// at its first poll past that, one 10 ms step at most). On PAGE, build the
+// answer from *page, then call
 // witness_history_release(*gen) — the slot stays claimed until then.
 WitnessHistoryWait witness_history_request(const witness_history_bridge::Request& req,
                                            const witness_history_bridge::Response** page,

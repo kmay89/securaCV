@@ -92,8 +92,11 @@ struct Slot     { uint32_t busy, req_lock, req_gen, done_gen, abandoned_gen;  //
   `witness_history_request()` / `witness_history_release()`). `begin()`
   claims `busy` with a compare-and-set (a second request gets
   `503 history_busy`) and publishes the request under a new generation.
-  `wait()` polls for **that** generation's page every 10 ms for at most
-  **3000 ms** (`WAIT_MS`; the delay is `vTaskDelay`). On a page, the handler
+  `wait()` polls for **that** generation's page every 10 ms until
+  **3000 ms** (`WAIT_MS`) have passed on `millis()` (the delay is
+  `vTaskDelay`). The budget is time on the clock, not the sum of the sleeps
+  asked for, so a sleep that runs long because a higher-priority task held
+  the core counts for as long as it ran. On a page, the handler
   builds its JSON straight from the slot and then calls `end()`; on a timeout
   it answers `504 history_timeout` and `end(gave_up)` marks the generation
   abandoned. Either way `busy` is released at once.
@@ -111,8 +114,15 @@ struct Slot     { uint32_t busy, req_lock, req_gen, done_gen, abandoned_gen;  //
   bytes before it. Then it reads **at most 4 × 1 KiB per pass**
   (`READS_PER_PASS` × `READ_LEN`), feeding the walker; on a terminal status
   it fills the response and publishes it under the generation it walked.
-  The per-pass cap keeps the task watchdog and the sensing cadence
-  untouched: a deep page takes a few passes, never one long stall.
+  The per-pass cap is meant to leave the task watchdog and the sensing
+  cadence alone, with a deep page taking a few passes rather than one long
+  read. That is design intent. Bench U1 still has to show it, by measuring
+  the loop time of each pass on a large `records.jsonl`. A pass costs more
+  than its 4 KiB: FATFS fast seek is off in the 2.0.17 core
+  (`CONFIG_FATFS_USE_FASTSEEK` unset), and the file is reopened every pass.
+  So the pass's first seek, and any seek back into an earlier cluster,
+  walks the cluster chain from the start of the file. That cost grows with
+  the file's size.
 - **A late completion never answers the next request.** A waiter accepts
   only a page published under its own generation (`done_gen == gen`), and
   a walk whose request was superseded or abandoned is not published at all.
@@ -196,7 +206,10 @@ lifts those functions out of the raw string and pins that behavior.
 ## What stays honest
 
 - A stalled loop (a camera peek, a remount in flight) makes a page time
-  out at 3 s and say so; it never blocks the httpd task longer than that.
+  out and say so. The wait gives up at its first poll at or past 3 s on
+  `millis()`, so it overruns by what one 10 ms sleep overran, not by
+  further sleeps. How long a preempted httpd task really takes to wake is
+  for bench U1 to measure, along with page latency.
 - Reading while the loop appends is safe only because the reader IS the
   loop task: the walker sees either the old end or the new one, never a
   half-written line it would trust (a torn tail is skipped by rule).
@@ -216,4 +229,6 @@ lifts those functions out of the raw string and pins that behavior.
   holds the route table.
 - Bench (U1): latency and the timeout path need a card holding more than 32
   records on a real unit — a page read across passes while the loop appends,
-  a card pulled mid-page, and a stalled loop answering 504.
+  a card pulled mid-page, and a stalled loop answering 504 — plus, on a large
+  `records.jsonl`, the loop time of each pass and how far a preempted wait
+  overruns its 3 s.

@@ -61,8 +61,15 @@ WitnessHistoryWait witness_history_request(const whb::Request& req,
                                            uint32_t* gen) {
   const uint32_t g = whb::begin(&s_slot, req);
   if (g == 0) return WitnessHistoryWait::BUSY;
-  const whb::Response* p = whb::wait(&s_slot, g, whb::WAIT_MS, whb::WAIT_STEP_MS,
-                                     [](uint32_t ms) { vTaskDelay(pdMS_TO_TICKS(ms)); });
+  // The budget runs on millis() (esp_timer), so a delay that overruns
+  // because a higher-priority task held the core counts as the time it took.
+  const whb::Response* p = whb::wait(
+      &s_slot, g, whb::WAIT_MS, whb::WAIT_STEP_MS,
+      []() { return (uint32_t)millis(); },
+      [](uint32_t ms) {
+        const TickType_t t = pdMS_TO_TICKS(ms);
+        vTaskDelay(t > 0 ? t : 1);
+      });
   if (p == nullptr) {
     whb::end(&s_slot, g, /*gave_up=*/true);
     return WitnessHistoryWait::TIMEOUT;
