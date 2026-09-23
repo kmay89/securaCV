@@ -28,6 +28,7 @@
 #include "esp_http_server.h"
 #include "beacon_channel.h"
 #include "beacon_cancel_policy.h"
+#include "http_body_reader.h"
 #include "api_auth.h"
 #include <ArduinoJson.h>
 #include <string.h>
@@ -219,12 +220,27 @@ inline esp_err_t handle_pair_cancel(httpd_req_t* req) {
   return send_success(req, "pair canceled");
 }
 
+// Read a request body completely (NUL-terminated), or refuse it by name.
+// One httpd_req_recv() is one socket read, so parsing after a single call
+// rejects a body the client sent in two segments and silently truncates one
+// longer than the buffer (http_body_reader.h, host-tested). Every Beacon
+// route reads its body here; tests_host pins that no bare httpd_req_recv
+// remains in this file.
+static const char* read_body(httpd_req_t* req, char* buf, size_t cap, size_t* len) {
+  const http_body::Result r = http_body::read_all(
+      [req](char* p, size_t n) { return httpd_req_recv(req, p, n); },
+      req->content_len, buf, cap, HTTPD_SOCK_ERR_TIMEOUT, 3, len);
+  if (r == http_body::TOO_LARGE) return "body too large";
+  if (r == http_body::READ_FAILED) return "body read failed";
+  return nullptr;
+}
+
 // POST /api/beacon/revoke  body: { "fingerprint": "<hex>" }
 inline esp_err_t handle_revoke(httpd_req_t* req) {
   char body[128];
-  int len = httpd_req_recv(req, body, sizeof(body) - 1);
-  if (len <= 0) return send_error(req, "empty body");
-  body[len] = '\0';
+  size_t len = 0;
+  if (const char* err = read_body(req, body, sizeof(body), &len)) return send_error(req, err);
+  if (len == 0) return send_error(req, "empty body");
 
   JsonDocument doc;
   if (deserializeJson(doc, body)) return send_error(req, "invalid JSON");
@@ -302,9 +318,9 @@ static uint8_t parse_certainty(JsonVariantConst v) {
 // strings, and clients always have the IDs from /api/beacon/set anyway).
 inline esp_err_t handle_originate(httpd_req_t* req) {
   char body[256];
-  int len = httpd_req_recv(req, body, sizeof(body) - 1);
-  if (len <= 0) return send_error(req, "empty body");
-  body[len] = '\0';
+  size_t len = 0;
+  if (const char* err = read_body(req, body, sizeof(body), &len)) return send_error(req, err);
+  if (len == 0) return send_error(req, "empty body");
 
   JsonDocument doc;
   if (deserializeJson(doc, body)) return send_error(req, "invalid JSON");
@@ -343,9 +359,9 @@ inline esp_err_t handle_originate(httpd_req_t* req) {
 // held, the call returns 400 with reason="boot_button_not_held".
 inline esp_err_t handle_originate_solo(httpd_req_t* req) {
   char body[256];
-  int len = httpd_req_recv(req, body, sizeof(body) - 1);
-  if (len <= 0) return send_error(req, "empty body");
-  body[len] = '\0';
+  size_t len = 0;
+  if (const char* err = read_body(req, body, sizeof(body), &len)) return send_error(req, err);
+  if (len == 0) return send_error(req, "empty body");
 
   JsonDocument doc;
   if (deserializeJson(doc, body)) return send_error(req, "invalid JSON");
@@ -388,9 +404,9 @@ inline esp_err_t handle_originate_solo(httpd_req_t* req) {
 // POST /api/beacon/cosign  body: { "confirm": true|false }
 inline esp_err_t handle_cosign(httpd_req_t* req) {
   char body[128];
-  int len = httpd_req_recv(req, body, sizeof(body) - 1);
-  if (len <= 0) return send_error(req, "empty body");
-  body[len] = '\0';
+  size_t len = 0;
+  if (const char* err = read_body(req, body, sizeof(body), &len)) return send_error(req, err);
+  if (len == 0) return send_error(req, "empty body");
 
   JsonDocument doc;
   if (deserializeJson(doc, body)) return send_error(req, "invalid JSON");
@@ -428,12 +444,11 @@ static beacon_cancel_policy::BodyField classify_field(JsonVariantConst v) {
 
 static const char* read_cancel_request(httpd_req_t* req, CancelRequest* out) {
   char body[192];
-  const int len = httpd_req_recv(req, body, sizeof(body) - 1);
-  if (len < 0) return "body read failed";
+  size_t len = 0;
+  if (const char* err = read_body(req, body, sizeof(body), &len)) return err;
   JsonDocument doc;
   bool is_object = true;  // an empty body is an empty object: all defaults
   if (len > 0) {
-    body[len] = '\0';
     if (deserializeJson(doc, body)) return "invalid JSON";
     is_object = doc.is<JsonObjectConst>();
   }

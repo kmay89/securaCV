@@ -246,6 +246,24 @@ clean-beacon-cancel:
 run: run-beacon-cancel
 clean: clean-beacon-cancel
 
+# Full-body HTTP reads (http_body_reader.h): a body split across TCP reads is
+# reassembled, an oversized one is refused before any read (never truncated),
+# timeouts are bounded, nothing past content_len is read — and a source pin
+# that every Beacon route in beacon_api.h reads its body through read_body().
+HTTP_BODY_BIN = test_http_body_reader
+HTTP_BODY_SRC = test_http_body_reader.cpp
+
+$(HTTP_BODY_BIN): $(HTTP_BODY_SRC) $(SRC_DIR)/http_body_reader.h $(SRC_DIR)/beacon_api.h beacon_source_scan.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DBEACON_API_H='"$(abspath $(SRC_DIR))/beacon_api.h"' -o $@ $(HTTP_BODY_SRC)
+
+.PHONY: run-http-body clean-http-body
+run-http-body: $(HTTP_BODY_BIN)
+	./$(HTTP_BODY_BIN)
+clean-http-body:
+	rm -f $(HTTP_BODY_BIN)
+run: run-http-body
+clean: clean-http-body
+
 $(BEACON_TAMPER_BIN): $(BEACON_TAMPER_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_TAMPER_SRC) -lcrypto
 
