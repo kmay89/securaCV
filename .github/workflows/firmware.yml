@@ -9,6 +9,15 @@ on:
       # it and the generator's --check pins it, so an edit here must run this job.
       - 'spec/fixtures/witness_page_v1.json'
       - 'spec/fixtures/gen_witness_page_v1.py'
+      # The sealed-snapshot vault's python half and its cross-language
+      # fixture: "Mesh + Scout Host Tests" runs tools/test_unseal_snapshot.py
+      # and gen_svlt_parity.py --check, and the golden header they share
+      # with test_vault_logic.cpp is a firmware contract, so an edit here
+      # must run this job (the same reason the witness-page fixture is listed).
+      - 'tools/unseal_snapshot.py'
+      - 'tools/test_unseal_snapshot.py'
+      - 'tools/gen_svlt_parity.py'
+      - 'tools/fixtures/vault/**'
       - '.github/workflows/firmware.yml'
       # The release workflow is a checked INPUT here, not just a neighbor:
       # "Regression Guards" runs check_ota_channels.py, which reads the
@@ -24,6 +33,15 @@ on:
       # it and the generator's --check pins it, so an edit here must run this job.
       - 'spec/fixtures/witness_page_v1.json'
       - 'spec/fixtures/gen_witness_page_v1.py'
+      # The sealed-snapshot vault's python half and its cross-language
+      # fixture: "Mesh + Scout Host Tests" runs tools/test_unseal_snapshot.py
+      # and gen_svlt_parity.py --check, and the golden header they share
+      # with test_vault_logic.cpp is a firmware contract, so an edit here
+      # must run this job (the same reason the witness-page fixture is listed).
+      - 'tools/unseal_snapshot.py'
+      - 'tools/test_unseal_snapshot.py'
+      - 'tools/gen_svlt_parity.py'
+      - 'tools/fixtures/vault/**'
       - '.github/workflows/firmware.yml'
       # The release workflow is a checked INPUT here, not just a neighbor:
       # "Regression Guards" runs check_ota_channels.py, which reads the
@@ -1551,6 +1569,15 @@ jobs:
         run: |
           python3 -m pip install --quiet cryptography
           python3 tools/test_unseal_snapshot.py
+
+      - name: Check the sealed-snapshot parity fixture is fresh
+        # tools/fixtures/vault/svlt_parity.json pins ONE sealed .svlt, byte
+        # for byte, from fixed test-only keys — the file the iOS app's
+        # CryptoKit port (SnapshotVaultTests, ios-selfheal.yml) must open and
+        # re-seal identically. The python test above asserts its contents;
+        # this asserts the committed bytes are what the generator renders,
+        # so the Swift side can never be held to a stale twin.
+        run: python3 tools/gen_svlt_parity.py --check
 
       - name: Build + run canary-wap witness store logic host test
         # The /WITNESS/records.jsonl durable tier (witness_store.h): the
