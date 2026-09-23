@@ -50,6 +50,15 @@ BEACON_ORIG_SRC = test_beacon_origination.cpp
 BEACON_SOLO_BIN = test_beacon_solo_origination
 BEACON_SOLO_SRC = test_beacon_solo_origination.cpp
 
+# Beacon CANCEL origination (beacon_cancel_policy.h): reason -> all-clear
+# template, the canonical a CANCEL signs, the refusal order the REST layer
+# names, the cosigner gate (sign a CANCEL only for the alarm this device
+# holds), the emitted header following the signed canonical, the originator
+# adopting its own frame, and the wire struct sizes. Includes the REAL
+# Arduino-free beacon_wire.h + beacon_cancel_policy.h, not a mirror.
+BEACON_CANCEL_BIN = test_beacon_cancel_origination
+BEACON_CANCEL_SRC = test_beacon_cancel_origination.cpp
+
 # v0.5: auto-revoke-on-tamper invariants for
 # mesh_network.cpp::handle_tamper_alert → beacon_channel::on_peer_tampered.
 # Uses libcrypto (OpenSSL) for SHA-256 since this test is host-side and
@@ -202,6 +211,9 @@ $(BEACON_ORIG_BIN): $(BEACON_ORIG_SRC)
 $(BEACON_SOLO_BIN): $(BEACON_SOLO_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_SOLO_SRC)
 
+$(BEACON_CANCEL_BIN): $(BEACON_CANCEL_SRC) $(SRC_DIR)/beacon_wire.h $(SRC_DIR)/beacon_cancel_policy.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(BEACON_CANCEL_SRC)
+
 $(BEACON_TAMPER_BIN): $(BEACON_TAMPER_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_TAMPER_SRC) -lcrypto
 
@@ -311,12 +323,13 @@ TAMPER_SOURCES = test_tamper_events_logic.cpp \
 $(TAMPER_BIN): $(TAMPER_SOURCES)
 	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -Wno-unused-parameter -I $(SRC_DIR) -o $@ $(TAMPER_SOURCES)
 
-run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(FLEET_BEACON_BIN) $(EVDRIVE_BIN) $(EVVERIFY_BIN) $(BLEOTA_BIN) $(HELPQR_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN) $(WITNESS_PAGE_BIN)
+run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_CANCEL_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(FLEET_BEACON_BIN) $(EVDRIVE_BIN) $(EVVERIFY_BIN) $(BLEOTA_BIN) $(HELPQR_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN) $(WITNESS_PAGE_BIN)
 	./$(BIN)
 	./$(CHIRP_INV_BIN)
 	./$(CHIRP_SEC_BIN)
 	./$(BEACON_ORIG_BIN)
 	./$(BEACON_SOLO_BIN)
+	./$(BEACON_CANCEL_BIN)
 	./$(BEACON_TAMPER_BIN)
 	./$(OPERA_SEC_BIN)
 	./$(DEVSIG_BIN)
@@ -341,4 +354,4 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 	./$(WITNESS_PAGE_BIN) $(WITNESS_PAGE_FIXTURE)
 
 clean:
-	rm -f $(WITNESS_PAGE_BIN) $(EVVERIFY_BIN) $(BLEOTA_BIN) $(EVDRIVE_BIN) $(FLEET_BEACON_BIN) $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(HELPQR_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN)
+	rm -f $(WITNESS_PAGE_BIN) $(EVVERIFY_BIN) $(BLEOTA_BIN) $(EVDRIVE_BIN) $(FLEET_BEACON_BIN) $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_CANCEL_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(HELPQR_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN)

@@ -475,17 +475,41 @@ paired cosigner (`originate_alert_solo` refuses whenever
 names the reason, `paired_cosigner_available`, so the operator is sent to the
 two-device path rather than told "refused").
 
+Closed in the CANCEL pass (2026-09): the network all-clear (spec §6.5, §10).
+`POST /api/beacon/cancel` now originates a `BEACON_MSG_CANCEL` over the same
+two-pubkey cosign flow as an ALERT, and `POST /api/beacon/cancel-solo` over
+the BOOT-button solo path (§6.2: SOLO flag, `certainty = Observed`, refused
+while a fresh cosigner is available); the old local-only behavior moved to
+`POST /api/beacon/silence` (`silence_active_alarm()`) under its honest name.
+Four defects on the way there are fixed with it: the COSIGN_RESP handler
+hardcoded the emitted header's `msg_type` to ALERT, so a CANCEL canonical
+would have gone out as a frame every receiver drops (the header is now
+derived from the signed canonical); the originator never adopted its own
+frame — ESP-NOW does not deliver a broadcast to its sender — so it never
+entered ALARM for its own ALERT and held no nonce to name in a CANCEL (it now
+audits and adopts its frame at hop 0, charging no bucket); the cosigner
+checked scope, template and signature but not `msg_type`, so it could be
+asked to sign a CANCEL for an alarm it does not hold (it now signs a CANCEL
+only for an all-clear template naming its own active alarm, and refuses
+UPDATE/EXERCISE requests outright); and the never-called `emit_alert_frame()`
+is gone. The decisions live in the Arduino-free `beacon_cancel_policy.h`,
+pinned by `tests_host/test_beacon_cancel_origination.cpp` against the real
+`beacon_wire.h` structs; `test_beacon_origination.cpp`
+`test_cancel_is_charged_like_an_alert` pins the receive-side consequence of
+charging a CANCEL like an ALERT (spec §8 has no exemption). Radio-level proof
+is the hardware checklist's "CANCEL propagates" row; no board can run it
+until the channel is wired into the sketch loop (`init()`, `update()` and the
+ESP-NOW dispatch still have no callers).
+
 Still open on this surface: gateway-trust keys are accepted as ordinary
 community cosigners with no upstream CAP attestation (the `.cpp` header
 documents the gap); rate-limit state is not rebuilt from the audit log on
 boot (§11 — `init()` runs before the wall clock syncs, so the persisted
 entries' ages cannot be judged there; a rebuild deferred to first time sync
-is the shape of the fix); `cancel_active_alarm()` still silences locally
-without originating a `BEACON_MSG_CANCEL` (§10) — the REST reply now says
-exactly that ("silenced on this device only — no network CANCEL was sent")
-instead of "alarm canceled", but the network cancel itself needs the
-dual-signed cosign flow with `msg_type=CANCEL`; and the CANCEL reference is
-the unsigned header nonce (above).
+is the shape of the fix); a device that spent its fifth origination cannot
+cancel its own alarm (a §8 CANCEL exemption is a spec decision — until then
+another set member cancels it); and the CANCEL reference is the unsigned
+header nonce (above).
 
 ## 10. Closure traceability — every finding's fix in code
 

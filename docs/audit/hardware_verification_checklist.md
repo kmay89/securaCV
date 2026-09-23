@@ -139,6 +139,27 @@ host tests assert they do, on real radio.
     sequence). HA `sensor.canary_<C>_beacon_state` flips to `Alarm`.
   - Artifact: `docs/audit/repro/beacon/happy_path/`.
 
+- [ ] **CANCEL propagates (and the originator adopts its own frames)**
+  - Setup: continue from the happy path — A, B and C all in
+    `BEACON_STATE_ALARM` for A's alert.
+  - Check first: A itself shows `Alarm` (`GET /api/beacon` on A,
+    HA `sensor.canary_<A>_beacon_state`) — the originator adopts its own
+    ALERT at hop 0; before the CANCEL pass it stayed `Normal`.
+  - Repro: on A, `POST /api/beacon/cancel` with `{"reason":"false_alarm"}`.
+    B's UI shows the cosign prompt for the all-clear; B confirms.
+  - Expected: A emits a dual-signed `BEACON_MSG_CANCEL`
+    (`template_id = 0x82`, header `msg_type = 2`) naming the alarm's nonce.
+    A, B and C each move to `BEACON_STATE_SUPERVISORY`; each audit log
+    gains the CANCEL (A's at `hop_count = 0`).
+  - Negative: on a fourth board D that never received the ALERT, a
+    COSIGN_REQ for that CANCEL is refused before its user is asked (health
+    log: "COSIGN_REQ refused").
+  - Solo variant: a single board holding a solo alarm, BOOT held,
+    `POST /api/beacon/cancel-solo` → a receiver with the board in its set
+    leaves `Alarm`. `POST /api/beacon/silence` on any board changes only that
+    board.
+  - Artifact: `docs/audit/repro/beacon/cancel_propagates/`.
+
 - [ ] **Single-signature reject**
   - Setup: same as above.
   - Repro: craft a `BEACON_MSG_ALERT` frame with only `sig_originator`

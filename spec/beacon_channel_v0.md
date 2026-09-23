@@ -249,7 +249,7 @@ struct BeaconAlertCanonical {
 };
 ```
 
-Total alert frame: 24 (header) + 65 (canonical, packed) + 64 + 64 = 217 B. Comfortably fits.
+Total alert frame: 24 (header) + 72 (canonical: 71 bytes of fields plus the 1-byte `reserved`, no padding) + 64 + 64 = 224 B. Comfortably fits. (The firmware's `beacon_wire.h` holds these structs; `tests_host/test_beacon_cancel_origination.cpp` pins their sizes.)
 
 ### 5.3 Other message types
 
@@ -386,6 +386,18 @@ The cosigner MUST decrypt, parse the canonical, display it to the user, and only
 
 The cosign request includes the originator's `boot_button_state` (whether the BOOT button is currently pressed). If a cosigner receives a request where the originator claims `boot_button_state = 0` but the receiver's UI sees signs of duress (e.g., very fast repeated requests), the receiver MAY refuse silently. This is a soft mitigation — the real defense against coercion is operational, not cryptographic.
 
+### 6.5 Cancel origination
+
+A network all-clear is a `BEACON_MSG_CANCEL` frame, originated by an explicit user action and answering to the same rules as an ALERT:
+
+- **Two-device path** (`POST /api/beacon/cancel`). The canonical carries `msg_type = Cancel`; one of the all-clear templates (`0x80`–`0x82`, chosen by the request's `reason`: `resolved`, `safe` or `false_alarm`); urgency `Past` and severity `Minor` (the §4 defaults for those templates); scope `Private`; and `ref_canceled_nonce` = the frame nonce of the alarm this device holds (§5.4). It goes through the §6.1 cosign flow unchanged.
+- **The cosigner only signs a CANCEL for an alarm it holds.** Before its user is asked, a cosigner checks that the CANCEL carries an all-clear template and that `ref_canceled_nonce` is non-zero and equals the nonce of its own active alarm. A cosigner never attests an all-clear for an alarm it did not see. Cosign requests for `Update` or `Exercise` are refused until each has its own reviewed origination path.
+- **Solo path** (`POST /api/beacon/cancel-solo`). §6.2 with `msg_type = Cancel`: the physical BOOT button held at the moment of origination, `BCN_FLAG_SOLO_ORIGIN` on the header, `certainty = Observed`, one signature in both slots, and refused while a fresh paired cosigner is available.
+- **The emitted header follows the signed canonical.** The header `msg_type` and flags are derived from the canonical, so a CANCEL is emitted as a CANCEL; receivers drop a header that disagrees with the signed `msg_type`.
+- **The originator adopts its own frame at hop 0.** ESP-NOW does not deliver a broadcast back to its sender, so the originating device audits the frame it emitted and applies its state effect itself: it enters `Alarm` for its own ALERT (keeping that frame's nonce, which is what a later CANCEL names) and moves to `Supervisory` for its own CANCEL. Adoption charges no rate bucket.
+- **Rate.** A CANCEL counts against its originator's `MAX_ORIGINATIONS_PER_PUBKEY_24H` bucket and against the pair's budget exactly as an ALERT does — §8 has no CANCEL exemption and receivers charge it. So a device that spent its fifth origination on the alarm cannot cancel that alarm itself; any other member of the set can (any beacon-set pair may cancel, not only the ALERT's signers — §14.2). Whether §8 should exempt CANCEL is an open decision for this spec.
+- **Silence is not a cancel.** `POST /api/beacon/silence` stands only this device down and sends nothing; paired devices stay in `Alarm` until the alarm expires or a CANCEL reaches them.
+
 ## 7. Reception and state surface
 
 ### 7.1 Validation pipeline
@@ -514,8 +526,11 @@ All endpoints Bearer-token-gated identically to `/api/mesh/*` and `/api/bluetoot
 | `/api/beacon/pair/cancel` | POST | Abort pairing |
 | `/api/beacon/revoke` | POST | Set a beacon-set entry to `trust_level = 2` (revoked) |
 | `/api/beacon/originate` | POST | Begin two-pubkey origination flow (template_id, urgency, severity) |
+| `/api/beacon/originate-solo` | POST | Solo-degraded origination (§6.2) — the BOOT button must be held |
 | `/api/beacon/cosign` | POST | Confirm a pending cosign request (originator_fp, decision) |
-| `/api/beacon/cancel` | POST | Originate a `BEACON_MSG_CANCEL` for the current active alarm |
+| `/api/beacon/cancel` | POST | Originate a `BEACON_MSG_CANCEL` for the current active alarm over the two-pubkey cosign flow (§6.5); body `reason` (`resolved` \| `safe` \| `false_alarm`), `certainty`, `ttl_minutes`, all optional |
+| `/api/beacon/cancel-solo` | POST | Solo `BEACON_MSG_CANCEL` (§6.2, §6.5) — the BOOT button must be held; `certainty` is forced to `Observed` |
+| `/api/beacon/silence` | POST | Local mute: stand this device down; sends no frame (§6.5) |
 | `/api/beacon/active` | GET | Active alarms and active cosign requests |
 | `/api/beacon/audit` | GET | Audit log (recent entries from the NVS ring cache; full history exportable from `/beacon/audit.jsonl` on SD) |
 | `/api/beacon/selftest` | POST | Force a `BEACON_MSG_SELFTEST_OK` emission (mostly for tests) |
@@ -616,6 +631,7 @@ What Beacon never shares:
 ## 16. Changelog
 
 - v0.1 (2026-05-11): Initial draft.
+- 2026-09: §6.5 cancel origination (two-device and solo `BEACON_MSG_CANCEL`, cosigner gate, originator self-adoption); §10 gains `/api/beacon/originate-solo`, `/api/beacon/cancel-solo` and `/api/beacon/silence`; §5.2 frame size corrected to 224 B.
 
 ---
 

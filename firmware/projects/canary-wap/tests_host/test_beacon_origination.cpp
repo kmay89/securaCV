@@ -667,6 +667,34 @@ void test_cancel_must_reference_the_active_alarm() {
   EXPECT(!rx.alarm_valid, "CANCEL naming the active alarm clears it (§7.2)");
 }
 
+// A CANCEL is charged to its originator's 24 h bucket like an ALERT (spec §8
+// has no CANCEL exemption; handle_alert_frame charges every non-drill frame),
+// which is why originate_cancel charges the originator's own bucket too
+// (decision D2 — maintainer to confirm). The consequence this pins: a device
+// that spent its fifth origination on the alarm cannot cancel it itself, but
+// any other member of the set can — spec §14.2's "insiders are by definition
+// cosigners" — and that CANCEL clears the alarm.
+void test_cancel_is_charged_like_an_alert() {
+  Receiver rx;
+  rx.set = { mk(0xAA), mk(0xBB), mk(0xCC) };
+  Frame last{};
+  for (int i = 0; i < MAX_ORIGINATIONS_PER_PUBKEY_24H; i++) {
+    last = mk_frame(0xAA, 0xBB);
+    EXPECT(rx.receive(last) == Outcome::Audited, "AA's alerts inside its bucket");
+  }
+  EXPECT(rx.alarm_valid, "the fifth alert is the alarm in force");
+
+  Frame own = mk_cancel(0xAA, 0xBB, last.nonce);
+  EXPECT(rx.receive(own) == Outcome::RejectedRate,
+         "AA's CANCEL is charged to AA's spent bucket and refused");
+  EXPECT(rx.alarm_valid, "so AA's own all-clear does not clear the alarm");
+
+  Frame other = mk_cancel(0xCC, 0xBB, last.nonce);
+  EXPECT(rx.receive(other) == Outcome::Audited,
+         "a CANCEL originated by another set member is charged to its own bucket");
+  EXPECT(!rx.alarm_valid, "and clears the alarm it names");
+}
+
 void test_update_must_reference_the_active_alarm() {
   Receiver rx;
   rx.set = { mk(0xAA), mk(0xBB) };
@@ -899,6 +927,7 @@ int main() {
   test_unsynced_clock_accepts_stale_effective();
 
   test_cancel_must_reference_the_active_alarm();
+  test_cancel_is_charged_like_an_alert();
   test_update_must_reference_the_active_alarm();
 
   test_drills_do_not_exhaust_the_alert_bucket();

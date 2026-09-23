@@ -27,6 +27,7 @@
 
 #include "esp_http_server.h"
 #include "beacon_channel.h"
+#include "beacon_cancel_policy.h"
 #include "api_auth.h"
 #include <ArduinoJson.h>
 #include <string.h>
@@ -59,22 +60,33 @@ static inline esp_err_t send_json(httpd_req_t* req, const char* json) {
   return httpd_resp_sendstr(req, json);
 }
 
+// Replies are {"success":…,"message"|"error":"…"} built in a stack buffer.
+// A reply that does not fit is refused whole rather than truncated: the
+// silence reply once overflowed a 128-byte buffer and reached the client as
+// cut-off, unparseable JSON.
+static const size_t REPLY_BUF = 256;
+
+static inline esp_err_t send_reply(httpd_req_t* req, JsonDocument& doc) {
+  char buf[REPLY_BUF];
+  if (measureJson(doc) >= sizeof(buf)) {
+    return send_json(req, "{\"success\":false,\"error\":\"reply_too_long\"}");
+  }
+  serializeJson(doc, buf, sizeof(buf));
+  return send_json(req, buf);
+}
+
 static inline esp_err_t send_success(httpd_req_t* req, const char* msg = nullptr) {
   JsonDocument doc;
   doc["success"] = true;
   if (msg) doc["message"] = msg;
-  char buf[128];
-  serializeJson(doc, buf);
-  return send_json(req, buf);
+  return send_reply(req, doc);
 }
 
 static inline esp_err_t send_error(httpd_req_t* req, const char* err) {
   JsonDocument doc;
   doc["success"] = false;
   doc["error"] = err;
-  char buf[128];
-  serializeJson(doc, buf);
-  return send_json(req, buf);
+  return send_reply(req, doc);
 }
 
 static inline void fp_to_hex(const uint8_t* fp, char* out) {
@@ -388,16 +400,101 @@ inline esp_err_t handle_cosign(httpd_req_t* req) {
       : send_error(req, "no pending cosign request");
 }
 
-// POST /api/beacon/cancel — silence the active alarm on this device.
-// Spec §10 defines this as originating a BEACON_MSG_CANCEL for the network;
-// the firmware does not do that yet (see cancel_active_alarm), so the reply
-// says what actually happened rather than "canceled". Paired devices stay in
-// alarm until the alarm's own expiry.
+// Body shared by the two network-cancel routes. Every field is optional and
+// an empty body takes the defaults: reason "resolved" (BCN_CLR_RESOLVED),
+// ttl_minutes 15. An unknown reason is refused, not defaulted — an all-clear
+// that says something the operator did not choose is worse than none. The
+// TTL is bounded so the frame cannot be born expired (receivers drop
+// now > expires) or outlive a day.
+struct CancelRequest {
+  beacon_channel::BeaconTemplate tpl;
+  uint8_t certainty;
+  uint32_t ttl_minutes;
+};
+
+static const char* read_cancel_request(httpd_req_t* req, CancelRequest* out) {
+  char body[192];
+  const int len = httpd_req_recv(req, body, sizeof(body) - 1);
+  if (len < 0) return "body read failed";
+  JsonDocument doc;
+  if (len > 0) {
+    body[len] = '\0';
+    if (deserializeJson(doc, body)) return "invalid JSON";
+  }
+  beacon_cancel_policy::CancelReason reason = beacon_cancel_policy::CANCEL_REASON_RESOLVED;
+  if (!doc["reason"].isNull()) {
+    const char* r = doc["reason"].is<const char*>() ? doc["reason"].as<const char*>() : nullptr;
+    if (!beacon_cancel_policy::parse_cancel_reason(r, &reason)) {
+      return "reason must be resolved, safe or false_alarm";
+    }
+  }
+  out->tpl = beacon_cancel_policy::cancel_template_for(reason);
+  out->certainty = doc["certainty"].isNull()
+      ? (uint8_t)beacon_channel::BCN_CERT_LIKELY
+      : parse_certainty(doc["certainty"]);
+  if (out->certainty > beacon_channel::BCN_CERT_UNKNOWN) return "certainty out of range";
+  out->ttl_minutes = (uint32_t)(doc["ttl_minutes"] | 15);
+  if (out->ttl_minutes == 0 || out->ttl_minutes > 1440) return "ttl_minutes must be 1..1440";
+  return nullptr;
+}
+
+// POST /api/beacon/cancel — network all-clear (spec §10): originate a
+// BEACON_MSG_CANCEL naming this device's active alarm, over the same
+// two-pubkey cosign flow as /api/beacon/originate. A paired neighbor that
+// also holds the alarm must confirm; when it does, this device emits the
+// CANCEL and leaves ALARM, and so does every receiver holding that alarm.
+// Body: { "reason": "resolved"|"safe"|"false_alarm", "certainty": label|code,
+//         "ttl_minutes": n } — all optional (see read_cancel_request).
+// The local-only mute this route used to be is /api/beacon/silence.
 inline esp_err_t handle_cancel(httpd_req_t* req) {
-  return beacon_channel::cancel_active_alarm()
+  CancelRequest c;
+  if (const char* err = read_cancel_request(req, &c)) return send_error(req, err);
+
+  // Pre-checks so the operator gets the reason by name.
+  if (!beacon_channel::has_active_alarm()) return send_error(req, "no_active_alarm");
+  if (!beacon_channel::paired_cosigner_available()) {
+    // The solo all-clear is /api/beacon/cancel-solo (BOOT button held).
+    return send_error(req, "no_cosigner_available");
+  }
+
+  const bool ok = beacon_channel::originate_cancel(
+      c.tpl, (beacon_channel::BeaconCertainty)c.certainty, c.ttl_minutes);
+  return ok ? send_success(req, "CANCEL pending cosigner")
+            : send_error(req, "cancel refused (rate, time-unsynced, or no cosigner)");
+}
+
+// POST /api/beacon/cancel-solo — single-device all-clear via the BOOT button
+// (spec §6.2 step 4). Same body as /api/beacon/cancel; `certainty` is
+// ignored (forced to "Observed", the solo invariant). The caller MUST be
+// holding the physical BOOT button at the moment of this call — the same
+// load-bearing gate as /api/beacon/originate-solo.
+inline esp_err_t handle_cancel_solo(httpd_req_t* req) {
+  CancelRequest c;
+  if (const char* err = read_cancel_request(req, &c)) return send_error(req, err);
+
+  if (!beacon_channel::has_active_alarm()) return send_error(req, "no_active_alarm");
+  // spec §6.2: solo is for a device with no paired neighbor able to cosign
+  // right now; with one available, the answer is /api/beacon/cancel.
+  if (beacon_channel::paired_cosigner_available()) {
+    return send_error(req, "paired_cosigner_available");
+  }
+  if (!beacon_channel::boot_button_held()) {
+    return send_error(req, "boot_button_not_held");
+  }
+
+  const bool ok = beacon_channel::originate_cancel_solo(c.tpl, c.ttl_minutes);
+  return ok ? send_success(req, "solo CANCEL broadcast (certainty=Observed)")
+            : send_error(req, "solo cancel refused (rate, time-unsynced, or button released)");
+}
+
+// POST /api/beacon/silence — the local mute: stand THIS device down without
+// sending anything. The reply says exactly that; paired devices stay in
+// alarm until it expires or a network CANCEL reaches them.
+inline esp_err_t handle_silence(httpd_req_t* req) {
+  return beacon_channel::silence_active_alarm()
       ? send_success(req, "alarm silenced on this device only — no network CANCEL was sent; "
-                          "paired devices stay in alarm until it expires")
-      : send_error(req, "no active alarm");
+                          "paired devices stay in alarm until it expires or is canceled")
+      : send_error(req, "no_active_alarm");
 }
 
 // GET /api/beacon/active — active alarm details, if any
@@ -534,7 +631,9 @@ inline void register_routes(httpd_handle_t server, const char* api_token = nullp
   register_api_handler(server, "/api/beacon/originate",      HTTP_POST, bcn_auth_gated<handle_originate>);
   register_api_handler(server, "/api/beacon/originate-solo", HTTP_POST, bcn_auth_gated<handle_originate_solo>);
   register_api_handler(server, "/api/beacon/cosign",         HTTP_POST, bcn_auth_gated<handle_cosign>);
-  register_api_handler(server, "/api/beacon/cancel",       HTTP_POST, bcn_auth_gated<handle_cancel>);
+  register_api_handler(server, "/api/beacon/cancel",         HTTP_POST, bcn_auth_gated<handle_cancel>);
+  register_api_handler(server, "/api/beacon/cancel-solo",    HTTP_POST, bcn_auth_gated<handle_cancel_solo>);
+  register_api_handler(server, "/api/beacon/silence",        HTTP_POST, bcn_auth_gated<handle_silence>);
   register_api_handler(server, "/api/beacon/selftest",     HTTP_POST, bcn_auth_gated<handle_selftest>);
 }
 

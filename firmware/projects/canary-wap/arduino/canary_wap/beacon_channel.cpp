@@ -41,6 +41,7 @@
 #include "airtime_governor.h"
 #include "health_log.h"
 #include "beacon_audit_recover.h"
+#include "beacon_cancel_policy.h"
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <esp_flash_encrypt.h>
@@ -232,7 +233,6 @@ static bool persist_beacon_set();
 static bool load_beacon_set();
 static void recompute_trouble_reasons();
 static bool rate_check_and_record(const uint8_t* fp, bool is_exercise);
-static void emit_alert_frame();
 static void chain_audit_entry(BeaconAuditEntry* entry);
 static void on_espnow_recv(const uint8_t* mac, const uint8_t* data, int len, int8_t rssi);
 static void broadcast_message(const uint8_t* data, size_t len);
@@ -896,45 +896,102 @@ static void broadcast_message(const uint8_t* data, size_t len) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// ALERT EMISSION (after cosigner signature received)
+// FRAME EMISSION (hop 0) + ORIGINATOR SELF-ADOPTION
 // ════════════════════════════════════════════════════════════════════════════
 
-static void emit_alert_frame() {
-  if (!g_pending_origination.valid) return;
-  // Frame layout: BeaconHeader || BeaconAlertCanonical || sig_originator || sig_cosigner.
-  uint8_t buf[sizeof(BeaconHeader) + sizeof(BeaconAlertCanonical) + 2 * BEACON_SIGNATURE_SIZE];
-  memset(buf, 0, sizeof(buf));
-  BeaconHeader* hdr = (BeaconHeader*)buf;
+static const char* msg_type_label(uint8_t t) {
+  switch (t) {
+    case BEACON_MSG_ALERT:    return "ALERT";
+    case BEACON_MSG_UPDATE:   return "UPDATE";
+    case BEACON_MSG_CANCEL:   return "CANCEL";
+    case BEACON_MSG_EXERCISE: return "EXERCISE";
+    default:                  return "frame";
+  }
+}
+
+// Build and broadcast one signed ALERT-class frame at hop 0:
+// BeaconHeader || BeaconAlertCanonical || sig_originator || sig_cosigner.
+// The header's msg_type and flags are derived from the signed canonical
+// (beacon_cancel_policy), never hardcoded — receivers drop a header that
+// disagrees with the canonical, so a CANCEL must go out as a CANCEL. The
+// header nonce is fresh per emission and is returned, because it is the
+// identity a later CANCEL/UPDATE names (spec §5.4); so is the frame's
+// signature identity, for the seen-frame ring.
+static void emit_signed_frame(const BeaconAlertCanonical& c,
+                              const uint8_t* sig_a, const uint8_t* sig_b,
+                              bool solo,
+                              uint8_t out_hdr_nonce[BEACON_NONCE_SIZE],
+                              uint8_t out_frame_id[FRAME_ID_SIZE]) {
+  uint8_t out[sizeof(BeaconHeader) + sizeof(BeaconAlertCanonical) +
+              2 * BEACON_SIGNATURE_SIZE];
+  memset(out, 0, sizeof(out));
+  BeaconHeader* hdr = (BeaconHeader*)out;
   hdr->magic = BEACON_MAGIC;
   hdr->version = PROTOCOL_VERSION;
-  hdr->msg_type = BEACON_MSG_ALERT;
+  hdr->msg_type = beacon_cancel_policy::frame_header_msg_type(c);
   hdr->hop_count = 0;
-  hdr->flags = 0;
+  hdr->flags = beacon_cancel_policy::frame_header_flags(c, solo);
   hdr->payload_len = sizeof(BeaconAlertCanonical) + 2 * BEACON_SIGNATURE_SIZE;
-  memcpy(hdr->nonce, g_pending_origination.canonical.ref_canceled_nonce, BEACON_NONCE_SIZE);
-  // Actually use a fresh nonce for the frame itself if canonical doesn't carry it:
   esp_fill_random(hdr->nonce, BEACON_NONCE_SIZE);
 
-  uint8_t* p = buf + sizeof(BeaconHeader);
-  memcpy(p, &g_pending_origination.canonical, sizeof(BeaconAlertCanonical));
+  uint8_t* p = out + sizeof(BeaconHeader);
+  memcpy(p, &c, sizeof(BeaconAlertCanonical));
   p += sizeof(BeaconAlertCanonical);
-  memcpy(p, g_pending_origination.sig_originator, BEACON_SIGNATURE_SIZE);
-  // sig_cosigner is filled in once the response arrives — caller of
-  // emit_alert_frame() is the COSIGN_RESP handler; it places the signature in
-  // the second slot before invoking this. We expect g_pending_origination has
-  // been augmented; for simplicity we assume the cosigner sig has been copied
-  // into the trailing 64 bytes of g_pending_origination.canonical's owner
-  // structure — see on_cosign_resp handler.
+  memcpy(p, sig_a, BEACON_SIGNATURE_SIZE);
+  p += BEACON_SIGNATURE_SIZE;
+  memcpy(p, sig_b, BEACON_SIGNATURE_SIZE);
+
+  memcpy(out_hdr_nonce, hdr->nonce, BEACON_NONCE_SIZE);
+  frame_identity(sig_a, sig_b, out_frame_id);
 
   // Beacon frames go through the distinct beacon-slot airtime accounting
   // so HA MQTT can surface beacon.airtime_pct separately from Opera tamper
   // alerts. force_reserve_beacon never blocks (Beacon is always urgent).
-  airtime_governor::force_reserve_beacon(millis(), sizeof(buf));
-  broadcast_message(buf, sizeof(buf));
-  g_pending_origination.valid = false;
+  airtime_governor::force_reserve_beacon(millis(), sizeof(out));
+  broadcast_message(out, sizeof(out));
+}
 
-  health_log(SCV_LOG_ALERT, SCV_CAT_NETWORK,
-             "beacon: dual-signed ALERT broadcast (hop 0)");
+// The originator's own copy of a frame it just emitted. ESP-NOW never hands
+// a broadcast back to its sender, so without this the originating device
+// never entered ALARM for its own ALERT, never published Alarm, and held no
+// nonce to name in a CANCEL. Audited at hop 0 like any received frame and
+// remembered in the seen-frame ring; the state effect is the same one
+// handle_alert_frame applies. No rate bucket is charged here: the originator
+// charged its own when it originated, and receivers charge theirs.
+static void adopt_emitted_frame(const BeaconAlertCanonical& c,
+                                const uint8_t* sig_a, const uint8_t* sig_b,
+                                const uint8_t hdr_nonce[BEACON_NONCE_SIZE],
+                                const uint8_t frame_id[FRAME_ID_SIZE]) {
+  const time_t now = time(nullptr);
+  BeaconAuditEntry entry;
+  memset(&entry, 0, sizeof(entry));
+  entry.received_at = (uint64_t)now;
+  entry.canonical = c;
+  memcpy(entry.sig_originator, sig_a, BEACON_SIGNATURE_SIZE);
+  memcpy(entry.sig_cosigner, sig_b, BEACON_SIGNATURE_SIZE);
+  entry.hop_count = 0;
+  chain_audit_entry(&entry);
+  remember_frame(frame_id);
+
+  switch (beacon_cancel_policy::adopt_effect(c.msg_type, references_active_alarm(&c))) {
+    case beacon_cancel_policy::ADOPT_RAISE_ALARM:
+      g_active_alarm = c;
+      g_active_alarm_valid = true;
+      g_active_alarm_expires = c.expires;
+      memcpy(g_active_alarm_nonce, hdr_nonce, BEACON_NONCE_SIZE);
+      memcpy(g_last_alert_id, frame_id, FRAME_ID_SIZE);
+      g_last_alert_id_valid = true;
+      if (g_alarm_callback) g_alarm_callback(&g_active_alarm);
+      recompute_trouble_reasons();
+      break;
+    case beacon_cancel_policy::ADOPT_CLEAR_ALARM:
+      g_active_alarm_valid = false;
+      set_state(BEACON_STATE_SUPERVISORY);
+      break;
+    case beacon_cancel_policy::ADOPT_AUDIT_ONLY:
+    default:
+      break;
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1013,6 +1070,18 @@ static void handle_cosign_req_frame(const uint8_t* data, size_t len) {
   // spec §6.1 step 3: the cosigner checks the template before the user is
   // ever asked to confirm — nothing outside the life-safety set is signable.
   if (!is_valid_beacon_template(candidate.template_id)) return;
+  // What this device agrees to be asked (beacon_cancel_policy): ALERT, or a
+  // CANCEL that carries an all-clear template and names the alarm THIS
+  // device holds. A cosigner never attests an all-clear for an alarm it did
+  // not see, and UPDATE/EXERCISE have no reviewed origination path yet.
+  if (!beacon_cancel_policy::cosign_request_acceptable(
+          candidate.msg_type, candidate.template_id, candidate.ref_canceled_nonce,
+          g_active_alarm_valid, g_active_alarm_nonce)) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+               "beacon: COSIGN_REQ refused — msg_type not signable here, or the "
+               "CANCEL does not name this device's active alarm");
+    return;
+  }
 
   // Verify originator's signature.
   uint8_t buf[64 + sizeof(BeaconAlertCanonical)];
@@ -1091,31 +1160,23 @@ static void handle_cosign_resp_frame(const uint8_t* data, size_t len) {
     return;
   }
 
-  // Emit the dual-signed ALERT now.
-  uint8_t out[sizeof(BeaconHeader) + sizeof(BeaconAlertCanonical) +
-              2 * BEACON_SIGNATURE_SIZE];
-  memset(out, 0, sizeof(out));
-  BeaconHeader* hdr = (BeaconHeader*)out;
-  hdr->magic = BEACON_MAGIC;
-  hdr->version = PROTOCOL_VERSION;
-  hdr->msg_type = BEACON_MSG_ALERT;
-  hdr->hop_count = 0;
-  hdr->payload_len = sizeof(BeaconAlertCanonical) + 2 * BEACON_SIGNATURE_SIZE;
-  esp_fill_random(hdr->nonce, BEACON_NONCE_SIZE);
-
-  uint8_t* p = out + sizeof(BeaconHeader);
-  memcpy(p, &g_pending_origination.canonical, sizeof(BeaconAlertCanonical));
-  p += sizeof(BeaconAlertCanonical);
-  memcpy(p, g_pending_origination.sig_originator, BEACON_SIGNATURE_SIZE);
-  p += BEACON_SIGNATURE_SIZE;
-  memcpy(p, plaintext, BEACON_SIGNATURE_SIZE);  // cosigner's sig
-
-  airtime_governor::force_reserve_beacon(millis(), sizeof(out));
-  broadcast_message(out, sizeof(out));
+  // Emit the dual-signed frame now — as whatever the signed canonical is
+  // (ALERT, or a CANCEL from originate_cancel) — then adopt it locally.
+  const BeaconAlertCanonical emitted = g_pending_origination.canonical;
+  uint8_t sig_originator[BEACON_SIGNATURE_SIZE];
+  memcpy(sig_originator, g_pending_origination.sig_originator, BEACON_SIGNATURE_SIZE);
   g_pending_origination.valid = false;
 
-  health_log(SCV_LOG_ALERT, SCV_CAT_NETWORK,
-             "beacon: dual-signed ALERT broadcast at hop 0");
+  uint8_t hdr_nonce[BEACON_NONCE_SIZE];
+  uint8_t frame_id[FRAME_ID_SIZE];
+  emit_signed_frame(emitted, sig_originator, plaintext /* cosigner's sig */,
+                    /*solo=*/false, hdr_nonce, frame_id);
+  adopt_emitted_frame(emitted, sig_originator, plaintext, hdr_nonce, frame_id);
+
+  char msg[80];
+  snprintf(msg, sizeof(msg), "beacon: dual-signed %s broadcast at hop 0",
+           msg_type_label(emitted.msg_type));
+  health_log(SCV_LOG_ALERT, SCV_CAT_NETWORK, msg);
 }
 
 static void handle_alert_frame(const uint8_t* data, size_t len) {
@@ -1525,17 +1586,14 @@ static const BeaconSetEntry* pick_cosign_candidate() {
 
 bool paired_cosigner_available() { return pick_cosign_candidate() != nullptr; }
 
-bool originate_alert(BeaconTemplate template_id, BeaconUrgency urgency,
-                     BeaconSeverity severity, BeaconCertainty certainty,
-                     BeaconDetailSlot detail, uint32_t ttl_minutes) {
-  if (!g_enabled) return false;
-  if (time(nullptr) < (time_t)MIN_UNIX_TIME) return false;
-  if (g_beacon_set_count == 0) return false;  // no cosigner available
-  if (!is_valid_beacon_template((uint8_t)template_id)) {
-    health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
-               "beacon: origination refused — template outside the life-safety set");
-    return false;
-  }
+// The two-device origination tail shared by originate_alert and
+// originate_cancel: charge this device's per-pubkey bucket, pick a paired
+// cosigner, name it in the canonical, sign, park the canonical as the pending
+// origination and send the encrypted COSIGN_REQ. The caller has run its own
+// gates and built everything in `canonical` except cosigner_fp, which is
+// filled here — before signing, because the signatures cover it. For ALERT
+// this is the body originate_alert always had, in the same order.
+static bool originate_canonical(BeaconAlertCanonical& canonical) {
   if (!rate_check_and_record(g_device_fp, /*is_exercise=*/false)) return false;
 
   ensure_x25519_keypair();
@@ -1546,19 +1604,6 @@ bool originate_alert(BeaconTemplate template_id, BeaconUrgency urgency,
                "beacon: no eligible cosigner (rate/presence/x25519)");
     return false;
   }
-
-  BeaconAlertCanonical canonical;
-  memset(&canonical, 0, sizeof(canonical));
-  canonical.effective = (uint64_t)time(nullptr);
-  canonical.expires = canonical.effective + (uint64_t)ttl_minutes * 60ULL;
-  canonical.template_id = (uint8_t)template_id;
-  canonical.msg_type = BEACON_MSG_ALERT;
-  canonical.urgency = (uint8_t)urgency;
-  canonical.severity = (uint8_t)severity;
-  canonical.certainty = (uint8_t)certainty;
-  canonical.scope = BCN_SCOPE_PRIVATE;
-  canonical.detail_slot = (uint8_t)detail;
-  memcpy(canonical.originator_fp, g_device_fp, DEVICE_FP_SIZE);
   memcpy(canonical.cosigner_fp, candidate->fingerprint, DEVICE_FP_SIZE);
 
   uint8_t buf[64 + sizeof(BeaconAlertCanonical)];
@@ -1606,6 +1651,35 @@ bool originate_alert(BeaconTemplate template_id, BeaconUrgency urgency,
   health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
              "beacon: encrypted COSIGN_REQ broadcast to candidate cosigner");
   return true;
+}
+
+bool originate_alert(BeaconTemplate template_id, BeaconUrgency urgency,
+                     BeaconSeverity severity, BeaconCertainty certainty,
+                     BeaconDetailSlot detail, uint32_t ttl_minutes) {
+  if (!g_enabled) return false;
+  if (time(nullptr) < (time_t)MIN_UNIX_TIME) return false;
+  if (g_beacon_set_count == 0) return false;  // no cosigner available
+  if (!is_valid_beacon_template((uint8_t)template_id)) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+               "beacon: origination refused — template outside the life-safety set");
+    return false;
+  }
+
+  BeaconAlertCanonical canonical;
+  memset(&canonical, 0, sizeof(canonical));
+  canonical.effective = (uint64_t)time(nullptr);
+  canonical.expires = canonical.effective + (uint64_t)ttl_minutes * 60ULL;
+  canonical.template_id = (uint8_t)template_id;
+  canonical.msg_type = BEACON_MSG_ALERT;
+  canonical.urgency = (uint8_t)urgency;
+  canonical.severity = (uint8_t)severity;
+  canonical.certainty = (uint8_t)certainty;
+  canonical.scope = BCN_SCOPE_PRIVATE;
+  canonical.detail_slot = (uint8_t)detail;
+  memcpy(canonical.originator_fp, g_device_fp, DEVICE_FP_SIZE);
+  // cosigner_fp is named by originate_canonical once a candidate is picked.
+
+  return originate_canonical(canonical);
 }
 
 bool cosign_pending_request(bool confirm) {
@@ -1757,47 +1831,128 @@ bool originate_alert_solo(BeaconTemplate template_id, BeaconUrgency urgency,
   // slots carry the same Ed25519 signature, and the BCN_FLAG_SOLO_ORIGIN
   // flag in the header tells receivers to skip the "originator != cosigner"
   // check.
-  uint8_t out[sizeof(BeaconHeader) + sizeof(BeaconAlertCanonical) +
-              2 * BEACON_SIGNATURE_SIZE];
-  memset(out, 0, sizeof(out));
-  BeaconHeader* hdr = (BeaconHeader*)out;
-  hdr->magic = BEACON_MAGIC;
-  hdr->version = PROTOCOL_VERSION;
-  hdr->msg_type = BEACON_MSG_ALERT;
-  hdr->hop_count = 0;
-  hdr->flags = BCN_FLAG_SOLO_ORIGIN;
-  hdr->payload_len = sizeof(BeaconAlertCanonical) + 2 * BEACON_SIGNATURE_SIZE;
-  esp_fill_random(hdr->nonce, BEACON_NONCE_SIZE);
-
-  uint8_t* p = out + sizeof(BeaconHeader);
-  memcpy(p, &canonical, sizeof(BeaconAlertCanonical));
-  p += sizeof(BeaconAlertCanonical);
-  memcpy(p, sig, BEACON_SIGNATURE_SIZE);                // sig_originator
-  p += BEACON_SIGNATURE_SIZE;
-  memcpy(p, sig, BEACON_SIGNATURE_SIZE);                // sig_cosigner (same)
-
-  airtime_governor::force_reserve_beacon(millis(), sizeof(out));
-  broadcast_message(out, sizeof(out));
+  uint8_t hdr_nonce[BEACON_NONCE_SIZE];
+  uint8_t frame_id[FRAME_ID_SIZE];
+  emit_signed_frame(canonical, sig, sig, /*solo=*/true, hdr_nonce, frame_id);
+  adopt_emitted_frame(canonical, sig, sig, hdr_nonce, frame_id);
 
   health_log(SCV_LOG_ALERT, SCV_CAT_NETWORK,
              "beacon: solo ALERT broadcast (certainty=Observed)");
   return true;
 }
 
-// Silences the active alarm on THIS device only. Spec §10 has the endpoint
-// behind this originate a BEACON_MSG_CANCEL so every receiver stands down
-// together; that needs the dual-signed cosign flow with msg_type=CANCEL and
-// ref_canceled_nonce set, which is not built yet. Until it is, the caller
-// has to say so (beacon_api.h's handle_cancel does) rather than report a
-// network cancel that never went out — neighbors stay in ALARM until the
-// alarm's own `expires`.
-bool cancel_active_alarm() {
+// ════════════════════════════════════════════════════════════════════════════
+// CANCEL ORIGINATION (spec §10 /api/beacon/cancel, §6.2 step 4 for solo)
+//
+// A network all-clear for the alarm this device holds. It is a Beacon frame
+// like any other, so it takes the same two paths an ALERT does: the
+// two-device cosign flow (a paired neighbor that ALSO holds this alarm
+// confirms and signs — see cosign_request_acceptable), or the BOOT-button
+// solo path with BCN_FLAG_SOLO_ORIGIN and certainty=Observed. Receivers
+// already accept it (handle_alert_frame: the CANCEL must name the active
+// alarm's nonce), and charge it to the originator's 24 h bucket like an
+// ALERT (spec §8 has no CANCEL exemption) — so this side charges it too,
+// rather than spend nothing on a frame receivers would then drop.
+// ════════════════════════════════════════════════════════════════════════════
+
+static bool cancel_gates_pass(BeaconTemplate clr_template, bool solo) {
+  if (!g_enabled) return false;
+  if (!beacon_cancel_policy::is_cancel_template((uint8_t)clr_template)) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+               "beacon: cancel refused — template is not an all-clear (0x80-0x82)");
+    return false;
+  }
+  const bool time_synced = time(nullptr) >= (time_t)MIN_UNIX_TIME;
+  // The BOOT pin is read only on the solo path — it is that path's physical
+  // attestation, and nothing else consults it.
+  const bool boot_held = solo ? boot_button_held() : false;
+  const beacon_cancel_policy::CancelRefusal r =
+      beacon_cancel_policy::decide_cancel_origination(
+          g_active_alarm_valid, time_synced, solo,
+          paired_cosigner_available(), boot_held);
+  switch (r) {
+    case beacon_cancel_policy::CANCEL_OK:
+      return true;
+    case beacon_cancel_policy::CANCEL_NO_ACTIVE_ALARM:
+      health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "beacon: cancel refused — no active alarm");
+      return false;
+    case beacon_cancel_policy::CANCEL_TIME_UNSYNCED:
+      health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "beacon: cancel refused — wall clock not synced");
+      return false;
+    case beacon_cancel_policy::CANCEL_NO_COSIGNER:
+      health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
+                 "beacon: cancel refused — no paired cosigner available; the solo path needs the BOOT button");
+      return false;
+    case beacon_cancel_policy::CANCEL_PAIRED_COSIGNER_AVAILABLE:
+      health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
+                 "beacon: solo cancel refused — a fresh paired cosigner is available; use the two-device path");
+      return false;
+    case beacon_cancel_policy::CANCEL_BOOT_NOT_HELD:
+    default:
+      health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "beacon: solo cancel refused — BOOT button not held");
+      return false;
+  }
+}
+
+bool originate_cancel(BeaconTemplate clr_template, BeaconCertainty certainty,
+                      uint32_t ttl_minutes) {
+  if (!cancel_gates_pass(clr_template, /*solo=*/false)) return false;
+
+  static const uint8_t NO_COSIGNER_YET[DEVICE_FP_SIZE] = {0};
+  BeaconAlertCanonical canonical;
+  beacon_cancel_policy::fill_cancel_canonical(
+      canonical, (uint64_t)time(nullptr), ttl_minutes, (uint8_t)clr_template,
+      (uint8_t)certainty, g_active_alarm_nonce, g_device_fp, NO_COSIGNER_YET,
+      /*solo=*/false);
+  // originate_canonical charges the bucket, names the cosigner and sends the
+  // encrypted COSIGN_REQ; the COSIGN_RESP handler emits the CANCEL and
+  // adopts it, which is when this device leaves ALARM.
+  return originate_canonical(canonical);
+}
+
+bool originate_cancel_solo(BeaconTemplate clr_template, uint32_t ttl_minutes) {
+  if (!cancel_gates_pass(clr_template, /*solo=*/true)) return false;
+  // Charged last, after every stateless gate, so a refusal costs no budget.
+  if (!rate_check_and_record(g_device_fp, /*is_exercise=*/false)) {
+    health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
+               "beacon: solo cancel refused — this device's 24 h origination budget is spent");
+    return false;
+  }
+
+  BeaconAlertCanonical canonical;
+  beacon_cancel_policy::fill_cancel_canonical(
+      canonical, (uint64_t)time(nullptr), ttl_minutes, (uint8_t)clr_template,
+      (uint8_t)BCN_CERT_OBSERVED, g_active_alarm_nonce, g_device_fp, g_device_fp,
+      /*solo=*/true);
+
+  uint8_t buf[64 + sizeof(BeaconAlertCanonical)];
+  size_t cl = build_alert_canonical(&canonical, buf, sizeof(buf));
+  if (cl == 0) return false;
+  uint8_t sig[BEACON_SIGNATURE_SIZE];
+  Ed25519::sign(sig, g_device_privkey, g_device_pubkey, buf, cl);
+
+  uint8_t hdr_nonce[BEACON_NONCE_SIZE];
+  uint8_t frame_id[FRAME_ID_SIZE];
+  emit_signed_frame(canonical, sig, sig, /*solo=*/true, hdr_nonce, frame_id);
+  adopt_emitted_frame(canonical, sig, sig, hdr_nonce, frame_id);
+
+  health_log(SCV_LOG_ALERT, SCV_CAT_NETWORK,
+             "beacon: solo CANCEL broadcast (certainty=Observed)");
+  return true;
+}
+
+// The local mute: stands THIS device down without sending anything. Paired
+// devices stay in ALARM until the alarm's own `expires` or a network CANCEL
+// (originate_cancel / originate_cancel_solo) reaches them. Any surface that
+// calls this must say exactly that; "canceled" would be a claim the network
+// never saw.
+bool silence_active_alarm() {
   if (!g_active_alarm_valid) return false;
   g_active_alarm_valid = false;
   set_state(BEACON_STATE_SUPERVISORY);
   health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
              "beacon: alarm silenced on this device only — no CANCEL originated; "
-             "paired devices stay in alarm until it expires");
+             "paired devices stay in alarm until it expires or is canceled");
   return true;
 }
 
