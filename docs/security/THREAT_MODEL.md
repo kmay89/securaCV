@@ -142,7 +142,7 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 | OTA | User-initiated only, signed binaries. The WAP's BLE OTA (protocol v2) puts product and version under the release signature and enforces the same anti-rollback floor as the pull path; a downgrade or a legacy v1 header needs the owner's BOOT-button break-glass and is logged as a bypass (`docs/firmware_ota.md`) |
 | Cloud | No outbound connections |
 | mDNS | Local AP only |
-| HTTP | Plaintext on the LAN by default (token-authenticated); TLS is an owner opt-in on the WAP (`tls_enabled`) and the kernel (`api-tls` feature) — not "TLS only" |
+| HTTP | Plaintext on the LAN by default (token-authenticated); TLS is an owner opt-in on the WAP (`tls_enabled`) and the kernel (`api-tls` feature) — not "TLS only". The `canary (PIO)` dev/full builds (`FEATURE_HTTPS=1`, 2026-09) serve a self-signed ECDSA P-256 certificate on 443 after first-boot setup and redirect port 80 there; release builds stay plaintext until the size budget is read, and a build or core that cannot do TLS falls back to plaintext and says why in `/api/status` `tls_mode_reason` — compile-tested, never run on hardware |
 | Fleet roll-call (`GET /api/fleet`) | The one open read on the hub: rate-limited, no token. It serves the kernel's own row and — when `api.fleet_peers_path` is set — each Canary the MQTT bridge heard, in the contract's coarse words only (name, online, chain verdict, product, and presence/occupants/breathing while proven online); never an event, a zone or key material. The origin allow-list stops other websites' scripts, not a client that can reach the port, so the port stays loopback by default and is the owner's to expose. What the roll-call says is bounded by the MQTT broker, not proven past it: a peer with publish rights can replay a captured signed publish (held to one window per missed chain advance), invent ids, or put a real id into `degraded` — see `tvos/discovery/DISCOVERY.md`. The summary file behind it is `0600` and size-bounded |
 | Camera | Preview only (evidence is metadata, not video) |
 
@@ -154,7 +154,8 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 | Ed25519 | Signatures (identity, record signing) | Arduino Crypto (rweather) |
 | SHA-256 | Hashing (chain integrity, domain separation) | mbedTLS (ESP-IDF) |
 | HMAC-SHA256 / HKDF | Key derivation (token generation) | mbedTLS (ESP-IDF) |
-| RSA-2048 | TLS certificate (self-signed, local only) | mbedTLS (ESP-IDF) |
+| RSA-2048 | TLS certificate (self-signed, local only) — canary-wap | mbedTLS (ESP-IDF) |
+| ECDSA P-256 | TLS certificate (self-signed, local only) — `canary (PIO)` `FEATURE_HTTPS` builds | mbedTLS (ESP-IDF) |
 
 **Not used (and why):**
 | Primitive | Reason |

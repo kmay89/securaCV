@@ -525,6 +525,18 @@ within those 30 seconds — that is how you get it back later without a
 USB cable. *(New in 2026-09; checked by automated builds and tests, not
 yet on a bench device.)*
 
+**Encrypted dashboard (development and full images only, for now).** On
+those images the Canary serves its dashboard over `https://` once setup
+is done; typing `http://` sends you there. Setup itself stays on plain
+`http://`, because the phone's sign-in sheet shows a blank page for a
+certificate it does not recognize. Your browser will warn that the
+certificate is not trusted: the Canary made it for itself, and the iPhone
+app checks it against the fingerprint in your recovery kit instead. A
+factory reset makes a new certificate, so pair the iPhone app again
+afterwards. The standard release image does not turn this on yet.
+*(New in 2026-09; checked by automated builds only, not yet on a bench
+device.)*
+
 ---
 
 ## Optional: Home Assistant

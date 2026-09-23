@@ -858,6 +858,32 @@ void setup() {
     if (net.begin(ap_ssid, g_ap_password, device.device_id)) {
       Serial.println("[OK] WiFi AP active");
 #if FEATURE_HTTP_SERVER
+#if FEATURE_HTTPS
+      // F15: self-signed TLS. Skipped during first-boot setup — captive
+      // mini-browsers (iOS CNA, Android) render a blank page on a
+      // self-signed certificate, the AP is the security boundary before any
+      // home Wi-Fi exists, and setup completes with a reboot, so the next
+      // boot comes up on HTTPS (WAP parity). A failure is not fatal: the
+      // server falls back to HTTP-only and /api/status tls_mode_reason says
+      // why.
+#if FEATURE_SETUP_WIZARD
+      const bool tls_skip_for_setup = setup_is_first_boot();
+#else
+      const bool tls_skip_for_setup = false;
+#endif
+      if (tls_skip_for_setup) {
+        Serial.println("[..] SETUP MODE: HTTP only so the captive portal renders");
+      } else {
+        Serial.println("[..] Preparing TLS certificate...");
+#if FEATURE_WATCHDOG
+        esp_task_wdt_reset();  // first TLS boot generates a P-256 key (~1 s)
+#endif
+        if (!net.initTls()) {
+          Serial.printf("[WARN] TLS unavailable (%s) — API traffic is NOT encrypted\n",
+                        net.getTlsModeReason());
+        }
+      }
+#endif
       Serial.println("[..] Starting HTTP server...");
       net.startHttpServer();
 #endif
@@ -1499,13 +1525,22 @@ void setup() {
   ScvNetworkManager& network = network_get_instance();
   Serial.printf("║  WiFi AP    : %-45s  ║\n", device.ap_ssid);
   Serial.printf("║  Password   : %-45s  ║\n", g_ap_password);
-  Serial.printf("║  Dashboard  : http://%-39s  ║\n", network.getStatus().ap_ip);
   {
+    // F15: the scheme the dashboard is actually served on.
+    const char* scheme = network.isTlsEnabled() ? "https" : "http";
+    char dash_url[64];
+    snprintf(dash_url, sizeof(dash_url), "%s://%s", scheme, network.getStatus().ap_ip);
+    Serial.printf("║  Dashboard  : %-45s  ║\n", dash_url);
     const char* host = network.getMdnsHostname();
     char mdns_url[64];
-    snprintf(mdns_url, sizeof(mdns_url), "http://%s.local",
+    snprintf(mdns_url, sizeof(mdns_url), "%s://%s.local", scheme,
              (host && host[0]) ? host : "canary");
     Serial.printf("║  mDNS       : %-45s  ║\n", mdns_url);
+    if (network.isTlsEnabled()) {
+      char fp_short[24];
+      snprintf(fp_short, sizeof(fp_short), "%.16s...", network.getTlsCertFp());
+      Serial.printf("║  TLS cert fp: %-45s  ║\n", fp_short);
+    }
   }
 #endif
 #if FEATURE_POWER_MONITOR

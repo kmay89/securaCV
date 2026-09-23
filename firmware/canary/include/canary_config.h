@@ -24,6 +24,18 @@
 #ifndef FEATURE_HTTP_SERVER
   #define FEATURE_HTTP_SERVER   1
 #endif
+// Self-signed HTTPS on 443 with a port-80 redirect server (F15). Default OFF:
+// [env:dev] turns it on (inherited by dev_ha / usb-onboard / full), so CI
+// compiles it on both the IDF 4.4 and IDF 5.5 cores. release/release_ha and
+// the board envs stay at 0 until the firmware.yml size-guard log shows the
+// release delta fits the 0x1E0000 OTA slot (firmware/flavors.json
+// size_guards) — the maintainer flips release. Even when ON, the device falls
+// back to HTTP-only (and says why in /api/status tls_mode_reason) when the
+// core lacks esp_https_server, certificate generation is unavailable, or the
+// first-boot setup wizard is running.
+#ifndef FEATURE_HTTPS
+  #define FEATURE_HTTPS         0
+#endif
 #ifndef FEATURE_CAMERA_PEEK
   #define FEATURE_CAMERA_PEEK   1
 #endif
@@ -317,6 +329,11 @@
 #define AP_CHANNEL           1
 #define AP_MAX_CONNECTIONS   1    // Hardened: max 1 client for security isolation
 
+// FEATURE_HTTPS ports: the TLS server, and the plain server that keeps the
+// OS connectivity probes and 307-redirects everything else to https://.
+#define HTTPS_PORT           443
+#define HTTP_REDIRECT_PORT   80
+
 // Radio defaults applied once at network bring-up. Pinning the PHY to HT20 +
 // 11bgn keeps the WiFi-CSI subcarrier count constant — an HT40 association or
 // rate renegotiation would change it and destabilize the fixed 32-dim CSI
@@ -434,6 +451,11 @@
 #define NVS_KEY_WIFI_PASS "wifi_pass"
 #define NVS_KEY_WIFI_EN   "wifi_en"
 #define NVS_KEY_TOKEN     "api_token"
+// FEATURE_HTTPS: the self-signed ECDSA P-256 certificate and its key, DER,
+// generated once on the first TLS-capable boot (factory reset erases both,
+// so the device re-keys and a pinned iPhone pairing must be redone).
+#define NVS_KEY_TLS_CERT  "tls_cert"
+#define NVS_KEY_TLS_KEY   "tls_key"
 #define NVS_KEY_BATT_CAP  "batt_cap"
 #define NVS_KEY_BATT_CYC  "batt_cycles"
 #define NVS_KEY_BATT_MAX  "batt_max_mv"

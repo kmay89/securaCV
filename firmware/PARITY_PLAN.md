@@ -96,6 +96,15 @@ is already at parity ✅) are omitted.
   a provisioned cert, so the dashboard honestly rates default builds ❌. Enabling it for real is
   the shared TLS gap (launch review §2) and Track D in the bench runbook — do it once and
   mirror into both trees.
+- *2026-09 (F15, option (b) — maintainer to confirm):* the `canary (PIO)` tree now has the same
+  shape — `httpd_ssl` on 443 serving every route, a port-80 server that keeps the six OS
+  connectivity probes and 307-redirects the rest, TLS skipped during first-boot setup — with an
+  on-device **ECDSA P-256** self-signed certificate (the WAP's CN / validity / serial / NVS
+  layout; ~1 s keygen instead of RSA-2048's 30-60 s). `FEATURE_HTTPS=1` in `[env:dev]` and
+  `[env:full]` only, so CI compiles it on IDF 4.4 and 5.5; release stays off until the
+  size-guard log gives the slot delta. Never run on hardware: the dashboard cell is ⚠️, not ✅.
+  Fallback if the dev leg shows the 2.0.17 core lacks x509write: option (c), certificate + key
+  provisioned by the two flashers' NVS builders (no on-device keygen).
 
 ---
 
@@ -172,7 +181,7 @@ cell to ✅ only after the matching bench-runbook track passes** and an artifact
 | →Arduino | Sensing dashboard panel | ☐ | n/a | ☐ |
 | →Arduino | WiFi power save | ☐ | ☐ | ☐ |
 | →Arduino | WiFi auto-reconnect | ☐ | n/a | ☐ |
-| shared | TLS (HTTPS) enabled | ☐ | ☐ | ☐ |
+| shared | TLS (HTTPS) enabled | ☐ ACTIVE: code in dev/full (2026-09, F15) — tick when that PR's `firmware.yml` run is green · ☐ WAP default builds | ☐ | ☐ |
 
 **Exit:** every row ✅ in `FEATURES.md` for both `canary (PIO)` and `canary-wap (Arduino)` columns,
 with the bench-gated rows backed by a runbook artifact.

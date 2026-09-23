@@ -456,6 +456,15 @@ Genuinely solid. Gaps:
 
 - **No TLS anywhere** (no `esp_https_server`/`httpd_ssl`) — all REST + the MJPEG peek stream are
   plaintext on the LAN; a self-signed pinned cert (as the archived WAP snapshot had) closes it. **[P1]**
+  *Update 2026-09 (F15, option (b) — maintainer to confirm):* landed for `[env:dev]` and
+  `[env:full]` — `httpd_ssl` on 443 with an on-device ECDSA P-256 self-signed certificate (the
+  WAP's CN / validity / serial / NVS layout), a port-80 server that keeps the connectivity probes
+  and 307-redirects the rest, TLS skipped during first-boot setup, the MJPEG stream run in the
+  handler over TLS, and `tls_enabled` / `tls_cert_fp` / `tls_mode_reason` in `/api/status` and
+  the receipt. Every core capability is detected (`__has_include` + Kconfig + mbedTLS config), so
+  a core without it compiles HTTP-only and says why. **Release pending** the size-guard delta;
+  **bench Track D open**. Fallback if the IDF 4.4 core lacks x509write: option (c), the
+  certificate provisioned by the flashers' NVS builders.
 - **Auth coverage is good — the MJPEG stream *is* gated.** `handle_peek_stream` calls `auth_gate`
   first ([`securacv_network.cpp:1700`](canary/lib/securacv_network/src/securacv_network.cpp)), so the
   peek stream is **not** an open privacy hole. The main intentionally-ungated handler is `handle_ui`
@@ -555,7 +564,7 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 19 | Migrate audio→`i2s_pdm`, IR→`rmt_rx` | **P1** | Audio/IR | `securacv_audio.cpp:56` | Forward-compat; built-in HPF/callbacks |
 | 20 | esp-dsp / esp-nn for audio DSP + TFLite | **P1** | Audio/Vision | `securacv_audio.cpp:339` | Several-fold DSP; ~500→~60 ms Invoke |
 | 21 | WPA3/PMF + per-device AP password | **P1** | WiFi | `canary_config.h:276` | Closes plaintext-AP + shared-secret exposure |
-| 22 | TLS on the HTTP/peek surface | **P1** | Web | `securacv_network.cpp` | Encrypted LAN API + stream |
+| 22 | TLS on the HTTP/peek surface (landed dev/full 2026-09; release pending size; bench Track D open) | **P1** | Web | `securacv_network.cpp` | Encrypted LAN API + stream |
 | 23 | Camera SCCB standby + XCLK gating/tuning | **P1** | Camera | `securacv_camera.cpp:111` | Lower idle draw + self-heat; OV5640 headroom |
 | 24 | OV5640/OV3660 tuning parity + PID map fix | **P1** | Camera | `securacv_camera.cpp:392` | Correct image on shipped sensors |
 | 25 | Graceful sleep teardown + `gpio_hold` + PSRAM down | **P1** | Power | `securacv_lowpower.cpp:213` | µA deep-sleep floor; no SD corruption |

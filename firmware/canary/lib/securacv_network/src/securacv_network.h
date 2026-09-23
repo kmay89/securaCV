@@ -123,9 +123,30 @@ public:
   const PeerEntry* getPeers() const { return m_peers; }
   size_t getPeerCount() const;
 
-  // HTTP server
+  // HTTP server. With FEATURE_HTTPS and a certificate (initTls), this starts
+  // httpd_ssl on HTTPS_PORT serving every route plus a small plain server on
+  // HTTP_REDIRECT_PORT (connectivity probes + a redirect); otherwise one plain
+  // server on port 80 serving every route, exactly as before.
   bool startHttpServer();
   void stopHttpServer();
+
+  // F15: load the self-signed ECDSA P-256 certificate from NVS, or generate
+  // and store it on the first TLS-capable boot. Call before startHttpServer();
+  // main.cpp skips it during first-boot setup (captive sheets go blank on a
+  // self-signed certificate). Returns false, with the reason kept for
+  // /api/status, when the core cannot do TLS or generation fails.
+  bool initTls();
+  // True once startHttpServer() actually brought up the TLS server.
+  bool isTlsEnabled() const { return m_tls_enabled; }
+  // Lowercase hex SHA-256 of the certificate DER ("" without one): the pin
+  // the provisioning receipt's tls_cert_fp hands the iPhone app.
+  const char* getTlsCertFp() const { return m_tls_cert_fp_hex; }
+  // Why the server is (or is not) serving HTTPS — tls_policy::decide's
+  // reason, or the certificate step's failure. Never null.
+  const char* getTlsModeReason() const { return m_tls_reason; }
+  // The TLS server handle (null when HTTP-only). Handlers compare
+  // req->handle against it to pick the TLS-safe streaming path.
+  httpd_handle_t getHttpsServer() const { return m_https_server; }
 
   // Status
   const WiFiStatus& getStatus() const { return m_status; }
@@ -143,8 +164,11 @@ public:
   // State name
   static const char* stateName(WiFiProvState s);
 
-  // HTTP server handle (for external handlers)
-  httpd_handle_t getHttpServer() const { return m_http_server; }
+  // The server that carries the API routes (for external handlers): the TLS
+  // server when HTTPS is up, else the plain one.
+  httpd_handle_t getHttpServer() const {
+    return m_https_server ? m_https_server : m_http_server;
+  }
 
   // The SoftAP credentials as broadcast right now (the first-boot setup SSID
   // while unprovisioned, the device SSID after). Read by the provisioning
@@ -154,7 +178,11 @@ public:
   const char* getApPassword() const { return m_ap_password; }
 
 private:
-  void registerHttpHandlers();
+  // Registers every route on `server` (the TLS server, or the plain one in
+  // HTTP-only mode) — one table, whichever server is primary.
+  void registerHttpHandlers(httpd_handle_t server);
+  // FEATURE_HTTPS: the plain port-80 server beside the TLS one.
+  bool startRedirectServer();
 
   // F4 (Wi-Fi/BLE coexistence): tear down the SoftAP once the STA link is
   // healthy so the single 2.4 GHz radio runs STA + BLE (Espressif's stable Y
@@ -179,6 +207,17 @@ private:
   uint32_t m_peers_last_browse_ms;
   char m_ap_ssid[33];            // stashed in begin() so raiseAp() can bring the
   char m_ap_password[65];        // management SoftAP back up after STA loss.
+
+  // F15 TLS state. The DER buffers are malloc'd once (initTls) and live for
+  // the server's lifetime: httpd_ssl keeps pointers to them.
+  httpd_handle_t m_https_server;
+  bool m_tls_enabled;
+  uint8_t* m_tls_cert_der;
+  size_t m_tls_cert_der_len;
+  uint8_t* m_tls_key_der;
+  size_t m_tls_key_der_len;
+  char m_tls_cert_fp_hex[65];
+  const char* m_tls_reason;
 };
 
 // ════════════════════════════════════════════════════════════════════════════

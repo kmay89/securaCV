@@ -26,6 +26,45 @@
 #include <lwip/sockets.h>
 #include <esp_netif.h>
 
+// F15: self-signed HTTPS. One code path for both cores — dev/release/board
+// envs are Arduino 2.0.17 / IDF 4.4.7, [env:full] is core 3.3.8 / IDF 5.5.4 —
+// so every capability is detected, never assumed:
+//   * SECURACV_HAS_HTTPS_SERVER: FEATURE_HTTPS on, the header present, AND the
+//     core's prebuilt sdkconfig built the component (the header can exist
+//     while the library is compiled out; that would only fail at link);
+//   * SECURACV_HAS_TLS_CERTGEN: mbedTLS built with everything an on-device
+//     ECDSA P-256 self-signed certificate needs.
+// Whatever is missing compiles OUT and the device runs HTTP-only, naming the
+// reason in /api/status tls_mode_reason (tls_policy::decide).
+#include "network/tls_policy.h"
+#include <esp_idf_version.h>
+#include <sdkconfig.h>
+#if FEATURE_HTTPS && __has_include("esp_https_server.h") && \
+    defined(CONFIG_ESP_HTTPS_SERVER_ENABLE) && CONFIG_ESP_HTTPS_SERVER_ENABLE
+  #include "esp_https_server.h"
+  #define SECURACV_HAS_HTTPS_SERVER 1
+#else
+  #define SECURACV_HAS_HTTPS_SERVER 0
+#endif
+#if SECURACV_HAS_HTTPS_SERVER && __has_include("mbedtls/x509write_crt.h")
+  #include "mbedtls/x509write_crt.h"
+  #include "mbedtls/pk.h"
+  #include "mbedtls/ecp.h"
+  #include "mbedtls/entropy.h"
+  #include "mbedtls/ctr_drbg.h"
+  #include "mbedtls/version.h"
+  #if defined(MBEDTLS_X509_CRT_WRITE_C) && defined(MBEDTLS_PK_WRITE_C) && \
+      defined(MBEDTLS_ECP_C) && defined(MBEDTLS_ECDSA_C) && \
+      defined(MBEDTLS_ECP_DP_SECP256R1_ENABLED) && \
+      defined(MBEDTLS_CTR_DRBG_C) && defined(MBEDTLS_ENTROPY_C)
+    #define SECURACV_HAS_TLS_CERTGEN 1
+  #else
+    #define SECURACV_HAS_TLS_CERTGEN 0
+  #endif
+#else
+  #define SECURACV_HAS_TLS_CERTGEN 0
+#endif
+
 #if FEATURE_SD_STORAGE
 #include "securacv_storage.h"
 #endif
@@ -151,6 +190,14 @@ ScvNetworkManager::ScvNetworkManager()
   m_mdns_device_id[0] = '\0';
   m_ap_ssid[0] = '\0';
   m_ap_password[0] = '\0';
+  m_https_server = nullptr;
+  m_tls_enabled = false;
+  m_tls_cert_der = nullptr;
+  m_tls_cert_der_len = 0;
+  m_tls_key_der = nullptr;
+  m_tls_key_der_len = 0;
+  m_tls_cert_fp_hex[0] = '\0';
+  m_tls_reason = "initTls() not called (first-boot setup, or FEATURE_HTTPS=0)";
 }
 
 // F4 grace window: keep the SoftAP up this long after the STA link reports
@@ -958,6 +1005,218 @@ static void local_addr_of(httpd_req_t* req, char* out, size_t cap) {
            (unsigned)((local >> 8) & 0xFF),  (unsigned)(local & 0xFF));
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// TLS CERTIFICATE (F15) — self-signed ECDSA P-256, generated once, kept in NVS
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The WAP's layout and naming (canary_wap.ino tls_*: CN=securacv-<fp>,
+// O=SecuraCV, OU=Canary; validity 2020-01-01..2050-01-01; serial 1; DER in
+// NVS keys tls_cert / tls_key) with one deliberate difference, option (b):
+// an ECDSA P-256 key instead of RSA-2048 — about a second of keygen instead
+// of 30-60 s, ~0.5 KB of DER instead of ~2 KB, a smaller handshake. Clients
+// never see the difference: the iPhone app pins the SHA-256 of the
+// certificate DER (tls_cert_fp), whatever the key type.
+//
+// Every step logs why it stopped, and the reason lands in m_tls_reason so
+// /api/status tls_mode_reason says it. Serial lines never print key bytes.
+
+#if SECURACV_HAS_HTTPS_SERVER
+static bool tls_load_der_from_nvs(uint8_t** cert, size_t* cert_len,
+                                  uint8_t** key, size_t* key_len) {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly()) return false;
+  const size_t clen = nvs.getBytesLength(NVS_KEY_TLS_CERT);
+  const size_t klen = nvs.getBytesLength(NVS_KEY_TLS_KEY);
+  if (clen == 0 || klen == 0) {
+    nvs.end();
+    return false;
+  }
+  uint8_t* c = (uint8_t*)malloc(clen);
+  uint8_t* k = (uint8_t*)malloc(klen);
+  bool ok = c && k &&
+            nvs.getBytes(NVS_KEY_TLS_CERT, c, clen) == clen &&
+            nvs.getBytes(NVS_KEY_TLS_KEY, k, klen) == klen;
+  nvs.end();
+  if (!ok) {
+    if (k) { memset(k, 0, klen); free(k); }
+    free(c);
+    return false;
+  }
+  *cert = c; *cert_len = clen;
+  *key = k;  *key_len = klen;
+  return true;
+}
+
+static bool tls_store_der_to_nvs(const uint8_t* cert, size_t cert_len,
+                                 const uint8_t* key, size_t key_len) {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadWrite()) return false;
+  const bool ok = nvs.putBytes(NVS_KEY_TLS_CERT, cert, cert_len) == cert_len &&
+                  nvs.putBytes(NVS_KEY_TLS_KEY, key, key_len) == key_len;
+  nvs.end();
+  return ok;
+}
+#endif  // SECURACV_HAS_HTTPS_SERVER
+
+#if SECURACV_HAS_TLS_CERTGEN
+// Generates the pair into freshly malloc'd DER buffers. mbedTLS writes DER at
+// the END of the scratch buffer and returns its length, so the copy starts at
+// buf + sizeof(buf) - len (WAP parity).
+static bool tls_generate_self_signed(const char* device_fp_hex,
+                                     uint8_t** cert, size_t* cert_len,
+                                     uint8_t** key, size_t* key_len,
+                                     const char** why) {
+  Serial.println("[TLS] Generating self-signed certificate (ECDSA P-256, first TLS boot only)...");
+  int ret = -1;
+  bool ok = false;
+  uint8_t* c = nullptr;
+  uint8_t* k = nullptr;
+  mbedtls_pk_context pk;
+  mbedtls_x509write_cert crt;
+  mbedtls_entropy_context entropy;
+  mbedtls_ctr_drbg_context drbg;
+  mbedtls_mpi serial;
+  mbedtls_pk_init(&pk);
+  mbedtls_x509write_crt_init(&crt);
+  mbedtls_entropy_init(&entropy);
+  mbedtls_ctr_drbg_init(&drbg);
+  mbedtls_mpi_init(&serial);
+
+  static const char kPers[] = "securacv_tls_gen";
+  char subject[96];
+  static uint8_t scratch[1024];  // certificate DER; P-256 needs ~450 bytes
+
+  *why = "certificate generation failed (DRBG seed)";
+  ret = mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy,
+                              (const unsigned char*)kPers, sizeof(kPers) - 1);
+  if (ret != 0) goto done;
+
+  *why = "certificate generation failed (P-256 keygen)";
+  ret = mbedtls_pk_setup(&pk, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY));
+  if (ret != 0) goto done;
+  ret = mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(pk),
+                            mbedtls_ctr_drbg_random, &drbg);
+  if (ret != 0) goto done;
+
+  *why = "certificate generation failed (subject/issuer)";
+  snprintf(subject, sizeof(subject), "CN=securacv-%s,O=SecuraCV,OU=Canary",
+           device_fp_hex);
+  mbedtls_x509write_crt_set_subject_key(&crt, &pk);
+  mbedtls_x509write_crt_set_issuer_key(&crt, &pk);
+  mbedtls_x509write_crt_set_md_alg(&crt, MBEDTLS_MD_SHA256);
+  ret = mbedtls_x509write_crt_set_subject_name(&crt, subject);
+  if (ret != 0) goto done;
+  ret = mbedtls_x509write_crt_set_issuer_name(&crt, subject);
+  if (ret != 0) goto done;
+  // Serial 1 (WAP parity). mbedTLS 3.4+ deprecates the MPI setter in favor
+  // of the raw-bytes one; IDF 5.5 ships 3.6, IDF 4.4 ships 2.28.
+#if defined(MBEDTLS_VERSION_NUMBER) && MBEDTLS_VERSION_NUMBER >= 0x03040000
+  {
+    unsigned char serial_one[1] = {0x01};
+    ret = mbedtls_x509write_crt_set_serial_raw(&crt, serial_one, sizeof(serial_one));
+  }
+#else
+  mbedtls_mpi_lset(&serial, 1);
+  ret = mbedtls_x509write_crt_set_serial(&crt, &serial);
+#endif
+  if (ret != 0) goto done;
+  ret = mbedtls_x509write_crt_set_validity(&crt, "20200101000000", "20500101000000");
+  if (ret != 0) goto done;
+
+  *why = "certificate generation failed (certificate DER)";
+  ret = mbedtls_x509write_crt_der(&crt, scratch, sizeof(scratch),
+                                  mbedtls_ctr_drbg_random, &drbg);
+  if (ret <= 0) goto done;
+  c = (uint8_t*)malloc((size_t)ret);
+  if (!c) { ret = -1; goto done; }
+  memcpy(c, scratch + sizeof(scratch) - ret, (size_t)ret);
+  *cert_len = (size_t)ret;
+
+  *why = "certificate generation failed (key DER)";
+  ret = mbedtls_pk_write_key_der(&pk, scratch, sizeof(scratch));
+  if (ret <= 0) goto done;
+  k = (uint8_t*)malloc((size_t)ret);
+  if (!k) { ret = -1; goto done; }
+  memcpy(k, scratch + sizeof(scratch) - ret, (size_t)ret);
+  *key_len = (size_t)ret;
+
+  ok = true;
+  *cert = c; c = nullptr;
+  *key = k;  k = nullptr;
+  *why = "certificate generated";
+
+done:
+  if (!ok && ret != 0) {
+    Serial.printf("[TLS] %s: -0x%04X\n", *why, (unsigned)(-ret));
+  }
+  memset(scratch, 0, sizeof(scratch));  // the key DER passed through here
+  free(c);
+  if (k) { memset(k, 0, *key_len); free(k); }
+  mbedtls_mpi_free(&serial);
+  mbedtls_x509write_crt_free(&crt);
+  mbedtls_pk_free(&pk);
+  mbedtls_ctr_drbg_free(&drbg);
+  mbedtls_entropy_free(&entropy);
+  return ok;
+}
+#endif  // SECURACV_HAS_TLS_CERTGEN
+
+bool ScvNetworkManager::initTls() {
+#if !FEATURE_HTTPS
+  m_tls_reason = "FEATURE_HTTPS=0 in this build";
+  return false;
+#elif !SECURACV_HAS_HTTPS_SERVER
+  m_tls_reason = "this core has no esp_https_server";
+  Serial.println("[TLS] esp_https_server not in this core — HTTP only");
+  log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "TLS unavailable", m_tls_reason);
+  return false;
+#else
+  if (m_tls_cert_der && m_tls_key_der) return true;  // idempotent
+
+  uint8_t* cert = nullptr;
+  uint8_t* key = nullptr;
+  size_t cert_len = 0, key_len = 0;
+  if (tls_load_der_from_nvs(&cert, &cert_len, &key, &key_len)) {
+    Serial.println("[TLS] Loaded certificate from NVS");
+  } else {
+#if SECURACV_HAS_TLS_CERTGEN
+    char device_fp[17];
+    hex_to_str(device_fp, witness_get_device().pubkey_fp, 8);
+    const char* why = nullptr;
+    if (!tls_generate_self_signed(device_fp, &cert, &cert_len, &key, &key_len, &why)) {
+      m_tls_reason = why;
+      Serial.println("[TLS] Certificate generation FAILED — HTTP only");
+      log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "TLS unavailable", why);
+      return false;
+    }
+    if (!tls_store_der_to_nvs(cert, cert_len, key, key_len)) {
+      // Serve with it this boot anyway; the next boot generates a new one,
+      // which changes the pin — logged so a re-pair is not a mystery.
+      Serial.println("[TLS] WARNING: certificate not stored; it changes next boot");
+      log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "TLS cert not persisted", "NVS write failed");
+    }
+    Serial.printf("[TLS] CN: securacv-%s\n", device_fp);
+#else
+    m_tls_reason = "no stored certificate and this core cannot generate one (mbedTLS x509write/ECDSA)";
+    Serial.println("[TLS] No certificate in NVS and no on-device generation — HTTP only");
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "TLS unavailable", "no certificate generation");
+    return false;
+#endif
+  }
+
+  m_tls_cert_der = cert;
+  m_tls_cert_der_len = cert_len;
+  m_tls_key_der = key;
+  m_tls_key_der_len = key_len;
+  uint8_t digest[32];
+  sha256_raw(m_tls_cert_der, m_tls_cert_der_len, digest);
+  canary::net::tls_policy::fingerprint_hex(digest, m_tls_cert_fp_hex);
+  m_tls_reason = "certificate ready";
+  Serial.printf("[TLS] Cert fingerprint: %.16s...\n", m_tls_cert_fp_hex);
+  return true;
+#endif
+}
+
 // Forward declarations for HTTP handlers
 static esp_err_t handle_ui(httpd_req_t* req);
 // BOOT-tap gated provisioning receipt (F20 gap #11; WAP parity).
@@ -965,6 +1224,9 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req);
 // Captive-portal probes + first-boot setup wizard (see the CAPTIVE-PORTAL
 // section below for the per-platform strategy).
 static esp_err_t handle_captive_probe(httpd_req_t* req);
+// FEATURE_HTTPS port-80 server: 307 to https:// for everything that is not
+// a connectivity probe (F15).
+static esp_err_t handle_https_redirect(httpd_req_t* req);
 static esp_err_t handle_setup_page(httpd_req_t* req);
 static esp_err_t handle_captive_catchall(httpd_req_t* req);
 static esp_err_t handle_status(httpd_req_t* req);
@@ -1072,26 +1334,101 @@ static void register_route(httpd_handle_t server, const httpd_uri_t* uri) {
   }
 }
 
+// The six OS connectivity probes (tls_policy::is_connectivity_probe names the
+// same list). Registered with a trailing '*' because probe URLs sometimes
+// carry a cache-busting query and the wildcard matcher compares the FULL uri;
+// handle_captive_probe re-checks the exact path component itself. File scope
+// because both the main route table and the FEATURE_HTTPS port-80 server
+// register them.
+static const char* kProbePaths[] = {
+  "/hotspot-detect.html*",        // Apple CNA
+  "/library/test/success.html*",  // Apple (older probe)
+  "/generate_204*",               // Android
+  "/gen_204*",                    // Android (short variant)
+  "/connecttest.txt*",            // Windows NCSI
+  "/ncsi.txt*",                   // Windows NCSI (legacy)
+};
+
+// Worst case with every feature on: 14 unconditional + 4 MQTT (/api/mqtt/ca
+// twice — POST and DELETE are separate registrations) + 1 dev-only POST
+// /api/ota (FEATURE_OTA_UPDATE && !SECURACV_BUILD_RELEASE; a release build
+// leaves that slot spare, which is cheaper than a dropped route) + 4
+// OTA-pull + 9 peek + 1 sensing + 4 vision + 4 audio + 2 diagnostics + 1
+// power + 1 thermal = 45 base, + 8 captive-portal routes (6 OS connectivity
+// probes + /setup + the wildcard fallback) + 1 provisioning receipt
+// (GET /api/provisioning-receipt, F20 gap #11) + 6 mesh endpoints (PR-8)
+// when the mesh feature is compiled in. Each registered httpd_uri_t needs
+// a slot; register_route() names any that does not get one. The same table
+// goes on whichever server is primary (TLS or plain), so one budget.
+#if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
+static const uint16_t kRouteTableSlots = 60;
+#else
+static const uint16_t kRouteTableSlots = 54;
+#endif
+
 bool ScvNetworkManager::startHttpServer() {
+  using canary::net::tls_policy::Mode;
+  const bool setup_active = setup_is_active() || setup_is_first_boot();
+  const char* why = nullptr;
+  const Mode mode = canary::net::tls_policy::decide(
+      FEATURE_HTTPS != 0, SECURACV_HAS_HTTPS_SERVER != 0,
+      m_tls_cert_der != nullptr && m_tls_key_der != nullptr, setup_active, &why);
+  m_tls_reason = why;
+
+#if SECURACV_HAS_HTTPS_SERVER
+  if (mode == Mode::HTTPS_REDIRECT) {
+    httpd_ssl_config_t ssl = HTTPD_SSL_CONFIG_DEFAULT();
+    // The server certificate field was renamed in IDF 5.0 (cacert_pem was
+    // the server certificate on 4.4 and became the client-verify CA). DER is
+    // accepted by both: mbedTLS parses PEM only when it finds the header.
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+    ssl.servercert     = m_tls_cert_der;
+    ssl.servercert_len = m_tls_cert_der_len;
+#else
+    ssl.cacert_pem     = m_tls_cert_der;
+    ssl.cacert_len     = m_tls_cert_der_len;
+#endif
+    ssl.prvtkey_pem = m_tls_key_der;
+    ssl.prvtkey_len = m_tls_key_der_len;
+    ssl.port_secure = HTTPS_PORT;
+    ssl.httpd.uri_match_fn = httpd_uri_match_wildcard;
+    ssl.httpd.stack_size = 10240;  // TLS handshake + the in-handler MJPEG loop
+    ssl.httpd.max_uri_handlers = kRouteTableSlots;
+    ssl.httpd.recv_wait_timeout = 30;
+    ssl.httpd.send_wait_timeout = 30;
+    ssl.httpd.lru_purge_enable = true;
+    // Two httpd instances need two control ports; pin both explicitly
+    // rather than trusting the two DEFAULT macros to differ.
+    ssl.httpd.ctrl_port = ESP_HTTPD_DEF_CTRL_PORT + 1;
+
+    if (httpd_ssl_start(&m_https_server, &ssl) == ESP_OK) {
+      m_tls_enabled = true;
+      registerHttpHandlers(m_https_server);
+      Serial.printf("[HTTPS] Server started on port %d\n", HTTPS_PORT);
+      log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "HTTPS server started", "port 443");
+      if (!startRedirectServer()) {
+        // The API is up on 443; only the plain-HTTP conveniences (probes,
+        // the redirect) are missing. Logged, not fatal.
+        log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
+                   "HTTPS redirect server start failed", "probes unanswered");
+      }
+      return true;
+    }
+    m_https_server = nullptr;
+    m_tls_enabled = false;
+    m_tls_reason = "httpd_ssl_start failed; serving HTTP";
+    Serial.println("[HTTPS] Server start FAILED — falling back to HTTP");
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "HTTPS start failed, using HTTP", nullptr);
+  }
+#else
+  (void)mode;  // HTTP-only build: the reason above is still reported
+#endif  // SECURACV_HAS_HTTPS_SERVER
+
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.server_port = 80;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
-  // Worst case with every feature on: 14 unconditional + 4 MQTT (/api/mqtt/ca
-  // twice — POST and DELETE are separate registrations) + 1 dev-only POST
-  // /api/ota (FEATURE_OTA_UPDATE && !SECURACV_BUILD_RELEASE; a release build
-  // leaves that slot spare, which is cheaper than a dropped route) + 4
-  // OTA-pull + 9 peek + 1 sensing + 4 vision + 4 audio + 2 diagnostics + 1
-  // power + 1 thermal = 45 base, + 8 captive-portal routes (6 OS connectivity
-  // probes + /setup + the wildcard fallback) + 1 provisioning receipt
-  // (GET /api/provisioning-receipt, F20 gap #11) + 6 mesh endpoints (PR-8)
-  // when the mesh feature is compiled in. Each registered httpd_uri_t needs
-  // a slot; register_route() names any that does not get one.
-  #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
-  config.max_uri_handlers = 60;
-  #else
-  config.max_uri_handlers = 54;
-  #endif
+  config.max_uri_handlers = kRouteTableSlots;
   config.recv_wait_timeout = 30;
   config.send_wait_timeout = 30;
   config.lru_purge_enable  = true;
@@ -1101,235 +1438,261 @@ bool ScvNetworkManager::startHttpServer() {
     return false;
   }
 
-  registerHttpHandlers();
+  registerHttpHandlers(m_http_server);
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "HTTP server started", "port 80");
   return true;
 }
 
+// FEATURE_HTTPS: the plain server beside the TLS one. It serves only what must
+// stay plain — the six connectivity probes (no OS sends them over TLS; a
+// redirect breaks detection and the phone drops the AP) — and redirects every
+// other GET/POST to https:// (tls_policy::build_redirect_location). The canary
+// serves no public /api/fleet, so unlike the WAP's there is nothing else here.
+// 6 probes + 2 wildcard redirects, with headroom.
+bool ScvNetworkManager::startRedirectServer() {
+  httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+  config.server_port = HTTP_REDIRECT_PORT;  // the port-80 redirect-to-https server
+  config.ctrl_port = ESP_HTTPD_DEF_CTRL_PORT;
+  config.uri_match_fn = httpd_uri_match_wildcard;
+  config.max_uri_handlers = 12;
+  config.lru_purge_enable = true;
+  if (httpd_start(&m_http_server, &config) != ESP_OK) {
+    m_http_server = nullptr;
+    return false;
+  }
+  for (const char* p : kProbePaths) {
+    httpd_uri_t probe = { .uri = p, .method = HTTP_GET, .handler = handle_captive_probe };
+    register_route(m_http_server, &probe);
+  }
+  // Registered after the probes: esp_http_server matches in registration order.
+  httpd_uri_t redirect_get = { .uri = "/*", .method = HTTP_GET, .handler = handle_https_redirect };
+  register_route(m_http_server, &redirect_get);
+  httpd_uri_t redirect_post = { .uri = "/*", .method = HTTP_POST, .handler = handle_https_redirect };
+  register_route(m_http_server, &redirect_post);
+  Serial.println("[HTTP]  Port 80 redirects to HTTPS (connectivity probes answered in plain HTTP)");
+  return true;
+}
+
 void ScvNetworkManager::stopHttpServer() {
+#if SECURACV_HAS_HTTPS_SERVER
+  if (m_https_server) {
+    httpd_ssl_stop(m_https_server);
+    m_https_server = nullptr;
+  }
+#endif
+  m_tls_enabled = false;
   if (m_http_server) {
     httpd_stop(m_http_server);
     m_http_server = nullptr;
   }
 }
 
-void ScvNetworkManager::registerHttpHandlers() {
+void ScvNetworkManager::registerHttpHandlers(httpd_handle_t server) {
   // UI
   httpd_uri_t ui = { .uri = "/", .method = HTTP_GET, .handler = handle_ui };
-  register_route(m_http_server, &ui);
+  register_route(server, &ui);
 
   // First-boot setup wizard + the OS captive-portal connectivity probes.
-  // Registered with a trailing '*' because probe URLs sometimes carry a
-  // cache-busting query and the wildcard matcher compares the FULL uri;
-  // handle_captive_probe re-checks the exact path component itself.
   httpd_uri_t setup_page = { .uri = "/setup", .method = HTTP_GET, .handler = handle_setup_page };
-  register_route(m_http_server, &setup_page);
-  static const char* kProbePaths[] = {
-    "/hotspot-detect.html*",        // Apple CNA
-    "/library/test/success.html*",  // Apple (older probe)
-    "/generate_204*",               // Android
-    "/gen_204*",                    // Android (short variant)
-    "/connecttest.txt*",            // Windows NCSI
-    "/ncsi.txt*",                   // Windows NCSI (legacy)
-  };
+  register_route(server, &setup_page);
   for (const char* p : kProbePaths) {
     httpd_uri_t probe = { .uri = p, .method = HTTP_GET, .handler = handle_captive_probe };
-    register_route(m_http_server, &probe);
+    register_route(server, &probe);
   }
 
   // Provisioning receipt: bearer OR one BOOT tap (the handler gates itself;
   // firmware/canary/scripts/check_route_security.py lists it as self-gating).
   httpd_uri_t receipt = { .uri = "/api/provisioning-receipt", .method = HTTP_GET, .handler = handle_provisioning_receipt };
-  register_route(m_http_server, &receipt);
+  register_route(server, &receipt);
 
   // API endpoints
   httpd_uri_t status = { .uri = "/api/status", .method = HTTP_GET, .handler = handle_status };
-  register_route(m_http_server, &status);
+  register_route(server, &status);
 
   httpd_uri_t chain = { .uri = "/api/chain", .method = HTTP_GET, .handler = handle_chain };
-  register_route(m_http_server, &chain);
+  register_route(server, &chain);
 
   httpd_uri_t witness = { .uri = "/api/witness", .method = HTTP_GET, .handler = handle_witness };
-  register_route(m_http_server, &witness);
+  register_route(server, &witness);
 
   httpd_uri_t logs = { .uri = "/api/logs", .method = HTTP_GET, .handler = handle_logs };
-  register_route(m_http_server, &logs);
+  register_route(server, &logs);
 
   httpd_uri_t log_ack = { .uri = "/api/logs/*/ack", .method = HTTP_POST, .handler = handle_log_ack };
-  register_route(m_http_server, &log_ack);
+  register_route(server, &log_ack);
 
   httpd_uri_t ack_all = { .uri = "/api/logs/ack-all", .method = HTTP_POST, .handler = handle_ack_all };
-  register_route(m_http_server, &ack_all);
+  register_route(server, &ack_all);
 
   httpd_uri_t reboot = { .uri = "/api/reboot", .method = HTTP_POST, .handler = handle_reboot };
-  register_route(m_http_server, &reboot);
+  register_route(server, &reboot);
 
   httpd_uri_t export_ep = { .uri = "/api/export", .method = HTTP_POST, .handler = handle_export };
-  register_route(m_http_server, &export_ep);
+  register_route(server, &export_ep);
 
   // WiFi management endpoints
   httpd_uri_t wifi_status = { .uri = "/api/wifi/status", .method = HTTP_GET, .handler = handle_wifi_status };
-  register_route(m_http_server, &wifi_status);
+  register_route(server, &wifi_status);
 
   httpd_uri_t wifi_scan = { .uri = "/api/wifi/scan", .method = HTTP_GET, .handler = handle_wifi_scan };
-  register_route(m_http_server, &wifi_scan);
+  register_route(server, &wifi_scan);
 
   httpd_uri_t wifi_connect = { .uri = "/api/wifi/connect", .method = HTTP_POST, .handler = handle_wifi_connect };
-  register_route(m_http_server, &wifi_connect);
+  register_route(server, &wifi_connect);
 
   httpd_uri_t wifi_disconnect = { .uri = "/api/wifi/disconnect", .method = HTTP_POST, .handler = handle_wifi_disconnect };
-  register_route(m_http_server, &wifi_disconnect);
+  register_route(server, &wifi_disconnect);
 
   // Peer list (mDNS browse cache). Path matches canary-vision/docs/discovery.md
   // and the SPA's CanaryAPI.request(... '/api/v1/peers').
   httpd_uri_t peers_ep = { .uri = "/api/v1/peers", .method = HTTP_GET, .handler = handle_peers };
-  register_route(m_http_server, &peers_ep);
+  register_route(server, &peers_ep);
 
   #if FEATURE_HA_MQTT
   httpd_uri_t mqtt_stat = { .uri = "/api/mqtt/status", .method = HTTP_GET, .handler = handle_mqtt_status };
-  register_route(m_http_server, &mqtt_stat);
+  register_route(server, &mqtt_stat);
 
   httpd_uri_t mqtt_cfg = { .uri = "/api/mqtt/config", .method = HTTP_POST, .handler = handle_mqtt_config };
-  register_route(m_http_server, &mqtt_cfg);
+  register_route(server, &mqtt_cfg);
 
   // The broker CA (PEM, up to kCaPemMax) has its own route: the config body
   // is 512 bytes and a certificate is not. POST stores, DELETE forgets —
   // an explicit verb, so a body that arrives empty can never mean "clear".
   httpd_uri_t mqtt_ca_post = { .uri = "/api/mqtt/ca", .method = HTTP_POST, .handler = handle_mqtt_ca };
-  register_route(m_http_server, &mqtt_ca_post);
+  register_route(server, &mqtt_ca_post);
   httpd_uri_t mqtt_ca_del = { .uri = "/api/mqtt/ca", .method = HTTP_DELETE, .handler = handle_mqtt_ca };
-  register_route(m_http_server, &mqtt_ca_del);
+  register_route(server, &mqtt_ca_del);
   #endif
 
   #if FEATURE_OTA_UPDATE && !defined(SECURACV_BUILD_RELEASE)
   httpd_uri_t ota = { .uri = "/api/ota", .method = HTTP_POST, .handler = handle_ota };
-  register_route(m_http_server, &ota);
+  register_route(server, &ota);
   #endif
 
   #if FEATURE_OTA_PULL
   httpd_uri_t ota_status = { .uri = "/api/ota/status", .method = HTTP_GET, .handler = handle_ota_status };
-  register_route(m_http_server, &ota_status);
+  register_route(server, &ota_status);
 
   httpd_uri_t ota_check = { .uri = "/api/ota/check", .method = HTTP_POST, .handler = handle_ota_check };
-  register_route(m_http_server, &ota_check);
+  register_route(server, &ota_check);
 
   httpd_uri_t ota_install = { .uri = "/api/ota/install", .method = HTTP_POST, .handler = handle_ota_install };
-  register_route(m_http_server, &ota_install);
+  register_route(server, &ota_install);
 
   httpd_uri_t ota_cfg = { .uri = "/api/ota/config", .method = HTTP_POST, .handler = handle_ota_config };
-  register_route(m_http_server, &ota_cfg);
+  register_route(server, &ota_cfg);
   #endif
 
   #if FEATURE_CAMERA_PEEK
   httpd_uri_t peek_start = { .uri = "/api/peek/start", .method = HTTP_POST, .handler = handle_peek_start };
-  register_route(m_http_server, &peek_start);
+  register_route(server, &peek_start);
 
   httpd_uri_t peek_stream = { .uri = "/api/peek/stream", .method = HTTP_GET, .handler = handle_peek_stream };
-  register_route(m_http_server, &peek_stream);
+  register_route(server, &peek_stream);
 
   httpd_uri_t peek_stop = { .uri = "/api/peek/stop", .method = HTTP_POST, .handler = handle_peek_stop };
-  register_route(m_http_server, &peek_stop);
+  register_route(server, &peek_stop);
 
   httpd_uri_t peek_status = { .uri = "/api/peek/status", .method = HTTP_GET, .handler = handle_peek_status };
-  register_route(m_http_server, &peek_status);
+  register_route(server, &peek_status);
 
   httpd_uri_t peek_init = { .uri = "/api/peek/init", .method = HTTP_POST, .handler = handle_peek_init };
-  register_route(m_http_server, &peek_init);
+  register_route(server, &peek_init);
 
   httpd_uri_t peek_res = { .uri = "/api/peek/resolution", .method = HTTP_POST, .handler = handle_peek_resolution };
-  register_route(m_http_server, &peek_res);
+  register_route(server, &peek_res);
 
   httpd_uri_t peek_sensor_g = { .uri = "/api/peek/sensor", .method = HTTP_GET, .handler = handle_peek_sensor_get };
-  register_route(m_http_server, &peek_sensor_g);
+  register_route(server, &peek_sensor_g);
 
   httpd_uri_t peek_sensor_s = { .uri = "/api/peek/sensor", .method = HTTP_POST, .handler = handle_peek_sensor_set };
-  register_route(m_http_server, &peek_sensor_s);
+  register_route(server, &peek_sensor_s);
 
   httpd_uri_t peek_snap = { .uri = "/api/peek/snapshot", .method = HTTP_GET, .handler = handle_peek_snapshot };
-  register_route(m_http_server, &peek_snap);
+  register_route(server, &peek_snap);
   #endif
 
   #if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
   httpd_uri_t sensing_ep = { .uri = "/api/sensing", .method = HTTP_GET, .handler = handle_sensing };
-  register_route(m_http_server, &sensing_ep);
+  register_route(server, &sensing_ep);
   #endif
 
   #if FEATURE_VISION_DETECT
   httpd_uri_t vision_cfg_g = { .uri = "/api/vision/config", .method = HTTP_GET, .handler = handle_vision_config_get };
-  register_route(m_http_server, &vision_cfg_g);
+  register_route(server, &vision_cfg_g);
 
   httpd_uri_t vision_cfg_s = { .uri = "/api/vision/config", .method = HTTP_POST, .handler = handle_vision_config_set };
-  register_route(m_http_server, &vision_cfg_s);
+  register_route(server, &vision_cfg_s);
 
   httpd_uri_t vision_cfg_save = { .uri = "/api/vision/config/save", .method = HTTP_POST, .handler = handle_vision_config_save };
-  register_route(m_http_server, &vision_cfg_save);
+  register_route(server, &vision_cfg_save);
 
   httpd_uri_t vision_thumb = { .uri = "/api/vision/thumbnail", .method = HTTP_GET, .handler = handle_vision_thumbnail };
-  register_route(m_http_server, &vision_thumb);
+  register_route(server, &vision_thumb);
   #endif
 
   #if FEATURE_ACOUSTIC_EVENTS
   // Live RMS for the UI level meter — same number the hysteresis uses,
   // not a second audio path. Returns 0 when muted.
   httpd_uri_t audio_level = { .uri = "/api/audio/level", .method = HTTP_GET, .handler = handle_audio_level };
-  register_route(m_http_server, &audio_level);
+  register_route(server, &audio_level);
 
   // Hard mute (physically uninstalls the I2S driver) — persisted in NVS.
   httpd_uri_t audio_mute_ep = { .uri = "/api/audio/mute", .method = HTTP_POST, .handler = handle_audio_mute };
-  register_route(m_http_server, &audio_mute_ep);
+  register_route(server, &audio_mute_ep);
 
   // Alarm-pattern self-test (relaxed thresholds, normal event callback
   // suppressed so a TEST-button press does NOT flow into HA automations).
   httpd_uri_t audio_test_start = { .uri = "/api/audio/test/start", .method = HTTP_POST, .handler = handle_audio_test_start };
-  register_route(m_http_server, &audio_test_start);
+  register_route(server, &audio_test_start);
   httpd_uri_t audio_test_status = { .uri = "/api/audio/test/status", .method = HTTP_GET, .handler = handle_audio_test_status };
-  register_route(m_http_server, &audio_test_status);
+  register_route(server, &audio_test_status);
   #endif
 
   #if FEATURE_DIAGNOSTICS
   httpd_uri_t diag_ep = { .uri = "/api/diagnostics", .method = HTTP_GET, .handler = handle_diagnostics };
-  register_route(m_http_server, &diag_ep);
+  register_route(server, &diag_ep);
 
   httpd_uri_t selftest_ep = { .uri = "/api/selftest", .method = HTTP_GET, .handler = handle_selftest };
-  register_route(m_http_server, &selftest_ep);
+  register_route(server, &selftest_ep);
   #endif
 
   #if FEATURE_POWER_MONITOR
   httpd_uri_t batt_hist_ep = { .uri = "/api/battery/history", .method = HTTP_GET, .handler = handle_battery_history };
-  register_route(m_http_server, &batt_hist_ep);
+  register_route(server, &batt_hist_ep);
   #endif
 
   #if FEATURE_THERMAL_WATCHDOG
   httpd_uri_t thermal_ep = { .uri = "/api/thermal", .method = HTTP_GET, .handler = handle_thermal };
-  register_route(m_http_server, &thermal_ep);
+  register_route(server, &thermal_ep);
   #endif
 
   #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
   // Mesh / opera REST API (PR-8). 6 endpoints — see spec §8.
   httpd_uri_t mesh_status_ep = { .uri = "/api/mesh", .method = HTTP_GET, .handler = handle_mesh_status };
-  register_route(m_http_server, &mesh_status_ep);
+  register_route(server, &mesh_status_ep);
 
   httpd_uri_t mesh_peers_ep = { .uri = "/api/mesh/peers", .method = HTTP_GET, .handler = handle_mesh_peers };
-  register_route(m_http_server, &mesh_peers_ep);
+  register_route(server, &mesh_peers_ep);
 
   httpd_uri_t mesh_pair_start_ep = { .uri = "/api/mesh/pair/start", .method = HTTP_POST, .handler = handle_mesh_pair_start };
-  register_route(m_http_server, &mesh_pair_start_ep);
+  register_route(server, &mesh_pair_start_ep);
 
   httpd_uri_t mesh_pair_join_ep = { .uri = "/api/mesh/pair/join", .method = HTTP_POST, .handler = handle_mesh_pair_join };
-  register_route(m_http_server, &mesh_pair_join_ep);
+  register_route(server, &mesh_pair_join_ep);
 
   httpd_uri_t mesh_pair_confirm_ep = { .uri = "/api/mesh/pair/confirm", .method = HTTP_POST, .handler = handle_mesh_pair_confirm };
-  register_route(m_http_server, &mesh_pair_confirm_ep);
+  register_route(server, &mesh_pair_confirm_ep);
 
   httpd_uri_t mesh_pair_cancel_ep = { .uri = "/api/mesh/pair/cancel", .method = HTTP_POST, .handler = handle_mesh_pair_cancel };
-  register_route(m_http_server, &mesh_pair_cancel_ep);
+  register_route(server, &mesh_pair_cancel_ep);
   #endif
 
   // Wildcard fallback — MUST stay the last registration, so every exact
   // route above wins first. During setup it funnels stray hijacked-DNS
   // requests to the wizard; otherwise it 404s like before.
   httpd_uri_t catchall = { .uri = "/*", .method = HTTP_GET, .handler = handle_captive_catchall };
-  register_route(m_http_server, &catchall);
+  register_route(server, &catchall);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1422,9 +1785,10 @@ static esp_err_t handle_ui(httpd_req_t* req) {
 // The WAP's receipt shape (canary_wap.ino send_provisioning_receipt), which
 // the iOS app's ProvisioningReceipt parses: device_id, base_url, token,
 // pubkey_fp, firmware, hw_token, ap_ssid, ap_password, tls_cert_fp,
-// provisioned_at. tls_cert_fp is empty until the TLS server lands (F15);
-// the app refuses an https base_url that carries no pin, so the scheme and
-// the pin move together.
+// provisioned_at. With HTTPS up (F15) the base_url is https:// and
+// tls_cert_fp carries the certificate pin; HTTP-only, http:// and "". The
+// route lives on the primary server only — on the TLS server when HTTPS is
+// up, never on the port-80 redirect server (WAP parity).
 
 static esp_err_t send_provisioning_receipt(httpd_req_t* req) {
   DeviceIdentity& device = witness_get_device();
@@ -1438,7 +1802,8 @@ static esp_err_t send_provisioning_receipt(httpd_req_t* req) {
   char addr[16];
   local_addr_of(req, addr, sizeof(addr));
   char base_url[32];
-  snprintf(base_url, sizeof(base_url), "http://%s", addr);
+  snprintf(base_url, sizeof(base_url), "%s://%s",
+           net.isTlsEnabled() ? "https" : "http", addr);
   char provisioned_at[24];
   snprintf(provisioned_at, sizeof(provisioned_at), "boot:%lu", (unsigned long)device.boot_count);
 
@@ -1451,7 +1816,9 @@ static esp_err_t send_provisioning_receipt(httpd_req_t* req) {
   doc["hw_token"]       = hw_token;
   doc["ap_ssid"]        = net.getApSsid();
   doc["ap_password"]    = net.getApPassword();
-  doc["tls_cert_fp"]    = "";
+  // The pin and the scheme move together: the iPhone app refuses an https
+  // base_url whose receipt carries no tls_cert_fp.
+  doc["tls_cert_fp"]    = net.isTlsEnabled() ? net.getTlsCertFp() : "";
   doc["provisioned_at"] = provisioned_at;
 
   String response;
@@ -1533,6 +1900,33 @@ static bool probe_path_is(const char* uri, const char* lit) {
   return uri[i] == '\0' || uri[i] == '?' || uri[i] == '#';
 }
 
+// F15: what the Apple probe gets on the plain port-80 server while HTTPS is
+// up and the home Wi-Fi is down (the retry case above). A captive sheet
+// renders a blank page on a self-signed certificate, so it cannot simply be
+// redirected; this names the https:// address to open in a real browser.
+static esp_err_t send_tls_captive_hint(httpd_req_t* req) {
+  char addr[16];
+  local_addr_of(req, addr, sizeof(addr));
+  char page[640];
+  const int n = snprintf(page, sizeof(page),
+      "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+      "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+      "<title>Canary</title></head><body style=\"font-family:sans-serif;padding:1.5rem;\">"
+      "<h2>Open your Canary in a browser</h2>"
+      "<p>This Canary's dashboard uses an encrypted connection. Open "
+      "<b>https://%s/setup</b> in Safari or Chrome.</p>"
+      "<p>Your browser will warn that the certificate is not trusted. That is "
+      "expected: the Canary made it for itself. Continue to the page.</p>"
+      "</body></html>",
+      addr);
+  httpd_resp_set_type(req, "text/html");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  if (n < 0 || (size_t)n >= sizeof(page)) {
+    return httpd_resp_sendstr(req, kAppleSuccessBody);
+  }
+  return httpd_resp_sendstr(req, page);
+}
+
 static esp_err_t handle_captive_probe(httpd_req_t* req) {
   witness_get_health().http_requests++;
   const char* uri = req->uri;
@@ -1553,6 +1947,13 @@ static esp_err_t handle_captive_probe(httpd_req_t* req) {
   // for the retry, not declare Success. Only a live STA link earns Apple's
   // Success token (which lets the sheet close cleanly and stop nagging).
   if (setup_is_active() || !network_get_instance().getStatus().sta_connected) {
+    // F15: with HTTPS up, this probe arrived on the plain port-80 server,
+    // and the wizard's API calls would all be redirected to a self-signed
+    // https:// origin the captive sheet cannot open. Point at it instead.
+    if (network_get_instance().isTlsEnabled() &&
+        req->handle != network_get_instance().getHttpsServer()) {
+      return send_tls_captive_hint(req);
+    }
     return send_html_with_token(req, CANARY_SETUP_HTML, page_token_inject(req));
   }
   httpd_resp_set_type(req, "text/html");
@@ -1579,6 +1980,41 @@ static esp_err_t handle_captive_catchall(httpd_req_t* req) {
   httpd_resp_set_status(req, "302 Found");
   httpd_resp_set_hdr(req, "Location", "/setup");
   return httpd_resp_send(req, NULL, 0);
+}
+
+// FEATURE_HTTPS port-80 server (F15): everything that is not a probe goes to
+// https:// on the host the client asked for (or, when its Host header is not a
+// plain host, the address the request arrived on). 307, not 301: a 301 is
+// cached as permanent, and a factory-reset Canary serves its setup wizard on
+// plain HTTP again — a browser remembering "always https" could not reach it;
+// 307 also keeps a POST a POST. Truncation or an unusable target answers 500,
+// never a cut-off Location (tls_policy::build_redirect_location, host-tested).
+static esp_err_t handle_https_redirect(httpd_req_t* req) {
+  witness_get_health().http_requests++;
+  if (canary::net::tls_policy::plain_http_exempt(req->uri, setup_is_active())) {
+    // Defensive: the probes are registered ahead of this wildcard, but a
+    // probe path that reaches here still gets its plain answer.
+    return handle_captive_probe(req);
+  }
+  char host[64];
+  host[0] = '\0';
+  const size_t host_len = httpd_req_get_hdr_value_len(req, "Host");
+  if (host_len == 0 || host_len >= sizeof(host) ||
+      httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) {
+    host[0] = '\0';
+  }
+  char arrived_on[16];
+  local_addr_of(req, arrived_on, sizeof(arrived_on));
+  char location[256];
+  if (!canary::net::tls_policy::build_redirect_location(
+          location, sizeof(location), host, arrived_on, req->uri)) {
+    return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                               "https redirect target too long");
+  }
+  httpd_resp_set_status(req, "307 Temporary Redirect");
+  httpd_resp_set_hdr(req, "Location", location);
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  return httpd_resp_sendstr(req, "Redirecting to https");
 }
 
 static esp_err_t handle_status(httpd_req_t* req) {
@@ -1624,6 +2060,15 @@ static esp_err_t handle_status(httpd_req_t* req) {
   // home-LAN page load can never be unlocked by a tap (fails closed, and the
   // bench can see it instead of guessing).
   doc["provisioning_gate"] = (s_gate_take && s_gate_is_open) ? "boot_button" : "unwired";
+
+  // F15: what actually came up, and why — a device that fell back to HTTP
+  // says so here instead of leaving the bench to guess (tls_policy::decide).
+  {
+    ScvNetworkManager& net = network_get_instance();
+    doc["tls_enabled"] = net.isTlsEnabled();
+    doc["tls_cert_fp"] = net.isTlsEnabled() ? net.getTlsCertFp() : "";
+    doc["tls_mode_reason"] = net.getTlsModeReason();
+  }
 
   String response;
   serializeJson(doc, response);
@@ -2122,6 +2567,21 @@ struct StreamTaskCtx {
   httpd_handle_t server;
 };
 
+// The MJPEG part header and the inter-frame pace, shared by both stream paths
+// (the raw-socket task for plain HTTP, the in-handler loop for TLS) so they
+// cannot drift apart.
+static int peek_part_header(char* buf, size_t cap, size_t jpeg_len) {
+  return snprintf(buf, cap,
+    "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
+    (unsigned)jpeg_len);
+}
+
+static uint32_t peek_pace_ms(uint32_t frame_delay_ms) {
+  if (frame_delay_ms < 20)  return 20;
+  if (frame_delay_ms > 500) return 500;
+  return frame_delay_ms;
+}
+
 static bool sock_send_all(int fd, const char* buf, size_t len) {
   while (len > 0) {
     int sent = send(fd, buf, len, 0);
@@ -2160,9 +2620,7 @@ static void stream_task_fn(void* param) {
     }
 
     char part_buf[128];
-    int part_len = snprintf(part_buf, sizeof(part_buf),
-      "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
-      (unsigned)fb->len);
+    int part_len = peek_part_header(part_buf, sizeof(part_buf), fb->len);
 
     bool ok = sock_send_all(sockfd, part_buf, part_len);
     if (ok) ok = sock_send_all(sockfd, (const char*)fb->buf, fb->len);
@@ -2174,10 +2632,7 @@ static void stream_task_fn(void* param) {
     if (!ok) break;
     cam.recordFrame(frame_bytes);
 
-    uint32_t pace = cam.getFrameDelay();
-    if (pace < 20)  pace = 20;
-    if (pace > 500) pace = 500;
-    vTaskDelay(pdMS_TO_TICKS(pace));
+    vTaskDelay(pdMS_TO_TICKS(peek_pace_ms(cam.getFrameDelay())));
   }
 
   cam.setPeekActive(false);
@@ -2186,6 +2641,63 @@ static void stream_task_fn(void* param) {
 
   __atomic_store_n(&s_stream_task, (TaskHandle_t)nullptr, __ATOMIC_SEQ_CST);
   vTaskDelete(nullptr);
+}
+
+// F15: the stream over TLS runs synchronously IN the handler, on the httpd
+// task, through httpd_resp_send_chunk (WAP parity, canary_wap.ino's peek
+// stream). The plain-HTTP path below hands the socket to a worker task that
+// send()s raw bytes — over TLS that would write plaintext into the record
+// stream, and httpd_ssl's send override is not safe to call from a second
+// task while the httpd task may read the same mbedTLS session. The cost:
+// while a TLS stream runs, the TLS server answers nothing else (the WAP has
+// the same limit); stopping the peek or closing the tab ends the loop.
+static esp_err_t peek_stream_in_handler(httpd_req_t* req, CameraManager& cam) {
+  httpd_resp_set_type(req, "multipart/x-mixed-replace; boundary=frame");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  httpd_resp_set_hdr(req, "Pragma", "no-cache");
+  httpd_resp_set_hdr(req, "X-Accel-Buffering", "no");
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Peek stream started (TLS, in handler)", nullptr);
+
+  uint32_t fail_since_ms = 0;
+  esp_err_t err = ESP_OK;
+  while (cam.isPeekActive()) {
+    cam.checkThermal();
+    if (cam.getThermalState() == THERMAL_PAUSED) {
+      vTaskDelay(pdMS_TO_TICKS(500));
+      continue;
+    }
+    camera_fb_t* fb = cam.captureFrame();
+    if (!fb) {
+      if (cam.checkFreeze(millis())) {
+        cam.setPeekActive(true);
+      } else if (!cam.isInitialized()) {
+        break;
+      }
+      // Give up after ~1 s of consecutive capture failures rather than
+      // holding the TLS server's only task on a dead sensor.
+      if (fail_since_ms == 0) fail_since_ms = millis();
+      if (millis() - fail_since_ms > 1000) break;
+      vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
+    }
+    fail_since_ms = 0;
+
+    char part_buf[128];
+    const int part_len = peek_part_header(part_buf, sizeof(part_buf), fb->len);
+    err = httpd_resp_send_chunk(req, part_buf, part_len);
+    if (err == ESP_OK) err = httpd_resp_send_chunk(req, (const char*)fb->buf, fb->len);
+    if (err == ESP_OK) err = httpd_resp_send_chunk(req, "\r\n", 2);
+    const uint32_t frame_bytes = (uint32_t)fb->len;
+    cam.returnFrame(fb);
+    if (err != ESP_OK) break;  // client went away
+    cam.recordFrame(frame_bytes);
+    vTaskDelay(pdMS_TO_TICKS(peek_pace_ms(cam.getFrameDelay())));
+  }
+
+  cam.setPeekActive(false);
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Peek stream ended", nullptr);
+  if (err == ESP_OK) httpd_resp_send_chunk(req, NULL, 0);
+  return ESP_OK;
 }
 
 static esp_err_t handle_peek_stream(httpd_req_t* req) {
@@ -2213,6 +2725,11 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
 
   cam.setPeekActive(true);
   cam.resetMetrics();
+
+  // TLS: stream on this task (see peek_stream_in_handler for why).
+  if (req->handle == network_get_instance().getHttpsServer()) {
+    return peek_stream_in_handler(req, cam);
+  }
 
   int sockfd = httpd_req_to_sockfd(req);
   if (sockfd < 0) {

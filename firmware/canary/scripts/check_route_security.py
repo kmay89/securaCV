@@ -64,8 +64,12 @@ PUBLIC_ALLOWLIST = {
     ("GET", "/gen_204*"): "Android captive probe (legacy)",
     ("GET", "/connecttest.txt*"): "Windows NCSI probe",
     ("GET", "/ncsi.txt*"): "Windows NCSI probe (legacy)",
-    # Registered LAST: 302 → /setup while setup is active, else 404.
-    ("GET", "/*"): "captive wildcard fallback (302 to /setup or 404; serves nothing)",
+    # Two registrations share this key: the main table's captive wildcard
+    # fallback (registered LAST: 302 → /setup while setup is active, else 404)
+    # and, with FEATURE_HTTPS, the port-80 server's redirect to https://.
+    # Neither serves content.
+    ("GET", "/*"): "captive wildcard fallback / port-80 https redirect; serves nothing",
+    ("POST", "/*"): "FEATURE_HTTPS port-80 server: 307 to https://, serves nothing (F15)",
 }
 
 # Handlers that gate internally in ways the marker scan cannot attribute to
