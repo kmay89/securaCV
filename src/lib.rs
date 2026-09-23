@@ -2495,6 +2495,17 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     /// bootstrap (there is no quorum yet to consult) and is recorded as such.
     /// Every accepted change appends a chained, device-signed history record.
     ///
+    /// The decision and the write are one critical section: the database
+    /// write lock is taken first (`BEGIN IMMEDIATE`, or a savepoint inside a
+    /// caller's transaction) and the stored policy is re-read under it. So
+    /// "bootstrap or change" is decided against what is COMMITTED, never
+    /// against this handle's in-memory copy, which another process (the CLI
+    /// beside a running console) can have made stale: a policy stored
+    /// elsewhere after this kernel was opened is a live policy here too, and
+    /// replacing it needs its quorum. The same lock keeps two writers from
+    /// forking the history chain. The in-memory copy is refreshed from that
+    /// read whatever the outcome.
+    ///
     /// Honest scope note: this is a procedural + auditability control inside
     /// the host-trust boundary, not a cryptographic lock — an actor with host
     /// access and the device seed can still rewrite the policy row out of
@@ -2508,6 +2519,54 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         now_bucket: TimeBucket,
     ) -> Result<PolicyChangeOutcome> {
         new_policy.validate()?;
+        // History row and policy row land atomically with the decision: a
+        // change that cannot be recorded is a change that does not happen
+        // (fail closed).
+        let own_tx = self.conn.is_autocommit();
+        self.conn.execute_batch(if own_tx {
+            "BEGIN IMMEDIATE;"
+        } else {
+            "SAVEPOINT policy_change;"
+        })?;
+        let applied = self
+            .set_break_glass_policy_gated_locked(new_policy, approvals, now_bucket)
+            .and_then(|outcome| {
+                self.conn.execute_batch(if own_tx {
+                    "COMMIT;"
+                } else {
+                    "RELEASE policy_change;"
+                })?;
+                Ok(outcome)
+            });
+        match applied {
+            Ok(outcome) => {
+                if outcome != PolicyChangeOutcome::Unchanged {
+                    self.break_glass_policy = Some(new_policy.clone());
+                }
+                Ok(outcome)
+            }
+            Err(e) => {
+                let _ = self.conn.execute_batch(if own_tx {
+                    "ROLLBACK;"
+                } else {
+                    "ROLLBACK TO policy_change; RELEASE policy_change;"
+                });
+                Err(e)
+            }
+        }
+    }
+
+    /// The body of [`Kernel::set_break_glass_policy_gated`], run with the
+    /// write lock held.
+    fn set_break_glass_policy_gated_locked(
+        &mut self,
+        new_policy: &crate::break_glass::QuorumPolicy,
+        approvals: &[crate::break_glass::Approval],
+        now_bucket: TimeBucket,
+    ) -> Result<PolicyChangeOutcome> {
+        // The committed policy, read under the lock — not the copy loaded
+        // when this handle was opened.
+        self.load_break_glass_policy()?;
         let current = self.break_glass_policy.clone();
 
         let (prev_commitment, bootstrap) = match &current {
@@ -2556,35 +2615,17 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             approvals_commitment: crate::break_glass::approvals_commitment(approvals),
         };
 
-        // History row and policy row land atomically: a change that cannot be
-        // recorded is a change that does not happen (fail closed).
-        self.conn.execute_batch("SAVEPOINT policy_change;")?;
-        let applied = self.append_policy_change_record(&record, approvals);
-        let applied = applied.and_then(|_| {
-            let json = serde_json::to_string(new_policy)?;
-            self.conn.execute(
-                "INSERT OR REPLACE INTO break_glass_policy (id, policy_json) VALUES (1, ?1)",
-                params![json],
-            )?;
-            Ok(())
-        });
-        match applied {
-            Ok(()) => {
-                self.conn.execute_batch("RELEASE policy_change;")?;
-                self.break_glass_policy = Some(new_policy.clone());
-                Ok(if bootstrap {
-                    PolicyChangeOutcome::Bootstrapped
-                } else {
-                    PolicyChangeOutcome::Replaced
-                })
-            }
-            Err(e) => {
-                let _ = self
-                    .conn
-                    .execute_batch("ROLLBACK TO policy_change; RELEASE policy_change;");
-                Err(e)
-            }
-        }
+        self.append_policy_change_record(&record, approvals)?;
+        let json = serde_json::to_string(new_policy)?;
+        self.conn.execute(
+            "INSERT OR REPLACE INTO break_glass_policy (id, policy_json) VALUES (1, ?1)",
+            params![json],
+        )?;
+        Ok(if bootstrap {
+            PolicyChangeOutcome::Bootstrapped
+        } else {
+            PolicyChangeOutcome::Replaced
+        })
     }
 
     fn last_policy_change_hash_or_zero(&self) -> Result<[u8; 32]> {

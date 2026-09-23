@@ -58,19 +58,42 @@ impl BreakGlassOps for KernelVaultOps {
         Ok(self.kernel.break_glass_policy().cloned())
     }
 
-    /// The console's one-time setup. Re-reads the stored policy first: the CLI
-    /// may have bootstrapped one since this kernel was opened, and the copy in
-    /// memory would not know. The write goes through [`Self::set_policy`], the
-    /// quorum-gated path, so the history row is the CLI's bootstrap row and a
-    /// live policy could not be replaced here even if this check were skipped.
+    /// The console's one-time setup. The in-memory policy and a database
+    /// re-read answer the common case early (a policy the CLI stored while
+    /// the console was running). The guarantee is the write itself: it goes
+    /// through [`Self::set_policy`], the quorum-gated path, which re-reads
+    /// the stored policy under the database write lock before deciding. A
+    /// policy committed after the early check is therefore found there and,
+    /// with no approvals, cannot be replaced: the gate answers `Unchanged`
+    /// (the same policy) or refuses the change, and both mean "already
+    /// configured". Only a genuine bootstrap is `Stored`, with the CLI's
+    /// `bootstrap` history row.
     fn bootstrap_policy(&mut self, policy: &QuorumPolicy) -> Result<PolicyBootstrap> {
         if self.kernel.break_glass_policy().is_some()
             || crate::verify::load_break_glass_policy(&self.kernel.conn)?.is_some()
         {
             return Ok(PolicyBootstrap::AlreadyConfigured);
         }
-        self.set_policy(policy)?;
-        Ok(PolicyBootstrap::Stored)
+        match self
+            .kernel
+            .set_break_glass_policy_gated(policy, &[], crate::TimeBucket::now_10min()?)
+        {
+            Ok(crate::PolicyChangeOutcome::Bootstrapped) => Ok(PolicyBootstrap::Stored),
+            Ok(crate::PolicyChangeOutcome::Unchanged) => Ok(PolicyBootstrap::AlreadyConfigured),
+            // A live policy needs its quorum's approvals, and this path
+            // carries none — so this cannot happen. Refuse to report it as a
+            // bootstrap if it ever does.
+            Ok(crate::PolicyChangeOutcome::Replaced) => Err(anyhow!(
+                "a live policy was replaced without approvals; refusing to report it as a \
+                 bootstrap"
+            )),
+            // The gate refreshed the in-memory policy from the database: if
+            // one is there now, it was committed after the early check.
+            Err(_) if self.kernel.break_glass_policy().is_some() => {
+                Ok(PolicyBootstrap::AlreadyConfigured)
+            }
+            Err(err) => Err(err),
+        }
     }
 
     fn ruleset_hash(&self) -> [u8; 32] {
@@ -317,6 +340,71 @@ mod tests {
         assert!(err.to_string().contains("insufficient"), "got: {err}");
         // Nothing was written on denial.
         assert!(!out.join("vault-x.raw").exists());
+        Ok(())
+    }
+
+    /// The console's kernel is opened while no policy exists; the CLI then
+    /// stores one through its own handle. The console's in-memory copy is now
+    /// stale, and its write must not "bootstrap" over the live policy: the
+    /// gate re-reads the committed row under the write lock and refuses a
+    /// change that carries no approvals (Invariant V). The console route
+    /// answers "already configured", and history holds one bootstrap row.
+    #[test]
+    fn a_stale_console_handle_cannot_replace_a_policy_the_cli_stored() -> Result<()> {
+        let dir = std::env::temp_dir().join(format!("secura_bg_stale_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&dir)?;
+        let cfg = test_config(&dir);
+        let mut console = KernelVaultOps::open(cfg.clone(), dir.join("vault").to_string_lossy())?;
+        assert!(console.policy()?.is_none());
+
+        let one_of = |seed: u8, id: &str| {
+            QuorumPolicy::new(
+                1,
+                vec![TrusteeEntry {
+                    id: TrusteeId::new(id),
+                    public_key: SigningKey::from_bytes(&[seed; 32])
+                        .verifying_key()
+                        .to_bytes(),
+                }],
+            )
+        };
+        let cli_policy = one_of(11, "carol")?;
+        let console_policy = one_of(12, "mallory")?;
+
+        let mut cli = crate::Kernel::open(&cfg)?;
+        assert_eq!(
+            cli.set_break_glass_policy_gated(&cli_policy, &[], TimeBucket::now_10min()?)?,
+            crate::PolicyChangeOutcome::Bootstrapped
+        );
+        drop(cli);
+        assert!(
+            console.kernel.break_glass_policy().is_none(),
+            "the console's copy is stale"
+        );
+
+        // The write path itself refuses, even with no early check in front.
+        let err = console.set_policy(&console_policy).unwrap_err();
+        assert!(
+            err.to_string().contains("policy change denied"),
+            "got: {err}"
+        );
+        // ... and the gate refreshed the console's copy from the database.
+        assert_eq!(console.policy()?.unwrap().trustees[0].id.0, "carol");
+
+        // The console route: already configured, whichever policy it posts.
+        assert_eq!(
+            console.bootstrap_policy(&console_policy)?,
+            PolicyBootstrap::AlreadyConfigured
+        );
+        assert_eq!(
+            console.bootstrap_policy(&cli_policy)?,
+            PolicyBootstrap::AlreadyConfigured
+        );
+
+        let stored = crate::verify::load_break_glass_policy(&console.kernel.conn)?.unwrap();
+        assert_eq!(stored.full_commitment(), cli_policy.full_commitment());
+        let history = console.kernel.policy_change_history()?;
+        assert_eq!(history.len(), 1, "exactly one bootstrap row");
         Ok(())
     }
 

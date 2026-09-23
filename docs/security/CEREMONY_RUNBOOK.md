@@ -669,7 +669,7 @@ rotate per bucket automatically.
 |---|---|---|
 | Sign what you see (WYSIWYS approval) | **CODE** | `approve --request` recomputes and displays; served signer page recomputes in-browser |
 | Quorum-gated policy mutation | **CODE** (procedural against a host-level actor) | `policy set --approvals`, prior-era commitment from the stored policy |
-| Console bootstrap limited to the first policy | **CODE** | `POST /breakglass/policy` → `409 policy_already_configured` once a policy exists (re-read from the database) |
+| Console bootstrap limited to the first policy | **CODE** | `POST /breakglass/policy` → `409 policy_already_configured` once a policy exists; the quorum-gated write re-reads the stored policy under the database write lock, so a policy the CLI stored while the console ran is never replaced |
 | Bootstrap labeled in history | **CODE** | history row `bootstrap` |
 | Complete-roster commit at issuance | **CODE** | `trustee enroll` |
 | Single-use token; bucket-bounded redemption | **CODE** | durable nonce burn; same-bucket rule with receipted denial |
