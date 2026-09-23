@@ -75,8 +75,9 @@ bool setup_set_device_name(const char* name);
  * setup_set_tz(posix, iana): the provisioning seed (/api/wifi/connect's
  *   tz_iana) and POST /api/settings. A typed POSIX rule wins; an IANA name
  *   maps through the shared table (common/time/tz_rule.h). Returns the
- *   tz_rule::Resolve value: 0 stored + applied, 1 nothing given, 2 an
- *   implausible rule, 3 a zone the table does not know. Nothing is written
+ *   tz_rule::Resolve value: 0 stored + applied, 1 nothing given, 2 a rule
+ *   outside the strict POSIX grammar (tz_rule::posix_valid), 3 a zone the
+ *   table does not know. Nothing is written
  *   unless it returns 0.
  * setup_clear_tz(): forget the zone (UTC again). */
 #define SETUP_TZ_MAX  47

@@ -3686,9 +3686,10 @@ static esp_err_t handle_thermal(httpd_req_t* req) {
 //
 // Stored and applied by securacv_setup (setenv + tzset, never configTzTime),
 // resolved through the shared table (common/time/tz_rule.h): a typed rule
-// wins, an IANA name maps, an unknown zone or implausible rule is refused by
-// name and stores nothing. The CSI day offset picks the change up on the
-// next loop pass (main.cpp updateCsiClockOffset).
+// wins, an IANA name maps, an unknown zone or a rule outside the strict
+// POSIX grammar (tz_rule::posix_valid) is refused by name and stores
+// nothing. The CSI day offset picks the change up on the next loop pass
+// (main.cpp updateCsiClockOffset).
 // ════════════════════════════════════════════════════════════════════════════
 
 static esp_err_t send_settings(httpd_req_t* req) {

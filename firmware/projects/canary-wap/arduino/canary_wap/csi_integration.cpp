@@ -507,7 +507,7 @@ void apply_quiet_hours_from_nvs() {
  * "tz.iana" the IANA name it was mapped from (for the dashboard to show), and
  * is removed when a rule is typed directly. Applied with setenv + tzset only —
  * configTzTime would also start SNTP, which this device deliberately lacks.
- * A missing or implausible stored value sets nothing: TZ stays unset = UTC. */
+ * A missing or invalid stored value sets nothing: TZ stays unset = UTC. */
 constexpr const char* NVS_KEY_TZ      = "tz";
 constexpr const char* NVS_KEY_TZ_IANA = "tz.iana";
 
@@ -522,7 +522,7 @@ void apply_tz_from_nvs() {
   char rule[tz_rule::MAX_POSIX_LEN + 1] = {0};
   if (tprefs.isKey(NVS_KEY_TZ)) tprefs.getString(NVS_KEY_TZ, rule, sizeof(rule));
   tprefs.end();
-  if (tz_rule::posix_plausible(rule)) apply_tz_rule(rule);
+  if (tz_rule::posix_valid(rule)) apply_tz_rule(rule);
 }
 
 /* Persist + apply. Returns the resolution; nothing is written unless OK. */
@@ -1097,13 +1097,13 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
   /* Transmitter filter (default on). */
   const bool    filter_foreign = prefs.getBool(NVS_KEY_FILTER_FOREIGN, true);
   /* Household time zone (F28): "" while unset (the device keeps UTC). Both
-   * values passed posix_plausible / the IANA table on the way in, so they
+   * values passed posix_valid / the IANA table on the way in, so they
    * carry no quote or backslash and print into the JSON as-is. */
   char tz[tz_rule::MAX_POSIX_LEN + 1] = {0};
   char tz_iana[tz_rule::MAX_IANA_LEN + 1] = {0};
   if (prefs.isKey(NVS_KEY_TZ))      prefs.getString(NVS_KEY_TZ, tz, sizeof(tz));
   if (prefs.isKey(NVS_KEY_TZ_IANA)) prefs.getString(NVS_KEY_TZ_IANA, tz_iana, sizeof(tz_iana));
-  if (!tz_rule::posix_plausible(tz)) tz[0] = '\0';
+  if (!tz_rule::posix_valid(tz)) tz[0] = '\0';
   if (tz_rule::posix_for_iana(tz_iana) == nullptr) tz_iana[0] = '\0';
   prefs.end();
 
@@ -1157,7 +1157,7 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
 
   /* "tz": a POSIX rule, or "tz_iana": an IANA zone the shared table maps
    * (repo sweep F28); "tz":"" alone clears the zone (back to UTC). Handled
-   * FIRST and all-or-nothing: an unknown zone or implausible rule is refused
+   * FIRST and all-or-nothing: an unknown zone or an invalid rule is refused
    * by name before any other key in the body is written, so a 400 never
    * leaves half a settings change on disk. */
   if (strstr(body, "\"tz\"") != nullptr || strstr(body, "\"tz_iana\"") != nullptr) {

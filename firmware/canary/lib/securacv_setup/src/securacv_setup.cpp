@@ -236,14 +236,14 @@ static bool tz_read(const char* key, char* out, size_t len) {
 void setup_apply_tz(void) {
   char rule[SETUP_TZ_MAX + 1];
   if (!tz_read("tz", rule, sizeof(rule))) return;   // unset: TZ stays UTC
-  if (!tz_rule::posix_plausible(rule)) return;
+  if (!tz_rule::posix_valid(rule)) return;
   setenv("TZ", rule, 1);
   tzset();
 }
 
 bool setup_get_tz(char* out, size_t len) {
   if (!tz_read("tz", out, len)) return false;
-  if (!tz_rule::posix_plausible(out)) { out[0] = '\0'; return false; }
+  if (!tz_rule::posix_valid(out)) { out[0] = '\0'; return false; }
   return true;
 }
 

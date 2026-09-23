@@ -147,24 +147,114 @@ inline const char* posix_for_iana(const char* iana) {
   return nullptr;
 }
 
-// Is this a string worth handing to tzset()? 1..MAX_POSIX_LEN printable
-// ASCII, starts with a letter or '<' (a POSIX std name), no spaces, quotes or
-// backslashes. Plausibility, not a full parser: newlib and glibc fall back to
-// UTC on a rule they cannot parse, so this gate's job is to keep control
-// bytes, JSON-breaking characters and oversize values out of NVS (a stored
-// value is re-applied on every boot), refused rather than "cleaned".
-inline bool posix_plausible(const char* s) {
+// The POSIX TZ grammar, strictly: the only rules this gate passes are ones
+// every libc a Canary runs reads to the end. That matters because a rule a
+// libc cannot read is NOT safely ignored: the ESP newlib 4.1 base under
+// Arduino core 2.0.x (the canary-wap's CI build) returns from tzset() part
+// way through a parse without resetting anything (tzset_r.c: a failed offset
+// or date is a bare `return`), so the previous zone's offset, or a mix of the
+// old and new rule, stays in force until the next reboot, and after it
+// whatever the half-read rule left. Only the esp-4.3 base falls back to UTC.
+// So the settings surfaces must refuse every rule outside the subset newlib
+// 4.1, newlib 4.3 and glibc (the host test) all parse completely:
+//
+//   std offset [dst [offset] ,date[/time] ,date[/time]]
+//
+//   std, dst  [A-Za-z]{3,10}  or  <[-+0-9A-Za-z]{3,10}>   (newlib's TZNAME_MAX)
+//   offset    [+-]?hh[:mm[:ss]]   hh 0..24 (1-2 digits), mm and ss 00..59
+//   date      Mm.w.d (m 1..12, w 1..5, d 0..6) | Jn (1..365) | n (0..365)
+//   time      hh[:mm[:ss]]        hh 0..167 (POSIX.1-2024; unsigned, since
+//                                  newlib 4.1 reads a '-' as a huge hour)
+//
+// Narrower than POSIX on purpose, each by what one libc would do otherwise:
+// a DST name needs BOTH change dates (with none, each libc supplies its own
+// default, the US rules on newlib, so "CET-1CEST" would quietly change clocks
+// on US dates); dates without a DST name are refused (every libc ignores
+// them); nothing may trail the rule (newlib stops reading at the first thing
+// it does not expect and keeps the rest of what it had); no leading ':'.
+// Also keeps control bytes, quotes, backslashes and oversize values out of
+// NVS (a stored rule is re-applied on every boot): refused, never "cleaned".
+namespace detail {
+
+inline bool is_alpha(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
+inline bool is_digit(char c) { return c >= '0' && c <= '9'; }
+
+// 1..max_digits decimal digits (no more), value in lo..hi.
+inline bool take_uint(const char*& p, unsigned max_digits, unsigned lo, unsigned hi) {
+  unsigned v = 0, k = 0;
+  while (k < max_digits && is_digit(p[k])) v = v * 10 + (unsigned)(p[k++] - '0');
+  if (k == 0 || is_digit(p[k]) || v < lo || v > hi) return false;
+  p += k;
+  return true;
+}
+
+// [A-Za-z]{3,10} or <[-+0-9A-Za-z]{3,10}>
+inline bool take_name(const char*& p) {
+  size_t k = 0;
+  if (*p == '<') {
+    const char* q = p + 1;
+    while (is_alpha(q[k]) || is_digit(q[k]) || q[k] == '+' || q[k] == '-') k++;
+    if (k < 3 || k > 10 || q[k] != '>') return false;
+    p = q + k + 1;
+    return true;
+  }
+  while (is_alpha(p[k])) k++;
+  if (k < 3 || k > 10) return false;
+  p += k;
+  return true;
+}
+
+// hh[:mm[:ss]] with hh <= max_hour; mm and ss exactly two digits, <= 59.
+inline bool take_hms(const char*& p, unsigned max_hour_digits, unsigned max_hour) {
+  if (!take_uint(p, max_hour_digits, 0, max_hour)) return false;
+  for (int part = 0; part < 2 && *p == ':'; ++part) {
+    const char* q = p + 1;
+    if (!is_digit(q[0]) || !is_digit(q[1]) || is_digit(q[2])) return false;
+    if ((q[0] - '0') * 10 + (q[1] - '0') > 59) return false;
+    p = q + 2;
+  }
+  return true;
+}
+
+inline bool take_offset(const char*& p) {
+  if (*p == '+' || *p == '-') p++;
+  return take_hms(p, 2, 24);
+}
+
+// ,date[/time]
+inline bool take_change(const char*& p) {
+  if (*p++ != ',') return false;
+  if (*p == 'M') {
+    p++;
+    if (!take_uint(p, 2, 1, 12)) return false;               // month
+    if (*p++ != '.' || !take_uint(p, 1, 1, 5)) return false; // week
+    if (*p++ != '.' || !take_uint(p, 1, 0, 6)) return false; // weekday
+  } else if (*p == 'J') {
+    p++;
+    if (!take_uint(p, 3, 1, 365)) return false;              // Julian, no Feb 29
+  } else if (!take_uint(p, 3, 0, 365)) {                     // zero-based day
+    return false;
+  }
+  if (*p == '/') {
+    p++;
+    if (!take_hms(p, 3, 167)) return false;
+  }
+  return true;
+}
+
+}  // namespace detail
+
+inline bool posix_valid(const char* s) {
   if (s == nullptr) return false;
   const size_t n = strlen(s);
   if (n == 0 || n > MAX_POSIX_LEN) return false;
-  const char c0 = s[0];
-  const bool letter = (c0 >= 'A' && c0 <= 'Z') || (c0 >= 'a' && c0 <= 'z');
-  if (!letter && c0 != '<') return false;
-  for (size_t i = 0; i < n; ++i) {
-    const unsigned char c = (unsigned char)s[i];
-    if (c <= 0x20 || c > 0x7E || c == '"' || c == '\'' || c == '\\') return false;
-  }
-  return true;
+  const char* p = s;
+  if (!detail::take_name(p) || !detail::take_offset(p)) return false;
+  if (*p == '\0') return true;                                // standard time only
+  if (!detail::take_name(p)) return false;                    // the DST name
+  if (*p != ',' && !detail::take_offset(p)) return false;     // its optional offset
+  if (!detail::take_change(p) || !detail::take_change(p)) return false;
+  return *p == '\0';
 }
 
 // Minutes since LOCAL midnight (0..1439) for a wall-clock epoch, under
@@ -185,7 +275,7 @@ inline int32_t local_minute_of_day(time_t t) {
 enum class Resolve : uint8_t {
   OK           = 0,  // out holds the rule
   NONE         = 1,  // neither field present: leave the setting alone
-  BAD_RULE     = 2,  // a "tz" that fails posix_plausible
+  BAD_RULE     = 2,  // a "tz" that fails posix_valid
   UNKNOWN_ZONE = 3,  // a "tz_iana" the table does not know
 };
 
@@ -194,7 +284,7 @@ enum class Resolve : uint8_t {
 // MAX_POSIX_LEN + 1 bytes; it is written only on OK.
 inline Resolve resolve(const char* posix, const char* iana, char* out) {
   if (posix != nullptr && posix[0] != '\0') {
-    if (!posix_plausible(posix)) return Resolve::BAD_RULE;
+    if (!posix_valid(posix)) return Resolve::BAD_RULE;
     memcpy(out, posix, strlen(posix) + 1);
     return Resolve::OK;
   }

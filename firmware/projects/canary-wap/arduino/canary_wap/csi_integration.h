@@ -259,7 +259,8 @@ void hex_encode(const uint8_t* in, size_t len, char* out);
  * set_timezone(posix, iana): the provisioning seed (/api/wifi/connect's
  * tz_iana) and POST /api/settings. Resolution is tz_rule::resolve — a typed
  * POSIX rule wins, an IANA name maps through the shared table, an unknown
- * zone or implausible rule stores nothing. Persists, then applies.
+ * zone or a rule outside the strict POSIX grammar (tz_rule::posix_valid)
+ * stores nothing. Persists, then applies.
  * ────────────────────────────────────────────────────────────────────────── */
 void apply_timezone_from_nvs();
 tz_rule::Resolve set_timezone(const char* posix, const char* iana);

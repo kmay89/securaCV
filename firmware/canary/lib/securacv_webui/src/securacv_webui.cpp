@@ -3761,7 +3761,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const d = await api('/api/settings', 'POST', body);
       if (d && d.ok === true) { tzShow(d); msg.textContent = 'Saved. The next reading uses it.'; return; }
       const why = { unknown_zone: 'This Canary does not know that zone yet. Enter its POSIX rule instead.',
-                    bad_time_zone: 'That does not look like a POSIX time zone rule.' };
+                    bad_time_zone: 'This Canary cannot read that rule. A zone with summer time needs both change dates, like EST5EDT,M3.2.0,M11.1.0.' };
       msg.textContent = why[d && d.error] || ('Could not save: ' + ((d && d.error) || 'unknown'));
     }
     function tzUseBrowser() {
