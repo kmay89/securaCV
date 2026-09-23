@@ -11,7 +11,7 @@
 //   · a page reaches the release-fetching modules without → "signed-release hosts"
 //     the hosts (fails behind a click, off the probe's path)
 //   · a directive nobody needs quietly appears             → "trimmed, not granted"
-//   · the firmware's captive page (a srcdoc frame, which    → "wap.html's style-src pins"
+//   · a firmware captive page (a srcdoc frame, which        → "each srcdoc page's style-src pins"
 //     inherits the policy) changes and its hash goes stale
 //   · a module creates a <style> element (inline style the  → "no module writes style="
 //     load-time probe never sees — fleet.html's toggle did)
@@ -256,25 +256,34 @@ test("directives no page needs are trimmed, not granted: no blob:, no worker-src
   }
 });
 
-test("wap.html's style-src pins the firmware's captive page (a srcdoc frame) — and nothing else does", () => {
-  // wap-ui.js shows the device's real captive-portal HTML in an <iframe
-  // srcdoc>; a srcdoc document inherits the embedder's policy, so its one
-  // <style> block is hashed from devices/wap.json (gen_wap.py writes it from
-  // the firmware source — the pin follows the firmware). No hash can cover a
-  // style= attribute, an on*= handler or an inline <script> there, so that
-  // document must carry none.
-  const captive = JSON.parse(read(join(ROOT, "devices/wap.json"))).captive.html;
-  const blocks = [...captive.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\b[^>]*>/gi)].map((m) => m[1]);
-  assert.strictEqual(blocks.length, 1, "the captive page carries one <style> block");
-  assert.deepStrictEqual(parse(policyOf("wap.html")).get("style-src"), ["'self'", sha256(blocks[0])],
-    "wap.html style-src must be 'self' plus the captive page's <style> hash (rerun gen_csp.py after gen_wap.py)");
-  for (const tag of markupOf(captive).match(/<[a-zA-Z][^>]*>/g) || []) {
-    assert.doesNotMatch(tag, /\s(?:on[a-z]+|style)\s*=/i, `captive page: ${tag.slice(0, 80)} — no hash can allow it`);
+// The pages that frame a firmware document in an <iframe srcdoc>, and the
+// generated JSON each document ships in (gen_csp.py SRCDOC_STYLES).
+const SRCDOC = {
+  "wap.html": "devices/wap.json",                // gen_wap.py: canary-wap captive page
+  "fleet.html": "devices/display_portal.json",   // gen_display_portal.py: the display's portal
+};
+
+test("each srcdoc page's style-src pins its firmware captive page — and nothing else does", () => {
+  // wap-ui.js (wap.html) and onboard-phone.js (fleet.html) show a device's own
+  // captive-portal HTML in an <iframe srcdoc>; a srcdoc document inherits the
+  // embedder's policy, so its one <style> block is hashed from the generated
+  // JSON (its generator reads the firmware source — the pin follows the
+  // firmware). No hash can cover a style= attribute, an on*= handler or an
+  // inline <script> there, so that document must carry none.
+  for (const [page, rel] of Object.entries(SRCDOC)) {
+    const captive = JSON.parse(read(join(ROOT, rel))).captive.html;
+    const blocks = [...captive.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\b[^>]*>/gi)].map((m) => m[1]);
+    assert.strictEqual(blocks.length, 1, `${rel}: the captive page carries one <style> block`);
+    assert.deepStrictEqual(parse(policyOf(page)).get("style-src"), ["'self'", sha256(blocks[0])],
+      `${page} style-src must be 'self' plus the captive page's <style> hash (rerun gen_csp.py after the page's generator)`);
+    for (const tag of markupOf(captive).match(/<[a-zA-Z][^>]*>/g) || []) {
+      assert.doesNotMatch(tag, /\s(?:on[a-z]+|style)\s*=/i, `${rel}: ${tag.slice(0, 80)} — no hash can allow it`);
+    }
+    assert.doesNotMatch(captive, /<script\b(?![^>]*\ssrc=)/i, `${rel}: the captive page has no inline script`);
   }
-  assert.doesNotMatch(captive, /<script\b(?![^>]*\ssrc=)/i, "the captive page has no inline script");
   // Every other page's style-src is exactly 'self'.
   for (const page of PAGES) {
-    if (page === "wap.html") continue;
+    if (Object.hasOwn(SRCDOC, page)) continue;
     assert.deepStrictEqual(parse(policyOf(page)).get("style-src"), ["'self'"], `${page}: style-src`);
   }
 });

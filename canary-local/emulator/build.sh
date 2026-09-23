@@ -364,6 +364,10 @@ FIRMWARE_SRCS=(
   "$PROJ/src/diagnostics.cpp"
   "$PROJ/src/hal/chime.cpp"
   "$PROJ/src/net/mqtt_mgr.cpp"
+  # The first-boot SoftAP + captive portal, verbatim: every display flavor
+  # sets FEATURE_ONBOARDING, and the radio / WebServer / WiFiUDP it drives
+  # are shims (emu_radio.cpp, emu_webserver.cpp) the page's phone talks to.
+  "$PROJ/src/net/provision.cpp"
   "$PROJ"/src/ui/*.cpp
   "$PROJ"/src/care/*.cpp
   "$PROJ"/src/fleet/*.cpp
@@ -403,7 +407,8 @@ if [[ "$FLAVOR" == "touch169" || "$FLAVOR" == "amoled241" ]]; then
   )
 fi
 # The two silicon HALs are replaced by emu_hal_display.cpp; everything
-# else in src/ compiles verbatim. (net/* are replaced by emu_net/emu_mqtt.)
+# else in src/ compiles verbatim. (net/* are replaced by emu_net.cpp —
+# except mqtt_mgr.cpp and provision.cpp above, which compile for real.)
 
 CRYPTO_SRCS=(
   "$TP/arduinolibs/libraries/Crypto/Ed25519.cpp"

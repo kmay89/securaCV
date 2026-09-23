@@ -59,6 +59,8 @@ canary-local/
     chooser.js          the needs-matcher UI
     chooser-data.js     questions + candidates + scorer (DOM-free, tested)
     guides.js           tours, fix-it flows, LED/chirp grammars (data)
+    onboard-phone.js    the phone that walks the display's real first-boot
+                        portal (net/provision.cpp in wasm — see §4 Try it)
     canary-local.css    Quiet Glass, on the web (palette from ui/theme.h)
   devices/
     registry.json       the device registry (one card per entry)
@@ -67,6 +69,8 @@ canary-local/
                         named for future live pin emulation — see §4g)
     playground.json     Waveshare 4.3B peripheral bench (generated from
                         pins.h + the dev-playground firmware — see §6)
+    display_portal.json the display's first-boot captive page as the phone
+                        frames it + its routes (tools/gen_display_portal.py)
   enclosures/preview/   coarse preview meshes for in-dev designs (rendered
                         by tools/gen_enclosures.py --render; the library's
                         own "committed STLs are print-validated" policy
@@ -138,12 +142,16 @@ What is *replaced* is exactly the silicon boundary, one shim per wire:
 | WiFi STA supervisor | scenario switch driving the firmware's own `common/network/wifi_join_policy.h` — the same header and the same `WifiRetryPolicy` constants as the display, so the schedule is the glass's (boot timeout → boot completes and the loop retries with the shared backoff, never a reboot; an outage on a link that once worked → reboot after `WIFI_OUTAGE_REBOOT_MS`) | `src/emu_net.cpp` |
 | PubSubClient socket | scenario broker: retained rows, LWT, wildcard replay | `src/emu_mqtt.cpp` |
 | mDNS discovery / broker gossip | scenario referral (teaches the self-healing rebind) | `src/emu_net.cpp` |
+| Radio under the first-boot portal (SoftAP, async 13-channel scan, STA join) | the page's phone joins the SoftAP with the key the firmware chose; a staged LAN answers the scan and the join (`WL_NO_SSID_AVAIL` / `WL_CONNECT_FAILED` / `WL_CONNECTED`) — the firmware turns that into its own list, reasons and glass | `shim/WiFi.h` + `src/emu_radio.cpp` |
+| WebServer :80 / captive DNS on WiFiUDP :53 | requests and datagrams from the page's phone, queued for the firmware's own `handleClient()` / `parsePacket()`; every response byte is its handler's | `shim/WebServer.h` + `src/emu_webserver.cpp`, `shim/WiFiUdp.h` |
 | esp_random / mbedtls SHA-256 | page entropy (seedable) / vetted compact SHA-256 | shims |
 
 Two firmware TUs are excluded outright (`hal/display_*.cpp` — they *are*
-the silicon) and four are stubbed with honest signage (`ota_mgr` declines
-installs, `chirp_scan` reports no radio, `provision` ships provisioned —
-see §5 Roadmap).
+the silicon) and the rest of `net/` is stubbed with honest signage
+(`ota_mgr` declines installs, `chirp_scan` reports no radio — see §6
+Roadmap). `net/provision.cpp`, the first-boot SoftAP + captive portal,
+compiles verbatim: a first meeting (no Wi-Fi stored) lands in it, and the
+fleet page's phone walks it (§4, **Try it**).
 
 **Drift is structurally impossible** at the logic layer: there is no
 second implementation to drift. If a PR changes the mood engine or the
@@ -197,7 +205,17 @@ Three doors into the same live device, all driven by one scenario API
   bench runbooks) — including the count-coded LED grammar (groups of
   2/3/4/5) and the chirp vocabulary.
 - **Try it** — free play: link switches, time controls, staged events,
-  tamper, household ack-sync from a "sibling display".
+  tamper, household ack-sync from a "sibling display". And the first
+  boot: "meet the bird again" reboots a factory-fresh unit (no Wi-Fi
+  stored), the real `net/provision.cpp` raises its `SecuraCV-XXXX`
+  SoftAP, and a phone (`assets/onboard-phone.js`) walks the display's own
+  portal — join with the key from the glass's QR, the captive DNS answer,
+  the firmware's page in a sandboxed `srcdoc` frame, `/scan`, `/join`,
+  `/status` — until the display drops its AP and finishes booting. The
+  phone chrome is the Lab's; every answer is the firmware's. The one
+  thing not run is the page's inline script (this page's policy forbids
+  inline script, §9), so the phone stands in for it against the same
+  routes, reading its zone list and copy out of the served page.
 - **Bench** — the physical test bench: the layer the firmware *can't*
   see, modeled where it lives (outside the silicon boundary, in
   `emulator/web/bench.js`). Pull the USB cable mid-frame, remove or
@@ -796,9 +814,19 @@ Three tiers, no lock-in, one source of truth:
 
 ## 6. Roadmap (scenario waves)
 
-- **Wave 2 — first-boot theater**: shim `WebServer`/`DNSServer` so
-  `provision.cpp` compiles too, with a simulated phone sheet for the
-  SoftAP captive-portal walk (`provision_core.h` is already pure).
+- **Shipped (wave 2) — first-boot theater**: `net/provision.cpp`
+  compiles into every display flavor against three shims — `WebServer`
+  (`shim/WebServer.h`, `src/emu_webserver.cpp`), `WiFiUDP`
+  (`shim/WiFiUdp.h`) and the radio's SoftAP / scan / join
+  (`shim/WiFi.h`, `src/emu_radio.cpp`) — and the fleet page's phone
+  (`assets/onboard-phone.js`) walks it. The boundary, honestly: the
+  firmware's bytes (every route, the DNS reply, the verdicts, NVS written
+  only on success), the Lab's phone chrome, and the portal's own inline
+  script not executed (the phone stands in for it against the same
+  routes; `devices/display_portal.json`, from `tools/gen_display_portal.py`,
+  pins the framed page and its `<style>` hash). The provisioned boot every
+  other tour starts from is unchanged: the shell preseeds the scenario's
+  Wi-Fi unless the boot is a first meeting.
 - **Wave 2 — chirp fallback**: scripted BLE chirp injection while the
   broker is dark (the "burglar cut the internet" demo).
 - **On-device serving**: the artifacts are single-file by design
@@ -874,6 +902,16 @@ fails on byte drift.
   cores; the probe walks first boot in headless Chromium (power on → the phone
   catches the SoftAP → the firmware's captive HTML → the wizard reaches online
   → retained MQTT + all 24 discovery entities land → a smoke cadence alarms).
+- `tests/onboard.test.js` + `tests/onboard_probe.mjs` — the display's first
+  boot (§4, **Try it**): the test pins `devices/display_portal.json` to
+  `provision.cpp` (routes, served-page hash, zone presets, `/status`
+  reasons), the phone's srcdoc transform to the generator's, its `/join`
+  body and zone preselection to the portal's script, and the preseed keys
+  to `runtime_config.cpp`; the probe boots every flavor as a first meeting
+  and walks the firmware's portal (SoftAP key from serial = radio, captive
+  DNS A-only, the 302, GET / byte-for-byte, wrong key / absent SSID / 400
+  from the firmware, credentials only on success, the AP torn down, the
+  boot finishing), then the fleet page's phone end to end under its CSP.
 - `tests/csp.test.js` + `tests/csp_probe.mjs` — every page's Content-Security-
   Policy (§9): the test pins each page's `<meta>` to the policy table, refuses
   `unsafe-*`, inline handlers and `style=` attributes, and checks the wasm /
@@ -928,7 +966,7 @@ The rules, which the generator enforces rather than documents:
   for `frame-src` and the page's iframes, and for the release hosts and the
   modules that fetch a release (`flash.js`, `we2-flash.js`), which would
   otherwise fail behind a click where the browser probe never looks.
-- **Two hashes, both computed from bytes, on purpose.** `flash.html`'s
+- **Every hash is computed from bytes, on purpose.** `flash.html`'s
   import map (the SRI pins for the vendored flasher engines) cannot be an
   external file, so it is the single entry in `INLINE_SCRIPT_OK` and its
   `'sha256-…'` is computed from the page's own bytes on every run. And
@@ -936,7 +974,11 @@ The rules, which the generator enforces rather than documents:
   `srcdoc` frame — the device's document, not the Lab's — so its one
   `<style>` block is hashed from `devices/wap.json` (`SRCDOC_STYLES`; the
   pin follows the firmware through `gen_wap.py`, so regenerate WAP data
-  first, then the policy). Any other inline `<script>` or `<style>` fails
+  first, then the policy). `fleet.html` does the same for the display's
+  first-boot portal, as its wasm WebServer serves it with the script and
+  the one `style=` attribute removed: hashed from
+  `devices/display_portal.json`, written by `gen_display_portal.py` — run
+  it, then the policy. Any other inline `<script>` or `<style>` fails
   the generator instead of getting a hash, and the generator refuses the
   srcdoc row if that document ever grows a script, a `style=` or an `on*=`.
 - **No LAN allowlist, by design.** No page fetches a Canary or a hub from
