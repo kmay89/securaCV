@@ -165,7 +165,12 @@ and CI fails if the firmware stops compiling against the shim boundary.
 `devices/registry.json` is the page's only source of device knowledge.
 One entry = one pairing card. An entry with an `emulator` block gets live
 firmware behind its glass; witness entries (no glass) get decoder cards
-(LED grammar, chirp meanings, joining paths) instead.
+(LED grammar, chirp meanings, joining paths) instead; a display with no
+twin of its own yet (the Nightlight, the Nightstand C6, the Nightstand 7)
+gets its case, parts and specs, never the witness decoders. Every device
+manifest that claims a case has a card here — its slug, or the card its
+`lab.card` names (`devices/README.md`) — or the case shows on no page;
+`scripts/lint_device_manifests.py` refuses that.
 
 Adding a future Canary = adding one registry entry + one procedural body
 in `scene3d.js` (dimensions from its enclosure `.scad` — the same

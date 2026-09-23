@@ -38,14 +38,18 @@ PREVIEW_DIR = REPO / "canary-local/enclosures/preview"
 # Which device each variant/design belongs to (the page groups by card).
 # The MANIFESTS decide: every devices/<slug>/device.json lists the printable
 # sets its hardware takes in cad.enclosure_sets, and inverted that is the
-# attribution. `device` is the first claimant in slug order — homed on its
-# family's device when the family is itself a manifest (canary-vision is the
-# Vision page for the DevKit and XIAO S3 hosts too; the display line has no
-# family device, so each display manifest is its own) — and `devices` lists
-# the claimants whenever `device` alone does not say them (the 7" case is the
-# Dash 7's and the Nightstand 7's). A set no manifest claims is universal.
-# `device` also drives the chooser's device↔enclosure pairing
-# (tests/chooser.test.js holds the chooser to it).
+# attribution. `device` is the first claimant in slug order, homed on the Lab
+# card that presents it: the card its `lab.card` names (the Nightlight's
+# manifest is canary-display-nightlight-c3, its card canary-nightlight), else
+# its family's device when the family is itself a manifest (canary-vision is
+# the Vision page for the DevKit and XIAO S3 hosts too; the display line has
+# no family device, so each display manifest is its own). `devices` lists the
+# claimants whenever `device` alone does not say them (the 7" case is the
+# Dash 7's and the Nightstand 7's; the C3 case is the Nightlight card's and
+# its manifest's — the flasher looks a case up by the manifest slug). A set
+# no manifest claims is universal. `device` also drives the chooser's
+# device↔enclosure pairing (tests/chooser.test.js holds the chooser to it,
+# and scripts/lint_device_manifests.py every home to a registry.json card).
 MANIFESTS = load_manifests(REPO)
 SET_OWNERS: dict[str, list[str]] = {}
 for _slug, _m in MANIFESTS.items():              # slug order — "first" is stable
@@ -54,8 +58,13 @@ for _slug, _m in MANIFESTS.items():              # slug order — "first" is sta
 
 
 def home(slug: str) -> str:
-    """The device page a manifest's sets land on: its family's, when the
-    family is a manifest of its own, else its own."""
+    """The Lab card a manifest's sets land on: the one its `lab.card` names,
+    else its family's, when the family is a manifest of its own, else its
+    own slug. (scripts/lint_device_manifests.py and tests/chooser.test.js
+    carry the same rule.)"""
+    card = (MANIFESTS[slug].get("lab") or {}).get("card")
+    if card:
+        return card
     fam = MANIFESTS[slug].get("family")
     return fam if fam in MANIFESTS else slug
 
@@ -78,7 +87,7 @@ DEVICE_OF = [
     (r"touch watch-display", "canary-display-touch169"),          # ESP32-S3-Touch-LCD-1.69
     (r"C6 display pocket", "canary-display-nightstand-c6"),       # ESP32-C6-LCD-1.47
     (r"S3 hallway stick", "canary-display-nightstand-s3"),        # ESP32-S3-LCD-1.47
-    (r"C3 pocket display", "canary-display-nightlight-c3"),       # ESP32-C3-LCD-1.47
+    (r"C3 pocket display", "canary-nightlight"),                  # ESP32-C3-LCD-1.47 (its card)
     (r"Sense bedside|Sense in-wall", "canary-sense"),
     (r"Thermal / outdoor", "canary-wap"),
     (r"Combo", "canary-vision"),

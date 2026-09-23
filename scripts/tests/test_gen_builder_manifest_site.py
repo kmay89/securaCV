@@ -301,11 +301,15 @@ class LedgerShape(unittest.TestCase):
                     self.assertEqual(figs[fig]["knobs"][name], o.value, f"{fig}.{name}")
                     seen += 1
         self.assertGreaterEqual(seen, 54)
-        # owned, not carried: the Nightstand C6 owns its ws147 trio but draws no
-        # figure (its board is unmapped, no STL is committed), so the ledger has
-        # no home for its knobs — and it is the only such manifest
+        # owned, not carried: the Nightstand C6 owns its ws147 trio but its
+        # manifest names no figure (its board is unmapped, no STL is
+        # committed), so the ledger has no home for its knobs — and it is the
+        # only such manifest. Its pocket case IS drawn, for its Lab card, and
+        # that figure is carried like any sketch — without knobs, because
+        # knobs ride on the figure a manifest names.
         self.assertEqual(uncarried, {"canary-display-nightstand-c6"})
-        self.assertFalse(any("c6" in fid for fid in figs))
+        self.assertEqual([fid for fid in figs if "c6" in fid], ["device.canary-display-nightstand-c6"])
+        self.assertNotIn("knobs", figs["device.canary-display-nightstand-c6"])
         # the Touch 1.69's split line reaches the ledger as two more knobs
         t169 = figs["device.canary-display-touch169"]["knobs"]
         self.assertEqual((t169["aa_dx"], t169["aa_dy"]), (0.0, 0.0))

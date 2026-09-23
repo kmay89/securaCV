@@ -98,6 +98,25 @@ test("every figure-routed display is the figure the ledger resolves, with a comm
   }
 });
 
+test("the display cards the manifests home cases on draw their own hardware", async () => {
+  // registry.json carries a card for every display manifest that claims a
+  // case (tests/chooser.test.js): the C6 draws its own pocket case, and the
+  // Nightstand 7 — one board, one case, two products — the Dash 7's slab,
+  // resolved through the figure's `manifests` (the manifest names the figure;
+  // the figure's own id and device are the Dash 7's)
+  const { FIGURE_BUILDERS } = await load();
+  const { deviceFigure } = await import("../assets/body-dims.js");
+  assert.deepStrictEqual(FIGURE_BUILDERS["canary-display-nightstand-c6"], ["device.canary-display-nightstand-c6", {}]);
+  assert.deepStrictEqual(FIGURE_BUILDERS["canary-display-nightstand7"], ["device.canary-display-dash7", {}]);
+  const dash7 = ledger.figures.find((f) => f.id === "device.canary-display-dash7");
+  assert.deepStrictEqual(dash7.manifests, ["canary-display-dash7", "canary-display-nightstand7"]);
+  assert.strictEqual(deviceFigure(ledger, "canary-display-nightstand7")?.id, "device.canary-display-dash7");
+  const n7 = JSON.parse(readFileSync(join(ROOT, "../devices/canary-display-nightstand7/device.json"), "utf8"));
+  assert.strictEqual(n7.figure, "device.canary-display-dash7", "the join is the manifest's own figure");
+  // an id or device match still wins: the Nightlight card is the C3 manifest's figure by id
+  assert.strictEqual(deviceFigure(ledger, "canary-nightlight")?.id, "device.canary-nightlight");
+});
+
 test("a figure builder lands the model centered, with the live glass on its face", async () => {
   const { buildFromFigure } = await load();
   const scene = fakeScene();

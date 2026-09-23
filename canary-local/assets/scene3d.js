@@ -1030,8 +1030,11 @@ export const FIGURE_BUILDERS = {
   "canary-display-watch": ["device.canary-display-watch", { round: true }],
   "canary-display-dash": ["device.canary-display-dash", {}],
   "canary-display-nightstand-s3": ["device.canary-display-nightstand", {}],
+  "canary-display-nightstand-c6": ["device.canary-display-nightstand-c6", {}],
   "canary-display-touch169": ["device.canary-display-touch169", {}],
   "canary-display-dash7": ["device.canary-display-dash7", {}],
+  // one board, one case, two products: the bedside 7" draws the Dash 7's slab
+  "canary-display-nightstand7": ["device.canary-display-dash7", {}],
   "canary-display-amoled241": ["device.canary-display-amoled241", {}],
   "canary-nightlight": ["device.canary-nightlight", {}],
 };

@@ -23,7 +23,7 @@
  },
  "counts": {
   "idea": 15,
-  "prototype": 10,
+  "prototype": 11,
   "confirmed": 1,
   "shipping": 25
  },
@@ -851,7 +851,10 @@
    "solids": 3,
    "rev": "8c939c25",
    "svg": "canary-local/figures/device.canary-display-amoled241.svg",
-   "glyph": "canary-local/figures/device.canary-display-amoled241.glyph.svg"
+   "glyph": "canary-local/figures/device.canary-display-amoled241.glyph.svg",
+   "manifests": [
+    "canary-display-amoled241"
+   ]
   },
   {
    "id": "device.canary-display-dash",
@@ -909,7 +912,10 @@
    "solids": 5,
    "rev": "f344cfc8",
    "svg": "canary-local/figures/device.canary-display-dash.svg",
-   "glyph": "canary-local/figures/device.canary-display-dash.glyph.svg"
+   "glyph": "canary-local/figures/device.canary-display-dash.glyph.svg",
+   "manifests": [
+    "canary-display-dash"
+   ]
   },
   {
    "id": "device.canary-display-dash7",
@@ -957,7 +963,11 @@
    "solids": 3,
    "rev": "cdff74a9",
    "svg": "canary-local/figures/device.canary-display-dash7.svg",
-   "glyph": "canary-local/figures/device.canary-display-dash7.glyph.svg"
+   "glyph": "canary-local/figures/device.canary-display-dash7.glyph.svg",
+   "manifests": [
+    "canary-display-dash7",
+    "canary-display-nightstand7"
+   ]
   },
   {
    "id": "device.canary-display-nightstand",
@@ -1005,7 +1015,58 @@
    "solids": 4,
    "rev": "c361481b",
    "svg": "canary-local/figures/device.canary-display-nightstand.svg",
-   "glyph": "canary-local/figures/device.canary-display-nightstand.glyph.svg"
+   "glyph": "canary-local/figures/device.canary-display-nightstand.glyph.svg",
+   "manifests": [
+    "canary-display-nightstand-s3"
+   ]
+  },
+  {
+   "id": "device.canary-display-nightstand-c6",
+   "title": "Canary Nightstand C6",
+   "role": "device",
+   "device": "canary-display-nightstand-c6",
+   "family": "canary-display",
+   "supply": [
+    {
+     "vendor": "waveshare",
+     "line": "ESP32 display board"
+    }
+   ],
+   "confidence": "prototype",
+   "evidence": {
+    "registry_kind": "display",
+    "committed_stls": [],
+    "catalog_variants": [
+     {
+      "product": "c6_display",
+      "variant": "c6-display-pocket-case",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "amoled241",
+     "dash",
+     "dash7",
+     "nightlight",
+     "nightstand",
+     "nightstand7",
+     "touch169",
+     "watch"
+    ]
+   },
+   "dims_source": "sketch",
+   "sketch_note": "the C6-LCD-1.47 pocket case in canary_c6_display.scad, stripped-board build (headers=\"none\", the file default): shell 25.12 x 41.17 (board cavity + 2.2 mm walls), 14.05 mm deep (bezel 12.05 + back 2.0), plus the 1.0 mm button ears and the 1.1 mm USB-C chin; no committed case STL yet",
+   "envelope_mm": {
+    "w": 27.12,
+    "d": 14.05,
+    "h": 42.27
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 7,
+   "rev": "cbada0b2",
+   "svg": "canary-local/figures/device.canary-display-nightstand-c6.svg",
+   "glyph": "canary-local/figures/device.canary-display-nightstand-c6.glyph.svg"
   },
   {
    "id": "device.canary-display-touch169",
@@ -1053,7 +1114,10 @@
    "solids": 3,
    "rev": "72fa8cf1",
    "svg": "canary-local/figures/device.canary-display-touch169.svg",
-   "glyph": "canary-local/figures/device.canary-display-touch169.glyph.svg"
+   "glyph": "canary-local/figures/device.canary-display-touch169.glyph.svg",
+   "manifests": [
+    "canary-display-touch169"
+   ]
   },
   {
    "id": "device.canary-display-watch",
@@ -1110,7 +1174,10 @@
    "solids": 4,
    "rev": "c673b27b",
    "svg": "canary-local/figures/device.canary-display-watch.svg",
-   "glyph": "canary-local/figures/device.canary-display-watch.glyph.svg"
+   "glyph": "canary-local/figures/device.canary-display-watch.glyph.svg",
+   "manifests": [
+    "canary-display-watch"
+   ]
   },
   {
    "id": "device.canary-feeder",
@@ -1326,7 +1393,13 @@
    "evidence": {
     "registry_kind": "display",
     "committed_stls": [],
-    "catalog_variants": [],
+    "catalog_variants": [
+     {
+      "product": "c3_lcd147",
+      "variant": "c3-pocket-display-case",
+      "status": "in-development"
+     }
+    ],
     "firmware_configs": [
      "amoled241",
      "dash",
@@ -1350,7 +1423,10 @@
    "solids": 6,
    "rev": "27f621f7",
    "svg": "canary-local/figures/device.canary-nightlight.svg",
-   "glyph": "canary-local/figures/device.canary-nightlight.glyph.svg"
+   "glyph": "canary-local/figures/device.canary-nightlight.glyph.svg",
+   "manifests": [
+    "canary-display-nightlight-c3"
+   ]
   },
   {
    "id": "device.canary-paw",
@@ -1528,7 +1604,10 @@
    "solids": 4,
    "rev": "423b3305",
    "svg": "canary-local/figures/device.canary-sense.svg",
-   "glyph": "canary-local/figures/device.canary-sense.glyph.svg"
+   "glyph": "canary-local/figures/device.canary-sense.glyph.svg",
+   "manifests": [
+    "canary-sense"
+   ]
   },
   {
    "id": "device.canary-vehicle",
@@ -1697,7 +1776,11 @@
    "solids": 4,
    "rev": "0d4ba02d",
    "svg": "canary-local/figures/device.canary-vision.svg",
-   "glyph": "canary-local/figures/device.canary-vision.glyph.svg"
+   "glyph": "canary-local/figures/device.canary-vision.glyph.svg",
+   "manifests": [
+    "canary-vision",
+    "canary-vision-xiao-s3"
+   ]
   },
   {
    "id": "device.canary-vision-devkit",
@@ -1800,7 +1883,10 @@
    "solids": 4,
    "rev": "36ad7de9",
    "svg": "canary-local/figures/device.canary-vision-devkit.svg",
-   "glyph": "canary-local/figures/device.canary-vision-devkit.glyph.svg"
+   "glyph": "canary-local/figures/device.canary-vision-devkit.glyph.svg",
+   "manifests": [
+    "canary-vision-devkit"
+   ]
   },
   {
    "id": "device.canary-vision-doorbell",
@@ -2074,7 +2160,10 @@
    "solids": 3,
    "rev": "85a6140a",
    "svg": "canary-local/figures/device.canary-wap.svg",
-   "glyph": "canary-local/figures/device.canary-wap.glyph.svg"
+   "glyph": "canary-local/figures/device.canary-wap.glyph.svg",
+   "manifests": [
+    "canary-wap"
+   ]
   },
   {
    "id": "part.doorbell.body",

@@ -177,6 +177,18 @@ public struct FleetMassing: Sendable {
       FleetSolid(kind: .box, material: "glass", axis: "y", at: [2.7650000000000006, 8.2, 2.344999999999999], size: [19.39, 0.9, 36.28], r: 1.5, h: 0, fullDetailOnly: false),
       FleetSolid(kind: .box, material: "lit", axis: "y", at: [3.7650000000000006, 8.799999999999999, 4.309999999999999], size: [17.39, 0.4, 32.35], r: 1, h: 0, fullDetailOnly: false),
   ]),
+  "device.canary-display-nightstand-c6": FleetMassing(
+    id: "device.canary-display-nightstand-c6", rev: "cbada0b2", ghost: false,
+    envelope: [27.12, 14.05, 42.27],
+    solids: [
+      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [25.12, 2, 41.17], r: 3, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 1.95, 0], size: [25.12, 11.100000000000001, 41.17], r: 3, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell", axis: "y", at: [-1, 2, 5.7], size: [1.05, 11.05, 7.4], r: 0, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell", axis: "y", at: [25.07, 2, 5.7], size: [1.05, 11.05, 7.4], r: 0, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell", axis: "y", at: [5.985, 2, -1.1], size: [13.15, 11.05, 1.1500000000000001], r: 0, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "glass", axis: "y", at: [2.865, 13.05, 2.4450000000000003], size: [19.39, 0.9, 36.28], r: 1.5, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "lit", axis: "y", at: [3.865, 13.65, 4.41], size: [17.39, 0.4, 32.35], r: 1, h: 0, fullDetailOnly: false),
+  ]),
   "device.canary-display-touch169": FleetMassing(
     id: "device.canary-display-touch169", rev: "72fa8cf1", ghost: false,
     envelope: [46.13, 17, 38.13],

@@ -16,7 +16,11 @@ What is pinned and why:
     it like cad.scad, and no standalone doorbell manifest exists;
   • enclosures.json homes every set on the manifests that claim it: a set
     homed by its README name alone, a claimant the catalog does not reflect,
-    and a claimed set the catalog left universal each fail.
+    and a claimed set the catalog left universal each fail;
+  • every case a manifest claims lands on a Lab card: a manifest whose home
+    is no registry.json card fails (the Nightlight's manifest without its
+    `lab.card`), and so does a `lab.card` the registry lacks or one that
+    restates the default.
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
@@ -150,6 +154,44 @@ class LintCatchesRealMistakes(unittest.TestCase):
             _, errors = ldm.lint(devices_dir=devices)
         self.assertTrue(any("'field-case'" in e and "disagrees" in e and "canary-wap" in e
                             for e in errors), errors)
+
+    # every claimed case shows on a Lab card (registry.json), through lab.card
+    # where the card and the manifest name one device two ways
+    def test_the_nightlight_case_is_homed_on_its_lab_card(self):
+        enclosures = json.loads((REPO / "canary-local/devices/enclosures.json")
+                                .read_text(encoding="utf-8"))
+        c3 = next(s for s in enclosures["sets"] if s["id"] == "c3-pocket-display-case")
+        self.assertEqual((c3["device"], c3["devices"]),
+                         ("canary-nightlight", ["canary-display-nightlight-c3"]))
+        m = json.loads((DEVICES / "canary-display-nightlight-c3" / "device.json")
+                       .read_text(encoding="utf-8"))
+        self.assertEqual(m["lab"], {"card": "canary-nightlight"})
+
+    def test_a_claimed_case_with_no_lab_card_fails(self):
+        with _Mutated() as devices:          # the C3 manifest, before it named its card
+            edit(devices, "canary-display-nightlight-c3", lambda d: d.pop("lab"))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any("canary-display-nightlight-c3: claims c3-pocket-display-case, but its "
+                            "Lab card 'canary-display-nightlight-c3' is not in" in e
+                            for e in errors), errors)
+        # and the committed catalog, homed on the card, no longer matches
+        self.assertTrue(any("'c3-pocket-display-case'" in e and "disagrees" in e for e in errors),
+                        errors)
+
+    def test_a_lab_card_the_registry_lacks_fails(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-display-nightlight-c3",
+                 lambda d: d.__setitem__("lab", {"card": "canary-lamp"}))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any("lab.card 'canary-lamp' is not a card in" in e for e in errors), errors)
+
+    def test_a_lab_card_restating_the_default_fails(self):
+        with _Mutated() as devices:          # the DevKit already lands on its family's card
+            edit(devices, "canary-vision-devkit",
+                 lambda d: d.__setitem__("lab", {"card": "canary-vision"}))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any("canary-vision-devkit: lab.card 'canary-vision' restates the default"
+                            in e for e in errors), errors)
 
     def test_chip_mismatch_with_flasher_catalog_fails(self):
         with _Mutated() as devices:
