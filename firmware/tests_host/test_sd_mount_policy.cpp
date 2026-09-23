@@ -17,6 +17,7 @@ using sd_mount_policy::declare_lost;
 using sd_mount_policy::may_teardown;
 using sd_mount_policy::mount_wait_expired;
 using sd_mount_policy::periodic_action;
+using sd_mount_policy::sd_state_for_tamper;
 
 static int g_checks = 0;
 #define CHECK(cond)                                                     \
@@ -84,6 +85,22 @@ int main() {
   CHECK(mount_wait_expired(4000, 0, 4000));
   CHECK(!mount_wait_expired(near_wrap + 100, near_wrap, 4000));
   CHECK(mount_wait_expired(near_wrap + 4000, near_wrap, 4000));
+
+  // The tamper watcher's sd_state. The numbers are pinned: they are
+  // tamper_events_module.cpp's ABSENT/MOUNTED/ERROR (and the canary-wap
+  // SdState), so a renumbering here would turn a pulled card into a
+  // failing one on the wire.
+  CHECK(sd_mount_policy::SD_TAMPER_ABSENT == 0);
+  CHECK(sd_mount_policy::SD_TAMPER_MOUNTED == 1);
+  CHECK(sd_mount_policy::SD_TAMPER_ERROR == 2);
+  // Mounted wins, whatever the latch says (a successful remount clears it;
+  // a stale latch must never narrate a working card as failing).
+  CHECK(sd_state_for_tamper(true, false) == sd_mount_policy::SD_TAMPER_MOUNTED);
+  CHECK(sd_state_for_tamper(true, true) == sd_mount_policy::SD_TAMPER_MOUNTED);
+  // Given up on after consecutive write failures = ERROR (sd_error).
+  CHECK(sd_state_for_tamper(false, true) == sd_mount_policy::SD_TAMPER_ERROR);
+  // Probe failed / never mounted / remount pending = ABSENT (sd_remove).
+  CHECK(sd_state_for_tamper(false, false) == sd_mount_policy::SD_TAMPER_ABSENT);
 
   std::printf("test_sd_mount_policy: %d checks passed\n", g_checks);
   return 0;

@@ -22,6 +22,7 @@
 
 #if FEATURE_SD_STORAGE
 #include "securacv_storage.h"
+#include "storage/sd_mount_policy.h"  // SD_TAMPER_* — the health payload's sd_mounted
 #endif
 
 #if FEATURE_WIFI_AP
@@ -53,9 +54,14 @@
 #endif
 #endif
 
+#if FEATURE_TAMPER_GPIO
+#include "contact_tamper.h"  /* enclosure contact debounce (common/csi/src) */
+#endif
+
 #if FEATURE_CSI
 #include "securacv_csi.h"
 #include "csi_modules_integration.h"
+#include "csi_event_egress.h"  /* committed events -> MQTT events/tamper (F29) */
 #include "csi_event.h"  /* csi_event_set_clock_offset_minutes — wall-clock bucket alignment */
 
 /* csi_features_t is the canonical csi_types.h struct (securacv_csi.h
@@ -339,6 +345,13 @@ static uint32_t g_ota_next_check_ms = 0;
 static volatile bool g_tamper_publish_pending = false;
 static volatile uint8_t g_tamper_pending_kind = 0;       /* sensing_witness_kind_t */
 static volatile uint8_t g_tamper_pending_confidence = 0; /* 0..100 */
+#endif
+
+#if FEATURE_TAMPER_GPIO
+/* Enclosure tamper contact on TAMPER_PIN_DEFAULT (canary_config.h): the
+ * debounced state loop() feeds the system.integrity watcher. Loop task
+ * only. */
+static contact_tamper::State g_tamper_contact = contact_tamper::kInitial;
 #endif
 
 // Device-unique AP password (derived from pubkey fingerprint)
@@ -1160,6 +1173,10 @@ void setup() {
 
   // Initialize CSI sensing (motion / breathing / micro-activity)
 #if FEATURE_CSI
+  // Before any module can emit: restore the event-id floor (ids stay
+  // monotonic across reboots) and, on HA builds, arm the committed-event
+  // egress and its signer (csi_event_egress.h).
+  csi_event_egress_begin();
   Serial.println("[..] Initializing CSI environmental sensing...");
   sensing_init();
   csi_config_t csi_cfg = CSI_CONFIG_DEFAULT;
@@ -1270,6 +1287,15 @@ void setup() {
   } else {
     Serial.println("[WARN] Touch sensor init failed");
   }
+#endif
+
+#if FEATURE_TAMPER_GPIO
+  // Enclosure tamper contact: a reed/hall switch to GND on the board map's
+  // pin, read through the internal pull-up and debounced in loop()
+  // (contact_tamper.h). canary_config.h refuses to build it on a pin the
+  // touch pad, SD, camera, GNSS or BOOT button already owns.
+  pinMode(TAMPER_PIN_DEFAULT, INPUT_PULLUP);
+  Serial.printf("[OK] Enclosure contact on GPIO%d\n", (int)TAMPER_PIN_DEFAULT);
 #endif
 
   // Initialize IR remote-control activity detection (RMT RX)
@@ -1677,14 +1703,24 @@ void loop() {
   // saver. On builds where the CSI pipeline never initializes, the
   // module's bounded retry gives up quietly.
   //
-  // sd_state: we feed the module's pinned ABSENT (0) constant, so the
-  // watcher adopts it on the first call and never emits an SD kind on this
-  // host. The storage lane DOES have a hot-swap machine now (F2:
-  // storage_periodic_check + the sd_mount_policy remount path), but wiring
-  // its state into tamper narration would add sd_error/sd_remove event
-  // kinds to this host's vocabulary — a dictionary decision, not a data
-  // feed (backlog F25). Until that call is made, canary-wap remains the
-  // only host narrating SD stories.
+  // sd_state: the storage lane's live three-state (storage_sd_state(),
+  // sd_mount_policy::sd_state_for_tamper). MOUNTED while the card is
+  // mounted; ERROR once noteWriteFailure() gave up on a mounted card after
+  // consecutive write failures; ABSENT otherwise (the periodic presence
+  // probe failed, or no card was ever mounted). Those are the canary-wap's
+  // own two triggers (hardware_state.h SD_ERROR / card gone), so the
+  // watcher narrates sd_error on MOUNTED -> ERROR and sd_remove on
+  // MOUNTED -> ABSENT here exactly as it does there, and booting without a
+  // card is adopted silently. Both kinds are in this host's vocabulary
+  // (spec/witness_dictionary.json system_integrity_kinds, gated by
+  // scripts/lint_dictionary_sync.py). A build without FEATURE_SD_STORAGE
+  // feeds the pinned ABSENT constant and never emits an SD kind.
+  //
+  // Where the rows go: the RAM ring and, on HA builds, csi_event_egress's
+  // csi_event_on_committed override — the signed `events` topic, plus the
+  // tamper-topic bridge for the SD and enclosure kinds. Home Assistant's SD
+  // Removed sensor also reads `sd_mounted` from the health payload
+  // (mqtt_publish_health_update).
   {
     static const esp_reset_reason_t s_boot_rst = esp_reset_reason();
     // Same crash set as canary-wap's hardware_state.h reset_is_crash():
@@ -1697,11 +1733,37 @@ void loop() {
     const bool rst_brownout = (s_boot_rst == ESP_RST_BROWNOUT);
     const bool rst_crash = (s_boot_rst == ESP_RST_PANIC) ||
                            rst_watchdog || rst_brownout;
+#if FEATURE_SD_STORAGE
+    const uint8_t sd_state = storage_sd_state();
+#else
+    const uint8_t sd_state = 0u;  // pinned ABSENT: no SD lane in this build
+#endif
     securacv_csi_modules_tamper_watch(rst_crash ? 1 : 0,
                                       rst_watchdog ? 1 : 0,
                                       rst_brownout ? 1 : 0,
-                                      /*sd_state: pinned ABSENT*/ 0u);
+                                      sd_state);
   }
+
+#if FEATURE_TAMPER_GPIO
+  // Enclosure contact: debounce the raw line, feed the watcher the accepted
+  // state (it narrates `enclosure` on CLOSED -> OPEN only; the first sample
+  // is adopted, so booting with the lid off is not an intrusion), and keep
+  // DeviceIdentity.tamper_active as the standing condition — it drives the
+  // health payload's tamper_detected, the fleet beacon's tamper flag and the
+  // trust card, which had no writer before this contact existed.
+  {
+    const contact_tamper::Transition tr = contact_tamper::sample(
+        &g_tamper_contact, digitalRead(TAMPER_PIN_DEFAULT) == TAMPER_ACTIVE,
+        millis());
+    securacv_csi_modules_tamper_watch_contact(g_tamper_contact.open ? 1 : 0);
+    if (tr == contact_tamper::Transition::OPENED) {
+      witness_get_device().tamper_active = true;
+      witness_get_health().tamper_events++;
+    } else if (tr == contact_tamper::Transition::CLOSED) {
+      witness_get_device().tamper_active = false;
+    }
+  }
+#endif
 
 #if FEATURE_ACOUSTIC_EVENTS
   #if FEATURE_POWER_POLICY
@@ -1907,6 +1969,13 @@ void loop() {
   // MQTT loop — handles reconnect and keepalive
   mqtt_loop();
 
+#if FEATURE_CSI
+  // Committed csi_events (presence, breathing, system.integrity tampers)
+  // -> securacv/{id}/events, signed, plus the per-kind tamper bridge. The
+  // override only queues; this loop-task pump is the one publisher.
+  csi_event_egress_pump();
+#endif
+
   // Publish status periodically
   if (mqtt_connected() && now - g_last_mqtt_status_ms >= MQTT_STATUS_INTERVAL_MS) {
     g_last_mqtt_status_ms = now;
@@ -1930,6 +1999,11 @@ void loop() {
   // matches the host mqtt_sensor adapter contract ({state, confidence,
   // kind}); the adapter routes it into the sealed log as TamperDetected.
   // Confidence is rescaled 0..100 -> 0..1 for the kernel's bounds check.
+  // A kind that IS one of Home Assistant's tamper types also carries
+  // `type` (spec/witness_dictionary.json firmware_kind_types): the touch
+  // pad's enclosure_tamper is HA's `enclosure`, so the Enclosure Open
+  // sensor lights — it matches `type`, never `kind`. temp_drift and
+  // camera_tamper have no HA type and stay kind-only.
   // Gated on mqtt_accepting(), not mqtt_connected(): during a broker
   // outage the publish buffers in the MQTT layer's offline queue, so each
   // alert leaves this one-deep pending slot within a loop pass instead of
@@ -1946,10 +2020,12 @@ void loop() {
         (kind == SENSING_WITNESS_TOUCH_TAMPER)  ? "enclosure_tamper" :
         (kind == SENSING_WITNESS_TEMP_DRIFT)    ? "temp_drift"
                                                 : "camera_tamper";
-    char payload[96];
+    const char* type_kv =
+        (kind == SENSING_WITNESS_TOUCH_TAMPER) ? ",\"type\":\"enclosure\"" : "";
+    char payload[112];
     snprintf(payload, sizeof(payload),
-             "{\"state\":\"on\",\"confidence\":%.2f,\"kind\":\"%s\"}",
-             (double)confidence / 100.0, kind_str);
+             "{\"state\":\"on\",\"confidence\":%.2f,\"kind\":\"%s\"%s}",
+             (double)confidence / 100.0, kind_str, type_kv);
     if (!mqtt_publish_tamper(payload)) {
       // False now means the offline queue itself refused (inert after a
       // failed allocation) — re-arm so the alert still survives; the
@@ -2188,9 +2264,48 @@ static void mqtt_publish_health_update() {
   doc["http_requests"] = health.http_requests;
   doc["sd_writes"] = health.sd_writes;
   doc["sd_errors"] = health.sd_errors;
+#if FEATURE_SD_STORAGE
+  /* HA's SD Removed sensor reads `sd_mounted` (binary_sensor.py). Sent only
+   * once a card has mounted this boot: booting without a card is a
+   * configuration, not a removal — the same adopt-silently rule the
+   * system.integrity watcher follows — and an absent key reads as mounted
+   * on the HA side. After that it says whether a card is still in the
+   * slot, from the same three-state the watcher reads: a pulled card
+   * lights the sensor and a remount clears it. A card that is present
+   * but failing (ERROR: given up on after consecutive write failures) is
+   * NOT removed. It is SD Error's story (sd_errors here, sd_error on the
+   * tamper topic), so it must not light SD Removed beside it. */
+  if (storage_mount_generation() > 0) {
+    doc["sd_mounted"] = storage_sd_state() != sd_mount_policy::SD_TAMPER_ABSENT;
+  }
+#endif
   doc["boot_count"] = device.boot_count;
   doc["firmware_version"] = FIRMWARE_VERSION;
+  /* The witness key's public half, 64 lowercase hex: the canary-wap's
+   * health shape. Home Assistant pins it on first sight
+   * (__init__.py _async_health_for_tofu; docs/device_trust.md), and
+   * that pin is what lets it verify the Ed25519 signature on the `events`
+   * bodies csi_event_egress publishes. Without it every body read
+   * `no_pubkey` until someone pinned the key by hand. The same key signs
+   * those bodies (csi_event_egress hands this identity to
+   * device_signature). A public key; /api/status already serves it. */
+  {
+    static const char kHex[] = "0123456789abcdef";
+    char pk_hex[65];
+    for (int i = 0; i < 32; ++i) {
+      pk_hex[2 * i]     = kHex[(device.pubkey[i] >> 4) & 0xF];
+      pk_hex[2 * i + 1] = kHex[device.pubkey[i] & 0xF];
+    }
+    pk_hex[64] = '\0';
+    doc["public_key"] = pk_hex;
+  }
   doc["tamper_detected"] = device.tamper_active;
+#if FEATURE_TAMPER_GPIO
+  /* The contact's live (debounced) level, which HA's Enclosure Open sensor
+   * reads from health — so it stands while the lid is off instead of
+   * lasting only until the next health publish. */
+  doc["enclosure_open"] = g_tamper_contact.adopted && g_tamper_contact.open;
+#endif
 
   /* Power lineage flags, held for kIncidentHoldMs after boot: the tamper
    * topic's one-shot message is non-retained, so a hub that reboots slower

@@ -1,9 +1,10 @@
 // Host tests for common/mqtt/mqtt_offline_queue.h — the bounded FIFO that
 // holds discrete MQTT publishes (tamper alerts, events) across a broker
-// outage. Pins the drop policy (oldest out, never truncate), the
-// peek-then-pop drain contract (a failed replay keeps the record), FIFO
-// order across wrap, and the inert behavior of a queue whose storage never
-// arrived.
+// outage. Pins the drop policy (oldest out, never truncate; a tamper alert
+// outranks an event, so a burst of events cannot push a queued tamper
+// out), the peek-then-pop drain contract (a failed replay keeps the
+// record), FIFO order across wrap and across a mid-queue eviction, and the
+// inert behavior of a queue whose storage never arrived.
 //
 // Build/run: make -C firmware/tests_host (the CI "host tests" job).
 
@@ -131,6 +132,96 @@ int main() {
   CHECK(q.front(nullptr, nullptr, &p));
   CHECK(std::strcmp(p, "new-broker") == 0);
   q.pop_front();
+
+  // ── a tamper alert outranks an event on a full queue ──
+  // The canary's egress publishes every committed csi_event through this
+  // queue during a broker outage; routine rows must not evict a tamper.
+  {
+    uint8_t st4[4 * kStride];
+    Queue t;
+    CHECK(t.init(st4, sizeof(st4), kPayload));
+    // Move the head off slot 0 first, so evictions cross the ring's wrap.
+    CHECK(t.push(mqtt_offline_queue::KIND_EVENT, false, "pre1"));
+    CHECK(t.push(mqtt_offline_queue::KIND_EVENT, false, "pre2"));
+    CHECK(t.push(mqtt_offline_queue::KIND_EVENT, false, "pre3"));
+    t.pop_front();
+    t.pop_front();
+    t.pop_front();
+    CHECK(t.push(mqtt_offline_queue::KIND_TAMPER, false, "T1"));
+    for (int i = 0; i < 20; ++i) {  // a burst far past capacity
+      char e[8];
+      std::snprintf(e, sizeof(e), "E%d", i);
+      CHECK(t.push(mqtt_offline_queue::KIND_EVENT, false, e));
+    }
+    CHECK(t.size() == 4);
+    CHECK(t.stats().dropped_overflow == 17);
+    const char* want_burst[] = {"T1", "E17", "E18", "E19"};
+    for (const char* want : want_burst) {
+      CHECK(t.front(nullptr, nullptr, &p));
+      CHECK(std::strcmp(p, want) == 0);
+      t.pop_front();
+    }
+    CHECK(t.empty());
+
+    // Mixed queue: the OLDEST event goes, everything else keeps its order,
+    // kind and retained flag.
+    CHECK(t.push(mqtt_offline_queue::KIND_EVENT, false, "E1"));
+    CHECK(t.push(mqtt_offline_queue::KIND_TAMPER, true, "T1"));
+    CHECK(t.push(mqtt_offline_queue::KIND_EVENT, false, "E2"));
+    CHECK(t.push(mqtt_offline_queue::KIND_TAMPER, false, "T2"));
+    CHECK(t.push(mqtt_offline_queue::KIND_TAMPER, false, "T3"));  // drops E1
+    CHECK(t.push(mqtt_offline_queue::KIND_TAMPER, true, "T4"));   // drops E2
+    // Only tamper alerts left: a new event is refused, not admitted...
+    CHECK(!t.push(mqtt_offline_queue::KIND_EVENT, false, "E3"));
+    CHECK(t.size() == 4);
+    // ...and a new tamper alert displaces the oldest tamper alert.
+    CHECK(t.push(mqtt_offline_queue::KIND_TAMPER, false, "T5"));  // drops T1
+    CHECK(t.stats().dropped_overflow == 17 + 4);
+    const char* want_mixed[] = {"T2", "T3", "T4", "T5"};
+    const bool want_retained[] = {false, false, true, false};
+    for (int i = 0; i < 4; ++i) {
+      CHECK(t.front(&kind, &retained, &p));
+      CHECK(kind == mqtt_offline_queue::KIND_TAMPER);
+      CHECK(retained == want_retained[i]);
+      CHECK(std::strcmp(p, want_mixed[i]) == 0);
+      t.pop_front();
+    }
+    CHECK(t.empty());
+
+    // An event in the middle goes; the tamper alerts around it stay put.
+    CHECK(t.push(mqtt_offline_queue::KIND_TAMPER, false, "A"));
+    CHECK(t.push(mqtt_offline_queue::KIND_TAMPER, false, "B"));
+    CHECK(t.push(mqtt_offline_queue::KIND_EVENT, false, "e"));
+    CHECK(t.push(mqtt_offline_queue::KIND_TAMPER, false, "C"));
+    CHECK(t.push(mqtt_offline_queue::KIND_EVENT, false, "f"));  // drops e
+    const char* want_mid[] = {"A", "B", "C", "f"};
+    for (const char* want : want_mid) {
+      CHECK(t.front(nullptr, nullptr, &p));
+      CHECK(std::strcmp(p, want) == 0);
+      t.pop_front();
+    }
+    CHECK(t.empty());
+  }
+
+  // The review's case at the canary's real geometry (MQTT_OFFLINE_SLOTS 12
+  // x MQTT_OFFLINE_SLOT_BYTES 512): one queued SD alert, then a dozen
+  // committed events while the broker is gone. The alert is still first.
+  {
+    const size_t kSlots = 12, kSlotBytes = 512;
+    static uint8_t big_storage[12 * (4 + 512 + 1)];
+    Queue c;
+    CHECK(c.init(big_storage, sizeof(big_storage), kSlotBytes));
+    CHECK(c.capacity() == kSlots);
+    CHECK(c.push(mqtt_offline_queue::KIND_TAMPER, false,
+                 "{\"type\":\"sd_remove\",\"severity\":\"tamper\"}"));
+    for (int i = 0; i < 12; ++i) {
+      CHECK(c.push(mqtt_offline_queue::KIND_EVENT, false, "{\"event_id\":1}"));
+    }
+    CHECK(c.stats().dropped_overflow == 1);
+    CHECK(c.front(&kind, nullptr, &p));
+    CHECK(kind == mqtt_offline_queue::KIND_TAMPER);
+    CHECK(std::strstr(p, "sd_remove") != nullptr);
+  }
 
   // ── re-init resets contents and counters ──
   CHECK(q.push(mqtt_offline_queue::KIND_EVENT, false, "stale"));

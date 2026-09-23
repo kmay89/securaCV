@@ -398,7 +398,7 @@
      "signal": "tamper",
      "dir": "in",
      "status": "planned",
-     "note": "INPUT_PULLUP, active-low (FEATURE_TAMPER_GPIO)"
+     "note": "INPUT_PULLUP, active-low = enclosure open (read only when built with FEATURE_TAMPER_GPIO=1)"
     },
     {
      "from": [

@@ -180,7 +180,7 @@
       "mpn": "59140-1-S-02-A",
       "mfr": "Littelfuse",
       "usd": 1.8,
-      "notes": "TAMPER_PIN_DEFAULT=GPIO4 (D3), INPUT_PULLUP active LOW. FIRMWARE: FEATURE_TAMPER_GPIO defined but NOT yet consumed - needs firmware support, OR use securacv_touch enclosure-tamper mode. GPIO4 shared with touch default (see build plan 5.1). Hermetic glass = wide-temp, near-zero idle current",
+      "notes": "TAMPER_PIN_DEFAULT=GPIO4 (D3), INPUT_PULLUP; TAMPER_ACTIVE LOW = enclosure open (the NC reed is held open by MAG1 while the lid is on). FIRMWARE: read and narrated as the enclosure tamper kind when built with FEATURE_TAMPER_GPIO=1 - off in shipped builds until the pin is bench-validated. GPIO4 shared with the canary build's touch default (see build plan 5.1). Hermetic glass = wide-temp, near-zero idle current",
       "orderable": true,
       "live": {
        "unit_usd": 3.76,

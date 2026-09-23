@@ -27,7 +27,7 @@
 #define FEATURE_WIFI_STA            1   // Enable WiFi Station (connect to home)
 #define FEATURE_HTTP_SERVER         1   // Enable HTTP API server
 #define FEATURE_CAMERA_PEEK         1   // Enable camera preview streaming
-#define FEATURE_TAMPER_GPIO         0   // Enable tamper detection pin
+#define FEATURE_TAMPER_GPIO         0   // Enclosure tamper contact (reed/hall on D3); off until bench-validated
 #define FEATURE_WATCHDOG            1   // Enable hardware watchdog
 #define FEATURE_STATE_LOG           1   // Log state transitions
 #define FEATURE_MESH_NETWORK        1   // Enable Opera mesh network

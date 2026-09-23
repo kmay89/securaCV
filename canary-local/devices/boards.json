@@ -225,7 +225,7 @@
      "pin": "D3",
      "gpio": "GPIO4",
      "status": "planned",
-     "use": "Reed / hall switch (INPUT_PULLUP, active-low) \u2014 FEATURE_TAMPER_GPIO defined but not yet consumed by canary-wap firmware.",
+     "use": "Reed / hall switch (INPUT_PULLUP, active-low = enclosure open) \u2014 read by firmware built with FEATURE_TAMPER_GPIO=1, which no shipped build sets until the pin is bench-validated.",
      "anchor": [
       1.74,
       0.4,

@@ -131,7 +131,37 @@ instead. Boot kinds stand for the whole boot; SD kinds stand until the card
 recovers (and outrank a standing boot kind while they do). **Absent means
 nothing to confess** — a client must treat the missing field as calm, never
 as unknown-tamper, and may drive its level-triggered tamper flag from this
-field exactly as it would from an open row.
+field exactly as it would from an open row. The kind words are a gated
+vocabulary: `system_integrity_kinds` in `spec/witness_dictionary.json`,
+which `scripts/lint_dictionary_sync.py` holds equal to the module's
+literals and to Home Assistant's per-type tamper sensors. Both firmware
+trees register the module and feed it a live SD state, so both can narrate
+`sd_error` and `sd_remove`.
+
+### MQTT `securacv/<id>/events`
+
+When a broker is configured, every committed row is also published on
+`securacv/<id>/events` as one JSON body built by
+`firmware/common/csi/src/csi_event_wire.h`. The canary-wap sketch
+(`csi_mqtt.cpp`) and the canary PIO tree (`src/csi_event_egress.cpp`) share
+that builder, and `firmware/tests_host/test_csi_event_wire.cpp` pins its
+bytes. The body carries an Ed25519 signature over the `event` canonical
+(`firmware/common/identity/device_signature`), which Home Assistant verifies
+against the device's pinned key. Both trees publish that key as
+`public_key` in their MQTT health payload, and the integration pins it on
+first sight ([device_trust.md](device_trust.md)); until a key is pinned,
+the body reads as unverified (`no_pubkey`). `"signed"` is `true` only when
+a signature rides the body. `system.integrity` rows are also republished on
+`securacv/<id>/tamper` as `{"type":"<kind>","severity":"tamper"}`, the shape
+the integration's per-type tamper sensors match. On the canary base that
+bridge carries the SD and enclosure kinds only: its boot story already
+reaches the tamper topic through the power-events classifier. The canary-wap
+also keeps an SD event log and backfills Home Assistant after a broker
+outage, marking those bodies `"replay":true`. The canary base relies on its
+MQTT offline queue (12 records), where tamper alerts outrank events: once
+the queue is full, a new row pushes out the oldest queued event, never a
+tamper alert. A body built while the broker is unreachable also says
+`"replay":true`. SD backfill on the canary base is a recorded follow-up.
 
 ### `POST /api/events/dismiss`
 

@@ -313,6 +313,20 @@ jobs:
             done < <(jq -c '.size_guards // [] | .[]' <<< "$FLAVOR_JSON")
           done
 
+      - name: Compile the enclosure tamper contact (canary dev, compile-only)
+        # FEATURE_TAMPER_GPIO is 0 in every shipped canary env until the
+        # reed/hall pin is bench-validated, so no env above compiles the
+        # contact glue (main.cpp, csi_modules_integration.cpp). This
+        # rebuilds [env:dev] with the flag on and the touch pad moved to D4
+        # (-DTOUCH_PIN_NUM=5), exactly as canary_config.h's pin sanity
+        # demands. A compile gate only: nothing ships from it. [env:dev]
+        # sets no -DFEATURE_TAMPER_GPIO of its own (canary_config.h's
+        # default 0 applies), so the flag here is the only definition.
+        if: matrix.flavor.name == 'canary'
+        env:
+          PLATFORMIO_BUILD_FLAGS: -DVALIDATION_BUILD=1 -DFEATURE_TAMPER_GPIO=1 -DTOUCH_PIN_NUM=5
+        run: pio run -e dev
+
   pio-check:
     name: Static Analysis (${{ matrix.flavor.name }})
     needs: flavors
@@ -426,18 +440,21 @@ jobs:
           fi
           echo "canary-wap size: $SIZE / $SLOT bytes ($((SIZE * 100 / SLOT))% of OTA slot)"
 
-      - name: Compile firmware (Beacon channel gate)
+      - name: Compile firmware (Beacon channel + tamper contact gate)
         run: |
           # FEATURE_BEACON_CHANNEL is OFF by default, which previously meant
           # beacon_channel.cpp (and every #if FEATURE_BEACON_CHANNEL block in
           # the sketch) was never compile-verified in CI. This second pass
           # forces the flag ON so the Beacon scaffold — including its
           # append-only SD audit-log path (AGENTS.md Beacon invariant 9) —
-          # can't silently rot.
+          # can't silently rot. FEATURE_TAMPER_GPIO rides the same pass for
+          # the same reason: the enclosure contact (pinMode, the debounced
+          # loop feed, the live selftest probe) is off in every shipped
+          # profile until its pin is bench-validated.
           arduino-cli compile \
             --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi \
             --libraries firmware/common \
-            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DFEATURE_BEACON_CHANNEL=1 -DBOARD_HAS_PSRAM" \
+            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DFEATURE_BEACON_CHANNEL=1 -DFEATURE_TAMPER_GPIO=1 -DBOARD_HAS_PSRAM" \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
       - name: Compile firmware (DEV profile gate)

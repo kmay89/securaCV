@@ -55,6 +55,7 @@ Derived from the post-archive Feature-Parity Dashboard in [FEATURES.md](../FEATU
 | 13 | WiFi presence detection | ❌ | `canary_wap/wifi_presence.h` | Medium | Medium (MAC hygiene) |
 | 14 | System monitor (temp / heap / PSRAM) | ❌ | `canary_wap/sys_monitor.h` | Low | Low |
 | 15 | Log acknowledgment system + categories | ⚠️ partial | `canary_wap/health_log.h` + `log_level.h` | Medium | Low |
+| 16 | Committed CSI events over MQTT (`events` topic, signed, + `tamper` bridge) | ⚠️ live publish + Ed25519 signing (`src/csi_event_egress.cpp`, the shared `common/csi/src/csi_event_wire.h` body), with the key on MQTT health as `public_key` for Home Assistant's first-sight pin; CI compile only, bench pending; no SD event log or reconnect backfill yet | `canary_wap/csi_event_log.{h,cpp}` (SD.h-bound; needs an adapter honoring this tree's loop-task single-writer rule) | Medium | Low |
 
 ---
 

@@ -92,6 +92,30 @@ inline bool mount_wait_expired(uint32_t now_ms, uint32_t started_ms,
   return (uint32_t)(now_ms - started_ms) >= budget_ms;
 }
 
+// The card's state as the system.integrity tamper watcher reads it
+// (common/csi/src/tamper_events_module: tamper_events_watch's sd_state).
+// The numbers are that module's pinned ABSENT=0 / MOUNTED=1 / ERROR=2,
+// which mirror the canary-wap sketch's SdState — the watcher emits
+// sd_error on MOUNTED -> ERROR and sd_remove on MOUNTED -> ABSENT, so the
+// mapping below IS the difference between those two stories.
+enum : uint8_t {
+  SD_TAMPER_ABSENT  = 0,
+  SD_TAMPER_MOUNTED = 1,
+  SD_TAMPER_ERROR   = 2,
+};
+
+// ERROR only when the consumer gave up on a mounted card after a run of
+// write failures (declare_lost above) — the canary-wap's SD_ERROR trigger.
+// Every other not-mounted state is ABSENT: a presence probe that failed
+// (the card left), a card never mounted this boot, a remount still
+// pending. A mounted card wins over a stale latch: the consumer clears the
+// latch on a successful mount, and this function never reports ERROR for
+// a card that is mounted right now.
+inline uint8_t sd_state_for_tamper(bool mounted, bool lost_by_errors) {
+  if (mounted) return SD_TAMPER_MOUNTED;
+  return lost_by_errors ? SD_TAMPER_ERROR : SD_TAMPER_ABSENT;
+}
+
 }  // namespace sd_mount_policy
 
 #endif  // SECURACV_SD_MOUNT_POLICY_H

@@ -392,7 +392,7 @@
       },
       "FEATURE_TAMPER_GPIO": {
        "on": false,
-       "note": "Enable tamper detection pin"
+       "note": "Enclosure tamper contact (reed/hall on D3); off until bench-validated"
       },
       "FEATURE_WATCHDOG": {
        "on": true,

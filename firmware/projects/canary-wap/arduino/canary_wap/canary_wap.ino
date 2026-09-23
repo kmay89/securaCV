@@ -158,6 +158,7 @@
 #include "companion_pwa.h"
 #include "csi_integration.h"     // Boot the CSI library + HTTP endpoints
 #include "tamper_events_module.h" // system.integrity watcher (fed from loop())
+#include "contact_tamper.h"      // enclosure contact debounce (FEATURE_TAMPER_GPIO)
 #include "csi_mqtt.h"            // Optional MQTT bridge for HA integration
 #include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
 #include "csi_event_log.h"       // SD-backed event persistence + MQTT backfill
@@ -870,6 +871,14 @@ static const uint32_t WIFI_RECONNECT_INTERVAL_MS = 30000;
 // (SKIP) apart from "init ran and the stack genuinely failed" (FAIL). Read
 // by selftest_api.h's probe_bluetooth; non-static so its extern resolves.
 volatile bool g_ble_init_attempted = false;
+
+#if FEATURE_TAMPER_GPIO
+// Enclosure tamper contact on TAMPER_PIN_DEFAULT (build_config.h): the
+// debounced state loop() feeds tamper_events_watch_contact(). Read by
+// selftest_api.h's probe_tamper (the live line); non-static so its extern
+// resolves.
+contact_tamper::State g_tamper_contact = contact_tamper::kInitial;
+#endif
 
 // The ENTIRE Bluetooth/BLE bring-up (stack init + radio activity) is deferred
 // out of the provisioning join window and out of setup() (see
@@ -10388,6 +10397,11 @@ void setup() {
   }
 
   pinMode(BOOT_BUTTON_GPIO, INPUT_PULLUP);
+#if FEATURE_TAMPER_GPIO
+  // Enclosure contact: a reed/hall switch to GND, read through the internal
+  // pull-up; loop() debounces it (contact_tamper.h).
+  pinMode(TAMPER_PIN_DEFAULT, INPUT_PULLUP);
+#endif
 
   // Flush the witness chain (and mesh replay counters) before any safe-mode
   // recovery/retry reboot, mirroring the /api/reboot path. Without this a
@@ -11873,6 +11887,18 @@ void loop() {
        g_hw.last_reset_reason == ESP_RST_WDT) ? 1 : 0,
       (g_hw.last_reset_reason == ESP_RST_BROWNOUT) ? 1 : 0,
       (uint8_t)g_hw.sd_state);
+#if FEATURE_TAMPER_GPIO
+  // Enclosure contact: debounce the raw line, then feed the watcher the
+  // accepted state. It narrates `enclosure` on CLOSED -> OPEN only (the
+  // first sample is adopted — booting with the lid off is not an
+  // intrusion), and csi_mqtt's system.integrity bridge carries the row to
+  // Home Assistant as {"type":"enclosure"}.
+  contact_tamper::sample(&g_tamper_contact,
+                         digitalRead(TAMPER_PIN_DEFAULT) == TAMPER_ACTIVE,
+                         millis());
+  tamper_events_watch_contact(g_tamper_contact.open ? TAMPER_CONTACT_OPEN
+                                                    : TAMPER_CONTACT_CLOSED);
+#endif
 
   // Optional MQTT bridge — pump (no-op when disabled or unconfigured),
   // plus three cadence-gated publishers for the topics HA expects.
