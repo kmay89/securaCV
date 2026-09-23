@@ -129,3 +129,25 @@ describe('connectBody (household time zone seed, repo sweep F28)', () => {
     }
   });
 });
+
+describe('tzNotice (what the success card says about the zone, repo sweep F28)', () => {
+  it('names the fallback when the Canary does not know the phone zone', () => {
+    const t = L.tzNotice('unknown_zone', 'Africa/Johannesburg');
+    assert.match(t, /Africa\/Johannesburg/);
+    assert.match(t, /world time \(UTC\)/);
+  });
+  it('says the zone was not stored when the device could not store it', () => {
+    const t = L.tzNotice('not_set', 'Europe/Kyiv');
+    assert.match(t, /couldn't store/);
+    assert.match(t, /Europe\/Kyiv/);
+    assert.match(t, /UTC/);
+  });
+  it('still reads as a sentence when the phone gave no name', () => {
+    assert.match(L.tzNotice('unknown_zone', ''), /^Your phone's time zone isn't/);
+  });
+  it('says nothing when the zone was set, none was sent, or an older firmware answered without "tz"', () => {
+    for (const o of ['set', 'not_sent', undefined, null, '', 'something-new']) {
+      assert.equal(L.tzNotice(o, 'America/New_York'), '', String(o));
+    }
+  });
+});

@@ -3391,11 +3391,18 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   witness_get_health().http_requests++;
 
   char body[384];  // ssid + password + tz_iana (F28); 256 left no room for the zone
-  int recv = httpd_req_recv(req, body, sizeof(body) - 1);
-  if (recv <= 0) {
-    return http_send_error(req, 400, "empty_body");
+  // The whole body or a refusal by name: one httpd_req_recv() returns what
+  // one socket read delivered, so a body in two segments would parse as a
+  // fragment (the loop /api/settings and the Scout routes use).
+  if (req->content_len == 0) return http_send_error(req, 400, "empty_body");
+  if (req->content_len >= sizeof(body)) return http_send_error(req, 413, "body_too_large");
+  size_t total = 0;
+  while (total < req->content_len) {
+    const int r = httpd_req_recv(req, body + total, req->content_len - total);
+    if (r <= 0) return http_send_error(req, 400, "empty_body");
+    total += (size_t)r;
   }
-  body[recv] = '\0';
+  body[total] = '\0';
 
   JsonDocument input;
   if (deserializeJson(input, body) != DeserializationError::Ok) {
@@ -3411,9 +3418,18 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
 
   // Household time zone seed (repo sweep F28): the setup page sends the
   // phone's own IANA zone. Mapped on the device; an unknown or absent zone
-  // stores nothing and never fails the join.
+  // stores nothing and never fails the join, but the answer says so
+  // ("tz": set | unknown_zone | not_set | not_sent) so the page can tell
+  // the person their Canary is still on world time (UTC).
   const char* tz_iana = input["tz_iana"] | "";
-  if (tz_iana[0] != '\0') (void)setup_set_tz(nullptr, tz_iana);
+  const char* tz_outcome = "not_sent";
+  if (tz_iana[0] != '\0') {
+    switch (setup_set_tz(nullptr, tz_iana)) {
+      case 0:  tz_outcome = "set"; break;
+      case 3:  tz_outcome = "unknown_zone"; break;
+      default: tz_outcome = "not_set"; break;
+    }
+  }
 
   ScvNetworkManager& net = network_get_instance();
   WiFiCredentials creds;
@@ -3438,6 +3454,7 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "Connecting to WiFi...";
+  doc["tz"] = tz_outcome;
   doc["ssid"] = ssid;
 
   String response;

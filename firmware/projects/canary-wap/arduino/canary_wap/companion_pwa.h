@@ -408,6 +408,7 @@ footer a{color:var(--accent);text-decoration:none}
       <div class="wiz-tick">✓</div>
       <h2 class="wiz-h" tabindex="-1">Your Canary is online.</h2>
       <p class="wiz-sub">Joined <strong id="wiz-success-ssid">your home WiFi</strong>. Running one quick check that the sensors are awake.</p>
+      <p class="wiz-sub hidden" id="wiz-success-tz" role="status"></p>
       <p class="wiz-sub">The SecuraCV setup network turns itself off in about two minutes — reconnect this phone to your home WiFi and find your Canary at <strong>canary.local</strong>.</p>
     </div>
     <div id="wiz-step-4-standalone" class="hidden">
@@ -789,7 +790,25 @@ const WizardLogic = (function () {
     return body;
   }
 
-  return { isPairToken, connectOutcome, capabilityNotice, connectBody };
+  // What to tell the person about the phone's time zone once the join is
+  // saved, from /api/wifi/connect's "tz" answer (repo sweep F28). The join
+  // never waits on the zone; when the Canary could not take it, it keeps
+  // world time (UTC), and the success card says so instead of implying the
+  // setup applied everything. '' = nothing to say (set, or none was sent).
+  function tzNotice(tzOutcome, zone) {
+    const named = (typeof zone === 'string' && zone) ? ' (' + zone + ')' : '';
+    if (tzOutcome === 'unknown_zone') {
+      return "Your phone's time zone" + named + " isn't in this Canary's built-in list, " +
+             "so it keeps world time (UTC): quiet hours and the day's summaries follow UTC.";
+    }
+    if (tzOutcome === 'not_set') {
+      return "This Canary couldn't store your phone's time zone" + named +
+             ", so it keeps world time (UTC) for now.";
+    }
+    return '';
+  }
+
+  return { isPairToken, connectOutcome, capabilityNotice, connectBody, tzNotice };
 })();
 if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLogic; }
 /* WIZARD_LOGIC:END */
@@ -1205,6 +1224,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
                     out.isTokenErr ? { raw: true } : undefined);
         return;
       }
+      successTzNote = WizardLogic.tzNotice(j && j.tz, phoneZone);
       pollWifiUntilConnected();
     } catch (e) {
       showFailure(e.message);
@@ -1253,12 +1273,16 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
   // — the device may not be reachable as canary.local on networks
   // without mDNS, so we surface the raw IP next to the mDNS hostname.
   let connectedStaIp = '';
+  let successTzNote = '';  // WizardLogic.tzNotice() for this join, '' = none
   function showSuccess(staIp) {
     connectedStaIp = staIp || '';
     $w('wiz-step-4-progress').classList.add('hidden');
     $w('wiz-step-4-failure').classList.add('hidden');
     $w('wiz-step-4-success').classList.remove('hidden');
     $w('wiz-success-ssid').textContent = pickedSsid || 'your home WiFi';
+    const tzLine = $w('wiz-success-tz');
+    tzLine.textContent = successTzNote;
+    tzLine.classList.toggle('hidden', !successTzNote);
     [4].forEach(i => {
       const dot = $w('wiz-prog-' + i);
       dot.classList.remove('now');
@@ -1271,7 +1295,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
     setTimeout(() => {
       setStep(5);
       runSelfTest();
-    }, 700);
+    }, successTzNote ? 6000 : 700);  // a time-zone note needs reading time
   }
   // showFailure() defaults to wrapping the reason as "We couldn't
   // connect: {reason}" because the HTTP / network call-sites pass tight

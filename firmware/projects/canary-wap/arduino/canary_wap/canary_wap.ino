@@ -6310,10 +6310,21 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   // network, no lookup service. Mapped on the device through the shared
   // table and stored; an unknown or absent zone stores nothing and NEVER
   // fails the join (a wrong clock is better than no network), and it never
-  // overwrites a zone that is already set by an unknown guess.
+  // overwrites a zone that is already set by an unknown guess. The answer
+  // says what happened ("tz": set | unknown_zone | not_set | not_sent) so
+  // the wizard can tell the person their Canary is still on world time.
   const char* tz_iana = body["tz_iana"] | "";
-  if (tz_iana[0] != '\0' && strlen(tz_iana) <= tz_rule::MAX_IANA_LEN) {
-    (void)csi_integration::set_timezone(nullptr, tz_iana);
+  const char* tz_outcome = "not_sent";
+  if (tz_iana[0] != '\0') {
+    if (strlen(tz_iana) > tz_rule::MAX_IANA_LEN) {
+      tz_outcome = "unknown_zone";  // longer than any name the table holds
+    } else {
+      switch (csi_integration::set_timezone(nullptr, tz_iana)) {
+        case tz_rule::Resolve::OK:           tz_outcome = "set"; break;
+        case tz_rule::Resolve::UNKNOWN_ZONE: tz_outcome = "unknown_zone"; break;
+        default:                             tz_outcome = "not_set"; break;
+      }
+    }
   }
 
   // Save credentials
@@ -6336,6 +6347,7 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   doc["ok"] = true;
   doc["message"] = "Credentials saved, attempting connection";
   doc["ssid"] = g_wifi_creds.ssid;
+  doc["tz"] = tz_outcome;
 
   String response;
   serializeJson(doc, response);
