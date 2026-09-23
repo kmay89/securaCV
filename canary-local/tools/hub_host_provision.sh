@@ -61,14 +61,23 @@ fi
 # missing certificate.
 ssl_src="${SECURACV_HOST_SSL_DIR:-/mnt/data/supervisor/ssl}"
 ssl_mount=""
+# docker -v splits its spec on ':' and reads a source that does not start
+# with '/' as a named volume, so only an absolute path with no ':' can be the
+# source. Anything else takes the missing-folder branch below: never handed
+# to docker, and named on stderr with the rule.
+case "$ssl_src" in
+  *:*) ssl_ok="" ;;
+  /*) ssl_ok=1 ;;
+  *) ssl_ok="" ;;
+esac
 prev=""
 for arg in "$@"; do
   if { [ "$prev" = "--with" ] && [ "$arg" = "broker_tls" ]; } || [ "$arg" = "--with=broker_tls" ]; then
-    if [ -d "$ssl_src" ]; then
+    if [ -n "$ssl_ok" ] && [ -d "$ssl_src" ]; then
       ssl_mount="$ssl_src:/ssl:ro"
     else
-      echo "host_provision.sh: $ssl_src is not here, so the broker_tls step will not see /ssl" >&2
-      echo "  (if the hub keeps it elsewhere: SECURACV_HOST_SSL_DIR=<path> sh host_provision.sh --with broker_tls)." >&2
+      echo "host_provision.sh: $ssl_src is not a folder this run can mount, so the broker_tls step will not see /ssl" >&2
+      echo "  (it must be an absolute host path to a directory, with no ':' — if the hub keeps it elsewhere: SECURACV_HOST_SSL_DIR=<path> sh host_provision.sh --with broker_tls)." >&2
     fi
   fi
   prev="$arg"

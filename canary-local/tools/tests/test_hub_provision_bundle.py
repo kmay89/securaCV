@@ -233,7 +233,8 @@ class HostRunnerSslMount(unittest.TestCase):
     directory on the host. Driven through the real script with a fake docker
     on PATH, so the branch logic is exercised, not grepped."""
 
-    def run_runner(self, args: list[str], ssl_dir: str | None) -> subprocess.CompletedProcess:
+    def run_runner(self, args: list[str], ssl_dir: str | None,
+                   cwd: str | None = None) -> subprocess.CompletedProcess:
         import os
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
@@ -248,7 +249,7 @@ class HostRunnerSslMount(unittest.TestCase):
                 env["SECURACV_HOST_SSL_DIR"] = ssl_dir
             return subprocess.run(
                 ["sh", str(b / "host_provision.sh"), *args],
-                capture_output=True, text=True, env=env,
+                capture_output=True, text=True, env=env, cwd=cwd,
             )
 
     @staticmethod
@@ -300,3 +301,36 @@ class HostRunnerSslMount(unittest.TestCase):
         self.assertIn("/mnt/data/supervisor/addon_configs:/addon_configs", hr)
         self.assertIn('${SECURACV_HOST_SSL_DIR:-/mnt/data/supervisor/ssl}', hr)
         self.assertNotIn("-v /mnt/data/supervisor/ssl", hr, "the ssl mount must be conditional")
+
+    def assert_refused_with_the_rule(self, r: subprocess.CompletedProcess) -> None:
+        # The same branch as a missing folder: no mount, a note on stderr, and
+        # the run goes on, so the executor's own "cannot see /ssl" refusal
+        # stops the broker_tls step while the core plan still completes.
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIsNone(self.mount_of(r.stdout))
+        self.assertNotIn(":/ssl:ro", r.stdout)
+        # The rule and the override share ONE line, so whoever reads the hint
+        # learns what a value it will accept looks like.
+        hint = [ln for ln in r.stderr.splitlines() if "SECURACV_HOST_SSL_DIR=" in ln]
+        self.assertEqual(len(hint), 1, r.stderr)
+        self.assertIn("absolute", hint[0])
+        self.assertIn("no ':'", hint[0])
+
+    def test_a_value_docker_would_split_is_refused_not_mounted(self):
+        # A real directory whose name holds ':' passes `-d`; spliced into
+        # `-v <src>:/ssl:ro` it would become a different mount spec.
+        with tempfile.TemporaryDirectory() as tmp:
+            odd = Path(tmp) / "a:b"
+            odd.mkdir()
+            r = self.run_runner(["--with", "broker_tls", "--dry-run"], str(odd))
+            self.assert_refused_with_the_rule(r)
+            self.assertIn(str(odd), r.stderr)
+
+    def test_a_relative_value_is_refused_not_mounted(self):
+        # docker reads a `-v` source with no leading '/' as a NAMED VOLUME: an
+        # empty one would be mounted at /ssl, and the executor would report a
+        # missing certificate for what is really a wrong setting.
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "ssl").mkdir()
+            r = self.run_runner(["--with", "broker_tls", "--dry-run"], "ssl", cwd=tmp)
+            self.assert_refused_with_the_rule(r)
