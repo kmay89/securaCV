@@ -26,7 +26,7 @@
       ],
       "network": {
         "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
-        "web": "first-boot portal, then the live glass mirror (/, /api)",
+        "web": "first-boot portal, then the on-LAN glass mirror on :80 (/, /tv, /api — incl. the iPhone app's settings writes and OTA)",
         "mqtt": "fleet subscriber + own heartbeat"
       },
       "emulator": {
@@ -118,7 +118,7 @@
       ],
       "network": {
         "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
-        "web": "first-boot portal only",
+        "web": "first-boot portal, then the on-LAN glass mirror on :80 (/, /tv, /api — incl. the iPhone app's settings writes and OTA)",
         "mqtt": "fleet subscriber + own heartbeat"
       },
       "emulator": {
@@ -214,7 +214,7 @@
       ],
       "network": {
         "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
-        "web": "first-boot portal only",
+        "web": "first-boot portal, then the on-LAN glass mirror on :80 (/, /tv, /api — incl. the iPhone app's settings writes and OTA)",
         "mqtt": "fleet subscriber + own heartbeat"
       },
       "emulator": {
@@ -272,7 +272,7 @@
       ],
       "network": {
         "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
-        "web": "first-boot portal only",
+        "web": "first-boot portal, then the on-LAN glass mirror on :80 (/, /tv, /api — incl. the iPhone app's settings writes and OTA)",
         "mqtt": "fleet subscriber + own heartbeat"
       },
       "docs": [
@@ -303,7 +303,7 @@
       ],
       "network": {
         "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
-        "web": "first-boot portal only",
+        "web": "first-boot portal, then the on-LAN glass mirror on :80 (/, /tv, /api — incl. the iPhone app's settings writes and OTA)",
         "mqtt": "fleet subscriber + own heartbeat"
       },
       "emulator": {
@@ -363,7 +363,7 @@
       ],
       "network": {
         "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
-        "web": "first-boot portal only",
+        "web": "first-boot portal, then the on-LAN glass mirror on :80 (/, /tv, /api — incl. the iPhone app's settings writes and OTA)",
         "mqtt": "fleet subscriber + own heartbeat"
       },
       "emulator": {
@@ -422,7 +422,7 @@
       ],
       "network": {
         "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
-        "web": "first-boot portal only",
+        "web": "first-boot portal, then the on-LAN glass mirror on :80 (/, /tv, /api — incl. the iPhone app's settings writes and OTA)",
         "mqtt": "fleet subscriber + own heartbeat"
       },
       "emulator": {
@@ -503,7 +503,7 @@
       ],
       "network": {
         "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
-        "web": "first-boot portal only",
+        "web": "first-boot portal, then the on-LAN glass mirror on :80 (/, /tv, /api — incl. the iPhone app's settings writes and OTA)",
         "mqtt": "fleet subscriber + own heartbeat"
       },
       "docs": [
@@ -534,7 +534,7 @@
       ],
       "network": {
         "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
-        "web": "first-boot portal + on-LAN /api/settings (the iPhone app's knobs)",
+        "web": "first-boot portal, then the on-LAN glass mirror on :80 (/, /tv, /api — incl. the iPhone app's settings writes and OTA)",
         "mqtt": "fleet subscriber + own heartbeat"
       },
       "docs": [

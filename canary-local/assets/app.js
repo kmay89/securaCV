@@ -1094,7 +1094,8 @@ function specsView(dev) {
     dl.append(el("dt", null, k), el("dd", null, v));
   };
   row("Board", dev.board);
-  if (dev.glass) row("Glass", `${dev.glass.panel} · touch ${dev.glass.touch}`);
+  // glass.touch is null on a panel with no touch layer (the 1.47" sticks)
+  if (dev.glass) row("Glass", `${dev.glass.panel} · ${dev.glass.touch ? `touch ${dev.glass.touch}` : "no touch"}`);
   const fig = deviceFigure(state.figures, dev.id);
   if (fig && fig.envelope_mm && fig.confidence !== "idea") {
     // the caliper row: mm · decimal inch · fractional inch, tap to cycle
