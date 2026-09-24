@@ -944,8 +944,10 @@ strip carrying its own rib notches, so it goes in as a single piece.
    into the LED port.
 4. (weather mode) Seat the TPU gasket in the rim groove; glue the clear disc
    into the camera seat.
-5. Close the lid (lip nests into the base) and drive 4 × M2 screws — snug
-   diagonally first, then final quarter-turns. Don't crank them: M2 self-taps
+5. Close the lid (lip nests into the base), turn the case over and drive the
+   4 × M2 screws up through the seats in the **back** into the lid's bosses —
+   the lid face stays unbroken (the Outdoor preset keeps its screws on the lid,
+   under the sun shield) — snug diagonally first, then final quarter-turns. Don't crank them: M2 self-taps
    strip printed posts beyond ~0.3 N·m (two fingers on the short end of the
    driver is plenty).
 
@@ -1147,8 +1149,10 @@ silicone.
 3. Route the camera FPC to the module's CSI connector (and, devkit host, the
    Grove cable across the middle gap to the DevKit pins).
 4. (weather) Seat the TPU gasket in the rim groove.
-5. Close the front (lip nests into the back) and drive the 4 × M2 corner
-   screws — snug diagonally, then final quarter-turns.
+5. Close the front (lip nests into the back), turn it over and drive the
+   M2 corner screws up through the seats in the **back** into the front's
+   bosses (4, or 6 on the Outdoor preset) — the face stays unbroken — snug
+   diagonally, then final quarter-turns.
 6. Screw the **bracket** to the wall (or a tripod plate via the 1/4-20 nut),
    slot the case prongs into it, set the angle, tighten the M5 thumbscrew.
 
@@ -1334,7 +1338,8 @@ exits the bottom wall at a height DERIVED from the seated stack
    stick a GORE-type membrane over any vent seat.
 4. (weather mode) Seat the **TPU gasket** in the rim groove.
 5. Close the **radome front** (lip nests into the back; the window must land
-   over the antenna array) and drive the 4 × M2 corner screws — snug
+   over the antenna array), turn it over and drive the 4 × M2 corner screws up
+   through the seats in the back into the front's bosses — snug
    diagonally first, then final quarter-turns, never past ~0.3 N·m.
 6. Mount it: slot the hinge prongs into the shared **Vision bracket** and set
    the angle (bedside ≤ 1.5 m for the wellbeing channel), or hang the blind

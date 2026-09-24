@@ -85,7 +85,8 @@
         "opt_antenna",
         "opt_seal",
         "opt_mount",
-        "opt_weep"
+        "opt_weep",
+        "screw_from"
       ],
       "part_labels": {
         "all": "Assembled preview (not for printing)",
@@ -138,7 +139,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "a759696f0a4371f65f6206f448d85769eb08dd8f65aea7e68a0ca2e6c43225bc",
+      "sha256": "6694c280b7478bfc24f82004542ac9a31c6aef1fbcbfc88317fe265f96ffeaed",
       "groups": [
         {
           "name": "What to render",
@@ -842,6 +843,16 @@
               "desc": "lid screw — the catalog screw registry (canary_core_lib) sets"
             },
             {
+              "name": "screw_from",
+              "type": "string",
+              "default": "back",
+              "options": [
+                "back",
+                "face"
+              ],
+              "desc": "back = the face is unbroken: screws enter a seat in the back and thread into bosses under the lid (the house default); face = heads on the lid (the Outdoor preset, whose sun shield rides on them)"
+            },
+            {
               "name": "screw_head",
               "type": "string",
               "default": "flat",
@@ -1135,7 +1146,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "26b8d2d35a528d40ed621f1682ef670ece1aceb1d14ceef4a492e96c410248bd"
+          "sha256": "7b96b09ca72d40aebd5539e71d4dd649e00632f6fb5b44193b6330a446b8d2b1"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -1247,7 +1258,7 @@
         }
       },
       "units": {},
-      "sha256": "999d9dba844fd13eab445aa9a69ec6f3c5164f22bd2c18437f45c219386c33bc",
+      "sha256": "9ad727988d8163585c2a3834fe511bf2a523aed90ce1dbcccc1c1a6ec676bcba",
       "groups": [
         {
           "name": "What to render",
@@ -1737,6 +1748,16 @@
               "type": "number",
               "default": 2.0,
               "desc": "(m2 pan) seat depth: the head 1.6 + 0.4 sink. Deeper than the 2.0 front,"
+            },
+            {
+              "name": "screw_from",
+              "type": "string",
+              "default": "back",
+              "options": [
+                "back",
+                "face"
+              ],
+              "desc": "back = the face is unbroken: screws enter a seat in the back and thread into bosses under the front (the house default; opening it means taking it down first); face = heads on the front"
             }
           ]
         },
@@ -2252,7 +2273,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "26b8d2d35a528d40ed621f1682ef670ece1aceb1d14ceef4a492e96c410248bd"
+          "sha256": "7b96b09ca72d40aebd5539e71d4dd649e00632f6fb5b44193b6330a446b8d2b1"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -2347,7 +2368,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "f17de85b4cf16ec5c684594a7cf80a681e412dec0330bd046a6b92a3e466238d",
+      "sha256": "28cd583764795ed744d55fda7aa9fce0b25acf9f72028a1435f5c50d92bc5121",
       "groups": [
         {
           "name": "What to render",
@@ -2848,6 +2869,16 @@
               "type": "number",
               "default": 2.0,
               "desc": "(m2 pan) seat depth; the face carries a pad under it (head_pad)"
+            },
+            {
+              "name": "screw_from",
+              "type": "string",
+              "default": "back",
+              "options": [
+                "back",
+                "face"
+              ],
+              "desc": "back = the face is unbroken: screws enter a seat in the back and thread into bosses under the face (the house default; opening it means taking it down first); face = heads on the face"
             }
           ]
         },
@@ -3184,12 +3215,22 @@
               "desc": "beam face to board edge (a fit — tune on the coupon) — snap_boardclip default"
             }
           ]
+        },
+        {
+          "name": "Quality",
+          "params": [
+            {
+              "name": "face_skin",
+              "type": "number",
+              "default": 1.0
+            }
+          ]
         }
       ],
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "26b8d2d35a528d40ed621f1682ef670ece1aceb1d14ceef4a492e96c410248bd"
+          "sha256": "7b96b09ca72d40aebd5539e71d4dd649e00632f6fb5b44193b6330a446b8d2b1"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -3301,7 +3342,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "83a31b970ed47b5ee108827e0f6fa9a6e98f19b7fef03b041c5fdb79c4ce3662",
+      "sha256": "46d46843ec9d47f662171c5e7acab639753f82cd7024f45971c63aa9f3dcb995",
       "groups": [
         {
           "name": "What to render",
@@ -3839,6 +3880,16 @@
               "type": "number",
               "default": 2.0,
               "desc": "(m2 pan) seat depth; the front carries a pad under it (head_pad)"
+            },
+            {
+              "name": "screw_from",
+              "type": "string",
+              "default": "back",
+              "options": [
+                "back",
+                "face"
+              ],
+              "desc": "back = the face is unbroken: screws enter a seat in the back and thread into bosses under the front (the house default; opening it means taking it down first); face = heads on the front"
             }
           ]
         },
@@ -4179,7 +4230,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "26b8d2d35a528d40ed621f1682ef670ece1aceb1d14ceef4a492e96c410248bd"
+          "sha256": "7b96b09ca72d40aebd5539e71d4dd649e00632f6fb5b44193b6330a446b8d2b1"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -4626,7 +4677,7 @@
         },
         {
           "file": "canary_core_lib.scad",
-          "sha256": "26b8d2d35a528d40ed621f1682ef670ece1aceb1d14ceef4a492e96c410248bd"
+          "sha256": "7b96b09ca72d40aebd5539e71d4dd649e00632f6fb5b44193b6330a446b8d2b1"
         },
         {
           "file": "canary_mount_lib.scad",

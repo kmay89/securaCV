@@ -39,14 +39,12 @@ back_rim = 1.5;      // rim on the back, inboard of the edge (rib_lib loop): the
 /* [Boards] — MR60BHA2 carrier + stacked XIAO ESP32-C6. MEASURE */
 radar_l  = 44.0;      // brd_l("mr60") — canary_board_lib
 radar_w  = 36.0;      // brd_w("mr60") — canary_board_lib
-stack_sock_h = 11.5;  // brd_stack_sock_unmeasured() — the doorbell bench measured 6.5 (canary_board_lib)
 radar_front_h = 3.5;  // carrier front-side TALLEST part (connectors etc.) — MEASURE
 pcb_t    = 1.0;
 board_clear = 0.6;
 
 /* [Radome window] */
-radome_t  = 1.5;   // ≈ half-wave in PETG/ASA at 60 GHz — the low-reflection optimum;
-                   // AVOID 0.7–1.1 mm (quarter-wave band, ~20 % reflection)
+radome_t  = 1.5;   // membrane — 1.5 ≈ half-wave in PETG/ASA at 60 GHz (low-reflection optimum); 0.7–1.1 is the quarter-wave band (~20 % reflection) and is refused  // [1.3:0.1:1.7]
 rad_win_x = 24.0;
 rad_win_y = 24.0;
 rad_dx    = 0.0;
@@ -78,7 +76,10 @@ $fa = 3; $fs = 0.4;
 radar_standoff = 4.5;                 // rails hold the carrier's front parts (radar_front_h) clear of the
 rail_h  = radar_standoff;             // solid plate back; the XIAO hangs deeper into the box
 assert(radar_standoff > radar_front_h, "radar_standoff must clear the carrier's front-side parts (radar_front_h)");
-assert(radome_t >= 0.6 && radome_t < plate_t, "radome_t must be printable and thinner than plate_t");
+// the Sense enclosure's own radome gate, word for word: >= 1.3 keeps the membrane
+// out of the 0.7–1.1 quarter-wave band (was only >= 0.6, which let 0.8 through)
+assert(radome_t >= 1.3 && radome_t < plate_t,
+       "radome_t must be >= 1.3 (0.7-1.1 is the quarter-wave band: ~20 % reflected into the antenna) and thinner than plate_t");
 assert(radar_w + 2*(clip_clear + clip_t) + 2 < plate_w, "carrier too wide for the plate");
 assert(back_rim == 0 || plate_h/2 - 1.0 - 1.6 > screw_gap/2 + dev_screw_d/2 + 1.0,
        "the back rim runs over the device-screw holes — shrink screw_gap or drop back_rim");

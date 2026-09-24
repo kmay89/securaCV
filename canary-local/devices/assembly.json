@@ -598,44 +598,49 @@
      "source": "proc",
      "part": "screw",
      "params": {
-      "len": 10
+      "len": 20
      },
      "instances": [
       [
        17.3,
        33,
-       21.38
+       2
       ],
       [
        -17.3,
        33,
-       21.38
+       2
       ],
       [
        17.3,
        -33,
-       21.38
+       2
       ],
       [
        -17.3,
        -33,
-       21.38
+       2
       ]
      ],
      "explode": [
       0,
       0,
-      74
+      -80
      ],
      "insert": [
       0,
       0,
-      10
+      -12
      ],
      "step": 5,
-     "name": "M2 corner screws",
+     "name": "M2 corner screws — driven up from the back into the face's bosses",
      "qty": 4,
-     "pose": "cad"
+     "pose": "cad",
+     "irot": [
+      180,
+      0,
+      0
+     ]
     }
    ],
    "steps": [
@@ -1214,44 +1219,49 @@
      "source": "proc",
      "part": "screw",
      "params": {
-      "len": 10
+      "len": 16
      },
      "instances": [
       [
        24.3,
        24.8,
-       19.5
+       2
       ],
       [
        -24.3,
        24.8,
-       19.5
+       2
       ],
       [
        24.3,
        -24.8,
-       19.5
+       2
       ],
       [
        -24.3,
        -24.8,
-       19.5
+       2
       ]
      ],
      "explode": [
       0,
       0,
-      68
+      -80
      ],
      "insert": [
       0,
       0,
-      10
+      -12
      ],
      "step": 4,
-     "name": "M2 corner screws",
+     "name": "M2 corner screws — driven up from the back into the face's bosses",
      "qty": 4,
-     "pose": "cad"
+     "pose": "cad",
+     "irot": [
+      180,
+      0,
+      0
+     ]
     }
    ],
    "steps": [

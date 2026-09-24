@@ -710,7 +710,7 @@ class DisplayCasesJoinTheSameChain(unittest.TestCase):
             lib_after = edit_lib(root, WS147_ROW, WS147_ROW.replace("36.37", "36.4"))
             errors = gcp.check(root / "devices", root)
             self.assertEqual(sorted(e.split(" ", 1)[0] for e in errors),
-                             ["canary_c3_lcd147.scad:249:", "canary_c6_display.scad:89:",
+                             ["canary_c3_lcd147.scad:249:", "canary_c6_display.scad:90:",
                               "canary_s3_lcd147.scad:106:"], errors)
             for e in errors:
                 self.assertIn('references brd_l("ws147") (canary_board_lib.scad:53, drawing rung): '
@@ -720,7 +720,7 @@ class DisplayCasesJoinTheSameChain(unittest.TestCase):
             self.assertEqual(sorted((p.name, c.line, c.name, c.old_token, c.new_token)
                                     for p, c in written),
                              [("canary_c3_lcd147.scad", 249, "board_l", "36.37", "36.4"),
-                              ("canary_c6_display.scad", 89, "board_l", "36.37", "36.4"),
+                              ("canary_c6_display.scad", 90, "board_l", "36.37", "36.4"),
                               ("canary_s3_lcd147.scad", 106, "board_l", "36.37", "36.4")])
             self.assertEqual(gcp.check(root / "devices", root), [])
             self.assertEqual(moved_lines("canary_c3_lcd147.scad", root), [249])
@@ -729,7 +729,7 @@ class DisplayCasesJoinTheSameChain(unittest.TestCase):
             # no manifest could own, so a registry correction never reached it;
             # its board_l is the 1.47 literal now and the manifest names the
             # row, so the correction lands on line 89 — one token, nothing else
-            self.assertEqual(moved_lines(C6, root), [89])
+            self.assertEqual(moved_lines(C6, root), [90])
             for name in ("canary_s3_touch169.scad", "canary_watch_station.scad",
                          "canary_dash_display.scad", *RELEASED):
                 self.assertEqual(moved_lines(name, root), [], name)
@@ -779,7 +779,7 @@ class DisplayCasesJoinTheSameChain(unittest.TestCase):
                             ("lcm_w", 19.39)):
             self.assertEqual((params[knob]["type"], params[knob]["default"]), ("number", value), knob)
             self.assertNotIn("options", params[knob])
-        self.assertEqual(params["board_l"]["line"], 89)
+        self.assertEqual(params["board_l"]["line"], 90)
         # the 7" frame reads its panel record from canary_panel_lib.scad
         r = gcp.render(ENC / "canary_s3_lcd7.scad", {"panel_variant": "lcd7", "PANEL": 1})
         self.assertEqual(r.changes, [])

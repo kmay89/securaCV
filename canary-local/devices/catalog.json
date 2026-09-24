@@ -315,7 +315,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 82,
+   "engineering_param_count": 88,
    "alternatives": [
     "s3_touch169",
     "watch_station"
@@ -504,7 +504,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 32,
+   "engineering_param_count": 38,
    "alternatives": [
     "s3_lcd7"
    ],
@@ -827,7 +827,7 @@
     "gland_cap"
    ],
    "options": [],
-   "engineering_param_count": 13,
+   "engineering_param_count": 36,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -951,7 +951,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 15,
+   "engineering_param_count": 17,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -990,7 +990,7 @@
     "cradle"
    ],
    "options": [],
-   "engineering_param_count": 12,
+   "engineering_param_count": 14,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -1700,7 +1700,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 64,
+   "engineering_param_count": 70,
    "alternatives": [
     "c6_display",
     "watch_station"
@@ -1954,7 +1954,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 144,
+   "engineering_param_count": 151,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -1993,7 +1993,7 @@
     "plate"
    ],
    "options": [],
-   "engineering_param_count": 35,
+   "engineering_param_count": 34,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2042,7 +2042,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 20,
+   "engineering_param_count": 23,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2137,7 +2137,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 12,
+   "engineering_param_count": 21,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2224,7 +2224,7 @@
     "vent"
    ],
    "options": [],
-   "engineering_param_count": 15,
+   "engineering_param_count": 19,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2391,7 +2391,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 140,
+   "engineering_param_count": 147,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2711,7 +2711,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 173,
+   "engineering_param_count": 180,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -3155,7 +3155,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 164,
+   "engineering_param_count": 172,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -3232,7 +3232,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 66,
+   "engineering_param_count": 69,
    "alternatives": [
     "s3_touch169",
     "c6_display"

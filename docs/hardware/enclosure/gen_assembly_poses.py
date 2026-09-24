@@ -113,10 +113,12 @@ DEVICES = {
             # tubes standing on the lid's outer face
             "shield": [("T", "[0, 0, base_h + lid_t + sh_t + sh_gap]"), ("R", [180, 0, 0])],
         },
-        # flat heads: the 90° seat is flush, so the head's top (the builder's
-        # csk z = 0) is the lid's outer face
-        "screws": {"xy": "post_xy()", "z": "base_h + lid_t", "rot": None,
-                   "len": "hw_len(lid_t, head_pad, hw_engage(screw_size))"},
+        # flat heads: the head's top (the builder's csk z = 0) is the lid's
+        # outer face in face mode, the recess plane in the back (turned over)
+        # in back mode — the Outdoor build the tab shows keeps face screws
+        "screws": {"xy": "post_xy()",
+                   "z": "e_back ? -mount_extra + bk_r : base_h + lid_t", "rot": ["e_back ? 180 : 0", 0, 0],
+                   "len": "e_back ? bk_L : hw_len(lid_t, head_pad, hw_engage(screw_size))"},
         "params": {"disc": {"d": "cam_disc_d", "t": "cam_disc_t"},
                    "batt": {"t": "batt_h - 1"}},
     },
@@ -139,8 +141,13 @@ DEVICES = {
             "front": [("T", "[0, 0, base_d + lid_t]"), ("R", [180, 0, 0])],
         },
         # pan heads in cb_flat_cut: the seat floor is head_h under the outer face
-        "screws": {"xy": "post_xy()", "z": "base_d + lid_t - head_h", "rot": None,
-                   "len": "hw_len(lid_t, head_pad, hw_engage(screw_size))"},
+        # screw_from "back" (the house default): driven up from the seat in
+        # the back, the pan head's bearing face bk_hh above its recess; the
+        # builder draws a pan head above z = 0, so it turns over
+        "screws": {"xy": "post_xy()",
+                   "z": "e_back ? -mount_extra + bk_r + bk_hh(screw_size, screw_head) : base_d + lid_t - head_h",
+                   "rot": ["e_back ? 180 : 0", 0, 0],
+                   "len": "e_back ? bk_L : hw_len(lid_t, head_pad, hw_engage(screw_size))"},
         "params": {
             "board": {"w": "vm_w", "h": "vm_l", "t": "pcb_t"},
             "xiao": {"w": "xiao_l", "h": "xiao_w"},
@@ -161,8 +168,13 @@ DEVICES = {
                      ("R", [180, 0, -90])],
             "front": [("T", "[0, 0, base_d + lid_t]"), ("R", [180, 0, 0])],
         },
-        "screws": {"xy": "post_xy()", "z": "base_d + lid_t - head_h", "rot": None,
-                   "len": "hw_len(lid_t, head_pad, hw_engage(screw_size))"},
+        # screw_from "back" (the house default): driven up from the seat in
+        # the back, the pan head's bearing face bk_hh above its recess; the
+        # builder draws a pan head above z = 0, so it turns over
+        "screws": {"xy": "post_xy()",
+                   "z": "e_back ? -mount_extra + bk_r + bk_hh(screw_size, screw_head) : base_d + lid_t - head_h",
+                   "rot": ["e_back ? 180 : 0", 0, 0],
+                   "len": "e_back ? bk_L : hw_len(lid_t, head_pad, hw_engage(screw_size))"},
         "params": {
             "radar": {"w": "radar_w", "h": "radar_l", "t": "pcb_t"},
             "xiao": {"w": "xiao_l", "h": "xiao_w"},
@@ -310,6 +322,9 @@ def _exprs(dev):
         out["Sz"] = sc["z"]
         if sc.get("len"):
             out["Slen"] = sc["len"]
+        for j, a in enumerate(sc.get("rot") or []):
+            if isinstance(a, str):
+                out[f"Srot_{j}"] = a
     return out
 
 
@@ -404,7 +419,8 @@ def derive(asm):
             for q in xy:
                 m = _mul(F, _t([q[0], q[1], vals["Sz"]]))
                 if sc["rot"]:
-                    m = _mul(m, _rot(sc["rot"]))
+                    m = _mul(m, _rot([vals[f"Srot_{j}"] if isinstance(a, str) else a
+                                      for j, a in enumerate(sc["rot"])]))
                 pos, rot = _decompose(m)
                 inst.append([_num(x) for x in pos])
                 rot0 = rot

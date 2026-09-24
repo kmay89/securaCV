@@ -14,6 +14,14 @@
 //  battery build on a sun-baked dash (esp32s3_power_battery_guide.md).
 //  Set stud_gap to YOUR case's keyhole spacing (36 = field case default).
 //
+//  ⚠️ RETENTION (dash): the dash studs pair ACROSS the 10° slope (along Y),
+//  and the catalog's slots run along the pair axis, so the slide-lock is
+//  horizontal — gravity does not latch it, and braking or cornering pushes
+//  the case straight back along its slide. Nothing on this plate holds it:
+//  use a case with the click detent in its pockets (mount_keyhole_click)
+//  AND lanyard it through the tether slot. The vent clip's studs pair
+//  vertically, so there the case drops on and gravity latches as on a wall.
+//
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print- or road-validated.
 //  The vent prongs print sideways by design (extruded profile: flex loads
 //  stay in-plane); the studs on the vent clip therefore print sideways too
@@ -49,7 +57,7 @@ tether_w = 8.0;  tether_l = 4.0;
 
 /* [Vent clip] */
 vent_w   = 32.0;     // clip width (extrusion length)
-face_h   = 50.0;     // front face height
+face_h   = 50.0;     // front face height — a minimum: grown to stud_gap + stud_head + 4 so both heads land on the face
 face_t   = 4.0;
 prong_l  = 22.0;     // reach onto the louver blade
 prong_t  = 2.4;
@@ -62,6 +70,20 @@ $fa = 3; $fs = 0.4;
 echo(str("Canary vehicle mount v0.1-dev — stud_gap ", stud_gap,
          "  (IN DEVELOPMENT — no battery builds on a hot dash!)"));
 assert(stud_gap >= stud_head + 4, "studs overlap — raise stud_gap");
+
+// every stud head sits whole on the face that carries it, with 2 mm of land
+// beyond its rim at each end — the riser and the vent face grow with stud_gap
+// (they were a fixed 46 / 50: at stud_gap 50 the dash heads overhung the
+// riser by 5.3 and the vent heads the face by 3.3, with nothing to say so)
+stud_span = stud_gap + stud_head + 4;
+riser_l   = 50.0;                      // riser run along the slope
+riser_w   = max(46.0, stud_span);      // 46 = the original riser; wider only when the studs need it
+vent_fh   = max(face_h, stud_span);    // the vent face actually drawn
+assert(riser_w <= dash_w - 4, "stud_gap too wide for the dash plate — the riser would overrun dash_w");
+assert(vent_fh >= stud_span && riser_w >= stud_span, "a stud head overruns its face");
+if (vent_fh > face_h)
+    echo(str("vent face grown to ", vent_fh, " mm to carry stud_gap ", stud_gap));
+echo("NOTE: the dash plate's slide-lock is horizontal — use a click-detent case and the tether lanyard (header)");
 assert(louver_gap >= 1.5, "louver_gap < 1.5 mm — measure your vent blade");
 
 // T-stud from the mount library, fed this file's knobs (+Z axis, base at the
@@ -73,7 +95,6 @@ module tstud() {
 
 // ---- dash plate (prints flat, studs up on the wedge face) --------------------
 module dash() {
-    riser_l = 50.0;  riser_w = 46.0;
     riser_h = riser_l * tan(dash_tilt);
     difference() {
         union() {
@@ -107,6 +128,7 @@ module dash() {
 // prong's tip hook dips 1.0 into the gap and snaps behind the blade's rear
 // edge, the lower tip up-ramp preloads the blade underside.
 module vent() {
+    face_h = vent_fh;                  // the grown face (the knob is its minimum)
     zm = face_h/2;  g = louver_gap/2;
     pts = [
         [0, 0], [face_t, 0],

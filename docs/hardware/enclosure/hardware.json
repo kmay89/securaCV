@@ -13,8 +13,8 @@
     {
      "qty": 6,
      "kind": "screw",
-     "spec": "M2 pan x 10 self-tap",
-     "text": "M2 pan x 10 self-tap"
+     "spec": "M2 pan x 20 self-tap",
+     "text": "M2 pan x 20 self-tap from the back"
     },
     {
      "qty": 4,
@@ -95,8 +95,8 @@
     {
      "qty": 6,
      "kind": "screw",
-     "spec": "M2 pan x 10 machine (into the inserts)",
-     "text": "M2 pan x 10 machine (into the inserts)"
+     "spec": "M2 pan x 20 machine (into the inserts)",
+     "text": "M2 pan x 20 machine (into the inserts) from the back"
     },
     {
      "qty": 4,
@@ -165,8 +165,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 pan x 10 self-tap",
-     "text": "M2 pan x 10 self-tap"
+     "spec": "M2 pan x 16 self-tap",
+     "text": "M2 pan x 16 self-tap from the back"
     },
     {
      "qty": 1,
@@ -196,7 +196,12 @@
     "slack": 0.0,
     "batt_hold": false
    },
-   "bom": {}
+   "bom": {
+    "SCR3": {
+     "bom": 4,
+     "echo": 4
+    }
+   }
   },
   "sense+inserts": {
    "device": "canary-sense",
@@ -210,8 +215,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 pan x 10 machine (into the inserts)",
-     "text": "M2 pan x 10 machine (into the inserts)"
+     "spec": "M2 pan x 16 machine (into the inserts)",
+     "text": "M2 pan x 16 machine (into the inserts) from the back"
     },
     {
      "qty": 4,
@@ -258,8 +263,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 pan x 10 self-tap",
-     "text": "M2 pan x 10 self-tap"
+     "spec": "M2 pan x 12 self-tap",
+     "text": "M2 pan x 12 self-tap from the back"
     },
     {
      "qty": 4,
@@ -325,8 +330,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 pan x 10 self-tap",
-     "text": "M2 pan x 10 self-tap"
+     "spec": "M2 pan x 20 self-tap",
+     "text": "M2 pan x 20 self-tap from the back"
     },
     {
      "qty": 4,
@@ -393,8 +398,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 pan x 10 machine (into the inserts)",
-     "text": "M2 pan x 10 machine (into the inserts)"
+     "spec": "M2 pan x 20 machine (into the inserts)",
+     "text": "M2 pan x 20 machine (into the inserts) from the back"
     },
     {
      "qty": 4,
@@ -453,8 +458,8 @@
     {
      "qty": 6,
      "kind": "screw",
-     "spec": "M2 pan x 10 self-tap",
-     "text": "M2 pan x 10 self-tap"
+     "spec": "M2 pan x 25 self-tap",
+     "text": "M2 pan x 25 self-tap from the back"
     },
     {
      "qty": 4,
@@ -543,8 +548,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 flat x 8 self-tap",
-     "text": "M2 flat x 8 self-tap"
+     "spec": "M2 flat x 16 self-tap",
+     "text": "M2 flat x 16 self-tap from the back"
     },
     {
      "qty": 1,
@@ -723,7 +728,12 @@
      "text": "M2 flat x 16 self-tap — REPLACES the lid screws when the shield is fitted"
     }
    ],
-   "bom": {}
+   "bom": {
+    "SCR3": {
+     "bom": 4,
+     "echo": 4
+    }
+   }
   },
   "wap.compact_plain": {
    "device": "canary-wap",
@@ -737,8 +747,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 flat x 8 self-tap",
-     "text": "M2 flat x 8 self-tap"
+     "spec": "M2 flat x 12 self-tap",
+     "text": "M2 flat x 12 self-tap from the back"
     },
     {
      "qty": 1,
@@ -776,8 +786,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 flat x 8 machine (into the inserts)",
-     "text": "M2 flat x 8 machine (into the inserts)"
+     "spec": "M2 flat x 12 machine (into the inserts)",
+     "text": "M2 flat x 12 machine (into the inserts) from the back"
     },
     {
      "qty": 4,
@@ -816,12 +826,6 @@
   {
    "set": "sense",
    "csv": "bom_canary_sense.csv",
-   "what": "unbilled M2 pan x 10 self-tap",
-   "detail": "4x M2 pan x 10 self-tap — no row in bom_canary_sense.csv bills it"
-  },
-  {
-   "set": "sense",
-   "csv": "bom_canary_sense.csv",
    "what": "unbilled M5 x 25 bolt + nut (hinge; Vision knob/bracket parts)",
    "detail": "1x M5 x 25 bolt + nut (hinge; Vision knob/bracket parts) — no row in bom_canary_sense.csv bills it"
   },
@@ -854,12 +858,6 @@
    "csv": "bom_canary_wap.csv",
    "what": "unbilled M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat)",
    "detail": "2x M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat) — no row in bom_canary_wap.csv bills it"
-  },
-  {
-   "set": "wap.battery_weather.shield",
-   "csv": "bom_canary_wap.csv",
-   "what": "unbilled M2 flat x 16 self-tap — REPLACES the lid screws when the shield is fitted",
-   "detail": "4x M2 flat x 16 self-tap — REPLACES the lid screws when the shield is fitted — no row in bom_canary_wap.csv bills it"
   }
  ]
 }

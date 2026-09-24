@@ -183,6 +183,7 @@ screw_head   = "pan"; // ["pan","flat"] pan = flat-floored seat (the BOM's black
 screw_d      = 1.6;   // (m2)
 screw_head_d = 4.0;   // (m2 pan)
 screw_head_h = 2.0;   // (m2 pan) seat depth; the face carries a pad under it (head_pad)
+screw_from   = "back"; // ["back","face"] back = the face is unbroken: screws enter a seat in the back and thread into bosses under the face (the house default; opening it means taking it down first); face = heads on the face
 
 /* [Weather sealing] */
 gasket_w      = 1.6;  // gasket groove width in the body's rim (the printed gasket is 0.5 narrower)
@@ -271,7 +272,8 @@ head_h  = (screw_size == "m2" && screw_head == "pan") ? screw_head_h
 ins_od  = (screw_size == "m2") ? insert_d : scr_insert_d(screw_size) + 0.3;
 ins_h   = (screw_size == "m2") ? insert_h : scr_insert_h(screw_size);
 pd = max(screw_insert ? max(post_d, ins_od + 3.0) : post_d, scr_post_min(screw_size));
-head_pad = (screw_head == "pan") ? max(0, head_h + 1.0 - lid_t) : 0;
+e_back   = screw_from == "back";
+head_pad = (!e_back && screw_head == "pan") ? max(0, head_h + 1.0 - lid_t) : 0;
 clip_stack  = clip_clear + clip_t;
 vm_standoff = stack_sock_h + xiao_below;
 cam_post_eff = (cam_ap_d >= cam_lens_sq*1.4142 + 0.6) ? cam_post_h : max(cam_post_h, cam_lens_h + 0.3);
@@ -289,6 +291,16 @@ cav_d   = max(vm_standoff + pcb_t + vm_front_h + cav_extra, btn_body_l - lid_t +
 out_x  = inner_x + 2*wall_eff;
 out_y  = inner_y + 2*wall_eff;
 base_d = floor_t + cav_d;
+// screws from the back (canary_core_lib bk_*): the length, the head's recess
+// into the back and the boss under the face, derived together; `face_skin` is
+// the unbroken plate left over the screw tip
+face_skin = 1.0;
+bk_L      = e_back ? bk_len(screw_size, screw_head, kh_extra, base_d, lid_t, face_skin) : 0;
+bk_r      = e_back ? bk_recess(screw_size, screw_head, kh_extra, floor_t, base_d, lid_t, face_skin) : 0;
+boss_h    = e_back ? bk_boss_h(screw_size, screw_head, kh_extra, floor_t, base_d, lid_t, face_skin) : 0;
+post_h    = cav_d - head_pad - boss_h;             // the post stops where the face's boss lands
+assert(!e_back || post_h >= 2.0, str("screws from the back: the boss (", boss_h, " mm) leaves a ", post_h, " mm post — use screw_from=\"face\""));
+assert(!e_back || !(screw_insert && boss_h < ins_h + 1.0), "the boss is shorter than the insert it must hold");
 // ASSEMBLED-FIT PROBE for canary_case_fitcheck.scad. It lives HERE, next to
 // the geometry, for two reasons: it reads this file's own derived datum
 // instead of duplicating the arithmetic it is checking, and its name is
@@ -392,7 +404,8 @@ assert(!opt_mark || mark_word_ink_w("securaCV", label_size) <= plate_x - 4.0,
 // the hardware, DERIVED from the same knobs that draw the holes (canary_core_lib)
 hw_thread = screw_insert ? "machine (into the inserts)" : "self-tap";
 hw_echo("Vision doorbell", [
-    hw_item(len(post_xy()), hw_screw(screw_size, screw_head, hw_len(lid_t, head_pad, hw_engage(screw_size)), hw_thread)),
+    e_back ? hw_item(len(post_xy()), str(hw_screw(screw_size, screw_head, bk_L, hw_thread), " from the back"))
+           : hw_item(len(post_xy()), hw_screw(screw_size, screw_head, hw_len(lid_t, head_pad, hw_engage(screw_size)), hw_thread)),
     hw_item(4, "M2 pan x 6 self-tap (OV5647 to the face posts)"),
     // the security boss takes screw_size's insert when screw_insert is on (its bore is ins_od),
     // so the security screw is that size's machine thread; self-tap builds keep the M2 pilot
@@ -438,9 +451,35 @@ module edgeclip(px, py, ang, soff) {
 // ----------------------------------------------------------------------------
 //  BODY (back shell: board rails, cable exit, stud pockets, security boss)
 // ----------------------------------------------------------------------------
+// the screws from the back: the seat and the bore, cut through the WHOLE
+// body (slab, floor and post) after everything else is drawn
 module body() {
+    difference() {
+        body_body();
+        if (e_back) for (p = post_xy())
+            bk_seat_cut(p[0], p[1], kh_extra, floor_t + post_h, screw_size, screw_head,
+                        bk_r, scr_c, tol_hole);
+    }
+}
+// ...and the bosses they thread into, hanging from the face onto the post tops
+// (cropped to the cavity like the pan pads — the CLR-1 lesson)
+module face() {
+    difference() {
+        union() {
+            face_body();
+            if (e_back) for (p = post_xy())
+                cb_head_pad(p[0], p[1], boss_h, pd, inner_x, inner_y, core_cav_r(rr, wall_eff));
+        }
+        if (e_back) for (p = post_xy())
+            bk_boss_bore(p[0], p[1], boss_h, lid_t, face_skin,
+                         screw_insert ? scr_nominal(screw_size) + 0.3 : scr_d,
+                         screw_insert, ins_od - 0.3, ins_h);
+    }
+}
+
+module body_body() {
     posts = post_xy();
-    gusset_h = max(2, cav_d - lip_h - 1.0);
+    gusset_h = max(2, min(cav_d - lip_h - 1.0, post_h - 0.5));   // and below the post top, where the boss lands
     gusset_w = min(2.0, rib_t_max(wall_eff));
     difference() {
     union() {
@@ -488,7 +527,7 @@ module body() {
         // to its own wall); shortened by the face's head pads
         difference() {
             union() {
-                for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - head_pad);
+                for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = post_h);
                 // constant-width webs (canary_rib_lib corner_gusset) — no hull flare.
                 // The ±Y web ties a corner post into its end wall (it used to aim
                 // inside the post and drew nothing); a mid-span post has only its X wall
@@ -499,9 +538,9 @@ module body() {
                         corner_gusset(p[0], p[1], p[0], sy*(inner_y/2 + 0.5), gusset_h, wall_eff, pd, gusset_w);
                 }
             }
-            for (p = posts) translate([p[0], p[1], floor_t + 2.0])
+            if (!e_back) for (p = posts) translate([p[0], p[1], floor_t + 2.0])
                 cylinder(d = screw_insert ? scr_nominal(screw_size) + 0.3 : scr_d, h = cav_d);
-            if (screw_insert)
+            if (screw_insert && !e_back)
                 for (p = posts) translate([p[0], p[1], floor_t + cav_d - head_pad - ins_h - 0.5])
                     cylinder(d = ins_od - 0.3, h = ins_h + 1);
         }
@@ -547,7 +586,7 @@ module body() {
 // (core_vent_cluster / core_lightpipe_bore) — this file used to carry its
 // own copy of both, and the four copies across the weather shells had
 // forked. The knobs above still ride in as arguments.
-module face() {
+module face_body() {
     union() {
         difference() {
             union() {
@@ -587,7 +626,7 @@ module face() {
                                               vent_pad_d, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes);
             // screw seats by the head in the bag (canary_core_lib): flat floor for
             // PAN heads (on the pad), 90° cone for FLAT, O-ring gland with head_seal
-            for (p = post_xy()) translate([0, 0, -head_pad]) {
+            if (!e_back) for (p = post_xy()) translate([0, 0, -head_pad]) {
                 if (screw_head == "flat")
                     cs_cone90_cut(p[0], p[1], lid_t, scr_c, head_h);
                 else if (head_seal)

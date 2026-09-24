@@ -374,11 +374,11 @@ public struct FleetMassing: Sendable {
       FleetSolid(kind: .disc, material: "dark", axis: "y", at: [28.599990844726562, 19.55, 71.69733428955078], size: [], r: 3.2, h: 0.6, fullDetailOnly: true),
   ]),
   "part.sense.front": FleetMassing(
-    id: "part.sense.front", rev: "512c1cf5", ghost: false,
-    envelope: [57.2, 6.95, 58.2],
+    id: "part.sense.front", rev: "7b80398f", ghost: false,
+    envelope: [57.2, 10.45, 58.2],
     solids: [
-      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [57.199981689453125, 6, 58.199981689453125], r: 3, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .box, material: "radome", axis: "y", at: [16.599990844726562, 6.05, 17.099990844726562], size: [24, 0.9, 24], r: 1.5, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [57.199981689453125, 9.5, 58.199981689453125], r: 3, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "radome", axis: "y", at: [16.599990844726562, 9.55, 17.099990844726562], size: [24, 0.9, 24], r: 1.5, h: 0, fullDetailOnly: false),
   ]),
   "part.vision.back": FleetMassing(
     id: "part.vision.back", rev: "2162bb83", ghost: false,
@@ -432,11 +432,11 @@ public struct FleetMassing: Sendable {
       FleetSolid(kind: .box, material: "gasket", axis: "y", at: [0, 0, 0], size: [105.60000610351562, 1.5, 40.100006103515625], r: 3, h: 0, fullDetailOnly: false),
   ]),
   "part.wap.lid": FleetMassing(
-    id: "part.wap.lid", rev: "01ef2e35", ghost: false,
-    envelope: [33.7, 6.55, 36.6],
+    id: "part.wap.lid", rev: "4e5e7d75", ghost: false,
+    envelope: [33.7, 8.85, 36.6],
     solids: [
-      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [33.699981689453125, 6, 36.5999755859375], r: 3, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .disc, material: "accent", axis: "y", at: [16.849990844726562, 6.05, 18.29998779296875], size: [], r: 2.2, h: 0.5, fullDetailOnly: true),
+      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [33.699981689453125, 8.299999237060547, 36.5999755859375], r: 3, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .disc, material: "accent", axis: "y", at: [16.849990844726562, 8.349999237060548, 18.29998779296875], size: [], r: 2.2, h: 0.5, fullDetailOnly: true),
   ]),
   "part.wap.tray": FleetMassing(
     id: "part.wap.tray", rev: "4b6848fe", ghost: false,

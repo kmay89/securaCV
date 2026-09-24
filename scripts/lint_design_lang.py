@@ -108,6 +108,14 @@ CANON = {
     "kh_head_d":      (7.0,  "canary_mount_lib.scad", "mount_kh_head_d"),
 }
 
+# The canon's word-valued knobs: name -> (the house choice, where it is stated).
+# `screw_from = "back"` is the fastener-free face (canary_core_lib bk_*): the
+# audit's renders found every released face carrying its screw heads, so a
+# case that puts them back on the face has to say why, on the line.
+CANON_WORD = {
+    "screw_from": ("back", "canary_core_lib.scad bk_len()/bk_boss_h()"),
+}
+
 # Modules the libraries own. A case redefining one is a fork by definition.
 LIB_OWNED = [
     "vent_cluster", "core_vent_cluster", "core_lightpipe_bore",
@@ -173,6 +181,14 @@ def lint_file(path):
                         f"but the house value is {want} ({lib}:{fn}()) — conform it, "
                         "or say why with a `deviates: <reason>` comment on the line "
                         "(a bare marker with no reason does not count)")
+        mw = re.match(r'^(?P<name>[a-z_][a-z0-9_]*)\s*=\s*"(?P<val>[^"]*)"\s*;', code)
+        if mw and mw.group("name") in CANON_WORD:
+            want, where = CANON_WORD[mw.group("name")]
+            if mw.group("val") != want and not DEVIATES.search(line):
+                problems.append(
+                    f"{path.name}:{lineno}: {mw.group('name')} = \"{mw.group('val')}\" "
+                    f"but the house choice is \"{want}\" ({where}) — conform it, or say "
+                    "why with a `deviates: <reason>` comment on the line")
         mm = re.match(r"\s*module\s+([a-z_][a-z0-9_]*)\s*\(", line)
         if mm and mm.group(1) in LIB_OWNED and not DEVIATES.search(line):
             problems.append(

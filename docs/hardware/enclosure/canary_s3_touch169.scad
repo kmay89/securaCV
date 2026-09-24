@@ -110,7 +110,7 @@ usb_dz   = 0.0;      // measured correction to the derived USB-C center (+ = tow
 btn_side = "back";   // ["back","front"] which PCB face carries the buttons — MEASURE
 btn_dz   = 1.0;      // actuator center off that face (side tact switches sit ~1.0) — MEASURE
 opt_side = true;
-side_open_h = 16.0;   // side slot height — a tall slot, MEASURE
+side_open_h = 10.0;   // side slot height — MEASURE; capped by the snap windows either side of it (asserted)
 side_open_dy = 0.0;   // side slot center offset (Y) — MEASURE
 
 /* [Stud/keyhole interface] — the catalog's blind stud/keyhole standard */
@@ -156,7 +156,10 @@ nub_w = 3.1;         // the ridge's DRAWN width in Y — exactly what the old
 snap_play = 0.15;    // window clearance per side — the catalog default (a
                      // printed window comes out a hair small and the skirt
                      // still has to enter)
-snap_h = 1.6; snap_depth = 2.6; snap_proud = 0.5;
+snap_h = 1.6;         // window / nub height (Z)
+snap_depth = 2.6;     // window center below the bezel rim
+snap_proud = 0.25;    // nub stand-proud of the skirt: 0.2 of travel over the cavity wall, which the
+                      // bezel wall takes as a beam (the snap lib's cycle budget gates it; 0.5 was 4.4 %)
 pry_notch = true;    // fingernail notches in the bezel's BOTTOM (-Y) wall rear rim, either side of the USB
                      // channel: the back snaps closed on a flush parting line with nothing to lift it by
                      // (0.6 into the wall, 0.8 below the rim)
@@ -267,10 +270,28 @@ skirt_x = xc - 2*tol_press;   skirt_y = yc - 2*tol_press;
 // (snap_window(): ridge + play per side; one number cannot size two features
 // that are not the same size)
 snap_w = snap_window(nub_w, snap_play);
-// the snap pair sits 5 mm in from the glass's ends: at ±glass_h/4 the windows
-// shared their wall with the vent slots and the +X side slot (45 % of each +X
-// catch edge was air)
-function nub_ys() = [-(glass_h/2 - 5), glass_h/2 - 5];
+// the snap pair sits at the ends of the side walls' STRAIGHT run, 0.4 inboard
+// of where the r_in corner arc begins. At ±(glass_h/2 − 5) the windows landed
+// on the arcs (±11.565 against a straight wall that ends at ±9.765): a nub
+// facing a curved wall meets it at an angle and the window is a slot cut
+// through a bend. (At ±glass_h/4, before that, they shared their wall with the
+// vent slots and the +X side slot.)
+function nub_ys() = [-(yc/2 - r_in - snap_w/2 - 0.4), yc/2 - r_in - snap_w/2 - 0.4];
+assert(max([for (yy = nub_ys()) abs(yy)]) + snap_w/2 <= yc/2 - r_in,
+       "a snap window runs onto the cavity's corner arc — the nub must face straight wall");
+// the snap is worked at every service, so the lib's CYCLE budget binds. The
+// skirt is a closed ring rooted snap_depth off its plate — effectively rigid —
+// so the bezel side wall is the beam that takes the nub's travel: rooted at
+// the face plate, loaded at the window center, deflected by what the nub tip
+// stands past the cavity wall (the tip cube's outer face is snap_proud + 0.05
+// off the skirt face, and the skirt runs tol_press inside the cavity)
+snap_defl  = skirt_x/2 + snap_proud + 0.05 - xc/2;
+snap_lever = bez_h - snap_depth - face_t;
+assert(snap_defl > 0, "the snap nub does not reach the bezel wall — raise snap_proud");
+assert(snap_strain(wall, snap_defl, snap_lever) <= snap_budget_cycle(),
+       str("bezel wall snap strain ", round(snap_strain(wall, snap_defl, snap_lever)*1000)/10,
+           " % — over the ", round(snap_budget_cycle()*1000)/10,
+           " % cycle budget: shrink snap_proud, or raise the window toward the rim (a smaller snap_depth lengthens the lever)"));
 // the vent slots stop 0.8 below the snap windows' bottom edge, so the two
 // never share wall wherever the row runs in y
 vent_z0 = face_t + 1.0;
@@ -385,15 +406,19 @@ module back() {
         // edge, and the plate's edge band stands where the channel's crown
         // clips the bezel rim. (Back-local x mirrors bezel x — the part
         // flips about Y to assemble, which is what points the keyhole
-        // slot up.)
-        if (opt_usb) {
+        // slot up.) Cut as a MIRRORED pair under (x,y)→(−x,−y), the C6's
+        // flippable-lid rule: the lid has no key, and turned 180° it seated
+        // just as well with its skirt standing square across the overmold
+        // path (96 mm³ of plug blocked). Now either way round passes the
+        // plug; turning the lid only re-aims the keyhole (port-up hanging).
+        if (opt_usb) for (s = [1, -1]) {
             // full-height skirt notch over the channel's footprint
-            translate([-usb_dx - usb_ch_w/2 - 0.1, -skirt_y/2 - 0.3, back_t - 0.1])
-                cube([usb_ch_w + 0.2, skirt_wall + 0.6, skirt_dep + 0.3]);
+            translate([-s*usb_dx, -s*(skirt_y/2 - skirt_wall/2), back_t + skirt_dep/2 + 0.05])
+                cube([usb_ch_w + 0.2, skirt_wall + 0.6, skirt_dep + 0.3], center = true);
             // shelf in the plate's inner face where the crown passes over it
             if (plate_relief > 0)
-                translate([-usb_dx - usb_ch_w/2 - 0.1, -yo/2 - 0.1, back_t - plate_relief])
-                    cube([usb_ch_w + 0.2, usb_reach + 0.3, plate_relief + 0.2]);
+                translate([-s*usb_dx, -s*(yo/2 - (usb_reach + 0.3)/2 + 0.1), back_t - plate_relief/2 + 0.1])
+                    cube([usb_ch_w + 0.2, usb_reach + 0.3, plate_relief + 0.2], center = true);
         }
         // BLIND keyhole pocket, cut into plate + pad from the outer face
         // (slot toward +Y = UP on the wall, so the case slides DOWN to seat —
@@ -409,33 +434,61 @@ module back() {
 // ----------------------------------------------------------------------------
 //  STAND — free-standing desk cradle (prints flat)
 // ----------------------------------------------------------------------------
-// The slab (thickness T = bez_h + back_t) rests on its bottom REAR edge at the
-// rail's front face and leans back stand_ang; everything else is derived from
-// that line: the fin's front face contains the slab's back plane, and the
-// front lip's back face is a wedge parallel to the slab's front face, 0.2
-// clear. (v0.1 typed a 14.7 channel for a 12.7 slab: it wedged at ~11° and
+// The slab (thickness T = bez_h + back_t) rests on its bottom REAR edge on the
+// base, at the foot of the fin, and leans back stand_ang; everything else is
+// derived from that line: the fin's front face contains the slab's back plane,
+// and the front lip's back face is a wedge parallel to the slab's front face,
+// 0.2 clear. (v0.1 typed a 14.7 channel for a 12.7 slab: it wedged at ~11° and
 // the fin never touched the slab at all.)
+//
+// No back rail. There was one — a 3 × 9 block with its front face at the rest
+// line — but the reclined back plane retreats tan(stand_ang) per mm of height,
+// so the block's full height stood inside the slab (561.6 mm³ of it). It was
+// also redundant: the fin's own foot is the backstop at the rest line.
+//
+// The USB plug leaves the slab's bottom edge pointing down into the base, so
+// a CABLE SLOT runs through the base and the front lip at the plug's x: a
+// spec-max overmold (port_usbc_overmold_*()) passes it for its full length
+// instead of landing on the base (306.9 mm³ did). The Watch stand's chin slot
+// is the same move.
+cable_w = port_usbc_overmold_w() + 2*1.0;   // 1.0 of play a side: the plug arrives tilted
 module stand() {
     T   = bez_h + back_t;
     a   = stand_ang;
     fw  = stand_w - 16;
-    yr  = -stand_d/2 + 20;                  // rail front face = the slab's rear-bottom edge
+    yr  = -stand_d/2 + 20;                  // the rest line = the slab's rear-bottom edge
     cy  = yr - T*cos(a);  cz = stand_t + T*sin(a);   // the slab's lifted front-bottom corner
     // front face of the slab at height z (z >= cz): y = cy + (z - cz)*tan(a)
     function yf(z) = cy + (z - cz)*tan(a) - 0.2;
     lip_h = 10;
-    linear_extrude(stand_t) rrect2d(stand_w, stand_d, 6);
-    // front lip: a wedge whose back face follows the slab's front face
-    hull() {
-        translate([-fw/2, yf(stand_t) - 3, stand_t - 0.01]) cube([fw, 3, 0.02]);
-        translate([-fw/2, yf(stand_t + lip_h) - 3, stand_t + lip_h - 0.02]) cube([fw, 3, 0.02]);
-    }
-    // back rail: the slab's rear edge sits against its front face
-    translate([-fw/2, yr, stand_t - 0.01]) cube([fw, 3, 9]);
-    // reclined fin: front face through the rear-bottom edge, leaning stand_ang
-    hull() {
-        translate([-fw/2, yr - 0.01, stand_t - 0.01]) cube([fw, 8, 0.02]);
-        translate([-fw/2, yr - 0.01 + 34*tan(a), stand_t + 34 - 0.02]) cube([fw, 8, 0.02]);
+    // the plug's axis stands zu in front of the back plane; its channel
+    // envelope reaches usb_ch_h/2 either side of it. The rear edge of that
+    // envelope runs parallel to the back plane, so it crosses the base top
+    // (zu − usb_ch_h/2)/cos(a) in front of the rest line — the slot ends 0.4
+    // behind that crossing. World x mirrors the bezel's x: the case faces −Y
+    // on the stand, so bezel +X is the viewer's left.
+    zu      = T - z_usb;
+    slot_y1 = yr - (zu - usb_ch_h/2)/cos(a) + 0.4;
+    assert(!opt_usb || slot_y1 <= yr - 0.5,
+           "the cable slot reaches the rest line — the slab's bottom edge would lose its land over the slot");
+    difference() {
+        union() {
+            linear_extrude(stand_t) rrect2d(stand_w, stand_d, 6);
+            // front lip: a wedge whose back face follows the slab's front face
+            hull() {
+                translate([-fw/2, yf(stand_t) - 3, stand_t - 0.01]) cube([fw, 3, 0.02]);
+                translate([-fw/2, yf(stand_t + lip_h) - 3, stand_t + lip_h - 0.02]) cube([fw, 3, 0.02]);
+            }
+            // reclined fin: front face through the rear-bottom edge, leaning stand_ang
+            hull() {
+                translate([-fw/2, yr - 0.01, stand_t - 0.01]) cube([fw, 8, 0.02]);
+                translate([-fw/2, yr - 0.01 + 34*tan(a), stand_t + 34 - 0.02]) cube([fw, 8, 0.02]);
+            }
+        }
+        // the cable slot: base and lip, open to the front edge
+        if (opt_usb)
+            translate([-usb_dx - cable_w/2, -stand_d/2 - 1, -0.1])
+                cube([cable_w, slot_y1 + stand_d/2 + 1, stand_t + lip_h + 1]);
     }
     assert(yr + 3 + 34*tan(a) + 8 <= stand_d/2, "the fin's top runs off the stand's back edge — deepen stand_d or lower stand_ang");
     assert(yf(stand_t) - 3 >= -stand_d/2 + 2, "the front lip runs off the stand's front edge — deepen stand_d");
