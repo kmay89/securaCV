@@ -501,13 +501,18 @@ where that is depends on the product:
 - **The `firmware/canary` build** and **canary-vision**: the USB serial
   console, where `j` prints the self-manifest with `device_id` and
   `pubkey` (the `firmware/canary` build's `i` prints the key too).
-- **canary-sense** and **canary-sentinel**: the boot log on USB serial.
-  Right after `Ed25519 ready  fp=…` it prints `Ed25519 pubkey` and the
-  64-character key, once per boot, so open the serial monitor and then
-  reset the board. The `Device ID` line later in the same log is the
-  `device_id`. The key line is compiled by CI but has not been read off a
-  unit on a bench, and canary-sentinel has not run on hardware at all.
-  An image built before the line was added shows only the fingerprint.
+- **canary-sense** and **canary-sentinel**, on a firmware release after
+  2.4.15: the boot log on the serial console. Right after
+  `Ed25519 ready  fp=…` it prints `Ed25519 pubkey` and the 64-character
+  key, once per boot, so open the serial monitor and then reset the
+  board. The `Device ID` line later in the same log is the `device_id`.
+  2.4.15 and older show only the fingerprint: compare it with the
+  `pinned_fingerprint` attribute instead. The key line is compiled by CI
+  but has not been read off a unit on a bench, and canary-sentinel has
+  not run on hardware at all. Which port carries that console is
+  unverified as well: read from the build flags, it may be the header
+  pins the radar uses rather than the board's USB-C port (the table
+  linked below has the detail).
 - **The canary-display line**: nothing to pin. A display has no signing
   key.
 

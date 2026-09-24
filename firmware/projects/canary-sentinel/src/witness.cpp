@@ -168,8 +168,8 @@ bool init() {
       "Ed25519 ready  fp=%s  chain_len=%lu\n",
       fp_hex, (unsigned long)s_length);
   // The full public key, which is public data: the manual pin in Home
-  // Assistant takes these 64 hex characters, and USB serial is this
-  // product's only way to show them without the broker in the path.
+  // Assistant takes these 64 hex characters, and the serial console is
+  // this product's only way to show them without the broker in the path.
   // Lowercase, the same string the health publish carries as public_key.
   // The line is 79 characters, so it does not wrap on an 80-column console.
   canary::dbg_serial().printf("Ed25519 pubkey %s\n",
