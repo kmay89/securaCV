@@ -536,8 +536,10 @@ recursive FreeRTOS mutex from `begin()` to the matching `end()`, with the
 canary's session arithmetic (`firmware/common/storage/nvs_session_depth.h`,
 staged next to the sketch). Host-tested by
 `firmware/projects/canary-wap/tests_host/test_nvs_store_lock.cpp` (the real
-header over a fake mutex) and `test_nvs_session_balance.cpp` (a scan that
-every block in the sketch that opens a session closes it). Five tasks open
+header over a fake mutex) and `test_nvs_session_balance.cpp` (a textual
+scan of the sketch that fails on a block that opens a session and never
+ends it, or that returns inside one without ending it; a session ended in
+only one branch, or left by a `goto`, gets past it). Five tasks open
 sessions on the one settings handle: the loop, the httpd task serving the
 API, the NimBLE host task, the Bluetooth bring-up task and the QR-scan task.
 These rows check the real mutex on a board, which nothing on the host can
@@ -548,9 +550,12 @@ That line means a task waited 2 s for another's session and gave up; on the
 WAP it would most likely mean a session somewhere never ended.
 
 - [ ] **API writes during chain persists keep the chain head**
-  - Setup: a FULL image on a XIAO ESP32-S3 Sense with a GPS fix, so records
-    are written and the chain persists every 10 of them; a laptop on the
-    LAN with the API token.
+  - Setup: a FULL image on a XIAO ESP32-S3 Sense on USB power, at the
+    default record interval; a laptop on the LAN with the API token. No GPS
+    fix is needed: the loop writes a record every second
+    (`RECORD_INTERVAL_MS`), fix or no fix, and persists the chain every 10
+    of them (`SD_PERSIST_INTERVAL`). On battery the power policy stretches
+    that cadence.
   - Repro: send `POST /api/bluetooth/power`, alternating two TX powers,
     about every 100 ms for a few minutes. Note the last `chain_seq` that
     `GET /api/status` answers, then send `POST /api/reboot`.
@@ -567,7 +572,8 @@ WAP it would most likely mean a session somewhere never ended.
   - Artifact: `docs/audit/repro/nvs-lock-wap/ble-bond/`.
 - [ ] **The vault's key and config calls release the store**
   - Setup: the same image (the vault is compiled in with the camera and the
-    PDM mic); a vault recipient public key; a GPS fix, as in the first row.
+    PDM mic), on USB power as in the first row; a vault recipient public
+    key.
   - Repro: `POST /api/vault/key` with the key, `POST /api/vault/config`
     turning `t3_smoke` on, then `DELETE /api/vault/key`. Wait a minute after
     each (the loop keeps persisting the chain meanwhile), then reboot as in
