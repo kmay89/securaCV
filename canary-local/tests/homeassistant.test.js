@@ -170,33 +170,76 @@ test("the drill's trigger entity exists in the demo's entity list", () => {
   assert.ok(names.has(data.ha_demo.drill.trigger_entity));
 });
 
-test("the guide's endpoint table names the two token-free routes, and only those", () => {
-  // src/api/mod.rs answers exactly two paths before the bearer check: GET
-  // /health and GET/OPTIONS /api/fleet — the roll-call the Witness Wall
-  // reads. A reader deciding whether to open the add-on's 8799 host port
-  // needs the guide's table to say what that exposes, so the /api/fleet
-  // row must exist and say "no token"; and no other row may claim to be
-  // token-free, or the doc would promise an open read the kernel gates.
-  const api = readFileSync(join(REPO, "src/api/mod.rs"), "utf8");
-  assert.ok(api.includes('("GET", "/health") =>'), "mod.rs answers /health before the token check");
-  assert.ok(api.includes('("GET", "/api/fleet") => {}'), "mod.rs lets GET /api/fleet through untokened");
-  assert.ok(api.includes('("OPTIONS", "/api/fleet") =>'), "mod.rs answers the /api/fleet preflight");
+// The routes src/api/mod.rs answers with a 2xx before it ever reads a bearer
+// token, as "METHOD /path" strings. Read off the router itself: every
+// concrete ("METHOD", "/path") arm between read_request and bearer_token()
+// whose body writes a 2xx, plus every empty arm that an
+// `if request.path == "/path"` branch in the same stretch answers with one.
+// A new open route therefore shows up here without anyone listing it.
+function tokenFreeRoutes(src) {
+  const from = src.indexOf("let request = read_request(&mut stream)?;");
+  const to = src.indexOf("request.bearer_token()", from);
+  assert.ok(from >= 0 && to > from, "mod.rs reads the request, then the bearer token");
+  // Raw-string bodies (r#"{...}"#) are emptied so their braces cannot
+  // unbalance the scan below.
+  const region = src.slice(from, to).replace(/r#".*?"#/gs, 'r#""#');
+  const bodyAt = (i) => {
+    const open = region.indexOf("{", i);
+    let depth = 0;
+    for (let j = open; open >= 0 && j < region.length; j++) {
+      if (region[j] === "{") depth++;
+      else if (region[j] === "}" && --depth === 0) return region.slice(open, j + 1);
+    }
+    return "";
+  };
+  const answers2xx = (body) =>
+    [...body.matchAll(/write_\w+\(\s*&mut stream,\s*(\d{3})/g)].some((m) => m[1].startsWith("2"));
+  const open = new Set();
+  for (const m of region.matchAll(/\("([A-Z]+)",\s*"(\/[^"]*)"\)/g)) {
+    const body = bodyAt(region.indexOf("=>", m.index));
+    let free = answers2xx(body);
+    if (!free && body.replace(/\s/g, "") === "{}") {
+      const branch = region.indexOf(`if request.path == "${m[2]}"`);
+      free = branch >= 0 && answers2xx(bodyAt(branch));
+    }
+    if (free) open.add(`${m[1]} ${m[2]}`);
+  }
+  return open;
+}
+
+test("the guide's endpoint table names exactly the routes the kernel answers without a token", () => {
+  // A reader deciding whether to open the add-on's 8799 host port needs the
+  // guide's table to say what that exposes. So every route src/api/mod.rs
+  // answers before the bearer check must have a row that says so, with each
+  // method; and no other row may claim to be token-free, or the doc would
+  // promise an open read the kernel gates. Today that is GET /health and
+  // GET/OPTIONS /api/fleet, the roll-call the Witness Wall reads. A new open
+  // route fails the pin below first: add its row, then the route here.
+  const free = tokenFreeRoutes(readFileSync(join(REPO, "src/api/mod.rs"), "utf8"));
+  assert.deepStrictEqual([...free].sort(), ["GET /api/fleet", "GET /health", "OPTIONS /api/fleet"],
+    "the routes mod.rs answers before the bearer check");
+  const methodsByPath = new Map();
+  for (const route of free) {
+    const [method, path] = route.split(" ");
+    methodsByPath.set(path, [...(methodsByPath.get(path) || []), method]);
+  }
 
   const table = doc.split("### Endpoints")[1].split("\n### ")[0];
   const rows = table.split("\n").filter((l) => l.startsWith("| `/"));
   assert.ok(rows.length >= 8, "the endpoint table is where it was");
   const byPath = new Map(rows.map((r) => [r.split("|")[1].trim().replace(/`/g, ""), r]));
+  const claimsOpen = /no token|unauthenticated|without (a|the) token/i;
 
-  const fleet = byPath.get("/api/fleet");
-  assert.ok(fleet, "the table has a /api/fleet row");
-  assert.match(fleet, /GET, OPTIONS/, "both methods the kernel answers");
-  assert.match(fleet, /no token/i, "the row says the roll-call needs no token");
-  const health = byPath.get("/health");
-  assert.ok(health && /unauthenticated/i.test(health), "the /health row still says unauthenticated");
+  for (const [path, methods] of methodsByPath) {
+    const row = byPath.get(path);
+    assert.ok(row, `the table has a ${path} row`);
+    const listed = row.split("|")[2].split(",").map((m) => m.trim());
+    for (const method of methods) assert.ok(listed.includes(method), `${path}: the row lists ${method}`);
+    assert.match(row, claimsOpen, `${path}: the row says it answers without a token`);
+  }
   for (const [path, row] of byPath) {
-    if (path === "/api/fleet" || path === "/health") continue;
-    assert.ok(!/no token|unauthenticated|without (a|the) token/i.test(row),
-      `${path}: only /health and /api/fleet are token-free in mod.rs`);
+    if (methodsByPath.has(path)) continue;
+    assert.ok(!claimsOpen.test(row), `${path}: mod.rs gates it behind the token, so the row may not say otherwise`);
   }
 });
 
