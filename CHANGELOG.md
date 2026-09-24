@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### The airtime governor charges what goes on the air, a chain-state write NVS refuses is retried, the WAP's settings sessions stop closing each other, the key-pinning steps name each product's source, and CI keeps one host-test list and fails a logic test's node or python3 read outside its path filter (#<D>)
+### The airtime governor charges what goes on the air, a chain-state write NVS refuses is retried, the WAP's settings sessions stop closing each other, the key-pinning steps name each product's source, and CI keeps one host-test list and fails a logic test's node or python3 read outside its path filter (#1725)
 
 - **The airtime governor charges what goes on the air: an ESP-NOW framing
   allowance for every caller, and one frame per peer a mesh broadcast
@@ -40,7 +40,7 @@
   composite action compiles a tests_host source inline, or when no
   pull-request workflow runs a Makefile whole. Host-tested locally: all five
   Makefiles pass, and a failing check in each moved suite turns `make` red.
-  CI runs the new steps on #<D>.
+  CI runs the new steps on #1725.
 - **Canary: a chain-state write NVS refuses is no longer forgotten (sweep
   F55).** `nvs_store_u32` / `nvs_store_bytes` returned true once their
   session opened, whatever the put wrote, and the chain persist advanced
@@ -55,7 +55,7 @@
   a failed write and retries a minute later; a boot count that did not land
   says so on Serial. Host-tested on the firmware's own code
   (`test_nvs_store_result.cpp`, `test_chain_persist.cpp`); compiled by CI's
-  canary envs on #<D>; not bench-tested. The identity key's store
+  canary envs on #1725; not bench-tested. The identity key's store
   (`nvs_store_key`), canary-wap's copies and the Wi-Fi settings save are
   unchanged and tracked separately (sweep F58, F59 and F61).
 - **canary-wap: NVS sessions are serialized across tasks (sweep F53).** Five

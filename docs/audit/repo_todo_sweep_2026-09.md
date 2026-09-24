@@ -80,8 +80,8 @@ Two smaller one-time human acts, same flavor:
   The trees drifted: after #1703, #1704 and #1718 the mirror sat 33 carried
   files behind (every refresh ran green and pushed nothing) until a hand
   resync in securacv-homeassistant#17 (2026-09-24). HA14 moved the carried
-  `custom_components/securacv` files again in #<D> (and F55 one carried
-  test), and their resync follows #<D>. Until the secret is set, every
+  `custom_components/securacv` files again in #1725 (and F55 one carried
+  test), and their resync follows #1725. Until the secret is set, every
   `main` change to the carried set needs that again.
 - [ ] **U7 [human] Open the staged home-assistant/brands submission.**
   `brands/home-assistant/README.md` says "not submitted"; it is the only route
@@ -604,7 +604,7 @@ so — see D2 below.)
   stage it for the sketch and add the lock. Compiled by the WAP PlatformIO
   and Arduino CLI legs. Found in the wave-7 reconcile; not traced to a live
   overlap.
-  *Done (#<D>):* traced, and more than one task holds a session: the loop,
+  *Done (#1725):* traced, and more than one task holds a session: the loop,
   the API httpd task, the NimBLE host task (a new bond's pairing record, BLE
   Wi-Fi provisioning), the Bluetooth bring-up task and the QR-scan task.
   F52's lock is ported: `nvs_session_depth.h` moved to
@@ -640,7 +640,7 @@ so — see D2 below.)
   retries, count the failure beside `chain_persists`, and have the Wi-Fi
   route answer an error when the save fails. The helpers are CI-compiled
   only; a pure retry rule could be host-tested. Found reconciling F52.
-  *Done (#<D>):* `nvs_store_u32` / `nvs_store_bytes` return true only when
+  *Done (#1725):* `nvs_store_u32` / `nvs_store_bytes` return true only when
   the put wrote the whole value, and `witness_persist_chain_state()` settles
   every write through `common/witness/chain_persist.h`: only a write that
   landed moves `seq_persisted` and counts in `chain_persists`; one that did
@@ -657,7 +657,7 @@ so — see D2 below.)
   (`test_nvs_store_result.cpp`, `test_chain_persist.cpp`: the helpers and
   the witness glue cut out verbatim; the old bodies fail 9 and 38
   assertions, a retry on every record 28); compiled by CI's canary envs on
-  #<D>; no bench pass. Still open: `nvs_store_key()` has the same unread put,
+  #1725; no bench pass. Still open: `nvs_store_key()` has the same unread put,
   but an honest result there halts provisioning (F58, maintainer to choose);
   canary-wap's own copies of these helpers and its `persist_chain_state()`
   carry the same defect (F59); the canary's other direct NVS put calls (64 in
@@ -1161,7 +1161,7 @@ so — see D2 below.)
   both sides); the device build is CI's (firmware.yml's WAP Arduino legs).
   Latent on shipped devices: the WAP's probe table is empty, so it
   broadcasts at 10 Hz, ~0.8 % by the governor's estimate. Still open: the
-  framing and the mesh's per-peer fan-out are F54's (#<D>); the 1.60 %
+  framing and the mesh's per-peer fan-out are F54's (#1725); the 1.60 %
   ceiling is also the Beacon's `airtime_saturated` trouble line
   (`beacon_channel.cpp`, > 160 x100), so the two move together or not at
   all; the 32-slot Beacon telemetry ring keeps the per-send shape (it gates
@@ -1178,7 +1178,7 @@ so — see D2 below.)
   64 B signature included, to every connected peer (`mesh_network.cpp`; only
   offline-imminent multiplies by the peer count). So the window under-reads
   every caller but the probe.
-  *Done (#<D>):* the governor adds a ~59 B ESP-NOW framing allowance to
+  *Done (#1725):* the governor adds a ~59 B ESP-NOW framing allowance to
   every frame itself (`ESPNOW_FRAME_OVERHEAD_BYTES` in
   `airtime_governor.h`). The allowance is conservative: Espressif documents
   43 B of fixed fields for an unencrypted frame, and every sender here is
@@ -1800,7 +1800,7 @@ so — see D2 below.)
   wave-7 mirror reconcile. The HACS store page
   (securacv-homeassistant#17) names only the options-flow path, and no key
   source, until this lands.
-  *Done (#<D>):* `docs/homeassistant_setup.md` Step 6,
+  *Done (#1725):* `docs/homeassistant_setup.md` Step 6,
   `docs/device_trust.md` and the options-flow text in `strings.json` /
   `translations/en.json` now say where each product's key can be read out of
   band, as read from source, in a new "Where each product shows its key"
@@ -1911,7 +1911,7 @@ so — see D2 below.)
   files #1703, #1704 and #1718 had moved. The same PR brought the store
   page's watch-actions, key-pinning, broker-TLS and Apple Home sentences,
   and a `lint_readme.py` overclaim check that reads a hard-wrapped claim as
-  one and refuses "encrypted by default". PR #<D> moves carried files
+  one and refuses "encrypted by default". PR #1725 moves carried files
   again, and their resync follows it (U6). Its health items are U6 and U7
   above, plus the three monorepo-fixture tests its CI deselects, which is
   by design. A few more tests skip themselves there because they read
@@ -2670,7 +2670,7 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   - Allowlist: the job's own outputs and tmp dirs.
 
   The same idea applies to ios-selfheal.yml's `#filePath` readers.
-  *Done (#<D>):* the logic-tests job's three test steps run with two read
+  *Done (#1725):* the logic-tests job's three test steps run with two read
   recorders armed (`scripts/path_filter_reads/`). A `--require` preload
   records the paths each node process opens to read, stats, lists, resolves
   or only checks for existence. A `sitecustomize` `sys.addaudithook` hook
@@ -2708,7 +2708,7 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   step. CI runs `make -C` for all five host-test Makefiles. Add
   `scripts/tests/test_host_test_lists.py` so the list cannot fork again
   (the same idea as the `MESH_TESTS` guard in that job).
-  *Done (#<D>):* the 19 are named rules in their Makefiles with the inline
+  *Done (#1725):* the 19 are named rules in their Makefiles with the inline
   steps' exact flags and per-rule `-Werror` (canary-wap 14, hooked in by
   prerequisite as `run-sketch-logic`; canary-display 5, as `run-io-cores`),
   and the 12 canary-wap and canary-display duplicate rules took `-Werror`
@@ -2731,7 +2731,7 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   Makefiles pass locally, and a failing check in each of the 19 moved suites
   turns `make` red.
 - [ ] **CI4 [decision] The path-filter read gate hears only
-  canary-local.yml's logic tests.** CI2 (#<D>) records what that job's three
+  canary-local.yml's logic tests.** CI2 (#1725) records what that job's three
   test steps read. The job's drift-step generators run unarmed: measured
   on CI2's branch, they read 194 paths outside the filter, 187 of them
   `gen_flash.py`'s (all but two under `firmware/canary/**`; the two are
