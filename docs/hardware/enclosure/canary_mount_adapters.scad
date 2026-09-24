@@ -20,7 +20,7 @@ use <canary_mount_lib.scad>  // the stud/keyhole standard this file carries arou
 /* [What to render] */
 part = "corner";     // ["corner","magnet","pole","template"]
 
-/* [T-stud interface] */
+/* [Stud/keyhole interface] — the adapter's T-studs */
 stud_gap = 30.0;     // stud spacing — match the target case's keyhole pockets
 kh_face  = 1.0;      // target pocket's face web — canary_mount_lib mount_kh_face()
 
@@ -59,9 +59,10 @@ echo(str("Canary mount adapters v0.1-dev — ", part, ", stud_gap ", stud_gap, "
 module tstud(yc, zbase) {
     translate([0, yc, zbase]) mount_tstud(stem = kh_face + 0.4);
 }
+cb_h = 2.2;                          // pan-head counterbore depth (a #8 pan head sits in it)
 module cb_screw(x, y, t) {           // through-hole + pan-head counterbore from the front
     translate([x, y, -0.1]) cylinder(d = screw_d, h = t + 3);
-    translate([x, y, t - 2.2]) cylinder(d = screw_d + 4.4, h = 3);
+    translate([x, y, t - cb_h]) cylinder(d = screw_d + 4.4, h = 3);
 }
 
 // 90° inside-corner wedge: two 45° wall wings, studs on the outward face
@@ -112,18 +113,27 @@ module magnet() {
     tstud(-stud_gap/2, mag_ap_t - 0.01);
 }
 
-// flat plate with strap channels across the back, studs on the front
+// flat plate with strap channels across the back, studs on the front.
+// Thicker than ap_t: the center screw's counterbore sits right over the strap
+// channel, and at 4.0 its floor (1.8) was below the channel roof (2.2) — the
+// Ø8.6 bore broke into the channel and the head fell through. The plate is
+// channel + a 1.2 seat floor + the counterbore, so the head bears on plastic.
+// The screw is a backup: it passes through the channel, so it is used with a
+// strap that straddles it (two zip ties) or instead of the strap
+pole_t = max(ap_t, strap_t + 1.2 + cb_h);         // 5.6 at the defaults
+assert(pole_t - cb_h - strap_t >= 1.0,
+       "pole plate: the center screw's counterbore breaks into the strap channel — raise ap_t");
 module pole() {
     difference() {
-        linear_extrude(ap_t) rrect2d(ap_w, ap_l, 5);
+        linear_extrude(pole_t) rrect2d(ap_w, ap_l, 5);
         // ONE strap channel, centered between the studs: at ±ap_l/4 the channels
         // ran directly under the stud heads and left 1.8 mm of floor in the load path
         translate([-ap_w/2 - 1, -strap_w/2, -0.1])
             cube([ap_w + 2, strap_w, strap_t + 0.1]);
-        cb_screw(0, 0, ap_t);        // optional center wall screw as backup
+        cb_screw(0, 0, pole_t);      // optional center wall screw as backup
     }
-    tstud( stud_gap/2, ap_t - 0.01);
-    tstud(-stud_gap/2, ap_t - 0.01);
+    tstud( stud_gap/2, pole_t - 0.01);
+    tstud(-stud_gap/2, pole_t - 0.01);
 }
 
 // 1 mm drill/hang template: hold to the wall, mark through the holes

@@ -72,6 +72,16 @@ fn config_string(value: Option<String>, default: &str) -> String {
     value.unwrap_or_else(|| default.to_string())
 }
 
+/// Where the viewer credential file lives when nothing names it: beside the
+/// capability token (`viewer_tokens.json` in `token_path`'s directory), the
+/// one place the operator already keeps a secret the kernel writes. No
+/// token path, no default — a kernel that persists no token has no secret
+/// directory to put a second one in.
+fn default_viewer_token_path(token_path: Option<&Path>) -> Option<PathBuf> {
+    let dir = token_path?.parent()?;
+    Some(dir.join(crate::api::VIEWER_TOKEN_FILE_NAME))
+}
+
 fn config_u32(value: Option<u32>, default: u32) -> u32 {
     value.unwrap_or(default)
 }
@@ -113,6 +123,7 @@ struct ApiConfigFile {
     token_path: Option<PathBuf>,
     rate_limit_per_minute: Option<u32>,
     fleet_peers_path: Option<PathBuf>,
+    viewer_token_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -258,6 +269,12 @@ pub struct WitnessdConfig {
     /// when set, `/api/fleet` lists the Canaries the bridge has heard. See
     /// [`crate::fleet_peers`].
     pub api_fleet_peers_path: Option<PathBuf>,
+    /// The viewer credential file (`crate::api::ViewerTokenSet`): bearer
+    /// tokens good for `GET /api/sealed-log` only, minted by
+    /// `witness_api mint-viewer-token`. Defaults to `viewer_tokens.json`
+    /// beside `api_token_path` when that is set; `None` keeps the route
+    /// capability-only.
+    pub api_viewer_token_path: Option<PathBuf>,
     /// Per-IP request cap for the event API (0 disables). See
     /// [`crate::api::DEFAULT_API_RATE_LIMIT_PER_MINUTE`].
     pub api_rate_limit_per_minute: u32,
@@ -289,6 +306,12 @@ pub struct WitnessApiConfig {
     /// when set, `/api/fleet` lists the Canaries the bridge has heard. See
     /// [`crate::fleet_peers`].
     pub api_fleet_peers_path: Option<PathBuf>,
+    /// The viewer credential file (`crate::api::ViewerTokenSet`): bearer
+    /// tokens good for `GET /api/sealed-log` only, minted by
+    /// `witness_api mint-viewer-token`. Defaults to `viewer_tokens.json`
+    /// beside `api_token_path` when that is set; `None` keeps the route
+    /// capability-only.
+    pub api_viewer_token_path: Option<PathBuf>,
     /// Per-IP request cap for the event API (0 disables). See
     /// [`crate::api::DEFAULT_API_RATE_LIMIT_PER_MINUTE`].
     pub api_rate_limit_per_minute: u32,
@@ -451,6 +474,10 @@ impl WitnessdConfig {
             .api
             .as_ref()
             .and_then(|api| api.fleet_peers_path.clone());
+        let api_viewer_token_path = file
+            .api
+            .as_ref()
+            .and_then(|api| api.viewer_token_path.clone());
         let api_token_path = file.api.and_then(|api| api.token_path);
         let ingest_config = file.ingest.unwrap_or_default();
         let ingest_backend = ingest_config
@@ -645,6 +672,7 @@ impl WitnessdConfig {
             api_addr,
             api_token_path,
             api_fleet_peers_path,
+            api_viewer_token_path,
             api_rate_limit_per_minute,
             ingest,
             rtsp,
@@ -677,6 +705,14 @@ impl WitnessdConfig {
             if !path.trim().is_empty() {
                 self.api_fleet_peers_path = Some(PathBuf::from(path));
             }
+        }
+        if let Ok(path) = std::env::var("WITNESS_API_VIEWER_TOKEN_PATH") {
+            if !path.trim().is_empty() {
+                self.api_viewer_token_path = Some(PathBuf::from(path));
+            }
+        }
+        if self.api_viewer_token_path.is_none() {
+            self.api_viewer_token_path = default_viewer_token_path(self.api_token_path.as_deref());
         }
         if let Ok(raw) = std::env::var("WITNESS_API_RATE_LIMIT_PER_MINUTE") {
             if !raw.trim().is_empty() {
@@ -1035,6 +1071,10 @@ impl WitnessApiConfig {
             .api
             .as_ref()
             .and_then(|api| api.fleet_peers_path.clone());
+        let api_viewer_token_path = file
+            .api
+            .as_ref()
+            .and_then(|api| api.viewer_token_path.clone());
         let api_token_path = file.api.and_then(|api| api.token_path);
         let sensitive_zones = file
             .zones
@@ -1051,6 +1091,7 @@ impl WitnessApiConfig {
             api_addr,
             api_token_path,
             api_fleet_peers_path,
+            api_viewer_token_path,
             api_rate_limit_per_minute,
             sensitive_zones,
             retention,
@@ -1072,6 +1113,14 @@ impl WitnessApiConfig {
             if !path.trim().is_empty() {
                 self.api_fleet_peers_path = Some(PathBuf::from(path));
             }
+        }
+        if let Ok(path) = std::env::var("WITNESS_API_VIEWER_TOKEN_PATH") {
+            if !path.trim().is_empty() {
+                self.api_viewer_token_path = Some(PathBuf::from(path));
+            }
+        }
+        if self.api_viewer_token_path.is_none() {
+            self.api_viewer_token_path = default_viewer_token_path(self.api_token_path.as_deref());
         }
         if let Ok(raw) = std::env::var("WITNESS_API_RATE_LIMIT_PER_MINUTE") {
             if !raw.trim().is_empty() {
@@ -1206,6 +1255,38 @@ mod tests {
                 count: 11,
             },
         );
+    }
+
+    #[test]
+    fn viewer_token_path_parses_in_both_api_blocks_and_defaults_beside_the_token() {
+        // deny_unknown_fields: the key must be accepted by BOTH binaries'
+        // api block, or a config naming it is a startup error.
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("config.json");
+        write_file(
+            &path,
+            r#"{"api":{"token_path":"/data/api_token","viewer_token_path":"/secrets/viewers.json"}}"#,
+        );
+        let file: WitnessApiConfigFile = read_config_file(&path).expect("witness_api config");
+        let config = WitnessApiConfig::from_file(file).expect("witness_api config should parse");
+        assert_eq!(
+            config.api_viewer_token_path,
+            Some(PathBuf::from("/secrets/viewers.json"))
+        );
+        let file: WitnessdConfigFile = read_config_file(&path).expect("witnessd config");
+        let config = WitnessdConfig::from_file(file).expect("witnessd config should parse");
+        assert_eq!(
+            config.api_viewer_token_path,
+            Some(PathBuf::from("/secrets/viewers.json"))
+        );
+
+        // Unnamed, it sits beside the capability token; no token path, no
+        // default (the route then stays capability-only).
+        assert_eq!(
+            default_viewer_token_path(Some(Path::new("/data/api_token"))),
+            Some(PathBuf::from("/data").join(crate::api::VIEWER_TOKEN_FILE_NAME))
+        );
+        assert_eq!(default_viewer_token_path(None), None);
     }
 
     #[test]

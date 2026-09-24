@@ -50,8 +50,10 @@ per-module change that follows.
 
 Today the shipping profiles are split across **two** toolchains:
 
-- `dev` / `release` / `minimal` / `standalone` build on `espressif32 @ ^7.0.0`, whose
-  `framework=arduino` package is still **Arduino 2.0.17 / IDF 4.4.7**
+- `dev` / `release` / `minimal` / `standalone` build on the official `espressif32@6.9.0`
+  (exact, `[platform_s3c3]` in [`envs/platformio/platforms.ini`](envs/platformio/platforms.ini);
+  a floating `^7.0.0` until 2026-09-22, [`PLATFORMS.md`](PLATFORMS.md)), whose
+  `framework=arduino` package is **Arduino 2.0.17 / IDF 4.4.7** — and so is 7.x's
   ([`canary/platformio.ini`](canary/platformio.ini), `[env]` `platform =`).
 - `[env:full]` pins the **pioarduino** fork `55.03.38-1` = **Arduino 3.3.8 / IDF 5.5.4**
   ([`canary/platformio.ini`](canary/platformio.ini) `[env:full]` block) because NimBLE 2.x
@@ -144,17 +146,54 @@ reconnect. This is a far better default than the current deep-sleep-and-cold-rec
 
 ### 1.5 Protect the key at rest and in hardware (the "crypto signing everything" lever)
 
-The product's spine is Ed25519-signed, hash-chained records. But the **device private key sits in
-plaintext NVS** ([`securacv_crypto.cpp:306`](canary/lib/securacv_crypto/src/securacv_crypto.cpp))
-with **no flash encryption, no NVS encryption, and no secure boot** in the default build
-([`canary/sdkconfig.defaults`](canary/sdkconfig.defaults)). Physical read of the flash → key
-extraction → the attacker can forge the entire chain. "Keys never leave the device"
-([`secure_defaults.h`](canary/include/secure_defaults.h) Principle 1) is enforced only against the
-*software* export path, not against at-rest confidentiality. The ESP32-S3 has the exact hardware
-to fix this and **none of it is used** (grep: zero `esp_ds_*` / `esp_hmac_*` / `esp_efuse_*` in
-`canary/`). See §3.7 for the staged plan (NVS encryption now → flash encryption + secure boot v2
-→ HMAC/DS-peripheral key wrapping). This is a P0/P1 split: NVS encryption is a quick P1 win; the
-plaintext key is a P0-severity exposure that the roadmap must not leave implicit.
+The product's spine is Ed25519-signed, hash-chained records. The **device identity key sits in
+plaintext NVS** ([`securacv_crypto.cpp:423`](canary/lib/securacv_crypto/src/securacv_crypto.cpp))
+with **no flash encryption and no secure boot** in the default build — and burning flash encryption
+would not change that: flash encryption does not cover NVS (below). Physical read of the flash →
+key extraction → the attacker can forge records *forward* from that point (not rewrite anchored
+history — [`SECURITY_MODEL.md`](../docs/security/SECURITY_MODEL.md)). "Keys never leave the
+device" ([`secure_defaults.h`](canary/include/secure_defaults.h) Principle 1) is enforced only
+against the *software* export path, not against at-rest confidentiality.
+
+**(decided)** This is the accepted **Tier-0 default**, not an open exposure:
+[`hardware_root_of_trust.md`](../docs/design/hardware_root_of_trust.md) §5.1 defines Tier 0 as
+"Ed25519 identity in NVS" and decisions §8 #1/#3/#4 keep the default Canary at Tiers 0–2 (no eFuse
+ever burned, un-brickable), with flash encryption opt-in at Tier 3 (dev mode) / Tier 4 (release).
+What landed instead of a default-build gate:
+
+- **flash encryption does not cover NVS.** With it on, ESP-IDF encrypts only the app, otadata and
+  `nvs_keys` partitions; this tree's tables leave `nvs` unflagged, so it is still written in
+  plaintext, and flagging it `encrypted` does not help — plain NVS then refuses to open it
+  (`ESP_ERR_NVS_WRONG_ENCRYPTION`; IDF v4.4 `nvs_partition_lookup.cpp`). That is what
+  `provisioning/partitions_secure.csv` did until F42, so the kit's `[env:secure]` image could not
+  have opened NVS on a fused board; the flag is gone now (ESP-IDF's flash-encryption guide: the
+  `nvs` partition cannot be encrypted). The key is ciphertext at rest only under
+  **NVS encryption** on top of flash encryption;
+- the policy is written down once, host-tested, in
+  [`common/identity/key_at_rest.h`](common/identity/key_at_rest.h): the tier is `plaintext-nvs`
+  unless flash encryption AND NVS encryption are both active; the default never refuses; an image
+  built with `SECURACV_REQUIRE_FLASH_ENCRYPTION=1` (a Tier-3+ image) refuses to store **and** to
+  load the key unless its NVS is actually encrypted, so it fails closed at provisioning — under
+  `framework = arduino` that is **every** board, fused or not, by design. The provisioning kit's
+  `[env:secure]` sets the flag; since F42 it extends the canary `[env]` flags (it had replaced
+  them, losing the shared `-I` paths) and `firmware.yml` compiles it and `secure_ha`
+  (compile-only, no bench pass). Bench row K1 builds the opt-in as a normal canary env with
+  `PLATFORMIO_BUILD_FLAGS=-DSECURACV_REQUIRE_FLASH_ENCRYPTION=1`;
+- the posture is **self-reported** live as `key_at_rest` (`plaintext-nvs` | `nvs-encrypted` |
+  `nvs-encrypted+secure-boot`) in `/api/status`, the health export, the `f` console card and the
+  `j` self-manifest, with one `[WARN] Key at rest` boot line — `plaintext-nvs` on every PIO canary
+  image today, because the NVS-encryption fact is false in this build;
+- the "NVS encryption now" quick win this section used to promise is **not achievable in the PIO
+  canary tree**: `framework = arduino` ships a precompiled core + bootloader, so
+  `CONFIG_NVS_ENCRYPTION` / `CONFIG_SECURE_FLASH_ENC_ENABLED` in any `sdkconfig.defaults` are inert
+  here (the 2.0.17 core's own sdkconfig leaves `CONFIG_SECURE_FLASH_ENC_ENABLED` unset, and NVS
+  encryption depends on it; only the ESP-IDF project `canary-ota` has NVS encryption on). It needs
+  the arduino-as-IDF-component migration (item 9) and is then a Tier-3 concern — and the point
+  where `key_at_rest.h`'s NVS-encryption fact learns to read true.
+
+The ESP32-S3's DS/HMAC peripherals remain unused by design (§8 #4: Ed25519 under FE/NVS
+encryption is the default; a DS-bound RSA key only where non-extractability is required) — see
+§3.7 and item 18.
 
 ---
 
@@ -359,6 +398,20 @@ Untapped / issues:
   legacy fallback macro was deleted from [`canary_config.h`](canary/include/canary_config.h) and
   `begin()` now requires an explicit credential.)
   The IDF OTA sub-project already sets `pmf_cfg`; the main firmware doesn't. **[P1, unblocked by §1.1]**
+  *Update 2026-09 (F16, option (b) — maintainer to confirm):* landed with a caveat. Both trees now
+  ask for WPA2/WPA3 **transition** on the SoftAP (SAE for capable clients, WPA2 for the rest), PMF
+  capable and never required, after every `WiFi.softAP()`
+  ([`common/network/ap_security_policy.h`](common/network/ap_security_policy.h), host-tested;
+  the WAP carries a byte-identical staged copy), and the STA asks for PMF capable / not required
+  (read back first, written only when needed; always capable on IDF 5). `CANARY_AP_WPA3_TRANSITION`
+  (default 1) is the knob. **Caveat:** SoftAP SAE exists only where the core's prebuilt sdkconfig
+  enables it — an IDF 5 feature, so on the 2.0.17 core (dev/release) the AP stays WPA2 and says
+  so (`ap_auth` / `ap_auth_reason` in `/api/wifi/status`, `ap_auth` in `/api/status`); the row
+  closes for those builds with §1.1. CI-compiled (#1704), no bench pass. Not in this change: widening the 8-char
+  AP password (below) — it is re-derived from the fingerprint every boot, so a new derivation
+  changes every provisioned device's Wi-Fi password after an OTA and needs a derivation-version
+  marker first. The `"witness2026"` tripwire in `regression_check.sh` (CI's "Regression Guards"
+  job) matches no source today; it stays as the ratchet.
 - **De-block the loop** — async `WiFi.scanNetworks(true,…)`, throttle/offload `MDNS.queryService`,
   move MQTT to its own task (subsumed by §1.2). **[P1]**
 - **[future] FTM ranging** (`esp_wifi_ftm_*`, S3 initiator/responder) → inter-Canary distance to
@@ -423,15 +476,35 @@ OTA with PENDING_VERIFY self-test + rollback, HTTPS+cert-bundle manifest pull, s
 anti-rollback floor.
 
 Beyond §1.5:
-- **Weak first-boot entropy.** `esp_fill_random` is called during provisioning early in `setup()`
-  before RF is up, with no `bootloader_random_enable()` and no entropy self-check
-  ([`securacv_crypto.cpp:136`](canary/lib/securacv_crypto/src/securacv_crypto.cpp)) — risk of
-  predictable keys on fresh units. Seed hardware entropy before keygen, gate provisioning on a
-  check. **[P1]**
-- **Chain-head persistence is non-atomic** — `seq` then `chain_head` as two separate NVS writes
-  ([`securacv_witness.cpp:227`](canary/lib/securacv_witness/src/securacv_witness.cpp)); a power cut
-  between them leaves them inconsistent (recoverable via SD-wins **only if a card is present**).
-  Persist as one blob in one commit (or double-buffer with a generation counter). **[P1]**
+- **(fixed) Weak first-boot entropy.** `esp_fill_random` is called during provisioning early in
+  `setup()` before RF is up; the identity draw is now wrapped in `bootloader_random_enable()` /
+  `bootloader_random_disable()` ([`securacv_crypto.cpp:206`](canary/lib/securacv_crypto/src/securacv_crypto.cpp)),
+  the same pattern PR #994 gave canary-sense, canary-vision and canary-wap, and
+  `regression_check.sh` ("first-boot keygen is entropy-seeded") fails any tree that loses it.
+  The two later draws — the BLE scout key (`ble_scout_key_init`, from `ble_scout_init` inside
+  `securacv_csi_modules_init()`) and the mesh pairing ephemeral key (`mesh_pairing`) — run after
+  `mesh_transport::start()` brings the radio up, so they are RF-seeded and deliberately stay
+  bare: `bootloader_random_enable()` must never run while RF is up. The same IDF rule covers the
+  ADC (the entropy source *is* the SAR ADC; the pair must run before the ADC is initialized, and on
+  the S3 `bootloader_random_disable()` powers it down and resets its digital part), and here
+  `FEATURE_POWER_MONITOR`'s `power_start()` has already opened the battery ADC earlier in
+  `setup()` — so whether the battery reading survives a first-boot keygen is an open bench check
+  (K1's fresh-unit step), not proven. No entropy self-check (still open under item 18).
+  **[P1 → done; ADC interaction bench-gated]**
+- **(fixed) Chain-head persistence is non-atomic** — `seq` then `chain_head` were two separate
+  NVS writes; a power cut between them left them inconsistent (recoverable via SD-wins **only if a
+  card is present**). Now one 39-byte `{version, seq, head, CRC-16}` blob under `chain_st`
+  ([`common/witness/chain_state.h`](common/witness/chain_state.h), host-tested;
+  [`securacv_witness.cpp:154`](canary/lib/securacv_witness/src/securacv_witness.cpp) is the single
+  writer — the `/api/reboot` handler's own copy of the two-write pair is gone too), which NVS
+  commits atomically. Boot reads blob → legacy pair (read-only, never deleted, so a downgrade still
+  boots) → genesis. The legacy pair goes stale after the first blob write, so an older image after
+  a downgrade resumes from an old head and forks the chain there — SD-wins covers that only when a
+  card is present. On the **re-upgrade**, a legacy seq *ahead of* the blob's can only mean that
+  older image ran since the last blob write, so boot resumes from its pair (and says so) instead of
+  re-signing its seqs on a second branch (`chain_state::choose()`, host-tested). Not carried to the
+  canary-wap sketch (its three write sites and the staged-copy sync gate are a follow-up).
+  **[P1 → done in the PIO canary tree]**
 - **No device-side rollback detection** — without secure boot / an eFuse or RTC monotonic anchor,
   an attacker who rewrites NVS can rewind `seq`/`chain_head`; the device re-signs the fork with its
   own key and only an external verifier holding an earlier copy notices. Anchor a monotonic counter
@@ -456,11 +529,28 @@ Genuinely solid. Gaps:
 
 - **No TLS anywhere** (no `esp_https_server`/`httpd_ssl`) — all REST + the MJPEG peek stream are
   plaintext on the LAN; a self-signed pinned cert (as the archived WAP snapshot had) closes it. **[P1]**
+  *Update 2026-09 (F15, option (b) — maintainer to confirm):* landed for `[env:dev]` and
+  `[env:full]` — `httpd_ssl` on 443 with an on-device ECDSA P-256 self-signed certificate (the
+  WAP's CN / validity / serial / NVS layout), a port-80 server that keeps the connectivity probes
+  and 307-redirects the rest, TLS skipped during first-boot setup, the MJPEG stream run in the
+  handler over TLS, and `tls_enabled` / `tls_cert_fp` / `tls_mode_reason` in `/api/status` and
+  the receipt. Every core capability is detected (`__has_include` + Kconfig + mbedTLS config), so
+  a core without it compiles HTTP-only and says why. **Release pending** the size-guard delta;
+  **bench Track D open**. Fallback if the IDF 4.4 core lacks x509write: option (c), the
+  certificate provisioned by the flashers' NVS builders.
 - **Auth coverage is good — the MJPEG stream *is* gated.** `handle_peek_stream` calls `auth_gate`
   first ([`securacv_network.cpp:1700`](canary/lib/securacv_network/src/securacv_network.cpp)), so the
   peek stream is **not** an open privacy hole. The main intentionally-ungated handler is `handle_ui`
   (it serves the SPA and carries the token). Worth a periodic sweep that no *new* handler is added
   without `auth_gate`, but there is no open endpoint today. **[P2 — hygiene]**
+  *Update 2026-09 (F20 gap #11, option D — maintainer to confirm):* the sweep is now a CI gate —
+  [`canary/scripts/check_route_security.py`](canary/scripts/check_route_security.py) fails any
+  route that reaches no credential gate and is not on its documented public allowlist. And
+  `handle_ui` / `/setup` no longer hand the token to every caller: it is injected only for
+  first-boot setup, a bearer-authenticated request, a SoftAP-subnet peer, or by spending a BOOT
+  tap (one tap = one page load or one receipt fetch, 30 s;
+  [`common/network/provisioning_gate.h`](common/network/provisioning_gate.h), host-tested); a
+  home-LAN load gets the page without it. CI-compiled (#1704), no bench pass.
 - **AP password is exactly 8 chars** (`"cv-"` + 5), the WPA2 floor — ~28.7 bits of entropy. Widen
   to 10–12 chars from the same fingerprint for headroom. **[P2]**
 - **Untapped UX:** Improv-WiFi / WebUSB provisioning, SSE/WebSocket event streams instead of poll,
@@ -514,7 +604,8 @@ confirmed against a real CI build log before anyone acts loudly on them:
   (they'd need the pioarduino custom-sdkconfig path, which is another reason to do §1.1 first).
   **Check a verbose build for whether the file is consumed.**
 - **Confirm the two ungated HTTP handlers** (`handle_ui`, `/api/peek/stream`) before shipping —
-  §3.8 item 2.
+  §3.8 item 2. (2026-09: the stream is `auth_gate`d and `handle_ui` withholds the token off-AP;
+  both are now pinned by `canary/scripts/check_route_security.py`.)
 - **SD 20 MHz** is reliable on the reference wiring; validate on hardware with the specific card
   mix before raising the default, keeping the slow-init fallback ladder.
 - Everything tagged **[unblocked by §1.1]** presumes the core-3.x migration; on the legacy 2.0.17
@@ -533,7 +624,7 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 5 | (fixed) SD glitch disabled logging until reboot — bounded mount worker + periodic remount | **P0** | Storage | `securacv_storage.cpp` | Durable logging survives transient faults |
 | 6 | CSI dies under modem-sleep; probe unwired | **P0** | WiFi/CSI | `power_policy.cpp:73` | Reliable CSI on battery + lone devices |
 | 7 | (fixed) Camera init/deinit raced peek task — lifecycle mutex in CameraManager | **P0** | Camera | `securacv_camera.cpp` | Removes a crash vector |
-| 8 | Plaintext private key in NVS | **P0→P1** | Crypto | `securacv_crypto.cpp:306` | NVS-enc now; flash-enc+secure-boot next |
+| 8 | (decided) Plaintext identity key at Tier 0 is the accepted default (`hardware_root_of_trust.md` §8 #1/#3/#4); fail-closed via `SECURACV_REQUIRE_FLASH_ENCRYPTION` on Tier-3+ images (refuses unless NVS is encrypted — flash encryption alone does not cover NVS, so every board under `framework = arduino`); posture self-reported (`key_at_rest`, `plaintext-nvs` everywhere today) | **P0→P1** | Crypto | `securacv_crypto.cpp:423` | Posture stated, not assumed; at-rest encryption needs NVS encryption (item 9), FE dev-mode (Tier 3) → FE+SB (Tier 4) stay opt-in |
 | 9 | Unify on core-3.x / IDF-5.x toolchain | **P1** | Build | `platformio.ini` | Unblocks §3.2–3.4, §1.4, WPA3, new drivers |
 | 10 | Dual-core task model (sensing + durability) | **P1** | Core | `main.cpp:1480` | Bounded loop latency, no WDT thrash |
 | 11 | One 8 MB partition table + `witness_log` | **P1** | Flash | `partitions_ota.csv` | Ends the table matrix; card-independent durability |
@@ -543,11 +634,11 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 15 | Pin WiFi PHY (protocol/BW/country) + TX power | **P1** | WiFi/CSI | `securacv_network.cpp` | Stable CSI vector, correct regulatory/range |
 | 16 | Fast reconnect (cached BSSID/channel/IP) | **P1** | WiFi | `securacv_network.cpp:405` | <300 ms reconnect, no CSI-disrupting sweep |
 | 17 | (fixed) MQTT: socket timeout + offline queue + TLS all landed | **P1** | MQTT | `common/mqtt/mqtt_offline_queue.h` | Outages delay events instead of dropping them; encrypted transport |
-| 18 | HW key protection (HMAC/DS peripheral) + entropy seed + atomic chain head | **P1** | Crypto | `securacv_crypto.cpp:136` | Real at-rest + anti-forgery guarantees |
+| 18 | HW key protection (HMAC/DS peripheral) + entropy seed (fixed) + atomic chain head (fixed, PIO canary tree) — OPEN: (c) DS/HMAC-bound key and (d) an eFuse/RTC rollback anchor; both need the IDF-component toolchain (item 9) plus a bench, the DS route is RSA-only and reserved per `hardware_root_of_trust.md` §5.4 / §8 #4, and `key_at_rest.h` already reserves the `hw-bound` label for it | **P1** | Crypto | `securacv_crypto.cpp:206` | Real at-rest + anti-forgery guarantees |
 | 19 | Migrate audio→`i2s_pdm`, IR→`rmt_rx` | **P1** | Audio/IR | `securacv_audio.cpp:56` | Forward-compat; built-in HPF/callbacks |
 | 20 | esp-dsp / esp-nn for audio DSP + TFLite | **P1** | Audio/Vision | `securacv_audio.cpp:339` | Several-fold DSP; ~500→~60 ms Invoke |
-| 21 | WPA3/PMF + per-device AP password | **P1** | WiFi | `canary_config.h:276` | Closes plaintext-AP + shared-secret exposure |
-| 22 | TLS on the HTTP/peek surface | **P1** | Web | `securacv_network.cpp` | Encrypted LAN API + stream |
+| 21 | WPA3/PMF + per-device AP password (password: done; WPA2/WPA3 transition + PMF landed 2026-09, #1704 — CI-compiled, no bench pass; WPA2 until a device on the 2.0.17 core reports SoftAP SAE, see §3.4) | **P1** | WiFi | `canary_config.h:276` | Closes plaintext-AP + shared-secret exposure |
+| 22 | TLS on the HTTP/peek surface (landed dev/full 2026-09, #1704 — CI-compiled; release pending size; bench Track D open) | **P1** | Web | `securacv_network.cpp` | Encrypted LAN API + stream |
 | 23 | Camera SCCB standby + XCLK gating/tuning | **P1** | Camera | `securacv_camera.cpp:111` | Lower idle draw + self-heat; OV5640 headroom |
 | 24 | OV5640/OV3660 tuning parity + PID map fix | **P1** | Camera | `securacv_camera.cpp:392` | Correct image on shipped sensors |
 | 25 | Graceful sleep teardown + `gpio_hold` + PSRAM down | **P1** | Power | `securacv_lowpower.cpp:213` | µA deep-sleep floor; no SD corruption |

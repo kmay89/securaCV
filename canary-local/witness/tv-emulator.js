@@ -413,7 +413,7 @@ if (tv && stage) {
   function appearDevice(dev, label) {
     if (!liveFleet) { liveFleet = homeTiles.map((t) => ({ name: t.n, online: true })); if (!liveHost) liveHost = 'your fleet'; setLive(true, liveHost); }
     if (liveFleet.some((d) => d.name === dev.name)) { showToast(dev.name + ' is already in the fleet'); return; }
-    liveFleet.push({ name: dev.name, online: dev.online !== false });
+    liveFleet.push({ name: dev.name, online: dev.online === true });
     justAppeared = dev.name;
     // Jump to the home wall for the "it appeared!" moment — unless a host
     // pinned the edition to its use case; then the pinned view updates in place.
@@ -433,7 +433,9 @@ if (tv && stage) {
   function applyFleet(data, highlight) {
     const devs = Array.isArray(data) ? data : ((data && (data.devices || data.canaries || data.fleet)) || []);
     if (!devs.length) return;
-    liveFleet = devs.map((x) => ({ name: String(x.name || x.id || x.hostname || 'Canary').slice(0, 40), online: x.online !== false }));
+    // Only `name` is required; a silent `online` is NOT a presence claim (securaCV
+    // tvos/discovery/DISCOVERY.md, fleet_contract_vectors.json) — the tile reads offline.
+    liveFleet = devs.map((x) => ({ name: String(x.name || x.id || x.hostname || 'Canary').slice(0, 40), online: x.online === true }));
     liveHost = 'your LAN';
     setLive(true, liveHost);
     if (highlight) justAppeared = String(highlight).slice(0, 40);
@@ -487,7 +489,8 @@ if (tv && stage) {
       const data = await res.json();
       const devices = Array.isArray(data) ? data : (data.devices || data.canaries || data.fleet || []);
       if (!devices.length) throw new Error('kernel returned no devices');
-      liveFleet = devices.map((d) => ({ name: d.name || d.id || d.hostname || 'Canary', online: d.online !== false }));
+      // Same contract as tv/app.js parseFleet: a silent `online` is not presence.
+      liveFleet = devices.map((d) => ({ name: d.name || d.id || d.hostname || 'Canary', online: d.online === true }));
       liveHost = shown; setLive(true, shown); render(); renderDevices(); showJson(data);
       setStatus('Connected — ' + liveFleet.length + ' Canaries from ' + shown + '. They drive the fleet above now.', 'ok');
       lastNames = liveFleet.map((d) => d.name); startPoll(url);
@@ -505,12 +508,14 @@ if (tv && stage) {
 
   // ---------- auto-detection: live-watch the well-known addresses ----------
   // The same list every SecuraCV surface probes, in the same order (the tvOS
-  // Wall, the desktop Flasher, the Lab's witness host): the hub/kernel
-  // convention first, then the bare device — a fresh Canary answers
-  // /api/fleet at http://canary.local (port 80, no hub needed), which is the
-  // address the getting-started docs put in front of people. The real Wall
-  // (tv/app.js) probes the identical list; tests/tv-wall.test.mjs pins the two.
-  const WELL_KNOWN = ['http://canary.local:8099', 'http://canary.local'];
+  // Wall, the desktop Flasher, the Lab's witness host): the hub convention
+  // port first, then the kernel's own API port (8799 — the Home Assistant
+  // add-on and the Docker sidecar), then the bare device — a fresh Canary
+  // answers /api/fleet at http://canary.local (port 80, no hub needed), which
+  // is the address the getting-started docs put in front of people. The real
+  // Wall (tv/app.js) probes the identical list; tests/tv-wall.test.mjs pins
+  // the two.
+  const WELL_KNOWN = ['http://canary.local:8099', 'http://canary.local:8799', 'http://canary.local'];
   // An https page can never fetch an http LAN device (mixed content), so
   // probing from the public site would only fail forever; the loop runs where
   // it can actually work — served from the hub, over http, or in an app shell.

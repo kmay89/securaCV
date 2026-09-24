@@ -180,16 +180,36 @@ sensitive, so here is the complete list:
     from this computer; to revoke access on the hub side, remove the matching
     line from the hub's `authorized_keys` (or reflash the card).
   - `launch.log` / `launch-state.json` — the launch journal (no secrets).
-- **Saved passwords and device tokens** live in the OS credential store, not
-  in a file: on macOS open **Keychain Access** and delete the entries whose
-  service is **"SecuraCV Flasher"** (saved Wi-Fi/broker passwords and
-  per-Canary API tokens). They survive an app reinstall by design.
-- **Webview data** (window preferences, no secrets):
+- **Saved passwords and device tokens** live in the OS credential store,
+  not in a file, whenever your platform offers one (a Linux session without
+  a Secret Service is the exception — see below): on macOS open **Keychain
+  Access** and delete the entries whose service is **"SecuraCV Flasher"**
+  (saved Wi-Fi/broker passwords and per-Canary API tokens). They survive an
+  app reinstall by design.
+  - Linux: the store is your desktop's keyring, reached through the
+    freedesktop Secret Service — GNOME Keyring (open **Passwords and Keys**,
+    also called Seahorse) or KDE Wallet (**KWalletManager**). Delete the
+    entries whose service is **"SecuraCV Flasher"**. If the keyring is
+    locked, saving a password makes it ask to be unlocked first — and so
+    does the launch that moves locally kept passwords into it (below).
+  - A Linux session with **no** Secret Service (a minimal window manager, a
+    headless box, a keyring daemon that isn't running) has no OS store to
+    offer. The app checks at launch and, when nothing answers, keeps the
+    passwords you choose to remember (and each flashed Canary's API token)
+    in its own local settings instead — the WebKit storage under
+    `~/.local/share/com.securacv.flasher/` — and the "Remember" note beside
+    the checkbox says so rather than naming a keyring. Once a keyring
+    answers on a later launch, the app moves those saved secrets into it
+    and removes the local copies.
+- **Webview data** (window preferences; no secrets, except as below):
   - macOS: `~/Library/WebKit/com.securacv.flasher`,
     `~/Library/Caches/com.securacv.flasher`,
     `~/Library/HTTPStorages/com.securacv.flasher`
   - Linux: inside the app data folder above, plus
-    `~/.cache/com.securacv.flasher`
+    `~/.cache/com.securacv.flasher`. On a Linux session with no Secret
+    Service, this storage also holds the passwords you chose to remember
+    and the Canaries' API tokens (see "Saved passwords" above) — deleting
+    it removes them.
 - **Linux udev rules**, only if you added them by hand for the AppImage:
   `/etc/udev/rules.d/60-rpiboot.rules` and
   `/etc/udev/rules.d/61-securacv-canary.rules`. (The `.deb`'s copies under

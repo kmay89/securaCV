@@ -31,6 +31,38 @@ on:
       # change would sail through with only the Ubuntu (JavaScript) side run,
       # which is exactly the drift the fixture exists to prevent.
       - "viewer/fixtures/timeline/**"
+      # Same shape: the sealed-snapshot parity fixture is asserted by
+      # SnapshotVaultTests against ios/Sources/SecuraCV/Security/
+      # SnapshotVault.swift and is generated from the python reference
+      # (tools/gen_svlt_parity.py), so a regeneration must compile Swift.
+      - "tools/fixtures/vault/**"
+      # And every other file an XCTest reads off disk by #filePath, outside
+      # ios/: each is a belt holding a Swift mirror to its source, so an edit
+      # to the source alone changes what Swift is held to while touching
+      # nothing here. WitnessPageFixtureTests decodes the witness page fixture
+      # the firmware host test also reads; EventVocabularyTests holds the
+      # event enum to the dictionary, to const.py and to each WAP module's
+      # type_name (SenseModalityTests reads const.py too); ChirpAdvertTests
+      # holds the BLE chirp decoder to the firmware's layout; WapEventsTests
+      # holds the events-today reply and the radio-silent thresholds to the
+      # WAP's handler and dashboard. (canary-local/devices/ecosystem.json is
+      # left out: ecosystem.test.js already pins EcosystemMap.swift to it on
+      # every change, without a macOS runner.)
+      - "spec/fixtures/witness_page_v1.json"
+      - "spec/witness_dictionary.json"
+      - "custom_components/securacv/const.py"
+      - "firmware/projects/canary-wap/arduino/canary_wap/ble_chirp.h"
+      - "firmware/projects/canary-wap/arduino/canary_wap/ble_config.h"
+      - "firmware/projects/canary-wap/arduino/canary_wap/acoustic_events_module.cpp"
+      - "firmware/projects/canary-wap/arduino/canary_wap/vault_events_module.cpp"
+      - "firmware/projects/canary-wap/arduino/canary_wap/tamper_events_module.cpp"
+      - "firmware/projects/canary-wap/arduino/canary_wap/core_presence.cpp"
+      - "firmware/projects/canary-wap/arduino/canary_wap/core_breathing.cpp"
+      - "firmware/projects/canary-wap/arduino/canary_wap/anomaly_baseline.cpp"
+      - "firmware/projects/canary-wap/arduino/canary_wap/meta_daily_summary.cpp"
+      - "firmware/projects/canary-wap/arduino/canary_wap/core_activity_ribbon.cpp"
+      - "firmware/projects/canary-wap/arduino/canary_wap/csi_integration.cpp"
+      - "firmware/projects/canary-wap/arduino/canary_wap/csi_dashboard_html.h"
       - ".github/workflows/ios-selfheal.yml"
   # And main's post-lint compiler. The linters that gate iOS sources
   # (lint_apple_parity.py, lint_apple_plists.py, lint_cloudkit_container.py,

@@ -44,9 +44,14 @@ Rust-first.
 | Self-update | `tauri-plugin-updater` | checks GitHub releases, one-click update |
 | Catalog | `canary-local/devices/flash.json` | embedded fresh every build by `build.rs` (via `OUT_DIR`) — no committed copy to drift; the chip guard works offline |
 
-The command registration lives in `src-tauri/src/lib.rs`. Release verification,
-NVS provisioning, the serial monitor/receipt parser, and the WE2 engine are
-split into `release.rs`, `provisioning.rs`, `serial_monitor.rs`, and `we2.rs`.
+The command registration lives in `src-tauri/src/lib.rs`. The ESP32 flash
+path itself — the catalog guards, release verification, NVS provisioning, the
+change map and intake checks, the espflash invocation, the flash pipeline and
+the serial monitor/receipt parser — lives in the tauri-free
+[`flash-engine`](flash-engine/) crate, which the Lab's native flash path
+shares and PR CI tests on its own (`desktop-hub-core.yml`); this app keeps the
+Tauri commands over it and the tracked sidecar spawn (`src-tauri/src/host.rs`).
+The WE2 engine is `src-tauri/src/we2.rs`.
 
 For `usb-secrets` images, Wi-Fi and MQTT values are patched into the ESP32 NVS
 partition only after the untouched release image verifies. The broker block
@@ -89,7 +94,9 @@ matching tag:
 git tag flasher-v0.1.0 && git push origin flasher-v0.1.0
 ```
 
-The workflow downloads the espflash sidecars, builds a **universal** macOS
+The workflow downloads the espflash sidecars — the version and per-target
+sha256s pinned in [`.github/espflash-pins.env`](../.github/espflash-pins.env),
+the one file the Lab's release reads too — builds a **universal** macOS
 `.dmg` plus Linux `.AppImage`/`.deb`, and publishes a GitHub release with the
 `latest.json` self-update manifest. You can also run it from the Actions tab
 (**Run workflow**) for a smoke build.

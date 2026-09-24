@@ -138,6 +138,15 @@ jobs:
               echo "Firmware release version: $VERSION" ;;
           esac
 
+      - name: Security/privacy regression guard (--strict)
+        # The release bar from ENTERPRISE_READINESS_TODO.md §7: zero
+        # Security/Privacy warnings. PR CI (firmware.yml "Regression
+        # Guards") runs the same script in advisory mode; only a release
+        # refuses on them. Accepted exceptions are the script's reviewed
+        # allowlists (PLAINTEXT_OK, DISCLOSED_OUTBOUND), which fail here when
+        # an entry goes stale. Fails before anything is built or signed.
+        run: bash firmware/scripts/regression_check.sh --strict
+
       - name: Set up Python + build and signing tools (PlatformIO, cached)
         # The shared composite action installs the interpreter, restores the
         # PlatformIO cache and runs ONE pip install (CI.md R10). The pins stay
@@ -146,8 +155,10 @@ jobs:
         # to the flash engine — so every version is exact. Bump deliberately;
         # Dependabot does not watch these lines.
         #   cryptography — ota_release.py signing
-        #   intelhex     — esptool 4.11 (official espressif32 7.x platform)
-        #                  imports it without declaring it, as in firmware.yml
+        #   intelhex     — leftover from canary's floating espressif32 ^7.x
+        #                  days (its esptool 4.11 imports it without declaring
+        #                  it); canary pins 6.9.0 exactly since 2026-09-22
+        #                  (firmware/PLATFORMS.md). Harmless, as in firmware.yml
         #   esptool      — the browser-flasher factory images (make_factory.py);
         #                  stays <5 so the `merge_bin` subcommand name is stable
         uses: ./.github/actions/setup-platformio

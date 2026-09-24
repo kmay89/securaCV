@@ -46,7 +46,7 @@
     `initialism`, `aria-labelledby`. The linter's `ALLOW` list asserts it.
   - See [`AGENTS.md`](AGENTS.md) rule 3b, the canonical statement.
 
-## Generated files — there are TWENTY-NINE, not a handful
+## Generated files — THIRTY-ODD, not a handful (derive the count, never type it)
 
 Committed generators whose output CI regenerates and byte-diffs. Editing a
 source without re-running the right one leaves a gate to find it, and the
@@ -82,9 +82,13 @@ Content-Security-Policy, from one policy table) hashes the firmware's captive
 page as `wap.html` embeds it, and it reads that page from
 `canary-local/devices/wap.json`. So a change to the captive-portal HTML is
 `gen_wap.py` **then** `gen_csp.py`; running only the first leaves
-`gen_csp.py --check` red with a message that names the second.
+`gen_csp.py --check` red with a message that names the second. The display's
+first-boot portal is the same pair: `fleet.html` frames
+`firmware/projects/canary-display/src/net/provision.cpp`'s `PORTAL_HTML`, so a
+change to it is `gen_display_portal.py` **then** `gen_csp.py` — and, since the
+emulator compiles `provision.cpp`, a dist rebuild too.
 
-**The recipe above does not find the thirtieth, and it can't:** the WASM
+**The recipe above misses one more, and it can't find it:** the WASM
 emulator's `canary-local/emulator/dist/*.js` is generated and committed like
 the rest, but its generator is a compiler and its *inputs are firmware
 sources*. There is no `gen_*.py` or `make-*.mjs` to grep for. So an ordinary
@@ -109,6 +113,10 @@ the LVGL faces and `care/`/`fleet/`/`trust`, **not** the `net/` layer:
   `WIFI_OUTAGE_REBOOT_MS` constants in `canary-display/include/canary/config.h`,
   which `emu_net.cpp` feeds to the policy. Rule of thumb: everything under
   `canary-local/emulator/src/` and `shim/` is dist by definition.
+- editing `src/net/provision.cpp` or `common/network/provision_core.h` →
+  `dist/` **changes**, for every display flavor: the first-boot SoftAP +
+  captive portal compiles verbatim (the page's phone walks it). A
+  `PORTAL_HTML` edit also moves `gen_display_portal.py` → `gen_csp.py`.
 - **bumping the firmware VERSION → `dist/` changes**, for every flavor, even
   if you touched no other line. `build.sh` compiles `src/net/mqtt_mgr.cpp`
   (which embeds `CANARY_FW_VERSION`) and stamps `fw_version` into each
@@ -144,19 +152,22 @@ devices/<slug>/device.json cad.params
   → lint_design_lang.py          (the literal-knob canon still holds)
   → render.sh --no-png           (the STLs; OpenSCAD 2021.01)
   → gen_assembled_dims.py        (assembled envelopes, measured off the fit-checked unions)
+  → gen_hardware.py              (each preset's HARDWARE echo + lid-rib headroom → hardware.json; BOM join)
+  → gen_enclosures.py            (enclosures / catalog / build / workshop .json — catalog.json is
+                                  figure evidence, so it is current BEFORE the figures read it)
   → gen_figures.mjs              (figures.json, the SVGs, fleet_figures.h / _art.h, FleetFigures.swift)
   → gen_device_glbs.mjs          (the two flashers' models)
   → firmware/projects/canary-display/setup.sh regen   (only when fleet_figures*.h moved) — then STOP
   → dispatch the dist rebuild → pull it
-  → gen_flash.py → gen_builder_manifest.py [--site <website-checkout>] → gen_enclosures.py
+  → gen_flash.py → gen_builder_manifest.py [--site <website-checkout>]
   → gen_stamp.py --check, gen_mark_svg.py --check (report-only; a STAMP_REV bump is a human's call)
   → in the website repo, after the carry: its make-*-glb.mjs (the AR models re-read cad-dims.json)
 ```
 
 Two things about that list that the old prose had wrong. `./setup.sh regen`
-is `firmware/projects/canary-display/setup.sh` (`regen)` at :363-368), the
+is `firmware/projects/canary-display/setup.sh` (`regen)` at :381), the
 display project's Arduino sketch mirror — it *copies* `gen_figures.mjs`'s
-outputs (`fleet_figures.h` and `fleet_figures_art.h`, setup.sh:128-129) into
+outputs (`fleet_figures.h` and `fleet_figures_art.h`, setup.sh:129-130) into
 the sketch, so it runs **after** the figures generator, never before it. And
 the STL link has no `--check` form: OpenSCAD's STL bytes are not
 deterministic, so nothing byte-gates them — the two steps after it gate the

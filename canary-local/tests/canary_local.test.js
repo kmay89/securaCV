@@ -6,10 +6,12 @@
 // Coverage: MQTT wildcard matching (the shell's broker semantics), the
 // witness canonical/signature format (must equal what trust.cpp
 // rebuilds before Ed25519::verify — pinned here as a golden string),
-// LED cadence translation, and registry ↔ dist artifact integrity.
+// LED cadence translation, registry ↔ dist artifact integrity, the cards'
+// status prose against the train, and the vendored Witness Wall against the
+// fleet contract.
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { readFileSync, existsSync } = require("node:fs");
+const { readFileSync, existsSync, readdirSync } = require("node:fs");
 const { join } = require("node:path");
 
 const ROOT = join(__dirname, "..");
@@ -123,6 +125,66 @@ test("registry entries with emulators point at real artifacts", () => {
   }
 });
 
+// The Specs tab's Web row is a statement about a device's LAN surface, on a
+// privacy product. Seven display cards said "first-boot portal only" while
+// every canary-display flavor starts the glass mirror's WebServer on :80
+// right after provisioning (main.cpp setup(), no #if around it) and
+// advertises it over mDNS. Held here: the firmware still serves it on every
+// flavor, and every display manifest's card names the port, each page the
+// server registers, and its /api — never "only".
+test("every display card's Web row names the glass mirror the firmware serves", () => {
+  const reg = JSON.parse(readFileSync(join(ROOT, "devices/registry.json"), "utf8"));
+  const cards = new Map(reg.devices.map((d) => [d.id, d]));
+  const fw = join(ROOT, "../firmware/projects/canary-display/src");
+  // 1. unconditional: the init (setup) and the tick (loop) at #if depth 0
+  const main = readFileSync(join(fw, "main.cpp"), "utf8").split("\n");
+  let depth = 0;
+  const seen = {};
+  for (const line of main) {
+    const t = line.trim();
+    if (/^#\s*if(n?def)?\b/.test(t)) depth++;
+    else if (/^#\s*endif\b/.test(t)) depth--;
+    for (const call of ["glass_web_init()", "glass_web_tick("]) {
+      if (!t.startsWith("//") && t.includes(`canary::net::${call}`)) seen[call] = depth;
+    }
+  }
+  for (const call of ["glass_web_init()", "glass_web_tick("]) {
+    assert.strictEqual(seen[call], 0,
+      `main.cpp's ${call} is no longer unconditional — the display cards' Web row says every flavor serves :80`);
+  }
+  // 2. what it serves: the port and the GET pages outside /api
+  const web = readFileSync(join(fw, "net/glass_web.cpp"), "utf8");
+  const port = /new WebServer\((\d+)\)/.exec(web);
+  assert.ok(port, "glass_web.cpp still constructs its WebServer");
+  const pages = [...web.matchAll(/->on\("([^"]+)",\s*HTTP_GET/g)].map((m) => m[1])
+    .filter((p) => !p.startsWith("/api/"));
+  assert.ok(pages.includes("/") && web.includes('->on("/api/'), "glass_web.cpp route table parses");
+  // 3. every display manifest's card says so
+  const dir = join(ROOT, "../devices");
+  let n = 0;
+  for (const slug of readdirSync(dir).filter((d) => existsSync(join(dir, d, "device.json")))) {
+    const m = JSON.parse(readFileSync(join(dir, slug, "device.json"), "utf8"));
+    if (m.family !== "canary-display") continue;
+    const card = cards.get(m.lab?.card || slug);
+    assert.ok(card, `${slug}: its Lab card ${m.lab?.card || slug} is in registry.json`);
+    const says = card.network.web;
+    assert.doesNotMatch(says, /\bonly\b/, `${card.id}: Web row "${says}" understates the LAN surface`);
+    assert.ok(says.includes(`:${port[1]}`), `${card.id}: Web row names port ${port[1]}`);
+    for (const p of [...pages, "/api"]) {
+      assert.ok(says.split(/[\s(),]+/).includes(p), `${card.id}: Web row names ${p}`);
+    }
+    n++;
+  }
+  assert.ok(n >= 9, `every display manifest checked (${n})`);
+  // …and the Glass row beside it prints no raw null for a panel without touch
+  const glassRow = readFileSync(join(ROOT, "assets/app.js"), "utf8").split("\n")
+    .find((l) => l.includes('row("Glass"'));
+  assert.ok(glassRow, "app.js specsView still has its Glass row");
+  assert.match(glassRow, /dev\.glass\.touch \?/,
+    "specsView prints glass.touch without testing it — a touchless panel reads 'touch null'");
+  assert.ok(reg.devices.some((d) => d.glass && d.glass.touch === null), "a touchless panel is still carried");
+});
+
 test("fw_train matches the firmware tree's CANARY_FW_VERSION", () => {
   const reg = JSON.parse(readFileSync(join(ROOT, "devices/registry.json"), "utf8"));
   const vh = readFileSync(
@@ -130,6 +192,116 @@ test("fw_train matches the firmware tree's CANARY_FW_VERSION", () => {
   const m = vh.match(/CANARY_FW_VERSION "([^"]+)"/);
   assert.ok(m, "version.h parses");
   assert.strictEqual(reg.fw_train, m[1]);
+});
+
+// A card's status is prose, and prose that names a firmware version drifts the
+// moment the train moves: the Vision card still said "fw 2.2.0" with the
+// unified train at 2.4.15, and the Lab's Specs tab (assets/app.js specsView,
+// on Pages and in the desktop Lab) prints a card's status verbatim. (The
+// website's lab.html renders this file too, but a released card only as the
+// word "released", so it never showed the number.) The train lives in
+// `fw_train` (held to version.h above); a status string may repeat it, never
+// contradict it. A version counts with or without a space after "fw"/"v"/
+// "firmware", and a two-part one counts once a prefix says it is firmware.
+test("no card's status names a firmware version other than fw_train", () => {
+  const reg = JSON.parse(readFileSync(join(ROOT, "devices/registry.json"), "utf8"));
+  const VERSION = /(?<![\w.])((?:firmware|fw|v)\s*v?)?(\d+\.\d+(?:\.\d+)?)(?!\.?\d)/gi;
+  const versionsIn = (s) => [...s.matchAll(VERSION)]
+    .filter(([, prefix, v]) => prefix || v.split(".").length === 3).map(([, , v]) => v);
+  // The scanner itself, on the spellings a status could drift into.
+  for (const [s, want] of [
+    ["released, fw 2.2.0", ["2.2.0"]], ["released, fw2.2.0", ["2.2.0"]],
+    ["released, fw v2.2.0.", ["2.2.0"]], ["released (2.2.0)", ["2.2.0"]],
+    ["firmware 2.3.1-rc1", ["2.3.1"]], ["released, fw 2.2", ["2.2"]],
+    ["phase 2 complete", []], ["a 1.5 m range, 11 tests", []],
+  ]) assert.deepStrictEqual(versionsIn(s), want, `the version scanner reads "${s}" wrong`);
+  let statuses = 0;
+  for (const dev of reg.devices) {
+    if (typeof dev.status !== "string") continue;
+    statuses++;
+    for (const v of versionsIn(dev.status)) {
+      assert.strictEqual(v, reg.fw_train,
+        `${dev.id}: status "${dev.status}" names fw ${v}, but the registry's train is ${reg.fw_train} ` +
+        `— drop the version from the status (the card's train is fw_train), don't retype it`);
+    }
+  }
+  assert.ok(statuses >= 5, `the registry's cards still carry a status (${statuses})`);
+});
+
+// Both apps iframe the website's Witness Wall emulator, vendored from the
+// website (witness/PROVENANCE.txt). The fleet contract it reads is
+// tvos/discovery/DISCOVERY.md: only `name` is required, and a silent `online`
+// is NOT a presence claim. The website fixed its canonical copy after the apps
+// had vendored it, and nothing here noticed, because
+// scripts/check_witness_emulator_sync.sh compares the two app copies with each
+// other, never with the contract. So, in both apps: replay the contract's own
+// vectors through the three fleet-row `online` derivations (appear,
+// witness:fleet, connect), and hold every other `online:` the emulator writes
+// to a bare literal, so a new default spelled some other way cannot slip past
+// the replay. A literal is the host's or the simulation's own claim; the
+// /api/fleet poll adding a newcomer as `online: true` is one, and it is the
+// website's to fix (it cannot be told from `just flashed` by shape).
+test("both apps' vendored Witness Wall reads a silent `online` as offline", () => {
+  const { vectors } = JSON.parse(readFileSync(
+    join(ROOT, "../tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"), "utf8"));
+  assert.ok(vectors.length >= 3, "the contract vectors parse");
+  for (const rel of ["witness/tv-emulator.js", "../desktop/src/witness/tv-emulator.js"]) {
+    const src = readFileSync(join(ROOT, rel), "utf8");
+    const sites = [...src.matchAll(/online:\s*([A-Za-z_$][\w$]*)\.online\s*([!=]==)\s*(true|false)\b/g)];
+    assert.ok(sites.length >= 3,
+      `${rel}: ${sites.length} fleet-row \`online\` derivations found (appear, witness:fleet, connect)`);
+    for (const [expr, row, op, lit] of sites) {
+      const derive = new Function(row, `return ${row}.online ${op} ${lit};`);
+      for (const x of vectors) {
+        const body = JSON.parse(x.input);
+        const rows = Array.isArray(body) ? body : body.devices;
+        rows.forEach((r, i) => assert.strictEqual(derive(r), x.normalized.devices[i].online,
+          `${rel}: \`${expr}\` reads vector "${x.name}" row ${i} ${JSON.stringify(r)} wrong — ` +
+          "a silent `online` is never a presence claim; re-vendor with scripts/vendor_witness_emulator.sh"));
+      }
+    }
+    // Every `online:` value is one of the replayed derivations or a literal.
+    const values = [...src.matchAll(/\bonline:\s*([^,}\n]*)/g)].map(([, v]) => v.trim());
+    assert.ok(values.length >= sites.length, `${rel}: the \`online:\` scan found the derivations`);
+    for (const v of values) {
+      assert.match(v, /^(?:true|false|[A-Za-z_$][\w$]*\.online === true)$/,
+        `${rel}: \`online: ${v}\` is neither a literal nor \`<row>.online === true\` — ` +
+        "a silent `online` is never a presence claim");
+    }
+    assert.doesNotMatch(src, /online[^,;\n]*(!==\s*false|===\s*undefined\s*\?\s*true|\?\?\s*true)/,
+      `${rel} still defaults a silent \`online\` to present in some other shape`);
+  }
+});
+
+// ── CI wiring: a test file here is a gate only once CI runs it ─────────────
+// canary-local.yml names each file on its own `node --test` line (repo
+// convention: no glob, no runner), so a new file is silently not a gate until
+// someone lists it. scene_figures, body_dims and device_models sat unlisted
+// while the Lab's prose (render_probe.mjs, the README, a workflow comment)
+// said they held their guards. A comment naming a file does not run it: only
+// `node --test` in command position counts.
+test("CI runs every test file in this folder", () => {
+  const wf = readFileSync(join(ROOT, "../.github/workflows/canary-local.yml"), "utf8");
+  const ran = [];
+  for (const raw of wf.split("\n")) {
+    const line = raw.trim().replace(/^(?:-\s*)?run:\s*/, "");
+    if (line.startsWith("#")) continue;
+    for (const seg of line.split(/&&|\|\||;|\|/)) {
+      const words = seg.trim().split(/\s+/);
+      if (words[0] !== "node" || words[1] !== "--test") continue;
+      for (const w of words.slice(2)) {
+        if (w.startsWith("#")) break;
+        if (!w.startsWith("-")) ran.push(w.replace(/^["']|["']$/g, ""));
+      }
+    }
+  }
+  const glob = (p) => new RegExp(`^${p.replace(/[.+?^${}()[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")}$`);
+  const files = readdirSync(__dirname).filter((n) => /\.test\.m?js$/.test(n));
+  assert.ok(files.includes("canary_local.test.js"), "the folder listing found this file");
+  const unrun = files.filter((n) => !ran.some((p) => glob(p).test(`canary-local/tests/${n}`)));
+  assert.deepStrictEqual(unrun, [],
+    `run by no \`node --test\` line in .github/workflows/canary-local.yml: ${unrun.join(", ")} — ` +
+    `list each in the logic-tests job's "Node tests" step`);
 });
 
 // ── the filament finish system (finishes.js) ───────────────────────────────

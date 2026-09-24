@@ -212,8 +212,10 @@ jobs:
         #                  whether this run signs depends on a secret, and
         #                  discovering a missing dependency after a 40-minute
         #                  build would be the worst possible moment.
-        #   intelhex     — esptool 4.11 imports it without declaring it (same
-        #                  workaround as the release workflow)
+        #   intelhex     — leftover from canary's floating espressif32 ^7.x
+        #                  days (its esptool 4.11 imports it without declaring
+        #                  it); harmless on the exact 6.9.0 pin (same note as
+        #                  the release workflow, firmware/PLATFORMS.md)
         #   esptool      — <5 keeps `merge_bin` stable for make_factory.py
         uses: ./.github/actions/setup-platformio
         with:

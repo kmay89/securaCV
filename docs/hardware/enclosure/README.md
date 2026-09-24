@@ -42,13 +42,16 @@ the website's carried copies after a CAD change (`--site <website-checkout>
 --check` says whether they are current without writing anything). The carry
 includes `scad/cad-dims.json`, the CAD ledger the site's AR models and copy
 are pinned to: each figure's envelope and assembled seams from the fleet
-figures, each manifest-owned device's `cad.params` knobs resolved to numbers,
-and the board registry (`canary_board_lib.scad`) with its evidence rung.
+figures, the face features `gen_assembled_dims.py` measures (the Combo's lens
+aperture and radome window, as `features_mm`), each manifest-owned device's
+`cad.params` knobs resolved to numbers, and the board registry
+(`canary_board_lib.scad`) with its evidence rung.
 
 ## Table of contents
 
 - [The complete file map](#the-complete-file-map) — every file, one line each
 - [Pick your variant](#pick-your-variant) — gallery with previews + 3D viewers
+- In-development assembly: [Watch station](#assembly-watch-station) · [Dashboard display case](#assembly-dashboard-display) — step by step from the CAD, not yet print-validated
 - [Engineering & materials](#engineering--materials-security-build) — durability, materials, thermal kit, finish
 - [Best-practice printing tips](./printing_best_practices.md) — the *why* behind a good print: strength, fit, finish, durability (slicer-agnostic)
 - [Printing in PETG — Cura guide](./printing_petg_cura.md) — reasoned settings sheet, per-model cheat-sheet, importable profile
@@ -147,7 +150,7 @@ minutes.
 
 ### In development
 
-These designs are **render- and mesh-verified but not print-validated** — no
+These designs are **render- and mesh-checked but not print-validated** — no
 committed STLs yet (CI still renders and checks them on every change).
 Open the `.scad`, measure your hardware, and render locally; feedback and
 measurements welcome.
@@ -181,6 +184,66 @@ measurements welcome.
 | **Fleet provisioning dock** — N numbered reclined bays for bare XIAOs beside a USB hub (v1 runbook fleet flashing) | `n_bays` parametric | <img src="./preview_dev_dock.png" width="230"> | [`canary_dock.scad`](./canary_dock.scad) |
 | **Shop tools** — heat-set insert press guide (keeps inserts square) + doorbell button accent ring | tiny prints | — | [`canary_shop_tools.scad`](./canary_shop_tools.scad) |
 | **Paper install templates** — 1:1 SVGs ([studs](./template_studs.svg) · [bracket](./template_bracket.svg) · [doorbell](./template_doorbell.svg)): print ON PAPER at 100 % (verify the 20 mm square), tape to the wall, drill | no plastic needed | — | [`canary_templates_2d.scad`](./canary_templates_2d.scad) |
+
+## Assembly
+<a id="assembly-watch-station"></a>
+
+**Watch station — v0.2-dev, in development.** Render- and mesh-checked,
+**not print-validated**: these steps follow the CAD
+([`canary_watch_station.scad`](./canary_watch_station.scad)), not a built
+unit. Measure your display disc (`disc_d`) and the XIAO's USB position before
+you print.
+
+1. Set the **stand** on the desk. It prints upright with no supports: a
+   full-depth divot bored normal to the 25° reclined face, two thumb scallops
+   to lift the puck back out, and a chin slot that passes the USB-C cable into
+   the open channel under the base. (Wall-mounting instead? Skip the stand —
+   the drum's blind keyhole hangs the puck on a single screw.)
+2. Rest the **drum** in the cradle. It sinks 11 mm into the divot, so it
+   cannot rock or roll, and its USB slot lands in the chin channel.
+3. Pin the **XIAO ESP32-S3** into the Round Display's back socket. It rides
+   the display's own two 7-pin headers — component side away from the
+   display, USB-C at the disc edge. Zero wiring: the display's charger, RTC
+   and microSD come along.
+4. Lower the stack into the **bore**, display face up, USB-C aligned to the
+   side slot. The Ø43.0 disc slides down the Ø44.4 bore (measured from the
+   vendor CAD — the disc is 43 mm, not the marketing 39) and its trim ring
+   stops 0.4 mm below the rim. *(battery build, opt_batt)* Before you lower
+   it, tape the protected LiPo between the fence rails on the drum floor and
+   plug it into the display's JST 1.25 — check the polarity first; vendor
+   pigtails vary.
+5. Snap the **bezel** home. Its skirt drops into the bore over the disc edge
+   and the four nubs click into the wall slots — no fasteners. The aperture
+   shows the full glass and lands on the display's trim ring; to open it
+   again, lift the bezel at the fingernail notch in the drum rim.
+
+## Assembly
+<a id="assembly-dashboard-display"></a>
+
+**Dashboard display case — in development.** Render- and mesh-checked,
+**not print-validated**: these steps follow the CAD
+([`canary_dash_display.scad`](./canary_dash_display.scad)), not a built unit,
+and its panel dimensions are nominal — measure your Waveshare
+ESP32-S3-Touch-LCD-4.3 before you print.
+
+1. Set the **desk cradle** down. It prints flat with no hardware: the front
+   lip and back rail form the bottom-edge channel and the fin takes the 25°
+   lean. (Wall-mounting instead? Screw the printed **wall cradle** to the
+   wall with its two screws; the finished case clicks onto it.)
+2. Lay the **bezel frame** face-down — it prints that way, so the A-surface
+   is your build plate. Its 2.5 mm lip retains the glass; the USB-C slot is in
+   the bottom wall and the chimney vents are in the top wall.
+3. Drop the **4.3″ panel** in face-first: the glass lands against the bezel
+   lip, the rear stack faces you, and the USB-C port lines up with the
+   bottom-wall slot. Waveshare publishes no full mechanical drawing, so the
+   pocket is cut to nominal numbers — if the panel binds or rattles, measure
+   it and re-render before you go further.
+4. Close the **vented back**, dock pads facing out — they are what clicks
+   onto the wall cradle.
+5. Drive the **4 × M2 × 8 self-tappers** from the back, through the
+   counterbores and into the corner lobes outside the panel cavity — snug
+   diagonally first, then a final quarter-turn. Don't crank them: M2
+   self-taps strip printed posts beyond ~0.3 N·m.
 
 ## Engineering & materials (security build)
 
@@ -501,12 +564,13 @@ These dimensions were reconciled against **Seeed's official spec** and a
 ## Render / regenerate the STLs
 
 **Changed a knob? Run the whole chain, not one link of it.** An STL is the
-first of ten committed, byte-gated files a dimension moves — the assembled
-envelopes (`gen_assembled_dims.py`), the fleet figures and their firmware and
+first of eleven committed, byte-gated files a dimension moves — the assembled
+envelopes (`gen_assembled_dims.py`), the hardware ledger (`gen_hardware.py`),
+the enclosure catalog (`gen_enclosures.py` — the figures cite it as evidence,
+so it comes first), the fleet figures and their firmware and
 Swift mirrors (`gen_figures.mjs`), the flashers' models (`gen_device_glbs.mjs`),
-the display sketch mirror, `flash.json`, the web builder's manifest and the
-enclosure catalog — in a fixed order, with the emulator dist rebuild in the
-middle of it. [`scripts/regen_cad.py`](../../../scripts/regen_cad.py) is that
+the display sketch mirror, `flash.json` and the web builder's manifest — in a
+fixed order, with the emulator dist rebuild in the middle of it. [`scripts/regen_cad.py`](../../../scripts/regen_cad.py) is that
 order as one command, from the repo root:
 
 ```bash
@@ -514,7 +578,7 @@ python3 scripts/regen_cad.py --previews /tmp/previews   # everything, in order; 
                                                         # every part of every changed case into the dir
 python3 scripts/regen_cad.py --check                    # every step's check form; the first stale one named
 python3 scripts/regen_cad.py --from gen_flash           # resume after the emulator dist came back
-python3 scripts/regen_cad.py --list                     # the twelve steps and their check forms
+python3 scripts/regen_cad.py --list                     # the thirteen steps and their check forms
 ```
 
 It stops on purpose after regenerating the sketch mirror when
@@ -835,8 +899,9 @@ provably, since the bezel subtracts `seam − ribs` and the band *is*
 void.
 
 **No AMS?** Print `part="bezel"` and `part="back"` in black, then
-`part="fil_light"` on its own in white and press the two strips in — that is
-what the default `band_clear = 0.10` is for. Each side is one continuous
+`part="fil_light"` on its own in white and press the two strips in — set
+`band_clear = 0.10` for that (the default is now 0, the co-print: with the
+insert gap the seam's roof prints as a bridge between the hidden ribs). Each side is one continuous
 strip carrying its own rib notches, so it goes in as a single piece.
 
 ## Key parameters to check first
@@ -857,7 +922,7 @@ strip carrying its own rib notches, so it goes in as a single piece.
 
 ## Suggested print settings
 
-- **Material:** PETG or ASA for heat/UV exposure (PLA only for indoor/bench).
+- **Material:** PETG indoors; **ASA for anything that sees sun** — PETG is not UV-stable and yellows and embrittles outdoors (PLA only for indoor/bench fit checks).
   **Gasket:** TPU 90–95A, 2 perimeters, 100 % infill, slow. Deployed units:
   use the hardened spec in [Engineering & materials](#engineering--materials-security-build).
 - **Layer height:** 0.2 mm. **Walls:** 3 perimeters. **Infill:** 20–30 %.
@@ -880,8 +945,10 @@ strip carrying its own rib notches, so it goes in as a single piece.
    into the LED port.
 4. (weather mode) Seat the TPU gasket in the rim groove; glue the clear disc
    into the camera seat.
-5. Close the lid (lip nests into the base) and drive 4 × M2 screws — snug
-   diagonally first, then final quarter-turns. Don't crank them: M2 self-taps
+5. Close the lid (lip nests into the base), turn the case over and drive the
+   4 × M2 screws up through the seats in the **back** into the lid's bosses —
+   the lid face stays unbroken (the Outdoor preset keeps its screws on the lid,
+   under the sun shield) — snug diagonally first, then final quarter-turns. Don't crank them: M2 self-taps
    strip printed posts beyond ~0.3 N·m (two fingers on the short end of the
    driver is plenty).
 
@@ -1001,8 +1068,8 @@ sealing, and no real wall-mount story. This design replaces it with a
 pitch, M5 axis):
 
 - **Sag-proof**: optional radial **detent teeth** (`hinge_teeth`, on by
-  default) interlock the mating faces in 15° steps — the set angle cannot
-  drift. Set `hinge_teeth = false` for smooth faces and full compatibility
+  default) interlock the mating faces every 30° (12 teeth on a 24-step
+  ring, `teeth_n`) — the set angle cannot drift. Set `hinge_teeth = false` for smooth faces and full compatibility
   with off-the-shelf GoPro accessories (arms, clamps, suction mounts…).
 - **Locked, not rubbed**: the angle clamps with an **M5 thumbscrew** (buy a
   GoPro-style knurled screw, or print the included `knob` over an M5 × 25
@@ -1083,8 +1150,10 @@ silicone.
 3. Route the camera FPC to the module's CSI connector (and, devkit host, the
    Grove cable across the middle gap to the DevKit pins).
 4. (weather) Seat the TPU gasket in the rim groove.
-5. Close the front (lip nests into the back) and drive the 4 × M2 corner
-   screws — snug diagonally, then final quarter-turns.
+5. Close the front (lip nests into the back), turn it over and drive the
+   M2 corner screws up through the seats in the **back** into the front's
+   bosses (4, or 6 on the Outdoor preset) — the face stays unbroken — snug
+   diagonally, then final quarter-turns.
 6. Screw the **bracket** to the wall (or a tripod plate via the 1/4-20 nut),
    slot the case prongs into it, set the angle, tighten the M5 thumbscrew.
 
@@ -1184,6 +1253,7 @@ screw.
 
 | Param | Default | Why you'd change it |
 |-------|--------:|---------------------|
+| `preset` | `"custom"` | `doorbell_weather` = the released build in one click — sealed, vented, weep, no extra light pipe, no tamper magnet (overrides the option checkboxes, which already default to it) |
 | `plate_wedge` / `plate_wedge_x` | 0 / 0 | wedge the plate vertically and/or left-right (corner installs) |
 | `btn_d` / `btn_bez_d` / `btn_body_l` | 12 / 16.5 / 18 | match YOUR button (depth is assert-checked against the cavity) |
 | `stack_sock_h`, `xiao_below`, `lens_dx/dy` | 6.5 / 5.5 / 0, 2.5 | **measure** your stack and lens, as with the Vision case |
@@ -1243,9 +1313,10 @@ exits the bottom wall at a height DERIVED from the seated stack
 
 | Param | Default | Why you'd change it |
 |-------|--------:|---------------------|
+| `preset` | `"custom"` | `sense_wall` = the released build on its hinge (LED + lux, unsealed); `sense_ceiling` = the same build flat on its keyholes, the MR60FDA2 fall build's mount (overrides the option checkboxes; `radar` stays yours) |
 | `radome_t` | 1.5 | radar window thickness; 1.5 ≈ half-wave in PETG/ASA (optimum) — avoid 0.7–1.1 (quarter-wave reflection band) |
 | `rad_win_x/y`, `rad_dx/dy` | 24×24 / 0, 6 | window size/position over the antenna — **measure** |
-| `vm_l/vm_w`, `stack_sock_h`, `xiao_below` | 44×36 / 6.5 / 5.5 | carrier + seated-stack dimensions — **measure** (the XIAO port height follows) |
+| `radar_l/radar_w`, `stack_sock_h`, `xiao_below` | 44×36 / 6.5 / 5.5 | carrier + seated-stack dimensions — **measure** (the XIAO port height follows) |
 | `screw_size` / `screw_head` / `head_seal` | m2 / pan / off | fastener from the catalog registry; O-ring under each head in seal mode |
 | `lux_dx/dy`, `lp_dx/dy` | — | sensor/LED positions from the board center |
 | `opt_seal`, `mount_style` | off / hinge | same systems as the Vision case |
@@ -1268,7 +1339,8 @@ exits the bottom wall at a height DERIVED from the seated stack
    stick a GORE-type membrane over any vent seat.
 4. (weather mode) Seat the **TPU gasket** in the rim groove.
 5. Close the **radome front** (lip nests into the back; the window must land
-   over the antenna array) and drive the 4 × M2 corner screws — snug
+   over the antenna array), turn it over and drive the 4 × M2 corner screws up
+   through the seats in the back into the front's bosses — snug
    diagonally first, then final quarter-turns, never past ~0.3 N·m.
 6. Mount it: slot the hinge prongs into the shared **Vision bracket** and set
    the angle (bedside ≤ 1.5 m for the wellbeing channel), or hang the blind

@@ -42,7 +42,7 @@
     tamper_detected: { label: "Tamper detected", icon: "mdi:shield-alert" },
     vehicle_arrival_departure: { label: "Vehicle arrival/departure", icon: "mdi:car-side" },
   };
-  // The WAP's system.integrity tamper KINDS (const.py's tamper vocabulary,
+  // The system.integrity tamper KINDS (const.py's tamper vocabulary,
   // not dictionary event types — lint_dictionary_sync pins the table above
   // to the dictionary's ids, and these deliberately are not ids). They ride
   // the events wire with event_type = the kind word (csi_mqtt stamps
@@ -54,6 +54,7 @@
     sd_error: { label: "Storage card failing", icon: "mdi:shield-alert" },
     watchdog: { label: "Recovered from a system hang", icon: "mdi:shield-alert" },
     unexpected_reboot: { label: "Rebooted unexpectedly", icon: "mdi:shield-alert" },
+    enclosure: { label: "Enclosure opened", icon: "mdi:shield-alert" },
   };
   const DEFAULT_EVENT_ICON = "mdi:shield-eye";
 
@@ -73,6 +74,8 @@
     "canary-vision": "camera",
     "canary-wap": "wifi-csi",
     "canary-contact": "contact",
+    // Fuses several media, so no single-medium glyph (const.py explains).
+    "canary-sentinel": "other",
   };
   const MODALITY_ALIASES = {
     csi: "wifi-csi",
@@ -351,6 +354,33 @@
     return out;
   }
 
+  // What the rows on screen are made of, and what to say about it.
+  // `source` is what _maybeFetchHistory recorded:
+  //   null            — nothing fetched yet;
+  //   "history"       — history/history_during_period answered;
+  //   "current-state" — that call failed (the recorder may be off, the WS
+  //                     call unsupported, or a transient error) and the rows
+  //                     are each event sensor's CURRENT state only.
+  // Returns { notice, empty }: `notice` is rendered above the timeline
+  // whenever it is non-null — also when rows exist, because those rows are
+  // not a history and must be flagged as such — and `empty` is the line for
+  // a timeline with no rows. The fallback wording says "unavailable", not
+  // "the recorder is off": the catch also fires on transient errors, and it
+  // never claims a time window it did not read.
+  function timelineStatus({ source, hours } = {}) {
+    const h = Number.isFinite(Number(hours)) && Number(hours) > 0 ? Number(hours) : 24;
+    if (source === "current-state") {
+      return {
+        notice:
+          "Event history is unavailable (the recorder may be off, or this Home " +
+          "Assistant does not answer history queries), so this shows each " +
+          `sensor's current event only — not what happened over the last ${h}h.`,
+        empty: "History is unavailable and no sensor currently reports an event.",
+      };
+    }
+    return { notice: null, empty: `No witness events in the last ${h}h.` };
+  }
+
   // --- Node export surface (pure helpers only; no DOM) ----------------------
   const helpers = {
     EVENT_TYPE_METADATA,
@@ -369,6 +399,7 @@
     normalizeHistoryEntry,
     historyToTimelineItems,
     discoverEntities,
+    timelineStatus,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = helpers;
@@ -414,6 +445,7 @@
     .badge.failed { color: var(--error-color, #e53935); }
     .conf { font-size: 0.75rem; color: var(--secondary-text-color); }
     .empty { padding: 24px 4px; text-align: center; color: var(--secondary-text-color); }
+    .notice { padding: 8px 4px; font-size: 0.8rem; color: var(--secondary-text-color); }
   `;
 
   class SecuraCVTimelineCard extends HTMLElement {
@@ -423,6 +455,8 @@
       this._config = {};
       this._hass = null;
       this._items = [];
+      // "history" | "current-state" | null — see timelineStatus().
+      this._historySource = null;
       this._historyKey = null;
       this._fetching = false;
       this._needReFetch = false;
@@ -434,6 +468,9 @@
         config || {}
       );
       this._historyKey = null; // force a refresh on reconfigure
+      // A new config has not read history yet: a notice left over from the
+      // old one would describe a fetch this config never made.
+      this._historySource = null;
     }
 
     getCardSize() {
@@ -466,7 +503,11 @@
       const entities = this._resolveEntities();
       const ids = entities.eventEntities;
       if (!ids.length) {
+        // No event entities → no history read attempted, so no notice about
+        // one (an earlier failed read must not keep speaking for this state).
         this._items = [];
+        this._historySource = null;
+        this._historyKey = null; // entities coming back must re-read, not reuse
         return;
       }
       // Re-fetch only when an event entity changes. The key folds in
@@ -498,10 +539,18 @@
           significant_changes_only: false,
         });
         this._items = historyToTimelineItems(history, { maxEvents: this._config.max_events });
+        this._historySource = "history";
       } catch (err) {
         // Recorder may be disabled or the WS call unsupported; fall back to the
-        // current state of each event entity so the card still shows something.
+        // current state of each event entity so the card still shows something
+        // — and SAY so: _render() puts a notice above these rows, because a
+        // current-state snapshot presented as "the last N hours" is a false
+        // statement about what happened.
         this._items = this._itemsFromCurrentStates(ids);
+        this._historySource = "current-state";
+        if (typeof console !== "undefined" && console.debug) {
+          console.debug("securacv-timeline-card: history unavailable, showing current state only", err);
+        }
       } finally {
         this._fetching = false;
         if (this._needReFetch) {
@@ -565,6 +614,9 @@
         .map((p) => `<span class="pill ${p.cls}"><ha-icon icon="${p.icon}"></ha-icon>${escapeHtml(p.text)}</span>`)
         .join("");
 
+      const status = timelineStatus({ source: this._historySource, hours: this._config.hours });
+      const noticeHtml = status.notice ? `<div class="notice">${escapeHtml(status.notice)}</div>` : "";
+
       const eventsHtml = this._items.length
         ? this._items.map((it) => {
             const conf = it.confidence != null ? `<span class="conf">${it.confidence}% conf</span>` : "";
@@ -597,13 +649,14 @@
                 </div>
               </div>`;
           }).join("")
-        : `<div class="empty">No witness events in the last ${this._config.hours}h.</div>`;
+        : `<div class="empty">${escapeHtml(status.empty)}</div>`;
 
       this.shadowRoot.innerHTML = `
         <style>${CARD_STYLE}</style>
         <ha-card>
           <div class="header"><span class="title">${escapeHtml(this._config.title)}</span></div>
           <div class="chain">${pillsHtml || '<span class="pill muted">No chain status entities found</span>'}</div>
+          ${noticeHtml}
           <div class="timeline">${eventsHtml}</div>
         </ha-card>`;
     }

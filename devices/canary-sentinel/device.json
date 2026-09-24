@@ -1,0 +1,20 @@
+{
+  "$schema": "../device.schema.json",
+  "slug": "canary-sentinel",
+  "name": "Canary Sentinel",
+  "family": "canary-sentinel",
+  "board": {
+    "mcu": "ESP32-C6",
+    "psram_mb": 0,
+    "flash_mb": 4,
+    "board_id": "xiao-esp32c6-sentinel",
+    "envs": [
+      "canary-sentinel-door"
+    ]
+  },
+  "peripherals": [
+    "mmwave_radar",
+    "ambient_light",
+    "pir"
+  ]
+}

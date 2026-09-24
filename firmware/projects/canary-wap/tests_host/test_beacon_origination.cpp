@@ -9,7 +9,9 @@
 //   4. canonical.msg_type == header.msg_type (only the canonical is signed)
 //   5. EXERCISE frames carry BCN_FLAG_IS_EXERCISE and nothing else does (§5.4)
 //   6. template_id inside the life-safety set (§4)
-//   7. both originator_fp and cosigner_fp present in local beacon set
+//   7. both originator_fp and cosigner_fp present in local beacon set — or
+//      naming this receiver itself (resolve_signer: the set holds peers only,
+//      so the cosigner of a frame would otherwise drop the alarm it confirmed)
 //   8. neither revoked
 //   9. originator_fp != cosigner_fp (dual-pubkey path)
 //  10. neither signer's selftest older than 36 h (§7.1 step 9)
@@ -28,7 +30,23 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <sstream>
+#include <string>
 #include <vector>
+
+#include "beacon_source_scan.h"
+// The real wire constants and cosigner gate, for the two-device CANCEL
+// scenario (the mirror below redeclares what it needs; the static_asserts
+// after it hold those copies to the real ones).
+#include "beacon_wire.h"
+#include "beacon_cancel_policy.h"
+
+// The real receive path, for the source-level pins (beacon_source_scan.h). The
+// Makefile passes the absolute path; a hand build from tests_host/ falls back
+// to the relative one.
+#ifndef BEACON_CHANNEL_CPP
+#define BEACON_CHANNEL_CPP "../arduino/canary_wap/beacon_channel.cpp"
+#endif
 
 namespace {
 
@@ -36,6 +54,7 @@ constexpr size_t DEVICE_FP_SIZE = 16;
 constexpr size_t BEACON_NONCE_SIZE = 16;
 constexpr uint8_t BCN_MAGIC = 0xB1;
 constexpr uint8_t BCN_SCOPE_PRIVATE = 2;
+constexpr uint8_t BCN_TRUST_GATEWAY = 1;  // spec/beacon_cap_gateway_v0.md §2.2
 constexpr uint8_t BCN_TRUST_REVOKED = 2;
 
 constexpr uint8_t BCN_FLAG_IS_EXERCISE = 0x01;
@@ -60,6 +79,27 @@ constexpr uint8_t  MAX_ORIGINATIONS_PER_PUBKEY_24H = 5;
 constexpr uint8_t  MAX_ORIGINATIONS_PER_PAIR_24H = 8;
 constexpr size_t   SEEN_FRAME_MAX = 32;
 constexpr size_t   FRAME_ID_SIZE = 32;  // 16 bytes of each signature
+
+static_assert(DEVICE_FP_SIZE == beacon_channel::DEVICE_FP_SIZE &&
+              BEACON_NONCE_SIZE == beacon_channel::BEACON_NONCE_SIZE &&
+              BCN_MAGIC == beacon_channel::BEACON_MAGIC &&
+              BCN_SCOPE_PRIVATE == beacon_channel::BCN_SCOPE_PRIVATE &&
+              BCN_TRUST_GATEWAY == beacon_channel::BCN_TRUST_GATEWAY &&
+              BCN_TRUST_REVOKED == beacon_channel::BCN_TRUST_REVOKED &&
+              BCN_FLAG_IS_EXERCISE == beacon_channel::BCN_FLAG_IS_EXERCISE &&
+              BCN_FLAG_SOLO_ORIGIN == beacon_channel::BCN_FLAG_SOLO_ORIGIN &&
+              BCN_CERT_OBSERVED == beacon_channel::BCN_CERT_OBSERVED &&
+              MSG_ALERT == beacon_channel::BEACON_MSG_ALERT &&
+              MSG_UPDATE == beacon_channel::BEACON_MSG_UPDATE &&
+              MSG_CANCEL == beacon_channel::BEACON_MSG_CANCEL &&
+              MSG_EXERCISE == beacon_channel::BEACON_MSG_EXERCISE &&
+              TPL_FIRE_VISIBLE == beacon_channel::BCN_EMERG_FIRE_VISIBLE &&
+              TPL_FALSE_ALARM == beacon_channel::BCN_CLR_FALSE_ALARM &&
+              BEACON_FRESHNESS_S == beacon_channel::BEACON_FRESHNESS_S &&
+              SELFTEST_MISSING_MS == beacon_channel::SELFTEST_MISSING_MS &&
+              MAX_ORIGINATIONS_PER_PUBKEY_24H == beacon_channel::MAX_ORIGINATIONS_PER_PUBKEY_24H &&
+              MAX_ORIGINATIONS_PER_PAIR_24H == beacon_channel::MAX_ORIGINATIONS_PER_PAIR_24H,
+              "the receive-path mirror's constants match beacon_wire.h");
 
 bool is_valid_beacon_template(uint8_t id) {
   switch (id) {
@@ -121,11 +161,27 @@ bool signer_selftest_stale(const SetEntry& e, uint32_t now_ms) {
   return age > SELFTEST_MISSING_MS;
 }
 
+// Mirrors beacon_channel.cpp::resolve_signer: a signer is a non-revoked
+// beacon-set member, or the receiver itself. Pairing adds the OTHER device's
+// key (spec §3.3), so the set holds peers only and a frame this receiver
+// co-signed names its own fingerprint; that resolves to its own key (the
+// synthetic `self_entry`: trusted, no selftest age), and its slot is still
+// verified. `self_fp` is nullptr where the receiver's own fingerprint does not
+// matter to the test.
+const SetEntry* resolve_signer(const std::vector<SetEntry>& set, const uint8_t* fp,
+                               const uint8_t* self_fp, const SetEntry* self_entry) {
+  if (self_fp && std::memcmp(fp, self_fp, DEVICE_FP_SIZE) == 0) return self_entry;
+  const SetEntry* e = find_in_set(set, fp);
+  if (!e || e->trust == BCN_TRUST_REVOKED) return nullptr;
+  return e;
+}
+
 // The stateless half of handle_alert_frame: everything from the scope check
 // through the freshness window. Stateful checks (replay ring, rate buckets,
 // alarm reference) live in Receiver below.
 bool would_accept(const std::vector<SetEntry>& set, const Frame& f,
-                  uint64_t now_unix = 1800000000ULL, uint32_t now_ms = 0) {
+                  uint64_t now_unix = 1800000000ULL, uint32_t now_ms = 0,
+                  const uint8_t* self_fp = nullptr) {
   if (f.magic != BCN_MAGIC) return false;
   if (f.scope != BCN_SCOPE_PRIVATE) return false;
 
@@ -145,11 +201,14 @@ bool would_accept(const std::vector<SetEntry>& set, const Frame& f,
     if (std::memcmp(f.originator_fp, f.cosigner_fp, DEVICE_FP_SIZE) != 0) return false;
   }
 
-  const SetEntry* a = find_in_set(set, f.originator_fp);
-  const SetEntry* b = is_solo ? a : find_in_set(set, f.cosigner_fp);
+  SetEntry self_entry{};
+  if (self_fp) {
+    std::memcpy(self_entry.fp, self_fp, DEVICE_FP_SIZE);
+    self_entry.valid = true;
+  }
+  const SetEntry* a = resolve_signer(set, f.originator_fp, self_fp, &self_entry);
+  const SetEntry* b = is_solo ? a : resolve_signer(set, f.cosigner_fp, self_fp, &self_entry);
   if (!a || !b) return false;
-  if (a->trust == BCN_TRUST_REVOKED) return false;
-  if (b->trust == BCN_TRUST_REVOKED) return false;
   if (!is_solo &&
       std::memcmp(f.originator_fp, f.cosigner_fp, DEVICE_FP_SIZE) == 0) {
     return false;
@@ -182,6 +241,13 @@ enum class Outcome {
 // active-alarm reference rules.
 struct Receiver {
   std::vector<SetEntry> set;
+  // This receiver's own fingerprint (set_self); unset, it is neither signer.
+  uint8_t self_fp[DEVICE_FP_SIZE] = {};
+  bool    has_self = false;
+  void set_self(uint8_t prefix) {
+    std::memset(self_fp, prefix, DEVICE_FP_SIZE);
+    has_self = true;
+  }
 
   struct SeenFrame { uint8_t id[FRAME_ID_SIZE]; uint32_t seen_ms; bool valid; };
   SeenFrame seen[SEEN_FRAME_MAX] = {};
@@ -305,7 +371,9 @@ struct Receiver {
                   uint32_t now_ms = 0) {
     if (f.magic != BCN_MAGIC) return Outcome::RejectedGate;
     if (frame_seen(f.sig_id, now_ms)) return Outcome::RejectedReplay;
-    if (!would_accept(set, f, now_unix, now_ms)) return Outcome::RejectedGate;
+    if (!would_accept(set, f, now_unix, now_ms, has_self ? self_fp : nullptr)) {
+      return Outcome::RejectedGate;
+    }
 
     remember_frame(f.sig_id, now_ms);
     const bool is_exercise = (f.canon_msg_type == MSG_EXERCISE);
@@ -667,6 +735,34 @@ void test_cancel_must_reference_the_active_alarm() {
   EXPECT(!rx.alarm_valid, "CANCEL naming the active alarm clears it (§7.2)");
 }
 
+// A CANCEL is charged to its originator's 24 h bucket like an ALERT (spec §8
+// has no CANCEL exemption; handle_alert_frame charges every non-drill frame),
+// which is why originate_cancel charges the originator's own bucket too
+// (decision D2 — maintainer to confirm). The consequence this pins: a device
+// that spent its fifth origination on the alarm cannot cancel it itself, but
+// any other member of the set can — spec §14.2's "insiders are by definition
+// cosigners" — and that CANCEL clears the alarm.
+void test_cancel_is_charged_like_an_alert() {
+  Receiver rx;
+  rx.set = { mk(0xAA), mk(0xBB), mk(0xCC) };
+  Frame last{};
+  for (int i = 0; i < MAX_ORIGINATIONS_PER_PUBKEY_24H; i++) {
+    last = mk_frame(0xAA, 0xBB);
+    EXPECT(rx.receive(last) == Outcome::Audited, "AA's alerts inside its bucket");
+  }
+  EXPECT(rx.alarm_valid, "the fifth alert is the alarm in force");
+
+  Frame own = mk_cancel(0xAA, 0xBB, last.nonce);
+  EXPECT(rx.receive(own) == Outcome::RejectedRate,
+         "AA's CANCEL is charged to AA's spent bucket and refused");
+  EXPECT(rx.alarm_valid, "so AA's own all-clear does not clear the alarm");
+
+  Frame other = mk_cancel(0xCC, 0xBB, last.nonce);
+  EXPECT(rx.receive(other) == Outcome::Audited,
+         "a CANCEL originated by another set member is charged to its own bucket");
+  EXPECT(!rx.alarm_valid, "and clears the alarm it names");
+}
+
 void test_update_must_reference_the_active_alarm() {
   Receiver rx;
   rx.set = { mk(0xAA), mk(0xBB) };
@@ -704,6 +800,99 @@ void test_update_must_reference_the_active_alarm() {
   EXPECT(rx.receive(cancel) == Outcome::Audited, "CANCEL after UPDATE accepted");
   EXPECT(!rx.alarm_valid,
          "a CANCEL naming the originating ALERT still clears an amended alarm");
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// The cosigner holds the alarm it cosigned (spec §3.3, §6.5)
+// ───────────────────────────────────────────────────────────────────────────
+
+// Two-device set: A = 0xAA, B = 0xBB. Pairing puts each in the OTHER's set,
+// so B's set is {A}. A originates, B's user confirms, A emits (A, B) and
+// adopts it at hop 0; B hears the broadcast. Before resolve_signer, B looked
+// its own fingerprint up in its set, found nothing and dropped the frame, so
+// B never held the alarm — and the cosigner gate (the REAL
+// beacon_cancel_policy::cosign_request_acceptable) then refused A's CANCEL on
+// B. In a two-device set that was every CANCEL: A's only candidate is B, and
+// A's solo path is closed while B is a fresh cosigner.
+void test_cosigner_holds_the_alarm_it_cosigned() {
+  Receiver b;
+  b.set = { mk(0xAA) };
+  b.set_self(0xBB);
+  Receiver b_pre_fix;  // the same device when only set entries resolved
+  b_pre_fix.set = { mk(0xAA) };
+
+  const Frame alert = mk_frame(0xAA, 0xBB);
+  EXPECT(b_pre_fix.receive(alert) == Outcome::RejectedGate && !b_pre_fix.alarm_valid,
+         "(pre-fix) the cosigner dropped the alarm it had just co-signed");
+  EXPECT(b.receive(alert) == Outcome::Audited, "the cosigner accepts the frame it co-signed");
+  EXPECT(b.alarm_valid && std::memcmp(b.alarm_nonce, alert.nonce, BEACON_NONCE_SIZE) == 0,
+         "and holds the alarm under the emitted frame's nonce (the one A adopted)");
+
+  // A's CANCEL names the nonce A adopted — the emitted header's nonce.
+  EXPECT(beacon_cancel_policy::cosign_request_acceptable(
+             beacon_channel::BEACON_MSG_CANCEL, beacon_channel::BCN_CLR_FALSE_ALARM,
+             alert.nonce, b.alarm_valid, b.alarm_nonce),
+         "so the cosigner can cosign that alarm's CANCEL");
+  EXPECT(!beacon_cancel_policy::cosign_request_acceptable(
+             beacon_channel::BEACON_MSG_CANCEL, beacon_channel::BCN_CLR_FALSE_ALARM,
+             alert.nonce, b_pre_fix.alarm_valid, b_pre_fix.alarm_nonce),
+         "(pre-fix) it refused, so a two-device set could not cancel over the network");
+
+  // A third member C (set {A, B}) held the alarm before and still does.
+  Receiver c;
+  c.set = { mk(0xAA), mk(0xBB) };
+  c.set_self(0xCC);
+  EXPECT(c.receive(alert) == Outcome::Audited && c.alarm_valid,
+         "a member that is neither signer holds the alarm as before");
+
+  // A emits the dual CANCEL (A, B): the cosigner and every member clear.
+  const Frame cancel = mk_cancel(0xAA, 0xBB, alert.nonce);
+  EXPECT(b.receive(cancel) == Outcome::Audited && !b.alarm_valid,
+         "the cosigner leaves ALARM for the CANCEL it co-signed");
+  EXPECT(c.receive(cancel) == Outcome::Audited && !c.alarm_valid,
+         "and so does every other member");
+
+  // The other direction: B, now holding the alarm, originates the CANCEL and
+  // A cosigns it. A holds its own alarm by adoption (no receive), so the
+  // mirror seeds that state; A then accepts the (B, A) CANCEL naming it.
+  Receiver a;
+  a.set = { mk(0xBB) };
+  a.set_self(0xAA);
+  a.alarm_valid = true;
+  std::memcpy(a.alarm_nonce, alert.nonce, BEACON_NONCE_SIZE);
+  EXPECT(a.receive(mk_cancel(0xBB, 0xAA, alert.nonce)) == Outcome::Audited && !a.alarm_valid,
+         "the ALERT's originator clears on a CANCEL it co-signed for the other device");
+}
+
+// Resolving this device's own fingerprint grants nothing else: the slot is
+// still verified against its own key, the two-distinct-keys rule still holds,
+// and the other signer still has to be a paired, non-revoked member.
+void test_self_as_signer_grants_nothing_else() {
+  const std::vector<SetEntry> set = { mk(0xAA), mk(0xDD, BCN_TRUST_REVOKED) };
+  uint8_t me[DEVICE_FP_SIZE];
+  std::memset(me, 0xBB, DEVICE_FP_SIZE);
+  const uint64_t t = 1800000000ULL;
+
+  EXPECT(would_accept(set, mk_frame(0xAA, 0xBB), t, 0, me),
+         "a paired originator plus this device, both signatures valid → accepted");
+  EXPECT(!would_accept(set, mk_frame(0xAA, 0xBB, /*sa=*/true, /*sb=*/false), t, 0, me),
+         "this device's slot is verified: a bad signature there is dropped");
+  EXPECT(!would_accept(set, mk_frame(0xBB, 0xBB), t, 0, me),
+         "naming this device twice without the SOLO flag is still a collapsed-signer frame");
+  EXPECT(!would_accept(set, mk_frame(0xEE, 0xBB), t, 0, me) &&
+         !would_accept(set, mk_frame(0xBB, 0xEE), t, 0, me),
+         "this device plus an unpaired key is dropped, in either slot");
+  EXPECT(!would_accept(set, mk_frame(0xDD, 0xBB), t, 0, me) &&
+         !would_accept(set, mk_frame(0xBB, 0xDD), t, 0, me),
+         "this device plus a revoked key is dropped, in either slot");
+  EXPECT(!would_accept(set, mk_frame(0xAA, 0xBB), t, 0, nullptr),
+         "a receiver that is not the named signer resolves nothing new");
+
+  // The other signer's supervised health still counts; this device has none.
+  const uint32_t now_ms = SELFTEST_MISSING_MS + 100000;
+  const std::vector<SetEntry> stale = { mk(0xAA, 0, /*last_selftest_ms=*/1) };
+  EXPECT(!would_accept(stale, mk_frame(0xAA, 0xBB), t, now_ms, me),
+         "a stale originator is refused even when this device is the cosigner");
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -745,6 +934,123 @@ void test_alerts_do_not_exhaust_the_drill_bucket() {
   }
   EXPECT(rx.receive(mk_exercise(0xAA, 0xBB)) == Outcome::Audited,
          "a drill still runs after the alert budget is spent");
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// CAP gateway trust confers no privilege (spec/beacon_cap_gateway_v0.md §2.3:
+// "The gateway gets no special privilege without producing the upstream
+// attestation" — and the attestation path is deferred by decision, so a
+// gateway-trust entry must be an ordinary two-pubkey signer today)
+// ───────────────────────────────────────────────────────────────────────────
+
+void test_gateway_trust_confers_no_privilege() {
+  std::vector<SetEntry> set = { mk(0x6A, BCN_TRUST_GATEWAY), mk(0xBB) };
+
+  // (a) No solo-by-trust: a gateway naming itself as its own cosigner,
+  // without the BOOT-button SOLO flag, is a collapsed-signer frame.
+  Frame self = mk_frame(0x6A, 0x6A);
+  EXPECT(!would_accept(set, self),
+         "a gateway-trust key cannot cosign its own frame (no solo without the SOLO flag)");
+  self.certainty = 1;  // BCN_CERT_LIKELY — what an upstream-attested frame would carry
+  EXPECT(!would_accept(set, self),
+         "nor at a higher certainty");
+
+  // (b) The SOLO flag buys a gateway exactly what it buys any member: the
+  // §6.2 rules, certainty = Observed and originator == cosigner.
+  Frame solo = mk_frame(0x6A, 0x6A);
+  solo.flags = BCN_FLAG_SOLO_ORIGIN;
+  EXPECT(would_accept(set, solo),
+         "a gateway's solo frame is accepted under the ordinary §6.2 rules");
+  solo.certainty = 1;
+  EXPECT(!would_accept(set, solo),
+         "a gateway's solo frame above Observed is rejected like anyone's");
+
+  // (c) Co-signed with a real second key, a gateway is just a cosigner.
+  EXPECT(would_accept(set, mk_frame(0x6A, 0xBB)),
+         "a gateway-trust key co-signing with a paired member is an ordinary two-pubkey frame");
+  EXPECT(!would_accept(set, mk_frame(0x6A, 0xBB, /*sa=*/true, /*sb=*/false)),
+         "and still needs the second signature");
+
+  // (d) The same 24 h bucket as anyone (the spec's proposed 50-per-day for
+  // attested gateways, §5 Q4, does not exist without the attestation).
+  Receiver rx;
+  rx.set = set;
+  for (int i = 0; i < MAX_ORIGINATIONS_PER_PUBKEY_24H; i++) {
+    EXPECT(rx.receive(mk_frame(0x6A, 0xBB)) == Outcome::Audited,
+           "gateway alerts inside the ordinary bucket");
+  }
+  EXPECT(rx.receive(mk_frame(0x6A, 0xBB)) == Outcome::RejectedRate,
+         "the gateway's sixth alert is rate-limited like any member's");
+}
+
+// The mirror above could drift from the firmware; this reads the firmware.
+// Nothing in beacon_channel.cpp's code may name the gateway trust level or
+// the attestation structure, and every trust_level it reads or writes is
+// compared against / set to REVOKED — so no code path can grant a
+// gateway-trust entry anything a cosigner lacks, and a frame's trailing
+// bytes (where an attestation block would sit) are never parsed: the ALERT
+// length check is a lower bound and the parser reads fixed offsets only.
+// Implementing the attestation path is a decision with human gates (a trust
+// root, a separately named build, a per-deployment legal review); when it is
+// taken, this pin is the thing that has to change on purpose.
+void test_source_grants_gateway_trust_nothing() {
+  bool ok = false;
+  const std::string src = beacon_source_scan::read_source(BEACON_CHANNEL_CPP, &ok);
+  EXPECT(ok, "beacon_channel.cpp is readable (source pin fails closed)");
+  if (!ok) return;
+  const std::string code = beacon_source_scan::strip_comments(src);
+  EXPECT(code.find("trust_level") != std::string::npos,
+         "the scan sees the receive path's trust checks (sanity)");
+  EXPECT(code.find("BCN_TRUST_GATEWAY") == std::string::npos,
+         "no code in beacon_channel.cpp names the gateway trust level");
+  EXPECT(code.find("BeaconGatewayAttestation") == std::string::npos &&
+         code.find("upstream_sig") == std::string::npos,
+         "no code in beacon_channel.cpp parses a gateway attestation block");
+  std::istringstream lines(code);
+  std::string line;
+  int trust_lines = 0;
+  while (std::getline(lines, line)) {
+    if (line.find("trust_level") == std::string::npos) continue;
+    trust_lines++;
+    if (line.find("BCN_TRUST_REVOKED") == std::string::npos) {
+      std::fprintf(stderr, "  trust_level used without BCN_TRUST_REVOKED: %s\n", line.c_str());
+      EXPECT(false, "every trust_level use in beacon_channel.cpp is a REVOKED check");
+    }
+  }
+  EXPECT(trust_lines >= 5, "the receive, cosign and revoke paths all check trust_level");
+}
+
+// The mirror's resolve_signer above is only worth what the firmware does, so
+// this reads the firmware: handle_alert_frame resolves BOTH signers through
+// resolve_signer (never a bare set lookup), resolve_signer maps this device's
+// own fingerprint to this device's own pubkey and refuses a revoked entry,
+// and both slots are verified against the resolved keys.
+void test_source_resolves_this_device_as_a_signer() {
+  using namespace beacon_source_scan;
+  bool ok = false;
+  const std::string src = read_source(BEACON_CHANNEL_CPP, &ok);
+  EXPECT(ok, "beacon_channel.cpp is readable (source pin fails closed)");
+  if (!ok) return;
+  const std::string code = strip_comments(src);
+  const std::string rx = squeeze(function_body(code, "handle_alert_frame"));
+  const std::string rs = squeeze(function_body(code, "resolve_signer"));
+  EXPECT(!rx.empty() && !rs.empty(), "handle_alert_frame() and resolve_signer() are defined");
+  EXPECT(rx.find("if(!resolve_signer(canonical->originator_fp,&a))return;") != std::string::npos,
+         "the originator is resolved through resolve_signer");
+  EXPECT(rx.find("elseif(!resolve_signer(canonical->cosigner_fp,&b)){return;}") != std::string::npos,
+         "the cosigner is resolved through resolve_signer");
+  EXPECT(rx.find("find_set_entry_by_fp(") == std::string::npos,
+         "the receive path does no bare set lookup that would miss this device");
+  EXPECT(rx.find("Ed25519::verify(sig_a,a.pubkey,buf,cl)") != std::string::npos &&
+         rx.find("Ed25519::verify(sig_b,b.pubkey,buf,cl)") != std::string::npos,
+         "both slots are verified against the resolved keys");
+  EXPECT(before(rs, "if(memcmp(fp,g_device_fp,DEVICE_FP_SIZE)==0){out->pubkey=g_device_pubkey;",
+                "find_set_entry_by_fp(fp)"),
+         "resolve_signer maps this device's fingerprint to this device's own pubkey");
+  EXPECT(rs.find("if(!e||e->trust_level==BCN_TRUST_REVOKED)returnfalse;") != std::string::npos,
+         "resolve_signer refuses an unknown or revoked entry");
+  EXPECT(rx.find("if(!is_solo&&memcmp(canonical->originator_fp,canonical->cosigner_fp,DEVICE_FP_SIZE)==0){return;}") != std::string::npos,
+         "a non-solo frame naming one fingerprint twice is still dropped");
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -899,13 +1205,20 @@ int main() {
   test_unsynced_clock_accepts_stale_effective();
 
   test_cancel_must_reference_the_active_alarm();
+  test_cancel_is_charged_like_an_alert();
   test_update_must_reference_the_active_alarm();
+  test_cosigner_holds_the_alarm_it_cosigned();
+  test_self_as_signer_grants_nothing_else();
 
   test_drills_do_not_exhaust_the_alert_bucket();
   test_alerts_do_not_exhaust_the_drill_bucket();
   test_pair_budget_caps_co_signed_alerts();
 
   test_template_outside_life_safety_set_rejected();
+
+  test_gateway_trust_confers_no_privilege();
+  test_source_grants_gateway_trust_nothing();
+  test_source_resolves_this_device_as_a_signer();
 
   test_stale_signer_selftest_rejected();
   test_unobserved_selftest_is_not_treated_as_stale();

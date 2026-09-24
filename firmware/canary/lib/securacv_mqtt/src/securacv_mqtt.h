@@ -26,8 +26,17 @@
 #ifndef MQTT_KEEPALIVE_SEC
   #define MQTT_KEEPALIVE_SEC      60
 #endif
+// PubSubClient's one buffer holds a whole outgoing packet: fixed header
+// (5) + topic length (2) + topic + payload. It refuses anything larger,
+// silently. The health payload is the largest periodic publish: ~970 B
+// with realistic values, including the 64-hex public_key Home Assistant
+// pins. With every field at its type's widest it reaches ~1170 B, a
+// 1236 B packet on a topic at its 63-char cap. The old 1024 B buffer did
+// not hold that worst case even before the key. 1280 does, and
+// custom_components/securacv/tests/test_canary_health_trust.py holds
+// every health key to it.
 #ifndef MQTT_BUFFER_SIZE
-  #define MQTT_BUFFER_SIZE        1024
+  #define MQTT_BUFFER_SIZE        1280
 #endif
 #ifndef MQTT_RECONNECT_MIN_MS
   #define MQTT_RECONNECT_MIN_MS   1000
@@ -98,11 +107,18 @@ bool mqtt_clear_credentials();
 // What NVS holds now, for the API's save-time judgment and for status:
 // the mode byte (0 when absent), the stored pin as-is ("" when absent;
 // "?" for a set-but-unreadable key, as the transport itself reports it),
-// and whether a CA is present. Never the CA itself.
+// and whether a CA is present AND readable. `ca_set` is true only when the
+// stored CA fits the transport's buffer (kCaBufBytes) — what load() will
+// actually hand mbedTLS; a key that exists but does not fit (a third-party
+// NVS writer; both flashers and the API cap at 3071) sets `ca_unreadable`
+// instead, so the API can refuse a CA-verified mode over it the way the
+// connect would, and say so (409 ca_unreadable: DELETE and upload again).
+// Never the CA itself.
 struct MqttTlsCurrent {
   uint8_t mode_byte;
   bool    fp_set;
   bool    ca_set;
+  bool    ca_unreadable;
   char    fp[128];
 };
 bool mqtt_tls_read_current(MqttTlsCurrent* out);
@@ -118,6 +134,17 @@ struct MqttTlsWrite {
   bool        clear_fp;
 };
 
+// What the credential row may carry over from what NVS already holds,
+// exactly as mqtt_tls_fields::credential_carry decided (host-tested): a
+// stored username / password the body omitted STANDS when `keep_*` is true
+// (the same endpoint) and is REMOVED when false (a new host or port — a
+// stored broker password never follows the link to an address it was not
+// given for). A body that supplies a field always writes it.
+struct MqttCredentialCarry {
+  bool keep_user;
+  bool keep_pass;
+};
+
 // One request, one NVS session, one reload. Writes the TLS keys FIRST (the
 // pin, then the mode byte — mqtt_tls_fields::write_order, host-tested) and
 // the credentials LAST, stops at the first failed write, closes the session
@@ -125,10 +152,13 @@ struct MqttTlsWrite {
 // re-reads NVS and reconnects the moment it sees the flag, and shares this
 // NVS handle — can never observe the new credentials next to the old (plain)
 // mode byte, nor close the handle under a write still in flight. `tls` may
-// be nullptr (credentials only). Returns false when NVS could not be opened
-// or a write failed; a reload is raised either way, so the link follows what
-// NVS actually holds.
-bool mqtt_save_config(const MqttCredentials* creds, const MqttTlsWrite* tls);
+// be nullptr (credentials only); `carry` may be nullptr (keep everything the
+// body omitted — the pre-sweep semantics, right only for the SAME endpoint;
+// the API always passes the rule's answer). Returns false when NVS could not
+// be opened or a write (a removal included) failed; a reload is raised
+// either way, so the link follows what NVS actually holds.
+bool mqtt_save_config(const MqttCredentials* creds, const MqttTlsWrite* tls,
+                      const MqttCredentialCarry* carry);
 
 // Store / forget the broker CA. `pem` has already passed
 // mqtt_tls_fields::check_ca and ends in '\n' (the caller adds it, as the
@@ -171,6 +201,21 @@ bool mqtt_publish_status(const char* json_payload);
 
 // Events: discrete event record (QoS 0, buffered across broker outages)
 bool mqtt_publish_event(const char* json_payload);
+
+// Events, live link only (the SD event log's backfill and its live path,
+// csi_event_egress / common/csi/src/csi_event_backfill.h): true when the
+// link took the body. Never buffers — false while the link is down, while
+// the offline queue still holds records from an outage (those go first, in
+// order: a queued tamper alert is never overtaken), or when the send
+// failed. The caller's copy stays on the card and is retried.
+bool mqtt_publish_event_live(const char* json_payload);
+
+// Bumped by every reprovision that changes the broker a record would be
+// delivered to (host, port or user changed, or the broker removed) — the
+// same test that flushes the offline queue. A caller holding undelivered
+// records of its own (the SD event log's backfill) drops them on a change:
+// what waited for one broker is not the next one's to see.
+uint32_t mqtt_destination_epoch();
 
 // Health: system metrics (QoS 0, every 60s)
 bool mqtt_publish_health(const char* json_payload);

@@ -9,6 +9,7 @@
  */
 
 #include "mesh_state.h"
+#include "mesh_revocation.h"   /* BLOB_MAX (F33) */
 
 #include <string.h>
 
@@ -30,18 +31,39 @@ namespace {
 constexpr const char* NVS_NAMESPACE = "securacv";
 constexpr const char* NVS_KEY_OPERA = "opera_secret";
 
-/* Project invariant (AGENTS.md §"NVS write paths"): persisting the
+/* Project invariant (spec/canary_mesh_network_v0.md §5.5; audit O2 in
+ * docs/security/THREAT_MODEL.md "Opera mesh"): persisting the
  * household opera_secret to NVS requires flash encryption to be
- * active. canary-wap's mesh_network.cpp:1053 enforces the same check
+ * active. canary-wap's mesh_network.cpp enforces the same check
  * on its opera_config write/load paths. Devices without FE blown
  * simply cannot store an opera_secret — the user must complete
- * pairing on every boot until the eFuse is committed. */
+ * pairing on every boot until the eFuse is committed. The device's
+ * own identity key is a different question with a different answer
+ * (Tier 0 by decision; common/identity/key_at_rest.h). */
 inline bool flash_encryption_enabled() {
   return esp_flash_encryption_enabled();
 }
 #endif
 
+#ifdef CSI_TEST_HOST_BUILD
+/* Host-test journal (mesh_state.h test::). */
+char s_journal[64] = {0};
+bool s_fail_remove = false;
+void journal_add(char op) {
+  const size_t n = strlen(s_journal);
+  if (n + 1 < sizeof(s_journal)) { s_journal[n] = op; s_journal[n + 1] = '\0'; }
+}
+#endif
+
 }  /* namespace */
+
+#ifdef CSI_TEST_HOST_BUILD
+namespace test {
+const char* journal()                   { return s_journal; }
+void        reset_journal()             { s_journal[0] = '\0'; s_fail_remove = false; }
+void        fail_remove_trusted_peer(bool fail) { s_fail_remove = fail; }
+}  /* namespace test */
+#endif
 
 bool save_opera_secret(const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN]) {
   if (secret == nullptr) return false;
@@ -50,6 +72,7 @@ bool save_opera_secret(const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN]) {
   /* Host build: succeed silently — tests use in-memory state, not NVS.
    * The flash-encryption gate is a hardware-only concern, not a logic
    * concern; we don't simulate it on host. */
+  journal_add('S');
   return true;
 #else
   if (!flash_encryption_enabled()) {
@@ -105,6 +128,7 @@ bool load_opera_secret(uint8_t out[mesh_crypto::OPERA_SECRET_LEN]) {
 
 bool clear_opera_secret() {
 #ifdef CSI_TEST_HOST_BUILD
+  journal_add('C');
   return true;
 #else
   Preferences prefs;
@@ -255,6 +279,162 @@ bool clear_trusted_peers() {
     /* Same isKey() idempotency dance as clear_opera_secret. */
     ok = !prefs.isKey(NVS_KEY_PEERS);
   }
+  prefs.end();
+  (void)clear_peer_macs();   /* the addresses go with the peers (F33) */
+  return ok;
+#endif
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * TRUSTED-PEER RADIO ADDRESSES (F33 part 1)
+ * "peer_macs" is 9 chars (within the 15-char NVS key budget).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+namespace peer_mac_blob {
+
+bool valid_len(size_t len) {
+  return len % PEER_MAC_ENTRY_LEN == 0 && len <= PEER_MACS_BLOB_MAX;
+}
+
+static size_t find(const uint8_t* blob, size_t len,
+                   const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN]) {
+  for (size_t off = 0; off < len; off += PEER_MAC_ENTRY_LEN) {
+    if (mesh_crypto::ct_equal(blob + off, fingerprint, mesh_crypto::FINGERPRINT_LEN)) {
+      return off;
+    }
+  }
+  return len;   /* not found */
+}
+
+bool upsert(uint8_t* blob, size_t* len,
+            const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN],
+            const uint8_t mac[PEER_MAC_LEN]) {
+  if (blob == nullptr || len == nullptr || fingerprint == nullptr || mac == nullptr) return false;
+  if (!valid_len(*len)) return false;
+  size_t off = find(blob, *len, fingerprint);
+  if (off == *len) {
+    if (*len + PEER_MAC_ENTRY_LEN > PEER_MACS_BLOB_MAX) return false;   /* full */
+    memcpy(blob + off, fingerprint, mesh_crypto::FINGERPRINT_LEN);
+    *len += PEER_MAC_ENTRY_LEN;
+  }
+  memcpy(blob + off + mesh_crypto::FINGERPRINT_LEN, mac, PEER_MAC_LEN);
+  return true;
+}
+
+bool remove(uint8_t* blob, size_t* len,
+            const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN]) {
+  if (blob == nullptr || len == nullptr || fingerprint == nullptr) return false;
+  if (!valid_len(*len)) return false;
+  const size_t off = find(blob, *len, fingerprint);
+  if (off == *len) return false;
+  memmove(blob + off, blob + off + PEER_MAC_ENTRY_LEN, *len - off - PEER_MAC_ENTRY_LEN);
+  *len -= PEER_MAC_ENTRY_LEN;
+  memset(blob + *len, 0, PEER_MAC_ENTRY_LEN);
+  return true;
+}
+
+bool decode(const uint8_t* blob, size_t len, PeerMac* out, size_t cap, size_t* count) {
+  if (count == nullptr) return false;
+  *count = 0;
+  if ((blob == nullptr && len > 0) || !valid_len(len)) return false;
+  const size_t n = len / PEER_MAC_ENTRY_LEN;
+  if (n > 0 && (out == nullptr || cap < n)) return false;
+  for (size_t i = 0; i < n; ++i) {
+    memcpy(out[i].fingerprint, blob + i * PEER_MAC_ENTRY_LEN, mesh_crypto::FINGERPRINT_LEN);
+    memcpy(out[i].mac, blob + i * PEER_MAC_ENTRY_LEN + mesh_crypto::FINGERPRINT_LEN, PEER_MAC_LEN);
+  }
+  *count = n;
+  return true;
+}
+
+}  /* namespace peer_mac_blob */
+
+#ifndef CSI_TEST_HOST_BUILD
+constexpr const char* NVS_KEY_PEER_MACS = "peer_macs";
+
+/* Read the current blob: true with *len = 0 when the key is absent; false on
+ * a read failure or a malformed blob (refuse rather than clobber — the same
+ * isKey() disambiguation as save_trusted_peer). */
+static bool read_peer_macs(Preferences& prefs, uint8_t* blob, size_t* len) {
+  *len = 0;
+  if (!prefs.isKey(NVS_KEY_PEER_MACS)) return true;
+  *len = prefs.getBytes(NVS_KEY_PEER_MACS, blob, PEER_MACS_BLOB_MAX);
+  return *len != 0 && peer_mac_blob::valid_len(*len);
+}
+#endif
+
+bool save_peer_mac(const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN],
+                   const uint8_t mac[PEER_MAC_LEN]) {
+  if (fingerprint == nullptr || mac == nullptr) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  if (!flash_encryption_enabled()) {
+    Serial.println("[ALERT][mesh_state] refused save_peer_mac — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    return false;
+  }
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  uint8_t blob[PEER_MACS_BLOB_MAX] = {0};
+  size_t len = 0;
+  bool ok = read_peer_macs(prefs, blob, &len) &&
+            peer_mac_blob::upsert(blob, &len, fingerprint, mac);
+  if (ok) ok = prefs.putBytes(NVS_KEY_PEER_MACS, blob, len) == len;
+  prefs.end();
+  return ok;
+#endif
+}
+
+bool load_peer_macs(PeerMac* out, size_t out_cap, size_t* out_count) {
+  if (out == nullptr || out_count == nullptr) return false;
+  *out_count = 0;
+  if (out_cap < MAX_TRUSTED_PEERS) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  if (!flash_encryption_enabled()) {
+    Serial.println("[ALERT][mesh_state] refused load_peer_macs — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    return false;
+  }
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/true)) return false;
+  uint8_t blob[PEER_MACS_BLOB_MAX] = {0};
+  size_t len = 0;
+  const bool read_ok = read_peer_macs(prefs, blob, &len);
+  prefs.end();
+  return read_ok && peer_mac_blob::decode(blob, len, out, out_cap, out_count);
+#endif
+}
+
+bool remove_peer_mac(const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN]) {
+  if (fingerprint == nullptr) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  if (!flash_encryption_enabled()) return false;
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  uint8_t blob[PEER_MACS_BLOB_MAX] = {0};
+  size_t len = 0;
+  bool ok = read_peer_macs(prefs, blob, &len);
+  if (ok && peer_mac_blob::remove(blob, &len, fingerprint)) {
+    ok = (len == 0) ? (prefs.remove(NVS_KEY_PEER_MACS) || !prefs.isKey(NVS_KEY_PEER_MACS))
+                    : prefs.putBytes(NVS_KEY_PEER_MACS, blob, len) == len;
+  }
+  prefs.end();
+  return ok;
+#endif
+}
+
+bool clear_peer_macs() {
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  const bool ok = prefs.remove(NVS_KEY_PEER_MACS) || !prefs.isKey(NVS_KEY_PEER_MACS);
   prefs.end();
   return ok;
 #endif
@@ -425,6 +605,298 @@ bool clear_elected_hub() {
   prefs.end();
   return ok;
 #endif
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * SINGLE TRUSTED-PEER REMOVAL (F10)
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool remove_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]) {
+  if (pubkey == nullptr) return false;
+
+#ifdef CSI_TEST_HOST_BUILD
+  journal_add('R');
+  return !s_fail_remove;
+#else
+  if (!flash_encryption_enabled()) {
+    Serial.println("[ALERT][mesh_state] refused remove_trusted_peer — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    return false;
+  }
+
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  if (!prefs.isKey(NVS_KEY_PEERS)) {   /* nothing persisted: already gone */
+    prefs.end();
+    return true;
+  }
+  uint8_t blob[PEERS_BLOB_MAX];
+  const size_t cur_bytes = prefs.getBytes(NVS_KEY_PEERS, blob, sizeof(blob));
+  if (cur_bytes == 0 || cur_bytes % mesh_crypto::PUBKEY_LEN != 0) {
+    prefs.end();   /* read failure / partial write — refuse, don't clobber */
+    return false;
+  }
+  const size_t cur_count = cur_bytes / mesh_crypto::PUBKEY_LEN;
+
+  /* Compact the survivors in place, preserving order. */
+  size_t kept = 0;
+  for (size_t i = 0; i < cur_count; ++i) {
+    const uint8_t* entry = blob + i * mesh_crypto::PUBKEY_LEN;
+    if (mesh_crypto::ct_equal(entry, pubkey, mesh_crypto::PUBKEY_LEN)) continue;
+    if (kept != i) {
+      memmove(blob + kept * mesh_crypto::PUBKEY_LEN, entry, mesh_crypto::PUBKEY_LEN);
+    }
+    ++kept;
+  }
+  bool ok;
+  if (kept == cur_count) {
+    ok = true;                                   /* not present: idempotent */
+  } else if (kept == 0) {
+    ok = prefs.remove(NVS_KEY_PEERS) || !prefs.isKey(NVS_KEY_PEERS);
+  } else {
+    const size_t new_bytes = kept * mesh_crypto::PUBKEY_LEN;
+    ok = prefs.putBytes(NVS_KEY_PEERS, blob, new_bytes) == new_bytes;
+  }
+  prefs.end();
+  /* Its radio address goes too (F33), best effort: a stale entry binds
+   * nothing — bind_peer_mac refuses an untrusted fingerprint. */
+  uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
+  mesh_crypto::compute_fingerprint(pubkey, fp);
+  (void)remove_peer_mac(fp);
+  return ok;
+#endif
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * MESH ENABLED FLAG (F10) — a preference, deliberately NOT FE-gated.
+ * "mesh_enabled" is 12 chars (within the 15-char NVS key budget).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+#ifndef CSI_TEST_HOST_BUILD
+constexpr const char* NVS_KEY_MESH_ENABLED = "mesh_enabled";
+#endif
+
+bool save_mesh_enabled(bool enabled) {
+#ifdef CSI_TEST_HOST_BUILD
+  (void)enabled;
+  return true;
+#else
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  const size_t put = prefs.putUChar(NVS_KEY_MESH_ENABLED, enabled ? 1 : 0);
+  prefs.end();
+  return put == 1;
+#endif
+}
+
+bool load_mesh_enabled(bool* out) {
+  if (out == nullptr) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  return false;
+#else
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/true)) return false;
+  if (!prefs.isKey(NVS_KEY_MESH_ENABLED)) {
+    prefs.end();
+    return false;                                /* absent → caller defaults on */
+  }
+  const uint8_t v = prefs.getUChar(NVS_KEY_MESH_ENABLED, 1);
+  prefs.end();
+  *out = (v != 0);
+  return true;
+#endif
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * OUTBOUND COUNTER HIGH-WATER MARK (F33) — deliberately NOT FE-gated.
+ * "mesh_out_ctr" is 12 chars (within the 15-char NVS key budget).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+#ifndef CSI_TEST_HOST_BUILD
+constexpr const char* NVS_KEY_OUT_CTR = "mesh_out_ctr";
+#endif
+
+bool save_outbound_counter(uint64_t high_water) {
+#ifdef CSI_TEST_HOST_BUILD
+  (void)high_water;
+  return true;
+#else
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  const size_t put = prefs.putULong64(NVS_KEY_OUT_CTR, high_water);
+  /* The reservation is only as good as the write: read it back. */
+  const bool ok = put == sizeof(uint64_t) &&
+                  prefs.getULong64(NVS_KEY_OUT_CTR, high_water + 1) == high_water;
+  prefs.end();
+  return ok;
+#endif
+}
+
+bool load_outbound_counter(uint64_t* out) {
+  if (out == nullptr) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  return false;
+#else
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/true)) return false;
+  if (!prefs.isKey(NVS_KEY_OUT_CTR)) {
+    prefs.end();
+    return false;
+  }
+  *out = prefs.getULong64(NVS_KEY_OUT_CTR, 0);
+  prefs.end();
+  return true;
+#endif
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * REVOCATION DENY-LIST (F33) — FE-gated household-graph metadata.
+ * "mesh_revoked" is 12 chars (within the 15-char NVS key budget).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+#ifndef CSI_TEST_HOST_BUILD
+constexpr const char* NVS_KEY_REVOKED = "mesh_revoked";
+#endif
+
+bool save_revocations(const uint8_t* blob, size_t len) {
+  if (blob == nullptr && len > 0) return false;
+  if (len > mesh_revocation::BLOB_MAX) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  if (!flash_encryption_enabled()) {
+    Serial.println("[ALERT][mesh_state] refused save_revocations — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    return false;
+  }
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  bool ok;
+  if (len == 0) {
+    ok = prefs.remove(NVS_KEY_REVOKED) || !prefs.isKey(NVS_KEY_REVOKED);
+  } else {
+    ok = prefs.putBytes(NVS_KEY_REVOKED, blob, len) == len;
+  }
+  prefs.end();
+  return ok;
+#endif
+}
+
+bool load_revocations(uint8_t* out, size_t out_cap, size_t* out_len) {
+  if (out == nullptr || out_len == nullptr) return false;
+  *out_len = 0;
+  if (out_cap < mesh_revocation::BLOB_MAX) return false;
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  if (!flash_encryption_enabled()) {
+    Serial.println("[ALERT][mesh_state] refused load_revocations — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    return false;
+  }
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/true)) return false;
+  bool ok = true;
+  if (prefs.isKey(NVS_KEY_REVOKED)) {
+    *out_len = prefs.getBytes(NVS_KEY_REVOKED, out, out_cap);
+    ok = *out_len != 0;   /* present but unreadable: a read failure */
+  }
+  prefs.end();
+  return ok;
+#endif
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * OPERA DISPLAY NAME (F10) — FE-gated household-identifying text.
+ * "opera_name" is 10 chars (within the 15-char NVS key budget).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+#ifndef CSI_TEST_HOST_BUILD
+constexpr const char* NVS_KEY_OPERA_NAME = "opera_name";
+#endif
+
+bool save_opera_name(const char* name) {
+  if (name == nullptr) return false;
+  const size_t len = strnlen(name, MAX_OPERA_NAME_BYTES + 1);
+  if (len == 0 || len > MAX_OPERA_NAME_BYTES) return false;
+
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  if (!flash_encryption_enabled()) {
+    Serial.println("[ALERT][mesh_state] refused save_opera_name — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    return false;
+  }
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  const size_t put = prefs.putBytes(NVS_KEY_OPERA_NAME, name, len);
+  prefs.end();
+  return put == len;
+#endif
+}
+
+bool load_opera_name(char* out, size_t cap) {
+  if (out == nullptr || cap < MAX_OPERA_NAME_BYTES + 1) return false;
+
+#ifdef CSI_TEST_HOST_BUILD
+  return false;
+#else
+  if (!flash_encryption_enabled()) {
+    Serial.println("[ALERT][mesh_state] refused load_opera_name — "
+                   "flash encryption disabled (audit O2 / AGENTS.md)");
+    return false;
+  }
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/true)) return false;
+  char temp[MAX_OPERA_NAME_BYTES];
+  const size_t got = prefs.isKey(NVS_KEY_OPERA_NAME)
+                   ? prefs.getBytes(NVS_KEY_OPERA_NAME, temp, sizeof(temp))
+                   : 0;
+  prefs.end();
+  if (got == 0 || got > MAX_OPERA_NAME_BYTES) return false;
+  memcpy(out, temp, got);
+  out[got] = '\0';
+  return true;
+#endif
+}
+
+bool clear_opera_name() {
+#ifdef CSI_TEST_HOST_BUILD
+  return true;
+#else
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
+  bool ok = prefs.remove(NVS_KEY_OPERA_NAME);
+  if (!ok) ok = !prefs.isKey(NVS_KEY_OPERA_NAME);
+  prefs.end();
+  return ok;
+#endif
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * ROTATION PERSISTENCE (F10-rekey) — CRYPTO: maintainer review required.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool persist_rotation(const uint8_t new_secret[mesh_crypto::OPERA_SECRET_LEN],
+                      const uint8_t (*forgotten_pubkeys)[mesh_crypto::PUBKEY_LEN],
+                      size_t forgotten_count) {
+  if (new_secret == nullptr) return false;
+  if (forgotten_count > 0 && forgotten_pubkeys == nullptr) return false;
+
+  /* Forgotten peers FIRST (fail closed — see mesh_state.h): a board must
+   * never boot holding the new secret and a peer that rotation dropped. */
+  bool removed_all = true;
+  for (size_t i = 0; i < forgotten_count; ++i) {
+    removed_all = remove_trusted_peer(forgotten_pubkeys[i]) && removed_all;
+  }
+  /* save_opera_secret() carries the flash-encryption gate. */
+  const bool ok = removed_all && save_opera_secret(new_secret);
+  if (!ok) {
+    /* Never leave the rotated-away secret as the one a reboot loads. */
+    clear_opera_secret();
+  }
+  return ok;
 }
 
 }  /* namespace mesh_state */

@@ -536,7 +536,9 @@ fn local_hub_host(host: &str) -> Result<&str, String> {
     // One trailing :port comes off; more colons than that is an IPv6 literal.
     let bare = match host.rsplit_once(':') {
         Some((name, port))
-            if !name.contains(':') && !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) =>
+            if !name.contains(':')
+                && !port.is_empty()
+                && port.bytes().all(|b| b.is_ascii_digit()) =>
         {
             name
         }

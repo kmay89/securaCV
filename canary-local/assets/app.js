@@ -7,9 +7,10 @@
 // (no glass) get their decoder cards — LED grammar, chirp meanings,
 // setup path. Everything works offline; nothing phones anywhere.
 
-import { DeviceScene, BUILDERS } from "./scene3d.js";
+import { DeviceScene, builderFor } from "./scene3d.js";
 import { buildFinishPicker, startFinishShowcase, hasUserChoice } from "./finishes.js";
 import { fmtLen, UNIT_MODES } from "./assembly-rules.js";
+import { deviceFigure, standTilt, bodyText } from "./body-dims.js";
 import { upgradeRealShape } from "./real-shapes.js";
 import { buildEnclosureLab } from "./enclosure-lab.js";
 import { buildBuildIt } from "./build-it.js";
@@ -18,6 +19,7 @@ import { buildAssemblyLab } from "./assembly-lab.js";
 import { CanaryEmulator, demoFleet } from "../emulator/web/emu-shell.js";
 import { BenchPower, romBanner } from "../emulator/web/bench.js";
 import { DEMO, beatsBetween } from "./mode-sim.js";
+import { buildOnboardPhone } from "./onboard-phone.js";
 import {
   DISPLAY_TOUR,
   DISPLAY_FIXES,
@@ -26,6 +28,14 @@ import {
   CHIRP_GRAMMAR,
   ledSequence,
 } from "./guides.js";
+
+// What a "meet the bird again" reboot forgets: the remembered hello, and the
+// Wi-Fi network (the two keys runtime_config.cpp reads and the portal's
+// set_wifi_credentials() writes). Everything else in flash — trust days,
+// pins, the unit's setup-network key — survives, as it would on the glass.
+const firstMeetingForgets = (nsKey) =>
+  nsKey.startsWith("scv-hello/") ||
+  nsKey === "securacv/wifi_ssid" || nsKey === "securacv/wifi_pass";
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const el = (tag, cls, text) => {
@@ -56,6 +66,11 @@ async function main() {
     .then((r) => r.json())
     .catch(() => null);
   state.boards = await fetch("devices/boards.json")
+    .then((r) => r.json())
+    .catch(() => null);
+  // the fleet-figure ledger (gen_figures.mjs, generated from the CAD): the
+  // Body row reads its measured envelope rather than a second, typed copy
+  state.figures = await fetch("devices/figures.json")
     .then((r) => r.json())
     .catch(() => null);
   state.assembly = await fetch("devices/assembly.json")
@@ -111,7 +126,8 @@ function renderCards() {
     grid.append(card);
 
     const scene = new DeviceScene(cv, null);
-    (BUILDERS[dev.id] || BUILDERS["canary-wap"])(scene);
+    // the device's own body, or its fleet figure — never another device's
+    builderFor(dev.id)(scene);
     upgradeRealShape(scene, dev.id);
     scene.start();
     state.cards.set(dev.id, { scene, dev });
@@ -159,7 +175,7 @@ async function openSheet(dev) {
     dispose: [],
   };
   state.sheet = ctx;
-  (BUILDERS[dev.id] || BUILDERS["canary-wap"])(ctx.scene);
+  builderFor(dev.id)(ctx.scene);
   upgradeRealShape(ctx.scene, dev.id);
   ctx.scene.start();
 
@@ -484,11 +500,13 @@ async function buildDisplaySheet(ctx, side, stage) {
     // power-on, so setup() always reads the surviving flash — never a
     // race against the firmware's resume. A "meet again" reboot must not
     // restore the remembered hello — that memory is exactly what the
-    // button un-remembers.
+    // button un-remembers — nor a Wi-Fi network a previous setup walk
+    // stored: a first meeting is a factory-fresh unit, so the firmware's own
+    // provision_needed() opens its setup portal (the phone in "Try it").
     const img = !opts.preserve
       ? null
       : opts.firstMeeting
-        ? new Map([...ctx.nvsImage].filter(([k]) => !k.startsWith("scv-hello/")))
+        ? new Map([...ctx.nvsImage].filter(([k]) => !firstMeetingForgets(k)))
         : ctx.nvsImage;
     await ctx.emu.start({
       provisioned: true,
@@ -581,7 +599,7 @@ async function buildDisplaySheet(ctx, side, stage) {
         note("no power on the bench — restore power first (Bench tab)");
         return;
       }
-      note("rebooting for a first meeting — the bird will introduce itself");
+      note("rebooting for a first meeting — the bird will introduce itself, then raise its setup network (the phone in Try it walks it)");
       serialAppend("\n\n※ ── power cycle (first meeting) ── ※\n\n" + romBanner("poweron"));
       ctx.emu.retire();
       await boot({ preserve: true, firstMeeting: true });
@@ -742,6 +760,20 @@ function tryView(ctx, noteLine) {
   styleWrap.append(mk("meet the bird again (first boot)",
     () => ctx.meetAgain?.(), "primary"));
 
+  // ── First boot: the display's own setup portal, walked from a phone ──
+  // A first meeting is a factory-fresh unit (no Wi-Fi stored), so the real
+  // net/provision.cpp raises its SoftAP + captive portal in the wasm; this
+  // phone joins it and every answer it shows is the firmware's.
+  const setupWrap = el("div", "style-rail");
+  setupWrap.append(
+    el("h4", null, "First boot — the setup portal"),
+    el("p", "muted",
+      "The same wizard a new display runs on your desk: it raises its own setup " +
+      "network, shows the key as a QR on its glass, and serves a sign-in page " +
+      "to your phone. Wrong password, a network that isn't there, a router that's " +
+      "unplugged — the reason you get back is the firmware's."),
+    buildOnboardPhone(ctx, { note: (t) => { noteLine.textContent = t; } }));
+
   // ── The storyline (display_modes.md §demo): the mode system's scripted
   // household, played through THIS page's staged witnesses into the real
   // firmware — the same beats, seconds and severities the on-device demo
@@ -821,6 +853,7 @@ function tryView(ctx, noteLine) {
       "Then break the household on purpose — the glass must never lie about it."),
     styleWrap,
     grid,
+    setupWrap,
     noteLine
   );
   return wrap;
@@ -1061,19 +1094,19 @@ function specsView(dev) {
     dl.append(el("dt", null, k), el("dd", null, v));
   };
   row("Board", dev.board);
-  if (dev.glass) row("Glass", `${dev.glass.panel} · touch ${dev.glass.touch}`);
-  if (dev.body_mm) {
+  // glass.touch is null on a panel with no touch layer (the 1.47" sticks)
+  if (dev.glass) row("Glass", `${dev.glass.panel} · ${dev.glass.touch ? `touch ${dev.glass.touch}` : "no touch"}`);
+  const fig = deviceFigure(state.figures, dev.id);
+  if (fig && fig.envelope_mm && fig.confidence !== "idea") {
     // the caliper row: mm · decimal inch · fractional inch, tap to cycle
-    // (same persisted setting the Assemble tab's parts list uses)
-    const b = dev.body_mm;
+    // (same persisted setting the Assemble tab's parts list uses). An idea
+    // gets no dimensions: it is a ghost everywhere, and a size is a claim.
+    const tilt = standTilt(dev, state.enclosures);
     const dd = el("dd", "unit-cycle");
     dd.title = "tap to cycle mm / inches / all";
     const paint = () => {
       const mode = localStorage.getItem("scv-units") || "all";
-      const f = (mm) => fmtLen(mm, mode);
-      dd.textContent = b.d
-        ? `Ø ${f(b.d)}  ×  ${f(b.depth)} deep · stand ${b.stand_tilt_deg}°`
-        : `${f(b.w)}  ×  ${f(b.h)}  ×  ${f(b.depth)} · stand ${b.stand_tilt_deg}°`;
+      dd.textContent = bodyText(dev, fig, tilt, (mm) => fmtLen(mm, mode));
     };
     dd.addEventListener("click", () => {
       const cur = localStorage.getItem("scv-units") || "all";
@@ -1106,6 +1139,9 @@ function specsView(dev) {
 }
 
 // ── witness sheet: decoder cards (no glass to emulate — LEDs + chirps) ──
+// Also the sheet of a display with no browser twin of its own yet (the
+// Nightlight, the Nightstand C6, the Nightstand 7): the case, the parts and
+// the facts, without the witness-only tabs below.
 function buildWitnessSheet(ctx, side) {
   const dev = ctx.dev;
   const tabs = el("nav", "tabs");
@@ -1179,6 +1215,13 @@ function buildWitnessSheet(ctx, side) {
     },
     Specs: () => specsView(dev),
   };
+  if (dev.kind === "display") {
+    // A screen, no twin: the count-coded LED grammar, the piezo and the
+    // camera-scan join describe a screenless witness, not this glass.
+    delete views.Lights;
+    delete views.Sounds;
+    delete views.Joining;
+  }
   for (const name of Object.keys(views)) {
     const b = el("button", "tab", name);
     b.addEventListener("click", () => {

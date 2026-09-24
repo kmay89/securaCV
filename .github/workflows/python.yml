@@ -12,6 +12,11 @@ on:
       - 'pyproject.toml'
       - 'requirements_test.txt'
       - '.github/workflows/python.yml'
+      # Firmware sources a test reads (test_wap_tamper_health.py builds the
+      # WAP's MQTT health from them), so a firmware-only edit that stops
+      # carrying a tamper level still runs the test that catches it.
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino'
   pull_request:
     branches: [main]
     paths:
@@ -20,6 +25,11 @@ on:
       - 'pyproject.toml'
       - 'requirements_test.txt'
       - '.github/workflows/python.yml'
+      # Firmware sources a test reads (test_wap_tamper_health.py builds the
+      # WAP's MQTT health from them), so a firmware-only edit that stops
+      # carrying a tamper level still runs the test that catches it.
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino'
 
 permissions:
   contents: read
@@ -39,6 +49,13 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Python
+        # Holds the Home Assistant integration's suite (pytest, and mypy,
+        # whose python_version is 3.11 anyway) to requires-python's floor, on
+        # purpose: a python-version-file job gets the newest release inside
+        # pyproject.toml's range, so without this pin the integration would
+        # never run on 3.11. It proves the floor for the integration only;
+        # the tooling's own tests run on the newest release. Move it when the
+        # floor moves.
         uses: actions/setup-python@v7
         with:
           python-version: '3.11'

@@ -37,6 +37,9 @@
  *   securacv-canary-sig|v1|sense|<device_id>|<seq>|<event>|<presence>|
  *                                <occupants>|<range>|<bucket_uptime_s>
  *   securacv-canary-sig|v1|whoami|<device_id>|<nonce_hex>
+ *   securacv-canary-sig|v1|sentinel|<device_id>|<seq>|<event>|<level>|
+ *                                <confidence>|<anomaly>|<occupancy>|<range>|
+ *                                <modality_bits>|<bucket_uptime_s>
  *
  * Both sides reconstruct this string from the parsed JSON fields and
  * verify the Ed25519 sig over its raw UTF-8 bytes. The schema version
@@ -48,6 +51,15 @@
  * bucket, near/mid/far band, 10-minute uptime bucket) — the canonical
  * carries exactly what the JSON body publishes, nothing finer. The
  * `whoami` kind is the presence proof described at sign_whoami() below.
+ *
+ * The `sentinel` kind is canary-sentinel's fused-claim event (the coarse
+ * securacv::fusion::FusionResult at its privacy chokepoint): ordinal level,
+ * 0..100 confidence, 0..100 anomaly accumulator, 0/1/2+ occupancy, near/mid/
+ * far band, and the bitmask of modality CLASSES that corroborated. It is a
+ * kind of its own, not a reuse of `sense`, because `sense` has no slot for
+ * confidence, anomaly or the modality bitmask — publishing those beside a
+ * `sense` signature would leave them unsigned and forgeable by anyone with
+ * broker access.
  *
  * Output sigs are base64url-encoded with no padding (86 chars for the
  * 64-byte Ed25519 sig); the whoami proof alone is hex (see sign_whoami).
@@ -128,6 +140,24 @@ bool sign_sense(uint32_t    seq,
                 char*       sig_b64url_out,
                 size_t      sig_cap);
 
+/* Sign the canonical "sentinel" message (canary-sentinel fused-claim
+ * event). The string fields are the fusion chokepoint's fixed vocabulary —
+ * event names (level_changed), levels (clear/aware/present/confirmed/
+ * loiter/anomaly), occupancy buckets (unknown/0/1/2+), range bands
+ * (unknown/near/mid/far) — so no escaping is needed. confidence and anomaly
+ * are 0..100; modality_bits is the securacv::fusion::Modality bitmask. */
+bool sign_sentinel(uint32_t    seq,
+                   const char* event_name,
+                   const char* level,
+                   uint8_t     confidence,
+                   uint8_t     anomaly,
+                   const char* occupancy,
+                   const char* range,
+                   uint8_t     modality_bits,
+                   uint32_t    bucket_uptime_s,
+                   char*       sig_b64url_out,
+                   size_t      sig_cap);
+
 /* Sign the canonical "whoami" presence proof — a caller-supplied nonce
  * bound to this device's identity:
  *
@@ -159,7 +189,7 @@ bool sign_sense(uint32_t    seq,
  * arbitrary attacker bytes (the domain prefix + kind field separate it
  * from every other message this key signs: 32-byte chain hashes, the
  * beacon canonicals under "securacv:beacon:canonical:v0", and the
- * chain/event/counts/sense kinds above).
+ * chain/event/counts/sense/sentinel kinds above).
  *
  * The signature is returned as 128 hex chars, not b64url: its consumer
  * is the Flasher's Rust verifier and hex round-trips through every stack
@@ -210,6 +240,19 @@ size_t build_sense_canonical(uint32_t    seq,
                              const char* device_id,
                              char*       out,
                              size_t      cap);
+
+size_t build_sentinel_canonical(uint32_t    seq,
+                                const char* event_name,
+                                const char* level,
+                                uint8_t     confidence,
+                                uint8_t     anomaly,
+                                const char* occupancy,
+                                const char* range,
+                                uint8_t     modality_bits,
+                                uint32_t    bucket_uptime_s,
+                                const char* device_id,
+                                char*       out,
+                                size_t      cap);
 
 size_t build_whoami_canonical(const char*   nonce_hex,
                               const char*   device_id,

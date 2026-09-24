@@ -14,9 +14,10 @@
 //      USB: open the case to charge/flash — the biggest leak path deleted.
 //    - A real Ø1.5 mm O-ring CORD in a machined-style groove on the body
 //      rim (27 % squeeze), not a printed TPU gasket.
-//    - Six M3 heat-set screw lobes (Pelican-style), worst unsupported seal
-//      span ~41 mm (end lobe -> mid-side lobe along the seal line) — at the
-//      top of the ~40 mm clamp-spacing rule; verify compression in W-3.
+//    - Eight M3 heat-set screw lobes (Pelican-style), worst unsupported seal
+//      span ~38 mm (between the two lobes on a long side, measured along the
+//      seal line and asserted under the ~40 mm clamp-spacing rule; the six-lobe
+//      layout ran 47 mm end lobe -> mid-side lobe); verify compression in W-3.
 //    - 4 mm walls everywhere; the electronics never touch the shell —
 //      board on snap-clips, battery on a foam bed.
 //    - A TPU impact BOOT takes the drops; the shell takes the water.
@@ -25,7 +26,7 @@
 //         bezel (contrast lens trim ring — hides the disc bond line) / all
 //  Print: body + lid in ASA (outdoor) or PETG, 5-6 perimeters, 40 % gyroid,
 //  0.2 mm layers, flat as modeled — no supports. Boot: TPU 95A, open up.
-//  Hardware: 6x M3 heat-set insert (Ø4.6) + M3x8 pan head; Ø1.5 O-ring cord
+//  Hardware: 8x M3 heat-set insert (Ø4.6) + M3x8 pan head; Ø1.5 O-ring cord
 //  (~200 mm, nitrile/silicone); Ø12x2 polycarbonate lens disc, silicone-
 //  bonded; 1x adhesive ePTFE vent patch (Ø10+); closed-cell foam pad.
 //
@@ -42,6 +43,13 @@
 //  width while strain does not. The lanyard bore roof is now the library
 //  teardrop (flat 45° crown, not the pointed local cap). All other meshes
 //  are unchanged.
+//
+//  2026-09-24 (v0.1-dev): the printed-TPU fallback ring filled 139 % of its
+//  groove (it now prints 1.4 x 1.4, ~89 %, asserted by core_gasket_fill); the
+//  lid seated turned 180° (six symmetric lobes, off-center lens) — it now
+//  carries the house key (lid_key_rib / lid_key_slot); the two mid-side lobes
+//  are four at x = ±inner_l/4, taking the worst seal span from 47 to ~38 mm;
+//  inserts are 7.0 deep so the M3 x 8 does not bottom out.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect2d, tearbore_x, flat pan-head counterbore
@@ -54,9 +62,11 @@ use <canary_board_lib.scad>  // board registry — the XIAO numbers the knobs ci
 part = "all";        // ["body","lid","boot","gasket","bezel","all"]
 
 /* [Board] — XIAO ESP32-S3 Sense, camera stack up, USB toward +X wall */
-board_l = 21.0;  board_w = 17.5;  board_h = 1.2;   // the xiao registry record — canary_board_lib;
-                     // the board rides in CLIPS, so clip_clear absorbs the measured
-                     // 17.8 width (brd_xiao_w_measured) and the spec 17.5 stays
+board_l = 21.0;      // board length — the xiao registry record, brd_l("xiao"), canary_board_lib
+board_w = 17.5;      // board width — the xiao registry record, brd_w("xiao"); the board rides in
+                     // CLIPS, so clip_clear absorbs the measured 17.8 width
+                     // (brd_xiao_w_measured) and the spec 17.5 stays
+board_h = 1.2;       // PCB thickness — the xiao registry record, brd_t("xiao")
 stack_h = 6.5;       // Sense expansion + camera height above the base PCB
 cam_dx = 0.0;        // lens center offset from board center
 cam_dy = 0.0;
@@ -64,16 +74,20 @@ cam_dy = 0.0;
 /* [Battery] — MEASURE yours; 503035 (500 mAh) default. LiPo: never charge below 0 C */
 batt_l = 35.0;  batt_w = 30.0;  batt_h = 5.0;
 foam_t = 2.0;        // closed-cell foam bed under + over the pack
-batt_pad = 1.0;
+batt_pad = 1.5;      // end clearance, at the -X WALL end: the pack rides against the divider on its foam
+                     // and its corners clear the cavity's corner radius (asserted; at 1.0 against the
+                     // wall they stood 0.2 into it)
 
 /* [Print tolerances] — tune with canary_fit_coupon.scad */
-tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;   // catalog defaults — core_tol_* (canary_core_lib)
+tol_slide = 0.20;   // catalog default — core_tol_slide() (canary_core_lib)
+tol_press = 0.10;   // catalog default — core_tol_press() (canary_core_lib)
+tol_hole  = 0.30;   // catalog default — core_tol_hole() (canary_core_lib)
 
 /* [Shell] — 4 mm everywhere is the field-grade floor, not a suggestion.
    floor_t is 4.5 so the keyhole pockets reach the ecosystem-standard 3.5 mm
    depth (the shared T-stud is 3.4 mm tall) while keeping a 1.0 mm ceiling. */
 wall_t  = 4.0;   // deviates: drop-case wall — impact duty is this case's whole intent
-floor_t = 4.5;
+floor_t = 4.5;   // floor thickness — 4.5 so the keyhole pockets reach the standard 3.5 mm depth with a 1.0 mm ceiling
 lid_t   = 4.0;
 r_in    = 3.0;       // cavity corner radius
 head_clear = 1.8;    // clearance above the camera stack
@@ -88,10 +102,12 @@ g_c     = 2.0;       // groove centerline offset outboard of the cavity edge
 lob_d    = 9.0;
 lob_off  = 8.0;      // lobe center offset outboard of the cavity edge (keeps the lanyard bore >=1.5 mm off the pressure wall)
 end_lob_y = 8.0;     // Y of the two lobes on each short end
-insert_d = 4.0;  insert_h = 6.0;   // M3 heat-set HOLE (the short-series insert's knurl is Ø4.6:
-                                   // bore it 4.0 so the brass bites — at 4.6 it pulled out under preload)
+insert_d = 4.0;     // M3 heat-set HOLE Ø (the short-series insert's knurl is Ø4.6:
+                    // bore it 4.0 so the brass bites — at 4.6 it pulled out under preload)
+insert_h = 7.0;     // M3 heat-set hole depth — the M3 x 8 reaches 6.0 below the rim; 1 mm to spare
 screw_c_d = 3.4;                    // lid clearance hole
-cb_d = 6.4;  cb_h = 2.0;            // pan-head counterbore
+cb_d = 6.4;                         // pan-head counterbore Ø
+cb_h = 2.0;                         // pan-head counterbore depth
 
 /* [Lens window] — Ø12x2 polycarbonate disc, bonded from outside */
 disc_d = 12.0;  disc_t = 2.0;
@@ -99,24 +115,29 @@ ap_d   = 8.0;        // aperture through the web behind the disc
 
 /* [Vent] — Ø3 hole + adhesive ePTFE patch on the INSIDE face */
 vent_d = 3.0;
-vent_x = 30.0;   vent_y = 0.0;    // over the plug room beyond the board's USB edge: at (-15, 6) the
-                                  // membrane sat under the battery's foam-over pad and got pressed
-                                  // on every close; the lens keep-out and the wall are asserted
+vent_x = 30.0;   // vent position X — over the plug room beyond the board's USB edge: at (-15, 6) the
+                 // membrane sat under the battery's foam-over pad and got pressed
+                 // on every close; the lens keep-out and the wall are asserted
+vent_y = 0.0;    // vent position Y (see vent_x)
 
-/* [Keyhole mounts] — blind, seal-safe (never reach the cavity) */
+/* [Stud/keyhole interface] — blind keyhole pockets, seal-safe (never reach the cavity) */
 kh_x = 18.0;         // +/- X of the two keyholes
-kh_head_d = 8.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;   // deviates: head Ø8.0 is a STATED deviation from
+kh_head_d = 8.0;     // deviates: head Ø8.0 is a STATED deviation from
                      // mount_kh_head_d() = 7.0: a field case gets hung on found hardware, and Ø8
                      // passes a #8 pan head too, not just the T-stud. Shank/slot are the
                      // canary_mount_lib standard.
-kh_head_h = 3.5;  kh_face = 1.0;    // catalog standard — mount_kh_head_h()/mount_kh_face();
+kh_shank_d = 4.2;    // shank slot width — the canary_mount_lib standard, mount_kh_shank_d()
+kh_slot_l = 8.0;     // slot travel — the canary_mount_lib standard, mount_kh_slot_l()
+kh_head_h = 3.5;     // total pocket depth — catalog standard, mount_kh_head_h();
                      // fits the 3.4 mm T-stud (mount_stud_h) with 0.1 ceiling clearance
+kh_face = 1.0;       // face web the screw head grips behind — catalog standard, mount_kh_face()
 
 /* [Lanyard] — paracord bore through the two -X lobes */
 lan_d = 4.5;  lan_z = 5.0;
 
 /* [Lid alignment lip] — shear key inboard of the seal */
 lip_w = 1.5;  lip_h = 2.0;
+lid_key = true;      // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — the lobes fit a lid two ways and the lens lines up one way
 
 /* [Bezel accent] — contrast-color trim ring hiding the lens bond line */
 bez_on = true;
@@ -170,11 +191,24 @@ total_h = base_h + lid_t;
 bcx     = inner_l/2 - board_zone/2 - usb_room/2;   // board center X (the plug room sits +X of it)
 x_div   = -inner_l/2 + batt_l + batt_pad + rib_t/2;
 lens_x  = bcx + cam_dx;  lens_y = cam_dy;
+// lid key: the +Y wall, off center toward +X (the board side) — turned 180°
+// the slot lands on -X of the -Y wall and the lip stands on the rib
+key_x   = inner_l/4 + 6.0;
 
+// two lobes on each long side at x = ±inner_l/4 (it was one, mid-side: the
+// end lobe -> mid-side lobe seal span ran 47 mm against the ~40 mm rule)
+lob_xm  = inner_l/4;
 function lobes() = [
     [ (inner_l/2 + lob_off),  end_lob_y], [ (inner_l/2 + lob_off), -end_lob_y],
     [-(inner_l/2 + lob_off),  end_lob_y], [-(inner_l/2 + lob_off), -end_lob_y],
-    [0,  (inner_w/2 + lob_off)], [0, -(inner_w/2 + lob_off)] ];
+    [ lob_xm,  (inner_w/2 + lob_off)], [ lob_xm, -(inner_w/2 + lob_off)],
+    [-lob_xm,  (inner_w/2 + lob_off)], [-lob_xm, -(inner_w/2 + lob_off)] ];
+// the clamp spans along the O-ring's centerline between neighboring lobes
+seal_span_long = 2*lob_xm;                                           // the two lobes of one long side
+seal_span_end  = (inner_l/2 - r_in - lob_xm) + PI/2*(r_in + g_c)     // long-side lobe -> round the corner
+                 + (inner_w/2 - r_in - end_lob_y);                   //   -> end lobe
+seal_span_short = 2*end_lob_y;                                       // the two lobes of one short end
+seal_span = max(seal_span_long, seal_span_end, seal_span_short);
 
 // O-ring engineering checks
 squeeze = 1 - grv_d/oring_d;
@@ -183,6 +217,20 @@ grv_R = r_in + g_c;
 cord_len = 2*(inner_l + 2*g_c) + 2*(inner_w + 2*g_c) - 8*grv_R + 2*PI*grv_R;
 
 assert(squeeze >= 0.15 && squeeze <= 0.40, "O-ring squeeze must be 15-40% — adjust grv_d/oring_d");
+assert(seal_span <= 40, str("worst seal clamp span ", seal_span, " mm is past the ~40 mm clamp-spacing rule — add lobes"));
+// the printed-TPU fallback ring (gasket()): 0.6 narrower than the groove and
+// 0.3 proud of it — core_gasket_fill's house ceiling. At grv_w - 0.2 by
+// grv_d + 0.6 it filled 139 %: a solid ring that props the lid open
+function gk_shrink() = 0.6;
+function gk_proud()  = 0.3;
+assert(core_gasket_fill(grv_w, grv_d, gk_proud(), gk_shrink()) <= core_gasket_fill_max(),
+       str("the printed TPU fallback ring would fill ", round(100*core_gasket_fill(grv_w, grv_d, gk_proud(), gk_shrink())),
+           " % of the O-ring groove — past ", round(100*core_gasket_fill_max()), " %"));
+// the pack's wall-end corners inside the cavity's corner radius (pack against the divider)
+batt_dy = batt_w/2 - (inner_w/2 - r_in);
+assert(batt_dy <= 0 || batt_pad >= r_in - sqrt(max(0, r_in*r_in - batt_dy*batt_dy)) + 0.1,
+       "the battery's wall-end corners run into the cavity's corner radius — raise batt_pad");
+assert(abs(key_x) + core_key_w()/2 + 1.0 <= inner_l/2 - r_in, "the lid key rides onto the cavity's corner radius");
 assert(grv_fill <= 0.90, "O-ring groove over-filled (>90%) — widen grv_w");
 assert(g_c - grv_w/2 >= 0.8, "inner groove cheek < 0.8 mm");
 assert(wall_t - g_c - grv_w/2 >= 0.8, "outer groove cheek < 0.8 mm — thicken wall_t");
@@ -206,7 +254,8 @@ assert(abs(vent_x) + vent_d/2 + 1.2 + 1.0 <= inner_l/2 && abs(vent_y) + vent_d/2
 echo(str("Canary FIELD case v0.1-dev — outer ", out_l, " x ", out_w, " x ", total_h,
          " (+boot ", out_l + 2*(boot_w + lob_off + lob_d/2 - wall_t), " wide at lobes)"));
 echo(str("O-ring: Ø", oring_d, " cord, cut ~", round(cord_len), " mm, squeeze ",
-         round(squeeze*100), "%, groove fill ", round(grv_fill*100), "%"));
+         round(squeeze*100), "%, groove fill ", round(grv_fill*100), "%; worst clamp span ",
+         round(seal_span*10)/10, " mm (", len(lobes()), " lobes)"));
 echo("CER-4 design intent: IP67 + MIL-STD-810H 516.8 IV (boot on) — VERIFY per field_ratings.md");
 if (wall_t < 4.0 || floor_t < 4.0 || lid_t < 4.0)
     echo("NOTE: shell thinner than 4.0 mm — CER-4 submersion intent assumes 4.0 mm");
@@ -293,6 +342,8 @@ module body() {
         translate([x_div - rib_t/2 - 0.1, inner_w/2 - 2 - notch_w, floor_t + rib_h - notch_d])
             cube([rib_t + 0.2, notch_w, notch_d + 0.1]);
     }
+    // lid key (canary_core_lib): a rib on the +Y cavity wall under the lip zone
+    if (lid_key) lid_key_rib(key_x, inner_w/2, 270, base_h, lip_h);
 }
 
 module lid() {                          // z=0 is the OUTER face; print face-down
@@ -310,6 +361,12 @@ module lid() {                          // z=0 is the OUTER face; print face-dow
                 offset(r = -tol_slide - lip_w) cav2d();
             }
         }
+        // the key's slot through the lip. The lid is modeled face-down and
+        // assembles turned over about X (y -> -y), so the slot sits at -y here
+        // and the library's lid frame (plate above z = 0, lip below) is this
+        // one mirrored about the plate's inner face
+        if (lid_key) translate([0, 0, lid_t]) mirror([0, 0, 1])
+            lid_key_slot(key_x, -inner_w/2, 90, lip_h, lip_w);
         // screw holes + FLAT pan-head counterbores — canary_core_lib's seat
         // (a shallow cone under a pan head bears only on its lip). The lib
         // cuts down toward z = t; this lid's show face is z = 0, so mirror —
@@ -336,9 +393,9 @@ module lid() {                          // z=0 is the OUTER face; print face-dow
 }
 
 module gasket() {                       // printed-TPU fallback if you skip the cord
-    linear_extrude(grv_d + 0.6) difference() {
-        offset(r = g_c + (grv_w - 0.2)/2) cav2d();
-        offset(r = g_c - (grv_w - 0.2)/2) cav2d();
+    linear_extrude(grv_d + gk_proud()) difference() {
+        offset(r = g_c + (grv_w - gk_shrink())/2) cav2d();
+        offset(r = g_c - (grv_w - gk_shrink())/2) cav2d();
     }
 }
 

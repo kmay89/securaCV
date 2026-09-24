@@ -20,6 +20,11 @@ final class FleetStore: ObservableObject {
     /// inside it. The shell switches tabs on it; the destination consumes
     /// and CLEARS it, so a stale route can never re-fire on a later visit.
     @Published var pendingRoute: AppRoute?
+    /// A `.svlt` handed to the app from Files, Mail or AirDrop (the document
+    /// type in Info.plist). The shell switches to Keys; the Unseal screen
+    /// consumes and CLEARS it, the same contract as `pendingRoute`. A file
+    /// URL, never the file: nothing is read until the screen reads it.
+    @Published var pendingSealedSnapshot: URL?
     @Published var fleetName: String = "Your Canaries"
     @Published var isRefreshing = false
 

@@ -36,11 +36,29 @@ final class WallModel {
     private(set) var state: WallState = .needsHub
     /// The verdict of THIS TV's own verification of the sealed log, refreshed
     /// every poll cycle (`refreshVerification`) — nil whenever the source
-    /// serves no sealed log, which is every source until a hub ships the
-    /// endpoint. The header banner keys off it: only a non-nil `ok` verdict
-    /// may say "Verified"; everything else is phrased as the fleet's own
-    /// report, because that is all it is.
+    /// serves no sealed log to this TV (every firmware board; a kernel this
+    /// TV is not paired with answers 401). A verdict alone is a walk against
+    /// the key the log supplied; what it may CLAIM is `standing`.
     private(set) var report: VerifyReport?
+    /// Where that walk stands against the key pinned at pairing
+    /// (WallPairing). The header banner keys off it: only `.verified` may
+    /// say "Verified"; `.keyChanged` is an alarm; everything else is phrased
+    /// as the fleet's own report or a walk "not yet pinned".
+    private(set) var standing: VerificationStanding = .none
+    /// This TV's pairing with the one source it polls, if any — the viewer
+    /// token and the pinned key, read from the Keychain (never defaults).
+    /// Nil on a multi-source wall: one pin cannot vouch for several sources.
+    private(set) var pairing: PairedSource?
+    /// The sealed log as a timeline — drawn ONLY from a chain this TV walked
+    /// and verified against the key pinned at pairing (`standing ==
+    /// .verified`). A failed walk shows the alarm banner, never a ribbon; an
+    /// unpinned walk shows neither, because a ribbon of "what happened"
+    /// wears the integrity claim the Wall has not earned. Coarse buckets
+    /// only (TimelineScrub.records(fromSealedPayloads:)); empty otherwise.
+    private(set) var timeline: [TimelineRecord] = []
+    /// Payloads in that verified log the timeline could not read — counted
+    /// and shown as a count, never silently dropped.
+    private(set) var timelineUnparsed = 0
     /// Where the fleet answers, persisted so a power cut heals itself. ONE
     /// entry when a hub (or a typed address) fronts the fleet; SEVERAL when
     /// the Wall found standalone Canaries by their own announcements and
@@ -67,6 +85,15 @@ final class WallModel {
     let coreVersion = WitnessCore.version
 
     private let transport: FleetTransport
+    private let pairings: PairedSourceStore
+    /// Sources (by pairing account) whose sealed log refused this TV this
+    /// session — asked once, then left alone until a pairing changes. The
+    /// kernel counts every refused credential, and a missing one, toward a
+    /// per-address lockout that also closes `/api/fleet`; a Wall that asked
+    /// every ten seconds would lock ITSELF out of the roll-call within a
+    /// minute. Cleared by pair, forget and connect; in memory only, so a
+    /// relaunch asks once more.
+    private var sealedLogRefused: Set<String> = []
     /// The Bonjour browse, injectable exactly like the transport: a real
     /// NWBrowser cannot be constructed or fed in a test, and a unit test must
     /// not spend four wall-clock seconds listening to a simulator's network.
@@ -105,11 +132,16 @@ final class WallModel {
     private static let reconcileEvery = 6
 
     /// Where a fleet answers on a standard install, most-specific first: the
-    /// hub's kernel port, then a lone canary-wap fronting its own fleet at
-    /// canary.local. The SAME list the desktop Flasher and Lab probe
-    /// (witnessBases / witness-host.js) — one discovery story on every
-    /// surface, so "it found it on my Mac but not my TV" can't happen.
-    static let wellKnownCandidates = ["canary.local:8099", "canary.local"]
+    /// hub convention port, the kernel's own API port (8799 — what the Home
+    /// Assistant add-on and the Docker sidecar serve), then a lone canary-wap
+    /// fronting its own fleet at canary.local. 8799 is here so a kernel host
+    /// that answers to canary.local is found without typing the port. This
+    /// list is the reference every other wall probes, in this order: the
+    /// desktop Flasher and Lab (witnessBases / witness-host.js, the Lab's
+    /// menu bar companion) and the vendored web emulator are pinned to it by
+    /// canary-local/tests/desktop_parity.test.js, and the website's TV app
+    /// to the emulator by securacv_website tests/tv-wall.test.mjs.
+    static let wellKnownCandidates = ["canary.local:8099", "canary.local:8799", "canary.local"]
 
     /// The character's current face and posture, and its one ambient
     /// sentence — the SAME mood engine every surface runs (CanaryMood,
@@ -126,9 +158,11 @@ final class WallModel {
         transport: FleetTransport = URLSessionFleetTransport(),
         defaults: UserDefaults = .standard,
         pollInterval: TimeInterval = 10,
+        pairings: PairedSourceStore = PairedSourceStore(),
         discover: @escaping @Sendable (TimeInterval) async -> [String] = { await WallDiscovery.browse(seconds: $0) }
     ) {
         self.transport = transport
+        self.pairings = pairings
         self.discover = discover
         self.defaults = defaults
         self.pollInterval = pollInterval
@@ -143,6 +177,7 @@ final class WallModel {
         self.seen = Self.loadSeen(from: defaults)
         self.resident = ResidentWatch(defaults: defaults)
         pruneStaleDiscoveredSources()
+        reloadPairing()
     }
 
     private func persist(_ sources: [String], discovered: Bool = false) {
@@ -151,6 +186,81 @@ final class WallModel {
         defaults.set(discovered, forKey: Self.discoveredKey)
         // Keep the legacy key coherent for anything still reading it.
         defaults.set(sources.first ?? "", forKey: Self.hubKey)
+        reloadPairing()
+    }
+
+    /// Drop this cycle's verdict and everything drawn from it. A remembered
+    /// verdict is not a current verdict, and a timeline is only as current
+    /// as the verdict that licensed it.
+    private func clearVerdict() {
+        report = nil
+        standing = .none
+        timeline = []
+        timelineUnparsed = 0
+    }
+
+    /// Re-read this TV's pairing for the source it polls. Only a single
+    /// source can be paired: a merged wall has no one key to pin.
+    private func reloadPairing() {
+        pairing = sources.count == 1 ? pairings.pairing(for: sources[0]) : nil
+    }
+
+    // MARK: Pairing — the viewer token and the pinned key
+
+    /// Pair this Wall with the hub that minted `receiptText` (the one line
+    /// `witness_api mint-viewer-token` prints). The receipt's own `base_url`
+    /// wins when it names one — the Wall then connects there, replacing a
+    /// discovered set as a typed address would — else the pairing is for
+    /// the one source the Wall polls now. Returns nil on success, or the
+    /// sentence the settings panel shows; nothing is saved on failure.
+    ///
+    /// The previous verdict does not carry over: it was reached without
+    /// this pin. The next poll cycle walks the log under it.
+    @discardableResult
+    func pair(receiptText: String) -> String? {
+        let receipt: ViewerReceipt
+        do {
+            receipt = try ViewerReceipt.parse(receiptText)
+        } catch {
+            return error.localizedDescription
+        }
+        let target: String
+        if let base = receipt.baseURL {
+            guard PairedSourceStore.account(for: base) != nil else {
+                return PairingError.badBaseURL(base).localizedDescription
+            }
+            target = base
+        } else if sources.count == 1 {
+            target = sources[0]
+        } else {
+            return PairingError.noSingleSource.localizedDescription
+        }
+        do {
+            try pairings.pair(receipt, source: target)
+        } catch {
+            return error.localizedDescription
+        }
+        sealedLogRefused.removeAll()
+        clearVerdict()
+        if sources.count == 1,
+           PairedSourceStore.account(for: sources[0]) == PairedSourceStore.account(for: target) {
+            reloadPairing()
+        } else {
+            connect(to: target)
+        }
+        return nil
+    }
+
+    /// Forget this TV's pairing with the source it polls — the viewer token
+    /// AND the pinned key, together (one Keychain item). The Wall goes back
+    /// to reading the fleet's own report; the operator revokes the token on
+    /// the hub (`revoke-viewer-token <id>`) to finish the job there.
+    func forgetPairing() {
+        guard sources.count == 1 else { return }
+        pairings.forget(sources[0])
+        reloadPairing()
+        sealedLogRefused.removeAll()
+        clearVerdict()
     }
 
     /// Read the last-seen table. A value that is not a number is ignored —
@@ -258,7 +368,8 @@ final class WallModel {
         persist([typed])
         markSeen([typed])
         // The old source's verdict does not cover the new source's fleet.
-        report = nil
+        clearVerdict()
+        sealedLogRefused.removeAll()
         backoff.reset()
         state = .connecting(to: typed)
         start()
@@ -423,30 +534,76 @@ final class WallModel {
     /// "Verified" — a fleet that renders is not the same claim as a chain
     /// that verifies, and conflating them is exactly how a wall starts lying.
     ///
-    /// Two honesty rules bound it:
+    /// Three honesty rules bound it:
     ///  * ONE verdict, ONE source — the same rule `FleetSnapshot.merged`
     ///    applies to `verified_through`: a chain fetched from one Canary must
     ///    not banner devices another one reported, so a multi-source wall
     ///    carries no verdict at all.
     ///  * A body that is not a sealed log AT ALL (a squatted host's login
-    ///    page, an endpoint nobody serves — today, every source) is a
-    ///    non-answer, not a failed verification: same "keep looking, never
-    ///    close enough" rule the fleet parse applies. The core reports that
-    ///    case as malformed with no failing entry, which is the one shape
-    ///    that never indicts a real chain.
+    ///    page, an endpoint a firmware board does not serve) is a non-answer,
+    ///    not a failed verification: same "keep looking, never close enough"
+    ///    rule the fleet parse applies. The core reports that case as
+    ///    malformed with no failing entry, which is the one shape that never
+    ///    indicts a real chain.
+    ///  * The token goes only where it was paired, and the word "Verified"
+    ///    only where the log's key IS the pinned key (VerificationStanding).
+    ///    The pairing is re-read from the Keychain every cycle, so a pairing
+    ///    forgotten or replaced in settings is what the next walk uses.
+    ///  * A source that refuses this TV is asked once, not every cycle — the
+    ///    hub's auth lockout is per address and would close the roll-call
+    ///    too (`sealedLogRefused`).
     private func refreshVerification() async {
         guard sources.count == 1,
-              let address = try? FleetAddress.normalize(sources[0]),
-              let sealed = await transport.fetchSealedLog(from: address) else {
-            report = nil
+              let address = try? FleetAddress.normalize(sources[0]) else {
+            clearVerdict()
             return
         }
-        let verdict = try? WitnessCore.verify(sealedLogJSON: sealed)
-        if let verdict, verdict.kind == .malformed, verdict.failedAt == nil {
-            report = nil
+        reloadPairing()
+        let pin = pairing
+        let account = PairedSourceStore.account(for: sources[0]) ?? sources[0]
+        // Refused once this session: do not knock again (see
+        // `sealedLogRefused`). The standing that refusal earned holds.
+        let fetch: SealedLogFetch
+        if sealedLogRefused.contains(account) {
+            fetch = .unauthorized
         } else {
-            report = verdict
+            fetch = await transport.fetchSealedLog(from: address, token: pin?.token)
+            if fetch == .unauthorized { sealedLogRefused.insert(account) }
         }
+        var verdict: VerifyReport?
+        var servedKey: String?
+        if case .document(let sealed) = fetch {
+            verdict = try? WitnessCore.verify(sealedLogJSON: sealed)
+            if let walked = verdict, walked.kind == .malformed, walked.failedAt == nil {
+                verdict = nil
+            }
+            if verdict != nil {
+                servedKey = VerificationStanding.servedKey(in: sealed)
+            }
+        }
+        report = verdict
+        standing = VerificationStanding.derive(pinnedKey: pin?.verifyingKey, fetch: fetch,
+                                               report: verdict, servedKey: servedKey)
+        if standing == .verified, case .document(let sealed) = fetch {
+            let folded = TimelineScrub.records(fromSealedPayloads: Self.sealedPayloads(in: sealed))
+            timeline = folded.records
+            timelineUnparsed = folded.unparsed
+        } else {
+            timeline = []
+            timelineUnparsed = 0
+        }
+    }
+
+    /// The entries' `payload` strings — the stored bytes the chain walk just
+    /// hashed, and the only field the timeline reads. Anything that does
+    /// not decode is no entries at all (the walk already said why).
+    private static func sealedPayloads(in sealedLogJSON: String) -> [String] {
+        struct SealedLogEntriesLite: Decodable {
+            struct Entry: Decodable { let payload: String }
+            let entries: [Entry]
+        }
+        let doc = try? JSONDecoder().decode(SealedLogEntriesLite.self, from: Data(sealedLogJSON.utf8))
+        return doc?.entries.map(\.payload) ?? []
     }
 
     /// Losing the hub keeps the last good fleet on screen, clearly marked
@@ -455,7 +612,7 @@ final class WallModel {
     /// not a current verdict, the same rule `withEveryDeviceOffline` applies
     /// to a remembered `verified_through`.
     private func degrade(reason: String) {
-        report = nil
+        clearVerdict()
         switch state {
         case .live(let snapshot, let asOf):
             state = .stale(snapshot, since: asOf, reason: reason)
@@ -478,7 +635,8 @@ final class WallModel {
     private func updateCanaryMood(fleet: FleetSnapshot, wallDown: Bool,
                                   carryingMilestone carried: Bool = false) -> Bool {
         let reading = moodKeeper.observe(
-            WallCanary.inputs(fleet: fleet, wallDown: wallDown, report: report))
+            WallCanary.inputs(fleet: fleet, wallDown: wallDown, report: report,
+                              standing: standing))
         let milestone = reading.milestone || carried
         canaryFace = reading.face
         canaryPosture = reading.posture

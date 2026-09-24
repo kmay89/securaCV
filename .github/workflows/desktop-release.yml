@@ -48,6 +48,12 @@ concurrency:
 permissions:
   contents: write
 
+# The flash engine the Lab bundles for its native USB flashing is the SAME
+# espflash as the Flasher's, pinned in the same place: .github/espflash-pins.env,
+# the ONE file this workflow and desktop-flasher-release.yml both read (their
+# "Load the espflash pins" step), so the two apps can never ship different
+# flash engines. Bump it there, deliberately.
+
 jobs:
   build:
     strategy:
@@ -83,10 +89,11 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             libudev-dev \
-            patchelf
+            patchelf \
+            file curl unzip
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: stable
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
@@ -107,6 +114,132 @@ jobs:
       - name: Install Tauri CLI
         working-directory: desktop-lab
         run: npm ci
+
+      # ── the bundled flash engine (the Flasher's steps, the same pins) ──────
+      # Fetch the prebuilt espflash for each arch and drop it where Tauri looks
+      # for a sidecar: binaries/espflash-<target-triple> (tauri.conf.json
+      # externalBin). A universal macOS build needs ALL THREE: the per-arch
+      # sidecars (aarch64 + x86_64) while it compiles each slice, AND a lipo'd
+      # universal one at bundle time. Falls back to `cargo install` if the
+      # release asset naming ever changes, so the pipeline can't silently
+      # break. These two steps are desktop-flasher-release.yml's, with the
+      # sidecar directory swapped; desktop_parity.test.js holds them equal.
+      - name: Load the espflash pins
+        # The version and per-target sha256s the two bundle steps below check
+        # against live in ONE file both desktop apps' releases read
+        # (.github/espflash-pins.env), which both apps' release-targets.yml
+        # watches name. Parsed, never sourced: only the four expected keys,
+        # each in its expected shape, reach $GITHUB_ENV, and anything else in
+        # the file fails the release here instead of bundling around it.
+        # Identical in both workflows (desktop_parity.test.js holds it so and
+        # runs it against the file).
+        shell: bash
+        run: |
+          set -euo pipefail
+          pins=.github/espflash-pins.env
+          want="ESPFLASH_VERSION ESPFLASH_SHA256_AARCH64_APPLE_DARWIN ESPFLASH_SHA256_X86_64_APPLE_DARWIN ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU"
+          seen=" " version=""
+          while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in ''|'#'*) continue;; esac
+            key="${line%%=*}" value="${line#*=}"
+            case " $want " in *" $key "*) ;; *) echo "::error file=$pins::not an espflash pin: $line"; exit 1;; esac
+            case "$seen" in *" $key "*) echo "::error file=$pins::$key is pinned twice"; exit 1;; esac
+            if [ "$key" = ESPFLASH_VERSION ]; then
+              [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+                || { echo "::error file=$pins::ESPFLASH_VERSION is not an x.y.z version: $value"; exit 1; }
+              version="$value"
+            else
+              [[ "$value" =~ ^[0-9a-f]{64}$ ]] \
+                || { echo "::error file=$pins::$key is not a sha256 digest: $value"; exit 1; }
+            fi
+            seen="$seen$key "
+            echo "$key=$value" >> "$GITHUB_ENV"
+          done < "$pins"
+          for key in $want; do
+            case "$seen" in *" $key "*) ;; *) echo "::error file=$pins::$key is missing"; exit 1;; esac
+          done
+          echo "espflash $version and every per-target sha256 loaded from $pins"
+
+      - name: Bundle espflash sidecar (macOS universal)
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://github.com/esp-rs/espflash/releases/download/v${ESPFLASH_VERSION}"
+          bin=desktop-lab/src-tauri/binaries
+          mkdir -p "$bin"
+          fetch() {
+            local triple="$1" out="$bin/espflash-$1"
+            if curl -fL "$base/espflash-$triple.zip" -o e.zip 2>/dev/null; then
+              # Verify the prebuilt asset against its pinned sha256 before we
+              # trust it — a mutable release asset must not silently change the
+              # flash engine we bundle. The env var name is the triple upcased.
+              local var want
+              var="ESPFLASH_SHA256_$(printf '%s' "$triple" | tr 'a-z-' 'A-Z_')"
+              want="${!var:-}"
+              [ -n "$want" ] || { echo "::error::no pinned sha256 for espflash-$triple (add ${var})"; exit 1; }
+              echo "${want}  e.zip" | sha256sum -c - \
+                || { echo "::error::espflash-$triple.zip sha256 mismatch — refusing to bundle an unverified flash engine"; exit 1; }
+              rm -rf ex && unzip -q e.zip -d ex
+              cp "$(find ex -type f -name espflash | head -n1)" "$out"
+            else
+              # No sha256 pin covers a source build: never silent (see Linux).
+              echo "::warning::prebuilt espflash-$triple not downloadable; building espflash $ESPFLASH_VERSION from crates.io instead (no sha256 pin covers this path)"
+              cargo install espflash --version "$ESPFLASH_VERSION" --locked --target "$triple" --root "cargo-$triple"
+              cp "cargo-$triple/bin/espflash" "$out"
+            fi
+            chmod +x "$out"
+          }
+          fetch aarch64-apple-darwin
+          fetch x86_64-apple-darwin
+          # Universal slice for the bundle step.
+          lipo -create -output "$bin/espflash-universal-apple-darwin" \
+            "$bin/espflash-aarch64-apple-darwin" "$bin/espflash-x86_64-apple-darwin"
+          chmod +x "$bin/espflash-universal-apple-darwin"
+          file "$bin"/espflash-*
+          # A file NAMED universal is not a universal file (RELEASE_LESSONS
+          # (z): a one-slice lipo succeeds). Prove each per-arch sidecar is its
+          # arch and the universal one carries both, or an Intel or Apple
+          # Silicon Mac gets "Bad CPU type" the first time it flashes.
+          [ "$(lipo -archs "$bin/espflash-aarch64-apple-darwin")" = "arm64" ] \
+            || { echo "::error::espflash-aarch64-apple-darwin is not an arm64 binary"; exit 1; }
+          [ "$(lipo -archs "$bin/espflash-x86_64-apple-darwin")" = "x86_64" ] \
+            || { echo "::error::espflash-x86_64-apple-darwin is not an x86_64 binary"; exit 1; }
+          archs=" $(lipo -archs "$bin/espflash-universal-apple-darwin") "
+          case "$archs" in *" arm64 "*) ;; *) echo "::error::universal espflash lacks arm64:$archs"; exit 1;; esac
+          case "$archs" in *" x86_64 "*) ;; *) echo "::error::universal espflash lacks x86_64:$archs"; exit 1;; esac
+
+      - name: Bundle espflash sidecar (Linux x86_64)
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://github.com/esp-rs/espflash/releases/download/v${ESPFLASH_VERSION}"
+          triple="x86_64-unknown-linux-gnu"
+          out="desktop-lab/src-tauri/binaries/espflash-$triple"
+          mkdir -p desktop-lab/src-tauri/binaries
+          if curl -fL "$base/espflash-$triple.zip" -o e.zip 2>/dev/null; then
+            # Verify the mutable release asset before bundling it (see macOS).
+            echo "${ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU}  e.zip" | sha256sum -c - \
+              || { echo "::error::espflash-$triple.zip sha256 mismatch — refusing to bundle an unverified flash engine"; exit 1; }
+            unzip -q e.zip -d ex
+            cp "$(find ex -type f -name espflash | head -n1)" "$out"
+          else
+            # No sha256 pin covers a source build, so it must never happen
+            # silently (RELEASE_LESSONS principles 2 and 4): say so on the run.
+            echo "::warning::prebuilt espflash-$triple not downloadable; building espflash $ESPFLASH_VERSION from crates.io instead (no sha256 pin covers this path)"
+            cargo install espflash --version "$ESPFLASH_VERSION" --locked --root cargo-linux
+            cp cargo-linux/bin/espflash "$out"
+          fi
+          chmod +x "$out"
+          # A file NAMED for x86_64 Linux is not one: prove it, or a bad
+          # download ships as an espflash that fails at its first spawn.
+          desc="$(file -b "$out")"
+          echo "$out: $desc"
+          case "$desc" in
+            *"ELF 64-bit"*"x86-64"*) ;;
+            *) echo "::error::espflash-$triple is not an x86-64 ELF executable: $desc"; exit 1;;
+          esac
 
       - name: All three version files agree
         # On the RELEASE path, not just in lint: a pushed `app-v*` tag, or a
@@ -183,7 +316,7 @@ jobs:
           tagName: ${{ (github.event_name == 'push' || inputs.publish) && 'app-v__VERSION__' || '' }}
           releaseName: "SecuraCV Lab v__VERSION__"
           releaseBody: |
-            The **SecuraCV Lab**, as a native app — local-first; it talks only to your own devices, and the one thing it fetches on its own is its signed update manifest.
+            The **SecuraCV Lab**, as a native app — local-first; it talks to your own devices and reaches the internet only for the project's GitHub releases: its update manifest, and firmware for the Flash page (once a board is connected it asks which signed firmware is published; pressing Flash downloads that image).
 
             - **macOS**: download the `.dmg` (universal — Apple Silicon & Intel).
             - **Linux**: `.AppImage` (runs anywhere) or `.deb` (Debian/Ubuntu).
@@ -356,7 +489,7 @@ jobs:
           tagName: ${{ (github.event_name == 'push' || inputs.publish) && 'app-v__VERSION__' || '' }}
           releaseName: "SecuraCV Lab v__VERSION__"
           releaseBody: |
-            The **SecuraCV Lab**, as a native app — local-first; it talks only to your own devices, and the one thing it fetches on its own is its signed update manifest.
+            The **SecuraCV Lab**, as a native app — local-first; it talks to your own devices and reaches the internet only for the project's GitHub releases: its update manifest, and firmware for the Flash page (once a board is connected it asks which signed firmware is published; pressing Flash downloads that image).
 
             - **macOS**: download the `.dmg` (universal — Apple Silicon & Intel).
             - **Linux**: `.AppImage` (runs anywhere) or `.deb` (Debian/Ubuntu).
@@ -475,7 +608,7 @@ jobs:
             echo
             echo "---"
             echo
-            echo "The **SecuraCV Lab**, as a native app — local-first; it talks only to your own devices, and the one thing it fetches on its own is its signed update manifest."
+            echo "The **SecuraCV Lab**, as a native app — local-first; it talks to your own devices and reaches the internet only for the project's GitHub releases: its update manifest, and firmware for the Flash page (once a board is connected it asks which signed firmware is published; pressing Flash downloads that image)."
             echo
             echo "- **macOS**: download the \`.dmg\` (universal — Apple Silicon & Intel)."
             echo "- **Linux**: \`.AppImage\` (runs anywhere) or \`.deb\` (Debian/Ubuntu)."

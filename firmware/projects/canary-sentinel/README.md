@@ -5,15 +5,17 @@ because any one sensor is magic, but because it fuses several *physically
 independent* ones and treats disagreement and blinding as suspicion. One
 host-tested fusion brain, three cost tiers, five presets.
 
-> **Status: Phase 0 — the fusion brain is landed and host-tested.** The novel
-> core (`firmware/common/fusion`) and the preset→engine mapping are proven
-> without hardware in `firmware/tests_host` (77 checks green under
-> `-Wall -Wextra -Werror`, run by the existing host-tests CI job). This project
-> composes that core with the on-board sensors and emits coarse transitions to
-> the console. The signed witness + MQTT/HA + pull-OTA network path — the same
-> proven stack as canary-sense — is **Phase 1** (checklist below), and the
-> hardware bench is **pending**, so this project is intentionally not yet in
-> `firmware/flavors.json`. It phases in exactly as canary-sense did.
+> **Status: Phase 1a — compile-gated in CI, NOT released, nothing
+> bench-verified.** The novel core (`firmware/common/fusion`) and the
+> preset→engine mapping are proven without hardware in `firmware/tests_host`
+> (under `-Wall -Wextra -Werror`, run by the host-tests CI job). Phase 1a wires
+> the network/witness path — canary-sense's stack, carried here and pinned to
+> it — and the project is in `firmware/flavors.json`, so its `door` (C6) and
+> `lite` (C3) envs are compile-gated by CI's PlatformIO leg, which also holds
+> each image to its OTA slot. It has no release envs, no flasher product and no published OTA
+> channel (its `firmware/flavors.json` entry is marked `unreleased`): it ships
+> when the bench checklist below is green. The onboard-radio channels are Phase 1b and are
+> not built. See the phase table below for exactly what is proven where.
 
 Design + full spec: [`docs/canary_sentinel_fusion_design.md`](../../../docs/canary_sentinel_fusion_design.md).
 Fusion engine: [`firmware/common/fusion`](../../common/fusion/README.md).
@@ -77,24 +79,75 @@ fusion core does not change.
 
 `Clear → Aware → Present → Confirmed → Loiter`, with `Anomaly` as an overlay
 that wins and latches. The only thing published is the coarse `FusionResult`:
-level, 0..100 confidence, 0/1/2+ occupancy, near/mid/far band, and which
-modality *classes* corroborated. **No MAC, no centimeters, no per-target track,
-no imagery, no vitals — ever.** Every transition is Ed25519-signed over a
-`sentinel` v1 canonical and hash-chained (Phase 1), reusing `common/identity` +
-`common/witness` exactly as canary-sense does.
+level, 0..100 confidence, 0..100 anomaly score, 0/1/2+ occupancy, near/mid/far
+band, and which modality *classes* corroborated. **No MAC, no centimeters, no
+per-target track, no imagery, no vitals — ever.** Every level transition is
+Ed25519-signed over the `sentinel` v1 canonical and hash-chained, reusing
+`common/identity` + `common/witness` exactly as canary-sense does:
+
+```
+securacv-canary-sig|v1|sentinel|<device_id>|<seq>|<event>|<level>|<confidence>|
+    <anomaly>|<occupancy>|<range>|<modality_bits>|<bucket_uptime_s>
+```
+
+It is its own kind (`spec/witness_dictionary.json` `signature_format`), not a
+reuse of canary-sense's `sense` kind, because `sense` has no slot for
+confidence, anomaly or the modality bitmask — those would have ridden unsigned.
+Home Assistant rebuilds it in `custom_components/securacv/signature.py`
+(`verify_sentinel_event`); the firmware host test and the HA pytest share one
+golden vector.
+
+### What goes over MQTT (Phase 1a)
+
+| Topic | Retained | Carries |
+|---|---|---|
+| `securacv/<id>/events` | no | one signed event per level transition: `event` (`level_changed`), `seq`, `bucket_uptime_s`, `level`, `confidence`, `anomaly`, `occupancy`, `range`, `modality_bits`, `signed` + `v`/`alg`/`fp`/`sig` |
+| `securacv/<id>/state` | yes | the latest claim + `presence` (level present/confirmed/loiter), `anomaly_active`, `channel_denied`, `modalities` (class names), `strong_modalities`, `tier`, uptime |
+| `securacv/<id>/status` | yes | online/offline (LWT), heartbeat, RSSI, heap health |
+| `securacv/<id>/health` | yes | the public key HA TOFU-pins, firmware version |
+| `securacv/<id>/chain` | yes | the signed chain head + length (the `chain` kind) |
+| `securacv/<id>/update/*` | yes | the HA update entity + auto-update switch (signed pull-OTA) |
+
+The device's own MQTT discovery creates Presence and Anomaly binary sensors, a
+Channel-blinded problem sensor, Level / Confidence / Anomaly score / Occupancy
+/ Range band / Corroborating modalities sensors, the canary-sense diagnostics
+(last event, uptime, RSSI, free heap) and the firmware update entity. There is
+no Identify button and no tuning dial yet. In the SecuraCV integration the
+device's sensing modality reads "Other sensor": it fuses several media, and a
+dedicated fusion modality is a later dictionary decision.
+
+## Phases — what is proven where
+
+| Phase | Scope | Status | Proven by |
+|---|---|---|---|
+| **0** | fusion brain, presets, board pins, envs | landed | `make -C firmware/tests_host` (fusion + door / mailbox-lite preset suites) |
+| **1a** | network/witness path: `sentinel` canonical + chain, MQTT events + retained state, HA discovery, signed pull-OTA, setup portal, mDNS | **compile-gated in CI** — `door` (C6, core 3) and `lite` (C3, core 2) in `firmware.yml`'s PlatformIO leg with OTA-slot size guards; **not run on hardware** | the canonical: host test + HA pytest golden vector; the copy of canary-sense's stack: `firmware/scripts/check_sentinel_net_sync.sh`; the compile: CI only (no local ESP32 toolchain) |
+| **1b** | onboard-radio channels: WiFi-RF, WiFi-CSI, BLE (and the fleet-link BLE beacon) | **bench-bound, NOT built** — radio coexistence with the STA link and the CSI HAL on the C6 are unproven | nothing yet; the adapter call sites in `src/main.cpp` are comments |
+| **2** | bench-tuned presets, release envs, OTA channels — one per preset (each env already names its own product and manifest, all declared unpublished) | not started | the bench checklist below, then a release |
+
+Until 1b lands, a Standard build fuses PIR + radar + light and a Lite build
+PIR + light: the unwired channels never vote, which the engine treats as
+quiet (not blinded). That is fewer corroborating classes than the tier table
+above promises — one more reason nothing ships yet.
 
 ## Build & test
 
 ```
-# verify the novel core without hardware (this is the CI-covered path):
-make -C firmware/tests_host          # fusion + preset host suites, all green
+# verify the novel core + the signed canonical without hardware:
+make -C firmware/tests_host          # fusion + preset + device-signature suites
+firmware/scripts/check_sentinel_net_sync.sh   # the net stack still equals canary-sense's
 
-# device builds (Phase 1 net path pending; recipe in envs/platformio/):
+# device builds (compile-gated in CI; recipe in envs/platformio/):
 pio run -e canary-sentinel-door      # Standard, front-door preset
 pio run -e canary-sentinel-lite      # Lite tier (C3, no radar)
-pio run -e canary-sentinel-demo-head # Heavy sensor head
+pio run -e canary-sentinel-demo-head # Heavy sensor head (not in CI: preset-only delta from door)
 pio device monitor -b 115200
 ```
+
+Credentials: copy `secrets/secrets.example.h` to `secrets/secrets.h` for a
+USB-provisioned bench unit; a build without it boots into the shared setup
+portal (a `SecuraCV-XXXX` network) instead of joining a placeholder, exactly
+as canary-sense does.
 
 ## Layout
 
@@ -102,10 +155,25 @@ pio device monitor -b 115200
 projects/canary-sentinel/
   platformio.ini                 # selects envs from envs/platformio/canary-sentinel.ini
   include/canary/
-    config.h                     # composition: preset macros -> housekeeping consts
+    config.h                     # composition: preset macros -> housekeeping + net consts
     sentinel_config.h            # preset SENT_*/FEATURE_* -> securacv::fusion::FusionConfig
     sentinel_requirements.h      # R1–R10 as code
+    types.h / topics.h           # the coarse claim + snapshot; the MQTT topic set
+    witness.h                    # Ed25519 identity + chain over the `sentinel` canonical
+    net/{wifi,mdns,ota}_mgr.h ha/ log.h version.h runtime_config.h diagnostics.h
+                                 # canary-sense's, byte-identical (pinned)
+    net/mqtt_mgr.h               # the sentinel's publishers over canary-sense's transport
   src/main.cpp                   # reads sensors -> Vote -> fusion engine -> emit_claim()
+  src/witness.cpp                # canary-sense's key/chain plumbing (pinned whole-file but
+                                 #   the event canonical's call sites), signing + chaining
+                                 #   the `sentinel` canonical
+  src/net/mqtt_mgr.cpp           # canary-sense's transport + trust surface (pinned whole-
+                                 #   file but the payloads) + the sentinel's state and
+                                 #   heartbeat payloads
+  src/ha/ha_discovery.cpp        # the sentinel's HA entity set
+  src/net/{wifi,mdns,ota}_mgr.cpp src/runtime_config.cpp src/diagnostics.cpp
+                                 # canary-sense's (wifi_mgr: all but the setup-network name)
+  secrets/secrets.example.h      # USB-provisioning template (secrets.h is git-ignored)
 common/fusion/                   # the board-agnostic, host-tested fusion brain
 configs/canary-sentinel/<preset> # door / window / hallway / mailbox-lite / perimeter-demo
 boards/xiao-esp32c6-sentinel     # Standard/Heavy head pins (radar + PIR + lux)
@@ -123,14 +191,44 @@ envs/platformio/canary-sentinel.ini
 - [ ] Standard walk-in → `Confirmed` latency target ≤ 1.5 s `[BENCH]`
 - [ ] Heavy head↔hub ESP-NOW link + vision vote round-trip `[BENCH]`
 - [ ] False-alarm soak: pets, HVAC, sun-through-blinds vs the `Anomaly` rate
+- [ ] Phase 1a on hardware, both tiers: an unprovisioned unit raises the setup
+      network; a provisioned one joins, publishes discovery, and its signed
+      events verify in Home Assistant ("verified" = the Ed25519 signature
+      checked against the TOFU-pinned key) `[BENCH]`
+- [ ] Pull-OTA boot self-test confirms (and a failed probe rolls back) on the
+      C6 and the C3 `[BENCH]`
+- [ ] NVS wear: chain head + length persist on every level transition — soak
+      a busy doorway and confirm the write rate is acceptable `[BENCH]`
 
-## Phase 1 (the wiring that turns Phase 0 into a witness)
+## Phase 1b (the wiring still to do, on a bench)
 
-Wire the four onboard channels (PIR is already live; add WiFi-RF/CSI + BLE via
-canary-wap's `rf_presence` / `common/csi` / `common/bluetooth`), then light up
-`emit_claim()` into the shared signed witness + MQTT/HA + pull-OTA stack
-canary-sense proves, add the HA discovery entity set, and land the flavor in
-`firmware/flavors.json` once the C6 device build is bench-green.
+Wire the onboard-radio channels — WiFi-RF and BLE counting via canary-wap's
+`rf_presence` / `common/bluetooth`, WiFi-CSI via `common/csi` — into the
+`observe()` call sites `src/main.cpp` shows as comments, prove on a real C6
+that they coexist with the STA link Phase 1a brings up (and that the CSI HAL
+works there at all), then add the fleet-link BLE beacon. Release envs and the
+per-preset OTA channels follow the bench checklist, not this list.
+
+## Keeping the copied stack honest
+
+`src/net`, `src/runtime_config.cpp`, `src/diagnostics.cpp` and the witness
+key/chain plumbing are canary-sense's, carried rather than promoted to
+`firmware/common` (a common/net promotion would move canary-sense,
+canary-vision and their sketch mirrors — its own milestone).
+`firmware/scripts/check_sentinel_net_sync.sh` runs in `firmware.yml` and fails
+on any drift outside a short, named list of product regions: the shared files
+byte-identical, `wifi_mgr.cpp` but for its setup-network product name, and
+`mqtt_mgr.cpp` / `witness.cpp` as whole files but for the heartbeat/state
+payloads, the event canonical's call sites (`sense` vs `sentinel`) and — in
+canary-sense's copy only — its radar-dial and identify-button features, which
+Phase 1a does not wire. So the connect path (TLS gate, LWT, the MAC-free
+client ID), the socket timeout, the OTA command parser, the witness domain
+strings, NVS key names and chain construction are all pinned, and so is any
+function canary-sense adds later. Each region may only set aside lines of the
+shape it names, so a fix landed inside one still fails the pin;
+`scripts/tests/test_check_sentinel_net_sync.py` (in `lint.yml`) proves both
+directions with mutation cases. Fix canary-sense first, then carry the change
+here.
 
 ## About the creator
 

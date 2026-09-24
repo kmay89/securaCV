@@ -39,6 +39,57 @@
     </dict>
   </array>
 
+  <!-- Sealed snapshots (.svlt): the document type that lets a file tapped
+       in Files, Mail or AirDrop open in this app, and the exported UTType
+       the Unseal screen's file importer filters on. Opening one never
+       stores it: the screen decrypts on this phone, shows the frame once,
+       and discards it (Views/UnsealView.swift). The type is ours — no
+       system type describes a Canary's sealed frame — so it is exported
+       here rather than imported. The identifier and the extension are
+       SvltFile's two constants; SnapshotVaultTests reads this file and
+       holds them equal. -->
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>com.securacv.svlt</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.data</string>
+      </array>
+      <key>UTTypeDescription</key>
+      <string>SecuraCV sealed snapshot</string>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array>
+          <string>svlt</string>
+        </array>
+      </dict>
+    </dict>
+  </array>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>SecuraCV sealed snapshot</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>com.securacv.svlt</string>
+      </array>
+    </dict>
+  </array>
+  <!-- Open in place: a .svlt tapped in Files is read where it lies, under
+       security-scoped access, instead of iOS first copying it into this
+       app's Documents/Inbox — the app keeps no sealed file it was only
+       asked to open. (A copy iOS makes anyway, from Mail, is deleted once
+       read.) Declaring the key either way is also what App Store Connect
+       expects of any app that lists CFBundleDocumentTypes. -->
+  <key>LSSupportsOpeningDocumentsInPlace</key>
+  <true/>
+
   <!-- Live Activities / Dynamic Island -->
   <key>NSSupportsLiveActivities</key>
   <true/>
@@ -74,6 +125,15 @@
   <!-- HomeKit: publish coarse witness state (motion/occupancy/tamper), never video. -->
   <key>NSHomeKitUsageDescription</key>
   <string>Add your Canaries to Apple Home so they can trigger your automations. Only coarse status is shared — never footage.</string>
+
+  <!-- Face ID: opening a sealed snapshot unwraps the phone's snapshot key
+       through the Secure Enclave, and that Enclave key is created with
+       `.userPresence` (Security/EnclaveCustody.swift) — Face ID, Touch ID
+       or the passcode. iOS requires this string before Face ID may be
+       offered at all; without it the prompt would fall back to the
+       passcode on every open. Nothing about the face reaches the app. -->
+  <key>NSFaceIDUsageDescription</key>
+  <string>SecuraCV asks for Face ID before it opens a sealed snapshot, so only you can use the key this device keeps for them.</string>
 
   <!-- No microphone usage string, on purpose: the app records nothing and
        has no talk feature. If two-way talk ever lands, the mic string, the

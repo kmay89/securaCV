@@ -34,7 +34,7 @@
 //      opening is now a true stadium (full-round ends, like the connector
 //      itself) instead of a rectangle, sized shell + tolerance.
 //    * USB-C and BOTH buttons are mounted on the BACK of the PCB (photo-
-//      verified), not the front: the port center sits ~usb_h/2 behind the
+//      verified), not the front: the port center sits ~usb_shell_h/2 behind the
 //      PCB back face and the button actuators ~btn_dz behind it. That also
 //      means even the stripped board needs back clearance for the shell
 //      (back_stack ≥ ~4.7 keeps a printable bridge above the port), and the
@@ -75,6 +75,7 @@ use <canary_core_lib.scad>    // rrect2d + the catalog's process floors
 use <canary_mount_lib.scad>   // the stud/keyhole standard — the blind pocket
 use <canary_snap_lib.scad>    // snap arithmetic — the derived-window rule
 use <canary_board_lib.scad>   // the board registry — ws147 family numbers
+use <canary_port_lib.scad>    // the Type-C plug overmold envelope the chin pocket passes
 
 /* [What to render] */
 part  = "all";      // ["bezel","back","all"]
@@ -129,12 +130,18 @@ glass_relief_w = 0.5;   // width of that relieved band, from the window edge out
 
 /* [USB-C] — on the BOTTOM (−Y) short wall, mounted on the BACK of the PCB
    (photo-verified): the shell rests on the PCB back face, so the opening
-   centers ~usb_h/2 behind it. The opening is a stadium (full-round ends,
+   centers ~usb_shell_h/2 behind it. The opening is a stadium (full-round ends,
    radius = half its height) hugging the receptacle shell — nominal shell is
-   8.94 × 3.26; usb_h carries extra because the bezel prints face-down and
-   holes shrink a touch along the print Z. */
-usb_w  = 9.15;   // stadium opening width — shell + 0.2 (fit-tested: 9.4 showed a gap)
-usb_h  = 3.45;   // stadium opening height — shell + 0.2
+   8.94 × 3.26; usb_shell_h carries extra because the bezel prints face-down and
+   holes shrink a touch along the print Z.
+   The stadium is the RECEPTACLE's reveal, and it sits usb_proud + tol_slide
+   + ear_skin (1.6 at defaults) behind the chin's outer face — so from the
+   outside the chin carries an OVERMOLD POCKET down to it: the Type-C spec's
+   maximum plug overmold (canary_port_lib) + tol_hole a side. A shell-sized
+   hole there stopped a cable's overmold at the outer face and the shell
+   latched on 4.9 of its 6.5 mm (the 1.69's OPN-2 defect, one wall over). */
+usb_shell_w = 9.15;  // stadium opening width — shell + 0.2 (fit-tested: 9.4 showed a gap)
+usb_shell_h = 3.45;  // stadium opening height — shell + 0.2
 usb_dx = 0.0;    // sideways offset of the connector center — MEASURE
 usb_dz = 0.0;    // depth offset from shell-on-back-face nominal (+ = toward the back) — MEASURE
 usb_proud = 1.9; // shell overhang past the PCB edge (photo ≈1.8) — MEASURE
@@ -153,12 +160,16 @@ btn_ch_w  = 3.4;               // actuator channel width (Y) — hugs the black 
 btn_body_w = 5.2;              // shallow relief width for the switch's metal body — MEASURE
 btn_body_p = 0.4;              // metal body overhang past the PCB edge — MEASURE
 
-/* [Mount] */
+/* [Stud/keyhole interface] */
 opt_keyhole = true;            // one blind keyhole in the back (wall hang)
 // catalog standard — canary_mount_lib. This file had drifted to slot 7.0 /
 // depth 3.0: a slide the standard stud's head never finishes and a pocket it
 // bottoms out in 0.4 early. The knobs stay tunable; the lib is the default.
-kh_head_d = 7.0; kh_shank_d = 4.2; kh_slot_l = 8.0; kh_head_h = 3.5; kh_face = 1.0;
+kh_head_d = 7.0;               // screw-head pass hole — catalog standard, mount_kh_head_d()
+kh_shank_d = 4.2;              // shank slot width — catalog standard, mount_kh_shank_d()
+kh_slot_l = 8.0;               // slot travel — catalog standard, mount_kh_slot_l() (a drifted 7.0 lived here)
+kh_head_h = 3.5;               // total pocket depth — catalog standard, mount_kh_head_h() (a drifted 3.0 lived here)
+kh_face = 1.0;                 // face web the screw head grips behind — catalog standard, mount_kh_face()
 
 /* [Ventilation] — let the backlight/regulator heat convect out (side slots +
    a back grille). Even this small board runs warm on full brightness. */
@@ -169,7 +180,9 @@ vent_w = 1.4;        // slot width
 
 /* [Print tolerances] — the catalog defaults (core_tol_* in canary_core_lib);
    tune with canary_fit_coupon.scad */
-tol_slide = 0.20; tol_press = 0.10; tol_hole = 0.30;
+tol_slide = 0.20;  // catalog default — core_tol_slide() in canary_core_lib
+tol_press = 0.10;  // catalog default — core_tol_press() in canary_core_lib
+tol_hole  = 0.30;  // catalog default — core_tol_hole() in canary_core_lib
 
 /* [Shell] */
 wall   = 2.2;    // deviates: snap-shell wall — the band pocket (snap_depth 1.4) + the 0.8 web behind it
@@ -229,12 +242,18 @@ xc = board_w + 2*tol_slide;   yc = board_l + 2*tol_slide;   // board cavity (X,Y
 xo = xc + 2*wall;             yo = yc + 2*wall;             // outer (X,Y)
 cav_d = lcd_rise + pcb_t + stack_eff;            // glass ledge → back-plate inner
 bez_h = face_t + cav_d;                          // bezel wall height
-r_in  = max(0.6, r_out - wall);                  // cavity corner radius
+// cavity corner radius: the PCB's corners are SQUARE, and a square corner
+// tol_slide inside a cavity corner of radius r clears only while
+// sqrt(2)·(r − tol_slide) ≤ r, i.e. r ≤ 0.68 at tol_slide 0.2 — less the
+// arc's facets, which cut ~0.03 inside the true circle at this size (0.6
+// still left 0.0001 mm³ slivers on the four corners). r_out − wall gave 0.8,
+// which bit 0.05 into each board corner (asserted below).
+r_in  = min(r_out - wall, 0.5);
 
 z_pcb_front = face_t + lcd_rise;                 // PCB front plane
 z_pcb_back  = z_pcb_front + pcb_t;               // PCB back plane
 // opening centers on the SHELL (nominal 3.26 tall, resting on the PCB back),
-// not on the opening height, so tightening usb_h never shifts it off the port
+// not on the opening height, so tightening usb_shell_h never shifts it off the port
 z_usb       = z_pcb_back + 3.26/2 + usb_dz;
 z_btn       = z_pcb_back + btn_dz;               // button actuator center (back-mounted)
 
@@ -244,12 +263,20 @@ btn_y     = -board_l/2 + btn_up;         // button center (Y)
 btn_reach = btn_proud + tol_slide;       // actuator channel depth past the cavity face
 btn_body_reach = btn_body_p + tol_slide; // shallow body-relief depth
 usb_reach = usb_proud + tol_slide;
-usb_slide = usb_w + 0.35;                // insertion-notch width — a hair looser than the
+usb_slide = usb_shell_w + 0.35;          // insertion-notch width — a hair looser than the
                                          // visible stadium so the shell can't bind on the way in
 ear_bump  = max(0, btn_reach + ear_skin - wall);   // side-wall bulge
 chin_bump = max(0, usb_reach + ear_skin - wall);   // bottom-wall bulge
 ear_w  = btn_ch_w + 4;                   // ear bulge width along the wall
-chin_w = usb_w + 4;                      // chin bulge width along the wall
+// the chin's outer pocket: overmold envelope + tol_hole a side, from the
+// chin face to the receptacle face (see the [USB-C] note)
+usb_ch_w = port_usbc_overmold_w() + 2*tol_hole;
+usb_ch_h = port_usbc_overmold_h() + 2*tol_hole;
+usb_face_y = board_l/2 + usb_proud;      // receptacle face, from center (−Y side)
+// the pocket's crown stands past the bezel rim by this much on the stripped
+// board; the back plate's edge band covers it and is shelved to pass it
+plate_relief = max(0, z_usb + usb_ch_h/2 - bez_h);
+chin_w = max(usb_shell_w + 4, usb_ch_w + 2*ear_skin);   // chin bulge width: ear_skin either side of the pocket
 
 // active-area window vs module: the face overlaps the module border by
 // (module − AA)/2 per side; that overlap retains the glass. The LAND is what
@@ -312,14 +339,33 @@ assert(land_w_x >= 0.4 && land_w_y >= 0.4,
            "carry the panel. Shrink glass_relief_w; the relief must never eat ",
            "the land that locates the glass."));
 assert(lcm_l <= yc && lcm_w <= xc, "LCD module larger than the board cavity — check dims");
-assert(z_usb - usb_h/2 >= face_t - 0.01, "USB opening cuts into the bezel face — check usb_h/usb_dz");
-assert(z_usb + usb_h/2 <= face_t + cav_d - 0.8,
+assert(z_usb - usb_shell_h/2 >= face_t - 0.01, "USB opening cuts into the bezel face — check usb_shell_h/usb_dz");
+assert(z_usb + usb_shell_h/2 <= face_t + cav_d - 0.8,
        "no printable bridge left between the USB opening and the rear rim — raise back_stack/hdr_drop or lower usb_dz");
 assert(z_btn + btn_d/2 <= face_t + cav_d, "button hole overruns the cavity depth — check btn_dz/back_stack");
 assert(skirt_dep <= stack_eff + 0.01, "skirt_dep > component clearance — the skirt would drive into the PCB");
 assert(!pry_notch || pry_w/2 <= xo/2 - r_out - 1.0, "pry_w runs into the corner radii — narrow it");
 assert(!pry_notch || wall - 0.6 >= 1.2, "the pry notch leaves under 1.2 mm of wall");
 assert(skirt_dep >= snap_depth + snap_h/2, "skirt too short to carry the snap nub (nub sits at back_t + snap_depth)");
+assert(sqrt(2)*(r_in - tol_slide) <= r_in - 0.05,
+       "the cavity's corner radius bites the PCB's square corners — r_in must clear them by 0.05 (the arc's facets)");
+// the snap is worked at every service (and on every lid flip), so the lib's
+// CYCLE budget binds. The skirt is a closed ring rooted snap_depth off its
+// plate — effectively rigid — so the bezel side wall is the beam that takes
+// the nub's travel: rooted at the face plate, loaded at the window center,
+// deflected by what the nub tip stands past the cavity wall (tip cube outer
+// face snap_proud + 0.05 off the skirt, skirt tol_press inside the cavity)
+snap_defl  = skirt_x/2 + snap_proud + 0.05 - xc/2;
+snap_lever = bez_h - snap_depth - face_t;
+assert(snap_defl > 0, "the snap nub does not reach the bezel wall — raise snap_proud");
+assert(snap_strain(wall, snap_defl, snap_lever) <= snap_budget_cycle(),
+       str("bezel wall snap strain ", round(snap_strain(wall, snap_defl, snap_lever)*1000)/10,
+           " % — over the ", round(snap_budget_cycle()*1000)/10,
+           " % cycle budget: shrink snap_proud, or raise the window toward the rim (a smaller snap_depth lengthens the lever)"));
+// the pocket stays inside the chin: ear_skin of wall either side, and the
+// receptacle face is behind the chin face (else there is nothing to pocket)
+assert(chin_w - usb_ch_w >= 2*ear_skin - 1e-9, "the overmold pocket breaks out of the chin's sides");
+assert(yo/2 + chin_bump > usb_face_y, "the receptacle face stands outside the chin — check usb_proud");
 assert(stand_len >= 0.6, "press bosses shorter than 0.6 — brass_h nearly fills the cavity; check hdr_drop/brass_h");
 assert(headers != "male" || hdr_drop >= brass_h + 0.5,
        "corner pillars taller than the cavity below the PCB — check brass_h/hdr_drop");
@@ -405,7 +451,13 @@ module bezel() {
         translate([0, 0, face_t]) linear_extrude(cav_d + 0.2) cavity2d();
         // USB-C stadium opening through the bottom (−Y) wall + chin
         translate([usb_dx, -yo/2, z_usb]) rotate([90, 0, 0])
-            linear_extrude(2*(wall + chin_bump + 1), center = true) stadium2d(usb_w, usb_h);
+            linear_extrude(2*(wall + chin_bump + 1), center = true) stadium2d(usb_shell_w, usb_shell_h);
+        // ...and the overmold pocket from the chin face down to the
+        // receptacle face, so a cable's overmold seats on the shell's full
+        // insertion. Its crown clips the rim on the stripped board; the back
+        // plate is shelved over it.
+        translate([usb_dx, -usb_face_y, z_usb]) rotate([90, 0, 0])
+            linear_extrude(yo/2 + chin_bump - usb_face_y + 1) pill2d(usb_ch_w, usb_ch_h);
         // BOOT / RST side access holes near the USB end, through the ear
         // skin — the actuators sit BEHIND the PCB (back-mounted switches)
         if (opt_btn) for (sx = [1, -1])
@@ -446,7 +498,7 @@ module back() {
                     // occupy the edge zone the skirt passes through. Cut
                     // MIRRORED pairs so the lid still seats rotated 180°.
                     for (sy = [1, -1])
-                        translate([sy*usb_dx, -sy*skirt_y/2]) square([usb_w + 2, 3*skirt_wall], center = true);
+                        translate([sy*usb_dx, -sy*skirt_y/2]) square([usb_shell_w + 2, 3*skirt_wall], center = true);
                     if (opt_btn) for (sx = [1, -1], sy = [1, -1])
                         translate([sx*skirt_x/2, sy*btn_y]) square([3*skirt_wall, btn_body_w + 2], center = true);
                 }
@@ -488,6 +540,13 @@ module back() {
             if (abs(gy) + vent_w/2 <= board_l/2 - stand_iy - stand_d/2 - 0.2)
                 translate([sx*grille_x, gy, back_t/2])
                     cube([2.0, vent_w, back_t + 0.4], center = true);
+        // shelf in the plate's inner face where the overmold pocket's crown
+        // passes the rim (stripped board only — the headers build is deep
+        // enough). A MIRRORED pair, so the lid still clicks on either way.
+        // Back-local x mirrors bezel x: the part flips about Y to assemble.
+        if (plate_relief > 0) for (s = [1, -1])
+            translate([-s*usb_dx, -s*(yo/2 + usb_face_y)/2, back_t - plate_relief/2 + 0.1])
+                cube([usb_ch_w + 0.2, yo/2 - usb_face_y + 0.6, plate_relief + 0.2], center = true);
         // BLIND keyhole (wall hang; slot toward +Y/up) — the catalog pocket
         // from canary_mount_lib, drawn natively along Y: the head circle
         // passes the screw head behind a kh_face web and the shank rides to

@@ -1,15 +1,21 @@
 # Watches — attention that expires on purpose
 
-> **Status: built for event-kind watches · numeric subjects and
-> persistence are next.** The decision core
+> **Status: built for event-kind watches, persisted across restarts ·
+> numeric subjects are next.** The decision core
 > (`custom_components/securacv/watches.py`) is pure and covered by
 > `tests/test_watches.py`, and `watch_runtime.py` wires it live: witness
 > events feed observations, a five-minute tick evaluates and delivers,
-> and expiry announces itself as a persistent notification. **Not yet
-> real:** numeric subjects (a soil-moisture sensor is accepted but
-> nothing feeds it), and watches do not survive a hub restart. A watch
-> whose subject nothing reports says so when you start it rather than
-> pretending.
+> expiry announces itself as a persistent notification, and the roster is
+> mirrored to Home Assistant's `Store` (`.storage/securacv_watches`) so a
+> clean restart keeps every watch, its baseline and its history. A crash or
+> power cut loses at most the last few seconds of changes, because the write
+> lands within ten seconds and a busy event stream cannot postpone it. A
+> watch that ended while the hub was down is announced by the first tick
+> rather than silently gone. Automations start, end and list watches through the
+> `securacv.start_watch` / `end_watch` / `list_watches` actions, on the same
+> start path voice uses. **Not yet real:** numeric subjects (a soil-moisture
+> sensor is accepted but nothing feeds it). A watch whose subject nothing
+> reports says so when you start it rather than pretending.
 
 ## The problem, stated properly
 
@@ -142,8 +148,10 @@ allowed to *create* — but the split is asymmetric, and deliberately:
   on its own. That failure direction is safe.
 - **Ending a watch early: not allowed by voice.** That *removes*
   attention, which is the silencing direction — the same reason voice
-  cannot mute an Alert. Ending early happens on an authenticated surface.
-  Expiry is automatic, so this is rarely needed anyway.
+  cannot mute an Alert. Ending early happens on an authenticated surface:
+  the `securacv.end_watch` action, by id or label, which refuses a label two
+  watches share rather than guessing and announces the early end like an
+  expiry. Expiry is automatic, so this is rarely needed anyway.
 
 The rule underneath, worth stating once because it generalizes: **voice may
 make you better informed, never less.**
@@ -207,8 +215,9 @@ reasons to build them well:
 | Duration parsing ("two weeks", "until October") | same | **built, host-tested** |
 | Voice: start a watch, list watches | `intent.py` + sentences | **built** |
 | Feeding event-kind watches + tick + delivery | `watch_runtime.py` | **built** |
+| Persistence across restarts | `watch_runtime.py` → HA `Store`, `.storage/securacv_watches` (one queued write at a time, landing within ten seconds and never pushed back; restored on setup, expired ones announced by the first tick; a store that cannot be read is left untouched) | **built** |
+| Automations: `securacv.start_watch` / `securacv.end_watch` / `securacv.list_watches` actions (one start path with voice; no trust actions — [why](../device_trust.md#why-pin-rotate-and-unpin-are-not-actions)) | `services.py` → `watch_runtime.py` | **built** |
 | Numeric subjects (an HA sensor like soil moisture) | integration glue | next |
-| Persistence across restarts | HA `Store` | next |
 | Recipes in the UI, end-of-watch summary card | Lovelace | after that |
 
 ## Related

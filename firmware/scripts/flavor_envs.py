@@ -52,7 +52,8 @@ result to its build and packaging steps, so neither types an env name.
         product from flavors.json, with a product that declares `shards`
         expanded into one leg per shard (see build_legs). The `flavors` job
         runs this; the manifest is validated first, so a shard list that
-        drops an env fails that job instead of silently not building it.
+        drops an env, or a size guard on an env no leg builds, fails that
+        job instead of silently not building (or not measuring) it.
 
     python3 firmware/scripts/flavor_envs.py --check-workflows
         the lint: every literal `canary-display-<x>` token in any workflow
@@ -62,9 +63,13 @@ result to its build and packaging steps, so neither types an env name.
         invocation present, no literal `pio run -e canary-display-<env>`);
         also validates that `release_envs` is a subset of `build_envs`, that
         every release env has its flasher catalog product
-        (canary-local/devices/flash.json), and that a product's `shards`
+        (canary-local/devices/flash.json), that a product's `shards`
         partition its build_envs exactly with one PLATFORMIO_CORE_DIR class
-        per shard. Exit 1 with every problem listed. Run from lint.yml.
+        per shard, and that every size guard names an env in build_envs,
+        sharded or not — firmware.yml fires a guard only right after
+        `pio run -e` of the env its bin names, so a guard on an env PR CI
+        never compiles would first fire on the release artifact. Exit 1
+        with every problem listed. Run from lint.yml.
 
 stdlib only. Run from any directory (the repo root is resolved from this
 file's own location).
@@ -286,17 +291,58 @@ def validate(flavors: list[dict]) -> list[str]:
                     f"{name}: build env(s) {', '.join(missing)} are in no shard "
                     f"— once `shards` is declared every build_env must land in "
                     f"exactly one leg, or CI quietly stops compiling it")
-            # build_legs() narrows size_guards to the envs of each leg by the
-            # env in the guard's `bin` path; a guard whose bin does not parse
-            # (or names an env outside build_envs) would land in NO leg and
-            # silently stop running. Refuse that here, where the shards are.
-            for guard in entry.get("size_guards") or []:
-                genv = guard_env(guard)
-                if genv is None or genv not in build_set:
-                    problems.append(
-                        f"{name}: size_guard bin '{guard.get('bin')}' does not sit "
-                        f"under .pio/build/<env>/ for an env in build_envs — with "
-                        f"`shards` declared it would be dropped from every leg")
+        # firmware.yml fires a size guard only in the build-loop iteration
+        # that just ran `pio run -e` of the env its bin names
+        # (.pio/build/<env>/), and build_legs() narrows a sharded product's
+        # guards to each leg's envs by the same key. So a guard whose bin
+        # does not parse, or names an env outside build_envs, measures
+        # nothing on any PR — in a sharded product it lands in no leg, in an
+        # unsharded one it rides along and is never matched — and first
+        # fires in check_slot_budget.py on the release artifact. Refuse both
+        # for EVERY product: this check used to live inside the shards
+        # branch above, which is how canary's release_ha guard sat exactly
+        # that way from #1567 until wave 6 added the env to build_envs.
+        seen: set[str] = set()
+        for guard in entry.get("size_guards") or []:
+            genv = guard_env(guard)
+            if genv is None:
+                problems.append(
+                    f"{name}: size_guard bin '{guard.get('bin')}' does not sit "
+                    f"under .pio/build/<env>/ — firmware.yml and "
+                    f"check_slot_budget.py key a guard to the env whose build "
+                    f"dir its bin names, so this guard would never fire "
+                    f"anywhere; write it as .pio/build/<env>/firmware.bin")
+            elif genv not in build_set:
+                problems.append(
+                    f"{name}: size_guard bin '{guard.get('bin')}' names env "
+                    f"'{genv}', which is not in build_envs — firmware.yml runs "
+                    f"a guard only right after `pio run -e` of that env, so "
+                    f"this guard measures nothing on any PR and would first "
+                    f"fire on the release artifact (canary's release_ha sat "
+                    f"that way until wave 6); add '{genv}' to build_envs or "
+                    f"drop the guard")
+            elif genv in seen:
+                problems.append(
+                    f"{name}: env '{genv}' has two size_guards entries — one "
+                    f"budget per env (check_slot_budget.py refuses two that "
+                    f"disagree, but only when a release is being cut)")
+            else:
+                seen.add(genv)
+        # `unreleased` marks a product CI compiles but nothing ships (canary-
+        # sentinel while its bench checklist is open): a non-empty reason, and
+        # never beside release_envs — "compiled, not released" and "the
+        # release workflows publish these envs" cannot both be true.
+        # scripts/lint_build_matrix.py reads the same field to excuse the
+        # product from needing a /checkup lane (and to refuse one).
+        if "unreleased" in entry:
+            why = entry.get("unreleased")
+            if not isinstance(why, str) or not why.strip():
+                problems.append(f"{name}: `unreleased` must be a non-empty reason "
+                                f"string — say why the product does not ship")
+            if entry.get("release_envs"):
+                problems.append(f"{name}: declares `unreleased` AND release_envs — "
+                                f"a product the release workflows publish is released; "
+                                f"drop one")
         release = entry.get("release_envs")
         if release is None:
             continue
@@ -423,14 +469,17 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"::error::{p}")
             print(f"\n{len(problems)} problem(s): every display env a workflow "
                   f"names must exist in firmware/flavors.json, the release "
-                  f"workflows must derive the list from this script, and the "
-                  f"release set must be a subset of what CI builds.")
+                  f"workflows must derive the list from this script, the "
+                  f"release set must be a subset of what CI builds, and every "
+                  f"size guard must name an env PR CI builds.")
             return 1
         n = sum(len(e.get("release_envs") or []) for e in flavors)
+        guards = sum(len(e.get("size_guards") or []) for e in flavors)
         legs = len(build_matrix(flavors))
         print(f"flavor_envs.py --check-workflows: OK — workflows name only "
               f"declared envs and the release workflows derive the list; {n} "
               f"release env(s) all in build_envs with a flasher product; "
+              f"{guards} size guard(s) each on an env PR CI builds; "
               f"{len(flavors)} product(s) build as {legs} matrix leg(s).")
         return 0
 

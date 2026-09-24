@@ -335,7 +335,7 @@ comes out right:
 | Feature (where) | Why it's demanding | The lever that matters most |
 |---|---|---|
 | **Snap clips** (case edges) | They *flex* across layer lines every time you open the case — pure Z-load | Layer adhesion: print **hot, low fan**. A cold-printed clip snaps off. |
-| **Radome window** (Sense front) | Thin uniform 1.0 mm membrane the 60 GHz beam crosses | **Flow calibration** for even thickness; **unfilled single material, no CF, no metallic paint/foil** in front of the antenna. |
+| **Radome window** (Sense front) | Thin uniform 1.5 mm membrane the 60 GHz beam crosses (never 0.7–1.1 mm: that quarter-wave band reflects ~20 % back into the antenna, and the model refuses it) | **Flow calibration** for even thickness; **unfilled single material, no CF, no metallic paint/foil** in front of the antenna. |
 | **Hinge prongs / bracket** (Vision, Sense) | Cantilevered — the highest bending stress in the catalog | **Walls + material**: print solid-ish, consider **CF-PETG/CF-Nylon**; keep the modeled orientation so the load is in-plane. |
 | **Gasket groove & lid lip** (weather builds) | A precise seal that must stay dimensionally exact | **Flow, not over-extrusion**; **skip the full anneal** (shrinkage kills the seal). |
 | **M2 screw posts** (corners) | Self-tappers in plastic strip easily | Enough **walls around the bore**; don't exceed ~0.3 N·m; use **heat-set inserts** for serviced/sealed fleets. |

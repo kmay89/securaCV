@@ -19,33 +19,35 @@
 //! Everything the user watches scroll by during a flash is `espflash`'s own
 //! output, relayed verbatim over the `flash:log` event.
 
-mod changemap;
 mod efuse;
 mod fleet;
-mod health;
+mod host;
 mod hub;
-mod intake;
 mod launch_guard;
-mod port_hint;
-mod provisioning;
-mod release;
-mod rescue;
 mod secret_store;
 mod serial_monitor;
-mod whoami;
 mod sscma;
 mod we2;
 mod we2_bench;
+mod whoami;
 
-use provisioning::Provisioning;
+// The ESP32 flash engine (desktop/flash-engine) — shared with the Lab and
+// PR-CI-tested on its own. Imported at the crate root under the names these
+// modules had when they lived here, so `crate::port_hint` et al. keep
+// resolving for we2.rs / we2_bench.rs.
+use flash_engine::catalog::Catalog;
+use flash_engine::flash::{ChipInfo, FlashReceipt, FlashRequest};
+use flash_engine::image::{check_local_image, stage_firmware};
+use flash_engine::ports::PortDto;
+use flash_engine::provisioning::Provisioning;
+use flash_engine::{health, port_hint, release, rescue};
+use host::TauriHost;
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_opener::OpenerExt;
-use tauri_plugin_shell::process::CommandEvent;
-use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
 
 // The Raspberry Pi Home Assistant hub path (design: docs/design/
@@ -62,146 +64,26 @@ use tauri_plugin_updater::UpdaterExt;
 // this embed can never drift from the website/firmware source of truth.
 pub(crate) const EMBEDDED_CATALOG: &str = include_str!(concat!(env!("OUT_DIR"), "/flash.json"));
 
-/// The catalog's chip spellings, derived ONCE from the embedded catalog's
-/// `chips` keys instead of a hardcoded copy of them (the desktop-parity test
-/// used to diff the copy against the catalog; deriving removes the copy).
-/// Each canonical spelling ("ESP32-S3") yields its folded token ("esp32s3");
-/// canonical_chip() looks tokens up here by exact match, so the catalog's
-/// exact spelling wins for chips it ships, and falls back to spelling the
-/// token itself for ESP32-family chips it doesn't. A corrupt catalog yields
-/// an empty table; detection still names chips (rescue is
-/// catalog-independent), while every catalog flash path stays behind its own
-/// catalog parse.
-fn chip_table() -> &'static [(String, String)] {
-    static TABLE: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
-    TABLE.get_or_init(|| {
-        let Ok(catalog) = serde_json::from_str::<Value>(EMBEDDED_CATALOG) else {
-            return Vec::new();
-        };
-        let mut table: Vec<(String, String)> = catalog
-            .get("chips")
-            .and_then(Value::as_object)
-            .map(|chips| {
-                chips
-                    .keys()
-                    .map(|canon| {
-                        let needle = canon.to_lowercase().replace(['-', ' ', '_'], "");
-                        (needle, canon.clone())
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        table.sort(); // deterministic order; lookup is by exact token
-        table
-    })
+/// The embedded catalog and everything the flash engine derives from it —
+/// the chip table behind canonical_chip(), the release origin, the manifest
+/// allow-list (flash_engine::catalog) — computed once per launch.
+fn bundled_catalog() -> &'static Catalog {
+    static CATALOG: std::sync::OnceLock<Catalog> = std::sync::OnceLock::new();
+    CATALOG.get_or_init(|| Catalog::new(EMBEDDED_CATALOG))
 }
 
 /// The one origin this app downloads release assets from, derived from the
-/// catalog's own pinned manifest_url (everything up to and including
-/// `/releases/download/`) — a repo move edits flash.json and every guard
-/// follows, instead of a literal in each flash path. None (fail closed:
-/// nothing downloads) if the catalog is corrupt or its manifest_url is not
-/// a releases/download URL — states the browser Lab cannot reach either.
+/// catalog's own pinned manifest_url (flash_engine::catalog). None (fail
+/// closed: nothing downloads) if the catalog is corrupt or its manifest_url is
+/// not a releases/download URL.
 fn release_origin() -> Option<&'static str> {
-    static ORIGIN: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    ORIGIN
-        .get_or_init(|| {
-            let catalog = serde_json::from_str::<Value>(EMBEDDED_CATALOG).ok()?;
-            let url = catalog.get("manifest_url")?.as_str()?;
-            let marker = "/releases/download/";
-            let end = url.find(marker)? + marker.len();
-            Some(url[..end].to_string())
-        })
-        .as_deref()
+    bundled_catalog().release_origin()
 }
 
 // The Hatchery naming spec — the same canary-local/devices/hatch.json the
 // website ships — embedded so the flasher's birth certificate names a Canary
 // identically to the web Lab, offline, and can never drift from it.
 const EMBEDDED_HATCH: &str = include_str!(concat!(env!("OUT_DIR"), "/hatch.json"));
-
-// The dev channel's one stable address: the rolling fw-dev-latest prerelease
-// that CI re-points on every fw-v*-dev.*/-rc.* tag. This is a fixed
-// first-party constant, deliberately NOT a general manifest-URL override —
-// the dev toggle can only ever mean this URL. It is the ONE alternative
-// flash() accepts to the catalog's pinned manifest_url; everything downstream
-// (chip guard, release origin, size/SHA, signature policy) is identical.
-// Mirrors canary-local/assets/flash-core.js DEV_FLASH_MANIFEST_URL — the
-// desktop-parity test fails if the two drift.
-const DEV_FLASH_MANIFEST_URL: &str =
-    "https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/manifest-flash.json";
-
-// A firmware image can't reasonably exceed the largest flash any Canary
-// carries (32 MiB parts exist; nothing bigger does). A file past this is a
-// wrong pick — a disk image, a video — not a firmware image, so the local-file
-// path refuses it before reading further.
-const LOCAL_IMAGE_MAX_BYTES: u64 = 32 * 1024 * 1024;
-
-// The shape of a merged factory image: the ESP32 partition table lives at
-// 0x8000 on every variant, and its 32-byte entries open with the magic bytes
-// 0xAA 0x50 (u16le 0x50AA) — the same constants
-// firmware/scripts/make_factory.py merges by. This is what tells a factory
-// image apart from an app-only build, because BOTH start with 0xE9.
-const PARTITION_TABLE_OFFSET: usize = 0x8000;
-const PARTITION_MAGIC_LE: [u8; 2] = [0xAA, 0x50];
-
-// The one sidecar we ship. This is the RUNTIME name: the bundler flattens the
-// `externalBin` "binaries/espflash-<triple>" to plain `espflash` next to the
-// app binary (Contents/MacOS/espflash), and Tauri resolves the sidecar by that
-// basename. (Using "binaries/espflash" here makes Tauri look for
-// MacOS/binaries/espflash, which doesn't exist → "No such file or directory".)
-// No capability scope is involved: shell scopes gate only the webview's own
-// plugin:shell IPC (which this app never grants — see capabilities/
-// default.json); Rust-side `shell().sidecar()` resolves by externalBin alone.
-const ESPFLASH: &str = "espflash";
-
-/// Stage a firmware image in an atomically-created, randomly named private
-/// file. `NamedTempFile` creates mode 0600 on Unix and removes the file on
-/// drop, so a provisioned image never passes through a world-readable path.
-fn stage_firmware(bytes: &[u8], safe_id: &str) -> Result<tempfile::NamedTempFile, String> {
-    use std::io::Write;
-
-    let mut staged = tempfile::Builder::new()
-        .prefix(&format!("securacv-{safe_id}-"))
-        .suffix(".bin")
-        .tempfile()
-        .map_err(|e| format!("couldn't create private firmware staging file: {e}"))?;
-    staged
-        .write_all(bytes)
-        .and_then(|_| staged.flush())
-        .map_err(|e| format!("couldn't stage the image: {e}"))?;
-    Ok(staged)
-}
-
-/// A USB serial port as the OS sees it — enough for the UI to show a friendly
-/// picker without pretending to know more than it does.
-#[derive(Serialize)]
-pub struct PortDto {
-    /// OS port path, e.g. `/dev/tty.usbmodem1101` or `/dev/ttyACM0`.
-    name: String,
-    /// "usb" | "bluetooth" | "pci" | "unknown" — USB is what a Canary is.
-    kind: String,
-    vid: Option<u16>,
-    pid: Option<u16>,
-    product: Option<String>,
-    manufacturer: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct FlashReceipt {
-    target: &'static str,
-    product_id: String,
-    version: String,
-    release_sha256: String,
-    installed_sha256: String,
-    bytes_written: usize,
-    release_verification: &'static str,
-    /// "stable" | "dev" for manifest flashes, "local" for a file off this
-    /// computer's disk — so the receipt names which train the bytes came from.
-    channel: &'static str,
-    chip_write_verified: bool,
-    provisioned: bool,
-}
 
 /// The embedded flasher catalog, handed to the UI verbatim. The front-end
 /// already knows this schema (it is the website's), so we don't re-type it
@@ -405,224 +287,28 @@ fn app_info() -> AppInfo {
 /// no Chromium — just the platform enumerating its own devices.
 #[tauri::command]
 fn list_ports() -> Result<Vec<PortDto>, String> {
-    let ports =
-        serialport::available_ports().map_err(|e| format!("could not list serial ports: {e}"))?;
-    let mut out = Vec::new();
-    for p in ports {
-        use serialport::SerialPortType::*;
-        let (kind, vid, pid, product, manufacturer) = match &p.port_type {
-            UsbPort(info) => (
-                "usb",
-                Some(info.vid),
-                Some(info.pid),
-                info.product.clone(),
-                info.manufacturer.clone(),
-            ),
-            BluetoothPort => ("bluetooth", None, None, None, None),
-            PciPort => ("pci", None, None, None, None),
-            Unknown => ("unknown", None, None, None, None),
-        };
-        out.push(PortDto {
-            name: p.port_name,
-            kind: kind.to_string(),
-            vid,
-            pid,
-            product,
-            manufacturer,
-        });
-    }
-    Ok(out)
-}
-
-/// Normalize whatever `espflash board-info` calls the chip into a canonical
-/// spelling ("ESP32-S3", "ESP32-C3", …). The chip token is extracted from the
-/// output ("esp32" plus an optional variant suffix — one letter, then digits:
-/// s3, c6, p4 — preferring an occurrence that names a variant, so a bare
-/// "esp32" elsewhere in the output can't hide one). A token the catalog ships
-/// gets the catalog's spelling (chip_table); an ESP32-family variant the
-/// catalog does NOT ship still gets its real name (ESP32-S2, ESP32-H2), never
-/// bare "ESP32" and never None — the catalog is a product list, not a
-/// detection whitelist: espflash already talked to the chip, and the
-/// catalog-independent rescue/local-file operations need it identified, while
-/// the catalog flash paths refuse the (now truthful) chip mismatch. Only
-/// output naming no ESP32-family chip at all answers None.
-fn canonical_chip(raw: &str) -> Option<String> {
-    let s = raw.to_lowercase().replace(['-', ' ', '_'], "");
-    let mut token: Option<&str> = None;
-    let mut at = 0;
-    while let Some(i) = s[at..].find("esp32") {
-        let start = at + i;
-        let rest = s[start + 5..].as_bytes();
-        let mut suffix_len = 0;
-        if rest.first().is_some_and(u8::is_ascii_lowercase) {
-            let digits = rest[1..].iter().take_while(|b| b.is_ascii_digit()).count();
-            if digits > 0 {
-                suffix_len = 1 + digits;
-            }
-        }
-        if suffix_len > 0 {
-            token = Some(&s[start..start + 5 + suffix_len]);
-            break;
-        }
-        token.get_or_insert("esp32");
-        at = start + 5;
-    }
-    let token = token?;
-    if let Some((_, canon)) = chip_table().iter().find(|(needle, _)| needle == token) {
-        return Some(canon.clone());
-    }
-    let suffix = &token[5..];
-    Some(if suffix.is_empty() {
-        "ESP32".to_string()
-    } else {
-        format!("ESP32-{}", suffix.to_uppercase())
-    })
+    flash_engine::ports::list_ports()
 }
 
 /// Run the sidecar to completion, collecting stdout+stderr. Used for the short
-/// `board-info` probe where we want the whole answer, not a live stream.
+/// region reads where we want the whole answer, not a live stream. The spawn
+/// is this app's (host::TauriHost → launch_guard::spawn_tracked).
 async fn run_sidecar_capture(app: &AppHandle, args: Vec<String>) -> Result<(i32, String), String> {
-    let cmd = app
-        .shell()
-        .sidecar(ESPFLASH)
-        .map_err(|e| format!("bundled espflash missing: {e}"))?
-        .args(args);
-    // Tracked, not bare: espflash's PID is on disk for as long as it runs, so
-    // a force quit can't strand it holding the board's serial port with
-    // nothing left to clean it up. `_ticket` un-records it on the way out.
-    let (mut rx, _child, _ticket) = launch_guard::spawn_tracked(app, cmd, ESPFLASH)?;
-
-    let mut buf = String::new();
-    let mut code = -1;
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
-                buf.push_str(&String::from_utf8_lossy(&bytes));
-            }
-            CommandEvent::Terminated(payload) => {
-                code = payload.code.unwrap_or(-1);
-            }
-            _ => {}
-        }
-    }
-    Ok((code, buf))
-}
-
-/// What `detect_chip` reports: the canonical chip name — the "you can't pick the
-/// wrong image" guard, since the UI only offers products whose `chip` matches —
-/// plus the flash size in bytes when board-info named it, which the rescue
-/// bench's full-chip backup needs. Both come from the one board-info call.
-#[derive(Serialize)]
-pub struct ChipInfo {
-    chip: String,
-    flash_bytes: Option<u64>,
-    mac: Option<String>,
-    /// The read-only MAC sanity check (blank / multicast / locally
-    /// administered). Reported here rather than kept to ourselves: a board
-    /// whose address was never programmed is a clone or a reject, and the
-    /// user deserves to know before they trust it with a network.
-    mac_check: Option<serde_json::Value>,
+    flash_engine::host::run_capture(&TauriHost(app.clone()), args).await
 }
 
 /// Ask the connected board which ESP32 it is (and how much flash it carries).
 #[tauri::command]
 async fn detect_chip(app: AppHandle, port: String) -> Result<ChipInfo, String> {
-    let (code, out) =
-        run_sidecar_capture(&app, vec!["board-info".into(), "--port".into(), port]).await?;
-    // Check the exit code before parsing: a *failed* board-info can still print
-    // a chip name in its error text, which would otherwise read as a false
-    // positive detection.
-    if code != 0 {
-        // On Linux, a failed board-info is more often the OS refusing or
-        // holding the port than a board out of download mode — when the
-        // output names that cause, lead with its real fix instead of the
-        // BOOT/RESET ritual (which can't help and reads as the board's
-        // fault). Linux-only: the hint text is a Linux fix.
-        if cfg!(target_os = "linux") {
-            if let Some(hint) = port_hint::linux_open_hint(&out) {
-                return Err(format!("{hint}\n\nespflash said:\n{}", out.trim()));
-            }
-        }
-        return Err(format!(
-            "couldn't read the chip (espflash exit {code}). Put the board in download mode (hold BOOT, tap RESET, release BOOT) and try again.\n\nespflash said:\n{}",
-            out.trim()
-        ));
-    }
-    match canonical_chip(&out) {
-        Some(chip) => {
-            let mac = rescue::parse_mac(&out);
-            let mac_check = mac.as_deref().map(|m| {
-                let f = intake::mac_checks(m);
-                json!({ "level": f.level, "label": f.label, "detail": f.detail })
-            });
-            Ok(ChipInfo {
-                chip,
-                flash_bytes: rescue::parse_flash_size(&out),
-                mac,
-                mac_check,
-            })
-        }
-        None => Err(format!(
-            "couldn't recognize the chip from espflash's output:\n{}",
-            out.trim()
-        )),
-    }
-}
-
-/// The manifest URLs this app will ever fetch: the catalog's pinned stable
-/// release, the fixed fw-dev-latest dev constant, and the catalog's pinned
-/// Vision-module manifest. `fetch_manifest` is reachable straight from the
-/// webview, so the gate lives HERE, not only in the flash paths that happen
-/// to call it — the same closed-set discipline flash() and
-/// flash_vision_module() already apply before a byte moves.
-fn manifest_url_allowed(url: &str) -> bool {
-    if url == DEV_FLASH_MANIFEST_URL {
-        return true;
-    }
-    let Ok(catalog) = serde_json::from_str::<Value>(EMBEDDED_CATALOG) else {
-        return false;
-    };
-    let bundled = |v: Option<&Value>| v.and_then(Value::as_str) == Some(url);
-    bundled(catalog.get("manifest_url"))
-        || bundled(
-            catalog
-                .get("we2_module")
-                .and_then(|module| module.get("manifest_url")),
-        )
+    flash_engine::flash::detect_chip(&TauriHost(app), bundled_catalog(), port).await
 }
 
 /// Fetch the live release manifest so the UI can show what version is
-/// currently published for each product (mirrors the website's manifest state).
+/// currently published for each product — only ever one of the bundled
+/// manifest URLs (the gate is the engine's, before any socket).
 #[tauri::command]
-async fn fetch_manifest(manifest_url: String) -> Result<Value, String> {
-    if !manifest_url_allowed(&manifest_url) {
-        return Err("refusing an unbundled manifest URL".into());
-    }
-    let client = reqwest::Client::builder()
-        .user_agent("SecuraCV-Flasher")
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let resp = client
-        .get(&manifest_url)
-        .send()
-        .await
-        .map_err(|e| format!("couldn't reach the release manifest: {e}"))?;
-    // The `HTTP <code>` token is a CONTRACT, not just prose: app.js matches it to
-    // tell "the release we're pinned to has no images" (a real answer — someone
-    // must cut that release) apart from a transport failure above (offline, DNS,
-    // TLS), which proves nothing about whether the release exists. Reword freely,
-    // but keep `HTTP <code>` in it or the UI silently falls back to the cautious
-    // wording for every failure.
-    if !resp.status().is_success() {
-        return Err(format!(
-            "no published release yet (manifest returned HTTP {}). You can still flash a local .bin.",
-            resp.status().as_u16()
-        ));
-    }
-    resp.json::<Value>()
-        .await
-        .map_err(|e| format!("release manifest is malformed: {e}"))
+async fn fetch_manifest(app: AppHandle, manifest_url: String) -> Result<Value, String> {
+    flash_engine::flash::fetch_manifest(&TauriHost(app), bundled_catalog(), manifest_url).await
 }
 
 /// Find a freshly-flashed Canary on the LAN and return its kernel's fleet.
@@ -671,7 +357,11 @@ async fn witness_discover(bases: Vec<String>) -> Result<Value, String> {
 
 /// Resolve → download → flash. Streams every line espflash prints over the
 /// `flash:log` event so the UI is a live console, then returns Ok on a clean
-/// exit or a human error otherwise.
+/// exit or a human error otherwise. The pipeline is the flash engine's
+/// (flash_engine::flash::flash) — the Lab runs the same one.
+// The argument list IS the frontend's invoke contract (and the Lab's twin
+// takes the same nine), so it stays flat rather than becoming a struct.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn flash(
     app: AppHandle,
@@ -687,458 +377,17 @@ async fn flash(
     // wouldn't read, and no map is the truthful outcome.
     backup_path: Option<String>,
 ) -> Result<FlashReceipt, String> {
-    let emit = |app: &AppHandle, line: String| {
-        let _ = app.emit("flash:log", line);
-    };
-
-    // 1) Resolve the official factory image for this exact product.
-    emit(
-        &app,
-        format!("→ resolving verified release for {product_id}…"),
-    );
-    let catalog: Value = serde_json::from_str(EMBEDDED_CATALOG)
-        .map_err(|e| format!("bundled catalog is corrupt: {e}"))?;
-    // Exactly two manifests are ever resolved: the catalog's pinned stable
-    // release, and the fixed fw-dev-latest constant. Anything else is an
-    // unbundled URL and is refused before a byte moves.
-    let channel =
-        if catalog.get("manifest_url").and_then(Value::as_str) == Some(manifest_url.as_str()) {
-            "stable"
-        } else if manifest_url == DEV_FLASH_MANIFEST_URL {
-            "dev"
-        } else {
-            return Err("refusing an unbundled firmware manifest URL".into());
-        };
-    if channel == "dev" {
-        emit(
-            &app,
-            "→ DEV CHANNEL: resolving the rolling fw-dev-latest prerelease, not the pinned stable release".into(),
-        );
-    }
-    let product = catalog
-        .get("products")
-        .and_then(Value::as_array)
-        .and_then(|products| {
-            products
-                .iter()
-                .find(|product| product.get("id").and_then(Value::as_str) == Some(&product_id))
-        })
-        .ok_or_else(|| format!("{product_id} is not in the bundled product catalog"))?;
-    let catalog_chip = product
-        .get("chip")
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("{product_id} has no chip guard in the catalog"))?;
-    if canonical_chip(catalog_chip) != canonical_chip(&detected_chip) {
-        return Err(format!(
-            "the catalog requires {catalog_chip}, but {detected_chip} was detected; refusing to write"
-        ));
-    }
-    let needs_provisioning =
-        product.get("provisioning").and_then(Value::as_str) == Some("usb-secrets");
-    // The generated catalog derives this from the product's real serial-command
-    // implementation. Missing fields fail closed for older/unknown catalogs.
-    let expects_serial_receipt = product
-        .get("serial_receipt")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    if needs_provisioning && provisioning.is_none() {
-        return Err(
-            "this firmware uses generic release placeholders; Wi-Fi and MQTT provisioning is required before flash"
-                .into(),
-        );
-    }
-
-    let manifest = fetch_manifest(manifest_url).await?;
-    if manifest.get("schema").and_then(Value::as_str) != Some("securacv-flash-1") {
-        return Err("release manifest has an unexpected schema".into());
-    }
-    let entry = manifest
-        .get("products")
-        .and_then(|p| p.get(&product_id))
-        .ok_or_else(|| format!("the release doesn't offer {product_id} yet"))?;
-    let manifest_chip = entry
-        .get("chipFamily")
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("{product_id} has no chip family in the release"))?;
-    if canonical_chip(manifest_chip) != canonical_chip(&detected_chip) {
-        return Err(format!(
-            "the release offers {manifest_chip}, but {detected_chip} is connected; refusing to write"
-        ));
-    }
-    let factory_url = entry
-        .get("factory")
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("{product_id} has no factory image in the release"))?
-        .to_string();
-    if !release_origin().is_some_and(|origin| factory_url.starts_with(origin)) {
-        return Err(
-            "release image URL is outside the bundled SecuraCV GitHub release origin".into(),
-        );
-    }
-    let version = entry
-        .get("version")
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("{product_id} has no version in the release"))?
-        .to_string();
-    let expected_size = entry
-        .get("size")
-        .and_then(Value::as_u64)
-        .filter(|size| *size > 0)
-        .ok_or_else(|| format!("{product_id} has an invalid release size"))?;
-    let expected_sha = entry
-        .get("sha256")
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("{product_id} has no SHA-256 in the release"))?;
-    emit(&app, format!("→ version {version}"));
-
-    // 2) Download it to a temp file. reqwest verifies TLS; GitHub serves the
-    //    asset from the release the CI published.
-    emit(&app, format!("→ downloading {factory_url}"));
-    // The image is a few MB; guard the connect so a dead network fails fast,
-    // but give the transfer itself generous headroom on a slow link.
-    let client = reqwest::Client::builder()
-        .user_agent("SecuraCV-Flasher")
-        .connect_timeout(std::time::Duration::from_secs(15))
-        .timeout(std::time::Duration::from_secs(300))
-        .build()
-        .map_err(|e| e.to_string())?;
-    // Chunked, not bytes(): on a slow link the transfer runs inside a 300 s
-    // window with — before this — no output at all, which reads as a hang.
-    // Every ~200 ms a structured `flash:progress` event carries done/total so
-    // the UI can show a real bar; the release size is the honest total (the
-    // Content-Length can be the compressed size behind a proxy).
-    let mut resp = client
-        .get(&factory_url)
-        .send()
-        .await
-        .map_err(|e| format!("download failed: {e}"))?
-        .error_for_status()
-        .map_err(|e| format!("download failed: {e}"))?;
-    let total = if expected_size > 0 {
-        expected_size
-    } else {
-        resp.content_length().unwrap_or(0)
-    };
-    let mut downloaded: Vec<u8> = Vec::with_capacity(total as usize);
-    let mut last_tick = std::time::Instant::now();
-    while let Some(chunk) = resp
-        .chunk()
-        .await
-        .map_err(|e| format!("download failed: {e}"))?
-    {
-        downloaded.extend_from_slice(&chunk);
-        if last_tick.elapsed().as_millis() >= 200 {
-            last_tick = std::time::Instant::now();
-            let _ = app.emit(
-                "flash:progress",
-                serde_json::json!({ "stage": "download", "done": downloaded.len(), "total": total }),
-            );
-        }
-    }
-    let _ = app.emit(
-        "flash:progress",
-        serde_json::json!({ "stage": "download", "done": downloaded.len(), "total": total }),
-    );
-
-    // TLS identifies GitHub; these checks identify the actual release bytes.
-    let release_sha = release::verify_size_and_sha(&downloaded, expected_size, expected_sha)?;
-    let release_pubkey = catalog
-        .get("release_pubkey")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "bundled catalog has no release public key".to_string())?;
-    let release_verification = release::verify_signature(
-        downloaded.len(),
-        &release_sha,
-        entry.get("signature").and_then(Value::as_str),
-        release_pubkey,
-    )?;
-    emit(
-        &app,
-        format!(
-            "✓ release verified: SHA-256 {}… ({release_verification})",
-            &release_sha[..16]
-        ),
-    );
-
-    // Provision only after verifying the untouched release. The installed hash
-    // records the exact per-device image we actually hand to espflash.
-    let mut bytes = downloaded.to_vec();
-    let provisioned = if let Some(config) = provisioning.as_ref() {
-        provisioning::patch_factory_image(&mut bytes, config)?;
-        // Name what was ACTUALLY sealed. This line used to claim "Wi-Fi + MQTT"
-        // whenever any provisioning reached it — and for an on-glass display the
-        // broker host is prefilled for the user, so a config carrying an EMPTY
-        // network still arrived here and still printed the Wi-Fi claim. The
-        // network field is not `required` for those products (their firmware can
-        // be set up on the glass), so leaving it blank is silent by design; the
-        // owner read a tick saying their network was baked in, watched the board
-        // come up in its on-screen wizard anyway, and had no way to tell which of
-        // the two things had actually happened. A receipt that overstates what
-        // was written costs more than one that says less.
-        let wifi = !config.wifi_ssid.is_empty();
-        let broker = !config.mqtt_host.is_empty();
-        let what = match (wifi, broker) {
-            (true, true) => "network + hub",
-            (true, false) => "network",
-            (false, true) => "hub",
-            (false, false) => "settings",
-        };
-        emit(
-            &app,
-            format!("✓ {what} sealed into the image's settings partition (values not logged)"),
-        );
-        if !wifi {
-            emit(
-                &app,
-                "  no network baked in — this board asks for Wi-Fi itself on first boot".into(),
-            );
-        }
-        true
-    } else {
-        false
-    };
-    let installed_sha = release::sha256_hex(&bytes);
-
-    let safe_id: String = product_id
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect();
-    // Keep the private file handle alive until espflash exits. Its RAII guard
-    // removes the path on success and on every ordinary error return.
-    let staged = stage_firmware(&bytes, &safe_id)?;
-    let path = staged.path();
-    emit(
-        &app,
-        format!(
-            "→ {} bytes staged (installed SHA-256 {}…), writing to the board…",
-            bytes.len(),
-            &installed_sha[..16]
-        ),
-    );
-
-    // 2a) The change map, computed HERE because this is the only moment both
-    // sides exist: the safety copy has every byte that is on the board, and
-    // `bytes` is the verified image about to replace them. A separate command
-    // would have to download and verify the image a second time.
-    //
-    // Entirely best-effort and never fatal: a missing or unreadable backup
-    // (the copy was skipped, or the board wouldn't read) means no map, which
-    // is the honest answer. Failing the install because we couldn't draw a
-    // picture of it would be absurd.
-    if let Some(bp) = backup_path.as_deref().filter(|p| !p.is_empty()) {
-        if let Ok(old) = std::fs::read(bp) {
-            // Both facts the verdict needs are known right here: whether this
-            // install erases the whole chip first (so regions the image never
-            // reaches do NOT survive), and whether we just wrote the user's
-            // own network into the replacement NVS (so a differing settings
-            // region means "replaced with what you asked for", not "cleared").
-            let erase_all = erase_first.unwrap_or(false);
-            let baked_wifi = provisioning
-                .as_ref()
-                .map(|p| !p.wifi_ssid.is_empty())
-                .unwrap_or(false);
-
-            // Free intake check while we hold the whole chip: does the flash
-            // really hold what it claims? A relabeled part (a 4 MB die sold as
-            // 16 MB) ACCEPTS writes past its real end and discards them, so
-            // the install "succeeds" and the board can't boot, with no error
-            // at any layer. This costs no serial time — the bytes are already
-            // here — and it is the last moment the write can still be stopped.
-            // The safety copy was read with the chip's DECLARED size, so the
-            // dump's own length is that claim — no extra argument needed.
-            let declared = old.len() as u64;
-            if declared >= 0x2000 {
-                let f = intake::flash_alias_verdict(&old, declared);
-                if f.level == "stop" {
-                    emit(&app, format!("✗ {}", f.label));
-                    if let Some(d) = &f.detail {
-                        emit(&app, format!("  {d}"));
-                    }
-                    return Err(format!(
-                        "{} {} Nothing was written.",
-                        f.label,
-                        f.detail.unwrap_or_default()
-                    ));
-                }
-                // "clear" is the only level that earns a tick. An
-                // inconclusive check (a blank chip, where a mirror and an
-                // honest part read identically) is missing evidence, and
-                // missing evidence dressed as a pass is the failure this
-                // whole module exists to avoid — so it gets a warning marker
-                // and keeps its explanation.
-                if f.level == "clear" {
-                    emit(&app, format!("✓ {}", f.label));
-                } else {
-                    emit(&app, format!("⚠ {}", f.label));
-                    if let Some(d) = &f.detail {
-                        emit(&app, format!("  {d}"));
-                    }
-                }
-            }
-            if let Some(map) = changemap::diff_install(&old, &bytes, erase_all) {
-                let had_wifi = old.windows(9).any(|w| w == b"wifi_ssid");
-                let verdict = changemap::settings_verdict(&map, had_wifi, baked_wifi);
-                let _ = app.emit(
-                    "flash:changemap",
-                    json!({
-                        "layoutChanged": map.layout_changed,
-                        "settings": verdict.map(|(kept, text)| json!({ "kept": kept, "text": text })),
-                        "rows": map.rows.iter().map(|r| json!({
-                            "label": r.label,
-                            "kind": r.kind,
-                            "offset": r.offset,
-                            "size": r.size,
-                            "verdict": r.verdict.as_str(),
-                            "changedPct": r.changed_pct,
-                            "before": r.before,
-                            "after": r.after,
-                        })).collect::<Vec<_>>(),
-                    }),
-                );
-            }
-        }
-    }
-
-    // 2b) First contact: wipe the WHOLE chip before writing. `write-bin` only
-    //     touches the regions the image covers, so a board that arrived
-    //     carrying somebody else's firmware would keep whatever sat in the
-    //     partitions we don't write — on a board the user now believes is
-    //     theirs. Erasing first is the only way that leftover goes away.
-    //
-    //     This mirrors the browser flasher, which forces the same erase on a
-    //     board it has never written (canary-local/assets/intake.js:
-    //     isFirstContact). The browser decides it by reading the board;
-    //     espflash reports nothing about resident firmware, so here it comes
-    //     from the step-1 checkbox.
-    if erase_first.unwrap_or(false) {
-        emit(
-            &app,
-            "→ first contact with this board — erasing the whole chip before writing".into(),
-        );
-        let code =
-            run_sidecar_streaming(&app, rescue::erase_flash_args(&port), "flash:log").await?;
-        if code != 0 {
-            return Err(format!(
-                "the full erase failed (espflash exit {code}). Nothing was written. The board can't be bricked — put it back in download mode and try again."
-            ));
-        }
-        emit(
-            &app,
-            "✓ chip erased — nothing of the old firmware is left".into(),
-        );
-    }
-
-    // 3) Flash the merged factory image at 0x0. A factory image already carries
-    //    the bootloader/partition table at their real offsets, so 0x0 is right.
-    //    espflash hard-resets the board when it's done.
-    let args = vec![
-        "write-bin".into(),
-        "0x0".into(),
-        path.to_string_lossy().to_string(),
-        "--port".into(),
+    let request = FlashRequest {
         port,
-        "--baud".into(),
-        baud.to_string(),
-    ];
-
-    let cmd = app
-        .shell()
-        .sidecar(ESPFLASH)
-        .map_err(|e| format!("bundled espflash missing: {e}"))?
-        .args(args);
-    // Tracked, not bare: espflash's PID is on disk for as long as it runs, so
-    // a force quit can't strand it holding the board's serial port with
-    // nothing left to clean it up. `_ticket` un-records it on the way out.
-    let (mut rx, _child, _ticket) = launch_guard::spawn_tracked(&app, cmd, ESPFLASH)?;
-
-    let mut code = -1;
-    // Keep espflash's last words. They stream to the console for the user to
-    // read, but the FAILURE needs them too: the frontend classifies errors by
-    // their text ("permission denied", "resource busy", "no serial data"), and
-    // an error saying only "exited with code 1" classifies as `unknown` —
-    // indistinguishable from a bad cable. That makes a busy port look like a
-    // transport fault and get retried down the whole baud ladder, re-erasing
-    // and re-downloading each time. A few lines of tail is the difference
-    // between a diagnosis and a shrug. (read_region already did this.)
-    let mut tail: Vec<String> = Vec::new();
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
-                let text = String::from_utf8_lossy(&bytes);
-                for line in text.split(['\r', '\n']).filter(|l| !l.trim().is_empty()) {
-                    emit(&app, line.to_string());
-                    tail.push(line.trim().to_string());
-                    if tail.len() > 8 {
-                        tail.remove(0);
-                    }
-                }
-            }
-            CommandEvent::Terminated(payload) => {
-                code = payload.code.unwrap_or(-1);
-            }
-            _ => {}
-        }
-    }
-    // (`staged` removes the private image on scope exit.)
-
-    if code == 0 {
-        let message = if expects_serial_receipt {
-            "✓ chip write verified — reopening serial for the live boot receipt."
-        } else {
-            "✓ chip write verified — this firmware does not require a live receipt."
-        };
-        emit(&app, message.into());
-        Ok(FlashReceipt {
-            target: "esp32-host",
-            product_id,
-            version,
-            release_sha256: release_sha,
-            installed_sha256: installed_sha,
-            bytes_written: bytes.len(),
-            release_verification,
-            channel,
-            chip_write_verified: true,
-            provisioned,
-        })
-    } else {
-        Err(format!(
-            "espflash exited with code {code}. The board can't be bricked — put it back in download mode and try again.\n{}",
-            tail.join("\n")
-        ))
-    }
-}
-
-/// The cheap refusals for a user-picked firmware file: an empty file or one
-/// larger than any Canary's flash is a wrong pick, and a file without a
-/// partition table at 0x8000 is an app-only build — this path writes whole
-/// factory images at offset 0, so an app-only .bin would land on the
-/// bootloader and the board wouldn't boot (recoverable over USB download
-/// mode, but a guaranteed bad hour). The 0xE9 image magic can't make that
-/// call — an app-only build starts with 0xE9 too. Anything subtler (a real
-/// factory image for the wrong board) is on the user — a personal file has
-/// no catalog entry to check it against.
-fn check_local_image(bytes: &[u8]) -> Result<(), String> {
-    if bytes.is_empty() {
-        return Err("that file is empty — there's nothing to write".into());
-    }
-    if bytes.len() as u64 > LOCAL_IMAGE_MAX_BYTES {
-        return Err(format!(
-            "that file is {} bytes — no Canary carries more than 32 MiB of flash, so this can't be a firmware image",
-            bytes.len()
-        ));
-    }
-    let factory_shape = bytes.len() > PARTITION_TABLE_OFFSET + 32
-        && bytes[PARTITION_TABLE_OFFSET..PARTITION_TABLE_OFFSET + 2] == PARTITION_MAGIC_LE;
-    if !factory_shape {
-        return Err(
-            "this looks like an app-only build, not a merged factory image — there's no \
-             partition table at 0x8000. The flasher writes whole factory images at offset 0, \
-             so an app-only .bin would overwrite the bootloader and the board wouldn't boot. \
-             Merge one with firmware/scripts/make_factory.py or use `dev_flash.sh <env> -f`."
-                .into(),
-        );
-    }
-    Ok(())
+        product_id,
+        manifest_url,
+        baud,
+        detected_chip,
+        provisioning,
+        erase_first,
+        backup_path,
+    };
+    flash_engine::flash::flash(&TauriHost(app), bundled_catalog(), request).await
 }
 
 /// What the Advanced local-file panel shows BEFORE anything is written: size,
@@ -1230,53 +479,13 @@ async fn flash_local_file(
         format!("→ {} bytes staged, writing to the board…", bytes.len()),
     );
 
-    let args = vec![
-        "write-bin".into(),
-        "0x0".into(),
-        staged_path.to_string_lossy().to_string(),
-        "--port".into(),
-        port,
-        "--baud".into(),
-        baud.to_string(),
-    ];
-    let cmd = app
-        .shell()
-        .sidecar(ESPFLASH)
-        .map_err(|e| format!("bundled espflash missing: {e}"))?
-        .args(args);
-    // Tracked, not bare: espflash's PID is on disk for as long as it runs, so
-    // a force quit can't strand it holding the board's serial port with
-    // nothing left to clean it up. `_ticket` un-records it on the way out.
-    let (mut rx, _child, _ticket) = launch_guard::spawn_tracked(&app, cmd, ESPFLASH)?;
-
-    let mut code = -1;
-    // Keep espflash's last words. They stream to the console for the user to
-    // read, but the FAILURE needs them too: the frontend classifies errors by
-    // their text ("permission denied", "resource busy", "no serial data"), and
-    // an error saying only "exited with code 1" classifies as `unknown` —
-    // indistinguishable from a bad cable. That makes a busy port look like a
-    // transport fault and get retried down the whole baud ladder, re-erasing
-    // and re-downloading each time. A few lines of tail is the difference
-    // between a diagnosis and a shrug. (read_region already did this.)
-    let mut tail: Vec<String> = Vec::new();
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
-                let text = String::from_utf8_lossy(&bytes);
-                for line in text.split(['\r', '\n']).filter(|l| !l.trim().is_empty()) {
-                    emit(&app, line.to_string());
-                    tail.push(line.trim().to_string());
-                    if tail.len() > 8 {
-                        tail.remove(0);
-                    }
-                }
-            }
-            CommandEvent::Terminated(payload) => {
-                code = payload.code.unwrap_or(-1);
-            }
-            _ => {}
-        }
-    }
+    let args = rescue::write_bin_args(&port, &staged_path.to_string_lossy(), baud);
+    // The engine's write: the same tracked spawn, `flash:log` streaming and
+    // kept tail (the frontend classifies a failure by espflash's last words)
+    // as the release path.
+    let (code, tail) =
+        flash_engine::host::run_streaming_with_tail(&TauriHost(app.clone()), args, "flash:log")
+            .await?;
     // (`staged` removes the private image on scope exit.)
 
     if code == 0 {
@@ -1295,12 +504,10 @@ async fn flash_local_file(
             channel: "local",
             chip_write_verified: true,
             provisioned: false,
+            broker_tls: None,
         })
     } else {
-        Err(format!(
-            "espflash exited with code {code}. The board can't be bricked — put it back in download mode and try again.\n{}",
-            tail.join("\n")
-        ))
+        Err(flash_engine::flash::write_failure(code, &tail))
     }
 }
 
@@ -1338,7 +545,12 @@ async fn flash_vision_module(
         let _ = app.emit("vision:log", message);
     };
     emit_log("→ resolving the pinned Grove Vision AI V2 model…".into());
-    let manifest = fetch_manifest(manifest_url).await?;
+    let manifest = flash_engine::flash::fetch_manifest(
+        &TauriHost(app.clone()),
+        bundled_catalog(),
+        manifest_url,
+    )
+    .await?;
     let version = manifest
         .get("version")
         .and_then(Value::as_str)
@@ -1538,35 +750,14 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
 // can brick the board — the ESP32's first-stage bootloader is mask ROM.
 
 /// Spawn the espflash sidecar with `args`, streaming each non-empty line over
-/// `event`, and return its exit code.
+/// `event`, and return its exit code (flash_engine::host::run_streaming over
+/// this app's tracked spawn).
 async fn run_sidecar_streaming(
     app: &AppHandle,
     args: Vec<String>,
     event: &'static str,
 ) -> Result<i32, String> {
-    let cmd = app
-        .shell()
-        .sidecar(ESPFLASH)
-        .map_err(|e| format!("bundled espflash missing: {e}"))?
-        .args(args);
-    // Tracked, not bare: espflash's PID is on disk for as long as it runs, so
-    // a force quit can't strand it holding the board's serial port with
-    // nothing left to clean it up. `_ticket` un-records it on the way out.
-    let (mut rx, _child, _ticket) = launch_guard::spawn_tracked(app, cmd, ESPFLASH)?;
-    let mut code = -1;
-    while let Some(ev) = rx.recv().await {
-        match ev {
-            CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
-                let text = String::from_utf8_lossy(&bytes);
-                for line in text.split(['\r', '\n']).filter(|l| !l.trim().is_empty()) {
-                    let _ = app.emit(event, line.to_string());
-                }
-            }
-            CommandEvent::Terminated(payload) => code = payload.code.unwrap_or(-1),
-            _ => {}
-        }
-    }
-    Ok(code)
+    flash_engine::host::run_streaming(&TauriHost(app.clone()), args, event).await
 }
 
 /// Where the automatic pre-flash safety copy lands: a per-app backups folder,
@@ -1593,7 +784,11 @@ fn auto_backup_path(app: AppHandle, mac: String) -> Result<String, String> {
     Ok(dir
         .join(format!(
             "canary-{}-{stamp}.bin",
-            if safe_mac.is_empty() { "unknown".into() } else { safe_mac }
+            if safe_mac.is_empty() {
+                "unknown".into()
+            } else {
+                safe_mac
+            }
         ))
         .to_string_lossy()
         .to_string())
@@ -2053,11 +1248,7 @@ async fn health_check(
 /// rather than failing the connect. A passport that cannot be read must never
 /// be reported as a blank board — missing evidence is its own answer.
 #[tauri::command]
-async fn board_passport(
-    app: AppHandle,
-    port: String,
-    baud: u32,
-) -> Result<Value, String> {
+async fn board_passport(app: AppHandle, port: String, baud: u32) -> Result<Value, String> {
     // Each region is its own espflash spawn (bootloader re-sync included), so
     // the whole read runs 8–25 s — long enough that a silent label reads as a
     // hang. `passport:log` narrates each step; the frontend shows the line in
@@ -2082,8 +1273,7 @@ async fn board_passport(
     if let Some(otap) = entries.iter().find(|e| health::is_ota_data(e)) {
         if !slots.is_empty() {
             narrate("reading its update history…");
-            if let Ok(ob) =
-                read_region(&app, &port, otap.offset, otap.size.min(0x2000), baud).await
+            if let Ok(ob) = read_region(&app, &port, otap.offset, otap.size.min(0x2000), baud).await
             {
                 let o = health::parse_ota_data(&ob, slots.len() as u32);
                 ota_json = json!({
@@ -2356,78 +1546,29 @@ pub fn run() {
 }
 
 #[cfg(test)]
-mod local_image_tests {
-    use super::{check_local_image, PARTITION_TABLE_OFFSET};
-
-    #[test]
-    fn app_only_builds_are_refused_and_factory_shapes_pass() {
-        assert!(check_local_image(&[]).is_err());
-        // An app-only PlatformIO build starts with 0xE9 too — the refusal
-        // must come from the missing partition table, not the image magic.
-        let app_only = vec![0xE9; PARTITION_TABLE_OFFSET / 2];
-        assert!(check_local_image(&app_only).is_err());
-        // Right length, no 0xAA 0x50 at 0x8000 → still not a factory image.
-        let unmerged = vec![0xE9; PARTITION_TABLE_OFFSET + 64];
-        assert!(check_local_image(&unmerged).is_err());
-        let mut factory = vec![0xFF; PARTITION_TABLE_OFFSET + 64];
-        factory[0] = 0xE9;
-        factory[PARTITION_TABLE_OFFSET] = 0xAA;
-        factory[PARTITION_TABLE_OFFSET + 1] = 0x50;
-        assert!(check_local_image(&factory).is_ok());
-    }
-}
-
-#[cfg(test)]
 mod catalog_derivation_tests {
-    use super::{canonical_chip, chip_table, release_origin, EMBEDDED_CATALOG};
+    use super::{bundled_catalog, release_origin, EMBEDDED_CATALOG};
     use serde_json::Value;
 
-    // These used to be hardcoded copies of catalog facts, diffed against the
-    // catalog by canary-local/tests/desktop_parity.test.js. Now they derive;
-    // the tests pin the derivation against the embedded catalog itself, so a
-    // regression back to a literal (or a broken parse) fails here first.
+    // The derivations themselves (chip table, release origin, the manifest
+    // allow-list) are the flash engine's and are pinned by its own tests
+    // against this same catalog file (desktop/flash-engine/src/catalog.rs).
+    // What this app owns is the wiring: bundled_catalog() must wrap the catalog
+    // build.rs embedded, not some other text.
 
     #[test]
-    fn chips_derive_from_the_catalog_and_variants_win() {
-        let catalog: Value = serde_json::from_str(EMBEDDED_CATALOG).unwrap();
-        let chips = catalog["chips"].as_object().expect("catalog has chips");
-        // Every catalog chip canonicalizes to itself, from espflash-ish
-        // spellings too.
-        for canon in chips.keys() {
-            assert_eq!(canonical_chip(canon).as_deref(), Some(canon.as_str()));
-            let sloppy = canon.to_lowercase().replace('-', "_");
-            assert_eq!(canonical_chip(&format!("Chip type: {sloppy} (rev 0)")).as_deref(),
-                       Some(canon.as_str()), "espflash-style spelling of {canon}");
-        }
-        // A variant token must never fold to bare ESP32.
-        assert_eq!(canonical_chip("esp32-s3").as_deref(), Some("ESP32-S3"));
-        // The table carries exactly the catalog's chips — no leftovers of
-        // the old hardcoded list.
-        assert_eq!(chip_table().len(), chips.len());
-        // An ESP32-family variant the catalog does NOT ship still gets its
-        // real name — never bare "ESP32" (that would defeat the flash chip
-        // guard), never None (rescue/local-file operations are
-        // catalog-independent and need the chip identified).
-        assert_eq!(canonical_chip("Chip type: esp32s2 (revision v0.0)").as_deref(),
-                   Some("ESP32-S2"));
-        assert_eq!(canonical_chip("esp32-h2").as_deref(), Some("ESP32-H2"));
-        assert_eq!(canonical_chip("esp32c2").as_deref(), Some("ESP32-C2"));
-        // A variant named anywhere wins over a bare esp32 mention earlier on.
-        assert_eq!(canonical_chip("esp32 family: esp32s2").as_deref(), Some("ESP32-S2"));
-        // Output naming no ESP32-family chip at all answers None.
-        assert_eq!(canonical_chip("rp2040"), None);
-    }
-
-    #[test]
-    fn release_origin_derives_from_the_catalog_manifest() {
-        let catalog: Value = serde_json::from_str(EMBEDDED_CATALOG).unwrap();
-        let manifest_url = catalog["manifest_url"].as_str().unwrap();
+    fn the_engine_catalog_wraps_the_embedded_catalog() {
+        assert_eq!(bundled_catalog().raw(), EMBEDDED_CATALOG);
+        let embedded: Value = serde_json::from_str(EMBEDDED_CATALOG).unwrap();
+        let chips = embedded["chips"].as_object().expect("catalog has chips");
+        assert_eq!(bundled_catalog().chip_table().len(), chips.len());
+        let manifest_url = embedded["manifest_url"].as_str().unwrap();
         let origin = release_origin().expect("catalog carries a releases/download manifest_url");
-        assert!(origin.ends_with("/releases/download/"));
         assert!(manifest_url.starts_with(origin));
-        // The guard the flash paths apply: catalog-origin assets pass, a
-        // foreign host does not.
-        assert!(!("https://example.com/releases/download/x.bin").starts_with(origin));
+        assert!(bundled_catalog().manifest_url_allowed(manifest_url));
+        assert!(
+            bundled_catalog().manifest_url_allowed(flash_engine::catalog::DEV_FLASH_MANIFEST_URL)
+        );
     }
 
     #[test]
@@ -2435,9 +1576,15 @@ mod catalog_derivation_tests {
         let catalog: Value = serde_json::from_str(EMBEDDED_CATALOG).unwrap();
         let module = &catalog["we2_module"];
         let vid = u16::from_str_radix(
-            module["usb_vid"].as_str().unwrap().trim_start_matches("0x"), 16).unwrap();
+            module["usb_vid"].as_str().unwrap().trim_start_matches("0x"),
+            16,
+        )
+        .unwrap();
         let pid = u16::from_str_radix(
-            module["usb_pid"].as_str().unwrap().trim_start_matches("0x"), 16).unwrap();
+            module["usb_pid"].as_str().unwrap().trim_start_matches("0x"),
+            16,
+        )
+        .unwrap();
         assert!(crate::we2::is_module_usb(Some(vid), Some(pid)));
         assert!(!crate::we2::is_module_usb(Some(vid), Some(pid ^ 1)));
         assert!(!crate::we2::is_module_usb(None, None));
@@ -2446,9 +1593,7 @@ mod catalog_derivation_tests {
 
 #[cfg(test)]
 mod webview_boundary_tests {
-    use super::{
-        manifest_url_allowed, validated_backup_path, validated_save_path, DEV_FLASH_MANIFEST_URL,
-    };
+    use super::{validated_backup_path, validated_save_path};
 
     #[test]
     fn backup_paths_are_validated_not_trusted() {
@@ -2456,8 +1601,7 @@ mod webview_boundary_tests {
         // webview-supplied destination gets exactly the JSON export's rules.
         let dir = tempfile::tempdir().expect("tempdir");
         let good = dir.path().join("canary-backup.bin");
-        let resolved =
-            validated_backup_path(good.to_str().unwrap()).expect("a dialog-shaped path");
+        let resolved = validated_backup_path(good.to_str().unwrap()).expect("a dialog-shaped path");
         assert_eq!(resolved.file_name().unwrap(), "canary-backup.bin");
 
         assert!(validated_backup_path("backup.bin").is_err(), "relative");
@@ -2474,27 +1618,10 @@ mod webview_boundary_tests {
         let sneaky = dir.path().join("sub/../canary-backup.bin");
         let resolved = validated_backup_path(sneaky.to_str().unwrap()).unwrap();
         assert!(!resolved.to_string_lossy().contains(".."));
-        assert_eq!(resolved.parent().unwrap(), dir.path().canonicalize().unwrap());
-    }
-
-    #[test]
-    fn only_the_bundled_manifest_urls_are_fetchable() {
-        // The closed set: catalog stable pin, dev constant, Vision-module pin.
-        let catalog: serde_json::Value = serde_json::from_str(super::EMBEDDED_CATALOG).unwrap();
-        let stable = catalog.get("manifest_url").and_then(|v| v.as_str()).unwrap();
-        assert!(manifest_url_allowed(stable));
-        assert!(manifest_url_allowed(DEV_FLASH_MANIFEST_URL));
-        if let Some(we2) = catalog
-            .get("we2_module")
-            .and_then(|m| m.get("manifest_url"))
-            .and_then(|v| v.as_str())
-        {
-            assert!(manifest_url_allowed(we2));
-        }
-        // Anything else — including lookalikes — is refused before a socket.
-        assert!(!manifest_url_allowed("https://example.com/manifest-flash.json"));
-        assert!(!manifest_url_allowed(&format!("{DEV_FLASH_MANIFEST_URL}.evil")));
-        assert!(!manifest_url_allowed(""));
+        assert_eq!(
+            resolved.parent().unwrap(),
+            dir.path().canonicalize().unwrap()
+        );
     }
 
     #[test]
@@ -2507,48 +1634,21 @@ mod webview_boundary_tests {
         // Relative paths, non-.json targets, and missing folders are refused.
         assert!(validated_save_path("report.json").is_err());
         assert!(validated_save_path(dir.path().join("evil.sh").to_str().unwrap()).is_err());
-        assert!(validated_save_path(
-            dir.path().join("no-such-dir/report.json").to_str().unwrap()
-        )
-        .is_err());
+        assert!(
+            validated_save_path(dir.path().join("no-such-dir/report.json").to_str().unwrap())
+                .is_err()
+        );
 
         // `..` segments are resolved away, never written through blindly.
         std::fs::create_dir(dir.path().join("sub")).unwrap();
         let sneaky = dir.path().join("sub/../canary-report.json");
         let resolved = validated_save_path(sneaky.to_str().unwrap()).expect("canonicalized");
-        assert_eq!(resolved, dir.path().canonicalize().unwrap().join("canary-report.json"));
-    }
-}
-
-#[cfg(test)]
-mod staging_tests {
-    use super::stage_firmware;
-
-    #[test]
-    fn staged_firmware_is_private_and_removed_on_drop() {
-        let staged = stage_firmware(b"provisioned-secret-image", "canary-vision")
-            .expect("private staging file");
-        let path = staged.path().to_path_buf();
         assert_eq!(
-            std::fs::read(&path).expect("staged bytes"),
-            b"provisioned-secret-image"
+            resolved,
+            dir.path()
+                .canonicalize()
+                .unwrap()
+                .join("canary-report.json")
         );
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&path)
-                .expect("staging metadata")
-                .permissions()
-                .mode();
-            assert_eq!(
-                mode & 0o077,
-                0,
-                "staging file must not be group/world accessible"
-            );
-        }
-
-        drop(staged);
-        assert!(!path.exists(), "staging path must be removed on drop");
     }
 }

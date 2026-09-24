@@ -1,0 +1,4 @@
+# CI-populated sidecar (espflash) — never committed
+*
+!.gitignore
+!README.md

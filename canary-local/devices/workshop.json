@@ -154,6 +154,14 @@
      "default": false
     },
     {
+     "id": "opt_shield",
+     "group": "Weather sealing",
+     "label": "blind pilots in the lid over its corner bosses for the sun shield's four screws (ON in the Outdoor preset; the shield is part=\"shield\")",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
      "id": "usb_hood",
      "group": "Weather sealing",
      "label": "drip awning over the USB opening — for a case standing sideways or on a desk",
@@ -357,8 +365,8 @@
     },
     {
      "label": "Printed-enclosure weather kit",
-     "formula": "SCR3+CW1+ADH1+PLUG1+SCR4+FIL1+VENT1+LP1",
-     "usd": 11.55,
+     "formula": "SCR3+ORG1+CW1+ADH1+PLUG1+SCR4+FIL1+VENT1+LP1",
+     "usd": 11.75,
      "note": "Splash-resistant (~IP54) printed case, enclosure/ v0.7 - NOT a substitute for ENC1 outdoors"
     }
    ],
@@ -392,7 +400,7 @@
       },
       "FEATURE_TAMPER_GPIO": {
        "on": false,
-       "note": "Enable tamper detection pin"
+       "note": "Enclosure tamper contact (reed/hall on D3); off until bench-validated"
       },
       "FEATURE_WATCHDOG": {
        "on": true,
@@ -585,7 +593,7 @@
     {
      "label": "Printed camera unit",
      "formula": "req + CAM1 + ENC2 + SCR5-7 + NUT1 + CW2",
-     "usd": 41.74,
+     "usd": 41.84,
      "note": "Wall/tripod-mountable unit with adjustable hinge; add WAP weather-kit items for sealing"
     }
    ],
@@ -652,7 +660,7 @@
    "options": [
     {
      "id": "opt_led",
-     "group": "Options",
+     "group": "Options (applied when preset = custom)",
      "label": "onboard WS2812",
      "consequence": "light-pipe port (outside the radome zone)",
      "audience": "user",
@@ -663,7 +671,7 @@
     },
     {
      "id": "opt_lux",
-     "group": "Options",
+     "group": "Options (applied when preset = custom)",
      "label": "BH1750 lux sensor",
      "consequence": "small light aperture (outside the radome zone)",
      "audience": "user",
@@ -674,7 +682,7 @@
     },
     {
      "id": "opt_vent",
-     "group": "Options",
+     "group": "Options (applied when preset = custom)",
      "label": "GORE vent cluster (recommended with opt_seal)",
      "consequence": "",
      "audience": "user",
@@ -682,7 +690,7 @@
     },
     {
      "id": "opt_tamper",
-     "group": "Options",
+     "group": "Options (applied when preset = custom)",
      "label": "reed/Hall magnet pocket",
      "consequence": "",
      "audience": "user",
@@ -694,7 +702,7 @@
     },
     {
      "id": "opt_seal",
-     "group": "Options",
+     "group": "Options (applied when preset = custom)",
      "label": "perimeter TPU gasket + drip-edge front (indoor ceilings rarely need it)",
      "consequence": "",
      "audience": "user",
@@ -705,7 +713,7 @@
     },
     {
      "id": "opt_weep",
-     "group": "Options",
+     "group": "Options (applied when preset = custom)",
      "label": "Ø2 weep at the bottom wall's floor corner (seal mode): condensate leaves",
      "consequence": "",
      "audience": "user",
@@ -713,7 +721,7 @@
     },
     {
      "id": "seal_mid_posts",
-     "group": "Options",
+     "group": "Options (applied when preset = custom)",
      "label": "(seal mode) one extra screw post mid-way along each ±X wall",
      "consequence": "",
      "audience": "user",
@@ -721,16 +729,16 @@
     },
     {
      "id": "head_seal",
-     "group": "Options",
-     "label": "(seal mode) O-ring under each front screw head — needs screw_head = \"pan\"",
+     "group": "Options (applied when preset = custom)",
+     "label": "(seal mode, screws on the face) O-ring under each front screw head — from the back a sealed build always glands them — needs screw_head = \"pan\"",
      "consequence": "",
      "audience": "user",
      "default": false
     },
     {
      "id": "opt_mount",
-     "group": "Options",
-     "label": "opt_mount",
+     "group": "Options (applied when preset = custom)",
+     "label": "mounting features per mount_style",
      "consequence": "",
      "audience": "user",
      "default": true,
@@ -740,7 +748,7 @@
     },
     {
      "id": "mount_style",
-     "group": "Options",
+     "group": "Options (applied when preset = custom)",
      "label": "mount_style",
      "consequence": "",
      "audience": "user",

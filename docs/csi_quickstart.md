@@ -126,6 +126,14 @@ value. That's WiFi sensing on a $15 board, no camera, no cloud.
   so an AP-only install senses as before. The transmitter address is
   compared in place and never stored, logged or exported. Host-tested; the
   bench pass has to show the false-positive floor moved.
+- **Wander and jitter are off, and unproven.** A build with
+  `-DCSI_WANDER_JITTER=1` adds a second extractor (amplitude-centroid
+  wander in `v[28]`, frame-to-frame jitter in `v[29]`), visible only in the
+  raw P2 window. It is host-tested on synthetic frames; the flag is off in
+  every shipped build; there are no bench numbers and no thresholds, and no
+  module reads it. In a shipped build nothing on the dashboard depends on
+  it; a flag-on build only adds two cells to the Tinker heatmap. See
+  [`csi_modules.md`](csi_modules.md#the-second-extractor-wander-and-jitter).
 
 The dashboard's `?` affordance opens a "What it can / can't see" sheet
 that shows users the same seams.

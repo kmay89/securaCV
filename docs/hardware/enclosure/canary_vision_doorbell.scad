@@ -63,7 +63,10 @@ use <canary_color_lib.scad>  // the colorway registry — assembled-preview spoo
 /* [What to render] */
 part = "all";        // ["body","face","plate","gasket","all"]
 
-/* [Options] */
+/* [Preset] — quick configs; choose "custom" to use the option checkboxes */
+preset = "custom";   // ["custom","doorbell_weather"]
+
+/* [Options (applied when preset = custom)] */
 opt_seal   = true;   // perimeter TPU gasket + drip-edge face (doorbells live outside)
 opt_vent   = true;   // GORE vent cluster on the face — ON by default: a sealed outdoor
                      // unit with no pressure path pumps moist air past the seals on
@@ -75,8 +78,19 @@ opt_weep   = true;   // Ø2 weep through the bottom wall at the floor corner (mo
 weep_d     = 2.0;    // weep bore  // [1.5:0.5:3]
 seal_mid_posts = true; // one extra face screw per long wall, at the cable well: four corner screws
                        // cannot hold 20 % gasket squeeze across 97 mm of 2.2 mm face
-head_seal  = false;  // O-ring under each face screw head (the posts stand INSIDE the gasket line, so a
+head_seal  = false;  // (seal mode, screws on the face) O-ring under each face screw head — from the back a sealed build always glands them (the posts stand INSIDE the gasket line, so a
                      // bare screw is a drip path down the thread) — needs screw_head = "pan"
+
+// effective flags (a preset overrides the checkboxes above). doorbell_weather is
+// the committed build — the file's defaults: sealed, vented, weep through the
+// bottom wall, no separate light pipe (the button usually has its own LED ring), no
+// tamper magnet. A doorbell lives outside, so the one preset is the sealed one.
+function _pre(c, w) = (preset == "doorbell_weather") ? w : c;
+e_seal   = _pre(opt_seal,   true);
+e_vent   = _pre(opt_vent,   true);
+e_led    = _pre(opt_led,    false);
+e_tamper = _pre(opt_tamper, false);
+e_weep   = _pre(opt_weep,   true);
 
 /* [Boards] — the stacked-XIAO Vision build. Defaults measured from the
    committed vendor GLB (canary-local/boards/seeed_grove_vision_ai_v2.glb):
@@ -95,21 +109,21 @@ vm_front_h   = 5.0;  // module front-side component height (measured)
 cam_w    = 25.0;     // OV5647 carrier (Pi-cam v1.3 form) — brd_w("ov5647")
 cam_h    = 24.0;     // carrier height (Y) — brd_l("ov5647")
 pcb_t    = 1.0;      // brd_t("grove_v2") — the camera carrier matches
-board_clear = 0.6;
+board_clear = 0.6;   // clearance around the camera carrier and the module (per side across the case; once below the module)
 
 /* [Camera] — Pi-cam v1.3 posts on the face */
-cam_hole_x = 21.0;
-cam_hole_y = 12.5;
-cam_post_d = 3.6;
+cam_hole_x = 21.0;   // camera post grid (X) — the Pi-cam v1.3 hole pattern
+cam_hole_y = 12.5;   // camera post grid (Y)
+cam_post_d = 3.6;    // camera post diameter
 cam_post_h = 4.0;    // auto-raised to hold the lens holder behind the face (cam_lens_h)
 cam_lens_h = 5.5;    // Pi-cam v1.3 lens holder height above the PCB face — MEASURE yours
 cam_lens_sq = 8.5;   // the holder's square: its 12.0 diagonal cannot enter a Ø10 aperture
-cam_screw_d = 1.6;
+cam_screw_d = 1.6;   // pilot bored down each camera post for its screw
 lens_dx  = 0.0;      // lens center offset from the camera-board center — MEASURE
-lens_dy  = 2.5;
-cam_ap_d   = 10.0;
+lens_dy  = 2.5;      // lens center Y offset from the camera-board center — MEASURE
+cam_ap_d   = 10.0;   // lens aperture Ø through the face
 cam_disc_d = 14.0;   // clear-disc seat (0 = bare aperture)
-cam_disc_t = 1.0;
+cam_disc_t = 1.0;    // clear-disc thickness (the disc sits 0.2 recessed below the face)
 
 /* [Button] — 12 mm panel-mount illuminated momentary (short body, IP65) */
 btn_d      = 12.0;   // button thread/body diameter (hole = btn_d + 2*tol_slide)
@@ -124,12 +138,12 @@ db_r     = 12.0;     // outside corner radius (pill look; <= half the width)
 wall_t   = 2.0;      // auto-thickened in seal mode — catalog default, core_wall()
 floor_t  = 2.0;      // back thickness
 lid_t    = 2.2;      // face thickness (the visible surface)
-lip_h    = 4.0;
-lip_t    = 1.2;
+lip_h    = 4.0;      // how far the face's lip drops into the body
+lip_t    = 1.2;      // lip wall thickness
 cav_extra = 1.0;     // headroom over the tallest component
-floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp
-                   // notch there was the crack-starter in every flat-printed shell — a corner drop hinges the
-                   // floor about it along one layer boundary. 0 = the old square corner  // [0:0.2:1.2]
+floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner  // [0:0.2:1.2]
+                   // The sharp notch there was the crack-starter in every flat-printed shell — a corner drop
+                   // hinges the floor about it along one layer boundary.
 lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
                    // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 zone_top = 8.0;      // margin above the camera (top posts live here)
@@ -139,7 +153,7 @@ zone_btn = 21.0;     // button zone height
 usb_exit_w = 12.0;   // oval cable exit through the back (into the plate hole) — sized
                      // for a molded right-angle USB-C plug HEAD, not the 8.94 mm
                      // shell (port_usbc_shell_w()): molded heads run ~10-12 mm
-usb_exit_h = 7.0;
+usb_exit_h = 7.0;    // the cable exit oval's height (Y); usb_exit_w is its length
 usb_exit_dx = 0.0;   // exit offset from the centerline (0 keeps it between the mid-span posts)
 usb_exit_dy = 0.0;   // exit offset from the well center: the oval sits wholly in the well, under
                      // nothing (at +6 it reached under the module and the XIAO)
@@ -153,15 +167,15 @@ tol_hole  = 0.30;    // core_tol_hole()
 /* [Engineering] (see README "Engineering & materials") */
 screw_insert = false;  // M2 brass heat-set inserts in the corner posts AND the security boss (the one
                        // screw undone at every service — self-tapped plastic strips there first)
-insert_d     = 3.5;
-insert_h     = 4.0;
+insert_d     = 3.5;     // (m2) heat-set insert OD — its bore is cut 0.3 under it; other sizes read the registry
+insert_h     = 4.0;     // (m2) insert length; other sizes read the registry
 lid_ribs     = true;   // perimeter rib ring under the face
-lid_rib_w    = 2.5;
-lid_rib_h    = 1.0;
+lid_rib_w    = 2.5;     // rib ring width
+lid_rib_h    = 1.0;     // rib depth below the face — asserted within the headroom over the stack (lid_headroom)
 foot_cham    = 0.5;    // 45° chamfer on the body's back edge
 
 /* [Screw posts] (face screws — use black-oxide M2 for looks) */
-post_d       = 5.0;
+post_d       = 5.0;   // corner screw post Ø — the face screws thread into these (auto-fattened for inserts and larger screws)
 screw_size   = "m2";  // ["m2","m2.5","m3"] face screw — the core lib's registry sets pilot, clearance,
                       // head seat, insert bore and post floor; "m2" keeps the validated numbers below
 screw_head   = "pan"; // ["pan","flat"] pan = flat-floored seat (the BOM's black-oxide pan heads; what
@@ -169,20 +183,26 @@ screw_head   = "pan"; // ["pan","flat"] pan = flat-floored seat (the BOM's black
 screw_d      = 1.6;   // (m2)
 screw_head_d = 4.0;   // (m2 pan)
 screw_head_h = 2.0;   // (m2 pan) seat depth; the face carries a pad under it (head_pad)
+screw_from   = "back"; // ["back","face"] back = the face is unbroken: screws enter a seat in the back and thread into bosses under the face (the house default; opening it means taking it down first); face = heads on the face
 
 /* [Weather sealing] */
-gasket_w      = 1.6;
-gasket_groove = 1.2;
-gasket_proud  = 0.3;
-skirt_h       = 3.0;
-skirt_t       = 1.6;
+gasket_w      = 1.6;  // gasket groove width in the body's rim (the printed gasket is 0.5 narrower)
+gasket_groove = 1.2;  // groove depth into the body's rim
+gasket_proud  = 0.3;  // how far the printed gasket stands proud of its groove, uncompressed — what the face screws squeeze
+skirt_h       = 3.0;  // drip-edge skirt drop over the body's wall (sheds water off the seam)
+skirt_t       = 1.6;  // drip-edge skirt wall thickness
 
-/* [Wall plate + T-stud hooks + security screw] — the stud/pocket pair is the
-   catalog's one hanging interface: canary_mount_lib owns the drawings and the
-   numbers, these knobs stay for per-printer dialing */
+/* [Wall plate + security screw] */
 plate_t     = 4.0;    // plate thickness at the THIN end
 plate_wedge = 0;      // vertical wedge: camera tilts down the approach  // [0:5:15]
 plate_wedge_x = 0;    // horizontal wedge: aims left/right (corner installs)  // [-15:5:15]
+sec_screw_d = 2.2;    // security screw (M2 self-tap; use a Torx/security drive)
+plate_screw_d = 4.2;  // wall screws (#8 / M4 PAN head — the seats are flat counterbores)
+plate_head_h = 2.8;   // wall-screw pan head height: the seat is cut this deep (+0.2) so the head sits flush  // [2.0:0.1:3.2]
+
+/* [Stud/keyhole interface] — the plate's T-studs and the body's blind pockets */
+// the stud/pocket pair is the catalog's one hanging interface: canary_mount_lib owns the
+// drawings and the numbers, these knobs stay for per-printer dialing
 stud_y      = 40.0;   // T-stud/pocket centers at y = ±stud_y (clear of the cable exit and the well)
 kh_head_d   = 7.0;    // pocket head pass (stud head 6.6) — mount_kh_head_d()
 kh_shank_d  = 4.2;    // pocket slot (stud stem 4.0) — mount_kh_shank_d()
@@ -190,8 +210,6 @@ kh_slot_l   = 8.0;    // catalog standard — mount_kh_slot_l()
 kh_head_h   = 3.5;    // pocket depth (face web + head cavity) — mount_kh_head_h()
 kh_face     = 1.0;    // catalog standard — mount_kh_face()
 kh_extra    = 3.0;    // body back thickening that hosts the pockets
-sec_screw_d = 2.2;    // security screw (M2 self-tap; use a Torx/security drive)
-plate_screw_d = 4.2;  // wall screws (#8 / M4 PAN head — the seats are flat counterbores)
 
 /* [Aesthetics] */
 colorway    = "graphite"; // ["graphite","canary","snow","forest","midnight"] assembled-preview spool set (canary_color_lib; single-part exports carry no color)
@@ -203,37 +221,38 @@ opt_mark    = false;  // deboss the house wordmark instead of a custom label (ex
                       // metrics, so a size that would print as a smudge or run off
                       // the face is refused before a print, not after
 label_text  = "";     // debossed face label ("" = off)
-label_size  = 4.5;
-label_depth = 0.5;
-label_dx    = 0.0;
-label_dy    = -26.0;
-label_rot   = 0;
-label_font  = "Liberation Sans:style=Bold";
+label_size  = 4.5;    // label text height (the wordmark's size too, with opt_mark)
+label_depth = 0.5;    // deboss depth into the face
+label_dx    = 0.0;    // label center X offset from the FACE's center (not the module center)
+label_dy    = -26.0;  // label center Y offset from the FACE's center
+label_rot   = 0;      // label rotation (degrees)
+label_font  = "Liberation Sans:style=Bold";  // the font label_text is set in (it must be installed)
 
 /* [Front-face features] — offsets from the MODULE center */
-lp_d   = 3.0;
-lp_dx  = 8.0;
-lp_dy  = -8.0;
-vent_pad_d     = 12.0;
-vent_pad_depth = 0.8;
+lp_d   = 3.0;      // light-pipe diameter (hole = lp_d + 2*tol_press) — core_lightpipe_d()
+lp_dx  = 8.0;      // light-pipe port center X, from the module center
+lp_dy  = -8.0;     // light-pipe port center Y, from the module center
+vent_pad_d     = 12.0;  // GORE-vent seat Ø on the face's outer side — core_vent_pad_d()
+vent_pad_depth = 0.8;   // that seat's recess depth — core_vent_pad_depth()
 vent_hole_d    = 1.0;   // fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm)
-vent_ring_d    = 6.0;
+vent_ring_d    = 6.0;   // Ø of the ring the vent holes sit on — core_vent_ring_d()
 vent_holes     = 10;    // more, smaller holes recover the open area at 1.0 mm
-vent_dx        = 0.0;    // vent/sound cluster ON the face's vertical axis — the
-vent_dy        = -8.0;   // camera → grille → button rhythm of a real doorbell
-                         // (off-axis it read as an accidental drill pattern)
-mag_d  = 6.0;
-mag_h  = 3.2;
-mag_dx = 8.0;
-mag_dy = 8.0;
+vent_dx        = 0.0;    // vent cluster center X, from the module center; 0 keeps it on the face's vertical axis
+                         // That axis is the camera → grille → button rhythm of a real doorbell;
+                         // off-axis, the cluster read as an accidental drill pattern.
+vent_dy        = -8.0;   // vent cluster center Y, from the module center
+mag_d  = 6.0;      // tamper MAGNET diameter (pocket = mag_d + 2*tol_press — press fit)
+mag_h  = 3.2;      // magnet thickness, and the pocket ring's height off the face's inside
+mag_dx = 8.0;      // magnet pocket center X, from the module center
+mag_dy = 8.0;      // magnet pocket center Y, from the module center
 
 /* [Board snap clips] — the WAP's print-proven numbers (the canary_snap_lib
    snap_boardclip defaults); the lib's strain gate holds them honest */
-clip_w      = 6.0;
-clip_t      = 1.0;
-clip_hook   = 0.5;
-clip_hook_h = 1.2;
-clip_clear  = 0.25;
+clip_w      = 6.0;   // board-clip tab width along the board edge — snap_boardclip default
+clip_t      = 1.0;   // clip beam thickness — snap_boardclip default; the lib asserts its insertion strain
+clip_hook   = 0.5;   // lip overhang over the board top — snap_boardclip default
+clip_hook_h = 1.2;   // lip + 45° lead-in height above the board top — snap_boardclip default
+clip_clear  = 0.25;  // beam face to board edge (a fit — tune on the coupon) — snap_boardclip default
 
 /* [Quality] */
 // curve quality: $fa/$fs give smooth big arcs (pill corners, hood) without
@@ -243,7 +262,6 @@ $fa = 3; $fs = 0.4;
 // ----------------------------------------------------------------------------
 //  Derived geometry
 // ----------------------------------------------------------------------------
-e_seal   = opt_seal;
 wall_eff = e_seal ? max(wall_t, gasket_w + 2*core_min_wall()) : wall_t;   // 1.2 mm cheek each side of the groove
 scr_d   = (screw_size == "m2") ? screw_d : scr_pilot(screw_size);
 scr_c   = max(scr_d + 2*tol_hole, scr_clear(screw_size));
@@ -254,7 +272,11 @@ head_h  = (screw_size == "m2" && screw_head == "pan") ? screw_head_h
 ins_od  = (screw_size == "m2") ? insert_d : scr_insert_d(screw_size) + 0.3;
 ins_h   = (screw_size == "m2") ? insert_h : scr_insert_h(screw_size);
 pd = max(screw_insert ? max(post_d, ins_od + 3.0) : post_d, scr_post_min(screw_size));
-head_pad = (screw_head == "pan") ? max(0, head_h + 1.0 - lid_t) : 0;
+e_back   = screw_from == "back";
+// a sealed build seats an O-ring under every back screw head: the seat is a
+// hole through the seal line from outside (canary_core_lib bk_seat_cut)
+e_gland  = e_back && e_seal;
+head_pad = (!e_back && screw_head == "pan") ? max(0, head_h + 1.0 - lid_t) : 0;
 clip_stack  = clip_clear + clip_t;
 vm_standoff = stack_sock_h + xiao_below;
 cam_post_eff = (cam_ap_d >= cam_lens_sq*1.4142 + 0.6) ? cam_post_h : max(cam_post_h, cam_lens_h + 0.3);
@@ -272,6 +294,19 @@ cav_d   = max(vm_standoff + pcb_t + vm_front_h + cav_extra, btn_body_l - lid_t +
 out_x  = inner_x + 2*wall_eff;
 out_y  = inner_y + 2*wall_eff;
 base_d = floor_t + cav_d;
+// screws from the back (canary_core_lib bk_*): the length, the head's recess
+// into the back and the boss under the face, derived together; `face_skin` is
+// the unbroken plate left over the screw tip
+face_skin = 1.0;
+bk_L      = e_back ? bk_len(screw_size, screw_head, kh_extra, base_d, lid_t, face_skin) : 0;
+bk_r      = e_back ? bk_recess(screw_size, screw_head, kh_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0;
+boss_h    = e_back ? bk_boss_h(screw_size, screw_head, kh_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0;
+post_h    = cav_d - head_pad - boss_h - bk_relief();   // the rim is the datum: the boss stops bk_relief() short of the post
+assert(!e_back || post_h >= 2.0, str("screws from the back: the boss (", boss_h, " mm) leaves a ", post_h, " mm post — use screw_from=\"face\""));
+assert(!e_gland || screw_head == "pan", "a sealed build seats an O-ring under each back screw head — that needs screw_head = \"pan\"");
+assert(!e_gland || bk_bear(screw_size, screw_head, bk_r) + oring_gland_h(scr_oring_cs(screw_size)) + bk_web() <= kh_extra + floor_t + 1e-9,
+       "sealed back seats: the O-ring gland breaks out of the floor — add the keyhole slab (opt_mount) or thicken floor_t");
+assert(!e_back || !(screw_insert && boss_h < ins_h + 1.0), "the boss is shorter than the insert it must hold");
 // ASSEMBLED-FIT PROBE for canary_case_fitcheck.scad. It lives HERE, next to
 // the geometry, for two reasons: it reads this file's own derived datum
 // instead of duplicating the arithmetic it is checking, and its name is
@@ -307,6 +342,16 @@ function post_xy() = concat([
     [-inner_x/2 + pd/2 + 1.0, -inner_y/2 + pd/2 + 1.0],
 ], (e_seal && seal_mid_posts) ? [[inner_x/2 - pd/2 + 0.2, well_cy], [-inner_x/2 + pd/2 - 0.2, well_cy]] : []);
 
+// the clamp-spacing rule (DESIGN_RULES §6: <= 40 mm between gasket screws).
+// The mid pair sits at the cable well, low on the body, so the upper span runs
+// ~76 mm; a post pair beside the module needs a wider body (inner_x 26 -> ~33).
+// Said on every render, as DESIGN_RULES claims this file does.
+_ys = [for (p = post_xy()) if (p[0] > 0) p[1]];
+_seal_span = max([for (a = _ys) let (g = min([for (b = _ys) if (b > a) b - a, 1e9])) if (g < 1e8) g]);
+if (e_seal)
+    echo(str("seal mode: longest gasket span between screws ", _seal_span, " mm (rule: <= 40)",
+             _seal_span > 40 ? " — mid-span squeeze rests on the face's stiffness; mount under the porch roof" : ""));
+
 skirt_gap = tol_slide + 0.2;
 plate_x   = e_seal ? out_x + 2*(skirt_gap + skirt_t) : out_x;
 plate_y   = e_seal ? out_y + 2*(skirt_gap + skirt_t) : out_y;
@@ -316,7 +361,7 @@ assert(btn_bez_d == 0 || btn_bez_d > btn_d + 2, "btn_bez_d must exceed the butto
 assert(head_d > scr_c, "the screw head must be larger than its clearance hole, or it falls through the face");
 assert(screw_head == "flat" || head_h + 1.0 - lid_t <= 1.5, "pan-head seat needs more than 1.5 mm of inside pad — thicken lid_t");
 assert(!head_seal || screw_head == "pan", "head_seal seats an O-ring under a PAN head — set screw_head = \"pan\"");
-assert(!e_seal || opt_vent || opt_weep,
+assert(!e_seal || e_vent || e_weep,
        "seal mode with no pressure path — enable opt_vent (GORE seat) or opt_weep (field_ratings.md)");
 assert(!head_seal || e_seal, "head_seal only means something in seal mode");
 // the button's panel nut must clear the bottom posts (their inner edge vs the nut's corner radius)
@@ -365,21 +410,22 @@ assert(!opt_mark || mark_word_ink_w("securaCV", label_size) <= plate_x - 4.0,
 // the hardware, DERIVED from the same knobs that draw the holes (canary_core_lib)
 hw_thread = screw_insert ? "machine (into the inserts)" : "self-tap";
 hw_echo("Vision doorbell", [
-    hw_item(len(post_xy()), hw_screw(screw_size, screw_head, hw_len(lid_t, head_pad, hw_engage(screw_size)), hw_thread)),
+    e_back ? hw_item(len(post_xy()), str(hw_screw(screw_size, screw_head, bk_L, hw_thread), " from the back"))
+           : hw_item(len(post_xy()), hw_screw(screw_size, screw_head, hw_len(lid_t, head_pad, hw_engage(screw_size)), hw_thread)),
     hw_item(4, "M2 pan x 6 self-tap (OV5647 to the face posts)"),
     // the security boss takes screw_size's insert when screw_insert is on (its bore is ins_od),
     // so the security screw is that size's machine thread; self-tap builds keep the M2 pilot
     hw_item(1, str(screw_insert ? hw_size_name(screw_size) : "M2", " x 10 security screw, Torx pin/tri-wing, ",
                    screw_insert ? "machine thread (into the boss insert)" : "self-tap", " (plate foot into the body boss)")),
     screw_insert ? hw_item(len(post_xy()) + 1, str(str(hw_size_name(screw_size), " heat-set insert ", ins_od, " OD x ", ins_h), " — the +1 seats in the security boss")) : "",
-    head_seal    ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
+    (head_seal || e_gland) ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
     hw_item(1, str("Ø", btn_d, " illuminated momentary button + panel nut (", btn_nut_ac, " AC)")),
     e_seal       ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
-    opt_vent     ? hw_item(1, str("Ø", vent_pad_d, " adhesive ePTFE/GORE vent patch")) : "",
-    opt_led      ? hw_item(1, str("Ø", lp_d, " light pipe")) : "",
+    e_vent       ? hw_item(1, str("Ø", vent_pad_d, " adhesive ePTFE/GORE vent patch")) : "",
+    e_led        ? hw_item(1, str("Ø", lp_d, " light pipe")) : "",
     cam_disc_t > 0 && cam_disc_d > 0 ? hw_item(1, str("Ø", cam_disc_d, " x ", cam_disc_t, " clear disc (neutral-cure silicone)")) : "",
-    opt_tamper   ? hw_item(1, str("Ø", mag_d, " x ", mag_h, " disc magnet (press + glue)")) : "",
-    hw_item(2, "#6 pan wall screw (plate)"),
+    e_tamper     ? hw_item(1, str("Ø", mag_d, " x ", mag_h, " disc magnet (press + glue)")) : "",
+    hw_item(4, "#8 pan wall screw (plate)"),
 ]);
 echo(str("Canary Vision DOORBELL v0.4 — body ", out_x, " x ", out_y, " x ", base_d + lid_t + kh_extra,
          " mm + plate ", plate_t, " mm (wedge ", plate_wedge, " deg, seal=", e_seal, ")"));
@@ -411,9 +457,35 @@ module edgeclip(px, py, ang, soff) {
 // ----------------------------------------------------------------------------
 //  BODY (back shell: board rails, cable exit, stud pockets, security boss)
 // ----------------------------------------------------------------------------
+// the screws from the back: the seat and the bore, cut through the WHOLE
+// body (slab, floor and post) after everything else is drawn
 module body() {
+    difference() {
+        body_body();
+        if (e_back) for (p = post_xy())
+            bk_seat_cut(p[0], p[1], kh_extra, floor_t + post_h, screw_size, screw_head,
+                        bk_r, scr_c, tol_hole, e_gland);
+    }
+}
+// ...and the bosses they thread into, hanging from the face onto the post tops
+// (cropped to the cavity like the pan pads — the CLR-1 lesson)
+module face() {
+    difference() {
+        union() {
+            face_body();
+            if (e_back) for (p = post_xy())
+                bk_boss(p[0], p[1], boss_h, pd, inner_x, inner_y, core_cav_r(rr, wall_eff), tol_slide);
+        }
+        if (e_back) for (p = post_xy())
+            bk_boss_bore(p[0], p[1], boss_h, lid_t, face_skin,
+                         screw_insert ? scr_nominal(screw_size) + 0.3 : scr_d,
+                         screw_insert, ins_od - 0.3, ins_h);
+    }
+}
+
+module body_body() {
     posts = post_xy();
-    gusset_h = max(2, cav_d - lip_h - 1.0);
+    gusset_h = max(2, min(cav_d - lip_h - 1.0, post_h - 0.5));   // and below the post top, where the boss lands
     gusset_w = min(2.0, rib_t_max(wall_eff));
     difference() {
     union() {
@@ -446,7 +518,7 @@ module body() {
             // (x ±6) and inboard of the bottom posts' gussets. The v0.3 weep went
             // through the 2 mm floor of a 5 mm back — it was blind. Too small to
             // matter for ingress; the pressure path is the vent membrane.
-            if (opt_weep)
+            if (e_weep)
                 weep_cut(7.0, -inner_y/2, floor_t + weep_d/2 + 0.2, "-y", wall_eff, weep_d);
         }
         // lid key (canary_core_lib): a rib on the +Y (camera-end) wall, centered,
@@ -461,7 +533,7 @@ module body() {
         // to its own wall); shortened by the face's head pads
         difference() {
             union() {
-                for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - head_pad);
+                for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = post_h);
                 // constant-width webs (canary_rib_lib corner_gusset) — no hull flare.
                 // The ±Y web ties a corner post into its end wall (it used to aim
                 // inside the post and drew nothing); a mid-span post has only its X wall
@@ -472,9 +544,9 @@ module body() {
                         corner_gusset(p[0], p[1], p[0], sy*(inner_y/2 + 0.5), gusset_h, wall_eff, pd, gusset_w);
                 }
             }
-            for (p = posts) translate([p[0], p[1], floor_t + 2.0])
+            if (!e_back) for (p = posts) translate([p[0], p[1], floor_t + 2.0])
                 cylinder(d = screw_insert ? scr_nominal(screw_size) + 0.3 : scr_d, h = cav_d);
-            if (screw_insert)
+            if (screw_insert && !e_back)
                 for (p = posts) translate([p[0], p[1], floor_t + cav_d - head_pad - ins_h - 0.5])
                     cylinder(d = ins_od - 0.3, h = ins_h + 1);
         }
@@ -520,7 +592,7 @@ module body() {
 // (core_vent_cluster / core_lightpipe_bore) — this file used to carry its
 // own copy of both, and the four copies across the weather shells had
 // forked. The knobs above still ride in as arguments.
-module face() {
+module face_body() {
     union() {
         difference() {
             union() {
@@ -537,7 +609,7 @@ module face() {
                     cb_head_pad(p[0], p[1], head_pad,
                                 cb_pad_d(head_d, tol_hole),
                                 inner_x, inner_y, core_cav_r(rr, wall_eff),
-                                head_d + 2*tol_hole);
+                                head_d + 2*tol_hole, tol_slide);
             }
             translate([lens_x, lens_y, -1]) cylinder(d = cam_ap_d, h = lid_t + 2);
             if (cam_disc_t > 0 && cam_disc_d > 0) {
@@ -555,12 +627,12 @@ module face() {
                 translate([0, btn_cy, lid_t - 0.4])
                     cylinder(d1 = btn_bez_d + 2*tol_slide, d2 = btn_bez_d + 2*tol_slide + 1.0, h = 0.41);
             }
-            if (opt_led) core_lightpipe_bore(vm_cx + lp_dx, vm_cy + lp_dy, lid_t, lp_d, tol_press);
-            if (opt_vent) core_vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy, lid_t,
+            if (e_led) core_lightpipe_bore(vm_cx + lp_dx, vm_cy + lp_dy, lid_t, lp_d, tol_press);
+            if (e_vent) core_vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy, lid_t,
                                               vent_pad_d, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes);
             // screw seats by the head in the bag (canary_core_lib): flat floor for
             // PAN heads (on the pad), 90° cone for FLAT, O-ring gland with head_seal
-            for (p = post_xy()) translate([0, 0, -head_pad]) {
+            if (!e_back) for (p = post_xy()) translate([0, 0, -head_pad]) {
                 if (screw_head == "flat")
                     cs_cone90_cut(p[0], p[1], lid_t, scr_c, head_h);
                 else if (head_seal)
@@ -602,11 +674,11 @@ module face() {
                         cylinder(d = cam_post_d + 2, h = lid_rib_h + 0.2);
                 translate([0, btn_cy, -lid_rib_h - 0.1])
                     cylinder(d = max(btn_bez_d, btn_d) + 4, h = lid_rib_h + 0.2);
-                if (opt_led) translate([vm_cx + lp_dx, vm_cy + lp_dy, -lid_rib_h - 0.1])
+                if (e_led) translate([vm_cx + lp_dx, vm_cy + lp_dy, -lid_rib_h - 0.1])
                     cylinder(d = lp_d + 4, h = lid_rib_h + 0.2);
-                if (opt_vent) translate([vm_cx + vent_dx, vm_cy + vent_dy, -lid_rib_h - 0.1])
+                if (e_vent) translate([vm_cx + vent_dx, vm_cy + vent_dy, -lid_rib_h - 0.1])
                     cylinder(d = vent_pad_d + 3, h = lid_rib_h + 0.2);
-                if (opt_tamper) translate([vm_cx + mag_dx, vm_cy + mag_dy, -lid_rib_h - 0.1])
+                if (e_tamper) translate([vm_cx + mag_dx, vm_cy + mag_dy, -lid_rib_h - 0.1])
                     cylinder(d = mag_d + 2*tol_press + 4.8, h = lid_rib_h + 0.2);
             }
         }
@@ -632,7 +704,7 @@ module face() {
                     rrect2d(plate_x, plate_y, plate_r);
                     rrect2d(out_x + 2*skirt_gap, out_y + 2*skirt_gap, rr + skirt_gap);
                 }
-        if (opt_tamper)
+        if (e_tamper)
             translate([vm_cx + mag_dx, vm_cy + mag_dy, -mag_h]) difference() {
                 cylinder(d = mag_d + 2*tol_press + 2.4, h = mag_h + 0.1);
                 translate([0, 0, -0.1]) cylinder(d = mag_d + 2*tol_press, h = mag_h + 0.1);
@@ -671,6 +743,12 @@ function plate_z(y) = plate_t + (plate_wedge > 0 ? (y + out_y/2) * tan(plate_wed
 // extra height the horizontal wedge adds at the plate edge
 function plate_zx() = out_x/2 * tan(abs(plate_wedge_x));
 
+// the wall-screw seat floor, from the wall side (see plate()): the head lands
+// flush with the thin end, over the >= 1.0 mm web DESIGN_RULES §4 requires
+plate_seat_z = plate_t - plate_head_h - 0.2;
+assert(plate_seat_z >= 1.0 - 1e-9,
+       str("plate wall-screw seat leaves ", plate_seat_z, " mm under the head (< 1.0) — raise plate_t or use a lower head"));
+
 module plate() {
     hmax = plate_z(out_y/2) + 2*plate_zx() + 0.1;   // covers the HIGH side of the x-wedge too
     foot_z = plate_t + kh_extra + 3.0;         // security bore height = body pilot height
@@ -696,14 +774,18 @@ module plate() {
                 translate([-6, -4, -plate_t - plate_zx()]) cube([12, 4.5, foot_z + plate_zx() + 4]);
             }
         }
-        // wall screws: through-holes + flat counterbores at a CONSTANT 3 mm from
-        // the wall side, so standard-length screws work at any wedge angle
+        // wall screws: through-holes + flat counterbores whose floor sits at a
+        // CONSTANT height from the wall side, so standard-length screws work at
+        // any wedge angle. The floor is DERIVED so a pan head lands flush with
+        // the plate's thin end: the old constant 3.0 left a 1.0 seat on a 4.0
+        // plate, and the heads (#8 pan 2.8 tall) stood 1.5-2 mm proud under a
+        // SOLID body back — the body could not reach its studs or security bore
         // (7.5 from the side edge, not 8: the top stud's head now reaches y = stud_y + 6.8
         // and the counterbores must stay 1 mm clear of it in x)
         for (sy = [1, -1], sx = [1, -1]) {
             translate([sx*(out_x/2 - 7.5), sy*(out_y/2 - 14), -0.1])
                 cylinder(d = plate_screw_d, h = hmax + 1);
-            translate([sx*(out_x/2 - 7.5), sy*(out_y/2 - 14), 3.0])
+            translate([sx*(out_x/2 - 7.5), sy*(out_y/2 - 14), plate_seat_z])
                 cylinder(d = plate_screw_d + 4.4, h = hmax + 1);
         }
         // cable pass (a roomier match for the body's oval exit)

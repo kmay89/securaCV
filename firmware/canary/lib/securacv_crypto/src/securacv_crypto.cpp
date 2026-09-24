@@ -11,15 +11,38 @@
 #include <Crypto.h>
 #include <Ed25519.h>
 #include "esp_random.h"
+#include <bootloader_random.h>  // early-entropy source for the first-boot identity keygen
 #include "esp_mac.h"
 #include "mbedtls/sha256.h"
 #include "mbedtls/md.h"
+
+// Where the identity key sleeps: the tier / wire label / allow-refuse decision
+// is the host-tested policy in common/identity/key_at_rest.h; this file only
+// reads the eFuse facts and owns the NVS. Same __has_include pattern as
+// main.cpp's 'f' card so a toolchain without a header still builds — an absent
+// fact reads as "off", which is the safe direction for every rule.
+#include "identity/key_at_rest.h"
+#if __has_include(<esp_flash_encrypt.h>)
+#include <esp_flash_encrypt.h>
+#define CRYPTO_HAVE_FLASH_ENCRYPT 1
+#endif
+#if __has_include(<esp_secure_boot.h>)
+#include <esp_secure_boot.h>
+#define CRYPTO_HAVE_SECURE_BOOT 1
+#endif
 
 // ════════════════════════════════════════════════════════════════════════════
 // NVS MANAGER IMPLEMENTATION
 // ════════════════════════════════════════════════════════════════════════════
 
-NvsManager::NvsManager() : m_open(false), m_readOnly(false) {}
+// begin() fails soft after this wait, and one wait sits under the task
+// watchdog the loop is subscribed to (nvs_session_depth.h, host-tested too).
+// That bounds a wait, not a loop pass: a pass that meets a leaked session on
+// several calls can still outlast the watchdog, and its reset frees the leak.
+static_assert(nvs_session::kSessionWaitMs < WATCHDOG_TIMEOUT_SEC * 1000u,
+              "an NvsManager session wait must sit under the loop's task watchdog");
+
+NvsManager::NvsManager() : m_lock(xSemaphoreCreateRecursiveMutex()), m_session() {}
 
 NvsManager::~NvsManager() {
   end();
@@ -30,24 +53,56 @@ NvsManager& NvsManager::instance() {
   return s_instance;
 }
 
+// Takes the lock and KEEPS it on success, until the matching end(): the
+// session belongs to this task until then. Every false return has given back
+// the take it made, so a caller that got false owes no end() (none calls one).
 bool NvsManager::begin(bool readOnly) {
-  if (m_open) {
-    if (m_readOnly && !readOnly) {
-      m_prefs.end();
-      m_open = false;
-    } else {
-      return true;
+  if (m_lock != nullptr &&
+      xSemaphoreTakeRecursive(m_lock, pdMS_TO_TICKS(nvs_session::kSessionWaitMs)) != pdTRUE) {
+    // Another task held a session for the whole wait. A session is NVS reads
+    // and writes only (no send, no delay, no wait on another task), so this
+    // is a leaked session — a begin() without its end() on some path — or a
+    // stalled flash: say so once per boot, then fail soft. (Two tasks timing
+    // out together may both print; nothing else rides on the flag.)
+    static volatile bool s_wait_reported = false;
+    if (!s_wait_reported) {
+      s_wait_reported = true;
+      Serial.printf("[NVS] session wait timed out: another task held the settings store for %lu ms\n",
+                    (unsigned long)nvs_session::kSessionWaitMs);
     }
+    return false;
   }
-  m_open = m_prefs.begin(NVS_MAIN_NS, readOnly);
-  m_readOnly = readOnly;
-  return m_open;
+  const nvs_session::Begin action = nvs_session::on_begin(m_session, readOnly);
+  bool ok = true;
+  switch (action) {
+    case nvs_session::Begin::Open:
+      ok = m_prefs.begin(NVS_MAIN_NS, readOnly);
+      break;
+    case nvs_session::Begin::ReopenRw:
+      m_prefs.end();
+      ok = m_prefs.begin(NVS_MAIN_NS, false);
+      break;
+    case nvs_session::Begin::Keep:
+    case nvs_session::Begin::Refuse:
+      break;
+  }
+  if (!nvs_session::commit_begin(m_session, action, readOnly, ok)) {
+    if (m_lock != nullptr) xSemaphoreGiveRecursive(m_lock);
+    return false;
+  }
+  return true;
 }
 
+// The zero-wait take tells the cases apart: it succeeds at once when this task
+// holds the lock (its own session, or a nested one) or when nobody does (the
+// depth is then 0 and this end() is a no-op), and fails when another task
+// holds a session — which is not this task's to close.
 void NvsManager::end() {
-  if (m_open) {
-    m_prefs.end();
-    m_open = false;
+  if (m_lock != nullptr && xSemaphoreTakeRecursive(m_lock, 0) != pdTRUE) return;
+  const nvs_session::End e = nvs_session::on_end(m_session);
+  if (e == nvs_session::End::Close) m_prefs.end();
+  if (m_lock != nullptr) {
+    for (uint8_t i = 0; i < nvs_session::end_gives(e); i++) xSemaphoreGiveRecursive(m_lock);
   }
 }
 
@@ -98,7 +153,7 @@ size_t NvsManager::getString(const char* key, char* buf, size_t maxLen) {
 }
 
 size_t NvsManager::putString(const char* key, const char* value) {
-  if (key == nullptr || value == nullptr || !m_open || m_readOnly) return 0;
+  if (key == nullptr || value == nullptr || !m_session.open || m_session.read_only) return 0;
   return m_prefs.putString(key, value);
 }
 
@@ -149,7 +204,26 @@ void sha256_domain(const char* domain, const uint8_t* data, size_t n, uint8_t ou
 // ════════════════════════════════════════════════════════════════════════════
 
 bool crypto_generate_keypair(uint8_t priv[32], uint8_t pub[32]) {
+  // 32 bytes from the hardware RNG. This runs from witness_provision_device()
+  // early in setup(), before WiFi/BT start (the AP SSID / device id derive
+  // from the key fingerprint, so the keypair must exist first), so the RNG has
+  // no RF entropy source yet — gate the one-time identity draw with
+  // bootloader_random_enable()/_disable() to seed it properly (ESP-IDF's
+  // documented early-entropy pattern; the same wrap canary-sense, canary-vision
+  // and canary-wap carry). bootloader_random_enable() must NEVER be called
+  // while RF is up; the later draws (scout key, mesh pairing keys) run after
+  // the radio starts and are seeded by it, so they stay bare on purpose.
+  // The ADC is the other half of that rule: the entropy source IS the SAR
+  // ADC, IDF 4.4's bootloader_random.h says the pair must run "before RF
+  // features, ADC, or I2S ... are initialized", and on the S3 the disable
+  // powers the SAR ADC down and clock-gates/resets its digital part. Here
+  // FEATURE_POWER_MONITOR has ALREADY opened the battery ADC (power_start(),
+  // earlier in setup()). This runs once per unit (first boot, no key in NVS);
+  // whether the battery reading stays sane after it is bench row K1's
+  // fresh-unit step — plausible harm, not proven either way here.
+  bootloader_random_enable();
   esp_fill_random(priv, 32);
+  bootloader_random_disable();
   Ed25519::derivePublicKey(pub, priv);
   return true;
 }
@@ -308,7 +382,53 @@ void compute_chain_hash(const uint8_t prev[32], const uint8_t payload_hash[32],
 // NVS PERSISTENCE HELPERS
 // ════════════════════════════════════════════════════════════════════════════
 
+static key_at_rest::Facts key_at_rest_facts() {
+  key_at_rest::Facts f;
+#if CRYPTO_HAVE_FLASH_ENCRYPT
+  f.flash_encryption = esp_flash_encryption_enabled();
+#endif
+  // Flash encryption does NOT encrypt NVS (ESP-IDF encrypts only the app,
+  // otadata and nvs_keys partitions; this tree's tables leave nvs unflagged,
+  // so it is written in plaintext). NVS is ciphertext only under NVS
+  // encryption, which the Arduino core this tree builds on does not compile
+  // in (2.0.17's precompiled sdkconfig leaves CONFIG_SECURE_FLASH_ENC_ENABLED,
+  // and with it CONFIG_NVS_ENCRYPTION, unset). So on every canary image the
+  // key's NVS is plaintext, fused board or not, and this fact is false — set
+  // here, not read, so no core's sdkconfig can make it claim more. It learns
+  // to read true with the arduino-as-IDF-component migration (roadmap item 9)
+  // — until then false is also the safe direction: it can only make an
+  // opt-in image refuse, never make any image claim more than it has.
+  f.nvs_encryption = false;
+#if CRYPTO_HAVE_SECURE_BOOT
+  f.secure_boot = esp_secure_boot_enabled();
+#endif
+  f.require_fe = (SECURACV_REQUIRE_FLASH_ENCRYPTION != 0);
+  return f;
+}
+
+const char* crypto_key_at_rest_label() {
+  return key_at_rest::wire_label(key_at_rest::classify(key_at_rest_facts()));
+}
+
+void crypto_print_key_at_rest() {
+  // Level and text are key_at_rest::boot_level()/boot_text() verbatim — the
+  // same decide() nvs_load_key()/nvs_store_key() apply, host-tested — so the
+  // line cannot say INFO over a plaintext key or drift from the policy.
+  const key_at_rest::Facts f = key_at_rest_facts();
+  Serial.printf("[%s] Key at rest : %s - %s\n", key_at_rest::boot_level(f),
+                key_at_rest::wire_label(key_at_rest::classify(f)),
+                key_at_rest::boot_text(f));
+}
+
 bool nvs_load_key(uint8_t priv[32]) {
+  // Rule 2 of key_at_rest.h: an image that requires the key encrypted at rest
+  // refuses to USE a stored key unless NVS is actually encrypted (flash
+  // encryption alone is not enough), symmetrically with the store.
+  const key_at_rest::Decision d = key_at_rest::decide(key_at_rest_facts());
+  if (!d.allow_load) {
+    Serial.printf("[!!] identity key not loaded: %s\n", d.reason);
+    return false;
+  }
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.beginReadOnly()) return false;
   size_t n = nvs.getBytesLength(NVS_KEY_PRIV);
@@ -319,6 +439,11 @@ bool nvs_load_key(uint8_t priv[32]) {
 }
 
 bool nvs_store_key(const uint8_t priv[32]) {
+  const key_at_rest::Decision d = key_at_rest::decide(key_at_rest_facts());
+  if (!d.allow_persist) {
+    Serial.printf("[!!] identity key not stored: %s\n", d.reason);
+    return false;
+  }
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.beginReadWrite()) return false;
   nvs.putBytes(NVS_KEY_PRIV, priv, 32);

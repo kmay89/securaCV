@@ -38,9 +38,14 @@ key to do a compile-time job, or vice-versa.
    is not.
 2. **Never advertise unbuilt features.** Declared-but-unimplemented capabilities
    live in an explicit `FUTURE_*` list and **must not** appear in the
-   corresponding `ALL_*` list until wired end-to-end. Canonical example:
-   `FUTURE_TRANSPORTS` vs `ALL_TRANSPORTS` (`const.py:49-65`). The lint enforces
-   this for transports.
+   corresponding `ALL_*` list until wired end-to-end. Two pairs exist today,
+   both in `custom_components/securacv/const.py`: `FUTURE_TRANSPORTS` vs
+   `ALL_TRANSPORTS` and `FUTURE_TAMPER_TYPES` vs `ALL_TAMPER_TYPES`. The
+   per-type entities in `binary_sensor.py` are created by iterating the
+   `ALL_*` list, so the list *is* what gets advertised. Enforced twice: by
+   `custom_components/securacv/tests/test_feature_flags.py` (disjoint, complete
+   — every `TRANSPORT_*` / `TAMPER_*` constant is in exactly one list — and the
+   entity tables match the `ALL_*` lists) and by the lint's check B.
 3. **Lifecycle.** Every flag is in one stage: **experimental** (off by default,
    may change/vanish) → **stable** (load-bearing, documented default) →
    **deprecated** (scheduled for removal, has a removal criterion) → **removed**
@@ -138,11 +143,15 @@ Source of truth: `custom_components/securacv/const.py`.
 
 | Constant | List membership | Lifecycle | Notes |
 |---|---|:---:|---|
-| `TRANSPORT_LORA` | `FUTURE_TRANSPORTS` | future | LoRa radio — not on any firmware; must stay out of `ALL_TRANSPORTS` (lint-enforced) |
+| `TRANSPORT_LORA` | `FUTURE_TRANSPORTS` | future | LoRa radio — not on any firmware; must stay out of `ALL_TRANSPORTS` (test- and lint-enforced) |
 | `TRANSPORT_AUDIO` | `FUTURE_TRANSPORTS` | future | SCQCS audio squawks — same |
+| `TAMPER_AUDIO` | `FUTURE_TAMPER_TYPES` | future | Audio anomaly — no firmware emits it and no tamper sensor is created for it; must stay out of `ALL_TAMPER_TYPES` (test- and lint-enforced) |
 
-When a `FUTURE_*` transport is wired end-to-end on a device, move it into
-`ALL_TRANSPORTS`, update its row here, and the lint will pass.
+When a `FUTURE_*` transport or tamper type is wired end-to-end on a device,
+move it into the matching `ALL_*` list, add its row to the per-type table in
+`binary_sensor.py` (`TRANSPORT_SENSORS` / `TAMPER_TYPE_SENSORS` — the test
+requires the table and the list to match), update its row here, and both
+guards will pass.
 
 ---
 
@@ -153,4 +162,10 @@ bash scripts/lint_feature_flags.sh
 ```
 
 Verifies: no orphaned Cargo feature, no `FUTURE_*` transport advertised in
-`ALL_TRANSPORTS`, and every Cargo feature is listed in this registry.
+`ALL_TRANSPORTS`, no `FUTURE_*` tamper type advertised in `ALL_TAMPER_TYPES`,
+and every Cargo feature is listed in this registry. The in-package half of
+the same rule runs with the HA test suite:
+
+```sh
+python3 -m pytest custom_components/securacv/tests/test_feature_flags.py -q
+```

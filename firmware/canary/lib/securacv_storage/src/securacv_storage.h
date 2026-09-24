@@ -10,9 +10,11 @@
  *
  * Threading contract: everything in this class except the worker's own
  * SD.begin() runs on the Arduino loopTask (the single writer of all SD
- * state — witness appends included). USB MSC raw-sector reads come from
- * the TinyUSB task, which is why teardown is policy-gated on MSC holding
- * the card.
+ * state — witness appends included). Reads are loop-task-only too: the one
+ * HTTP-side consumer, the timeline's card pages, reaches the card through
+ * the loop-task bridge in securacv_witness_history.cpp (F35), never
+ * directly. USB MSC raw-sector reads come from the TinyUSB task, which is
+ * why teardown is policy-gated on MSC holding the card.
  *
  * Copyright (c) 2026 ERRERlabs / Karl May
  * License: Apache-2.0
@@ -66,6 +68,11 @@ public:
 
   // Status
   bool isMounted() const { return m_mounted; }
+  // The card's state for the system.integrity tamper watcher —
+  // sd_mount_policy::sd_state_for_tamper(): MOUNTED, ERROR (a mounted card
+  // given up on after consecutive write failures) or ABSENT (anything
+  // else). Loop-task-only, like every SD state here.
+  uint8_t sdState() const;
   bool mountInFlight() const;
   uint32_t mountGeneration() const { return m_mount_generation; }
   SDStatus getStatus();
@@ -101,6 +108,7 @@ private:
   SPIClass* m_spi;
   bool m_mounted;
   bool m_needs_teardown;        // card marked lost; SD.end() still owed
+  bool m_lost_by_errors;        // lost to write failures (ERROR, not ABSENT)
   uint32_t m_mount_generation;  // successful mounts this boot
   uint32_t m_consecutive_errors;
   uint32_t m_last_check_ms;
@@ -118,6 +126,8 @@ StorageManager& storage_get_instance();
 // Convenience functions
 bool storage_init(SPIClass* spi = nullptr);
 bool storage_is_mounted();
+// StorageManager::sdState() — the value main.cpp feeds the tamper watcher.
+uint8_t storage_sd_state();
 void storage_periodic_check(bool msc_holds_card);
 void storage_note_write_failure();
 void storage_note_write_success();

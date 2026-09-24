@@ -41,10 +41,14 @@
   ten minutes" while the chain hash binds a 5 s *uptime* bucket that has to
   ride for the hash to be recomputable (and already rides the SD line,
   `/api/export` and the MQTT chain publish). A reviewer read the sentence,
-  not the tree, and was right to. Whether the chain's floor should widen
-  to the ten-minute grid is a product decision (both firmwares, their
-  config floors, six places of operator copy), recorded as open — the
-  contract's job was to stop overclaiming, which it now does.
+  not the tree, and was right to. Widening the chain's floor to the
+  ten-minute grid was a product decision (both firmwares, their config
+  floors, six places of operator copy); it was decided on 2026-09-22,
+  maintainer to confirm. The contract's job was to stop overclaiming first,
+  which it did. The widening's first draft of §3 then overclaimed again: it
+  called the grid "one floor, met on both clocks", but each record's `seq`
+  at a one-second cadence still places it finely. A wider bucket is not a
+  coarse chain. §3 now says so, and keeps coarsening a reader's duty.
   The app pins `tls_cert_fp` and refuses an https device without it; the
   rollout prefers the bonded BLE lane and discloses plain http.
 - **Guidance:** a contract that exists only as "what the other side sends
@@ -349,6 +353,28 @@
   select the correct API at compile time. Include `esp_idf_version.h`.
 - **Date learned:** 2026-02
 
+### A name IDF 5 added is not in IDF 4.4, even when the number is the same
+- **What happened:** The canary's HTTPS server (backlog F15, #1704) runs
+  two httpd instances, so it pinned both control ports from
+  `ESP_HTTPD_DEF_CTRL_PORT`. That macro exists only in IDF 5's
+  `esp_http_server.h`; the canary's pinned core (Arduino-ESP32 2.0.17, IDF
+  4.4.7) writes the literal 32768 inside `HTTPD_DEFAULT_CONFIG()` and names
+  nothing. `[env:dev]` would have stopped at both uses. The package's own
+  checks could not see it: its host tests never include the IDF headers,
+  and the name reads as long-standing API. It was found by a local syntax
+  check with the core's own toolchain and flags, before CI reached it.
+- **Root cause:** The canary line builds on two cores at once (2.0.17 for
+  most envs, core 3.x / IDF 5.5 for `[env:full]`), and a helper macro that
+  one of them spells can be missing from the other while the value it
+  stands for is identical.
+- **Fix:** A fallback `#ifndef ESP_HTTPD_DEF_CTRL_PORT` define with the
+  same number, checked against both cores' `esp_http_server.h`, next to the
+  HTTPS feature test in `securacv_network.cpp`.
+- **Regression check:** The PlatformIO canary job compiles a 2.0.17 env and
+  `[env:full]`. Before using an IDF name in code both cores compile, look it
+  up in the IDF 4.4 headers too, not only in the current docs.
+- **Date learned:** 2026-09
+
 ---
 
 ## Hardware: XIAO ESP32S3 Sense
@@ -418,10 +444,14 @@
   browser's, and DNS rebinding makes them agree for the attacker: a page on a
   public domain re-pointed at the device's LAN IP arrives with Origin == Host,
   reads the CSRF token from `/api/settings` as same-origin, and writes.
-- **Fix:** `canary/net/host_guard.h` — the Host must be something that can only
-  mean this device on this network (an IP literal, `.local`, a single label, or
-  a private-use suffix); a public domain is foreign for the writes, the token,
-  and the per-witness reads. Header-only, host-tested, no Arduino.
+- **Fix:** `firmware/common/network/host_guard.h` — the Host must be something
+  that can only mean this device on this network (an IP literal, `.local`, a
+  single label, or a private-use suffix); a public domain is foreign for the
+  writes, the token, and the per-witness reads. Header-only, host-tested once
+  (`firmware/tests_host/test_host_guard.cpp`), no Arduino. The canary tree's
+  device API (`securacv_network`) applies the same header to its bearer token
+  and every token-gated route, exempting only requests that arrive over its
+  own setup AP, where its captive DNS answers every name with the AP address.
 - **Rule:** A same-site check needs one side the attacker cannot choose.
   Against rebinding that side is the device's own identity, never a second
   header from the same request.
@@ -578,6 +608,46 @@
   the budget doesn't cover the registrations with margin.
 - **Date learned:** 2026-07
 
+### A route budget counts every `#if` branch, and a route goes to the server it was handed
+- **What happened:** The canary (PlatformIO) tree sized its route tables by
+  hand: two `max_uri_handlers` literals, 59 with the mesh and 53 without,
+  and no CI gate behind them (`check_route_budget.py` above covers the
+  canary-wap only). Three changes in this wave added routes to the same
+  table at once: TLS plus the provisioning receipt (backlog F15/F20), the
+  mesh REST (F10 and its rekey, six routes) and the household time zone
+  plus Scout pairing (F27/F28, seven). The TLS change replaced both
+  literals with one `kRouteTableSlots` and made the table
+  `registerHttpHandlers(server)`, so it goes on whichever server is
+  primary. The other two, written against the old code, edited literals
+  that no longer existed and registered with
+  `register_route(m_http_server, ...)`. After a textual merge those lines
+  are still well-formed C++, because the member still exists. But on
+  `FEATURE_HTTPS` builds `registerHttpHandlers(m_https_server)` runs
+  before `startRedirectServer()` has created `m_http_server`, so all 13
+  new routes would have failed to register against a null handle, each
+  with one serial line. It never merged in that form: review named the
+  hazard, and the merge moved all 13 to `server`.
+- **Root cause:** Two, and neither is new. A budget summed by hand in a
+  comment, edited on three branches that could not see each other's
+  additions (the entry above, again, in the tree that had no gate). And a
+  refactor that turns a member into a parameter leaves every stale use of
+  the member compiling; the failure shows only at runtime, and only on some
+  builds.
+- **Fix:** `kRouteTableSlots` is 73 with the mesh block and 61 without. Both
+  numbers count every `#if` branch (the worst case): the five Scout routes
+  are in both, and a build without `FEATURE_BLE_SCAN` leaves them spare.
+  Every registration inside `registerHttpHandlers` uses `server`.
+- **Regression check:** `firmware/canary/scripts/check_route_security.py`
+  (firmware.yml, "Mesh + Scout Host Tests") fails a `register_route` or
+  `httpd_register_uri_handler` inside `registerHttpHandlers` whose first
+  argument is not `server`. It holds the table to `kRouteTableSlots` with
+  and without the mesh block, refuses an `#else`/`#elif` in the counted body
+  (the worst-case count would double it), and holds each function that sets
+  a literal `max_uri_handlers` (the redirect server's 12) to its own number.
+  When a refactor turns a member into a parameter, rename the member so
+  stale call sites stop compiling, or add a gate that names them.
+- **Date learned:** 2026-09
+
 ### A missing auth header must not feed the brute-force lockout
 - **What happened:** A correct pasted token was rejected with "Too many
   failed attempts" — the device 429'd everything, including valid clients.
@@ -605,12 +675,48 @@
   `selftest_ui.test.js`.
 - **Date learned:** 2026-07
 
+### `httpd_req_recv()` returns one socket read, not the request body
+- **What happened:** Every canary-wap Beacon route that takes a body
+  (`/api/beacon/revoke`, `/originate`, `/originate-solo`, `/cosign`,
+  `/cancel`, `/cancel-solo`) made one `httpd_req_recv()` call and parsed
+  what came back. A client that sent its body in two TCP segments had a
+  valid request rejected, and a body longer than the handler's buffer was
+  cut at the buffer's size and parsed anyway. Codex caught it on #1703.
+  The same single read then turned up in the canary's `/api/wifi/connect`
+  while that handler was open for another fix (#1704).
+- **Root cause:** `httpd_req_recv()` returns whatever one socket read
+  delivered, up to the length asked for. It is not "read the body". A small
+  body usually arrives in one segment, which is why a one-call handler
+  passes every casual test.
+- **Fix:** `http_body_reader.h`'s `read_all()` (pure; the socket read is
+  injected) loops until exactly `req->content_len` bytes are in, refuses a
+  body that cannot fit with its terminator before reading any of it, allows
+  a bounded number of timeouts, and never asks for bytes past
+  `content_len`, so it cannot read into the next request. `beacon_api.h`'s
+  `read_body()` wraps it, and all six routes (the two cancel routes share
+  one reader) answer "body too large" or "body read failed" instead of
+  acting on a fragment. The canary's `/api/wifi/connect` now loops the
+  same way (400 `empty_body`, 413 `body_too_large`), as its `/api/settings`
+  and Scout routes already did.
+- **Not done:** most other canary-wap POST handlers (Chirp, Bluetooth,
+  household, RF presence, several in `canary_wap.ino`,
+  `csi_integration.cpp` and `csi_mqtt.cpp`) still parse after one
+  `httpd_req_recv()`. Moving them to `read_all()` is open work.
+- **Regression check:** canary-wap `tests_host/test_http_body_reader.cpp`
+  (in `make run`) covers fragmented, oversize, empty, closed, errored and
+  timed-out reads. A source pin fails if `beacon_api.h` calls
+  `httpd_req_recv()` anywhere but inside `read_body()`, or if a handler stops
+  reading through it. A new handler that takes a body loops to
+  `content_len` or calls `read_all()`; it never parses after one call.
+- **Date learned:** 2026-09
+
 ---
 
 ## GPS & Time
 
 ### Time coarsening is mandatory
-- **Rule:** SecuraCV coarsens timestamps to 5-second buckets (minimum)
+- **Rule:** SecuraCV coarsens timestamps to ten-minute buckets (the floor;
+  `TIME_BUCKET_MS` in both firmwares, widened from 5 s on 2026-09-22)
 - **Why:** Privacy by design. Precise timestamps enable correlation attacks.
 - **Watch for:** High-precision format strings (`%.6f`, `%.7f`) near GPS data
 
@@ -619,6 +725,48 @@
 - **Reality:** L76K cold start = 25-35 seconds typical, but can take 8+
   minutes if almanac data is lost
 - **UX:** Dashboard should show "Acquiring satellites..." not "GPS Error"
+
+### A plausibility check is not a grammar, and a setting the device did not take must say so
+- **What happened:** Backlog F28 gave both firmwares a household time zone
+  (`common/time/tz_rule.h`), set from an IANA name or a typed POSIX TZ rule.
+  The first gate, `posix_plausible()`, refused control bytes, quotes, a
+  leading digit and oversize input, and passed `A`, `EST5EDT,M13.2.0,M11.1.0`
+  (month 13), `EST5EDT,M3.2.0` (no end rule) and rules with junk trailing.
+  Its comment said newlib and glibc fall back to UTC on a rule they cannot
+  parse. On the ESP newlib 4.1 base under Arduino core 2.0.x (the
+  canary-wap's CI build) that is false: `tzset()` returns part way through
+  a parse without resetting anything, so the previous zone's offset, or a
+  mix of old and new, stays in force until the next reboot. Both
+  `/api/settings` handlers stored such a rule, and the canary's page said
+  "Saved. The next reading uses it."
+- **Second layer (Codex, #1704):** `/api/wifi/connect` seeds the zone from
+  the phone's IANA name and never lets it fail the join. A name outside the
+  71-entry table (`Africa/Johannesburg`, for one) was dropped without a
+  word: setup reported success while the Canary stayed on UTC, so quiet
+  hours and the day's buckets followed UTC.
+- **Root cause:** The gate checked that the input looked like a rule, not
+  that every libc the device runs reads it to the end, and the comment
+  stated a fallback nobody had checked in newlib's source. The seed was
+  best-effort in the right way (it never blocks the join) and silent in the
+  wrong way (it never said what happened).
+- **Fix:** `posix_valid()` checks the POSIX TZ grammar strictly, and is
+  narrower on purpose where one libc would diverge: a DST name needs both
+  change dates, dates without a DST name are refused, nothing may trail,
+  no leading `:`. The comment above it now says what `tzset_r.c` does. Both
+  firmwares answer `"tz": set | unknown_zone | not_set | not_sent` beside
+  `ok`, and the join still never waits on it. When the zone was not taken,
+  both setup pages say so in one plain line that names the zone and says
+  the Canary keeps world time (UTC).
+- **Regression check:** `firmware/tests_host/test_tz_rule.cpp`: every string
+  the review found is in `kRefusedRules`, and `valid_means_same_to_glibc`
+  checks each accepted rule (the table, 18 extra rules and every accepted
+  one-byte edit) against glibc's `tzset()`. The newlib 4.1 and 4.3
+  comparison was a one-off harness during the fix, not a committed test.
+  `wizard_logic.test.js` pins the canary-wap wizard's `tzNotice()`. A
+  validator for input another library will parse is that library's
+  grammar, written down; a best-effort setting still answers with what it
+  did.
+- **Date learned:** 2026-09
 
 ---
 
@@ -769,6 +917,26 @@
   mention `HAS_` before the first `pins.h` include would automate this).
 - **Date learned:** 2026-07
 
+### Arduino's bare pin-mode macros eat enumerators with the same name
+- **What happened:** The mesh REST work (backlog F10, #1704) added
+  `RemoveResult::DISABLED` to `mesh_session.h`. The mesh host tests
+  (plain g++ on Linux) and the review passed; the PlatformIO canary build
+  failed, because Arduino-ESP32's `esp32-hal-gpio.h` has
+  `#define DISABLED 0x00`, and the preprocessor turned the enumerator into
+  `0x00` before the compiler saw the `enum class`.
+- **Root cause:** A scoped enum protects a name from other C++ names, not
+  from macros. The core defines many short all-caps names as bare macros:
+  `LOW`, `HIGH`, `INPUT`, `OUTPUT`, `PULLUP`, `ANALOG`, `DISABLED`,
+  `RISING`, `FALLING`, `CHANGE` (`esp32-hal-gpio.h`) and `DEFAULT`
+  (`Arduino.h`). A host build never includes them, so only a device build
+  finds the collision.
+- **Fix:** The enumerator is `MESH_DISABLED`, with a comment naming the
+  macro, at every use (`mesh_session.cpp`, its test, `securacv_network.cpp`).
+- **Regression check:** The PlatformIO canary build. When a header that a
+  device build includes gains an all-caps enumerator, grep the core's
+  `cores/esp32/*.h` for `#define <NAME>` first.
+- **Date learned:** 2026-09
+
 ### Dual-build compatibility required
 - **Rule:** Firmware must compile on BOTH Arduino IDE and PlatformIO
 - **Why:** Different team members use different IDEs; CI tests both
@@ -891,6 +1059,31 @@
   to Arduino, its host test should reproduce Arduino's macro namespace — a test
   that cannot see the target's preprocessor cannot pin the target's compile.**
 - **Date learned:** 2026-07
+
+### `*/` inside a block comment ends it, and a glob in prose is enough
+- **What happened:** The key-at-rest change (backlog F5) rewrote a sentence
+  in `mesh_state.h`'s file comment to "every save_*/load_* below returns
+  false". The `*/` inside `save_*/load_*` closed the `/* ... */` block, and
+  the compiler read the rest of the comment as code. The change's own gates were
+  green: the suites under `firmware/tests_host` never include that header,
+  and the text checks that read the mesh layer passed. firmware.yml's
+  Mesh + Scout host-test step fails on it, and so would every PlatformIO
+  canary build that includes the mesh layer. It was caught at integration
+  on #1704, before the merge was pushed.
+- **Root cause:** A C comment is still read by the compiler. `*/` has no
+  escape inside `/* */`, and a path, glob or cron field written the natural
+  way (`save_*/load_*`, `src/*/x.h`, `*/5`) contains one. Only a build that
+  compiles the header sees it; a check that reads the file as text does not.
+- **Fix:** The sentence now says "every save_ and load_ function". A scan of
+  every C/C++ file the PR changed found no other block comment that closes
+  mid-line.
+- **Regression check:** No lint looks for it; only a compile of a file
+  that includes the header does (for the mesh layer, the Mesh + Scout
+  host-test step in firmware.yml, which CI runs). After editing a comment
+  in a header, compile something that includes it before pushing. Keep a
+  path or glob in prose out of a `/* */` block; a `//` comment cannot be
+  closed early.
+- **Date learned:** 2026-09
 
 ---
 
@@ -1596,6 +1789,75 @@
   locally before pushing: it is the same gate CI runs.
 - **Date learned:** 2026-08
 
+### Two anchors that never meet: a card placed from the center, captions from the bottom
+
+- **What happened:** On the 800x480 dash the first-boot Join scene's
+  "or join … password" line ran across the lower edge of the QR card, into
+  the white quiet zone a phone's scanner needs empty — and the round watch's
+  network-name line did the same by 7 px. Seen in the emulator's preview of
+  the real firmware (F43); the other three emulated flavors happened to clear.
+- **Root cause:** each glass placed the card by an offset from the panel's
+  center and the captions by offsets from its bottom edge, as unrelated
+  literals. Nothing tied the card's bottom to the caption's top, so a card
+  size, a panel height or a type ladder with taller lines could close the
+  gap without anyone touching the scene — and on two glasses it already had.
+  The same literals left the AMOLED 2.41's two caption lines 2 px into each
+  other (a 16 px face in rows spaced for a 12 px one).
+- **Fix:** `include/canary/ui/onboard_layout.h` stacks title, card and both
+  caption lines from the panel's size and the labels' own line heights:
+  centered with even air on rectangular glass, inside the chord-safe band on
+  round glass, the QR canvas giving up pixels (never module pitch or its
+  white pad) when a window is short. `onboard_ui.cpp` asks it once per scene.
+- **Regression check:** `tests_host/test_onboard_layout.cpp` runs the stack
+  on every display env's panel (ini → pins.h) with both ladders (parsed from
+  `character.cpp`) and fails on any crossing; `canary-local/tests/onboard_probe.mjs`
+  reads the emulator's framebuffer on each flavor's Join scene and fails if
+  anything but the QR's black and the card's white is inside the card.
+- **Date learned:** 2026-09
+
+### An ellipsis is a fit to LVGL, and a dead end when the cut text is the way in
+
+- **What happened:** On the 172 px nightstand the Join scene's
+  "SecuraCV-XXXX  •  <key>" line (174 px of text in a 156 px row) drew as
+  "SecuraCV-XXXX  • ..." — the whole key gone — and the stuck-phone hint
+  as "can't join? forget it on..." (F45). A phone that cannot scan the QR has nothing else to
+  go on. The measuring also found two cuts nobody had seen: the round watch's
+  "pass  <key>" row overflows 142 px for the widest keys, and under the
+  Heirloom Character (14 px captions) its stuck-phone hint (171 px) does too.
+- **Root cause:** LONG_DOT turns "does not fit" into a tidy ellipsis — no
+  log, no assert, and in a screenshot it reads as a design choice. The rows
+  were sized by eye against one sample key on one ladder, so nothing asked
+  how wide the text could get: the key is random, a glyph's width depends on
+  the letter after it (kerning), and a Character can raise the caption size.
+- **And the second dead end, found in review:** the first fix split the
+  nightstand's rows the way round glass does — including round glass's rule
+  that a standing hint takes the key's row. So 45 s after the AP came up
+  the stuck-phone hint ("forget it on your phone") replaced the key, on
+  exactly the phone that now had to rejoin, and a probe that looked only
+  for the dots passed with the key gone. "Not cut" is not "on the glass":
+  check that the text is there, not only that nothing is truncated.
+- **Fix:** `onboard_layout.h`'s `join_lines()` decides what each row says
+  by measuring it the way LVGL lays it out (`lv_font_get_glyph_width`,
+  kerning included): joined only where it fits, else split like round glass;
+  longer forms before shorter ones, the row's own face before the default
+  Character's. It never falls back to the ellipsis. The name and the key
+  keep their rows while the scene is up — QR or no QR, hint or no hint; a
+  standing hint gets a note row of its own (`Stack::note_top`: under the key
+  on rectangular glass, the title's band on round glass, where the title
+  yields while it stands).
+- **Regression check:** `tests_host/test_onboard_layout.cpp` runs
+  `join_lines()` on every display env's glass and both ladders with LVGL's
+  own glyph metrics (`tests_host/montserrat_metrics.h`, generated from the
+  pinned LVGL by `firmware/scripts/gen_montserrat_metrics.py`, `--check`ed in
+  canary-local.yml) over the widest name and key the minting alphabet can
+  produce, found by a search rather than a guess, and requires the name and
+  the key on the glass with the stuck-phone hint up as well as without it;
+  `onboard_probe.mjs` fails on LONG_DOT's three baseline dots in each
+  emulated flavor's Join scene and reads the firmware's own labels
+  (`emu_screen_labels`) for the name and key it printed, with and without
+  the stuck-phone hint.
+- **Date learned:** 2026-09
+
 ---
 
 ## Network API: what a LAN token does and does not prove
@@ -1678,6 +1940,37 @@
   `scripts/lint_dictionary_sync.py` now pins the module's `SIG_PREFIX` /
   `SCHEMA_V` to the dictionary (it passed before only because the file was
   invisible to it).
+- **Date learned:** 2026-09
+
+### On a dual-stack listener an IPv4 client arrives as an IPv6 address
+- **What happened:** The canary's provisioning gate (backlog F20, gap #11)
+  lets a phone on the SoftAP fetch its setup receipt without a bearer, and
+  stamps the receipt's `base_url` with the address the request arrived on.
+  Both read the socket (`getpeername` / `getsockname`) through a helper
+  that returned 0 for anything but `AF_INET`. Review showed every real
+  request would take that 0: the SoftAP unlock could never fire; a receipt
+  fetched from the home LAN would name the AP address (`https://192.168.4.1`,
+  which the LAN cannot reach, or `0.0.0.0`, which the iPhone app refuses);
+  and the retry wizard served after a mistyped Wi-Fi password would reach
+  the phone without its token, a path that had worked before the change.
+- **Root cause:** With `CONFIG_LWIP_IPV6=y` (set in the Arduino-ESP32
+  sdkconfig this tree builds on) esp_http_server opens its listener as
+  `socket(PF_INET6)` on `in6addr_any`, and lwIP reports an IPv4 client on it
+  as `::ffff:a.b.c.d` with `sa_family == AF_INET6`. The host test fed the
+  policy integers already extracted, so it never saw the socket's shape.
+  This was established from the ESP-IDF and lwIP sources; nothing has run
+  it on hardware yet.
+- **Fix:** `provisioning_gate::ipv4_host_order_from_addr(family, bytes)`
+  (pure, `common/network/provisioning_gate.h`) unwraps `::ffff:0:0/96` and
+  answers 0 for every other IPv6 address, so a true IPv6 peer stays "not
+  provably on the AP"; `from_ap_subnet` and `local_addr_of` both go through
+  it. The FEATURES.md receipt cell stays ⚠️ until the U1 bench pass.
+- **Regression check:** `firmware/tests_host/test_provisioning_gate.cpp`
+  has rows for v4, v4-mapped, global, link-local, loopback,
+  IPv4-compatible, a near-miss prefix and null, plus the mapped address end
+  to end through `request_on_softap`. The lwIP glue is built only by CI.
+  Code that reads an address off an httpd socket goes through this helper,
+  never a bare `sin_addr`.
 - **Date learned:** 2026-09
 
 ## Build profiles: a configuration nobody compiles is a configuration that rots
@@ -1792,6 +2085,126 @@
   `csi::process()` path — the exact gap the shim hid. Compile-tested on the
   PR by `firmware.yml`'s canary PlatformIO leg — the change was host-tested
   only when it landed.
+- **Date learned:** 2026-09
+
+## Event egress: the receiver remembers across reboots and outages
+
+### An id floor written every N ids hands the same ids out again after a short boot
+- **What happened:** Both firmwares persist the csi_event id allocator
+  through `csi_event_on_id_advance` and restore it at boot. The canary-wap
+  remembered the id at which it last wrote NVS and wrote again only 10 ids
+  later, and the canary base copied the scheme when it began publishing its
+  events on MQTT (backlog F29). Home Assistant's replay gate refuses a
+  signed `events` body whose `event_id` is below the last one it accepted
+  for that device. Review modeled boots of 3, 3, 12, 4 and 4 events against
+  that gate: seven events were refused as replays, and the rows a boot emits
+  first are the likeliest to be lost. The canary's comments said ids were
+  "never reused".
+- **Root cause:** A boot that allocated fewer than 10 ids never reached its
+  next write, so NVS still held the floor that boot had started from, and
+  the next boot reissued the same ids. The scheme tracked when it had last
+  written, not what NVS actually held.
+- **Fix:** `common/csi/src/csi_event_id_floor.h` (pure, shared by both
+  trees, staged into the canary-wap): track the value NVS holds; an
+  allocation at or past it writes `id + kStride` before the id reaches any
+  consumer; restore sets the allocator's floor and the tracked value from
+  the same persisted number, so each boot's first allocation writes again.
+  A failed write leaves the tracked value alone, so the next allocation
+  retries. Cost: one NVS write per boot that allocates anything; a reboot
+  skips at most `kStride` ids and reuses none. Residual: the first boot
+  after upgrading can repeat, once, the ids of the old firmware's last
+  short boot.
+- **Regression check:** `firmware/tests_host/test_csi_event_id_floor.cpp`:
+  the review's schedule and 500 random 40-boot schedules stay strictly
+  increasing, NVS stays above every id handed out, writes stay bounded,
+  and the replaced scheme fails the same schedule. For any persisted
+  watermark, the invariant is "what is stored is already past everything
+  handed out", checked against the stored value, never against a cadence.
+- **Date learned:** 2026-09
+
+### A full offline queue that drops the oldest record lets routine events push out a tamper alert
+- **What happened:** The canary's MQTT offline queue
+  (`common/mqtt/mqtt_offline_queue.h`, 12 slots of 512 B) held only tamper
+  alerts, because nothing called `mqtt_publish_event`. Backlog F29 sent
+  every committed csi_event through the same `publish_or_queue`, and a full
+  queue dropped its oldest record whatever the kind. Ambient rows reach the
+  egress too, and `wifi.channel_activity` has a 5 s cooldown and no hourly
+  cap, so during a broker outage a queued power-loss, touch, SD or
+  enclosure alert could be pushed out by routine rows in about a minute.
+  Review ran it on the real header: one `sd_remove`, then 12 events, left
+  no tamper record. Queued events also replayed with `"replay":false`,
+  where the canary-wap marks its outage backfill `true`.
+- **Root cause:** A drop policy chosen when the queue carried one kind of
+  record, kept when a second, far more frequent kind joined it. "Drop the
+  oldest" is fair only between records of equal worth.
+- **Fix:** The queue ranks kinds. On a full queue the oldest event makes
+  room; with no event queued, a new tamper alert displaces the oldest
+  tamper alert and a new event is refused. Order among the records kept is
+  unchanged, and every drop and refusal is counted. The canary marks a body
+  built while the link is down `"replay":true` (nothing in the Home
+  Assistant integration reads that field yet).
+- **Regression check:** `firmware/tests_host/test_mqtt_offline_queue.cpp`:
+  a tamper alert survives a 20-event burst across the ring wrap, and at
+  12 × 512 B one `sd_remove` then 12 events leaves the tamper record at the
+  front; the pre-fix header fails the new checks. When a second kind of
+  traffic starts sharing a bounded queue, decide the drop policy again in
+  the same change.
+- **Date learned:** 2026-09
+
+### A replay watermark kept only in RAM starts over at every boot, and a torn log line reads as a record
+- **What happened:** Porting the canary-wap's SD event log and reconnect
+  backfill to the canary base (backlog F37) meant reading what it replays.
+  The canary-wap keys its backfill on `s_last_published_event_id`, which
+  lives in RAM and is 0 after a reboot, so the first reconnect of every boot
+  replays the oldest 64 lines of the log: ids Home Assistant verified long
+  ago, which its replay gate refuses. Its line parser also accepted a torn
+  last line (a power cut mid-append), and once the next append glued a
+  whole record onto the fragment, the pair parsed as the torn record's id
+  with the next record's fields.
+- **Root cause:** The watermark answered "what did this boot publish?" when
+  the receiver asks "what have you ever handed me?". The field scanner
+  looked each key up anywhere in the line and never checked that the line
+  was one record.
+- **Fix:** The canary base's backfill
+  (`common/csi/src/csi_event_backfill.h`, pure) never sends an id at or
+  below the highest one handed to the broker, and carries that watermark
+  across reboots as an NVS ceiling written with `csi_event_id_floor.h`'s
+  policy before an id goes out, kept at or below the allocator's floor so a
+  new boot's ids are never read as delivered. The line format moved into
+  `common/csi/src/csi_event_log_line.h`, shared by both trees, and its
+  parser refuses a line that does not start `{"id":`, end `}` and hold one
+  `{`; the canary's adapter also seals a torn tail with `'\n'` before the
+  next append. The canary-wap takes the parser fix with the shared header;
+  its RAM watermark is unchanged and recorded as a follow-up.
+- **Regression check:** `firmware/tests_host/test_csi_event_backfill.cpp`
+  replays outages, reboots and card faults against a model of HA's replay
+  gate and fails on any refused or repeated row. On every hand-over and
+  every loop pass it also checks that NVS already holds a ceiling above the
+  id and the watermark, and no higher than the allocator's floor. Mutating
+  any of these turns it red: the watermark skip or its boundary (`<=`; HA
+  accepts an EQUAL id, so `<` resends the last row after a remount),
+  persisting before the send on any route or the floor cap on any route,
+  the cursor staying put when a send is refused (a queue longer than one
+  drain, a failed send), the ceiling cap itself, or the first-boot record.
+  So does a failed-read count that a good read does not reset: a paced walk
+  returns from inside its line loop, so a reset at the end of a chunk never
+  ran, and three isolated failures across a long backlog gave it up. A
+  reset on any bytes read is the opposite mistake: a bad sector cuts every
+  read that crosses it short at the same offset, so that walk never gives
+  up and holds every new row behind the sector. Only a whole line resets
+  the count, and the test pins both sides. The test has to assume what it
+  cannot check: that the MQTT layer refuses a
+  live send while its queue holds records, that the tamper bridge publishes
+  first, and that the glue hands the planner the allocator's floor and drops
+  the backlog on a broker change. `firmware/scripts/check_event_egress_order.py`
+  holds the firmware source to all of it, including the pump's code before
+  the dequeue loop, where a budget, an early return or a muted link would
+  hold every tamper alert behind the backlog.
+  `test_csi_event_log_line.cpp` pins the format's bytes and refuses torn
+  and glued lines, and `check_csi_sync.sh` fails if a second builder of the
+  line appears. A watermark the receiver enforces belongs in storage that
+  outlives the sender's RAM, with the same "already past everything handed
+  out" invariant as the id floor.
 - **Date learned:** 2026-09
 
 ## How to Add an Entry

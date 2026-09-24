@@ -2,9 +2,9 @@
  * (firmware/common/csi/src/tamper_events_module.{h,cpp}).
  *
  * The transition rules ARE the feature's honesty contract: booting with no
- * card must not read as a removal, recovery must not cry, one boot story
- * per boot, and the doctrine precedence (watchdog > brownout > panic) must
- * hold. They shipped with a test-only reset hook and no test — a future
+ * card (or with the lid off) must not read as a removal (or an intrusion),
+ * recovery must not cry, one boot story per boot, and the doctrine
+ * precedence (watchdog > brownout > panic) must hold. They shipped with a test-only reset hook and no test — a future
  * edit could flip the adoption order and compile clean on every CI leg.
  *
  * Driven through the REAL chokepoint (csi_event + csi_module + csi_bundler,
@@ -173,12 +173,45 @@ static void test_recovery_is_not_a_tamper() {
 }
 
 static void test_constant_absent_feed_never_emits_sd_kinds() {
-  /* A host with no SD state machine (the active PIO lane) feeds ABSENT
-   * forever — the watcher adopts it and never invents a detector. */
+  /* A host with no SD state machine (a canary PIO build without
+   * FEATURE_SD_STORAGE) feeds ABSENT forever — the watcher adopts it and
+   * never invents a detector. */
   fresh();
   for (int i = 0; i < 50; ++i) tamper_events_watch(0, 0, 0, SD_ABSENT);
   CHECK(ring_count() == 0);
   CHECK(std::strcmp(tamper_events_active_kind(), "") == 0);
+}
+
+static void test_canary_storage_lane_story() {
+  /* The canary PIO tree's feed (sd_mount_policy::sd_state_for_tamper over
+   * its storage lane): a card given up on after consecutive write failures
+   * is ERROR, and the lane then retries the mount every 30 s — each failed
+   * retry leaves the state at ERROR, so the feed repeats it and must not
+   * re-narrate. A successful remount is MOUNTED (recovery, silent, clears
+   * the standing story); a later failed presence probe is ABSENT. */
+  fresh();
+  tamper_events_watch(0, 0, 0, SD_MOUNTED);            /* boot, card in */
+  CHECK(ring_count() == 0);
+  tamper_events_watch(0, 0, 0, SD_ERROR);              /* writes gave up */
+  CHECK(ring_count() == 1);
+  CHECK(std::strcmp(last_kind(), "sd_error") == 0);
+  for (int i = 0; i < 10; ++i) tamper_events_watch(0, 0, 0, SD_ERROR);
+  CHECK(ring_count() == 1);                            /* retries: silence */
+  CHECK(std::strcmp(tamper_events_active_kind(), "sd_error") == 0);
+  tamper_events_watch(0, 0, 0, SD_MOUNTED);            /* remount worked */
+  CHECK(ring_count() == 1);
+  CHECK(std::strcmp(tamper_events_active_kind(), "") == 0);
+  tamper_events_watch(0, 0, 0, SD_ABSENT);             /* probe failed */
+  CHECK(ring_count() == 2);
+  CHECK(std::strcmp(last_kind(), "sd_remove") == 0);
+  CHECK(csi_bundler_open_count() == 0);
+
+  /* Booting without a card, then one inserted and adopted by the lane's
+   * background remount: a configuration and a recovery, never a tamper. */
+  fresh();
+  tamper_events_watch(0, 0, 0, SD_ABSENT);
+  tamper_events_watch(0, 0, 0, SD_MOUNTED);
+  CHECK(ring_count() == 0);
 }
 
 static void test_the_standing_condition_speaks_the_present_tense() {
@@ -210,6 +243,91 @@ static void test_the_standing_condition_speaks_the_present_tense() {
   CHECK(std::strcmp(tamper_events_active_kind(), "") == 0);
 }
 
+/* Enclosure contact states, as tamper_events_module.h pins them. */
+static const uint8_t C_NONE = TAMPER_CONTACT_NONE;
+static const uint8_t C_CLOSED = TAMPER_CONTACT_CLOSED;
+static const uint8_t C_OPEN = TAMPER_CONTACT_OPEN;
+
+static void test_contact_constants_are_pinned() {
+  /* Hosts cross a plain-typed ABI with these numbers (the canary's
+   * csi_modules_integration bridge): a renumbering would swap open and
+   * closed on the wire. */
+  CHECK(C_NONE == 0 && C_CLOSED == 1 && C_OPEN == 2);
+}
+
+static void test_no_contact_input_never_emits_enclosure() {
+  /* A build without FEATURE_TAMPER_GPIO feeds nothing, or NONE: the
+   * doctrine holds by construction. */
+  fresh();
+  for (int i = 0; i < 50; ++i) tamper_events_watch_contact(C_NONE);
+  CHECK(ring_count() == 0);
+  /* NONE -> OPEN is not an opening either: only a contact seen CLOSED can
+   * be opened. */
+  tamper_events_watch_contact(C_OPEN);
+  CHECK(ring_count() == 0);
+  CHECK(std::strcmp(tamper_events_active_kind(), "") == 0);
+}
+
+static void test_booting_with_the_lid_off_adopts_silently() {
+  fresh();
+  tamper_events_watch_contact(C_OPEN);
+  tamper_events_watch_contact(C_OPEN);
+  CHECK(ring_count() == 0);
+  /* Closing it is not a tamper either — and it arms the next opening. */
+  tamper_events_watch_contact(C_CLOSED);
+  CHECK(ring_count() == 0);
+  tamper_events_watch_contact(C_OPEN);
+  CHECK(ring_count() == 1);
+  CHECK(std::strcmp(last_kind(), "enclosure") == 0);
+}
+
+static void test_closed_to_open_is_enclosure_and_it_stands() {
+  fresh();
+  tamper_events_watch_contact(C_CLOSED);               /* adopted */
+  CHECK(ring_count() == 0);
+  tamper_events_watch_contact(C_OPEN);                 /* lid lifted */
+  CHECK(ring_count() == 1);
+  CHECK(std::strcmp(last_kind(), "enclosure") == 0);
+  CHECK(csi_bundler_open_count() == 0);                /* sealed at once */
+  CHECK(std::strcmp(tamper_events_active_kind(), "enclosure") == 0);
+  for (int i = 0; i < 10; ++i) tamper_events_watch_contact(C_OPEN);
+  CHECK(ring_count() == 1);                            /* one row per opening */
+  tamper_events_watch_contact(C_CLOSED);               /* lid back on */
+  CHECK(ring_count() == 1);                            /* closing: no row */
+  CHECK(std::strcmp(tamper_events_active_kind(), "") == 0);
+  tamper_events_watch_contact(C_OPEN);                 /* opened again */
+  CHECK(ring_count() == 2);
+}
+
+static void test_enclosure_outranks_sd_and_boot_and_leaves_them_intact() {
+  fresh();
+  tamper_events_watch(1, 1, 0, SD_MOUNTED);            /* watchdog boot */
+  tamper_events_watch_contact(C_CLOSED);
+  tamper_events_watch(1, 1, 0, SD_ABSENT);             /* card pulled */
+  CHECK(std::strcmp(tamper_events_active_kind(), "sd_remove") == 0);
+  tamper_events_watch_contact(C_OPEN);                 /* then the lid */
+  CHECK(std::strcmp(tamper_events_active_kind(), "enclosure") == 0);
+  tamper_events_watch_contact(C_CLOSED);               /* lid back */
+  CHECK(std::strcmp(tamper_events_active_kind(), "sd_remove") == 0);
+  tamper_events_watch(1, 1, 0, SD_MOUNTED);            /* card back */
+  CHECK(std::strcmp(tamper_events_active_kind(), "watchdog") == 0);
+  /* Three rows, in the order they happened. */
+  CHECK(ring_count() == 3);
+  CHECK(std::strcmp(g_committed[0], "watchdog") == 0);
+  CHECK(std::strcmp(g_committed[1], "sd_remove") == 0);
+  CHECK(std::strcmp(g_committed[2], "enclosure") == 0);
+}
+
+static void test_contact_ignores_values_that_are_not_states() {
+  fresh();
+  tamper_events_watch_contact(C_CLOSED);
+  tamper_events_watch_contact(7);
+  tamper_events_watch_contact(0xFF);
+  CHECK(ring_count() == 0);
+  tamper_events_watch_contact(C_OPEN);                 /* still armed */
+  CHECK(ring_count() == 1);
+}
+
 int main() {
   test_boot_story_survives_a_pre_registration_race();  /* first, by contract */
   test_clean_boot_confesses_nothing();
@@ -220,7 +338,14 @@ int main() {
   test_mounted_to_error_is_sd_error();
   test_recovery_is_not_a_tamper();
   test_constant_absent_feed_never_emits_sd_kinds();
+  test_canary_storage_lane_story();
   test_the_standing_condition_speaks_the_present_tense();
+  test_contact_constants_are_pinned();
+  test_no_contact_input_never_emits_enclosure();
+  test_booting_with_the_lid_off_adopts_silently();
+  test_closed_to_open_is_enclosure_and_it_stands();
+  test_enclosure_outranks_sd_and_boot_and_leaves_them_intact();
+  test_contact_ignores_values_that_are_not_states();
 
   if (g_failures == 0) {
     std::printf("test_tamper_events_logic: ALL tamper watcher tests PASSED\n");

@@ -52,19 +52,21 @@ SEED = b"fixture-key-for-witness-page-v1!"
 assert len(SEED) == 32
 
 DEVICE_ID = "canary-fixture-0001"
-BUCKET_MS = 5000
-NOW_MS = 700_000                 # 700 s of uptime at render
+BUCKET_MS = 600_000              # the ten-minute grid (Invariant III), the floor as shipped
+NOW_MS = 1_300_000               # 1300 s of uptime at render
 NOW_EPOCH_S = 1_788_864_000      # 2026-09-08T10:40:00Z — a believable clock
 COARSE_S = 600
 
 # (seq, time_bucket, record_type, payload). The buckets are chosen so the
 # coarse timestamps land in TWO different ten-minute buckets (10:20 and
-# 10:30), proving the floor rather than a constant.
+# 10:30), proving the floor rather than a constant: the device booted at
+# 10:18:20Z, so the raw bucket starts are 10:28:20 and 10:38:20 and only
+# the flooring puts them on the grid.
 RECORDS = [
-    (1, 1,   0, b"boot:canary-fixture-0001"),
-    (2, 130, 1, b"event:presence_changed"),
-    (3, 131, 2, b"tamper:enclosure_tamper"),
-    (4, 132, 3, b"state:NOFIX->ACQRD"),
+    (1, 1, 0, b"boot:canary-fixture-0001"),
+    (2, 2, 1, b"event:presence_changed"),
+    (3, 2, 2, b"tamper:enclosure_tamper"),
+    (4, 2, 3, b"state:NOFIX->ACQRD"),
 ]
 
 # witness_page.h event_type_name(): the dictionary id for tamper, the

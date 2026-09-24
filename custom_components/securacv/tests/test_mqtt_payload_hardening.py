@@ -20,6 +20,7 @@ Platform stubs follow the convention in test_modality_and_radar.py.
 
 from __future__ import annotations
 
+import logging
 import sys
 import types
 
@@ -98,7 +99,7 @@ from homeassistant.core import HomeAssistant  # noqa: E402  (the stub)
 from .. import MAX_MQTT_PAYLOAD_BYTES, parse_mqtt_json  # noqa: E402
 from .. import binary_sensor as bs_platform  # noqa: E402
 from .. import sensor as sensor_platform  # noqa: E402
-from ..const import DOMAIN, TAMPER_MOTION, TAMPER_SD_REMOVE  # noqa: E402
+from ..const import DOMAIN, TAMPER_MOTION, TAMPER_SD_ERROR, TAMPER_SD_REMOVE  # noqa: E402
 
 ENTRY = types.SimpleNamespace(entry_id="e1")
 
@@ -227,7 +228,7 @@ def test_tamper_type_health_handler_survives_boolean_tamper_field() -> None:
     AttributeError this handler (bool has no .get)."""
     inst = _entity(
         bs_platform.SecuraCVCanaryTamperTypeSensor,
-        TAMPER_MOTION, "Unexpected Motion", "mdi:motion-sensor",
+        TAMPER_MOTION, "mdi:motion-sensor",
     )
     inst._handle_health_message(_msg('{"tamper": true}'))
     assert inst._attr_is_on is False  # a bare boolean names no specific type
@@ -242,12 +243,55 @@ def test_tamper_type_health_handler_survives_boolean_tamper_field() -> None:
 def test_tamper_type_health_handler_still_reads_flat_fields() -> None:
     inst = _entity(
         bs_platform.SecuraCVCanaryTamperTypeSensor,
-        TAMPER_SD_REMOVE, "SD Removed", "mdi:sd-off",
+        TAMPER_SD_REMOVE, "mdi:sd-off",
     )
     inst._handle_health_message(_msg('{"sd_mounted": false}'))
     assert inst._attr_is_on is True
     inst._handle_health_message(_msg('{"sd_mounted": true, "tamper": true}'))
     assert inst._attr_is_on is False
+
+
+def test_tamper_type_health_handler_logs_type_regressions(caplog) -> None:
+    """A well-shaped dict with a wrong-typed field ("sd_errors": "many")
+    used to be swallowed by a bare `except TypeError: pass`, so a firmware
+    field-type regression was invisible at any log level. It is skipped —
+    state untouched, nothing written — and logged at DEBUG (never higher:
+    an untrusted broker must not be able to spam the log) naming the
+    device, with the traceback attached."""
+    caplog.set_level(logging.DEBUG, logger=bs_platform.__name__)
+    inst = _entity(
+        bs_platform.SecuraCVCanaryTamperTypeSensor,
+        TAMPER_SD_ERROR, "mdi:alert-circle",
+    )
+    inst._handle_health_message(_msg('{"sd_errors": "many"}'))  # "many" > 0 → TypeError
+    assert inst._attr_is_on is False
+    assert inst.writes == []
+    records = [r for r in caplog.records if r.name == bs_platform.__name__]
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
+    assert "canary01" in records[0].getMessage()
+    assert "tamper" in records[0].getMessage()
+    assert records[0].exc_info is not None
+    # The next well-typed publish is handled normally.
+    inst._handle_health_message(_msg('{"sd_errors": 2}'))
+    assert inst._attr_is_on is True
+    assert inst.writes == [True]
+
+
+def test_mesh_handler_logs_type_regressions(caplog) -> None:
+    """Same contract for the mesh topic: {"peers": 5} (len(5) → TypeError)
+    is skipped and logged at DEBUG, naming the device."""
+    caplog.set_level(logging.DEBUG, logger=bs_platform.__name__)
+    inst = _entity(bs_platform.SecuraCVCanaryMeshConnectedSensor)
+    inst._handle_message(_msg('{"peers": 5}'))
+    assert inst._attr_is_on is False
+    assert inst.writes == []
+    records = [r for r in caplog.records if r.name == bs_platform.__name__]
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
+    assert "canary01" in records[0].getMessage()
+    assert "mesh" in records[0].getMessage()
+    assert records[0].exc_info is not None
 
 
 def test_general_tamper_handlers_survive_non_objects() -> None:
@@ -263,7 +307,7 @@ def test_general_tamper_handlers_survive_non_objects() -> None:
 def test_transport_handler_survives_non_objects() -> None:
     inst = _entity(
         bs_platform.SecuraCVCanaryTransportSensor,
-        "wifi_sta", "WiFi Station", "mdi:wifi",
+        "wifi_sta", "mdi:wifi",
     )
     for payload in NON_OBJECT_JSON + JUNK + [OVERSIZE]:
         inst._handle_message(_msg(payload))

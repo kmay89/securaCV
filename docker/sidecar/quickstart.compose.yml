@@ -41,6 +41,15 @@ services:
       # FRIGATE_LABELS: "person,car,dog,cat"
       # FRIGATE_MIN_CONFIDENCE: "0.5"
       # RETENTION_DAYS: "7"
+      # Witness Wall on your Apple TV: uncomment this AND the ports block
+      # below. The API then binds all interfaces inside the container
+      # (every data endpoint still needs the capability token; the fleet
+      # roll-call, GET /api/fleet — names, online state, coarse room words;
+      # no keys, no events — reads without one to anything on your LAN that
+      # can reach the published port). See docs/frigate_integration.md.
+      # SECURACV_API_BIND: "all"
+    # ports:
+    #   - "8799:8799"   # Witness Wall on your Apple TV; see docs/frigate_integration.md
     volumes:
       - securacv_data:/data
 

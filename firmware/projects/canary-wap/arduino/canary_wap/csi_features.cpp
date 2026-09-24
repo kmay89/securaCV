@@ -55,6 +55,7 @@
 
 #include "csi_features.h"
 #include "csi_mem.h"
+#include "csi_wander_jitter.h"  /* isqrt_u32 always; wander/jitter if flagged */
 #include <Arduino.h>  /* for millis() */
 #include <string.h>
 #include <stdlib.h>
@@ -116,6 +117,13 @@ static uint8_t s_sc_count = 0;  /* locked to first frame's subcarrier count */
 static int8_t  s_prev_iq[MAX_SC * 2];
 static bool    s_have_prev = false;
 
+#if CSI_WANDER_JITTER
+/* Second extractor (csi_wander_jitter.h): centroid and |Δ| sums for this
+ * window only. It reads the normalized rows already in s_amp_hist, so it
+ * needs no buffer of its own; 32 B, and only in a flag-on build. */
+static csi_wj::State s_wj;
+#endif
+
 /* CFO-corrected per-band rotation: signed sum (direction) and magnitude
  * sum (detection). Fast motion aliases the per-pair rotation past ±π and
  * the SIGNED sum self-cancels — the magnitude sum doesn't, so detection
@@ -176,24 +184,10 @@ static inline int8_t clip_i8(int32_t v) {
   return (int8_t)v;
 }
 
-/* Integer square root via bit-by-bit method. Fixed-time per input size;
- * ~16 iterations for 32-bit inputs. No FPU, no libm. */
-static uint32_t isqrt_u32(uint32_t n) {
-  uint32_t root = 0;
-  uint32_t bit = (uint32_t)1 << 30;  /* highest even bit ≤ 2^31 */
-  while (bit > n) bit >>= 2;
-  while (bit) {
-    const uint32_t trial = root + bit;
-    if (n >= trial) {
-      n -= trial;
-      root = (root >> 1) + bit;
-    } else {
-      root >>= 1;
-    }
-    bit >>= 2;
-  }
-  return root;
-}
+/* Integer square root (floor √n, bit by bit, no FPU, no libm). One copy
+ * in the library: it lives in csi_wander_jitter.h, which this file
+ * includes in every build. */
+using csi_wj::isqrt_u32;
 
 /* True magnitude √(I²+Q²). NOT the L1 |I|+|Q| shortcut: the ESP32's
  * per-frame common phase rotation swings an L1 "amplitude" by up to
@@ -241,6 +235,9 @@ void reset() {
   s_rssi_n = 0;
   s_last_channel = 0;
   s_last_bw = 0;
+#if CSI_WANDER_JITTER
+  csi_wj::reset(&s_wj);
+#endif
 
   /* Scrub history arrays — they previously held scrubbed-but-still-privacy-
    * sensitive per-subcarrier magnitudes. */
@@ -313,6 +310,14 @@ void accumulate(const int8_t* iq, uint8_t subcarrier_cnt,
      * moves them against each other. */
     s_env_band_sum[dop_band_of(k, N)] += a;
   }
+#if CSI_WANDER_JITTER
+  /* 1b. Second extractor: this normalized row's centroid, and its |Δ|
+   * against the previous frame's row in this window (s_amp_hist holds it;
+   * nullptr on the window's first frame). */
+  csi_wj::accumulate(&s_wj, row,
+                     s_frame_count ? s_amp_hist[s_frame_count - 1] : nullptr,
+                     N);
+#endif
 
   /* 2. CFO-corrected band rotation (requires a previous frame).
    * Per band b: C_b = Σ_k z_k·conj(z_prev,k)  (dot = Re, cross = Im).
@@ -512,6 +517,8 @@ static void compute_breathing(int8_t out[BREATH_BINS]) {
 /* Current per-window frame count (for csi_hal introspection). */
 uint32_t current_frame_count() { return s_frame_count; }
 
+bool wander_jitter_enabled() { return CSI_WANDER_JITTER != 0; }
+
 size_t   envelope_len()     { return s_env_ring_len; }
 uint32_t held_windows()     { return s_windows_held; }
 uint32_t merged_windows()   { return s_windows_merged; }
@@ -690,7 +697,12 @@ static void finalize_impl(csi_features_t* out, uint32_t frames_in_window,
   out->v[i++] = 0; /* dropped_estimate — filled by caller if known */ /* 25 */
   out->v[i++] = clip_i8((int32_t)s_last_channel);                     /* 26 */
   out->v[i++] = clip_i8((int32_t)s_last_bw);                          /* 27 */
-  /* v[28..31] remain zero — reserved. */
+#if CSI_WANDER_JITTER
+  out->v[28] = csi_wj::wander_i8(csi_wj::wander_q8(&s_wj));           /* 28 */
+  out->v[29] = csi_wj::jitter_i8(csi_wj::jitter_x16(&s_wj, s_sc_count)); /* 29 */
+#endif
+  /* v[28..29] stay zero without CSI_WANDER_JITTER; v[30..31] remain zero
+   * — reserved. */
 
   out->frames_in_window = (uint16_t)(frames_in_window > 0xFFFF ? 0xFFFF : frames_in_window);
 

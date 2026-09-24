@@ -39,8 +39,10 @@ Being listed here for a subsystem means your review is expected on changes to it
   start. See the "Start here" section of [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - **Automation is a maintainer.** Much of the review bar is enforced by CI
   (feature-dashboard guard, BOM drift gate, fact-tests) and by the advisory
-  [Canary Reviewer](.github/workflows/claude-review.yml). Humans decide;
-  machines catch the mechanical stuff first.
+  [Canary Reviewer](.github/workflows/claude-review.yml), once its
+  `ANTHROPIC_API_KEY` secret is set (until then it skips, green, with a
+  warning in the run). Humans decide; machines catch the mechanical stuff
+  first.
 
 ## Contact
 

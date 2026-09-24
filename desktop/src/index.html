@@ -431,6 +431,11 @@
             <section id="receipts" class="receipts hidden" aria-live="polite">
               <h3>Installation receipts</h3>
               <div id="receipt-host-image" class="receipt pending"><span>Host firmware</span><strong>waiting</strong></div>
+              <!-- The broker TLS mode as SEALED (never as connected): the line the
+                   writer returned in its receipt, from the NVS bytes it wrote —
+                   same words as the browser's done card (desktop_parity). Shown
+                   only when a broker host was sealed. -->
+              <div id="receipt-host-broker" class="receipt pending hidden"><span>Broker link</span><strong>waiting</strong></div>
               <div id="receipt-host-boot" class="receipt pending"><span>Host boot + Vision I²C</span><strong>waiting</strong></div>
               <div id="receipt-module" class="receipt pending"><span>Vision module model + inference</span><strong>waiting</strong></div>
             </section>

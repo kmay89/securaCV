@@ -176,25 +176,66 @@ function rosterAdd(entry) {
 // ── the secret drawer ────────────────────────────────────────────────────────
 // Where the setup profile's passwords and each Canary's API token live: the
 // OS credential store when this platform has one (macOS Keychain, Windows
-// Credential Manager), else this app's own prefs file — and the consent copy
-// names which, instead of pretending. Keys are namespaced and URI-encoded
-// (an SSID can hold spaces/emoji); prefs.secretKeys tracks every key ever
-// written so "Reset the app's memory" can sweep the OS store too.
+// Credential Manager, or a freedesktop Secret Service on Linux — which the
+// Rust side PROBES, so a desktop without one answers "none"), else this
+// app's own prefs file — and the consent copy names which, instead of
+// pretending. Keys are namespaced and URI-encoded (an SSID can hold
+// spaces/emoji); prefs.secretKeys tracks every key ever written so "Reset
+// the app's memory" can sweep the OS store too.
 const secretStore = {
   backend: "none",
   _ready: null,
+  _adopting: null,
   // Idempotent; every accessor awaits it, so a get() fired from early init
   // (hubRestoreSettings runs at DOMContentLoaded) can't race the backend
-  // answer and wrongly fall back to the prefs file.
+  // answer and wrongly fall back to the prefs file. It resolves as soon as
+  // the backend is known: the adoption pass below starts then but is NOT
+  // awaited here, because a locked keyring answers it with an unlock prompt
+  // that waits as long as the user does — a restore must not wait on that.
   init() {
     this._ready = this._ready || (async () => {
       try { this.backend = await invoke("secret_backend"); } catch (_) { this.backend = "none"; }
+      this._adopting = this._adopt().catch(() => {});
     })();
     return this._ready;
+  },
+  // Passwords saved while this platform had no OS store (every Linux build
+  // before the Secret Service backend, or a session whose keyring wasn't
+  // running) sit in the prefs file. Once a store answers, move them in —
+  // the consent note now names the store, so leaving them in the weaker
+  // place would make it half true. One pass per launch, stopping at the
+  // first refusal (a locked keyring the user declined to unlock): the
+  // prefs copy is only dropped after the store accepted it, so nothing is
+  // ever lost, and the next launch simply tries again. set() and delete()
+  // wait for this pass, so a newer value can't land under the old one it
+  // writes (or a deleted secret come back); get() reads the prefs copy
+  // before it asks the store, so a key moved while it was asking is found.
+  async _adopt() {
+    if (this.backend === "none" || !prefs.secrets) return;
+    let moved = 0;
+    for (const [key, value] of Object.entries(prefs.secrets)) {
+      if (!value) continue;
+      try {
+        await invoke("secret_set", { key, value });
+      } catch (e) {
+        // A key the drawer refuses by shape can never move — keep it where
+        // it is (get() still reads it) and carry on with the rest.
+        if (String(e).includes("bad secret key")) continue;
+        break;
+      }
+      delete prefs.secrets[key];
+      moved++;
+      this.track(key, true);
+    }
+    if (moved) {
+      savePrefs();
+      logEvent("info", `Moved ${moved} saved credential${moved === 1 ? "" : "s"} into ${this.where()}.`);
+    }
   },
   where() {
     return this.backend === "keychain" ? "your Mac's Keychain"
       : this.backend === "credential-manager" ? "Windows Credential Manager"
+      : this.backend === "secret-service" ? "your desktop's keyring (GNOME Keyring or KDE Wallet, via Secret Service)"
       : "this app's local settings";
   },
   key(...parts) { return parts.map((p) => encodeURIComponent(String(p))).join(":"); },
@@ -207,6 +248,7 @@ const secretStore = {
   },
   async set(key, value) {
     await this.init();
+    await this._adopting;
     if (!value) return this.delete(key);
     if (this.backend !== "none") {
       try {
@@ -232,16 +274,18 @@ const secretStore = {
   },
   async get(key) {
     await this.init();
+    const local = (prefs.secrets && prefs.secrets[key]) || null;
     if (this.backend !== "none") {
       try {
         const v = await invoke("secret_get", { key });
         if (v != null) return v;
       } catch (_) {}
     }
-    return (prefs.secrets && prefs.secrets[key]) || null;
+    return (prefs.secrets && prefs.secrets[key]) || local;
   },
   async delete(key) {
     await this.init();
+    await this._adopting;
     let ok = true;
     if (this.backend !== "none") {
       try { await invoke("secret_delete", { key }); }
@@ -261,6 +305,8 @@ const secretStore = {
   // Returns how many entries could NOT be removed, so the caller can report
   // an incomplete sweep instead of a false clean bill.
   async wipeAll() {
+    await this.init();
+    await this._adopting;   // a pass still moving keys must not refill what this sweeps
     let failed = 0;
     for (const k of [...(prefs.secretKeys || [])]) {
       if (!(await this.delete(k))) failed++;
@@ -299,6 +345,22 @@ function mintApiToken() {
 function classifyFlashError(err) {
   const msg = String((err && (err.message || err.name)) || err || "").toLowerCase();
   const has = (...subs) => subs.some((s) => msg.includes(s));
+
+  // The bundled espflash never started: the app's own engine failed, not the
+  // board (flash-engine sidecar.rs spawn_error, "could not start espflash: …";
+  // each app's host says "bundled espflash missing: …" when the sidecar can't
+  // even be resolved). Checked FIRST: the OS words such a failure in
+  // port-shaped terms ("Permission denied" for a file without its execute
+  // bit, "No such file or directory" for a missing loader), and the checks
+  // below would read those as the port's and coach dialout or download mode
+  // at a board that was never the problem.
+  if (has("could not start espflash", "bundled espflash missing"))
+    return { kind: "engine", title: "The app's flash engine couldn't start",
+      hint: "That's this app, not your board — the espflash engine it bundles wouldn't " +
+        "run on this computer, so download mode won't help. Install the newest release " +
+        "for this computer from securacv.com/download (the Mac download is universal, " +
+        "Apple Silicon and Intel; the Linux one is for x86-64 PCs). If the newest one " +
+        "fails the same way, please report it, with the reason the system gave." };
 
   if (has("failed to open serial port", "port is already open", "already open",
           "resource temporarily unavailable", "resource busy", "device or resource busy") ||
@@ -350,6 +412,15 @@ function classifyFlashError(err) {
   return { kind: "unknown", title: null,
     hint: "If this keeps happening: unplug the board, plug it back in, put it in download " +
       "mode (hold BOOT, tap RESET, release BOOT), and retry." };
+}
+
+// The system's own reason a bundled espflash didn't start, out of the
+// backend's one-line spawn error (flash-engine sidecar.rs spawn_error keeps
+// the raw OS error last, after any hint): its "(os error N)" clause when it
+// has one, else everything after the first colon.
+function spawnReason(line) {
+  const os = /[^():]*\(os error \d+\)/.exec(line);
+  return (os ? os[0] : line.slice(line.indexOf(":") + 1)).trim();
 }
 
 // USB-serial bridge chips that need an OS driver (parity: flash-core.js
@@ -1016,28 +1087,57 @@ function announceToWitness(product) {
 }
 
 // The real thing: because this is the native app, not a sandboxed browser, we
-// can reach the LAN and populate the wall with the REAL fleet. The Rust
+// can reach the LAN and populate the wall with the REAL fleet. Each tick
+// browses mDNS for `_securacv._tcp` (`fleet_scan`), then the Rust
 // `witness_discover` command does the LAN reach (no CSP; `.local` resolves via
 // the OS — Bonjour on macOS, avahi on Linux). ONE controller owns all of it:
 //   - opening the Fleet tab starts a continuous scan (and stops on tab leave),
 //     so the tab shows your actual Canaries without ever flashing anything;
 //   - a successful flash triggers a fast 30 s burst with the new device
 //     highlighted, while the board boots and joins Wi-Fi.
+// The Lab's wall host (canary-local/assets/witness-host.js) is the same
+// controller; desktop_parity.test.js runs both and holds them to one answer.
 // If nothing answers (or an older firmware build), the wall keeps its demo /
 // simulated state. Every path is wrapped: discovery can NEVER affect flashing.
-function witnessBases() {
+//
+// Where each browsed board might serve /api/fleet. IPv4 when the browse
+// resolved one (a bare IPv6 literal would need brackets, and a link-local
+// one a zone), else its own `.local` hostname. A board still on the old
+// port-1 "formality" advert serves its page on :80 (the fleet book probes
+// it the same way).
+function witnessBoardBases(sightings) {
+  const b = [];
+  for (const s of sightings || []) {
+    if (!s) continue;
+    const addr = s.ip && !String(s.ip).includes(":") ? s.ip : s.host;
+    if (!addr) continue;
+    b.push(s.port && s.port !== 1 ? `http://${addr}:${s.port}` : `http://${addr}`);
+  }
+  return b;
+}
+// The kernel addresses first — the provisioned host, then the well-known
+// three in the Apple TV's order (tvos WallModel.wellKnownCandidates): the hub
+// convention `canary.local:8099`, the kernel's own API port
+// `canary.local:8799` (what the Home Assistant add-on and the Docker sidecar
+// serve), then a bare `canary.local` — and the browsed boards only after
+// them: the kernel advertises no `_securacv._tcp`, and a WAP or display
+// answers /api/fleet with a one-board self-report, so a board tried first
+// would stand in for the kernel's whole fleet (witness_discover returns the
+// FIRST base that answers).
+function witnessBases(sightings) {
   const bases = [];
   const host = $("mqtt-host") && $("mqtt-host").value && $("mqtt-host").value.trim();
   if (host) { bases.push("http://" + host + ":8099"); bases.push("http://" + host); }
-  bases.push("http://canary.local:8099", "http://canary.local");
-  return bases;
+  bases.push("http://canary.local:8099", "http://canary.local:8799", "http://canary.local");
+  bases.push(...witnessBoardBases(sightings));
+  return [...new Set(bases)];
 }
 const witnessDiscovery = {
   timer: null,        // next scheduled tick
   scanning: false,    // continuous mode (fleet tab open)
   burstUntil: 0,      // fast-poll deadline after a flash
   highlight: null,    // device name to highlight on next find
-  inFlight: false,    // a witness_discover call is running (they can take ~8 s)
+  inFlight: false,    // a browse + witness_discover tick is running (it can take ~10 s)
   found: false,
   // "/" = our own origin: the LAN fleet (device names, who is home) goes to
   // our wall iframe and nowhere else, even if something else were framed.
@@ -1051,8 +1151,11 @@ const witnessDiscovery = {
   async tick() {
     if (this.inFlight) return this.schedule();
     this.inFlight = true;
+    let sightings = [];
+    try { sightings = (await invoke("fleet_scan", { timeoutMs: 2500 })) || []; }
+    catch (_) { /* no multicast here, or nobody announcing — the poll still runs */ }
     let fleet = null;
-    try { fleet = await invoke("witness_discover", { bases: witnessBases() }); }
+    try { fleet = await invoke("witness_discover", { bases: witnessBases(sightings) }); }
     catch (_) { /* nothing answering yet, or an older build without the command */ }
     this.inFlight = false;
     if (fleet) {
@@ -1061,6 +1164,11 @@ const witnessDiscovery = {
       this.highlight = null;
       this.found = true;
       this.status("● Live — " + (n || "your") + " Canar" + (n === 1 ? "y" : "ies") + " on your network", true);
+    } else if (!this.found && sightings.length) {
+      // Heard, but nobody serves /api/fleet: sense/vision run no HTTP server,
+      // so an announcement is not a fleet — say what is true.
+      const n = sightings.length;
+      this.status(n + " Canar" + (n === 1 ? "y" : "ies") + " announced on this network — none serves the fleet document yet.");
     } else if (!this.found) {
       this.status("Scanning your network for Canaries… nothing answering yet — flash one, or make sure a Canary is on this Wi-Fi.");
     }
@@ -2211,8 +2319,8 @@ async function pollPorts() {
 }
 
 // The monitor's native side follows the board by port name first, then by
-// VID/PID when the name changes across a reboot (matching_port in
-// serial_monitor.rs). Mirror that here so the status bar and the monitor
+// VID/PID when the name changes across a reboot (matching_port in the
+// flash engine's monitor.rs). Mirror that here so the status bar and the monitor
 // always agree on whether the board is still with us.
 function trackPresenceWhileMonitoring(usb) {
   const byName = state.port ? usb.find((p) => p.name === state.port) : null;
@@ -2313,15 +2421,20 @@ async function identify(portInfo) {
     // the download-mode advice: for those it IS the fix.
     const c = classifyFlashError(e);
     const named = !osLevel && c.kind !== "unknown" && c.kind !== "not-in-download";
+    // A bundled espflash that never started (`engine`) is this app's failure,
+    // not the board's: it gets its own words and the system's reason, and no
+    // driver note — no port was ever opened.
+    const engine = c.kind === "engine";
+    const reason = engine ? ` (The system said: ${spawnReason(firstLine)})` : "";
     // A known USB-serial bridge that won't talk is usually a missing OS
     // driver — name the chip and the driver instead of coaching BOOT/RESET
     // at a port the OS can't even open properly (parity: usbBridgeInfo). The
     // browser appends its driver hint on every non-module failure too.
     const bridge = state.portInfo && usbBridgeInfo(state.portInfo.vid, state.portInfo.pid);
-    const bridgeNote = !osLevel && bridge ? " " + bridge.note : "";
+    const bridgeNote = !osLevel && !engine && bridge ? " " + bridge.note : "";
     setConn("failed",
       osLevel ? `Found ${port} — ${firstLine}`
-        : named ? `Found ${port} — ${c.title}. ${c.hint}${bridgeNote}`
+        : named ? `Found ${port} — ${c.title}. ${c.hint}${reason}${bridgeNote}`
           : `Found ${port} — couldn't read the chip. Put it in download mode.${bridgeNote}`);
     $("download-mode").classList.toggle("hidden", osLevel || named);
     $("recheck").classList.remove("hidden");
@@ -4720,7 +4833,7 @@ function feedSenseTune(chunk) {
 // looksLikeGarbage). The desktop hard-coded one speed with no control and no
 // self-heal, so a board running a non-catalog console rate showed mojibake
 // with nothing to turn. The Rust side already accepts any speed in
-// 1_200..=2_000_000 (serial_monitor.rs), so this is purely the missing
+// 1_200..=2_000_000 (flash-engine monitor.rs), so this is purely the missing
 // frontend half.
 const CONSOLE_BAUDS = [115200, 74880, 9600, 230400, 460800, 921600];
 
@@ -5151,6 +5264,15 @@ function renderReceipts(forceVision = false) {
       ? "waiting for ESP32 flash — plug the XIAO's own USB-C port"
       : "waiting for ESP32 flash";
   setReceipt("receipt-host-image", !!host, hostLabel);
+  // The broker TLS mode as SEALED — the line the writer returned, built from
+  // the NVS bytes it wrote (the flash engine's flash → broker_receipt.rs),
+  // never from the form; the same words the browser's done card uses.
+  // Hidden when no broker host was sealed, and for a local file. It says
+  // sealed, not connected: the boot manifest carries no transport field, so
+  // nothing here can vouch for the link itself.
+  const brokerTls = host && host.broker_tls;
+  $("receipt-host-broker").classList.toggle("hidden", !brokerTls);
+  if (brokerTls) setReceipt("receipt-host-broker", true, "✓ " + brokerTls.line);
   setReceipt(
     "receipt-host-boot",
     !!(boot && boot.ready),

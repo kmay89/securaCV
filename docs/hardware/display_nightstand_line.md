@@ -430,7 +430,8 @@ everything else on these boards):
   `emu_button()` for JS to push the level in — so the twin can drive the new gestures the moment
   a build exists.
 - **Emulator + Lab** — `build.sh` `createCanaryEmuNightstand`/`…Dash7`, the `dist/*.js` + `.meta.json`
-  (`fw_version == fw_train`), `registry.json` display entries (`glass{172,320,round:false,…}` / `{800,480,…}`),
+  (`fw_version == fw_train`), `registry.json` `emulator` blocks (the C6 and Nightstand 7 Lab cards exist, with
+  their cases, figures and specs — they boot no twin of their own yet),
   the `fleet.html` `<script>` tags, and the `app.js` `buildDisplaySheet()` **172×320 portrait sizing case**
   (today it hardcodes `round ? 232 : 464`). Needs Emscripten to build the committed wasm the `canary_local`
   tests assert on — a toolchain-session slice.

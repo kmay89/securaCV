@@ -19,6 +19,12 @@ What is pinned and why:
     `shards` expand to one leg each, in build order, with only that leg's
     size guards; every display env lands in exactly one leg; and the
     validation refuses the mistakes that would silently drop an env from CI.
+  • a size guard on an env PR CI never builds is refused for EVERY product,
+    sharded or not — firmware.yml fires a guard only right after `pio run
+    -e` of the env its bin names, so such a guard measures nothing on a PR
+    and first fires on the release artifact (canary's release_ha, #1567 to
+    #1686). The check used to sit inside the `shards` branch and so missed
+    the four unsharded products; the pre-wave-6 canary entry is the fixture.
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
@@ -30,7 +36,7 @@ import json
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -239,12 +245,13 @@ class CurrentTreeIsGreen(unittest.TestCase):
             self.assertEqual(fe.main(["--check-workflows"]), 0)
 
     def test_every_guarded_image_is_built_by_pr_ci(self):
-        # firmware.yml runs a size_guards entry right after `pio run -e` of
-        # the env that produces its bin, so a guard on an env outside
-        # build_envs measures nothing until a release is cut — the slot
-        # overrun surfaces on the tag, not on the PR that caused it. canary's
-        # release_ha (the published OTA image) sat that way until it joined
-        # build_envs; this pins that every guarded env is PR-built.
+        # validate() now refuses this structurally for every product (see
+        # SizeGuardsMustBePrBuilt), so test_flavors_json_validates already
+        # covers the committed manifest. This is the belt to that: it pins
+        # the manifest directly, in words that name the guard, so a future
+        # loosening of the validator cannot quietly let a release-only guard
+        # back in. canary's release_ha (the published OTA image) sat outside
+        # build_envs from #1567 until wave 6.
         for entry in fe.load_flavors():
             built = set(entry.get("build_envs") or [])
             for g in entry.get("size_guards") or []:
@@ -255,6 +262,122 @@ class CurrentTreeIsGreen(unittest.TestCase):
                               f"release time")
 
 
+class SizeGuardsMustBePrBuilt(unittest.TestCase):
+    """validate() refuses a size guard on an env PR CI never builds, for
+    EVERY product. firmware.yml fires a guard only in the build-loop
+    iteration that just ran `pio run -e` of the env its bin names, so a
+    guard on an env outside build_envs measures nothing on any PR and first
+    fires in check_slot_budget.py on the release artifact. The check used to
+    live inside validate()'s `shards` branch, so it caught the display and
+    missed the four unsharded products — canary's release_ha sat exactly
+    that way from #1567 until wave 6 added the env to build_envs."""
+
+    def test_unsharded_guard_on_unbuilt_env_is_rejected(self):
+        entry = {"name": "canary", "dir": "firmware/canary",
+                 "build_envs": ["release"],
+                 "size_guards": [guard("release"), guard("release_ha")]}
+        problems = fe.validate([entry])
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("release_ha", problems[0])
+        self.assertIn("not in build_envs", problems[0])
+        # the guard on the built env alone is clean
+        entry["size_guards"] = [guard("release")]
+        self.assertEqual(fe.validate([entry]), [])
+
+    def test_sharded_guard_on_unbuilt_env_is_rejected_once(self):
+        # the loop MOVED out of the shards branch — a copy left behind would
+        # make a sharded product report the same guard twice
+        entry = display_entry({}, [], ["canary-display-a"], [],
+                              shards={"x": ["canary-display-a"]},
+                              size_guards=[guard("canary-display-zz")])
+        problems = fe.validate([entry])
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("canary-display-zz", problems[0])
+        self.assertIn("not in build_envs", problems[0])
+
+    def test_guard_on_built_env_is_clean_sharded_and_unsharded(self):
+        unsharded = {"name": "canary-sense", "dir": "x", "build_envs": ["a", "b"],
+                     "size_guards": [guard("a"), guard("b")]}
+        self.assertEqual(fe.validate([unsharded]), [])
+        sharded = display_entry({}, [], ["canary-display-a", "canary-display-b"], [],
+                                shards={"x": ["canary-display-a"],
+                                        "y": ["canary-display-b"]},
+                                size_guards=[guard("canary-display-b")])
+        self.assertEqual(fe.validate([sharded]), [])
+
+    def test_unparseable_guard_bin_is_rejected_for_an_unsharded_product(self):
+        # neither firmware.yml nor check_slot_budget.py can key this to an
+        # env, so it would never fire anywhere — not on a PR, not on a tag
+        entry = {"name": "canary-wap", "dir": "x", "build_envs": ["a"],
+                 "size_guards": [{"bin": "firmware.bin", "slot_bytes": 1}]}
+        problems = fe.validate([entry])
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("does not sit under .pio/build/<env>/", problems[0])
+        self.assertIn("'firmware.bin'", problems[0])
+
+    def test_two_guards_for_one_env_are_rejected(self):
+        # check_slot_budget.py refuses two that disagree, but only when a
+        # release is being cut; the manifest should say one budget per env
+        entry = {"name": "canary-wap", "dir": "x", "build_envs": ["a"],
+                 "size_guards": [guard("a"), guard("a")]}
+        problems = fe.validate([entry])
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("two size_guards entries", problems[0])
+        self.assertIn("'a'", problems[0])
+
+    def test_pre_wave6_canary_shape_is_rejected(self):
+        # firmware/flavors.json's canary entry at b43e823 (the #1567 shape,
+        # in force until #1686), verbatim: release_ha guarded, release_ha
+        # not built. validate() returned [] on it for that whole span — the
+        # slot_name even admits the guard fires "at release time".
+        entry = {
+            "name": "canary",
+            "dir": "firmware/canary",
+            "build_envs": ["dev", "release", "full", "esp32cam",
+                           "esp32-wroom", "freenove-s3"],
+            "check_env": "release",
+            "pip_extras": "intelhex",
+            "isolated_core_envs": ["full"],
+            "size_guards": [
+                {"bin": ".pio/build/release/firmware.bin",
+                 "slot_bytes": 1966080,
+                 "slot_name": "0x1E0000 OTA slot (partitions_ota.csv ota_0/ota_1)"},
+                {"bin": ".pio/build/release_ha/firmware.bin",
+                 "slot_bytes": 1966080,
+                 "slot_name": "0x1E0000 OTA slot (partitions_ota.csv ota_0/ota_1 "
+                              "— release_ha is the published OTA image; PR CI "
+                              "builds `release`, so this entry fires via "
+                              "check_slot_budget.py at release time)"},
+            ],
+        }
+        problems = fe.validate([entry])
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("release_ha", problems[0])
+        self.assertIn("not in build_envs", problems[0])
+        # and the wave-6 fix — the env joins build_envs — is what clears it
+        entry["build_envs"].append("release_ha")
+        self.assertEqual(fe.validate([entry]), [])
+
+    def test_cli_build_matrix_refuses_a_guard_on_an_unbuilt_env(self):
+        # firmware.yml's `flavors` job path: exit 1, the problems on stderr
+        # as ::error:: annotations, and NO matrix on stdout — so
+        # build-platformio never starts, rather than starting without the
+        # guard. This is the gate that runs on the PR that adds the guard.
+        entry = {"name": "canary", "dir": "firmware/canary",
+                 "build_envs": ["release"],
+                 "size_guards": [guard("release"), guard("release_ha")]}
+        with tempfile.TemporaryDirectory() as tmp:
+            alt = Path(tmp) / "flavors.json"
+            alt.write_text(json.dumps([entry]), encoding="utf-8")
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                rc = fe.main(["--flavors", str(alt), "--build-matrix"])
+        self.assertEqual(rc, 1)
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("::error::", err.getvalue())
+        self.assertIn("release_ha", err.getvalue())
+
+
 class LintCatchesRealMistakes(unittest.TestCase):
     def test_release_env_ci_never_builds_is_rejected(self):
         entry = display_entry({}, [], ["canary-display-a"],
@@ -262,6 +385,18 @@ class LintCatchesRealMistakes(unittest.TestCase):
         problems = fe.validate([entry])
         self.assertTrue(any("canary-display-zz" in p and "not in build_envs" in p
                             for p in problems), problems)
+
+    def test_unreleased_needs_a_reason_and_no_release_envs(self):
+        ok = {"name": "canary-x", "build_envs": ["canary-x-a"],
+              "unreleased": "bench pending"}
+        self.assertEqual(fe.validate([ok]), [])
+        blank = dict(ok, unreleased="  ")
+        self.assertTrue(any("non-empty reason" in p for p in fe.validate([blank])))
+        both = display_entry({}, [], ["canary-display-dash7"],
+                             ["canary-display-dash7"])
+        both["unreleased"] = "bench pending"
+        self.assertTrue(any("`unreleased` AND release_envs" in p
+                            for p in fe.validate([both])), fe.validate([both]))
 
     def test_release_env_without_flasher_product_is_rejected(self):
         # An env CI builds but the flasher catalog has never heard of.

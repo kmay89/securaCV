@@ -1038,7 +1038,7 @@ export function buildNvsWifiImage(ssid, pass, partitionSize) {
 
 // Turn the optional broker/identity fields into buildNvsSeedImage `strings`/`u16`
 // entries the firmware's runtime_config reads back — the SAME namespace ("securacv"),
-// keys, and NVS types the native app writes (desktop/src-tauri/src/provisioning.rs:
+// keys, and NVS types the native app writes (desktop/flash-engine/src/provisioning.rs:
 // build_nvs), so a board provisioned in the browser and one provisioned natively are
 // equivalent. Each field is optional: an empty device-id is omitted, and the MQTT
 // keys are written as a unit only when a broker host is given. Validates like native
@@ -1101,6 +1101,42 @@ export function mqttProvisioningToNvs(p = {}) {
     if (fp) strings.mqtt_fp = fp;
   }
   return { strings, u16, u8 };
+}
+
+// ── the broker TLS receipt line ─────────────────────────────────────────────
+// The one line the done card says about the broker TLS mode that was SEALED —
+// sealed, never connected: the firmware decides the transport at connect time
+// (mqtt_transport_logic.h) and the boot self-manifest carries no transport
+// field, so a flasher can vouch for the bytes it wrote and nothing more. Four
+// single-line templates keyed by the firmware's mode byte; the SAME four
+// strings live in desktop/flash-engine/src/broker_receipt.rs MODE_LABELS for
+// the native Flasher and the Lab (the two flashers share no UI code), and
+// tests/desktop_parity.test.js holds them equal — keep each on one line.
+// {N} = byte count of the CA string as sealed (trimmed PEM + "\n" — the count,
+// never the PEM); {FP} = the sealed fingerprint verbatim, which is public data
+// (the broker presents that certificate to every client on the LAN, and
+// printing the pin lets the owner compare it against
+// `openssl x509 -noout -fingerprint -sha256`). Never a password, never the host.
+export const MQTT_TLS_RECEIPT = Object.freeze([
+  "plain MQTT — not encrypted (the default every Canary shipped with)",
+  "TLS, CA-verified — CA certificate sealed, {N} bytes of PEM",
+  "TLS, SHA-256 fingerprint pin — {FP}",
+  "TLS, lab only — encrypted but NOT verified; the board warns on every connect",
+]);
+// A mode byte outside the table (the builder above refuses one, so this is
+// the firmware's own answer for a byte it does not know). {M} = the byte.
+export const MQTT_TLS_RECEIPT_UNKNOWN =
+  "TLS mode byte {M} — not one the firmware knows; it refuses to connect until reprovisioned";
+// Over the builder's OUTPUT (mqttProvisioningToNvs), never the form, so the
+// line describes what was sealed; null when no broker host was.
+export function brokerTlsReceipt(prov) {
+  const strings = (prov && prov.strings) || {};
+  if (!strings.mqtt_host) return null;
+  const mode = (prov.u8 && prov.u8.mqtt_tls) || 0;
+  const template = MQTT_TLS_RECEIPT[mode];
+  if (!template) return MQTT_TLS_RECEIPT_UNKNOWN.replace("{M}", String(mode));
+  const caBytes = strings.mqtt_ca ? new TextEncoder().encode(strings.mqtt_ca).length : 0;
+  return template.replace("{N}", String(caBytes)).replace("{FP}", strings.mqtt_fp || "");
 }
 
 // ── the device's local-API bearer credential ────────────────────────────────

@@ -104,6 +104,20 @@ updates:
         patterns: ["*"]
         update-types: ["minor", "patch"]
 
+  # The flash engine both desktop apps build (desktop/flash-engine): its own
+  # lockfile is what its PR CI job and audit.yml read.
+  - package-ecosystem: "cargo"
+    directory: "/desktop/flash-engine"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(cargo)"
+    groups:
+      cargo-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
   - package-ecosystem: "cargo"
     directory: "/tvos/witness-core"
     schedule:

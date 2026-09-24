@@ -226,8 +226,10 @@
     "pio_board": "seeed_xiao_esp32c6",
     "tier": "compile-tested",
     "tier_evidence": "",
-    "used_by": [],
-    "notes": "Canary Sentinel Standard/Heavy sensor head: MR60BHA2 60 GHz radar + PIR + BH1750 lux, WiFi-RF/CSI + BLE on the onboard radio. Phase 0 — the board-agnostic fusion core is host-tested (firmware/common/fusion, firmware/tests_host); the on-device PlatformIO build + bench validation are pending (see firmware/projects/canary-sentinel), so not yet in flavors.json and used_by is empty until it phases in like canary-sense.",
+    "used_by": [
+      "canary-sentinel"
+    ],
+    "notes": "Canary Sentinel Standard/Heavy sensor head: MR60BHA2 60 GHz radar + PIR + BH1750 lux, WiFi-RF/CSI + BLE on the onboard radio. Phase 1a — the board-agnostic fusion core is host-tested (firmware/common/fusion, firmware/tests_host), and the network/witness build (env canary-sentinel-door) is compile-gated in CI through firmware/flavors.json, marked unreleased; the onboard-radio channels (Phase 1b) and every bench check are pending (see firmware/projects/canary-sentinel).",
     "thermal_notes": "PIR needs thermal stability — mount the sensor head clear of the C6's own warmth and of drafts; the radar noise floor rises with temperature."
   },
   {
@@ -240,8 +242,10 @@
     "pio_board": "seeed_xiao_esp32c3",
     "tier": "compile-tested",
     "tier_evidence": "",
-    "used_by": [],
-    "notes": "Canary Sentinel Lite: PIR + BH1750 lux, WiFi-RF + BLE on the onboard radio, NO radar/CSI (honest low-cost tier limit). Phase 0 — fusion core host-tested; on-device build + bench pending (firmware/projects/canary-sentinel), so not yet in flavors.json and used_by is empty.",
+    "used_by": [
+      "canary-sentinel"
+    ],
+    "notes": "Canary Sentinel Lite: PIR + BH1750 lux, WiFi-RF + BLE on the onboard radio, NO radar/CSI (honest low-cost tier limit). Phase 1a — fusion core host-tested; the network/witness build (env canary-sentinel-lite) is compile-gated in CI through firmware/flavors.json, marked unreleased; bench pending (firmware/projects/canary-sentinel).",
     "thermal_notes": "PIR needs thermal stability — keep the sensor stalk clear of the MCU and out of drafts."
   },
   {

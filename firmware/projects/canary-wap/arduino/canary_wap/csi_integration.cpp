@@ -51,6 +51,7 @@
 #include <csi_types.h>
 #include <csi_module.h>
 #include <csi_event.h>
+#include "csi_event_id_floor.h"   // when to write the id floor (common/csi, host-tested)
 #include <csi_bundler.h>          // snapshot_open() — live rows for /api/events/today
 
 /* The four v1 modules ship with the library. After the Phase-4 flattening
@@ -68,7 +69,7 @@
 #include <wifi_channel_activity.h>
 #include <ble_events_module.h>
 #include "acoustic_events_module.h"
-#include "airtime_governor.h"      // probe sends reserve routine airtime
+#include "probe_airtime.h"         // probe sends reserve routine airtime
 
 #include "build_config.h"
 /* Unconditional, matching its unconditional registration below: every
@@ -204,7 +205,9 @@ uint32_t                                g_outbound_bytes      = 0;
  *   v[8..11]  phase-Doppler  (4 bands → motion)
  *   v[12..19] breathing FFT  (8 bins  → micro-motion / breath rhythm)
  *   v[20..23] RSSI stats
- *   v[24..31] frame health + reserved
+ *   v[24..27] frame health
+ *   v[28..29] wander / jitter (CSI_WANDER_JITTER builds only; else zero)
+ *   v[30..31] reserved
  * Mirrored, deliberately by-value, in core_presence.cpp / core_breathing.cpp. */
 constexpr int IDX_DOPPLER_BASE   = 8;
 constexpr int IDX_DOPPLER_COUNT  = 4;
@@ -503,6 +506,59 @@ void apply_quiet_hours_from_nvs() {
   csi_event_set_quiet_window((uint16_t)qh_start, (uint16_t)qh_end, qh_en);
 }
 
+/* Household time zone (repo sweep F28). NVS "csi"/"tz" holds the POSIX rule;
+ * "tz.iana" the IANA name it was mapped from (for the dashboard to show), and
+ * is removed when a rule is typed directly. Applied with setenv + tzset only —
+ * configTzTime would also start SNTP, which this device deliberately lacks.
+ * A missing or invalid stored value sets nothing: TZ stays unset = UTC. */
+constexpr const char* NVS_KEY_TZ      = "tz";
+constexpr const char* NVS_KEY_TZ_IANA = "tz.iana";
+
+void apply_tz_rule(const char* rule) {
+  setenv("TZ", rule, 1);
+  tzset();
+}
+
+void apply_tz_from_nvs() {
+  Preferences tprefs;
+  if (!tprefs.begin(SETTINGS_NS, /*readOnly=*/true)) return;
+  char rule[tz_rule::MAX_POSIX_LEN + 1] = {0};
+  if (tprefs.isKey(NVS_KEY_TZ)) tprefs.getString(NVS_KEY_TZ, rule, sizeof(rule));
+  tprefs.end();
+  if (tz_rule::posix_valid(rule)) apply_tz_rule(rule);
+}
+
+/* Persist + apply. Returns the resolution; nothing is written unless OK. */
+tz_rule::Resolve store_tz(const char* posix, const char* iana) {
+  char rule[tz_rule::MAX_POSIX_LEN + 1] = {0};
+  const tz_rule::Resolve r = tz_rule::resolve(posix, iana, rule);
+  if (r != tz_rule::Resolve::OK) return r;
+  Preferences tprefs;
+  if (!tprefs.begin(SETTINGS_NS, /*readOnly=*/false)) return tz_rule::Resolve::BAD_RULE;
+  tprefs.putString(NVS_KEY_TZ, rule);
+  const bool typed = posix != nullptr && posix[0] != '\0';
+  if (!typed && iana != nullptr && strlen(iana) <= tz_rule::MAX_IANA_LEN) {
+    tprefs.putString(NVS_KEY_TZ_IANA, iana);
+  } else if (tprefs.isKey(NVS_KEY_TZ_IANA)) {
+    tprefs.remove(NVS_KEY_TZ_IANA);
+  }
+  tprefs.end();
+  apply_tz_rule(rule);
+  return tz_rule::Resolve::OK;
+}
+
+/* Forget the zone: both keys removed, TZ unset — UTC again, as before F28. */
+tz_rule::Resolve clear_tz() {
+  Preferences tprefs;
+  if (!tprefs.begin(SETTINGS_NS, /*readOnly=*/false)) return tz_rule::Resolve::BAD_RULE;
+  if (tprefs.isKey(NVS_KEY_TZ))      tprefs.remove(NVS_KEY_TZ);
+  if (tprefs.isKey(NVS_KEY_TZ_IANA)) tprefs.remove(NVS_KEY_TZ_IANA);
+  tprefs.end();
+  unsetenv("TZ");
+  tzset();
+  return tz_rule::Resolve::OK;
+}
+
 /* Restore the persisted privacy ceiling at boot. Without this every
  * reboot reverts to P0 and the user has to re-consent to P1/P2 every
  * power cycle, which made the Tuning Lab effectively unreachable.
@@ -552,17 +608,20 @@ void apply_filter_foreign_from_nvs() {
  * commit removes that workaround by persisting the allocator's next-
  * id to NVS and restoring at boot.
  *
- * Persist cadence: every CSI_ID_PERSIST_STRIDE allocations we write
- * "current next_id + STRIDE" to NVS. After a reboot we restore from
- * that persisted value, then continue from there. Worst case we skip
- * up to STRIDE ids (never reuse one), and NVS write traffic stays
- * bounded — at the per-module hourly ceiling (~6 events/hour) and
- * STRIDE=10 we churn ~14 NVS writes/day, well inside the cell wear
- * budget. ────────────────────────────────────────────────────────── */
+ * Persist cadence: common/csi/src/csi_event_id_floor.h, shared with the
+ * canary PIO tree and host-tested across modeled reboots.
+ * g_id_floor_stored is the value NVS holds; an allocation at or past it
+ * writes "id + STRIDE" before the id goes out, so NVS is always above
+ * every id handed out. After a reboot we restore from that value, and
+ * the boot's first allocation writes again. Worst case a reboot skips
+ * up to STRIDE ids (never reuses one): the scheme this replaced wrote
+ * only every STRIDE ids and reused the ids of any boot shorter than
+ * that. NVS write traffic stays bounded: one write per boot, plus ~14/day
+ * at the per-module hourly ceiling (~6 events/hour, STRIDE=10), well
+ * inside the cell wear budget. ────────────────────────────────────── */
 
 constexpr const char*    NVS_KEY_EVENT_ID = "ev.next";
-constexpr uint32_t       CSI_ID_PERSIST_STRIDE = 10;
-uint32_t                 g_id_persisted_at = 0;
+uint32_t                 g_id_floor_stored = 0;
 
 void apply_event_id_floor_from_nvs() {
   Preferences prefs;
@@ -571,18 +630,17 @@ void apply_event_id_floor_from_nvs() {
   prefs.end();
   if (persisted > 0) {
     csi_event_set_event_id_floor(persisted);
-    g_id_persisted_at = persisted;
+    g_id_floor_stored = persisted;
   }
 }
 
-void persist_event_id_floor(uint32_t next_id) {
+void persist_event_id_floor(uint32_t new_id) {
   Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return;
-  /* Persist next_id + STRIDE so a reboot between persists at most
-   * skips STRIDE ids forward but never rewinds into the live range. */
-  prefs.putULong(NVS_KEY_EVENT_ID, (unsigned long)(next_id + CSI_ID_PERSIST_STRIDE));
+  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return;  // retried next id
+  const uint32_t next_floor = csi_event_id_floor::floor_for(new_id);
+  const bool wrote = prefs.putULong(NVS_KEY_EVENT_ID, (unsigned long)next_floor) > 0;
   prefs.end();
-  g_id_persisted_at = next_id;
+  if (wrote) g_id_floor_stored = next_floor;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -1043,6 +1101,15 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
   const int32_t privacy_raw = prefs.getInt("cp.pc", (int32_t)CSI_PRIVACY_P0);
   /* Transmitter filter (default on). */
   const bool    filter_foreign = prefs.getBool(NVS_KEY_FILTER_FOREIGN, true);
+  /* Household time zone (F28): "" while unset (the device keeps UTC). Both
+   * values passed posix_valid / the IANA table on the way in, so they
+   * carry no quote or backslash and print into the JSON as-is. */
+  char tz[tz_rule::MAX_POSIX_LEN + 1] = {0};
+  char tz_iana[tz_rule::MAX_IANA_LEN + 1] = {0};
+  if (prefs.isKey(NVS_KEY_TZ))      prefs.getString(NVS_KEY_TZ, tz, sizeof(tz));
+  if (prefs.isKey(NVS_KEY_TZ_IANA)) prefs.getString(NVS_KEY_TZ_IANA, tz_iana, sizeof(tz_iana));
+  if (!tz_rule::posix_valid(tz)) tz[0] = '\0';
+  if (tz_rule::posix_for_iana(tz_iana) == nullptr) tz_iana[0] = '\0';
   prefs.end();
 
   /* Map preset index back to a stable string for the dashboard. The
@@ -1056,14 +1123,15 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
                           : (privacy_raw == (int32_t)CSI_PRIVACY_P1) ? "p1"
                           : "p0";
 
-  char buf[320];
+  char buf[448];
   snprintf(buf, sizeof(buf),
     "{\"pet_mode\":%s,\"preset\":\"%s\",\"sensitivity\":%ld,"
      "\"quiet_hours\":{\"enabled\":%s,\"start_min\":%ld,\"end_min\":%ld},"
-     "\"privacy_ceiling\":\"%s\",\"filter_foreign\":%s}",
+     "\"privacy_ceiling\":\"%s\",\"filter_foreign\":%s,"
+     "\"tz\":\"%s\",\"tz_iana\":\"%s\"}",
     pet_mode ? "true" : "false", preset_str, (long)sensitivity,
     qh_enabled ? "true" : "false", (long)qh_start, (long)qh_end,
-    privacy_str, filter_foreign ? "true" : "false");
+    privacy_str, filter_foreign ? "true" : "false", tz, tz_iana);
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, buf, -1);
   return ESP_OK;
@@ -1079,8 +1147,9 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
    * QUOTED key in every case so a body like {"not_pet_mode": true}
    * doesn't accidentally match. Buffer sized for the full payload:
    *   pet_mode + preset + sensitivity + quiet_hours{enabled, start, end}
-   * is ~130 chars; 256 leaves comfortable headroom for future keys. */
-  char body[256];
+   * is ~130 chars; 384 leaves room for the household time zone (F28:
+   * "tz" up to 47 chars, "tz_iana" up to 47) on top. */
+  char body[384];
   const int got = httpd_req_recv(req, body, sizeof(body) - 1);
   if (got <= 0) {
     httpd_resp_set_status(req, "400 Bad Request");
@@ -1090,6 +1159,39 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
   body[got] = '\0';
 
   bool wrote_anything = false;
+
+  /* "tz": a POSIX rule, or "tz_iana": an IANA zone the shared table maps
+   * (repo sweep F28); "tz":"" alone clears the zone (back to UTC). Handled
+   * FIRST and all-or-nothing: an unknown zone or an invalid rule is refused
+   * by name before any other key in the body is written, so a 400 never
+   * leaves half a settings change on disk. */
+  if (strstr(body, "\"tz\"") != nullptr || strstr(body, "\"tz_iana\"") != nullptr) {
+    char tz[tz_rule::MAX_POSIX_LEN + 1] = {0};
+    char tz_iana[tz_rule::MAX_IANA_LEN + 1] = {0};
+    const bool tz_key   = strstr(body, "\"tz\"") != nullptr;
+    const bool iana_key = strstr(body, "\"tz_iana\"") != nullptr;
+    if ((tz_key && !tz_rule::json_string_field(body, "\"tz\"", tz, sizeof(tz))) ||
+        (iana_key && !tz_rule::json_string_field(body, "\"tz_iana\"", tz_iana, sizeof(tz_iana)))) {
+      httpd_resp_set_status(req, "400 Bad Request");
+      httpd_resp_send(req, "{\"ok\":false,\"reason\":\"bad time zone\"}", -1);
+      return ESP_OK;
+    }
+    const tz_rule::Resolve r = (tz_key && tz[0] == '\0' && tz_iana[0] == '\0')
+                                   ? clear_tz()
+                                   : store_tz(tz, tz_iana);
+    if (r == tz_rule::Resolve::UNKNOWN_ZONE) {
+      httpd_resp_set_status(req, "400 Bad Request");
+      httpd_resp_send(req, "{\"ok\":false,\"reason\":\"unknown zone\"}", -1);
+      return ESP_OK;
+    }
+    if (r != tz_rule::Resolve::OK) {
+      httpd_resp_set_status(req, "400 Bad Request");
+      httpd_resp_send(req, "{\"ok\":false,\"reason\":\"bad time zone\"}", -1);
+      return ESP_OK;
+    }
+    wrote_anything = true;
+  }
+
   Preferences prefs;
   if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) {
     httpd_resp_set_status(req, "500 Internal Server Error");
@@ -2124,15 +2226,17 @@ constexpr uint32_t WATCHDOG_ESCALATE_AFTER = 3;
  * cannot receive its own transmissions; a solo Canary still needs the
  * home AP's beacons — the dashboard's signal-supply chip says so.)
  *
- * Airtime: at ESP-NOW's 1 Mbps long-preamble fallback rate one probe
- * frame is ~0.66 ms on air (csi_probe.h's honest airtime math), so the
- * 10 Hz idle broadcast costs ~0.66 % of the channel — real, not
- * negligible, and unicast fan-out to a filled peer table would cost
- * far more. Every send therefore reserves against the airtime
- * governor's 2 % routine cap first (Config::airtime_gate below): the
- * probe shares one budget with mesh heartbeats/gossip and chirp
- * presence, and a saturated window skips probe slots instead of
- * degrading the user's WiFi.
+ * Airtime: by the governor's estimate at ESP-NOW's 1 Mbps long-preamble
+ * fallback rate, one framed probe frame (16 B payload + ~59 B framing) is
+ * 792 us (192 us + 8 us a byte; csi_probe.h's hand math says ~0.66 ms), so
+ * the 10 Hz idle broadcast is ~0.8 % of the window — real, not
+ * negligible, and unicast fan-out to a filled peer table would ask for
+ * far more. Every send therefore reserves against the airtime governor's
+ * 2 % routine cap first (Config::airtime_gate below, probe_airtime.h): the
+ * probe shares one budget with mesh heartbeats/gossip and chirp presence,
+ * it starts no frame once the window reads 1.60 % so those keep their
+ * room, and a saturated window skips probe slots instead of degrading the
+ * user's WiFi.
  *
  * The probe shares ESP-NOW with the mesh when FEATURE_MESH_NETWORK is on
  * (csi_probe::init is idempotent against a prior esp_now_init) and brings
@@ -2154,17 +2258,12 @@ void probe_pump() {
     csi_probe::Config pc = csi_probe::Config::defaults();
     pc.broadcast_when_no_peers = true;
     pc.idle_rate_hz            = CSI_PROBE_BROADCAST_HZ;
-    /* Probe frames are routine traffic — they reserve against the same
-     * 2 % cap as mesh heartbeats and chirp presence, never force. The
-     * hook receives the ESP-NOW payload length; add the MAC/action-frame
-     * framing (~59 B — csi_probe.h's honest airtime math) so the tiny
-     * probe payloads aren't undercounted the way pure-payload accounting
-     * would. */
-    pc.airtime_gate = [](uint32_t now, size_t payload_bytes) {
-      constexpr size_t ESPNOW_FRAME_OVERHEAD_BYTES = 59;
-      return airtime_governor::try_reserve_routine(
-          now, payload_bytes + ESPNOW_FRAME_OVERHEAD_BYTES);
-    };
+    /* Probe frames are routine traffic, never forced: framed cost, the
+     * 1.60 % ceiling and the mesh-less governor bring-up are all in
+     * probe_airtime.h (host-tested by test_csi_probe_airtime, which also
+     * pins these two lines). */
+    probe_airtime::ensure_governor();
+    pc.airtime_gate = probe_airtime::reserve_probe_frame;
     if (!csi_probe::init(pc)) return;   /* ESP-NOW not ready — retry */
     csi_probe::start();
     /* Transmitter filter: frames from registered peer Canaries are the
@@ -2179,6 +2278,11 @@ void probe_pump() {
     Serial.printf("[CSI] active probe up — %u Hz ESP-NOW broadcast "
                   "(peer Canaries sense off these frames)\n",
                   (unsigned)CSI_PROBE_BROADCAST_HZ);
+    /* airtime_governor.cpp cannot log (host-compiled); its callers do. */
+    if (!airtime_governor::ring_ok()) {
+      Serial.printf("[CSI] airtime ring alloc failed — probe sends are "
+                    "not governed\n");
+    }
   } else if (csi_hal::is_running()) {
     /* Only spend TX airtime while local sensing runs — if csi_hal is
      * stopped (power policy, watchdog restart window) the radio budget
@@ -2754,19 +2858,18 @@ extern "C" void csi_event_on_committed(uint32_t                  event_id,
 /* ──────────────────────────────────────────────────────────────────────────
  * STRONG OVERRIDE — csi_event_on_id_advance
  *
- * Fires on every event-id allocation. We throttle-persist the next-id
- * to NVS every CSI_ID_PERSIST_STRIDE advances so a subsequent boot can
- * resume from "persisted + safety_margin" via apply_event_id_floor_from_nvs.
+ * Fires on every event-id allocation. We throttle-persist the floor to
+ * NVS (csi_event_id_floor.h's STRIDE) so a subsequent boot can resume
+ * from "persisted + safety_margin" via apply_event_id_floor_from_nvs.
  * Without this, a reboot resets g_next_event_id to 1 and csi_mqtt's
  * reconnect-backfill watermark loses the ability to disambiguate
  * previous-boot vs current-boot events. ──────────────────────────── */
 
 extern "C" void csi_event_on_id_advance(uint32_t new_id) {
-  /* Cheap modulo gate so we don't hit NVS on every event. STRIDE=10
-   * means worst-case loss is 10 ids on a hard reset; NVS writes stay
-   * around ~14/day at the per-module hourly ceiling, well inside the
-   * cell wear budget. */
-  if (new_id < g_id_persisted_at + CSI_ID_PERSIST_STRIDE) return;
+  /* Cheap gate so we don't hit NVS on every event: one write per boot
+   * plus one per STRIDE ids (csi_event_id_floor.h). Worst-case loss is
+   * STRIDE ids on a hard reset, and none is ever reused. */
+  if (!csi_event_id_floor::must_persist(g_id_floor_stored, new_id)) return;
   persist_event_id_floor(new_id);
 }
 
@@ -2778,6 +2881,14 @@ namespace csi_integration {
 
 void set_legacy_features_hook(legacy_features_hook_t hook) {
   g_legacy_hook = hook;
+}
+
+void apply_timezone_from_nvs() {
+  apply_tz_from_nvs();
+}
+
+tz_rule::Resolve set_timezone(const char* posix, const char* iana) {
+  return store_tz(posix, iana);
 }
 
 unsigned int sse_client_count() {

@@ -161,13 +161,18 @@ Alerts tab (`ios/Sources/SecuraCV/Views/Components/TimelineScrubView.swift`),
 colored by the app's existing `Severity` → `Theme.Role` vocabulary rather
 than a second color language, and scrubbing the list beneath it.
 
-`ios/Shared/TimelineScrub.swift` deliberately carries **no**
-`SecuraCV-Parity` marker: the tvOS Wall has no time-bearing event data to
-draw — sealed entries carry only coarse buckets, and while the kernel now
-serves `/api/sealed-log` (token-gated), the TV holds no token yet — so
-shipping it there would mean inventing a clock the record does not have.
-When that data reaches the TV, the marker plus a
-`tvos/WitnessWall/project.yml` entry is the whole port.
+`ios/Shared/TimelineScrub.swift` also ships on the tvOS Witness Wall (it
+carries the `SecuraCV-Parity` marker, with `EventVocabulary.swift` and
+`AlertRecord.swift`, its only non-Foundation dependencies). Sealed entries
+do carry time — every payload the kernel's `/api/sealed-log` serves embeds
+its coarse `time_bucket`, the same bytes this viewer's timeline reads from
+the envelope — and the Wall folds them with
+`TimelineScrub.records(fromSealedPayloads:)`, the Swift twin of
+`normalizeEnvelope`, pinned to it by the fixture's `normalization` section.
+The Wall draws that day ribbon only from a chain it walked and verified
+against the key pinned when it was paired (a viewer-token receipt); an
+unpinned or failed walk draws none. Its remote moves a cursor through
+buckets and prints each as a range in the TV's clock, never an instant.
 
 ### Surface B (P2): live viewer on the hub — feed the same UI from `witness_api`
 

@@ -134,8 +134,8 @@ REFS = {
     ("canary_vision_enclosure.scad", "cam_w"): 'brd_w("ov5647")',
     ("canary_vision_enclosure.scad", "cam_h"): 'brd_l("ov5647")',
     ("canary_vision_enclosure.scad", "pcb_t"): 'brd_t("grove_v2")',
-    ("canary_sense_enclosure.scad", "vm_l"): 'brd_l("mr60")',
-    ("canary_sense_enclosure.scad", "vm_w"): 'brd_w("mr60")',
+    ("canary_sense_enclosure.scad", "radar_l"): 'brd_l("mr60")',
+    ("canary_sense_enclosure.scad", "radar_w"): 'brd_w("mr60")',
     ("canary_sense_enclosure.scad", "xiao_l"): 'brd_l("xiao")',
     ("canary_sense_enclosure.scad", "xiao_w"): 'brd_w("xiao")',
     ("canary_sense_enclosure.scad", "stack_sock_h"): "brd_stack_sock_measured()",
@@ -175,10 +175,10 @@ REFS = {
 NUMBERS = {
     "canary_wap_enclosure.scad": ["board_h", "board_clear", "stack_camera", "stack_plain"],
     "canary_vision_enclosure.scad": ["xiao_below", "vm_front_h", "board_clear", "stack_h"],
-    "canary_sense_enclosure.scad": ["xiao_below", "vm_front_h", "ant_h", "pcb_t", "board_clear",
+    "canary_sense_enclosure.scad": ["xiao_below", "radar_front_h", "ant_h", "pcb_t", "board_clear",
                                     "xiao_usb_z"],
     # measured stack numbers with no registry home
-    "canary_watch_station.scad": ["disc_t", "disp_back", "xiao_t"],
+    "canary_watch_station.scad": ["disc_t", "disp_back", "xiao_t", "tilt"],
     # the 4.3 panel has no registry row: MEASURE placeholders, owned as the
     # numbers they are today — documented, not blessed
     "canary_dash_display.scad": ["panel_l", "panel_w", "glass_t", "stack_t"],
@@ -356,25 +356,45 @@ class CommittedTreeIsAFixedPoint(unittest.TestCase):
     def test_cli_check_exit_code(self):
         with redirect_stdout(io.StringIO()) as out:
             self.assertEqual(gcp.main(["--check"]), 0)
-        # 54 + the C6's trio + the 1.69's two offsets + the doorbell's eleven;
-        # 8 files + the C6 + the doorbell; 29 references + 3 + 8
-        self.assertIn("70 manifest-owned knobs across 10 case file(s)", out.getvalue())
+        # 54 + the C6's trio + the 1.69's two offsets + the doorbell's eleven
+        # + the Watch's stand recline; 8 files + the C6 + the doorbell;
+        # 29 references + 3 + 8
+        self.assertIn("71 manifest-owned knobs across 10 case file(s)", out.getvalue())
         self.assertIn("(40 of them resolved from canary_board_lib.scad)", out.getvalue())
 
     def test_the_printed_order_names_the_carry_and_its_check(self):
-        # REGEN_ORDER is what a write and a failed --check print. Step 9 must
+        # REGEN_ORDER is what a write and a failed --check print. Step 10 must
         # say the carry has a check form (`--site <checkout> --check` names a
         # stale carry, writing nothing), or the operator carries to find out.
         order = gcp.REGEN_ORDER
         self.assertIn("python3 scripts/regen_cad.py --previews <dir> [--site <website checkout>]",
                       order)
-        self.assertIn("9. python3 docs/hardware/enclosure/gen_builder_manifest.py "
+        self.assertIn("10. python3 docs/hardware/enclosure/gen_builder_manifest.py "
                       "[--site <website checkout>]", order)
         self.assertIn("--site <website checkout> --check names a stale carry", order)
         lines = order.splitlines()
-        nine = next(i for i, ln in enumerate(lines) if ln.lstrip().startswith("9. "))
-        self.assertIn("--check names a stale carry", lines[nine + 1])
-        self.assertTrue(lines[nine + 2].lstrip().startswith("10. "))
+        ten = next(i for i, ln in enumerate(lines) if ln.lstrip().startswith("10. "))
+        self.assertIn("--check names a stale carry", lines[ten + 1])
+        self.assertEqual(len(lines), ten + 2, "the carry and its check close the order")
+
+    def test_the_printed_order_is_regen_cads_order(self):
+        # The prose order and the runnable one cannot disagree: every generator
+        # REGEN_ORDER names appears in scripts/regen_cad.py's STEPS in the same
+        # relative order — gen_enclosures.py BEFORE gen_figures.mjs, which reads
+        # the catalog.json it writes.
+        spec = importlib.util.spec_from_file_location("regen_cad", REPO / "scripts" / "regen_cad.py")
+        rc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rc)  # type: ignore[union-attr]
+        script_of = {}
+        for s in rc.STEPS:
+            for a in s.cmd:
+                if a.endswith((".py", ".mjs", ".sh")):
+                    script_of[Path(a).name] = s.name
+        named = [script_of[m] for m in re.findall(r"([A-Za-z0-9_]+\.(?:py|mjs)|render\.sh|setup\.sh)",
+                                                  gcp.REGEN_ORDER)
+                 if m in script_of and m != "regen_cad.py"]
+        self.assertEqual(named, [n for n in rc.STEP_NAMES if n in named])
+        self.assertLess(named.index("gen_enclosures"), named.index("gen_figures"))
 
 
 class BoardRegistry(unittest.TestCase):
@@ -690,7 +710,7 @@ class DisplayCasesJoinTheSameChain(unittest.TestCase):
             lib_after = edit_lib(root, WS147_ROW, WS147_ROW.replace("36.37", "36.4"))
             errors = gcp.check(root / "devices", root)
             self.assertEqual(sorted(e.split(" ", 1)[0] for e in errors),
-                             ["canary_c3_lcd147.scad:249:", "canary_c6_display.scad:89:",
+                             ["canary_c3_lcd147.scad:249:", "canary_c6_display.scad:90:",
                               "canary_s3_lcd147.scad:106:"], errors)
             for e in errors:
                 self.assertIn('references brd_l("ws147") (canary_board_lib.scad:53, drawing rung): '
@@ -700,7 +720,7 @@ class DisplayCasesJoinTheSameChain(unittest.TestCase):
             self.assertEqual(sorted((p.name, c.line, c.name, c.old_token, c.new_token)
                                     for p, c in written),
                              [("canary_c3_lcd147.scad", 249, "board_l", "36.37", "36.4"),
-                              ("canary_c6_display.scad", 89, "board_l", "36.37", "36.4"),
+                              ("canary_c6_display.scad", 90, "board_l", "36.37", "36.4"),
                               ("canary_s3_lcd147.scad", 106, "board_l", "36.37", "36.4")])
             self.assertEqual(gcp.check(root / "devices", root), [])
             self.assertEqual(moved_lines("canary_c3_lcd147.scad", root), [249])
@@ -709,7 +729,7 @@ class DisplayCasesJoinTheSameChain(unittest.TestCase):
             # no manifest could own, so a registry correction never reached it;
             # its board_l is the 1.47 literal now and the manifest names the
             # row, so the correction lands on line 89 — one token, nothing else
-            self.assertEqual(moved_lines(C6, root), [89])
+            self.assertEqual(moved_lines(C6, root), [90])
             for name in ("canary_s3_touch169.scad", "canary_watch_station.scad",
                          "canary_dash_display.scad", *RELEASED):
                 self.assertEqual(moved_lines(name, root), [], name)
@@ -759,7 +779,7 @@ class DisplayCasesJoinTheSameChain(unittest.TestCase):
                             ("lcm_w", 19.39)):
             self.assertEqual((params[knob]["type"], params[knob]["default"]), ("number", value), knob)
             self.assertNotIn("options", params[knob])
-        self.assertEqual(params["board_l"]["line"], 89)
+        self.assertEqual(params["board_l"]["line"], 90)
         # the 7" frame reads its panel record from canary_panel_lib.scad
         r = gcp.render(ENC / "canary_s3_lcd7.scad", {"panel_variant": "lcd7", "PANEL": 1})
         self.assertEqual(r.changes, [])

@@ -30,7 +30,7 @@
       "pinout": [
         { "label": "Chirp / buzzer", "pin": "D1", "gpio": "GPIO2", "use": "Passive piezo (LEDC PWM 2 kHz)", "anchor": [-3.34, 0.4, 1.76] },
         { "label": "Status RGB LED", "pin": "D2", "gpio": "GPIO3", "status": "planned", "use": "External WS2812 — pin defined but not driven by canary-wap firmware yet; the live indicator is the onboard LED (GPIO21).", "anchor": [-0.8, 0.4, 1.76] },
-        { "label": "Tamper", "pin": "D3", "gpio": "GPIO4", "status": "planned", "use": "Reed / hall switch (INPUT_PULLUP, active-low) — FEATURE_TAMPER_GPIO defined but not yet consumed by canary-wap firmware.", "anchor": [1.74, 0.4, 1.76] },
+        { "label": "Tamper", "pin": "D3", "gpio": "GPIO4", "status": "planned", "use": "Reed / hall switch (INPUT_PULLUP, active-low = enclosure open) — read by firmware built with FEATURE_TAMPER_GPIO=1, which no shipped build sets until the pin is bench-validated.", "anchor": [1.74, 0.4, 1.76] },
         { "label": "VBAT sense", "pin": "A0", "gpio": "GPIO1", "use": "2:1 divider, VBAT_DIVIDER_RATIO=2.0", "anchor": [-5.88, 0.4, 1.76] },
         { "label": "GNSS UART", "pin": "D6 / D7", "gpio": "GPIO43 / GPIO44", "use": "L76K TX/RX @ 9600 (FEATURE_GNSS)", "anchors": [[9.36, 0.4, 1.76], [9.36, 0.4, -13.98]] },
         { "label": "Battery", "pin": "BAT+ / BAT-", "gpio": "—", "use": "JST-PH LiPo, charged by the onboard charger", "anchors": [[2.12, -0.3, -10.56], [4.03, -0.3, -10.56]] },

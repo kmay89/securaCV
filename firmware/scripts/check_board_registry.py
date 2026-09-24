@@ -22,6 +22,15 @@ Checks:
   7. Every boards/<id>/pins include path referenced from
      firmware/envs/platformio/*.ini points at a registered board.
   8. firmware/boards/README.md mentions every registered board id.
+  9. The enclosure tamper contact's pin is the board map's. Neither firmware
+     tree includes a pins.h, so both restate TAMPER_PIN_DEFAULT /
+     TAMPER_ACTIVE (firmware/canary/include/canary_config.h and the
+     canary-wap sketch's build_config.h — the xiao-esp32s3-sense map), and
+     every canary board-port env built for another board passes that
+     board's pin (-DTAMPER_PIN_DEFAULT=N) or, when its map has no tamper
+     input, -DHAS_TAMPER_INPUT=0 so canary_config.h refuses the flag. The
+     env -> board join is the device manifests' (devices/<slug>/device.json
+     board.board_id / board.envs).
 
 Run from the repo root (CI) or anywhere inside the repo:
     python3 firmware/scripts/check_board_registry.py
@@ -171,6 +180,89 @@ def check_readme_mentions(registry_ids):
                 "keep the board index in sync with boards.json")
 
 
+# The canary PIO project and the default board its two restatements follow.
+CANARY_INI = REPO_ROOT / "firmware" / "canary" / "platformio.ini"
+DEVICES_DIR = REPO_ROOT / "devices"
+TAMPER_DEFAULT_BOARD = "xiao-esp32s3-sense"
+TAMPER_RESTATEMENTS = (
+    "firmware/canary/include/canary_config.h",
+    "firmware/projects/canary-wap/arduino/canary_wap/build_config.h",
+)
+
+
+def _define(text: str, name: str):
+    m = re.search(r"^\s*#\s*define\s+" + name + r"\s+(\S+)", strip_comments(text), re.M)
+    return m.group(1) if m else None
+
+
+def _ini_env_sections(text: str) -> dict:
+    out, cur, buf = {}, None, []
+    for line in text.splitlines():
+        m = re.match(r"^\[env:([^\]]+)\]\s*$", line)
+        if m or re.match(r"^\[[^\]]+\]\s*$", line):
+            if cur is not None:
+                out[cur] = "\n".join(buf)
+            cur, buf = (m.group(1) if m else None), []
+        elif cur is not None:
+            buf.append(line.split(";", 1)[0])
+    if cur is not None:
+        out[cur] = "\n".join(buf)
+    return out
+
+
+def check_tamper_pin_canon():
+    maps = {}
+    for board in {TAMPER_DEFAULT_BOARD} | {p.parent.parent.name for p in BOARDS_DIR.glob("*/pins/pins.h")}:
+        pins = BOARDS_DIR / board / "pins" / "pins.h"
+        if pins.is_file():
+            t = pins.read_text()
+            maps[board] = (_define(t, "HAS_TAMPER_INPUT"), _define(t, "TAMPER_PIN_DEFAULT"),
+                           _define(t, "TAMPER_ACTIVE"))
+    want = maps.get(TAMPER_DEFAULT_BOARD)
+    if not want or not want[1] or not want[2]:
+        err(f"{TAMPER_DEFAULT_BOARD}/pins/pins.h no longer defines TAMPER_PIN_DEFAULT / "
+            "TAMPER_ACTIVE — the firmware trees' tamper contact restates them; "
+            "update check 9 if the canon moved")
+        return
+    for rel in TAMPER_RESTATEMENTS:
+        path = REPO_ROOT / rel
+        if not path.is_file():
+            err(f"{rel} is gone — check 9 cannot prove the tamper pin it restates")
+            continue
+        t = path.read_text()
+        got = (_define(t, "TAMPER_PIN_DEFAULT"), _define(t, "TAMPER_ACTIVE"))
+        if got != (want[1], want[2]):
+            err(f"{rel} restates the tamper contact as pin {got[0]} / active {got[1]}, "
+                f"but the {TAMPER_DEFAULT_BOARD} board map says {want[1]} / {want[2]}")
+    # Board-port envs of the canary tree: each must carry its own map's pin.
+    envs = _ini_env_sections(CANARY_INI.read_text()) if CANARY_INI.is_file() else {}
+    if not envs:
+        err("firmware/canary/platformio.ini has no [env:*] sections — check 9 found nothing to prove")
+        return
+    for manifest in sorted(DEVICES_DIR.glob("*/device.json")):
+        try:
+            board = json.loads(manifest.read_text()).get("board", {})
+        except (OSError, json.JSONDecodeError):
+            continue
+        bid, benvs = board.get("board_id"), board.get("envs") or []
+        if bid == TAMPER_DEFAULT_BOARD or not benvs or not all(e in envs for e in benvs):
+            continue  # not a canary board port (or the default board itself)
+        has, pin, active = maps.get(bid, (None, None, None))
+        for env in benvs:
+            flags = dict(re.findall(r"-D(TAMPER_PIN_DEFAULT|TAMPER_ACTIVE|HAS_TAMPER_INPUT)=(\S+)", envs[env]))
+            where = f"firmware/canary/platformio.ini [env:{env}] ({bid})"
+            if has == "0":
+                if flags.get("HAS_TAMPER_INPUT") != "0":
+                    err(f"{where}: the board map has no tamper input, so the env must pass "
+                        "-DHAS_TAMPER_INPUT=0 (canary_config.h then refuses FEATURE_TAMPER_GPIO)")
+            elif pin is not None:
+                if flags.get("TAMPER_PIN_DEFAULT", want[1]) != pin:
+                    err(f"{where}: tamper contact pin {flags.get('TAMPER_PIN_DEFAULT', want[1])} "
+                        f"!= the board map's TAMPER_PIN_DEFAULT {pin} — pass -DTAMPER_PIN_DEFAULT={pin}")
+                if active and flags.get("TAMPER_ACTIVE", want[2]) != active:
+                    err(f"{where}: tamper contact polarity != the board map's TAMPER_ACTIVE {active}")
+
+
 def main() -> int:
     try:
         entries = json.loads(REGISTRY.read_text())
@@ -190,6 +282,7 @@ def main() -> int:
     check_flavor_refs(entries)
     check_env_refs(registry_ids)
     check_readme_mentions(registry_ids)
+    check_tamper_pin_canon()
 
     if errors:
         for e in errors:

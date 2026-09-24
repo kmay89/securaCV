@@ -24,7 +24,9 @@
  *            holds ≥ BREATH_MIN_WINDOWS samples.
  *   [20..23] RSSI stats over window: mean, std, max, min
  *   [24..27] Frame-rate health: frames, dropped_estimate, channel, bw_code
- *   [28..31] Reserved for v2.1 (C6 sounding), v2.2 (phase unwrap)
+ *   [28]     Wander, [29] jitter (csi_wander_jitter.h) — written only with
+ *            -DCSI_WANDER_JITTER=1 (default 0; zero otherwise)
+ *   [30..31] Reserved (v2.1 C6 sounding, v2.2 phase unwrap)
  */
 
 #ifndef SECURACV_CSI_FEATURES_H
@@ -98,6 +100,10 @@ uint32_t window_period_ms();  /* mean close-to-close interval (ms); 0 until two 
 
 /* Lightweight introspection — used by csi_hal conformance. */
 uint32_t current_frame_count();
+
+/* True in a build compiled with -DCSI_WANDER_JITTER=1 (v[28..29] carry
+ * wander / jitter); false in every shipped build. */
+bool wander_jitter_enabled();
 
 }  /* namespace csi_features */
 

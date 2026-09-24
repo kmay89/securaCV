@@ -117,11 +117,116 @@ struct WapStatus: Codable, Sendable {
     }
 }
 
+/// `GET /api/vault/status` — the sealed-snapshot side of a canary-wap
+/// (canary_wap.ino handle_vault_status). Tolerant like every wire struct
+/// here; only the fields the Unseal screen reads. `keyID` is the 16-hex id
+/// of the public key the Canary holds — compare it to
+/// `VaultKeyStore.keyIDHex` to know whether THIS phone's key is the one
+/// registered (an empty or absent id with `hasKey == false` is "none").
+struct VaultStatus: Codable, Sendable, Equatable {
+    var ok: Bool?
+    var hasKey: Bool?
+    var keyID: String?
+    var sealing: Bool?
+    var sdOK: Bool?
+    var cameraOK: Bool?
+    var keepFiles: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, sealing
+        case hasKey = "has_key"
+        case keyID = "key_id"
+        case sdOK = "sd_ok"
+        case cameraOK = "camera_ok"
+        case keepFiles = "keep_files"
+    }
+}
+
+/// One row of `GET /api/vault/list`'s `items`: the ring filename (which is
+/// also the download/delete handle), the trigger tag, the ten-minute time
+/// bucket (the ONLY time information a sealed file has — Invariant III)
+/// and the file size. `name` is validated by `VaultFilename` before it is
+/// ever put in a URL; a row whose name fails the grammar is dropped.
+struct VaultItem: Codable, Sendable, Equatable, Identifiable, Hashable {
+    var name: String
+    var trigger: String?
+    var timeBucket: Int?
+    var size: Int?
+
+    var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name, trigger, size
+        case timeBucket = "time_bucket"
+    }
+
+    /// The trigger as the format knows it — from the tag, or, when the tag
+    /// is missing or unknown, from the filename the firmware built.
+    var svltTrigger: SvltTrigger? {
+        trigger.flatMap(SvltTrigger.init(tag:)) ?? VaultFilename.parse(name)?.trigger
+    }
+
+    /// The row's time, as coarse as the file: the ten-minute window, or an
+    /// honest "time unknown" — the firmware answers 255 for a file whose
+    /// header it could not read, and no clamp may turn that into a time.
+    var bucketLabel: String {
+        timeBucket.flatMap(SvltHeader.bucketRange) ?? "time unknown"
+    }
+}
+
+/// The `{"ok": …, "sd_ok": …, "items": […]}` envelope of `/api/vault/list`.
+struct VaultList: Codable, Sendable, Equatable {
+    var ok: Bool?
+    var sdOK: Bool?
+    var items: [VaultItem] = []
+
+    enum CodingKeys: String, CodingKey {
+        case ok, items
+        case sdOK = "sd_ok"
+    }
+
+    init(ok: Bool? = nil, sdOK: Bool? = nil, items: [VaultItem] = []) {
+        self.ok = ok
+        self.sdOK = sdOK
+        self.items = items
+    }
+
+    /// Row by row: one malformed row costs that row, never the list (a
+    /// plain `[VaultItem]` decode throws for the whole array on one bad
+    /// element). A row whose name fails the grammar is dropped here, so
+    /// nothing downstream ever holds a name it could not request.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try? c.decode(Bool.self, forKey: .ok)
+        sdOK = try? c.decode(Bool.self, forKey: .sdOK)
+        items = ((try? c.decode([LossyRow].self, forKey: .items)) ?? [])
+            .compactMap(\.item)
+            .filter { VaultFilename.isValid($0.name) }
+    }
+
+    private struct LossyRow: Decodable {
+        let item: VaultItem?
+        init(from decoder: Decoder) throws { item = try? VaultItem(from: decoder) }
+    }
+}
+
 enum DeviceError: Error, LocalizedError {
     case notPrivateAddress
     case http(Int, String)
     case badReceipt
     case notPairable
+    /// A sealed-file name that is not `seal_<8 digits>_<tag>.svlt`. Refused
+    /// here, before it becomes a URL — the same gate the firmware applies.
+    case badVaultFilename(String)
+    /// The Canary answered 404 to `/api/vault/*`: it runs firmware with no
+    /// sealed-snapshot support (the display family and the Vision serve
+    /// none). Not an error to alarm about — an honest "not here".
+    case noSealedSnapshots
+    /// A 404 for one named file on a Canary whose snapshot routes answer:
+    /// the file left its ring (the newest 20 are kept) or was deleted.
+    case sealedSnapshotGone(String)
+    /// A public key that is not 64 hex characters — never sent.
+    case badPublicKeyHex
     /// An https Canary presented a certificate whose SHA-256 is not the one
     /// its pairing receipt named. The connection was cut before any request.
     case certificateMismatch
@@ -144,6 +249,15 @@ enum DeviceError: Error, LocalizedError {
             return "This Canary uses a secure (https) connection, but its pairing receipt "
                 + "carried no certificate fingerprint, so the connection can't be checked and "
                 + "was refused. Update the Canary's firmware and pair it again from its setup page."
+        case .badVaultFilename(let name):
+            return "\"\(name)\" isn't a sealed-snapshot filename, so it wasn't requested."
+        case .noSealedSnapshots:
+            return "This Canary has no sealed snapshots — its firmware doesn't seal frames."
+        case .sealedSnapshotGone(let name):
+            return "\(name) is no longer on the Canary — it keeps only its newest sealed "
+                + "snapshots, and this one was rotated out or deleted."
+        case .badPublicKeyHex:
+            return "The key to register isn't a 64-hex public key, so it wasn't sent."
         }
     }
 }
@@ -354,6 +468,105 @@ actor DeviceAPI {
         return Data(der.suffix(32))
     }
 
+    // MARK: - the sealed-snapshot surface (/api/vault/*, canary-wap only)
+    //
+    // Auth-gated like the Wi-Fi routes (Bearer). The Canary holds only the
+    // operator's PUBLIC key and serves back files it cannot open itself; the
+    // private key never travels (VaultKeyStore, SnapshotSealer). A 404 on a
+    // route is "this firmware has no sealed snapshots" — the display family
+    // and the Vision serve none — surfaced as `.noSealedSnapshots`; a 404 on a
+    // NAMED file (download, delete) is that file being gone, which the
+    // firmware answers the same way (canary_wap.ino handle_vault_download),
+    // so those two say `.sealedSnapshotGone` instead of blaming the firmware.
+
+    /// `GET /api/vault/status`.
+    func vaultStatus() async throws -> VaultStatus {
+        try await noVaultOn404 { try await self.get("/api/vault/status") }
+    }
+
+    /// `GET /api/vault/list` — every sealed file the Canary's ring holds,
+    /// names already checked against the filename grammar.
+    func vaultList() async throws -> VaultList {
+        try await noVaultOn404 { try await self.get("/api/vault/list") }
+    }
+
+    /// `GET /api/vault/download?name=` — the sealed bytes, exactly as the
+    /// SD card holds them (header ‖ ciphertext ‖ tag). The name must pass
+    /// `VaultFilename` BEFORE it becomes a query item; anything else is
+    /// refused here with `.badVaultFilename`, never sent.
+    func vaultDownload(name: String) async throws -> Data {
+        guard VaultFilename.isValid(name) else { throw DeviceError.badVaultFilename(name) }
+        return try await goneOn404(name) {
+            try await self.getRaw("/api/vault/download",
+                                  query: [URLQueryItem(name: "name", value: name)])
+        }
+    }
+
+    /// `POST /api/vault/key` with `{"pubkey": <64 hex>}` — hand the Canary
+    /// the PUBLIC half of this phone's key. Answers the 16-hex key id the
+    /// device now holds (it should equal `VaultKeyStore.keyIDHex`).
+    /// `{"ok": false, "error": …}` on a 200 is the firmware's refusal
+    /// (the same shape as `/api/wifi/connect`) and is thrown as such.
+    func vaultRegisterKey(hex: String) async throws -> String {
+        let body = try Self.vaultKeyBody(hex: hex)
+        let data = try await noVaultOn404 { try await self.postRaw("/api/vault/key", body: body) }
+        struct Reply: Codable {
+            var ok: Bool?
+            var error: String?
+            var keyID: String?
+            enum CodingKeys: String, CodingKey { case ok, error; case keyID = "key_id" }
+        }
+        let reply = try? Self.decoder.decode(Reply.self, from: data)
+        if reply?.ok == false {
+            throw DeviceError.http(200, reply?.error ?? "The Canary refused the key.")
+        }
+        return reply?.keyID ?? ""
+    }
+
+    /// The request body `/api/vault/key` reads. Static + pure so the tests
+    /// can pin its shape; the hex is normalized (lowercase, 64 hex) and
+    /// anything else is refused without a request.
+    static func vaultKeyBody(hex: String) throws -> Data {
+        let cleaned = hex.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        // ASCII only: `isHexDigit` alone also accepts the fullwidth forms,
+        // which the firmware's parser would refuse after the round trip.
+        guard cleaned.count == 64, cleaned.allSatisfy({ $0.isASCII && $0.isHexDigit }) else {
+            throw DeviceError.badPublicKeyHex
+        }
+        return try JSONEncoder().encode(["pubkey": cleaned])
+    }
+
+    /// `DELETE /api/vault/key` — the Canary forgets the public key AND turns
+    /// every sealing trigger off (it cannot seal to nobody).
+    func vaultDeleteKey() async throws {
+        _ = try await noVaultOn404 { try await self.deleteRaw("/api/vault/key", query: nil) }
+    }
+
+    /// `DELETE /api/vault/item?name=` — same filename gate as download.
+    func vaultDelete(name: String) async throws {
+        guard VaultFilename.isValid(name) else { throw DeviceError.badVaultFilename(name) }
+        _ = try await goneOn404(name) {
+            try await self.deleteRaw("/api/vault/item",
+                                     query: [URLQueryItem(name: "name", value: name)])
+        }
+    }
+
+    private func noVaultOn404<T>(_ op: () async throws -> T) async throws -> T {
+        do {
+            return try await op()
+        } catch DeviceError.http(404, _) {
+            throw DeviceError.noSealedSnapshots
+        }
+    }
+
+    private func goneOn404<T>(_ name: String, _ op: () async throws -> T) async throws -> T {
+        do {
+            return try await op()
+        } catch DeviceError.http(404, _) {
+            throw DeviceError.sealedSnapshotGone(name)
+        }
+    }
+
     // MARK: - plumbing
 
     private func get<T: Decodable>(_ path: String, query: [URLQueryItem]? = nil) async throws -> T {
@@ -389,6 +602,13 @@ actor DeviceAPI {
         req.httpBody = body
         authorize(&req)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        return try await send(req)
+    }
+
+    private func deleteRaw(_ path: String, query: [URLQueryItem]?) async throws -> Data {
+        var req = URLRequest(url: url(for: path, query: query))
+        req.httpMethod = "DELETE"
+        authorize(&req)
         return try await send(req)
     }
 

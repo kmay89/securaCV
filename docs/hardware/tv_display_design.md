@@ -206,8 +206,9 @@ plainly rather than hiding:
   host-tested table (`include/canary/net/settings_policy.h`,
   `tests_host/test_settings_policy.cpp`) that the handler enforces and
   `/api/settings` serves under `on_glass` so a client never draws a switch
-  that would 403; the mirror page renders those as read-only rows pointing at
-  the glass. The block carries the on/off state for every caller, and the two
+  that would 403; the mirror page — and the iPhone app's Display settings
+  sheet — render those as read-only rows pointing at the glass. The block
+  carries the on/off state for every caller, and the two
   location-derived facts (whether a grid point is stored, the fetcher's
   verdict) only on requests that are not cross-site — the same rule
   `/api/fleet` applies to presence. No route serves the stored grid point.

@@ -21,9 +21,12 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { readFileSync, readdirSync } = require("node:fs");
+const { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } = require("node:fs");
+const { tmpdir } = require("node:os");
+const { spawnSync } = require("node:child_process");
 const { join } = require("node:path");
 const { pathToFileURL } = require("node:url");
+const vm = require("node:vm");
 
 const ROOT = join(__dirname, "..", "..");     // repo root
 const CANARY = join(__dirname, "..");         // canary-local/
@@ -31,6 +34,17 @@ const read = (p) => readFileSync(p, "utf8");
 
 const catalog = JSON.parse(read(join(CANARY, "devices/flash.json")));
 const libRs = read(join(ROOT, "desktop/src-tauri/src/lib.rs"));
+// The ESP32 flash engine both desktop apps share (desktop/flash-engine): what
+// used to live in the Flasher's lib.rs and its pure modules — the catalog
+// guards, release verification, provisioning, the change map, intake, the
+// flash pipeline and the serial monitor. The Flasher's lib.rs keeps the Tauri
+// command wrappers over it, so an assertion about "the native backend" reads
+// both: `nativeRs` is the Flasher's commands plus the engine they call.
+const ENGINE = join(ROOT, "desktop/flash-engine/src");
+const engineRs = (name) => read(join(ENGINE, `${name}.rs`));
+const engineAllRs = readdirSync(ENGINE).filter((f) => f.endsWith(".rs")).sort()
+  .map((f) => read(join(ENGINE, f))).join("\n");
+const nativeRs = libRs + "\n" + engineAllRs;
 const we2Rs = read(join(ROOT, "desktop/src-tauri/src/we2.rs"));
 const we2Core = read(join(CANARY, "assets/we2-core.js"));
 
@@ -41,9 +55,9 @@ const normChip = (s) => String(s || "").toUpperCase().replace(/[\s\-_]+/g, "");
 // to the next top-level item. Reads source, not compiled Rust — enough to assert
 // which guard a command routes through without a desktop toolchain.
 const nativeFnBody = (src, name) => {
-  const sig = new RegExp(`\\n(?:pub\\s+)?(?:async\\s+)?fn\\s+${name}\\s*\\(`);
+  const sig = new RegExp(`\\n(?:pub\\s+)?(?:async\\s+)?fn\\s+${name}\\s*(?:<[^>]*>)?\\s*\\(`);
   const m = sig.exec(src);
-  assert.ok(m, `couldn't find fn ${name} in desktop/src-tauri/src/lib.rs`);
+  assert.ok(m, `couldn't find fn ${name} in the native source (desktop/src-tauri or desktop/flash-engine)`);
   const after = src.slice(m.index + 1);
   // Stop at the next top-level item — its `fn`, its attribute (#[…]), or the doc
   // comment (///) that precedes it — so a body can't bleed into the next command.
@@ -55,12 +69,12 @@ test("chip guard: native derives its chip table from the catalog, not a copy", (
   // native chip_table() builds canonical_chip()'s lookup from the embedded
   // catalog's `chips` keys — the drift risk this test used to diff away is
   // gone as long as the derivation stays and no hardcoded table creeps back.
-  assert.match(nativeFnBody(libRs, "chip_table"), /get\("chips"\)/,
-    "lib.rs chip_table() no longer reads the catalog's `chips` keys — " +
+  assert.match(nativeFnBody(engineRs("catalog"), "chip_table"), /get\("chips"\)/,
+    "flash-engine catalog.rs chip_table() no longer reads the catalog's `chips` keys — " +
     "if the table went back to being hardcoded, restore the old diff here");
   assert.strictEqual(
-    [...libRs.matchAll(/\(\s*"esp32[a-z0-9]*"\s*,\s*"(ESP32[^"]*)"\s*\)/g)].length, 0,
-    "a hardcoded (\"esp32…\",\"ESP32-…\") chip pair is back in lib.rs — " +
+    [...nativeRs.matchAll(/\(\s*"esp32[a-z0-9]*"\s*,\s*"(ESP32[^"]*)"\s*\)/g)].length, 0,
+    "a hardcoded (\"esp32…\",\"ESP32-…\") chip pair is back in the native source — " +
     "the table derives from the catalog now; delete the retyped copy");
 
   // The catalog's spelling wins for chips it ships (an ESP32-family chip the
@@ -121,7 +135,7 @@ test("dev channel: browser, native backend, and native frontend pin the same fw-
   // collapses the instant any copy drifts, so pin all three to each other.
   const sources = [
     ["canary-local/assets/flash-core.js", read(join(CANARY, "assets/flash-core.js"))],
-    ["desktop/src-tauri/src/lib.rs", libRs],
+    ["desktop/flash-engine/src/catalog.rs", engineRs("catalog")],
     ["desktop/src/app.js", read(join(ROOT, "desktop/src/app.js"))],
   ];
   const urls = sources.map(([label, src]) => {
@@ -145,13 +159,13 @@ test("release origin: native derives its download-host guard from the catalog", 
   // browser derives live — assert the derivation stays and no literal origin
   // guard crept back (the dev-channel URL is a full manifest URL, not an
   // origin prefix, so it never matched this pattern).
-  const originBody = nativeFnBody(libRs, "release_origin");
+  const originBody = nativeFnBody(engineRs("catalog"), "release_origin");
   assert.ok(originBody.includes('"manifest_url"') && originBody.includes("/releases/download/"),
-    "lib.rs release_origin() no longer derives from the catalog's manifest_url — " +
+    "flash-engine catalog.rs release_origin() no longer derives from the catalog's manifest_url — " +
     "if the guard went back to a literal, restore the old diff here");
   assert.strictEqual(
-    [...libRs.matchAll(/"(https:\/\/[^"]+\/releases\/download\/)"/g)].length, 0,
-    "a literal release-origin prefix is back in lib.rs — the guard derives " +
+    [...nativeRs.matchAll(/"(https:\/\/[^"]+\/releases\/download\/)"/g)].length, 0,
+    "a literal release-origin prefix is back in the native source — the guard derives " +
     "from the catalog now; delete the retyped copy");
 
   // Native fails closed on a manifest_url without the marker (nothing
@@ -165,12 +179,12 @@ test("provisioning NVS: the browser writes the same key-set as native build_nvs"
   // Native build_nvs (provisioning.rs) IS the firmware contract for a provisioned
   // board — the exact NVS keys the runtime reads. The browser must write the same
   // set, or a board provisioned in the Lab differs from one provisioned natively.
-  const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
+  const provRs = engineRs("provisioning");
   const nativeKeys = new Set(
     [...provRs.matchAll(/writer\.(?:string|u8|u16|u32|blob)\(\s*"([a-z0-9_]+)"/g)].map((m) => m[1])
   );
   assert.ok(nativeKeys.size >= 5,
-    "couldn't parse native build_nvs keys from desktop/src-tauri/src/provisioning.rs");
+    "couldn't parse native build_nvs keys from desktop/flash-engine/src/provisioning.rs");
 
   // The browser's provisioning: wifi in BOTH schemes native now writes too —
   // string (sense/vision/display) and blob + wifi_en (canary/wap, flash-core's
@@ -202,7 +216,7 @@ test("provisioning NVS: the browser writes the same key-set as native build_nvs"
   assert.deepStrictEqual([...browserKeys].sort(), [...nativeKeys].sort(),
     "browser vs native provisioning NVS key-sets diverged — reconcile " +
     "flash-core.js:mqttProvisioningToNvs/buildNvsSeedImage/apiTokenToNvs with " +
-    "desktop/src-tauri/src/provisioning.rs:build_nvs");
+    "desktop/flash-engine/src/provisioning.rs:build_nvs");
 });
 
 test("OTA auto-update: both flashers seed the engine's own namespace, and both offer the switch", async () => {
@@ -221,7 +235,7 @@ test("OTA auto-update: both flashers seed the engine's own namespace, and both o
 
   // Both writers: the second namespace entry plus the u8 under it.
   const flashCoreSrc = read(join(CANARY, "assets/flash-core.js"));
-  const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
+  const provRs = engineRs("provisioning");
   assert.match(flashCoreSrc, /"securacv_ota"/,
     "flash-core.js buildNvsSeedImage no longer writes the securacv_ota namespace entry");
   assert.match(flashCoreSrc, /writeInt\("auto_upd", 0x01/,
@@ -371,7 +385,7 @@ test("parity wave 2: the board passport, the install verdict, and 'we've met thi
   // one before". These assertions keep that eyesight.
   const appJs = read(join(ROOT, "desktop/src/app.js"));
   const html = read(join(ROOT, "desktop/src/index.html"));
-  const healthRs = read(join(ROOT, "desktop/src-tauri/src/health.rs"));
+  const healthRs = engineRs("health");
   const flashCore = read(join(CANARY, "assets/flash-core.js"));
 
   // 1. A connect-time passport command, distinct from the deep health report.
@@ -496,9 +510,9 @@ test("parity wave 3a: the boot-log verdict and the self-healing baud ladder", as
     "the baud ladder must not retry `unknown` — it would retry every sidecar failure");
   // …which is only safe because the backend keeps espflash's own words, so a
   // real transport fault can classify as itself.
-  assert.match(libRs, /let mut tail: Vec<String>/,
+  assert.match(nativeRs, /let mut tail: Vec<String>/,
     "espflash's output must survive into the error, or every failure is `unknown`");
-  assert.match(libRs, /tail\.join\("\\n"\)/,
+  assert.match(nativeRs, /tail\.join\("\\n"\)/,
     "the espflash error must carry its tail for classification");
   // The ceiling is a per-board remedy. Left set across a swap it would hold a
   // healthy board at the slowest speed for the rest of the session.
@@ -548,7 +562,7 @@ test("parity wave 3b: room presets are baked in as typed NVS ints", async () => 
   // boot instead of after a trip to Home Assistant.
   const appJs = read(join(ROOT, "desktop/src/app.js"));
   const html = read(join(ROOT, "desktop/src/index.html"));
-  const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
+  const provRs = engineRs("provisioning");
   const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
 
   // 1. The NVS writer can express a u32 at all. Without it the dwell and
@@ -631,8 +645,8 @@ test("parity wave 3c: the change map answers 'do my settings survive?'", () => {
   // comparison exist for exactly one moment, and that is where this runs.
   const appJs = read(join(ROOT, "desktop/src/app.js"));
   const html = read(join(ROOT, "desktop/src/index.html"));
-  const cmRs = read(join(ROOT, "desktop/src-tauri/src/changemap.rs"));
-  const libRsSrc = read(join(ROOT, "desktop/src-tauri/src/lib.rs"));
+  const cmRs = engineRs("changemap");
+  const libRsSrc = nativeRs;
   const flashCore = read(join(CANARY, "assets/flash-core.js"));
   const flashJs = read(join(CANARY, "assets/flash.js"));
 
@@ -654,6 +668,10 @@ test("parity wave 3c: the change map answers 'do my settings survive?'", () => {
   assert.match(libRsSrc, /flash:changemap/, "the change map is never emitted");
   assert.match(libRsSrc, /backup_path: Option<String>/,
     "flash must accept the safety copy to diff against");
+  // …and the path is the webview's, so it is validated before a byte is read
+  // (an absolute, canonicalized .bin regular file ≤ 32 MiB — image.rs).
+  assert.match(libRsSrc, /if let Some\(old\) = read_safety_copy\(bp\)/,
+    "flash must read the safety copy through image::read_safety_copy, never an unchecked fs::read");
   assert.match(appJs, /flash:changemap/, "desktop never listens for the change map");
   assert.match(appJs, /function renderChangeMap/, "desktop lost the change-map render");
   assert.match(html, /id="change-map"/, "desktop has nowhere to show the change map");
@@ -692,8 +710,8 @@ test("parity wave 4a: the counterfeit-capacity check the desktop got for free", 
   // them, so the install reports success and the board cannot boot, with no
   // error at any layer. The safety copy already holds the whole chip in
   // memory before the write, so this costs no serial time at all.
-  const intakeRs = read(join(ROOT, "desktop/src-tauri/src/intake.rs"));
-  const libRsSrc = read(join(ROOT, "desktop/src-tauri/src/lib.rs"));
+  const intakeRs = engineRs("intake");
+  const libRsSrc = nativeRs;
   const appJsSrc = read(join(ROOT, "desktop/src/app.js"));
   const intakeJs = read(join(CANARY, "assets/intake.js"));
 
@@ -846,7 +864,7 @@ test("device API token: both flashers mint the same credential shape and seed th
   assert.ok(blobs.api_token instanceof Uint8Array && blobs.api_token.length === 35);
 
   // Native writes the SAME two blob keys and validates the same shape.
-  const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
+  const provRs = engineRs("provisioning");
   assert.match(provRs, /writer\.blob\(\s*"api_token"/,
     "provisioning.rs no longer seeds the PIO canary's api_token blob");
   assert.match(provRs, /writer\.blob\(\s*"api_tkn"/,
@@ -869,6 +887,166 @@ test("device API token: both flashers mint the same credential shape and seed th
   const flashJs = read(join(CANARY, "assets/flash.js"));
   assert.match(flashJs, /mintApiToken/, "browser flasher no longer mints the device API token");
   assert.match(flashJs, /apiTokenToNvs/, "browser flasher no longer seeds the device API token");
+});
+
+test("secret drawer: the consent copy names exactly the stores the native side can answer", () => {
+  // app.js words every "Remember" note from secretStore.where(), keyed on the
+  // string secret_backend returns. A backend the Rust side can answer but
+  // where() doesn't name falls through to "this app's local settings" — a
+  // consent note that understates where a password went; a name where()
+  // knows but Rust never returns is dead copy. One set, both sides.
+  const storeRs = read(join(ROOT, "desktop/src-tauri/src/secret_store.rs"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const strings = (text) => new Set([...text.matchAll(/"([a-z-]+)"/g)].map((m) => m[1]));
+  const sorted = (set) => [...set].sort();
+
+  const contract = /fn backend_names_are_the_contract\(\)[\s\S]*?matches!\(\s*backend\(\),([^)]*)\)/.exec(storeRs);
+  assert.ok(contract, "secret_store.rs lost backend_names_are_the_contract — re-point this gate at its new home");
+  const names = strings(contract[1]);
+  assert.ok(names.has("none"), "the backend contract must keep \"none\" — the fail-closed answer");
+
+  // Every name the native side can actually return is in the contract:
+  // backend()'s per-platform tail expressions and probe_backend()'s arms.
+  // (A whole-fn slice, to the closing col-0 brace: nativeFnBody stops at the
+  // first attribute, and backend()'s arms are each behind a #[cfg].)
+  const rsFn = (name) => {
+    const m = new RegExp(`\\n(?:pub\\s+)?(?:async\\s+)?fn\\s+${name}\\s*\\(`).exec(storeRs);
+    assert.ok(m, `couldn't find fn ${name} in desktop/src-tauri/src/secret_store.rs`);
+    const rest = storeRs.slice(m.index + 1);
+    return rest.slice(0, rest.indexOf("\n}\n"));
+  };
+  const tails = [...rsFn("backend").matchAll(/^\s*"([a-z-]+)"\s*$/gm)].map((m) => m[1]);
+  const arms = [...rsFn("probe_backend").matchAll(/=>\s*"([a-z-]+)"/g)].map((m) => m[1]);
+  assert.ok(tails.length >= 3, "couldn't read backend()'s per-platform answers out of secret_store.rs");
+  assert.ok(arms.length >= 2, "couldn't read probe_backend()'s answers out of secret_store.rs");
+  for (const a of [...tails, ...arms]) {
+    assert.ok(names.has(a), `secret_store.rs can answer "${a}" but its contract test doesn't list it`);
+  }
+  // The Linux answer is PROBED, and the probe fails closed to "none".
+  assert.match(rsFn("probe_backend"), /_ => "none"/,
+    "probe_backend() must fall back to \"none\" on any failure — a wrong \"secret-service\" makes the consent note a promise the app can't keep");
+
+  // where(): every non-"none" name gets its own wording; "none" is the fallback.
+  const where = /\n  where\(\) \{([\s\S]*?)\n  \},/.exec(appJs);
+  assert.ok(where, "desktop app.js secretStore.where() moved — re-point this gate at it");
+  const worded = new Set([...where[1].matchAll(/this\.backend === "([a-z-]+)"/g)].map((m) => m[1]));
+  assert.match(where[1], /: "this app's local settings";/,
+    "where() must end on the honest no-store wording");
+  assert.deepStrictEqual(sorted(new Set([...worded, "none"])), sorted(names),
+    "desktop app.js where() and secret_store.rs name different secret stores");
+});
+
+// The drawer's store paths, RUN rather than read: the Flasher's secretStore
+// lifted out of app.js against a stubbed native side whose store calls are
+// held open until the test answers them, the way a locked keyring holds one
+// open behind its unlock prompt.
+function loadSecretStore(backend, prefsSecrets) {
+  const src = read(join(ROOT, "desktop/src/app.js"));
+  const m = /\nconst secretStore = \{[\s\S]*?\n\};\n/.exec(src);
+  assert.ok(m, "desktop/src/app.js lost the secretStore object — re-point this gate at it");
+  const prefs = { secrets: { ...prefsSecrets }, secretKeys: Object.keys(prefsSecrets) };
+  const store = {};      // what the OS store holds; a write lands when it is answered
+  const calls = [];      // [cmd, args, answer(how)] in invoke order
+  const logs = [];
+  const invoke = (cmd, args) => {
+    if (cmd === "secret_backend") return Promise.resolve(backend);
+    let answer;
+    const p = new Promise((resolve, reject) => {
+      // answer() = the store does it; {reject: e} = it refuses; {value: v} =
+      // it answers v (a read taken before some other write landed).
+      answer = (how = {}) => {
+        if ("reject" in how) return reject(how.reject);
+        if ("value" in how) return resolve(how.value);
+        if (cmd === "secret_set") store[args.key] = args.value;
+        if (cmd === "secret_delete") delete store[args.key];
+        return resolve(cmd === "secret_get" ? (args.key in store ? store[args.key] : null) : null);
+      };
+    });
+    calls.push([cmd, args, answer]);
+    return p;
+  };
+  const secretStore = new Function("invoke", "prefs", "savePrefs", "logEvent",
+    `${m[0]}\nreturn secretStore;`)(invoke, prefs, () => {}, (level, msg) => logs.push([level, msg]));
+  return { secretStore, prefs, store, calls, logs };
+}
+const drain = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
+const storeCalls = (calls, cmd, key) => calls.filter(([c, a]) => c === cmd && a.key === key);
+
+test("secret drawer: a refusing store is never downgraded to the prefs file, and a locked keyring never holds up a read", async () => {
+  // 1. The OS store exists but refuses the write (locked, declined): the
+  //    consent note promised the OS store, so set() stores NOWHERE and says
+  //    so — it never quietly drops the password into the prefs file.
+  {
+    const { secretStore, prefs, calls, logs } = loadSecretStore("secret-service", {});
+    const saving = secretStore.set("wifi:home", "hunter2");
+    await drain();
+    storeCalls(calls, "secret_set", "wifi:home")[0][2]({ reject: "locked" });
+    assert.strictEqual(await saving, false, "a refused OS-store write must report failure");
+    assert.ok(!("wifi:home" in prefs.secrets),
+      "a refused OS-store write fell back to the prefs file — the consent note named the OS store");
+    assert.ok(logs.some(([level]) => level === "err"), "a refused OS-store write must be logged, not silent");
+  }
+  // 2. Launch with a password left in prefs and an unlock prompt nobody has
+  //    answered (the adoption pass's write held open): a restore's get() must
+  //    still ask the store and answer from the prefs copy, not wait on it.
+  {
+    const { secretStore, calls } = loadSecretStore("secret-service", { "wifi:home": "old" });
+    const reading = secretStore.get("wifi:home");
+    await drain();
+    const read1 = storeCalls(calls, "secret_get", "wifi:home")[0];
+    assert.ok(read1, "get() is waiting behind the adoption pass — a locked keyring's prompt would hold the restore");
+    read1[2]();
+    assert.strictEqual(await reading, "old", "get() must fall back to the prefs copy while the store has nothing");
+    assert.strictEqual(storeCalls(calls, "secret_set", "wifi:home").length, 1,
+      "the adoption pass should still be out here, its one write unanswered");
+  }
+  // 3. A save made while the pass is still out lands AFTER it, never under
+  //    it: the pass writes the OLD value, so a newer one written first would
+  //    be overwritten once the prompt is answered. Same for a delete, which
+  //    would otherwise see the forgotten password come back.
+  {
+    const { secretStore, store, calls } = loadSecretStore("secret-service", { "wifi:home": "old" });
+    await secretStore.init();
+    const saving = secretStore.set("wifi:home", "new");
+    await drain();
+    const writes = () => storeCalls(calls, "secret_set", "wifi:home");
+    assert.strictEqual(writes().length, 1, "set() wrote while the adoption pass was still out — it must wait for it");
+    writes()[0][2]();            // the prompt is answered: the pass writes the old value
+    await drain();
+    assert.strictEqual(writes().length, 2, "set() never wrote after the adoption pass finished");
+    writes()[1][2]();
+    assert.strictEqual(await saving, true);
+    assert.strictEqual(store["wifi:home"], "new", "the adoption pass overwrote a newer saved password");
+  }
+  {
+    const { secretStore, store, calls } = loadSecretStore("secret-service", { "wifi:home": "old" });
+    await secretStore.init();
+    const forgetting = secretStore.delete("wifi:home");
+    await drain();
+    assert.strictEqual(storeCalls(calls, "secret_delete", "wifi:home").length, 0,
+      "delete() ran while the adoption pass was still out — the pass would put the password back");
+    storeCalls(calls, "secret_set", "wifi:home")[0][2]();
+    await drain();
+    storeCalls(calls, "secret_delete", "wifi:home")[0][2]();
+    assert.strictEqual(await forgetting, true);
+    assert.ok(!("wifi:home" in store), "a forgotten password came back from the adoption pass");
+  }
+  // 4. A key the pass moves while get() is out is still found: the store's
+  //    answer predates the move, and the prefs copy is gone after it.
+  {
+    const { secretStore, prefs, calls } = loadSecretStore("secret-service", { "wifi:home": "v" });
+    await secretStore.init();
+    const reading = secretStore.get("wifi:home");
+    await drain();
+    const [read1] = storeCalls(calls, "secret_get", "wifi:home");
+    const [move] = storeCalls(calls, "secret_set", "wifi:home");
+    assert.ok(read1 && move, "expected the read and the adoption write both in flight");
+    move[2]();                   // the move lands and drops the prefs copy…
+    await drain();
+    assert.ok(!("wifi:home" in prefs.secrets), "the adoption pass should have dropped the prefs copy");
+    read1[2]({ value: null });   // …then the store's answer from before it arrives
+    assert.strictEqual(await reading, "v", "get() lost a password the adoption pass moved while it was asking");
+  }
 });
 
 test("dev channel: BOTH flashers give the user a control, not just a constant", () => {
@@ -987,9 +1165,9 @@ test("offset-0 write guard: both flashers refuse an app-only image before writin
     "the browser local-file path (flash.js:onLocalFile) no longer gates on core.localImageShape");
 
   // Native: the shape check exists and keys on the 0x8000 partition table…
-  assert.match(libRs, /fn check_local_image\b/,
-    "native lost lib.rs:check_local_image — the app-only-build refusal");
-  assert.match(libRs, /check_local_image[\s\S]*?PARTITION_TABLE_OFFSET/,
+  assert.match(engineRs("image"), /fn check_local_image\b/,
+    "native lost flash-engine image.rs:check_local_image — the app-only-build refusal");
+  assert.match(nativeFnBody(engineRs("image"), "check_local_image"), /PARTITION_TABLE_OFFSET/,
     "native check_local_image no longer checks the partition table at 0x8000");
 
   // …and EVERY native command that writes a user-chosen file from offset 0 routes
@@ -1117,7 +1295,7 @@ test("first contact forces a full erase on both flashers", () => {
     "desktop flasher never passes eraseFirst to the native flash command");
   assert.match(libRs, /erase_first/,
     "desktop/src-tauri/src/lib.rs ignores erase_first — the checkbox does nothing");
-  assert.match(libRs, /erase_first\.unwrap_or\(false\)/,
+  assert.match(nativeFnBody(engineRs("flash"), "flash"), /erase_first\.unwrap_or\(false\)/,
     "erase_first must fail closed to 'no erase' only when explicitly absent");
 
   // The safe default has to be restored for EVERY board, not once per app
@@ -1165,6 +1343,14 @@ test("security fuses: both flashers read them, off ONE field table", () => {
     "desktop frontend no longer invokes the native fuse read");
   assert.match(libRs, /efuse::read_security_efuses/,
     "native fuse-read command fell out of the invoke handler");
+
+  // The intake doc's "where the two flashers differ" section is the public
+  // record of this check; it must describe the native read, not the old gap.
+  const intakeDoc = read(join(ROOT, "docs/unflashed_board_intake.md"));
+  assert.ok(intakeDoc.includes("desktop/src-tauri/src/efuse.rs"),
+    "docs/unflashed_board_intake.md no longer names efuse.rs — its two-flashers section is stale");
+  assert.doesNotMatch(intakeDoc, /genuinely browser-only|desktop app cannot read eFuses/,
+    "docs/unflashed_board_intake.md still says the desktop cannot read eFuses");
 
   // The block-0 geometry agrees.
   const jsOffset = intakeJs.match(/EFUSE_BLOCK0_RD_OFFSET\s*=\s*(0x[0-9a-fA-F]+)/);
@@ -1223,7 +1409,7 @@ test("health check: native parsers pin the browser's byte-magics, and the UI rea
   // The native health parsers (health.rs) reimplement the browser's flash-core
   // parsers. Their magics/offsets/namespaces MUST match byte-for-byte, or the
   // same chip reads differently on each surface. Pin the shared constants.
-  const healthRs = read(join(ROOT, "desktop/src-tauri/src/health.rs"));
+  const healthRs = engineRs("health");
   const flashCore = read(join(CANARY, "assets/flash-core.js"));
   const flashJs = read(join(CANARY, "assets/flash.js"));
   const appJs = read(join(ROOT, "desktop/src/app.js"));
@@ -1571,7 +1757,7 @@ test("broker TLS: both flashers offer the mode, the CA and the fingerprint, and 
   const flashJs = read(join(CANARY, "assets/flash.js"));
   const appJs = read(join(ROOT, "desktop/src/app.js"));
   const html = read(join(ROOT, "desktop/src/index.html"));
-  const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
+  const provRs = engineRs("provisioning");
   const logicH = read(join(ROOT, "firmware/common/network/mqtt_transport_logic.h"));
   const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
 
@@ -1707,6 +1893,147 @@ test("broker TLS: both flashers offer the mode, the CA and the fingerprint, and 
   // Native never logs the config: Provisioning has no Debug derive to print.
   assert.ok(!/derive\([^)]*Debug[^)]*\)\]\s*\n\s*#\[serde\(rename_all = "camelCase"\)\]\s*\npub struct Provisioning/.test(provRs),
     "provisioning.rs Provisioning must stay un-Debug so a CA can never be formatted into a log");
+});
+
+test("broker TLS: both flashers' receipts name the sealed mode the same way", async () => {
+  // Wave 6 sealed mqtt_tls / mqtt_ca / mqtt_fp on both sides and neither
+  // receipt said so. Now each flasher prints ONE line about the broker TLS
+  // it SEALED — sealed, never connected: the firmware decides the transport
+  // at connect time (mqtt_transport_logic.h) and the boot self-manifest
+  // carries no transport field. The two flashers share no UI code, so the
+  // four-row table lives twice (flash-core.js MQTT_TLS_RECEIPT,
+  // desktop/flash-engine/src/broker_receipt.rs MODE_LABELS — the engine both
+  // desktop apps flash with) and this test is the only thing holding the
+  // copies equal: it must fail on either one changing alone.
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const coreJs = read(join(CANARY, "assets/flash-core.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  const provRs = engineRs("provisioning");
+  const receiptRs = engineRs("broker_receipt");
+  const engineLibRs = engineRs("lib");
+  const flashRs = engineRs("flash");
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+
+  // ONE table. The Rust literals are read as source text, one per line (the
+  // way the select's options are matched above), so a rustfmt split or a
+  // hand edit to either copy alone fails here by name.
+  const labels = /pub\(crate\) const MODE_LABELS: \[&str; 4\] = \[\n([\s\S]*?)\n\];/.exec(receiptRs);
+  assert.ok(labels, "broker_receipt.rs lost MODE_LABELS (the native receipt table)");
+  const rustLabels = labels[1].split("\n").map((l) => {
+    const m = /^ {4}"([^"]+)",$/.exec(l);
+    assert.ok(m, `MODE_LABELS must be four single-line literals, one per line — got ${JSON.stringify(l)}`);
+    return m[1];
+  });
+  assert.strictEqual(rustLabels.length, 4, "the firmware knows four modes (mqtt_transport_logic.h kModeCount)");
+  assert.deepStrictEqual([...core.MQTT_TLS_RECEIPT], rustLabels, "the receipt table differs between the two flashers");
+  const unknown = /pub\(crate\) const MODE_UNKNOWN: &str =\n\s+"([^"]+)";/.exec(receiptRs);
+  assert.ok(unknown, "broker_receipt.rs lost MODE_UNKNOWN");
+  assert.strictEqual(core.MQTT_TLS_RECEIPT_UNKNOWN, unknown[1], "the unknown-mode line differs between the two flashers");
+  // Keyed by the firmware's byte, in its order; each row says what was
+  // sealed, never that anything connected; the lab row keeps its warnings.
+  assert.match(rustLabels[0], /^plain MQTT — not encrypted/);
+  assert.ok(rustLabels[1].includes("{N} bytes of PEM") && !rustLabels[1].includes("{FP}"), "row 1 carries the CA's byte count only");
+  assert.ok(rustLabels[2].includes("{FP}") && !rustLabels[2].includes("{N}"), "row 2 carries the pin only");
+  assert.match(rustLabels[3], /NOT verified/);
+  assert.match(rustLabels[3], /warns on every connect/);
+  for (const row of rustLabels) {
+    assert.ok(!/connected|verified link|encrypted link/i.test(row), `a receipt row claims a connection: ${row}`);
+  }
+
+  // The byte count is the SEALED string's length on both sides — the trimmed
+  // PEM plus the newline build_nvs / mqttProvisioningToNvs append. Proven for
+  // ONE paste: the Rust tests' PEM fixture through the browser's builder and
+  // formatter gives a number, and the Rust test pins broker_tls_summary (and
+  // the NVS string item it writes) to that same literal.
+  const pemConst = /const PEM: &str = "((?:[^"\\]|\\.)+)";/.exec(provRs);
+  assert.ok(pemConst, "provisioning.rs tests lost their PEM fixture");
+  const pem = JSON.parse(`"${pemConst[1]}"`);
+  const prov = core.mqttProvisioningToNvs({ mqttHost: "h", mqttPort: 8883, mqttTls: 1, mqttCa: `  ${pem}\n\n` });
+  assert.strictEqual(prov.strings.mqtt_ca, pem.trim() + "\n");
+  const sealedBytes = new TextEncoder().encode(prov.strings.mqtt_ca).length;
+  assert.strictEqual(core.brokerTlsReceipt(prov), rustLabels[1].replace("{N}", String(sealedBytes)));
+  assert.ok(provRs.includes(`assert_eq!(broker_tls_summary(&ca), Some((1, ${sealedBytes}, String::new())));`),
+    `provisioning.rs's broker_tls_summary test must pin the CA fixture to ${sealedBytes} sealed bytes — the number the browser computes for the same paste`);
+  assert.match(provRs, /let ca_sealed_len = if ca\.is_empty\(\) \{ 0 \} else \{ ca\.len\(\) \+ 1 \};/,
+    "native must count the trimmed PEM + the newline build_nvs appends");
+  assert.match(provRs, /writer\.string\("mqtt_ca", &format!\("\{ca\}\\n"\)\)/,
+    "build_nvs no longer seals trimmed PEM + newline — the count above describes bytes that are not written");
+  assert.match(provRs, /pub\(crate\) fn broker_tls_summary\(config: &Provisioning\) -> Option<\(u8, usize, String\)> \{\n\s+if config\.mqtt_host\.is_empty\(\) \{\n\s+return None;/,
+    "native: no broker host sealed, no receipt line");
+
+  // Native: the log line rides under the broker branch of the engine's
+  // `flash` only (both desktop apps run it), is built from the summary + the
+  // std-only formatter (never a config field), and the sealed line stopped
+  // saying "values not logged" now that a pin is printed. The receipt
+  // carries it; the Flasher's local-file path (still in its lib.rs) carries
+  // None.
+  assert.match(engineLibRs, /^pub mod broker_receipt;$/m, "flash-engine lib.rs must register the receipt module");
+  const flashFn = nativeFnBody(flashRs, "flash");
+  assert.ok(flashFn.includes("(passwords not logged)"), "the sealed line must say passwords, not values, are withheld");
+  assert.ok(!nativeRs.includes("values not logged"), "'values not logged' is false once the pin is printed");
+  const branch = /\n( +)if broker \{\n([\s\S]*?)\n\1\}/.exec(flashFn);
+  assert.ok(branch, "flash-engine flash.rs lost its `if broker {` branch");
+  assert.match(branch[2], /if let Some\(\(mode, ca_bytes, fingerprint\)\) = provisioning::broker_tls_summary\(config\)/);
+  assert.match(branch[2], /let line = broker_receipt::broker_tls_receipt\(mode, ca_bytes, &fingerprint\);/);
+  assert.match(branch[2], /emit\(format!\("  broker link: \{line\}"\)\);/);
+  assert.match(branch[2], /broker_tls = Some\(BrokerTlsReceipt \{\n\s+mode,\n\s+ca_bytes,\n\s+fingerprint,\n\s+line,\n\s+\}\);/);
+  assert.strictEqual(nativeRs.split("broker link:").length - 1, 1, "the broker line is emitted in exactly one place — the engine's broker branch");
+  assert.ok(!/config\.mqtt_(?:ca|pass|host|fp|user)\b/.test(flashFn.replace(/config\.mqtt_host\.is_empty\(\)/g, "")),
+    "flash() must not format a broker field of the config into a log line");
+  assert.ok(!/config\.wifi_pass/.test(flashFn), "flash() must never touch the Wi-Fi password");
+  assert.match(flashRs, /pub struct FlashReceipt \{[\s\S]*?pub broker_tls: Option<BrokerTlsReceipt>,\n\}/, "the engine's FlashReceipt lost broker_tls");
+  assert.match(flashRs, /#\[derive\(Serialize\)\]\npub struct BrokerTlsReceipt \{\n\s+mode: u8,\n\s+ca_bytes: usize,\n\s+fingerprint: String,\n\s+line: String,\n\}/,
+    "BrokerTlsReceipt must serialize mode / ca_bytes / fingerprint / line in snake_case, like the rest of the receipt");
+  assert.match(nativeFnBody(libRs, "flash_local_file"), /broker_tls: None,/, "a local file seals nothing — its receipt carries None");
+  // The Lab's flash command returns the engine's receipt as-is, so its
+  // frontend sees the same broker_tls field the Flasher's does.
+  assert.match(nativeFnBody(read(join(ROOT, "desktop-lab/src-tauri/src/flash.rs")), "flash"),
+    /flash_engine::flash::flash\(&TauriHost\(app\), bundled_catalog\(\), request\)\.await/,
+    "the Lab must return the engine's receipt unchanged");
+
+  // Neither formatter can be handed the PEM: native takes a length, the
+  // browser measures the builder's sealed string and nothing else of it; and
+  // the std-only module never names the config, a password or the host.
+  assert.match(receiptRs, /pub\(crate\) fn broker_tls_receipt\(mode: u8, ca_sealed_len: usize, fp: &str\) -> String/,
+    "the native formatter takes the CA's sealed LENGTH, never the PEM");
+  assert.ok(!/mqtt_pass|wifi_pass|mqtt_host|Provisioning/.test(receiptRs),
+    "broker_receipt.rs must not know the config, a password or the host");
+  assert.ok(!/^use /m.test(receiptRs.split("#[cfg(test)]")[0]),
+    "broker_receipt.rs is std-only — `rustc --edition 2021 --test` compiles it alone, without the engine's dependencies");
+  const fmt = /export function brokerTlsReceipt\(prov\) \{([\s\S]*?)\n\}/.exec(coreJs);
+  assert.ok(fmt, "flash-core.js lost brokerTlsReceipt");
+  const caLines = fmt[1].split("\n").filter((l) => l.includes("mqtt_ca"));
+  assert.deepStrictEqual(caLines.map((l) => l.trim()),
+    ["const caBytes = strings.mqtt_ca ? new TextEncoder().encode(strings.mqtt_ca).length : 0;"],
+    "the browser formatter touches the sealed CA on one line — to measure it — and reports nothing else of it");
+  assert.ok(!/mqtt_pass|mqttPass|mqttCa\b|mqtt_host\b(?!\))/.test(fmt[1].replace("if (!strings.mqtt_host) return null;", "")),
+    "the browser formatter must not read a password, the form's CA, or print the host");
+
+  // Desktop UI: a fourth receipt row, rendered from the RETURNED receipt
+  // (host.broker_tls.line), never from the form.
+  assert.match(html, /<div id="receipt-host-broker" class="receipt pending hidden">/, "index.html lost #receipt-host-broker");
+  const render = /function renderReceipts\(forceVision = false\) \{([\s\S]*?)\n\}/.exec(appJs);
+  assert.ok(render, "desktop renderReceipts moved");
+  assert.match(render[1], /const brokerTls = host && host\.broker_tls;/, "the desktop row reads the writer's receipt");
+  assert.match(render[1], /\$\("receipt-host-broker"\)\.classList\.toggle\("hidden", !brokerTls\);/, "hidden when no broker host was sealed");
+  assert.match(render[1], /setReceipt\("receipt-host-broker", true, "✓ " \+ brokerTls\.line\)/, "the desktop renders the line as returned");
+  assert.ok(!/mqtt-tls|mqtt-ca|mqtt-fp|MQTT_TLS\b|readProvisioning/.test(render[1]), "the desktop receipt must never read the form");
+
+  // Browser: computed beside the sealed prov, handed to the done card with
+  // the form's broker object nulled the way the Wi-Fi credentials already
+  // are (it carries mqttPass and the CA PEM), and rendered as the hub line.
+  assert.match(flashJs, /bakedBroker = core\.brokerTlsReceipt\(prov\);/, "the browser line comes from the sealed prov, not the form");
+  const call = /setPhase\(phaseDone\(\{ \.\.\.opts,([\s\S]*?)\}\)\);/.exec(flashJs);
+  assert.ok(call, "flash.js lost the phaseDone call");
+  for (const kv of ["wifi: null", "mqtt: null", "provBroker: bakedBroker"]) {
+    assert.ok(call[1].includes(kv), `the done card must be handed ${kv}`);
+  }
+  const done = /function phaseDone\(opts\) \{([\s\S]*?)\n\}/.exec(flashJs);
+  assert.ok(done, "flash.js phaseDone moved");
+  assert.match(done[1], /if \(opts\.provBroker\) \{/, "the browser done card lost its hub line");
+  assert.ok(done[1].includes("` Hub baked in — ${opts.provBroker}`"), "the browser must render the hub line as computed");
+  assert.ok(!/opts\.mqtt\b/.test(done[1]), "the done card must not reach into the form's broker object");
 });
 
 test("broker TLS: the catalog's broker_tls is the firmware's own build fact, and both flashers gate on it", () => {
@@ -1971,7 +2298,7 @@ test("pre-configured Wi-Fi is honored: present-but-empty keys, and identity neve
   const flashCoreSrc = read(join(CANARY, "assets/flash-core.js"));
   assert.match(flashCoreSrc, /writeString\("wifi_pass", passB\)/,
     "flash-core.js no longer writes the (possibly empty) wifi_pass string key");
-  const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
+  const provRs = engineRs("provisioning");
   assert.match(provRs, /writer\.string\("wifi_pass", &config\.wifi_pass\)\?/,
     "provisioning.rs no longer writes the (possibly empty) wifi_pass string key");
 
@@ -2042,6 +2369,992 @@ test("witness wall: both apps discover the LAN fleet the same way, one emulator,
   const b = read(join(CANARY, "witness/tv-emulator.js"));
   assert.strictEqual(a, b,
     "vendored tv-emulator.js drifted between the Flasher and the Lab — run scripts/vendor_witness_emulator.sh");
+});
+
+// Run each app's wall controller against one stubbed native side and report
+// what it asked for and what it told the user. The Lab's host is small enough
+// to run whole; the Flasher's controller is lifted out of app.js with the two
+// helpers it calls. Source-level regexes can't see ORDER or wording drift —
+// running them can.
+const WALL_SIGHTINGS = [
+  { deviceId: "canary-wap-1", host: "canary-wap-1.local", ip: "192.168.1.50", port: 80 },
+  { deviceId: "canary-display-2", host: "canary-display-2.local", ip: "192.168.1.51", port: 1 },
+  { deviceId: "canary-sense-3", host: "canary-sense-3.local", ip: "fe80::1", port: 1 },
+];
+const WALL_BOARDS = ["http://192.168.1.50:80", "http://192.168.1.51", "http://canary-sense-3.local"];
+// The Apple TV's well-known candidates (tvos WallModel.wellKnownCandidates),
+// as bases — the test after the run test holds every monorepo wall to them.
+const WALL_WELL_KNOWN = ["http://canary.local:8099", "http://canary.local:8799", "http://canary.local"];
+const wallInvoke = (calls, sightings, caps) => async (cmd, args) => {
+  calls.push([cmd, args]);
+  if (cmd === "native_capabilities") return caps;
+  if (cmd === "fleet_scan") return sightings;
+  if (cmd === "witness_discover") throw "no kernel answered on the LAN yet";
+  if (cmd === "companion_set_bases") return null;
+  throw new Error(`the wall invoked an unexpected command: ${cmd}`);
+};
+const wallStatusEl = () => ({ textContent: "", classList: { toggle() {} } });
+async function runLabWall(typedBase, sightings) {
+  const calls = [];
+  const scan = wallStatusEl();
+  const frame = { src: "", contentWindow: { postMessage() {} } };
+  const ctx = {
+    document: {
+      getElementById: (id) => (id === "witness-frame" ? frame : id === "wall-scan" ? scan : null),
+      addEventListener() {},
+      hidden: false,
+    },
+    localStorage: { getItem: (k) => (k === "scv-kernel" ? typedBase : null) },
+    location: { search: "" },
+    URLSearchParams,
+    setTimeout: () => 0,
+    clearTimeout() {},
+    addEventListener() {},
+  };
+  ctx.window = ctx;
+  ctx.__TAURI__ = { core: { invoke: wallInvoke(calls, sightings, { mdns: true, notifications: false }) } };
+  vm.runInNewContext(read(join(CANARY, "assets/witness-host.js")), ctx);
+  for (let i = 0; i < 10 && !calls.some(([c]) => c === "witness_discover"); i++) {
+    await new Promise((r) => setImmediate(r));
+  }
+  await new Promise((r) => setImmediate(r));
+  return { calls, status: scan.textContent };
+}
+async function runFlasherWall(typedHost, sightings) {
+  const src = read(join(ROOT, "desktop/src/app.js"));
+  const grab = (re, what) => {
+    const m = re.exec(src);
+    assert.ok(m, `desktop/src/app.js lost ${what} — re-point the wall test at it`);
+    return m[0];
+  };
+  const code = [
+    grab(/\nfunction witnessBoardBases\([\s\S]*?\n\}\n/, "witnessBoardBases()"),
+    grab(/\nfunction witnessBases\([\s\S]*?\n\}\n/, "witnessBases()"),
+    grab(/\nconst witnessDiscovery = \{[\s\S]*?\n\};\n/, "the witnessDiscovery controller"),
+  ].join("\n");
+  const calls = [];
+  const scan = wallStatusEl();
+  const els = {
+    "mqtt-host": { value: typedHost || "" },
+    "fleet-scan-status": scan,
+    "witness-frame": { contentWindow: { postMessage() {} } },
+  };
+  const wall = new Function("$", "invoke", "witnessName", `${code}\nreturn witnessDiscovery;`)(
+    (id) => els[id] || null, wallInvoke(calls, sightings, {}), () => "New Canary");
+  await wall.tick();
+  return { calls, status: scan.textContent };
+}
+
+test("witness wall: both apps try the kernel before any browsed board, and say what they heard", async () => {
+  // witness_discover returns the FIRST base whose /api/fleet answers, and a
+  // WAP or display answers with a one-board self-report
+  // (tvos/discovery/DISCOVERY.md). So a browsed board tried ahead of the
+  // kernel would replace the kernel's whole fleet on the wall, every tick.
+  // Both hosts: browse first, then the typed kernel, the well-known
+  // canary.local:8099, canary.local:8799 and canary.local, and only then the
+  // boards they heard.
+  const hosts = [
+    ["Lab witness-host.js", () => runLabWall("http://192.168.1.10:8099", WALL_SIGHTINGS),
+      ["http://192.168.1.10:8099", ...WALL_WELL_KNOWN]],
+    ["Flasher app.js", () => runFlasherWall("192.168.1.10", WALL_SIGHTINGS),
+      ["http://192.168.1.10:8099", "http://192.168.1.10", ...WALL_WELL_KNOWN]],
+  ];
+  const statuses = [];
+  for (const [name, run, kernel] of hosts) {
+    const { calls, status } = await run();
+    const order = calls.map(([c]) => c);
+    const scanAt = order.indexOf("fleet_scan");
+    const pollAt = order.indexOf("witness_discover");
+    assert.ok(scanAt >= 0, `${name}'s wall no longer browses mDNS (fleet_scan) before it polls`);
+    assert.ok(pollAt > scanAt, `${name}'s wall must browse (fleet_scan) BEFORE it polls witness_discover`);
+    // (Array.from: the Lab's list is built in the vm's realm, with its own Array.prototype.)
+    assert.deepStrictEqual(Array.from(calls[pollAt][1].bases), [...kernel, ...WALL_BOARDS],
+      `${name}: the kernel addresses must come before every browsed board, boards in browse order`);
+    assert.match(status, /^3 Canaries announced on this network — none serves the fleet document yet\.$/,
+      `${name} must say the boards it heard, not "nothing answering yet"`);
+    statuses.push(status);
+  }
+  assert.strictEqual(statuses[0], statuses[1], "the two walls word the heard-but-no-fleet status differently");
+
+  // Nobody announcing: no board bases, and the honest "nothing answering".
+  for (const [name, run] of [["Lab witness-host.js", () => runLabWall(null, [])],
+                             ["Flasher app.js", () => runFlasherWall("", [])]]) {
+    const { calls, status } = await run();
+    const poll = calls.find(([c]) => c === "witness_discover");
+    assert.deepStrictEqual(Array.from(poll[1].bases), WALL_WELL_KNOWN,
+      `${name}: with no typed kernel and nothing heard, only the well-known addresses are tried`);
+    assert.match(status, /nothing answering yet/, `${name} must keep the "nothing answering yet" status when nothing announced`);
+  }
+});
+
+test("witness wall: every wall here probes the Apple TV's well-known addresses, in its order", () => {
+  // The Wall (tvos WallModel.wellKnownCandidates) is the reference: the hub
+  // convention port, the kernel's own API port (8799 — the Home Assistant
+  // add-on and the Docker sidecar serve it), then the bare device; the first
+  // address that serves a fleet wins. The desktop Flasher, the Lab's wall
+  // host, the Lab's menu bar companion and the vendored web emulator must
+  // try the same three in the same order — a list one surface forgot is a
+  // kernel that surface never finds. (The website's tests/tv-wall.test.mjs
+  // pins its TV app to the emulator's list, which this file pins here.)
+  const swift = read(join(ROOT, "tvos/WitnessWall/Sources/WitnessWall/WallModel.swift"));
+  const tv = /static let wellKnownCandidates = \[([^\]]*)\]/.exec(swift);
+  assert.ok(tv, "tvos WallModel.swift lost `static let wellKnownCandidates` — re-point this test at it");
+  const tvBases = [...tv[1].matchAll(/"([^"]+)"/g)].map((x) => `http://${x[1]}`);
+  assert.deepStrictEqual(WALL_WELL_KNOWN, tvBases,
+    "the monorepo walls' well-known list drifted from the Apple TV's wellKnownCandidates");
+
+  // The Lab's menu bar companion polls these until the wall host names one.
+  const companion = read(join(ROOT, "desktop-lab/src-tauri/src/companion.rs"));
+  const defaults = /const DEFAULT_BASES: \[&str; \d+\] = \[([^\]]*)\];/.exec(companion);
+  assert.ok(defaults, "companion.rs lost `const DEFAULT_BASES` — re-point this test at it");
+  assert.deepStrictEqual([...defaults[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]), tvBases,
+    "the Lab companion's DEFAULT_BASES must be the Apple TV's list, in its order");
+
+  // The vendored web emulator (canonical in the website repo; both app copies
+  // are byte-identical — the sync guard proves that).
+  const emu = read(join(CANARY, "witness/tv-emulator.js"));
+  const known = /const WELL_KNOWN = \[([^\]]*)\];/.exec(emu);
+  assert.ok(known, "the vendored tv-emulator.js lost `const WELL_KNOWN` — re-point this test at it");
+  assert.deepStrictEqual([...known[1].matchAll(/'([^']+)'/g)].map((x) => x[1]), tvBases,
+    "the vendored emulator's WELL_KNOWN drifted from the Apple TV's — change the website's js/tv-emulator.js, then scripts/vendor_witness_emulator.sh");
+});
+
+test("mDNS browse: the Lab's fleet_scan is the Flasher's, in lockstep", () => {
+  // The Lab ported the Flasher's browse of _securacv._tcp as a twin (same
+  // command, DTO, constant, code) so a frontend written against either app
+  // reads the other's answer unchanged. A retyped copy drifts quietly — the
+  // failure would be a board one app lists and the other never hears.
+  const flasherFleet = read(join(ROOT, "desktop/src-tauri/src/fleet.rs"));
+  const labFleet = read(join(ROOT, "desktop-lab/src-tauri/src/fleet.rs"));
+  const labRs = read(join(ROOT, "desktop-lab/src-tauri/src/lib.rs"));
+  const norm = (t) => t.replace(/\s+/g, " ").trim();
+  const item = (src, re, what) => {
+    const m = re.exec(src);
+    assert.ok(m, `couldn't find ${what}`);
+    return norm(m[0]);
+  };
+  const pieces = [
+    [/const SERVICE_TYPE: &str = "[^"]*";/, "SERVICE_TYPE"],
+    [/pub struct FleetSighting \{[\s\S]*?\n\}/, "struct FleetSighting"],
+    [/#\[derive\([^)]*\)\]\s*#\[serde\([^)]*\)\]\s*pub struct FleetSighting/, "FleetSighting's derive/serde attributes"],
+    [/#\[tauri::command\]\s*pub async fn fleet_scan\(timeout_ms: Option<u64>\)[\s\S]*?\n\}/, "fn fleet_scan"],
+    [/fn scan_blocking\(wait_ms: u64\)[\s\S]*?\n\}/, "fn scan_blocking"],
+  ];
+  for (const [re, what] of pieces) {
+    assert.strictEqual(item(labFleet, re, `${what} in desktop-lab fleet.rs`),
+      item(flasherFleet, re, `${what} in desktop fleet.rs`),
+      `desktop-lab fleet.rs ${what} drifted from the Flasher's — copy it back verbatim`);
+  }
+  assert.match(labFleet, /const SERVICE_TYPE: &str = "_securacv\._tcp\.local\.";/,
+    "the Lab must browse the service every board advertises");
+  // Only the browse is ported: the Flasher's device calls carry bearer tokens
+  // from its secret drawer, and the Lab has no drawer to keep them in.
+  const labFleetCode = labFleet.replace(/\/\/.*$/gm, "");
+  assert.doesNotMatch(labFleetCode, /fn\s+(?:fleet_device_call|device_whoami)\b|bearer_auth|Authorization|token/i,
+    "desktop-lab fleet.rs must not grow the Flasher's token-bearing device calls");
+  // Desktop-only, and honestly advertised: the module and the command exist
+  // only where the capability says so.
+  assert.match(labRs, /#\[cfg\(desktop\)\]\s*mod fleet;/, "desktop-lab lib.rs must gate mod fleet on desktop");
+  assert.match(labRs, /"mdns":\s*cfg!\(desktop\)/, "desktop-lab native_capabilities must report mdns as cfg!(desktop)");
+  const handlers = [...labRs.matchAll(/invoke_handler\(tauri::generate_handler!\[([\s\S]*?)\]\)/g)].map((m) => m[1]);
+  assert.strictEqual(handlers.length, 2, "expected a desktop and a non-desktop invoke_handler in desktop-lab lib.rs");
+  assert.ok(handlers[0].includes("fleet::fleet_scan"), "the desktop handler must register fleet::fleet_scan");
+  assert.ok(!handlers[1].includes("fleet_scan"), "the mobile handler must not register fleet_scan (no mdns there)");
+  // The frontend asks before it browses, then feeds the boards to the poll.
+  const labHost = read(join(CANARY, "assets/witness-host.js"));
+  assert.match(labHost, /invoke\("fleet_scan"/, "Lab witness-host.js no longer browses mDNS (fleet_scan)");
+  assert.match(labHost, /invoke\("native_capabilities"\)/, "Lab witness-host.js must ask native_capabilities before it browses");
+  assert.match(labHost, /if \(mdns\) \{[\s\S]{0,120}invoke\("fleet_scan"/,
+    "Lab witness-host.js must gate the browse on the mdns capability");
+  // One crate version on both sides of the twin.
+  const mdnsVer = (lock) => (/name = "mdns-sd"\nversion = "([^"]+)"/.exec(read(join(ROOT, lock))) || [])[1];
+  assert.ok(mdnsVer("desktop/src-tauri/Cargo.lock"), "the Flasher's lock lost mdns-sd");
+  assert.strictEqual(mdnsVer("desktop-lab/src-tauri/Cargo.lock"), mdnsVer("desktop/src-tauri/Cargo.lock"),
+    "the two apps lock different mdns-sd versions — the twin is no longer the same browse");
+});
+
+// ── Native flashing: the Lab runs the Flasher's commands on the same engine ──
+//
+// A14: the Lab's native flash path is NOT a port of the Flasher's flash code —
+// both apps call desktop/flash-engine, and each keeps only a thin Tauri
+// wrapper per command. The wrappers are the one place the two can still drift
+// (a renamed argument silently becomes `undefined` in one app's invoke), so
+// they are held equal by text here, and the DTOs and event names are held to
+// the engine.
+const FLASH_COMMANDS = [
+  // [command, the Flasher file that defines it]
+  ["list_ports", "desktop/src-tauri/src/lib.rs"],
+  ["detect_chip", "desktop/src-tauri/src/lib.rs"],
+  ["fetch_manifest", "desktop/src-tauri/src/lib.rs"],
+  ["flash", "desktop/src-tauri/src/lib.rs"],
+  ["start_serial_monitor", "desktop/src-tauri/src/serial_monitor.rs"],
+  ["serial_monitor_send", "desktop/src-tauri/src/serial_monitor.rs"],
+  ["stop_serial_monitor", "desktop/src-tauri/src/serial_monitor.rs"],
+];
+
+// One Rust fn — its attributes, signature and balanced body — whitespace
+// folded and `pub` dropped (the Lab's live in a module, the Flasher's at the
+// crate root). Comments stay: the argument comments are part of the contract.
+const rustFnText = (src, name, where) => {
+  const m = new RegExp(`\\n((?:#\\[[^\\n]*\\]\\s*\\n)*)(?:pub\\s+)?(?:async\\s+)?fn\\s+${name}\\s*\\(`).exec(src);
+  assert.ok(m, `couldn't find fn ${name} in ${where}`);
+  let depth = 0;
+  let i = src.indexOf("{", m.index + m[0].length);
+  for (; i < src.length; i++) {
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}" && --depth === 0) break;
+  }
+  return src.slice(m.index + 1, i + 1).replace(/\bpub\s+/g, "").replace(/\s+/g, " ").trim();
+};
+
+test("native flashing: the Lab's flash commands are the Flasher's, on the same engine", () => {
+  const labFlash = read(join(ROOT, "desktop-lab/src-tauri/src/flash.rs"));
+  const labRs = read(join(ROOT, "desktop-lab/src-tauri/src/lib.rs"));
+  const flasherHost = read(join(ROOT, "desktop/src-tauri/src/host.rs"));
+
+  // 1. Same command names, same arguments, same body — by text.
+  for (const [cmd, file] of FLASH_COMMANDS) {
+    const flasher = rustFnText(read(join(ROOT, file)), cmd, file);
+    const lab = rustFnText(labFlash, cmd, "desktop-lab/src-tauri/src/flash.rs");
+    assert.strictEqual(lab, flasher,
+      `the Lab's ${cmd} drifted from the Flasher's (${file}) — the two apps' wrappers ` +
+      "must stay identical so either frontend's invoke works against either app");
+    assert.match(flasher, /#\[tauri::command\]/, `${cmd} is not a tauri command in ${file}`);
+  }
+  // Every delegating wrapper calls the engine, never a local copy of the logic.
+  for (const [cmd, engineFn] of [["detect_chip", "flash_engine::flash::detect_chip"],
+    ["fetch_manifest", "flash_engine::flash::fetch_manifest"], ["flash", "flash_engine::flash::flash"],
+    ["list_ports", "flash_engine::ports::list_ports"]]) {
+    assert.ok(rustFnText(labFlash, cmd, "desktop-lab flash.rs").includes(`${engineFn}(`),
+      `the Lab's ${cmd} must delegate to ${engineFn}`);
+  }
+
+  // 2. Registered where they can work, and only there: the Lab's desktop
+  //    handler, never the mobile one (no USB serial on iOS/iPadOS — MOBILE.md).
+  const handlers = [...labRs.matchAll(/invoke_handler\(tauri::generate_handler!\[([\s\S]*?)\]\)/g)].map((m) => m[1]);
+  assert.strictEqual(handlers.length, 2, "expected a desktop and a non-desktop invoke_handler in desktop-lab lib.rs");
+  const flasherHandler = /invoke_handler\(tauri::generate_handler!\[([\s\S]*?)\]\)/.exec(libRs)[1];
+  for (const [cmd] of FLASH_COMMANDS) {
+    assert.match(handlers[0], new RegExp(`\\bflash::${cmd}\\b`), `the Lab's desktop handler must register flash::${cmd}`);
+    assert.doesNotMatch(handlers[1], new RegExp(`\\b${cmd}\\b`), `the Lab's mobile handler must not register ${cmd}`);
+    assert.match(flasherHandler, new RegExp(`\\b${cmd}\\b`), `the Flasher no longer registers ${cmd}`);
+  }
+  assert.match(labRs, /#\[cfg\(desktop\)\]\s*mod flash;/, "desktop-lab lib.rs must gate mod flash on desktop");
+  assert.match(labRs, /\.manage\(flash_engine::monitor::SerialMonitorState::default\(\)\)/,
+    "the Lab must manage the engine's SerialMonitorState, or every serial command panics");
+  assert.match(labRs, /\.plugin\(tauri_plugin_shell::init\(\)\)/,
+    "the Lab must init the shell plugin — Rust-side shell().sidecar() needs its state");
+
+  // 3. The DTOs are the engine's, in both apps — never a retyped twin.
+  for (const [label, src] of [["desktop lib.rs", libRs], ["desktop-lab lib.rs", labRs], ["desktop-lab flash.rs", labFlash]]) {
+    assert.doesNotMatch(src, /struct\s+(?:FlashReceipt|ChipInfo|PortDto|FlashRequest)\b/,
+      `${label} defines its own flash DTO — use flash_engine's, or the two apps' answers drift`);
+  }
+
+  // 4. One host shape per app: the same name, Tauri's emitter, the bundled
+  //    espflash by its runtime name, each app's User-Agent, and a spawn that
+  //    never leaves espflash behind — the Flasher's launch guard, the Lab's
+  //    Sidecars registry killed on exit (the launch guard is not ported).
+  for (const [label, src, ua] of [["desktop host.rs", flasherHost, "SecuraCV-Flasher"],
+    ["desktop-lab flash.rs", labFlash, "SecuraCV-Lab"]]) {
+    assert.match(src, /impl FlashHost for TauriHost \{/, `${label} must implement the engine's FlashHost as TauriHost`);
+    assert.match(src, /\.sidecar\(ESPFLASH\)/, `${label} must spawn the bundled espflash by its runtime name`);
+    assert.match(src, new RegExp(`const USER_AGENT: &'static str = "${ua}";`), `${label} lost its User-Agent`);
+  }
+  assert.match(flasherHost, /launch_guard::spawn_tracked\(/, "the Flasher's espflash spawn must stay launch-guard tracked");
+  assert.match(labFlash, /running\.insert\(pid, child\)/, "the Lab must record each running espflash");
+  assert.match(labRs, /RunEvent::Exit = &_event \{\s*flash::Sidecars::kill_all\(_app\);/,
+    "a quitting Lab must kill the espflash it is still running");
+
+  // 5. The events the engine speaks are the events the Flasher's frontend
+  //    listens for (the Lab's flash page joins this list when it gains the
+  //    native path).
+  const events = new Set([...engineAllRs.matchAll(/\.emit\(\s*"((?:flash|serial):[a-z]+)"/g)].map((m) => m[1]));
+  for (const e of ["flash:log", "flash:progress", "flash:changemap", "serial:log", "serial:status", "serial:receipt"]) {
+    assert.ok(events.has(e), `the flash engine no longer emits ${e}`);
+  }
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  for (const e of events) {
+    if (e === "serial:vision") continue; // a Vision-module detail, read from the receipt instead
+    assert.ok(appJs.includes(`"${e}"`), `the engine emits ${e} but the Flasher's frontend never listens for it`);
+  }
+
+  // 6. Both apps embed the one catalog for the Rust-side guards, and both
+  //    depend on the engine by path (the Lab's only on desktop).
+  const labBuild = read(join(ROOT, "desktop-lab/src-tauri/build.rs"));
+  assert.match(labBuild, /canary-local\/devices\/flash\.json/, "the Lab's build.rs must embed the canonical flash.json");
+  assert.match(labFlash, /include_str!\(concat!\(env!\("OUT_DIR"\), "\/flash\.json"\)\)/,
+    "the Lab's chip guard must read the catalog build.rs embedded");
+  assert.match(read(join(ROOT, "desktop/src-tauri/Cargo.toml")), /^flash-engine = \{ path = "\.\.\/flash-engine" \}/m,
+    "the Flasher must depend on desktop/flash-engine");
+  const labToml = read(join(ROOT, "desktop-lab/src-tauri/Cargo.toml"));
+  const desktopBlock = labToml.split("[target.'cfg(not(any(target_os = \"android\", target_os = \"ios\")))'.dependencies]")[1] || "";
+  assert.match(desktopBlock.split(/^\[/m)[0], /^flash-engine = \{ path = "\.\.\/\.\.\/desktop\/flash-engine" \}/m,
+    "the Lab must depend on desktop/flash-engine in its desktop-only block");
+
+  // 7. No shell grant for either webview: every sidecar spawn is Rust-side.
+  for (const dir of ["desktop/src-tauri/capabilities", "desktop-lab/src-tauri/capabilities"]) {
+    for (const f of readdirSync(join(ROOT, dir)).filter((n) => n.endsWith(".json"))) {
+      const perms = JSON.parse(read(join(ROOT, dir, f))).permissions || [];
+      for (const p of perms) {
+        const id = typeof p === "string" ? p : p.identifier;
+        assert.doesNotMatch(String(id), /^shell:/, `${dir}/${f} grants ${id} — espflash is spawned from Rust, never the webview`);
+      }
+    }
+  }
+});
+
+test("native flashing: the Lab bundles the Flasher's espflash, pinned and packaged the same way", () => {
+  // A sidecar is a pin set, a Linux access rule and a build-checked config
+  // key (RELEASE_LESSONS 2026-09-23 (b)); a second app bundling it copies all
+  // three, so all three are held to the Flasher's here.
+  const flasherWf = read(join(ROOT, ".github/workflows/desktop-flasher-release.yml"));
+  const labWf = read(join(ROOT, ".github/workflows/desktop-release.yml"));
+
+  const step = (wf, name, label) => {
+    const i = wf.indexOf(`      - name: ${name}\n`);
+    assert.ok(i >= 0, `${label} has no "${name}" step`);
+    const rest = wf.slice(i + 1);
+    const end = rest.search(/\n      - name: |\n      # ──/);
+    return (end >= 0 ? rest.slice(0, end) : rest).trimEnd();
+  };
+
+  // 1. One flash engine, pinned in ONE file both workflows read
+  //    (.github/espflash-pins.env, A21) — never a second copy in either
+  //    workflow, where it could drift and where no release-targets.yml watch
+  //    would see a bump.
+  const PINS = ".github/espflash-pins.env";
+  const pinKeys = ["ESPFLASH_VERSION", "ESPFLASH_SHA256_AARCH64_APPLE_DARWIN",
+    "ESPFLASH_SHA256_X86_64_APPLE_DARWIN", "ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU"];
+  const pinLines = read(join(ROOT, PINS)).split("\n").filter((l) => l && !l.startsWith("#"));
+  const pins = Object.fromEntries(pinLines.map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
+  assert.deepStrictEqual(Object.keys(pins).sort(), [...pinKeys].sort(),
+    `${PINS} must pin exactly the espflash version and the three per-target sha256s, once each`);
+  assert.strictEqual(pinLines.length, pinKeys.length, `${PINS} pins a key twice`);
+  assert.match(pins.ESPFLASH_VERSION, /^\d+\.\d+\.\d+$/, "ESPFLASH_VERSION must be a plain x.y.z version");
+  for (const key of pinKeys.slice(1)) {
+    assert.match(pins[key], /^[0-9a-f]{64}$/, `${key} must be a full sha256 digest`);
+  }
+  for (const [label, wf] of [["desktop-release.yml", labWf], ["desktop-flasher-release.yml", flasherWf]]) {
+    assert.doesNotMatch(wf, /^\s+ESPFLASH_(?:VERSION|SHA256_\w+):/m,
+      `${label} pins espflash itself again — the one copy lives in ${PINS}`);
+  }
+  // Both read it through the same step, before either bundle step runs.
+  const loadName = "Load the espflash pins";
+  const load = step(labWf, loadName, "desktop-release.yml");
+  assert.strictEqual(load, step(flasherWf, loadName, "desktop-flasher-release.yml"),
+    `the Lab's "${loadName}" step drifted from the Flasher's — keep them identical`);
+  assert.ok(load.includes(`pins=${PINS}\n`), `"${loadName}" must read ${PINS}`);
+  for (const [label, wf] of [["desktop-release.yml", labWf], ["desktop-flasher-release.yml", flasherWf]]) {
+    const at = wf.indexOf(`- name: ${loadName}\n`);
+    for (const name of ["Bundle espflash sidecar (macOS universal)", "Bundle espflash sidecar (Linux x86_64)"]) {
+      assert.ok(at >= 0 && at < wf.indexOf(`- name: ${name}\n`), `${label} must load the pins before "${name}"`);
+    }
+  }
+  // Run the step exactly as the release does — on the real file, and on the
+  // shapes it must refuse — so a parse that only ever runs on a release
+  // runner is exercised on every PR that touches it.
+  const runBody = /\n        run: \|\n([\s\S]*)$/.exec(load);
+  assert.ok(runBody, `couldn't find the run: block of "${loadName}"`);
+  const script = runBody[1].split("\n").map((l) => l.replace(/^ {10}/, "")).join("\n");
+  const runLoad = (pinsText) => {
+    const dir = mkdtempSync(join(tmpdir(), "espflash-pins-"));
+    try {
+      mkdirSync(join(dir, ".github"));
+      writeFileSync(join(dir, PINS), pinsText);
+      const envFile = join(dir, "github_env");
+      writeFileSync(envFile, "");
+      const r = spawnSync("bash", ["-c", script], { cwd: dir, env: { PATH: process.env.PATH, GITHUB_ENV: envFile }, encoding: "utf8" });
+      return { status: r.status, env: read(envFile), out: (r.stdout || "") + (r.stderr || "") };
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  };
+  const real = read(join(ROOT, PINS));
+  const ok = runLoad(real);
+  assert.strictEqual(ok.status, 0, `"${loadName}" refused the real ${PINS}: ${ok.out}`);
+  assert.deepStrictEqual(ok.env.split("\n").filter(Boolean).sort(),
+    pinKeys.map((k) => `${k}=${pins[k]}`).sort(), `"${loadName}" must export exactly the four pins`);
+  const sha = pins.ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU;
+  for (const [why, text] of [
+    ["a missing pin", real.replace(/^ESPFLASH_SHA256_X86_64_APPLE_DARWIN=.*\n/m, "")],
+    ["a pin given twice", real + `ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU=${sha}\n`],
+    ["a short digest", real.replace(sha, sha.slice(1))],
+    ["an uppercase digest", real.replace(sha, sha.toUpperCase())],
+    ["a quoted version", real.replace(/^ESPFLASH_VERSION=(.*)$/m, 'ESPFLASH_VERSION="$1"')],
+    ["a stranger key", real + "ESPFLASH_EXTRA=1\n"],
+    ["shell in the file", real + "$(touch pwned)\n"],
+  ]) {
+    const bad = runLoad(text);
+    assert.notStrictEqual(bad.status, 0, `"${loadName}" accepted ${why}`);
+    assert.match(bad.out, /::error file=\.github\/espflash-pins\.env::/, `"${loadName}" must name ${PINS} when it refuses ${why}`);
+  }
+  // Every sha256 the bundle steps look up is one the file pins: the macOS
+  // step derives ESPFLASH_SHA256_<TRIPLE> from each triple it fetches, the
+  // Linux step names its variable outright.
+  const macStep = step(flasherWf, "Bundle espflash sidecar (macOS universal)", "desktop-flasher-release.yml");
+  const fetched = [...macStep.matchAll(/^\s+fetch ([a-z0-9_-]+)$/gm)].map((m) => m[1]);
+  assert.deepStrictEqual(fetched, ["aarch64-apple-darwin", "x86_64-apple-darwin"], "the macOS step fetches a different set of slices");
+  for (const triple of fetched) {
+    const key = `ESPFLASH_SHA256_${triple.toUpperCase().replace(/-/g, "_")}`;
+    assert.ok(key in pins, `the macOS step verifies espflash-${triple} against ${key}, which ${PINS} doesn't pin`);
+  }
+  const linuxVars = [...step(flasherWf, "Bundle espflash sidecar (Linux x86_64)", "desktop-flasher-release.yml")
+    .matchAll(/\$\{(ESPFLASH_\w+)\}/g)].map((m) => m[1]);
+  assert.ok(linuxVars.includes("ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU"), "the Linux step lost its sha256 check variable");
+  for (const v of linuxVars) assert.ok(v in pins, `the Linux step reads ${v}, which ${PINS} doesn't pin`);
+
+  // 2. The same bundling steps, sidecar directory aside — sha check, lipo and
+  //    the per-arch/universal architecture proof included.
+  for (const name of ["Bundle espflash sidecar (macOS universal)", "Bundle espflash sidecar (Linux x86_64)"]) {
+    const lab = step(labWf, name, "desktop-release.yml");
+    const flasher = step(flasherWf, name, "desktop-flasher-release.yml");
+    assert.match(lab, /desktop-lab\/src-tauri\/binaries/, `the Lab's "${name}" must fill the Lab's binaries/`);
+    assert.strictEqual(lab.replaceAll("desktop-lab/src-tauri", "desktop/src-tauri"), flasher,
+      `the Lab's "${name}" step drifted from the Flasher's — keep them identical but for the sidecar directory`);
+    assert.match(flasher, /sha256sum -c -/, `"${name}" must verify the download against its pin`);
+  }
+  assert.match(step(labWf, "Bundle espflash sidecar (macOS universal)", "desktop-release.yml"),
+    /lipo -archs "\$bin\/espflash-universal-apple-darwin"/,
+    "the universal espflash must be PROVEN to carry both slices (RELEASE_LESSONS (z))");
+  // The steps run before the bundle is built.
+  assert.ok(labWf.indexOf("Bundle espflash sidecar (Linux x86_64)") < labWf.indexOf("- name: Build & publish (unsigned)"),
+    "the Lab must bundle espflash before tauri-action builds the app");
+
+  // 3. Where Tauri looks: externalBin on exactly the platforms the release
+  //    bundles (macOS + Linux), never in the base config — tauri-build
+  //    enforces externalBin for every target, and no iOS espflash exists.
+  const labConf = JSON.parse(read(join(ROOT, "desktop-lab/src-tauri/tauri.conf.json")));
+  assert.strictEqual(labConf.bundle.externalBin, undefined,
+    "the Lab's base tauri.conf.json must not name externalBin — the iPad shell's build would demand an iOS espflash");
+  for (const plat of ["macos", "linux"]) {
+    const conf = JSON.parse(read(join(ROOT, `desktop-lab/src-tauri/tauri.${plat}.conf.json`)));
+    assert.deepStrictEqual(conf.bundle.externalBin, ["binaries/espflash"],
+      `desktop-lab tauri.${plat}.conf.json must bundle binaries/espflash`);
+  }
+  const flasherConf = JSON.parse(read(join(ROOT, "desktop/src-tauri/tauri.conf.json")));
+  assert.ok((flasherConf.bundle.externalBin || []).includes("binaries/espflash"), "the Flasher lost its espflash externalBin");
+  // The sidecar the PR check stubs is the one the Linux config names.
+  const labCheck = read(join(ROOT, ".github/workflows/desktop-lab-check.yml"));
+  assert.match(labCheck, /want="binaries\/espflash-\$\(rustc -vV/,
+    "desktop-lab-check.yml must stub binaries/espflash-<host triple>, or tauri-build refuses to compile the crate");
+
+  // 4. One udev rule, byte-equal, installed by each .deb under its OWN path:
+  //    dpkg refuses a package that owns a path another installed package owns.
+  const rules = (p) => readFileSync(join(ROOT, p));
+  assert.ok(rules("desktop-lab/src-tauri/packaging/canary-serial.rules")
+    .equals(rules("desktop/src-tauri/packaging/canary-serial.rules")),
+  "the Lab's canary-serial.rules drifted from the Flasher's — copy it back byte for byte");
+  const debFiles = (conf) => (((conf.bundle || {}).linux || {}).deb || {}).files || {};
+  const labDest = Object.entries(debFiles(labConf)).find(([, src]) => src === "packaging/canary-serial.rules");
+  const flasherDest = Object.entries(debFiles(flasherConf)).find(([, src]) => src === "packaging/canary-serial.rules");
+  assert.ok(labDest && flasherDest, "both .debs must install packaging/canary-serial.rules");
+  assert.match(labDest[0], /^\/usr\/lib\/udev\/rules\.d\/6[0-9]-[a-z-]+\.rules$/, "the Lab's rule must land in udev's rules.d, before ModemManager's 77-mm-*");
+  assert.notStrictEqual(labDest[0], flasherDest[0],
+    "the two .debs install the rule at the same path — dpkg would refuse the second app");
+  // …and the heredoc each INSTALL.md hands an AppImage user to paste is the
+  // same rule (RELEASE_LESSONS principle 13: a hand copy nothing ties to the
+  // file is a copy that drifts).
+  const ruleLines = rules("desktop/src-tauri/packaging/canary-serial.rules").toString("utf8")
+    .split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+  assert.ok(ruleLines.length >= 2, "couldn't read the rule lines out of canary-serial.rules");
+  for (const doc of ["desktop/INSTALL.md", "desktop-lab/INSTALL.md"]) {
+    const m = /sudo tee \/etc\/udev\/rules\.d\/61-securacv-canary\.rules >\/dev\/null <<'EOF'\n([\s\S]*?)\n\s*EOF\n/
+      .exec(read(join(ROOT, doc)));
+    assert.ok(m, `${doc} lost its udev-rule heredoc`);
+    assert.deepStrictEqual(m[1].split("\n").map((l) => l.trim()).filter(Boolean), ruleLines,
+      `${doc}'s udev-rule heredoc drifted from packaging/canary-serial.rules — paste the rule lines back`);
+  }
+  // The Linux step proves what it bundled is an x86-64 ELF, and a source
+  // build (which no sha256 pin covers) is never silent — both workflows, as
+  // the step-equality check above keeps them.
+  const linuxStep = step(labWf, "Bundle espflash sidecar (Linux x86_64)", "desktop-release.yml");
+  assert.match(linuxStep, /\*"ELF 64-bit"\*"x86-64"\*\) ;;/, "the Linux espflash must be proven an x86-64 ELF");
+  for (const name of ["Bundle espflash sidecar (macOS universal)", "Bundle espflash sidecar (Linux x86_64)"]) {
+    assert.match(step(labWf, name, "desktop-release.yml"), /echo "::warning::prebuilt espflash-\$triple not downloadable;[^\n]*\n\s*cargo install espflash/,
+      `"${name}"'s cargo-install fallback must announce itself with a ::warning::`);
+  }
+});
+
+// The text of a top-level JS function (declaration through its balanced
+// body) — the grabFn idiom above, for any source.
+const jsFnText = (src, name, where) => {
+  const i = src.indexOf("function " + name + "(");
+  assert.ok(i >= 0, `couldn't find function ${name} in ${where}`);
+  const b = src.indexOf("{", src.indexOf(")", i));
+  let d = 0;
+  for (let k = b; k < src.length; k++) {
+    if (src[k] === "{") d++;
+    else if (src[k] === "}" && --d === 0) return src.slice(i, k + 1);
+  }
+  assert.fail(`unbalanced function ${name} in ${where}`);
+};
+
+// Does a frontend's BAUD_RETRY_KINDS name `engine`?
+const BAUD_RETRY_SET_HAS_ENGINE = (src) =>
+  /const BAUD_RETRY_KINDS = new Set\(\[[^\]]*"engine"/.test(src);
+
+test("native flashing: the Lab's flash page gives the Flasher's diagnostics, and serial lights only where it works", () => {
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const nativeJs = read(join(CANARY, "assets/flash-native.js"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const labRs = read(join(ROOT, "desktop-lab/src-tauri/src/lib.rs"));
+
+  // 1. The espflash-aware classifier is the Flasher's, verbatim (the third
+  //    source beside app.js and flash-core.js) — and it names espflash's
+  //    real failures the way the Flasher does.
+  const nativeClassifier = jsFnText(nativeJs, "classifyFlashError", "flash-native.js");
+  assert.strictEqual(nativeClassifier, jsFnText(appJs, "classifyFlashError", "desktop/src/app.js"),
+    "flash-native.js classifyFlashError drifted from the Flasher's (desktop/src/app.js) — copy it back verbatim");
+  const classify = new Function(nativeClassifier + "\nreturn classifyFlashError;")();
+  const generic = "espflash exited with code 1. The board can't be bricked — " +
+    "put it back in download mode and try again.\n";
+  for (const [tail, kind] of [
+    ["Error: Failed to open serial port\nCaused by: Device or resource busy", "port-busy"],
+    ["Error: Permission denied (os error 13)", "permission"],
+    ["Error: Failed to connect to the device\nCaused by: No serial data received", "not-in-download"],
+    ["Error: Serial port disconnected\nCaused by: device not configured", "device-lost"],
+    ["", "unknown"],
+  ]) {
+    assert.strictEqual(classify(new Error(generic + tail)).kind, kind,
+      `flash-native.js misclassifies espflash's tail: ${tail.slice(0, 40) || "(none)"}`);
+  }
+  // A bundled espflash that cannot start (the wrong CPU, a missing loader, a
+  // file without its execute bit) is its own kind in both frontends — never
+  // `unknown` (which coaches download mode) and never the port's `permission`.
+  // The errors are built from the Rust that produces them, so a reworded
+  // spawn_error or host message fails here instead of silently falling back.
+  const archHint = /pub const ARCH_MISMATCH_HINT: &str =\s*"([\s\S]*?)";/
+    .exec(read(join(ROOT, "desktop/hub-core/src/hub_sidecar.rs")));
+  assert.ok(archHint, "couldn't parse ARCH_MISMATCH_HINT from hub-core hub_sidecar.rs");
+  const archText = archHint[1].replace(/\\\n\s*/g, "").replace(/\\"/g, '"');
+  const sidecarRs = engineRs("sidecar");
+  const withHint = /format!\("could not start \{name\}: \{hint\} \(\{raw\}\)"\)/;
+  const bare = /format!\("could not start \{name\}: \{raw\}"\)/;
+  assert.match(sidecarRs, withHint, "spawn_error's hinted wording moved — the frontends match its prefix");
+  assert.match(sidecarRs, bare, "spawn_error's bare wording moved — the frontends match its prefix");
+  const flasherHostRs = read(join(ROOT, "desktop/src-tauri/src/host.rs"));
+  const labFlashRs = read(join(ROOT, "desktop-lab/src-tauri/src/flash.rs"));
+  for (const [label, src] of [["desktop host.rs", flasherHostRs], ["desktop-lab flash.rs", labFlashRs]]) {
+    assert.match(src, /\.map_err\(\|e\| format!\("bundled espflash missing: \{e\}"\)\)/,
+      `${label}'s unresolvable-sidecar wording moved — the frontends match its prefix`);
+  }
+  assert.strictEqual(jsFnText(nativeJs, "spawnReason", "flash-native.js"),
+    jsFnText(appJs, "spawnReason", "desktop/src/app.js"),
+    "flash-native.js spawnReason drifted from the Flasher's — copy it back verbatim");
+  const reasonOf = new Function(jsFnText(appJs, "spawnReason", "desktop/src/app.js") + "\nreturn spawnReason;")();
+  const classifyFlasher = new Function(jsFnText(appJs, "classifyFlashError", "desktop/src/app.js") +
+    "\nreturn classifyFlashError;")();
+  for (const [err, reason] of [
+    // macOS given a slice-less binary, and Linux's twin: spawn_error's hint.
+    [`could not start espflash: ${archText} (Bad CPU type in executable (os error 86))`,
+      "Bad CPU type in executable (os error 86)"],
+    [`could not start espflash: ${archText} (Exec format error (os error 8))`, "Exec format error (os error 8)"],
+    // A dynamically linked espflash whose loader is missing reports ENOENT…
+    ["could not start espflash: No such file or directory (os error 2)", "No such file or directory (os error 2)"],
+    // …and one without its execute bit reports EACCES — port-shaped words.
+    ["could not start espflash: Permission denied (os error 13)", "Permission denied (os error 13)"],
+    ["bundled espflash missing: current executable path has no parent", "current executable path has no parent"],
+  ]) {
+    for (const [where, fn] of [["flash-native.js", classify], ["desktop/src/app.js", classifyFlasher]]) {
+      const c = fn(err);
+      assert.strictEqual(c.kind, "engine", `${where} reads a sidecar that never started as ${c.kind}: ${err.slice(0, 60)}`);
+      assert.doesNotMatch(c.hint, /hold BOOT/, `${where} coaches download mode for a sidecar that never started`);
+    }
+    assert.strictEqual(reasonOf(err), reason, `spawnReason lost the system's reason in: ${err.slice(0, 60)}`);
+  }
+  // …while espflash that RAN and was refused the port keeps the port's kind.
+  assert.strictEqual(classify(new Error(generic + "Error: Permission denied (os error 13)")).kind, "permission");
+  assert.ok(!BAUD_RETRY_SET_HAS_ENGINE(nativeJs) && !BAUD_RETRY_SET_HAS_ENGINE(appJs),
+    "a sidecar that cannot start fails identically at every speed — never retry `engine`");
+  // Both identify() calls say it with the system's reason and no driver note
+  // (the port was never opened, so a USB-bridge driver can't be the cause).
+  for (const [where, src] of [["desktop/src/app.js", appJs], ["flash-native.js", nativeJs]]) {
+    assert.ok(src.includes('const engine = c.kind === "engine";'), `${where} identify() lost the engine kind`);
+    assert.ok(src.includes('const reason = engine ? ` (The system said: ${spawnReason(firstLine)})` : "";'),
+      `${where} identify() must give the system's reason for a sidecar that never started`);
+    assert.ok(src.includes("!osLevel && !engine && bridge"), `${where} identify() must not blame a USB driver when the engine never started`);
+  }
+
+  // withoutLocalFile() rewrites ONE sentence of that verbatim classifier (the
+  // "local .bin under Advanced" install lives in the Flasher, not here). If
+  // app.js rewords it, the replace silently does nothing — so the sentence it
+  // replaces must still be in the download hint, word for word.
+  const replaced = /const withoutLocalFile = \(hint\) =>\s*hint\.replace\("([^"]+)",/.exec(nativeJs);
+  assert.ok(replaced, "couldn't find flash-native.js withoutLocalFile's replace");
+  const downloadHint = classify(new Error("download failed: connection reset"));
+  assert.strictEqual(downloadHint.kind, "download");
+  assert.ok(downloadHint.hint.includes(replaced[1]),
+    "the Flasher's download hint no longer says the sentence withoutLocalFile replaces — reword both");
+  // The same retry rule (never `unknown`) and the same live-receipt rule.
+  const retrySet = (src, where) => {
+    const m = /const BAUD_RETRY_KINDS = new Set\(\[([^\]]*)\]\)/.exec(src);
+    assert.ok(m, `couldn't find BAUD_RETRY_KINDS in ${where}`);
+    return m[1].replace(/\s+/g, "");
+  };
+  assert.strictEqual(retrySet(nativeJs, "flash-native.js"), retrySet(appJs, "app.js"),
+    "the Lab retries a different set of failures down the baud ladder than the Flasher");
+  assert.match(nativeJs, /const requiresLiveReceipt = \(product\) => !product \|\| product\.serial_receipt !== false;/,
+    "flash-native.js must judge the live boot receipt by the Flasher's rule");
+  assert.match(appJs, /return !product \|\| product\.serial_receipt !== false;/, "the Flasher's live-receipt rule moved");
+
+  // 2. The Linux port hints the backend names are said as-is, not coached
+  //    as download mode: the frontends' OS-level pattern must match BOTH of
+  //    the engine's hints, in both apps.
+  const hint = (name) => {
+    const m = new RegExp(`pub const ${name}: &str =\\s*"([\\s\\S]*?)";`).exec(engineRs("port_hint"));
+    assert.ok(m, `couldn't parse ${name} from flash-engine port_hint.rs`);
+    // Rust → runtime text: line continuations folded, \" unescaped.
+    return m[1].replace(/\\\n\s*/g, "").replace(/\\"/g, '"');
+  };
+  const osLevelNative = /const OS_LEVEL_RE = (\/[^\n]*\/i);/.exec(nativeJs);
+  assert.ok(osLevelNative, "flash-native.js lost its OS-level (Linux hint) pattern");
+  assert.ok(appJs.includes(osLevelNative[1] + ".test(firstLine)"),
+    "flash-native.js and the Flasher's identify() must recognize the same OS-level causes");
+  const osRe = new Function(`return ${osLevelNative[1]};`)();
+  for (const name of ["PERMISSION_HINT", "BUSY_HINT"]) {
+    assert.ok(osRe.test(hint(name)), `the frontends' OS-level pattern no longer matches the engine's ${name}`);
+  }
+
+  // 3. Every event the pipeline and the monitor stream is heard — except
+  //    the change map, which needs a safety copy this bench doesn't take
+  //    (it sends no backup path, so the engine never emits it).
+  for (const e of ["flash:log", "flash:progress", "serial:status", "serial:log", "serial:receipt"]) {
+    assert.ok(nativeJs.includes(`listen("${e}"`), `the Lab's flash page never listens for ${e}`);
+  }
+  assert.match(nativeJs, /backupPath: "",/, "the native bench must say it has no safety copy (backupPath empty)");
+
+  // 4. The capability flips only where everything behind it exists: the
+  //    sidecar in the macOS + Linux configs, the release steps that fill it,
+  //    and a frontend that branches on it.
+  const serialCap = /"serial":\s*(.*),\s*$/m.exec(labRs);
+  assert.ok(serialCap, "couldn't find the Lab's serial capability");
+  if (serialCap[1].trim() !== "false") {
+    assert.strictEqual(serialCap[1].trim(),
+      'cfg!(any(target_os = "macos", target_os = "linux")) && espflash_bundled(&app)',
+      "the Lab may advertise native flashing only on the two platforms whose release bundles espflash, " +
+      "and only while that espflash is really there (a compile-time cfg! alone lights the bench on a " +
+      "dev build's empty stub, where every board read fails at spawn)");
+    // The runtime half: resolved where the spawn looks (the shell plugin's
+    // own sidecar() path), and refused unless it is a non-empty executable
+    // file (the engine's looks_runnable, unit-tested there).
+    assert.match(labRs, /#\[cfg\(any\(target_os = "macos", target_os = "linux"\)\)\]\s*fn espflash_bundled\(app: &tauri::AppHandle\) -> bool \{\s*flash::espflash_bundled\(app\)\s*\}/,
+      "lib.rs espflash_bundled must ask src/flash.rs on the platforms that bundle espflash");
+    const labFlashRs = read(join(ROOT, "desktop-lab/src-tauri/src/flash.rs"));
+    const bundled = /pub fn espflash_bundled\(app: &AppHandle\) -> bool \{([\s\S]*?)\n\}/.exec(labFlashRs);
+    assert.ok(bundled, "src/flash.rs lost espflash_bundled");
+    assert.match(bundled[1], /app\.shell\(\)\.sidecar\(ESPFLASH\)/,
+      "espflash_bundled must resolve the path the spawn uses (shell().sidecar(ESPFLASH))");
+    assert.match(bundled[1], /flash_engine::sidecar::looks_runnable\(/,
+      "espflash_bundled must refuse a missing, empty or non-executable sidecar (looks_runnable)");
+    assert.match(engineRs("sidecar"), /pub fn looks_runnable\(path: &std::path::Path\) -> bool \{[\s\S]*?meta\.len\(\) == 0/,
+      "the engine's looks_runnable must refuse the empty compile-only stub");
+    for (const plat of ["macos", "linux"]) {
+      const conf = JSON.parse(read(join(ROOT, `desktop-lab/src-tauri/tauri.${plat}.conf.json`)));
+      assert.ok(((conf.bundle || {}).externalBin || []).includes("binaries/espflash"),
+        `serial is on, but tauri.${plat}.conf.json bundles no espflash`);
+    }
+    const labWf = read(join(ROOT, ".github/workflows/desktop-release.yml"));
+    for (const step of ["Bundle espflash sidecar (macOS universal)", "Bundle espflash sidecar (Linux x86_64)"]) {
+      assert.ok(labWf.includes(`- name: ${step}`), `serial is on, but desktop-release.yml has no "${step}" step`);
+    }
+    assert.match(flashJs, /import \{[^}]*\bmountNativeBench\b[^}]*\} from "\.\/flash-native\.js";/,
+      "serial is on, but the Flash page never loads its native bench");
+  }
+  // The page asks before it chooses, prefers the native engine, and an app
+  // that can't flash gets the in-app card — never the website's "get Chrome".
+  assert.match(flashJs, /const native = await probeNative\(\);\s*const nativeSerial = !!\(native && native\.serial\);/,
+    "flash.js must ask native_capabilities (probeNative) before choosing a path");
+  assert.match(flashJs, /mount\.append\(native \? renderNativeUnavailable\(native\) : renderUnsupported\(\)\);/,
+    "inside the Lab app, a build that can't flash must render the in-app card, not the website's");
+  assert.ok(flashJs.indexOf("probeNative()") < flashJs.indexOf('"serial" in navigator'),
+    "the native probe must come before the Web Serial check");
+  assert.match(nativeJs, /invoke\("native_capabilities"\)/, "flash-native.js must probe native_capabilities");
+});
+
+// RELEASE_LESSONS 2026-09-03: a network claim lives on more surfaces than the
+// file being edited, and nothing held them together — so this does. The
+// native bench asks GitHub which firmware is published as soon as a board is
+// read (identify → refreshManifest, and again on the dev toggle), BEFORE
+// anyone presses Flash; every Lab surface that states what the app fetches
+// must say that, and none may keep the old "only when you press Flash" / "the
+// one thing it fetches on its own" wording that became false with it.
+test("the Lab's network claim says what the native bench fetches, on every surface", () => {
+  const nativeJs = read(join(CANARY, "assets/flash-native.js"));
+  assert.match(nativeJs, /recheck\.classList\.remove\("flash-hidden"\);\s*await refreshManifest\(\);\s*renderPick\(\);/,
+    "the bench's manifest read moved — if it now waits for Flash, the claim below may say so again");
+  // Comments and prose flattened: `#` / `//` line markers dropped, whitespace folded.
+  const flat = (t) => t.replace(/^\s*(?:#|\/\/)\s?/gm, "").replace(/\s+/g, " ");
+  const surfaces = [
+    ["desktop-lab/README.md", 1],
+    ["desktop-lab/INSTALL.md", 1],
+    ["desktop-lab/src-tauri/tauri.conf.json", 1], // the .deb/AppImage store text
+    ["desktop-lab/ipad-guide.html", 1],
+    ["desktop-lab/src-tauri/Cargo.toml", 1],
+    ["desktop-lab/src-tauri/src/lib.rs", 1],
+    [".github/workflows/desktop-release.yml", 3], // the three release bodies
+  ];
+  for (const [path, want] of surfaces) {
+    const text = flat(read(join(ROOT, path)));
+    assert.strictEqual(text.split("which signed firmware is published").length - 1, want,
+      `${path} must say the Lab asks which signed firmware is published once a board is connected (${want}×)`);
+    for (const stale of [/only when (?:you press|the user presses) Flash/i, /fetches on its own/i,
+      /the one thing it (?:ever )?fetches/i]) {
+      assert.ok(!stale.test(text), `${path} still claims ${stale} — the bench fetches the release manifest before Flash`);
+    }
+  }
+});
+
+// A DOM just big enough for flash-native.js: elements with children, class
+// lists, text, listeners and the few properties the bench reads and writes.
+function fakeDocument() {
+  class Node {
+    constructor(tag) {
+      this.tagName = tag; this.children = []; this.parent = null; this._text = "";
+      this.className = ""; this.dataset = {}; this.style = {}; this.listeners = {};
+      this.value = ""; this.checked = false; this.disabled = false; this.type = ""; this.name = "";
+      this.scrollTop = 0; this.scrollHeight = 0; this.attrs = {};
+      const self = this;
+      this.classList = {
+        add: (...c) => { const s = new Set(self.className.split(/\s+/).filter(Boolean)); c.forEach((x) => s.add(x)); self.className = [...s].join(" "); },
+        remove: (...c) => { self.className = self.className.split(/\s+/).filter((x) => x && !c.includes(x)).join(" "); },
+        toggle: (c, on) => { const has = self.classList.contains(c); const want = on === undefined ? !has : !!on; if (want && !has) self.classList.add(c); if (!want && has) self.classList.remove(c); },
+        contains: (c) => self.className.split(/\s+/).includes(c),
+      };
+    }
+    append(...nodes) { for (const n of nodes) { if (n.parent) n.remove(); n.parent = this; this.children.push(n); } }
+    remove() { if (this.parent) { this.parent.children = this.parent.children.filter((c) => c !== this); this.parent = null; } }
+    set innerHTML(_) { for (const c of [...this.children]) c.remove(); this._text = ""; }
+    get textContent() { return this._text + this.children.map((c) => c.textContent).join(""); }
+    set textContent(t) { for (const c of [...this.children]) c.remove(); this._text = String(t); }
+    setAttribute(k, v) { this.attrs[k] = v; }
+    addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); }
+    fire(type) { for (const fn of this.listeners[type] || []) fn({ target: this }); }
+    *walk() { yield this; for (const c of this.children) yield* c.walk(); }
+    find(pred) { for (const n of this.walk()) if (pred(n)) return n; return null; }
+  }
+  return {
+    createElement: (tag) => new Node(tag),
+    createTextNode: (t) => { const n = new Node("#text"); n._text = String(t); return n; },
+  };
+}
+
+async function runNativeBench({ flashAnswers, detectAnswer, ports }) {
+  const calls = [];
+  // Every command and every touch of the form, in order — so a test can say
+  // what happened BEFORE the flash (the password cleared) and after it (the
+  // form redrawn from its Wi-Fi memory).
+  const timeline = [];
+  const flashQueue = [...(flashAnswers || [])];
+  const invoke = async (cmd, args) => {
+    calls.push([cmd, args]);
+    timeline.push(cmd);
+    switch (cmd) {
+      case "native_capabilities": return { serial: true, serial_list: true };
+      // A non-USB port listed FIRST: only kind "usb" may be read as a Canary.
+      case "list_ports": return ports || [{ name: "/dev/ttyS0", kind: "pci", vid: null, pid: null },
+                                 { name: "/dev/ttyACM0", kind: "usb", vid: 0x303a, pid: 0x1001, product: "USB JTAG/serial debug unit" }];
+      // Tauri rejects an invoke with the command's Err value itself — a
+      // plain string, not an Error — so the fakes throw strings too.
+      case "detect_chip":
+        if (typeof detectAnswer === "string") throw detectAnswer;
+        return { chip: "ESP32-S3", flash_bytes: 8 * 1024 * 1024, mac: "dc:54:75:c1:22:30", mac_check: { level: "clear", label: "ok" } };
+      case "fetch_manifest": {
+        const products = {};
+        for (const p of catalog.products) products[p.id] = { version: "9.9.9", chipFamily: p.chip };
+        return { schema: "securacv-flash-1", products };
+      }
+      case "flash": {
+        const next = flashQueue.shift();
+        if (typeof next === "string") throw next;
+        return next;
+      }
+      default: return null; // stop/start_serial_monitor
+    }
+  };
+  const doc = fakeDocument();
+  const saved = { window: globalThis.window, document: globalThis.document, setInterval: globalThis.setInterval };
+  const restore = () => Object.assign(globalThis, saved);
+  globalThis.document = doc;
+  const heard = {};
+  const listen = async (evt, cb) => {
+    (heard[evt] = heard[evt] || []).push(cb);
+    return () => { heard[evt] = (heard[evt] || []).filter((f) => f !== cb); };
+  };
+  globalThis.window = { __TAURI__: { core: { invoke }, event: { listen } } };
+  globalThis.setInterval = () => 0; // the 1 s port poll is driven by hand here
+  try {
+    const native = await import(pathToFileURL(join(CANARY, "assets/flash-native.js")).href);
+    assert.deepStrictEqual(await native.probeNative(), { serial: true, serial_list: true });
+    const mount = doc.createElement("div");
+    const form = {
+      credentials: () => { timeline.push("form:read"); return { ok: true, wifi: { ssid: "home", pass: "hunter22" }, mqtt: null, autoUpdate: true }; },
+      clear() { timeline.push("form:clear"); },
+    };
+    await native.mountNativeBench(mount, { catalog, renderWifiFields: () => { timeline.push("form:draw"); return form; } });
+    const run = { calls, timeline, mount, doc, close: restore };
+    run.emit = (evt, payload) => { for (const cb of heard[evt] || []) cb({ payload }); };
+    run.text = () => mount.textContent;
+    run.pick = async (id) => {
+      const name = catalog.products.find((p) => p.id === id).name;
+      const row = mount.find((n) => n.tagName === "label" && n.textContent.startsWith(name));
+      assert.ok(row, `the picker offers no ${id}`);
+      const radio = row.children[0];
+      assert.ok(!radio.disabled, `${id} is not selectable`);
+      radio.fire("change");
+      const go = mount.find((n) => n.tagName === "button" && n.textContent === "Flash my Canary");
+      go.fire("click");
+      await drain(); await drain();
+    };
+    return run;
+  } catch (e) {
+    restore();
+    throw e;
+  }
+}
+
+test("native flashing: the Lab's flash page drives the Flasher's commands with the Flasher's arguments", async () => {
+  const labFlash = read(join(ROOT, "desktop-lab/src-tauri/src/flash.rs"));
+  const camel = (s) => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+  const rustArgs = (src, fn) => {
+    const sig = new RegExp(`fn ${fn}\\(([\\s\\S]*?)\\)\\s*->`).exec(src);
+    assert.ok(sig, `couldn't parse fn ${fn}`);
+    // Argument names only: `name: Type` at the start of each argument (a
+    // generic's inner comma — State<'_, T> — starts no argument).
+    const flat = sig[1].split("\n").map((l) => l.replace(/\/\/.*$/, "").trim()).join(" ");
+    return [...flat.matchAll(/(?:^|,)\s*(\w+)\s*:/g)].map((m) => m[1])
+      .filter((a) => !["app", "state"].includes(a)).map(camel).sort();
+  };
+  const receipt = { target: "esp32-host", product_id: "securacv-canary", version: "9.9.9", release_sha256: "a".repeat(64),
+    installed_sha256: "b".repeat(64), bytes_written: 1, release_verification: "ed25519+sha256", channel: "stable",
+    chip_write_verified: true, provisioned: true };
+
+  // A transport fault at the top speed, then success one rung down.
+  const run = await runNativeBench({
+    flashAnswers: ["espflash exited with code 1. The board can't be bricked — put it back in download mode and try again.\nError: Failed to connect to the device\nCaused by: No serial data received", receipt],
+  });
+  try {
+  const order = run.calls.map(([c]) => c);
+  assert.ok(order.indexOf("list_ports") < order.indexOf("detect_chip"), "the bench must list ports before reading the board");
+  assert.deepStrictEqual(run.calls.find(([c]) => c === "detect_chip")[1], { port: "/dev/ttyACM0" },
+    "only the USB port is a Canary candidate (the Flasher's kind === \"usb\" filter)");
+  assert.deepStrictEqual(run.calls.find(([c]) => c === "fetch_manifest")[1], { manifestUrl: catalog.manifest_url },
+    "the bench must read the catalog's pinned stable manifest");
+  assert.match(run.text(), /Connected · ESP32-S3 · 8 MB flash on \/dev\/ttyACM0/);
+  // Only firmware for this silicon is offered.
+  for (const p of catalog.products) {
+    const offered = run.mount.find((n) => n.tagName === "label" && n.textContent.startsWith(p.name + " — "));
+    assert.strictEqual(!!offered, normChip(p.chip) === "ESP32S3", `${p.id} offered on an ESP32-S3: ${!!offered}`);
+  }
+  await run.pick("securacv-canary");
+  const flashes = run.calls.filter(([c]) => c === "flash").map(([, a]) => a);
+  assert.deepStrictEqual(flashes.map((a) => a.baud), [catalog.flash_baud || 921600, 460800],
+    "a not-in-download failure must retry one rung down the baud ladder, like the Flasher");
+  const args = flashes[1];
+  assert.deepStrictEqual(Object.keys(args).sort(), rustArgs(labFlash, "flash"),
+    "the bench's invoke(\"flash\") keys must be exactly the command's arguments (camelCased by Tauri)");
+  assert.strictEqual(args.productId, "securacv-canary");
+  assert.strictEqual(args.detectedChip, "ESP32-S3");
+  assert.strictEqual(args.eraseFirst, true, "first contact must default to the full erase, as in the Flasher");
+  assert.strictEqual(args.backupPath, "");
+  const provFields = [...engineRs("provisioning").matchAll(/^\s+pub (\w+):/gm)].map((m) => camel(m[1]));
+  const provStruct = /pub struct Provisioning \{([\s\S]*?)\n\}/.exec(engineRs("provisioning"))[1];
+  const structFields = [...provStruct.matchAll(/^\s+pub (\w+):/gm)].map((m) => camel(m[1])).sort();
+  assert.ok(provFields.length >= structFields.length);
+  assert.deepStrictEqual(Object.keys(args.provisioning).sort(), structFields,
+    "the bench's provisioning object must carry exactly the engine's Provisioning fields");
+  assert.strictEqual(args.provisioning.wifiSsid, "home");
+  assert.strictEqual(args.provisioning.wifiNvs, catalog.products.find((p) => p.id === "securacv-canary").wifi_nvs || "string");
+  const start = run.calls.find(([c]) => c === "start_serial_monitor");
+  assert.ok(start, "a successful flash must start the boot-receipt monitor");
+  assert.deepStrictEqual(Object.keys(start[1]).sort(), rustArgs(labFlash, "start_serial_monitor"));
+  assert.strictEqual(start[1].postFlash, true);
+  assert.strictEqual(start[1].vid, 0x303a);
+  // Who checked what: the app verified the release signature; espflash and
+  // the chip only confirmed the write. The chip is never credited with the
+  // Ed25519 check ("verified" is the signature's word alone).
+  assert.match(run.text(), /Written, and espflash confirmed the write on the chip · release signature verified against the pinned key \(ed25519\+sha256\) · stable channel · installed SHA-256 b{16}…\. Your settings were sealed/);
+  assert.ok(!/verified by the chip/i.test(run.text()), "the success text must not credit the chip with the release check");
+  // The Wi-Fi password leaves the DOM the moment it is read — before the
+  // first write, not after a success — and the form is drawn afresh once the
+  // attempt ends, so a retry pre-fills from memory instead of re-reading an
+  // emptied field (which would provision, and remember, an empty password).
+  const tl = run.timeline;
+  assert.ok(tl.indexOf("form:read") < tl.indexOf("form:clear") && tl.indexOf("form:clear") < tl.indexOf("flash"),
+    "the bench must clear the Wi-Fi password right after reading it, before flashing (flash.js does)");
+  assert.ok(tl.lastIndexOf("form:draw") > tl.lastIndexOf("flash"), "the form must be redrawn after the attempt");
+  // The board's own receipt, as the monitor streams it: `firmware` is the
+  // version string the self-manifest reports.
+  run.emit("serial:receipt", { target: "esp32-host", ready: true,
+    manifest: { schema: "securacv.canary.manifest/v1", board: "canary", firmware: "9.9.9" } });
+  assert.match(run.text(), /✓ canary booted and answered with its receipt · firmware 9\.9\.9\./,
+    "the Lab must read the board's receipt the way the Flasher does");
+  } finally { run.close(); }
+
+  // A refused permission is NOT retried at a gentler speed, and is named.
+  const denied = await runNativeBench({
+    flashAnswers: ["espflash exited with code 1. The board can't be bricked — put it back in download mode and try again.\nError: Permission denied (os error 13)"],
+  });
+  try {
+    await denied.pick("securacv-canary");
+    assert.strictEqual(denied.calls.filter(([c]) => c === "flash").length, 1, "a permission failure must not walk the baud ladder");
+    assert.match(denied.text(), /The system wouldn't grant access to the port/);
+    assert.ok(!denied.calls.some(([c]) => c === "start_serial_monitor"), "no monitor after a failed write");
+    // A FAILED flash strands no password either.
+    const dtl = denied.timeline;
+    assert.ok(dtl.indexOf("form:clear") > -1 && dtl.indexOf("form:clear") < dtl.indexOf("flash"),
+      "a failed flash must not leave the Wi-Fi password in the DOM");
+    assert.ok(dtl.lastIndexOf("form:draw") > dtl.lastIndexOf("flash"), "the form must be redrawn after a failure");
+  } finally { denied.close(); }
+
+  // A download failure's advice points at the Flasher for a local .bin — this
+  // bench has no "Advanced" local-file install to send anyone to.
+  const offline = await runNativeBench({
+    flashAnswers: ["download failed: error sending request for url (connection reset)"],
+  });
+  try {
+    await offline.pick("securacv-canary");
+    assert.match(offline.text(), /Couldn't download the firmware image/);
+    assert.ok(offline.text().includes("A local .bin can be installed with the SecuraCV Flasher."),
+      "the download advice must point at the Flasher for a local .bin");
+    assert.ok(!/under Advanced/.test(offline.text()), "the Lab has no Advanced local-file install to point at");
+  } finally { offline.close(); }
+
+  // The backend's Linux hint is said as-is when the board can't be read.
+  const permHint = /pub const PERMISSION_HINT: &str =\s*"([\s\S]*?)";/.exec(engineRs("port_hint"))[1]
+    .replace(/\\\n\s*/g, "").replace(/\\"/g, '"'); // the string at runtime
+  const blocked = await runNativeBench({ detectAnswer: `${permHint}\n\nespflash said:\nError: Permission denied` });
+  try {
+    assert.ok(blocked.text().includes(`Found /dev/ttyACM0 — ${permHint}`),
+      "a Linux permission failure must show the backend's own hint, not download-mode coaching");
+    assert.ok(!/Put it in download mode/.test(blocked.text()));
+    assert.ok(!blocked.calls.some(([c]) => c === "fetch_manifest"), "nothing is fetched for a board that couldn't be read");
+  } finally { blocked.close(); }
+
+  // A bundled espflash that never started reads as the app's engine, with the
+  // system's reason — not as download mode, and not as the CP210x driver the
+  // bridge note would otherwise blame (the port was never opened).
+  const stuck = await runNativeBench({
+    detectAnswer: "could not start espflash: No such file or directory (os error 2)",
+    ports: [{ name: "/dev/ttyUSB0", kind: "usb", vid: 0x10c4, pid: 0xea60, product: "CP2102 USB to UART Bridge Controller" }],
+  });
+  try {
+    assert.match(stuck.text(), /Found \/dev\/ttyUSB0 — The app's flash engine couldn't start\. That's this app, not your board/);
+    assert.ok(stuck.text().includes("(The system said: No such file or directory (os error 2))"),
+      "the Lab must say the system's reason for a sidecar that never started");
+    assert.ok(!/Put it in download mode|hold BOOT, tap RESET/.test(stuck.text()),
+      "a sidecar that never started must not coach download mode");
+    assert.ok(!/Silicon Labs|driver/i.test(stuck.text()), "a sidecar that never started must not blame the USB driver");
+    assert.ok(!stuck.calls.some(([c]) => c === "fetch_manifest"), "nothing is fetched for a board that couldn't be read");
+  } finally { stuck.close(); }
+
+  // The camera module's own port is recognized by the catalog's USB id and
+  // never read as an ESP32 (the Flasher short-circuits on the same id).
+  const vid = parseInt(String(catalog.we2_module.usb_vid).replace(/^0x/i, ""), 16);
+  const pid = parseInt(String(catalog.we2_module.usb_pid).replace(/^0x/i, ""), 16);
+  const module = await runNativeBench({ ports: [{ name: "/dev/ttyUSB0", kind: "usb", vid, pid, product: "USB Single Serial" }] });
+  try {
+    assert.ok(!module.calls.some(([c]) => c === "detect_chip"), "the Vision module's port must not be read with board-info");
+    assert.match(module.text(), /Grove Vision AI V2 camera module/);
+  } finally { module.close(); }
 });
 
 // ── The derived birth certificate: one bird, one name, three surfaces ─────
@@ -2207,7 +3520,7 @@ test("every long wait shows liveness on both flashers", () => {
   const appJs = read(join(ROOT, "desktop", "src", "app.js"));
   const html = read(join(ROOT, "desktop", "src", "index.html"));
   const css = read(join(ROOT, "desktop", "src", "styles.css"));
-  const libRsSrc = read(join(ROOT, "desktop", "src-tauri", "src", "lib.rs"));
+  const libRsSrc = nativeRs;
 
   // 1. The elapsed clock: both frontends tick seconds through every long
   //    operation — the difference between "working" and "hung".
@@ -2244,9 +3557,9 @@ test("every long wait shows liveness on both flashers", () => {
   assert.match(browser, /resp\.body && resp\.body\.getReader/,
     "the browser image download went back to a silent arrayBuffer()");
   assert.match(libRsSrc, /flash:progress/,
-    "lib.rs no longer emits download progress events");
+    "the native flash path (flash-engine flash.rs) no longer emits download progress events");
   assert.match(libRsSrc, /resp\s*\.chunk\(\)/,
-    "lib.rs download went back to a silent bytes() buffer");
+    "the native download (flash-engine net.rs) went back to a silent bytes() buffer");
   assert.match(appJs, /flash:progress/,
     "desktop never listens for the download progress it is sent");
 

@@ -38,16 +38,19 @@ plate_w = 88.0;
 plate_t = 2.4;
 
 /* [Boards] — nominal; MEASURE (same meanings as the device enclosures) */
-wap_l = 21.0;  wap_w = 17.5;  wap_pcb = 1.2;  // XIAO spec — brd_l/brd_w/brd_t("xiao");
+wap_l = 21.0;                                 // XIAO length — the spec, brd_l("xiao")
+wap_w = 17.5;                                 // XIAO width — the spec, brd_w("xiao");
                                               // the clips' clip_clear absorbs the
                                               // measured 17.8 (brd_xiao_w_measured())
+wap_pcb = 1.2;                                // XIAO PCB thickness — the spec, brd_t("xiao")
 // The Grove module is what it is — a fixed arithmetic input, not a knob — so
 // its size comes from the registry instead of a retype. This file carried the
 // wrong 25 x 25 long after three siblings measured 40 x 20; the registry (and
 // its board_selfcheck()) is why that cannot happen a fourth time.
 vm_l  = brd_l("grove_v2");                   // Grove Vision AI V2, measured 40
 vm_w  = brd_w("grove_v2");                   // ... x 20 (the 1x2 form, not a square)
-sm_l  = 44.0;  sm_w  = 36.0;                 // MR60BHA2 carrier — brd_l/brd_w("mr60")
+sm_l  = 44.0;                                // MR60BHA2 carrier length — brd_l("mr60")
+sm_w  = 36.0;                                // MR60BHA2 carrier width — brd_w("mr60")
 stack_sock_h = 11.5;                          // seated-XIAO stack height (module underside
                                               // -> XIAO underside): measured 6.5 per
                                               // canary_board_lib brd_stack_sock_measured();
@@ -80,6 +83,7 @@ b_w  = (stack == "wap") ? wap_w : (stack == "vision") ? vm_w : sm_w;
 b_t  = (stack == "wap") ? wap_pcb : pcb_t;
 soff = (stack == "wap") ? standoff_h : stack_sock_h + xiao_below;
 assert(b_w + 6 < plate_w && b_l + 6 < plate_l, "board exceeds the plate — grow plate_l/w");
+assert(stack != "vision" || xiao_w/2 + 1.3 - 1.0 <= b_w/2 - 0.5, "the vision stack's corner pins no longer reach under the module's edge");
 assert(boss_dx/2 + 1 + (boss_screw_d + 2*tol_hole)/2 + 2 <= plate_l/2 && boss_dy/2 + (boss_screw_d + 2*tol_hole)/2 + 2 <= plate_w/2,
        "boss slots too close to the plate edge (need >= 2 mm web) — grow plate_l/plate_w");
 rib_y = b_w/2 + 8 + 4 + 1.5 + 0.8;          // outboard of the tie slots (b_w/2 + 8, 8 tall)
@@ -136,7 +140,9 @@ module plate() {
                     cube([5, clip_w + 2, soff + 1], center = true);
             }
             edgeclip(s*b_w/2, cyc, s > 0 ? 0 : 180);
-            if (half) translate([s*(xiao_w/2 + 1.1), -b_l/2 + 1.2, plate_t - 0.01]) cylinder(d = 2.0, h = soff + 0.01);
+            // the pins stand 0.3 off the XIAO's edge (at + 1.1 it was 0.1 — less than a
+            // Ø2 pin prints oversize) and still reach 0.8 under the module's edge
+            if (half) translate([s*(xiao_w/2 + 1.3), -b_l/2 + 1.2, plate_t - 0.01]) cylinder(d = 2.0, h = soff + 0.01);
         }
         // long-axis rib bars (canary_rib_lib board_rail, turned to run along X):
         // the width derives from the plate (rib_t_max), the root is coved

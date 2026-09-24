@@ -30,6 +30,95 @@
 import Accessibility
 import SwiftUI
 
+/// What time a ribbon cell reads as — the phone's port of the Witness Wall's
+/// rule (tvos `WallTimeline.sealedBuckets`, from that view's review fix).
+///
+/// A cell is not a record's bucket. The ribbon cuts the phone's day at LOCAL
+/// midnight into bucket-wide slots; the records hold buckets on the epoch
+/// grid (`AlertRecord.bucket` floors the epoch). The two line up only when
+/// the zone's UTC offset is a multiple of the bucket — not in +5:45 with
+/// ten-minute buckets, not in +5:30 with hour buckets — and the day is 24
+/// hours long: a 25-hour day clamps its last hour into the last cell
+/// (`TimelineScrub.days`). Printing `dayT0 + cell × bucket` named a window
+/// no record holds. So a lit cell prints its records' OWN bucket ranges,
+/// every one, oldest first; only an empty cell, which holds no record to
+/// name, prints its slot on this phone's ribbon.
+///
+/// "Own", not "sealed": this ribbon is fed by the phone's alert notebook,
+/// which makes no sealing claim (see `TimelineDayAudioGraph`).
+enum TimelineCellBuckets {
+    /// One bucket a record holds: its own start and width.
+    struct Bucket: Hashable, Sendable {
+        let start: Int
+        let seconds: Int
+    }
+
+    /// The distinct buckets `rows` hold, oldest first — each record's own
+    /// `t0` and `size` (the fallback only for a size that is not positive),
+    /// never merged into one window no record holds.
+    static func buckets(of rows: [TimelineRecord], fallbackSeconds: Int) -> [Bucket] {
+        var out: [Bucket] = []
+        for record in rows {
+            let bucket = Bucket(start: record.t0, seconds: record.size > 0 ? record.size : fallbackSeconds)
+            if !out.contains(bucket) { out.append(bucket) }
+        }
+        return out.sorted { ($0.start, $0.seconds) < ($1.start, $1.seconds) }
+    }
+
+    /// Every lit cell's buckets, `[dayT0: [cell index: buckets]]`. Placed
+    /// exactly as `TimelineScrub.days` places the records — the same
+    /// calendar, bucket width and last-cell clamp, heartbeats out — so a cell
+    /// names exactly the records it counted.
+    static func byCell(_ records: [TimelineRecord], bucketSeconds: Int,
+                       calendar: Calendar) -> [Int: [Int: [Bucket]]] {
+        guard bucketSeconds > 0 else { return [:] }
+        let perDay = max(1, Int((Double(TimelineScrub.daySeconds) / Double(bucketSeconds)).rounded()))
+        var rows: [Int: [Int: [TimelineRecord]]] = [:]
+        for record in records where record.kind != .heartbeat {
+            let start = calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(record.t0)))
+            let dayT0 = Int(start.timeIntervalSince1970)
+            let index = min((record.t0 - dayT0) / bucketSeconds, perDay - 1)
+            rows[dayT0, default: [:]][index, default: []].append(record)
+        }
+        return rows.mapValues { cells in
+            cells.mapValues { buckets(of: $0, fallbackSeconds: bucketSeconds) }
+        }
+    }
+
+    /// What cell `index` of the day starting `dayT0` reads as: a lit cell its
+    /// records' own ranges, oldest first; an empty cell its `gridSeconds`
+    /// slot — a place on the ribbon, not a time any record holds. `through`
+    /// joins a range's ends (the Audio Graph speaks " to ").
+    static func label(forCell index: Int, dayT0: Int, cells: [Int: [Bucket]],
+                      gridSeconds: Int = TimelineScrub.defaultBucketSeconds,
+                      style: Date.FormatStyle = .dateTime.hour().minute(),
+                      through: String = " – ") -> String {
+        if let own = cells[index], !own.isEmpty {
+            return own.map { range(start: $0.start, seconds: $0.seconds, style: style, through: through) }
+                .joined(separator: ", ")
+        }
+        return range(start: dayT0 + index * gridSeconds, seconds: gridSeconds, style: style, through: through)
+    }
+
+    /// A bucket as a range — a bucket IS a range, never an instant.
+    static func range(start: Int, seconds: Int, style: Date.FormatStyle,
+                      through: String = " – ") -> String {
+        let from = Date(timeIntervalSince1970: TimeInterval(start))
+        let to = Date(timeIntervalSince1970: TimeInterval(start + seconds))
+        return from.formatted(style) + through + to.formatted(style)
+    }
+
+    /// Where a commit on a cell walks the list: the newest bucket its records
+    /// hold (the hosts scroll to the first row at or before it), else the
+    /// seated slot. In an aligned zone on a 24-hour day the two are the same
+    /// instant; off the grid the slot's start fell BEFORE the cell's records
+    /// and the list landed on the row behind them.
+    static func scrollTarget(seated: Date, cell: [Bucket]?) -> Date {
+        guard let newest = cell?.last else { return seated }
+        return Date(timeIntervalSince1970: TimeInterval(newest.start))
+    }
+}
+
 /// Audio Graph twin of the ribbon: the same worst-first day, spoken and
 /// sonified through VoiceOver's rotor. Dormant for everyone else — no render
 /// cost, no gesture interplay. Honesty falls out of the data shape: points
@@ -39,15 +128,15 @@ import SwiftUI
 /// of the outline-not-fill drawing rule.
 private struct TimelineDayAudioGraph: AXChartDescriptorRepresentable {
     let day: TimelineDay
+    /// The day's lit cells and the buckets their records hold
+    /// (`TimelineCellBuckets.byCell`) — what a point's time is read from.
+    let cells: [Int: [TimelineCellBuckets.Bucket]]
 
     func makeChartDescriptor() -> AXChartDescriptor {
-        let day = self.day // value copy for the escaping providers
+        let day = self.day // value copies for the escaping providers
+        let cells = self.cells
         func clock(_ index: Int) -> String {
-            let start = Date(timeIntervalSince1970:
-                TimeInterval(day.dayT0 + index * TimelineScrub.defaultBucketSeconds))
-            let end = start.addingTimeInterval(TimeInterval(TimelineScrub.defaultBucketSeconds))
-            return start.formatted(.dateTime.hour().minute())
-                + " to " + end.formatted(.dateTime.hour().minute())
+            TimelineCellBuckets.label(forCell: index, dayT0: day.dayT0, cells: cells, through: " to ")
         }
         let xAxis = AXNumericDataAxisDescriptor(
             title: "Time of day, in 10-minute buckets",
@@ -138,9 +227,14 @@ struct TimelineDayShapeView: View {
     /// cell scan misses exactly the "lens covered, then pried" pairing that
     /// matters most. Nil when the day holds no tamper records.
     var firstTamperBucket: Date?
+    /// This day's lit cells and the buckets their records hold, built by the
+    /// host from the records (`TimelineCellBuckets.byCell`). What a lit cell
+    /// PRINTS comes from here, never from the cell's slot on the grid.
+    var cellBuckets: [Int: [TimelineCellBuckets.Bucket]] = [:]
     /// Fired whenever an interaction commits a bucket — drag release, tap,
     /// the VoiceOver adjustable action, and both jump paths — always already
-    /// snapped, so the caller can bring the matching row into view.
+    /// snapped, so the caller can bring the matching row into view. A lit
+    /// cell commits its newest record bucket, not its slot (`scrollTarget`).
     var onScrub: (Date) -> Void
     /// The newest ribbon shows the one-time gesture-hint shimmer.
     var showsFirstUseHint = false
@@ -272,7 +366,7 @@ struct TimelineDayShapeView: View {
                     // moment than the bucket it touched.
                     hintX = nil // a real touch outranks the hint
                     preview(atX: location.x, width: width)
-                    if let bucket = myBucket { onScrub(bucket) }
+                    if let bucket = myBucket { onScrub(scrollTarget(for: bucket)) }
                     fireBloom(width: width, height: height)
                     scheduleCaretClear()
                 }
@@ -316,7 +410,7 @@ struct TimelineDayShapeView: View {
                             // list it scrolls. So the drag only previews, and
                             // the list is moved once, on release.
                             if scrub != nil, let bucket = myBucket {
-                                onScrub(bucket)
+                                onScrub(scrollTarget(for: bucket))
                                 fireBloom(width: width, height: height)
                             }
                             scrub = nil
@@ -375,7 +469,7 @@ struct TimelineDayShapeView: View {
                 }
             }
             // VoiceOver's Audio Graphs rotor: the day's shape, sonified.
-            .accessibilityChartDescriptor(TimelineDayAudioGraph(day: day))
+            .accessibilityChartDescriptor(TimelineDayAudioGraph(day: day, cells: cellBuckets))
             footer
         }
     }
@@ -403,7 +497,7 @@ struct TimelineDayShapeView: View {
             if let bucket = myBucket {
                 // The record speaking — the loudest text on the ribbon while
                 // seated; digits roll like a counter as the pen moves.
-                Text(Self.clock(bucket))
+                Text(timeLabel(bucket))
                     .font(.footnote.weight(.semibold).monospacedDigit())
                     .foregroundStyle(Theme.color(.info))
                     .contentTransition(.numericText())
@@ -459,7 +553,7 @@ struct TimelineDayShapeView: View {
         // promise that the ribbon says everything it shows, and "worst:
         // tamper" only covers the case where tamper happens to be worst.
         if day.tamperCount > 0 { parts.append("\(day.tamperCount) tamper") }
-        if let bucket = myBucket { parts.append("at " + Self.clock(bucket)) }
+        if let bucket = myBucket { parts.append("at " + timeLabel(bucket)) }
         return parts.joined(separator: ", ")
     }
 
@@ -609,11 +703,34 @@ struct TimelineDayShapeView: View {
 
     // MARK: - input
 
-    /// The day's cell under a bucket date, if that bucket holds records.
-    private func cell(at bucket: Date) -> TimelineDayCell? {
+    /// The index of the day's slot under a bucket date, if it is inside the
+    /// day's 24 hours.
+    private func cellIndex(at bucket: Date) -> Int? {
         let offset = bucket.timeIntervalSince1970 - TimeInterval(day.dayT0)
         guard offset >= 0, offset < TimeInterval(TimelineScrub.daySeconds) else { return nil }
-        return cellsByIndex[Int(offset) / TimelineScrub.defaultBucketSeconds]
+        return Int(offset) / TimelineScrub.defaultBucketSeconds
+    }
+
+    /// The day's cell under a bucket date, if that bucket holds records.
+    private func cell(at bucket: Date) -> TimelineDayCell? {
+        cellIndex(at: bucket).flatMap { cellsByIndex[$0] }
+    }
+
+    /// What the seated position reads as: a lit cell's records' own buckets,
+    /// an empty slot's own range (`TimelineCellBuckets.label`). A date past
+    /// the strip — a tamper jump into a 25-hour day's last hour — is that
+    /// record's own bucket already.
+    private func timeLabel(_ bucket: Date) -> String {
+        guard let index = cellIndex(at: bucket) else { return Self.clock(bucket) }
+        return TimelineCellBuckets.label(forCell: index, dayT0: day.dayT0, cells: cellBuckets)
+    }
+
+    /// The date a commit hands the host to scroll to: the seated cell's
+    /// newest record bucket, so the list lands on that cell's rows even where
+    /// the slot starts before them (`TimelineCellBuckets.scrollTarget`).
+    private func scrollTarget(for bucket: Date) -> Date {
+        TimelineCellBuckets.scrollTarget(seated: bucket,
+                                         cell: cellIndex(at: bucket).flatMap { cellBuckets[$0] })
     }
 
     /// Scrub straight to the day's first tamper (or first declared-gap)
@@ -630,7 +747,9 @@ struct TimelineDayShapeView: View {
             }
         guard let bucket else { return }
         position = TimelineScrubPosition(dayT0: day.dayT0, bucket: bucket)
-        onScrub(bucket)
+        // A tamper jump seats on the record's own bucket already; a gap jump
+        // seats on its cell's slot, which walks the list by the cell's records.
+        onScrub(toTamper ? bucket : scrollTarget(for: bucket))
         scheduleCaretClear()
     }
 
@@ -711,7 +830,7 @@ struct TimelineDayShapeView: View {
         let current = myBucket?.timeIntervalSince1970
             ?? TimeInterval(day.dayT0) + Double(TimelineScrub.daySeconds) / 2
         seat(secondsIntoDay: current - TimeInterval(day.dayT0) + delta)
-        if let bucket = myBucket { onScrub(bucket) }
+        if let bucket = myBucket { onScrub(scrollTarget(for: bucket)) }
     }
 
     /// Snap to a bucket start and report it. Snapping is the point, not a
@@ -729,7 +848,8 @@ struct TimelineDayShapeView: View {
     /// A bucket is a RANGE, and saying "12:20" for it would narrow a
     /// ten-minute window the log deliberately left wide (Invariant III). The
     /// phone shows the user's own wall clock; the parity-checked UTC forms
-    /// stay in the model for the record itself.
+    /// stay in the model for the record itself. Only for a date that is a
+    /// bucket already — a cell's time comes from `timeLabel`.
     private static func clock(_ date: Date) -> String {
         let end = date.addingTimeInterval(TimeInterval(TimelineScrub.defaultBucketSeconds))
         return date.formatted(.dateTime.hour().minute())
@@ -759,6 +879,10 @@ struct TimelineScrubSection: View {
     /// frame is the honest one, and the page says so.
     private let built: TimelineModel
     private let tamperBuckets: [Int: Date]
+    /// Per day, each lit cell's record buckets — what a cell prints and where
+    /// a commit on it scrolls (`TimelineCellBuckets`). Same calendar and
+    /// bucket width as the model, so the cells are the model's cells.
+    private let cellBuckets: [Int: [Int: [TimelineCellBuckets.Bucket]]]
 
     init(records: [AlertRecord], onScrub: @escaping (Date) -> Void) {
         self.records = records
@@ -766,6 +890,8 @@ struct TimelineScrubSection: View {
         let model = TimelineScrub.model(for: TimelineScrub.records(from: records), calendar: .current)
         self.built = model
         self.tamperBuckets = Self.firstTamperBuckets(in: model, calendar: .current)
+        self.cellBuckets = TimelineCellBuckets.byCell(model.records, bucketSeconds: model.bucketSeconds,
+                                                      calendar: .current)
     }
 
     /// Earliest tamper bucket per calendar day, straight from the records —
@@ -792,6 +918,7 @@ struct TimelineScrubSection: View {
                 ForEach(Array(days.prefix(3))) { day in
                     TimelineDayShapeView(day: day, position: $position,
                                          firstTamperBucket: tamperBuckets[day.dayT0],
+                                         cellBuckets: cellBuckets[day.dayT0] ?? [:],
                                          onScrub: onScrub,
                                          showsFirstUseHint: day.dayT0 == days.first?.dayT0)
                 }

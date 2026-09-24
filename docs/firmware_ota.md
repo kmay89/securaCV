@@ -365,7 +365,12 @@ MQTT (Home Assistant discovers these automatically):
 | `securacv/<id>/update/auto/cmd` | HA → device | `ON`/`OFF` |
 
 The dev-only raw push endpoint (`POST /api/ota`, used by
-`firmware/canary/scripts/ota_deploy.py`) is compiled out of release builds.
+`firmware/canary/scripts/ota_deploy.py` and `ota_deploy.sh`) is compiled out of
+release builds. It is bearer-gated like the rest: the scripts take the recovery
+kit's `token` from `CANARY_TOKEN` (or a no-echo prompt — never an argument),
+and a dev build serving HTTPS is spoken to on 443 only when its certificate
+matches `CANARY_TLS_FP`, its `tls_cert_fp`; without a pin they refuse it. An
+HTTP-only build gets plain HTTP, token included.
 
 ## Safety properties (the no-brick guarantees)
 

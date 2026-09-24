@@ -14,9 +14,93 @@
 #if FEATURE_WIFI_AP || FEATURE_HTTP_SERVER
 
 #include <ArduinoJson.h>
+// F20 gap #11: BOOT-tap provisioning gate + the page-token policy (pure,
+// host-tested) and the salted hardware pseudonym the receipt carries instead
+// of a MAC (privacy Invariant III). Both live under firmware/common on the
+// project's -I path.
+#include "network/provisioning_gate.h"
+#include "identity/device_pseudonym.h"
+// The Host a request targeted must name THIS device (host_is_foreign /
+// auth_gate below) — shared with the display's glass_web.cpp, host-tested
+// once in firmware/tests_host.
+#include "network/host_guard.h"
+// getpeername()/getsockname() + the AP/STA netif addresses for the
+// interface-scoped page-token policy and the receipt's base_url (the address
+// the request actually arrived on).
+#include <lwip/sockets.h>
+#include <esp_netif.h>
+
+// F15: self-signed HTTPS. One code path for both cores — dev/release/board
+// envs are Arduino 2.0.17 / IDF 4.4.7, [env:full] is core 3.3.8 / IDF 5.5.4 —
+// so every capability is detected, never assumed:
+//   * SECURACV_HAS_HTTPS_SERVER: FEATURE_HTTPS on, the header present, AND the
+//     core's prebuilt sdkconfig built the component (the header can exist
+//     while the library is compiled out; that would only fail at link);
+//   * SECURACV_HAS_TLS_CERTGEN: mbedTLS built with everything an on-device
+//     ECDSA P-256 self-signed certificate needs.
+// Whatever is missing compiles OUT and the device runs HTTP-only, naming the
+// reason in /api/status tls_mode_reason (tls_policy::decide).
+#include "network/tls_policy.h"
+#include <esp_idf_version.h>
+#include <sdkconfig.h>
+
+// F16: SoftAP WPA2/WPA3 transition + PMF, STA PMF. The AP-side PMF config and
+// SoftAP SAE exist only on cores whose prebuilt sdkconfig enables SoftAP SAE
+// (an IDF 5.x feature; the IDF 4.4 core has no ap.pmf_cfg at all), so the
+// whole AP write compiles out elsewhere and ap_security::decide reports why.
+#include "network/ap_security_policy.h"
+#include <esp_wifi.h>
+#if defined(CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT) && CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT && \
+    ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+  #define CANARY_SOFTAP_SAE_IN_BUILD 1
+#else
+  #define CANARY_SOFTAP_SAE_IN_BUILD 0
+#endif
+// label_for() maps ESP-IDF's auth-mode numbers without including esp_wifi;
+// pin the ones the firmware relies on to the real enum.
+static_assert((int)WIFI_AUTH_OPEN == canary::net::ap_security::kAuthOpen,
+              "ap_security_policy.h: WIFI_AUTH_OPEN renumbered");
+static_assert((int)WIFI_AUTH_WPA2_PSK == canary::net::ap_security::kAuthWpa2Psk,
+              "ap_security_policy.h: WIFI_AUTH_WPA2_PSK renumbered");
+static_assert((int)WIFI_AUTH_WPA2_WPA3_PSK == canary::net::ap_security::kAuthWpa2Wpa3Psk,
+              "ap_security_policy.h: WIFI_AUTH_WPA2_WPA3_PSK renumbered");
+// IDF 5.x names the httpd control port's default; IDF 4.4 (Arduino core
+// 2.0.17, the canary's pinned core) only writes the literal inside
+// HTTPD_DEFAULT_CONFIG(). Same number either way.
+#ifndef ESP_HTTPD_DEF_CTRL_PORT
+  #define ESP_HTTPD_DEF_CTRL_PORT 32768
+#endif
+#if FEATURE_HTTPS && __has_include("esp_https_server.h") && \
+    defined(CONFIG_ESP_HTTPS_SERVER_ENABLE) && CONFIG_ESP_HTTPS_SERVER_ENABLE
+  #include "esp_https_server.h"
+  #define SECURACV_HAS_HTTPS_SERVER 1
+#else
+  #define SECURACV_HAS_HTTPS_SERVER 0
+#endif
+#if SECURACV_HAS_HTTPS_SERVER && __has_include("mbedtls/x509write_crt.h")
+  #include "mbedtls/x509write_crt.h"
+  #include "mbedtls/pk.h"
+  #include "mbedtls/ecp.h"
+  #include "mbedtls/entropy.h"
+  #include "mbedtls/ctr_drbg.h"
+  #include "mbedtls/version.h"
+  #if defined(MBEDTLS_X509_CRT_WRITE_C) && defined(MBEDTLS_PK_WRITE_C) && \
+      defined(MBEDTLS_ECP_C) && defined(MBEDTLS_ECDSA_C) && \
+      defined(MBEDTLS_ECP_DP_SECP256R1_ENABLED) && \
+      defined(MBEDTLS_CTR_DRBG_C) && defined(MBEDTLS_ENTROPY_C)
+    #define SECURACV_HAS_TLS_CERTGEN 1
+  #else
+    #define SECURACV_HAS_TLS_CERTGEN 0
+  #endif
+#else
+  #define SECURACV_HAS_TLS_CERTGEN 0
+#endif
 
 #if FEATURE_SD_STORAGE
 #include "securacv_storage.h"
+// Card pages for the timeline (F35): handle_witness asks the loop task for
+// them through this bridge — the httpd task never opens a file on the card.
+#include "securacv_witness_history.h"
 #endif
 
 #if FEATURE_WATCHDOG
@@ -75,11 +159,17 @@
 #include <math.h>    /* lroundf */
 #include <stdarg.h>  /* thermal_json_append */
 #endif
+// BLE Scout pairing surface (repo sweep F27). Same gate as the Scout lib
+// itself: platformio.ini lib_ignores securacv_ble_scan outside [env:full].
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+#include "ble_scout.h"
+#endif
 
-// Mesh REST API (PR-8). Gated on FEATURE_MESH_NETWORK — the dev/release
-// CI envs build with this OFF, so these handlers get no CI compile
-// coverage; the JSON-building logic is therefore factored into the pure
-// mesh_api builders, which the securacv_mesh host tests exercise.
+// Mesh REST API (PR-8, F10). Gated on FEATURE_MESH_NETWORK, which only
+// [env:full] turns on; CI compiles that env (flavors.json build_envs), so
+// the handlers build on every PR. What they EMIT is proven separately:
+// the JSON-building logic lives in the pure mesh_api builders, which the
+// securacv_mesh host tests exercise.
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
 #include "mesh_session.h"
 #include "mesh_state.h"
@@ -119,6 +209,7 @@ esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_c
                               status_code == 409 ? "409 Conflict" :
                               status_code == 413 ? "413 Payload Too Large" :
                               status_code == 503 ? "503 Service Unavailable" :
+                              status_code == 504 ? "504 Gateway Timeout" :
                               status_code == 500 ? "500 Internal Server Error" : "400 Bad Request");
   char response[128];
   snprintf(response, sizeof(response), "{\"ok\":false,\"error\":\"%s\"}", error_code);
@@ -140,6 +231,21 @@ ScvNetworkManager::ScvNetworkManager()
   m_mdns_device_id[0] = '\0';
   m_ap_ssid[0] = '\0';
   m_ap_password[0] = '\0';
+  m_https_server = nullptr;
+  m_tls_enabled = false;
+  m_tls_cert_der = nullptr;
+  m_tls_cert_der_len = 0;
+  m_tls_key_der = nullptr;
+  m_tls_key_der_len = 0;
+  m_tls_cert_fp_hex[0] = '\0';
+  m_tls_reason = "initTls() not called (first-boot setup, or FEATURE_HTTPS=0)";
+  m_tls_deferred_for_setup = false;
+}
+
+const char* ScvNetworkManager::getTlsModeReason() const {
+  return canary::net::tls_policy::live_reason(
+      m_tls_reason, m_tls_deferred_for_setup,
+      setup_is_active() || setup_is_first_boot());
 }
 
 // F4 grace window: keep the SoftAP up this long after the STA link reports
@@ -235,6 +341,75 @@ static void start_mdns(const char* device_id) {
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "mDNS started", fqdn);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// F16: SOFTAP / STA SECURITY (ap_security_policy.h, host-tested)
+// ════════════════════════════════════════════════════════════════════════════
+
+// Called right after every WiFi.softAP() (begin, raiseAp): the Arduino call
+// always brings the AP up as WPA2-PSK; this asks the driver for WPA2/WPA3
+// transition + PMF-capable when the policy allows it, and records what is
+// actually on the air. Both call sites run before any client has joined, so
+// the brief AP restart esp_wifi_set_config causes disrupts nobody.
+static void apply_ap_security(WiFiStatus& st) {
+  namespace aps = canary::net::ap_security;
+  wifi_config_t c;
+  memset(&c, 0, sizeof(c));
+  size_t pw_len = 0;
+  if (esp_wifi_get_config(WIFI_IF_AP, &c) == ESP_OK) {
+    pw_len = strnlen((const char*)c.ap.password, sizeof(c.ap.password));
+  }
+  aps::Decision d = aps::decide(CANARY_AP_WPA3_TRANSITION != 0, CANARY_SOFTAP_SAE_IN_BUILD != 0, pw_len);
+#if CANARY_SOFTAP_SAE_IN_BUILD
+  if (d.mode == aps::AuthMode::WPA2_WPA3_TRANSITION) {
+    c.ap.authmode = WIFI_AUTH_WPA2_WPA3_PSK;
+    c.ap.pairwise_cipher = WIFI_CIPHER_TYPE_CCMP;
+    c.ap.pmf_cfg.capable = d.pmf_capable;
+    c.ap.pmf_cfg.required = d.pmf_required;  // never true: WPA2 clients must still join
+    const bool accepted = (esp_wifi_set_config(WIFI_IF_AP, &c) == ESP_OK);
+    d = aps::after_driver(d, accepted);
+    if (!accepted) {
+      log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
+                 "WPA3 SoftAP refused by driver", "WPA2-PSK kept");
+    }
+  }
+#endif
+  secure_zero(&c, sizeof(c));  // the read-back carries the AP passphrase
+  strncpy(st.ap_auth, d.label, sizeof(st.ap_auth) - 1);
+  st.ap_auth[sizeof(st.ap_auth) - 1] = '\0';
+  st.ap_auth_reason = d.reason;
+  Serial.printf("[WIFI] SoftAP security: %s (%s)\n", d.label, d.reason);
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "SoftAP security", d.label);
+}
+
+// Called right after WiFi.begin(): the STA side asks for PMF capable, not
+// required (a required PMF would refuse every router without it). On IDF 5.x
+// the driver is always PMF-capable (pmf_cfg.capable is documented as
+// deprecated there), so nothing is written. On IDF 4.4 the config is read
+// back and written only when it does not already say capable — a needless
+// esp_wifi_set_config restarts the association.
+static bool ensure_sta_pmf_capable() {
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+  return true;
+#else
+  wifi_config_t c;
+  memset(&c, 0, sizeof(c));
+  bool capable = false;
+  if (esp_wifi_get_config(WIFI_IF_STA, &c) == ESP_OK) {
+    capable = c.sta.pmf_cfg.capable;
+    if (!capable) {
+      c.sta.pmf_cfg.capable = true;
+      c.sta.pmf_cfg.required = false;
+      capable = (esp_wifi_set_config(WIFI_IF_STA, &c) == ESP_OK);
+      if (!capable) {
+        log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "STA PMF config refused", nullptr);
+      }
+    }
+  }
+  secure_zero(&c, sizeof(c));  // the read-back carries the home Wi-Fi passphrase
+  return capable;
+#endif
+}
+
 bool ScvNetworkManager::begin(const char* ap_ssid, const char* ap_password,
                            const char* device_id) {
   // Load saved credentials
@@ -318,6 +493,7 @@ bool ScvNetworkManager::begin(const char* ap_ssid, const char* ap_password,
     log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "WiFi AP start failed", nullptr);
     return false;
   }
+  apply_ap_security(m_status);  // F16: WPA2/WPA3 transition + PMF when the core allows
 
   m_status.ap_active = true;
   witness_get_health().wifi_active = true;
@@ -453,6 +629,7 @@ void ScvNetworkManager::connectToHome() {
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, msg, nullptr);
 
   WiFi.begin(m_creds.ssid, m_creds.password);
+  m_status.sta_pmf = ensure_sta_pmf_capable();  // F16: PMF capable, not required
 }
 
 void ScvNetworkManager::updateStatus() {
@@ -630,6 +807,7 @@ void ScvNetworkManager::raiseAp() {
     WiFi.mode(WIFI_STA);  // don't leave the radio half-configured in AP_STA with no AP up
     return;
   }
+  apply_ap_security(m_status);  // F16: same request as begin()
   m_status.ap_active = true;
   witness_get_health().wifi_active = true;
   IPAddress ip = WiFi.softAPIP();
@@ -804,6 +982,76 @@ bool rate_limit_check(httpd_req_t* req, bool is_action) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// HOST GUARD — the Host a request targeted must name THIS device
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The bearer token is injected into GET / and GET /setup for whoever can load
+// them, and every API route is gated on it. A browser page on another site
+// cannot read those pages (no Access-Control-Allow-Origin on the HTML, and
+// the Authorization header forces a preflight no route answers) — unless DNS
+// rebinding makes the page same-origin with this device: a page at
+// http://evil.example whose name is re-pointed at the Canary's LAN IP loads
+// http://evil.example/ from the victim's browser, reads __CV_TOKEN__ out of
+// the HTML, and drives every gated route, the broker-password writer included.
+// The display closed exactly this with network/host_guard.h (its LAN page's
+// token and writes require a Host that can only mean this device: an IP
+// literal, the .local name, a single label, or a private-use suffix); the
+// canary applies the same header, host-tested once, to every path that can
+// hand out the token or spend the BOOT tap, and asks it FIRST on each: the
+// page-token decision (page_token_inject, for / and /setup and the probe that
+// serves the wizard), the API gate (auth_gate), and the provisioning receipt
+// (handle_provisioning_receipt, whose gate is a bearer or the tap rather than
+// auth_gate). firmware/canary/scripts/check_route_security.py holds all three
+// to that order.
+//
+// One exemption, and it is a property of the INTERFACE, never of the name: a
+// request that arrived over the Canary's own softAP. main.cpp runs the captive
+// DNS redirector for the AP's lifetime, answering every non-.local name with
+// the AP address, and the phone's captive sheet loads the setup wizard under
+// whatever probe name its OS used (captive.apple.com) and calls the API under
+// that name too — including the hub step, which POSTs the broker password
+// after setup_mark_complete() has already fired. Over the AP the Host is
+// this device by construction (this device minted the answer), and a
+// rebinding page has nowhere to load from (the softAP has no upstream). Over
+// the home LAN — the STA address — the guard applies in full. "Arrived over
+// the softAP" is decided by from_ap_subnet, the same predicate the F20
+// page-token policy uses (provisioning_gate::request_on_softap, host-tested),
+// so the two hardenings cannot disagree about which interface a request
+// came in on.
+//
+// The trade, the same one the display took (glass_web.cpp, note 2b): a
+// household that reaches the Canary by a PUBLIC split-horizon DNS name
+// (canary.example.com resolving to a LAN address) gets the dashboard without
+// its token — the page loads and its calls fail with 403 {"error":"host"}, so
+// the failure is visible on the dashboard, never a blank 403 — and must use
+// the IP, the .local name, or a private-suffix alias instead. Documented in
+// firmware/canary/CONSOLIDATION.md.
+
+// The one "arrived over the softAP" predicate in this file: main's page-token
+// policy (F20) defines it beside the provisioning gate below — the AP is up,
+// the socket's LOCAL address is the AP address, the peer is inside the AP
+// subnet and the home network does not overlap it, decided by the host-tested
+// provisioning_gate::request_on_softap. The Host guard reuses it rather than
+// keeping a second copy of the same socket arithmetic; the stricter
+// no-overlap clause means a household whose LAN happens to overlap the AP
+// subnet gets the full guard over the AP too, the same call the page-token
+// policy already makes there.
+static bool from_ap_subnet(httpd_req_t* req);
+
+// True when the Host the request targeted cannot name this device — the
+// rebinding case (network/host_guard.h) — unless the request arrived over the
+// softAP (from_ap_subnet). A missing or oversize Host is foreign, never a free
+// pass. A direct client (curl, the apps, the flashers) addresses the Canary by
+// its IP or .local name and never trips this. Must run before the response
+// starts: esp_http_server purges the request headers on the first send.
+static bool host_is_foreign(httpd_req_t* req) {
+  if (from_ap_subnet(req)) return false;
+  char host[96];
+  if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) return true;
+  return !canary::net::host_names_this_device(host);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // AUTH GATE
 // ════════════════════════════════════════════════════════════════════════════
 //
@@ -811,8 +1059,25 @@ bool rate_limit_check(httpd_req_t* req, bool is_action) {
 // On failure the AuthManager has already written the 401/403/429 response,
 // so the handler can return ESP_OK directly after this returns false.
 // Tracks http_errors so the status endpoint surfaces rejected calls.
+// A foreign Host (host_is_foreign) is refused first, before the token is
+// even looked at: a rebinding page that somehow holds a token still cannot
+// use it, and learns nothing about the provisioning state either.
+
+// The answer every token-bearing route gives a foreign Host — auth_gate and
+// the provisioning receipt, which does not go through auth_gate — so the two
+// cannot drift apart: 403 {"error":"host"}, counted like any rejected call.
+static void send_host_refusal(httpd_req_t* req) {
+  httpd_resp_set_status(req, "403 Forbidden");
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_sendstr(req, "{\"error\":\"host\"}");
+  witness_get_health().http_errors++;
+}
 
 static bool auth_gate(httpd_req_t* req) {
+  if (host_is_foreign(req)) {
+    send_host_refusal(req);
+    return false;
+  }
   const char* token = auth_get_token();
   if (!token || token[0] == '\0') {
     // Fail closed: if the bearer credential isn't provisioned, refuse.
@@ -829,11 +1094,372 @@ static bool auth_gate(httpd_req_t* req) {
   return true;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// PROVISIONING GATE (F20 gap #11) — hooks + interface scoping
+// ════════════════════════════════════════════════════════════════════════════
+//
+// main.cpp owns the gate State (it owns the BOOT button) and registers these
+// two hooks at boot. Unregistered == closed, so the receipt and the page
+// token fail closed on a build that never wires the button.
+
+static network_gate_fn_t s_gate_take    = nullptr;
+static network_gate_fn_t s_gate_is_open = nullptr;
+
+void network_set_provisioning_gate_hooks(network_gate_fn_t take,
+                                         network_gate_fn_t is_open) {
+  s_gate_take    = take;
+  s_gate_is_open = is_open;
+}
+
+// Every grant TAKES the gate (one tap = one consumer). The is_open hook is
+// only a wiring check for /api/status; nothing here grants on a peek.
+static bool provisioning_gate_take()    { return s_gate_take    ? s_gate_take()    : false; }
+
+// Host-order a.b.c.d from an IPAddress (WiFi.softAPIP() and friends).
+static uint32_t ip4_host_order(const IPAddress& ip) {
+  return ((uint32_t)ip[0] << 24) | ((uint32_t)ip[1] << 16) |
+         ((uint32_t)ip[2] << 8)  |  (uint32_t)ip[3];
+}
+
+// Host-order value of an lwIP/esp_netif IPv4 word. The word is network byte
+// order in memory, so the first byte is the first octet — no ntohl macro
+// dependency, and the same on every core.
+static uint32_t be_word_host_order(const void* word) {
+  const uint8_t* b = (const uint8_t*)word;
+  return ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) |
+         ((uint32_t)b[2] << 8)  |  (uint32_t)b[3];
+}
+
+// Host-order IPv4 of a sockaddr, or 0 when it carries none. esp_http_server's
+// listener is a dual-stack AF_INET6 socket on every core with
+// CONFIG_LWIP_IPV6 (both of ours), so an IPv4 client arrives as AF_INET6
+// ::ffff:a.b.c.d — provisioning_gate::ipv4_host_order_from_addr (host-tested)
+// unwraps that and answers 0 for a real IPv6 or link-local address. Reading
+// only AF_INET here made every request look like "address unknown".
+static uint32_t sockaddr_ip4_host_order(const struct sockaddr_storage& ss) {
+  using canary::net::provisioning_gate::AddrFamily;
+  using canary::net::provisioning_gate::ipv4_host_order_from_addr;
+  if (ss.ss_family == AF_INET) {
+    const struct sockaddr_in* sin = (const struct sockaddr_in*)&ss;
+    return ipv4_host_order_from_addr(AddrFamily::IPV4,
+                                     (const uint8_t*)&sin->sin_addr.s_addr);
+  }
+#if defined(LWIP_IPV6) && LWIP_IPV6
+  if (ss.ss_family == AF_INET6) {
+    const struct sockaddr_in6* sin6 = (const struct sockaddr_in6*)&ss;
+    return ipv4_host_order_from_addr(AddrFamily::IPV6,
+                                     (const uint8_t*)&sin6->sin6_addr);
+  }
+#endif
+  return 0;
+}
+
+// Address + netmask of one default netif ("WIFI_AP_DEF" / "WIFI_STA_DEF"),
+// host order; both 0 when the netif is absent or has no address. esp_netif
+// reads the same on the IDF 4.4 (Arduino 2.0.17) and IDF 5.x cores — the
+// Arduino WiFi class's subnet-mask accessor does not exist on the older one.
+static void netif_ip4(const char* ifkey, uint32_t* ip, uint32_t* mask) {
+  *ip = 0;
+  *mask = 0;
+  esp_netif_t* nif = esp_netif_get_handle_from_ifkey(ifkey);
+  if (!nif) return;
+  esp_netif_ip_info_t info;
+  memset(&info, 0, sizeof(info));
+  if (esp_netif_get_ip_info(nif, &info) != ESP_OK) return;
+  *ip = be_word_host_order(&info.ip.addr);
+  *mask = be_word_host_order(&info.netmask.addr);
+}
+
+// True only when this request provably came over the Canary's own Wi-Fi:
+// the AP is up, the socket's LOCAL address is the AP address, the peer is
+// inside the AP subnet, and the home network (if joined) does not overlap
+// it — provisioning_gate::request_on_softap, host-tested. Anything else,
+// IPv6 and link-local included, is "not AP", i.e. the home LAN, where the
+// page token is withheld: a wrong match here would re-open the disclosure.
+// The AP is dropped once the STA settles (dropAp), so this grant only exists
+// while the AP is up; the SPA banner says so.
+static bool from_ap_subnet(httpd_req_t* req) {
+  if (!(WiFi.getMode() & WIFI_AP)) return false;
+  const int fd = httpd_req_to_sockfd(req);
+  if (fd < 0) return false;
+  struct sockaddr_storage peer_ss;
+  struct sockaddr_storage local_ss;
+  socklen_t plen = sizeof(peer_ss);
+  socklen_t llen = sizeof(local_ss);
+  memset(&peer_ss, 0, sizeof(peer_ss));
+  memset(&local_ss, 0, sizeof(local_ss));
+  if (getpeername(fd, (struct sockaddr*)&peer_ss, &plen) != 0) return false;
+  if (getsockname(fd, (struct sockaddr*)&local_ss, &llen) != 0) return false;
+  uint32_t ap_ip, ap_mask, sta_ip, sta_mask;
+  netif_ip4("WIFI_AP_DEF", &ap_ip, &ap_mask);
+  netif_ip4("WIFI_STA_DEF", &sta_ip, &sta_mask);
+  return canary::net::provisioning_gate::request_on_softap(
+      sockaddr_ip4_host_order(peer_ss), sockaddr_ip4_host_order(local_ss),
+      ap_ip, ap_mask, sta_ip, sta_mask);
+}
+
+// A valid bearer on this request. Fails closed when the device credential
+// is not provisioned: AuthManager::checkOptional against an EMPTY expected
+// token would accept "Authorization: Bearer " (a zero-length constant-time
+// compare is equal), and here that would hand out the receipt.
+static bool bearer_present_and_valid(httpd_req_t* req) {
+  const char* token = auth_get_token();
+  if (!token || token[0] == '\0') return false;
+  return auth_check_optional(req, token);
+}
+
+// Dotted IPv4 of the interface this request arrived on (getsockname), so the
+// receipt's base_url points at the address the client can actually reach —
+// the STA address for a LAN caller, the AP address for an AP caller. Falls
+// back to the SoftAP address when the socket cannot say.
+static void local_addr_of(httpd_req_t* req, char* out, size_t cap) {
+  uint32_t local = 0;
+  const int fd = httpd_req_to_sockfd(req);
+  if (fd >= 0) {
+    struct sockaddr_storage ss;
+    socklen_t len = sizeof(ss);
+    memset(&ss, 0, sizeof(ss));
+    if (getsockname(fd, (struct sockaddr*)&ss, &len) == 0) {
+      local = sockaddr_ip4_host_order(ss);
+    }
+  }
+  if (local == 0) local = ip4_host_order(WiFi.softAPIP());
+  snprintf(out, cap, "%u.%u.%u.%u",
+           (unsigned)((local >> 24) & 0xFF), (unsigned)((local >> 16) & 0xFF),
+           (unsigned)((local >> 8) & 0xFF),  (unsigned)(local & 0xFF));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// TLS CERTIFICATE (F15) — self-signed ECDSA P-256, generated once, kept in NVS
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The WAP's layout and naming (canary_wap.ino tls_*: CN=securacv-<fp>,
+// O=SecuraCV, OU=Canary; validity 2020-01-01..2050-01-01; serial 1; DER in
+// NVS keys tls_cert / tls_key) with one deliberate difference, option (b):
+// an ECDSA P-256 key instead of RSA-2048 — expected to be far quicker than
+// RSA-2048's 30-60 s (untimed: the "[TLS] Certificate generation took" line
+// is what Track D D1 records), ~0.5 KB of DER instead of ~2 KB, a smaller
+// handshake. Clients
+// never see the difference: the iPhone app pins the SHA-256 of the
+// certificate DER (tls_cert_fp), whatever the key type.
+//
+// Every step logs why it stopped, and the reason lands in m_tls_reason so
+// /api/status tls_mode_reason says it. Serial lines never print key bytes.
+
+#if SECURACV_HAS_HTTPS_SERVER
+static bool tls_load_der_from_nvs(uint8_t** cert, size_t* cert_len,
+                                  uint8_t** key, size_t* key_len) {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly()) return false;
+  const size_t clen = nvs.getBytesLength(NVS_KEY_TLS_CERT);
+  const size_t klen = nvs.getBytesLength(NVS_KEY_TLS_KEY);
+  if (clen == 0 || klen == 0) {
+    nvs.end();
+    return false;
+  }
+  uint8_t* c = (uint8_t*)malloc(clen);
+  uint8_t* k = (uint8_t*)malloc(klen);
+  bool ok = c && k &&
+            nvs.getBytes(NVS_KEY_TLS_CERT, c, clen) == clen &&
+            nvs.getBytes(NVS_KEY_TLS_KEY, k, klen) == klen;
+  nvs.end();
+  if (!ok) {
+    if (k) { memset(k, 0, klen); free(k); }
+    free(c);
+    return false;
+  }
+  *cert = c; *cert_len = clen;
+  *key = k;  *key_len = klen;
+  return true;
+}
+
+static bool tls_store_der_to_nvs(const uint8_t* cert, size_t cert_len,
+                                 const uint8_t* key, size_t key_len) {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadWrite()) return false;
+  const bool ok = nvs.putBytes(NVS_KEY_TLS_CERT, cert, cert_len) == cert_len &&
+                  nvs.putBytes(NVS_KEY_TLS_KEY, key, key_len) == key_len;
+  nvs.end();
+  return ok;
+}
+#endif  // SECURACV_HAS_HTTPS_SERVER
+
+#if SECURACV_HAS_TLS_CERTGEN
+// Generates the pair into freshly malloc'd DER buffers. mbedTLS writes DER at
+// the END of the scratch buffer and returns its length, so the copy starts at
+// buf + sizeof(buf) - len (WAP parity).
+static bool tls_generate_self_signed(const char* device_fp_hex,
+                                     uint8_t** cert, size_t* cert_len,
+                                     uint8_t** key, size_t* key_len,
+                                     const char** why) {
+  Serial.println("[TLS] Generating self-signed certificate (ECDSA P-256, first TLS boot only)...");
+  int ret = -1;
+  bool ok = false;
+  uint8_t* c = nullptr;
+  uint8_t* k = nullptr;
+  mbedtls_pk_context pk;
+  mbedtls_x509write_cert crt;
+  mbedtls_entropy_context entropy;
+  mbedtls_ctr_drbg_context drbg;
+  mbedtls_mpi serial;
+  mbedtls_pk_init(&pk);
+  mbedtls_x509write_crt_init(&crt);
+  mbedtls_entropy_init(&entropy);
+  mbedtls_ctr_drbg_init(&drbg);
+  mbedtls_mpi_init(&serial);
+
+  static const char kPers[] = "securacv_tls_gen";
+  char subject[96];
+  static uint8_t scratch[1024];  // certificate DER; P-256 needs ~450 bytes
+
+  *why = "certificate generation failed (DRBG seed)";
+  ret = mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy,
+                              (const unsigned char*)kPers, sizeof(kPers) - 1);
+  if (ret != 0) goto done;
+
+  *why = "certificate generation failed (P-256 keygen)";
+  ret = mbedtls_pk_setup(&pk, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY));
+  if (ret != 0) goto done;
+  ret = mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(pk),
+                            mbedtls_ctr_drbg_random, &drbg);
+  if (ret != 0) goto done;
+
+  *why = "certificate generation failed (subject/issuer)";
+  snprintf(subject, sizeof(subject), "CN=securacv-%s,O=SecuraCV,OU=Canary",
+           device_fp_hex);
+  mbedtls_x509write_crt_set_subject_key(&crt, &pk);
+  mbedtls_x509write_crt_set_issuer_key(&crt, &pk);
+  mbedtls_x509write_crt_set_md_alg(&crt, MBEDTLS_MD_SHA256);
+  ret = mbedtls_x509write_crt_set_subject_name(&crt, subject);
+  if (ret != 0) goto done;
+  ret = mbedtls_x509write_crt_set_issuer_name(&crt, subject);
+  if (ret != 0) goto done;
+  // Serial 1 (WAP parity). mbedTLS 3.4+ deprecates the MPI setter in favor
+  // of the raw-bytes one; IDF 5.5 ships 3.6, IDF 4.4 ships 2.28.
+#if defined(MBEDTLS_VERSION_NUMBER) && MBEDTLS_VERSION_NUMBER >= 0x03040000
+  {
+    unsigned char serial_one[1] = {0x01};
+    ret = mbedtls_x509write_crt_set_serial_raw(&crt, serial_one, sizeof(serial_one));
+  }
+#else
+  mbedtls_mpi_lset(&serial, 1);
+  ret = mbedtls_x509write_crt_set_serial(&crt, &serial);
+#endif
+  if (ret != 0) goto done;
+  ret = mbedtls_x509write_crt_set_validity(&crt, "20200101000000", "20500101000000");
+  if (ret != 0) goto done;
+
+  *why = "certificate generation failed (certificate DER)";
+  ret = mbedtls_x509write_crt_der(&crt, scratch, sizeof(scratch),
+                                  mbedtls_ctr_drbg_random, &drbg);
+  if (ret <= 0) goto done;
+  c = (uint8_t*)malloc((size_t)ret);
+  if (!c) { ret = -1; goto done; }
+  memcpy(c, scratch + sizeof(scratch) - ret, (size_t)ret);
+  *cert_len = (size_t)ret;
+
+  *why = "certificate generation failed (key DER)";
+  ret = mbedtls_pk_write_key_der(&pk, scratch, sizeof(scratch));
+  if (ret <= 0) goto done;
+  k = (uint8_t*)malloc((size_t)ret);
+  if (!k) { ret = -1; goto done; }
+  memcpy(k, scratch + sizeof(scratch) - ret, (size_t)ret);
+  *key_len = (size_t)ret;
+
+  ok = true;
+  *cert = c; c = nullptr;
+  *key = k;  k = nullptr;
+  *why = "certificate generated";
+
+done:
+  if (!ok && ret != 0) {
+    Serial.printf("[TLS] %s: -0x%04X\n", *why, (unsigned)(-ret));
+  }
+  memset(scratch, 0, sizeof(scratch));  // the key DER passed through here
+  free(c);
+  if (k) { memset(k, 0, *key_len); free(k); }
+  mbedtls_mpi_free(&serial);
+  mbedtls_x509write_crt_free(&crt);
+  mbedtls_pk_free(&pk);
+  mbedtls_ctr_drbg_free(&drbg);
+  mbedtls_entropy_free(&entropy);
+  return ok;
+}
+#endif  // SECURACV_HAS_TLS_CERTGEN
+
+bool ScvNetworkManager::initTls() {
+#if !FEATURE_HTTPS
+  m_tls_reason = "FEATURE_HTTPS=0 in this build";
+  return false;
+#elif !SECURACV_HAS_HTTPS_SERVER
+  m_tls_reason = "this core has no esp_https_server";
+  Serial.println("[TLS] esp_https_server not in this core — HTTP only");
+  log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "TLS unavailable", m_tls_reason);
+  return false;
+#else
+  if (m_tls_cert_der && m_tls_key_der) return true;  // idempotent
+
+  uint8_t* cert = nullptr;
+  uint8_t* key = nullptr;
+  size_t cert_len = 0, key_len = 0;
+  if (tls_load_der_from_nvs(&cert, &cert_len, &key, &key_len)) {
+    Serial.println("[TLS] Loaded certificate from NVS");
+  } else {
+#if SECURACV_HAS_TLS_CERTGEN
+    char device_fp[17];
+    hex_to_str(device_fp, witness_get_device().pubkey_fp, 8);
+    const char* why = nullptr;
+    const uint32_t gen_started_ms = millis();
+    const bool generated =
+        tls_generate_self_signed(device_fp, &cert, &cert_len, &key, &key_len, &why);
+    // The keygen time is not measured anywhere else: this line is what the
+    // bench (Track D D1) records, so the doc figure can become a number.
+    Serial.printf("[TLS] Certificate generation took %lu ms\n",
+                  (unsigned long)(millis() - gen_started_ms));
+    if (!generated) {
+      m_tls_reason = why;
+      Serial.println("[TLS] Certificate generation FAILED — HTTP only");
+      log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "TLS unavailable", why);
+      return false;
+    }
+    if (!tls_store_der_to_nvs(cert, cert_len, key, key_len)) {
+      // Serve with it this boot anyway; the next boot generates a new one,
+      // which changes the pin — logged so a re-pair is not a mystery.
+      Serial.println("[TLS] WARNING: certificate not stored; it changes next boot");
+      log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "TLS cert not persisted", "NVS write failed");
+    }
+    Serial.printf("[TLS] CN: securacv-%s\n", device_fp);
+#else
+    m_tls_reason = "no stored certificate and this core cannot generate one (mbedTLS x509write/ECDSA)";
+    Serial.println("[TLS] No certificate in NVS and no on-device generation — HTTP only");
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "TLS unavailable", "no certificate generation");
+    return false;
+#endif
+  }
+
+  m_tls_cert_der = cert;
+  m_tls_cert_der_len = cert_len;
+  m_tls_key_der = key;
+  m_tls_key_der_len = key_len;
+  uint8_t digest[32];
+  sha256_raw(m_tls_cert_der, m_tls_cert_der_len, digest);
+  canary::net::tls_policy::fingerprint_hex(digest, m_tls_cert_fp_hex);
+  m_tls_reason = "certificate ready";
+  Serial.printf("[TLS] Cert fingerprint: %.16s...\n", m_tls_cert_fp_hex);
+  return true;
+#endif
+}
+
 // Forward declarations for HTTP handlers
 static esp_err_t handle_ui(httpd_req_t* req);
+// BOOT-tap gated provisioning receipt (F20 gap #11; WAP parity).
+static esp_err_t handle_provisioning_receipt(httpd_req_t* req);
 // Captive-portal probes + first-boot setup wizard (see the CAPTIVE-PORTAL
 // section below for the per-platform strategy).
 static esp_err_t handle_captive_probe(httpd_req_t* req);
+// FEATURE_HTTPS port-80 server: 307 to https:// for everything that is not
+// a connectivity probe (F15).
+static esp_err_t handle_https_redirect(httpd_req_t* req);
 static esp_err_t handle_setup_page(httpd_req_t* req);
 static esp_err_t handle_captive_catchall(httpd_req_t* req);
 static esp_err_t handle_status(httpd_req_t* req);
@@ -917,16 +1543,36 @@ static esp_err_t handle_battery_history(httpd_req_t* req);
 static esp_err_t handle_thermal(httpd_req_t* req);
 #endif
 
+// Household time zone (F28): GET/POST /api/settings.
+static esp_err_t handle_settings_get(httpd_req_t* req);
+static esp_err_t handle_settings_post(httpd_req_t* req);
+
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+// BLE Scout paired beacons + the proximity pairing window (F27).
+static esp_err_t handle_scout_list(httpd_req_t* req);
+static esp_err_t handle_scout_pair_start(httpd_req_t* req);
+static esp_err_t handle_scout_pair_status(httpd_req_t* req);
+static esp_err_t handle_scout_pair_cancel(httpd_req_t* req);
+static esp_err_t handle_scout_unpair(httpd_req_t* req);
+#endif
+
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
-// Mesh / opera REST API (PR-8). Six endpoints only — status, peers, and
-// the four pairing steps. remove/leave/name/enable/alerts-DELETE are
-// deferred (see spec/canary_mesh_network_v0.md §8).
+// Mesh / opera REST API (PR-8, F10, F10-rekey). Twelve registrations:
+// status, peers, the four pairing steps, leave, name, enable, alerts GET +
+// DELETE, and remove (which rotates opera_secret — spec §5.6 PIO; crypto
+// review + bench pending, see spec/canary_mesh_network_v0.md §8.3).
 static esp_err_t handle_mesh_status(httpd_req_t* req);
 static esp_err_t handle_mesh_peers(httpd_req_t* req);
 static esp_err_t handle_mesh_pair_start(httpd_req_t* req);
 static esp_err_t handle_mesh_pair_join(httpd_req_t* req);
 static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req);
 static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req);
+static esp_err_t handle_mesh_leave(httpd_req_t* req);
+static esp_err_t handle_mesh_name(httpd_req_t* req);
+static esp_err_t handle_mesh_enable(httpd_req_t* req);
+static esp_err_t handle_mesh_alerts(httpd_req_t* req);
+static esp_err_t handle_mesh_alerts_clear(httpd_req_t* req);
+static esp_err_t handle_mesh_remove(httpd_req_t* req);
 #endif
 
 // esp_http_server drops a registration past max_uri_handlers and returns an
@@ -941,25 +1587,112 @@ static void register_route(httpd_handle_t server, const httpd_uri_t* uri) {
   }
 }
 
+// The six OS connectivity probes (tls_policy::is_connectivity_probe names the
+// same list). Registered with a trailing '*' because probe URLs sometimes
+// carry a cache-busting query and the wildcard matcher compares the FULL uri;
+// handle_captive_probe re-checks the exact path component itself. File scope
+// because both the main route table and the FEATURE_HTTPS port-80 server
+// register them.
+static const char* kProbePaths[] = {
+  "/hotspot-detect.html*",        // Apple CNA
+  "/library/test/success.html*",  // Apple (older probe)
+  "/generate_204*",               // Android
+  "/gen_204*",                    // Android (short variant)
+  "/connecttest.txt*",            // Windows NCSI
+  "/ncsi.txt*",                   // Windows NCSI (legacy)
+};
+
+// Worst case with every feature on: 14 unconditional + 4 MQTT (/api/mqtt/ca
+// twice — POST and DELETE are separate registrations) + 1 dev-only POST
+// /api/ota (FEATURE_OTA_UPDATE && !SECURACV_BUILD_RELEASE; a release build
+// leaves that slot spare, which is cheaper than a dropped route) + 4
+// OTA-pull + 9 peek + 1 sensing + 4 vision + 4 audio + 2 diagnostics + 1
+// power + 1 thermal = 45 base, + 8 captive-portal routes (6 OS connectivity
+// probes + /setup + the wildcard fallback) + 1 provisioning receipt
+// (GET /api/provisioning-receipt, F20 gap #11) + 2 settings (GET/POST
+// /api/settings — household time zone, F28), always + 5 BLE Scout pairing
+// endpoints (F27) when FEATURE_BLE_SCAN is compiled in + 12 mesh
+// registrations (PR-8's 6 + F10's leave/name/enable/alerts GET/alerts DELETE
+// + F10-rekey's remove) when the mesh feature is compiled in. The BLE Scout five are in
+// both numbers because the audit counts every #if branch (the worst case);
+// a build without FEATURE_BLE_SCAN leaves them spare. Each registered httpd_uri_t needs
+// a slot; register_route() names any that does not get one. The same table
+// goes on whichever server is primary (TLS or plain), so one budget — and
+// every registration in registerHttpHandlers uses its `server` parameter,
+// never m_http_server (nullptr there on FEATURE_HTTPS builds).
+// firmware/canary/scripts/check_route_security.py enforces both: it counts
+// every #if branch against these two numbers and fails a member handle.
+#if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
+static const uint16_t kRouteTableSlots = 73;
+#else
+static const uint16_t kRouteTableSlots = 61;
+#endif
+
 bool ScvNetworkManager::startHttpServer() {
+  using canary::net::tls_policy::Mode;
+  const bool setup_active = setup_is_active() || setup_is_first_boot();
+  const char* why = nullptr;
+  const Mode mode = canary::net::tls_policy::decide(
+      FEATURE_HTTPS != 0, SECURACV_HAS_HTTPS_SERVER != 0,
+      m_tls_cert_der != nullptr && m_tls_key_der != nullptr, setup_active, &why);
+  m_tls_reason = why;
+  m_tls_deferred_for_setup = canary::net::tls_policy::deferred_for_setup(
+      FEATURE_HTTPS != 0, SECURACV_HAS_HTTPS_SERVER != 0, setup_active);
+
+#if SECURACV_HAS_HTTPS_SERVER
+  if (mode == Mode::HTTPS_REDIRECT) {
+    httpd_ssl_config_t ssl = HTTPD_SSL_CONFIG_DEFAULT();
+    // The server certificate field was renamed in IDF 5.0 (cacert_pem was
+    // the server certificate on 4.4 and became the client-verify CA). DER is
+    // accepted by both: mbedTLS parses PEM only when it finds the header.
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+    ssl.servercert     = m_tls_cert_der;
+    ssl.servercert_len = m_tls_cert_der_len;
+#else
+    ssl.cacert_pem     = m_tls_cert_der;
+    ssl.cacert_len     = m_tls_cert_der_len;
+#endif
+    ssl.prvtkey_pem = m_tls_key_der;
+    ssl.prvtkey_len = m_tls_key_der_len;
+    ssl.port_secure = HTTPS_PORT;
+    ssl.httpd.uri_match_fn = httpd_uri_match_wildcard;
+    ssl.httpd.stack_size = 10240;  // TLS handshake + the in-handler MJPEG loop
+    ssl.httpd.max_uri_handlers = kRouteTableSlots;
+    ssl.httpd.recv_wait_timeout = 30;
+    ssl.httpd.send_wait_timeout = 30;
+    ssl.httpd.lru_purge_enable = true;
+    // Two httpd instances need two control ports; pin both explicitly
+    // rather than trusting the two DEFAULT macros to differ.
+    ssl.httpd.ctrl_port = ESP_HTTPD_DEF_CTRL_PORT + 1;
+
+    if (httpd_ssl_start(&m_https_server, &ssl) == ESP_OK) {
+      m_tls_enabled = true;
+      registerHttpHandlers(m_https_server);
+      Serial.printf("[HTTPS] Server started on port %d\n", HTTPS_PORT);
+      log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "HTTPS server started", "port 443");
+      if (!startRedirectServer()) {
+        // The API is up on 443; only the plain-HTTP conveniences (probes,
+        // the redirect) are missing. Logged, not fatal.
+        log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
+                   "HTTPS redirect server start failed", "probes unanswered");
+      }
+      return true;
+    }
+    m_https_server = nullptr;
+    m_tls_enabled = false;
+    m_tls_reason = "httpd_ssl_start failed; serving HTTP";
+    Serial.println("[HTTPS] Server start FAILED — falling back to HTTP");
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "HTTPS start failed, using HTTP", nullptr);
+  }
+#else
+  (void)mode;  // HTTP-only build: the reason above is still reported
+#endif  // SECURACV_HAS_HTTPS_SERVER
+
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.server_port = 80;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
-  // Worst case with every feature on: 14 unconditional + 4 MQTT (/api/mqtt/ca
-  // twice — POST and DELETE are separate registrations) + 1 dev-only POST
-  // /api/ota (FEATURE_OTA_UPDATE && !SECURACV_BUILD_RELEASE; a release build
-  // leaves that slot spare, which is cheaper than a dropped route) + 4
-  // OTA-pull + 9 peek + 1 sensing + 4 vision + 4 audio + 2 diagnostics + 1
-  // power + 1 thermal = 45 base, + 8 captive-portal routes (6 OS connectivity
-  // probes + /setup + the wildcard fallback) + 6 mesh endpoints (PR-8) when
-  // the mesh feature is compiled in. Each registered httpd_uri_t needs a
-  // slot; register_route() names any that does not get one.
-  #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
-  config.max_uri_handlers = 59;
-  #else
-  config.max_uri_handlers = 53;
-  #endif
+  config.max_uri_handlers = kRouteTableSlots;
   config.recv_wait_timeout = 30;
   config.send_wait_timeout = 30;
   config.lru_purge_enable  = true;
@@ -969,230 +1702,304 @@ bool ScvNetworkManager::startHttpServer() {
     return false;
   }
 
-  registerHttpHandlers();
+  registerHttpHandlers(m_http_server);
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "HTTP server started", "port 80");
   return true;
 }
 
+// FEATURE_HTTPS: the plain server beside the TLS one. It serves only what must
+// stay plain — the six connectivity probes (no OS sends them over TLS; a
+// redirect breaks detection and the phone drops the AP) — and redirects every
+// other GET/POST to https:// (tls_policy::build_redirect_location). The canary
+// serves no public /api/fleet, so unlike the WAP's there is nothing else here.
+// 6 probes + 2 wildcard redirects, with headroom.
+bool ScvNetworkManager::startRedirectServer() {
+  httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+  config.server_port = HTTP_REDIRECT_PORT;  // the port-80 redirect-to-https server
+  config.ctrl_port = ESP_HTTPD_DEF_CTRL_PORT;
+  config.uri_match_fn = httpd_uri_match_wildcard;
+  config.max_uri_handlers = 12;
+  config.lru_purge_enable = true;
+  if (httpd_start(&m_http_server, &config) != ESP_OK) {
+    m_http_server = nullptr;
+    return false;
+  }
+  for (const char* p : kProbePaths) {
+    httpd_uri_t probe = { .uri = p, .method = HTTP_GET, .handler = handle_captive_probe };
+    register_route(m_http_server, &probe);
+  }
+  // Registered after the probes: esp_http_server matches in registration order.
+  httpd_uri_t redirect_get = { .uri = "/*", .method = HTTP_GET, .handler = handle_https_redirect };
+  register_route(m_http_server, &redirect_get);
+  httpd_uri_t redirect_post = { .uri = "/*", .method = HTTP_POST, .handler = handle_https_redirect };
+  register_route(m_http_server, &redirect_post);
+  Serial.println("[HTTP]  Port 80 redirects to HTTPS (connectivity probes answered in plain HTTP)");
+  return true;
+}
+
 void ScvNetworkManager::stopHttpServer() {
+#if SECURACV_HAS_HTTPS_SERVER
+  if (m_https_server) {
+    httpd_ssl_stop(m_https_server);
+    m_https_server = nullptr;
+  }
+#endif
+  m_tls_enabled = false;
   if (m_http_server) {
     httpd_stop(m_http_server);
     m_http_server = nullptr;
   }
 }
 
-void ScvNetworkManager::registerHttpHandlers() {
+void ScvNetworkManager::registerHttpHandlers(httpd_handle_t server) {
   // UI
   httpd_uri_t ui = { .uri = "/", .method = HTTP_GET, .handler = handle_ui };
-  register_route(m_http_server, &ui);
+  register_route(server, &ui);
 
   // First-boot setup wizard + the OS captive-portal connectivity probes.
-  // Registered with a trailing '*' because probe URLs sometimes carry a
-  // cache-busting query and the wildcard matcher compares the FULL uri;
-  // handle_captive_probe re-checks the exact path component itself.
   httpd_uri_t setup_page = { .uri = "/setup", .method = HTTP_GET, .handler = handle_setup_page };
-  register_route(m_http_server, &setup_page);
-  static const char* kProbePaths[] = {
-    "/hotspot-detect.html*",        // Apple CNA
-    "/library/test/success.html*",  // Apple (older probe)
-    "/generate_204*",               // Android
-    "/gen_204*",                    // Android (short variant)
-    "/connecttest.txt*",            // Windows NCSI
-    "/ncsi.txt*",                   // Windows NCSI (legacy)
-  };
+  register_route(server, &setup_page);
   for (const char* p : kProbePaths) {
     httpd_uri_t probe = { .uri = p, .method = HTTP_GET, .handler = handle_captive_probe };
-    register_route(m_http_server, &probe);
+    register_route(server, &probe);
   }
+
+  // Provisioning receipt: the Host first, then a bearer OR one BOOT tap (the
+  // handler gates itself; firmware/canary/scripts/check_route_security.py
+  // holds it to that order).
+  httpd_uri_t receipt = { .uri = "/api/provisioning-receipt", .method = HTTP_GET, .handler = handle_provisioning_receipt };
+  register_route(server, &receipt);
 
   // API endpoints
   httpd_uri_t status = { .uri = "/api/status", .method = HTTP_GET, .handler = handle_status };
-  register_route(m_http_server, &status);
+  register_route(server, &status);
 
   httpd_uri_t chain = { .uri = "/api/chain", .method = HTTP_GET, .handler = handle_chain };
-  register_route(m_http_server, &chain);
+  register_route(server, &chain);
 
   httpd_uri_t witness = { .uri = "/api/witness", .method = HTTP_GET, .handler = handle_witness };
-  register_route(m_http_server, &witness);
+  register_route(server, &witness);
 
   httpd_uri_t logs = { .uri = "/api/logs", .method = HTTP_GET, .handler = handle_logs };
-  register_route(m_http_server, &logs);
+  register_route(server, &logs);
 
   httpd_uri_t log_ack = { .uri = "/api/logs/*/ack", .method = HTTP_POST, .handler = handle_log_ack };
-  register_route(m_http_server, &log_ack);
+  register_route(server, &log_ack);
 
   httpd_uri_t ack_all = { .uri = "/api/logs/ack-all", .method = HTTP_POST, .handler = handle_ack_all };
-  register_route(m_http_server, &ack_all);
+  register_route(server, &ack_all);
 
   httpd_uri_t reboot = { .uri = "/api/reboot", .method = HTTP_POST, .handler = handle_reboot };
-  register_route(m_http_server, &reboot);
+  register_route(server, &reboot);
 
   httpd_uri_t export_ep = { .uri = "/api/export", .method = HTTP_POST, .handler = handle_export };
-  register_route(m_http_server, &export_ep);
+  register_route(server, &export_ep);
 
   // WiFi management endpoints
   httpd_uri_t wifi_status = { .uri = "/api/wifi/status", .method = HTTP_GET, .handler = handle_wifi_status };
-  register_route(m_http_server, &wifi_status);
+  register_route(server, &wifi_status);
 
   httpd_uri_t wifi_scan = { .uri = "/api/wifi/scan", .method = HTTP_GET, .handler = handle_wifi_scan };
-  register_route(m_http_server, &wifi_scan);
+  register_route(server, &wifi_scan);
 
   httpd_uri_t wifi_connect = { .uri = "/api/wifi/connect", .method = HTTP_POST, .handler = handle_wifi_connect };
-  register_route(m_http_server, &wifi_connect);
+  register_route(server, &wifi_connect);
 
   httpd_uri_t wifi_disconnect = { .uri = "/api/wifi/disconnect", .method = HTTP_POST, .handler = handle_wifi_disconnect };
-  register_route(m_http_server, &wifi_disconnect);
+  register_route(server, &wifi_disconnect);
 
   // Peer list (mDNS browse cache). Path matches canary-vision/docs/discovery.md
   // and the SPA's CanaryAPI.request(... '/api/v1/peers').
   httpd_uri_t peers_ep = { .uri = "/api/v1/peers", .method = HTTP_GET, .handler = handle_peers };
-  register_route(m_http_server, &peers_ep);
+  register_route(server, &peers_ep);
 
   #if FEATURE_HA_MQTT
   httpd_uri_t mqtt_stat = { .uri = "/api/mqtt/status", .method = HTTP_GET, .handler = handle_mqtt_status };
-  register_route(m_http_server, &mqtt_stat);
+  register_route(server, &mqtt_stat);
 
   httpd_uri_t mqtt_cfg = { .uri = "/api/mqtt/config", .method = HTTP_POST, .handler = handle_mqtt_config };
-  register_route(m_http_server, &mqtt_cfg);
+  register_route(server, &mqtt_cfg);
 
   // The broker CA (PEM, up to kCaPemMax) has its own route: the config body
   // is 512 bytes and a certificate is not. POST stores, DELETE forgets —
   // an explicit verb, so a body that arrives empty can never mean "clear".
   httpd_uri_t mqtt_ca_post = { .uri = "/api/mqtt/ca", .method = HTTP_POST, .handler = handle_mqtt_ca };
-  register_route(m_http_server, &mqtt_ca_post);
+  register_route(server, &mqtt_ca_post);
   httpd_uri_t mqtt_ca_del = { .uri = "/api/mqtt/ca", .method = HTTP_DELETE, .handler = handle_mqtt_ca };
-  register_route(m_http_server, &mqtt_ca_del);
+  register_route(server, &mqtt_ca_del);
   #endif
 
   #if FEATURE_OTA_UPDATE && !defined(SECURACV_BUILD_RELEASE)
   httpd_uri_t ota = { .uri = "/api/ota", .method = HTTP_POST, .handler = handle_ota };
-  register_route(m_http_server, &ota);
+  register_route(server, &ota);
   #endif
 
   #if FEATURE_OTA_PULL
   httpd_uri_t ota_status = { .uri = "/api/ota/status", .method = HTTP_GET, .handler = handle_ota_status };
-  register_route(m_http_server, &ota_status);
+  register_route(server, &ota_status);
 
   httpd_uri_t ota_check = { .uri = "/api/ota/check", .method = HTTP_POST, .handler = handle_ota_check };
-  register_route(m_http_server, &ota_check);
+  register_route(server, &ota_check);
 
   httpd_uri_t ota_install = { .uri = "/api/ota/install", .method = HTTP_POST, .handler = handle_ota_install };
-  register_route(m_http_server, &ota_install);
+  register_route(server, &ota_install);
 
   httpd_uri_t ota_cfg = { .uri = "/api/ota/config", .method = HTTP_POST, .handler = handle_ota_config };
-  register_route(m_http_server, &ota_cfg);
+  register_route(server, &ota_cfg);
   #endif
 
   #if FEATURE_CAMERA_PEEK
   httpd_uri_t peek_start = { .uri = "/api/peek/start", .method = HTTP_POST, .handler = handle_peek_start };
-  register_route(m_http_server, &peek_start);
+  register_route(server, &peek_start);
 
   httpd_uri_t peek_stream = { .uri = "/api/peek/stream", .method = HTTP_GET, .handler = handle_peek_stream };
-  register_route(m_http_server, &peek_stream);
+  register_route(server, &peek_stream);
 
   httpd_uri_t peek_stop = { .uri = "/api/peek/stop", .method = HTTP_POST, .handler = handle_peek_stop };
-  register_route(m_http_server, &peek_stop);
+  register_route(server, &peek_stop);
 
   httpd_uri_t peek_status = { .uri = "/api/peek/status", .method = HTTP_GET, .handler = handle_peek_status };
-  register_route(m_http_server, &peek_status);
+  register_route(server, &peek_status);
 
   httpd_uri_t peek_init = { .uri = "/api/peek/init", .method = HTTP_POST, .handler = handle_peek_init };
-  register_route(m_http_server, &peek_init);
+  register_route(server, &peek_init);
 
   httpd_uri_t peek_res = { .uri = "/api/peek/resolution", .method = HTTP_POST, .handler = handle_peek_resolution };
-  register_route(m_http_server, &peek_res);
+  register_route(server, &peek_res);
 
   httpd_uri_t peek_sensor_g = { .uri = "/api/peek/sensor", .method = HTTP_GET, .handler = handle_peek_sensor_get };
-  register_route(m_http_server, &peek_sensor_g);
+  register_route(server, &peek_sensor_g);
 
   httpd_uri_t peek_sensor_s = { .uri = "/api/peek/sensor", .method = HTTP_POST, .handler = handle_peek_sensor_set };
-  register_route(m_http_server, &peek_sensor_s);
+  register_route(server, &peek_sensor_s);
 
   httpd_uri_t peek_snap = { .uri = "/api/peek/snapshot", .method = HTTP_GET, .handler = handle_peek_snapshot };
-  register_route(m_http_server, &peek_snap);
+  register_route(server, &peek_snap);
   #endif
 
   #if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
   httpd_uri_t sensing_ep = { .uri = "/api/sensing", .method = HTTP_GET, .handler = handle_sensing };
-  register_route(m_http_server, &sensing_ep);
+  register_route(server, &sensing_ep);
   #endif
 
   #if FEATURE_VISION_DETECT
   httpd_uri_t vision_cfg_g = { .uri = "/api/vision/config", .method = HTTP_GET, .handler = handle_vision_config_get };
-  register_route(m_http_server, &vision_cfg_g);
+  register_route(server, &vision_cfg_g);
 
   httpd_uri_t vision_cfg_s = { .uri = "/api/vision/config", .method = HTTP_POST, .handler = handle_vision_config_set };
-  register_route(m_http_server, &vision_cfg_s);
+  register_route(server, &vision_cfg_s);
 
   httpd_uri_t vision_cfg_save = { .uri = "/api/vision/config/save", .method = HTTP_POST, .handler = handle_vision_config_save };
-  register_route(m_http_server, &vision_cfg_save);
+  register_route(server, &vision_cfg_save);
 
   httpd_uri_t vision_thumb = { .uri = "/api/vision/thumbnail", .method = HTTP_GET, .handler = handle_vision_thumbnail };
-  register_route(m_http_server, &vision_thumb);
+  register_route(server, &vision_thumb);
   #endif
 
   #if FEATURE_ACOUSTIC_EVENTS
   // Live RMS for the UI level meter — same number the hysteresis uses,
   // not a second audio path. Returns 0 when muted.
   httpd_uri_t audio_level = { .uri = "/api/audio/level", .method = HTTP_GET, .handler = handle_audio_level };
-  register_route(m_http_server, &audio_level);
+  register_route(server, &audio_level);
 
   // Hard mute (physically uninstalls the I2S driver) — persisted in NVS.
   httpd_uri_t audio_mute_ep = { .uri = "/api/audio/mute", .method = HTTP_POST, .handler = handle_audio_mute };
-  register_route(m_http_server, &audio_mute_ep);
+  register_route(server, &audio_mute_ep);
 
   // Alarm-pattern self-test (relaxed thresholds, normal event callback
   // suppressed so a TEST-button press does NOT flow into HA automations).
   httpd_uri_t audio_test_start = { .uri = "/api/audio/test/start", .method = HTTP_POST, .handler = handle_audio_test_start };
-  register_route(m_http_server, &audio_test_start);
+  register_route(server, &audio_test_start);
   httpd_uri_t audio_test_status = { .uri = "/api/audio/test/status", .method = HTTP_GET, .handler = handle_audio_test_status };
-  register_route(m_http_server, &audio_test_status);
+  register_route(server, &audio_test_status);
   #endif
 
   #if FEATURE_DIAGNOSTICS
   httpd_uri_t diag_ep = { .uri = "/api/diagnostics", .method = HTTP_GET, .handler = handle_diagnostics };
-  register_route(m_http_server, &diag_ep);
+  register_route(server, &diag_ep);
 
   httpd_uri_t selftest_ep = { .uri = "/api/selftest", .method = HTTP_GET, .handler = handle_selftest };
-  register_route(m_http_server, &selftest_ep);
+  register_route(server, &selftest_ep);
   #endif
 
   #if FEATURE_POWER_MONITOR
   httpd_uri_t batt_hist_ep = { .uri = "/api/battery/history", .method = HTTP_GET, .handler = handle_battery_history };
-  register_route(m_http_server, &batt_hist_ep);
+  register_route(server, &batt_hist_ep);
   #endif
 
   #if FEATURE_THERMAL_WATCHDOG
   httpd_uri_t thermal_ep = { .uri = "/api/thermal", .method = HTTP_GET, .handler = handle_thermal };
-  register_route(m_http_server, &thermal_ep);
+  register_route(server, &thermal_ep);
+  #endif
+
+  // Household time zone (F28). 2 endpoints — see the SETTINGS section below.
+  httpd_uri_t settings_get_ep = { .uri = "/api/settings", .method = HTTP_GET, .handler = handle_settings_get };
+  register_route(server, &settings_get_ep);
+  httpd_uri_t settings_post_ep = { .uri = "/api/settings", .method = HTTP_POST, .handler = handle_settings_post };
+  register_route(server, &settings_post_ep);
+
+  #if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+  // BLE Scout pairing (F27). 5 endpoints — see the SCOUT section below.
+  httpd_uri_t scout_list_ep = { .uri = "/api/scout", .method = HTTP_GET, .handler = handle_scout_list };
+  register_route(server, &scout_list_ep);
+
+  httpd_uri_t scout_pair_start_ep = { .uri = "/api/scout/pair/start", .method = HTTP_POST, .handler = handle_scout_pair_start };
+  register_route(server, &scout_pair_start_ep);
+
+  httpd_uri_t scout_pair_status_ep = { .uri = "/api/scout/pair/status", .method = HTTP_GET, .handler = handle_scout_pair_status };
+  register_route(server, &scout_pair_status_ep);
+
+  httpd_uri_t scout_pair_cancel_ep = { .uri = "/api/scout/pair/cancel", .method = HTTP_POST, .handler = handle_scout_pair_cancel };
+  register_route(server, &scout_pair_cancel_ep);
+
+  httpd_uri_t scout_unpair_ep = { .uri = "/api/scout/unpair", .method = HTTP_POST, .handler = handle_scout_unpair };
+  register_route(server, &scout_unpair_ep);
   #endif
 
   #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
-  // Mesh / opera REST API (PR-8). 6 endpoints — see spec §8.
+  // Mesh / opera REST API (PR-8, F10, F10-rekey). 12 registrations — see spec §8.1.
   httpd_uri_t mesh_status_ep = { .uri = "/api/mesh", .method = HTTP_GET, .handler = handle_mesh_status };
-  register_route(m_http_server, &mesh_status_ep);
+  register_route(server, &mesh_status_ep);
 
   httpd_uri_t mesh_peers_ep = { .uri = "/api/mesh/peers", .method = HTTP_GET, .handler = handle_mesh_peers };
-  register_route(m_http_server, &mesh_peers_ep);
+  register_route(server, &mesh_peers_ep);
 
   httpd_uri_t mesh_pair_start_ep = { .uri = "/api/mesh/pair/start", .method = HTTP_POST, .handler = handle_mesh_pair_start };
-  register_route(m_http_server, &mesh_pair_start_ep);
+  register_route(server, &mesh_pair_start_ep);
 
   httpd_uri_t mesh_pair_join_ep = { .uri = "/api/mesh/pair/join", .method = HTTP_POST, .handler = handle_mesh_pair_join };
-  register_route(m_http_server, &mesh_pair_join_ep);
+  register_route(server, &mesh_pair_join_ep);
 
   httpd_uri_t mesh_pair_confirm_ep = { .uri = "/api/mesh/pair/confirm", .method = HTTP_POST, .handler = handle_mesh_pair_confirm };
-  register_route(m_http_server, &mesh_pair_confirm_ep);
+  register_route(server, &mesh_pair_confirm_ep);
 
   httpd_uri_t mesh_pair_cancel_ep = { .uri = "/api/mesh/pair/cancel", .method = HTTP_POST, .handler = handle_mesh_pair_cancel };
-  register_route(m_http_server, &mesh_pair_cancel_ep);
+  register_route(server, &mesh_pair_cancel_ep);
+
+  httpd_uri_t mesh_leave_ep = { .uri = "/api/mesh/leave", .method = HTTP_POST, .handler = handle_mesh_leave };
+  register_route(server, &mesh_leave_ep);
+
+  httpd_uri_t mesh_name_ep = { .uri = "/api/mesh/name", .method = HTTP_POST, .handler = handle_mesh_name };
+  register_route(server, &mesh_name_ep);
+
+  httpd_uri_t mesh_enable_ep = { .uri = "/api/mesh/enable", .method = HTTP_POST, .handler = handle_mesh_enable };
+  register_route(server, &mesh_enable_ep);
+
+  httpd_uri_t mesh_alerts_ep = { .uri = "/api/mesh/alerts", .method = HTTP_GET, .handler = handle_mesh_alerts };
+  register_route(server, &mesh_alerts_ep);
+
+  httpd_uri_t mesh_alerts_clear_ep = { .uri = "/api/mesh/alerts", .method = HTTP_DELETE, .handler = handle_mesh_alerts_clear };
+  register_route(server, &mesh_alerts_clear_ep);
+
+  httpd_uri_t mesh_remove_ep = { .uri = "/api/mesh/remove", .method = HTTP_POST, .handler = handle_mesh_remove };
+  register_route(server, &mesh_remove_ep);
   #endif
 
   // Wildcard fallback — MUST stay the last registration, so every exact
   // route above wins first. During setup it funnels stray hijacked-DNS
   // requests to the wizard; otherwise it 404s like before.
   httpd_uri_t catchall = { .uri = "/*", .method = HTTP_GET, .handler = handle_captive_catchall };
-  register_route(m_http_server, &catchall);
+  register_route(server, &catchall);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1208,7 +2015,32 @@ void ScvNetworkManager::registerHttpHandlers() {
 // fragments fast, so we stream prefix/token/suffix as three chunks rather
 // than allocating a rendered copy. Shared by the dashboard (/) and the
 // first-boot setup wizard (/setup + the captive-portal probe paths).
-static esp_err_t send_html_with_token(httpd_req_t* req, const char* html) {
+//
+// `verdict` is the page-token decision (page_token_inject below), made
+// before this function sets a header or sends a byte: esp_http_server purges
+// the request headers on the first send, and the Host and the Authorization
+// header are both read there. Only INJECT streams the credential. WITHHOLD
+// streams the placeholder EMPTY with `X-CV-Token: withheld`: the SPA's api()
+// helper already skips the Authorization header for an empty/placeholder
+// token and renders the unlock banner (tap BOOT, use the Canary's own
+// Wi-Fi, or paste the kit token). This is what stops any device on the home
+// LAN from reading the credential out of view-source (F20 gap #11).
+//
+// FOREIGN_HOST — the Host cannot name this device and the request did not
+// come over the SoftAP (the DNS rebinding case, HOST GUARD note above) —
+// streams the same empty placeholder WITHOUT the `withheld` header, which
+// means "tap BOOT / use the AP" and cannot help under that name. That
+// verdict is reached before any grant is read or the BOOT tap is taken
+// (provisioning_gate::page_token_decide, host-tested), so a page load under
+// a foreign name neither receives the credential nor spends the tap the
+// owner meant for their own page load. The page's fetch helper then sends no
+// Authorization header, every API route answers 403 {"error":"host"}
+// (auth_gate, and the receipt route's own check), and the failure shows on
+// the dashboard instead of a blank 403 — the split-horizon trade is in that
+// note.
+static esp_err_t send_html_with_token(httpd_req_t* req, const char* html,
+                                      canary::net::provisioning_gate::PageToken verdict) {
+  using canary::net::provisioning_gate::PageToken;
   httpd_resp_set_type(req, "text/html");
   // no-store: captive sheets cache aggressively, and a cached copy of this
   // page carries the PREVIOUS Canary's bearer token when the same phone
@@ -1224,8 +2056,9 @@ static esp_err_t send_html_with_token(httpd_req_t* req, const char* html) {
     return httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN);
   }
 
-  const char* token = auth_get_token();
+  const char* token = (verdict == PageToken::INJECT) ? auth_get_token() : "";
   if (!token) token = "";
+  if (verdict == PageToken::WITHHOLD) httpd_resp_set_hdr(req, "X-CV-Token", "withheld");
   const size_t token_len = strlen(token);
   const size_t prefix_len = needle - html;
 
@@ -1243,9 +2076,152 @@ static esp_err_t send_html_with_token(httpd_req_t* req, const char* html) {
   return httpd_resp_send_chunk(req, NULL, 0);
 }
 
+// The page-token decision for this request (provisioning_gate::page_token_decide,
+// host-tested). The Host first: a request whose Host cannot name this device
+// (host_is_foreign, the same predicate auth_gate asks, SoftAP exemption
+// included) gets FOREIGN_HOST before any grant is read — its bearer is not
+// even looked at, like auth_gate — and the BOOT tap is never taken for it.
+// Otherwise: inject while the first-boot wizard is active, for a
+// bearer-authenticated caller, for a peer inside the live SoftAP subnet, or
+// by SPENDING an unspent BOOT tap — taken, never peeked, so one tap unlocks
+// exactly one home-LAN page load (or, if the app asks first, one receipt
+// fetch; never both). The page that got the token holds the bearer, so its
+// "Save recovery kit" needs no second tap. Everything else (the home LAN)
+// gets the page without the credential.
+static canary::net::provisioning_gate::PageToken page_token_inject(httpd_req_t* req) {
+  using canary::net::provisioning_gate::PageToken;
+  using canary::net::provisioning_gate::page_token_decide;
+  const bool foreign      = host_is_foreign(req);
+  const bool setup_active = setup_is_active() || setup_is_first_boot();
+  const bool bearer_ok    = !foreign && bearer_present_and_valid(req);
+  const bool on_ap        = from_ap_subnet(req);
+  bool tap_spent = false;
+  const char* why = nullptr;
+  const PageToken verdict = page_token_decide(
+      foreign, setup_active, bearer_ok, on_ap,
+      [&tap_spent]() {
+        tap_spent = provisioning_gate_take();
+        return tap_spent;
+      },
+      &why);
+  if (verdict != PageToken::INJECT) {
+    Serial.printf("[AUTH] page token withheld (%s)\n", why ? why : "");
+  } else if (tap_spent) {
+    Serial.println("[AUTH] page token handed to one page load on a BOOT tap. Gate closed.");
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Page token unlocked", "BOOT gate");
+  }
+  return verdict;
+}
+
 static esp_err_t handle_ui(httpd_req_t* req) {
   witness_get_health().http_requests++;
-  return send_html_with_token(req, CANARY_UI_HTML);
+  return send_html_with_token(req, CANARY_UI_HTML, page_token_inject(req));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PROVISIONING RECEIPT (F20 gap #11) — the Host, then a bearer OR one BOOT tap
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The WAP's receipt shape (canary_wap.ino send_provisioning_receipt), which
+// the iOS app's ProvisioningReceipt parses: device_id, base_url, token,
+// pubkey_fp, firmware, hw_token, ap_ssid, ap_password, tls_cert_fp,
+// provisioned_at. With HTTPS up (F15) the base_url is https:// and
+// tls_cert_fp carries the certificate pin; HTTP-only, http:// and "". The
+// route lives on the primary server only — on the TLS server when HTTPS is
+// up, never on the port-80 redirect server (WAP parity).
+
+static esp_err_t send_provisioning_receipt(httpd_req_t* req) {
+  DeviceIdentity& device = witness_get_device();
+  ScvNetworkManager& net = network_get_instance();
+
+  char fp_hex[17];
+  hex_to_str(fp_hex, device.pubkey_fp, 8);
+  // Privacy (Invariant III): salted pseudonym, never the raw MAC.
+  char hw_token[device_pseudonym::HEX_LEN + 1];
+  if (!device_pseudonym::device_id_hex(hw_token, sizeof(hw_token))) hw_token[0] = '\0';
+  char addr[16];
+  local_addr_of(req, addr, sizeof(addr));
+  char base_url[32];
+  snprintf(base_url, sizeof(base_url), "%s://%s",
+           net.isTlsEnabled() ? "https" : "http", addr);
+  char provisioned_at[24];
+  snprintf(provisioned_at, sizeof(provisioned_at), "boot:%lu", (unsigned long)device.boot_count);
+
+  JsonDocument doc;
+  doc["device_id"]      = device.device_id;
+  doc["base_url"]       = base_url;
+  doc["token"]          = auth_get_token();
+  doc["pubkey_fp"]      = fp_hex;
+  doc["firmware"]       = FIRMWARE_VERSION;
+  doc["hw_token"]       = hw_token;
+  doc["ap_ssid"]        = net.getApSsid();
+  doc["ap_password"]    = net.getApPassword();
+  // The pin and the scheme move together: the iPhone app refuses an https
+  // base_url whose receipt carries no tls_cert_fp.
+  doc["tls_cert_fp"]    = net.isTlsEnabled() ? net.getTlsCertFp() : "";
+  doc["provisioned_at"] = provisioned_at;
+
+  String response;
+  serializeJson(doc, response);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  return httpd_resp_sendstr(req, response.c_str());
+}
+
+static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
+  witness_get_health().http_requests++;
+  using canary::net::provisioning_gate::ReceiptVerdict;
+  using canary::net::provisioning_gate::receipt_decide;
+
+  // The order auth_gate asks in (provisioning_gate::receipt_decide,
+  // host-tested; the grants are callables so the decision runs them in order):
+  //   1. the Host — a request whose Host cannot name this device and that did
+  //      not come over the SoftAP (host_is_foreign, the predicate auth_gate
+  //      uses) is refused 403 {"error":"host"} before the bearer is read and
+  //      before the gate is touched, so it can neither use a token nor spend
+  //      the tap the owner meant for their own page load or app;
+  //   2. a valid bearer always gets the receipt (the SPA's "Save recovery
+  //      kit" button, the iOS app re-syncing) — silently checked through
+  //      auth_check_optional(), no 401 on miss, refused outright while the
+  //      credential is unprovisioned — and leaves the gate alone;
+  //   3. no bearer: consume the physical gate in ONE atomic step (a second
+  //      poll, or a second consumer on another task, reads it closed).
+  const ReceiptVerdict verdict = receipt_decide(
+      host_is_foreign(req),
+      [req]() { return bearer_present_and_valid(req); },
+      []() { return provisioning_gate_take(); });
+
+  // Fail closed: the receipt is sent ONLY inside an explicit SERVE_BEARER or
+  // SERVE_TAP test. REFUSE_NO_TAP has its own body below; REFUSE_HOST, and
+  // any verdict a later edit adds or a branch here stops naming, reaches the
+  // refusal at the end, never the receipt. check_route_security.py holds the
+  // handler to this shape (check_host_first).
+  if (verdict == ReceiptVerdict::SERVE_BEARER) {
+    return send_provisioning_receipt(req);
+  }
+  if (verdict == ReceiptVerdict::SERVE_TAP) {
+    const esp_err_t result = send_provisioning_receipt(req);
+    Serial.println("[AUTH] Provisioning receipt served. Gate closed.");
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Provisioning receipt served", "BOOT gate");
+    return result;
+  }
+  if (verdict == ReceiptVerdict::REFUSE_NO_TAP) {
+    char body[256];
+    if (!canary::net::provisioning_gate::build_gate_refusal_json(
+            body, sizeof(body), PROVISIONING_GATE_TTL_MS)) {
+      // Truncation guard: never ship half-JSON to the app.
+      return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                 "Failed to build provisioning gate response");
+    }
+    witness_get_health().http_errors++;
+    httpd_resp_set_status(req, "403 Forbidden");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_sendstr(req, body);
+  }
+  // REFUSE_HOST, and every verdict not named above: 403 {"error":"host"}.
+  send_host_refusal(req);
+  return ESP_OK;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1286,6 +2262,33 @@ static bool probe_path_is(const char* uri, const char* lit) {
   return uri[i] == '\0' || uri[i] == '?' || uri[i] == '#';
 }
 
+// F15: what the Apple probe gets on the plain port-80 server while HTTPS is
+// up and the home Wi-Fi is down (the retry case above). A captive sheet
+// renders a blank page on a self-signed certificate, so it cannot simply be
+// redirected; this names the https:// address to open in a real browser.
+static esp_err_t send_tls_captive_hint(httpd_req_t* req) {
+  char addr[16];
+  local_addr_of(req, addr, sizeof(addr));
+  char page[640];
+  const int n = snprintf(page, sizeof(page),
+      "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+      "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+      "<title>Canary</title></head><body style=\"font-family:sans-serif;padding:1.5rem;\">"
+      "<h2>Open your Canary in a browser</h2>"
+      "<p>This Canary's dashboard uses an encrypted connection. Open "
+      "<b>https://%s/setup</b> in Safari or Chrome.</p>"
+      "<p>Your browser will warn that the certificate is not trusted. That is "
+      "expected: the Canary made it for itself. Continue to the page.</p>"
+      "</body></html>",
+      addr);
+  httpd_resp_set_type(req, "text/html");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  if (n < 0 || (size_t)n >= sizeof(page)) {
+    return httpd_resp_sendstr(req, kAppleSuccessBody);
+  }
+  return httpd_resp_sendstr(req, page);
+}
+
 static esp_err_t handle_captive_probe(httpd_req_t* req) {
   witness_get_health().http_requests++;
   const char* uri = req->uri;
@@ -1306,7 +2309,14 @@ static esp_err_t handle_captive_probe(httpd_req_t* req) {
   // for the retry, not declare Success. Only a live STA link earns Apple's
   // Success token (which lets the sheet close cleanly and stop nagging).
   if (setup_is_active() || !network_get_instance().getStatus().sta_connected) {
-    return send_html_with_token(req, CANARY_SETUP_HTML);
+    // F15: with HTTPS up, this probe arrived on the plain port-80 server,
+    // and the wizard's API calls would all be redirected to a self-signed
+    // https:// origin the captive sheet cannot open. Point at it instead.
+    if (network_get_instance().isTlsEnabled() &&
+        req->handle != network_get_instance().getHttpsServer()) {
+      return send_tls_captive_hint(req);
+    }
+    return send_html_with_token(req, CANARY_SETUP_HTML, page_token_inject(req));
   }
   httpd_resp_set_type(req, "text/html");
   return httpd_resp_sendstr(req, kAppleSuccessBody);
@@ -1316,7 +2326,7 @@ static esp_err_t handle_captive_probe(httpd_req_t* req) {
 // too (canary.local/setup), not only through the captive sheet.
 static esp_err_t handle_setup_page(httpd_req_t* req) {
   witness_get_health().http_requests++;
-  return send_html_with_token(req, CANARY_SETUP_HTML);
+  return send_html_with_token(req, CANARY_SETUP_HTML, page_token_inject(req));
 }
 
 // Wildcard fallback, registered LAST. While setup is active every stray
@@ -1332,6 +2342,41 @@ static esp_err_t handle_captive_catchall(httpd_req_t* req) {
   httpd_resp_set_status(req, "302 Found");
   httpd_resp_set_hdr(req, "Location", "/setup");
   return httpd_resp_send(req, NULL, 0);
+}
+
+// FEATURE_HTTPS port-80 server (F15): everything that is not a probe goes to
+// https:// on the host the client asked for (or, when its Host header is not a
+// plain host, the address the request arrived on). 307, not 301: a 301 is
+// cached as permanent, and a factory-reset Canary serves its setup wizard on
+// plain HTTP again — a browser remembering "always https" could not reach it;
+// 307 also keeps a POST a POST. Truncation or an unusable target answers 500,
+// never a cut-off Location (tls_policy::build_redirect_location, host-tested).
+static esp_err_t handle_https_redirect(httpd_req_t* req) {
+  witness_get_health().http_requests++;
+  if (canary::net::tls_policy::plain_http_exempt(req->uri, setup_is_active())) {
+    // Defensive: the probes are registered ahead of this wildcard, but a
+    // probe path that reaches here still gets its plain answer.
+    return handle_captive_probe(req);
+  }
+  char host[64];
+  host[0] = '\0';
+  const size_t host_len = httpd_req_get_hdr_value_len(req, "Host");
+  if (host_len == 0 || host_len >= sizeof(host) ||
+      httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) {
+    host[0] = '\0';
+  }
+  char arrived_on[16];
+  local_addr_of(req, arrived_on, sizeof(arrived_on));
+  char location[256];
+  if (!canary::net::tls_policy::build_redirect_location(
+          location, sizeof(location), host, arrived_on, req->uri)) {
+    return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                               "https redirect target too long");
+  }
+  httpd_resp_set_status(req, "307 Temporary Redirect");
+  httpd_resp_set_hdr(req, "Location", location);
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  return httpd_resp_sendstr(req, "Redirecting to https");
 }
 
 static esp_err_t handle_status(httpd_req_t* req) {
@@ -1360,6 +2405,9 @@ static esp_err_t handle_status(httpd_req_t* req) {
   doc["uptime_sec"] = uptime_seconds();
   doc["boot_count"] = device.boot_count;
   doc["chain_seq"] = device.seq;
+  // Where the identity key sleeps, read live from the eFuses (a wire label,
+  // never key material — common/identity/key_at_rest.h).
+  doc["key_at_rest"] = crypto_key_at_rest_label();
   doc["witness_count"] = health.records_created;
   doc["free_heap"] = ESP.getFreeHeap();
   doc["min_heap"] = health.min_heap;
@@ -1371,6 +2419,27 @@ static esp_err_t handle_status(httpd_req_t* req) {
 
   doc["logs_stored"] = health.logs_stored;
   doc["unacked_count"] = health.logs_unacked;
+
+  // F20 gap #11: "physical_button" (the WAP's /api/device-info value for the
+  // same field, so a client reads one vocabulary) once main.cpp has wired the
+  // BOOT-tap hooks;
+  // "unwired" means the receipt can only be fetched with the bearer and a
+  // home-LAN page load can never be unlocked by a tap (fails closed, and the
+  // bench can see it instead of guessing).
+  doc["provisioning_gate"] = (s_gate_take && s_gate_is_open) ? "physical_button" : "unwired";
+
+  // F15: what actually came up, and why — a device that fell back to HTTP
+  // says so here instead of leaving the bench to guess (tls_policy::decide).
+  {
+    ScvNetworkManager& net = network_get_instance();
+    doc["tls_enabled"] = net.isTlsEnabled();
+    doc["tls_cert_fp"] = net.isTlsEnabled() ? net.getTlsCertFp() : "";
+    doc["tls_mode_reason"] = net.getTlsModeReason();
+    // F16: SoftAP / STA security as it actually came up.
+    const WiFiStatus& ws = net.getStatus();
+    doc["ap_auth"] = ws.ap_auth[0] ? ws.ap_auth : "unknown";
+    doc["sta_pmf"] = ws.sta_pmf;
+  }
 
   String response;
   serializeJson(doc, response);
@@ -1444,25 +2513,88 @@ static esp_err_t handle_chain(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
-// Serve the recent witness-record ring for the timeline UI. The ring is bounded
-// (display-only); the tamper-evident guarantee lives in the hash chain, and full
-// history is available via /api/export. Reads only in-RAM state — no SD, no camera.
+#if FEATURE_SD_STORAGE
+// A timeline page from the card (F35): records older than the ring, read by
+// the loop task through the bridge (securacv_witness_history.h) — this task
+// only posts the request and waits, at most WAIT_MS. Rows say where they came
+// from and whether they chain to the next older record on the card; they are
+// never "verified": no signature is checked on this path (the off-device
+// verifier, tools/verify_witness_log.py, is how a card is verified).
+static esp_err_t send_card_page(httpd_req_t* req, uint32_t before_seq, size_t last,
+                                bool has_hint, uint32_t hint, size_t ring_total) {
+  namespace whb = witness_history_bridge;
+  whb::Request q;
+  memset(&q, 0, sizeof(q));
+  q.before_seq = before_seq;
+  q.has_hint = has_hint;
+  q.hint = hint;
+  q.want = (uint8_t)((last == 0 || last > whb::PAGE_ROWS_MAX) ? whb::PAGE_ROWS_MAX : last);
+
+  const whb::Response* page = nullptr;
+  uint32_t gen = 0;
+  switch (witness_history_request(q, &page, &gen)) {
+    case WitnessHistoryWait::BUSY:    return http_send_error(req, 503, "history_busy");
+    case WitnessHistoryWait::TIMEOUT: return http_send_error(req, 504, "history_timeout");
+    case WitnessHistoryWait::PAGE:    break;
+  }
+  if (page->result != whb::Result::OK) {
+    const bool no_card = (page->result == whb::Result::NO_CARD);
+    witness_history_release(gen);
+    return no_card ? http_send_error(req, 503, "no_card")
+                   : http_send_error(req, 500, "history_read_failed");
+  }
+
+  // Build the answer while the page is ours, then free the slot before the
+  // (slower) send. Oldest -> newest, like the ring page.
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["source"] = "sd";
+  doc["total"] = ring_total;
+  JsonArray records = doc["records"].to<JsonArray>();
+  char hash[65];
+  for (size_t k = page->n; k-- > 0;) {
+    const size_t i = (size_t)page->first + k;
+    const witness_history::HistoryRow& row = page->rows[i];
+    JsonObject r = records.add<JsonObject>();
+    r["seq"] = row.seq;
+    r["type_name"] = record_type_name((RecordType)row.type);
+    hex_to_str(hash, row.ch, 32);
+    r["chain_hash"] = hash;
+    r["time_bucket"] = row.tb;
+    r["source"] = "sd";
+    if (page->linked[i] == whb::Link::NONE) r["linked"] = nullptr;  // nothing older on the card
+    else r["linked"] = (page->linked[i] == whb::Link::LINKED);
+  }
+  doc["next_hint"] = page->next_hint;
+  doc["more"] = page->more;
+  if (page->joins != whb::Link::NONE) doc["joins"] = (page->joins == whb::Link::LINKED);
+  doc["hint_refused"] = page->hint_refused;
+  doc["skipped"] = page->skipped;
+  witness_history_release(gen);
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+#endif  // FEATURE_SD_STORAGE
+
+// Serve the timeline: the recent witness-record ring, and — once a page asks
+// for records older than the ring holds — pages from the card (F35). The ring
+// is bounded RAM (display-only; the tamper-evident guarantee lives in the
+// hash chain). The card pages come from the loop task through the history
+// bridge: this handler reads only in-RAM state itself — no SD, no camera.
 static esp_err_t handle_witness(httpd_req_t* req) {
-  if (!rate_limit_check(req)) return ESP_OK;
-  if (!auth_gate(req)) return ESP_OK;
-  witness_get_health().http_requests++;
-
-  const size_t ring_size = witness_get_record_ring_size();
-  const size_t total = witness_get_record_count();
-  const size_t head  = witness_get_record_head();
-
-  // Optional ?last=N — clamp to [1, total]; default to all available records.
-  // Optional ?before=SEQ — exclusive upper bound: only records with
-  // seq < SEQ count toward the window. This is how the timeline's "Load
-  // More" pages backward through the ring (still RAM-only — paging deeper
-  // than the ring means SD, which this task never touches).
-  size_t want = total;
+  // Parse first (no side effects): whether this is a card page decides how
+  // the rate limiter counts it — an SD page counts as an action.
+  //   ?last=N    clamp to [1, total] (card pages: [1, PAGE_ROWS_MAX]).
+  //   ?before=S  exclusive upper bound: only records with seq < S — how the
+  //              timeline's "Load More" pages backward.
+  //   ?hint=H    the previous card page's next_hint: where the next one
+  //              starts. Client input — the bridge re-checks it before use.
+  size_t last = 0;          // 0 = not given
   uint32_t before_seq = 0;  // 0 = no bound
+  uint32_t hint = 0;
+  bool has_hint = false;
   size_t qlen = httpd_req_get_url_query_len(req);
   if (qlen > 0 && qlen < 128) {
     char query[128];
@@ -1470,14 +2602,55 @@ static esp_err_t handle_witness(httpd_req_t* req) {
       char val[12];
       if (httpd_query_key_value(query, "last", val, sizeof(val)) == ESP_OK) {
         int n = atoi(val);
-        if (n > 0 && (size_t)n < want) want = (size_t)n;
+        if (n > 0) last = (size_t)n;
       }
       if (httpd_query_key_value(query, "before", val, sizeof(val)) == ESP_OK) {
         long b = atol(val);
         if (b > 0) before_seq = (uint32_t)b;
       }
+      if (httpd_query_key_value(query, "hint", val, sizeof(val)) == ESP_OK &&
+          val[0] >= '0' && val[0] <= '9') {
+        char* end = nullptr;
+        const unsigned long h = strtoul(val, &end, 10);  // overflow: ULONG_MAX, past any file
+        if (end != nullptr && *end == '\0') {
+          hint = (uint32_t)h;
+          has_hint = true;
+        }
+      }
     }
   }
+
+  const size_t ring_size = witness_get_record_ring_size();
+  const size_t total = witness_get_record_count();
+  const size_t head  = witness_get_record_head();
+  uint32_t ring_oldest_seq = 0;
+  if (total > 0) {
+    WitnessRecord oldest;
+    if (witness_copy_record_at((head + ring_size - total) % ring_size, &oldest))
+      ring_oldest_seq = oldest.seq;
+  }
+
+#if FEATURE_SD_STORAGE
+  // Nothing below `before` is in the ring: the next records are on the card.
+  const bool card_page = before_seq > 0 && (total == 0 || before_seq <= ring_oldest_seq);
+#else
+  const bool card_page = false;
+#endif
+
+  if (!rate_limit_check(req, card_page)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+#if FEATURE_SD_STORAGE
+  if (card_page) return send_card_page(req, before_seq, last, has_hint, hint, total);
+#else
+  (void)has_hint;
+  (void)hint;
+  (void)ring_oldest_seq;
+#endif
+
+  size_t want = total;
+  if (last > 0 && last < want) want = last;
 
   // With a bound, shrink the window to the records older than it. Ring seqs
   // are contiguous ascending, so count the newest entries at or past the
@@ -1522,6 +2695,15 @@ static esp_err_t handle_witness(httpd_req_t* req) {
     r["payload_len"] = (uint32_t)rec.payload_len;
     r["verified"] = rec.verified;
   }
+
+  // Is anything older to page to? Older ring records below this window, or —
+  // on a build with a card — whatever precedes the ring's oldest record
+  // (seq 1 is the chain's first). A card page answers for itself.
+#if FEATURE_SD_STORAGE
+  doc["more"] = (want > 0) && (start > 0 || ring_oldest_seq > 1);
+#else
+  doc["more"] = (want > 0) && (start > 0);
+#endif
 
   String response;
   serializeJson(doc, response);
@@ -1626,9 +2808,9 @@ static esp_err_t handle_reboot(httpd_req_t* req) {
 
   log_health(LOG_LEVEL_NOTICE, LOG_CAT_USER, "Reboot requested", nullptr);
 
-  DeviceIdentity& device = witness_get_device();
-  nvs_store_u32(NVS_KEY_SEQ, device.seq);
-  nvs_store_bytes(NVS_KEY_CHAIN, device.chain_head, 32);
+  // The witness lib owns chain persistence (one atomic blob — never the
+  // legacy seq/chain pair from here, which was the second torn-write site).
+  witness_persist_chain_state();
 
   JsonDocument doc;
   doc["ok"] = true;
@@ -1869,6 +3051,21 @@ struct StreamTaskCtx {
   httpd_handle_t server;
 };
 
+// The MJPEG part header and the inter-frame pace, shared by both stream paths
+// (the raw-socket task for plain HTTP, the in-handler loop for TLS) so they
+// cannot drift apart.
+static int peek_part_header(char* buf, size_t cap, size_t jpeg_len) {
+  return snprintf(buf, cap,
+    "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
+    (unsigned)jpeg_len);
+}
+
+static uint32_t peek_pace_ms(uint32_t frame_delay_ms) {
+  if (frame_delay_ms < 20)  return 20;
+  if (frame_delay_ms > 500) return 500;
+  return frame_delay_ms;
+}
+
 static bool sock_send_all(int fd, const char* buf, size_t len) {
   while (len > 0) {
     int sent = send(fd, buf, len, 0);
@@ -1907,9 +3104,7 @@ static void stream_task_fn(void* param) {
     }
 
     char part_buf[128];
-    int part_len = snprintf(part_buf, sizeof(part_buf),
-      "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
-      (unsigned)fb->len);
+    int part_len = peek_part_header(part_buf, sizeof(part_buf), fb->len);
 
     bool ok = sock_send_all(sockfd, part_buf, part_len);
     if (ok) ok = sock_send_all(sockfd, (const char*)fb->buf, fb->len);
@@ -1921,10 +3116,7 @@ static void stream_task_fn(void* param) {
     if (!ok) break;
     cam.recordFrame(frame_bytes);
 
-    uint32_t pace = cam.getFrameDelay();
-    if (pace < 20)  pace = 20;
-    if (pace > 500) pace = 500;
-    vTaskDelay(pdMS_TO_TICKS(pace));
+    vTaskDelay(pdMS_TO_TICKS(peek_pace_ms(cam.getFrameDelay())));
   }
 
   cam.setPeekActive(false);
@@ -1933,6 +3125,63 @@ static void stream_task_fn(void* param) {
 
   __atomic_store_n(&s_stream_task, (TaskHandle_t)nullptr, __ATOMIC_SEQ_CST);
   vTaskDelete(nullptr);
+}
+
+// F15: the stream over TLS runs synchronously IN the handler, on the httpd
+// task, through httpd_resp_send_chunk (WAP parity, canary_wap.ino's peek
+// stream). The plain-HTTP path below hands the socket to a worker task that
+// send()s raw bytes — over TLS that would write plaintext into the record
+// stream, and httpd_ssl's send override is not safe to call from a second
+// task while the httpd task may read the same mbedTLS session. The cost:
+// while a TLS stream runs, the TLS server answers nothing else (the WAP has
+// the same limit); stopping the peek or closing the tab ends the loop.
+static esp_err_t peek_stream_in_handler(httpd_req_t* req, CameraManager& cam) {
+  httpd_resp_set_type(req, "multipart/x-mixed-replace; boundary=frame");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  httpd_resp_set_hdr(req, "Pragma", "no-cache");
+  httpd_resp_set_hdr(req, "X-Accel-Buffering", "no");
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Peek stream started (TLS, in handler)", nullptr);
+
+  uint32_t fail_since_ms = 0;
+  esp_err_t err = ESP_OK;
+  while (cam.isPeekActive()) {
+    cam.checkThermal();
+    if (cam.getThermalState() == THERMAL_PAUSED) {
+      vTaskDelay(pdMS_TO_TICKS(500));
+      continue;
+    }
+    camera_fb_t* fb = cam.captureFrame();
+    if (!fb) {
+      if (cam.checkFreeze(millis())) {
+        cam.setPeekActive(true);
+      } else if (!cam.isInitialized()) {
+        break;
+      }
+      // Give up after ~1 s of consecutive capture failures rather than
+      // holding the TLS server's only task on a dead sensor.
+      if (fail_since_ms == 0) fail_since_ms = millis();
+      if (millis() - fail_since_ms > 1000) break;
+      vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
+    }
+    fail_since_ms = 0;
+
+    char part_buf[128];
+    const int part_len = peek_part_header(part_buf, sizeof(part_buf), fb->len);
+    err = httpd_resp_send_chunk(req, part_buf, part_len);
+    if (err == ESP_OK) err = httpd_resp_send_chunk(req, (const char*)fb->buf, fb->len);
+    if (err == ESP_OK) err = httpd_resp_send_chunk(req, "\r\n", 2);
+    const uint32_t frame_bytes = (uint32_t)fb->len;
+    cam.returnFrame(fb);
+    if (err != ESP_OK) break;  // client went away
+    cam.recordFrame(frame_bytes);
+    vTaskDelay(pdMS_TO_TICKS(peek_pace_ms(cam.getFrameDelay())));
+  }
+
+  cam.setPeekActive(false);
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Peek stream ended", nullptr);
+  if (err == ESP_OK) httpd_resp_send_chunk(req, NULL, 0);
+  return ESP_OK;
 }
 
 static esp_err_t handle_peek_stream(httpd_req_t* req) {
@@ -1960,6 +3209,11 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
 
   cam.setPeekActive(true);
   cam.resetMetrics();
+
+  // TLS: stream on this task (see peek_stream_in_handler for why).
+  if (req->handle == network_get_instance().getHttpsServer()) {
+    return peek_stream_in_handler(req, cam);
+  }
 
   int sockfd = httpd_req_to_sockfd(req);
   if (sockfd < 0) {
@@ -2298,6 +3552,7 @@ static esp_err_t handle_export(httpd_req_t* req) {
   doc["ruleset"] = RULESET_ID;
   doc["export_time_ms"] = millis();
   doc["chain_seq"] = device.seq;
+  doc["key_at_rest"] = crypto_key_at_rest_label();
   doc["records_total"] = health.records_created;
 
   char pubkey_hex[65];
@@ -2350,6 +3605,11 @@ static esp_err_t handle_wifi_status(httpd_req_t* req) {
     doc["rssi"] = status.rssi;
   }
   doc["ap_clients"] = status.ap_clients;
+  // F16: what the SoftAP is actually broadcasting, and why (a core without
+  // SoftAP SAE, or a driver refusal, stays WPA2 and says so here).
+  doc["ap_auth"] = status.ap_auth[0] ? status.ap_auth : "unknown";
+  doc["ap_auth_reason"] = status.ap_auth_reason ? status.ap_auth_reason : "";
+  doc["sta_pmf"] = status.sta_pmf;
 
   String response;
   serializeJson(doc, response);
@@ -2372,7 +3632,9 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
     net["ssid"] = WiFi.SSID(i);
     net["rssi"] = WiFi.RSSI(i);
     net["channel"] = WiFi.channel(i);
-    net["encryption"] = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "open" : "wpa";
+    // F16: the real auth mode ("open" stays "open": the setup page keys its
+    // lock icon off exactly that value).
+    net["encryption"] = canary::net::ap_security::label_for((int)WiFi.encryptionType(i));
   }
 
   WiFi.scanDelete();
@@ -2387,12 +3649,19 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  char body[256];
-  int recv = httpd_req_recv(req, body, sizeof(body) - 1);
-  if (recv <= 0) {
-    return http_send_error(req, 400, "empty_body");
+  char body[384];  // ssid + password + tz_iana (F28); 256 left no room for the zone
+  // The whole body or a refusal by name: one httpd_req_recv() returns what
+  // one socket read delivered, so a body in two segments would parse as a
+  // fragment (the loop /api/settings and the Scout routes use).
+  if (req->content_len == 0) return http_send_error(req, 400, "empty_body");
+  if (req->content_len >= sizeof(body)) return http_send_error(req, 413, "body_too_large");
+  size_t total = 0;
+  while (total < req->content_len) {
+    const int r = httpd_req_recv(req, body + total, req->content_len - total);
+    if (r <= 0) return http_send_error(req, 400, "empty_body");
+    total += (size_t)r;
   }
-  body[recv] = '\0';
+  body[total] = '\0';
 
   JsonDocument input;
   if (deserializeJson(input, body) != DeserializationError::Ok) {
@@ -2404,6 +3673,21 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
 
   if (!ssid || strlen(ssid) == 0) {
     return http_send_error(req, 400, "missing_ssid");
+  }
+
+  // Household time zone seed (repo sweep F28): the setup page sends the
+  // phone's own IANA zone. Mapped on the device; an unknown or absent zone
+  // stores nothing and never fails the join, but the answer says so
+  // ("tz": set | unknown_zone | not_set | not_sent) so the page can tell
+  // the person their Canary is still on world time (UTC).
+  const char* tz_iana = input["tz_iana"] | "";
+  const char* tz_outcome = "not_sent";
+  if (tz_iana[0] != '\0') {
+    switch (setup_set_tz(nullptr, tz_iana)) {
+      case 0:  tz_outcome = "set"; break;
+      case 3:  tz_outcome = "unknown_zone"; break;
+      default: tz_outcome = "not_set"; break;
+    }
   }
 
   ScvNetworkManager& net = network_get_instance();
@@ -2429,6 +3713,7 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "Connecting to WiFi...";
+  doc["tz"] = tz_outcome;
   doc["ssid"] = ssid;
 
   String response;
@@ -2475,8 +3760,12 @@ static esp_err_t send_tls_refusal(httpd_req_t* req, canary::net::mqtt_tls_fields
   doc["reason"] = canary::net::mqtt_tls_fields::reason(v, d);
   String response;
   serializeJson(doc, response);
-  httpd_resp_set_status(req, v == canary::net::mqtt_tls_fields::Verdict::CaTooLarge
-                                 ? "413 Payload Too Large" : "400 Bad Request");
+  // 413 for a body that does not fit; 409 for a stored CA the firmware cannot
+  // read back (the row conflicts with itself — DELETE /api/mqtt/ca and upload
+  // again); 400 for everything else, the credential-carry refusal included.
+  httpd_resp_set_status(req, v == canary::net::mqtt_tls_fields::Verdict::CaTooLarge   ? "413 Payload Too Large"
+                             : v == canary::net::mqtt_tls_fields::Verdict::CaUnreadable ? "409 Conflict"
+                                                                                        : "400 Bad Request");
   witness_get_health().http_errors++;
   return http_send_json(req, response.c_str());
 }
@@ -2514,8 +3803,12 @@ static esp_err_t handle_mqtt_status(httpd_req_t* req) {
   if (tls.warn_insecure) doc["tls_warning"] = canary::net::mqtt_tls::insecure_warning();
   MqttTlsCurrent cur;
   if (mqtt_tls_read_current(&cur)) {
-    doc["ca_set"] = cur.ca_set;
+    doc["ca_set"] = cur.ca_set;  // present AND readable — what the connect will actually use
     doc["fp_set"] = cur.fp_set;
+    // A CA key the firmware cannot read back (a third-party writer; the
+    // shipped paths cap at 3071): named, so the operator knows to DELETE
+    // /api/mqtt/ca and upload again. Absent from the body otherwise.
+    if (cur.ca_unreadable) doc["ca_unreadable"] = true;
   }
 
   String response;
@@ -2534,7 +3827,11 @@ static esp_err_t handle_mqtt_status(httpd_req_t* req) {
 // NVS already holds, with the shared decision, BEFORE anything is written:
 // a body the firmware would refuse at connect (mode 1 with no CA uploaded,
 // mode 2 with no pin here or stored, a malformed pin, an unknown mode) is a
-// 400 with the header's own reason text, and NVS is untouched.
+// 400 with the header's own reason text, and NVS is untouched. So is a body
+// that moves the link to a new host or port while a password is stored and
+// gives none (400 password_required_for_new_host): a stored broker password
+// never follows the link to a new endpoint (mqtt_tls_fields::credential_carry).
+// A stored CA the firmware cannot read back is a 409 ca_unreadable.
 static esp_err_t handle_mqtt_config(httpd_req_t* req) {
   namespace tf = canary::net::mqtt_tls_fields;
   if (!rate_limit_check(req, true)) return ESP_OK;
@@ -2588,6 +3885,29 @@ static esp_err_t handle_mqtt_config(httpd_req_t* req) {
   creds.enabled = input["enabled"] | true;
   creds.configured = true;
 
+  // What this body may carry over from the stored row — decided by the one
+  // rule in mqtt_tls_fields.h (credential_carry, host-tested) BEFORE any
+  // write: the same endpoint keeps a username / password the body omitted
+  // (the /setup re-run that changes only a password stands as before); a
+  // new host or port carries nothing, and is refused outright when a
+  // password is stored and the body gave none — the only thing that request
+  // could do is send the stored broker password to an address it was never
+  // given for. The stored row is read in a read-only session of its own,
+  // like the TLS read below; the WRITE session stays one. The wizard posts
+  // the CA before the config, so a refused config can leave a freshly
+  // uploaded CA stored — harmless, and the retry re-sends it.
+  MqttCredentials stored_row;
+  const bool have_row = mqtt_load_credentials(&stored_row);
+  const tf::CredentialCarry carry = tf::credential_carry(
+      have_row ? stored_row.host : "", stored_row.port,
+      have_row && stored_row.password[0] != '\0',
+      creds.host, creds.port, creds.password[0] != '\0');
+  memset(&stored_row, 0, sizeof(stored_row));  // the stored password was on this frame
+  if (carry.refuse) {
+    const canary::net::mqtt_tls::Decision none;
+    return send_tls_refusal(req, tf::Verdict::PasswordRequiredForNewHost, none);
+  }
+
   // The optional TLS pair, typed strictly: a `tls` that is not an integer or
   // an `fp` that is not a string is the same refusal a bad value gets.
   tf::Request tls_req;
@@ -2609,6 +3929,9 @@ static esp_err_t handle_mqtt_config(httpd_req_t* req) {
   cur.mode_byte = stored.mode_byte;
   cur.fp = stored.fp_set ? stored.fp : nullptr;
   cur.ca_set = stored.ca_set;
+  // Without this the planner never sees an unreadable CA and the 409
+  // ca_unreadable arm below is unreachable (review finding on #1691).
+  cur.ca_unreadable = stored.ca_unreadable;
 
   tf::Plan tls_plan;
   const tf::Verdict verdict = tf::plan(cur, tls_req, tls_plan);
@@ -2620,12 +3943,14 @@ static esp_err_t handle_mqtt_config(httpd_req_t* req) {
   // credentials last, one reload after the session closes (mqtt_save_config
   // walks mqtt_tls_fields::write_order, host-tested). Two sessions with the
   // credentials first would let the main task reconnect with the NEW
-  // password on the OLD, plain socket in the gap between them, and close the
-  // shared NVS handle under the second write.
+  // password on the OLD, plain socket in the gap between them. (The main
+  // task can no longer close this task's handle mid-session: NvsManager
+  // holds its lock from begin() to end().)
   const MqttTlsWrite tls_write = {tls_plan.set_mode, tls_plan.mode, tls_plan.set_fp, tls_plan.fp,
                                   tls_plan.clear_fp};
   const bool any_tls = tls_plan.set_mode || tls_plan.set_fp || tls_plan.clear_fp;
-  if (!mqtt_save_config(&creds, any_tls ? &tls_write : nullptr)) {
+  const MqttCredentialCarry keep = {carry.keep_user, carry.keep_pass};
+  if (!mqtt_save_config(&creds, any_tls ? &tls_write : nullptr, &keep)) {
     return http_send_error(req, 500, "save_failed");
   }
 
@@ -3625,21 +4950,290 @@ static esp_err_t handle_thermal(httpd_req_t* req) {
 #endif // FEATURE_THERMAL_WATCHDOG
 
 // ════════════════════════════════════════════════════════════════════════════
-// MESH / OPERA REST API (PR-8)
+// SETTINGS — household time zone (repo sweep F28, option A)
 //
-// Six endpoints, all auth-gated + rate-limited, all using the existing
-// {ok:...} JSON convention via http_send_json / http_send_error:
+//   GET  /api/settings  — {ok, tz, tz_iana}: "" while unset (the Canary keeps UTC)
+//   POST /api/settings  — {tz: "<POSIX rule>"} or {tz_iana: "<IANA zone>"};
+//                         {tz: ""} alone clears the zone (UTC again)
 //
-//   GET  /api/mesh              — opera status (refreshOpera reads this)
-//   GET  /api/mesh/peers        — peer list
-//   POST /api/mesh/pair/start   — begin pairing as the initiator (add another)
-//   POST /api/mesh/pair/join    — begin pairing as the joiner (new device)
-//   POST /api/mesh/pair/confirm — user confirmed the 6-digit code matches
-//   POST /api/mesh/pair/cancel  — abort an in-progress pairing
+// Stored and applied by securacv_setup (setenv + tzset, never configTzTime),
+// resolved through the shared table (common/time/tz_rule.h): a typed rule
+// wins, an IANA name maps, an unknown zone or a rule outside the strict
+// POSIX grammar (tz_rule::posix_valid) is refused by name and stores
+// nothing. The CSI day offset picks the change up on the next loop pass
+// (main.cpp updateCsiClockOffset).
+// ════════════════════════════════════════════════════════════════════════════
+
+static esp_err_t send_settings(httpd_req_t* req) {
+  char tz[SETUP_TZ_MAX + 1];
+  char tz_iana[SETUP_TZ_MAX + 1];
+  if (!setup_get_tz(tz, sizeof(tz))) tz[0] = '\0';
+  if (!setup_get_tz_iana(tz_iana, sizeof(tz_iana))) tz_iana[0] = '\0';
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["tz"] = tz;
+  doc["tz_iana"] = tz_iana;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_settings_get(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+  return send_settings(req);
+}
+
+static esp_err_t handle_settings_post(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  char body[256];
+  if (req->content_len == 0) return http_send_error(req, 400, "empty_body");
+  if (req->content_len >= sizeof(body)) return http_send_error(req, 413, "body_too_large");
+  size_t total = 0;
+  while (total < req->content_len) {
+    const int r = httpd_req_recv(req, body + total, req->content_len - total);
+    if (r <= 0) return http_send_error(req, 400, "empty_body");
+    total += (size_t)r;
+  }
+  body[total] = '\0';
+
+  JsonDocument input;
+  if (deserializeJson(input, body) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+  const bool has_tz   = input["tz"].is<const char*>();
+  const bool has_iana = input["tz_iana"].is<const char*>();
+  if (!has_tz && !has_iana) return http_send_error(req, 400, "no_recognized_keys");
+  const char* tz      = input["tz"] | "";
+  const char* tz_iana = input["tz_iana"] | "";
+
+  if (has_tz && tz[0] == '\0' && tz_iana[0] == '\0') {
+    if (!setup_clear_tz()) return http_send_error(req, 500, "nvs_unavailable");
+  } else {
+    switch (setup_set_tz(tz, tz_iana)) {
+      case 0:  break;
+      case 3:  return http_send_error(req, 400, "unknown_zone");
+      default: return http_send_error(req, 400, "bad_time_zone");
+    }
+  }
+  return send_settings(req);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// BLE SCOUT PAIRING (repo sweep F27, option B — proximity pairing window)
 //
-// The JSON-rendering for the two GET endpoints lives in the pure
-// mesh_api builders so the response shape stays under host-test coverage
-// even though CI compiles FEATURE_MESH_NETWORK out (dev/release envs).
+//   GET  /api/scout               — paired beacons: [{hashed_id, label}]
+//   POST /api/scout/pair/start    — {label, window_s<=60, rssi_min=-45}: arm
+//   GET  /api/scout/pair/status   — the window: state, remaining_s, result
+//   POST /api/scout/pair/cancel   — cancel an armed window
+//   POST /api/scout/unpair        — {hashed_id}: forget a beacon
+//
+// No MAC crosses this API in either direction. The window is armed here and
+// the pairing happens inside the NimBLE scan callback (ble_scout_on_advert:
+// the first advert from an unpaired beacon at/above rssi_min), which hashes
+// the MAC with the per-device key and discards it. hashed_id is that keyed
+// hash as 32 lowercase hex characters — unlinkable to the same tag on any
+// other device. Every access to the registry/window goes through
+// ble_scout.cpp's portMUX; the NVS write of the registry blob happens later
+// on the loop task (ble_scout_tick), never on this HTTP task.
+// ════════════════════════════════════════════════════════════════════════════
+
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+
+// Read a small JSON body (the Scout bodies are < 128 bytes).
+static bool scout_read_body(httpd_req_t* req, JsonDocument& input, esp_err_t* sent) {
+  char body[192];
+  if (req->content_len == 0) {
+    *sent = http_send_error(req, 400, "empty_body");
+    return false;
+  }
+  if (req->content_len >= sizeof(body)) {
+    *sent = http_send_error(req, 413, "body_too_large");
+    return false;
+  }
+  size_t total = 0;
+  while (total < req->content_len) {
+    const int r = httpd_req_recv(req, body + total, req->content_len - total);
+    if (r <= 0) {
+      *sent = http_send_error(req, 400, "empty_body");
+      return false;
+    }
+    total += (size_t)r;
+  }
+  body[total] = '\0';
+  if (deserializeJson(input, body) != DeserializationError::Ok) {
+    *sent = http_send_error(req, 400, "invalid_json");
+    return false;
+  }
+  return true;
+}
+
+static esp_err_t handle_scout_list(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  ble_scan::PairedBeacon snap[ble_scan::MAX_PAIRED_BEACONS];
+  const size_t n = ble_scout::ble_scout_registry_snapshot(snap, ble_scan::MAX_PAIRED_BEACONS);
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["count"] = (unsigned)n;
+  doc["max"] = (unsigned)ble_scan::MAX_PAIRED_BEACONS;
+  JsonArray arr = doc["beacons"].to<JsonArray>();
+  for (size_t i = 0; i < n; ++i) {
+    char hex[2 * ble_scan::HASHED_ID_LEN + 1];
+    ble_scout::pairing::id_to_hex(snap[i].hashed_id, hex);
+    JsonObject o = arr.add<JsonObject>();
+    o["hashed_id"] = hex;
+    o["label"] = snap[i].label;
+  }
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static void scout_status_json(JsonDocument& doc, const ble_scout::pairing::Status& st) {
+  doc["ok"] = true;
+  doc["state"] = ble_scout::pairing::state_name(st.state);
+  doc["label"] = st.label;
+  doc["window_s"] = (unsigned)(st.window_ms / 1000u);
+  doc["remaining_s"] = (unsigned)((st.remaining_ms + 999u) / 1000u);
+  doc["rssi_min"] = (int)st.rssi_min;
+  if (st.state == ble_scout::pairing::State::PAIRED) {
+    char hex[2 * ble_scan::HASHED_ID_LEN + 1];
+    ble_scout::pairing::id_to_hex(st.paired_id, hex);
+    doc["hashed_id"] = hex;
+  }
+}
+
+static esp_err_t handle_scout_pair_start(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  JsonDocument input;
+  esp_err_t sent = ESP_OK;
+  if (!scout_read_body(req, input, &sent)) return sent;
+
+  const char* label = input["label"];
+  const int window_s = input["window_s"] | 60;
+  const int rssi_min = input["rssi_min"] | (int)ble_scout::pairing::DEFAULT_RSSI_MIN;
+  if (window_s <= 0) {
+    return http_send_error(req, 400, "bad_window");
+  }
+  // Over 60 s is clamped to 60 s (the window FSM clamps too; this keeps the
+  // multiply from wrapping on an absurd value).
+  const uint32_t window_ms = (uint32_t)(window_s > 60 ? 60 : window_s) * 1000u;
+
+  const uint32_t now = millis();
+  switch (ble_scout::ble_scout_pair_window_start(label, window_ms, rssi_min, now)) {
+    case ble_scout::pairing::ArmResult::OK:            break;
+    case ble_scout::pairing::ArmResult::BUSY:          return http_send_error(req, 409, "window_busy");
+    case ble_scout::pairing::ArmResult::BAD_LABEL:     return http_send_error(req, 400, "bad_label");
+    case ble_scout::pairing::ArmResult::REGISTRY_FULL: return http_send_error(req, 409, "registry_full");
+    case ble_scout::pairing::ArmResult::NOT_READY:     return http_send_error(req, 503, "scout_not_ready");
+  }
+
+  JsonDocument doc;
+  scout_status_json(doc, ble_scout::ble_scout_pair_window_status(now));
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_scout_pair_status(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  JsonDocument doc;
+  scout_status_json(doc, ble_scout::ble_scout_pair_window_status(millis()));
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_scout_pair_cancel(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  const uint32_t now = millis();
+  const bool canceled = ble_scout::ble_scout_pair_window_cancel(now);
+  JsonDocument doc;
+  scout_status_json(doc, ble_scout::ble_scout_pair_window_status(now));
+  doc["canceled"] = canceled;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_scout_unpair(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  JsonDocument input;
+  esp_err_t sent = ESP_OK;
+  if (!scout_read_body(req, input, &sent)) return sent;
+
+  uint8_t id[ble_scan::HASHED_ID_LEN];
+  if (!ble_scout::pairing::id_from_hex(input["hashed_id"] | "", id)) {
+    return http_send_error(req, 400, "bad_hashed_id");
+  }
+  if (!ble_scout::ble_scout_unpair(id)) {
+    return http_send_error(req, 404, "not_paired");
+  }
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["count"] = (unsigned)ble_scout::ble_scout_count();
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+#endif // FEATURE_BLE_SCAN
+
+// ════════════════════════════════════════════════════════════════════════════
+// MESH / OPERA REST API (PR-8, F10)
+//
+// Twelve registrations, all auth-gated + rate-limited, all using the
+// existing {ok:...} JSON convention via http_send_json / http_send_error:
+//
+//   GET    /api/mesh              — opera status (refreshOpera reads this)
+//   GET    /api/mesh/peers        — peer list
+//   POST   /api/mesh/pair/start   — begin pairing as the initiator (add another)
+//   POST   /api/mesh/pair/join    — begin pairing as the joiner (new device)
+//   POST   /api/mesh/pair/confirm — user confirmed the 6-digit code matches
+//   POST   /api/mesh/pair/cancel  — abort an in-progress pairing
+//   POST   /api/mesh/leave        — forget the opera + signed LEAVE_OPERA notify (F10)
+//   POST   /api/mesh/name {name}  — rename this device's opera label, local only (F10)
+//   POST   /api/mesh/enable {enabled} — mesh on/off, NVS-persisted (F10)
+//   GET    /api/mesh/alerts       — received TAMPER_ALERT history (F10)
+//   DELETE /api/mesh/alerts       — clear that history (counters keep counting) (F10)
+//   POST   /api/mesh/remove {fingerprint} — drop a peer AND rotate opera_secret
+//                                  (spec §5.6 PIO, F10-rekey option B; CRYPTO:
+//                                  maintainer review + bench pending)
+//
+// The JSON-rendering for the GET endpoints lives in the pure mesh_api
+// builders so the response shape stays under host-test coverage; CI's
+// [env:full] leg compiles these handlers but cannot run them.
+//
+// Threading: mesh_session's state belongs to the main loop (loop() runs
+// mesh_session::process()). The mutators — leave, name, enable, alerts
+// DELETE, remove, and since F33 part 5 the four pairing routes (start, join,
+// confirm, cancel) — therefore never run here: each handler hands ONE
+// request to mesh_session's request slot and waits, bounded, for loop() to
+// execute it (mesh_call below). The pragma after this comment makes a
+// direct call to any of those nine a compile error in the rest of this
+// file. The GET handlers only read.
 //
 // MAC↔fingerprint join: the persisted trusted-peer set keys on Ed25519
 // pubkey (→ fingerprint), while the live transport peer table keys on
@@ -3649,24 +5243,19 @@ static esp_err_t handle_thermal(httpd_req_t* req) {
 // below are the transport table's real numbers once a peer has spoken
 // this boot. A peer that has not yet sent a verified frame reports
 // OFFLINE/never — best-effort by design, documented in
-// spec/canary_mesh_network_v0.md §8.
+// spec/canary_mesh_network_v0.md §8. (The table itself is filled by
+// mesh_session from each peer's persisted radio MAC — F33 part 1 — so a
+// peer's entry exists from boot; the verified-frame MAC is what says it
+// has actually been heard.)
 // ════════════════════════════════════════════════════════════════════════════
 
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
 
-// Number of online peers from the live transport table (peers seen within
-// the transport's ACTIVE window). Used for the status state mapping.
-static size_t mesh_count_online_peers() {
-  mesh_transport::Peer peers[16];
-  const size_t n = mesh_transport::list_peers(peers, sizeof(peers) / sizeof(peers[0]));
-  size_t online = 0;
-  for (size_t i = 0; i < n; ++i) {
-    if (peers[i].in_use && peers[i].state == mesh_transport::PeerState::ACTIVE) {
-      ++online;
-    }
-  }
-  return online;
-}
+// The main-loop-only mesh_session mutators (see "Threading" above): from
+// here to the end of this file, naming one is a compile error. Reach them
+// through mesh_call() / mesh_session::submit_request().
+#pragma GCC poison leave_opera set_opera_name set_enabled clear_alerts remove_peer
+#pragma GCC poison start_pairing_initiator start_pairing_joiner confirm_pairing_code cancel_pairing
 
 static esp_err_t handle_mesh_status(httpd_req_t* req) {
   if (!rate_limit_check(req)) return ESP_OK;
@@ -3683,17 +5272,21 @@ static esp_err_t handle_mesh_status(httpd_req_t* req) {
 
   const mesh_pairing::State pstate = mesh_session::pairing_state();
   const size_t peers_total  = mesh_session::trusted_peer_count();
-  const size_t peers_online = mesh_count_online_peers();
+  // Trusted peers heard this boot (verified frame) whose transport entry is
+  // in the ACTIVE window. Not the raw transport table any more: since F33
+  // the table holds every bound peer from boot, fresh entries start ACTIVE,
+  // and a peer that has said nothing is not online.
+  const size_t peers_online = mesh_session::online_peer_count();
 
-  // alerts_received: opera-level alert count is not yet tracked in the
-  // PIO mesh session (deferred with the alerts endpoints) — report 0.
-  const uint32_t alerts_received = 0;
+  // alerts_received: verified TAMPER_ALERT frames from any peer this boot
+  // (F10/F11 — counted only after signature + opera_id + replay checks).
+  const uint32_t alerts_received = mesh_session::alerts_received();
   const uint32_t pairing_code    = mesh_session::pairing_confirmation_code();
 
   char body[512];
   if (!mesh_api::build_mesh_status_json(
           body, sizeof(body),
-          /*enabled=*/true, has_opera,
+          mesh_session::is_enabled(), has_opera,
           have_id ? opera_id : nullptr,
           opera_name, pstate,
           peers_total, peers_online, alerts_received, pairing_code)) {
@@ -3742,15 +5335,18 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
     views[i].state        = "OFFLINE";     // until a verified frame joins it
     views[i].last_seen_sec = 0xFFFFFFFFu;  // "never" (UI shows 'never')
     views[i].rssi          = 0;
+    views[i].alerts_received = 0;          // until the session has a link row
 
     // fp → last verified MAC → live transport entry. A peer that has
     // not sent a verified frame this boot, or whose MAC has left the
     // transport table, keeps the OFFLINE/never defaults above.
     for (size_t l = 0; l < n_links; ++l) {
-      if (!links[l].mac_known ||
-          memcmp(links[l].fp, fp, mesh_crypto::FINGERPRINT_LEN) != 0) {
+      if (memcmp(links[l].fp, fp, mesh_crypto::FINGERPRINT_LEN) != 0) {
         continue;
       }
+      // Per-peer alert attribution (F11) does not depend on liveness.
+      views[i].alerts_received = links[l].alerts_received;
+      if (!links[l].mac_known) break;
       for (size_t t = 0; t < n_live; ++t) {
         if (!live[t].in_use ||
             memcmp(live[t].mac, links[l].mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) != 0) {
@@ -3769,11 +5365,37 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
     }
   }
 
-  char body[1024];
+  // Sized for 8 worst-case rows (host-test pinned, mesh_api.h). 1024 held
+  // the pre-F11 row; the alerts_received field needs the headroom.
+  char body[mesh_api::PEERS_JSON_CAP];
   if (!mesh_api::build_mesh_peers_json(body, sizeof(body), views, count)) {
     return http_send_error(req, 500, "encode_failed");
   }
   return http_send_json(req, body);
+}
+
+static bool mesh_call(httpd_req_t* req, const mesh_session::Request& r,
+                      mesh_session::RequestResult* out, esp_err_t* rc);
+
+// The pairing routes' refusals from the main loop (F33 part 5): true, with
+// the error response sent through *rc, for any status but OK.
+static bool mesh_pair_refused(httpd_req_t* req, mesh_session::RequestStatus st,
+                              const char* refused_code, esp_err_t* rc) {
+  switch (st) {
+    case mesh_session::RequestStatus::OK:
+      return false;
+    case mesh_session::RequestStatus::MESH_DISABLED:
+      *rc = http_send_error(req, 400, "mesh_disabled");
+      return true;
+    case mesh_session::RequestStatus::REKEY_IN_FLIGHT:
+      // Pairing during a secret rotation would hand the joiner the secret
+      // being retired, or overwrite the one about to arrive (review fix).
+      *rc = http_send_error(req, 409, "rekey_in_flight");
+      return true;
+    default:
+      *rc = http_send_error(req, 400, refused_code);
+      return true;
+  }
 }
 
 static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
@@ -3788,29 +5410,38 @@ static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
   }
 
   // "Add another" — an opera already exists. Load its secret straight
-  // from NVS into a local buffer, hand it to the pairing initiator, then
-  // zero the buffer. If no opera is persisted, there is nothing to add to.
-  uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN];
-  if (!mesh_state::load_opera_secret(opera_secret)) {
-    return http_send_error(req, 400, "no_opera");
+  // from NVS into the request, hand it to the main loop, then zero this
+  // copy (the session wipes its own). If no opera is persisted, the main
+  // loop founds one first (spec §5.4, F33 part 4 — canary-wap's
+  // create-on-start, behind the gates above): it draws the secret, has it
+  // persisted before anything uses it, and never replaces an opera the
+  // session already holds (opera_exists).
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::PAIR_START;
+  r.create = !mesh_state::load_opera_secret(r.opera_secret);
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  const bool ran = mesh_call(req, r, &res, &rc);
+  volatile uint8_t* z = r.opera_secret;   // regardless of outcome
+  for (size_t i = 0; i < sizeof(r.opera_secret); ++i) z[i] = 0;
+  if (!ran) return rc;
+  if (res.status == mesh_session::RequestStatus::OPERA_EXISTS) {
+    // A join landed after the load above, or NVS would not give back the
+    // secret the session holds: never found a second opera over it.
+    return http_send_error(req, 409, "opera_exists");
   }
-
-  char opera_name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
-  mesh_session::get_opera_name(opera_name, sizeof(opera_name));
-
-  const bool ok = mesh_session::start_pairing_initiator(
-      opera_secret, opera_name, millis());
-
-  // Zero the local secret copy regardless of outcome.
-  volatile uint8_t* z = opera_secret;
-  for (size_t i = 0; i < sizeof(opera_secret); ++i) z[i] = 0;
-
-  if (!ok) {
-    return http_send_error(req, 400, "pair_start_failed");
+  if (res.status == mesh_session::RequestStatus::NOT_PERSISTED) {
+    return http_send_error(req, 500, "opera_not_persisted");
   }
+  if (res.created) {
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Opera created", nullptr);
+  }
+  if (mesh_pair_refused(req, res.status, "pair_start_failed", &rc)) return rc;
 
   JsonDocument doc;
   doc["ok"] = true;
+  doc["created"] = res.created;
   doc["state"] = "PAIRING_INIT";
   String response;
   serializeJson(doc, response);
@@ -3828,9 +5459,13 @@ static esp_err_t handle_mesh_pair_join(httpd_req_t* req) {
     return http_send_error(req, 400, "no_flash_encryption");
   }
 
-  if (!mesh_session::start_pairing_joiner(millis())) {
-    return http_send_error(req, 400, "pair_join_failed");
-  }
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::PAIR_JOIN;
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  if (!mesh_call(req, r, &res, &rc)) return rc;
+  if (mesh_pair_refused(req, res.status, "pair_join_failed", &rc)) return rc;
 
   JsonDocument doc;
   doc["ok"] = true;
@@ -3845,7 +5480,13 @@ static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  if (!mesh_session::confirm_pairing_code(millis())) {
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::PAIR_CONFIRM;
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  if (!mesh_call(req, r, &res, &rc)) return rc;
+  if (res.status != mesh_session::RequestStatus::OK) {
     return http_send_error(req, 400, "confirm_failed");
   }
 
@@ -3861,10 +5502,304 @@ static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  mesh_session::cancel_pairing();
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::PAIR_CANCEL;
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  if (!mesh_call(req, r, &res, &rc)) return rc;
 
   JsonDocument doc;
   doc["ok"] = true;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// Run one mesh mutation on the main loop (review fix; F33 part 5 added the
+// four pairing routes). mesh_session's state belongs to the task that runs
+// mesh_session::process() — loop() — and the httpd task must not touch it,
+// so these handlers validate what they can locally, submit ONE request into
+// mesh_session's one-deep slot and wait:
+// loop() executes it inside its next mesh_session::process() pass, which a
+// healthy main loop reaches within milliseconds. Returns true with *out
+// filled; false after sending the error response itself (409 mesh_busy
+// when another request holds the slot, 503 mesh_timeout when the main
+// loop did not get to it — withdrawn, so it never runs).
+static constexpr uint32_t kMeshCallStepMs = 10;
+static constexpr uint32_t kMeshCallWaitMs = 3000;
+
+static bool mesh_call(httpd_req_t* req, const mesh_session::Request& r,
+                      mesh_session::RequestResult* out, esp_err_t* rc) {
+  if (!mesh_session::submit_request(r)) {
+    *rc = http_send_error(req, 409, "mesh_busy");
+    return false;
+  }
+  for (uint32_t waited = 0; waited < kMeshCallWaitMs; waited += kMeshCallStepMs) {
+    if (mesh_session::take_request_result(out)) return true;
+    vTaskDelay(pdMS_TO_TICKS(kMeshCallStepMs));
+  }
+  if (!mesh_session::withdraw_request()) {
+    // The main loop took it just now: its result lands within that same
+    // process() call. Wait once more, then give up for good.
+    for (uint32_t waited = 0; waited < kMeshCallWaitMs; waited += kMeshCallStepMs) {
+      if (mesh_session::take_request_result(out)) return true;
+      vTaskDelay(pdMS_TO_TICKS(kMeshCallStepMs));
+    }
+    mesh_session::abandon_request();
+  }
+  *rc = http_send_error(req, 503, "mesh_timeout");
+  return false;
+}
+
+// POST /api/mesh/leave — forget this device's opera (F10). The session
+// signs a LEAVE_OPERA under the opera it is leaving (best effort — the
+// survivors drop only this device's trust entry), then wipes its RAM
+// state and the radio peer table, on the main loop; the NVS copies go
+// here. No rekey: the leaver discards its own secret, and a signed LEAVE
+// can only remove its signer. Refused (409) while a secret rotation runs —
+// leaving mid-rotation would split the survivors.
+static esp_err_t handle_mesh_leave(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::LEAVE;
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  if (!mesh_call(req, r, &res, &rc)) return rc;
+  if (res.status == mesh_session::RequestStatus::REKEY_IN_FLIGHT) {
+    return http_send_error(req, 409, "rekey_in_flight");
+  }
+  const bool notified = res.notified;
+  // Each clear is idempotent; AND them so a real NVS failure is reported
+  // rather than hidden behind a local wipe that did happen. replay_ctrs is
+  // deliberately NOT cleared: the counters are replay defense, not
+  // membership — the session keeps them as tombstones so a later re-pair
+  // into this opera cannot be fed the peers' old frames, and the entries
+  // already in NVS restore as exactly those tombstones at the next boot.
+  bool cleared = mesh_state::clear_opera_secret();
+  cleared = mesh_state::clear_trusted_peers()   && cleared;
+  cleared = mesh_state::clear_elected_hub()     && cleared;
+  cleared = mesh_state::clear_opera_name()      && cleared;
+  log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "Left opera",
+             notified ? "peers notified" : "no peer took the LEAVE frame");
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["notified"] = notified;
+  doc["persisted"] = cleared;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// POST /api/mesh/name {name} — this device's label for its opera (F10).
+// Local only: nothing is sent to peers. Printable ASCII, 1..32 bytes.
+// Persisted through the flash-encryption gate; on an FE-off board the
+// rename holds until reboot and the response says persisted:false.
+static esp_err_t handle_mesh_name(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  char body[128];
+  const int recv = httpd_req_recv(req, body, sizeof(body) - 1);
+  if (recv <= 0) return http_send_error(req, 400, "empty_body");
+  body[recv] = '\0';
+
+  JsonDocument input;
+  if (deserializeJson(input, body) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+  if (!input["name"].is<const char*>()) {
+    return http_send_error(req, 400, "missing_name");
+  }
+  const char* name = input["name"].as<const char*>();
+  const size_t len = strnlen(name, mesh_pairing::MAX_OPERA_NAME_LEN + 1);
+  if (len == 0 || len > mesh_pairing::MAX_OPERA_NAME_LEN) {
+    return http_send_error(req, 400, "invalid_name");
+  }
+  for (size_t i = 0; i < len; ++i) {
+    const unsigned char c = (unsigned char)name[i];
+    if (c < 0x20 || c > 0x7E) return http_send_error(req, 400, "invalid_name");
+  }
+
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::SET_NAME;
+  memcpy(r.name, name, len);   // len <= MAX_OPERA_NAME_LEN; r.name[len] stays '\0'
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  if (!mesh_call(req, r, &res, &rc)) return rc;
+  if (res.status == mesh_session::RequestStatus::NO_OPERA) {
+    return http_send_error(req, 400, "no_opera");
+  }
+  const bool persisted = mesh_state::save_opera_name(r.name);
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["persisted"] = persisted;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// POST /api/mesh/enable {enabled} — mesh on/off (F10). Disabling stops
+// the session (and cancels a pairing in flight) without leaving the
+// opera; the choice is persisted (NVS "mesh_enabled", a preference, not
+// FE-gated) and re-applied at boot.
+static esp_err_t handle_mesh_enable(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  char body[64];
+  const int recv = httpd_req_recv(req, body, sizeof(body) - 1);
+  if (recv <= 0) return http_send_error(req, 400, "empty_body");
+  body[recv] = '\0';
+
+  JsonDocument input;
+  if (deserializeJson(input, body) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+  if (!input["enabled"].is<bool>()) {
+    return http_send_error(req, 400, "missing_enabled_bool");
+  }
+  const bool want = input["enabled"].as<bool>();
+
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type    = mesh_session::RequestType::SET_ENABLED;
+  r.enabled = want;
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  if (!mesh_call(req, r, &res, &rc)) return rc;
+  // A rotation cannot finish while the mesh is off; refuse rather than
+  // strand the survivors (F10-rekey). It ends within 60 s either way.
+  if (res.status == mesh_session::RequestStatus::REKEY_IN_FLIGHT) {
+    return http_send_error(req, 409, "rekey_in_flight");
+  }
+  const bool persisted = mesh_state::save_mesh_enabled(want);
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK,
+             want ? "Mesh enabled" : "Mesh disabled", "via /api/mesh/enable");
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["enabled"] = res.enabled;
+  doc["persisted"] = persisted;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// GET /api/mesh/alerts — the received-alert history, newest first (F10).
+static esp_err_t handle_mesh_alerts(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  static_assert(mesh_session::MAX_ALERT_HISTORY <= mesh_api::MAX_ALERTS_JSON,
+                "ALERTS_JSON_CAP is pinned for MAX_ALERTS_JSON rows");
+  mesh_alert::Record recs[mesh_session::MAX_ALERT_HISTORY];
+  const size_t n = mesh_session::get_alerts(recs, mesh_session::MAX_ALERT_HISTORY);
+
+  // Worst-case body (host-test pinned, mesh_api.h) — heap, not the httpd
+  // task's stack.
+  const size_t cap = mesh_api::ALERTS_JSON_CAP;
+  char* body = (char*)malloc(cap);
+  if (body == nullptr) return http_send_error(req, 500, "oom");
+  esp_err_t rc;
+  // millis(): the uptime each alert's timestamp_ms is measured against —
+  // the web UI shows an age, never a date (F33 part 7).
+  if (!mesh_api::build_mesh_alerts_json(body, cap, recs, n, (uint32_t)millis())) {
+    rc = http_send_error(req, 500, "encode_failed");
+  } else {
+    rc = http_send_json(req, body);
+  }
+  free(body);
+  return rc;
+}
+
+// DELETE /api/mesh/alerts — clear the history (F10), on the main loop that
+// writes it. The per-peer and opera-wide alerts_received counters keep
+// counting for the boot (canary-wap parity).
+static esp_err_t handle_mesh_alerts_clear(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::CLEAR_ALERTS;
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  if (!mesh_call(req, r, &res, &rc)) return rc;
+  return http_send_json(req, "{\"ok\":true}");
+}
+
+// POST /api/mesh/remove {fingerprint} — drop a peer AND rotate
+// opera_secret (spec §5.6; F10-rekey option B). The session starts the
+// rotation first and forgets the peer only if it started; the survivors
+// get the new secret over an ephemeral-X25519 exchange inside signed
+// envelopes and this device commits on all ACKs or at the 60 s timeout
+// (the rekey-commit handler re-persists it). rekey:"committed" means there
+// was nobody left to tell and the secret rotated locally at once. Runs on
+// the main loop (mesh_call); refused while a pairing runs.
+// CRYPTO: maintainer review required before merge; bench-gated U1 C3.
+static esp_err_t handle_mesh_remove(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  char body[96];
+  const int recv = httpd_req_recv(req, body, sizeof(body) - 1);
+  if (recv <= 0) return http_send_error(req, 400, "empty_body");
+  body[recv] = '\0';
+
+  JsonDocument input;
+  if (deserializeJson(input, body) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+  if (!input["fingerprint"].is<const char*>()) {
+    return http_send_error(req, 400, "missing_fingerprint");
+  }
+  mesh_session::Request r;
+  memset(&r, 0, sizeof(r));
+  r.type = mesh_session::RequestType::REMOVE;
+  if (!mesh_api::parse_fingerprint_hex(input["fingerprint"].as<const char*>(), r.fp)) {
+    return http_send_error(req, 400, "invalid_fingerprint");
+  }
+
+  mesh_session::RequestResult res;
+  esp_err_t rc = ESP_OK;
+  if (!mesh_call(req, r, &res, &rc)) return rc;
+  const mesh_session::RemoveResult rr = res.remove;
+  switch (rr) {
+    case mesh_session::RemoveResult::STARTED:
+    case mesh_session::RemoveResult::COMMITTED:
+      break;
+    case mesh_session::RemoveResult::MESH_DISABLED:  return http_send_error(req, 400, "mesh_disabled");
+    case mesh_session::RemoveResult::NO_OPERA:  return http_send_error(req, 400, "no_opera");
+    case mesh_session::RemoveResult::NOT_FOUND: return http_send_error(req, 404, "unknown_peer");
+    case mesh_session::RemoveResult::IN_FLIGHT: return http_send_error(req, 409, "rekey_in_flight");
+    case mesh_session::RemoveResult::PAIRING:   return http_send_error(req, 409, "pairing_in_progress");
+    default:                                    return http_send_error(req, 500, "rekey_failed");
+  }
+  // The removed peer's own NVS entry (FE-gated), dropped now so a reboot
+  // mid-rotation does not bring it back; the rotation's commit drops it
+  // again (idempotent) before it persists the new secret.
+  const bool persisted = mesh_state::remove_trusted_peer(res.removed_pubkey);
+  log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "Opera peer removed",
+             rr == mesh_session::RemoveResult::COMMITTED ? "secret rotated locally"
+                                                         : "secret rotation started");
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["rekey"] = (rr == mesh_session::RemoveResult::COMMITTED) ? "committed" : "started";
+  doc["persisted"] = persisted;
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());

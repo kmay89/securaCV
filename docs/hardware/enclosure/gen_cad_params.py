@@ -195,14 +195,15 @@ Step by step, the same order:
      committed (docs/hardware/enclosure/README.md, "Preview renders")
   2. (cd docs/hardware/enclosure && ./render.sh)                    # the STLs
   3. python3 docs/hardware/enclosure/gen_assembled_dims.py          # assembled envelopes
-  4. node canary-local/tools/figures/gen_figures.mjs                # fleet figures + ledger
-  5. node canary-local/tools/figures/gen_device_glbs.mjs            # the Lab's device glTFs
-  6. (cd firmware/projects/canary-display && ./setup.sh regen)     # the sketch's figure mirror
-  7. Actions -> "Rebuild emulator dist (pinned emsdk)" on the branch, then pull it
-  8. python3 canary-local/tools/gen_flash.py
-  9. python3 docs/hardware/enclosure/gen_builder_manifest.py [--site <website checkout>]
-     # --site <website checkout> --check names a stale carry, writing nothing
- 10. python3 canary-local/tools/gen_enclosures.py"""
+     python3 docs/hardware/enclosure/gen_hardware.py                # hardware counts + lid-rib headroom
+  4. python3 canary-local/tools/gen_enclosures.py                   # the catalog gen_figures reads
+  5. node canary-local/tools/figures/gen_figures.mjs                # fleet figures + ledger
+  6. node canary-local/tools/figures/gen_device_glbs.mjs            # the Lab's device glTFs
+  7. (cd firmware/projects/canary-display && ./setup.sh regen)     # the sketch's figure mirror
+  8. Actions -> "Rebuild emulator dist (pinned emsdk)" on the branch, then pull it
+  9. python3 canary-local/tools/gen_flash.py
+ 10. python3 docs/hardware/enclosure/gen_builder_manifest.py [--site <website checkout>]
+     # --site <website checkout> --check names a stale carry, writing nothing"""
 
 
 class Change(NamedTuple):

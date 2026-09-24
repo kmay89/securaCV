@@ -1,0 +1,417 @@
+// src/net/mqtt_mgr.cpp
+#include "canary/net/mqtt_mgr.h"
+
+#include <Arduino.h>
+#include <cstring>
+
+#include <WiFi.h>
+#include <PubSubClient.h>
+
+// PlatformIO's chain-mode Library Dependency Finder only follows #includes it
+// can see in PROJECT sources; network/mqtt_transport.h is reached through
+// -I .../common, so its own <WiFiClientSecure.h> is invisible to the LDF and
+// the library (WiFiClientSecure on core 2.x, NetworkClientSecure on core 3.x,
+// which ships the same header name) is never added. Name it here, first.
+#include <WiFiClientSecure.h>
+#include "network/mqtt_transport.h"  // plain / TLS-CA / pinned broker socket, decided once fleet-wide
+
+#include "canary/config.h"
+#include "canary/log.h"
+#include "canary/version.h"
+#include "canary/runtime_config.h"  // NVS-backed identity + broker credentials
+#include "canary/diagnostics.h"     // heap health for the status heartbeat
+#include "canary/witness.h"         // chain head/length for the trust surface
+#include "canary/net/wifi_mgr.h"    // RSSI + link state
+#include "canary/ha/ha_discovery.h"
+#include "identity/device_pseudonym.h"  // MAC-free client-ID suffix (Invariant III)
+#include "identity/device_signature.h"  // pubkey/fingerprint + chain signature
+
+namespace canary::net {
+
+static WiFiClient wifiClient;
+static PubSubClient mqtt(wifiClient);
+// The socket PubSubClient actually rides is rebound in mqtt_init once NVS
+// is readable: this object hands back a plain WiFiClient or a configured
+// WiFiClientSecure per the provisioned TLS mode (network/mqtt_transport.h).
+static canary::net::mqtt_tls::BrokerTransport s_broker_tls;
+
+// Bound a stuck MQTT connect/read to well under the task watchdog timeout
+// (SENT_WATCHDOG_TIMEOUT_SEC) instead of resting on PubSubClient's library
+// default, so the socket timeout is a provable input to the WDT budget.
+static constexpr uint16_t MQTT_SOCKET_TIMEOUT_SEC = 5;
+static_assert(canary::net::mqtt_tls::kConnectTimeoutSec + canary::net::mqtt_tls::kHandshakeTimeoutSec +
+                  MQTT_SOCKET_TIMEOUT_SEC < WATCHDOG_TIMEOUT_SEC,
+              "one bounded broker connect must fit inside the task watchdog");
+static Topics g_topics{};
+static bool discovery_done = false;
+
+// Inbound firmware-update commands. The PubSubClient callback fires inside
+// mqtt.loop() on the main task, but flash-cycle decisions belong to the OTA
+// glue (ota_mgr) — the callback only latches these flags and ota_loop()
+// drains them. Same pattern as the other Canary variants.
+static volatile bool s_pending_install = false;
+static volatile int s_pending_auto = -1;
+
+// Cached retained payloads, republished on every reconnect so HA's update
+// entity and auto-update switch never sit at "unknown" after a broker
+// restart.
+static char s_update_state_cache[640] = {0};
+static bool s_update_state_set = false;
+static int s_update_auto_cache = -1;
+
+static bool token_at(const char* p, int n, const char* tok, int tok_len) {
+  auto boundary = [](char c) {
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
+           c == '"' || c == '}' || c == '\0';
+  };
+  return n >= tok_len && memcmp(p, tok, tok_len) == 0 &&
+         (n == tok_len || boundary(p[tok_len]));
+}
+
+static void on_mqtt_message(char* topic, uint8_t* payload, unsigned int len) {
+  if (!topic || !payload) return;
+
+  const bool is_install = (strcmp(topic, g_topics.update_cmd) == 0);
+  const bool is_auto = (strcmp(topic, g_topics.update_auto_cmd) == 0);
+  if (!is_install && !is_auto) return;
+
+  // Trim leading whitespace/quotes; require a token boundary after the
+  // match so a mangled payload can't trigger a flash cycle.
+  const char* p = (const char*)payload;
+  int n = (int)len;
+  while (n > 0 && (*p == ' ' || *p == '\t' || *p == '"')) { p++; n--; }
+
+  if (is_install) {
+    if (token_at(p, n, "install", 7)) s_pending_install = true;
+    return;
+  }
+  if (token_at(p, n, "ON", 2) || token_at(p, n, "on", 2)) {
+    s_pending_auto = 1;
+  } else if (token_at(p, n, "OFF", 3) || token_at(p, n, "off", 3)) {
+    s_pending_auto = 0;
+  }
+}
+
+bool take_pending_install() {
+  if (!s_pending_install) return false;
+  s_pending_install = false;
+  return true;
+}
+
+int take_pending_auto() {
+  const int v = s_pending_auto;
+  s_pending_auto = -1;
+  return v;
+}
+
+static bool publish_checked(const char* tag, const char* topic, const char* payload, bool retain) {
+  const bool ok = mqtt.publish(topic, payload, retain);
+
+  log_header(tag);
+  // NEVER call Serial directly in libs here; use dbg_serial() so CI/targets can swap it.
+  canary::dbg_serial().printf("%s => %s (retain=%s len=%u)\n",
+                              topic,
+                              ok ? "OK" : "FAIL",
+                              retain ? "true" : "false",
+                              (unsigned)strlen(payload));
+  return ok;
+}
+
+void mqtt_init(const Topics& topics) {
+  g_topics = topics;
+  const auto& cfg = canary::cfg::get();
+  mqtt.setServer(cfg.mqtt_host, cfg.mqtt_port);
+  mqtt.setBufferSize(MQTT_BUFFER_BYTES);
+  mqtt.setSocketTimeout(MQTT_SOCKET_TIMEOUT_SEC);
+  mqtt.setCallback(on_mqtt_message);
+  // Broker transport: plain unless NVS carries a TLS mode (CA-verified,
+  // fingerprint-pinned, or the explicit lab opt-in). Decided ONCE here by the
+  // shared header so every product answers identically; the BrokerTransport owns
+  // the CA buffer setCACert() keeps a pointer to. A refused decision is
+  // logged now and again on every connect attempt, never silently plain.
+  {
+    const auto& tls = s_broker_tls.load("securacv");
+    mqtt.setClient(s_broker_tls.client());
+    log_header("MQTT");
+    canary::dbg_serial().printf("Broker transport: %s\n", s_broker_tls.name());
+    if (!tls.allowed()) log_line("MQTT", canary::net::mqtt_tls::reason_text(tls.reason));
+  }
+}
+
+bool mqtt_connected() { return mqtt.connected(); }
+
+void mqtt_loop() { mqtt.loop(); }
+
+void publish_status_retained(const Topics& topics, const char* status) {
+  const auto& d = canary::diag::get();
+  char msg[384];
+  snprintf(msg, sizeof(msg),
+           "{"
+           "\"device_id\":\"%s\","
+           "\"device_type\":\"%s\","
+           "\"status\":\"%s\","
+           "\"ip\":\"%s\","
+           "\"rssi\":%d,"
+           "\"heap_free\":%lu,"
+           "\"heap_min\":%lu,"
+           "\"degraded\":\"%s\","
+           "\"ts_ms\":%lu"
+           "}",
+           canary::cfg::get().device_id, DEVICE_TYPE, status,
+           WiFi.localIP().toString().c_str(),
+           wifi_rssi(),
+           (unsigned long)d.free_heap,
+           (unsigned long)d.min_heap,
+           canary::diag::level_name(d.level),
+           (unsigned long)ms_now());
+  publish_checked("STATUS", topics.status, msg, true);
+}
+
+void publish_heartbeat(const Topics& topics, const SentinelSnapshot& s) {
+  const auto& d = canary::diag::get();
+  char msg[384];
+  snprintf(msg, sizeof(msg),
+           "{"
+           "\"device_id\":\"%s\","
+           "\"device_type\":\"%s\","
+           "\"status\":\"online\","
+           "\"presence\":%s,"
+           "\"channel_denied\":%s,"
+           "\"rssi\":%d,"
+           "\"heap_free\":%lu,"
+           "\"heap_min\":%lu,"
+           "\"degraded\":\"%s\","
+           "\"ts_ms\":%lu"
+           "}",
+           canary::cfg::get().device_id, DEVICE_TYPE,
+           s.present ? "true" : "false",
+           s.denied_any ? "true" : "false",
+           wifi_rssi(),
+           (unsigned long)d.free_heap,
+           (unsigned long)d.min_heap,
+           canary::diag::level_name(d.level),
+           (unsigned long)ms_now());
+  publish_checked("HEART", topics.status, msg, true);
+}
+
+void publish_state_retained(const Topics& topics, const SentinelSnapshot& s) {
+  // The coarse FusionResult vocabulary only (requirement R4): the same fields
+  // the signed event carries, plus the derived booleans HA's binary sensors
+  // read and a readable spelling of the modality bitmask. Nothing finer.
+  char msg[768];
+  const int n = snprintf(msg, sizeof(msg),
+           "{"
+           "\"device_id\":\"%s\","
+           "\"device_type\":\"%s\","
+           "\"tier\":\"%s\","
+           "\"level\":\"%s\","
+           "\"presence\":%s,"
+           "\"anomaly_active\":%s,"
+           "\"confidence\":%u,"
+           "\"anomaly\":%u,"
+           "\"occupancy\":\"%s\","
+           "\"range\":\"%s\","
+           "\"modality_bits\":%u,"
+           "\"modalities\":\"%s\","
+           "\"strong_modalities\":%u,"
+           "\"channel_denied\":%s,"
+           "\"last_event\":\"%s\","
+           "\"uptime_s\":%lu,"
+           "\"ts_ms\":%lu"
+           "}",
+           canary::cfg::get().device_id, DEVICE_TYPE, TIER,
+           s.claim.level,
+           s.present ? "true" : "false",
+           s.anomalous ? "true" : "false",
+           (unsigned)s.claim.confidence,
+           (unsigned)s.claim.anomaly,
+           s.claim.occupancy,
+           s.claim.range,
+           (unsigned)s.claim.modality_bits,
+           s.modalities ? s.modalities : "none",
+           (unsigned)s.strong_modalities,
+           s.denied_any ? "true" : "false",
+           s.last_event ? s.last_event : "boot",
+           (unsigned long)s.uptime_s,
+           (unsigned long)s.ts_ms);
+  if (n <= 0 || (size_t)n >= sizeof(msg)) return;
+
+  publish_checked("STATE", topics.state, msg, true);
+}
+
+void publish_event(const Topics& topics, const char* json_payload) {
+  publish_checked("EVENT", topics.events, json_payload, false);
+}
+
+void publish_health_retained(const Topics& topics) {
+  // Same field set as canary-wap's mains-powered health publish: HA's
+  // health handler reads memory/uptime/firmware and — crucially —
+  // TOFU-pins the device from `public_key` on first sight.
+  char msg[384];
+  const int n = snprintf(msg, sizeof(msg),
+           "{"
+           "\"battery\":100,"
+           "\"battery_present\":false,"
+           "\"memory_free\":%lu,"
+           "\"uptime\":%lu,"
+           "\"firmware_version\":\"%s\","
+           "\"public_key\":\"%s\""
+           "}",
+           (unsigned long)ESP.getFreeHeap(),
+           (unsigned long)(ms_now() / 1000UL),
+           CANARY_FW_VERSION,
+           device_signature::pubkey_hex());
+  if (n <= 0 || (size_t)n >= sizeof(msg)) return;
+  publish_checked("HEALTH", topics.health, msg, true);
+}
+
+void publish_chain_retained(const Topics& topics) {
+  const uint32_t length = canary::witness::chain_length();
+  const uint8_t* head = canary::witness::chain_head();
+
+  char hash_hex[65];
+  {
+    static const char H[] = "0123456789abcdef";
+    for (int i = 0; i < 32; i++) {
+      hash_hex[2 * i]     = H[(head[i] >> 4) & 0xF];
+      hash_hex[2 * i + 1] = H[(head[i] >> 0) & 0xF];
+    }
+    hash_hex[64] = '\0';
+  }
+
+  // Identical envelope to canary-wap's publish_chain: v/length/latest_hash
+  // (+ legacy "algorithm") always; alg/fp/sig when signing is available.
+  // HA's verify_chain rebuilds the canonical from (device_id-from-topic,
+  // length, latest_hash) and verifies against the pinned pubkey.
+  char sig_b64[device_signature::SIG_B64URL_CAP] = "";
+  const bool signed_ok =
+      canary::witness::ready() &&
+      device_signature::sign_chain(length, head, sig_b64, sizeof(sig_b64));
+
+  char msg[320];
+  int n;
+  if (signed_ok) {
+    n = snprintf(msg, sizeof(msg),
+        "{\"v\":%d,\"length\":%lu,\"latest_hash\":\"%s\","
+        "\"algorithm\":\"ed25519\","
+        "\"alg\":\"%s\",\"fp\":\"%s\",\"sig\":\"%s\"}",
+        device_signature::SCHEMA_V,
+        (unsigned long)length, hash_hex,
+        device_signature::ALG_NAME,
+        device_signature::fingerprint_hex(),
+        sig_b64);
+  } else {
+    n = snprintf(msg, sizeof(msg),
+        "{\"v\":%d,\"length\":%lu,\"latest_hash\":\"%s\","
+        "\"algorithm\":\"ed25519\"}",
+        device_signature::SCHEMA_V,
+        (unsigned long)length, hash_hex);
+  }
+  if (n <= 0 || (size_t)n >= sizeof(msg)) return;
+  publish_checked("CHAIN", topics.chain, msg, true);
+}
+
+void ha_discovery_publish_once(const Topics& topics) {
+  if (discovery_done) return;
+  canary::ha::publish_discovery(mqtt, topics);
+  discovery_done = true;
+}
+
+bool mqtt_connect_attempt() {
+  if (mqtt.connected()) return true;
+
+  // A dead WiFi link makes every broker attempt hopeless — the caller's
+  // wifi_loop() supervision owns that recovery.
+  if (!wifi_connected()) return false;
+
+  // Broker transport gate (shared decision, network/mqtt_transport.h): a
+  // REFUSED decision never reaches the socket, and the lab opt-in is named on
+  // every attempt — the condition that makes an unverified socket acceptable
+  // at all. The text is secret-free by construction (constants only).
+  char tls_msg[224];
+  switch (s_broker_tls.prepare(tls_msg, sizeof(tls_msg))) {
+    case canary::net::mqtt_tls::Prepared::Refused:
+      log_line("MQTT", tls_msg);
+      return false;
+    case canary::net::mqtt_tls::Prepared::OkWarnInsecure:
+      log_line("MQTT", tls_msg);
+      break;
+    case canary::net::mqtt_tls::Prepared::Ok:
+      break;
+  }
+
+  char lwtPayload[160];
+  snprintf(lwtPayload, sizeof(lwtPayload),
+           "{"
+           "\"device_id\":\"%s\","
+           "\"device_type\":\"%s\","
+           "\"status\":\"offline\","
+           "\"ts_ms\":0"
+           "}",
+           canary::cfg::get().device_id, DEVICE_TYPE);
+
+  // Privacy (Invariant III): the MQTT client ID reaches the broker, so its unique
+  // suffix is the salted device pseudonym — never the raw efuse MAC.
+  char devid_hex[device_pseudonym::HEX_LEN + 1] = {0};
+  device_pseudonym::device_id_hex(devid_hex, sizeof(devid_hex));
+
+  const auto& cfg = canary::cfg::get();
+  String clientId = String("securacv-") + cfg.device_id + "-" + devid_hex;
+
+  log_header("MQTT");
+  canary::dbg_serial().printf("Connecting %s:%u as %s ...\n", cfg.mqtt_host, cfg.mqtt_port, clientId.c_str());
+
+  bool ok = false;
+  if (cfg.mqtt_user[0] != '\0') {
+    ok = mqtt.connect(clientId.c_str(), cfg.mqtt_user, cfg.mqtt_pass, g_topics.status, 1, true, lwtPayload);
+  } else {
+    ok = mqtt.connect(clientId.c_str(), nullptr, nullptr, g_topics.status, 1, true, lwtPayload);
+  }
+
+  if (!ok) {
+    log_header("MQTT");
+    canary::dbg_serial().printf("Connect FAIL rc=%d — retrying on the main-loop backoff.\n", mqtt.state());
+    // A TLS socket that failed to come up says WHY (pin mismatch, CA verify
+    // failure, plaintext listener on a TLS port) — the reason a person can
+    // act on, never the CA or the credential.
+    if (s_broker_tls.describe_failure(tls_msg, sizeof(tls_msg))) log_line("MQTT", tls_msg);
+    return false;
+  }
+
+  log_line("MQTT", "Connected.");
+  publish_status_retained(g_topics, "online");
+  ha_discovery_publish_once(g_topics);
+
+  // Firmware update entity: re-subscribe the command topics (the broker
+  // may have dropped them) and reconcile the retained states.
+  mqtt.subscribe(g_topics.update_cmd, 1);
+  mqtt.subscribe(g_topics.update_auto_cmd, 1);
+
+  if (s_update_state_set) {
+    publish_checked("OTA", g_topics.update_state, s_update_state_cache, true);
+  }
+  if (s_update_auto_cache >= 0) {
+    publish_checked("OTA", g_topics.update_auto,
+                    s_update_auto_cache ? "ON" : "OFF", true);
+  }
+  return true;
+}
+
+bool publish_update_state_retained(const Topics& topics, const char* json_payload) {
+  if (!json_payload) return false;
+  /* Cache first so the reconnect republish always has the latest snapshot,
+   * even if the broker is down right now. */
+  strncpy(s_update_state_cache, json_payload, sizeof(s_update_state_cache) - 1);
+  s_update_state_cache[sizeof(s_update_state_cache) - 1] = '\0';
+  s_update_state_set = true;
+  if (!mqtt.connected()) return false;
+  return publish_checked("OTA", topics.update_state, s_update_state_cache, true);
+}
+
+bool publish_update_auto_retained(const Topics& topics, bool enabled) {
+  s_update_auto_cache = enabled ? 1 : 0;
+  if (!mqtt.connected()) return false;
+  return publish_checked("OTA", topics.update_auto, enabled ? "ON" : "OFF", true);
+}
+
+} // namespace canary::net

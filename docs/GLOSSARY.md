@@ -84,8 +84,16 @@ policy saying how many of them must sign for a break-glass request to
 authorize. Configured once, then rehearsed — see the Operator's Bench in
 the Lab.
 
-**The Vault** — The sealed store of raw snapshots that break-glass opens.
-→ [sealed snapshot vault](sealed_snapshot_vault.md)
+**The Vault** — The kernel's sealed store of raw frames that break-glass
+opens — by quorum, never by one person.
+→ [`spec/break_glass.md`](../spec/break_glass.md)
+
+**Sealed snapshot** — Not the Vault. One camera frame a canary-wap seals when
+an alarm it was armed for fires, encrypted to one person's X25519 key; the
+Canary keeps only the public half, so it cannot open its own file. Being
+single-recipient by construction, it is opened by that key's holder alone —
+with `tools/unseal_snapshot.py`, or on the iPhone app's Keys tab.
+→ [sealed snapshots](sealed_snapshot_vault.md)
 
 **Coarse timestamps** — Event times are bucketed (10-minute windows) on
 purpose, so the log can prove *that* something happened without becoming a
@@ -104,6 +112,17 @@ a pinned key* — nothing looser. Never use it to mean "probably fine," "seen," 
 
 **Presence** — The weaker claim: "I heard this device recently," self-reported
 and **unsigned**. Used for the nearby-device roster. Never a trust boundary.
+
+**On-glass only** — A Canary Display setting the LAN API refuses to write for
+every caller, token or not: `POST /api/set` answers
+`403 {"ok":false,"err":"on_glass_only"}` for `wx_direct` (the display's one
+opt-in outbound path, the standalone forecast) and `wx_loc` (the coarse
+location it uses), so a hand on the glass is the only thing that can flip
+them. `GET /api/settings` lists the class under `on_glass`; the display's LAN
+page and the iPhone app render it read-only, and neither ever carries the
+grid point — only whether one is stored.
+→ [the security model](security/SECURITY_MODEL.md#the-networked-products-disclosed-outbound-paths),
+[display settings](hardware/display_settings.md)
 
 **Randomart / trust card** — A drunken-bishop ASCII rendering of a device's key
 fingerprint, so a human can compare a device's identity at a glance instead of
@@ -173,8 +192,9 @@ airtight allowlist. → [`src/detect/backend.rs`](../src/detect/backend.rs),
 [inference backends](inference_backends.md)
 
 **`DetectionResult` / `Detection`** — What a backend may return: classes and
-boxes, never identity. `ObjectClass` is `Person | Vehicle | Animal | Package`
-— deliberately *not* `Face` or `LicensePlate`.
+boxes, never identity. `ObjectClass` is `Person | Vehicle | Animal | Package`,
+plus `Unknown` for a detection the backend could not class — deliberately
+*not* `Face` or `LicensePlate`.
 
 **`CandidateEvent` → `SealedEvent`** — A detection becomes a candidate event,
 then is sealed into the hash chain.
@@ -200,9 +220,9 @@ truth is [`firmware/build_matrix.json`](../firmware/build_matrix.json).
 | **Canary Vision** | shipping | Camera + on-device person detection, reports to Home Assistant. |
 | **Canary Sense** | shipping | Presence and breathing radar (60 GHz MR60BHA2) — care and wellbeing without a camera to point. |
 | **Canary Pool** | design | *Design-stage* — an outdoor pool/spa water-chemistry node (pH · ORP · water temp · TDS) that publishes to the fleet; the Dash already renders its cards. ESP32 + Atlas EZO or industrial differential probes. See [pool water-monitor research](research/pool_water_monitor.md). |
-| **Canary Sentinel** | design | *Phase 0 — fusion core host-tested, no released build.* Multi-sensor fusion guardian: PIR + radar + WiFi CSI + WiFi/BLE + light, scored for corroboration across physically independent channels. Lite / Standard / Heavy tiers. See `firmware/FIRMWARE_VARIANT_AUDIT.md`. |
+| **Canary Sentinel** | design | *Phase 1a — fusion core host-tested; the signed network/witness firmware is compile-gated in CI but has not run on hardware; no released build.* Multi-sensor fusion guardian: PIR + radar + WiFi CSI + WiFi/BLE + light, scored for corroboration across physically independent channels. Lite / Standard / Heavy tiers. See `firmware/FIRMWARE_VARIANT_AUDIT.md`. |
 | **Canary Display** | prototype | The wall displays and dashes — the ambient surface a household actually looks at. |
-| **Canary OTA** | software | The signed pull-update path, with rollback. |
+| **Canary OTA** | software | The signed update engine (`firmware/common/ota`): the daily pull path and, on the WAP, BLE OTA v2 — product and version under one Ed25519 release signature, the same anti-rollback floor, a BOOT-button rescue for downgrades — with A/B rollback. |
 | **Canary Fence Guard** | idea | *Concept — nothing builds yet.* Boundary/perimeter variant. |
 | **The Tin Can** | design | Design-stage kids' wrist Canary on the AMOLED watch board: two kids "tie a string" and knock at each other, with **no voice, no text, no location, no cloud**. The refusal list *is* the design. |
 | **The Night Watch** | design | Phase-0 bedside clock on the same AMOLED watch board. Ships `GoDark` — genuinely off, which only AMOLED allows — under one rule that outranks the owner's preference: *silence is never rendered as safety*, so fleet trouble or a clock unsure of the time breaks blackout every time. |
@@ -235,11 +255,17 @@ and [what still has to be true](BRAND.md) in the brand doc.
 Three separate channels, deliberately different trust models. Mixing them up is
 the most common misreading of this project.
 
-**Opera** — The household mesh protocol (ESP-NOW/BLE): how a household's own
-Canaries stay in sync. Requires WiFi association; `opera_secret` provisioning
-refuses to run on a device without flash encryption.
+**Opera** — The household mesh protocol: how a household's own Canaries stay
+in sync. It runs over ESP-NOW, which needs the radio on a shared channel but
+not an access-point association (the WiFi bridge and BLE fallback in the spec
+are not built, and the BLE control plane in the tandem doc is design only). An
+`opera_secret` is never written to or read back from NVS on a board without
+flash encryption (audit O2). That keeps the household secret off un-fused
+boards; it does **not** make it confidential at rest on fused ones, because
+flash encryption does not cover NVS.
 → [`spec/canary_mesh_network_v0.md`](../spec/canary_mesh_network_v0.md),
-[BLE mesh + Opera tandem](BLE_MESH_OPERA_TANDEM.md)
+[BLE mesh + Opera tandem](BLE_MESH_OPERA_TANDEM.md),
+[threat model](security/THREAT_MODEL.md#opera-mesh-household-trusted)
 
 **Chirp** — The community witness channel: neighbors corroborating an event,
 with ephemeral session keys (never persisted — that's the privacy firewall
@@ -323,8 +349,33 @@ unless chosen; with no screen attached the add-on simply won't start.
 [hub validation runbook](hub_validation_runbook.md)
 
 **The Witness Wall** — The Apple TV surface: the *verified record* on the shared
-screen for homes and venues, not a wall of live feeds.
-→ [tvOS docs](tvos/README.md)
+screen for homes and venues, not a wall of live feeds. It reads a hub's fleet
+roll-call (`GET /api/fleet`, next entry). From a Home Assistant add-on
+install that takes two steps: enable the kernel's 8799 host port (it ships
+disabled, and enabling it opens the roll-call to your LAN) and type
+`http://<host>:8799` into the Wall once. It says *Verified* only once it is
+paired: the operator mints a viewer token on the hub (`witness_api
+mint-viewer-token`), whose one-line receipt carries a token good for
+`GET /api/sealed-log` alone and the kernel's key, which the Wall pins; an
+unpaired Wall shows the devices' own report. The add-on has no control that
+mints one yet, so an add-on install gets the roll-call, not a walk.
+→ [tvOS docs](tvos/README.md),
+[Home Assistant setup](homeassistant_setup.md#witness-wall-the-fleet-roll-call),
+[viewer tokens](homeassistant_setup.md#viewer-tokens-witness-wall)
+
+**The fleet roll-call** — `GET /api/fleet`: the coarse fleet read a hub, a
+Canary WAP and a Canary Display each answer without a token (on the hub, the
+only route besides the `/health` liveness check that needs none), in coarse
+words only — name, online, chain verdict,
+product, and the per-room presence / occupants / breathing words while a peer
+is proven online; never an event, a zone or a key. From the Home Assistant
+add-on it lists the kernel first, then every Canary the MQTT bridge has heard
+and pinned. `online` means a signed, chain-advancing publish verified against
+the pinned key within the last 180 s — stronger than a heartbeat, not a
+liveness proof. Each source answers the CORS preflight; the hub admits
+browser pages from an origin allow-list, the boards any origin.
+→ [`tvos/discovery/DISCOVERY.md`](../tvos/discovery/DISCOVERY.md) (the
+contract), [`src/fleet_peers.rs`](../src/fleet_peers.rs)
 
 **The Verified Timeline card** — The Home Assistant Lovelace card that shows
 ✓-badged events on a dashboard. → [Lovelace timeline](lovelace_timeline.md)
@@ -350,8 +401,9 @@ failures, each written down once so it is never re-learned.
 
 **The witness dictionary** — [`spec/witness_dictionary.json`](../spec/witness_dictionary.json):
 one machine-readable source of truth for every vocabulary that is otherwise
-duplicated as constants across Rust, Python, JavaScript, and firmware C++.
-`scripts/lint_dictionary_sync.py` parses the real source in each language and
+duplicated as constants across Rust, Python, JavaScript, firmware C++ and
+Swift (the Apple apps' `EventVocabulary`). `scripts/lint_dictionary_sync.py`
+parses the real source in each language and
 fails CI if any copy drifts. To change a vocabulary, edit the dictionary first.
 
 **Anchor subject** — What an RFC 3161 anchor row says it covers: `chain_head`,
@@ -374,6 +426,45 @@ of requests. Stored as a `digest` anchor; proves nothing about any ledger.
 **Parity by architecture** — The rule that a fleet-wide capability lives in one
 host-tested `common/` core so a single edit reaches every board — never a
 per-board copy-paste. → [`docs/FLEET_PARITY.md`](FLEET_PARITY.md)
+
+**Device manifest** — `devices/<slug>/device.json`: one file per Canary that
+holds the ids the seven other device files use (board, envs, emulator twin,
+figure, CAD, flasher product) and, as **owner**, the board and module knobs
+its case is cut around (`cad.params`; `cad.also` names a second case file of
+the same build — the Vision's doorbell). `gen_cad_params.py` writes those
+knobs into the `.scad`, `scripts/lint_device_manifests.py` proves every join,
+and `scripts/regen_cad.py` runs everything downstream of an edit in order.
+→ [`devices/README.md`](../devices/README.md)
+
+**Broker TLS mode** — How a Canary's MQTT link is protected, one NVS byte:
+`0` plain (the default on every Canary with a broker link), `1`
+CA-verified, `2` SHA-256 fingerprint pin, `3` lab (no verification — chosen
+by name, warns on every connect). Stored as `mqtt_tls` (the CA in `mqtt_ca`,
+the pin in `mqtt_fp`) on canary-display / -sense / -vision, the
+`firmware/canary` flagship and the unreleased canary-sentinel's Phase 1a
+build, and as `mqtt.tlsmode` on canary-wap, which honors `0` and `1` only;
+the canary-display nightstand-c6 is built plain-only and refuses every mode
+but `0`. Fail-closed: a mode missing its CA or pin refuses to connect rather
+than downgrading. Per-variant truth:
+[`FIRMWARE_VARIANT_AUDIT.md`](FIRMWARE_VARIANT_AUDIT.md); compile-tested by
+CI and host-tested, not bench-tested against a TLS broker.
+
+**TLS pin** — `tls_cert_fp`: the SHA-256 fingerprint of a Canary's
+self-signed HTTPS certificate, on a Canary that serves HTTPS — a Canary WAP
+built with its HTTPS server, or a `firmware/canary` flagship built with
+`FEATURE_HTTPS` (its dev builds since 2026-09; off in release, not yet
+bench-tested). It is carried in the provisioning receipt (and the WAP's
+pairing QR). The iPhone app dials an https Canary only through that pin (an
+exact match on the leaf certificate) and refuses one it has no pin for. Not the
+broker pin (`mqtt_fp`, above), which protects the other direction.
+→ [`ios/README.md`](../ios/README.md)
+
+**The SBOM** — The software bill of materials. The firmware one,
+[`sbom/sbom-firmware.cdx.json`](../sbom/sbom-firmware.cdx.json), is derived
+from the build inputs by `scripts/gen_firmware_sbom.py`, committed,
+byte-gated and CycloneDX 1.5 schema-validated on every PR
+(`--check --validate`); the Rust and Node documents are produced in CI and
+attached to every release. → [`sbom/README.md`](../sbom/README.md)
 
 **Release buttons** — The operator's index of every release action, when to
 press it and when not to. The default is **Actions → "Update everything (only
@@ -401,7 +492,7 @@ event vocabulary and signed witness record stay identical across profiles.
 | "verified" loosely | "heard," "reported," "presence" | "Verified" is reserved for a checked Ed25519 signature against a pinned key. |
 | face recognition, plate reading, gait, re-ID, demographics | — | Not disabled — **absent**. Invariant II; never implement. |
 | "secure" as a bare adjective | the specific property | Say what can't happen and what still has to be true. |
-| performance claims without benchmarks | "varies by hardware; benchmark first" | Claims discipline; CI fact-tests enforce it on the site. |
+| performance claims without benchmarks | "varies by hardware; benchmark first" | Claims discipline. On the site, review keeps them out (no site test looks for them); here, `scripts/lint_bench_rows.py` fails the build on a pasted [benchmark](BENCHMARKS.md) table. |
 
 ---
 

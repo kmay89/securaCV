@@ -1,8 +1,11 @@
 // canary-local/emulator/src/emu_net.cpp — the LAN as a scenario.
 //
 // Replaces the firmware's ESP-specific net TUs (wifi_mgr, tz_auto,
-// ota_mgr, discovery, chirp_scan, provision) with implementations of the
-// same canary::net contracts, driven by page-side switches. The
+// ota_mgr, discovery, chirp_scan) with implementations of the same
+// canary::net contracts, driven by page-side switches. (provision.cpp —
+// the first-boot SoftAP + captive portal — is NOT here any more: it
+// compiles verbatim against the radio/WebServer/UDP shims in
+// emu_radio.cpp and emu_webserver.cpp.) The
 // semantics stay honest to the originals: a display that boots with no
 // reachable Wi-Fi finishes booting and the loop owns the retry (never a
 // reboot loop), while a link that once worked and stays down for
@@ -39,7 +42,6 @@
 #include "canary/net/ota_mgr.h"
 #include "canary/net/discovery.h"
 #include "canary/net/chirp_scan.h"
-#include "canary/net/provision.h"
 #include "canary/net/mqtt_mgr.h"
 #include "canary/net/glass_web.h"
 #include "network/wifi_join_policy.h"  // fleet-wide join/retry rules (common/)
@@ -197,11 +199,14 @@ int wifi_rssi() { return g_wifi_up ? g_rssi : 0; }
 // visitor never typed.
 JoinFailure wifi_last_failure() { return JoinFailure::Unknown; }
 
-// The setup fallback exists for credentials that are set but WRONG. The
-// emulator has no credentials to be wrong, and raising a SoftAP wizard in a
-// browser tab would be theater, so this is honestly false. (The shared rule
-// agrees: wifi_should_open_setup() never opens setup for JoinFailure::Unknown,
-// which is all this shim can ever report.)
+// The loop()-path re-raise exists for credentials that are set but WRONG.
+// This supervisor's link is the page's switch, not an association with the
+// stored credentials, so there is no wrong key for it to discover — honestly
+// false. (The shared rule agrees: wifi_should_open_setup() never opens setup
+// for JoinFailure::Unknown, which is all this shim can ever report.) The
+// FIRST-boot path is real: provision_needed() is the firmware's own
+// placeholder check, and provision_run() raises the SoftAP + captive portal
+// for the page's phone to walk.
 bool wifi_wants_setup() { return false; }
 
 // ── tz_auto contract ────────────────────────────────────────────────────
@@ -220,6 +225,27 @@ void tz_auto_tick(uint32_t) {
   configTzTime(g_tz_from_page, "");
   g_tz_applied = true;
   log_line("TZ", "Wall-clock zone learned from the page (emulated tz_auto).");
+}
+
+// A zone a human chose (the setup portal's picker; glass_web's /api/tz on
+// silicon). Same contract as tz_auto.cpp: refuse empty or >= 48 bytes, apply
+// now, stand the learner down. Kept for this emulated session in the page-zone
+// slot the boot path reads; not persisted, because the emulator's boot zone is
+// the page's (the visitor's own browser) on every power-on — see
+// tz_boot_string above.
+bool tz_set_manual(const char* posix) {
+  if (!posix || !posix[0] || strlen(posix) >= 48) return false;
+  snprintf(g_tz_from_page, sizeof(g_tz_from_page), "%s", posix);
+  configTzTime(g_tz_from_page, "");
+  g_tz_applied = true;
+  return true;
+}
+
+// The zone in force right now: tz_auto.cpp's answer (tz_boot_string with the
+// compiled seed), which here is the page's zone when it gave one.
+void tz_current(char* out, unsigned cap) {
+  if (!out || cap == 0) return;
+  tz_boot_string(CD_TZ, out, cap);
 }
 
 // ── ota_mgr contract ────────────────────────────────────────────────────
@@ -352,13 +378,5 @@ void glass_web_init() {
 void glass_web_tick(uint32_t) {}
 void glass_web_publish(const canary::fleet::Fleet&, uint32_t, bool, bool,
                        int, int, bool, bool, canary::ui::CanaryMood) {}
-
-// ── provision contract ──────────────────────────────────────────────────
-// The first-boot SoftAP + captive-portal walk is scenario wave 2 (it
-// needs a WebServer/DNSServer shim and a fake phone sheet). The emulated
-// device ships provisioned; commissioning (add-a-canary QR) is the live
-// pairing surface today.
-bool provision_needed() { return false; }
-void provision_run(bool) {}
 
 }  // namespace canary::net

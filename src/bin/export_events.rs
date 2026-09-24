@@ -39,9 +39,10 @@ struct Args {
     /// Ruleset identifier to bind export interpretation.
     #[arg(long, default_value = "ruleset:v0.1")]
     ruleset_id: String,
-    /// Device key seed (required).
-    #[arg(long, env = "DEVICE_KEY_SEED")]
-    device_key_seed: String,
+    /// Device key seed (must match witnessd). When absent, the seed file
+    /// witnessd keeps beside the database (`<db>.ed25519.seed`) is used.
+    #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
+    device_key_seed: Option<String>,
     /// Output file path for the export artifact.
     #[arg(long, default_value = "witness_export.json")]
     output: String,
@@ -165,19 +166,29 @@ fn main() -> Result<()> {
         ));
     }
 
+    // An export signs a receipt under the CURRENT device identity, so the seed
+    // must be the one witnessd runs with: the flag / DEVICE_KEY_SEED, else the
+    // seed file beside the database. Never generated here — an export must not
+    // mint an identity because it was pointed at the wrong path.
+    let device_key_seed =
+        witness_kernel::crypto::find_device_seed(&args.db_path, args.device_key_seed.as_deref())?
+            .map(|found| found.seed)
+            .ok_or_else(|| {
+                anyhow!(
+            "DEVICE_KEY_SEED must be set (or the seed file witnessd keeps beside {} must exist)",
+            args.db_path
+        )
+            })?;
+
     let cfg = KernelConfig {
         db_path: args.db_path.clone(),
         ruleset_id: args.ruleset_id.clone(),
         ruleset_hash,
         kernel_version: env!("CARGO_PKG_VERSION").to_string(),
         retention: Duration::from_secs(60 * 60 * 24 * 7),
-        device_key_seed: args.device_key_seed.trim().to_string(),
+        device_key_seed,
         zone_policy: ZonePolicy::default(),
     };
-
-    if cfg.device_key_seed.is_empty() {
-        return Err(anyhow!("DEVICE_KEY_SEED must be set"));
-    }
 
     let window = resolve_window(&args)?;
     let mut kernel = {

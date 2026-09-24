@@ -217,13 +217,63 @@ nothing.
 ## Where the two flashers differ, and why we say so
 
 Per CLAUDE.md's "two flashers, two frontends" rule, both get the cold-start
-gesture and the forced erase. One check is genuinely browser-only:
+gesture, the forced erase and the security-fuse read.
 
-**The desktop app cannot read eFuses.** It drives the `espflash` CLI as a
-sidecar, and `espflash` has no fuse-read command. Rather than silently omit
-it — a missing check reads as a passed check — the desktop app states the gap
-on the connect step. Closing it means either bundling `espefuse` or waiting for
-`espflash` to grow the command.
+**The desktop app reads eFuses natively — not through espflash.** The
+`espflash` CLI it drives as a sidecar cannot read one: the version both
+desktop apps bundle (3.3.0, pinned in
+[`.github/espflash-pins.env`](../.github/espflash-pins.env)) has no such
+command. Checked against the espflash 3.3.0 source (backlog item A12), not
+assumed:
+
+- Its subcommands are `board-info`, `checksum-md5`, `completions`,
+  `erase-flash`, `erase-parts`, `erase-region`, `flash`, `hold-in-reset`,
+  `monitor`, `partition-table`, `read-flash`, `reset`, `save-image` and
+  `write-bin`. None reads a register or an eFuse; `read-flash` reads the SPI
+  flash, which is not where eFuses live.
+- `board-info` prints the chip and its revision, the crystal, the flash size,
+  a features list and the MAC. It reads eFuses to get the revision and the
+  MAC, but prints none of the security fields (on the ESP32-S3, C3 and C6
+  its "features" are fixed strings), so there is nothing in its output to
+  parse.
+- The library underneath can send the ROM's `READ_REG` and names its
+  `GET_SECURITY_INFO` command, but 3.3.0 never sends the latter and exposes
+  neither on the command line — and the apps run the CLI, not the library.
+
+So the app speaks the read-only sliver of the ROM serial protocol itself
+([`desktop/src-tauri/src/efuse.rs`](../desktop/src-tauri/src/efuse.rs)),
+over the same `serialport` link the WE2 flasher and the monitor use: reset
+into the bootloader with the sequences the vendored esptool-js uses (the
+classic bridge sequence first, the USB-Serial/JTAG sequence if that finds
+nothing), `SYNC`, six `READ_REG`s at eFuse block 0, then a hard reset back
+into the firmware. Those are the only two commands the module can send —
+nothing in it writes, burns or uploads a stub — and a probe that cannot
+reach the ROM reports "not checked", never "clean". The flash engine stays
+espflash-the-CLI; this is six register reads, not a second flasher.
+
+The decode is a port of the browser's `intake.js`: the same fields, bit
+offsets and widths, the same parity rule for `SPI_BOOT_CRYPT_CNT`, the same
+clean / burned-and-undone / burned-in verdicts and the same words on screen.
+`canary-local/tests/desktop_parity.test.js` pins every `(key, bit, width)`
+between the two files — as a set and per chip — plus the block-0 geometry and
+each native `EFUSE_BASE` against the vendored esptool-js bundle, so the two
+tables cannot drift apart unnoticed. Where the browser reads the fuses
+automatically at intake, the desktop reads them on demand (the *Read its
+security fuses* button on the connect step), bound to the board it read them
+from and cleared when that board goes away; once read, a stop-level finding
+refuses both flash paths, as the browser's blocked confirm card does.
+
+Two other routes were considered and not taken: bumping the pinned espflash
+to 4.x, whose `board-info` prints a `GET_SECURITY_INFO` summary (a flags
+word, not the block-0 fields — it names neither `SECURE_VERSION` nor
+`DIS_DOWNLOAD_MANUAL_ENCRYPT`) at the cost of a new flash engine in both
+apps and a bench flash on every board; and bundling `espefuse` as a second
+sidecar with its own interpreter and pins.
+
+**Not bench-verified on hardware yet** (U1): the frames, the decode and the
+reset sequences are host-tested against the vendored esptool-js
+implementation, not proven on a physical board. A protocol mistake fails as
+"not checked", not as a wrong verdict.
 
 The desktop app **can** now read what firmware is resident: `board_passport`
 reads the partition table, otadata and the booted slot's `esp_app_desc_t` over

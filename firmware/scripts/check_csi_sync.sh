@@ -142,6 +142,26 @@ if [ -f "$GNSSTIME_CANONICAL" ]; then
     fi
 fi
 
+# Household time zone (repo sweep F28): same single-source pattern. The
+# canonical, header-only tz_rule (IANA -> POSIX table, rule validator, local
+# minute-of-day) lives at firmware/common/time/; the canary-wap sketch carries
+# a byte-identical staged copy so both firmware trees map a phone's zone to
+# the same rule and derive the same local day.
+TZRULE_CANONICAL="firmware/common/time/tz_rule.h"
+TZRULE_STAGED="$STAGED/tz_rule.h"
+if [ -f "$TZRULE_CANONICAL" ]; then
+    if [ ! -f "$TZRULE_STAGED" ]; then
+        echo "::error::Missing staged copy: $TZRULE_STAGED"
+        echo "         Run: cp $TZRULE_CANONICAL $TZRULE_STAGED"
+        drift=1
+    elif ! cmp -s "$TZRULE_CANONICAL" "$TZRULE_STAGED"; then
+        echo "::error::Drift detected: $TZRULE_STAGED differs from $TZRULE_CANONICAL"
+        echo "--- diff ($TZRULE_CANONICAL vs $TZRULE_STAGED) ---"
+        diff -u "$TZRULE_CANONICAL" "$TZRULE_STAGED" || true
+        drift=1
+    fi
+fi
+
 # ── One CSI HAL: the canary product's lib/securacv_csi is an adapter ──
 # firmware/canary/lib/securacv_csi/src/securacv_csi.cpp used to be a second
 # copy of csi_hal.cpp + csi_features.cpp (~1150 lines), kept equal to the
@@ -257,12 +277,62 @@ if [ -f "$ADAPTER_CPP" ]; then
     done
 fi
 
+# ── The SD event log's line format: one builder ──
+# Both trees write /EVENTS/today.ndjson and a tool reads either card, so the
+# line is built in exactly one place, csi_event_log_line.h (and its staged
+# copy): a second snprintf of the record would drift the moment one side
+# changed (backlog F37 moved the canary-wap's own copy there).
+EVLINE_FMT='\{\\"id\\":%lu,\\"first\\":'
+evline_hits=$(grep -rlE "$EVLINE_FMT" firmware --include='*.h' --include='*.cpp' --include='*.ino' \
+    | grep -v '/tests_host/' | sort)
+evline_want=$(printf '%s\n' "$CANONICAL/csi_event_log_line.h" "$STAGED/csi_event_log_line.h" | sort)
+if [ "$evline_hits" != "$evline_want" ]; then
+    echo "::error::The event-log line format is built outside csi_event_log_line.h:"
+    echo "$evline_hits" | sed 's/^/           /'
+    echo "         Call csi_event_log_line::marshal() instead of restating the format."
+    drift=1
+fi
+
+# ── The event log's owner file: one name, honored by both trees ──
+# A canary base binds its /EVENTS log to its witness key with an owner file
+# (csi_event_log_line.h kOwnerPath), and replays the log signed with that
+# key. The canary-wap writes no owner file, so it must leave a card that has
+# one alone. Otherwise its rows land in a canary's log, which the canary
+# then signs as its own, and it replays the canary's history as its own.
+owner_hits=$(grep -rlF '"/EVENTS/owner"' firmware --include='*.h' --include='*.cpp' --include='*.ino' \
+    | grep -v '/tests_host/' | sort)
+if [ "$owner_hits" != "$evline_want" ]; then
+    echo "::error::The event log's owner path is spelled outside csi_event_log_line.h:"
+    echo "$owner_hits" | sed 's/^/           /'
+    echo "         Name csi_event_log_line::kOwnerPath instead."
+    drift=1
+fi
+if ! grep -qF 'SD.exists(csi_event_log_line::kOwnerPath)' "$STAGED/csi_event_log.cpp"; then
+    echo "::error::$STAGED/csi_event_log.cpp must leave a canary's card alone:"
+    echo "         sd_path_ready() refuses the card when SD.exists(csi_event_log_line::kOwnerPath)."
+    drift=1
+fi
+
+# ── The SD event log backfill's glue (backlog F37) ──
+# test_csi_event_backfill.cpp runs the planner against a model. The model
+# refuses a live publish while the MQTT offline queue holds records, and
+# publishes the tamper bridge before it commits the row; it also hands the
+# planner the allocator's id floor and drops the backlog on a broker change.
+# Those are the firmware's job (securacv_mqtt.cpp, csi_event_egress.cpp),
+# and this check holds the source to them. Each run it also mutates the
+# source in memory, to prove the check bites.
+if ! python3 firmware/scripts/check_event_egress_order.py; then
+    drift=1
+fi
+
 if [ "$drift" -ne 0 ]; then
     echo ""
     echo "The committed copies under $STAGED/ must match their canonical sources,"
     echo "and the canary CSI library must stay a thin adapter over them."
     echo "Re-stage with: firmware/projects/canary-wap/setup.sh arduino"
+    echo "(An event-log owner or event egress order error above is a rule about the"
+    echo " source, not a copy: fix the code it names.)"
     exit 1
 fi
 
-echo "CSI + identity + witness-store + provision-qr + gnss-time library copies are in sync; the canary CSI adapter is thin."
+echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule library copies are in sync; the canary CSI adapter is thin; the event-log line has one builder and one owner file; the event egress keeps its order."

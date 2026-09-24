@@ -15,17 +15,19 @@ Optionally (--render, needs openscad) renders coarse PREVIEW meshes for a
 curated set of in-development designs into canary-local/enclosures/preview/
 so the lab can show them in 3D. These are explicitly preview meshes —
 docs/hardware/enclosure keeps its "committed STLs are print-validated"
-policy; nothing is written there.
+policy; nothing is written there. --check-previews (needs openscad; writes
+nothing) re-renders each one and fails if a committed mesh's bounding box no
+longer matches its source — the enclosure CI runs it.
 
-Run:  python3 canary-local/tools/gen_enclosures.py [--render]
+Run:  python3 canary-local/tools/gen_enclosures.py [--render | --check-previews]
 CI:   regenerates and diffs (drift gate, same idea as the emulator dist).
 """
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
+from _devices import load_manifests
 from _tooling import repo_root
 
 REPO = repo_root()
@@ -34,18 +36,58 @@ OUT_JSON = REPO / "canary-local/devices/enclosures.json"
 PREVIEW_DIR = REPO / "canary-local/enclosures/preview"
 
 # Which device each variant/design belongs to (the page groups by card).
-# "family" also drives the chooser's device↔enclosure pairing.
+# The MANIFESTS decide: every devices/<slug>/device.json lists the printable
+# sets its hardware takes in cad.enclosure_sets, and inverted that is the
+# attribution. `device` is the first claimant in slug order, homed on the Lab
+# card that presents it: the card its `lab.card` names (the Nightlight's
+# manifest is canary-display-nightlight-c3, its card canary-nightlight), else
+# its family's device when the family is itself a manifest (canary-vision is
+# the Vision page for the DevKit and XIAO S3 hosts too; the display line has
+# no family device, so each display manifest is its own). `devices` lists the
+# claimants whenever `device` alone does not say them (the 7" case is the
+# Dash 7's and the Nightstand 7's; the C3 case is the Nightlight card's and
+# its manifest's — the flasher looks a case up by the manifest slug). A set
+# no manifest claims is universal. `device` also drives the chooser's
+# device↔enclosure pairing (tests/chooser.test.js holds the chooser to it,
+# and scripts/lint_device_manifests.py every home to a registry.json card).
+MANIFESTS = load_manifests(REPO)
+SET_OWNERS: dict[str, list[str]] = {}
+for _slug, _m in MANIFESTS.items():              # slug order — "first" is stable
+    for _set in (_m.get("cad") or {}).get("enclosure_sets", []):
+        SET_OWNERS.setdefault(_set, []).append(_slug)
+
+
+def home(slug: str) -> str:
+    """The Lab card a manifest's sets land on: the one its `lab.card` names,
+    else its family's, when the family is a manifest of its own, else its
+    own slug. (scripts/lint_device_manifests.py and tests/chooser.test.js
+    carry the same rule.)"""
+    card = (MANIFESTS[slug].get("lab") or {}).get("card")
+    if card:
+        return card
+    fam = MANIFESTS[slug].get("family")
+    return fam if fam in MANIFESTS else slug
+
+
+# Name hints — consulted ONLY for a set no manifest claims, and never trusted
+# there: scripts/lint_device_manifests.py fails any set whose device no
+# manifest claims. So a new README row that LOOKS like a device's (a "WAP ·
+# mini") goes red until that device's manifest lists it, instead of being
+# homed by its name — the way the display cases once landed on the Watch and
+# Dash pages.
 DEVICE_OF = [
     (r"^WAP", "canary-wap"),
-    (r"^Vision", "canary-vision"),
+    (r"^Vision ·", "canary-vision"),     # the variant rows — not "Vision Pro mount"
     (r"^Sense", "canary-sense"),
     (r"Watch station", "canary-display-watch"),
     (r"Dashboard display", "canary-display-dash"),
-    # board-specific firmware-display cases → their display device page (not
+    # board-specific firmware-display cases → their own display device (not
     # universal, or they'd show on every WAP/Vision/Sense/hub page)
-    (r"7. touch dashboard case", "canary-display-dash"),   # ESP32-S3-Touch-LCD-7
-    (r"touch watch-display", "canary-display-watch"),      # ESP32-S3-Touch-LCD-1.69
-    (r"C6 display pocket", "canary-display-watch"),        # ESP32-C6-LCD-1.47 (glance)
+    (r"7. touch dashboard case", "canary-display-dash7"),         # ESP32-S3-Touch-LCD-7
+    (r"touch watch-display", "canary-display-touch169"),          # ESP32-S3-Touch-LCD-1.69
+    (r"C6 display pocket", "canary-display-nightstand-c6"),       # ESP32-C6-LCD-1.47
+    (r"S3 hallway stick", "canary-display-nightstand-s3"),        # ESP32-S3-LCD-1.47
+    (r"C3 pocket display", "canary-nightlight"),                  # ESP32-C3-LCD-1.47 (its card)
     (r"Sense bedside|Sense in-wall", "canary-sense"),
     (r"Thermal / outdoor", "canary-wap"),
     (r"Combo", "canary-vision"),
@@ -94,6 +136,25 @@ NON_PRODUCT_SCADS = {
     "canary_color_lib.scad",          # the COLORWAY registry — spool palettes,
                                       # not a part
 }
+
+
+def is_scratch_scad(name: str) -> bool:
+    """A throwaway .scad a generator writes BESIDE the case files while it
+    measures — never a product. scad_probe.py (gen_assembled_dims.py,
+    gen_hardware.py) renders from a hidden `.tmp_probe_<label>.scad` that
+    `include`s a case and deletes it afterwards, so running this generator
+    while one of those is on disk used to catalog a bogus product. Hidden
+    files and tmp-named files are skipped by name, whoever wrote them."""
+    return name.startswith(".") or name.lower().startswith(("tmp", "_tmp"))
+
+
+def case_scads(enc: Path | None = None) -> list[Path]:
+    """Every committed-looking .scad in the enclosure folder (ENC unless
+    given), sorted — the scratch files above excluded. NON_PRODUCT_SCADS (the
+    libraries and harnesses) is the catalog's further, curated exclusion."""
+    enc = ENC if enc is None else enc
+    return sorted(p for p in enc.glob("*.scad") if not is_scratch_scad(p.name))
+
 
 # Preview meshes rendered for in-development designs the device sheets
 # feature. part → -D part=<...>; coarse curves keep files small.
@@ -150,11 +211,32 @@ def part_note(filename: str) -> str:
     return "prints flat as modeled — no supports by design"
 
 
-def device_for(name: str) -> str | None:
+def device_for(name: str, set_id: str | None = None) -> str | None:
+    """The device a set belongs to: its first manifest claimant's home, else
+    the name hint (which the manifest lint then refuses). Without a set id —
+    the catalog's product titles — only the hints speak."""
+    owners = SET_OWNERS.get(set_id) if set_id else None
+    if owners:
+        return home(owners[0])
     for pat, dev in DEVICE_OF:
         if re.search(pat, name):
             return dev
     return None
+
+
+def attribution(name: str, set_id: str) -> dict:
+    """A set's `device`, plus `devices` — every claimant — whenever the
+    device alone does not name them all."""
+    owners = SET_OWNERS.get(set_id, [])
+    dev = device_for(name, set_id)
+    return {"device": dev, **({"devices": owners} if owners and owners != [dev] else {})}
+
+
+def serves(s: dict, dev: str) -> bool:
+    """Does set `s` belong on device `dev`'s page — its device, or any
+    manifest that claims it? (canary-local/assets/enclosure-sets.js is the
+    page-side twin.)"""
+    return dev == s.get("device") or dev in s.get("devices", ())
 
 
 # ── README variant tables ────────────────────────────────────────────────
@@ -195,7 +277,7 @@ def parse_tables(md: str):
         # The scad behind the parts: shared per family prefix.
         scad = None
         m = re.match(r"(canary_[a-z]+(?:_[a-z]+)*?)_(?:enclosure|doorbell)", stls[0]["file"])
-        candidates = sorted(ENC.glob("*.scad"))
+        candidates = case_scads()
         for sc in candidates:
             if stls[0]["file"].startswith(sc.stem):
                 scad = sc.name
@@ -211,12 +293,13 @@ def parse_tables(md: str):
             cand = ENC / f"{fam}_enclosure.scad"
             if cand.exists():
                 scad = cand.name
+        set_id = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
         sets.append({
-            "id": re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-"),
+            "id": set_id,
             "name": name,
             "for": re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", c[1]),
             "status": "released",
-            "device": device_for(name),
+            **attribution(name, set_id),
             "preview": preview_of(c[2]),
             "parts": stls,
             "scad": scad,
@@ -235,13 +318,14 @@ def parse_tables(md: str):
         if not srcs:
             continue
         scad = srcs[0]["file"]
+        set_id = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
         entry = {
-            "id": re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-"),
+            "id": set_id,
             "name": name,
             "for": raw.split("—", 1)[1].strip() if "—" in raw else "",
             "status": "in-development",
             "note": re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", c[1]),
-            "device": device_for(name),
+            **attribution(name, set_id),
             "preview": preview_of(c[2]),
             "parts": [],
             "scad": scad,
@@ -293,10 +377,20 @@ def parse_scad(path: Path):
             if em:
                 enum = re.findall(r'"([^"]*)"', em.group(1))
                 comment = comment[em.end():].strip()
-            rm = re.match(r"^\[(-?[\d.]+):(-?[\d.]+):(-?[\d.]+)\]", comment)
-            if rm:
+            # The range is the LAST [min:step:max] bracket anywhere in the
+            # comment — the rule gen_builder_manifest.parse_scad reads, so the
+            # house form `help  // [min:step:max]` reaches the Lab as well as
+            # the web builder. (Only a LEADING bracket used to count here: 43
+            # ranges the builder showed as sliders arrived in the Lab as a raw
+            # "// [..]" tail on the help. scripts/tests/test_enclosure_parsers.py
+            # holds the two parsers to one answer.)
+            rms = None if enum else list(re.finditer(
+                r"\[\s*(-?[\d.]+)\s*:\s*(-?[\d.]+)\s*:\s*(-?[\d.]+)\s*\]", comment))
+            if rms:
+                rm = rms[-1]
                 rng = [float(rm.group(1)), float(rm.group(2)), float(rm.group(3))]
-                comment = comment[rm.end():].strip()
+                comment = re.sub(r"\s*//\s*$", "",
+                                 (comment[:rm.start()] + comment[rm.end():]).strip())
             cur["params"].append({
                 "name": name, "default": val.strip('"'),
                 **({"enum": enum} if enum else {}),
@@ -308,23 +402,80 @@ def parse_scad(path: Path):
 
 
 # ── preview mesh rendering (openscad; coarse curves, binary STL) ─────────
-def render_previews():
-    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+# The render goes through docs/hardware/enclosure/scad_probe.py — the same
+# clean-render rule (ERROR/WARNING in the log = nothing was rendered) and the
+# same STL reader gen_assembled_dims.py measures with.
+sys.path.insert(0, str(ENC))
+import scad_probe  # noqa: E402
+
+# bbox agreement --check-previews requires, mm (gen_assembled_dims.py's TOL)
+PREVIEW_TOL = 0.01
+
+
+def _preview_jobs():
+    """(scad, out, -D defines) for every committed preview mesh, in order."""
     for scad, parts in RENDER_PRESETS.items():
         for part in parts:
             out = PREVIEW_DIR / f"{Path(scad).stem}_{part}.stl"
-            cmd = [
-                "openscad", "-o", str(out),
-                "-D", f'part="{part}"',
-                "-D", "$fa=6", "-D", "$fs=0.8",
-                "--export-format", "binstl",
-                str(ENC / scad),
-            ]
-            print("render:", out.name)
-            subprocess.run(cmd, check=True, capture_output=True)
+            yield scad, out, {"part": f'"{part}"', "$fa": "6", "$fs": "0.8"}
+
+
+def render_previews():
+    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    for scad, out, defines in _preview_jobs():
+        print("render:", out.name)
+        try:
+            scad_probe.render(ENC / scad, defines, keep=out, label=out.name)
+        except scad_probe.ProbeError as e:
+            sys.exit(f"gen_enclosures: {e}")
+
+
+def check_previews():
+    """The committed preview meshes still ARE their sources.
+
+    canary-local/enclosures/preview/*.stl are loaded by the Lab (the device
+    sheets' 3D cards, real-shapes.js, the assembly viewer) and were rendered
+    once by --render — and nothing re-rendered them: no workflow named the
+    folder, and one test pinned one drum diameter within 1.5 mm. A .scad
+    edit that moved a Watch or Dash part left the Lab showing the old shape
+    with every gate green. This re-renders each one exactly as --render does
+    and compares bounding boxes (deterministic, unlike OpenSCAD's STL bytes)
+    at PREVIEW_TOL; a missing or stray mesh fails too. Run in enclosure.yml,
+    where OpenSCAD is installed. Returns the process exit code."""
+    bad = []
+    want = set()
+    for scad, out, defines in _preview_jobs():
+        want.add(out.name)
+        rel = out.relative_to(REPO)
+        if not out.exists():
+            bad.append(f"{rel}: missing — run gen_enclosures.py --render")
+            continue
+        try:
+            fresh = scad_probe.render(ENC / scad, defines, label=out.name).bbox
+        except scad_probe.ProbeError as e:
+            bad.append(str(e))
+            continue
+        have = scad_probe.stl_bbox(out)
+        if any(abs(a - b) > PREVIEW_TOL for a, b in zip(fresh, have)):
+            bad.append(f"{rel}: committed {have} mm vs {fresh} mm rendered from {scad} "
+                       "— the source moved; run gen_enclosures.py --render and commit")
+        else:
+            print(f"ok: {rel} {have} mm")
+    for stray in sorted(PREVIEW_DIR.glob("*.stl")):
+        if stray.name not in want:
+            bad.append(f"{stray.relative_to(REPO)}: stray — no RENDER_PRESETS entry renders it")
+    for b in bad:
+        print(f"::error::{b}")
+    if bad:
+        return 1
+    print(f"preview meshes OK ({len(want)} parts)")
+    return 0
 
 
 def main():
+    if "--check-previews" in sys.argv:
+        # a check writes nothing — not the catalogs below, not the meshes
+        sys.exit(check_previews())
     md = (ENC / "README.md").read_text(errors="replace")
     sets = parse_tables(md)
     scads = {}
@@ -528,7 +679,9 @@ def resolve_recipe(formula, refs):
 
 def parse_assembly(md):
     """Every '## Assembly' block → numbered steps; device inferred from the
-    block's own vocabulary (deterministic keywords, tested)."""
+    block's own vocabulary (deterministic keywords, tested in
+    tests/assembly.test.js). Anything before the first numbered step — the
+    in-development blocks' status caveat — is prose, never a step."""
     out = {}
     for m in re.finditer(r"^## Assembly\s*$(.*?)(?=^## |\Z)", md, re.M | re.S):
         body = m.group(1)
@@ -538,21 +691,45 @@ def parse_assembly(md):
         if not steps:
             continue
         text = body.lower()
-        # The radar vocabulary comes FIRST because it is the most specific:
-        # a Sense block legitimately mentions the same magnets and discs the
-        # WAP and Vision nets match on, while nothing but the Sense says
-        # "radome" — with radar last, the Sense's own §Assembly would be
-        # claimed by whichever broader net matched first.
-        if "radar" in text or "mr60" in text or "radome" in text:
+        # The two display builds come FIRST: their blocks name the product in
+        # the caveat line, and the Watch's battery step says "LiPo", which the
+        # WAP net below would otherwise claim. Then the radar vocabulary,
+        # because it is the most specific of the rest: a Sense block
+        # legitimately mentions the same magnets and discs the WAP and Vision
+        # nets match on, while nothing but the Sense says "radome" — with
+        # radar last, the Sense's own §Assembly would be claimed by whichever
+        # broader net matched first.
+        if "watch station" in text or "round display" in text:
+            dev = "canary-display-watch"
+        elif "dashboard display" in text or "touch-lcd-4.3" in text:
+            dev = "canary-display-dash"
+        elif "radar" in text or "mr60" in text or "radome" in text:
             dev = "canary-sense"
         elif "ov5647" in text or "grove" in text or "lens" in text:
             dev = "canary-vision"
         elif "lipo" in text or "wire channel" in text or "magnet" in text:
             dev = "canary-wap"
         else:
-            continue
+            # A block no net claims used to be dropped here without a word —
+            # which is how two devices' steps sat unpublished. Refuse instead.
+            raise SystemExit(
+                "build.json: a README '## Assembly' block matches no device "
+                f"vocabulary (first step: {steps[0][:60]!r}) — add a net in "
+                "parse_assembly")
+        if dev in out:
+            raise SystemExit(
+                f"build.json: two README '## Assembly' blocks infer {dev} — "
+                "the second would silently replace the first")
+        # The prose above step 1 (an in-development block's status caveat)
+        # rides along as its own field, so every surface that shows the steps
+        # can show the caveat with them instead of dropping it.
+        caveat = re.split(r"^\d+\.\s", body, maxsplit=1, flags=re.M)[0]
+        caveat = re.sub(r"<[^>]+>", "", caveat)                       # anchors
+        caveat = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", caveat)     # links → text
+        caveat = re.sub(r"\s+", " ", re.sub(r"[*`]", "", caveat)).strip()
         out[dev] = {
             "source": "docs/hardware/enclosure/README.md §Assembly",
+            **({"caveat": caveat} if caveat else {}),
             "steps": steps,
         }
     return out
@@ -899,7 +1076,7 @@ def sets_as_packages(sets, dev, exclude=()):
     package (committed, print-validated); in-dev sets ride along marked."""
     out = []
     for s in sets:
-        if s["device"] != dev or s["id"] in exclude or not s["parts"]:
+        if not serves(s, dev) or s["id"] in exclude or not s["parts"]:
             continue
         out.append({
             "id": s["id"],
@@ -1018,9 +1195,13 @@ def workshop_main():
     n_pkgs = sum(len(d["packages"]) for d in devices.values())
     print(f"OK workshop.json: {len(devices)} devices, {n_pkgs} packages, "
           f"{n_opts} linked options")
+    return tuple(devices)
 
 
-workshop_main()
+# The devices the workshop configures — the catalog's "configure in the
+# workshop" link may name only one of these (workshop.js opens the WAP for a
+# device it does not know, so a link to any other device lands on the wrong one).
+WORKSHOP_DEVICES = workshop_main()
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -1309,8 +1490,8 @@ def variant_from_set(s: dict, product_scad: str) -> dict:
 def catalog_main():
     md = (ENC / "README.md").read_text(errors="replace")
     sets = parse_tables(md)
-    scad_files = sorted(p.name for p in ENC.glob("*.scad")
-                        if p.name not in NON_PRODUCT_SCADS)
+    scad_files = [p.name for p in case_scads()
+                  if p.name not in NON_PRODUCT_SCADS]
     scads = {name: parse_scad(ENC / name) for name in scad_files}
     # Environment rating parsed from each model's own `// @env` header line.
     env_by_scad = {name: parse_env((ENC / name).read_text(errors="replace"))
@@ -1371,11 +1552,19 @@ def catalog_main():
     for scad in scad_files:
         parsed = scads[scad]
         my_sets = sets_by_scad.get(scad, [])
-        # Canonical device ids; universal (nullable) sets normalize to _universal.
-        devices = sorted({s.get("device") or UNIVERSAL_ID for s in my_sets})
+        # Canonical device ids — every manifest that claims one of the
+        # product's sets; universal (nullable) sets normalize to _universal.
+        devices = sorted({d for s in my_sets
+                          for d in (s.get("devices") or [s.get("device") or UNIVERSAL_ID])})
         family = (device_for(parsed["title"])
                   or (devices[0] if devices and devices != [UNIVERSAL_ID] else None)
                   or "universal")
+        # The workshop page that takes this product: the first workshop device
+        # one of its sets serves (its home or a claimant — the predicate the
+        # workshop's own packages use). None when no workshop device does: the
+        # display cases homed on their own boards have no workshop yet.
+        workshop = next((d for d in WORKSHOP_DEVICES
+                         if any(serves(s, d) for s in my_sets)), None)
         options = catalog_options(parsed, scad)
         vaxes = variant_axes_of(parsed)
         variants = [variant_from_set(s, scad) for s in my_sets]
@@ -1395,6 +1584,7 @@ def catalog_main():
             "title": parsed["title"],
             "family": family,
             "device_compat": devices,
+            "workshop": workshop,
             "class": "primary" if variants else "accessory",
             **({"env": env_by_scad[scad]} if env_by_scad.get(scad) else {}),
             "fit": "standard",  # → the shared tier (top-level `fit`)

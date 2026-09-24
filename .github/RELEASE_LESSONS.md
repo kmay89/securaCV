@@ -12,6 +12,152 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-09-23 (c) — A file an app embeds from outside its directory is an input its watch must name
+
+- **Symptom (caught before it was paid for):** hardening the Pi hub's
+  provisioning executor and host runner changed bytes the desktop Flasher
+  ships. `desktop/hub-io/src/provision.rs` embeds them with `include_str!`,
+  and the Flasher seeds them onto the hub's card. Yet a change to those
+  files alone would have left "Update everything" calling the Flasher
+  unchanged: its watch named `desktop` and the files `build.rs` copies, not
+  these five, and the planner decides "changed" only by a git diff over the
+  watch.
+- **Cause:** the watch follows what `build.rs` copies, and the
+  2026-09-23 (b) test covers the pins files a release workflow reads.
+  Nothing covered a file that a crate the app links by path embeds by
+  literal path from outside the app's directory.
+- **Fix:** the Flasher's watch now names
+  `canary-local/devices/hub_seed.json`,
+  `canary-local/devices/hub_provision_bundle.json`,
+  `canary-local/tools/hub_seed_apply.py`,
+  `canary-local/tools/hub_host_provision.sh` and
+  `homeassistant/frigate/config.yaml`. A new test,
+  `test_release_plan.py`'s
+  `test_every_file_a_desktop_app_embeds_is_in_its_watch`, follows each
+  desktop app's `Cargo.toml` path dependencies transitively. It fails when
+  the target's watch does not cover a linked crate's directory, or a file
+  that an `include_str!`/`include_bytes!` literal in that crate's `src/`
+  names. It sets aside the `concat!(env!("OUT_DIR"), …)` form, which reads a
+  `build.rs` copy the watch comments already track, and fails on any other
+  form it cannot read rather than skipping it.
+- **When that test runs (a gap still open when this was written):** only
+  `workflows-lint.yml` (on a `.github` change) and "Update everything"'s
+  "Self-test the decision engine" step run it. So a PR that adds an
+  unwatched embed or path dependency under `desktop/` or `desktop-lab/`,
+  and touches nothing under `.github`, never runs it. The first failure is
+  then the next press of the button, which dispatches nothing, firmware
+  included. The closing edit is to name the files the test reads (each
+  linked crate's `Cargo.toml` and `src/`) in `workflows-lint.yml`'s two
+  path lists.
+- **What the next press shows:** nothing this change caused. When this
+  was written, the Flasher was already NEEDS_BUMP: `desktop/` had moved since
+  `flasher-v0.11.9` (so had four of the five newly watched files), and
+  `desktop/src-tauri/tauri.conf.json` still said 0.11.9. The new lines add
+  reasons to that state; they do not create it. The lasting effect comes
+  after the next Flasher release: from then on, a change to the hub bundle
+  alone reports the Flasher as changed, where before it reported nothing
+  to do.
+- **Applies to:** the Flasher and the Lab. The Lab already watches all of
+  `canary-local`, `desktop/flash-engine` and `desktop/hub-core`, and the
+  test now pins those two crate lines, since it reaches hub-core only
+  through flash-engine. A future Apple target that bundles a file by path
+  belongs in the same test.
+
+## 2026-09-23 (b) — A second app bundling the same sidecar is two pins, two udev paths and two configs
+
+- **Symptom (caught before it was paid for):** the Lab gained the Flasher's
+  native USB flashing (A14) — the same `espflash` sidecar, spawned through the
+  shared `desktop/flash-engine`. Copying the Flasher's bundling naively would
+  have shipped three latent failures at once: (1) a second
+  `ESPFLASH_VERSION` + three `ESPFLASH_SHA256_*` pins in a second workflow,
+  free to drift from the Flasher's, so the two apps could flash with
+  different engines; (2) a Lab `.deb` installing the Flasher's udev rule at
+  the Flasher's path, `/usr/lib/udev/rules.d/61-securacv-canary.rules` —
+  and dpkg refuses to install a package that owns a path another installed
+  package already owns, so anyone with both apps would have had the second
+  install fail; (3) `externalBin` in the Lab's `tauri.conf.json`, which
+  tauri-build enforces for EVERY target it builds — including the iPad
+  shell's local recipe (`desktop-lab/MOBILE.md`), which would have died on a
+  missing `espflash-aarch64-apple-ios` that nothing could ever provide.
+- **Cause:** a sidecar is more than a binary. It is a pin set in a release
+  workflow, a Linux access rule in a package, and a config key the build
+  script checks — and each of those has an identity (a value, a path, a
+  target list) that a copy duplicates.
+- **Fix:** `desktop-release.yml` carries the Flasher's bundling steps with
+  only the sidecar directory swapped, and
+  `canary-local/tests/desktop_parity.test.js` holds the two step bodies
+  equal across the two workflows. (The four pins were first copied into
+  both workflows and held equal by that test; they now live in one file —
+  see "Closed" below.) The udev rule is ONE file,
+  byte-equal in both apps (asserted), installed under two names
+  (`61-securacv-canary.rules` from the Flasher, `61-securacv-lab.rules` from
+  the Lab) — the rules are idempotent, so both present changes nothing.
+  The Lab's `externalBin` lives in `tauri.macos.conf.json` and
+  `tauri.linux.conf.json` (merged per target), the two platforms the release
+  bundles, and the Lab's `native_capabilities().serial` is scoped to the
+  same two, never to "any desktop". And both
+  workflows' macOS steps now prove the per-arch sidecars are their arch and
+  the universal one carries both — lesson (z) applied to `espflash`, which
+  had only ever been `file`'d.
+- **Review follow-up (same day):** the Linux step had only ever been
+  `file`'d too — both workflows now fail unless it reports an x86-64 ELF —
+  and the `cargo install` fallback, which no sha256 pin covers, ran on any
+  `curl` failure without a word; on both platforms, in both workflows, it
+  now prints a `::warning::`. The rule's two hand copies (the AppImage
+  heredocs in both `INSTALL.md`s) are held to the rules file by
+  `desktop_parity` too. And "the platform bundles it" is not "it is here":
+  the Lab's `serial` is also a runtime check that the sidecar is a
+  non-empty executable file where the spawn looks, so a dev build on the
+  empty compile-only stub never lights a bench that can only fail at spawn.
+- **Closed (A21, same day):** the gap this entry left open — the pins
+  lived only inside the two workflows, and neither app's
+  `release-targets.yml` watch covered them, so a pin bump alone marked
+  neither app as changed and "Update everything" reported "nothing to do"
+  for a new flash engine — is shut. `ESPFLASH_VERSION` and the three
+  `ESPFLASH_SHA256_*` live in ONE file, `.github/espflash-pins.env`, which
+  both workflows read in an identical "Load the espflash pins" step
+  (parsed, never sourced: only the four keys, each in its shape, reach
+  `$GITHUB_ENV`, and a missing, doubled, malformed or stranger line fails
+  the release) before either bundle step, which keep their sha256 checks
+  and lipo / x86-64 proofs unchanged. Both apps' watches name the file.
+  `desktop_parity` holds the step equal across the workflows, refuses a
+  second copy of any pin in either one, and RUNS the step against the
+  real file and seven bad ones; `test_release_plan.py` fails any target
+  whose release reads a `.github/*.env` its watch doesn't name.
+- **Applies to:** every sidecar a second app bundles (espflash today;
+  rpiboot if the Lab ever flashes a Pi), and every packaged file two apps
+  share. Pin shared values in one file both workflows read, and name that
+  file in every app's watch that ships it — a value inside a workflow is a
+  release input no watch can see; give each package its own installed path
+  for a shared file; and scope a build-script-enforced key to the targets
+  that can satisfy it.
+
+## 2026-09-23 — A `-sys` crate that links nothing can still crash the app
+
+- **Symptom (caught before it was paid for):** the Lab's menu bar companion
+  turned on tauri's `tray-icon` feature. On Linux that brings in
+  `libappindicator-sys`, and the 2026-09-21 rule below ("diff the new
+  `-sys` deps against the apt block") found nothing to install — the crate
+  has no build script and links no library. It `dlopen`s
+  `libayatana-appindicator3` the first time a tray is built and **panics**
+  when no candidate loads; with the Lab's `panic = "abort"` release profile
+  that is a crash at launch on any desktop without the library (an AppImage
+  on a minimal distro, a `.deb` forced in without its depends).
+- **Cause:** a runtime-loaded library is invisible to every build-time
+  check. The build is green, the tests are green, and the dependency exists
+  only as a string inside the crate's loader.
+- **Fix:** the Lab's `.deb` depends on `libayatana-appindicator3-1`
+  (`tauri.conf.json`, asserted by `canary-local/tests/lab_settings.test.js`
+  whenever the feature is on), and `companion.rs` probes the loader's own
+  four library names with the same `libloading` before building the tray —
+  no library, no tray, the app runs on. **The general rule:** when a new
+  `-sys` crate shows up in the 2026-09-21 diff, read its source for
+  `dlopen`/`libloading` as well as its build script; a runtime library
+  belongs in the package's depends, and a loader that panics needs a probe
+  in front of it.
+- **Applies to:** the Lab (fixed). The Flasher carries no tray; if it ever
+  gains one, it needs the same depends line and the same probe.
+
 ## 2026-09-21 — A new native crate is a release-workflow edit, not just a Cargo.toml line
 
 - **Symptom (caught before it was paid for):** adding `serialport` to the
@@ -20,8 +166,11 @@ any platform.
   release build: the crate pulls `libudev-sys`, whose build script needs the
   `libudev-dev` system package, and the Lab's release workflow
   (`desktop-release.yml`) did not install it. Nothing on a PR would have
-  said so — `desktop-lab/src-tauri` has no PR-triggered CI; the first red
-  signal would have been the release run itself.
+  said so — `desktop-lab/src-tauri` had no PR-triggered CI; the first red
+  signal would have been the release run itself. (Closed 2026-09-22:
+  `desktop-lab-check.yml` now compiles, lints and tests the crate on every
+  PR that touches it or what it bundles, with the release workflow's own
+  apt block, so a crate that outgrows that block fails on the PR.)
 - **Cause:** each app's release workflow carries its own hand-listed
   Linux `apt-get install` block, and a crate's system-library needs live in
   the crate, not the workflow — so adding a dependency silently outgrows

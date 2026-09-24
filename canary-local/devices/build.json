@@ -180,7 +180,7 @@
       "mpn": "59140-1-S-02-A",
       "mfr": "Littelfuse",
       "usd": 1.8,
-      "notes": "TAMPER_PIN_DEFAULT=GPIO4 (D3), INPUT_PULLUP active LOW. FIRMWARE: FEATURE_TAMPER_GPIO defined but NOT yet consumed - needs firmware support, OR use securacv_touch enclosure-tamper mode. GPIO4 shared with touch default (see build plan 5.1). Hermetic glass = wide-temp, near-zero idle current",
+      "notes": "TAMPER_PIN_DEFAULT=GPIO4 (D3), INPUT_PULLUP; TAMPER_ACTIVE LOW = enclosure open (the NC reed is held open by MAG1 while the lid is on). FIRMWARE: read and narrated as the enclosure tamper kind when built with FEATURE_TAMPER_GPIO=1 - off in shipped builds until the pin is bench-validated. GPIO4 shared with the canary build's touch default (see build plan 5.1). Hermetic glass = wide-temp, near-zero idle current",
       "orderable": true,
       "live": {
        "unit_usd": 3.76,
@@ -407,14 +407,14 @@
      },
      {
       "ref": "SCR3",
-      "qty": "4",
+      "qty": "8",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 self-tapping screw, FLAT (countersunk) head, 8-10mm (printed-enclosure lid)",
-      "mpn": "M2X8-ST-CSK",
+      "desc": "M2 self-tapping screws, 8-16mm: FLAT (countersunk) head indoors, PAN head on the Outdoor build (printed-enclosure lid + sun shield)",
+      "mpn": "M2X8-ST-MIX",
       "mfr": "Generic",
-      "usd": 0.2,
-      "notes": "For the 3D-printed enclosure corner posts (enclosure/ v0.7) - the lid seats are countersink cones, so use flat-head. Max ~0.3 N-m or the printed posts strip",
+      "usd": 0.4,
+      "notes": "Driven up from the seats in the BACK into the lid bosses so the lid face is unbroken: 4x flat 12mm (compact) / 16mm (battery); the Outdoor build takes 4x PAN 12mm over O-rings (ORG1) plus 4x flat 12mm for the sun shield into the lid's blind pilots. Max ~0.3 N-m or the printed bosses strip",
       "orderable": false
      },
      {
@@ -488,12 +488,24 @@
       "usd": 0.4,
       "notes": "Service-grade lid threads: set screw_insert=true in the enclosure (posts auto-fatten), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws instead of SCR3 self-tappers",
       "orderable": false
+     },
+     {
+      "ref": "ORG1",
+      "qty": "4",
+      "required": false,
+      "category": "Sealing",
+      "desc": "O-ring 2 mm ID x 1 mm CS (M2 screw-head seal, printed enclosure)",
+      "mpn": "OR-2X1-NBR70",
+      "mfr": "Generic",
+      "usd": 0.2,
+      "notes": "Outdoor build: one under each of the 4 lid screws' pan heads, in the glands the back seats carry (canary_wap_enclosure e_gland). NBR or silicone 70A",
+      "orderable": false
      }
     ],
     "required_usd": 25.99,
-    "full_usd": 101.98,
+    "full_usd": 102.38,
     "required_usd_live": 27.9,
-    "full_usd_live": 116.45,
+    "full_usd_live": 116.85,
     "pricing_as_of": "2026-09-02T13:37:16Z",
     "recipes": [
      {
@@ -506,6 +518,7 @@
       "label": "Printed-enclosure weather kit",
       "refs": [
        "SCR3",
+       "ORG1",
        "CW1",
        "ADH1",
        "PLUG1",
@@ -514,7 +527,7 @@
        "VENT1",
        "LP1"
       ],
-      "usd": 11.55,
+      "usd": 11.75,
       "note": "Splash-resistant (~IP54) printed case, enclosure/ v0.7 - NOT a substitute for ENC1 outdoors"
      }
     ]
@@ -526,7 +539,7 @@
      "Press the PCB straight down until the four edge clips snap over it, USB-C aligned to the wall cutout — no screws needed for the board. (To remove, gently splay the clips outward and lift.)",
      "Press a 6 mm magnet into the lid pocket (press fit — a drop of CA glue makes it permanent); add a GORE vent over the seat if sealing; press the light pipe into the LED port.",
      "(weather mode) Seat the TPU gasket in the rim groove; glue the clear disc into the camera seat.",
-     "Close the lid (lip nests into the base) and drive 4 × M2 screws — snug diagonally first, then final quarter-turns. Don't crank them: M2 self-taps strip printed posts beyond ~0.3 N·m (two fingers on the short end of the driver is plenty)."
+     "Close the lid (lip nests into the base), turn the case over and drive the 4 × M2 screws up through the seats in the back into the lid's bosses — the lid face stays unbroken (the Outdoor preset keeps its screws on the lid, under the sun shield) — snug diagonally first, then final quarter-turns. Don't crank them: M2 self-taps strip printed posts beyond ~0.3 N·m (two fingers on the short end of the driver is plenty)."
     ]
    }
   },
@@ -752,14 +765,14 @@
      },
      {
       "ref": "SCR5",
-      "qty": "8",
+      "qty": "10",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 self-tapping screws, 6-10mm: 4x pan head (camera posts) + 4x head per case (front corners)",
+      "desc": "M2 self-tapping pan-head screws: 4x 6mm (camera posts) + 4-6x 12-25mm per case (front corners, driven from the back; 6 on the sealed builds)",
       "mpn": "M2X8-ST-MIX",
       "mfr": "Generic",
-      "usd": 0.4,
-      "notes": "4x 6mm PAN for the OV5647 posts. Front corners: FLAT/countersunk head on the Vision case (cone seats), PAN head on the doorbell face (flat counterbores). Max ~0.3 N-m",
+      "usd": 0.5,
+      "notes": "4x 6mm for the OV5647 posts. Front corners, driven up from the seats in the BACK into the face bosses so the face is unbroken: 20mm on the XIAO Vision (25mm Outdoor, 6 of them for its mid-span gasket posts), 12mm on the DevKit build, 6x 20mm on the doorbell. Max ~0.3 N-m",
       "orderable": false
      },
      {
@@ -857,12 +870,24 @@
       "usd": 0.4,
       "notes": "Doorbell rear cable exit; pair with a right-angle USB-C plug",
       "orderable": false
+     },
+     {
+      "ref": "ORG1",
+      "qty": "6",
+      "required": false,
+      "category": "Sealing",
+      "desc": "O-ring 2 mm ID x 1 mm CS (M2 screw-head seal, printed enclosure)",
+      "mpn": "OR-2X1-NBR70",
+      "mfr": "Generic",
+      "usd": 0.3,
+      "notes": "Outdoor Vision and doorbell: one under each back screw's pan head (6 with the mid-span gasket posts), in the glands the sealed back seats carry (e_gland). NBR or silicone 70A",
+      "orderable": false
      }
     ],
     "required_usd": 28.69,
-    "full_usd": 80.25,
+    "full_usd": 80.65,
     "required_usd_live": 29.49,
-    "full_usd_live": 91.93,
+    "full_usd_live": 92.33,
     "pricing_as_of": "2026-09-02T13:37:16Z",
     "recipes": [
      {
@@ -882,7 +907,7 @@
        "NUT1",
        "CW2"
       ],
-      "usd": 41.74,
+      "usd": 41.84,
       "note": "Wall/tripod-mountable unit with adjustable hinge; add WAP weather-kit items for sealing"
      }
     ]
@@ -894,7 +919,7 @@
      "(xiao host) Seat the XIAO in the module's socket — both USB-C ports must face the same direction; backwards seating feeds power into GPIO and can kill either board (device guide §3). Click the stack into the tall side rails, module up, both ports aligned to the two bottom-wall openings (model port above, firmware port below). (devkit host) Click the Vision AI V2 and the DevKitM-1 into their snap-clip cradles (DevKit USB-C down, aligned to the wall opening); the module's own USB-C faces the middle gap — open the case to reflash models.",
      "Route the camera FPC to the module's CSI connector (and, devkit host, the Grove cable across the middle gap to the DevKit pins).",
      "(weather) Seat the TPU gasket in the rim groove.",
-     "Close the front (lip nests into the back) and drive the 4 × M2 corner screws — snug diagonally, then final quarter-turns.",
+     "Close the front (lip nests into the back), turn it over and drive the M2 corner screws up through the seats in the back into the front's bosses (4, or 6 on the Outdoor preset) — the face stays unbroken — snug diagonally, then final quarter-turns.",
      "Screw the bracket to the wall (or a tripod plate via the 1/4-20 nut), slot the case prongs into it, set the angle, tighten the M5 thumbscrew."
     ]
    }
@@ -974,11 +999,11 @@
       "qty": "4",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 self-tapping screw, FLAT (countersunk) head, 8-10mm (printed-enclosure lid)",
-      "mpn": "M2X8-ST-CSK",
+      "desc": "M2 self-tapping screw, PAN head, 16mm (printed-enclosure front)",
+      "mpn": "M2X16-ST-PAN",
       "mfr": "Generic",
       "usd": 0.2,
-      "notes": "For the printed Sense enclosure posts (canary_sense_enclosure.scad); max ~0.3 N-m or the printed posts strip",
+      "notes": "For the printed Sense enclosure (canary_sense_enclosure.scad): driven up from the seats in the BACK into the radome front's bosses, so the front is unbroken. Max ~0.3 N-m or the printed bosses strip",
       "orderable": false
      },
      {
@@ -1016,12 +1041,24 @@
       "usd": 0.2,
       "notes": "Printed perimeter gasket for the sealed radome preset (opt_seal); 2 perimeters, 100% infill, slow. Radar sees through plastic — no window, no vent needed",
       "orderable": false
+     },
+     {
+      "ref": "ORG1",
+      "qty": "4",
+      "required": false,
+      "category": "Sealing",
+      "desc": "O-ring 2 mm ID x 1 mm CS (M2 screw-head seal, printed enclosure)",
+      "mpn": "OR-2X1-NBR70",
+      "mfr": "Generic",
+      "usd": 0.2,
+      "notes": "Sealed build (opt_seal): one under each back screw's pan head, in the glands the back seats carry (e_gland); 6 with seal_mid_posts. NBR or silicone 70A",
+      "orderable": false
      }
     ],
     "required_usd": 36.4,
-    "full_usd": 40.0,
+    "full_usd": 40.2,
     "required_usd_live": 36.4,
-    "full_usd_live": 41.96,
+    "full_usd_live": 42.16,
     "pricing_as_of": "2026-09-02T13:37:16Z",
     "recipes": [
      {
@@ -1051,7 +1088,7 @@
      "Click the carrier into the snap rails, antenna face toward the front, until the +Y end stops locate it — the stops are what keep the antenna under the radome window, so push it home against them.",
      "Press the light pipe into the WS2812 port; when sealing, glue a clear disc behind the lux aperture (the BH1750 needs to see room light) and stick a GORE-type membrane over any vent seat.",
      "(weather mode) Seat the TPU gasket in the rim groove.",
-     "Close the radome front (lip nests into the back; the window must land over the antenna array) and drive the 4 × M2 corner screws — snug diagonally first, then final quarter-turns, never past ~0.3 N·m.",
+     "Close the radome front (lip nests into the back; the window must land over the antenna array), turn it over and drive the 4 × M2 corner screws up through the seats in the back into the front's bosses — snug diagonally first, then final quarter-turns, never past ~0.3 N·m.",
      "Mount it: slot the hinge prongs into the shared Vision bracket and set the angle (bedside ≤ 1.5 m for the wellbeing channel), or hang the blind keyholes — ceiling-mount the MR60FDA2 fall build facing straight down."
     ]
    }
@@ -1168,6 +1205,17 @@
     "required_usd_live": 34.99,
     "full_usd_live": 44.14,
     "pricing_as_of": "2026-09-02T13:37:16Z"
+   },
+   "assembly": {
+    "source": "docs/hardware/enclosure/README.md §Assembly",
+    "caveat": "Watch station — v0.2-dev, in development. Render- and mesh-checked, not print-validated: these steps follow the CAD (canary_watch_station.scad), not a built unit. Measure your display disc (disc_d) and the XIAO's USB position before you print.",
+    "steps": [
+     "Set the stand on the desk. It prints upright with no supports: a full-depth divot bored normal to the 25° reclined face, two thumb scallops to lift the puck back out, and a chin slot that passes the USB-C cable into the open channel under the base. (Wall-mounting instead? Skip the stand — the drum's blind keyhole hangs the puck on a single screw.)",
+     "Rest the drum in the cradle. It sinks 11 mm into the divot, so it cannot rock or roll, and its USB slot lands in the chin channel.",
+     "Pin the XIAO ESP32-S3 into the Round Display's back socket. It rides the display's own two 7-pin headers — component side away from the display, USB-C at the disc edge. Zero wiring: the display's charger, RTC and microSD come along.",
+     "Lower the stack into the bore, display face up, USB-C aligned to the side slot. The Ø43.0 disc slides down the Ø44.4 bore (measured from the vendor CAD — the disc is 43 mm, not the marketing 39) and its trim ring stops 0.4 mm below the rim. (battery build, opt_batt) Before you lower it, tape the protected LiPo between the fence rails on the drum floor and plug it into the display's JST 1.25 — check the polarity first; vendor pigtails vary.",
+     "Snap the bezel home. Its skirt drops into the bore over the disc edge and the four nubs click into the wall slots — no fasteners. The aperture shows the full glass and lands on the display's trim ring; to open it again, lift the bezel at the fingernail notch in the drum rim."
+    ]
    }
   },
   "canary-display-dash": {
@@ -1264,6 +1312,17 @@
     "required_usd_live": 42.5,
     "full_usd_live": 45.5,
     "pricing_as_of": "2026-09-02T13:37:16Z"
+   },
+   "assembly": {
+    "source": "docs/hardware/enclosure/README.md §Assembly",
+    "caveat": "Dashboard display case — in development. Render- and mesh-checked, not print-validated: these steps follow the CAD (canary_dash_display.scad), not a built unit, and its panel dimensions are nominal — measure your Waveshare ESP32-S3-Touch-LCD-4.3 before you print.",
+    "steps": [
+     "Set the desk cradle down. It prints flat with no hardware: the front lip and back rail form the bottom-edge channel and the fin takes the 25° lean. (Wall-mounting instead? Screw the printed wall cradle to the wall with its two screws; the finished case clicks onto it.)",
+     "Lay the bezel frame face-down — it prints that way, so the A-surface is your build plate. Its 2.5 mm lip retains the glass; the USB-C slot is in the bottom wall and the chimney vents are in the top wall.",
+     "Drop the 4.3″ panel in face-first: the glass lands against the bezel lip, the rear stack faces you, and the USB-C port lines up with the bottom-wall slot. Waveshare publishes no full mechanical drawing, so the pocket is cut to nominal numbers — if the panel binds or rattles, measure it and re-render before you go further.",
+     "Close the vented back, dock pads facing out — they are what clicks onto the wall cradle.",
+     "Drive the 4 × M2 × 8 self-tappers from the back, through the counterbores and into the corner lobes outside the panel cavity — snug diagonally first, then a final quarter-turn. Don't crank them: M2 self-taps strip printed posts beyond ~0.3 N·m."
+    ]
    }
   }
  }

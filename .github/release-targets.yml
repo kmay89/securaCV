@@ -95,6 +95,24 @@ targets:
       - canary-local/devices/flash.json
       - canary-local/devices/hub_image.json
       - canary-local/devices/hatch.json
+      # …and what hub-io bakes in with include_str! (desktop/hub-io/src/
+      # provision.rs): the provisioning bundle the Flasher seeds onto a Pi
+      # hub's card. Without these, a change to the executor, the host runner,
+      # the plan or the Frigate config alone reports the Flasher unchanged,
+      # and the published app keeps seeding the old bytes (RELEASE_LESSONS
+      # 2026-09-23 (c)). test_release_plan.py holds every file a desktop
+      # app's path-linked crates embed, and each such crate, to its watch.
+      - canary-local/devices/hub_seed.json
+      - canary-local/devices/hub_provision_bundle.json
+      - canary-local/tools/hub_seed_apply.py
+      - canary-local/tools/hub_host_provision.sh
+      - homeassistant/frigate/config.yaml
+      # …and what the RELEASE bundles: the espflash sidecar's version and
+      # sha256 pins, read by desktop-flasher-release.yml. A pin bump changes
+      # the flash engine inside the app without touching desktop/, so without
+      # this line it released nothing (RELEASE_LESSONS 2026-09-23 (b)). The
+      # Lab bundles the same engine from the same file — keep both watches.
+      - .github/espflash-pins.env
 
   - name: lab
     label: SecuraCV Lab (macOS + Linux)
@@ -110,6 +128,26 @@ targets:
       publish: "false"
     watch:
       - desktop-lab
+      # The Lab BAKES the web root in at build time: tauri::generate_context!()
+      # embeds desktop-lab/dist, which scripts/stage-frontend.mjs mirrors from
+      # exactly these two trees (desktop-lab/frontend-stage.json `mirror`).
+      # Without them here a Lab page fix, a new device card or an enclosure
+      # render lands on the site and the plan still reports the Lab
+      # "unchanged since 0.x.y — nothing to do" — the same shape as the
+      # Flasher's stale-catalog release (RELEASE_LESSONS 2026-08-13 (c)).
+      # Watch what the build EMBEDS, not just where the code lives; when
+      # editing frontend-stage.json, keep this list in step.
+      - canary-local
+      - docs/hardware/enclosure
+      # The native flash path compiles the shared ESP32 flash engine (and the
+      # hub-core helper it uses) into the Lab, so an engine change is a Lab
+      # change. (flash.json, which build.rs also embeds, is under canary-local
+      # above.)
+      - desktop/flash-engine
+      - desktop/hub-core
+      # The espflash sidecar the Lab's release bundles, pinned in the one
+      # file both desktop apps' releases read (the Flasher watches it too).
+      - .github/espflash-pins.env
 
   - name: tvos
     label: Witness Wall (Apple TV)

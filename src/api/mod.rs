@@ -296,6 +296,13 @@ pub struct ApiConfig {
     /// never cached, so a bridge restart or a deleted file takes effect on
     /// the next poll.
     pub fleet_peers_path: Option<PathBuf>,
+    /// The viewer credential file ([`ViewerTokenSet`]): long-lived bearer
+    /// tokens, each good for exactly one read — `GET /api/sealed-log` — and
+    /// nothing else. Minted by `witness_api mint-viewer-token`, stored as
+    /// sha256 only, read per request like `fleet_peers_path` so a
+    /// revocation takes effect on the next poll. Unset or missing on disk,
+    /// the route stays exactly as it was: capability token only.
+    pub viewer_token_path: Option<PathBuf>,
 }
 
 /// Generous for legitimate clients — the HA coordinator polls every 30 s and
@@ -313,6 +320,7 @@ impl Default for ApiConfig {
             rate_limit_per_minute: DEFAULT_API_RATE_LIMIT_PER_MINUTE,
             tls: ApiTlsConfig::default(),
             fleet_peers_path: None,
+            viewer_token_path: None,
         }
     }
 }
@@ -382,6 +390,245 @@ impl CapabilityTokenManager {
         }
         Ok(())
     }
+}
+
+// ---------------------------------------------------------------------------
+// Viewer credential — a second, narrower credential class.
+//
+// The capability token above rotates every 10-minute bucket and lives in a
+// file the HA integration re-reads; a television cannot read a file, so a
+// pasted capability token dies within ten minutes. A viewer token is the
+// credential the Witness Wall CAN hold: minted once by the operator, pasted
+// into the TV with the kernel's current verifying key (a pairing receipt),
+// and honored on exactly one route — `GET /api/sealed-log`, the
+// non-queryable, size-capped, signed chain tail (Invariant VII bounds it).
+// On any other path or method it is an auth failure like any bad token.
+// At rest the kernel keeps only its sha256; the compare is constant-time;
+// the file is read per request so `revoke-viewer-token` is immediate.
+// ---------------------------------------------------------------------------
+
+/// Schema version of the viewer-token file.
+pub const VIEWER_TOKEN_FILE_VERSION: u32 = 1;
+/// File name of the viewer credential set when only `token_path` is
+/// configured: it sits beside the capability token, in the directory the
+/// operator already treats as secret.
+pub const VIEWER_TOKEN_FILE_NAME: &str = "viewer_tokens.json";
+/// A handful of rows at most; the reader refuses anything larger than this
+/// rather than parsing a planted file whole.
+pub const VIEWER_TOKEN_MAX_FILE_BYTES: u64 = 64 * 1024;
+/// Longest label kept for a viewer token (a room name, not a paragraph).
+pub const VIEWER_TOKEN_LABEL_MAX_CHARS: usize = 64;
+/// What the kernel calls itself in the fleet roll-call and on a receipt.
+pub const KERNEL_NAME: &str = "witness-kernel";
+
+/// One minted viewer credential, as stored: never the token itself.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ViewerTokenEntry {
+    /// Short handle for `revoke-viewer-token`: the first 8 hex characters
+    /// of `sha256`.
+    pub id: String,
+    /// Hex sha256 over the 32 raw token bytes — the only form kept at rest.
+    pub sha256: String,
+    /// The operator's label ("living room tv"), bounded and control-free.
+    pub label: String,
+    /// Epoch seconds when it was minted.
+    pub minted: u64,
+}
+
+/// The viewer credential file (`viewer_tokens.json`, 0600):
+/// `{"v":1,"tokens":[{"id","sha256","label","minted"}]}`.
+#[derive(Clone, Debug, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ViewerTokenSet {
+    pub v: u32,
+    pub tokens: Vec<ViewerTokenEntry>,
+}
+
+impl Default for ViewerTokenSet {
+    /// The empty set, at the current schema version — what a missing file
+    /// reads as.
+    fn default() -> Self {
+        Self {
+            v: VIEWER_TOKEN_FILE_VERSION,
+            tokens: Vec::new(),
+        }
+    }
+}
+
+/// What `mint-viewer-token` prints, once. The token is in it; the file on
+/// disk holds only the hash, so this is the only copy that will ever exist.
+#[derive(Clone, Debug, Serialize)]
+pub struct ViewerReceipt {
+    /// [`KERNEL_NAME`] — what the roll-call calls this source.
+    pub kernel: &'static str,
+    /// Where to reach the API, when the operator told the minter
+    /// (`--base-url`); the kernel does not know its own LAN address.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    /// The bearer for `GET /api/sealed-log`, 64 hex.
+    pub sealed_log_token: String,
+    /// The CURRENT device verifying key, 64 hex — the same value
+    /// `SealedLogDocument::verifying_key` serves, so the Wall pins at
+    /// pairing what it will compare every walk against.
+    pub verifying_key: String,
+    /// The entry's `id`, for `revoke-viewer-token`.
+    pub token_id: String,
+}
+
+impl ViewerTokenSet {
+    /// Read the set at `path`. A missing file is an empty set (the route
+    /// stays capability-only); a file past the size bound, malformed, or
+    /// of another schema version is an error the caller decides on.
+    pub fn load(path: &Path) -> Result<Self> {
+        let file = match std::fs::File::open(path) {
+            Ok(file) => file,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(err) => {
+                return Err(anyhow!(
+                    "failed to open viewer token file {}: {err}",
+                    path.display()
+                ))
+            }
+        };
+        let declared = file.metadata()?.len();
+        if declared > VIEWER_TOKEN_MAX_FILE_BYTES {
+            return Err(anyhow!(
+                "viewer token file {} is {declared} bytes, past the {VIEWER_TOKEN_MAX_FILE_BYTES}-byte bound",
+                path.display()
+            ));
+        }
+        let mut bytes = Vec::new();
+        file.take(VIEWER_TOKEN_MAX_FILE_BYTES + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > VIEWER_TOKEN_MAX_FILE_BYTES {
+            return Err(anyhow!(
+                "viewer token file {} grew past the {VIEWER_TOKEN_MAX_FILE_BYTES}-byte bound",
+                path.display()
+            ));
+        }
+        let set: Self = serde_json::from_slice(&bytes)
+            .map_err(|err| anyhow!("viewer token file {} is malformed: {err}", path.display()))?;
+        if set.v != VIEWER_TOKEN_FILE_VERSION {
+            return Err(anyhow!(
+                "viewer token file {} is schema v{}, this kernel reads v{VIEWER_TOKEN_FILE_VERSION}",
+                path.display(),
+                set.v
+            ));
+        }
+        Ok(set)
+    }
+
+    /// Write the set as a fresh 0600 regular file (atomic replace, never
+    /// through a symlink — `write_restricted`'s contract).
+    pub fn save(&self, path: &Path) -> Result<()> {
+        let bytes = serde_json::to_vec_pretty(self)?;
+        crate::break_glass::backend::write_restricted(path, &[bytes.as_slice(), b"\n"].concat())
+    }
+
+    /// The entry a presented bearer matches, if any. The token's 32 bytes
+    /// are hashed and every stored hash is compared in constant time; a
+    /// presented value that is not 64 hex cannot be a viewer token and
+    /// matches nothing (the caller then falls through to the capability
+    /// token, which rejects it in its own constant-time compare).
+    pub fn matches(&self, presented: &str) -> Option<&ViewerTokenEntry> {
+        let raw = parse_hex32(presented).ok()?;
+        let digest = viewer_token_digest(&raw);
+        let mut hit: Option<&ViewerTokenEntry> = None;
+        for entry in &self.tokens {
+            let Ok(stored) = parse_hex32(&entry.sha256) else {
+                continue;
+            };
+            // No early exit on a match: the walk is the same length for a
+            // token that matches the first row and one that matches none.
+            if digest.ct_eq(&stored).unwrap_u8() == 1 && hit.is_none() {
+                hit = Some(entry);
+            }
+        }
+        hit
+    }
+
+    /// Mint a new viewer token into the file at `path` and return the
+    /// receipt — the ONE time the token exists in the clear. `verifying_key`
+    /// is the kernel's current device key (hex), read by the caller from an
+    /// opened `Kernel` so a retired seed cannot mint a receipt that pins the
+    /// wrong key.
+    pub fn mint(
+        path: &Path,
+        label: &str,
+        verifying_key: String,
+        base_url: Option<String>,
+    ) -> Result<ViewerReceipt> {
+        let label = clean_viewer_label(label);
+        if label.is_empty() {
+            return Err(anyhow!(
+                "a viewer token needs a label (which screen holds it, e.g. \"living room tv\")"
+            ));
+        }
+        if hex::decode(&verifying_key).map(|k| k.len()) != Ok(32) {
+            return Err(anyhow!("verifying_key must be 64 hex characters"));
+        }
+        let mut set = Self::load(path)?;
+        let mut token = [0u8; 32];
+        rand::fill(&mut token[..]);
+        let sha256 = hex::encode(viewer_token_digest(&token));
+        let id = sha256[..8].to_string();
+        let minted = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        set.tokens.push(ViewerTokenEntry {
+            id: id.clone(),
+            sha256,
+            label,
+            minted,
+        });
+        set.save(path)?;
+        Ok(ViewerReceipt {
+            kernel: KERNEL_NAME,
+            base_url,
+            sealed_log_token: hex::encode(token),
+            verifying_key,
+            token_id: id,
+        })
+    }
+
+    /// Remove the entry with `id` from the file at `path`; the next request
+    /// carrying that token is an auth failure. An unknown id is an error so
+    /// a typo never reads as "revoked".
+    pub fn revoke(path: &Path, id: &str) -> Result<ViewerTokenEntry> {
+        let mut set = Self::load(path)?;
+        let index = set
+            .tokens
+            .iter()
+            .position(|entry| entry.id == id)
+            .ok_or_else(|| {
+                anyhow!(
+                    "no viewer token with id {id:?} in {} ({} minted)",
+                    path.display(),
+                    set.tokens.len()
+                )
+            })?;
+        let removed = set.tokens.remove(index);
+        set.save(path)?;
+        Ok(removed)
+    }
+}
+
+/// sha256 over a viewer token's 32 raw bytes — the only form kept at rest.
+fn viewer_token_digest(raw: &[u8; 32]) -> [u8; 32] {
+    <sha2::Sha256 as sha2::Digest>::digest(raw).into()
+}
+
+/// A label is a room name: trimmed, control characters dropped, bounded.
+fn clean_viewer_label(label: &str) -> String {
+    label
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(VIEWER_TOKEN_LABEL_MAX_CHARS)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 pub struct ApiServer {
@@ -903,6 +1150,39 @@ fn handle_connection(
         }
     };
 
+    // Viewer credential (see `ViewerTokenSet`): checked before the
+    // capability token so a viewer read never rotates or touches the
+    // capability machinery. It opens exactly one door — GET /api/sealed-log,
+    // served by the same writer as the capability path, so the bytes are
+    // identical — and presented at any other door it is an auth failure
+    // that counts toward the lockout like any bad token. The file is read
+    // per request; a malformed one is logged and treated as empty (fail
+    // closed: no viewer is admitted through a file the kernel cannot read).
+    // A good viewer read does NOT clear the address's failure history: the
+    // lockout guards the capability token too, and a holder of the narrower
+    // credential must not be able to reset it by slipping a read between
+    // every four capability-token guesses. Only a capability success clears.
+    if let Some(viewer_path) = &cfg.viewer_token_path {
+        let viewers = ViewerTokenSet::load(viewer_path).unwrap_or_else(|err| {
+            log::warn!("viewer token file ignored: {err:#}");
+            ViewerTokenSet::default()
+        });
+        if let Some(entry) = viewers.matches(&token) {
+            if request.method == "GET" && request.path == "/api/sealed-log" {
+                write_sealed_log_document(&mut stream, kernel)?;
+                return Ok(());
+            }
+            auth_tracker.record_failure(peer.ip());
+            write_json_response(&mut stream, 401, r#"{"error":"invalid_token"}"#)?;
+            return Err(anyhow!(
+                "viewer token {} presented outside GET /api/sealed-log ({} {})",
+                entry.id,
+                request.method,
+                request.path
+            ));
+        }
+    }
+
     let now_bucket = TimeBucket::now_10min()?;
     if token_mgr.rotate_if_needed(now_bucket)? {
         if let Some(path) = &cfg.token_path {
@@ -1012,10 +1292,9 @@ fn handle_connection(
         // the chain as the chain, and redaction remains the export lane's
         // job. No query parameters exist for this route (Invariant VII,
         // non-queryable): any query string is ignored, apart from the
-        // `?token=` rejection above.
-        let doc = kernel.sealed_log_document()?;
-        let payload = serde_json::to_vec(&doc)?;
-        write_response(&mut stream, 200, "application/json", &payload)?;
+        // `?token=` rejection above. A viewer token reaches the same writer
+        // (and only this writer) above.
+        write_sealed_log_document(&mut stream, kernel)?;
         return Ok(());
     }
 
@@ -1164,6 +1443,15 @@ fn read_request<S: Read>(stream: &mut S) -> Result<HttpRequest> {
         headers,
         raw_path: raw_path.to_string(),
     })
+}
+
+/// The one writer for `GET /api/sealed-log`, whichever credential opened
+/// it: the capability token and a viewer token must serve byte-identical
+/// documents, so neither path may serialize on its own.
+fn write_sealed_log_document<S: Write>(stream: &mut S, kernel: &Kernel) -> Result<()> {
+    let doc = kernel.sealed_log_document()?;
+    let payload = serde_json::to_vec(&doc)?;
+    write_response(stream, 200, "application/json", &payload)
 }
 
 fn write_json_response<S: Write>(stream: &mut S, status: u16, body: &str) -> Result<()> {
@@ -1353,7 +1641,7 @@ fn fleet_document(self_chain_ok: Option<bool>, peers: &[FleetRow]) -> String {
         name: "Witness kernel".to_string(),
         online: true,
         chain: self_chain_ok.map(|ok| if ok { "ok" } else { "degraded" }.to_string()),
-        product: Some("witness-kernel".to_string()),
+        product: Some(KERNEL_NAME.to_string()),
         presence: None,
         occupants: None,
         breathing: None,
@@ -1362,7 +1650,7 @@ fn fleet_document(self_chain_ok: Option<bool>, peers: &[FleetRow]) -> String {
     devices.push(&me);
     devices.extend(peers.iter());
     let doc = FleetDocument {
-        kernel: "witness-kernel",
+        kernel: KERNEL_NAME,
         verified_through: "now",
         devices,
     };
@@ -1629,6 +1917,12 @@ mod tests {
             self.api_handle
                 .as_ref()
                 .expect("test API handle should be initialized")
+        }
+
+        /// The temp dir the kernel DB (and any file `configure` pointed
+        /// inside it) lives in.
+        fn dir(&self) -> &std::path::Path {
+            self._dir.path()
         }
 
         fn request(&self, method: &str, path: &str, with_token: bool) -> Result<(String, String)> {
@@ -2060,6 +2354,334 @@ mod tests {
             headers.contains("405 Method Not Allowed"),
             "headers: {headers}"
         );
+        Ok(())
+    }
+
+    // ---------------------------------------------------------------
+    // Viewer tokens — the credential the Witness Wall can hold: minted
+    // once, route-scoped to GET /api/sealed-log, sha256 at rest, revoked
+    // by id and read per request.
+    // ---------------------------------------------------------------
+
+    /// A 64-hex key that is not the kernel's: the receipt's key is the
+    /// caller's to supply, and `mint` only checks its shape.
+    const SOME_KEY_HEX: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+
+    /// Spawn an API whose viewer file sits in the temp dir, with one sealed
+    /// event, and mint one viewer token into it. Returns the API, the file
+    /// path, and the token's bearer header line.
+    fn viewer_api() -> Result<(SealedLogTestApi, PathBuf, String)> {
+        let api = SealedLogTestApi::spawn_with(
+            |kernel, cfg| seal_event(kernel, cfg, "zone:a"),
+            |api_cfg, dir| api_cfg.viewer_token_path = Some(dir.join(VIEWER_TOKEN_FILE_NAME)),
+        )?;
+        let path = api.dir().join(VIEWER_TOKEN_FILE_NAME);
+        let receipt =
+            ViewerTokenSet::mint(&path, "living room tv", SOME_KEY_HEX.to_string(), None)?;
+        let bearer = format!("Authorization: Bearer {}\r\n", receipt.sealed_log_token);
+        Ok((api, path, bearer))
+    }
+
+    #[test]
+    fn viewer_token_serves_get_sealed_log_byte_for_byte_and_nothing_else() -> Result<()> {
+        let (api, _path, bearer) = viewer_api()?;
+
+        // The one door it opens — and the same bytes the capability token gets.
+        let (headers, viewer_body) =
+            api.request_with_headers("GET", "/api/sealed-log", false, &bearer)?;
+        assert!(headers.contains("200 OK"), "headers: {headers}");
+        let (_, capability_body) = api.get("/api/sealed-log", true)?;
+        assert_eq!(
+            viewer_body, capability_body,
+            "a viewer token must serve the identical sealed-log document"
+        );
+        let doc: SealedLogDocument = serde_json::from_str(&viewer_body)?;
+        assert_eq!(doc.entries.len(), 1);
+
+        // Every other token-gated door: the viewer token is a bad token
+        // there. The tracker locks an address on its fifth failure, so the
+        // six refusals are split by a successful CAPABILITY read — the one
+        // success that clears the history (a viewer read does not; see
+        // viewer_reads_never_reset_the_lockout_that_guards_the_capability_token).
+        let refused = |method: &str, path: &str| -> Result<()> {
+            let (headers, body) = api.request_with_headers(method, path, false, &bearer)?;
+            assert!(
+                headers.contains("401 Unauthorized"),
+                "{method} {path}: headers: {headers}"
+            );
+            assert!(
+                body.contains("invalid_token"),
+                "{method} {path}: body: {body}"
+            );
+            Ok(())
+        };
+        for path in ["/events", "/events/latest", "/digest", "/status"] {
+            refused("GET", path)?;
+        }
+        let (headers, _) = api.get("/api/sealed-log", true)?;
+        assert!(headers.contains("200 OK"), "headers: {headers}");
+        refused("GET", "/export/bundle")?;
+        // POST /verify is the one token-gated write; the viewer never gets it.
+        refused("POST", "/verify")?;
+
+        // A method the route does not take is refused before any credential
+        // is read (the pre-auth method table), viewer token or not.
+        let (headers, _) = api.request_with_headers("POST", "/api/sealed-log", false, &bearer)?;
+        assert!(
+            headers.contains("405 Method Not Allowed"),
+            "headers: {headers}"
+        );
+        // `?token=` stays rejected for this credential class too.
+        let query = format!(
+            "/api/sealed-log?token={}",
+            bearer.trim().rsplit(' ').next().unwrap_or("")
+        );
+        let (headers, body) = api.request_with_headers("GET", &query, false, "")?;
+        assert!(headers.contains("400 Bad Request"), "headers: {headers}");
+        assert!(
+            body.contains("token_query_param_not_allowed"),
+            "body: {body}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn viewer_token_serves_the_shared_vector_document() -> Result<()> {
+        // The Witness Wall walks exactly these bytes: the document a viewer
+        // token opens must be the one the kernel<->core vector pins (read
+        // only here — the vector test above is the one that may regenerate
+        // it).
+        const PAYLOADS: [&str; 3] = [
+            r#"{"record_type":"event","event_type":"BoundaryCrossingObjectLarge","zone_id":"zone:a","time_bucket":{"start_epoch_s":1700000400,"size_s":600}}"#,
+            r#"{"record_type":"event","event_type":"BoundaryCrossingObjectLarge","zone_id":"zone:b","time_bucket":{"start_epoch_s":1700001000,"size_s":600}}"#,
+            r#"{"record_type":"heartbeat","time_bucket":{"start_epoch_s":1700001600,"size_s":600}}"#,
+        ];
+        let api = SealedLogTestApi::spawn_with(
+            |kernel, cfg| {
+                for payload in PAYLOADS {
+                    plant_verbatim_payload(kernel, cfg, payload)?;
+                }
+                Ok(())
+            },
+            |api_cfg, dir| api_cfg.viewer_token_path = Some(dir.join(VIEWER_TOKEN_FILE_NAME)),
+        )?;
+        let receipt = ViewerTokenSet::mint(
+            &api.dir().join(VIEWER_TOKEN_FILE_NAME),
+            "tv",
+            SOME_KEY_HEX.to_string(),
+            None,
+        )?;
+        let bearer = format!("Authorization: Bearer {}\r\n", receipt.sealed_log_token);
+        let (headers, body) = api.request_with_headers("GET", "/api/sealed-log", false, &bearer)?;
+        assert!(headers.contains("200 OK"), "headers: {headers}");
+        let served: serde_json::Value = serde_json::from_str(&body)?;
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/envelope/sealed_log_document_vector.json");
+        let pinned: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+        assert_eq!(
+            served, pinned,
+            "a viewer token must open the same document the shared vector pins"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn viewer_token_misuse_counts_toward_the_auth_lockout() -> Result<()> {
+        let (api, _path, bearer) = viewer_api()?;
+        // Five misuses (the tracker's max_attempts) lock the address, and the
+        // lock holds even for the door the token DOES open — a bad-token
+        // spray with a viewer token costs exactly what one with a capability
+        // token costs. (Bearer and route are not even read while locked.)
+        for _ in 0..5 {
+            let (headers, _) = api.request_with_headers("GET", "/events", false, &bearer)?;
+            assert!(headers.contains("401 Unauthorized"), "headers: {headers}");
+        }
+        // The lock is answered before the request is read, so this probe
+        // connects and only listens: a request written into a socket the
+        // server closes unread would come back as a reset, not a 429.
+        let mut stream = TcpStream::connect(api.handle().addr)?;
+        let mut response = String::new();
+        stream.read_to_string(&mut response)?;
+        assert!(
+            response.contains("429 Too Many Requests"),
+            "response: {response}"
+        );
+        assert!(response.contains("auth_locked"), "response: {response}");
+        Ok(())
+    }
+
+    #[test]
+    fn viewer_reads_never_reset_the_lockout_that_guards_the_capability_token() -> Result<()> {
+        // The narrower credential must not weaken the lockout on the wider
+        // one: four capability-token guesses, a good viewer read, one more
+        // guess — and the address is locked, exactly as with no read between.
+        let (api, _path, bearer) = viewer_api()?;
+        let guess = format!("Authorization: Bearer {}\r\n", "0".repeat(64));
+        for _ in 0..4 {
+            let (headers, body) = api.request_with_headers("GET", "/events", false, &guess)?;
+            assert!(headers.contains("401 Unauthorized"), "headers: {headers}");
+            assert!(body.contains("invalid_token"), "body: {body}");
+        }
+        let (headers, _) = api.request_with_headers("GET", "/api/sealed-log", false, &bearer)?;
+        assert!(headers.contains("200 OK"), "headers: {headers}");
+        let (headers, _) = api.request_with_headers("GET", "/events", false, &guess)?;
+        assert!(headers.contains("401 Unauthorized"), "headers: {headers}");
+        // Locked: answered before the request is read (see the misuse test).
+        let mut stream = TcpStream::connect(api.handle().addr)?;
+        let mut response = String::new();
+        stream.read_to_string(&mut response)?;
+        assert!(
+            response.contains("429 Too Many Requests"),
+            "a viewer read between guesses must not reset the count: {response}"
+        );
+        assert!(response.contains("auth_locked"), "response: {response}");
+        Ok(())
+    }
+
+    #[test]
+    fn viewer_token_revocation_is_immediate_and_a_missing_file_is_capability_only() -> Result<()> {
+        let (api, path, bearer) = viewer_api()?;
+        let (headers, _) = api.request_with_headers("GET", "/api/sealed-log", false, &bearer)?;
+        assert!(headers.contains("200 OK"), "headers: {headers}");
+
+        // Revoke by id — the file is read per request, so no restart.
+        let set = ViewerTokenSet::load(&path)?;
+        assert_eq!(set.tokens.len(), 1);
+        let id = set.tokens[0].id.clone();
+        assert!(
+            ViewerTokenSet::revoke(&path, "deadbeef").is_err(),
+            "an unknown id must be an error, never a silent no-op"
+        );
+        let removed = ViewerTokenSet::revoke(&path, &id)?;
+        assert_eq!(removed.label, "living room tv");
+        assert!(ViewerTokenSet::load(&path)?.tokens.is_empty());
+        let (headers, body) = api.request_with_headers("GET", "/api/sealed-log", false, &bearer)?;
+        assert!(headers.contains("401 Unauthorized"), "headers: {headers}");
+        assert!(body.contains("invalid_token"), "body: {body}");
+
+        // No file at all: the route is exactly what it was before viewer
+        // tokens existed — capability token or nothing.
+        std::fs::remove_file(&path)?;
+        let (headers, body) = api.request_with_headers("GET", "/api/sealed-log", false, &bearer)?;
+        assert!(headers.contains("401 Unauthorized"), "headers: {headers}");
+        assert!(body.contains("invalid_token"), "body: {body}");
+        let (headers, body) = api.get("/api/sealed-log", false)?;
+        assert!(headers.contains("401 Unauthorized"), "headers: {headers}");
+        assert!(body.contains("missing_token"), "body: {body}");
+        let (headers, _) = api.get("/api/sealed-log", true)?;
+        assert!(headers.contains("200 OK"), "headers: {headers}");
+        Ok(())
+    }
+
+    #[test]
+    fn viewer_token_file_the_kernel_cannot_read_admits_no_one() -> Result<()> {
+        let (api, path, bearer) = viewer_api()?;
+        for planted in [
+            "not json at all",
+            r#"{"v":2,"tokens":[]}"#,
+            r#"{"v":1,"tokens":[],"extra":1}"#,
+        ] {
+            std::fs::write(&path, planted)?;
+            let (headers, body) =
+                api.request_with_headers("GET", "/api/sealed-log", false, &bearer)?;
+            assert!(
+                headers.contains("401 Unauthorized"),
+                "{planted}: headers: {headers}"
+            );
+            assert!(body.contains("invalid_token"), "{planted}: body: {body}");
+            // and the capability path is untouched by the bad file
+            let (headers, _) = api.get("/api/sealed-log", true)?;
+            assert!(headers.contains("200 OK"), "{planted}: headers: {headers}");
+        }
+        // Past the size bound: refused unread.
+        let big = format!(
+            r#"{{"v":1,"tokens":[],"pad":"{}"}}"#,
+            "x".repeat(VIEWER_TOKEN_MAX_FILE_BYTES as usize)
+        );
+        std::fs::write(&path, big)?;
+        assert!(ViewerTokenSet::load(&path).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn viewer_token_file_holds_the_hash_at_0600_and_the_receipt_pins_the_served_key() -> Result<()>
+    {
+        use sha2::Digest;
+        let dir = tempfile::tempdir()?;
+        let cfg = sealed_log_kernel_config(&dir.path().join("witness.db"));
+        let mut kernel = Kernel::open(&cfg)?;
+        seal_event(&mut kernel, &cfg, "zone:a")?;
+        // What the CLI does: read the current key off the opened kernel.
+        let verifying_key = hex::encode(kernel.device_verifying_key().to_bytes());
+        assert_eq!(
+            verifying_key,
+            kernel.sealed_log_document()?.verifying_key,
+            "the receipt's key must be the one /api/sealed-log serves"
+        );
+
+        let path = dir.path().join(VIEWER_TOKEN_FILE_NAME);
+        let receipt = ViewerTokenSet::mint(
+            &path,
+            "  living\troom tv  ",
+            verifying_key.clone(),
+            Some("http://192.168.1.20:8799".to_string()),
+        )?;
+        assert_eq!(receipt.kernel, KERNEL_NAME);
+        assert_eq!(receipt.verifying_key, verifying_key);
+        assert_eq!(
+            receipt.base_url.as_deref(),
+            Some("http://192.168.1.20:8799")
+        );
+        assert_eq!(receipt.sealed_log_token.len(), 64);
+        assert_eq!(receipt.token_id.len(), 8);
+
+        // 0600, and the token itself is nowhere in it: only its sha256.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path)?.permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "viewer token file must be 0600");
+        }
+        let text = std::fs::read_to_string(&path)?;
+        assert!(
+            !text.contains(&receipt.sealed_log_token),
+            "the token must never be written to disk"
+        );
+        let raw = hex::decode(&receipt.sealed_log_token)?;
+        let expected_sha = hex::encode(sha2::Sha256::digest(&raw));
+        assert!(text.contains(&expected_sha), "file: {text}");
+        assert_eq!(receipt.token_id, expected_sha[..8]);
+        let set = ViewerTokenSet::load(&path)?;
+        assert_eq!(set.v, VIEWER_TOKEN_FILE_VERSION);
+        assert_eq!(set.tokens.len(), 1);
+        assert_eq!(
+            set.tokens[0].label, "livingroom tv",
+            "label is trimmed and control-free"
+        );
+        assert!(set.tokens[0].minted > 0);
+        assert_eq!(
+            set.matches(&receipt.sealed_log_token)
+                .map(|e| e.id.as_str()),
+            Some(receipt.token_id.as_str())
+        );
+        assert!(set
+            .matches(&receipt.sealed_log_token.to_uppercase())
+            .is_some());
+        assert!(set.matches("not-hex").is_none());
+        assert!(set.matches(SOME_KEY_HEX).is_none());
+
+        // A second mint appends; ids differ; the first still matches.
+        let second = ViewerTokenSet::mint(&path, "kitchen", verifying_key.clone(), None)?;
+        let set = ViewerTokenSet::load(&path)?;
+        assert_eq!(set.tokens.len(), 2);
+        assert_ne!(second.token_id, receipt.token_id);
+        assert!(set.matches(&receipt.sealed_log_token).is_some());
+        assert!(set.matches(&second.sealed_log_token).is_some());
+
+        // What mint refuses: an empty label, a key that is not 32 bytes.
+        assert!(ViewerTokenSet::mint(&path, "   ", verifying_key.clone(), None).is_err());
+        assert!(ViewerTokenSet::mint(&path, "tv", "abcd".to_string(), None).is_err());
+        assert_eq!(ViewerTokenSet::load(&path)?.tokens.len(), 2);
         Ok(())
     }
 

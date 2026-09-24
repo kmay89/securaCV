@@ -38,7 +38,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version-file: pyproject.toml
       - name: Guard against unacknowledged capability downgrades
         env:
           PR_BODY: ${{ github.event.pull_request.body }}

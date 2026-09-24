@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -441,6 +442,140 @@ class TheRealCatalog(unittest.TestCase):
                     f"{name}: {target['workflow']} never mentions {target['tag_prefix']}*, "
                     f"so it cannot be producing the tags this planner reads back",
                 )
+
+    def test_every_pins_file_a_release_reads_is_in_its_watch(self):
+        # RELEASE_LESSONS 2026-09-23 (b): the bundled espflash's version and
+        # sha256 pins lived only inside the two desktop release workflows,
+        # which no watch named, so a pin bump alone marked neither app as
+        # changed and released nothing. A pins file (.github/*.env) that a
+        # target's release workflow reads is an input to what it ships, so it
+        # must be in that target's watch.
+        workflows_dir = os.path.join(rp.REPO_ROOT, ".github", "workflows")
+        readers = set()
+        for target in self.targets:
+            with open(os.path.join(workflows_dir, target["workflow"]), encoding="utf-8") as handle:
+                source = handle.read()
+            for path in sorted(set(re.findall(r"\.github/[\w.-]+\.env\b", source))):
+                with self.subTest(target=target["name"], path=path):
+                    self.assertTrue(
+                        os.path.isfile(os.path.join(rp.REPO_ROOT, path)),
+                        f"{target['workflow']} reads {path}, which does not exist",
+                    )
+                    self.assertIn(
+                        path,
+                        target["watch"],
+                        f"{target['name']}'s release reads {path} but its watch does not name it — "
+                        f"a change to it alone would be reported as nothing to do",
+                    )
+                if path == ".github/espflash-pins.env":
+                    readers.add(target["name"])
+        # Not vacuous: both desktop apps bundle espflash from that one file.
+        self.assertEqual(readers, {"flasher", "lab"})
+
+    def test_every_file_a_desktop_app_embeds_is_in_its_watch(self):
+        # The pins-file lesson above, one layer down (RELEASE_LESSONS
+        # 2026-09-23 (c)): a desktop app's binary carries every file that any
+        # crate it links by path include_str!s or include_bytes!s by literal
+        # path (the Flasher's hub-io embeds the Pi hub's provisioning bundle),
+        # so each such file, and each such crate's directory, is an input to
+        # what the app ships and must be in that target's watch. Path
+        # dependencies are followed through each Cargo.toml, transitively, so
+        # a new crate is covered without editing this test. The
+        # concat!(env!("OUT_DIR"), ...) form reads a copy build.rs made, which
+        # the watch comments tie to build.rs; any other form fails here
+        # rather than being skipped unread.
+        import tomllib
+
+        apps = {"flasher": "desktop/src-tauri", "lab": "desktop-lab/src-tauri"}
+        by_name = {t["name"]: t for t in self.targets}
+        root = rp.REPO_ROOT
+        embed = re.compile(r"\binclude_(?:str|bytes)!\s*\(\s*")
+        literal = re.compile(r'"([^"\\]+)"\s*\)')
+        out_dir = re.compile(r'concat!\s*\(\s*env!\s*\(\s*"OUT_DIR"\s*\)')
+
+        def covered(rel: str, watch: list) -> bool:
+            return any(rel == w or rel.startswith(w.rstrip("/") + "/") for w in watch)
+
+        def path_deps(crate: str) -> set:
+            with open(os.path.join(crate, "Cargo.toml"), "rb") as handle:
+                manifest = tomllib.load(handle)
+            tables = [manifest.get("dependencies", {})]
+            tables += [t.get("dependencies", {}) for t in manifest.get("target", {}).values()]
+            return {
+                os.path.normpath(os.path.join(crate, spec["path"]))
+                for table in tables
+                for spec in table.values()
+                if isinstance(spec, dict) and "path" in spec
+            }
+
+        linked, embedded, copies = {}, {}, {}
+        for name, app_dir in apps.items():
+            watch = by_name[name]["watch"]
+            crates, todo = set(), [os.path.join(root, app_dir)]
+            while todo:
+                crate = todo.pop()
+                if crate not in crates:
+                    crates.add(crate)
+                    todo.extend(path_deps(crate))
+            linked[name] = {os.path.relpath(c, root) for c in crates}
+            embedded[name], copies[name] = set(), 0
+            for crate in sorted(crates):
+                rel_crate = os.path.relpath(crate, root)
+                with self.subTest(target=name, links=rel_crate):
+                    self.assertTrue(
+                        covered(rel_crate, watch),
+                        f"{name} links {rel_crate} but its watch does not cover it — "
+                        f"a change to that crate alone would be reported as nothing to do",
+                    )
+                for dirpath, _dirs, names in os.walk(os.path.join(crate, "src")):
+                    for rs in sorted(n for n in names if n.endswith(".rs")):
+                        path = os.path.join(dirpath, rs)
+                        where = os.path.relpath(path, root)
+                        with open(path, encoding="utf-8") as handle:
+                            source = handle.read()
+                        for found in embed.finditer(source):
+                            rest = source[found.end():]
+                            lit = literal.match(rest)
+                            if lit is None:
+                                self.assertIsNotNone(
+                                    out_dir.match(rest),
+                                    f"{where}: an embed this test cannot read — teach it the "
+                                    f"form, or its file goes unwatched",
+                                )
+                                copies[name] += 1
+                                continue
+                            rel = os.path.relpath(
+                                os.path.normpath(os.path.join(dirpath, lit.group(1))), root
+                            )
+                            embedded[name].add(rel)
+                            with self.subTest(target=name, file=where, embeds=rel):
+                                self.assertTrue(
+                                    os.path.isfile(os.path.join(root, rel)),
+                                    f"{where} embeds {rel}, which does not exist",
+                                )
+                                self.assertTrue(
+                                    covered(rel, watch),
+                                    f"{name} embeds {rel} but its watch does not name it — "
+                                    f"a change to it alone would be reported as nothing to do",
+                                )
+        # Not vacuous: the Flasher's hub-io embeds the five bundle files it
+        # seeds onto a hub's card; the Lab reaches hub-core only through
+        # flash-engine (so the walk is transitive) and embeds flash.json
+        # through it; and both apps' OUT_DIR copies were seen and set aside.
+        self.assertLessEqual(
+            {
+                "canary-local/devices/hub_seed.json",
+                "canary-local/devices/hub_provision_bundle.json",
+                "canary-local/tools/hub_seed_apply.py",
+                "canary-local/tools/hub_host_provision.sh",
+                "homeassistant/frigate/config.yaml",
+            },
+            embedded["flasher"],
+        )
+        self.assertIn("desktop/hub-core", linked["lab"])
+        self.assertIn("canary-local/devices/flash.json", embedded["lab"])
+        self.assertGreater(copies["flasher"], 0)
+        self.assertGreater(copies["lab"], 0)
 
     def test_tag_prefixes_are_unique(self):
         prefixes = [t["tag_prefix"] for t in self.targets if t.get("tag_prefix")]

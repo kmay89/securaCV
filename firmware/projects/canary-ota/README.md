@@ -5,8 +5,10 @@
 > **`firmware/common/ota/`** (2026-06) and extended there with Ed25519
 > release-signature verification, certificate-bundle TLS, a URL transport
 > policy, an NVS anti-rollback version floor, NVS-persisted settings, and
-> install/pre-reboot hooks. The ACTIVE canary (PIO) and canary-wap
-> (Arduino) variants consume that shared engine; see
+> install/pre-reboot hooks. Every released firmware tree consumes that
+> shared engine: the canary (PIO), canary-wap (Arduino), canary-vision,
+> canary-sense and every released canary-display flavor (canary-sentinel
+> links it too, compile-gated and unreleased); see
 > **`docs/firmware_ota.md`** for the end-to-end release + update flow.
 >
 > What stays useful here: a minimal, standalone ESP-IDF harness for

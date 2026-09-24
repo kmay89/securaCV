@@ -53,7 +53,12 @@ jobs:
           token: ${{ secrets.FRESHNESS_PAT || github.token }}
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          python-version-file: pyproject.toml
+      - uses: actions/setup-node@v7
+        # node from the runner image moves with the image, like its python3;
+        # pin the major the other node jobs run (CI.md, Node).
+        with:
+          node-version: "22"
       - name: Refresh the vendor board-facts snapshot
         run: python3 canary-local/tools/gen_board_facts.py --refresh-upstream
       - name: Drift-lock before proposing anything (facts shape + pins.h match)

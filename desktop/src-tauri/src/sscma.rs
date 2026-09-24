@@ -89,11 +89,6 @@ pub fn valid_cmd_body(body: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '=' | ',' | '?' | '.' | '_' | '-'))
 }
 
-/// Clamp a slider value to the module's 0-100 threshold range.
-pub fn clamp_threshold(value: i64) -> u8 {
-    value.clamp(0, 100) as u8
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,12 +151,5 @@ mod tests {
         assert!(!valid_cmd_body("VER?\rAT+RESET")); // frame injection
         assert!(!valid_cmd_body(&"X".repeat(65))); // oversized
         assert!(!valid_cmd_body("INFO=\"quote\"")); // quotes are outside the bench dialect
-    }
-
-    #[test]
-    fn thresholds_clamp_to_module_range() {
-        assert_eq!(clamp_threshold(-5), 0);
-        assert_eq!(clamp_threshold(50), 50);
-        assert_eq!(clamp_threshold(1000), 100);
     }
 }

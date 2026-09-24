@@ -43,6 +43,15 @@
 //              wall and the antenna), its stop sits below the panel's top
 //              face so water sheds over it, three drain notches at bed level
 //              through the stop, and rib_lib ribs under the bed.
+//  2026-09-24: ASSEMBLY (v0.2-dev) — probed in position: the SMA land stood
+//              0.55 into the lid's drip skirt (sma_z now clears it); the roof
+//              struts crossed the panel slot (now rooted under the rails, in
+//              the bed's frame); the roof screws sat under the panel (the
+//              posts now stand outboard of it — the pod is 15.5 mm wider);
+//              the panel gland stood in the roof's root and on the holder
+//              (moved over the LoRa column); the lid's lip landed on the
+//              18650 holder (cav_d clears it); seal cheeks 0.8 -> 1.2 (CLR-7)
+//              with the gasket-fill assert; strap channels bridge 7, not 9.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, soft-edge lid, screw seats — the shared idiom
@@ -97,18 +106,25 @@ strap_t = 2.0;       // channel depth
 
 /* [Shell / tolerances / fasteners] */
 wall_t = 2.0;  floor_t = 2.0;  lid_t = 2.0;  lip_h = 4.0;  lip_t = 1.2;  corner_r = 3.0;
-tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;   // the catalog trio — core_tol_*(), canary_core_lib
+tol_slide = 0.20;  // catalog default — core_tol_slide(), canary_core_lib
+tol_press = 0.10;  // catalog default — core_tol_press(), canary_core_lib
+tol_hole  = 0.30;  // catalog default — core_tol_hole(), canary_core_lib
 post_d = 5.0;  screw_d = 1.6;  screw_head_d = 4.0;  screw_head_h = 2.0;
 gasket_w = 1.6;  gasket_groove = 1.2;  gasket_proud = 0.3;  skirt_h = 3.0;  skirt_t = 1.6;
-usb_w = 12.0;  usb_h = 6.5;   // service USB opening, bottom wall (plug when deployed); 12 clears a boot
-clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;   // snap_boardclip defaults — canary_snap_lib runs the strain budget as an assert
+usb_w = 12.0;  // service USB opening width, bottom wall (plug when deployed); 12 clears a boot
+usb_h = 6.5;   // service USB opening height — boot clearance
+clip_w      = 6.0;   // board-clip tab width along the board edge — snap_boardclip default, canary_snap_lib
+clip_t      = 1.0;   // clip beam thickness — snap_boardclip default; canary_snap_lib runs the strain budget as an assert
+clip_hook   = 0.5;   // lip overhang over the board top — snap_boardclip default
+clip_hook_h = 1.2;   // lip + 45° lead-in height above the board top — snap_boardclip default
+clip_clear  = 0.25;  // beam face to board edge (a fit — tune on the coupon) — snap_boardclip default
 standoff_h = 3.0;
 lid_edge  = 0.8;  // first (45°) stage of the show-face edge, mm — core_face_edge()  // [0:0.1:1.5]
 lid_edge2 = 0.8;  // second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]
 foot_cham = 0.5;
-floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp
-                   // notch there was the crack-starter in every flat-printed shell — a corner drop hinges the
-                   // floor about it along one layer boundary. 0 = the old square corner  // [0:0.2:1.2]
+floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner  // [0:0.2:1.2]
+                   // The sharp notch there was the crack-starter in every flat-printed shell — a corner drop
+                   // hinges the floor about it along one layer boundary.
 lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
                    // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 
@@ -127,7 +143,13 @@ $fa = 3; $fs = 0.4;
 
 // ----------------------------------------------------------------------------
 e_seal   = opt_seal;
-wall_eff = e_seal ? max(wall_t, gasket_w + 1.6) : wall_t;
+// 1.2 mm cheek each side of the groove (2*core_min_wall) — this file carried
+// the WAP's 0.8-cheek fork (CLR-7); the cheeks are the seal path's walls
+wall_eff = e_seal ? max(wall_t, gasket_w + 2*core_min_wall()) : wall_t;
+assert(!e_seal || core_gasket_fill(gasket_w, gasket_groove, gasket_proud) <= core_gasket_fill_max(),
+       str("the printed TPU ring would fill ", round(100*core_gasket_fill(gasket_w, gasket_groove, gasket_proud)),
+           " % of its groove - past ", round(100*core_gasket_fill_max()),
+           " % the incompressible gasket props the lid open instead of sealing; narrow gasket_w or deepen gasket_groove"));
 pd = post_d;
 post_corner = pd + 1.5;
 clip_stack = clip_clear + clip_t;
@@ -138,9 +160,19 @@ head_pad = max(0, screw_head_h + 1.0 - lid_t);
 // two columns: LoRa board | battery holder (both vertical, USB/leads down)
 col_lb = lb_w + 2*(clip_stack + board_clear) + 0.5;
 col_bh = bh_w + 2.0;
-inner_x = col_lb + 2 + col_bh + 2*post_corner;
+// the roof screws (through its feet into the TOP posts) must be drivable with
+// the panel in its rails: each Ø8 foot stands wholly outboard of the panel
+// edge, so the corner posts sit at |x| >= pan_w/2 + 4.4. Packed to the columns
+// alone the posts were under the panel, and the panel slides in before the
+// roof goes on — the two roof screws were unreachable. The extra width is
+// wire room between the columns.
+roof_foot_d = screw_head_d + 4.0;   // the roof screw's foot: the head seat + a 2 mm rim
+roof_post_x = pan_w/2 + roof_foot_d/2 + 0.4;
+inner_x = max(col_lb + 2 + col_bh + 2*post_corner, 2*(roof_post_x + post_d/2 + 0.2));
 inner_y = max(lb_l, bh_l) + 2*board_clear + 10;      // + wire room at the top
-cav_d   = max(standoff_h + pcb_t + lb_stack, bh_h) + 1.5;
+// the 18650 holder runs to within 0.6 of the bottom wall, under the lid's lip:
+// the cavity is deep enough for the lip to pass over the holder, not onto it
+cav_d   = max(max(standoff_h + pcb_t + lb_stack, bh_h) + 1.5, bh_h + 0.01 + lip_h + 0.3);
 
 out_x = inner_x + 2*wall_eff;
 out_y = inner_y + 2*wall_eff;
@@ -149,6 +181,18 @@ lb_cx = -inner_x/2 + post_corner + col_lb/2;
 bh_cx =  inner_x/2 - post_corner - col_bh/2;
 lb_cy = -inner_y/2 + board_clear + lb_l/2;
 bh_cy = -inner_y/2 + board_clear + bh_l/2;
+// SMA bulkhead height on the sky wall: centered on the cavity unless its
+// washer land would reach the lid's drip skirt (sealed) — then as high as the
+// land clears the skirt's lower edge by 0.4. Centered, the land stood 0.55
+// into the skirt and held the lid off its gasket.
+sma_land_d = sma_d + 6;
+sma_z = min(floor_t + cav_d/2, base_d - skirt_h - 0.4 - sma_land_d/2);
+// panel-lead gland on the lid: over the LoRa column, clear of the board's top
+// edge (the Ø13 locknut envelope hangs 6 below the lid) and under the roof bed
+// where it stands highest. Over the battery bay by the top wall (as it was) its
+// body stood in the roof's root and its nut on the holder.
+gland_x = lb_cx;
+gland_y = lb_cy + lb_l/2 + 11;
 usb_zc = floor_t + standoff_h + pcb_t + port_usbc_shell_h()/2;   // on the connector AXIS, not PCB-top + h/2
 // drains: one in the gap between the LoRa rail and the battery bay wall, one
 // under the 18650 bay (its ring wall is a dam: the bay is a cup without it)
@@ -178,6 +222,13 @@ assert(lip_h < cav_d, "lip_h vs cavity");
 key_x = inner_x/2 - post_corner - 2.5;   // lid key: +Y wall, inboard of the +X corner post (battery side)
 assert(roof_drain_w == 0 || 3*roof_drain_w + 12 <= pan_w, "roof_drain_w: three notches do not fit across the stop");
 assert(!sma_boss || sma_d + 6 <= cav_d, "the SMA washer land is taller than the sky wall — shrink it");
+assert(!sma_boss || !e_seal || sma_z + sma_land_d/2 <= base_d - skirt_h - 0.4 + 1e-9,
+       "the SMA washer land reaches the lid's drip skirt — the lid would stand on it");
+assert(sma_z - sma_land_d/2 >= floor_t, "the SMA land drops below the floor — shrink sma_d or deepen cav_d");
+assert(roof_post_x - roof_foot_d/2 >= pan_w/2 + 0.4 - 1e-9 && post_xy()[0][0] >= roof_post_x - 1e-9,
+       "a roof foot stands under the panel — its screw cannot be driven with the panel fitted");
+assert(bh_h + 0.01 + 0.3 <= cav_d - lip_h + 1e-9, "the lid's lip lands on the 18650 holder");
+assert(abs(gland_y - (lb_cy + lb_l/2)) >= 6.5 + 1.0, "the gland's locknut lands on the LoRa board");
 assert(!opt_mark || (mark_depth > 0 && mark_depth < lid_t),
        "mark_depth must be between 0 and lid_t");
 // the wordmark's two gates, from the mark library's measured type metrics:
@@ -252,8 +303,8 @@ module body_solid() {
                 // nut torqued onto a flat wall seats its washer IN the film of
                 // water that wall carries; on a land it seats above it
                 if (sma_boss)
-                    translate([lb_cx, out_y/2 - 0.01, floor_t + cav_d/2]) rotate([-90, 0, 0])
-                        cylinder(d = sma_d + 6, h = 1.01);
+                    translate([lb_cx, out_y/2 - 0.01, sma_z]) rotate([-90, 0, 0])
+                        cylinder(d = sma_land_d, h = 1.01);
             }
             translate([0, 0, floor_t])   // the cavity, floor cove left standing (canary_core_lib)
                 cavity_cut(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1, floor_cove);
@@ -261,7 +312,7 @@ module body_solid() {
             // 1/4-36 thread is Ø6.35, and nut torque on a plain round bore
             // spins the jack and chews the print. Fit an EPDM sealing washer
             // under the external nut — this is the sky-facing wall.
-            translate([lb_cx, out_y/2, floor_t + cav_d/2])
+            translate([lb_cx, out_y/2, sma_z])
                 rotate([-90, 0, 0]) translate([0, 0, -wall_eff*2])
                     linear_extrude(wall_eff*4) intersection() {
                         circle(d = sma_d);
@@ -278,9 +329,14 @@ module body_solid() {
             if (e_seal)
                 translate([0, 0, base_d - gasket_groove])
                     linear_extrude(gasket_groove + 1) rim_ring2d(gasket_w);
-            // pole strap channels, cut only within the added back slab (seal-safe)
-            for (sy = [1, -1]) translate([-out_x/2 - 1, sy*inner_y/4 - strap_w/2, -strap_t - 0.1])
-                cube([out_x + 2, strap_w, strap_t + 0.1]);
+            // pole strap channels, cut only within the added back slab (seal-safe).
+            // The channel opens onto the bed, so its roof is a bridge: 45°
+            // corners hold the flat span to the print-validated 7 mm
+            // (canary_port_lib) — a square 9 mm channel bridged all 9
+            for (sy = [1, -1]) translate([-out_x/2 - 1, sy*inner_y/4, -strap_t - 0.1])
+                rotate([90, 0, 90]) linear_extrude(out_x + 2)
+                    port_bridge_profile2d(strap_w, 2*(strap_t + 0.1),
+                                          max(0, (strap_w - port_flat_span_max())/2));
             // bottom-edge chamfer — the LIBRARY's ring (canary_core_lib), not
             // a local re-draw of it. This was a hand copy of foot_chamfer_ring
             // in a file that already imports the library, structurally
@@ -350,7 +406,7 @@ module lid() {
                 cb_flat_cut(p[0], p[1], lid_t + head_pad, screw_d + 2*tol_hole,
                             screw_head_d + 2*tol_hole, screw_head_h);
             // panel-lead gland hole (fit an M8 cable gland or silicone-seal)
-            translate([bh_cx, inner_y/2 - 8, -1]) cylinder(d = 8.2, h = lid_t + 2);
+            translate([gland_x, gland_y, -1]) cylinder(d = 8.2, h = lid_t + 2);
             // pressure vent: Ø3 hole + inner spot-face for an adhesive ePTFE
             // patch (Ø10) — the most thermally-cycled design in the folder
             // pumps ~14 % of its volume past the gasket per day/night cycle
@@ -393,17 +449,25 @@ module lid() {
 // the stop the panel rests against under gravity; the panel slides in from
 // the root end before the roof goes on. Screws to the lid's top posts (swap
 // the two TOP lid screws for M2 x 12 through the roof feet).
+// the bed's own frame: x across, y along the slope from the root, z = 0 the
+// bed's underside (the rib side), the panel slot at z 2 .. 2 + pan_t
+module roof_bed_frame() {
+    translate([0, inner_y/2 - 2, 0]) rotate([90 + roof_ang, 0, 0]) mirror([0, 0, 1]) translate([0, 0, -2])
+        children();
+}
 module roof() {
     // the bed is as long as the panel plus its stop: at 0.75 x pan_l the panel
     // overhung the ROOT end, straight into the top wall and the antenna
     bed_l = pan_l + tol_slide + roof_stop_t;
     stop_h = pan_t - 0.4;   // BELOW the panel's top face: water sheds over the stop, not against it
+    rail_x = pan_w/2 + tol_slide;   // the rails' inner face
     difference() {
         union() {
-            // two feet matching the top lid-screw posts
+            // two feet matching the top lid-screw posts — outboard of the panel
+            // edge (roof_post_x), so a driver reaches them past a fitted panel
             for (p = [post_xy()[0], post_xy()[1]])
-                translate([p[0], p[1], 0]) cylinder(d = 8, h = 3);
-            translate([0, inner_y/2 - 2, 0]) rotate([90 + roof_ang, 0, 0]) mirror([0, 0, 1]) translate([0, 0, -2]) {
+                translate([p[0], p[1], 0]) cylinder(d = roof_foot_d, h = 3);
+            roof_bed_frame() {
                 translate([-pan_w/2 - 3, 0, 0]) cube([pan_w + 6, bed_l, 2]);                // bed
                 for (s = [1, -1]) translate([s*(pan_w/2 + tol_slide) + (s < 0 ? -3 : 0), 0, 2 - 0.01])
                     cube([3, bed_l, pan_t + 2]);                                              // side rails
@@ -422,17 +486,26 @@ module roof() {
                 if (roof_ribs)
                     translate([0, bed_l/2, 0.01]) mirror([0, 0, 1]) plate_ribs(pan_w + 6, bed_l, 2, 4.0, r = 1.0, inset = 2.0, n = 2);
             }
-            // struts from the feet up INTO the bed's underside, 12 mm along it
-            // from the root (bed point (0, 12, 0) -> world (0, inner_y/2 - 2 - 12 cos(a), 12 sin(a)))
+            // struts from the feet up to the bed's UNDERSIDE, their upper end
+            // defined in the bed's frame under the side rail (x outboard of the
+            // rail's inner face, z <= 0): a hull of two bodies that both lie
+            // outboard of the panel edge cannot reach the panel slot. The old
+            // upper end was a world-frame cylinder at 0.8 x the post x — inside
+            // the panel's width and 3 mm tall across the bed plane, so both
+            // struts stood 2 x 214 mm3 into the panel.
             for (p = [post_xy()[0], post_xy()[1]])
                 hull() {
-                    translate([p[0], p[1], 0]) cylinder(d = 8, h = 3);
-                    translate([p[0]*0.8, inner_y/2 - 2 - 12*sin(roof_ang), 12*cos(roof_ang) - 2.5]) cylinder(d = 8, h = 3);
+                    translate([p[0], p[1], 0]) cylinder(d = roof_foot_d, h = 3);
+                    roof_bed_frame()
+                        translate([sign(p[0]) > 0 ? rail_x : -rail_x - 3, 14, -2]) cube([3, 8, 2.01]);
                 }
         }
+        // the roof screws and their driver path: the Ø(head + 0.6) bore runs up
+        // through the foot, the strut and the rail root above it, so the driver
+        // reaches the head with the panel fitted
         for (p = [post_xy()[0], post_xy()[1]]) {
             translate([p[0], p[1], -0.1]) cylinder(d = screw_d + 2*tol_hole, h = 30);
-            translate([p[0], p[1], 3 - 1.4]) cylinder(d = screw_head_d + 0.6, h = 30);
+            translate([p[0], p[1], 3 - 1.4]) cylinder(d = screw_head_d + 0.6, h = 40);
         }
         // crop everything below the foot plane: the tilted lower stop otherwise
         // protrudes ~2.7 mm below z=0 and digs into the lid on assembly

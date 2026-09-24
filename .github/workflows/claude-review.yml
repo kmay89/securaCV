@@ -8,8 +8,15 @@ name: Canary Reviewer
 # can't — a missing invariant-impact statement, a smuggled tracking feature,
 # voice drift ("flock", overclaimed "Verified"), an unjustified dependency.
 #
-# Requires repo secret ANTHROPIC_API_KEY. Fork PRs get no secrets, so the job
-# skips them (they still get every deterministic check).
+# INTENDED STATE: ON for every same-repo PR. It needs the repo secret
+# ANTHROPIC_API_KEY (Settings -> Secrets and variables -> Actions). Without it
+# the job still runs, prints a warning, and exits green with the review step
+# skipped, so a green check here does NOT mean a review happened: open the run
+# and look for the "Canary Reviewer" step. As of 2026-09-22 the secret is not
+# set, so no run has produced a review (run #1480 is a recent skip). Fork PRs
+# never see secrets and always skip; Dependabot PRs see only Dependabot
+# secrets, so add the key there too if bot PRs should be reviewed.
+# Deterministic gates decide correctness either way.
 
 on:
   pull_request:
@@ -39,9 +46,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      # Advisory-only: if the key isn't configured yet, skip cleanly (green)
-      # instead of failing the PR. Add ANTHROPIC_API_KEY in repo Settings →
-      # Secrets to turn the reviewer on.
+      # Advisory-only: if the key isn't configured yet, skip green instead of
+      # failing the PR, but say so loudly (a warning annotation plus a job
+      # summary) so a green check is never mistaken for a review. Add
+      # ANTHROPIC_API_KEY in repo Settings → Secrets to turn the reviewer on.
       - name: Check for API key
         id: key
         env:
@@ -51,11 +59,13 @@ jobs:
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::ANTHROPIC_API_KEY not set — skipping the advisory Canary Reviewer. Add it in Settings → Secrets to enable it."
+            echo "::warning::ANTHROPIC_API_KEY not set — skipping the advisory Canary Reviewer. Add it in Settings → Secrets to enable it."
+            echo "### Canary Reviewer skipped" >> "$GITHUB_STEP_SUMMARY"
+            echo "ANTHROPIC_API_KEY is not set for this repository, so the advisory review did not run. Add it under Settings -> Secrets and variables -> Actions to turn it on." >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Canary Reviewer
         if: steps.key.outputs.present == 'true'
-        uses: anthropics/claude-code-action@7b0b255830a1fab6e602658672acad11c12d841d # v1
+        uses: anthropics/claude-code-action@cfc3eb22bfed5c26ef66e3223c982af27e4524de # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |

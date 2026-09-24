@@ -75,9 +75,13 @@ buzzer onto a `MINIMAL` build that never calls it.
 | microSD storage | `FEATURE_SD_STORAGE` | — | ✅ | ✅ |
 | GNSS (L76K) | `FEATURE_GNSS` | ✅ | ✅ | ✅ |
 
-`FEATURE_TAMPER_GPIO` defaults to `0` in
-[`configs/canary-wap/default/config.h`](../../firmware/configs/canary-wap/default/config.h);
-enable it when a tamper switch is fitted.
+`FEATURE_TAMPER_GPIO` defaults to `0` in every profile
+([`build_config.h`](../../firmware/projects/canary-wap/arduino/canary_wap/build_config.h),
+mirrored in
+[`configs/canary-wap/default/config.h`](../../firmware/configs/canary-wap/default/config.h))
+until the contact's pin is bench-validated. When a tamper switch is fitted,
+build with `-DFEATURE_TAMPER_GPIO=1`: the firmware then reads the switch and
+narrates an opening as the `system.integrity` `enclosure` kind (§6.3).
 
 ---
 
@@ -177,7 +181,7 @@ Source: [`pins.h`](../../firmware/boards/xiao-esp32s3-sense/pins/pins.h),
 | Multifunction button | SW1 | BOOT | 0 | Input active LOW; `BOOT_BUTTON_PIN = 0` | ✅ Driven (beacon presence gate) |
 | Battery sense | — | D0 / A0 | 1 | ADC1_CH0, 2:1 divider; `VBAT_PIN = 1` | ✅ Driven (`FEATURE_POWER_MONITOR`) |
 | Cap-touch pad | TP1 | D3 | **4** | Native touch; `TOUCH_PIN_NUM = 4` | 🔧 Library (`securacv_touch`; see note) |
-| Tamper switch | SW2 | D3 | **4** | Input `INPUT_PULLUP`; `TAMPER_PIN_DEFAULT = 4` | 📋 Pin only (`FEATURE_TAMPER_GPIO` not yet consumed) |
+| Tamper switch | SW2 | D3 | **4** | Input `INPUT_PULLUP`; `TAMPER_PIN_DEFAULT = 4` | 🔧 Read when built with `FEATURE_TAMPER_GPIO=1` (off by default; bench-unvalidated) |
 | External RGB LED | DLED1 | D2 | 3 | Digital out; `EXT_LED_PIN_DEFAULT = 3` | 📋 Pin only (not driven in canary-wap today) |
 
 **Reserved — do not repurpose:** D6/D7 (GPIO43/44) = L76K GNSS UART · D8–D10
@@ -196,9 +200,10 @@ Source: [`pins.h`](../../firmware/boards/xiao-esp32s3-sense/pins/pins.h),
 > by the `securacv_touch` library (currently wired into the `firmware/canary`
 > PlatformIO build, not the canary-wap Arduino sketch) — enabling it on
 > canary-wap requires integrating that library. **Tamper** (`FEATURE_TAMPER_GPIO`)
-> and the **external RGB LED** (`EXT_LED_PIN_DEFAULT`) are **pin definitions with
-> no consuming code yet** — fitting the hardware reserves the pin but the feature
-> needs firmware support before it does anything. Treat these three as
+> is read by both firmware trees, but only when built with the flag on — it is
+> off in every shipped profile until the pin is bench-validated. The **external
+> RGB LED** (`EXT_LED_PIN_DEFAULT`) is a **pin definition with no consuming code
+> yet** — fitting it reserves the pin but does nothing. Treat these three as
 > *build-to-spec, enable-in-firmware* rather than drop-in.
 >
 > **Pin budget:** the assignments above (buzzer 2, RGB LED 3, tamper/touch 4 with
@@ -247,15 +252,26 @@ strong pull at boot) · ADC2/GPIO5 is shared with WiFi.
   on-board pixel). Active-HIGH per `EXT_LED_ACTIVE = HIGH`.
 
 ### 6.3 Tamper switch (SW2)
-> **Firmware:** `FEATURE_TAMPER_GPIO` / `TAMPER_PIN_DEFAULT` are defined but **not
-> yet consumed** by the WAP firmware — setting the flag does not currently poll
-> the pin or emit a tamper event. Fitting SW2 prepares the hardware; emitting
-> events needs firmware support (or use the touch-based enclosure-tamper mode in
-> `securacv_touch`, which *is* implemented). Note GPIO4 is shared with the touch
-> default — see the §5.1 collision note.
-- Reed/Hall between GPIO4 and GND, wired for `INPUT_PULLUP`, active LOW
-  (`TAMPER_ACTIVE = LOW`) — so a **normally-closed** sensor held shut by `MAG1`
-  reads "closed/secure," and opening the enclosure (magnet leaves) trips it.
+> **Firmware:** built with `FEATURE_TAMPER_GPIO=1`, both firmware trees (the
+> canary-wap sketch and the `firmware/canary` PlatformIO build) read
+> `TAMPER_PIN_DEFAULT`, debounce it (`contact_tamper.h`: the new level must
+> hold for 5 samples and 300 ms), and narrate an opening as the
+> `system.integrity` `enclosure` kind, which reaches Home Assistant's
+> **Enclosure Open** sensor. The first reading is adopted silently, so
+> powering up with the lid off is not an event. The flag is **off in every
+> shipped profile** until the pin and polarity below are bench-validated.
+> In the canary PlatformIO build GPIO4 is also the touch pad's default: the
+> build refuses to compile with both on until the pad moves (§5.1 collision
+> note, `-DTOUCH_PIN_NUM=5`).
+- Reed/Hall between GPIO4 and GND, wired for `INPUT_PULLUP`. The firmware
+  reads the enclosure as **open** while the line sits at `TAMPER_ACTIVE`
+  (`LOW`), so the switch must conduct when the lid is off: the BOM's
+  **normally-closed** reed (SW2) is held *open* by `MAG1` while the lid is
+  on (the pull-up reads HIGH, secure), and lifting the lid lets it close to
+  GND (LOW, enclosure open).
+- In this polarity a cut lead reads as secure. A wiring that fails toward
+  "open" would need a normally-open reed held shut by the magnet and
+  `TAMPER_ACTIVE = HIGH` — a board-map change (`pins.h`), not a wiring trick.
 - The internal pull-up is sufficient; external `R3` (10 kΩ) only if you want a
   stiffer pull or external filtering.
 

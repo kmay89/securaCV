@@ -76,11 +76,13 @@ def is_night(local_hour: int | None) -> bool:
 
 
 # Alert-class event types: when the latest event is one of these, the casual
-# answer leads with it — a smoke alarm outranks small talk. The five bare
-# kind words are the WAP's system.integrity tamper events, whose wire
-# event_type IS the kind (const.py's vocabulary; csi_mqtt.cpp stamps
-# event_type from the state name) — a box that just rebooted unexpectedly
-# outranks small talk exactly as a named tamper does.
+# answer leads with it — a smoke alarm outranks small talk. The bare kind
+# words are the system.integrity tamper events, whose wire event_type IS
+# the kind (const.py's vocabulary; csi_mqtt.cpp stamps event_type from the
+# state name) — a box that just rebooted unexpectedly outranks small talk
+# exactly as a named tamper does. scripts/lint_dictionary_sync.py requires
+# this set to hold every kind in spec/witness_dictionary.json's
+# system_integrity_kinds.
 _ALERT_EVENT_TYPES = frozenset(
     {
         "tamper_detected",
@@ -91,6 +93,7 @@ _ALERT_EVENT_TYPES = frozenset(
         "sd_error",
         "watchdog",
         "unexpected_reboot",
+        "enclosure",
     }
 )
 

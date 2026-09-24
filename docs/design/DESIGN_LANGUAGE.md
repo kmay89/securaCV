@@ -57,6 +57,20 @@ lives in the library **once**; the knobs stay per-case:
   the GoPro hinge is Vision/Sense's shared gesture.
 - **Fasteners** — `SCR_REGISTRY` in the core lib; heads seat in designed
   seats (`cs_cone90_cut` / `cb_head_pad`), never on bare face.
+- **The face is unbroken** — no screw head on a show face. Screws enter a
+  seat in the **back** (the side against the wall, the table or the
+  doorbell's plate) and thread into bosses that hang under the face, stopping
+  `face_skin` (1.0) short of it; `screw_from = "back"` is the house choice
+  and the length, the head's recess and the boss are derived together by
+  `bk_len()` / `bk_recess()` / `bk_boss_h()` / `bk_seat_cut()` /
+  `bk_boss_bore()`. A face that shows its fasteners is a departure and says
+  why (`deviates:` on the knob) — the WAP's Outdoor preset keeps its heads
+  on the lid only because the sun shield covers them and rides on them.
+  A sealed build seats an O-ring under every one of those back screw heads
+  (a seat is a hole through the seal line from outside), and the sun shield
+  on the WAP has screws of its own into blind pilots over the bosses.
+  Gated by `lint_design_lang.py` (`CANON_WORD`) and by the fit gates, which
+  prove each boss clears its post by the relief that makes the rim the datum.
 
 ## Color
 

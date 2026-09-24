@@ -349,8 +349,9 @@ aspirational.
     snapshots) plus `/api/sealed-log` — which the kernel now serves
     (wave 6): a token-gated, checkpoint-anchored tail with stored-byte
     payloads and no query surface (Invariant VII), verified end-to-end
-    against the TV core's own chain math. The remaining design work is the
-    pairing/token story that lets the TV read it.
+    against the TV core's own chain math, and readable by a Wall paired with
+    a route-scoped viewer token that pins the kernel's key. The remaining
+    design work is the dispute pack itself.
 11. **The enterprise-custody threshold tier.** *Needs design* (spec exists:
     [`spec/quorum_unseal_v2.md`](../../spec/quorum_unseal_v2.md)). Upgrades
     move #2's honest limit into a cryptographic guarantee for buyers whose

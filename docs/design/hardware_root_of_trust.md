@@ -71,7 +71,7 @@ hardware root of trust closes.
 
 `firmware/provisioning/` ships real tooling — `generate_keys.sh` (RSA-3072 Secure
 Boot key + XTS-AES flash-encryption key), `sdkconfig.defaults.secure`,
-`partitions_secure.csv` (encrypted partitions + `nvs_keys`), `provision_canary.sh`
+`partitions_secure.csv` (`nvs_keys` + `spiffs` flagged `encrypted`, `nvs` deliberately not), `provision_canary.sh`
 (virgin-verify → burn → flash → post-verify, with `--dry-run`), and
 `verify_device.py` (reads the security eFuses). [`secure_provisioning.md`](../secure_provisioning.md)
 documents the eFuse target state. The firmware full audit
@@ -143,7 +143,7 @@ honest hardware-RoT design must own this, not bury it.
 | **0** (default) | Ed25519 identity in NVS; signed OTA | — | **Yes** | Everyone |
 | **1** | Anti-rollback (A/B + boot self-test/safe-mode) | Yes (software) | Yes | Everyone — should become default |
 | **2** | Software **attestation** (signed challenge-response + firmware self-measurement) | Yes | Yes | Anyone wanting a signed, replay-proof health report |
-| **3** | Flash encryption (**development** mode) — identity key protected at rest; DS-bound key optional (§8 #4) | Partly (still reflashable) | Mostly | Physical-theft threat models |
+| **3** | Flash encryption (**development** mode) + NVS encryption — the identity key is protected at rest only with both, because flash encryption does not cover NVS, where the key lives; NVS encryption is not available under `framework = arduino` (the Arduino 2.0.17 core cannot build it; `firmware/ESP32S3_OPTIMIZATION_ROADMAP.md` item 9), so on a fused board the key is still plaintext today — the PIO canary image reports `key_at_rest` = `plaintext-nvs`; DS-bound key optional (§8 #4) | Partly (still reflashable) | Mostly | Physical-theft threat models |
 | **4** | Secure Boot v2 + flash encryption (**release**) + JTAG-off | **No — eFuse** | **No** | High-assurance deployments only |
 
 Tiers 1–2 are the "every Canary should have this" band — pure software, no eFuse,
@@ -299,8 +299,12 @@ Mirroring the honesty of the vault RFC's §5.5
   `securacv.attest/v1` (challenge-response + measurement) on the existing identity
   key; add the read-only "is this device locked?" probe so the flasher refuses
   locked units cleanly. No eFuse.
-- **Phase 3 — key-at-rest protection.** Flash encryption (development mode) so the
-  Ed25519 identity is protected at rest (§8 #4 default); a DS-peripheral-bound RSA
+- **Phase 3 — key-at-rest protection.** Flash encryption (development mode) plus
+  NVS encryption so the Ed25519 identity is protected at rest (§8 #4 default).
+  Flash encryption alone does not cover NVS, and NVS encryption is not available
+  under `framework = arduino`, so this phase needs the arduino-as-IDF-component
+  migration first (item 9 in `firmware/ESP32S3_OPTIMIZATION_ROADMAP.md`; the
+  Tier 3 row in §5.1). A DS-peripheral-bound RSA
   key is added *only* where a deployment needs non-extractability against a full
   flash readout. Validated on dev boards; still reflashable.
 - **Phase 4 — full lockdown ceremony (opt-in, irreversible).** Secure Boot v2 +

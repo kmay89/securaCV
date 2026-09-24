@@ -250,16 +250,17 @@ function cb_pad_seat_ok(inset, d_seat) = inset >= d_seat/2 - 1e-9;
 //  catalog — a post tucked far enough into a corner for the corner ARC to bind
 //  instead would need its own check, and would be a post that no longer sits
 //  where these cases put theirs.
-module cb_head_pad(x, y, h, d_pad, cl, cw, cr, d_seat = 0) {
+module cb_head_pad(x, y, h, d_pad, cl, cw, cr, d_seat = 0, clear = 0) {
     if (h > 0) {
-        assert(d_seat == 0 || cb_pad_seat_ok(min(cl/2 - abs(x), cw/2 - abs(y)), d_seat),
+        assert(d_seat == 0 || cb_pad_seat_ok(min(cl/2 - abs(x), cw/2 - abs(y)) - clear, d_seat),
                str("cb_head_pad: cropping the pad to the cavity leaves the ",
                    d_seat, " mm head seat without a complete floor — the screw ",
                    "center is only ", min(cl/2 - abs(x), cw/2 - abs(y)),
                    " mm from the cavity wall. Move the post inboard."));
         intersection() {
             translate([x, y, -h]) cylinder(d = d_pad, h = h + 0.1);
-            translate([0, 0, -h - 0.1]) rrect(cl, cw, cr, h + 0.3);
+            // `clear` keeps the pad the lip's running clearance off the wall
+            translate([0, 0, -h - 0.1]) rrect(cl - 2*clear, cw - 2*clear, max(cr - clear, 0.4), h + 0.3);
         }
     }
 }
@@ -268,6 +269,116 @@ module cs_cone90_cut(x, y, t, d_screw, h_head) {
     translate([x, y, -0.1]) cylinder(d = d_screw, h = t + 0.2);
     translate([x, y, t - h_head])
         cylinder(d1 = d_screw, d2 = d_screw + 2*h_head, h = h_head + 0.1);
+}
+
+// ---------------------------------------------------------------------------
+//  Screws from the back — the fastener-free face.
+//
+//  The show face is the one surface everyone sees and nobody touches, and the
+//  audit's renders of the released four found every one of them carrying its
+//  screw heads: four on the WAP, Vision and Sense, six on the doorbell. So the
+//  house default drives them the other way (screw_from = "back"): through a
+//  seat in the BACK, up a clearance bore through the corner post, and into a
+//  boss that hangs under the face, stopping `skin` short of it. The face is
+//  unbroken; the back — against the wall, the table or the doorbell's plate —
+//  carries the seats, and opening the case now means taking it down first.
+//
+//  The numbers are derived together, never typed:
+//    bk_len     the longest standard length whose tip stays skin + 0.3 under
+//               the face, given the head must sit wholly in the floor;
+//    bk_recess  how far the head sinks into the back (z from the back face):
+//               never so deep that the head's bearing floor — and, with a
+//               gland, the O-ring's floor plus a 0.4 web — leaves the plate;
+//    bk_boss_h  how far the boss hangs below the face's underside (the rim
+//               datum, base_h) so the thread engages hw_engage(size) = 3 × d.
+//
+//  THE RIM IS THE DATUM. The post stops bk_relief() short of the boss's foot
+//  (post top = base_h - boss_h - relief). Drawn to land exactly, boss and rim
+//  were two contact planes for one clamp: a post printed 0.1 tall held the
+//  rim open 0.1 and the gasket under-squeezed, with nothing to say so. With
+//  the relief the lid always seats rim-on-rim (the seal line), and the screw
+//  pulls the boss toward a post it never quite reaches — the gap absorbs the
+//  print's height error instead of the seam showing it.
+//
+//  THE GLAND. In seal mode a screw seat is a hole through the seal line from
+//  the outside, so a sealed build seats an O-ring under each pan head
+//  (bk_seat_cut gland = true): the gland is cut into the head's bearing
+//  floor, inside the plate (recess is limited so the ring's floor keeps a
+//  0.4 web), and the post — Ø5 around a Ø4.3 gland would be a 0.35 wall —
+//  is never asked to host it. The same registry O-ring as head_seal on a
+//  face-driven lid (cb_oring_cut).
+//  ext = the back's thickening below z = 0 (the keyhole slab, mount_extra).
+// ---------------------------------------------------------------------------
+function bk_relief() = 0.2;   // boss foot above the post top: the rim seats first
+function bk_web()    = 0.4;   // plate kept above an O-ring gland's floor
+function bk_hh(size, head)  = (head == "pan") ? scr_pan_h(size) : scr_flat_h(size);
+function bk_hd(size, head)  = (head == "pan") ? scr_pan_d(size) : scr_flat_d(size);
+// a pan screw's length is measured under the head, a flat's includes it
+function bk_hp(size, head)  = (head == "pan") ? scr_pan_h(size) : 0;
+function bk_gland_h(size, gland) = gland ? oring_gland_h(scr_oring_cs(size)) + bk_web() : 0;
+function bk_tipmax(base_h, lid_t, skin) = base_h + lid_t - skin - 0.3;
+function bk_len(size, head, ext, base_h, lid_t, skin = 1.0) =
+    let (room = bk_tipmax(base_h, lid_t, skin) + ext - bk_hp(size, head),
+         ok = [for (l = hw_std_lens()) if (l <= room + 1e-9) l])
+    ok[len(ok) - 1];
+function bk_recess(size, head, ext, floor_t, base_h, lid_t, skin = 1.0, gland = false) =
+    max(0, min(ext + floor_t - bk_hh(size, head) - bk_gland_h(size, gland),
+               bk_tipmax(base_h, lid_t, skin) + ext - bk_hp(size, head)
+                 - bk_len(size, head, ext, base_h, lid_t, skin)));
+function bk_tip(size, head, ext, floor_t, base_h, lid_t, skin = 1.0, gland = false) =
+    -ext + bk_recess(size, head, ext, floor_t, base_h, lid_t, skin, gland) + bk_hp(size, head)
+         + bk_len(size, head, ext, base_h, lid_t, skin);
+function bk_boss_h(size, head, ext, floor_t, base_h, lid_t, skin = 1.0, gland = false) =
+    max(0, ceil((hw_engage(size) - (bk_tip(size, head, ext, floor_t, base_h, lid_t, skin, gland) - base_h)) * 10) / 10);
+// the head's bearing plane above the back face, and the gland's floor: a
+// sealed seat must keep both inside the plate (asserted by the adopter)
+function bk_bear(size, head, recess) = recess + bk_hh(size, head);
+
+// the seat in the back and the clearance bore up the post: SUBTRACT from a
+// base whose back face is at z = -ext; `top` is where the bore ends (the
+// post top). Flat heads get a true 90° cone, pan heads a flat-floored bore;
+// `gland` (pan only) cuts the O-ring gland into the bearing floor.
+module bk_seat_cut(x, y, ext, top, size, head, recess, d_clear, tol_hole, gland = false) {
+    hh = bk_hh(size, head);
+    hd = bk_hd(size, head) + 2*tol_hole;
+    assert(!gland || head == "pan", "bk_seat_cut: an O-ring gland needs a pan head's flat bearing face");
+    translate([x, y, -ext - 0.1]) {
+        cylinder(d = d_clear, h = ext + top + 0.2);
+        if (recess > 0) cylinder(d = hd, h = recess + 0.1);
+        translate([0, 0, recess + 0.1])
+            if (head == "pan") cylinder(d = hd, h = hh);
+            else cylinder(d1 = d_clear + 2*hh, d2 = d_clear, h = hh);
+        if (gland)
+            translate([0, 0, recess + hh + 0.1 - 0.01])
+                cylinder(d = oring_gland_d(scr_oring_id(size), scr_oring_cs(size)),
+                         h = oring_gland_h(scr_oring_cs(size)) + 0.01);
+    }
+}
+
+// the boss under the face: hangs h below z = 0 (the face's underside), with
+// a 45° root fillet (a plain cylinder off a 2 mm plate is a stress riser at
+// the one joint the screw loads), CROPPED `clear` inside the cavity — the
+// same running clearance the lip carries. Cropped to the cavity exactly it
+// was an interference fit at every corner: seated straight it passed the fit
+// gate, shifted 0.15 mm it hit the wall (3.6 mm³), so the lid went on with a
+// press where the lip was designed to slide.
+module bk_boss(x, y, h, d, cl, cw, cr, clear, fil = 1.0) {
+    if (h > 0) intersection() {
+        translate([x, y, 0]) {
+            translate([0, 0, -h]) cylinder(d = d, h = h + 0.1);
+            translate([0, 0, -fil]) cylinder(d1 = d, d2 = d + 2*fil, h = fil + 0.1);
+        }
+        translate([0, 0, -h - 0.1]) rrect(cl - 2*clear, cw - 2*clear, max(cr - clear, 0.4), h + 0.3);
+    }
+}
+
+// the boss's thread: a pilot (or an insert bore) from the boss's foot up to
+// `skin` under the face. SUBTRACT from a face plate whose underside is z = 0.
+module bk_boss_bore(x, y, boss_h, lid_t, skin, d_pilot, insert = false, ins_bore = 0, ins_h = 0) {
+    translate([x, y, -boss_h - 0.1]) {
+        cylinder(d = d_pilot, h = boss_h + lid_t - skin + 0.1);
+        if (insert) cylinder(d = ins_bore, h = ins_h + 0.6);
+    }
 }
 
 // ---------------------------------------------------------------------------

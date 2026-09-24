@@ -72,7 +72,8 @@ def _install_ha_stubs() -> None:
 
     class _HomeAssistant:
         """Just enough for type annotations — TrustStore never calls
-        instance methods on hass; it just hands it to Store()."""
+        instance methods on hass; it just hands it to Store(). The
+        services registry and ServiceCall come from _augment_ha_stubs."""
 
         def __init__(self) -> None:
             self.data: dict[str, Any] = {}
@@ -127,6 +128,9 @@ def _install_ha_stubs() -> None:
         }),
         ("homeassistant.helpers.device_registry", {
             "async_get": lambda *a, **kw: None,
+        }),
+        ("homeassistant.helpers.config_validation", {
+            "config_entry_only_config_schema": lambda domain: (lambda config: config),
         }),
     ]:
         mod = types.ModuleType(name)
@@ -194,6 +198,126 @@ def _augment_ha_stubs() -> None:
         package = sys.modules.get(__name__.rsplit(".", 2)[0])
         if package is not None:
             importlib.reload(package)
+
+    # ── homeassistant.core: the services surface ─────────────────────
+    # What services.py registers against and what its handlers receive.
+    # Additive: the repo-root conftest installs the same shapes; this
+    # layer only fills in whatever base is missing them.
+    if not getattr(core_mod, "_securacv_services_rich", False):
+
+        class _ServiceRegistry:
+            """Records registrations so a test can find a handler by
+            (domain, service); async_call is a no-op (watch_runtime._notify
+            schedules one, and tests that care patch _notify)."""
+
+            def __init__(self) -> None:
+                self.registered: dict[tuple[str, str], Any] = {}
+
+            def async_register(
+                self, domain, service, service_func, schema=None,
+                supports_response=None, job_type=None,
+            ) -> None:
+                self.registered[(domain, service)] = types.SimpleNamespace(
+                    func=service_func, schema=schema, supports_response=supports_response
+                )
+
+            def has_service(self, domain, service) -> bool:
+                return (domain, service) in self.registered
+
+            def async_remove(self, domain, service) -> None:
+                self.registered.pop((domain, service), None)
+
+            async def async_call(self, *a, **kw):
+                return None
+
+        class _ServiceCall:
+            """The oldest supported shape (2024.4.1): slotted, and no
+            ``.hass`` — HA added that in 2025.1, so a handler must bind
+            hass at registration rather than read it off the call."""
+
+            __slots__ = ("domain", "service", "data", "context", "return_response")
+
+            def __init__(
+                self, domain, service, data=None, context=None, return_response=False
+            ) -> None:
+                self.domain = domain
+                self.service = service
+                self.data = dict(data or {})
+                self.context = context
+                self.return_response = return_response
+
+        ha_cls = core_mod.HomeAssistant
+        probe = ha_cls()
+        if not hasattr(getattr(probe, "services", None), "async_register"):
+
+            def _services(self):
+                # Cached per instance, and a property rather than an
+                # attribute set in __init__, so a test subclass can still
+                # override it with its own (test_tofu_health_hook.py).
+                registry = self.__dict__.get("_services")
+                if registry is None:
+                    registry = self.__dict__["_services"] = _ServiceRegistry()
+                return registry
+
+            ha_cls.services = property(_services)
+        if not hasattr(ha_cls, "async_create_task"):
+
+            def _async_create_task(self, coro):
+                try:
+                    coro.close()
+                except Exception:
+                    pass
+                return None
+
+            ha_cls.async_create_task = _async_create_task
+        if not hasattr(core_mod, "ServiceCall"):
+            core_mod.ServiceCall = _ServiceCall
+        if not hasattr(core_mod, "SupportsResponse"):
+            core_mod.SupportsResponse = types.SimpleNamespace(
+                NONE="none", OPTIONAL="optional", ONLY="only"
+            )
+        core_mod._securacv_services_rich = True
+
+    # ── homeassistant.exceptions ─────────────────────────────────────
+    exc_mod = sys.modules.get("homeassistant.exceptions")
+    if exc_mod is None:
+        exc_mod = types.ModuleType("homeassistant.exceptions")
+        sys.modules["homeassistant.exceptions"] = exc_mod
+    if not hasattr(exc_mod, "HomeAssistantError"):
+        class _HomeAssistantError(Exception):
+            """HA's constructor: a positional message plus the translation
+            triple (the repo-root conftest's stub has the same shape)."""
+
+            def __init__(
+                self,
+                *args,
+                translation_domain=None,
+                translation_key=None,
+                translation_placeholders=None,
+            ) -> None:
+                super().__init__(*args)
+                self.translation_domain = translation_domain
+                self.translation_key = translation_key
+                self.translation_placeholders = translation_placeholders
+        exc_mod.HomeAssistantError = _HomeAssistantError
+    if not hasattr(exc_mod, "ServiceValidationError"):
+        class _ServiceValidationError(exc_mod.HomeAssistantError):
+            pass
+        exc_mod.ServiceValidationError = _ServiceValidationError
+
+    # ── homeassistant.helpers.config_validation ──────────────────────
+    cv_mod = sys.modules.get("homeassistant.helpers.config_validation")
+    if cv_mod is None:
+        cv_mod = types.ModuleType("homeassistant.helpers.config_validation")
+        sys.modules["homeassistant.helpers.config_validation"] = cv_mod
+    for name, validator in (
+        ("string", str),
+        ("boolean", bool),
+        ("positive_float", float),
+        ("config_entry_only_config_schema", lambda domain: (lambda config: config)),
+    ):
+        if not hasattr(cv_mod, name):
+            setattr(cv_mod, name, validator)
 
     # ── Store.async_delay_save ───────────────────────────────────────
     store_cls = sys.modules["homeassistant.helpers.storage"].Store

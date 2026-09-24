@@ -40,7 +40,7 @@ This script derives the document from the files the build actually reads:
                                            profile, parsed from YAML
   firmware/canary/include/canary_config.h  FIRMWARE_VERSION — the one train
                                            (scripts/lint_fw_version_sync.sh
-                                           holds the other five copies to it)
+                                           holds the other six copies to it)
 
 The two Arduino axes must agree, and the agreement is asserted here instead
 of in firmware.yml's "keep the two in lockstep" comment (check_core_pin_
@@ -168,17 +168,6 @@ PLATFORM_FACTS: dict[str, dict] = {
         "arduino_core": "3.3.8",
         "esp_idf": "5.5.4",
         "website": "https://github.com/pioarduino/platform-espressif32",
-    },
-    "espressif32 @ ^7.0.0": {
-        "name": "platformio/espressif32",
-        "version": None,
-        "exact": False,
-        # 7.x still ships the 2.0.17 core (the 7.x bump added ESP-IDF 6.0
-        # support, not core 3.x) — PLATFORMS.md; what a release runner
-        # resolved on the day is in that run's log, not here.
-        "arduino_core": "2.0.17",
-        "esp_idf": "4.4.7",
-        "website": "https://registry.platformio.org/platforms/platformio/espressif32",
     },
 }
 

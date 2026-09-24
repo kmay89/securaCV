@@ -518,6 +518,18 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       color: var(--accent);
       margin-top: 0.25rem;
     }
+    /* Rows read from the SD card (F35): chain-linked, never "Verified" —
+       no signature is checked on that path. */
+    .tl-chain-badge.card { background: rgba(255,255,255,0.06); color: var(--muted); }
+    .tl-chain-badge.unlinked { background: var(--warning-dim); color: var(--warning); }
+    .tl-divider {
+      font-size: 0.7rem;
+      color: var(--muted);
+      border-top: 1px dashed var(--border);
+      padding: 0.4rem 0 0.6rem;
+      margin-left: -20px;
+    }
+    .tl-note { font-size: 0.75rem; color: var(--muted); text-align: center; padding: 0 0.75rem 0.75rem; }
     .tl-thumb {
       width: 64px;
       height: 48px;
@@ -984,6 +996,22 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <button class="nav-btn" data-panel="bluetooth">Bluetooth</button>
     </nav>
 
+    <!-- LAN unlock banner (F20 gap #11): shown only when the server served
+         this page WITHOUT the bearer credential — a home-network request that
+         carried no grant. The pasted token lives in a JS variable only. -->
+    <div class="card" id="lanLockBanner" style="display:none;border-color:var(--warning);">
+      <div class="card-title">This dashboard is locked on your home network</div>
+      <div class="card-subtitle" style="margin-top:0.35rem;">
+        Tap the BOOT button on the Canary and reload within 30 seconds, open this
+        page over the Canary's own Wi-Fi (that unlock only exists while the
+        Canary's network is broadcasting), or paste the token from your recovery kit.
+      </div>
+      <div style="display:flex;gap:0.5rem;margin-top:0.75rem;flex-wrap:wrap;">
+        <input type="text" class="form-input" id="lanTokenInput" placeholder="cv_… token from canary-recovery-kit.json" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" style="flex:1;min-width:12rem;">
+        <button class="btn btn-primary" onclick="unlockWithToken()">Unlock</button>
+      </div>
+    </div>
+
     <!-- Status Panel -->
     <div class="panel active" id="panel-status">
 
@@ -1188,6 +1216,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div class="tl-load-more" id="timelineLoadMore" style="display:none;">
           <button class="btn btn-secondary" onclick="loadMoreTimeline()">Load More</button>
         </div>
+        <div class="tl-note" id="timelineNote" style="display:none;"></div>
       </div>
     </div>
 
@@ -1614,6 +1643,39 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div class="stat-item"><div class="stat-label">Last wake</div><div class="stat-value" id="lpWake">--</div></div>
           <div class="stat-item"><div class="stat-label">Wake pad</div><div class="stat-value" id="lpWakePad">--</div></div>
           <div class="stat-item"><div class="stat-label">Caps</div><div class="stat-value" id="lpCaps" style="font-size:0.8rem;">--</div></div>
+        </div>
+      </div>
+
+      <!-- Paired beacons (BLE Scout, [env:full] builds; repo sweep F27).
+           Hidden unless GET /api/scout answers. No MAC is ever shown or
+           sent: the Canary pairs the FIRST unpaired Bluetooth device it
+           hears at or above the window's signal threshold (not the loudest
+           one), and keeps only a coded ID + the name. -->
+      <div class="card" id="scoutCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Paired beacons</div>
+            <div class="card-subtitle">
+              Bluetooth tags this Canary listens for, to tell you which room
+              they are in. It keeps a coded ID and your name for each tag,
+              never the tag's address. Most phones change their Bluetooth
+              address every few minutes, so a tag works best.
+            </div>
+          </div>
+        </div>
+        <div class="log-list" id="scoutList"></div>
+        <div class="form-group" style="margin-top:1rem;">
+          <label class="form-label" for="scoutLabel">Name for the new tag</label>
+          <div style="display:flex;gap:0.5rem;">
+            <input type="text" class="form-input" id="scoutLabel" maxlength="23" placeholder="Keys" style="flex:1;">
+            <button class="btn btn-primary" id="scoutPairBtn" onclick="scoutPairStart()">Pair a tag</button>
+            <button class="btn btn-ghost" id="scoutCancelBtn" onclick="scoutPairCancel()" style="display:none;">Cancel</button>
+          </div>
+          <div class="card-subtitle" id="scoutPairMsg" style="margin-top:0.5rem;">
+            Press Pair, then hold the tag against the Canary for up to 60 seconds.
+            Keep your phone and any other Canary a step back: the first unpaired
+            device this close is the one that pairs.
+          </div>
         </div>
       </div>
 
@@ -2219,6 +2281,22 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     <!-- Settings Panel -->
     <div class="panel" id="panel-settings">
+      <!-- Recovery kit (F20 gap #11, WAP wizard parity) -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Recovery kit</div>
+            <div class="card-subtitle">
+              Download this Canary's provisioning receipt — device ID, API token,
+              Wi-Fi name and password — as <code>canary-recovery-kit.json</code>.
+              Keep it somewhere safe: it unlocks this dashboard from your home
+              network and pairs the iPhone app.
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-secondary" onclick="saveRecoveryKit()">Save recovery kit</button>
+      </div>
+
       <!-- WiFi Configuration Card -->
       <div class="card">
         <div class="card-header">
@@ -2315,31 +2393,37 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <div class="card">
         <div class="card-header">
           <div>
-            <div class="card-title">Device Configuration</div>
-            <div class="card-subtitle">Modify device settings</div>
+            <div class="card-title">Device</div>
+            <div class="card-subtitle">Restart the Canary</div>
           </div>
         </div>
-        <div class="form-group">
-          <label class="form-label">Record Interval (ms)</label>
-          <input type="number" class="form-input" id="configRecordInterval" value="1000" min="100" max="60000">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Time Bucket (ms)</label>
-          <input type="number" class="form-input" id="configTimeBucket" value="5000" min="1000" max="60000">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Log Level (min stored)</label>
-          <select class="form-input" id="configLogLevel">
-            <option value="0">Debug</option>
-            <option value="1" selected>Info</option>
-            <option value="2">Notice</option>
-            <option value="3">Warning</option>
-          </select>
-        </div>
         <div style="display:flex;gap:0.5rem;margin-top:1rem;">
-          <button class="btn btn-primary" onclick="saveConfig()">Save Configuration</button>
           <button class="btn btn-danger" onclick="confirmReboot()">Reboot Device</button>
         </div>
+      </div>
+
+      <!-- Household time zone (repo sweep F28). The Canary's day — its
+           10-minute buckets and quiet hours — follows this zone; world time
+           (UTC) until one is set. Set at setup from the phone; changed here. -->
+      <div class="card" id="tzCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Time zone</div>
+            <div class="card-subtitle" id="tzNow">--</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+          <button class="btn btn-secondary" id="tzUseBrowser" onclick="tzUseBrowser()">Use this browser's time zone</button>
+          <button class="btn btn-ghost" onclick="tzSet({tz: ''})">Back to world time (UTC)</button>
+        </div>
+        <div class="form-group" style="margin-top:1rem;">
+          <label class="form-label" for="tzRule">Or a POSIX rule (advanced)</label>
+          <div style="display:flex;gap:0.5rem;">
+            <input type="text" class="form-input" id="tzRule" maxlength="47" placeholder="EST5EDT,M3.2.0,M11.1.0" style="flex:1;">
+            <button class="btn btn-secondary" onclick="tzSetRule()">Set</button>
+          </div>
+        </div>
+        <div class="card-subtitle" id="tzMsg" style="margin-top:0.5rem;"></div>
       </div>
 
       <!-- Software Update Card (signed pull-OTA; hidden on builds without it) -->
@@ -2687,7 +2771,13 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // In the unprovisioned/dev-preview path the placeholder stays in place
     // and the api() helper skips the Authorization header — requests then
     // fail closed on the server side.
-    const CV_TOKEN = '__CV_TOKEN__';
+    // `let`, not `const`: a home-network load arrives with the placeholder
+    // streamed EMPTY (X-CV-Token: withheld) and the owner may paste the token
+    // from the recovery kit. It stays in this variable and is never
+    // persisted to browser storage or a cookie (regression_check.sh fails on
+    // any such API name in a *webui* file outside a whole-line comment; this
+    // comment does not spell them either).
+    let CV_TOKEN = '__CV_TOKEN__';
     let currentPanel = 'status';
     let pendingAckSeq = null;
     let logFilter = 'all';
@@ -2719,9 +2809,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (panel === 'opera') refreshOpera();
       else if (panel === 'community') refreshChirpStatus();
       else if (panel === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); }
-      else if (panel === 'sensing') { refreshSensing(); refreshThermal(); }
+      else if (panel === 'sensing') { refreshSensing(); refreshThermal(); refreshScout(); }
       else if (panel === 'status') refreshLiveSensing();
-      else if (panel === 'settings') refreshOtaStatus();
+      else if (panel === 'settings') { refreshOtaStatus(); loadTz(); }
 
       // Stop OTA status polling when leaving settings (refreshOtaStatus
       // restarts it if an install is still running next time we look)
@@ -2735,6 +2825,49 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       // Stop timeline auto-refresh when leaving timeline panel
       if (panel !== 'timeline') {
         clearInterval(timelineRefreshTimer);
+      }
+    }
+
+    // ── LAN unlock + recovery kit (F20 gap #11) ────────────────────────
+    function tokenIsMissing() { return !CV_TOKEN || CV_TOKEN.charAt(0) === '_'; }
+    function refreshLockBanner() {
+      const b = document.getElementById('lanLockBanner');
+      if (b) b.style.display = tokenIsMissing() ? '' : 'none';
+    }
+    function unlockWithToken() {
+      const el = document.getElementById('lanTokenInput');
+      const v = (el.value || '').trim();
+      if (!v) return;
+      CV_TOKEN = v;
+      el.value = '';
+      refreshLockBanner();
+      refreshStatus();
+      loadWifiStatus();
+    }
+    // GET /api/provisioning-receipt with the bearer (or, on the LAN without
+    // one, after a BOOT tap) and hand it to the browser as a download.
+    async function saveRecoveryKit() {
+      const hdrs = {};
+      if (!tokenIsMissing()) hdrs['Authorization'] = 'Bearer ' + CV_TOKEN;
+      try {
+        const res = await fetch(API_BASE + '/api/provisioning-receipt', { headers: hdrs, cache: 'no-store' });
+        if (res.status === 403) {
+          alert('Tap the BOOT button on the Canary, then try again within 30 seconds.');
+          return;
+        }
+        if (!res.ok) { alert('Could not fetch the recovery kit (' + res.status + ')'); return; }
+        const text = await res.text();
+        const blob = new Blob([text], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'canary-recovery-kit.json';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } catch (e) {
+        alert('Network error');
       }
     }
 
@@ -3679,6 +3812,124 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     // ════════════════════════════════════════════════════════════════
+    // Household time zone — /api/settings (repo sweep F28)
+    // ════════════════════════════════════════════════════════════════
+    function browserZone() {
+      try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { return ''; }
+    }
+    function tzShow(d) {
+      const here = d.tz_iana || d.tz;
+      document.getElementById('tzNow').textContent = here
+        ? 'Days and quiet hours follow ' + here + '.'
+        : 'Days and quiet hours follow world time (UTC). No time zone is set.';
+      const z = browserZone();
+      const btn = document.getElementById('tzUseBrowser');
+      btn.style.display = (!z || z === d.tz_iana) ? 'none' : '';
+      btn.textContent = 'Use ' + z;
+    }
+    async function loadTz() {
+      const card = document.getElementById('tzCard');
+      if (!card) return;
+      const d = await api('/api/settings');
+      if (!d || d.ok !== true) { card.style.display = 'none'; return; }
+      card.style.display = '';
+      tzShow(d);
+    }
+    async function tzSet(body) {
+      const msg = document.getElementById('tzMsg');
+      const d = await api('/api/settings', 'POST', body);
+      if (d && d.ok === true) { tzShow(d); msg.textContent = 'Saved. The next reading uses it.'; return; }
+      const why = { unknown_zone: 'This Canary does not know that zone yet. Enter its POSIX rule instead.',
+                    bad_time_zone: 'This Canary cannot read that rule. A zone with summer time needs both change dates, like EST5EDT,M3.2.0,M11.1.0.' };
+      msg.textContent = why[d && d.error] || ('Could not save: ' + ((d && d.error) || 'unknown'));
+    }
+    function tzUseBrowser() {
+      const z = browserZone();
+      if (z) tzSet({ tz_iana: z });
+    }
+    function tzSetRule() {
+      const v = document.getElementById('tzRule').value.trim();
+      if (v) tzSet({ tz: v });
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Paired beacons — /api/scout (BLE Scout proximity pairing, F27)
+    // ════════════════════════════════════════════════════════════════
+    let scoutPoll = null;
+    async function refreshScout() {
+      const card = document.getElementById('scoutCard');
+      if (!card) return;
+      const d = await api('/api/scout');
+      if (!d || d.ok !== true) { card.style.display = 'none'; return; }
+      card.style.display = '';
+      const list = document.getElementById('scoutList');
+      const beacons = d.beacons || [];
+      if (beacons.length === 0) {
+        list.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;text-align:center;padding:1rem;">No tags paired yet</p>';
+      } else {
+        list.innerHTML = beacons.map(b =>
+          '<div class="log-item" style="padding:0.75rem;display:flex;justify-content:space-between;align-items:center;">' +
+          '<strong>' + escapeHtml(b.label || '(no name)') + '</strong>' +
+          '<button class="btn btn-danger btn-sm" data-id="' + escapeHtml(b.hashed_id) + '" onclick="scoutUnpair(this.dataset.id)">Forget</button>' +
+          '</div>').join('');
+      }
+      scoutPairStatus();
+    }
+
+    function scoutShowWindow(st) {
+      const msg = document.getElementById('scoutPairMsg');
+      const armed = st && st.state === 'armed';
+      document.getElementById('scoutPairBtn').disabled = armed;
+      document.getElementById('scoutCancelBtn').style.display = armed ? '' : 'none';
+      if (!st || !msg) return;
+      if (armed) msg.textContent = 'Listening for "' + st.label + '": hold the tag against the Canary (' + st.remaining_s + ' s left).';
+      else if (st.state === 'paired') msg.textContent = 'Paired "' + st.label + '".';
+      else if (st.state === 'expired') msg.textContent = 'No tag came close enough in time. Try again, holding it right against the Canary.';
+      else if (st.state === 'failed') msg.textContent = 'Could not pair: every slot is in use. Forget a tag first.';
+      else if (st.state === 'canceled') msg.textContent = 'Pairing canceled.';
+      if (!armed && scoutPoll) { clearInterval(scoutPoll); scoutPoll = null; }
+    }
+
+    async function scoutPairStatus() {
+      const st = await api('/api/scout/pair/status');
+      if (!st || st.ok !== true) return;
+      const wasArmed = !!scoutPoll;
+      scoutShowWindow(st);
+      if (st.state === 'armed' && !scoutPoll && currentPanel === 'sensing') {
+        scoutPoll = setInterval(scoutPairStatus, 2000);
+      }
+      if (wasArmed && st.state === 'paired') refreshScout();
+    }
+
+    async function scoutPairStart() {
+      const label = document.getElementById('scoutLabel').value.trim();
+      const msg = document.getElementById('scoutPairMsg');
+      if (!label) { msg.textContent = 'Give the tag a name first.'; return; }
+      const r = await api('/api/scout/pair/start', 'POST', { label: label, window_s: 60 });
+      if (!r || r.ok !== true) {
+        const why = { bad_label: 'Use up to 23 plain letters, numbers or punctuation.',
+                      window_busy: 'Already listening for a tag.',
+                      registry_full: 'Every slot is in use. Forget a tag first.' };
+        msg.textContent = why[r && r.error] || ('Could not start pairing: ' + ((r && r.error) || 'unknown'));
+        return;
+      }
+      scoutShowWindow(r);
+      if (!scoutPoll) scoutPoll = setInterval(scoutPairStatus, 2000);
+    }
+
+    async function scoutPairCancel() {
+      const r = await api('/api/scout/pair/cancel', 'POST');
+      if (r && r.ok === true) scoutShowWindow(r);
+    }
+
+    async function scoutUnpair(id) {
+      if (!confirm('Forget this tag? It will stop reporting which room it is in.')) return;
+      const r = await api('/api/scout/unpair', 'POST', { hashed_id: id });
+      if (r && r.ok !== true) alert('Could not forget the tag: ' + (r.error || 'unknown'));
+      refreshScout();
+    }
+
+    // ════════════════════════════════════════════════════════════════
     // Microphone test panel: live RMS meter + alarm-pattern self-test
     // ════════════════════════════════════════════════════════════════
     // The level meter publishes the SAME 20 ms RMS scalar the on/off
@@ -4550,6 +4801,14 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     const TIMELINE_PAGE_SIZE = 20;
     let timelineRecords = [];
     let timelineRefreshTimer = null;
+    // Where the next card page starts: the last card page's next_hint, echoed
+    // as ?hint= so each page costs one page of reads. The device re-checks it.
+    let timelineHint = null;
+    // Bumped by every reload of the list. A Load More page is appended only
+    // to the list it was asked for, never to one reloaded while it was out.
+    let timelineEpoch = 0;
+    // One Load More at a time: a card page can take up to 3 s.
+    let timelineMoreLoading = false;
 
     const RECORD_TYPES = {
       0: { name: 'Boot Attestation', icon: '⚡', css: 'boot' },
@@ -4578,8 +4837,11 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       try { await _loadTimelineImpl(); } finally { timelineLoading = false; }
     }
     async function _loadTimelineImpl() {
+      timelineEpoch++;
       timelinePage = 0;
       timelineRecords = [];
+      timelineHint = null;
+      setTimelineNote('');
       const list = document.getElementById('timelineList');
       list.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 
@@ -4630,17 +4892,20 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       renderTimeline(recs);
 
+      // The device says whether anything is older: more of the ring, or —
+      // on a Canary with a card — the history the card holds.
       document.getElementById('timelineLoadMore').style.display =
-        (recs.length >= TIMELINE_PAGE_SIZE && recs.length < ringTotal) ? 'block' : 'none';
+        (witData.more && recs.length > 0) ? 'block' : 'none';
 
       // Start auto-refresh while timeline panel is active. Paused once the
       // reader pages into history (timelinePage > 0) so a refresh doesn't
-      // collapse the list they are reading; leaving and re-entering the
-      // panel resumes it.
+      // collapse the list they are reading, and while a Load More is out
+      // (the first card page can take a few seconds); leaving and
+      // re-entering the panel resumes it.
       clearInterval(timelineRefreshTimer);
       timelineRefreshTimer = setInterval(() => {
         if (currentPanel === 'timeline') {
-          if (timelinePage === 0) loadTimeline();
+          if (timelinePage === 0 && !timelineMoreLoading) loadTimeline();
         } else {
           clearInterval(timelineRefreshTimer);
         }
@@ -4686,7 +4951,33 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         const isLast = i === records.length - 1;
         const timeSrc = r.time_source === 'gps' ? '🛰 GPS' : '⏱ Device';
         const hash = r.hash || r.chain_hash || '';
-        const verified = r.verified ? '✓' : '⚠';
+
+        // Rows from the card say where they came from and whether they chain
+        // to the next older record on it. Never "Verified": nothing on that
+        // path checks a signature.
+        let badgeCss = 'tl-chain-badge';
+        let badgeText;
+        if (r.source === 'sd') {
+          if (i === 0 || records[i - 1].source !== 'sd') {
+            html += '<div class="tl-divider">Older records, read from the SD card</div>';
+          }
+          if (r.linked === false) {
+            badgeCss += ' unlinked';
+            badgeText = '⚠ from card, not chain-linked (a gap or break below)';
+          } else if (r.linked === true) {
+            badgeCss += ' card';
+            badgeText = 'from card, chain-linked';
+          } else {
+            badgeCss += ' card';
+            badgeText = 'from card, oldest on the card';
+          }
+          if (r.joins_above === false) {
+            badgeText = '⚠ ' + badgeText.replace(/^⚠ /, '') + ' · not chain-linked to the record above';
+            badgeCss = 'tl-chain-badge unlinked';
+          }
+        } else {
+          badgeText = r.verified ? '✓' : '⚠';
+        }
 
         html += '<div class="tl-entry">';
         html += '<div class="tl-dot ' + typeInfo.css + '"></div>';
@@ -4694,7 +4985,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         html += '<div class="tl-body">';
         html += '<div class="tl-title">' + typeInfo.icon + ' ' + typeInfo.name + '</div>';
         html += '<div class="tl-meta">#' + escapeHtml(String(r.seq || '?')) + ' · TB:' + escapeHtml(String(r.time_bucket || '--')) + ' · ' + timeSrc + '</div>';
-        html += '<div class="tl-chain-badge">' + verified + ' ' + escapeHtml(truncHash(hash, 12)) + '</div>';
+        html += '<div class="' + badgeCss + '">' + escapeHtml(badgeText) + ' ' + escapeHtml(truncHash(hash, 12)) + '</div>';
         html += '</div>';
 
         html += '</div>';
@@ -4703,21 +4994,61 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       list.innerHTML = html;
     }
 
+    function setTimelineNote(text) {
+      const note = document.getElementById('timelineNote');
+      note.textContent = text;
+      note.style.display = text ? 'block' : 'none';
+    }
+
     async function loadMoreTimeline() {
-      // Page backward through the witness-record ring: ?before= is an
-      // exclusive seq bound, so each click fetches the window just older
-      // than what is on screen. The ring is bounded RAM (deeper history
-      // lives on the SD card; the HTTP task never touches SD), so the
-      // button retires once the ring runs dry.
+      // A second click while a page is out would ask for the same page
+      // again and append it twice: ignore it until the first one lands.
+      if (timelineMoreLoading) return;
+      timelineMoreLoading = true;
+      try { await _loadMoreTimelineImpl(); } finally { timelineMoreLoading = false; }
+    }
+    async function _loadMoreTimelineImpl() {
+      // Page backward: ?before= is an exclusive seq bound, so each click
+      // fetches the window just older than what is on screen. The ring
+      // (RAM) answers first; past its oldest record the device reads the SD
+      // card on its main loop and answers with a card page (source "sd"),
+      // whose next_hint the next click echoes as ?hint=.
       if (!timelineRecords.length) return;
+      const epoch = timelineEpoch;
       const oldest = timelineRecords[timelineRecords.length - 1].seq;
-      const data = await api('/api/witness?last=' + TIMELINE_PAGE_SIZE + '&before=' + oldest);
-      const more = (data && data.ok) ? (data.records || []).slice().reverse() : [];
+      let url = '/api/witness?last=' + TIMELINE_PAGE_SIZE + '&before=' + oldest;
+      if (timelineHint != null) url += '&hint=' + timelineHint;
+      const data = await api(url);
+      // The list was reloaded (Refresh, the panel re-entered) while this
+      // page was out: it belongs to a list that is gone. Drop it.
+      if (epoch !== timelineEpoch) return;
+      const loadMore = document.getElementById('timelineLoadMore');
+      if (!data || !data.ok) {
+        const err = data && data.error;
+        if (err === 'history_busy' || err === 'history_timeout') {
+          setTimelineNote('The Canary is busy reading its card. Try Load More again in a moment.');
+        } else if (err === 'no_card') {
+          setTimelineNote('Older records are on the SD card, and no card is mounted right now.');
+          loadMore.style.display = 'none';
+        } else {
+          setTimelineNote('Could not read older records' + (err ? ' (' + err + ')' : '') + '.');
+        }
+        return;
+      }
+      setTimelineNote('');
+      const more = (data.records || []).slice().reverse();
+      if (data.source === 'sd') {
+        timelineHint = data.next_hint;
+        if (more.length && data.joins === false) more[0].joins_above = false;
+        // An empty card page ends the paging: say why the button went.
+        if (!more.length) setTimelineNote('Nothing older is on the card.');
+      } else {
+        timelineHint = null;
+      }
       timelinePage++;
       timelineRecords = timelineRecords.concat(more);
       renderTimeline(timelineRecords);
-      document.getElementById('timelineLoadMore').style.display =
-        more.length < TIMELINE_PAGE_SIZE ? 'none' : 'block';
+      loadMore.style.display = (data.more && more.length > 0) ? 'block' : 'none';
     }
 
     // Acknowledgment
@@ -4755,16 +5086,6 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     // Settings
-    async function saveConfig() {
-      const config = {
-        record_interval_ms: parseInt(document.getElementById('configRecordInterval').value),
-        time_bucket_ms: parseInt(document.getElementById('configTimeBucket').value),
-        log_level: parseInt(document.getElementById('configLogLevel').value)
-      };
-      const data = await api('/api/config', 'POST', config);
-      alert(data.ok ? 'Configuration saved!' : 'Save failed: ' + (data.error || 'Unknown'));
-    }
-
     function confirmReboot() {
       if (confirm('Reboot the device? All unsaved data will be persisted first.')) {
         api('/api/reboot', 'POST');
@@ -5067,6 +5388,23 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }).join('');
     }
 
+    // An Opera alert's timestamp_ms is this Canary's uptime (millis()) when
+    // the alert arrived, not a date: it is shown as an age against the
+    // uptime_ms the same response carries, or not at all (F33 part 7).
+    // The subtraction is u32, like the firmware's, so it survives the
+    // millis() wrap every ~49.7 days.
+    function formatAlertAge(timestampMs, uptimeMs) {
+      const u32 = (v) => Number.isInteger(v) && v >= 0 && v <= 0xFFFFFFFF;
+      if (!u32(timestampMs) || !u32(uptimeMs)) return '';
+      const sec = Math.floor(((uptimeMs - timestampMs) >>> 0) / 1000);
+      if (sec < 60) return `received ${sec} s ago`;
+      const min = Math.floor(sec / 60);
+      if (min < 60) return `received ${min} min ago`;
+      const h = Math.floor(min / 60);
+      if (h < 24) return `received ${h} h ${min % 60} min ago`;
+      return `received ${Math.floor(h / 24)} d ${h % 24} h ago`;
+    }
+
     async function loadOperaAlerts() {
       const data = await api('/api/mesh/alerts');
       const list = document.getElementById('operaAlertsList');
@@ -5078,13 +5416,14 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       list.innerHTML = data.alerts.map(alert => {
         const levelClass = alert.severity >= 6 ? 'critical' : alert.severity >= 4 ? 'error' : 'warning';
+        const age = formatAlertAge(alert.timestamp_ms, data.uptime_ms);
         return `
           <div class="log-item ${levelClass}">
             <div class="log-level ${levelClass}">${alert.type || 'ALERT'}</div>
             <div class="log-content">
               <div class="log-message">From: ${escapeHtml(alert.sender_name || 'Unknown')}</div>
               <div class="log-detail">${escapeHtml(alert.detail || '')}</div>
-              <div class="log-meta">${formatTimestamp(alert.timestamp_ms)}</div>
+              ${age ? `<div class="log-meta">${age}</div>` : ''}
             </div>
           </div>
         `;
@@ -6077,6 +6416,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // Initialize
     // ══════════════════════════════════════════════════════════════════
 
+    refreshLockBanner();
     refreshStatus();
     refreshLiveSensing();   // Status-tab live sensing summary
     loadChain();

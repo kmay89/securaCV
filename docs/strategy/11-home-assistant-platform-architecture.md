@@ -19,7 +19,7 @@ Short answer: the **cryptography and the pipeline are ahead of the market; the H
 projection of them is behind our own engine**. We ship three parallel entity universes
 that don't know about each other, we poll where we could push, the wizard/options/config-flow
 overlap three ways, and a handful of Quality Scale basics (subscription cleanup,
-availability, reauth, entity translations, repairs) are missing — while genuinely hard
+availability, reauth, repairs) are missing (entity translations were too, until backlog HA2) — while genuinely hard
 things (signed exports, offline verification, TOFU device PKI, broker credential
 hygiene) are already done well. The fix is not more features; it is **one architecture
 decision** (add-on = engine, integration = the single product face, paired by
@@ -128,7 +128,7 @@ has 4 gaps, Gold is where the UX wins live. Every finding below was verified in 
 | common-modules | ⚠️ | coordinators live in `__init__.py` (679 lines), no `coordinator.py` / `entity.py` split |
 | appropriate-polling | ⚠️ | 30 s HTTP poll of a loopback API whose data changes on 10-minute buckets; and a push path (MQTT) exists for the same data (§4.3) |
 | docs-* (5 rules) | ⚠️ | `docs/homeassistant_setup.md` is strong but not structured per-rule (install/removal/actions) |
-| **action-setup** | ❌ | **The integration registers no services at all.** Verify-now / export / pin-device exist only as MQTT button, wizard endpoints, and options-flow forms — none are automatable as `securacv.*` actions |
+| **action-setup** | ✅/⚠️ | Three watch actions — `securacv.start_watch`, `securacv.end_watch`, `securacv.list_watches` (response only) — registered once in `async_setup` (`services.py`, 2026-09), so they exist before any entry loads. Verify-now / export are still only an MQTT button and wizard endpoints; pin / rotate / unpin stay options-flow forms on purpose (`docs/device_trust.md`, "Why pin, rotate and unpin are not actions") |
 | **entity-event-setup** | ❌ | Subscriptions are made in `async_added_to_hass` (correct) but the unsubscribe callbacks are **discarded** — see §2.5 bug #1 |
 | **runtime-data** | ❌ | legacy `hass.data[DOMAIN][entry_id]` dict (`__init__.py:395`) instead of typed `entry.runtime_data` |
 | config-flow-test-coverage | ❌ | zero config-flow tests (see §2.4 on the test harness) |
@@ -143,7 +143,7 @@ has 4 gaps, Gold is where the UX wins live. Every finding below was verified in 
 | **entity-unavailable** | ❌ | MQTT entities have **no availability logic** — a dead Canary shows stale state / `unknown` forever, never `unavailable`, despite firmware publishing an LWT `securacv/<id>/status` availability topic we don't consume for this |
 | **reauthentication-flow** | ❌ | no `async_step_reauth`. Softened by the rotating-token-file re-read on 401 (`__init__.py:159-222`) — but a permanently wrong URL/token has no recovery path except delete-and-re-add |
 | **parallel-updates** | ❌ | `PARALLEL_UPDATES` not set in either platform |
-| action-exceptions | ❌ (latent) | no actions exist yet; when added they must raise translatable `HomeAssistantError`/`ServiceValidationError` |
+| action-exceptions | ✅ | the watch actions raise `ServiceValidationError` on every refusal — an empty subject or watch, a duration with no unit, the cap reached, an unknown or ambiguous watch, the integration not loaded yet, its stored watches unreadable, or no loaded entry running the watch tick — each with a translation key (backlog HA9; see exception-translations) |
 | test-coverage ≥95 % | ❌ | crypto/trust/API-token logic is well covered; setup, unload, entities, diagnostics, config flow are not |
 | docs-configuration/installation-parameters | ⚠️ | options flow (PKI menu) documented in `device_trust.md`, not in a parameters reference |
 
@@ -158,9 +158,9 @@ has 4 gaps, Gold is where the UX wins live. Every finding below was verified in 
 | entity-device-class | ✅ | tamper/problem/connectivity/temperature used well |
 | diagnostics | ⚠️ | exists but **no `async_redact_data`** — dumps full kernel URL, full latest event, full device status incl. LAN IPs (`diagnostics.py`) |
 | entity-disabled-by-default | ❌ | noisy diagnostics (GPS, SD wear, transport per-type, radar link) all enabled by default |
-| **entity-translations** | ❌ | **no entity sets `translation_key`; every `_attr_name` is hardcoded English — and the `entity:` block shipped in `strings.json`/`translations/en.json` is dead data that never binds** |
+| entity-translations | ✅ | every entity class in `sensor.py` / `binary_sensor.py` sets `_attr_translation_key` and none sets `_attr_name`; `strings.json` declares all 40 keys with the names users already saw, `translations/en.json` is an identical copy, and `tests/test_entity_translations.py` holds both (backlog HA2, #1703) |
 | icon-translations | ❌ | `_attr_icon` + dynamic `icon` properties instead of `icons.json` |
-| exception-translations | ❌ | not used |
+| exception-translations | ⚠️ | the watch actions' nine refusals are raised with `translation_domain`, `translation_key` and placeholders, declared in the `exceptions` section of `strings.json` (`translations/en.json` an identical copy), and read in English exactly as before; `tests/test_exception_translations.py` fails on a key raised but undeclared or declared but never raised and pins every message (backlog HA9). Not yet: the coordinators' `UpdateFailed` messages (`__init__.py`) are plain English |
 | **reconfiguration-flow** | ❌ | no `async_step_reconfigure` (move the kernel to a new host ⇒ delete and re-add) |
 | **repair-issues** | ❌ | trust mismatches surface as `persistent_notification` (`__init__.py:707`) — invisible in the Repairs center, not actionable, not translatable. Chain breaks / silent devices / clock drift raise no repair issues at all (§7.2) |
 | stale-devices | ❌ | removed canaries live in the registry forever; no `async_remove_config_entry_device` |
@@ -410,7 +410,7 @@ SecuraCV Kernel  (service device; sw_version, storage diags, chain sensor,
 ### 6.3 Naming and translation plan
 
 All entities get `_attr_translation_key`; names move to `strings.json` `entity:`
-(which already exists and is currently dead); icons move to `icons.json` with
+(done for the names in #1703, backlog HA2 — the block is live now); icons move to `icons.json` with
 state-based icons (chain ok/broken, tamper types). `en.json` stays generated from
 `strings.json`. This unlocks community translations — a real lever for a
 privacy product with strong EU resonance.
@@ -535,8 +535,8 @@ unused `ssl` map.
 **Phase 1 — One architecture (the decision work):**
 Supervisor discovery handshake add-on→integration (§4.2) · adopt/suppress mechanics
 for the three universes (§6.1) · push-fed coordinators (§4.3) · reauth + reconfigure
-flows · services (`verify`, `export_evidence`, `pin_device`) registered in
-`async_setup` · entity translations + icons.json (kill the dead strings) ·
+flows · services (`verify`, `export_evidence`) registered in `async_setup` beside
+the watch actions (never `pin_device` — `device_trust.md`) · icons.json (the entity translations landed in #1703, backlog HA2) ·
 `via_device` tree (§6.2) · add-on store presentation (DOCS.md, icon, CHANGELOG,
 option translations, `homeassistant:` min) · s6 service supervision + `apparmor.txt` ·
 in-repo `brand/` folder (done 2026-09-08; a home-assistant/brands PR stays optional, for pre-2026.3 installs) ·

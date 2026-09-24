@@ -40,14 +40,11 @@ pub(crate) fn compute_features_hash(pixels: &[u8], frame_count: u64) -> [u8; 32]
 ///
 /// Coarsens wall-clock time into a 10-minute `TimeBucket` and computes the
 /// non-invertible feature hash *at capture time*, then assembles the `RawFrame`.
-/// Centralizing this is the guard against the RTSP (GStreamer / FFmpeg) and file
-/// (`file` / `file_ffmpeg`) backends silently diverging on the privacy contract
-/// (flag report F-11): change the bucket granularity or the hash inputs here and
-/// every backend that routes through this helper moves together, rather than each
-/// backend re-implementing the sequence and drifting apart.
-///
-/// (The feature-gated `esp32` / `v4l2` sources still inline the equivalent sequence
-/// and should be migrated onto this helper too — tracked under F-11.)
+/// Centralizing this is the guard against the frame sources — RTSP (GStreamer /
+/// FFmpeg), file (`file` / `file_ffmpeg`), and the feature-gated `esp32` and `v4l2`
+/// sources — silently diverging on the privacy contract (flag report F-11): change
+/// the bucket granularity or the hash inputs here and every backend moves together,
+/// rather than each backend re-implementing the sequence and drifting apart.
 pub(crate) fn raw_frame_at_capture(
     pixels: Vec<u8>,
     width: u32,
@@ -106,6 +103,48 @@ mod tests {
         assert_ne!(
             frame.inference_view().features_hash(),
             again.inference_view().features_hash()
+        );
+    }
+
+    /// F-11 guard: every frame source emits through `raw_frame_at_capture` and none
+    /// re-implements the capture sequence inline. Reads the sources as text, so the
+    /// feature-gated `esp32` / `v4l2` backends are checked on every build, including
+    /// the default one that never compiles them, and a new backend file is checked
+    /// the day it lands.
+    #[test]
+    fn every_frame_source_emits_through_the_capture_gate() {
+        // Files in src/ingest/ that are not frame sources.
+        const NOT_SOURCES: &[&str] = &["mod.rs", "features.rs", "normalize.rs"];
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ingest");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&dir).expect("read src/ingest") {
+            let path = entry.expect("dir entry").path();
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            if !name.ends_with(".rs") || NOT_SOURCES.contains(&name.as_str()) {
+                continue;
+            }
+            let src = std::fs::read_to_string(&path).expect("read source");
+            for inline in [
+                "RawFrame::new(",
+                "compute_features_hash(",
+                "TimeBucket::now_10min(",
+            ] {
+                assert!(
+                    !src.contains(inline),
+                    "{name} calls `{inline}` directly: route the frame through \
+                     raw_frame_at_capture (or list a non-source file in NOT_SOURCES)"
+                );
+            }
+            assert!(
+                src.contains("raw_frame_at_capture("),
+                "{name} never calls raw_frame_at_capture (list a non-source file in NOT_SOURCES)"
+            );
+            checked += 1;
+        }
+        // rtsp, rtsp_ffmpeg, file, file_ffmpeg, esp32, v4l2.
+        assert!(
+            checked >= 6,
+            "expected every frame source, checked {checked}"
         );
     }
 

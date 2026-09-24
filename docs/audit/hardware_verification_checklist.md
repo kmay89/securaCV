@@ -110,6 +110,82 @@ host tests assert they do, on real radio.
     (audit O2)`. NVS does not contain an opera_secret entry.
   - Artifact: `docs/audit/repro/O2/`.
 
+- [ ] **K1 — identity-key posture is reported, and only the opt-in image refuses**
+  - Setup: one ESP32-S3 board with flash encryption NOT enabled, one with
+    it enabled (dev mode); the default `canary` image (`pio run -e release`)
+    and an opt-in image built from the same env with
+    `PLATFORMIO_BUILD_FLAGS=-DSECURACV_REQUIRE_FLASH_ENCRYPTION=1 pio run -e release`.
+    The provisioning kit's `[env:secure]`
+    (`firmware/provisioning/platformio_secure.ini`) sets the same flag and,
+    since F42, compiles in CI (compile-only), but it is a different image —
+    `partitions_secure.csv`, CSI off — so this row stays on `release`. On a
+    fused board, `pio run -e secure` is also the check that its `nvs`
+    partition now opens (F42 dropped the `encrypted` flag that made IDF
+    refuse it): boot it and expect the opt-in refusal lines below, not an
+    NVS open failure.
+  - Repro: boot each combination; press `f` on the console; `GET /api/status`.
+  - Expected:
+    - default image, FE-off board: boot log carries
+      `[WARN] Key at rest : plaintext-nvs - identity key at rest in plaintext NVS (Tier 0 default; ...)`,
+      the `f` card shows `KeyAtRest : plaintext-nvs`, `/api/status` and the
+      `j` manifest carry `"key_at_rest":"plaintext-nvs"`; provisioning
+      succeeds.
+    - default image, FE-on board: the `f` card's `FlashEnc` line reads
+      `ENABLED`, but the three surfaces STILL read `plaintext-nvs` and the
+      boot line is still `[WARN]`, now with `flash encryption is on but does
+      not cover NVS, and NVS encryption is not active`. Flash encryption
+      does not encrypt NVS and this build has no NVS encryption, so the key
+      is readable from a flash dump; a board reporting `nvs-encrypted` here
+      is a FAIL. Optional confirmation: read the `nvs` partition back with
+      `esptool.py read_flash 0x9000 0x5000` and find the `privkey` entry in
+      the clear.
+    - opt-in image, FE-off board: provisioning HALTS. The log carries
+      `[!!] identity key not loaded: flash encryption required by this
+      build but not active` (the load is refused before NVS is read, so it
+      prints whether or not a default image had already stored a key), then
+      `[!!] identity key not stored: ...` with the same reason, then
+      `Device provisioning failed`; NVS never gains a new `privkey` entry and
+      an existing one is left as it was.
+    - opt-in image, FE-on board: provisioning ALSO halts, the same two
+      lines with the reason `encrypted NVS required by this build but NVS
+      encryption is not active (flash encryption alone does not cover NVS)`.
+      Under `framework = arduino` the opt-in image refuses on every board —
+      that is the policy, not a fault.
+    - fresh-unit keygen vs the battery ADC (R18a): on a board with the
+      battery divider fitted and `FEATURE_POWER_MONITOR` on, erase NVS, boot
+      the default image once (first-boot keygen runs
+      `bootloader_random_enable()`/`_disable()` AFTER `power_start()` opened
+      the ADC), note the battery mV from the `b` console card (or
+      `current.voltage_mv` in `GET /api/battery/history`), then reboot
+      without erasing and note it again: the two readings agree
+      within normal ADC noise. A zero, pinned or wildly different first
+      reading is a FAIL (the disable powered down / reset the ADC under the
+      power monitor).
+  - Policy under test: `firmware/common/identity/key_at_rest.h`
+    (host-tested by `firmware/tests_host/test_key_at_rest.cpp`).
+  - Artifact: `docs/audit/repro/K1/`.
+
+- [ ] **K2 — chain head survives a power cut between record and persist**
+  - Setup: one board on the PIO `canary` image, NO SD card (so SD-wins cannot
+    mask the result); a bench supply you can cut.
+  - Repro: note `chain_seq` + `chain_head` from `/api/status`; trigger a
+    witness record; cut power inside the persist window (repeat ~20 times —
+    the window is one NVS blob write, so most cuts land before or after it).
+  - Expected: on every next boot `/api/status` reports EITHER the previous
+    {`chain_seq`, `chain_head`} pair OR the new one — never the new seq with
+    the old head or vice versa; the boot log carries no `[CHAIN]` mismatch
+    and the `t` self-test chain verify passes. A board upgraded from a
+    pre-blob image boots with its old seq/head (legacy fallback), and the
+    first persist moves it to the blob; `chain_st` appears in NVS, `seq` /
+    `chain` are left as they were. Re-upgrade: downgrade that board to the
+    pre-blob image, create records until its `chain_seq` passes the blob's,
+    then flash this image again — the boot log carries
+    `[WARN] Chain: legacy seq N is ahead of chain_st seq M` and
+    `/api/status` resumes at the older image's seq N, not at M.
+  - Codec + source order under test: `firmware/common/witness/chain_state.h`
+    (host-tested by `firmware/tests_host/test_chain_state.cpp`).
+  - Artifact: `docs/audit/repro/K2/`.
+
 - [ ] **O3 — transactional rekey on peer removal**
   - Setup: three Opera-member boards (A, B, C); A is the initiator.
   - Repro: from A, call `remove_peer(B.fingerprint)` via REST.
@@ -127,6 +203,12 @@ host tests assert they do, on real radio.
 
 ## Beacon channel v0 — three-board repro
 
+**Blocked until two code items land** (see "Still open" in
+`docs/audit/mesh_and_chirp_audit_v1.md` §9.1): the §3.3 pairing flow is a
+stub, so no board can be "paired into the same beacon set" yet, and the
+channel's runtime is not wired into the sketch loop, so no board receives
+or ticks Beacon frames. Every row below assumes both.
+
 - [ ] **Two-pubkey origination, happy path**
   - Setup: three boards paired into the same beacon set (A, B, C).
     `FEATURE_BEACON_CHANNEL` enabled in the build.
@@ -138,6 +220,33 @@ host tests assert they do, on real radio.
     `BEACON_STATE_ALARM`, plays `PATTERN_BEACON` (1200/1700/2200 Hz
     sequence). HA `sensor.canary_<C>_beacon_state` flips to `Alarm`.
   - Artifact: `docs/audit/repro/beacon/happy_path/`.
+
+- [ ] **CANCEL propagates (and the originator adopts its own frames)**
+  - Setup: continue from the happy path — A, B and C all in
+    `BEACON_STATE_ALARM` for A's alert.
+  - Check first: A itself shows `Alarm` (`GET /api/beacon` on A,
+    HA `sensor.canary_<A>_beacon_state`) — the originator adopts its own
+    ALERT at hop 0; before the CANCEL pass it stayed `Normal`. B, the
+    cosigner, shows `Alarm` too — it resolves its own fingerprint to its own
+    key (spec §7.1 step 5); before the review follow-up it dropped the frame
+    it had co-signed, stayed `Normal`, and refused the CANCEL below.
+  - Repro: on A, `POST /api/beacon/cancel` with `{"reason":"false_alarm"}`.
+    B's UI shows the cosign prompt for the all-clear; B confirms.
+  - Expected: A emits a dual-signed `BEACON_MSG_CANCEL`
+    (`template_id = 0x82`, header `msg_type = 2`) naming the alarm's nonce.
+    A, B and C each move to `BEACON_STATE_SUPERVISORY`; each audit log
+    gains the CANCEL (A's at `hop_count = 0`).
+  - Two-device variant: with only A and B paired (each in the other's set,
+    no C), the same CANCEL completes — B is A's only candidate, B holds the
+    alarm, B confirms, and both leave `Alarm`.
+  - Negative: on a fourth board D that never received the ALERT, a
+    COSIGN_REQ for that CANCEL is refused before its user is asked (health
+    log: "COSIGN_REQ refused").
+  - Solo variant: a single board holding a solo alarm, BOOT held,
+    `POST /api/beacon/cancel-solo` → a receiver with the board in its set
+    leaves `Alarm`. `POST /api/beacon/silence` on any board changes only that
+    board.
+  - Artifact: `docs/audit/repro/beacon/cancel_propagates/`.
 
 - [ ] **Single-signature reject**
   - Setup: same as above.
@@ -159,11 +268,14 @@ host tests assert they do, on real radio.
 
 - [ ] **X25519 keypair persistence across reboot**
   - Setup: two paired boards (A, B). FE enabled.
-  - Repro: capture A's `x25519_pubkey` via `GET /api/beacon/set` on B.
-    Reboot A. After reboot, query again.
-  - Post-fix expected: A's `x25519_pubkey` is identical to pre-reboot.
-    A successful COSIGN_REQ→RESP exchange completes after reboot
-    without re-pairing.
+  - Repro: note A's `fingerprint` in `GET /api/beacon/set` on B (the
+    route lists fingerprints, names and trust levels — not X25519 keys, and
+    it should not grow one for this check). Complete one COSIGN_REQ→RESP
+    exchange (A originates, B confirms). Reboot A. Originate again from A.
+  - Post-fix expected: A's fingerprint on B is unchanged, and the
+    post-reboot COSIGN_REQ→RESP exchange completes without re-pairing — B
+    can only decrypt A's request if A kept the X25519 keypair B stored at
+    pairing.
   - Pre-fix (v0.3 before PR #454): the pubkey would change every
     reboot, breaking cosign decrypt at B.
   - Artifact: `docs/audit/repro/beacon/x25519_persistence/`.
@@ -282,6 +394,139 @@ host tests assert they do, on real radio.
     becomes "Alarm"`.
   - Repro: trigger a beacon alarm via the happy-path test above.
   - Post-fix expected: HA automation fires within one 30 s publish cycle.
+
+## Canary base SD event log + reconnect backfill (F37) — on-device verification
+
+Code: `firmware/canary/src/csi_event_egress.cpp` over the loop-task adapter
+`src/csi_event_log.cpp`; the rules are
+`firmware/common/csi/src/csi_event_backfill.h` (host-tested against a model
+of Home Assistant's replay gate). Owner: U1.
+
+Read the results knowing one thing the backfill cannot change: rows that go
+through the CSI bundler (presence, and `system.integrity` tampers, which
+carry a state) take ids from the bundler's own space — 0x80000000 upward,
+restarting every boot, covered by no floor — and commit when their bundle
+closes, not in id order. Home Assistant's replay gate refuses a row whose
+id is below one it already verified, live or not, and the backfill skips
+exactly those rows. The first bundled row that goes out also moves the
+backfill's watermark into the bundler's space for good. After that, the
+backfill never sends a chokepoint-id row again on that canary, in the same
+boot or after a reboot; only live rows still go out. So judge "whole"
+against the rows HA could accept, on a canary whose presence module has
+not yet reported. A `replay` verdict on a LIVE row is that pre-existing
+id-space problem, not the backfill.
+
+- [ ] **An outage longer than the offline queue arrives whole**
+  - Setup: an HA-enabled canary image (`release_ha`) with a card in,
+    paired to Home Assistant; the MQTT broker on a host you can stop.
+  - Repro: stop the broker; commit more than 12 events (presence changes
+    in front of the sensor); restart the broker.
+  - Expected: the serial log shows `[EVT-LOG] /EVENTS/today.ndjson open`
+    at boot and `[CSI] event backfill done: N event(s) from the card`
+    after the reconnect; HA's event history holds the outage's rows in id
+    order, well past the 12 the offline queue could hold; no backfilled
+    body gets a `replay` verdict; and the bodies committed while the broker
+    was down carry `"replay":true`.
+  - Artifact: `docs/audit/repro/F37/outage/`.
+- [ ] **A reboot inside the outage republishes nothing**
+  - Setup: as above.
+  - Repro: stop the broker, commit several events, power-cycle the canary,
+    commit a few more, restart the broker.
+  - Expected: the pre-reboot backlog arrives in id order with no `replay`
+    verdict on any backfilled body (at most ten of its rows may be missing
+    — the NVS ceiling's stride). Post-reboot rows from the bundler restart
+    below the pre-reboot ids, so HA refuses them live and the backfill does
+    not send them — the id-space problem above, recorded as an open item.
+  - Artifact: `docs/audit/repro/F37/reboot/`.
+- [ ] **Another device's card is left alone**
+  - Setup: a card taken from a canary-wap (or another canary).
+  - Expected: the health log says `SD event log belongs to another device -
+    not used`; the card's `/EVENTS` is unchanged afterwards; events still
+    publish live.
+  - Artifact: `docs/audit/repro/F37/foreign-card/`.
+- [ ] **A canary's card in a canary-wap is left alone**
+  - Setup: a card the canary base has written its event log to (it holds
+    `/EVENTS/owner`); a canary-wap on firmware carrying the owner rule.
+  - Expected: the canary-wap's serial log says `[EVT-LOG] /EVENTS belongs to
+    a canary base (owner file) - event log off for this card`; after events
+    commit on the canary-wap, the card's `/EVENTS` is unchanged; back in the
+    canary, the backfill sends none of the canary-wap's rows.
+  - Artifact: `docs/audit/repro/F37/canary-card-in-wap/`.
+
+## SoftAP WPA2/WPA3 transition + PMF (F16) — on-device verification
+
+Code: `firmware/common/network/ap_security_policy.h` (host-tested), applied
+after every `WiFi.softAP()` in both trees. Owner: U1.
+
+- [ ] **WPA3 phone joins; the device says so**
+  - Setup: a `canary (PIO)` `full` image (IDF 5.5) and a canary-wap image;
+    a phone that supports WPA3.
+  - Expected: the phone joins `SecuraCV-XXXX`; `GET /api/wifi/status`
+    (canary) / `GET /api/wifi` (WAP) shows `ap_auth: "wpa2-wpa3"`. If it
+    shows `"wpa2"`, record `ap_auth_reason` (a core without SoftAP SAE, or
+    a driver refusal) — that is the finding.
+  - Artifact: `docs/audit/repro/F16/wpa3-join/`.
+- [ ] **WPA2-only client still joins**
+  - Setup: same images; a laptop or phone forced to WPA2.
+  - Expected: it joins and loads the dashboard (PMF is capable, never
+    required).
+  - Artifact: `docs/audit/repro/F16/wpa2-join/`.
+- [ ] **2.0.17-core builds report WPA2 honestly**
+  - Setup: a `canary (PIO)` `dev` or `release` image.
+  - Expected: `ap_auth: "wpa2"` with `ap_auth_reason` naming the missing
+    SoftAP SAE; any client joins as before.
+  - Artifact: `docs/audit/repro/F16/idf44-fallback/`.
+- [ ] **STA PMF**
+  - Setup: join the Canary to a PMF-capable router.
+  - Expected: `sta_pmf: true`; the association is stable.
+  - Artifact: `docs/audit/repro/F16/sta-pmf/`.
+
+## Canary NvsManager session lock — on-device verification
+
+Code: `NvsManager` in `firmware/canary/lib/securacv_crypto/src/securacv_crypto.cpp`,
+which holds a recursive FreeRTOS mutex from `begin()` to the matching
+`end()`. The session arithmetic is `nvs_session_depth.h`, host-tested by
+`firmware/tests_host/test_nvs_session_depth.cpp` and, on the real
+`begin()`/`end()` over a fake mutex, `test_nvs_manager_lock.cpp`. The loop,
+the httpd task serving the API and the pull-OTA task all open sessions on
+the one settings handle, and before the lock a session ending on one task
+closed it under another. These rows check the real mutex on a board, which
+nothing on the host can do. Owner: U1.
+
+In every row, the serial log must not show `[NVS] session wait timed out`.
+That line means a task waited 2 s for another's session and gave up.
+
+- [ ] **Status polls during an MQTT reprovision keep MQTT configured**
+  - Setup: an HA-enabled canary image (`release_ha`) joined to Wi-Fi and
+    paired to a broker; a laptop on the LAN with the API token.
+  - Repro: poll `GET /api/mqtt/status` about every 100 ms. Meanwhile send
+    `POST /api/mqtt/config` several times with the same host and no
+    password (the credential carry keeps the stored one), then once with a
+    new host and its password.
+  - Expected: no status response lacks `host` or answers
+    `"configured": false`. After each save MQTT reconnects to the saved
+    broker, and after the same-host saves it still authenticates with the
+    stored password.
+  - Artifact: `docs/audit/repro/nvs-lock/mqtt-reprovision/`.
+- [ ] **A reboot during a status poll keeps the chain head**
+  - Setup: the `release_ha` image as above (`/api/mqtt/status` is an HA
+    route); a GPS fix, so records are being written.
+  - Repro: poll `GET /api/status` and `GET /api/mqtt/status`. Note the last
+    `chain_seq` that `/api/status` answers, then send `POST /api/reboot`.
+  - Expected: the boot log's `[OK] Chain seq: N` is at least that
+    `chain_seq`. The reboot's chain persist landed, so the chain does not
+    resume from an older head.
+  - Artifact: `docs/audit/repro/nvs-lock/reboot/`.
+- [ ] **A pull-OTA install under polling keeps the chain head**
+  - Setup: the `release_ha` image, with an update manifest that offers a
+    newer build; a GPS fix.
+  - Repro: poll `GET /api/status` and `GET /api/mqtt/status`, then start
+    the install with `POST /api/ota/install`. The pull-OTA task persists
+    the chain before its reboot.
+  - Expected: the install completes and the device boots the new image.
+    Its `[OK] Chain seq: N` is at least the last `chain_seq` read before
+    the restart.
+  - Artifact: `docs/audit/repro/nvs-lock/pull-ota/`.
 
 ---
 

@@ -64,7 +64,13 @@ from .health_metrics import (
     memory_free_bytes,
     round_pct,
 )
-from .signature import verify_chain, verify_counts, verify_event, verify_sense_event
+from .signature import (
+    verify_chain,
+    verify_counts,
+    verify_event,
+    verify_sense_event,
+    verify_sentinel_event,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -84,6 +90,7 @@ def _trust_store_for(hass: HomeAssistant, entry: ConfigEntry) -> TrustStore | No
 _REPLAY_COUNTER_FIELD = {
     "verify_event": "event_id",
     "verify_sense_event": "seq",
+    "verify_sentinel_event": "seq",
     "verify_chain": "length",
     "verify_counts": "total",
 }
@@ -172,6 +179,24 @@ def _verify_and_record(
     verdict = _replay_gate(hass, entry, device_id, payload, verifier, verdict)
     async_record_verify(hass, entry, device_id, verdict)
     return verdict
+
+
+def _event_verifier_for(data: dict[str, Any]):
+    """Pick the verifier for one events-topic payload by its shape.
+
+    `event_id` is the CSI dialect's counter and appears in no other shape,
+    so it wins outright. Without it, a `level` field is canary-sentinel's
+    fused claim (the sense dialect has no `level`), and an `occupants`
+    field is the canary-sense / canary-vision radar/optical shape (the
+    sentinel spells its bucket `occupancy`). Anything else falls back to
+    the CSI verifier, which reports a missing field as "unsigned"."""
+    if "event_id" in data:
+        return verify_event
+    if "level" in data:
+        return verify_sentinel_event
+    if "occupants" in data:
+        return verify_sense_event
+    return verify_event
 
 
 def _is_replay(verdict: TrustVerdict | None) -> bool:
@@ -422,7 +447,11 @@ async def _setup_mqtt_sensors(
 class SecuraCVKernelLastEventSensor(CoordinatorEntity, SensorEntity):
     """Sensor for latest event from the Privacy Witness Kernel (HTTP API)."""
 
-    _attr_name = "SecuraCV Last Event"
+    # Entity names are looked up in translations/<lang>.json by translation
+    # key (strings.json is the source copy); no entity here sets _attr_name,
+    # which would bypass the translation. tests/test_entity_translations.py
+    # holds every key to a strings.json entry and pins the rendered names.
+    _attr_translation_key = "kernel_last_event"
     _attr_has_entity_name = True
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
@@ -492,11 +521,12 @@ class SecuraCVKernelStorageSensorBase(CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def __init__(self, coordinator, entry: ConfigEntry, name: str, key: str) -> None:
-        """Initialize the sensor."""
+    def __init__(self, coordinator, entry: ConfigEntry, key: str) -> None:
+        """Initialize the sensor; `key` is both the unique_id suffix and the
+        translation key (strings.json entity.sensor.<key>.name)."""
         super().__init__(coordinator)
         self._entry = entry
-        self._attr_name = name
+        self._attr_translation_key = key
         self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_{key}"
 
     @property
@@ -527,7 +557,7 @@ class SecuraCVKernelStorageHealthSensor(SecuraCVKernelStorageSensorBase):
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, entry, "Storage Health", "storage_health")
+        super().__init__(coordinator, entry, "storage_health")
 
     @property
     def native_value(self) -> str | None:
@@ -556,7 +586,7 @@ class SecuraCVKernelStorageFreeSensor(SecuraCVKernelStorageSensorBase):
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, entry, "Storage Free", "storage_free_pct")
+        super().__init__(coordinator, entry, "storage_free_pct")
 
     @property
     def native_value(self) -> float | None:
@@ -580,7 +610,7 @@ class SecuraCVKernelStorageWearSensor(SecuraCVKernelStorageSensorBase):
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, entry, "Storage Wear Estimate", "storage_wear_pct")
+        super().__init__(coordinator, entry, "storage_wear_pct")
 
     @property
     def native_value(self) -> float | None:
@@ -613,7 +643,7 @@ class SecuraCVKernelStorageWriteRateSensor(SecuraCVKernelStorageSensorBase):
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, entry, "Storage Write Rate", "storage_write_rate")
+        super().__init__(coordinator, entry, "storage_write_rate")
 
     @property
     def native_value(self) -> float | None:
@@ -633,7 +663,7 @@ class SecuraCVKernelTemperatureSensor(SecuraCVKernelStorageSensorBase):
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, entry, "SoC Temperature", "soc_temperature")
+        super().__init__(coordinator, entry, "soc_temperature")
 
     @property
     def native_value(self) -> float | None:
@@ -665,7 +695,7 @@ class SecuraCVAdapterStatsSensor(CoordinatorEntity, SensorEntity):
     (and totals) is exposed as attributes. Operational counts only — no event content.
     """
 
-    _attr_name = "SecuraCV Adapter Host"
+    _attr_translation_key = "adapter_stats"
     _attr_icon = "mdi:hub"
     _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -738,15 +768,15 @@ class SecuraCVCanarySensorBase(SensorEntity):
         prefix: str,
         device_id: str,
         entry: ConfigEntry,
-        name_suffix: str,
         key: str,
     ) -> None:
-        """Initialize the sensor."""
+        """Initialize the sensor; `key` is both the unique_id suffix and the
+        translation key (strings.json entity.sensor.<key>.name)."""
         self._prefix = prefix
         self._device_id = device_id
         self._entry = entry
         self._attr_unique_id = f"{DOMAIN}_canary_{device_id}_{key}"
-        self._attr_name = name_suffix
+        self._attr_translation_key = key
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -768,7 +798,7 @@ class SecuraCVCanaryWitnessCountSensor(SecuraCVCanarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "Witness Count", "witness_count")
+        super().__init__(prefix, device_id, entry, "witness_count")
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""
@@ -810,7 +840,7 @@ class SecuraCVCanaryChainLengthSensor(SecuraCVCanarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "Chain Length", "chain_length")
+        super().__init__(prefix, device_id, entry, "chain_length")
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""
@@ -855,7 +885,7 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "Last Event", "last_event")
+        super().__init__(prefix, device_id, entry, "last_event")
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""
@@ -881,18 +911,15 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
             self._attr_native_value = data.get(
                 "event_type", data.get("type", data.get("event", "unknown"))
             )
-            # Two event dialects share the events topic: the CSI canary's
-            # (event_id/state/category/...) and the radar witness's
-            # canary-sense shape (event/seq/occupants/range). Dispatch on
-            # the payload shape so each verifies against its own canonical —
-            # the wrong verifier would mark a validly signed payload
-            # "unsigned".
-            if "event_id" not in data and "occupants" in data:
-                verdict = _verify_and_record(self.hass, self._entry, self._device_id,
-                                             data, verify_sense_event)
-            else:
-                verdict = _verify_and_record(self.hass, self._entry, self._device_id,
-                                             data, verify_event)
+            # Three event dialects share the events topic: the CSI canary's
+            # (event_id/state/category/...), the radar witness's canary-sense
+            # shape (event/seq/occupants/range) and canary-sentinel's fused
+            # claim (event/seq/level/confidence/anomaly/occupancy/...).
+            # Dispatch on the payload shape so each verifies against its own
+            # canonical — the wrong verifier would mark a validly signed
+            # payload "unsigned".
+            verdict = _verify_and_record(self.hass, self._entry, self._device_id,
+                                         data, _event_verifier_for(data))
             if _is_replay(verdict):
                 # An older event re-sent with a valid signature: keep the
                 # newer state we already hold and only annotate the trust view.
@@ -953,7 +980,7 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "Health", "health_status")
+        super().__init__(prefix, device_id, entry, "health_status")
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""
@@ -1040,7 +1067,7 @@ class SecuraCVCanarySDWearSensor(SecuraCVCanarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "SD Wear Estimate", "sd_wear")
+        super().__init__(prefix, device_id, entry, "sd_wear")
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""
@@ -1085,7 +1112,7 @@ class SecuraCVCanaryGPSSensor(SecuraCVCanarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "GPS Fix", "gps_fix")
+        super().__init__(prefix, device_id, entry, "gps_fix")
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""
@@ -1160,7 +1187,7 @@ class SecuraCVCanaryRadarLinkSensor(SecuraCVCanarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "Radar Link", "radar_link")
+        super().__init__(prefix, device_id, entry, "radar_link")
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""

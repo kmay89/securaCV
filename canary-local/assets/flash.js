@@ -32,6 +32,7 @@ import { chirp, chirpToggle } from "./chirp.js";
 import { minimalEnabled, minimalToggle } from "./minimal.js";
 import { mountBoardIdentity } from "./board-identity.js";
 import * as intake from "./intake.js";
+import { probeNative, mountNativeBench, renderNativeUnavailable } from "./flash-native.js";
 
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 const LESSON = "wap.html"; // the guided BOOT/RESET + PlatformIO/Arduino path
@@ -116,8 +117,15 @@ async function boot() {
   const mount = $("#flash");
   mount.innerHTML = "";
 
-  if (!("serial" in navigator)) {
-    mount.append(renderUnsupported());
+  // Inside the SecuraCV Lab app the OS webview has no Web Serial — but the
+  // native shell may flash through its own bundled espflash, the Flasher's
+  // engine (flash-native.js). Ask it (native_capabilities().serial) and
+  // believe the answer: an app build that can't flash (the iPad shell) gets
+  // the in-app "not on this device" card, never the website's "get Chrome".
+  const native = await probeNative();
+  const nativeSerial = !!(native && native.serial);
+  if (!nativeSerial && !("serial" in navigator)) {
+    mount.append(native ? renderNativeUnavailable(native) : renderUnsupported());
     return;
   }
 
@@ -147,6 +155,13 @@ async function boot() {
     guide.href = LESSON;
     box.append(guide);
     mount.append(box);
+    return;
+  }
+
+  if (nativeSerial) {
+    // The native bench, with the browser's own Wi-Fi / broker form.
+    await mountNativeBench(mount, { catalog: state.catalog, renderWifiFields });
+    mount.append(renderReassurance());
     return;
   }
 
@@ -4200,7 +4215,7 @@ async function startFlash(opts) {
     // settings region in the same pass as the firmware. If we can't locate
     // that region, the install continues — never block a flash on a
     // convenience.
-    let wifiFile = null, wifiSsid = null, seededDials = null, seededReflex = null, bakedDeviceId = "", bakedApiToken = null;
+    let wifiFile = null, wifiSsid = null, seededDials = null, seededReflex = null, bakedDeviceId = "", bakedApiToken = null, bakedBroker = null;
     // The auto-update choice (a boolean when the confirm card's checkbox was
     // shown) is a thing to seed by itself: checked or not, the human
     // answered, and the OTA engine reads that answer out of NVS on boot.
@@ -4243,6 +4258,11 @@ async function startFlash(opts) {
         // certificate's Ring ID (this line is reached only on a successful bake).
         bakedDeviceId = prov.strings.dev_id || "";
         bakedApiToken = apiToken;
+        // The broker TLS mode as SEALED — from the builder's output, never the
+        // form — is the one line the done card says about the hub; null when
+        // no broker host was written. Same table as the native Flasher's
+        // receipt (core.MQTT_TLS_RECEIPT).
+        bakedBroker = core.brokerTlsReceipt(prov);
       } catch (e) {
         box.stage("Couldn’t bake the settings (" + String(e.message || e) +
           ") — continuing; everything is still tunable after boot");
@@ -4350,7 +4370,11 @@ async function startFlash(opts) {
     setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings,
       shaHex, shaSigned, sigVerified, sigChecked, bytesWritten: bytes.length,
       wifiSsid, seededDials, seededReflex, provDeviceId: bakedDeviceId,
-      apiToken: bakedApiToken, wifi: null }));
+      apiToken: bakedApiToken, provBroker: bakedBroker,
+      // opts.mqtt carries the broker password and the CA PEM: like the Wi-Fi
+      // credentials (wifi: null) they must not ride into the done card's
+      // closures — the sealed, public receipt line above is all it needs.
+      wifi: null, mqtt: null }));
   } catch (e) {
     state.busy = false;
     // Self-heal write-time failures too: a flaky cable can sync at 921600 but
@@ -4569,6 +4593,17 @@ function phaseDone(opts) {
       `No network was baked in — this Canary asks for WiFi itself on first boot ` +
       `(its own screen, or the setup network it raises).`));
     box.append(w);
+  }
+  if (opts.provBroker) {
+    // What was SEALED for the hub link, in the same words the native
+    // Flasher's receipt uses (core.MQTT_TLS_RECEIPT, held equal to
+    // broker_receipt.rs by desktop_parity.test.js): the mode, a CA's byte
+    // count or the public pin — never the PEM, a password, or a claim that
+    // anything connected (the boot receipt cannot see the transport).
+    const b = el("p", "muted");
+    b.append(el("span", "flash-check", "✓"));
+    b.append(document.createTextNode(` Hub baked in — ${opts.provBroker}`));
+    box.append(b);
   }
   if (opts.apiToken) {
     // Shown ONCE, here — deliberately not remembered by this page (the
@@ -5798,7 +5833,7 @@ function phaseMonitor(port, opts = {}) {
     // If nothing arrives soon, explain why (many builds stay silent until
     // asked) — but keep the connection; don't tear it down.
     if (quietTimer) clearTimeout(quietTimer);
-    // Same diagnosis the native app gives (desktop/src-tauri/serial_monitor.rs,
+    // Same diagnosis the native app gives (desktop/flash-engine/src/monitor.rs,
     // SILENCE_SECS) — a console that connects and then shows nothing looks like
     // a dead board when the board is usually fine and the LINK is the problem,
     // and browser users deserve the same list of things worth trying rather

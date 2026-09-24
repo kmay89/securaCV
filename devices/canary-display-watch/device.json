@@ -34,7 +34,8 @@
       },
       "disc_t": 5.0,
       "disp_back": 5.0,
-      "xiao_t": 4.4
+      "xiao_t": 4.4,
+      "tilt": 25
     }
   },
   "emulator": {

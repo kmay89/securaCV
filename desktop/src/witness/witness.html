@@ -116,7 +116,7 @@
     .tile.offline::before { opacity: .12; animation: none; }
     .tile.just { box-shadow: 0 0 0 2px var(--accent), 0 0 34px -6px var(--accent); animation: tilejoin .9s cubic-bezier(.2,.8,.2,1); }
     @keyframes tilejoin { 0% { transform: scale(.86); opacity: 0; } 60% { transform: scale(1.05); } 100% { transform: scale(1); opacity: 1; } }
-    .cp-btn.flash { background: var(--canary, #f5b301); color: #3a2d00; }
+    .cp-btn.flash { background: var(--canary, #f0b400); color: #3a2d00; }
     .tile .chip { font-family: var(--mono); font-size: .58rem; color: var(--verified); border: 1px solid var(--verified-dim); background: var(--verified-dim); border-radius: 999px; padding: 1px 7px; margin-top: 7px; display: inline-block; }
 
     .events { display: flex; flex-direction: column; gap: 7px; overflow: hidden; }
@@ -508,7 +508,7 @@
 
     <section class="connect-panel" id="connect" aria-label="Connect your fleet">
       <h2>Connect your fleet <span class="exp">experimental</span></h2>
-      <p class="cp-sub">This really fetches a kernel over HTTP and shows the Canaries it returns — in place of the demo fleet. Hit <b>Try a live demo kernel</b> to watch it work right here (a real fetch to a live endpoint), or point it at your own kernel's address to see your actual devices. A browser can't scan your LAN by itself, so you give it the address — and it keeps watching the two well-known ones (<code>canary.local:8099</code>, then <code>canary.local</code> — a fresh Canary answers there with no hub at all), so when one shows up you get to flip the switch.</p>
+      <p class="cp-sub">This really fetches a kernel over HTTP and shows the Canaries it returns — in place of the demo fleet. Hit <b>Try a live demo kernel</b> to watch it work right here (a real fetch to a live endpoint), or point it at your own kernel's address to see your actual devices. A browser can't scan your LAN by itself, so you give it the address — and it keeps watching the three well-known ones (<code>canary.local:8099</code>, the kernel's own <code>canary.local:8799</code>, then <code>canary.local</code> — a fresh Canary answers there with no hub at all), so when one shows up you get to flip the switch.</p>
       <div class="cp-row">
         <button class="cp-btn golive" id="goLiveBtn" type="button" hidden>✨ Go live</button>
         <button class="cp-btn" id="liveDemoBtn" type="button">▶ Try a live demo kernel</button>
@@ -526,7 +526,7 @@
       <pre class="codeblock" id="cpJson" aria-label="Fleet response"></pre>
       <details>
         <summary>Why can't it just find them automatically?</summary>
-        <p>Browsers deliberately can't do mDNS/Bonjour discovery or scan your network, and a page served over <code>https://</code> can't reach a device that only speaks <code>http://</code> on your LAN (mixed-content is blocked). So real discovery works when: your kernel exposes a CORS-enabled endpoint over <code>https</code>, or you open this page on the same LAN over <code>http</code>, or you run the SecuraCV desktop app, which does the mDNS discovery natively and bridges it to the UI. When a kernel answers, your real fleet — names, online state, chain health — replaces the demo data here.</p>
+        <p>Browsers deliberately can't do mDNS/Bonjour discovery or scan your network, and a page served over <code>https://</code> can't reach a device that only speaks <code>http://</code> on your LAN (mixed-content is blocked). So real discovery works when: your kernel exposes a CORS-enabled endpoint over <code>https</code>, or you open this page on the same LAN over <code>http</code>, or you run the SecuraCV desktop app, which does the mDNS discovery natively and bridges it to the UI. When a kernel answers, your real fleet — names and online state — replaces the demo data here; the chain chip stays the emulator's placeholder. The real Wall at <a href="https://securacv.com/tv/">/tv</a> shows a verdict only when a hub serves an evidence envelope, which no shipping hub or Canary does today — against every real source it is presence-only and says so. On a Home Assistant add-on hub, enable the 8799 host port in the add-on's Network settings first (it ships disabled) and type <code>http://&lt;hub&gt;:8799</code> — with the port.</p>
       </details>
     </section>
 

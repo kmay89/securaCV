@@ -100,6 +100,16 @@ only, never the keys. `online` there is not a liveness proof: it means a
 signed chain publish verified against the pin within the last 180 s, no
 more — see [`tvos/discovery/DISCOVERY.md`](../tvos/discovery/DISCOVERY.md).
 
+Listed is not verified: for the Wall to walk the sealed log itself and say
+**Verified**, it needs a viewer token — a credential good for
+`GET /api/sealed-log` alone, minted once with `witness_api
+mint-viewer-token` (see
+[the API reference](../docs/homeassistant_setup.md#viewer-tokens-witness-wall)).
+The add-on's kernel honors one as soon as it appears in
+`/config/viewer_tokens.json` (read per request, `0600`), but the add-on has
+no control that mints one yet, so on an add-on install the Wall shows the
+roll-call and not a walk of its own.
+
 ## Features
 
 - **Zero-config Frigate mode** - broker auto-discovery, auto device key
