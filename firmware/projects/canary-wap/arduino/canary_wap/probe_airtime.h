@@ -8,8 +8,8 @@
  * caller.
  *
  * Every figure here is the governor's ESTIMATE of airtime (192 us preamble
- * + 8 us a byte at the 1 Mbps fallback rate, airtime_governor.h), not a
- * measurement of the air.
+ * + 8 us a byte at the 1 Mbps fallback rate, the ~59 B of ESP-NOW framing
+ * included, airtime_governor.h), not a measurement of the air.
  */
 #ifndef SECURACV_PROBE_AIRTIME_H
 #define SECURACV_PROBE_AIRTIME_H
@@ -20,11 +20,6 @@
 #include "airtime_governor.h"
 
 namespace probe_airtime {
-
-/* ESP-NOW MAC/action-frame framing the governor's estimate does not add on
- * its own (csi_probe.h's honest airtime math): the 16 B probe payload is
- * charged as 75 B, 792 us. */
-constexpr size_t PROBE_FRAME_OVERHEAD_BYTES = 59;
 
 /* The probe starts no frame once the governor's window reads 1.60 % of its
  * 10 s (160 000 us). One frame is 792 us, under 0.01 % of the window, so the
@@ -53,8 +48,11 @@ inline bool reserve_probe_frame(uint32_t now_ms, size_t payload_bytes) {
   if (airtime_governor::airtime_pct_x100(now_ms) >= PROBE_CEILING_PCT_X100) {
     return false;
   }
-  return airtime_governor::try_reserve_routine(
-      now_ms, payload_bytes + PROBE_FRAME_OVERHEAD_BYTES);
+  /* The payload only: the governor adds the ESP-NOW framing to every
+   * caller's frame (airtime_governor::ESPNOW_FRAME_OVERHEAD_BYTES), so the
+   * 16 B probe payload is charged as 75 B, 792 us, and adding it here too
+   * would count it twice. */
+  return airtime_governor::try_reserve_routine(now_ms, payload_bytes);
 }
 
 /* The governor's window is a PSRAM ring that only mesh_network::init

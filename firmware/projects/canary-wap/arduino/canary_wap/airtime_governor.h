@@ -7,17 +7,21 @@
  *
  * Model
  * ─────
- * Each TX is recorded with its byte count. We estimate airtime per packet as
- *   airtime_us ≈ PHY_PREAMBLE_US + (bytes * 8) / PHY_BIT_RATE_MBPS
- * Then we sum airtime over a rolling 10-second window and compare against a
+ * Each TX is recorded with its byte count. We estimate airtime per frame as
+ *   airtime_us ≈ PHY_PREAMBLE_US
+ *                + ((bytes + ESPNOW_FRAME_OVERHEAD_BYTES) * 8) / PHY_BIT_RATE_MBPS
+ * and a reservation of `frames` frames costs frames x that. Then we sum
+ * airtime over a rolling 10-second window and compare against a
  * configurable cap (default 2%). Sends are summed in 100 ms buckets, so the
  * window holds every send at any rate and reads 10.0-10.1 s (a bucket
  * leaves it with its newest send; the cap errs toward denying).
  *
  * This is an ESTIMATE, not a measurement of the air: it counts the bytes
- * the caller passes at the 1 Mbps fallback rate. The CSI probe adds its
- * ~59 B of ESP-NOW framing (probe_airtime.h); the mesh, chirp and Beacon
- * callers pass header + payload and do not yet.
+ * the caller hands esp_now_send at the 1 Mbps fallback rate, plus the ~59 B
+ * of ESP-NOW MAC/action-frame framing the governor adds to every frame, so
+ * no caller adds framing itself. A caller that unicasts one message to
+ * several peers passes `frames` (mesh_network's broadcasts: one frame per
+ * connected peer); the chirp and Beacon broadcasts are one frame each.
  *
  * Two send classes
  * ────────────────
@@ -51,11 +55,15 @@
 namespace airtime_governor {
 
 // PHY parameters for ESP-NOW @ 1 Mbps long preamble (the worst-case rate —
-// real rates are typically higher). Conservative in RATE only: the byte
-// count is whatever the caller passes, and only the CSI probe adds the MAC
-// framing, so the other callers' estimates run ~59 B a frame short.
+// real rates are typically higher). Conservative in RATE: the byte count is
+// the caller's payload plus the fixed framing below, per frame.
 static const uint32_t PHY_PREAMBLE_US = 192;      // long preamble + headers
 static const uint32_t PHY_BIT_RATE_KBPS = 1000;   // 1 Mbps fallback rate
+
+// ESP-NOW's MAC/action-frame framing around the payload, added to every
+// frame by estimate_airtime_us() (so a 16 B CSI probe payload is charged as
+// 75 B, 792 us). Callers pass only what they hand esp_now_send.
+constexpr size_t ESPNOW_FRAME_OVERHEAD_BYTES = 59;
 
 static const uint32_t WINDOW_MS = 10000;           // rolling 10-second window
 static const uint8_t DEFAULT_CAP_PCT = 2;          // 2% airtime cap (routine)
@@ -72,7 +80,8 @@ struct Stats {
   uint32_t beacon_airtime_us;  // total Beacon airtime in window (subset of airtime_us)
 };
 
-// Estimate the airtime cost of one packet (microseconds).
+// Estimate the airtime cost of one frame carrying `bytes` of ESP-NOW
+// payload (microseconds), its ESP-NOW framing included.
 uint32_t estimate_airtime_us(size_t bytes);
 
 // Initialize / reset the governor. Optional: pass cap_pct = 0 to keep default.
@@ -84,20 +93,25 @@ bool ring_ok();
 
 // Attempt to reserve airtime for a routine (non-urgent) send.
 //   now_ms: caller's millisecond clock
-//   bytes:  packet size on the wire
-// Returns true and records the send if allowed; returns false and records a
-// denial otherwise.
-bool try_reserve_routine(uint32_t now_ms, size_t bytes);
+//   bytes:  ESP-NOW payload of ONE frame (the governor adds the framing)
+//   frames: how many such frames the send puts on the air — one per peer
+//           when the caller unicasts the same message to each (0 charges
+//           nothing)
+// The cost is frames x estimate_airtime_us(bytes), all or nothing, in one
+// window slot. Returns true and records the send if allowed; returns false
+// and records a denial otherwise. The counters count calls, not frames.
+bool try_reserve_routine(uint32_t now_ms, size_t bytes, uint16_t frames = 1);
 
-// Force-reserve airtime for an urgent send. Always returns true; the cost
-// is still recorded so the rolling window reflects reality.
-void force_reserve_urgent(uint32_t now_ms, size_t bytes);
+// Force-reserve airtime for an urgent send (same bytes/frames meaning).
+// Always permitted; the cost is still recorded so the rolling window
+// reflects reality.
+void force_reserve_urgent(uint32_t now_ms, size_t bytes, uint16_t frames = 1);
 
 // Force-reserve airtime for a Beacon-class urgent send. Same airtime
 // accounting as force_reserve_urgent, plus a distinct counter slot so the
 // `beacon.airtime_pct` / `beacon.frames` MQTT sensor can be surfaced
 // separately from Opera tamper/power alerts.
-void force_reserve_beacon(uint32_t now_ms, size_t bytes);
+void force_reserve_beacon(uint32_t now_ms, size_t bytes, uint16_t frames = 1);
 
 // Telemetry — utilization expressed as percent × 100 (i.e. 215 = 2.15%).
 uint16_t airtime_pct_x100(uint32_t now_ms);
