@@ -347,12 +347,12 @@ public struct FleetMassing: Sendable {
       FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [34.199981689453125, 24, 115.5999755859375], r: 12, h: 0, fullDetailOnly: false),
   ]),
   "part.doorbell.face": FleetMassing(
-    id: "part.doorbell.face", rev: "15907b73", ghost: false,
-    envelope: [38.2, 9.45, 119.6],
+    id: "part.doorbell.face", rev: "61ae6147", ghost: false,
+    envelope: [38.2, 9.85, 119.6],
     solids: [
-      FleetSolid(kind: .box, material: "dark", axis: "y", at: [0, 0, 0], size: [38.199981689453125, 7.999999809265134, 119.5999755859375], r: 12, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .disc, material: "lens", axis: "y", at: [19.099990844726562, 8.049999809265135, 97.5999755859375], size: [], r: 6, h: 1.2, fullDetailOnly: false),
-      FleetSolid(kind: .disc, material: "accent", axis: "y", at: [19.099990844726562, 8.049999809265135, 22], size: [], r: 6, h: 1.4, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "dark", axis: "y", at: [0, 0, 0], size: [38.199981689453125, 8.399999427795407, 119.5999755859375], r: 12, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .disc, material: "lens", axis: "y", at: [19.099990844726562, 8.449999427795408, 97.5999755859375], size: [], r: 6, h: 1.2, fullDetailOnly: false),
+      FleetSolid(kind: .disc, material: "accent", axis: "y", at: [19.099990844726562, 8.449999427795408, 22], size: [], r: 6, h: 1.4, fullDetailOnly: false),
   ]),
   "part.doorbell.gasket": FleetMassing(
     id: "part.doorbell.gasket", rev: "da9d1172", ghost: false,
@@ -445,10 +445,10 @@ public struct FleetMassing: Sendable {
       FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [24, 8, 18], r: 1, h: 0, fullDetailOnly: false),
   ]),
   "part.wap.weather-shield": FleetMassing(
-    id: "part.wap.weather-shield", rev: "de6d1547", ghost: false,
-    envelope: [120.5, 7.6, 55],
+    id: "part.wap.weather-shield", rev: "a8a64e49", ghost: false,
+    envelope: [120.5, 8.4, 55],
     solids: [
-      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [120.5, 7.59999942779541, 55], r: 5, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [120.5, 8.399999618530273, 55], r: 5, h: 0, fullDetailOnly: false),
   ]),
   "tool.fit-coupon": FleetMassing(
     id: "tool.fit-coupon", rev: "8b3335bd", ghost: false,

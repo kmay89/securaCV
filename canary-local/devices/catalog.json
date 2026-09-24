@@ -436,7 +436,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 77,
+   "engineering_param_count": 78,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -1893,7 +1893,7 @@
     {
      "id": "head_seal",
      "type": "bool",
-     "label": "(seal mode) O-ring under each front screw head — needs screw_head = \"pan\"",
+     "label": "(seal mode, screws on the face) O-ring under each front screw head — from the back a sealed build always glands them — needs screw_head = \"pan\"",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -1987,7 +1987,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 151,
+   "engineering_param_count": 152,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2386,7 +2386,7 @@
     {
      "id": "head_seal",
      "type": "bool",
-     "label": "O-ring under each face screw head (the posts stand INSIDE the gasket line, so a",
+     "label": "(seal mode, screws on the face) O-ring under each face screw head — from the back a sealed build always glands them (the posts stand INSIDE the gasket line, so a",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -2424,7 +2424,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 147,
+   "engineering_param_count": 148,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2674,7 +2674,7 @@
     {
      "id": "head_seal",
      "type": "bool",
-     "label": "(seal mode) O-ring under each front screw head — the posts stand INSIDE the",
+     "label": "(seal mode, screws on the face) O-ring under each front screw head — from the back a sealed build always glands them — the posts stand INSIDE the",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -2744,7 +2744,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 180,
+   "engineering_param_count": 181,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -3100,6 +3100,14 @@
      "default": false
     },
     {
+     "id": "opt_shield",
+     "type": "bool",
+     "label": "blind pilots in the lid over its corner bosses for the sun shield's four screws (ON in the Outdoor preset; the shield is part=\"shield\")",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
      "id": "usb_hood",
      "type": "bool",
      "label": "drip awning over the USB opening — for a case standing sideways or on a desk",
@@ -3188,14 +3196,14 @@
      "default": true
     }
    ],
-   "engineering_param_count": 172,
+   "engineering_param_count": 177,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 5,
     "released": 5,
-    "options": 22,
-    "user_options": 17,
+    "options": 23,
+    "user_options": 18,
     "variant_axes": 1
    }
   },

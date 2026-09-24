@@ -125,7 +125,7 @@ RIB_BOUND = {
 # and a length range joins only that; a mixed row (the Vision's SCR5) says so.
 JOIN = {
     "canary-wap": ("bom_canary_wap.csv", [
-        ("screw", r"^M2 flat x (8|10|12|16) self-tap", "SCR3"),    # FLAT head, 8-16mm (12/16 from the back)
+        ("screw", r"^M2 (pan|flat) x (8|10|12|16) self-tap", "SCR3"),  # flat (indoor, from the back) or pan (Outdoor: O-ring glands) + the shield's flat x 12
         ("insert", r"^M2 heat-set insert 3\.5 OD x 4\b", "INS1"),   # 3.5mm OD x 4.0mm
         ("wall-screw", r"^#6 pan wall screw \(keyholes\)", "SCR4"),  # keyhole mount
     ]),

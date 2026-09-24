@@ -137,7 +137,7 @@ CURATED = [
         "preset_controls": ["opt_camera", "opt_buzzer", "opt_led",
                             "opt_battery", "opt_gps", "opt_tamper",
                             "opt_touch", "opt_antenna", "opt_seal",
-                            "opt_mount", "opt_weep", "screw_from"],
+                            "opt_mount", "opt_weep", "screw_head", "opt_shield"],
         "part_labels": {
             "all": "Assembled preview (not for printing)",
             "base": "Base — the tub",

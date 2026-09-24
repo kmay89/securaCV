@@ -407,14 +407,14 @@
      },
      {
       "ref": "SCR3",
-      "qty": "4",
+      "qty": "8",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 self-tapping screw, FLAT (countersunk) head, 8-16mm (printed-enclosure lid)",
-      "mpn": "M2X8-ST-CSK",
+      "desc": "M2 self-tapping screws, 8-16mm: FLAT (countersunk) head indoors, PAN head on the Outdoor build (printed-enclosure lid + sun shield)",
+      "mpn": "M2X8-ST-MIX",
       "mfr": "Generic",
-      "usd": 0.2,
-      "notes": "For the 3D-printed enclosure: driven up from the countersinks in the BACK into the lid bosses (12mm compact, 16mm battery build) so the lid face is unbroken; the Outdoor build keeps 8mm heads on the lid under the sun shield. Max ~0.3 N-m or the printed bosses strip",
+      "usd": 0.4,
+      "notes": "Driven up from the seats in the BACK into the lid bosses so the lid face is unbroken: 4x flat 12mm (compact) / 16mm (battery); the Outdoor build takes 4x PAN 12mm over O-rings (ORG1) plus 4x flat 12mm for the sun shield into the lid's blind pilots. Max ~0.3 N-m or the printed bosses strip",
       "orderable": false
      },
      {
@@ -491,9 +491,9 @@
      }
     ],
     "required_usd": 25.99,
-    "full_usd": 101.98,
+    "full_usd": 102.18,
     "required_usd_live": 27.9,
-    "full_usd_live": 116.45,
+    "full_usd_live": 116.65,
     "pricing_as_of": "2026-09-02T13:37:16Z",
     "recipes": [
      {

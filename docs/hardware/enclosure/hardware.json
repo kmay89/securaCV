@@ -29,6 +29,12 @@
      "text": "M2 x 10 security screw, Torx pin/tri-wing, self-tap (plate foot into the body boss)"
     },
     {
+     "qty": 6,
+     "kind": "o-ring",
+     "spec": "O-ring 2 ID x 1 CS (under the head)",
+     "text": "O-ring 2 ID x 1 CS (under the head)"
+    },
+    {
      "qty": 1,
      "kind": "button",
      "spec": "Ø12 illuminated momentary button + panel nut (16.2 AC)",
@@ -115,6 +121,12 @@
      "kind": "insert",
      "spec": "M2 heat-set insert 3.5 OD x 4",
      "text": "M2 heat-set insert 3.5 OD x 4 — the +1 seats in the security boss"
+    },
+    {
+     "qty": 6,
+     "kind": "o-ring",
+     "spec": "O-ring 2 ID x 1 CS (under the head)",
+     "text": "O-ring 2 ID x 1 CS (under the head)"
     },
     {
      "qty": 1,
@@ -468,6 +480,12 @@
      "text": "M2 pan x 6 self-tap (OV5647 to the front posts)"
     },
     {
+     "qty": 6,
+     "kind": "o-ring",
+     "spec": "O-ring 2 ID x 1 CS (under the head)",
+     "text": "O-ring 2 ID x 1 CS (under the head)"
+    },
+    {
      "qty": 1,
      "kind": "gasket",
      "spec": "TPU gasket (print part=\"gasket\")",
@@ -581,7 +599,7 @@
    },
    "bom": {
     "SCR3": {
-     "bom": 4,
+     "bom": 8,
      "echo": 4
     }
    }
@@ -598,8 +616,14 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 flat x 8 self-tap",
-     "text": "M2 flat x 8 self-tap"
+     "spec": "M2 pan x 12 self-tap",
+     "text": "M2 pan x 12 self-tap from the back"
+    },
+    {
+     "qty": 4,
+     "kind": "o-ring",
+     "spec": "O-ring 2 ID x 1 CS (under the head)",
+     "text": "O-ring 2 ID x 1 CS (under the head)"
     },
     {
      "qty": 1,
@@ -655,7 +679,7 @@
    },
    "bom": {
     "SCR3": {
-     "bom": 4,
+     "bom": 8,
      "echo": 4
     },
     "SCR4": {
@@ -676,8 +700,14 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 flat x 8 self-tap",
-     "text": "M2 flat x 8 self-tap"
+     "spec": "M2 pan x 12 self-tap",
+     "text": "M2 pan x 12 self-tap from the back"
+    },
+    {
+     "qty": 4,
+     "kind": "o-ring",
+     "spec": "O-ring 2 ID x 1 CS (under the head)",
+     "text": "O-ring 2 ID x 1 CS (under the head)"
     },
     {
      "qty": 1,
@@ -724,16 +754,11 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 flat x 16 self-tap",
-     "text": "M2 flat x 16 self-tap — REPLACES the lid screws when the shield is fitted"
+     "spec": "M2 flat x 12 self-tap",
+     "text": "M2 flat x 12 self-tap (shield to the lid's pilots)"
     }
    ],
-   "bom": {
-    "SCR3": {
-     "bom": 4,
-     "echo": 4
-    }
-   }
+   "bom": {}
   },
   "wap.compact_plain": {
    "device": "canary-wap",
@@ -768,7 +793,7 @@
    },
    "bom": {
     "SCR3": {
-     "bom": 4,
+     "bom": 8,
      "echo": 4
     }
    }
