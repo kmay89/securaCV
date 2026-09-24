@@ -30,7 +30,7 @@ from homeassistant.helpers import device_registry as dr
 
 import json
 
-from .device_trust import TrustStore, TrustVerdict
+from .device_trust import TrustStore, TrustVerdict, normalize_hex
 from .const import (
     DOMAIN,
     CONF_MQTT_PREFIX,
@@ -943,7 +943,8 @@ def async_record_verify(
         # Dedup by (device_id, received_fingerprint) so a steady stream
         # of mismatched publishes only notifies the user once. Cleared
         # when the operator either re-pins or unpins the device.
-        key = (device_id, verdict.received_fingerprint or "")
+        # Lowercased so two spellings of one fingerprint are one notice.
+        key = (device_id, normalize_hex(verdict.received_fingerprint or ""))
         notified: set = entry_data["mismatch_notified"]
         if key in notified:
             return

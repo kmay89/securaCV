@@ -10,6 +10,11 @@ Trust model
 - **TOFU by default.** First time a device_id appears on MQTT with a
   valid `fp` field, we pin that fingerprint as the trusted identity.
   Subsequent publishes from the same device_id MUST carry the same fp.
+- **Hex case carries no identity.** A canary-wap spells its fingerprint
+  and public key in capitals (`hex_to_str` in canary_wap.ino); every other
+  build, and this module's own derivation, spells them in lowercase. Both
+  name the same bytes, so a fingerprint is lowercased (`normalize_hex`)
+  before it is compared.
 - **Manual pin.** The options flow's "Pin a device pubkey" step takes
   the device_id and the full pubkey hex an installer read off the device
   out of band (canary-wap's `/enroll` page, USB serial on the
@@ -147,6 +152,21 @@ class DeviceTrustEntry:
             "previous": self.previous,
             "counters": self.counters,
         }
+
+
+def normalize_hex(value: str) -> str:
+    """The one spelling HA compares a fingerprint or key in.
+
+    Hex is case-free: `7916CA487912FA1B` and `7916ca487912fa1b` are the same
+    8 bytes. The canary-wap writes capitals (canary_wap.ino's `hex_to_str`,
+    the source of its envelope `fp` and its health `public_key`), while the
+    other builds and `fingerprint_from_pubkey_hex` write lowercase. Comparing
+    the two spellings exactly read every signed canary-wap publish as a key
+    mismatch. Everything that reaches a comparison goes through here first.
+    Nothing else is stripped or repaired: a value that is not hex still
+    fails where it failed before.
+    """
+    return value.lower()
 
 
 def fingerprint_from_pubkey_hex(pubkey_hex: str) -> str:
