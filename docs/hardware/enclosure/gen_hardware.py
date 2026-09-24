@@ -64,7 +64,7 @@ DESIGN_RULES = HERE / "DESIGN_RULES.md"
 # How every message names the rib table: by its title, not its section number.
 RIB_TABLE = 'DESIGN_RULES.md "Lid rib proportions" table'
 
-FASTENERS = ("screw", "insert", "security-screw", "wall-screw", "bolt")
+FASTENERS = ("screw", "insert", "security-screw", "wall-screw", "bolt", "o-ring")
 
 # The committed sets: render.sh's presets (base part — the hardware line is a
 # top-level echo, so any part gives it; the WAP shield is the exception, its
@@ -127,6 +127,7 @@ JOIN = {
     "canary-wap": ("bom_canary_wap.csv", [
         ("screw", r"^M2 (pan|flat) x (8|10|12|16) self-tap", "SCR3"),  # flat (indoor, from the back) or pan (Outdoor: O-ring glands) + the shield's flat x 12
         ("insert", r"^M2 heat-set insert 3\.5 OD x 4\b", "INS1"),   # 3.5mm OD x 4.0mm
+        ("o-ring", r"^O-ring 2 ID x 1 CS", "ORG1"),                # the sealed back seats' glands
         ("wall-screw", r"^#6 pan wall screw \(keyholes\)", "SCR4"),  # keyhole mount
     ]),
     "canary-vision": ("bom_canary_vision.csv", [
@@ -135,10 +136,12 @@ JOIN = {
         ("security-screw", r"^M2 x 10 security screw", "SCR8"),
         ("bolt", r"^M5 x 25 bolt \+ nut", "SCR6"),
         ("wall-screw", r"^#8 ", "SCR7"),                            # #8 / M4 countersunk (bracket)
+        ("o-ring", r"^O-ring 2 ID x 1 CS", "ORG1"),                # the sealed back seats' glands
     ]),
     "canary-sense": ("bom_canary_sense.csv", [
         ("screw", r"^M2 pan x 16 self-tap", "SCR3"),                 # PAN head, 16mm, from the back
         ("insert", r"^M2 heat-set insert 3\.5 OD x 4\b", "INS1"),
+        ("o-ring", r"^O-ring 2 ID x 1 CS", "ORG1"),                # the sealed back seats' glands
         ("wall-screw", r"^#6 pan wall screw \(keyholes\)", "SCR4"),  # keyhole mount
     ]),
 }

@@ -75,6 +75,10 @@
     "batt_hold": false
    },
    "bom": {
+    "ORG1": {
+     "bom": 6,
+     "echo": 6
+    },
     "SCR5": {
      "bom": 10,
      "echo": 10
@@ -544,6 +548,10 @@
     "batt_hold": false
    },
    "bom": {
+    "ORG1": {
+     "bom": 6,
+     "echo": 6
+    },
     "SCR5": {
      "bom": 10,
      "echo": 10
@@ -678,6 +686,10 @@
     "batt_hold": true
    },
    "bom": {
+    "ORG1": {
+     "bom": 4,
+     "echo": 4
+    },
     "SCR3": {
      "bom": 8,
      "echo": 4

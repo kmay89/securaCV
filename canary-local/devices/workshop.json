@@ -365,8 +365,8 @@
     },
     {
      "label": "Printed-enclosure weather kit",
-     "formula": "SCR3+CW1+ADH1+PLUG1+SCR4+FIL1+VENT1+LP1",
-     "usd": 11.55,
+     "formula": "SCR3+ORG1+CW1+ADH1+PLUG1+SCR4+FIL1+VENT1+LP1",
+     "usd": 11.75,
      "note": "Splash-resistant (~IP54) printed case, enclosure/ v0.7 - NOT a substitute for ENC1 outdoors"
     }
    ],
