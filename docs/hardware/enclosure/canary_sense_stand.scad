@@ -6,6 +6,16 @@
 //  three-prong hinge head — the Sense case (or any Canary with the GoPro
 //  two-prong hinge) clips on and locks with the usual M5 thumbscrew.
 //
+//  POSE: the case stands UP on the head — radome level and facing the bed is
+//  the bedside pose — and tips forward from there down to 15° below
+//  horizontal. It does NOT hang plumb below the head: a GoPro joint's center
+//  fin points down the stalk, and the case's hinge root collides with it in
+//  any pose within ~90° of that direction (plumb measured 821 mm³ of case
+//  inside the head and stalk, the teeth aside). Measured by hanging the
+//  committed canary_sense_back.stl on the head's bolt axis and sweeping it in
+//  5° steps: zero overlap (the detent teeth aside) from 10° above horizontal
+//  toward the back, through upright, to 15° below horizontal toward the front.
+//
 //  Ballast: the underside has pockets for 4 x M10 washers / US quarters
 //  (~25 mm discs); cover with the ballast lid (glue or tape). Stick-on
 //  rubber feet recommended.
@@ -24,10 +34,10 @@ part = "all";        // ["base","ballast_lid","all"]
 /* [Stand] */
 base_d   = 92.0;     // base disc diameter
 base_t   = 12.0;     // base thickness
-stalk_h  = 70.0;     // stalk height to the hinge axis region — 70, not 55: hung plumb (radome
-                     // horizontal, the bedside pose) the case's far edge swings case_reach below
-                     // the axis and needs the base clear; asserted below
-case_reach = 70.0;   // the Sense case's far bottom edge from its hinge axis (out_y/2 + hinge_off + ... = 69.6)
+stalk_h  = 70.0;     // stalk height to the hinge axis region — puts the standing radome ~130 mm over the nightstand
+case_reach = 71.2;   // the Sense case's far edge from its hinge axis — measured off canary_sense_back.stl (out_y/2 + hinge_off)
+case_face  = 14.0;   // the case's radome face from its hinge axis (back 19.5 - fin_r 7.5 + lid 2.0)
+pose_low   = 15;     // the forward tip limit below horizontal — where the case root meets the center fin (header)
 stalk_d  = 16.0;     // stalk diameter
 stalk_tilt = 12;     // stalk lean (degrees, toward the front)  // [0:2:20]
 
@@ -55,11 +65,16 @@ tol_hole  = 0.30;    // catalog default — core_tol_hole(), canary_core_lib
 $fa = 3; $fs = 0.4;
 
 hinge_hole = hinge_bolt_d + 0.4;
-assert(base_t - 2 + stalk_h*cos(stalk_tilt) + 7.5 >= base_t + case_reach + 2,
-       "the case hung plumb hits the base — raise stalk_h (axis must clear base_t + case_reach + 2)");
+head_off = 10.0;                     // bolt axis above the head's base plate
+// the hinge axis as base() places it: the stalk top plus head_off, both along the tilted stalk
+axis_z = base_t - 2 + (stalk_h - 0.2 + head_off)*cos(stalk_tilt);
+// the lowest free pose (tipped pose_low below horizontal, radome down-forward) keeps the
+// case's leading corner 2 mm over the base; the plumb pose is not free, so not asserted
+assert(axis_z - case_reach*sin(pose_low) - case_face*cos(pose_low) >= base_t + 2,
+       "the case tipped fully forward hits the base — raise stalk_h");
 assert(bal_r + bal_d/2 < base_d/2 - 3, "ballast ring exceeds the base — shrink bal_r/bal_d");
-echo(str("Canary Sense bedside stand v0.1-dev — base ", base_d, " mm, head axis at ~",
-         base_t - 2 + stalk_h*cos(stalk_tilt) + head_off, " mm  (IN DEVELOPMENT)"));
+echo(str("Canary Sense bedside stand v0.1-dev — base ", base_d, " mm, head axis at ",
+         axis_z, " mm; case stands up, tips to ", pose_low, "° below level  (IN DEVELOPMENT)"));
 
 module teeth2d() {
     step = 360 / teeth_n;
@@ -70,8 +85,7 @@ module teeth2d() {
         }
 }
 // three-prong head: fins ⊥ X rise from a base plate at local z=0 (which embeds
-// into the stalk top); bolt axis along X at z = head_off
-head_off = 10.0;
+// into the stalk top); bolt axis along X at z = head_off (defined with the knobs' derived values)
 module head_fin(xc) {
     hull() {
         translate([xc - prong_t/2, -fin_r, -0.5]) cube([prong_t, 2*fin_r, 0.5]);

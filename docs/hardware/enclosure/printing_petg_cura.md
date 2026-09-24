@@ -208,9 +208,10 @@ are off for every row** — the orientation is what makes that true.
 | **WAP weather lid** | face-down | no | The 3 mm drip skirt is self-supporting; the gasket lands separately. |
 | **TPU gasket** | flat | **yes** (thin ring) | TPU 90–95 A, **2 walls, 100 % infill, ~25 mm/s, fan low/off.** It's a 1.1 mm ring — brim keeps it from wandering. |
 | **Vision back / front** | back open-up / front **face-down** | no | The GoPro hinge prongs print as part of the shell, fins self-supporting. |
+| **Vision rain hood** (`part="hood"`) | drip edge down, spigot up | no | A C-section with no overhang. The most sun-exposed part on the Vision: print it in **ASA**, then press the spigot into the front's groove and bond it. |
 | **Vision bracket** | prongs **up**, flat base down | **yes** | Small footprint + cantilever load — brim for adhesion, and print in **CF-PETG/CF-Nylon** if you can (it's the highest-stressed part). |
 | **Vision knob** | flat | **yes** | Prints over an M5×25 bolt; small round footprint needs the brim. |
-| **Sense radome front** | **face-down**, window flat on the plate | no | **Radome flatness is the whole game.** Uniform 1.0 mm membrane, **unfilled PETG/ASA only** — no CF, no metallic paint, no foil label in front of the antenna or you blind the 60 GHz radar. Textured PEI is fine; don't sand the window. |
+| **Sense radome front** | **face-down**, window flat on the plate | no | **Radome flatness is the whole game.** Uniform 1.5 mm membrane (the model refuses 0.7–1.1 mm — the quarter-wave band that reflects the beam back), **unfilled PETG/ASA only** — no CF, no metallic paint, no foil label in front of the antenna or you blind the 60 GHz radar. Textured PEI is fine; don't sand the window. |
 | **Sense back** | open side up | no | — |
 | **Doorbell body** | tall pill, back flat on plate | **yes** | Tall + narrow footprint — brim for stability. Sealed by default; treat like a weather build (5 walls). |
 | **Doorbell face** | **face-down** | recommended | Two-stage soft edges + button bezel land on layer 1 face-down. |

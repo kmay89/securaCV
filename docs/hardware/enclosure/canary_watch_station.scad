@@ -41,8 +41,9 @@
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect + the catalog tolerance trio the knobs cite
-use <canary_mount_lib.scad>
-use <canary_snap_lib.scad>   // the finger strain budget  // the stud/keyhole hanging standard — the drum's blind pocket
+use <canary_mount_lib.scad>  // the stud/keyhole hanging standard — the drum's blind pocket
+use <canary_snap_lib.scad>   // the finger strain budget, and the window derived from its ridge
+use <canary_port_lib.scad>   // the bridge-safe profile the drum's USB slot and the stand's cable channel cut
 use <canary_board_lib.scad>  // board registry — the measured round_disp record disc_d cites
 
 /* [What to render] */
@@ -57,8 +58,10 @@ xiao_t    = 4.4;     // XIAO seated proud of the socket: PCB + USB shell (measur
 xiao_gap  = 1.2;     // clearance under the XIAO's USB shell (boot-button room)
 bore_clear = 0.7;    // bore radial clearance over disc_d (back parts sweep Ø43.9)
 usb_ang   = 270;     // XIAO USB direction, degrees (0 = +X; 270 = -Y = chin/front in the stand)
-usb_slot_w = 11.0;   // side-slot width (USB-C plug shells run ~10.5)
-usb_slot_h = 7.0;    // side-slot height
+usb_slot_w = 13.0;   // side-slot width: the Type-C spec-max overmold (12.35) + 0.3 a side — the
+                     // receptacle sits at the disc edge, ~3 mm inside the wall's outer face
+usb_slot_h = 8.6;    // side-slot height: the overmold's 6.5, grown so its round ends clear the
+                     // 45° top chamfers the slot's bridge takes (asserted)
 
 /* [Battery] — optional LiPo laid on the drum floor (display has JST + charger) */
 opt_batt = false;
@@ -83,14 +86,17 @@ snap_n       = 4;     // nubs / wall slots
 pry_notch    = true;  // a fingernail notch in the drum rim at pry_ang (mid-wall between two snap windows,
                       // away from the USB and keyhole): the bezel snaps flush Ø-for-Ø with nothing to lift it by
 pry_ang      = 0;     // degrees, 0 = +X  // [0:15:345]
-snap_w       = 6.5;   // slot width (arc chord)
+nub_w        = 4.2;   // the nub ridge's drawn width (arc chord) — exactly what the old end plates drew
+snap_play    = 0.15;  // window clearance per side — the catalog default (canary_snap_lib)
 snap_h       = 1.8;   // slot height
-snap_depth   = 2.6;   // slot center below the drum rim
-snap_proud   = 0.3;   // nub stand-proud of the skirt: 0.15 of working interference over the bore
-                      // (0.4 needed 0.25 of finger travel — 9 % strain on the 2.35 mm skirt)
+snap_depth   = 3.3;   // slot center below the drum rim: low on the finger, where its lever is longest
+snap_proud   = 0.25;  // nub stand-proud of the skirt: 0.1 of working interference over the bore
+                      // (0.4 needed 0.25 of finger travel — 9 % strain on the 2.35 mm skirt; 0.3 on a
+                      // 1.0 finger at the real 1.9 lever was 6.2 %)
 skirt_dep    = 4.0;   // bezel skirt reach into the bore (capped: the skirt must float over the PCB rim)
-finger_t     = 1.0;   // finger thickness — the skirt is relieved to this behind the nubs so the
+finger_t     = 0.8;   // finger thickness — the skirt is relieved to this behind the nubs so the
                       // fingers flex (a 2.35 wall did not); the snap lib's cycle budget gates it
+finger_root  = 0.7;   // full-thickness band under the face plate the fingers hang from — their lever runs root → nub
 pcb_t        = 1.2;   // display PCB thickness — the skirt floats 0.2 over its rim
 
 /* [Stud/keyhole interface] — a blind keyhole pocket in the drum back */
@@ -107,7 +113,6 @@ pocket_clear = 0.4;  // radial clearance around the drum barrel
 rim_margin  = 5.0;   // face margin around the pocket circle
 chin_w      = 14.0;  // USB/cable chin-slot width
 scallop_d   = 18.0;  // thumb scallops for lifting the drum out
-foot_h      = 1.5;   // foot pads (base cable channel runs beneath)
 
 /* [Aesthetics] */
 lid_edge  = 1.0;     // deviates: scaled to the round bezel — the drum face carries a wider single stage
@@ -138,6 +143,14 @@ assert(bez_ap_d < skirt_od - 3, "skirt wall too thin — shrink bez_ap_d");
 assert(kh_head_h + 1.5 <= back_t + kh_extra, "keyhole pocket must stay blind (head_h + 1.5 web, canary_mount_lib) — raise kh_extra");
 assert(usb_cz - usb_slot_h/2 > 1.0, "USB slot digs into the drum back — raise xiao_gap");
 assert(usb_cz + usb_slot_h/2 < z_pcb, "USB slot reaches the display PCB — check stack");
+// the slot's top corners are 45° chamfers (the bridge rule), and a spec-max
+// overmold's round end must clear them: the end circle (radius h/2, centered
+// w/2 − h/2 off the slot axis) stands clear of the chamfer line while
+// (w_slot/2 + h_slot/2 − cham − (w/2 − h/2))/√2 ≥ h/2
+assert((usb_slot_w/2 + usb_slot_h/2 - port_bridge_cham_for(usb_slot_w)
+        - (port_usbc_overmold_w() - port_usbc_overmold_h())/2)/sqrt(2) >= port_usbc_overmold_h()/2
+       && usb_slot_w >= port_usbc_overmold_w(),
+       "a spec-max USB-C overmold does not pass the drum's USB slot — widen or heighten it");
 assert(!opt_batt || sqrt(pow(batt_l/2,2) + pow(batt_w/2 + 2,2)) < bore_d/2, "battery too large for the bore");
 echo(str("Canary Watch station v0.2-dev — drum Ø", drum_d, " x ", puck_len,
          " mm (bore Ø", bore_d, ", USB slot z ", usb_cz, "), stand tilt ", tilt, " deg"));
@@ -148,13 +161,24 @@ echo(str("Canary Watch station v0.2-dev — drum Ø", drum_d, " x ", puck_len,
 // ----------------------------------------------------------------------------
 // the four snap windows, mid-wall between the USB slot (270°) and keyhole (90°)
 function snap_angs() = [45, 135, 225, 315];
+// the window derives from the ridge that parks in it (canary_snap_lib's
+// rule): one snap_w used to size the window AND place the ridge's end plates
+// 1.2 in from it, drawing a 4.2 ridge in a 6.5 window — 1.15 of rattle a side
+snap_w = snap_window(nub_w, snap_play);
 // the bezel's fingers are a snap worked at every service: the lib's CYCLE
-// budget, on the finger's real numbers (thickness finger_t, travel = the nub's
-// interference over the bore, free length = the slit length)
-snap_defl = skirt_od/2 + snap_proud - bore_d/2;
-assert(snap_strain(finger_t, snap_defl, skirt_dep - 0.6) <= snap_budget_cycle(),
-       str("bezel fingers strain ", round(snap_strain(finger_t, snap_defl, skirt_dep - 0.6)*1000)/10,
-           " % — over the ", round(snap_budget_cycle()*1000)/10, " % cycle budget: thin finger_t or shrink snap_proud"));
+// budget, on the finger's real numbers — thickness finger_t, travel = the
+// nub's interference over the bore, and the lever from the finger's ROOT to
+// the NUB. The relief and slits that make the finger stop finger_root under
+// the face plate, so the root sits at bezel z = −finger_root and the nub at
+// −snap_depth. (This assert used to run on skirt_dep − 0.6 = 3.4, the
+// relief's height, and passed a finger whose real 1.9 lever strained 6.2 %.)
+snap_defl  = skirt_od/2 + snap_proud - bore_d/2;
+snap_lever = snap_depth - finger_root;
+assert(snap_defl > 0, "the nubs do not reach the bore — raise snap_proud");
+assert(snap_depth + (snap_h - 0.4)/2 <= skirt_dep + 1e-9, "the nub hangs off the finger's tip — shrink snap_depth or snap_h");
+assert(snap_strain(finger_t, snap_defl, snap_lever) <= snap_budget_cycle(),
+       str("bezel fingers strain ", round(snap_strain(finger_t, snap_defl, snap_lever)*1000)/10,
+           " % — over the ", round(snap_budget_cycle()*1000)/10, " % cycle budget: thin finger_t, shrink snap_proud, or drop the nub lower on the finger (snap_depth)"));
 assert(!pry_notch || min([for (a = snap_angs()) abs(((pry_ang - a + 540) % 360) - 180)]) >= 20,
        "pry_ang lands on a snap window — keep it 20 degrees off snap_angs()");
 assert(!pry_notch || abs(((pry_ang - usb_ang + 540) % 360) - 180) >= 25, "pry_ang lands on the USB slot");
@@ -166,9 +190,13 @@ module drum() {
         // bore — smooth wall to wall, nothing protrudes (the display's back
         // parts sweep Ø43.9; internal posts are impossible with this board)
         translate([0, 0, floor_z]) cylinder(d = bore_d, h = drum_h);
-        // XIAO USB-C slot through the wall at the measured shell height
+        // XIAO USB-C slot through the wall at the measured shell height —
+        // the catalog's chamfered-top profile: the drum prints open-face-up,
+        // so the slot's top is a bridge in an upright wall, and 11.0 flat is
+        // past the 7.0 ceiling
         rotate([0, 0, usb_ang]) translate([drum_d/2 - wall_t/2, 0, usb_cz])
-            cube([wall_t*3, usb_slot_w, usb_slot_h], center = true);
+            rotate([90, 0, 90]) linear_extrude(wall_t*3, center = true)
+                port_bridge_profile2d(usb_slot_w, usb_slot_h);
         // snap windows for the bezel nubs
         for (a = snap_angs()) rotate([0, 0, a])
             translate([drum_d/2 - wall_t/2, 0, drum_h - snap_depth])
@@ -215,10 +243,10 @@ module bezel() {
                 cylinder(d = skirt_od, h = skirt_dep + 0.01);
                 translate([0, 0, -0.1]) cylinder(d = bez_ap_d, h = skirt_dep + 0.2);
                 // relieve the skirt to finger_t over the finger span so the fingers
-                // are beams, not a wall; slits leave a 0.6 root under the face
-                translate([0, 0, -0.1]) cylinder(d = skirt_od - 2*finger_t, h = skirt_dep - 0.6);
+                // are beams, not a wall; relief and slits stop finger_root under the face
+                translate([0, 0, -0.1]) cylinder(d = skirt_od - 2*finger_t, h = skirt_dep - finger_root + 0.1);
                 for (a = snap_angs()) rotate([0, 0, a + 45])
-                    translate([skirt_od/2 - 3, -0.6, -0.1]) cube([6, 1.2, skirt_dep - 0.6]);
+                    translate([skirt_od/2 - 3, -0.6, -0.1]) cube([6, 1.2, skirt_dep - finger_root + 0.1]);
             }
             // snap nubs, chamfered both ways (assembly AND service removal).
             // The face underside (bezel z=0) rests on the drum rim (drum z=drum_h),
@@ -227,12 +255,12 @@ module bezel() {
             for (a = snap_angs()) rotate([0, 0, a]) {
                 nz = -snap_depth;             // slot center, bezel frame
                 translate([skirt_od/2 - 0.5, 0, nz]) hull() {
-                    translate([0, -snap_w/2 + 1.2, 0]) cube([0.5, 0.1, snap_h - 0.4], center = true);
+                    translate([0, -nub_w/2 + 0.05, 0]) cube([0.5, 0.1, snap_h - 0.4], center = true);
                     // tip cube is 0.5 wide: its OUTER face lands at skirt_od/2 + snap_proud,
                     // so the strain assert's snap_defl is the travel the finger really makes
                     // (drawn +0.5 it stood 0.25 prouder than the number the budget was run on)
                     translate([snap_proud + 0.25, 0, 0]) cube([0.5, 0.1, 0.6], center = true);
-                    translate([0, snap_w/2 - 1.2, 0]) cube([0.5, 0.1, snap_h - 0.4], center = true);
+                    translate([0, nub_w/2 - 0.05, 0]) cube([0.5, 0.1, snap_h - 0.4], center = true);
                 }
             }
         }
@@ -300,13 +328,15 @@ module stand() {
             for (sx = [1, -1]) translate([sx * (pkt_d/2 + scallop_d/2 - 7), 0, pocket_dep - 6])
                 cylinder(d = scallop_d, h = 40);
         }
-        // open cable channel under the base, chin to the rear edge
-        translate([-6, -sd_f - 1, -0.1]) cube([12, sd_f + sd_b + 2, 4 + 0.1]);
+        // open cable channel under the base, chin to the rear edge. Its
+        // ceiling is a bridge (the stand prints base-down), so it takes the
+        // catalog's chamfered-top profile: 12 wide at the floor, 7.0 of flat.
+        // The base sits on the desk directly — the 1.5 foot pads that used to
+        // lift it hung below z = 0, so the print pose was the pads on the bed
+        // and the whole base bridging 1.5 above it.
+        translate([0, sd_b + 1, (4 - 0.1)/2]) rotate([90, 0, 0])
+            linear_extrude(sd_f + sd_b + 2) port_bridge_profile2d(12, 4 + 0.1);
     }
-    // foot pads lift the base over the cable channel
-    for (fx = [1, -1], fy = [1, -1])
-        translate([fx*(sw/2 - 9), fy == 1 ? sd_b - 9 : -(sd_f - 9), -foot_h])
-            cylinder(d = 12, h = foot_h + 0.01);
 }
 
 // ----------------------------------------------------------------------------

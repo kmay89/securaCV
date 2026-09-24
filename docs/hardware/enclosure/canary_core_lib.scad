@@ -271,6 +271,73 @@ module cs_cone90_cut(x, y, t, d_screw, h_head) {
 }
 
 // ---------------------------------------------------------------------------
+//  Screws from the back — the fastener-free face.
+//
+//  The show face is the one surface everyone sees and nobody touches, and the
+//  audit's renders of the released four found every one of them carrying its
+//  screw heads: four on the WAP, Vision and Sense, six on the doorbell. So the
+//  house default drives them the other way (screw_from = "back"): through a
+//  seat in the BACK, up a clearance bore through the corner post, and into a
+//  boss that hangs under the face, stopping `skin` short of it. The face is
+//  unbroken; the back — against the wall, the table or the doorbell's plate —
+//  carries the seats, and opening the case now means taking it down first.
+//
+//  The three numbers are derived together, never typed:
+//    bk_len     the longest standard length whose tip stays skin + 0.3 under
+//               the face, given the head must sit wholly in the floor;
+//    bk_recess  how far the head sinks into the back (z from the back face),
+//               never above the floor top — above it the post wall around a
+//               head-sized recess would be 0.2 mm;
+//    bk_boss_h  how far the boss hangs below the face's underside (the rim
+//               datum, base_h) so the thread engages hw_engage(size) = 3 × d.
+//  The post stops at base_h - bk_boss_h; the boss lands on its top face, so
+//  the fit gate's seat datum is unchanged.
+//  ext = the back's thickening below z = 0 (the keyhole slab, mount_extra).
+// ---------------------------------------------------------------------------
+function bk_hh(size, head)  = (head == "pan") ? scr_pan_h(size) : scr_flat_h(size);
+function bk_hd(size, head)  = (head == "pan") ? scr_pan_d(size) : scr_flat_d(size);
+// a pan screw's length is measured under the head, a flat's includes it
+function bk_hp(size, head)  = (head == "pan") ? scr_pan_h(size) : 0;
+function bk_tipmax(base_h, lid_t, skin) = base_h + lid_t - skin - 0.3;
+function bk_len(size, head, ext, base_h, lid_t, skin = 1.0) =
+    let (room = bk_tipmax(base_h, lid_t, skin) + ext - bk_hp(size, head),
+         ok = [for (l = hw_std_lens()) if (l <= room + 1e-9) l])
+    ok[len(ok) - 1];
+function bk_recess(size, head, ext, floor_t, base_h, lid_t, skin = 1.0) =
+    max(0, min(ext + floor_t - bk_hh(size, head),
+               bk_tipmax(base_h, lid_t, skin) + ext - bk_hp(size, head)
+                 - bk_len(size, head, ext, base_h, lid_t, skin)));
+function bk_tip(size, head, ext, floor_t, base_h, lid_t, skin = 1.0) =
+    -ext + bk_recess(size, head, ext, floor_t, base_h, lid_t, skin) + bk_hp(size, head)
+         + bk_len(size, head, ext, base_h, lid_t, skin);
+function bk_boss_h(size, head, ext, floor_t, base_h, lid_t, skin = 1.0) =
+    max(0, ceil((hw_engage(size) - (bk_tip(size, head, ext, floor_t, base_h, lid_t, skin) - base_h)) * 10) / 10);
+
+// the seat in the back and the clearance bore up the post: SUBTRACT from a
+// base whose back face is at z = -ext; `top` is where the bore ends (the
+// post top). Flat heads get a true 90° cone, pan heads a flat-floored bore.
+module bk_seat_cut(x, y, ext, top, size, head, recess, d_clear, tol_hole) {
+    hh = bk_hh(size, head);
+    hd = bk_hd(size, head) + 2*tol_hole;
+    translate([x, y, -ext - 0.1]) {
+        cylinder(d = d_clear, h = ext + top + 0.2);
+        if (recess > 0) cylinder(d = hd, h = recess + 0.1);
+        translate([0, 0, recess + 0.1])
+            if (head == "pan") cylinder(d = hd, h = hh);
+            else cylinder(d1 = d_clear + 2*hh, d2 = d_clear, h = hh);
+    }
+}
+
+// the boss's thread: a pilot (or an insert bore) from the boss's foot up to
+// `skin` under the face. SUBTRACT from a face plate whose underside is z = 0.
+module bk_boss_bore(x, y, boss_h, lid_t, skin, d_pilot, insert = false, ins_bore = 0, ins_h = 0) {
+    translate([x, y, -boss_h - 0.1]) {
+        cylinder(d = d_pilot, h = boss_h + lid_t - skin + 0.1);
+        if (insert) cylinder(d = ins_bore, h = ins_h + 0.6);
+    }
+}
+
+// ---------------------------------------------------------------------------
 //  Vent / buzzer cluster — the weather shells' shared sound + pressure port:
 //  a recessed seat for the adhesive GORE membrane on the OUTER face and a
 //  ring of through-holes behind it. SUBTRACT from a lid whose outer face is

@@ -20,25 +20,24 @@
 //  1. THE PLUG FITS, AND KEEPS ITS FULL INSERTION LENGTH.
 //     USB-A is a hard standard: the plug shell is 12.00 x 4.50 mm and needs
 //     ~12 mm of clear length to seat in a receptacle. Anything the case adds
-//     past the PCB's plug-end edge comes straight off that 12 mm. So the
-//     plug-end wall is thin (`usb_wall`), and its outer face is CHAMFERED
-//     BACK (`usb_relief`) so a receptacle recessed in a wall-wart housing
+//     past the PCB's plug-end edge comes straight off that 12 mm — the
+//     cavity's tol_slide AND the end wall (`wall`) both. Its outer face is
+//     RELIEVED (`usb_relief`) so a receptacle recessed in a wall-wart housing
 //     meets air instead of meeting this case. `usb_free` asserts what is
 //     left; if it drops below 11 mm the render fails rather than shipping a
 //     case that will not plug in all the way.
 //     And the opening is a RECTANGLE, because series-A is a rectangle —
-//     see `usb_a_2d`. The stadium that suits USB-C will not pass a series-A
-//     shell's square corners.
+//     see `usb_bore_2d`, with a bridge-safe 45° top. A USB-C stadium will
+//     not pass a series-A shell's square corners.
 //
-//  2. NO SCREWS, AND THE SNAP FEELS DELIBERATE.
-//     Four cantilever beams on the back's skirt, into undercuts in the bezel.
-//     The feel is authored, not inherited:
-//       - LEAD-IN 30°, so it guides itself in and closes with one push.
-//       - RETURN ANGLE IS ASYMMETRIC, which is the whole trick. The two beams
-//         at the PLUG end return at `snap_ret_lock` (steep — those never let
-//         go, because that end takes the insertion and removal forces every
-//         time the device is plugged in). The two at the FAR end return at
-//         `snap_ret_free` (shallower — those are the ones a thumb releases).
+//  2. NO SCREWS, AND THE SNAP IS WHAT THE PRINT CAN HOLD.
+//     Four beams cut into the bezel wall hook a groove in the plate's edge.
+//       - RETENTION IS 45°, at all four: the plate pulls out against the
+//         hooks' UNDERSIDES, an overhang on the face-down bezel. (The first
+//         cut's 62° / 38° "return angles" sat on the TOP face — asymmetric
+//         ENTRY, not hold.) The plate enters over a 45° top face.
+//       - It releases where it is pried: the far-end scallop lifts the far
+//         pair first, so the plug end is never the end that lets go.
 //       - The beams are sized by STRAIN, not by eye: see the ε calculation at
 //         `snap_beam_l`. PETG takes about 1.8% repeatedly; a beam short
 //         enough to feel stiff is a beam that goes white and then snaps off
@@ -60,11 +59,11 @@
 //     Two ways, because the microSD slot's exact mouth is a MEASURE item:
 //       - A window in the back over the slot (`sd_window`), so a card can be
 //         changed with the case shut, and
-//       - the THUMB FLICK: the back stands a hair proud at the far end over a
-//         20° cam ramp (`flick_*`). A thumb pushed along the body rides the
-//         ramp and pops the two free-end snaps. It is deliberately at the end
-//         AWAY from the plug, so the gesture pushes the device INTO its
-//         socket rather than levering it out.
+//       - the PRY SCALLOP (`flick_*`): a rounded scoop through the far wall's
+//         rim that puts a thumbnail under the plate's far edge and pops the
+//         two far-end snaps. It is deliberately at the end AWAY from the
+//         plug, so the gesture pushes the device INTO its socket rather than
+//         levering it out.
 //
 //  ── PRINTING ─────────────────────────────────────────────────────────────
 //  Black PETG body, one YELLOW accent — the house mark (canary_mark_lib.scad)
@@ -93,7 +92,8 @@
 
 use <canary_core_lib.scad> // rrect2d + the house constants
 use <canary_mark_lib.scad>  // the house mark: bird + wordmark lockup
-use <canary_port_lib.scad>  // the series-A standards + the insertion-length gate
+use <canary_port_lib.scad>  // the series-A standards + the insertion-length gate + the bridge-safe opening
+use <canary_snap_lib.scad>  // snap_strain() + the cycled-snap budget the beams answer to
 use <canary_board_lib.scad> // the ws147 board record the knob defaults cite
 use <canary_color_lib.scad> // the colorway registry — preview spool colors
 
@@ -149,6 +149,7 @@ hdr_drop  = 8.8;   // cavity depth below the PCB back swallowing base + pins —
                    // MEASURE (8.8 is the C3/C6's fit-tested figure)
 hdr_inset = 1.6;   // PCB long edge → header row centerline — MEASURE
 hdr_pin_w = 1.2;   // width the solder fillet + pin occupies across the row
+hdr_body_w = 2.54; // the header's plastic body across the row — it sits on the PCB back, where the ribs land
 
 /* [USB-A plug] — the standard, plus what the board does with it */
 // USB-A series-A plug shell, per the USB 2.0 mechanical drawing. These are
@@ -168,15 +169,15 @@ usb_dx = 0.0;      // shell center offset across the board (X) — MEASURE
 usb_dz = 0.0;      // + = shell center sits further BEHIND the PCB — MEASURE
 usb_clear = 0.35;  // per-side clearance around the shell in its opening
 
-// The plug-end wall, and how far it is cut back so a recessed receptacle
-// housing does not foul the case before the plug is home.
-usb_wall = 1.8;    // plug-end wall thickness — thin, so a recessed receptacle housing clears before the plug is home
-// Chamfer depth on the outer face around the opening. Bounded by how much
+// The plug-end wall is the shell's own `wall` — there is no separate knob
+// for it (a `usb_wall` of 1.8 used to feed usb_free while the case drew 2.1,
+// so the gate passed half a millimeter the plug did not have).
+// Relief depth on the outer face around the opening. Bounded by how much
 // wall there is above and below the plug — the shell straddles the board, so
 // its bottom edge sits only a couple of millimeters above the bezel face and
 // a greedy relief cuts straight through it. The two asserts below hold the
 // line; if you want more relief, you need a deeper case, not a bigger number.
-usb_relief = 0.5;  // chamfer depth on the outer face around the opening — bounded by the wall above and below the plug
+usb_relief = 0.5;  // relief step depth on the outer face around the opening — bounded by the wall above and below the plug
 
 /* [Drop collar] — the reason this case exists in one piece */
 collar_on = true;
@@ -188,17 +189,20 @@ collar_gap = 0.25; // ring-to-shell gap: small enough to bottom out early,
 /* [Buttons] — BOOT and RST, side-mounted near the plug end */
 opt_btn = true;
 btn_d = 2.6;         // access hole Ø — a fingertip cannot, a pen tip can
-btn_from_usb = 11.3; // button center down from the PCB's plug-end edge — MEASURE
-                     // (the drawing's 11.31 dimension appears to be this span,
-                     // which is exactly why it needs checking)
+btn_from_usb = 7.0;  // button center down from the PCB's plug-end EDGE (not the cavity end)
+                     // 7.0 is the C3 case's FIT-CONFIRMED btn_up on this same
+                     // outline: its first print caught the drawing's 11.31 as
+                     // a CENTER-referenced dimension (18.185 - 11.31 = 6.875),
+                     // and this file had read it as edge-referenced — 4.1 mm
+                     // off, which puts the board's side switches on plain wall
 btn_dz = 1.0;        // actuator center behind the PCB BACK face — MEASURE
 btn_proud = 1.6;     // actuator overhang past the PCB edge — MEASURE
 btn_ch_w = 3.2;      // actuator channel width — hugs the nub, nothing more
 ear_skin = 1.1;      // wall skin left outside a button clearance channel
 
-/* [microSD] — the card the thumb flick is for */
+/* [microSD] — the card the pry scallop is for */
 // OFF by default, and that is the considered choice, not an oversight. The
-// thumb flick IS the card story: the back comes off in a second and the slot
+// pry scallop IS the card story: the back comes off in a second and the slot
 // is right there. A permanent window costs the one clean face this case has
 // (the mark lives there), and it can only be cut in the right place once
 // somebody has measured where the slot mouth actually is — which the product
@@ -245,15 +249,20 @@ light_seam = true;
 // Two ways to build it, and the geometry serves both:
 //   - CO-PRINTED (AMS / multi-material): a third filament alongside the black
 //     body and the yellow mark — the same three-spool arrangement the 7" frame
-//     already uses. `python3 gen_3mf.py stick` packages exactly this, and sets
-//     band_clear = 0 so the band fuses to the walls it fills.
-//   - SEPARATE INSERTS: print part="fil_light" on its own and press the two
-//     strips in. Keep band_clear at its default so they actually go in.
+//     already uses. `python3 gen_3mf.py stick` packages exactly this, at
+//     band_clear = 0 (the default) so the band fuses to the walls it fills.
+//   - SEPARATE INSERTS: print part="fil_light" on its own at band_clear =
+//     0.10 and press the two strips in (see band_clear for what the bezel's
+//     seam roof costs in that build).
 //
 // Either way the outer line is CONTINUOUS — the ties across the seam are ribs
 // hidden behind the strip, not breaks in it. See seam_web_ribs.
 light_band = true; // fill the seam with a white PETG light-pipe strip (co-printed, or pressed in as part fil_light)
-band_clear = 0.10;   // per-face clearance; 0 for a co-printed band
+// ZERO by default: the co-print is the build. The slot's roof is ~16 mm of
+// wall carried only by the hidden ribs, and on a face-down bezel it is a
+// bridge unless the band is printed under it. The insert build (0.10) prints
+// that roof as a bridge between ribs — a known sag, accepted by choosing it.
+band_clear = 0;      // per-face clearance; 0 = co-printed (the default), 0.10 = pressed-in inserts
 // Measured off the board (kmay89), stated as the SIDE ELEVATION because that
 // is what you look at: 1 mm of black, then 3 mm of white, then black to the
 // back. The 1 mm is the bezel face; the white starts immediately behind it
@@ -344,29 +353,33 @@ snap_w = 4.6;        // beam width
 // A thinner case leaves less wall to carry a beam, so the beam gets LONGER
 // per unit thickness, not shorter: strain goes as t/L², so trading 0.15 mm of
 // thickness buys back more than the 1.2 mm of length the shallower case costs.
-snap_beam_l = 6.8;   // free beam LENGTH — see the strain note below
+// 6.0, not 6.8: the plug-end pair now stands over the light seam (the
+// button ear took its old place at the plug end), and a beam must root on
+// solid wall above the seam's roof, not on it — see the seam assert.
+snap_beam_l = 6.0;   // free beam LENGTH — see the strain note below
 snap_beam_t = 0.85;  // beam thickness (the wall is locally thinned to this)
-snap_eng = 0.55;     // engagement depth (how far the hook stands proud)
-snap_flat = 0.5;     // the flat that actually seats
+// The hook has to FIT the 2.0 plate it hooks: its height at the plate edge
+// (eng on the underside + flat + eng on the top face, at 45° each) plus
+// tol_press either side is the groove, and the groove needs a lip of plate
+// above and below it. 0.55 / 0.5 drew a 1.34-1.75 mm hook into a 0.8 mm
+// groove — ~0.3 mm of interference at every seat, a plate that never closed.
+snap_eng = 0.4;      // engagement depth (how far the hook stands past the plate edge)
+snap_flat = 0.3;     // the vertical flat at the hook tip
 snap_slot = 0.9;     // U-slot width freeing each side of the beam
-snap_lead = 45;      // insertion lead-in angle, degrees — 45, not 30: the hook prints on a
-                     // face-down bezel and a 30° lead-in is a 60° overhang (strain does not
-                     // depend on it)
-snap_ret_lock = 62;  // return angle at the plug end — effectively permanent
-snap_ret_free = 38;  // return angle at the free end — releases with intent
+snap_hold = 45;      // hook UNDERSIDE angle from horizontal — the retention face; 45 is the flattest a face-down print holds
+snap_entry = 45;     // hook TOP face angle from horizontal — the face the plate's lead chamfer rides in over
 
-/* [Thumb flick] — how the back comes off */
-// A LIFT LUG, not a pry slot. The plate carries a small tab at its far end
-// that stands proud of the rim; the bezel's far wall is scooped away there so
-// the tab is reachable. A thumb pushed along the body meets the tab's ramped
-// face and cams the plate up out of the two shallow-return hooks.
+/* [Pry scallop] — how the back comes off */
+// A scoop through the far wall's rim that bares the plate's far edge, so a
+// thumbnail lifts it off the two far-end hooks. It used to reach a LIFT LUG on
+// the plate — a stub drawn in the wrong plane that stood 1.2 mm past the
+// plate's far end and landed on the bezel rim, so the plate could not seat at
+// all. The scallop was always the pry point; the lug is gone.
 //
 // Far end, deliberately: the gesture pushes the stick further INTO its socket
 // rather than levering it out of the wall.
-flick_w = 9.0;       // lug width
-flick_proud = 1.1;   // how far the lug stands above the rim
-flick_ramp = 22;     // the ramp face a thumb climbs, degrees
-flick_scoop = 7.0;   // Ø of the scoop through the bezel rim that reaches it
+flick_w = 9.0;       // scallop width along the far wall
+flick_scoop = 7.0;   // Ø of the scoop through the bezel rim
 
 /* [Shell] */
 wall = 2.1;   // deviates: the cantilever snap beams (beam_t/eng) were tuned against this wall — conform only with a snap re-validation
@@ -384,8 +397,9 @@ preload = 0.25;      // compliant squeeze on the PCB (rib crush), not a clamp
 // is still free: the pin rows run down the long edges, and the rib has to
 // stand INBOARD of them. The assert in the derived block is what checks it,
 // and this is the number it tells you to change.
-rib_inset = 3.2;   // where the compliant ribs land, in from the cavity wall — must stand inboard of the pin rows
+rib_inset = 4.2;   // where the compliant ribs land, in from the cavity wall — inboard of the header bodies and the side switches
 rib_w = 1.2;         // rib thickness across the board — the crushing face
+rib_l = 5.0;         // rib length along the board
 
 /* [Tolerances] */
 tol_slide = 0.20;    // board into its cavity
@@ -407,7 +421,12 @@ xc = board_w + 2*tol_slide;
 yc = board_l + 2*tol_slide;
 xo = xc + 2*wall;
 yo = yc + 2*wall;
-r_in = max(0.6, r_out - wall);
+// The cavity corner radius is held by the BOARD, not by the outer radius: a
+// square-cornered PCB clears a cavity only tol_slide bigger when
+// (r - tol)·√2 <= r, i.e. r <= tol·√2/(√2 - 1) = 0.68 at 0.20 (less 0.1 for
+// the arc's facets, whose chords cut inside it). r_out - wall (1.1) drew
+// corners that stood 0.17 into all four PCB corners.
+r_in = min(max(0.4, r_out - wall), tol_slide * sqrt(2) / (sqrt(2) - 1) - 0.1);
 
 // The clearance behind the PCB. On the bare board that is the measured stack;
 // with headers soldered it opens out to swallow the base and the pins, and
@@ -450,12 +469,14 @@ assert(headers != "male" || hdr_drop > back_stack,
            "the bare board's clearance (", back_stack, ") — the pins would ",
            "hold the back plate off. MEASURE hdr_drop."));
 // The ribs press on the PCB, and the pin rows run down the same long edges.
-// This is the collision that a comment would not have caught: at the file's
-// own hdr_inset default the ribs clear the row by 0.20 mm, and at the OTHER
-// candidate the C3 file still lists (2.00) they overlap it by 0.20. Which of
-// the two is real is unmeasured, so the arithmetic is an assert.
+// This is the collision that a comment would not have caught, and it bit
+// twice: the first version checked only the 1.2 mm pin + fillet, while the
+// header's 2.54 mm plastic body sits on the same PCB back face the ribs press
+// — the ribs cleared the pins and landed 0.47 mm onto the body. Which
+// hdr_inset is real (1.6 here; the C3 still lists 1.27 and 2.00) is
+// unmeasured, so the arithmetic is an assert.
 rib_out = xc/2 - rib_inset + rib_w/2;              // rib's outboard face
-pin_in  = board_w/2 - hdr_inset - hdr_pin_w/2;     // pin row's inboard face
+pin_in  = board_w/2 - hdr_inset - max(hdr_pin_w, hdr_body_w)/2;   // header's inboard face
 assert(headers != "male" || rib_out <= pin_in - 0.15,
        str("the compliant ribs reach x=", rib_out, " and the header pin row ",
            "starts at x=", pin_in, " — the ribs would land on the pins ",
@@ -467,39 +488,57 @@ assert(stack_eff + preload <= 9.0 * rib_w,
        str("the compliant ribs would stand ", stack_eff + preload, " mm on a ",
            rib_w, " mm section — too slender to load. Widen rib_w."));
 
-usb_free = usb_proud - usb_wall;
+// The shell leaves the PCB edge, crosses the tol_slide gap to the cavity end,
+// then the end wall: both come off the plug.
+usb_free = usb_proud - tol_slide - wall;
 port_assert_insertion(usb_free, "the hallway case's series-A plug");
 
-// The plug opening, with its outer relief chamfer, has to stay INSIDE the end
-// wall. If it does not, the case is open along an edge — and because the
-// relief is what makes the opening look intentional, the failure is easy to
-// introduce by tuning `usb_relief` alone.
-usb_top = z_usb + usb_shell_h/2 + usb_clear + usb_relief;
+// The plug opening, bridge-safe (usb_bore_2d), and its outer relief have to
+// stay INSIDE the end wall. If they do not, the case is open along an edge.
+// The top is the chamfers' apex — the 45° corners rise from the SHELL line
+// (so they never cut the shell envelope) to a flat no wider than the
+// catalog's 7.0 bridge; the relief is a plain step around the shell box.
+usb_ow   = usb_shell_w + 2*usb_clear;
+usb_cham = port_bridge_cham_for(usb_ow);
+usb_top = max(z_usb + usb_shell_h/2 + usb_cham,
+              z_usb + usb_shell_h/2 + usb_clear + usb_relief);
 usb_bot = z_usb - usb_shell_h/2 - usb_clear - usb_relief;
 assert(usb_top <= bez_h - 0.6,
        str("The plug opening (top at ", usb_top, ") breaks out through the ",
-           "rim (", bez_h, "). Check usb_dz and back_stack, or trim ",
-           "usb_relief."));
+           "rim (", bez_h, "). Its bridge-safe chamfers need ", usb_cham,
+           " mm over the shell — check usb_dz and back_stack; a flat lintel ",
+           "is not the fix."));
 assert(usb_bot >= face_t + 0.6,
        str("The plug opening (bottom at ", usb_bot, ") breaks out through the ",
            "bezel face. Check usb_dz."));
 
 // ── THE SNAP-BEAM STRAIN CHECK ─────────────────────────────────────────────
-// Cantilever with a rectangular section, deflected `snap_eng` at its tip:
+// Cantilever with a rectangular section (canary_snap_lib snap_strain):
 //     ε = 1.5 · y · t / L²
-// PETG tolerates roughly 1.8% strain on a joint meant to be opened again and
-// again (short-term ultimate is higher, but designing to ultimate is how you
-// get a case that opens three times). If this assert fires the fix is a
-// LONGER or THINNER beam — never a shallower engagement, which is what makes
-// a snap feel cheap.
-snap_strain = 1.5 * snap_eng * snap_beam_t / (snap_beam_l * snap_beam_l);
-assert(snap_strain <= 0.018,
+// deflected by the hook's engagement PLUS tol_press — the plate floats that
+// much in the cavity, and when it is pushed toward a beam the beam opens by
+// both. PETG tolerates roughly 1.8% strain on a joint meant to be opened
+// again and again (the catalog's cycled budget, snap_budget_cycle(), is 2.0;
+// this file keeps its tighter 1.8). If this assert fires the fix is a LONGER
+// or THINNER beam — never a shallower engagement: snap_eng is already what
+// the 2.0 plate can take (the groove assert below), and less is a snap that
+// lets go.
+snap_defl   = snap_eng + tol_press;
+snap_strain = snap_strain(snap_beam_t, snap_defl, snap_beam_l);
+assert(snap_strain <= min(0.018, snap_budget_cycle()),
        str("Snap beam strain is ", snap_strain*100,
            "% — above the ~1.8% PETG can take repeatedly. Lengthen ",
            "snap_beam_l or thin snap_beam_t."));
+// The print pose decides the hold: the underside is an overhang on the
+// face-down bezel, so it cannot be flatter than 45°.
+assert(snap_hold >= 45 && snap_entry >= 45,
+       str("hook faces at ", snap_hold, "° / ", snap_entry, "° from horizontal — ",
+           "below 45° they are overhangs the face-down bezel cannot print"));
 
-// Button geometry.
-btn_y = yc/2 - btn_from_usb;              // +Y is the plug end
+// Button geometry. btn_from_usb is measured from the PCB's plug-end EDGE —
+// it used to be subtracted from the cavity end (yc/2), a silent tol_slide off
+// on top of the 11.31 misreading.
+btn_y = board_l/2 - btn_from_usb;         // +Y is the plug end
 btn_reach = btn_proud + tol_slide;
 ear_bump = max(0, btn_reach + ear_skin - wall);
 // Ear width. Deliberately tight to the actuator: the C6 case's second fit
@@ -514,18 +553,18 @@ plate_x = xc - 2*tol_press;
 plate_y = yc - 2*tol_press;
 plate_z0 = bez_h - back_t;          // plate underside, in bezel coordinates
 
-// Where the snap beams sit along Y. Both long walls are crowded — the buttons
-// need an ear at btn_y and the light seam wants the clear run between the
-// pairs — so the pairs are pushed to the two ends: the locking pair OUTBOARD
-// of the button ear (nearer the plug), the free pair down at the thumb end.
-// The asserts below are what keep that arrangement true if anyone moves a
-// button; moving one also moves the seam, which is derived from these.
-snap_y_lock = yc/2 - 4.2;
-snap_y_free = -yc/2 + 6.0;
-
-// Half-widths of the things competing for the long walls.
+// Where the snap beams sit along Y. Both long walls are crowded, and the
+// button ear decides the plug-end pair: at the measured 7.0 the ear leaves
+// only ~3.4 mm of wall between itself and the plug end — not a beam's worth.
+// So the plug-end pair stands just INBOARD of the ear, over the light seam
+// (the beams root above the seam's roof — asserted below), and the free pair
+// stays down at the pry end. The asserts are what keep that arrangement true
+// if anyone moves a button.
 snap_half = (snap_w + 2*snap_slot)/2;
 ear_half  = (ear_w + 2)/2;
+
+snap_y_lock = btn_y - (snap_half + ear_half);
+snap_y_free = -yc/2 + 6.0;
 
 assert(abs(snap_y_lock - btn_y) >= snap_half + ear_half,
        str("The plug-end snap beam at y=", snap_y_lock, " overlaps the button ",
@@ -535,6 +574,10 @@ assert(snap_y_lock + snap_half <= yc/2,
        "The plug-end snap beam runs off the end of the wall.");
 assert(snap_y_free - snap_half >= -yc/2,
        "The free-end snap beam runs off the end of the wall.");
+assert(snap_y_lock - snap_half >= snap_y_free + snap_half + 1.0,
+       str("The two snap pairs overlap (plug pair at y=", snap_y_lock,
+           ", free pair at y=", snap_y_free, ") — the button has moved too ",
+           "far down the board for this wall."));
 
 // The hook's shoulder sits so its flat lands in the plate's groove, which is
 // cut at mid-plate. One number, derived once, used by both parts — if the
@@ -542,11 +585,30 @@ assert(snap_y_free - snap_half >= -yc/2,
 // the case will either rattle or refuse to close.
 groove_mid_z = plate_z0 + back_t/2;
 
+// The hook's height where it crosses the plate edge, and the groove that
+// takes it: the groove is the hook's own profile grown by tol_press
+// (back_groove), so the two cannot drift apart again. What is left of the
+// plate above and below that groove is the lip the hook holds — asserted.
+hook_hr = snap_eng * tan(snap_hold);                 // underside's rise
+hook_er = snap_eng * tan(snap_entry);                // top face's rise
+groove_edge_h = hook_hr + snap_flat + hook_er + tol_press/cos(snap_entry);
+assert((back_t - groove_edge_h)/2 >= 0.3,
+       str("the hook's groove is ", groove_edge_h, " mm tall at the edge of a ",
+           back_t, " mm plate — less than 0.3 mm of plate either side of it. ",
+           "Shrink snap_eng / snap_flat."));
+
 // The beam runs DOWN from the rim; its root is snap_beam_l below the rim.
 beam_root_z = bez_h - snap_beam_l;
 assert(beam_root_z > face_t + 1.0,
        str("Snap beams (", snap_beam_l, " mm) are longer than the bezel wall ",
            "can carry — shorten snap_beam_l or deepen the case."));
+// The plug-end pair stands over the light seam, so a beam must root on solid
+// wall ABOVE the seam's roof, never in it: a U-slot that reaches the slot
+// leaves the beam hanging off the band.
+assert(!light_seam || beam_root_z >= face_t + seam_dz + seam_h + 1.0,
+       str("the snap beams root at z=", beam_root_z, ", within 1.0 mm of the ",
+           "light seam's roof (", face_t + seam_dz + seam_h, ") — shorten ",
+           "snap_beam_l."));
 
 // ── The glass has to be RETAINED, not merely framed ──────────────────────
 // The bezel face overlaps the LCD module's border by this much on each side.
@@ -630,6 +692,21 @@ module usb_a_2d(w, h, r = usb_r) {
     offset(r = r) offset(r = -r) square([w, h], center = true);
 }
 
+// The bore the shell passes through, drawn in the (x, z) plane about the
+// shell's center: the shell box grown by `clr` at the sides and bottom, and
+// a BRIDGE-SAFE top (canary_port_lib port_bridge_profile2d). The bezel prints
+// face-down, so the top of any horizontal bore is a bridge — this one was a
+// 12.0 mm flat lintel in the wall and an 11.8 mm flat roof in the collar.
+// The 45° chamfers start at the SHELL's top line, not at the clearance box's,
+// so they pass `clr` over the shell's corners and never cut its envelope;
+// port_bridge_cham_for() sizes them to leave the catalog's 7.0 mm flat.
+module usb_bore_2d(clr) {
+    w = usb_shell_w + 2*clr;
+    c = port_bridge_cham_for(w);
+    h = usb_shell_h + clr + c;
+    translate([0, h/2 - (usb_shell_h/2 + clr)]) port_bridge_profile2d(w, h, c);
+}
+
 // ===========================================================================
 //  THE BEZEL — front frame, prints FACE-DOWN
 // ===========================================================================
@@ -661,15 +738,17 @@ module bezel_window() {
             rrect2d(aa_w, aa_l, 1.6);
 }
 
-// The plug opening + its relief chamfer + the drop collar.
+// The plug opening + its relief step. (The drop collar is ADDED, after the
+// cuts — see bezel().)
 module bezel_usb() {
-    // The through opening, sized shell + clearance, as a stadium.
+    // The through opening: shell + clearance, bridge-safe top.
     translate([usb_dx, yc/2 + wall/2, z_usb]) rotate([90, 0, 0])
         linear_extrude(wall*3, center = true)
-            usb_a_2d(usb_shell_w + 2*usb_clear, usb_shell_h + 2*usb_clear);
+            usb_bore_2d(usb_clear);
 
     // Relief on the OUTER face: a receptacle recessed in a wall-wart housing
-    // meets air here instead of meeting the case.
+    // meets air here instead of meeting the case. A plain step round the
+    // shell box — 0.5 deep, so its ceiling is an overhang, not a bridge.
     translate([usb_dx, yo/2 + 0.01, z_usb]) rotate([90, 0, 0])
         linear_extrude(usb_relief, scale = 1.0)
             usb_a_2d(usb_shell_w + 2*usb_clear + 2*usb_relief,
@@ -692,23 +771,40 @@ module bezel_collar() {
     // where the board is. So it is an inverted U over the shell's top and
     // upper flanks, not a closed ring — which is also the half that matters,
     // since a stick dropped on its plug levers the shell toward the glass.
+    //
+    // It is ADDED to the bezel after the cavity is cut (bezel()), and that
+    // is not a detail: drawn inside the difference, the cavity cut it
+    // straight back out and the case shipped with no collar at all. Its bore
+    // is the bridge-safe usb_bore_2d, so its crown bears on the shell's top
+    // CORNERS through the 45° chamfers (collar_gap over them) — on the
+    // stock stick the chamfers' 7.0 flat lies above the plate clip, and the
+    // "U" is two flanks. Its underside is a 45° ramp up from the end wall,
+    // not a flat shelf: printed face-down it hangs off that wall, and a flat
+    // 3.4 mm cantilever is an overhang.
     intersection() {
         translate([usb_dx, yc/2 + 0.01, z_usb]) rotate([90, 0, 0])
             linear_extrude(collar_l)
                 difference() {
-                    usb_a_2d(usb_shell_w + 2*collar_gap + 2*collar_t,
-                             usb_shell_h + 2*collar_gap + 2*collar_t, usb_r + collar_t);
-                    usb_a_2d(usb_shell_w + 2*collar_gap, usb_shell_h + 2*collar_gap);
+                    offset(delta = collar_t) usb_bore_2d(collar_gap);
+                    usb_bore_2d(collar_gap);
                 }
-        // above the board, inside the shell, and 0.2 UNDER the plate's
-        // underside (the plate used to sit on the collar's crown)
-        translate([0, 0, z_pcb_back]) linear_extrude(plate_z0 - 0.2 - z_pcb_back)
-            rrect2d(xc, yc, r_in);
+        // clipped in Z only: behind the board, and 0.2 UNDER the plate's
+        // underside (the plate used to sit on the collar's crown) ...
+        translate([-xo, -yo, z_pcb_back])
+            cube([2*xo, 2*yo, plate_z0 - 0.2 - z_pcb_back]);
+        // ... and the 45° underside, rising inward from the end wall
+        translate([-xo, 0, 0]) rotate([90, 0, 90]) linear_extrude(2*xo)
+            polygon([[yc/2 + 0.02, z_pcb_back - 0.01],
+                     [yc/2 + 0.02, bez_h],
+                     [yc/2 - collar_l, bez_h],
+                     [yc/2 - collar_l, z_pcb_back + collar_l]]);
     }
 }
-assert(plate_z0 - 0.2 - (z_usb + usb_shell_h/2 + collar_gap) >= 1.0,
-       str("the drop collar keeps only ", plate_z0 - 0.2 - (z_usb + usb_shell_h/2 + collar_gap),
-           " mm of ring over the shell crown under the plate — thin back_t or deepen back_stack"));
+// The flanks have to stand past the shell's crown line, or the chamfers that
+// carry the drop load have nothing to bear on.
+assert(plate_z0 - 0.2 - (z_usb + usb_shell_h/2) >= 1.0,
+       str("the drop collar stands only ", plate_z0 - 0.2 - (z_usb + usb_shell_h/2),
+           " mm above the shell's crown line under the plate — thin back_t or deepen back_stack"));
 
 // Button access, through the ear skin.
 module bezel_buttons() {
@@ -731,10 +827,12 @@ module bezel_buttons() {
 // span is DERIVED from the cavity and outer faces, and asserted, rather than
 // composed out of wall thicknesses that happen to add up.
 
-// The run: between the two snap pairs, which is also the stretch with no
-// button ear on it.
+// The run: from just past the free pair, centered on the glass. The plug-end
+// pair no longer bounds it — those beams root above the seam's roof (the
+// assert at beam_root_z) — so the line is placed for the eye: symmetric
+// about the screen's center rather than wherever a snap happened to stop.
 seam_y_lo = snap_y_free + snap_half + 1.0;
-seam_y_hi = snap_y_lock - snap_half - 1.0;
+seam_y_hi = -seam_y_lo;
 
 seam_x_in  = xc/2 - 1.0;                // starts inside the cavity: no lip, no curtain
 seam_x_out = xo/2 + ear_bump + 1.0;     // clears the outer face, button ear included
@@ -859,8 +957,10 @@ assert(!light_seam || seam_dz + seam_h <= lcd_rise + 0.25,
 // strain stays in budget. The hook stands INWARD at the rim end.
 
 // Hook cross-section, in (inward, up) with z=0 at the hook's shoulder. The
-// BOTTOM face is the shallow lead-in — that is the one the plate's edge rides
-// on the way in — and the TOP face is the steep return that holds it there.
+// plate comes DOWN onto it from the rim, so the TOP face is the entry — the
+// plate's chamfered lower edge rides it on the way in — and the BOTTOM face
+// is what holds the plate against being pulled back out. That underside is
+// an overhang on the face-down bezel, which is why the hold is 45°.
 //
 // THE PEDESTAL, and why it is not optional. The beam is what survives the
 // inside relief, which means the beam is the wall's OUTER skin — it sits
@@ -874,20 +974,16 @@ assert(!light_seam || seam_dz + seam_h <= lcd_rise + 0.25,
 hook_ped = (wall - snap_beam_t) + tol_press;   // beam face -> plate edge
 kJoin = 0.3;   // overlap into the parent so the union is ONE solid
 
-module hook_profile(ret) {
-    lead_run = snap_eng / tan(snap_lead);
-    ret_run  = snap_eng / tan(ret);
+module hook_profile() {
     // the pedestal's underside runs 45° from the beam face to its tip (a flat
     // 1.65 mm shelf printed in air on the face-down bezel)
-    polygon([[-kJoin, -lead_run - hook_ped - kJoin],
-             [hook_ped, -lead_run],
+    polygon([[-kJoin, -hook_hr - hook_ped - kJoin],
+             [hook_ped, -hook_hr],
              [hook_ped + snap_eng, 0],
              [hook_ped + snap_eng, snap_flat],
-             [hook_ped, snap_flat + ret_run],
-             [-kJoin, snap_flat + ret_run]]);
+             [hook_ped, snap_flat + hook_er],
+             [-kJoin, snap_flat + hook_er]]);
 }
-
-function hook_h(ret) = snap_eng/tan(snap_lead) + snap_flat + snap_eng/tan(ret);
 
 // The material REMOVED to free a beam: the two slots, and the inside relief
 // that thins the wall down to snap_beam_t over the beam's length.
@@ -916,18 +1012,17 @@ module bezel_snap_relief() {
 module bezel_hooks() {
     for (sy = [1, -1]) {
         yy  = sy > 0 ? snap_y_lock : snap_y_free;
-        ret = sy > 0 ? snap_ret_lock : snap_ret_free;
         for (sx = [-1, 1])
             translate([sx * (xc/2 + wall - snap_beam_t), yy,
                        groove_mid_z - snap_flat/2])
                 rotate([90, 0, 0])
                     linear_extrude(snap_w, center = true)
-                        scale([-sx, 1]) hook_profile(ret);
+                        scale([-sx, 1]) hook_profile();
     }
 }
 
 module bezel_flick_scallop() {
-    // The scoop through the far wall's rim that reaches the plate's lift lug.
+    // The scoop through the far wall's rim that bares the plate's far edge.
     // Rounded on purpose: a square notch cut into a rim is a stress raiser,
     // and this is the corner a dropped stick lands on second.
     translate([0, -yo/2 - 0.6, bez_h + flick_scoop/2 - 1.6])
@@ -944,7 +1039,6 @@ module bezel() {
                     translate([sx * (xo/2 + ear_bump/2 - 0.01), btn_y, face_t])
                         linear_extrude(bez_h - face_t)
                             rrect2d(ear_bump + 0.02, ear_w + 2, 0.8);
-                if (collar_on) bezel_collar();
             }
             bezel_cavity();
             bezel_window();
@@ -954,8 +1048,11 @@ module bezel() {
             if (light_seam) bezel_light_seam();
             bezel_flick_scallop();
         }
-        // Hooks go on AFTER the reliefs are cut, or the slots would eat them.
+        // Hooks go on AFTER the reliefs are cut, or the slots would eat them —
+        // and the collar for the same reason: it stands IN the cavity, so
+        // inside the difference the cavity cut removed it whole.
         bezel_hooks();
+        if (collar_on) bezel_collar();
     }
 }
 
@@ -968,15 +1065,17 @@ module bezel() {
 // the mark). The renderer places it.
 module back_plate() {
     // Lead-in chamfer on the bottom OUTER edge — this is the face that rides
-    // the hooks' shallow lead-in on the way down, so the plate guides itself
-    // in rather than needing to be aimed.
+    // the hooks' top (entry) faces on the way down, so the plate guides itself
+    // in rather than needing to be aimed. snap_eng deep, no more: the plate
+    // below the groove is the lip the hooks HOLD, and every tenth of chamfer
+    // past the hook tip is a tenth of that lip gone.
     //
     // Built as a hull from a smaller bottom profile up to the full outline,
     // NOT as a subtracted taper. Subtracting one removes the middle of the
     // plate's underside rather than its edge, which both guts the plate and
     // leaves the PCB ribs standing on air — the mesh gate counts those as
     // extra parts, which is how the mistake surfaced.
-    lead = snap_eng + 0.3;
+    lead = snap_eng;
     union() {
         hull() {
             linear_extrude(0.01)
@@ -989,20 +1088,44 @@ module back_plate() {
     }
 }
 
-// The groove the hooks seat in: a shallow rectangular slot around the whole
-// perimeter, cut at mid-plate. Running it right around (rather than four
-// local pockets) means the plate has NO orientation to get wrong — it drops
-// in either way up-the-long-axis, which matters for a part a user takes off
-// in a dark hallway.
+// The groove the hooks seat in, around the whole perimeter. Running it right
+// around (rather than four local pockets) means the plate has NO orientation
+// to get wrong — it drops in either way up-the-long-axis, which matters for a
+// part a user takes off in a dark hallway.
+//
+// Its section IS the hook's section grown by tol_press — the tip line moved
+// in, the top face moved off along its normal — not a rectangle sized by
+// eye. The rectangle it replaces was 0.8 tall against a hook 1.34-1.75 tall
+// where it crosses the plate edge: every seat was ~0.3 mm of interference.
+// The UNDERSIDE is not grown: it is the seat. The ribs' preload pushes the
+// plate out against the four hold faces, so the plate rests on them flush
+// with the rim, and a clearance there would only be play spent out of the
+// rib crush (0.14 of the 0.25 at tol_press).
+// Built as a stack of hulls between inset outlines, so the sloped faces are
+// true 45° ruled surfaces round the corners too.
 module back_groove() {
-    g_h = snap_flat + 0.3;
-    g_d = snap_eng + 0.15;
-    translate([0, 0, back_t/2 - g_h/2])
-        linear_extrude(g_h)
-            difference() {
-                rrect2d(plate_x + 1, plate_y + 1, r_in);
-                rrect2d(plate_x - 2*g_d, plate_y - 2*g_d, max(0.4, r_in - g_d));
-            }
+    v0 = back_t/2 - snap_flat/2;                   // hook shoulder, plate frame
+    D  = snap_eng + tol_press;                     // groove depth at the tip
+    lo = v0 - hook_hr;                             // underside line at the edge — the seat
+    hi = v0 + snap_flat + hook_er + tol_press/cos(snap_entry);
+    vb = lo + D * tan(snap_hold);                  // the tip's bottom corner
+    vc = hi - D * tan(snap_entry);                 // ... and its top corner
+    o  = 1.0;                                      // run the faces past the edge
+    module ring_at(z, d)
+        translate([0, 0, z]) linear_extrude(0.01)
+            rrect2d(plate_x - 2*d, plate_y - 2*d, max(0.01, r_in - d));
+    difference() {
+        translate([0, 0, lo - o*tan(snap_hold)])
+            linear_extrude(hi - lo + o*(tan(snap_hold) + tan(snap_entry)))
+                rrect2d(plate_x + 2*o + 1, plate_y + 2*o + 1, r_in + o);
+        // what the groove leaves of the plate: full outline outside the
+        // band, inset to the tip line D inside it
+        // (the lower hull's slices hang BELOW their z: the kept surface is
+        // their top, and it has to be the seat line exactly)
+        hull() { ring_at(lo - o*tan(snap_hold) - 0.01, -o); ring_at(vb - 0.01, D); }
+        hull() { ring_at(vb, D); ring_at(vc, D); }
+        hull() { ring_at(vc, D); ring_at(hi + o*tan(snap_entry), -o); }
+    }
 }
 
 // Compliant PCB ribs: thin standing ribs that crush slightly rather than a
@@ -1015,6 +1138,19 @@ module back_groove() {
 // mm of interference produces to a third of it. The compliance argument above
 // gets stronger with depth; what needs watching is the rib's slenderness, and
 // the assert below watches it.
+// Where the ribs stand along the board. The far pair sits 4.5 in from the
+// cavity end as it always has. The plug-end pair used to mirror it — and so
+// stood exactly where the drop collar is, once the collar was actually in
+// the bezel: it is moved inboard to clear the collar's inner end by 0.3.
+rib_ys = [-(yc/2 - 4.5),
+          collar_on ? yc/2 - collar_l - rib_l/2 - 0.3 : yc/2 - 4.5];
+// Nothing on the back may stand past the plate's own outline — the lift lug
+// that did stood 1.2 mm past the far end, onto the bezel rim, and held the
+// plate off its seat. The ribs are the only thing below the plate now.
+assert(max([for (y = rib_ys) abs(y) + rib_l/2]) <= plate_y/2
+       && xc/2 - rib_inset + rib_w/2 <= plate_x/2,
+       "a compliant rib stands past the back plate's outline");
+
 module back_ribs() {
     // Extruded a hair PAST z=0 into the plate: a rib that merely touches the
     // underside is a separate solid to CGAL, and the mesh gate counts it as
@@ -1022,31 +1158,11 @@ module back_ribs() {
     // plate underside -> PCB back is stack_eff; the rib reaches preload PAST
     // the PCB plane (it was stack_eff - preload: a 0.25 gap, not a 0.25 crush)
     rib_h = stack_eff + preload;
-    for (sy = [-1, 1], sx = [-1, 1])
-        translate([sx * (xc/2 - rib_inset), sy * (yc/2 - 4.5), -rib_h])
-            linear_extrude(rib_h + kJoin) square([rib_w, 5.0], center = true);
+    for (y = rib_ys, sx = [-1, 1])
+        translate([sx * (xc/2 - rib_inset), y, -rib_h])
+            linear_extrude(rib_h + kJoin) square([rib_w, rib_l], center = true);
 }
 
-// The thumb-flick ramp. The plate's far end carries a wedge that stands proud
-// of the bezel rim; a thumb pushed ALONG the body meets the wedge's 20° face
-// and cams the plate up out of the two shallow-return hooks.
-//
-// It is at the far end on purpose: the gesture pushes the stick further INTO
-// its socket rather than levering it out of the wall.
-module back_flick() {
-    run = flick_proud / tan(flick_ramp);
-    // The lug: a tab on the plate's far edge standing `flick_proud` above the
-    // outer face, its outward face raked back at `flick_ramp` so a thumb
-    // sliding along the body climbs it instead of stubbing on it.
-    translate([0, -plate_y/2 + 0.6, back_t])
-        rotate([90, 0, 0]) rotate([0, 0, 0])
-            translate([0, 0, -flick_w/2])
-                linear_extrude(flick_w)
-                    polygon([[0, 0],
-                             [1.2, 0],
-                             [1.2, -flick_proud],
-                             [-run, -flick_proud]]);
-}
 
 module back_cutouts() {
     // The card window.
@@ -1076,7 +1192,6 @@ module back_body() {
         union() {
             back_plate();
             back_ribs();
-            back_flick();
         }
         back_groove();
         back_cutouts();

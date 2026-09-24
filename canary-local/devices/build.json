@@ -410,11 +410,11 @@
       "qty": "4",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 self-tapping screw, FLAT (countersunk) head, 8-10mm (printed-enclosure lid)",
+      "desc": "M2 self-tapping screw, FLAT (countersunk) head, 8-16mm (printed-enclosure lid)",
       "mpn": "M2X8-ST-CSK",
       "mfr": "Generic",
       "usd": 0.2,
-      "notes": "For the 3D-printed enclosure corner posts (enclosure/ v0.7) - the lid seats are countersink cones, so use flat-head. Max ~0.3 N-m or the printed posts strip",
+      "notes": "For the 3D-printed enclosure: driven up from the countersinks in the BACK into the lid bosses (12mm compact, 16mm battery build) so the lid face is unbroken; the Outdoor build keeps 8mm heads on the lid under the sun shield. Max ~0.3 N-m or the printed bosses strip",
       "orderable": false
      },
      {
@@ -526,7 +526,7 @@
      "Press the PCB straight down until the four edge clips snap over it, USB-C aligned to the wall cutout — no screws needed for the board. (To remove, gently splay the clips outward and lift.)",
      "Press a 6 mm magnet into the lid pocket (press fit — a drop of CA glue makes it permanent); add a GORE vent over the seat if sealing; press the light pipe into the LED port.",
      "(weather mode) Seat the TPU gasket in the rim groove; glue the clear disc into the camera seat.",
-     "Close the lid (lip nests into the base) and drive 4 × M2 screws — snug diagonally first, then final quarter-turns. Don't crank them: M2 self-taps strip printed posts beyond ~0.3 N·m (two fingers on the short end of the driver is plenty)."
+     "Close the lid (lip nests into the base), turn the case over and drive the 4 × M2 screws up through the seats in the back into the lid's bosses — the lid face stays unbroken (the Outdoor preset keeps its screws on the lid, under the sun shield) — snug diagonally first, then final quarter-turns. Don't crank them: M2 self-taps strip printed posts beyond ~0.3 N·m (two fingers on the short end of the driver is plenty)."
     ]
    }
   },
@@ -752,14 +752,14 @@
      },
      {
       "ref": "SCR5",
-      "qty": "8",
+      "qty": "10",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 self-tapping screws, 6-10mm: 4x pan head (camera posts) + 4x head per case (front corners)",
+      "desc": "M2 self-tapping pan-head screws: 4x 6mm (camera posts) + 4-6x 12-25mm per case (front corners, driven from the back; 6 on the sealed builds)",
       "mpn": "M2X8-ST-MIX",
       "mfr": "Generic",
-      "usd": 0.4,
-      "notes": "4x 6mm PAN for the OV5647 posts. Front corners: FLAT/countersunk head on the Vision case (cone seats), PAN head on the doorbell face (flat counterbores). Max ~0.3 N-m",
+      "usd": 0.5,
+      "notes": "4x 6mm for the OV5647 posts. Front corners, driven up from the seats in the BACK into the face bosses so the face is unbroken: 20mm on the XIAO Vision (25mm Outdoor, 6 of them for its mid-span gasket posts), 12mm on the DevKit build, 6x 20mm on the doorbell. Max ~0.3 N-m",
       "orderable": false
      },
      {
@@ -860,9 +860,9 @@
      }
     ],
     "required_usd": 28.69,
-    "full_usd": 80.25,
+    "full_usd": 80.35,
     "required_usd_live": 29.49,
-    "full_usd_live": 91.93,
+    "full_usd_live": 92.03,
     "pricing_as_of": "2026-09-02T13:37:16Z",
     "recipes": [
      {
@@ -882,7 +882,7 @@
        "NUT1",
        "CW2"
       ],
-      "usd": 41.74,
+      "usd": 41.84,
       "note": "Wall/tripod-mountable unit with adjustable hinge; add WAP weather-kit items for sealing"
      }
     ]
@@ -894,7 +894,7 @@
      "(xiao host) Seat the XIAO in the module's socket — both USB-C ports must face the same direction; backwards seating feeds power into GPIO and can kill either board (device guide §3). Click the stack into the tall side rails, module up, both ports aligned to the two bottom-wall openings (model port above, firmware port below). (devkit host) Click the Vision AI V2 and the DevKitM-1 into their snap-clip cradles (DevKit USB-C down, aligned to the wall opening); the module's own USB-C faces the middle gap — open the case to reflash models.",
      "Route the camera FPC to the module's CSI connector (and, devkit host, the Grove cable across the middle gap to the DevKit pins).",
      "(weather) Seat the TPU gasket in the rim groove.",
-     "Close the front (lip nests into the back) and drive the 4 × M2 corner screws — snug diagonally, then final quarter-turns.",
+     "Close the front (lip nests into the back), turn it over and drive the M2 corner screws up through the seats in the back into the front's bosses (4, or 6 on the Outdoor preset) — the face stays unbroken — snug diagonally, then final quarter-turns.",
      "Screw the bracket to the wall (or a tripod plate via the 1/4-20 nut), slot the case prongs into it, set the angle, tighten the M5 thumbscrew."
     ]
    }
@@ -974,11 +974,11 @@
       "qty": "4",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 self-tapping screw, FLAT (countersunk) head, 8-10mm (printed-enclosure lid)",
-      "mpn": "M2X8-ST-CSK",
+      "desc": "M2 self-tapping screw, PAN head, 16mm (printed-enclosure front)",
+      "mpn": "M2X16-ST-PAN",
       "mfr": "Generic",
       "usd": 0.2,
-      "notes": "For the printed Sense enclosure posts (canary_sense_enclosure.scad); max ~0.3 N-m or the printed posts strip",
+      "notes": "For the printed Sense enclosure (canary_sense_enclosure.scad): driven up from the seats in the BACK into the radome front's bosses, so the front is unbroken. Max ~0.3 N-m or the printed bosses strip",
       "orderable": false
      },
      {
@@ -1051,7 +1051,7 @@
      "Click the carrier into the snap rails, antenna face toward the front, until the +Y end stops locate it — the stops are what keep the antenna under the radome window, so push it home against them.",
      "Press the light pipe into the WS2812 port; when sealing, glue a clear disc behind the lux aperture (the BH1750 needs to see room light) and stick a GORE-type membrane over any vent seat.",
      "(weather mode) Seat the TPU gasket in the rim groove.",
-     "Close the radome front (lip nests into the back; the window must land over the antenna array) and drive the 4 × M2 corner screws — snug diagonally first, then final quarter-turns, never past ~0.3 N·m.",
+     "Close the radome front (lip nests into the back; the window must land over the antenna array), turn it over and drive the 4 × M2 corner screws up through the seats in the back into the front's bosses — snug diagonally first, then final quarter-turns, never past ~0.3 N·m.",
      "Mount it: slot the hinge prongs into the shared Vision bracket and set the angle (bedside ≤ 1.5 m for the wellbeing channel), or hang the blind keyholes — ceiling-mount the MR60FDA2 fall build facing straight down."
     ]
    }

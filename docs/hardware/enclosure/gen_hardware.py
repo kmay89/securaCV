@@ -125,19 +125,19 @@ RIB_BOUND = {
 # and a length range joins only that; a mixed row (the Vision's SCR5) says so.
 JOIN = {
     "canary-wap": ("bom_canary_wap.csv", [
-        ("screw", r"^M2 flat x (8|10) self-tap", "SCR3"),          # FLAT head, 8-10mm
+        ("screw", r"^M2 flat x (8|10|12|16) self-tap", "SCR3"),    # FLAT head, 8-16mm (12/16 from the back)
         ("insert", r"^M2 heat-set insert 3\.5 OD x 4\b", "INS1"),   # 3.5mm OD x 4.0mm
         ("wall-screw", r"^#6 pan wall screw \(keyholes\)", "SCR4"),  # keyhole mount
     ]),
     "canary-vision": ("bom_canary_vision.csv", [
-        ("screw", r"^M2 (pan|flat) x (6|8|10) self-tap", "SCR5"),  # 6-10mm, pan + per-case head
+        ("screw", r"^M2 (pan|flat) x (6|8|10|12|20|25) self-tap", "SCR5"),  # 6-25mm, pan + per-case head
         ("insert", r"^M2 heat-set insert 3\.5 OD x 4\b", "INS1"),
         ("security-screw", r"^M2 x 10 security screw", "SCR8"),
         ("bolt", r"^M5 x 25 bolt \+ nut", "SCR6"),
         ("wall-screw", r"^#8 ", "SCR7"),                            # #8 / M4 countersunk (bracket)
     ]),
     "canary-sense": ("bom_canary_sense.csv", [
-        ("screw", r"^M2 flat x (8|10) self-tap", "SCR3"),          # FLAT head, 8-10mm
+        ("screw", r"^M2 pan x 16 self-tap", "SCR3"),                 # PAN head, 16mm, from the back
         ("insert", r"^M2 heat-set insert 3\.5 OD x 4\b", "INS1"),
         ("wall-screw", r"^#6 pan wall screw \(keyholes\)", "SCR4"),  # keyhole mount
     ]),
@@ -147,11 +147,8 @@ JOIN = {
 # await a human (the CSV's owner) — found by this gate's first run, reported,
 # not edited. A new one fails --check; so does one that stops happening.
 KNOWN_DRIFT = {
-    "doorbell|short SCR5",
-    "doorbell|unbilled #6 pan wall screw (plate)",
     "doorbell+inserts|short INS1",
     "sense|unbilled #6 pan wall screw (bracket)",
-    "sense|unbilled M2 pan x 10 self-tap",
     "sense|unbilled M5 x 25 bolt + nut (hinge; Vision knob/bracket parts)",
     "vision.devkit_indoor|unbilled #6 pan wall screw (bracket)",
     "vision.xiao_indoor|unbilled #6 pan wall screw (bracket)",
@@ -159,8 +156,6 @@ KNOWN_DRIFT = {
     "vision.xiao_weather|unbilled #6 pan wall screw (keyholes)",
     "wap.battery_weather|unbilled M3 flat-head wall screw x 12 (pierce the anti-lift "
     "knockouts after hanging; 90° seat)",
-    "wap.battery_weather.shield|unbilled M2 flat x 16 self-tap — REPLACES the lid screws "
-    "when the shield is fitted",
 }
 
 _HW_LINE = re.compile(r'^"HARDWARE — (.+?): (.*)"$')

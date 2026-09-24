@@ -102,7 +102,8 @@ class JoinsTheBom(unittest.TestCase):
         sets = _set("sense", "canary-sense", line)
         _, drift = gh.join(sets, {"bom_canary_sense.csv": {"SCR3": 4}})
         self.assertEqual([d["what"] for d in drift], ["unbilled M2 pan x 10 self-tap"])
-        line = '"HARDWARE — Sense: 4x M2 flat x 8 self-tap · 1x Ø3 light pipe"'
+        # the Sense row names PAN x 16 (driven from the back): only that joins
+        line = '"HARDWARE — Sense: 4x M2 pan x 16 self-tap from the back · 1x Ø3 light pipe"'
         table, drift = gh.join(_set("sense", "canary-sense", line),
                                {"bom_canary_sense.csv": {"SCR3": 4}})
         self.assertEqual(drift, [])
@@ -113,10 +114,11 @@ class JoinsTheBom(unittest.TestCase):
                 '4x M2 flat x 16 self-tap — REPLACES the lid screws when the shield is fitted"')
         table, drift = gh.join(_set("wap.battery_weather.shield", "canary-wap", line),
                                {"bom_canary_wap.csv": {"SCR3": 4}})
-        self.assertEqual(table["wap.battery_weather.shield"], {})
-        self.assertEqual([d["what"] for d in drift],
-                         ["unbilled M2 flat x 16 self-tap — REPLACES the lid screws when the "
-                          "shield is fitted"])
+        # SCR3 names flat heads 8-16 mm (16 is the battery build's from-the-back
+        # length), so it bills the shield's replacement screws too — and only
+        # them: the set's own 8 mm lid screws are the ones the shield replaces
+        self.assertEqual(table["wap.battery_weather.shield"], {"SCR3": {"bom": 4, "echo": 4}})
+        self.assertEqual(drift, [])
 
     def test_a_missing_row_is_short(self):
         line = '"HARDWARE — WAP: 4x M2 flat x 8 self-tap"'

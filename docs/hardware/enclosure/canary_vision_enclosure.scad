@@ -91,7 +91,7 @@ opt_seal   = false;   // perimeter TPU gasket + drip-edge front + USB plug reces
 opt_mount  = true;    // mounting features per mount_style
 mount_style = "hinge"; // ["hinge","keyhole","both"]
 opt_weep   = false;   // Ø2 weep at the cavity's low point (bottom wall, beside the USB): condensate leaves (ON in the weather preset)
-seal_mid_posts = false; // (seal mode) one extra screw post mid-way along each long wall: four corner
+seal_mid_posts = false; // (seal mode) one extra screw post mid-way along each long wall (ON in the weather preset): four corner
                         // screws cannot hold 20 % gasket squeeze across a 60 mm span of 2 mm face
 head_seal  = false;   // (seal mode) O-ring under each front screw head — the posts stand INSIDE the
                       // gasket line, so a bare screw is a drip path; needs screw_head = "pan"
@@ -107,6 +107,9 @@ e_hood   = _pre(opt_hood,   false, true);
 e_seal   = _pre(opt_seal,   false, true);
 e_mount  = _pre(opt_mount,  true,  true);
 e_weep   = _pre(opt_weep,   false, true);
+// the weather preset's gasket spans 66 mm between corner screws — past the
+// 40 mm clamp-spacing rule (DESIGN_RULES §6) — so it carries the mid posts
+e_midposts = _pre(seal_mid_posts, false, true);
 m_style  = _pre(mount_style, "hinge", "both");
 
 /* [Boards] — measure YOURS; these are nominal, and the registry
@@ -195,6 +198,7 @@ screw_head   = "pan"; // ["pan","flat"] the head in the bag: pan = flat-floored 
 screw_d      = 1.6;   // (m2) M2 self-tapping pilot
 screw_head_d = 4.0;   // (m2 pan) head Ø
 screw_head_h = 2.0;   // (m2 pan) seat depth: the head 1.6 + 0.4 sink. Deeper than the 2.0 front,
+screw_from   = "back"; // ["back","face"] back = the face is unbroken: screws enter a seat in the back and thread into bosses under the front (the house default; opening it means taking it down first); face = heads on the front
                       // which is why the front carries a pad under each head (head_pad)
 
 /* [USB-C ports] — on the BOTTOM (-Y) wall. devkit host: one opening (DevKit).
@@ -323,7 +327,8 @@ pd = max(screw_insert ? max(post_d, ins_od + 3.0) : post_d,   // >=1.5 mm wall a
          scr_post_min(screw_size));
 // the pan seat's floor: whatever the front is short of (seat + 1.0 web) is
 // carried by a pad on the inside face, and the posts shorten by the same
-head_pad = (screw_head == "pan") ? max(0, head_h + 1.0 - lid_t) : 0;
+e_back   = screw_from == "back";
+head_pad = (!e_back && screw_head == "pan") ? max(0, head_h + 1.0 - lid_t) : 0;
 post_corner = pd + 1.5;
 has_dk = (host == "devkit");
 
@@ -394,6 +399,16 @@ usb_zc = floor_t + usb_axis;                                  // opening centere
 xiao_usb_zc = floor_t + vm_standoff - stack_sock_h - port_usbc_shell_h()/2 + xiao_usb_z;
 
 mount_extra = (e_mount && (m_style == "keyhole" || m_style == "both")) ? kh_extra : 0;
+// screws from the back (canary_core_lib bk_*): the length, the head's recess
+// into the back and the boss under the front, derived together; `face_skin` is
+// the unbroken plate left over the screw tip
+face_skin = 1.0;
+bk_L      = e_back ? bk_len(screw_size, screw_head, mount_extra, base_d, lid_t, face_skin) : 0;
+bk_r      = e_back ? bk_recess(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin) : 0;
+boss_h    = e_back ? bk_boss_h(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin) : 0;
+post_h    = cav_d - head_pad - boss_h;             // the post stops where the front's boss lands
+assert(!e_back || post_h >= 2.0, str("screws from the back: the boss (", boss_h, " mm) leaves a ", post_h, " mm post — use screw_from=\"face\""));
+assert(!e_back || !(screw_insert && boss_h < ins_h + 1.0), "the boss is shorter than the insert it must hold");
 kh_y  = inner_y/2 - kh_inset;
 kh_ys = (kh_y >= kh_slot_l/2 + kh_head_d/2 + 2) ? [-kh_y, kh_y] : [0];
 hinge_hole = hinge_bolt_d + tol_hole + 0.1;       // ~5.4 for M5: free pivot
@@ -467,7 +482,8 @@ assert((label_text == "" && !opt_mark) || (label_depth > 0 && label_depth < lid_
 // the hardware, DERIVED from the same knobs that draw the holes (canary_core_lib)
 hw_thread = screw_insert ? "machine (into the inserts)" : "self-tap";
 hw_echo(str("Vision ", host), [
-    hw_item(len(post_xy()), hw_screw(screw_size, screw_head, hw_len(lid_t, head_pad, hw_engage(screw_size)), hw_thread)),
+    e_back ? hw_item(len(post_xy()), str(hw_screw(screw_size, screw_head, bk_L, hw_thread), " from the back"))
+           : hw_item(len(post_xy()), hw_screw(screw_size, screw_head, hw_len(lid_t, head_pad, hw_engage(screw_size)), hw_thread)),
     hw_item(4, "M2 pan x 6 self-tap (OV5647 to the front posts)"),
     screw_insert ? hw_item(len(post_xy()), str(hw_size_name(screw_size), " heat-set insert ", ins_od, " OD x ", ins_h)) : "",
     head_seal    ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
@@ -491,7 +507,9 @@ if (!has_dk)
              " mm above the back face, at x ", usb_cx, " / ", vm_cx + xiao_usb_dx, " — MEASURE both"));
 if (e_hood)
     echo("opt_hood: the hood is its own part — render part=\"hood\", press its spigot into the front's groove and bond it (the front still prints face-down)");
-if (e_seal && !seal_mid_posts && inner_y - 2*post_corner > 40*lid_t)
+// the clamp-spacing rule is 40 mm (DESIGN_RULES §6, field_ratings.md) — this
+// read 40*lid_t, i.e. 80 mm at the house face, and never fired on the 66 mm span
+if (e_seal && !e_midposts && inner_y - 2*post_corner > 40)
     echo(str("seal mode: ", inner_y - 2*post_corner, " mm between corner screws on a ", lid_t,
              " mm front — the gasket opens mid-span; set seal_mid_posts=true"));
 // ----------------------------------------------------------------------------
@@ -513,7 +531,7 @@ function post_xy() = concat([
     [-inner_x/2 + pd/2 - 0.2,  inner_y/2 - pd/2 + 0.2],
     [ inner_x/2 - pd/2 + 0.2, -inner_y/2 + pd/2 - 0.2],
     [-inner_x/2 + pd/2 - 0.2, -inner_y/2 + pd/2 - 0.2],
-], (e_seal && seal_mid_posts) ? [[inner_x/2 - pd/2 + 0.2, 0], [-inner_x/2 + pd/2 - 0.2, 0]] : []);
+], (e_seal && e_midposts) ? [[inner_x/2 - pd/2 + 0.2, 0], [-inner_x/2 + pd/2 - 0.2, 0]] : []);
 
 // ring pedestal that supports a PCB's underside along its perimeter
 module ringped(cx, cy, l, w) {
@@ -600,15 +618,52 @@ module case_hinge() {
             }
         }
         tearbore_x(-out_x/2, ax[1], ax[2], out_x, hinge_hole);
+        // With the keyhole slab under the back (mount_style "both", the
+        // weather preset) the root web reached down to z = -mount_extra, and
+        // hanging straight under the bracket (0°, lens level) that slab-level
+        // web landed on the bracket's tripod boss: 46 mm³ of case in bracket,
+        // so the weather Vision could only hang tilted 30°. A 45° relief from
+        // the wall's foot takes the web back to the case floor — what the
+        // indoor back already had — and prints self-supported (bed = slab).
+        if (mount_extra > 0)
+            translate([-out_x, 0, 0]) rotate([90, 0, 90]) linear_extrude(2*out_x)
+                polygon([[out_y/2 + 0.5, -mount_extra - 1], [out_y/2 + 40, -mount_extra - 1],
+                         [out_y/2 + 40, -0.6], [out_y/2 + 0.5 + mount_extra + 0.4, -0.6]]);
     }
 }
 
 // ----------------------------------------------------------------------------
 //  BACK shell (mounts to the wall; boards click in)
 // ----------------------------------------------------------------------------
+// the screws from the back: the seat and the bore, cut through the WHOLE
+// back (slab, floor and post) after everything else is drawn
 module back() {
+    difference() {
+        back_body();
+        if (e_back) for (p = post_xy())
+            bk_seat_cut(p[0], p[1], mount_extra, floor_t + post_h, screw_size, screw_head,
+                        bk_r, scr_c, tol_hole);
+    }
+}
+// ...and the bosses they thread into, hanging from the front onto the post tops
+// (cropped to the cavity like the pan pads — the CLR-1 lesson)
+module front() {
+    difference() {
+        union() {
+            front_body();
+            if (e_back) for (p = post_xy())
+                cb_head_pad(p[0], p[1], boss_h, pd, inner_x, inner_y, core_cav_r(corner_r, wall_eff));
+        }
+        if (e_back) for (p = post_xy())
+            bk_boss_bore(p[0], p[1], boss_h, lid_t, face_skin,
+                         screw_insert ? scr_nominal(screw_size) + 0.3 : scr_d,
+                         screw_insert, ins_od - 0.3, ins_h);
+    }
+}
+
+module back_body() {
     posts = post_xy();
-    gusset_h = max(2, cav_d - lip_h - 1.0);
+    gusset_h = max(2, min(cav_d - lip_h - 1.0, post_h - 0.5));   // and below the post top, where the boss lands
     gusset_w = min(2.0, rib_t_max(wall_eff));   // the landing width, capped at the old 2.0 target
 
     union() {
@@ -702,7 +757,7 @@ module back() {
         // mid-span post (y = 0) has only its own wall to gusset to
         difference() {
             union() {
-                for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - head_pad);
+                for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = post_h);
                 // constant-width webs (canary_rib_lib corner_gusset): a hull between a
                 // Ø5 post and a Ø2 target FLARES, landing wider than it was drawn;
                 // this lands at gusset_w, 0.5 into the wall, sloped so no shelf
@@ -713,10 +768,10 @@ module back() {
                 }
             }
             // self-tap pilot — or, with inserts, a clearance bore below the brass
-            for (p = posts) translate([p[0], p[1], floor_t + 2.0])
+            if (!e_back) for (p = posts) translate([p[0], p[1], floor_t + 2.0])
                 cylinder(d = screw_insert ? scr_nominal(screw_size) + 0.3 : scr_d, h = cav_d);
             // heat-set insert bore at the post top (0.3 interference; melt in flush)
-            if (screw_insert)
+            if (screw_insert && !e_back)
                 for (p = posts) translate([p[0], p[1], floor_t + cav_d - head_pad - ins_h - 0.5])
                     cylinder(d = ins_od - 0.3, h = ins_h + 1);
         }
@@ -771,7 +826,7 @@ module back() {
 // own copy of both, and the four copies across the weather shells had
 // forked. The knobs above still ride in as arguments.
 
-module front() {
+module front_body() {
     union() {
         difference() {
             union() {
@@ -807,7 +862,7 @@ module front() {
             // floor for PAN heads (1.0 mm of it, on the pad), a 90° cone for FLAT
             // heads, and in seal mode with head_seal an O-ring gland under the
             // pan head so the screw stops being the hole through the seal line
-            for (p = post_xy()) translate([0, 0, -head_pad]) {
+            if (!e_back) for (p = post_xy()) translate([0, 0, -head_pad]) {
                 if (screw_head == "flat")
                     cs_cone90_cut(p[0], p[1], lid_t, scr_c, head_h);
                 else if (head_seal)

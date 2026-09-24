@@ -14,6 +14,12 @@
 //
 //  v0.1-dev (2026-08-23): canary_*_lib adoption (dedup, mesh-identical);
 //  opt_mark knob added — the mark rides the lid's INTERIOR face, default off.
+//  2026-09-24: print and drain fixes — the conduit bosses carry a 45° keel
+//  (their lower quarter was an overhang the old note said to support); the
+//  USB slot is the bridge-safe chamfered profile (canary_port_lib); the lid
+//  seats are the house 90° cone (cs_cone90_cut) at the M2 flat head's height;
+//  posts stand 0.2 INTO the walls, the corner behind them filled, webbed by
+//  corner_gusset; opt_weep drains the -X (cable, down) wall.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d — the catalog's shared helpers
@@ -21,6 +27,7 @@ use <canary_snap_lib.scad>   // the cantilever board clip + its strain budget
 use <canary_port_lib.scad>   // connector standards — the USB slot centers on the shell axis
 use <canary_board_lib.scad>  // board registry — the XIAO numbers the knobs cite
 use <canary_mark_lib.scad>   // the house wordmark (opt_mark)
+use <canary_rib_lib.scad>    // corner_gusset — the constant-width post web
 
 /* [What to render] */
 part = "all";        // ["body","lid","all"]
@@ -28,6 +35,7 @@ part = "all";        // ["body","lid","all"]
 /* [Options] */
 opt_camera = true;   // aperture hidden in the knockout ring (XIAO Sense)
 opt_led    = false;  // pinhole light pipe (covert: usually off)
+opt_weep   = true;   // Ø2 drain through the -X wall at the floor (the cable wall hangs down), beside the USB slot
 // A covert box stays street-plain outside, so the mark sits where only the
 // installer sees it.
 opt_mark   = false;  // deboss the house wordmark on the lid's INTERIOR face (covert: never outside)
@@ -57,7 +65,7 @@ lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the l
                    // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 boss_d = 12.0;       // fake conduit boss diameter (fits the body height; a true 1/2" boss needs a taller shell)
 boss_l = 6.0;        // boss protrusion
-screw_d = 1.6;  screw_head_d = 4.0;  screw_head_h = 1.6;
+screw_d = 1.6;  screw_head_d = 4.0;  screw_head_h = 1.2;
 post_d = 5.0;
 usb_w = 10.5;
 usb_h = 6.5;
@@ -100,12 +108,23 @@ assert(!opt_mark || mark_word_ink_w("securaCV", 4.0) <= inner_l - 6,
            " mm wide — more than the lid interior offers; shrink the cap height"));
 
 // (rrect2d/rrect come from canary_core_lib — the local copies are gone)
+// corner posts stand 0.2 INTO both walls (the catalog's post seat); at -0.2
+// they stood free of both, touching nothing but the floor
 function post_xy() = [
-    [ inner_l/2 - pd/2 - 0.2,  inner_w/2 - pd/2 - 0.2],
-    [-inner_l/2 + pd/2 + 0.2,  inner_w/2 - pd/2 - 0.2],
-    [ inner_l/2 - pd/2 - 0.2, -inner_w/2 + pd/2 + 0.2],
-    [-inner_l/2 + pd/2 + 0.2, -inner_w/2 + pd/2 + 0.2],
+    [ inner_l/2 - pd/2 + 0.2,  inner_w/2 - pd/2 + 0.2],
+    [-inner_l/2 + pd/2 - 0.2,  inner_w/2 - pd/2 + 0.2],
+    [ inner_l/2 - pd/2 + 0.2, -inner_w/2 + pd/2 - 0.2],
+    [-inner_l/2 + pd/2 - 0.2, -inner_w/2 + pd/2 - 0.2],
 ];
+// the lid seat is the house 90° cone for a flat head: screw_head_h deep, it
+// opens to the head plus the hole tolerance
+assert(abs((screw_d + 2*tol_hole) + 2*screw_head_h - (screw_head_d + 2*tol_hole)) < 1e-6,
+       "screw_head_h: the 90° seat does not open to the flat head's diameter");
+assert(lid_t - screw_head_h >= 1.0, "the lid seat leaves under 1.0 mm under the head");
+usb_zc = floor_t + standoff_h + board_h + port_usbc_shell_h()/2;
+// the drain: -X wall at the floor, beside the USB slot
+weep_y = usb_w/2 + weep_d()/2 + 1.5;
+assert(!opt_weep || weep_y + weep_d()/2 + 0.5 <= inner_w/2 - pd, "the weep runs into a corner post");
 // Cantilever snap clip on a board long edge — the compact-WAP idiom, so the
 // drawing now comes from canary_snap_lib like the WAP's own: the insertion-
 // strain arithmetic runs as an assert on every render instead of trusting a
@@ -123,13 +142,22 @@ module body() {
             union() {
                 rrect(out_l, out_w, corner_r, base_h);
                 // fake conduit bosses: two per long wall, half-cylinders lying on
-                // the wall, CENTERD on the body height so they stay inside the
+                // the wall, CENTERED on the body height so they stay inside the
                 // print envelope (a Ø21 boss poked 1.7 mm below the bed plane).
-                // Horizontal cylinders on vertical walls: print with a dab of
-                // support or accept a rough underside on the lower quarter.
+                // A horizontal cylinder's lower quarter is an overhang, so each
+                // carries a 45° keel down to the bed (a teardrop, point down,
+                // cropped at z = 0): it prints unsupported and reads as the
+                // cast web under a real conduit hub
                 for (sy = [1, -1], i = [-1, 1])
                     translate([i*out_l/4, sy*(out_w/2 - 0.01), base_h/2])
-                        rotate([-sy*90, 0, 0]) cylinder(d = boss_d, h = boss_l);
+                        mirror([0, sy > 0 ? 1 : 0, 0]) rotate([90, 0, 0]) linear_extrude(boss_l)
+                            intersection() {
+                                hull() {
+                                    circle(d = boss_d);
+                                    translate([0, -boss_d/2*sqrt(2)]) square(0.01, center = true);
+                                }
+                                translate([-boss_d, -base_h/2]) square([2*boss_d, boss_d + base_h]);
+                            }
             }
             translate([0, 0, floor_t])   // the cavity, floor cove left standing (canary_core_lib)
                 cavity_cut(inner_l, inner_w, max(0.1, corner_r - wall_t), cav_h + 1, floor_cove);
@@ -138,14 +166,34 @@ module body() {
             // the cable as conduit. Sheltered mounting only - the slot is open.
             // centered on the connector AXIS (shell/2 above the PCB), not PCB-top + h/2:
             // the pigtail's lower half landed in the wall
-            translate([-out_l/2, 0, floor_t + standoff_h + board_h + port_usbc_shell_h()/2])
-                cube([wall_t*3, usb_w, usb_h], center = true);
+            // 45°-chamfered top corners keep the upright wall's bridge to the
+            // print-validated span (canary_port_lib; the slot bridged 10.5 flat)
+            translate([-out_l/2, 0, usb_zc]) rotate([90, 0, 90])
+                linear_extrude(wall_t*3, center = true) port_bridge_profile2d(usb_w, usb_h);
+            // drain at the low point: the -X wall's floor corner, angled down
+            // and out (canary_core_lib weep_cut)
+            if (opt_weep)
+                weep_cut(-inner_l/2, weep_y, floor_t + weep_d()/2 + 0.2, "-x", wall_t, weep_d());
         }
         // lid key (canary_core_lib): a rib on the +Y wall, centered, inside the lip zone
         if (lid_key) lid_key_rib(0, inner_w/2, 270, base_h, lip_h);
         // posts + board clips (compact-WAP idiom)
         difference() {
-            for (p = post_xy()) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_h);
+            union() {
+                for (p = post_xy()) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_h);
+                // the corner behind each post filled solid into both walls (a
+                // round post in a square corner leaves a closed sliver there)
+                for (p = post_xy()) let (sx = sign(p[0]), sy = sign(p[1]))
+                    translate([min(p[0], sx*(inner_l/2 + 0.3)), min(p[1], sy*(inner_w/2 + 0.3)), floor_t])
+                        cube([abs(sx*(inner_l/2 + 0.3) - p[0]), abs(sy*(inner_w/2 + 0.3) - p[1]), cav_h]);
+                // constant-width webs into both walls (canary_rib_lib corner_gusset)
+                for (p = post_xy()) translate([0, 0, floor_t]) {
+                    sx = sign(p[0]); sy = sign(p[1]);
+                    gw = min(2.0, rib_t_max(wall_t));
+                    corner_gusset(p[0], p[1], sx*(inner_l/2 + 0.5), p[1], cav_h - lip_h - 1, wall_t, pd, gw);
+                    corner_gusset(p[0], p[1], p[0], sy*(inner_w/2 + 0.5), cav_h - lip_h - 1, wall_t, pd, gw);
+                }
+            }
             for (p = post_xy()) translate([p[0], p[1], floor_t + 2]) cylinder(d = screw_d, h = cav_h);
         }
         // support rails under the board's short edges (clips alone don't set the
@@ -175,11 +223,10 @@ module lid() {
             // counterbores (y) and the lip ring (which lives below z=0).
             if (opt_mark) translate([0, -9, -0.1])
                 linear_extrude(0.6) mark_wordmark(4.0);
-            for (p = post_xy()) {
-                translate([p[0], p[1], -1]) cylinder(d = screw_d + 2*tol_hole, h = lid_t + 2);
-                translate([p[0], p[1], lid_t - screw_head_h])
-                    cylinder(d1 = screw_d + 2*tol_hole, d2 = screw_head_d, h = screw_head_h + 0.1);
-            }
+            // flat-head seats: the house 90° cone (canary_core_lib) — the old
+            // cone opened to the bare head Ø over 1.6, a ~64° seat a 90° head
+            // bears on by its rim
+            for (p = post_xy()) cs_cone90_cut(p[0], p[1], lid_t, screw_d + 2*tol_hole, screw_head_h);
         }
         difference() {   // lip
             lip_ring(inner_l - 2*tol_slide, inner_w - 2*tol_slide, 0.5, lip_h, lip_t);   // lead-in on the tip (canary_core_lib)

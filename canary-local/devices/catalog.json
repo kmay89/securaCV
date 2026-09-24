@@ -223,7 +223,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 163,
+   "engineering_param_count": 176,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -315,7 +315,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 82,
+   "engineering_param_count": 88,
    "alternatives": [
     "s3_touch169",
     "watch_station"
@@ -367,7 +367,8 @@
    "render_parts": [
     "back",
     "front",
-    "gasket"
+    "gasket",
+    "hood"
    ],
    "options": [
     {
@@ -381,7 +382,23 @@
     {
      "id": "opt_hood",
      "type": "bool",
-     "label": "rain hood over the lens",
+     "label": "rain hood over the lens — its OWN part (part=\"hood\"), pressed into a groove on the front and bonded",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "opt_weep",
+     "type": "bool",
+     "label": "Ø2 drain through the bottom wall between the columns (canary_core_lib weep_cut); the sealed build's pressure path",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "usb_hood",
+     "type": "bool",
+     "label": "drip awning (canary_core_lib port_hood) over the Sense USB opening; the Vision pair sits under the rim",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -419,14 +436,14 @@
      "default": false
     }
    ],
-   "engineering_param_count": 65,
+   "engineering_param_count": 77,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 6,
-    "user_options": 6,
+    "options": 8,
+    "user_options": 8,
     "variant_axes": 0
    }
   },
@@ -504,7 +521,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 32,
+   "engineering_param_count": 38,
    "alternatives": [
     "s3_lcd7"
    ],
@@ -606,6 +623,14 @@
    ],
    "options": [
     {
+     "id": "lid_key",
+     "type": "bool",
+     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — the lobes fit a lid two ways and the lens lines up one way",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "bez_on",
      "type": "bool",
      "label": "bez_on",
@@ -614,7 +639,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 66,
+   "engineering_param_count": 72,
    "alternatives": [
     "hammond_chassis",
     "relay_solar"
@@ -623,8 +648,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 1,
-    "user_options": 1,
+    "options": 2,
+    "user_options": 2,
     "variant_axes": 0
    }
   },
@@ -784,7 +809,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 36,
+   "engineering_param_count": 52,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -827,7 +852,7 @@
     "gland_cap"
    ],
    "options": [],
-   "engineering_param_count": 13,
+   "engineering_param_count": 36,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -884,6 +909,14 @@
      "default": false
     },
     {
+     "id": "opt_weep",
+     "type": "bool",
+     "label": "Ø2 drain through the -X wall at the floor (the cable wall hangs down), beside the USB slot",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "opt_mark",
      "type": "bool",
      "label": "deboss the house wordmark on the lid's INTERIOR face (covert: never outside)",
@@ -900,14 +933,14 @@
      "default": true
     }
    ],
-   "engineering_param_count": 29,
+   "engineering_param_count": 31,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 4,
-    "user_options": 4,
+    "options": 5,
+    "user_options": 5,
     "variant_axes": 0
    }
   },
@@ -951,7 +984,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 15,
+   "engineering_param_count": 17,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -990,7 +1023,7 @@
     "cradle"
    ],
    "options": [],
-   "engineering_param_count": 12,
+   "engineering_param_count": 14,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -1094,7 +1127,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 62,
+   "engineering_param_count": 68,
    "alternatives": [
     "field_case",
     "hammond_chassis"
@@ -1219,7 +1252,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 121,
+   "engineering_param_count": 124,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -1700,7 +1733,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 64,
+   "engineering_param_count": 70,
    "alternatives": [
     "c6_display",
     "watch_station"
@@ -1954,7 +1987,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 144,
+   "engineering_param_count": 151,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -1993,7 +2026,7 @@
     "plate"
    ],
    "options": [],
-   "engineering_param_count": 35,
+   "engineering_param_count": 34,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2042,7 +2075,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 20,
+   "engineering_param_count": 23,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2137,7 +2170,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 12,
+   "engineering_param_count": 21,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2224,7 +2257,7 @@
     "vent"
    ],
    "options": [],
-   "engineering_param_count": 15,
+   "engineering_param_count": 19,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2391,7 +2424,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 136,
+   "engineering_param_count": 147,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2633,7 +2666,7 @@
     {
      "id": "seal_mid_posts",
      "type": "bool",
-     "label": "(seal mode) one extra screw post mid-way along each long wall: four corner",
+     "label": "(seal mode) one extra screw post mid-way along each long wall (ON in the weather preset): four corner",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -2711,7 +2744,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 172,
+   "engineering_param_count": 180,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -3155,7 +3188,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 163,
+   "engineering_param_count": 172,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -3232,7 +3265,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 66,
+   "engineering_param_count": 69,
    "alternatives": [
     "s3_touch169",
     "c6_display"

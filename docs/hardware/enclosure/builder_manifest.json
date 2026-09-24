@@ -56,7 +56,7 @@
       "name": "Canary WAP",
       "tagline": "The pocket witness case — XIAO ESP32-S3, optional camera, battery, GPS and weather sealing.",
       "about": "A pocket-sized box for the XIAO ESP32-S3 witness build. Tick only the peripherals actually on your bench — each one adds its bay, port or window, and the case grows or shrinks to fit.",
-      "print_plan": "Print the Base and Lid in PETG. Going outdoors? Pick the Outdoor preset, then also print the Gasket in TPU — plus the Shield and Tray if it will sit in the sun.",
+      "print_plan": "Print the Base and Lid in PETG for indoors. Going outdoors? Pick the Outdoor preset and print the shell in ASA (PETG yellows and embrittles in sun), the Gasket in TPU — plus the Shield in white or light ASA if it will sit in the sun.",
       "simple": [
         "part",
         "preset",
@@ -85,7 +85,8 @@
         "opt_antenna",
         "opt_seal",
         "opt_mount",
-        "opt_weep"
+        "opt_weep",
+        "screw_from"
       ],
       "part_labels": {
         "all": "Assembled preview (not for printing)",
@@ -138,7 +139,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "dec4fc3a443d8d0c1b7c72f580a995fb394719d5f41a1fe3dbe80314d27496d5",
+      "sha256": "6694c280b7478bfc24f82004542ac9a31c6aef1fbcbfc88317fe265f96ffeaed",
       "groups": [
         {
           "name": "What to render",
@@ -842,6 +843,16 @@
               "desc": "lid screw — the catalog screw registry (canary_core_lib) sets"
             },
             {
+              "name": "screw_from",
+              "type": "string",
+              "default": "back",
+              "options": [
+                "back",
+                "face"
+              ],
+              "desc": "back = the face is unbroken: screws enter a seat in the back and thread into bosses under the lid (the house default); face = heads on the lid (the Outdoor preset, whose sun shield rides on them)"
+            },
+            {
               "name": "screw_head",
               "type": "string",
               "default": "flat",
@@ -969,8 +980,8 @@
             {
               "name": "lp_dy",
               "type": "number",
-              "default": 5.0,
-              "desc": "light-pipe port center Y, from the board center"
+              "default": 7.5,
+              "desc": "light-pipe port center Y, from the board center (7.5, not 5: at 5 the Ø3.2 bore broke 0.7 into the camera disc seat)"
             },
             {
               "name": "vent_pad_d",
@@ -1135,7 +1146,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "26b8d2d35a528d40ed621f1682ef670ece1aceb1d14ceef4a492e96c410248bd"
+          "sha256": "7b96b09ca72d40aebd5539e71d4dd649e00632f6fb5b44193b6330a446b8d2b1"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -1173,7 +1184,7 @@
       "name": "Canary Vision",
       "tagline": "The camera case — Grove Vision AI V2 or DevKit host, GoPro-compatible hinge, optional rain hood.",
       "about": "The camera witness for a wall or eave: Grove Vision AI V2 with a stacked XIAO (recommended) or a Grove-cabled DevKit. The GoPro-style hinge aims it; the options weather it.",
-      "print_plan": "Print the Back and Front in PETG — plus the Bracket and Knob if you use the hinge mount. The Outdoor preset adds a rain hood and the TPU Gasket.",
+      "print_plan": "Print the Back and Front in PETG — plus the Bracket and Knob if you use the hinge mount. The Outdoor preset adds a rain hood and the TPU Gasket; outdoors, print the shell, hood, Bracket and Knob in ASA — PETG is not UV-stable.",
       "simple": [
         "part",
         "preset",
@@ -1196,7 +1207,8 @@
         "opt_seal",
         "opt_mount",
         "mount_style",
-        "opt_weep"
+        "opt_weep",
+        "seal_mid_posts"
       ],
       "part_labels": {
         "all": "Assembled preview (not for printing)",
@@ -1246,7 +1258,7 @@
         }
       },
       "units": {},
-      "sha256": "174d4ee17371bb4022e5514191209c72fe3713bda1e277a419fd5e7834af3706",
+      "sha256": "9ad727988d8163585c2a3834fe511bf2a523aed90ce1dbcccc1c1a6ec676bcba",
       "groups": [
         {
           "name": "What to render",
@@ -1350,7 +1362,7 @@
               "name": "seal_mid_posts",
               "type": "bool",
               "default": false,
-              "desc": "(seal mode) one extra screw post mid-way along each long wall: four corner"
+              "desc": "(seal mode) one extra screw post mid-way along each long wall (ON in the weather preset): four corner"
             },
             {
               "name": "head_seal",
@@ -1736,6 +1748,16 @@
               "type": "number",
               "default": 2.0,
               "desc": "(m2 pan) seat depth: the head 1.6 + 0.4 sink. Deeper than the 2.0 front,"
+            },
+            {
+              "name": "screw_from",
+              "type": "string",
+              "default": "back",
+              "options": [
+                "back",
+                "face"
+              ],
+              "desc": "back = the face is unbroken: screws enter a seat in the back and thread into bosses under the front (the house default; opening it means taking it down first); face = heads on the front"
             }
           ]
         },
@@ -2251,7 +2273,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "26b8d2d35a528d40ed621f1682ef670ece1aceb1d14ceef4a492e96c410248bd"
+          "sha256": "7b96b09ca72d40aebd5539e71d4dd649e00632f6fb5b44193b6330a446b8d2b1"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -2289,7 +2311,7 @@
       "name": "Canary Vision Doorbell",
       "tagline": "Wyze/Ring form factor for the Vision stack — sealed by default, wedge plates for aiming down the approach.",
       "about": "The Vision stack in a Ring/Wyze-sized doorbell: camera, lit button, hidden security screw. It ships sealed by default — doorbells live outside.",
-      "print_plan": "Print the Body, Face and Plate in PETG and the Gasket in TPU. Aiming down a porch or across a corner? Set the wedge angles before you print the Plate.",
+      "print_plan": "Print the Body, Face and Plate in ASA (a doorbell lives in the sun; PETG only under a deep porch roof) and the Gasket in TPU. Aiming down a porch or across a corner? Set the wedge angles before you print the Plate.",
       "simple": [
         "part",
         "preset",
@@ -2346,7 +2368,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "9869e0df57092822d6e7c3f343736ed58cb84a6859d638bded8a9cad4a679902",
+      "sha256": "28cd583764795ed744d55fda7aa9fce0b25acf9f72028a1435f5c50d92bc5121",
       "groups": [
         {
           "name": "What to render",
@@ -2847,6 +2869,16 @@
               "type": "number",
               "default": 2.0,
               "desc": "(m2 pan) seat depth; the face carries a pad under it (head_pad)"
+            },
+            {
+              "name": "screw_from",
+              "type": "string",
+              "default": "back",
+              "options": [
+                "back",
+                "face"
+              ],
+              "desc": "back = the face is unbroken: screws enter a seat in the back and thread into bosses under the face (the house default; opening it means taking it down first); face = heads on the face"
             }
           ]
         },
@@ -2923,6 +2955,15 @@
               "type": "number",
               "default": 4.2,
               "desc": "wall screws (#8 / M4 PAN head — the seats are flat counterbores)"
+            },
+            {
+              "name": "plate_head_h",
+              "type": "number",
+              "default": 2.8,
+              "min": 2.0,
+              "step": 0.1,
+              "max": 3.2,
+              "desc": "wall-screw pan head height: the seat is cut this deep (+0.2) so the head sits flush"
             }
           ]
         },
@@ -3174,12 +3215,22 @@
               "desc": "beam face to board edge (a fit — tune on the coupon) — snap_boardclip default"
             }
           ]
+        },
+        {
+          "name": "Quality",
+          "params": [
+            {
+              "name": "face_skin",
+              "type": "number",
+              "default": 1.0
+            }
+          ]
         }
       ],
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "26b8d2d35a528d40ed621f1682ef670ece1aceb1d14ceef4a492e96c410248bd"
+          "sha256": "7b96b09ca72d40aebd5539e71d4dd649e00632f6fb5b44193b6330a446b8d2b1"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -3291,7 +3342,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "e44ad58d3b08381373e5475f63e1ab4265ffbf892e3849fb896cbed03b5c5d87",
+      "sha256": "46d46843ec9d47f662171c5e7acab639753f82cd7024f45971c63aa9f3dcb995",
       "groups": [
         {
           "name": "What to render",
@@ -3829,6 +3880,16 @@
               "type": "number",
               "default": 2.0,
               "desc": "(m2 pan) seat depth; the front carries a pad under it (head_pad)"
+            },
+            {
+              "name": "screw_from",
+              "type": "string",
+              "default": "back",
+              "options": [
+                "back",
+                "face"
+              ],
+              "desc": "back = the face is unbroken: screws enter a seat in the back and thread into bosses under the front (the house default; opening it means taking it down first); face = heads on the front"
             }
           ]
         },
@@ -4169,7 +4230,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "26b8d2d35a528d40ed621f1682ef670ece1aceb1d14ceef4a492e96c410248bd"
+          "sha256": "7b96b09ca72d40aebd5539e71d4dd649e00632f6fb5b44193b6330a446b8d2b1"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -4616,7 +4677,7 @@
         },
         {
           "file": "canary_core_lib.scad",
-          "sha256": "26b8d2d35a528d40ed621f1682ef670ece1aceb1d14ceef4a492e96c410248bd"
+          "sha256": "7b96b09ca72d40aebd5539e71d4dd649e00632f6fb5b44193b6330a446b8d2b1"
         },
         {
           "file": "canary_mount_lib.scad",

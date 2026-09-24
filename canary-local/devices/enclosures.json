@@ -1351,6 +1351,15 @@
        "comment": "lid screw — the catalog screw registry (canary_core_lib) sets"
       },
       {
+       "name": "screw_from",
+       "default": "back",
+       "enum": [
+        "back",
+        "face"
+       ],
+       "comment": "back = the face is unbroken: screws enter a seat in the back and thread into bosses under the lid (the house default); face = heads on the lid (the Outdoor preset, whose sun shield rides on them)"
+      },
+      {
        "name": "screw_head",
        "default": "flat",
        "enum": [
@@ -1373,6 +1382,14 @@
        "name": "screw_head_h",
        "default": "1.2",
        "comment": "(m2 flat) countersink depth — the cone below is a true 90° seat for an M2 flat head"
+      },
+      {
+       "name": "e_from",
+       "default": "_pre(screw_from,  \"back\", \"back\", \"face\")"
+      },
+      {
+       "name": "e_back",
+       "default": "e_from == \"back"
       }
      ]
     },
@@ -1468,8 +1485,8 @@
       },
       {
        "name": "lp_dy",
-       "default": "5.0",
-       "comment": "light-pipe port center Y, from the board center"
+       "default": "7.5",
+       "comment": "light-pipe port center Y, from the board center (7.5, not 5: at 5 the Ø3.2 bore broke 0.7 into the camera disc seat)"
       },
       {
        "name": "vent_pad_d",
@@ -1643,7 +1660,7 @@
       },
       {
        "name": "head_pad",
-       "default": "(screw_head == \"pan\") ? max(0, head_h + 1.0 - lid_t) : 0"
+       "default": "(!e_back && screw_head == \"pan\") ? max(0, head_h + 1.0 - lid_t) : 0"
       },
       {
        "name": "board_zone_l",
@@ -1729,6 +1746,27 @@
        "default": "(e_mount && (mount_style == \"keyhole\" || mount_style == \"both\")) ? kh_extra : 0"
       },
       {
+       "name": "face_skin",
+       "default": "1.0"
+      },
+      {
+       "name": "bk_L",
+       "default": "e_back ? bk_len(screw_size, screw_head, mount_extra, base_h, lid_t, face_skin) : 0"
+      },
+      {
+       "name": "bk_r",
+       "default": "e_back ? bk_recess(screw_size, screw_head, mount_extra, floor_t, base_h, lid_t, face_skin) : 0"
+      },
+      {
+       "name": "boss_h",
+       "default": "e_back ? bk_boss_h(screw_size, screw_head, mount_extra, floor_t, base_h, lid_t, face_skin) : 0"
+      },
+      {
+       "name": "post_h",
+       "default": "cav_h - head_pad - boss_h",
+       "comment": "the post stops where the lid's boss lands"
+      },
+      {
        "name": "kh_x",
        "default": "inner_l/2 - kh_inset"
       },
@@ -1773,6 +1811,10 @@
       {
        "name": "hw_thread",
        "default": "screw_insert ? \"machine (into the inserts)\" : \"self-tap"
+      },
+      {
+       "name": "_seal_span",
+       "default": "max([for (a = post_xy(), b = post_xy()) (a[1] == b[1]) ? abs(a[0] - b[0]) : 0])"
       }
      ]
     }
@@ -1871,7 +1913,7 @@
       {
        "name": "seal_mid_posts",
        "default": "false",
-       "comment": "(seal mode) one extra screw post mid-way along each long wall: four corner"
+       "comment": "(seal mode) one extra screw post mid-way along each long wall (ON in the weather preset): four corner"
       },
       {
        "name": "head_seal",
@@ -1909,6 +1951,10 @@
       {
        "name": "e_weep",
        "default": "_pre(opt_weep,   false, true)"
+      },
+      {
+       "name": "e_midposts",
+       "default": "_pre(seal_mid_posts, false, true)"
       },
       {
        "name": "m_style",
@@ -2235,6 +2281,15 @@
        "name": "screw_head_h",
        "default": "2.0",
        "comment": "(m2 pan) seat depth: the head 1.6 + 0.4 sink. Deeper than the 2.0 front,"
+      },
+      {
+       "name": "screw_from",
+       "default": "back",
+       "enum": [
+        "back",
+        "face"
+       ],
+       "comment": "back = the face is unbroken: screws enter a seat in the back and thread into bosses under the front (the house default; opening it means taking it down first); face = heads on the front"
       },
       {
        "name": "usb_w",
@@ -2700,8 +2755,12 @@
        "default": "(screw_size == \"m2\") ? insert_h : scr_insert_h(screw_size)"
       },
       {
+       "name": "e_back",
+       "default": "screw_from == \"back"
+      },
+      {
        "name": "head_pad",
-       "default": "(screw_head == \"pan\") ? max(0, head_h + 1.0 - lid_t) : 0"
+       "default": "(!e_back && screw_head == \"pan\") ? max(0, head_h + 1.0 - lid_t) : 0"
       },
       {
        "name": "post_corner",
@@ -2818,6 +2877,27 @@
       {
        "name": "mount_extra",
        "default": "(e_mount && (m_style == \"keyhole\" || m_style == \"both\")) ? kh_extra : 0"
+      },
+      {
+       "name": "face_skin",
+       "default": "1.0"
+      },
+      {
+       "name": "bk_L",
+       "default": "e_back ? bk_len(screw_size, screw_head, mount_extra, base_d, lid_t, face_skin) : 0"
+      },
+      {
+       "name": "bk_r",
+       "default": "e_back ? bk_recess(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin) : 0"
+      },
+      {
+       "name": "boss_h",
+       "default": "e_back ? bk_boss_h(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin) : 0"
+      },
+      {
+       "name": "post_h",
+       "default": "cav_d - head_pad - boss_h",
+       "comment": "the post stops where the front's boss lands"
       },
       {
        "name": "kh_y",
@@ -3324,6 +3404,15 @@
        "name": "screw_head_h",
        "default": "2.0",
        "comment": "(m2 pan) seat depth; the face carries a pad under it (head_pad)"
+      },
+      {
+       "name": "screw_from",
+       "default": "back",
+       "enum": [
+        "back",
+        "face"
+       ],
+       "comment": "back = the face is unbroken: screws enter a seat in the back and thread into bosses under the face (the house default; opening it means taking it down first); face = heads on the face"
       }
      ]
     },
@@ -3396,6 +3485,16 @@
        "name": "plate_screw_d",
        "default": "4.2",
        "comment": "wall screws (#8 / M4 PAN head — the seats are flat counterbores)"
+      },
+      {
+       "name": "plate_head_h",
+       "default": "2.8",
+       "range": [
+        2.0,
+        0.1,
+        3.2
+       ],
+       "comment": "wall-screw pan head height: the seat is cut this deep (+0.2) so the head sits flush"
       }
      ]
     },
@@ -3639,8 +3738,12 @@
        "default": "max(screw_insert ? max(post_d, ins_od + 3.0) : post_d, scr_post_min(screw_size))"
       },
       {
+       "name": "e_back",
+       "default": "screw_from == \"back"
+      },
+      {
        "name": "head_pad",
-       "default": "(screw_head == \"pan\") ? max(0, head_h + 1.0 - lid_t) : 0"
+       "default": "(!e_back && screw_head == \"pan\") ? max(0, head_h + 1.0 - lid_t) : 0"
       },
       {
        "name": "clip_stack",
@@ -3675,6 +3778,27 @@
        "default": "floor_t + cav_d"
       },
       {
+       "name": "face_skin",
+       "default": "1.0"
+      },
+      {
+       "name": "bk_L",
+       "default": "e_back ? bk_len(screw_size, screw_head, kh_extra, base_d, lid_t, face_skin) : 0"
+      },
+      {
+       "name": "bk_r",
+       "default": "e_back ? bk_recess(screw_size, screw_head, kh_extra, floor_t, base_d, lid_t, face_skin) : 0"
+      },
+      {
+       "name": "boss_h",
+       "default": "e_back ? bk_boss_h(screw_size, screw_head, kh_extra, floor_t, base_d, lid_t, face_skin) : 0"
+      },
+      {
+       "name": "post_h",
+       "default": "cav_d - head_pad - boss_h",
+       "comment": "the post stops where the face's boss lands"
+      },
+      {
        "name": "rr",
        "default": "min(db_r, out_x/2 - 0.1)",
        "comment": "pill radius, clamped to the width"
@@ -3695,6 +3819,14 @@
       {
        "name": "cam_cy",
        "default": "vm_cy + vm_l/2 + zone_gap + cam_h/2"
+      },
+      {
+       "name": "_ys",
+       "default": "[for (p = post_xy()) if (p[0] > 0) p[1]]"
+      },
+      {
+       "name": "_seal_span",
+       "default": "max([for (a = _ys) let (g = min([for (b = _ys) if (b > a) b - a, 1e9])) if (g < 1e8) g])"
       },
       {
        "name": "skirt_gap",
@@ -3719,6 +3851,10 @@
       {
        "name": "hw_thread",
        "default": "screw_insert ? \"machine (into the inserts)\" : \"self-tap"
+      },
+      {
+       "name": "plate_seat_z",
+       "default": "plate_t - plate_head_h - 0.2"
       }
      ]
     }
@@ -4234,6 +4370,15 @@
        "name": "screw_head_h",
        "default": "2.0",
        "comment": "(m2 pan) seat depth; the front carries a pad under it (head_pad)"
+      },
+      {
+       "name": "screw_from",
+       "default": "back",
+       "enum": [
+        "back",
+        "face"
+       ],
+       "comment": "back = the face is unbroken: screws enter a seat in the back and thread into bosses under the front (the house default; opening it means taking it down first); face = heads on the front"
       }
      ]
     },
@@ -4566,8 +4711,12 @@
        "default": "max(screw_insert ? max(post_d, ins_od + 3.0) : post_d, scr_post_min(screw_size))"
       },
       {
+       "name": "e_back",
+       "default": "screw_from == \"back"
+      },
+      {
        "name": "head_pad",
-       "default": "(screw_head == \"pan\") ? max(0, head_h + 1.0 - lid_t) : 0"
+       "default": "(!e_back && screw_head == \"pan\") ? max(0, head_h + 1.0 - lid_t) : 0"
       },
       {
        "name": "clip_stack",
@@ -4650,6 +4799,27 @@
       {
        "name": "mount_extra",
        "default": "(e_mount && (m_style == \"keyhole\" || m_style == \"both\")) ? kh_extra : 0"
+      },
+      {
+       "name": "face_skin",
+       "default": "1.0"
+      },
+      {
+       "name": "bk_L",
+       "default": "e_back ? bk_len(screw_size, screw_head, mount_extra, base_d, lid_t, face_skin) : 0"
+      },
+      {
+       "name": "bk_r",
+       "default": "e_back ? bk_recess(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin) : 0"
+      },
+      {
+       "name": "boss_h",
+       "default": "e_back ? bk_boss_h(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin) : 0"
+      },
+      {
+       "name": "post_h",
+       "default": "cav_d - head_pad - boss_h",
+       "comment": "the post stops where the front's boss lands"
       },
       {
        "name": "kh_y",
@@ -4746,13 +4916,13 @@
       },
       {
        "name": "usb_slot_w",
-       "default": "11.0",
-       "comment": "side-slot width (USB-C plug shells run ~10.5)"
+       "default": "13.0",
+       "comment": "side-slot width: the Type-C spec-max overmold (12.35) + 0.3 a side — the"
       },
       {
        "name": "usb_slot_h",
-       "default": "7.0",
-       "comment": "side-slot height"
+       "default": "8.6",
+       "comment": "side-slot height: the overmold's 6.5, grown so its round ends clear the"
       }
      ]
     },
@@ -4863,9 +5033,14 @@
        "comment": "degrees, 0 = +X"
       },
       {
-       "name": "snap_w",
-       "default": "6.5",
-       "comment": "slot width (arc chord)"
+       "name": "nub_w",
+       "default": "4.2",
+       "comment": "the nub ridge's drawn width (arc chord) — exactly what the old end plates drew"
+      },
+      {
+       "name": "snap_play",
+       "default": "0.15",
+       "comment": "window clearance per side — the catalog default (canary_snap_lib)"
       },
       {
        "name": "snap_h",
@@ -4874,13 +5049,13 @@
       },
       {
        "name": "snap_depth",
-       "default": "2.6",
-       "comment": "slot center below the drum rim"
+       "default": "3.3",
+       "comment": "slot center below the drum rim: low on the finger, where its lever is longest"
       },
       {
        "name": "snap_proud",
-       "default": "0.3",
-       "comment": "nub stand-proud of the skirt: 0.15 of working interference over the bore"
+       "default": "0.25",
+       "comment": "nub stand-proud of the skirt: 0.1 of working interference over the bore"
       },
       {
        "name": "skirt_dep",
@@ -4889,8 +5064,13 @@
       },
       {
        "name": "finger_t",
-       "default": "1.0",
+       "default": "0.8",
        "comment": "finger thickness — the skirt is relieved to this behind the nubs so the"
+      },
+      {
+       "name": "finger_root",
+       "default": "0.7",
+       "comment": "full-thickness band under the face plate the fingers hang from — their lever runs root → nub"
       },
       {
        "name": "pcb_t",
@@ -4963,11 +5143,6 @@
        "name": "scallop_d",
        "default": "18.0",
        "comment": "thumb scallops for lifting the drum out"
-      },
-      {
-       "name": "foot_h",
-       "default": "1.5",
-       "comment": "foot pads (base cable channel runs beneath)"
       }
      ]
     },
@@ -5045,8 +5220,16 @@
        "comment": "full seated length, back cap → face"
       },
       {
+       "name": "snap_w",
+       "default": "snap_window(nub_w, snap_play)"
+      },
+      {
        "name": "snap_defl",
        "default": "skirt_od/2 + snap_proud - bore_d/2"
+      },
+      {
+       "name": "snap_lever",
+       "default": "snap_depth - finger_root"
       },
       {
        "name": "pkt_d",
@@ -5140,12 +5323,22 @@
       {
        "name": "stalk_h",
        "default": "70.0",
-       "comment": "stalk height to the hinge axis region — 70, not 55: hung plumb (radome"
+       "comment": "stalk height to the hinge axis region — puts the standing radome ~130 mm over the nightstand"
       },
       {
        "name": "case_reach",
-       "default": "70.0",
-       "comment": "the Sense case's far bottom edge from its hinge axis (out_y/2 + hinge_off + ... = 69.6)"
+       "default": "71.2",
+       "comment": "the Sense case's far edge from its hinge axis — measured off canary_sense_back.stl (out_y/2 + hinge_off)"
+      },
+      {
+       "name": "case_face",
+       "default": "14.0",
+       "comment": "the case's radome face from its hinge axis (back 19.5 - fin_r 7.5 + lid 2.0)"
+      },
+      {
+       "name": "pose_low",
+       "default": "15",
+       "comment": "the forward tip limit below horizontal — where the case root meets the center fin (header)"
       },
       {
        "name": "stalk_d",
@@ -5250,7 +5443,12 @@
       },
       {
        "name": "head_off",
-       "default": "10.0"
+       "default": "10.0",
+       "comment": "bolt axis above the head's base plate"
+      },
+      {
+       "name": "axis_z",
+       "default": "base_t - 2 + (stalk_h - 0.2 + head_off)*cos(stalk_tilt)"
       }
      ]
     }
@@ -5333,11 +5531,6 @@
        "comment": "brd_w(\"mr60\") — canary_board_lib"
       },
       {
-       "name": "stack_sock_h",
-       "default": "11.5",
-       "comment": "brd_stack_sock_unmeasured() — the doorbell bench measured 6.5 (canary_board_lib)"
-      },
-      {
        "name": "radar_front_h",
        "default": "3.5",
        "comment": "carrier front-side TALLEST part (connectors etc.) — MEASURE"
@@ -5359,7 +5552,12 @@
       {
        "name": "radome_t",
        "default": "1.5",
-       "comment": "≈ half-wave in PETG/ASA at 60 GHz — the low-reflection optimum;"
+       "range": [
+        1.3,
+        0.1,
+        1.7
+       ],
+       "comment": "membrane — 1.5 ≈ half-wave in PETG/ASA at 60 GHz (low-reflection optimum); 0.7–1.1 is the quarter-wave band (~20 % reflection) and is refused"
       },
       {
        "name": "rad_win_x",
@@ -5547,9 +5745,21 @@
      "note": "T-studs matching the standard Canary keyhole pockets",
      "params": [
       {
+       "name": "target",
+       "default": "sense",
+       "enum": [
+        "sense",
+        "vision_xiao",
+        "vision_devkit",
+        "wap_custom",
+        "wap_battery",
+        "custom"
+       ]
+      },
+      {
        "name": "stud_gap",
        "default": "30.0",
-       "comment": "stud spacing (vertical) — must fit the target case's kh_ys spread"
+       "comment": "stud spacing (vertical) for target = \"custom\" — must match that case's keyhole pocket spread"
       },
       {
        "name": "kh_face",
@@ -5579,6 +5789,10 @@
       {
        "name": "ih",
        "default": "wart_h + 2*tol_slide"
+      },
+      {
+       "name": "gap",
+       "default": "target_gap()"
       }
      ]
     }
@@ -5899,7 +6113,7 @@
       },
       {
        "name": "wall_eff",
-       "default": "e_seal ? max(wall_t, gasket_w + 1.6) : wall_t"
+       "default": "e_seal ? max(wall_t, gasket_w + 2*core_min_wall()) : wall_t"
       },
       {
        "name": "pd",
@@ -5926,8 +6140,17 @@
        "default": "bh_w + 2.0"
       },
       {
+       "name": "roof_foot_d",
+       "default": "screw_head_d + 4.0",
+       "comment": "the roof screw's foot: the head seat + a 2 mm rim"
+      },
+      {
+       "name": "roof_post_x",
+       "default": "pan_w/2 + roof_foot_d/2 + 0.4"
+      },
+      {
        "name": "inner_x",
-       "default": "col_lb + 2 + col_bh + 2*post_corner"
+       "default": "max(col_lb + 2 + col_bh + 2*post_corner, 2*(roof_post_x + post_d/2 + 0.2))"
       },
       {
        "name": "inner_y",
@@ -5936,7 +6159,7 @@
       },
       {
        "name": "cav_d",
-       "default": "max(standoff_h + pcb_t + lb_stack, bh_h) + 1.5"
+       "default": "max(max(standoff_h + pcb_t + lb_stack, bh_h) + 1.5, bh_h + 0.01 + lip_h + 0.3)"
       },
       {
        "name": "out_x",
@@ -5965,6 +6188,22 @@
       {
        "name": "bh_cy",
        "default": "-inner_y/2 + board_clear + bh_l/2"
+      },
+      {
+       "name": "sma_land_d",
+       "default": "sma_d + 6"
+      },
+      {
+       "name": "sma_z",
+       "default": "min(floor_t + cav_d/2, base_d - skirt_h - 0.4 - sma_land_d/2)"
+      },
+      {
+       "name": "gland_x",
+       "default": "lb_cx"
+      },
+      {
+       "name": "gland_y",
+       "default": "lb_cy + lb_l/2 + 11"
       },
       {
        "name": "usb_zc",
@@ -6014,7 +6253,8 @@
         "back",
         "front",
         "all",
-        "gasket"
+        "gasket",
+        "hood"
        ]
       }
      ]
@@ -6031,7 +6271,17 @@
       {
        "name": "opt_hood",
        "default": "false",
-       "comment": "rain hood over the lens"
+       "comment": "rain hood over the lens — its OWN part (part=\"hood\"), pressed into a groove on the front and bonded"
+      },
+      {
+       "name": "opt_weep",
+       "default": "true",
+       "comment": "Ø2 drain through the bottom wall between the columns (canary_core_lib weep_cut); the sealed build's pressure path"
+      },
+      {
+       "name": "usb_hood",
+       "default": "false",
+       "comment": "drip awning (canary_core_lib port_hood) over the Sense USB opening; the Vision pair sits under the rim"
       },
       {
        "name": "opt_led",
@@ -6149,6 +6399,15 @@
        "comment": "catalog default — core_tol_hole(), canary_core_lib"
       },
       {
+       "name": "screw_from",
+       "default": "back",
+       "enum": [
+        "back",
+        "face"
+       ],
+       "comment": "back = the face is unbroken: screws enter a seat in the back and thread into bosses under the front (the house default); face = pan heads on the front"
+      },
+      {
        "name": "usb_w",
        "default": "12.0",
        "comment": "opening width — 12 clears rugged cable boots (the WAP's validated opening)"
@@ -6202,6 +6461,26 @@
         1.5
        ],
        "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you"
+      },
+      {
+       "name": "hood_seat",
+       "default": "0.6",
+       "range": [
+        0.4,
+        0.1,
+        1.0
+       ],
+       "comment": "groove in the front's show face the hood's spigot presses into (tol_press); bond with neutral-cure silicone"
+      },
+      {
+       "name": "usb_hood_reach",
+       "default": "3.0",
+       "range": [
+        2.0,
+        0.5,
+        6.0
+       ],
+       "comment": "how far the USB awning's drip edge stands off the bottom wall"
       }
      ]
     },
@@ -6307,8 +6586,12 @@
        "default": "s_stack_sock + xiao_below"
       },
       {
+       "name": "e_back",
+       "default": "screw_from == \"back"
+      },
+      {
        "name": "head_pad",
-       "default": "max(0, screw_head_h + 1.0 - lid_t)"
+       "default": "e_back ? 0 : max(0, screw_head_h + 1.0 - lid_t)"
       },
       {
        "name": "col_v",
@@ -6380,6 +6663,26 @@
        "default": "opt_mount ? kh_extra : 0"
       },
       {
+       "name": "face_skin",
+       "default": "1.0"
+      },
+      {
+       "name": "bk_L",
+       "default": "e_back ? bk_len(\"m2\", \"pan\", mount_extra, base_d, lid_t, face_skin) : 0"
+      },
+      {
+       "name": "bk_r",
+       "default": "e_back ? bk_recess(\"m2\", \"pan\", mount_extra, floor_t, base_d, lid_t, face_skin) : 0"
+      },
+      {
+       "name": "boss_h",
+       "default": "e_back ? bk_boss_h(\"m2\", \"pan\", mount_extra, floor_t, base_d, lid_t, face_skin) : 0"
+      },
+      {
+       "name": "post_h",
+       "default": "cav_d - head_pad - boss_h"
+      },
+      {
        "name": "skirt_gap",
        "default": "tol_slide + 0.2"
       },
@@ -6394,6 +6697,18 @@
       {
        "name": "plate_r",
        "default": "e_seal ? corner_r + skirt_gap + skirt_t : corner_r"
+      },
+      {
+       "name": "weep_x",
+       "default": "(v_cx + col_v/2 + s_cx - col_s/2)/2"
+      },
+      {
+       "name": "cam_pilot",
+       "default": "cam_post_h - 0.9"
+      },
+      {
+       "name": "cam_scr_l",
+       "default": "max([for (l = hw_std_lens()) if (l <= pcb_t + cam_pilot + 1e-9) l])"
       },
       {
        "name": "key_x",
@@ -6621,17 +6936,100 @@
        "comment": "tray walls stop above the PCB"
       },
       {
-       "name": "clip_screws",
-       "default": "[[-6.5, 23.5], [6.5, 23.5], [-6.5, -23.5], [6.5, -23.5]]",
-       "comment": "M3s, floor -> clip lands (between the vent slots)"
-      },
-      {
        "name": "total_h",
        "default": "floor_t + standoff_h + pcb_t + hat_h + lid_t"
       },
       {
        "name": "tube_h",
        "default": "hat_h - standoff_ff"
+      },
+      {
+       "name": "head_seat",
+       "default": "lid_t - 1.0"
+      }
+     ]
+    },
+    {
+     "name": "Hidden",
+     "note": "",
+     "params": [
+      {
+       "name": "cw",
+       "default": "42",
+       "comment": "clip block width along the rail"
+      },
+      {
+       "name": "din_gap",
+       "default": "1.6",
+       "comment": "land face -> lip top: clears 1.3 mm flange metal"
+      },
+      {
+       "name": "din_lh",
+       "default": "9.5",
+       "comment": "land height: the tray's stand-off from the flange faces"
+      },
+      {
+       "name": "din_hz",
+       "default": "-din_lh - din_gap - 1.6",
+       "comment": "hook plates' bottom z: the print bed"
+      },
+      {
+       "name": "din_crown_hw",
+       "default": "12.5",
+       "comment": "TS35 crown inner half-width (27 outside, 1.0 metal)"
+      },
+      {
+       "name": "keel_hw",
+       "default": "din_w/2 + din_t - port_flat_span_max()",
+       "comment": "the fixed-side span keel -> drop plate is 7.0"
+      },
+      {
+       "name": "land_o",
+       "default": "din_w/2 + din_t + 10",
+       "comment": "lands' outer edge (|y|)"
+      },
+      {
+       "name": "post_y0",
+       "default": "din_w/2 + 0.2",
+       "comment": "latch posts: 0.2 outboard of the flange edge ..."
+      },
+      {
+       "name": "post_y1",
+       "default": "post_y0 + 1.2",
+       "comment": "... 1.2 wide (three lines)"
+      },
+      {
+       "name": "leaf_t",
+       "default": "1.8",
+       "comment": "leaf arm thickness (it flexes in y)"
+      },
+      {
+       "name": "leaf_y0",
+       "default": "post_y1 + 0.6",
+       "comment": "leaf inner face: 0.6 off the posts (no fused gap)"
+      },
+      {
+       "name": "leaf_y1",
+       "default": "leaf_y0 + leaf_t"
+      },
+      {
+       "name": "leaf_rel",
+       "default": "1.6",
+       "comment": "relief outboard of the leaf (it rides over 1.0)"
+      },
+      {
+       "name": "hook_x",
+       "default": "cw*0.55",
+       "comment": "hook position along the leaf"
+      },
+      {
+       "name": "hook_l",
+       "default": "6.0",
+       "comment": "hook length along the rail: the posts' span over it is hook_l + 0.8"
+      },
+      {
+       "name": "tab_w",
+       "default": "4.0"
       }
      ]
     }
@@ -6944,8 +7342,18 @@
        "default": "stud_gap + 26"
       },
       {
+       "name": "cb_h",
+       "default": "2.2",
+       "comment": "pan-head counterbore depth (a #8 pan head sits in it)"
+      },
+      {
        "name": "mag_ap_t",
        "default": "mag_t + 3.0"
+      },
+      {
+       "name": "pole_t",
+       "default": "max(ap_t, strap_t + 1.2 + cb_h)",
+       "comment": "5.6 at the defaults"
       }
      ]
     }
@@ -7037,6 +7445,16 @@
       {
        "name": "cg_flange",
        "default": "14.0"
+      },
+      {
+       "name": "cg_squeeze",
+       "default": "0.25",
+       "range": [
+        0.2,
+        0.05,
+        0.3
+       ],
+       "comment": "bush wall squeeze on the cable (the O-ring rule's band)"
       }
      ]
     },
@@ -7053,6 +7471,115 @@
        "name": "tol_press",
        "default": "0.10",
        "comment": "catalog default — core_tol_press(), canary_core_lib"
+      }
+     ]
+    },
+    {
+     "name": "Quality",
+     "note": "",
+     "params": [
+      {
+       "name": "cg_bore",
+       "default": "cg_cable + 1.0",
+       "comment": "nose bore (5.5): 0.5 radial room round the cable"
+      },
+      {
+       "name": "cg_nose",
+       "default": "cg_hole - 2*tol_slide",
+       "comment": "nose / stem OD (7.8)"
+      },
+      {
+       "name": "cg_barb_z",
+       "default": "2.0 + cg_panel + 5.4",
+       "comment": "barb shoulder (the flat step the cap catches)"
+      },
+      {
+       "name": "cg_barb_d",
+       "default": "cg_hole + 0.1",
+       "comment": "barb OD at the shoulder (8.3)"
+      },
+      {
+       "name": "cg_top",
+       "default": "cg_barb_z + 1.8",
+       "comment": "body top (barb tip)"
+      },
+      {
+       "name": "cg_seat_z",
+       "default": "6.2",
+       "comment": "top of the seat lip the bush stands on"
+      },
+      {
+       "name": "cg_seat_d",
+       "default": "cg_cable + 0.4",
+       "comment": "seat lip bore: passes the cable, stops the bush"
+      },
+      {
+       "name": "cg_room",
+       "default": "(cg_bore - cg_cable)/2"
+      },
+      {
+       "name": "cg_bush_od",
+       "default": "cg_bore - 0.1"
+      },
+      {
+       "name": "cg_bush_id",
+       "default": "cg_bush_od - 2*cg_room/(1 - cg_squeeze)",
+       "comment": "4.07 at 25 %: grips a 4.5 cable"
+      },
+      {
+       "name": "cg_gap",
+       "default": "0.2",
+       "comment": "cap floor clear of the barb tip"
+      },
+      {
+       "name": "cg_cav_l",
+       "default": "cg_top + cg_gap - cg_seat_z",
+       "comment": "5.2: seat to the cap floor"
+      },
+      {
+       "name": "cg_a_free",
+       "default": "PI/4*(cg_bush_od*cg_bush_od - cg_bush_id*cg_bush_id)"
+      },
+      {
+       "name": "cg_a_room",
+       "default": "PI/4*(cg_bore*cg_bore - cg_cable*cg_cable)"
+      },
+      {
+       "name": "cg_fill",
+       "default": "0.90"
+      },
+      {
+       "name": "cg_bush_l",
+       "default": "cg_fill * cg_cav_l * cg_a_room / cg_a_free",
+       "comment": "3.71 free -> 4.68 squeezed in 5.2"
+      },
+      {
+       "name": "cg_cap_floor",
+       "default": "1.2"
+      },
+      {
+       "name": "cg_cap_hole",
+       "default": "cg_cable + 0.3",
+       "comment": "4.8 < the bush's 5.4: the floor drives the bush"
+      },
+      {
+       "name": "cg_lip_d",
+       "default": "cg_nose + 0.2",
+       "comment": "8.0: slides on the nose, catches the Ø8.3 barb"
+      },
+      {
+       "name": "cg_lip_h",
+       "default": "1.0"
+      },
+      {
+       "name": "cg_groove_d",
+       "default": "cg_barb_d + 0.3",
+       "comment": "8.6: the barb parks free inside"
+      },
+      {
+       "name": "cg_cap_h",
+       "default": "cg_cap_floor + (cg_top + cg_gap - cg_barb_z) + 0.1 + cg_lip_h",
+       "comment": "lip 0.1 under the shoulder"
       }
      ]
     }
@@ -7089,6 +7616,11 @@
        "name": "opt_led",
        "default": "false",
        "comment": "pinhole light pipe (covert: usually off)"
+      },
+      {
+       "name": "opt_weep",
+       "default": "true",
+       "comment": "Ø2 drain through the -X wall at the floor (the cable wall hangs down), beside the USB slot"
       },
       {
        "name": "opt_mark",
@@ -7258,6 +7790,14 @@
       {
        "name": "pd",
        "default": "post_d"
+      },
+      {
+       "name": "usb_zc",
+       "default": "floor_t + standoff_h + board_h + port_usbc_shell_h()/2"
+      },
+      {
+       "name": "weep_y",
+       "default": "usb_w/2 + weep_d()/2 + 1.5"
       }
      ]
     }
@@ -7305,6 +7845,11 @@
        "comment": "countersunk corners; or use VHB and set screws=false"
       },
       {
+       "name": "cs_head_d",
+       "default": "8.2",
+       "comment": "#8 82° flat-head Ø — the seat's rim at the face, so the head lands flush"
+      },
+      {
        "name": "screws",
        "default": "true"
       },
@@ -7342,6 +7887,21 @@
        "default": "no video is recorded or stored"
       },
       {
+       "name": "size1",
+       "default": "7.5",
+       "comment": "line 1 cap size — 8.0 measured 98.68 wide and touched the border groove (inner edge ±49.5)"
+      },
+      {
+       "name": "size2",
+       "default": "5.2",
+       "comment": "line 2 size — matches line 3"
+      },
+      {
+       "name": "size3",
+       "default": "5.2",
+       "comment": "line 3 size — 5.5 measured 97.79 wide, 0.55 off the groove"
+      },
+      {
        "name": "text_depth",
        "default": "0.8"
       },
@@ -7352,6 +7912,34 @@
       {
        "name": "font_r",
        "default": "Liberation Sans"
+      }
+     ]
+    },
+    {
+     "name": "Quality",
+     "note": "",
+     "params": [
+      {
+       "name": "cs_h",
+       "default": "(cs_head_d - screw_d) / (2*tan(41))",
+       "comment": "2.30 for #8 in a Ø4.2 hole"
+      },
+      {
+       "name": "text_room",
+       "default": "sign_w - 11 - 2*1.0",
+       "comment": "97: groove inner width less 1 mm a side"
+      },
+      {
+       "name": "_w1",
+       "default": "_tw(line1, size1, line1 == \"PRIVACY WITNESS\" ? 12.335 : 0, 0.84)"
+      },
+      {
+       "name": "_w2",
+       "default": "_tw(line2, size2, line2 == \"presence sensing in use\" ? 14.495 : 0, 0.66)"
+      },
+      {
+       "name": "_w3",
+       "default": "_tw(line3, size3, line3 == \"no video is recorded or stored\" ? 17.780 : 0, 0.66)"
       }
      ]
     }
@@ -7424,7 +8012,8 @@
       },
       {
        "name": "batt_pad",
-       "default": "1.0"
+       "default": "1.5",
+       "comment": "end clearance, at the -X WALL end: the pack rides against the divider on its foam"
       }
      ]
     },
@@ -7523,8 +8112,8 @@
       },
       {
        "name": "insert_h",
-       "default": "6.0",
-       "comment": "M3 heat-set hole depth"
+       "default": "7.0",
+       "comment": "M3 heat-set hole depth — the M3 x 8 reaches 6.0 below the rim; 1 mm to spare"
       },
       {
        "name": "screw_c_d",
@@ -7607,6 +8196,17 @@
        "name": "kh_face",
        "default": "1.0",
        "comment": "face web the screw head grips behind — catalog standard, mount_kh_face()"
+      }
+     ]
+    },
+    {
+     "name": "Lid alignment lip",
+     "note": "shear key inboard of the seal",
+     "params": [
+      {
+       "name": "lid_key",
+       "default": "true",
+       "comment": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — the lobes fit a lid two ways and the lens lines up one way"
       }
      ]
     },
@@ -7744,6 +8344,28 @@
        "default": "-inner_l/2 + batt_l + batt_pad + rib_t/2"
       },
       {
+       "name": "key_x",
+       "default": "inner_l/4 + 6.0"
+      },
+      {
+       "name": "lob_xm",
+       "default": "inner_l/4"
+      },
+      {
+       "name": "seal_span_long",
+       "default": "2*lob_xm",
+       "comment": "the two lobes of one long side"
+      },
+      {
+       "name": "seal_span_short",
+       "default": "2*end_lob_y",
+       "comment": "the two lobes of one short end"
+      },
+      {
+       "name": "seal_span",
+       "default": "max(seal_span_long, seal_span_end, seal_span_short)"
+      },
+      {
        "name": "squeeze",
        "default": "1 - grv_d/oring_d"
       },
@@ -7758,6 +8380,10 @@
       {
        "name": "cord_len",
        "default": "2*(inner_l + 2*g_c) + 2*(inner_w + 2*g_c) - 8*grv_R + 2*PI*grv_R"
+      },
+      {
+       "name": "batt_dy",
+       "default": "batt_w/2 - (inner_w/2 - r_in)"
       }
      ]
     }
@@ -7811,25 +8437,26 @@
        "name": "bez_lip",
        "default": "2.5",
        "comment": "bezel overlap onto the glass edge"
-      }
-     ]
-    },
-    {
-     "name": "USB / terminals",
-     "note": "positions along the BOTTOM wall, from panel center",
-     "params": [
+      },
       {
        "name": "usb_dx",
        "default": "0.0",
-       "comment": "USB-C slot center offset — MEASURE"
+       "comment": "USB-C channel center offset along the bottom wall — MEASURE"
+      },
+      {
+       "name": "usb_axis_z",
+       "default": "9.35",
+       "comment": "USB-C shell axis above the frame's face (frame z) — MEASURE (the old opening's center)"
       },
       {
        "name": "usb_w",
-       "default": "12.0"
+       "default": "12.95",
+       "comment": "wall opening the plug and its overmold boot pass through: spec-max 12.35 + 2 x tol_hole"
       },
       {
        "name": "usb_h",
-       "default": "6.5"
+       "default": "7.1",
+       "comment": "wall opening height the plug and its boot pass through: spec-max 6.5 + 2 x tol_hole"
       },
       {
        "name": "term_open",
@@ -7907,6 +8534,16 @@
        "name": "lob_o",
        "default": "2.2",
        "comment": "lobe diagonal offset outboard of the cavity corner"
+      },
+      {
+       "name": "screw_l",
+       "default": "8.0",
+       "range": [
+        6.0,
+        1.0,
+        12.0
+       ],
+       "comment": "M2 self-tapper length the pilots are cut for (the BOM's M2 x 8)"
       }
      ]
     },
@@ -7987,6 +8624,25 @@
       {
        "name": "view_w",
        "default": "panel_w - 2*bez_lip"
+      },
+      {
+       "name": "pilot_l",
+       "default": "screw_l - (back_t - cb_h) + 0.5"
+      },
+      {
+       "name": "lobe_low_y",
+       "default": "inner_w/2 + lob_o + lob_d/2",
+       "comment": "the lobes' reach below the center"
+      },
+      {
+       "name": "ylob",
+       "default": "lobe_low_y - out_w/2",
+       "comment": "the straight bottom edge above that"
+      },
+      {
+       "name": "cable_w",
+       "default": "port_usbc_overmold_w() + 2*1.0",
+       "comment": "1.0 of play a side: the plug arrives tilted"
       }
      ]
     }
@@ -8099,6 +8755,11 @@
        "name": "hdr_pin_w",
        "default": "1.2",
        "comment": "width the solder fillet + pin occupies across the row"
+      },
+      {
+       "name": "hdr_body_w",
+       "default": "2.54",
+       "comment": "the header's plastic body across the row — it sits on the PCB back, where the ribs land"
       }
      ]
     },
@@ -8142,14 +8803,9 @@
        "comment": "per-side clearance around the shell in its opening"
       },
       {
-       "name": "usb_wall",
-       "default": "1.8",
-       "comment": "plug-end wall thickness — thin, so a recessed receptacle housing clears before the plug is home"
-      },
-      {
        "name": "usb_relief",
        "default": "0.5",
-       "comment": "chamfer depth on the outer face around the opening — bounded by the wall above and below the plug"
+       "comment": "relief step depth on the outer face around the opening — bounded by the wall above and below the plug"
       }
      ]
     },
@@ -8193,8 +8849,8 @@
       },
       {
        "name": "btn_from_usb",
-       "default": "11.3",
-       "comment": "button center down from the PCB's plug-end edge — MEASURE"
+       "default": "7.0",
+       "comment": "button center down from the PCB's plug-end EDGE (not the cavity end)"
       },
       {
        "name": "btn_dz",
@@ -8220,7 +8876,7 @@
     },
     {
      "name": "microSD",
-     "note": "the card the thumb flick is for",
+     "note": "the card the pry scallop is for",
      "params": [
       {
        "name": "sd_window",
@@ -8279,8 +8935,8 @@
       },
       {
        "name": "band_clear",
-       "default": "0.10",
-       "comment": "per-face clearance; 0 for a co-printed band"
+       "default": "0",
+       "comment": "per-face clearance; 0 = co-printed (the default), 0.10 = pressed-in inserts"
       },
       {
        "name": "seam_h",
@@ -8360,7 +9016,7 @@
       },
       {
        "name": "snap_beam_l",
-       "default": "6.8",
+       "default": "6.0",
        "comment": "free beam LENGTH — see the strain note below"
       },
       {
@@ -8370,13 +9026,13 @@
       },
       {
        "name": "snap_eng",
-       "default": "0.55",
-       "comment": "engagement depth (how far the hook stands proud)"
+       "default": "0.4",
+       "comment": "engagement depth (how far the hook stands past the plate edge)"
       },
       {
        "name": "snap_flat",
-       "default": "0.5",
-       "comment": "the flat that actually seats"
+       "default": "0.3",
+       "comment": "the vertical flat at the hook tip"
       },
       {
        "name": "snap_slot",
@@ -8384,45 +9040,30 @@
        "comment": "U-slot width freeing each side of the beam"
       },
       {
-       "name": "snap_lead",
+       "name": "snap_hold",
        "default": "45",
-       "comment": "insertion lead-in angle, degrees — 45, not 30: the hook prints on a"
+       "comment": "hook UNDERSIDE angle from horizontal — the retention face; 45 is the flattest a face-down print holds"
       },
       {
-       "name": "snap_ret_lock",
-       "default": "62",
-       "comment": "return angle at the plug end — effectively permanent"
-      },
-      {
-       "name": "snap_ret_free",
-       "default": "38",
-       "comment": "return angle at the free end — releases with intent"
+       "name": "snap_entry",
+       "default": "45",
+       "comment": "hook TOP face angle from horizontal — the face the plate's lead chamfer rides in over"
       }
      ]
     },
     {
-     "name": "Thumb flick",
+     "name": "Pry scallop",
      "note": "how the back comes off",
      "params": [
       {
        "name": "flick_w",
        "default": "9.0",
-       "comment": "lug width"
-      },
-      {
-       "name": "flick_proud",
-       "default": "1.1",
-       "comment": "how far the lug stands above the rim"
-      },
-      {
-       "name": "flick_ramp",
-       "default": "22",
-       "comment": "the ramp face a thumb climbs, degrees"
+       "comment": "scallop width along the far wall"
       },
       {
        "name": "flick_scoop",
        "default": "7.0",
-       "comment": "Ø of the scoop through the bezel rim that reaches it"
+       "comment": "Ø of the scoop through the bezel rim"
       }
      ]
     },
@@ -8457,13 +9098,18 @@
       },
       {
        "name": "rib_inset",
-       "default": "3.2",
-       "comment": "where the compliant ribs land, in from the cavity wall — must stand inboard of the pin rows"
+       "default": "4.2",
+       "comment": "where the compliant ribs land, in from the cavity wall — inboard of the header bodies and the side switches"
       },
       {
        "name": "rib_w",
        "default": "1.2",
        "comment": "rib thickness across the board — the crushing face"
+      },
+      {
+       "name": "rib_l",
+       "default": "5.0",
+       "comment": "rib length along the board"
       }
      ]
     },
@@ -8527,7 +9173,7 @@
       },
       {
        "name": "r_in",
-       "default": "max(0.6, r_out - wall)"
+       "default": "min(max(0.4, r_out - wall), tol_slide * sqrt(2) / (sqrt(2) - 1) - 0.1)"
       },
       {
        "name": "stack_eff",
@@ -8575,28 +9221,36 @@
       },
       {
        "name": "pin_in",
-       "default": "board_w/2 - hdr_inset - hdr_pin_w/2",
-       "comment": "pin row's inboard face"
+       "default": "board_w/2 - hdr_inset - max(hdr_pin_w, hdr_body_w)/2",
+       "comment": "header's inboard face"
       },
       {
        "name": "usb_free",
-       "default": "usb_proud - usb_wall"
+       "default": "usb_proud - tol_slide - wall"
       },
       {
-       "name": "usb_top",
-       "default": "z_usb + usb_shell_h/2 + usb_clear + usb_relief"
+       "name": "usb_ow",
+       "default": "usb_shell_w + 2*usb_clear"
+      },
+      {
+       "name": "usb_cham",
+       "default": "port_bridge_cham_for(usb_ow)"
       },
       {
        "name": "usb_bot",
        "default": "z_usb - usb_shell_h/2 - usb_clear - usb_relief"
       },
       {
+       "name": "snap_defl",
+       "default": "snap_eng + tol_press"
+      },
+      {
        "name": "snap_strain",
-       "default": "1.5 * snap_eng * snap_beam_t / (snap_beam_l * snap_beam_l)"
+       "default": "snap_strain(snap_beam_t, snap_defl, snap_beam_l)"
       },
       {
        "name": "btn_y",
-       "default": "yc/2 - btn_from_usb",
+       "default": "board_l/2 - btn_from_usb",
        "comment": "+Y is the plug end"
       },
       {
@@ -8625,14 +9279,6 @@
        "comment": "plate underside, in bezel coordinates"
       },
       {
-       "name": "snap_y_lock",
-       "default": "yc/2 - 4.2"
-      },
-      {
-       "name": "snap_y_free",
-       "default": "-yc/2 + 6.0"
-      },
-      {
        "name": "snap_half",
        "default": "(snap_w + 2*snap_slot)/2"
       },
@@ -8641,8 +9287,30 @@
        "default": "(ear_w + 2)/2"
       },
       {
+       "name": "snap_y_lock",
+       "default": "btn_y - (snap_half + ear_half)"
+      },
+      {
+       "name": "snap_y_free",
+       "default": "-yc/2 + 6.0"
+      },
+      {
        "name": "groove_mid_z",
        "default": "plate_z0 + back_t/2"
+      },
+      {
+       "name": "hook_hr",
+       "default": "snap_eng * tan(snap_hold)",
+       "comment": "underside's rise"
+      },
+      {
+       "name": "hook_er",
+       "default": "snap_eng * tan(snap_entry)",
+       "comment": "top face's rise"
+      },
+      {
+       "name": "groove_edge_h",
+       "default": "hook_hr + snap_flat + hook_er + tol_press/cos(snap_entry)"
       },
       {
        "name": "beam_root_z",
@@ -8693,7 +9361,7 @@
       },
       {
        "name": "seam_y_hi",
-       "default": "snap_y_lock - snap_half - 1.0"
+       "default": "-seam_y_lo"
       },
       {
        "name": "seam_x_in",
@@ -9043,8 +9711,7 @@
       },
       {
        "name": "r_in",
-       "default": "max(0.6, r_out - wall)",
-       "comment": "cavity corner radius"
+       "default": "min(r_out - wall, 0.5)"
       },
       {
        "name": "z_pcb_front",
@@ -9105,9 +9772,26 @@
        "comment": "ear bulge width along the wall"
       },
       {
+       "name": "usb_ch_w",
+       "default": "port_usbc_overmold_w() + 2*tol_hole"
+      },
+      {
+       "name": "usb_ch_h",
+       "default": "port_usbc_overmold_h() + 2*tol_hole"
+      },
+      {
+       "name": "usb_face_y",
+       "default": "board_l/2 + usb_proud",
+       "comment": "receptacle face, from center (−Y side)"
+      },
+      {
+       "name": "plate_relief",
+       "default": "max(0, z_usb + usb_ch_h/2 - bez_h)"
+      },
+      {
        "name": "chin_w",
-       "default": "usb_shell_w + 4",
-       "comment": "chin bulge width along the wall"
+       "default": "max(usb_shell_w + 4, usb_ch_w + 2*ear_skin)",
+       "comment": "chin bulge width: ear_skin either side of the pocket"
       },
       {
        "name": "lip_l",
@@ -9195,6 +9879,14 @@
       {
        "name": "vent_dy",
        "default": "opt_btn ? (btn_y + ear_w/2) + (vent_n-1)*vent_pitch/2 + vent_w/2 + 1.2 : 0"
+      },
+      {
+       "name": "snap_defl",
+       "default": "skirt_x/2 + snap_proud + 0.05 - xc/2"
+      },
+      {
+       "name": "snap_lever",
+       "default": "bez_h - snap_depth - face_t"
       }
      ]
     }
@@ -9279,6 +9971,16 @@
        "name": "hdr_inset",
        "default": "1.6",
        "comment": "PCB edge → header row centerline. The drawing offers two"
+      },
+      {
+       "name": "hdr_body_w",
+       "default": "2.54",
+       "comment": "the header's plastic body across the row — MEASURE; the lid bosses must clear it"
+      },
+      {
+       "name": "hdr_row_l",
+       "default": "22.86",
+       "comment": "header row length along Y, centered on the board (9 x 2.54) — MEASURE"
       },
       {
        "name": "brass_h",
@@ -9371,6 +10073,11 @@
        "name": "usb_a_proud",
        "default": "14.0",
        "comment": "shell overhang past the PCB edge — MEASURE. This is the"
+      },
+      {
+       "name": "usb_a_over",
+       "default": "3.0",
+       "comment": "how far the plug shell runs back OVER the PCB from its edge — MEASURE; the lid bosses stand clear of it"
       },
       {
        "name": "usb_a_clear",
@@ -9524,6 +10231,11 @@
        "name": "btn_body_p",
        "default": "0.4",
        "comment": "metal body overhang past the PCB edge — MEASURE"
+      },
+      {
+       "name": "btn_body_d",
+       "default": "3.5",
+       "comment": "switch body depth IN from its overhanging face (X) — MEASURE; the lid bosses must clear it"
       },
       {
        "name": "light_seam",
@@ -9788,7 +10500,7 @@
      "params": [
       {
        "name": "pillars_in",
-       "default": "(headers != \"none\")"
+       "default": "(headers != \"none\") && port != \"usb_a"
       },
       {
        "name": "cav_d",
@@ -9802,7 +10514,7 @@
       },
       {
        "name": "r_in",
-       "default": "max(0.6, r_out - wall)"
+       "default": "min(max(0.4, r_out - wall), tol_slide * sqrt(2) / (sqrt(2) - 1) - 0.1)"
       },
       {
        "name": "z_pcb_front",
@@ -9849,8 +10561,8 @@
       },
       {
        "name": "usb_free",
-       "default": "usb_a_proud - wall",
-       "comment": "insertion length left to the plug"
+       "default": "usb_a_proud - tol_slide - wall",
+       "comment": "insertion length left to the plug: the"
       },
       {
        "name": "usb_slide",
@@ -9876,8 +10588,41 @@
        "comment": "the ear wraps the paddle recess"
       },
       {
+       "name": "om_w",
+       "default": "port_usbc_overmold_w() + 2*tol_slide"
+      },
+      {
+       "name": "om_h",
+       "default": "port_usbc_overmold_h() + 2*tol_slide"
+      },
+      {
+       "name": "om_cham",
+       "default": "port_bridge_cham_for(om_w)"
+      },
+      {
+       "name": "om_z0",
+       "default": "z_usb - om_h/2",
+       "comment": "counterbore floor"
+      },
+      {
+       "name": "om_z1",
+       "default": "z_usb + om_h/2",
+       "comment": "top of the envelope box (chamfers start here)"
+      },
+      {
+       "name": "om_y_rf",
+       "default": "-(board_l/2 + usb_proud) + tol_slide",
+       "comment": "the receptacle face, board floated inward"
+      },
+      {
+       "name": "om_y_out",
+       "default": "-(yo/2 + chin_bump) - 1",
+       "comment": "past the chin's outer face"
+      },
+      {
        "name": "chin_w",
-       "default": "usb_ow + 4"
+       "default": "max(usb_ow + 4, is_a ? 0 : om_w + 2*1.2)",
+       "comment": "the counterbore keeps 1.2 of chin each side"
       },
       {
        "name": "pad_beam",
@@ -10000,10 +10745,6 @@
        "default": "stack_eff - (pillars_in ? brass_h : 0)"
       },
       {
-       "name": "hole_iy_usb_eff",
-       "default": "(is_a && collar_on) ? max(hole_iy_usb, collar_l + stand_d/2 + 0.3 + tol_slide) : hole_iy_usb"
-      },
-      {
        "name": "mark_w",
        "default": "mark_word_ink_w(mark_word, mark_word_h)"
       },
@@ -10104,6 +10845,18 @@
       {
        "name": "band_under",
        "default": "(z_usb - usb_oh/2 - band_notch) - seam_z0"
+      },
+      {
+       "name": "band_under_c",
+       "default": "(om_z0 - band_notch) - seam_z0"
+      },
+      {
+       "name": "usb_a_top",
+       "default": "z_usb + usb_a_h/2 + port_bridge_cham_for(usb_ow)"
+      },
+      {
+       "name": "sw_x0",
+       "default": "board_w/2 + btn_body_p - btn_body_d"
       }
      ]
     }
@@ -12173,8 +12926,8 @@
       },
       {
        "name": "side_open_h",
-       "default": "16.0",
-       "comment": "side slot height — a tall slot, MEASURE"
+       "default": "10.0",
+       "comment": "side slot height — MEASURE; capped by the snap windows either side of it (asserted)"
       },
       {
        "name": "side_open_dy",
@@ -12299,6 +13052,21 @@
        "comment": "window clearance per side — the catalog default (a"
       },
       {
+       "name": "snap_h",
+       "default": "1.6",
+       "comment": "window / nub height (Z)"
+      },
+      {
+       "name": "snap_depth",
+       "default": "2.6",
+       "comment": "window center below the bezel rim"
+      },
+      {
+       "name": "snap_proud",
+       "default": "0.25",
+       "comment": "nub stand-proud of the skirt: 0.2 of travel over the cavity wall, which the"
+      },
+      {
        "name": "pry_notch",
        "default": "true",
        "comment": "fingernail notches in the bezel's BOTTOM (-Y) wall rear rim, either side of the USB"
@@ -12417,12 +13185,25 @@
        "default": "snap_window(nub_w, snap_play)"
       },
       {
+       "name": "snap_defl",
+       "default": "skirt_x/2 + snap_proud + 0.05 - xc/2"
+      },
+      {
+       "name": "snap_lever",
+       "default": "bez_h - snap_depth - face_t"
+      },
+      {
        "name": "vent_z0",
        "default": "face_t + 1.0"
       },
       {
        "name": "vent_z1",
        "default": "bez_h - snap_depth - snap_h/2 - 0.8"
+      },
+      {
+       "name": "cable_w",
+       "default": "port_usbc_overmold_w() + 2*1.0",
+       "comment": "1.0 of play a side: the plug arrives tilted"
       }
      ]
     }
@@ -12515,7 +13296,7 @@
       {
        "name": "face_h",
        "default": "50.0",
-       "comment": "front face height"
+       "comment": "front face height — a minimum: grown to stud_gap + stud_head + 4 so both heads land on the face"
       },
       {
        "name": "face_t",
@@ -12534,6 +13315,31 @@
        "name": "louver_gap",
        "default": "2.2",
        "comment": "louver BLADE thickness + play — MEASURE your vents (blades run 1.5-2.0; at"
+      }
+     ]
+    },
+    {
+     "name": "Quality",
+     "note": "",
+     "params": [
+      {
+       "name": "stud_span",
+       "default": "stud_gap + stud_head + 4"
+      },
+      {
+       "name": "riser_l",
+       "default": "50.0",
+       "comment": "riser run along the slope"
+      },
+      {
+       "name": "riser_w",
+       "default": "max(46.0, stud_span)",
+       "comment": "46 = the original riser; wider only when the studs need it"
+      },
+      {
+       "name": "vent_fh",
+       "default": "max(face_h, stud_span)",
+       "comment": "the vent face actually drawn"
       }
      ]
     }
