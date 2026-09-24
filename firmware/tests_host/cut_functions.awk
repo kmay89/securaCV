@@ -15,7 +15,7 @@
 # Users (firmware/tests_host/Makefile): test_nvs_manager_lock.cpp (NvsManager's
 # constructor, destructor, begin() and end()), test_nvs_store_result.cpp (the
 # NVS store helpers and the puts under them) and test_chain_persist.cpp
-# (securacv_witness.cpp's chain persist glue).
+# (securacv_witness.cpp's chain persist and birth-stamp glue).
 BEGIN {
   n = split(sigs, sig, "|")
   if (n == 0) bad = "no signatures given (-v sigs='a(|b(')"

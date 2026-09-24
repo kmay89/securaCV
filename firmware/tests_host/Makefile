@@ -377,16 +377,17 @@ NVSSTORE_BIN  = $(BUILD_DIR)/test_nvs_store_result
 # only a write that landed moves seq_persisted and counts, a failed one is
 # counted beside it, retried after the next record and reported once per
 # streak. test_chain_persist.cpp tests the header, then runs
-# securacv_witness.cpp's own persist glue, cut out verbatim, over a fake NVS
-# and stubs/witness_glue. The record path's call into that
+# securacv_witness.cpp's own persist and birth-stamp glue, cut out verbatim,
+# over a fake NVS and stubs/witness_glue. The record path's call into that
 # glue is a one-line grep: the recipe fails if witness_create_record_gps()
 # stops calling persist_chain_if_due().
 CHAINPERSIST_HDRS = ../common/witness/chain_persist.h $(CHAINST_HDR) \
+                    ../common/identity/birth_day.h \
                     ../canary/lib/securacv_witness/src/securacv_witness.h \
                     ../canary/include/canary_config.h ../canary/include/log_level.h \
                     $(wildcard stubs/witness_glue/*.h)
 CHAINPERSIST_SRC  = ../canary/lib/securacv_witness/src/securacv_witness.cpp
-CHAINPERSIST_SIGS = static bool persist_chain_blob(|void witness_persist_chain_state(|static void persist_chain_if_due(
+CHAINPERSIST_SIGS = static bool persist_chain_blob(|void witness_persist_chain_state(|static void persist_chain_if_due(|bool witness_note_wall_clock(
 CHAINPERSIST_INC  = $(BUILD_DIR)/chain_persist_glue.inc
 CHAINPERSIST_BIN  = $(BUILD_DIR)/test_chain_persist
 

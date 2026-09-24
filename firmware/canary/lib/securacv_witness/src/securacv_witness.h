@@ -210,9 +210,11 @@ void witness_persist_chain_state();
 
 // Offer the current wall clock to the birth-day recorder. Safe and cheap to
 // call from the main loop at any cadence: it returns immediately once a day is
-// recorded (which is once, for the life of the key) or while the clock is still
-// the boot epoch. Returns true only on the one call that actually stamped —
-// callers can log it, but nothing depends on catching that moment.
+// recorded (which is once, for the life of the key), while the clock is still
+// the boot epoch, or for a minute after a stamp whose NVS write failed (the
+// failure is reported once, and nothing in RAM claims the stamp). Returns true
+// only on the one call that actually stamped — callers can log it, but
+// nothing depends on catching that moment.
 bool witness_note_wall_clock(uint32_t unix_s);
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -1,8 +1,8 @@
-/* Minimal Arduino stub for compiling securacv_witness.cpp's chain-persist
- * glue (cut out by cut_functions.awk) under test_chain_persist.cpp: a Serial
- * that keeps its last line and counts them, and a millis() the test sets.
- * securacv_witness.h includes <Arduino.h> for these and nothing else the cut
- * functions use. */
+/* Minimal Arduino stub for compiling securacv_witness.cpp's chain-persist and
+ * birth-stamp glue (cut out by cut_functions.awk) under test_chain_persist.cpp:
+ * a Serial that keeps its last line and counts them, and a millis() the test
+ * sets. securacv_witness.h includes <Arduino.h> for these and nothing else
+ * the cut functions use. */
 #ifndef STUB_WITNESS_GLUE_ARDUINO_H
 #define STUB_WITNESS_GLUE_ARDUINO_H
 

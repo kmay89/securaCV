@@ -1,7 +1,8 @@
 /* Host tests for the chain-state persist: the decision in
  * firmware/common/witness/chain_persist.h, and securacv_witness.cpp's own
- * glue around it (persist_chain_blob(), witness_persist_chain_state() and
- * persist_chain_if_due()), cut out verbatim by cut_functions.awk (the Makefile writes
+ * glue around it (persist_chain_blob(), witness_persist_chain_state(),
+ * persist_chain_if_due() and the birth stamp's witness_note_wall_clock()),
+ * cut out verbatim by cut_functions.awk (the Makefile writes
  * build/chain_persist_glue.inc) and compiled over a fake NVS.
  *
  * THE FAILURE THIS PREVENTS (repo sweep F55). witness_persist_chain_state()
@@ -13,6 +14,11 @@
  * write must leave seq_persisted where NVS is, be counted apart from the
  * writes that landed, be tried again after the next record, and be reported
  * once per streak.
+ *
+ * The birth stamp (witness_note_wall_clock) is the other caller that reads
+ * nvs_store_u32 now. Its caller runs every loop pass, so a failed stamp must
+ * not claim a birth NVS lacks, must not write the day after a flag that did
+ * not land, and must wait a minute between attempts.
  *
  * What this does not prove: the NVS itself, the record path around
  * persist_chain_if_due() (the Makefile checks witness_create_record_gps()
@@ -28,6 +34,7 @@
 
 #include "securacv_witness.h"  // the real DeviceIdentity / SystemHealth, over stubs/witness_glue
 #include "canary_config.h"
+#include "identity/birth_day.h"
 #include "witness/chain_persist.h"
 #include "witness/chain_state.h"
 
@@ -119,15 +126,18 @@ static void test_settle_refuses_a_null_argument() {
 static DeviceIdentity g_device;
 static SystemHealth g_health;
 
-// A fake NVS: the chain blob. A put to a refused key (or any put, with
-// refuse_all) fails the way nvs_store_bytes now reports it.
+// A fake NVS: the chain blob and the two birth entries. A put to a refused
+// key (or any put, with refuse_all) fails the way nvs_store_* now reports it.
 struct FakeNvs {
   bool refuse_all = false;
   const char* refuse_key = nullptr;
   int chain_puts = 0;
+  int u32_puts = 0;
   int unexpected = 0;  // a put to any other key, or a blob of the wrong size
   bool blob_present = false;
   uint8_t blob[chain_state::BLOB_LEN] = {0};
+  bool born_set = false, born_ex_set = false;
+  uint32_t born = 0, born_ex = 0;
 };
 static FakeNvs g_nvs;
 
@@ -145,6 +155,22 @@ bool nvs_store_bytes(const char* key, const uint8_t* data, size_t len) {
   if (refused(key)) return false;
   std::memcpy(g_nvs.blob, data, len);
   g_nvs.blob_present = true;
+  return true;
+}
+
+bool nvs_store_u32(const char* key, uint32_t val) {
+  g_nvs.u32_puts++;
+  if (refused(key)) return false;
+  if (std::strcmp(key, NVS_KEY_BORN) == 0) {
+    g_nvs.born = val;
+    g_nvs.born_set = true;
+  } else if (std::strcmp(key, NVS_KEY_BORN_EX) == 0) {
+    g_nvs.born_ex = val;
+    g_nvs.born_ex_set = true;
+  } else {
+    g_nvs.unexpected++;
+    return false;
+  }
   return true;
 }
 
@@ -324,6 +350,74 @@ static void test_nvs_never_lags_an_interval_without_a_retry() {
   CHECK(g_nvs.unexpected == 0);
 }
 
+// ── the birth stamp: no stamp claimed that NVS lacks, and no hot retry ──────
+static void test_a_failed_birth_stamp_claims_nothing_and_waits() {
+  reset_chain(0);
+  const uint32_t unix_s = birth::kClockFloor + 12345u;
+  const uint32_t day = birth::day_of(unix_s);
+  g_device.key_is_new = true;
+  g_device.key_born_ms = 0;
+  g_host_millis = 100000u;
+  const int lines = Serial.lines;
+
+  // The flag's write is refused: the day is not written after it, and RAM
+  // claims no stamp. Reported once.
+  g_nvs.refuse_key = NVS_KEY_BORN_EX;
+  CHECK(!witness_note_wall_clock(unix_s));
+  CHECK(!g_nvs.born_set);
+  CHECK(g_device.born_day == 0 && !g_device.born_exact);
+  CHECK(Serial.lines == lines + 1);
+  CHECK(std::strstr(Serial.last, "not stored") != nullptr);
+
+  // The loop calls again at once, and for the rest of the minute: no write.
+  const int puts = g_nvs.u32_puts;
+  g_host_millis += 1000u;
+  CHECK(!witness_note_wall_clock(unix_s));
+  g_host_millis += 58000u;
+  CHECK(!witness_note_wall_clock(unix_s));
+  CHECK(g_nvs.u32_puts == puts);
+
+  // A minute on it tries again; this time the flag lands and the day does
+  // not. Still no stamp in RAM, and the streak is not reported again.
+  g_nvs.refuse_key = NVS_KEY_BORN;
+  g_host_millis += 1000u;
+  CHECK(!witness_note_wall_clock(unix_s));
+  CHECK(g_nvs.u32_puts == puts + 2);
+  CHECK(g_nvs.born_ex_set && !g_nvs.born_set);
+  CHECK(g_device.born_day == 0);
+  CHECK(Serial.lines == lines + 1);
+
+  // Another minute, NVS takes both: the stamp is written and then held.
+  g_nvs.refuse_key = nullptr;
+  g_host_millis += 60000u;
+  CHECK(witness_note_wall_clock(unix_s));
+  CHECK(g_nvs.born_set && g_nvs.born == day);
+  CHECK(g_nvs.born_ex_set && g_nvs.born_ex == 1u);  // made this boot, minutes ago
+  CHECK(g_device.born_day == day && g_device.born_exact);
+  CHECK(std::strstr(Serial.last, "[BIRTH]") != nullptr);
+  const int puts_after = g_nvs.u32_puts;
+  CHECK(!witness_note_wall_clock(unix_s));         // recorded: never again
+  CHECK(g_nvs.u32_puts == puts_after);
+}
+
+// ── the birth stamp's wait survives millis() wrapping ───────────────────────
+static void test_the_birth_retry_wait_is_wrap_safe() {
+  reset_chain(0);
+  const uint32_t unix_s = birth::kClockFloor + 777u;
+  g_device.key_is_new = false;
+  g_nvs.refuse_all = true;
+  g_host_millis = 0xFFFFF000u;
+  CHECK(!witness_note_wall_clock(unix_s));
+  const int puts = g_nvs.u32_puts;
+  g_host_millis = 0x00000100u;                     // 4.35 s later, wrapped
+  CHECK(!witness_note_wall_clock(unix_s));
+  CHECK(g_nvs.u32_puts == puts);                   // still waiting
+  g_nvs.refuse_all = false;
+  g_host_millis = 0xFFFFF000u + 60000u;            // a minute on, wrapped
+  CHECK(witness_note_wall_clock(unix_s));
+  CHECK(g_nvs.born_set && !g_device.born_exact && g_nvs.born_ex == 0u);
+}
+
 int main() {
   test_due_follows_the_interval_and_the_streak();
   test_settle_moves_and_counts_only_what_landed();
@@ -332,6 +426,8 @@ int main() {
   test_a_failed_persist_is_retried_not_forgotten();
   test_a_failed_direct_persist_is_retried_after_the_next_record();
   test_nvs_never_lags_an_interval_without_a_retry();
+  test_a_failed_birth_stamp_claims_nothing_and_waits();
+  test_the_birth_retry_wait_is_wrap_safe();
 
   if (g_failures == 0) { std::printf("ALL chain-persist tests PASSED\n"); return 0; }
   std::printf("FAILED: %d assertion(s)\n", g_failures);

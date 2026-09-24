@@ -271,7 +271,12 @@ bool witness_provision_device() {
   }
   g_device.seq_persisted = g_device.seq;
   g_device.boot_count = nvs_load_u32(NVS_KEY_BOOTS, 0) + 1;
-  nvs_store_u32(NVS_KEY_BOOTS, g_device.boot_count);
+  if (!nvs_store_u32(NVS_KEY_BOOTS, g_device.boot_count)) {
+    // Once per boot by construction. The count this boot reports stands; the
+    // next boot reads the old one and counts this boot again.
+    Serial.printf("[WARN] Boot count %u not stored (NVS write failed): the next boot "
+                  "will repeat it\n", (unsigned)g_device.boot_count);
+  }
   g_device.log_seq = nvs_load_u32(NVS_KEY_LOGSEQ, 0);
   // The genesis head goes through the same persist as every other write, so
   // a write that does not land is counted, reported and retried after the
@@ -316,6 +321,12 @@ static void update_chain(const uint8_t payload_hash[32], uint32_t tb, WitnessRec
 }
 
 bool witness_note_wall_clock(uint32_t unix_s) {
+  // The caller runs every loop pass, so a stamp whose write failed waits a
+  // minute before it tries again, and the failure is reported once.
+  static bool s_write_failed = false;
+  static uint32_t s_failed_at_ms = 0;
+  if (s_write_failed && (uint32_t)(millis() - s_failed_at_ms) < 60000u) return false;
+
   birth::Stamp stored;
   stored.day = g_device.born_day;
   stored.exact = g_device.born_exact;
@@ -332,9 +343,20 @@ bool witness_note_wall_clock(uint32_t unix_s) {
 
   // Order matters: the day is what `recorded()` tests, so writing it last
   // means a power cut between the two writes leaves no half-stamped birth —
-  // the next boot simply tries again.
-  nvs_store_u32(NVS_KEY_BORN_EX, fresh.exact ? 1 : 0);
-  nvs_store_u32(NVS_KEY_BORN, fresh.day);
+  // the next boot simply tries again. A failed write is the same case: the
+  // day is not written after a flag that did not land, and nothing in RAM
+  // claims a stamp NVS does not hold. The stamp is tried again later.
+  if (!nvs_store_u32(NVS_KEY_BORN_EX, fresh.exact ? 1 : 0) ||
+      !nvs_store_u32(NVS_KEY_BORN, fresh.day)) {
+    if (!s_write_failed) {
+      Serial.printf("[WARN] BIRTH: key day %lu not stored (NVS write failed); "
+                    "retrying every minute\n", (unsigned long)fresh.day);
+    }
+    s_write_failed = true;
+    s_failed_at_ms = millis();
+    return false;
+  }
+  s_write_failed = false;
   g_device.born_day = fresh.day;
   g_device.born_exact = fresh.exact;
 
