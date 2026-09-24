@@ -140,8 +140,8 @@ CURATED = [
                             "opt_mount", "opt_weep", "screw_head", "opt_shield"],
         "part_labels": {
             "all": "Assembled preview (not for printing)",
-            "base": "Base — the tub",
-            "lid": "Lid",
+            "base": "Back plate — the chassis",
+            "lid": "Shell — face, walls and posts",
             "coupon": "Clip-fit coupon (print first)",
             "gasket": "Gasket ring — print in TPU",
             "shield": "Solar radiation shield",
@@ -150,10 +150,12 @@ CURATED = [
         "part_info": {
             "all": "Every part in place, for looking around — pick a single "
                    "part when you want an STL to print.",
-            "base": "The tub the boards and battery clip into. Prints flat, "
-                    "open side up, no supports.",
-            "lid": "Snaps onto the base; prints face-down. Your options "
-                   "carve its windows, vents and ports.",
+            "base": "The plate the boards and battery clip into. It nests "
+                    "inside the shell's walls and takes the four short screws "
+                    "from the back; prints flat, boards side up, no supports.",
+            "lid": "The one-piece show part — face, side walls and the screw "
+                   "posts — printed face-down; the only seam is on the back. "
+                   "Your options carve its windows, vents and ports.",
             "coupon": "A one-clip fit tester for this case — print it before "
                       "a full lid to dial in the snap.",
             "gasket": "The soft seal ring for weather builds — print in TPU, "
@@ -212,8 +214,8 @@ CURATED = [
                             "mount_style", "opt_weep", "seal_mid_posts"],
         "part_labels": {
             "all": "Assembled preview (not for printing)",
-            "back": "Back shell",
-            "front": "Front face",
+            "back": "Back plate — the chassis",
+            "front": "Shell — face, walls and posts",
             "gasket": "Gasket ring — print in TPU",
             "bracket": "Wall bracket",
             "knob": "Hinge knob",
@@ -222,10 +224,13 @@ CURATED = [
         "part_info": {
             "all": "Every part in place, for looking around — pick a single "
                    "part when you want an STL to print.",
-            "back": "The wall-side shell. Boards clip in; the hinge knuckle "
-                    "or keyholes grow from its back.",
-            "front": "The face with the lens aperture and clear-disc seat — "
-                     "screws into the back with 4× M2.",
+            "back": "The plate the boards clip into. It nests inside the "
+                    "shell's walls and takes the short M2 screws from the "
+                    "back; the keyholes are in it.",
+            "front": "The one-piece show part — the face with the lens "
+                     "aperture and clear-disc seat, the side walls, the screw "
+                     "posts and the hinge fins — printed face-down; the only "
+                     "seam is on the back.",
             "gasket": "The soft seal ring for weather builds — print in TPU; "
                       "switch Weather seal ON first.",
             "bracket": "The wall bracket the hinge clicks into — four screws "
@@ -281,18 +286,21 @@ CURATED = [
                             "opt_weep"],
         "part_labels": {
             "all": "Assembled preview (not for printing)",
-            "body": "Body",
-            "face": "Face",
+            "body": "Body — the back plate, the chassis",
+            "face": "Face — the one-piece shell",
             "plate": "Wall plate",
             "gasket": "Gasket ring — print in TPU",
         },
         "part_info": {
             "all": "Every part in place, for looking around — pick a single "
                    "part when you want an STL to print.",
-            "body": "The main shell the module stack lives in — it hangs on "
-                    "the plate's T-studs and locks with the hidden screw.",
-            "face": "The visible front: lens aperture, button hole, and the "
-                    "gasket groove behind.",
+            "body": "The plate the module stack lives on. It nests inside "
+                    "the face's walls on the short screws from the back, "
+                    "hangs on the wall plate's T-studs and locks with the "
+                    "hidden screw.",
+            "face": "The one-piece show part — lens aperture, button hole, "
+                    "side walls and posts, the gasket ledge inside — printed "
+                    "face-down; the only seam is against the wall plate.",
             "plate": "The wall plate with the T-studs. The wedge angles live "
                      "here — the case aims wherever the plate points.",
             "gasket": "The soft TPU ring that seals face to body against "
@@ -342,8 +350,8 @@ CURATED = [
                             "mount_style"],
         "part_labels": {
             "all": "Assembled preview (not for printing)",
-            "back": "Back shell",
-            "front": "Front face — the radome",
+            "back": "Back plate — the chassis",
+            "front": "Shell — the radome face, walls and posts",
             "gasket": "Gasket ring — print in TPU",
             "bracket": "Wall bracket",
             "knob": "Hinge knob",
@@ -351,10 +359,13 @@ CURATED = [
         "part_info": {
             "all": "Every part in place, for looking around — pick a single "
                    "part when you want an STL to print.",
-            "back": "The mounting shell — the radar carrier clips in with "
-                    "the XIAO hanging beneath it.",
-            "front": "The radome face. The window over the antenna stays "
-                     "thin, flat and empty — that's the physics working.",
+            "back": "The plate the radar carrier clips into, the XIAO "
+                    "hanging beneath it; it nests inside the shell's walls "
+                    "and takes the four short M2 screws from the back.",
+            "front": "The one-piece show part — radome face, side walls, "
+                     "posts and hinge fins, printed face-down. The window "
+                     "over the antenna stays thin, flat and empty — that's "
+                     "the physics working.",
             "gasket": "The soft TPU seal ring — switch Weather seal ON "
                       "first; indoor ceilings rarely need it.",
             "bracket": "Wall bracket for the hinge mount — same part the "

@@ -75,7 +75,6 @@ opt_seal   = false;   // perimeter TPU gasket + drip-edge front (indoor ceilings
 opt_weep   = false;   // Ø2 weep at the bottom wall's floor corner (seal mode): condensate leaves
 weep_d     = 2.0;     // weep bore  // [1.5:0.5:3]
 seal_mid_posts = false; // (seal mode) one extra screw post mid-way along each ±X wall
-head_seal  = false;  // (seal mode, screws on the face) O-ring under each front screw head — from the back a sealed build always glands them — needs screw_head = "pan"
 opt_mount  = true;    // mounting features per mount_style
 mount_style = "hinge"; // ["hinge","keyhole","both"]
 
@@ -158,14 +157,12 @@ mag_dy = -14.0;      // magnet pocket center Y, from the board center
 wall_t   = 2.0;    // side wall thickness (auto-thickened in seal mode) — core_wall()
 floor_t  = 2.0;    // back thickness
 lid_t    = 2.0;      // face thickness OUTSIDE the radome window
-lip_h    = 4.0;    // front lip insertion into the back shell
-lip_t    = 1.2;    // lip wall thickness
 corner_r = 3.0;    // outside corner radius — core_corner_r()
 cav_extra = 1.0;   // headroom over the carrier's tallest part; raise it for more antenna-to-radome gap (asserted >= 3 mm)
 floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner  // [0:0.2:1.2]
                    // The sharp notch there was the crack-starter in every flat-printed shell — a corner drop
                    // hinges the floor about it along one layer boundary.
-lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
+lid_key    = true; // poka-yoke: a rib on the +Y bore wall and a slot in the plate's edge — four corner posts fit
                    // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 
 /* [Print tolerances] — defaults = the catalog trio (core_tol_*(), canary_core_lib), dialed on the fit coupon */
@@ -191,7 +188,6 @@ screw_head   = "pan"; // ["pan","flat"] pan = flat-floored seat (what head_seal 
 screw_d      = 1.6;   // (m2)
 screw_head_d = 4.0;   // (m2 pan)
 screw_head_h = 2.0;   // (m2 pan) seat depth; the front carries a pad under it (head_pad)
-screw_from   = "back"; // ["back","face"] back = the face is unbroken: screws enter a seat in the back and thread into bosses under the front (the house default; opening it means taking it down first); face = heads on the front
 
 /* [USB-C port] — the stacked XIAO's port, bottom (-Y) wall */
 usb_w  = 12.0;       // clears rugged cable boots (the receptacle face sits ~2.6 mm behind the wall)  // [9:0.5:14]
@@ -225,11 +221,9 @@ kh_face    = 1.0;    // face web the screw head grips behind — mount_kh_face()
 kh_inset   = 12.0;   // pocket centers at y = ±(inner_y/2 − kh_inset), on the X centerline; one centered pocket on a case too short for two
 
 /* [Weather sealing] */
-gasket_w      = 1.6;  // gasket groove width in the back's rim (the printed gasket is 0.5 narrower)
-gasket_groove = 1.2;  // groove depth into the back shell's rim
-gasket_proud  = 0.3;  // how far the printed gasket stands proud of its groove, uncompressed — what the front screws squeeze
-skirt_h       = 3.0;  // drip-edge skirt drop over the back shell's wall (sheds water off the seam)
-skirt_t       = 1.6;  // drip-edge skirt wall thickness
+gasket_w      = 1.6;  // gasket groove width in the shell's ledge (the printed gasket is 0.5 narrower)
+gasket_groove = 1.2;  // groove depth into the ledge
+gasket_proud  = 0.3;  // how far the printed gasket stands proud of its groove, uncompressed — what the plate screws squeeze
 usb_cover     = true; // (seal mode) shallow recess framing the USB opening for a flanged silicone plug
 usb_cov_pad   = 2.0;  // recess margin around the USB opening
 usb_cov_dep   = 1.0;  // recess depth into the outer wall face
@@ -264,7 +258,10 @@ $fa = 3; $fs = 0.4;
 // ----------------------------------------------------------------------------
 //  Derived geometry
 // ----------------------------------------------------------------------------
-wall_eff   = e_seal ? max(wall_t, gasket_w + 2*core_min_wall()) : wall_t;   // 1.2 mm cheek each side of the groove
+// the piston plate (canary_core_lib pl_*): the plate seats on a ledge inside
+// the walls and the parting line is the back face itself
+ledge_w  = pl_ledge(e_seal, gasket_w);                   // gasket + a cheek each side, or one contact band
+wall_eff = max(wall_t, ledge_w + core_min_wall());       // the skin outside the plate's bore stays a structural wall
 scr_d   = (screw_size == "m2") ? screw_d : scr_pilot(screw_size);
 scr_c   = max(scr_d + 2*tol_hole, scr_clear(screw_size));
 head_d  = (screw_size == "m2" && screw_head == "pan") ? screw_head_d
@@ -274,16 +271,20 @@ head_h  = (screw_size == "m2" && screw_head == "pan") ? screw_head_h
 ins_od  = (screw_size == "m2") ? insert_d : scr_insert_d(screw_size) + 0.3;
 ins_h   = (screw_size == "m2") ? insert_h : scr_insert_h(screw_size);
 pd = max(screw_insert ? max(post_d, ins_od + 3.0) : post_d, scr_post_min(screw_size));
-e_back   = screw_from == "back";
-// a sealed build seats an O-ring under every back screw head: the seat is a
-// hole through the seal line from outside (canary_core_lib bk_seat_cut)
-e_gland  = e_back && e_seal;
-head_pad = (!e_back && screw_head == "pan") ? max(0, head_h + 1.0 - lid_t) : 0;
+// a sealed build seats an O-ring under every plate screw head: the seat is a
+// hole through the seal line from outside (canary_core_lib pl_seat_cut)
+e_gland  = e_seal;
 clip_stack  = clip_clear + clip_t;
-radar_standoff = stack_sock_h + xiao_below;
+// seal mode lifts the whole stack so the USB opening's bottom keeps a 0.4 web
+// over the gasket groove's TOP — at the raw numbers the opening cut the
+// groove's outer cheek away over the port's width and bared the ring's flank
+// to the plug (the combo port found it)
+usb_axis0  = xiao_below - port_usbc_shell_h()/2 + xiao_usb_z;
+stack_lift = e_seal ? max(0, gasket_groove + 0.4 - (usb_axis0 - usb_h/2)) : 0;
+radar_standoff = stack_sock_h + xiao_below + stack_lift;
 post_corner = pd + 1.5;
-// bottom margin: the front's lip (tol_slide + lip_t inside the wall) must not land on the carrier's edge
-bot_margin  = max(board_clear, tol_slide + lip_t + 0.2);
+// bottom margin: the wall's floor cove must not land on the carrier's edge
+bot_margin  = max(board_clear, floor_cove + 0.4);
 
 inner_x = radar_w + 2*(clip_stack + board_clear) + 0.5 + 2*post_corner;
 inner_y = bot_margin + radar_l + 0.6 + 2 + 6; // board at the USB wall + end stops + wire room + top margin
@@ -292,7 +293,7 @@ cav_d_min = radar_standoff + pcb_t + radar_front_h + cav_extra;
 // its axis is half a shell below that face
 usb_axis = radar_standoff - stack_sock_h - port_usbc_shell_h()/2 + xiao_usb_z;
 usb_zc  = floor_t + usb_axis;
-cav_d   = e_seal ? max(cav_d_min, usb_axis + usb_h/2 + 1.5 + gasket_groove + (usb_cover ? usb_cov_pad : 0)) : cav_d_min;
+cav_d   = e_seal ? max(cav_d_min, usb_axis + usb_h/2 + 1.5 + (usb_cover ? usb_cov_pad : 0)) : cav_d_min;
 // actual antenna-to-radome air gap: from the AiP top to the thinned window's
 // inner face (cavity headroom above the tallest part + the window recess)
 rad_gap = (radar_front_h - ant_h) + (cav_d - cav_d_min + cav_extra) + (lid_t - radome_t);
@@ -310,9 +311,9 @@ base_d = floor_t + cav_d;
 // MUST RENDER EMPTY. `lift` separates intended face-on-face contact from real
 // interference: coplanar faces intersect to a zero-volume patch that CGAL
 // reports as non-2-manifold, which is a dirty render, not a pass.
-// `turned` seats the lid rotated 180° about Z — the poka-yoke CONTROL: with
-// lid_key on, this must NOT be empty (the lip lands on the key rib). A gate
-// that can only pass has proved nothing; this is the case it must fail.
+// `turned` seats the shell rotated 180° about Z — the poka-yoke CONTROL: with
+// lid_key on, this must NOT be empty (the plate's edge lands on the key rib).
+// A gate that can only pass has proved nothing; this is the case it must fail.
 module sense_fitcheck(lift = 0.1, turned = false) {
     intersection() { translate([0, 0, base_d + lift]) rotate([0, 0, turned ? 180 : 0]) front(); back(); }
 }
@@ -323,28 +324,29 @@ rad_cx = radar_cx + rad_dx;                 // radome window center
 rad_cy = radar_cy + rad_dy;
 usb_cx = radar_cx + usb_dx;
 
-mount_extra = (e_mount && (m_style == "keyhole" || m_style == "both")) ? kh_extra : 0;
-// screws from the back (canary_core_lib bk_*): the length, the head's recess
-// into the back and the boss under the front, derived together; `face_skin` is
-// the unbroken plate left over the screw tip
-face_skin = 1.0;
-bk_L      = e_back ? bk_len(screw_size, screw_head, mount_extra, base_d, lid_t, face_skin) : 0;
-bk_r      = e_back ? bk_recess(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0;
-boss_h    = e_back ? bk_boss_h(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0;
-post_h    = cav_d - head_pad - boss_h - bk_relief();   // the rim is the datum: the boss stops bk_relief() short of the post
-assert(!e_back || post_h >= 2.0, str("screws from the back: the boss (", boss_h, " mm) leaves a ", post_h, " mm post — use screw_from=\"face\""));
-assert(!e_gland || screw_head == "pan", "a sealed build seats an O-ring under each back screw head — that needs screw_head = \"pan\"");
-assert(!e_gland || bk_bear(screw_size, screw_head, bk_r) + oring_gland_h(scr_oring_cs(screw_size)) + bk_web() <= mount_extra + floor_t + 1e-9,
-       "sealed back seats: the O-ring gland breaks out of the floor — add the keyhole slab (opt_mount) or thicken floor_t");
-assert(!e_back || !(screw_insert && boss_h < ins_h + 1.0), "the boss is shorter than the insert it must hold");
+mount_extra0 = (e_mount && (m_style == "keyhole" || m_style == "both")) ? kh_extra : 0;
+// the plate (canary_core_lib pl_*): never thinner than a head and its floor;
+// the head recesses as far as that floor allows; the screw is the shortest
+// standard length that engages hw_engage() in the post end past the relief
+plate_t  = pl_thick(floor_t, mount_extra0, screw_size, screw_head, e_gland);
+mount_extra = plate_t - floor_t;                   // the plate below z = 0 (the keyhole slab, or the head's floor)
+pl_r     = pl_recess(plate_t, screw_size, screw_head, e_gland);
+pl_L     = pl_len(plate_t, pl_r, screw_size, screw_head);
+pl_eng   = pl_engage(plate_t, pl_r, screw_size, screw_head);
+pl_pil   = pl_pilot(plate_t, pl_r, screw_size, screw_head);
+post_h   = cav_d - pl_relief();                    // face underside -> the relief over the ledge plane
+shell_d  = cav_d + plate_t;                        // the walls, face underside -> the back face
+bore_x   = inner_x + 2*ledge_w;  bore_y = inner_y + 2*ledge_w;
+bore_r   = core_cav_r(corner_r, wall_eff) + ledge_w;
+plate_x  = bore_x - 2*tol_slide;  plate_y = bore_y - 2*tol_slide;  plate_r = max(bore_r - tol_slide, 0.4);
+assert(!e_gland || screw_head == "pan", "a sealed build seats an O-ring under each plate screw head — that needs screw_head = \"pan\"");
+assert(pl_pil + 1.0 <= post_h, str("the post is too short for its pilot (", pl_pil, " into ", post_h, " mm)"));
+assert(!screw_insert || ins_h + 1.0 <= post_h, "the post is shorter than the insert it must hold");
+assert(!e_seal || !lid_key || core_key_d() + 0.3 <= core_min_wall() + 1e-9,
+       "the plate's key notch would reach the gasket groove's outer cheek");
 kh_y  = inner_y/2 - kh_inset;
 kh_ys = (kh_y >= kh_slot_l/2 + kh_head_d/2 + 2) ? [-kh_y, kh_y] : [0];
 hinge_hole = hinge_bolt_d + 0.4;
-
-skirt_gap = tol_slide + 0.2;
-plate_x   = e_seal ? out_x + 2*(skirt_gap + skirt_t) : out_x;
-plate_y   = e_seal ? out_y + 2*(skirt_gap + skirt_t) : out_y;
-plate_r   = e_seal ? corner_r + skirt_gap + skirt_t : corner_r;
 
 // posts 0.2 INTO each wall (fused above the gussets); seal_mid_posts adds one
 // per ±X wall at y = 0, outboard of the carrier rails and clips
@@ -367,28 +369,23 @@ assert(!e_tamper || _win_clear(mag_dx, mag_dy, mag_d + 2*tol_press + 2.4),
        "the tamper magnet sits inside the radome window — NdFeB in the beam; move mag_dx/mag_dy");
 assert(radome_t >= 1.3 && radome_t < lid_t,
        "radome_t must be >= 1.3 (0.7-1.1 is the quarter-wave band: ~20 % reflected into the antenna) and thinner than lid_t");
-assert(head_d > scr_c, "the screw head must be larger than its clearance hole, or it falls through the front");
-assert(screw_head == "flat" || head_h + 1.0 - lid_t <= 1.5, "pan-head seat needs more than 1.5 mm of inside pad — thicken lid_t");
-assert(!head_seal || screw_head == "pan", "head_seal seats an O-ring under a PAN head — set screw_head = \"pan\"");
+assert(head_d > scr_c, "the screw head must be larger than its clearance hole, or it falls through the plate");
 assert(!e_seal || e_vent || e_weep,
        "seal mode with no pressure path — enable opt_vent (GORE seat) or opt_weep (field_ratings.md)");
-assert(!head_seal || e_seal, "head_seal only means something in seal mode");
 assert(usb_axis - usb_h/2 >= 0.6, "the XIAO port opening breaches the floor — raise xiao_below");
 assert(lid_rib_h <= cav_extra, "lid_rib_h must stay within cav_extra, the headroom over the carrier's tallest part");
 assert(!lid_ribs || lid_rib_w >= core_min_wall(), "lid_rib_w is under the structural wall floor");
-key_x = inner_x/2 - post_corner - 2.5;   // lid key: on the +Y wall, inboard of the +X corner post
+key_x = inner_x/2 - post_corner - 2.5;   // plate key: on the +Y bore wall, inboard of the +X corner post
 assert(2*fin_r <= base_d + mount_extra + 0.01, "fin_r too large — prongs must not exceed the shell depth");
 assert(rad_gap >= 3.0, "antenna-to-radome gap < 3 mm — raise cav_extra");
 assert(rad_win_x + 2*abs(rad_dx) <= inner_x - 4 && rad_win_y + 2*abs(rad_dy) <= radar_l,
        "radome window exceeds the face — shrink rad_win/rad_dx/rad_dy or grow the board zone");
-assert(lip_h < cav_d, "lip_h must be less than the cavity depth");
 assert(screw_head_d > screw_d, "screw_head_d must be larger than screw_d");
-assert(!e_seal || gasket_groove <= lip_h - 0.5, "gasket_groove must stay below the lip");
+assert(!e_seal || gasket_groove + 0.5 <= cav_d, "gasket_groove runs out of the ledge");
 assert(!e_seal || core_gasket_fill(gasket_w, gasket_groove, gasket_proud) <= core_gasket_fill_max(),
        str("the printed TPU ring would fill ", round(100*core_gasket_fill(gasket_w, gasket_groove, gasket_proud)),
            " % of its groove - past ", round(100*core_gasket_fill_max()),
            " % the incompressible gasket props the lid open instead of sealing; narrow gasket_w or deepen gasket_groove"));
-assert(!e_seal || skirt_h < base_d, "skirt_h must be shorter than the back shell");
 assert(mount_extra == 0 || kh_head_h + 1.5 <= floor_t + kh_extra, "keyhole pocket too deep");
 assert(lid_edge == 0 || (lid_edge >= 0.01 && lid_edge < lid_t), "lid_edge out of range");
 assert(lid_edge2 >= 0 && (lid_edge > 0 || lid_edge2 == 0) && lid_edge + lid_edge2 < lid_t,
@@ -404,17 +401,16 @@ assert(!opt_mark || label_size >= mark_word_min_h(),
        str("opt_mark at label_size ", label_size, " mm is under the ",
            mark_word_min_h(), " mm cap height where a 0.4 mm bead still ",
            "reaches the letterforms — raise label_size"));
-assert(!opt_mark || mark_word_ink_w("securaCV", label_size) <= plate_x - 4.0,
+assert(!opt_mark || mark_word_ink_w("securaCV", label_size) <= out_x - 4.0,
        str("the wordmark draws ", mark_word_ink_w("securaCV", label_size),
-           " mm at label_size ", label_size, " on a ", plate_x,
+           " mm at label_size ", label_size, " on a ", out_x,
            " mm face (2 mm margin per side) — shrink label_size"));
 // the hardware, DERIVED from the same knobs that draw the holes (canary_core_lib)
 hw_thread = screw_insert ? "machine (into the inserts)" : "self-tap";
 hw_echo("Sense", [
-    e_back ? hw_item(len(post_xy()), str(hw_screw(screw_size, screw_head, bk_L, hw_thread), " from the back"))
-           : hw_item(len(post_xy()), hw_screw(screw_size, screw_head, hw_len(lid_t, head_pad, hw_engage(screw_size)), hw_thread)),
+    hw_item(len(post_xy()), str(hw_screw(screw_size, screw_head, pl_L, hw_thread), " (plate to the post ends)")),
     screw_insert ? hw_item(len(post_xy()), str(hw_size_name(screw_size), " heat-set insert ", ins_od, " OD x ", ins_h)) : "",
-    (head_seal || e_gland) ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
+    e_gland ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
     e_seal       ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
     e_vent       ? hw_item(1, str("Ø", vent_pad_d, " adhesive ePTFE/GORE vent patch")) : "",
     e_led        ? hw_item(1, str("Ø", lp_d, " light pipe")) : "",
@@ -438,10 +434,11 @@ echo(str("XIAO USB-C opening: axis ", usb_zc, " mm above the back face (derived 
 //  Helpers — the shared idiom (rrect, tearbore, clip, keyhole, foot chamfer)
 //  now comes from the contract libraries; what stays local is this file's own
 // ----------------------------------------------------------------------------
+// a ring of width w centered on the ledge band (the gasket's home)
 module rim_ring2d(w) {
     difference() {
-        offset(r =  w/2) rrect2d(inner_x + wall_eff, inner_y + wall_eff, max(0.1, corner_r - wall_eff/2));
-        offset(r = -w/2) rrect2d(inner_x + wall_eff, inner_y + wall_eff, max(0.1, corner_r - wall_eff/2));
+        offset(r =  w/2) rrect2d(inner_x + ledge_w, inner_y + ledge_w, core_cav_r(corner_r, wall_eff) + ledge_w/2);
+        offset(r = -w/2) rrect2d(inner_x + ledge_w, inner_y + ledge_w, core_cav_r(corner_r, wall_eff) + ledge_w/2);
     }
 }
 // Cantilever snap clip on a carrier edge — canary_snap_lib's beam (the WAP
@@ -468,13 +465,23 @@ module teeth2d() {
             polygon([[0, 0], [2*fin_r, 0], [2*fin_r*cos(step), 2*fin_r*sin(step)]]);
         }
 }
+// The fin prints on the shell, face-down: whatever faces the face is a
+// bed-facing overhang. A round lug's crown and a flat top edge both were, so
+// the fin is a teardrop knuckle — the crown comes to a 45° point toward the
+// face, and the root stays low enough (fin_root) that the edge from root to
+// point climbs at 45°. The root is what carries the case: a 3 x fin_root
+// PETG section sees under 1 MPa from the case's weight on the bolt's lever.
+fin_root = fin_r*(1 + sqrt(2)) - hinge_off;   // the 45° line from the point back to the wall
 module case_fin(xc) {
-    hull() {   // the root reaches the bed even under a keyhole slab (it floated 3 mm over it)
-        translate([xc - prong_t/2, out_y/2 - 1, -mount_extra]) cube([prong_t, 1, 2*fin_r + mount_extra]);
+    hull() {   // the root reaches the back face even under a keyhole slab
+        translate([xc - prong_t/2, out_y/2 - 1, -mount_extra]) cube([prong_t, 1, fin_root + mount_extra]);
         translate([xc - prong_t/2, out_y/2 + hinge_off, fin_r])
             rotate([0, 90, 0]) cylinder(r = fin_r, h = prong_t);
+        translate([xc - prong_t/2, out_y/2 + hinge_off - 0.01, fin_r*(1 + sqrt(2)) - 0.01]) cube([prong_t, 0.02, 0.02]);
     }
 }
+assert(fin_root >= 2.0, "the hinge fin's root is too low for its stand-off — raise fin_r or lower hinge_off");
+assert(fin_r*(1 + sqrt(2)) <= base_d + 0.01, "the hinge fin's point reaches past the face");
 module case_hinge() {
     ax = [0, out_y/2 + hinge_off, fin_r];
     difference() {
@@ -482,7 +489,7 @@ module case_hinge() {
             case_fin(-prong_pitch/2);
             case_fin( prong_pitch/2);
             translate([-(prong_pitch/2 + prong_t/2), out_y/2 - 1, -mount_extra])
-                cube([prong_pitch + prong_t, 1 + max(1, hinge_off - fin_r - 0.5), 2*fin_r + mount_extra]);
+                cube([prong_pitch + prong_t, 1 + max(1, hinge_off - fin_r - 0.5), fin_root + mount_extra]);
             if (hinge_teeth) {
                 xo = prong_pitch/2 + prong_t/2;
                 translate([ xo, ax[1], ax[2]]) rotate([0,  90, 0]) linear_extrude(teeth_h) teeth2d();
@@ -499,265 +506,209 @@ module case_hinge() {
                          [out_y/2 + 40, -0.6], [out_y/2 + 0.5 + mount_extra + 0.4, -0.6]]);
     }
 }
-// peripheral wedge that 45°-chamfers the bottom edge (subtract from the shell);
-// canary_core_lib owns the drawing — bounded to the footprint so the hinge
-// prongs lose only a root nick
+// peripheral wedge that 45°-chamfers the shell's back edge (subtract from
+// the shell, assembled frame); canary_core_lib owns the drawing — bounded
+// to the footprint so the hinge prongs lose only a root nick
 module foot_chamfer_cut() {
     foot_chamfer_ring(out_x, out_y, corner_r, foot_cham, -mount_extra);
 }
 
 // ----------------------------------------------------------------------------
-//  BACK shell
+//  The PLATE (part="back") — the chassis: the floor with its slab, the
+//  carrier rails and clips, the keyholes, and the seats the screws enter
+//  through. Drawn in the assembled frame: front face at z = floor_t, body
+//  down to -mount_extra. Prints back-face down.
 // ----------------------------------------------------------------------------
-// the screws from the back: the seat and the bore, cut through the WHOLE
-// back (slab, floor and post) after everything else is drawn
 module back() {
     difference() {
-        back_body();
-        if (e_back) for (p = post_xy())
-            bk_seat_cut(p[0], p[1], mount_extra, floor_t + post_h, screw_size, screw_head,
-                        bk_r, scr_c, tol_hole, e_gland);
-    }
-}
-// ...and the bosses they thread into, hanging from the front onto the post tops
-// (cropped to the cavity like the pan pads — the CLR-1 lesson)
-module front() {
-    difference() {
         union() {
-            front_body();
-            if (e_back) for (p = post_xy())
-                bk_boss(p[0], p[1], boss_h, pd, inner_x, inner_y, core_cav_r(corner_r, wall_eff), tol_slide);
-        }
-        if (e_back) for (p = post_xy())
-            bk_boss_bore(p[0], p[1], boss_h, lid_t, face_skin,
-                         screw_insert ? scr_nominal(screw_size) + 0.3 : scr_d,
-                         screw_insert, ins_od - 0.3, ins_h);
-    }
-}
-
-module back_body() {
-    posts = post_xy();
-    gusset_h = max(2, min(cav_d - lip_h - 1.0, post_h - 0.5));   // and below the post top, where the boss lands
-    gusset_w = min(2.0, rib_t_max(wall_eff));
-    union() {
-        difference() {
-            union() {
-                rrect(out_x, out_y, corner_r, base_d);
-                if (mount_extra > 0)
-                    translate([0, 0, -mount_extra]) rrect(out_x, out_y, corner_r, mount_extra);
-                if (e_mount && (m_style == "hinge" || m_style == "both"))
-                    case_hinge();
-            }
-            translate([0, 0, floor_t])   // the cavity, floor cove left standing (canary_core_lib)
-                cavity_cut(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1, floor_cove);
-            // seam reveal — the shadow line under the parting line
-            // (canary_core_lib): the indoor build closes front-on-back at the
-            // exact same footprint, a raw butt joint on a show surface. The
-            // sealed build's drip-edge front already draws a designed seam.
-            // The groove spares the hinge span — a slot through a hinge root
-            // is a stress riser, not a shadow line.
-            if (!e_seal) difference() {
-                seam_reveal_cut(out_x, out_y, corner_r, base_d);
-                if (e_mount && (m_style == "hinge" || m_style == "both"))
-                    translate([-(prong_pitch/2 + prong_t/2 + teeth_h + 1),
-                               out_y/2 - core_reveal_d() - 1,
-                               base_d - core_reveal_h() - 0.1])
-                        cube([prong_pitch + prong_t + 2*teeth_h + 2,
-                              hinge_off + fin_r + 2, core_reveal_h() + 0.2]);
-            }
-            // XIAO USB-C opening, bottom wall: 45°-chamfered top corners halve
-            // the unsupported bridge in the upright-printed wall and keep any
-            // droop out of the plug envelope — canary_port_lib (the WAP's
-            // print-validated profile; this wall used to bridge a flat top)
-            translate([usb_cx, -out_y/2 + wall_eff*1.5, usb_zc])
-                rotate([90, 0, 0]) linear_extrude(wall_eff*3)
-                    port_bridge_profile2d(usb_w, usb_h);
-            if (e_seal)
-                translate([0, 0, base_d - gasket_groove])
-                    linear_extrude(gasket_groove + 1) rim_ring2d(gasket_w);
-            if (e_seal && usb_cover) {
-                uz0 = usb_zc - usb_h/2 - usb_cov_pad;
-                uz1 = min(usb_zc + usb_h/2 + usb_cov_pad, base_d - gasket_groove - 0.5);
-                translate([usb_cx - (usb_w/2 + usb_cov_pad), -out_y/2 - 1, uz0])
-                    cube([usb_w + 2*usb_cov_pad, 1 + usb_cov_dep, uz1 - uz0]);
-            }
-            if (mount_extra > 0)
-                for (yc = kh_ys) keyhole_pocket(yc);
-            if (mount_extra > 0 && kh_lock)
-                for (sx = [1, -1]) translate([sx*12, inner_y/2 - 5, 0]) {
-                    translate([0, 0, -mount_extra + 0.6]) cylinder(d = 3.2, h = mount_extra + floor_t);
-                    translate([0, 0, floor_t - 1.2]) cylinder(d1 = 3.2, d2 = 6.0, h = 1.21);
+            translate([0, 0, floor_t]) pl_plate(plate_x, plate_y, plate_r, plate_t);
+            // +Y end stops: two bumps just past the carrier's top edge, so the board
+            // (hooked only on its ±X edges) cannot slide up and take the antenna array
+            // out from under its window — it had 8 mm of travel
+            for (s = [1, -1])
+                translate([radar_cx + s*(radar_w/2 - 4) - 1.5, radar_cy + radar_l/2 + board_clear, floor_t - 0.01])
+                    cube([3, 2.0, radar_standoff + pcb_t + 1.0]);
+            // carrier rails (notched at the clips); the stacked XIAO hangs beneath.
+            // TWO clips per edge, at the quarter points: one hook at mid-span let
+            // the carrier's ends rock 4 mm about the hook line in a drop
+            for (s = [1, -1]) {
+                difference() {
+                    translate([radar_cx + s*(radar_w/2 - 1.5) - 1.5, radar_cy - (radar_l - 1)/2, floor_t - 0.01])
+                        cube([3, radar_l - 1, radar_standoff]);
+                    for (dy = [-radar_l/4, radar_l/4])
+                        translate([radar_cx + s*(radar_w/2 - 1.5), radar_cy + dy, floor_t + radar_standoff/2])
+                            cube([5, clip_w + 2, radar_standoff + 1], center = true);
                 }
-            if (foot_cham > 0) foot_chamfer_cut();
-            // weep at the bottom wall's floor corner (hung +Y up), beside the USB
-            // opening and outside its plug recess — canary_core_lib weep_cut
-            if (e_seal && e_weep)
-                weep_cut(usb_cx + usb_w/2 + usb_cov_pad + weep_d + 1.0, -inner_y/2, floor_t + weep_d/2 + 0.2,
-                         "-y", wall_eff, weep_d);
-        }
-        // screw posts, gusseted (a mid-span post only to its own wall); shortened by the front's head pads
-        difference() {
-            union() {
-                for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = post_h);
-                // constant-width webs (canary_rib_lib corner_gusset) — no hull flare
-                for (p = posts) translate([0, 0, floor_t]) {
-                    sx = sign(p[0]); sy = sign(p[1]);
-                    if (sx != 0) corner_gusset(p[0], p[1], sx*(inner_x/2 + 0.5), p[1], gusset_h, wall_eff, pd, gusset_w);
-                    if (sy != 0) corner_gusset(p[0], p[1], p[0], sy*(inner_y/2 + 0.5), gusset_h, wall_eff, pd, gusset_w);
-                }
-            }
-            if (!e_back) for (p = posts) translate([p[0], p[1], floor_t + 2.0])
-                cylinder(d = screw_insert ? scr_nominal(screw_size) + 0.3 : scr_d, h = cav_d);
-            if (screw_insert && !e_back)
-                for (p = posts) translate([p[0], p[1], floor_t + cav_d - head_pad - ins_h - 0.5])
-                    cylinder(d = ins_od - 0.3, h = ins_h + 1);
-        }
-        // lid key (canary_core_lib): a rib on the +Y wall inside the lip zone
-        if (lid_key) lid_key_rib(key_x, inner_y/2, 270, base_d, lip_h);
-        // +Y end stops: two bumps just past the carrier's top edge, so the board
-        // (hooked only on its ±X edges) cannot slide up and take the antenna array
-        // out from under its window — it had 8 mm of travel
-        for (s = [1, -1])
-            translate([radar_cx + s*(radar_w/2 - 4) - 1.5, radar_cy + radar_l/2 + board_clear, floor_t])
-                cube([3, 2.0, radar_standoff + pcb_t + 1.0]);
-        // carrier rails (notched at the clips); the stacked XIAO hangs beneath.
-        // TWO clips per edge, at the quarter points: one hook at mid-span let
-        // the carrier's ends rock 4 mm about the hook line in a drop
-        for (s = [1, -1]) {
-            difference() {
-                translate([radar_cx + s*(radar_w/2 - 1.5) - 1.5, radar_cy - (radar_l - 1)/2, floor_t])
-                    cube([3, radar_l - 1, radar_standoff]);
                 for (dy = [-radar_l/4, radar_l/4])
-                    translate([radar_cx + s*(radar_w/2 - 1.5), radar_cy + dy, floor_t + radar_standoff/2])
-                        cube([5, clip_w + 2, radar_standoff + 1], center = true);
+                    edgeclip(radar_cx + s*radar_w/2, radar_cy + dy, s > 0 ? 0 : 180, radar_standoff);
             }
-            for (dy = [-radar_l/4, radar_l/4])
-                edgeclip(radar_cx + s*radar_w/2, radar_cy + dy, s > 0 ? 0 : 180, radar_standoff);
         }
+        // the screws: seats through the plate, pan heads over their glands in seal mode
+        for (p = post_xy())
+            pl_seat_cut(p[0], p[1], floor_t, plate_t, screw_size, screw_head, pl_r, scr_c, tol_hole, e_gland);
+        // the key slot in the plate's edge (the rib is on the shell's bore wall)
+        // the key notch: core_key_d() + 0.3 into the plate from the bore wall — never
+        // through the ledge band, so the gasket stays backed (asserted below in seal mode)
+        if (lid_key) translate([0, 0, floor_t]) lid_key_slot(key_x, bore_y/2, 270, plate_t + 0.2, core_key_d() - 0.7);
+        if (mount_extra0 > 0)
+            for (yc = kh_ys) keyhole_pocket(yc);
+        if (mount_extra0 > 0 && kh_lock)
+            for (sx = [1, -1]) translate([sx*12, inner_y/2 - 5, 0]) {
+                translate([0, 0, -mount_extra + 0.6]) cylinder(d = 3.2, h = mount_extra + floor_t);
+                translate([0, 0, floor_t - 1.2]) cylinder(d1 = 3.2, d2 = 6.0, h = 1.21);
+            }
     }
 }
 
 // ----------------------------------------------------------------------------
-//  FRONT face — the RADOME: thinned window over the antenna, features outside it
+//  The SHELL (part="front") — face, walls and posts, one piece: the RADOME
+//  (thinned window over the antenna, features outside it) with the walls
+//  hanging below to the back face. Drawn with the face at z = 0..lid_t;
+//  everything below z = 0 is inside or the walls. Prints face-down.
 // ----------------------------------------------------------------------------
 // The vent cluster and light-pipe bore are canary_core_lib's now
 // (core_vent_cluster / core_lightpipe_bore) — this file used to carry its
 // own copy of both, and the four copies across the weather shells had
 // forked. The knobs above still ride in as arguments.
-module front_body() {
+module front() { translate([0, 0, -base_d]) shell_asm(); }
+
+// the shell in the ASSEMBLED frame (back face at -mount_extra, face at base_d..base_d + lid_t)
+module shell_asm() {
+    posts = post_xy();
+    difference() {
+        shell_solid();
+        // the posts' blind pilots (or insert bores), up from their end faces —
+        // cut LAST, through the posts the union below adds
+        for (p = posts)
+            pl_post_pilot(p[0], p[1], floor_t + pl_relief(), pl_pil,
+                          screw_insert ? scr_nominal(screw_size) + 0.3 : scr_d,
+                          screw_insert, ins_od - 0.3, ins_h);
+    }
+}
+module shell_solid() {
+    posts = post_xy();
+    gusset_h = max(2, post_h - 0.5);
+    gusset_w = min(2.0, rib_t_max(wall_eff));
     union() {
         difference() {
             union() {
-                // the plate with the catalog's two-stage soft edge — canary_core_lib
-                soft_edge_plate(plate_x, plate_y, plate_r, lid_t, lid_edge, lid_edge2);
-                // pan-head pads: the 1.0 mm floor under each head the 2.0 front
-                // cannot spare — CROPPED to the cavity (canary_core_lib). Drawn
-                // as a bare Ø7.8 cylinder it overhung its Ø5.0 post by 1.4 mm
-                // all round, 1.6 mm of that landed on the shell wall rim, and
-                // the front rested 1.0 mm proud: lip out of the cavity, screws
-                // clamping nothing, gasket uncompressed. Probed at 50.04 mm3.
-                if (head_pad > 0) for (p = post_xy())
-                    cb_head_pad(p[0], p[1], head_pad,
-                                cb_pad_d(head_d, tol_hole),
-                                inner_x, inner_y, core_cav_r(corner_r, wall_eff),
-                                head_d + 2*tol_hole, tol_slide);
+                translate([0, 0, base_d]) soft_edge_plate(out_x, out_y, corner_r, lid_t, lid_edge, lid_edge2);
+                translate([0, 0, -mount_extra]) rrect(out_x, out_y, corner_r, shell_d + 0.01);
+                if (e_mount && (m_style == "hinge" || m_style == "both"))
+                    case_hinge();
             }
+            // the cavity, coved at the face and at the ledge (canary_core_lib)
+            translate([0, 0, base_d]) pl_cavity_cut(inner_x, inner_y, core_cav_r(corner_r, wall_eff), cav_d, floor_cove);
+            // the plate's bore below the ledge
+            pl_bore_cut(bore_x, bore_y, bore_r, floor_t, plate_t);
+            // the gasket groove, cut into the ledge
+            if (e_seal)
+                translate([0, 0, floor_t - 0.01]) linear_extrude(gasket_groove + 0.01) rim_ring2d(gasket_w);
             // RADOME window: blind thinning from the INSIDE, leaving a flat
             // uniform radome_t membrane. Rounded corners avoid stress risers.
-            translate([rad_cx, rad_cy, -1])
+            translate([rad_cx, rad_cy, base_d - 1])
                 linear_extrude(lid_t - radome_t + 1)
                     rrect2d(rad_win_x, rad_win_y, 3);
-            if (e_led) core_lightpipe_bore(radar_cx + lp_dx, radar_cy + lp_dy, lid_t, lp_d, tol_press);
-            if (e_lux) {
-                translate([radar_cx + lux_dx, radar_cy + lux_dy, -1]) cylinder(d = lux_d, h = lid_t + 2);
-                if (lux_disc_d > 0)   // recessed seat on the outer face for a glued clear disc
-                    translate([radar_cx + lux_dx, radar_cy + lux_dy, lid_t - 1.2])
-                        cylinder(d = lux_disc_d + 2*tol_slide, h = 1.3);
-            }
-            if (e_vent) core_vent_cluster(radar_cx + vent_dx, radar_cy + vent_dy, lid_t,
+            translate([0, 0, base_d]) {
+                if (e_led) core_lightpipe_bore(radar_cx + lp_dx, radar_cy + lp_dy, lid_t, lp_d, tol_press);
+                if (e_lux) {
+                    translate([radar_cx + lux_dx, radar_cy + lux_dy, -1]) cylinder(d = lux_d, h = lid_t + 2);
+                    if (lux_disc_d > 0)   // recessed seat on the outer face for a glued clear disc
+                        translate([radar_cx + lux_dx, radar_cy + lux_dy, lid_t - 1.2])
+                            cylinder(d = lux_disc_d + 2*tol_slide, h = 1.3);
+                }
+                if (e_vent) core_vent_cluster(radar_cx + vent_dx, radar_cy + vent_dy, lid_t,
                                               vent_pad_d, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes);
-            // screw seats by the head in the bag (canary_core_lib): flat floor for
-            // PAN heads (on the pad — a 2.0 seat in a 2.0 plate was a through-hole),
-            // 90° cone for FLAT, O-ring gland with head_seal
-            if (!e_back) for (p = post_xy()) translate([0, 0, -head_pad]) {
-                if (screw_head == "flat")
-                    cs_cone90_cut(p[0], p[1], lid_t, scr_c, head_h);
-                else if (head_seal)
-                    cb_oring_cut(p[0], p[1], lid_t + head_pad, scr_c,
-                                 scr_oring_id(screw_size), scr_oring_cs(screw_size), head_d);
-                else
-                    cb_flat_cut(p[0], p[1], lid_t + head_pad, scr_c, head_d + 2*tol_hole, head_h);
+                if (label_text != "")
+                    translate([label_dx, label_dy, lid_t - label_depth])
+                        linear_extrude(label_depth + 1) rotate(label_rot)
+                            text(label_text, size = label_size, font = label_font,
+                                 halign = "center", valign = "center");
+                // the house wordmark (opt_mark), debossed exactly where the label
+                // would sit and by the same first-layer machinery — canary_mark_lib
+                // owns the word and its face, this file only places it
+                if (opt_mark)
+                    translate([label_dx, label_dy, lid_t - label_depth])
+                        linear_extrude(label_depth + 1) rotate(label_rot)
+                            mark_wordmark(label_size);
             }
-            if (label_text != "")
-                translate([label_dx, label_dy, lid_t - label_depth])
-                    linear_extrude(label_depth + 1) rotate(label_rot)
-                        text(label_text, size = label_size, font = label_font,
-                             halign = "center", valign = "center");
-            // the house wordmark (opt_mark), debossed exactly where the label
-            // would sit and by the same first-layer machinery — canary_mark_lib
-            // owns the word and its face, this file only places it
-            if (opt_mark)
-                translate([label_dx, label_dy, lid_t - label_depth])
-                    linear_extrude(label_depth + 1) rotate(label_rot)
-                        mark_wordmark(label_size);
+            // XIAO USB-C opening, bottom wall: 45° chamfers on the BACK side
+            // of the opening — in the face-down print that is the opening's
+            // roof, and the chamfers halve the flat bridge (canary_port_lib)
+            translate([usb_cx, -out_y/2 + wall_eff*1.5, usb_zc])
+                rotate([90, 0, 0]) linear_extrude(wall_eff*3)
+                    mirror([0, 1, 0]) port_bridge_profile2d(usb_w, usb_h);
+            if (e_seal && usb_cover) {
+                uz0 = max(usb_zc - usb_h/2 - usb_cov_pad, floor_t + 0.3);   // never into the skin below the ledge
+                uz1 = usb_zc + usb_h/2 + usb_cov_pad;
+                translate([usb_cx - (usb_w/2 + usb_cov_pad), -out_y/2 - 1, uz0])
+                    cube([usb_w + 2*usb_cov_pad, 1 + usb_cov_dep, uz1 - uz0]);
+            }
+            if (foot_cham > 0) foot_chamfer_cut();
+            // weep at the bottom wall (hung +Y up: straight out is straight down),
+            // beside the USB opening and outside its plug recess, its bore a web
+            // ABOVE the gasket groove's top — the old 30° dive from the ledge plane
+            // bored through the groove (canary_core_lib weep_cut)
+            if (e_seal && e_weep)
+                weep_cut(usb_cx + usb_w/2 + usb_cov_pad + weep_d + 1.0, -inner_y/2,
+                         floor_t + gasket_groove + core_min_web() + weep_d/2, "-y", wall_eff, weep_d, tilt = 0);
         }
-        // rib ring, auto-cleared around the RADOME window and every feature; fused
-        // to the lip (it stopped 0.4 short — a one-nozzle slot)
-        if (lid_ribs) {
-            ro_x = inner_x - 2*tol_slide - 2*lip_t + 0.4;
-            ro_y = inner_y - 2*tol_slide - 2*lip_t + 0.4;
-            difference() {
-                translate([0, 0, -lid_rib_h]) linear_extrude(lid_rib_h + 0.1)
-                    difference() {
-                        rrect2d(ro_x, ro_y, max(0.1, corner_r - wall_eff - lip_t));
-                        rrect2d(ro_x - 2*lid_rib_w, ro_y - 2*lid_rib_w, 0.1);
-                    }
-                for (p = post_xy())
-                    translate([p[0], p[1], -lid_rib_h - 0.1]) cylinder(d = pd + 1.6, h = lid_rib_h + 0.2);
-                translate([rad_cx, rad_cy, -lid_rib_h - 0.1])
-                    linear_extrude(lid_rib_h + 0.2) rrect2d(rad_win_x + 3, rad_win_y + 3, 3);
-                // ...and over the whole carrier outline: the ring's -Y bar sat on the
-                // radar_front_h plane over the board's bottom 3.7 mm — any part there
-                // taller than the headroom met it
-                translate([radar_cx, radar_cy, -lid_rib_h - 0.1])
-                    linear_extrude(lid_rib_h + 0.2) rrect2d(radar_w + 2.0, radar_l + 2.0, 1.0);
-                if (e_led) translate([radar_cx + lp_dx, radar_cy + lp_dy, -lid_rib_h - 0.1])
-                    cylinder(d = lp_d + 4, h = lid_rib_h + 0.2);
-                if (e_lux) translate([radar_cx + lux_dx, radar_cy + lux_dy, -lid_rib_h - 0.1])
-                    cylinder(d = lux_d + 3, h = lid_rib_h + 0.2);
-                if (e_vent) translate([radar_cx + vent_dx, radar_cy + vent_dy, -lid_rib_h - 0.1])
-                    cylinder(d = vent_pad_d + 3, h = lid_rib_h + 0.2);
-                if (e_tamper) translate([radar_cx + mag_dx, radar_cy + mag_dy, -lid_rib_h - 0.1])
-                    cylinder(d = mag_d + 2*tol_press + 4.8, h = lid_rib_h + 0.2);
-                translate([usb_cx, -inner_y/2, 0]) cube([usb_w + 4, 14, 3*lid_rib_h], center = true);
-            }
+        // screw posts from the face's underside to the relief over the ledge,
+        // gusseted to their walls (a mid-span post only to its own) — the
+        // gussets root at the face and taper toward the ledge. A corner post
+        // also fills the pocket between its two gussets and the cavity's
+        // corner: with the cavity coved at the ledge too, that pocket would
+        // otherwise close into a sealed void (the mesh gate counts it a part)
+        for (p = posts) translate([p[0], p[1], floor_t + pl_relief()]) cylinder(d = pd, h = post_h);
+        for (p = posts) translate([0, 0, base_d]) mirror([0, 0, 1]) {
+            sx = sign(p[0]); sy = sign(p[1]);
+            if (sx != 0) corner_gusset(p[0], p[1], sx*(inner_x/2 + 0.5), p[1], gusset_h, wall_eff, pd, gusset_w);
+            if (sy != 0) corner_gusset(p[0], p[1], p[0], sy*(inner_y/2 + 0.5), gusset_h, wall_eff, pd, gusset_w);
         }
-        // lip, cleared at posts + USB notch
-        difference() {
-            lip_ring(inner_x - 2*tol_slide, inner_y - 2*tol_slide,
-                     max(0.1, corner_r - wall_eff - tol_slide), lip_h, lip_t);   // lead-in on the tip (canary_core_lib)
-            for (p = post_xy())
-                translate([p[0], p[1], -lip_h - 0.1]) cylinder(d = pd + 1.2, h = lip_h + 0.2);
-            if (lid_key) lid_key_slot(key_x, inner_y/2, 270, lip_h, lip_t);
-            translate([usb_cx, -inner_y/2, -lip_h/2])
-                cube([usb_w + 4, lip_t*4, lip_h + 0.2], center = true);
+        for (p = posts) if (p[0] != 0 && p[1] != 0)
+            translate([min(p[0], sign(p[0])*(inner_x/2 + 0.5)), min(p[1], sign(p[1])*(inner_y/2 + 0.5)), floor_t + pl_relief()])
+                cube([inner_x/2 + 0.5 - abs(p[0]), inner_y/2 + 0.5 - abs(p[1]), post_h]);
+        // the plate key (canary_core_lib): a rib on the +Y bore wall
+        if (lid_key) lid_key_rib(key_x, bore_y/2, 270, floor_t, plate_t + 0.5);
+        translate([0, 0, base_d]) {
+            // rib ring, auto-cleared around the RADOME window and every feature;
+            // fused 0.2 into the walls
+            if (lid_ribs) {
+                ro_x = inner_x + 0.4;
+                ro_y = inner_y + 0.4;
+                difference() {
+                    translate([0, 0, -lid_rib_h]) linear_extrude(lid_rib_h + 0.1)
+                        difference() {
+                            rrect2d(ro_x, ro_y, core_cav_r(corner_r, wall_eff) + 0.2);
+                            rrect2d(ro_x - 2*lid_rib_w, ro_y - 2*lid_rib_w, 0.1);
+                        }
+                    for (p = post_xy())
+                        translate([p[0], p[1], -lid_rib_h - 0.1]) cylinder(d = pd + 1.6, h = lid_rib_h + 0.2);
+                    translate([rad_cx, rad_cy, -lid_rib_h - 0.1])
+                        linear_extrude(lid_rib_h + 0.2) rrect2d(rad_win_x + 3, rad_win_y + 3, 3);
+                    // ...and over the whole carrier outline: the ring's -Y bar sat on the
+                    // radar_front_h plane over the board's bottom 3.7 mm — any part there
+                    // taller than the headroom met it
+                    translate([radar_cx, radar_cy, -lid_rib_h - 0.1])
+                        linear_extrude(lid_rib_h + 0.2) rrect2d(radar_w + 2.0, radar_l + 2.0, 1.0);
+                    if (e_led) translate([radar_cx + lp_dx, radar_cy + lp_dy, -lid_rib_h - 0.1])
+                        cylinder(d = lp_d + 4, h = lid_rib_h + 0.2);
+                    if (e_lux) translate([radar_cx + lux_dx, radar_cy + lux_dy, -lid_rib_h - 0.1])
+                        cylinder(d = lux_d + 3, h = lid_rib_h + 0.2);
+                    if (e_vent) translate([radar_cx + vent_dx, radar_cy + vent_dy, -lid_rib_h - 0.1])
+                        cylinder(d = vent_pad_d + 3, h = lid_rib_h + 0.2);
+                    if (e_tamper) translate([radar_cx + mag_dx, radar_cy + mag_dy, -lid_rib_h - 0.1])
+                        cylinder(d = mag_d + 2*tol_press + 4.8, h = lid_rib_h + 0.2);
+                    translate([usb_cx, -inner_y/2, 0]) cube([usb_w + 4, 14, 3*lid_rib_h], center = true);
+                }
+            }
+            if (e_tamper)
+                translate([radar_cx + mag_dx, radar_cy + mag_dy, -mag_h]) difference() {
+                    cylinder(d = mag_d + 2*tol_press + 2.4, h = mag_h + 0.1);
+                    translate([0, 0, -0.1]) cylinder(d = mag_d + 2*tol_press, h = mag_h + 0.1);
+                }
         }
-        // drip-edge skirt (seal mode), notched over the USB opening
-        if (e_seal)
-            difference() {
-                translate([0, 0, -skirt_h]) linear_extrude(skirt_h)
-                    difference() {
-                        rrect2d(plate_x, plate_y, plate_r);
-                        rrect2d(out_x + 2*skirt_gap, out_y + 2*skirt_gap, corner_r + skirt_gap);
-                    }
-                translate([usb_cx, -(out_y/2 + skirt_gap + skirt_t/2), -skirt_h/2])
-                    cube([usb_w + 6, skirt_t*3, skirt_h + 0.4], center = true);
-            }
-        if (e_tamper)
-            translate([radar_cx + mag_dx, radar_cy + mag_dy, -mag_h]) difference() {
-                cylinder(d = mag_d + 2*tol_press + 2.4, h = mag_h + 0.1);
-                translate([0, 0, -0.1]) cylinder(d = mag_d + 2*tol_press, h = mag_h + 0.1);
-            }
     }
 }
 

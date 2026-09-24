@@ -206,12 +206,31 @@
 //  two screws and slides DOWN to seat. aa_dy and m3_ox/m3_oy are stated in
 //  this orientation; a buttons-down build (panel rotated 180°, image flipped
 //  in firmware) negates their signs and mirrors the frame's features.
+//
+//  ── CHANGELOG ────────────────────────────────────────────────────────────
+//  2026-09-24  Display-case CAD audit — the two flat bridges over the 7.0 mm
+//     print rule (DESIGN_RULES; canary_port_lib port_flat_span_max), both
+//     found on the exported meshes as downward-facing flats:
+//     - TRAY (part="back", legacy): the 96 mm bottom channel and the two
+//       40 mm side slots each had a flat lintel at z 14 on a floor-down
+//       print. They are now bridge-safe BAYS (port_bays2d): the fewest equal
+//       bays whose 45° chamfers reach a 7.0 flat with port_bay_jamb of jamb
+//       under them, split by port_mullion columns — 4 x 22.2 across the
+//       bottom, 2 x 18.8 up each side — and every bay is asserted to pass
+//       the cable head the frame's own port passes (usb_open_w x usb_open_h).
+//     - DOCK (part="stand"): the cable channel's roof under the fin's foot
+//       was a 16 mm flat bridge at z 9. It is now the same profile — 45°
+//       haunches from z 4.5 up to a 7.0 flat — with the slot still 16 wide
+//       at the desk.
+//     Nothing about the frame, the fitments, the gauges or the fit gates
+//     moved; the corner gauge stops short of the side slots.
 // ============================================================================
 
 use <canary_panel_lib.scad> // THE PANEL REGISTRY — every panel/board number
                             // this file uses comes from there, not from here
 use <canary_vent_lib.scad>  // the brand vent shape: egg2d / egg_area
 use <canary_mark_lib.scad>  // THE BIRD — mark_bird, shared with the coupon
+use <canary_port_lib.scad>  // the bridge-safe opening profile + the 7.0 mm flat the tray's port bays and the dock's cable tunnel answer to
 use <canary_s3_lcd7_stamp.scad>   // GENERATED build stamp — see gen_stamp.py
 // Downloaded this file on its own? It CUTS ITS VENTS with that library — a
 // missing lib would render a sealed, overheating case with only a console
@@ -456,6 +475,14 @@ bottom_open_dx = 0.0;      // its center offset from the board center, along the
 opt_side_ports = true;     // open the tall slot in each short (±X) wall (CAN/RS485/battery)
 side_open_h    = 40.0;     // height (Y) of the tall slot on each short wall
 side_open_dy   = 0.0;      // its center offset from the board center, along the short wall
+// Every opening's top is a BRIDGE on this floor-down tray, and 96 mm of it
+// is nearly fourteen times the catalog's print-validated 7.0 flat. A 45°
+// chamfer cannot rescue a run that wide at 11 tall, so each opening is split
+// into BAYS by mullions — wall columns the bridge-safe lintels land on. The
+// bay count is DERIVED from the flat rule (see port_bays() below); these two
+// only shape the mullion and the jamb.
+port_mullion  = 2.4;       // mullion width between the port bays that split each opening — a wall column (wall thick, port_h tall) the bridge-safe lintels land on
+port_bay_jamb = 1.0;       // vertical jamb kept under each bay's 45° chamfers — sets the widest bay the port band's height can chamfer down to the 7.0 flat
 
 /* [Ventilation] */
 // MUST let the backlight/SoC heat convect out.
@@ -2073,6 +2100,32 @@ assert(btn_tower_len > 0.4 && btn_tower_len <= fr_yo/2 - pcb_h/2 - 3.6 + 0.6,
 // actually is — the cable routes inside, and the case never has to know.
 usb_open_w = usb_head_w + 2*usb_pass_c;
 usb_open_h = usb_head_h + 2*usb_pass_c;
+// ── THE TRAY'S PORT BAYS ────────────────────────────────────────────────────
+// The widest bay the port band's height can carry: a 7.0 flat plus two 45°
+// chamfers that leave port_bay_jamb of vertical jamb. An opening wider than
+// that is split into the fewest equal bays that fit, mullions between.
+port_bay_max = port_flat_span_max() + 2*(port_h - port_bay_jamb);
+function port_bays(W)  = max(1, ceil((W + port_mullion) / (port_bay_max + port_mullion)));
+function port_bay_w(W) = (W - (port_bays(W) - 1)*port_mullion) / port_bays(W);
+// the bay's clear width at the height of the cable head the frame's own port
+// passes — the chamfers close in above (port_h - c), so a head taller than
+// the jamb meets a narrower bay than the one at the floor
+function port_bay_pass_w(W) = let (bw = port_bay_w(W), c = port_bridge_cham_for(bw))
+    bw - 2*max(0, usb_open_h - (port_h - c));
+assert(!opt_bottom_ports || port_bay_pass_w(bottom_open_w) >= usb_open_w,
+       str("tray: the bottom opening's ", port_bays(bottom_open_w), " bays are ",
+           port_bay_w(bottom_open_w), " wide and pass only ",
+           port_bay_pass_w(bottom_open_w), " mm at the cable head's height (",
+           usb_open_h, ") — the head is ", usb_open_w, ". Thin port_mullion or ",
+           "shorten port_bay_jamb."));
+assert(!opt_side_ports || port_bay_pass_w(side_open_h) >= usb_open_w,
+       str("tray: the side openings' ", port_bays(side_open_h), " bays are ",
+           port_bay_w(side_open_h), " wide and pass only ",
+           port_bay_pass_w(side_open_h), " mm at the cable head's height (",
+           usb_open_h, ") — the head is ", usb_open_w, ". Thin port_mullion or ",
+           "shorten port_bay_jamb."));
+assert(port_bay_jamb >= 0.4 && port_bay_jamb < port_h - port_bridge_cham(),
+       "tray: port_bay_jamb leaves no room for a bay's chamfers in the port band");
 // Brand deboss words: each centered between the port flange and the desk
 // dock's well edge — the placement the stencil vents established (and the
 // first print validated visually); as deboss they no longer need to stay
@@ -3108,6 +3161,20 @@ module vent_grille(ox = m3_ox, oy = m3_oy, keepouts = []) {
             linear_extrude(back_t + 0.2)
                 egg2d(vent_slot_l, vent_slot_w, vent_tip);
 }
+// One wall opening as bridge-safe bays, in the (along-wall, up) plane about
+// the opening's center: W along the wall, port_h tall, split by port_mullion
+// into port_bays(W) equal bays, each the catalog's chamfered profile
+// (canary_port_lib port_bridge_profile2d — 45° corners down to a 7.0 flat,
+// the chamfer sized by the bay's own width). The caller extrudes it through
+// the wall. The mullions are what the lintels land on; without them the
+// tray's openings printed as 96 mm and 40 mm flat bridges.
+module port_bays2d(W) {
+    n = port_bays(W); bw = port_bay_w(W);
+    for (i = [0 : n - 1])
+        translate([-W/2 + bw/2 + i*(bw + port_mullion), 0])
+            port_bridge_profile2d(bw, port_h);
+}
+
 module back() {
     total_d = cav_d + back_t;   // full tray depth (floor + cavity to glass ledge)
     difference() {
@@ -3153,12 +3220,15 @@ module back() {
         // Connector openings span the band the rear-side connectors actually
         // occupy: the tray floor up to the PCB underside. (v0.1 measured this
         // from the glass instead, and left 3.3 mm of wall across their bottoms.)
+        // Cut as bridge-safe BAYS, not one lintel: the 96 mm channel's top
+        // was a 96 mm flat bridge on this floor-down print, the side slots'
+        // 40 mm ones — see port_bays2d().
         if (opt_bottom_ports)
-            translate([bottom_open_dx, -yo/2, port_z])
-                cube([bottom_open_w, wall*3, port_h], center = true);
+            translate([bottom_open_dx, -yo/2, port_z]) rotate([90, 0, 0])
+                linear_extrude(wall*3, center = true) port_bays2d(bottom_open_w);
         if (opt_side_ports) for (sx = [1,-1])
-            translate([sx*xo/2, side_open_dy, port_z])
-                cube([wall*3, side_open_h, port_h], center = true);
+            translate([sx*xo/2, side_open_dy, port_z]) rotate([90, 0, 90])
+                linear_extrude(wall*3, center = true) port_bays2d(side_open_h);
         // CONVECTION: intake low, exhaust high. The board is narrower than the
         // cavity, so the wall slots open into clear air beside/above it.
         if (vent_top) for (i = [0:vent_top_n-1])
@@ -4592,9 +4662,18 @@ module stand() {
                          halign = "center", valign = "center");
         }
         // cable channel: desk-level, from the well out the back edge,
-        // tunnelling under the fin's foot
-        translate([-stand_cable_w/2, std_ys, -1])
-            cube([stand_cable_w, std_d/2 - std_ys + 2, 10]);
+        // tunnelling under the fin's foot. Its section is the catalog's
+        // bridge-safe profile (canary_port_lib port_bridge_profile2d), not a
+        // box: where the fin's foot crosses it the roof is a bridge on this
+        // base-down print, and 16 mm of flat roof is over twice the 7.0 the
+        // catalog has printed clean — so the roof carries 45° haunches from
+        // z 4.5 up to a 7.0 flat. Through the plate the slot is open to the
+        // desk either way and still stand_cable_w wide there; only the roof
+        // under the fin changed shape. Same envelope as before: z -1 .. 9,
+        // from the seat line out past the back edge.
+        translate([0, std_d/2 + 2, 4]) rotate([90, 0, 0])
+            linear_extrude(std_d/2 + 2 - std_ys)
+                port_bridge_profile2d(stand_cable_w, 10);
         // rubber-foot recesses in the corners, clear of well and channel
         if (stand_feet) for (sx = [1, -1], sy = [1, -1])
             translate([sx*(stand_w/2 - 14), sy*(std_d/2 - 12), -0.1])

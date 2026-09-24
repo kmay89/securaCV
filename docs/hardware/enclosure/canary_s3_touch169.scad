@@ -169,6 +169,14 @@ skirt_wall = 1.6; skirt_dep = back_stack;   // must not exceed back_stack (see a
 /* [Stand] */
 opt_stand = true;
 stand_ang = 22;  stand_w = 70.0;  stand_d = 52.0;  stand_t = 4.0;
+// The seat's height is DERIVED from the plug: the USB-C leaves the bottom
+// edge pointing stand_ang forward of straight down, so the seat has to stand
+// far enough up a pedestal that a spec-max boot AND the lead behind it clear
+// the desk (see the stand section). These three describe the cable.
+plug_l = 20.0;       // straight Type-C boot (overmold) length past the receptacle face the seat clears — MEASURE your cable; 20 covers the common molded boot  // [12:1:30]
+cable_d = 4.5;       // the lead's diameter behind the boot: sizes its room under the seat and the channel's crown — MEASURE your cable  // [3:0.5:6]
+cable_bend_r = 15.0; // gentlest bend the lead makes under the seat toward the back, on its centerline (about 3 x cable_d for a molded USB-C lead); the channel's crown clears it  // [8:1:25]
+cable_drop = plug_l + cable_d/2 + 3.0;   // clear height under the boot's end: the one-boot-length of straight lead a molded strain relief holds (25 mm at any recline), its radius, and 3 of desk. DERIVED, never typed: the seat's height follows from it
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
@@ -434,70 +442,196 @@ module back() {
 // ----------------------------------------------------------------------------
 //  STAND — free-standing desk cradle (prints flat)
 // ----------------------------------------------------------------------------
-// The slab (thickness T = bez_h + back_t) rests on its bottom REAR edge on the
-// base, at the foot of the fin, and leans back stand_ang; everything else is
-// derived from that line: the fin's front face contains the slab's back plane,
-// and the front lip's back face is a wedge parallel to the slab's front face,
-// 0.2 clear. (v0.1 typed a 14.7 channel for a 12.7 slab: it wedged at ~11° and
-// the fin never touched the slab at all.)
+// The slab (thickness slab_t = bez_h + back_t) rests on its bottom REAR edge
+// on the SEAT at (seat_y, seat_z) — the foot of the fin, on top of a pedestal
+// — and leans back stand_ang; everything else is derived from that line: the
+// fin's front face contains the slab's back plane, and the front lip's back
+// face is a wedge parallel to the slab's front face, 0.2 clear. (v0.1 typed a
+// 14.7 channel for a 12.7 slab: it wedged at ~11° and the fin never touched
+// the slab at all.)
 //
 // No back rail. There was one — a 3 × 9 block with its front face at the rest
 // line — but the reclined back plane retreats tan(stand_ang) per mm of height,
 // so the block's full height stood inside the slab (561.6 mm³ of it). It was
 // also redundant: the fin's own foot is the backstop at the rest line.
 //
-// The USB plug leaves the slab's bottom edge pointing down into the base, so
-// a CABLE SLOT runs through the base and the front lip at the plug's x: a
-// spec-max overmold (port_usbc_overmold_*()) passes it for its full length
-// instead of landing on the base (306.9 mm³ did). The Watch stand's chin slot
-// is the same move.
+// SEAT HEIGHT (the pedestal): the USB plug leaves the slab's bottom edge
+// pointing stand_ang forward of straight down, so with the slab seated on the
+// base top a spec-max boot ended 13.9 mm BELOW the desk — the slot through
+// the base (the last pass's move, the Watch stand's chin slot) only let it
+// into the desk. The seat now stands cable_drop above where the boot ends:
+// the receptacle's axis sits usb_reach above the bottom edge and zu ahead of
+// the back plane, so reclined it stands rx_z above the seat; the boot reaches
+// plug_l down the axis and usb_ch_h/2 across it, and its lowest corner is
+// boot_z below the receptacle.
+//
+// THE LEAD'S WAY OUT: past the boot it either runs on straight (cable_drop =
+// plug_l + cable_d/2 + 3 clears 25 mm of it at any recline) or bends
+// cable_bend_r toward the back and leaves under the seat through the CHANNEL:
+// the slot through base, pedestal and lip in front of the plug's rear edge,
+// its rear wall reclined with the plug, continued as a bridged tunnel under
+// the seat to the rear edge — the Watch stand's channel under the base. The
+// tunnel's crown follows the bend: the lead's centerline turns about (bend_y,
+// bend_z), one radius behind the boot's axis, and its REAR edge — the circle
+// cable_bend_r - cable_d/2 about that center — meets the slot's rear wall
+// (parallel to the axis, usb_ch_h/2 + 0.4 behind it) after turning bend_in,
+// i.e. (cable_bend_r - wall)·tan(bend_in) down the axis; everything of the
+// lead behind the wall lies below that point.
 cable_w = port_usbc_overmold_w() + 2*1.0;   // 1.0 of play a side: the plug arrives tilted
+slab_t  = bez_h + back_t;                                     // the slab the stand carries
+zu      = slab_t - z_usb;                                     // the plug's axis ahead of the back plane
+rx_y    = usb_reach*sin(stand_ang) - zu*cos(stand_ang);       // the receptacle's axis from the seat: y…
+rx_z    = usb_reach*cos(stand_ang) + zu*sin(stand_ang);       // …and z
+boot_z  = plug_l*cos(stand_ang) + usb_ch_h/2*sin(stand_ang);  // the boot's lowest corner below the receptacle
+// the rest line: where the reclined slab's CG — its center, yo/2 up the slab
+// and slab_t/2 out from the back plane — stands over the base's center, so
+// the push to tip is the same fore and aft. (v0.2 typed it 20 from the front
+// edge, which put the CG 4.7 ahead of center; that was a fifth of the front
+// margin once the seat rose and the tip lever grew from 45 to 80 mm.)
+seat_y  = -(yo/2*sin(stand_ang) - slab_t/2*cos(stand_ang));
+seat_z  = cable_drop + boot_z - rx_z;                         // the bottom edge's height when seated
+ped_h   = seat_z - stand_t;                                   // the pedestal under it
+assert(ped_h >= 0, str("1.69 stand: seat_z ", seat_z, " is under the base top — cable_drop cannot be that negative"));
+// the plug's channel envelope reaches usb_ch_h/2 either side of its axis; its
+// rear edge runs parallel to the back plane, so it crosses the seat
+// (zu − usb_ch_h/2)/cos(a) ahead of the rest line — the slot's rear wall
+// stands 0.4 behind that crossing and leans with the plug. World x mirrors
+// the bezel's x: the case faces −Y on the stand, so bezel +X is the viewer's
+// left.
+slot_y1 = seat_y - (zu - usb_ch_h/2)/cos(stand_ang) + 0.4;
+// the bend, in world y/z on the plug's x: from the boot's end (boot_y, boot_zz)
+// the lead's centerline turns about (bend_y, bend_z) and bottoms out
+// cable_bend_r below it, then runs back at that height
+boot_y   = seat_y + rx_y - plug_l*sin(stand_ang);
+boot_zz  = seat_z + rx_z - plug_l*cos(stand_ang);
+bend_y   = boot_y + cable_bend_r*cos(stand_ang);
+bend_z   = boot_zz - cable_bend_r*sin(stand_ang);
+lead_low = bend_z - cable_bend_r - cable_d/2;                 // the bent lead's underside at its lowest
+assert(!opt_usb || lead_low >= 0, str("1.69 stand: a lead bent ", cable_bend_r, " toward the back bottoms out ",
+                                      -lead_low, " mm under the desk — raise cable_drop or bend tighter"));
+slot_wall = usb_ch_h/2 + 0.4;                                 // the slot's rear wall behind the plug's axis
+assert(cable_d/2 < slot_wall, "1.69 stand: cable_d is fatter than the boot channel the lead follows");
+assert(cable_bend_r > slot_wall, "1.69 stand: cable_bend_r turns inside the slot's own width — no crown to derive");
+bend_in  = acos((cable_bend_r - slot_wall)/(cable_bend_r - cable_d/2));
+chan_h   = max(boot_zz - (cable_bend_r - slot_wall)*tan(bend_in)*cos(stand_ang) - slot_wall*sin(stand_ang),
+               bend_z - cable_bend_r + cable_d/2) + 1.0;      // the crown: 1.0 over the lead's highest point behind the wall
+// TIP-OVER (2D, about the base's front and rear edges). The slab alone, as a
+// uniform block xo x yo x slab_t on a weightless stand — the stand's own
+// weight only adds restoring moment, so leaving it out is conservative. The
+// rest line above puts the slab's CG over the base's center (cg_y = 0), so
+// the margin is stand_d/2 both ways; the slab's top-front corner is
+//   top_z = seat_z + yo·cos(a) + slab_t·sin(a)   (79.7 at defaults)
+// A horizontal push F at top_z tips the assembly about an edge m from cg_y
+// when F·top_z > W·m, so the push it survives is W·m/top_z — 26/79.7 = 0.33
+// of the slab's weight either way at defaults. The rule is tip_push_min();
+// stand_d is the lever.
+function tip_push_min() = 0.30;   // push at the slab's top edge it must survive, in slab weights
+cg_y  = seat_y + yo/2*sin(stand_ang) - slab_t/2*cos(stand_ang);
+top_z = seat_z + yo*cos(stand_ang) + slab_t*sin(stand_ang);
+tip_back  = (stand_d/2 - cg_y)/top_z;
+tip_front = (stand_d/2 + cg_y)/top_z;
+assert(!opt_stand || (tip_back >= tip_push_min() && tip_front >= tip_push_min()),
+       str("1.69 stand: a push of ", round(min(tip_back, tip_front)*100)/100,
+           " x the slab's weight at its top edge tips it (rule ", tip_push_min(), ") — deepen stand_d"));
+if (opt_stand)
+    echo(str("Canary 1.69 stand — seat y ", round(seat_y*100)/100, " z ", round(seat_z*100)/100,
+             " (pedestal ", round(ped_h*100)/100, "); boot ends ", cable_drop,
+             " over the desk, bent lead ", round(lead_low*100)/100, "; channel crown ",
+             round(chan_h*100)/100, "; tip push back ", round(tip_back*100)/100,
+             " / front ", round(tip_front*100)/100, " x slab weight"));
+
 module stand() {
-    T   = bez_h + back_t;
+    T   = slab_t;
     a   = stand_ang;
     fw  = stand_w - 16;
-    yr  = -stand_d/2 + 20;                  // the rest line = the slab's rear-bottom edge
-    cy  = yr - T*cos(a);  cz = stand_t + T*sin(a);   // the slab's lifted front-bottom corner
+    yr  = seat_y;                            // the rest line = the slab's rear-bottom edge
+    cy  = yr - T*cos(a);  cz = seat_z + T*sin(a);   // the slab's lifted front-bottom corner
     // front face of the slab at height z (z >= cz): y = cy + (z - cz)*tan(a)
     function yf(z) = cy + (z - cz)*tan(a) - 0.2;
     lip_h = 10;
-    // the plug's axis stands zu in front of the back plane; its channel
-    // envelope reaches usb_ch_h/2 either side of it. The rear edge of that
-    // envelope runs parallel to the back plane, so it crosses the base top
-    // (zu − usb_ch_h/2)/cos(a) in front of the rest line — the slot ends 0.4
-    // behind that crossing. World x mirrors the bezel's x: the case faces −Y
-    // on the stand, so bezel +X is the viewer's left.
-    zu      = T - z_usb;
-    slot_y1 = yr - (zu - usb_ch_h/2)/cos(a) + 0.4;
+    // the pedestal: from the lip's foot to the fin's back, the seat its top
+    ped_front = yf(seat_z) - 3;
+    ped_back  = yr + 8;
     assert(!opt_usb || slot_y1 <= yr - 0.5,
            "the cable slot reaches the rest line — the slab's bottom edge would lose its land over the slot");
     difference() {
         union() {
             linear_extrude(stand_t) rrect2d(stand_w, stand_d, 6);
+            translate([-fw/2, ped_front, stand_t - 0.01])                  // pedestal
+                cube([fw, ped_back - ped_front, ped_h + 0.01]);
             // front lip: a wedge whose back face follows the slab's front face
             hull() {
-                translate([-fw/2, yf(stand_t) - 3, stand_t - 0.01]) cube([fw, 3, 0.02]);
-                translate([-fw/2, yf(stand_t + lip_h) - 3, stand_t + lip_h - 0.02]) cube([fw, 3, 0.02]);
+                translate([-fw/2, yf(seat_z) - 3, seat_z - 0.01]) cube([fw, 3, 0.02]);
+                translate([-fw/2, yf(seat_z + lip_h) - 3, seat_z + lip_h - 0.02]) cube([fw, 3, 0.02]);
             }
             // reclined fin: front face through the rear-bottom edge, leaning stand_ang
             hull() {
-                translate([-fw/2, yr - 0.01, stand_t - 0.01]) cube([fw, 8, 0.02]);
-                translate([-fw/2, yr - 0.01 + 34*tan(a), stand_t + 34 - 0.02]) cube([fw, 8, 0.02]);
+                translate([-fw/2, yr - 0.01, seat_z - 0.01]) cube([fw, 8, 0.02]);
+                translate([-fw/2, yr - 0.01 + 34*tan(a), seat_z + 34 - 0.02]) cube([fw, 8, 0.02]);
             }
         }
-        // the cable slot: base and lip, open to the front edge
-        if (opt_usb)
-            translate([-usb_dx - cable_w/2, -stand_d/2 - 1, -0.1])
-                cube([cable_w, slot_y1 + stand_d/2 + 1, stand_t + lip_h + 1]);
+        if (opt_usb) cable_channel(seat_z + lip_h);
     }
     assert(yr + 3 + 34*tan(a) + 8 <= stand_d/2, "the fin's top runs off the stand's back edge — deepen stand_d or lower stand_ang");
-    assert(yf(stand_t) - 3 >= -stand_d/2 + 2, "the front lip runs off the stand's front edge — deepen stand_d");
+    assert(ped_front >= -stand_d/2 + 2, "the front lip runs off the stand's front edge — deepen stand_d");
+}
+
+// The cable channel on the plug's x, front edge to rear edge. In front of the
+// plug's rear edge a slot through base, pedestal and lip, open to the front
+// and the top, its rear wall reclined with the plug so the pedestal keeps
+// everything the plug does not sweep. Behind that wall a tunnel under the
+// seat: cable_w wide, chan_h to its crown, bridged on the catalog's
+// chamfered-top profile (port_bridge_profile2d — 7.0 of flat, the
+// print-validated ceiling; the Watch stand's channel takes the same profile).
+module cable_channel(top) {
+    a = stand_ang;
+    translate([-usb_dx, 0, 0]) {
+        intersection() {
+            translate([0, slot_y1, seat_z]) rotate([-a, 0, 0])
+                translate([-cable_w/2, -200, -100]) cube([cable_w, 200, 300]);
+            translate([-cable_w/2 - 1, -stand_d/2 - 1, -0.1])
+                cube([cable_w + 2, stand_d + 2, top + 1.1]);
+        }
+        translate([0, stand_d/2 + 1, (chan_h + 0.1)/2 - 0.1]) rotate([90, 0, 0])
+            linear_extrude(stand_d + 2) port_bridge_profile2d(cable_w, chan_h + 0.1);
+    }
+}
+
+// CABLE GATE — a spec-max Type-C boot and its lead, seated as they leave the
+// port, against the stand AND the desk (the half-space under z = 0):
+//   cable_probe   — must be EMPTY: the boot (usb_ch_w x usb_ch_h x plug_l from
+//                   the receptacle face, reclined with the slab), 25 mm of
+//                   straight lead past it, and the same lead bent cable_bend_r
+//                   toward the back and run out the rear edge at its lowest
+//   cable_control — the same with the boot 6 mm longer: must NOT be empty
+//                   (the straight lead reaches the desk), so the gate can fail
+module lead(extra = 0) {
+    a = stand_ang;
+    L = plug_l + extra;
+    translate([-usb_dx, seat_y + rx_y, seat_z + rx_z]) rotate([-a, 0, 0]) {
+        translate([-usb_ch_w/2, -usb_ch_h/2, -L]) cube([usb_ch_w, usb_ch_h, L]);   // the boot
+        translate([0, 0, -L - 25]) cylinder(d = cable_d, h = 25.01);             // straight lead
+    }
+    // the bend: from the boot's end at angle 180 − a about (bend_y, bend_z),
+    // swept 90 + a to straight down (the boot's extra shifts it down the axis)
+    translate([-usb_dx, bend_y - extra*sin(a), bend_z - extra*cos(a)]) {
+        rotate([90, 0, 90]) rotate([0, 0, 180 - a])
+            rotate_extrude(angle = 90 + a) translate([cable_bend_r, 0]) circle(d = cable_d);
+        translate([0, 0, -cable_bend_r]) rotate([-90, 0, 0])
+            cylinder(d = cable_d, h = stand_d/2 + 5 - bend_y);                   // the run out the back
+    }
+}
+module stand_and_desk() {
+    stand();
+    translate([-stand_w, -stand_d, -50]) cube([2*stand_w, 2*stand_d, 50]);   // the desk, below z = 0
 }
 
 // ----------------------------------------------------------------------------
 if      (part == "bezel") bezel_print();
 else if (part == "back")  back();
 else if (part == "stand") stand();
+else if (part == "cable_probe")   intersection() { lead();  stand_and_desk(); }
+else if (part == "cable_control") intersection() { lead(6); stand_and_desk(); }
 else {
     bezel_print();
     translate([xo + 12, 0, 0]) back();

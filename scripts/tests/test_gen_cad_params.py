@@ -18,7 +18,7 @@ What is pinned and why:
     output, so a same-named local of a column-0 module can never be hit
     (parse_scad stops at the first `^module`);
   • the board registry (canary_board_lib.scad) parses completely — nine rows,
-    seven facts — and a row that drifts from the literal shape is a failure,
+    eleven facts — and a row that drifts from the literal shape is a failure,
     never a shorter registry; each reference form resolves; an unknown row,
     dim or fact fails naming the manifest and the library;
   • a reference is declared only where the knob's help comment already cites
@@ -124,6 +124,9 @@ module m() { n = 3; }
 REFS = {
     ("canary_wap_enclosure.scad", "board_l"): 'brd_l("xiao")',
     ("canary_wap_enclosure.scad", "board_w"): 'brd_w("xiao")',
+    ("canary_wap_enclosure.scad", "cam_lens_h"): "brd_xiao_sense_cam_h()",
+    ("canary_wap_enclosure.scad", "cam_dx"): "brd_xiao_sense_cam_dx()",
+    ("canary_wap_enclosure.scad", "cam_dy"): "brd_xiao_sense_cam_dy()",
     ("canary_vision_enclosure.scad", "dk_l"): 'brd_l("dk_c3")',
     ("canary_vision_enclosure.scad", "dk_w"): 'brd_w("dk_c3")',
     ("canary_vision_enclosure.scad", "vm_l"): 'brd_l("grove_v2")',
@@ -357,10 +360,10 @@ class CommittedTreeIsAFixedPoint(unittest.TestCase):
         with redirect_stdout(io.StringIO()) as out:
             self.assertEqual(gcp.main(["--check"]), 0)
         # 54 + the C6's trio + the 1.69's two offsets + the doorbell's eleven
-        # + the Watch's stand recline; 8 files + the C6 + the doorbell;
-        # 29 references + 3 + 8
-        self.assertIn("71 manifest-owned knobs across 10 case file(s)", out.getvalue())
-        self.assertIn("(40 of them resolved from canary_board_lib.scad)", out.getvalue())
+        # + the Watch's stand recline + the WAP's three Sense-camera facts;
+        # 8 files + the C6 + the doorbell; 29 references + 3 + 8 + 3
+        self.assertIn("74 manifest-owned knobs across 10 case file(s)", out.getvalue())
+        self.assertIn("(43 of them resolved from canary_board_lib.scad)", out.getvalue())
 
     def test_the_printed_order_names_the_carry_and_its_check(self):
         # REGEN_ORDER is what a write and a failed --check print. Step 10 must
@@ -398,7 +401,7 @@ class CommittedTreeIsAFixedPoint(unittest.TestCase):
 
 
 class BoardRegistry(unittest.TestCase):
-    def test_committed_lib_parses_nine_rows_and_seven_facts(self):
+    def test_committed_lib_parses_nine_rows_and_eleven_facts(self):
         reg = gcp.parse_board_registry()
         self.assertEqual(reg.path, LIB)
         self.assertEqual(list(reg.rows), ["xiao", "grove_v2", "ov5647", "mr60", "dk_c3",
@@ -417,7 +420,14 @@ class BoardRegistry(unittest.TestCase):
         self.assertEqual(list(reg.facts), ["brd_xiao_w_measured", "brd_stack_sock_measured",
                                            "brd_stack_sock_unmeasured", "brd_ws147_brass_c3",
                                            "brd_ws147_brass_c6", "brd_ws169_glass_w",
-                                           "brd_ws169_glass_h"])
+                                           "brd_ws169_glass_h",
+                                           # the XIAO ESP32-S3 Sense camera, off Seeed's model
+                                           "brd_xiao_sense_cam_h", "brd_xiao_sense_cam_dx",
+                                           "brd_xiao_sense_cam_dy", "brd_xiao_sense_cam_fp"])
+        self.assertEqual((reg.facts["brd_xiao_sense_cam_h"].value,
+                          reg.facts["brd_xiao_sense_cam_dx"].value,
+                          reg.facts["brd_xiao_sense_cam_dy"].value,
+                          reg.facts["brd_xiao_sense_cam_fp"].value), (12.7, 6.95, 0, 8.0))
         self.assertEqual((reg.facts["brd_xiao_w_measured"].value,
                           reg.facts["brd_xiao_w_measured"].line), (17.8, 84))
         self.assertEqual(reg.facts["brd_stack_sock_measured"].value, 6.5)
@@ -573,7 +583,8 @@ class BoardRegistry(unittest.TestCase):
         self.assertIn("is not a registry reference", by["board_clear"])
         self.assertIn("is not a registry reference", by["stack_camera"])
         self.assertIn('names "core_wall" — a fact is a brd_<name>', by["stack_plain"])
-        self.assertEqual(owned[WAP_REL], {})          # six refusals, nothing owned
+        # six refusals; only the WAP's three untouched camera references survive
+        self.assertEqual(sorted(owned[WAP_REL]), ["cam_dx", "cam_dy", "cam_lens_h"])
         # a registry that does not parse is ONE error, and the numbers still load
         with _Tree() as root:
             (root / LIB_REL).write_text("// nothing here\n", encoding="utf-8")
@@ -642,10 +653,12 @@ class ManifestsCarryTheJoin(unittest.TestCase):
         # the solar relay pod's radio board has no case file; the seated-stack
         # guess is the doorbell's comment-only citation; the brass pillar facts
         # are cited by comment in the C3 (its own MEASURED 3.0) and the C6
-        # (whose brass_h is maintainer-gated: the fact says 5.0, the file 3.0)
+        # (whose brass_h is maintainer-gated: the fact says 5.0, the file 3.0);
+        # the Sense camera's footprint is read by the WAP's fixed arithmetic
+        # (its window assert), not owned as a knob
         self.assertEqual(rows, ["heltec_v3"])
         self.assertEqual(facts, ["brd_stack_sock_unmeasured", "brd_ws147_brass_c3",
-                                 "brd_ws147_brass_c6"])
+                                 "brd_ws147_brass_c6", "brd_xiao_sense_cam_fp"])
         with redirect_stdout(io.StringIO()) as out:
             self.assertEqual(gcp.main(["--check"]), 0)
         text = out.getvalue()
@@ -710,8 +723,8 @@ class DisplayCasesJoinTheSameChain(unittest.TestCase):
             lib_after = edit_lib(root, WS147_ROW, WS147_ROW.replace("36.37", "36.4"))
             errors = gcp.check(root / "devices", root)
             self.assertEqual(sorted(e.split(" ", 1)[0] for e in errors),
-                             ["canary_c3_lcd147.scad:249:", "canary_c6_display.scad:90:",
-                              "canary_s3_lcd147.scad:106:"], errors)
+                             ["canary_c3_lcd147.scad:269:", "canary_c6_display.scad:90:",
+                              "canary_s3_lcd147.scad:129:"], errors)
             for e in errors:
                 self.assertIn('references brd_l("ws147") (canary_board_lib.scad:53, drawing rung): '
                               "registry says 36.4, file says 36.37", e)
@@ -719,12 +732,12 @@ class DisplayCasesJoinTheSameChain(unittest.TestCase):
             self.assertEqual(werr, [])
             self.assertEqual(sorted((p.name, c.line, c.name, c.old_token, c.new_token)
                                     for p, c in written),
-                             [("canary_c3_lcd147.scad", 249, "board_l", "36.37", "36.4"),
+                             [("canary_c3_lcd147.scad", 269, "board_l", "36.37", "36.4"),
                               ("canary_c6_display.scad", 90, "board_l", "36.37", "36.4"),
-                              ("canary_s3_lcd147.scad", 106, "board_l", "36.37", "36.4")])
+                              ("canary_s3_lcd147.scad", 129, "board_l", "36.37", "36.4")])
             self.assertEqual(gcp.check(root / "devices", root), [])
-            self.assertEqual(moved_lines("canary_c3_lcd147.scad", root), [249])
-            self.assertEqual(moved_lines("canary_s3_lcd147.scad", root), [106])
+            self.assertEqual(moved_lines("canary_c3_lcd147.scad", root), [269])
+            self.assertEqual(moved_lines("canary_s3_lcd147.scad", root), [129])
             # the C6 used to cite the row by comment behind a `model` ternary
             # no manifest could own, so a registry correction never reached it;
             # its board_l is the 1.47 literal now and the manifest names the

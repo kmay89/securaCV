@@ -88,6 +88,29 @@
 //     because the product photos do not dimension any of them.
 //     There is also a non-stick "-LCD-1.47B" variant with a different
 //     outline entirely — verify which board you have.
+//
+//  ── CHANGELOG ────────────────────────────────────────────────────────────
+//  2026-09-24  Display-case CAD audit, closed against the rendered meshes
+//     (every item below is a mesh intersection, not a reading of the source):
+//     - the light seam's ROOF, insert build (band_clear > 0): the outer
+//       wall - seam_web_d (0.9 mm) of the roof hung over the whole 16.4 mm
+//       slot with nothing under it — the hidden ribs stop at seam_web_d.
+//       Each rib now carries a 45° WEDGE out to the skin under the roof
+//       (seam_web_ribs), so the roof bridges the 1.1 mm between ribs and
+//       nothing else. The band gets the matching notch; the white line at the
+//       skin is still unbroken (the wedge is zero-height where it meets the
+//       outer face). Co-print build unchanged in function.
+//     - re-proven, no geometry moved: the drop collar survives the cavity cut
+//       (bezel_collar() is added after it — 2 x 11.5 mm3 flanks on the stock
+//       stick, a 160 mm3 ring on the headered one, bearing on the shell at
+//       collar_gap); all four hooks drop fully into the plate's groove (the
+//       seated plate meets the bezel with ZERO intersection at dz = 0 and
+//       -0.1, engagement 0.40 past the plate edge at every hook; lifted 0.05
+//       it meets the hold faces); the buttons are at the C3-confirmed 7.0
+//       from the plug edge and both the actuators and the switch bodies
+//       clear the walls; the plug opening's top is the bridge-safe 7.0 flat;
+//       the lift lug is gone (nothing on the back stands past the plate
+//       outline — the pry scallop is the release).
 // ============================================================================
 
 use <canary_core_lib.scad> // rrect2d + the house constants
@@ -259,9 +282,11 @@ light_seam = true;
 // hidden behind the strip, not breaks in it. See seam_web_ribs.
 light_band = true; // fill the seam with a white PETG light-pipe strip (co-printed, or pressed in as part fil_light)
 // ZERO by default: the co-print is the build. The slot's roof is ~16 mm of
-// wall carried only by the hidden ribs, and on a face-down bezel it is a
-// bridge unless the band is printed under it. The insert build (0.10) prints
-// that roof as a bridge between ribs — a known sag, accepted by choosing it.
+// wall, and on a face-down bezel it is a bridge unless the band is printed
+// under it. The insert build (0.10) prints that roof over air, so the hidden
+// ribs carry 45° wedges out to the skin (seam_web_ribs): the roof then
+// bridges only the ~1.1 mm between ribs, in both builds, instead of the whole
+// run on the outer 0.9 mm the ribs never reached.
 band_clear = 0;      // per-face clearance; 0 = co-printed (the default), 0.10 = pressed-in inserts
 // Measured off the board (kmay89), stated as the SIDE ELEVATION because that
 // is what you look at: 1 mm of black, then 3 mm of white, then black to the
@@ -874,20 +899,49 @@ module seam_prisms(shrink = 0) {
 // crosses: face rim -> rib -> wall, through solid material the whole way.
 // `grow` swells them so the white strip gets notches it slides over rather
 // than an interference fit against them.
+//
+// THE ROOF WEDGES. The ribs reach seam_web_d into the wall and stop; the
+// outer wall - seam_web_d of the slot's roof had nothing under it for the
+// whole run — fine co-printed (the band is under it), a 16 mm unsupported
+// shelf in the insert build. So each rib carries a 45° wedge from its outer
+// face up to the skin, hung under the roof: printed face-down it grows
+// outward one layer per layer off the rib, and the roof then bridges only
+// the gap between ribs. The wedge is zero-height where it meets the outer
+// face, so the white line at the skin stays unbroken; the band takes the
+// matching notch (grown by `grow`) at its top outer corner and still presses
+// in from outside, since the notch only ever lies BELOW the wedge as it
+// slides. Drawn to the shell's own face (xo/2), not seam_x_out — that reach
+// would leave a black notch in the line at each rib.
 module seam_web_ribs(grow = 0) {
     z0 = face_t + seam_dz;
+    z_top = z0 + seam_h;
     span = seam_y_hi - seam_y_lo;
     // Ribs sit at the interior boundaries of (webs + 1) equal stretches.
     step = span / (seam_webs + 1);
+    x_rib = xc/2 + seam_web_d;      // the rib's outer face: where the roof's support ended
     if (seam_webs > 0)
-        for (sx = [-1, 1], i = [1 : seam_webs])
-            translate([sx * (xc/2 + seam_web_d/2),
-                       seam_y_lo + i * step,
-                       z0 + seam_h/2])
+        for (sx = [-1, 1], i = [1 : seam_webs]) {
+            yy = seam_y_lo + i * step;
+            translate([sx * (xc/2 + seam_web_d/2), yy, z0 + seam_h/2])
                 cube([seam_web_d + 2*grow,
                       seam_web_w + 2*grow,
                       seam_h + 2], center = true);
+            // the wedge: everything above the 45° line through (xo/2, z_top),
+            // from inside the rib out past the skin, capped 1 mm into the roof
+            translate([0, yy, 0]) rotate([90, 0, 0])
+                linear_extrude(seam_web_w + 2*grow, center = true)
+                    scale([sx, 1]) offset(delta = grow)
+                        polygon([[x_rib - 0.5, z_top - (xo/2 - x_rib) - 0.5],
+                                 [xo/2 + 1, z_top + 1],
+                                 [x_rib - 0.5, z_top + 1]]);
+        }
 }
+// The wedge drops (wall - seam_web_d) below the roof at the rib; it must not
+// reach the slot's floor, or the rib is a full-depth web and the line breaks.
+assert(!light_seam || seam_webs == 0 || wall - seam_web_d <= seam_h - 0.8,
+       str("the roof wedge drops ", wall - seam_web_d, " mm into a ", seam_h,
+           " mm seam — under 0.8 mm of white would pass beneath it. Deepen ",
+           "seam_web_d or the seam."));
 
 // A rib that ate the whole wall would leave no white to see; one that ate none
 // would not tie anything. Hold it to a real ligament on both sides.

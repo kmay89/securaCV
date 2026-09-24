@@ -87,29 +87,32 @@ DEVICES = {
         "scad": "canary_wap_enclosure.scad",
         "overrides": {"preset": '"compact_plain"', "part": '"base"'},
         "body": "union() { base(); translate([0, 0, base_h]) lid(); }",
-        "seams": "[base_h]",
-        "placement": "wap_fitcheck: lid at z = base_h",
+        "seams": "[]",   # the piston plate: base is the plate inside lid's walls — no seam crosses the side profile
+        "placement": "wap_fitcheck: lid (the shell) at z = base_h; base (the plate) inside its walls at floor_t",
     },
     "device.canary-vision": {
         "scad": "canary_vision_enclosure.scad",
         "overrides": {"host": '"xiao"', "preset": '"vision_indoor"', "part": '"back"'},
         "body": "union() { back(); translate([0, 0, base_d]) front(); }",
-        "seams": "[base_d]",
-        "placement": "vision_fitcheck: front at z = base_d",
+        "seams": "[]",   # the piston plate: no seam crosses the side profile (see the Sense)
+        "placement": "vision_fitcheck: front at z = base_d (the plate's front face at floor_t, inside the walls)",
     },
     "device.canary-vision-devkit": {
         "scad": "canary_vision_enclosure.scad",
         "overrides": {"host": '"devkit"', "preset": '"vision_indoor"', "part": '"back"'},
         "body": "union() { back(); translate([0, 0, base_d]) front(); }",
-        "seams": "[base_d]",
-        "placement": "vision_fitcheck: front at z = base_d",
+        "seams": "[]",   # the piston plate: no seam crosses the side profile (see the Sense)
+        "placement": "vision_fitcheck: front at z = base_d (the plate's front face at floor_t, inside the walls)",
     },
     "device.canary-sense": {
         "scad": "canary_sense_enclosure.scad",
         "overrides": {"part": '"back"'},
         "body": "union() { back(); translate([0, 0, base_d]) front(); }",
-        "seams": "[base_d]",
-        "placement": "sense_fitcheck: front at z = base_d",
+        # the piston plate: the shell's walls run to the back face, the only
+        # seam is the hairline around the plate ON that face — nothing crosses
+        # the side profile, so the figure draws one band
+        "seams": "[]",
+        "placement": "sense_fitcheck: front at z = base_d (the plate's front face at floor_t, inside the walls)",
     },
     "device.canary-vision-doorbell": {
         # Mounted as it hangs: the body's blind keyhole pockets seat on the
