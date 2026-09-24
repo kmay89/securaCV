@@ -477,8 +477,9 @@ What to expect:
 
 ### Step 6: Verify per-device PKI (optional but recommended)
 
-Each Canary signs its `chain`, `events`, and `counts` MQTT publishes
-with an on-device Ed25519 key. HA auto-pins the public key the first
+Each Canary that witnesses signs its `chain`, `events`, and `counts`
+MQTT publishes with an on-device Ed25519 key (a canary-display signs
+nothing). HA auto-pins the public key the first
 time a device's health publish appears (TOFU), then verifies every
 subsequent publish.
 
@@ -487,8 +488,24 @@ attributes — you should see `verified: true`, `trust_reason: ok`, and
 matching `pinned_fingerprint` / `received_fingerprint` values. If your
 threat model needs stricter trust than TOFU, pin the device's pubkey
 manually from **Settings → Devices & services → SecuraCV → Configure →
-Pin a device pubkey** (the fingerprint + pubkey hex are on each
-device's `/enroll` page, e.g. `http://canary-<fp>.local/enroll`).
+Pin a device pubkey**. The form takes the `device_id` and the full
+64-character pubkey hex, read off the device rather than over MQTT, and
+where that is depends on the product:
+
+- **canary-wap**: its `/enroll` page on the local network
+  (`canary-<name>.local/enroll`, or its IP).
+- **The `firmware/canary` build** and **canary-vision**: the USB serial
+  console, where `j` prints the self-manifest with `device_id` and
+  `pubkey` (the `firmware/canary` build's `i` prints the key too).
+- **canary-sense** and **canary-sentinel**: only the fingerprint, in the
+  boot log (`Ed25519 ready  fp=…`). Neither shows its full key off the
+  network, so you can't pin one by hand. Compare that fingerprint with
+  the `pinned_fingerprint` attribute instead.
+- **The canary-display line**: nothing to pin. A display has no signing
+  key.
+
+Addresses, caveats and the apps' part:
+[where each product shows its key](device_trust.md#where-each-product-shows-its-key).
 
 Full background, threat model, and rotation procedure: see
 [`docs/device_trust.md`](device_trust.md).
