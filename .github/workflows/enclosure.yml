@@ -20,6 +20,9 @@ on:
       # the design-language gate's own script: a change to the gate must run
       # the gate, or it can be weakened while CI stays green
       - "scripts/lint_design_lang.py"
+      # the Lab's Assemble tab poses are derived from the CAD here
+      # (gen_assembly_poses.py --check), so a hand edit must run the gate
+      - "canary-local/devices/assembly.json"
   pull_request:
     branches: [ "main" ]
     paths:
@@ -28,6 +31,7 @@ on:
       - "docs/hardware/bom_*.csv"
       - ".github/workflows/enclosure.yml"
       - "scripts/lint_design_lang.py"
+      - "canary-local/devices/assembly.json"
 
 permissions:
   contents: read
@@ -98,6 +102,15 @@ jobs:
       # out from under the committed numbers.
       - name: Assembled envelopes match the committed parts
         run: python3 gen_assembled_dims.py --check
+
+      # Where each part SITS in the Lab's Assemble tab. Those poses were typed
+      # and drifted until the page showed every released lid sunk 1-1.4 mm
+      # into its base and the Vision/Sense screws 2.6-2.8 mm off their posts,
+      # pointing out of the face — while every fit gate here was green,
+      # because none of them looked at the page. They are derived from the
+      # same fit-check datums now; echo only, seconds.
+      - name: Lab assembly poses match the CAD
+        run: python3 gen_assembly_poses.py --check
 
       # The coarse preview meshes the Lab loads for in-development designs
       # (canary-local/enclosures/preview/*.stl — the Watch, Dash and Combo
