@@ -2191,12 +2191,19 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
       [req]() { return bearer_present_and_valid(req); },
       []() { return provisioning_gate_take(); });
 
-  if (verdict == ReceiptVerdict::REFUSE_HOST) {
-    send_host_refusal(req);
-    return ESP_OK;
-  }
+  // Fail closed: the receipt is sent ONLY inside an explicit SERVE_BEARER or
+  // SERVE_TAP test. REFUSE_NO_TAP has its own body below; REFUSE_HOST, and
+  // any verdict a later edit adds or a branch here stops naming, reaches the
+  // refusal at the end, never the receipt. check_route_security.py holds the
+  // handler to this shape (check_host_first).
   if (verdict == ReceiptVerdict::SERVE_BEARER) {
     return send_provisioning_receipt(req);
+  }
+  if (verdict == ReceiptVerdict::SERVE_TAP) {
+    const esp_err_t result = send_provisioning_receipt(req);
+    Serial.println("[AUTH] Provisioning receipt served. Gate closed.");
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Provisioning receipt served", "BOOT gate");
+    return result;
   }
   if (verdict == ReceiptVerdict::REFUSE_NO_TAP) {
     char body[256];
@@ -2212,11 +2219,9 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_sendstr(req, body);
   }
-
-  esp_err_t result = send_provisioning_receipt(req);
-  Serial.println("[AUTH] Provisioning receipt served. Gate closed.");
-  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Provisioning receipt served", "BOOT gate");
-  return result;
+  // REFUSE_HOST, and every verdict not named above: 403 {"error":"host"}.
+  send_host_refusal(req);
+  return ESP_OK;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
