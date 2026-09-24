@@ -13,8 +13,8 @@
   keys before it compares or stores them, rewrites pins already stored in
   capitals when it loads them, and shows every key in lowercase. A
   different key, or a tampered publish, still reads as a mismatch. The
-  setup guide and `docs/device_trust.md` drop their "a WAP may read as a
-  mismatch" caveats. The WAP firmware is unchanged. Reproduced and fixed on
+  setup guide and `docs/device_trust.md` drop their caveat that a WAP may
+  read as a mismatch. The WAP firmware is unchanged. Reproduced and fixed on
   a host with the WAP's own code, not checked on a bench. The HACS mirror's
   copy of the changed integration files follows in a resync (sweep U6).
 - **Canary Sense and Sentinel now show their full public key, so you can
@@ -54,21 +54,21 @@
   after bring-up was undefined. Both now get the static copy the Bluetooth
   manager already kept. Read from source; the WAP's compile is CI's; not
   run on a bench. The emulator dist does not move for this one.
-- **The Quiet Hours wheels center their options on every touch glass.**
-  The display runs without an LVGL theme, so a roller's text is
-  left-aligned unless it sets otherwise. The Location wheels already set
-  it; the two hour wheels did not, so every glass with the settings panel
-  drew `HH:00` flush-left under a full-width highlight. `mk_hour_roller`
-  now sets the same center style. Host-measured by compiling the helper as
-  committed against the firmware's `lv_conf.h` on LVGL 8.4.0 and 9.5.0: the
-  label's left/right gap goes from 0/36 to 18/18 px on the compact 92 px
-  wheel and from 0/73 to 36/37 px on the Regular 150 px wheel, the same on
-  both. The emulator bundles of the four touch flavors that compile it
-  (watch, dash, touch169, amoled241) are rebuilt in this PR by CI's pinned
-  emsdk. The Arduino sketch mirror is regenerated, and
-  `display_settings.md` no longer says the hour wheel never showed it. A new
-  source guard, `canary-local/tests/settings_rollers.test.js`, fails any
-  roller in the display's sources whose own block does not center it.
+- **The Quiet Hours wheels center their options on every touch glass
+  (roadmap row 17).** The display runs without an LVGL theme, so a roller's
+  text is left-aligned unless it sets otherwise. The Location wheels
+  already set it; the two hour wheels did not, so every glass with the
+  settings panel drew `HH:00` flush-left under a full-width highlight.
+  `mk_hour_roller` now sets the same center style. Host-measured by
+  compiling the helper as committed against the firmware's `lv_conf.h` on
+  LVGL 8.4.0 and 9.5.0: the label's left/right gap goes from 0/36 to 18/18
+  px on the compact 92 px wheel and from 0/73 to 36/37 px on the Regular
+  150 px wheel, the same on both. The emulator bundles of the four touch
+  flavors that compile it (watch, dash, touch169, amoled241) are rebuilt in
+  this PR by CI's pinned emsdk. The Arduino sketch mirror is regenerated,
+  and `display_settings.md` no longer says the hour wheel never showed it.
+  A new source guard, `canary-local/tests/settings_rollers.test.js`, fails
+  any roller in the display's sources whose own block does not center it.
   Compile-tested by CI, not bench-tested.
 
 ### The airtime governor charges what goes on the air, a chain-state write NVS refuses is retried, the WAP's settings sessions stop closing each other, the key-pinning steps name each product's source, and CI keeps one host-test list and fails a logic test's node or python3 read outside its path filter (#1725)

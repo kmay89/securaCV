@@ -82,8 +82,8 @@ Two smaller one-time human acts, same flavor:
   resync in securacv-homeassistant#17 (2026-09-24). HA14 moved the carried
   `custom_components/securacv` files again in #1725 (and F55 one carried
   test), and HA18 and HA17 moved them again in #<E>; their resync follows
-  both. Until the secret is set, every
-  `main` change to the carried set needs that again.
+  both. Until the secret is set, every `main` change to the carried set
+  needs that again.
 - [ ] **U7 [human] Open the staged home-assistant/brands submission.**
   `brands/home-assistant/README.md` says "not submitted"; it is the only route
   to an integration icon on HA < 2026.3.
@@ -1934,7 +1934,11 @@ so — see D2 below.)
   `j` would need a new input path on both. The setup portal is shared by
   every product (`firmware/common/network/setup_portal.cpp`) and is up only
   at first boot and while joining keeps failing, so it would widen scope
-  and still not be there when an owner goes to pin. The line is carried
+  and still not be there when an owner goes to pin. One correction to this
+  item's own claims: the portal's setup network is not open to anyone
+  nearby. It is a WPA2 network with a per-unit password, minted once and
+  kept, and it takes one station at a time (`setup_portal.cpp`'s
+  `AP_PASS_LEN` and `WiFi.softAP(..., /*max_conn=*/1)`). The line is carried
   into canary-sentinel's `witness.cpp` (`check_sentinel_net_sync.sh`).
   Updated together: the Sense and Sentinel rows of "Where each product
   shows its key", manual pinning, rotation and the pre-TOFU threat bullet
@@ -2102,16 +2106,28 @@ so — see D2 below.)
   seen on a bench. The emulator dist does not move:
   `canary-local/emulator/build.sh` compiles only the WAP's
   `securacv_audio.cpp`, which includes none of the BLE headers.
+- [ ] **HA22 [code] A health `public_key` with whitespace in it passes the
+  TOFU hook's hex check and fails inside the pin task.**
+  `_async_health_for_tofu` (`custom_components/securacv/__init__.py`)
+  accepts any 64-character `public_key` that `bytes.fromhex` decodes, and
+  `bytes.fromhex` skips ASCII whitespace. So a 64-character string holding
+  spaces passes, decodes to fewer than 32 bytes, and
+  `fingerprint_from_pubkey_hex` raises `ValueError` inside the scheduled
+  pin task. No pin is made, but Home Assistant logs an unhandled task
+  exception. Fix: require every character to be a hex digit (or the
+  decoded key to be 32 bytes) before the pin task is scheduled, with a
+  test. Pre-existing: the hook did the same before HA18. Found in HA18's
+  review (#<E>).
 - [ ] *(Mirror repo itself: no code work. It was byte-identical again as of
   securacv-homeassistant#17 (2026-09-24), which resynced the 33 carried
   files #1703, #1704 and #1718 had moved. The same PR brought the store
   page's watch-actions, key-pinning, broker-TLS and Apple Home sentences,
   and a `lint_readme.py` overclaim check that reads a hard-wrapped claim as
   one and refuses "encrypted by default". PR #1725 and PR #<E> move
-  carried files again, and their resync follows them (U6). Its health items are U6 and U7
-  above, plus the three monorepo-fixture tests its CI deselects, which is
-  by design. A few more tests skip themselves there because they read
-  firmware sources the mirror does not carry.)*
+  carried files again, and their resync follows them (U6). Its health
+  items are U6 and U7 above, plus the three monorepo-fixture tests its CI
+  deselects, which is by design. A few more tests skip themselves there
+  because they read firmware sources the mirror does not carry.)*
 
 ---
 
