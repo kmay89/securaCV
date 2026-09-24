@@ -78,6 +78,12 @@ static uint8_t s_mode_byte_raw = 0;
 static constexpr uint32_t      kConnectTimeoutSec   = 3;  // same as WiFiClient's plain default (3000 ms)
 static constexpr unsigned long kHandshakeTimeoutSec = 4;
 static constexpr uint16_t      kSocketTimeoutSec    = 5;
+// The watchdog is fed between the two stages, so each stage must fit on its
+// own, on both Arduino cores ([env:full] builds on core 3, the rest on 2).
+static_assert(kConnectTimeoutSec + kHandshakeTimeoutSec < WATCHDOG_TIMEOUT_SEC,
+              "stage 1 (TCP connect + TLS handshake) must end before the loop task's watchdog");
+static_assert(kSocketTimeoutSec < WATCHDOG_TIMEOUT_SEC,
+              "stage 2 (MQTT CONNECT -> CONNACK) must end before the loop task's watchdog");
 
 static MqttCredentials s_creds;
 static char s_device_id[32];
@@ -508,8 +514,12 @@ static bool attempt_connect() {
   Client& sock = s_transport.client();
   if (s_transport.decision().tls()) {
     WiFiClientSecure& tls = static_cast<WiFiClientSecure&>(sock);
-    tls.setTimeout(kConnectTimeoutSec);             // seconds: the TCP connect select + socket recv/send
-    tls.setHandshakeTimeout(kHandshakeTimeoutSec);  // seconds: the mbedTLS handshake loop
+    // The shared helper, not a bare setTimeout: on core 3 ([env:full])
+    // NetworkClientSecure has no seconds-based setTimeout, so that call is
+    // Stream's read timeout and leaves the connect at the transport's 5 s,
+    // which with the 4 s handshake would outlast the 8 s watchdog.
+    canary::net::mqtt_tls::set_connect_timeout_sec(tls, kConnectTimeoutSec);  // the TCP connect
+    tls.setHandshakeTimeout(kHandshakeTimeoutSec);  // seconds on both cores: the mbedTLS handshake loop
   }
   Serial.printf("[MQTT] Connecting to %s:%u (%s)...\n", s_creds.host, (unsigned)s_creds.port,
                 s_transport.name());
