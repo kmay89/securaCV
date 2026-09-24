@@ -14,11 +14,16 @@ SRC_DIR   = ../arduino/canary_wap
 # $(call run_marked,<suite>[ <args>][,<marker>]) runs ./<suite> and holds it
 # to the check firmware.yml's old inline steps made: a non-zero exit fails,
 # and so does output without the suite's marker (default "ALL .* PASSED"), so
-# a suite that returns 0 before its last check cannot pass silently. It
-# echoes only the suite's command line, like the plain `./suite` lines.
-run_marked = @echo "./$(1)"; out=$$(./$(1)); s=$$?; printf '%s\n' "$$out"; \
-  [ $$s -eq 0 ] || { echo "$(firstword $(1)): exit $$s" >&2; exit 1; }; \
-  printf '%s\n' "$$out" | grep -q "$(or $(2),ALL .* PASSED)" || \
+# a suite that returns 0 before its last check cannot pass silently. Its
+# output passes through tee as the suite writes it, instead of being held
+# until it exits, and its exit status comes back through a file, because
+# make's /bin/sh has no pipefail. It echoes only the suite's command line,
+# like the plain `./suite` lines.
+run_marked = @echo "./$(1)"; t=$$(mktemp) || exit 1; \
+  { ./$(1); echo $$? > "$$t.rc"; } | tee "$$t"; s=$$(cat "$$t.rc"); \
+  grep -q "$(or $(2),ALL .* PASSED)" "$$t"; m=$$?; rm -f "$$t" "$$t.rc"; \
+  [ "$$s" = 0 ] || { echo "$(firstword $(1)): exit $$s" >&2; exit 1; }; \
+  [ $$m -eq 0 ] || \
   { echo "$(firstword $(1)): no '$(or $(2),ALL .* PASSED)' line in its output" >&2; exit 1; }
 
 SOURCES   = test_mesh_coexistence.cpp \

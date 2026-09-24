@@ -25,12 +25,16 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Werror
 # $(call run_marked,<suite>) runs ./<suite> and holds it to the check
 # firmware.yml's old inline steps made: a non-zero exit fails, and so does
 # output without the suite's "ALL ... PASSED" line, so a suite that returns 0
-# before its last check cannot pass silently. It echoes only the suite's
-# command line, like a plain `./suite` line.
-run_marked = @echo "./$(1)"; out=$$(./$(1)); s=$$?; printf '%s\n' "$$out"; \
-  [ $$s -eq 0 ] || { echo "$(1): exit $$s" >&2; exit 1; }; \
-  printf '%s\n' "$$out" | grep -q "ALL .* PASSED" || \
-  { echo "$(1): no 'ALL .* PASSED' line in its output" >&2; exit 1; }
+# before its last check cannot pass silently. Its output passes through
+# tee as the suite writes it, instead of being held until it exits, and
+# its exit status comes back through a file, because make's /bin/sh has
+# no pipefail. It echoes only the suite's command line, like
+# a plain `./suite` line.
+run_marked = @echo "./$(1)"; t=$$(mktemp) || exit 1; \
+  { ./$(1); echo $$? > "$$t.rc"; } | tee "$$t"; s=$$(cat "$$t.rc"); \
+  grep -q "ALL .* PASSED" "$$t"; m=$$?; rm -f "$$t" "$$t.rc"; \
+  [ "$$s" = 0 ] || { echo "$(1): exit $$s" >&2; exit 1; }; \
+  [ $$m -eq 0 ] || { echo "$(1): no 'ALL .* PASSED' line in its output" >&2; exit 1; }
 
 INC_COMPANION = -I ../include
 
