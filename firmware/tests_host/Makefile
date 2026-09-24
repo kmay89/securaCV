@@ -346,7 +346,7 @@ NVSDEPTH_HDR = ../canary/lib/securacv_crypto/src/nvs_session_depth.h ../canary/i
 NVSDEPTH_BIN = $(BUILD_DIR)/test_nvs_session_depth
 
 # NvsManager's lock on the firmware's own code (test_nvs_manager_lock.cpp):
-# nvs_manager_cut.awk cuts the constructor, destructor, begin() and end()
+# cut_functions.awk cuts the constructor, destructor, begin() and end()
 # verbatim out of securacv_crypto.cpp, and the suite compiles them against the
 # real securacv_crypto.h over stubs/nvs_manager (Serial, a Preferences that
 # refuses a double begin, a recursive mutex with an owner). The model's
@@ -358,8 +358,20 @@ NVSLOCK_HDRS = ../canary/lib/securacv_crypto/src/securacv_crypto.h \
                ../canary/lib/securacv_crypto/src/nvs_session_depth.h \
                ../canary/include/canary_config.h \
                $(wildcard stubs/nvs_manager/*.h stubs/nvs_manager/freertos/*.h)
+NVSLOCK_SIGS = NvsManager::NvsManager(|NvsManager::~NvsManager(|bool NvsManager::begin(|void NvsManager::end(
 NVSLOCK_INC  = $(BUILD_DIR)/nvs_manager_session.inc
 NVSLOCK_BIN  = $(BUILD_DIR)/test_nvs_manager_lock
+
+# The canary's NVS store helpers report what they wrote (repo sweep F55,
+# test_nvs_store_result.cpp): nvs_store_u32() / nvs_store_bytes(), the
+# NvsManager puts under them and the session begin()/end() around them, cut
+# out of securacv_crypto.cpp like the lock suite's. Pins that a put NVS
+# refused, a short put and a zero-length store are false, that a write that
+# landed is true and ran on a writable handle, and that F52's lock holds on
+# every one of those paths (the session ends, another task's is untouched).
+NVSSTORE_SIGS = $(NVSLOCK_SIGS)|size_t NvsManager::putUInt(|size_t NvsManager::putBytes(|bool nvs_store_u32(|bool nvs_store_bytes(
+NVSSTORE_INC  = $(BUILD_DIR)/nvs_store_result.inc
+NVSSTORE_BIN  = $(BUILD_DIR)/test_nvs_store_result
 
 # Coarse optical feature classifiers (canary-vision optical_features.h): pins
 # the invariant-safe coarsening of the person-detection model's box geometry —
@@ -610,12 +622,19 @@ $(KEYREST_BIN): test_key_at_rest.cpp $(KEYREST_HDR) Makefile | $(BUILD_DIR)
 $(NVSDEPTH_BIN): test_nvs_session_depth.cpp $(NVSDEPTH_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../canary/lib/securacv_crypto/src -I ../canary/include test_nvs_session_depth.cpp -o $@
 
-$(NVSLOCK_INC): $(NVSLOCK_SRC) nvs_manager_cut.awk Makefile | $(BUILD_DIR)
-	awk -f nvs_manager_cut.awk $(NVSLOCK_SRC) > $@.tmp && mv $@.tmp $@
+$(NVSLOCK_INC): $(NVSLOCK_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(NVSLOCK_SIGS)' -f cut_functions.awk $(NVSLOCK_SRC) > $@.tmp && mv $@.tmp $@
 
 $(NVSLOCK_BIN): test_nvs_manager_lock.cpp $(NVSLOCK_INC) $(NVSLOCK_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I stubs/nvs_manager -I ../canary/lib/securacv_crypto/src \
 	    -I ../canary/include -I $(BUILD_DIR) test_nvs_manager_lock.cpp -o $@
+
+$(NVSSTORE_INC): $(NVSLOCK_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(NVSSTORE_SIGS)' -f cut_functions.awk $(NVSLOCK_SRC) > $@.tmp && mv $@.tmp $@
+
+$(NVSSTORE_BIN): test_nvs_store_result.cpp $(NVSSTORE_INC) $(NVSLOCK_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I stubs/nvs_manager -I ../canary/lib/securacv_crypto/src \
+	    -I ../canary/include -I $(BUILD_DIR) test_nvs_store_result.cpp -o $@
 
 $(OPTFEAT_BIN): test_optical_features.cpp $(OPTFEAT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(OPTFEAT_INC) test_optical_features.cpp -o $@
@@ -661,7 +680,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -698,6 +717,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(KEYREST_BIN)
 	./$(NVSDEPTH_BIN)
 	./$(NVSLOCK_BIN)
+	./$(NVSSTORE_BIN)
 	./$(OPTFEAT_BIN)
 	./$(VISION_PIPE_BIN)
 	./$(VISPROF_BIN)
