@@ -115,17 +115,23 @@ Behavior worth knowing before you flip a mode on:
   milliseconds and would have left the 30 s in place. Each product's
   `mqtt_mgr.cpp` then `static_assert`s connect + handshake + its
   PubSubClient socket timeout (the CONNACK wait) under its watchdog:
-  5 + 15 + 5 = 25 s. The display used to wait PubSubClient's default 15 s
-  for CONNACK (35 s in all), so its TLS path now sets the 5 s socket
-  timeout the other three already had; its plain path keeps the core's
-  3 s connect and the 15 s wait. Outside the asserted 25 s: the DNS lookup,
-  `loop()` work between the watchdog feed at its top and the attempt, a
-  CONNECT write stalled on a full send buffer (itself now bounded at 5 s),
-  and the compute of the handshake's last step after the 15 s check. The
-  same 5 s also bounds any later stalled TLS write on that socket, which
-  used to wait 30 s. These are watchdog-derived numbers, compile-tested by
-  CI on both core lines, not bench-measured: a TCP connect slower than 5 s,
-  or a display TLS CONNACK slower than 5 s, now fails and retries on the
+  5 + 15 + 5 = 25 s. The display waited PubSubClient's default 15 s for
+  CONNACK, so even with the 5 s connect its TLS attempt would have totaled
+  5 + 15 + 15 = 35 s (60 s with the core's old 30 s connect). Its TLS path
+  now sets the 5 s socket timeout the other three already had; its plain
+  path keeps the core's 3 s connect and the 15 s wait. Outside the asserted
+  25 s: the DNS lookup, `loop()` work between the watchdog feed at its top
+  and the attempt, a CONNECT write stalled on a full send buffer (itself
+  now bounded at 5 s), the compute of the handshake's last step after the
+  15 s check, a CONNACK dribbled byte by byte (PubSubClient applies its
+  socket timeout to each byte, not to the packet), and the status and
+  subscribe writes that follow a successful connect before the next
+  watchdog feed. The same 5 s also bounds any later stalled TLS write on
+  that socket, which used to wait 30 s, and on the display's TLS path every
+  inbound MQTT read in `loop()` now gives up on a stalled byte after 5 s
+  instead of 15 s. These are watchdog-derived numbers, compile-tested by CI
+  on both core lines, not bench-measured: a TCP connect slower than 5 s, or
+  a display TLS CONNACK slower than 5 s, now fails and retries on the
   backoff where it used to wait.
 - **The Hub's Mosquitto add-on** (installed by the one-command hub plan)
   listens on plain `1883` by default; the broker-side TLS listener is
