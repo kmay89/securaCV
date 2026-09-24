@@ -11,6 +11,16 @@ CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra
 INC       = -I ../include
 
+# $(call run_marked,<suite>) runs ./<suite> and holds it to the check
+# firmware.yml's old inline steps made: a non-zero exit fails, and so does
+# output without the suite's "ALL ... PASSED" line, so a suite that returns 0
+# before its last check cannot pass silently. It echoes only the suite's
+# command line, like the plain `./suite` lines.
+run_marked = @echo "./$(1)"; out=$$(./$(1)); s=$$?; printf '%s\n' "$$out"; \
+  [ $$s -eq 0 ] || { echo "$(1): exit $$s" >&2; exit 1; }; \
+  printf '%s\n' "$$out" | grep -q "ALL .* PASSED" || \
+  { echo "$(1): no 'ALL .* PASSED' line in its output" >&2; exit 1; }
+
 # Fleet-link presence beacon parser (canary/net/beacon_parse.h): fp4 hex
 # encode, status decode (flags/battery/health/LE chain), and rejection of
 # short/oversize/wrong-company/wrong-type/wrong-version blobs.
@@ -125,28 +135,28 @@ $(CARDS_BIN): $(CARDS_SOURCES)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(CARDS_SOURCES)
 
 $(MODE_BIN): $(MODE_SRC)
-	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(MODE_SRC)
+	$(CXX) $(CXXFLAGS) -Werror $(INC) -o $@ $(MODE_SRC)
 
 $(DEMO_BIN): $(DEMO_SOURCES)
-	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(DEMO_SOURCES)
+	$(CXX) $(CXXFLAGS) -Werror $(INC) -o $@ $(DEMO_SOURCES)
 
 $(ARCADE_BIN): $(ARCADE_SRC)
-	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(ARCADE_SRC)
+	$(CXX) $(CXXFLAGS) -Werror $(INC) -o $@ $(ARCADE_SRC)
 
 $(MIC_BIN): $(MIC_SRC)
-	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(MIC_SRC)
+	$(CXX) $(CXXFLAGS) -Werror $(INC) -o $@ $(MIC_SRC)
 
 $(VOICE_BIN): $(VOICE_SRC)
-	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(VOICE_SRC)
+	$(CXX) $(CXXFLAGS) -Werror $(INC) -o $@ $(VOICE_SRC)
 
 $(CLEAR_BIN): $(CLEAR_SRC)
-	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(CLEAR_SRC)
+	$(CXX) $(CXXFLAGS) -Werror $(INC) -o $@ $(CLEAR_SRC)
 
 $(RTC_BIN): $(RTC_SRC)
-	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(RTC_SRC)
+	$(CXX) $(CXXFLAGS) -Werror $(INC) -o $@ $(RTC_SRC)
 
 $(RTC85063_BIN): $(RTC85063_SRC)
-	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(RTC85063_SRC)
+	$(CXX) $(CXXFLAGS) -Werror $(INC) -o $@ $(RTC85063_SRC)
 
 $(BEDSIDE_BIN): $(BEDSIDE_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(BEDSIDE_SRC)
@@ -247,20 +257,20 @@ POLICY_BIN = test_settings_policy
 POLICY_SRC = test_settings_policy.cpp
 
 $(POLICY_BIN): $(POLICY_SRC)
-	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(POLICY_SRC)
+	$(CXX) $(CXXFLAGS) -Werror $(INC) -o $@ $(POLICY_SRC)
 
 run:$(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN) $(ONBOARD_BIN) $(POLICY_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
-	./$(MODE_BIN)
-	./$(DEMO_BIN)
-	./$(ARCADE_BIN)
-	./$(MIC_BIN)
-	./$(VOICE_BIN)
-	./$(CLEAR_BIN)
-	./$(RTC_BIN)
-	./$(RTC85063_BIN)
+	$(call run_marked,$(MODE_BIN))
+	$(call run_marked,$(DEMO_BIN))
+	$(call run_marked,$(ARCADE_BIN))
+	$(call run_marked,$(MIC_BIN))
+	$(call run_marked,$(VOICE_BIN))
+	$(call run_marked,$(CLEAR_BIN))
+	$(call run_marked,$(RTC_BIN))
+	$(call run_marked,$(RTC85063_BIN))
 	./$(BEDSIDE_BIN)
 	./$(NIGHTLIGHT_BIN)
 	./$(ORIENT_BIN)
@@ -272,7 +282,88 @@ run:$(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCA
 	./$(ROUNDFRAME_BIN)
 	./$(ROUNDFRAME11_BIN)
 	./$(ONBOARD_BIN)
-	./$(POLICY_BIN)
+	$(call run_marked,$(POLICY_BIN))
 
 clean:
 	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN) $(ONBOARD_BIN) $(POLICY_BIN)
+
+# Sweep CI3, one host-test list: the five suites below were built only by
+# their own inline g++ steps in firmware.yml's "Mesh + Scout Host Tests" job,
+# so `make` here never ran them and the two lists could drift. Each rule keeps
+# its step's -Werror and its "ALL ... PASSED" check (run_marked, above);
+# scripts/tests/test_host_test_lists.py fails a suite that is back on a
+# workflow's list only. Pure cores, no board. Hooked into `run` and `clean`
+# by prerequisite so it adds no hunk to their lists.
+
+# The RS485/Modbus master's framing and CRC-16/MODBUS (canary/io/modbus_rtu.h),
+# so every byte on the 4.3B A/B terminal is host-verified without a board.
+# Anchored on the cataloged CRC-16/MODBUS check value 0x4B37 plus build/parse
+# roundtrips, exception decoding, and CRC/addr/func/capacity rejection cases.
+MODBUS_BIN = test_modbus_rtu
+MODBUS_SRC = test_modbus_rtu.cpp
+
+# The CAN 2.0 frame model (canary/io/can_frame.h): id-width/DLC validity,
+# SocketCAN-style acceptance filtering, and the ASCII log formatter. The TWAI
+# transport itself is compile-checked by the canary-display-dash-can
+# PlatformIO env.
+CAN_BIN = test_can_frame
+CAN_SRC = test_can_frame.cpp
+
+# The isolated DI/DO promotion's two testable decisions
+# (canary/io/field_io_logic.h): input debounce (reject contact bounce and bus
+# glitches) and the bounded siren controller (drive only while a real unacked
+# alert stands, capped so it can't blare forever). The runtime that reads the
+# CH422G and reports UNSIGNED local contact events is compile-checked by the
+# canary-display-dash-b env (HAS_ISOLATED_IO).
+FIELDIO_BIN = test_field_io
+FIELDIO_SRC = test_field_io.cpp
+
+# Router-independent peer presence (canary/net/espnow_peer_logic.h): the
+# decode that turns a raw ESP-NOW payload into a fleet-link beacon (fp4 +
+# status) reuses the shared, host-tested beacon wire contract
+# (canary/net/beacon_parse.h), so an ESP-NOW frame and a BLE advert from one
+# canary resolve to one witness, and foreign traffic and noise are rejected
+# before the fleet. The esp_now transport is compile-checked by the
+# canary-display-dash-espnow env.
+ESPNOW_BIN = test_espnow_peer
+ESPNOW_SRC = test_espnow_peer.cpp
+
+# The First Light pair demo's pure core (canary/pair/pair_demo.h):
+# adopt-first-heard + the lock (the card can never silently switch cameras),
+# the detection-edge rule mirrored from the sender's beacon payload, the
+# fleet-aligned staleness read, the 5 s HoldGate open gesture, and the
+# boxed-pair auto-open rule (unprovisioned + router-free band ONLY: a working
+# bedside clock never swaps its face). The LVGL/NVS shell is compile-checked
+# by the canary-display-nightlight-c3 env.
+PAIRDEMO_BIN = test_pair_demo
+PAIRDEMO_SRC = test_pair_demo.cpp
+
+IO_CORE_BINS = $(MODBUS_BIN) $(CAN_BIN) $(FIELDIO_BIN) $(ESPNOW_BIN) $(PAIRDEMO_BIN)
+
+$(MODBUS_BIN): $(MODBUS_SRC) ../include/canary/io/modbus_rtu.h
+	$(CXX) $(CXXFLAGS) -Werror $(INC) -o $@ $(MODBUS_SRC)
+
+$(CAN_BIN): $(CAN_SRC) ../include/canary/io/can_frame.h
+	$(CXX) $(CXXFLAGS) -Werror $(INC) -o $@ $(CAN_SRC)
+
+$(FIELDIO_BIN): $(FIELDIO_SRC) ../include/canary/io/field_io_logic.h
+	$(CXX) $(CXXFLAGS) -Werror $(INC) -o $@ $(FIELDIO_SRC)
+
+$(ESPNOW_BIN): $(ESPNOW_SRC) ../include/canary/net/espnow_peer_logic.h
+	$(CXX) $(CXXFLAGS) -Werror $(INC) -o $@ $(ESPNOW_SRC)
+
+$(PAIRDEMO_BIN): $(PAIRDEMO_SRC) ../include/canary/pair/pair_demo.h
+	$(CXX) $(CXXFLAGS) -Werror $(INC) -o $@ $(PAIRDEMO_SRC)
+
+.PHONY: run-io-cores clean-io-cores
+run-io-cores: $(IO_CORE_BINS)
+	$(call run_marked,$(MODBUS_BIN))
+	$(call run_marked,$(CAN_BIN))
+	$(call run_marked,$(FIELDIO_BIN))
+	$(call run_marked,$(ESPNOW_BIN))
+	$(call run_marked,$(PAIRDEMO_BIN))
+clean-io-cores:
+	rm -f $(IO_CORE_BINS)
+
+run: run-io-cores
+clean: clean-io-cores
