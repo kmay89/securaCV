@@ -77,9 +77,9 @@ Two smaller one-time human acts, same flavor:
 - [ ] **U6 [human] Set `MIRROR_PAT` in the monorepo secrets.** Until then the
   HACS mirror refresh is inert-but-green
   (`.github/workflows/homeassistant-mirror.yml` warns and files an issue).
-  The trees drifted: after #1703, #1704 and #1718 the mirror sits 33 carried
-  files behind on aa8b3d3 (every refresh ran green and pushed nothing); a
-  hand resync is open as securacv-homeassistant#17. Until the secret is set,
+  The trees drifted: after #1703, #1704 and #1718 the mirror sat 33 carried
+  files behind (every refresh ran green and pushed nothing) until a hand
+  resync in securacv-homeassistant#17 (2026-09-24). Until the secret is set,
   every `main` change to the carried set needs that again.
 - [ ] **U7 [human] Open the staged home-assistant/brands submission.**
   `brands/home-assistant/README.md` says "not submitted"; it is the only route
@@ -1675,15 +1675,45 @@ so — see D2 below.)
   `binary_sensor.securacv_canary_*_motion` joined it. The page says that
   glob also matches each Canary's Unexpected Motion tamper sensor, which no
   firmware signal drives, and that `exclude_entities` keeps it out. The
-  schema was read from Home Assistant core's source, not run in a live
-  Home Assistant.
-- [ ] *(Mirror repo itself: no code work. It sits 33 carried files behind
-  `main` on aa8b3d3 until securacv-homeassistant#17 merges. That PR resyncs
-  it and brings the store page's watch-actions, key-pinning, broker-TLS and
-  Apple Home sentences, and a `lint_readme.py` overclaim check that reads a
-  hard-wrapped claim as one and refuses "encrypted by default". Its health
-  items are U6 and U7 above, plus the three monorepo-fixture tests its CI
-  deselects, which is by design.)*
+  kernel's `pwk_*_motion` and the WAP's `*_smoke_alarm` / `*_co_alarm`
+  lines left the list, because the tree does not set those ids (HA16); the
+  page tells the reader to add the ids their install shows. The schema and
+  the naming were read from Home Assistant core's source, not run in a
+  live Home Assistant. The HACS store page (securacv-homeassistant#17)
+  gives the same Canary glob as its example without the Unexpected Motion
+  caveat; that page is mirror-owned, so the caveat is the mirror's to add.
+- [ ] **HA16 [code] The kernel's and the WAP's Home Assistant entity ids are
+  documented but never set.** `src/bin/event_mqtt_bridge.rs` documents
+  `binary_sensor.pwk_<zone>_motion`, `binary_sensor.pwk_chain_problem`,
+  `sensor.pwk_last_event` and the rest of the `pwk_*` family (its header,
+  :10-15), and `docs/homeassistant_setup.md` (:934-936, :980),
+  `homeassistant/lovelace/securacv-dashboard.yaml` and the HomeKit recipe
+  use those ids. canary-wap's acoustic sensors are documented as
+  `binary_sensor.<id>_smoke_alarm` / `_co_alarm` (`gen_wap.py` :586-591 and
+  the recipe's §1 table). Neither publisher sets an entity id: the kernel's
+  discovery configs (`HaBinarySensorConfig` :190-205 and its siblings) and
+  canary-wap's `publish_one_discovery` (`csi_mqtt.cpp`) send a name, a
+  unique id and a device, and no `default_entity_id`. Home Assistant core's
+  `components/mqtt/entity.py` sets `_attr_has_entity_name = True` and takes
+  an id only from `default_entity_id`, so by that source a new install
+  names them `binary_sensor.privacy_witness_kernel_pwk_<zone>_motion`
+  (device "Privacy Witness Kernel", entity "PWK <zone> Motion") and
+  `binary_sensor.canary_<id>_smoke_alarm_heard` / `_co_alarm_heard` (device
+  "Canary <id>"). Read from source, not seen in a running Home Assistant.
+  HA15 took the three unverified lines out of the recipe's filter. Fix: set
+  `default_entity_id` to the documented ids in both publishers (the WAP
+  half is a firmware change), check a live install, then put the lines
+  back in the recipe; or re-document the ids from a live install. Found in
+  the review of this sweep's wave-8 ledger.
+- [ ] *(Mirror repo itself: no code work. It is byte-identical again as of
+  securacv-homeassistant#17 (2026-09-24), which resynced the 33 carried
+  files #1703, #1704 and #1718 had moved. The same PR brought the store
+  page's watch-actions, key-pinning, broker-TLS and Apple Home sentences,
+  and a `lint_readme.py` overclaim check that reads a hard-wrapped claim as
+  one and refuses "encrypted by default". Its health items are U6 and U7
+  above, plus the three monorepo-fixture tests its CI deselects, which is
+  by design. A few more tests skip themselves there because they read
+  firmware sources the mirror does not carry.)*
 
 ---
 
@@ -1893,6 +1923,13 @@ so — see D2 below.)
   "nothing here phones anywhere" footers, `hatch.json`'s motto,
   `docs/FAQ.md`, `docs/getting_started_canary.md`) and Compare's unsourced
   "auto-deletes in 24 h" cell are the wave-4 claims-followup package.
+  `docs/FAQ.md`'s phone-home answer now names the Canaries' disclosed
+  outbound paths and the desktop apps' update fetch (#<C>): the broker, the
+  signed update check, the display's SNTP and its opt-in forecast, linked
+  to `SECURITY_MODEL.md`'s list. It still opens with "No.", which website
+  #203 ruled out for the site's FAQ, so it stays on that follow-up list
+  with `docs/getting_started_canary.md`, the Lab's footers and
+  `hatch.json`'s motto.
 - [x] **W17 [code] Model and copy drift found while building W4, not fixed
   there** (website PR #202). (1) `scripts/make-canary-glb.mjs` draws the
   Vision's lens barrel and glass under a solid Ø13 accent disc, so the lens

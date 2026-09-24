@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### The Canary's receipt asks the Host first, its settings sessions stop closing each other, a stalled TLS broker fits the watchdog, the airtime window holds every send, and the docs and CI catch up (#<C>)
+### The Canary's receipt asks the Host first, its settings sessions stop closing each other, a black-holed TLS broker no longer outlasts the products' watchdog, the airtime window holds every send, and the docs and CI catch up (#<C>)
 
 - **The Canary's provisioning receipt asks the Host first, and a page load
   under a foreign Host leaves the BOOT tap alone (sweep F56).**
@@ -63,12 +63,18 @@
     the 5 s connect its attempt would have totaled 35 s (60 s with the old
     30 s connect); its TLS path now sets 5 s, like the others. Its plain
     path keeps the core's 3 s connect and the 15 s wait.
-  - Outside the asserted 25 s: the DNS lookup, a CONNECT write stalled on
-    a full send buffer (itself now bounded at 5 s), a CONNACK dribbled byte
-    by byte (PubSubClient applies its socket timeout to each byte, not to
-    the packet), and the writes that follow a successful connect before the
-    next watchdog feed. On a slow link a TCP connect or a display TLS
-    CONNACK slower than 5 s now fails and retries on the backoff.
+  - Outside the asserted 25 s: the DNS lookup, `loop()` work between its
+    watchdog feed and the attempt, a CONNECT write stalled on a full send
+    buffer (itself now bounded at 5 s), the compute of the handshake's
+    last step after the 15 s check, a CONNACK dribbled byte by byte
+    (PubSubClient applies its socket timeout to each byte, not to the
+    packet), and the status and subscribe writes that follow a successful
+    connect before the next watchdog feed.
+  - What changes on a slow link: a TCP connect or a display TLS CONNACK
+    slower than 5 s now fails and retries on the backoff, a stalled TLS
+    write gives up after 5 s instead of 30 s, and on the display's TLS
+    path every inbound MQTT read in `loop()` gives up on a stalled byte
+    after 5 s instead of 15 s.
   - `firmware/canary` is unchanged; its own 3 s / 4 s / 5 s budget stands.
     `docs/FIRMWARE_VARIANT_AUDIT.md` gains the products' budget and a
     canary-sentinel row, and its canary row now says `release_ha` and the
@@ -135,8 +141,9 @@
     workflow, and `hub_seed_apply.py` is byte-unchanged.
   - `canary-local.yml`'s two lists now cover the 23 files its logic tests
     opened outside them (counting `desktop/src/models/` as one), seven of
-    them opened by #1703/#1704. Still outside: files the tests only check
-    exist, and what the drift-step generators read (CI2).
+    them opened by #1703/#1704. Still outside (CI2): files the tests only
+    check exist, what the drift-step generators read, and the contract
+    vectors A24's replay has read since #1720.
     `ios-selfheal.yml`'s PR compile now also fires on the 15 files outside
     `ios/` that XCTests read by `#filePath`.
   - Every explicit Python pin says why (R9). Three jobs keep 3.11 and give
@@ -182,8 +189,9 @@
   the tree with their status words, counts pointed at `flavors.json` /
   `devices/` rather than typed. Prose only; `gen_wap.py` regenerates to
   zero diff.
-- **The HomeKit Bridge recipe passes Home Assistant's config check, and
-  bridges each Canary's own Motion sensor (sweep HA15).**
+- **The HomeKit Bridge recipe puts its globs under `include_entity_globs`,
+  where Home Assistant's schema takes them, and bridges each Canary's own
+  Motion sensor (sweep HA15).**
   `docs/integrations/apple-home-homekit-bridge.md` §4 put
   `binary_sensor.*_occupancy` under `include_entities`, which Home
   Assistant validates with `cv.entity_ids` and so refuses, taking the
@@ -191,13 +199,17 @@
   `binary_sensor.securacv_canary_*_motion` joined it. The page says that
   glob also matches each Canary's Unexpected Motion tamper sensor, which
   no firmware signal drives, and that `exclude_entities` keeps it out. The
-  schema was read from Home Assistant core's source, not run in a live
-  Home Assistant.
-- **HACS mirror: securacv-homeassistant#17 (open)** resyncs the 33 carried
-  files the mirror sits behind `main`, and brings the store page's
-  watch-actions, key-pinning, broker-TLS and Apple Home sentences.
+  kernel's `pwk_*_motion` and the WAP's `*_smoke_alarm` / `*_co_alarm`
+  lines left the list: neither publisher sets an entity id, and by Home
+  Assistant core's source a new install names those sensors differently
+  (sweep HA16, open). The page tells the reader to add the ids their
+  install shows. The schema and the naming were read from Home Assistant
+  core's source; no config check was run in a live Home Assistant.
+- **HACS mirror: securacv-homeassistant#17 (merged 2026-09-24)** resynced
+  the 33 carried files the mirror sat behind `main`, and brought the store
+  page's watch-actions, key-pinning, broker-TLS and Apple Home sentences.
 
-### The security docs meet `main`'s page-token gate, both apps' Wall reads silence as offline, and the contract vectors ride the carry (#1720)
+### The security docs meet `main`'s page-token gate, both apps' Wall reads silence as offline, the Lab's Vision card stops naming fw 2.2.0, and the contract vectors ride the carry (#1720)
 
 - **The security docs describe the flagship `main` ships (sweep D8).**
   `SECURITY_MODEL.md`'s access section states the page-token gate. After
@@ -262,10 +274,9 @@
   DNS-rebinding page cannot read the token out of them (the provisioning
   receipt, gated by a bearer or the BOOT tap rather than `auth_gate`,
   gained the same check in the entry for #<C>); a request over the
-  Canary's own setup AP is exempt by
-  interface, never by name. The check is the display's `host_guard.h`,
-  moved to `firmware/common/network/`. A stored CA the transport reads back
-  empty is `409 ca_unreadable`, not Ok.
+  Canary's own setup AP is exempt by interface, never by name. The check
+  is the display's `host_guard.h`, moved to `firmware/common/network/`. A
+  stored CA the transport reads back empty is `409 ca_unreadable`, not Ok.
   Host-tested (the decisions); compile-tested by CI (the glue, PR CI's
   `release_ha` leg); not bench-tested. The setup-AP exemption on an
   iPhone's first boot is the first thing a bench should check.

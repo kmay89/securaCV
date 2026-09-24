@@ -45,7 +45,7 @@ survived only if a majority could not. The counts:
 | Landed in wave 5 (2026-09-11, PR #1682, website #197) | row 21's Parametrize wave, in part — the device manifests own their cases' board knobs and a generator writes them into the CAD, the regeneration order is one command, the CAD ledger the website pins to carries the knobs; zero `.scad` bytes moved |
 | Landed in wave 6 (2026-09-19, PR #1686) | the open clauses of three landed rows — 1 (the add-on and sidecar wire the fleet roll-call file), 12's flasher half (the broker TLS controls in both flashers) and 35 (the SBOM schema gate and the sketch-pin assertion), then 12's other two halves (the canary client rides the shared broker transport with its own provisioning path; an opt-in `--with broker_tls` hub step), 17 (the coarse weather location entered on the glass), 21's leftovers (the C6 and the Touch 1.69 own their knobs; `cad.also` gives the doorbell an owner; the 7" frame stays open with its reason written) and the canary `release_ha` image joining PR CI |
 | Landed in wave 7 (2026-09-23, PR #1703 and PR #1704, website #201 and #202) | a wave that worked the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)) rather than this list; where it touched rows here, each a decision for the maintainer to confirm: the two decisions taken on 2026-09-22 (row 30's exact pin and the ten-minute uptime-bucket floor, #1704); row 21's render-plan package in part (the manifests home the Lab's enclosure cards, option B; the selector half not built) and `body_mm` retired by construction (#1703); and on rows 1 and 20 the Docker sidecar's bind switch and the Witness Wall's viewer-token pairing (#1704). The website carry of the 1.69's knobs, which row 21 still listed, had already landed in website PR #197 |
-| Landed in wave 8 (PR #1691, PR #1720 and PR #<C>, website #199; mirror #17 open) | the open clauses of rows 12 (both flashers' receipts name the broker TLS mode they sealed; in PR #<C>, the products' TLS connect bounded under their task watchdog) and 17 (the iPhone's Display settings sheet reads the glass's `on_glass` block, read-only), and follow-ups from a fresh security sweep of the wave-5 and wave-6 surfaces (the Canary API's credential carry, `Host` guard and CA verdict, under row 12's canary client, with the provisioning receipt's `Host` check in PR #<C>; the security docs rewritten to the shipped posture with a banned-claims test, whose passages older than #1704's page-token gate PR #1720 brought up to date, sweep D8) and a validator gap (the size-guard rule for every product, wave 6's row-12 prelude made structural). PR #<C> also lands a sentence on row 37 and §5's steps 4 (the wander and jitter extractor, host half) and 5 (the probe's airtime accounting); the rest of the batch is recorded in the 2026-09-20 sweep (F51, F52, F56, A23, A24, D7-D9, CI1 and HA15 ticked; F53-F55, W21, HA14, CI2 and CI3 open). The PR's own title says wave 7; the row above already holds that name, so this document calls it wave 8. Website #199 makes the Wall read a silent `online` as offline, and PR #1720 re-vendors the Wall's emulator into both apps. The HACS mirror's resync is open as securacv-homeassistant#17. See §3, "Landed in wave 8" |
+| Landed in wave 8 (PR #1691, PR #1720 and PR #<C>, website #199, mirror #17) | the open clauses of rows 12 (both flashers' receipts name the broker TLS mode they sealed; in PR #<C>, the products' TLS connect bounded under their task watchdog) and 17 (the iPhone's Display settings sheet reads the glass's `on_glass` block, read-only), and follow-ups from a fresh security sweep of the wave-5 and wave-6 surfaces (the Canary API's credential carry, `Host` guard and CA verdict, under row 12's canary client, with the provisioning receipt's `Host` check in PR #<C>; the security docs rewritten to the shipped posture with a banned-claims test, whose passages older than #1704's page-token gate PR #1720 brought up to date, sweep D8) and a validator gap (the size-guard rule for every product, wave 6's row-12 prelude made structural). PR #<C> also lands a sentence on row 37 and §5's steps 4 (the wander and jitter extractor, host half) and 5 (the probe's airtime accounting); the rest of the batch is recorded in the 2026-09-20 sweep (F51, F52, F56, A23, A24, D7-D9, CI1 and HA15 ticked; F53-F55, W21, HA14, HA16, CI2 and CI3 open). The PR's own title says wave 7; the row above already holds that name, so this document calls it wave 8. Website #199 makes the Wall read a silent `online` as offline, and PR #1720 re-vendors the Wall's emulator into both apps. The HACS mirror's resync landed in securacv-homeassistant#17 (2026-09-24). See §3, "Landed in wave 8" |
 | Still open | 0 in full, 1 in part (21's Parametrize leftovers — the 7" frame's panel record, the render-plan package's selector half and the C6 manifest's `figure`; see row 21 and §4); row 20 carries one new open clause (a signed head for the sealed-log document, without which the Wall's "Verified" cannot say the tail is current or complete). Decisions taken and waiting on the maintainer's confirmation: row 30's version spread and the witness chain's uptime-bucket floor (`TIME_BUCKET_MS`, widened to the ten-minute grid; §3, "Landed in wave 4"), both decided on 2026-09-22 and landed in PR #1704; the two wave-5 questions, landed in PR #1703 — the render-plan package's Lab-card half (option B; the selector half, option A, is not built) and `canary-local/devices/registry.json`'s hand-typed `body_mm` (retired and derived; row 21); and, landed in PR #1704, the sidecar's bind (option (3), row 1) and the Wall's viewer token (option (a), row 20) |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
@@ -382,8 +382,10 @@ this document already used that name for PR #1703 and PR #1704 (§1), so it
 is wave 8 here. Each package was built in its own worktree, reviewed
 adversarially and fixed before it was merged. #1691 merged without its
 ledger edits, so these lines were written after the merge. PR #1720, merged
-the same day, wrote that ledger and landed four more packages; PR #<C>
-landed the rest of the batch. Their bullets follow #1691's.
+the same day, wrote that ledger and landed three more packages (the
+security docs, the Wall re-vendor with the Vision card label, and the
+vectors carry); PR #<C> landed most of the rest, and the Hours, F54 and CI3
+packages follow in a later PR. Their bullets follow #1691's.
 
 - **Row 12 (the canary client) — the Canary's API keeps its broker password
   home, checks the `Host`, and reports an honest CA verdict.** A new broker
@@ -396,8 +398,9 @@ landed the rest of the batch. Their bullets follow #1691's.
   a bearer or the BOOT tap instead, gained the same check in PR #<C>,
   below); a request over the Canary's own setup AP is exempt by interface
   (`firmware/common/network/host_guard.h`, moved from the display). A CA
-  the transport reads back empty is `409 ca_unreadable`, not Ok. Recorded in `firmware/canary/CONSOLIDATION.md` ("Later additions to
-  the gated set"). Host-tested; compile-tested by CI's `release_ha` leg; not
+  the transport reads back empty is `409 ca_unreadable`, not Ok. Recorded
+  in `firmware/canary/CONSOLIDATION.md` ("Later additions to the gated
+  set"). Host-tested; compile-tested by CI's `release_ha` leg; not
   bench-tested. The setup-AP exemption on an iPhone's first boot is the
   first bench check, since a wrong exemption would break the captive-sheet
   wizard.
@@ -439,9 +442,10 @@ landed the rest of the batch. Their bullets follow #1691's.
   `tv/app.js` and the Wall emulator read `online === true`, as
   `tvos/discovery/DISCOVERY.md` states the fleet contract, and the Wall's
   test replays `fleet_contract_vectors.json` from a hand-carried copy pinned
-  by sha256 (sweep W21 is the item that moves it into the carry). The download page offers
-  the Flasher, and stale status copy is corrected across the site (sweep
-  W20). PR #1720 re-vendored the emulator into both apps (sweep A24, below).
+  by sha256 (sweep W21 is the item that moves it into the carry). The
+  download page offers the Flasher, and stale status copy is corrected
+  across the site (sweep W20). PR #1720 re-vendored the emulator into both
+  apps (sweep A24, below).
 - **The security docs describe the flagship `main` ships (PR #1720, sweep
   D8).** `SECURITY_MODEL.md`'s access section states the page-token gate:
   after setup a home-network load gets the page without its token, which
@@ -540,22 +544,29 @@ landed the rest of the batch. Their bullets follow #1691's.
   `canary-local/README.md` are rewritten against the tree with their
   status words, and their counts point at `flavors.json` / `devices/`
   rather than being typed.
-- **The HomeKit Bridge recipe passes Home Assistant's config check (PR
-  #<C>, sweep HA15).** The occupancy glob moved to `include_entity_globs`,
-  and each Canary's own Motion sensor joined the list. The schema was read
-  from Home Assistant core's source, not run in a live Home Assistant.
-- **HACS mirror (securacv-homeassistant#17, open).** Resyncs the 33
-  carried files that #1703, #1704 and #1718 had moved while `MIRROR_PAT`
-  stayed unset: a mechanical copy from `main` 7446893 (unchanged through
-  80b6cd3f), proven by `check_mirror_sync.py`. Its store page names the
-  three watch actions, the broker's plain default with its per-model TLS
-  modes (compile- and host-tested, not run against a TLS broker on
-  hardware), device-key pinning with its TOFU limit, and the Apple Home
-  projection through Home Assistant's HomeKit Bridge, un-paced and
-  unverified on that hop, and its `lint_readme.py` refuses "encrypted by
+- **The HomeKit Bridge recipe puts its globs under `include_entity_globs`,
+  where Home Assistant's schema takes them (PR #<C>, sweep HA15).** The
+  occupancy glob moved there, and each Canary's own Motion sensor joined
+  the list. The kernel's per-zone motion and the WAP's smoke and CO lines
+  left it, because neither publisher sets the ids the tree documents
+  (sweep HA16, open); the page tells the reader to add the ids their
+  install shows. The schema and the naming were read from Home Assistant
+  core's source; no config check was run in a live Home Assistant.
+- **HACS mirror (securacv-homeassistant#17, merged 2026-09-24).**
+  Resynced the 33 carried files that #1703, #1704 and #1718 had moved
+  while `MIRROR_PAT` stayed unset: a mechanical copy from `main` 7446893
+  (unchanged through 80b6cd3f), proven by `check_mirror_sync.py` (62 files
+  match). The mirror's standalone suite went from 243 to 404 passing, and
+  nine monorepo-only firmware reads skip themselves there. The store page
+  now names the three watch actions, the broker's plain default with its
+  per-model TLS modes (compile- and host-tested, not run against a TLS
+  broker on hardware), device-key pinning with its TOFU limit, and the
+  Apple Home projection through Home Assistant's HomeKit Bridge, un-paced
+  and unverified on that hop. `lint_readme.py` now refuses "encrypted by
   default" and reads a claim split by a hard wrap, a hyphen or emphasis as
-  one claim. Until it merges the mirror sits 33 carried files behind
-  `main` on aa8b3d3 (sweep U6).
+  one claim, after checking its own probes on every run. Until
+  `MIRROR_PAT` is set, every `main` change to the carried set needs
+  another hand resync (sweep U6).
 
 ### The documentation wave
 
@@ -624,7 +635,7 @@ the ledger stays complete:
 
 | # | Item | Why it matters | Fix | Effort |
 |---|---|---|---|---|
-| 1 | **(landed)** **The Wall cannot reach any sealed-log source.** The kernel serves `/api/sealed-log` but not `/api/fleet`, which is the only discovery contract the tvOS Wall implements. | The "lights up with no app change" promise in `tvos/discovery/DISCOVERY.md` is false against the only kernel that exists. | Landed in two steps. The kernel serves `GET /api/fleet` in the firmware's self-report shape with the anti-drift vector (follow-up wave). Wave 3: it also lists the Canaries its MQTT bridge has heard — `src/fleet_peers.rs`, fed by `event_mqtt_bridge --fleet-peers-path` / `WITNESS_FLEET_PEERS_PATH` and read by the API through `api.fleet_peers_path` (schema `securacv/fleet_peers/v1`, one file both processes point at). A peer is `online` only when a live (not broker-retained) chain publish verifies against the key pinned for it on first `health` (a second key is a sticky conflict) within 180 s; wellbeing words ride only on such a row while fresh; the two-row document is a shared vector in `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json`, and its bytes are produced from typed rows so they do not move with `serde_json`'s feature set. Wave 6: `run.sh` and the sidecar's `entrypoint.sh` name the file in every kernel config block and on the bridge's argv (the sidecar needed no new volume — its daemons already share `/data`, and it ships no witnessd); a render-and-parse test gates both heredocs against the kernel's `deny_unknown_fields`. Wave 7 (PR #1704): the sidecar's bind is decided (option (3), maintainer to confirm) — `SECURACV_API_BIND` in its entrypoint takes `loopback` (the default) or `all`, which binds `0.0.0.0:8799` and sets `WITNESS_API_ALLOW_INSECURE` together; the image still `EXPOSE`s nothing and both quickstarts carry the opt-in as comments (e2e-tested in `docker-sidecar.yml`, CI-only) — and the Wall can read the sealed log with a route-scoped viewer token (row 20). Still the owner's: the 8799 host port (which opens the tokenless roll-call to the LAN) and `http://<host>:8799` typed into the Wall once, since the add-on advertises no `_securacv._tcp`; and the add-on honors `/config/viewer_tokens.json` but has no control that mints a viewer token, so on an add-on install the Wall gets the roll-call, not a walk. | M |
+| 1 | **(landed)** **The Wall cannot reach any sealed-log source.** The kernel serves `/api/sealed-log` but not `/api/fleet`, which is the only discovery contract the tvOS Wall implements. | The "lights up with no app change" promise in `tvos/discovery/DISCOVERY.md` is false against the only kernel that exists. | Landed in two steps. The kernel serves `GET /api/fleet` in the firmware's self-report shape with the anti-drift vector (follow-up wave). Wave 3: it also lists the Canaries its MQTT bridge has heard — `src/fleet_peers.rs`, fed by `event_mqtt_bridge --fleet-peers-path` / `WITNESS_FLEET_PEERS_PATH` and read by the API through `api.fleet_peers_path` (schema `securacv/fleet_peers/v1`, one file both processes point at). A peer is `online` only when a live (not broker-retained) chain publish verifies against the key pinned for it on first `health` (a second key is a sticky conflict) within 180 s; wellbeing words ride only on such a row while fresh; the two-row document is a shared vector in `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json`, and its bytes are produced from typed rows so they do not move with `serde_json`'s feature set. Wave 6: `run.sh` and the sidecar's `entrypoint.sh` name the file in every kernel config block and on the bridge's argv (the sidecar needed no new volume — its daemons already share `/data`, and it ships no witnessd); a render-and-parse test gates both heredocs against the kernel's `deny_unknown_fields`. Wave 7 (PR #1704): the sidecar's bind is decided (option (3), maintainer to confirm) — `SECURACV_API_BIND` in its entrypoint takes `loopback` (the default) or `all`, which binds `0.0.0.0:8799` and sets `WITNESS_API_ALLOW_INSECURE` together; the image still `EXPOSE`s nothing and both quickstarts carry the opt-in as comments (e2e-tested in `docker-sidecar.yml`, CI-only) — and the Wall can read the sealed log with a route-scoped viewer token (row 20). Still the owner's: the 8799 host port (which opens the tokenless roll-call to the LAN) and `http://<host>:8799` typed into the Wall once, since the add-on advertises no `_securacv._tcp`; and the add-on honors `/config/viewer_tokens.json` but has no control that mints a viewer token, so on an add-on install the Wall gets the roll-call, not a walk. Wave 8 (website PR #199, PR #1720): the website's Wall and its emulator read a silent `online` as offline, and the Wall replays `fleet_contract_vectors.json`. PR #1720 re-vendors the emulator into both apps, and the Lab's tests replay the same vectors through both copies (sweep A24). | M |
 | 2 | **(landed)** **CSI mixes every transmitter into one window.** Neighbor-AP beacons, peer Canaries' ESP-NOW probes and router echoes all land in the same 64-frame window; per-subcarrier variance across alternating links reads as motion. | The presence detector's false-positive floor is set by the neighborhood's Wi-Fi, not by the room. | Landed, host-tested (2026-09-08). `csi_hal.cpp`'s callback compares each frame's transmitter address, in place, against the BSSID of the AP the station is associated with — read back from `esp_wifi_sta_get_ap_info()` on the main loop (polled, and refreshed at once from the STA got-IP handler), held in one static that is never exported or logged and is wiped on `deinit()` — and, on the WAP, against `csi_probe::has_peer()`; everything else is counted under `frames_dropped_foreign` (appended to `csi_stats_t`; on `/api/status` beside the other drop counters with `filter_foreign` / `filter_armed`; on the canary webui's driver-health tile) and never buffered. `filter_foreign` is a persisted `/api/settings` key, default on. Until the STA associates there is nothing to compare against and every frame passes, so AP-only installs sense as before. The staged sketch copy is byte-identical; the canary tree's `securacv_csi.cpp` carries the BSSID half (no probe layer there). **What did not land:** peers are accepted only through the WAP's probe table, which nothing fills yet (the probe is broadcast-only), so a Canary-only install with no association still hears every transmitter; and nothing here is bench-verified — §5 step 3 has to show `frames_dropped_foreign` climbing while the presence floor drops. Host test: `csi_hal_transmitter_filter_test.cpp` compiles the shipped HAL against `host_stubs/`, feeds two transmitters, and scans the ring, the stats and the emitted feature vector for either address (two planted leaks fail it). | S |
 | 3 | **(landed)** **Breathing envelope is raw magnitude the driver's AGC removes.** The host test passes because synthetic frames have no automatic scaling. | `quiet` presence and `unusual_breathing` will not fire on a real device. | Landed: the envelope is now each subcarrier band's share of the per-frame-normalized row (four rotation bands, the Goertzel bank run per band, each bin keeping its strongest band), which per-packet gain cannot move; the host tests drive a 0.25 Hz breath through a simulated per-packet AGC into bin 3 and read zero in every bin through 80 s of ±30 % gain flicker. Host-tested on synthetic frames only — the bench pass (§5 step 3) is still what turns this into a claim about a room. | S |
 | 4 | **(landed)** **Breathing Goertzel assumes exactly one window per second.** Window cadence is loop-driven and gaps are skipped, so the 6+3i BPM map drifts with loop latency. | Reported breaths-per-minute is a function of CPU load. | Landed: every window close carries its timestamp and the envelope is resampled onto a fixed 1 Hz grid (a close inside the previous slot is averaged into it, a gap is bridged with held copies), and `csi_stats_t` reports `windows_held`, `windows_merged` and `window_period_ms` (appended, both status endpoints surface them). Host tests: 700 ms and 1300 ms cadences both keep 12 BPM in bin 2 with the counters reporting the real pace; a 3 s stall holds two copies. The three copies (common, the sketch mirror, the embedded extractor) moved together. | S |
