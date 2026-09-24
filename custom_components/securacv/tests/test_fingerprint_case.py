@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -188,9 +189,13 @@ def test_fixture_is_the_wap_spelling_of_the_test_key():
 def test_wap_firmware_spelling_is_one_this_file_covers():
     """canary_wap.ino's hex_to_str alphabet, and the two strings it feeds.
 
-    Both spellings run below, so this does not need updating if the WAP
-    ever emits lowercase; it fails if the envelope `fp` or the health key
-    stop coming from hex_to_str, or if hex_to_str emits something else."""
+    Both spellings run below, so if hex_to_str itself ever writes lowercase
+    this passes unchanged. It fails if hex_to_str writes anything else, or
+    if the envelope `fp` or the health key, at any csi_mqtt::init call,
+    stops coming from hex_to_str. A WAP change that lowercases just those
+    two strings, and leaves hex_to_str alone, trips it on purpose: point
+    these checks at the new encoder, and keep both spellings running below
+    while units that send capitals are deployed."""
     if not _WAP_SKETCH.exists():
         pytest.skip("canary_wap.ino not present (HACS mirror checkout)")
     text = _WAP_SKETCH.read_text(encoding="utf-8")
@@ -204,11 +209,19 @@ def test_wap_firmware_spelling_is_one_this_file_covers():
     assert re.search(
         r"device_signature::init\([^;]*g_device\.fingerprint_hex\);", text
     ), "the envelope fp no longer comes from g_device.fingerprint_hex"
-    assert re.search(
+    # Every call, not only the boot one: the QR hub-provisioning path
+    # re-inits csi_mqtt with a key of its own, split over two lines.
+    calls = re.findall(r"csi_mqtt::init\(", text)
+    fed = re.findall(
         r"hex_to_str\(pubkey_hex, g_device\.pubkey, 32\);\s*"
-        r"csi_mqtt::init\(g_device\.device_id, FIRMWARE_VERSION, pubkey_hex\);",
+        r"csi_mqtt::init\(g_device\.device_id,\s*FIRMWARE_VERSION,\s*pubkey_hex\);",
         text,
-    ), "the health public_key no longer comes from hex_to_str"
+    )
+    assert calls, "csi_mqtt::init moved; re-read where the health key comes from"
+    assert len(fed) == len(calls), (
+        f"{len(calls) - len(fed)} of {len(calls)} csi_mqtt::init calls no "
+        "longer take the health public_key straight from hex_to_str"
+    )
     if m.group(1) == UPPER_HEX:
         assert WAP_FP == WAP_FP.upper()
 
@@ -217,9 +230,14 @@ def test_wap_firmware_spelling_is_one_this_file_covers():
 
 
 @pytest.mark.parametrize("spelling", ["wap-capitals", "lowercase"])
-def test_signed_publishes_verify_after_tofu_from_health(spelling):
+def test_signed_publishes_verify_after_tofu_from_health(spelling, caplog):
     hass, store = _setup()
-    _async_health_for_tofu(hass, ENTRY)(_msg("health", _spelled(WAP_HEALTH, spelling)))
+    with caplog.at_level(logging.INFO):
+        _async_health_for_tofu(hass, ENTRY)(_msg("health", _spelled(WAP_HEALTH, spelling)))
+    # docs/device_trust.md "How to verify" step 2 sends owners to this line,
+    # and says every key HA shows is lowercase.
+    tofu_lines = [r.getMessage() for r in caplog.records if "TOFU-pinning" in r.getMessage()]
+    assert tofu_lines == [f"TOFU-pinning Canary {DEVICE_ID} with pubkey {TEST_PUB[:16]}…"]
 
     pin = store.get(DEVICE_ID)
     assert pin is not None and pin.pin_source == PIN_SOURCE_TOFU
