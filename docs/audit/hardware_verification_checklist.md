@@ -481,6 +481,53 @@ after every `WiFi.softAP()` in both trees. Owner: U1.
   - Expected: `sta_pmf: true`; the association is stable.
   - Artifact: `docs/audit/repro/F16/sta-pmf/`.
 
+## Canary NvsManager session lock — on-device verification
+
+Code: `NvsManager` in `firmware/canary/lib/securacv_crypto/src/securacv_crypto.cpp`,
+which holds a recursive FreeRTOS mutex from `begin()` to the matching
+`end()`. The session arithmetic is `nvs_session_depth.h`, host-tested by
+`firmware/tests_host/test_nvs_session_depth.cpp` and, on the real
+`begin()`/`end()` over a fake mutex, `test_nvs_manager_lock.cpp`. The loop,
+the httpd task serving the API and the pull-OTA task all open sessions on
+the one settings handle, and before the lock a session ending on one task
+closed it under another. These rows check the real mutex on a board, which
+nothing on the host can do. Owner: U1.
+
+In every row, the serial log must not show `[NVS] session wait timed out`.
+That line means a task waited 2 s for another's session and gave up.
+
+- [ ] **Status polls during an MQTT reprovision keep MQTT configured**
+  - Setup: an HA-enabled canary image (`release_ha`) joined to Wi-Fi and
+    paired to a broker; a laptop on the LAN with the API token.
+  - Repro: poll `GET /api/mqtt/status` about every 100 ms. Meanwhile send
+    `POST /api/mqtt/config` several times with the same host and no
+    password (the credential carry keeps the stored one), then once with a
+    new host and its password.
+  - Expected: no status response lacks `host` or answers
+    `"configured": false`. After each save MQTT reconnects to the saved
+    broker, and after the same-host saves it still authenticates with the
+    stored password.
+  - Artifact: `docs/audit/repro/nvs-lock/mqtt-reprovision/`.
+- [ ] **A reboot during a status poll keeps the chain head**
+  - Setup: the `release_ha` image as above (`/api/mqtt/status` is an HA
+    route); a GPS fix, so records are being written.
+  - Repro: poll `GET /api/status` and `GET /api/mqtt/status`. Note the last
+    `chain_seq` that `/api/status` answers, then send `POST /api/reboot`.
+  - Expected: the boot log's `[OK] Chain seq: N` is at least that
+    `chain_seq`. The reboot's chain persist landed, so the chain does not
+    resume from an older head.
+  - Artifact: `docs/audit/repro/nvs-lock/reboot/`.
+- [ ] **A pull-OTA install under polling keeps the chain head**
+  - Setup: the `release_ha` image, with an update manifest that offers a
+    newer build; a GPS fix.
+  - Repro: poll `GET /api/status` and `GET /api/mqtt/status`, then start
+    the install with `POST /api/ota/install`. The pull-OTA task persists
+    the chain before its reboot.
+  - Expected: the install completes and the device boots the new image.
+    Its `[OK] Chain seq: N` is at least the last `chain_seq` read before
+    the restart.
+  - Artifact: `docs/audit/repro/nvs-lock/pull-ota/`.
+
 ---
 
 When every box above has a corresponding artifact in

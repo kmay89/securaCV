@@ -147,7 +147,7 @@ reconnect. This is a far better default than the current deep-sleep-and-cold-rec
 ### 1.5 Protect the key at rest and in hardware (the "crypto signing everything" lever)
 
 The product's spine is Ed25519-signed, hash-chained records. The **device identity key sits in
-plaintext NVS** ([`securacv_crypto.cpp:384`](canary/lib/securacv_crypto/src/securacv_crypto.cpp))
+plaintext NVS** ([`securacv_crypto.cpp:423`](canary/lib/securacv_crypto/src/securacv_crypto.cpp))
 with **no flash encryption and no secure boot** in the default build — and burning flash encryption
 would not change that: flash encryption does not cover NVS (below). Physical read of the flash →
 key extraction → the attacker can forge records *forward* from that point (not rewrite anchored
@@ -478,7 +478,7 @@ anti-rollback floor.
 Beyond §1.5:
 - **(fixed) Weak first-boot entropy.** `esp_fill_random` is called during provisioning early in
   `setup()` before RF is up; the identity draw is now wrapped in `bootloader_random_enable()` /
-  `bootloader_random_disable()` ([`securacv_crypto.cpp:167`](canary/lib/securacv_crypto/src/securacv_crypto.cpp)),
+  `bootloader_random_disable()` ([`securacv_crypto.cpp:206`](canary/lib/securacv_crypto/src/securacv_crypto.cpp)),
   the same pattern PR #994 gave canary-sense, canary-vision and canary-wap, and
   `regression_check.sh` ("first-boot keygen is entropy-seeded") fails any tree that loses it.
   The two later draws — the BLE scout key (`ble_scout_key_init`, from `ble_scout_init` inside
@@ -624,7 +624,7 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 5 | (fixed) SD glitch disabled logging until reboot — bounded mount worker + periodic remount | **P0** | Storage | `securacv_storage.cpp` | Durable logging survives transient faults |
 | 6 | CSI dies under modem-sleep; probe unwired | **P0** | WiFi/CSI | `power_policy.cpp:73` | Reliable CSI on battery + lone devices |
 | 7 | (fixed) Camera init/deinit raced peek task — lifecycle mutex in CameraManager | **P0** | Camera | `securacv_camera.cpp` | Removes a crash vector |
-| 8 | (decided) Plaintext identity key at Tier 0 is the accepted default (`hardware_root_of_trust.md` §8 #1/#3/#4); fail-closed via `SECURACV_REQUIRE_FLASH_ENCRYPTION` on Tier-3+ images (refuses unless NVS is encrypted — flash encryption alone does not cover NVS, so every board under `framework = arduino`); posture self-reported (`key_at_rest`, `plaintext-nvs` everywhere today) | **P0→P1** | Crypto | `securacv_crypto.cpp:384` | Posture stated, not assumed; at-rest encryption needs NVS encryption (item 9), FE dev-mode (Tier 3) → FE+SB (Tier 4) stay opt-in |
+| 8 | (decided) Plaintext identity key at Tier 0 is the accepted default (`hardware_root_of_trust.md` §8 #1/#3/#4); fail-closed via `SECURACV_REQUIRE_FLASH_ENCRYPTION` on Tier-3+ images (refuses unless NVS is encrypted — flash encryption alone does not cover NVS, so every board under `framework = arduino`); posture self-reported (`key_at_rest`, `plaintext-nvs` everywhere today) | **P0→P1** | Crypto | `securacv_crypto.cpp:423` | Posture stated, not assumed; at-rest encryption needs NVS encryption (item 9), FE dev-mode (Tier 3) → FE+SB (Tier 4) stay opt-in |
 | 9 | Unify on core-3.x / IDF-5.x toolchain | **P1** | Build | `platformio.ini` | Unblocks §3.2–3.4, §1.4, WPA3, new drivers |
 | 10 | Dual-core task model (sensing + durability) | **P1** | Core | `main.cpp:1480` | Bounded loop latency, no WDT thrash |
 | 11 | One 8 MB partition table + `witness_log` | **P1** | Flash | `partitions_ota.csv` | Ends the table matrix; card-independent durability |
@@ -634,7 +634,7 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 15 | Pin WiFi PHY (protocol/BW/country) + TX power | **P1** | WiFi/CSI | `securacv_network.cpp` | Stable CSI vector, correct regulatory/range |
 | 16 | Fast reconnect (cached BSSID/channel/IP) | **P1** | WiFi | `securacv_network.cpp:405` | <300 ms reconnect, no CSI-disrupting sweep |
 | 17 | (fixed) MQTT: socket timeout + offline queue + TLS all landed | **P1** | MQTT | `common/mqtt/mqtt_offline_queue.h` | Outages delay events instead of dropping them; encrypted transport |
-| 18 | HW key protection (HMAC/DS peripheral) + entropy seed (fixed) + atomic chain head (fixed, PIO canary tree) — OPEN: (c) DS/HMAC-bound key and (d) an eFuse/RTC rollback anchor; both need the IDF-component toolchain (item 9) plus a bench, the DS route is RSA-only and reserved per `hardware_root_of_trust.md` §5.4 / §8 #4, and `key_at_rest.h` already reserves the `hw-bound` label for it | **P1** | Crypto | `securacv_crypto.cpp:167` | Real at-rest + anti-forgery guarantees |
+| 18 | HW key protection (HMAC/DS peripheral) + entropy seed (fixed) + atomic chain head (fixed, PIO canary tree) — OPEN: (c) DS/HMAC-bound key and (d) an eFuse/RTC rollback anchor; both need the IDF-component toolchain (item 9) plus a bench, the DS route is RSA-only and reserved per `hardware_root_of_trust.md` §5.4 / §8 #4, and `key_at_rest.h` already reserves the `hw-bound` label for it | **P1** | Crypto | `securacv_crypto.cpp:206` | Real at-rest + anti-forgery guarantees |
 | 19 | Migrate audio→`i2s_pdm`, IR→`rmt_rx` | **P1** | Audio/IR | `securacv_audio.cpp:56` | Forward-compat; built-in HPF/callbacks |
 | 20 | esp-dsp / esp-nn for audio DSP + TFLite | **P1** | Audio/Vision | `securacv_audio.cpp:339` | Several-fold DSP; ~500→~60 ms Invoke |
 | 21 | WPA3/PMF + per-device AP password (password: done; WPA2/WPA3 transition + PMF landed 2026-09, #1704 — CI-compiled, no bench pass; WPA2 until a device on the 2.0.17 core reports SoftAP SAE, see §3.4) | **P1** | WiFi | `canary_config.h:276` | Closes plaintext-AP + shared-secret exposure |
