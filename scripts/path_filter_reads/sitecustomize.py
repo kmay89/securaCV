@@ -10,6 +10,10 @@ scripts/check_path_filter_reads.py can hold them to the workflow's
 
 Inert unless PATH_FILTER_READS_DIR is set (the directory is made on the first
 record). The hook only ever records; it never raises into the audited call.
+It arms the Node half for the processes this one starts: when NODE_OPTIONS
+does not already `--require` this directory's record.cjs, it is added there
+(the Node half does the same for PYTHONPATH), so a step that loads either
+half records the other's children too.
 
 Records, one JSON line per (op, path, suite), into
 <dir>/py-<pid>-<rand>.jsonl, with the same fields as the Node half:
@@ -17,8 +21,10 @@ Records, one JSON line per (op, path, suite), into
          that spawned this generator); else the innermost test module
          (`test_*.py`) on the stack — `unittest discover` runs several suites
          in one process; else this process's entry script, or `-m <module>`.
-  op     "open" (read-only opens, imports included), "listdir" (os.listdir /
-         os.scandir, which glob and pathlib's iterdir go through).
+  op     "open" (opens that can read the file's bytes, imports included:
+         "r", "r+", "a+", O_RDONLY or O_RDWR without O_TRUNC, and not "w",
+         "w+", "a", "x" or O_TRUNC, which write, truncate or create), "listdir"
+         (os.listdir / os.scandir, which glob and pathlib's iterdir go through).
   path   repo-relative, forward slashes; nothing outside the repo is kept.
   at     the outermost frame in the suite's own file (the test method's
          line), else the innermost repo frame.
@@ -29,9 +35,11 @@ caches), and the entries shutil.rmtree / os.fwalk open relative to a
 directory fd (a TemporaryDirectory's cleanup reports bare names like "ssl",
 which would otherwise resolve against the cwd).
 
-Not seen: os.stat / os.path.exists / pathlib's exists() (CPython raises no
-audit event for them), and processes started with -I / -E or a replaced
-environment.
+Not seen: os.stat / os.path.exists / os.path.realpath / pathlib's exists()
+and is_file() (CPython raises no audit event for them), so a python3 process
+records what it opens and lists but not what it only checks for existence;
+and processes started with -I / -E / -S or a replaced environment, which
+never import this file.
 
 If another sitecustomize sits further down sys.path (Debian ships one), it
 still runs: this module executes it after installing the hook.
@@ -53,6 +61,13 @@ def _install(out_dir: str) -> None:
     # realpath: the cwd a relative path resolves against is a real path too
     here = os.path.dirname(os.path.realpath(__file__))
     root = os.path.dirname(os.path.dirname(here))
+
+    # Arm the Node half in every node this process starts (see the docstring).
+    node_rec = os.path.join(here, "record.cjs")
+    node_opts = os.environ.get("NODE_OPTIONS", "")
+    if os.path.isfile(node_rec) and node_rec not in node_opts:
+        word = f'"{node_rec}"' if " " in node_rec else node_rec
+        os.environ["NODE_OPTIONS"] = f"{node_opts} --require {word}".strip()
     root_sep = root + os.sep
     self_file = os.path.abspath(__file__)
 
@@ -175,10 +190,14 @@ def _install(out_dir: str) -> None:
         if event == "open":
             path, mode, flags = (tuple(args) + (None, None, None))[:3]
             if isinstance(flags, int):
-                if flags & 3 != os.O_RDONLY:
+                # io.open and os.open always pass the flags
+                if flags & 3 not in (os.O_RDONLY, os.O_RDWR) or flags & os.O_TRUNC \
+                        or (flags & os.O_CREAT and flags & os.O_EXCL):
                     return
-            elif isinstance(mode, str) and any(c in mode for c in "wax+"):
-                return
+            elif isinstance(mode, str):
+                # a raw sys.audit("open", path, mode, None) from other code
+                if not any(c in mode for c in "r+") or any(c in mode for c in "wx"):
+                    return
             op = "open"
         elif event in ("os.listdir", "os.scandir"):
             path = args[0] if args else "."

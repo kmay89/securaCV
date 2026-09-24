@@ -12,23 +12,40 @@
 // notes its path argument and then calls the original with the same `this`
 // and arguments.
 //
+// It arms the Python half for the processes it starts: when this directory
+// is not on PYTHONPATH it is prepended there (the Python half does the same
+// for NODE_OPTIONS), so a step that loads either half records the python3
+// generators and the node scripts its tests spawn, whichever came first.
+//
 // What is recorded, per process, into <dir>/node-<pid>-<thread>-<rand>.jsonl:
 //   {"suite", "op", "path", "at", "proc"}
 //   suite  the test the read belongs to: PATH_FILTER_READS_SUITE when a parent
 //          process set it, else this process's own entry script. A test's
 //          child (node, or python3 through the Python half's sitecustomize)
 //          inherits it, so a generator a test spawns is charged to the test.
+//          `node --test a.js b.js` is no suite itself ("<node --test>"): it
+//          runs each file in a child that names itself.
 //   op     the fs call (readFileSync, existsSync, readdirSync, ...).
 //   path   repo-relative, forward slashes. Paths outside the repo (tmp dirs,
 //          the node install) are never recorded.
 //   at     the outermost stack frame in the suite's own file (the test's own
 //          line, not a helper's), else the innermost repo frame that is not
-//          this file.
+//          this file. Empty when no repo frame is on the stack: an ES
+//          module's static `import` is resolved and read from the loader's
+//          own frames, so its records name the test and the file but no
+//          line. (A dynamic `import()` resolves on the caller's stack, so its
+//          realpathSync record carries the import's line.)
 //   proc   this process's entry script, repo-relative ("" for none).
 // One record per (op, path) per process: the gate needs the set, not a log.
 //
-// Not seen: reads by native code or by a process whose environment was
-// replaced (spawn with a fresh `env`), and reads by shell tools (cat, git).
+// Opens: recorded when the flags can read an existing file's bytes ("r",
+// "r+", "a+", O_RDONLY or O_RDWR without O_TRUNC); not when they only write,
+// truncate or create a new file ("w", "w+", "a", "wx", O_TRUNC, O_EXCL).
+//
+// Not seen: fs calls this file does not wrap (readlink, watch), a function
+// some module took off `fs` before this preload ran, reads by native code or
+// by a process whose environment was replaced (spawn with a fresh `env`),
+// and reads by shell tools (cat, cmp, git).
 "use strict";
 
 const DIR = process.env.PATH_FILTER_READS_DIR;
@@ -68,14 +85,22 @@ function install(dir) {
     return null; // a file descriptor, or something fs itself will refuse
   };
 
-  const entry = process.argv[1] ? rel(path.resolve(process.argv[1])) || "" : "";
-  const inherited = process.env.PATH_FILTER_READS_SUITE || "";
-  const suite = inherited || entry || "<node>";
-  // `node --test a.js b.js` runs each file in a child of its own: leave the
-  // children to name themselves. Every other process hands its suite down.
+  // `node --test a.js b.js` runs each file in a child of its own, and its
+  // own argv[1] is merely the first of them: it is no suite, and it leaves
+  // the children to name themselves. Every other process hands its suite
+  // down to the processes it starts.
   const isTestRunner = process.execArgv.includes("--test");
-  if (!inherited && entry && !isTestRunner) process.env.PATH_FILTER_READS_SUITE = suite;
+  const entry = !isTestRunner && process.argv[1] ? rel(path.resolve(process.argv[1])) || "" : "";
+  const inherited = process.env.PATH_FILTER_READS_SUITE || "";
+  const suite = inherited || entry || (isTestRunner ? "<node --test>" : "<node>");
+  if (!inherited && entry) process.env.PATH_FILTER_READS_SUITE = suite;
   const suiteAbs = path.join(ROOT, suite);
+
+  // Arm the Python half in every python3 this process starts (see the header).
+  const pyPath = process.env.PYTHONPATH || "";
+  if (!pyPath.split(path.delimiter).some((p) => p && path.resolve(p) === __dirname)) {
+    process.env.PYTHONPATH = pyPath ? `${__dirname}${path.delimiter}${pyPath}` : __dirname;
+  }
 
   let fd = null;
   const seen = new Set();
@@ -139,18 +164,26 @@ function install(dir) {
     }
   };
 
-  // Is an open(2) flags argument read-only? fs's own default is "r".
-  const readOnly = (flags) => {
-    if (flags === undefined || flags === null) return true;
-    if (typeof flags === "number") return (flags & 3) === fs.constants.O_RDONLY;
-    return typeof flags === "string" && /^r[s]?$/.test(flags);
+  // Can an open with these flags read the bytes already in the file? fs's
+  // own default is "r", and `fs.open(path, callback)` puts the callback where
+  // the flags go. Writing, truncating or creating a new file reads nothing.
+  const C = fs.constants;
+  const canRead = (flags) => {
+    if (flags === undefined || flags === null || typeof flags === "function") return true;
+    if (typeof flags === "number") {
+      const access = flags & 3;
+      if (access !== C.O_RDONLY && access !== C.O_RDWR) return false;
+      if (flags & C.O_TRUNC) return false;
+      return !((flags & C.O_CREAT) && (flags & C.O_EXCL));
+    }
+    return typeof flags === "string" && /[r+]/.test(flags) && !/[wx]/.test(flags);
   };
 
-  const wrap = (obj, name, test) => {
+  const wrap = (obj, name, test, op = name) => {
     const fn = obj && obj[name];
     if (typeof fn !== "function") return;
     const wrapped = function (p) {
-      if (!test || test(arguments)) note(name, p);
+      if (!test || test(arguments)) note(op, p);
       return fn.apply(this, arguments);
     };
     Object.defineProperty(wrapped, "name", { value: fn.name });
@@ -162,30 +195,37 @@ function install(dir) {
     obj[name] = wrapped;
   };
 
-  const openFlags = (args) => readOnly(args[1]);
+  const openFlags = (args) => canRead(args[1]);
   const streamFlags = (args) => {
     const o = args[1];
-    return readOnly(o && typeof o === "object" ? o.flags : undefined);
+    return canRead(o && typeof o === "object" ? o.flags : undefined);
   };
   for (const name of ["readFileSync", "existsSync", "readdirSync", "statSync", "lstatSync",
-    "accessSync", "opendirSync", "readFile", "readdir", "stat", "lstat", "access", "opendir", "exists"]) {
+    "accessSync", "opendirSync", "realpathSync", "readFile", "readdir", "stat", "lstat",
+    "access", "opendir", "exists", "realpath"]) {
     wrap(fs, name);
   }
+  // realpath throws on a missing path, so it is an existence check too; its
+  // `.native` forms are properties of the (now wrapped) functions.
+  wrap(fs.realpathSync, "native", null, "realpathSync.native");
+  wrap(fs.realpath, "native", null, "realpath.native");
   wrap(fs, "openSync", openFlags);
   wrap(fs, "open", openFlags);
   wrap(fs, "createReadStream", streamFlags);
   wrap(fs, "copyFileSync");
   wrap(fs, "cpSync");
   const promises = fs.promises;
-  for (const name of ["readFile", "readdir", "stat", "lstat", "access", "opendir", "copyFile", "cp"]) {
+  for (const name of ["readFile", "readdir", "stat", "lstat", "access", "opendir", "realpath",
+    "copyFile", "cp"]) {
     wrap(promises, name);
   }
   wrap(promises, "open", openFlags);
 
   // An ES module's `import { readFileSync } from "node:fs"` binds the
   // builtin's ESM facade, which is built on first import, so a test module
-  // loaded after this preload already gets the wrapped calls (the recorder
-  // tests pin that). Resync anyway, for a facade built before it.
+  // loaded after this preload already gets the wrapped calls. A facade an
+  // earlier preload built still holds the originals until this resync. The
+  // recorder tests pin both cases.
   require("node:module").syncBuiltinESMExports();
 
   if (entry) note("exec", path.resolve(process.argv[1]));
