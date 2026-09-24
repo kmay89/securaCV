@@ -123,14 +123,15 @@ struct Config {
 
   /* Airtime reservation gate. When non-null, every probe send — unicast
    * and idle broadcast alike — asks this hook to reserve its cost first,
-   * passing the caller's clock and the ESP-NOW payload length (the hook
-   * owns adding MAC/action-frame framing before charging a budget — see
-   * the honest airtime math above). Return false to deny: the send is
-   * skipped, counted in Stats::sends_denied_airtime, and the slot's
-   * cadence is kept so it retries one period later. The integration
-   * layer wires this to airtime_governor::try_reserve_routine (probe
-   * frames are routine traffic — never urgent); null means ungated,
-   * bounded only by aggregate_cap_hz. */
+   * passing the caller's clock and the ESP-NOW payload length only. The
+   * MAC/action-frame framing in the honest airtime math above is the
+   * governor's to add: on the WAP, airtime_governor adds it to every
+   * frame, so a hook that added it too would count it twice. Return false
+   * to deny: the send is skipped, counted in Stats::sends_denied_airtime,
+   * and the slot's cadence is kept so it retries one period later. The
+   * integration layer wires this to airtime_governor::try_reserve_routine
+   * (probe frames are routine traffic — never urgent); null means
+   * ungated, bounded only by aggregate_cap_hz. */
   bool (*airtime_gate)(uint32_t now_ms, size_t payload_bytes);
 
   static Config defaults() {
