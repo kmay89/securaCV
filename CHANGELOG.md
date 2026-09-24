@@ -54,6 +54,14 @@
   after bring-up was undefined. Both now get the static copy the Bluetooth
   manager already kept. Read from source; the WAP's compile is CI's; not
   run on a bench. The emulator dist does not move for this one.
+- **Home Assistant: a malformed key in a health publish no longer crashes
+  the pin task (sweep HA22).** The automatic pin accepted any 64-character
+  `public_key` that Python's hex decoder read, and that decoder skips
+  spaces, so a 64-character string holding spaces decoded to a short key
+  and the scheduled pin raised an error Home Assistant logged as unhandled.
+  The hook now requires exactly 64 hex digits before it schedules the pin.
+  Nothing was pinned before or after; the change removes the logged
+  exception. Host-tested, including the forms that failed before.
 - **The Quiet Hours wheels center their options on every touch glass
   (roadmap row 17).** The display runs without an LVGL theme, so a roller's
   text is left-aligned unless it sets otherwise. The Location wheels

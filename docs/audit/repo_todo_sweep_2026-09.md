@@ -2106,7 +2106,7 @@ so — see D2 below.)
   seen on a bench. The emulator dist does not move:
   `canary-local/emulator/build.sh` compiles only the WAP's
   `securacv_audio.cpp`, which includes none of the BLE headers.
-- [ ] **HA22 [code] A health `public_key` with whitespace in it passes the
+- [x] **HA22 [code] A health `public_key` with whitespace in it passes the
   TOFU hook's hex check and fails inside the pin task.**
   `_async_health_for_tofu` (`custom_components/securacv/__init__.py`)
   accepts any 64-character `public_key` that `bytes.fromhex` decodes, and
@@ -2117,7 +2117,10 @@ so — see D2 below.)
   exception. Fix: require every character to be a hex digit (or the
   decoded key to be 32 bytes) before the pin task is scheduled, with a
   test. Pre-existing: the hook did the same before HA18. Found in HA18's
-  review (#<E>).
+  review (#<E>). *Done (#<E>):* the hook requires exactly 64 hex digits
+  after lowercasing, before the pin task is scheduled.
+  `test_fingerprint_case.py` gains four 64-character non-keys; the two
+  whitespace forms fail on the old hook and pass after. Host-tested.
 - [ ] *(Mirror repo itself: no code work. It was byte-identical again as of
   securacv-homeassistant#17 (2026-09-24), which resynced the 33 carried
   files #1703, #1704 and #1718 had moved. The same PR brought the store
