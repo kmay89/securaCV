@@ -275,7 +275,13 @@ pd = max(screw_insert ? max(post_d, ins_od + 3.0) : post_d, scr_post_min(screw_s
 // hole through the seal line from outside (canary_core_lib pl_seat_cut)
 e_gland  = e_seal;
 clip_stack  = clip_clear + clip_t;
-radar_standoff = stack_sock_h + xiao_below;
+// seal mode lifts the whole stack so the USB opening's bottom keeps a 0.4 web
+// over the gasket groove's TOP — at the raw numbers the opening cut the
+// groove's outer cheek away over the port's width and bared the ring's flank
+// to the plug (the combo port found it)
+usb_axis0  = xiao_below - port_usbc_shell_h()/2 + xiao_usb_z;
+stack_lift = e_seal ? max(0, gasket_groove + 0.4 - (usb_axis0 - usb_h/2)) : 0;
+radar_standoff = stack_sock_h + xiao_below + stack_lift;
 post_corner = pd + 1.5;
 // bottom margin: the wall's floor cove must not land on the carrier's edge
 bot_margin  = max(board_clear, floor_cove + 0.4);
@@ -336,6 +342,8 @@ plate_x  = bore_x - 2*tol_slide;  plate_y = bore_y - 2*tol_slide;  plate_r = max
 assert(!e_gland || screw_head == "pan", "a sealed build seats an O-ring under each plate screw head — that needs screw_head = \"pan\"");
 assert(pl_pil + 1.0 <= post_h, str("the post is too short for its pilot (", pl_pil, " into ", post_h, " mm)"));
 assert(!screw_insert || ins_h + 1.0 <= post_h, "the post is shorter than the insert it must hold");
+assert(!e_seal || !lid_key || core_key_d() + 0.3 <= core_min_wall() + 1e-9,
+       "the plate's key notch would reach the gasket groove's outer cheek");
 kh_y  = inner_y/2 - kh_inset;
 kh_ys = (kh_y >= kh_slot_l/2 + kh_head_d/2 + 2) ? [-kh_y, kh_y] : [0];
 hinge_hole = hinge_bolt_d + 0.4;
@@ -540,7 +548,9 @@ module back() {
         for (p = post_xy())
             pl_seat_cut(p[0], p[1], floor_t, plate_t, screw_size, screw_head, pl_r, scr_c, tol_hole, e_gland);
         // the key slot in the plate's edge (the rib is on the shell's bore wall)
-        if (lid_key) translate([0, 0, floor_t]) lid_key_slot(key_x, bore_y/2 - tol_slide, 270, plate_t + 0.2, ledge_w + 0.4);
+        // the key notch: core_key_d() + 0.3 into the plate from the bore wall — never
+        // through the ledge band, so the gasket stays backed (asserted below in seal mode)
+        if (lid_key) translate([0, 0, floor_t]) lid_key_slot(key_x, bore_y/2, 270, plate_t + 0.2, core_key_d() - 0.7);
         if (mount_extra0 > 0)
             for (yc = kh_ys) keyhole_pocket(yc);
         if (mount_extra0 > 0 && kh_lock)
@@ -636,11 +646,13 @@ module shell_solid() {
                     cube([usb_w + 2*usb_cov_pad, 1 + usb_cov_dep, uz1 - uz0]);
             }
             if (foot_cham > 0) foot_chamfer_cut();
-            // weep at the bottom wall, just above the plate's face (hung +Y up), beside
-            // the USB opening and outside its plug recess — canary_core_lib weep_cut
+            // weep at the bottom wall (hung +Y up: straight out is straight down),
+            // beside the USB opening and outside its plug recess, its bore a web
+            // ABOVE the gasket groove's top — the old 30° dive from the ledge plane
+            // bored through the groove (canary_core_lib weep_cut)
             if (e_seal && e_weep)
-                weep_cut(usb_cx + usb_w/2 + usb_cov_pad + weep_d + 1.0, -inner_y/2, floor_t + weep_d/2 + 0.2,
-                         "-y", wall_eff, weep_d);
+                weep_cut(usb_cx + usb_w/2 + usb_cov_pad + weep_d + 1.0, -inner_y/2,
+                         floor_t + gasket_groove + core_min_web() + weep_d/2, "-y", wall_eff, weep_d, tilt = 0);
         }
         // screw posts from the face's underside to the relief over the ledge,
         // gusseted to their walls (a mid-span post only to its own) — the

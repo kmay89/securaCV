@@ -94,15 +94,15 @@ DEVICES = {
         "scad": "canary_vision_enclosure.scad",
         "overrides": {"host": '"xiao"', "preset": '"vision_indoor"', "part": '"back"'},
         "body": "union() { back(); translate([0, 0, base_d]) front(); }",
-        "seams": "[base_d]",
-        "placement": "vision_fitcheck: front at z = base_d",
+        "seams": "[]",   # the piston plate: no seam crosses the side profile (see the Sense)
+        "placement": "vision_fitcheck: front at z = base_d (the plate's front face at floor_t, inside the walls)",
     },
     "device.canary-vision-devkit": {
         "scad": "canary_vision_enclosure.scad",
         "overrides": {"host": '"devkit"', "preset": '"vision_indoor"', "part": '"back"'},
         "body": "union() { back(); translate([0, 0, base_d]) front(); }",
-        "seams": "[base_d]",
-        "placement": "vision_fitcheck: front at z = base_d",
+        "seams": "[]",   # the piston plate: no seam crosses the side profile (see the Sense)
+        "placement": "vision_fitcheck: front at z = base_d (the plate's front face at floor_t, inside the walls)",
     },
     "device.canary-sense": {
         "scad": "canary_sense_enclosure.scad",

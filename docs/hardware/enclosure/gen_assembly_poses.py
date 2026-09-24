@@ -140,7 +140,7 @@ DEVICES = {
             # the Grove module rides the XIAO's socket vm_standoff off the floor
             "board": [("T", "[vm_cx, vm_cy, floor_t + vm_standoff]")],
             # the XIAO hangs stack_sock_h under it, face (USB) down, xiao_below of air
-            "xiao": [("T", "[vm_cx, vm_cy - vm_l/2 + xiao_l/2, floor_t + xiao_below + P_t]"),
+            "xiao": [("T", "[vm_cx, vm_cy - vm_l/2 + xiao_l/2, floor_t + xiao_below_eff + P_t]"),
                      ("R", [180, 0, -90])],
             # the OV5647 board screws to the front's posts: its face sits
             # cam_post_eff under the front plate, lens on the aperture
@@ -149,14 +149,12 @@ DEVICES = {
             "flex": [("T", "[vm_cx, vm_cy + vm_l/2 - 3, floor_t + vm_standoff + pcb_t]")],
             "front": [("T", "[0, 0, base_d + lid_t]"), ("R", [180, 0, 0])],
         },
-        # pan heads in cb_flat_cut: the seat floor is head_h under the outer face
-        # screw_from "back" (the house default): driven up from the seat in
-        # the back, the pan head's bearing face bk_hh above its recess; the
-        # builder draws a pan head above z = 0, so it turns over
+        # the plate screws (canary_core_lib pl_*), as on the Sense: from the
+        # plate's back face, the head recessed pl_r, its bearing face pl_hp above
         "screws": {"xy": "post_xy()",
-                   "z": "e_back ? -mount_extra + bk_r + bk_hh(screw_size, screw_head) : base_d + lid_t - head_h",
-                   "rot": ["e_back ? 180 : 0", 0, 0],
-                   "len": "e_back ? bk_L : hw_len(lid_t, head_pad, hw_engage(screw_size))"},
+                   "z": "-mount_extra + pl_r + pl_hp(screw_size, screw_head)",
+                   "rot": [180, 0, 0],
+                   "len": "pl_L"},
         "params": {
             "board": {"w": "vm_w", "h": "vm_l", "t": "pcb_t"},
             "xiao": {"w": "xiao_l", "h": "xiao_w"},

@@ -131,7 +131,7 @@ JOIN = {
         ("wall-screw", r"^#6 pan wall screw \(keyholes\)", "SCR4"),  # keyhole mount
     ]),
     "canary-vision": ("bom_canary_vision.csv", [
-        ("screw", r"^M2 (pan|flat) x (6|8|10|12|20|25) self-tap", "SCR5"),  # 6-25mm, pan + per-case head
+        ("screw", r"^M2 pan x (6|8) self-tap", "SCR5"),               # 6 mm camera posts + the 8 mm plate screws (pl_len)
         ("insert", r"^M2 heat-set insert 3\.5 OD x 4\b", "INS1"),
         ("security-screw", r"^M2 x 10 security screw", "SCR8"),
         ("bolt", r"^M5 x 25 bolt \+ nut", "SCR6"),

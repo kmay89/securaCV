@@ -198,6 +198,10 @@ jobs:
           # the pan head is one Customizer click away and puts the pad back in
           # the wall on a case whose default head is flat — so it is gated too
           chk wap_pan        -D 'check="wap_pan"'      -D 'preset="battery_full"' -D 'screw_head="pan"'
+          # the combo's two layouts: unsealed, and sealed (mid posts on every
+          # wall for the ≤ 40 mm clamp spans, the stacks lifted over the groove)
+          chk combo          -D 'check="combo"'
+          chk combo_seal     -D 'check="combo"'        -D 'opt_seal=true'
           # the CONTROL: the lid turned 180° must COLLIDE (the lip lands on the
           # key rib). A fit gate that has never been seen to fail has proved
           # nothing; this run shows it can, once per family.
@@ -218,6 +222,7 @@ jobs:
           hit vision    -D 'check="vision_indoor"' -D 'host="xiao"' -D 'preset="vision_indoor"'
           hit doorbell  -D 'check="doorbell"'
           hit wap       -D 'check="wap_compact"'   -D 'preset="compact_plain"'
+          hit combo     -D 'check="combo"'
           exit $status
 
       - name: Verify STLs are watertight, with the expected number of parts
