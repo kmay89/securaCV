@@ -32,9 +32,12 @@ canary-local/
   catalog.html          "The Case Catalog" — browse every enclosure (§4b)
   find.html             "Find your case" — three questions → one recommended case
   boards.html           "Boards" — every board + pin flags + wiring (§4g)
-  flash.html            "Flash over USB" — the real in-browser flasher (inside the
-                        desktop Lab app: the native bench, assets/flash-native.js,
-                        on the Flasher's espflash engine)
+  flash.html            "Flash over USB" — the real in-browser flasher: Wi-Fi +
+                        broker provisioning, broker encryption included (the
+                        desktop Flasher seeds the same keys —
+                        tests/desktop_parity.test.js pins the two forms equal);
+                        inside the desktop Lab app it is the native bench,
+                        assets/flash-native.js, on the Flasher's espflash engine
   wap.html              "First boot" — captive-portal setup, serial + MQTT (§4i)
   vision.html           "The Vision" — model load, aim card, tuning (§4k)
   eyes.html             "Through Canary eyes" — your webcam feeding the real firmware wasm
@@ -103,8 +106,11 @@ python3 -m http.server -d /path/to/securaCV 8000
 # → http://localhost:8000/canary-local/
 ```
 
-Nothing phones anywhere: no CDN, no fonts, no analytics, no fetches
-outside the page's own directory. Invariant IV extends to the docs.
+Nothing phones anywhere: no CDN, no fonts, no analytics. Every fetch stays
+on the page's own origin except the flasher's: the signed release hosts
+(GitHub's release host and its asset CDN) and a same-machine manifest server
+on loopback, each a row with a reason in the policy table (§9). Invariant IV
+extends to the docs.
 
 ---
 
@@ -298,8 +304,10 @@ slicer — nothing is an invented toolpath.
 
 **Build it (every device sheet).** BOM with required/optional totals and
 per-part sourcing straight from `docs/hardware/bom_*.csv`, assembly steps
-from the enclosure catalog's own §Assembly, and the CI-generated
-CycloneDX SBOM explained and linked — all emitted into
+from the enclosure catalog's own §Assembly, and the CycloneDX SBOM
+explained and linked (the firmware document generated from the build
+inputs, committed and schema-validated on every PR; the Rust and Node
+documents produced by `sbom.yml`; see `sbom/README.md`) — all emitted into
 `devices/build.json` by the same generator, drift-gated, so "how to
 build it" can never silently rot.
 
