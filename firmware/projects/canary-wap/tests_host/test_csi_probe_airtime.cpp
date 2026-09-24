@@ -16,7 +16,9 @@
  *     framing is counted once;
  *   - the WAP today (idle 10 Hz broadcast) is never denied;
  *   - the gate starts a frame at 159 x100 and none at 160 x100;
- *   - one peer at the full 20 Hz stays steady under the 1.60 % ceiling;
+ *   - one peer at the full 20 Hz stays steady under the 1.60 % ceiling
+ *     with an Opera of one; with a full Opera of sixteen the heartbeat
+ *     holds it off, and the window over the Beacon's line, for 1.5 s;
  *   - eight peers asking 160 frames/s are held at the ceiling, the window
  *     never reads below the ledger, and the 30 s mesh heartbeat keeps its
  *     room (without the ceiling: 0 of 6), to eight connected mesh peers
@@ -66,11 +68,13 @@ uint32_t ledger_window(uint32_t now) {
   return (uint32_t)s;
 }
 uint32_t g_second_frames = 0;                  /* probe frames allowed this second */
+uint32_t g_last_frame = 0;                     /* when the probe last got a frame */
 bool gate(uint32_t now, size_t payload) {
   const bool ok = probe_airtime::reserve_probe_frame(now, payload);
   if (ok) {
     g_ledger.push_back({now, airtime_governor::estimate_airtime_us(payload)});
     ++g_second_frames;
+    g_last_frame = now;
   }
   return ok;
 }
@@ -85,8 +89,15 @@ bool heartbeat(uint32_t now, uint16_t mesh_peers) {
 bool send_ok(const uint8_t*, const uint8_t*, size_t) { return true; }
 
 /* min_per_s: the fewest probe frames allowed in any whole second after the
- * first 10 s (the window's first fill). */
-struct Run { uint32_t hb_ok, hb_tries, max_x100, max_under_us, min_per_s; csi_probe::Stats st; };
+ * first 10 s (the window's first fill). max_gap_ms: the longest the probe
+ * went without a frame after that, and max_over_ms: the longest the
+ * governor's own reading stayed over the Beacon's airtime_saturated line
+ * (beacon_channel.cpp, > 160 x100), sampled every 100 ms. */
+struct Run {
+  uint32_t hb_ok, hb_tries, max_x100, max_under_us, min_per_s;
+  uint32_t max_gap_ms, max_over_ms;
+  csi_probe::Stats st;
+};
 
 Run run(int peers, uint32_t seconds, uint16_t mesh_peers) {
   g_ledger.clear();
@@ -109,7 +120,9 @@ Run run(int peers, uint32_t seconds, uint16_t mesh_peers) {
   Run r{};
   r.min_per_s = UINT32_MAX;
   g_second_frames = 0;
+  g_last_frame = g_now;
   const uint32_t start = g_now;
+  uint32_t over_since = 0;                     /* 0: under the line */
   uint32_t next_hb = g_now + 5000;
   for (const uint32_t end = g_now + seconds * 1000u; g_now < end;) {
     ++g_now;
@@ -120,7 +133,14 @@ Run run(int peers, uint32_t seconds, uint16_t mesh_peers) {
       if (g_now - start > 10000 && g_second_frames < r.min_per_s) r.min_per_s = g_second_frames;
       g_second_frames = 0;
     }
+    if (g_now - start > 10000 && g_now - g_last_frame > r.max_gap_ms) r.max_gap_ms = g_now - g_last_frame;
     if (g_now % 100 == 0) {
+      if (airtime_governor::airtime_pct_x100(g_now) > 160) {
+        if (!over_since) over_since = g_now;
+        if (g_now - over_since + 100 > r.max_over_ms) r.max_over_ms = g_now - over_since + 100;
+      } else {
+        over_since = 0;
+      }
       const uint32_t truth = ledger_window(g_now);
       const uint32_t seen = airtime_governor::snapshot(g_now).airtime_us;
       if (truth > seen && truth - seen > r.max_under_us) r.max_under_us = truth - seen;
@@ -191,17 +211,43 @@ void test_wap_today_is_in_budget() {           /* broadcast-only at 10 Hz */
 
 /* 1.58 %: under the ceiling. A one-peer heartbeat frame (1576 us) landing
  * on that window takes it to the line, so the probe skips about one frame
- * a heartbeat and never more than one in any second. */
+ * a heartbeat and never more than one in any second, and the window never
+ * reads over the Beacon's line. This is an Opera of one: the case below is
+ * the same probe with more peers to send the heartbeat to. */
 void test_one_peer_at_full_rate_is_steady() {
   const int f0 = g_failures;
   Run r = run(1, 60, 1);
   EXPECT(r.st.sends_denied_airtime <= 3);
   EXPECT(r.st.unicasts_sent >= 1190);
   EXPECT(r.min_per_s >= 19);
+  EXPECT(r.max_gap_ms <= 100);
+  EXPECT(r.max_over_ms == 0);
   EXPECT(r.max_under_us == 0);
   EXPECT(r.hb_tries == 2 && r.hb_ok == r.hb_tries);
   std::printf("%s one peer x 20 Hz steady (%u denied, >= %u frames every second)\n",
               VERDICT(f0), r.st.sends_denied_airtime, r.min_per_s);
+}
+
+/* The same one peer at 20 Hz with a full Opera of 16 to send the heartbeat
+ * to. The window holds 158 400 us of probe frames; the heartbeat adds
+ * 16 x 1576 = 25 216 us (183 616 us, 183 x100), and the probe starts no
+ * frame until as much has aged out. Each heartbeat frame is about two
+ * probe frames (1584 us), which is what this peer sends in 100 ms, so the
+ * heartbeat holds the probe off for about 100 ms a mesh peer: 15 buckets
+ * of 1584 us take the window back under 160 000 us, 1.5 s over the
+ * Beacon's line (> 160 x100) and at most 1.6 s without a frame, once every
+ * 30 s. It still fits under the cap and goes out every time. (Charged as
+ * one unframed send, as before F54, it never crossed the line.) */
+void test_one_peer_with_a_full_opera_is_held_off_briefly() {
+  const int f0 = g_failures;
+  Run r = run(1, 120, 16);
+  EXPECT(r.hb_tries == 4 && r.hb_ok == r.hb_tries);
+  EXPECT(r.max_x100 <= 184);             /* 183 616 us, and one probe frame */
+  EXPECT(r.max_over_ms >= 1400 && r.max_over_ms <= 1500);
+  EXPECT(r.max_gap_ms <= 1600);
+  EXPECT(r.max_under_us == 0);
+  std::printf("%s one peer x 20 Hz, 16 mesh peers: held off %u ms, over the line %u ms a heartbeat\n",
+              VERDICT(f0), r.max_gap_ms, r.max_over_ms);
 }
 
 void test_over_budget_probe_leaves_heartbeats_their_room() {
@@ -254,6 +300,7 @@ int main() {
   test_ceiling_is_one_point_six_zero_exactly();
   test_wap_today_is_in_budget();
   test_one_peer_at_full_rate_is_steady();
+  test_one_peer_with_a_full_opera_is_held_off_briefly();
   test_over_budget_probe_leaves_heartbeats_their_room();
   test_full_opera_heartbeat_keeps_its_room();
   test_probe_pump_installs_this_gate();

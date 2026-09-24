@@ -8,8 +8,9 @@
  * caller.
  *
  * Every figure here is the governor's ESTIMATE of airtime (192 us preamble
- * + 8 us a byte at the 1 Mbps fallback rate, the ~59 B of ESP-NOW framing
- * included, airtime_governor.h), not a measurement of the air.
+ * + 8 us a byte at ESP-NOW's default 1 Mbps rate, the governor's ~59 B
+ * framing allowance included, airtime_governor.h), not a measurement of
+ * the air.
  */
 #ifndef SECURACV_PROBE_AIRTIME_H
 #define SECURACV_PROBE_AIRTIME_H
@@ -26,29 +27,36 @@ namespace probe_airtime {
  * probe stops within one frame of the line (the window holds 160 784 us at
  * most when its last frame lands) and about 0.39 % (39 216 us) of the 2 %
  * routine cap stays for the other routine senders, framed like the probe:
- * the 30 s mesh heartbeat (one 1576 us signed frame to each connected
- * peer, 25 216 us for a full Opera of 16), the 60 s chirp presence
- * (1120 us) and the Beacon self-test (1624 us, a routine reservation,
- * beacon_channel.cpp emit_selftest) — 27 960 us together. Without the
- * ceiling a probe asking for more than the cap took every microsecond the
- * window freed and those were refused (host-measured: 0 of 9 in 180 s at
- * 160 frames/s). 1.60, not lower: one paired peer at the full 20 Hz is
- * estimated at 1.58 % and keeps a steady supply (it skips about one frame
- * when a heartbeat lands); at 1.50 it was throttled (host-measured, framed:
- * 228 of 3600 frames skipped in 180 s, some seconds down to 12). Not higher
+ * the 30 s mesh heartbeat (one 1576 us signed frame to each peer
+ * broadcast_message reaches, 25 216 us for a full Opera of 16), the 60 s
+ * chirp presence (1120 us) and the Beacon self-test (1624 us, a routine
+ * reservation, beacon_channel.cpp emit_selftest) — 27 960 us together.
+ * Without the ceiling a probe asking for more than the cap took every
+ * microsecond the window freed and those were refused (host-measured: 0 of
+ * 9 in 180 s at 160 frames/s). 1.60, not lower: one paired peer at the
+ * full 20 Hz is estimated at 1.58 % and, with an Opera of one, keeps a
+ * steady supply (it skips about one frame when the heartbeat lands); at
+ * 1.50 it was throttled (host-measured, framed: 228 of 3600 frames skipped
+ * in 180 s, some seconds down to 12). With more peers to send the
+ * heartbeat to, the heartbeat holds that one peer off about 100 ms a mesh
+ * peer (each 1576 us frame is two of its 792 us frames), up to 1.6 s for a
+ * full Opera of 16, once every 30 s (test_csi_probe_airtime). Not higher
  * either: 1.60 % is also the Beacon's airtime_saturated trouble line
  * (beacon_channel.cpp, > 160 x100, NORMAL -> TROUBLE), so a probe held
  * above it would keep the Beacon in TROUBLE once the peer table fills. At
  * this value the probe alone never takes the window over that line (its
  * frames stop at 160 x100); only another sender landing after its last
- * frame does, and on a window the probe saturates it stays over until as
- * much probe airtime ages out, which can take seconds (host-measured,
- * eight probe peers for 170 s: over the line 25 s with the heartbeat
- * charged a frame per connected peer to eight peers; 9 s when it was
- * charged as one unframed send). The window counts urgent and Beacon sends
- * too, so during an alert storm the probe yields first — intended.
- * test_csi_probe_airtime static_asserts the value and pins the gate on
- * both sides of the line. */
+ * frame does, and the window stays over until as much probe airtime ages
+ * out. For one peer at 20 Hz that is a heartbeat to two or more peers:
+ * about 100 ms over the line a mesh peer past the first, 1.5 s at 16. On
+ * a window two or more probe peers saturate it can take seconds
+ * (host-measured, eight probe peers for 170 s: over the line 25 s with the
+ * heartbeat charged a frame per peer to eight peers; 9 s when it was
+ * charged as one unframed send). The WAP registers no probe peer today (it
+ * only broadcasts, at 10 Hz), so none of this happens yet. The window
+ * counts urgent and Beacon sends too, so during an alert storm the probe
+ * yields first — intended. test_csi_probe_airtime static_asserts the value
+ * and pins the gate on both sides of the line. */
 constexpr uint16_t PROBE_CEILING_PCT_X100 = 160;
 
 /* csi_probe::Config::airtime_gate (test_csi_probe_airtime.cpp
@@ -57,10 +65,10 @@ inline bool reserve_probe_frame(uint32_t now_ms, size_t payload_bytes) {
   if (airtime_governor::airtime_pct_x100(now_ms) >= PROBE_CEILING_PCT_X100) {
     return false;
   }
-  /* The payload only: the governor adds the ESP-NOW framing to every
-   * caller's frame (airtime_governor::ESPNOW_FRAME_OVERHEAD_BYTES), so the
-   * 16 B probe payload is charged as 75 B, 792 us, and adding it here too
-   * would count it twice. */
+  /* The payload only: the governor adds its ESP-NOW framing allowance
+   * (airtime_governor::ESPNOW_FRAME_OVERHEAD_BYTES) to every caller's
+   * frame, so the 16 B probe payload is charged as 75 B, 792 us, and adding
+   * it here too would count it twice. */
   return airtime_governor::try_reserve_routine(now_ms, payload_bytes);
 }
 
