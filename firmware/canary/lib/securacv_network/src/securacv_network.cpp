@@ -996,8 +996,13 @@ bool rate_limit_check(httpd_req_t* req, bool is_action) {
 // The display closed exactly this with network/host_guard.h (its LAN page's
 // token and writes require a Host that can only mean this device: an IP
 // literal, the .local name, a single label, or a private-use suffix); the
-// canary applies the same header, host-tested once, to its token delivery
-// (send_html_with_token) and its gate (auth_gate).
+// canary applies the same header, host-tested once, to every path that can
+// hand out the token or spend the BOOT tap, and asks it FIRST on each: the
+// page-token decision (page_token_inject, for / and /setup and the probe that
+// serves the wizard), the API gate (auth_gate), and the provisioning receipt
+// (handle_provisioning_receipt, whose gate is a bearer or the tap rather than
+// auth_gate). firmware/canary/scripts/check_route_security.py holds all three
+// to that order.
 //
 // One exemption, and it is a property of the INTERFACE, never of the name: a
 // request that arrived over the Canary's own softAP. main.cpp runs the captive
@@ -1058,12 +1063,19 @@ static bool host_is_foreign(httpd_req_t* req) {
 // even looked at: a rebinding page that somehow holds a token still cannot
 // use it, and learns nothing about the provisioning state either.
 
+// The answer every token-bearing route gives a foreign Host — auth_gate and
+// the provisioning receipt, which does not go through auth_gate — so the two
+// cannot drift apart: 403 {"error":"host"}, counted like any rejected call.
+static void send_host_refusal(httpd_req_t* req) {
+  httpd_resp_set_status(req, "403 Forbidden");
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_sendstr(req, "{\"error\":\"host\"}");
+  witness_get_health().http_errors++;
+}
+
 static bool auth_gate(httpd_req_t* req) {
   if (host_is_foreign(req)) {
-    httpd_resp_set_status(req, "403 Forbidden");
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, "{\"error\":\"host\"}");
-    witness_get_health().http_errors++;
+    send_host_refusal(req);
     return false;
   }
   const char* token = auth_get_token();
@@ -1752,8 +1764,9 @@ void ScvNetworkManager::registerHttpHandlers(httpd_handle_t server) {
     register_route(server, &probe);
   }
 
-  // Provisioning receipt: bearer OR one BOOT tap (the handler gates itself;
-  // firmware/canary/scripts/check_route_security.py lists it as self-gating).
+  // Provisioning receipt: the Host first, then a bearer OR one BOOT tap (the
+  // handler gates itself; firmware/canary/scripts/check_route_security.py
+  // holds it to that order).
   httpd_uri_t receipt = { .uri = "/api/provisioning-receipt", .method = HTTP_GET, .handler = handle_provisioning_receipt };
   register_route(server, &receipt);
 
@@ -2003,28 +2016,31 @@ void ScvNetworkManager::registerHttpHandlers(httpd_handle_t server) {
 // than allocating a rendered copy. Shared by the dashboard (/) and the
 // first-boot setup wizard (/setup + the captive-portal probe paths).
 //
-// `inject` is the page-token policy's verdict (page_token_inject below).
-// When it is false the placeholder is streamed EMPTY and the response
-// carries `X-CV-Token: withheld`: the SPA's api() helper already skips the
-// Authorization header for an empty/placeholder token and renders the
-// unlock banner (tap BOOT, use the Canary's own Wi-Fi, or paste the kit
-// token). This is what stops any device on the home LAN from reading the
-// credential out of view-source (F20 gap #11).
+// `verdict` is the page-token decision (page_token_inject below), made
+// before this function sets a header or sends a byte: esp_http_server purges
+// the request headers on the first send, and the Host and the Authorization
+// header are both read there. Only INJECT streams the credential. WITHHOLD
+// streams the placeholder EMPTY with `X-CV-Token: withheld`: the SPA's api()
+// helper already skips the Authorization header for an empty/placeholder
+// token and renders the unlock banner (tap BOOT, use the Canary's own
+// Wi-Fi, or paste the kit token). This is what stops any device on the home
+// LAN from reading the credential out of view-source (F20 gap #11).
 //
-// The Host check rides beside it, and a foreign Host wins whatever the
-// policy said: a request whose Host cannot name this device (the DNS
-// rebinding case — HOST GUARD note above) gets the page with the SAME empty
-// token even when the policy would inject (an unspent BOOT tap does not
-// hand the credential to a rebinding page). The page's fetch helper then
-// sends no Authorization header, every call answers 403 {"error":"host"}
-// (auth_gate), and the failure shows on the dashboard instead of a blank
-// 403 — the split-horizon trade is in that note. Only the policy's own
-// verdict sets the `withheld` header: it means "tap BOOT / use the AP", which
-// cannot help a foreign Host.
-static esp_err_t send_html_with_token(httpd_req_t* req, const char* html, bool inject) {
-  // Read before any header is set or byte is sent: esp_http_server purges
-  // the request headers on the first send, and the Host is one of them.
-  const bool foreign = host_is_foreign(req);
+// FOREIGN_HOST — the Host cannot name this device and the request did not
+// come over the SoftAP (the DNS rebinding case, HOST GUARD note above) —
+// streams the same empty placeholder WITHOUT the `withheld` header, which
+// means "tap BOOT / use the AP" and cannot help under that name. That
+// verdict is reached before any grant is read or the BOOT tap is taken
+// (provisioning_gate::page_token_decide, host-tested), so a page load under
+// a foreign name neither receives the credential nor spends the tap the
+// owner meant for their own page load. The page's fetch helper then sends no
+// Authorization header, every API route answers 403 {"error":"host"}
+// (auth_gate, and the receipt route's own check), and the failure shows on
+// the dashboard instead of a blank 403 — the split-horizon trade is in that
+// note.
+static esp_err_t send_html_with_token(httpd_req_t* req, const char* html,
+                                      canary::net::provisioning_gate::PageToken verdict) {
+  using canary::net::provisioning_gate::PageToken;
   httpd_resp_set_type(req, "text/html");
   // no-store: captive sheets cache aggressively, and a cached copy of this
   // page carries the PREVIOUS Canary's bearer token when the same phone
@@ -2040,9 +2056,9 @@ static esp_err_t send_html_with_token(httpd_req_t* req, const char* html, bool i
     return httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN);
   }
 
-  const char* token = (inject && !foreign) ? auth_get_token() : "";
+  const char* token = (verdict == PageToken::INJECT) ? auth_get_token() : "";
   if (!token) token = "";
-  if (!inject) httpd_resp_set_hdr(req, "X-CV-Token", "withheld");
+  if (verdict == PageToken::WITHHOLD) httpd_resp_set_hdr(req, "X-CV-Token", "withheld");
   const size_t token_len = strlen(token);
   const size_t prefix_len = needle - html;
 
@@ -2061,35 +2077,40 @@ static esp_err_t send_html_with_token(httpd_req_t* req, const char* html, bool i
 }
 
 // The page-token decision for this request (provisioning_gate::page_token_decide,
-// host-tested): inject while the first-boot wizard is active, for a
+// host-tested). The Host first: a request whose Host cannot name this device
+// (host_is_foreign, the same predicate auth_gate asks, SoftAP exemption
+// included) gets FOREIGN_HOST before any grant is read — its bearer is not
+// even looked at, like auth_gate — and the BOOT tap is never taken for it.
+// Otherwise: inject while the first-boot wizard is active, for a
 // bearer-authenticated caller, for a peer inside the live SoftAP subnet, or
 // by SPENDING an unspent BOOT tap — taken, never peeked, so one tap unlocks
 // exactly one home-LAN page load (or, if the app asks first, one receipt
 // fetch; never both). The page that got the token holds the bearer, so its
 // "Save recovery kit" needs no second tap. Everything else (the home LAN)
 // gets the page without the credential.
-static bool page_token_inject(httpd_req_t* req) {
+static canary::net::provisioning_gate::PageToken page_token_inject(httpd_req_t* req) {
   using canary::net::provisioning_gate::PageToken;
   using canary::net::provisioning_gate::page_token_decide;
+  const bool foreign      = host_is_foreign(req);
   const bool setup_active = setup_is_active() || setup_is_first_boot();
-  const bool bearer_ok    = bearer_present_and_valid(req);
+  const bool bearer_ok    = !foreign && bearer_present_and_valid(req);
   const bool on_ap        = from_ap_subnet(req);
   bool tap_spent = false;
   const char* why = nullptr;
   const PageToken verdict = page_token_decide(
-      setup_active, bearer_ok, on_ap,
+      foreign, setup_active, bearer_ok, on_ap,
       [&tap_spent]() {
         tap_spent = provisioning_gate_take();
         return tap_spent;
       },
       &why);
-  if (verdict == PageToken::WITHHOLD) {
+  if (verdict != PageToken::INJECT) {
     Serial.printf("[AUTH] page token withheld (%s)\n", why ? why : "");
   } else if (tap_spent) {
     Serial.println("[AUTH] page token handed to one page load on a BOOT tap. Gate closed.");
     log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Page token unlocked", "BOOT gate");
   }
-  return verdict == PageToken::INJECT;
+  return verdict;
 }
 
 static esp_err_t handle_ui(httpd_req_t* req) {
@@ -2098,7 +2119,7 @@ static esp_err_t handle_ui(httpd_req_t* req) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// PROVISIONING RECEIPT (F20 gap #11) — bearer OR one BOOT tap
+// PROVISIONING RECEIPT (F20 gap #11) — the Host, then a bearer OR one BOOT tap
 // ════════════════════════════════════════════════════════════════════════════
 //
 // The WAP's receipt shape (canary_wap.ino send_provisioning_receipt), which
@@ -2149,18 +2170,42 @@ static esp_err_t send_provisioning_receipt(httpd_req_t* req) {
 
 static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   witness_get_health().http_requests++;
+  using canary::net::provisioning_gate::ReceiptVerdict;
+  using canary::net::provisioning_gate::receipt_decide;
 
-  // A valid bearer always gets the receipt (the SPA's "Save recovery kit"
-  // button, the iOS app re-syncing) — silently checked through
-  // auth_check_optional(), no 401 on miss, refused outright while the
-  // credential is unprovisioned.
-  if (bearer_present_and_valid(req)) {
+  // The order auth_gate asks in (provisioning_gate::receipt_decide,
+  // host-tested; the grants are callables so the decision runs them in order):
+  //   1. the Host — a request whose Host cannot name this device and that did
+  //      not come over the SoftAP (host_is_foreign, the predicate auth_gate
+  //      uses) is refused 403 {"error":"host"} before the bearer is read and
+  //      before the gate is touched, so it can neither use a token nor spend
+  //      the tap the owner meant for their own page load or app;
+  //   2. a valid bearer always gets the receipt (the SPA's "Save recovery
+  //      kit" button, the iOS app re-syncing) — silently checked through
+  //      auth_check_optional(), no 401 on miss, refused outright while the
+  //      credential is unprovisioned — and leaves the gate alone;
+  //   3. no bearer: consume the physical gate in ONE atomic step (a second
+  //      poll, or a second consumer on another task, reads it closed).
+  const ReceiptVerdict verdict = receipt_decide(
+      host_is_foreign(req),
+      [req]() { return bearer_present_and_valid(req); },
+      []() { return provisioning_gate_take(); });
+
+  // Fail closed: the receipt is sent ONLY inside an explicit SERVE_BEARER or
+  // SERVE_TAP test. REFUSE_NO_TAP has its own body below; REFUSE_HOST, and
+  // any verdict a later edit adds or a branch here stops naming, reaches the
+  // refusal at the end, never the receipt. check_route_security.py holds the
+  // handler to this shape (check_host_first).
+  if (verdict == ReceiptVerdict::SERVE_BEARER) {
     return send_provisioning_receipt(req);
   }
-
-  // No bearer: consume the physical gate in ONE atomic step (a second poll,
-  // or a second consumer on another task, reads it closed).
-  if (!provisioning_gate_take()) {
+  if (verdict == ReceiptVerdict::SERVE_TAP) {
+    const esp_err_t result = send_provisioning_receipt(req);
+    Serial.println("[AUTH] Provisioning receipt served. Gate closed.");
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Provisioning receipt served", "BOOT gate");
+    return result;
+  }
+  if (verdict == ReceiptVerdict::REFUSE_NO_TAP) {
     char body[256];
     if (!canary::net::provisioning_gate::build_gate_refusal_json(
             body, sizeof(body), PROVISIONING_GATE_TTL_MS)) {
@@ -2174,11 +2219,9 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_sendstr(req, body);
   }
-
-  esp_err_t result = send_provisioning_receipt(req);
-  Serial.println("[AUTH] Provisioning receipt served. Gate closed.");
-  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Provisioning receipt served", "BOOT gate");
-  return result;
+  // REFUSE_HOST, and every verdict not named above: 403 {"error":"host"}.
+  send_host_refusal(req);
+  return ESP_OK;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

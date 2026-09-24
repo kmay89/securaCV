@@ -12,6 +12,10 @@
 //   * one tap is ONE consumer across the page and receipt paths: five LAN
 //     page loads after a tap inject once, and whichever of page load /
 //     receipt fetch comes first leaves nothing for the other;
+//   * the Host comes first on both paths: a request whose Host cannot name
+//     the device gets no credential, is refused on the receipt route before
+//     the bearer is read, and never spends the tap — foreign-Host requests
+//     throughout the TTL leave it for the owner's own request;
 //   * ipv4_in_subnet / request_on_softap answer false for every "not provably
 //     over the Canary's own Wi-Fi" input (wrong interface, overlapping home
 //     subnet, unusable mask, AP down);
@@ -130,11 +134,11 @@ static void reason_pointer_is_optional() {
 
 // ── one tap, one consumer, across the page and receipt paths ────────────────
 //
-// The firmware's two consumers, modeled exactly as the handlers run them:
-//   page load    → page_token_decide(setup, bearer, on_ap, take-hook)
-//   receipt GET  → bearer ? served : take-hook ? served : 403
-// (handle_provisioning_receipt: `if (bearer_present_and_valid) serve;
-//  if (!provisioning_gate_take()) 403; serve`).
+// The firmware's two consumers call the header's decisions directly:
+//   page load    → page_token_decide(foreign, setup, bearer, on_ap, take-hook)
+//   receipt GET  → receipt_decide(foreign, bearer-hook, take-hook)
+// (page_token_inject and handle_provisioning_receipt in securacv_network),
+// so these helpers run the same functions the handlers run.
 
 struct Taker {
   State* s;
@@ -148,14 +152,39 @@ struct Taker {
 
 static bool lan_page_load(State& s, uint32_t now, int* take_calls = nullptr) {
   Taker t{&s, now, 0};
-  const bool inject = page_token_decide(false, false, false, std::ref(t)) == PageToken::INJECT;
+  const bool inject =
+      page_token_decide(false, false, false, false, std::ref(t)) == PageToken::INJECT;
   if (take_calls) *take_calls = t.calls;
   return inject;
 }
 
+// Counts how often the receipt decision read the bearer.
+struct Bearer {
+  bool ok;
+  int calls;
+  bool operator()() {
+    ++calls;
+    return ok;
+  }
+};
+
+static ReceiptVerdict receipt_verdict(State& s, uint32_t now, bool foreign_host,
+                                      bool bearer_ok, int* bearer_calls = nullptr,
+                                      int* take_calls = nullptr) {
+  Bearer b{bearer_ok, 0};
+  Taker t{&s, now, 0};
+  const ReceiptVerdict v = receipt_decide(foreign_host, std::ref(b), std::ref(t));
+  if (bearer_calls) *bearer_calls = b.calls;
+  if (take_calls) *take_calls = t.calls;
+  return v;
+}
+
+static bool receipt_served(ReceiptVerdict v) {
+  return v == ReceiptVerdict::SERVE_BEARER || v == ReceiptVerdict::SERVE_TAP;
+}
+
 static bool receipt_fetch(State& s, uint32_t now, bool bearer_ok) {
-  if (bearer_ok) return true;
-  return take(s, now, kTtl);
+  return receipt_served(receipt_verdict(s, now, false, bearer_ok));
 }
 
 static void one_tap_unlocks_exactly_one_lan_page_load() {
@@ -183,9 +212,9 @@ static void standing_grants_never_spend_the_tap() {
   State s{0};
   open(s, 1000);
   Taker t{&s, 1100, 0};
-  CHECK(page_token_decide(true, false, false, std::ref(t)) == PageToken::INJECT, "setup → INJECT");
-  CHECK(page_token_decide(false, true, false, std::ref(t)) == PageToken::INJECT, "bearer → INJECT");
-  CHECK(page_token_decide(false, false, true, std::ref(t)) == PageToken::INJECT, "SoftAP → INJECT");
+  CHECK(page_token_decide(false, true, false, false, std::ref(t)) == PageToken::INJECT, "setup → INJECT");
+  CHECK(page_token_decide(false, false, true, false, std::ref(t)) == PageToken::INJECT, "bearer → INJECT");
+  CHECK(page_token_decide(false, false, false, true, std::ref(t)) == PageToken::INJECT, "SoftAP → INJECT");
   CHECK(t.calls == 0, "no standing grant touches the gate, %d take calls", t.calls);
   CHECK(is_open(s, 1100, kTtl), "the tap is still there for the one consumer that needs it");
   int calls = -1;
@@ -201,13 +230,161 @@ static void no_tap_withholds_and_names_the_reason() {
   open(s, 2000);
   Taker t{&s, 2100, 0};
   const char* why = nullptr;
-  CHECK(page_token_decide(false, false, false, std::ref(t), &why) == PageToken::INJECT, "tap → INJECT");
+  CHECK(page_token_decide(false, false, false, false, std::ref(t), &why) == PageToken::INJECT, "tap → INJECT");
   CHECK(why && std::strstr(why, "gate") != nullptr, "reason names the gate");
-  CHECK(page_token_decide(false, false, false, std::ref(t), &why) == PageToken::WITHHOLD, "spent → WITHHOLD");
+  CHECK(page_token_decide(false, false, false, false, std::ref(t), &why) == PageToken::WITHHOLD, "spent → WITHHOLD");
   CHECK(why && std::strstr(why, "withheld") != nullptr, "reason names the withhold");
   // An expired tap grants nothing either.
   open(s, 3000);
   CHECK(!lan_page_load(s, 3000 + kTtl), "an expired tap → WITHHOLD");
+}
+
+// ── the Host first, on both paths ───────────────────────────────────────────
+//
+// `foreign_host` is the firmware's host_is_foreign(): the Host cannot name
+// this device (host_guard.h) and the request did not arrive over the SoftAP
+// (over the AP it is always false, whatever the name). The rows below pin
+// the order on both paths: the receipt refuses a foreign Host before the
+// bearer or the tap is consulted, and a page load under one leaves the tap
+// unspent for the owner's own request.
+
+static void foreign_host_receipt_is_refused_before_bearer_and_tap() {
+  State s{0};
+  open(s, 1000);
+  int bearer_calls = -1, take_calls = -1;
+  CHECK(receipt_verdict(s, 1100, true, false, &bearer_calls, &take_calls) ==
+            ReceiptVerdict::REFUSE_HOST,
+        "foreign Host, no bearer, an open tap → REFUSE_HOST");
+  CHECK(bearer_calls == 0, "the bearer is not read for a foreign Host, %d reads", bearer_calls);
+  CHECK(take_calls == 0, "the gate is not touched for a foreign Host, %d takes", take_calls);
+  CHECK(is_open(s, 1100, kTtl), "the tap is still there after the foreign poll");
+
+  // Like auth_gate: a foreign-Host request that somehow holds the token still
+  // cannot use it here.
+  CHECK(receipt_verdict(s, 1200, true, true, &bearer_calls, &take_calls) ==
+            ReceiptVerdict::REFUSE_HOST,
+        "foreign Host with a valid bearer → REFUSE_HOST");
+  CHECK(bearer_calls == 0 && take_calls == 0, "and neither grant was consulted (%d, %d)",
+        bearer_calls, take_calls);
+
+  // The owner's own app, under a name that means the device, gets the tap.
+  CHECK(receipt_verdict(s, 1300, false, false, &bearer_calls, &take_calls) ==
+            ReceiptVerdict::SERVE_TAP,
+        "the owner's receipt fetch after the foreign polls → SERVE_TAP");
+  CHECK(bearer_calls == 1 && take_calls == 1, "bearer read once, tap taken once (%d, %d)",
+        bearer_calls, take_calls);
+}
+
+static void receipt_order_on_a_device_host() {
+  State s{0};
+  open(s, 1000);
+  int bearer_calls = -1, take_calls = -1;
+  CHECK(receipt_verdict(s, 1100, false, true, &bearer_calls, &take_calls) ==
+            ReceiptVerdict::SERVE_BEARER,
+        "valid bearer → SERVE_BEARER");
+  CHECK(take_calls == 0, "a bearer fetch never spends the tap, %d takes", take_calls);
+  CHECK(is_open(s, 1100, kTtl), "the tap survives a bearer fetch");
+  CHECK(receipt_verdict(s, 1200, false, false) == ReceiptVerdict::SERVE_TAP,
+        "no bearer, open tap → SERVE_TAP");
+  CHECK(receipt_verdict(s, 1300, false, false, &bearer_calls, &take_calls) ==
+            ReceiptVerdict::REFUSE_NO_TAP,
+        "the second tapless fetch → REFUSE_NO_TAP");
+  CHECK(take_calls == 1, "it asked the gate once, %d takes", take_calls);
+  State closed{0};
+  CHECK(receipt_verdict(closed, 1400, false, false) == ReceiptVerdict::REFUSE_NO_TAP,
+        "never tapped → REFUSE_NO_TAP");
+}
+
+// Every (foreign, bearer, tap) combination: the verdict, and exactly which
+// grants were consulted.
+static void receipt_truth_table() {
+  for (int foreign = 0; foreign <= 1; ++foreign) {
+    for (int bearer = 0; bearer <= 1; ++bearer) {
+      for (int tapped = 0; tapped <= 1; ++tapped) {
+        State s{0};
+        if (tapped) open(s, 1000);
+        int bearer_calls = -1, take_calls = -1;
+        const ReceiptVerdict v =
+            receipt_verdict(s, 1100, foreign != 0, bearer != 0, &bearer_calls, &take_calls);
+        ReceiptVerdict want = ReceiptVerdict::REFUSE_NO_TAP;
+        if (foreign) {
+          want = ReceiptVerdict::REFUSE_HOST;
+        } else if (bearer) {
+          want = ReceiptVerdict::SERVE_BEARER;
+        } else if (tapped) {
+          want = ReceiptVerdict::SERVE_TAP;
+        }
+        CHECK(v == want, "foreign=%d bearer=%d tapped=%d: verdict %d, want %d", foreign,
+              bearer, tapped, (int)v, (int)want);
+        CHECK(bearer_calls == (foreign ? 0 : 1), "foreign=%d bearer=%d tapped=%d: %d bearer reads",
+              foreign, bearer, tapped, bearer_calls);
+        CHECK(take_calls == ((foreign || bearer) ? 0 : 1),
+              "foreign=%d bearer=%d tapped=%d: %d takes", foreign, bearer, tapped, take_calls);
+        CHECK(is_open(s, 1100, kTtl) == (tapped && (foreign || bearer)),
+              "foreign=%d bearer=%d tapped=%d: the tap is left exactly when it was not spent",
+              foreign, bearer, tapped);
+      }
+    }
+  }
+}
+
+static void foreign_host_page_load_leaves_the_tap() {
+  State s{0};
+  open(s, 1000);
+  Taker t{&s, 1100, 0};
+  const char* why = nullptr;
+  CHECK(page_token_decide(true, false, false, false, std::ref(t), &why) ==
+            PageToken::FOREIGN_HOST,
+        "foreign Host, an open tap → FOREIGN_HOST");
+  CHECK(t.calls == 0, "a foreign-Host page load does not take the tap, %d takes", t.calls);
+  CHECK(is_open(s, 1100, kTtl), "the tap is still there after it");
+  CHECK(why && std::strstr(why, "Host") != nullptr, "reason names the Host");
+  CHECK(lan_page_load(s, 1200), "the owner's own page load then gets the token");
+}
+
+// No standing grant outweighs a foreign Host, and none of them lets it take.
+static void foreign_host_page_truth_table() {
+  for (int setup = 0; setup <= 1; ++setup) {
+    for (int bearer = 0; bearer <= 1; ++bearer) {
+      for (int on_ap = 0; on_ap <= 1; ++on_ap) {
+        State s{0};
+        open(s, 1000);
+        Taker t{&s, 1100, 0};
+        const PageToken v =
+            page_token_decide(true, setup != 0, bearer != 0, on_ap != 0, std::ref(t));
+        CHECK(v == PageToken::FOREIGN_HOST, "setup=%d bearer=%d on_ap=%d: verdict %d", setup,
+              bearer, on_ap, (int)v);
+        CHECK(t.calls == 0, "setup=%d bearer=%d on_ap=%d: %d takes", setup, bearer, on_ap,
+              t.calls);
+      }
+    }
+  }
+  // And a device-naming Host is exactly the policy it was.
+  State s{0};
+  Taker t{&s, 1100, 0};
+  CHECK(page_token_decide(false, false, false, false, std::ref(t)) == PageToken::WITHHOLD,
+        "device Host, no grant, no tap → WITHHOLD (never FOREIGN_HOST)");
+}
+
+// Foreign-Host requests arriving throughout the window, receipt fetches and
+// page loads alike, get nothing and never spend the tap, which then admits
+// the owner's request at the last millisecond of the TTL.
+static void foreign_host_requests_through_the_whole_ttl_leave_the_tap() {
+  State s{0};
+  open(s, 1000);
+  int served = 0, injected = 0, takes = 0;
+  for (uint32_t now = 1000; now < 1000 + kTtl - 1; now += 250) {
+    int take_calls = 0;
+    if (receipt_served(receipt_verdict(s, now, true, false, nullptr, &take_calls))) ++served;
+    takes += take_calls;
+    Taker t{&s, now, 0};
+    if (page_token_decide(true, false, false, false, std::ref(t)) == PageToken::INJECT) ++injected;
+    takes += t.calls;
+  }
+  CHECK(served == 0 && injected == 0, "foreign-Host requests got %d receipts, %d tokens", served,
+        injected);
+  CHECK(takes == 0, "and took the gate %d times", takes);
+  CHECK(receipt_fetch(s, 1000 + kTtl - 1, false), "the owner's fetch still finds the tap");
 }
 
 // ── subnet check ────────────────────────────────────────────────────────────
@@ -367,6 +544,12 @@ int main() {
   receipt_first_leaves_nothing_for_a_page_load();
   standing_grants_never_spend_the_tap();
   no_tap_withholds_and_names_the_reason();
+  foreign_host_receipt_is_refused_before_bearer_and_tap();
+  receipt_order_on_a_device_host();
+  receipt_truth_table();
+  foreign_host_page_load_leaves_the_tap();
+  foreign_host_page_truth_table();
+  foreign_host_requests_through_the_whole_ttl_leave_the_tap();
   ap_subnet_match_is_conservative();
   request_on_softap_needs_the_ap_interface_and_no_overlap();
   v4_and_v4_mapped_addresses_unwrap();

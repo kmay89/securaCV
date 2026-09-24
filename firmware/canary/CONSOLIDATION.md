@@ -150,12 +150,24 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
     out of the HTML and could drive every gated route, the two broker
     writers included. The display's `host_guard.h` now lives at
     `firmware/common/network/host_guard.h` (one header, one host test in
-    `firmware/tests_host`), and `securacv_network` applies it in two places:
-    `send_html_with_token` serves the page with an **empty** token for a
-    foreign Host (the page's fetch helper then sends no `Authorization`, so
-    the failure shows on the dashboard rather than as a blank 403), and
-    `auth_gate` answers `403 {"error":"host"}` before the token compare. A
-    missing or oversize Host is foreign. **One exemption, by interface, never
+    `firmware/tests_host`), and `securacv_network` asks it first on every
+    path that can hand out the token or spend the BOOT tap: the page-token
+    decision serves the page with an **empty** token for a foreign Host
+    before any grant is read or the tap is taken (the page's fetch helper
+    then sends no `Authorization`, so the failure shows on the dashboard
+    rather than as a blank 403), `auth_gate` answers `403 {"error":"host"}`
+    before the token compare, and `GET /api/provisioning-receipt`, whose
+    gate is a bearer or the tap rather than `auth_gate`, answers the same
+    `403 {"error":"host"}` before either is consulted (2026-09 follow-up:
+    the receipt route refuses a foreign Host like every other token-bearing
+    route, and a page load under a foreign Host no longer spends the BOOT
+    tap; `provisioning_gate.h`'s `page_token_decide` and `receipt_decide`
+    take the Host verdict first, host-tested; the receipt handler sends the
+    receipt only on an explicit `SERVE_BEARER` / `SERVE_TAP` verdict and
+    answers every other one with the Host refusal, so it fails closed; and
+    `scripts/check_route_security.py` holds every token path to that order
+    and the receipt handler to that shape).
+    A missing or oversize Host is foreign. **One exemption, by interface, never
     by name:** a request that arrived over the Canary's own softAP (local
     address = the AP address and the peer in the AP subnet). The captive DNS
     redirector runs for the AP's lifetime and answers every non-`.local` name
