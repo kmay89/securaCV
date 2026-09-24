@@ -65,7 +65,9 @@ constexpr uint8_t kMaxDepth = 8;
 // (returns false, as a failed Preferences::begin always could). The same
 // 2 s the camera lifecycle lock waits (securacv_camera.cpp), well under the
 // 8 s task watchdog the loop is subscribed to; securacv_crypto.cpp holds it
-// under WATCHDOG_TIMEOUT_SEC with a static_assert.
+// under WATCHDOG_TIMEOUT_SEC with a static_assert. That bounds one wait, not
+// a loop pass: a pass that meets a leaked session on several calls can
+// still outlast the watchdog (whose reset then frees the leaked session).
 constexpr uint32_t kSessionWaitMs = 2000;
 
 // What begin() does to the Preferences handle.

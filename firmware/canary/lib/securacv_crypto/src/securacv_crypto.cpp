@@ -35,8 +35,10 @@
 // NVS MANAGER IMPLEMENTATION
 // ════════════════════════════════════════════════════════════════════════════
 
-// begin() fails soft after this wait; it must never be what trips the task
+// begin() fails soft after this wait, and one wait sits under the task
 // watchdog the loop is subscribed to (nvs_session_depth.h, host-tested too).
+// That bounds a wait, not a loop pass: a pass that meets a leaked session on
+// several calls can still outlast the watchdog, and its reset frees the leak.
 static_assert(nvs_session::kSessionWaitMs < WATCHDOG_TIMEOUT_SEC * 1000u,
               "an NvsManager session wait must sit under the loop's task watchdog");
 

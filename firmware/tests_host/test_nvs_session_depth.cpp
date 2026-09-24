@@ -214,7 +214,9 @@ static void test_depth_is_bounded() {
 // fails soft. The loop task is subscribed to the WATCHDOG_TIMEOUT_SEC task
 // watchdog, so the wait must sit well under it (securacv_crypto.cpp repeats
 // this as a static_assert on the device build). Two sequential waits — the
-// MQTT reload's two reads — still fit.
+// MQTT reload's two reads — still fit. That bounds a wait, not a loop pass:
+// a pass that meets a leaked session on more calls than that can still
+// outlast the watchdog, whose reset then frees the leaked session.
 static void test_wait_is_under_the_loop_watchdog() {
   CHECK(kSessionWaitMs > 0);
   CHECK(2u * kSessionWaitMs < (uint32_t)WATCHDOG_TIMEOUT_SEC * 1000u);
