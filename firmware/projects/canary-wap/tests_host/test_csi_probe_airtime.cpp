@@ -7,7 +7,10 @@
  *
  * Every percentage here is the governor's ESTIMATE of airtime (192 us +
  * 8 us a byte, the governor's 59 B of ESP-NOW framing included), not a
- * measurement of the air. What the cases hold:
+ * measurement of the air. The heartbeat is charged as mesh_network.cpp
+ * charges it: one 114 B signed frame (38 B header + 12 B payload + 64 B
+ * signature) to each connected mesh peer, 1576 us a frame. What the cases
+ * hold:
  *   - ensure_governor() makes a mesh-less build's gate real (the governor
  *     otherwise fails open: every reservation passes), and the probe's
  *     framing is counted once;
@@ -16,7 +19,8 @@
  *   - one peer at the full 20 Hz stays steady under the 1.60 % ceiling;
  *   - eight peers asking 160 frames/s are held at the ceiling, the window
  *     never reads below the ledger, and the 30 s mesh heartbeat keeps its
- *     room (without the ceiling: 0 of 6);
+ *     room (without the ceiling: 0 of 6), to eight connected mesh peers
+ *     and to a full Opera of sixteen;
  *   - probe_pump installs exactly this gate — read from the real
  *     csi_integration.cpp (beacon_source_scan.h; its path is passed as
  *     CSI_INTEGRATION_CPP, so the pin fails closed).
@@ -70,9 +74,12 @@ bool gate(uint32_t now, size_t payload) {
   }
   return ok;
 }
-bool heartbeat(uint32_t now) {                 /* mesh_network: 60 B every 30 s */
-  const bool ok = airtime_governor::try_reserve_routine(now, 60);
-  if (ok) g_ledger.push_back({now, airtime_governor::estimate_airtime_us(60)});
+/* mesh_network send_heartbeat: every 30 s, one signed frame to each
+ * connected peer (test_mesh_coexistence pins that charge in the source). */
+constexpr size_t HB_FRAME_BYTES = 38 + 12 + 64;
+bool heartbeat(uint32_t now, uint16_t mesh_peers) {
+  const bool ok = airtime_governor::try_reserve_routine(now, HB_FRAME_BYTES, mesh_peers);
+  if (ok) g_ledger.push_back({now, mesh_peers * airtime_governor::estimate_airtime_us(HB_FRAME_BYTES)});
   return ok;
 }
 bool send_ok(const uint8_t*, const uint8_t*, size_t) { return true; }
@@ -81,7 +88,7 @@ bool send_ok(const uint8_t*, const uint8_t*, size_t) { return true; }
  * first 10 s (the window's first fill). */
 struct Run { uint32_t hb_ok, hb_tries, max_x100, max_under_us, min_per_s; csi_probe::Stats st; };
 
-Run run(int peers, uint32_t seconds) {
+Run run(int peers, uint32_t seconds, uint16_t mesh_peers) {
   g_ledger.clear();
   airtime_governor::init(airtime_governor::DEFAULT_CAP_PCT);
   csi_probe::deinit();
@@ -108,7 +115,7 @@ Run run(int peers, uint32_t seconds) {
     ++g_now;
     csi_probe::test::set_now_ms(g_now);
     csi_probe::process();
-    if (g_now >= next_hb) { ++r.hb_tries; if (heartbeat(g_now)) ++r.hb_ok; next_hb += 30000; }
+    if (g_now >= next_hb) { ++r.hb_tries; if (heartbeat(g_now, mesh_peers)) ++r.hb_ok; next_hb += 30000; }
     if ((g_now - start) % 1000 == 0) {
       if (g_now - start > 10000 && g_second_frames < r.min_per_s) r.min_per_s = g_second_frames;
       g_second_frames = 0;
@@ -163,29 +170,31 @@ void test_ceiling_is_one_point_six_zero_exactly() {
   EXPECT(airtime_governor::snapshot(50000).airtime_us == 160000u);
   EXPECT(airtime_governor::airtime_pct_x100(50000) == 160);
   EXPECT(!probe_airtime::reserve_probe_frame(50000, 16));   /* at the line */
-  /* ...while the routine cap still has 40 000 us for everyone else. */
-  EXPECT(airtime_governor::try_reserve_routine(50000, 60));
+  /* ...while the routine cap still has 40 000 us for everyone else: a
+   * heartbeat to a full Opera of 16 connected peers is 25 216 us. */
+  EXPECT(airtime_governor::try_reserve_routine(50000, HB_FRAME_BYTES, 16));
+  EXPECT(airtime_governor::snapshot(50000).airtime_us == 160000u + 16u * 1576u);
   std::printf("%s ceiling: 159 x100 sends, 160 x100 stops\n", VERDICT(f0));
 }
 
 void test_wap_today_is_in_budget() {           /* broadcast-only at 10 Hz */
   const int f0 = g_failures;
-  Run r = run(0, 60);
+  Run r = run(0, 60, 1);
   EXPECT(r.st.sends_denied_airtime == 0);
   EXPECT(r.st.broadcasts_sent >= 599);
-  /* 10 x 792 us per s, plus the 1144 us heartbeat when it lands. */
+  /* 10 x 792 us per s, plus one 1576 us heartbeat frame when it lands. */
   EXPECT(r.max_x100 >= 78 && r.max_x100 <= 80);
   EXPECT(r.max_under_us == 0);
   EXPECT(r.hb_ok == r.hb_tries);
   std::printf("%s WAP today: 10 Hz broadcast, %u x100, never denied\n", VERDICT(f0), r.max_x100);
 }
 
-/* 1.58 %: under the ceiling. The heartbeat (1144 us framed) landing on
- * that window can take it to the line, so the probe may skip a frame when
- * one lands, and never more than one in any second. */
+/* 1.58 %: under the ceiling. A one-peer heartbeat frame (1576 us) landing
+ * on that window takes it to the line, so the probe skips about one frame
+ * a heartbeat and never more than one in any second. */
 void test_one_peer_at_full_rate_is_steady() {
   const int f0 = g_failures;
-  Run r = run(1, 60);
+  Run r = run(1, 60, 1);
   EXPECT(r.st.sends_denied_airtime <= 3);
   EXPECT(r.st.unicasts_sent >= 1190);
   EXPECT(r.min_per_s >= 19);
@@ -197,16 +206,31 @@ void test_one_peer_at_full_rate_is_steady() {
 
 void test_over_budget_probe_leaves_heartbeats_their_room() {
   const int f0 = g_failures;
-  Run r = run(8, 180);                         /* 160 frames/s = 12.7 % asked */
+  Run r = run(8, 180, 8);                      /* 160 frames/s = 12.7 % asked */
   EXPECT(r.st.sends_denied_airtime > 0);
   /* The probe starts no frame at 160 x100, and one frame is 792 us, under
-   * 1 x100, so its frames stop by 160 784 us; the heartbeat (1144 us
-   * framed) landing after the last frame makes 161 928 us, 161 x100.
-   * Absolute, not relative to the constant. */
-  EXPECT(r.max_x100 <= 161);
+   * 1 x100, so its frames stop by 160 784 us; a heartbeat to eight
+   * connected mesh peers (8 x 1576 = 12 608 us) landing after the last
+   * frame makes 173 392 us, 173 x100. Absolute, not relative to the
+   * constant. */
+  EXPECT(r.max_x100 <= 173);
   EXPECT(r.hb_tries == 6 && r.hb_ok == r.hb_tries);
   EXPECT(r.max_under_us == 0);
   std::printf("%s 8 peers: held at %u x100, heartbeats %u/%u\n", VERDICT(f0), r.max_x100, r.hb_ok, r.hb_tries);
+}
+
+/* The same over-budget probe with a full Opera (MAX_OPERA_SIZE, 16
+ * connected peers): the heartbeat is 16 frames, 25 216 us, and still fits
+ * the 39 216 us the ceiling leaves under the 2 % cap (160 784 + 25 216 =
+ * 186 000 us, 186 x100). */
+void test_full_opera_heartbeat_keeps_its_room() {
+  const int f0 = g_failures;
+  Run r = run(8, 180, 16);
+  EXPECT(r.st.sends_denied_airtime > 0);
+  EXPECT(r.max_x100 <= 186);
+  EXPECT(r.hb_tries == 6 && r.hb_ok == r.hb_tries);
+  EXPECT(r.max_under_us == 0);
+  std::printf("%s 16 mesh peers: held at %u x100, heartbeats %u/%u\n", VERDICT(f0), r.max_x100, r.hb_ok, r.hb_tries);
 }
 
 void test_probe_pump_installs_this_gate() {
@@ -231,6 +255,7 @@ int main() {
   test_wap_today_is_in_budget();
   test_one_peer_at_full_rate_is_steady();
   test_over_budget_probe_leaves_heartbeats_their_room();
+  test_full_opera_heartbeat_keeps_its_room();
   test_probe_pump_installs_this_gate();
   if (g_failures) { std::fprintf(stderr, "FAIL  %d assertion(s) failed\n", g_failures); return 1; }
   std::printf("test_csi_probe_airtime: ALL PASSED\n");

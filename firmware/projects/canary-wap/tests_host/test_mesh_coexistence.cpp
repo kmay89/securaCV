@@ -12,10 +12,16 @@
 
 #include "../arduino/canary_wap/mesh_channel_policy.h"
 #include "../arduino/canary_wap/airtime_governor.h"
+#include "beacon_source_scan.h"
 
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <string>
+
+#ifndef MESH_NETWORK_CPP
+#error "MESH_NETWORK_CPP (absolute path to mesh_network.cpp) must be defined"
+#endif
 
 using namespace mesh_channel_policy;
 
@@ -251,6 +257,62 @@ static void test_governor_charges_each_frame_of_a_fan_out() {
   EXPECT(s.routine_denied == 1);
 }
 
+// mesh_network.cpp needs Arduino, ESP-NOW and the crypto library, so no
+// host test links it. These pins read it (beacon_source_scan.h: comments
+// stripped, whitespace squeezed; its path is passed in as MESH_NETWORK_CPP,
+// so a pin fails closed) to hold the firmware to the charge the fan-out
+// case above tests: one signed frame (38 B header + payload + 64 B
+// signature) per peer the send reaches, reserved before it is sent.
+static void test_mesh_charges_one_signed_frame_per_peer() {
+  namespace bss = beacon_source_scan;
+  bool ok = false;
+  const std::string code =
+      bss::strip_comments(bss::read_source(MESH_NETWORK_CPP, &ok));
+  EXPECT(ok);
+  const std::string sq = bss::squeeze(code);
+
+  // The frame send_to_peer() builds; the 102 B minimum the receive path
+  // checks is this header plus the signature (a static_assert there).
+  EXPECT(bss::count(sq, "staticconstexprsize_tWIRE_HEADER_BYTES=2+OPERA_ID_SIZE+FINGERPRINT_SIZE+8+4;") == 1);
+  EXPECT(bss::count(bss::squeeze(bss::function_body(code, "signed_frame_bytes")),
+                    "returnWIRE_HEADER_BYTES+payload_len+SIGNATURE_SIZE;") == 1);
+
+  // The frames: broadcast_message() sends to exactly the peers
+  // connected_peer_count() counts.
+  const std::string pred = "if(g_peers[i].state>=PEER_CONNECTED)";
+  EXPECT(bss::count(bss::squeeze(bss::function_body(code, "broadcast_message")), pred) == 1);
+  EXPECT(bss::count(bss::squeeze(bss::function_body(code, "connected_peer_count")), pred + "n++;") == 1);
+
+  struct Site { const char* fn; const char* charge; const char* send; };
+  const Site sites[] = {
+    {"send_heartbeat",
+     "airtime_governor::try_reserve_routine(millis(),signed_frame_bytes(sizeof(payload)),connected_peer_count())",
+     "broadcast_message(MSG_HEARTBEAT,"},
+    {"broadcast_tamper_alert",
+     "airtime_governor::force_reserve_urgent(millis(),signed_frame_bytes(sizeof(payload)),connected_peer_count());",
+     "broadcast_message(MSG_TAMPER_ALERT,"},
+    {"broadcast_power_alert",
+     "airtime_governor::force_reserve_urgent(millis(),signed_frame_bytes(sizeof(payload)),connected_peer_count());",
+     "broadcast_message(MSG_POWER_ALERT,"},
+    /* offline-imminent goes to every known peer, connected or not. */
+    {"broadcast_offline_imminent",
+     "airtime_governor::force_reserve_urgent(millis(),signed_frame_bytes(sizeof(payload)),g_peer_count);",
+     "for(uint8_ti=0;i<g_peer_count;i++){if(send_to_peer(&g_peers[i],MSG_OFFLINE_IMMINENT,"},
+  };
+  for (const Site& site : sites) {
+    const std::string body = bss::squeeze(bss::function_body(code, site.fn));
+    EXPECT(!body.empty());
+    EXPECT(bss::count(body, site.charge) == 1);
+    EXPECT(bss::before(body, site.charge, site.send));
+  }
+
+  // Those four are the file's only reservations, and none charges the
+  // padded struct (sizeof(MessageHeader) is 48; the wire header is 38).
+  EXPECT(bss::count(sq, "airtime_governor::try_reserve_routine(") == 1);
+  EXPECT(bss::count(sq, "airtime_governor::force_reserve_urgent(") == 3);
+  EXPECT(bss::count(sq, "sizeof(MessageHeader)") == 0);
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // airtime_governor: the window holds every send, at any reservation rate
 // ─────────────────────────────────────────────────────────────────────────
@@ -346,6 +408,7 @@ int main() {
   test_governor_urgent_bypasses();
   test_governor_airtime_pct();
   test_governor_charges_each_frame_of_a_fan_out();
+  test_mesh_charges_one_signed_frame_per_peer();
   test_governor_ring_covers_window_at_any_rate();
   test_governor_cap_holds_above_default();
   test_governor_bucket_ages_out_with_its_newest_send();
