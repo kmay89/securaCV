@@ -524,12 +524,14 @@ static void test_stall_holds_and_reports() {
 // v[29] jitter: mean frame-to-frame |Δ| per tone, 128 ≙ the row mean.
 // Each pin is a range or a ratio with room around what this fixture reads
 // (the number in parentheses in each message). The bounds were checked
-// against 400 other seeds of the fixture's PRNG, so a harmless change to
+// against 1400 other seeds of the fixture's PRNG, so a harmless change to
 // the random stream does not trip them. Synthetic frames only: no bench,
 // no threshold, and no module reads either slot.
 
-// Wander of a channel that is not moving (still, gain flicker, static
-// tilt). The fixture reads 1–5 across seeds; the moving scatterer ≥ 60.
+// Wander of a strong, clean channel that is not moving (still, gain
+// flicker, static tilt). The fixture reads 1–5 across seeds; the moving
+// scatterer ≥ 59. Not a motion threshold: extra front-end noise and a weak
+// link raise this floor too (test_wj_noise_scales_jitter, test_wj_weak_link).
 static constexpr int WJ_STILL_WANDER_MAX = 6;
 
 // A still room: static channel, random per-frame CFO, a fixed link gain.
@@ -559,8 +561,9 @@ static csi_features_t wj_drift(int frames, double depth, double gain) {
     });
 }
 
-// Strong-link still-room jitter (max over 5 windows) and the σ = 4 LSB
-// noise response — the two references the weak-link pin reads against.
+// Strong-link still-room wander and jitter (max over 5 windows) and the
+// σ = 4 LSB noise response — the references the later pins read against.
+static int g_wj_still_v28 = -1;
 static int g_wj_floor_v29 = -1;
 static int g_wj_sigma4_v29 = -1;
 
@@ -576,12 +579,14 @@ static void test_wj_still_room_floor() {
   printf("    still+CFO x5: max wander=%d max jitter=%d\n", w_max, j_max);
   assert(w_max <= WJ_STILL_WANDER_MAX && "a still room must not wander (3)");
   assert(j_max <= 4 && "a still strong link has a low jitter floor (3)");
+  g_wj_still_v28 = w_max;
   g_wj_floor_v29 = j_max;
   printf("ok  wander/jitter: a still room reads its floor through CFO\n");
 }
 
 static void test_wj_agc_flicker() {
   csi_features::reset_history();
+  assert(g_wj_floor_v29 > 0);
   const csi_features_t w = run_window(make_channel(), 20,
     [](int, double* cfo, double* gain, const double**, const double**) {
       *cfo  = frand() * kTwoPi;
@@ -591,7 +596,12 @@ static void test_wj_agc_flicker() {
   printf("    AGC flicker: wander=%d jitter=%d\n", w.v[28], w.v[29]);
   assert(w.v[28] <= WJ_STILL_WANDER_MAX &&
          "per-packet gain must not move the centroid (2)");
-  printf("ok  wander: AGC gain flicker normalizes away\n");
+  // The centroid is scale-invariant, so wander alone cannot catch a row
+  // that skipped the per-frame normalization; jitter can, and must not
+  // read a gain step as change.
+  assert(w.v[29] <= g_wj_floor_v29 + 2 &&
+         "per-packet gain must not read as jitter (3)");
+  printf("ok  wander/jitter: AGC gain flicker normalizes away\n");
 }
 
 static void test_wj_motion() {
@@ -644,12 +654,13 @@ static void test_wj_drift_scales_wander_not_jitter() {
 static void test_wj_noise_scales_jitter() {
   csi_features::reset_history();
   const double sigma[4] = {1.0, 2.0, 4.0, 8.0};
-  int jv[4];
+  int wv[4], jv[4];
   for (int i = 0; i < 4; i++) {
     g_extra_noise_lsb = sigma[i];
     const csi_features_t w = wj_still(1.0);
     g_extra_noise_lsb = 0.0;
     check_reserved(w);
+    wv[i] = w.v[28];
     jv[i] = w.v[29];
     printf("    I/Q noise sigma %.0f LSB: wander=%d jitter=%d\n",
            sigma[i], w.v[28], jv[i]);
@@ -660,8 +671,13 @@ static void test_wj_noise_scales_jitter() {
            "doubling the noise must raise jitter >= 1.4x (6/10/20/34)");
   }
   assert(jv[3] >= 4 * jv[0] && "8x the noise must read >= 4x the jitter (34 vs 6)");
+  // Noise moves the per-frame centroid as well, so a noisy front end on a
+  // still channel reads wander above the clean still floor — about half the
+  // moving scatterer's at sigma 8. Wander is not a motion-only slot.
+  assert(wv[3] > WJ_STILL_WANDER_MAX &&
+         "front-end noise raises wander too (29)");
   g_wj_sigma4_v29 = jv[2];
-  printf("ok  jitter tracks the front-end noise\n");
+  printf("ok  jitter tracks the front-end noise, and wander rises with it\n");
 }
 
 static void test_wj_static_tilt_is_not_wander() {
@@ -682,24 +698,28 @@ static void test_wj_static_tilt_is_not_wander() {
 
 static void test_wj_weak_link() {
   csi_features::reset_history();
-  assert(g_wj_floor_v29 > 0 && g_wj_sigma4_v29 > 0);
+  assert(g_wj_still_v28 >= 0 && g_wj_floor_v29 > 0 && g_wj_sigma4_v29 > 0);
   const csi_features_t still = wj_still(0.35);
   check_reserved(still);
   const csi_features_t strong = wj_drift(20, 0.20, 1.0);
   const csi_features_t weak   = wj_drift(20, 0.20, 0.35);
-  printf("    weak link (0.35x): still jitter=%d (strong floor %d, sigma4 %d);"
-         " drift wander weak=%d strong=%d\n", still.v[29], g_wj_floor_v29,
-         g_wj_sigma4_v29, weak.v[28], strong.v[28]);
-  // The floor rises on a weak link (quantization is a bigger share of a
-  // normalized row) — but stays below a genuinely noisy front end.
+  printf("    weak link (0.35x): still wander=%d jitter=%d (strong floor %d,"
+         " sigma4 %d); drift wander weak=%d strong=%d\n", still.v[28],
+         still.v[29], g_wj_floor_v29, g_wj_sigma4_v29, weak.v[28],
+         strong.v[28]);
+  // Both still floors rise on a weak link (quantization is a bigger share
+  // of a normalized row) — jitter's stays below a genuinely noisy front end.
+  assert(still.v[28] > g_wj_still_v28 &&
+         "a weak link's still-room wander sits above the strong floor (9 vs 3)");
   assert(still.v[29] >= 2 * g_wj_floor_v29 &&
          "a weak link's still-room jitter sits well above the strong floor (9 vs 3)");
   assert(still.v[29] < g_wj_sigma4_v29 &&
          "and below the sigma = 4 LSB noise response (20)");
   // Wander reads normalized rows, so the same drift reads about the same.
   assert(weak.v[28] * 4 >= strong.v[28] * 3 && weak.v[28] * 4 <= strong.v[28] * 5 &&
-         "wander is gain-invariant within +-25% (42 vs 37)");
-  printf("ok  a weak link raises the jitter floor, not the wander\n");
+         "wander's drift response is gain-invariant within +-25% (42 vs 37)");
+  printf("ok  a weak link raises both still floors; wander's drift response"
+         " is gain-invariant\n");
 }
 
 static void test_wj_short_window() {
