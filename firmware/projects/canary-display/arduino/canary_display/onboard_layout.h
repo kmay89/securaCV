@@ -339,4 +339,109 @@ inline JoinLines join_lines(bool round, int creds_w, int low_w, int note_w,
   return j;
 }
 
+// ── The coach line in a scene without credentials (F50) ──────────────────
+//
+// PhoneJoined ("no page? open 192.168.4.1") and Fail (join_failure_hint's
+// fix for what went wrong) set a coach line under their title and body while
+// the credentials rows stand empty. It used to go on the hint row alone,
+// whole, in the row's own face, and narrow glass cut it: the Fail hints are
+// 175-219 px at 12 px against the round watch's 142 px low band and the
+// 156/164 px portrait rows, and the PhoneJoined hint is 182 px under
+// Heirloom there (F50).
+//
+// The rule, one for every small glass (the watch branch of onboard_ui.cpp):
+//  * The coach line has both rows the credentials would take: the
+//    credentials row (upper) and the hint row under it (lower). Nothing else
+//    is on them in these scenes.
+//  * Its forms, longest first, in the rows' own face and then the floor
+//    face: the whole hint on the hint row; the whole hint over both rows;
+//    the narrow form on the hint row; the narrow form over both rows. A form
+//    that spans both rows breaks at a space (split_line below). The words the
+//    portal and the log use stay whole wherever the glass has the room; the
+//    narrow form is the rung under them, and it still names the fix.
+//  * Nothing is cut. `fits` is false only when no form fits in any face;
+//    the host test proves that never happens on a shipped glass.
+
+struct HintLines {
+  bool split;  // the coach line spans both rows
+  Line upper;  // the credentials row: its first half when split, else empty
+  Line lower;  // the hint row: the whole form, or its second half
+};
+
+// Break `text` at one space into `head` (for the upper row, upper_w) and
+// `tail` (the lower row, lower_w), measured in one face. A number keeps the
+// word after it ("2.4 GHz" never breaks). Of the breaks where both halves
+// fit, one that ends a clause (the head ends in '?', ':' or ',') wins —
+// "no page?" over "open 192.168.4.1" — else the one whose wider half is
+// narrowest; on a tie the later, so the head takes the upper row (on round
+// glass the wider of the two). False when no break fits.
+template <class Measure>
+inline bool split_line(const char* text, int upper_w, int lower_w,
+                       bool floor, Measure measure, char* head, char* tail) {
+  int best = -1;
+  bool best_clause = false;
+  int best_w = 0;
+  char h[kLineCap];
+  if (text == nullptr || text[0] == '\0') return false;
+  int word = 0;  // where the word before text[i] starts
+  for (int i = 1; i < kLineCap && text[i] != '\0'; ++i) {
+    if (text[i] != ' ') continue;
+    const bool number = text[word] >= '0' && text[word] <= '9';
+    word = i + 1;
+    if (number || text[i + 1] == '\0') continue;
+    snprintf(h, sizeof(h), "%.*s", i, text);
+    const int hw = measure(h, floor);
+    const int tw = measure(text + i + 1, floor);
+    if (hw > upper_w || tw > lower_w) continue;
+    const char end = text[i - 1];
+    const bool clause = end == '?' || end == ':' || end == ',';
+    const int wide = hw > tw ? hw : tw;
+    if (best < 0 || (clause && !best_clause) ||
+        (clause == best_clause && wide <= best_w)) {
+      best = i;
+      best_clause = clause;
+      best_w = wide;
+    }
+  }
+  if (best < 0) return false;
+  snprintf(head, kLineCap, "%.*s", best, text);
+  snprintf(tail, kLineCap, "%s", text + best + 1);
+  return true;
+}
+
+// The coach line of a scene without credentials (see the rule above).
+// upper_w / lower_w are the widths the credentials and hint rows are fitted
+// to (rf_row_width at creds_top and hint_top); hint is the live coach line
+// ("" for none) and narrow its shorter form (may be null).
+template <class Measure>
+inline HintLines hint_lines(int upper_w, int lower_w, const char* hint,
+                            const char* narrow, Measure measure) {
+  HintLines out = HintLines();
+  set_line(out.upper, "", false, true);
+  set_line(out.lower, "", false, true);
+  const char* forms[2] = {hint, narrow};
+  const char* last = "";
+  char head[kLineCap];
+  char tail[kLineCap];
+  for (int face = 0; face < 2; ++face) {
+    const bool fl = face == 1;
+    for (int k = 0; k < 2; ++k) {
+      if (forms[k] == nullptr || forms[k][0] == '\0') continue;
+      last = forms[k];
+      if (measure(forms[k], fl) <= lower_w) {
+        set_line(out.lower, forms[k], fl, true);
+        return out;
+      }
+      if (split_line(forms[k], upper_w, lower_w, fl, measure, head, tail)) {
+        out.split = true;
+        set_line(out.upper, head, fl, true);
+        set_line(out.lower, tail, fl, true);
+        return out;
+      }
+    }
+  }
+  set_line(out.lower, last, true, last[0] == '\0');
+  return out;
+}
+
 }  // namespace canary::ui::onboardlayout

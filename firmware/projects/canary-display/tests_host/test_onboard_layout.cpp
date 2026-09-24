@@ -16,6 +16,13 @@
 // with the stuck-phone hint standing too: that hint is exactly when the
 // phone needs the key again, and when the QR does not scan (or never
 // rendered: join_lines does not depend on it) the text is the only way in.
+//
+// And the coach line of the scenes without credentials is never cut either
+// (F50): every Fail hint (join_failure_hint, 175-219 px at 12 px) and the
+// PhoneJoined hint (182 px under Heirloom) went on one row and ended in an
+// ellipsis on the round watch's 142 px band and the 156/164 px portrait rows.
+// For every glass and ladder, hint_lines() is run on each of them, with the
+// narrow form the glass is handed, and each row must fit its width.
 // Text is measured with LVGL's own Montserrat data (montserrat_metrics.h,
 // generated from the pinned LVGL by firmware/scripts/gen_montserrat_metrics.py)
 // the way lv_font_get_glyph_width reads it — never an estimated width.
@@ -24,9 +31,10 @@
 // board pins.h via envs/platformio/canary-display.ini; the flavor bits
 // (dash / nightstand / watch / AMOLED, and the lean build) from the env's
 // config.h and flags; the font sizes from character.cpp's type ladders
-// (parsed in order, role by role); the stuck-phone hints, the key length
-// and the network-name shapes from provision.cpp; the minting alphabet from
-// device_pseudonym.h and provision_core.h. Only LVGL's font data is a table
+// (parsed in order, role by role); the stuck-phone and PhoneJoined hints,
+// the key length and the network-name shapes from provision.cpp; the Fail
+// hints from wifi_join_policy.h itself (the table provision.cpp hands the
+// glass); the minting alphabet from device_pseudonym.h and provision_core.h. Only LVGL's font data is a table
 // (the line heights below, and the generated glyph metrics) — theirs, not
 // ours.
 //
@@ -43,6 +51,7 @@
 #include "canary/ui/onboard_layout.h"
 #include "montserrat_metrics.h"
 #include "network/provision_core.h"
+#include "network/wifi_join_policy.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -415,6 +424,9 @@ struct Minted {
   std::string ssid_tagged;   // ... + "-" + 2 slots (the unwritable-store path)
   // The stuck-phone hint's forms per glass: round, small rectangular, wide.
   std::vector<std::string> hint_round, hint_small, hint_wide;
+  // The PhoneJoined hint's forms: small glass (the hint, then its narrow
+  // form), wide glass.
+  std::vector<std::string> phone_small, phone_wide;
 };
 static Minted g_minted;
 
@@ -510,6 +522,48 @@ static void load_minted() {
         "stuck-phone hint forms: %d round, %d portrait, %d wide",
         (int)g_minted.hint_round.size(), (int)g_minted.hint_small.size(),
         (int)g_minted.hint_wide.size());
+  // The PhoneJoined hint, per glass, from the branch that sets it once the
+  // phone has sat on the AP for HINT_AFTER_MS without opening the page.
+  branch = -1;
+  armed = false;
+  done = false;
+  std::string pj[2];
+  for (size_t i = 0; i < ls.size() && !done; i++) {
+    const std::string t = trim(ls[i]);
+    if (t.find("(int32_t)HINT_AFTER_MS") != std::string::npos) {
+      armed = true;
+    } else if (armed && branch < 0 && t == "#if defined(CD_FLAVOR_WATCH)") {
+      branch = 0;
+    } else if (branch == 0 && t == "#else") {
+      branch = 1;
+    } else if (branch == 1 && t == "#endif") {
+      done = true;
+    } else if (branch >= 0 && !starts_with(t, "//")) {
+      pj[branch] += t + "\n";
+    }
+  }
+  CHECK(done, "provision.cpp's PhoneJoined hint branches (small / wide) not "
+              "found after HINT_AFTER_MS");
+  g_minted.phone_small = literals(pj[0]);
+  g_minted.phone_wide = literals(pj[1]);
+  CHECK(g_minted.phone_small.size() == 2 && g_minted.phone_wide.size() == 1,
+        "PhoneJoined hint forms: %d small (want the hint and its narrow "
+        "form), %d wide", (int)g_minted.phone_small.size(),
+        (int)g_minted.phone_wide.size());
+
+  // The Fail hint: provision.cpp hands the glass wifi_join_policy.h's hint
+  // AND its narrow form, in one call — the narrow form is the rung
+  // hint_lines() falls back to (F50), and a call that drops it leaves a
+  // narrow row nothing to show but a cut.
+  const size_t call = prov.find("ui_hint(canary::net::join_failure_hint(");
+  const std::string stmt =
+      call == std::string::npos ? std::string()
+                                : prov.substr(call, prov.find(';', call) - call);
+  CHECK(stmt.find("canary::net::join_failure_hint_narrow(") != std::string::npos,
+        "provision.cpp's Fail hint no longer hands the glass "
+        "join_failure_hint_narrow() with join_failure_hint(): \"%s\"",
+        stmt.c_str());
+
   std::printf("  key %d of %d chars; hints: \"%s\" | \"%s\"%s%s%s | \"%s\"\n",
               g_minted.key_len, (int)g_minted.alpha.size(),
               g_minted.hint_round.empty() ? "" : g_minted.hint_round[0].c_str(),
@@ -549,6 +603,93 @@ static int band_chord_px(int dia, int top, int h) {
 }
 
 static const char* face_name(bool floor) { return floor ? "floor" : "own"; }
+
+// Every JoinFailure, in enum order (the Fail hints the glass can show).
+static const canary::net::JoinFailure kFailures[] = {
+    canary::net::JoinFailure::NotFound, canary::net::JoinFailure::BadPassword,
+    canary::net::JoinFailure::NoAddress, canary::net::JoinFailure::Unknown};
+static const int kFailureCount = (int)(sizeof(kFailures) / sizeof(kFailures[0]));
+
+// One coach line and the forms the glass is handed for it.
+struct CoachLine {
+  const char* what;    // for the messages
+  const char* hint;    // the whole hint
+  const char* narrow;  // its narrow form (may be null)
+};
+
+// Every coach line a scene without credentials sets on small glass: each
+// Fail hint (wifi_join_policy.h, with its narrow form, as provision.cpp hands
+// them over) and the PhoneJoined hint (provision.cpp's small-glass branch).
+static std::vector<CoachLine> small_coach_lines() {
+  std::vector<CoachLine> out;
+  for (int i = 0; i < kFailureCount; i++) {
+    CoachLine c = {canary::net::join_failure_label(kFailures[i]),
+                   canary::net::join_failure_hint(kFailures[i]),
+                   canary::net::join_failure_hint_narrow(kFailures[i])};
+    out.push_back(c);
+  }
+  if (!g_minted.phone_small.empty()) {
+    CoachLine c = {"PhoneJoined", g_minted.phone_small[0].c_str(),
+                   g_minted.phone_small.size() > 1
+                       ? g_minted.phone_small[1].c_str()
+                       : nullptr};
+    out.push_back(c);
+  }
+  return out;
+}
+
+// F50 on small glass: the coach line of a scene without credentials
+// (PhoneJoined, Fail) fits the two rows the credentials leave — the
+// credentials row (creds_w) over the hint row (low_w) — in the row's own
+// face or the floor face, and what the rows say is the hint or its narrow
+// form, word for word. Returns a one-line summary of the rung each took.
+static std::string check_hint_rows(const Env& e, const char* lad_name,
+                                   int creds_w, int low_w, const Measure& m) {
+  const char* n = e.name.c_str();
+  const std::vector<CoachLine> lines = small_coach_lines();
+  CHECK(lines.size() == (size_t)kFailureCount + 1,
+        "%s/%s: %d coach lines, want every Fail hint and PhoneJoined's", n,
+        lad_name, (int)lines.size());
+  std::string summary;
+  for (size_t i = 0; i < lines.size(); i++) {
+    const CoachLine& c = lines[i];
+    const HintLines h = hint_lines(creds_w, low_w, c.hint, c.narrow, m);
+    CHECK(h.upper.fits && m(h.upper.text, h.upper.floor) <= creds_w,
+          "%s/%s: %s: the upper row \"%s\" (%s face) is cut on a %d px row",
+          n, lad_name, c.what, h.upper.text, face_name(h.upper.floor),
+          creds_w);
+    CHECK(h.lower.fits && m(h.lower.text, h.lower.floor) <= low_w,
+          "%s/%s: %s: the hint row \"%s\" (%s face) is cut on a %d px row",
+          n, lad_name, c.what, h.lower.text, face_name(h.lower.floor), low_w);
+    CHECK(h.split || h.upper.text[0] == '\0',
+          "%s/%s: %s: one-row hint, yet the upper row says \"%s\"", n,
+          lad_name, c.what, h.upper.text);
+    CHECK(!h.split || h.upper.floor == h.lower.floor,
+          "%s/%s: %s: a split hint in two faces", n, lad_name, c.what);
+    // Word for word: the rows read back as the hint or its narrow form.
+    const std::string said =
+        h.split ? std::string(h.upper.text) + " " + h.lower.text
+                : std::string(h.lower.text);
+    const bool whole = said == c.hint;
+    const bool narrow = c.narrow != nullptr && said == c.narrow;
+    CHECK(whole || narrow,
+          "%s/%s: %s: the rows say \"%s\" — neither \"%s\" nor \"%s\"", n,
+          lad_name, c.what, said.c_str(), c.hint, c.narrow ? c.narrow : "");
+    // The narrow form is a real rung: on its own, in the floor face, it
+    // fits the hint row, whatever hint_lines() picked above it.
+    CHECK(c.narrow == nullptr || m(c.narrow, true) <= low_w,
+          "%s/%s: %s: the narrow form \"%s\" is %d px on a %d px row", n,
+          lad_name, c.what, c.narrow ? c.narrow : "",
+          c.narrow ? m(c.narrow, true) : 0, low_w);
+    char one[64];
+    std::snprintf(one, sizeof(one), "%s%s %s%s", i ? ", " : "", c.what,
+                  whole ? (h.split ? "split" : "whole")
+                        : (h.split ? "narrow split" : "narrow"),
+                  h.lower.floor ? " (floor)" : "");
+    summary += one;
+  }
+  return summary;
+}
 
 // F45 on small glass: what join_lines() puts on the text rows, for the
 // widest network name and key the unit can mint and for the stuck-phone
@@ -665,6 +806,10 @@ static void check_rows(const Env& e, int which, const Stack& s, const Rows& r,
               typ.low.floor ? " (floor)" : "", typ_hint_line.text,
               typ_hint_line.floor ? " (floor)" : "",
               typ_hint.split ? "note" : "hint");
+  // F50: the scenes without credentials hand the same two rows to their
+  // coach line.
+  const std::string coach = check_hint_rows(e, lad_name, creds_w, low_w, m);
+  std::printf("  %20s coach lines: %s\n", "", coach.c_str());
 }
 
 // Wide glass keeps one worded credentials line and a separate hint line,
@@ -698,8 +843,26 @@ static void check_wide_rows(const Env& e, int which, int fam) {
                          : text_px(*caption, g_minted.hint_wide[0].c_str());
   CHECK(hint_w <= row, "%s/%s: the stuck-phone hint is %d px on %d px", n,
         lad_name, hint_w, row);
-  std::printf("  %20s row %3d  credentials <= %3d px  hint %3d px\n", "", row,
-              widest, hint_w);
+  // F50: the scenes without credentials set their coach line whole on the
+  // hint row here (the wide branch of refresh_bottom): every Fail hint and
+  // the wide PhoneJoined hint must fit it.
+  int coach_w = 0;
+  for (int i = 0; i < kFailureCount; i++) {
+    const char* h = canary::net::join_failure_hint(kFailures[i]);
+    const int w = text_px(*caption, h);
+    CHECK(w <= row, "%s/%s: the Fail hint \"%s\" is %d px on %d px", n,
+          lad_name, h, w, row);
+    if (w > coach_w) coach_w = w;
+  }
+  const int phone_w = g_minted.phone_wide.empty()
+                          ? 0
+                          : text_px(*caption, g_minted.phone_wide[0].c_str());
+  CHECK(!g_minted.phone_wide.empty() && phone_w <= row,
+        "%s/%s: the PhoneJoined hint is %d px on %d px", n, lad_name, phone_w,
+        row);
+  if (phone_w > coach_w) coach_w = phone_w;
+  std::printf("  %20s row %3d  credentials <= %3d px  hint %3d px  coach "
+              "lines <= %3d px\n", "", row, widest, hint_w, coach_w);
 }
 
 static void check_glass(const Env& e, int which, int also) {
@@ -921,6 +1084,97 @@ static void test_f45_pins() {
         "a 40 px row claimed to fit");
 }
 
+// ── the F50 glass, pinned (LVGL's metrics, the real hint copy) ──────────
+static void test_f50_pins() {
+  std::printf("F50 coach lines, pinned:\n");
+  using canary::net::JoinFailure;
+  using canary::net::join_failure_hint;
+  using canary::net::join_failure_hint_narrow;
+  const Face* f12 = face_of(12);
+  const Face* f14 = face_of(14);
+  if (f12 == nullptr || f14 == nullptr || g_minted.phone_small.size() != 2) {
+    CHECK(false, "F50 pins need montserrat_12/14 and both PhoneJoined forms");
+    return;
+  }
+  const char* phone = g_minted.phone_small[0].c_str();
+  const char* phone_narrow = g_minted.phone_small[1].c_str();
+  // The defect: every Fail hint is 175-219 px at 12 px, wider than the
+  // round watch's 142 px band and the 156/164 px portrait rows, and the
+  // PhoneJoined hint is 182 px in Heirloom's 14 px caption. One row, whole,
+  // in the row's face, and LONG_DOT cut every one of them.
+  int lo = 1 << 30, hi = 0;
+  for (int i = 0; i < kFailureCount; i++) {
+    const int w = text_px(*f12, join_failure_hint(kFailures[i]));
+    if (w < lo) lo = w;
+    if (w > hi) hi = w;
+  }
+  CHECK(lo == 175 && hi == 219 &&
+            text_px(*f12, join_failure_hint(JoinFailure::NoAddress)) == 219,
+        "Fail hints %d..%d px at 12 px", lo, hi);
+  CHECK(text_px(*f14, phone) == 182, "PhoneJoined hint %d px at 14 px",
+        text_px(*f14, phone));
+  const Measure std12 = {f12, f12};
+  const Measure heir = {f14, f12};
+  // The round watch (the credentials band 174 px over the 142 px low band):
+  // the whole hint over both rows, broken where the halves are most even
+  // ("your router may be" over "out of addresses", 117/99 px, ties "your
+  // router may" over "be out of addresses", 99/117: the later break wins,
+  // the head on the wider upper row) — and never between a number and its
+  // unit: "it only sees 2.4" over "GHz wifi - not 5" (87/92) would be more
+  // even than the break it takes (66/113).
+  HintLines h = hint_lines(174, kRoundLowRowW,
+                           join_failure_hint(JoinFailure::NoAddress),
+                           join_failure_hint_narrow(JoinFailure::NoAddress),
+                           std12);
+  CHECK(h.split && std::strcmp(h.upper.text, "your router may be") == 0 &&
+            std::strcmp(h.lower.text, "out of addresses") == 0 &&
+            !h.upper.floor && !h.lower.floor,
+        "round NoAddress \"%s\" | \"%s\"", h.upper.text, h.lower.text);
+  h = hint_lines(174, kRoundLowRowW, join_failure_hint(JoinFailure::NotFound),
+                 join_failure_hint_narrow(JoinFailure::NotFound), std12);
+  CHECK(h.split && std::strcmp(h.upper.text, "it only sees") == 0 &&
+            std::strcmp(h.lower.text, "2.4 GHz wifi - not 5") == 0,
+        "round NotFound \"%s\" | \"%s\"", h.upper.text, h.lower.text);
+  // A clause break wins over a more even one: "no page? open" over
+  // "192.168.4.1" is 90/58 px, "no page?" over "open 192.168.4.1" 56/92 px.
+  h = hint_lines(174, kRoundLowRowW, phone, phone_narrow, std12);
+  CHECK(h.split && std::strcmp(h.upper.text, "no page?") == 0 &&
+            std::strcmp(h.lower.text, "open 192.168.4.1") == 0,
+        "round PhoneJoined \"%s\" | \"%s\"", h.upper.text, h.lower.text);
+  // The 172 px nightstand (156 px rows): the PhoneJoined hint fits one row
+  // at 12 px (151 px), so it stays whole there; Heirloom's 14 px (182)
+  // takes both rows, still in 14 px.
+  h = hint_lines(156, 156, phone, phone_narrow, std12);
+  CHECK(!h.split && std::strcmp(h.lower.text, phone) == 0 &&
+            h.upper.text[0] == '\0' && !h.lower.floor,
+        "nightstand PhoneJoined \"%s\" | \"%s\"", h.upper.text, h.lower.text);
+  h = hint_lines(156, 156, phone, phone_narrow, heir);
+  CHECK(h.split && std::strcmp(h.upper.text, "no page?") == 0 &&
+            std::strcmp(h.lower.text, "open 192.168.4.1") == 0 &&
+            !h.upper.floor && !h.lower.floor,
+        "heirloom nightstand PhoneJoined \"%s\" | \"%s\"", h.upper.text,
+        h.lower.text);
+  // An upper row too narrow to take any head: the narrow form, on the hint
+  // row, in the row's own face — before any smaller face.
+  h = hint_lines(40, kRoundLowRowW, join_failure_hint(JoinFailure::NoAddress),
+                 join_failure_hint_narrow(JoinFailure::NoAddress), std12);
+  CHECK(!h.split && h.upper.text[0] == '\0' &&
+            std::strcmp(h.lower.text,
+                        join_failure_hint_narrow(JoinFailure::NoAddress)) == 0 &&
+            h.lower.fits && !h.lower.floor,
+        "narrow rung \"%s\" (%s)", h.lower.text, face_name(h.lower.floor));
+  // No hint: both rows empty. And the degenerate case says so rather than
+  // claiming a fit.
+  h = hint_lines(174, kRoundLowRowW, "", nullptr, std12);
+  CHECK(!h.split && h.upper.text[0] == '\0' && h.lower.text[0] == '\0' &&
+            h.upper.fits && h.lower.fits,
+        "an empty coach line drew \"%s\" | \"%s\"", h.upper.text,
+        h.lower.text);
+  h = hint_lines(20, 20, join_failure_hint(JoinFailure::Unknown),
+                 join_failure_hint_narrow(JoinFailure::Unknown), std12);
+  CHECK(!h.lower.fits, "a 20 px row claimed to fit \"%s\"", h.lower.text);
+}
+
 // ── degenerate glass: the lines still never cross ─────────────────────────
 static void test_short_glass() {
   std::printf("short glass:\n");
@@ -983,6 +1237,7 @@ int main() {
   }
   test_f43_pins();
   test_f45_pins();
+  test_f50_pins();
   test_short_glass();
   test_join_payload();
   if (g_fail == 0) {
