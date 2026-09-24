@@ -877,10 +877,10 @@ def _async_health_for_tofu(hass: HomeAssistant, entry: ConfigEntry):
         # A canary-wap spells its key in capitals; the store keeps one
         # lowercase spelling (device_trust.normalize_hex).
         pubkey_hex = normalize_hex(pubkey_hex)
-        try:
-            bytes.fromhex(pubkey_hex)
-        except ValueError:
-            # 64 chars but not hex — would raise later inside the pin task.
+        # Exactly 64 hex digits. bytes.fromhex alone is not enough: it skips
+        # ASCII whitespace, so a 64-character string holding spaces decoded
+        # to a short key and raised later, inside the pin task (HA22).
+        if not re.fullmatch(r"[0-9a-f]{64}", pubkey_hex):
             return
         # async_pin needs the loop; schedule as a task so the @callback
         # context returns synchronously. A pin that actually lands is a new

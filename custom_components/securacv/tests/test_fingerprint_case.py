@@ -356,3 +356,29 @@ def test_one_mismatch_notice_per_fingerprint_whatever_its_case():
         )
     assert len(hass.notifications) == 1
     assert hass.data[DOMAIN]["e1"]["mismatch_notified"] == {(DEVICE_ID, WAP_FP.lower())}
+
+
+# ─── HA22: a 64-character key that is not 64 hex digits never reaches the pin task ──
+
+
+@pytest.mark.parametrize(
+    "bad_key",
+    [
+        TEST_PUB[:60] + "    ",            # bytes.fromhex skips whitespace: 30 bytes
+        TEST_PUB[:30] + "  " + TEST_PUB[32:],  # whitespace in the middle
+        "0x" + TEST_PUB[:62],              # a prefix is not hex
+        TEST_PUB[:63] + "g",               # one non-hex digit
+    ],
+)
+def test_a_64_char_key_that_is_not_64_hex_digits_is_not_pinned(bad_key, caplog):
+    hass, store = _setup()
+    body = json.loads(WAP_HEALTH)
+    body["public_key"] = bad_key
+    assert len(bad_key) == 64
+    with caplog.at_level(logging.INFO):
+        # Before HA22's fix the whitespace forms passed bytes.fromhex, the
+        # pin task raised ValueError (a 30-byte key has no fingerprint), and
+        # this call raised with it.
+        _async_health_for_tofu(hass, ENTRY)(_msg("health", json.dumps(body)))
+    assert store.get(DEVICE_ID) is None
+    assert not [r for r in caplog.records if "TOFU-pinning" in r.getMessage()]
