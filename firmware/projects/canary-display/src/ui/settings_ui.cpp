@@ -1238,7 +1238,8 @@ const char* wx_deg_opts(int max_deg) {
 }
 
 // mk_hour_roller's styling, restated: that helper is compiled into every
-// emulator flavor and must not change shape for a page they never build.
+// touch flavor of the emulator (watch, dash, touch169, amoled241) and must
+// not change shape for a page they never build.
 // Both helpers center their options. This glass runs without a theme
 // (LV_USE_THEME_DEFAULT 0), so a roller's text_align is AUTO, which both
 // majors resolve to LEFT — the roller places its option label by that
