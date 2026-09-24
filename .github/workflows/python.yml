@@ -17,6 +17,11 @@ on:
       # carrying a tamper level still runs the test that catches it.
       - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp'
       - 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino'
+      # test_key_source_copy.py holds the options-flow copy to the flavor
+      # registry and to the boot key line the two witness.cpp files print.
+      - 'firmware/flavors.json'
+      - 'firmware/projects/canary-sense/src/witness.cpp'
+      - 'firmware/projects/canary-sentinel/src/witness.cpp'
   pull_request:
     branches: [main]
     paths:
@@ -30,6 +35,11 @@ on:
       # carrying a tamper level still runs the test that catches it.
       - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp'
       - 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino'
+      # test_key_source_copy.py holds the options-flow copy to the flavor
+      # registry and to the boot key line the two witness.cpp files print.
+      - 'firmware/flavors.json'
+      - 'firmware/projects/canary-sense/src/witness.cpp'
+      - 'firmware/projects/canary-sentinel/src/witness.cpp'
 
 permissions:
   contents: read
