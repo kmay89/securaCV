@@ -358,8 +358,8 @@ recovery matrix: [`display_onboarding.md`](./display_onboarding.md).
    wizard restarts clean.
 
 **Pass:** (1) both phones auto-join from the QR and the sheet pops (Android
-fallback: the glass adds "no page? open 192.168.4.1" after ~9 s if it
-doesn't); (2) the portal shows **"Wrong password"** inline (not a generic
+fallback: the glass adds "no page? open 192.168.4.1" about 4 s after the
+phone joins, if it doesn't); (2) the portal shows **"Wrong password"** inline (not a generic
 error, not "network not found"), the sheet shakes, the glass mirrors the
 reason in amber, and the AP never drops; (3) glass sweeps → **"You're in."**
 bloom → cross-fade to the fleet UI → fleet referral lands the broker (F6) and

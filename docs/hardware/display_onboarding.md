@@ -58,7 +58,11 @@ needs the key again. On that glass the hint gets a row of its own: under the
 key on the nightstand and nightlight, the title's band on the round watch
 (the title yields while the hint stands: with the QR up, the card speaks for
 itself; without one, the hint replaces "On your phone").
-No row is ever cut to an ellipsis (F45).
+None of those rows (the name, the key, the hint) is ever cut to an ellipsis
+(F45). The scene titles and bodies are not fitted that way yet: under
+Heirloom the round watch's title band is 142 px and cuts "On your phone"
+(154 px), which is what the Join scene says when its QR did not render, and
+the later scenes' titles and bodies are cut on the smallest glass too.
 
 The same holds for the hints after the Join scene. When the phone sits on the
 setup network without opening the page, the glass adds "no page? open
@@ -66,8 +70,10 @@ setup network without opening the page, the glass adds "no page? open
 ("passwords are case-sensitive", "it only sees 2.4 GHz wifi - not 5"). Those
 scenes leave the credentials rows empty, so the hint has both of them: whole
 on one row where it fits, over the two rows where it does not ("no page?" over
-"open 192.168.4.1" on the round watch), and a shorter form of the same fix
-only where neither would hold it. None of them is cut either (F50).
+"open 192.168.4.1" on the round watch). A shorter form of the same fix
+(`join_failure_hint_narrow()`) is there for a row that would hold neither; no
+display's glass needs it today, and the host test fails if one ever does.
+None of these hints is cut either (F50).
 
 The last step is the payoff of the whole discovery program: the moment WiFi
 exists, the **fleet referral** (broker gossip, discovery doc §5.1) configures
@@ -100,7 +106,7 @@ eye has continuity while the words change.
 | Wrong password | Portal: inline "Wrong password", field cleared + refocused, sheet shakes. Glass: amber "Wrong password — try again on your phone" | resubmit; AP never dropped |
 | Network out of range / gone | "Network not found" (distinct from wrong password — WAP lesson) | pick another network |
 | Router slow / edge of range | 30 s budget before "Couldn't connect" (15 s reads as a false "wrong password" at range edge) | retry |
-| Captive sheet never pops | after 9 s the glass quietly adds "no page? open 192.168.4.1" | manual URL |
+| Captive sheet never pops | 4 s after the phone joins, the glass quietly adds "no page? open 192.168.4.1" | manual URL |
 | Phone leaves the AP mid-setup | glass returns to the QR scene | rescan |
 | User walks away | join scene breathes indefinitely; glass dims after 8 min (touch or a joining phone re-wakes) | resume any time |
 | Power cycle mid-setup | credentials persist **on success only** — an interrupted setup restarts clean | start over, ~90 s |
@@ -139,7 +145,7 @@ look failed on the phone — hard-won WAP lesson.)
 | State machine + AP + portal | `src/net/provision.cpp` (`FEATURE_ONBOARDING`) |
 | Glass scenes | `src/ui/onboard_ui.cpp` — own LVGL screen, auto-deleted at handoff |
 | Join-scene geometry | `include/canary/ui/onboard_layout.h` — title, QR card and caption lines stacked from the panel and the fonts' line heights, never crossing (host-tested on every display env's panel by `tests_host/test_onboard_layout.cpp`; `canary-local/tests/onboard_probe.mjs` checks the card is clean on each emulated flavor) |
-| Join-scene text | the same header's `join_lines()` — the credentials joined where they fit their row, else split (name, then key, and a standing hint on the note row: nothing displaces the name or the key), shorter forms before a smaller face, never an ellipsis (F45). The host test measures every glass and ladder with LVGL's glyph metrics (`tests_host/montserrat_metrics.h`, from `firmware/scripts/gen_montserrat_metrics.py`) over the widest name and key the unit can mint, and requires both on the glass with and without the stuck-phone hint; the probe fails on an ellipsis in each flavor's Join scene and reads the firmware's own labels (the emulator's `emu_screen_labels`) for the name and key it printed, before and after the hint |
+| Join-scene text | the same header's `join_lines()` — the credentials joined where they fit their row, else split (name, then key, and a standing hint on the note row: nothing displaces the name or the key), shorter forms before a smaller face, never an ellipsis (F45). The host test measures every glass and ladder with LVGL's glyph metrics (`tests_host/montserrat_metrics.h`, from `firmware/scripts/gen_montserrat_metrics.py`) over the widest name and key the unit can mint, and requires both on the glass with and without the stuck-phone hint; the probe fails on an ellipsis in each flavor's Join scene and reads the firmware's own labels (the emulator's `emu_screen_labels`) for the name and key it printed, before and after the hint. After the Join scene, `hint_lines()` gives the coach line both of the empty credentials rows: whole on one where it fits, else split at a clause over two, else the shorter form (F50). The host test runs every failure's fix and the "no page?" hint through it on every env and ladder and requires the whole form; the probe reads the whole "no page?" hint and the wrong-key and absent-network fixes off each flavor's glass |
 | NVS persistence | `canary::cfg::set_wifi_credentials()` (success only) |
 | Boot hook | `main.cpp`: placeholder creds → `provision_run()` before the watchdog arms |
 | Captive mechanics provenance | canary-wap wizard, `LESSONS_LEARNED` §captive-portal |
