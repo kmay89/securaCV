@@ -99,7 +99,8 @@ firmware/
 ├── scripts/        # CI checks, release and OTA tooling
 ├── tests_host/     # host-side unit tests for the pure cores
 ├── examples/       # standalone samples (CSI, a module stub)
-└── flavors.json    # every PlatformIO env CI builds (ARCHITECTURE.md, "CI Flavor Manifest")
+└── flavors.json    # every PlatformIO flavor env CI builds (ARCHITECTURE.md, "CI Flavor Manifest");
+                    #   firmware.yml adds two compile-only steps (see "PR CI" below)
 ```
 
 **Key rule:** Composition happens only in `envs/` and `projects/`. Common modules never import board or config files.
