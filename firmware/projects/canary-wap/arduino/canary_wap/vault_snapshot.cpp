@@ -126,6 +126,7 @@ static void persist_config() {
   nvs.putBool(NVS_KEY_MOT,   g_cfg.motion_enabled);
   nvs.putBool(NVS_KEY_MESH,  g_cfg.mesh_enabled);
   nvs.putUInt(NVS_KEY_COOL,  g_cfg.cooldown_s);
+  nvs.end();
 }
 
 /* ── The seal worker (one-shot task; never the loop) ────────────────── */
@@ -355,6 +356,7 @@ void init() {
     sha256_key_id(g_pubkey, g_key_id);
     g_has_pubkey = true;
   }
+  nvs.end();
 }
 
 Decision request_capture(Trigger t, bool camera_ok, bool qr_active,
@@ -386,6 +388,7 @@ Decision request_capture(Trigger t, bool camera_ok, bool qr_active,
   if (nvs.beginReadWrite()) {
     seq = nvs.getUInt(NVS_KEY_SEQ, 0) + 1;
     nvs.putUInt(NVS_KEY_SEQ, seq);
+    nvs.end();
   }
 
   g_job.trigger     = t;
@@ -457,7 +460,9 @@ bool set_pubkey_hex(const char* hex64) {
 
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.beginReadWrite()) return false;
-  if (nvs.putBytes(NVS_KEY_PUB, pub, sizeof(pub)) != sizeof(pub)) return false;
+  const bool stored = nvs.putBytes(NVS_KEY_PUB, pub, sizeof(pub)) == sizeof(pub);
+  nvs.end();
+  if (!stored) return false;
 
   memcpy(g_pubkey, pub, sizeof(g_pubkey));
   sha256_key_id(g_pubkey, g_key_id);
@@ -470,6 +475,7 @@ void clear_pubkey() {
   NvsManager& nvs = NvsManager::instance();
   if (nvs.beginReadWrite()) {
     nvs.remove(NVS_KEY_PUB);
+    nvs.end();  /* before persist_config() opens its own */
   }
   memset(g_pubkey, 0, sizeof(g_pubkey));
   memset(g_key_id, 0, sizeof(g_key_id));
