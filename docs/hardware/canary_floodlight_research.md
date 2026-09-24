@@ -36,19 +36,26 @@ are US street, Sept 2026, and move weekly — treat them as a tier, not a quote.
    shipped radio. But a *120 V floodlight in a junction box* is a **luminaire on a branch circuit**
    (UL 1598 territory, inspector territory, insurer territory). The simple answer is to **never
    touch mains**: the light runs on **Class 2 low voltage** (≤ 30 V, ≤ 100 VA) from a bought,
-   listed driver or a PoE splitter, which is exactly the NEC's carve-out for low-voltage lighting
-   and exactly the shape of the PoE floodlights the CCTV industry already sells (§4).
+   listed **cord-and-plug** supply or a PoE splitter, which is exactly the NEC's carve-out for
+   low-voltage lighting and exactly the shape of the PoE floodlights the CCTV industry already
+   sells (§4).
 4. **The recommended first build is a "light head that a Canary drives," not a monolith.** A
-   listed 24 V LED floodlight module + a listed Class 2 driver (or an 802.3at PoE splitter), switched
-   by a MOSFET on the existing Sentinel-class sensor head, with the Vision stack beside it in the
-   Combo case. Every part the builder buys is already listed by someone else; every part we publish
-   is plastic or firmware. **No certification is owed by us at all** in that shape, and the builder
-   is inside 47 CFR 15.23 (§4.1).
+   listed 24 V LED floodlight module + a listed plug-in Class 2 supply (or an 802.3at PoE splitter),
+   switched by a MOSFET on the existing Sentinel-class sensor head, with the Vision stack beside it
+   in the Combo case. Every part we publish is plastic or firmware, so **no certification is owed by
+   us at all** in that shape, and the builder is inside 47 CFR 15.23 (§4.1). The compliance story
+   for the *light* is **conditional on the builder buying listed parts on both sides of the Class 2
+   line** — a listed supply *and* listed low-voltage lighting equipment (NEC 411.4). The supply is
+   easy to name; a listed 24 V DC, 3000 K, 20–30 W module is **not yet identified** (§4.2, §7), and
+   an "IP65" on a store page is an ingress claim, not a safety listing.
 5. **What we cannot match, and shouldn't try:** cloud video history, a phone app that streams from
    anywhere with no setup, 4K color night video, and face recognition. What we can do that none of
    them can: a light that turns on **because a signed, hash-chained claim says a large object crossed
    a boundary**, with no footage to subpoena, no network to enroll in, and no monthly fee — the
-   Reolink/Eufy "no subscription" pitch taken to its structural conclusion.
+   Reolink/Eufy "no subscription" pitch taken to its structural conclusion. The "structural" word
+   is earned only on the tiers built on the Grove Vision AI V2 + ESP32 stack, where no host ever
+   holds a frame; the reCamera-based Pro tier is a Linux camera that *can* stream and record, so
+   there the guarantee is configuration policy, stated as such (§5.4).
 
 ---
 
@@ -85,7 +92,7 @@ from vendor copy or a named review; **unverified** marks a cell no source stated
 
 1. **The light is a solved commodity: 2000–3000 lm, 15–30 W.** Only Blink (700 lm, battery) and
    Lorex (1500 lm) sit below. Anything we build needs ~2000 lm to be taken seriously, and §4.3 shows
-   802.3at PoE or a 36 W Class 2 driver gets there.
+   an 802.3at PoE run reaches the low end of that and a 36–40 W Class 2 plug-in supply the top.
 2. **Detection has bifurcated.** The cheap tier is PIR (false alerts); the premium tier is **radar +
    video** (Ring Pro) or **on-device video AI with tracking** (eufy, Reolink). Radar-corroborated
    video is exactly the Combo Witness / Sentinel fusion this repo already has.
@@ -208,12 +215,12 @@ A floodlight is not a USB gadget. The relevant rules, in plain terms:
 |---|---|---|
 | **Wired to a 120 V branch circuit** (junction box, like every Ring/Wyze/Eufy/Reolink hardwired model) | NEC Article 410 + **UL 1598 (Luminaires)**, with the LED array under **UL 8750**; a permanent installation an electrical inspector and a homeowner's insurer can ask to see a listing for | A listing program per fixture — five figures and a lab relationship. **Out of reach, and out of character.** An unlisted mains luminaire is also the "unlisted device caused the fire" clause insurers reach for. |
 | **Cord-and-plug, 120 V** (plugs into an outdoor outlet) | Code does not require a listing for portable plug-in equipment; an inspector can still object to anything bolted to the wall; insurers increasingly expect an NRTL mark on anything with a plug | Better, but a home-built mains PSU in a printed box is the exact fact pattern doc 29 §6 says never to ship. |
-| **Low voltage, ≤ 30 V and ≤ 100 VA, from a listed Class 2 source** | **NEC Article 411** (low-voltage lighting) and **Article 725** (Class 2 circuits). 411.4 asks that a system at 30 V or less be *listed as a complete system*, **or** that the Class 2 power source and the lighting equipment connected to it be listed. UL 1310 covers the Class 2 supply. | **This is the carve-out.** Class 2 wiring is treated as inherently safe from fire and shock: reduced wiring rules, no conduit, no electrician. A bought Mean Well LPV-35-24 (24 V, 1.5 A, IP67, Class 2, 90–264 VAC in) or a bought PoE splitter is the listed source; a bought 24 V LED floodlight module is the listed lighting equipment; **our part is the printed bracket, the MOSFET switch and the firmware.** |
+| **Low voltage, ≤ 30 V and ≤ 100 VA, from a listed Class 2 source** | **NEC Article 411** (low-voltage lighting) and **Article 725** (Class 2 circuits). 411.4 asks that a system at 30 V or less be *listed as a complete system*, **or** that the Class 2 power source and the lighting equipment connected to it be listed. UL 1310 covers the Class 2 supply. | **This is the carve-out.** Class 2 wiring is treated as inherently safe from fire and shock: reduced wiring rules, no conduit, no electrician. A bought, listed **cord-and-plug** Class 2 supply (a 24 V Class 2 desktop adapter of the Mean Well GST40A24 / GSM40B24 class, or a listed plug-in low-voltage landscape-lighting transformer — the very product NEC 411 was written for) or a bought PoE splitter is the listed source. **The lighting equipment must be listed too**, and that is the open condition: the $15–30 "24 V DC LED flood" class on the marketplaces is mostly *un*listed (an IP65 mark is not an NRTL mark), so the honest statement is "compliant *when* built from a listed supply and a listed low-voltage luminaire," with the luminaire still to be named (§7). **Our part is the printed bracket, the MOSFET switch and the firmware.** Not a Mean Well LPV-35-24: that series has flying mains-input leads and needs a box and a qualified termination, which is exactly the mains work this design exists to avoid. |
 | **PoE** (802.3af 13 W / 802.3at 25.5 W / 802.3bt 51–71 W at the powered device) | Same Class 2 / low-voltage territory; PoE is a limited-power source by construction. The Tycon POE-SPLT-4824G-P (at in, 24 V out) is UL-listed as ITE. | One cable does power and data; the light head never sees mains; the switch or injector is the listed source. |
 
 **The design rule that falls out:** *the project never touches mains.* Every path from the wall to
-the LED runs through a **bought, listed** device — a Class 2 driver or a PoE switch — and everything
-we publish sits on the Class 2 side of it. That deletes UL 1598, deletes the inspector, deletes the
+the LED runs through a **bought, listed, cord-and-plug or PoE** device — nothing with bare mains
+leads — and everything we publish sits on the Class 2 side of it. That deletes UL 1598, deletes the inspector, deletes the
 "who made the power supply" liability, and (as doc 29 §6 already found for the Dash) makes the SKU
 cheaper as well as cleaner.
 
@@ -225,9 +232,9 @@ Enough. The commercial floodlight cams run 1800–3000 lm total from two or thre
 | Power path | Budget at the load | Realistic light (3000 K, ~110 lm/W incl. driver loss) | Camera + sensor head | Verdict |
 |---|---|---|---|---|
 | **802.3af PoE** | ~13 W | ~8–10 W → **900–1100 lm** (a bright porch light, not a floodlight) | ~3 W | The "lit path light" tier; the Prokyber board's class |
-| **802.3at PoE+** | 25.5 W | ~20 W → **2000–2400 lm** | ~3–5 W | **Matches Ring Pro / Eufy E340 (2000 lm).** Axton sells a 25 W PoE floodlight at 3300 lm (6000 K, cooler phosphor is more efficient) on exactly this class |
-| **802.3bt** | 51–71 W | 40 W+ → 4000+ lm | — | More than any consumer unit; only if someone wants it |
-| **24 V Class 2 driver, 36 W** (LPV-35-24) | 36 W | ~30 W → **2800–3300 lm** | ~3–5 W | **Matches Wyze Pro (3000 lm).** Plugs into an outdoor outlet; the 24 V line runs to the eave as low-voltage wire |
+| **802.3at PoE+** | 25.5 W at the PD; ~23 W after splitter loss | head 3–5 W leaves **≤ 18 W for the light → ~1700–2000 lm** | ~3–5 W | **Reaches the Ring Pro / Eufy E340 (2000 lm) class, at the low end.** Axton's 25 W PoE floodlight spends the whole at budget on the light alone (3300 lm at 6000 K, a more efficient phosphor) — a camera beside it needs its own run or 802.3bt |
+| **802.3bt** | 51–71 W | 20–30 W light + head with margin → **2200–3300 lm**; 40 W+ → 4000+ lm | ~3–5 W | The tier for the full 20–30 W module on one cable; more than any consumer unit above that |
+| **24 V Class 2 plug-in supply, 36–40 W** (GST40A24-class desktop adapter, or a listed plug-in landscape transformer) | 36–40 W | ~30 W → **2800–3300 lm** | ~3–5 W | **Matches Wyze Pro (3000 lm).** Plugs into an outdoor outlet under an in-use cover; the 24 V line runs to the eave as low-voltage wire |
 | **12 V / 24 V from a solar controller** | whatever the panel and pack allow | a 20 W light for 2 min × 20 triggers/night ≈ 13 Wh/night — plausible on a 30 W panel + LiFePO₄ in summer, marginal in winter | — | Not the first build; the [solar sizing](./solar_power_sizing.md) and [cold-weather](./cold_weather_envelope.md) references apply unchanged |
 
 **LED parts, honestly priced (single-source retail excerpts):** a 30 W COB emitter at 3000–3500 K
@@ -235,7 +242,9 @@ gives ~2700–2800 lm at 900 mA / 30–34 V (a constant-*current* driver, ~$5–
 constant-current COB module quotes 2000–2500 lm at 3000 K. A 20–30 W COB needs a real heatsink —
 tens of grams of finned aluminum, kept under ~60 °C — which is why the practical recommendation is
 **not** a bare COB in a printed shell but a **bought, sealed 24 V LED floodlight module** (the
-$15–30 "12/24 V DC LED flood" class, IP65 by its own maker, aluminum body) on a printed bracket.
+$15–30 "12/24 V DC LED flood" class, IP65 by its own maker, aluminum body) on a printed bracket —
+with the caveat §4.2 states: that class is mostly unlisted, and the design's NEC 411 story needs a
+**listed** low-voltage luminaire, which this research has not yet named.
 The heat then lives in a metal body someone else designed, and the printed parts carry no thermal
 duty at all. A PETG or ASA shell next to a 30 W LED is the wrong material for the wrong job.
 
@@ -256,8 +265,9 @@ printed case is **never IP-rated**; an IEC 60529 rating is a lab result on a spe
 a self-declared "IP65" on a store page is a claim, not a test. The honest split for this device:
 
 - the **LED module** carries its own maker's IP rating (bought part);
-- the **driver / splitter** carries its own (LPV series is IP67; PoE splitters are indoor parts —
-  they live inside);
+- the **supply / splitter** carries its own (a desktop Class 2 adapter is an indoor part and lives
+  in the in-use outlet cover or indoors; a landscape transformer is outdoor-rated by its maker; PoE
+  splitters are indoor parts and live in the head);
 - the **sensor + camera head** is ours, and is CER-2 (sheltered, under an eave — where a floodlight
   cam lives anyway) as printed, CER-3 with the gland + vent rules, and **IP66/67 only by putting the
   electronics in a bought Hammond 1554/1555 box** on a `canary_hammond_chassis.scad` plate, the
@@ -283,7 +293,7 @@ listings; take no board order and no light order. **Do not call it a "kit"** (do
 | Tier | Sensor head | Camera | Light | Power | ~BOM (builder-bought, excl. printed parts) | For |
 |---|---|---|---|---|---|---|
 | **Lantern** | Sentinel-Lite class: XIAO ESP32-C3, PIR (HC-SR501/AM312 class), BH1750 lux | none | 8–10 W 24 V module, ~1000 lm | 802.3af or a small Class 2 driver | ~$45 | a lit path or side door; the "smart porch light" — no lens at all, the strongest privacy story |
-| **Floodlight** | Sentinel-Standard class: XIAO ESP32-C6 + MR60BHA2 60 GHz radar + PIR + lux | Vision stack (Grove Vision AI V2 + XIAO C3, boxes only) | 20–30 W 24 V module, 2000–3000 lm | 802.3at PoE splitter or LPV-35-24 | ~$120–140 | **the recommended build** — driveway, garage corner, backyard |
+| **Floodlight** | Sentinel-Standard class: XIAO ESP32-C6 + MR60BHA2 60 GHz radar + PIR + lux | Vision stack (Grove Vision AI V2 + XIAO C3, boxes only) | 15–18 W 24 V module (~1700–2000 lm) on 802.3at; 20–30 W (2000–3000 lm) on 802.3bt or the plug-in supply | 802.3at PoE splitter (light capped at ~18 W), or 802.3bt, or a 36–40 W plug-in Class 2 supply | ~$120–140 | **the recommended build** — driveway, garage corner, backyard |
 | **Floodlight Pro** | same head | [Vision Lite](./canary_vision_lite_recamera.md) (reCamera 2002, PoE baseboard) or [Vision Pro](./canary_vision_pro_recamera.md) (reCamera Pro, starlight) via the webhook adapter | same | 802.3bt or the driver + a second PoE run | ~$170 (Lite) / ~$420 (Pro) | a wide dark yard where the Grove sensor's short range and weak low light run out (the [Curbwatch](./canary_curbwatch_research.md) finding) |
 
 The **head is the Sentinel**. The fusion engine (`firmware/common/fusion`, host-tested) already
@@ -322,13 +332,19 @@ firmware surface is small: one output pin, a light policy, and a lux gate.
   output; the XIAO's USB-C is not used in the field (its plug recess is sealed, per the weather
   presets).
 - **PoE path:** switch → outdoor Cat 5e/6 → **Tycon POE-SPLT-4824G-P or Planet POE-162S** (802.3at in,
-  24 V out, indoor part, lives in the sensor-head shell) → light + buck.
-- **Driver path:** outdoor outlet → **LPV-35-24** (IP67, Class 2; can live outside) → low-voltage
-  landscape wire → light + buck. Two conductors up the wall, no data; the head keeps Wi-Fi (the C6
-  and the C3 each carry their own certified module, per §4.1).
-- **Light:** a bought 20–30 W **24 V DC** LED floodlight module, 3000 K, IP65 by its maker, aluminum
-  body, on a printed **bracket** that mates to the catalog's two-T-stud wall interface
-  (`canary_mount_lib.scad`) and puts the module's own yoke on a hood-shaped shade.
+  24 V out, indoor part, lives in the sensor-head shell) → light + buck. On 802.3at the light is
+  capped at ~18 W (§4.3); a 20–30 W module wants an 802.3bt switch or the supply path below.
+- **Plug-in path:** outdoor outlet (GFCI, in-use cover) → a listed **cord-and-plug Class 2 24 V
+  supply** (Mean Well GST40A24 / GSM40B24-class desktop adapter, or a listed plug-in low-voltage
+  landscape transformer) → low-voltage landscape wire → light + buck. Two conductors up the wall, no
+  data; the head keeps Wi-Fi (the C6 and the C3 each carry their own certified module, per §4.1).
+  **Not** an LPV-series driver: its input is bare mains leads, which is a box and a qualified
+  termination — the work this path exists to avoid.
+- **Light:** a bought 20–30 W **24 V DC** LED floodlight module, 3000 K, aluminum body, on a printed
+  **bracket** that mates to the catalog's two-T-stud wall interface (`canary_mount_lib.scad`) and
+  puts the module's own yoke on a hood-shaped shade. It must be **NRTL-listed low-voltage lighting
+  equipment** for the §4.2 story to hold; its maker's IP65 is a separate, ingress-only claim. The
+  specific listed module is open item 7 in §7.
 - **Head + camera:** `canary_combo.scad` as the starting point (Vision column + Sense column, two
   USB-C, weep, hood seat), with a third bay for the PIR's HDPE Fresnel window (a PIR needs its own
   LWIR-transmissive window; ordinary acrylic blocks it — the [Feeder](./canary_feeder_research.md)
@@ -349,11 +365,19 @@ firmware surface is small: one output pin, a light policy, and a lux gate.
 | sensor blinded (radome covered, PIR taped, lens dark in daylight) | the fusion engine's tamper-suspicion path | Sentinel's existing asymmetry — blinding raises the score |
 | light state | **runtime telemetry only** | never sealed; not a claim |
 
-What it structurally cannot do: identify a face (no model, no vocabulary — `ObjectClass` is
-`Person | Vehicle | Animal | Package | Unknown`), read a plate, record video (the ESP32 host never
-sees pixels; the reCamera tiers route only a class + score through the webhook adapter, per the Vision
-Pro dossier §3), or join a neighbor's search. Those are the four features the incumbents have added
-since 2024, and they are the four this design is *incapable* of adding — which is the product.
+What the **Lantern and Floodlight tiers** structurally cannot do: identify a face (no model, no
+vocabulary — `ObjectClass` is `Person | Vehicle | Animal | Package | Unknown`), read a plate, record
+video (the ESP32 host never sees pixels; the Grove module holds no frame past inference), or join a
+neighbor's search. Those are the four features the incumbents have added since 2024, and they are the
+four those tiers are *incapable* of adding — which is the product.
+
+**The Pro tier is different, and says so.** A reCamera is a Linux camera computer with RTSP and
+local storage; nothing structural stops it streaming or recording. What SecuraCV guarantees there is
+narrower: the witness log ingests only a class + score through the webhook adapter (the payload
+grammar has no image or free-text field, per the Vision Pro dossier §3), so nothing but a coarse claim
+can be *sealed* — but whether the camera itself keeps footage is **configuration policy on the
+reCamera, not an incapability**, and the build guide must say that in those words. A buyer who wants
+the `can't` buys the Floodlight tier.
 
 ---
 
@@ -362,7 +386,8 @@ since 2024, and they are the four this design is *incapable* of adding — which
 - **Not a burglar deterrent with a warranty.** Motion-activated light is associated with less property
   crime in some studies and not in others; we say "a light that comes on when a witnessed event happens,"
   never "keeps your home safe" (the doc 27 banned-words table governs store copy too).
-- **Not a video camera.** A buyer who wants to *see* who was there at 3 a.m. should buy a Reolink and run
+- **Not a video camera** (on the Lantern and Floodlight tiers; the Pro tier's reCamera can be one,
+  by policy — §5.4). A buyer who wants to *see* who was there at 3 a.m. should buy a Reolink and run
   Frigate. This device tells you *that* a person crossed the driveway at 03:12, signed, and turned the
   light on. That is a smaller promise and a keepable one.
 - **Not life-safety lighting.** It is not an egress light and must never be wired as one; off is the
@@ -375,7 +400,8 @@ since 2024, and they are the four this design is *incapable* of adding — which
 ## 7 · Open items and never-let-it-rot
 
 1. **A bench unit.** Everything above is research and a design. The first build is: a Sentinel-Standard
-   head + a $20 24 V LED module + a MOSFET module + an LPV-35-24, on a plank, in a garage. Log the PIR
+   head + a $20 24 V LED module + a MOSFET module + a plug-in 24 V Class 2 adapter, on a plank, in a
+   garage (a bench unit needs no listing; the field build does — item 7). Log the PIR
    self-trigger distance from the light, the radome temperature next to it, and the lux gate's
    hysteresis in a PR.
 2. **Firmware:** one GPIO, a light policy, an HA `light` entity, a lux gate — a Sentinel preset, not a
@@ -390,6 +416,13 @@ since 2024, and they are the four this design is *incapable* of adding — which
    the card's research link when that exists.
 6. **Re-verify prices and the subscription tiers** before any copy quotes them; the vendors reprice
    quarterly and Ring's feature set changed three times in the research window.
+7. **Name a listed low-voltage luminaire.** The §4.2 compliance shape needs NRTL-listed lighting
+   equipment on the Class 2 side, and no 24 V DC, 3000 K, 20–30 W module with a listing has been
+   identified. Candidates to check: the listed 12/24 V landscape-lighting flood fixtures (Volt, WAC
+   Landscape, Kichler, Hinkley — most are 12 V and 500–1500 lm, so two may be needed), a listed PoE
+   floodlight used as the light alone (Axton-class; confirm the listing, **single-source**), or a
+   listed 24 V constant-voltage LED strip/module family with a UL 8750 recognition. Until one is
+   named, the light side of the story is conditional and the dossier says so.
 
 ---
 
@@ -453,7 +486,10 @@ since 2024, and they are the four this design is *incapable* of adding — which
 - Omnitron, "What is IEEE 802.3bt"; Axton "About PoE Powered LED Floodlights" and the Blaze 25WE (25 W,
   3300 lm, 802.3at/bt) and 11WE (802.3af) pages; Tycon POE-SPLT-4824G-P and Planet POE-162S / IPOE-162S
   splitter listings; QuinLED, "Can You Run LEDs Over PoE?"
-- Mean Well LPV-35-24 datasheet excerpts (TRC Electronics, Bravo Electro, GekPower); CHANZON 30 W COB
+- Mean Well LPV-35-24 datasheet excerpts (TRC Electronics, Bravo Electro, GekPower — the series is
+  cited only to say why it is *not* the plug-in supply: flying mains leads); Mean Well GST / GSM
+  desktop-adapter families as the Class 2 cord-and-plug class (**model-level listing unverified from
+  the research environment**); CHANZON 30 W COB
   and GekPower 30 W constant-current COB listings
 - IEC 60529 / IP-rating explainers (instacertify, indEx Enclosures, standardclarity) on self-declared vs.
   lab-tested ratings
