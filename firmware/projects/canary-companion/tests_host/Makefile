@@ -22,6 +22,16 @@
 CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Werror
 
+# $(call run_marked,<suite>) runs ./<suite> and holds it to the check
+# firmware.yml's old inline steps made: a non-zero exit fails, and so does
+# output without the suite's "ALL ... PASSED" line, so a suite that returns 0
+# before its last check cannot pass silently. It echoes only the suite's
+# command line, like a plain `./suite` line.
+run_marked = @echo "./$(1)"; out=$$(./$(1)); s=$$?; printf '%s\n' "$$out"; \
+  [ $$s -eq 0 ] || { echo "$(1): exit $$s" >&2; exit 1; }; \
+  printf '%s\n' "$$out" | grep -q "ALL .* PASSED" || \
+  { echo "$(1): no 'ALL .* PASSED' line in its output" >&2; exit 1; }
+
 INC_COMPANION = -I ../include
 
 BIN = test_companion_cores
@@ -33,7 +43,7 @@ $(BIN): $(SRC)
 	$(CXX) $(CXXFLAGS) $(INC_COMPANION) -o $@ $(SRC)
 
 run: $(BIN)
-	./$(BIN)
+	$(call run_marked,$(BIN))
 
 clean:
 	rm -f $(BIN)
