@@ -187,6 +187,13 @@ static uint32_t cap_us() {
 }
 
 bool try_reserve_routine(uint32_t now_ms, size_t bytes, uint16_t frames) {
+  // Nothing goes on the air (a heartbeat with no peer to send to), so there
+  // is nothing to deny: without this, a window that urgent or Beacon sends
+  // had already taken past the cap refused it and ticked routine_denied.
+  if (frames == 0) {
+    g_routine_allowed++;
+    return true;
+  }
   const uint32_t cost = reservation_us(bytes, frames);
   if (static_cast<uint64_t>(window_airtime_us(now_ms)) + cost > cap_us()) {
     g_routine_denied++;

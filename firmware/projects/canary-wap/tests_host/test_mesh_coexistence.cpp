@@ -239,10 +239,23 @@ static void test_governor_charges_each_frame_of_a_fan_out() {
   EXPECT(s.beacon_airtime_us == 2u * 1576u);
   EXPECT(s.urgent_sends == 1 && s.beacon_sends == 1);
 
-  // No peers connected: nothing goes on the air, nothing is charged.
+  // No peer to send to: nothing goes on the air, nothing is charged.
   airtime_governor::init(2);
   EXPECT(airtime_governor::try_reserve_routine(1000, hb_frame, 0));
   EXPECT(airtime_governor::snapshot(1000).airtime_us == 0);
+
+  // ...even when urgent sends have already taken the window past the cap
+  // (130 x 1576 = 204 880 us > 200 000): a zero-frame reservation has
+  // nothing to deny, so it is allowed and counted as an allowed call, not
+  // as a denial (the MQTT routine_denied counter).
+  airtime_governor::init(2);
+  airtime_governor::force_reserve_urgent(1000, hb_frame, 130);
+  EXPECT(!airtime_governor::try_reserve_routine(1000, hb_frame, 1));
+  EXPECT(airtime_governor::try_reserve_routine(1000, hb_frame, 0));
+  s = airtime_governor::snapshot(1000);
+  EXPECT(s.airtime_us == 130u * 1576u);
+  EXPECT(s.routine_allowed == 1);
+  EXPECT(s.routine_denied == 1);
 
   // All or nothing: 125 x 1576 = 197 000 us leaves 3000 us, room for one
   // frame (1576) but not three (4728); the fan-out is denied whole and
