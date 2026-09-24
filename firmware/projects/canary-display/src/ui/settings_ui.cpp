@@ -1017,6 +1017,7 @@ lv_obj_t* mk_hour_roller(lv_obj_t* parent, int hh, int id) {
   lv_roller_set_options(r, opts, LV_ROLLER_MODE_INFINITE);
   lv_roller_set_visible_row_count(r, 3);
   lv_obj_set_width(r, M.roller_w);
+  lv_obj_set_style_text_align(r, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);  // no theme: see mk_wx_roller
   lv_obj_set_style_text_font(r, font_body(), LV_PART_MAIN);
   lv_obj_set_style_text_color(r, col_muted(), LV_PART_MAIN);
   lv_obj_set_style_text_line_space(r, M.compact ? 10 : 16, LV_PART_MAIN);
@@ -1237,16 +1238,21 @@ const char* wx_deg_opts(int max_deg) {
 }
 
 // mk_hour_roller's styling, restated: that helper is compiled into every
-// emulator flavor and must not change shape for a page they never build.
-// Plus one line the hour wheel never needed: this glass runs without a
-// theme (LV_USE_THEME_DEFAULT 0), so a roller's text_align is AUTO, which
-// both majors resolve to LEFT — the roller places its option label by that
-// inherited property (refr_position in lv_roller.c). Every "%02d:00" is the
-// same width, so the hour wheel never showed it; the degrees wheel is the
-// first here with unequal options ("0" beside "180"), and without this its
-// digits sit flush-left in a box the widest option sized while the selected
+// touch flavor of the emulator (watch, dash, touch169, amoled241) and must
+// not change shape for a page they never build.
+// Both helpers center their options. This glass runs without a theme
+// (LV_USE_THEME_DEFAULT 0), so a roller's text_align is AUTO, which both
+// majors resolve to LEFT — the roller places its option label by that
+// inherited property (refr_position in lv_roller.c) while the selected
 // tier's highlight spans the full width. Centering is what the default theme
-// adds to every roller, and all three wheels of a trio get it.
+// adds to every roller. The hour wheel showed it until it took the same
+// line: a "%02d:00" label flush-left in a fixed-width wheel. Host-measured
+// on LVGL 8.4.0 and 9.5.0 with this lv_conf.h, the label's left/right gap
+// goes 0/36 -> 18/18 px on the compact 92 px wheel (16 px body) and
+// 0/73 -> 36/37 on the Regular 150 px one (24 px body); the Heirloom bodies
+// (20, 28) give 13/13 and 30/30. The degrees wheels centered from the
+// start, where unequal options ("0" beside "180") would show it most. All
+// three wheels of a trio center.
 lv_obj_t* mk_wx_roller(lv_obj_t* parent, const char* opts, bool infinite,
                        int width, int sel, int id) {
   lv_obj_t* r = lv_roller_create(parent);

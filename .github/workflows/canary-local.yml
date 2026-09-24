@@ -511,6 +511,7 @@ jobs:
           node --test canary-local/tests/scene_figures.test.js
           node --test canary-local/tests/body_dims.test.js
           node --test canary-local/tests/device_models.test.js
+          node --test canary-local/tests/settings_rollers.test.js
       - name: Witness Wall emulator copies in sync (Flasher <-> Lab)
         # One canonical emulator (the website repo), vendored by
         # scripts/vendor_witness_emulator.sh into both apps — byte-identical,
