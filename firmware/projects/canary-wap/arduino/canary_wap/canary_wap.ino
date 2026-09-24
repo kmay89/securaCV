@@ -8415,10 +8415,12 @@ static void register_api_routes(httpd_handle_t server) {
   httpd_register_uri_handler(server, &settings_ui);
 
   // Device enrollment endpoints — unauthenticated by design (pubkey +
-  // fingerprint are PUBLIC data). HA's config flow pulls /api/device/enroll
-  // to TOFU-pin the device's pubkey; the /enroll HTML page renders the
-  // fingerprint in big monospace text for an installer to read off the
-  // captive-portal page and type into HA when they want to pin manually.
+  // fingerprint are PUBLIC data). Home Assistant does not fetch these: it
+  // TOFU-pins from the health publish's public_key. They are the owner's
+  // out-of-band read — the /enroll HTML page shows the fingerprint in big
+  // monospace text and the full pubkey hex, which is what HA's manual pin
+  // form takes (docs/device_trust.md, "Where each product shows its key");
+  // /api/device/enroll is the same card as JSON, for scripts.
   httpd_uri_t enroll_json_uri = { .uri = "/api/device/enroll", .method = HTTP_GET,
                                   .handler = device_identity_api::handle_enroll_json };
   httpd_register_uri_handler(server, &enroll_json_uri);

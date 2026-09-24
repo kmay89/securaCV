@@ -552,11 +552,14 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 # it. Storage round-trips happen through TrustStore.async_pin / rotate
 # / unpin — the flow is just the UX layer.
 #
-# We deliberately don't try to fetch /api/device/enroll from inside
+# We deliberately don't try to fetch the key from the device inside
 # the options flow: the device's IP isn't necessarily known to HA, and
-# the captive-portal page exists precisely so an installer can read
-# the fingerprint off any phone with WiFi reach. The pubkey hex is
-# pasted verbatim from /enroll.
+# only canary-wap serves /api/device/enroll at all. The pubkey hex is
+# pasted verbatim from wherever the product shows it out of band
+# (canary-wap's /enroll page; USB serial `j` on the firmware/canary
+# build and canary-vision; canary-sense and canary-sentinel show only a
+# fingerprint) — docs/device_trust.md, "Where each product shows its
+# key".
 
 
 CONF_PIN_DEVICE_ID = "device_id"
@@ -569,8 +572,9 @@ PIN_ACTION_UNPIN = "unpin"
 
 def _looks_like_pubkey_hex(value: str) -> bool:
     """64-char lowercase hex. We lowercase before checking so users
-    can paste from any case-preserving source (`/enroll` emits
-    lowercase but a manual transcription often comes back uppercase)."""
+    can paste from any case-preserving source (`/enroll` and the serial
+    `j` manifest emit lowercase, but canary-wap's serial `i` prints
+    capitals and a manual transcription often comes back uppercase)."""
     v = value.strip().lower()
     if len(v) != 64:
         return False

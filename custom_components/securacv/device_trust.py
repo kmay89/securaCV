@@ -10,9 +10,13 @@ Trust model
 - **TOFU by default.** First time a device_id appears on MQTT with a
   valid `fp` field, we pin that fingerprint as the trusted identity.
   Subsequent publishes from the same device_id MUST carry the same fp.
-- **Manual pin.** The config flow's "Pin device fingerprint" step lets
-  an installer enter the fp they read off the device's `/enroll` page;
-  that pin takes precedence over any TOFU pin already on record.
+- **Manual pin.** The options flow's "Pin a device pubkey" step takes
+  the device_id and the full pubkey hex an installer read off the device
+  out of band (canary-wap's `/enroll` page, USB serial on the
+  firmware/canary build and canary-vision; canary-sense and
+  canary-sentinel show only the fingerprint — docs/device_trust.md has
+  the per-product table); that pin takes precedence over any TOFU pin
+  already on record.
 - **Rotation.** An explicit options-flow action lets the operator
   re-pin a new fingerprint after a deliberate key change (e.g. NVS
   wipe). Rotation is logged with the old fp + a timestamp so an
@@ -153,9 +157,9 @@ def fingerprint_from_pubkey_hex(pubkey_hex: str) -> str:
     SHA256(domain || 0x00 || pubkey) — note the single NUL separator
     between the domain string and the payload — and takes the first
     8 bytes hex-encoded. We replicate it byte-for-byte so HA can derive
-    the fp from a pubkey supplied via the /enroll endpoint, the health
-    topic, or manual paste without needing the firmware to also publish
-    it.
+    the fp from a pubkey supplied via the health topic or a manual paste
+    (read off the device, e.g. canary-wap's /enroll page) without needing
+    the firmware to also publish it.
 
     Historical note: this function originally omitted the 0x00
     separator, so every HA-derived fp disagreed with the fp the
