@@ -16,9 +16,9 @@
 //     45 s stuck-phone hint (F45, see joinEllipses and credsOnGlass; --shots
 //     saves onboard_join_hint_<flavor>.png); the phone's wrong key is refused and the
 //     right one joins; when the phone sits on the AP without opening the page
-//     the glass's "no page?" hint is on the glass word for word, and so is each
-//     failure's fix after a wrong key and an absent network (F50, see
-//     coachOnGlass; --shots saves onboard_phone_hint_<flavor>.png and
+//     the glass's whole "no page?" hint is on the glass word for word, and so
+//     is each failure's whole fix after a wrong key and an absent network (F50,
+//     see coachOnGlass; never the shorter forms; --shots saves onboard_phone_hint_<flavor>.png and
 //     onboard_fail_<reason>_<flavor>.png); the captive DNS answers A with
 //     192.168.4.1 and AAAA with no data; the OS
 //     probe gets the 302; GET / serves PORTAL_HTML byte-for-byte as
@@ -60,26 +60,28 @@ const ONLY = flavorIdx > 0 ? process.argv[flavorIdx + 1] : null;
 
 const PORTAL = JSON.parse(await readFile(join(ROOT, "canary-local/devices/display_portal.json"), "utf8"));
 // The coach lines the glass is handed (F50), read from the sources the
-// emulator compiles: each failure's fix and its narrow form from the shared
-// table (wifi_join_policy.h), and the "no page?" hint's forms from the
-// PhoneJoined branch of provision.cpp.
+// emulator compiles: each failure's fix from the shared table
+// (wifi_join_policy.h's join_failure_hint), and the "no page?" hint from
+// the PhoneJoined branches of provision.cpp (the first literal of each
+// ui_hint call: small glass, wide glass). Only the WHOLE forms: the narrow
+// ones (join_failure_hint_narrow, the address alone) are a rung no shipped
+// glass reaches (test_onboard_layout holds that), and accepting them would
+// pass a glass that fell to the shorter copy, or the old round watch, which
+// showed the address without "no page?".
 const POLICY = await readFile(join(ROOT, "firmware/common/network/wifi_join_policy.h"), "utf8");
 const PROVISION = await readFile(join(ROOT, "firmware/projects/canary-display/src/net/provision.cpp"), "utf8");
-function failureHints(name) {
-  const forms = [];
-  for (const fn of ["join_failure_hint", "join_failure_hint_narrow"]) {
-    const body = new RegExp(`inline const char\\* ${fn}\\(JoinFailure f\\) \\{([\\s\\S]*?)\\n\\}`).exec(POLICY)?.[1] || "";
-    const m = new RegExp(`case JoinFailure::${name}:\\s*return "([^"]*)";`).exec(body);
-    if (m) forms.push(m[1]);
-  }
-  if (forms.length !== 2) throw new Error(`wifi_join_policy.h: no hint and narrow form for ${name}`);
-  return forms;
+function failureHint(name) {
+  const body = /inline const char\* join_failure_hint\(JoinFailure f\) \{([\s\S]*?)\n\}/.exec(POLICY)?.[1] || "";
+  const m = new RegExp(`case JoinFailure::${name}:\\s*return "([^"]*)";`).exec(body);
+  if (!m) throw new Error(`wifi_join_policy.h: no join_failure_hint for ${name}`);
+  return [m[1]];
 }
 const PHONE_HINTS = (() => {
   const block = /\(int32_t\)HINT_AFTER_MS\)[\s\S]*?#endif/.exec(PROVISION)?.[0] || "";
   const forms = [...block.matchAll(/^\s*ui_hint\(([^;]*)\);/gm)]
-    .flatMap((c) => [...c[1].matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]));
-  if (!forms.length) throw new Error("provision.cpp: no PhoneJoined hint after HINT_AFTER_MS");
+    .map((c) => /"((?:[^"\\]|\\.)*)"/.exec(c[1])?.[1])
+    .filter(Boolean);
+  if (forms.length !== 2) throw new Error(`provision.cpp: ${forms.length} PhoneJoined hints after HINT_AFTER_MS (want small and wide)`);
   return forms;
 })();
 const DIST = join(ROOT, "canary-local/emulator/dist");
@@ -309,9 +311,9 @@ async function walkHarness(flavor) {
     return j.state === "connecting" || j.state === "idle" ? null : j;
   }, "a /status verdict", 30000, 900);
   // F50: after a failed join the glass names the fix (wifi_join_policy.h's
-  // hint for the reason, or its narrow form), word for word.
+  // hint for the reason, whole: on one row or over two), word for word.
   const failFixOnGlass = async (reason) => {
-    const forms = failureHints(reason);
+    const forms = failureHint(reason);
     await until(async () => coachOnGlass(await E(glassLines), forms), `the ${reason} fix on the glass`, 10000)
       .catch(async () => {
         const ls = await E(glassLines);
@@ -389,7 +391,8 @@ async function walkHarness(flavor) {
     check(await E((a) => window.__emu.phoneJoin(a.ssid, a.pass), ap) === 1, "the QR's key did not join");
     // F50: the phone is on the AP and has not opened the page. The glass
     // leaves the Join scene (the key goes), and 4 s on it names the manual
-    // path — whole, or over the two rows the credentials left.
+    // path — the whole hint, on one row or over the two the credentials
+    // left (the old round watch showed the address alone: a fail here).
     await until(async () => !(await E(glassLines)).some((l) => l.text.includes(ap.pass)),
       "the glass to see the phone join", 20000);
     await E(() => window.__emu.stepTime(5000));
