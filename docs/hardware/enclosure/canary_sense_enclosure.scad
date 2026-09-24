@@ -471,6 +471,13 @@ module case_hinge() {
             }
         }
         tearbore_x(-out_x/2, ax[1], ax[2], out_x, hinge_hole);
+        // the Vision's lesson, same hinge: with the keyhole slab under the
+        // back the slab-level root web hits the bracket's tripod boss hanging
+        // straight (0°) — a 45° relief from the wall's foot clears it
+        if (mount_extra > 0)
+            translate([-out_x, 0, 0]) rotate([90, 0, 90]) linear_extrude(2*out_x)
+                polygon([[out_y/2 + 0.5, -mount_extra - 1], [out_y/2 + 40, -mount_extra - 1],
+                         [out_y/2 + 40, -0.6], [out_y/2 + 0.5 + mount_extra + 0.4, -0.6]]);
     }
 }
 // peripheral wedge that 45°-chamfers the bottom edge (subtract from the shell);

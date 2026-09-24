@@ -752,14 +752,14 @@
      },
      {
       "ref": "SCR5",
-      "qty": "8",
+      "qty": "10",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 self-tapping screws, 6-10mm: 4x pan head (camera posts) + 4x head per case (front corners)",
+      "desc": "M2 self-tapping screws, 6-10mm: 4x pan head (camera posts) + 4-6x per case (front corners; 6 on the sealed builds)",
       "mpn": "M2X8-ST-MIX",
       "mfr": "Generic",
-      "usd": 0.4,
-      "notes": "4x 6mm PAN for the OV5647 posts. Front corners: FLAT/countersunk head on the Vision case (cone seats), PAN head on the doorbell face (flat counterbores). Max ~0.3 N-m",
+      "usd": 0.5,
+      "notes": "4x 6mm PAN for the OV5647 posts. Front corners: 4 on the indoor Vision, 6 on the Outdoor preset (its mid-span gasket posts) and on the doorbell face. Max ~0.3 N-m",
       "orderable": false
      },
      {
@@ -860,9 +860,9 @@
      }
     ],
     "required_usd": 28.69,
-    "full_usd": 80.25,
+    "full_usd": 80.35,
     "required_usd_live": 29.49,
-    "full_usd_live": 91.93,
+    "full_usd_live": 92.03,
     "pricing_as_of": "2026-09-02T13:37:16Z",
     "recipes": [
      {
@@ -882,7 +882,7 @@
        "NUT1",
        "CW2"
       ],
-      "usd": 41.74,
+      "usd": 41.84,
       "note": "Wall/tripod-mountable unit with adjustable hinge; add WAP weather-kit items for sealing"
      }
     ]

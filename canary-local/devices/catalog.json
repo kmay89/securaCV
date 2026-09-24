@@ -2391,7 +2391,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 136,
+   "engineering_param_count": 140,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2633,7 +2633,7 @@
     {
      "id": "seal_mid_posts",
      "type": "bool",
-     "label": "(seal mode) one extra screw post mid-way along each long wall: four corner",
+     "label": "(seal mode) one extra screw post mid-way along each long wall (ON in the weather preset): four corner",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -2711,7 +2711,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 172,
+   "engineering_param_count": 173,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -3155,7 +3155,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 163,
+   "engineering_param_count": 164,
    "alternatives": [],
    "remix_of": null,
    "counts": {

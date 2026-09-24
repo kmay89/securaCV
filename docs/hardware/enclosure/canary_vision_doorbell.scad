@@ -197,6 +197,7 @@ plate_wedge = 0;      // vertical wedge: camera tilts down the approach  // [0:5
 plate_wedge_x = 0;    // horizontal wedge: aims left/right (corner installs)  // [-15:5:15]
 sec_screw_d = 2.2;    // security screw (M2 self-tap; use a Torx/security drive)
 plate_screw_d = 4.2;  // wall screws (#8 / M4 PAN head — the seats are flat counterbores)
+plate_head_h = 2.8;   // wall-screw pan head height: the seat is cut this deep (+0.2) so the head sits flush  // [2.0:0.1:3.2]
 
 /* [Stud/keyhole interface] — the plate's T-studs and the body's blind pockets */
 // the stud/pocket pair is the catalog's one hanging interface: canary_mount_lib owns the
@@ -323,6 +324,16 @@ function post_xy() = concat([
     [-inner_x/2 + pd/2 + 1.0, -inner_y/2 + pd/2 + 1.0],
 ], (e_seal && seal_mid_posts) ? [[inner_x/2 - pd/2 + 0.2, well_cy], [-inner_x/2 + pd/2 - 0.2, well_cy]] : []);
 
+// the clamp-spacing rule (DESIGN_RULES §6: <= 40 mm between gasket screws).
+// The mid pair sits at the cable well, low on the body, so the upper span runs
+// ~76 mm; a post pair beside the module needs a wider body (inner_x 26 -> ~33).
+// Said on every render, as DESIGN_RULES claims this file does.
+_ys = [for (p = post_xy()) if (p[0] > 0) p[1]];
+_seal_span = max([for (a = _ys) let (g = min([for (b = _ys) if (b > a) b - a, 1e9])) if (g < 1e8) g]);
+if (e_seal)
+    echo(str("seal mode: longest gasket span between screws ", _seal_span, " mm (rule: <= 40)",
+             _seal_span > 40 ? " — mid-span squeeze rests on the face's stiffness; mount under the porch roof" : ""));
+
 skirt_gap = tol_slide + 0.2;
 plate_x   = e_seal ? out_x + 2*(skirt_gap + skirt_t) : out_x;
 plate_y   = e_seal ? out_y + 2*(skirt_gap + skirt_t) : out_y;
@@ -395,7 +406,7 @@ hw_echo("Vision doorbell", [
     e_led        ? hw_item(1, str("Ø", lp_d, " light pipe")) : "",
     cam_disc_t > 0 && cam_disc_d > 0 ? hw_item(1, str("Ø", cam_disc_d, " x ", cam_disc_t, " clear disc (neutral-cure silicone)")) : "",
     e_tamper     ? hw_item(1, str("Ø", mag_d, " x ", mag_h, " disc magnet (press + glue)")) : "",
-    hw_item(2, "#6 pan wall screw (plate)"),
+    hw_item(4, "#8 pan wall screw (plate)"),
 ]);
 echo(str("Canary Vision DOORBELL v0.4 — body ", out_x, " x ", out_y, " x ", base_d + lid_t + kh_extra,
          " mm + plate ", plate_t, " mm (wedge ", plate_wedge, " deg, seal=", e_seal, ")"));
@@ -687,6 +698,12 @@ function plate_z(y) = plate_t + (plate_wedge > 0 ? (y + out_y/2) * tan(plate_wed
 // extra height the horizontal wedge adds at the plate edge
 function plate_zx() = out_x/2 * tan(abs(plate_wedge_x));
 
+// the wall-screw seat floor, from the wall side (see plate()): the head lands
+// flush with the thin end, over the >= 1.0 mm web DESIGN_RULES §4 requires
+plate_seat_z = plate_t - plate_head_h - 0.2;
+assert(plate_seat_z >= 1.0 - 1e-9,
+       str("plate wall-screw seat leaves ", plate_seat_z, " mm under the head (< 1.0) — raise plate_t or use a lower head"));
+
 module plate() {
     hmax = plate_z(out_y/2) + 2*plate_zx() + 0.1;   // covers the HIGH side of the x-wedge too
     foot_z = plate_t + kh_extra + 3.0;         // security bore height = body pilot height
@@ -712,14 +729,18 @@ module plate() {
                 translate([-6, -4, -plate_t - plate_zx()]) cube([12, 4.5, foot_z + plate_zx() + 4]);
             }
         }
-        // wall screws: through-holes + flat counterbores at a CONSTANT 3 mm from
-        // the wall side, so standard-length screws work at any wedge angle
+        // wall screws: through-holes + flat counterbores whose floor sits at a
+        // CONSTANT height from the wall side, so standard-length screws work at
+        // any wedge angle. The floor is DERIVED so a pan head lands flush with
+        // the plate's thin end: the old constant 3.0 left a 1.0 seat on a 4.0
+        // plate, and the heads (#8 pan 2.8 tall) stood 1.5-2 mm proud under a
+        // SOLID body back — the body could not reach its studs or security bore
         // (7.5 from the side edge, not 8: the top stud's head now reaches y = stud_y + 6.8
         // and the counterbores must stay 1 mm clear of it in x)
         for (sy = [1, -1], sx = [1, -1]) {
             translate([sx*(out_x/2 - 7.5), sy*(out_y/2 - 14), -0.1])
                 cylinder(d = plate_screw_d, h = hmax + 1);
-            translate([sx*(out_x/2 - 7.5), sy*(out_y/2 - 14), 3.0])
+            translate([sx*(out_x/2 - 7.5), sy*(out_y/2 - 14), plate_seat_z])
                 cylinder(d = plate_screw_d + 4.4, h = hmax + 1);
         }
         // cable pass (a roomier match for the body's oval exit)

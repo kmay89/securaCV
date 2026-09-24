@@ -53,10 +53,10 @@
      "text": "Ø14 x 1 clear disc (neutral-cure silicone)"
     },
     {
-     "qty": 2,
+     "qty": 4,
      "kind": "wall-screw",
-     "spec": "#6 pan wall screw (plate)",
-     "text": "#6 pan wall screw (plate)"
+     "spec": "#8 pan wall screw (plate)",
+     "text": "#8 pan wall screw (plate)"
     }
    ],
    "lid_rib": {
@@ -70,8 +70,12 @@
    },
    "bom": {
     "SCR5": {
-     "bom": 8,
+     "bom": 10,
      "echo": 10
+    },
+    "SCR7": {
+     "bom": 4,
+     "echo": 4
     },
     "SCR8": {
      "bom": 1,
@@ -137,10 +141,10 @@
      "text": "Ø14 x 1 clear disc (neutral-cure silicone)"
     },
     {
-     "qty": 2,
+     "qty": 4,
      "kind": "wall-screw",
-     "spec": "#6 pan wall screw (plate)",
-     "text": "#6 pan wall screw (plate)"
+     "spec": "#8 pan wall screw (plate)",
+     "text": "#8 pan wall screw (plate)"
     }
    ],
    "bom": {
@@ -299,7 +303,7 @@
    },
    "bom": {
     "SCR5": {
-     "bom": 8,
+     "bom": 10,
      "echo": 8
     },
     "SCR6": {
@@ -366,7 +370,7 @@
    },
    "bom": {
     "SCR5": {
-     "bom": 8,
+     "bom": 10,
      "echo": 8
     },
     "SCR6": {
@@ -447,7 +451,7 @@
    "case": "Vision xiao",
    "items": [
     {
-     "qty": 4,
+     "qty": 6,
      "kind": "screw",
      "spec": "M2 pan x 10 self-tap",
      "text": "M2 pan x 10 self-tap"
@@ -518,8 +522,8 @@
    },
    "bom": {
     "SCR5": {
-     "bom": 8,
-     "echo": 8
+     "bom": 10,
+     "echo": 10
     },
     "SCR6": {
      "bom": 1,
@@ -797,18 +801,6 @@
   }
  },
  "bom_drift": [
-  {
-   "set": "doorbell",
-   "csv": "bom_canary_vision.csv",
-   "what": "short SCR5",
-   "detail": "bom_canary_vision.csv SCR5 qty 8 < 10 the CAD echoes"
-  },
-  {
-   "set": "doorbell",
-   "csv": "bom_canary_vision.csv",
-   "what": "unbilled #6 pan wall screw (plate)",
-   "detail": "2x #6 pan wall screw (plate) — no row in bom_canary_vision.csv bills it"
-  },
   {
    "set": "doorbell+inserts",
    "csv": "bom_canary_vision.csv",

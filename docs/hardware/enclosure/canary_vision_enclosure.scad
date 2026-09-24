@@ -91,7 +91,7 @@ opt_seal   = false;   // perimeter TPU gasket + drip-edge front + USB plug reces
 opt_mount  = true;    // mounting features per mount_style
 mount_style = "hinge"; // ["hinge","keyhole","both"]
 opt_weep   = false;   // Ø2 weep at the cavity's low point (bottom wall, beside the USB): condensate leaves (ON in the weather preset)
-seal_mid_posts = false; // (seal mode) one extra screw post mid-way along each long wall: four corner
+seal_mid_posts = false; // (seal mode) one extra screw post mid-way along each long wall (ON in the weather preset): four corner
                         // screws cannot hold 20 % gasket squeeze across a 60 mm span of 2 mm face
 head_seal  = false;   // (seal mode) O-ring under each front screw head — the posts stand INSIDE the
                       // gasket line, so a bare screw is a drip path; needs screw_head = "pan"
@@ -107,6 +107,9 @@ e_hood   = _pre(opt_hood,   false, true);
 e_seal   = _pre(opt_seal,   false, true);
 e_mount  = _pre(opt_mount,  true,  true);
 e_weep   = _pre(opt_weep,   false, true);
+// the weather preset's gasket spans 66 mm between corner screws — past the
+// 40 mm clamp-spacing rule (DESIGN_RULES §6) — so it carries the mid posts
+e_midposts = _pre(seal_mid_posts, false, true);
 m_style  = _pre(mount_style, "hinge", "both");
 
 /* [Boards] — measure YOURS; these are nominal, and the registry
@@ -491,7 +494,9 @@ if (!has_dk)
              " mm above the back face, at x ", usb_cx, " / ", vm_cx + xiao_usb_dx, " — MEASURE both"));
 if (e_hood)
     echo("opt_hood: the hood is its own part — render part=\"hood\", press its spigot into the front's groove and bond it (the front still prints face-down)");
-if (e_seal && !seal_mid_posts && inner_y - 2*post_corner > 40*lid_t)
+// the clamp-spacing rule is 40 mm (DESIGN_RULES §6, field_ratings.md) — this
+// read 40*lid_t, i.e. 80 mm at the house face, and never fired on the 66 mm span
+if (e_seal && !e_midposts && inner_y - 2*post_corner > 40)
     echo(str("seal mode: ", inner_y - 2*post_corner, " mm between corner screws on a ", lid_t,
              " mm front — the gasket opens mid-span; set seal_mid_posts=true"));
 // ----------------------------------------------------------------------------
@@ -513,7 +518,7 @@ function post_xy() = concat([
     [-inner_x/2 + pd/2 - 0.2,  inner_y/2 - pd/2 + 0.2],
     [ inner_x/2 - pd/2 + 0.2, -inner_y/2 + pd/2 - 0.2],
     [-inner_x/2 + pd/2 - 0.2, -inner_y/2 + pd/2 - 0.2],
-], (e_seal && seal_mid_posts) ? [[inner_x/2 - pd/2 + 0.2, 0], [-inner_x/2 + pd/2 - 0.2, 0]] : []);
+], (e_seal && e_midposts) ? [[inner_x/2 - pd/2 + 0.2, 0], [-inner_x/2 + pd/2 - 0.2, 0]] : []);
 
 // ring pedestal that supports a PCB's underside along its perimeter
 module ringped(cx, cy, l, w) {
@@ -600,6 +605,17 @@ module case_hinge() {
             }
         }
         tearbore_x(-out_x/2, ax[1], ax[2], out_x, hinge_hole);
+        // With the keyhole slab under the back (mount_style "both", the
+        // weather preset) the root web reached down to z = -mount_extra, and
+        // hanging straight under the bracket (0°, lens level) that slab-level
+        // web landed on the bracket's tripod boss: 46 mm³ of case in bracket,
+        // so the weather Vision could only hang tilted 30°. A 45° relief from
+        // the wall's foot takes the web back to the case floor — what the
+        // indoor back already had — and prints self-supported (bed = slab).
+        if (mount_extra > 0)
+            translate([-out_x, 0, 0]) rotate([90, 0, 90]) linear_extrude(2*out_x)
+                polygon([[out_y/2 + 0.5, -mount_extra - 1], [out_y/2 + 40, -mount_extra - 1],
+                         [out_y/2 + 40, -0.6], [out_y/2 + 0.5 + mount_extra + 0.4, -0.6]]);
     }
 }
 

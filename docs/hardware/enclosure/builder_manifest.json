@@ -56,7 +56,7 @@
       "name": "Canary WAP",
       "tagline": "The pocket witness case — XIAO ESP32-S3, optional camera, battery, GPS and weather sealing.",
       "about": "A pocket-sized box for the XIAO ESP32-S3 witness build. Tick only the peripherals actually on your bench — each one adds its bay, port or window, and the case grows or shrinks to fit.",
-      "print_plan": "Print the Base and Lid in PETG. Going outdoors? Pick the Outdoor preset, then also print the Gasket in TPU — plus the Shield and Tray if it will sit in the sun.",
+      "print_plan": "Print the Base and Lid in PETG for indoors. Going outdoors? Pick the Outdoor preset and print the shell in ASA (PETG yellows and embrittles in sun), the Gasket in TPU — plus the Shield in white or light ASA if it will sit in the sun.",
       "simple": [
         "part",
         "preset",
@@ -138,7 +138,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "dec4fc3a443d8d0c1b7c72f580a995fb394719d5f41a1fe3dbe80314d27496d5",
+      "sha256": "a759696f0a4371f65f6206f448d85769eb08dd8f65aea7e68a0ca2e6c43225bc",
       "groups": [
         {
           "name": "What to render",
@@ -969,8 +969,8 @@
             {
               "name": "lp_dy",
               "type": "number",
-              "default": 5.0,
-              "desc": "light-pipe port center Y, from the board center"
+              "default": 7.5,
+              "desc": "light-pipe port center Y, from the board center (7.5, not 5: at 5 the Ø3.2 bore broke 0.7 into the camera disc seat)"
             },
             {
               "name": "vent_pad_d",
@@ -1173,7 +1173,7 @@
       "name": "Canary Vision",
       "tagline": "The camera case — Grove Vision AI V2 or DevKit host, GoPro-compatible hinge, optional rain hood.",
       "about": "The camera witness for a wall or eave: Grove Vision AI V2 with a stacked XIAO (recommended) or a Grove-cabled DevKit. The GoPro-style hinge aims it; the options weather it.",
-      "print_plan": "Print the Back and Front in PETG — plus the Bracket and Knob if you use the hinge mount. The Outdoor preset adds a rain hood and the TPU Gasket.",
+      "print_plan": "Print the Back and Front in PETG — plus the Bracket and Knob if you use the hinge mount. The Outdoor preset adds a rain hood and the TPU Gasket; outdoors, print the shell, hood, Bracket and Knob in ASA — PETG is not UV-stable.",
       "simple": [
         "part",
         "preset",
@@ -1196,7 +1196,8 @@
         "opt_seal",
         "opt_mount",
         "mount_style",
-        "opt_weep"
+        "opt_weep",
+        "seal_mid_posts"
       ],
       "part_labels": {
         "all": "Assembled preview (not for printing)",
@@ -1246,7 +1247,7 @@
         }
       },
       "units": {},
-      "sha256": "174d4ee17371bb4022e5514191209c72fe3713bda1e277a419fd5e7834af3706",
+      "sha256": "999d9dba844fd13eab445aa9a69ec6f3c5164f22bd2c18437f45c219386c33bc",
       "groups": [
         {
           "name": "What to render",
@@ -1350,7 +1351,7 @@
               "name": "seal_mid_posts",
               "type": "bool",
               "default": false,
-              "desc": "(seal mode) one extra screw post mid-way along each long wall: four corner"
+              "desc": "(seal mode) one extra screw post mid-way along each long wall (ON in the weather preset): four corner"
             },
             {
               "name": "head_seal",
@@ -2289,7 +2290,7 @@
       "name": "Canary Vision Doorbell",
       "tagline": "Wyze/Ring form factor for the Vision stack — sealed by default, wedge plates for aiming down the approach.",
       "about": "The Vision stack in a Ring/Wyze-sized doorbell: camera, lit button, hidden security screw. It ships sealed by default — doorbells live outside.",
-      "print_plan": "Print the Body, Face and Plate in PETG and the Gasket in TPU. Aiming down a porch or across a corner? Set the wedge angles before you print the Plate.",
+      "print_plan": "Print the Body, Face and Plate in ASA (a doorbell lives in the sun; PETG only under a deep porch roof) and the Gasket in TPU. Aiming down a porch or across a corner? Set the wedge angles before you print the Plate.",
       "simple": [
         "part",
         "preset",
@@ -2346,7 +2347,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "9869e0df57092822d6e7c3f343736ed58cb84a6859d638bded8a9cad4a679902",
+      "sha256": "f17de85b4cf16ec5c684594a7cf80a681e412dec0330bd046a6b92a3e466238d",
       "groups": [
         {
           "name": "What to render",
@@ -2923,6 +2924,15 @@
               "type": "number",
               "default": 4.2,
               "desc": "wall screws (#8 / M4 PAN head — the seats are flat counterbores)"
+            },
+            {
+              "name": "plate_head_h",
+              "type": "number",
+              "default": 2.8,
+              "min": 2.0,
+              "step": 0.1,
+              "max": 3.2,
+              "desc": "wall-screw pan head height: the seat is cut this deep (+0.2) so the head sits flush"
             }
           ]
         },
@@ -3291,7 +3301,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "e44ad58d3b08381373e5475f63e1ab4265ffbf892e3849fb896cbed03b5c5d87",
+      "sha256": "83a31b970ed47b5ee108827e0f6fa9a6e98f19b7fef03b041c5fdb79c4ce3662",
       "groups": [
         {
           "name": "What to render",

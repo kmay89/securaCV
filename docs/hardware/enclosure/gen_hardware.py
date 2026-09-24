@@ -147,8 +147,6 @@ JOIN = {
 # await a human (the CSV's owner) — found by this gate's first run, reported,
 # not edited. A new one fails --check; so does one that stops happening.
 KNOWN_DRIFT = {
-    "doorbell|short SCR5",
-    "doorbell|unbilled #6 pan wall screw (plate)",
     "doorbell+inserts|short INS1",
     "sense|unbilled #6 pan wall screw (bracket)",
     "sense|unbilled M2 pan x 10 self-tap",

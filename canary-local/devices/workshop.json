@@ -585,7 +585,7 @@
     {
      "label": "Printed camera unit",
      "formula": "req + CAM1 + ENC2 + SCR5-7 + NUT1 + CW2",
-     "usd": 41.74,
+     "usd": 41.84,
      "note": "Wall/tripod-mountable unit with adjustable hinge; add WAP weather-kit items for sealing"
     }
    ],

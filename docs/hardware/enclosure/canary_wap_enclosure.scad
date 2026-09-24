@@ -265,7 +265,7 @@ cam_dy         = 0.0;   // camera window center Y, from the board center
 // Light-pipe / status-LED port (press fit: hole = lp_d + 2*tol_press)
 lp_d           = 3.0;   // light-pipe diameter (3 mm pipe -> 3.2 mm hole at default tol_press)
 lp_dx          = 5.0;   // light-pipe port center X, from the board center
-lp_dy          = 5.0;   // light-pipe port center Y, from the board center
+lp_dy          = 7.5;   // light-pipe port center Y, from the board center (7.5, not 5: at 5 the Ø3.2 bore broke 0.7 into the camera disc seat)
 // Buzzer + pressure vent (recess seats an adhesive GORE vent; ring of holes passes sound/pressure)
 vent_pad_d     = 12.0;  // GORE-vent recess Ø (the buzzer + pressure vent: the recess seats an adhesive vent)
 vent_pad_depth = 0.8;   // GORE-vent recess depth into the lid's outer face — core_vent_pad_depth()
@@ -477,6 +477,12 @@ assert(!e_antenna || !e_seal || pcb_z + ant_z + ant_d/2 + 1.5 <= base_h - gasket
 assert(!e_antenna || pcb_z + ant_z - ant_d/2 >= floor_t + 0.8, "antenna bore breaks into the floor — raise ant_z");
 // the camera window at the disc's inner plane must pass the lens's field of view:
 // lens front -> disc underside is the throw; half-angle tan(fov/2); +2 for the aperture itself
+// the light-pipe bore and the camera's clear-disc seat share the lid face:
+// at lp (5, 5) the Ø3.2 bore cut 0.7 mm into the Ø12.4 seat, so a glued disc
+// landed on the flush pipe's rim and could not seat. Keep a web between them.
+assert(!(e_camera && e_led) || cam_disc_d <= 0 ||
+       norm([lp_dx - cam_dx, lp_dy - cam_dy]) >= (cam_disc_d/2 + tol_slide) + (lp_d/2 + tol_press) + core_min_web(),
+       "the light-pipe bore breaks into the camera disc seat — move lp_dx/lp_dy");
 cam_throw = base_h + lid_t - (cam_disc_t > 0 ? cam_disc_t + 0.2 : 0) - (pcb_z + board_h + cam_lens_h);
 cam_need  = 2*cam_throw*tan(cam_fov/2) + 2.0;
 assert(!e_camera || cam_throw >= 0.5,
@@ -515,6 +521,13 @@ echo(str("lid screws: ", screw_size, " ", screw_head, " head, max length ",
          e_seal ? (head_seal ? " — O-ring glands under the heads" : " — NOTE: heads sit inside the gasket line; head_seal=true rings them") : ""));
 if (e_seal && wall_eff > wall_t)
     echo(str("seal mode: walls auto-thickened ", wall_t, " -> ", wall_eff, " mm to host the gasket groove"));
+// the clamp-spacing rule (DESIGN_RULES §6: <= 40 mm between the screws that
+// squeeze the gasket). Four corner posts on the battery case span ~96 mm, and a
+// mid post cannot fit beside a 34 mm cell in a 35 mm cavity, so say it on
+// every render rather than let a sealed build imply what it does not deliver
+_seal_span = max([for (a = post_xy(), b = post_xy()) (a[1] == b[1]) ? abs(a[0] - b[0]) : 0]);
+if (e_seal && _seal_span > 40)
+    echo(str("seal mode: ", _seal_span, " mm between gasket screws (rule: <= 40) — mid-span squeeze rests on the lid's stiffness; treat this build as splash-resistant and put it under the shield or an eave"));
 if (mount_extra > 0 && kh_lock && !e_battery)
     echo("kh_lock: no battery bay, so no free floor for the anti-lift knockouts — skipped (use mount_style=\"tabs\" for a screwed install)");
 assert(!(mount_extra > 0 && kh_lock && e_battery)

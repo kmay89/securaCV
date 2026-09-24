@@ -124,9 +124,11 @@ CURATED = [
                  "Tick only the peripherals actually on your bench — each one "
                  "adds its bay, port or window, and the case grows or shrinks "
                  "to fit.",
-        "print_plan": "Print the Base and Lid in PETG. Going outdoors? Pick "
-                      "the Outdoor preset, then also print the Gasket in TPU "
-                      "— plus the Shield and Tray if it will sit in the sun.",
+        "print_plan": "Print the Base and Lid in PETG for indoors. Going "
+                      "outdoors? Pick the Outdoor preset and print the shell "
+                      "in ASA (PETG yellows and embrittles in sun), the Gasket "
+                      "in TPU — plus the Shield in white or light ASA if it "
+                      "will sit in the sun.",
         "simple": ["part", "preset", "opt_camera", "opt_buzzer", "opt_led",
                    "opt_battery", "opt_gps", "opt_tamper", "opt_touch",
                    "opt_antenna", "opt_seal", "opt_mount", "mount_style",
@@ -198,14 +200,16 @@ CURATED = [
                  "The GoPro-style hinge aims it; the options weather it.",
         "print_plan": "Print the Back and Front in PETG — plus the Bracket "
                       "and Knob if you use the hinge mount. The Outdoor "
-                      "preset adds a rain hood and the TPU Gasket.",
+                      "preset adds a rain hood and the TPU Gasket; outdoors, "
+                      "print the shell, hood, Bracket and Knob in ASA — PETG "
+                      "is not UV-stable.",
         "simple": ["part", "preset", "host", "opt_led", "opt_vent",
                    "opt_tamper", "opt_hood", "opt_seal", "opt_mount",
                    "mount_style"],
         "preset_param": "preset",
         "preset_controls": ["opt_led", "opt_buzzer", "opt_vent", "opt_tamper",
                             "opt_hood", "opt_seal", "opt_mount",
-                            "mount_style", "opt_weep"],
+                            "mount_style", "opt_weep", "seal_mid_posts"],
         "part_labels": {
             "all": "Assembled preview (not for printing)",
             "back": "Back shell",
@@ -265,9 +269,11 @@ CURATED = [
         "about": "The Vision stack in a Ring/Wyze-sized doorbell: camera, "
                  "lit button, hidden security screw. It ships sealed by "
                  "default — doorbells live outside.",
-        "print_plan": "Print the Body, Face and Plate in PETG and the Gasket "
-                      "in TPU. Aiming down a porch or across a corner? Set "
-                      "the wedge angles before you print the Plate.",
+        "print_plan": "Print the Body, Face and Plate in ASA (a doorbell "
+                      "lives in the sun; PETG only under a deep porch roof) "
+                      "and the Gasket in TPU. Aiming down a porch or across a "
+                      "corner? Set the wedge angles before you print the "
+                      "Plate.",
         "simple": ["part", "preset", "opt_seal", "opt_vent", "opt_led",
                    "opt_tamper", "plate_wedge", "plate_wedge_x"],
         "preset_param": "preset",

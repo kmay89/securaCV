@@ -921,7 +921,7 @@ strip carrying its own rib notches, so it goes in as a single piece.
 
 ## Suggested print settings
 
-- **Material:** PETG or ASA for heat/UV exposure (PLA only for indoor/bench).
+- **Material:** PETG indoors; **ASA for anything that sees sun** — PETG is not UV-stable and yellows and embrittles outdoors (PLA only for indoor/bench fit checks).
   **Gasket:** TPU 90–95A, 2 perimeters, 100 % infill, slow. Deployed units:
   use the hardened spec in [Engineering & materials](#engineering--materials-security-build).
 - **Layer height:** 0.2 mm. **Walls:** 3 perimeters. **Infill:** 20–30 %.
