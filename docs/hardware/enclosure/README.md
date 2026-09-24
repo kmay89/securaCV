@@ -899,8 +899,9 @@ provably, since the bezel subtracts `seam − ribs` and the band *is*
 void.
 
 **No AMS?** Print `part="bezel"` and `part="back"` in black, then
-`part="fil_light"` on its own in white and press the two strips in — that is
-what the default `band_clear = 0.10` is for. Each side is one continuous
+`part="fil_light"` on its own in white and press the two strips in — set
+`band_clear = 0.10` for that (the default is now 0, the co-print: with the
+insert gap the seam's roof prints as a bridge between the hidden ribs). Each side is one continuous
 strip carrying its own rib notches, so it goes in as a single piece.
 
 ## Key parameters to check first

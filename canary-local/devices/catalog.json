@@ -223,7 +223,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 163,
+   "engineering_param_count": 176,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -1252,7 +1252,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 121,
+   "engineering_param_count": 124,
    "alternatives": [],
    "remix_of": null,
    "counts": {

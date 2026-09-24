@@ -8755,6 +8755,11 @@
        "name": "hdr_pin_w",
        "default": "1.2",
        "comment": "width the solder fillet + pin occupies across the row"
+      },
+      {
+       "name": "hdr_body_w",
+       "default": "2.54",
+       "comment": "the header's plastic body across the row — it sits on the PCB back, where the ribs land"
       }
      ]
     },
@@ -8798,14 +8803,9 @@
        "comment": "per-side clearance around the shell in its opening"
       },
       {
-       "name": "usb_wall",
-       "default": "1.8",
-       "comment": "plug-end wall thickness — thin, so a recessed receptacle housing clears before the plug is home"
-      },
-      {
        "name": "usb_relief",
        "default": "0.5",
-       "comment": "chamfer depth on the outer face around the opening — bounded by the wall above and below the plug"
+       "comment": "relief step depth on the outer face around the opening — bounded by the wall above and below the plug"
       }
      ]
     },
@@ -8849,8 +8849,8 @@
       },
       {
        "name": "btn_from_usb",
-       "default": "11.3",
-       "comment": "button center down from the PCB's plug-end edge — MEASURE"
+       "default": "7.0",
+       "comment": "button center down from the PCB's plug-end EDGE (not the cavity end)"
       },
       {
        "name": "btn_dz",
@@ -8876,7 +8876,7 @@
     },
     {
      "name": "microSD",
-     "note": "the card the thumb flick is for",
+     "note": "the card the pry scallop is for",
      "params": [
       {
        "name": "sd_window",
@@ -8935,8 +8935,8 @@
       },
       {
        "name": "band_clear",
-       "default": "0.10",
-       "comment": "per-face clearance; 0 for a co-printed band"
+       "default": "0",
+       "comment": "per-face clearance; 0 = co-printed (the default), 0.10 = pressed-in inserts"
       },
       {
        "name": "seam_h",
@@ -9016,7 +9016,7 @@
       },
       {
        "name": "snap_beam_l",
-       "default": "6.8",
+       "default": "6.0",
        "comment": "free beam LENGTH — see the strain note below"
       },
       {
@@ -9026,13 +9026,13 @@
       },
       {
        "name": "snap_eng",
-       "default": "0.55",
-       "comment": "engagement depth (how far the hook stands proud)"
+       "default": "0.4",
+       "comment": "engagement depth (how far the hook stands past the plate edge)"
       },
       {
        "name": "snap_flat",
-       "default": "0.5",
-       "comment": "the flat that actually seats"
+       "default": "0.3",
+       "comment": "the vertical flat at the hook tip"
       },
       {
        "name": "snap_slot",
@@ -9040,45 +9040,30 @@
        "comment": "U-slot width freeing each side of the beam"
       },
       {
-       "name": "snap_lead",
+       "name": "snap_hold",
        "default": "45",
-       "comment": "insertion lead-in angle, degrees — 45, not 30: the hook prints on a"
+       "comment": "hook UNDERSIDE angle from horizontal — the retention face; 45 is the flattest a face-down print holds"
       },
       {
-       "name": "snap_ret_lock",
-       "default": "62",
-       "comment": "return angle at the plug end — effectively permanent"
-      },
-      {
-       "name": "snap_ret_free",
-       "default": "38",
-       "comment": "return angle at the free end — releases with intent"
+       "name": "snap_entry",
+       "default": "45",
+       "comment": "hook TOP face angle from horizontal — the face the plate's lead chamfer rides in over"
       }
      ]
     },
     {
-     "name": "Thumb flick",
+     "name": "Pry scallop",
      "note": "how the back comes off",
      "params": [
       {
        "name": "flick_w",
        "default": "9.0",
-       "comment": "lug width"
-      },
-      {
-       "name": "flick_proud",
-       "default": "1.1",
-       "comment": "how far the lug stands above the rim"
-      },
-      {
-       "name": "flick_ramp",
-       "default": "22",
-       "comment": "the ramp face a thumb climbs, degrees"
+       "comment": "scallop width along the far wall"
       },
       {
        "name": "flick_scoop",
        "default": "7.0",
-       "comment": "Ø of the scoop through the bezel rim that reaches it"
+       "comment": "Ø of the scoop through the bezel rim"
       }
      ]
     },
@@ -9113,13 +9098,18 @@
       },
       {
        "name": "rib_inset",
-       "default": "3.2",
-       "comment": "where the compliant ribs land, in from the cavity wall — must stand inboard of the pin rows"
+       "default": "4.2",
+       "comment": "where the compliant ribs land, in from the cavity wall — inboard of the header bodies and the side switches"
       },
       {
        "name": "rib_w",
        "default": "1.2",
        "comment": "rib thickness across the board — the crushing face"
+      },
+      {
+       "name": "rib_l",
+       "default": "5.0",
+       "comment": "rib length along the board"
       }
      ]
     },
@@ -9183,7 +9173,7 @@
       },
       {
        "name": "r_in",
-       "default": "max(0.6, r_out - wall)"
+       "default": "min(max(0.4, r_out - wall), tol_slide * sqrt(2) / (sqrt(2) - 1) - 0.1)"
       },
       {
        "name": "stack_eff",
@@ -9231,28 +9221,36 @@
       },
       {
        "name": "pin_in",
-       "default": "board_w/2 - hdr_inset - hdr_pin_w/2",
-       "comment": "pin row's inboard face"
+       "default": "board_w/2 - hdr_inset - max(hdr_pin_w, hdr_body_w)/2",
+       "comment": "header's inboard face"
       },
       {
        "name": "usb_free",
-       "default": "usb_proud - usb_wall"
+       "default": "usb_proud - tol_slide - wall"
       },
       {
-       "name": "usb_top",
-       "default": "z_usb + usb_shell_h/2 + usb_clear + usb_relief"
+       "name": "usb_ow",
+       "default": "usb_shell_w + 2*usb_clear"
+      },
+      {
+       "name": "usb_cham",
+       "default": "port_bridge_cham_for(usb_ow)"
       },
       {
        "name": "usb_bot",
        "default": "z_usb - usb_shell_h/2 - usb_clear - usb_relief"
       },
       {
+       "name": "snap_defl",
+       "default": "snap_eng + tol_press"
+      },
+      {
        "name": "snap_strain",
-       "default": "1.5 * snap_eng * snap_beam_t / (snap_beam_l * snap_beam_l)"
+       "default": "snap_strain(snap_beam_t, snap_defl, snap_beam_l)"
       },
       {
        "name": "btn_y",
-       "default": "yc/2 - btn_from_usb",
+       "default": "board_l/2 - btn_from_usb",
        "comment": "+Y is the plug end"
       },
       {
@@ -9281,14 +9279,6 @@
        "comment": "plate underside, in bezel coordinates"
       },
       {
-       "name": "snap_y_lock",
-       "default": "yc/2 - 4.2"
-      },
-      {
-       "name": "snap_y_free",
-       "default": "-yc/2 + 6.0"
-      },
-      {
        "name": "snap_half",
        "default": "(snap_w + 2*snap_slot)/2"
       },
@@ -9297,8 +9287,30 @@
        "default": "(ear_w + 2)/2"
       },
       {
+       "name": "snap_y_lock",
+       "default": "btn_y - (snap_half + ear_half)"
+      },
+      {
+       "name": "snap_y_free",
+       "default": "-yc/2 + 6.0"
+      },
+      {
        "name": "groove_mid_z",
        "default": "plate_z0 + back_t/2"
+      },
+      {
+       "name": "hook_hr",
+       "default": "snap_eng * tan(snap_hold)",
+       "comment": "underside's rise"
+      },
+      {
+       "name": "hook_er",
+       "default": "snap_eng * tan(snap_entry)",
+       "comment": "top face's rise"
+      },
+      {
+       "name": "groove_edge_h",
+       "default": "hook_hr + snap_flat + hook_er + tol_press/cos(snap_entry)"
       },
       {
        "name": "beam_root_z",
@@ -9349,7 +9361,7 @@
       },
       {
        "name": "seam_y_hi",
-       "default": "snap_y_lock - snap_half - 1.0"
+       "default": "-seam_y_lo"
       },
       {
        "name": "seam_x_in",
@@ -9961,6 +9973,16 @@
        "comment": "PCB edge → header row centerline. The drawing offers two"
       },
       {
+       "name": "hdr_body_w",
+       "default": "2.54",
+       "comment": "the header's plastic body across the row — MEASURE; the lid bosses must clear it"
+      },
+      {
+       "name": "hdr_row_l",
+       "default": "22.86",
+       "comment": "header row length along Y, centered on the board (9 x 2.54) — MEASURE"
+      },
+      {
        "name": "brass_h",
        "default": "3.0",
        "comment": "factory pillar height above the PCB back — MEASURED"
@@ -10051,6 +10073,11 @@
        "name": "usb_a_proud",
        "default": "14.0",
        "comment": "shell overhang past the PCB edge — MEASURE. This is the"
+      },
+      {
+       "name": "usb_a_over",
+       "default": "3.0",
+       "comment": "how far the plug shell runs back OVER the PCB from its edge — MEASURE; the lid bosses stand clear of it"
       },
       {
        "name": "usb_a_clear",
@@ -10204,6 +10231,11 @@
        "name": "btn_body_p",
        "default": "0.4",
        "comment": "metal body overhang past the PCB edge — MEASURE"
+      },
+      {
+       "name": "btn_body_d",
+       "default": "3.5",
+       "comment": "switch body depth IN from its overhanging face (X) — MEASURE; the lid bosses must clear it"
       },
       {
        "name": "light_seam",
@@ -10468,7 +10500,7 @@
      "params": [
       {
        "name": "pillars_in",
-       "default": "(headers != \"none\")"
+       "default": "(headers != \"none\") && port != \"usb_a"
       },
       {
        "name": "cav_d",
@@ -10482,7 +10514,7 @@
       },
       {
        "name": "r_in",
-       "default": "max(0.6, r_out - wall)"
+       "default": "min(max(0.4, r_out - wall), tol_slide * sqrt(2) / (sqrt(2) - 1) - 0.1)"
       },
       {
        "name": "z_pcb_front",
@@ -10529,8 +10561,8 @@
       },
       {
        "name": "usb_free",
-       "default": "usb_a_proud - wall",
-       "comment": "insertion length left to the plug"
+       "default": "usb_a_proud - tol_slide - wall",
+       "comment": "insertion length left to the plug: the"
       },
       {
        "name": "usb_slide",
@@ -10556,8 +10588,41 @@
        "comment": "the ear wraps the paddle recess"
       },
       {
+       "name": "om_w",
+       "default": "port_usbc_overmold_w() + 2*tol_slide"
+      },
+      {
+       "name": "om_h",
+       "default": "port_usbc_overmold_h() + 2*tol_slide"
+      },
+      {
+       "name": "om_cham",
+       "default": "port_bridge_cham_for(om_w)"
+      },
+      {
+       "name": "om_z0",
+       "default": "z_usb - om_h/2",
+       "comment": "counterbore floor"
+      },
+      {
+       "name": "om_z1",
+       "default": "z_usb + om_h/2",
+       "comment": "top of the envelope box (chamfers start here)"
+      },
+      {
+       "name": "om_y_rf",
+       "default": "-(board_l/2 + usb_proud) + tol_slide",
+       "comment": "the receptacle face, board floated inward"
+      },
+      {
+       "name": "om_y_out",
+       "default": "-(yo/2 + chin_bump) - 1",
+       "comment": "past the chin's outer face"
+      },
+      {
        "name": "chin_w",
-       "default": "usb_ow + 4"
+       "default": "max(usb_ow + 4, is_a ? 0 : om_w + 2*1.2)",
+       "comment": "the counterbore keeps 1.2 of chin each side"
       },
       {
        "name": "pad_beam",
@@ -10680,10 +10745,6 @@
        "default": "stack_eff - (pillars_in ? brass_h : 0)"
       },
       {
-       "name": "hole_iy_usb_eff",
-       "default": "(is_a && collar_on) ? max(hole_iy_usb, collar_l + stand_d/2 + 0.3 + tol_slide) : hole_iy_usb"
-      },
-      {
        "name": "mark_w",
        "default": "mark_word_ink_w(mark_word, mark_word_h)"
       },
@@ -10784,6 +10845,18 @@
       {
        "name": "band_under",
        "default": "(z_usb - usb_oh/2 - band_notch) - seam_z0"
+      },
+      {
+       "name": "band_under_c",
+       "default": "(om_z0 - band_notch) - seam_z0"
+      },
+      {
+       "name": "usb_a_top",
+       "default": "z_usb + usb_a_h/2 + port_bridge_cham_for(usb_ow)"
+      },
+      {
+       "name": "sw_x0",
+       "default": "board_w/2 + btn_body_p - btn_body_d"
       }
      ]
     }

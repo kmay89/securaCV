@@ -38,9 +38,9 @@
 //     CHAMFER (`usb_cham`) so a plug's overmold meets a lead-in, not a
 //     wall edge. It was a recessed ring until print 2: the ring's floor
 //     crossed the insertion slot at 0.4 mm thick and broke out — the
-//     chamfer leaves no thin floor to break. The wall stays thin enough
-//     (wall + chin ≈ 3.5 mm) that any compliant plug bottoms out on the
-//     shell, never on the case.
+//     chamfer leaves no thin floor to break. The outer face is then
+//     COUNTERBORED to the spec-max Type-C overmold back to the receptacle
+//     face (usb_om_cut) — a shell-sized hole left the plug 1.8 mm short.
 //
 //  3. THE GLASS IS LOCATED, NOT CLAMPED. The panel's front face IS glass,
 //     and glass fails from stress at its edges. Three rules here:
@@ -234,7 +234,7 @@
 use <canary_mark_lib.scad>   // the house mark; this part wears the wordmark
 use <canary_vent_lib.scad>   // the house egg — here it is the hanger, not a vent
 use <canary_core_lib.scad>   // rrect2d — the shared 2D helpers; the local copy is gone
-use <canary_port_lib.scad>   // the series-A standards + the insertion-length gate
+use <canary_port_lib.scad>   // the series-A standards + the insertion-length gate + the bridge-safe opening + the Type-C overmold envelope
 use <canary_board_lib.scad>  // the ws147 board record the knob defaults cite
 use <canary_color_lib.scad>  // the colorway registry — preview spool colors
 
@@ -264,6 +264,8 @@ hdr_inset = 1.6;   // PCB edge → header row centerline. The drawing offers two
                    // readings (1.27 if the 17.78 dim is the column span, 2.00
                    // if that is the edge inset) — MEASURE; the skirt assert
                    // below is what a wrong value trips
+hdr_body_w = 2.54; // the header's plastic body across the row — MEASURE; the lid bosses must clear it
+hdr_row_l = 22.86; // header row length along Y, centered on the board (9 x 2.54) — MEASURE
 brass_h   = 3.0;   // factory pillar height above the PCB back — MEASURED
                    // (kmay89, print 2): the lid-inner-to-pillar-top gap is
                    // 2.8 mm in the printed case, whose cavity sits 5.8 below
@@ -336,10 +338,11 @@ usb_a_proud = 14.0; // shell overhang past the PCB edge — MEASURE. This is the
                     // board, so ~14 past the edge is the realistic start, NOT
                     // the 12 mm insertion figure (that is what must survive
                     // AFTER the end wall takes its cut).
+usb_a_over = 3.0;   // how far the plug shell runs back OVER the PCB from its edge — MEASURE; the lid bosses stand clear of it
 usb_a_clear = 0.35; // per-side clearance around the shell in its opening
                     // (the plug-end wall is NOT a knob here: it is this case's
-                    //  ordinary `wall`, and the assert below proves 14.0 - 2.2
-                    //  still leaves 11.8 mm of insertion length. A thinner
+                    //  ordinary `wall`, and the assert below proves 14.0 - 0.2
+                    //  - 2.2 still leaves 11.6 mm of insertion length. A thinner
                     //  special-case wall would buy 0.4 mm nobody needs and
                     //  cost the drop collar the stock it anchors into.)
 usb_a_relief = 0.5; // outer-face relief so a receptacle recessed in a wall-
@@ -568,6 +571,7 @@ btn_proud  = 1.8;  // black actuator overhang past the PCB edge — MEASURE
 btn_ch_w   = 3.4;  // actuator channel width — hugs the nub, nothing more
 btn_body_w = 5.2;  // shallow relief width for the switch's metal body — MEASURE
 btn_body_p = 0.4;  // metal body overhang past the PCB edge — MEASURE
+btn_body_d = 3.5;  // switch body depth IN from its overhanging face (X) — MEASURE; the lid bosses must clear it
 
 /* [Light band] — the white PETG that does the acrylic sandwich's job.
    Measured on the hardware (kmay89), stated as the side elevation you look
@@ -898,8 +902,11 @@ $fa = 3; $fs = 0.4;
 // ----------------------------------------------------------------------------
 // pillars_in: the brass corner pillars are on the board (as-shipped and
 // headers builds alike) — the bosses land on their tops and the skirt is
-// notched around them.
-pillars_in = (headers != "none");
+// notched around them. NEVER on the usb_a board: the pillars are a MEASURED
+// fact about the C3 (see the "pillars" assert below), and the S3 stick's
+// male build used to inherit them anyway — bosses cut short to brass_h and
+// sized for brass tops that board does not have.
+pillars_in = (headers != "none") && port != "usb_a";
 // The pillars build deepens only as far as the pillars demand: brass_h plus
 // the measured working gap the boss spans (stand_gap). The male build
 // swallows header base + pins instead.
@@ -911,7 +918,11 @@ xc = board_w + 2*tol_slide;   yc = board_l + 2*tol_slide;   // board cavity
 xo = xc + 2*wall;             yo = yc + 2*wall;             // outer shell
 cav_d = lcd_rise + pcb_t + stack_eff;            // glass ledge → lid inner
 bez_h = face_t + cav_d;                          // bezel wall height
-r_in  = max(0.6, r_out - wall);
+// The cavity corner radius is held by the BOARD: a square-cornered PCB
+// clears a cavity tol_slide bigger only when (r - tol)·√2 <= r, i.e.
+// r <= tol·√2/(√2 - 1) = 0.68 at 0.20 (less 0.1 for the arc's facets).
+// r_out - wall (0.8) stood into all four PCB corners.
+r_in  = min(max(0.4, r_out - wall), tol_slide * sqrt(2) / (sqrt(2) - 1) - 0.1);
 
 z_pcb_front = face_t + lcd_rise;
 z_pcb_back  = z_pcb_front + pcb_t;
@@ -944,7 +955,8 @@ btn_body_reach = btn_body_p + tol_slide;
 // the case must not add to it — which is why usb_a_reach is NOT what sets the
 // chin. See chin_bump.
 usb_reach = (is_a ? wall : usb_proud) + tol_slide;
-usb_free  = usb_a_proud - wall;          // insertion length left to the plug
+usb_free  = usb_a_proud - tol_slide - wall;   // insertion length left to the plug: the
+                                         // cavity gap AND the end wall come off it
 usb_slide = usb_ow + 0.1;                // insertion slot — a hair looser than
                                          // the opening, and flush-walled with
                                          // it, so the connector drops down it
@@ -963,7 +975,28 @@ ear_bump  = max(0, btn_reach + ear_skin - wall);
 chin_bump = is_a ? 0 : max(0, usb_reach + ear_skin - wall);
 ear_w  = pad_l + pad_slot + 2.4;         // the ear wraps the paddle recess
                                          // with 1.2 mm of wall each side
-chin_w = usb_ow + 4;
+
+// ── THE OVERMOLD COUNTERBORE — usb_c ────────────────────────────────────────
+// The header used to promise the wall was "thin enough that any compliant
+// plug bottoms out on the shell". It was not: the receptacle face sits 1.8 mm
+// behind the chin face, behind a shell-sized hole, so a spec-max overmold
+// stopped on the chin and the plug mated 1.8 mm short (76 mm3 of overmold
+// inside the case). A cable's plug enters the receptacle only as far as its
+// OVERMOLD lets it, so the stretch from the chin face back to the receptacle
+// face has to be open to the overmold's envelope — the spec's maximum
+// (canary_port_lib), plus tol_slide — or the plug stops on the case before
+// it latches. Its roof is the bridge-safe
+// profile; where the case is too shallow for that roof the counterbore runs
+// out through the rim instead, open to the lid (and, in the stripped build,
+// into a shallow pocket in the lid's edge — see lid()).
+om_w   = port_usbc_overmold_w() + 2*tol_slide;
+om_h   = port_usbc_overmold_h() + 2*tol_slide;
+om_cham = port_bridge_cham_for(om_w);
+om_z0  = z_usb - om_h/2;                    // counterbore floor
+om_z1  = z_usb + om_h/2;                    // top of the envelope box (chamfers start here)
+om_y_rf = -(board_l/2 + usb_proud) + tol_slide;   // the receptacle face, board floated inward
+om_y_out = -(yo/2 + chin_bump) - 1;               // past the chin's outer face
+chin_w = max(usb_ow + 4, is_a ? 0 : om_w + 2*1.2);   // the counterbore keeps 1.2 of chin each side
 
 // paddle frame (per ±X ear): the beam hinges at its USB-end face and its
 // free end carries the press dot. All in case coordinates.
@@ -1051,13 +1084,22 @@ snap_w = nub_w + 2*snap_play;
 // Stripped, they run to the bare PCB corners over the same M2 positions.
 stand_d   = pillars_in ? 4.6 : 4.2;
 stand_len = stack_eff - (pillars_in ? brass_h : 0);
-// usb_a build: the USB-pair bosses move inboard of the drop collar's reach
-// (collar_l + boss radius + 0.3) — at the M2 positions they landed on the
-// collar's flanks and the lid could not close; they press bare PCB there
-hole_iy_usb_eff = (is_a && collar_on) ? max(hole_iy_usb, collar_l + stand_d/2 + 0.3 + tol_slide) : hole_iy_usb;
+// usb_a build: the USB-pair bosses have no pillars to land on, and the M2
+// positions are taken by the drop collar. The first relocation (inboard of
+// the collar by collar_l + boss radius + 0.3) put them ON the BOOT/RST switch
+// bodies — 35 mm3 of lid in the switches, a lid that could not close, or one
+// that held both buttons down. So they go inboard of the switch bodies in Y,
+// and on the male build inboard of the header rows in X too; they press bare
+// PCB there — MEASURE that nothing else stands there on the S3 board.
+stand_usb_y = is_a ? btn_y + btn_body_w/2 + stand_d/2 + 0.4
+                   : -(board_l/2 - hole_iy_usb);
+stand_usb_x = (is_a && headers == "male")
+            ? min(board_w/2 - hole_ix_usb,
+                  board_w/2 - hdr_inset - hdr_body_w/2 - stand_d/2 - 0.4)
+            : board_w/2 - hole_ix_usb;
 // the four positions in CASE frame (USB end = −Y); the lid module flips Y
-stand_case = [[ board_w/2 - hole_ix_usb, -(board_l/2 - hole_iy_usb_eff)],
-              [-(board_w/2 - hole_ix_usb), -(board_l/2 - hole_iy_usb_eff)],
+stand_case = [[ stand_usb_x, stand_usb_y],
+              [-stand_usb_x, stand_usb_y],
               [ board_w/2 - hole_ix_far,  board_l/2 - hole_iy_far ],
               [-(board_w/2 - hole_ix_far), board_l/2 - hole_iy_far ]];
 
@@ -1319,6 +1361,61 @@ assert(!is_a || !light_seam || !band_ring || band_under >= 1.0,
            z_usb - usb_oh/2 - band_notch, "). Under 1.0 mm it is not a pipe ",
            "and the ring is dark across the whole plug wall. Lower seam_dz, ",
            "shrink band_notch, or re-MEASURE usb_dz."));
+// usb_c: the overmold counterbore DOES reach the ring's height (its floor
+// sits on the band's top), so there the ring dives under it the same way —
+// and the same 1.0 floor holds what survives.
+band_under_c = (om_z0 - band_notch) - seam_z0;
+assert(is_a || !light_seam || !band_ring || band_under_c >= 1.0,
+       str("the overmold counterbore leaves only ", band_under_c, " mm of light ",
+           "ring under it — under 1.0 mm it is not a pipe. Lower seam_dz or ",
+           "shrink band_notch."));
+assert(is_a || om_z0 >= face_t + 0.6,
+       str("the overmold counterbore's floor (z=", om_z0, ") breaks into the ",
+           "bezel face — check usb_dz"));
+// usb_a: the opening's bridge-safe top (45° chamfers from the shell line up
+// to a 7.0 flat) must stay under the rim, or the lintel is gone.
+usb_a_top = z_usb + usb_a_h/2 + port_bridge_cham_for(usb_ow);
+assert(!is_a || usb_a_top <= bez_h - 0.5,
+       str("the plug opening's bridge-safe top reaches z=", usb_a_top,
+           " under a rim at ", bez_h, " — under 0.5 mm of lintel left. Check ",
+           "usb_dz; a flat 12 mm lintel is not the fix."));
+// ── THE LID'S BOSSES AGAINST WHAT IS ON THE BOARD'S BACK ───────────────────
+// A boss that lands on a component instead of the PCB is a lid that will
+// not close, or one that holds BOOT/RST down. Each footprint is checked
+// against the switch bodies (unless it stops on a pillar top that stands
+// clear of them), the header rows in the male build (same), and the drop
+// collar. The usb_a relocation shipped onto the switch bodies because no
+// gate asked. (btn_body_w is the RELIEF width, the body plus tol_slide a
+// side, so the body box is that less 2·tol_slide; the stripped C3's own
+// M2-position bosses clear it by 0.1, which is why the switch check takes
+// no extra margin.)
+function box_clear(p, r, x0, x1, y0, y1, m = 0.3) =
+    abs(p[0]) + r + m <= x0 || abs(p[0]) - r - m >= x1 ||
+    p[1] + r + m <= y0 || p[1] - r - m >= y1;
+sw_x0 = board_w/2 + btn_body_p - btn_body_d;
+assert(len([for (p = stand_case)
+           if (!(pillars_in && brass_h >= 2*btn_dz + 0.3)
+               && !box_clear(p, stand_d/2, sw_x0, board_w/2 + btn_body_p,
+                             btn_y - btn_body_w/2 + tol_slide,
+                             btn_y + btn_body_w/2 - tol_slide, 0)) 1]) == 0,
+       str("a lid press boss lands on a BOOT/RST switch body (x ", sw_x0,
+           ".., y ", btn_y - btn_body_w/2, "..", btn_y + btn_body_w/2,
+           ") — move the boss, never the switch"));
+assert(headers != "male" || len([for (p = stand_case)
+           if (!(pillars_in && brass_h >= 2.5 + 0.3)
+               && !box_clear(p, stand_d/2, board_w/2 - hdr_inset - hdr_body_w/2,
+                             board_w/2 - hdr_inset + hdr_body_w/2,
+                             -hdr_row_l/2, hdr_row_l/2)) 1]) == 0,
+       "a lid press boss lands on a header row — pull it inboard of hdr_body_w");
+assert(!is_a || !collar_on || len([for (p = stand_case)
+           if (!box_clear(p, stand_d/2, 0, usb_a_w/2 + collar_gap + collar_t,
+                          -yc/2, -yc/2 + collar_l)) 1]) == 0,
+       "a lid press boss lands on the drop collar");
+assert(!is_a || len([for (p = stand_case)
+           if (!box_clear(p, stand_d/2, 0, usb_a_w/2,
+                          -board_l/2 - 1, -board_l/2 + usb_a_over)) 1]) == 0,
+       str("a lid press boss lands on the plug shell where it runs ", usb_a_over,
+           " mm back over the PCB — MEASURE usb_a_over, then move the boss"));
 // The collar is added AFTER the cavity now, so nothing clips it in XY — which
 // means nothing stops it growing out through the side walls either. This is
 // the assert that replaced that clip.
@@ -1555,6 +1652,37 @@ module usb_port2d(w, h, r = usb_a_r) {
     else stadium2d(w, h);
 }
 
+// The series-A BORE — the opening through the plug wall and the collar's
+// inside — in the wall's plane about the shell's center: the shell box grown
+// by `clr` at the sides and bottom, and a BRIDGE-SAFE top
+// (port_bridge_profile2d). The bezel prints face-down, so the top of every
+// horizontal bore is a bridge: this was a 12.0 mm flat lintel in the wall
+// and an 11.8 mm flat roof in the collar. The 45° chamfers start at the
+// SHELL's top line, so they pass `clr` over its corners and never cut its
+// envelope; port_bridge_cham_for() sizes them to the catalog's 7.0 flat.
+module usb_a_bore2d(clr) {
+    w = usb_a_w + 2*clr;
+    c = port_bridge_cham_for(w);
+    h = usb_a_h + clr + c;
+    translate([0, h/2 - (usb_a_h/2 + clr)]) port_bridge_profile2d(w, h, c);
+}
+
+// The usb_c overmold counterbore (see om_* in Derived), in CASE coordinates:
+// from past the chin's face back to the receptacle's face, `grow` bigger all
+// round. `box_only` stops it at the envelope's top — the lid's pocket takes
+// only that, never the chamfered roof above it, which would hole the plate.
+module usb_om_cut(grow = 0, box_only = false) {
+    translate([usb_dx, om_y_rf + grow, z_usb]) rotate([90, 0, 0])
+        linear_extrude(om_y_rf + grow - om_y_out)
+            offset(delta = grow)
+                if (box_only)
+                    translate([0, -(bez_h + back_t)/2 + om_h/2])
+                        square([om_w, bez_h + back_t], center = true);
+                else
+                    translate([0, (om_h + om_cham)/2 - om_h/2])
+                        port_bridge_profile2d(om_w, om_h + om_cham, om_cham);
+}
+
 // The drop collar — usb_a only, and it reaches INWARD from the plug-end wall,
 // never outward. That is the whole subtlety, and the first cut of this got it
 // wrong: an outward ring is the obvious shape, and every millimeter of it
@@ -1571,6 +1699,11 @@ module usb_port2d(w, h, r = usb_a_r) {
 // the board is. So it is an inverted U over the shell's top and upper flanks
 // rather than a closed ring — which is also the half that matters, since a
 // case dropped on its plug levers the shell toward the glass.
+// Its bore is the bridge-safe usb_a_bore2d, so the crown bears on the
+// shell's top CORNERS through the 45° chamfers (collar_gap over them) under
+// a 7.0 flat; and its underside is a 45° ramp up from the end wall rather
+// than a flat shelf — printed face-down it hangs off that wall, and a flat
+// collar_l cantilever is an overhang. It stops 0.3 under the lid.
 // ⚠️ IT IS ADDED AFTER THE CAVITY IS CUT, not with the shell stock, and the
 // first cut of this got that wrong in a way nothing caught: the collar stands
 // INBOARD of the plug wall, so it lives inside cavity2d() — and the bezel
@@ -1587,18 +1720,23 @@ module usb_port2d(w, h, r = usb_a_r) {
 module usb_collar() {
     if (is_a && collar_on)
         intersection() {
-            translate([usb_dx, -(yc/2 + 0.01), z_usb]) rotate([-90, 0, 0])
-                linear_extrude(collar_l)
+            translate([usb_dx, -(yc/2 + 0.01), z_usb]) rotate([90, 0, 0])
+                mirror([0, 0, 1]) linear_extrude(collar_l)
                     difference() {
-                        usb_port2d(usb_a_w + 2*collar_gap + 2*collar_t,
-                                   usb_a_h + 2*collar_gap + 2*collar_t,
-                                   usb_a_r + collar_t);
-                        usb_port2d(usb_a_w + 2*collar_gap,
-                                   usb_a_h + 2*collar_gap);
+                        offset(delta = collar_t) usb_a_bore2d(collar_gap);
+                        usb_a_bore2d(collar_gap);
                     }
-            // above the PCB's back face — below that plane is the board
+            // above the PCB's back face — below that plane is the board —
+            // and 0.3 under the lid (the chamfered crown stands taller than
+            // the old flat one did)
             translate([-2*xo, -2*yo, z_pcb_back])
-                cube([4*xo, 4*yo, bez_h - z_pcb_back]);
+                cube([4*xo, 4*yo, bez_h - 0.3 - z_pcb_back]);
+            // the 45° underside, rising inward from the end wall
+            translate([-2*xo, 0, 0]) rotate([90, 0, 90]) linear_extrude(4*xo)
+                polygon([[-(yc/2 + 0.02), z_pcb_back - 0.01],
+                         [-(yc/2 - collar_l), z_pcb_back + collar_l],
+                         [-(yc/2 - collar_l), bez_h],
+                         [-(yc/2 + 0.02), bez_h]]);
         }
 }
 
@@ -1709,6 +1847,9 @@ module seam_solid(shrink = 0) {
                 linear_extrude(2*(wall + collar_l + 4), center = true)
                     usb_port2d(usb_ow + 2*band_notch, usb_oh + 2*band_notch,
                                usb_a_r + band_notch);
+        // …and on the C build under the overmold counterbore, whose floor
+        // lands on the band's top: the same dive, the same black margin.
+        else usb_om_cut(band_notch);
     }
 }
 
@@ -1772,9 +1913,14 @@ module bezel() {
         // USB insertion slot (stadium floor → rim; solid wall below)
         usb_slot();
         // the port opening through the bottom wall + chin, tight on the shell
+        // (series-A: the bridge-safe bore; the C stadium is 3.35 tall and
+        // arches over itself)
         translate([usb_dx, -yo/2, z_usb]) rotate([90, 0, 0])
             linear_extrude(2*(wall + chin_bump + collar_l + 2), center = true)
-                usb_port2d(usb_ow, usb_oh);
+                if (is_a) usb_a_bore2d(usb_a_clear);
+                else usb_port2d(usb_ow, usb_oh);
+        // usb_c: the overmold counterbore, chin face back to receptacle face
+        if (!is_a) usb_om_cut(0);
         // …and the outer-face relief. Two different jobs, hence two shapes:
         //   usb_c — a CHAMFER, the plug's overmold lead-in. It was a recessed
         //           ring until print 2 exposed the flaw (a 0.4 mm floor over
@@ -1970,8 +2116,19 @@ module lid() {
         // and the white shell ends exactly at its edge.
         if (lid_has_kh)
             translate([0, -kh_y, -0.1]) linear_extrude(back_t + 0.2) kh_egg2d();
+        // usb_c, stripped build only: the overmold envelope stands om_z1 -
+        // bez_h above the rim, over the last half-millimeter of wall before
+        // the receptacle face — so the lid's inner face takes a shallow
+        // pocket at its USB edge. The envelope BOX only (usb_om_cut's
+        // box_only), never the chamfered roof, which would hole the plate.
+        if (!is_a && om_z1 > bez_h)
+            rotate([180, 0, 0]) translate([0, 0, -(bez_h + back_t)])
+                usb_om_cut(0, true);
     }
 }
+assert(is_a || om_z1 <= bez_h + back_t - 1.0,
+       str("the overmold envelope reaches z=", om_z1, " — the lid's pocket ",
+           "for it would leave under 1.0 mm of plate"));
 
 // ----------------------------------------------------------------------------
 //  MARK — the wordmark inlay, black. Exactly the volume the lid's deboss
