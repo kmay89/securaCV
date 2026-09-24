@@ -45,7 +45,7 @@ survived only if a majority could not. The counts:
 | Landed in wave 5 (2026-09-11, PR #1682, website #197) | row 21's Parametrize wave, in part — the device manifests own their cases' board knobs and a generator writes them into the CAD, the regeneration order is one command, the CAD ledger the website pins to carries the knobs; zero `.scad` bytes moved |
 | Landed in wave 6 (2026-09-19, PR #1686) | the open clauses of three landed rows — 1 (the add-on and sidecar wire the fleet roll-call file), 12's flasher half (the broker TLS controls in both flashers) and 35 (the SBOM schema gate and the sketch-pin assertion), then 12's other two halves (the canary client rides the shared broker transport with its own provisioning path; an opt-in `--with broker_tls` hub step), 17 (the coarse weather location entered on the glass), 21's leftovers (the C6 and the Touch 1.69 own their knobs; `cad.also` gives the doorbell an owner; the 7" frame stays open with its reason written) and the canary `release_ha` image joining PR CI |
 | Landed in wave 7 (2026-09-23, PR #1703 and PR #1704, website #201 and #202) | a wave that worked the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)) rather than this list; where it touched rows here, each a decision for the maintainer to confirm: the two decisions taken on 2026-09-22 (row 30's exact pin and the ten-minute uptime-bucket floor, #1704); row 21's render-plan package in part (the manifests home the Lab's enclosure cards, option B; the selector half not built) and `body_mm` retired by construction (#1703); and on rows 1 and 20 the Docker sidecar's bind switch and the Witness Wall's viewer-token pairing (#1704). The website carry of the 1.69's knobs, which row 21 still listed, had already landed in website PR #197 |
-| Landed in wave 8 (PR #1691, PR #1720 and PR #1722, website #199, mirror #17) | the open clauses of rows 12 (both flashers' receipts name the broker TLS mode they sealed; in PR #1722, the products' TLS connect bounded under their task watchdog) and 17 (the iPhone's Display settings sheet reads the glass's `on_glass` block, read-only), and follow-ups from a fresh security sweep of the wave-5 and wave-6 surfaces (the Canary API's credential carry, `Host` guard and CA verdict, under row 12's canary client, with the provisioning receipt's `Host` check in PR #1722; the security docs rewritten to the shipped posture with a banned-claims test, whose passages older than #1704's page-token gate PR #1720 brought up to date, sweep D8) and a validator gap (the size-guard rule for every product, wave 6's row-12 prelude made structural). PR #1722 also lands a sentence on row 37 and §5's steps 4 (the wander and jitter extractor, host half) and 5 (the probe's airtime accounting); the rest of the batch is recorded in the 2026-09-20 sweep (F51, F52, F56, A23, A24, D7-D9, CI1 and HA15 ticked; F53-F55, W21, HA14, HA16, CI2 and CI3 open). The PR's own title says wave 7; the row above already holds that name, so this document calls it wave 8. Website #199 makes the Wall read a silent `online` as offline, and PR #1720 re-vendors the Wall's emulator into both apps. The HACS mirror's resync landed in securacv-homeassistant#17 (2026-09-24). See §3, "Landed in wave 8" |
+| Landed in wave 8 (PR #1691, PR #1720, PR #1722 and PR #<D>, website #199 and #207, mirror #17) | the open clauses of rows 12 (both flashers' receipts name the broker TLS mode they sealed; in PR #1722, the products' TLS connect bounded under their task watchdog) and 17 (the iPhone's Display settings sheet reads the glass's `on_glass` block, read-only), and follow-ups from a fresh security sweep of the wave-5 and wave-6 surfaces (the Canary API's credential carry, `Host` guard and CA verdict, under row 12's canary client, with the provisioning receipt's `Host` check in PR #1722; the security docs rewritten to the shipped posture with a banned-claims test, whose passages older than #1704's page-token gate PR #1720 brought up to date, sweep D8) and a validator gap (the size-guard rule for every product, wave 6's row-12 prelude made structural). PR #1722 also lands a sentence on row 37 and §5's steps 4 (the wander and jitter extractor, host half) and 5 (the probe's airtime accounting); the rest of the batch is recorded in the 2026-09-20 sweep (F51, F52, F56, A23, A24, D7-D9, CI1 and HA15 ticked; F53-F55, W21, HA14, HA16, CI2 and CI3 open when it merged). PR #<D> lands the airtime governor's framing (F54), the Canary's and the WAP's NVS fixes (F55, F53), the key-source docs (HA14) and two CI gates (CI3, CI2), with a sentence on row 37, and files F57-F61, HA17, HA18 and CI4 (HA17 and HA18 in progress). The PR's own title says wave 7; the row above already holds that name, so this document calls it wave 8. Website #199 makes the Wall read a silent `online` as offline, PR #1720 re-vendors the Wall's emulator into both apps, and website #207 adds the contract vectors to the site's weekly carry. The HACS mirror's resync landed in securacv-homeassistant#17 (2026-09-24); PR #<D> changes carried files again, and their resync follows (sweep U6). See §3, "Landed in wave 8" |
 | Still open | 0 in full, 1 in part (21's Parametrize leftovers — the 7" frame's panel record, the render-plan package's selector half and the C6 manifest's `figure`; see row 21 and §4); row 20 carries one new open clause (a signed head for the sealed-log document, without which the Wall's "Verified" cannot say the tail is current or complete). Decisions taken and waiting on the maintainer's confirmation: row 30's version spread and the witness chain's uptime-bucket floor (`TIME_BUCKET_MS`, widened to the ten-minute grid; §3, "Landed in wave 4"), both decided on 2026-09-22 and landed in PR #1704; the two wave-5 questions, landed in PR #1703 — the render-plan package's Lab-card half (option B; the selector half, option A, is not built) and `canary-local/devices/registry.json`'s hand-typed `body_mm` (retired and derived; row 21); and, landed in PR #1704, the sidecar's bind (option (3), row 1) and the Wall's viewer token (option (a), row 20) |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
@@ -384,8 +384,9 @@ adversarially and fixed before it was merged. #1691 merged without its
 ledger edits, so these lines were written after the merge. PR #1720, merged
 the same day, wrote that ledger and landed three more packages (the
 security docs, the Wall re-vendor with the Vision card label, and the
-vectors carry); PR #1722 landed most of the rest, and the Hours, F54 and CI3
-packages follow in a later PR. Their bullets follow #1691's.
+vectors carry); PR #1722 landed most of the rest; PR #<D> landed the F54
+and CI3 packages with four more (F53, F55, HA14 and CI2), and the Hours
+package follows in a later PR. Their bullets follow #1691's.
 
 - **Row 12 (the canary client) — the Canary's API keeps its broker password
   home, checks the `Host`, and reports an honest CA verdict.** A new broker
@@ -475,8 +476,9 @@ packages follow in a later PR. Their bullets follow #1691's.
   the site's `tests/fixtures/` and pins it in `tv/vendor/PROVENANCE.txt`,
   which the website's existing test already hashes; a missing upstream
   file stops the verifier carry before it writes any of its files.
-  Host-tested against a copy of the website tree. The website still has to
-  add the file to its carry job's `CARRY_PATHS` and retire its hand pin.
+  Host-tested against a copy of the website tree. Website #207 added the
+  file to the site's carry job's `CARRY_PATHS`; the website's hand pin
+  retires once the first carry PR has run (sweep W21).
 - **Row 12 (the products' TLS connect) — a black-holed or silent TLS broker
   no longer outlasts a product's task watchdog (PR #1722).** The shared
   transport bounds the TLS TCP connect at 5 s next to its 15 s handshake,
@@ -567,6 +569,57 @@ packages follow in a later PR. Their bullets follow #1691's.
   one claim, after checking its own probes on every run. Until
   `MIRROR_PAT` is set, every `main` change to the carried set needs
   another hand resync (sweep U6).
+- **The airtime governor charges what goes on the air (PR #<D>, sweep
+  F54).** It adds a 59 B ESP-NOW framing allowance to every frame (it errs
+  high: Espressif documents 43 B of fixed fields for an unencrypted frame),
+  its reservations take a frame count, and the mesh charges a heartbeat,
+  tamper or power alert as one signed frame (38 B header, payload, 64 B
+  signature) per peer it reaches instead of once. The probe's 1.60 % ceiling
+  is unchanged and a heartbeat to a full Opera of 16 still fits, but that
+  heartbeat now holds a single 20 Hz probe peer off for about 1.6 s
+  every 30 s (latent: the WAP probes no peer today). Host-tested;
+  compile-tested by CI's WAP Arduino leg; every figure is the governor's
+  estimate. Every other mesh send still reserves nothing.
+- **The Canary's NVS writes say what they wrote (PR #<D>, sweep F55).**
+  `nvs_store_u32` / `nvs_store_bytes` report whether the whole value landed,
+  and a chain persist that did not land leaves `seq_persisted` behind, is
+  retried (on the next record, then once per persist interval) and is
+  counted in `chain_persist_failures` on the MQTT health payload; the birth
+  stamp and the boot count read their results too. Host-tested on the
+  firmware's own code; compiled by CI's canary envs on PR #<D>; not
+  bench-tested. The identity-key store (F58), canary-wap's copies (F59) and
+  the canary's other NVS puts, the Wi-Fi settings save first (F61), are
+  open.
+- **canary-wap's NVS sessions are serialized across its tasks (PR #<D>,
+  sweep F53).** Five tasks open sessions on the WAP's one settings handle.
+  `NvsManager` now holds F52's bounded recursive lock from `begin()` to the
+  matching `end()`, sharing `firmware/common/storage/nvs_session_depth.h`
+  with the canary, and the vault's five sessions that never ended now end.
+  Host-tested on the real header, with a textual scan for sessions that
+  never end (its limits are F60); the glue compiles only in CI's WAP legs,
+  and the bench rows are open.
+- **The key-pinning steps say where each product's key is (PR #<D>, sweep
+  HA14).** Step 6 of `docs/homeassistant_setup.md`, `docs/device_trust.md`
+  and the integration's options flow sent every owner to an `/enroll` page
+  only canary-wap serves. They now name each product's source, say
+  canary-sense and canary-sentinel show only a fingerprint (HA17, in
+  progress) and canary-display has no key, and warn that a canary-wap may
+  read as a mismatch today (HA18, in progress).
+  `tests/test_key_source_copy.py` holds the copy to the source. Read from
+  source, not checked on a bench. The mirror's resync of the changed
+  integration files follows (sweep U6).
+- **Row 37 and the workflows: one host-test list, and a read gate on
+  `canary-local.yml`'s path filter (PR #<D>, sweeps CI3 and CI2).** The 19
+  tests_host suites `firmware.yml` compiled only inline are Makefile rules
+  with their steps' flags and `-Werror`, 32 of the 33 inline steps are gone,
+  all five host-test Makefiles run through `make -C`, and
+  `scripts/tests/test_host_test_lists.py` fails if the lists fork again. The
+  logic tests run with node and python3 read recorders armed, and
+  `scripts/check_path_filter_reads.py` fails a PR whose node or python3 tests
+  read a file outside the filter (a shell tool's read, git and a python3
+  existence check are not seen); its first run added 29 paths. Host-tested
+  locally; PR #<D>'s CI is their first run on GitHub. The drift-step
+  generators and the other filtered workflows are not recorded yet (CI4).
 
 ### The documentation wave
 
@@ -686,7 +739,7 @@ the ledger stays complete:
 | 34 | **(landed)** **canary-display builds 21 PlatformIO envs serially** in one 45–50 minute job; comments say 18. | Landed. `flavors.json` carries an explicit `shards` partition for canary-display (dash 6, dash-features 6, seven-inch 2, core2-panels 6, c6 1 — one `PLATFORMIO_CORE_DIR` class each); `flavor_envs.py --build-matrix` derives `firmware.yml`'s matrix with per-leg size guards, and its validation refuses a partition that drops an env or mixes core dirs. Five products build as nine legs; the display's check is now five checks named `PlatformIO Build (canary-display/<shard>)` — re-select required status checks on `main` if the old name is pinned. Timeout 90 → 60 min, unmeasured; tighten after a week of timings. | M |
 | 35 | **(landed)** **Firmware SBOM is hand-written** and no longer matches the build files it cites. | Landed. `scripts/gen_firmware_sbom.py` derives CycloneDX 1.5 from `flavors.json`, every build env's resolved PlatformIO config, `platforms.ini`, the first-party library manifests and the workflows' Arduino core pins; committed at `sbom/sbom-firmware.cdx.json`, byte-gated in `lint.yml`, and the resolver is cross-checked against `pio project config` in `sbom.yml`. Still declared by hand, in one place: `PLATFORM_FACTS` (core/IDF per platform literal — a pin bump without it fails generation). Wave 6: `--validate` gates lint.yml and sbom.yml; the sketch.yaml pins are asserted against the workflows (rules in `sbom/README.md`). Residual: the WAP rows' "latest" vs the sketch's 3.3.8 is a maintainer's release call (`firmware/PLATFORMS.md`). | M |
 | 36 | **(landed)** **ruff covers only `custom_components`**; the 100+ tooling scripts are unlinted (106 findings at first run). | Add `canary-local/tools` and `scripts` to the ruff step; fix in one sweep. | S |
-| 37 | **(landed)** **Tooling Python is unpinned**; half the workflows run whatever `ubuntu-latest` ships while `pyproject` targets 3.11. | Landed: `pyproject.toml` carries `requires-python = ">=3.11"` as the one floor, every Python-running job sets up Python from it, and rule R9 in `CI.md` is machine-enforced by `ci_policy_check.py` (unit-tested). The resolver picks the newest interpreter that satisfies the floor; the floor is the one knob if that ever bites. Wave 8 (PR #1722): since #1635, `requires-python` has a ceiling (`>=3.11,<3.13`), so `python-version-file` jobs get 3.12. The three jobs that stay on 3.11 now say why: `python.yml` holds the Home Assistant integration's suite to the floor, `pwk-wizard-tests.yml` matches the add-on image's Alpine 3.18 python3, and `vision-model-release.yml` pins for the signing path's Vela compiler. The other three read `pyproject.toml`, and `ci_policy_check.py` refuses an unexplained pin. | S |
+| 37 | **(landed)** **Tooling Python is unpinned**; half the workflows run whatever `ubuntu-latest` ships while `pyproject` targets 3.11. | Landed: `pyproject.toml` carries `requires-python = ">=3.11"` as the one floor, every Python-running job sets up Python from it, and rule R9 in `CI.md` is machine-enforced by `ci_policy_check.py` (unit-tested). The resolver picks the newest interpreter that satisfies the floor; the floor is the one knob if that ever bites. Wave 8 (PR #1722): since #1635, `requires-python` has a ceiling (`>=3.11,<3.13`), so `python-version-file` jobs get 3.12. The three jobs that stay on 3.11 now say why: `python.yml` holds the Home Assistant integration's suite to the floor, `pwk-wizard-tests.yml` matches the add-on image's Alpine 3.18 python3, and `vision-model-release.yml` pins for the signing path's Vela compiler. The other three read `pyproject.toml`, and `ci_policy_check.py` refuses an unexplained pin. Wave 8 (PR #<D>): the tests_host suites have one list, their Makefiles, and `scripts/tests/test_host_test_lists.py` fails a suite off its Makefile, an inline tests_host compile in a workflow, or a Makefile no pull-request workflow runs (sweep CI3); and `canary-local.yml`'s logic tests fail a PR whose node or python3 tests read a file outside the path filter (`scripts/check_path_filter_reads.py`, sweep CI2; a shell tool's read, git and a python3 existence check are not seen, and the drift-step generators are not recorded yet, sweep CI4). Host-tested; PR #<D>'s CI is their first run on GitHub. | S |
 | 38 | **(landed)** **Toolchain setup is hand-rolled** (PlatformIO ×15, emsdk ×2, libseccomp ×9, issue-dedup ×3) despite CI.md's composite-action rule. | Landed. Four composite actions under `.github/actions/` — `setup-platformio`, `setup-emsdk`, `setup-libseccomp`, `issue-dedup` — replace the inline copies (the real counts were 4, 2, 9 and 5); `CI.md` R10 is machine-checked by `ci_policy_check.py` (an inline PlatformIO or emsdk install fails), and R9 resolves local composite actions that carry `setup-python`. Left by design: the four `apt-get` lines that install libseccomp with other packages, and bom-pricing's per-item exception loop. Follow-up: move `setup-platformio`'s interpreter to `pyproject.toml` once a build has run on it. | M |
 | 39 | **(landed)** **`gen_qr.py` output is committed with no `--check`** and runs in no workflow. | Add the flag and a line in `lint.yml`. | S |
 | 40 | **(landed)** **`bom-pricing` still pushes to `main`** (now gated, still with the default token so zero CI runs on the commit). | Open a PR instead, or use the freshness PAT. | S |
