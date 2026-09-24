@@ -2226,18 +2226,17 @@ constexpr uint32_t WATCHDOG_ESCALATE_AFTER = 3;
  * cannot receive its own transmissions; a solo Canary still needs the
  * home AP's beacons — the dashboard's signal-supply chip says so.)
  *
- * Airtime: by the governor's estimate at ESP-NOW's 1 Mbps long-preamble
- * fallback rate, one framed probe frame (16 B payload + the ~59 B of
- * framing the governor adds) is 792 us (192 us + 8 us a byte, as
- * csi_probe.h's hand math says), so
- * the 10 Hz idle broadcast is ~0.8 % of the window — real, not
- * negligible, and unicast fan-out to a filled peer table would ask for
- * far more. Every send therefore reserves against the airtime governor's
- * 2 % routine cap first (Config::airtime_gate below, probe_airtime.h): the
- * probe shares one budget with mesh heartbeats/gossip and chirp presence,
- * it starts no frame once the window reads 1.60 % so those keep their
- * room, and a saturated window skips probe slots instead of degrading the
- * user's WiFi.
+ * Airtime: by the governor's estimate at ESP-NOW's default 1 Mbps
+ * long-preamble rate, one framed probe frame (16 B payload + the ~59 B
+ * framing allowance the governor adds) is 792 us (192 us + 8 us a byte, as
+ * csi_probe.h's hand math says), so the 10 Hz idle broadcast is ~0.8 % of
+ * the window — real, not negligible, and unicast fan-out to a filled peer
+ * table would ask for far more. Every send therefore reserves against the
+ * airtime governor's 2 % routine cap first (Config::airtime_gate below,
+ * probe_airtime.h): the probe shares one budget with mesh
+ * heartbeats/gossip and chirp presence, it starts no frame once the window
+ * reads 1.60 % so those keep their room, and a saturated window skips
+ * probe slots instead of degrading the user's WiFi.
  *
  * The probe shares ESP-NOW with the mesh when FEATURE_MESH_NETWORK is on
  * (csi_probe::init is idempotent against a prior esp_now_init) and brings
