@@ -380,8 +380,9 @@ NVSSTORE_BIN  = $(BUILD_DIR)/test_nvs_store_result
 # reported once per streak. test_chain_persist.cpp tests the header, then
 # runs securacv_witness.cpp's own persist and birth-stamp glue, cut out
 # verbatim, over a fake NVS and stubs/witness_glue. The record path's call
-# into that glue is a one-line grep: the recipe fails if witness_create_record_gps()
-# stops calling persist_chain_if_due().
+# into that glue is checked, not run: the recipe cuts
+# witness_create_record_gps() with the same cutter and fails unless its body
+# still holds the one-line call to persist_chain_if_due().
 CHAINPERSIST_HDRS = ../common/witness/chain_persist.h $(CHAINST_HDR) \
                     ../common/identity/birth_day.h \
                     ../canary/lib/securacv_witness/src/securacv_witness.h \
@@ -389,6 +390,7 @@ CHAINPERSIST_HDRS = ../common/witness/chain_persist.h $(CHAINST_HDR) \
                     $(wildcard stubs/witness_glue/*.h)
 CHAINPERSIST_SRC  = ../canary/lib/securacv_witness/src/securacv_witness.cpp
 CHAINPERSIST_SIGS = static bool persist_chain_blob(|void witness_persist_chain_state(|static void persist_chain_if_due(|bool witness_note_wall_clock(
+CHAINPERSIST_CALLER = bool witness_create_record_gps(
 CHAINPERSIST_INC  = $(BUILD_DIR)/chain_persist_glue.inc
 CHAINPERSIST_BIN  = $(BUILD_DIR)/test_chain_persist
 
@@ -656,8 +658,10 @@ $(NVSSTORE_BIN): test_nvs_store_result.cpp $(NVSSTORE_INC) $(NVSLOCK_HDRS) Makef
 	    -I ../canary/include -I $(BUILD_DIR) test_nvs_store_result.cpp -o $@
 
 $(CHAINPERSIST_INC): $(CHAINPERSIST_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
-	@grep -q '^  persist_chain_if_due();$$' $(CHAINPERSIST_SRC) || { \
-	  echo "securacv_witness.cpp: the record path no longer calls persist_chain_if_due()" >&2; exit 1; }
+	@awk -v 'sigs=$(CHAINPERSIST_CALLER)' -f cut_functions.awk $(CHAINPERSIST_SRC) > $@.caller
+	@grep -q '^  persist_chain_if_due();$$' $@.caller || { \
+	  echo "securacv_witness.cpp: witness_create_record_gps() no longer calls persist_chain_if_due()" >&2; exit 1; }
+	@rm -f $@.caller
 	awk -v 'sigs=$(CHAINPERSIST_SIGS)' -f cut_functions.awk $(CHAINPERSIST_SRC) > $@.tmp && mv $@.tmp $@
 
 $(CHAINPERSIST_BIN): test_chain_persist.cpp $(CHAINPERSIST_INC) $(CHAINPERSIST_HDRS) Makefile | $(BUILD_DIR)

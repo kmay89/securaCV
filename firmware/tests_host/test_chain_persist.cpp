@@ -518,6 +518,9 @@ static void test_the_birth_retry_wait_is_wrap_safe() {
   g_host_millis = 0xFFFFF000u;
   CHECK(!witness_note_wall_clock(unix_s));
   const int puts = g_nvs.u32_puts;
+  g_host_millis = 0xFFFFF800u;                     // 2 s later, not yet wrapped
+  CHECK(!witness_note_wall_clock(unix_s));
+  CHECK(g_nvs.u32_puts == puts);                   // still waiting
   g_host_millis = 0x00000100u;                     // 4.35 s later, wrapped
   CHECK(!witness_note_wall_clock(unix_s));
   CHECK(g_nvs.u32_puts == puts);                   // still waiting
