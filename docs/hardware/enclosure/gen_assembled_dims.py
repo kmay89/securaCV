@@ -87,8 +87,8 @@ DEVICES = {
         "scad": "canary_wap_enclosure.scad",
         "overrides": {"preset": '"compact_plain"', "part": '"base"'},
         "body": "union() { base(); translate([0, 0, base_h]) lid(); }",
-        "seams": "[base_h]",
-        "placement": "wap_fitcheck: lid at z = base_h",
+        "seams": "[]",   # the piston plate: base is the plate inside lid's walls — no seam crosses the side profile
+        "placement": "wap_fitcheck: lid (the shell) at z = base_h; base (the plate) inside its walls at floor_t",
     },
     "device.canary-vision": {
         "scad": "canary_vision_enclosure.scad",

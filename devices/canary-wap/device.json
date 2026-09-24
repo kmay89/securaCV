@@ -41,8 +41,17 @@
       },
       "board_h": 1.2,
       "board_clear": 0.6,
-      "stack_camera": 8.0,
-      "stack_plain": 4.5
+      "stack_camera": 11.4,
+      "stack_plain": 4.5,
+      "cam_lens_h": {
+        "brd_fn": "brd_xiao_sense_cam_h"
+      },
+      "cam_dx": {
+        "brd_fn": "brd_xiao_sense_cam_dx"
+      },
+      "cam_dy": {
+        "brd_fn": "brd_xiao_sense_cam_dy"
+      }
     }
   },
   "flasher": {

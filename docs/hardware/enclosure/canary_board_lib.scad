@@ -100,6 +100,25 @@ function brd_ws147_brass_c6() = 5.0;    // unmeasured — MEASURE tag lives in t
 function brd_ws169_glass_w() = 33.13;
 function brd_ws169_glass_h() = 41.13;
 
+// XIAO ESP32-S3 SENSE camera — the OV2640 module on the Sense expansion
+// board, read off Seeed's own XIAO ESP32-S3 Sense model (GLB), "drawing"
+// rung: PCB solid x -8.67..12.28 (the length axis), z -15.00..2.78 (the
+// width — 17.78, the measured 17.8 again), top face y = 1.0; the camera
+// module's top face at y = 13.71 over x 4.75..12.75, z -10.75..-2.75. So the
+// lens top stands 12.7 above the PCB top face (the WAP's knob said 6.0 —
+// half the real stack), the module is 8 x 8, and its center sits 6.95 along
+// the LENGTH from the board center toward the antenna end, away from the
+// USB (the WAP's window sat over the board center, 7 mm off the lens); it
+// overhangs that end by ~0.5. Across the width the model reads ~0.6 toward
+// one long edge; which edge needs a bench unit (the model's handedness is
+// not stated), so it is carried as 0 and the WAP's window keeps 0.5 a side
+// round the barrel — MEASURE before a print that depends on it. The WAP's
+// window, disc seat and camera stack read these through its manifest.
+function brd_xiao_sense_cam_h()  = 12.7;   // lens top above the PCB top face
+function brd_xiao_sense_cam_dx() = 6.95;   // module center along the length, from the board center, + = away from the USB
+function brd_xiao_sense_cam_dy() = 0;      // module center across the width, from the board center (see above)
+function brd_xiao_sense_cam_fp() = 8.0;    // module footprint, square side (the lens barrel's envelope)
+
 // ---------------------------------------------------------------------------
 //  Self-check — registry integrity + the pinned lessons. Call once from an
 //  adopter (the fit coupon does).

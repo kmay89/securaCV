@@ -113,15 +113,15 @@ DEVICES = {
             # tubes standing on the lid's outer face
             "shield": [("T", "[0, 0, base_h + lid_t + sh_t + sh_gap]"), ("R", [180, 0, 0])],
         },
-        # from the back (every preset): the head's top (the builder's csk z = 0)
-        # sits at the recess plane in the back, turned over; the Outdoor build
-        # the tab shows drives pan heads over O-rings
+        # the plate screws (canary_core_lib pl_*): from the plate's back face
+        # (z = -mount_extra), the head recessed pl_r; a flat head's top IS the
+        # recess plane (the builder's csk z = 0), a pan head's bearing face sits
+        # pl_hp above it; turned over. The Outdoor build the tab shows drives
+        # pan heads over O-rings
         "screws": {
-            # the lid screws, from the back: the head's top (the builder's z = 0)
-            # at the recess plane, turned over
             "screws": {"xy": "post_xy()",
-                       "z": "e_back ? -mount_extra + bk_r : base_h + lid_t", "rot": ["e_back ? 180 : 0", 0, 0],
-                       "len": "e_back ? bk_L : hw_len(lid_t, head_pad, hw_engage(screw_size))"},
+                       "z": "-mount_extra + pl_r + pl_hp(screw_size, e_head)", "rot": [180, 0, 0],
+                       "len": "pl_L"},
             # the sun shield's own flat-head screws, flush in the shield's top,
             # down its tubes into the lid's blind pilots
             "shield_screws": {"xy": "post_xy()", "z": "base_h + lid_t + sh_t + sh_gap", "rot": None,

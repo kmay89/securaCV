@@ -272,7 +272,8 @@ class LedgerShape(unittest.TestCase):
         figs = self.dims["figures"]
         wap = figs["device.canary-wap"]["knobs"]
         self.assertEqual(wap, {"board_clear": 0.6, "board_h": 1.2, "board_l": 21.0,
-                               "board_w": 17.5, "stack_camera": 8.0, "stack_plain": 4.5})
+                               "board_w": 17.5, "cam_dx": 6.95, "cam_dy": 0.0,
+                               "cam_lens_h": 12.7, "stack_camera": 11.4, "stack_plain": 4.5})
         # references arrive as the registry's numbers, and the per-case decision
         # survives: the Sense clips say brd_w("xiao") = 17.5, the Vision pins the
         # measured 17.8 — same registry, two manifests, two knobs
@@ -325,8 +326,9 @@ class LedgerShape(unittest.TestCase):
         for rid, row in reg.items():
             self.assertIn(row["evidence"], {"measured", "drawing", "spec", "unmeasured"}, rid)
         facts = self.dims["board_facts"]
-        self.assertEqual(len(facts), 7)
+        self.assertEqual(len(facts), 11)
         self.assertEqual(facts["brd_xiao_w_measured"], 17.8)
+        self.assertEqual(facts["brd_xiao_sense_cam_h"], 12.7)
         self.assertEqual(facts["brd_stack_sock_measured"], 6.5)
         self.assertEqual(facts["brd_ws169_glass_h"], 41.13)
         # the same numbers the resolver hands the cases — one registry, read once
