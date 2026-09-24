@@ -34,9 +34,14 @@ stands: the events — absolutely; the video — never.
 | Signal in Apple Home | Backing entity today | Source |
 |---|---|---|
 | Motion Sensor (per zone) | `binary_sensor.pwk_<zone>_motion` (`device_class: motion`, auto-off 10 min) | `event_mqtt_bridge` (runs by default in the add-on) |
+| Motion Sensor (per Canary) | `binary_sensor.securacv_canary_<device_id>_motion` (`device_class: motion`) | The integration itself, natively — phase A1, shipped |
 | Smoke Sensor | `binary_sensor.<canary_id>_smoke_alarm` ("Smoke Alarm Heard", `device_class: smoke`) | Canary WAP acoustic detector (`FEATURE_ACOUSTIC_EVENTS`, NFPA 72 T3 cadence) |
 | Carbon Monoxide Sensor | `binary_sensor.<canary_id>_co_alarm` ("CO Alarm Heard", `device_class: carbon_monoxide`) | Same detector, UL 2034 T4 cadence — a separate entity, so it needs its own include line |
-| Occupancy Sensor | `binary_sensor.<canary_id>_occupancy` (`device_class: occupancy`) | The integration itself, natively — phase A1, shipped. A template is now only needed for a presence source the integration does not own (§5) |
+| Occupancy Sensor | `binary_sensor.securacv_canary_<device_id>_occupancy` (`device_class: occupancy`) | The integration itself, natively — phase A1, shipped. A template is now only needed for a presence source the integration does not own (§5) |
+
+The kernel's and the WAP's ids in this table are the ones this tree
+documents. Their publishers do not set them, so your install may show
+different ones; §4 says what to look for.
 
 ## 2) Architecture
 
@@ -60,7 +65,7 @@ SecuraCV cloud exists in this picture, same as everywhere else.
   HAOS on a Pi 4/5, `scripts/install.sh` from the Terminal add-on installs
   Mosquitto, the SecuraCV add-on, and the custom integration. The add-on's
   `mqtt_publish` option (default **enabled**) is what creates the
-  `pwk_<zone>_motion` sensors.
+  per-zone **PWK <zone> Motion** sensors.
 - At least one event source: a Canary, or Frigate via the
   [HA + Frigate recipe](home-assistant-frigate-mqtt.md).
 - An Apple **home hub** on the same LAN: Apple TV 4K or HomePod. Without one,
@@ -80,12 +85,46 @@ homekit:
     mode: bridge
     filter:
       include_entity_globs:
-        - binary_sensor.pwk_*_motion        # per-zone motion
-        - binary_sensor.*_smoke_alarm       # Canary WAP acoustic T3 (smoke)
-        - binary_sensor.*_co_alarm          # Canary WAP acoustic T4 (CO)
-      include_entities:
-        - binary_sensor.*_occupancy         # native (A1); or the §5 template for a foreign source
+        - binary_sensor.securacv_canary_*_motion    # each Canary's own Motion (A1)
+        - binary_sensor.*_occupancy                 # native (A1); or the §5 template for a foreign source
+        # The kernel's per-zone motion and the WAP's smoke and CO sensors:
+        # add the ids your install shows (see below).
 ```
+
+Every pattern with a `*` in it goes under `include_entity_globs`.
+`include_entities` takes exact entity ids only: Home Assistant validates that
+key with `cv.entity_ids`, which refuses a `*`, and the whole `homekit:` block
+with it. That rule was read from Home Assistant core's source
+(`homeassistant/helpers/entityfilter.py`), not checked by loading this block
+into a running Home Assistant, so run Home Assistant's configuration check on
+it before you restart, and check that each pattern matches the entity ids your
+install shows.
+
+The Canary line matches the default id of each Canary's **Motion** sensor:
+the integration names the device `SecuraCV Canary <device_id>` and the entity
+`Motion`, so the id is `binary_sensor.securacv_canary_<device_id>_motion`, with
+`<device_id>` as Home Assistant slugs it (`canary-1` becomes `canary_1`). It
+also matches that Canary's **Unexpected Motion** tamper sensor
+(`binary_sensor.securacv_canary_<device_id>_unexpected_motion`), which no
+current firmware signal drives (the
+[per-tamper-type catalog](../homeassistant_setup.md#per-tamper-type-sensor-catalog)),
+so it is bridged too and stays off. To keep it out, list its exact id under
+`exclude_entities`, which Home Assistant checks before the globs.
+
+**The kernel's per-zone motion and the WAP's smoke and CO sensors are left
+out of the list on purpose.** This tree documents their ids as
+`binary_sensor.pwk_<zone>_motion` and `binary_sensor.<canary_id>_smoke_alarm`
+/ `_co_alarm` (the table in §1), but neither publisher sets an id. Their MQTT
+discovery payloads carry a name (**PWK <zone> Motion**, **Smoke Alarm
+Heard**, **CO Alarm Heard**) and a unique id, and no `default_entity_id`, so
+Home Assistant builds each id from the device's name and the entity's. Read
+from Home Assistant core's source (`homeassistant/components/mqtt/entity.py`),
+not seen in a running Home Assistant, a new install would name them
+`binary_sensor.privacy_witness_kernel_pwk_<zone>_motion` and
+`binary_sensor.canary_<id>_smoke_alarm_heard` / `_co_alarm_heard`, which the
+patterns this recipe used to list do not match. Find each one under
+**Settings > Devices & Services**, on the Entities tab, and add it under
+`include_entities` (its exact id) or `include_entity_globs` (a pattern).
 
 Deliberately **excluded**: the connectivity/`problem`/storage/chain entities.
 Apple Home has no honest rendering for attestation or chain state — that
@@ -100,14 +139,14 @@ sidebar. Room-assign each sensor once; names follow the entity names.
 ## 5) Template occupancy — now only for foreign presence sources
 
 **A1 has shipped**, so the integration publishes native
-`binary_sensor.<canary_id>_motion` and `…_occupancy` entities itself. Occupancy
-tracks the retained `state` snapshot (`securacv/<id>/state`, field `presence`)
-and the events vocabulary; motion auto-clears after a hold window matching the
-kernel's own, so an automation written against a Canary behaves like one
-written against a sensor you already own. **Prefer the native entities** —
-which events raise which signal is dictionary-governed and CI-gated across the
-Rust kernel and the Python integration, so it cannot drift from what the
-witness actually said.
+`binary_sensor.securacv_canary_<device_id>_motion` and `…_occupancy` entities
+itself. Occupancy tracks the retained `state` snapshot
+(`securacv/<id>/state`, field `presence`) and the events vocabulary; motion
+auto-clears after a hold window matching the kernel's own, so an automation
+written against a Canary behaves like one written against a sensor you already
+own. **Prefer the native entities** — which events raise which signal is
+dictionary-governed and CI-gated across the Rust kernel and the Python
+integration, so it cannot drift from what the witness actually said.
 
 A template is still the answer for a presence source the integration does not
 own — an ESPHome mmWave kit, say, publishing over MQTT via the
@@ -143,12 +182,12 @@ Run all three. They fail independently, which is the point.
 
 **Smoke and CO, end to end:** the dumb alarm on the ceiling sounds → a Canary
 WAP hears the cadence → the matching entity turns on
-(`binary_sensor.<id>_smoke_alarm` for T3, `binary_sensor.<id>_co_alarm` for
-T4 — two entities, both in the §4 include list) → Apple Home and the HA
-blueprint both push, at home or away. The detector listens only for those two
-legally mandated cadences and stores no audio — and it is *not* a UL-listed
-life-safety device; it is a second messenger for the alarm you already own,
-never a replacement.
+(**Smoke Alarm Heard** for T3, **CO Alarm Heard** for T4 — two entities, each
+added to the §4 filter by the id your install gives it) → Apple Home and the
+HA blueprint both push, at home or away. The detector listens only for those
+two legally mandated cadences and stores no audio — and it is *not* a
+UL-listed life-safety device; it is a second messenger for the alarm you
+already own, never a replacement.
 
 **Seal the alarm as evidence (optional):** the push lanes above tell you *now*;
 the adapter host can also make "an alarm was heard" part of the sealed witness
@@ -208,8 +247,8 @@ death — the hub, the router, and the Apple hub die with it. What works:
 ## 7) Verify
 
 1. `mosquitto_sub -t 'witness/#' -v` on the hub shows zone counts and motion.
-2. Walk a zone: `binary_sensor.pwk_<zone>_motion` turns on in HA, and the
-   matching Motion Sensor fires in the Home app within a second or two.
+2. Walk a zone: the zone's **PWK <zone> Motion** sensor turns on in HA, and
+   the matching Motion Sensor fires in the Home app within a second or two.
 3. Hold your real alarm's test button: the smoke (or CO) entity trips in HA
    and the Home app raises the safety alert. (The Lab's Acoustic card is a
    staged in-browser simulation of this contract — it never reaches your

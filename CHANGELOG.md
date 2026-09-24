@@ -2,6 +2,262 @@
 
 ## [Unreleased]
 
+### The Canary's receipt asks the Host first, its settings sessions stop closing each other, a black-holed TLS broker no longer outlasts the products' watchdog, the airtime window holds every send, and the docs and CI catch up (#<C>)
+
+- **The Canary's provisioning receipt asks the Host first, and a page load
+  under a foreign Host leaves the BOOT tap alone (sweep F56).**
+  `GET /api/provisioning-receipt` is gated by a bearer or one BOOT tap
+  rather than `auth_gate`, so the Host check #1691 gave the `auth_gate`
+  routes and both pages did not cover it. The receipt route now refuses a
+  foreign Host like every other token-bearing route:
+  `403 {"error":"host"}` before the bearer is read or the tap is taken,
+  with the same setup-AP exemption. Its handler serves only on an explicit
+  bearer or tap verdict and refuses every other verdict. A page load under
+  a foreign Host no longer spends the BOOT tap, because the page path
+  decides the Host before its grants. The order lives in
+  `firmware/common/network/provisioning_gate.h` (`receipt_decide`, and
+  `page_token_decide`, which now takes the Host first), host-tested in
+  `firmware/tests_host/test_provisioning_gate.cpp`.
+  `firmware/canary/scripts/check_route_security.py` checks the glue's
+  shape: every path that can hand out the token or spend the tap must pass
+  `host_is_foreign(req)` to one of those decisions or refuse on it first,
+  the receipt must go out only under a serve verdict, and the page must
+  carry the token only on its inject verdict. `SECURITY_MODEL.md` and the
+  Home Assistant guide's Step 3 now say every API call under a foreign
+  Host, the receipt included, answers `403`. The decisions are host-tested
+  and the route rule is a static check. The glue is syntax-checked against
+  the core 3 headers and built by CI only (firmware.yml's
+  `PlatformIO Build (canary)` job, every canary env, and the
+  secure/secure_ha compile step). Not bench-tested.
+- **The Canary's settings store no longer lets one task close another's
+  session (sweep F52).** Found by the wave-7 security scout (its finding
+  4). The main loop, the web API and the pull-OTA updater share one NVS
+  handle, and a session ending on one of them closed it under another. A
+  status check during an MQTT reload could read the broker as unset and
+  leave MQTT off until the next setup, and a chain-state or Wi-Fi save
+  racing it could be lost while reporting success. Each session now holds
+  a lock from open to close, and nested sessions on one task close only at
+  the outermost end. Each wait for another task's session gives up cleanly
+  after 2 s, well under the watchdog. No caller changed. The session
+  arithmetic and the firmware's own open/close code are host-tested
+  against a fake lock; the real lock is compile-tested by CI's canary
+  builds and has not run on a bench (its bench rows are in the hardware
+  checklist). Recorded: canary-wap's own copy of the class (F53), and NVS
+  and Wi-Fi store helpers that report success whatever the write did
+  (F55).
+- **A black-holed or silent TLS broker no longer outlasts a product's task
+  watchdog, on both Arduino cores (security-sweep finding 5).** The shared
+  transport (`firmware/common/network/mqtt_transport.h`) bounded only the
+  TLS handshake (15 s). The TCP connect under it kept the core's 30 s
+  default, the whole of every product's 30 s watchdog, so a black-holed
+  TLS broker address could reset a display, Sense, Vision or Sentinel.
+  - The connect is now bounded at 5 s. On Arduino-ESP32 2.x that is
+    `WiFiClientSecure::setTimeout(seconds)`. On 3.x it is
+    `setConnectionTimeout(ms)`, because there `setTimeout` is `Stream`'s
+    read timeout in milliseconds: it compiles and changes nothing. One
+    helper, `set_connect_timeout_sec()`, holds the split.
+  - canary-display, -sense, -vision and -sentinel each `static_assert`
+    connect + handshake + PubSubClient's socket timeout (the CONNACK wait)
+    under their watchdog: 5 + 15 + 5 = 25 s against 30 s. On TLS the
+    display waited PubSubClient's default 15 s for CONNACK, so even with
+    the 5 s connect its attempt would have totaled 35 s (60 s with the old
+    30 s connect); its TLS path now sets 5 s, like the others. Its plain
+    path keeps the core's 3 s connect and the 15 s wait.
+  - Outside the asserted 25 s: the DNS lookup, `loop()` work between its
+    watchdog feed and the attempt, a CONNECT write stalled on a full send
+    buffer (itself now bounded at 5 s), the compute of the handshake's
+    last step after the 15 s check, a CONNACK dribbled byte by byte
+    (PubSubClient applies its socket timeout to each byte, not to the
+    packet), and the status and subscribe writes that follow a successful
+    connect before the next watchdog feed.
+  - What changes on a slow link: a TCP connect or a display TLS CONNACK
+    slower than 5 s now fails and retries on the backoff, a stalled TLS
+    write gives up after 5 s instead of 30 s, and on the display's TLS
+    path every inbound MQTT read in `loop()` gives up on a stalled byte
+    after 5 s instead of 15 s.
+  - `firmware/canary` is unchanged; its own 3 s / 4 s / 5 s budget stands.
+    `docs/FIRMWARE_VARIANT_AUDIT.md` gains the products' budget and a
+    canary-sentinel row, and its canary row now says `release_ha` and the
+    compile-only `secure_ha` both compile `securacv_mqtt`, both on core 2.
+  - Compile-tested by CI on both core lines. The emulator dist does not
+    move: a five-flavor preprocessor byte compare of the display's
+    emulator-compiled TU matches the base. The numbers are derived from the
+    watchdog; not bench-tested.
+- **The airtime governor's window holds every send at any rate, and the
+  CSI probe leaves the heartbeat its room (sweep F51).** The governor's
+  256-slot ring held one slot per send, so above 25.6 reservations a
+  second it overwrote sends still in its 10 s window and the 2 % cap
+  stopped holding (host-measured: 200 Hz × 16 B read 0.82 % while the true
+  figure was 6.41 %). It now sums sends in 100 ms buckets, so the window
+  holds every send; it reads 10.0–10.1 s, erring toward denial. The WAP's
+  CSI probe now stops at 1.60 % of that window by the governor's estimate,
+  so the 30 s mesh heartbeat and 60 s chirp presence keep the rest;
+  before, a probe asking for more than the cap took all of it and those
+  were refused. On the DEV build, or a boot where the mesh did not come
+  up, the probe now brings the governor up itself; before, nothing did and
+  every reservation passed. Neither defect showed on a shipped device: the
+  WAP's probe table is empty, so it broadcasts at 10 Hz, about 0.8 % by
+  the estimate. `firmware/FEATURES.md`'s probe row and
+  `docs/esp32_mesh_sensing_design.md` now say the probe is
+  airtime-governed. Host-tested; the device build is CI's, and whether the
+  estimate matches real air is a bench question.
+- **A second CSI feature extractor, off by default (roadmap §5 step 4,
+  host half).** `-DCSI_WANDER_JITTER=1` writes amplitude-centroid wander
+  to `v[28]` and frame-to-frame jitter to `v[29]`; no module reads them and
+  no event, witness record or MQTT field carries them. Both rise with
+  motion and with front-end noise, and both still-room floors rise on a
+  weak link, so neither is a motion-only reading. Host-tested on synthetic
+  frames; flag off in every shipped build; no bench pass. CI compiles the
+  flag-on path on the canary-wap's S3 Arduino pass.
+  `docs/csi_developer_api.md` drops the `?include=window` stream variant it
+  documented but the firmware never had, and documents
+  `GET /api/csi/window` as it behaves; `docs/csi_modules.md` lists the five
+  common-library modules its table omitted. `csi_probe.h`'s airtime
+  comment now works a frame as 192 + 75 × 8 = 792 µs (it said ~0.66 ms and
+  that 30 Hz fits the 2 % budget; 25 Hz does), names the 20 Hz default,
+  and says nothing fills the probe's peer table yet.
+- **The hub's provisioning run refuses a path it cannot mean (sweep
+  A23).** `hub_seed_apply.py` now refuses a plan before it asks the hub
+  anything when a step's `dest` or `requires_files` is not an absolute,
+  normalized path, or its `source` is not a relative, normalized one. It
+  names the step, the key and the path, and exits 2. The host runner
+  (`hub_host_provision.sh`) mounts `SECURACV_HOST_SSL_DIR` only when it is
+  an absolute directory with no `:` in it, and says so on the line that
+  names the override. This is hygiene, not a security boundary: the plan
+  rides the same read-only mount as the executor. The committed plan
+  already complied, and the bundle's two pins moved with the scripts. The
+  desktop Flasher's release watch now names the five bundle files it
+  embeds. Before, a change to those files alone reported the Flasher as
+  having nothing to do; after its next release, such a change marks it as
+  changed. Host-tested; not run on a hub.
+- **CI: the hub plan's prose gate runs on every PR, and the path filters
+  cover what their tests open (sweep CI1).**
+  - One check makes sure no doc retypes the option and file names of the
+    `broker-tls` step, and that at least one doc points at
+    `--with broker_tls`. It walked every `docs/**/*.md` but ran only in
+    `canary-local.yml`, whose filter names a dozen docs, so a PR touching
+    only other docs never ran it. It is now
+    `scripts/tests/test_hub_plan_prose.py` in the unfiltered Repo Lints
+    workflow, and `hub_seed_apply.py` is byte-unchanged.
+  - `canary-local.yml`'s two lists now cover the 23 files its logic tests
+    opened outside them (counting `desktop/src/models/` as one), seven of
+    them opened by #1703/#1704. Still outside (CI2): files the tests only
+    check exist, what the drift-step generators read, and the contract
+    vectors A24's replay has read since #1720.
+    `ios-selfheal.yml`'s PR compile now also fires on the 15 files outside
+    `ios/` that XCTests read by `#filePath`.
+  - Every explicit Python pin says why (R9). Three jobs keep 3.11 and give
+    a reason, three stdlib-only jobs now read `pyproject.toml`, and
+    `ci_policy_check.py` refuses a literal `python-version` with no reason
+    comment on its line or above it inside the same step.
+  - hub-core's test matrix caches its cargo builds per crate, and the five
+    jobs that ran `node` or `npx` from `ubuntu-latest` now set up node 22.
+    Three release-path jobs stay on node 20 with no stated reason yet;
+    `.github/CI.md` names them as the known exceptions.
+  - The scheduled jobs (board facts, BOM pricing, Home Assistant
+    freshness) and the release-only Vela job are proven only on their next
+    run. The cache is proven when a second push restores it.
+- **The user docs catch up with waves 3–7.** `docs/FAQ.md` adds an answer
+  on whether the broker link is encrypted. It is plain by default on every
+  Canary with a broker link. TLS is CA-verified on all of them except the
+  plain-only Canary Display nightstand-c6; Display, Sense, Vision and the
+  flagship can instead pin the broker's certificate, and the WAP is
+  CA-only. The FAQ also names `Unknown` among the object classes, and its
+  phone-home answer names the Canaries' disclosed outbound paths (the
+  broker you choose, the signed daily update check, the display's SNTP and
+  its opt-in forecast) and the desktop apps' update fetch.
+  `docs/GLOSSARY.md` adds the fleet roll-call, the device manifest, the
+  broker TLS mode, the TLS pin, the firmware SBOM and on-glass only.
+  `docs/homeassistant_setup.md` Step 3 states the flagship's page-token
+  rule, host-tested and not yet bench-tested; its add-on checklist says a
+  bridge run outside the app takes `MQTT_USE_TLS` / `MQTT_TLS_CA_PATH`;
+  and its endpoint table adds `GET/OPTIONS /api/fleet` as the second route
+  that answers without a token. `canary-local/tests/homeassistant.test.js`
+  now reads the routes `src/api/mod.rs` answers before the bearer check and
+  holds the table to exactly those. `README.md` says the broker is plain on
+  `1883` by default and gives the installer form that adds TLS
+  (`SECURACV_WITH=broker_tls`). `docs/RELEASE_BUTTONS.md` adds the CloudKit
+  schema promote, the SBOM gate, and the dist and SBOM commits a VERSION
+  bump owes. `AGENTS.md` adds the SBOM step and new look-up and gate rows,
+  and its six agent entrypoints are regenerated.
+- **The firmware and Lab READMEs describe the trees (sweep D7).**
+  `firmware/README.md`'s architecture tree, build-target table and canary
+  env table, the display README's flavors, status banner and Location
+  page, the WAP README's API table (now the routes the sketch registers),
+  canary-ota's consumer note and `VARIANT_POLICY.md`'s canary-ota row,
+  `devices/README.md` and `canary-local/README.md` are rewritten against
+  the tree with their status words, counts pointed at `flavors.json` /
+  `devices/` rather than typed. Prose only; `gen_wap.py` regenerates to
+  zero diff.
+- **The HomeKit Bridge recipe puts its globs under `include_entity_globs`,
+  where Home Assistant's schema takes them, and bridges each Canary's own
+  Motion sensor (sweep HA15).**
+  `docs/integrations/apple-home-homekit-bridge.md` §4 put
+  `binary_sensor.*_occupancy` under `include_entities`, which Home
+  Assistant validates with `cv.entity_ids` and so refuses, taking the
+  `homekit:` block with it. The glob moved to `include_entity_globs`, and
+  `binary_sensor.securacv_canary_*_motion` joined it. The page says that
+  glob also matches each Canary's Unexpected Motion tamper sensor, which
+  no firmware signal drives, and that `exclude_entities` keeps it out. The
+  kernel's `pwk_*_motion` and the WAP's `*_smoke_alarm` / `*_co_alarm`
+  lines left the list: neither publisher sets an entity id, and by Home
+  Assistant core's source a new install names those sensors differently
+  (sweep HA16, open). The page tells the reader to add the ids their
+  install shows. The schema and the naming were read from Home Assistant
+  core's source; no config check was run in a live Home Assistant.
+- **HACS mirror: securacv-homeassistant#17 (merged 2026-09-24)** resynced
+  the 33 carried files the mirror sat behind `main`, and brought the store
+  page's watch-actions, key-pinning, broker-TLS and Apple Home sentences.
+
+### The security docs meet `main`'s page-token gate, both apps' Wall reads silence as offline, the Lab's Vision card stops naming fw 2.2.0, and the contract vectors ride the carry (#1720)
+
+- **The security docs describe the flagship `main` ships (sweep D8).**
+  `SECURITY_MODEL.md`'s access section states the page-token gate. After
+  setup, a home-network load gets the page without its token. The token
+  rides the page for the first-boot wizard, and after setup only for a
+  bearer request, a request over the flagship's own access point, or one
+  page load that spends a BOOT tap. It states #1691's Host guard: the page
+  carries no token for a foreign Host, and the API's bearer gate answers
+  that Host 403 `{"error":"host"}`, except over the access point. It also
+  says the gate is not encryption. The transport paragraph names the
+  `FEATURE_HTTPS` builds (dev, dev_ha, usb-onboard and full): self-signed
+  ECDSA P-256 on 443 from the first boot after setup, port 80 redirected.
+  CI compiles dev and full, no workflow builds dev_ha or usb-onboard, and
+  none has run on hardware. Release images stay on plain HTTP, port 80.
+  `THREAT_MODEL.md` Scenario 2 and DoD 7 say the same.
+  `test_docs_claims.py` bans three retired sentences and restates its
+  reasons, and `regression_check.sh`'s labels cite disclosed outbound
+  paths 3-5. Docs and test only: the decisions stay host-tested, the glue
+  CI-compiled, nothing bench-tested.
+- **Both apps' Witness Wall reads a silent `online` as offline (sweep
+  A24).** The Flasher's Fleet tab and the Lab's Witness Wall re-vendor the
+  website's emulator (website #199). A fleet row that says nothing about
+  presence is now drawn offline, as `tvos/discovery/DISCOVERY.md` says.
+  The page also stops promising "chain health" from the real fleet,
+  because the emulator never reads a row's `chain` word.
+  `canary_local.test.js` replays the fleet contract vectors through both
+  vendored copies, which `check_witness_emulator_sync.sh` never did.
+  Host-tested; not run in a browser or an app shell, and neither app's
+  version is bumped yet.
+- **The Lab's Vision card stops saying fw 2.2.0 (sweep D9).** Its status on
+  the Lab's Specs tab names no version. The train is `fw_train` (2.4.15),
+  which `canary_local.test.js` already holds to `version.h`. A test fails
+  if any card's status names a version other than `fw_train`.
+  `vision.json` is regenerated. The fix reaches the Lab's Specs tab on
+  Pages at the next deploy, and the desktop Lab at its next release.
+- **The website's fleet contract vectors ride the weekly carry (sweep W21,
+  monorepo half).** The website's Wall replayed a hand copy of
+  `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json`, pinned by
+  a sha256 a human had to move. `scripts/carry_to_site.py`'s verifier carry
+  now copies it to the site's `tests/fixtures/` and pins it in
+  `tv/vendor/PROVENANCE.txt`, which the website's existing test already
+  hashes. A missing upstream file stops the verifier carry before it
+  writes any of its files. `scripts/tests/test_carry_to_site.py` pins the
+  landing path, one resolvable pin per carried file, and the shape the
+  website's replay reads. The website still has to add the file to its
+  carry job's `CARRY_PATHS` and retire its hand pin. Host-tested against a
+  copy of the website tree; nothing on the site has changed yet.
+
 ### The Canary's API keeps its broker password home and checks the Host, the security docs say what ships, the iPhone reads the glass, and both flashers name the sealed TLS mode (#1691, website #199)
 
 - **The Canary's API keeps a stored broker password home (security-sweep
@@ -12,13 +268,15 @@
   password stored and none in the body, the request is refused before any
   write with `400 password_required_for_new_host` (`mqtt_tls_fields.h`,
   `credential_carry`); the same endpoint keeps what the body omits, as
-  before. Every gated route refuses a `Host` that does not name the device
-  (`403 {"error":"host"}`), and the dashboard and setup pages served under
-  one carry no token, so a DNS-rebinding page can no longer read the token
-  out of them; a request over the Canary's own setup AP is exempt by
-  interface, never by name. The check is the display's `host_guard.h`,
-  moved to `firmware/common/network/`. A stored CA the transport reads back
-  empty is `409 ca_unreadable`, not Ok.
+  before. Every route behind `auth_gate` refuses a `Host` that does not
+  name the device (`403 {"error":"host"}`) before it looks at the token,
+  and the dashboard and setup pages served under one carry no token, so a
+  DNS-rebinding page cannot read the token out of them (the provisioning
+  receipt, gated by a bearer or the BOOT tap rather than `auth_gate`,
+  gained the same check in the entry for #<C>); a request over the
+  Canary's own setup AP is exempt by interface, never by name. The check
+  is the display's `host_guard.h`, moved to `firmware/common/network/`. A
+  stored CA the transport reads back empty is `409 ca_unreadable`, not Ok.
   Host-tested (the decisions); compile-tested by CI (the glue, PR CI's
   `release_ha` leg); not bench-tested. The setup-AP exemption on an
   iPhone's first boot is the first thing a bench should check.

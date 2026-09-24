@@ -165,9 +165,9 @@ devices/<slug>/device.json cad.params
 ```
 
 Two things about that list that the old prose had wrong. `./setup.sh regen`
-is `firmware/projects/canary-display/setup.sh` (`regen)` at :363-368), the
+is `firmware/projects/canary-display/setup.sh` (`regen)` at :381), the
 display project's Arduino sketch mirror — it *copies* `gen_figures.mjs`'s
-outputs (`fleet_figures.h` and `fleet_figures_art.h`, setup.sh:128-129) into
+outputs (`fleet_figures.h` and `fleet_figures_art.h`, setup.sh:129-130) into
 the sketch, so it runs **after** the figures generator, never before it. And
 the STL link has no `--check` form: OpenSCAD's STL bytes are not
 deterministic, so nothing byte-gates them — the two steps after it gate the
