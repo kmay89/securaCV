@@ -790,3 +790,36 @@ clean-nvs-lock:
 
 run: run-nvs-lock
 clean: clean-nvs-lock
+
+# Sweep HA20: the canary-wap publishes its MQTT fingerprint and health key in
+# lowercase hex (the sketch's mqtt_identity.h), like every other build. The
+# suite derives the repo's Ed25519 test key and its fingerprint with OpenSSL,
+# spells both strings with the encoder, builds a signed events body through
+# the real device_signature.cpp and csi_event_wire.h (OpenSSL's deterministic
+# Ed25519 as the signer) and byte-compares it with the lowercase body Home
+# Assistant's test_fingerprint_case.py runs. It also reads canary_wap.ino and
+# csi_mqtt.cpp (beacon_source_scan.h; both paths passed in, so the pins fail
+# closed): both csi_mqtt::init calls and the device_signature::init call take
+# the encoder's strings, and csi_mqtt.cpp publishes no other fp or key. Hooked
+# into `run` and `clean` by prerequisite so it adds no hunk to their lists.
+MQTTID_BIN  = test_mqtt_identity
+MQTTID_SRC  = test_mqtt_identity.cpp
+MQTTID_DEPS = $(MQTTID_SRC) beacon_source_scan.h $(SRC_DIR)/mqtt_identity.h \
+              $(SRC_DIR)/device_signature.h $(SRC_DIR)/device_signature.cpp \
+              $(SRC_DIR)/csi_event_wire.h
+
+# The pins read both files at run time, so they re-run on every `make`.
+$(MQTTID_BIN): $(MQTTID_DEPS)
+	$(CXX) $(CXXFLAGS) -Werror -DCSI_TEST_HOST_BUILD -I $(SRC_DIR) \
+	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' \
+	  -DCSI_MQTT_CPP='"$(abspath $(SRC_DIR))/csi_mqtt.cpp"' \
+	  -o $@ $(MQTTID_SRC) $(SRC_DIR)/device_signature.cpp -lcrypto
+
+.PHONY: run-mqtt-identity clean-mqtt-identity
+run-mqtt-identity: $(MQTTID_BIN)
+	$(call run_marked,$(MQTTID_BIN))
+clean-mqtt-identity:
+	rm -f $(MQTTID_BIN)
+
+run: run-mqtt-identity
+clean: clean-mqtt-identity

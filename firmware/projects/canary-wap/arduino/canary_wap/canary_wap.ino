@@ -162,6 +162,7 @@
 #include "contact_tamper.h"      // enclosure contact debounce (FEATURE_TAMPER_GPIO)
 #include "csi_mqtt.h"            // Optional MQTT bridge for HA integration
 #include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
+#include "mqtt_identity.h"       // pure, host-tested: the MQTT fp + health key, lowercase (HA20)
 #include "csi_event_log.h"       // SD-backed event persistence + MQTT backfill
 #include "csi_witness_payload.h" // Builds the witness-chain payload string
 #include <ble_events_module.h>   // spec §10 BLE event chokepoint helpers
@@ -7201,8 +7202,9 @@ static void qr_scan_task_fn(void* param) {
               mc.port = prov.port;
               mc.enabled = true;
               if (csi_mqtt::config_save(mc)) {
-                char pubkey_hex[65];
-                hex_to_str(pubkey_hex, g_device.pubkey, 32);
+                // The same lowercase key as the boot init (HA20).
+                char pubkey_hex[mqtt_identity::KEY_HEX_CAP];
+                mqtt_identity::public_key_hex(pubkey_hex, g_device.pubkey);
                 csi_mqtt::init(g_device.device_id, FIRMWARE_VERSION,
                                pubkey_hex);
                 hub_saved = true;
@@ -8546,9 +8548,11 @@ static void register_api_routes(httpd_handle_t server) {
   // live data). init() is a no-op if disabled in NVS, and idempotent —
   // re-runs whenever /api/mqtt/config POST changes the broker. We pass
   // the device id, firmware version, and pubkey hex up front so the
-  // health payload is self-contained.
-  char pubkey_hex[65];
-  hex_to_str(pubkey_hex, g_device.pubkey, 32);
+  // health payload is self-contained. The key is lowercase hex, as every
+  // other build publishes it (mqtt_identity.h, sweep HA20); hex_to_str's
+  // capitals stay on this device's other surfaces.
+  char pubkey_hex[mqtt_identity::KEY_HEX_CAP];
+  mqtt_identity::public_key_hex(pubkey_hex, g_device.pubkey);
   csi_mqtt::init(g_device.device_id, FIRMWARE_VERSION, pubkey_hex);
 
   // Per-device Ed25519 signature service. Mounts the keypair into a
@@ -8556,10 +8560,15 @@ static void register_api_routes(httpd_handle_t server) {
   // like SD-resync) can stamp chain/event/counts publishes with a
   // signature HA verifies against its pinned-pubkey trust store.
   // Must come after generate_keypair has populated g_device.{priv,pub,fp}.
+  // The fingerprint it is handed is the `fp` of every signed publish (and
+  // the one /enroll prints), so it gets the lowercase spelling too; the
+  // module copies it, and g_device.fingerprint_hex keeps hex_to_str's.
+  char mqtt_fp_hex[mqtt_identity::FP_HEX_CAP];
+  mqtt_identity::fingerprint_hex(mqtt_fp_hex, g_device.pubkey_fp);
   device_signature::init(g_device.privkey,
                          g_device.pubkey,
                          g_device.device_id,
-                         g_device.fingerprint_hex);
+                         mqtt_fp_hex);
 }
 
 // GET /api/selftest wrapper: while the user is on the wizard's final step
