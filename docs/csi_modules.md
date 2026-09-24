@@ -58,6 +58,84 @@ claim: no bench numbers exist for the breathing path on hardware yet, so
 treat the on-device breathing rate as unverified until a bench log says
 otherwise.
 
+### The second extractor (wander and jitter)
+
+Off by default. [`csi_wander_jitter.h`](../firmware/common/csi/src/csi_wander_jitter.h)
+defines two more per-window scalars, and only a build compiled with
+`-DCSI_WANDER_JITTER=1` writes them, into two of the four slots the vector
+kept in reserve:
+
+| Slot | Name | Definition, within one window | Scale |
+| --- | --- | --- | --- |
+| `v[28]` | wander | Population standard deviation, over the window's frames, of the per-frame amplitude centroid Σ k·a<sub>k</sub> / Σ a<sub>k</sub> (a tone index). | 64 per tone of spread; clips at 127 (about 2 tones). |
+| `v[29]` | jitter | Mean frame-to-frame \|Δa<sub>k</sub>\| per tone over the window's consecutive frame pairs. | 128 × (mean \|Δ\| ÷ the row mean); clips at 127. |
+
+a<sub>k</sub> is the same AGC-normalized amplitude row `v[0..7]` is built
+from (every frame rescaled to a mean of 64), so a per-packet gain step moves
+neither. Both are **within one window**: no baseline and no memory across
+windows. A room whose multipath profile is tilted but not changing reads
+wander ≈ 0 (position is not motion). Anything that changes the rows during
+the window raises both slots: motion, and front-end noise too. On the host
+fixture, 8 LSB of extra I/Q noise on a still channel reads about half the
+moving scatterer's wander and more than its jitter, so neither slot is a
+motion-only reading. Without the flag `v[28..29]` are zero, which is the
+layout every shipped build has, and `csi_features::wander_jitter_enabled()`
+tells a host which build it is. `v[30..31]` stay reserved (v2.1 C6
+sounding, v2.2 phase unwrap).
+
+These are our own definitions, written in the style of espressif/esp-radar's
+`waveform_wander` and `waveform_jitter`. esp-radar ships its metric math as
+a binary, so this is not a port and makes no claim to match it.
+
+**Both floors depend on the link.** Normalization rescales the
+quantization noise along with the row, so a weak link reads a higher
+still-room wander and jitter than a strong one: on the host fixture, a link
+at 0.35× gain reads about like 2 LSB of extra I/Q noise on a full-strength
+one. Compare either slot with that link's own still reading, never with a
+fixed number.
+
+**Where the values show up** in a flag-on build:
+
+- the canary-wap's P2 route
+  [`GET /api/csi/window`](csi_developer_api.md#get-apicsiwindow), and so the
+  last cells of the dashboard's Tinker heatmap, which paints that vector
+  cell by cell;
+- `meta.empty_room_baseline`'s in-RAM mean, which sums all 32 slots while a
+  calibration runs. No firmware path starts a calibration today, and
+  nothing reads the mean;
+- the canary PIO tree computes them too (it compiles the same
+  `csi_features.cpp`), but its sensing bridge copies only `v[0..27]`
+  (`securacv_sensing.cpp`), so nothing there shows them.
+
+**What does not change:** no module reads either slot, and no event,
+witness record, MQTT field, `/api/status` field or Home Assistant entity
+carries them. No allow-list was touched.
+
+**Status:** host-tested on synthetic frames; flag off in every shipped
+build; no bench numbers, no thresholds, not read by any module.
+`tests_host/test_csi_wander_jitter.cpp` pins the math on hand-built rows,
+and `test_csi_features.cpp` is built a second time with the flag on to pin
+the pipeline: a still room, per-packet gain flicker and a static tilt read
+near-zero wander, and gain flicker leaves jitter at its floor; the
+moving-scatterer fixture reads on both; a slow drift scales wander and
+leaves jitter at its floor; extra I/Q noise scales jitter and raises
+wander; a weak link raises both still floors. The flag-off build asserts
+`v[28..31]` stay zero. CI compiles the flag-on path for the S3 on the
+canary-wap's second Arduino pass.
+
+**Bench recipe** (the bench half of roadmap §5 step 4, after step 3's bench
+pass): build the canary-wap with `-DCSI_WANDER_JITTER=1`, raise the privacy
+ceiling to `p2`, poll `GET /api/csi/window` once a second, and record
+`v[28]` / `v[29]` beside `v[0..11]` for an empty room, a person sitting
+still and a person walking. Do it on an S3 and a C3 (the canary-wap builds
+for both). The C6 has no canary-wap build, and
+`firmware/examples/csi_minimal` prints only the reduced scalars today, so a
+C6 row first needs a sketch that prints the two slots. Note dropped or
+all-zero frames beside each reading: a frame with no amplitude still counts
+toward jitter, and one all-zero frame in a steady window reads jitter about
+as high as the moving-scatterer fixture (13 against 14 on the host). Until
+that log exists, a threshold on either slot would be a guess.
+
 ## The manifest
 
 ```c
@@ -195,6 +273,11 @@ alongside them — the host's `register_v1_modules()` is a one-line edit.
 | `core.activity_ribbon` | P0 | `ribbon_bucket_advanced` | Writes the 96-slot 15-minute ring that the dashboard renders as the aurora-strip activity ribbon. NVS-persisted. |
 | `meta.daily_summary` | P0 | `daily_summary` | One row per day at the bucket boundary: total active minutes, longest quiet stretch, anomaly count. |
 | `anomaly.baseline` | P0 | `unusual_motion`, `unusual_breathing` | 60-window rolling baseline of motion / breathing scalars; emits when the current sample exceeds the baseline by `spike_ratio` (default 2.5×) AND clears the absolute floor. Per-channel cooldown prevents notification floods; ranges are clamped at NVS read so a corrupt slot can't break the detector. |
+| `core.multilink_fusion` | P0 | `motion_confirmed` | Two-link motion confirmation: emits on the rising edge when the local window and at least one fresh paired peer's window (under 3 s old) both clear the motion threshold. Registered in both trees, but no production path calls `core_multilink_fusion_ingest_peer_features()` yet, so with no peer windows it never fires. Host-tested (`firmware/common/csi/test_core_multilink_fusion.cpp`). |
+| `meta.empty_room_baseline` | P0 | `baseline_status` | Empty-room calibration: while a calibration runs, accumulates each window's 32-slot vector into an in-RAM mean and emits `baseline_status` (`calibrated` / `canceled` / `failed`) with the window count. Registered in both trees; nothing in the firmware starts a calibration yet, nothing reads the mean, and the mean lives in RAM only. |
+| `wifi.channel_activity` | P0 | `channel_active` | Ambient, unattributed "the airwaves got busy" glow from the RSSI spread (`v[21]`) and the dropped-frame estimate (`v[25]`) against the room's own rolling baseline. `CSI_CATEGORY_AMBIENT`: the chokepoint never persists it (live UI only). Registered in both trees. |
+| `meta.quiet_hours` | P0 | `held_summary` | Manifest only: the chokepoint synthesizes one `held_summary` row when a configured quiet window closes, and registering this module is what lets that emit pass the allow-list. canary-wap only. |
+| `system.integrity` | P0 | `tamper` | The device's own integrity story: `unexpected_reboot`, `watchdog`, `power_loss` from the reset reason, `sd_error` / `sd_remove` from the SD state, and `enclosure` only on a `FEATURE_TAMPER_GPIO` build that feeds a real contact. `CSI_CATEGORY_ANOMALY`; each emit is sealed at once. Registered in both trees. |
 | `ble.events` | P0 | `ble_initialized`, `ble_init_failed`, `ble_client_connected`, `ble_client_disconnected`, `chirp_sent`, `chirp_received`, `canary_discovered`, `canary_lost` | Chokepoint-routed manifest for the eight BLE Discovery semantic events declared in `spec/event_contract.md` §10. Per-event allow-lists strip MAC-precision fields (motion / breathing / RSSI proxies); peer identification uses the truncated Ed25519 pubkey hash (≤16 hex chars) carried in `note`. Helpers in `ble_events_module.h` (e.g. `ble_events_emit_chirp_sent("boot")`) are the only legitimate BLE → witness-chain path going forward — direct `create_witness_record()` calls from the BLE stack would bypass the privacy contract. |
 
 ### Anomaly baseline tunables (live in the Tuning Lab)

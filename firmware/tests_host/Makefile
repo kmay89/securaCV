@@ -468,7 +468,8 @@ CSIHAL_SRC  = $(CSIHAL_ADP)/securacv_csi.cpp \
               $(CSIHAL_DIR)/csi_hal.cpp $(CSIHAL_DIR)/csi_features.cpp
 CSIHAL_HDRS = $(CSIHAL_ADP)/securacv_csi.h ../canary/include/health_log.h \
               $(CSIHAL_DIR)/csi_hal.h $(CSIHAL_DIR)/csi_features.h \
-              $(CSIHAL_DIR)/csi_types.h $(wildcard stubs/csi_hal/*.h)
+              $(CSIHAL_DIR)/csi_types.h $(CSIHAL_DIR)/csi_wander_jitter.h \
+              $(wildcard stubs/csi_hal/*.h)
 CSIHAL_BIN  = $(BUILD_DIR)/test_csi_hal_adapter
 
 .PHONY: all run clean

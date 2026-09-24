@@ -463,7 +463,7 @@ jobs:
           fi
           echo "canary-wap size: $SIZE / $SLOT bytes ($((SIZE * 100 / SLOT))% of OTA slot)"
 
-      - name: Compile firmware (Beacon channel + tamper contact gate)
+      - name: Compile firmware (Beacon channel + tamper contact + wander/jitter gate)
         run: |
           # FEATURE_BEACON_CHANNEL is OFF by default, which previously meant
           # beacon_channel.cpp (and every #if FEATURE_BEACON_CHANNEL block in
@@ -473,11 +473,13 @@ jobs:
           # can't silently rot. FEATURE_TAMPER_GPIO rides the same pass for
           # the same reason: the enclosure contact (pinMode, the debounced
           # loop feed, the live selftest probe) is off in every shipped
-          # profile until its pin is bench-validated.
+          # profile until its pin is bench-validated. CSI_WANDER_JITTER
+          # rides it too: the second CSI extractor (csi_wander_jitter.h,
+          # v[28]/v[29]) is 0 in every shipped build until a bench pass.
           arduino-cli compile \
             --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi \
             --libraries firmware/common \
-            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DFEATURE_BEACON_CHANNEL=1 -DFEATURE_TAMPER_GPIO=1 -DBOARD_HAS_PSRAM" \
+            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DFEATURE_BEACON_CHANNEL=1 -DFEATURE_TAMPER_GPIO=1 -DCSI_WANDER_JITTER=1 -DBOARD_HAS_PSRAM" \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
       - name: Compile firmware (DEV profile gate)

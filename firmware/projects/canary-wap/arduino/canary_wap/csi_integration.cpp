@@ -205,7 +205,9 @@ uint32_t                                g_outbound_bytes      = 0;
  *   v[8..11]  phase-Doppler  (4 bands → motion)
  *   v[12..19] breathing FFT  (8 bins  → micro-motion / breath rhythm)
  *   v[20..23] RSSI stats
- *   v[24..31] frame health + reserved
+ *   v[24..27] frame health
+ *   v[28..29] wander / jitter (CSI_WANDER_JITTER builds only; else zero)
+ *   v[30..31] reserved
  * Mirrored, deliberately by-value, in core_presence.cpp / core_breathing.cpp. */
 constexpr int IDX_DOPPLER_BASE   = 8;
 constexpr int IDX_DOPPLER_COUNT  = 4;

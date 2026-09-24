@@ -51,17 +51,40 @@ privacy class `P0`.
 | `rssi_mean` | int | dBm (negative) |
 | `frames` | int | CSI frames in the closing window (~ 18-20 healthy) |
 
-### `GET /api/csi/stream?include=window`
-
-The same SSE stream, but each event also carries the raw 32-dimension
-`int8` feature vector under `window`. Privacy class **P2** — never persists,
-never leaves the device, never available unless the user has raised the
-privacy ceiling in settings (the Tuning Lab is the typical caller).
+There is no `?include=window` variant of the stream. An earlier version of
+this page documented one; it was never built, and `handle_stream` reads no
+query string. The raw vector has exactly one route, the next one.
 
 ### `GET /api/csi/window`
 
-One-shot polling endpoint that returns the most recent feature window as
-JSON. Same privacy class as the SSE variant requested.
+The most recently closed window's raw 32-dimension `int8` feature vector,
+one snapshot per request (the dashboard's Tinker view polls it about once a
+second while that panel is open, and paints it as the raw heatmap).
+Privacy class **P2**: the route answers `403` with
+`{"error":"raw window requires P2 privacy ceiling"}` until the user raises
+the ceiling to `p2` (`"privacy_ceiling": "p2"` through `POST /api/settings`),
+and `204 No Content` before the first window has closed. Bearer- or
+session-authenticated like the rest of `/api/csi/*`; nothing persists it.
+
+```json
+{ "frames": 19, "time_bucket": 57, "v": [3, 2, 0, 1, 4, 2, 1, 0, 1, -1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, -52, 2, -49, -56, 19, 0, 6, 0, 0, 0, 0, 0] }
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `frames` | int | CSI frames in the window (~ 18-20 healthy) |
+| `time_bucket` | int 0..143 | the window's 10-minute bucket of the day |
+| `v` | int[32] | the feature vector; layout in `firmware/common/csi/src/csi_features.h` |
+
+`v[0..7]` are amplitude variance per band, `v[8..11]` band rotation,
+`v[12..19]` breathing bins, `v[20..23]` RSSI mean / std / max / min and
+`v[24..27]` frames / dropped / channel / bandwidth code. `v[28]` (wander) and
+`v[29]` (jitter) carry values only in a build compiled with
+`-DCSI_WANDER_JITTER=1` and read `0` otherwise
+([`csi_modules.md`](csi_modules.md#the-second-extractor-wander-and-jitter):
+host-tested on synthetic frames; flag off in every shipped build; no bench
+numbers, no thresholds, not read by any module). `v[30..31]` are reserved
+and always `0`.
 
 ---
 

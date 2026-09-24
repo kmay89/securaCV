@@ -54,7 +54,8 @@
     "csi_event_wire.h",
     "csi_event_id_floor.h",
     "csi_event_log_line.h",
-    "csi_event_backfill.h"
+    "csi_event_backfill.h",
+    "csi_wander_jitter.h"
   ],
   "build": {
     "srcDir": "src",
