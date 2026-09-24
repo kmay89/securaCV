@@ -159,7 +159,21 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
    in your browser. If you only have one Canary, plain `http://canary.local`
    may also resolve, but each Canary always advertises its unique hostname
    so multiple devices on the same network don't collide. `/setup` on any of
-   those addresses reopens the wizard.
+   those addresses reopens the wizard. On a `firmware/canary` unit that is
+   already set up, a page loaded over your home WiFi arrives without its API
+   token, so its saves are refused. The page carries the token only for the
+   first-boot wizard, a request that already sends it, a device on the
+   Canary's own WiFi, or one BOOT tap: tap the Canary's BOOT button and
+   reload within 30 seconds (one tap unlocks one page load), or paste the
+   token from your recovery kit into the dashboard. The Canary's own WiFi
+   unlocks the page too, but it broadcasts only while the Canary is off
+   your home network (before setup, or after it loses that network), so on
+   a Canary that is running normally the BOOT tap is the way in. Reach it
+   by an IP, its `.local` name, a single-label name or a router alias under
+   `.lan`, `.internal` or `.home.arpa`: under a public DNS name the page
+   gets no token and every call answers `403`, except over the Canary's
+   own WiFi. Release images serve these pages as plain HTTP on port 80.
+   Host-tested, not yet bench-tested.
 3. In the dashboard, go to the **Network** tab and enter your home WiFi
    credentials (the Canary needs WiFi to reach the MQTT broker)
 4. MQTT broker details (if you skipped the wizard's hub step):
@@ -646,9 +660,7 @@ Cameras → Frigate (detection) → MQTT → PWK (privacy logging)
 - [ ] **Home Assistant MQTT publish settings are aligned**: if you enable `mqtt_publish.enabled`, ensure `mqtt_publish.host`, `mqtt_publish.port`, `mqtt_publish.username`, and `mqtt_publish.password` match the same broker.
 - [ ] **Topic + discovery prefixes are consistent**: `mqtt_publish.topic_prefix` is the prefix you expect for PWK events, and `mqtt_publish.discovery_prefix` matches Home Assistant’s discovery prefix (default `homeassistant`).
 - [ ] **App options from the Configuration tab are configured**: `mode` is still `frigate`, a `device_key_seed` is present (the app auto-generates one on first start if you left it empty), and any Frigate-specific options (`frigate.cameras`, `frigate.labels`, `frigate.min_confidence`) are configured as needed.
-- [ ] **MQTT transport expectations are understood**: the current bridges speak MQTT 3.1.1 over TCP with no TLS support.
-
-**Follow-up task**: If you require TLS or MQTT v5, the bridge code must be modified to use a standard MQTT client library that supports these features. When making this change, ensure the bridge still avoids introducing new privacy metadata.
+- [ ] **Broker transport understood**: the bridges speak MQTT 3.1.1 over TCP, plain by default. In the app they connect to the broker set in its options or, left empty, the one the Supervisor hands them (by default `core-mosquitto` on `1883`, over Home Assistant's internal network); the app has no TLS option, and `--with broker_tls` adds the TLS listener the Canaries use (Step 3 of the manual walkthrough) while leaving that internal `1883` in place. A bridge run outside the app takes `MQTT_USE_TLS` / `MQTT_TLS_CA_PATH` for a TLS broker (the [TLS Settings](#tls-settings-optional) table below). MQTT v5 is not spoken by either bridge.
 
 ### Standalone Mode
 
@@ -998,13 +1010,15 @@ still needs from you, and why:
   `http://<your-home-assistant-host>:8799` in the Wall — with the port,
   because the Wall adds only `http://` to a bare host and would otherwise
   poll port 80; a typed hub is remembered and never aged out. Know what the
-  open port means: `/api/fleet` is the one endpoint that answers without
-  the capability token, so once the host port is enabled anything on your
-  LAN can read the roll-call — name, online, chain verdict, product, and
-  the per-room presence/occupants/breathing words while a peer is proven
-  online (the posture [`docs/security/THREAT_MODEL.md`](security/THREAT_MODEL.md)
-  states for the one open read on the hub). Every other endpoint still
-  requires the token.
+  open port means: `/api/fleet` is the one data endpoint that answers with
+  no token at all (`/health` answers only `{"status":"ok"}`), so once the
+  host port is enabled anything on your LAN can read the roll-call — name,
+  online, chain verdict, product, and the per-room
+  presence/occupants/breathing words while a peer is proven online (the
+  posture [`docs/security/THREAT_MODEL.md`](security/THREAT_MODEL.md) states
+  for the one open read on the hub). Every other endpoint still requires the
+  capability token — or, on `GET /api/sealed-log` alone, a
+  [viewer token](#viewer-tokens-witness-wall).
 - **The summary file is in your backups, on purpose.** `/config` is part of
   every Home Assistant backup, and `/config/fleet_peers.json` holds the
   public key pinned on first sight for each Canary plus the per-room
@@ -1092,7 +1106,7 @@ elsewhere, replace the hostname with the reachable IP/DNS name for that host.
 ### Authentication
 
 The API uses short-lived capability tokens as **Bearer** credentials. The token is written to `/config/api_token` when the app starts and rotates every 10 minutes; read it from the configured token file whenever you need to authenticate. If you run the kernel elsewhere, use the token path or secrets location configured for that deployment. The SecuraCV integration handles rotation automatically when configured with the token-file path (its default); scripts and other clients must re-read the file on every `401`.
-The `/health` endpoint is unauthenticated and only reachable on the local loopback interface. Query-string tokens are rejected—send the token only in the `Authorization: Bearer` header.
+`/health` and the fleet roll-call `GET /api/fleet` are the two routes that answer without a token. The kernel refuses to bind a non-loopback address without TLS or an explicit override and, when bound to loopback, answers only loopback peers (`403`); the app binds all interfaces inside its own container so Home Assistant core can reach it, and ships the 8799 host port disabled. Every other route takes the capability token — or, on `GET /api/sealed-log` alone, a [viewer token](#viewer-tokens-witness-wall). Query-string tokens are rejected—send the token only in the `Authorization: Bearer` header.
 
 ```bash
 # Read the token
@@ -1143,6 +1157,7 @@ add-on reads the file but has no control that mints one yet.
 | `/verify` | POST | Run sealed-log verification and return the `VerifyReport` |
 | `/export/bundle` | GET | Receipted export bundle (events reshaped for disclosure; correlation tokens stripped) |
 | `/api/sealed-log` | GET | Checkpoint-anchored sealed-log tail for read-only verifiers — stored bytes verbatim, size-capped, **no query parameters** (the log is non-queryable by design). The one route a [viewer token](#viewer-tokens-witness-wall) also opens |
+| `/api/fleet` | GET, OPTIONS | The fleet roll-call the Witness Wall reads — coarse words only (name, online, chain verdict, product, presence/occupants/breathing while proven online); **no token**, an origin allow-list for browsers; see [Witness Wall: the fleet roll-call](#witness-wall-the-fleet-roll-call) |
 | `/health` | GET | Check daemon health (unauthenticated) |
 
 ### `/events/latest` Response (Event)
