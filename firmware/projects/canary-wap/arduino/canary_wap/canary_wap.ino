@@ -1401,6 +1401,15 @@ static void sha256_domain(const char* domain, const uint8_t* data, size_t n, uin
 // Note: nvs_open_rw(), nvs_open_ro(), and nvs_close() are now provided
 // by nvs_store.h as inline functions that delegate to NvsManager::instance()
 
+// NvsManager::begin() (nvs_store.h) waits at most this long for another
+// task's session and then fails soft, and one wait must sit under the task
+// watchdog the loop is subscribed to (nvs_session_depth.h). That bounds a
+// wait, not a loop pass: a pass that meets a leaked session on several calls
+// can still outlast the watchdog, and its reset frees the leak.
+// tests_host/test_nvs_store_lock.cpp reads this line and the constant.
+static_assert(nvs_session::kSessionWaitMs < WATCHDOG_TIMEOUT_SEC * 1000u,
+              "an NvsManager session wait must sit under the loop's task watchdog");
+
 static bool nvs_load_key(uint8_t priv[32]) {
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.beginReadOnly()) return false;
