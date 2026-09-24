@@ -1004,13 +1004,14 @@ void provision_run(bool glass_ok) {
           WiFi.disconnect(/*wifioff=*/false, /*eraseap=*/false);
           enter(St::Fail, now);
           ui_stage(canary::ui::ObStage::Fail, ctx.fail_reason);
-          // Every failure carries its most likely fix (the portal shows a
-          // longer version of the same tip). The classic silent killer is
-          // a 5 GHz-only network the radio literally cannot see.
-          // Same shared table the boot path and the glass use, so the hint a
-          // user reads in the portal is the hint the device logs. The narrow
-          // form is the same fix in fewer words, for a row that cannot hold
-          // the hint whole or over two rows (onboardlayout::hint_lines, F50).
+          // Every failure carries its most likely fix (the portal's own
+          // tip() words a longer one for a wrong key and a missing
+          // network). The classic silent killer is a 5 GHz-only network the
+          // radio literally cannot see. The fix comes from the shared table
+          // (wifi_join_policy.h) whose label is the title above it and
+          // whose detail the boot path logs. The narrow form is the same fix
+          // in fewer words, for a row that cannot hold the hint whole or
+          // over two rows (onboardlayout::hint_lines, F50).
           {
             const canary::net::JoinFailure why = classify_status(ws);
             ui_hint(canary::net::join_failure_hint(why),

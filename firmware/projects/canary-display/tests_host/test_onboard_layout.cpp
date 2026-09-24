@@ -675,6 +675,15 @@ static std::string check_hint_rows(const Env& e, const char* lad_name,
     CHECK(whole || narrow,
           "%s/%s: %s: the rows say \"%s\" — neither \"%s\" nor \"%s\"", n,
           lad_name, c.what, said.c_str(), c.hint, c.narrow ? c.narrow : "");
+    // And on every display env it is the whole hint, on one row or two: the
+    // narrow form is a rung no shipped glass reaches (test_f50_pins holds
+    // it), the docs say the fixes read whole, and onboard_probe.mjs reads
+    // the whole form off the emulator's glass word for word. A glass that
+    // needs the shorter copy is a copy change: word it, then relax this.
+    CHECK(whole,
+          "%s/%s: %s: the glass falls to the narrow form \"%s\" (the whole "
+          "hint \"%s\" fits neither row nor both)",
+          n, lad_name, c.what, said.c_str(), c.hint);
     // The narrow form is a real rung: on its own, in the floor face, it
     // fits the hint row, whatever hint_lines() picked above it.
     CHECK(c.narrow == nullptr || m(c.narrow, true) <= low_w,

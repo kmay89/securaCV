@@ -53,9 +53,9 @@ constexpr int kMinGap = 2;
 
 // Width the round glass's lowest line keeps: the chord of the band the
 // password / coach line rides, and (the window is symmetric) of the title's
-// band. provision.cpp writes its round-glass hints to it ("open 192.168.4.1"
-// on the low band; "forget it on your phone" on the Join scene's note row,
-// the title's band).
+// band. The coach line's lower half rides it (hint_lines: "open 192.168.4.1"
+// under "no page?"), and so does the stuck-phone hint on the Join scene's
+// note row, the title's band ("forget it on your phone").
 constexpr int kRoundLowRowW = 142;
 
 // The join code's module count. provision_core.h's payload for the
