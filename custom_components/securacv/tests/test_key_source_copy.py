@@ -4,8 +4,9 @@ The pin / rotate / unpin menu used to tell every operator to read the
 fingerprint and pubkey hex off "its /enroll page", but only canary-wap
 serves that route (canary_wap.ino's register_api_routes). The
 firmware/canary build and canary-vision print the key on USB serial when
-asked (`j`); canary-sense and canary-sentinel print it once at boot, as
-the `Ed25519 pubkey` line; a canary-display has no key at all.
+asked (`j`); canary-sense and canary-sentinel, on a firmware release
+after 2.4.15, print it once at boot on their serial console, as the
+`Ed25519 pubkey` line; a canary-display has no key at all.
 docs/device_trust.md ("Where each product shows its key") holds the full
 table, read from source.
 
@@ -19,7 +20,11 @@ These tests pin properties the copy has to keep, not its wording:
   no firmware/ and skips that one cross-check);
 - the pin step names a source for every product that signs and none for
   the one with no key, and in the monorepo the boot line it names for
-  canary-sense and canary-sentinel is held to their witness.cpp;
+  canary-sense and canary-sentinel is held to their witness.cpp, and the
+  `Device ID` line it names beside it to their main.cpp;
+- wherever the copy names that boot line it also names the release it
+  first ships after, because no image up to that release prints it and
+  the copy must not promise the key on every unit in the field;
 - the pin form's error text claims no rule its validator does not enforce.
 """
 
@@ -60,6 +65,13 @@ KEYLESS_LINES = ("canary-display",)
 BOOT_LINE_WITNESS = {
     "canary-sense": "projects/canary-sense/src/witness.cpp",
     "canary-sentinel": "projects/canary-sentinel/src/witness.cpp",
+}
+
+# The same products' main.cpp, whose setup() prints the device_id on a
+# `Device ID` boot line: the pin form's other field.
+BOOT_LINE_MAIN = {
+    "canary-sense": "projects/canary-sense/src/main.cpp",
+    "canary-sentinel": "projects/canary-sentinel/src/main.cpp",
 }
 
 
@@ -196,3 +208,48 @@ def test_boot_line_the_copy_names_is_printed_by_the_firmware() -> None:
                 f"options.step.{name} must name the `{found[0]}` boot line "
                 f"that {rel} prints for {line}"
             )
+
+
+_DEVICE_ID_PRINT = re.compile(r'boot_kv\(\s*"Device ID"\s*,')
+
+
+def test_pin_step_names_the_device_id_line_the_firmware_prints() -> None:
+    # The pin form takes a device_id as well as the key. For the products
+    # whose key is a boot-log line, the copy names the boot-log line that
+    # carries the device_id, and that line must exist.
+    text = _load()["options"]["step"]["pin"]["description"]
+    assert "`Device ID`" in text, (
+        "the pin step names the boot key line for "
+        f"{sorted(BOOT_LINE_MAIN)} but not where their device_id is read"
+    )
+    if not FIRMWARE.is_dir():
+        pytest.skip("firmware/ not present (HACS mirror checkout)")
+    for line, rel in BOOT_LINE_MAIN.items():
+        source = (FIRMWARE / rel).read_text(encoding="utf-8")
+        assert _DEVICE_ID_PRINT.search(source), (
+            f"{rel} prints no `Device ID` boot line, which the pin step "
+            f"names as the source of {line}'s device_id"
+        )
+
+
+# "a firmware release after 2.4.15": the last release without the line.
+_RELEASE_FLOOR = re.compile(r"\bfirmware release after (\d+\.\d+\.\d+)\b")
+
+
+def test_boot_line_copy_names_the_release_it_ships_after() -> None:
+    # The boot key line is newer than the released images, so a sentence
+    # offering it with no release qualifier tells every owner of a unit in
+    # the field to look for a line their firmware never prints. Both steps
+    # must name the same release.
+    step = _load()["options"]["step"]
+    floors = {}
+    for name in ("init", "pin"):
+        text = step[name]["description"]
+        found = set(_RELEASE_FLOOR.findall(text))
+        assert len(found) == 1, (
+            f"options.step.{name} names the boot key line for "
+            f"{sorted(BOOT_LINE_WITNESS)} without the release it first "
+            "ships after (\"a firmware release after X.Y.Z\")"
+        )
+        floors[name] = found.pop()
+    assert floors["init"] == floors["pin"], floors
