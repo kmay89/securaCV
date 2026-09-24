@@ -17,10 +17,26 @@ its suites unchanged —
   PYTHONPATH             <abs>/scripts/path_filter_reads   (its sitecustomize)
 
 and every node and python3 process in those steps — the test files, and the
-generators they spawn — appends the repo-relative paths it opened, stat'ed,
-listed or checked for existence to a JSONL file there. This script then
-matches each path against the workflow's `pull_request` paths, with the
-pattern semantics GitHub documents for path filters:
+generators they spawn — appends repo-relative paths to a JSONL file there.
+The two halves do not see the same things:
+
+  node     the paths it opens to read, stats, lists, resolves (realpath) or
+           only checks for existence (existsSync, accessSync)
+  python3  the paths it opens to read (imports included) and lists. CPython
+           raises no audit event for os.stat, os.path.exists or pathlib's
+           exists(), so a python3 existence check is not seen.
+
+Each half arms the other in the processes it starts (record.cjs puts its
+directory on PYTHONPATH, sitecustomize.py puts record.cjs in NODE_OPTIONS),
+so a step needs PATH_FILTER_READS_DIR plus the variable that loads its first
+process: NODE_OPTIONS for `node --test`, PYTHONPATH for `python3 -m
+unittest`. canary-local.yml sets all three anyway. Not recorded at all:
+reads by shell tools and git (the Witness Wall step's `cmp`, a test's `git
+ls-files`), and a child started with a replaced environment or with
+python3 -I / -E / -S.
+
+This script then matches each path against the workflow's `pull_request`
+paths, with the pattern semantics GitHub documents for path filters:
 
   *    any run of characters except `/`       **   any run, `/` included
   **/  zero or more whole directories         ?    the previous char, optional
@@ -30,14 +46,26 @@ pattern semantics GitHub documents for path filters:
 
 A path is covered when the last pattern that matches it is not a `!` one.
 A DIRECTORY (listed, or stat'ed and a directory on disk) is covered when some
-pattern can reach inside it: a test that lists a directory usually filters
-the names, and the files it then reads are held to the filter one by one.
+pattern can reach inside it and no later `!` pattern takes its whole tree: a
+test that lists a directory usually filters the names, and the files it then
+reads are held to the filter one by one. A later `!` that takes only part of
+the tree is not weighed, so that answer is the lenient one.
 
 It fails, naming the test, the file, the test line that read it and the line
 to add to BOTH path lists (R6 in .github/CI.md keeps push equal to
-pull_request; .github/scripts/ci_policy_check.py enforces that half). It
-also fails when a suite the job runs left no record at all — a recorder that
-was never armed must not read as "no reads outside the filter".
+pull_request; .github/scripts/ci_policy_check.py enforces that half). A
+static `import` in an ES module is resolved and read from the loader's own
+frames, so for it the message names the test and the file but no line (a
+dynamic `import()` has one: its resolve runs on the test's stack).
+
+It also fails when a suite the job runs left no record of its own — a
+recorder that was never armed must not read as "no reads outside the
+filter". The suites it expects are the ones two command forms name:
+`node [opts] --test [opts] <file>...` and `python3 -m unittest discover [-s
+dir] [-p pattern]` (job_suites). A test command in another form (`node
+--test` with no file, `npm test`, pytest, `python3 -m unittest <module>`)
+still has its reads checked when its step is armed, but an unarmed one is
+not reported.
 
 A read of Python bytecode is charged to its source (a read of
 `x/__pycache__/m.cpython-311.pyc` is a read of `x/m.py`). Once a module is
@@ -97,6 +125,24 @@ def source_of(path: str) -> str:
 _PREFIX_WORDS = {"if", "elif", "while", "until", "then", "do", "else", "!",
                  "time", "exec", "env", "command", "nice"}
 _ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+# `node` options that take their value as the next word (`--opt value`); the
+# `--opt=value` spelling is one word and needs no entry.
+_NODE_VALUE_OPTS = {
+    "--test-name-pattern", "--test-skip-pattern", "--test-reporter",
+    "--test-reporter-destination", "--test-concurrency", "--test-shard",
+    "--test-timeout", "--test-isolation", "--test-global-setup",
+    "--test-coverage-include", "--test-coverage-exclude",
+    "--test-coverage-branches", "--test-coverage-functions",
+    "--test-coverage-lines", "--require", "-r", "--import", "--loader",
+    "--experimental-loader", "--conditions", "-C", "--env-file",
+    "--input-type", "--watch-path",
+}
+
+# The suite label the Python half gives a `python3 -m unittest ...` process
+# (sitecustomize.py's `label`): its reads made outside any test module's code,
+# such as importing each test module, are charged to it.
+_UNITTEST_RUNNER = "python3 -m unittest"
 
 # fs calls that look at a directory's listing rather than a file's bytes.
 LISTING_OPS = {"readdirSync", "readdir", "opendirSync", "opendir", "listdir"}
@@ -176,17 +222,28 @@ class PathFilter:
         return not hit if self.ignore else hit
 
     def covers_dir(self, path: str) -> bool:
-        """Can a change inside directory `path` trigger the workflow at all?"""
+        """Can a change inside directory `path` trigger the workflow at all?
+
+        The last pattern that speaks for the whole directory decides: a
+        positive one that reaches inside it covers it, and a `!` one that
+        matches everything under it (`!docs/**`) uncovers it. A `!` pattern
+        that takes only part of the tree (`!docs/*.md`) is not weighed: the
+        directory stays covered, the lenient answer."""
         probe = path.rstrip("/") + "/\0"  # "\0" never occurs in a real name
         if self.ignore:
             # Ignored only when every path under it is, which only a
             # `<dir>/**`-style pattern says.
             return not self._last_match(probe)
-        if self.covers_file(probe):
-            return True
+        deep = probe + "/\0"  # only a pattern that takes every depth matches both
         segs = path.strip("/").split("/")
-        return any(not neg and _reaches_into(segs, body.split("/"))
-                   for neg, body, _rx in self._compiled)
+        verdict = False
+        for neg, body, rx in self._compiled:
+            if neg:
+                if rx.fullmatch(probe) and rx.fullmatch(deep):
+                    verdict = False
+            elif rx.fullmatch(probe) or _reaches_into(segs, body.split("/")):
+                verdict = True
+        return verdict
 
 
 def allowed(path: str) -> str | None:
@@ -279,8 +336,30 @@ def _commands(line: str) -> list[list[str]]:
     return cmds
 
 
+def _node_test_files(words: list[str]) -> list[str]:
+    """The files a `node ... --test ... <files>` command names."""
+    files: list[str] = []
+    skip = False
+    for w in words[words.index("--test") + 1:]:
+        if skip:
+            skip = False
+        elif w.startswith("-"):
+            skip = w in _NODE_VALUE_OPTS
+        else:
+            files.append(w)
+    return files
+
+
 def job_suites(wf: dict, job: str) -> tuple[list[str], list[tuple[str, str]]]:
-    """(node --test files, [(unittest discover dir, pattern)]) the job runs."""
+    """(node --test files, [(unittest discover dir, pattern)]) the job runs.
+
+    Two command forms are recognized, anywhere in a run line (after `if !`,
+    `time`, `VAR=x` and the like): `node [opts] --test [opts] <file>...`
+    with its files named, and `python3 -m unittest discover [-s dir]
+    [-p pattern]`. Any other test command (`node --test` with no file,
+    `npm test`, pytest, `python3 -m unittest <module>`) still has its reads
+    recorded and checked when its step is armed, but it is not expected by
+    name, so an unarmed one is not reported as silent."""
     jobs = wf.get("jobs") or {}
     if job not in jobs:
         raise SystemExit(f"::error::no job `{job}` in the workflow")
@@ -293,8 +372,7 @@ def job_suites(wf: dict, job: str) -> tuple[list[str], list[tuple[str, str]]]:
         for line in run.replace("\\\n", " ").splitlines():
             for words in _commands(line):
                 if len(words) >= 3 and words[0] == "node" and "--test" in words:
-                    node.extend(w for w in words[words.index("--test") + 1:]
-                                if not w.startswith("-"))
+                    node.extend(_node_test_files(words))
                 if words[:4] in (["python3", "-m", "unittest", "discover"],
                                  ["python", "-m", "unittest", "discover"]):
                     opts = words[4:]
@@ -358,13 +436,22 @@ def check(repo: Path, workflow: Path, job: str, reads_dir: Path,
     records = load_records(reads_dir)
     problems: list[str] = []
 
-    heard = {r.get("path") for r in records} | {r.get("suite") for r in records}
+    # A suite is heard when its own process recorded something, never because
+    # another suite read its source. A node file's child always writes its
+    # own "exec" record. A discover module is heard through its own reads, or
+    # through the runner's import of it (a module whose tests read nothing).
+    suites_heard = {r.get("suite") for r in records}
+    node_files = {os.path.normpath(f).replace(os.sep, "/") for f in node}
+    imported = {r.get("path") for r in records
+                if str(r.get("suite") or "").startswith(_UNITTEST_RUNNER)}
     for f in expected:
-        if f not in heard:
+        heard = f in suites_heard or (f not in node_files and f in imported)
+        if not heard:
             problems.append(
                 f"::error file={wf_rel}::{f} ran in `{job}` but left no read "
                 f"record — the recorder was not armed for it (the step needs "
-                f"PATH_FILTER_READS_DIR, NODE_OPTIONS and PYTHONPATH, see "
+                f"PATH_FILTER_READS_DIR, and NODE_OPTIONS for a node suite or "
+                f"PYTHONPATH for a python3 one; see "
                 f"scripts/check_path_filter_reads.py), so its reads went unchecked"
             )
     if not expected:
@@ -393,10 +480,13 @@ def check(repo: Path, workflow: Path, job: str, reads_dir: Path,
         is_dir = any(r.get("op") in LISTING_OPS for r in recs) or (repo / path).is_dir()
         line = f'- "{path}/**"' if is_dir else f'- "{path}"'
         by_suite: dict[str, dict] = {}
-        for r in recs:
-            by_suite.setdefault(r.get("suite") or "?", r)
+        for r in recs:  # per test, the first record that carries a line
+            reader = r.get("suite") or "?"
+            if reader not in by_suite or (r.get("at") and not by_suite[reader].get("at")):
+                by_suite[reader] = r
         who = "; ".join(
-            f"{s} ({r.get('op')}{' at ' + r['at'] if r.get('at') else ''}"
+            f"{s} ({r.get('op')}"
+            f"{' at ' + r['at'] if r.get('at') else ', no line: a module load or the runner'}"
             f"{', via ' + r['proc'] if r.get('proc') and r.get('proc') != s else ''})"
             for s, r in sorted(by_suite.items()))
         problems.append(

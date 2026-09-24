@@ -156,6 +156,18 @@ class DirectoryCoverage(unittest.TestCase):
     def test_a_bang_pattern_reaches_nothing(self):
         self.assertFalse(flt("!docs/**").covers_dir("docs"))
 
+    def test_a_later_bang_over_the_whole_tree_uncovers_the_directory(self):
+        self.assertFalse(flt("docs/**", "!docs/**").covers_dir("docs"))
+        self.assertFalse(flt("docs/*.md", "!docs/**").covers_dir("docs"))
+        # ...and a positive pattern after it reaches back in
+        f = flt("docs/*.md", "!docs/**", "docs/keep/**")
+        self.assertTrue(f.covers_dir("docs"))
+        self.assertTrue(f.covers_dir("docs/keep"))
+        self.assertFalse(f.covers_dir("docs/other"))
+        # a negation of one level only leaves the subdirectories covered
+        self.assertTrue(flt("docs/**", "!docs/*").covers_dir("docs"))
+        self.assertTrue(flt("docs/**", "!docs/*").covers_dir("docs/sub"))
+
 
 WORKFLOW = """\
 name: demo
@@ -270,6 +282,28 @@ class Checker(unittest.TestCase):
         last = WORKFLOW.splitlines().index('      - ".github/workflows/demo.yml"', 10) + 1
         self.assertIn(f"file=.github/workflows/demo.yml,line={last}::", p)
 
+    def test_a_read_with_no_line_says_why(self):
+        # An ES module load reads the file from the loader's own frames.
+        self.all_suites_heard()
+        self.record({"suite": "tests/a.test.js", "op": "readFileSync",
+                     "path": "docs/mod.js", "at": "", "proc": "tests/a.test.js"})
+        problems, _ = self.run_check()
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("tests/a.test.js (readFileSync, no line: a module load or the runner)",
+                      problems[0])
+
+    def test_the_record_with_a_line_speaks_for_its_test(self):
+        # A dynamic import() is read with no line but resolved with one.
+        self.all_suites_heard()
+        self.record({"suite": "tests/a.test.js", "op": "readFileSync",
+                     "path": "docs/mod.js", "at": "", "proc": "tests/a.test.js"},
+                    {"suite": "tests/a.test.js", "op": "realpathSync",
+                     "path": "docs/mod.js", "at": "tests/a.test.js:9",
+                     "proc": "tests/a.test.js"})
+        problems, _ = self.run_check()
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("tests/a.test.js (realpathSync at tests/a.test.js:9)", problems[0])
+
     def test_a_spawned_generator_is_charged_to_its_test(self):
         self.all_suites_heard()
         self.record({"suite": "tests/b.test.mjs", "op": "open", "path": "docs/table.md",
@@ -293,6 +327,27 @@ class Checker(unittest.TestCase):
         silent = sorted(p.split("::")[2].split(" ")[0] for p in problems)
         self.assertEqual(silent, ["tests/b.test.mjs", "tools/tests/test_one.py"])
         self.assertIn("left no read record", problems[0])
+
+    def test_a_suite_another_suite_reads_is_not_heard(self):
+        # b.test.mjs and test_one.py never ran armed; a.test.js only reads
+        # their source. A read of a suite's file is not that suite running.
+        self.record(
+            {"suite": "tests/a.test.js", "op": "exec", "path": "tests/a.test.js"},
+            {"suite": "tests/a.test.js", "op": "readFileSync", "path": "tests/b.test.mjs"},
+            {"suite": "tests/a.test.js", "op": "readFileSync",
+             "path": "tools/tests/test_one.py"},
+        )
+        problems, _ = self.run_check()
+        silent = sorted(p.split("::")[2].split(" ")[0] for p in problems)
+        self.assertEqual(silent, ["tests/b.test.mjs", "tools/tests/test_one.py"], problems)
+
+    def test_node_options_that_take_a_value_are_not_suites(self):
+        wf = gate.yaml.safe_load(WORKFLOW.replace(
+            "node --test tests/a.test.js",
+            "node --test --test-name-pattern foo --require ./x.cjs "
+            "--test-reporter=spec tests/a.test.js"))
+        node, _ = gate.job_suites(wf, "logic")
+        self.assertEqual(node, ["tests/a.test.js", "tests/b.test.mjs"])
 
     def test_a_python_module_heard_only_through_its_import_counts(self):
         self.record(
@@ -432,7 +487,62 @@ class Recorders(unittest.TestCase):
                         open("data/e.txt").read()
                 """),
             "py/child.py": "open('data/b.txt').read()\n",
+            # the async and promises forms, fs.open with a callback in the
+            # flags slot, the realpath family, and opens that can read (r+,
+            # a+) against ones that cannot (w+, a, O_TRUNC)
+            "t/more.js": textwrap.dedent("""\
+                const fs = require("node:fs");
+                const fsp = require("node:fs/promises");
+                const cb = (f) => new Promise((ok, no) => f((e, v) => (e ? no(e) : ok(v))));
+                (async () => {
+                  const out = {};
+                  out.r1 = await cb((k) => fs.readFile("more/r1.txt", "utf8", k));
+                  out.r2 = await fsp.readFile("more/r2.txt", "utf8");
+                  const fd = await cb((k) => fs.open("more/r3.txt", k));
+                  fs.closeSync(fd);
+                  out.r4 = fs.realpathSync("more/r4.txt").endsWith("r4.txt");
+                  out.r5 = fs.realpathSync.native("more/r5.txt").endsWith("r5.txt");
+                  out.r6 = (await cb((k) => fs.realpath("more/r6.txt", k))).endsWith("r6.txt");
+                  out.r7 = (await fsp.realpath("more/r7.txt")).endsWith("r7.txt");
+                  fs.closeSync(fs.openSync("more/rw1.txt", "r+"));
+                  fs.closeSync(fs.openSync("more/rw2.txt", "a+"));
+                  fs.closeSync(fs.openSync("more/rw3.txt", fs.constants.O_RDWR));
+                  fs.closeSync(fs.openSync("more/wo1.txt", "w+"));
+                  fs.closeSync(fs.openSync("more/wo2.txt", "a"));
+                  fs.closeSync(fs.openSync("more/wo3.txt",
+                    fs.constants.O_RDWR | fs.constants.O_TRUNC));
+                  process.stdout.write(JSON.stringify(out));
+                })();
+                """),
+            "py/modes.py": textwrap.dedent("""\
+                import os, sys
+                # a raw event with no int flags: the mode string decides
+                sys.audit("open", "more/p1.txt", "w", None)
+                sys.audit("open", "more/p2.txt", "r", None)
+                sys.audit("open", "more/p3.txt", "r+", None)
+                sys.audit("open", "more/p4.txt", "a", None)
+                open("more/p5.txt", "r+").close()
+                open("more/p6.txt", "w+").close()
+                open("more/p7.txt", "a").close()
+                os.close(os.open("more/p8.txt", os.O_RDWR))
+                os.close(os.open("more/p9.txt", os.O_RDWR | os.O_TRUNC))
+                """),
+            # python3 first: the node it starts is recorded too
+            "py/spawn_node.py": textwrap.dedent("""\
+                import subprocess
+                subprocess.run(["node", "t/esm.mjs"], check=True)
+                """),
+            # `node --test a b`: each file is a suite of its own
+            "tn/one.test.js": 'require("node:fs").readFileSync("more/n1.txt");\n',
+            "tn/two.test.js": 'require("node:fs").readFileSync("more/n2.txt");\n',
+            # a preload ahead of the recorder that builds node:fs's ES module
+            # facade before the recorder wraps anything
+            "pre/early.cjs": 'require("./early.mjs");\n',
+            "pre/early.mjs": 'import { readFileSync } from "node:fs";\nexport const f = readFileSync;\n',
         }
+        for name in ("r1", "r2", "r3", "r4", "r5", "r6", "r7", "rw1", "rw2", "rw3",
+                     "wo1", "wo2", "wo3", "n1", "n2", *(f"p{i}" for i in range(1, 10))):
+            files[f"more/{name}.txt"] = name
         for rel, text in files.items():
             p = cls.root / rel
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -443,20 +553,24 @@ class Recorders(unittest.TestCase):
     def tearDownClass(cls):
         cls._tmp.cleanup()
 
-    def env(self, reads: Path | None) -> dict:
+    def env(self, reads: Path | None, drop: tuple[str, ...] = ()) -> dict:
         env = dict(os.environ)
-        env.pop("PATH_FILTER_READS_SUITE", None)
-        env.pop("PATH_FILTER_READS_DIR", None)
+        for k in ("PATH_FILTER_READS_SUITE", "PATH_FILTER_READS_DIR",
+                  "NODE_OPTIONS", "PYTHONPATH"):
+            env.pop(k, None)
         env["NODE_OPTIONS"] = f"--require {self.root / 'scripts/path_filter_reads/record.cjs'}"
         env["PYTHONPATH"] = str(self.root / "scripts/path_filter_reads")
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         if reads is not None:
             env["PATH_FILTER_READS_DIR"] = str(reads)
+        for k in drop:
+            env.pop(k, None)
         return env
 
-    def run_recorded(self, argv: list[str]) -> tuple[subprocess.CompletedProcess, list[dict]]:
+    def run_recorded(self, argv: list[str], drop: tuple[str, ...] = ()
+                     ) -> tuple[subprocess.CompletedProcess, list[dict]]:
         with tempfile.TemporaryDirectory() as reads:
-            r = subprocess.run(argv, cwd=self.root, env=self.env(Path(reads) / "made"),
+            r = subprocess.run(argv, cwd=self.root, env=self.env(Path(reads) / "made", drop),
                                capture_output=True, text=True, timeout=120)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             return r, gate.load_records(Path(reads) / "made")
@@ -493,6 +607,7 @@ class Recorders(unittest.TestCase):
         child = [x for x in recs if x["proc"] == "py/gen.py"]
         self.assertTrue(child)
         self.assertEqual({x["suite"] for x in child}, {"t/run.js"})
+        self.assertIn(("exec", "py/gen.py"), {(x["op"], x["path"]) for x in child})
         self.assertIn(("open", "data/c.txt"), {(x["op"], x["path"]) for x in child})
         self.assertIn(("listdir", "data"), {(x["op"], x["path"]) for x in child})
         self.assertEqual({x["at"] for x in child if x["path"] == "data/c.txt"}, {"py/gen.py:2"})
@@ -517,9 +632,98 @@ class Recorders(unittest.TestCase):
         at = {x["path"]: x["at"] for x in recs if x["suite"] == "tt/test_first.py"}
         self.assertEqual(at["data/d.txt"], "tt/test_first.py:4")
 
+    def test_the_async_promises_open_and_realpath_forms_are_recorded(self):
+        r, recs = self.run_recorded(["node", "t/more.js"])
+        self.assertEqual(json.loads(r.stdout), {"r1": "r1", "r2": "r2", "r4": True,
+                                                "r5": True, "r6": True, "r7": True})
+        got = {(x["op"], x["path"]) for x in recs if x["proc"] == "t/more.js"}
+        for want in [("readFile", "more/r1.txt"), ("readFile", "more/r2.txt"),
+                     ("open", "more/r3.txt"), ("realpathSync", "more/r4.txt"),
+                     ("realpathSync.native", "more/r5.txt"), ("realpath", "more/r6.txt"),
+                     ("realpath", "more/r7.txt"), ("openSync", "more/rw1.txt"),
+                     ("openSync", "more/rw2.txt"), ("openSync", "more/rw3.txt")]:
+            self.assertIn(want, got)
+        # an open that truncates or cannot read depends on nothing in the file
+        paths = {x["path"] for x in recs}
+        self.assertFalse({"more/wo1.txt", "more/wo2.txt", "more/wo3.txt"} & paths, paths)
+
+    def test_python_opens_that_can_read_are_recorded_and_writes_are_not(self):
+        _, recs = self.run_recorded([sys.executable, "py/modes.py"])
+        paths = {x["path"] for x in recs if x["op"] == "open"}
+        self.assertLessEqual({"more/p2.txt", "more/p3.txt", "more/p5.txt", "more/p8.txt"},
+                             paths)
+        self.assertFalse({"more/p1.txt", "more/p4.txt", "more/p6.txt", "more/p7.txt",
+                          "more/p9.txt"} & paths, paths)
+
+    def test_the_import_systems_own_listings_are_not_reads(self):
+        # py/gen.py's stdlib imports make the import system list py/ (the
+        # script's directory is sys.path[0]); only the script's own listing
+        # of data/ is a read.
+        _, recs = self.run_recorded([sys.executable, "py/gen.py"])
+        listed = {x["path"] for x in recs if x["op"] == "listdir"}
+        self.assertEqual(listed, {"data"})
+
+    def test_node_test_runs_each_file_as_its_own_suite(self):
+        _, recs = self.run_recorded(["node", "--test", "tn/one.test.js", "tn/two.test.js"])
+        suite_of = {x["path"]: x["suite"] for x in recs if x["op"] == "readFileSync"}
+        self.assertEqual(suite_of.get("more/n1.txt"), "tn/one.test.js")
+        self.assertEqual(suite_of.get("more/n2.txt"), "tn/two.test.js")
+        # the runner itself is no suite: only a file's own process says it ran
+        execs = sorted((x["suite"], x["path"]) for x in recs if x["op"] == "exec")
+        self.assertEqual(execs, [("tn/one.test.js", "tn/one.test.js"),
+                                 ("tn/two.test.js", "tn/two.test.js")])
+
+    def test_an_es_module_facade_built_before_the_recorder_is_resynced(self):
+        # `import { readFileSync } from "node:fs"` binds the facade's export;
+        # a facade an earlier preload built holds the unwrapped function
+        # until the recorder resyncs it. The earlier preload loads an ES
+        # module through require(), which node has done unflagged since 22.12.
+        probe = subprocess.run(["node", "-p", "Boolean(process.features.require_module)"],
+                               capture_output=True, text=True, timeout=60)
+        if probe.stdout.strip() != "true":
+            self.skipTest("this node cannot require() an ES module")
+        with tempfile.TemporaryDirectory() as reads:
+            env = self.env(Path(reads))
+            env["NODE_OPTIONS"] = (f"--require {self.root / 'pre/early.cjs'} "
+                                   f"--require {self.root / 'scripts/path_filter_reads/record.cjs'}")
+            r = subprocess.run(["node", "t/esm.mjs"], cwd=self.root, env=env,
+                               capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            recs = gate.load_records(Path(reads))
+        self.assertIn(("readFileSync", "data/d.txt"), {(x["op"], x["path"]) for x in recs})
+
+    def test_node_alone_arms_its_python_children(self):
+        # A step that sets PATH_FILTER_READS_DIR and NODE_OPTIONS but not
+        # PYTHONPATH still records the generators its tests spawn.
+        _, recs = self.run_recorded(["node", "t/run.js"], drop=("PYTHONPATH",))
+        child = {(x["op"], x["path"], x["suite"]) for x in recs if x["proc"] == "py/gen.py"}
+        self.assertIn(("open", "data/c.txt", "t/run.js"), child)
+
+    def test_python_alone_arms_its_node_children(self):
+        _, recs = self.run_recorded([sys.executable, "py/spawn_node.py"],
+                                    drop=("NODE_OPTIONS",))
+        child = {(x["op"], x["path"], x["suite"]) for x in recs if x["proc"] == "t/esm.mjs"}
+        self.assertIn(("readFileSync", "data/d.txt", "py/spawn_node.py"), child)
+
+    def test_a_shadowed_sitecustomize_still_runs(self):
+        # Debian's python3 ships a sitecustomize of its own; the recorder's
+        # shadows it on sys.path and must run it, not replace it.
+        with tempfile.TemporaryDirectory() as tmp:
+            other = Path(tmp) / "other"
+            other.mkdir()
+            (other / "sitecustomize.py").write_text(
+                "import os\nos.environ['CHAINED'] = 'yes'\n")
+            env = self.env(Path(tmp) / "reads")
+            env["PYTHONPATH"] += os.pathsep + str(other)
+            r = subprocess.run([sys.executable, "-c",
+                                "import os, sys; print(os.environ.get('CHAINED'), "
+                                "'sitecustomize' in sys.modules)"],
+                               cwd=self.root, env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.stdout.split(), ["yes", "True"], r.stderr)
+
     def test_inert_without_the_directory_variable(self):
         probe = ['node', '-e', 'process.stdout.write(String(require("fs").readFileSync)'
-                 '.includes("note(name") ? "wrapped" : "plain")']
+                 '.includes("note(op, p)") ? "wrapped" : "plain")']
         with tempfile.TemporaryDirectory() as reads:
             armed = subprocess.run(probe, cwd=self.root, env=self.env(Path(reads)),
                                    capture_output=True, text=True, timeout=60)
