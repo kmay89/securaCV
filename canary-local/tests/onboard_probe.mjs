@@ -15,8 +15,12 @@
 //     name and key it printed readable on the glass, before and after the
 //     45 s stuck-phone hint (F45, see joinEllipses and credsOnGlass; --shots
 //     saves onboard_join_hint_<flavor>.png); the phone's wrong key is refused and the
-//     right one joins; the captive DNS answers A with 192.168.4.1 and AAAA
-//     with no data; the OS
+//     right one joins; when the phone sits on the AP without opening the page
+//     the glass's "no page?" hint is on the glass word for word, and so is each
+//     failure's fix after a wrong key and an absent network (F50, see
+//     coachOnGlass; --shots saves onboard_phone_hint_<flavor>.png and
+//     onboard_fail_<reason>_<flavor>.png); the captive DNS answers A with
+//     192.168.4.1 and AAAA with no data; the OS
 //     probe gets the 302; GET / serves PORTAL_HTML byte-for-byte as
 //     devices/display_portal.json pins it; /scan lists the staged LAN
 //     strongest-first with the display's zone; a wrong key and an absent SSID
@@ -55,6 +59,29 @@ const flavorIdx = process.argv.indexOf("--flavor");
 const ONLY = flavorIdx > 0 ? process.argv[flavorIdx + 1] : null;
 
 const PORTAL = JSON.parse(await readFile(join(ROOT, "canary-local/devices/display_portal.json"), "utf8"));
+// The coach lines the glass is handed (F50), read from the sources the
+// emulator compiles: each failure's fix and its narrow form from the shared
+// table (wifi_join_policy.h), and the "no page?" hint's forms from the
+// PhoneJoined branch of provision.cpp.
+const POLICY = await readFile(join(ROOT, "firmware/common/network/wifi_join_policy.h"), "utf8");
+const PROVISION = await readFile(join(ROOT, "firmware/projects/canary-display/src/net/provision.cpp"), "utf8");
+function failureHints(name) {
+  const forms = [];
+  for (const fn of ["join_failure_hint", "join_failure_hint_narrow"]) {
+    const body = new RegExp(`inline const char\\* ${fn}\\(JoinFailure f\\) \\{([\\s\\S]*?)\\n\\}`).exec(POLICY)?.[1] || "";
+    const m = new RegExp(`case JoinFailure::${name}:\\s*return "([^"]*)";`).exec(body);
+    if (m) forms.push(m[1]);
+  }
+  if (forms.length !== 2) throw new Error(`wifi_join_policy.h: no hint and narrow form for ${name}`);
+  return forms;
+}
+const PHONE_HINTS = (() => {
+  const block = /\(int32_t\)HINT_AFTER_MS\)[\s\S]*?#endif/.exec(PROVISION)?.[0] || "";
+  const forms = [...block.matchAll(/^\s*ui_hint\(([^;]*)\);/gm)]
+    .flatMap((c) => [...c[1].matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]));
+  if (!forms.length) throw new Error("provision.cpp: no PhoneJoined hint after HINT_AFTER_MS");
+  return forms;
+})();
 const DIST = join(ROOT, "canary-local/emulator/dist");
 const FLAVORS = (await readdir(DIST))
   .map((f) => /^canary-display-([a-z0-9]+)\.js$/.exec(f)?.[1])
@@ -249,6 +276,17 @@ function credsOnGlass(lines, ap) {
   return missing;
 }
 
+// A coach line, word for word, on the glass (runs here, on glassLines'
+// answer): one of its forms on one line, or over two lines one under the
+// other (the head, a space, the tail). A line LVGL cut to an ellipsis holds
+// "..." instead of its tail, so it matches no form. On narrow glass every
+// failure's fix and the "no page?" hint used to be cut that way (F50).
+function coachOnGlass(lines, forms) {
+  const texts = [...lines].sort((a, b) => a.y - b.y || a.x - b.x).map((l) => l.text);
+  return forms.some((f) => texts.includes(f) ||
+    texts.some((t, i) => i + 1 < texts.length && `${t} ${texts[i + 1]}` === f));
+}
+
 // ── 1. the harness, per flavor ──────────────────────────────────────────────
 async function walkHarness(flavor) {
   const page = await browser.newPage({ viewport: { width: 1000, height: 620 } });
@@ -258,12 +296,30 @@ async function walkHarness(flavor) {
   const E = (fn, arg) => page.evaluate(fn, arg);
   const serial = () => E(() => window.__state.serialText);
   const check = (ok, msg) => { if (!ok) throw new Error(msg); };
+  // --shots: the glass as drawn, as <name>_<flavor>.png.
+  const shotAs = async (name) => {
+    if (!SHOTS) return;
+    const png = await E(() => document.getElementById("glass").toDataURL("image/png"));
+    await writeFile(`${SHOTS}/${name}_${flavor}.png`, Buffer.from(png.split(",")[1], "base64"));
+  };
   // Poll /status until the firmware leaves "connecting".
   const verdict = () => until(async () => {
     const r = await E(() => window.__emu.http("GET", "/status"));
     const j = JSON.parse(r.body || "{}");
     return j.state === "connecting" || j.state === "idle" ? null : j;
   }, "a /status verdict", 30000, 900);
+  // F50: after a failed join the glass names the fix (wifi_join_policy.h's
+  // hint for the reason, or its narrow form), word for word.
+  const failFixOnGlass = async (reason) => {
+    const forms = failureHints(reason);
+    await until(async () => coachOnGlass(await E(glassLines), forms), `the ${reason} fix on the glass`, 10000)
+      .catch(async () => {
+        const ls = await E(glassLines);
+        throw new Error(`after a ${reason} failure the glass does not show its fix word for word (lines: ` +
+          `${JSON.stringify(ls.map((l) => l.text))}; forms ${JSON.stringify(forms)}) (F50)`);
+      });
+    await shotAs(`onboard_fail_${reason}`);
+  };
 
   try {
     await page.goto(`http://localhost:${port}/canary-local/emulator/web/harness.html?hour=10&meet=1&flavor=${flavor}`);
@@ -331,6 +387,19 @@ async function walkHarness(flavor) {
     // The phone joins: the radio checks the key the firmware chose.
     check(await E((a) => window.__emu.phoneJoin(a.ssid, "wrongkey"), ap) === -1, "a wrong AP key was not refused");
     check(await E((a) => window.__emu.phoneJoin(a.ssid, a.pass), ap) === 1, "the QR's key did not join");
+    // F50: the phone is on the AP and has not opened the page. The glass
+    // leaves the Join scene (the key goes), and 4 s on it names the manual
+    // path — whole, or over the two rows the credentials left.
+    await until(async () => !(await E(glassLines)).some((l) => l.text.includes(ap.pass)),
+      "the glass to see the phone join", 20000);
+    await E(() => window.__emu.stepTime(5000));
+    await until(async () => coachOnGlass(await E(glassLines), PHONE_HINTS),
+      "the \"no page?\" hint on the glass", 20000).catch(async () => {
+      const ls = await E(glassLines);
+      throw new Error(`the "no page?" hint is not on the glass word for word (lines: ` +
+        `${JSON.stringify(ls.map((l) => l.text))}; forms ${JSON.stringify(PHONE_HINTS)}) (F50)`);
+    });
+    await shotAs("onboard_phone_hint");
 
     // Captive DNS: the firmware's dns_build_response.
     const dns = await E(async () => {
@@ -383,6 +452,7 @@ async function walkHarness(flavor) {
     check(r.status === 200 && JSON.parse(r.body).ok === true, `POST /join → ${r.status} ${r.body}`);
     let v = await verdict();
     check(v.state === "fail" && v.reason === PORTAL.join_failures.BadPassword, `wrong key verdict ${JSON.stringify(v)}`);
+    await failFixOnGlass("BadPassword");
     check(!(await E(() => window.__nvs)).some((k) => k.startsWith("securacv/wifi_")), "a failed join wrote credentials");
     check((await E(() => window.__emu.http("GET", "/"))).status === 200, "the portal stopped answering after a failure");
 
@@ -390,6 +460,7 @@ async function walkHarness(flavor) {
     r = await join("Nobody Here", "whatever");
     v = await verdict();
     check(v.state === "fail" && v.reason === PORTAL.join_failures.NotFound, `absent SSID verdict ${JSON.stringify(v)}`);
+    await failFixOnGlass("NotFound");
 
     // A body the firmware refuses outright.
     r = await join("x".repeat(33), "k");
@@ -416,7 +487,7 @@ async function walkHarness(flavor) {
     if (errors.length) throw new Error("page errors:\n" + errors.slice(0, 8).join("\n"));
     console.log(`ONBOARD_PROBE_OK[${flavor}] ${ap.ssid}: join card clean, no line cut and name + key on the glass ` +
       `(with and without the stuck hint), ` +
-      `refused wrong key, captive DNS+302, served page pinned, ` +
+      `refused wrong key, "no page?" and both failures' fixes whole on the glass, captive DNS+302, served page pinned, ` +
       `3 verdicts from firmware, persisted on success, boot resumed`);
   } catch (e) {
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/onboard_${flavor}_fail.png` }).catch(() => {});
