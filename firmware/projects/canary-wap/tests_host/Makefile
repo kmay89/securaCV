@@ -11,6 +11,16 @@ CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Wpedantic
 SRC_DIR   = ../arduino/canary_wap
 
+# $(call run_marked,<suite>[ <args>][,<marker>]) runs ./<suite> and holds it
+# to the check firmware.yml's old inline steps made: a non-zero exit fails,
+# and so does output without the suite's marker (default "ALL .* PASSED"), so
+# a suite that returns 0 before its last check cannot pass silently. It
+# echoes only the suite's command line, like the plain `./suite` lines.
+run_marked = @echo "./$(1)"; out=$$(./$(1)); s=$$?; printf '%s\n' "$$out"; \
+  [ $$s -eq 0 ] || { echo "$(firstword $(1)): exit $$s" >&2; exit 1; }; \
+  printf '%s\n' "$$out" | grep -q "$(or $(2),ALL .* PASSED)" || \
+  { echo "$(firstword $(1)): no '$(or $(2),ALL .* PASSED)' line in its output" >&2; exit 1; }
+
 SOURCES   = test_mesh_coexistence.cpp \
             $(SRC_DIR)/mesh_channel_policy.cpp \
             $(SRC_DIR)/airtime_governor.cpp
@@ -292,7 +302,7 @@ $(GNSS_TIME_BIN): $(GNSS_TIME_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(GNSS_TIME_SRC)
 
 $(AUDIO_BIN): $(AUDIO_SOURCES)
-	$(CXX) $(CXXFLAGS) -I stubs/audio -I $(SRC_DIR) -o $@ $(AUDIO_SOURCES)
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/audio -I $(SRC_DIR) -o $@ $(AUDIO_SOURCES)
 
 $(CSI_FEAT_BIN): $(CSI_FEAT_SOURCES)
 	$(CXX) $(CXXFLAGS) -I stubs/csi -I $(SRC_DIR) -o $@ $(CSI_FEAT_SOURCES)
@@ -310,10 +320,10 @@ $(EVVERIFY_BIN): $(EVVERIFY_SOURCES)
 	$(CXX) $(CXXFLAGS) -DSECURACV_OTA_HOST_BUILD -I $(SRC_DIR) -o $@ $(EVVERIFY_SOURCES) -lcrypto
 
 $(BLEOTA_BIN): $(BLEOTA_SOURCES)
-	$(CXX) $(CXXFLAGS) -DSECURACV_OTA_HOST_BUILD -I $(SRC_DIR) -o $@ $(BLEOTA_SOURCES) -lcrypto
+	$(CXX) $(CXXFLAGS) -Werror -Wno-deprecated-declarations -DSECURACV_OTA_HOST_BUILD -I $(SRC_DIR) -o $@ $(BLEOTA_SOURCES) -lcrypto
 
 $(WITNESS_PAGE_BIN): $(WITNESS_PAGE_SRC) $(SRC_DIR)/witness_page.h
-	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -I $(SRC_DIR) -o $@ $(WITNESS_PAGE_SRC) -lcrypto
+	$(CXX) $(CXXFLAGS) -Werror -Wno-deprecated-declarations -I $(SRC_DIR) -o $@ $(WITNESS_PAGE_SRC) -lcrypto
 
 # Help QR: the verdict → Help Desk URL composer (help_qr_logic.h) — the
 # probe-namespace bridge, worst-first precedence, and overflow refusal.
@@ -397,20 +407,20 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 	./$(DEVPSEUDO_COMMON_BIN)
 	./$(GPS_COARSEN_BIN)
 	./$(GNSS_TIME_BIN)
-	./$(AUDIO_BIN)
+	$(call run_marked,$(AUDIO_BIN),test_audio_cadence: all tests passed)
 	./$(CSI_FEAT_BIN)
 	./$(WCA_BIN)
 	./$(FLEET_BEACON_BIN)
 	./$(EVDRIVE_BIN)
 	./$(EVVERIFY_BIN)
-	./$(BLEOTA_BIN)
+	$(call run_marked,$(BLEOTA_BIN))
 	./$(HELPQR_BIN)
 	./$(STATUSTIER_BIN)
 	./$(CSI_SUBC_BIN)
 	for b in $(CSI_COMPAT_BINS); do ./$$b || exit 1; done
 	./$(CSI_TRAFFIC_BIN)
 	./$(TAMPER_BIN)
-	./$(WITNESS_PAGE_BIN) $(WITNESS_PAGE_FIXTURE)
+	$(call run_marked,$(WITNESS_PAGE_BIN) $(WITNESS_PAGE_FIXTURE))
 
 clean:
 	rm -f $(WITNESS_PAGE_BIN) $(EVVERIFY_BIN) $(BLEOTA_BIN) $(EVDRIVE_BIN) $(FLEET_BEACON_BIN) $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(HELPQR_BIN) $(STATUSTIER_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN)
@@ -543,3 +553,187 @@ clean-wander-jitter:
 
 run: run-wander-jitter
 clean: clean-wander-jitter
+
+# Sweep CI3, one host-test list: the fourteen suites below were built only by
+# their own inline g++ steps in firmware.yml's "Mesh + Scout Host Tests" job,
+# so `make` here never ran them and the two lists could drift. Each rule keeps
+# its step's flags (-Werror; the witness store's OpenSSL deprecation waiver
+# and -lcrypto) and its "ALL ... PASSED" check (run_marked, above).
+# scripts/tests/test_host_test_lists.py fails a suite that is back on a
+# workflow's list only. Pure sketch headers, no Arduino glue. Hooked into
+# `run` and `clean` by prerequisite so it adds no hunk to their lists.
+
+# The first-run wizard's pure decisions (setup-window keep-alive, scan-cache
+# freshness, AP-only join suppression, AP teardown grace), so the
+# phone-visible provisioning behavior is pinned on the host.
+PROV_BIN = test_provisioning_logic
+PROV_SRC = test_provisioning_logic.cpp
+
+# The pre-flight health check's verdicts (Bluetooth SKIP vs FAIL vs ABSENT
+# across boot window / safe mode / DEV builds, Wi-Fi link-down vs radio-off),
+# so the "almost everything failing" false negatives can't come back.
+SELFTEST_BIN = test_selftest_logic
+SELFTEST_SRC = test_selftest_logic.cpp
+
+# The Device-tab runtime config clamps. Most important: the event-time
+# coarsening bucket can only be widened past its compile-time floor, never
+# narrowed (Invariant III), and the log threshold can never rise above
+# WARNING (ERROR/CRITICAL always stored).
+CONFIG_BIN = test_config_logic
+CONFIG_SRC = test_config_logic.cpp
+
+# Which failed-auth shapes feed the brute-force lockout. A credential-less
+# request must NOT count: counting it let one open dashboard tab 429-lock the
+# operator's correct token.
+AUTH_BIN = test_auth_logic
+AUTH_SRC = test_auth_logic.cpp
+
+# The BLE pairing channel ships ENABLED by default (disabled read as a dead
+# Bluetooth panel). Pins that the radio is on out of the box AND that PIN
+# confirmation stays required, so "on by default" never becomes "pairs
+# silently".
+BTDEF_BIN = test_bt_defaults
+BTDEF_SRC = test_bt_defaults.cpp
+
+# The SD mount worker's decisions: the loop's periodic SD check never attempts
+# a mount in SAFE MODE (the old unconditional remount re-ran a blocking
+# SD.begin from loop() and crash-looped safe mode via the 8 s task watchdog),
+# never piles onto an in-flight attempt, and the caller's bounded wait is
+# wrap-safe.
+SDMOUNT_BIN = test_sd_mount_logic
+SDMOUNT_SRC = test_sd_mount_logic.cpp
+
+# The camera preview's reported numbers: stream uptime freezes at the recorded
+# end instead of collapsing to 0 (which zeroed the derived throughput), avg
+# kbps comes from real byte totals with no divide-by-zero, and the MJPEG
+# worker's frame pacing clamps to a >=20 ms floor (the yield that keeps the
+# WDT-subscribed IDLE tasks fed under the priority-3 stream task).
+PEEK_BIN = test_peek_stream_logic
+PEEK_SRC = test_peek_stream_logic.cpp
+
+# Sealed-snapshot vault decisions and on-disk format (vault_logic.h): the
+# fail-closed capture decision table (no key / no SD / no camera / QR busy /
+# worker busy / cooldown, incl. millis wrap), the byte-exact 64-byte .svlt
+# header against a golden hex fixture shared verbatim with
+# tools/test_unseal_snapshot.py, and the ring filename parser that doubles as
+# the download/delete traversal gate.
+VAULT_BIN = test_vault_logic
+VAULT_SRC = test_vault_logic.cpp
+
+# The /WITNESS/records.jsonl durable tier (witness_store.h, the sketch's
+# staged copy; firmware/tests_host builds the same suite against the
+# canonical header): the byte-exact NDJSON line against a golden fixture,
+# tail recovery (newest complete line wins; torn power-cut lines skipped; junk
+# lines can't shadow good ones), malformed-field and seq-overflow rejection,
+# the SD-wins reconciliation decision, and the seq-binding tamper check
+# (OpenSSL recompute of the chain hash; SHA256_Init & co. are deprecated in
+# OpenSSL 3, hence the waiver under -Werror).
+WITSTORE_BIN = test_witness_store_logic
+WITSTORE_SRC = test_witness_store_logic.cpp
+
+# The beacon-audit chain-head SD recovery guard (beacon_audit_recover.h): only
+# adopt the newest COMPLETE line's head when the tail chain-links (each
+# entry's prev == the previous entry's head, or genesis for a first record).
+# Torn tails, corrupt or field-less lines, and unverifiable single fragments
+# are refused, so a stale-NVS boot cannot silently redirect the append-only
+# chain.
+BCNAUDIT_BIN = test_beacon_audit_recover
+BCNAUDIT_SRC = test_beacon_audit_recover.cpp
+
+# Camera power management decisions (camera_gate_logic.h): the peek-surface
+# gate precedence (broken camera > thermal > battery policy, each with honest
+# user-facing copy) and the idle-standby decision (never while
+# streaming/QR/sealing; immediate on policy deny; wrap-safe idle timer
+# otherwise).
+CAMGATE_BIN = test_camera_gate_logic
+CAMGATE_SRC = test_camera_gate_logic.cpp
+
+# The /HEALTH per-boot jsonl format (health_store_logic.h): JSON escaping of
+# peer-influenced strings (quote/backslash/control bytes, atomic truncation),
+# the byte-exact line format, and the boot filename scheme.
+HEALTH_BIN = test_health_store_logic
+HEALTH_SRC = test_health_store_logic.cpp
+
+# Round-two power-policy gates (power_gate_logic.h): advisory feature run/skip
+# (CSI drain) and routine MQTT heartbeat cadence stretch by power mode
+# (life-safety and event publishes bypass; overflow saturates rather than
+# wraps).
+PWRGATE_BIN = test_power_gate_logic
+PWRGATE_SRC = test_power_gate_logic.cpp
+
+# Who owns the shared canary.local catch-all when several Canaries share a
+# LAN: the fingerprint-staggered claim window, the detect-own-echo probe
+# classification, and the IP tie-break whose antisymmetry guarantees exactly
+# one device keeps a double claim (both keeping = session-cookie-killing
+# hostname flapping; both withdrawing = canary.local goes dark).
+CATCHALL_BIN = test_catchall_logic
+CATCHALL_SRC = test_catchall_logic.cpp
+
+SKETCH_LOGIC_BINS = $(PROV_BIN) $(SELFTEST_BIN) $(CONFIG_BIN) $(AUTH_BIN) \
+                    $(BTDEF_BIN) $(SDMOUNT_BIN) $(PEEK_BIN) $(VAULT_BIN) \
+                    $(WITSTORE_BIN) $(BCNAUDIT_BIN) $(CAMGATE_BIN) \
+                    $(HEALTH_BIN) $(PWRGATE_BIN) $(CATCHALL_BIN)
+
+$(PROV_BIN): $(PROV_SRC) $(SRC_DIR)/provisioning_logic.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(PROV_SRC)
+
+$(SELFTEST_BIN): $(SELFTEST_SRC) $(SRC_DIR)/selftest_logic.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(SELFTEST_SRC)
+
+$(CONFIG_BIN): $(CONFIG_SRC) $(SRC_DIR)/config_logic.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(CONFIG_SRC)
+
+$(AUTH_BIN): $(AUTH_SRC) $(SRC_DIR)/auth_logic.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(AUTH_SRC)
+
+$(BTDEF_BIN): $(BTDEF_SRC) $(SRC_DIR)/bt_defaults.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(BTDEF_SRC)
+
+$(SDMOUNT_BIN): $(SDMOUNT_SRC) $(SRC_DIR)/sd_mount_logic.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(SDMOUNT_SRC)
+
+$(PEEK_BIN): $(PEEK_SRC) $(SRC_DIR)/peek_stream_logic.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(PEEK_SRC)
+
+$(VAULT_BIN): $(VAULT_SRC) $(SRC_DIR)/vault_logic.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(VAULT_SRC)
+
+$(WITSTORE_BIN): $(WITSTORE_SRC) $(SRC_DIR)/witness_store.h
+	$(CXX) $(CXXFLAGS) -Werror -Wno-deprecated-declarations -I $(SRC_DIR) -o $@ $(WITSTORE_SRC) -lcrypto
+
+$(BCNAUDIT_BIN): $(BCNAUDIT_SRC) $(SRC_DIR)/beacon_audit_recover.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(BCNAUDIT_SRC)
+
+$(CAMGATE_BIN): $(CAMGATE_SRC) $(SRC_DIR)/camera_gate_logic.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(CAMGATE_SRC)
+
+$(HEALTH_BIN): $(HEALTH_SRC) $(SRC_DIR)/health_store_logic.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(HEALTH_SRC)
+
+$(PWRGATE_BIN): $(PWRGATE_SRC) $(SRC_DIR)/power_gate_logic.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(PWRGATE_SRC)
+
+$(CATCHALL_BIN): $(CATCHALL_SRC) $(SRC_DIR)/catchall_logic.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(CATCHALL_SRC)
+
+.PHONY: run-sketch-logic clean-sketch-logic
+run-sketch-logic: $(SKETCH_LOGIC_BINS)
+	$(call run_marked,$(PROV_BIN))
+	$(call run_marked,$(SELFTEST_BIN))
+	$(call run_marked,$(CONFIG_BIN))
+	$(call run_marked,$(AUTH_BIN))
+	$(call run_marked,$(BTDEF_BIN))
+	$(call run_marked,$(SDMOUNT_BIN))
+	$(call run_marked,$(PEEK_BIN))
+	$(call run_marked,$(VAULT_BIN))
+	$(call run_marked,$(WITSTORE_BIN))
+	$(call run_marked,$(BCNAUDIT_BIN))
+	$(call run_marked,$(CAMGATE_BIN))
+	$(call run_marked,$(HEALTH_BIN))
+	$(call run_marked,$(PWRGATE_BIN))
+	$(call run_marked,$(CATCHALL_BIN))
+clean-sketch-logic:
+	rm -f $(SKETCH_LOGIC_BINS)
+
+run: run-sketch-logic
+clean: clean-sketch-logic
