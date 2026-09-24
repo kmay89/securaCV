@@ -3345,6 +3345,22 @@ test("the native flasher derives the same certificate as the module", async () =
     assert.equal(mine.motto, theirs.motto, `native/module motto drift for ${fp}`);
     assert.equal(mine.ringId, theirs.ringId, `native/module ring id drift for ${fp}`);
   }
+
+  // A canary-wap's boot receipt spells pubkey_fp in capitals (canary_wap.ino's
+  // hex_to_str), and that is what each flasher hands the mint; the phone
+  // derives the same fingerprint in lowercase from the key it pinned. Hex case
+  // names no different key, so all three must hatch one bird from it.
+  const wapFp = "7916CA487912FA1B";
+  const phone = deriveCertificate(hatch, { fingerprint: wapFp.toLowerCase(), product: { name: "Canary WAP" } });
+  for (const [who, cert] of [
+    ["the Mac Flasher", native(hatch, wapFp, { name: "Canary WAP" }, "")],
+    ["the Lab", deriveCertificate(hatch, { fingerprint: wapFp, product: { name: "Canary WAP" } })],
+  ]) {
+    assert.equal(cert.name, phone.name, `${who} names a canary-wap's capital fp a different bird`);
+    assert.equal(cert.lineage, phone.lineage, `${who} lineage drifts on a capital fp`);
+    assert.equal(cert.motto, phone.motto, `${who} motto drifts on a capital fp`);
+    assert.equal(cert.ringId, phone.ringId, `${who} ring id drifts on a capital fp`);
+  }
 });
 
 // The gap this test exists for: the derivation can be perfectly correct in

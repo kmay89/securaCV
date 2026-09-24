@@ -30,7 +30,7 @@ from homeassistant.helpers import device_registry as dr
 
 import json
 
-from .device_trust import TrustStore, TrustVerdict
+from .device_trust import TrustStore, TrustVerdict, normalize_hex
 from .const import (
     DOMAIN,
     CONF_MQTT_PREFIX,
@@ -845,11 +845,11 @@ def _async_health_for_tofu(hass: HomeAssistant, entry: ConfigEntry):
     threat model includes a hostile broker must pin keys manually
     (Options → Pin a device pubkey) with the key read off the device out
     of band — canary-wap's /enroll page, USB serial `j` on the
-    firmware/canary build and canary-vision; canary-sense and
-    canary-sentinel show only their fingerprint, which can check this pin
-    but not replace it (docs/device_trust.md, "Where each product shows
-    its key") — and should use broker ACLs to restrict who may publish
-    under the prefix.
+    firmware/canary build and canary-vision, the `Ed25519 pubkey` boot
+    line on canary-sense and canary-sentinel from a firmware release
+    after 2.4.15 (docs/device_trust.md, "Where each product shows its
+    key") — and should use broker ACLs to restrict who may publish under
+    the prefix.
     Subsequent publishes are verified against the pin; the warn-loudly-
     accept policy handles the "device legitimately re-flashed" case.
     """
@@ -874,10 +874,14 @@ def _async_health_for_tofu(hass: HomeAssistant, entry: ConfigEntry):
         pubkey_hex = data.get("public_key")
         if not pubkey_hex or not isinstance(pubkey_hex, str) or len(pubkey_hex) != 64:
             return
-        try:
-            bytes.fromhex(pubkey_hex)
-        except ValueError:
-            # 64 chars but not hex — would raise later inside the pin task.
+        # A canary-wap on firmware 2.4.15 or older spells its key in
+        # capitals; the store keeps one lowercase spelling
+        # (device_trust.normalize_hex).
+        pubkey_hex = normalize_hex(pubkey_hex)
+        # Exactly 64 hex digits. bytes.fromhex alone is not enough: it skips
+        # ASCII whitespace, so a 64-character string holding spaces decoded
+        # to a short key and raised later, inside the pin task (HA22).
+        if not re.fullmatch(r"[0-9a-f]{64}", pubkey_hex):
             return
         # async_pin needs the loop; schedule as a task so the @callback
         # context returns synchronously. A pin that actually lands is a new
@@ -943,7 +947,8 @@ def async_record_verify(
         # Dedup by (device_id, received_fingerprint) so a steady stream
         # of mismatched publishes only notifies the user once. Cleared
         # when the operator either re-pins or unpins the device.
-        key = (device_id, verdict.received_fingerprint or "")
+        # Lowercased so two spellings of one fingerprint are one notice.
+        key = (device_id, normalize_hex(verdict.received_fingerprint or ""))
         notified: set = entry_data["mismatch_notified"]
         if key in notified:
             return

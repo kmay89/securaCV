@@ -286,8 +286,9 @@ size_t b64url_encode_nopad(const uint8_t* in,
  * `v` it expects on signed payloads.
  *
  * GET /enroll → human-readable HTML page rendering the same data in
- * a captive-portal-friendly layout (big fingerprint, "type this into
- * HA" copy). Same data, different content-type.
+ * a captive-portal-friendly layout: the full key, which is what HA's
+ * manual pin form takes, under a big fingerprint for checking a pin by
+ * eye. Same data, different content-type.
  *
  * Both are registered from canary_wap.ino's start_http_server(). The
  * headless MQTT variants that compile the canonical copy (canary-sense,

@@ -10,13 +10,19 @@ Trust model
 - **TOFU by default.** First time a device_id appears on MQTT with a
   valid `fp` field, we pin that fingerprint as the trusted identity.
   Subsequent publishes from the same device_id MUST carry the same fp.
+- **Hex case carries no identity.** A canary-wap on firmware 2.4.15 or
+  older spells its fingerprint and public key in capitals (`hex_to_str` in
+  canary_wap.ino); a later one, every other build, and this module's own
+  derivation spell them in lowercase. Both name the same bytes, so every fingerprint and key is lowercased
+  (`normalize_hex`) before it is compared or stored, and stored pins are
+  always lowercase.
 - **Manual pin.** The options flow's "Pin a device pubkey" step takes
   the device_id and the full pubkey hex an installer read off the device
   out of band (canary-wap's `/enroll` page, USB serial on the
-  firmware/canary build and canary-vision; canary-sense and
-  canary-sentinel show only the fingerprint — docs/device_trust.md has
-  the per-product table); that pin takes precedence over any TOFU pin
-  already on record.
+  firmware/canary build and canary-vision, the boot log on canary-sense
+  and canary-sentinel from a firmware release after 2.4.15 —
+  docs/device_trust.md has the per-product table); that pin takes
+  precedence over any TOFU pin already on record.
 - **Rotation.** An explicit options-flow action lets the operator
   re-pin a new fingerprint after a deliberate key change (e.g. NVS
   wipe). Rotation is logged with the old fp + a timestamp so an
@@ -149,6 +155,22 @@ class DeviceTrustEntry:
         }
 
 
+def normalize_hex(value: str) -> str:
+    """The one spelling HA compares and stores a fingerprint or key in.
+
+    Hex is case-free: `7916CA487912FA1B` and `7916ca487912fa1b` are the same
+    8 bytes. A canary-wap on firmware 2.4.15 or older writes capitals
+    (canary_wap.ino's `hex_to_str`, the source of its envelope `fp` and its
+    health `public_key` until HA20), while later ones, the other builds and
+    `fingerprint_from_pubkey_hex` write lowercase. Comparing
+    the two spellings exactly read every signed canary-wap publish as a key
+    mismatch. Everything that reaches a comparison or the store goes through
+    here first. Nothing else is stripped or repaired: a value that is not
+    hex still fails where it failed before.
+    """
+    return value.lower()
+
+
 def fingerprint_from_pubkey_hex(pubkey_hex: str) -> str:
     """Mirror firmware's domain-separated SHA256 fingerprint.
 
@@ -177,6 +199,27 @@ def fingerprint_from_pubkey_hex(pubkey_hex: str) -> str:
     h.update(b"\x00")
     h.update(pubkey)
     return h.digest()[:8].hex()
+
+
+def _normalize_entry_case(entry: DeviceTrustEntry) -> bool:
+    """Lowercase a loaded entry's key, fingerprint and audit trail in place.
+
+    Returns True when anything changed, so the caller rewrites the store."""
+    changed = False
+    for attr in ("pubkey_hex", "fingerprint_hex"):
+        value = getattr(entry, attr)
+        if isinstance(value, str) and normalize_hex(value) != value:
+            setattr(entry, attr, normalize_hex(value))
+            changed = True
+    for retired in entry.previous:
+        if not isinstance(retired, dict):
+            continue
+        for key in ("pubkey_hex", "fp"):
+            value = retired.get(key)
+            if isinstance(value, str) and normalize_hex(value) != value:
+                retired[key] = normalize_hex(value)
+                changed = True
+    return changed
 
 
 class TrustStore:
@@ -213,6 +256,14 @@ class TrustStore:
                     "Dropping malformed trust entry for %s: %s", device_id, err
                 )
                 continue
+            # Heal pins stored in capitals: before the case fix, a TOFU pin
+            # from a canary-wap's health publish kept its key as the device
+            # spelled it. Same bytes, so only the spelling changes.
+            if _normalize_entry_case(entry):
+                _LOGGER.info(
+                    "Healing trust pin for %s: stored hex lowercased", device_id
+                )
+                healed = True
             # Heal pins recorded under the pre-fix fingerprint derivation
             # (missing 0x00 domain separator): the pubkey is the identity;
             # the fp is derived, so recompute and overwrite when stale.
@@ -280,7 +331,13 @@ class TrustStore:
         `async_rotate` rather than calling this directly — those wrap
         the right pin_source. Direct calls are for the config flow's
         manual entry step.
+
+        The key is stored lowercase whatever case it arrived in (the
+        health publish of a canary-wap on firmware 2.4.15 or older spells it
+        in capitals), so the pin, its derived fingerprint and the audit
+        trail share one spelling.
         """
+        pubkey_hex = normalize_hex(pubkey_hex)
         fp = fingerprint_from_pubkey_hex(pubkey_hex)
         now = time.time()
         existing = self._devices.get(device_id)

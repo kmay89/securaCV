@@ -297,6 +297,31 @@ int main() {
     CHECK(m2.ack_active(late), "display going Lost does not un-ack the household");
   }
 
+  // ── A canary-wap's fp arrives in capitals (canary_wap.ino hex_to_str) ──
+  // The beacon/chirp fp4 is rendered lowercase (beacon_parse.h), so the model
+  // must match it to the WAP's row and retire the WAP's ghost either way.
+  {
+    Model m;
+    m.on_chain("canary-s3-4dC2", 42, Badge::Verified, /*now=*/500,
+               nullptr, 0, "7916CA487912FA1B");
+    const Witness* w = find(m, "canary-s3-4dC2");
+    CHECK(w && strcmp(w->fp, "7916ca487912fa1b") == 0,
+          "a capital fp is stored lowercase");
+    BeaconStatus s = mk_status(80, 90, 43, false);
+    m.on_beacon("fa1b", s, true, /*now=*/1000);
+    CHECK(m.count() == 1, "the WAP's beacon lands on its row, no SCV-fa1b twin");
+    w = find(m, "canary-s3-4dC2");
+    CHECK(w && w->seen_via_ble, "the WAP row is marked seen over BLE");
+
+    Model g;
+    g.on_chirp("fa1b", 0x01, /*now=*/400);
+    CHECK(find(g, "SCV-fa1b") != nullptr, "an early chirp makes the ghost");
+    g.on_chain("canary-s3-4dC2", 42, Badge::Verified, /*now=*/500,
+               nullptr, 0, "7916CA487912FA1B");
+    CHECK(find(g, "SCV-fa1b") == nullptr, "the WAP's capital fp retires its ghost");
+    CHECK(g.count() == 1, "one row for the WAP after the chain lands");
+  }
+
   printf(g_failures == 0 ? "\nALL PASS\n" : "\n%d FAILURE(S)\n", g_failures);
   return g_failures == 0 ? 0 : 1;
 }

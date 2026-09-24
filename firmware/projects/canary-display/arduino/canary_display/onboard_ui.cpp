@@ -106,22 +106,28 @@ const char* join_title() { return s_qr_ok ? "Scan me" : "On your phone"; }
 // On split glass that hint takes the note row instead (under the key on
 // rectangular glass; the title's band on round glass, where the title
 // yields while it stands).
+//
+// Every other scene leaves the credentials rows empty, so its coach line —
+// PhoneJoined's "no page?", Fail's fix — has both of them (F50):
+// onboardlayout::hint_lines keeps the hint whole on the hint row where it
+// fits, else over both rows, else its narrow form, and never cuts it.
 void refresh_bottom() {
   if (!s_creds || !s_hint) return;
 #ifdef CD_FLAVOR_WATCH
+  const lv_font_t* own_f = s_row_font;
+  const lv_font_t* floor_f = s_floor_font;
+  auto measure = [own_f, floor_f](const char* t, bool fl) {
+    return text_w(t, fl ? floor_f : own_f);
+  };
   if (s_stage == ObStage::Join) {
-    const lv_font_t* own_f = s_row_font;
-    const lv_font_t* floor_f = s_floor_font;
     const onboardlayout::JoinLines j = onboardlayout::join_lines(
         RF_GLASS_ROUND != 0, s_creds_w, s_low_w, s_note_w, s_ap_ssid,
-        s_ap_pass, s_hint_text, s_hint_narrow,
-        [own_f, floor_f](const char* t, bool fl) {
-          return text_w(t, fl ? floor_f : own_f);
-        });
+        s_ap_pass, s_hint_text, s_hint_narrow, measure);
     set_row(s_creds, j.creds);
     set_row(s_hint, j.low);
     set_row(s_note, j.note);
-    // The key is load-bearing — muted; a hint is faint.
+    // The name and the key are load-bearing — muted; a hint is faint.
+    lv_obj_set_style_text_color(s_creds, col_muted(), 0);
     lv_obj_set_style_text_color(s_hint, j.split ? col_muted() : col_faint(),
                                 0);
 #if RF_GLASS_ROUND
@@ -129,12 +135,16 @@ void refresh_bottom() {
 #endif
     return;
   }
-  lv_obj_set_style_text_font(s_creds, s_row_font, 0);
-  lv_obj_set_style_text_font(s_hint, s_row_font, 0);
+  const onboardlayout::HintLines h = onboardlayout::hint_lines(
+      s_creds_w, s_low_w, s_hint_text, s_hint_narrow, measure);
+  set_row(s_creds, h.upper);
+  set_row(s_hint, h.lower);
+  lv_obj_set_style_text_color(s_creds, col_faint(), 0);
   lv_obj_set_style_text_color(s_hint, col_faint(), 0);
   lv_label_set_text(s_note, "");
-#endif
+#else
   lv_label_set_text(s_hint, s_hint_text);
+#endif
 }
 
 // Scene fade, applied to the TEXT of the labels rather than as one

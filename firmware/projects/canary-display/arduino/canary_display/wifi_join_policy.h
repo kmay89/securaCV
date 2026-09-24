@@ -111,9 +111,10 @@ inline const char* join_failure_detail(JoinFailure f) {
 /**
  * @brief The single most likely fix, in the user's words, for a small screen.
  *
- * Lower case and un-punctuated on purpose: these render under a status line on
- * a 1.47-inch panel as well as in the portal, and sentence case there reads as
- * a second error rather than a suggestion.
+ * Lower case and un-punctuated on purpose: the display's onboarding glass
+ * renders it under the failure's label, and sentence case there reads as a
+ * second error rather than a suggestion. (The portal page words its own,
+ * longer tip for the same causes, in provision.cpp's PORTAL_HTML.)
  */
 inline const char* join_failure_hint(JoinFailure f) {
   switch (f) {
@@ -123,6 +124,30 @@ inline const char* join_failure_hint(JoinFailure f) {
     case JoinFailure::Unknown:     break;
   }
   return "try moving it closer to the router";
+}
+
+/**
+ * @brief The same fix in fewer words, for a row too narrow for the hint.
+ *
+ * The hints above run 175-219 px in the smallest face a display sets, and the
+ * narrowest row that shows one is 142 px (the round watch's low band). The
+ * display fits the hint to the rows it has (whole, or over two rows) and
+ * falls back to this form only when neither holds it
+ * (`onboardlayout::hint_lines`, F50). Each one still names the fix: the
+ * 2.4 GHz band, the letter case, the router, the distance. And it says no
+ * more than the hint does: a hedged guess stays hedged ("may"), a suggestion
+ * stays a suggestion ("try"), and no form asks for a step the hint does not
+ * (NoAddress is inferred from a timeout, so "restart your router" would
+ * order a household off its network on a guess).
+ */
+inline const char* join_failure_hint_narrow(JoinFailure f) {
+  switch (f) {
+    case JoinFailure::NotFound:    return "needs 2.4 GHz wifi";
+    case JoinFailure::BadPassword: return "it's case-sensitive";
+    case JoinFailure::NoAddress:   return "router may be full";
+    case JoinFailure::Unknown:     break;
+  }
+  return "try moving it closer";
 }
 
 /**
