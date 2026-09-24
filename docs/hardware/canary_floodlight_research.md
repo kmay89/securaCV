@@ -54,7 +54,86 @@ are US street, Sept 2026, and move weekly — treat them as a tier, not a quote.
 
 ## 1 · The market — what's on the shelf
 
-<!-- MARKET-TABLE -->
+### 1.1 · The shelf, side by side
+
+Street prices are US, Sept 2026, before sales (most of these sit 20–40 % lower on any given
+week). "Sub." is the cheapest plan that unlocks the vendor's smart detection and event history;
+where the row says *none*, those features work without one. Lumens are vendor-stated. Every cell is
+from vendor copy or a named review; **unverified** marks a cell no source stated.
+
+| Product | Price | Light | Video / FOV | Detection | Power | Local / open | Subscription | Notable |
+|---|---|---|---|---|---|---|---|---|
+| **Ring Floodlight Cam Pro (2nd gen, "4K Pro")** | $260–280 | 2000 lm, dimmable 200–2000 | 4K (3840×2160), 140°×85° HDR, 10× zoom, color night | **radar** ("3D Motion Detection", Bird's Eye View) + video | hardwired 120 V j-box, 2.4/5 GHz Wi-Fi | none — cloud only, no RTSP | Ring Home Basic $4.99 · Standard $10 · Premium $19.99/mo (AI, video search, 24/7, **Familiar Faces**) | the category's flagship; person/package/vehicle alerts and all history behind the plan; Search Party on by default on cloud outdoor cams |
+| **Ring Floodlight Cam Wired Pro (1st gen)** | ~$200 street | 2000 lm | 2K HDR, 140°×80° | radar + video | hardwired, Wi-Fi | none | Ring Home (as above) | last year's Pro; same radar |
+| **Ring Floodlight Cam Wired Plus** | $180 | 2600 lm | 1080p, 140°×80°, color night | **PIR** | hardwired, 2.4 GHz only | none | Ring Home | the volume seller; PIR-only false alerts are the #1 review complaint |
+| **Wyze Cam Floodlight Pro** | $150 | 3000 lm, three independently aimed panels | 2.5K, **180°** wide, color night | video AI (Cam Plus) + PIR (**unverified**) | hardwired, Wi-Fi | **microSD to 256 GB**, 24/7 local; no official RTSP (`docker-wyze-bridge` community) | Cam Plus $2.99/mo per cam for person/pet/vehicle/package + cloud | PCMag Editors' Choice on value; TWiT: "good concept, frustrating execution" (app/setup) |
+| **Wyze Cam Floodlight v2** | $70–90 | 2800 lm | 2K, 160°, color night, 105 dB siren | PIR + video | hardwired, Wi-Fi | microSD to 256 GB, 30 days 24/7 | Cam Plus $2.99/mo for AI | the price floor of the hardwired class |
+| **eufy Floodlight Camera E340** | $220 ($370 w/ HomeBase S380) | 2000 lm, adjustable | **dual lens** 3K wide + 2K tele, 360° pan/tilt, AI tracking | video AI on-device + PIR (**unverified**) | hardwired, Wi-Fi | **microSD 128 GB or HomeBase**, AES-128; no fees; RTSP via HomeBase/app (**unverified** on this model) | **none** required | PCWorld: "tops in surveillance, lighting"; the reviewer default for "no subscription" |
+| **eufy Floodlight Cam S330 (2 Pro)** | $200–300 | **3000 lm** | 2K, 360° pan/tilt, on-device subject lock | video AI | hardwired, Wi-Fi | local (onboard), no fees | none | praised light + PTZ; "fussy about Wi-Fi", app hiccups |
+| **eufy Floodlight Camera E30** | $150 | 2000 lm | 2K, 360° pan / 70° tilt, siren | video AI | hardwired, **2.4 GHz only** | local 24/7, no fees | none | the cheap eufy |
+| **Reolink Elite Floodlight WiFi** | ~$200–250 (**unverified**) | **3000 lm adjustable** | 4K 8 MP, **180°** dual-lens | video AI on-device, local video search | hardwired 100–240 V, Wi-Fi 6 dual-band | **RTSP + ONVIF native**, microSD, NVR; official Home Assistant integration | none | the open-protocol leader; closed firmware |
+| **Reolink Duo Floodlight (WiFi / PoE)** | ~$180–230 | 2 × 15 W, 1800 lm, 4200 K | 4K dual-lens 180° | video AI | Wi-Fi or **PoE** | RTSP/ONVIF, NVR | none | the only mainstream **PoE floodlight cam**; VueVille: strong image, light "adequate" |
+| **Reolink TrackFlex Floodlight WiFi** | ~€230 (US **unverified**) | 3000 lm | 4K dual, PTZ 360°, 6× hybrid zoom | video AI, auto-track | hardwired, Wi-Fi | RTSP/ONVIF, HA integration | none | HA community favorite |
+| **TP-Link Tapo C720** | $100–120 | 2800 lm, 270° motion-light coverage | 2K QHD 2560×1440 @15 fps, 150°, color night, 93 dB siren | PIR + video (person/vehicle/pet on-device, **unverified**) | hardwired, Wi-Fi | **microSD 512 GB, RTSP + ONVIF**, local HA since fw 1.4.4 | none for local; Tapo Care for cloud | the cheapest open-protocol option; IP65 |
+| **Arlo Pro 3 Floodlight** | $250 (often $170) | 2000 lm on battery, **3000 lm** on continuous power | 2K HDR, 160° | PIR + cloud AI | **battery** (≈6 mo) or wired/solar | none — cloud | Arlo Secure Plus $7.99/mo per cam, $17.99 unlimited; Premium $24.99–29.99 | the battery-install answer; light dims on battery |
+| **Google Nest Cam with Floodlight** | $280 | 2400 lm | 1080p HDR @30 fps, 130° | on-device person/animal/vehicle; **Familiar Faces** with plan | hardwired, Wi-Fi | none — cloud (3 h event history free) | Nest Aware $10/mo, Plus $20/mo (24/7) | AndroidPolice: "overpriced and underpowered"; hiked plan prices 2025 |
+| **Blink Outdoor 4 Floodlight** | $120–130 (often $77–99) | **700 lm** | 1080p, IR night | PIR | **battery** — AA lithium in cam, 4× D in light, ≈2 yr | none — cloud or Sync Module local | Blink Basic $3/mo, Plus $10/mo | the budget floor; AndroidCentral: "good but not great unless you pay" |
+| **Lorex 2K Floodlight (Wi-Fi, panning)** | $110 (wired model MSRP $250) | 1500 lm | 2K, app-controlled pan | video AI | hardwired, Wi-Fi | microSD 32 GB incl., no sub | none | PCWorld: "high-res, no sub" |
+| **Amcrest SmartHome ASH26-W** | ~$70–90 (**unverified**) | 2000 lm | 1080p @30, 114° | PIR + video | hardwired, Wi-Fi | microSD, Amcrest cloud optional | none for local | Amcrest's real value is its **PoE bullet cams + ONVIF** (Frigate's favorite), not this |
+
+**Read across the columns and three things stand out.**
+
+1. **The light is a solved commodity: 2000–3000 lm, 15–30 W.** Only Blink (700 lm, battery) and
+   Lorex (1500 lm) sit below. Anything we build needs ~2000 lm to be taken seriously, and §4.3 shows
+   802.3at PoE or a 36 W Class 2 driver gets there.
+2. **Detection has bifurcated.** The cheap tier is PIR (false alerts); the premium tier is **radar +
+   video** (Ring Pro) or **on-device video AI with tracking** (eufy, Reolink). Radar-corroborated
+   video is exactly the Combo Witness / Sentinel fusion this repo already has.
+3. **"No subscription, local storage, RTSP/ONVIF" went from niche to a purchase criterion** in two
+   product cycles. eufy, Reolink and Tapo now compete on it; Ring, Nest, Arlo and Blink still
+   gate person/package/vehicle detection and all history behind $3–20/month, and the two biggest
+   (Ring, Nest) have added **face recognition** as the premium hook.
+
+### 1.2 · Per-vendor notes (what the spec sheet doesn't say)
+
+- **Ring.** The Pro's radar is real and reviewers credit it with the fewest false alerts in the
+  category; the app's motion zones are drawn on a bird's-eye map. But everything past live view is
+  a plan: Basic covers one camera, Standard the home, Premium adds smart video search, 24/7 and
+  **Familiar Faces** (launched US Dec 2025, off by default, unavailable in IL, TX, Portland OR and
+  Quebec because of biometric law). **Search Party for Dogs** enrolls cloud-connected outdoor cams
+  by default. The **Flock Safety** integration into Community Requests was announced, aired as a
+  Super Bowl ad, and canceled 2026-02-12 after the backlash; Ring says no video was ever sent.
+  Senator Markey's office has an open correspondence on Ring's facial-recognition rollout (Nov 2025).
+- **Wyze.** Best light-per-dollar (3000 lm, three panels, 180°). microSD 24/7 is genuinely free;
+  AI classes are $2.99/mo per camera. RTSP: Wyze shipped official RTSP firmware only for v1/v2-era
+  cams and has not for the floodlights; `docker-wyze-bridge` supports both floodlights but forced
+  firmware pushes have broken it before. The 2022 disclosure history (a known vulnerability sat
+  unpatched for years) still shapes how privacy reviewers write about the brand.
+- **eufy (Anker).** The E340's dual-lens + PTZ + tracking at $220 with no fee is why it wins
+  roundups. Local by default, AES-128, HomeBase S380 adds NAS-style storage and cross-camera AI.
+  The brand carries its own 2022–23 history: cloud uploads and an unauthenticated stream that
+  Anker first denied, then acknowledged (see the repo's
+  [competitor app landscape](../research/competitor_app_landscape.md)).
+- **Reolink.** The one vendor whose *whole line* speaks RTSP/ONVIF, sells PoE floodlights, and ships
+  an official Home Assistant integration; "no fees" is the headline. Firmware is closed and the
+  cloud is opt-in. VueVille's PoE Duo review: excellent image, the 1800 lm light "adequate rather
+  than dazzling."
+- **TP-Link Tapo.** Quietly the cheapest way to an open-protocol floodlight cam: RTSP + ONVIF,
+  512 GB microSD, local HA. 15 fps at 2K and a 2.4 GHz-only radio are the trade.
+- **Arlo / Nest / Blink.** Three cloud-first designs at three price points. Arlo is the battery
+  install (light drops to 2000 lm on battery); Nest is 1080p at $280 with face recognition behind
+  Nest Aware; Blink is 700 lm on D cells. None exposes a local stream.
+
+### 1.3 · How big is this
+
+Analyst numbers are vendor-marketed and **single-source**, so treat them as order-of-magnitude:
+the floodlight-camera segment is quoted at ~$3.2 B globally in 2025 with North America ~38 % and a
+~14 % CAGR; the broader home-camera market is ~42–48 M units/yr, and SafeHome's 2026 survey counts
+~75 M US households with at least one camera, outdoor more common than indoor. Residential DIY is
+the largest channel. The point for this dossier is not the size but the shape: a large installed
+base, sold through Amazon and the big-box aisle, on a hardware-plus-plan model that a growing
+minority of buyers now actively shops *against*.
+
 
 ---
 
@@ -333,6 +412,21 @@ since 2024, and they are the four this design is *incapable* of adding — which
 - reolink.com Elite Floodlight WiFi / Duo Floodlight WiFi / TrackFlex pages, Amazon listing of the Elite
   Floodlight WiFi (3000 lm, 100–240 V hardwired, no fees), VueVille review of the Duo Floodlight PoE,
   raspberry.tips on TrackFlex + Home Assistant, Reolink's own Home Assistant guide
+- SafeHome / Security.org / Digital Camera World on the Ring Floodlight Cam Wired Plus ($179.99,
+  2600 lm, 140°×80°, PIR); ring.com and Best Buy / Home Depot listings for the Floodlight Cam Pro
+  (2nd gen) ($259.99–279.99, 4K, 140°×85°, 200–2000 lm); ring.com "explore Ring Home" and Security.org
+  on the Ring Home Basic / Standard / Premium tiers; TechCrunch (2024-10-09) on the plan revamp
+- Android Police, Digital Camera World and Modern Castle reviews of the Arlo Pro 3 Floodlight;
+  Security.org, HomeCamCafe and SafeWise on Arlo Secure pricing (2026)
+- Tech Advisor, Android Authority, Android Police and Reviewed on the Google Nest Cam with Floodlight
+  ($279, 2400 lm, 1080p); PCWorld and HomeCamCafe on the Nest Aware price increase
+- Android Central, Reviewed, Tom's Guide and GearBrain on the Blink Outdoor 4 Floodlight (700 lm,
+  D-cell light); Amazon listing for the plan prices
+- TP-Link / Tapo store and B&H spec pages for the Tapo C720 (2K @15 fps, 2800 lm, 150°, microSD
+  512 GB, RTSP + ONVIF, IP65); tapoappforpc.com review
+- TechHive, Mighty Gadget and Amazon listings for the eufy S330 (3000 lm, 360° PTZ); Best Buy, Home
+  Depot and Notebookcheck on the eufy E30 ($149.99, 2000 lm)
+- PCWorld and GearBrain on the Lorex 2K Floodlight; Amcrest product pages for the ASH26-W
 - Market sizing (analyst-report excerpts, all **single-source**, all vendor-marketed): Verified Market
   Research / Growth Market Reports (~$3.2 B global 2025, ~14 % CAGR, North America ~38 %); SafeHome 2026
   Home Security Market Report (74.9 M US households with cameras); IndexBox / Grand View US outlook
