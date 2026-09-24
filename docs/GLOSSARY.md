@@ -437,13 +437,15 @@ and `scripts/regen_cad.py` runs everything downstream of an edit in order.
 → [`devices/README.md`](../devices/README.md)
 
 **Broker TLS mode** — How a Canary's MQTT link is protected, one NVS byte:
-`0` plain (what every Canary ships with), `1` CA-verified, `2` SHA-256
-fingerprint pin, `3` lab (no verification — chosen by name, warns on every
-connect). Stored as `mqtt_tls` (the CA in `mqtt_ca`, the pin in `mqtt_fp`)
-on canary-display / -sense / -vision, the `firmware/canary` flagship and the
-unreleased canary-sentinel's Phase 1a build, and as `mqtt.tlsmode` on
-canary-wap, which honors `0` and `1` only. Fail-closed: a mode missing its
-CA or pin refuses to connect rather than downgrading. Per-variant truth:
+`0` plain (the default on every Canary with a broker link), `1`
+CA-verified, `2` SHA-256 fingerprint pin, `3` lab (no verification — chosen
+by name, warns on every connect). Stored as `mqtt_tls` (the CA in `mqtt_ca`,
+the pin in `mqtt_fp`) on canary-display / -sense / -vision, the
+`firmware/canary` flagship and the unreleased canary-sentinel's Phase 1a
+build, and as `mqtt.tlsmode` on canary-wap, which honors `0` and `1` only;
+the canary-display nightstand-c6 is built plain-only and refuses every mode
+but `0`. Fail-closed: a mode missing its CA or pin refuses to connect rather
+than downgrading. Per-variant truth:
 [`FIRMWARE_VARIANT_AUDIT.md`](FIRMWARE_VARIANT_AUDIT.md); compile-tested by
 CI and host-tested, not bench-tested against a TLS broker.
 

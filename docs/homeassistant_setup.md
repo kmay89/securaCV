@@ -164,13 +164,16 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
    token, so its saves are refused. The page carries the token only for the
    first-boot wizard, a request that already sends it, a device on the
    Canary's own WiFi, or one BOOT tap: tap the Canary's BOOT button and
-   reload within 30 seconds (one tap unlocks one page load), or open the
-   page over the Canary's own WiFi; the dashboard also takes the token from
-   your recovery kit. Reach it by an IP, its `.local` name, a single-label
-   name or a router alias under `.lan`, `.internal` or `.home.arpa`: under
-   a public DNS name the page gets no token and every call answers `403`,
-   except over the Canary's own WiFi. Release images serve these pages as
-   plain HTTP on port 80. Host-tested, not yet bench-tested.
+   reload within 30 seconds (one tap unlocks one page load), or paste the
+   token from your recovery kit into the dashboard. The Canary's own WiFi
+   unlocks the page too, but it broadcasts only while the Canary is off
+   your home network (before setup, or after it loses that network), so on
+   a Canary that is running normally the BOOT tap is the way in. Reach it
+   by an IP, its `.local` name, a single-label name or a router alias under
+   `.lan`, `.internal` or `.home.arpa`: under a public DNS name the page
+   gets no token and every call answers `403`, except over the Canary's
+   own WiFi. Release images serve these pages as plain HTTP on port 80.
+   Host-tested, not yet bench-tested.
 3. In the dashboard, go to the **Network** tab and enter your home WiFi
    credentials (the Canary needs WiFi to reach the MQTT broker)
 4. MQTT broker details (if you skipped the wizard's hub step):

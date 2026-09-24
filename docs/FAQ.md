@@ -140,23 +140,29 @@ argues the parts that are imperfect rather than only the parts that are good
 
 ### Is the link from my Canary to the broker encrypted?
 
-**Not by default.** Every Canary ships speaking plain MQTT, so the broker
-username and password cross your own LAN in the clear until you say
-otherwise. Every product can be provisioned for TLS: verified against a CA
-certificate you supply on all of them; pinned to the broker certificate's
-SHA-256 fingerprint on Canary Display (except the plain-only nightstand-c6),
-Canary Sense, Canary Vision and the flagship `firmware/canary` build; the
-Canary WAP is CA-only. (A fourth mode, lab, skips verification — it is chosen
-by name and warns on every connect, and the WAP refuses it.) You set the mode
-from the *Broker encryption* select in either flasher's broker block (Canary
-Display, Sense and Vision), on the WAP's own `/mqtt` page, or in the
-flagship's setup wizard or its bearer-gated `POST /api/mqtt/config` — once
-a flagship is set up, its pages carry its API token only when opened over
-the Canary's own WiFi or after one tap of its BOOT button (one tap, one page
-load). The hub plan adds the broker's TLS listener with `--with broker_tls`,
-from a certificate you already have. An incomplete setup — a CA mode with no
-CA, a pin mode with no pin — refuses to connect rather than quietly
-downgrading to plain.
+**Not by default.** Every Canary with a broker link ships it as plain MQTT,
+so the broker username and password cross your own LAN in the clear until
+you say otherwise. (The flagship's ESP32-CAM, WROOM and Freenove ports are
+built without one.) Every one of those links can be provisioned for TLS
+except the Canary Display nightstand-c6's, which is built plain-only and
+refuses every TLS mode. On the rest, TLS is verified against a CA
+certificate you supply; Canary Display, Canary Sense, Canary Vision and the
+flagship `firmware/canary` build can instead pin the broker certificate's
+SHA-256 fingerprint, and the Canary WAP is CA-only. (A fourth mode, lab,
+skips verification — it is chosen by name and warns on every connect, and
+the WAP refuses it.) You set the mode from the *Broker encryption* select in
+either flasher's broker block (Canary Display, Sense and Vision), on the
+WAP's own `/mqtt` page, or in the flagship's setup wizard or its
+bearer-gated `POST /api/mqtt/config`. Once a flagship is set up, its pages
+carry its API token only to a request that already sends it, after one tap
+of its BOOT button (one tap, one page load), or over the Canary's own WiFi,
+which broadcasts only while the Canary is off your home network; reached by
+a public DNS name, they get no token and a `403`
+([Step 3](homeassistant_setup.md#step-3-configure-the-canary-device) has the
+whole rule). The hub plan adds the broker's TLS listener with
+`--with broker_tls`, from a certificate you already have. An incomplete
+setup — a CA mode with no CA, a pin mode with no pin — refuses to connect
+rather than quietly downgrading to plain.
 
 Honest status: compile-tested by CI and host-tested (the decision, both
 flashers' forms, the wizard, the flagship's page-token rule); not yet run
