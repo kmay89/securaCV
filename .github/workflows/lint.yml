@@ -29,6 +29,11 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version-file: pyproject.toml
+      # scripts/tests/test_check_path_filter_reads.py starts the Node half of
+      # the path-filter read recorder for real, so this job runs node.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
       # Conformance + hygiene lints that previously had no CI gate.
       - name: CAP-mapping conformance
         run: bash scripts/lint_cap_mapping.sh
@@ -106,6 +111,14 @@ jobs:
         #    scratch copy of both trees: a TLS-gate bypass, a MAC client ID or
         #    a changed NVS key name in the copy must fail it, and a sense-only
         #    radar dial must not. Its first version let all three mutations through.
+        #  • canary-local.yml's path-filter read gate
+        #    (test_check_path_filter_reads.py) — GitHub's filter-pattern rules
+        #    (`?` is "the previous character, optional", `**/` matches zero
+        #    directories), and both read recorders run for real under node and
+        #    python3: writes and paths outside the repo are never recorded, a
+        #    TemporaryDirectory's cleanup reports no bare names, a generator a
+        #    test spawns is charged to that test, and each half arms the other
+        #    in the processes it starts.
         run: |
           python3 -m pip install --quiet pyyaml 'cyclonedx-python-lib[json-validation]==11.12.0'
           python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
