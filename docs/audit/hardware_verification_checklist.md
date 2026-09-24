@@ -528,6 +528,58 @@ That line means a task waited 2 s for another's session and gave up.
     the restart.
   - Artifact: `docs/audit/repro/nvs-lock/pull-ota/`.
 
+## Canary WAP NvsManager session lock (F53) — on-device verification
+
+Code: the header-only `NvsManager` in
+`firmware/projects/canary-wap/arduino/canary_wap/nvs_store.h`, which holds a
+recursive FreeRTOS mutex from `begin()` to the matching `end()`, with the
+canary's session arithmetic (`firmware/common/storage/nvs_session_depth.h`,
+staged next to the sketch). Host-tested by
+`firmware/projects/canary-wap/tests_host/test_nvs_store_lock.cpp` (the real
+header over a fake mutex) and `test_nvs_session_balance.cpp` (a scan that
+every block in the sketch that opens a session closes it). Five tasks open
+sessions on the one settings handle: the loop, the httpd task serving the
+API, the NimBLE host task, the Bluetooth bring-up task and the QR-scan task.
+These rows check the real mutex on a board, which nothing on the host can
+do. Owner: U1.
+
+In every row, the serial log must not show `[NVS] session wait timed out`.
+That line means a task waited 2 s for another's session and gave up; on the
+WAP it would most likely mean a session somewhere never ended.
+
+- [ ] **API writes during chain persists keep the chain head**
+  - Setup: a FULL image on a XIAO ESP32-S3 Sense with a GPS fix, so records
+    are written and the chain persists every 10 of them; a laptop on the
+    LAN with the API token.
+  - Repro: send `POST /api/bluetooth/power`, alternating two TX powers,
+    about every 100 ms for a few minutes. Note the last `chain_seq` that
+    `GET /api/status` answers, then send `POST /api/reboot`.
+  - Expected: the boot log's `[PROV] Chain seq: N` is at least that
+    `chain_seq`, and after the boot `GET /api/bluetooth/settings` answers the
+    last power sent.
+  - Artifact: `docs/audit/repro/nvs-lock-wap/api-writes/`.
+- [ ] **A BLE bond during API writes keeps its pairing record**
+  - Setup: the same image; a phone that can bond over BLE.
+  - Repro: while the laptop repeats the `POST /api/bluetooth/power` loop,
+    start pairing (`POST /api/bluetooth/pair/start`) and bond the phone. The
+    NimBLE host task saves the pairing record. Reboot.
+  - Expected: `GET /api/bluetooth/paired` lists the phone after the reboot.
+  - Artifact: `docs/audit/repro/nvs-lock-wap/ble-bond/`.
+- [ ] **The vault's key and config calls release the store**
+  - Setup: the same image (the vault is compiled in with the camera and the
+    PDM mic); a vault recipient public key; a GPS fix, as in the first row.
+  - Repro: `POST /api/vault/key` with the key, `POST /api/vault/config`
+    turning `t3_smoke` on, then `DELETE /api/vault/key`. Wait a minute after
+    each (the loop keeps persisting the chain meanwhile), then reboot as in
+    the first row.
+  - Expected: `GET /api/vault/status` answers `has_key: true` after the
+    first call and `has_key: false` with every trigger off after the last;
+    it answers the same after the reboot, and `[PROV] Chain seq: N` is at
+    least the last `chain_seq` read. Before F53 these calls left their
+    sessions open, which the lock would have turned into this row's timeout
+    line.
+  - Artifact: `docs/audit/repro/nvs-lock-wap/vault/`.
+
 ---
 
 When every box above has a corresponding artifact in
