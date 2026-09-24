@@ -473,8 +473,10 @@ constexpr size_t ENROLL_PAGE_CAP = 2048;
  * enrollment JSON. Home Assistant's manual pin takes the device_id and
  * the full key, never the fingerprint, so the copy sends the reader to
  * the key and keeps the fingerprint for checking a pin HA already took.
- * A canary-wap's fingerprint prints in capitals and HA shows it in
- * lowercase, hence "ignoring case". No external assets, so the page
+ * The fingerprint is the one init was handed: a canary-wap on firmware
+ * 2.4.15 or older handed it capitals while HA shows lowercase, hence
+ * "ignoring case" (later WAPs hand it lowercase, HA20; the WAP's other
+ * surfaces still print capitals). No external assets, so the page
  * still renders behind a router that intercepts other domains. The key
  * is user-select:all, so a click selects all of it: it is copied, not
  * typed. */

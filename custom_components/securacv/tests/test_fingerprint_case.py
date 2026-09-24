@@ -1,29 +1,37 @@
 """A canary-wap's signed publishes verify: fingerprints compare ignoring case.
 
-The canary-wap spells hex in capitals: `hex_to_str` in canary_wap.ino writes
-"0123456789ABCDEF", and it is what fills `g_device.fingerprint_hex` (the `fp`
-of every signed chain / counts / events envelope, via device_signature::init)
-and the `public_key` of the health publish (via csi_mqtt::init). HA derives
-the pinned fingerprint in lowercase (`fingerprint_from_pubkey_hex`), and the
-verifier compared the two strings exactly, so after TOFU every signed publish
-from a canary-wap read `mismatch` ("Fingerprint changed without rotation")
-and raised a key-mismatch notification, even though its signature was good.
+A canary-wap on firmware 2.4.15 or older spells hex in capitals: `hex_to_str`
+in canary_wap.ino writes "0123456789ABCDEF", and it filled the `fp` of every
+signed chain / counts / events envelope (via device_signature::init) and the
+`public_key` of the health publish (via csi_mqtt::init). HA derives the pinned
+fingerprint in lowercase (`fingerprint_from_pubkey_hex`), and the verifier
+compared the two strings exactly, so after TOFU every signed publish from a
+canary-wap read `mismatch` ("Fingerprint changed without rotation") and
+raised a key-mismatch notification, even though its signature was good.
 
-The WAP_* bodies below are what a canary-wap publishes, byte for byte, for the
-repo's Ed25519 test key (seed 0x42 * 32, test_signature.py `_make_keypair`).
-They were produced on the host by compiling the firmware's own code:
-`sha256_domain`, `compute_fingerprint`, `hex_to_str` and `generate_device_id`
-lifted verbatim from canary_wap.ino (S3 prefix), with
+The WAP_* bodies below are what such a canary-wap publishes, byte for byte,
+for the repo's Ed25519 test key (seed 0x42 * 32, test_signature.py
+`_make_keypair`). They were produced on the host by compiling the firmware's
+own code: `sha256_domain`, `compute_fingerprint`, `hex_to_str` and
+`generate_device_id` lifted verbatim from canary_wap.ino (S3 prefix), with
 firmware/common/identity/device_signature.cpp for init, the canonicals and
 b64url, firmware/common/csi/src/csi_event_wire.h for the events body, and
 csi_mqtt.cpp's health / chain / counts formats; signed with OpenSSL's
 Ed25519, which is deterministic, so the Python signer below reproduces
 every `sig`.
 
+A later canary-wap spells those two strings in lowercase (sweep HA20:
+canary_wap.ino's `mqtt_identity.h`), and so does every other build. Its
+bodies are the same bytes with `fp` and `public_key` lowercased, which is
+the `lowercase` spelling below; the WAP's own host test
+(tests_host/test_mqtt_identity.cpp) builds the lowercase events body through
+the firmware's code and compares it with this one. Capital-spelling units
+stay deployed, so both spellings keep running.
+
 On the exact-compare code every WAP-spelling test here fails (the end-to-end
 one with `mismatch` on the first signed topic). The lowercase runs, the
 fixture check and the firmware cross-check pass on both, and are the
-regression guard for every build that already spells hex in lowercase.
+regression guard for every build that spells hex in lowercase.
 """
 
 from __future__ import annotations
@@ -93,6 +101,8 @@ _WAP_SKETCH = (
     Path(__file__).resolve().parents[3]
     / "firmware" / "projects" / "canary-wap" / "arduino" / "canary_wap" / "canary_wap.ino"
 )
+# The encoder that spells the two MQTT strings since HA20, next to the sketch.
+_WAP_MQTT_IDENTITY = _WAP_SKETCH.with_name("mqtt_identity.h")
 
 
 # ─── harness ───────────────────────────────────────────────────────────
@@ -187,43 +197,57 @@ def test_fixture_is_the_wap_spelling_of_the_test_key():
 
 
 def test_wap_firmware_spelling_is_one_this_file_covers():
-    """canary_wap.ino's hex_to_str alphabet, and the two strings it feeds.
+    """The encoder canary_wap.ino spells its MQTT fp and health key with, and
+    the two strings it feeds.
 
-    Both spellings run below, so if hex_to_str itself ever writes lowercase
-    this passes unchanged. It fails if hex_to_str writes anything else, or
-    if the envelope `fp` or the health key, at any csi_mqtt::init call,
-    stops coming from hex_to_str. A WAP change that lowercases just those
-    two strings, and leaves hex_to_str alone, trips it on purpose: point
-    these checks at the new encoder, and keep both spellings running below
-    while units that send capitals are deployed."""
+    Through 2.4.15 both came from hex_to_str (capitals); since HA20 both come
+    from mqtt_identity.h's lowercase encoder. Both spellings run below, so a
+    lowercase encoder passes unchanged. This fails if the encoder writes
+    anything else, or if the envelope `fp` (device_signature::init's
+    fingerprint), or the health key at any csi_mqtt::init call, stops coming
+    from it: re-read how the WAP spells them, point these checks at the new
+    source, and keep both spellings running below while units that send
+    capitals are deployed."""
     if not _WAP_SKETCH.exists():
         pytest.skip("canary_wap.ino not present (HACS mirror checkout)")
     text = _WAP_SKETCH.read_text(encoding="utf-8")
-    m = re.search(
-        r"static void hex_to_str\([^)]*\)\s*\{\s*static const char hex\[\] = \"([^\"]*)\";",
-        text,
+    assert _WAP_MQTT_IDENTITY.exists(), (
+        "mqtt_identity.h moved; re-read how the WAP spells its MQTT fp and key"
     )
-    assert m, "hex_to_str's alphabet moved; re-read how the WAP spells its fp"
+    header = _WAP_MQTT_IDENTITY.read_text(encoding="utf-8")
+    m = re.search(
+        r"inline void hex_lower\([^)]*\)\s*\{\s*static const char kLowerHex\[\] = \"([^\"]*)\";",
+        header,
+    )
+    assert m, "mqtt_identity.h's alphabet moved; re-read how the WAP spells its fp"
     assert m.group(1) in (UPPER_HEX, LOWER_HEX)
-    assert "hex_to_str(g_device.fingerprint_hex, g_device.pubkey_fp, 8);" in text
     assert re.search(
-        r"device_signature::init\([^;]*g_device\.fingerprint_hex\);", text
-    ), "the envelope fp no longer comes from g_device.fingerprint_hex"
+        r"mqtt_identity::fingerprint_hex\((\w+),\s*g_device\.pubkey_fp\);\s*"
+        r"device_signature::init\(g_device\.privkey,\s*g_device\.pubkey,\s*"
+        r"g_device\.device_id,\s*\1\);",
+        text,
+    ), "the envelope fp no longer comes from mqtt_identity::fingerprint_hex"
     # Every call, not only the boot one: the QR hub-provisioning path
     # re-inits csi_mqtt with a key of its own, split over two lines.
     calls = re.findall(r"csi_mqtt::init\(", text)
     fed = re.findall(
-        r"hex_to_str\(pubkey_hex, g_device\.pubkey, 32\);\s*"
+        r"mqtt_identity::public_key_hex\(pubkey_hex, g_device\.pubkey\);\s*"
         r"csi_mqtt::init\(g_device\.device_id,\s*FIRMWARE_VERSION,\s*pubkey_hex\);",
         text,
     )
     assert calls, "csi_mqtt::init moved; re-read where the health key comes from"
     assert len(fed) == len(calls), (
         f"{len(calls) - len(fed)} of {len(calls)} csi_mqtt::init calls no "
-        "longer take the health public_key straight from hex_to_str"
+        "longer take the health public_key from mqtt_identity::public_key_hex"
     )
-    if m.group(1) == UPPER_HEX:
-        assert WAP_FP == WAP_FP.upper()
+    # The capital fixture is the older WAP's spelling, and the lowercase run
+    # is the newer one's, byte for byte.
+    assert WAP_FP == WAP_FP.upper()
+    if m.group(1) == LOWER_HEX:
+        for body in (WAP_HEALTH, WAP_CHAIN, WAP_COUNTS, WAP_EVENT):
+            data = json.loads(body)
+            old = data.get("fp") or data.get("public_key")
+            assert _spelled(body, "lowercase") == body.replace(old, old.lower())
 
 
 # ─── end to end: TOFU from the health publish, then the signed topics ──

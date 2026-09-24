@@ -52,10 +52,12 @@ Ed25519 over the raw UTF-8 bytes. The 64-byte signature is base64url-
 encoded (no padding) and shipped as `sig` alongside the existing
 fields. The publish also carries `fp` (the 16-char fingerprint),
 `alg=ed25519`, and `v=1` so HA can validate without inferring.
-Hex case is not part of the value: a canary-wap writes `fp` and its
-health `public_key` in capitals, the other builds write lowercase, and
-HA lowercases both before it compares or stores them, so every
-fingerprint and key HA shows is lowercase.
+Hex case is not part of the value: a canary-wap on firmware 2.4.15 or
+older writes `fp` and its health `public_key` in capitals; a later
+release writes them in lowercase, like the other builds (host-tested and
+compiled by CI, not yet read off a unit). HA lowercases both before it
+compares or stores them, so every fingerprint and key HA shows is
+lowercase.
 
 Each topic also includes a `v` schema version so the canonical format
 can evolve without breaking deployed Canaries — a `v=2` payload on a
@@ -160,10 +162,12 @@ the fingerprint read off the device. The Health sensor fills it in on
 the first health publish after HA pins the key; the chain-length sensor
 shows it too, but only once HA has checked a signed chain publish.
 Compare ignoring case: HA shows lowercase, and some device
-surfaces print capitals (everything a canary-wap prints except the
-public key on `/enroll`, and the `firmware/canary` build's
-`/api/status` and receipt). A match is strong evidence that the key HA
-pinned on first sight is the one the device holds. A difference means
+surfaces print capitals: the `firmware/canary` build's `/api/status` and
+receipt, and everything a canary-wap prints except its `/enroll` page
+(and `/api/device/enroll`, the same card). On a canary-wap on firmware
+2.4.15 or older that page prints the fingerprint in capitals too, and
+only the key under it in lowercase. A match is strong evidence that the
+key HA pinned on first sight is the one the device holds. A difference means
 something else is pinned: **Unpin a device**, fix whatever let the
 other key in (broker ACLs), and compare again after the next TOFU pin,
 or pin the full key by hand. The fingerprint is

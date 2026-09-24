@@ -14,12 +14,13 @@ on:
       - '.github/workflows/python.yml'
       # Firmware sources a test reads (test_wap_tamper_health.py builds the
       # WAP's MQTT health from them; test_fingerprint_case.py holds its
-      # WAP-spelled fixture to canary_wap.ino's hex_to_str), so a
-      # firmware-only edit that stops carrying a tamper level, or changes
-      # how the WAP spells its fingerprint, still runs the test that
-      # catches it.
+      # WAP-spelled fixture to the encoder canary_wap.ino spells its MQTT
+      # fp and health key with, mqtt_identity.h), so a firmware-only edit
+      # that stops carrying a tamper level, or changes how the WAP spells
+      # its fingerprint, still runs the test that catches it.
       - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp'
       - 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/mqtt_identity.h'
       # test_key_source_copy.py holds the options-flow copy to the flavor
       # registry, to the boot key line the two witness.cpp files print and
       # to the `Device ID` boot line the two main.cpp files print.
@@ -38,12 +39,13 @@ on:
       - '.github/workflows/python.yml'
       # Firmware sources a test reads (test_wap_tamper_health.py builds the
       # WAP's MQTT health from them; test_fingerprint_case.py holds its
-      # WAP-spelled fixture to canary_wap.ino's hex_to_str), so a
-      # firmware-only edit that stops carrying a tamper level, or changes
-      # how the WAP spells its fingerprint, still runs the test that
-      # catches it.
+      # WAP-spelled fixture to the encoder canary_wap.ino spells its MQTT
+      # fp and health key with, mqtt_identity.h), so a firmware-only edit
+      # that stops carrying a tamper level, or changes how the WAP spells
+      # its fingerprint, still runs the test that catches it.
       - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp'
       - 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/mqtt_identity.h'
       # test_key_source_copy.py holds the options-flow copy to the flavor
       # registry, to the boot key line the two witness.cpp files print and
       # to the `Device ID` boot line the two main.cpp files print.
