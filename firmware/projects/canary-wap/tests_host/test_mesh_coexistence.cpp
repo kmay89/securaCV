@@ -190,6 +190,79 @@ static void test_governor_airtime_pct() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// airtime_governor: the window holds every send, at any reservation rate
+// ─────────────────────────────────────────────────────────────────────────
+
+// 2000 per-frame 16 B reservations inside one 10 s window (200 Hz) may
+// spend the 2 % cap and no more: 625 x 320 us = 200 000 us. A ring of 256
+// SENDS overwrote in-window sends, allowed all 2000 and read 0.82 % (the
+// true figure was 6.41 %).
+static void test_governor_ring_covers_window_at_any_rate() {
+  airtime_governor::init(2);
+  int allowed = 0;
+  for (int i = 0; i < 2000; i++) {
+    if (airtime_governor::try_reserve_routine(1000u + 5u * i, 16)) allowed++;
+  }
+  airtime_governor::Stats s = airtime_governor::snapshot(1000u + 5u * 1999u);
+  EXPECT(allowed == 625);
+  EXPECT(s.airtime_us == 200000u);
+  EXPECT(s.airtime_pct_x100 == 200);
+  EXPECT(s.routine_denied == 2000u - 625u);
+}
+
+// The cap is init()'s to choose, and it must hold for the CSI probe's
+// framed 75 B frames (792 us) at 160 frames/s: 300 000 / 792 = 378. A ring
+// of 256 sends only ever saw 256 x 792 = 202 752 us of them, so a 3 % cap
+// never denied at all.
+static void test_governor_cap_holds_above_default() {
+  airtime_governor::init(3);
+  int allowed = 0;
+  for (int i = 0; i < 1600; i++) {
+    if (airtime_governor::try_reserve_routine(1000u + (10000u * i) / 1600u, 75)) allowed++;
+  }
+  EXPECT(allowed == 378);
+  EXPECT(airtime_governor::airtime_pct_x100(1000u + 9993u) <= 300);
+}
+
+// A 100 ms bucket leaves the window with its NEWEST send, routine and
+// urgent alike: the window reads 10.0-10.1 s, never shorter, so the cap
+// can only err toward denying.
+static void test_governor_bucket_ages_out_with_its_newest_send() {
+  airtime_governor::init(2);
+  const uint32_t c = airtime_governor::estimate_airtime_us(100);
+  EXPECT(airtime_governor::try_reserve_routine(1000, 100));
+  airtime_governor::force_reserve_urgent(1050, 100);
+  EXPECT(airtime_governor::try_reserve_routine(1099, 100));
+  EXPECT(airtime_governor::snapshot(11000).airtime_us == 3 * c);
+  EXPECT(airtime_governor::snapshot(11099).airtime_us == 3 * c);
+  EXPECT(airtime_governor::snapshot(11100).airtime_us == 0);
+  airtime_governor::Stats s = airtime_governor::snapshot(11100);
+  EXPECT(s.routine_allowed == 2);
+  EXPECT(s.urgent_sends == 1);
+}
+
+// A reader whose clock trails the newest send still counts the sends
+// before its `now`. The WAP's MQTT publish does this: loop() takes
+// `now = millis()` early, the mesh, chirp and probe record later sends,
+// then snapshot(now) runs. Ten 75 B probe frames at 20000..20090 and a
+// 60 B heartbeat at 20095 share one bucket stamped 20095; a reader at
+// 20050 must see at least the six frames sent by then. A bucket stamped
+// after `now` was skipped whole, so the window read 0.
+static void test_governor_trailing_reader_keeps_the_newest_bucket() {
+  airtime_governor::init(2);
+  const uint32_t frame = airtime_governor::estimate_airtime_us(75);   // 792 us
+  const uint32_t hb = airtime_governor::estimate_airtime_us(60);      // 672 us
+  for (uint32_t t = 20000; t <= 20090; t += 10) {
+    EXPECT(airtime_governor::try_reserve_routine(t, 75));
+  }
+  EXPECT(airtime_governor::try_reserve_routine(20095, 60));
+  const airtime_governor::Stats s = airtime_governor::snapshot(20050);
+  EXPECT(s.airtime_us >= 6 * frame);            // never below the truth
+  EXPECT(s.airtime_us <= 10 * frame + hb);      // over by at most one bucket
+  EXPECT(airtime_governor::airtime_pct_x100(20050) >= (6 * frame) / 1000);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // main
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -204,9 +277,14 @@ int main() {
   test_governor_window_decay();
   test_governor_urgent_bypasses();
   test_governor_airtime_pct();
+  test_governor_ring_covers_window_at_any_rate();
+  test_governor_cap_holds_above_default();
+  test_governor_bucket_ages_out_with_its_newest_send();
+  test_governor_trailing_reader_keeps_the_newest_bucket();
 
   if (g_failures == 0) {
     std::printf("OK  all mesh coexistence tests passed\n");
+    std::printf("ALL MESH COEXISTENCE TESTS PASSED\n");
     return 0;
   }
   std::fprintf(stderr, "FAIL  %d assertion(s) failed\n", g_failures);
