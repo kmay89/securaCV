@@ -34,7 +34,8 @@ common/
 │   ├── gnss_time.h
 │   └── gps_privacy.h
 ├── storage/        # Unified storage
-│   └── storage.h
+│   ├── storage.h
+│   └── nvs_session_depth.h  # NvsManager's per-task session count under its cross-task lock (host-tested)
 ├── network/        # Network modules
 │   ├── provision_core.h
 │   ├── wifi_join_policy.h

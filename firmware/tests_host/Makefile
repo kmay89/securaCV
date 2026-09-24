@@ -333,7 +333,7 @@ BIRTHDAY_BIN = $(BUILD_DIR)/test_birth_day
 KEYREST_HDR = ../common/identity/key_at_rest.h
 KEYREST_BIN = $(BUILD_DIR)/test_key_at_rest
 
-# NvsManager session depth (canary/lib/securacv_crypto/src/nvs_session_depth.h):
+# NvsManager session depth (common/storage/nvs_session_depth.h):
 # the count that lets the canary hold one lock from begin() to end() across
 # its loop, httpd and OTA tasks. Pins that a nested end() never closes the
 # outer session's handle, that a write inside a read-only session gets a
@@ -342,7 +342,7 @@ KEYREST_BIN = $(BUILD_DIR)/test_key_at_rest
 # (canary_config.h), and — through a model of begin()/end() over a fake
 # recursive mutex — that the lock's count is the depth and one task's end()
 # cannot close another's session. Pure header; the real mutex is CI-compiled.
-NVSDEPTH_HDR = ../canary/lib/securacv_crypto/src/nvs_session_depth.h ../canary/include/canary_config.h
+NVSDEPTH_HDR = ../common/storage/nvs_session_depth.h ../canary/include/canary_config.h
 NVSDEPTH_BIN = $(BUILD_DIR)/test_nvs_session_depth
 
 # NvsManager's lock on the firmware's own code (test_nvs_manager_lock.cpp):
@@ -355,7 +355,7 @@ NVSDEPTH_BIN = $(BUILD_DIR)/test_nvs_session_depth
 # finds all four functions.
 NVSLOCK_SRC  = ../canary/lib/securacv_crypto/src/securacv_crypto.cpp
 NVSLOCK_HDRS = ../canary/lib/securacv_crypto/src/securacv_crypto.h \
-               ../canary/lib/securacv_crypto/src/nvs_session_depth.h \
+               ../common/storage/nvs_session_depth.h \
                ../canary/include/canary_config.h \
                $(wildcard stubs/nvs_manager/*.h stubs/nvs_manager/freertos/*.h)
 NVSLOCK_INC  = $(BUILD_DIR)/nvs_manager_session.inc
@@ -608,14 +608,14 @@ $(KEYREST_BIN): test_key_at_rest.cpp $(KEYREST_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_key_at_rest.cpp -o $@
 
 $(NVSDEPTH_BIN): test_nvs_session_depth.cpp $(NVSDEPTH_HDR) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -I ../canary/lib/securacv_crypto/src -I ../canary/include test_nvs_session_depth.cpp -o $@
+	$(CXX) $(CXXFLAGS) -I ../common -I ../canary/include test_nvs_session_depth.cpp -o $@
 
 $(NVSLOCK_INC): $(NVSLOCK_SRC) nvs_manager_cut.awk Makefile | $(BUILD_DIR)
 	awk -f nvs_manager_cut.awk $(NVSLOCK_SRC) > $@.tmp && mv $@.tmp $@
 
 $(NVSLOCK_BIN): test_nvs_manager_lock.cpp $(NVSLOCK_INC) $(NVSLOCK_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I stubs/nvs_manager -I ../canary/lib/securacv_crypto/src \
-	    -I ../canary/include -I $(BUILD_DIR) test_nvs_manager_lock.cpp -o $@
+	    -I ../common -I ../canary/include -I $(BUILD_DIR) test_nvs_manager_lock.cpp -o $@
 
 $(OPTFEAT_BIN): test_optical_features.cpp $(OPTFEAT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(OPTFEAT_INC) test_optical_features.cpp -o $@

@@ -18,7 +18,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
-#include "nvs_session_depth.h"
+#include "storage/nvs_session_depth.h"  // firmware/common, via -I ../common
 
 // ════════════════════════════════════════════════════════════════════════════
 // NVS MANAGER
