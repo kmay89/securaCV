@@ -214,8 +214,8 @@ WITNESS_PAGE_BIN = test_witness_page
 WITNESS_PAGE_SRC = test_witness_page.cpp
 WITNESS_PAGE_FIXTURE = ../../../../spec/fixtures/witness_page_v1.json
 
-$(BIN): $(SOURCES)
-	$(CXX) $(CXXFLAGS) -o $@ $(SOURCES)
+$(BIN): $(SOURCES) $(SRC_DIR)/airtime_governor.h $(SRC_DIR)/mesh_network.cpp beacon_source_scan.h
+	$(CXX) $(CXXFLAGS) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(SOURCES)
 
 $(CHIRP_INV_BIN): $(CHIRP_INV_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(CHIRP_INV_SRC)

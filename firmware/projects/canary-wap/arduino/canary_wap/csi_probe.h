@@ -95,9 +95,10 @@ struct Config {
    * the default 20 Hz asks for 160 frames/s, ~12.7 %; and the 200 Hz
    * ceiling below, which only a raised rate_hz reaches, would cost
    * ~15.8 %. That is well over airtime_governor's 2 % routine cap (#442),
-   * which is why every send also asks `airtime_gate` below (the
-   * integration layer wires it to airtime_governor::try_reserve_routine —
-   * see csi_integration.cpp's probe_pump). This cap remains the
+   * which is why every send also asks `airtime_gate` below (the WAP wires
+   * it to probe_airtime::reserve_probe_frame, which reserves through
+   * airtime_governor::try_reserve_routine and stops at 1.60 % — see
+   * csi_integration.cpp's probe_pump). This cap remains the
    * scheduler's own ceiling: in a build that leaves the gate null
    * (standalone sketches, host tests), it is the only limit, and 25 Hz is
    * the most that fits the 2 % budget at 1 Mbps (25 × 792 µs is 1.98 %;
@@ -123,14 +124,17 @@ struct Config {
 
   /* Airtime reservation gate. When non-null, every probe send — unicast
    * and idle broadcast alike — asks this hook to reserve its cost first,
-   * passing the caller's clock and the ESP-NOW payload length (the hook
-   * owns adding MAC/action-frame framing before charging a budget — see
-   * the honest airtime math above). Return false to deny: the send is
-   * skipped, counted in Stats::sends_denied_airtime, and the slot's
-   * cadence is kept so it retries one period later. The integration
-   * layer wires this to airtime_governor::try_reserve_routine (probe
-   * frames are routine traffic — never urgent); null means ungated,
-   * bounded only by aggregate_cap_hz. */
+   * passing the caller's clock and the ESP-NOW payload length only. The
+   * MAC/action-frame framing in the honest airtime math above is the
+   * governor's to add: on the WAP, airtime_governor adds it to every
+   * frame, so a hook that added it too would count it twice. Return false
+   * to deny: the send is skipped, counted in Stats::sends_denied_airtime,
+   * and the slot's cadence is kept so it retries one period later. The
+   * WAP wires this to probe_airtime::reserve_probe_frame, which stops the
+   * probe once the governor's window reads 1.60 % and otherwise reserves
+   * through airtime_governor::try_reserve_routine (probe frames are
+   * routine traffic — never urgent); null means ungated, bounded only by
+   * aggregate_cap_hz. */
   bool (*airtime_gate)(uint32_t now_ms, size_t payload_bytes);
 
   static Config defaults() {
