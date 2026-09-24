@@ -97,7 +97,7 @@ you can pin the pubkey before the device ever publishes. This is the
 
 1. Read the device's `device_id` and its full 64-character public key
    hex off the device itself, from the source the table below names
-   for its product. Not every product has one.
+   for its product. A canary-display has no key to pin.
 2. In HA → **Settings** → **Devices & services** → **SecuraCV** →
    **Configure** → **Pin a device pubkey**.
 3. Enter the `device_id` and paste the 64-char pubkey hex.
@@ -118,8 +118,8 @@ but not to set one. Only canary-wap serves an `/enroll` page.
 | **canary-wap** | The `/enroll` page (and `/api/device/enroll`, the same card as JSON), no login: `device_id`, fingerprint and full key. Open it at `canary-<name>.local/enroll`, or `canary-<first four hex of the fingerprint>.local/enroll` on an unnamed device, or at its IP. Once setup is done the WAP normally serves HTTPS with a certificate it made itself, so `http://` redirects and the browser warns about the certificate (it stays on plain HTTP if it could not set up TLS); during first-boot setup it is plain HTTP on the setup network. `GET /api/status` also returns `pubkey` and `fingerprint`, but only with the device's bearer token. On USB serial, `i` prints the identity block with the full key (the line ends in a literal `...` after the 64 characters: don't paste the dots). | `GET /api/device-info` returns `pubkey_fp`, no login. The provisioning receipt it prints on USB serial at every boot carries `pubkey_fp`. |
 | **`firmware/canary` build** (and the ESP32-CAM, Freenove S3 and WROOM builds of it) | No `/enroll`. On USB serial, `i` prints the device ID and full key, and `j` prints the self-manifest (`device_id`, `pubkey`, `pubkey_fp`). `GET /api/status` also returns `pubkey` and `fingerprint`, but only with the device's bearer token. | On USB serial, `f` prints the fingerprint. The dashboard's Device Identity card shows the fingerprint and only the first 16 characters of the key, and only on a page that was handed the token (during setup, over the SoftAP, with the bearer, or after one BOOT tap). The provisioning receipt carries `pubkey_fp` only. |
 | **canary-vision** | No `/enroll`. Its only web page is the shared setup portal, on its own setup network at first boot and when joining Wi-Fi keeps failing, and that page shows no key. On USB serial, `j` prints the self-manifest (`device_id`, `pubkey`, `pubkey_fp`). | The boot log prints `Ed25519 ready  fp=<fingerprint>`. |
-| **canary-sense** | **None.** Its only web page is the shared setup portal (on its own setup network, at first boot and when joining Wi-Fi keeps failing), which shows no key, and its serial console is the tuning console, which has no identity command. You can check its TOFU pin but not set one by hand. | The boot log prints `Ed25519 ready  fp=<fingerprint>`, once, at boot. |
-| **canary-sentinel** (not released; has not run on hardware) | **None**, in source: its only web page is the same setup portal, which shows no key, and it reads no serial commands. | The boot log's `Ed25519 ready  fp=<fingerprint>` line. |
+| **canary-sense** | The boot log on USB serial. Right after `Ed25519 ready  fp=<fingerprint>` it prints `Ed25519 pubkey <64 hex>`, in lowercase (an image built before this line was added prints only the fingerprint: update it first). It prints once per boot, so open the serial monitor first, then reset the board. The `device_id` is on the `Device ID` line later in the same boot log. It has no other source: its only web page is the shared setup portal (on its own setup network, at first boot and when joining Wi-Fi keeps failing), which shows no key, and its serial console is the tuning console, which has no identity command. The key line is compiled by CI; it has not been read off a unit on a bench. | The boot log's `Ed25519 ready  fp=<fingerprint>` line. |
+| **canary-sentinel** (not released; has not run on hardware) | In source, the same boot-log line as canary-sense (`Ed25519 pubkey <64 hex>`, once per boot, with `Device ID` later in the log): its `witness.cpp` is canary-sense's, pinned by `firmware/scripts/check_sentinel_net_sync.sh`. Its only web page is the same setup portal, which shows no key, and it reads no serial commands. | The boot log's `Ed25519 ready  fp=<fingerprint>` line. |
 | **canary-display** line | Nothing to pin: a display has no signing key, and its health publish carries no `public_key`. The proof QR on its screen carries the key *the display* pinned from the same broker, which is a second TOFU, not an out-of-band read. | — |
 
 The apps and flashers read the same sources:
@@ -147,7 +147,8 @@ for every product.
 ### Checking a TOFU pin against the device
 
 Every product that signs shows its fingerprint somewhere in the table
-above, even where it can't show its full key. Compare the
+above, and on some surfaces (the WAP's `/api/device-info`, the iPhone
+app) the fingerprint is all there is. Compare the
 `pinned_fingerprint` attribute on the device's **Health** sensor with
 the fingerprint read off the device. The Health sensor fills it in on
 the first health publish after HA pins the key; the chain-length sensor
@@ -159,7 +160,7 @@ public key on `/enroll`, and the `firmware/canary` build's
 pinned on first sight is the one the device holds. A difference means
 something else is pinned: **Unpin a device**, fix whatever let the
 other key in (broker ACLs), and compare again after the next TOFU pin,
-or pin by hand where the product shows its full key. The fingerprint is
+or pin the full key by hand. The fingerprint is
 the first 8 bytes of a hash of the key
 (`device_trust.fingerprint_from_pubkey_hex`), so it can check a pin but
 cannot set one.
@@ -177,9 +178,9 @@ To clear it:
    → **Rotate a pinned device key**.
 2. Enter the device_id and the new pubkey, read off the re-flashed
    Canary from its source in
-   [the table above](#where-each-product-shows-its-key). A canary-sense
-   or canary-sentinel shows no full key: unpin it instead, then
-   [check the new TOFU pin](#checking-a-tofu-pin-against-the-device).
+   [the table above](#where-each-product-shows-its-key). On a
+   canary-sense or canary-sentinel, that is the `Ed25519 pubkey` line
+   in its boot log.
 3. The previous pubkey is moved into the device's `previous` audit
    trail; the mismatch notification clears; entities verify cleanly
    on the next publish.
@@ -257,10 +258,8 @@ What this does NOT defend against:
   is a follow-up.
 - **Pre-TOFU broker spoofing.** If the very first time HA sees a
   device is on a hostile broker, TOFU pins the wrong key. Use manual
-  pinning if your broker isn't trusted, on a product that shows its
-  full key out of band; on one that doesn't (canary-sense,
-  canary-sentinel), check the TOFU pin's fingerprint against the
-  device instead
+  pinning if your broker isn't trusted, with the full key read off the
+  device out of band
   ([where each product shows its key](#where-each-product-shows-its-key)).
 
 ## How to verify
