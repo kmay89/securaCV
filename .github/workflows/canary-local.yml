@@ -188,6 +188,29 @@ on:
       # we2.test.js: the Vision model-release workflow reads the WE2 burn
       # address from flash.json and never hardcodes a second copy
       - ".github/workflows/vision-model-release.yml"
+      # files the logic tests read that neither list had, found by the
+      # recorded-reads gate below (scripts/check_path_filter_reads.py):
+      # desktop_parity reads the flagship's runtime_config.h (does it read a
+      # broker? -> broker_nvs); canary_local.test.js replays the Witness
+      # Wall contract vectors against both vendored walls
+      - "firmware/canary/include/canary/runtime_config.h"
+      - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
+      # …and the files they only check exist (a rename or delete fails them
+      # just the same): each concept's docs in the registry (canary_local;
+      # the glob also takes two research notes no concept names yet, so a new
+      # concept's note needs no line), each board's vendor STEP (boards),
+      # the Get Started and Hub pages' doc links (start, homeassistant), and
+      # the LICENSE the flasher's About panel cites (flash_epic)
+      - "docs/hardware/canary_*_research.md"
+      - "docs/hardware/canary_vision_lite_recamera.md"
+      - "docs/hardware/canary_vision_pro_recamera.md"
+      - "firmware/projects/canary-fence-guard/README.md"
+      - "boards/vendor/*.step.gz"
+      - "docs/README.md"
+      - "docs/device_trust.md"
+      - "docs/firmware_ota.md"
+      - "docs/lovelace_timeline.md"
+      - "LICENSE"
       - ".github/workflows/canary-local.yml"
   pull_request:
     paths:
@@ -368,6 +391,29 @@ on:
       # we2.test.js: the Vision model-release workflow reads the WE2 burn
       # address from flash.json and never hardcodes a second copy
       - ".github/workflows/vision-model-release.yml"
+      # files the logic tests read that neither list had, found by the
+      # recorded-reads gate below (scripts/check_path_filter_reads.py):
+      # desktop_parity reads the flagship's runtime_config.h (does it read a
+      # broker? -> broker_nvs); canary_local.test.js replays the Witness
+      # Wall contract vectors against both vendored walls
+      - "firmware/canary/include/canary/runtime_config.h"
+      - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
+      # …and the files they only check exist (a rename or delete fails them
+      # just the same): each concept's docs in the registry (canary_local;
+      # the glob also takes two research notes no concept names yet, so a new
+      # concept's note needs no line), each board's vendor STEP (boards),
+      # the Get Started and Hub pages' doc links (start, homeassistant), and
+      # the LICENSE the flasher's About panel cites (flash_epic)
+      - "docs/hardware/canary_*_research.md"
+      - "docs/hardware/canary_vision_lite_recamera.md"
+      - "docs/hardware/canary_vision_pro_recamera.md"
+      - "firmware/projects/canary-fence-guard/README.md"
+      - "boards/vendor/*.step.gz"
+      - "docs/README.md"
+      - "docs/device_trust.md"
+      - "docs/firmware_ota.md"
+      - "docs/lovelace_timeline.md"
+      - "LICENSE"
       - ".github/workflows/canary-local.yml"
 
 permissions:
