@@ -102,8 +102,8 @@ class JoinsTheBom(unittest.TestCase):
         sets = _set("sense", "canary-sense", line)
         _, drift = gh.join(sets, {"bom_canary_sense.csv": {"SCR3": 4}})
         self.assertEqual([d["what"] for d in drift], ["unbilled M2 pan x 10 self-tap"])
-        # the Sense row names PAN x 16 (driven from the back): only that joins
-        line = '"HARDWARE — Sense: 4x M2 pan x 16 self-tap from the back · 1x Ø3 light pipe"'
+        # the Sense row names PAN x 8 (the plate screw, into the post ends): only that joins
+        line = '"HARDWARE — Sense: 4x M2 pan x 8 self-tap (plate to the post ends) · 1x Ø3 light pipe"'
         table, drift = gh.join(_set("sense", "canary-sense", line),
                                {"bom_canary_sense.csv": {"SCR3": 4}})
         self.assertEqual(drift, [])
