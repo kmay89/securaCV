@@ -2,6 +2,75 @@
 
 ## [Unreleased]
 
+### Home Assistant verifies a Canary WAP's signed publishes, Canary Sense and Sentinel show their full key, a Canary Display files a WAP's beacons on its own row, the WAP's Bluetooth Device Info keeps its id, and the Quiet Hours wheels center (#<E>)
+
+- **Home Assistant: a Canary WAP's signed publishes now verify (sweep
+  HA18).** The WAP writes its key fingerprint in capitals, and Home
+  Assistant compared it exactly with the lowercase fingerprint it had
+  pinned. So every chain, count and event from a WAP read as a key mismatch
+  and raised a "key mismatch" notification, even though the signature was
+  good. Home Assistant now ignores hex case: it lowercases fingerprints and
+  keys before it compares or stores them, rewrites pins already stored in
+  capitals when it loads them, and shows every key in lowercase. A
+  different key, or a tampered publish, still reads as a mismatch. The
+  setup guide and `docs/device_trust.md` drop their "a WAP may read as a
+  mismatch" caveats. The WAP firmware is unchanged. Reproduced and fixed on
+  a host with the WAP's own code, not checked on a bench. The HACS mirror's
+  copy of the changed integration files follows in a resync (sweep U6).
+- **Canary Sense and Sentinel now show their full public key, so you can
+  pin them in Home Assistant by hand (sweep HA17).** From the first
+  firmware release after 2.4.15, the boot log prints `Ed25519 pubkey` and
+  the 64-character key right after the `Ed25519 ready  fp=…` line. The
+  `Device ID` line later in the same log is the device ID. 2.4.15 and older
+  show only a fingerprint, which can check Home Assistant's automatic pin
+  but not set one. The setup guide, `docs/device_trust.md` and the
+  integration's options flow now point there and name the release. Two
+  caveats. The line is compiled by CI but has not been read off a unit on a
+  bench; Canary Sentinel is unreleased and has not run on hardware. And
+  which port carries this boot log is unverified: going by the build
+  flags, the C6 builds' serial console may be the radar's header pins
+  rather than the USB-C port (sweep F62). Also, the Canary WAP's `/enroll`
+  page now tells you to paste its full key, not the fingerprint, which Home
+  Assistant's pin form never accepted, and the flasher fleet book names the
+  WAP's real enrollment route, `/api/device/enroll?nonce=`, instead of a
+  `/enroll.json` that does not exist. The HACS mirror's copy of the changed
+  integration files follows in a resync (sweep U6).
+- **A Canary Display files a Canary WAP's Bluetooth beacons and chirps on
+  the WAP's own row (sweep HA19).** The display's fleet model stored the
+  WAP's fingerprint in capitals, as the WAP sends it, and compared it
+  exactly with the lowercase suffix every beacon and chirp carries. So a
+  WAP's own sightings made an `SCV-xxxx` twin row, a ghost row from an
+  early chirp was never retired, and a tap on the WAP's row asked for a
+  Bluetooth status pull no scan could match. The model now keeps the
+  fingerprint in lowercase. A host test with the display's own model fails
+  before the change and passes after; the status-pull miss is read from
+  source. The emulator dist is rebuilt in this PR by CI's pinned emsdk.
+  Not bench-tested.
+- **Canary WAP: the Bluetooth Device Info characteristic no longer reads
+  its id from a finished task's memory (sweep HA21).** The Bluetooth
+  bring-up task handed the Opera and Chirp subsystems a pointer into its
+  own stack and then deleted itself, and Opera formats the Device Info
+  characteristic's `id` from that pointer every 5 s, so what it showed
+  after bring-up was undefined. Both now get the static copy the Bluetooth
+  manager already kept. Read from source; the WAP's compile is CI's; not
+  run on a bench. The emulator dist does not move for this one.
+- **The Quiet Hours wheels center their options on every touch glass.**
+  The display runs without an LVGL theme, so a roller's text is
+  left-aligned unless it sets otherwise. The Location wheels already set
+  it; the two hour wheels did not, so every glass with the settings panel
+  drew `HH:00` flush-left under a full-width highlight. `mk_hour_roller`
+  now sets the same center style. Host-measured by compiling the helper as
+  committed against the firmware's `lv_conf.h` on LVGL 8.4.0 and 9.5.0: the
+  label's left/right gap goes from 0/36 to 18/18 px on the compact 92 px
+  wheel and from 0/73 to 36/37 px on the Regular 150 px wheel, the same on
+  both. The emulator bundles of the four touch flavors that compile it
+  (watch, dash, touch169, amoled241) are rebuilt in this PR by CI's pinned
+  emsdk. The Arduino sketch mirror is regenerated, and
+  `display_settings.md` no longer says the hour wheel never showed it. A new
+  source guard, `canary-local/tests/settings_rollers.test.js`, fails any
+  roller in the display's sources whose own block does not center it.
+  Compile-tested by CI, not bench-tested.
+
 ### The airtime governor charges what goes on the air, a chain-state write NVS refuses is retried, the WAP's settings sessions stop closing each other, the key-pinning steps name each product's source, and CI keeps one host-test list and fails a logic test's node or python3 read outside its path filter (#1725)
 
 - **The airtime governor charges what goes on the air: an ESP-NOW framing

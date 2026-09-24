@@ -81,7 +81,8 @@ Two smaller one-time human acts, same flavor:
   files behind (every refresh ran green and pushed nothing) until a hand
   resync in securacv-homeassistant#17 (2026-09-24). HA14 moved the carried
   `custom_components/securacv` files again in #1725 (and F55 one carried
-  test), and their resync follows #1725. Until the secret is set, every
+  test), and HA18 and HA17 moved them again in #<E>; their resync follows
+  both. Until the secret is set, every
   `main` change to the carried set needs that again.
 - [ ] **U7 [human] Open the staged home-assistant/brands submission.**
   `brands/home-assistant/README.md` says "not submitted"; it is the only route
@@ -1206,6 +1207,42 @@ so — see D2 below.)
   measurement of the air. Still open: every other mesh send reserves nothing
   (Beacon event, channel lock, hub election, rekey and its ACK, auth,
   pairing, leave-opera).
+- [ ] **F62 [code] The C6 builds most likely send `Serial` to UART0 on the
+  radar's pins, not to USB.** `firmware/envs/platformio/canary-sense.ini`
+  :78 and `canary-sentinel.ini` :67 add `-UARDUINO_USB_CDC_ON_BOOT` (so do
+  `canary-display.ini` :700, for the C6 nightstand, and `common.ini` :76,
+  for `common_esp32c3`). PlatformIO's `ProcessFlags` appends every `-U`
+  after the `-D` list, and its `CPPDEFINES` removal compares the bare name
+  with a `(name, value)` tuple. So the flag cancels the board's
+  `-DARDUINO_USB_CDC_ON_BOOT=1` (`seeed_xiao_esp32c6.json` in pioarduino
+  55.03.38) instead of being skipped. Arduino-ESP32 3.3.8's
+  `HardwareSerial.h` (:426-440) then defines the macro as 0 and maps
+  `Serial` to `Serial0`, which is UART0, on RX GPIO17 / TX GPIO16 on the C6
+  (:160, :180). `HWCDC.h` (:110-115) declares `HWCDCSerial`, the USB-C
+  port, only when CDC-on-boot is 1. Both XIAO C6 `pins.h` files put the
+  radar's UART1 on TX16/RX17 ('UART0 stays on USB-CDC console'), and
+  Sense's `main.cpp` calls `Serial.begin()` (:677) before
+  `RadarSerial.begin()` (:735). So the Sense boot log, its tuning console
+  and the `Ed25519 pubkey` line HA17 added most likely go to header pins
+  D6/D7, and UART0 and UART1 contend for the radar's pins.
+  `scripts/lint_usb_console.py` and RELEASE_LESSONS (q) state the opposite
+  rule for C3/C6 ('they provide `Serial` on their own, and the S3 flag
+  prevents it'), so no gate notices. This is read from the installed core
+  headers and PlatformIO's source, not seen on a bench. The C3 envs on core
+  2.0.x were not checked. Fix, after a bench read on a XIAO C6 (U1): settle
+  which flag the C6 (and C3) builds need, then change the envs, the release
+  FQBNs and `lint_usb_console.py`'s rule together, and drop the port caveat
+  from `docs/device_trust.md` and Step 6 of `docs/homeassistant_setup.md`.
+  Found reviewing HA17 (#<E>).
+- [ ] **F63 [code] canary-sense and canary-sentinel answer no serial `j`, so
+  the in-browser flasher's identity card cannot show them.** HA17 (#<E>)
+  gave both a boot line with the full key, not the `j` self-manifest
+  canary-vision answers (`firmware/common/attest/self_manifest.h`:
+  `device_id` / `pubkey` / `pubkey_fp`), which is what the identity card
+  reads. Sentinel reads no serial input, and Sense's serial input belongs
+  to the tuning console, which has no identity command, so `j` needs a new
+  input path on both. Which port that input would arrive on is F62's
+  question, so settle F62 first. Found doing HA17.
 
 ---
 
@@ -1863,7 +1900,7 @@ so — see D2 below.)
   half is a firmware change), check a live install, then put the lines
   back in the recipe; or re-document the ids from a live install. Found in
   the review of this sweep's wave-8 ledger.
-- [ ] **HA17 [code] canary-sense and canary-sentinel show no full public key
+- [x] **HA17 [code] canary-sense and canary-sentinel show no full public key
   out of band.** Manual pinning needs the 64-hex key, but both devices print
   only `Ed25519 ready  fp=<fingerprint>`, once at boot (in the init of
   `firmware/projects/canary-{sense,sentinel}/src/witness.cpp`). Their only
@@ -1884,9 +1921,50 @@ so — see D2 below.)
   / `translations/en.json`;
   `tests/test_key_source_copy.py::test_pin_step_offers_no_source_for_a_fingerprint_only_product`
   must change with them. The in-browser flasher's identity card works for
-  them once they answer `j`. Found in HA14. — in progress (2026-09-24)
-- [ ] **HA18 [code] Home Assistant likely reads canary-wap's signed publishes
-  as a key mismatch (fingerprint case).** `canary_wap.ino`'s `hex_to_str`
+  them once they answer `j`. Found in HA14.
+  *Done (#<E>):* canary-sense and canary-sentinel now print their full
+  public key at boot, from the first firmware release after 2.4.15.
+  `witness.cpp`'s init prints `Ed25519 pubkey <64 hex>` right after
+  `Ed25519 ready  fp=<fingerprint>`, from `device_signature::pubkey_hex()`.
+  That is lowercase, the same string the health publish carries as
+  `public_key`, and 79 characters, so it does not wrap at 80 columns. The
+  `Device ID` line later in the same boot log gives the pin form's other
+  field. Neither surface the item suggested was used. Sentinel reads no
+  serial input, and Sense's serial input belongs to the tuning console, so
+  `j` would need a new input path on both. The setup portal is shared by
+  every product (`firmware/common/network/setup_portal.cpp`) and is up only
+  at first boot and while joining keeps failing, so it would widen scope
+  and still not be there when an owner goes to pin. The line is carried
+  into canary-sentinel's `witness.cpp` (`check_sentinel_net_sync.sh`).
+  Updated together: the Sense and Sentinel rows of "Where each product
+  shows its key", manual pinning, rotation and the pre-TOFU threat bullet
+  in `docs/device_trust.md`; Step 6 of `docs/homeassistant_setup.md`; and
+  the options flow in `strings.json` / `translations/en.json`. All of them
+  name the release floor ("a firmware release after 2.4.15"; 2.4.15 and
+  older print only the fingerprint) and say "serial console", not USB. In
+  `tests/test_key_source_copy.py`, the fingerprint-only pin test became
+  `test_pin_step_names_a_source_for_every_signing_product`, and three tests
+  are new: `test_boot_line_the_copy_names_is_printed_by_the_firmware` holds
+  the named line to both `witness.cpp` inits;
+  `test_boot_line_copy_names_the_release_it_ships_after` holds the release
+  floor; `test_pin_step_names_the_device_id_line_the_firmware_prints` holds
+  the `Device ID` line to both `main.cpp` files. The firmware halves skip in
+  the HACS mirror, and `python.yml`'s path filter lists the five files they
+  read. Two related fixes: canary-wap's `/enroll` page now tells the reader
+  to paste the full key, not the fingerprint, within its 2048-byte buffer,
+  which two `static_assert`s check in the host build too. And
+  `docs/flasher_profiles_fleet_book.md` names `/api/device/enroll?nonce=`
+  instead of a `/enroll.json` route that does not exist. Compile-tested by
+  CI and host-probed against stubs, not bench-tested. Left open: which port
+  carries the line. The C6 builds undefine `ARDUINO_USB_CDC_ON_BOOT`, which
+  with Arduino-ESP32 3.3.8 maps `Serial` to UART0 on the radar's pins
+  rather than USB (F62). Also left: serial `j` on Sense and Sentinel, which
+  the in-browser flasher's identity card needs (F63); a bench read of the
+  line on a Sense (Sentinel has not run on hardware); the line on the Sense
+  teaching page's staged boot log. The HACS mirror's resync of the changed
+  integration files follows (U6).
+- [x] **HA18 [code] Home Assistant read canary-wap's signed publishes as a
+  key mismatch (fingerprint case).** `canary_wap.ino`'s `hex_to_str`
   writes capitals, so `g_device.fingerprint_hex` is uppercase. That string is
   the `fp` in every signed chain / event / counts envelope, through
   `device_signature::init` and `csi_mqtt`, and the health `public_key` is
@@ -1905,14 +1983,132 @@ so — see D2 below.)
   canary-wap caveat HA14 added to `docs/homeassistant_setup.md` Step 6 and
   to `docs/device_trust.md` "How to verify" step 3, which both expect
   `verified: true` and matching fingerprints. Found in HA14.
-  — in progress (2026-09-24)
+  *Done (#<E>):* Confirmed, then fixed in Home Assistant. A host probe
+  compiled the WAP's own `hex_to_str`, `compute_fingerprint` and
+  `generate_device_id` (lifted verbatim from `canary_wap.ino`) with
+  `device_signature.cpp` and `csi_event_wire.h`. It built the WAP's health,
+  chain, counts and events publishes for the repo's test key and fed them
+  through the TOFU hook and the sensor handlers. After TOFU all three signed
+  topics read `mismatch`, with one key-mismatch notification. The same
+  bodies with `fp` lowercased read `ok`. The integration now lowercases hex
+  before it compares or stores it (`device_trust.normalize_hex`): the
+  envelope `fp` in `signature._verify_with_kind` and every verdict field;
+  the mismatch-notice dedup key; the health `public_key` before TOFU; every
+  key `TrustStore.async_pin` stores (the pin form already lowercased); pins
+  the old hook stored in capitals, healed on load with their replay
+  counters kept; and the Health sensor's `public_key` attribute.
+  Diagnostics reads the store, so it was already lowercase. The `fp` only
+  picks the key, and the signature is still checked against it: tests pin
+  that a different key, or a tampered body, in capitals still reads
+  `mismatch`. `tests/test_fingerprint_case.py` carries the WAP's publishes
+  byte for byte and runs them in capitals and in lowercase, and checks that
+  the TOFU log line shows the key in lowercase. 8 of its 11 tests fail on
+  the old code. Its firmware cross-check holds the fixture to `hex_to_str`
+  at every `csi_mqtt::init` call, and it skips in the HACS mirror. HA14's
+  canary-wap caveats in `docs/homeassistant_setup.md` Step 6 and in
+  `docs/device_trust.md` "How to verify" step 3 are removed. The WAP
+  firmware is unchanged: deployed units send capitals, and HA accepts both;
+  whether the WAP should send lowercase too is HA20. The sweep of other
+  consumers found they already ignore case: the desktop Flasher's whoami
+  check (`eq_ignore_ascii_case`), the kernel's fleet peers (it lowercases
+  the health key before it pins or compares it, and never reads `fp`), the
+  iOS app (it derives its own lowercase fp and lowercases before suffix
+  matches), both flashers' certificate mint (it lowercases; now pinned in
+  `desktop_parity.test.js`), the witness verifier (it compares bytes),
+  `canary-local/tools` (no fp compares), and the firmware readers (the
+  canary-display's key pin, `firmware/canary`'s mesh API, the WAP's own mesh
+  and beacon endpoints), `firmware/provisioning/create_manifest.py` and
+  `tools/verify_witness_log.py`, which parse hex to bytes or lowercase it.
+  tvOS pins kernel keys, not device fingerprints. The canary-display's
+  fleet model did not ignore case (HA19, done in the same PR). The review
+  of the sweep also found, from source, that the WAP's BLE Device Info
+  characteristic read its id through a pointer to a deleted task's stack.
+  That is not a case bug (HA21, done in the same PR). Reproduced and fixed
+  on a host, not seen on a bench. The HACS mirror's resync of the changed
+  integration files follows (U6).
+- [x] **HA19 [code] A canary-display filed a canary-wap's BLE beacons and
+  chirps under a ghost row (fingerprint case).** `FleetModel::on_chain`
+  (`firmware/projects/canary-display/include/canary/fleet/fleet_model.h`)
+  stored the chain envelope's `fp` as sent, and a canary-wap sends it in
+  capitals (`canary_wap.ino`'s `hex_to_str`). Every `fp4` the model is
+  handed is lowercase (`beacon_parse.h`'s `beacon_fp4_from_mfg`,
+  `chirp_scan.cpp`), and `fp_suffix_match` and the ghost retirement compare
+  exactly. The result: a WAP's own fleet beacon or chirp never landed on
+  its MQTT row and made an `SCV-xxxx` twin instead; a ghost made by an
+  early chirp was never retired; and a tap on the WAP's row sent
+  `fleet_link_request` a capital suffix that `find_target_addr` (`strncmp`
+  against the lowercase `fp4`) could never match. A host probe with the
+  display's own model and beacon parser reproduced the first two, and with
+  the fp lowercased they matched; the third is read from `fleet_link.cpp`'s
+  source. Found in HA18.
+  *Done (#<E>):* `on_chain` stores the fp in lowercase (`copy_hex_lower`)
+  and takes the ghost suffix from the stored copy. A new case in
+  `tests_host/test_fleet_beacon_model.cpp` fails on the old model and passes
+  on the new one, and the whole display host suite passes. `setup.sh regen`
+  restaged the sketch's `fleet_model.h`. `canary-local/emulator/build.sh`
+  compiles the fleet model and the MQTT manager that feeds it, so the
+  emulator dist is rebuilt in this PR by CI's pinned emsdk, in the same
+  rebuild as the Quiet Hours wheels (roadmap row 17). Host-tested; the
+  device builds are CI's; not seen on a bench.
+- [ ] **HA20 [code] canary-wap: send its MQTT fingerprint and health key in
+  lowercase.** Every other build writes both in lowercase: `firmware/canary`'s
+  `csi_event_egress.cpp` and `main.cpp`, and each `witness.cpp` and
+  `mqtt_mgr.cpp` on Sense, Sentinel and Vision. The WAP alone writes
+  capitals through `hex_to_str`, which caused HA18 and HA19. Home Assistant
+  (HA18) and the canary-display's fleet model (HA19) now accept both and
+  must keep doing so while capital-spelling units are deployed, so this is
+  consistency, not a fix; HA19 had to land first, and it has (#<E>). Scope
+  it to `g_device.fingerprint_hex` and the `pubkey_hex` handed to
+  `csi_mqtt::init` at both of its calls (at boot, and again after a QR hub
+  provision), not to `hex_to_str` itself: that one encoder also spells the
+  TLS certificate fingerprint, the receipts, `/api/status`, serial `i`, the
+  BLE witness export and the BLE Opera Device Info `id` (HA21).
+  `fingerprint_hex` also feeds the CN of a newly generated TLS certificate
+  (stored certificates keep theirs), the receipt's `pubkey_fp`,
+  `/api/device-info`, `/enroll` and `/api/device/enroll`'s
+  `fingerprint_hex`, the BLE console metadata and the BLE DIS serial number
+  (`bluetooth_channel::set_device_metadata`). `/api/mesh/peers`'
+  `fingerprint` is spelled by its own `%02X` and stays in capitals unless
+  this item widens its scope. No reader of any of these in the repo
+  compares it exactly (HA18's sweep). The BLE name suffix (`SCV-XXXX`) is
+  built separately at BLE bring-up and stays in capitals, which is what the
+  iPhone's provisional name shows.
+  `custom_components/securacv/tests/test_fingerprint_case.py`'s firmware
+  cross-check requires both strings to come from `hex_to_str`, at every
+  `csi_mqtt::init` call, and fails on purpose when they stop: point it at
+  the new encoder and keep both spellings running. Host-test the two
+  strings, then update `docs/device_trust.md`'s note on which WAP surfaces
+  print capitals. Found in HA18 (#<E>).
+- [x] **HA21 [code] canary-wap: the BLE Device Info characteristic read its
+  device id from a deleted task's stack.** `ble_bringup_task`
+  (`canary_wap.ino`) fills a stack array, `ble_device_id_hex[20]`, with
+  `hex_to_str` of `pubkey_fp` and hands it to `ble_manager::init`.
+  `ble_manager.h` copied it into its static `g_deviceIdHex`, but then passed
+  the caller's pointer, not the copy, to `ble_opera::init` and
+  `ble_chirp::init`, and `ble_opera.h` keeps that pointer
+  (`g_deviceIdHash = deviceIdHash;`). The task then deletes itself
+  (`vTaskDelete(NULL)`). From then on the loop's `ble_manager::update()`
+  calls `ble_opera::update()` every 5 s, and its
+  `updateDeviceInfoCharacteristic()` formatted `"id":"%s"` from memory the
+  task no longer owns, so what the GATT Device Info characteristic
+  (`...6002`, `docs/ble_protocol.md`) showed after bring-up was undefined.
+  `ble_chirp` keeps the pointer too but reads it only inside `init`. Not a
+  case bug; the `id` is one of the capital-spelled surfaces HA20 lists.
+  Found in HA18's review.
+  *Done (#<E>):* `ble_manager.h` passes `g_deviceIdHex`, the copy it
+  already made and never used (a zero-initialized static filled by
+  `strncpy` with size - 1, so always terminated), to both inits. Read from
+  source only: not compiled here (the WAP compile is CI's), not run, not
+  seen on a bench. The emulator dist does not move:
+  `canary-local/emulator/build.sh` compiles only the WAP's
+  `securacv_audio.cpp`, which includes none of the BLE headers.
 - [ ] *(Mirror repo itself: no code work. It was byte-identical again as of
   securacv-homeassistant#17 (2026-09-24), which resynced the 33 carried
   files #1703, #1704 and #1718 had moved. The same PR brought the store
   page's watch-actions, key-pinning, broker-TLS and Apple Home sentences,
   and a `lint_readme.py` overclaim check that reads a hard-wrapped claim as
-  one and refuses "encrypted by default". PR #1725 moves carried files
-  again, and their resync follows it (U6). Its health items are U6 and U7
+  one and refuses "encrypted by default". PR #1725 and PR #<E> move
+  carried files again, and their resync follows them (U6). Its health items are U6 and U7
   above, plus the three monorepo-fixture tests its CI deselects, which is
   by design. A few more tests skip themselves there because they read
   firmware sources the mirror does not carry.)*
