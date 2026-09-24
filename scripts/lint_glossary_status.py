@@ -55,6 +55,7 @@ ROW_MAP = {
     "Canary Sense": ("id", "device.canary-sense"),
     "Canary Pool": ("hand", "design"),
     "Canary Sentinel": ("hand", "design"),
+    "Canary Doorbell": ("hand", "design"),
     "Canary Display": ("family", "device.canary-display-"),
     "Canary OTA": ("hand", "software"),
     "Canary Fence Guard": ("id", "device.canary-fence-guard"),
