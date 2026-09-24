@@ -31,17 +31,21 @@ or files anywhere in the tree, belongs in `lint.yml` (unfiltered,
 file it reads outside the workflow's own trees in both path lists (R6) —
 otherwise an edit to that file alone runs nothing, and the red lands on the
 next unrelated PR. The first half is on the reviewer. The second is
-machine-checked for one job so far, canary-local.yml's logic tests: every
-node and python3 process in its three test steps records the repo paths it
-opens, stats, lists or only checks for existence
-(`scripts/path_filter_reads/`), and the step after them,
-`scripts/check_path_filter_reads.py`, fails on any of them outside the
-`pull_request` list — naming the test, the file, the test's line and the
-line to add — or on a suite that left no record. Arming another workflow is
-the same env block on its test steps and the same step after them (the
-checker's docstring). Not recorded yet: canary-local's drift-step
-generators, which read further (`gen_flash.py` reads `firmware/canary/**`),
-and every other filtered workflow.
+machine-checked for one job so far, canary-local.yml's logic tests
+(`scripts/path_filter_reads/`). In its three test steps every node process
+records the repo paths it opens, stats, lists or only checks for existence,
+and every python3 process the paths it opens and lists: CPython raises no
+audit event for a stat or an exists check, so a python3 existence check is
+not seen. The step after them, `scripts/check_path_filter_reads.py`, fails
+on any recorded path outside the `pull_request` list, naming the test, the
+file, the test's line (a static ES `import` has none) and the line to add. It
+also fails on a suite that left no record of its own. Arming another
+workflow is the same env block on its test steps and the same step after
+them (the checker's docstring). Not recorded: reads by shell tools and git
+(the Witness Wall step's `cmp`), children started with a replaced
+environment or python3 -I / -E / -S, canary-local's drift-step generators,
+which read further (`gen_flash.py` reads `firmware/canary/**`), and every
+other filtered workflow.
 
 ## Speed & cost conventions
 

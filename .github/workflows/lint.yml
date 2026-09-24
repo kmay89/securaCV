@@ -116,8 +116,9 @@ jobs:
         #    (`?` is "the previous character, optional", `**/` matches zero
         #    directories), and both read recorders run for real under node and
         #    python3: writes and paths outside the repo are never recorded, a
-        #    TemporaryDirectory's cleanup reports no bare names, and a generator
-        #    a test spawns is charged to that test.
+        #    TemporaryDirectory's cleanup reports no bare names, a generator a
+        #    test spawns is charged to that test, and each half arms the other
+        #    in the processes it starts.
         run: |
           python3 -m pip install --quiet pyyaml 'cyclonedx-python-lib[json-validation]==11.12.0'
           python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v

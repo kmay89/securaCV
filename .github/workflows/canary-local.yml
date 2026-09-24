@@ -448,11 +448,15 @@ jobs:
         with:
           node-version: "22"
       # The path-filter gate (sweep CI2): every node and python3 process in the
-      # three test steps below records the repo paths it reads, and the step
-      # after the last of them fails on any read outside this workflow's
-      # `pull_request` paths. The recorders are inert without
-      # PATH_FILTER_READS_DIR, never change what a call returns, and write to
-      # $RUNNER_TEMP, outside the checkout. A test step added here without
+      # three test steps below records the repo paths it reads (node: opens,
+      # stats, listings, existence checks; python3: opens and listings only,
+      # CPython audits no stat or exists call; shell tools such as the Witness
+      # Wall step's cmp are not recorded), and the step after the last of them
+      # fails on any read outside this workflow's `pull_request` paths. The
+      # recorders are inert without PATH_FILTER_READS_DIR, never change what a
+      # call returns, and write to $RUNNER_TEMP, outside the checkout. Each
+      # half arms the other in the processes it starts. A test step added here
+      # as `node --test <files>` or `python3 -m unittest discover` without
       # this env block is named by the gate as a suite it never heard from.
       - name: Node tests (shipped source, repo convention)
         env:
@@ -620,9 +624,10 @@ jobs:
         # not run again) and matches each path against on.pull_request.paths
         # with GitHub's pattern rules. A miss is a test that a PR editing that
         # file never runs: it fails here naming the test, the file, the test
-        # line and the line to add to BOTH lists (R6). The checker also fails
-        # on a suite this job runs that left no record, so an unarmed step
-        # cannot pass as "nothing outside". PyYAML reads this file.
+        # line (none for a static ES import) and the line to add to BOTH lists
+        # (R6). The checker also fails on a suite this job runs that left no
+        # record of its own, so an unarmed step cannot pass as "nothing
+        # outside". PyYAML reads this file.
         run: |
           python3 -m pip install --quiet pyyaml
           python3 scripts/check_path_filter_reads.py \
