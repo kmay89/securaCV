@@ -2035,7 +2035,9 @@ so — see D2 below.)
   phone-home comment cites `SECURITY_MODEL.md`'s old heading "The display
   line's disclosed exceptions", path 1, which is now "The networked
   products' disclosed outbound paths", path 3. The monorepo half landed in
-  #1720; the website half follows. — in progress (2026-09-23)
+  #1720, and website #207 added the file to the carry job's `CARRY_PATHS`
+  and fixed that pointer; what is left is retiring the hand pin once the
+  first carry PR has run. — in progress (2026-09-23)
 
 ---
 
