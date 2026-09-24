@@ -283,7 +283,7 @@ freshly-installed HA:
    may show `trust_reason: mismatch` here even with the right key: its
    signed publishes carry the fingerprint in capitals, and HA compares
    it with the lowercase pin exactly. That is read from source and
-   reproduced in a host test of the verifier, not yet seen on a bench,
+   reproduced by a host probe of the verifier, not yet seen on a bench,
    and it is an open fix.
 4. Flash a different firmware build to the same Canary (or wipe NVS to
    regenerate the keypair). On the next publish, expect:
