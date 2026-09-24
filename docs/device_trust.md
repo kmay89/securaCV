@@ -125,9 +125,10 @@ but not to set one. Only canary-wap serves an `/enroll` page.
 The apps and flashers read the same sources:
 
 - **The in-browser flasher's** serial monitor has `j` and `i` buttons
-  and shows the raw lines, full key included. After a flash, for a board
-  that answers `j` (the `firmware/canary` build, canary-vision), its
-  identity card shows the key fingerprint, grouped `aa:bb:…`.
+  and shows the raw lines, so a key the board prints is there to copy.
+  When the board answers `j` (the `firmware/canary` build,
+  canary-vision), its identity card shows the key fingerprint, grouped
+  `aa:bb:…`.
 - **The desktop Flasher's** serial monitor has a **Print receipt (j)**
   button and shows the raw lines. Its receipts panel does not print the
   fingerprint.
@@ -152,14 +153,14 @@ entities (the chain-length sensor, for one) with the fingerprint read
 off the device, ignoring case: HA shows lowercase, and some device
 surfaces print capitals (everything a canary-wap prints except the
 public key on `/enroll`, and the `firmware/canary` build's
-`/api/status` and receipt). A
-match is strong evidence that the key HA pinned on first sight is the
-one the device holds. A difference means something else is pinned:
-**Unpin a device**, fix whatever let the other key in (broker ACLs),
-and compare again after the next TOFU pin, or pin by hand where the
-product shows its full key. The fingerprint is the first 8 bytes of a
-hash of the key (`device_trust.fingerprint_from_pubkey_hex`), so it can
-check a pin but cannot set one.
+`/api/status` and receipt). A match is strong evidence that the key HA
+pinned on first sight is the one the device holds. A difference means
+something else is pinned: **Unpin a device**, fix whatever let the
+other key in (broker ACLs), and compare again after the next TOFU pin,
+or pin by hand where the product shows its full key. The fingerprint is
+the first 8 bytes of a hash of the key
+(`device_trust.fingerprint_from_pubkey_hex`), so it can check a pin but
+cannot set one.
 
 ## Key rotation
 
