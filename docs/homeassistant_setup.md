@@ -171,8 +171,8 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
    a Canary that is running normally the BOOT tap is the way in. Reach it
    by an IP, its `.local` name, a single-label name or a router alias under
    `.lan`, `.internal` or `.home.arpa`: under a public DNS name the page
-   gets no token and every call answers `403`, except over the Canary's
-   own WiFi. Release images serve these pages as plain HTTP on port 80.
+   loads without its token and every API call it makes, the recovery-kit
+   receipt included, answers `403`, except over the Canary's own WiFi. Release images serve these pages as plain HTTP on port 80.
    Host-tested, not yet bench-tested.
 3. In the dashboard, go to the **Network** tab and enter your home WiFi
    credentials (the Canary needs WiFi to reach the MQTT broker)
