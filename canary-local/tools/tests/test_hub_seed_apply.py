@@ -1221,7 +1221,12 @@ class PlanPaths(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 plan = Path(tmp) / "plan.json"
-                plan.write_text(json.dumps(self.seed(feature="broker_tls", requires_files=[self.CLIMB])))
+                seed = self.seed(feature="broker_tls", requires_files=[self.CLIMB])
+                # A feature left off, so main() has a "note: optional feature
+                # ... not enabled" line it could print: the empty-stdout check
+                # below then fails if the refusal moves after those notes.
+                seed["optional_features"]["display"] = {"enable": "--with display"}
+                plan.write_text(json.dumps(seed))
                 for extra in (["--dry-run"], ["--dry-run", "--observe", "--token", "t"], ["--token", "t"]):
                     with self.subTest(run=extra):
                         out, err = io.StringIO(), io.StringIO()
