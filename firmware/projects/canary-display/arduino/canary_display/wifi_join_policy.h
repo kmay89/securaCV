@@ -126,6 +126,26 @@ inline const char* join_failure_hint(JoinFailure f) {
 }
 
 /**
+ * @brief The same fix in fewer words, for a row too narrow for the hint.
+ *
+ * The hints above run 175-219 px in the smallest face a display sets, and the
+ * narrowest row that shows one is 142 px (the round watch's low band). The
+ * display fits the hint to the rows it has (whole, or over two rows) and
+ * falls back to this form only when neither holds it
+ * (`onboardlayout::hint_lines`, F50). Each one still names the fix: the
+ * 2.4 GHz band, the letter case, the router, the distance.
+ */
+inline const char* join_failure_hint_narrow(JoinFailure f) {
+  switch (f) {
+    case JoinFailure::NotFound:    return "needs 2.4 GHz wifi";
+    case JoinFailure::BadPassword: return "it's case-sensitive";
+    case JoinFailure::NoAddress:   return "restart your router";
+    case JoinFailure::Unknown:     break;
+  }
+  return "move it closer";
+}
+
+/**
  * @brief Whether a human could plausibly fix this by re-entering credentials.
  *
  * A wrong password or a missing SSID is a **setup** problem: the right response

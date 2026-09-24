@@ -194,9 +194,17 @@ static void every_failure_has_text_for_every_surface() {
     const char* label = join_failure_label(f);
     const char* detail = join_failure_detail(f);
     const char* hint = join_failure_hint(f);
+    const char* narrow = join_failure_hint_narrow(f);
     CHECK(label && *label, "label missing for failure %u", (unsigned)f);
     CHECK(detail && *detail, "detail missing for failure %u", (unsigned)f);
     CHECK(hint && *hint, "hint missing for failure %u", (unsigned)f);
+    // The narrow form is what a row too narrow for the hint shows (F50): it
+    // must exist and be shorter, or the fallback is no fallback. Whether it
+    // fits each display's rows is the display's host test (onboard_layout).
+    CHECK(narrow && *narrow, "narrow hint missing for failure %u", (unsigned)f);
+    CHECK(narrow && hint && std::strlen(narrow) < std::strlen(hint),
+          "narrow hint \"%s\" is not shorter than \"%s\"", narrow ? narrow : "",
+          hint ? hint : "");
     CHECK(std::strlen(label) <= 32,
           "label must fit a small status line: \"%s\"", label);
     // The detail is what replaced a silent reboot; it must say the device is
@@ -215,6 +223,13 @@ static void the_two_common_failures_name_their_real_cause() {
   CHECK(std::string(join_failure_hint(JoinFailure::BadPassword))
                 .find("case-sensitive") != std::string::npos,
         "a bad password must mention case sensitivity");
+  // ...and the narrow forms a small screen falls back to still name them.
+  CHECK(std::string(join_failure_hint_narrow(JoinFailure::BadPassword))
+                .find("case-sensitive") != std::string::npos,
+        "the narrow bad-password hint must still mention case sensitivity");
+  CHECK(std::string(join_failure_hint_narrow(JoinFailure::NotFound))
+                .find("2.4 GHz") != std::string::npos,
+        "the narrow not-found hint must still name the 2.4 GHz band");
 }
 
 int main() {
