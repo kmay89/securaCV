@@ -2,6 +2,107 @@
 
 ## [Unreleased]
 
+### The airtime governor charges what goes on the air, a chain-state write NVS refuses is retried, the WAP's settings sessions stop closing each other, the key-pinning steps name each product's source, and CI keeps one host-test list and hears every read outside its path filter (#<D>)
+
+- **The airtime governor charges what goes on the air: an ESP-NOW framing
+  allowance for every caller, and one frame per peer a mesh broadcast
+  reaches (sweep F54).** The governor's estimate used to count only the
+  bytes a caller passed. The CSI probe added its ~59 B of ESP-NOW framing
+  itself, and the mesh, chirp and Beacon callers did not. The mesh also
+  charged a heartbeat, tamper or power alert once, at a padded 48 B struct
+  header plus the payload, when it actually sends a signed frame (38 B
+  header, payload, 64 B signature) to every peer it reaches. Now the
+  governor adds the framing allowance to every frame, its reservations take
+  a frame count, and the mesh charges one signed frame per peer it sends to
+  (for offline-imminent, every known peer). A heartbeat to eight peers is
+  now charged as eight 1576 µs frames, not one 672 µs send. The 59 B
+  allowance errs high: Espressif documents 43 B of fixed fields for an
+  unencrypted frame. The probe's 1.60 % ceiling is unchanged, and a
+  heartbeat to a full Opera of 16 still fits under the 2 % cap. With a full
+  Opera, though, that heartbeat now holds a single 20 Hz probe peer off for
+  about 1.6 s every 30 s (latent: the WAP probes no peer today).
+  Host-tested; compile-tested by CI's WAP Arduino leg. The figures are the
+  governor's estimate, not a measurement of the air.
+- **One host-test list (sweep CI3).** `firmware.yml`'s Mesh + Scout job
+  compiled 34 tests_host sources inline, in 33 steps, beside each
+  directory's Makefile. Nineteen of those suites were built nowhere else.
+  Fifteen were on both lists: twelve were compiled twice in CI with
+  different flags, and the Tin Can and Companion three only inline, because
+  no workflow ran their Makefiles. The 19 are named Makefile rules now, with
+  their steps' flags and `-Werror`, and every suite a step used to grep
+  keeps that marker check in the Makefile (`run_marked`, which tees the
+  output as the steps did). 32 of the 33 inline steps are gone, and the
+  witness-page step keeps only the generator's `--check`. All five host-test
+  Makefiles run through `make -C`. `scripts/tests/test_host_test_lists.py`
+  reads make's own expanded plan, so it counts the shared `run:` list and
+  the prerequisite hooks alike, and only a run whose failure can fail make.
+  It fails when a suite is off its Makefile's list, when a workflow step or
+  composite action compiles a tests_host source inline, or when no
+  pull-request workflow runs a Makefile whole. Host-tested locally: all five
+  Makefiles pass, and a failing check in each moved suite turns `make` red.
+  CI runs the new steps on #<D>.
+- **Canary: a chain-state write NVS refuses is no longer forgotten (sweep
+  F55).** `nvs_store_u32` / `nvs_store_bytes` returned true once their
+  session opened, whatever the put wrote, and the chain persist advanced
+  `seq_persisted` and counted a persist regardless, so the atomic
+  `{seq, head}` blob could be dropped with nothing counting, logging or
+  retrying it. The helpers now report whether the whole value landed. A
+  chain persist that does not land leaves `seq_persisted` where it was, is
+  retried on the next record and then once per persist interval while the
+  failure lasts, is counted in the new `chain_persist_failures` on the MQTT
+  health payload beside `chain_persists`, and is logged once per failure
+  streak (and once when it heals). The birth stamp no longer half-stamps on
+  a failed write and retries a minute later; a boot count that did not land
+  says so on Serial. Host-tested on the firmware's own code
+  (`test_nvs_store_result.cpp`, `test_chain_persist.cpp`); compiled by CI's
+  canary envs on #<D>; not bench-tested. The identity key's store
+  (`nvs_store_key`) and canary-wap's copies are unchanged and tracked
+  separately (sweep F58 and F59).
+- **canary-wap: NVS sessions are serialized across tasks (sweep F53).** Five
+  tasks open sessions on the WAP's one settings handle (the loop, the API,
+  the NimBLE host, Bluetooth bring-up and the QR scan), and a session ending
+  on one could close the handle under another, so a Wi-Fi save or a chain
+  persist could land nothing. `NvsManager` now holds the canary's bounded
+  recursive lock from `begin()` to `end()`, sharing its session rules
+  through `firmware/common/storage/nvs_session_depth.h`, and the vault's
+  settings calls now close the sessions they open. Host-tested on the real
+  header. A textual scan of the sketch also fails on a block that opens a
+  session and never ends it, or that returns inside one without ending it; a
+  session ended in only one branch, or left by a `goto`, gets past it (sweep
+  F60). Compiled by CI's WAP legs, not yet run on a board.
+- **Home Assistant: the key-pinning instructions now say where each
+  product's key really is (sweep HA14).** The setup guide,
+  `docs/device_trust.md` and the integration's options flow sent every owner
+  to an `/enroll` page that only the Canary WAP serves. Now they name each
+  product's source: the WAP's `/enroll` page, or USB serial on the
+  `firmware/canary` build and Canary Vision. They say plainly that Canary
+  Sense and Sentinel show only a fingerprint, so there is no full key to
+  paste; use it to check the automatic pin. A Canary Display has no key. The
+  pin form's error no longer asks for lowercase, which it never required.
+  Read from the firmware source, not checked on a bench. The HACS mirror's
+  copy of the changed integration files follows in a resync (sweep U6).
+- **A node or python3 logic test that reads a file outside
+  canary-local.yml's path filter now fails the PR that adds it (sweep
+  CI2).** The filter is kept by hand, and it drifted: a PR that edited a
+  file only a logic test read ran nothing, and the red landed on the next
+  unrelated PR. The logic-tests job now records the repo paths its node
+  processes open, stat, list or check for existence, and the paths its
+  python3 processes open and list (`scripts/path_filter_reads/`).
+  `scripts/check_path_filter_reads.py` then fails on any path outside
+  `on.pull_request.paths`, naming the test, the file, its line and the line
+  to add. It does not see a python3 existence check, a shell tool's read or
+  git, and it does not yet record the job's drift-step generators or any
+  other workflow (sweep CI4). Its first run found 29 more, now in both
+  lists: two files the tests read (the flagship's `runtime_config.h` and the
+  Witness Wall contract vectors) and 27 they only check exist. CI only; no
+  product change.
+- **Two failures only the merged tree showed.** F55's
+  `test_nvs_store_result` includes `securacv_crypto.h`, which reaches
+  `storage/nvs_session_depth.h` under `firmware/common` since F53 moved it
+  there, so its Makefile rule now passes `-I ../common` like the lock
+  test's. And the CI2 gate's tests assigned a lambda (ruff E731); it is a
+  `def` now. `make -C firmware/tests_host` and ruff pass.
+
 ### The Canary's receipt asks the Host first, its settings sessions stop closing each other, a black-holed TLS broker no longer outlasts the products' watchdog, the airtime window holds every send, and the docs and CI catch up (#1722)
 
 - **The Canary's provisioning receipt asks the Host first, and a page load
