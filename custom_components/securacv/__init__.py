@@ -874,6 +874,9 @@ def _async_health_for_tofu(hass: HomeAssistant, entry: ConfigEntry):
         pubkey_hex = data.get("public_key")
         if not pubkey_hex or not isinstance(pubkey_hex, str) or len(pubkey_hex) != 64:
             return
+        # A canary-wap spells its key in capitals; the store keeps one
+        # lowercase spelling (device_trust.normalize_hex).
+        pubkey_hex = normalize_hex(pubkey_hex)
         try:
             bytes.fromhex(pubkey_hex)
         except ValueError:

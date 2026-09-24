@@ -43,7 +43,7 @@ from .const import (
     modality_metadata,
     normalize_attestation,
 )
-from .device_trust import TrustStore
+from .device_trust import TrustStore, normalize_hex
 from . import (
     async_record_verify,
     parse_mqtt_json,
@@ -1025,12 +1025,18 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
         else:
             self._attr_native_value = "healthy"
 
+        # Shown lowercase, the spelling the pin and every other HA surface
+        # use: a canary-wap sends its key in capitals, and someone reading
+        # this beside pinned_fingerprint should not have to know that.
+        public_key = data.get("public_key", "")
+        if isinstance(public_key, str):
+            public_key = normalize_hex(public_key)
         self._attr_extra_state_attributes = {
             "battery_percent": 100 if battery is None else battery,
             "memory_free_bytes": memory_free,
             "uptime_seconds": data.get("uptime", 0),
             "firmware_version": data.get("firmware_version", ""),
-            "public_key": data.get("public_key", ""),
+            "public_key": public_key,
             # Health is not signed: say so with the same slice the signed
             # entities carry, rather than moving with no verdict at all.
             **unsigned_trust_attrs(self.hass, self._entry, self._device_id),

@@ -234,13 +234,18 @@ def test_signed_publishes_verify_after_tofu_from_health(spelling):
         assert attrs["received_fingerprint"] == WAP_FP.lower()
     assert hass.notifications == [], "a good signature raised a key-mismatch notice"
 
+    # One lowercase spelling in the store, whatever the device sent.
+    assert pin.pubkey_hex == TEST_PUB
+    assert pin.fingerprint_hex == WAP_FP.lower()
+
 
 @pytest.mark.parametrize("key_spelling", [TEST_PUB.upper(), TEST_PUB])
 def test_manual_pin_then_wap_publishes_verify(key_spelling):
-    """Whatever case the key was pinned in, the WAP's capital fp must match
-    the pin, whose fingerprint is derived in lowercase."""
+    """The pin form lowercases what it is given; the store does too, for any
+    other caller. Either way the WAP's capital fp must match the pin."""
     hass, store = _setup()
-    run(store.async_pin(DEVICE_ID, key_spelling, source=PIN_SOURCE_MANUAL))
+    entry = run(store.async_pin(DEVICE_ID, key_spelling, source=PIN_SOURCE_MANUAL))
+    assert entry.pubkey_hex == TEST_PUB
     for verifier, body in (
         (verify_chain, WAP_CHAIN),
         (verify_counts, WAP_COUNTS),
@@ -248,6 +253,49 @@ def test_manual_pin_then_wap_publishes_verify(key_spelling):
     ):
         verdict = verifier(store, DEVICE_ID, json.loads(body))
         assert verdict.trusted and verdict.reason == "ok", (verifier.__name__, verdict)
+
+
+def test_health_sensor_shows_the_key_in_lowercase():
+    hass, _store = _setup()
+    health = _entity(sensor_platform.SecuraCVCanaryHealthSensor, hass)
+    health._handle_message(_msg("health", WAP_HEALTH))
+    assert health._attr_extra_state_attributes["public_key"] == TEST_PUB
+
+
+# ─── stored pins stay lowercase ────────────────────────────────────────
+
+
+def test_a_capital_pin_in_an_existing_store_heals_to_lowercase():
+    """Before the fix a TOFU pin kept the WAP's key as sent. Loading such a
+    store lowercases it (same bytes) and writes the store back."""
+    hass = HomeAssistant()
+    old = TrustStore(hass, entry_id="e1")
+    old._store._payload = {
+        "version": 1,
+        "devices": {
+            DEVICE_ID: {
+                "pubkey_hex": TEST_PUB.upper(),
+                "fingerprint_hex": WAP_FP.lower(),
+                "pinned_at": 1.0,
+                "pin_source": PIN_SOURCE_TOFU,
+                "previous": [
+                    {"pubkey_hex": "AB" * 32, "fp": "ABCDEF0123456789", "retired_at": 0.5}
+                ],
+                "counters": {"length": 42},
+            }
+        },
+    }
+    run(old.async_load())
+    pin = old.get(DEVICE_ID)
+    assert pin.pubkey_hex == TEST_PUB
+    assert pin.fingerprint_hex == WAP_FP.lower()
+    assert pin.previous[0]["pubkey_hex"] == "ab" * 32
+    assert pin.previous[0]["fp"] == "abcdef0123456789"
+    assert pin.counters == {"length": 42}, "healing the spelling keeps the replay floor"
+    saved = old._store._payload["devices"][DEVICE_ID]
+    assert saved["pubkey_hex"] == TEST_PUB, "the healed spelling was written back"
+    # And the healed pin verifies the WAP as sent.
+    assert verify_chain(old, DEVICE_ID, json.loads(WAP_CHAIN)).reason == "ok"
 
 
 # ─── ignoring case does not widen trust ────────────────────────────────
