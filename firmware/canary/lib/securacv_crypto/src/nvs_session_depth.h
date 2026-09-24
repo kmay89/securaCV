@@ -20,9 +20,10 @@
  * the outer session is still using. That is this header: a depth count and
  * what begin() / end() do to the Preferences handle at each depth. It is
  * the arithmetic only, with no Arduino, no FreeRTOS and no NVS, so
- * firmware/tests_host/test_nvs_session_depth.cpp proves it on the host. The
- * mutex around it is compile-tested by CI's canary envs and has not run on
- * a bench.
+ * firmware/tests_host/test_nvs_session_depth.cpp proves it on the host, and
+ * test_nvs_manager_lock.cpp runs NvsManager's own begin() and end() over it
+ * against a fake recursive mutex. The FreeRTOS mutex itself is
+ * compile-tested by CI's canary envs and has not run on a bench.
  *
  * No caller nests today (every one of the canary's NvsManager sessions is a
  * begin, NVS reads or writes, and its end). The recursive lock and the count
@@ -141,7 +142,9 @@ inline End on_end(State& s) {
 // was no session to end. So the lock's recursion count is the session depth
 // after every call, and the lock is free exactly when the depth is 0 — the
 // invariant end()'s zero-wait take relies on to tell "my session" from
-// "another task's session" (the host test drives it across two tasks).
+// "another task's session". test_nvs_session_depth.cpp drives it across
+// three tasks through a model; test_nvs_manager_lock.cpp does the same with
+// securacv_crypto.cpp's own begin() and end().
 inline uint8_t end_gives(End e) {
   return e == End::Unbalanced ? 1 : 2;
 }

@@ -18,8 +18,10 @@
  * NvsManager::begin()/end(): the same calls in the same order as
  * securacv_crypto.cpp, with Preferences replaced by a fake that refuses a
  * double begin, and the FreeRTOS recursive mutex by a counter with an owner.
- * The model is not the firmware; the real mutex is compile-tested by CI's
- * canary envs and has not run on a bench.
+ * The model is not the firmware: test_nvs_manager_lock.cpp runs the same
+ * scenarios on securacv_crypto.cpp's own begin()/end(), cut out of the file
+ * by the Makefile. The real FreeRTOS mutex is compile-tested by CI's canary
+ * envs and has not run on a bench.
  *
  * Build & run (via firmware/tests_host/Makefile, mirrors the CI contract):
  *   g++ -std=c++17 -Wall -Wextra -Werror -I ../canary/lib/securacv_crypto/src \
@@ -220,7 +222,8 @@ static void test_wait_is_under_the_loop_watchdog() {
 
 // ═══ The model: NvsManager::begin()/end() over a fake handle and lock ═══════
 //
-// securacv_crypto.cpp, call for call, with xSemaphoreTakeRecursive /
+// A hand copy of securacv_crypto.cpp, call for call (test_nvs_manager_lock.cpp
+// holds the real bodies to the same scenarios), with xSemaphoreTakeRecursive /
 // xSemaphoreGiveRecursive replaced by FakeMutex and Preferences by FakePrefs.
 // FakeMutex is a recursive mutex with an owner: a take by the owner nests, a
 // take by anyone else while it is held fails (begin()'s 2 s wait running out,
