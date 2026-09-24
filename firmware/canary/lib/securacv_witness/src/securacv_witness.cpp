@@ -373,20 +373,21 @@ void witness_persist_chain_state() {
   // legacy keys are deliberately never written again.
   //
   // Only a write that landed moves seq_persisted and counts as a persist; one
-  // that did not is counted beside it and retried after the next record, and
-  // a failure streak is reported once, not per retry (chain_persist.h). The
-  // seq is read before the write: the blob carries at least this seq, so
-  // seq_persisted never claims more than NVS holds.
+  // that did not is counted beside it and retried after the next record, then
+  // once per interval while the streak lasts, and a failure streak is
+  // reported once, not per retry (chain_persist.h). The seq is read before
+  // the write: the blob carries at least this seq, so seq_persisted never
+  // claims more than NVS holds.
   const uint32_t seq = g_device.seq;
   const bool wrote = persist_chain_blob();
-  char detail[48];
+  char detail[48];  // a HealthLogRingEntry detail; the longest line here is 47 chars
   switch (chain_persist::settle(seq, wrote, &g_device.seq_persisted,
-                                &g_device.chain_persist_failing,
+                                &g_device.chain_persist_streak,
                                 &g_health.chain_persists,
                                 &g_health.chain_persist_failures)) {
     case chain_persist::Say::Failed:
-      snprintf(detail, sizeof(detail), "seq %u; retrying after each record",
-               (unsigned)seq);
+      snprintf(detail, sizeof(detail), "seq %u; retrying, then every %u records",
+               (unsigned)seq, (unsigned)SD_PERSIST_INTERVAL);
       log_health(LOG_LEVEL_WARNING, LOG_CAT_STORAGE,
                  "Chain state not written to NVS", detail);
       break;
@@ -409,10 +410,13 @@ void witness_persist_chain_state() {
 }
 
 // After every record: the routine persist every SD_PERSIST_INTERVAL
-// records, or the retry of one that did not land (chain_persist::due).
+// records, or the retry of one that did not land: on the next record, then
+// once per SD_PERSIST_INTERVAL, so a lasting failure (a full partition, a
+// leaked NVS session's 2 s wait) is not paid on every record
+// (chain_persist::due).
 static void persist_chain_if_due() {
   if (chain_persist::due(g_device.seq, g_device.seq_persisted,
-                         g_device.chain_persist_failing, SD_PERSIST_INTERVAL)) {
+                         g_device.chain_persist_streak, SD_PERSIST_INTERVAL)) {
     witness_persist_chain_state();
   }
 }

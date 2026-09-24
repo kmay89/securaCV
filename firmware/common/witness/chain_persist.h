@@ -18,19 +18,34 @@
  *   1. Only a write that landed moves `seq_persisted` and counts as a
  *      persist. A failed one is counted as a failure and leaves
  *      `seq_persisted` where it was.
- *   2. While the last attempt has failed, a persist is due after the next
- *      record whatever the gap, so the failure is retried, not forgotten.
- *      Otherwise it is due when the gap `seq - seq_persisted` reaches the
- *      interval, as before. The subtraction is unsigned, so a seq that
- *      wrapped past 0 still reads as the gap it is.
+ *   2. With no failure streak open, a persist is due when the gap
+ *      `seq - seq_persisted` reaches the interval, as before. While a
+ *      streak is open, the failure is retried, not forgotten: once on the
+ *      next record after the failure that opened it, whatever the gap (a
+ *      failed genesis or pre-restart write sits far under the interval),
+ *      then once per interval, counted from the last failed attempt. The
+ *      subtractions are unsigned, so a seq that wrapped past 0 still reads
+ *      as the gap it is.
  *   3. A failure streak is reported once, at the failure that opens it,
  *      and once more when a write lands again. A retry that fails inside
  *      an open streak is counted, not reported.
  *
- * Retries run once per record while the streak lasts, so a lasting failure
- * (a full NVS partition) costs one refused write per record, not one per
- * interval. That is the price of retrying on the next record; the
- * alternative, waiting out another interval, is the gap this header closes.
+ * WHY RETRIES BACK OFF TO THE INTERVAL. A failure that lasts is not free to
+ * retry. A full NVS partition refuses every put, and a session another task
+ * leaked (F52's lock) makes every attempt wait out the session wait,
+ * nvs_session::kSessionWaitMs = 2 s, on the loop before it fails. The
+ * periodic record comes about once a second (RECORD_INTERVAL_MS), so a retry
+ * on every record would stall the loop 2 s per record for as long as the
+ * leak lasted, and multiply the refused writes by the interval. After the
+ * one prompt retry, an open streak costs one attempt per interval: the
+ * cadence the routine persist already had before F55, now with the attempt
+ * counted, reported and held behind instead of forgotten. The price is the
+ * lag: while a streak lasts, NVS holds the head of the last write that
+ * landed, however many intervals back, and a power cut resumes from it
+ * (SD-wins reconciles when a card is present). A retry on every record
+ * would not shorten that while the failure lasts; it would only land the
+ * first write after the failure clears sooner, by fewer than an interval of
+ * records.
  *
  * Pure hosted C++ (no Arduino/ESP-IDF includes). test_chain_persist.cpp
  * tests these rules on the host, and runs securacv_witness.cpp's own persist
@@ -47,11 +62,25 @@
 namespace chain_persist {
 
 /**
- * Is a persist due after a record? `failing` is true while the last attempt
- * did not land (rule 2); `interval` is the records between routine persists.
+ * The open failure streak, if any. Zero-initialized means no streak: a
+ * DeviceIdentity starts that way. Only settle() writes it.
  */
-inline bool due(uint32_t seq, uint32_t seq_persisted, bool failing, uint32_t interval) {
-  return failing || (uint32_t)(seq - seq_persisted) >= interval;
+struct Streak {
+  bool     failing;     ///< the last attempt did not land (a streak is open)
+  bool     retried;     ///< the prompt retry after the opening failure has run, and failed
+  uint32_t failed_seq;  ///< the seq the last failed attempt tried to write
+};
+
+/**
+ * Is a persist due after a record (rule 2)? `interval` is the records
+ * between routine persists, and between retries once the prompt one has
+ * failed.
+ */
+inline bool due(uint32_t seq, uint32_t seq_persisted, const Streak& streak,
+                uint32_t interval) {
+  if (!streak.failing) return (uint32_t)(seq - seq_persisted) >= interval;
+  const uint32_t wait = streak.retried ? interval : 1u;
+  return (uint32_t)(seq - streak.failed_seq) >= wait;
 }
 
 /** What one settled attempt asks the caller to report (rule 3). */
@@ -64,24 +93,29 @@ enum class Say : uint8_t {
 /**
  * Settle one attempt to write the chain state as of `seq`. `wrote` is true
  * only when the whole blob landed. Moves `*seq_persisted` to `seq` and
- * counts `*persists` only on a write that landed; otherwise counts
- * `*failures` and leaves `*seq_persisted` alone (rule 1). `*failing` is the
- * open streak, kept for due() and for the next call. A null argument changes
- * nothing and reports nothing.
+ * counts `*persists` only on a write that landed, which also closes an open
+ * streak; otherwise counts `*failures`, leaves `*seq_persisted` alone
+ * (rule 1) and records the attempt in `*streak` for due(). A null argument
+ * changes nothing and reports nothing.
  */
-inline Say settle(uint32_t seq, bool wrote, uint32_t* seq_persisted, bool* failing,
+inline Say settle(uint32_t seq, bool wrote, uint32_t* seq_persisted, Streak* streak,
                   uint32_t* persists, uint32_t* failures) {
-  if (!seq_persisted || !failing || !persists || !failures) return Say::Nothing;
+  if (!seq_persisted || !streak || !persists || !failures) return Say::Nothing;
   if (wrote) {
     *seq_persisted = seq;
     ++*persists;
-    if (!*failing) return Say::Nothing;
-    *failing = false;
-    return Say::Recovered;
+    const bool was_failing = streak->failing;
+    *streak = Streak{};
+    return was_failing ? Say::Recovered : Say::Nothing;
   }
   ++*failures;
-  if (*failing) return Say::Nothing;
-  *failing = true;
+  streak->failed_seq = seq;
+  if (streak->failing) {
+    streak->retried = true;
+    return Say::Nothing;
+  }
+  streak->failing = true;
+  streak->retried = false;
   return Say::Failed;
 }
 

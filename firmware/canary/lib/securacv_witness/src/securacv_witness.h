@@ -14,6 +14,9 @@
 #include <stdint.h>
 #include "canary_config.h"
 #include "log_level.h"
+// chain_persist::Streak, the chain persist's failure streak (pure, host-tested
+// in firmware/tests_host/test_chain_persist.cpp; -I ../common in every env).
+#include "witness/chain_persist.h"
 
 // ════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -77,9 +80,11 @@ struct DeviceIdentity {
   // The seq the last chain persist that landed wrote (at boot, the seq the
   // chain state was read at). A write that did not land leaves it here.
   uint32_t seq_persisted;
-  // The last chain persist did not land: the next record retries whatever
-  // the gap, and the streak has been reported (common/witness/chain_persist.h).
-  bool     chain_persist_failing;
+  // The open failure streak of the chain persist, if any: the last attempt
+  // did not land, so a retry is due on the next record and then once per
+  // SD_PERSIST_INTERVAL, and the streak has been reported
+  // (common/witness/chain_persist.h). Zero is no streak.
+  chain_persist::Streak chain_persist_streak;
   uint32_t boot_count;
   uint32_t boot_ms;
   uint32_t tamper_count;
@@ -201,7 +206,8 @@ bool witness_verify_record(const WitnessRecord* rec);
 // Write the chain state to NVS now (the atomic {seq, head} blob). Only a
 // write that landed moves seq_persisted and counts in chain_persists; one
 // that did not is counted in chain_persist_failures, reported once per
-// failure streak (health log and Serial), and retried after the next record
+// failure streak (health log and Serial), and retried after the next record,
+// then once per SD_PERSIST_INTERVAL records while the streak lasts
 // (common/witness/chain_persist.h). Before a restart nothing is left to
 // retry it: the failure is counted (and reported, unless its streak already
 // was), and the next boot resumes from what NVS holds, which SD-wins

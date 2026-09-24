@@ -13,7 +13,10 @@
  * device believed it did. The suite is organized by that failure: a failed
  * write must leave seq_persisted where NVS is, be counted apart from the
  * writes that landed, be tried again after the next record, and be reported
- * once per streak.
+ * once per streak. And the retry must not become its own failure: a lasting
+ * one (a full partition, or a leaked NVS session whose every attempt waits
+ * 2 s on the loop) is retried once per interval after the prompt retry, not
+ * on every record.
  *
  * The birth stamp (witness_note_wall_clock) is the other caller that reads
  * nvs_store_u32 now. Its caller runs every loop pass, so a failed stamp must
@@ -53,69 +56,107 @@ using chain_persist::Say;
 // PART 1 — the decision (chain_persist.h)
 // ════════════════════════════════════════════════════════════════════════════
 
+// A streak as settle() leaves it: opened by a failure at `failed_seq`, and
+// `retried` once the prompt retry has failed too.
+static chain_persist::Streak streak(bool failing, bool retried, uint32_t failed_seq) {
+  chain_persist::Streak s{};
+  s.failing = failing;
+  s.retried = retried;
+  s.failed_seq = failed_seq;
+  return s;
+}
+
 // ── due(): the interval as before, and the retry after a failure ────────────
-static void test_due_follows_the_interval_and_the_streak() {
-  CHECK(!chain_persist::due(9, 0, false, 10));    // gap 9: not yet
-  CHECK(chain_persist::due(10, 0, false, 10));    // gap 10: due
-  CHECK(chain_persist::due(25, 0, false, 10));    // gap past it: due
-  CHECK(!chain_persist::due(20, 20, false, 10));  // just persisted
-  // Rule 2: a failed attempt is retried after the next record, whatever
-  // the gap, even one far under the interval (a failed pre-restart persist).
-  CHECK(chain_persist::due(21, 20, true, 10));
-  CHECK(chain_persist::due(20, 20, true, 10));
+static void test_due_follows_the_interval_with_no_streak() {
+  const chain_persist::Streak none{};
+  CHECK(!chain_persist::due(9, 0, none, 10));    // gap 9: not yet
+  CHECK(chain_persist::due(10, 0, none, 10));    // gap 10: due
+  CHECK(chain_persist::due(25, 0, none, 10));    // gap past it: due
+  CHECK(!chain_persist::due(20, 20, none, 10));  // just persisted
   // Wrap-safe: seq wrapped past 0, the gap is still 7 / 10.
-  CHECK(!chain_persist::due(2u, 0xFFFFFFFBu, false, 10));
-  CHECK(chain_persist::due(5u, 0xFFFFFFFBu, false, 10));
+  CHECK(!chain_persist::due(2u, 0xFFFFFFFBu, none, 10));
+  CHECK(chain_persist::due(5u, 0xFFFFFFFBu, none, 10));
+}
+
+// Rule 2: the failure that opens a streak is retried on the next record,
+// whatever the gap (a failed pre-restart persist sits far under it)...
+static void test_due_retries_the_opening_failure_on_the_next_record() {
+  CHECK(chain_persist::due(21, 20, streak(true, false, 20), 10));   // gap 1
+  CHECK(chain_persist::due(23, 20, streak(true, false, 22), 10));  // gap 3
+  CHECK(chain_persist::due(11, 0, streak(true, false, 10), 10));   // gap 11
+  // Wrap-safe: the failure was at 0xFFFFFFFF, the next record is seq 0.
+  CHECK(chain_persist::due(0u, 0xFFFFFFF6u, streak(true, false, 0xFFFFFFFFu), 10));
+}
+
+// ...and once that retry fails too, once per interval from the last failed
+// attempt, however far behind NVS is: a lasting failure is not paid on
+// every record.
+static void test_due_backs_off_to_the_interval_after_the_prompt_retry() {
+  const chain_persist::Streak s = streak(true, true, 11);  // failed at 10, then 11
+  for (uint32_t seq = 12; seq < 21; ++seq) CHECK(!chain_persist::due(seq, 0, s, 10));
+  CHECK(chain_persist::due(21, 0, s, 10));
+  CHECK(chain_persist::due(40, 0, s, 10));       // overdue: still due
+  // The gap to seq_persisted is not what counts while a streak is open.
+  CHECK(!chain_persist::due(1000, 0, streak(true, true, 995), 10));
+  // Wrap-safe: last failed at 0xFFFFFFFC, due 10 records on (seq 6).
+  CHECK(!chain_persist::due(5u, 0u, streak(true, true, 0xFFFFFFFCu), 10));
+  CHECK(chain_persist::due(6u, 0u, streak(true, true, 0xFFFFFFFCu), 10));
 }
 
 // ── settle(): only a landed write moves seq_persisted and counts as one ─────
 static void test_settle_moves_and_counts_only_what_landed() {
   uint32_t persisted = 10, persists = 0, failures = 0;
-  bool failing = false;
+  chain_persist::Streak s{};
 
-  CHECK(chain_persist::settle(20, true, &persisted, &failing, &persists, &failures) ==
+  CHECK(chain_persist::settle(20, true, &persisted, &s, &persists, &failures) ==
         Say::Nothing);
-  CHECK(persisted == 20 && persists == 1 && failures == 0 && !failing);
+  CHECK(persisted == 20 && persists == 1 && failures == 0 && !s.failing);
 
-  // The failure: the write did not land. seq_persisted stays where NVS is.
-  CHECK(chain_persist::settle(30, false, &persisted, &failing, &persists, &failures) ==
+  // The failure: the write did not land. seq_persisted stays where NVS is,
+  // and the streak opens with its prompt retry still owed.
+  CHECK(chain_persist::settle(30, false, &persisted, &s, &persists, &failures) ==
         Say::Failed);
-  CHECK(persisted == 20 && persists == 1 && failures == 1 && failing);
+  CHECK(persisted == 20 && persists == 1 && failures == 1);
+  CHECK(s.failing && !s.retried && s.failed_seq == 30);
 
-  // Retries inside the streak: counted, not reported.
-  CHECK(chain_persist::settle(31, false, &persisted, &failing, &persists, &failures) ==
+  // Retries inside the streak: counted, not reported; the first one spends
+  // the prompt retry, and each records where it tried.
+  CHECK(chain_persist::settle(31, false, &persisted, &s, &persists, &failures) ==
         Say::Nothing);
-  CHECK(chain_persist::settle(32, false, &persisted, &failing, &persists, &failures) ==
+  CHECK(s.failing && s.retried && s.failed_seq == 31);
+  CHECK(chain_persist::settle(41, false, &persisted, &s, &persists, &failures) ==
         Say::Nothing);
-  CHECK(persisted == 20 && persists == 1 && failures == 3 && failing);
+  CHECK(persisted == 20 && persists == 1 && failures == 3);
+  CHECK(s.failing && s.retried && s.failed_seq == 41);
 
   // The first write to land closes the streak, and says so once.
-  CHECK(chain_persist::settle(33, true, &persisted, &failing, &persists, &failures) ==
+  CHECK(chain_persist::settle(51, true, &persisted, &s, &persists, &failures) ==
         Say::Recovered);
-  CHECK(persisted == 33 && persists == 2 && failures == 3 && !failing);
-  CHECK(chain_persist::settle(43, true, &persisted, &failing, &persists, &failures) ==
+  CHECK(persisted == 51 && persists == 2 && failures == 3);
+  CHECK(!s.failing && !s.retried);
+  CHECK(chain_persist::settle(61, true, &persisted, &s, &persists, &failures) ==
         Say::Nothing);
-  CHECK(persisted == 43 && persists == 3);
+  CHECK(persisted == 61 && persists == 3);
 
-  // A second streak is reported again.
-  CHECK(chain_persist::settle(53, false, &persisted, &failing, &persists, &failures) ==
+  // A second streak is reported again, and owes its own prompt retry.
+  CHECK(chain_persist::settle(71, false, &persisted, &s, &persists, &failures) ==
         Say::Failed);
-  CHECK(persisted == 43 && failures == 4 && failing);
+  CHECK(persisted == 61 && failures == 4 && s.failing && !s.retried && s.failed_seq == 71);
 }
 
 // ── settle() with a null argument changes nothing ───────────────────────────
 static void test_settle_refuses_a_null_argument() {
   uint32_t persisted = 5, persists = 1, failures = 2;
-  bool failing = false;
-  CHECK(chain_persist::settle(9, false, nullptr, &failing, &persists, &failures) ==
+  chain_persist::Streak s{};
+  CHECK(chain_persist::settle(9, false, nullptr, &s, &persists, &failures) ==
         Say::Nothing);
   CHECK(chain_persist::settle(9, true, &persisted, nullptr, &persists, &failures) ==
         Say::Nothing);
-  CHECK(chain_persist::settle(9, true, &persisted, &failing, nullptr, &failures) ==
+  CHECK(chain_persist::settle(9, true, &persisted, &s, nullptr, &failures) ==
         Say::Nothing);
-  CHECK(chain_persist::settle(9, false, &persisted, &failing, &persists, nullptr) ==
+  CHECK(chain_persist::settle(9, false, &persisted, &s, &persists, nullptr) ==
         Say::Nothing);
-  CHECK(persisted == 5 && persists == 1 && failures == 2 && !failing);
+  CHECK(persisted == 5 && persists == 1 && failures == 2 && !s.failing && s.failed_seq == 0);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -237,7 +278,7 @@ static void test_routine_persist_every_interval() {
   CHECK(nvs_seq() == SD_PERSIST_INTERVAL);
   CHECK(g_device.seq_persisted == SD_PERSIST_INTERVAL);
   CHECK(g_health.chain_persists == 1 && g_health.chain_persist_failures == 0);
-  CHECK(!g_device.chain_persist_failing);
+  CHECK(!g_device.chain_persist_streak.failing);
   CHECK(g_log.count == 0);                         // a landed write says nothing
   CHECK(g_nvs.unexpected == 0);
 }
@@ -251,28 +292,41 @@ static void test_a_failed_persist_is_retried_not_forgotten() {
   CHECK(g_nvs.chain_puts == 1);
   CHECK(nvs_seq() == 0);                           // NVS still holds seq 0...
   CHECK(g_device.seq_persisted == 0);              // ...and the device says so
-  CHECK(g_device.chain_persist_failing);
+  CHECK(g_device.chain_persist_streak.failing);
   CHECK(g_health.chain_persists == 0 && g_health.chain_persist_failures == 1);
   CHECK(g_log.count == 1 && g_log.warnings == 1);  // reported once
   CHECK(std::strstr(g_log.message, "not written to NVS") != nullptr);
-  CHECK(std::strstr(g_log.detail, "seq 10") != nullptr);
+  CHECK(std::strstr(g_log.detail, "seq 10;") != nullptr);
 
   // The next record retries at once, not an interval later; the streak is
   // not reported again.
   make_record();
-  make_record();
+  CHECK(g_nvs.chain_puts == 2);
+  CHECK(g_health.chain_persist_failures == 2);
+  CHECK(g_device.seq_persisted == 0 && nvs_seq() == 0);
+  CHECK(g_log.count == 1);
+
+  // That retry failed too: the next one is an interval after it, not on
+  // every record (a leaked session would stall the loop 2 s per record).
+  for (uint32_t i = 1; i < SD_PERSIST_INTERVAL; ++i) make_record();
+  CHECK(g_nvs.chain_puts == 2);
+  make_record();                                   // an interval after seq 11
   CHECK(g_nvs.chain_puts == 3);
   CHECK(g_health.chain_persist_failures == 3);
   CHECK(g_device.seq_persisted == 0 && nvs_seq() == 0);
   CHECK(g_log.count == 1);
 
-  // NVS takes writes again: the next record lands the newest state.
+  // NVS takes writes again: the next retry, an interval on, lands the
+  // newest state.
   g_nvs.refuse_all = false;
+  for (uint32_t i = 1; i < SD_PERSIST_INTERVAL; ++i) make_record();
+  CHECK(g_nvs.chain_puts == 3);
   make_record();
   CHECK(g_nvs.chain_puts == 4);
-  CHECK(nvs_seq() == SD_PERSIST_INTERVAL + 3);
-  CHECK(g_device.seq_persisted == SD_PERSIST_INTERVAL + 3);
-  CHECK(!g_device.chain_persist_failing);
+  CHECK(g_device.seq == 3 * SD_PERSIST_INTERVAL + 1);
+  CHECK(nvs_seq() == g_device.seq);
+  CHECK(g_device.seq_persisted == g_device.seq);
+  CHECK(!g_device.chain_persist_streak.failing && !g_device.chain_persist_streak.retried);
   CHECK(g_health.chain_persists == 1 && g_health.chain_persist_failures == 3);
   CHECK(g_log.count == 2 && g_log.notices == 1);   // the recovery, once
   CHECK(std::strstr(g_log.message, "written to NVS again") != nullptr);
@@ -284,6 +338,45 @@ static void test_a_failed_persist_is_retried_not_forgotten() {
   make_record();
   CHECK(g_nvs.chain_puts == 5 && g_log.count == 2);
   CHECK(g_nvs.unexpected == 0);
+}
+
+// ── a failure that lasts costs one attempt per interval, not one per record ─
+//
+// The cost a lasting failure puts on the loop: a full partition refuses
+// every put, and a leaked NVS session makes each attempt wait 2 s
+// (nvs_session::kSessionWaitMs) before it fails. A thousand records under
+// one: the opening failure, the prompt retry, then one attempt per interval.
+static void test_a_lasting_failure_is_retried_once_per_interval() {
+  reset_chain(0);
+  g_nvs.refuse_all = true;
+  const uint32_t records = 1000;
+  for (uint32_t i = 0; i < records; ++i) make_record();
+  // Attempts at seq 10 (the routine one, refused), 11 (the prompt retry),
+  // then 21, 31, ..., 991.
+  const int expected = 2 + (int)((records - (SD_PERSIST_INTERVAL + 1)) / SD_PERSIST_INTERVAL);
+  CHECK(g_nvs.chain_puts == expected);
+  CHECK(g_health.chain_persist_failures == (uint32_t)expected);
+  CHECK(g_health.chain_persists == 0);
+  CHECK(g_device.seq_persisted == 0 && nvs_seq() == 0);
+  CHECK(g_log.count == 1);                         // one streak, one line
+  // It still heals within an interval of NVS taking writes again.
+  g_nvs.refuse_all = false;
+  for (uint32_t i = 0; i < SD_PERSIST_INTERVAL; ++i) make_record();
+  CHECK(g_device.seq_persisted == nvs_seq() && !g_device.chain_persist_streak.failing);
+  CHECK(g_device.seq - nvs_seq() < SD_PERSIST_INTERVAL);
+  CHECK(g_log.notices == 1);
+}
+
+// ── the failure line fits its health-log slot at the largest seq ────────────
+static void test_the_failure_line_fits_at_the_largest_seq() {
+  reset_chain(0xFFFFFFFFu - SD_PERSIST_INTERVAL);
+  g_nvs.refuse_all = true;
+  for (uint32_t i = 0; i < SD_PERSIST_INTERVAL; ++i) make_record();
+  CHECK(g_device.seq == 0xFFFFFFFFu && g_log.warnings == 1);
+  char want[48];
+  std::snprintf(want, sizeof(want), "seq 4294967295; retrying, then every %u records",
+                (unsigned)SD_PERSIST_INTERVAL);
+  CHECK(std::strcmp(g_log.detail, want) == 0);     // not cut short by detail[48]
 }
 
 // ── a failed persist outside the interval (before a restart) is retried too ─
@@ -300,19 +393,22 @@ static void test_a_failed_direct_persist_is_retried_after_the_next_record() {
   make_record();                                   // gap 3, but a retry is owed
   CHECK(g_nvs.chain_puts == 2);
   CHECK(nvs_seq() == 23 && g_device.seq_persisted == 23);
-  CHECK(!g_device.chain_persist_failing && g_log.notices == 1);
+  CHECK(!g_device.chain_persist_streak.failing && g_log.notices == 1);
 }
 
-// ── the failure, run long: NVS never lags a full interval unnoticed ─────────
+// ── the failure, run long: never an interval without an attempt, never more ─
 //
 // A deterministic mix of records with NVS refusing about one write in four,
 // in streaks. After every record: seq_persisted is exactly the seq NVS holds;
-// a record that leaves NVS an interval or more behind the chain has just
-// tried to write; every attempt is counted once, on one side; and the health
-// log holds one line per streak opened and one per streak closed. The old
-// glue (advance and count whatever the write did) breaks the first two on
-// the first refused write.
-static void test_nvs_never_lags_an_interval_without_a_retry() {
+// no record ends an interval or more past the last write attempt (a failure
+// is never left untried for an interval); inside a streak, only the prompt
+// retry comes sooner than an interval after the attempt before it (a lasting
+// failure is not paid per record); every attempt is counted once, on one
+// side; and the health log holds one line per streak opened and one per
+// streak closed. The old glue (advance and count whatever the write did)
+// breaks the first on the first refused write; a retry on every record
+// breaks the third.
+static void test_nvs_is_retried_every_interval_and_no_more_often() {
   reset_chain(0);
   uint32_t x = 0x9E3779B9u;  // xorshift32, fixed seed: the run is reproducible
   auto next = [&x]() {
@@ -321,7 +417,9 @@ static void test_nvs_never_lags_an_interval_without_a_retry() {
     x ^= x << 5;
     return x;
   };
-  int streaks = 0, recoveries = 0, refused_steps = 0;
+  int streaks = 0, recoveries = 0, refused_steps = 0, prompt_retries = 0;
+  int prompt_in_streak = 0;
+  uint32_t last_attempt = g_device.seq;  // reset_chain() wrote it
   bool was_failing = false;
   for (int step = 0; step < 50000; ++step) {
     const uint32_t r = next();
@@ -334,18 +432,29 @@ static void test_nvs_never_lags_an_interval_without_a_retry() {
     CHECK(g_nvs.chain_puts <= puts_before + 1);    // at most one write per record
 
     CHECK(g_device.seq_persisted == nvs_seq());
-    if (g_device.seq - nvs_seq() >= SD_PERSIST_INTERVAL) CHECK(attempted);
+    if (attempted && was_failing &&
+        g_device.seq - last_attempt < SD_PERSIST_INTERVAL) {
+      prompt_retries++;
+      CHECK(++prompt_in_streak == 1);              // one prompt retry per streak
+    }
+    if (attempted) last_attempt = g_device.seq;
+    CHECK(g_device.seq - last_attempt < SD_PERSIST_INTERVAL);
     CHECK((uint32_t)g_nvs.chain_puts ==
           g_health.chain_persists + g_health.chain_persist_failures);
-    if (attempted && g_device.chain_persist_failing && !was_failing) streaks++;
-    if (attempted && !g_device.chain_persist_failing && was_failing) recoveries++;
-    was_failing = g_device.chain_persist_failing;
+    const bool failing = g_device.chain_persist_streak.failing;
+    if (attempted && failing && !was_failing) {
+      streaks++;
+      prompt_in_streak = 0;
+    }
+    if (attempted && !failing && was_failing) recoveries++;
+    was_failing = failing;
     if (g_failures > 20) break;  // one broken invariant floods; stop early
   }
   CHECK(g_log.warnings == streaks && g_log.notices == recoveries);
   CHECK(g_log.count == streaks + recoveries);
   CHECK(streaks > 100 && recoveries > 100);       // the mix really failed and healed
   CHECK(refused_steps > 5000);
+  CHECK(prompt_retries > 100);                    // the prompt retry really ran
   CHECK(g_health.chain_persist_failures > (uint32_t)streaks);  // retries inside streaks
   CHECK(g_nvs.unexpected == 0);
 }
@@ -419,13 +528,17 @@ static void test_the_birth_retry_wait_is_wrap_safe() {
 }
 
 int main() {
-  test_due_follows_the_interval_and_the_streak();
+  test_due_follows_the_interval_with_no_streak();
+  test_due_retries_the_opening_failure_on_the_next_record();
+  test_due_backs_off_to_the_interval_after_the_prompt_retry();
   test_settle_moves_and_counts_only_what_landed();
   test_settle_refuses_a_null_argument();
   test_routine_persist_every_interval();
   test_a_failed_persist_is_retried_not_forgotten();
+  test_a_lasting_failure_is_retried_once_per_interval();
+  test_the_failure_line_fits_at_the_largest_seq();
   test_a_failed_direct_persist_is_retried_after_the_next_record();
-  test_nvs_never_lags_an_interval_without_a_retry();
+  test_nvs_is_retried_every_interval_and_no_more_often();
   test_a_failed_birth_stamp_claims_nothing_and_waits();
   test_the_birth_retry_wait_is_wrap_safe();
 

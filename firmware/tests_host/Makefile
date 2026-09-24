@@ -375,11 +375,12 @@ NVSSTORE_BIN  = $(BUILD_DIR)/test_nvs_store_result
 
 # The chain-state persist (common/witness/chain_persist.h, repo sweep F55):
 # only a write that landed moves seq_persisted and counts, a failed one is
-# counted beside it, retried after the next record and reported once per
-# streak. test_chain_persist.cpp tests the header, then runs
-# securacv_witness.cpp's own persist and birth-stamp glue, cut out verbatim,
-# over a fake NVS and stubs/witness_glue. The record path's call into that
-# glue is a one-line grep: the recipe fails if witness_create_record_gps()
+# counted beside it, retried on the next record and then once per interval
+# (not on every record: a lasting failure is not paid per record), and
+# reported once per streak. test_chain_persist.cpp tests the header, then
+# runs securacv_witness.cpp's own persist and birth-stamp glue, cut out
+# verbatim, over a fake NVS and stubs/witness_glue. The record path's call
+# into that glue is a one-line grep: the recipe fails if witness_create_record_gps()
 # stops calling persist_chain_if_due().
 CHAINPERSIST_HDRS = ../common/witness/chain_persist.h $(CHAINST_HDR) \
                     ../common/identity/birth_day.h \
