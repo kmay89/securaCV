@@ -827,6 +827,11 @@
        "comment": "Ø1.5 weep at the cavity's low point (the USB wall, hung USB-down): condensate"
       },
       {
+       "name": "opt_shield",
+       "default": "false",
+       "comment": "blind pilots in the lid over its corner bosses for the sun shield's four screws (ON in the Outdoor preset; the shield is part=\"shield\")"
+      },
+      {
        "name": "usb_hood",
        "default": "false",
        "comment": "drip awning over the USB opening — for a case standing sideways or on a desk"
@@ -1301,8 +1306,8 @@
       },
       {
        "name": "sh_t",
-       "default": "1.6",
-       "comment": "shield panel thickness"
+       "default": "2.4",
+       "comment": "shield panel thickness (2.4, not 1.6: its flat-head cones are 1.2 deep and keep a 1.0 floor)"
       },
       {
        "name": "tray_l",
@@ -1384,12 +1389,20 @@
        "comment": "(m2 flat) countersink depth — the cone below is a true 90° seat for an M2 flat head"
       },
       {
-       "name": "e_from",
-       "default": "_pre(screw_from,  \"back\", \"back\", \"face\")"
+       "name": "e_back",
+       "default": "screw_from == \"back"
       },
       {
-       "name": "e_back",
-       "default": "e_from == \"back"
+       "name": "e_head",
+       "default": "_pre(screw_head,  screw_head, screw_head, \"pan\")"
+      },
+      {
+       "name": "e_shield",
+       "default": "_pre(opt_shield,  false, false, true)"
+      },
+      {
+       "name": "e_gland",
+       "default": "e_back && e_seal"
       }
      ]
     },
@@ -1660,7 +1673,7 @@
       },
       {
        "name": "head_pad",
-       "default": "(!e_back && screw_head == \"pan\") ? max(0, head_h + 1.0 - lid_t) : 0"
+       "default": "(!e_back && e_head == \"pan\") ? max(0, head_h + 1.0 - lid_t) : 0"
       },
       {
        "name": "board_zone_l",
@@ -1750,21 +1763,34 @@
        "default": "1.0"
       },
       {
+       "name": "sh_L",
+       "default": "hw_len(sh_t + sh_gap, 0, 3.0)",
+       "comment": "3 mm in the lid: 1.5 x d for a shield that sees wind, not load"
+      },
+      {
+       "name": "sh_pilot",
+       "default": "sh_L - sh_t - sh_gap"
+      },
+      {
+       "name": "skin_eff",
+       "default": "e_shield ? sh_pilot + 1.0 : face_skin"
+      },
+      {
        "name": "bk_L",
-       "default": "e_back ? bk_len(screw_size, screw_head, mount_extra, base_h, lid_t, face_skin) : 0"
+       "default": "e_back ? bk_len(screw_size, e_head, mount_extra, base_h, lid_t, skin_eff) : 0"
       },
       {
        "name": "bk_r",
-       "default": "e_back ? bk_recess(screw_size, screw_head, mount_extra, floor_t, base_h, lid_t, face_skin) : 0"
+       "default": "e_back ? bk_recess(screw_size, e_head, mount_extra, floor_t, base_h, lid_t, skin_eff, e_gland) : 0"
       },
       {
        "name": "boss_h",
-       "default": "e_back ? bk_boss_h(screw_size, screw_head, mount_extra, floor_t, base_h, lid_t, face_skin) : 0"
+       "default": "e_back ? bk_boss_h(screw_size, e_head, mount_extra, floor_t, base_h, lid_t, skin_eff, e_gland) : 0"
       },
       {
        "name": "post_h",
-       "default": "cav_h - head_pad - boss_h",
-       "comment": "the post stops where the lid's boss lands"
+       "default": "cav_h - head_pad - boss_h - bk_relief()",
+       "comment": "the rim is the datum: the boss stops bk_relief() short of the post"
       },
       {
        "name": "kh_x",
@@ -1918,7 +1944,7 @@
       {
        "name": "head_seal",
        "default": "false",
-       "comment": "(seal mode) O-ring under each front screw head — the posts stand INSIDE the"
+       "comment": "(seal mode, screws on the face) O-ring under each front screw head — from the back a sealed build always glands them — the posts stand INSIDE the"
       },
       {
        "name": "e_led",
@@ -2759,6 +2785,10 @@
        "default": "screw_from == \"back"
       },
       {
+       "name": "e_gland",
+       "default": "e_back && e_seal"
+      },
+      {
        "name": "head_pad",
        "default": "(!e_back && screw_head == \"pan\") ? max(0, head_h + 1.0 - lid_t) : 0"
       },
@@ -2888,16 +2918,16 @@
       },
       {
        "name": "bk_r",
-       "default": "e_back ? bk_recess(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin) : 0"
+       "default": "e_back ? bk_recess(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0"
       },
       {
        "name": "boss_h",
-       "default": "e_back ? bk_boss_h(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin) : 0"
+       "default": "e_back ? bk_boss_h(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0"
       },
       {
        "name": "post_h",
-       "default": "cav_d - head_pad - boss_h",
-       "comment": "the post stops where the front's boss lands"
+       "default": "cav_d - head_pad - boss_h - bk_relief()",
+       "comment": "the rim is the datum: the boss stops bk_relief() short of the post"
       },
       {
        "name": "kh_y",
@@ -3034,7 +3064,7 @@
       {
        "name": "head_seal",
        "default": "false",
-       "comment": "O-ring under each face screw head (the posts stand INSIDE the gasket line, so a"
+       "comment": "(seal mode, screws on the face) O-ring under each face screw head — from the back a sealed build always glands them (the posts stand INSIDE the gasket line, so a"
       },
       {
        "name": "e_seal",
@@ -3742,6 +3772,10 @@
        "default": "screw_from == \"back"
       },
       {
+       "name": "e_gland",
+       "default": "e_back && e_seal"
+      },
+      {
        "name": "head_pad",
        "default": "(!e_back && screw_head == \"pan\") ? max(0, head_h + 1.0 - lid_t) : 0"
       },
@@ -3787,16 +3821,16 @@
       },
       {
        "name": "bk_r",
-       "default": "e_back ? bk_recess(screw_size, screw_head, kh_extra, floor_t, base_d, lid_t, face_skin) : 0"
+       "default": "e_back ? bk_recess(screw_size, screw_head, kh_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0"
       },
       {
        "name": "boss_h",
-       "default": "e_back ? bk_boss_h(screw_size, screw_head, kh_extra, floor_t, base_d, lid_t, face_skin) : 0"
+       "default": "e_back ? bk_boss_h(screw_size, screw_head, kh_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0"
       },
       {
        "name": "post_h",
-       "default": "cav_d - head_pad - boss_h",
-       "comment": "the post stops where the face's boss lands"
+       "default": "cav_d - head_pad - boss_h - bk_relief()",
+       "comment": "the rim is the datum: the boss stops bk_relief() short of the post"
       },
       {
        "name": "rr",
@@ -3948,7 +3982,7 @@
       {
        "name": "head_seal",
        "default": "false",
-       "comment": "(seal mode) O-ring under each front screw head — needs screw_head = \"pan\""
+       "comment": "(seal mode, screws on the face) O-ring under each front screw head — from the back a sealed build always glands them — needs screw_head = \"pan\""
       },
       {
        "name": "opt_mount",
@@ -4715,6 +4749,10 @@
        "default": "screw_from == \"back"
       },
       {
+       "name": "e_gland",
+       "default": "e_back && e_seal"
+      },
+      {
        "name": "head_pad",
        "default": "(!e_back && screw_head == \"pan\") ? max(0, head_h + 1.0 - lid_t) : 0"
       },
@@ -4810,16 +4848,16 @@
       },
       {
        "name": "bk_r",
-       "default": "e_back ? bk_recess(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin) : 0"
+       "default": "e_back ? bk_recess(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0"
       },
       {
        "name": "boss_h",
-       "default": "e_back ? bk_boss_h(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin) : 0"
+       "default": "e_back ? bk_boss_h(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0"
       },
       {
        "name": "post_h",
-       "default": "cav_d - head_pad - boss_h",
-       "comment": "the post stops where the front's boss lands"
+       "default": "cav_d - head_pad - boss_h - bk_relief()",
+       "comment": "the rim is the datum: the boss stops bk_relief() short of the post"
       },
       {
        "name": "kh_y",
@@ -6590,6 +6628,10 @@
        "default": "screw_from == \"back"
       },
       {
+       "name": "e_gland",
+       "default": "e_back && e_seal"
+      },
+      {
        "name": "head_pad",
        "default": "e_back ? 0 : max(0, screw_head_h + 1.0 - lid_t)"
       },
@@ -6672,15 +6714,16 @@
       },
       {
        "name": "bk_r",
-       "default": "e_back ? bk_recess(\"m2\", \"pan\", mount_extra, floor_t, base_d, lid_t, face_skin) : 0"
+       "default": "e_back ? bk_recess(\"m2\", \"pan\", mount_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0"
       },
       {
        "name": "boss_h",
-       "default": "e_back ? bk_boss_h(\"m2\", \"pan\", mount_extra, floor_t, base_d, lid_t, face_skin) : 0"
+       "default": "e_back ? bk_boss_h(\"m2\", \"pan\", mount_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0"
       },
       {
        "name": "post_h",
-       "default": "cav_d - head_pad - boss_h"
+       "default": "cav_d - head_pad - boss_h - bk_relief()",
+       "comment": "the rim is the datum: the boss stops bk_relief() short of the post"
       },
       {
        "name": "skirt_gap",

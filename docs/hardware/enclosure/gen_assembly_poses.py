@@ -113,14 +113,23 @@ DEVICES = {
             # tubes standing on the lid's outer face
             "shield": [("T", "[0, 0, base_h + lid_t + sh_t + sh_gap]"), ("R", [180, 0, 0])],
         },
-        # flat heads: the head's top (the builder's csk z = 0) is the lid's
-        # outer face in face mode, the recess plane in the back (turned over)
-        # in back mode — the Outdoor build the tab shows keeps face screws
-        "screws": {"xy": "post_xy()",
-                   "z": "e_back ? -mount_extra + bk_r : base_h + lid_t", "rot": ["e_back ? 180 : 0", 0, 0],
-                   "len": "e_back ? bk_L : hw_len(lid_t, head_pad, hw_engage(screw_size))"},
+        # from the back (every preset): the head's top (the builder's csk z = 0)
+        # sits at the recess plane in the back, turned over; the Outdoor build
+        # the tab shows drives pan heads over O-rings
+        "screws": {
+            # the lid screws, from the back: the head's top (the builder's z = 0)
+            # at the recess plane, turned over
+            "screws": {"xy": "post_xy()",
+                       "z": "e_back ? -mount_extra + bk_r : base_h + lid_t", "rot": ["e_back ? 180 : 0", 0, 0],
+                       "len": "e_back ? bk_L : hw_len(lid_t, head_pad, hw_engage(screw_size))"},
+            # the sun shield's own flat-head screws, flush in the shield's top,
+            # down its tubes into the lid's blind pilots
+            "shield_screws": {"xy": "post_xy()", "z": "base_h + lid_t + sh_t + sh_gap", "rot": None,
+                              "len": "sh_L"},
+        },
         "params": {"disc": {"d": "cam_disc_d", "t": "cam_disc_t"},
-                   "batt": {"t": "batt_h - 1"}},
+                   "batt": {"t": "batt_h - 1"},
+                   "screws": {"csk": 'e_head == "flat"'}},
     },
     # ---- Vision, xiao host, vision_indoor (the committed STLs it loads) ---
     "canary-vision": {
@@ -316,16 +325,24 @@ def _exprs(dev):
     for pid, ps in dev.get("params", {}).items():
         for k, e in ps.items():
             out[f"Q{pid}_{k}"] = e
-    sc = dev.get("screws")
-    if sc:
-        out["Sxy"] = sc["xy"]
-        out["Sz"] = sc["z"]
+    for pid, sc in _fasteners(dev).items():
+        out[f"S{pid}_xy"] = sc["xy"]
+        out[f"S{pid}_z"] = sc["z"]
         if sc.get("len"):
-            out["Slen"] = sc["len"]
+            out[f"S{pid}_len"] = sc["len"]
         for j, a in enumerate(sc.get("rot") or []):
             if isinstance(a, str):
-                out[f"Srot_{j}"] = a
+                out[f"S{pid}_rot_{j}"] = a
     return out
+
+
+def _fasteners(dev):
+    """{part id: spec} — `screws` is one spec (the part called "screws") or,
+    when a device has more than one fastener pattern, a dict of them."""
+    sc = dev.get("screws")
+    if not sc:
+        return {}
+    return {"screws": sc} if "xy" in sc else sc
 
 
 def _parse(val: str):
@@ -345,7 +362,9 @@ def _evaluate(dev_id, dev, asm_parts):
     pdefs = []
     for p in asm_parts:
         for k, v in (p.get("params") or {}).items():
-            if isinstance(v, (int, float)):
+            if isinstance(v, bool):        # bool is an int in Python; OpenSCAD wants true/false
+                pdefs.append((p["id"], k, "true" if v else "false"))
+            elif isinstance(v, (int, float)):
                 pdefs.append((p["id"], k, v))
     body = dev.get("defs", "")
     lines = []
@@ -410,16 +429,18 @@ def derive(asm):
             p.setdefault("params", {})
             for k in ps:
                 v = vals[f"Q{pid}_{k}"]
-                p["params"][k] = [_num(x) for x in v] if isinstance(v, list) else _num(v)
-        sc = dev.get("screws")
-        if sc:
-            p = byid["screws"]
-            xy = vals["Sxy"]
+                p["params"][k] = (v if isinstance(v, bool)
+                                  else [_num(x) for x in v] if isinstance(v, list) else _num(v))
+        for pid, sc in _fasteners(dev).items():
+            p = byid.get(pid)
+            if p is None:
+                raise SystemExit(f"{dev_id}: assembly.json has no fastener part '{pid}'")
+            xy = vals[f"S{pid}_xy"]
             inst, rot0 = [], None
             for q in xy:
-                m = _mul(F, _t([q[0], q[1], vals["Sz"]]))
+                m = _mul(F, _t([q[0], q[1], vals[f"S{pid}_z"]]))
                 if sc["rot"]:
-                    m = _mul(m, _rot([vals[f"Srot_{j}"] if isinstance(a, str) else a
+                    m = _mul(m, _rot([vals[f"S{pid}_rot_{j}"] if isinstance(a, str) else a
                                       for j, a in enumerate(sc["rot"])]))
                 pos, rot = _decompose(m)
                 inst.append([_num(x) for x in pos])
@@ -431,10 +452,10 @@ def derive(asm):
             else:
                 p.pop("irot", None)
             if sc.get("len"):
-                p.setdefault("params", {})["len"] = _num(vals["Slen"])
+                p.setdefault("params", {})["len"] = _num(vals[f"S{pid}_len"])
             p["pose"] = "cad"
             if len(inst) != p.get("qty", len(inst)):
-                raise SystemExit(f"{dev_id}: the CAD has {len(inst)} screws, assembly.json qty {p.get('qty')}")
+                raise SystemExit(f"{dev_id}: the CAD has {len(inst)} {pid}, assembly.json qty {p.get('qty')}")
     return out
 
 

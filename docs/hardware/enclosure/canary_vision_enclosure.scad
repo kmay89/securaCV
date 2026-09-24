@@ -93,7 +93,7 @@ mount_style = "hinge"; // ["hinge","keyhole","both"]
 opt_weep   = false;   // Ø2 weep at the cavity's low point (bottom wall, beside the USB): condensate leaves (ON in the weather preset)
 seal_mid_posts = false; // (seal mode) one extra screw post mid-way along each long wall (ON in the weather preset): four corner
                         // screws cannot hold 20 % gasket squeeze across a 60 mm span of 2 mm face
-head_seal  = false;   // (seal mode) O-ring under each front screw head — the posts stand INSIDE the
+head_seal  = false;  // (seal mode, screws on the face) O-ring under each front screw head — from the back a sealed build always glands them — the posts stand INSIDE the
                       // gasket line, so a bare screw is a drip path; needs screw_head = "pan"
 
 // effective flags (a preset overrides the checkboxes above)
@@ -328,6 +328,9 @@ pd = max(screw_insert ? max(post_d, ins_od + 3.0) : post_d,   // >=1.5 mm wall a
 // the pan seat's floor: whatever the front is short of (seat + 1.0 web) is
 // carried by a pad on the inside face, and the posts shorten by the same
 e_back   = screw_from == "back";
+// a sealed build seats an O-ring under every back screw head: the seat is a
+// hole through the seal line from outside (canary_core_lib bk_seat_cut)
+e_gland  = e_back && e_seal;
 head_pad = (!e_back && screw_head == "pan") ? max(0, head_h + 1.0 - lid_t) : 0;
 post_corner = pd + 1.5;
 has_dk = (host == "devkit");
@@ -404,10 +407,13 @@ mount_extra = (e_mount && (m_style == "keyhole" || m_style == "both")) ? kh_extr
 // the unbroken plate left over the screw tip
 face_skin = 1.0;
 bk_L      = e_back ? bk_len(screw_size, screw_head, mount_extra, base_d, lid_t, face_skin) : 0;
-bk_r      = e_back ? bk_recess(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin) : 0;
-boss_h    = e_back ? bk_boss_h(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin) : 0;
-post_h    = cav_d - head_pad - boss_h;             // the post stops where the front's boss lands
+bk_r      = e_back ? bk_recess(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0;
+boss_h    = e_back ? bk_boss_h(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0;
+post_h    = cav_d - head_pad - boss_h - bk_relief();   // the rim is the datum: the boss stops bk_relief() short of the post
 assert(!e_back || post_h >= 2.0, str("screws from the back: the boss (", boss_h, " mm) leaves a ", post_h, " mm post — use screw_from=\"face\""));
+assert(!e_gland || screw_head == "pan", "a sealed build seats an O-ring under each back screw head — that needs screw_head = \"pan\"");
+assert(!e_gland || bk_bear(screw_size, screw_head, bk_r) + oring_gland_h(scr_oring_cs(screw_size)) + bk_web() <= mount_extra + floor_t + 1e-9,
+       "sealed back seats: the O-ring gland breaks out of the floor — add the keyhole slab (opt_mount) or thicken floor_t");
 assert(!e_back || !(screw_insert && boss_h < ins_h + 1.0), "the boss is shorter than the insert it must hold");
 kh_y  = inner_y/2 - kh_inset;
 kh_ys = (kh_y >= kh_slot_l/2 + kh_head_d/2 + 2) ? [-kh_y, kh_y] : [0];
@@ -486,7 +492,7 @@ hw_echo(str("Vision ", host), [
            : hw_item(len(post_xy()), hw_screw(screw_size, screw_head, hw_len(lid_t, head_pad, hw_engage(screw_size)), hw_thread)),
     hw_item(4, "M2 pan x 6 self-tap (OV5647 to the front posts)"),
     screw_insert ? hw_item(len(post_xy()), str(hw_size_name(screw_size), " heat-set insert ", ins_od, " OD x ", ins_h)) : "",
-    head_seal    ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
+    (head_seal || e_gland) ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
     e_seal       ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
     e_vent       ? hw_item(1, str("Ø", vent_pad_d, " adhesive ePTFE/GORE vent patch")) : "",
     e_led        ? hw_item(1, str("Ø", lp_d, " light pipe")) : "",
@@ -642,7 +648,7 @@ module back() {
         back_body();
         if (e_back) for (p = post_xy())
             bk_seat_cut(p[0], p[1], mount_extra, floor_t + post_h, screw_size, screw_head,
-                        bk_r, scr_c, tol_hole);
+                        bk_r, scr_c, tol_hole, e_gland);
     }
 }
 // ...and the bosses they thread into, hanging from the front onto the post tops
@@ -652,7 +658,7 @@ module front() {
         union() {
             front_body();
             if (e_back) for (p = post_xy())
-                cb_head_pad(p[0], p[1], boss_h, pd, inner_x, inner_y, core_cav_r(corner_r, wall_eff));
+                bk_boss(p[0], p[1], boss_h, pd, inner_x, inner_y, core_cav_r(corner_r, wall_eff), tol_slide);
         }
         if (e_back) for (p = post_xy())
             bk_boss_bore(p[0], p[1], boss_h, lid_t, face_skin,
@@ -844,7 +850,7 @@ module front_body() {
                     cb_head_pad(p[0], p[1], head_pad,
                                 cb_pad_d(head_d, tol_hole),
                                 inner_x, inner_y, core_cav_r(corner_r, wall_eff),
-                                head_d + 2*tol_hole);
+                                head_d + 2*tol_hole, tol_slide);
             }
             // lens aperture + recessed clear-disc seat
             translate([lens_x, lens_y, -1]) cylinder(d = cam_ap_d, h = lid_t + 2);

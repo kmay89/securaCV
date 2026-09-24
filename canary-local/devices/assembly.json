@@ -285,46 +285,51 @@
      "source": "proc",
      "part": "screw",
      "params": {
-      "len": 8,
-      "csk": true
+      "len": 12,
+      "csk": false
      },
      "instances": [
       [
        47.95,
        15.2,
-       18.25
+       -1.15
       ],
       [
        -47.95,
        15.2,
-       18.25
+       -1.15
       ],
       [
        47.95,
        -15.2,
-       18.25
+       -1.15
       ],
       [
        -47.95,
        -15.2,
-       18.25
+       -1.15
       ]
      ],
      "explode": [
       0,
       0,
-      60
+      -80
      ],
      "insert": [
       0,
       0,
-      16
+      -12
      ],
      "step": 6,
-     "name": "M2 screw",
+     "name": "M2 screws — driven up from the back into the lid's bosses, over O-rings",
      "qty": 4,
      "ref": "SCR3",
-     "pose": "cad"
+     "pose": "cad",
+     "irot": [
+      180,
+      0,
+      0
+     ]
     },
     {
      "id": "shield",
@@ -335,7 +340,7 @@
       "pos": [
        0,
        0,
-       25.85
+       26.65
       ],
       "rot": [
        180,
@@ -356,6 +361,52 @@
      "step": 7,
      "name": "Sun shield",
      "ref": "weather_shield",
+     "pose": "cad"
+    },
+    {
+     "id": "shield_screws",
+     "source": "proc",
+     "part": "screw",
+     "params": {
+      "len": 12,
+      "csk": true
+     },
+     "instances": [
+      [
+       47.95,
+       15.2,
+       26.65
+      ],
+      [
+       -47.95,
+       15.2,
+       26.65
+      ],
+      [
+       47.95,
+       -15.2,
+       26.65
+      ],
+      [
+       -47.95,
+       -15.2,
+       26.65
+      ]
+     ],
+     "explode": [
+      0,
+      0,
+      110
+     ],
+     "insert": [
+      0,
+      0,
+      20
+     ],
+     "step": 7,
+     "name": "M2 flat screws — the shield's own, into the lid's blind pilots",
+     "qty": 4,
+     "ref": "SCR3",
      "pose": "cad"
     }
    ],

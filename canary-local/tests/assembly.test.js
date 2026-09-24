@@ -80,11 +80,15 @@ for (const [dev, d] of Object.entries(asm.devices)) {
   test(`${dev}: part quantities match the BOM`, () => {
     const rows = build.devices[dev]?.bom?.rows || [];
     const byRef = Object.fromEntries(rows.map((r) => [r.ref, r]));
+    // parts sharing a RefDes (the WAP's lid screws and its shield's screws are
+    // one BOM row) sum to the row's quantity
+    const byRefQty = {};
+    for (const p of d.parts) if (p.ref && p.qty != null) byRefQty[p.ref] = (byRefQty[p.ref] || 0) + p.qty;
+    for (const [ref, qty] of Object.entries(byRefQty)) {
+      if (byRef[ref]) assert.strictEqual(String(qty), String(byRef[ref].qty),
+        `${ref}: assembly says ×${qty}, BOM says ×${byRef[ref].qty}`);
+    }
     for (const p of d.parts) {
-      if (p.ref && byRef[p.ref] && p.qty != null) {
-        assert.strictEqual(String(p.qty), String(byRef[p.ref].qty),
-          `${p.ref}: assembly says ×${p.qty}, BOM says ×${byRef[p.ref].qty}`);
-      }
       if (p.instances) assert.strictEqual(p.instances.length, p.qty, `${p.id}: ${p.instances.length} placements ≠ qty ${p.qty}`);
     }
   });
@@ -178,9 +182,10 @@ test("canary-wap: the assembly is physically true to the scad", () => {
   // (their x/y are post_xy(), written by gen_assembly_poses.py and --checked
   // against the CAD in the enclosure CI — a number pinned here would be a
   // second, unchecked copy of it)
-  for (const [, , z] of by.screws.instances) {
-    assert.strictEqual(z, by.lid.seated.pos[2], "flat heads land flush at the lid top");
-  }
+  // driven from the BACK: every head sits below the base's back face (z < 0),
+  // turned over (irot 180) — the lid face carries no screw
+  for (const [, , z] of by.screws.instances) assert.ok(z < 0, "lid screws sit in the back, not on the lid");
+  assert.deepStrictEqual(by.screws.irot, [180, 0, 0], "lid screws drive upward from the back");
 
   // the step rail reads in build order
   const titles = a.steps.map((s) => s.title.toLowerCase());
@@ -253,8 +258,12 @@ test("canary-wap: the sun shield stands on its posts above the lid", () => {
   const a = asm.devices["canary-wap"];
   const shield = a.parts.find((p) => p.id === "shield");
   // printed installed-top-down (scad: "bed face = the installed top"),
-  // so assembly flips it; its tubes are 7.6 (sh_t 1.6 + sh_gap 6), tips on the lid
+  // so assembly flips it; its tubes are 8.4 (sh_t 2.4 + sh_gap 6), tips on the lid
   const lid = a.parts.find((p) => p.id === "lid");
   assert.deepStrictEqual(shield.seated.rot, [180, 0, 0], "shield flips like the lid");
-  assert.ok(Math.abs(shield.seated.pos[2] - lid.seated.pos[2] - 7.6) < 0.01, "posts stand on the lid top");
+  assert.ok(Math.abs(shield.seated.pos[2] - lid.seated.pos[2] - 8.4) < 0.01, "posts stand on the lid top");
+  // its own four screws sit flush in the shield's top and drive down into the lid
+  const ss = a.parts.find((p) => p.id === "shield_screws");
+  for (const [, , z] of ss.instances) assert.ok(Math.abs(z - shield.seated.pos[2]) < 0.01, "shield screws flush in its top");
+  assert.ok(ss.step >= shield.step, "the shield's screws drive once it is on");
 });

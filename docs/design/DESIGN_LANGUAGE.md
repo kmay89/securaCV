@@ -66,8 +66,11 @@ lives in the library **once**; the knobs stay per-case:
   `bk_boss_bore()`. A face that shows its fasteners is a departure and says
   why (`deviates:` on the knob) — the WAP's Outdoor preset keeps its heads
   on the lid only because the sun shield covers them and rides on them.
+  A sealed build seats an O-ring under every one of those back screw heads
+  (a seat is a hole through the seal line from outside), and the sun shield
+  on the WAP has screws of its own into blind pilots over the bosses.
   Gated by `lint_design_lang.py` (`CANON_WORD`) and by the fit gates, which
-  prove each boss lands on its post.
+  prove each boss clears its post by the relief that makes the rim the datum.
 
 ## Color
 

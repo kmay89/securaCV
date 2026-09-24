@@ -86,7 +86,8 @@
         "opt_seal",
         "opt_mount",
         "opt_weep",
-        "screw_from"
+        "screw_head",
+        "opt_shield"
       ],
       "part_labels": {
         "all": "Assembled preview (not for printing)",
@@ -139,7 +140,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "6694c280b7478bfc24f82004542ac9a31c6aef1fbcbfc88317fe265f96ffeaed",
+      "sha256": "77af8201b51e3b012df3073c7a7192f057d8e2ddf40cd85bf5a8879a1a201a62",
       "groups": [
         {
           "name": "What to render",
@@ -299,6 +300,12 @@
               "type": "bool",
               "default": false,
               "desc": "Ø1.5 weep at the cavity's low point (the USB wall, hung USB-down): condensate"
+            },
+            {
+              "name": "opt_shield",
+              "type": "bool",
+              "default": false,
+              "desc": "blind pilots in the lid over its corner bosses for the sun shield's four screws (ON in the Outdoor preset; the shield is part=\"shield\")"
             },
             {
               "name": "usb_hood",
@@ -787,8 +794,8 @@
             {
               "name": "sh_t",
               "type": "number",
-              "default": 1.6,
-              "desc": "shield panel thickness"
+              "default": 2.4,
+              "desc": "shield panel thickness (2.4, not 1.6: its flat-head cones are 1.2 deep and keep a 1.0 floor)"
             },
             {
               "name": "tray_l",
@@ -1146,7 +1153,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "7b96b09ca72d40aebd5539e71d4dd649e00632f6fb5b44193b6330a446b8d2b1"
+          "sha256": "810fc6439c44593f9fa4b6353f3263f2d2f399cfe5f4202a29f2a4b28c09147f"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -1258,7 +1265,7 @@
         }
       },
       "units": {},
-      "sha256": "9ad727988d8163585c2a3834fe511bf2a523aed90ce1dbcccc1c1a6ec676bcba",
+      "sha256": "f9945dee35f5b682f24c14795a0ebd16a078e1f0569686d1bbe9e14fd5e52b49",
       "groups": [
         {
           "name": "What to render",
@@ -1368,7 +1375,7 @@
               "name": "head_seal",
               "type": "bool",
               "default": false,
-              "desc": "(seal mode) O-ring under each front screw head — the posts stand INSIDE the"
+              "desc": "(seal mode, screws on the face) O-ring under each front screw head — from the back a sealed build always glands them — the posts stand INSIDE the"
             }
           ]
         },
@@ -2273,7 +2280,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "7b96b09ca72d40aebd5539e71d4dd649e00632f6fb5b44193b6330a446b8d2b1"
+          "sha256": "810fc6439c44593f9fa4b6353f3263f2d2f399cfe5f4202a29f2a4b28c09147f"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -2368,7 +2375,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "28cd583764795ed744d55fda7aa9fce0b25acf9f72028a1435f5c50d92bc5121",
+      "sha256": "be6fdfa368830156d4ffe24e4fa7fb35401fc735ae24fecfd273894fd4931883",
       "groups": [
         {
           "name": "What to render",
@@ -2455,7 +2462,7 @@
               "name": "head_seal",
               "type": "bool",
               "default": false,
-              "desc": "O-ring under each face screw head (the posts stand INSIDE the gasket line, so a"
+              "desc": "(seal mode, screws on the face) O-ring under each face screw head — from the back a sealed build always glands them (the posts stand INSIDE the gasket line, so a"
             }
           ]
         },
@@ -3230,7 +3237,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "7b96b09ca72d40aebd5539e71d4dd649e00632f6fb5b44193b6330a446b8d2b1"
+          "sha256": "810fc6439c44593f9fa4b6353f3263f2d2f399cfe5f4202a29f2a4b28c09147f"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -3342,7 +3349,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "46d46843ec9d47f662171c5e7acab639753f82cd7024f45971c63aa9f3dcb995",
+      "sha256": "1966072fe44c575ef26d35d02a7145087d7296ee44de988036d1f0c689cbc026",
       "groups": [
         {
           "name": "What to render",
@@ -3437,7 +3444,7 @@
               "name": "head_seal",
               "type": "bool",
               "default": false,
-              "desc": "(seal mode) O-ring under each front screw head — needs screw_head = \"pan\""
+              "desc": "(seal mode, screws on the face) O-ring under each front screw head — from the back a sealed build always glands them — needs screw_head = \"pan\""
             },
             {
               "name": "opt_mount",
@@ -4230,7 +4237,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "7b96b09ca72d40aebd5539e71d4dd649e00632f6fb5b44193b6330a446b8d2b1"
+          "sha256": "810fc6439c44593f9fa4b6353f3263f2d2f399cfe5f4202a29f2a4b28c09147f"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -4677,7 +4684,7 @@
         },
         {
           "file": "canary_core_lib.scad",
-          "sha256": "7b96b09ca72d40aebd5539e71d4dd649e00632f6fb5b44193b6330a446b8d2b1"
+          "sha256": "810fc6439c44593f9fa4b6353f3263f2d2f399cfe5f4202a29f2a4b28c09147f"
         },
         {
           "file": "canary_mount_lib.scad",

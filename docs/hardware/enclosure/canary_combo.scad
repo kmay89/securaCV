@@ -141,6 +141,9 @@ s_standoff = s_stack_sock + xiao_below;
 // pan-head seat: a 2.0 seat in a 2.0 front is a through-hole, so the front
 // carries a pad under each head and the posts shorten by the same
 e_back   = screw_from == "back";
+// a sealed build seats an O-ring under every back screw head: the seat is a
+// hole through the seal line from outside (canary_core_lib bk_seat_cut)
+e_gland  = e_back && e_seal;
 head_pad = e_back ? 0 : max(0, screw_head_h + 1.0 - lid_t);
 
 col_v = max(cam_w + 2*board_clear, vm_w + 2*(clip_stack + board_clear) + 0.5);
@@ -176,10 +179,12 @@ mount_extra = opt_mount ? kh_extra : 0;
 // the boss under the front, derived together; face_skin stays over the tip
 face_skin = 1.0;
 bk_L      = e_back ? bk_len("m2", "pan", mount_extra, base_d, lid_t, face_skin) : 0;
-bk_r      = e_back ? bk_recess("m2", "pan", mount_extra, floor_t, base_d, lid_t, face_skin) : 0;
-boss_h    = e_back ? bk_boss_h("m2", "pan", mount_extra, floor_t, base_d, lid_t, face_skin) : 0;
-post_h    = cav_d - head_pad - boss_h;
+bk_r      = e_back ? bk_recess("m2", "pan", mount_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0;
+boss_h    = e_back ? bk_boss_h("m2", "pan", mount_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0;
+post_h    = cav_d - head_pad - boss_h - bk_relief();   // the rim is the datum: the boss stops bk_relief() short of the post
 assert(!e_back || post_h >= 2.0, "screws from the back: the boss leaves too short a post");
+assert(!e_gland || bk_bear("m2", "pan", bk_r) + oring_gland_h(scr_oring_cs("m2")) + bk_web() <= mount_extra + floor_t + 1e-9,
+       "sealed back seats: the O-ring gland breaks out of the floor — add the keyhole slab (opt_mount) or thicken floor_t");
 skirt_gap = tol_slide + 0.2;
 plate_x = e_seal ? out_x + 2*(skirt_gap + skirt_t) : out_x;
 plate_y = e_seal ? out_y + 2*(skirt_gap + skirt_t) : out_y;
@@ -240,6 +245,7 @@ assert(!opt_mark || mark_word_ink_w("securaCV", mark_size) <= plate_x - 4.0,
            " mm face (2 mm margin per side) — shrink mark_size"));
 // the hardware, DERIVED from the same knobs that draw the holes (canary_core_lib)
 hw_echo("Combo witness", [
+    e_gland ? hw_item(len(post_xy()), hw_oring("m2")) : "",
     e_back ? hw_item(len(post_xy()), str(hw_screw("m2", "pan", bk_L, "self-tap"), " from the back"))
            : hw_item(len(post_xy()), hw_screw("m2", "pan", hw_len(lid_t, head_pad, 6), "self-tap")),
     hw_item(4, str(hw_screw("m2", "pan", cam_scr_l, "self-tap"), " (OV5647 to the front posts)")),
@@ -304,7 +310,7 @@ module back() {
         back_body();
         if (e_back) for (p = post_xy())
             bk_seat_cut(p[0], p[1], mount_extra, floor_t + post_h, "m2", "pan", bk_r,
-                        screw_d + 2*tol_hole, tol_hole);
+                        screw_d + 2*tol_hole, tol_hole, e_gland);
     }
 }
 module front() {
@@ -312,7 +318,7 @@ module front() {
         union() {
             front_body();
             if (e_back) for (p = post_xy())
-                cb_head_pad(p[0], p[1], boss_h, pd, inner_x, inner_y, core_cav_r(corner_r, wall_eff));
+                bk_boss(p[0], p[1], boss_h, pd, inner_x, inner_y, core_cav_r(corner_r, wall_eff), tol_slide);
         }
         if (e_back) for (p = post_xy())
             bk_boss_bore(p[0], p[1], boss_h, lid_t, face_skin, screw_d);
@@ -404,7 +410,7 @@ module front_body() {
                     cb_head_pad(p[0], p[1], head_pad,
                                 cb_pad_d(screw_head_d, tol_hole),
                                 inner_x, inner_y, core_cav_r(corner_r, wall_eff),
-                                screw_head_d + 2*tol_hole);
+                                screw_head_d + 2*tol_hole, tol_slide);
             }
             // the hood's seat: a hood_seat-deep groove in the show face on the
             // collar's footprint (the hood is its own part)

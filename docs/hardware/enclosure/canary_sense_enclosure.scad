@@ -75,7 +75,7 @@ opt_seal   = false;   // perimeter TPU gasket + drip-edge front (indoor ceilings
 opt_weep   = false;   // Ø2 weep at the bottom wall's floor corner (seal mode): condensate leaves
 weep_d     = 2.0;     // weep bore  // [1.5:0.5:3]
 seal_mid_posts = false; // (seal mode) one extra screw post mid-way along each ±X wall
-head_seal  = false;   // (seal mode) O-ring under each front screw head — needs screw_head = "pan"
+head_seal  = false;  // (seal mode, screws on the face) O-ring under each front screw head — from the back a sealed build always glands them — needs screw_head = "pan"
 opt_mount  = true;    // mounting features per mount_style
 mount_style = "hinge"; // ["hinge","keyhole","both"]
 
@@ -275,6 +275,9 @@ ins_od  = (screw_size == "m2") ? insert_d : scr_insert_d(screw_size) + 0.3;
 ins_h   = (screw_size == "m2") ? insert_h : scr_insert_h(screw_size);
 pd = max(screw_insert ? max(post_d, ins_od + 3.0) : post_d, scr_post_min(screw_size));
 e_back   = screw_from == "back";
+// a sealed build seats an O-ring under every back screw head: the seat is a
+// hole through the seal line from outside (canary_core_lib bk_seat_cut)
+e_gland  = e_back && e_seal;
 head_pad = (!e_back && screw_head == "pan") ? max(0, head_h + 1.0 - lid_t) : 0;
 clip_stack  = clip_clear + clip_t;
 radar_standoff = stack_sock_h + xiao_below;
@@ -326,10 +329,13 @@ mount_extra = (e_mount && (m_style == "keyhole" || m_style == "both")) ? kh_extr
 // the unbroken plate left over the screw tip
 face_skin = 1.0;
 bk_L      = e_back ? bk_len(screw_size, screw_head, mount_extra, base_d, lid_t, face_skin) : 0;
-bk_r      = e_back ? bk_recess(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin) : 0;
-boss_h    = e_back ? bk_boss_h(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin) : 0;
-post_h    = cav_d - head_pad - boss_h;             // the post stops where the front's boss lands
+bk_r      = e_back ? bk_recess(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0;
+boss_h    = e_back ? bk_boss_h(screw_size, screw_head, mount_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0;
+post_h    = cav_d - head_pad - boss_h - bk_relief();   // the rim is the datum: the boss stops bk_relief() short of the post
 assert(!e_back || post_h >= 2.0, str("screws from the back: the boss (", boss_h, " mm) leaves a ", post_h, " mm post — use screw_from=\"face\""));
+assert(!e_gland || screw_head == "pan", "a sealed build seats an O-ring under each back screw head — that needs screw_head = \"pan\"");
+assert(!e_gland || bk_bear(screw_size, screw_head, bk_r) + oring_gland_h(scr_oring_cs(screw_size)) + bk_web() <= mount_extra + floor_t + 1e-9,
+       "sealed back seats: the O-ring gland breaks out of the floor — add the keyhole slab (opt_mount) or thicken floor_t");
 assert(!e_back || !(screw_insert && boss_h < ins_h + 1.0), "the boss is shorter than the insert it must hold");
 kh_y  = inner_y/2 - kh_inset;
 kh_ys = (kh_y >= kh_slot_l/2 + kh_head_d/2 + 2) ? [-kh_y, kh_y] : [0];
@@ -408,7 +414,7 @@ hw_echo("Sense", [
     e_back ? hw_item(len(post_xy()), str(hw_screw(screw_size, screw_head, bk_L, hw_thread), " from the back"))
            : hw_item(len(post_xy()), hw_screw(screw_size, screw_head, hw_len(lid_t, head_pad, hw_engage(screw_size)), hw_thread)),
     screw_insert ? hw_item(len(post_xy()), str(hw_size_name(screw_size), " heat-set insert ", ins_od, " OD x ", ins_h)) : "",
-    head_seal    ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
+    (head_seal || e_gland) ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
     e_seal       ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
     e_vent       ? hw_item(1, str("Ø", vent_pad_d, " adhesive ePTFE/GORE vent patch")) : "",
     e_led        ? hw_item(1, str("Ø", lp_d, " light pipe")) : "",
@@ -510,7 +516,7 @@ module back() {
         back_body();
         if (e_back) for (p = post_xy())
             bk_seat_cut(p[0], p[1], mount_extra, floor_t + post_h, screw_size, screw_head,
-                        bk_r, scr_c, tol_hole);
+                        bk_r, scr_c, tol_hole, e_gland);
     }
 }
 // ...and the bosses they thread into, hanging from the front onto the post tops
@@ -520,7 +526,7 @@ module front() {
         union() {
             front_body();
             if (e_back) for (p = post_xy())
-                cb_head_pad(p[0], p[1], boss_h, pd, inner_x, inner_y, core_cav_r(corner_r, wall_eff));
+                bk_boss(p[0], p[1], boss_h, pd, inner_x, inner_y, core_cav_r(corner_r, wall_eff), tol_slide);
         }
         if (e_back) for (p = post_xy())
             bk_boss_bore(p[0], p[1], boss_h, lid_t, face_skin,
@@ -654,7 +660,7 @@ module front_body() {
                     cb_head_pad(p[0], p[1], head_pad,
                                 cb_pad_d(head_d, tol_hole),
                                 inner_x, inner_y, core_cav_r(corner_r, wall_eff),
-                                head_d + 2*tol_hole);
+                                head_d + 2*tol_hole, tol_slide);
             }
             // RADOME window: blind thinning from the INSIDE, leaving a flat
             // uniform radome_t membrane. Rounded corners avoid stress risers.

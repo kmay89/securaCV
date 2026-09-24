@@ -78,7 +78,7 @@ opt_weep   = true;   // Ø2 weep through the bottom wall at the floor corner (mo
 weep_d     = 2.0;    // weep bore  // [1.5:0.5:3]
 seal_mid_posts = true; // one extra face screw per long wall, at the cable well: four corner screws
                        // cannot hold 20 % gasket squeeze across 97 mm of 2.2 mm face
-head_seal  = false;  // O-ring under each face screw head (the posts stand INSIDE the gasket line, so a
+head_seal  = false;  // (seal mode, screws on the face) O-ring under each face screw head — from the back a sealed build always glands them (the posts stand INSIDE the gasket line, so a
                      // bare screw is a drip path down the thread) — needs screw_head = "pan"
 
 // effective flags (a preset overrides the checkboxes above). doorbell_weather is
@@ -273,6 +273,9 @@ ins_od  = (screw_size == "m2") ? insert_d : scr_insert_d(screw_size) + 0.3;
 ins_h   = (screw_size == "m2") ? insert_h : scr_insert_h(screw_size);
 pd = max(screw_insert ? max(post_d, ins_od + 3.0) : post_d, scr_post_min(screw_size));
 e_back   = screw_from == "back";
+// a sealed build seats an O-ring under every back screw head: the seat is a
+// hole through the seal line from outside (canary_core_lib bk_seat_cut)
+e_gland  = e_back && e_seal;
 head_pad = (!e_back && screw_head == "pan") ? max(0, head_h + 1.0 - lid_t) : 0;
 clip_stack  = clip_clear + clip_t;
 vm_standoff = stack_sock_h + xiao_below;
@@ -296,10 +299,13 @@ base_d = floor_t + cav_d;
 // the unbroken plate left over the screw tip
 face_skin = 1.0;
 bk_L      = e_back ? bk_len(screw_size, screw_head, kh_extra, base_d, lid_t, face_skin) : 0;
-bk_r      = e_back ? bk_recess(screw_size, screw_head, kh_extra, floor_t, base_d, lid_t, face_skin) : 0;
-boss_h    = e_back ? bk_boss_h(screw_size, screw_head, kh_extra, floor_t, base_d, lid_t, face_skin) : 0;
-post_h    = cav_d - head_pad - boss_h;             // the post stops where the face's boss lands
+bk_r      = e_back ? bk_recess(screw_size, screw_head, kh_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0;
+boss_h    = e_back ? bk_boss_h(screw_size, screw_head, kh_extra, floor_t, base_d, lid_t, face_skin, e_gland) : 0;
+post_h    = cav_d - head_pad - boss_h - bk_relief();   // the rim is the datum: the boss stops bk_relief() short of the post
 assert(!e_back || post_h >= 2.0, str("screws from the back: the boss (", boss_h, " mm) leaves a ", post_h, " mm post — use screw_from=\"face\""));
+assert(!e_gland || screw_head == "pan", "a sealed build seats an O-ring under each back screw head — that needs screw_head = \"pan\"");
+assert(!e_gland || bk_bear(screw_size, screw_head, bk_r) + oring_gland_h(scr_oring_cs(screw_size)) + bk_web() <= kh_extra + floor_t + 1e-9,
+       "sealed back seats: the O-ring gland breaks out of the floor — add the keyhole slab (opt_mount) or thicken floor_t");
 assert(!e_back || !(screw_insert && boss_h < ins_h + 1.0), "the boss is shorter than the insert it must hold");
 // ASSEMBLED-FIT PROBE for canary_case_fitcheck.scad. It lives HERE, next to
 // the geometry, for two reasons: it reads this file's own derived datum
@@ -412,7 +418,7 @@ hw_echo("Vision doorbell", [
     hw_item(1, str(screw_insert ? hw_size_name(screw_size) : "M2", " x 10 security screw, Torx pin/tri-wing, ",
                    screw_insert ? "machine thread (into the boss insert)" : "self-tap", " (plate foot into the body boss)")),
     screw_insert ? hw_item(len(post_xy()) + 1, str(str(hw_size_name(screw_size), " heat-set insert ", ins_od, " OD x ", ins_h), " — the +1 seats in the security boss")) : "",
-    head_seal    ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
+    (head_seal || e_gland) ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
     hw_item(1, str("Ø", btn_d, " illuminated momentary button + panel nut (", btn_nut_ac, " AC)")),
     e_seal       ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
     e_vent       ? hw_item(1, str("Ø", vent_pad_d, " adhesive ePTFE/GORE vent patch")) : "",
@@ -458,7 +464,7 @@ module body() {
         body_body();
         if (e_back) for (p = post_xy())
             bk_seat_cut(p[0], p[1], kh_extra, floor_t + post_h, screw_size, screw_head,
-                        bk_r, scr_c, tol_hole);
+                        bk_r, scr_c, tol_hole, e_gland);
     }
 }
 // ...and the bosses they thread into, hanging from the face onto the post tops
@@ -468,7 +474,7 @@ module face() {
         union() {
             face_body();
             if (e_back) for (p = post_xy())
-                cb_head_pad(p[0], p[1], boss_h, pd, inner_x, inner_y, core_cav_r(rr, wall_eff));
+                bk_boss(p[0], p[1], boss_h, pd, inner_x, inner_y, core_cav_r(rr, wall_eff), tol_slide);
         }
         if (e_back) for (p = post_xy())
             bk_boss_bore(p[0], p[1], boss_h, lid_t, face_skin,
@@ -603,7 +609,7 @@ module face_body() {
                     cb_head_pad(p[0], p[1], head_pad,
                                 cb_pad_d(head_d, tol_hole),
                                 inner_x, inner_y, core_cav_r(rr, wall_eff),
-                                head_d + 2*tol_hole);
+                                head_d + 2*tol_hole, tol_slide);
             }
             translate([lens_x, lens_y, -1]) cylinder(d = cam_ap_d, h = lid_t + 2);
             if (cam_disc_t > 0 && cam_disc_d > 0) {
