@@ -34,9 +34,10 @@ stands: the events — absolutely; the video — never.
 | Signal in Apple Home | Backing entity today | Source |
 |---|---|---|
 | Motion Sensor (per zone) | `binary_sensor.pwk_<zone>_motion` (`device_class: motion`, auto-off 10 min) | `event_mqtt_bridge` (runs by default in the add-on) |
+| Motion Sensor (per Canary) | `binary_sensor.securacv_canary_<device_id>_motion` (`device_class: motion`) | The integration itself, natively — phase A1, shipped |
 | Smoke Sensor | `binary_sensor.<canary_id>_smoke_alarm` ("Smoke Alarm Heard", `device_class: smoke`) | Canary WAP acoustic detector (`FEATURE_ACOUSTIC_EVENTS`, NFPA 72 T3 cadence) |
 | Carbon Monoxide Sensor | `binary_sensor.<canary_id>_co_alarm` ("CO Alarm Heard", `device_class: carbon_monoxide`) | Same detector, UL 2034 T4 cadence — a separate entity, so it needs its own include line |
-| Occupancy Sensor | `binary_sensor.<canary_id>_occupancy` (`device_class: occupancy`) | The integration itself, natively — phase A1, shipped. A template is now only needed for a presence source the integration does not own (§5) |
+| Occupancy Sensor | `binary_sensor.securacv_canary_<device_id>_occupancy` (`device_class: occupancy`) | The integration itself, natively — phase A1, shipped. A template is now only needed for a presence source the integration does not own (§5) |
 
 ## 2) Architecture
 
@@ -80,12 +81,31 @@ homekit:
     mode: bridge
     filter:
       include_entity_globs:
-        - binary_sensor.pwk_*_motion        # per-zone motion
-        - binary_sensor.*_smoke_alarm       # Canary WAP acoustic T3 (smoke)
-        - binary_sensor.*_co_alarm          # Canary WAP acoustic T4 (CO)
-      include_entities:
-        - binary_sensor.*_occupancy         # native (A1); or the §5 template for a foreign source
+        - binary_sensor.pwk_*_motion                # per-zone motion (the kernel)
+        - binary_sensor.securacv_canary_*_motion    # each Canary's own Motion (A1)
+        - binary_sensor.*_occupancy                 # native (A1); or the §5 template for a foreign source
+        - binary_sensor.*_smoke_alarm               # Canary WAP acoustic T3 (smoke)
+        - binary_sensor.*_co_alarm                  # Canary WAP acoustic T4 (CO)
 ```
+
+Every pattern with a `*` in it goes under `include_entity_globs`.
+`include_entities` takes exact entity ids only: Home Assistant validates that
+key with `cv.entity_ids`, which refuses a `*`, and the whole `homekit:` block
+with it. That rule was read from Home Assistant core's source
+(`homeassistant/helpers/entityfilter.py`), not checked by loading this block
+into a running Home Assistant, so run Home Assistant's configuration check on
+it before you restart, and check that each pattern matches the entity ids your
+install shows.
+
+The Canary line matches the default id of each Canary's **Motion** sensor:
+the integration names the device `SecuraCV Canary <device_id>` and the entity
+`Motion`, so the id is `binary_sensor.securacv_canary_<device_id>_motion`. It
+also matches that Canary's **Unexpected Motion** tamper sensor
+(`binary_sensor.securacv_canary_<device_id>_unexpected_motion`), which no
+current firmware signal drives (the
+[per-tamper-type catalog](../homeassistant_setup.md#per-tamper-type-sensor-catalog)),
+so it is bridged too and stays off. To keep it out, list its exact id under
+`exclude_entities`, which Home Assistant checks before the globs.
 
 Deliberately **excluded**: the connectivity/`problem`/storage/chain entities.
 Apple Home has no honest rendering for attestation or chain state — that
@@ -100,14 +120,14 @@ sidebar. Room-assign each sensor once; names follow the entity names.
 ## 5) Template occupancy — now only for foreign presence sources
 
 **A1 has shipped**, so the integration publishes native
-`binary_sensor.<canary_id>_motion` and `…_occupancy` entities itself. Occupancy
-tracks the retained `state` snapshot (`securacv/<id>/state`, field `presence`)
-and the events vocabulary; motion auto-clears after a hold window matching the
-kernel's own, so an automation written against a Canary behaves like one
-written against a sensor you already own. **Prefer the native entities** —
-which events raise which signal is dictionary-governed and CI-gated across the
-Rust kernel and the Python integration, so it cannot drift from what the
-witness actually said.
+`binary_sensor.securacv_canary_<device_id>_motion` and `…_occupancy` entities
+itself. Occupancy tracks the retained `state` snapshot
+(`securacv/<id>/state`, field `presence`) and the events vocabulary; motion
+auto-clears after a hold window matching the kernel's own, so an automation
+written against a Canary behaves like one written against a sensor you already
+own. **Prefer the native entities** — which events raise which signal is
+dictionary-governed and CI-gated across the Rust kernel and the Python
+integration, so it cannot drift from what the witness actually said.
 
 A template is still the answer for a presence source the integration does not
 own — an ESPHome mmWave kit, say, publishing over MQTT via the
