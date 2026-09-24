@@ -2227,8 +2227,9 @@ constexpr uint32_t WATCHDOG_ESCALATE_AFTER = 3;
  * home AP's beacons — the dashboard's signal-supply chip says so.)
  *
  * Airtime: by the governor's estimate at ESP-NOW's 1 Mbps long-preamble
- * fallback rate, one framed probe frame (16 B payload + ~59 B framing) is
- * 792 us (192 us + 8 us a byte; csi_probe.h's hand math says ~0.66 ms), so
+ * fallback rate, one framed probe frame (16 B payload + the ~59 B of
+ * framing the governor adds) is 792 us (192 us + 8 us a byte, as
+ * csi_probe.h's hand math says), so
  * the 10 Hz idle broadcast is ~0.8 % of the window — real, not
  * negligible, and unicast fan-out to a filled peer table would ask for
  * far more. Every send therefore reserves against the airtime governor's
@@ -2258,10 +2259,10 @@ void probe_pump() {
     csi_probe::Config pc = csi_probe::Config::defaults();
     pc.broadcast_when_no_peers = true;
     pc.idle_rate_hz            = CSI_PROBE_BROADCAST_HZ;
-    /* Probe frames are routine traffic, never forced: framed cost, the
-     * 1.60 % ceiling and the mesh-less governor bring-up are all in
-     * probe_airtime.h (host-tested by test_csi_probe_airtime, which also
-     * pins these two lines). */
+    /* Probe frames are routine traffic, never forced: the 1.60 % ceiling
+     * and the mesh-less governor bring-up are in probe_airtime.h, and the
+     * governor adds the framing to the cost (host-tested by
+     * test_csi_probe_airtime, which also pins these two lines). */
     probe_airtime::ensure_governor();
     pc.airtime_gate = probe_airtime::reserve_probe_frame;
     if (!csi_probe::init(pc)) return;   /* ESP-NOW not ready — retry */
