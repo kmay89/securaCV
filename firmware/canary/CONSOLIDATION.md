@@ -162,8 +162,11 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
     the receipt route refuses a foreign Host like every other token-bearing
     route, and a page load under a foreign Host no longer spends the BOOT
     tap; `provisioning_gate.h`'s `page_token_decide` and `receipt_decide`
-    take the Host verdict first, host-tested, and
-    `scripts/check_route_security.py` holds every token path to that order).
+    take the Host verdict first, host-tested; the receipt handler sends the
+    receipt only on an explicit `SERVE_BEARER` / `SERVE_TAP` verdict and
+    answers every other one with the Host refusal, so it fails closed; and
+    `scripts/check_route_security.py` holds every token path to that order
+    and the receipt handler to that shape).
     A missing or oversize Host is foreign. **One exemption, by interface, never
     by name:** a request that arrived over the Canary's own softAP (local
     address = the AP address and the peer in the AP subnet). The captive DNS
