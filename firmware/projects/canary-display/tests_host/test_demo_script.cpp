@@ -4,7 +4,7 @@
 // is run through the REAL classifier in src/fleet/fleet_model.cpp — the demo
 // can never tell a story the product vocabulary doesn't. Builds standalone
 // with g++ (links fleet_model.cpp, exactly like test_fleet_beacon_model).
-// Run in CI by the "demo script host test" step in firmware.yml; prints
+// Run in CI by this directory's Makefile, which firmware.yml runs; prints
 // "ALL DEMO SCRIPT TESTS PASSED" on success. Build (from the repo root):
 //
 //   g++ -std=c++17 -Wall -Wextra -I firmware/projects/canary-display/include

@@ -1,7 +1,7 @@
 // Host test for the pure field-I/O logic (include/canary/io/field_io_logic.h).
 //
-// Builds standalone with g++ — no Arduino, no board. Run in CI by the
-// "field-I/O logic host test" step in .github/workflows/firmware.yml. Prints
+// Builds standalone with g++ — no Arduino, no board. Run in CI by
+// this directory's Makefile, which .github/workflows/firmware.yml runs. Prints
 // "ALL FIELD IO TESTS PASSED" on success (the CI grep makes a silent pass
 // impossible to fake). Build (from the repo root):
 //

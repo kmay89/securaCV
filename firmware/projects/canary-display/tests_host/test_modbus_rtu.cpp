@@ -1,7 +1,7 @@
 // Host test for the pure Modbus RTU core (include/canary/io/modbus_rtu.h).
 //
-// Builds standalone with g++ — no Arduino, no board. Run in CI by the
-// "Modbus RTU host test" job in .github/workflows/firmware.yml. Prints
+// Builds standalone with g++ — no Arduino, no board. Run in CI by
+// this directory's Makefile, which .github/workflows/firmware.yml runs. Prints
 // "ALL MODBUS RTU TESTS PASSED" on success (the CI grep makes a silent pass
 // impossible to fake). Build (from the repo root):
 //

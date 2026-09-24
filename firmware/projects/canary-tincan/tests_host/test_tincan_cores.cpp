@@ -2,8 +2,8 @@
 // codec, the string model, the Ring's delivery honesty, the tie ceremony's
 // parent gate, the stamp table, warmer/colder, and the step duel.
 //
-// Builds standalone with g++ — no Arduino, no LVGL, no radio. Run in CI by the
-// "Tin Can payload cores host test" step in .github/workflows/firmware.yml.
+// Builds standalone with g++ — no Arduino, no LVGL, no radio. Run in CI by
+// this directory's Makefile, which .github/workflows/firmware.yml runs.
 // Prints "ALL TINCAN TESTS PASSED" on success (the CI grep makes a silent pass
 // impossible to fake). Build from the repo root:
 //

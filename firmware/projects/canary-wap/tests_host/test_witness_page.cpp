@@ -8,7 +8,7 @@
  * derived public key must equal PUBKEY_HEX, the constant the iPhone app's
  * WitnessPageFixtureTests pins, so one fixture proves both ends.
  *
- * Build & run (CI: firmware.yml host tests; the Makefile here runs it too):
+ * Build & run (CI: the Makefile here, which firmware.yml's host tests run):
  *
  *   g++ -std=c++17 -Wall -Wextra -Werror -Wno-deprecated-declarations \
  *       -I firmware/projects/canary-wap/arduino/canary_wap \

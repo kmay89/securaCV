@@ -150,8 +150,8 @@ input-poll's brief expander direction-flip causes no backlight flicker.
   single 0x06), and a response parser with exception decode. No Arduino deps.
 - `tests_host/test_modbus_rtu.cpp` — host test anchored on the cataloged
   CRC-16/MODBUS check value `0x4B37`, plus build/parse roundtrips and CRC / addr
-  / func / capacity / exception rejection cases. Run by the "Modbus RTU host
-  test" step in `firmware.yml`.
+  / func / capacity / exception rejection cases. Run by the display's
+  `tests_host` Makefile, which `firmware.yml` runs.
 - `src/io/rs485.{h,cpp}` — thin `Serial1` transport (auto-direction, bounded
   request→response wait) behind `FEATURE_RS485`; the whole TU is empty without
   the flag, so the default/emulator builds stay byte-identical.
@@ -188,7 +188,7 @@ default bit rate `CAN_BITRATE_DEFAULT` 500 kbit/s).
   (`(rx & mask) == (want & mask)`), and a bounded ASCII log formatter. No Arduino.
 - `tests_host/test_can_frame.cpp` — host test of every rule above (id ranges,
   DLC bounds, filter mask cases, exact formatter output, buffer guards). Run by
-  the "CAN frame host test" step in `firmware.yml`.
+  the display's `tests_host` Makefile, which `firmware.yml` runs.
 - `src/io/can_bus.{h,cpp}` — thin ESP-IDF **TWAI** transport on the H/L terminal
   (`twai_driver_install`/`twai_start`, bounded `twai_transmit`/`twai_receive`,
   frame ⇄ `twai_message_t` conversion, accept-all filter, normal mode) behind
