@@ -596,7 +596,8 @@ class Recorders(unittest.TestCase):
         self.assertEqual({x["suite"] for x in recs if x["proc"] == "t/esm.mjs"}, {"t/run.js"})
         # `at` is the suite's own line; through a helper, the line that called it
         src = (self.root / "t/run.js").read_text().splitlines()
-        line = lambda needle: next(i for i, t in enumerate(src, 1) if needle in t)
+        def line(needle):
+            return next(i for i, t in enumerate(src, 1) if needle in t)
         at = {x["path"]: x["at"] for x in recs if x["op"] == "readFileSync"}
         self.assertEqual(at["data/a.txt"], f"t/run.js:{line('data/a.txt')}")
         called = line('read("data/e.txt")')

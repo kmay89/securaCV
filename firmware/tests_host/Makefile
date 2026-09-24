@@ -655,7 +655,7 @@ $(NVSSTORE_INC): $(NVSLOCK_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
 
 $(NVSSTORE_BIN): test_nvs_store_result.cpp $(NVSSTORE_INC) $(NVSLOCK_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I stubs/nvs_manager -I ../canary/lib/securacv_crypto/src \
-	    -I ../canary/include -I $(BUILD_DIR) test_nvs_store_result.cpp -o $@
+	    -I ../common -I ../canary/include -I $(BUILD_DIR) test_nvs_store_result.cpp -o $@
 
 $(CHAINPERSIST_INC): $(CHAINPERSIST_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
 	@awk -v 'sigs=$(CHAINPERSIST_CALLER)' -f cut_functions.awk $(CHAINPERSIST_SRC) > $@.caller
