@@ -187,7 +187,7 @@ jobs:
         run: |
           node --test tests/a.test.js
           # node --test tests/commented.test.js
-          node --test --test-reporter=dot tests/b.test.mjs
+          if ! CI=1 node --test --test-reporter=dot tests/b.test.mjs; then exit 1; fi
       - name: python suites
         run: |
           python3 -m unittest discover -p 'test_*.py' \\
@@ -239,6 +239,13 @@ class Checker(unittest.TestCase):
         self.assertEqual(
             gate.expected_files(self.root, node, discover),
             ["tests/a.test.js", "tests/b.test.mjs", "tools/tests/test_one.py"])
+
+    def test_run_lines_split_into_simple_commands(self):
+        self.assertEqual(
+            gate._commands("time node --test a.js && CI=1 node --test b.js > log 2>&1  # x"),
+            [["node", "--test", "a.js"], ["node", "--test", "b.js"], ["log", "2"], ["1"]])
+        self.assertEqual(gate._commands("  # node --test commented.js"), [])
+        self.assertEqual(gate._commands("node --test we#ird.js"), [["node", "--test", "we#ird.js"]])
 
     def test_green_when_every_read_is_covered(self):
         self.all_suites_heard()

@@ -93,6 +93,11 @@ def source_of(path: str) -> str:
     return f"{m['dir']}{m['mod']}.py" if m else path
 
 
+# Shell words that can stand in front of the command a run: line starts.
+_PREFIX_WORDS = {"if", "elif", "while", "until", "then", "do", "else", "!",
+                 "time", "exec", "env", "command", "nice"}
+_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
 # fs calls that look at a directory's listing rather than a file's bytes.
 LISTING_OPS = {"readdirSync", "readdir", "opendirSync", "opendir", "listdir"}
 
@@ -244,6 +249,36 @@ def filter_anchor_line(text: str) -> int:
     return last or 1
 
 
+def _commands(line: str) -> list[list[str]]:
+    """The simple commands on one shell line, as argv lists: split at `;`,
+    `&&`, `||`, `|` and redirections, a comment dropped, and the words that
+    can stand in front of a command (`if !`, `time`, `CI=1`) stripped."""
+    lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    lex.commenters = ""
+    out: list[list[str]] = []
+    seg: list[str] = []
+    try:
+        for tok in lex:
+            if tok.startswith("#"):  # a word that starts with # starts a comment
+                break
+            if tok and set(tok) <= set("();<>|&"):
+                out.append(seg)
+                seg = []
+            else:
+                seg.append(tok)
+    except ValueError:
+        pass  # an unbalanced quote: keep what parsed
+    out.append(seg)
+    cmds = []
+    for words in out:
+        while words and (words[0] in _PREFIX_WORDS or _ASSIGNMENT_RE.match(words[0])):
+            words = words[1:]
+        if words:
+            cmds.append(words)
+    return cmds
+
+
 def job_suites(wf: dict, job: str) -> tuple[list[str], list[tuple[str, str]]]:
     """(node --test files, [(unittest discover dir, pattern)]) the job runs."""
     jobs = wf.get("jobs") or {}
@@ -256,23 +291,20 @@ def job_suites(wf: dict, job: str) -> tuple[list[str], list[tuple[str, str]]]:
         if not isinstance(run, str):
             continue
         for line in run.replace("\\\n", " ").splitlines():
-            try:
-                words = shlex.split(line, comments=True)
-            except ValueError:
-                continue
-            if len(words) >= 3 and words[0] == "node" and "--test" in words:
-                node.extend(w for w in words[words.index("--test") + 1:]
-                            if not w.startswith("-"))
-            if words[:4] in (["python3", "-m", "unittest", "discover"],
-                             ["python", "-m", "unittest", "discover"]):
-                opts = words[4:]
-                start, pat = ".", "test*.py"
-                for k, w in enumerate(opts):
-                    if w in ("-s", "--start-directory") and k + 1 < len(opts):
-                        start = opts[k + 1]
-                    if w in ("-p", "--pattern") and k + 1 < len(opts):
-                        pat = opts[k + 1]
-                discover.append((os.path.normpath(start).replace(os.sep, "/"), pat))
+            for words in _commands(line):
+                if len(words) >= 3 and words[0] == "node" and "--test" in words:
+                    node.extend(w for w in words[words.index("--test") + 1:]
+                                if not w.startswith("-"))
+                if words[:4] in (["python3", "-m", "unittest", "discover"],
+                                 ["python", "-m", "unittest", "discover"]):
+                    opts = words[4:]
+                    start, pat = ".", "test*.py"
+                    for k, w in enumerate(opts):
+                        if w in ("-s", "--start-directory") and k + 1 < len(opts):
+                            start = opts[k + 1]
+                        if w in ("-p", "--pattern") and k + 1 < len(opts):
+                            pat = opts[k + 1]
+                    discover.append((os.path.normpath(start).replace(os.sep, "/"), pat))
     return node, discover
 
 

@@ -85,7 +85,11 @@ def _install(out_dir: str) -> None:
         break
 
     inherited = os.environ.get(_SUITE_ENV, "")
-    state = {"fd": None, "busy": False}
+    # `busy` is per thread: the hook's own writes must not re-enter it, but a
+    # second thread's open while this one records is a read like any other.
+    from _thread import get_ident
+    busy: set[int] = set()
+    state = {"fd": None}
     seen: set[tuple[str, str, str]] = set()
 
     def frames():
@@ -165,7 +169,8 @@ def _install(out_dir: str) -> None:
         write({"suite": suite, "op": op, "path": r, "at": at, "proc": entry})
 
     def hook(event: str, args: tuple) -> None:
-        if state["busy"]:
+        me = get_ident()
+        if me in busy:
             return
         if event == "open":
             path, mode, flags = (tuple(args) + (None, None, None))[:3]
@@ -184,7 +189,7 @@ def _install(out_dir: str) -> None:
             # A child given its own env (subprocess's 4th audit argument) gets
             # it there, when that env keeps the recorder armed at all.
             if not inherited:
-                state["busy"] = True
+                busy.add(me)
                 try:
                     suite, _, _ = attribute()
                     os.environ[_SUITE_ENV] = suite
@@ -194,21 +199,21 @@ def _install(out_dir: str) -> None:
                 except Exception:
                     pass
                 finally:
-                    state["busy"] = False
+                    busy.discard(me)
             return
         else:
             return
-        state["busy"] = True
+        busy.add(me)
         try:
             note(op, path)
         except Exception:
             pass  # never the reason a test fails; the checker sees the gap
         finally:
-            state["busy"] = False
+            busy.discard(me)
 
     sys.addaudithook(hook)
     if entry:
-        state["busy"] = True
+        busy.add(get_ident())
         try:
             write({"suite": inherited or entry, "op": "exec", "path": entry,
                    "at": "", "proc": entry})
@@ -216,7 +221,7 @@ def _install(out_dir: str) -> None:
         except Exception:
             pass
         finally:
-            state["busy"] = False
+            busy.discard(get_ident())
 
 
 def _chain() -> None:
