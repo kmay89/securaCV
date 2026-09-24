@@ -338,7 +338,7 @@ kits under the free "Works with SecuraCV" badge.
 | Camera + person detection into Home Assistant | **Canary Vision** |
 | Presence/breathing care with no camera | **Canary Sense** |
 | A doorway that's very hard to sneak past | **Canary Sentinel** — *not yet flashable*: the fusion core is host-tested and its network firmware is compile-gated in CI, but nothing has run on hardware and there is no released build; use a Canary Sense or Vision today |
-| A doorbell | **The Vision Doorbell case** on a Canary Vision today (camera + button, plate-mounted, sealed). It rings, it sees a person and a package, and it cannot show you a picture — the Pro tier with night sensing, radar and a doormat depth sensor is *design only*: [the doorbell dossier](hardware/canary_doorbell_research.md) |
+| A doorbell | Nothing that rings today. The **Vision Doorbell case** is a released, sealed, plate-mounted case for a Canary Vision — a person witness in a doorbell shape. Its button is wired, but the shipping firmware does not read it, and the shipping model detects people, not packages. The doorbell itself — the ring, the package chain, night sensing, radar, the doormat depth sensor — is *design only*: [the doorbell dossier](hardware/canary_doorbell_research.md) |
 | A wall display for the household | **Canary Display** |
 | A kid's bedside clock + lamp with a companion | **The Nightlight** (the `nightlight` display flavor) |
 | Pool/spa water chemistry (pH, ORP, temp) | **Canary Pool** *(design-stage)* |

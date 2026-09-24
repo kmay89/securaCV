@@ -1,19 +1,25 @@
 # Canary Doorbell — the doorbell that cannot become a surveillance camera (research & design dossier)
 
 **Status:** research complete (market, silicon, sensors, power — September 2026, sources in §12);
-design. What exists today is one tier of three: the **Vision Doorbell** case
+design. What exists today is a case: the **Vision Doorbell**
 ([`enclosure/canary_vision_doorbell.scad`](./enclosure/canary_vision_doorbell.scad), v0.4) is a
-released catalog variant wrapping the shipping Vision stack. Everything else here — the Pro
-carrier board, its firmware image, the sensor set, the case that holds them — is **a design: no
-schematic, no image, no bench unit.** Ladder verdicts are derived from evidence on disk, and this
+released catalog variant wrapping the shipping Vision stack — a person witness in a doorbell
+shape. Its button is wired to the host's multifunction input, but the shipping Vision firmware
+does not read that input, and the shipping model detects people, not packages; so even the Lite
+tier's *ring* is firmware work. Everything else here — the Pro carrier board, its firmware
+image, the sensor set, the case that holds them — is **a design: no schematic, no image, no
+bench unit, and no benchmark.** Every "beats" and every latency in this document is a **design
+target** (AGENTS.md rule 4: no performance claim without a benchmark); §11 is the bench plan that
+turns a target into a claim. Ladder verdicts are derived from evidence on disk, and this
 document adds none — its glossary row carries the non-ladder label *design*.
 
-**The one-sentence version:** a wired, open-hardware, open-firmware doorbell that senses better
-than Ring's flagship (a starlight square sensor behind a 150° head-to-toe lens, invisible 940 nm
-IR, a tracking radar, and a depth sensor aimed at the doormat), tells the household *what
-happened* within a second over the LAN with no cloud and no subscription, proves a package was
-placed and later taken in a signed, hash-chained record that names no one — and **cannot** show
-anyone a picture, because the code that would was never written.
+**The one-sentence version:** a wired, open-hardware, open-firmware doorbell **designed to**
+out-sense Ring's flagship (a starlight square sensor behind a 150° head-to-toe lens, invisible
+940 nm IR, a tracking radar, and a depth sensor aimed at the doormat), **targeted at** telling
+the household *what happened* within a second over the LAN with no cloud and no subscription,
+recording that a small object was placed on the doormat and later removed — corroborated by two
+independent channels — in a signed, hash-chained record that names no one, and **unable** to
+show anyone a picture, because the code that would was never written.
 
 **The one thing to know first:** SecuraCV will not ship a live view, recorded clips, or a
 visitor's voice. That is Invariant I ([`spec/invariants.md`](../../spec/invariants.md)), the FAQ's
@@ -68,23 +74,26 @@ sources); its 4K Pro sibling's sources are "pending". That is the field we are e
 
 ---
 
-## 2 · The bar — feature by feature, and where a witness can clear it
+## 2 · The bar — feature by feature, and where a witness could clear it
 
-| Feature | Best in class today | What the Doorbell does | Verdict |
+Every cell in the last two columns is a **design target**. Nothing in this row set has been
+built or measured; the bench plan in §11 is what turns a target into a claim.
+
+| Feature | Best in class today | What the Doorbell is designed to do | Target |
 |---|---|---|---|
-| Pixels on a package on the doormat | Ring 4K Pro: 2880² at 140° ≈ 20.6 px/° → a shoebox at 0.5 m ≈ 270×165 px; Eufy's dedicated 1080p down-cam is worse | 5MP 4:3 sensor cropped **1944² at 150°** = 13 px/° → ≈ 170×105 px; the 4K tier (2160²) = 14.4 px/° | **beats every dual-cam and 2K unit; Ring's 4K keeps the pixel crown, at night it does not** (§5.1) |
-| Night | Eufy dual light (spotlight + IR); Aqara 940 nm invisible IR; Ring sensor-only color | 2.0 µm STARVIS class (2.9 µm option), F1.6 f-theta, **940 nm** invisible IR *and* a warm porch LED on approach | **matches or beats**; the porch light is a courtesy, not a deterrent floodlight |
-| Approach sensing | Ring radar 3D Motion (history paid); Tapo D260 radar; Aqara mmWave | 24 GHz FMCW tracker (x/y, 3 targets, 8 m): approach vector, dwell, sidewalk rejection — **the map is never stored, only the events** | **beats** (free, local) |
-| Package left / taken | Eufy "Delivery Guard" flow, the most-praised implementation | `Package` class + a **depth blob on the doormat** (8×8 ToF) → placed / present / removed, radar-corroborated, **signed and chained** (§4.1) | **beats** — it works in the dark and it is evidence |
-| Latency | Nest "loads almost instantly"; Reolink 7.9 s to a motion push | button → local MQTT / fleet beacon → Dash, nightstand, phone: **sub-second on the LAN, WAN unplugged** | **beats** |
+| Pixels on a package on the doormat | Ring 4K Pro: 2880² at 140° ≈ 20.6 px/° → a shoebox at 0.5 m ≈ 270×165 px; Eufy's dedicated 1080p down-cam is worse | 5MP 4:3 sensor cropped **1944² at 150°** = 13 px/° → ≈ 170×105 px; the 4K tier (2160²) = 14.4 px/° | target: beat every dual-cam and 2K unit on the doormat; Ring's 4K keeps the pixel crown, and the night claim is the IMX335's datasheet, not a measurement (§5.1) |
+| Night | Eufy dual light (spotlight + IR); Aqara 940 nm invisible IR; Ring sensor-only color | 2.0 µm STARVIS class (2.9 µm option), F1.6 f-theta, **940 nm** invisible IR *and* a warm porch LED on approach | target: match or beat; the porch light is a courtesy, not a deterrent floodlight |
+| Approach sensing | Ring radar 3D Motion (history paid); Tapo D260 radar; Aqara mmWave | 24 GHz FMCW tracker (x/y, 3 targets, 8 m): approach vector, dwell, sidewalk rejection — **the map is never stored, only the events** | target: beat (free, local) |
+| Package left / taken | Eufy "Delivery Guard" flow, the most-praised implementation | small-object class + a **depth blob on the doormat** (8×8 ToF) → placed / present / removed, radar-corroborated, **signed and chained** (§4.1; the word *package* needs a dictionary row first, §11 item 13) | target: beat — depth works in the dark, and the chain is evidence |
+| Latency | Nest "loads almost instantly"; Reolink 7.9 s to a motion push | button → local MQTT / fleet beacon → Dash, nightstand, phone in the house: **sub-second on the LAN, WAN unplugged** (the away poke is the exception, §4.5) | target: beat; measure end-to-end (§11 item 14) |
 | Live view / two-way talk | everyone | **none inbound** — an outbound speaker for quick replies rendered on the hub (§4.3) | **refused, by design** (§3) |
 | Face recognition | Ring, Eufy, Aqara, Tapo | never — `ObjectClass` has no `Face` | **refused** (Invariant II) |
-| Power | Reolink PoE: 802.3af *or* 12–24 VAC *or* 24 VDC; Ring 4K wants 30–40 VA | 8–24 VAC (chime relay + built-in bypass), 24 VDC, 802.3af option, USB-C for the bench; ~2.5 W typical | **matches Reolink**, runs on a 10 VA transformer the 4K Ring cannot |
+| Power | Reolink PoE: 802.3af *or* 12–24 VAC *or* 24 VDC; Ring 4K wants 30–40 VA | 8–24 VAC (chime relay + built-in bypass), 24 VDC, 802.3af option, USB-C for the bench; ~2.5 W typical | target: match Reolink; the 10 VA case is a budget estimate (§8), not a measurement |
 | Cold | all battery units stop charging below 0 °C | wired, no battery, −20 … 50 °C parts ([cold-weather envelope](./cold_weather_envelope.md)) | **honest** |
 | Weather | Tapo D260 IP66; most IP65; UniFi IPX4–5 | CER-2 sealed build (~IP54 as printed; [field ratings](./enclosure/field_ratings.md)); the button IP65–67 | behind on the sticker, honest on the test |
-| Subscription | $30–200 / yr | $0, structurally — there is nothing to subscribe to | **beats** |
-| Openness | none | case (OpenSCAD), carrier (KiCad), firmware image, evidence format, disclosure text | **beats** |
-| Price | $90 (Wyze Duo) – $250 (Ring 4K) + fees; Tapo D260 $220 | Lite ≈ $60 parts today; Pro ≈ $150 at qty-1, ≈ $70 at 1 000 (§10) | qty-1 parity, volume win, and $0/yr forever |
+| Subscription | $30–200 / yr | $0, structurally — there is nothing to subscribe to | structural |
+| Openness | none | case (OpenSCAD), carrier (KiCad), firmware image, evidence format, disclosure text | structural |
+| Price | $90 (Wyze Duo) – $250 (Ring 4K) + fees; Tapo D260 $220 | Lite ≈ $60 parts today; Pro ≈ $150 at qty-1, ≈ $70 at 1 000 (§10) | estimate: qty-1 parity, a volume win, and $0/yr forever |
 
 ---
 
@@ -115,24 +124,35 @@ recording. Refuse the recording and the whole business model falls off the devic
 ### 4.1 Package custody without footage (the killer feature)
 
 Porch piracy is the reason people buy a doorbell camera, and the incumbents answer it with a
-1080p clip that shows a hooded stranger. A witness answers it with a **custody chain**:
+1080p clip that shows a hooded stranger. A witness answers it with a **custody chain** — here
+written in the vocabulary the sealed record can carry *today*:
 
 ```
-14:10  SmallObjectBoundaryCrossing(Package)   camera: package class at the doormat crop
-14:10  ContactStateChange(doorbell)           the carrier rang
-14:10  doormat depth: OCCUPIED (blob 0.31 m²)  ToF: something is on the mat
-  …    doormat depth: OCCUPIED                 (heartbeat, coarsened to 10-min buckets)
-16:20  LargeObjectBoundaryCrossing(Person)     radar approach from the sidewalk, no ring
-16:20  ObjectRemovedFromZone(Package)          ToF: doormat EMPTY; camera: package class gone
+14:10  boundary_crossing_object_small   camera: a small object entered the doormat zone
+14:10  contact_state_change             the button — firmware work on the Vision (§10)
+16:20  boundary_crossing_object_large   radar + camera: a person approached; no press
+16:20  object_removed_from_zone         ToF: doormat plane empty; camera: the object is gone
 ```
 
-Every line is an existing claim kind — **no new vocabulary**
+Every line is an existing event type — **no new vocabulary**
 ([`spec/witness_dictionary.json`](../../spec/witness_dictionary.json): `object_removed_from_zone`
-already exists, with the package icon). Each is signed and hash-chained; the whole sequence
-exports as a self-verifying evidence envelope ([evidence lifecycle](../evidence_lifecycle.md))
-that a carrier, an insurer or the police can check without our tools and that **names no one and
-shows no street**. Time is bucketed to 10 minutes (Invariant III) — coarse enough to protect the
+already exists, with the package icon). Each is signed and hash-chained; the sequence exports as
+a self-verifying evidence envelope ([evidence lifecycle](../evidence_lifecycle.md)) that a
+carrier, an insurer or the police can check without our tools and that **names no one and shows
+no street**. Time is bucketed to 10 minutes (Invariant III) — coarse enough to protect the
 household's routine, fine enough to bracket a theft.
+
+**What the record can say today, and what it cannot.** The kernel's `Event` carries an event
+type, a time bucket, a zone, a confidence and an attestation — **no object class**. The detector
+emits `Person | Vehicle | Animal | Package | Unknown`, but that word does not reach the sealed
+row. So the chain above proves that *a small object* was placed and *an object* was removed from
+the doormat zone, corroborated by two physically independent channels; it does not, in today's
+schema, say *package*. Making it say so is a vocabulary change, and vocabulary changes start in
+the dictionary (rule 5): a coarse `subject_class` attribute on the event record, the same enum
+the detector already has, is §11 item 13. Until it lands the custody chain is a small-object
+chain, and the dossier says so. The depth sensor's occupancy is likewise not an event type: it
+is corroboration that raises the confidence of the two boundary events, and the design keeps it
+that way rather than inventing a heartbeat row.
 
 Why the depth sensor: a package is a *small* object on a *known* plane. An 8×8 time-of-flight
 array aimed down at the doormat sees a step change in the floor plane and needs no light, no
@@ -143,24 +163,32 @@ to ~2.8 m at 5 klux and much less in direct sun, so the mat must sit within ~1 m
 the doorbell's own shadow; the camera's doormat crop is the fallback channel when the sun is on
 the mat (§11, item 3).
 
-### 4.2 Evidence when it matters — 4K starlight frames that only a quorum can open
+### 4.2 Evidence when it matters — what the vault can hold, honestly
 
-"Verified" in this project means an Ed25519 signature checked against a pinned key, and a
-break-glass export needs n-of-m trustees ([`spec/break_glass.md`](../../spec/break_glass.md)).
-The Doorbell's one *new* mechanism is to give that vault something worth opening: on a
-qualifying event (a removal after a placement, a tamper, a dwell past the threshold), the device
-seals the current full-resolution frame **encrypted at capture** — a per-object DEK wrapped to
-the trustee quorum, the v2 vault envelope the kernel already defines — onto its own eMMC. The
-device holds no unwrap key; neither does the household. Nothing on the device can display it. The
-pixels the incumbents sell as a live feed exist here only as ciphertext, and only for the frames
-around the events that earned them.
+Two facts about the shipped kernel bound this section, and the first draft of it got both wrong.
 
-This is the honest reason to want a good sensor in a witness: not to look, but so that the frame
-your trustees can unseal after a break-in is starlight-clean and not the "noticeably softer"
-night image Ring's 4K reviewers describe. It is also a spec change: today sealing happens on the
-kernel, and the sensor adapter contract has no image field *by construction*. The on-device vault
-needs the spec's blessing before a line of it is written (§11, item 1). Until then the Doorbell is
-a coarse-claim source like every other Canary, and that alone delivers §4.1.
+- **Invariant I, verbatim:** raw frames live only in a short in-memory ring, bounded in seconds
+  and frames, zeroized on eviction — and *a drain of that ring for sealing requires a valid
+  `BreakGlassToken`*. There is no automatic capture path, and encrypting a frame does not make
+  one conforming. The only route from `RawFrame` to persistent storage is `export_for_vault()`
+  after quorum approval.
+- **Invariant V's scope note:** the v1 vault's quorum is an *authorization* gate. Envelope
+  confidentiality reduces to a device-local master key stored beside the ciphertext; threshold-
+  wrapping the DEK to trustees is spec-only ([`spec/quorum_unseal_v2.md`](../../spec/quorum_unseal_v2.md),
+  tracked in [`docs/security/ENTERPRISE_CUSTODY.md`](../security/ENTERPRISE_CUSTODY.md)). A
+  design that says "the device holds no unwrap key" is describing something the kernel does not
+  yet provide.
+
+So the Doorbell's raw frames follow the kernel's rules exactly: a RAM ring, drained only when a
+trustee quorum presents a token **while the frames are still in the ring** — in practice, during
+a live, rehearsed incident (the Lab's Operator's Bench exists for that rehearsal). A frame that
+was in the buffer ten minutes ago is gone, by construction. There is **no** "encrypted at
+capture, opened later" path in this design; that idea is recorded in §11 item 1 only as the
+question it raises for the spec, not as a plan.
+
+What a good sensor is *for*, then: the detector — night package and person reliability (§5) —
+and the quality of the one frame a quorum can pull during an incident. The sensor argument in
+§5.1 stands on the first alone.
 
 ### 4.3 Answering without a feed
 
@@ -194,15 +222,20 @@ true by construction. The ring is also the one place the ambient-display rule ap
 **silence is never rendered as safety** — a device that has lost the hub breathes differently,
 so an empty log is visibly "unsure", not "quiet".
 
-### 4.5 A ring that arrives in under a second, with the internet unplugged
+### 4.5 A ring targeted at under a second, with the internet unplugged
 
-The press is a `ContactStateChange` on the wire name `doorbell` (the Dash already renders it at
-an honest severity — see the [competitor landscape](../research/competitor_app_landscape.md)).
-It rides local MQTT to the hub and the BLE fleet beacon to the phone in the same room; the Dash,
-the nightstand and the Nightlight react; the mechanical chime strikes through the on-board relay;
-the alert relay pokes an away phone with one coarse word. None of it crosses the WAN. The two
-Ring outages of the last year took down live view *and* the ring notification; ours cannot,
-because there is no server in the path to fall over.
+The press is a `ContactStateChange` on the wire name `doorbell` (the Dash already renders that
+name at an honest severity — see the [competitor landscape](../research/competitor_app_landscape.md);
+today it is emitted by the WAP's acoustic module, and the Doorbell's button producing it is
+firmware work, §10). It rides local MQTT to the hub and the BLE fleet beacon to the phone in the
+same room; the Dash, the nightstand and the Nightlight react; the mechanical chime strikes
+through the on-board relay. **Those paths cross no WAN**, so a WAN outage cannot take them down.
+The **away** poke is the exception, by nature: the [alert relay](../design/alert_relay.md)'s
+built lane posts to ntfy and a phone's push service, which is a server across the WAN, and an
+internet outage delays it like anyone else's. The difference from the two Ring outages of the
+last year is what survives: the bell still rings, the chime still strikes, the record is still
+sealed, and the poke catches up. "Under a second" is a target for the LAN path, measured
+end-to-end in §11 item 14, not a number anyone has taken yet.
 
 ### 4.6 Approach, dwell and the visitor who did not ring
 
@@ -240,8 +273,8 @@ So: **"4K" on a 1/2.8" sensor is a night downgrade**, and "4K starlight" costs a
 port, which means the RV1126B class of SoC (§6.1) — the reCamera Pro's silicon, $300 today. The
 design therefore has two camera tiers on **one lens mount and one face**:
 
-- **Pro (the build): IMX335, 1944² square crop, 2-lane.** 13 px/° beats every dual-cam and 2K
-  incumbent on the doormat (a shoebox at 0.5 m ≈ 170×105 px; a classifier is comfortable above
+- **Pro (the build): IMX335, 1944² square crop, 2-lane.** on the arithmetic, 13 px/° out-counts every
+  dual-cam and 2K incumbent on the doormat (a shoebox at 0.5 m ≈ 170×105 px; a classifier is comfortable above
   64 px) and sits within 10 % of a 4K square crop, with a night floor the 4K IMX415 cannot reach.
   The 1944² crop from a 4:3 sensor throws away 25 % of the width and nothing of the height; a 16:9
   4K sensor cropped square wastes 44 %.
@@ -365,10 +398,10 @@ cannot be applied to old data, because there is no old data.
 
 | Doorbell moment | Claim kind (existing) | Modality | Corroboration |
 |---|---|---|---|
-| button press | `ContactStateChange` (wire name `doorbell`) | contact | — |
+| button press | `ContactStateChange` (wire name `doorbell`; the Vision reading its input is firmware work) | contact | — |
 | approach across the walk line | `LargeObjectBoundaryCrossing` | radar, camera | both, or radar alone at night before the camera wakes |
 | standing at the door, no press | `PresenceInRestrictedZone` (dwell ≥ N s) | radar + camera | required from both |
-| package placed | `SmallObjectBoundaryCrossing(Package)` | camera + ToF | both |
+| package placed | `SmallObjectBoundaryCrossing` (the class word waits on §11 item 13) | camera + ToF | both |
 | package removed | `ObjectRemovedFromZone` | ToF + camera | both |
 | pry / hammer / plate screw | `TamperDetected` | other (IMU, contact) | — |
 | knock (opt-in mic) | `AcousticImpulseInZone` | other | envelope only |
@@ -454,7 +487,7 @@ is where these become distributor-verified rows.
 
 | Tier | What it is | Parts (qty-1) | At 1 000 (est.) |
 |---|---|---|---|
-| **Lite — the Vision Doorbell, today** | the released case + XIAO S3 + Grove Vision AI V2 + OV5647 (NoIR variant) + 2× 850 nm emitter + 12 mm lit button; **add** an LD2410 ($3) for approach, a VL53L8CX ($9) for the mat, and a chime-relay power module ($6); night is IR grayscale on the module's small NPU | **≈ $60** | ≈ $45 |
+| **Lite — the released case, plus firmware work** | the released case + XIAO S3 + Grove Vision AI V2 + OV5647 (NoIR variant) + 2× 850 nm emitter + 12 mm lit button; **add** an LD2410 ($3) for approach, a VL53L8CX ($9) for the mat, and a chime-relay power module ($6); night is IR grayscale on the module's small NPU. **Firmware work, not yet done:** the Vision project reads no physical button today (the ring is a `ContactStateChange` on the multifunction input to be written), the shipping model is person-only (a package class is a model change), and the radar, ToF and relay each need a driver. Parts exist; the doorbell does not | **≈ $60** | ≈ $45 |
 | **Pro — this design** | Core1106 SoM $35 · IMX335 M12 module $25 · 1.5 mm f-theta lens + ICR $12 · LD2450 $12 · VL53L8CX $9 · 4× SFH 4725AS + 2× white LED $15 · SK6812 ring + 16 mm IP67 button $7 · MAX98357A + IP67 speaker $8 · LIS3DH $2 · power block (bridge, bulk, buck, relay, supercaps) $8 · 4-layer carrier + passives + connectors $12 · case, gasket, vent, PMMA, screws $6 | **≈ $150** | **≈ $70** |
 | **Pro 4K — the option** | the Pro with an RV1126B compute island and an IMX678 / SC850SL 4-lane module | ≈ $250 (SoM price unpublished; the reCamera Pro is $300 as a product) | ≈ $120 |
 | PoE daughter | 802.3af PD module | +$8 | +$5 |
@@ -473,10 +506,12 @@ device that cannot be turned against you."**
 
 Numbered, so the follow-ups can cite them.
 
-1. **The on-device vault is a spec decision, not a firmware feature.** Sealing raw frames on a
-   Canary, encrypted to the quorum, extends [`spec/break_glass.md`](../../spec/break_glass.md)
-   and the sensor adapter contract's "no image field" rule. It needs an RFC and the maintainer's
-   yes before a line of it exists; the Doorbell ships §4.1 without it.
+1. **Raw frames on a Canary — none outside a live break-glass drain (§4.2).** If the project
+   ever wants frames around an event to outlive the ring for a *later* quorum — the "encrypted at
+   capture" idea the first draft floated — that is a change to Invariant I's buffer-drain rule
+   *and* it needs threshold custody ([`spec/quorum_unseal_v2.md`](../../spec/quorum_unseal_v2.md))
+   to be real first. Neither is proposed here; this item exists so the question is written down
+   once, with its two prerequisites.
 2. **RV1106G3 NPU rating** — 1 TOPS (Luckfox, CNX) vs 0.5 TOPS (one Amazon listing). Pull the
    datasheet revision for the exact die before choosing over the SG2002.
 3. **ToF on a sunlit mat** — bench the VL53L8CX at 0.5 m against a 30 × 20 cm box at noon; if it
@@ -500,10 +535,18 @@ Numbered, so the follow-ups can cite them.
 12. **Naming and the figure** — the Pro needs its own `device.json`, a figure in the ledger and a
     Lab card; its confidence stays *idea* (a dashed ghost) until STLs are committed, by
     construction.
+13. **The class word on the record** — `Event` carries no object class, so the custody chain
+    cannot say *package* (§4.1). A coarse `subject_class` attribute (`Person | Vehicle | Animal
+    | Package | Unknown`, the detector's own enum) is a dictionary-first vocabulary change:
+    `spec/witness_dictionary.json`, then every copy `lint_dictionary_sync.py` names. Until it
+    lands, "package custody" means "small-object custody".
+14. **Measure the ring** — button press to Dash render, to BLE beacon receipt on a phone in the
+    house, and to a mechanical chime strike, on the LAN with the WAN unplugged; the "under a
+    second" in §4.5 is a target until this row has numbers.
 
-**Bench sequence:** (a) the Lite's three add-ons on the released case — radar, ToF and the chime
-relay on the XIAO's spare pins — proves §4.1, §4.5 and §4.6 with shipping firmware and zero new
-silicon; (b) a Core1106 on a Luckfox carrier with an IMX335 and the §6.2 image, boxes-only, on the
+**Bench sequence:** (a) the Lite on the released case — first the Vision firmware reading its
+button, then radar, ToF and the chime relay on the XIAO's spare pins — proves §4.1, §4.5 and
+§4.6 with zero new silicon; (b) a Core1106 on a Luckfox carrier with an IMX335 and the §6.2 image, boxes-only, on the
 bench; (c) the Pro carrier.
 
 ---
