@@ -1,7 +1,7 @@
 /* Host tests for NvsManager's session lock, run on the firmware's own code:
  * the constructor, destructor, begin() and end() that
  * firmware/canary/lib/securacv_crypto/src/securacv_crypto.cpp compiles, cut
- * out verbatim by nvs_manager_cut.awk (the Makefile writes
+ * out verbatim by cut_functions.awk (the Makefile writes
  * build/nvs_manager_session.inc) and compiled here against the real
  * securacv_crypto.h.
  *

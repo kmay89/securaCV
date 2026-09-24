@@ -93,10 +93,21 @@ static size_t g_beacon_count = 0;
 static uint8_t g_cap_pct = DEFAULT_CAP_PCT;
 
 uint32_t estimate_airtime_us(size_t bytes) {
-  // bits / kbps gives milliseconds; convert to microseconds.
-  const uint32_t payload_us = (static_cast<uint32_t>(bytes) * 8u * 1000u) /
-                              PHY_BIT_RATE_KBPS;
-  return PHY_PREAMBLE_US + payload_us;
+  // bits / kbps gives milliseconds; convert to microseconds. The caller's
+  // payload rides inside ESP-NOW's framing, so the frame is both.
+  const uint32_t frame_bytes =
+      static_cast<uint32_t>(bytes + ESPNOW_FRAME_OVERHEAD_BYTES);
+  const uint32_t frame_us = (frame_bytes * 8u * 1000u) / PHY_BIT_RATE_KBPS;
+  return PHY_PREAMBLE_US + frame_us;
+}
+
+// `frames` frames of `bytes` payload each: every frame pays its own
+// preamble and framing, so this is frames x the one-frame estimate, not the
+// estimate of frames x bytes. Saturates rather than wrapping.
+static uint32_t reservation_us(size_t bytes, uint16_t frames) {
+  const uint64_t us =
+      static_cast<uint64_t>(frames) * estimate_airtime_us(bytes);
+  return us > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(us);
 }
 
 void init(uint8_t cap_pct) {
@@ -175,9 +186,16 @@ static uint32_t cap_us() {
           static_cast<uint32_t>(g_cap_pct)) / 100u;
 }
 
-bool try_reserve_routine(uint32_t now_ms, size_t bytes) {
-  const uint32_t cost = estimate_airtime_us(bytes);
-  if (window_airtime_us(now_ms) + cost > cap_us()) {
+bool try_reserve_routine(uint32_t now_ms, size_t bytes, uint16_t frames) {
+  // Nothing goes on the air (a heartbeat with no peer to send to), so there
+  // is nothing to deny: without this, a window that urgent or Beacon sends
+  // had already taken past the cap refused it and ticked routine_denied.
+  if (frames == 0) {
+    g_routine_allowed++;
+    return true;
+  }
+  const uint32_t cost = reservation_us(bytes, frames);
+  if (static_cast<uint64_t>(window_airtime_us(now_ms)) + cost > cap_us()) {
     g_routine_denied++;
     return false;
   }
@@ -186,13 +204,13 @@ bool try_reserve_routine(uint32_t now_ms, size_t bytes) {
   return true;
 }
 
-void force_reserve_urgent(uint32_t now_ms, size_t bytes) {
-  record(now_ms, estimate_airtime_us(bytes));
+void force_reserve_urgent(uint32_t now_ms, size_t bytes, uint16_t frames) {
+  record(now_ms, reservation_us(bytes, frames));
   g_urgent_sends++;
 }
 
-void force_reserve_beacon(uint32_t now_ms, size_t bytes) {
-  const uint32_t cost = estimate_airtime_us(bytes);
+void force_reserve_beacon(uint32_t now_ms, size_t bytes, uint16_t frames) {
+  const uint32_t cost = reservation_us(bytes, frames);
   record(now_ms, cost);
   // Distinct Beacon ring + counter.
   g_beacon_ring[g_beacon_head].ts_ms = now_ms;

@@ -333,7 +333,7 @@ BIRTHDAY_BIN = $(BUILD_DIR)/test_birth_day
 KEYREST_HDR = ../common/identity/key_at_rest.h
 KEYREST_BIN = $(BUILD_DIR)/test_key_at_rest
 
-# NvsManager session depth (canary/lib/securacv_crypto/src/nvs_session_depth.h):
+# NvsManager session depth (common/storage/nvs_session_depth.h):
 # the count that lets the canary hold one lock from begin() to end() across
 # its loop, httpd and OTA tasks. Pins that a nested end() never closes the
 # outer session's handle, that a write inside a read-only session gets a
@@ -342,11 +342,11 @@ KEYREST_BIN = $(BUILD_DIR)/test_key_at_rest
 # (canary_config.h), and — through a model of begin()/end() over a fake
 # recursive mutex — that the lock's count is the depth and one task's end()
 # cannot close another's session. Pure header; the real mutex is CI-compiled.
-NVSDEPTH_HDR = ../canary/lib/securacv_crypto/src/nvs_session_depth.h ../canary/include/canary_config.h
+NVSDEPTH_HDR = ../common/storage/nvs_session_depth.h ../canary/include/canary_config.h
 NVSDEPTH_BIN = $(BUILD_DIR)/test_nvs_session_depth
 
 # NvsManager's lock on the firmware's own code (test_nvs_manager_lock.cpp):
-# nvs_manager_cut.awk cuts the constructor, destructor, begin() and end()
+# cut_functions.awk cuts the constructor, destructor, begin() and end()
 # verbatim out of securacv_crypto.cpp, and the suite compiles them against the
 # real securacv_crypto.h over stubs/nvs_manager (Serial, a Preferences that
 # refuses a double begin, a recursive mutex with an owner). The model's
@@ -355,11 +355,44 @@ NVSDEPTH_BIN = $(BUILD_DIR)/test_nvs_session_depth
 # finds all four functions.
 NVSLOCK_SRC  = ../canary/lib/securacv_crypto/src/securacv_crypto.cpp
 NVSLOCK_HDRS = ../canary/lib/securacv_crypto/src/securacv_crypto.h \
-               ../canary/lib/securacv_crypto/src/nvs_session_depth.h \
+               ../common/storage/nvs_session_depth.h \
                ../canary/include/canary_config.h \
                $(wildcard stubs/nvs_manager/*.h stubs/nvs_manager/freertos/*.h)
+NVSLOCK_SIGS = NvsManager::NvsManager(|NvsManager::~NvsManager(|bool NvsManager::begin(|void NvsManager::end(
 NVSLOCK_INC  = $(BUILD_DIR)/nvs_manager_session.inc
 NVSLOCK_BIN  = $(BUILD_DIR)/test_nvs_manager_lock
+
+# The canary's NVS store helpers report what they wrote (repo sweep F55,
+# test_nvs_store_result.cpp): nvs_store_u32() / nvs_store_bytes(), the
+# NvsManager puts under them and the session begin()/end() around them, cut
+# out of securacv_crypto.cpp like the lock suite's. Pins that a put NVS
+# refused, a short put and a zero-length store are false, that a write that
+# landed is true and ran on a writable handle, and that F52's lock holds on
+# every one of those paths (the session ends, another task's is untouched).
+NVSSTORE_SIGS = $(NVSLOCK_SIGS)|size_t NvsManager::putUInt(|size_t NvsManager::putBytes(|bool nvs_store_u32(|bool nvs_store_bytes(
+NVSSTORE_INC  = $(BUILD_DIR)/nvs_store_result.inc
+NVSSTORE_BIN  = $(BUILD_DIR)/test_nvs_store_result
+
+# The chain-state persist (common/witness/chain_persist.h, repo sweep F55):
+# only a write that landed moves seq_persisted and counts, a failed one is
+# counted beside it, retried on the next record and then once per interval
+# (not on every record: a lasting failure is not paid per record), and
+# reported once per streak. test_chain_persist.cpp tests the header, then
+# runs securacv_witness.cpp's own persist and birth-stamp glue, cut out
+# verbatim, over a fake NVS and stubs/witness_glue. The record path's call
+# into that glue is checked, not run: the recipe cuts
+# witness_create_record_gps() with the same cutter and fails unless its body
+# still holds the one-line call to persist_chain_if_due().
+CHAINPERSIST_HDRS = ../common/witness/chain_persist.h $(CHAINST_HDR) \
+                    ../common/identity/birth_day.h \
+                    ../canary/lib/securacv_witness/src/securacv_witness.h \
+                    ../canary/include/canary_config.h ../canary/include/log_level.h \
+                    $(wildcard stubs/witness_glue/*.h)
+CHAINPERSIST_SRC  = ../canary/lib/securacv_witness/src/securacv_witness.cpp
+CHAINPERSIST_SIGS = static bool persist_chain_blob(|void witness_persist_chain_state(|static void persist_chain_if_due(|bool witness_note_wall_clock(
+CHAINPERSIST_CALLER = bool witness_create_record_gps(
+CHAINPERSIST_INC  = $(BUILD_DIR)/chain_persist_glue.inc
+CHAINPERSIST_BIN  = $(BUILD_DIR)/test_chain_persist
 
 # Coarse optical feature classifiers (canary-vision optical_features.h): pins
 # the invariant-safe coarsening of the person-detection model's box geometry —
@@ -608,14 +641,32 @@ $(KEYREST_BIN): test_key_at_rest.cpp $(KEYREST_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_key_at_rest.cpp -o $@
 
 $(NVSDEPTH_BIN): test_nvs_session_depth.cpp $(NVSDEPTH_HDR) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -I ../canary/lib/securacv_crypto/src -I ../canary/include test_nvs_session_depth.cpp -o $@
+	$(CXX) $(CXXFLAGS) -I ../common -I ../canary/include test_nvs_session_depth.cpp -o $@
 
-$(NVSLOCK_INC): $(NVSLOCK_SRC) nvs_manager_cut.awk Makefile | $(BUILD_DIR)
-	awk -f nvs_manager_cut.awk $(NVSLOCK_SRC) > $@.tmp && mv $@.tmp $@
+$(NVSLOCK_INC): $(NVSLOCK_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(NVSLOCK_SIGS)' -f cut_functions.awk $(NVSLOCK_SRC) > $@.tmp && mv $@.tmp $@
 
 $(NVSLOCK_BIN): test_nvs_manager_lock.cpp $(NVSLOCK_INC) $(NVSLOCK_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I stubs/nvs_manager -I ../canary/lib/securacv_crypto/src \
-	    -I ../canary/include -I $(BUILD_DIR) test_nvs_manager_lock.cpp -o $@
+	    -I ../common -I ../canary/include -I $(BUILD_DIR) test_nvs_manager_lock.cpp -o $@
+
+$(NVSSTORE_INC): $(NVSLOCK_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(NVSSTORE_SIGS)' -f cut_functions.awk $(NVSLOCK_SRC) > $@.tmp && mv $@.tmp $@
+
+$(NVSSTORE_BIN): test_nvs_store_result.cpp $(NVSSTORE_INC) $(NVSLOCK_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I stubs/nvs_manager -I ../canary/lib/securacv_crypto/src \
+	    -I ../common -I ../canary/include -I $(BUILD_DIR) test_nvs_store_result.cpp -o $@
+
+$(CHAINPERSIST_INC): $(CHAINPERSIST_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	@awk -v 'sigs=$(CHAINPERSIST_CALLER)' -f cut_functions.awk $(CHAINPERSIST_SRC) > $@.caller
+	@grep -q '^  persist_chain_if_due();$$' $@.caller || { \
+	  echo "securacv_witness.cpp: witness_create_record_gps() no longer calls persist_chain_if_due()" >&2; exit 1; }
+	@rm -f $@.caller
+	awk -v 'sigs=$(CHAINPERSIST_SIGS)' -f cut_functions.awk $(CHAINPERSIST_SRC) > $@.tmp && mv $@.tmp $@
+
+$(CHAINPERSIST_BIN): test_chain_persist.cpp $(CHAINPERSIST_INC) $(CHAINPERSIST_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I stubs/witness_glue -I ../canary/lib/securacv_witness/src \
+	    -I ../canary/include -I ../common -I $(BUILD_DIR) test_chain_persist.cpp -o $@
 
 $(OPTFEAT_BIN): test_optical_features.cpp $(OPTFEAT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(OPTFEAT_INC) test_optical_features.cpp -o $@
@@ -661,7 +712,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -698,6 +749,8 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(KEYREST_BIN)
 	./$(NVSDEPTH_BIN)
 	./$(NVSLOCK_BIN)
+	./$(NVSSTORE_BIN)
+	./$(CHAINPERSIST_BIN)
 	./$(OPTFEAT_BIN)
 	./$(VISION_PIPE_BIN)
 	./$(VISPROF_BIN)

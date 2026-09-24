@@ -13,6 +13,13 @@
 #include <Preferences.h>
 #include <cstddef>  // For std::nullptr_t
 #include <cstring>  // For memcpy
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
+// NvsManager's per-task session count (pure, host-tested): a staged copy of
+// firmware/common/storage/nvs_session_depth.h, held byte-identical by
+// firmware/scripts/check_csi_sync.sh (setup.sh arduino re-stages it).
+#include "nvs_session_depth.h"
 
 // ════════════════════════════════════════════════════════════════════════════
 // NVS NAMESPACES (centralized definitions)
@@ -36,6 +43,34 @@ static const char* NVS_MESH_NS = "mesh";
  * Use this singleton for all operations on the "securacv" namespace instead
  * of directly accessing a global Preferences object.
  *
+ * It is ONE Preferences handle, shared by every task that calls it, and five
+ * tasks open sessions on it: the loop task (setup() and loop(): the witness
+ * chain persist, the birth stamp, the vault's capture sequence, the modules'
+ * nvs_store:: settings), the httpd task serving the API (the Wi-Fi, config,
+ * reboot, vault, Bluetooth, household and RF-presence routes), the NimBLE
+ * host task (a newly bonded peer's pairing record; a phone's BLE Wi-Fi
+ * provisioning), the Bluetooth bring-up task (bluetooth_channel::init()) and
+ * the QR-scan task (a scanned Wi-Fi credential). Sessions are serialized
+ * across tasks, as the canary's are (securacv_crypto.cpp, sweep F52): begin()
+ * takes a recursive mutex and keeps it until the matching end(), so another
+ * task's begin() waits for it (at most nvs_session::kSessionWaitMs, then
+ * returns false — fail soft, the way a failed Preferences::begin always
+ * could) and another task's end() cannot close it. Before the lock, a
+ * session ending on one task closed the handle under another, so a write
+ * racing that end() landed nothing. Nesting on one task is counted
+ * (nvs_session_depth.h): only the outermost end() closes the handle, and a
+ * read-write session inside a read-only one reopens it read-write. An end()
+ * from a task with no session is a no-op. The accessors below are valid only
+ * between the calling task's begin() and end(); isOpen()/isReadOnly()
+ * describe the session of the task that holds the lock.
+ *
+ * Every begin() that returns true owes exactly one end() on every path,
+ * because the lock is held until then: a session that never ends keeps the
+ * lock on its task, and every other task's begin() waits kSessionWaitMs and
+ * fails until a reboot. tests_host/test_nvs_session_balance.cpp scans the
+ * sketch for a block that opens a session and does not close it. A begin()
+ * that returns false owes no end().
+ *
  * Example usage:
  *   NvsManager& nvs = NvsManager::instance();
  *   if (nvs.begin(false)) {  // Open for read-write
@@ -51,22 +86,48 @@ public:
     return s_instance;
   }
 
-  // Open NVS session. Returns true on success.
-  // If already open in a compatible mode, returns true without reopening.
-  // If write mode is requested but session is open in read-only mode, reopens.
+  // Open an NVS session. Returns true on success, and the session then
+  // belongs to this task until its matching end(). Takes the lock and KEEPS
+  // it on success; every false return has given back the take it made, so a
+  // caller that got false owes no end(). Inside this task's own session it
+  // nests: a compatible mode keeps the handle, and read-write asked inside a
+  // read-only session reopens it read-write.
   bool begin(bool readOnly = false) {
-    if (m_open) {
-      // If write is requested but we are in read-only mode, reopen
-      if (m_readOnly && !readOnly) {
-        m_prefs.end();
-        m_open = false;  // Force reopen
-      } else {
-        return true;  // Already open in compatible mode
+    if (m_lock != nullptr &&
+        xSemaphoreTakeRecursive(m_lock, pdMS_TO_TICKS(nvs_session::kSessionWaitMs)) != pdTRUE) {
+      // Another task held a session for the whole wait. A session is NVS
+      // reads and writes only (no send, no delay, no wait on another task),
+      // so this is a leaked session — a begin() without its end() on some
+      // path — or a stalled flash: say so once per boot, then fail soft.
+      // (Two tasks timing out together may both print; nothing else rides
+      // on the flag.)
+      static volatile bool s_wait_reported = false;
+      if (!s_wait_reported) {
+        s_wait_reported = true;
+        Serial.printf("[NVS] session wait timed out: another task held the settings store for %lu ms\n",
+                      (unsigned long)nvs_session::kSessionWaitMs);
       }
+      return false;
     }
-    m_open = m_prefs.begin(NVS_MAIN_NS, readOnly);
-    m_readOnly = readOnly;
-    return m_open;
+    const nvs_session::Begin action = nvs_session::on_begin(m_session, readOnly);
+    bool ok = true;
+    switch (action) {
+      case nvs_session::Begin::Open:
+        ok = m_prefs.begin(NVS_MAIN_NS, readOnly);
+        break;
+      case nvs_session::Begin::ReopenRw:
+        m_prefs.end();
+        ok = m_prefs.begin(NVS_MAIN_NS, false);
+        break;
+      case nvs_session::Begin::Keep:
+      case nvs_session::Begin::Refuse:
+        break;
+    }
+    if (!nvs_session::commit_begin(m_session, action, readOnly, ok)) {
+      if (m_lock != nullptr) xSemaphoreGiveRecursive(m_lock);
+      return false;
+    }
+    return true;
   }
 
   // Open NVS in read-only mode (convenience wrapper)
@@ -75,19 +136,25 @@ public:
   // Open NVS in read-write mode (convenience wrapper)
   bool beginReadWrite() { return begin(false); }
 
-  // Close NVS session
+  // Close this task's session. The zero-wait take tells the cases apart: it
+  // succeeds at once when this task holds the lock (its own session, or a
+  // nested one) or when nobody does (the depth is then 0 and this end() is a
+  // no-op), and fails when another task holds a session — which is not this
+  // task's to close. Only the outermost end() closes the handle.
   void end() {
-    if (m_open) {
-      m_prefs.end();
-      m_open = false;
+    if (m_lock != nullptr && xSemaphoreTakeRecursive(m_lock, 0) != pdTRUE) return;
+    const nvs_session::End e = nvs_session::on_end(m_session);
+    if (e == nvs_session::End::Close) m_prefs.end();
+    if (m_lock != nullptr) {
+      for (uint8_t i = 0; i < nvs_session::end_gives(e); i++) xSemaphoreGiveRecursive(m_lock);
     }
   }
 
-  // Check if NVS is currently open
-  bool isOpen() const { return m_open; }
+  // The handle is open (for the task holding the lock)
+  bool isOpen() const { return m_session.open; }
 
-  // Check if opened in read-only mode
-  bool isReadOnly() const { return m_readOnly; }
+  // ...and read-only
+  bool isReadOnly() const { return m_session.read_only; }
 
   // ──────────────────────────────────────────────────────────────────────────
   // Boolean operations
@@ -185,12 +252,17 @@ public:
   NvsManager& operator=(const NvsManager&) = delete;
 
 private:
-  NvsManager() : m_open(false), m_readOnly(false) {}
+  NvsManager() : m_lock(xSemaphoreCreateRecursiveMutex()), m_session() {}
   ~NvsManager() { end(); }
 
   Preferences m_prefs;
-  bool m_open;
-  bool m_readOnly;
+  // Created in the constructor (the first instance() call, in setup()). Null
+  // only if creation failed (heap exhaustion); NvsManager then proceeds
+  // unlocked, the pre-lock behavior, as the canary's does.
+  SemaphoreHandle_t m_lock;
+  // Changed only by the task holding m_lock (or, with no lock, by whoever
+  // calls): the depth of that task's sessions and the handle's mode.
+  nvs_session::State m_session;
 };
 
 // ════════════════════════════════════════════════════════════════════════════

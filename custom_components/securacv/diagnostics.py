@@ -41,7 +41,8 @@ async def async_get_config_entry_diagnostics(
                     # The full fingerprint is exactly 16 hex chars
                     # (device_trust: sha256 digest[:8].hex()), so truncate
                     # to half of it — diagnostics dumps get shared publicly,
-                    # and 8 chars is plenty to correlate against /enroll
+                    # and 8 chars is plenty to correlate against the
+                    # fingerprint the device shows (docs/device_trust.md)
                     # without republishing the whole identifier.
                     "fingerprint": entry_trust.fingerprint_hex[:8] + "…" if entry_trust.fingerprint_hex else None,
                 }

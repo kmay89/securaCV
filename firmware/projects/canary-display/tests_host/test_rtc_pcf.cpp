@@ -1,7 +1,7 @@
 // Host test for the pure PCF8563 RTC core (include/canary/io/rtc_pcf.h).
 //
-// Builds standalone with g++ — no Arduino, no board, no Wire. Run in CI by the
-// "PCF8563 RTC host test" step in .github/workflows/firmware.yml. Prints
+// Builds standalone with g++ — no Arduino, no board, no Wire. Run in CI by
+// this directory's Makefile, which .github/workflows/firmware.yml runs. Prints
 // "ALL RTC TESTS PASSED" on success (the CI grep makes a silent pass
 // impossible to fake). Build (from the repo root):
 //

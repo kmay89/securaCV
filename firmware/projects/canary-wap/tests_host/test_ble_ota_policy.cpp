@@ -8,7 +8,7 @@
 // securacv_ota_update_decision(), so the floor rule under test is the pull
 // path's own.
 //
-// Build (also in the tests_host Makefile and firmware.yml): g++ -std=c++17
+// Build (the tests_host Makefile, which firmware.yml runs): g++ -std=c++17
 // -Wall -Wextra -Werror -DSECURACV_OTA_HOST_BUILD, with the sketch dir on
 // the include path, this file plus the sketch's securacv_ota.cpp, -lcrypto.
 

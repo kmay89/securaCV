@@ -1401,6 +1401,15 @@ static void sha256_domain(const char* domain, const uint8_t* data, size_t n, uin
 // Note: nvs_open_rw(), nvs_open_ro(), and nvs_close() are now provided
 // by nvs_store.h as inline functions that delegate to NvsManager::instance()
 
+// NvsManager::begin() (nvs_store.h) waits at most this long for another
+// task's session and then fails soft, and one wait must sit under the task
+// watchdog the loop is subscribed to (nvs_session_depth.h). That bounds a
+// wait, not a loop pass: a pass that meets a leaked session on several calls
+// can still outlast the watchdog, and its reset frees the leak.
+// tests_host/test_nvs_store_lock.cpp reads this line and the constant.
+static_assert(nvs_session::kSessionWaitMs < WATCHDOG_TIMEOUT_SEC * 1000u,
+              "an NvsManager session wait must sit under the loop's task watchdog");
+
 static bool nvs_load_key(uint8_t priv[32]) {
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.beginReadOnly()) return false;
@@ -8406,10 +8415,12 @@ static void register_api_routes(httpd_handle_t server) {
   httpd_register_uri_handler(server, &settings_ui);
 
   // Device enrollment endpoints — unauthenticated by design (pubkey +
-  // fingerprint are PUBLIC data). HA's config flow pulls /api/device/enroll
-  // to TOFU-pin the device's pubkey; the /enroll HTML page renders the
-  // fingerprint in big monospace text for an installer to read off the
-  // captive-portal page and type into HA when they want to pin manually.
+  // fingerprint are PUBLIC data). Home Assistant does not fetch these: it
+  // TOFU-pins from the health publish's public_key. They are the owner's
+  // out-of-band read — the /enroll HTML page shows the fingerprint in big
+  // monospace text and the full pubkey hex, which is what HA's manual pin
+  // form takes (docs/device_trust.md, "Where each product shows its key");
+  // /api/device/enroll is the same card as JSON, for scripts.
   httpd_uri_t enroll_json_uri = { .uri = "/api/device/enroll", .method = HTTP_GET,
                                   .handler = device_identity_api::handle_enroll_json };
   httpd_register_uri_handler(server, &enroll_json_uri);

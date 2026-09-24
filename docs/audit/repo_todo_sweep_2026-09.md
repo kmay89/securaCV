@@ -79,8 +79,10 @@ Two smaller one-time human acts, same flavor:
   (`.github/workflows/homeassistant-mirror.yml` warns and files an issue).
   The trees drifted: after #1703, #1704 and #1718 the mirror sat 33 carried
   files behind (every refresh ran green and pushed nothing) until a hand
-  resync in securacv-homeassistant#17 (2026-09-24). Until the secret is set,
-  every `main` change to the carried set needs that again.
+  resync in securacv-homeassistant#17 (2026-09-24). HA14 moved the carried
+  `custom_components/securacv` files again in #1725 (and F55 one carried
+  test), and their resync follows #1725. Until the secret is set, every
+  `main` change to the carried set needs that again.
 - [ ] **U7 [human] Open the staged home-assistant/brands submission.**
   `brands/home-assistant/README.md` says "not submitted"; it is the only route
   to an integration icon on HA < 2026.3.
@@ -591,7 +593,7 @@ so — see D2 below.)
   CI's canary envs; it has not run on a bench. Bench (U1): the NvsManager
   rows in `docs/audit/hardware_verification_checklist.md`. canary-wap keeps
   its own copy of the class: F53.
-- [ ] **F53 [code] canary-wap's NvsManager copy has the same shared handle.**
+- [x] **F53 [code] canary-wap's NvsManager copy has the same shared handle.**
   `firmware/projects/canary-wap/arduino/canary_wap/nvs_store.h` carries its
   own header-only `NvsManager` with the bare open flag F52 removes from the
   canary. The WAP opens sessions from `canary_wap.ino` (its esp_http_server
@@ -602,7 +604,24 @@ so — see D2 below.)
   stage it for the sketch and add the lock. Compiled by the WAP PlatformIO
   and Arduino CLI legs. Found in the wave-7 reconcile; not traced to a live
   overlap.
-- [ ] **F55 [code] The canary's NVS writes report success whatever the
+  *Done (#1725):* traced, and more than one task holds a session: the loop,
+  the API httpd task, the NimBLE host task (a new bond's pairing record, BLE
+  Wi-Fi provisioning), the Bluetooth bring-up task and the QR-scan task.
+  F52's lock is ported: `nvs_session_depth.h` moved to
+  `firmware/common/storage/` (the canary includes it from there, unchanged)
+  and is staged next to the sketch (`setup.sh arduino`, held byte-identical
+  by `check_csi_sync.sh`), and `nvs_store.h`'s `NvsManager` holds the same
+  bounded recursive mutex from `begin()` to the matching `end()`, with the
+  2 s wait static_asserted under the loop's watchdog in `canary_wap.ino`.
+  The vault's five sessions that never ended, a lockout under the lock, now
+  end. Host-tested on the real header (`test_nvs_store_lock`, twelve mutants
+  caught), and `test_nvs_session_balance` is a textual scan of the sketch
+  that fails on a block that opens a session and never ends it, or that
+  returns inside one without ending it (a session ended in only one branch,
+  or left by a `goto`, gets past it: F60). The glue compiles only in CI's
+  WAP PlatformIO and Arduino CLI legs, and the bench rows in
+  `hardware_verification_checklist.md` are open.
+- [x] **F55 [code] The canary's NVS writes report success whatever the
   write did.** `nvs_store_bytes` and `nvs_store_u32`
   (`firmware/canary/lib/securacv_crypto/src/securacv_crypto.cpp`) return
   true once the session opens, whatever `putBytes` / `putUInt` returned, and
@@ -621,6 +640,31 @@ so — see D2 below.)
   retries, count the failure beside `chain_persists`, and have the Wi-Fi
   route answer an error when the save fails. The helpers are CI-compiled
   only; a pure retry rule could be host-tested. Found reconciling F52.
+  *Done (#1725):* `nvs_store_u32` / `nvs_store_bytes` return true only when
+  the put wrote the whole value, and `witness_persist_chain_state()` settles
+  every write through `common/witness/chain_persist.h`: only a write that
+  landed moves `seq_persisted` and counts in `chain_persists`; one that did
+  not is counted in the new `chain_persist_failures` (MQTT health, beside
+  `chain_persists`, the only place that counter is exposed), leaves
+  `seq_persisted` where it was, and is retried on the next record, then once
+  per interval while the failure lasts (so a full partition or a leaked NVS
+  session's 2 s wait is not paid on every record); a failure streak is
+  logged once when it opens and once when a write lands again. The genesis
+  write at boot takes the same path. The helpers' other callers now read the
+  result: the birth stamp no longer writes its day after a flag that did not
+  land, claims no stamp NVS lacks and retries a minute later, and a boot
+  count that did not land says so. Host-tested on the firmware's own code
+  (`test_nvs_store_result.cpp`, `test_chain_persist.cpp`: the helpers and
+  the witness glue cut out verbatim; the old bodies fail 9 and 38
+  assertions, a retry on every record 28); compiled by CI's canary envs on
+  #1725; no bench pass. Still open: `nvs_store_key()` has the same unread put,
+  but an honest result there halts provisioning (F58, maintainer to choose);
+  canary-wap's own copies of these helpers and its `persist_chain_state()`
+  carry the same defect (F59); the canary's other direct NVS put calls (64 in
+  15 files, a few of which already read their result) were not audited (F61).
+  The Wi-Fi save this item names is one of them and is unchanged:
+  `ScvNetworkManager::saveCredentials()` still ignores its puts, and
+  `handle_wifi_connect` ignores its result; F61 starts there.
 - [x] **F56 [code] The canary's provisioning receipt did not ask the Host,
   and a page load under a foreign Host could spend the BOOT tap.** Found by
   the wave-7 security-docs review. `GET /api/provisioning-receipt`
@@ -643,8 +687,74 @@ so — see D2 below.)
   out the token only through the page decision. The glue is syntax-checked
   against the core 3 headers and built by CI only. Not bench-tested.
   Hardening TODOs: apply the same Host-first order to the WAP sketch's
-  receipt route, and consider refusing browser cross-site requests before
-  either tap path takes the tap.
+  receipt route (F57), and consider refusing browser cross-site requests
+  before either tap path takes the tap.
+- [ ] **F57 [decision] canary-wap's receipt route and bearer-gated API do not
+  refuse a foreign Host.** F56 gave the canary's receipt the Host-first order
+  its `auth_gate` routes already had; on the WAP, neither the receipt nor the
+  bearer check (`api_auth.h`) reads the Host. `handle_provisioning_receipt`
+  (`canary_wap.ino`) serves on a bearer (`api_auth_check_optional`) or takes
+  the BOOT tap (`provisioning_gate_take()`) without reading the Host, and
+  nothing under `firmware/projects/canary-wap/` includes
+  `firmware/common/network/host_guard.h`. #1722 left the WAP out, recording
+  that a port needs a decision on the captive portal. The follow-up proposed
+  with F56's fix has the canary's shape: stage `host_guard.h`, refuse a
+  foreign Host first with the SoftAP exempt, and extend the WAP's own
+  `check_route_security.py`. That decision comes first. The canary exempts
+  every request from its own AP subnet (`host_is_foreign`'s `from_ap_subnet`),
+  but in standalone mode the WAP's AP is the product (`canary_wap.ino` says so
+  where it restarts the captive DNS), so the same exemption would exempt every
+  client it has. And the WAP runs its captive DNS for the whole life of the
+  AP, pointing every name at itself, so captive-portal assistants arrive under
+  foreign Host names; its `/` redirect and `request_host_is_direct` (the
+  wizard's `/api/wifi/pair-token`) already tell those apart from the owner's
+  browser by `canary.local` / `192.168.4.1`. Decide which interface and which
+  names the WAP trusts, then port it with its route checker. Found in the
+  wave-7 receipt review (F56).
+- [ ] **F58 [decision] The canary's identity-key store still reports success
+  whatever the write did.** `nvs_store_key()`
+  (`firmware/canary/lib/securacv_crypto/src/securacv_crypto.cpp`) ignores
+  `putBytes`' result; F55 left it alone on purpose. Its caller,
+  `witness_provision_device()`, stops provisioning on false ("provisioning
+  cannot continue"), so an honest result there halts a device on a full NVS
+  instead of booting it with a key the next boot will not find (a new device
+  id and a broken Home Assistant pin). Maintainer to choose: halt, or boot
+  with a loud, counted ephemeral identity. Found doing F55.
+- [ ] **F59 [code] canary-wap's NVS writes report success whatever the write
+  did.** `canary_wap.ino`'s `nvs_store_key` / `nvs_store_u32` /
+  `nvs_store_bytes` and `tls_store_to_nvs` return true once the session
+  opens, `persist_chain_state()` advances `seq_persisted` and
+  `chain_persists` regardless, and `note_wall_clock()` writes the birth pair
+  unread. The chain persist also still writes the two-entry seq/chain pair
+  F38 (b) retired on the canary, in two sessions, and the reboot's persist
+  on the httpd task can interleave with the loop's (F53's lock serializes
+  each session, not the pair). Port F55:
+  `firmware/common/witness/chain_persist.h` is shared-ready (a staged copy
+  and a sync check for the sketch). The WAP's provisioning also stops when
+  its key store returns false, so an honest `nvs_store_key` there is F58's
+  choice too. Found doing F55 and F53.
+- [ ] **F60 [code] canary-wap's NVS session-balance check is textual.**
+  F53's `test_nvs_session_balance`
+  (`firmware/projects/canary-wap/tests_host/`) reads the sketch's sources as
+  text: it fails on a block that opens a session and never ends it, or that
+  returns inside one without ending it. A session ended in only one branch,
+  or left by a `break` or `goto`, gets past it, and so does a session opened
+  through a pointer or a second name. Under F53's lock a session that never
+  ends shuts every other task out (each waits 2 s, then fails soft). Close
+  the gap with an RAII session guard in `nvs_store.h` or a real control-flow
+  check. Found doing F53.
+- [ ] **F61 [code] The canary's other NVS puts are unaudited for a write that
+  did not land.** F55 made the chain-state helpers honest; the 64 direct
+  `Preferences` / `NvsManager` put calls in 15 files of `firmware/canary`
+  (outside `securacv_crypto.cpp`) were out of its scope, and a few already
+  read their result (`csi_event_egress.cpp`, `mesh_state.cpp`). Start with the
+  Wi-Fi save F55 named: `ScvNetworkManager::saveCredentials()`
+  (`firmware/canary/lib/securacv_network/src/securacv_network.cpp`) ignores
+  what `putBytes` / `putBool` returned, marks the credentials configured, logs
+  'WiFi credentials saved' and returns true, and `handle_wifi_connect` ignores
+  even a false, so a Wi-Fi save the API reported as done can be silently
+  dropped; have the route answer an error when the save fails. Then audit each
+  of the rest for a state it claims after a put NVS refused. Found doing F55.
 
 ### Parity & sub-projects
 
@@ -1043,23 +1153,23 @@ so — see D2 below.)
   a reader whose clock trails the newest send (the MQTT telemetry) still
   counts every send before its time. The probe's gate moved to
   `probe_airtime.h`: it starts no frame once the governor's window reads
-  1.60 % (one peer at 20 Hz stays steady; the probe stops within one
-  792 µs frame of the line, so about 0.39 % stays for the heartbeat,
-  presence and the Beacon self-test), and it brings the governor up on a
-  boot without the mesh. Host-tested (`test_mesh_coexistence`,
+  1.60 % (one peer at 20 Hz, with an Opera of one, stays steady; the probe
+  stops within one 792 µs frame of the line, so about 0.39 % stays for the
+  heartbeat, presence and the Beacon self-test), and it brings the governor up
+  on a boot without the mesh. Host-tested (`test_mesh_coexistence`,
   `test_csi_probe_airtime`, which pins the ceiling at exactly 1.60 % from
   both sides); the device build is CI's (firmware.yml's WAP Arduino legs).
   Latent on shipped devices: the WAP's probe table is empty, so it
-  broadcasts at 10 Hz, ~0.8 % by the governor's estimate. Still open:
-  framing is added only for the probe (F54); the 1.60 % ceiling is also the
-  Beacon's `airtime_saturated` trouble line (`beacon_channel.cpp`,
-  > 160 x100), so the two move together or not at all; the 32-slot Beacon
-  telemetry ring keeps the per-send shape (it gates nothing); with a filled
-  probe table an over-budget probe arrives in bursts (host-measured about
-  1.3 s of frames per 10 s window at 8 peers), which is roadmap section 5
-  step 5's call (`aggregate_cap_hz`); and no bench has checked the
-  192 µs + 8 µs/B estimate against real air (U1).
-- [ ] **F54 [code] The airtime governor charges the mesh, chirp and beacon
+  broadcasts at 10 Hz, ~0.8 % by the governor's estimate. Still open: the
+  framing and the mesh's per-peer fan-out are F54's (#1725); the 1.60 %
+  ceiling is also the Beacon's `airtime_saturated` trouble line
+  (`beacon_channel.cpp`, > 160 x100), so the two move together or not at
+  all; the 32-slot Beacon telemetry ring keeps the per-send shape (it gates
+  nothing); with a filled probe table an over-budget probe arrives in bursts
+  (host-measured about 1.3 s of frames per 10 s window at 8 peers), which is
+  roadmap section 5 step 5's call (`aggregate_cap_hz`); and no bench has
+  checked the 192 µs + 8 µs/B estimate against real air (U1).
+- [x] **F54 [code] The airtime governor charges the mesh, chirp and beacon
   callers for their payload only.** Found reconciling F4 and F51. The
   probe's gate adds the ~59 B of ESP-NOW MAC and action-frame framing
   (`PROBE_FRAME_OVERHEAD_BYTES` in `probe_airtime.h`); every other
@@ -1067,7 +1177,35 @@ so — see D2 below.)
   tamper or power broadcast once, while `broadcast_message` unicasts it, its
   64 B signature included, to every connected peer (`mesh_network.cpp`; only
   offline-imminent multiplies by the peer count). So the window under-reads
-  every caller but the probe. — in progress (2026-09-23)
+  every caller but the probe.
+  *Done (#1725):* the governor adds a ~59 B ESP-NOW framing allowance to
+  every frame itself (`ESPNOW_FRAME_OVERHEAD_BYTES` in
+  `airtime_governor.h`). The allowance is conservative: Espressif documents
+  43 B of fixed fields for an unencrypted frame, and every sender here is
+  unencrypted. `probe_airtime.h` no longer adds its own, so nothing is
+  counted twice. `try_reserve_routine`, `force_reserve_urgent` and
+  `force_reserve_beacon` take a defaulted frame count, charged as frames ×
+  the one-frame estimate; 0 frames charges nothing, and a routine
+  reservation of 0 frames is never denied. `mesh_network.cpp` charges one
+  signed frame per peer: the 38 B header `send_to_peer` writes, the payload
+  and the 64 B signature (`sizeof(MessageHeader)` is 48 and never sent). The
+  heartbeat, tamper and power alerts go to each peer `broadcast_message`
+  reaches (connected, stale, offline or alerting), and offline-imminent to
+  each known peer. The chirp and Beacon broadcasts are one frame each and
+  gain only the framing. The probe's 1.60 % ceiling is unchanged.
+  Re-derived, a heartbeat to a full Opera of 16 (25 216 µs), a chirp
+  presence and a Beacon self-test still fit in the 0.39 % it leaves, and one
+  paired peer at 20 Hz (an Opera of one) still holds steady. With more mesh
+  peers, a heartbeat now holds that probe off for up to about 1.6 s and
+  keeps the window over the Beacon's 1.60 % line for up to about 1.5 s (16
+  peers), once every 30 s. This is latent while the WAP probes no peer.
+  Host-tested (`test_mesh_coexistence`, re-baselined to the framed numbers,
+  with a fan-out case and a source pin on `mesh_network.cpp`;
+  `test_csi_probe_airtime`, with full-Opera cases); compile-tested by CI's
+  WAP Arduino leg. The figures are the governor's estimate, not a
+  measurement of the air. Still open: every other mesh send reserves nothing
+  (Beacon event, channel lock, hub election, rekey and its ACK, auth,
+  pairing, leave-opera).
 
 ---
 
@@ -1642,7 +1780,7 @@ so — see D2 below.)
   once and replace the derived samples with a dated live run; the header
   keeps saying "derived" until then. The verify script's first check needs
   a live detection, so this pairs with HA8.
-- [ ] **HA14 [code] `/enroll` is named as every Canary's key source, but only
+- [x] **HA14 [code] `/enroll` is named as every Canary's key source, but only
   canary-wap serves it.** `docs/homeassistant_setup.md` (Step 6: "the
   fingerprint + pubkey hex are on each device's `/enroll` page"),
   `docs/device_trust.md`'s manual pinning and the carried
@@ -1662,6 +1800,26 @@ so — see D2 below.)
   wave-7 mirror reconcile. The HACS store page
   (securacv-homeassistant#17) names only the options-flow path, and no key
   source, until this lands.
+  *Done (#1725):* `docs/homeassistant_setup.md` Step 6,
+  `docs/device_trust.md` and the options-flow text in `strings.json` /
+  `translations/en.json` now say where each product's key can be read out of
+  band, as read from source, in a new "Where each product shows its key"
+  table. The table covers each product: canary-wap's unauthenticated
+  `/enroll` page and `/api/device/enroll`, plus `/api/device-info`
+  (fingerprint) and bearer-gated `/api/status`; USB serial `i` / `j` on the
+  `firmware/canary` build; serial `j` on canary-vision. canary-sense and
+  canary-sentinel show only a boot-log fingerprint (their setup portal shows
+  no key), so owners compare it with `pinned_fingerprint` on the Health
+  sensor, ignoring case. A canary-display has no key. The integration
+  comments that said HA fetches `/api/device/enroll` to TOFU-pin were wrong;
+  they are fixed, and so is the same comment in `canary_wap.ino`. The pin
+  form's error no longer demands lowercase. `tests/test_key_source_copy.py`
+  checks each clause: `/enroll` must name canary-wap and nothing wider. It
+  also holds the product list to `firmware/flavors.json`. Read from source,
+  not checked on a bench. Left: a full-key source on Sense and Sentinel
+  (HA17); canary-wap's uppercase `fp` (HA18); the mirror carry. That carry
+  includes the store-page sentence, which still tells every hostile-broker
+  owner to pin by hand until it lands.
 - [x] **HA15 [code] The HomeKit Bridge recipe's include list failed Home
   Assistant's config check and skipped the Canary's own Motion sensor.**
   `docs/integrations/apple-home-homekit-bridge.md` §4 put
@@ -1705,12 +1863,56 @@ so — see D2 below.)
   half is a firmware change), check a live install, then put the lines
   back in the recipe; or re-document the ids from a live install. Found in
   the review of this sweep's wave-8 ledger.
-- [ ] *(Mirror repo itself: no code work. It is byte-identical again as of
+- [ ] **HA17 [code] canary-sense and canary-sentinel show no full public key
+  out of band.** Manual pinning needs the 64-hex key, but both devices print
+  only `Ed25519 ready  fp=<fingerprint>`, once at boot (in the init of
+  `firmware/projects/canary-{sense,sentinel}/src/witness.cpp`). Their only
+  web page is the shared setup portal
+  (`firmware/common/network/setup_portal.cpp`: `/`, `/scan`, `/join`,
+  `/status`), on their own setup network at first boot and when a join keeps
+  failing, and it shows no key. Sense's serial input feeds only the tuning
+  console, which has no identity command, and Sentinel reads no USB serial
+  at all. Owners can use the fingerprint to check a TOFU pin but cannot set
+  one. Two candidate surfaces: the `j` self-manifest canary-vision already
+  answers (`firmware/common/attest/self_manifest.h`: `device_id` / `pubkey`
+  / `pubkey_fp`), or a key card on the setup portal. The portal is shared
+  with every product that compiles it, and it runs on an open-to-nearby
+  setup network, so decide that one deliberately. Host-test the routing or
+  the card. Then update together the Sense and Sentinel rows of "Where each
+  product shows its key" in `docs/device_trust.md`, Step 6 of
+  `docs/homeassistant_setup.md`, and the options-flow text in `strings.json`
+  / `translations/en.json`;
+  `tests/test_key_source_copy.py::test_pin_step_offers_no_source_for_a_fingerprint_only_product`
+  must change with them. The in-browser flasher's identity card works for
+  them once they answer `j`. Found in HA14. — in progress (2026-09-24)
+- [ ] **HA18 [code] Home Assistant likely reads canary-wap's signed publishes
+  as a key mismatch (fingerprint case).** `canary_wap.ino`'s `hex_to_str`
+  writes capitals, so `g_device.fingerprint_hex` is uppercase. That string is
+  the `fp` in every signed chain / event / counts envelope, through
+  `device_signature::init` and `csi_mqtt`, and the health `public_key` is
+  uppercase too. HA derives the pinned fingerprint in lowercase
+  (`device_trust.fingerprint_from_pubkey_hex`), and
+  `signature._verify_with_kind` compares `pinned.fingerprint_hex != fp`
+  exactly. So after TOFU, every WAP publish should read `mismatch`
+  ("Fingerprint changed without rotation"). A host probe reproduces it: an
+  uppercase fp gives mismatch, and the same fp lowercased gives ok. Not
+  observed on a bench. The `firmware/canary` build already lowercases its
+  envelope `fp` (`csi_event_egress.cpp`). Fix it on the HA side by comparing
+  case-insensitively, stored pins included, with a test that uses a
+  WAP-shaped envelope. Also decide whether the WAP should emit lowercase:
+  its TLS CN, the provisioning receipt and the flashers' fleet-book
+  `expectedFp` all read the same string. When it lands, remove the
+  canary-wap caveat HA14 added to `docs/homeassistant_setup.md` Step 6 and
+  to `docs/device_trust.md` "How to verify" step 3, which both expect
+  `verified: true` and matching fingerprints. Found in HA14.
+  — in progress (2026-09-24)
+- [ ] *(Mirror repo itself: no code work. It was byte-identical again as of
   securacv-homeassistant#17 (2026-09-24), which resynced the 33 carried
   files #1703, #1704 and #1718 had moved. The same PR brought the store
   page's watch-actions, key-pinning, broker-TLS and Apple Home sentences,
   and a `lint_readme.py` overclaim check that reads a hard-wrapped claim as
-  one and refuses "encrypted by default". Its health items are U6 and U7
+  one and refuses "encrypted by default". PR #1725 moves carried files
+  again, and their resync follows it (U6). Its health items are U6 and U7
   above, plus the three monorepo-fixture tests its CI deselects, which is
   by design. A few more tests skip themselves there because they read
   firmware sources the mirror does not carry.)*
@@ -2433,7 +2635,7 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   named in CI.md as the known exceptions. docs/ci.md no longer types a
   check count. The cache is proven when a second push restores it, and the
   scheduled and release-only jobs on their next run.
-- [ ] **CI2 [code] canary-local.yml's path filter is hand-kept, and it
+- [x] **CI2 [code] canary-local.yml's path filter is hand-kept, and it
   drifts.** Found in the wave-7 reconcile and its review. On 7446893, 23
   files its logic tests open were outside it, 7 of them opened by
   #1703/#1704, and #1722 lists them all. The reconcile's string scan found
@@ -2468,7 +2670,31 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   - Allowlist: the job's own outputs and tmp dirs.
 
   The same idea applies to ios-selfheal.yml's `#filePath` readers.
-- [ ] **CI3 [code] One host-test list.** On 7446893, `firmware.yml`'s Mesh +
+  *Done (#1725):* the logic-tests job's three test steps run with two read
+  recorders armed (`scripts/path_filter_reads/`). A `--require` preload
+  records the paths each node process opens to read, stats, lists, resolves
+  or only checks for existence. A `sitecustomize` `sys.addaudithook` hook
+  records the paths each python3 process opens and lists. CPython audits no
+  stat or exists call, so a python3 existence check is not seen. Each half
+  arms the other in the processes it starts, and a generator a test spawns
+  is charged to that test. The step after them runs
+  `scripts/check_path_filter_reads.py` on the same recordings, so no suite
+  runs twice. It matches every read against `on.pull_request.paths` with
+  GitHub's pattern rules. A miss fails naming the test, the file, the test's
+  line (a static ES `import` has none) and the line to add to both lists
+  (R6). It also fails on a `node --test <file>` or `unittest discover` suite
+  that left no record of its own. Its first run found 29 reads outside the
+  filter, all listed now: two content reads
+  (`firmware/canary/include/canary/runtime_config.h` in desktop_parity,
+  `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json` in
+  canary_local) and 27 existence checks. The allowlist is empty: a `.pyc`
+  read is charged to its source, which keeps `scripts/bom_pricing.py`
+  checked. Not recorded: shell reads (the Witness Wall step's `cmp`, git),
+  children with a replaced environment or python3 -I/-E/-S, the drift-step
+  generators (194 paths outside the filter, measured on CI2's branch, 187
+  of them `gen_flash.py`'s, nearly all under `firmware/canary/**`) and
+  every other filtered workflow (CI4).
+- [x] **CI3 [code] One host-test list.** On 7446893, `firmware.yml`'s Mesh +
   Scout host-test job compiles 34 tests_host sources inline (canary-display
   14, canary-wap 17, canary-tincan 2, canary-companion 1). 19 of those tests
   are built nowhere else (canary-wap 14, canary-display 5), and 15 duplicate
@@ -2482,7 +2708,43 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   step. CI runs `make -C` for all five host-test Makefiles. Add
   `scripts/tests/test_host_test_lists.py` so the list cannot fork again
   (the same idea as the `MESH_TESTS` guard in that job).
-  — in progress (2026-09-23)
+  *Done (#1725):* the 19 are named rules in their Makefiles with the inline
+  steps' exact flags and per-rule `-Werror` (canary-wap 14, hooked in by
+  prerequisite as `run-sketch-logic`; canary-display 5, as `run-io-cores`),
+  and the 12 canary-wap and canary-display duplicate rules took `-Werror`
+  too. Every suite an inline step used to grep keeps that marker check as
+  well as its exit code (`run_marked`, in all four project Makefiles;
+  `test_audio_cadence` keeps its own lowercase marker), and its output still
+  reaches the log through `tee` as the suite writes it. Of the 33 inline
+  steps (34 compiles), 32 are gone and the witness-page step keeps only
+  `gen_witness_page_v1.py --check`. The tincan and companion Makefiles got
+  `make -C` steps, and the display list runs in the fleet-link job's
+  existing `make -C`. `scripts/tests/test_host_test_lists.py` reads each
+  directory's expanded `make` plan, so the shared `run:` lists and the
+  prerequisite hooks count the same way. A run counts only when its failure
+  reaches make: no `-` prefix, `.IGNORE` or `-i`, and nothing like `|| true`
+  after it. The test also fails on a C or C++ compile of a tests_host source
+  in any workflow step or composite action (by path, glob, shell variable,
+  or a relative name under a working-directory or `cd`), and on a tests_host
+  Makefile that no step in a pull-request workflow runs whole. It is red on
+  the tree before this change and green on it. Host-tested: all five
+  Makefiles pass locally, and a failing check in each of the 19 moved suites
+  turns `make` red.
+- [ ] **CI4 [decision] The path-filter read gate hears only
+  canary-local.yml's logic tests.** CI2 (#1725) records what that job's three
+  test steps read. The job's drift-step generators run unarmed: measured
+  on CI2's branch, they read 194 paths outside the filter, 187 of them
+  `gen_flash.py`'s (all but two under `firmware/canary/**`; the two are
+  `.github/workflows/firmware-release.yml` and
+  `firmware/provisioning/platformio_secure.ini`), plus `gen_figures.mjs`'s
+  6 existence probes and one `gen_operator.py` read. Arming them is a policy
+  call: `firmware/canary/**` in the filter would run the workflow's wasm
+  build-and-boot job (a 45-minute timeout) on every flagship firmware PR. No
+  other filtered workflow is recorded either, for example
+  `ios-selfheal.yml`'s XCTests, whose `#filePath` reads CI1 listed by hand
+  (the recorders hear node and python3 only). Decide which drift steps to
+  arm, at what cost, and how the other filtered workflows' readers are
+  heard. Found doing CI2.
 
 ---
 

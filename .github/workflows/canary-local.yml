@@ -188,6 +188,32 @@ on:
       # we2.test.js: the Vision model-release workflow reads the WE2 burn
       # address from flash.json and never hardcodes a second copy
       - ".github/workflows/vision-model-release.yml"
+      # files the logic tests read that neither list had, found by the
+      # recorded-reads gate below (scripts/check_path_filter_reads.py):
+      # desktop_parity reads the flagship's runtime_config.h (does it read a
+      # broker? -> broker_nvs); canary_local.test.js replays the Witness
+      # Wall contract vectors against both vendored walls
+      - "firmware/canary/include/canary/runtime_config.h"
+      - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
+      # …and the files they only check exist (a rename or delete fails them
+      # just the same): each concept's docs in the registry (canary_local;
+      # the glob also takes two research notes no concept names yet, so a new
+      # concept's note needs no line), each board's vendor STEP (boards),
+      # the Get Started and Hub pages' doc links (start, homeassistant), and
+      # the LICENSE the flasher's About panel cites (flash_epic)
+      - "docs/hardware/canary_*_research.md"
+      - "docs/hardware/canary_vision_lite_recamera.md"
+      - "docs/hardware/canary_vision_pro_recamera.md"
+      - "firmware/projects/canary-fence-guard/README.md"
+      - "boards/vendor/*.step.gz"
+      - "docs/README.md"
+      - "docs/device_trust.md"
+      - "docs/firmware_ota.md"
+      - "docs/lovelace_timeline.md"
+      - "LICENSE"
+      # the gate itself: its read recorders and its checker run in this job
+      - "scripts/path_filter_reads/**"
+      - "scripts/check_path_filter_reads.py"
       - ".github/workflows/canary-local.yml"
   pull_request:
     paths:
@@ -368,6 +394,32 @@ on:
       # we2.test.js: the Vision model-release workflow reads the WE2 burn
       # address from flash.json and never hardcodes a second copy
       - ".github/workflows/vision-model-release.yml"
+      # files the logic tests read that neither list had, found by the
+      # recorded-reads gate below (scripts/check_path_filter_reads.py):
+      # desktop_parity reads the flagship's runtime_config.h (does it read a
+      # broker? -> broker_nvs); canary_local.test.js replays the Witness
+      # Wall contract vectors against both vendored walls
+      - "firmware/canary/include/canary/runtime_config.h"
+      - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
+      # …and the files they only check exist (a rename or delete fails them
+      # just the same): each concept's docs in the registry (canary_local;
+      # the glob also takes two research notes no concept names yet, so a new
+      # concept's note needs no line), each board's vendor STEP (boards),
+      # the Get Started and Hub pages' doc links (start, homeassistant), and
+      # the LICENSE the flasher's About panel cites (flash_epic)
+      - "docs/hardware/canary_*_research.md"
+      - "docs/hardware/canary_vision_lite_recamera.md"
+      - "docs/hardware/canary_vision_pro_recamera.md"
+      - "firmware/projects/canary-fence-guard/README.md"
+      - "boards/vendor/*.step.gz"
+      - "docs/README.md"
+      - "docs/device_trust.md"
+      - "docs/firmware_ota.md"
+      - "docs/lovelace_timeline.md"
+      - "LICENSE"
+      # the gate itself: its read recorders and its checker run in this job
+      - "scripts/path_filter_reads/**"
+      - "scripts/check_path_filter_reads.py"
       - ".github/workflows/canary-local.yml"
 
 permissions:
@@ -395,7 +447,22 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
+      # The path-filter gate (sweep CI2): every node and python3 process in the
+      # three test steps below records the repo paths it reads (node: opens,
+      # stats, listings, existence checks; python3: opens and listings only,
+      # CPython audits no stat or exists call; shell tools such as the Witness
+      # Wall step's cmp are not recorded), and the step after the last of them
+      # fails on any read outside this workflow's `pull_request` paths. The
+      # recorders are inert without PATH_FILTER_READS_DIR, never change what a
+      # call returns, and write to $RUNNER_TEMP, outside the checkout. Each
+      # half arms the other in the processes it starts. A test step added here
+      # as `node --test <files>` or `python3 -m unittest discover` without
+      # this env block is named by the gate as a suite it never heard from.
       - name: Node tests (shipped source, repo convention)
+        env:
+          PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads
+          NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+          PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
         run: |
           node --test canary-local/tests/canary_local.test.js
           node --test canary-local/tests/build_line.test.js
@@ -448,6 +515,10 @@ jobs:
         # One canonical emulator (the website repo), vendored by
         # scripts/vendor_witness_emulator.sh into both apps — byte-identical,
         # or this fails with the exact re-vendor command.
+        env:
+          PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads
+          NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+          PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
         run: |
           chmod +x scripts/check_witness_emulator_sync.sh
           scripts/check_witness_emulator_sync.sh
@@ -542,7 +613,26 @@ jobs:
           fi
 
       - name: Hub seed executor + provision-bundle tests (pure planner, fail-closed exec, self-contained bundle — no HA needed)
+        env:
+          PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads
+          NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+          PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
         run: python3 -m unittest discover -s canary-local/tools/tests -p 'test_*.py'
+
+      - name: Every file the logic tests read is inside this workflow's path filter
+        # Reads the recordings the three test steps above left (the suites are
+        # not run again) and matches each path against on.pull_request.paths
+        # with GitHub's pattern rules. A miss is a test that a PR editing that
+        # file never runs: it fails here naming the test, the file, the test
+        # line (none for a static ES import) and the line to add to BOTH lists
+        # (R6). The checker also fails on a suite this job runs that left no
+        # record of its own, so an unarmed step cannot pass as "nothing
+        # outside". PyYAML reads this file.
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 scripts/check_path_filter_reads.py \
+            --workflow .github/workflows/canary-local.yml --job logic-tests \
+            --reads "$RUNNER_TEMP/path-filter-reads"
 
       - name: Hub seed executor dry-run smoke (the plan the installer would run)
         # The executor is what turns hub_seed.json into a provisioned hub. Prove

@@ -24,7 +24,8 @@ common/
 ├── witness/        # Witness chain management
 │   ├── witness_chain.h
 │   ├── witness_store.h  # /WITNESS/records.jsonl line format + SD-wins reconciliation (host-tested)
-│   └── chain_state.h    # {seq, head} as ONE atomic NVS blob + the boot-time source order (host-tested)
+│   ├── chain_state.h    # {seq, head} as ONE atomic NVS blob + the boot-time source order (host-tested)
+│   └── chain_persist.h  # when that blob is written, and a write that did not land is retried (host-tested)
 ├── identity/       # The device's own identity: what it is, when it was born, where its key sleeps
 │   ├── device_signature.{h,cpp}  # canonical signed-message builders (HA verifies the same bytes)
 │   ├── device_pseudonym.h
@@ -34,7 +35,8 @@ common/
 │   ├── gnss_time.h
 │   └── gps_privacy.h
 ├── storage/        # Unified storage
-│   └── storage.h
+│   ├── sd_mount_policy.h    # SD mount-recovery decisions: when to remount, tear down or declare the card lost (host-tested)
+│   └── nvs_session_depth.h  # NvsManager's per-task session count under its cross-task lock (host-tested)
 ├── network/        # Network modules
 │   ├── provision_core.h
 │   ├── wifi_join_policy.h

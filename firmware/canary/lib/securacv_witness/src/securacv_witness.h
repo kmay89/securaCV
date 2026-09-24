@@ -14,6 +14,9 @@
 #include <stdint.h>
 #include "canary_config.h"
 #include "log_level.h"
+// chain_persist::Streak, the chain persist's failure streak (pure, host-tested
+// in firmware/tests_host/test_chain_persist.cpp; -I ../common in every env).
+#include "witness/chain_persist.h"
 
 // ════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -74,7 +77,14 @@ struct DeviceIdentity {
   uint8_t  pubkey_fp[8];
   uint8_t  chain_head[32];
   uint32_t seq;
+  // The seq the last chain persist that landed wrote (at boot, the seq the
+  // chain state was read at). A write that did not land leaves it here.
   uint32_t seq_persisted;
+  // The open failure streak of the chain persist, if any: the last attempt
+  // did not land, so a retry is due on the next record and then once per
+  // SD_PERSIST_INTERVAL, and the streak has been reported
+  // (common/witness/chain_persist.h). Zero is no streak.
+  chain_persist::Streak chain_persist_streak;
   uint32_t boot_count;
   uint32_t boot_ms;
   uint32_t tamper_count;
@@ -106,7 +116,11 @@ struct SystemHealth {
   uint32_t gsa_count;
   uint32_t gsv_count;
   uint32_t vtg_count;
+  // Chain-state writes to NVS this boot: those that landed, and those that
+  // did not (NVS refused the put or the session never opened). Both ride the
+  // MQTT health payload as `chain_persists` / `chain_persist_failures`.
   uint32_t chain_persists;
+  uint32_t chain_persist_failures;
   uint32_t state_changes;
   uint32_t tamper_events;
   uint32_t uptime_sec;
@@ -189,14 +203,24 @@ bool witness_create_record_gps(const uint8_t* payload, size_t len, RecordType ty
 // Verify record signature
 bool witness_verify_record(const WitnessRecord* rec);
 
-// Persist chain state to NVS
+// Write the chain state to NVS now (the atomic {seq, head} blob). Only a
+// write that landed moves seq_persisted and counts in chain_persists; one
+// that did not is counted in chain_persist_failures, reported once per
+// failure streak (health log and Serial), and retried after the next record,
+// then once per SD_PERSIST_INTERVAL records while the streak lasts
+// (common/witness/chain_persist.h). Before a restart nothing is left to
+// retry it: the failure is counted (and reported, unless its streak already
+// was), and the next boot resumes from what NVS holds, which SD-wins
+// reconciles when a card is present.
 void witness_persist_chain_state();
 
 // Offer the current wall clock to the birth-day recorder. Safe and cheap to
 // call from the main loop at any cadence: it returns immediately once a day is
-// recorded (which is once, for the life of the key) or while the clock is still
-// the boot epoch. Returns true only on the one call that actually stamped —
-// callers can log it, but nothing depends on catching that moment.
+// recorded (which is once, for the life of the key), while the clock is still
+// the boot epoch, or for a minute after a stamp whose NVS write failed (the
+// failure is reported once, and nothing in RAM claims the stamp). Returns true
+// only on the one call that actually stamped — callers can log it, but
+// nothing depends on catching that moment.
 bool witness_note_wall_clock(uint32_t unix_s);
 
 // ════════════════════════════════════════════════════════════════════════════

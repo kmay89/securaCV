@@ -28,13 +28,15 @@
 #endif
 // PubSubClient's one buffer holds a whole outgoing packet: fixed header
 // (5) + topic length (2) + topic + payload. It refuses anything larger,
-// silently. The health payload is the largest periodic publish: ~970 B
+// silently. The health payload is the largest periodic publish: ~1000 B
 // with realistic values, including the 64-hex public_key Home Assistant
-// pins. With every field at its type's widest it reaches ~1170 B, a
-// 1236 B packet on a topic at its 63-char cap. The old 1024 B buffer did
-// not hold that worst case even before the key. 1280 does, and
-// custom_components/securacv/tests/test_canary_health_trust.py holds
-// every health key to it.
+// pins. With every field at its type's widest it reaches ~1200 B, a
+// 1272 B packet on a topic at its 63-char cap. The old 1024 B buffer did
+// not hold that worst case even before the key. 1280 does, with 8 B to
+// spare since chain_persist_failures joined (F55): almost any new health
+// key needs a larger buffer first.
+// custom_components/securacv/tests/test_canary_health_trust.py holds every
+// health key to it.
 #ifndef MQTT_BUFFER_SIZE
   #define MQTT_BUFFER_SIZE        1280
 #endif

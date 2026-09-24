@@ -202,9 +202,10 @@ def _verify_with_kind(
     pinned = trust_store.get(device_id)
 
     if pubkey_bytes is None:
-        # No pin yet. Caller (handle_*) will TOFU-pin via a separate
-        # round-trip to /api/device/enroll, or wait for the next publish
-        # — we don't synthesize a pubkey from the sig.
+        # No pin yet. TOFU happens elsewhere (__init__.py's
+        # _async_health_for_tofu, from the health publish's public_key)
+        # or by the operator's manual pin — we don't synthesize a pubkey
+        # from the sig.
         return TrustVerdict(
             trusted=False,
             reason="no_pubkey",

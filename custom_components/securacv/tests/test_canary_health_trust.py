@@ -125,7 +125,8 @@ _FLOAT = -40.123456789
 _WORST = {
     "uptime": _U32, "free_heap": _U32, "min_heap": _U32,
     "records_created": _U32, "records_verified": _U32, "verify_failures": _U32,
-    "chain_persists": _U32, "gps_healthy": False, "crypto_healthy": False,
+    "chain_persists": _U32, "chain_persist_failures": _U32,
+    "gps_healthy": False, "crypto_healthy": False,
     "sd_healthy": False, "wifi_active": False, "http_requests": _U32,
     "sd_writes": _U32, "sd_errors": _U32, "sd_mounted": False,
     "boot_count": _U32, "firmware_version": "0" * 24,
