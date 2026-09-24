@@ -650,16 +650,21 @@ class FleetModel {
     w->chain_length = length;
     w->badge = verdict;
     if (fp && fp[0]) {
-      copy_str(w->fp, sizeof(w->fp), fp);
+      // Kept in lowercase: every fp4 this model is handed (beacon_parse.h,
+      // chirp_scan.cpp) is lowercase, and a canary-wap writes its envelope
+      // fp in capitals (canary_wap.ino's hex_to_str). Stored as sent, a
+      // WAP's fp matched none of its own beacons or chirps, never retired
+      // its ghost, and sent fleet_link_request a suffix no scan could find.
+      copy_hex_lower(w->fp, sizeof(w->fp), fp);
       // An off-grid chirp may have created a pseudo witness ("SCV-XXXX",
       // named by the fp's last-4 suffix like the canary's own BLE name)
       // for this very device before its fingerprint was known. Now that a
       // real identity owns the suffix, retire the ghost — left behind it
       // would go Lost once scanning stops and raise a false alarm.
       size_t n = 0;
-      while (fp[n]) n++;
+      while (w->fp[n]) n++;
       if (n >= 4) {
-        const char* s = fp + n - 4;
+        const char* s = w->fp + n - 4;
         const char pseudo[9] = {'S', 'C', 'V', '-', s[0], s[1], s[2], s[3],
                                 '\0'};
         for (int i = 0; i < MAX_DEVICES; i++) {
@@ -944,6 +949,16 @@ class FleetModel {
     size_t i = 0;
     for (; i + 1 < cap && src[i]; i++) dst[i] = src[i];
     dst[i] = '\0';
+  }
+
+  // copy_str, then ASCII capitals to lowercase: hex case names no
+  // different fingerprint, and the model compares fps as plain strings.
+  static void copy_hex_lower(char* dst, size_t cap, const char* src) {
+    copy_str(dst, cap, src);
+    if (!dst) return;
+    for (size_t i = 0; i < cap && dst[i]; i++) {
+      if (dst[i] >= 'A' && dst[i] <= 'Z') dst[i] = (char)(dst[i] - 'A' + 'a');
+    }
   }
 
   static bool str_eq(const char* a, const char* b) {
