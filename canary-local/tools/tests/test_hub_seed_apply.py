@@ -1104,3 +1104,131 @@ class RequireFiles(unittest.TestCase):
                 self.assertIn(("restart_addon", MOSQUITTO_SUP), made[-1].calls)
         finally:
             hsa.SupervisorClient = real
+
+
+class PlanPaths(unittest.TestCase):
+    """The executor refuses a plan path it cannot mean, before the hub is
+    asked anything. `dest` and `requires_files` are on-device paths
+    (absolute); `source` is a bundle path (relative to --assets-root). Each
+    must be normalized: an empty, `.` or `..` segment could name a file
+    outside the root it is joined under (under_root, assets_root / source).
+    Hygiene, not a privilege boundary: the plan rides the same read-only
+    mount as the executor, so whoever can edit one can edit the other."""
+
+    CLIMB = "/ssl/../../etc/passwd"
+
+    def seed(self, **step):
+        base = {"id": "odd", "title": "t", "why": "w", "for_what": "f"}
+        return {"optional_features": {"broker_tls": {"enable": "--with broker_tls"}},
+                "steps": [dict(base, **step)]}
+
+    def test_the_committed_plan_passes(self):
+        hsa.check_plan_paths(REAL_PLAN)
+        # Not vacuous: the committed plan names every kind of path the check reads.
+        kinds = {k for s in REAL_PLAN["steps"] for k in ("dest", "source", "requires_files") if k in s}
+        self.assertEqual(kinds, {"dest", "source", "requires_files"})
+
+    def test_a_climbing_required_file_is_refused_by_name(self):
+        seed = self.seed(feature="broker_tls", requires_files=[self.CLIMB])
+        with self.assertRaises(hsa.PlanError) as cm:
+            hsa.plan_actions(seed, hsa.FRESH_HUB, frozenset({"broker_tls"}))
+        text = str(cm.exception)
+        for part in ("'odd'", "requires_files", self.CLIMB, "'..'"):
+            self.assertIn(part, text)
+
+    def test_a_step_whose_feature_is_off_is_checked_too(self):
+        # plan_actions skips such a step, but observe() looks up every step's
+        # requires_files on every run, so the check cannot skip it.
+        seed = self.seed(feature="broker_tls", requires_files=[self.CLIMB])
+        with self.assertRaises(hsa.PlanError):
+            hsa.plan_actions(seed, hsa.FRESH_HUB, frozenset())
+
+    def test_observe_refuses_before_it_asks_the_hub_or_the_disk(self):
+        asked: list = []
+
+        class NoHub:
+            def __getattr__(self, name):
+                def call(*args):
+                    asked.append(name)
+                    raise AssertionError(f"observe asked the hub ({name}) about a refused plan")
+                return call
+
+        real = hsa.under_root
+
+        def spy(root, path):
+            asked.append(("under_root", path))
+            return real(root, path)
+
+        hsa.under_root = spy  # type: ignore[assignment]
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                seed = self.seed(feature="broker_tls", requires_files=[self.CLIMB])
+                with self.assertRaises(hsa.PlanError):
+                    hsa.observe(NoHub(), seed, Path(tmp))
+        finally:
+            hsa.under_root = real
+        self.assertEqual(asked, [])
+
+    def test_every_path_kind_is_held_to_its_spelling(self):
+        dest, src = "/addon_configs/x/config.yml", "homeassistant/frigate/config.yaml"
+        bad = [
+            ("requires_files", {"requires_files": ["ssl/fullchain.pem"]}),     # relative
+            ("requires_files", {"requires_files": ["/ssl/./fullchain.pem"]}),  # '.'
+            ("requires_files", {"requires_files": ["/ssl//fullchain.pem"]}),   # empty segment
+            ("requires_files", {"requires_files": ["/ssl/"]}),                 # trailing slash
+            ("requires_files", {"requires_files": [""]}),
+            ("requires_files", {"requires_files": [None]}),
+            ("requires_files", {"requires_files": "/ssl/fullchain.pem"}),      # not a list
+            ("dest", {"dest": "addon_configs/x/config.yml", "source": src}),
+            ("dest", {"dest": "/addon_configs/../etc/x.yml", "source": src}),
+            ("dest", {"dest": "", "source": src}),
+            ("source", {"dest": dest, "source": "../../etc/hosts"}),
+            ("source", {"dest": dest, "source": "/etc/hosts"}),
+            ("source", {"dest": dest, "source": "homeassistant/./frigate/config.yaml"}),
+        ]
+        for key, step in bad:
+            with self.subTest(step=step):
+                with self.assertRaises(hsa.PlanError) as cm:
+                    hsa.check_plan_paths(self.seed(**step))
+                self.assertIn(key, str(cm.exception))
+
+    def test_the_spellings_the_plan_uses_still_plan(self):
+        seed = self.seed(feature="broker_tls", requires_files=["/ssl/fullchain.pem"],
+                         dest="/addon_configs/ccab4aaf_frigate/config.yml",
+                         source="homeassistant/frigate/config.yaml")
+        steps = hsa.plan_actions(seed, hsa.FRESH_HUB, frozenset({"broker_tls"}))
+        self.assertEqual([a.kind for a in steps[0].actions], ["require_files", "write_config"])
+
+    def test_main_refuses_with_rc_2_and_names_the_path(self):
+        import contextlib
+        import io
+        made: list = []
+
+        def fake_client(base_url, token):
+            made.append(FakeClient())
+            return made[-1]
+
+        real = hsa.SupervisorClient
+        hsa.SupervisorClient = fake_client  # type: ignore[assignment]
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                plan = Path(tmp) / "plan.json"
+                seed = self.seed(feature="broker_tls", requires_files=[self.CLIMB])
+                # A feature left off, so main() has a "note: optional feature
+                # ... not enabled" line it could print: the empty-stdout check
+                # below then fails if the refusal moves after those notes.
+                seed["optional_features"]["display"] = {"enable": "--with display"}
+                plan.write_text(json.dumps(seed))
+                for extra in (["--dry-run"], ["--dry-run", "--observe", "--token", "t"], ["--token", "t"]):
+                    with self.subTest(run=extra):
+                        out, err = io.StringIO(), io.StringIO()
+                        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                            rc = hsa.main(["--plan", str(plan), "--files-root", tmp,
+                                           "--with", "broker_tls", *extra])
+                        self.assertEqual(rc, 2)
+                        self.assertIn(f"refusing plan {plan}", err.getvalue())
+                        self.assertIn(self.CLIMB, err.getvalue())
+                        self.assertEqual(out.getvalue(), "", "a refused plan narrates nothing")
+            self.assertEqual(made, [], "a refused plan never builds a Supervisor client")
+        finally:
+            hsa.SupervisorClient = real

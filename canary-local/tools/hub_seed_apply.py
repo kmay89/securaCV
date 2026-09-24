@@ -84,9 +84,70 @@ DEFAULT_FILES_ROOT = Path("/")
 
 
 def under_root(root: Path, path: str) -> Path:
-    """An absolute on-device path as seen from `root`: /ssl/x under /tmp/t is /tmp/t/ssl/x."""
+    """An absolute on-device path as seen from `root`: /ssl/x under /tmp/t is /tmp/t/ssl/x.
+
+    Only ever handed a path check_plan_paths() accepted (or the parent of
+    one): normalized, so the join cannot climb out of `root`.
+    """
     p = Path(path)
     return root / (p.relative_to("/") if p.is_absolute() else p)
+
+
+class PlanError(ValueError):
+    """A plan this executor refuses to run. Raised before the hub is asked
+    anything, so a refused plan has observed nothing and changed nothing."""
+
+
+def plan_path_problem(path: object, absolute: bool) -> str:
+    """Why a plan path is refused, or "" when it is acceptable.
+
+    A plan names on-device paths (`dest`, `requires_files`: absolute) and a
+    bundle path (`source`: relative to --assets-root). Either kind must be
+    spelled normalized, with no empty, `.` or `..` segment, so joining it
+    under a root (under_root, assets_root / source) can never climb out of
+    that root. Checked on the raw string: pathlib quietly drops `.` and
+    doubled slashes but keeps `..`, which is the one that matters.
+    """
+    if not isinstance(path, str) or not path:
+        return "is not a path"
+    if path.startswith("/") != absolute:
+        if absolute:
+            return "must be absolute (an on-device path, starting with /)"
+        return "must be relative (a path inside the bundle, resolved under --assets-root)"
+    for seg in (path[1:] if absolute else path).split("/"):
+        if seg in ("", ".", ".."):
+            which = "an empty" if not seg else f"a {seg!r}"
+            return (
+                f"has {which} segment (a plan path must be normalized, so that joining "
+                "it under its root stays inside that root)"
+            )
+    return ""
+
+
+def check_plan_paths(seed: dict) -> None:
+    """Refuse the whole plan if any step names a path the executor cannot mean.
+
+    Every step, enabled feature or not: observe() looks up every step's
+    `requires_files` on each run, so a disabled step's paths are still read.
+    Called by main() right after the plan loads, and again by observe() and
+    plan_actions() so neither can be handed an unchecked plan.
+    """
+    for step in seed.get("steps", []):
+        sid = step.get("id", "?")
+        named: list[tuple[str, object, bool]] = []
+        if "dest" in step:
+            named.append(("dest", step["dest"], True))
+        if "requires_files" in step:
+            required = step["requires_files"]
+            if not isinstance(required, list):
+                raise PlanError(f"step {sid!r} requires_files {required!r} is not a list of paths")
+            named += [("requires_files", p, True) for p in required]
+        if "source" in step:
+            named.append(("source", step["source"], False))
+        for key, value, absolute in named:
+            why = plan_path_problem(value, absolute)
+            if why:
+                raise PlanError(f"step {sid!r} {key} {value!r} {why}")
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +300,7 @@ def plan_actions(
     a human ``reason`` — the executor prints it as a skip rather than redoing it,
     which is what makes re-running safe.
     """
+    check_plan_paths(seed)
     repos_present = observed.get("repositories", set())
     addons = observed.get("addons", {})
     files_present = observed.get("existing_files", set())
@@ -641,6 +703,7 @@ class SupervisorClient:
 
 def observe(client: SupervisorClient, seed: dict, files_root: Path = DEFAULT_FILES_ROOT) -> dict:
     """Snapshot the hub so plan_actions can decide what still needs doing."""
+    check_plan_paths(seed)
     dests = [s["dest"] for s in seed.get("steps", []) if s.get("dest")]
     # Files a step REQUIRES (and never writes): present if they exist under
     # files_root — `/` on the hub. Looked up for every step that names any, so
@@ -921,6 +984,14 @@ def main(argv: list[str] | None = None) -> int:
         seed = json.loads(Path(args.plan).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
         print(f"hub_seed_apply.py: cannot read plan {args.plan}: {e}", file=sys.stderr)
+        return 2
+    # Before anything is printed or asked of the hub: a plan path that is not
+    # absolute and normalized (or, for a `source`, relative and normalized)
+    # could name a file outside the root it is joined under.
+    try:
+        check_plan_paths(seed)
+    except PlanError as e:
+        print(f"hub_seed_apply.py: refusing plan {args.plan}: {e}", file=sys.stderr)
         return 2
 
     # Validate requested features against the PLAN, not a hardcoded list —
