@@ -25,8 +25,8 @@ been the other end of.
 
 **What holds now.** The decision lives once, in
 `firmware/common/network/mqtt_transport_logic.h` (pure, host-tested by
-`firmware/tests_host/test_mqtt_transport_logic.cpp`), and the five clients
-(four products plus the `firmware/canary` tree's `securacv_mqtt` library)
+`firmware/tests_host/test_mqtt_transport_logic.cpp`), and the six clients
+(five products plus the `firmware/canary` tree's `securacv_mqtt` library)
 apply it rather than deciding for themselves:
 
 | Provisioned mode (byte) | Socket | Needs |
@@ -41,7 +41,7 @@ Fail-closed is the rule: mode `1` with no CA, mode `2` with no pin, a
 malformed PEM, or a mode byte outside the table refuses to connect and says
 why. Nothing ever downgrades to plain or to unverified on its own; the
 unverified socket exists only as a mode chosen by name, and only on the
-transports that can honor it (display / sense / vision and the
+transports that can honor it (display / sense / vision / sentinel and the
 `firmware/canary` tree — not the WAP).
 
 | Variant | MQTT stack | Plain | TLS, CA-verified | TLS, SHA-256-pinned | Lab opt-in (unverified, warns every connect) | Provisioned through | Test tier |
@@ -50,8 +50,9 @@ transports that can honor it (display / sense / vision and the
 | canary-display nightstand-c6 | plain `WiFiClient` — built with `CANARY_MQTT_PLAIN_ONLY` (`canary-display.ini`): the TLS transport put the image 1,568 bytes over its 0x1F0000 OTA slot | ✅ default | ❌ refused: a non-zero `mqtt_tls` in NVS is answered with a refusal and the reason on the log, never a plaintext socket | ❌ same | ❌ same | same NVS row — both flashers disable the TLS modes for it (catalog `broker_tls=false`, derived by `gen_flash.py` from the env's `-DCANARY_MQTT_PLAIN_ONLY`) and quote this refusal under the select, so neither seeds a mode the board will not connect with | compile-tested; returns with the next size cut or a grown slot |
 | canary-sense | same shared transport | ✅ default | ✅ | ✅ | ✅ | same NVS row; the shared setup portal provisions Wi-Fi only | compile-tested; decision host-tested |
 | canary-vision | same shared transport | ✅ default | ✅ | ✅ | ✅ | same NVS row; the shared setup portal provisions Wi-Fi only | compile-tested; decision host-tested |
+| canary-sentinel (unreleased, F22 Phase 1a) | same shared transport — its `mqtt_mgr.cpp` is canary-sense's, pinned line for line by `firmware/scripts/check_sentinel_net_sync.sh` | ✅ default | ✅ | ✅ | ✅ | the same NVS keys; no flasher offers it yet (no flasher product until its bench checklist is green), and the shared setup portal provisions Wi-Fi only | compile-tested (`canary-sentinel-door` on core 3, `canary-sentinel-lite` on core 2); decision host-tested; not run on hardware |
 | canary-wap | esp_mqtt (ESP-IDF) applying the same decision (staged copy of the header, drift-gated by `check_mqtt_transport_sync.sh`) | ✅ default | ✅ `mqtt.tlsmode=1` + `mqtt.ca` — the device's `/mqtt` page or `POST /api/mqtt/config` | ❌ refused at save time and at connect: esp_mqtt has no fingerprint hook — use the CA mode | ❌ refused at save time and at connect: the pinned Arduino core builds esp-tls without `CONFIG_ESP_TLS_INSECURE` (every chip's sdkconfig in framework-arduinoespressif32-libs 3.3.8), so a session with no verification option fails with `ESP_ERR_INVALID_STATE` — the mode is not offered on the `/mqtt` page | the device's own `/mqtt` page / API (NVS namespace `csi`) | compile-tested (Arduino CLI); decision host-tested |
-| `firmware/canary` (PIO tree, `securacv_mqtt` lib) | same shared transport | ✅ default | ✅ `mqtt_tls=1` + `mqtt_ca` | ✅ `mqtt_tls=2` + `mqtt_fp` | ✅ `mqtt_tls=3` | same NVS row, written by the device itself — the flashers do not seed these rows (`broker_nvs=false`: this tree stores its credentials as blobs/u32, not the fleet's strings). The setup wizard's hub step carries the same *Encryption* select (four modes), CA box, fingerprint field and 8883 suggestion as the flashers; the API is `POST /api/mqtt/config` with optional `tls` (0-3) and `fp`, plus `POST` / `DELETE /api/mqtt/ca` for the PEM (raw body, bounded to the firmware's 3071 bytes), all behind the same bearer gate and rate limit as the other mutating handlers. A save is judged at save time with the shared decision (`mqtt_tls_fields.h`) and refused with the header's own reason when the connect would refuse; `GET /api/mqtt/status` (`tls`, `transport`, `tls_reason`, `ca_set` / `fp_set` presence only) and the serial `m` menu report the transport and the refusal, never the CA, pin or credentials. A reprovision reconnects without a reboot; one request's writes land in ONE NVS session — the pin, then the mode byte, then the credentials (`mqtt_tls_fields::write_order`, host-tested) — with one main-loop reload after the session closes, so the reload can never see a new password next to the old plain mode. The wizard pre-sets its *Encryption* select from `GET /api/mqtt/status` and sends `tls` only when the person changes it (host-tested: `firmware/tests_host/test_canary_setup_page.test.js`), so re-running `/setup` cannot downgrade a TLS unit. Since the 2026-09 security sweep: a config body that moves the link to a **new host or port carries no stored credential** — refused with `400 password_required_for_new_host` when a password is stored and the body gives none, the stored username / password removed unless resupplied otherwise, the same endpoint keeping what the body omitted as before (`mqtt_tls_fields::credential_carry`, host-tested); the device API requires a **`Host` that names this device** (the shared `network/host_guard.h`: a foreign Host gets the page without its token and `403 {"error":"host"}` on every gated route; requests over the Canary's own setup AP are exempt, because its captive DNS answers every name with the AP address); and a stored CA the firmware cannot read back is `409 ca_unreadable` with the DELETE-and-re-upload reason, never a CA-verified mode called Ok. | compile-tested by CI's `release_ha` leg only — the one env that compiles `securacv_mqtt`; decision, the API's field judgment, the credential-carry rule and the Host guard host-tested (`test_mqtt_transport_logic`, `test_mqtt_tls_fields`, `test_host_guard`), the setup page's rendering of a refusal host-tested (`test_canary_setup_page.test.js`); **no bench pass against a TLS broker**, and the Host guard's softAP exemption is likewise not bench-tested |
+| `firmware/canary` (PIO tree, `securacv_mqtt` lib) | same shared transport | ✅ default | ✅ `mqtt_tls=1` + `mqtt_ca` | ✅ `mqtt_tls=2` + `mqtt_fp` | ✅ `mqtt_tls=3` | same NVS row, written by the device itself — the flashers do not seed these rows (`broker_nvs=false`: this tree stores its credentials as blobs/u32, not the fleet's strings). The setup wizard's hub step carries the same *Encryption* select (four modes), CA box, fingerprint field and 8883 suggestion as the flashers; the API is `POST /api/mqtt/config` with optional `tls` (0-3) and `fp`, plus `POST` / `DELETE /api/mqtt/ca` for the PEM (raw body, bounded to the firmware's 3071 bytes), all behind the same bearer gate and rate limit as the other mutating handlers. A save is judged at save time with the shared decision (`mqtt_tls_fields.h`) and refused with the header's own reason when the connect would refuse; `GET /api/mqtt/status` (`tls`, `transport`, `tls_reason`, `ca_set` / `fp_set` presence only) and the serial `m` menu report the transport and the refusal, never the CA, pin or credentials. A reprovision reconnects without a reboot; one request's writes land in ONE NVS session — the pin, then the mode byte, then the credentials (`mqtt_tls_fields::write_order`, host-tested) — with one main-loop reload after the session closes, so the reload can never see a new password next to the old plain mode. The wizard pre-sets its *Encryption* select from `GET /api/mqtt/status` and sends `tls` only when the person changes it (host-tested: `firmware/tests_host/test_canary_setup_page.test.js`), so re-running `/setup` cannot downgrade a TLS unit. Since the 2026-09 security sweep: a config body that moves the link to a **new host or port carries no stored credential** — refused with `400 password_required_for_new_host` when a password is stored and the body gives none, the stored username / password removed unless resupplied otherwise, the same endpoint keeping what the body omitted as before (`mqtt_tls_fields::credential_carry`, host-tested); the device API requires a **`Host` that names this device** (the shared `network/host_guard.h`: a foreign Host gets the page without its token and `403 {"error":"host"}` on every gated route; requests over the Canary's own setup AP are exempt, because its captive DNS answers every name with the AP address); and a stored CA the firmware cannot read back is `409 ca_unreadable` with the DELETE-and-re-upload reason, never a CA-verified mode called Ok. | compile-tested by CI's `release_ha` leg and the compile-only `secure_ha` step (`firmware.yml`), the two CI envs that compile `securacv_mqtt` (`FEATURE_HA_MQTT=1`) — both on the core-2 line (`platform_s3c3`), where its seconds-based `setTimeout(3)` is a connect bound; decision, the API's field judgment, the credential-carry rule and the Host guard host-tested (`test_mqtt_transport_logic`, `test_mqtt_tls_fields`, `test_host_guard`), the setup page's rendering of a refusal host-tested (`test_canary_setup_page.test.js`); **no bench pass against a TLS broker**, and the Host guard's softAP exemption is likewise not bench-tested |
 
 Behavior worth knowing before you flip a mode on:
 
@@ -104,6 +105,34 @@ Behavior worth knowing before you flip a mode on:
   legitimate handshake that needs more than 4 s on an S3 fails there with
   *TLS handshake failed* on the log — the recoverable side of that trade —
   and the first hardware pass should measure it.
+- **The products bound a TLS connect to their 30 s task watchdog.**
+  canary-display, -sense, -vision and -sentinel arm a 30 s task watchdog on
+  the loop that connects, and the core's WiFiClientSecure waits 30 s for
+  the TCP connect under the handshake — the whole watchdog on its own. So
+  the shared transport bounds that connect at 5 s, next to its 15 s
+  handshake: `setTimeout(seconds)` on core 2.x, `setConnectionTimeout(ms)`
+  on core 3.x, where `setTimeout` is `Stream`'s read timeout in
+  milliseconds and would have left the 30 s in place. Each product's
+  `mqtt_mgr.cpp` then `static_assert`s connect + handshake + its
+  PubSubClient socket timeout (the CONNACK wait) under its watchdog:
+  5 + 15 + 5 = 25 s. The display waited PubSubClient's default 15 s for
+  CONNACK, so even with the 5 s connect its TLS attempt would have totaled
+  5 + 15 + 15 = 35 s (60 s with the core's old 30 s connect). Its TLS path
+  now sets the 5 s socket timeout the other three already had; its plain
+  path keeps the core's 3 s connect and the 15 s wait. Outside the asserted
+  25 s: the DNS lookup, `loop()` work between the watchdog feed at its top
+  and the attempt, a CONNECT write stalled on a full send buffer (itself
+  now bounded at 5 s), the compute of the handshake's last step after the
+  15 s check, a CONNACK dribbled byte by byte (PubSubClient applies its
+  socket timeout to each byte, not to the packet), and the status and
+  subscribe writes that follow a successful connect before the next
+  watchdog feed. The same 5 s also bounds any later stalled TLS write on
+  that socket, which used to wait 30 s, and on the display's TLS path every
+  inbound MQTT read in `loop()` now gives up on a stalled byte after 5 s
+  instead of 15 s. These are watchdog-derived numbers, compile-tested by CI
+  on both core lines, not bench-measured: a TCP connect slower than 5 s, or
+  a display TLS CONNACK slower than 5 s, now fails and retries on the
+  backoff where it used to wait.
 - **The Hub's Mosquitto add-on** (installed by the one-command hub plan)
   listens on plain `1883` by default; the broker-side TLS listener is
   performed on request by the plan (`--with broker_tls`): the `broker-tls`
@@ -124,7 +153,13 @@ Gaps still open after this pass:
   MQTT fields at all (pre-existing); the `firmware/canary` tree's own setup
   wizard is the exception, above.
 - `firmware/canary`'s adoption is compile-tested by the `release_ha` leg
-  only and has not run against a TLS broker; its 4 s handshake budget is a
-  watchdog constraint awaiting a bench number.
+  and the compile-only `secure_ha` step, and has not run against a TLS
+  broker; its 4 s handshake budget is a watchdog constraint awaiting a bench
+  number. Its `tls.setTimeout(3)` is a connect bound only on core 2, where
+  every env that compiles `securacv_mqtt` builds today; a core-3 HA env
+  would have to switch to the shared header's `set_connect_timeout_sec()`.
+- The products' 5 s + 15 s + 5 s TLS budget is likewise derived from the
+  watchdog and awaits a bench number: a black-holed and a silent-broker TLS
+  connect, timed on one core-2 and one core-3 product.
 - No bench pass: nothing above has connected to a real TLS broker on
   hardware. The claim is *compile-tested*.
