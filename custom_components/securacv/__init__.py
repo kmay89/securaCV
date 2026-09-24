@@ -845,11 +845,10 @@ def _async_health_for_tofu(hass: HomeAssistant, entry: ConfigEntry):
     threat model includes a hostile broker must pin keys manually
     (Options → Pin a device pubkey) with the key read off the device out
     of band — canary-wap's /enroll page, USB serial `j` on the
-    firmware/canary build and canary-vision; canary-sense and
-    canary-sentinel show only their fingerprint, which can check this pin
-    but not replace it (docs/device_trust.md, "Where each product shows
-    its key") — and should use broker ACLs to restrict who may publish
-    under the prefix.
+    firmware/canary build and canary-vision, the `Ed25519 pubkey` boot
+    line on canary-sense and canary-sentinel (docs/device_trust.md,
+    "Where each product shows its key") — and should use broker ACLs to
+    restrict who may publish under the prefix.
     Subsequent publishes are verified against the pin; the warn-loudly-
     accept policy handles the "device legitimately re-flashed" case.
     """

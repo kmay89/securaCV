@@ -3,10 +3,11 @@
 The pin / rotate / unpin menu used to tell every operator to read the
 fingerprint and pubkey hex off "its /enroll page", but only canary-wap
 serves that route (canary_wap.ino's register_api_routes). The
-firmware/canary build and canary-vision print the key on USB serial; the
-canary-sense and canary-sentinel show only a fingerprint; a canary-display
-has no key at all. docs/device_trust.md ("Where each product shows its
-key") holds the full table, read from source.
+firmware/canary build and canary-vision print the key on USB serial when
+asked (`j`); canary-sense and canary-sentinel print it once at boot, as
+the `Ed25519 pubkey` line; a canary-display has no key at all.
+docs/device_trust.md ("Where each product shows its key") holds the full
+table, read from source.
 
 These tests pin properties the copy has to keep, not its wording:
 
@@ -16,6 +17,9 @@ These tests pin properties the copy has to keep, not its wording:
   monorepo PRODUCT_LINES is held to firmware/flavors.json, so a flavor added
   there without saying here where its key is read fails (the HACS mirror has
   no firmware/ and skips that one cross-check);
+- the pin step names a source for every product that signs and none for
+  the one with no key, and in the monorepo the boot line it names for
+  canary-sense and canary-sentinel is held to their witness.cpp;
 - the pin form's error text claims no rule its validator does not enforce.
 """
 
@@ -33,8 +37,9 @@ from ..config_flow import _looks_like_pubkey_hex
 
 PACKAGE_DIR = Path(__file__).resolve().parent.parent
 STRINGS = PACKAGE_DIR / "strings.json"
-# The monorepo's flavor registry. Absent in the HACS mirror checkout.
-FLAVORS = Path(__file__).resolve().parents[3] / "firmware" / "flavors.json"
+# The monorepo's firmware tree. Absent in the HACS mirror checkout.
+FIRMWARE = Path(__file__).resolve().parents[3] / "firmware"
+FLAVORS = FIRMWARE / "flavors.json"
 
 # Every product line the options menu has to account for: the ones that
 # sign (and so can be pinned) and the display line, which signs nothing.
@@ -46,6 +51,16 @@ PRODUCT_LINES = (
     "canary-sentinel",
     "canary-display",
 )
+
+# The product lines with no signing key, so nothing to pin.
+KEYLESS_LINES = ("canary-display",)
+
+# The products whose only full-key source is a line in the boot log, and
+# the file whose init() prints it.
+BOOT_LINE_WITNESS = {
+    "canary-sense": "projects/canary-sense/src/witness.cpp",
+    "canary-sentinel": "projects/canary-sentinel/src/witness.cpp",
+}
 
 
 def _strings(node: Any, path: str = "") -> Iterator[tuple[str, str]]:
@@ -140,10 +155,44 @@ def test_pubkey_error_claims_no_rule_the_validator_skips() -> None:
     assert "lowercase" not in error.lower(), error
 
 
-def test_pin_step_offers_no_source_for_a_fingerprint_only_product() -> None:
-    # canary-sense and canary-sentinel show only a fingerprint, so the pin
-    # step (which needs the full 64-hex key) must not list them as a source.
+def test_pin_step_names_a_source_for_every_signing_product() -> None:
+    # The pin step needs the full 64-hex key. Every product that signs shows
+    # it somewhere off the network, so each must be named there with its
+    # source; the product with no key must not be offered at all.
     text = _load()["options"]["step"]["pin"]["description"]
-    assert "canary-wap" in text
-    for line in ("canary-sense", "canary-sentinel", "canary-display"):
-        assert line not in text, f"{line} has no full key to paste into the pin step"
+    missing = [
+        line for line in PRODUCT_LINES
+        if line not in KEYLESS_LINES and line not in text
+    ]
+    assert not missing, f"the pin step names no key source for {missing}"
+    for line in KEYLESS_LINES:
+        assert line not in text, f"{line} has no key to paste into the pin step"
+
+
+_BOOT_KEY_PRINT = re.compile(
+    r'printf\(\s*"([^"%]+) %s\\n",\s*device_signature::pubkey_hex\(\)\s*\)'
+)
+
+
+def _init_body(source: str) -> str:
+    start = source.index("\nbool init() {")
+    return source[start:source.index("\n}\n", start)]
+
+
+def test_boot_line_the_copy_names_is_printed_by_the_firmware() -> None:
+    if not FIRMWARE.is_dir():
+        pytest.skip("firmware/ not present (HACS mirror checkout)")
+    step = _load()["options"]["step"]
+    for line, rel in BOOT_LINE_WITNESS.items():
+        body = _init_body((FIRMWARE / rel).read_text(encoding="utf-8"))
+        found = _BOOT_KEY_PRINT.findall(body)
+        assert len(found) == 1, (
+            f"{rel}: init() must print device_signature::pubkey_hex() on one "
+            f"line of its own, or the copy's source for {line} is not there"
+        )
+        for name in ("init", "pin"):
+            text = step[name]["description"]
+            assert f"`{found[0]}`" in text and line in text, (
+                f"options.step.{name} must name the `{found[0]}` boot line "
+                f"that {rel} prints for {line}"
+            )

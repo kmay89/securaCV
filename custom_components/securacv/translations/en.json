@@ -85,7 +85,7 @@
     "step": {
       "init": {
         "title": "Device key management",
-        "description": "Pin, rotate, or unpin a Canary device's Ed25519 public key. Read the key off the device, not over MQTT: a canary-wap shows it on its /enroll page, and the firmware/canary build and canary-vision print it on USB serial (`j`). A canary-sense or canary-sentinel shows only its fingerprint, in its boot log, so compare that with the pinned_fingerprint attribute instead of pinning by hand. A canary-display has no key to pin.",
+        "description": "Pin, rotate, or unpin a Canary device's Ed25519 public key. Read the key off the device, not over MQTT: a canary-wap shows it on its /enroll page, the firmware/canary build and canary-vision print it on USB serial (`j`), and a canary-sense or canary-sentinel prints it on USB serial once at boot, as the `Ed25519 pubkey` line. A canary-display has no key to pin.",
         "menu_options": {
           "pin": "Pin a device pubkey (manual)",
           "rotate": "Rotate a pinned device key",
@@ -94,7 +94,7 @@
       },
       "pin": {
         "title": "Pin device pubkey",
-        "description": "Paste the device_id and the full 64-character Ed25519 pubkey hex, read off the device: the /enroll page on a canary-wap, or the USB serial `j` output on the firmware/canary build or canary-vision.",
+        "description": "Paste the device_id and the full 64-character Ed25519 pubkey hex, read off the device: the /enroll page on a canary-wap, the USB serial `j` output on the firmware/canary build or canary-vision, or the `Ed25519 pubkey` line a canary-sense or canary-sentinel prints on USB serial at boot.",
         "data": {
           "device_id": "Device ID",
           "pubkey_hex": "Public key (hex)"

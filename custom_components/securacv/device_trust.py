@@ -13,10 +13,10 @@ Trust model
 - **Manual pin.** The options flow's "Pin a device pubkey" step takes
   the device_id and the full pubkey hex an installer read off the device
   out of band (canary-wap's `/enroll` page, USB serial on the
-  firmware/canary build and canary-vision; canary-sense and
-  canary-sentinel show only the fingerprint — docs/device_trust.md has
-  the per-product table); that pin takes precedence over any TOFU pin
-  already on record.
+  firmware/canary build and canary-vision, the boot log on canary-sense
+  and canary-sentinel — docs/device_trust.md has the per-product
+  table); that pin takes precedence over any TOFU pin already on
+  record.
 - **Rotation.** An explicit options-flow action lets the operator
   re-pin a new fingerprint after a deliberate key change (e.g. NVS
   wipe). Rotation is logged with the old fp + a timestamp so an
