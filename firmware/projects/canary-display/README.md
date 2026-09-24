@@ -14,7 +14,7 @@ product is a `devices/canary-display-*` manifest, and the envs CI builds are
 | Flavor | Hardware | Where it lives | Env |
 |--------|----------|----------------|-----|
 | **watch** | XIAO ESP32-S3 + Seeed Round Display (1.28" 240×240 GC9A01, CST816S touch) | bedside table, desk | `canary-display-watch` (+ `-watch-modes`) |
-| **dash** | Waveshare ESP32-S3-Touch-LCD-4.3 (800×480 IPS, GT911 5-pt touch) | by the front door, kitchen wall | `canary-display-dash` (+ `-b`, `-rs485`, `-can`, `-vault`, `-sd`, `-rtc`, `-espnow`, `-ble5`, `-modes`, `-mic` on the 4.3 / 4.3B / 4.3C pins) |
+| **dash** | Waveshare ESP32-S3-Touch-LCD-4.3 (800×480 IPS, GT911 5-pt touch) | by the front door, kitchen wall | `canary-display-dash` (+ `-dash-b`, `-dash-rs485`, `-dash-can`, `-dash-vault`, `-dash-sd`, `-dash-rtc`, `-dash-espnow`, `-dash-ble5`, `-dash-modes`, `-dash-mic` on the 4.3 / 4.3B / 4.3C pins) |
 | **playground** | Waveshare ESP32-S3-Touch-LCD-4.3**B** (dash hardware + isolated DI/DO, RS485, CAN, I2C terminals) | the workbench — a safe guided peripheral test mode, no network ([doc](../../../docs/hardware/dev_playground_43b.md)) | `canary-display-playground` |
 | **dash7** | Waveshare ESP32-S3-Touch-LCD-7 (800×480 RGB, GT911 5-pt touch) | the big glass, desk | `canary-display-dash7` |
 | **nightstand7** | the same 7" board, bedside face | bedside | `canary-display-nightstand7` |
@@ -47,10 +47,11 @@ cataloged in
 > enclosures. Pin maps carry VERIFY notes where vendor documentation is thin
 > (CH422G bits, RGB timings, round-display backlight line). The bench-gated
 > defaults stay off in the shipped images until a bench pass: the chime
-> wherever no piezo is populated (`FEATURE_CHIME=0`; the Touch 1.69's buzzer
-> is populated and chimes), the LittleFS time-machine persistence, and the SD
-> archive everywhere but the AMOLED 2.41 (the dash's `-vault` and `-sd` envs
-> compile those two on, as compile checks only). The
+> wherever no piezo is populated (`FEATURE_CHIME=0`; the Touch 1.69's image
+> ships the chime on, `FEATURE_CHIME=1` for its populated buzzer), the
+> LittleFS time-machine persistence, and the SD archive everywhere but the
+> AMOLED 2.41 (`canary-display-dash-vault` and `-dash-sd` compile those two
+> on, as compile checks only). The
 > [bench bring-up runbook](../../../docs/hardware/display_bench_bringup.md)
 > is the step-by-step that clears every VERIFY note and retires this status.
 
@@ -158,10 +159,11 @@ cataloged in
   the card reads on any laptop with a text editor, and popping it out IS the
   export. SDMMC 1-bit (the CS-less path this hardware's expander-routed DAT3
   demands), failure-tolerant like every other tier (no card = nothing
-  changes; hot insert archives from the next event), dash-only for now (the
-  watch slot shares the panel's SPI bus — `fleet/sd_archive.h` has the full
-  story), and bench-gated before the default flips. And on the *sensor* side
-  `canary-wap` now
+  changes; hot insert archives from the next event). It ships on by default
+  only in the AMOLED 2.41's image (a dedicated SDMMC slot); the dash's stays
+  bench-gated before its default flips, and the watch refuses the flag at
+  compile time (its slot shares the panel's SPI bus — `fleet/sd_archive.h`
+  has the full story). And on the *sensor* side `canary-wap` now
   **gossips the broker** (`FEATURE_MDNS_BROKER_GOSSIP`): configure one canary
   and every display self-discovers a provably-reachable broker with zero
   setup ([discovery doc](../../../docs/hardware/display_discovery_and_resilience.md) §5.1).
