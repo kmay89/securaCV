@@ -10,10 +10,10 @@ Trust model
 - **TOFU by default.** First time a device_id appears on MQTT with a
   valid `fp` field, we pin that fingerprint as the trusted identity.
   Subsequent publishes from the same device_id MUST carry the same fp.
-- **Hex case carries no identity.** A canary-wap spells its fingerprint
-  and public key in capitals (`hex_to_str` in canary_wap.ino); every other
-  build, and this module's own derivation, spells them in lowercase. Both
-  name the same bytes, so every fingerprint and key is lowercased
+- **Hex case carries no identity.** A canary-wap on firmware 2.4.15 or
+  older spells its fingerprint and public key in capitals (`hex_to_str` in
+  canary_wap.ino); a later one, every other build, and this module's own
+  derivation spell them in lowercase. Both name the same bytes, so every fingerprint and key is lowercased
   (`normalize_hex`) before it is compared or stored, and stored pins are
   always lowercase.
 - **Manual pin.** The options flow's "Pin a device pubkey" step takes
@@ -159,9 +159,10 @@ def normalize_hex(value: str) -> str:
     """The one spelling HA compares and stores a fingerprint or key in.
 
     Hex is case-free: `7916CA487912FA1B` and `7916ca487912fa1b` are the same
-    8 bytes. The canary-wap writes capitals (canary_wap.ino's `hex_to_str`,
-    the source of its envelope `fp` and its health `public_key`), while the
-    other builds and `fingerprint_from_pubkey_hex` write lowercase. Comparing
+    8 bytes. A canary-wap on firmware 2.4.15 or older writes capitals
+    (canary_wap.ino's `hex_to_str`, the source of its envelope `fp` and its
+    health `public_key` until HA20), while later ones, the other builds and
+    `fingerprint_from_pubkey_hex` write lowercase. Comparing
     the two spellings exactly read every signed canary-wap publish as a key
     mismatch. Everything that reaches a comparison or the store goes through
     here first. Nothing else is stripped or repaired: a value that is not
@@ -331,9 +332,10 @@ class TrustStore:
         the right pin_source. Direct calls are for the config flow's
         manual entry step.
 
-        The key is stored lowercase whatever case it arrived in (a
-        canary-wap's health publish spells it in capitals), so the pin, its
-        derived fingerprint and the audit trail share one spelling.
+        The key is stored lowercase whatever case it arrived in (the
+        health publish of a canary-wap on firmware 2.4.15 or older spells it
+        in capitals), so the pin, its derived fingerprint and the audit
+        trail share one spelling.
         """
         pubkey_hex = normalize_hex(pubkey_hex)
         fp = fingerprint_from_pubkey_hex(pubkey_hex)

@@ -183,8 +183,9 @@ def _verify_with_kind(
         )
     sig_b64, fp, alg = envelope
     # One spelling for the comparison below and for every verdict field: a
-    # canary-wap sends its fp in capitals (canary_wap.ino's `hex_to_str`),
-    # the pin is derived lowercase, and hex case names no different key.
+    # canary-wap on firmware 2.4.15 or older sends its fp in capitals
+    # (canary_wap.ino's `hex_to_str`), the pin is derived lowercase, and hex
+    # case names no different key.
     fp = normalize_hex(fp)
     if alg != ALG_NAME:
         return TrustVerdict(

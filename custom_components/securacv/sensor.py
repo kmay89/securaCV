@@ -1026,8 +1026,9 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
             self._attr_native_value = "healthy"
 
         # Shown lowercase, the spelling the pin and every other HA surface
-        # use: a canary-wap sends its key in capitals, and someone reading
-        # this beside pinned_fingerprint should not have to know that.
+        # use: a canary-wap on firmware 2.4.15 or older sends its key in
+        # capitals, and someone reading this beside pinned_fingerprint
+        # should not have to know that.
         public_key = data.get("public_key", "")
         if isinstance(public_key, str):
             public_key = normalize_hex(public_key)
