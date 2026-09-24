@@ -118,7 +118,7 @@
     },
     "error": {
       "invalid_device_id": "Device ID can't be empty.",
-      "invalid_pubkey_hex": "Public key must be exactly 64 lowercase hex characters.",
+      "invalid_pubkey_hex": "Public key must be exactly 64 hex characters (0-9, a-f, either case), with no spaces or trailing dots.",
       "device_not_pinned": "No pin exists for this device_id.",
       "trust_store_unavailable": "The trust store isn't loaded for this entry — try reloading the integration."
     }

@@ -15,7 +15,8 @@ These tests pin properties the copy has to keep, not its wording:
 - the menu text names each product line in PRODUCT_LINES, and in the
   monorepo PRODUCT_LINES is held to firmware/flavors.json, so a flavor added
   there without saying here where its key is read fails (the HACS mirror has
-  no firmware/ and skips that one cross-check).
+  no firmware/ and skips that one cross-check);
+- the pin form's error text claims no rule its validator does not enforce.
 """
 
 from __future__ import annotations
@@ -26,6 +27,9 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import pytest
+
+from . import conftest  # noqa: F401  (installs/augments ha stubs at import time)
+from ..config_flow import _looks_like_pubkey_hex
 
 PACKAGE_DIR = Path(__file__).resolve().parent.parent
 STRINGS = PACKAGE_DIR / "strings.json"
@@ -123,6 +127,17 @@ def test_product_lines_match_the_flavor_registry() -> None:
         "menu (and docs/device_trust.md) where the new product's key is read, "
         "then list it here"
     )
+
+
+def test_pubkey_error_claims_no_rule_the_validator_skips() -> None:
+    key = "ab" * 32
+    error = _load()["options"]["error"]["invalid_pubkey_hex"]
+    # The form lowercases before it validates, so case never fails a paste,
+    # and the error must not send someone chasing it. canary-wap's serial `i`
+    # prints the key in capitals followed by "...": that fails, on the dots.
+    assert _looks_like_pubkey_hex(key.upper())
+    assert not _looks_like_pubkey_hex(key.upper() + "...")
+    assert "lowercase" not in error.lower(), error
 
 
 def test_pin_step_offers_no_source_for_a_fingerprint_only_product() -> None:
