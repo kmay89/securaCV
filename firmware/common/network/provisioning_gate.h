@@ -28,6 +28,16 @@
 // one consumer across both paths: one page load or one receipt fetch,
 // whichever asks first. A page that got the token already holds the bearer,
 // so its "Save recovery kit" fetch needs no second tap.
+//
+// And one question comes before all of that, on both paths: can the Host the
+// request targeted name this device (network/host_guard.h), or did it arrive
+// over the Canary's own SoftAP, where the name is this device by
+// construction? A foreign Host is decided FIRST — before a grant is read,
+// before the bearer is looked at, before the tap is taken
+// (page_token_decide's and receipt_decide's `foreign_host`). So a page load
+// or a receipt fetch under a name that cannot mean this device neither gets a
+// credential nor spends the tap the owner meant for their own page or app,
+// which the order "grant first, Host after" did not guarantee.
 #pragma once
 
 #include <stddef.h>
@@ -79,8 +89,11 @@ inline void close(State& s) {
 // ── Page-token policy ───────────────────────────────────────────────────────
 
 enum class PageToken : uint8_t {
-  INJECT,    // stream the bearer credential into the page's placeholder
-  WITHHOLD,  // stream the page with an empty credential (the SPA shows how to unlock)
+  INJECT,        // stream the bearer credential into the page's placeholder
+  WITHHOLD,      // stream the page with an empty credential (the SPA shows how to unlock)
+  FOREIGN_HOST,  // the Host cannot name this device: an empty credential, no
+                 // "withheld" hint (no unlock helps under that name), and the
+                 // BOOT tap left unspent
 };
 
 // The order is the order of the reasons a reader sees on the wire: the most
@@ -110,25 +123,61 @@ inline PageToken page_token_policy(bool setup_active, bool bearer_ok,
   return out;
 }
 
-// The page handlers' whole decision. `take_gate` (a callable returning bool:
-// the firmware passes its take() hook) is called only when none of the three
-// standing grants applies, and then exactly once — so a first-boot, bearer
-// or SoftAP load never spends a tap, and a home-LAN load that is unlocked by
-// a tap spends it. An earlier version PEEKED the gate here: one tap then
-// unlocked every page load for the whole TTL, and each of those pages could
-// fetch the receipt (AP password included) with the bearer it had been
-// handed — one tap, any number of consumers, which is the opposite of the
-// contract at the top of this file.
+// The page handlers' whole decision. `foreign_host` is the Host verdict the
+// API gate uses too (the firmware's host_is_foreign: the Host cannot name
+// this device and the request did not arrive over the SoftAP); when it is
+// set the answer is FOREIGN_HOST and nothing else is consulted — no grant,
+// and never the gate, so a load under a foreign name cannot spend a tap.
+// Otherwise `take_gate` (a callable returning bool: the firmware passes its
+// take() hook) is called only when none of the three standing grants
+// applies, and then exactly once — so a first-boot, bearer or SoftAP load
+// never spends a tap, and a home-LAN load that is unlocked by a tap spends
+// it. An earlier version PEEKED the gate here: one tap then unlocked every
+// page load for the whole TTL, and each of those pages could fetch the
+// receipt (AP password included) with the bearer it had been handed — one
+// tap, any number of consumers, which is the opposite of the contract at the
+// top of this file.
 template <typename TakeGate>
-inline PageToken page_token_decide(bool setup_active, bool bearer_ok,
-                                   bool from_ap_subnet, TakeGate take_gate,
+inline PageToken page_token_decide(bool foreign_host, bool setup_active,
+                                   bool bearer_ok, bool from_ap_subnet,
+                                   TakeGate take_gate,
                                    const char** reason = nullptr) {
+  if (foreign_host) {
+    if (reason) *reason = "foreign Host: no token and the BOOT tap left unspent (use the IP, the .local name or a private-suffix alias)";
+    return PageToken::FOREIGN_HOST;
+  }
   if (page_token_policy(setup_active, bearer_ok, from_ap_subnet, false, reason) ==
       PageToken::INJECT) {
     return PageToken::INJECT;
   }
   const bool took = take_gate();
   return page_token_policy(false, false, false, took, reason);
+}
+
+// ── Provisioning-receipt decision ───────────────────────────────────────────
+
+enum class ReceiptVerdict : uint8_t {
+  REFUSE_HOST,    // 403 {"error":"host"}: the bearer unread, the gate untouched
+  SERVE_BEARER,   // a valid bearer: serve the receipt; the gate is left alone
+  SERVE_TAP,      // no bearer, and this request took an unspent BOOT tap: serve
+  REFUSE_NO_TAP,  // no bearer and no tap to take: 403 physical_confirmation_required
+};
+
+// GET /api/provisioning-receipt's whole decision, in the order auth_gate
+// asks its own questions: the Host first (`foreign_host`, the same verdict
+// the gate and the pages use), then a valid bearer, then the tap. Both
+// grants are callables so this function decides WHEN they run: `bearer_ok`
+// is never called for a foreign Host, and `take_gate` (the firmware's take()
+// hook, one atomic exchange) is called at most once, and only when the Host
+// passed and no bearer did. A receipt fetch under a foreign name therefore
+// gets neither the receipt nor the tap, and the owner's own app or page load
+// still finds the tap waiting.
+template <typename BearerOk, typename TakeGate>
+inline ReceiptVerdict receipt_decide(bool foreign_host, BearerOk bearer_ok,
+                                     TakeGate take_gate) {
+  if (foreign_host) return ReceiptVerdict::REFUSE_HOST;
+  if (bearer_ok()) return ReceiptVerdict::SERVE_BEARER;
+  return take_gate() ? ReceiptVerdict::SERVE_TAP : ReceiptVerdict::REFUSE_NO_TAP;
 }
 
 // A netmask is a contiguous run of leading ones: ~mask + 1 is a power of

@@ -3,18 +3,31 @@
 **"A Canary that shows instead of senses."** Fleet status display firmware —
 the answer to *"I shouldn't need my phone to know the house is quiet."*
 
-Two hardware flavors of one app (selection rationale:
-[`docs/hardware/display_research.md`](../../../docs/hardware/display_research.md)):
+One app across the whole display line (selection rationale:
+[`display_research.md`](../../../docs/hardware/display_research.md); the
+bedside boards:
+[`display_nightstand_line.md`](../../../docs/hardware/display_nightstand_line.md)).
+One row per product, plus the playground (a build-only bench image). Each
+product is a `devices/canary-display-*` manifest, and the envs CI builds are
+`firmware/flavors.json`'s; where this table disagrees with them, they win:
 
 | Flavor | Hardware | Where it lives | Env |
 |--------|----------|----------------|-----|
-| **watch** | XIAO ESP32-S3 + Seeed Round Display (1.28" 240×240 GC9A01, CST816S touch) | bedside table, desk | `canary-display-watch` |
-| **dash** | Waveshare ESP32-S3-Touch-LCD-4.3 (800×480 IPS, GT911 5-pt touch) | by the front door, kitchen wall | `canary-display-dash` |
+| **watch** | XIAO ESP32-S3 + Seeed Round Display (1.28" 240×240 GC9A01, CST816S touch) | bedside table, desk | `canary-display-watch` (+ `-watch-modes`) |
+| **dash** | Waveshare ESP32-S3-Touch-LCD-4.3 (800×480 IPS, GT911 5-pt touch) | by the front door, kitchen wall | `canary-display-dash` (+ `-dash-b`, `-dash-rs485`, `-dash-can`, `-dash-vault`, `-dash-sd`, `-dash-rtc`, `-dash-espnow`, `-dash-ble5`, `-dash-modes`, `-dash-mic` on the 4.3 / 4.3B / 4.3C pins) |
 | **playground** | Waveshare ESP32-S3-Touch-LCD-4.3**B** (dash hardware + isolated DI/DO, RS485, CAN, I2C terminals) | the workbench — a safe guided peripheral test mode, no network ([doc](../../../docs/hardware/dev_playground_43b.md)) | `canary-display-playground` |
+| **dash7** | Waveshare ESP32-S3-Touch-LCD-7 (800×480 RGB, GT911 5-pt touch) | the big glass, desk | `canary-display-dash7` |
+| **nightstand7** | the same 7" board, bedside face | bedside | `canary-display-nightstand7` |
+| **nightstand** | Waveshare ESP32-S3-LCD-1.47 (172×320 ST7789, WS2812) | plug-in ambient, USB-A stick | `canary-display-nightstand-s3` |
+| **nightstand-c6** | Waveshare ESP32-C6-LCD-1.47 (the same panel, no PSRAM; broker link plain-only, see below) | nightstand, pin-header | `canary-display-nightstand-c6` |
+| **nightlight** | Waveshare ESP32-C3-LCD-1.47 (180×320 ST7789T; the glass is the lamp) | kid's bedside, pocket case | `canary-display-nightlight-c3` |
+| **touch169** | Waveshare ESP32-S3-Touch-LCD-1.69 (240×280 ST7789V2, CST816T touch) | bedside, the touch member of the nightstand family | `canary-display-touch169` |
+| **amoled241** | Waveshare ESP32-S3-Touch-AMOLED-2.41 (450×600 AMOLED, touch) | the flagship glance glass, no enclosure yet | `canary-display-amoled241` |
 
 Companion docs: [BOM](../../../docs/hardware/bom_canary_display.csv) ·
 [UX design goals](../../../docs/hardware/display_ux_design.md) ·
-enclosures `canary_watch_station.scad` / `canary_dash_display.scad`.
+enclosures: each product's `cad.scad` in its `devices/canary-display-*`
+manifest (the AMOLED 2.41 has none yet).
 
 The playground/dev-mode pair is the first citizen of a five-gear **mode
 system** (fleet / bench / demo / debug / arcade —
@@ -28,10 +41,17 @@ spec's Waves ledger. What plugs into the 4.3B's terminals — and why — is
 cataloged in
 [`display_peripheral_catalog.md`](../../../docs/hardware/display_peripheral_catalog.md).
 
-> ⚠️ **DEV STATUS (v0.1):** compile/CI-verified; **not yet validated on
-> bench hardware** — same status as the matching enclosures. Pin maps carry
-> VERIFY notes where vendor documentation is thin (CH422G bits, RGB
-> timings, round-display backlight line). The
+> ⚠️ **Status:** released (built by CI and offered in both flashers and the
+> signed pull-OTA channel, labeled *compile-tested, never booted*) and **not
+> yet validated on bench hardware**, the same status as the matching
+> enclosures. Pin maps carry VERIFY notes where vendor documentation is thin
+> (CH422G bits, RGB timings, round-display backlight line). The bench-gated
+> defaults stay off in the shipped images until a bench pass: the chime
+> wherever no piezo is populated (`FEATURE_CHIME=0`; the Touch 1.69's image
+> ships the chime on, `FEATURE_CHIME=1` for its populated buzzer), the
+> LittleFS time-machine persistence, and the SD archive everywhere but the
+> AMOLED 2.41 (`canary-display-dash-vault` and `-dash-sd` compile those two
+> on, as compile checks only). The
 > [bench bring-up runbook](../../../docs/hardware/display_bench_bringup.md)
 > is the step-by-step that clears every VERIFY note and retires this status.
 
@@ -139,10 +159,11 @@ cataloged in
   the card reads on any laptop with a text editor, and popping it out IS the
   export. SDMMC 1-bit (the CS-less path this hardware's expander-routed DAT3
   demands), failure-tolerant like every other tier (no card = nothing
-  changes; hot insert archives from the next event), dash-only for now (the
-  watch slot shares the panel's SPI bus — `fleet/sd_archive.h` has the full
-  story), and bench-gated before the default flips. And on the *sensor* side
-  `canary-wap` now
+  changes; hot insert archives from the next event). It ships on by default
+  only in the AMOLED 2.41's image (a dedicated SDMMC slot); the dash's stays
+  bench-gated before its default flips, and the watch refuses the flag at
+  compile time (its slot shares the panel's SPI bus — `fleet/sd_archive.h`
+  has the full story). And on the *sensor* side `canary-wap` now
   **gossips the broker** (`FEATURE_MDNS_BROKER_GOSSIP`): configure one canary
   and every display self-discovers a provably-reachable broker with zero
   setup ([discovery doc](../../../docs/hardware/display_discovery_and_resilience.md) §5.1).
@@ -189,7 +210,14 @@ cataloged in
   momentum, so nothing is ever packed to fit. Input is LVGL-native while
   it is open; the faces' gesture policy is untouched. Doorways: the
   watch's last page (hold), the portrait faces' gear corner (day), the
-  dash's transparency sheet.
+  dash's transparency sheet. On the two 7" flavors that carry the standalone
+  forecast (dash7, nightstand7), a **Location** page under Weather takes the
+  coarse cell on the glass: hemisphere · degrees · tenths wheels per axis,
+  one explicit *Use This Location*, and a *Forget Location* row. The stored
+  ~11 km cell is shown on the glass and never on the LAN page or the API.
+  The wheel helpers are host-tested and the page is compile-tested by CI; no
+  emulator flavor carries it, and it is not bench-tested
+  ([doc](../../../docs/hardware/display_settings.md)).
 
 ## Broker link: TLS (optional, fail-closed)
 

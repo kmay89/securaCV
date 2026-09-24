@@ -463,7 +463,7 @@ jobs:
           fi
           echo "canary-wap size: $SIZE / $SLOT bytes ($((SIZE * 100 / SLOT))% of OTA slot)"
 
-      - name: Compile firmware (Beacon channel + tamper contact gate)
+      - name: Compile firmware (Beacon channel + tamper contact + wander/jitter gate)
         run: |
           # FEATURE_BEACON_CHANNEL is OFF by default, which previously meant
           # beacon_channel.cpp (and every #if FEATURE_BEACON_CHANNEL block in
@@ -473,11 +473,13 @@ jobs:
           # can't silently rot. FEATURE_TAMPER_GPIO rides the same pass for
           # the same reason: the enclosure contact (pinMode, the debounced
           # loop feed, the live selftest probe) is off in every shipped
-          # profile until its pin is bench-validated.
+          # profile until its pin is bench-validated. CSI_WANDER_JITTER
+          # rides it too: the second CSI extractor (csi_wander_jitter.h,
+          # v[28]/v[29]) is 0 in every shipped build until a bench pass.
           arduino-cli compile \
             --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi \
             --libraries firmware/common \
-            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DFEATURE_BEACON_CHANNEL=1 -DFEATURE_TAMPER_GPIO=1 -DBOARD_HAS_PSRAM" \
+            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DFEATURE_BEACON_CHANNEL=1 -DFEATURE_TAMPER_GPIO=1 -DCSI_WANDER_JITTER=1 -DBOARD_HAS_PSRAM" \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
       - name: Compile firmware (DEV profile gate)
@@ -1097,6 +1099,12 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version-file: pyproject.toml
+      - uses: actions/setup-node@v7
+        # Two node runs below: the inline mesh-alerts test and the
+        # `node --test` suites firmware/tests_host's Makefile runs. node from
+        # the runner image moves with the image, like its python3.
+        with:
+          node-version: "22"
 
       - name: Build + run all mesh + ble_scan host tests
         # Each test links the minimum source set it needs. ble_scout.cpp
@@ -1147,7 +1155,7 @@ jobs:
           # The canary web UI's Opera alert list (securacv_webui.cpp): each
           # alert's timestamp_ms is the receiver's uptime, shown as an age
           # against the uptime_ms of the JSON test_mesh_session pins, never
-          # as a date (F33 part 7). node is preinstalled on ubuntu-latest.
+          # as a date (F33 part 7). node is setup-node's 22 (top of the job).
           node --test firmware/tests_host/test_canary_mesh_alerts.test.js
 
           # ble_scan + ble_scout_state — pure-logic, only link
@@ -1901,7 +1909,11 @@ jobs:
         # provisioning_gate.h's page_token_decide (F20 gap #11); the script
         # fails any page call that does not pass page_token_inject(req), a
         # registration inside registerHttpHandlers that does not use its
-        # `server` parameter, and a table larger than kRouteTableSlots.
+        # `server` parameter, a table larger than kRouteTableSlots, any
+        # path that can hand out the token or spend the BOOT tap (auth_gate,
+        # the receipt route, page_token_inject) without deciding the Host
+        # (host_is_foreign) first, and a receipt handler that sends the
+        # receipt on any verdict but an explicit SERVE_BEARER / SERVE_TAP.
         run: |
           python3 firmware/canary/scripts/check_route_security.py
 
@@ -1945,7 +1957,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version-file: pyproject.toml
 
       - name: Run microcopy lint trio
         # Three sub-checks gate every PR that touches the dashboard:

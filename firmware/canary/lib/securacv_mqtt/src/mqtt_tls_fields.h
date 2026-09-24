@@ -146,13 +146,13 @@ inline Verdict plan(const Current& cur, const Request& req, Plan& out) {
 //
 //   the pin (set or cleared)  →  the mode byte  →  the credentials
 //
-// The main task's reload re-reads NVS and reconnects at once, and the two
-// tasks share one NVS handle, so a credential row committed in a session of
-// its own — with the mode byte still to come in a second — is a window in
-// which the link comes up with the NEW password on the OLD (plain) socket,
-// and in which whichever task closes the shared handle first closes it under
-// the other. Writing the mode before the credentials, and stopping at the
-// first failed write, means a later step can only ever land on top of every
+// The main task's reload re-reads NVS and reconnects at once, so a
+// credential row committed in a session of its own — with the mode byte
+// still to come in a second — is a window in which the link comes up with
+// the NEW password on the OLD (plain) socket. (The two tasks share one NVS
+// handle; NvsManager serializes their sessions, so neither can close it
+// under the other.) Writing the mode before the credentials, and stopping at
+// the first failed write, means a later step can only ever land on top of every
 // earlier one: the credentials never sit next to a mode they were not asked
 // for, and a mode never lands without its pin. Sequenced here, pure, so the
 // host test holds the order; securacv_mqtt.cpp's mqtt_save_config walks it.

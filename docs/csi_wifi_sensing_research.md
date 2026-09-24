@@ -34,6 +34,11 @@ three defects. All three are fixed on this branch; the first two are covered by
 host tests, the third by a host-tested policy plus a device path copied from
 esp-csi's own examples.
 
+Since 2026-09 there is one HAL: `firmware/canary/lib/securacv_csi` is a thin
+adapter over `firmware/common/csi`, guarded by
+`firmware/scripts/check_csi_sync.sh`. The "both HALs" below is the state the
+survey found.
+
 1. **The HAL did not compile on the chips the README listed.** ESP-IDF 5.1+
    typedefs `wifi_csi_config_t` to `wifi_csi_acquire_config_t` on the C6 / C5
    / C61 (bitfields `enable`, `acquire_csi_legacy`, `acquire_csi_ht20`, …), and
@@ -103,12 +108,24 @@ esp-csi's own examples.
    rows in `firmware/common/csi/README.md` / `docs/csi_quickstart.md` flip from
    "bench-unverified" to "verified". Nothing else should change.
 2. **Adopt esp-radar's two metrics as first-class features.** `waveform_wander`
-   (slow drift of the per-tone amplitude vector against a baseline) and
-   `waveform_jitter` (frame-to-frame change) map onto our `v[0..7]` and
-   `v[8..11]` bands but are scalar, dimensionless, and have a published
-   calibration recipe (`train_start` in an empty room → thresholds). Adding
-   them to the reserved `v[28..31]` slots keeps the 32-byte contract and gives
-   `core.presence` a second opinion that is already field-proven.
+   (slow drift of the per-tone amplitude vector) and `waveform_jitter`
+   (frame-to-frame change) map onto our `v[0..7]` and `v[8..11]` bands but
+   are scalar and dimensionless. What esp-radar publishes is the training
+   API (`esp_radar_train_start` / `_stop` in an empty room →
+   `someone_threshold`, `move_threshold`), not a calibration recipe: the
+   metric math and how the thresholds are derived ship in the binary
+   component. Adding them to the reserved `v[28..31]` slots keeps the
+   32-byte contract.
+   **Status (2026-09): the host half landed, flag off.** `csi_wander_jitter.h`
+   defines our own versions, measured within one window against no
+   baseline: the standard deviation of the per-frame amplitude centroid
+   (`v[28]`) and the mean frame-to-frame |Δ| of the normalized row
+   (`v[29]`), written only with `-DCSI_WANDER_JITTER=1` (`v[30..31]` stay
+   reserved). Host-tested on synthetic frames; flag off in every shipped
+   build; no bench numbers, no thresholds, not read by any module. Whether
+   they behave like esp-radar's, and any someone / move threshold, are bench
+   items after the bench pass in item 1 and roadmap §5 step 3; see
+   [`csi_modules.md`](csi_modules.md#the-second-extractor-wander-and-jitter).
 3. **Make the Lab's radar model the firmware's.** `canary-local/assets/radar-emu.js`
    models the mmWave Sense product; nothing in the Lab runs the CSI feature
    extractor. Compiling `csi_features.cpp` + `csi_subcarriers.h` to WASM (the

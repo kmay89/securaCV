@@ -69,7 +69,7 @@
 #include <wifi_channel_activity.h>
 #include <ble_events_module.h>
 #include "acoustic_events_module.h"
-#include "airtime_governor.h"      // probe sends reserve routine airtime
+#include "probe_airtime.h"         // probe sends reserve routine airtime
 
 #include "build_config.h"
 /* Unconditional, matching its unconditional registration below: every
@@ -205,7 +205,9 @@ uint32_t                                g_outbound_bytes      = 0;
  *   v[8..11]  phase-Doppler  (4 bands → motion)
  *   v[12..19] breathing FFT  (8 bins  → micro-motion / breath rhythm)
  *   v[20..23] RSSI stats
- *   v[24..31] frame health + reserved
+ *   v[24..27] frame health
+ *   v[28..29] wander / jitter (CSI_WANDER_JITTER builds only; else zero)
+ *   v[30..31] reserved
  * Mirrored, deliberately by-value, in core_presence.cpp / core_breathing.cpp. */
 constexpr int IDX_DOPPLER_BASE   = 8;
 constexpr int IDX_DOPPLER_COUNT  = 4;
@@ -2224,15 +2226,17 @@ constexpr uint32_t WATCHDOG_ESCALATE_AFTER = 3;
  * cannot receive its own transmissions; a solo Canary still needs the
  * home AP's beacons — the dashboard's signal-supply chip says so.)
  *
- * Airtime: at ESP-NOW's 1 Mbps long-preamble fallback rate one probe
- * frame is ~0.66 ms on air (csi_probe.h's honest airtime math), so the
- * 10 Hz idle broadcast costs ~0.66 % of the channel — real, not
- * negligible, and unicast fan-out to a filled peer table would cost
- * far more. Every send therefore reserves against the airtime
- * governor's 2 % routine cap first (Config::airtime_gate below): the
- * probe shares one budget with mesh heartbeats/gossip and chirp
- * presence, and a saturated window skips probe slots instead of
- * degrading the user's WiFi.
+ * Airtime: by the governor's estimate at ESP-NOW's 1 Mbps long-preamble
+ * fallback rate, one framed probe frame (16 B payload + ~59 B framing) is
+ * 792 us (192 us + 8 us a byte; csi_probe.h's hand math says ~0.66 ms), so
+ * the 10 Hz idle broadcast is ~0.8 % of the window — real, not
+ * negligible, and unicast fan-out to a filled peer table would ask for
+ * far more. Every send therefore reserves against the airtime governor's
+ * 2 % routine cap first (Config::airtime_gate below, probe_airtime.h): the
+ * probe shares one budget with mesh heartbeats/gossip and chirp presence,
+ * it starts no frame once the window reads 1.60 % so those keep their
+ * room, and a saturated window skips probe slots instead of degrading the
+ * user's WiFi.
  *
  * The probe shares ESP-NOW with the mesh when FEATURE_MESH_NETWORK is on
  * (csi_probe::init is idempotent against a prior esp_now_init) and brings
@@ -2254,17 +2258,12 @@ void probe_pump() {
     csi_probe::Config pc = csi_probe::Config::defaults();
     pc.broadcast_when_no_peers = true;
     pc.idle_rate_hz            = CSI_PROBE_BROADCAST_HZ;
-    /* Probe frames are routine traffic — they reserve against the same
-     * 2 % cap as mesh heartbeats and chirp presence, never force. The
-     * hook receives the ESP-NOW payload length; add the MAC/action-frame
-     * framing (~59 B — csi_probe.h's honest airtime math) so the tiny
-     * probe payloads aren't undercounted the way pure-payload accounting
-     * would. */
-    pc.airtime_gate = [](uint32_t now, size_t payload_bytes) {
-      constexpr size_t ESPNOW_FRAME_OVERHEAD_BYTES = 59;
-      return airtime_governor::try_reserve_routine(
-          now, payload_bytes + ESPNOW_FRAME_OVERHEAD_BYTES);
-    };
+    /* Probe frames are routine traffic, never forced: framed cost, the
+     * 1.60 % ceiling and the mesh-less governor bring-up are all in
+     * probe_airtime.h (host-tested by test_csi_probe_airtime, which also
+     * pins these two lines). */
+    probe_airtime::ensure_governor();
+    pc.airtime_gate = probe_airtime::reserve_probe_frame;
     if (!csi_probe::init(pc)) return;   /* ESP-NOW not ready — retry */
     csi_probe::start();
     /* Transmitter filter: frames from registered peer Canaries are the
@@ -2279,6 +2278,11 @@ void probe_pump() {
     Serial.printf("[CSI] active probe up — %u Hz ESP-NOW broadcast "
                   "(peer Canaries sense off these frames)\n",
                   (unsigned)CSI_PROBE_BROADCAST_HZ);
+    /* airtime_governor.cpp cannot log (host-compiled); its callers do. */
+    if (!airtime_governor::ring_ok()) {
+      Serial.printf("[CSI] airtime ring alloc failed — probe sends are "
+                    "not governed\n");
+    }
   } else if (csi_hal::is_running()) {
     /* Only spend TX airtime while local sensing runs — if csi_hal is
      * stopped (power policy, watchdog restart window) the radio budget

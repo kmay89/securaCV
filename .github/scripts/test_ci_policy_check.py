@@ -12,6 +12,9 @@ R10 reuses the same tokenizer for "is this job installing a toolchain inline";
 its cases pin that the composite actions' callers (which `source` the emsdk
 env, or pass pins as inputs) are NOT flagged, and that the inline copies the
 rule exists to retire ARE.
+R9's reason half (an explicit `python-version` says why) reads raw text, so
+its cases pin which comment counts as the pin's reason and which line counts
+as a pin at all.
 """
 
 from __future__ import annotations
@@ -193,6 +196,163 @@ class R9LocalCompositeAction(unittest.TestCase):
                   run: echo hi
         """, self.WF % "setup-other")
         self.assertTrue(any("R9" in p and "`build`" in p for p in probs), probs)
+
+
+class R9PythonVersionReason(unittest.TestCase):
+    """R9's reason half: a literal `python-version:` says why, on its line or
+    in a comment above it inside the same step. It reads the raw text, since
+    yaml.safe_load drops comments, so the cases pin what counts as "the same
+    step" and what counts as a pin at all."""
+
+    HEAD = """
+        on: {workflow_dispatch: {}}
+        permissions: {contents: read}
+        jobs:
+          j:
+            runs-on: ubuntu-latest
+            timeout-minutes: 5
+            steps:
+              - uses: actions/checkout@v7
+    """
+
+    def _reasons(self, steps: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as d:
+            path = _write_workflow(d, self.HEAD + textwrap.indent(textwrap.dedent(steps), " " * 10))
+            return cpc.check_python_version_reasons(path, "wf.yml")
+
+    def test_a_bare_pin_is_flagged_with_its_line(self):
+        probs = self._reasons("""
+            - uses: actions/setup-python@v7
+              with:
+                python-version: '3.11'
+        """)
+        self.assertEqual(len(probs), 1, probs)
+        self.assertIn("wf.yml:13: R9", probs[0])
+        self.assertIn("python-version-file: pyproject.toml", probs[0])
+        # the message names where a reason counts, so a comment above the
+        # step's own `- ` line (refused below) is not a mystery
+        self.assertIn("inside the same step", probs[0])
+
+    def test_a_comment_above_the_step_itself_is_not_a_reason(self):
+        # This repo often comments above a step's `- name:` line; for a pin,
+        # that comment sits outside the step and does not count.
+        probs = self._reasons("""
+            # the add-on image's interpreter
+            - name: Set up Python
+              uses: actions/setup-python@v7
+              with:
+                python-version: '3.11'
+        """)
+        self.assertEqual(len(probs), 1, probs)
+        self.assertIn("inside the same step", probs[0])
+
+    def test_a_trailing_comment_is_a_reason(self):
+        self.assertEqual(self._reasons("""
+            - uses: actions/setup-python@v7
+              with:
+                python-version: '3.11'  # the add-on image's interpreter
+        """), [])
+
+    def test_a_comment_above_inside_the_step_is_a_reason(self):
+        for steps in ("""
+            - uses: actions/setup-python@v7
+              with:
+                # the add-on image's interpreter
+                python-version: '3.11'
+        """, """
+            - name: Set up Python
+              # the add-on image's interpreter
+              uses: actions/setup-python@v7
+              with:
+                python-version: "3.11"
+        """):
+            with self.subTest(steps=steps):
+                self.assertEqual(self._reasons(steps), [])
+
+    def test_a_comment_in_another_step_is_not(self):
+        probs = self._reasons("""
+            - run: echo hi
+              # this comment explains the step above, not the pin
+            - uses: actions/setup-python@v7
+              with:
+                python-version: '3.11'
+        """)
+        self.assertEqual(len(probs), 1, probs)
+
+    def test_a_trailing_comment_on_another_line_is_not(self):
+        # An R8 `# v2` on a SHA-pinned uses line names a tag, not a reason.
+        probs = self._reasons("""
+            - uses: actions/setup-python@0123456789abcdef0123456789abcdef01234567 # v5
+              with:
+                python-version: '3.11'
+        """)
+        self.assertEqual(len(probs), 1, probs)
+
+    def test_flow_style_is_a_pin_too(self):
+        self.assertEqual(len(self._reasons("""
+            - uses: actions/setup-python@v7
+              with: {python-version: '3.12'}
+        """)), 1)
+
+    def test_an_expression_and_the_file_form_are_not_pins(self):
+        for steps in ("""
+            - uses: actions/setup-python@v7
+              with:
+                python-version: ${{ inputs.python-version }}
+        """, """
+            - uses: actions/setup-python@v7
+              with:
+                python-version-file: pyproject.toml
+        """, """
+            - uses: actions/setup-python@v7
+              with: {python-version-file: pyproject.toml}
+        """):
+            with self.subTest(steps=steps):
+                self.assertEqual(self._reasons(steps), [])
+
+    def test_a_composite_actions_input_declaration_is_not_a_pin(self):
+        # .github/actions/setup-platformio declares `python-version:` as an
+        # input (a mapping, no value on the line) and passes it on as an
+        # expression; its default carries the reason in its description.
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "action.yml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(textwrap.dedent("""
+                    name: t
+                    inputs:
+                      python-version:
+                        description: why 3.11
+                        default: "3.11"
+                    runs:
+                      using: composite
+                      steps:
+                        - uses: actions/setup-python@v7
+                          with:
+                            python-version: ${{ inputs.python-version }}
+                """))
+            self.assertEqual(cpc.check_python_version_reasons(path, "action.yml"), [])
+
+    def test_the_composite_actions_are_checked_too(self):
+        with tempfile.TemporaryDirectory() as d:
+            adir = os.path.join(d, ".github", "actions", "setup-x")
+            os.makedirs(adir)
+            with open(os.path.join(adir, "action.yml"), "w", encoding="utf-8") as f:
+                f.write(textwrap.dedent("""
+                    name: t
+                    runs:
+                      using: composite
+                      steps:
+                        - uses: actions/setup-python@v7
+                          with:
+                            python-version: '3.11'
+                """))
+            saved = cpc.REPO_ROOT
+            cpc.REPO_ROOT = d
+            try:
+                probs = cpc.check_composite_actions(BASE_POLICY)
+            finally:
+                cpc.REPO_ROOT = saved
+        self.assertTrue(any("R9" in p and "setup-x" in p for p in probs), probs)
 
 
 class R10InlineToolchains(unittest.TestCase):

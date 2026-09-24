@@ -59,8 +59,9 @@ is free for anyone to earn. → [`LICENSE`](../LICENSE) ·
 enable or disable. The same is true of license-plate reading, gait analysis,
 person re-identification, and demographic (age/gender/race) estimation. The
 object classes the system can emit are `Person`, `Vehicle`, `Animal`, `Package`
-— not `Face`, not `LicensePlate`. This is Invariant II, and adding any of it is
-a rejected pull request, not a configuration change.
+(plus `Unknown`, for a detection the backend could not class) — not `Face`,
+not `LicensePlate`. This is Invariant II, and adding any of it is a rejected
+pull request, not a configuration change.
 → [`spec/invariants.md`](../spec/invariants.md)
 
 ### Can someone watch a live feed of my house?
@@ -87,7 +88,20 @@ No. Logs stay local, there is no remote indexing and no telemetry (Invariant
 IV). No account is required to run it. Dependencies that phone home are
 forbidden by policy. → [`AGENTS.md`](../AGENTS.md) dependency policy
 
-The one honest footnote is the iPhone app — see the next question.
+The one honest footnote on the kernel is the iPhone app — see the next
+question. The other footnote is the Canaries themselves: a networked Canary
+talks to the MQTT broker *you* point it at, fetches a small signed update
+manifest once a day (no identifier rides on the request, and nothing installs
+unless you press Install or opt into Auto Update), and a display syncs its
+clock over SNTP and — only if you switch it on at the glass, on a display
+that has never had a hub configured — fetches an anonymous weather forecast.
+A Canary WAP used as its own access point makes no outbound connection at
+all. Every one of those paths is listed in
+[the security model](security/SECURITY_MODEL.md#the-networked-products-disclosed-outbound-paths),
+with the host test that pins its request shape where one exists (SNTP has
+none); none reaches us, because there is nothing of ours to reach. The
+desktop Flasher and Lab fetch their own updates, and any image you choose to
+flash, from the project's public GitHub releases.
 
 ### The iPhone app uses iCloud. Doesn't that contradict all of this?
 
@@ -123,6 +137,39 @@ ever told anything until you invite them. Not signed into
 iCloud at all? The app works locally; iCloud is convenience, never a gate.
 → [iCloud as the backend we don't have](design/cloudkit_backend.md), which also
 argues the parts that are imperfect rather than only the parts that are good
+
+### Is the link from my Canary to the broker encrypted?
+
+**Not by default.** Every Canary with a broker link ships it as plain MQTT,
+so the broker username and password cross your own LAN in the clear until
+you say otherwise. (The flagship's ESP32-CAM, WROOM and Freenove ports are
+built without one.) Every one of those links can be provisioned for TLS
+except the Canary Display nightstand-c6's, which is built plain-only and
+refuses every TLS mode. On the rest, TLS is verified against a CA
+certificate you supply; Canary Display, Canary Sense, Canary Vision and the
+flagship `firmware/canary` build can instead pin the broker certificate's
+SHA-256 fingerprint, and the Canary WAP is CA-only. (A fourth mode, lab,
+skips verification — it is chosen by name and warns on every connect, and
+the WAP refuses it.) You set the mode from the *Broker encryption* select in
+either flasher's broker block (Canary Display, Sense and Vision), on the
+WAP's own `/mqtt` page, or in the flagship's setup wizard or its
+bearer-gated `POST /api/mqtt/config`. Once a flagship is set up, its pages
+carry its API token only to a request that already sends it, after one tap
+of its BOOT button (one tap, one page load), or over the Canary's own WiFi,
+which broadcasts only while the Canary is off your home network; reached by
+a public DNS name, they get no token and a `403`
+([Step 3](homeassistant_setup.md#step-3-configure-the-canary-device) has the
+whole rule). The hub plan adds the broker's TLS listener with
+`--with broker_tls`, from a certificate you already have. An incomplete
+setup — a CA mode with no CA, a pin mode with no pin — refuses to connect
+rather than quietly downgrading to plain.
+
+Honest status: compile-tested by CI and host-tested (the decision, both
+flashers' forms, the wizard, the flagship's page-token rule); not yet run
+against a TLS broker on hardware, and the page-token rule not yet
+bench-tested.
+→ [firmware variant audit](FIRMWARE_VARIANT_AUDIT.md) ·
+[Home Assistant setup, Step 3](homeassistant_setup.md#step-3-configure-the-canary-device)
 
 ### Why are the timestamps deliberately vague?
 

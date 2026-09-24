@@ -12,6 +12,57 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-09-23 (c) — A file an app embeds from outside its directory is an input its watch must name
+
+- **Symptom (caught before it was paid for):** hardening the Pi hub's
+  provisioning executor and host runner changed bytes the desktop Flasher
+  ships. `desktop/hub-io/src/provision.rs` embeds them with `include_str!`,
+  and the Flasher seeds them onto the hub's card. Yet a change to those
+  files alone would have left "Update everything" calling the Flasher
+  unchanged: its watch named `desktop` and the files `build.rs` copies, not
+  these five, and the planner decides "changed" only by a git diff over the
+  watch.
+- **Cause:** the watch follows what `build.rs` copies, and the
+  2026-09-23 (b) test covers the pins files a release workflow reads.
+  Nothing covered a file that a crate the app links by path embeds by
+  literal path from outside the app's directory.
+- **Fix:** the Flasher's watch now names
+  `canary-local/devices/hub_seed.json`,
+  `canary-local/devices/hub_provision_bundle.json`,
+  `canary-local/tools/hub_seed_apply.py`,
+  `canary-local/tools/hub_host_provision.sh` and
+  `homeassistant/frigate/config.yaml`. A new test,
+  `test_release_plan.py`'s
+  `test_every_file_a_desktop_app_embeds_is_in_its_watch`, follows each
+  desktop app's `Cargo.toml` path dependencies transitively. It fails when
+  the target's watch does not cover a linked crate's directory, or a file
+  that an `include_str!`/`include_bytes!` literal in that crate's `src/`
+  names. It sets aside the `concat!(env!("OUT_DIR"), …)` form, which reads a
+  `build.rs` copy the watch comments already track, and fails on any other
+  form it cannot read rather than skipping it.
+- **When that test runs (a gap still open when this was written):** only
+  `workflows-lint.yml` (on a `.github` change) and "Update everything"'s
+  "Self-test the decision engine" step run it. So a PR that adds an
+  unwatched embed or path dependency under `desktop/` or `desktop-lab/`,
+  and touches nothing under `.github`, never runs it. The first failure is
+  then the next press of the button, which dispatches nothing, firmware
+  included. The closing edit is to name the files the test reads (each
+  linked crate's `Cargo.toml` and `src/`) in `workflows-lint.yml`'s two
+  path lists.
+- **What the next press shows:** nothing this change caused. When this
+  was written, the Flasher was already NEEDS_BUMP: `desktop/` had moved since
+  `flasher-v0.11.9` (so had four of the five newly watched files), and
+  `desktop/src-tauri/tauri.conf.json` still said 0.11.9. The new lines add
+  reasons to that state; they do not create it. The lasting effect comes
+  after the next Flasher release: from then on, a change to the hub bundle
+  alone reports the Flasher as changed, where before it reported nothing
+  to do.
+- **Applies to:** the Flasher and the Lab. The Lab already watches all of
+  `canary-local`, `desktop/flash-engine` and `desktop/hub-core`, and the
+  test now pins those two crate lines, since it reaches hub-core only
+  through flash-engine. A future Apple target that bundles a file by path
+  belongs in the same test.
+
 ## 2026-09-23 (b) — A second app bundling the same sidecar is two pins, two udev paths and two configs
 
 - **Symptom (caught before it was paid for):** the Lab gained the Flasher's

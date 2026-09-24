@@ -144,6 +144,11 @@ auto-discovery via its CSI bridge) — see
 | `default` | `make build` | Full-featured, 1s record interval |
 | `mobile` | `make build-mobile` | Power-optimized, 5s interval |
 | `debug` | `make build-debug` | Verbose logging enabled |
+| `usbdrive` | `pio run -e canary-wap-usbdrive` | Opt-in bench build, not a shipping profile: USB-OTG for a branded USB name and a read-only SD "evidence drive" ([`usb_drive_bench.md`](../../../docs/hardware/usb_drive_bench.md)) |
+
+PR CI builds the `default` and `usbdrive` envs with PlatformIO
+(`firmware/flavors.json`); `firmware.yml`'s Arduino CLI legs also compile
+the sketch, the DEV profile `mobile` uses among them.
 
 ## Make Targets
 
@@ -182,30 +187,45 @@ make help               # Show all targets
 |----------|--------|-------------|
 | `/` | GET | Web dashboard |
 | `/api/status` | GET | Device status JSON |
-| `/api/health` | GET | Health metrics |
+| `/api/system` | GET | System metrics (`FEATURE_SYS_MONITOR` builds) |
+| `/api/diagnostics` | GET | Heap snapshot, SD health, degradation level (`FEATURE_SYS_MONITOR` builds) |
 | `/api/config` | GET/POST | Configuration |
 | `/api/logs` | GET | Log export |
-| `/api/witness/export` | GET | Export witness records |
+| `/api/witness` | GET | The newest witness record (sequence, time bucket, type, chain hash); the signed page is `/api/v1/witness` |
 | `/api/v1/witness?last=N` | GET | Newest N signed witness records with their chain-hash pre-image — the shared page contract the phone verifies (`spec/witness_api_v1.md`) |
-| `/api/peek/start` | GET | Start camera stream |
-| `/api/peek/stop` | GET | Stop camera stream |
+| `/api/export` | POST | Writes an export bundle header (device id, firmware, chain position, public key) to the SD card and returns its download URL |
+| `/api/peek/start` | POST | Start camera stream |
+| `/api/peek/stop` | POST | Stop camera stream |
 | `/api/audio/status` | GET | Mic state, mute info, detection counters |
 | `/api/audio/mute` | POST | Hard mute/unmute (`{"muted":bool}`) |
 | `/api/audio/selftest` | GET/POST | Guided alarm self-test (start/stop/progress) |
 | `/api/audio/config` | GET/POST | Room-noise sensitivity (persisted) |
 | `/api/audio/transitions` | GET | Recent sound on/off pattern (diagnostics) |
+| `/api/fleet` | GET/OPTIONS | The coarse fleet roll-call (name, online, chain verdict); the one `/api/` row here that answers without a token ([`DISCOVERY.md`](../../../tvos/discovery/DISCOVERY.md)) |
+| `/api/identify` | POST | Blink + chirp so you can find the unit (`duration_ms`, default ~15 s) |
+| `/api/pairing-qr` | GET | The pairing receipt as a QR: device id, base URL and token, plus `tls_cert_fp` on a TLS-enabled device |
+| `/api/mqtt/config` | GET/POST | Broker host, port, credentials (the password is write-only) and encryption (off, or CA-verified; see Connect above) |
+| `/api/settings` | GET/POST | Presence preset, sensitivity, pet mode, quiet hours, privacy ceiling, `filter_foreign` and the household time zone ([`csi_developer_api.md`](../../../docs/csi_developer_api.md)) |
+
+The table is the common subset, not the whole surface: the sketch registers
+many more routes, the mesh, vault, Wi-Fi, BLE, OTA, presence and CSI families
+among them (the CSI ones are in
+[`docs/csi_developer_api.md`](../../../docs/csi_developer_api.md)).
 
 **Example:**
 ```bash
-curl http://192.168.4.1/api/status
+curl -H "Authorization: Bearer <api-token>" http://192.168.4.1/api/status
 ```
+
+Every `/api/` route above except `/api/fleet` needs the device's API token,
+as a bearer header or the dashboard's session cookie.
 
 ```json
 {
   "device_id": "canary-s3-AB7K",
   "firmware": "2.1.0",
   "uptime_sec": 3600,
-  "sequence": 1234,
+  "chain_seq": 1234,
   "boot_count": 5,
   "sd_healthy": true,
   "crypto_healthy": true

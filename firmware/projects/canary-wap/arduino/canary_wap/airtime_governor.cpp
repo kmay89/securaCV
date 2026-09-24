@@ -1,8 +1,8 @@
 /*
  * SecuraCV Canary — Airtime Governor (implementation)
  *
- * Ring-buffer of recent sends; sum airtime in the rolling window and gate
- * routine traffic against the configured cap.
+ * Ring of recent 100 ms buckets of sends; sum airtime in the rolling window
+ * and gate routine traffic against the configured cap.
  */
 
 #include "airtime_governor.h"
@@ -10,12 +10,37 @@
 
 namespace airtime_governor {
 
-// Ring-buffer capacity. At 1 Mbps and 250-byte max packets we get one
-// "send slot" per ~2 ms; ten seconds of worst-case routine traffic would be
-// 5000 slots, but the routine traffic budget is at most 2% of that. We size
-// the ring to 256 entries which comfortably holds a window's worth of
-// realistic mesh + chirp traffic.
+// The ring holds 100 ms BUCKETS, not sends. record() adds a send to the
+// newest slot when it falls in the same 100 ms of the caller's clock, so
+// the ring covers the most recent 256 non-empty buckets (at least 25.6 s)
+// whatever the reservation rate: the slot it overwrites is always older
+// than the window, and window_airtime_us() never loses in-window airtime.
+//
+// It used to hold one slot per send, sized on the guess that 256 sends
+// "comfortably" cover a window. They do not above 25.6 reservations a
+// second: the oldest in-window sends were overwritten, the window read low
+// and the cap stopped holding. Host-measured on that ring: 200 Hz x 16 B
+// for 10 s was allowed in full and read 0.82 % (true 6.41 %); the CSI
+// probe's framed 75 B frames (792 us) held the 2 % cap only because they
+// cleared the 781.25 us-per-slot line (cap_us / RING_SIZE) by 1.4 %, and
+// a 3 % cap did not hold (12.7 % true, 2.0 % read).
+//
+// A slot's timestamp is its NEWEST send, so a bucket leaves the window
+// with its last send, and every send in [now - 10 s, now] is counted: the
+// window reads 10.0-10.1 s and the cap can only err toward denying. That
+// holds for a reader whose `now` trails the newest send too (the MQTT
+// publish reads snapshot() with the `now` loop() took before the mesh,
+// chirp and probe recorded): a bucket stamped less than one bucket after
+// `now` is counted whole, because a send at or before `now` may sit in it.
+// So the error is upward only, by at most 99 ms of sends at either edge.
+// This assumes one caller clock that does not step back across a bucket
+// (every caller is the loop task's millis()); a step back opens a new
+// slot, which only shortens how far back the ring reaches. Sizing is
+// unchanged: 256 x 8 B = 2 KB of PSRAM (ram_audit.yml).
 static constexpr size_t RING_SIZE = 256;
+static constexpr uint32_t BUCKET_MS = 100;
+static_assert(RING_SIZE * BUCKET_MS > WINDOW_MS + BUCKET_MS,
+              "the bucket ring must span the window plus one bucket");
 
 struct Slot {
   uint32_t ts_ms;
@@ -104,22 +129,42 @@ bool ring_ok() { return g_ring != nullptr; }
 
 static void record(uint32_t now_ms, uint32_t airtime_us) {
   if (!g_ring) return;  /* alloc failed — governor fails open, window reads 0 */
+  if (g_count > 0) {
+    Slot& last = g_ring[(g_head + RING_SIZE - 1) % RING_SIZE];
+    if (last.ts_ms / BUCKET_MS == now_ms / BUCKET_MS) {  /* same 100 ms bucket */
+      /* Keep the bucket's NEWEST send time (signed: a same-bucket step
+       * back keeps the later stamp), so the bucket ages out last. */
+      if (static_cast<int32_t>(now_ms - last.ts_ms) > 0) last.ts_ms = now_ms;
+      last.airtime_us += airtime_us;
+      return;
+    }
+  }
   g_ring[g_head].ts_ms = now_ms;
   g_ring[g_head].airtime_us = airtime_us;
   g_head = (g_head + 1) % RING_SIZE;
   if (g_count < RING_SIZE) g_count++;
 }
 
-// Sum airtime in [now - WINDOW_MS, now].
+// Sum the buckets whose newest send lies in [now - WINDOW_MS, now +
+// BUCKET_MS): every send in the window, plus up to 99 ms of sends that
+// share a bucket with one. The upper edge sits past `now` because a
+// bucket's sends all lie in one 100 ms of the clock (record() coalesces
+// only within it), so a bucket holding a send at or before `now` is
+// stamped at most 99 ms after it; an unsigned age wrapped on such a stamp
+// and dropped a trailing reader's pre-`now` sends with it.
 static uint32_t window_airtime_us(uint32_t now_ms) {
-  // Handle millis() rollover by treating older timestamps as "out of window."
-  // The window is 10 s, well under the 49-day rollover.
+  // Signed age: millis() rollover is handled by the wrap (the window is
+  // 10 s, well under the 49-day rollover), and a stamp just after `now`
+  // reads as a small negative age instead of a huge positive one.
   uint32_t total = 0;
   for (size_t i = 0; i < g_count; i++) {
     const Slot& s = g_ring[i];
     if (s.ts_ms == 0 && s.airtime_us == 0) continue;
-    const uint32_t age = now_ms - s.ts_ms;
-    if (age <= WINDOW_MS) total += s.airtime_us;
+    const int32_t age = static_cast<int32_t>(now_ms - s.ts_ms);
+    if (age > -static_cast<int32_t>(BUCKET_MS) &&
+        age <= static_cast<int32_t>(WINDOW_MS)) {
+      total += s.airtime_us;
+    }
   }
   return total;
 }

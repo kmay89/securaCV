@@ -3,7 +3,7 @@
  * Version 0.1.0
  *
  * Sends low-payload ESP-NOW unicasts to a small set of paired peers at a
- * configurable rate (default 50 Hz per peer). The transmission itself is
+ * configurable rate (default 20 Hz per peer). The transmission itself is
  * the point: each unicast triggers a CSI rx callback on the receiver with
  * a known sender on a pinned channel, so the receiver's 1 Hz feature
  * window (csi_hal/csi_features) becomes deterministic instead of depending
@@ -19,9 +19,12 @@
  * COUPLING:
  *   Standalone — does not depend on csi_hal. ESP-NOW is initialized
  *   lazily on first start(); if some other component already initialized
- *   ESP-NOW, that's fine (init is idempotent). The mesh layer in PR 2
- *   will own peer-list lifecycle; until then, add_peer()/remove_peer()
- *   can be driven from a sketch directly.
+ *   ESP-NOW, that's fine (init is idempotent). Nothing fills the peer
+ *   table today: the canary-wap runs the probe broadcast-only
+ *   (csi_integration.cpp probe_pump), the canary compiles this file but
+ *   never calls it, and each tree's mesh keeps its own ESP-NOW peer list
+ *   without driving this one. A sketch can drive add_peer()/remove_peer()
+ *   directly.
  *
  * BUILD:
  *   Compiles for ESP32-S3 against arduino-esp32 (esp_now.h). Host build
@@ -42,8 +45,9 @@ namespace csi_probe {
  * CONSTANTS
  * ────────────────────────────────────────────────────────────────────────── */
 
-/* Max peers the probe will fan out to. Matches MESH_MAX_PEERS in the
- * mesh_network contract so the two can share a peer list once PR 2 lands. */
+/* Max peers the probe will fan out to. The same 8 as the canary mesh
+ * transport's MESH_TRANSPORT_MAX_PEERS (securacv_mesh/src/mesh_transport.h);
+ * the two tables are separate, and no mesh fills this one (see COUPLING). */
 constexpr size_t CSI_PROBE_MAX_PEERS = 8;
 
 /* MAC address length (no Bluetooth — this is an ESP-NOW peer MAC). */
@@ -80,21 +84,25 @@ struct Config {
 
   /* Aggregate Tx cap across all peers + idle broadcasts, in frames/sec.
    *
-   * Honest airtime math (this comment used to claim 0.6 %, which counted
-   * only the preamble): ESP-NOW sends at the 1 Mbps long-preamble rate
+   * Honest airtime math (this comment once claimed 0.6 %, which counted
+   * only the preamble, and then ≈ 0.66 ms a frame, which left out the
+   * payload's bytes): ESP-NOW sends at the 1 Mbps long-preamble rate
    * unless esp_wifi_config_espnow_rate() says otherwise, and nothing in
-   * this firmware does. One frame is then 192 µs PLCP + ~59 bytes of
-   * MAC/action-frame framing and a 16-byte payload (~470 µs) ≈ 0.66 ms
-   * on air. So a single peer at rate_hz=20 costs ~1.3 % of the 2.4 GHz
-   * channel, and the 200 Hz ceiling below — reached only when ten or
-   * more peers all draw their full 20 Hz — would cost ~13 %. That is
-   * well over airtime_governor's 2 % routine cap (#442), which is why
-   * every send also asks `airtime_gate` below (the integration layer
-   * wires it to airtime_governor::try_reserve_routine — see
-   * csi_integration.cpp's probe_pump). This cap remains the scheduler's
-   * own ceiling: in a build that leaves the gate null (standalone
-   * sketches, host tests), it is the only limit, and 30 Hz is the value
-   * that fits the 2 % budget at 1 Mbps. */
+   * this firmware does. One frame is then 192 µs PLCP + 75 bytes on air
+   * (~59 bytes of MAC/action-frame framing and the 16-byte payload) at
+   * 8 µs a byte: 192 + 75 × 8 = 792 µs. So a single peer at rate_hz=20
+   * costs ~1.6 % of the 2.4 GHz channel; a full table of eight peers at
+   * the default 20 Hz asks for 160 frames/s, ~12.7 %; and the 200 Hz
+   * ceiling below, which only a raised rate_hz reaches, would cost
+   * ~15.8 %. That is well over airtime_governor's 2 % routine cap (#442),
+   * which is why every send also asks `airtime_gate` below (the
+   * integration layer wires it to airtime_governor::try_reserve_routine —
+   * see csi_integration.cpp's probe_pump). This cap remains the
+   * scheduler's own ceiling: in a build that leaves the gate null
+   * (standalone sketches, host tests), it is the only limit, and 25 Hz is
+   * the most that fits the 2 % budget at 1 Mbps (25 × 792 µs is 1.98 %;
+   * 30 Hz would be ~2.4 %). These are arithmetic at the fallback rate,
+   * not a measurement of the air. */
   uint16_t aggregate_cap_hz;
 
   /* If true, when no peers are registered the probe falls back to ESP-NOW
@@ -171,9 +179,9 @@ bool is_paused();
 /* ──────────────────────────────────────────────────────────────────────────
  * PEER REGISTRY
  *
- * Small RAM-only table of up to CSI_PROBE_MAX_PEERS MACs. No persistence —
- * the mesh layer (PR 2) owns the durable peer list and will drive this
- * table.
+ * Small RAM-only table of up to CSI_PROBE_MAX_PEERS MACs. No persistence,
+ * and no caller fills it in either tree today (see COUPLING); the durable
+ * peer lists are the meshes' own.
  * ────────────────────────────────────────────────────────────────────────── */
 
 bool   add_peer(const uint8_t mac[CSI_PROBE_MAC_LEN]);

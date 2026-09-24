@@ -84,7 +84,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | RF presence detection | ❌ | ✅ | ❌ | ❌ | ❌ | ➖ | ✅ |
 | WiFi CSI sensing (motion / breathing / micro-activity) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | CSI module pipeline + privacy chokepoint + 10-min bundler (v1: presence, breathing, ribbon, daily summary, anomaly) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
-| CSI active probe (ESP-NOW unicast at 20 Hz per paired peer, low-rate broadcast while unpaired — 10 Hz on the WAP; deterministic frame rate; not yet airtime-governed, `csi_probe.h`; the WAP drives it — the flagship compiles `csi_probe.cpp` but nothing in its tree calls `csi_probe::init()`) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| CSI active probe (ESP-NOW unicast at 20 Hz per paired peer, low-rate broadcast while unpaired — 10 Hz on the WAP; deterministic frame rate; airtime-governed on the WAP: each send reserves through `airtime_governor` and the probe stops at 1.60 % of its window by the governor's estimate (host-tested), `csi_probe.h`; the WAP drives it — the flagship compiles `csi_probe.cpp` but nothing in its tree calls `csi_probe::init()`) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | Multi-link fusion (2-link confirmation gate, motion direction, breathing median) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | Multipath shimmer filter (RSSI swing >8 dB without Doppler → reject) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | CSI watchdog (5 s silence → rx toggle; 3× escalation → WiFi restart) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |

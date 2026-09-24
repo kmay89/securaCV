@@ -111,9 +111,10 @@ KIOSK_SLUG = "haoskiosk"
 # host-tested; the step has not opened a listener on a real hub and cannot
 # verify that one came up. The option names and the file names are spelled
 # here, and so in the plan's `what` / `options`, and nowhere else in prose —
-# the docs point at this step by its flag, and test_hub_seed_apply.py's
-# BrokerTls gate holds them to it. The port reaches the docs only as the
-# setting a reader types into a Canary.
+# the docs point at this step by its flag, and
+# scripts/tests/test_hub_plan_prose.py (lint.yml, unfiltered) holds them to
+# it. The port reaches the docs only as the setting a reader types into a
+# Canary.
 BROKER_TLS_PORT = 8883
 BROKER_TLS_SSL_DIR = "/ssl"
 BROKER_TLS_OPTIONS = {"certfile": "fullchain.pem", "keyfile": "privkey.pem"}

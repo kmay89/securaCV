@@ -15,11 +15,26 @@
 #include <Preferences.h>
 #include <stdint.h>
 #include <stddef.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
+#include "nvs_session_depth.h"
 
 // ════════════════════════════════════════════════════════════════════════════
 // NVS MANAGER
 // ════════════════════════════════════════════════════════════════════════════
 
+// One Preferences handle on NVS_MAIN_NS, shared by every task that calls it
+// (the loop, the httpd task serving the API, the pull-OTA task). Sessions are
+// serialized across tasks: begin() takes a recursive mutex and keeps it until
+// the matching end(), so another task's begin() waits for it (at most
+// nvs_session::kSessionWaitMs, then returns false — fail soft, the way a
+// failed Preferences::begin always could) and another task's end() cannot
+// close it. Nesting on one task is counted (nvs_session_depth.h, host-tested):
+// only the outermost end() closes the handle, and a read-write session inside
+// a read-only one reopens it read-write. An end() from a task with no session
+// is a no-op. The accessors below are valid only between the calling task's
+// begin() and end(); isOpen()/isReadOnly() describe that task's session.
 class NvsManager {
 public:
   static NvsManager& instance();
@@ -29,8 +44,8 @@ public:
   bool beginReadWrite() { return begin(false); }
   void end();
 
-  bool isOpen() const { return m_open; }
-  bool isReadOnly() const { return m_readOnly; }
+  bool isOpen() const { return m_session.open; }
+  bool isReadOnly() const { return m_session.read_only; }
 
   // Boolean operations
   bool getBool(const char* key, bool defaultValue = false);
@@ -70,8 +85,13 @@ private:
   ~NvsManager();
 
   Preferences m_prefs;
-  bool m_open;
-  bool m_readOnly;
+  // Created in the constructor. Null only if creation failed (heap
+  // exhaustion at first use); NvsManager then proceeds unlocked, the
+  // pre-lock behavior, as the camera lifecycle lock does.
+  SemaphoreHandle_t m_lock;
+  // Changed only by the task holding m_lock (or, with no lock, by whoever
+  // calls): the depth of that task's sessions and the handle's mode.
+  nvs_session::State m_session;
 };
 
 // ════════════════════════════════════════════════════════════════════════════

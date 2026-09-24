@@ -74,6 +74,14 @@ static PubSubClient mqtt(wifiClient);
 // is readable: this object hands back a plain WiFiClient or a configured
 // WiFiClientSecure per the provisioned TLS mode (network/mqtt_transport.h).
 static canary::net::mqtt_tls::BrokerTransport s_broker_tls;
+// The CONNACK wait on a TLS socket (PubSubClient's own default is 15 s). One
+// TLS attempt is connect + handshake + this, and it must fit inside the task
+// watchdog. A plain socket keeps the defaults: the core's 3 s connect, then
+// PubSubClient's 15 s.
+static constexpr uint16_t MQTT_SOCKET_TIMEOUT_SEC = 5;
+static_assert(canary::net::mqtt_tls::kConnectTimeoutSec + canary::net::mqtt_tls::kHandshakeTimeoutSec +
+                  MQTT_SOCKET_TIMEOUT_SEC < CD_WATCHDOG_TIMEOUT_SEC,
+              "one bounded broker connect must fit inside the task watchdog");
 #endif
 #if CANARY_MQTT_PLAIN_ONLY_GUARD
 // The provisioned mode byte (NVS "securacv"/"mqtt_tls", the same key the
@@ -531,6 +539,7 @@ void mqtt_init(const Topics& topics) {
   {
     const auto& tls = s_broker_tls.load("securacv");
     mqtt.setClient(s_broker_tls.client());
+    if (tls.tls()) mqtt.setSocketTimeout(MQTT_SOCKET_TIMEOUT_SEC);  // plain keeps its 3 s + 15 s
     log_header("MQTT");
     canary::dbg_serial().printf("Broker transport: %s\n", s_broker_tls.name());
     if (!tls.allowed()) log_line("MQTT", canary::net::mqtt_tls::reason_text(tls.reason));

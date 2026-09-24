@@ -486,3 +486,60 @@ clean-revocation:
 
 run: run-revocation
 clean: clean-revocation
+
+# The CSI active probe under the airtime governor (the follow-up to sweep F4,
+# #1696), end to end — the REAL csi_probe scheduler (the sketch's staged copy,
+# CSI_TEST_HOST_BUILD), the REAL airtime_governor and the gate body the WAP
+# installs (probe_airtime.h), against an independent send ledger: the window
+# never reads below the ledger, the probe stops at its 1.60 % ceiling and the
+# mesh heartbeat keeps its room. Also reads the real csi_integration.cpp
+# (beacon_source_scan.h; its path is passed in, so the pin fails closed) to
+# pin that probe_pump installs exactly probe_airtime::reserve_probe_frame.
+PROBE_AIR_BIN     = test_csi_probe_airtime
+PROBE_AIR_SOURCES = test_csi_probe_airtime.cpp \
+                    $(SRC_DIR)/csi_probe.cpp \
+                    $(SRC_DIR)/airtime_governor.cpp
+
+$(PROBE_AIR_BIN): $(PROBE_AIR_SOURCES) $(SRC_DIR)/probe_airtime.h $(SRC_DIR)/csi_probe.h $(SRC_DIR)/airtime_governor.h $(SRC_DIR)/csi_integration.cpp beacon_source_scan.h
+	$(CXX) $(CXXFLAGS) -Werror -DCSI_TEST_HOST_BUILD -I $(SRC_DIR) -DCSI_INTEGRATION_CPP='"$(abspath $(SRC_DIR))/csi_integration.cpp"' -o $@ $(PROBE_AIR_SOURCES)
+
+.PHONY: run-probe-airtime clean-probe-airtime
+run-probe-airtime: $(PROBE_AIR_BIN)
+	./$(PROBE_AIR_BIN)
+clean-probe-airtime:
+	rm -f $(PROBE_AIR_BIN)
+
+run: run-probe-airtime
+clean: clean-probe-airtime
+
+# Roadmap §5 step 4, host half: the second CSI feature extractor —
+# amplitude-centroid wander → v[28], frame-to-frame jitter → v[29] — behind
+# CSI_WANDER_JITTER, which is 0 in every shipped build.
+# test_csi_wander_jitter pins the header's exact math and edges (pure
+# header, no Arduino glue). test_csi_features_wj recompiles the REAL staged
+# csi_features.cpp and the physics suite with the flag ON, where the
+# synthetic-channel pins live; test_csi_features above stays the flag-off
+# build and asserts v[28..31] read zero. Hooked into `run` and `clean` by
+# prerequisite so it adds no hunk to their lists.
+CSI_WJ_BIN      = test_csi_wander_jitter
+CSI_WJ_SRC      = test_csi_wander_jitter.cpp
+CSI_FEAT_WJ_BIN = test_csi_features_wj
+
+$(CSI_WJ_BIN): $(CSI_WJ_SRC) $(SRC_DIR)/csi_wander_jitter.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(CSI_WJ_SRC)
+
+$(CSI_FEAT_WJ_BIN): $(CSI_FEAT_SOURCES) $(SRC_DIR)/csi_wander_jitter.h
+	$(CXX) $(CXXFLAGS) -Werror -DCSI_WANDER_JITTER=1 -I stubs/csi -I $(SRC_DIR) -o $@ $(CSI_FEAT_SOURCES)
+
+# The flag-off build includes the header too (isqrt_u32 lives there).
+$(CSI_FEAT_BIN): $(SRC_DIR)/csi_wander_jitter.h
+
+.PHONY: run-wander-jitter clean-wander-jitter
+run-wander-jitter: $(CSI_WJ_BIN) $(CSI_FEAT_WJ_BIN)
+	./$(CSI_WJ_BIN)
+	./$(CSI_FEAT_WJ_BIN)
+clean-wander-jitter:
+	rm -f $(CSI_WJ_BIN) $(CSI_FEAT_WJ_BIN)
+
+run: run-wander-jitter
+clean: clean-wander-jitter
