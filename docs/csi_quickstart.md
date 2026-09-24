@@ -131,7 +131,8 @@ value. That's WiFi sensing on a $15 board, no camera, no cloud.
   wander in `v[28]`, frame-to-frame jitter in `v[29]`), visible only in the
   raw P2 window. It is host-tested on synthetic frames; the flag is off in
   every shipped build; there are no bench numbers and no thresholds, and no
-  module reads it — so nothing you see on the dashboard depends on it. See
+  module reads it. In a shipped build nothing on the dashboard depends on
+  it; a flag-on build only adds two cells to the Tinker heatmap. See
   [`csi_modules.md`](csi_modules.md#the-second-extractor-wander-and-jitter).
 
 The dashboard's `?` affordance opens a "What it can / can't see" sheet

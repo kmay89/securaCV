@@ -20,13 +20,19 @@
  * WITHIN-WINDOW ONLY. There is no baseline, no empty-room reference and no
  * memory across windows: reset() runs at every window close. So a room
  * whose multipath profile is tilted but still reads wander ≈ 0 — position
- * is not motion — and only a profile that MOVES during the window scores.
+ * is not motion. Anything that CHANGES the rows during the window raises
+ * both slots: motion, and front-end noise too. On the host fixture 8 LSB
+ * of extra I/Q noise on a still channel reads about half the moving
+ * scatterer's wander and more than its jitter, so neither slot is a
+ * motion-only reading. A frame with no centroid still counts toward
+ * jitter (see accumulate()): one all-zero frame in a steady window reads
+ * jitter about like the moving scatterer.
  *
- * Jitter's floor depends on amplitude. Normalization rescales the
- * quantization noise with the row, so a weak link (small I/Q magnitudes)
- * has a higher still-room jitter than a strong one: on the host fixture a
+ * Both floors depend on amplitude. Normalization rescales the quantization
+ * noise with the row, so a weak link (small I/Q magnitudes) has a higher
+ * still-room wander AND jitter than a strong one: on the host fixture a
  * link at 0.35× gain reads about like 2 LSB of extra I/Q noise on a full
- * one. Read jitter against the same link's own still reading, never
+ * one. Read either slot against the same link's own still reading, never
  * against a fixed number.
  *
  * NO THRESHOLD is defined here or anywhere else, and no module reads
