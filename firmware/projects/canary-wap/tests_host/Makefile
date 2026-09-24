@@ -742,3 +742,51 @@ clean-sketch-logic:
 
 run: run-sketch-logic
 clean: clean-sketch-logic
+
+# NvsManager's cross-task session lock (nvs_store.h, sweep F53). The sketch's
+# one settings handle is opened by five tasks (loop, httpd, NimBLE host,
+# Bluetooth bring-up, QR scan); nvs_store.h holds a recursive FreeRTOS mutex
+# from begin() to the matching end(), counting nested sessions with the
+# staged nvs_session_depth.h (canonical in firmware/common/storage/,
+# check_csi_sync.sh). test_nvs_store_lock compiles the REAL nvs_store.h over
+# stubs/nvs_store (Serial, String, a typed Preferences that refuses a double
+# begin and counts closed-handle access) and the canary suite's fake
+# recursive mutex, and runs the canary's scenarios on the WAP's code plus its
+# nvs_store:: helpers and legacy wrappers; it also reads canary_wap.ino for
+# the watchdog static_assert. Built twice: the _nolock binary is the first
+# instance() meeting a failed mutex creation. test_nvs_session_balance reads
+# every sketch source and fails on a block that opens a session and does not
+# close it (the vault's pre-F53 shape). Hooked into `run` and `clean` by
+# prerequisite so it adds no hunk to their lists.
+NVSLOCK_BIN        = test_nvs_store_lock
+NVSLOCK_NULL_BIN   = test_nvs_store_lock_nolock
+NVSBAL_BIN         = test_nvs_session_balance
+NVSLOCK_SRC        = test_nvs_store_lock.cpp
+NVSBAL_SRC         = test_nvs_session_balance.cpp
+NVSLOCK_FREERTOS   = ../../../tests_host/stubs/nvs_manager
+NVSLOCK_DEPS       = $(NVSLOCK_SRC) $(SRC_DIR)/nvs_store.h $(SRC_DIR)/nvs_session_depth.h \
+                     $(SRC_DIR)/canary_wap.ino $(wildcard stubs/nvs_store/*.h) \
+                     $(wildcard $(NVSLOCK_FREERTOS)/freertos/*.h)
+NVSLOCK_FLAGS      = -Werror -I stubs/nvs_store -I $(NVSLOCK_FREERTOS) -I $(SRC_DIR) \
+                     -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"'
+
+$(NVSLOCK_BIN): $(NVSLOCK_DEPS)
+	$(CXX) $(CXXFLAGS) $(NVSLOCK_FLAGS) -o $@ $(NVSLOCK_SRC)
+
+$(NVSLOCK_NULL_BIN): $(NVSLOCK_DEPS)
+	$(CXX) $(CXXFLAGS) $(NVSLOCK_FLAGS) -DNVS_STORE_TEST_NULL_LOCK -o $@ $(NVSLOCK_SRC)
+
+# The scan reads the directory at run time, so it re-runs on every `make`.
+$(NVSBAL_BIN): $(NVSBAL_SRC)
+	$(CXX) $(CXXFLAGS) -Werror -DCANARY_WAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' -o $@ $(NVSBAL_SRC)
+
+.PHONY: run-nvs-lock clean-nvs-lock
+run-nvs-lock: $(NVSLOCK_BIN) $(NVSLOCK_NULL_BIN) $(NVSBAL_BIN)
+	./$(NVSLOCK_BIN)
+	./$(NVSLOCK_NULL_BIN)
+	./$(NVSBAL_BIN)
+clean-nvs-lock:
+	rm -f $(NVSLOCK_BIN) $(NVSLOCK_NULL_BIN) $(NVSBAL_BIN)
+
+run: run-nvs-lock
+clean: clean-nvs-lock

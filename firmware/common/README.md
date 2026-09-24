@@ -35,7 +35,8 @@ common/
 │   ├── gnss_time.h
 │   └── gps_privacy.h
 ├── storage/        # Unified storage
-│   └── storage.h
+│   ├── sd_mount_policy.h    # SD mount-recovery decisions: when to remount, tear down or declare the card lost (host-tested)
+│   └── nvs_session_depth.h  # NvsManager's per-task session count under its cross-task lock (host-tested)
 ├── network/        # Network modules
 │   ├── provision_core.h
 │   ├── wifi_join_policy.h

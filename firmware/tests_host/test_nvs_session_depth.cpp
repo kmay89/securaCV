@@ -1,5 +1,5 @@
 /* Host tests for NvsManager's session depth
- * (firmware/canary/lib/securacv_crypto/src/nvs_session_depth.h).
+ * (firmware/common/storage/nvs_session_depth.h).
  *
  * NvsManager is the canary's one shared Preferences handle. Three tasks open
  * sessions on it after setup (the loop, the httpd task serving the API, the
@@ -24,14 +24,14 @@
  * envs and has not run on a bench.
  *
  * Build & run (via firmware/tests_host/Makefile, mirrors the CI contract):
- *   g++ -std=c++17 -Wall -Wextra -Werror -I ../canary/lib/securacv_crypto/src \
- *       -I ../canary/include test_nvs_session_depth.cpp
+ *   g++ -std=c++17 -Wall -Wextra -Werror -I ../common -I ../canary/include \
+ *       test_nvs_session_depth.cpp
  */
 #include <cstdint>
 #include <cstdio>
 
 #include "canary_config.h"  // WATCHDOG_TIMEOUT_SEC — the loop's task watchdog
-#include "nvs_session_depth.h"
+#include "storage/nvs_session_depth.h"
 
 static int g_failures = 0;
 #define CHECK(cond)                                                      \
