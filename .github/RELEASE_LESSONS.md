@@ -17,10 +17,11 @@ any platform.
 - **Symptom (caught before it was paid for):** hardening the Pi hub's
   provisioning executor and host runner changed bytes the desktop Flasher
   ships. `desktop/hub-io/src/provision.rs` embeds them with `include_str!`,
-  and the Flasher seeds them onto the hub's card. Even so, "Update
-  everything" would have called the Flasher unchanged: its watch named
-  `desktop` and the files `build.rs` copies, not these five, and the planner
-  decides "changed" only by a git diff over the watch.
+  and the Flasher seeds them onto the hub's card. Yet a change to those
+  files alone would have left "Update everything" calling the Flasher
+  unchanged: its watch named `desktop` and the files `build.rs` copies, not
+  these five, and the planner decides "changed" only by a git diff over the
+  watch.
 - **Cause:** the watch follows what `build.rs` copies, and the
   2026-09-23 (b) test covers the pins files a release workflow reads.
   Nothing covered a file that a crate the app links by path embeds by
@@ -39,11 +40,23 @@ any platform.
   names. It sets aside the `concat!(env!("OUT_DIR"), …)` form, which reads a
   `build.rs` copy the watch comments already track, and fails on any other
   form it cannot read rather than skipping it.
-- **What the next press shows:** the newly watched files moved after the
-  last `flasher-v` tag, so the first "Update everything" after this lands
-  reports the Flasher as changed: NEEDS_BUMP while
-  `desktop/src-tauri/tauri.conf.json` still carries the tagged version, a
-  release once it is bumped. That is the point of the fix, not a new fault.
+- **When that test runs (a gap still open when this was written):** only
+  `workflows-lint.yml` (on a `.github` change) and "Update everything"'s
+  "Self-test the decision engine" step run it. So a PR that adds an
+  unwatched embed or path dependency under `desktop/` or `desktop-lab/`,
+  and touches nothing under `.github`, never runs it. The first failure is
+  then the next press of the button, which dispatches nothing, firmware
+  included. The closing edit is to name the files the test reads (each
+  linked crate's `Cargo.toml` and `src/`) in `workflows-lint.yml`'s two
+  path lists.
+- **What the next press shows:** nothing this change caused. When this
+  was written, the Flasher was already NEEDS_BUMP: `desktop/` had moved since
+  `flasher-v0.11.9` (so had four of the five newly watched files), and
+  `desktop/src-tauri/tauri.conf.json` still said 0.11.9. The new lines add
+  reasons to that state; they do not create it. The lasting effect comes
+  after the next Flasher release: from then on, a change to the hub bundle
+  alone reports the Flasher as changed, where before it reported nothing
+  to do.
 - **Applies to:** the Flasher and the Lab. The Lab already watches all of
   `canary-local`, `desktop/flash-engine` and `desktop/hub-core`, and the
   test now pins those two crate lines, since it reaches hub-core only
