@@ -8,20 +8,29 @@ canary-sense and canary-sentinel show only a fingerprint; a canary-display
 has no key at all. docs/device_trust.md ("Where each product shows its
 key") holds the full table, read from source.
 
-These tests pin the two properties the copy has to keep, not its wording:
-/enroll is never offered as anyone's source but canary-wap's, and the menu
-text accounts for every product line, so adding a product without saying
-where its key is read fails here.
+These tests pin properties the copy has to keep, not its wording:
+
+- every clause that offers /enroll names canary-wap and no other product,
+  and no "any" / "each device" style word that would widen it again;
+- the menu text names each product line in PRODUCT_LINES, and in the
+  monorepo PRODUCT_LINES is held to firmware/flavors.json, so a flavor added
+  there without saying here where its key is read fails (the HACS mirror has
+  no firmware/ and skips that one cross-check).
 """
 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Iterator
 
+import pytest
+
 PACKAGE_DIR = Path(__file__).resolve().parent.parent
 STRINGS = PACKAGE_DIR / "strings.json"
+# The monorepo's flavor registry. Absent in the HACS mirror checkout.
+FLAVORS = Path(__file__).resolve().parents[3] / "firmware" / "flavors.json"
 
 # Every product line the options menu has to account for: the ones that
 # sign (and so can be pinned) and the display line, which signs nothing.
@@ -47,16 +56,50 @@ def _load() -> dict[str, Any]:
     return json.loads(STRINGS.read_text(encoding="utf-8"))
 
 
+# A clause ends at any of these; "/enroll" contains none of them.
+_CLAUSE_BREAK = re.compile(r"[.,;:()]")
+# Words that would widen an /enroll clause back to every device.
+_WIDENING = re.compile(r"\b(any|each|every|all|other)\b", re.IGNORECASE)
+
+
+def _enroll_offenders(data: dict[str, Any]) -> list[tuple[str, str]]:
+    out = []
+    for path, text in _strings(data):
+        for clause in _CLAUSE_BREAK.split(text):
+            if "/enroll" not in clause:
+                continue
+            named = {line for line in PRODUCT_LINES if line in clause}
+            if named != {"canary-wap"} or _WIDENING.search(clause):
+                out.append((path, clause.strip()))
+    return out
+
+
 def test_enroll_is_offered_only_as_canary_wap_source() -> None:
-    offenders = [
-        path
-        for path, text in _strings(_load())
-        if "/enroll" in text and "canary-wap" not in text
-    ]
+    offenders = _enroll_offenders(_load())
     assert not offenders, (
-        f"{offenders} send operators to /enroll without saying only canary-wap "
-        "serves it — the other products have no such route"
+        f"{offenders}: a clause that offers /enroll must name canary-wap and "
+        "nothing wider; the other products have no such route"
     )
+
+
+def test_enroll_check_catches_the_claim_it_replaced() -> None:
+    # The two descriptions as they read before this test existed. Both have
+    # "canary-wap" somewhere in the string, which is why a whole-string check
+    # passed them; the clause check must not.
+    old = {
+        "init": (
+            "Read each device's fingerprint and pubkey hex from its /enroll "
+            "page on the local network (canary-wap, firmware/canary, "
+            "canary-vision, canary-sense, canary-sentinel, canary-display)."
+        ),
+        "pin": (
+            "Paste the device_id and full 64-character Ed25519 pubkey hex "
+            "shown on the device's /enroll page (any canary-wap or other Canary)."
+        ),
+        "widened": "the /enroll page on a canary-wap or any other Canary",
+    }
+    flagged = {path for path, _ in _enroll_offenders(old)}
+    assert flagged == {"init", "pin", "widened"}
 
 
 def test_options_menu_names_every_product_line() -> None:
@@ -65,6 +108,20 @@ def test_options_menu_names_every_product_line() -> None:
     assert not missing, (
         f"the options menu does not say where {missing} show their key "
         "(or that they have none); see docs/device_trust.md"
+    )
+
+
+def test_product_lines_match_the_flavor_registry() -> None:
+    if not FLAVORS.exists():
+        pytest.skip("firmware/flavors.json not present (HACS mirror checkout)")
+    flavors = json.loads(FLAVORS.read_text(encoding="utf-8"))
+    # The flagship's flavor is named "canary"; the copy calls it by its
+    # directory, firmware/canary, since "canary" alone names every product.
+    names = {"firmware/canary" if f["name"] == "canary" else f["name"] for f in flavors}
+    assert names == set(PRODUCT_LINES), (
+        "firmware/flavors.json and PRODUCT_LINES disagree: say in the options "
+        "menu (and docs/device_trust.md) where the new product's key is read, "
+        "then list it here"
     )
 
 
