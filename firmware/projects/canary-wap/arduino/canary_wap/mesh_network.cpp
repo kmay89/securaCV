@@ -578,9 +578,11 @@ static constexpr size_t signed_frame_bytes(size_t payload_len) {
   return WIRE_HEADER_BYTES + payload_len + SIGNATURE_SIZE;
 }
 
-// broadcast_message() unicasts to every peer at PEER_CONNECTED or later, so
-// a broadcast is this many frames.
-static uint16_t connected_peer_count() {
+// broadcast_message() unicasts to every peer at PEER_CONNECTED or later —
+// every authenticated peer, whether connected, stale, offline or alerting —
+// so a broadcast is this many frames. Same loop, same predicate
+// (test_mesh_coexistence pins the two together).
+static uint16_t broadcast_peer_count() {
   uint16_t n = 0;
   for (uint8_t i = 0; i < g_peer_count; i++) {
     if (g_peers[i].state >= PEER_CONNECTED) n++;
@@ -1938,10 +1940,10 @@ bool broadcast_tamper_alert(AlertType type, LogLevel severity, uint32_t witness_
 
   g_alerts_sent++;
   // Tamper alerts are urgent — bypass the routine airtime cap but still
-  // record their cost (one signed frame per connected peer) so telemetry
-  // reflects reality.
+  // record their cost (one signed frame per peer broadcast_message reaches)
+  // so telemetry reflects reality.
   airtime_governor::force_reserve_urgent(millis(),
-      signed_frame_bytes(sizeof(payload)), connected_peer_count());
+      signed_frame_bytes(sizeof(payload)), broadcast_peer_count());
   return broadcast_message(MSG_TAMPER_ALERT, (uint8_t*)&payload, sizeof(payload));
 }
 
@@ -1957,7 +1959,7 @@ bool broadcast_power_alert(AlertType type, uint16_t voltage_mv, uint16_t estimat
 
   g_alerts_sent++;
   airtime_governor::force_reserve_urgent(millis(),
-      signed_frame_bytes(sizeof(payload)), connected_peer_count());
+      signed_frame_bytes(sizeof(payload)), broadcast_peer_count());
   return broadcast_message(MSG_POWER_ALERT, (uint8_t*)&payload, sizeof(payload));
 }
 
@@ -2027,9 +2029,9 @@ void send_heartbeat() {
   // cap. The peer-stale timer (90 s) is long enough to tolerate a few skipped
   // heartbeats; the only consequence of skipping is a slightly delayed stale
   // transition for peers that were also being noisy. broadcast_message()
-  // sends one signed frame to each connected peer, so that is the charge.
+  // sends one signed frame to each peer it reaches, so that is the charge.
   if (!airtime_governor::try_reserve_routine(millis(),
-          signed_frame_bytes(sizeof(payload)), connected_peer_count())) {
+          signed_frame_bytes(sizeof(payload)), broadcast_peer_count())) {
     return;
   }
 

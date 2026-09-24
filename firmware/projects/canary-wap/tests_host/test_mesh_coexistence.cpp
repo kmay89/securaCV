@@ -136,8 +136,8 @@ static void test_listener_fires_on_change_only() {
 // airtime_governor: cap routine traffic, allow urgent through
 // ─────────────────────────────────────────────────────────────────────────
 
-// The governor adds ESP-NOW's framing to every frame itself: 192 us
-// preamble + (bytes + 59) x 8 us at the 1 Mbps fallback rate.
+// The governor adds its ESP-NOW framing allowance to every frame itself:
+// 192 us preamble + (bytes + 59) x 8 us at ESP-NOW's default 1 Mbps.
 static_assert(airtime_governor::ESPNOW_FRAME_OVERHEAD_BYTES == 59,
               "the framing docs/network_coexistence.md states");
 
@@ -214,8 +214,8 @@ static void test_governor_airtime_pct() {
 // ─────────────────────────────────────────────────────────────────────────
 
 // mesh_network's broadcast_message() unicasts one signed frame to each
-// connected peer (38 B header + payload + 64 B signature), so a heartbeat
-// (12 B HeartbeatPayload) to 3 connected peers puts 3 frames of 114 B on
+// authenticated peer (38 B header + payload + 64 B signature), so a
+// heartbeat (12 B HeartbeatPayload) to 3 such peers puts 3 frames of 114 B on
 // the air: 3 x (192 + (114 + 59) x 8) = 3 x 1576 us, each with its own
 // preamble and framing — not one 342 B frame, and not one 114 B frame.
 static void test_governor_charges_each_frame_of_a_fan_out() {
@@ -291,21 +291,25 @@ static void test_mesh_charges_one_signed_frame_per_peer() {
                     "returnWIRE_HEADER_BYTES+payload_len+SIGNATURE_SIZE;") == 1);
 
   // The frames: broadcast_message() sends to exactly the peers
-  // connected_peer_count() counts.
-  const std::string pred = "if(g_peers[i].state>=PEER_CONNECTED)";
-  EXPECT(bss::count(bss::squeeze(bss::function_body(code, "broadcast_message")), pred) == 1);
-  EXPECT(bss::count(bss::squeeze(bss::function_body(code, "connected_peer_count")), pred + "n++;") == 1);
+  // broadcast_peer_count() counts — the same loop over the peer table (its
+  // bound too: a count to MAX_OPERA_SIZE would read past the peers) and the
+  // same predicate (every authenticated peer: connected, stale, offline or
+  // alerting).
+  const std::string loop =
+      "for(uint8_ti=0;i<g_peer_count;i++){if(g_peers[i].state>=PEER_CONNECTED)";
+  EXPECT(bss::count(bss::squeeze(bss::function_body(code, "broadcast_message")), loop) == 1);
+  EXPECT(bss::count(bss::squeeze(bss::function_body(code, "broadcast_peer_count")), loop + "n++;") == 1);
 
   struct Site { const char* fn; const char* charge; const char* send; };
   const Site sites[] = {
     {"send_heartbeat",
-     "airtime_governor::try_reserve_routine(millis(),signed_frame_bytes(sizeof(payload)),connected_peer_count())",
+     "airtime_governor::try_reserve_routine(millis(),signed_frame_bytes(sizeof(payload)),broadcast_peer_count())",
      "broadcast_message(MSG_HEARTBEAT,"},
     {"broadcast_tamper_alert",
-     "airtime_governor::force_reserve_urgent(millis(),signed_frame_bytes(sizeof(payload)),connected_peer_count());",
+     "airtime_governor::force_reserve_urgent(millis(),signed_frame_bytes(sizeof(payload)),broadcast_peer_count());",
      "broadcast_message(MSG_TAMPER_ALERT,"},
     {"broadcast_power_alert",
-     "airtime_governor::force_reserve_urgent(millis(),signed_frame_bytes(sizeof(payload)),connected_peer_count());",
+     "airtime_governor::force_reserve_urgent(millis(),signed_frame_bytes(sizeof(payload)),broadcast_peer_count());",
      "broadcast_message(MSG_POWER_ALERT,"},
     /* offline-imminent goes to every known peer, connected or not. */
     {"broadcast_offline_imminent",
