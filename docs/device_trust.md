@@ -279,7 +279,12 @@ freshly-installed HA:
 2. Wait 60 s for the first health publish — check HA's log for
    `TOFU-pinning Canary <id> with pubkey <hex>…`.
 3. Open the chain sensor's attributes — `verified: true`, `trust_reason: ok`,
-   `pinned_fingerprint` matches `received_fingerprint`.
+   `pinned_fingerprint` matches `received_fingerprint`. A canary-wap
+   may show `trust_reason: mismatch` here even with the right key: its
+   signed publishes carry the fingerprint in capitals, and HA compares
+   it with the lowercase pin exactly. That is read from source and
+   reproduced in a host test of the verifier, not yet seen on a bench,
+   and it is an open fix.
 4. Flash a different firmware build to the same Canary (or wipe NVS to
    regenerate the keypair). On the next publish, expect:
    - A `SecuraCV: device <id> key mismatch` persistent notification.
