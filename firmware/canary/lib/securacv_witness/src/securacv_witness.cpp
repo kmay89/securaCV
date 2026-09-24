@@ -15,6 +15,10 @@
 // The chain-state blob codec + boot-time source decision — pure, host-tested
 // (firmware/tests_host/test_chain_state.cpp). Same split: this file owns NVS.
 #include "witness/chain_state.h"
+// When a chain persist is due, and what one that did not land leaves behind —
+// pure, host-tested with this file's own persist glue
+// (firmware/tests_host/test_chain_persist.cpp).
+#include "witness/chain_persist.h"
 
 #if FEATURE_DIAGNOSTICS
 #include "securacv_diagnostics.h"
@@ -151,6 +155,7 @@ void format_uptime(char* out, size_t cap, uint32_t secs) {
 
 // {seq, chain_head} as the single 39-byte entry chain_state.h defines. The
 // only writer of NVS_KEY_CHAINST; nothing writes NVS_KEY_SEQ / NVS_KEY_CHAIN.
+// True only when the whole blob landed (nvs_store_bytes says so since F55).
 static bool persist_chain_blob() {
   uint8_t blob[chain_state::BLOB_LEN];
   if (!chain_state::encode(g_device.seq, g_device.chain_head, blob)) return false;
@@ -225,6 +230,7 @@ bool witness_provision_device() {
   // order is decided by chain_state::choose() and pinned on the host; the
   // SD-wins reconciliation (witness_recover_chain_from_sd) is unchanged and
   // still runs after this.
+  bool genesis = false;
   {
     uint8_t blob[chain_state::BLOB_LEN];
     uint32_t blob_seq = 0;
@@ -254,11 +260,12 @@ bool witness_provision_device() {
         break;
       case chain_state::Source::Genesis:
         // Initialize genesis chain hash. The seq stays whatever the legacy
-        // entry says (0 on a fresh device), exactly as before the blob.
+        // entry says (0 on a fresh device), exactly as before the blob. The
+        // head is written below, after log_seq is loaded.
         g_device.seq = nvs_load_u32(NVS_KEY_SEQ, 0);
         sha256_domain("securacv:genesis:v1", (const uint8_t*)g_device.device_id,
                       strlen(g_device.device_id), g_device.chain_head);
-        persist_chain_blob();
+        genesis = true;
         break;
     }
   }
@@ -266,6 +273,11 @@ bool witness_provision_device() {
   g_device.boot_count = nvs_load_u32(NVS_KEY_BOOTS, 0) + 1;
   nvs_store_u32(NVS_KEY_BOOTS, g_device.boot_count);
   g_device.log_seq = nvs_load_u32(NVS_KEY_LOGSEQ, 0);
+  // The genesis head goes through the same persist as every other write, so
+  // a write that does not land is counted, reported and retried after the
+  // first record. It runs after log_seq is loaded, so a report takes the next
+  // health-log seq, not one the load would hand out again.
+  if (genesis) witness_persist_chain_state();
 
   // Provision the transport-layer bearer credential. Owned entirely by
   // securacv_auth — we just trigger derivation here so it happens during
@@ -337,14 +349,50 @@ void witness_persist_chain_state() {
   // power cut can no longer leave a seq that belongs to a different head (the
   // two-write window the legacy seq/chain pair had; roadmap item 18). The
   // legacy keys are deliberately never written again.
-  persist_chain_blob();
-  g_device.seq_persisted = g_device.seq;
-  g_health.chain_persists++;
+  //
+  // Only a write that landed moves seq_persisted and counts as a persist; one
+  // that did not is counted beside it and retried after the next record, and
+  // a failure streak is reported once, not per retry (chain_persist.h). The
+  // seq is read before the write: the blob carries at least this seq, so
+  // seq_persisted never claims more than NVS holds.
+  const uint32_t seq = g_device.seq;
+  const bool wrote = persist_chain_blob();
+  char detail[48];
+  switch (chain_persist::settle(seq, wrote, &g_device.seq_persisted,
+                                &g_device.chain_persist_failing,
+                                &g_health.chain_persists,
+                                &g_health.chain_persist_failures)) {
+    case chain_persist::Say::Failed:
+      snprintf(detail, sizeof(detail), "seq %u; retrying after each record",
+               (unsigned)seq);
+      log_health(LOG_LEVEL_WARNING, LOG_CAT_STORAGE,
+                 "Chain state not written to NVS", detail);
+      break;
+    case chain_persist::Say::Recovered:
+      snprintf(detail, sizeof(detail), "seq %u; %u failed this boot",
+               (unsigned)seq, (unsigned)g_health.chain_persist_failures);
+      log_health(LOG_LEVEL_NOTICE, LOG_CAT_STORAGE,
+                 "Chain state written to NVS again", detail);
+      break;
+    case chain_persist::Say::Nothing:
+      break;
+  }
 
   #if DEBUG_CHAIN
-  Serial.print("[CHAIN] Persisted seq=");
-  Serial.println(g_device.seq);
+  if (wrote) {
+    Serial.print("[CHAIN] Persisted seq=");
+    Serial.println(seq);
+  }
   #endif
+}
+
+// After every record: the routine persist every SD_PERSIST_INTERVAL
+// records, or the retry of one that did not land (chain_persist::due).
+static void persist_chain_if_due() {
+  if (chain_persist::due(g_device.seq, g_device.seq_persisted,
+                         g_device.chain_persist_failing, SD_PERSIST_INTERVAL)) {
+    witness_persist_chain_state();
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -609,10 +657,8 @@ bool witness_create_record_gps(const uint8_t* payload, size_t len, RecordType ty
   #endif
 
   // Persist chain state periodically (fast-boot cache only — the durable
-  // history lives in /WITNESS/records.jsonl).
-  if ((g_device.seq - g_device.seq_persisted) >= SD_PERSIST_INTERVAL) {
-    witness_persist_chain_state();
-  }
+  // history lives in /WITNESS/records.jsonl), and retry one that failed.
+  persist_chain_if_due();
 
   return true;
 }

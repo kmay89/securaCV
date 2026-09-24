@@ -74,7 +74,12 @@ struct DeviceIdentity {
   uint8_t  pubkey_fp[8];
   uint8_t  chain_head[32];
   uint32_t seq;
+  // The seq the last chain persist that landed wrote (at boot, the seq the
+  // chain state was read at). A write that did not land leaves it here.
   uint32_t seq_persisted;
+  // The last chain persist did not land: the next record retries whatever
+  // the gap, and the streak has been reported (common/witness/chain_persist.h).
+  bool     chain_persist_failing;
   uint32_t boot_count;
   uint32_t boot_ms;
   uint32_t tamper_count;
@@ -106,7 +111,11 @@ struct SystemHealth {
   uint32_t gsa_count;
   uint32_t gsv_count;
   uint32_t vtg_count;
+  // Chain-state writes to NVS this boot: those that landed, and those that
+  // did not (NVS refused the put or the session never opened). Both ride the
+  // MQTT health payload as `chain_persists` / `chain_persist_failures`.
   uint32_t chain_persists;
+  uint32_t chain_persist_failures;
   uint32_t state_changes;
   uint32_t tamper_events;
   uint32_t uptime_sec;
@@ -189,7 +198,14 @@ bool witness_create_record_gps(const uint8_t* payload, size_t len, RecordType ty
 // Verify record signature
 bool witness_verify_record(const WitnessRecord* rec);
 
-// Persist chain state to NVS
+// Write the chain state to NVS now (the atomic {seq, head} blob). Only a
+// write that landed moves seq_persisted and counts in chain_persists; one
+// that did not is counted in chain_persist_failures, reported once per
+// failure streak (health log and Serial), and retried after the next record
+// (common/witness/chain_persist.h). Before a restart nothing is left to
+// retry it: the failure is counted (and reported, unless its streak already
+// was), and the next boot resumes from what NVS holds, which SD-wins
+// reconciles when a card is present.
 void witness_persist_chain_state();
 
 // Offer the current wall clock to the birth-day recorder. Safe and cheap to

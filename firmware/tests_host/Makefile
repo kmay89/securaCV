@@ -373,6 +373,23 @@ NVSSTORE_SIGS = $(NVSLOCK_SIGS)|size_t NvsManager::putUInt(|size_t NvsManager::p
 NVSSTORE_INC  = $(BUILD_DIR)/nvs_store_result.inc
 NVSSTORE_BIN  = $(BUILD_DIR)/test_nvs_store_result
 
+# The chain-state persist (common/witness/chain_persist.h, repo sweep F55):
+# only a write that landed moves seq_persisted and counts, a failed one is
+# counted beside it, retried after the next record and reported once per
+# streak. test_chain_persist.cpp tests the header, then runs
+# securacv_witness.cpp's own persist glue, cut out verbatim, over a fake NVS
+# and stubs/witness_glue. The record path's call into that
+# glue is a one-line grep: the recipe fails if witness_create_record_gps()
+# stops calling persist_chain_if_due().
+CHAINPERSIST_HDRS = ../common/witness/chain_persist.h $(CHAINST_HDR) \
+                    ../canary/lib/securacv_witness/src/securacv_witness.h \
+                    ../canary/include/canary_config.h ../canary/include/log_level.h \
+                    $(wildcard stubs/witness_glue/*.h)
+CHAINPERSIST_SRC  = ../canary/lib/securacv_witness/src/securacv_witness.cpp
+CHAINPERSIST_SIGS = static bool persist_chain_blob(|void witness_persist_chain_state(|static void persist_chain_if_due(
+CHAINPERSIST_INC  = $(BUILD_DIR)/chain_persist_glue.inc
+CHAINPERSIST_BIN  = $(BUILD_DIR)/test_chain_persist
+
 # Coarse optical feature classifiers (canary-vision optical_features.h): pins
 # the invariant-safe coarsening of the person-detection model's box geometry —
 # aspect ratio -> posture, area fraction -> proximity, count -> occupancy
@@ -636,6 +653,15 @@ $(NVSSTORE_BIN): test_nvs_store_result.cpp $(NVSSTORE_INC) $(NVSLOCK_HDRS) Makef
 	$(CXX) $(CXXFLAGS) -I stubs/nvs_manager -I ../canary/lib/securacv_crypto/src \
 	    -I ../canary/include -I $(BUILD_DIR) test_nvs_store_result.cpp -o $@
 
+$(CHAINPERSIST_INC): $(CHAINPERSIST_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	@grep -q '^  persist_chain_if_due();$$' $(CHAINPERSIST_SRC) || { \
+	  echo "securacv_witness.cpp: the record path no longer calls persist_chain_if_due()" >&2; exit 1; }
+	awk -v 'sigs=$(CHAINPERSIST_SIGS)' -f cut_functions.awk $(CHAINPERSIST_SRC) > $@.tmp && mv $@.tmp $@
+
+$(CHAINPERSIST_BIN): test_chain_persist.cpp $(CHAINPERSIST_INC) $(CHAINPERSIST_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I stubs/witness_glue -I ../canary/lib/securacv_witness/src \
+	    -I ../canary/include -I ../common -I $(BUILD_DIR) test_chain_persist.cpp -o $@
+
 $(OPTFEAT_BIN): test_optical_features.cpp $(OPTFEAT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(OPTFEAT_INC) test_optical_features.cpp -o $@
 
@@ -680,7 +706,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -718,6 +744,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(NVSDEPTH_BIN)
 	./$(NVSLOCK_BIN)
 	./$(NVSSTORE_BIN)
+	./$(CHAINPERSIST_BIN)
 	./$(OPTFEAT_BIN)
 	./$(VISION_PIPE_BIN)
 	./$(VISPROF_BIN)
