@@ -289,9 +289,10 @@ that page load or one provisioning-receipt fetch, whichever asks first.
 A request whose `Host` header cannot name this device — an IP address, the
 `.local` name, a single label and a private-use suffix all can; a public
 name re-pointed at your network, the DNS-rebinding trick, cannot — gets the
-page with no token whatever else applies, and the API's token check refuses
-every call under that name with `403 {"error":"host"}` before it looks at
-the token. Only a request over the flagship's own access point is exempt,
+page with no token whatever else applies and never spends your BOOT tap, and
+every API route, the provisioning receipt included, refuses a call under that
+name with `403 {"error":"host"}` before it looks at the token or the tap. Only
+a request over the flagship's own access point is exempt,
 because there the name is the device's by construction. A household that
 reaches the flagship by a public split-horizon name gets the same token-less
 page and has to use the IP, the `.local` name or a private-suffix alias
@@ -301,10 +302,10 @@ The gate is not encryption. The token is still a bearer secret on the wire,
 so on a release image a host that can watch your network reads it out of
 someone else's session — an unlocked page load, or any API call the page or
 the app makes — as it can read the broker password below, and whoever asks
-inside those 30 seconds, with a page load or a receipt fetch, can spend your
-tap before you do. The decisions
-(`firmware/common/network/provisioning_gate.h`'s `page_token_policy`, and
-`host_guard.h` beside it) are host-tested, the handler glue is compiled by
+inside those 30 seconds, with a page load or a receipt fetch under a name
+that means the device, can spend your tap before you do. The decisions
+(`firmware/common/network/provisioning_gate.h`'s `page_token_policy` and
+`receipt_decide`, and `host_guard.h` beside them) are host-tested, the handler glue is compiled by
 CI, and none of it is bench-tested yet.
 
 The WAP's sensing dashboard draws the line elsewhere: its landing page
