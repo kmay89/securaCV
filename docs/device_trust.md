@@ -149,9 +149,12 @@ Every product that signs shows its fingerprint somewhere in the table
 above, even where it can't show its full key. After the first health
 publish, compare the `pinned_fingerprint` attribute on the device's
 entities (the chain-length sensor, for one) with the fingerprint read
-off the device. A match is strong evidence that the key HA pinned on
-first sight is the one the device holds. A difference means something
-else is pinned:
+off the device, ignoring case: HA shows lowercase, and some device
+surfaces print capitals (everything a canary-wap prints except the
+public key on `/enroll`, and the `firmware/canary` build's
+`/api/status` and receipt). A
+match is strong evidence that the key HA pinned on first sight is the
+one the device holds. A difference means something else is pinned:
 **Unpin a device**, fix whatever let the other key in (broker ACLs),
 and compare again after the next TOFU pin, or pin by hand where the
 product shows its full key. The fingerprint is the first 8 bytes of a
