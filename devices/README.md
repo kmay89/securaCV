@@ -69,10 +69,12 @@ manifests (`canary-sentinel`, `canary-sentinel-lite`) carry less still. The
 family is Phase 1a, compile-gated and marked `unreleased` in `flavors.json`,
 so they name the board, its peripherals and the env CI compiles, and no
 more: no figure, case, flasher product or emulator flavor exists for them
-yet. One is absent by decision instead: the Nightstand C6's pocket case is
+yet.
+
+One key is absent by decision instead: the Nightstand C6's pocket case is
 drawn (`device.canary-display-nightstand-c6`, a sketch off its `.scad`, for
-its Lab card), but its manifest does not name that figure yet — naming it maps the
-C6 board in the firmware's figure table (`fleet_figures.h` and a
+its Lab card), but its manifest does not name that figure yet. Naming it
+maps the C6 board in the firmware's figure table (`fleet_figures.h` and a
 `CANARY_FIGURE_HARDWARE` line in its `pins.h`), a firmware change of its own.
 
 **A knob that is a board fact references the registry; a knob that is a case
@@ -174,7 +176,7 @@ import them — `lint_build_matrix.py` applies the matrix's side of the join
   `canary-sense` and `canary-display-watch` manifests name a glTF model. The
   website carries more than that: the WAP's and the 4.3" Dash's models exist
   with no `site.model` key yet (a one-line, shape-only manifest edit each,
-  deliberately not made here); the doorbell's has no manifest of its own
+  not yet made); the doorbell's has no manifest of its own
   (its case rides the Vision manifest's `cad.also`, and `site.model` holds
   one model); and the Combo's has no manifest to name it either (its catalog
   variant is a `canary-vision` build).
