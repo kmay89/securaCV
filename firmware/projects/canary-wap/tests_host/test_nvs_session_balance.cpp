@@ -24,7 +24,10 @@
  *      session and before the block's last nvs.end() comes straight after an
  *      nvs.end(); (`{ nvs.end(); return false; }`). The return in the opening
  *      statement itself (`if (!nvs.beginReadOnly()) return false;`) is the
- *      path where begin() failed, which owes no end().
+ *      path where begin() failed, which owes no end(); so is a return in the
+ *      braced block of `if (!nvs.beginReadOnly()) { ...; return false; }`,
+ *      when the condition is only negated opens joined by `&&`
+ *      (failed_begin_end() says exactly which shapes).
  *
  * What it is: a textual guard over comment- and literal-stripped source,
  * with brace matching. What it is not: a proof of every path. A session
@@ -161,10 +164,95 @@ struct Scan {
   int sessions = 0;                   // blocks that open a session, checked
 };
 
+// The {...} or (...) that opens at `at`: the position of its matching
+// closer, or npos.
+static size_t matching(const std::string& code, size_t at) {
+  const char o = code[at];
+  const char c = o == '{' ? '}' : ')';
+  int depth = 0;
+  for (size_t j = at; j < code.size(); ++j) {
+    if (code[j] == o) depth++;
+    else if (code[j] == c && --depth == 0) return j;
+  }
+  return std::string::npos;
+}
+
+// Where the failed-begin path that starts at the session's first open ends.
+// A return before this point is the path where begin() returned false, which
+// owes no end().
+//
+//   - Braceless, the path is the opening statement itself, up to its first
+//     ';' or '{': `if (!nvs.beginReadOnly()) return false;`.
+//   - Braced, `if (!nvs.beginReadOnly()) { Serial.println(...); return false; }`,
+//     the path is that whole block, but ONLY when the condition is nothing but
+//     negated opens on this manager joined by `&&`
+//     (`!nvs.beginReadOnly() && !nvs.beginReadWrite()`), each with no call in
+//     its arguments. That is the one shape where entering the block proves
+//     every open in it failed. Any other condition (`|| force`, an un-negated
+//     begin, `== false`) can enter the block with a session open, so its
+//     returns stay inside the session and are checked. When unsure, the scan
+//     checks: a wrong exemption would let a leaked lock through.
+//
+// Only the FIRST open gets this: a later open's failure path can still be
+// inside the first session (a read-write reopen inside a read-only session).
+static size_t failed_begin_end(const std::string& code, size_t first_open,
+                               const std::vector<std::string>& open_calls) {
+  const size_t stmt_end = code.find_first_of(";{", first_open);
+  // The `if (` whose parenthesis holds the first open, within its statement.
+  size_t lparen = std::string::npos;
+  int depth = 0;
+  for (size_t i = first_open; i > 0;) {
+    const char c = code[--i];
+    if (c == ')') {
+      depth++;
+    } else if (c == '(') {
+      if (depth > 0) { depth--; continue; }
+      size_t k = i;
+      while (k > 0 && (code[k - 1] == ' ' || code[k - 1] == '\t' || code[k - 1] == '\n')) k--;
+      if (k >= 2 && code.compare(k - 2, 2, "if") == 0 && (k == 2 || !ident_char(code[k - 3]))) {
+        lparen = i;
+        break;
+      }
+    } else if (depth == 0 && (c == ';' || c == '{' || c == '}')) {
+      break;
+    }
+  }
+  if (lparen == std::string::npos) return stmt_end;
+  const size_t rparen = matching(code, lparen);
+  if (rparen == std::string::npos) return stmt_end;
+  size_t brace = rparen + 1;
+  while (brace < code.size() && (code[brace] == ' ' || code[brace] == '\t' || code[brace] == '\n')) brace++;
+  if (brace >= code.size() || code[brace] != '{') return stmt_end;
+
+  // Every `&&` term is `!<open call>(<args with no call in them>)`.
+  const std::string cond = squeeze(code.substr(lparen + 1, rparen - lparen - 1));
+  size_t from = 0;
+  while (true) {
+    const size_t amp = cond.find("&&", from);
+    const std::string term = cond.substr(from, amp == std::string::npos ? std::string::npos : amp - from);
+    bool ok = false;
+    for (const std::string& call : open_calls) {
+      const std::string head = "!" + call;
+      if (term.size() > head.size() && term.compare(0, head.size(), head) == 0 && term.back() == ')' &&
+          term.find_first_of("()", head.size()) == term.size() - 1) {
+        ok = true;
+        break;
+      }
+    }
+    if (!ok) return stmt_end;
+    if (amp == std::string::npos) break;
+    from = amp + 2;
+  }
+  const size_t block_end = matching(code, brace);
+  return block_end == std::string::npos ? stmt_end : block_end;
+}
+
 // Rules 2 and 3 for one session: `opens` are where it opens (inside
-// [open, close]), `end_call` is what closes it ("nvs.end()").
+// [open, close]), `open_calls` are the spellings that open it
+// ("nvs.beginReadOnly(", ...), `end_call` is what closes it ("nvs.end()").
 static void check_session(const std::string& file, const std::string& code, size_t open,
                           size_t close, const std::vector<size_t>& opens,
+                          const std::vector<std::string>& open_calls,
                           const std::string& end_call, Scan* out) {
   if (opens.empty()) return;
   out->sessions++;
@@ -180,11 +268,10 @@ static void check_session(const std::string& file, const std::string& code, size
                             " in its block (the lock stays on this task)");
     return;
   }
-  // The statement that opens it runs to its first ';' or '{'; a return in it
-  // is the failed-begin path.
-  const size_t stmt_end = code.find_first_of(";{", first_open);
+  // A return on the first open's failed-begin path owes no end().
+  const size_t failed_end = failed_begin_end(code, first_open, open_calls);
   for (size_t r : find_token(code, "return")) {
-    if (r <= stmt_end || r >= last_end || r < open || r > close) continue;
+    if (r <= failed_end || r >= last_end || r < open || r > close) continue;
     if (r + 6 < code.size() && ident_char(code[r + 6])) continue;
     std::string before = code.substr(open, r - open);
     while (!before.empty() && (before.back() == ' ' || before.back() == '\t' ||
@@ -248,12 +335,14 @@ static void scan_source(const std::string& file, const std::string& src, Scan* o
       continue;
     }
     std::vector<size_t> opens;
+    std::vector<std::string> open_calls;
     for (const char* m : {".begin(", ".beginReadOnly(", ".beginReadWrite("}) {
+      open_calls.push_back(id + m);
       for (size_t o : find_token(code.substr(0, close), id + m)) {
         if (o > p) opens.push_back(o);
       }
     }
-    check_session(file, code, open, close, opens, id + ".end()", out);
+    check_session(file, code, open, close, opens, open_calls, id + ".end()", out);
   }
 
   // The legacy wrappers' callers, with nvs_close() as the end.
@@ -266,7 +355,8 @@ static void scan_source(const std::string& file, const std::string& src, Scan* o
                                   ": no enclosing block (unbalanced braces?)");
           continue;
         }
-        check_session(file, code, open, close, {p}, "nvs_close()", out);
+        check_session(file, code, open, close, {p}, {"nvs_open_rw(", "nvs_open_ro("},
+                      "nvs_close()", out);
       }
     }
   }
@@ -338,10 +428,150 @@ void legacy() {
   put();
   nvs_close();
 }
+static bool load_braced(uint8_t* out) {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly()) {
+    return false;
+  }
+  nvs.getBytes("k", out, 32);
+  nvs.end();
+  return true;
+}
+static bool store_braced(const uint8_t* in) {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadWrite())
+  {
+    Serial.println("[NVS] store failed");
+    return false;
+  }
+  nvs.putBytes("k", in, 32);
+  nvs.end();
+  return true;
+}
+void init_braced() {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly() && !nvs.begin(false)) {
+    Serial.println("[NVS] no store");
+    return;
+  }
+  cfg = nvs.getBool("t3", false);
+  nvs.end();
+}
+void legacy_braced() {
+  if (!nvs_open_ro()) {
+    return;
+  }
+  get();
+  nvs_close();
+}
 )SRC");
   dump_unless(s, 0);
   CHECK(s.findings.empty());
-  CHECK(s.sessions == 6);
+  CHECK(s.sessions == 10);
+}
+
+static void test_a_braced_failed_begin_exempts_only_its_block() {
+  // `if (!nvs.beginX()) { ...; return false; }` is the failed-begin path,
+  // which owes no end(); the exemption is that block and nothing else. A
+  // return after it, a condition that can enter the block with a session
+  // open (`||`, an un-negated begin, a comparison), an `else` arm, a
+  // positive `if (nvs.beginX()) {` body and a nested open's failure block
+  // are all still inside the session.
+  const Scan s = scan_one("z.cpp", R"SRC(
+bool e() {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadWrite()) {
+    Serial.println("x");
+    return false;
+  }
+  if (bad) return false;
+  nvs.end();
+  return true;
+}
+bool f() {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly() || force) {
+    return false;
+  }
+  nvs.end();
+  return true;
+}
+bool g() {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly() && nvs.beginReadWrite()) {
+    return false;
+  }
+  nvs.end();
+  return true;
+}
+bool h() {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly() == false) {
+    return false;
+  }
+  nvs.end();
+  return true;
+}
+bool i() {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadWrite()) {
+    return false;
+  } else if (skip) {
+    return true;
+  }
+  nvs.end();
+  return true;
+}
+bool j() {
+  NvsManager& nvs = NvsManager::instance();
+  if (nvs.beginReadWrite()) {
+    if (bad) return false;
+    nvs.end();
+  }
+  return true;
+}
+bool k() {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly()) {
+    return false;
+  }
+  if (!nvs.beginReadWrite()) {
+    return false;
+  }
+  nvs.end();
+  nvs.end();
+  return true;
+}
+bool l() {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly() || !nvs.beginReadWrite()) {
+    return false;
+  }
+  nvs.end();
+  return true;
+}
+)SRC");
+  dump_unless(s, 8);
+  CHECK(s.sessions == 8);
+  CHECK(s.findings.size() == 8);
+  auto has = [&s](const std::string& needle) {
+    for (const std::string& f : s.findings) {
+      if (f.find(needle) != std::string::npos) return true;
+    }
+    return false;
+  };
+  const std::string msg = ": returns inside an open session without nvs.end()";
+  CHECK(has("z.cpp:8" + msg));   // e: after the failure block
+  CHECK(has("z.cpp:15" + msg));  // f: `|| force` enters with a session open
+  CHECK(has("z.cpp:23" + msg));  // g: the read-write begin succeeded
+  CHECK(has("z.cpp:31" + msg));  // h: `== false` means the begin succeeded
+  CHECK(has("z.cpp:41" + msg));  // i: the else arm
+  CHECK(has("z.cpp:49" + msg));  // j: a positive begin's body
+  CHECK(has("z.cpp:60" + msg));  // k: a nested begin failing leaves the outer open
+  CHECK(has("z.cpp:69" + msg));  // l: `||` enters with the read-only session open
+  CHECK(!has("z.cpp:6:"));       // e's own failure block is exempt
+  CHECK(!has("z.cpp:39:"));      // so is i's
+  CHECK(!has("z.cpp:57:"));      // and k's first
 }
 
 static void test_the_vaults_prefix_shapes_fail() {
@@ -487,6 +717,7 @@ static void test_the_sketch_closes_every_session() {
 
 int main() {
   test_balanced_shapes_pass();
+  test_a_braced_failed_begin_exempts_only_its_block();
   test_the_vaults_prefix_shapes_fail();
   test_other_leaks_fail();
   test_comments_and_literals_do_not_count();
