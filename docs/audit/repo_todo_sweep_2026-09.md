@@ -145,7 +145,7 @@ against a pinned key or a claim proven on hardware — nothing below claims it.)
   probe into the canary PIO build at all) stays open under that item.
   (#1696) A follow-up found reconciling it on the host (the governor's ring
   lost in-window airtime above 25.6 sends a second, and an over-budget probe
-  starved the heartbeat) is F51 (#<C>).
+  starved the heartbeat) is F51 (#1722).
 - [x] **F5 [code+decision] Ed25519 private key in NVS without enforced flash
   encryption** — done (option B — maintainer to confirm), with the premise
   corrected first: flash encryption does not cover NVS, so the key is
@@ -579,7 +579,7 @@ so — see D2 below.)
   stored broker password. A write racing that `end()` landed nothing while
   `nvs_store_bytes` still returned true (F55), and that includes the atomic
   chain blob.
-  *Done (#<C>):* a recursive FreeRTOS mutex is held from `begin()` to the
+  *Done (#1722):* a recursive FreeRTOS mutex is held from `begin()` to the
   matching `end()`, and a depth count makes nested sessions on one task
   close only at the outermost `end()`. An `end()` from a task with no
   session is a no-op. Each wait is bounded (2 s, under the 8 s loop
@@ -629,7 +629,7 @@ so — see D2 below.)
   Host check did not cover it. On the page path the Host was read in
   `send_html_with_token`, after `page_token_inject` had already taken the
   tap.
-  *Done (#<C>):* the receipt route refuses a foreign Host like every other
+  *Done (#1722):* the receipt route refuses a foreign Host like every other
   token-bearing route (`403 {"error":"host"}`, before the bearer or the
   tap; the SoftAP is exempt, as for `auth_gate`). Its handler serves only
   on an explicit bearer or tap verdict and refuses every other one. A page
@@ -1038,7 +1038,7 @@ so — see D2 below.)
   160 frames/s. On the DEV profile, or a boot where the mesh did not
   initialize (safe mode, ESP-NOW refused), nothing initialized the
   governor, so every probe reservation passed.
-  *Done (#<C>):* the ring holds 100 ms buckets, so nothing in the window is
+  *Done (#1722):* the ring holds 100 ms buckets, so nothing in the window is
   ever overwritten; the window reads 10.0–10.1 s, erring toward denial, and
   a reader whose clock trails the newest send (the MQTT telemetry) still
   counts every send before its time. The probe's gate moved to
@@ -1429,7 +1429,7 @@ so — see D2 below.)
   (`desktop/hub-io/src/provision.rs`), but its release watch
   (`.github/release-targets.yml`) did not name them. From the wave-7
   security sweep (its path-hygiene findings, not this file's F7 or F8).
-  *Done (#<C>):* the executor refuses such a plan before it observes
+  *Done (#1722):* the executor refuses such a plan before it observes
   anything, naming the step, key and path (exit 2). Every step is checked,
   whether or not its feature is enabled. The runner mounts only an absolute
   directory with no `:`, and states the rule beside the override. The
@@ -1671,7 +1671,7 @@ so — see D2 below.)
   the integration's per-Canary Motion sensor (`binary_sensor.py`
   `SecuraCVCanaryMotionSensor`, `device_class: motion`), which exists for
   exactly this bridge. Found in the wave-7 mirror reconcile.
-  *Done (#<C>):* the occupancy glob moved to `include_entity_globs`, and
+  *Done (#1722):* the occupancy glob moved to `include_entity_globs`, and
   `binary_sensor.securacv_canary_*_motion` joined it. The page says that
   glob also matches each Canary's Unexpected Motion tamper sensor, which no
   firmware signal drives, and that `exclude_entities` keeps it out. The
@@ -1924,7 +1924,7 @@ so — see D2 below.)
   `docs/FAQ.md`, `docs/getting_started_canary.md`) and Compare's unsourced
   "auto-deletes in 24 h" cell are the wave-4 claims-followup package.
   `docs/FAQ.md`'s phone-home answer now names the Canaries' disclosed
-  outbound paths and the desktop apps' update fetch (#<C>): the broker, the
+  outbound paths and the desktop apps' update fetch (#1722): the broker, the
   signed update check, the display's SNTP and its opt-in forecast, linked
   to `SECURITY_MODEL.md`'s list. It still opens with "No.", which website
   #203 ruled out for the site's FAQ, so it stays on that follow-up list
@@ -2353,7 +2353,7 @@ major, by theme") — work its themes, then tick here.
   keys and unbuilt envs) and `canary-local/README.md` ("no fetches outside
   the page's own directory", a "CI-generated" SBOM, a flash.html line
   without broker encryption).
-  *Done (#<C>):* each rewritten against the tree with its status words,
+  *Done (#1722):* each rewritten against the tree with its status words,
   counts pointed at `flavors.json` / `devices/` rather than typed;
   `gen_wap.py` regenerates to zero diff.
 - [x] **D8 [code] The security docs have not caught up with the flagship's
@@ -2419,7 +2419,7 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   for one. hub-core's test matrix built its crates with no cargo cache, and
   jobs that run `node` used the runner image's node instead of setting one
   up.
-  *Done (#<C>):* the hub plan's docs-prose gate moves to lint.yml
+  *Done (#1722):* the hub plan's docs-prose gate moves to lint.yml
   (`scripts/tests/test_hub_plan_prose.py`). canary-local.yml's filter now
   covers the 23 files its logic tests opened outside it (counting
   `desktop/src/models/` as one). Seven of those gaps were opened by
@@ -2436,9 +2436,9 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
 - [ ] **CI2 [code] canary-local.yml's path filter is hand-kept, and it
   drifts.** Found in the wave-7 reconcile and its review. On 7446893, 23
   files its logic tests open were outside it, 7 of them opened by
-  #1703/#1704, and #<C> lists them all. The reconcile's string scan found
+  #1703/#1704, and #1722 lists them all. The reconcile's string scan found
   19; a trace found the other 4, which the tests build with join(). Still
-  outside after #<C>:
+  outside after #1722:
   - 27 existence probes: 6 `boards/vendor/*.step.gz`, 15 docs/hardware
     research and reCamera docs, the fence-guard README, `docs/README.md`,
     `docs/device_trust.md`, `docs/firmware_ota.md`,

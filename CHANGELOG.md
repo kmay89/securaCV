@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### The Canary's receipt asks the Host first, its settings sessions stop closing each other, a black-holed TLS broker no longer outlasts the products' watchdog, the airtime window holds every send, and the docs and CI catch up (#<C>)
+### The Canary's receipt asks the Host first, its settings sessions stop closing each other, a black-holed TLS broker no longer outlasts the products' watchdog, the airtime window holds every send, and the docs and CI catch up (#1722)
 
 - **The Canary's provisioning receipt asks the Host first, and a page load
   under a foreign Host leaves the BOOT tap alone (sweep F56).**
@@ -273,7 +273,7 @@
   and the dashboard and setup pages served under one carry no token, so a
   DNS-rebinding page cannot read the token out of them (the provisioning
   receipt, gated by a bearer or the BOOT tap rather than `auth_gate`,
-  gained the same check in the entry for #<C>); a request over the
+  gained the same check in the entry for #1722); a request over the
   Canary's own setup AP is exempt by interface, never by name. The check
   is the display's `host_guard.h`, moved to `firmware/common/network/`. A
   stored CA the transport reads back empty is `409 ca_unreadable`, not Ok.
