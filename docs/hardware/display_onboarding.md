@@ -60,6 +60,15 @@ key on the nightstand and nightlight, the title's band on the round watch
 itself; without one, the hint replaces "On your phone").
 No row is ever cut to an ellipsis (F45).
 
+The same holds for the hints after the Join scene. When the phone sits on the
+setup network without opening the page, the glass adds "no page? open
+192.168.4.1"; after a failed join it names the fix under the reason
+("passwords are case-sensitive", "it only sees 2.4 GHz wifi - not 5"). Those
+scenes leave the credentials rows empty, so the hint has both of them: whole
+on one row where it fits, over the two rows where it does not ("no page?" over
+"open 192.168.4.1" on the round watch), and a shorter form of the same fix
+only where neither would hold it. None of them is cut either (F50).
+
 The last step is the payoff of the whole discovery program: the moment WiFi
 exists, the **fleet referral** (broker gossip, discovery doc §5.1) configures
 MQTT with zero further input. Onboarding ends at a *working* display, not at
