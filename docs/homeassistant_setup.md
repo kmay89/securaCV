@@ -485,11 +485,9 @@ subsequent publish.
 
 To check that verification is live: open the chain-length sensor's
 attributes — you should see `verified: true`, `trust_reason: ok`, and
-matching `pinned_fingerprint` / `received_fingerprint` values. (A
-canary-wap may show `mismatch` here even with the right key, because it
-sends its fingerprint in capitals and HA compares it exactly: read from
-source and reproduced on a host, not yet seen on a bench, and an open
-fix.) If your
+matching `pinned_fingerprint` / `received_fingerprint` values, both in
+lowercase (a canary-wap sends its fingerprint in capitals, and HA reads
+that as the same value). If your
 threat model needs stricter trust than TOFU, pin the device's pubkey
 manually from **Settings → Devices & services → SecuraCV → Configure →
 Pin a device pubkey**. The form takes the `device_id` and the full

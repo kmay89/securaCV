@@ -52,6 +52,10 @@ Ed25519 over the raw UTF-8 bytes. The 64-byte signature is base64url-
 encoded (no padding) and shipped as `sig` alongside the existing
 fields. The publish also carries `fp` (the 16-char fingerprint),
 `alg=ed25519`, and `v=1` so HA can validate without inferring.
+Hex case is not part of the value: a canary-wap writes `fp` and its
+health `public_key` in capitals, the other builds write lowercase, and
+HA lowercases both before it compares or stores them, so every
+fingerprint and key HA shows is lowercase.
 
 Each topic also includes a `v` schema version so the canonical format
 can evolve without breaking deployed Canaries — a `v=2` payload on a
@@ -279,12 +283,7 @@ freshly-installed HA:
 2. Wait 60 s for the first health publish — check HA's log for
    `TOFU-pinning Canary <id> with pubkey <hex>…`.
 3. Open the chain sensor's attributes — `verified: true`, `trust_reason: ok`,
-   `pinned_fingerprint` matches `received_fingerprint`. A canary-wap
-   may show `trust_reason: mismatch` here even with the right key: its
-   signed publishes carry the fingerprint in capitals, and HA compares
-   it with the lowercase pin exactly. That is read from source and
-   reproduced by a host probe of the verifier, not yet seen on a bench,
-   and it is an open fix.
+   `pinned_fingerprint` matches `received_fingerprint`.
 4. Flash a different firmware build to the same Canary (or wipe NVS to
    regenerate the keypair). On the next publish, expect:
    - A `SecuraCV: device <id> key mismatch` persistent notification.
