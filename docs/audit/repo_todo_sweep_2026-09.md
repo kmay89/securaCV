@@ -81,7 +81,7 @@ Two smaller one-time human acts, same flavor:
   files behind (every refresh ran green and pushed nothing) until a hand
   resync in securacv-homeassistant#17 (2026-09-24). HA14 moved the carried
   `custom_components/securacv` files again in #1725 (and F55 one carried
-  test), and HA18 and HA17 moved them again in #<E>; their resync follows
+  test), and HA18 and HA17 moved them again in #1727; their resync follows
   both. Until the secret is set, every `main` change to the carried set
   needs that again.
 - [ ] **U7 [human] Open the staged home-assistant/brands submission.**
@@ -1136,7 +1136,7 @@ so — see D2 below.)
   `fit_line()` with narrow forms. Also, on the round watch's no-QR path,
   the title band appears to overlap the top of the bird, inferred from the
   numbers only. The emulator always renders the QR, so it was not seen.
-  *Done (#<E>):* the scenes without credentials (PhoneJoined, Fail) give
+  *Done (#1727):* the scenes without credentials (PhoneJoined, Fail) give
   their hint both rows the credentials leave. `onboardlayout::hint_lines()`
   tries the whole hint on the hint row, then over both rows, then a narrow
   form (`join_failure_hint_narrow()`, new in `wifi_join_policy.h`, one per
@@ -1263,9 +1263,9 @@ so — see D2 below.)
   which flag the C6 (and C3) builds need, then change the envs, the release
   FQBNs and `lint_usb_console.py`'s rule together, and drop the port caveat
   from `docs/device_trust.md` and Step 6 of `docs/homeassistant_setup.md`.
-  Found reviewing HA17 (#<E>).
+  Found reviewing HA17 (#1727).
 - [ ] **F63 [code] canary-sense and canary-sentinel answer no serial `j`, so
-  the in-browser flasher's identity card cannot show them.** HA17 (#<E>)
+  the in-browser flasher's identity card cannot show them.** HA17 (#1727)
   gave both a boot line with the full key, not the `j` self-manifest
   canary-vision answers (`firmware/common/attest/self_manifest.h`:
   `device_id` / `pubkey` / `pubkey_fp`), which is what the identity card
@@ -1292,7 +1292,7 @@ so — see D2 below.)
   style offset (lv_obj_get_style_x/y), then re-place the onboarding bird. At
   its constants the round watch's no-QR title band (30..48 px, 30..52 under
   Heirloom) overlaps the bird's head (from y 40), so that path needs a new
-  position (F50's second observation, #<E>). Found by F50 (#<E>).
+  position (F50's second observation, #1727). Found by F50 (#1727).
 - [ ] **F65 [code] The onboarding's scene titles and bodies are cut on small
   glass.** Only the Join scene's credentials rows and the coach line are
   fitted (F45, F50). The titles and bodies keep LV_LABEL_LONG_DOT at a fixed
@@ -1318,7 +1318,7 @@ so — see D2 below.)
   cut on any small glass. rf_fit_center() re-fits the centered labels on
   round glass. fit_line()'s ladder (shorter forms, then the floor face) with
   shorter copy covers the rest, and test_onboard_layout can hold each line
-  the way it holds the coach line. Found by F50 (#<E>).
+  the way it holds the coach line. Found by F50 (#1727).
 - [ ] **F66 [code] The onboarding halo ring runs through the low text rows
   on rectangular small glass.** onboard_ui.cpp draws one 236 px ring,
   centered, on every small glass. On the 172/180x320 portrait glass, its
@@ -1331,7 +1331,7 @@ so — see D2 below.)
   the arc, not cut. The round watch's rows sit inside its ring. Size the
   ring from the panel's short side on rectangular glass, or keep it clear of
   the Join stack's rows, and have test_onboard_layout hold the rows inside
-  the ring. Found by F50 (#<E>), from the layout constants and seen in
+  the ring. Found by F50 (#1727), from the layout constants and seen in
   native LVGL 8.4 renders of onboard_ui.cpp.
 
 ---
@@ -1739,7 +1739,7 @@ so — see D2 below.)
   sends it in lowercase. The examples elide the signature with an ellipsis,
   but the fp reads as a whole value. Give them a 16-digit lowercase example
   (regenerate `wap.json`, then `gen_csp.py` if the page hash moves). Found
-  in HA20 (#<E>).
+  in HA20 (#1727).
 
 ---
 
@@ -2020,7 +2020,7 @@ so — see D2 below.)
   `tests/test_key_source_copy.py::test_pin_step_offers_no_source_for_a_fingerprint_only_product`
   must change with them. The in-browser flasher's identity card works for
   them once they answer `j`. Found in HA14.
-  *Done (#<E>):* canary-sense and canary-sentinel now print their full
+  *Done (#1727):* canary-sense and canary-sentinel now print their full
   public key at boot, from the first firmware release after 2.4.15.
   `witness.cpp`'s init prints `Ed25519 pubkey <64 hex>` right after
   `Ed25519 ready  fp=<fingerprint>`, from `device_signature::pubkey_hex()`.
@@ -2085,7 +2085,7 @@ so — see D2 below.)
   canary-wap caveat HA14 added to `docs/homeassistant_setup.md` Step 6 and
   to `docs/device_trust.md` "How to verify" step 3, which both expect
   `verified: true` and matching fingerprints. Found in HA14.
-  *Done (#<E>):* Confirmed, then fixed in Home Assistant. A host probe
+  *Done (#1727):* Confirmed, then fixed in Home Assistant. A host probe
   compiled the WAP's own `hex_to_str`, `compute_fingerprint` and
   `generate_device_id` (lifted verbatim from `canary_wap.ino`) with
   `device_signature.cpp` and `csi_event_wire.h`. It built the WAP's health,
@@ -2110,7 +2110,7 @@ so — see D2 below.)
   canary-wap caveats in `docs/homeassistant_setup.md` Step 6 and in
   `docs/device_trust.md` "How to verify" step 3 are removed. HA18 leaves
   the WAP firmware alone: deployed units send capitals, and HA accepts
-  both; HA20 (#<E>) makes the WAP send lowercase too. The sweep of other
+  both; HA20 (#1727) makes the WAP send lowercase too. The sweep of other
   consumers found they already ignore case: the desktop Flasher's whoami
   check (`eq_ignore_ascii_case`), the kernel's fleet peers (it lowercases
   the health key before it pins or compares it, and never reads `fp`), the
@@ -2143,7 +2143,7 @@ so — see D2 below.)
   display's own model and beacon parser reproduced the first two, and with
   the fp lowercased they matched; the third is read from `fleet_link.cpp`'s
   source. Found in HA18.
-  *Done (#<E>):* `on_chain` stores the fp in lowercase (`copy_hex_lower`)
+  *Done (#1727):* `on_chain` stores the fp in lowercase (`copy_hex_lower`)
   and takes the ghost suffix from the stored copy. A new case in
   `tests_host/test_fleet_beacon_model.cpp` fails on the old model and passes
   on the new one, and the whole display host suite passes. `setup.sh regen`
@@ -2159,7 +2159,7 @@ so — see D2 below.)
   capitals through `hex_to_str`, which caused HA18 and HA19. Home Assistant
   (HA18) and the canary-display's fleet model (HA19) now accept both and
   must keep doing so while capital-spelling units are deployed, so this is
-  consistency, not a fix; HA19 had to land first, and it has (#<E>). Scope
+  consistency, not a fix; HA19 had to land first, and it has (#1727). Scope
   it to `g_device.fingerprint_hex` and the `pubkey_hex` handed to
   `csi_mqtt::init` at both of its calls (at boot, and again after a QR hub
   provision), not to `hex_to_str` itself: that one encoder also spells the
@@ -2180,8 +2180,8 @@ so — see D2 below.)
   `csi_mqtt::init` call, and fails on purpose when they stop: point it at
   the new encoder and keep both spellings running. Host-test the two
   strings, then update `docs/device_trust.md`'s note on which WAP surfaces
-  print capitals. Found in HA18 (#<E>).
-  *Done (#<E>):* A new pure header beside the sketch, `mqtt_identity.h`,
+  print capitals. Found in HA18 (#1727).
+  *Done (#1727):* A new pure header beside the sketch, `mqtt_identity.h`,
   spells the two MQTT strings in lowercase (`hex_lower`). Its
   `fingerprint_hex` and `public_key_hex` take fixed-size arrays, so a wrong
   buffer or byte array does not compile. Both `csi_mqtt::init` calls take
@@ -2243,7 +2243,7 @@ so — see D2 below.)
   `ble_chirp` keeps the pointer too but reads it only inside `init`. Not a
   case bug; the `id` is one of the capital-spelled surfaces HA20 lists.
   Found in HA18's review.
-  *Done (#<E>):* `ble_manager.h` passes `g_deviceIdHex`, the copy it
+  *Done (#1727):* `ble_manager.h` passes `g_deviceIdHex`, the copy it
   already made and never used (a zero-initialized static filled by
   `strncpy` with size - 1, so always terminated), to both inits. Read from
   source only: not compiled here (the WAP compile is CI's), not run, not
@@ -2261,7 +2261,7 @@ so — see D2 below.)
   exception. Fix: require every character to be a hex digit (or the
   decoded key to be 32 bytes) before the pin task is scheduled, with a
   test. Pre-existing: the hook did the same before HA18. Found in HA18's
-  review (#<E>). *Done (#<E>):* the hook requires exactly 64 hex digits
+  review (#1727). *Done (#1727):* the hook requires exactly 64 hex digits
   after lowercasing, before the pin task is scheduled.
   `test_fingerprint_case.py` gains four 64-character non-keys; the two
   whitespace forms fail on the old hook and pass after. Host-tested.
@@ -2270,7 +2270,7 @@ so — see D2 below.)
   files #1703, #1704 and #1718 had moved. The same PR brought the store
   page's watch-actions, key-pinning, broker-TLS and Apple Home sentences,
   and a `lint_readme.py` overclaim check that reads a hard-wrapped claim as
-  one and refuses "encrypted by default". PR #1725 and PR #<E> move
+  one and refuses "encrypted by default". PR #1725 and PR #1727 move
   carried files again, and their resync follows them (U6). Its health
   items are U6 and U7 above, plus the three monorepo-fixture tests its CI
   deselects, which is by design. A few more tests skip themselves there
