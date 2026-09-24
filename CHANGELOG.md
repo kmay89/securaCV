@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### The airtime governor charges what goes on the air, a chain-state write NVS refuses is retried, the WAP's settings sessions stop closing each other, the key-pinning steps name each product's source, and CI keeps one host-test list and hears every read outside its path filter (#<D>)
+### The airtime governor charges what goes on the air, a chain-state write NVS refuses is retried, the WAP's settings sessions stop closing each other, the key-pinning steps name each product's source, and CI keeps one host-test list and fails a logic test's node or python3 read outside its path filter (#<D>)
 
 - **The airtime governor charges what goes on the air: an ESP-NOW framing
   allowance for every caller, and one frame per peer a mesh broadcast
@@ -56,8 +56,8 @@
   says so on Serial. Host-tested on the firmware's own code
   (`test_nvs_store_result.cpp`, `test_chain_persist.cpp`); compiled by CI's
   canary envs on #<D>; not bench-tested. The identity key's store
-  (`nvs_store_key`) and canary-wap's copies are unchanged and tracked
-  separately (sweep F58 and F59).
+  (`nvs_store_key`), canary-wap's copies and the Wi-Fi settings save are
+  unchanged and tracked separately (sweep F58, F59 and F61).
 - **canary-wap: NVS sessions are serialized across tasks (sweep F53).** Five
   tasks open sessions on the WAP's one settings handle (the loop, the API,
   the NimBLE host, Bluetooth bring-up and the QR scan), and a session ending

@@ -657,14 +657,14 @@ so — see D2 below.)
   (`test_nvs_store_result.cpp`, `test_chain_persist.cpp`: the helpers and
   the witness glue cut out verbatim; the old bodies fail 9 and 38
   assertions, a retry on every record 28); compiled by CI's canary envs on
-  #<D>; no bench pass. Not changed: `nvs_store_key()` has the same unread
-  put, but an honest result there halts provisioning (F58, maintainer to
-  choose); canary-wap's own copies of these helpers and its
-  `persist_chain_state()` carry the same defect (F59); the canary's other
-  direct NVS put calls (64 in 15 files, a few of which already read their
-  result) were not audited. The Wi-Fi save this item names is one of them
-  and is unchanged: `ScvNetworkManager::saveCredentials()` still ignores its
-  puts, and `handle_wifi_connect` ignores its result.
+  #<D>; no bench pass. Still open: `nvs_store_key()` has the same unread put,
+  but an honest result there halts provisioning (F58, maintainer to choose);
+  canary-wap's own copies of these helpers and its `persist_chain_state()`
+  carry the same defect (F59); the canary's other direct NVS put calls (64 in
+  15 files, a few of which already read their result) were not audited (F61).
+  The Wi-Fi save this item names is one of them and is unchanged:
+  `ScvNetworkManager::saveCredentials()` still ignores its puts, and
+  `handle_wifi_connect` ignores its result; F61 starts there.
 - [x] **F56 [code] The canary's provisioning receipt did not ask the Host,
   and a page load under a foreign Host could spend the BOOT tap.** Found by
   the wave-7 security-docs review. `GET /api/provisioning-receipt`
@@ -689,27 +689,28 @@ so — see D2 below.)
   Hardening TODOs: apply the same Host-first order to the WAP sketch's
   receipt route (F57), and consider refusing browser cross-site requests
   before either tap path takes the tap.
-- [ ] **F57 [decision] canary-wap's receipt route and API do not ask the
-  Host.** F56 gave the canary's receipt the Host-first order its `auth_gate`
-  routes already had; the WAP sketch has neither.
-  `handle_provisioning_receipt` (`canary_wap.ino`) serves on a bearer
-  (`api_auth_check_optional`) or takes the BOOT tap
-  (`provisioning_gate_take()`) without reading the Host, and nothing under
-  `firmware/projects/canary-wap/` includes
-  `firmware/common/network/host_guard.h`. F56's fix (#1722) recorded the
-  same shape for the WAP: stage `host_guard.h`, refuse a foreign Host first
-  with the SoftAP exempt, and extend the WAP's own
-  `check_route_security.py`. That port needs a call first. The canary
-  exempts every request from its own AP subnet (`host_is_foreign`'s
-  `from_ap_subnet`), but in standalone mode the WAP's AP is the product
-  (`canary_wap.ino` says so where it restarts the captive DNS), so the same
-  exemption would exempt every client it has. And the WAP runs its captive
-  DNS for the whole life of the AP, pointing every name at itself, so
-  captive-portal assistants arrive under foreign Host names; its `/`
-  redirect and `request_host_is_direct` already tell those apart from the
-  owner's browser by `canary.local` / `192.168.4.1`. Decide which interface
-  and which names the WAP trusts, then port it with its route checker. Found
-  in the wave-7 receipt review (F56).
+- [ ] **F57 [decision] canary-wap's receipt route and bearer-gated API do not
+  refuse a foreign Host.** F56 gave the canary's receipt the Host-first order
+  its `auth_gate` routes already had; on the WAP, neither the receipt nor the
+  bearer check (`api_auth.h`) reads the Host. `handle_provisioning_receipt`
+  (`canary_wap.ino`) serves on a bearer (`api_auth_check_optional`) or takes
+  the BOOT tap (`provisioning_gate_take()`) without reading the Host, and
+  nothing under `firmware/projects/canary-wap/` includes
+  `firmware/common/network/host_guard.h`. #1722 left the WAP out, recording
+  that a port needs a decision on the captive portal. The follow-up proposed
+  with F56's fix has the canary's shape: stage `host_guard.h`, refuse a
+  foreign Host first with the SoftAP exempt, and extend the WAP's own
+  `check_route_security.py`. That decision comes first. The canary exempts
+  every request from its own AP subnet (`host_is_foreign`'s `from_ap_subnet`),
+  but in standalone mode the WAP's AP is the product (`canary_wap.ino` says so
+  where it restarts the captive DNS), so the same exemption would exempt every
+  client it has. And the WAP runs its captive DNS for the whole life of the
+  AP, pointing every name at itself, so captive-portal assistants arrive under
+  foreign Host names; its `/` redirect and `request_host_is_direct` (the
+  wizard's `/api/wifi/pair-token`) already tell those apart from the owner's
+  browser by `canary.local` / `192.168.4.1`. Decide which interface and which
+  names the WAP trusts, then port it with its route checker. Found in the
+  wave-7 receipt review (F56).
 - [ ] **F58 [decision] The canary's identity-key store still reports success
   whatever the write did.** `nvs_store_key()`
   (`firmware/canary/lib/securacv_crypto/src/securacv_crypto.cpp`) ignores
@@ -742,6 +743,18 @@ so — see D2 below.)
   ends shuts every other task out (each waits 2 s, then fails soft). Close
   the gap with an RAII session guard in `nvs_store.h` or a real control-flow
   check. Found doing F53.
+- [ ] **F61 [code] The canary's other NVS puts are unaudited for a write that
+  did not land.** F55 made the chain-state helpers honest; the 64 direct
+  `Preferences` / `NvsManager` put calls in 15 files of `firmware/canary`
+  (outside `securacv_crypto.cpp`) were out of its scope, and a few already
+  read their result (`csi_event_egress.cpp`, `mesh_state.cpp`). Start with the
+  Wi-Fi save F55 named: `ScvNetworkManager::saveCredentials()`
+  (`firmware/canary/lib/securacv_network/src/securacv_network.cpp`) ignores
+  what `putBytes` / `putBool` returned, marks the credentials configured, logs
+  'WiFi credentials saved' and returns true, and `handle_wifi_connect` ignores
+  even a false, so a Wi-Fi save the API reported as done can be silently
+  dropped; have the route answer an error when the save fails. Then audit each
+  of the rest for a state it claims after a put NVS refused. Found doing F55.
 
 ### Parity & sub-projects
 
@@ -1140,10 +1153,10 @@ so — see D2 below.)
   a reader whose clock trails the newest send (the MQTT telemetry) still
   counts every send before its time. The probe's gate moved to
   `probe_airtime.h`: it starts no frame once the governor's window reads
-  1.60 % (one peer at 20 Hz stays steady; the probe stops within one
-  792 µs frame of the line, so about 0.39 % stays for the heartbeat,
-  presence and the Beacon self-test), and it brings the governor up on a
-  boot without the mesh. Host-tested (`test_mesh_coexistence`,
+  1.60 % (one peer at 20 Hz, with an Opera of one, stays steady; the probe
+  stops within one 792 µs frame of the line, so about 0.39 % stays for the
+  heartbeat, presence and the Beacon self-test), and it brings the governor up
+  on a boot without the mesh. Host-tested (`test_mesh_coexistence`,
   `test_csi_probe_airtime`, which pins the ceiling at exactly 1.60 % from
   both sides); the device build is CI's (firmware.yml's WAP Arduino legs).
   Latent on shipped devices: the WAP's probe table is empty, so it
@@ -1872,10 +1885,10 @@ so — see D2 below.)
   `tests/test_key_source_copy.py::test_pin_step_offers_no_source_for_a_fingerprint_only_product`
   must change with them. The in-browser flasher's identity card works for
   them once they answer `j`. Found in HA14. — in progress (2026-09-24)
-- [ ] **HA18 [code] Home Assistant reads canary-wap's signed publishes as a
-  key mismatch (fingerprint case).** `canary_wap.ino`'s `hex_to_str` writes
-  capitals, so `g_device.fingerprint_hex` is uppercase. That string is the
-  `fp` in every signed chain / event / counts envelope, through
+- [ ] **HA18 [code] Home Assistant likely reads canary-wap's signed publishes
+  as a key mismatch (fingerprint case).** `canary_wap.ino`'s `hex_to_str`
+  writes capitals, so `g_device.fingerprint_hex` is uppercase. That string is
+  the `fp` in every signed chain / event / counts envelope, through
   `device_signature::init` and `csi_mqtt`, and the health `public_key` is
   uppercase too. HA derives the pinned fingerprint in lowercase
   (`device_trust.fingerprint_from_pubkey_hex`), and
@@ -1893,12 +1906,13 @@ so — see D2 below.)
   to `docs/device_trust.md` "How to verify" step 3, which both expect
   `verified: true` and matching fingerprints. Found in HA14.
   — in progress (2026-09-24)
-- [ ] *(Mirror repo itself: no code work. It is byte-identical again as of
+- [ ] *(Mirror repo itself: no code work. It was byte-identical again as of
   securacv-homeassistant#17 (2026-09-24), which resynced the 33 carried
   files #1703, #1704 and #1718 had moved. The same PR brought the store
   page's watch-actions, key-pinning, broker-TLS and Apple Home sentences,
   and a `lint_readme.py` overclaim check that reads a hard-wrapped claim as
-  one and refuses "encrypted by default". Its health items are U6 and U7
+  one and refuses "encrypted by default". PR #<D> moves carried files
+  again, and their resync follows it (U6). Its health items are U6 and U7
   above, plus the three monorepo-fixture tests its CI deselects, which is
   by design. A few more tests skip themselves there because they read
   firmware sources the mirror does not carry.)*
@@ -2677,9 +2691,9 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   read is charged to its source, which keeps `scripts/bom_pricing.py`
   checked. Not recorded: shell reads (the Witness Wall step's `cmp`, git),
   children with a replaced environment or python3 -I/-E/-S, the drift-step
-  generators (194 paths outside the filter when it landed, 187 of them
-  `gen_flash.py`'s under `firmware/canary/**`) and every other filtered
-  workflow (CI4).
+  generators (194 paths outside the filter, measured on CI2's branch, 187
+  of them `gen_flash.py`'s, nearly all under `firmware/canary/**`) and
+  every other filtered workflow (CI4).
 - [x] **CI3 [code] One host-test list.** On 7446893, `firmware.yml`'s Mesh +
   Scout host-test job compiles 34 tests_host sources inline (canary-display
   14, canary-wap 17, canary-tincan 2, canary-companion 1). 19 of those tests
@@ -2719,10 +2733,11 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
 - [ ] **CI4 [decision] The path-filter read gate hears only
   canary-local.yml's logic tests.** CI2 (#<D>) records what that job's three
   test steps read. The job's drift-step generators run unarmed: measured
-  when CI2 landed, they read 194 paths outside the filter, 187 of them
-  `gen_flash.py`'s (`firmware/canary/**` and
-  `.github/workflows/firmware-release.yml`), plus `gen_figures.mjs`'s 6
-  existence probes and one `gen_operator.py` read. Arming them is a policy
+  on CI2's branch, they read 194 paths outside the filter, 187 of them
+  `gen_flash.py`'s (all but two under `firmware/canary/**`; the two are
+  `.github/workflows/firmware-release.yml` and
+  `firmware/provisioning/platformio_secure.ini`), plus `gen_figures.mjs`'s
+  6 existence probes and one `gen_operator.py` read. Arming them is a policy
   call: `firmware/canary/**` in the filter would run the workflow's wasm
   build-and-boot job (a 45-minute timeout) on every flagship firmware PR. No
   other filtered workflow is recorded either, for example
