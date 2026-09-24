@@ -954,14 +954,15 @@ void provision_run(bool glass_ok) {
           // Captive sheet never popped (some Androids with "stay connected"
           // prompts, or a dismissed iOS sheet): give the manual path,
           // quietly. "browser", not "Safari" — this glass onboards Android
-          // phones too (review catch). Short form on the watch: the round
-          // face clips long bottom captions.
-#if defined(CD_FLAVOR_WATCH) && !defined(CD_FLAVOR_NIGHTSTAND)
-          // Round glass: the low band offers ~142 px — the address IS the
-          // hint (anything longer would ellipsize the digits away).
-          ui_hint("open 192.168.4.1");
-#elif defined(CD_FLAVOR_WATCH)
-          ui_hint("no page? open 192.168.4.1");
+          // phones too (review catch).
+#if defined(CD_FLAVOR_WATCH)
+          // Small glass, round and portrait: the glass fits it to the two
+          // rows the empty credentials leave (onboardlayout::hint_lines,
+          // F50) — whole where one row holds it, "no page?" over the
+          // address where it takes two (the round watch's 142 px low band;
+          // Heirloom's 182 px on the 156/164 px portrait rows), and the
+          // address alone, the narrow form, where neither would.
+          ui_hint("no page? open 192.168.4.1", "open 192.168.4.1");
 #else
           ui_hint("no page? open your browser: 192.168.4.1");
 #endif
@@ -1003,13 +1004,18 @@ void provision_run(bool glass_ok) {
           WiFi.disconnect(/*wifioff=*/false, /*eraseap=*/false);
           enter(St::Fail, now);
           ui_stage(canary::ui::ObStage::Fail, ctx.fail_reason);
-          // Every failure carries its most likely fix (the portal shows a
-          // longer version of the same tip). The classic silent killer is
-          // a 5 GHz-only network the radio literally cannot see.
-          // Same shared table the boot path and the glass use, so the hint a
-          // user reads in the portal is the hint the device logs.
+          // Every failure carries its most likely fix (the portal's own
+          // tip() words a longer one for a wrong key and a missing
+          // network). The classic silent killer is a 5 GHz-only network the
+          // radio literally cannot see. The fix comes from the shared table
+          // (wifi_join_policy.h) whose label is the title above it and
+          // whose detail the boot path logs. The narrow form is the same fix
+          // in fewer words, for a row that cannot hold the hint whole or
+          // over two rows (onboardlayout::hint_lines, F50).
           {
-            ui_hint(canary::net::join_failure_hint(classify_status(ws)));
+            const canary::net::JoinFailure why = classify_status(ws);
+            ui_hint(canary::net::join_failure_hint(why),
+                    canary::net::join_failure_hint_narrow(why));
           }
         }
         break;

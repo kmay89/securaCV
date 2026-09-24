@@ -194,9 +194,17 @@ static void every_failure_has_text_for_every_surface() {
     const char* label = join_failure_label(f);
     const char* detail = join_failure_detail(f);
     const char* hint = join_failure_hint(f);
+    const char* narrow = join_failure_hint_narrow(f);
     CHECK(label && *label, "label missing for failure %u", (unsigned)f);
     CHECK(detail && *detail, "detail missing for failure %u", (unsigned)f);
     CHECK(hint && *hint, "hint missing for failure %u", (unsigned)f);
+    // The narrow form is what a row too narrow for the hint shows (F50): it
+    // must exist and be shorter, or the fallback is no fallback. Whether it
+    // fits each display's rows is the display's host test (onboard_layout).
+    CHECK(narrow && *narrow, "narrow hint missing for failure %u", (unsigned)f);
+    CHECK(narrow && hint && std::strlen(narrow) < std::strlen(hint),
+          "narrow hint \"%s\" is not shorter than \"%s\"", narrow ? narrow : "",
+          hint ? hint : "");
     CHECK(std::strlen(label) <= 32,
           "label must fit a small status line: \"%s\"", label);
     // The detail is what replaced a silent reboot; it must say the device is
@@ -215,6 +223,58 @@ static void the_two_common_failures_name_their_real_cause() {
   CHECK(std::string(join_failure_hint(JoinFailure::BadPassword))
                 .find("case-sensitive") != std::string::npos,
         "a bad password must mention case sensitivity");
+  // ...and the narrow forms a small screen falls back to still name them.
+  CHECK(std::string(join_failure_hint_narrow(JoinFailure::BadPassword))
+                .find("case-sensitive") != std::string::npos,
+        "the narrow bad-password hint must still mention case sensitivity");
+  CHECK(std::string(join_failure_hint_narrow(JoinFailure::NotFound))
+                .find("2.4 GHz") != std::string::npos,
+        "the narrow not-found hint must still name the 2.4 GHz band");
+  CHECK(std::string(join_failure_hint_narrow(JoinFailure::NoAddress))
+                .find("router") != std::string::npos,
+        "the narrow no-address hint must still name the router");
+  CHECK(std::string(join_failure_hint_narrow(JoinFailure::Unknown))
+                .find("closer") != std::string::npos,
+        "the narrow catch-all hint must still say to move closer");
+}
+
+static bool has_word(const std::string& text, const char* word) {
+  const std::string w(word);
+  for (size_t at = text.find(w); at != std::string::npos;
+       at = text.find(w, at + 1)) {
+    const bool starts = at == 0 || text[at - 1] == ' ';
+    const size_t end = at + w.size();
+    if (starts && (end == text.size() || text[end] == ' ')) return true;
+  }
+  return false;
+}
+
+static void the_narrow_forms_say_no_more_than_the_hint() {
+  // The narrow form is the same fix in fewer words (F50), not a firmer one.
+  // NoAddress is inferred from a timeout (WL_IDLE_STATUS), so its hint is a
+  // guess and says so; the catch-all is a suggestion and says so. A narrow
+  // form that drops the hedge, or asks for a step the hint never did, turns
+  // a guess into an order on the smallest glass.
+  static const char* const kHedges[] = {"may", "try", "might", "maybe"};
+  static const char* const kSteps[] = {"restart", "reboot", "reset",
+                                       "unplug", "replace"};
+  for (JoinFailure f : kAllFailures) {
+    const std::string hint = join_failure_hint(f);
+    const std::string narrow = join_failure_hint_narrow(f);
+    for (const char* h : kHedges) {
+      CHECK(!has_word(hint, h) || has_word(narrow, h),
+            "\"%s\" drops the hedge \"%s\" of \"%s\"", narrow.c_str(), h,
+            hint.c_str());
+    }
+    for (const char* v : kSteps) {
+      CHECK(has_word(hint, v) || !has_word(narrow, v),
+            "\"%s\" asks for a step (\"%s\") \"%s\" never does",
+            narrow.c_str(), v, hint.c_str());
+    }
+    CHECK(narrow.find("...") == std::string::npos &&
+              narrow.find("\xE2\x80\xA6") == std::string::npos,
+          "\"%s\" is a cut, not a form", narrow.c_str());
+  }
 }
 
 int main() {
@@ -228,6 +288,7 @@ int main() {
   setup_waits_out_a_slow_booting_router();
   every_failure_has_text_for_every_surface();
   the_two_common_failures_name_their_real_cause();
+  the_narrow_forms_say_no_more_than_the_hint();
 
   if (g_failures == 0) {
     std::printf("test_wifi_join_policy: all checks passed\n");
