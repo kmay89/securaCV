@@ -23,6 +23,7 @@ on:
       # the Lab's Assemble tab poses are derived from the CAD here
       # (gen_assembly_poses.py --check), so a hand edit must run the gate
       - "canary-local/devices/assembly.json"
+      - "canary-local/boards/**"
   pull_request:
     branches: [ "main" ]
     paths:
@@ -32,6 +33,7 @@ on:
       - ".github/workflows/enclosure.yml"
       - "scripts/lint_design_lang.py"
       - "canary-local/devices/assembly.json"
+      - "canary-local/boards/**"
 
 permissions:
   contents: read

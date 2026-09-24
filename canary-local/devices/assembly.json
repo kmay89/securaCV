@@ -115,7 +115,19 @@
      "step": 2,
      "name": "XIAO ESP32-S3 Sense",
      "ref": "U1",
-     "pose": "cad"
+     "pose": "cad",
+     "glb_datum": {
+      "center": [
+       3.208,
+       6.73,
+       -6.111
+      ],
+      "datum": [
+       1.805,
+       -0.25,
+       -6.111
+      ]
+     }
     },
     {
      "id": "magnet",
@@ -786,7 +798,19 @@
      "name": "Seeed Round Display for XIAO",
      "qty": 1,
      "ref": "W-U2",
-     "pose": "cad"
+     "pose": "cad",
+     "glb_datum": {
+      "center": [
+       0,
+       -1.8,
+       0
+      ],
+      "datum": [
+       0,
+       -1.8,
+       0
+      ]
+     }
     },
     {
      "id": "bezel",

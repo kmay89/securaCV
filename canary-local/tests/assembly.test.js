@@ -63,6 +63,20 @@ for (const [dev, d] of Object.entries(asm.devices)) {
     }
   });
 
+  // A board placed from its PCB datum is only as right as the datum: the
+  // generator's numbers were measured off the committed GLB, so re-measure
+  // the GLB here with the page's own loader and hold them to it.
+  test(`${dev}: board datums still describe the committed GLBs`, async () => {
+    const { parseGLB } = await import("../assets/glb.js");
+    for (const p of d.parts.filter((q) => q.glb_datum)) {
+      const { bbox } = parseGLB(readFileSync(join(ROOT, boards.boards[p.board].glb)));
+      p.glb_datum.center.forEach((v, i) => assert.ok(Math.abs(v - bbox.center[i]) < 0.01,
+        `${p.board}: GLB center moved (${bbox.center.map((c) => c.toFixed(3))}) — re-measure BOARDS in gen_assembly_poses.py`));
+      p.glb_datum.datum.forEach((v, i) => assert.ok(v >= bbox.min[i] - 1e-6 && v <= bbox.max[i] + 1e-6,
+        `${p.board}: datum outside the GLB`));
+    }
+  });
+
   test(`${dev}: part quantities match the BOM`, () => {
     const rows = build.devices[dev]?.bom?.rows || [];
     const byRef = Object.fromEntries(rows.map((r) => [r.ref, r]));

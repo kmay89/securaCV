@@ -79,6 +79,9 @@ BOARDS = {
     "seeed_round_display_xiao": {"center": [0.000, -1.800, 0.000], "datum": [0.000, -1.800, 0.000]},
 }
 
+# (canary-local/tests/assembly.test.js re-measures each `center` off the
+# committed GLB with glb.js, and the socket rows' pad islands below, so a
+# regenerated board model cannot leave these behind silently.)
 # the round display's XIAO socket: the two header rows span raw GLB x
 # 0.55..18.9 (pad islands, same mesh), so the XIAO rides centered at 9.725
 DISPLAY_SOCKET_X = 9.725
@@ -381,6 +384,12 @@ def derive(asm):
                 seated["rot"] = [_ang(r) for r in rot]
             p["seated"] = seated
             p["pose"] = "cad"
+            glb = [a for (k, a) in (steps if isinstance(steps, list) else []) if k == "G"]
+            if glb:
+                # written beside the pose so the Lab test can re-measure the
+                # committed GLB with the page's own loader: a regenerated or
+                # replaced board model that moved its center fails there
+                p["glb_datum"] = {k: [_num(x) for x in v] for k, v in BOARDS[glb[0]].items()}
         for pid, ps in dev.get("params", {}).items():
             p = byid[pid]
             p.setdefault("params", {})
