@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### Home Assistant verifies a Canary WAP's signed publishes, Canary Sense and Sentinel show their full key, a Canary Display files a WAP's beacons on its own row, the WAP's Bluetooth Device Info keeps its id, and the Quiet Hours wheels center (#<E>)
+### Home Assistant verifies a Canary WAP's signed publishes and the WAP now sends them in lowercase, Canary Sense and Sentinel show their full key, a Canary Display files a WAP's beacons on its own row and fits its join hints on narrow glass, the WAP's Bluetooth Device Info keeps its id, and the Quiet Hours wheels center (#<E>)
 
 - **Home Assistant: a Canary WAP's signed publishes now verify (sweep
   HA18).** The WAP writes its key fingerprint in capitals, and Home
@@ -14,8 +14,10 @@
   capitals when it loads them, and shows every key in lowercase. A
   different key, or a tampered publish, still reads as a mismatch. The
   setup guide and `docs/device_trust.md` drop their caveat that a WAP may
-  read as a mismatch. The WAP firmware is unchanged. Reproduced and fixed on
-  a host with the WAP's own code, not checked on a bench. The HACS mirror's
+  read as a mismatch. Home Assistant keeps accepting both spellings, since
+  WAPs on released firmware through 2.4.15 write capitals; the WAP itself
+  switches to lowercase below (HA20). Reproduced and fixed on a host with
+  the WAP's own code, not checked on a bench. The HACS mirror's
   copy of the changed integration files follows in a resync (sweep U6).
 - **Canary Sense and Sentinel now show their full public key, so you can
   pin them in Home Assistant by hand (sweep HA17).** From the first
@@ -78,6 +80,39 @@
   A new source guard, `canary-local/tests/settings_rollers.test.js`, fails
   any roller in the display's sources whose own block does not center it.
   Compile-tested by CI, not bench-tested.
+- **The display's "no page?" hint and every failed join's fix fit narrow
+  glass (sweep F50).** After a failed join the glass names the fix
+  ("passwords are case-sensitive"). When a phone sits on the setup network
+  without opening the page, it names the manual path ("no page? open
+  192.168.4.1"). Both went on one row. The fixes (175-219 px in the 12 px
+  face) ended in an ellipsis on the round watch's 142 px band and on the
+  156/164 px rows of the 172/180 px portrait glass, and under Heirloom two
+  of them did on the 240 px touch169 as well. Under Heirloom the "no page?"
+  hint (182 px) was cut on the portrait glass, and the round watch had room
+  only for the address. Those scenes leave the credentials rows empty, so
+  the hint now has both. It stays whole on one row where it fits, and goes
+  over two where it does not ("no page?" over "open 192.168.4.1", never
+  splitting "2.4 GHz"). Every display now shows them whole, and the round
+  watch says "no page?" too. A shorter form of each fix (new in
+  `wifi_join_policy.h`, keeping the hint's "may" and "try") is a tested
+  fallback no glass needs today. `test_onboard_layout` runs every hint on
+  every display env with both type ladders and LVGL's own metrics, and
+  requires the whole form. The emulator's onboard probe reads the whole
+  "no page?" hint and the wrong-key and absent-network fixes off the glass
+  word for word. With the old dist it fails on the watch and the
+  nightstand. The onboarding docs now say the hint comes 4 s after the
+  phone joins (they said 9 s). Host-tested; the ESP32 builds are CI's; not
+  bench-tested. The emulator dist is rebuilt.
+- **A canary-wap publishes its MQTT fingerprint and health key in lowercase,
+  like every other build (sweep HA20).** Through 2.4.15 it wrote the `fp` of
+  its signed chain, counts and events publishes, and its health
+  `public_key`, in capitals. Home Assistant and the canary-display accept
+  both spellings (HA18, HA19), and they keep doing so for units on older
+  firmware. The WAP's `/enroll` page and `/api/device/enroll` card now print
+  the fingerprint in lowercase too. Its other surfaces keep their capitals:
+  the receipt, `/api/device-info`, `/api/status`, serial `i` and BLE.
+  Host-tested, including a signed events body byte-compared with Home
+  Assistant's fixture. Compile-tested by CI. Not seen on a unit.
 
 ### The airtime governor charges what goes on the air, a chain-state write NVS refuses is retried, the WAP's settings sessions stop closing each other, the key-pinning steps name each product's source, and CI keeps one host-test list and fails a logic test's node or python3 read outside its path filter (#1725)
 

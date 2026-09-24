@@ -1127,7 +1127,7 @@ so — see D2 below.)
   PIO residual splits remain: both initiators already handed out, a mutual
   removal, or a lost ACK. A random-loss probe split 3 of 60 runs at 5%
   frame loss (spec §5.6 states it).
-- [ ] **F50 [code] The display's other join hints still cut on narrow glass.**
+- [x] **F50 [code] The display's other join hints still cut on narrow glass.**
   Found by F45 (#1718). The Fail-stage hints from `join_failure_hint` measure
   175-219 px at 12 px ("your router may be out of addresses" is 219), so
   they are cut on the round watch's 142 px band and on the 156/164 px
@@ -1136,6 +1136,36 @@ so — see D2 below.)
   `fit_line()` with narrow forms. Also, on the round watch's no-QR path,
   the title band appears to overlap the top of the bird, inferred from the
   numbers only. The emulator always renders the QR, so it was not seen.
+  *Done (#<E>):* the scenes without credentials (PhoneJoined, Fail) give
+  their hint both rows the credentials leave. `onboardlayout::hint_lines()`
+  tries the whole hint on the hint row, then over both rows, then a narrow
+  form (`join_failure_hint_narrow()`, new in `wifi_join_policy.h`, one per
+  failure; each still names the fix and keeps the hint's "may" and "try"),
+  in the row's own face before the floor face. A two-row break goes after a
+  clause ("no page?" over "open 192.168.4.1"), else where the halves are
+  most even, and never inside "2.4 GHz". On every display env and ladder the
+  fixes and the "no page?" hint now read whole, on one row or two, and
+  `test_onboard_layout` requires it; the narrow forms are a pinned rung that
+  no glass reaches today, and each fits the hint row alone. Round and
+  portrait glass share one "no page?" hint (the round watch showed only the
+  address). The test runs every Fail hint and the "no page?" hint on every
+  display env with both ladders and LVGL's own metrics. The old one-row
+  behavior fails 39 of its row checks: 37 are cuts the old tree showed, and
+  2 are the round watch's new, longer hint. `onboard_probe.mjs` reads the
+  whole "no page?" hint and the whole wrong-key and absent-network fixes off
+  the emulator's glass word for word. With the old dist it fails on the
+  watch (the address without "no page?") and on the nightstand ("passwords
+  are case..."). The second observation holds at the layout constants but
+  not on the glass. At the constants, the bird's head (from y 40) sits under
+  the round watch's no-QR title band (30..48, or 30..52 under Heirloom), an
+  overlap of 8 px (12). But canary_mark records the bird's base before
+  LVGL's first layout pass, so the bird rides the panel center (y 98..137 on
+  240 px). That clears the band but puts the bird behind the other scenes'
+  titles (F64). The band's own title is cut under Heirloom ("On your
+  phone", 154 px on 142; F65). The onboarding docs said the hint comes
+  after 9 s; they now say 4 s after the phone joins. Host-tested; the ESP32
+  builds are CI's; not bench-tested. The emulator dist is rebuilt. Found
+  here: F64, F65 and F66.
 - [x] **F51 [code] The airtime governor's window lost sends above 25.6 a
   second, and a saturating probe starved the heartbeat.** Found reconciling
   F4 (#1696) on the host. `airtime_governor.cpp`'s 256-slot ring held sends,
@@ -1243,6 +1273,66 @@ so — see D2 below.)
   to the tuning console, which has no identity command, so `j` needs a new
   input path on both. Which port that input would arrive on is F62's
   question, so settle F62 first. Found doing HA17.
+- [ ] **F64 [code] The onboarding bird never sits where its host placed
+  it.** canary_mark_mood() records the bird's base with lv_obj_get_x/y at
+  its first on-stage mood, and the breath and the poses then write that base
+  back as the style offset. onboard_ui_create() reaches that mood (Hello,
+  Idle) before LVGL's first layout pass, so the base reads 0. The bird then
+  rides its alignment anchor with its offset lost. On the 240 px watch that
+  is the panel center, y 98..137 (±2 as it breathes), instead of CENTER -64
+  (y 36..75). Reproduced with LVGL 8.4.0 and the display's lv_conf, and seen
+  in the emulator. On every small glass it sits behind "Hello." / "Let's get
+  you connected.", "Nice - check your phone" / "a setup page is opening",
+  "Joining" and "You're in.". Where a host's first mood comes after a layout
+  pass instead, the base is the laid-out position. Under any alignment other
+  than TOP_LEFT, that is not the style offset either (inferred from LVGL's
+  semantics, not run). splash, dash_ui, nightstand7_ui, glance_ui,
+  portrait_ui, portrait7_ui and nightlight_ui all align their birds (CENTER,
+  LEFT_MID, TOP_MID, BOTTOM_MID, RIGHT_MID). Record the base as the host's
+  style offset (lv_obj_get_style_x/y), then re-place the onboarding bird. At
+  its constants the round watch's no-QR title band (30..48 px, 30..52 under
+  Heirloom) overlaps the bird's head (from y 40), so that path needs a new
+  position (F50's second observation, #<E>). Found by F50 (#<E>).
+- [ ] **F65 [code] The onboarding's scene titles and bodies are cut on small
+  glass.** Only the Join scene's credentials rows and the coach line are
+  fitted (F45, F50). The titles and bodies keep LV_LABEL_LONG_DOT at a fixed
+  width: the round watch's title band stays 142 px after the Join scene (138
+  px in Hello), and on portrait glass every row is the panel less 16 px.
+  Measured with test_onboard_layout's LVGL metrics, these are every cut on a
+  display env. At the default ladder (titles 16 px, bodies 12 px): "Nice -
+  check your phone" (197) and "No address from the router" (221) on the
+  round watch and the 156/164 px nightstand and nightlight, and "Network not
+  found" (154) on the round watch. Under Heirloom (titles 20 px, bodies 14
+  px), on the round watch: the no-QR Join title "On your phone" (154, shown
+  as "On your..." whenever the QR does not render), "Nice - check your
+  phone" (246), "Network not found" (194), "Wrong password" (175), "No
+  address from the router" (277), "Couldn't connect" (176) and "That didn't
+  work" (167). Under Heirloom on the 156/164 px portrait rows: the same six
+  later titles, and the bodies "Let's get you connected." (179), "a setup
+  page is opening" (176), "try again on your phone" (176) and "looking for
+  your canaries" (180). Under Heirloom on the 224 px touch169: "Nice - check
+  your phone" and "No address from the router". The amoled241's Heirloom
+  faces (28/20 px) are not in montserrat_metrics.h, so it was not measured;
+  scaled from the 20 px widths, nothing reaches its 434 px. The Connecting
+  body is the network name clipped to 28 characters, so a long name can be
+  cut on any small glass. rf_fit_center() re-fits the centered labels on
+  round glass. fit_line()'s ladder (shorter forms, then the floor face) with
+  shorter copy covers the rest, and test_onboard_layout can hold each line
+  the way it holds the coach line. Found by F50 (#<E>).
+- [ ] **F66 [code] The onboarding halo ring runs through the low text rows
+  on rectangular small glass.** onboard_ui.cpp draws one 236 px ring,
+  centered, on every small glass. On the 172/180x320 portrait glass, its
+  bottom arc (y 275..278 at the center) runs through the hint row
+  (269..284). The upper row of a split coach line crosses it at both ends
+  ("your router may be", y 259..268). On the 240x280 touch169 the arc (y
+  255..258 at the center) runs through the hint row (239..254), and under
+  Heirloom through both rows of a split fix. The Join scene's split
+  credentials have crossed it the same way since F45. The text is drawn over
+  the arc, not cut. The round watch's rows sit inside its ring. Size the
+  ring from the panel's short side on rectangular glass, or keep it clear of
+  the Join stack's rows, and have test_onboard_layout hold the rows inside
+  the ring. Found by F50 (#<E>), from the layout constants and seen in
+  native LVGL 8.4 renders of onboard_ui.cpp.
 
 ---
 
@@ -1642,6 +1732,14 @@ so — see D2 below.)
   a newcomer as `online: true`, the tile toast says "online · chain intact"
   for an offline tile, and the paragraph's 8799 instruction does not work
   inside either app.
+- [ ] **A25 [code] canary-local's WAP page shows an 8-digit example
+  fingerprint.** `canary-local/tools/gen_wap.py`'s TOPICS examples for
+  `events`, `chain` and `counts` carry `"fp":"7f3a9c21"`. The envelope `fp`
+  is 16 hex digits (8 bytes of `pubkey_fp`), and since HA20 a canary-wap
+  sends it in lowercase. The examples elide the signature with an ellipsis,
+  but the fp reads as a whole value. Give them a 16-digit lowercase example
+  (regenerate `wap.json`, then `gen_csp.py` if the page hash moves). Found
+  in HA20 (#<E>).
 
 ---
 
@@ -2010,9 +2108,9 @@ so — see D2 below.)
   the old code. Its firmware cross-check holds the fixture to `hex_to_str`
   at every `csi_mqtt::init` call, and it skips in the HACS mirror. HA14's
   canary-wap caveats in `docs/homeassistant_setup.md` Step 6 and in
-  `docs/device_trust.md` "How to verify" step 3 are removed. The WAP
-  firmware is unchanged: deployed units send capitals, and HA accepts both;
-  whether the WAP should send lowercase too is HA20. The sweep of other
+  `docs/device_trust.md` "How to verify" step 3 are removed. HA18 leaves
+  the WAP firmware alone: deployed units send capitals, and HA accepts
+  both; HA20 (#<E>) makes the WAP send lowercase too. The sweep of other
   consumers found they already ignore case: the desktop Flasher's whoami
   check (`eq_ignore_ascii_case`), the kernel's fleet peers (it lowercases
   the health key before it pins or compares it, and never reads `fp`), the
@@ -2054,7 +2152,7 @@ so — see D2 below.)
   emulator dist is rebuilt in this PR by CI's pinned emsdk, in the same
   rebuild as the Quiet Hours wheels (roadmap row 17). Host-tested; the
   device builds are CI's; not seen on a bench.
-- [ ] **HA20 [code] canary-wap: send its MQTT fingerprint and health key in
+- [x] **HA20 [code] canary-wap: send its MQTT fingerprint and health key in
   lowercase.** Every other build writes both in lowercase: `firmware/canary`'s
   `csi_event_egress.cpp` and `main.cpp`, and each `witness.cpp` and
   `mqtt_mgr.cpp` on Sense, Sentinel and Vision. The WAP alone writes
@@ -2083,6 +2181,52 @@ so — see D2 below.)
   the new encoder and keep both spellings running. Host-test the two
   strings, then update `docs/device_trust.md`'s note on which WAP surfaces
   print capitals. Found in HA18 (#<E>).
+  *Done (#<E>):* A new pure header beside the sketch, `mqtt_identity.h`,
+  spells the two MQTT strings in lowercase (`hex_lower`). Its
+  `fingerprint_hex` and `public_key_hex` take fixed-size arrays, so a wrong
+  buffer or byte array does not compile. Both `csi_mqtt::init` calls take
+  `mqtt_identity::public_key_hex`: the one at boot (`register_api_routes`)
+  and the one after a QR hub provision (`qr_scan_task_fn`). The one
+  `device_signature::init` call takes `mqtt_identity::fingerprint_hex` of
+  `g_device.pubkey_fp`. The decision, from the code: `hex_to_str` and
+  `g_device.fingerprint_hex` stay in capitals. device_signature's cached
+  fingerprint is the only source of the envelope `fp` (the chain and counts
+  bodies and the events Signer in `csi_mqtt.cpp`). It is also what `/enroll`
+  and `/api/device/enroll` print, so that card now prints the fingerprint in
+  lowercase, beside the key it already printed in lowercase
+  (device_signature's own encoder). Lowercasing `g_device.fingerprint_hex`
+  was wider than the item needed. The TLS CN, the receipt,
+  `/api/device-info`, `/api/status`, serial `i`, the BLE console metadata
+  and DIS serial, the BLE witness export, the BLE Opera Device Info `id` and
+  `/api/mesh/peers` keep their capitals. A fresh grep of the readers found
+  none that compares these strings exactly. Home Assistant runs them through
+  `normalize_hex`. The canary-display's fleet model lowercases them (HA19),
+  and its key pin compares bytes. The kernel's fleet peers lowercase the key
+  and never read `fp`. The desktop whoami reads the card's `pubkey_hex` and
+  compares fingerprints with `eq_ignore_ascii_case`. HA and the display
+  still accept both spellings. A new `tests_host/test_mqtt_identity.cpp` (26
+  checks, in `make`'s `run`) covers three things. First, the encoder, on the
+  repo test key and on all 256 byte values, with the key and fingerprint
+  derived by OpenSSL. Second, a signed events body built through the real
+  `device_signature.cpp` and `csi_event_wire.h`, with OpenSSL's
+  deterministic Ed25519 as the signer; it is byte-identical to the lowercase
+  `WAP_EVENT` Home Assistant runs, signature included. Third, source pins on
+  `canary_wap.ino` and `csi_mqtt.cpp`: the encoder feeds both init calls,
+  every published fp comes from `device_signature::fingerprint_hex()`, and
+  the health key comes only from `csi_mqtt::init`'s copy. Two pins fail
+  against the old sketch. `test_fingerprint_case.py`'s firmware cross-check
+  now points at `mqtt_identity.h`. It still runs both spellings, and it
+  checks that the lowercase run is the newer WAP's bytes. It fails on the
+  old sketch, and the old version of it fails on the new sketch, as
+  designed. `python.yml`'s path filter gains the header. The hex-case note
+  and "Checking a TOFU pin" in `docs/device_trust.md` now name the capital
+  spelling as firmware 2.4.15 and older. So do
+  `docs/homeassistant_setup.md`, the integration's comments and the
+  `/enroll` comment in `device_signature.cpp`. The emulator dist does not
+  move: `canary-local/emulator/build.sh` compiles only the WAP's
+  `securacv_audio.cpp`. Host-tested. The sketch compile is CI's. Not seen on
+  a bench. The HACS mirror's resync of the changed integration files follows
+  (sweep U6). Found here: A25.
 - [x] **HA21 [code] canary-wap: the BLE Device Info characteristic read its
   device id from a deleted task's stack.** `ble_bringup_task`
   (`canary_wap.ino`) fills a stack array, `ble_device_id_hex[20]`, with

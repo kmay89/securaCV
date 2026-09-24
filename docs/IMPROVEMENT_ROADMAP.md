@@ -388,7 +388,8 @@ vectors carry); PR #1722 landed most of the rest; PR #1725 landed the F54
 and CI3 packages with four more (F53, F55, HA14 and CI2); and PR #<E>
 landed the Hours package with HA18, HA17 and the two firmware fixes HA18
 turned up (HA19 in its sweep of the other fingerprint readers, HA21 in its
-review). Their bullets follow #1691's.
+review), plus F50's join hints and HA20's lowercase WAP publishes. Their
+bullets follow #1691's.
 
 - **Row 12 (the canary client) — the Canary's API keeps its broker password
   home, checks the `Host`, and reports an honest CA verdict.** A new broker
@@ -633,9 +634,10 @@ review). Their bullets follow #1691's.
   every fingerprint and key before it compares or stores it, heals pins
   stored in capitals on load, and shows keys in lowercase; another key, or
   a tampered body, in capitals still reads `mismatch`. HA14's canary-wap
-  caveats are gone. The WAP firmware is unchanged; making it send
-  lowercase too is HA20, for consistency. Reproduced and fixed on a host,
-  not seen on a bench. The mirror's resync follows (sweep U6).
+  caveats are gone. The same PR makes the WAP send lowercase too (HA20,
+  below), for consistency; Home Assistant keeps accepting both, since
+  released WAPs through 2.4.15 send capitals. Reproduced and fixed on a
+  host, not seen on a bench. The mirror's resync follows (sweep U6).
 - **Canary Sense and Sentinel print their full key at boot (PR #<E>, sweep
   HA17).** From the first firmware release after 2.4.15, `witness.cpp`
   prints `Ed25519 pubkey <64 hex>` after the fingerprint line, and the
@@ -657,6 +659,18 @@ review). Their bullets follow #1691's.
   device-id copy instead of a pointer into the bring-up task's stack, which
   the Device Info characteristic read after the task had deleted itself
   (read from source; the WAP compile is CI's). Neither is bench-tested.
+- **The display's join hints fit narrow glass, and the WAP publishes in
+  lowercase (PR #<E>, sweeps F50 and HA20).** A failed join's fix and the
+  "no page?" hint use both of the rows the credentials leave, so every
+  display shows them whole on both type ladders (`test_onboard_layout`
+  measures every hint on every display env with LVGL's own metrics; the
+  emulator's onboard probe reads them off the glass, and the five display
+  bundles are rebuilt by CI's pinned emsdk). canary-wap hands its MQTT
+  signer and health publish a lowercase fingerprint and key from a new pure
+  header, `mqtt_identity.h`, and its other surfaces keep their capitals.
+  Both host-tested; compile-tested by CI; not bench-tested. F50 filed
+  F64-F66 (the onboarding bird's base, cut titles and bodies, the halo
+  ring), and HA20 filed A25.
 - **Row 17's last open clause: the Quiet Hours wheels center on every touch
   glass (PR #<E>).** `mk_hour_roller` took the Location wheels' center
   style, host-measured on LVGL 8.4.0 and 9.5.0; the four touch flavors'
