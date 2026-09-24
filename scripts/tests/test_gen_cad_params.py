@@ -710,8 +710,8 @@ class DisplayCasesJoinTheSameChain(unittest.TestCase):
             lib_after = edit_lib(root, WS147_ROW, WS147_ROW.replace("36.37", "36.4"))
             errors = gcp.check(root / "devices", root)
             self.assertEqual(sorted(e.split(" ", 1)[0] for e in errors),
-                             ["canary_c3_lcd147.scad:249:", "canary_c6_display.scad:90:",
-                              "canary_s3_lcd147.scad:106:"], errors)
+                             ["canary_c3_lcd147.scad:269:", "canary_c6_display.scad:90:",
+                              "canary_s3_lcd147.scad:129:"], errors)
             for e in errors:
                 self.assertIn('references brd_l("ws147") (canary_board_lib.scad:53, drawing rung): '
                               "registry says 36.4, file says 36.37", e)
@@ -719,12 +719,12 @@ class DisplayCasesJoinTheSameChain(unittest.TestCase):
             self.assertEqual(werr, [])
             self.assertEqual(sorted((p.name, c.line, c.name, c.old_token, c.new_token)
                                     for p, c in written),
-                             [("canary_c3_lcd147.scad", 249, "board_l", "36.37", "36.4"),
+                             [("canary_c3_lcd147.scad", 269, "board_l", "36.37", "36.4"),
                               ("canary_c6_display.scad", 90, "board_l", "36.37", "36.4"),
-                              ("canary_s3_lcd147.scad", 106, "board_l", "36.37", "36.4")])
+                              ("canary_s3_lcd147.scad", 129, "board_l", "36.37", "36.4")])
             self.assertEqual(gcp.check(root / "devices", root), [])
-            self.assertEqual(moved_lines("canary_c3_lcd147.scad", root), [249])
-            self.assertEqual(moved_lines("canary_s3_lcd147.scad", root), [106])
+            self.assertEqual(moved_lines("canary_c3_lcd147.scad", root), [269])
+            self.assertEqual(moved_lines("canary_s3_lcd147.scad", root), [129])
             # the C6 used to cite the row by comment behind a `model` ternary
             # no manifest could own, so a registry correction never reached it;
             # its board_l is the 1.47 literal now and the manifest names the
