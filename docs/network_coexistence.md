@@ -96,6 +96,10 @@ falls in the same 100 ms, and a bucket leaves the window with its newest
 send. The 256-slot ring therefore reaches back at least 25.6 s at any send
 rate, so nothing still in the window is ever overwritten, and the window
 reads 10.0–10.1 s — never less, so the cap can only err toward denying.
+That holds for a reader whose clock trails the newest send too (the MQTT
+telemetry reads the window with a time taken before that loop pass's mesh
+and probe sends): a bucket stamped less than 100 ms after the reader's time
+is counted whole.
 (The ring used to hold one slot per send; above 25.6 reservations a second
 it dropped in-window sends and the cap stopped holding.)
 
@@ -110,10 +114,13 @@ The probe goes through `probe_airtime.h`, which also stops it once the
 window reads 1.60 %: a probe fanned out to a full peer table asks for far
 more than the cap, and without the ceiling it took every microsecond the
 window freed, so heartbeats and presence were refused outright. The rest of
-the 2 % (at least 0.32 %, since the last probe frame may land just past the
-line) stays for them. On a build without the mesh (the DEV and MINIMAL
-profiles), the probe also brings the governor up itself; otherwise nothing
-would, and every reservation would pass.
+the 2 % (about 0.39 %: all of the remaining 0.40 % but the one 792 µs probe
+frame that may land just past the line) stays for them. The 1.60 % line is
+also where the Beacon reports `airtime_saturated`, so the probe at its
+ceiling does not hold the Beacon in trouble. On the DEV profile, which has
+no mesh, or on a boot where the mesh did not initialize (safe mode, or
+ESP-NOW refused), the probe also brings the governor up itself; otherwise
+nothing would, and every reservation would pass.
 
 Urgent traffic — tamper alerts, power-loss alerts, `OFFLINE_IMMINENT` —
 calls `force_reserve_urgent()`. It always sends, but its cost is recorded
@@ -169,9 +176,10 @@ make -C firmware/projects/canary-wap/tests_host
 
 Should print `ALL MESH COEXISTENCE TESTS PASSED` (the channel policy and
 the governor's window) and `test_csi_probe_airtime: ALL PASSED` (the real
-probe scheduler under the real governor: the WAP's 10 Hz broadcast is never
-denied, one peer at 20 Hz stays steady, and eight peers are held at the
-1.60 % ceiling while the heartbeat keeps its room). Both are host tests of
+probe scheduler under the real governor: the gate starts a frame at
+1.59 % and none at 1.60 %, the WAP's 10 Hz broadcast is never denied, one
+peer at 20 Hz stays steady, and eight peers are held at the 1.60 % ceiling
+while the heartbeat keeps its room). Both are host tests of
 the estimate; whether it matches real air is a bench question.
 
 In the field, with two Canaries paired into one Opera, both in STA on the

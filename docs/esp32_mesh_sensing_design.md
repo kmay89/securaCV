@@ -18,7 +18,7 @@ ESP32-S3 has a single shared 2.4 GHz radio. Continuous CSI + continuous BLE scan
 
 | Role | Radio | Purpose | Power |
 |---|---|---|---|
-| **Sensor** (default) | WiFi only, BLE compile-disabled | Capture CSI + send 50 Hz ESP-NOW probes to peers | Mains (~100 mA) |
+| **Sensor** (default) | WiFi only, BLE compile-disabled | Capture CSI + send ESP-NOW probes to peers (up to 20 Hz per peer) | Mains (~100 mA) |
 | **Scout** (optional) | BLE scan only, WiFi STA for mesh uplink only | ESPresense-style RSSI tracking of paired beacons | Mains; lower-duty BLE-only variant battery-feasible |
 | **Hub** (>=1 required) | WiFi STA + ESP-NOW | Channel coordinator, evidence aggregator, dashboard host | Mains |
 
@@ -103,7 +103,7 @@ Hub failover is the only intentionally new state machine; the rest extend existi
 - `firmware/canary/lib/securacv_mesh/` — port from `firmware/projects/canary-wap/arduino/canary_wap/mesh_network.{h,cpp}`; add probe scheduler + role state. Library skeleton (`library.json`, `src/mesh_network.{h,cpp}`, `src/mesh_probe.{h,cpp}`). Phase 4 of `CONSOLIDATION.md`.
 - `firmware/canary/lib/securacv_ble_scan/` — new, feature-flagged. Reuses NimBLE 2.x already pulled in by `[env:full]` in `platformio.ini`.
 - `firmware/common/csi/src/core_multilink_fusion.{h,cpp}` — new module following the `csi_module.h` contract. Registers alongside `core_presence`, declares allowed fields, runs through the existing privacy chokepoint.
-- `firmware/common/csi/src/csi_probe.{h,cpp}` — active-probe transmitter (50 Hz unicast ESP-NOW). Owned by the CSI lib so probe cadence is tied to feature-window cadence.
+- `firmware/common/csi/src/csi_probe.{h,cpp}` — active-probe transmitter (unicast ESP-NOW, 20 Hz per peer, airtime-governed on the WAP). Owned by the CSI lib so probe cadence is tied to feature-window cadence.
 - `firmware/common/csi/tests/multilink_fusion_test.cpp` — host x86 test, same harness as existing `csi_event_invariants_test.cpp`.
 - `firmware/common/network/tests/mesh_probe_test.cpp` — host test for the probe scheduler.
 
