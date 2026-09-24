@@ -1,8 +1,8 @@
 // Host test for the pure ESP-NOW peer-decode logic
 // (include/canary/net/espnow_peer_logic.h).
 //
-// Builds standalone with g++ — no Arduino, no esp_now radio. Run in CI by the
-// "ESP-NOW peer-decode host test" step in .github/workflows/firmware.yml. Prints
+// Builds standalone with g++ — no Arduino, no esp_now radio. Run in CI by
+// this directory's Makefile, which .github/workflows/firmware.yml runs. Prints
 // "ALL ESPNOW TESTS PASSED" on success (the CI grep makes a silent pass
 // impossible to fake). Build (from the repo root):
 //

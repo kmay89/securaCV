@@ -10,7 +10,7 @@
 //   - THE EARS: only the two regulated alarm grammars raise events (smoke
 //     T3, CO T4), each needing two on-grammar cycles; doorbells, knocks,
 //     speech-shaped noise, and a stale streak after silence never do.
-// Run in CI by the "mic logic host test" step in firmware.yml; prints
+// Run in CI by this directory's Makefile, which firmware.yml runs; prints
 // "ALL MIC LOGIC TESTS PASSED" on success. Build (from the repo root):
 //
 //   g++ -std=c++17 -Wall -Wextra -I firmware/projects/canary-display/include

@@ -16,6 +16,20 @@
 CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Werror
 
+# $(call run_marked,<suite>) runs ./<suite> and holds it to the check
+# firmware.yml's old inline steps made: a non-zero exit fails, and so does
+# output without the suite's "ALL ... PASSED" line, so a suite that returns 0
+# before its last check cannot pass silently. Its output passes through
+# tee as the suite writes it, instead of being held until it exits, and
+# its exit status comes back through a file, because make's /bin/sh has
+# no pipefail. It echoes only the suite's command line, like
+# a plain `./suite` line.
+run_marked = @echo "./$(1)"; t=$$(mktemp) || exit 1; \
+  { ./$(1); echo $$? > "$$t.rc"; } | tee "$$t"; s=$$(cat "$$t.rc"); \
+  grep -q "ALL .* PASSED" "$$t"; m=$$?; rm -f "$$t" "$$t.rc"; \
+  [ "$$s" = 0 ] || { echo "$(1): exit $$s" >&2; exit 1; }; \
+  [ $$m -eq 0 ] || { echo "$(1): no 'ALL .* PASSED' line in its output" >&2; exit 1; }
+
 # The generic transport/session layer lives in firmware/common/link — it is
 # deliberately NOT kid-specific, because the same machinery (many nodes, one
 # radio, no broker, no cloud) is what an industrial deployment needs.
@@ -46,8 +60,8 @@ $(TINCAN_BIN): $(TINCAN_SRC)
 	$(CXX) $(CXXFLAGS) $(INC_TINCAN) -o $@ $(TINCAN_SRC)
 
 run: $(LINK_BIN) $(TINCAN_BIN)
-	./$(LINK_BIN)
-	./$(TINCAN_BIN)
+	$(call run_marked,$(LINK_BIN))
+	$(call run_marked,$(TINCAN_BIN))
 
 clean:
 	rm -f $(LINK_BIN) $(TINCAN_BIN)
