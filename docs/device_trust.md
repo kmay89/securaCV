@@ -115,11 +115,11 @@ but not to set one. Only canary-wap serves an `/enroll` page.
 
 | Product | Full public key, out of band | Fingerprint only |
 |---|---|---|
-| **canary-wap** | The `/enroll` page (and `/api/device/enroll`, the same card as JSON), no login: `device_id`, fingerprint and full key. Open it at `canary-<name>.local/enroll`, or `canary-<first four hex of the fingerprint>.local/enroll` on an unnamed device, or at its IP. Once setup is done the WAP serves HTTPS with a certificate it made itself, so `http://` redirects and the browser warns about the certificate; during first-boot setup it is plain HTTP on the setup network. On USB serial, `i` prints the identity block with the full key (the line ends in a literal `...` after the 64 characters: don't paste the dots). | The provisioning receipt it prints on USB serial at every boot carries `pubkey_fp`. |
+| **canary-wap** | The `/enroll` page (and `/api/device/enroll`, the same card as JSON), no login: `device_id`, fingerprint and full key. Open it at `canary-<name>.local/enroll`, or `canary-<first four hex of the fingerprint>.local/enroll` on an unnamed device, or at its IP. Once setup is done the WAP normally serves HTTPS with a certificate it made itself, so `http://` redirects and the browser warns about the certificate (it stays on plain HTTP if it could not set up TLS); during first-boot setup it is plain HTTP on the setup network. `GET /api/status` also returns `pubkey` and `fingerprint`, but only with the device's bearer token. On USB serial, `i` prints the identity block with the full key (the line ends in a literal `...` after the 64 characters: don't paste the dots). | `GET /api/device-info` returns `pubkey_fp`, no login. The provisioning receipt it prints on USB serial at every boot carries `pubkey_fp`. |
 | **`firmware/canary` build** (and the ESP32-CAM, Freenove S3 and WROOM builds of it) | No `/enroll`. On USB serial, `i` prints the device ID and full key, and `j` prints the self-manifest (`device_id`, `pubkey`, `pubkey_fp`). `GET /api/status` also returns `pubkey` and `fingerprint`, but only with the device's bearer token. | On USB serial, `f` prints the fingerprint. The dashboard's Device Identity card shows the fingerprint and only the first 16 characters of the key, and only on a page that was handed the token (during setup, over the SoftAP, with the bearer, or after one BOOT tap). The provisioning receipt carries `pubkey_fp` only. |
-| **canary-vision** | No web server. On USB serial, `j` prints the self-manifest (`device_id`, `pubkey`, `pubkey_fp`). | The boot log prints `Ed25519 ready  fp=<fingerprint>`. |
-| **canary-sense** | **None.** No web server, and its serial console is the tuning console, which has no identity command. You can check its TOFU pin but not set one by hand. | The boot log prints `Ed25519 ready  fp=<fingerprint>`, once, at boot. |
-| **canary-sentinel** (not released; has not run on hardware) | **None**, in source: no web server and no serial commands. | The boot log's `Ed25519 ready  fp=<fingerprint>` line. |
+| **canary-vision** | No `/enroll`. Its only web page is the shared setup portal, on its own setup network at first boot and when joining Wi-Fi keeps failing, and that page shows no key. On USB serial, `j` prints the self-manifest (`device_id`, `pubkey`, `pubkey_fp`). | The boot log prints `Ed25519 ready  fp=<fingerprint>`. |
+| **canary-sense** | **None.** Its only web page is the shared setup portal (on its own setup network, at first boot and when joining Wi-Fi keeps failing), which shows no key, and its serial console is the tuning console, which has no identity command. You can check its TOFU pin but not set one by hand. | The boot log prints `Ed25519 ready  fp=<fingerprint>`, once, at boot. |
+| **canary-sentinel** (not released; has not run on hardware) | **None**, in source: its only web page is the same setup portal, which shows no key, and it reads no serial commands. | The boot log's `Ed25519 ready  fp=<fingerprint>` line. |
 | **canary-display** line | Nothing to pin: a display has no signing key, and its health publish carries no `public_key`. The proof QR on its screen carries the key *the display* pinned from the same broker, which is a second TOFU, not an out-of-band read. | — |
 
 The apps and flashers read the same sources:
@@ -147,10 +147,12 @@ for every product.
 ### Checking a TOFU pin against the device
 
 Every product that signs shows its fingerprint somewhere in the table
-above, even where it can't show its full key. After the first health
-publish, compare the `pinned_fingerprint` attribute on the device's
-entities (the chain-length sensor, for one) with the fingerprint read
-off the device, ignoring case: HA shows lowercase, and some device
+above, even where it can't show its full key. Compare the
+`pinned_fingerprint` attribute on the device's **Health** sensor with
+the fingerprint read off the device. The Health sensor fills it in on
+the first health publish after HA pins the key; the chain-length sensor
+shows it too, but only once HA has checked a signed chain publish.
+Compare ignoring case: HA shows lowercase, and some device
 surfaces print capitals (everything a canary-wap prints except the
 public key on `/enroll`, and the `firmware/canary` build's
 `/api/status` and receipt). A match is strong evidence that the key HA
