@@ -6113,7 +6113,7 @@
       },
       {
        "name": "wall_eff",
-       "default": "e_seal ? max(wall_t, gasket_w + 1.6) : wall_t"
+       "default": "e_seal ? max(wall_t, gasket_w + 2*core_min_wall()) : wall_t"
       },
       {
        "name": "pd",
@@ -6140,8 +6140,17 @@
        "default": "bh_w + 2.0"
       },
       {
+       "name": "roof_foot_d",
+       "default": "screw_head_d + 4.0",
+       "comment": "the roof screw's foot: the head seat + a 2 mm rim"
+      },
+      {
+       "name": "roof_post_x",
+       "default": "pan_w/2 + roof_foot_d/2 + 0.4"
+      },
+      {
        "name": "inner_x",
-       "default": "col_lb + 2 + col_bh + 2*post_corner"
+       "default": "max(col_lb + 2 + col_bh + 2*post_corner, 2*(roof_post_x + post_d/2 + 0.2))"
       },
       {
        "name": "inner_y",
@@ -6150,7 +6159,7 @@
       },
       {
        "name": "cav_d",
-       "default": "max(standoff_h + pcb_t + lb_stack, bh_h) + 1.5"
+       "default": "max(max(standoff_h + pcb_t + lb_stack, bh_h) + 1.5, bh_h + 0.01 + lip_h + 0.3)"
       },
       {
        "name": "out_x",
@@ -6179,6 +6188,22 @@
       {
        "name": "bh_cy",
        "default": "-inner_y/2 + board_clear + bh_l/2"
+      },
+      {
+       "name": "sma_land_d",
+       "default": "sma_d + 6"
+      },
+      {
+       "name": "sma_z",
+       "default": "min(floor_t + cav_d/2, base_d - skirt_h - 0.4 - sma_land_d/2)"
+      },
+      {
+       "name": "gland_x",
+       "default": "lb_cx"
+      },
+      {
+       "name": "gland_y",
+       "default": "lb_cy + lb_l/2 + 11"
       },
       {
        "name": "usb_zc",
@@ -6228,7 +6253,8 @@
         "back",
         "front",
         "all",
-        "gasket"
+        "gasket",
+        "hood"
        ]
       }
      ]
@@ -6245,7 +6271,17 @@
       {
        "name": "opt_hood",
        "default": "false",
-       "comment": "rain hood over the lens"
+       "comment": "rain hood over the lens — its OWN part (part=\"hood\"), pressed into a groove on the front and bonded"
+      },
+      {
+       "name": "opt_weep",
+       "default": "true",
+       "comment": "Ø2 drain through the bottom wall between the columns (canary_core_lib weep_cut); the sealed build's pressure path"
+      },
+      {
+       "name": "usb_hood",
+       "default": "false",
+       "comment": "drip awning (canary_core_lib port_hood) over the Sense USB opening; the Vision pair sits under the rim"
       },
       {
        "name": "opt_led",
@@ -6363,6 +6399,15 @@
        "comment": "catalog default — core_tol_hole(), canary_core_lib"
       },
       {
+       "name": "screw_from",
+       "default": "back",
+       "enum": [
+        "back",
+        "face"
+       ],
+       "comment": "back = the face is unbroken: screws enter a seat in the back and thread into bosses under the front (the house default); face = pan heads on the front"
+      },
+      {
        "name": "usb_w",
        "default": "12.0",
        "comment": "opening width — 12 clears rugged cable boots (the WAP's validated opening)"
@@ -6416,6 +6461,26 @@
         1.5
        ],
        "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you"
+      },
+      {
+       "name": "hood_seat",
+       "default": "0.6",
+       "range": [
+        0.4,
+        0.1,
+        1.0
+       ],
+       "comment": "groove in the front's show face the hood's spigot presses into (tol_press); bond with neutral-cure silicone"
+      },
+      {
+       "name": "usb_hood_reach",
+       "default": "3.0",
+       "range": [
+        2.0,
+        0.5,
+        6.0
+       ],
+       "comment": "how far the USB awning's drip edge stands off the bottom wall"
       }
      ]
     },
@@ -6521,8 +6586,12 @@
        "default": "s_stack_sock + xiao_below"
       },
       {
+       "name": "e_back",
+       "default": "screw_from == \"back"
+      },
+      {
        "name": "head_pad",
-       "default": "max(0, screw_head_h + 1.0 - lid_t)"
+       "default": "e_back ? 0 : max(0, screw_head_h + 1.0 - lid_t)"
       },
       {
        "name": "col_v",
@@ -6594,6 +6663,26 @@
        "default": "opt_mount ? kh_extra : 0"
       },
       {
+       "name": "face_skin",
+       "default": "1.0"
+      },
+      {
+       "name": "bk_L",
+       "default": "e_back ? bk_len(\"m2\", \"pan\", mount_extra, base_d, lid_t, face_skin) : 0"
+      },
+      {
+       "name": "bk_r",
+       "default": "e_back ? bk_recess(\"m2\", \"pan\", mount_extra, floor_t, base_d, lid_t, face_skin) : 0"
+      },
+      {
+       "name": "boss_h",
+       "default": "e_back ? bk_boss_h(\"m2\", \"pan\", mount_extra, floor_t, base_d, lid_t, face_skin) : 0"
+      },
+      {
+       "name": "post_h",
+       "default": "cav_d - head_pad - boss_h"
+      },
+      {
        "name": "skirt_gap",
        "default": "tol_slide + 0.2"
       },
@@ -6608,6 +6697,18 @@
       {
        "name": "plate_r",
        "default": "e_seal ? corner_r + skirt_gap + skirt_t : corner_r"
+      },
+      {
+       "name": "weep_x",
+       "default": "(v_cx + col_v/2 + s_cx - col_s/2)/2"
+      },
+      {
+       "name": "cam_pilot",
+       "default": "cam_post_h - 0.9"
+      },
+      {
+       "name": "cam_scr_l",
+       "default": "max([for (l = hw_std_lens()) if (l <= pcb_t + cam_pilot + 1e-9) l])"
       },
       {
        "name": "key_x",
@@ -6835,17 +6936,100 @@
        "comment": "tray walls stop above the PCB"
       },
       {
-       "name": "clip_screws",
-       "default": "[[-6.5, 23.5], [6.5, 23.5], [-6.5, -23.5], [6.5, -23.5]]",
-       "comment": "M3s, floor -> clip lands (between the vent slots)"
-      },
-      {
        "name": "total_h",
        "default": "floor_t + standoff_h + pcb_t + hat_h + lid_t"
       },
       {
        "name": "tube_h",
        "default": "hat_h - standoff_ff"
+      },
+      {
+       "name": "head_seat",
+       "default": "lid_t - 1.0"
+      }
+     ]
+    },
+    {
+     "name": "Hidden",
+     "note": "",
+     "params": [
+      {
+       "name": "cw",
+       "default": "42",
+       "comment": "clip block width along the rail"
+      },
+      {
+       "name": "din_gap",
+       "default": "1.6",
+       "comment": "land face -> lip top: clears 1.3 mm flange metal"
+      },
+      {
+       "name": "din_lh",
+       "default": "9.5",
+       "comment": "land height: the tray's stand-off from the flange faces"
+      },
+      {
+       "name": "din_hz",
+       "default": "-din_lh - din_gap - 1.6",
+       "comment": "hook plates' bottom z: the print bed"
+      },
+      {
+       "name": "din_crown_hw",
+       "default": "12.5",
+       "comment": "TS35 crown inner half-width (27 outside, 1.0 metal)"
+      },
+      {
+       "name": "keel_hw",
+       "default": "din_w/2 + din_t - port_flat_span_max()",
+       "comment": "the fixed-side span keel -> drop plate is 7.0"
+      },
+      {
+       "name": "land_o",
+       "default": "din_w/2 + din_t + 10",
+       "comment": "lands' outer edge (|y|)"
+      },
+      {
+       "name": "post_y0",
+       "default": "din_w/2 + 0.2",
+       "comment": "latch posts: 0.2 outboard of the flange edge ..."
+      },
+      {
+       "name": "post_y1",
+       "default": "post_y0 + 1.2",
+       "comment": "... 1.2 wide (three lines)"
+      },
+      {
+       "name": "leaf_t",
+       "default": "1.8",
+       "comment": "leaf arm thickness (it flexes in y)"
+      },
+      {
+       "name": "leaf_y0",
+       "default": "post_y1 + 0.6",
+       "comment": "leaf inner face: 0.6 off the posts (no fused gap)"
+      },
+      {
+       "name": "leaf_y1",
+       "default": "leaf_y0 + leaf_t"
+      },
+      {
+       "name": "leaf_rel",
+       "default": "1.6",
+       "comment": "relief outboard of the leaf (it rides over 1.0)"
+      },
+      {
+       "name": "hook_x",
+       "default": "cw*0.55",
+       "comment": "hook position along the leaf"
+      },
+      {
+       "name": "hook_l",
+       "default": "6.0",
+       "comment": "hook length along the rail: the posts' span over it is hook_l + 0.8"
+      },
+      {
+       "name": "tab_w",
+       "default": "4.0"
       }
      ]
     }
@@ -7434,6 +7618,11 @@
        "comment": "pinhole light pipe (covert: usually off)"
       },
       {
+       "name": "opt_weep",
+       "default": "true",
+       "comment": "Ø2 drain through the -X wall at the floor (the cable wall hangs down), beside the USB slot"
+      },
+      {
        "name": "opt_mark",
        "default": "false",
        "comment": "deboss the house wordmark on the lid's INTERIOR face (covert: never outside)"
@@ -7601,6 +7790,14 @@
       {
        "name": "pd",
        "default": "post_d"
+      },
+      {
+       "name": "usb_zc",
+       "default": "floor_t + standoff_h + board_h + port_usbc_shell_h()/2"
+      },
+      {
+       "name": "weep_y",
+       "default": "usb_w/2 + weep_d()/2 + 1.5"
       }
      ]
     }
@@ -7815,7 +8012,8 @@
       },
       {
        "name": "batt_pad",
-       "default": "1.0"
+       "default": "1.5",
+       "comment": "end clearance, at the -X WALL end: the pack rides against the divider on its foam"
       }
      ]
     },
@@ -7914,8 +8112,8 @@
       },
       {
        "name": "insert_h",
-       "default": "6.0",
-       "comment": "M3 heat-set hole depth"
+       "default": "7.0",
+       "comment": "M3 heat-set hole depth — the M3 x 8 reaches 6.0 below the rim; 1 mm to spare"
       },
       {
        "name": "screw_c_d",
@@ -7998,6 +8196,17 @@
        "name": "kh_face",
        "default": "1.0",
        "comment": "face web the screw head grips behind — catalog standard, mount_kh_face()"
+      }
+     ]
+    },
+    {
+     "name": "Lid alignment lip",
+     "note": "shear key inboard of the seal",
+     "params": [
+      {
+       "name": "lid_key",
+       "default": "true",
+       "comment": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — the lobes fit a lid two ways and the lens lines up one way"
       }
      ]
     },
@@ -8135,6 +8344,28 @@
        "default": "-inner_l/2 + batt_l + batt_pad + rib_t/2"
       },
       {
+       "name": "key_x",
+       "default": "inner_l/4 + 6.0"
+      },
+      {
+       "name": "lob_xm",
+       "default": "inner_l/4"
+      },
+      {
+       "name": "seal_span_long",
+       "default": "2*lob_xm",
+       "comment": "the two lobes of one long side"
+      },
+      {
+       "name": "seal_span_short",
+       "default": "2*end_lob_y",
+       "comment": "the two lobes of one short end"
+      },
+      {
+       "name": "seal_span",
+       "default": "max(seal_span_long, seal_span_end, seal_span_short)"
+      },
+      {
        "name": "squeeze",
        "default": "1 - grv_d/oring_d"
       },
@@ -8149,6 +8380,10 @@
       {
        "name": "cord_len",
        "default": "2*(inner_l + 2*g_c) + 2*(inner_w + 2*g_c) - 8*grv_R + 2*PI*grv_R"
+      },
+      {
+       "name": "batt_dy",
+       "default": "batt_w/2 - (inner_w/2 - r_in)"
       }
      ]
     }
