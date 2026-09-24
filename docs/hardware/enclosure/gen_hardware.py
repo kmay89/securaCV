@@ -139,7 +139,7 @@ JOIN = {
         ("o-ring", r"^O-ring 2 ID x 1 CS", "ORG1"),                # the sealed back seats' glands
     ]),
     "canary-sense": ("bom_canary_sense.csv", [
-        ("screw", r"^M2 pan x 16 self-tap", "SCR3"),                 # PAN head, 16mm, from the back
+        ("screw", r"^M2 pan x (8|10) self-tap", "SCR3"),             # PAN head, plate to the post ends (pl_len)
         ("insert", r"^M2 heat-set insert 3\.5 OD x 4\b", "INS1"),
         ("o-ring", r"^O-ring 2 ID x 1 CS", "ORG1"),                # the sealed back seats' glands
         ("wall-screw", r"^#6 pan wall screw \(keyholes\)", "SCR4"),  # keyhole mount

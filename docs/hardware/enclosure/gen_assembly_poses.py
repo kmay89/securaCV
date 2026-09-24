@@ -177,13 +177,15 @@ DEVICES = {
                      ("R", [180, 0, -90])],
             "front": [("T", "[0, 0, base_d + lid_t]"), ("R", [180, 0, 0])],
         },
-        # screw_from "back" (the house default): driven up from the seat in
-        # the back, the pan head's bearing face bk_hh above its recess; the
-        # builder draws a pan head above z = 0, so it turns over
+        # the plate screws (canary_core_lib pl_*): driven up from the seat in
+        # the plate's back face (z = -mount_extra), the head recessed pl_r and
+        # its bearing face pl_hp (a pan head's height; 0 for a flat head, whose
+        # top IS the recess plane) above that; the builder draws a head above
+        # z = 0, so it turns over
         "screws": {"xy": "post_xy()",
-                   "z": "e_back ? -mount_extra + bk_r + bk_hh(screw_size, screw_head) : base_d + lid_t - head_h",
-                   "rot": ["e_back ? 180 : 0", 0, 0],
-                   "len": "e_back ? bk_L : hw_len(lid_t, head_pad, hw_engage(screw_size))"},
+                   "z": "-mount_extra + pl_r + pl_hp(screw_size, screw_head)",
+                   "rot": [180, 0, 0],
+                   "len": "pl_L"},
         "params": {
             "radar": {"w": "radar_w", "h": "radar_l", "t": "pcb_t"},
             "xiao": {"w": "xiao_l", "h": "xiao_w"},

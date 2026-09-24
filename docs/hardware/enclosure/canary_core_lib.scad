@@ -272,78 +272,90 @@ module cs_cone90_cut(x, y, t, d_screw, h_head) {
 }
 
 // ---------------------------------------------------------------------------
-//  Screws from the back — the fastener-free face.
+//  The parting line is the back face — the piston plate.
 //
-//  The show face is the one surface everyone sees and nobody touches, and the
-//  audit's renders of the released four found every one of them carrying its
-//  screw heads: four on the WAP, Vision and Sense, six on the doorbell. So the
-//  house default drives them the other way (screw_from = "back"): through a
-//  seat in the BACK, up a clearance bore through the corner post, and into a
-//  boss that hangs under the face, stopping `skin` short of it. The face is
-//  unbroken; the back — against the wall, the table or the doorbell's plate —
-//  carries the seats, and opening the case now means taking it down first.
+//  The show part is ONE piece: face, walls and corner posts, printed
+//  face-down as a cup. The back is a PLATE that nests inside the walls like a
+//  piston and seats on a ledge the walls carry, so the only seam is a
+//  hairline on the back face — against the wall, the table or the doorbell's
+//  plate — and the walls, not the screws, carry the plate's lateral loads.
+//  The plate is the chassis: boards, clips, standoffs, keyholes and the
+//  screw seats all live on it, so service is four screws and the boards
+//  come out with the plate. The screws are short — through the plate and
+//  hw_engage() into the post ends — and in seal mode every seat glands an
+//  O-ring under a pan head, because a seat is a hole through the seal line
+//  from outside.
 //
-//  The numbers are derived together, never typed:
-//    bk_len     the longest standard length whose tip stays skin + 0.3 under
-//               the face, given the head must sit wholly in the floor;
-//    bk_recess  how far the head sinks into the back (z from the back face):
-//               never so deep that the head's bearing floor — and, with a
-//               gland, the O-ring's floor plus a 0.4 web — leaves the plate;
-//    bk_boss_h  how far the boss hangs below the face's underside (the rim
-//               datum, base_h) so the thread engages hw_engage(size) = 3 × d.
+//  Frames. The SHELL is drawn with its face at z = 0..lid_t and everything
+//  else hanging below: the cavity to -cav_d (the ledge plane), the bore for
+//  the plate below that to -shell_d. The PLATE is drawn with its front face
+//  at z = 0 and its body to -plate_t. Assembled, the shell sits at
+//  z = base_d = floor_t + cav_d and the plate's front face at floor_t, so
+//  the fit gate's placement is the catalog's usual one.
 //
-//  THE RIM IS THE DATUM. The post stops bk_relief() short of the boss's foot
-//  (post top = base_h - boss_h - relief). Drawn to land exactly, boss and rim
-//  were two contact planes for one clamp: a post printed 0.1 tall held the
-//  rim open 0.1 and the gasket under-squeezed, with nothing to say so. With
-//  the relief the lid always seats rim-on-rim (the seal line), and the screw
-//  pulls the boss toward a post it never quite reaches — the gap absorbs the
-//  print's height error instead of the seam showing it.
+//  THE RIM IS THE DATUM. The posts stop pl_relief() short of the ledge
+//  plane: the plate always seats on the ledge (the seal line) and the
+//  screws pull the plate toward posts they never quite reach — the gap
+//  absorbs the print's height error instead of the seam showing it.
 //
-//  THE GLAND. In seal mode a screw seat is a hole through the seal line from
-//  the outside, so a sealed build seats an O-ring under each pan head
-//  (bk_seat_cut gland = true): the gland is cut into the head's bearing
-//  floor, inside the plate (recess is limited so the ring's floor keeps a
-//  0.4 web), and the post — Ø5 around a Ø4.3 gland would be a 0.35 wall —
-//  is never asked to host it. The same registry O-ring as head_seal on a
-//  face-driven lid (cb_oring_cut).
-//  ext = the back's thickening below z = 0 (the keyhole slab, mount_extra).
+//  The plate is never thinner than a head and its floor (pl_thick), the
+//  head recesses as far as the floor allows (pl_recess: a 1.0 floor, or the
+//  O-ring gland plus a 0.4 web in seal mode), and the length is the shortest
+//  standard one that engages hw_engage(size) past the relief (pl_len).
 // ---------------------------------------------------------------------------
-function bk_relief() = 0.2;   // boss foot above the post top: the rim seats first
-function bk_web()    = 0.4;   // plate kept above an O-ring gland's floor
-function bk_hh(size, head)  = (head == "pan") ? scr_pan_h(size) : scr_flat_h(size);
-function bk_hd(size, head)  = (head == "pan") ? scr_pan_d(size) : scr_flat_d(size);
+function pl_relief() = 0.2;   // post end above the ledge plane: the ledge seats first
+function pl_web()    = 0.4;   // plate kept above an O-ring gland's floor
+function pl_hh(size, head)  = (head == "pan") ? scr_pan_h(size) : scr_flat_h(size);
+function pl_hd(size, head)  = (head == "pan") ? scr_pan_d(size) : scr_flat_d(size);
 // a pan screw's length is measured under the head, a flat's includes it
-function bk_hp(size, head)  = (head == "pan") ? scr_pan_h(size) : 0;
-function bk_gland_h(size, gland) = gland ? oring_gland_h(scr_oring_cs(size)) + bk_web() : 0;
-function bk_tipmax(base_h, lid_t, skin) = base_h + lid_t - skin - 0.3;
-function bk_len(size, head, ext, base_h, lid_t, skin = 1.0) =
-    let (room = bk_tipmax(base_h, lid_t, skin) + ext - bk_hp(size, head),
-         ok = [for (l = hw_std_lens()) if (l <= room + 1e-9) l])
-    ok[len(ok) - 1];
-function bk_recess(size, head, ext, floor_t, base_h, lid_t, skin = 1.0, gland = false) =
-    max(0, min(ext + floor_t - bk_hh(size, head) - bk_gland_h(size, gland),
-               bk_tipmax(base_h, lid_t, skin) + ext - bk_hp(size, head)
-                 - bk_len(size, head, ext, base_h, lid_t, skin)));
-function bk_tip(size, head, ext, floor_t, base_h, lid_t, skin = 1.0, gland = false) =
-    -ext + bk_recess(size, head, ext, floor_t, base_h, lid_t, skin, gland) + bk_hp(size, head)
-         + bk_len(size, head, ext, base_h, lid_t, skin);
-function bk_boss_h(size, head, ext, floor_t, base_h, lid_t, skin = 1.0, gland = false) =
-    max(0, ceil((hw_engage(size) - (bk_tip(size, head, ext, floor_t, base_h, lid_t, skin, gland) - base_h)) * 10) / 10);
-// the head's bearing plane above the back face, and the gland's floor: a
-// sealed seat must keep both inside the plate (asserted by the adopter)
-function bk_bear(size, head, recess) = recess + bk_hh(size, head);
+function pl_hp(size, head)  = (head == "pan") ? scr_pan_h(size) : 0;
+function pl_gland_raw(size, gland) = gland ? oring_gland_h(scr_oring_cs(size)) : 0;
+function pl_floor_min(gland) = gland ? pl_web() : 1.0;
+// the ledge band the plate seats on: the gasket with a cheek each side, or one contact band
+function pl_ledge(seal, gasket_w) = seal ? gasket_w + 2*core_min_wall() : core_min_wall();
+function pl_thick(floor_t, ext, size, head, gland) =
+    max(floor_t + ext, pl_hh(size, head) + pl_gland_raw(size, gland) + pl_floor_min(gland));
+function pl_recess(t, size, head, gland) = t - pl_hh(size, head) - pl_gland_raw(size, gland) - pl_floor_min(gland);
+function pl_len(t, recess, size, head) =
+    let (need = hw_engage(size) + pl_relief() + t - recess - pl_hp(size, head),
+         ok = [for (l = hw_std_lens()) if (l >= need - 1e-9) l])
+    ok[0];
+function pl_engage(t, recess, size, head) = recess + pl_hp(size, head) + pl_len(t, recess, size, head) - t - pl_relief();
+function pl_pilot(t, recess, size, head)  = pl_engage(t, recess, size, head) + 1.0;   // blind, 1.0 past the tip
 
-// the seat in the back and the clearance bore up the post: SUBTRACT from a
-// base whose back face is at z = -ext; `top` is where the bore ends (the
-// post top). Flat heads get a true 90° cone, pan heads a flat-floored bore;
-// `gland` (pan only) cuts the O-ring gland into the bearing floor.
-module bk_seat_cut(x, y, ext, top, size, head, recess, d_clear, tol_hole, gland = false) {
-    hh = bk_hh(size, head);
-    hd = bk_hd(size, head) + 2*tol_hole;
-    assert(!gland || head == "pan", "bk_seat_cut: an O-ring gland needs a pan head's flat bearing face");
-    translate([x, y, -ext - 0.1]) {
-        cylinder(d = d_clear, h = ext + top + 0.2);
+// the plate: front face at z = 0, body to -t, a 45° lead-in on the front
+// edge so it finds the bore blind (the lip_ring lesson)
+module pl_plate(l, w, r, t, cham = core_lip_cham()) {
+    hull() {
+        translate([0, 0, -t]) rrect(l, w, r, t - cham);
+        translate([0, 0, -cham]) rrect(l - 2*cham, w - 2*cham, max(r - cham, 0.4), cham);
+    }
+}
+// the shell's cavity: z = 0 is the face's underside, the cavity hangs to
+// -depth (the ledge plane), coved at BOTH ends — the face/wall corner is
+// the cup's inside corner, the ledge/wall corner is where the flange roots
+module pl_cavity_cut(l, w, r, depth, fil = core_floor_cove()) {
+    translate([0, 0, -depth]) difference() {
+        rrect(l, w, r, depth);
+        if (fil > 0) {
+            inner_cove_ring(l, w, r, fil, 0);
+            translate([0, 0, depth]) mirror([0, 0, 1]) inner_cove_ring(l, w, r, fil, 0);
+        }
+    }
+}
+// the bore the plate slides into, from the ledge plane z_ledge down by depth
+module pl_bore_cut(l, w, r, z_ledge, depth) {
+    translate([0, 0, z_ledge - depth - 1]) rrect(l, w, r, depth + 1);
+}
+// the seat through the plate: the head from the back face (z_front - t),
+// pan heads flat-floored, flat heads on a 90° cone, `gland` cuts the
+// O-ring gland into the bearing floor
+module pl_seat_cut(x, y, z_front, t, size, head, recess, d_clear, tol_hole, gland = false) {
+    hh = pl_hh(size, head);
+    hd = pl_hd(size, head) + 2*tol_hole;
+    assert(!gland || head == "pan", "pl_seat_cut: an O-ring gland needs a pan head's flat bearing face");
+    translate([x, y, z_front - t - 0.1]) {
+        cylinder(d = d_clear, h = t + 0.2);
         if (recess > 0) cylinder(d = hd, h = recess + 0.1);
         translate([0, 0, recess + 0.1])
             if (head == "pan") cylinder(d = hd, h = hh);
@@ -354,29 +366,10 @@ module bk_seat_cut(x, y, ext, top, size, head, recess, d_clear, tol_hole, gland 
                          h = oring_gland_h(scr_oring_cs(size)) + 0.01);
     }
 }
-
-// the boss under the face: hangs h below z = 0 (the face's underside), with
-// a 45° root fillet (a plain cylinder off a 2 mm plate is a stress riser at
-// the one joint the screw loads), CROPPED `clear` inside the cavity — the
-// same running clearance the lip carries. Cropped to the cavity exactly it
-// was an interference fit at every corner: seated straight it passed the fit
-// gate, shifted 0.15 mm it hit the wall (3.6 mm³), so the lid went on with a
-// press where the lip was designed to slide.
-module bk_boss(x, y, h, d, cl, cw, cr, clear, fil = 1.0) {
-    if (h > 0) intersection() {
-        translate([x, y, 0]) {
-            translate([0, 0, -h]) cylinder(d = d, h = h + 0.1);
-            translate([0, 0, -fil]) cylinder(d1 = d, d2 = d + 2*fil, h = fil + 0.1);
-        }
-        translate([0, 0, -h - 0.1]) rrect(cl - 2*clear, cw - 2*clear, max(cr - clear, 0.4), h + 0.3);
-    }
-}
-
-// the boss's thread: a pilot (or an insert bore) from the boss's foot up to
-// `skin` under the face. SUBTRACT from a face plate whose underside is z = 0.
-module bk_boss_bore(x, y, boss_h, lid_t, skin, d_pilot, insert = false, ins_bore = 0, ins_h = 0) {
-    translate([x, y, -boss_h - 0.1]) {
-        cylinder(d = d_pilot, h = boss_h + lid_t - skin + 0.1);
+// the blind pilot (or insert bore) up from a post's end face at z_end
+module pl_post_pilot(x, y, z_end, depth, d, insert = false, ins_bore = 0, ins_h = 0) {
+    translate([x, y, z_end - 0.1]) {
+        cylinder(d = d, h = depth + 0.1);
         if (insert) cylinder(d = ins_bore, h = ins_h + 0.6);
     }
 }

@@ -109,12 +109,11 @@ CANON = {
 }
 
 # The canon's word-valued knobs: name -> (the house choice, where it is stated).
-# `screw_from = "back"` is the fastener-free face (canary_core_lib bk_*): the
-# audit's renders found every released face carrying its screw heads, so a
-# case that puts them back on the face has to say why, on the line.
-CANON_WORD = {
-    "screw_from": ("back", "canary_core_lib.scad bk_len()/bk_boss_h()"),
-}
+# Empty since the parting line moved to the back face (canary_core_lib pl_*):
+# there is no `screw_from` any more — every released case is a one-piece
+# shell with a piston plate, and the screws have exactly one direction. The
+# table stays so the next word-valued house choice has a home.
+CANON_WORD = {}
 
 # Modules the libraries own. A case redefining one is a fork by definition.
 LIB_OWNED = [

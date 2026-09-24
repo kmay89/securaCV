@@ -272,12 +272,19 @@ protocols that earn each level — see
   diameters of post, inserts, O-rings, gasket, vent patch, light pipe,
   clear disc, magnet, hinge bolt and wall screws. It cannot drift from the
   geometry, because it is the geometry.
-- **It only goes together one way.** Four corner posts fit a lid two ways
-  and every lid feature lines up one way, so each shell carries a
-  **`lid_key`**: a rib on the +Y cavity wall inside the lip zone and a slot
-  in the lip. Turned round, the lid stands `lip_h` proud. The lip's tip
-  carries a 45° lead-in so it finds the cavity blind. CI seats every
-  released lid turned 180° and requires the collision.
+- **It only goes together one way.** Four corner posts fit a plate two ways
+  and every feature lines up one way, so each shell carries a
+  **`lid_key`**: a rib on the +Y bore wall and a slot in the plate's edge.
+  Turned round, the plate stands on the rib and never reaches the ledge. The
+  plate's front edge carries a 45° lead-in so it finds the bore blind. CI
+  seats every released plate turned 180° and requires the collision.
+- **The parting line is the back.** Every released case is one show piece —
+  face, walls and corner posts, printed face-down as a cup — closed by a
+  **plate** that nests inside the walls like a piston and seats on an
+  internal ledge. There is no lip, no seam on any side you can see, and the
+  walls (not the screws) carry the plate: the only line is a hairline on the
+  back face. The plate is the chassis — boards, clips, keyholes — so service
+  is four short screws and the boards come out with the plate.
 - **Service-grade fastening.** The M2 self-tappers are fine for ~10 open/close
   cycles at ≤0.3 N·m. For a serviced fleet, set **`screw_insert = true`**: the
   corner posts auto-fatten (≥1.2 mm wall around the bore) for **M2 brass
@@ -945,12 +952,14 @@ strip carrying its own rib notches, so it goes in as a single piece.
    into the LED port.
 4. (weather mode) Seat the TPU gasket in the rim groove; glue the clear disc
    into the camera seat.
-5. Close the lid (lip nests into the base), turn the case over and drive the
-   4 × M2 screws up through the seats in the **back** into the lid's bosses —
-   the lid face stays unbroken (the Outdoor preset keeps its screws on the lid,
-   under the sun shield) — snug diagonally first, then final quarter-turns. Don't crank them: M2 self-taps
-   strip printed posts beyond ~0.3 N·m (two fingers on the short end of the
-   driver is plenty).
+5. Lower the **shell** over the plate (its walls swallow the plate's edge —
+   the key slot on the plate meets the rib in the +Y wall, so it only goes
+   one way), turn the case over and drive the M2 screws through the plate's
+   recessed seats into the post ends — the Outdoor build seats an O-ring
+   under each pan head first — snug diagonally, then final quarter-turns.
+   Don't crank them: M2 self-taps strip printed posts beyond ~0.3 N·m (two
+   fingers on the short end of the driver is plenty). The face and the sides
+   stay unbroken; the only seam is the hairline around the plate on the back.
 
 ## Build history
 
@@ -1150,10 +1159,12 @@ silicone.
 3. Route the camera FPC to the module's CSI connector (and, devkit host, the
    Grove cable across the middle gap to the DevKit pins).
 4. (weather) Seat the TPU gasket in the rim groove.
-5. Close the front (lip nests into the back), turn it over and drive the
-   M2 corner screws up through the seats in the **back** into the front's
-   bosses (4, or 6 on the Outdoor preset) — the face stays unbroken — snug
-   diagonally, then final quarter-turns.
+5. Lower the **shell** over the plate (the walls swallow the plate's edge;
+   the plate's key slot meets the rib in the +Y wall, so it only goes one
+   way), turn it over and drive the short M2 screws through the plate's
+   recessed seats into the post ends (4, or 6 with the weather preset's mid
+   posts — an O-ring under each pan head on a sealed build) — the face and
+   every side stay unbroken — snug diagonally, then final quarter-turns.
 6. Screw the **bracket** to the wall (or a tripod plate via the 1/4-20 nut),
    slot the case prongs into it, set the angle, tighten the M5 thumbscrew.
 
@@ -1338,9 +1349,10 @@ exits the bottom wall at a height DERIVED from the seated stack
    disc behind the **lux aperture** (the BH1750 needs to see room light) and
    stick a GORE-type membrane over any vent seat.
 4. (weather mode) Seat the **TPU gasket** in the rim groove.
-5. Close the **radome front** (lip nests into the back; the window must land
-   over the antenna array), turn it over and drive the 4 × M2 corner screws up
-   through the seats in the back into the front's bosses — snug
+5. Lower the **radome shell** over the plate (the walls swallow the plate's
+   edge — the key slot meets the rib in the +Y wall, so the window can only
+   land over the antenna array), turn it over and drive the 4 × M2 × 8 screws
+   through the plate's recessed seats into the corner post ends — snug
    diagonally first, then final quarter-turns, never past ~0.3 N·m.
 6. Mount it: slot the hinge prongs into the shared **Vision bracket** and set
    the angle (bedside ≤ 1.5 m for the wellbeing channel), or hang the blind

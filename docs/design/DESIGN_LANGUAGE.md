@@ -57,20 +57,25 @@ lives in the library **once**; the knobs stay per-case:
   the GoPro hinge is Vision/Sense's shared gesture.
 - **Fasteners** — `SCR_REGISTRY` in the core lib; heads seat in designed
   seats (`cs_cone90_cut` / `cb_head_pad`), never on bare face.
-- **The face is unbroken** — no screw head on a show face. Screws enter a
-  seat in the **back** (the side against the wall, the table or the
-  doorbell's plate) and thread into bosses that hang under the face, stopping
-  `face_skin` (1.0) short of it; `screw_from = "back"` is the house choice
-  and the length, the head's recess and the boss are derived together by
-  `bk_len()` / `bk_recess()` / `bk_boss_h()` / `bk_seat_cut()` /
-  `bk_boss_bore()`. A face that shows its fasteners is a departure and says
-  why (`deviates:` on the knob) — the WAP's Outdoor preset keeps its heads
-  on the lid only because the sun shield covers them and rides on them.
-  A sealed build seats an O-ring under every one of those back screw heads
-  (a seat is a hole through the seal line from outside), and the sun shield
-  on the WAP has screws of its own into blind pilots over the bosses.
-  Gated by `lint_design_lang.py` (`CANON_WORD`) and by the fit gates, which
-  prove each boss clears its post by the relief that makes the rim the datum.
+- **The face is unbroken, and so are the sides** — the parting line is the
+  **back face**. Every released case is one show piece: face, walls and
+  corner posts printed face-down as a cup, and a **plate** that nests
+  inside the walls like a piston and seats on a ledge the walls carry. The
+  only seam is a hairline on the back, against the wall, the table or the
+  doorbell's plate; the walls carry the plate's lateral loads, not the
+  screws. The screws are short — through the plate into blind pilots in
+  the post ends — and the plate is the chassis: boards, clips, standoffs,
+  keyholes and the poka-yoke key slot all ride on it, so service is four
+  screws and the boards come out with the plate. The plate's thickness,
+  the head's recess, the screw's length and the pilot are derived together
+  by `pl_thick()` / `pl_recess()` / `pl_len()` / `pl_pilot()` in
+  `canary_core_lib`, and the ledge is the datum: the posts stop
+  `pl_relief()` short of it. A sealed build seats an O-ring under every
+  plate screw head (a seat is a hole through the seal line from outside),
+  and the sun shield on the WAP has screws of its own into blind pilots
+  from the face over the posts. Gated by the fit gates (seated EMPTY, −0.1
+  contact, turned 180° COLLIDES) and the lateral probe (0.15 mm EMPTY,
+  0.25 COLLIDES).
 
 ## Color
 

@@ -108,8 +108,11 @@ DEVICES = {
         "scad": "canary_sense_enclosure.scad",
         "overrides": {"part": '"back"'},
         "body": "union() { back(); translate([0, 0, base_d]) front(); }",
-        "seams": "[base_d]",
-        "placement": "sense_fitcheck: front at z = base_d",
+        # the piston plate: the shell's walls run to the back face, the only
+        # seam is the hairline around the plate ON that face — nothing crosses
+        # the side profile, so the figure draws one band
+        "seams": "[]",
+        "placement": "sense_fitcheck: front at z = base_d (the plate's front face at floor_t, inside the walls)",
     },
     "device.canary-vision-doorbell": {
         # Mounted as it hangs: the body's blind keyhole pockets seat on the
