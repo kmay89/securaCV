@@ -331,7 +331,11 @@ cam_post_eff = (cam_ap_d >= cam_lens_sq*1.4142 + 0.6) ? cam_post_h : max(cam_pos
 
 // the zones along Y are set by the boards alone, so they come first: the
 // post rows and the mid posts read them, and the cavity's width reads the posts
-inner_y = zone_btn + zone_well + (vm_l + board_clear) + zone_gap + cam_h + zone_top;
+// the top margin holds the top post row over the camera carrier: board_clear
+// + the post + 1.0 of wall clearance — an insert build fattens the post, and
+// zone_top's 8.0 was 0.1 short of it (the +inserts hardware set found it)
+zone_top_eff = max(zone_top, board_clear + pd + 1.0);
+inner_y = zone_btn + zone_well + (vm_l + board_clear) + zone_gap + cam_h + zone_top_eff;
 btn_cy  = -inner_y/2 + zone_btn/2;
 well_cy = -inner_y/2 + zone_btn + zone_well/2;      // cable well / USB plug space
 vm_cy   = -inner_y/2 + zone_btn + zone_well + board_clear + vm_l/2;
@@ -349,7 +353,7 @@ lens_x  = lens_dx;  lens_y = cam_cy + lens_dy;
 // edge, 0.1 inside its clearance); the bottom row keeps 1.0 off the wall
 post_y_top = max(inner_y/2 - pd/2 - 2.5, cam_cy + cam_h/2 + board_clear + pd/2);
 post_y_bot = -inner_y/2 + pd/2 + 1.0;
-assert(inner_y/2 - post_y_top - pd/2 >= 1.0,
+assert(inner_y/2 - post_y_top - pd/2 >= 1.0 - 1e-9,
        "the top posts run into the top wall — lengthen zone_top or shorten cam_h's zone");
 n_mid  = (e_seal && seal_mid_posts) ? max(0, ceil((post_y_top - post_y_bot)/40) - 1) : 0;
 mid_ys = n_mid > 0 ? [for (i = [1 : n_mid]) post_y_bot + i*(post_y_top - post_y_bot)/(n_mid + 1)] : [];
