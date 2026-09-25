@@ -260,7 +260,7 @@ $fa = 3; $fs = 0.4;
 // ----------------------------------------------------------------------------
 // the piston plate (canary_core_lib pl_*): the plate seats on a ledge inside
 // the walls and the parting line is the back face itself
-ledge_w  = pl_ledge(e_seal, gasket_w);                   // gasket + a cheek each side, or one contact band
+ledge_w  = pl_ledge(e_seal, gasket_w, tol_slide);                   // gasket + a cheek each side, or one contact band
 wall_eff = max(wall_t, ledge_w + core_min_wall());       // the skin outside the plate's bore stays a structural wall
 scr_d   = (screw_size == "m2") ? screw_d : scr_pilot(screw_size);
 scr_c   = max(scr_d + 2*tol_hole, scr_clear(screw_size));
