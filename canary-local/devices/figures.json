@@ -769,9 +769,7 @@
    },
    "assembled": {
     "placement": "front() at z = base_d: the echo's base_d + lid_t + mount_extra, the posts shortened by the head pads they carry, the lid-key rib to the rim",
-    "seams_fig_d": [
-     24.38
-    ]
+    "seams_fig_d": []
    },
    "traced_to": [],
    "drift_guard": {

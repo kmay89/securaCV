@@ -220,7 +220,7 @@ DEVICES = {
         "body": "union() { back(); translate([0, 0, base_d]) front(); }",
         # visible bands from the wall out: the back (keyhole thickening
         # included) to its rim, the front plate beyond
-        "seams": "[mount_extra + base_d]",
+        "seams": "[]",   # the piston plate: no seam crosses the side profile (the plate is inside the shell)
         # what the massing draws on the face, read from the variables front()
         # cuts at (echoed, not measured off the cut): the
         # lens aperture (cylinder(d = cam_ap_d) at lens_x, lens_y) on the
