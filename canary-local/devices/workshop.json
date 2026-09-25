@@ -15,7 +15,7 @@
      "id": "opt_camera",
      "group": "Peripherals",
      "label": "XIAO *Sense* camera",
-     "consequence": "lid sensor window + taller cavity (off = plain XIAO ESP32-S3)",
+     "consequence": "face sensor window + taller cavity (off = plain XIAO ESP32-S3)",
      "audience": "user",
      "default": true,
      "bom": [
@@ -30,7 +30,7 @@
      "id": "opt_buzzer",
      "group": "Peripherals",
      "label": "piezo buzzer",
-     "consequence": "lid vent + GORE seat",
+     "consequence": "face vent + GORE seat",
      "audience": "user",
      "default": true,
      "bom": [
@@ -88,7 +88,7 @@
      "id": "opt_tamper",
      "group": "Peripherals",
      "label": "reed/Hall + magnet",
-     "consequence": "lid magnet pocket",
+     "consequence": "face magnet pocket",
      "audience": "user",
      "default": true,
      "bom": [
@@ -104,7 +104,7 @@
      "id": "opt_touch",
      "group": "Peripherals",
      "label": "cap-touch pad",
-     "consequence": "thinned \"touch window\" on the lid",
+     "consequence": "thinned \"touch window\" on the face",
      "audience": "user",
      "default": false,
      "bom": [
@@ -126,7 +126,7 @@
     {
      "id": "opt_seal",
      "group": "Weather sealing",
-     "label": "perimeter TPU gasket + drip-edge lid + USB plug recess (splash-resistant, NOT immersion)",
+     "label": "perimeter TPU gasket in the plate ledge + O-rings under the plate screws + USB plug recess (splash-resistant, NOT immersion)",
      "consequence": "",
      "audience": "user",
      "default": false,
@@ -138,17 +138,9 @@
      ]
     },
     {
-     "id": "head_seal",
-     "group": "Weather sealing",
-     "label": "(seal mode) O-ring under every lid screw head: the posts stand INSIDE the gasket",
-     "consequence": "",
-     "audience": "user",
-     "default": false
-    },
-    {
      "id": "opt_weep",
      "group": "Weather sealing",
-     "label": "Ø1.5 weep at the cavity's low point (the USB wall, hung USB-down): condensate",
+     "label": "Ø2 weep through the USB wall (hung USB-down it is the low wall): condensate leaves, driven rain does not enter. The weather preset turns it on",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -156,7 +148,7 @@
     {
      "id": "opt_shield",
      "group": "Weather sealing",
-     "label": "blind pilots in the lid over its corner bosses for the sun shield's four screws (ON in the Outdoor preset; the shield is part=\"shield\")",
+     "label": "blind pilots in the face over its corner posts for the sun shield's four screws (ON in the Outdoor preset; the shield is part=\"shield\")",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -172,7 +164,7 @@
     {
      "id": "opt_mount",
      "group": "Mounting",
-     "label": "wall-mount features (keyholes thicken the case back by `kh_extra`)",
+     "label": "wall-mount features (keyholes thicken the plate by `kh_extra`)",
      "consequence": "",
      "audience": "user",
      "default": false,
@@ -204,7 +196,7 @@
     {
      "id": "batt_hold",
      "group": "Battery",
-     "label": "lid-side ribs over the bay that stop the cell bouncing in a drop: they",
+     "label": "face-side ribs over the bay that stop the cell bouncing in a drop: they",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -212,7 +204,7 @@
     {
      "id": "lid_key",
      "group": "Shell",
-     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit",
+     "label": "poka-yoke: a rib on the +Y bore wall and a slot in the plate's edge — the posts fit",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -728,14 +720,6 @@
      "default": false
     },
     {
-     "id": "head_seal",
-     "group": "Options (applied when preset = custom)",
-     "label": "(seal mode, screws on the face) O-ring under each front screw head — from the back a sealed build always glands them — needs screw_head = \"pan\"",
-     "consequence": "",
-     "audience": "user",
-     "default": false
-    },
-    {
      "id": "opt_mount",
      "group": "Options (applied when preset = custom)",
      "label": "mounting features per mount_style",
@@ -762,7 +746,7 @@
     {
      "id": "lid_key",
      "group": "Shell",
-     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit",
+     "label": "poka-yoke: a rib on the +Y bore wall and a slot in the plate's edge — four corner posts fit",
      "consequence": "",
      "audience": "user",
      "default": true

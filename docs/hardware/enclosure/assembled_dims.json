@@ -9,28 +9,28 @@
    },
    "placement": "front() at z = base_d: the echo's base_d + lid_t + mount_extra, the posts shortened by the head pads they carry, the lid-key rib to the rim",
    "mm_scad": [
-    86.4,
-    73.6,
+    88.4,
+    75.6,
     26.38
    ],
    "fig": {
-    "w": 86.4,
+    "w": 88.4,
     "d": 26.38,
-    "h": 73.6
+    "h": 75.6
    },
    "seams_fig_d": [
     24.38
    ],
    "features_fig_mm": {
     "lens": {
-     "x": 21.6,
-     "z": 59.1,
+     "x": 22.6,
+     "z": 60.1,
      "w": 10.0,
      "h": 10.0
     },
     "radome": {
-     "x": 57.8,
-     "z": 30.6,
+     "x": 58.8,
+     "z": 31.6,
      "w": 24.0,
      "h": 24.0
     }
@@ -90,20 +90,18 @@
    "overrides": {
     "part": "back"
    },
-   "placement": "sense_fitcheck: front at z = base_d",
+   "placement": "sense_fitcheck: front at z = base_d (the plate's front face at floor_t, inside the walls)",
    "mm_scad": [
-    57.2,
-    78.697,
-    21.5
+    59.2,
+    80.297,
+    22.5
    ],
    "fig": {
-    "w": 57.2,
-    "d": 21.5,
-    "h": 78.697
+    "w": 59.2,
+    "d": 22.5,
+    "h": 80.297
    },
-   "seams_fig_d": [
-    19.5
-   ]
+   "seams_fig_d": []
   },
   "device.canary-vision": {
    "scad": "canary_vision_enclosure.scad",
@@ -112,20 +110,18 @@
     "preset": "vision_indoor",
     "part": "back"
    },
-   "placement": "vision_fitcheck: front at z = base_d",
+   "placement": "vision_fitcheck: front at z = base_d (the plate's front face at floor_t, inside the walls)",
    "mm_scad": [
-    43.2,
-    95.097,
-    23.38
+    45.2,
+    96.697,
+    24.38
    ],
    "fig": {
-    "w": 43.2,
-    "d": 23.38,
-    "h": 95.097
+    "w": 45.2,
+    "d": 24.38,
+    "h": 96.697
    },
-   "seams_fig_d": [
-    21.38
-   ]
+   "seams_fig_d": []
   },
   "device.canary-vision-devkit": {
    "scad": "canary_vision_enclosure.scad",
@@ -134,40 +130,37 @@
     "preset": "vision_indoor",
     "part": "back"
    },
-   "placement": "vision_fitcheck: front at z = base_d",
+   "placement": "vision_fitcheck: front at z = base_d (the plate's front face at floor_t, inside the walls)",
    "mm_scad": [
-    74.8,
-    96.497,
-    18.5
+    76.8,
+    98.497,
+    19.5
    ],
    "fig": {
-    "w": 74.8,
-    "d": 18.5,
-    "h": 96.497
+    "w": 76.8,
+    "d": 19.5,
+    "h": 98.497
    },
-   "seams_fig_d": [
-    16.5
-   ]
+   "seams_fig_d": []
   },
   "device.canary-vision-doorbell": {
    "scad": "canary_vision_doorbell.scad",
    "overrides": {
     "part": "plate"
    },
-   "placement": "doorbell_fitcheck: face at z = base_d; body back flush on plate front (T-studs in pockets), resting 0.5 up the slide on the plate's L-foot",
+   "placement": "doorbell_fitcheck: face (the shell) at z = base_d; body (the plate) inside its walls at floor_t, back flush on the wall plate front (wplate_t), then the 0.5 slide down onto the foot",
    "mm_scad": [
-    38.2,
-    122.1,
+    44.7,
+    123.7,
     30.2
    ],
    "fig": {
-    "w": 38.2,
+    "w": 44.7,
     "d": 30.2,
-    "h": 122.1
+    "h": 123.7
    },
    "seams_fig_d": [
-    4.0,
-    28.0
+    4.0
    ]
   },
   "device.canary-wap": {
@@ -176,20 +169,18 @@
     "preset": "compact_plain",
     "part": "base"
    },
-   "placement": "wap_fitcheck: lid at z = base_h",
+   "placement": "wap_fitcheck: lid (the shell) at z = base_h; base (the plate) inside its walls at floor_t",
    "mm_scad": [
-    33.7,
-    36.6,
-    15.05
+    35.7,
+    38.6,
+    15.25
    ],
    "fig": {
-    "w": 33.7,
-    "d": 15.05,
-    "h": 36.6
+    "w": 35.7,
+    "d": 15.25,
+    "h": 38.6
    },
-   "seams_fig_d": [
-    13.05
-   ]
+   "seams_fig_d": []
   }
  }
 }

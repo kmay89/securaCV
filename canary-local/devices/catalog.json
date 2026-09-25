@@ -332,7 +332,7 @@
   {
    "id": "combo",
    "scad": "canary_combo.scad",
-   "title": "Canary — RADAR + CAMERA COMBO WITNESS  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — RADAR + CAMERA COMBO WITNESS  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "family": "canary-vision",
    "device_compat": [
     "canary-vision"
@@ -374,7 +374,7 @@
     {
      "id": "opt_seal",
      "type": "bool",
-     "label": "gasket + drip skirt (same system as the other cases)",
+     "label": "perimeter TPU gasket in the shell's ledge + O-ring under every plate screw head (same system as the other cases)",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -414,7 +414,7 @@
     {
      "id": "lid_key",
      "type": "bool",
-     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit",
+     "label": "poka-yoke: a rib on the +Y bore wall and a notch in the plate's edge — four corner posts fit",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -422,7 +422,7 @@
     {
      "id": "opt_mount",
      "type": "bool",
-     "label": "blind keyholes in the back",
+     "label": "blind keyholes in the plate",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -436,7 +436,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 78,
+   "engineering_param_count": 88,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -521,7 +521,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 38,
+   "engineering_param_count": 62,
    "alternatives": [
     "s3_lcd7"
    ],
@@ -1633,7 +1633,7 @@
      "default": "none"
     }
    ],
-   "engineering_param_count": 306,
+   "engineering_param_count": 309,
    "alternatives": [
     "dash_display"
    ],
@@ -1733,7 +1733,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 70,
+   "engineering_param_count": 94,
    "alternatives": [
     "c6_display",
     "watch_station"
@@ -1891,14 +1891,6 @@
      "default": false
     },
     {
-     "id": "head_seal",
-     "type": "bool",
-     "label": "(seal mode, screws on the face) O-ring under each front screw head — from the back a sealed build always glands them — needs screw_head = \"pan\"",
-     "consequence": "",
-     "audience": "user",
-     "default": false
-    },
-    {
      "id": "opt_mount",
      "type": "bool",
      "label": "mounting features per mount_style",
@@ -1925,7 +1917,7 @@
     {
      "id": "lid_key",
      "type": "bool",
-     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit",
+     "label": "poka-yoke: a rib on the +Y bore wall and a slot in the plate's edge — four corner posts fit",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1987,14 +1979,14 @@
      "default": false
     }
    ],
-   "engineering_param_count": 152,
+   "engineering_param_count": 149,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 1,
-    "options": 18,
-    "user_options": 12,
+    "options": 17,
+    "user_options": 11,
     "variant_axes": 2
    }
   },
@@ -2271,7 +2263,7 @@
   {
    "id": "vision_doorbell",
    "scad": "canary_vision_doorbell.scad",
-   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.4",
+   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.5",
    "family": "canary-vision",
    "device_compat": [
     "canary-vision"
@@ -2338,7 +2330,7 @@
     {
      "id": "opt_seal",
      "type": "bool",
-     "label": "perimeter TPU gasket + drip-edge face (doorbells live outside)",
+     "label": "perimeter TPU gasket in the shell's ledge (doorbells live outside)",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -2370,7 +2362,7 @@
     {
      "id": "opt_weep",
      "type": "bool",
-     "label": "Ø2 weep through the bottom wall at the floor corner (mounted button-down):",
+     "label": "Ø2 weep through the bottom wall just above the plate's face (mounted button-down):",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -2378,23 +2370,15 @@
     {
      "id": "seal_mid_posts",
      "type": "bool",
-     "label": "one extra face screw per long wall, at the cable well: four corner screws",
+     "label": "(seal mode) mid posts along each long wall, as many as keep every gasket",
      "consequence": "",
      "audience": "user",
      "default": true
     },
     {
-     "id": "head_seal",
-     "type": "bool",
-     "label": "(seal mode, screws on the face) O-ring under each face screw head — from the back a sealed build always glands them (the posts stand INSIDE the gasket line, so a",
-     "consequence": "",
-     "audience": "user",
-     "default": false
-    },
-    {
      "id": "lid_key",
      "type": "bool",
-     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit",
+     "label": "poka-yoke: a rib on the +Y (camera-end) bore wall and a slot in the plate's edge — the",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -2402,7 +2386,7 @@
     {
      "id": "screw_insert",
      "type": "bool",
-     "label": "M2 brass heat-set inserts in the corner posts AND the security boss (the one",
+     "label": "M2 brass heat-set inserts in the post ends AND the security boss (the one",
      "consequence": "",
      "audience": "engineering",
      "default": false
@@ -2424,21 +2408,21 @@
      "default": false
     }
    ],
-   "engineering_param_count": 148,
+   "engineering_param_count": 153,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 1,
-    "options": 11,
-    "user_options": 9,
+    "options": 10,
+    "user_options": 8,
     "variant_axes": 1
    }
   },
   {
    "id": "vision_enclosure",
    "scad": "canary_vision_enclosure.scad",
-   "title": "SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.4",
+   "title": "SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.5",
    "family": "canary-vision",
    "device_compat": [
     "canary-vision",
@@ -2623,7 +2607,7 @@
     {
      "id": "opt_seal",
      "type": "bool",
-     "label": "perimeter TPU gasket + drip-edge front + USB plug recess (splash-resistant, NOT immersion)",
+     "label": "perimeter TPU gasket under the plate + O-rings under the plate screws + USB plug recess (splash-resistant, NOT immersion)",
      "consequence": "",
      "audience": "user",
      "default": false,
@@ -2672,17 +2656,9 @@
      "default": false
     },
     {
-     "id": "head_seal",
-     "type": "bool",
-     "label": "(seal mode, screws on the face) O-ring under each front screw head — from the back a sealed build always glands them — the posts stand INSIDE the",
-     "consequence": "",
-     "audience": "user",
-     "default": false
-    },
-    {
      "id": "lid_key",
      "type": "bool",
-     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit",
+     "label": "poka-yoke: a rib on the +Y bore wall and a slot in the plate's edge — four corner posts fit",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -2690,7 +2666,7 @@
     {
      "id": "screw_insert",
      "type": "bool",
-     "label": "M2 brass heat-set inserts in the corner posts (service-grade threads)",
+     "label": "M2 brass heat-set inserts in the post ends (service-grade threads)",
      "consequence": "",
      "audience": "engineering",
      "default": false
@@ -2744,14 +2720,14 @@
      "default": false
     }
    ],
-   "engineering_param_count": 181,
+   "engineering_param_count": 194,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 4,
     "released": 4,
-    "options": 19,
-    "user_options": 13,
+    "options": 18,
+    "user_options": 12,
     "variant_axes": 2
    }
   },
@@ -2808,7 +2784,7 @@
   {
    "id": "wap_enclosure",
    "scad": "canary_wap_enclosure.scad",
-   "title": "SecuraCV Canary WAP — 3D-printable enclosure (parametric)  v0.8",
+   "title": "SecuraCV Canary WAP — 3D-printable enclosure (parametric)  v0.9",
    "family": "canary-wap",
    "device_compat": [
     "canary-wap"
@@ -2950,7 +2926,7 @@
      "id": "opt_camera",
      "type": "bool",
      "label": "XIAO *Sense* camera",
-     "consequence": "lid sensor window + taller cavity (off = plain XIAO ESP32-S3)",
+     "consequence": "face sensor window + taller cavity (off = plain XIAO ESP32-S3)",
      "audience": "user",
      "default": true,
      "bom": [
@@ -2965,7 +2941,7 @@
      "id": "opt_buzzer",
      "type": "bool",
      "label": "piezo buzzer",
-     "consequence": "lid vent + GORE seat",
+     "consequence": "face vent + GORE seat",
      "audience": "user",
      "default": true,
      "bom": [
@@ -3023,7 +2999,7 @@
      "id": "opt_tamper",
      "type": "bool",
      "label": "reed/Hall + magnet",
-     "consequence": "lid magnet pocket",
+     "consequence": "face magnet pocket",
      "audience": "user",
      "default": true,
      "bom": [
@@ -3039,7 +3015,7 @@
      "id": "opt_touch",
      "type": "bool",
      "label": "cap-touch pad",
-     "consequence": "thinned \"touch window\" on the lid",
+     "consequence": "thinned \"touch window\" on the face",
      "audience": "user",
      "default": false,
      "bom": [
@@ -3061,7 +3037,7 @@
     {
      "id": "opt_seal",
      "type": "bool",
-     "label": "perimeter TPU gasket + drip-edge lid + USB plug recess (splash-resistant, NOT immersion)",
+     "label": "perimeter TPU gasket in the plate ledge + O-rings under the plate screws + USB plug recess (splash-resistant, NOT immersion)",
      "consequence": "",
      "audience": "user",
      "default": false,
@@ -3084,17 +3060,9 @@
      "default": true
     },
     {
-     "id": "head_seal",
-     "type": "bool",
-     "label": "(seal mode) O-ring under every lid screw head: the posts stand INSIDE the gasket",
-     "consequence": "",
-     "audience": "user",
-     "default": false
-    },
-    {
      "id": "opt_weep",
      "type": "bool",
-     "label": "Ø1.5 weep at the cavity's low point (the USB wall, hung USB-down): condensate",
+     "label": "Ø2 weep through the USB wall (hung USB-down it is the low wall): condensate leaves, driven rain does not enter. The weather preset turns it on",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -3102,7 +3070,7 @@
     {
      "id": "opt_shield",
      "type": "bool",
-     "label": "blind pilots in the lid over its corner bosses for the sun shield's four screws (ON in the Outdoor preset; the shield is part=\"shield\")",
+     "label": "blind pilots in the face over its corner posts for the sun shield's four screws (ON in the Outdoor preset; the shield is part=\"shield\")",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -3118,7 +3086,7 @@
     {
      "id": "opt_mount",
      "type": "bool",
-     "label": "wall-mount features (keyholes thicken the case back by `kh_extra`)",
+     "label": "wall-mount features (keyholes thicken the plate by `kh_extra`)",
      "consequence": "",
      "audience": "user",
      "default": false,
@@ -3150,7 +3118,7 @@
     {
      "id": "batt_hold",
      "type": "bool",
-     "label": "lid-side ribs over the bay that stop the cell bouncing in a drop: they",
+     "label": "face-side ribs over the bay that stop the cell bouncing in a drop: they",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -3158,7 +3126,7 @@
     {
      "id": "lid_key",
      "type": "bool",
-     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit",
+     "label": "poka-yoke: a rib on the +Y bore wall and a slot in the plate's edge — the posts fit",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -3166,7 +3134,7 @@
     {
      "id": "screw_insert",
      "type": "bool",
-     "label": "M2 brass heat-set inserts in the corner posts (service-grade threads;",
+     "label": "M2 brass heat-set inserts in the post ends (service-grade threads;",
      "consequence": "",
      "audience": "engineering",
      "default": false
@@ -3174,7 +3142,7 @@
     {
      "id": "lid_ribs",
      "type": "bool",
-     "label": "perimeter rib ring under the lid — stiffens the flat face (t³) against pry/flex",
+     "label": "perimeter rib ring under the face — stiffens the flat face (t³) against pry/flex",
      "consequence": "",
      "audience": "engineering",
      "default": true
@@ -3196,14 +3164,14 @@
      "default": true
     }
    ],
-   "engineering_param_count": 177,
+   "engineering_param_count": 186,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 5,
     "released": 5,
-    "options": 23,
-    "user_options": 18,
+    "options": 22,
+    "user_options": 17,
     "variant_axes": 1
    }
   },

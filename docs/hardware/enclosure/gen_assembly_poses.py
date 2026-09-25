@@ -124,7 +124,7 @@ DEVICES = {
                        "len": "pl_L"},
             # the sun shield's own flat-head screws, flush in the shield's top,
             # down its tubes into the lid's blind pilots
-            "shield_screws": {"xy": "post_xy()", "z": "base_h + lid_t + sh_t + sh_gap", "rot": None,
+            "shield_screws": {"xy": "corner_xy()", "z": "base_h + lid_t + sh_t + sh_gap", "rot": None,
                               "len": "sh_L"},
         },
         "params": {"disc": {"d": "cam_disc_d", "t": "cam_disc_t"},
