@@ -140,7 +140,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "aad3dd168af71df3e914980e753e5e536fea04555686abe45793e2079d33b265",
+      "sha256": "d998c09910ffcb5f5f732af369965f081e800e539385e3bba28f3072028ced89",
       "groups": [
         {
           "name": "What to render",
@@ -1225,7 +1225,7 @@
         }
       },
       "units": {},
-      "sha256": "bc9286cda6a76b9101c308a04ce5303c1660c36d4e777076c89d9141264f2762",
+      "sha256": "cea246e203ceb2703e0912119796dfc1c95a1303d870822a3d7de00367ccda6d",
       "groups": [
         {
           "name": "What to render",
@@ -2294,7 +2294,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "4b3ee463848e5cad1e8c1ba8e53ce337e0305888b410a42aa6626c8463838b1b",
+      "sha256": "35c1e18b5fe69161eceddfb74f2ce343c77535868fe62c541b78a9991a6d0f6c",
       "groups": [
         {
           "name": "What to render",
@@ -3239,7 +3239,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "4803053b8edba5a0fcc2e06ba43decdc4f4f91de4bd31d49fd7a1f8adcb34d5a",
+      "sha256": "7b073d7bea5988ac04f780e0fe068a7cc0363d22c47fe6572ae3562697c792b7",
       "groups": [
         {
           "name": "What to render",

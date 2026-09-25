@@ -1608,7 +1608,7 @@
      "params": [
       {
        "name": "ledge_w",
-       "default": "pl_ledge(e_seal, gasket_w)"
+       "default": "pl_ledge(e_seal, gasket_w, tol_slide)"
       },
       {
        "name": "wall_eff",
@@ -2756,7 +2756,7 @@
      "params": [
       {
        "name": "ledge_w",
-       "default": "pl_ledge(e_seal, gasket_w)",
+       "default": "pl_ledge(e_seal, gasket_w, tol_slide)",
        "comment": "gasket + a cheek each side, or one contact band"
       },
       {
@@ -3791,7 +3791,7 @@
      "params": [
       {
        "name": "ledge_w",
-       "default": "pl_ledge(e_seal, gasket_w)",
+       "default": "pl_ledge(e_seal, gasket_w, tol_slide)",
        "comment": "gasket + a cheek each side, or one contact band"
       },
       {
@@ -4780,7 +4780,7 @@
      "params": [
       {
        "name": "ledge_w",
-       "default": "pl_ledge(e_seal, gasket_w)",
+       "default": "pl_ledge(e_seal, gasket_w, tol_slide)",
        "comment": "gasket + a cheek each side, or one contact band"
       },
       {
@@ -6695,7 +6695,7 @@
       },
       {
        "name": "ledge_w",
-       "default": "pl_ledge(e_seal, gasket_w)",
+       "default": "pl_ledge(e_seal, gasket_w, tol_slide)",
        "comment": "gasket + a cheek each side, or one contact band"
       },
       {
