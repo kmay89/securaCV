@@ -182,9 +182,11 @@ test("canary-wap: the assembly is physically true to the scad", () => {
   // (their x/y are post_xy(), written by gen_assembly_poses.py and --checked
   // against the CAD in the enclosure CI — a number pinned here would be a
   // second, unchecked copy of it)
-  // driven from the BACK: every head sits below the base's back face (z < 0),
-  // turned over (irot 180) — the lid face carries no screw
-  for (const [, , z] of by.screws.instances) assert.ok(z < 0, "lid screws sit in the back, not on the lid");
+  // driven from the BACK, through the plate: every head sits inside the plate,
+  // under the seal line (below the gasket's seat on the ledge) and turned
+  // over (irot 180) — the lid face carries no screw
+  for (const [, , z] of by.screws.instances)
+    assert.ok(z < by.gasket.seated.pos[2], "the plate screws sit inside the plate, under the seal line, not on the lid");
   assert.deepStrictEqual(by.screws.irot, [180, 0, 0], "lid screws drive upward from the back");
 
   // the step rail reads in build order

@@ -76,11 +76,11 @@
    },
    "bom": {
     "ORG1": {
-     "bom": 6,
+     "bom": 8,
      "echo": 8
     },
     "SCR5": {
-     "bom": 10,
+     "bom": 12,
      "echo": 12
     },
     "SCR7": {
@@ -324,7 +324,7 @@
    },
    "bom": {
     "SCR5": {
-     "bom": 10,
+     "bom": 12,
      "echo": 8
     },
     "SCR6": {
@@ -391,7 +391,7 @@
    },
    "bom": {
     "SCR5": {
-     "bom": 10,
+     "bom": 12,
      "echo": 8
     },
     "SCR6": {
@@ -549,11 +549,11 @@
    },
    "bom": {
     "ORG1": {
-     "bom": 6,
+     "bom": 8,
      "echo": 6
     },
     "SCR5": {
-     "bom": 10,
+     "bom": 12,
      "echo": 10
     },
     "SCR6": {
@@ -607,7 +607,7 @@
    },
    "bom": {
     "SCR3": {
-     "bom": 8,
+     "bom": 12,
      "echo": 4
     }
    }
@@ -687,11 +687,11 @@
    },
    "bom": {
     "ORG1": {
-     "bom": 4,
+     "bom": 8,
      "echo": 8
     },
     "SCR3": {
-     "bom": 8,
+     "bom": 12,
      "echo": 8
     },
     "SCR4": {
@@ -805,7 +805,7 @@
    },
    "bom": {
     "SCR3": {
-     "bom": 8,
+     "bom": 12,
      "echo": 4
     }
    }
@@ -849,18 +849,6 @@
  },
  "bom_drift": [
   {
-   "set": "doorbell",
-   "csv": "bom_canary_vision.csv",
-   "what": "short ORG1",
-   "detail": "bom_canary_vision.csv ORG1 qty 6 < 8 the CAD echoes"
-  },
-  {
-   "set": "doorbell",
-   "csv": "bom_canary_vision.csv",
-   "what": "short SCR5",
-   "detail": "bom_canary_vision.csv SCR5 qty 10 < 12 the CAD echoes"
-  },
-  {
    "set": "doorbell+inserts",
    "csv": "bom_canary_vision.csv",
    "what": "short INS1",
@@ -901,12 +889,6 @@
    "csv": "bom_canary_vision.csv",
    "what": "unbilled #6 pan wall screw (keyholes)",
    "detail": "2x #6 pan wall screw (keyholes) — no row in bom_canary_vision.csv bills it"
-  },
-  {
-   "set": "wap.battery_weather",
-   "csv": "bom_canary_wap.csv",
-   "what": "short ORG1",
-   "detail": "bom_canary_wap.csv ORG1 qty 4 < 8 the CAD echoes"
   },
   {
    "set": "wap.battery_weather",

@@ -407,7 +407,7 @@
      },
      {
       "ref": "SCR3",
-      "qty": "8",
+      "qty": "12",
       "required": false,
       "category": "Mechanical",
       "desc": "M2 self-tapping screws, 8-12mm: FLAT (countersunk) head indoors, PAN head on the Outdoor build (printed-enclosure plate + sun shield)",
@@ -491,7 +491,7 @@
      },
      {
       "ref": "ORG1",
-      "qty": "4",
+      "qty": "8",
       "required": false,
       "category": "Sealing",
       "desc": "O-ring 2 mm ID x 1 mm CS (M2 screw-head seal, printed enclosure)",
@@ -765,10 +765,10 @@
      },
      {
       "ref": "SCR5",
-      "qty": "10",
+      "qty": "12",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 self-tapping pan-head screws: 4x 6mm (camera posts) + 4-6x 8mm (the back plate to the shell's post ends; 6 on the sealed builds)",
+      "desc": "M2 self-tapping pan-head screws: 4x 6mm (camera posts) + 4-8x 8mm (the back plate to the shell's post ends; 6 on the sealed Vision, 8 on the doorbell)",
       "mpn": "M2X8-ST-MIX",
       "mfr": "Generic",
       "usd": 0.5,
@@ -873,7 +873,7 @@
      },
      {
       "ref": "ORG1",
-      "qty": "6",
+      "qty": "8",
       "required": false,
       "category": "Sealing",
       "desc": "O-ring 2 mm ID x 1 mm CS (M2 screw-head seal, printed enclosure)",

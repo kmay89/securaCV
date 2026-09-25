@@ -13,10 +13,12 @@ argument for that: the pan-head seat that shipped as a through-hole in four
 cases was fine by every single-part check and was found only when a gate
 put the two halves together.
 
-Vocabulary: **base/back/body** is the half the boards live in, printed open
-side up; **lid/front/face** is the show half, printed face-down; the **lip**
-is the ring on the lid that nests into the base; **rim** is the base wall's
-top face the lid seats on.
+Vocabulary: **lid/front/face** is the one-piece show part — face, side
+walls and screw posts — printed face-down; **base/back/body** is the
+**plate** the boards live in, printed boards side up, which nests inside
+the show part's walls like a piston; the **ledge** is the internal step
+the plate seats on (the seal line), and the **bore** is the wall below it
+that the plate slides into.
 
 ## 1. Walls and sections
 
@@ -152,9 +154,9 @@ top face the lid seats on.
   | `sense` | 1.00 | 1.00 | `cav_extra` | 0.00 | pinned |
   | `vision.devkit_indoor` | 1.00 | 1.00 | `lid_headroom` | 0.00 | pinned (`cav_d` = `cav_d_min`) |
   | `vision.xiao_indoor` | 1.00 | 1.38 | `lid_headroom` | 0.38 | the USB rule set `cav_d` above `cav_d_min` |
-  | `vision.xiao_weather` | 1.00 | 4.58 | `lid_headroom` | 3.58 | the USB rule set `cav_d` above `cav_d_min` |
+  | `vision.xiao_weather` | 1.00 | 3.38 | `lid_headroom` | 2.38 | the USB rule set `cav_d` above `cav_d_min` |
   | `wap.battery_full` | 1.00 | 1.00 | `lid_headroom` | 0.00 | pinned; `batt_hold` |
-  | `wap.battery_weather` | 1.00 | 1.35 | `lid_headroom` | 0.35 | the USB rule set `cav_h` above `cav_h_min`; `batt_hold` |
+  | `wap.battery_weather` | 1.00 | 1.00 | `lid_headroom` | 0.00 | the USB rule set `cav_h` above `cav_h_min`; `batt_hold` |
   | `wap.compact_plain` | 1.00 | 1.85 | `lid_headroom` | 0.85 | the USB rule set `cav_h` above `cav_h_min` |
 
   So no single per-file literal can rise anywhere without either growing

@@ -104,7 +104,8 @@ DEVICES = {
             "magnet": [("T", "[board_cx + mag_dx, board_cy + mag_dy, base_h - P_h]")],
             # the pipe's face flush with the lid's outer face
             "lp": [("T", "[board_cx + lp_dx, board_cy + lp_dy, base_h + lid_t - P_len]")],
-            "gasket": [("T", "[0, 0, base_h - gasket_groove]")],
+            # the gasket sits in the groove cut into the LEDGE, from the ledge plane (floor_t) up
+            "gasket": [("T", "[0, 0, floor_t]")],
             # the disc seat: 0.2 below the lid's outer face (lid(): lid_t - (cam_disc_t + 0.2))
             "disc": [("T", "[board_cx + cam_dx, board_cy + cam_dy, base_h + lid_t - (cam_disc_t + 0.2)]")],
             # wap_fitcheck: lid() at z = base_h; the STL is T(0,0,lid_t)·Rx180·lid()
