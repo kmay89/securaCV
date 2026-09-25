@@ -413,7 +413,7 @@
       "desc": "M2 self-tapping screws, 8-12mm: FLAT (countersunk) head indoors, PAN head on the Outdoor build (printed-enclosure plate + sun shield)",
       "mpn": "M2X8-ST-MIX",
       "mfr": "Generic",
-      "usd": 0.4,
+      "usd": 0.6,
       "notes": "Driven through the back plate's recessed seats into the one-piece shell's post ends (the plate nests inside the walls; the only seam is on the back face): 4x flat 10mm on the battery and compact builds; the Outdoor build takes 4x PAN 8mm over O-rings (ORG1) plus 4x flat 12mm for the sun shield into the shell's blind face pilots. Max ~0.3 N-m or the printed posts strip",
       "orderable": false
      },
@@ -497,15 +497,15 @@
       "desc": "O-ring 2 mm ID x 1 mm CS (M2 screw-head seal, printed enclosure)",
       "mpn": "OR-2X1-NBR70",
       "mfr": "Generic",
-      "usd": 0.2,
+      "usd": 0.4,
       "notes": "Outdoor build: one under each of the 4 lid screws' pan heads, in the glands the back seats carry (canary_wap_enclosure e_gland). NBR or silicone 70A",
       "orderable": false
      }
     ],
     "required_usd": 25.99,
-    "full_usd": 102.38,
+    "full_usd": 102.78,
     "required_usd_live": 27.9,
-    "full_usd_live": 116.85,
+    "full_usd_live": 117.25,
     "pricing_as_of": "2026-09-02T13:37:16Z",
     "recipes": [
      {
@@ -771,7 +771,7 @@
       "desc": "M2 self-tapping pan-head screws: 4x 6mm (camera posts) + 4-8x 8mm (the back plate to the shell's post ends; 6 on the sealed Vision, 8 on the doorbell)",
       "mpn": "M2X8-ST-MIX",
       "mfr": "Generic",
-      "usd": 0.5,
+      "usd": 0.6,
       "notes": "4x 6mm for the OV5647 posts. 4x 8mm (6 on the sealed builds, with their mid-span posts) through the back plate's recessed seats into the one-piece shell's post ends — the plate nests inside the walls, so the only seam is on the back face. Max ~0.3 N-m or the printed posts strip",
       "orderable": false
      },
@@ -879,15 +879,15 @@
       "desc": "O-ring 2 mm ID x 1 mm CS (M2 screw-head seal, printed enclosure)",
       "mpn": "OR-2X1-NBR70",
       "mfr": "Generic",
-      "usd": 0.3,
+      "usd": 0.4,
       "notes": "Outdoor Vision and doorbell: one under each back screw's pan head (6 with the mid-span gasket posts), in the glands the sealed back seats carry (e_gland). NBR or silicone 70A",
       "orderable": false
      }
     ],
     "required_usd": 28.69,
-    "full_usd": 80.65,
+    "full_usd": 80.85,
     "required_usd_live": 29.49,
-    "full_usd_live": 92.33,
+    "full_usd_live": 92.53,
     "pricing_as_of": "2026-09-02T13:37:16Z",
     "recipes": [
      {
