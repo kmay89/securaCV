@@ -1,6 +1,6 @@
 {
  "generated_by": "scripts/bom_pricing.py",
- "as_of": "2026-09-02T13:37:16Z",
+ "as_of": "2026-09-26T13:44:25Z",
  "note": "Nightly distributor snapshot; provenance marks which rows are distributor-verified vs csv-seed.",
  "sources": {
   "csv": "docs/hardware/bom_*.csv (design intent + indicative seed prices)",
@@ -15,7 +15,7 @@
    "seed_usd": 15.99,
    "unit_usd": 15.99,
    "provenance": "digikey",
-   "stock": 130,
+   "stock": 113,
    "lifecycle": "Active",
    "sku": {
     "digikey": "1597-101021112-ND"
@@ -38,7 +38,7 @@
    "seed_usd": 13.99,
    "unit_usd": 15.9,
    "provenance": "digikey",
-   "stock": 1436,
+   "stock": 1231,
    "lifecycle": "Active",
    "sku": {
     "mouser": "713-102010469",
@@ -62,7 +62,7 @@
    "seed_usd": 18.0,
    "unit_usd": 18.0,
    "provenance": "digikey",
-   "stock": 7,
+   "stock": null,
    "lifecycle": "Active",
    "sku": {
     "digikey": "1597-104030087-ND"
@@ -85,7 +85,7 @@
    "seed_usd": 1.2,
    "unit_usd": 2.0,
    "provenance": "digikey",
-   "stock": 715,
+   "stock": 587,
    "lifecycle": "Active",
    "sku": {
     "mouser": "713-110990210",
@@ -109,7 +109,7 @@
    "seed_usd": 7.49,
    "unit_usd": 7.49,
    "provenance": "digikey",
-   "stock": 10870,
+   "stock": 10477,
    "lifecycle": "Active",
    "sku": {
     "digikey": "1597-113991114-ND"
@@ -148,7 +148,7 @@
    "seed_usd": 18.0,
    "unit_usd": 26.29,
    "provenance": "digikey",
-   "stock": 80,
+   "stock": 75,
    "lifecycle": "Active",
    "sku": {
     "mouser": "546-1554F2GYCL",
@@ -197,7 +197,7 @@
    "seed_usd": 0.05,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 764557,
+   "stock": 663085,
    "lifecycle": "Active",
    "sku": {
     "mouser": "512-1N4148",
@@ -295,7 +295,7 @@
    "seed_usd": 1.8,
    "unit_usd": 3.76,
    "provenance": "digikey",
-   "stock": 20747,
+   "stock": 20307,
    "lifecycle": "Active",
    "sku": {
     "digikey": "HE573-ND"
@@ -447,7 +447,7 @@
    "seed_usd": 0.12,
    "unit_usd": 0.35,
    "provenance": "digikey",
-   "stock": 42100,
+   "stock": 27126,
    "lifecycle": "Active",
    "sku": {
     "mouser": "653-B3F-1000",
@@ -521,7 +521,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 5531706,
+   "stock": 4579743,
    "lifecycle": "Active",
    "sku": {
     "lcsc": "C49678",
@@ -562,7 +562,7 @@
    "seed_usd": 0.55,
    "unit_usd": 2.2,
    "provenance": "digikey",
-   "stock": 3032,
+   "stock": 2740,
    "lifecycle": "Active",
    "sku": {
     "mouser": "490-CPT-9019S-SMT-TR",
@@ -861,7 +861,7 @@
   },
   "M2X10-SEC-TX": {
    "mfr": "Generic",
-   "desc": "M2 x 10 security screw (Torx pin / tri-wing), self-tapping",
+   "desc": "M2 x 10 security screw (Torx pin / tri-wing): self-tapping thread for the default body, MACHINE thread when screw_insert=true",
    "sourcing": "generic",
    "seed_usd": 0.3,
    "unit_usd": 0.3,
@@ -891,9 +891,9 @@
     "bom_canary_display.csv"
    ]
   },
-  "M2X8-ST-CSK": {
+  "M2X8-ST-MIX": {
    "mfr": "Generic",
-   "desc": "M2 self-tapping screw, FLAT (countersunk) head, 8-10mm (printed-enclosure lid)",
+   "desc": "M2 self-tapping pan-head screws: 4x 6mm (camera posts) + 4-8x 8mm (the back plate to the shell's post ends; 6 on the sealed Vision, 8 on the doorbell)",
    "sourcing": "generic",
    "seed_usd": 0.05,
    "unit_usd": 0.05,
@@ -904,13 +904,13 @@
    "breaks": [],
    "url": null,
    "boms": [
-    "bom_canary_sense.csv",
+    "bom_canary_vision.csv",
     "bom_canary_wap.csv"
    ]
   },
-  "M2X8-ST-MIX": {
+  "M2X8-ST-PAN": {
    "mfr": "Generic",
-   "desc": "M2 self-tapping screws, 6-10mm: 4x pan head (camera posts) + 4x head per case (front corners)",
+   "desc": "M2 self-tapping screw, PAN head, 8mm (printed-enclosure plate)",
    "sourcing": "generic",
    "seed_usd": 0.05,
    "unit_usd": 0.05,
@@ -921,7 +921,7 @@
    "breaks": [],
    "url": null,
    "boms": [
-    "bom_canary_vision.csv"
+    "bom_canary_sense.csv"
    ]
   },
   "M3.5-PAN-ANCHOR": {
@@ -1038,6 +1038,24 @@
     "bom_canary_vision.csv"
    ]
   },
+  "OR-2X1-NBR70": {
+   "mfr": "Generic",
+   "desc": "O-ring 2 mm ID x 1 mm CS (M2 screw-head seal, printed enclosure)",
+   "sourcing": "generic",
+   "seed_usd": 0.05,
+   "unit_usd": 0.05,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_sense.csv",
+    "bom_canary_vision.csv",
+    "bom_canary_wap.csv"
+   ]
+  },
   "OV5647-62": {
    "mfr": "Seeed/Generic",
    "desc": "OV5647 camera module, Raspberry Pi cam v1.3 form (25 x 24 mm, 21 x 12.5 mm M2 holes), FPC to CSI",
@@ -1091,9 +1109,9 @@
    "desc": "Light pipe, single, vertical (LED to face)",
    "sourcing": "orderable",
    "seed_usd": 0.45,
-   "unit_usd": 0.78,
+   "unit_usd": 0.76,
    "provenance": "digikey",
-   "stock": 4178,
+   "stock": 8953,
    "lifecycle": "Active",
    "sku": {
     "digikey": "492-1149-ND"
@@ -1101,39 +1119,39 @@
    "breaks": [
     {
      "qty": 1,
-     "usd": 0.78
+     "usd": 0.76
     },
     {
      "qty": 10,
-     "usd": 0.541
+     "usd": 0.527
     },
     {
      "qty": 100,
-     "usd": 0.3946
+     "usd": 0.3841
     },
     {
      "qty": 500,
-     "usd": 0.32922
+     "usd": 0.32018
     },
     {
      "qty": 1000,
-     "usd": 0.30778
+     "usd": 0.29921
     },
     {
      "qty": 2000,
-     "usd": 0.28956
+     "usd": 0.2814
     },
     {
      "qty": 5000,
-     "usd": 0.26966
+     "usd": 0.26193
     },
     {
      "qty": 10000,
-     "usd": 0.25724
+     "usd": 0.24979
     },
     {
      "qty": 25000,
-     "usd": 0.24371
+     "usd": 0.23655
     }
    ],
    "url": "https://www.digikey.com/en/products/detail/bivar-inc/PLP1-250/586454",
@@ -1164,7 +1182,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.11,
    "provenance": "digikey",
-   "stock": 1165954,
+   "stock": 857998,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07100KL",
@@ -1217,7 +1235,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 923616,
+   "stock": 1440239,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07100RL",
@@ -1270,7 +1288,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 915470,
+   "stock": 535802,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-071KL",
@@ -1323,7 +1341,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 342458,
+   "stock": 281794,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07330RL",
