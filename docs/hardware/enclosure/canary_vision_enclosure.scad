@@ -116,6 +116,11 @@
 //      supportless in every preset, including the shallow devkit body;
 //    * the USB openings' bridge chamfers face the BACK (the opening's roof in
 //      the face-down print).
+//  2026-09-26: inner_y is vision_inner_y(host) and the keyhole pockets
+//              vision_kh_ys(host) — the same derivation as before, now callable
+//              per host so the outlet cradle reads vision_kh_spread("xiao") /
+//              ("devkit") through `use <>` instead of retyping them (its table
+//              had the xiao spread 0.4 stale). No geometry moved.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, tearbore_x, soft_edge_plate,
@@ -407,8 +412,13 @@ dk_mid   = has_dk && e_seal && (inner_x0 - 2*post_in > span_max);
 mid_gap  = dk_mid ? pd + 1.0 : 2.0;   // devkit host: gap between the camera + module column and the DevKit column
 inner_x = has_dk ? col_cam + mid_gap + col_dk + 2*post_corner
                  : col_cam + 2*post_corner;
-inner_y = has_dk ? max(3 + cam_h + 2 + vm_l + 1.5 + 1.5, dk_l + bot_margin + board_clear + 6.0)
-                 : bot_margin + vm_l + 2 + cam_h + 3;   // module at the USB wall, camera above
+// the cavity height is a function of the host so a fitment can read either
+// host's keyhole spread through `use <>` (the outlet cradle) — this file's
+// own inner_y is the same function at its own host, never a second derivation
+function vision_inner_y(h = host) =
+    (h == "devkit") ? max(3 + cam_h + 2 + vm_l + 1.5 + 1.5, dk_l + bot_margin + board_clear + 6.0)
+                     : bot_margin + vm_l + 2 + cam_h + 3;   // module at the USB wall, camera above
+inner_y = vision_inner_y(host);
 
 // cavity depth: xiao host is driven by the rail height + module front parts;
 // devkit host by the tallest top-side component
@@ -479,8 +489,12 @@ plate_x  = bore_x - 2*tol_slide;  plate_y = bore_y - 2*tol_slide;  plate_r = max
 assert(!e_gland || screw_head == "pan", "a sealed build seats an O-ring under each plate screw head — that needs screw_head = \"pan\"");
 assert(pl_pil + 1.0 <= post_h, str("the post is too short for its pilot (", pl_pil, " into ", post_h, " mm)"));
 assert(!screw_insert || ins_h + 1.0 <= post_h, "the post is shorter than the insert it must hold");
+function vision_kh_ys(h = host) = let(k = vision_inner_y(h)/2 - kh_inset)
+    (k >= kh_slot_l/2 + kh_head_d/2 + 2) ? [-k, k] : [0];
 kh_y  = inner_y/2 - kh_inset;
-kh_ys = (kh_y >= kh_slot_l/2 + kh_head_d/2 + 2) ? [-kh_y, kh_y] : [0];
+kh_ys = vision_kh_ys(host);
+// the pocket spread a fitment hangs this case by (0 = one centered pocket)
+function vision_kh_spread(h = host) = let(ks = vision_kh_ys(h)) len(ks) == 2 ? ks[1] - ks[0] : 0;
 hinge_hole = hinge_bolt_d + tol_hole + 0.1;       // ~5.4 for M5: free pivot
 
 // mid posts, DERIVED from the clamp-spacing rule: each wall gets as many as

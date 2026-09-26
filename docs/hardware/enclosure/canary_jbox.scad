@@ -73,7 +73,7 @@ usb_h = 6.5;
 /* [Camera knockout] */
 cam_ap_d   = 9.0;
 cam_dx     = 0.0;    // aperture offset from the board center — MEASURE: the XIAO
-cam_dy     = 0.0;    // Sense camera sits toward the antenna end, not dead center
+cam_dy     = 0.0;    // Sense camera sits over the USB end (brd_xiao_sense_cam_dx/dy), not dead center
 ko_ring_d  = 22.0;   // mock knockout ring (aperture recessed inside it)
 ko_depth   = 0.8;
 

@@ -427,7 +427,7 @@ class BoardRegistry(unittest.TestCase):
         self.assertEqual((reg.facts["brd_xiao_sense_cam_h"].value,
                           reg.facts["brd_xiao_sense_cam_dx"].value,
                           reg.facts["brd_xiao_sense_cam_dy"].value,
-                          reg.facts["brd_xiao_sense_cam_fp"].value), (12.7, 6.95, 0, 8.0))
+                          reg.facts["brd_xiao_sense_cam_fp"].value), (12.7, -6.95, -0.64, 8.0))
         self.assertEqual((reg.facts["brd_xiao_w_measured"].value,
                           reg.facts["brd_xiao_w_measured"].line), (17.8, 84))
         self.assertEqual(reg.facts["brd_stack_sock_measured"].value, 6.5)

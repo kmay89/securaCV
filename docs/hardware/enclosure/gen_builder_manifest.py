@@ -693,8 +693,11 @@ def build_manifest() -> dict:
         # grays exactly preset_controls while the preset is not "custom" — so
         # the two are one list. The WAP's and the Vision's presets overrode
         # opt_weep while the builder left its checkbox live: a control that
-        # did nothing, with nothing saying so.
-        overridden = set(re.findall(r"=\s*_pre\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,",
+        # did nothing, with nothing saying so. A case that exports a flag per
+        # preset for a fitment to read (the WAP's wap_e_battery(pr)) writes it
+        # as `= _pre_p(pr, opt_x, ...)` (the preset argument spelled `pr`, so the
+        # `_pre()` wrapper's own definition is not read as an override).
+        overridden = set(re.findall(r"=\s*_pre(?:_p\(\s*pr\s*,|\()\s*([A-Za-z_][A-Za-z0-9_]*)\s*,",
                                     src.read_text(encoding="utf-8")))
         if overridden and not spec["preset_param"]:
             sys.exit(f"{spec['file']}: the source has a preset (_pre) but the "

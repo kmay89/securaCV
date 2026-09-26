@@ -49,6 +49,11 @@
 //              +hinge build; radome_t refuses the quarter-wave band; seal
 //              cheeks 1.2; opt_weep; seal_mid_posts; head_seal; selectable
 //              screw_size / screw_head; the USB opening clears a 12 mm boot.
+//  2026-09-26: the fitments read this case, not a copy of it: sense_kh_spread()
+//              (the keyhole pocket spread the outlet cradle's studs match) and
+//              sense_hinge_reach()/_face()/_back()/_axis_stl() (what the bedside
+//              stand sweeps the case by) are derived here and read through
+//              `use <>`. No geometry moved.
 // ============================================================================
 
 use <canary_core_lib.scad>    // rrect/rrect2d, soft-edge front, foot chamfer, screw seats, tearbore
@@ -346,6 +351,15 @@ assert(!e_seal || !lid_key || core_key_d() + 0.3 <= core_min_wall() + 1e-9,
        "the plate's key notch would reach the gasket groove's outer cheek");
 kh_y  = inner_y/2 - kh_inset;
 kh_ys = (kh_y >= kh_slot_l/2 + kh_head_d/2 + 2) ? [-kh_y, kh_y] : [0];
+// What the fitments that hold this case read through `use <>` (the outlet
+// cradle's stud pair, the bedside stand's pose limits) — derived here, never
+// retyped there: the pocket spread (0 when the case merges to one pocket),
+// and the hinge axis's reach to the far wall, the radome face and the back.
+function sense_kh_spread()   = len(kh_ys) == 2 ? kh_ys[1] - kh_ys[0] : 0;
+function sense_hinge_reach() = out_y + hinge_off;               // axis to the far (bottom) wall face
+function sense_hinge_face()  = base_d + lid_t - fin_r;          // axis to the radome face plane
+function sense_hinge_back()  = fin_r + mount_extra;             // axis to the back face
+function sense_hinge_axis_stl() = [0, out_y/2 + hinge_off, fin_r - base_d];   // the axis in canary_sense_front.stl's frame (front(): face underside at z = 0)
 hinge_hole = hinge_bolt_d + 0.4;
 
 // posts 0.2 INTO each wall (fused above the gussets); seal_mid_posts adds one
