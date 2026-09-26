@@ -1081,7 +1081,7 @@
     {
      "id": "opt_weep",
      "type": "bool",
-     "label": "Ø2 drains, angled down through the BOTTOM wall (the pod hangs USB-down on",
+     "label": "Ø2 drains, straight out through the BOTTOM wall (the pod hangs USB-down on",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1105,7 +1105,7 @@
     {
      "id": "seal_mid_posts",
      "type": "bool",
-     "label": "one extra lid screw mid-way along each long (±X) wall: four corner screws",
+     "label": "(seal mode) evenly spaced mid posts along every wall, as many as it takes to keep",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1113,7 +1113,7 @@
     {
      "id": "lid_key",
      "type": "bool",
-     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit",
+     "label": "poka-yoke: a rib on the +Y bore wall and a slot in the plate's edge — a symmetric post pattern fits",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1121,13 +1121,13 @@
     {
      "id": "opt_mark",
      "type": "bool",
-     "label": "deboss the house wordmark on the lid (canary_mark_lib)",
+     "label": "deboss the house wordmark on the face (canary_mark_lib)",
      "consequence": "",
      "audience": "user",
      "default": false
     }
    ],
-   "engineering_param_count": 68,
+   "engineering_param_count": 100,
    "alternatives": [
     "field_case",
     "hammond_chassis"
@@ -2720,7 +2720,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 194,
+   "engineering_param_count": 195,
    "alternatives": [],
    "remix_of": null,
    "counts": {

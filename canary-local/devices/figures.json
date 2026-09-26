@@ -2133,7 +2133,7 @@
     },
     {
      "file": "canary_wap_enclosure_compact_lid.stl",
-     "triangles": 2696,
+     "triangles": 2712,
      "mm": [
       35.7,
       38.6,
@@ -3353,7 +3353,7 @@
    "traced_to": [
     {
      "file": "canary_wap_enclosure_compact_lid.stl",
-     "triangles": 2696,
+     "triangles": 2712,
      "mm": [
       35.7,
       38.6,
@@ -3507,7 +3507,7 @@
    "traced_to": [
     {
      "file": "canary_wap_enclosure_weather_shield.stl",
-     "triangles": 3512,
+     "triangles": 3556,
      "mm": [
       124.1,
       68.2,
