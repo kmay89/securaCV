@@ -337,106 +337,94 @@ inline constexpr ArtFace kArt_device_canary_nightlight_faces[] = {
   { 0x61615E, 1, kArt_device_canary_nightlight_t24 },
 };
 
-inline constexpr int16_t kArt_device_canary_sense_t0[] = {163,242,196,222,196,72,196,72,163,91,163,242};
-inline constexpr int16_t kArt_device_canary_sense_t1[] = {195,68,162,88,162,89};
-inline constexpr int16_t kArt_device_canary_sense_t2[] = {195,67,161,87,162,88};
-inline constexpr int16_t kArt_device_canary_sense_t3[] = {159,85,193,66,100,12,100,12,67,32,159,85};
-inline constexpr int16_t kArt_device_canary_sense_t4[] = {67,190,163,242,159,85,159,85,63,34,67,190};
-inline constexpr int16_t kArt_device_canary_sense_t5[] = {159,200,163,198,163,93,163,93,159,96,159,200};
-inline constexpr int16_t kArt_device_canary_sense_t6[] = {154,86,157,84,68,33,68,33,65,35,154,86};
-inline constexpr int16_t kArt_device_canary_sense_t7[] = {65,152,159,200,154,86,154,86,60,38,65,152};
-inline constexpr int16_t kArt_device_canary_sense_t8[] = {130,110,129,111,129,153};
-inline constexpr int16_t kArt_device_canary_sense_t9[] = {91,85,90,85,126,107};
-inline constexpr int16_t kArt_device_canary_sense_t10[] = {90,134,129,153,126,107,126,107,87,87,90,134};
+inline constexpr int16_t kArt_device_canary_sense_t0[] = {197,218,159,240,159,242};
+inline constexpr int16_t kArt_device_canary_sense_t1[] = {159,240,197,218,197,73,197,73,159,95,159,240};
+inline constexpr int16_t kArt_device_canary_sense_t2[] = {197,72,159,94,159,95};
+inline constexpr int16_t kArt_device_canary_sense_t3[] = {196,70,158,92,159,94};
+inline constexpr int16_t kArt_device_canary_sense_t4[] = {196,68,158,90,158,92};
+inline constexpr int16_t kArt_device_canary_sense_t5[] = {195,67,156,89,158,90};
+inline constexpr int16_t kArt_device_canary_sense_t6[] = {193,66,155,88,156,89};
+inline constexpr int16_t kArt_device_canary_sense_t7[] = {192,65,154,87,155,88};
+inline constexpr int16_t kArt_device_canary_sense_t8[] = {154,87,192,65,102,13,102,13,64,35,154,87};
+inline constexpr int16_t kArt_device_canary_sense_t9[] = {101,12,63,34,64,35};
+inline constexpr int16_t kArt_device_canary_sense_t10[] = {64,191,159,240,154,87,154,87,59,38,64,191};
+inline constexpr int16_t kArt_device_canary_sense_t11[] = {129,130,128,131,128,172};
+inline constexpr int16_t kArt_device_canary_sense_t12[] = {91,105,90,106,125,127};
+inline constexpr int16_t kArt_device_canary_sense_t13[] = {90,153,128,172,125,127,125,127,87,108,90,153};
 inline constexpr ArtFace kArt_device_canary_sense_faces[] = {
-  { 0x6D7075, 2, kArt_device_canary_sense_t0 },
-  { 0x8F9298, 1, kArt_device_canary_sense_t1 },
-  { 0x94979E, 1, kArt_device_canary_sense_t2 },
-  { 0x878A90, 2, kArt_device_canary_sense_t3 },
-  { 0x414245, 2, kArt_device_canary_sense_t4 },
-  { 0xA5A39F, 2, kArt_device_canary_sense_t5 },
-  { 0xCCCAC5, 2, kArt_device_canary_sense_t6 },
-  { 0x61615E, 2, kArt_device_canary_sense_t7 },
-  { 0x99978E, 1, kArt_device_canary_sense_t8 },
-  { 0xBEBAB0, 1, kArt_device_canary_sense_t9 },
-  { 0x5B5954, 2, kArt_device_canary_sense_t10 },
+  { 0x969591, 1, kArt_device_canary_sense_t0 },
+  { 0xA5A39F, 2, kArt_device_canary_sense_t1 },
+  { 0xB2B1AC, 1, kArt_device_canary_sense_t2 },
+  { 0xC8C7C2, 1, kArt_device_canary_sense_t3 },
+  { 0xD8D6D0, 1, kArt_device_canary_sense_t4 },
+  { 0xDFDDD7, 1, kArt_device_canary_sense_t5 },
+  { 0xDEDCD6, 1, kArt_device_canary_sense_t6 },
+  { 0xD4D2CD, 1, kArt_device_canary_sense_t7 },
+  { 0xCCCAC5, 2, kArt_device_canary_sense_t8 },
+  { 0xC2C1BC, 1, kArt_device_canary_sense_t9 },
+  { 0x61615E, 2, kArt_device_canary_sense_t10 },
+  { 0x99978E, 1, kArt_device_canary_sense_t11 },
+  { 0xBEBAB0, 1, kArt_device_canary_sense_t12 },
+  { 0x5B5954, 2, kArt_device_canary_sense_t13 },
 };
 
-inline constexpr int16_t kArt_device_canary_vision_t0[] = {147,242,181,222,181,54,181,54,147,74,147,242};
-inline constexpr int16_t kArt_device_canary_vision_t1[] = {144,68,178,49,115,12,115,12,81,32,144,68};
-inline constexpr int16_t kArt_device_canary_vision_t2[] = {81,207,147,242,144,68,144,68,78,34,81,207};
-inline constexpr int16_t kArt_device_canary_vision_t3[] = {144,204,147,202,147,76,147,76,144,77,144,204};
-inline constexpr int16_t kArt_device_canary_vision_t4[] = {139,69,142,67,83,33,83,33,80,35,139,69};
-inline constexpr int16_t kArt_device_canary_vision_t5[] = {80,172,144,204,139,69,139,69,75,38,80,172};
+inline constexpr int16_t kArt_device_canary_vision_t0[] = {144,241,182,219,182,56,182,56,144,78,144,241};
+inline constexpr int16_t kArt_device_canary_vision_t1[] = {182,54,144,76,144,78};
+inline constexpr int16_t kArt_device_canary_vision_t2[] = {181,53,144,75,144,76};
+inline constexpr int16_t kArt_device_canary_vision_t3[] = {181,51,143,73,144,75};
+inline constexpr int16_t kArt_device_canary_vision_t4[] = {180,50,142,72,143,73};
+inline constexpr int16_t kArt_device_canary_vision_t5[] = {179,49,141,71,142,72};
+inline constexpr int16_t kArt_device_canary_vision_t6[] = {177,48,140,70,141,71};
+inline constexpr int16_t kArt_device_canary_vision_t7[] = {140,70,177,48,116,13,116,13,79,35,140,70};
+inline constexpr int16_t kArt_device_canary_vision_t8[] = {79,208,144,241,140,70,140,70,74,37,79,208};
 inline constexpr ArtFace kArt_device_canary_vision_faces[] = {
-  { 0x6D7075, 2, kArt_device_canary_vision_t0 },
-  { 0x878A90, 2, kArt_device_canary_vision_t1 },
-  { 0x414245, 2, kArt_device_canary_vision_t2 },
-  { 0xA5A39F, 2, kArt_device_canary_vision_t3 },
-  { 0xCCCAC5, 2, kArt_device_canary_vision_t4 },
-  { 0x61615E, 2, kArt_device_canary_vision_t5 },
+  { 0xA5A39F, 2, kArt_device_canary_vision_t0 },
+  { 0xB2B1AC, 1, kArt_device_canary_vision_t1 },
+  { 0xC8C7C2, 1, kArt_device_canary_vision_t2 },
+  { 0xD8D6D0, 1, kArt_device_canary_vision_t3 },
+  { 0xDFDDD7, 1, kArt_device_canary_vision_t4 },
+  { 0xDEDCD6, 1, kArt_device_canary_vision_t5 },
+  { 0xD4D2CD, 1, kArt_device_canary_vision_t6 },
+  { 0xCCCAC5, 2, kArt_device_canary_vision_t7 },
+  { 0x61615E, 2, kArt_device_canary_vision_t8 },
 };
 
-inline constexpr int16_t kArt_device_canary_vision_devkit_t0[] = {171,242,195,228,195,76,195,76,171,89,171,242};
-inline constexpr int16_t kArt_device_canary_vision_devkit_t1[] = {168,84,192,71,91,12,91,12,67,26,168,84};
-inline constexpr int16_t kArt_device_canary_vision_devkit_t2[] = {67,185,171,242,168,84,168,84,64,28,67,185};
-inline constexpr int16_t kArt_device_canary_vision_devkit_t3[] = {168,208,171,206,171,91,171,91,168,93,168,208};
-inline constexpr int16_t kArt_device_canary_vision_devkit_t4[] = {164,85,167,84,69,27,69,27,66,28,164,85};
-inline constexpr int16_t kArt_device_canary_vision_devkit_t5[] = {66,154,168,208,164,85,164,85,61,31,66,154};
+inline constexpr int16_t kArt_device_canary_vision_devkit_t0[] = {168,241,195,225,195,77,195,77,168,92,168,241};
+inline constexpr int16_t kArt_device_canary_vision_devkit_t1[] = {164,85,191,69,92,13,92,13,65,28,164,85};
+inline constexpr int16_t kArt_device_canary_vision_devkit_t2[] = {65,187,168,241,164,85,164,85,61,31,65,187};
 inline constexpr ArtFace kArt_device_canary_vision_devkit_faces[] = {
-  { 0x6D7075, 2, kArt_device_canary_vision_devkit_t0 },
-  { 0x878A90, 2, kArt_device_canary_vision_devkit_t1 },
-  { 0x414245, 2, kArt_device_canary_vision_devkit_t2 },
-  { 0xA5A39F, 2, kArt_device_canary_vision_devkit_t3 },
-  { 0xCCCAC5, 2, kArt_device_canary_vision_devkit_t4 },
-  { 0x61615E, 2, kArt_device_canary_vision_devkit_t5 },
+  { 0xA5A39F, 2, kArt_device_canary_vision_devkit_t0 },
+  { 0xCCCAC5, 2, kArt_device_canary_vision_devkit_t1 },
+  { 0x61615E, 2, kArt_device_canary_vision_devkit_t2 },
 };
 
-inline constexpr int16_t kArt_device_canary_wap_t0[] = {211,210,166,236,165,238};
-inline constexpr int16_t kArt_device_canary_wap_t1[] = {211,207,167,233,166,236};
-inline constexpr int16_t kArt_device_canary_wap_t2[] = {167,233,211,207,211,86,211,86,167,112,167,233};
-inline constexpr int16_t kArt_device_canary_wap_t3[] = {167,112,211,86,211,83,211,83,166,108,167,112};
-inline constexpr int16_t kArt_device_canary_wap_t4[] = {166,108,211,83,210,79,210,79,165,105,166,108};
-inline constexpr int16_t kArt_device_canary_wap_t5[] = {165,105,210,79,208,76,208,76,164,102,165,105};
-inline constexpr int16_t kArt_device_canary_wap_t6[] = {164,102,208,76,206,73,206,73,162,98,164,102};
-inline constexpr int16_t kArt_device_canary_wap_t7[] = {162,98,206,73,204,70,204,70,159,96,162,98};
-inline constexpr int16_t kArt_device_canary_wap_t8[] = {159,96,204,70,201,68,201,68,157,94,159,96};
-inline constexpr int16_t kArt_device_canary_wap_t9[] = {157,94,201,68,106,13,106,13,62,39,157,94};
-inline constexpr int16_t kArt_device_canary_wap_t10[] = {104,12,59,38,62,39};
-inline constexpr int16_t kArt_device_canary_wap_t11[] = {101,12,57,38,59,38};
-inline constexpr int16_t kArt_device_canary_wap_t12[] = {59,182,165,238,159,96,159,96,53,40,59,182};
-inline constexpr int16_t kArt_device_canary_wap_t13[] = {160,237,167,233,167,112,167,112,160,116,160,237};
-inline constexpr int16_t kArt_device_canary_wap_t14[] = {160,116,167,112,167,108,167,108,160,112,160,116};
-inline constexpr int16_t kArt_device_canary_wap_t15[] = {160,112,167,108,166,105,166,105,159,109,160,112};
-inline constexpr int16_t kArt_device_canary_wap_t16[] = {159,109,166,105,164,102,164,102,157,106,159,109};
-inline constexpr int16_t kArt_device_canary_wap_t17[] = {157,106,164,102,162,98,162,98,155,102,157,106};
-inline constexpr int16_t kArt_device_canary_wap_t18[] = {155,102,162,98,159,96,159,96,152,100,155,102};
-inline constexpr int16_t kArt_device_canary_wap_t19[] = {152,100,159,96,157,94,157,94,150,98,152,100};
-inline constexpr int16_t kArt_device_canary_wap_t20[] = {150,98,157,94,62,39,62,39,55,43,150,98};
-inline constexpr int16_t kArt_device_canary_wap_t21[] = {52,186,159,242,152,100,152,100,46,44,52,186};
+inline constexpr int16_t kArt_device_canary_wap_t0[] = {211,211,161,240,160,242};
+inline constexpr int16_t kArt_device_canary_wap_t1[] = {211,208,161,237,161,240};
+inline constexpr int16_t kArt_device_canary_wap_t2[] = {161,237,211,208,211,86,211,86,161,115,161,237};
+inline constexpr int16_t kArt_device_canary_wap_t3[] = {161,115,211,86,211,83,211,83,161,112,161,115};
+inline constexpr int16_t kArt_device_canary_wap_t4[] = {161,112,211,83,210,80,210,80,160,108,161,112};
+inline constexpr int16_t kArt_device_canary_wap_t5[] = {160,108,210,80,208,76,208,76,158,105,160,108};
+inline constexpr int16_t kArt_device_canary_wap_t6[] = {158,105,208,76,206,73,206,73,156,102,158,105};
+inline constexpr int16_t kArt_device_canary_wap_t7[] = {156,102,206,73,204,71,204,71,154,100,156,102};
+inline constexpr int16_t kArt_device_canary_wap_t8[] = {154,100,204,71,201,69,201,69,152,98,154,100};
+inline constexpr int16_t kArt_device_canary_wap_t9[] = {152,98,201,69,104,13,104,13,55,42,152,98};
+inline constexpr int16_t kArt_device_canary_wap_t10[] = {102,12,52,41,55,42};
+inline constexpr int16_t kArt_device_canary_wap_t11[] = {100,12,50,41,52,41};
+inline constexpr int16_t kArt_device_canary_wap_t12[] = {55,187,161,240,152,98,152,98,45,45,55,187};
 inline constexpr ArtFace kArt_device_canary_wap_faces[] = {
-  { 0x4F5054, 1, kArt_device_canary_wap_t0 },
-  { 0x64666A, 1, kArt_device_canary_wap_t1 },
-  { 0x6D7075, 2, kArt_device_canary_wap_t2 },
-  { 0x76797E, 2, kArt_device_canary_wap_t3 },
-  { 0x85888E, 2, kArt_device_canary_wap_t4 },
-  { 0x8F9298, 2, kArt_device_canary_wap_t5 },
-  { 0x94979E, 2, kArt_device_canary_wap_t6 },
-  { 0x93969D, 2, kArt_device_canary_wap_t7 },
-  { 0x8D8F96, 2, kArt_device_canary_wap_t8 },
-  { 0x878A90, 2, kArt_device_canary_wap_t9 },
-  { 0x818389, 1, kArt_device_canary_wap_t10 },
-  { 0x717378, 1, kArt_device_canary_wap_t11 },
-  { 0x414245, 2, kArt_device_canary_wap_t12 },
-  { 0xA5A39F, 2, kArt_device_canary_wap_t13 },
-  { 0xB2B1AC, 2, kArt_device_canary_wap_t14 },
-  { 0xC8C7C2, 2, kArt_device_canary_wap_t15 },
-  { 0xD8D6D0, 2, kArt_device_canary_wap_t16 },
-  { 0xDFDDD7, 2, kArt_device_canary_wap_t17 },
-  { 0xDEDCD6, 2, kArt_device_canary_wap_t18 },
-  { 0xD4D2CD, 2, kArt_device_canary_wap_t19 },
-  { 0xCCCAC5, 2, kArt_device_canary_wap_t20 },
-  { 0x61615E, 2, kArt_device_canary_wap_t21 },
+  { 0x777673, 1, kArt_device_canary_wap_t0 },
+  { 0x969591, 1, kArt_device_canary_wap_t1 },
+  { 0xA5A39F, 2, kArt_device_canary_wap_t2 },
+  { 0xB2B1AC, 2, kArt_device_canary_wap_t3 },
+  { 0xC8C7C2, 2, kArt_device_canary_wap_t4 },
+  { 0xD8D6D0, 2, kArt_device_canary_wap_t5 },
+  { 0xDFDDD7, 2, kArt_device_canary_wap_t6 },
+  { 0xDEDCD6, 2, kArt_device_canary_wap_t7 },
+  { 0xD4D2CD, 2, kArt_device_canary_wap_t8 },
+  { 0xCCCAC5, 2, kArt_device_canary_wap_t9 },
+  { 0xC2C1BC, 1, kArt_device_canary_wap_t10 },
+  { 0xAAA9A4, 1, kArt_device_canary_wap_t11 },
+  { 0x61615E, 2, kArt_device_canary_wap_t12 },
 };
 
 inline constexpr FigureArt kFigureArt[] = {
@@ -447,10 +435,10 @@ inline constexpr FigureArt kFigureArt[] = {
   { "device.canary-display-touch169", "72fa8cf1", 19, kArt_device_canary_display_touch169_faces },
   { "device.canary-display-watch", "c673b27b", 32, kArt_device_canary_display_watch_faces },
   { "device.canary-nightlight", "27f621f7", 25, kArt_device_canary_nightlight_faces },
-  { "device.canary-sense", "423b3305", 11, kArt_device_canary_sense_faces },
-  { "device.canary-vision", "0d4ba02d", 6, kArt_device_canary_vision_faces },
-  { "device.canary-vision-devkit", "36ad7de9", 6, kArt_device_canary_vision_devkit_faces },
-  { "device.canary-wap", "85a6140a", 22, kArt_device_canary_wap_faces },
+  { "device.canary-sense", "ea8ac325", 14, kArt_device_canary_sense_faces },
+  { "device.canary-vision", "2d4c8e94", 9, kArt_device_canary_vision_faces },
+  { "device.canary-vision-devkit", "7d3e6fb7", 3, kArt_device_canary_vision_devkit_faces },
+  { "device.canary-wap", "e30c7805", 13, kArt_device_canary_wap_faces },
 };
 inline constexpr size_t kFigureArtCount =
     sizeof(kFigureArt) / sizeof(kFigureArt[0]);

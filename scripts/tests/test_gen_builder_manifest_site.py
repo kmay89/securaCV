@@ -71,8 +71,8 @@ ASSEMBLED = ENC / "assembled_dims.json"
 # measured envelope's min corner (x along w, z along h) and its extent.
 FEATURES = {
     "device.canary-combo": {
-        "lens": {"h": 10.0, "w": 10.0, "x": 21.6, "z": 59.1},
-        "radome": {"h": 24.0, "w": 24.0, "x": 57.8, "z": 30.6},
+        "lens": {"h": 10.0, "w": 10.0, "x": 22.6, "z": 60.1},
+        "radome": {"h": 24.0, "w": 24.0, "x": 58.8, "z": 31.6},
     },
 }
 # The devices gen_assembled_dims.py measures — the five released multi-part
@@ -80,15 +80,14 @@ FEATURES = {
 # then the snap-bezel face; the Dash: dock pads, back plate, frame) and the
 # CAD-measured Combo (the back, keyhole thickening included, to its rim) —
 # and their seams as the ledger states them (figure-depth mm, unrounded).
+# The piston-plate cases (Sense, Vision, devkit, WAP, Combo) have NO seam on
+# the side profile any more — the plate nests inside the shell's walls — so
+# the ledger records [] for them and the manifest carries no seams_mm; the
+# doorbell keeps the wall plate's reveal.
 SEAMS = {
-    "device.canary-combo": [24.38],
     "device.canary-display-dash": [6, 9],
     "device.canary-display-watch": [21],
-    "device.canary-sense": [19.5],
-    "device.canary-vision": [21.38],
-    "device.canary-vision-devkit": [16.5],
-    "device.canary-vision-doorbell": [4, 28],
-    "device.canary-wap": [13.05],
+    "device.canary-vision-doorbell": [4],
 }
 
 
@@ -221,9 +220,8 @@ class LedgerShape(unittest.TestCase):
                 self.assertNotIn("seams_mm", entry, fid)
         self.assertEqual({fid: e["seams_mm"] for fid, e in self.dims["figures"].items()
                           if "seams_mm" in e}, SEAMS)
-        # unrounded: 13.05 and 21.38 survive as the assembled generator measured them
-        self.assertEqual(self.dims["figures"]["device.canary-wap"]["seams_mm"], [13.05])
-        self.assertEqual(self.dims["figures"]["device.canary-vision"]["seams_mm"], [21.38])
+        # verbatim: the doorbell's wall-plate reveal as the assembled generator measured it
+        self.assertEqual(self.dims["figures"]["device.canary-vision-doorbell"]["seams_mm"], [4])
 
     def test_features_equal_the_assembled_record_verbatim(self):
         # exactly the rows that record features, verbatim and unrounded, and
@@ -418,7 +416,7 @@ class ScratchTree(unittest.TestCase):
         # gen_figures.mjs was not re-run — the lens would land on the old box
         with _Tree() as root:
             aj = assembled_copy(root, lambda d: d["devices"]["device.canary-combo"]["fig"]
-                                .__setitem__("w", 88.4))
+                                .__setitem__("w", 90.4))
             with self.assertRaises(SystemExit) as cm:
                 distill(root, None, aj)
             msg = str(cm.exception.code)
@@ -455,7 +453,7 @@ class ScratchTree(unittest.TestCase):
             self.assertNotIn("knobs", figs["device.canary-wap"])
             self.assertNotIn("knobs", figs["device.canary-sense"])
             self.assertIn("knobs", figs["device.canary-vision"])
-            self.assertEqual(figs["device.canary-wap"]["seams_mm"], [13.05])   # still measured
+            self.assertNotIn("seams_mm", figs["device.canary-wap"])   # the plate case has no side seam
 
 
 class SiteCarry(unittest.TestCase):

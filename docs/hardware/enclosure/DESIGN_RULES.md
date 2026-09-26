@@ -13,10 +13,12 @@ argument for that: the pan-head seat that shipped as a through-hole in four
 cases was fine by every single-part check and was found only when a gate
 put the two halves together.
 
-Vocabulary: **base/back/body** is the half the boards live in, printed open
-side up; **lid/front/face** is the show half, printed face-down; the **lip**
-is the ring on the lid that nests into the base; **rim** is the base wall's
-top face the lid seats on.
+Vocabulary: **lid/front/face** is the one-piece show part — face, side
+walls and screw posts — printed face-down; **base/back/body** is the
+**plate** the boards live in, printed boards side up, which nests inside
+the show part's walls like a piston; the **ledge** is the internal step
+the plate seats on (the seal line), and the **bore** is the wall below it
+that the plate slides into.
 
 ## 1. Walls and sections
 
@@ -55,7 +57,7 @@ top face the lid seats on.
 | One screw registry: pilot, nominal, clearance, both heads, insert, O-ring per size | M2 / M2.5 / M3 | `SCR_REGISTRY`, `core_selfcheck()` pins the print-validated M2 row |
 | Every shell counts its own hardware, derived from the knobs that draw the holes, and echoes it on every render — a count typed in a comment is a count the next option breaks | `HARDWARE — <case>: 4x M2 flat x 8 self-tap · …` | `hw_echo()`, `hw_len()`, `hw_screw()`, `hw_insert()`, `hw_oring()` in `canary_core_lib`; `core_selfcheck()` pins `hw_len` to the validated M2 x 8 |
 | A head seat never goes as deep as the plate it is in; a pan head gets a floor, a flat head gets a 90° cone | ≥ 1.0 mm floor | `cb_head_pad()` + `cb_flat_cut()` / `cs_cone90_cut()`; the assembled fit check found the pad that overhung |
-| No screw head on a show face, and no seam on a show side: the parting line is the BACK face. The shell is one piece — face, walls and posts, printed face-down — and the back is a plate that nests inside the walls like a piston, seated on a ledge the walls carry; the screws are short, through the plate into blind pilots in the post ends, and the plate is the chassis (boards, clips, keyholes, the key slot) | ledge `pl_ledge()` (one `core_min_wall()` band, or the gasket plus a cheek each side); plate `bore − 2·tol_slide`; thread engagement `hw_engage()` past the relief; head recessed to a ≥ 1.0 floor (0.4 web over a gland) | `pl_thick()` / `pl_recess()` / `pl_len()` / `pl_pilot()` / `pl_plate()` / `pl_cavity_cut()` / `pl_bore_cut()` / `pl_seat_cut()` / `pl_post_pilot()` in `canary_core_lib`; the fit gates (seated EMPTY, −0.1 contact, turned COLLIDES); the lateral probe (0.15 EMPTY, 0.25 COLLIDES — the walls carry the plate, not the screws) |
+| No screw head on a show face, and no seam on a show side: the parting line is the BACK face. The shell is one piece — face, walls and posts, printed face-down — and the back is a plate that nests inside the walls like a piston, seated on a ledge the walls carry; the screws are short, through the plate into blind pilots in the post ends, and the plate is the chassis (boards, clips, keyholes, the key slot) | ledge `pl_ledge()` (one `core_min_wall()` band, or the gasket plus a cheek each side — plus `tol_slide` and the plate's lead-in chamfer, so the seated bearing band is the full width named); plate `bore − 2·tol_slide`, a 0.3 foot on its back edge; thread engagement `hw_engage()` past the relief; head recessed to a ≥ 1.0 floor (0.4 web over a gland) | `pl_thick()` / `pl_recess()` / `pl_len()` / `pl_pilot()` / `pl_plate()` / `pl_cavity_cut()` / `pl_bore_cut()` / `pl_seat_cut()` / `pl_post_pilot()` in `canary_core_lib`; the fit gates (seated EMPTY, −0.1 contact, turned COLLIDES); the lateral probe (0.15 EMPTY, 0.25 COLLIDES — the walls carry the plate, not the screws) |
 | The ledge is the clamp datum: the posts stop short of the ledge plane, so the plate always seats ledge-on-plate (the seal line) and the print's height error lands in the post gap, not in the seam | `pl_relief()` = 0.2 | every case's `post_h = cav_d − pl_relief()`; the −0.1 gate shows the contact is the ledge band |
 | A pilot is cut LAST, through the post the shell's union adds — a pilot cut inside the cavity's own difference cuts air (the Sense port had it, and the posts came out solid); a corner post also fills the pocket between its gussets and the coved corner, or the mesh closes a void there | `shell_asm()` = `difference() { shell_solid(); pilots }`; the corner fill block | the `path` probe (screw axis EMPTY through plate and post) and the `skin` probe (post material above the tip); `admesh` part count 1 |
 | A sun shield never rides on the case screws: it has its own short flat-head screws into blind pilots from the face over the corner posts, and the plate screw's pilot from the other end stops 1.0 under them | `sh_L` from `hw_len`, `sh_pilot`; `post_h ≥ (sh_pilot − lid_t) + pl_pil + 1.0` | the WAP's `opt_shield`; shield ∩ shell EMPTY seated, its screw path EMPTY, the skin probe solid between the tips |
@@ -152,9 +154,9 @@ top face the lid seats on.
   | `sense` | 1.00 | 1.00 | `cav_extra` | 0.00 | pinned |
   | `vision.devkit_indoor` | 1.00 | 1.00 | `lid_headroom` | 0.00 | pinned (`cav_d` = `cav_d_min`) |
   | `vision.xiao_indoor` | 1.00 | 1.38 | `lid_headroom` | 0.38 | the USB rule set `cav_d` above `cav_d_min` |
-  | `vision.xiao_weather` | 1.00 | 4.58 | `lid_headroom` | 3.58 | the USB rule set `cav_d` above `cav_d_min` |
+  | `vision.xiao_weather` | 1.00 | 3.38 | `lid_headroom` | 2.38 | the USB rule set `cav_d` above `cav_d_min` |
   | `wap.battery_full` | 1.00 | 1.00 | `lid_headroom` | 0.00 | pinned; `batt_hold` |
-  | `wap.battery_weather` | 1.00 | 1.35 | `lid_headroom` | 0.35 | the USB rule set `cav_h` above `cav_h_min`; `batt_hold` |
+  | `wap.battery_weather` | 1.00 | 1.00 | `lid_headroom` | 0.00 | the USB rule set `cav_h` above `cav_h_min`; `batt_hold` |
   | `wap.compact_plain` | 1.00 | 1.85 | `lid_headroom` | 0.85 | the USB rule set `cav_h` above `cav_h_min` |
 
   So no single per-file literal can rise anywhere without either growing

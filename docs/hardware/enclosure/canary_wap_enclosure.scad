@@ -348,7 +348,7 @@ $fa = 3; $fs = 0.4;
 // the walls and the parting line is the back face itself. The ledge band is
 // the gasket with a 1.2 cheek each side (the cheeks ARE the seal path's
 // walls — this file once shipped 0.8 cheeks), or one contact band
-ledge_w  = pl_ledge(e_seal, gasket_w);
+ledge_w  = pl_ledge(e_seal, gasket_w, tol_slide);
 wall_eff = max(wall_t, ledge_w + core_min_wall());   // the skin outside the plate's bore stays a structural wall
 // the fastener, resolved once: the M2 rows of the registry equal this file's
 // validated knobs, so a default render reads the knobs and larger sizes read

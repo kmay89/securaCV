@@ -407,14 +407,14 @@
      },
      {
       "ref": "SCR3",
-      "qty": "8",
+      "qty": "12",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 self-tapping screws, 8-16mm: FLAT (countersunk) head indoors, PAN head on the Outdoor build (printed-enclosure lid + sun shield)",
+      "desc": "M2 self-tapping screws, 8-12mm: FLAT (countersunk) head indoors, PAN head on the Outdoor build (printed-enclosure plate + sun shield)",
       "mpn": "M2X8-ST-MIX",
       "mfr": "Generic",
-      "usd": 0.4,
-      "notes": "Driven up from the seats in the BACK into the lid bosses so the lid face is unbroken: 4x flat 12mm (compact) / 16mm (battery); the Outdoor build takes 4x PAN 12mm over O-rings (ORG1) plus 4x flat 12mm for the sun shield into the lid's blind pilots. Max ~0.3 N-m or the printed bosses strip",
+      "usd": 0.6,
+      "notes": "Driven through the back plate's recessed seats into the one-piece shell's post ends (the plate nests inside the walls; the only seam is on the back face): 4x flat 10mm on the battery and compact builds; the Outdoor build takes 4x PAN 8mm over O-rings (ORG1) plus 4x flat 12mm for the sun shield into the shell's blind face pilots. Max ~0.3 N-m or the printed posts strip",
       "orderable": false
      },
      {
@@ -491,21 +491,21 @@
      },
      {
       "ref": "ORG1",
-      "qty": "4",
+      "qty": "8",
       "required": false,
       "category": "Sealing",
       "desc": "O-ring 2 mm ID x 1 mm CS (M2 screw-head seal, printed enclosure)",
       "mpn": "OR-2X1-NBR70",
       "mfr": "Generic",
-      "usd": 0.2,
+      "usd": 0.4,
       "notes": "Outdoor build: one under each of the 4 lid screws' pan heads, in the glands the back seats carry (canary_wap_enclosure e_gland). NBR or silicone 70A",
       "orderable": false
      }
     ],
     "required_usd": 25.99,
-    "full_usd": 102.38,
+    "full_usd": 102.78,
     "required_usd_live": 27.9,
-    "full_usd_live": 116.85,
+    "full_usd_live": 117.25,
     "pricing_as_of": "2026-09-02T13:37:16Z",
     "recipes": [
      {
@@ -539,7 +539,7 @@
      "Press the PCB straight down until the four edge clips snap over it, USB-C aligned to the wall cutout — no screws needed for the board. (To remove, gently splay the clips outward and lift.)",
      "Press a 6 mm magnet into the lid pocket (press fit — a drop of CA glue makes it permanent); add a GORE vent over the seat if sealing; press the light pipe into the LED port.",
      "(weather mode) Seat the TPU gasket in the rim groove; glue the clear disc into the camera seat.",
-     "Close the lid (lip nests into the base), turn the case over and drive the 4 × M2 screws up through the seats in the back into the lid's bosses — the lid face stays unbroken (the Outdoor preset keeps its screws on the lid, under the sun shield) — snug diagonally first, then final quarter-turns. Don't crank them: M2 self-taps strip printed posts beyond ~0.3 N·m (two fingers on the short end of the driver is plenty)."
+     "Lower the shell over the plate (its walls swallow the plate's edge — the key slot on the plate meets the rib in the +Y wall, so it only goes one way), turn the case over and drive the M2 screws through the plate's recessed seats into the post ends — the Outdoor build seats an O-ring under each pan head first — snug diagonally, then final quarter-turns. Don't crank them: M2 self-taps strip printed posts beyond ~0.3 N·m (two fingers on the short end of the driver is plenty). The face and the sides stay unbroken; the only seam is the hairline around the plate on the back."
     ]
    }
   },
@@ -765,14 +765,14 @@
      },
      {
       "ref": "SCR5",
-      "qty": "10",
+      "qty": "12",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 self-tapping pan-head screws: 4x 6mm (camera posts) + 4-6x 12-25mm per case (front corners, driven from the back; 6 on the sealed builds)",
+      "desc": "M2 self-tapping pan-head screws: 4x 6mm (camera posts) + 4-8x 8mm (the back plate to the shell's post ends; 6 on the sealed Vision, 8 on the doorbell)",
       "mpn": "M2X8-ST-MIX",
       "mfr": "Generic",
-      "usd": 0.5,
-      "notes": "4x 6mm for the OV5647 posts. Front corners, driven up from the seats in the BACK into the face bosses so the face is unbroken: 20mm on the XIAO Vision (25mm Outdoor, 6 of them for its mid-span gasket posts), 12mm on the DevKit build, 6x 20mm on the doorbell. Max ~0.3 N-m",
+      "usd": 0.6,
+      "notes": "4x 6mm for the OV5647 posts. 4x 8mm (6 on the sealed builds, with their mid-span posts) through the back plate's recessed seats into the one-piece shell's post ends — the plate nests inside the walls, so the only seam is on the back face. Max ~0.3 N-m or the printed posts strip",
       "orderable": false
      },
      {
@@ -873,21 +873,21 @@
      },
      {
       "ref": "ORG1",
-      "qty": "6",
+      "qty": "8",
       "required": false,
       "category": "Sealing",
       "desc": "O-ring 2 mm ID x 1 mm CS (M2 screw-head seal, printed enclosure)",
       "mpn": "OR-2X1-NBR70",
       "mfr": "Generic",
-      "usd": 0.3,
+      "usd": 0.4,
       "notes": "Outdoor Vision and doorbell: one under each back screw's pan head (6 with the mid-span gasket posts), in the glands the sealed back seats carry (e_gland). NBR or silicone 70A",
       "orderable": false
      }
     ],
     "required_usd": 28.69,
-    "full_usd": 80.65,
+    "full_usd": 80.85,
     "required_usd_live": 29.49,
-    "full_usd_live": 92.33,
+    "full_usd_live": 92.53,
     "pricing_as_of": "2026-09-02T13:37:16Z",
     "recipes": [
      {
@@ -919,7 +919,7 @@
      "(xiao host) Seat the XIAO in the module's socket — both USB-C ports must face the same direction; backwards seating feeds power into GPIO and can kill either board (device guide §3). Click the stack into the tall side rails, module up, both ports aligned to the two bottom-wall openings (model port above, firmware port below). (devkit host) Click the Vision AI V2 and the DevKitM-1 into their snap-clip cradles (DevKit USB-C down, aligned to the wall opening); the module's own USB-C faces the middle gap — open the case to reflash models.",
      "Route the camera FPC to the module's CSI connector (and, devkit host, the Grove cable across the middle gap to the DevKit pins).",
      "(weather) Seat the TPU gasket in the rim groove.",
-     "Close the front (lip nests into the back), turn it over and drive the M2 corner screws up through the seats in the back into the front's bosses (4, or 6 on the Outdoor preset) — the face stays unbroken — snug diagonally, then final quarter-turns.",
+     "Lower the shell over the plate (the walls swallow the plate's edge; the plate's key slot meets the rib in the +Y wall, so it only goes one way), turn it over and drive the short M2 screws through the plate's recessed seats into the post ends (4, or 6 with the weather preset's mid posts — an O-ring under each pan head on a sealed build) — the face and every side stay unbroken — snug diagonally, then final quarter-turns.",
      "Screw the bracket to the wall (or a tripod plate via the 1/4-20 nut), slot the case prongs into it, set the angle, tighten the M5 thumbscrew."
     ]
    }
@@ -999,11 +999,11 @@
       "qty": "4",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 self-tapping screw, PAN head, 16mm (printed-enclosure front)",
-      "mpn": "M2X16-ST-PAN",
+      "desc": "M2 self-tapping screw, PAN head, 8mm (printed-enclosure plate)",
+      "mpn": "M2X8-ST-PAN",
       "mfr": "Generic",
       "usd": 0.2,
-      "notes": "For the printed Sense enclosure (canary_sense_enclosure.scad): driven up from the seats in the BACK into the radome front's bosses, so the front is unbroken. Max ~0.3 N-m or the printed bosses strip",
+      "notes": "For the printed Sense enclosure (canary_sense_enclosure.scad): driven from the back plate's recessed seats into the one-piece shell's post ends (the plate nests inside the walls, so the only seam is on the back face). Max ~0.3 N-m or the printed posts strip",
       "orderable": false
      },
      {
@@ -1088,7 +1088,7 @@
      "Click the carrier into the snap rails, antenna face toward the front, until the +Y end stops locate it — the stops are what keep the antenna under the radome window, so push it home against them.",
      "Press the light pipe into the WS2812 port; when sealing, glue a clear disc behind the lux aperture (the BH1750 needs to see room light) and stick a GORE-type membrane over any vent seat.",
      "(weather mode) Seat the TPU gasket in the rim groove.",
-     "Close the radome front (lip nests into the back; the window must land over the antenna array), turn it over and drive the 4 × M2 corner screws up through the seats in the back into the front's bosses — snug diagonally first, then final quarter-turns, never past ~0.3 N·m.",
+     "Lower the radome shell over the plate (the walls swallow the plate's edge — the key slot meets the rib in the +Y wall, so the window can only land over the antenna array), turn it over and drive the 4 × M2 × 8 screws through the plate's recessed seats into the corner post ends — snug diagonally first, then final quarter-turns, never past ~0.3 N·m.",
      "Mount it: slot the hinge prongs into the shared Vision bracket and set the angle (bedside ≤ 1.5 m for the wellbeing channel), or hang the blind keyholes — ceiling-mount the MR60FDA2 fall build facing straight down."
     ]
    }

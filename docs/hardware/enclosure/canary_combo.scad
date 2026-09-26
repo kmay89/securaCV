@@ -165,7 +165,7 @@ $fa = 3; $fs = 0.4;
 e_seal = opt_seal;
 // the piston plate (canary_core_lib pl_*): the plate seats on a ledge inside
 // the walls and the parting line is the back face itself
-ledge_w  = pl_ledge(e_seal, gasket_w);                   // gasket + a cheek each side, or one contact band
+ledge_w  = pl_ledge(e_seal, gasket_w, tol_slide);                   // gasket + a cheek each side, or one contact band
 wall_eff = max(wall_t, ledge_w + core_min_wall());       // the skin outside the plate's bore stays a structural wall
 assert(!e_seal || core_gasket_fill(gasket_w, gasket_groove, gasket_proud) <= core_gasket_fill_max(),
        str("the printed TPU ring would fill ", round(100*core_gasket_fill(gasket_w, gasket_groove, gasket_proud)),

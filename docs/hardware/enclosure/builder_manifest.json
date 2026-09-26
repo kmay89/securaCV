@@ -91,8 +91,8 @@
       ],
       "part_labels": {
         "all": "Assembled preview (not for printing)",
-        "base": "Base — the tub",
-        "lid": "Lid",
+        "base": "Back plate — the chassis",
+        "lid": "Shell — face, walls and posts",
         "coupon": "Clip-fit coupon (print first)",
         "gasket": "Gasket ring — print in TPU",
         "shield": "Solar radiation shield",
@@ -100,8 +100,8 @@
       },
       "part_info": {
         "all": "Every part in place, for looking around — pick a single part when you want an STL to print.",
-        "base": "The tub the boards and battery clip into. Prints flat, open side up, no supports.",
-        "lid": "Snaps onto the base; prints face-down. Your options carve its windows, vents and ports.",
+        "base": "The plate the boards and battery clip into. It nests inside the shell's walls and takes the four short screws from the back; prints flat, boards side up, no supports.",
+        "lid": "The one-piece show part — face, side walls and the screw posts — printed face-down; the only seam is on the back. Your options carve its windows, vents and ports.",
         "coupon": "A one-clip fit tester for this case — print it before a full lid to dial in the snap.",
         "gasket": "The soft seal ring for weather builds — print in TPU, and switch Weather seal ON first or there is nothing to render.",
         "shield": "A sun shield that sits over sealed outdoor builds and keeps direct sun off the case.",
@@ -140,7 +140,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "77af8201b51e3b012df3073c7a7192f057d8e2ddf40cd85bf5a8879a1a201a62",
+      "sha256": "d998c09910ffcb5f5f732af369965f081e800e539385e3bba28f3072028ced89",
       "groups": [
         {
           "name": "What to render",
@@ -158,7 +158,7 @@
                 "shield",
                 "tray"
               ],
-              "desc": "(coupon = clip-fit test; gasket = TPU seal ring; shield = solar radiation shield; tray = desiccant tray)"
+              "desc": "(base = the PLATE, the chassis; lid = the SHELL, face + walls + posts; coupon = clip-fit test; gasket = TPU seal ring; shield = solar radiation shield; tray = desiccant tray)"
             }
           ]
         },
@@ -186,13 +186,13 @@
               "name": "opt_camera",
               "type": "bool",
               "default": true,
-              "desc": "XIAO *Sense* camera -> lid sensor window + taller cavity (off = plain XIAO ESP32-S3)"
+              "desc": "XIAO *Sense* camera -> face sensor window + taller cavity (off = plain XIAO ESP32-S3)"
             },
             {
               "name": "opt_buzzer",
               "type": "bool",
               "default": true,
-              "desc": "piezo buzzer -> lid vent + GORE seat"
+              "desc": "piezo buzzer -> face vent + GORE seat"
             },
             {
               "name": "opt_led",
@@ -216,13 +216,13 @@
               "name": "opt_tamper",
               "type": "bool",
               "default": true,
-              "desc": "reed/Hall + magnet -> lid magnet pocket"
+              "desc": "reed/Hall + magnet -> face magnet pocket"
             },
             {
               "name": "opt_touch",
               "type": "bool",
               "default": false,
-              "desc": "cap-touch pad -> thinned \"touch window\" on the lid"
+              "desc": "cap-touch pad -> thinned \"touch window\" on the face"
             },
             {
               "name": "opt_antenna",
@@ -239,7 +239,7 @@
               "name": "opt_seal",
               "type": "bool",
               "default": false,
-              "desc": "perimeter TPU gasket + drip-edge lid + USB plug recess (splash-resistant, NOT immersion)"
+              "desc": "perimeter TPU gasket in the plate ledge + O-rings under the plate screws + USB plug recess (splash-resistant, NOT immersion)"
             },
             {
               "name": "gasket_w",
@@ -251,25 +251,13 @@
               "name": "gasket_groove",
               "type": "number",
               "default": 1.2,
-              "desc": "groove depth into the base rim"
+              "desc": "groove depth into the ledge"
             },
             {
               "name": "gasket_proud",
               "type": "number",
               "default": 0.3,
-              "desc": "uncompressed gasket stand-proud (~20 % squeeze under the lid screws;"
-            },
-            {
-              "name": "skirt_h",
-              "type": "number",
-              "default": 3.0,
-              "desc": "drip-edge skirt drop over the base wall (sheds water off the seam)"
-            },
-            {
-              "name": "skirt_t",
-              "type": "number",
-              "default": 1.6,
-              "desc": "skirt wall thickness"
+              "desc": "uncompressed gasket stand-proud (~20 % squeeze under the plate screws;"
             },
             {
               "name": "usb_cover",
@@ -290,22 +278,16 @@
               "desc": "recess depth into the outer wall face"
             },
             {
-              "name": "head_seal",
-              "type": "bool",
-              "default": false,
-              "desc": "(seal mode) O-ring under every lid screw head: the posts stand INSIDE the gasket"
-            },
-            {
               "name": "opt_weep",
               "type": "bool",
               "default": false,
-              "desc": "Ø1.5 weep at the cavity's low point (the USB wall, hung USB-down): condensate"
+              "desc": "Ø2 weep through the USB wall (hung USB-down it is the low wall): condensate leaves, driven rain does not enter. The weather preset turns it on"
             },
             {
               "name": "opt_shield",
               "type": "bool",
               "default": false,
-              "desc": "blind pilots in the lid over its corner bosses for the sun shield's four screws (ON in the Outdoor preset; the shield is part=\"shield\")"
+              "desc": "blind pilots in the face over its corner posts for the sun shield's four screws (ON in the Outdoor preset; the shield is part=\"shield\")"
             },
             {
               "name": "usb_hood",
@@ -331,7 +313,7 @@
               "name": "opt_mount",
               "type": "bool",
               "default": false,
-              "desc": "wall-mount features (keyholes thicken the case back by `kh_extra`)"
+              "desc": "wall-mount features (keyholes thicken the plate by `kh_extra`)"
             },
             {
               "name": "mount_style",
@@ -389,7 +371,7 @@
               "name": "kh_extra",
               "type": "number",
               "default": 3.0,
-              "desc": "back thickening that hosts the keyhole pockets"
+              "desc": "plate thickening that hosts the keyhole pockets"
             },
             {
               "name": "kh_head_d",
@@ -452,7 +434,7 @@
               "min": 0,
               "step": 0.1,
               "max": 1.5,
-              "desc": "45° chamfer around the lid's top edge (0 = sharp slab)"
+              "desc": "45° chamfer around the face's top edge (0 = sharp slab)"
             },
             {
               "name": "lid_edge2",
@@ -473,7 +455,7 @@
               "name": "label_text",
               "type": "string",
               "default": "",
-              "desc": "debossed lid label, e.g. \"CANARY\" (\"\" = off; needs the font installed)"
+              "desc": "debossed face label, e.g. \"CANARY\" (\"\" = off; needs the font installed)"
             },
             {
               "name": "label_size",
@@ -485,19 +467,19 @@
               "name": "label_depth",
               "type": "number",
               "default": 0.5,
-              "desc": "deboss depth (prints as crisp first-layer voids, lid prints face-down)"
+              "desc": "deboss depth (prints as crisp first-layer voids, the shell prints face-down)"
             },
             {
               "name": "label_dx",
               "type": "number",
               "default": 0.0,
-              "desc": "label center offset from the LID center (not the board center)"
+              "desc": "label center offset from the FACE center (not the board center)"
             },
             {
               "name": "label_dy",
               "type": "number",
               "default": -10.0,
-              "desc": "label center Y offset from the LID center"
+              "desc": "label center Y offset from the FACE center"
             },
             {
               "name": "label_rot",
@@ -543,8 +525,8 @@
             {
               "name": "stack_camera",
               "type": "number",
-              "default": 8.0,
-              "desc": "headroom above the PCB with the Sense camera"
+              "default": 11.4,
+              "desc": "cavity depth over the PCB top with the Sense camera — LESS than the lens height brd_xiao_sense_cam_h() on purpose: the lens barrel stands in the face's window with its top 0.2-0.5 behind the disc (asserted both ways; the manifest owns this number)"
             },
             {
               "name": "stack_plain",
@@ -567,7 +549,7 @@
               "name": "batt_w",
               "type": "number",
               "default": 34.0,
-              "desc": "bay width across the case (Y) — the cell's 34"
+              "desc": "bay width across the case (Y) — the cell's 34; the plate's side rails sit 0.5 off it"
             },
             {
               "name": "batt_h",
@@ -588,13 +570,13 @@
               "name": "batt_wire_w",
               "type": "number",
               "default": 4.0,
-              "desc": "lead channel notched into the bay ribs, hugs the +Y wall (0 = off)"
+              "desc": "lead channel notched into the bay's end ribs at the +Y rail (0 = off)"
             },
             {
               "name": "batt_hold",
               "type": "bool",
               "default": true,
-              "desc": "lid-side ribs over the bay that stop the cell bouncing in a drop: they"
+              "desc": "face-side ribs over the bay that stop the cell bouncing in a drop: they"
             }
           ]
         },
@@ -651,31 +633,19 @@
               "name": "wall_t",
               "type": "number",
               "default": 2.0,
-              "desc": "side wall thickness (auto-thickened in seal mode to host the groove)"
+              "desc": "side wall thickness (auto-thickened to keep a structural skin outside the plate's bore, and in seal mode to host the gasket ledge)"
             },
             {
               "name": "floor_t",
               "type": "number",
               "default": 2.0,
-              "desc": "base floor thickness"
+              "desc": "plate floor thickness (the plate's front face sits this far above the back face)"
             },
             {
               "name": "lid_t",
               "type": "number",
               "default": 2.0,
-              "desc": "lid top thickness"
-            },
-            {
-              "name": "lip_h",
-              "type": "number",
-              "default": 4.0,
-              "desc": "how far the lid lip drops into the base"
-            },
-            {
-              "name": "lip_t",
-              "type": "number",
-              "default": 1.2,
-              "desc": "lid lip wall thickness"
+              "desc": "face thickness"
             },
             {
               "name": "corner_r",
@@ -690,13 +660,13 @@
               "min": 0,
               "step": 0.2,
               "max": 1.2,
-              "desc": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
+              "desc": "45° cove where the ledge meets the walls, inside (canary_core_lib pl_cavity_cut, at the face too); 0 = the old square corner"
             },
             {
               "name": "lid_key",
               "type": "bool",
               "default": true,
-              "desc": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
+              "desc": "poka-yoke: a rib on the +Y bore wall and a slot in the plate's edge — the posts fit"
             }
           ]
         },
@@ -707,7 +677,7 @@
               "name": "tol_slide",
               "type": "number",
               "default": 0.2,
-              "desc": "sliding fits: lid lip <-> base, drip skirt, camera-disc seat — core_tol_slide()"
+              "desc": "sliding fits: plate <-> bore, camera-disc seat — core_tol_slide()"
             },
             {
               "name": "tol_press",
@@ -719,7 +689,7 @@
               "name": "tol_hole",
               "type": "number",
               "default": 0.3,
-              "desc": "clearance holes: lid screws — core_tol_hole()"
+              "desc": "clearance holes: plate screws — core_tol_hole()"
             }
           ]
         },
@@ -730,7 +700,7 @@
               "name": "screw_insert",
               "type": "bool",
               "default": false,
-              "desc": "M2 brass heat-set inserts in the corner posts (service-grade threads;"
+              "desc": "M2 brass heat-set inserts in the post ends (service-grade threads;"
             },
             {
               "name": "insert_d",
@@ -748,7 +718,7 @@
               "name": "lid_ribs",
               "type": "bool",
               "default": true,
-              "desc": "perimeter rib ring under the lid — stiffens the flat face (t³) against pry/flex"
+              "desc": "perimeter rib ring under the face — stiffens the flat face (t³) against pry/flex"
             },
             {
               "name": "lid_rib_w",
@@ -760,13 +730,13 @@
               "name": "lid_rib_h",
               "type": "number",
               "default": 1.0,
-              "desc": "rib depth below the lid underside — keep <= the 1.0 mm component"
+              "desc": "rib depth below the face underside — keep <= the 1.0 mm component"
             },
             {
               "name": "foot_cham",
               "type": "number",
               "default": 0.5,
-              "desc": "45° chamfer on the bottom edge: elephant-foot + first-layer delamination guard (0 = off)"
+              "desc": "45° chamfer on the back edge: elephant-foot + first-layer delamination guard (0 = off)"
             },
             {
               "name": "kh_lock",
@@ -783,7 +753,7 @@
               "name": "sh_gap",
               "type": "number",
               "default": 6.0,
-              "desc": "shield air gap above the lid"
+              "desc": "shield air gap above the face"
             },
             {
               "name": "sh_over",
@@ -824,7 +794,7 @@
               "name": "standoff_h",
               "type": "number",
               "default": 3.5,
-              "desc": "PCB sits this high off the floor (clearance for bottom parts). 3.5, not"
+              "desc": "PCB sits this high off the plate (clearance for bottom parts). 3.5, not"
             },
             {
               "name": "standoff_d",
@@ -836,7 +806,7 @@
               "name": "post_d",
               "type": "number",
               "default": 5.0,
-              "desc": "corner screw posts (lid screws thread into these; auto-fattened for larger screws)"
+              "desc": "screw posts hanging from the face (the plate screws thread into their ends; auto-fattened for larger screws)"
             },
             {
               "name": "screw_size",
@@ -847,17 +817,7 @@
                 "m2.5",
                 "m3"
               ],
-              "desc": "lid screw — the catalog screw registry (canary_core_lib) sets"
-            },
-            {
-              "name": "screw_from",
-              "type": "string",
-              "default": "back",
-              "options": [
-                "back",
-                "face"
-              ],
-              "desc": "back = the face is unbroken: screws enter a seat in the back and thread into bosses under the lid (the house default); face = heads on the lid (the Outdoor preset, whose sun shield rides on them)"
+              "desc": "plate screw — the catalog screw registry (canary_core_lib) sets"
             },
             {
               "name": "screw_head",
@@ -867,7 +827,7 @@
                 "flat",
                 "pan"
               ],
-              "desc": "the head in the bag: flat = 90° countersink (this lid's validated"
+              "desc": "the head in the bag: flat = 90° countersink in the plate's back,"
             },
             {
               "name": "screw_d",
@@ -879,13 +839,13 @@
               "name": "screw_head_d",
               "type": "number",
               "default": 4.0,
-              "desc": "(m2 flat) the flat head's Ø, used by the shield's seat; the lid's 90° cone"
+              "desc": "(m2 flat) the flat head's Ø — the registry's M2 row, which the plate seat draws"
             },
             {
               "name": "screw_head_h",
               "type": "number",
               "default": 1.2,
-              "desc": "(m2 flat) countersink depth — the cone below is a true 90° seat for an M2 flat head"
+              "desc": "(m2 flat) countersink depth — a true 90° seat for an M2 flat head"
             }
           ]
         },
@@ -914,7 +874,7 @@
               "name": "usb_web",
               "type": "number",
               "default": 1.5,
-              "desc": "wall guaranteed ABOVE the opening in every mode (the compact case shipped 0.65)"
+              "desc": "wall guaranteed between the opening and the face underside in every mode"
             },
             {
               "name": "usb_z",
@@ -925,13 +885,13 @@
           ]
         },
         {
-          "name": "Lid features",
+          "name": "Face features",
           "params": [
             {
               "name": "cam_win_d",
               "type": "number",
-              "default": 9.0,
-              "desc": "asserted against cam_fov at the disc's inner plane so a corner never vignettes"
+              "default": 10.0,
+              "desc": "asserted against cam_fov at the disc's inner plane so a corner never vignettes, and >= the Ø8 lens barrel + 1.0 (the barrel stands in it); 10 leaves 1.0 a side for the board's clip float and the 0.64 the vendor model may put the module off the width centerline (MEASURE) — the disc's bond ring stays 1.2"
             },
             {
               "name": "cam_fov",
@@ -945,8 +905,8 @@
             {
               "name": "cam_lens_h",
               "type": "number",
-              "default": 6.0,
-              "desc": "lens front above the PCB top (Sense expansion board + OV2640 module) — MEASURE"
+              "default": 12.7,
+              "desc": "lens top above the PCB top — brd_xiao_sense_cam_h() (Seeed's XIAO ESP32-S3 Sense model), canary_board_lib"
             },
             {
               "name": "cam_disc_d",
@@ -958,19 +918,19 @@
               "name": "cam_disc_t",
               "type": "number",
               "default": 1.0,
-              "desc": "clear-disc thickness (disc sits 0.2 recessed below the lid face)"
+              "desc": "clear-disc thickness (disc sits 0.2 recessed below the face)"
             },
             {
               "name": "cam_dx",
               "type": "number",
-              "default": 0.0,
-              "desc": "camera window center X, from the board center"
+              "default": 6.95,
+              "desc": "camera window center X, from the board center — brd_xiao_sense_cam_dx() (toward the antenna end, away from the USB), canary_board_lib"
             },
             {
               "name": "cam_dy",
               "type": "number",
               "default": 0.0,
-              "desc": "camera window center Y, from the board center"
+              "desc": "camera window center Y, from the board center — brd_xiao_sense_cam_dy() (on the width centerline), canary_board_lib"
             },
             {
               "name": "lp_d",
@@ -981,14 +941,14 @@
             {
               "name": "lp_dx",
               "type": "number",
-              "default": 5.0,
-              "desc": "light-pipe port center X, from the board center"
+              "default": 1.0,
+              "desc": "light-pipe port center X, from the board center (off the lens now at +6.95: the Ø3.2 bore keeps a web to the Ø12.4 disc seat — asserted)"
             },
             {
               "name": "lp_dy",
               "type": "number",
-              "default": 7.5,
-              "desc": "light-pipe port center Y, from the board center (7.5, not 5: at 5 the Ø3.2 bore broke 0.7 into the camera disc seat)"
+              "default": 9.5,
+              "desc": "light-pipe port center Y, from the board center (9.5, past the board's edge: at 7.5 the bore broke into the moved disc seat)"
             },
             {
               "name": "vent_pad_d",
@@ -1000,7 +960,7 @@
               "name": "vent_pad_depth",
               "type": "number",
               "default": 0.8,
-              "desc": "GORE-vent recess depth into the lid's outer face — core_vent_pad_depth()"
+              "desc": "GORE-vent recess depth into the face's outer surface — core_vent_pad_depth()"
             },
             {
               "name": "vent_hole_d",
@@ -1023,32 +983,32 @@
             {
               "name": "vent_dx",
               "type": "number",
-              "default": 7.0,
-              "desc": "buzzer vent center X, from the board center"
+              "default": -5.0,
+              "desc": "buzzer vent center X, from the board center (the USB half of the board: the lens owns the other)"
             },
             {
               "name": "vent_dy",
               "type": "number",
-              "default": -4.0,
-              "desc": "buzzer vent center Y, from the board center"
+              "default": -6.5,
+              "desc": "buzzer vent center Y, from the board center (the Ø12 pad keeps a web to the disc seat and the magnet ring — asserted)"
             },
             {
               "name": "touch_d",
               "type": "number",
               "default": 12.0,
-              "desc": "cap-touch window Ø — local lid thinning so capacitance couples through (opt_touch)"
+              "desc": "cap-touch window Ø — local face thinning so capacitance couples through (opt_touch)"
             },
             {
               "name": "touch_wall",
               "type": "number",
               "default": 0.8,
-              "desc": "remaining lid thickness at the pad"
+              "desc": "remaining face thickness at the pad"
             },
             {
               "name": "touch_dx",
               "type": "number",
               "default": -3.0,
-              "desc": "cap-touch window center X, from the board center"
+              "desc": "cap-touch window center X, from the board center (shares the USB half with the vent: with opt_buzzer on, move one — asserted)"
             },
             {
               "name": "touch_dy",
@@ -1088,8 +1048,8 @@
             {
               "name": "mag_dy",
               "type": "number",
-              "default": 5.0,
-              "desc": "magnet pocket center Y, from the board center"
+              "default": 6.0,
+              "desc": "magnet pocket center Y, from the board center (6, not 5: the ring keeps its web to the moved vent pad)"
             }
           ]
         },
@@ -1153,7 +1113,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "810fc6439c44593f9fa4b6353f3263f2d2f399cfe5f4202a29f2a4b28c09147f"
+          "sha256": "ad5845ce413b6354208c62029f1f33203d9e903179db6f009dacc3894d6afbab"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -1169,7 +1129,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "18a7a92d1be319e23ecf9de807bb92cddafae82cdaa1c80c8af18d3c93798f85"
+          "sha256": "61ed73bb0c87d9854fed0ff82ff6c207f4130ff22301b7175ffd38dd59f271c4"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -1219,8 +1179,8 @@
       ],
       "part_labels": {
         "all": "Assembled preview (not for printing)",
-        "back": "Back shell",
-        "front": "Front face",
+        "back": "Back plate — the chassis",
+        "front": "Shell — face, walls and posts",
         "gasket": "Gasket ring — print in TPU",
         "bracket": "Wall bracket",
         "knob": "Hinge knob",
@@ -1228,8 +1188,8 @@
       },
       "part_info": {
         "all": "Every part in place, for looking around — pick a single part when you want an STL to print.",
-        "back": "The wall-side shell. Boards clip in; the hinge knuckle or keyholes grow from its back.",
-        "front": "The face with the lens aperture and clear-disc seat — screws into the back with 4× M2.",
+        "back": "The plate the boards clip into. It nests inside the shell's walls and takes the short M2 screws from the back; the keyholes are in it.",
+        "front": "The one-piece show part — the face with the lens aperture and clear-disc seat, the side walls, the screw posts and the hinge fins — printed face-down; the only seam is on the back.",
         "gasket": "The soft seal ring for weather builds — print in TPU; switch Weather seal ON first.",
         "bracket": "The wall bracket the hinge clicks into — four screws into the wall, then aim and lock.",
         "knob": "The thumbscrew that locks the hinge at your angle.",
@@ -1265,7 +1225,7 @@
         }
       },
       "units": {},
-      "sha256": "f9945dee35f5b682f24c14795a0ebd16a078e1f0569686d1bbe9e14fd5e52b49",
+      "sha256": "cea246e203ceb2703e0912119796dfc1c95a1303d870822a3d7de00367ccda6d",
       "groups": [
         {
           "name": "What to render",
@@ -1340,7 +1300,7 @@
               "name": "opt_seal",
               "type": "bool",
               "default": false,
-              "desc": "perimeter TPU gasket + drip-edge front + USB plug recess (splash-resistant, NOT immersion)"
+              "desc": "perimeter TPU gasket under the plate + O-rings under the plate screws + USB plug recess (splash-resistant, NOT immersion)"
             },
             {
               "name": "opt_mount",
@@ -1370,12 +1330,6 @@
               "type": "bool",
               "default": false,
               "desc": "(seal mode) one extra screw post mid-way along each long wall (ON in the weather preset): four corner"
-            },
-            {
-              "name": "head_seal",
-              "type": "bool",
-              "default": false,
-              "desc": "(seal mode, screws on the face) O-ring under each front screw head — from the back a sealed build always glands them — the posts stand INSIDE the"
             }
           ]
         },
@@ -1571,31 +1525,19 @@
               "name": "wall_t",
               "type": "number",
               "default": 2.0,
-              "desc": "side wall thickness (auto-thickened in seal mode) — catalog default, core_wall()"
+              "desc": "side wall thickness (auto-thickened to host the plate's ledge, and the gasket in seal mode) — catalog default, core_wall()"
             },
             {
               "name": "floor_t",
               "type": "number",
               "default": 2.0,
-              "desc": "back thickness"
+              "desc": "the plate's thickness under the boards (the plate grows below z = 0 for the screw heads and the keyhole slab)"
             },
             {
               "name": "lid_t",
               "type": "number",
               "default": 2.0,
               "desc": "front face thickness"
-            },
-            {
-              "name": "lip_h",
-              "type": "number",
-              "default": 4.0,
-              "desc": "front lip insertion into the back shell"
-            },
-            {
-              "name": "lip_t",
-              "type": "number",
-              "default": 1.2,
-              "desc": "lip wall thickness"
             },
             {
               "name": "corner_r",
@@ -1610,19 +1552,19 @@
               "min": 0,
               "step": 0.2,
               "max": 1.2,
-              "desc": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
+              "desc": "45° cove where the walls meet the face inside, and where they meet the ledge (canary_core_lib pl_cavity_cut); 0 = square corners"
             },
             {
               "name": "lid_key",
               "type": "bool",
               "default": true,
-              "desc": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
+              "desc": "poka-yoke: a rib on the +Y bore wall and a slot in the plate's edge — four corner posts fit"
             },
             {
               "name": "standoff_h",
               "type": "number",
               "default": 3.5,
-              "desc": "PCBs sit this high off the back (RAISE if DevKit has soldered pin headers!)"
+              "desc": "PCBs sit this high off the plate (RAISE if DevKit has soldered pin headers!)"
             },
             {
               "name": "cav_extra",
@@ -1639,7 +1581,7 @@
               "name": "tol_slide",
               "type": "number",
               "default": 0.2,
-              "desc": "sliding fits: front lip, drip skirt, disc seat — core_tol_slide()"
+              "desc": "sliding fits: the plate in its bore, the disc seat — core_tol_slide()"
             },
             {
               "name": "tol_press",
@@ -1651,7 +1593,7 @@
               "name": "tol_hole",
               "type": "number",
               "default": 0.3,
-              "desc": "clearance holes: front screws, hinge bolt — core_tol_hole()"
+              "desc": "clearance holes: plate screws, hinge bolt — core_tol_hole()"
             }
           ]
         },
@@ -1662,7 +1604,7 @@
               "name": "screw_insert",
               "type": "bool",
               "default": false,
-              "desc": "M2 brass heat-set inserts in the corner posts (service-grade threads)"
+              "desc": "M2 brass heat-set inserts in the post ends (service-grade threads)"
             },
             {
               "name": "insert_d",
@@ -1698,7 +1640,7 @@
               "name": "foot_cham",
               "type": "number",
               "default": 0.5,
-              "desc": "45° chamfer on the back's bottom edge: elephant-foot + delamination guard (0 = off)"
+              "desc": "45° chamfer on the shell's back edge: elephant-foot + delamination guard (0 = off)"
             },
             {
               "name": "kh_lock",
@@ -1715,7 +1657,7 @@
               "name": "post_d",
               "type": "number",
               "default": 5.0,
-              "desc": "corner screw post Ø — the front screws thread into these (auto-fattened for inserts and larger screws)"
+              "desc": "corner screw post Ø — the plate screws thread into the post ends (auto-fattened for inserts and larger screws)"
             },
             {
               "name": "screw_size",
@@ -1726,7 +1668,7 @@
                 "m2.5",
                 "m3"
               ],
-              "desc": "front screw — the core lib's screw registry sets pilot, clearance,"
+              "desc": "plate screw — the core lib's screw registry sets pilot, clearance,"
             },
             {
               "name": "screw_head",
@@ -1736,7 +1678,7 @@
                 "pan",
                 "flat"
               ],
-              "desc": "the head in the bag: pan = flat-floored counterbore (the BOM's"
+              "desc": "the head in the bag: pan = flat-floored counterbore in the plate (the BOM's"
             },
             {
               "name": "screw_d",
@@ -1754,17 +1696,7 @@
               "name": "screw_head_h",
               "type": "number",
               "default": 2.0,
-              "desc": "(m2 pan) seat depth: the head 1.6 + 0.4 sink. Deeper than the 2.0 front,"
-            },
-            {
-              "name": "screw_from",
-              "type": "string",
-              "default": "back",
-              "options": [
-                "back",
-                "face"
-              ],
-              "desc": "back = the face is unbroken: screws enter a seat in the back and thread into bosses under the front (the house default; opening it means taking it down first); face = heads on the front"
+              "desc": "(m2 pan) head height; the plate is never thinner than a head and its 1.0 floor (pl_thick)"
             }
           ]
         },
@@ -1919,7 +1851,7 @@
               "name": "kh_extra",
               "type": "number",
               "default": 3.0,
-              "desc": "back thickening that hosts the keyhole pockets"
+              "desc": "plate thickening below z = 0 that hosts the keyhole pockets"
             },
             {
               "name": "kh_head_d",
@@ -1966,31 +1898,19 @@
               "name": "gasket_w",
               "type": "number",
               "default": 1.6,
-              "desc": "gasket groove width in the back's rim (the printed gasket is 0.5 narrower)"
+              "desc": "gasket groove width in the shell's ledge (the printed gasket is 0.5 narrower)"
             },
             {
               "name": "gasket_groove",
               "type": "number",
               "default": 1.2,
-              "desc": "groove depth into the back shell's rim"
+              "desc": "groove depth into the ledge"
             },
             {
               "name": "gasket_proud",
               "type": "number",
               "default": 0.3,
-              "desc": "how far the printed gasket stands proud of its groove, uncompressed — what the front screws squeeze"
-            },
-            {
-              "name": "skirt_h",
-              "type": "number",
-              "default": 3.0,
-              "desc": "drip-edge skirt drop over the back shell's wall (sheds water off the seam)"
-            },
-            {
-              "name": "skirt_t",
-              "type": "number",
-              "default": 1.6,
-              "desc": "drip-edge skirt wall thickness"
+              "desc": "how far the printed gasket stands proud of its groove, uncompressed — what the plate screws squeeze"
             },
             {
               "name": "usb_cover",
@@ -2269,10 +2189,9 @@
           "name": "Quality",
           "params": [
             {
-              "name": "mid_gap",
+              "name": "span_max",
               "type": "number",
-              "default": 2.0,
-              "desc": "devkit host: gap between the camera + module column and the DevKit column"
+              "default": 40
             }
           ]
         }
@@ -2280,7 +2199,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "810fc6439c44593f9fa4b6353f3263f2d2f399cfe5f4202a29f2a4b28c09147f"
+          "sha256": "ad5845ce413b6354208c62029f1f33203d9e903179db6f009dacc3894d6afbab"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -2296,7 +2215,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "18a7a92d1be319e23ecf9de807bb92cddafae82cdaa1c80c8af18d3c93798f85"
+          "sha256": "61ed73bb0c87d9854fed0ff82ff6c207f4130ff22301b7175ffd38dd59f271c4"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -2339,15 +2258,15 @@
       ],
       "part_labels": {
         "all": "Assembled preview (not for printing)",
-        "body": "Body",
-        "face": "Face",
+        "body": "Body — the back plate, the chassis",
+        "face": "Face — the one-piece shell",
         "plate": "Wall plate",
         "gasket": "Gasket ring — print in TPU"
       },
       "part_info": {
         "all": "Every part in place, for looking around — pick a single part when you want an STL to print.",
-        "body": "The main shell the module stack lives in — it hangs on the plate's T-studs and locks with the hidden screw.",
-        "face": "The visible front: lens aperture, button hole, and the gasket groove behind.",
+        "body": "The plate the module stack lives on. It nests inside the face's walls on the short screws from the back, hangs on the wall plate's T-studs and locks with the hidden screw.",
+        "face": "The one-piece show part — lens aperture, button hole, side walls and posts, the gasket ledge inside — printed face-down; the only seam is against the wall plate.",
         "plate": "The wall plate with the T-studs. The wedge angles live here — the case aims wherever the plate points.",
         "gasket": "The soft TPU ring that seals face to body against the weather."
       },
@@ -2375,7 +2294,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "be6fdfa368830156d4ffe24e4fa7fb35401fc735ae24fecfd273894fd4931883",
+      "sha256": "35c1e18b5fe69161eceddfb74f2ce343c77535868fe62c541b78a9991a6d0f6c",
       "groups": [
         {
           "name": "What to render",
@@ -2417,7 +2336,7 @@
               "name": "opt_seal",
               "type": "bool",
               "default": true,
-              "desc": "perimeter TPU gasket + drip-edge face (doorbells live outside)"
+              "desc": "perimeter TPU gasket in the shell's ledge (doorbells live outside)"
             },
             {
               "name": "opt_vent",
@@ -2441,7 +2360,7 @@
               "name": "opt_weep",
               "type": "bool",
               "default": true,
-              "desc": "Ø2 weep through the bottom wall at the floor corner (mounted button-down):"
+              "desc": "Ø2 weep through the bottom wall just above the plate's face (mounted button-down):"
             },
             {
               "name": "weep_d",
@@ -2456,13 +2375,7 @@
               "name": "seal_mid_posts",
               "type": "bool",
               "default": true,
-              "desc": "one extra face screw per long wall, at the cable well: four corner screws"
-            },
-            {
-              "name": "head_seal",
-              "type": "bool",
-              "default": false,
-              "desc": "(seal mode, screws on the face) O-ring under each face screw head — from the back a sealed build always glands them (the posts stand INSIDE the gasket line, so a"
+              "desc": "(seal mode) mid posts along each long wall, as many as keep every gasket"
             }
           ]
         },
@@ -2668,25 +2581,13 @@
               "name": "floor_t",
               "type": "number",
               "default": 2.0,
-              "desc": "back thickness"
+              "desc": "the plate's floor under the boards (the plate itself is pl_thick: never thinner than a head and its floor)"
             },
             {
               "name": "lid_t",
               "type": "number",
               "default": 2.2,
               "desc": "face thickness (the visible surface)"
-            },
-            {
-              "name": "lip_h",
-              "type": "number",
-              "default": 4.0,
-              "desc": "how far the face's lip drops into the body"
-            },
-            {
-              "name": "lip_t",
-              "type": "number",
-              "default": 1.2,
-              "desc": "lip wall thickness"
             },
             {
               "name": "cav_extra",
@@ -2701,13 +2602,13 @@
               "min": 0,
               "step": 0.2,
               "max": 1.2,
-              "desc": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
+              "desc": "45° cove where the cavity meets the walls, at the face and at the ledge (canary_core_lib pl_cavity_cut); 0 = the old square corner"
             },
             {
               "name": "lid_key",
               "type": "bool",
               "default": true,
-              "desc": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
+              "desc": "poka-yoke: a rib on the +Y (camera-end) bore wall and a slot in the plate's edge — the"
             },
             {
               "name": "zone_top",
@@ -2737,7 +2638,7 @@
               "name": "usb_exit_w",
               "type": "number",
               "default": 12.0,
-              "desc": "oval cable exit through the back (into the plate hole) — sized"
+              "desc": "oval cable exit through the back plate (into the wall-plate hole) — sized"
             },
             {
               "name": "usb_exit_h",
@@ -2749,7 +2650,7 @@
               "name": "usb_exit_dx",
               "type": "number",
               "default": 0.0,
-              "desc": "exit offset from the centerline (0 keeps it between the mid-span posts)"
+              "desc": "exit offset from the centerline (0 keeps it centered in the well)"
             },
             {
               "name": "usb_exit_dy",
@@ -2789,7 +2690,7 @@
               "name": "screw_insert",
               "type": "bool",
               "default": false,
-              "desc": "M2 brass heat-set inserts in the corner posts AND the security boss (the one"
+              "desc": "M2 brass heat-set inserts in the post ends AND the security boss (the one"
             },
             {
               "name": "insert_d",
@@ -2825,7 +2726,7 @@
               "name": "foot_cham",
               "type": "number",
               "default": 0.5,
-              "desc": "45° chamfer on the body's back edge"
+              "desc": "45° chamfer on the shell's back edge"
             }
           ]
         },
@@ -2836,7 +2737,7 @@
               "name": "post_d",
               "type": "number",
               "default": 5.0,
-              "desc": "corner screw post Ø — the face screws thread into these (auto-fattened for inserts and larger screws)"
+              "desc": "screw post Ø — the plate screws thread into the post ends (auto-fattened for inserts and larger screws)"
             },
             {
               "name": "screw_size",
@@ -2847,7 +2748,7 @@
                 "m2.5",
                 "m3"
               ],
-              "desc": "face screw — the core lib's registry sets pilot, clearance,"
+              "desc": "plate screw — the core lib's registry sets pilot, clearance,"
             },
             {
               "name": "screw_head",
@@ -2875,17 +2776,7 @@
               "name": "screw_head_h",
               "type": "number",
               "default": 2.0,
-              "desc": "(m2 pan) seat depth; the face carries a pad under it (head_pad)"
-            },
-            {
-              "name": "screw_from",
-              "type": "string",
-              "default": "back",
-              "options": [
-                "back",
-                "face"
-              ],
-              "desc": "back = the face is unbroken: screws enter a seat in the back and thread into bosses under the face (the house default; opening it means taking it down first); face = heads on the face"
+              "desc": "(m2 pan) head height; the seat recesses it flush in the plate's back face"
             }
           ]
         },
@@ -2896,31 +2787,19 @@
               "name": "gasket_w",
               "type": "number",
               "default": 1.6,
-              "desc": "gasket groove width in the body's rim (the printed gasket is 0.5 narrower)"
+              "desc": "gasket groove width in the shell's ledge (the printed gasket is 0.5 narrower)"
             },
             {
               "name": "gasket_groove",
               "type": "number",
               "default": 1.2,
-              "desc": "groove depth into the body's rim"
+              "desc": "groove depth into the ledge"
             },
             {
               "name": "gasket_proud",
               "type": "number",
               "default": 0.3,
-              "desc": "how far the printed gasket stands proud of its groove, uncompressed — what the face screws squeeze"
-            },
-            {
-              "name": "skirt_h",
-              "type": "number",
-              "default": 3.0,
-              "desc": "drip-edge skirt drop over the body's wall (sheds water off the seam)"
-            },
-            {
-              "name": "skirt_t",
-              "type": "number",
-              "default": 1.6,
-              "desc": "drip-edge skirt wall thickness"
+              "desc": "how far the printed gasket stands proud of its groove, uncompressed — what the plate screws squeeze"
             }
           ]
         },
@@ -2928,10 +2807,10 @@
           "name": "Wall plate + security screw",
           "params": [
             {
-              "name": "plate_t",
+              "name": "wplate_t",
               "type": "number",
               "default": 4.0,
-              "desc": "plate thickness at the THIN end"
+              "desc": "wall plate thickness at the THIN end"
             },
             {
               "name": "plate_wedge",
@@ -3017,7 +2896,7 @@
               "name": "kh_extra",
               "type": "number",
               "default": 3.0,
-              "desc": "body back thickening that hosts the pockets"
+              "desc": "plate thickening below the floor that hosts the pockets (the plate is at least floor_t + kh_extra)"
             }
           ]
         },
@@ -3227,9 +3106,20 @@
           "name": "Quality",
           "params": [
             {
-              "name": "face_skin",
+              "name": "vm_cx",
               "type": "number",
-              "default": 1.0
+              "default": 0
+            },
+            {
+              "name": "cam_cx",
+              "type": "number",
+              "default": 0
+            },
+            {
+              "name": "sec_boss_d",
+              "type": "number",
+              "default": 4.0,
+              "desc": "the boss's depth off the wall's inner face"
             }
           ]
         }
@@ -3237,7 +3127,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "810fc6439c44593f9fa4b6353f3263f2d2f399cfe5f4202a29f2a4b28c09147f"
+          "sha256": "ad5845ce413b6354208c62029f1f33203d9e903179db6f009dacc3894d6afbab"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -3253,7 +3143,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "18a7a92d1be319e23ecf9de807bb92cddafae82cdaa1c80c8af18d3c93798f85"
+          "sha256": "61ed73bb0c87d9854fed0ff82ff6c207f4130ff22301b7175ffd38dd59f271c4"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -3302,16 +3192,16 @@
       ],
       "part_labels": {
         "all": "Assembled preview (not for printing)",
-        "back": "Back shell",
-        "front": "Front face — the radome",
+        "back": "Back plate — the chassis",
+        "front": "Shell — the radome face, walls and posts",
         "gasket": "Gasket ring — print in TPU",
         "bracket": "Wall bracket",
         "knob": "Hinge knob"
       },
       "part_info": {
         "all": "Every part in place, for looking around — pick a single part when you want an STL to print.",
-        "back": "The mounting shell — the radar carrier clips in with the XIAO hanging beneath it.",
-        "front": "The radome face. The window over the antenna stays thin, flat and empty — that's the physics working.",
+        "back": "The plate the radar carrier clips into, the XIAO hanging beneath it; it nests inside the shell's walls and takes the four short M2 screws from the back.",
+        "front": "The one-piece show part — radome face, side walls, posts and hinge fins, printed face-down. The window over the antenna stays thin, flat and empty — that's the physics working.",
         "gasket": "The soft TPU seal ring — switch Weather seal ON first; indoor ceilings rarely need it.",
         "bracket": "Wall bracket for the hinge mount — same part the Vision case uses.",
         "knob": "The hinge thumbscrew — same part the Vision case uses."
@@ -3349,7 +3239,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "1966072fe44c575ef26d35d02a7145087d7296ee44de988036d1f0c689cbc026",
+      "sha256": "7b073d7bea5988ac04f780e0fe068a7cc0363d22c47fe6572ae3562697c792b7",
       "groups": [
         {
           "name": "What to render",
@@ -3439,12 +3329,6 @@
               "type": "bool",
               "default": false,
               "desc": "(seal mode) one extra screw post mid-way along each ±X wall"
-            },
-            {
-              "name": "head_seal",
-              "type": "bool",
-              "default": false,
-              "desc": "(seal mode, screws on the face) O-ring under each front screw head — from the back a sealed build always glands them — needs screw_head = \"pan\""
             },
             {
               "name": "opt_mount",
@@ -3724,18 +3608,6 @@
               "desc": "face thickness OUTSIDE the radome window"
             },
             {
-              "name": "lip_h",
-              "type": "number",
-              "default": 4.0,
-              "desc": "front lip insertion into the back shell"
-            },
-            {
-              "name": "lip_t",
-              "type": "number",
-              "default": 1.2,
-              "desc": "lip wall thickness"
-            },
-            {
               "name": "corner_r",
               "type": "number",
               "default": 3.0,
@@ -3760,7 +3632,7 @@
               "name": "lid_key",
               "type": "bool",
               "default": true,
-              "desc": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
+              "desc": "poka-yoke: a rib on the +Y bore wall and a slot in the plate's edge — four corner posts fit"
             }
           ]
         },
@@ -3887,16 +3759,6 @@
               "type": "number",
               "default": 2.0,
               "desc": "(m2 pan) seat depth; the front carries a pad under it (head_pad)"
-            },
-            {
-              "name": "screw_from",
-              "type": "string",
-              "default": "back",
-              "options": [
-                "back",
-                "face"
-              ],
-              "desc": "back = the face is unbroken: screws enter a seat in the back and thread into bosses under the front (the house default; opening it means taking it down first); face = heads on the front"
             }
           ]
         },
@@ -4071,31 +3933,19 @@
               "name": "gasket_w",
               "type": "number",
               "default": 1.6,
-              "desc": "gasket groove width in the back's rim (the printed gasket is 0.5 narrower)"
+              "desc": "gasket groove width in the shell's ledge (the printed gasket is 0.5 narrower)"
             },
             {
               "name": "gasket_groove",
               "type": "number",
               "default": 1.2,
-              "desc": "groove depth into the back shell's rim"
+              "desc": "groove depth into the ledge"
             },
             {
               "name": "gasket_proud",
               "type": "number",
               "default": 0.3,
-              "desc": "how far the printed gasket stands proud of its groove, uncompressed — what the front screws squeeze"
-            },
-            {
-              "name": "skirt_h",
-              "type": "number",
-              "default": 3.0,
-              "desc": "drip-edge skirt drop over the back shell's wall (sheds water off the seam)"
-            },
-            {
-              "name": "skirt_t",
-              "type": "number",
-              "default": 1.6,
-              "desc": "drip-edge skirt wall thickness"
+              "desc": "how far the printed gasket stands proud of its groove, uncompressed — what the plate screws squeeze"
             },
             {
               "name": "usb_cover",
@@ -4237,7 +4087,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "810fc6439c44593f9fa4b6353f3263f2d2f399cfe5f4202a29f2a4b28c09147f"
+          "sha256": "ad5845ce413b6354208c62029f1f33203d9e903179db6f009dacc3894d6afbab"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -4253,7 +4103,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "18a7a92d1be319e23ecf9de807bb92cddafae82cdaa1c80c8af18d3c93798f85"
+          "sha256": "61ed73bb0c87d9854fed0ff82ff6c207f4130ff22301b7175ffd38dd59f271c4"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -4684,7 +4534,7 @@
         },
         {
           "file": "canary_core_lib.scad",
-          "sha256": "810fc6439c44593f9fa4b6353f3263f2d2f399cfe5f4202a29f2a4b28c09147f"
+          "sha256": "ad5845ce413b6354208c62029f1f33203d9e903179db6f009dacc3894d6afbab"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -4700,7 +4550,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "18a7a92d1be319e23ecf9de807bb92cddafae82cdaa1c80c8af18d3c93798f85"
+          "sha256": "61ed73bb0c87d9854fed0ff82ff6c207f4130ff22301b7175ffd38dd59f271c4"
         },
         {
           "file": "canary_color_lib.scad",

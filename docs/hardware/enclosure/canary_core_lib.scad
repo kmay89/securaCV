@@ -311,11 +311,15 @@ function pl_hd(size, head)  = (head == "pan") ? scr_pan_d(size) : scr_flat_d(siz
 function pl_hp(size, head)  = (head == "pan") ? scr_pan_h(size) : 0;
 function pl_gland_raw(size, gland) = gland ? oring_gland_h(scr_oring_cs(size)) : 0;
 function pl_floor_min(gland) = gland ? pl_web() : 1.0;
-// the ledge band the plate seats on: the gasket with a cheek each side, or one contact band
-function pl_ledge(seal, gasket_w) = seal ? gasket_w + 2*core_min_wall() : core_min_wall();
+// the ledge band the plate seats on: the gasket with a cheek each side, or one
+// contact band — PLUS the plate's sliding clearance and its front lead-in, so
+// the band the plate's front face actually bears on is the full width named
+// (with 1.2 alone, 0.2 of clearance and the 0.4 chamfer left a 0.6 seat)
+function pl_ledge(seal, gasket_w, tol = core_tol_slide(), cham = core_lip_cham()) =
+    (seal ? gasket_w + 2*core_min_wall() : core_min_wall()) + tol + cham;
 function pl_thick(floor_t, ext, size, head, gland) =
     max(floor_t + ext, pl_hh(size, head) + pl_gland_raw(size, gland) + pl_floor_min(gland));
-function pl_recess(t, size, head, gland) = t - pl_hh(size, head) - pl_gland_raw(size, gland) - pl_floor_min(gland);
+function pl_recess(t, size, head, gland) = max(0, t - pl_hh(size, head) - pl_gland_raw(size, gland) - pl_floor_min(gland));
 function pl_len(t, recess, size, head) =
     let (need = hw_engage(size) + pl_relief() + t - recess - pl_hp(size, head),
          ok = [for (l = hw_std_lens()) if (l >= need - 1e-9) l])
@@ -324,10 +328,13 @@ function pl_engage(t, recess, size, head) = recess + pl_hp(size, head) + pl_len(
 function pl_pilot(t, recess, size, head)  = pl_engage(t, recess, size, head) + 1.0;   // blind, 1.0 past the tip
 
 // the plate: front face at z = 0, body to -t, a 45° lead-in on the front
-// edge so it finds the bore blind (the lip_ring lesson)
-module pl_plate(l, w, r, t, cham = core_lip_cham()) {
+// edge so it finds the bore blind (the lip_ring lesson), and a small 45°
+// foot on the BACK edge — the plate prints back-face down, and a first
+// layer's flare on that edge would jam in a bore that carries 0.2 a side
+module pl_plate(l, w, r, t, cham = core_lip_cham(), foot = 0.3) {
     hull() {
-        translate([0, 0, -t]) rrect(l, w, r, t - cham);
+        translate([0, 0, -t]) rrect(l - 2*foot, w - 2*foot, max(r - foot, 0.4), 0.01);
+        translate([0, 0, -t + foot]) rrect(l, w, r, t - foot - cham);
         translate([0, 0, -cham]) rrect(l - 2*cham, w - 2*cham, max(r - cham, 0.4), cham);
     }
 }
