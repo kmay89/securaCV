@@ -12,16 +12,24 @@
 //  adapter it grips. The earlier header promised the WAP, Vision and Sense on
 //  one fixed 30 mm pair; only the Sense's pockets are near 30. At the default
 //  36 mm adapter only the Sense fits; the others need a taller adapter body
-//  (wart_h at least the spacing + 3.8 — asserted): Vision 50.4 (XIAO host) /
+//  (wart_h at least the spacing + 3.8 — asserted): Vision 50.0 (XIAO host) /
 //  51.8 (DevKit host), WAP 66.0 (custom defaults) / 84.3 (battery presets).
 //  The WAP's compact preset has ONE centered pocket — it cannot hang on a
 //  stud pair at all.
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
+//  2026-09-26: the stud spread is read LIVE off each case (sense_kh_spread(),
+//              vision_kh_spread(host), wap_kh_spread(preset), through `use <>`)
+//              — the table here had drifted 0.4 on the Sense and the Vision
+//              (xiao) since the piston-plate port. A target that reads a single
+//              centered pocket (the WAP's compact preset) is refused.
 // ============================================================================
 
 use <canary_core_lib.scad>   // shared 2D primitives — rrect2d has one home now
 use <canary_mount_lib.scad>  // the stud/keyhole standard this file carries around
+use <canary_sense_enclosure.scad>   // sense_kh_spread()  — each case's pocket spread, read live
+use <canary_vision_enclosure.scad>  // vision_kh_spread(host)
+use <canary_wap_enclosure.scad>     // wap_kh_spread(preset)
 
 /* [What to render] */
 part = "cradle";     // ["cradle"]
@@ -54,23 +62,22 @@ $fa = 3; $fs = 0.4;
 iw = wart_w + 2*tol_slide;
 ih = wart_h + 2*tol_slide;
 // Each case's pocket spread — the distance between its two keyhole pocket
-// centers (2 × kh_ys, or 2 × kh_xs for the WAP, whose pockets run along its
-// X), read off each case's own derivation at its defaults with OpenSCAD
-// 2021.01 (2026-09). `use<>` cannot carry a case's variables across, so these
-// are documented numbers: re-read them if a case's kh_inset or cavity moves.
-//   Sense, every preset:        2 × 15.1   (inner_y/2 − kh_inset)
-//   Vision, host "xiao":        2 × 23.3
-//   Vision, host "devkit":      2 × 24.0
-//   WAP, preset "custom":       2 × 31.1   (inner_l/2 − kh_inset)
-//   WAP, battery presets:       2 × 40.25
+// centers — is read LIVE off the case file through `use <>` (each case
+// exports its spread as a function of its host/preset, derived from the same
+// inner_y / inner_l its pockets are cut from), so a case whose cavity or
+// kh_inset moves moves this cradle's studs with it. Nothing here retypes a
+// millimeter. At the 2026-09-26 sources: Sense 29.8, Vision 46.2 (xiao) /
+// 48.0 (devkit), WAP 62.2 (custom) / 80.5 (battery presets); the WAP's
+// compact preset reads 0 (one centered pocket — asserted below).
 function target_gap() =
-      target == "sense"         ? 30.2
-    : target == "vision_xiao"   ? 46.6
-    : target == "vision_devkit" ? 48.0
-    : target == "wap_custom"    ? 62.2
-    : target == "wap_battery"   ? 80.5
+      target == "sense"         ? sense_kh_spread()
+    : target == "vision_xiao"   ? vision_kh_spread("xiao")
+    : target == "vision_devkit" ? vision_kh_spread("devkit")
+    : target == "wap_custom"    ? wap_kh_spread("custom")
+    : target == "wap_battery"   ? wap_kh_spread("battery_full")
     : stud_gap;
 gap = target_gap();
+assert(gap > 0, str("target \"", target, "\" hangs on ONE centered pocket — a stud pair cannot hold it"));
 assert(collar_d > grip_lip + 4, "collar too shallow");
 // the studs stand on the collar's face plate, so the pair's heads and a
 // min-wall rim around them must fit inside it

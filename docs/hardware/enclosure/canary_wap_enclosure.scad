@@ -76,6 +76,23 @@
 //              the cavity grows to keep them off the cell, and the cell is
 //              cradled by plate rails now (the walls are another part). Every
 //              committed WAP mesh moves.
+//  2026-09-26: THE CAMERA IS AT THE USB END. Seeed's XIAO ESP32-S3 Sense model
+//              puts the "USB TYPE C PORT" and both buttons at the +x end of the
+//              PCB and the camera module over that same end (x 4.75..12.75 on a
+//              -8.67..12.28 board, overhanging it by 0.5); the U.FL antenna is
+//              at the other end. The registry had read the offset as "toward
+//              the antenna" — 13.9 mm wrong. brd_xiao_sense_cam_dx() is now
+//              -6.95 (+ = away from the USB, the case's X), cam_dy -0.64 (the
+//              module sits 0.64 toward the U.FL's long edge; -Y here with the
+//              USB at -X and the parts toward the face), both through the
+//              manifest. The window, disc seat and the lid-rib keep-out follow;
+//              the light pipe, vent, touch window and magnet mirrored to the
+//              antenna half (the same webs as before, asserted). The disc seat
+//              now reaches 1.55 over the USB wall's top: a new assert keeps a
+//              full core_min_wall() between its edge and the outside, another
+//              keeps the barrel inside the cavity. wap_kh_spread(preset) and
+//              wap_inner_l(preset) export the pocket spread the outlet cradle
+//              hangs the case by (this file's inner_l is the same function).
 // ============================================================================
 
 use <canary_core_lib.scad>    // rrect/rrect2d, soft-edge face, foot chamfer, the piston plate (pl_*)
@@ -159,14 +176,20 @@ label_rot   = 0;      // label rotation (degrees)
 label_font  = "Liberation Sans:style=Bold";  // the font label_text is set in (it must be installed)
 
 // effective flags (a preset overrides the checkboxes above)
-function _pre(c, f, p, w) = (preset == "battery_full")    ? f
-                          : (preset == "compact_plain")   ? p
-                          : (preset == "battery_weather") ? w : c;
+function _pre_p(pr, c, f, p, w) = (pr == "battery_full")    ? f
+                                : (pr == "compact_plain")   ? p
+                                : (pr == "battery_weather") ? w : c;
+function _pre(c, f, p, w) = _pre_p(preset, c, f, p, w);
+// the two flags that size the cavity along X are functions of the preset,
+// so a fitment can read any preset's keyhole spread through `use <>` (the
+// outlet cradle); this file's own flags are the same functions at its preset
+function wap_e_battery(pr = preset) = _pre_p(pr, opt_battery, true,  false, true);
+function wap_e_gps(pr = preset)     = _pre_p(pr, opt_gps,     true,  false, true);
 e_camera  = _pre(opt_camera,  true,  false, true);
 e_buzzer  = _pre(opt_buzzer,  true,  true,  true);
 e_led     = _pre(opt_led,     true,  true,  true);
-e_battery = _pre(opt_battery, true,  false, true);
-e_gps     = _pre(opt_gps,     true,  false, true);
+e_battery = wap_e_battery(preset);
+e_gps     = wap_e_gps(preset);
 e_tamper  = _pre(opt_tamper,  true,  false, true);
 e_touch   = _pre(opt_touch,   false, false, false);
 e_antenna = _pre(opt_antenna, false, false, false);
@@ -284,16 +307,16 @@ usb_z          = -1.65; // centers the opening on the connector AXIS: the C shel
 
 /* [Face features] — offsets are measured FROM THE BOARD CENTER (mm). Measure your board! */
 // Camera / sensor window + recessed seat for a glued clear disc (12 x 1 mm PMMA/PC)
-cam_win_d      = 10.0;  // asserted against cam_fov at the disc's inner plane so a corner never vignettes, and >= the Ø8 lens barrel + 1.0 (the barrel stands in it); 10 leaves 1.0 a side for the board's clip float and the 0.64 the vendor model may put the module off the width centerline (MEASURE) — the disc's bond ring stays 1.2
+cam_win_d      = 10.0;  // asserted against cam_fov at the disc's inner plane so a corner never vignettes, and >= the Ø8 lens barrel + 1.0 (the barrel stands in it); 10 leaves 1.0 a side for the board's clip float now that the window is centered on Seeed's module (cam_dx/cam_dy) — the disc's bond ring stays 1.2
 cam_fov        = 66;    // lens diagonal field of view (OV2640 on the Sense: 66°)  // [40:1:120]
 cam_lens_h     = 12.7;   // lens top above the PCB top — brd_xiao_sense_cam_h() (Seeed's XIAO ESP32-S3 Sense model), canary_board_lib
 cam_disc_d     = 12.0;  // clear-disc diameter (seat = disc + 2*tol_slide; 0 = no seat, bare hole)
 cam_disc_t     = 1.0;   // clear-disc thickness (disc sits 0.2 recessed below the face)
-cam_dx         = 6.95;   // camera window center X, from the board center — brd_xiao_sense_cam_dx() (toward the antenna end, away from the USB), canary_board_lib
-cam_dy         = 0.0;   // camera window center Y, from the board center — brd_xiao_sense_cam_dy() (on the width centerline), canary_board_lib
+cam_dx         = -6.95;  // camera window center X, from the board center — brd_xiao_sense_cam_dx() (at the USB end: Seeed's model puts the module over the USB port, overhanging that end by 0.5), canary_board_lib
+cam_dy         = -0.64;  // camera window center Y, from the board center — brd_xiao_sense_cam_dy() (0.64 toward the -Y long edge: the U.FL antenna's edge in Seeed's model), canary_board_lib
 // Light-pipe / status-LED port (press fit: hole = lp_d + 2*tol_press)
 lp_d           = 3.0;   // light-pipe diameter (3 mm pipe -> 3.2 mm hole at default tol_press)
-lp_dx          = 1.0;   // light-pipe port center X, from the board center (off the lens now at +6.95: the Ø3.2 bore keeps a web to the Ø12.4 disc seat — asserted)
+lp_dx          = -1.0;  // light-pipe port center X, from the board center (off the lens at -6.95: the Ø3.2 bore keeps a web to the Ø12.4 disc seat — asserted)
 lp_dy          = 9.5;   // light-pipe port center Y, from the board center (9.5, past the board's edge: at 7.5 the bore broke into the moved disc seat)
 // Buzzer + pressure vent (recess seats an adhesive GORE vent; ring of holes passes sound/pressure)
 vent_pad_d     = 12.0;  // GORE-vent recess Ø (the buzzer + pressure vent: the recess seats an adhesive vent)
@@ -302,12 +325,12 @@ vent_hole_d    = 1.0;   // fine holes — insect-resistant (the README's outdoor
                         // membrane behind them seals, so the holes only need to pass sound + pressure
 vent_ring_d    = 6.0;   // Ø of the ring the vent holes sit on — core_vent_ring_d()
 vent_holes     = 10;    // hole count around that ring — core_vent_holes()
-vent_dx        = -5.0;  // buzzer vent center X, from the board center (the USB half of the board: the lens owns the other)
+vent_dx        = 5.0;   // buzzer vent center X, from the board center (the antenna half of the board: the lens owns the USB half)
 vent_dy        = -6.5;  // buzzer vent center Y, from the board center (the Ø12 pad keeps a web to the disc seat and the magnet ring — asserted)
 // Cap-touch window — local thinning so capacitance couples through the face (when opt_touch)
 touch_d        = 12.0;  // cap-touch window Ø — local face thinning so capacitance couples through (opt_touch)
 touch_wall     = 0.8;   // remaining face thickness at the pad
-touch_dx       = -3.0;  // cap-touch window center X, from the board center (shares the USB half with the vent: with opt_buzzer on, move one — asserted)
+touch_dx       = 3.0;   // cap-touch window center X, from the board center (shares the antenna half with the vent: with opt_buzzer on, move one — asserted)
 touch_dy       = -5.0;  // cap-touch window center Y, from the board center
 
 /* [Tamper magnet] — blind pocket on the FACE underside, over the board's reed/Hall switch */
@@ -316,7 +339,7 @@ mag_h          = 2.2;   // pocket depth — a 6 x 2 mm disc is standard
 mag_under      = 6.0;   // tallest part on the board UNDER the pocket: the Sense expansion board's top
                         // (camera excluded — keep the pocket off the lens) — MEASURE. The cavity grows
                         // to keep 1 mm between it and the pocket ring
-mag_dx         = -6.0;  // magnet pocket center X, from the board center
+mag_dx         = 6.0;   // magnet pocket center X, from the board center (the antenna half, off the lens)
 mag_dy         = 6.0;   // magnet pocket center Y, from the board center (6, not 5: the ring keeps its web to the moved vent pad)
 
 /* [Board snap clips] — press-fit retention so the PCB clicks in with NO screws */
@@ -366,8 +389,10 @@ pd      = max(screw_insert ? max(post_d, ins_od + 2.4) : post_d,     // >=1.2 mm
               scr_post_min(screw_size));                              // >=1.5 mm wall around the pilot
 
 board_zone_l = board_l + 2*board_clear;
-batt_zone_l  = e_battery ? (batt_gap + batt_l) : 0;
-gps_zone_l   = e_gps     ? (gps_gap  + gps_l)  : 0;
+function wap_batt_zone_l(pr = preset) = wap_e_battery(pr) ? (batt_gap + batt_l) : 0;
+function wap_gps_zone_l(pr = preset)  = wap_e_gps(pr)     ? (gps_gap  + gps_l)  : 0;
+batt_zone_l  = wap_batt_zone_l(preset);
+gps_zone_l   = wap_gps_zone_l(preset);
 extra_l      = batt_zone_l + gps_zone_l;                 // internal bays appended after the board
 post_corner  = pd + 1.5;                 // positioning margin so a screw post sits in the corner, clear of the board
 rail_t       = core_min_wall();          // the battery bay's side rails on the plate (the cell lies 0.5 off them)
@@ -376,7 +401,8 @@ rail_t       = core_min_wall();          // the battery bay's side rails on the 
 // The board is ALWAYS biased to the -X (USB) wall so the connector reaches the opening
 // (v0.7 fix — centering it left the USB ~6.5 mm behind the wall on the compact case).
 clip_stack = board_clips ? (clip_clear + clip_t) : 0;
-inner_l = board_zone_l + extra_l + post_corner + 1.0;
+function wap_inner_l(pr = preset) = board_zone_l + wap_batt_zone_l(pr) + wap_gps_zone_l(pr) + post_corner + 1.0;
+inner_l = wap_inner_l(preset);
 // the corner posts sit 0.2 INTO each wall (fused above the gussets); a sealed
 // build's gasket is squeezed only between screws, so the span between them
 // along the long walls stays <= 40 (DESIGN_RULES §6): n_mid evenly spaced
@@ -461,8 +487,12 @@ assert(!e_shield || post_h >= (sh_pilot - lid_t) + pl_pil + 1.0,
 assert(!e_shield || sh_t - scr_flat_h(screw_size) >= 1.0 - 1e-9, "the shield plate is too thin to keep a floor under its screw heads (sh_t)");
 
 // keyhole positions: two near the ends, or one centered when the case is too short
+function wap_kh_xs(pr = preset) = let(k = wap_inner_l(pr)/2 - kh_inset)
+    (k >= kh_slot_l/2 + kh_head_d/2 + 2) ? [-k, k] : [0];
 kh_x   = inner_l/2 - kh_inset;
-kh_xs  = (kh_x >= kh_slot_l/2 + kh_head_d/2 + 2) ? [-kh_x, kh_x] : [0];
+kh_xs  = wap_kh_xs(preset);
+// the pocket spread a fitment hangs this case by (0 = one centered pocket — the compact preset)
+function wap_kh_spread(pr = preset) = let(ks = wap_kh_xs(pr)) len(ks) == 2 ? ks[1] - ks[0] : 0;
 
 // sanity checks + a measurable size echo for scripted verification
 assert(wall_t > 0 && floor_t > 0 && lid_t > 0, "shell thicknesses must be positive");
@@ -545,6 +575,13 @@ assert(!e_camera || cam_throw <= 0.5 + 1e-6,
 assert(!e_camera || cam_top <= base_h || cam_win_d >= brd_xiao_sense_cam_fp() + 1.0,
        str("the Ø", brd_xiao_sense_cam_fp(), " lens barrel stands ", cam_top - base_h, " mm into a Ø", cam_win_d, " window — needs Ø",
            brd_xiao_sense_cam_fp() + 1.0, " (0.5 a side) — raise cam_win_d"));
+// The module sits at the USB end of the board (0.5 past it), so the disc seat
+// reaches over the wall's top there: the shell keeps a full wall between the
+// seat's edge and the outside, and the barrel stays inside the cavity.
+assert(!e_camera || board_cx + cam_dx - cam_r >= -out_l/2 + core_min_wall(),
+       str("the camera disc seat runs to ", -out_l/2 - (board_cx + cam_dx - cam_r), " mm from the outer wall face — under core_min_wall(): shorten cam_disc_d or grow wall_t"));
+assert(!e_camera || board_cx + cam_dx - brd_xiao_sense_cam_fp()/2 >= -inner_l/2 + 0.5,
+       "the lens barrel runs into the USB wall — the board's positioning margin is gone");
 assert(!e_camera || cam_win_d >= cam_need,
        str("camera window ", cam_win_d, " mm vignettes a ", cam_fov, "° lens ", cam_throw,
            " mm behind it — needs ", round(cam_need*10)/10, " mm (raise cam_win_d or cam_fov is optimistic)"));

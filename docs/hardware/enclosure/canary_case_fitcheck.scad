@@ -68,11 +68,12 @@ use <canary_vision_enclosure.scad>
 use <canary_vision_doorbell.scad>
 use <canary_sense_enclosure.scad>
 use <canary_combo.scad>
+use <canary_relay_solar.scad>
 
 /* [What to check] */
 // Each of these renders the two halves in their ASSEMBLED positions and
 // intersects them. EVERY ONE MUST COME OUT EMPTY.
-check = "sense";   // ["sense","vision_indoor","vision_weather","vision_devkit","doorbell","wap_battery","wap_compact","wap_weather","wap_pan","combo"]
+check = "sense";   // ["sense","vision_indoor","vision_weather","vision_devkit","doorbell","wap_battery","wap_compact","wap_weather","wap_pan","combo","relay"]
 
 /* [Tuning] */
 seat_lift = 0.1;   // hover the front this far off its seat, so face-on-face contact is not read as interference  // [0.05:0.05:0.5]
@@ -94,4 +95,5 @@ else if (check == "wap_battery"
       || check == "wap_weather"
       || check == "wap_pan")             wap_fitcheck(seat_lift, turned);
 else if (check == "combo")               combo_fitcheck(seat_lift, turned);
+else if (check == "relay")               relay_fitcheck(seat_lift, turned);
 else assert(false, str("canary_case_fitcheck: unknown check \"", check, "\""));

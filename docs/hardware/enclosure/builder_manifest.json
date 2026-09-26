@@ -140,7 +140,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "d998c09910ffcb5f5f732af369965f081e800e539385e3bba28f3072028ced89",
+      "sha256": "b559f1ba73eb0438f232625059d5b2fd616b364eea50c837effbf29a685aef79",
       "groups": [
         {
           "name": "What to render",
@@ -891,7 +891,7 @@
               "name": "cam_win_d",
               "type": "number",
               "default": 10.0,
-              "desc": "asserted against cam_fov at the disc's inner plane so a corner never vignettes, and >= the Ø8 lens barrel + 1.0 (the barrel stands in it); 10 leaves 1.0 a side for the board's clip float and the 0.64 the vendor model may put the module off the width centerline (MEASURE) — the disc's bond ring stays 1.2"
+              "desc": "asserted against cam_fov at the disc's inner plane so a corner never vignettes, and >= the Ø8 lens barrel + 1.0 (the barrel stands in it); 10 leaves 1.0 a side for the board's clip float now that the window is centered on Seeed's module (cam_dx/cam_dy) — the disc's bond ring stays 1.2"
             },
             {
               "name": "cam_fov",
@@ -923,14 +923,14 @@
             {
               "name": "cam_dx",
               "type": "number",
-              "default": 6.95,
-              "desc": "camera window center X, from the board center — brd_xiao_sense_cam_dx() (toward the antenna end, away from the USB), canary_board_lib"
+              "default": -6.95,
+              "desc": "camera window center X, from the board center — brd_xiao_sense_cam_dx() (at the USB end: Seeed's model puts the module over the USB port, overhanging that end by 0.5), canary_board_lib"
             },
             {
               "name": "cam_dy",
               "type": "number",
-              "default": 0.0,
-              "desc": "camera window center Y, from the board center — brd_xiao_sense_cam_dy() (on the width centerline), canary_board_lib"
+              "default": -0.64,
+              "desc": "camera window center Y, from the board center — brd_xiao_sense_cam_dy() (0.64 toward the -Y long edge: the U.FL antenna's edge in Seeed's model), canary_board_lib"
             },
             {
               "name": "lp_d",
@@ -941,8 +941,8 @@
             {
               "name": "lp_dx",
               "type": "number",
-              "default": 1.0,
-              "desc": "light-pipe port center X, from the board center (off the lens now at +6.95: the Ø3.2 bore keeps a web to the Ø12.4 disc seat — asserted)"
+              "default": -1.0,
+              "desc": "light-pipe port center X, from the board center (off the lens at -6.95: the Ø3.2 bore keeps a web to the Ø12.4 disc seat — asserted)"
             },
             {
               "name": "lp_dy",
@@ -983,8 +983,8 @@
             {
               "name": "vent_dx",
               "type": "number",
-              "default": -5.0,
-              "desc": "buzzer vent center X, from the board center (the USB half of the board: the lens owns the other)"
+              "default": 5.0,
+              "desc": "buzzer vent center X, from the board center (the antenna half of the board: the lens owns the USB half)"
             },
             {
               "name": "vent_dy",
@@ -1007,8 +1007,8 @@
             {
               "name": "touch_dx",
               "type": "number",
-              "default": -3.0,
-              "desc": "cap-touch window center X, from the board center (shares the USB half with the vent: with opt_buzzer on, move one — asserted)"
+              "default": 3.0,
+              "desc": "cap-touch window center X, from the board center (shares the antenna half with the vent: with opt_buzzer on, move one — asserted)"
             },
             {
               "name": "touch_dy",
@@ -1042,8 +1042,8 @@
             {
               "name": "mag_dx",
               "type": "number",
-              "default": -6.0,
-              "desc": "magnet pocket center X, from the board center"
+              "default": 6.0,
+              "desc": "magnet pocket center X, from the board center (the antenna half, off the lens)"
             },
             {
               "name": "mag_dy",
@@ -1129,7 +1129,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "61ed73bb0c87d9854fed0ff82ff6c207f4130ff22301b7175ffd38dd59f271c4"
+          "sha256": "22b1a1cfa9f719fdec2a87f693312c9412b187f5f516ee83f4ade87d3300f100"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -1225,7 +1225,7 @@
         }
       },
       "units": {},
-      "sha256": "cea246e203ceb2703e0912119796dfc1c95a1303d870822a3d7de00367ccda6d",
+      "sha256": "55e8cf7855f99e2b431686bad01526b4ed2ac6acc10417b616db56066bdfef5f",
       "groups": [
         {
           "name": "What to render",
@@ -2215,7 +2215,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "61ed73bb0c87d9854fed0ff82ff6c207f4130ff22301b7175ffd38dd59f271c4"
+          "sha256": "22b1a1cfa9f719fdec2a87f693312c9412b187f5f516ee83f4ade87d3300f100"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -3143,7 +3143,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "61ed73bb0c87d9854fed0ff82ff6c207f4130ff22301b7175ffd38dd59f271c4"
+          "sha256": "22b1a1cfa9f719fdec2a87f693312c9412b187f5f516ee83f4ade87d3300f100"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -3239,7 +3239,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "7b073d7bea5988ac04f780e0fe068a7cc0363d22c47fe6572ae3562697c792b7",
+      "sha256": "866cfe25a4dc6ca759978c8a7f743d08fa47d500825520bcca08b00cc1bb7935",
       "groups": [
         {
           "name": "What to render",
@@ -4103,7 +4103,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "61ed73bb0c87d9854fed0ff82ff6c207f4130ff22301b7175ffd38dd59f271c4"
+          "sha256": "22b1a1cfa9f719fdec2a87f693312c9412b187f5f516ee83f4ade87d3300f100"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -4550,7 +4550,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "61ed73bb0c87d9854fed0ff82ff6c207f4130ff22301b7175ffd38dd59f271c4"
+          "sha256": "22b1a1cfa9f719fdec2a87f693312c9412b187f5f516ee83f4ade87d3300f100"
         },
         {
           "file": "canary_color_lib.scad",

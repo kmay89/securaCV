@@ -270,7 +270,7 @@ class LedgerShape(unittest.TestCase):
         figs = self.dims["figures"]
         wap = figs["device.canary-wap"]["knobs"]
         self.assertEqual(wap, {"board_clear": 0.6, "board_h": 1.2, "board_l": 21.0,
-                               "board_w": 17.5, "cam_dx": 6.95, "cam_dy": 0.0,
+                               "board_w": 17.5, "cam_dx": -6.95, "cam_dy": -0.64,
                                "cam_lens_h": 12.7, "stack_camera": 11.4, "stack_plain": 4.5})
         # references arrive as the registry's numbers, and the per-case decision
         # survives: the Sense clips say brd_w("xiao") = 17.5, the Vision pins the

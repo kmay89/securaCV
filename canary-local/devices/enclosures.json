@@ -1014,11 +1014,11 @@
       },
       {
        "name": "e_battery",
-       "default": "_pre(opt_battery, true,  false, true)"
+       "default": "wap_e_battery(preset)"
       },
       {
        "name": "e_gps",
-       "default": "_pre(opt_gps,     true,  false, true)"
+       "default": "wap_e_gps(preset)"
       },
       {
        "name": "e_tamper",
@@ -1411,7 +1411,7 @@
       {
        "name": "cam_win_d",
        "default": "10.0",
-       "comment": "asserted against cam_fov at the disc's inner plane so a corner never vignettes, and >= the Ø8 lens barrel + 1.0 (the barrel stands in it); 10 leaves 1.0 a side for the board's clip float and the 0.64 the vendor model may put the module off the width centerline (MEASURE) — the disc's bond ring stays 1.2"
+       "comment": "asserted against cam_fov at the disc's inner plane so a corner never vignettes, and >= the Ø8 lens barrel + 1.0 (the barrel stands in it); 10 leaves 1.0 a side for the board's clip float now that the window is centered on Seeed's module (cam_dx/cam_dy) — the disc's bond ring stays 1.2"
       },
       {
        "name": "cam_fov",
@@ -1440,13 +1440,13 @@
       },
       {
        "name": "cam_dx",
-       "default": "6.95",
-       "comment": "camera window center X, from the board center — brd_xiao_sense_cam_dx() (toward the antenna end, away from the USB), canary_board_lib"
+       "default": "-6.95",
+       "comment": "camera window center X, from the board center — brd_xiao_sense_cam_dx() (at the USB end: Seeed's model puts the module over the USB port, overhanging that end by 0.5), canary_board_lib"
       },
       {
        "name": "cam_dy",
-       "default": "0.0",
-       "comment": "camera window center Y, from the board center — brd_xiao_sense_cam_dy() (on the width centerline), canary_board_lib"
+       "default": "-0.64",
+       "comment": "camera window center Y, from the board center — brd_xiao_sense_cam_dy() (0.64 toward the -Y long edge: the U.FL antenna's edge in Seeed's model), canary_board_lib"
       },
       {
        "name": "lp_d",
@@ -1455,8 +1455,8 @@
       },
       {
        "name": "lp_dx",
-       "default": "1.0",
-       "comment": "light-pipe port center X, from the board center (off the lens now at +6.95: the Ø3.2 bore keeps a web to the Ø12.4 disc seat — asserted)"
+       "default": "-1.0",
+       "comment": "light-pipe port center X, from the board center (off the lens at -6.95: the Ø3.2 bore keeps a web to the Ø12.4 disc seat — asserted)"
       },
       {
        "name": "lp_dy",
@@ -1490,8 +1490,8 @@
       },
       {
        "name": "vent_dx",
-       "default": "-5.0",
-       "comment": "buzzer vent center X, from the board center (the USB half of the board: the lens owns the other)"
+       "default": "5.0",
+       "comment": "buzzer vent center X, from the board center (the antenna half of the board: the lens owns the USB half)"
       },
       {
        "name": "vent_dy",
@@ -1510,8 +1510,8 @@
       },
       {
        "name": "touch_dx",
-       "default": "-3.0",
-       "comment": "cap-touch window center X, from the board center (shares the USB half with the vent: with opt_buzzer on, move one — asserted)"
+       "default": "3.0",
+       "comment": "cap-touch window center X, from the board center (shares the antenna half with the vent: with opt_buzzer on, move one — asserted)"
       },
       {
        "name": "touch_dy",
@@ -1541,8 +1541,8 @@
       },
       {
        "name": "mag_dx",
-       "default": "-6.0",
-       "comment": "magnet pocket center X, from the board center"
+       "default": "6.0",
+       "comment": "magnet pocket center X, from the board center (the antenna half, off the lens)"
       },
       {
        "name": "mag_dy",
@@ -1644,11 +1644,11 @@
       },
       {
        "name": "batt_zone_l",
-       "default": "e_battery ? (batt_gap + batt_l) : 0"
+       "default": "wap_batt_zone_l(preset)"
       },
       {
        "name": "gps_zone_l",
-       "default": "e_gps     ? (gps_gap  + gps_l)  : 0"
+       "default": "wap_gps_zone_l(preset)"
       },
       {
        "name": "extra_l",
@@ -1671,7 +1671,7 @@
       },
       {
        "name": "inner_l",
-       "default": "board_zone_l + extra_l + post_corner + 1.0"
+       "default": "wap_inner_l(preset)"
       },
       {
        "name": "post_cx",
@@ -1804,7 +1804,7 @@
       },
       {
        "name": "kh_xs",
-       "default": "(kh_x >= kh_slot_l/2 + kh_head_d/2 + 2) ? [-kh_x, kh_x] : [0]"
+       "default": "wap_kh_xs(preset)"
       },
       {
        "name": "lid_headroom",
@@ -2844,6 +2844,10 @@
        "comment": "devkit host: gap between the camera + module column and the DevKit column"
       },
       {
+       "name": "inner_y",
+       "default": "vision_inner_y(host)"
+      },
+      {
        "name": "usb_soff",
        "default": "has_dk ? standoff_h : vm_standoff",
        "comment": "standoff of the board that owns the USB wall"
@@ -2984,7 +2988,7 @@
       },
       {
        "name": "kh_ys",
-       "default": "(kh_y >= kh_slot_l/2 + kh_head_d/2 + 2) ? [-kh_y, kh_y] : [0]"
+       "default": "vision_kh_ys(host)"
       },
       {
        "name": "hinge_hole",
@@ -5435,16 +5439,6 @@
        "comment": "stalk height to the hinge axis region — puts the standing radome ~130 mm over the nightstand"
       },
       {
-       "name": "case_reach",
-       "default": "71.2",
-       "comment": "the Sense case's far edge from its hinge axis — measured off canary_sense_back.stl (out_y/2 + hinge_off)"
-      },
-      {
-       "name": "case_face",
-       "default": "14.0",
-       "comment": "the case's radome face from its hinge axis (back 19.5 - fin_r 7.5 + lid 2.0)"
-      },
-      {
        "name": "pose_low",
        "default": "15",
        "comment": "the forward tip limit below horizontal — where the case root meets the center fin (header)"
@@ -5549,6 +5543,14 @@
       {
        "name": "hinge_hole",
        "default": "hinge_bolt_d + 0.4"
+      },
+      {
+       "name": "case_reach",
+       "default": "sense_hinge_reach()"
+      },
+      {
+       "name": "case_face",
+       "default": "sense_hinge_face()"
       },
       {
        "name": "head_off",
@@ -5923,7 +5925,8 @@
         "roof",
         "gasket",
         "all"
-       ]
+       ],
+       "comment": "— body = the PLATE (back), lid = the SHELL (front)"
       }
      ]
     },
@@ -5938,7 +5941,7 @@
       {
        "name": "opt_weep",
        "default": "true",
-       "comment": "Ø2 drains, angled down through the BOTTOM wall (the pod hangs USB-down on"
+       "comment": "Ø2 drains, straight out through the BOTTOM wall (the pod hangs USB-down on"
       },
       {
        "name": "sma_boss",
@@ -5953,7 +5956,7 @@
       {
        "name": "seal_mid_posts",
        "default": "true",
-       "comment": "one extra lid screw mid-way along each long (±X) wall: four corner screws"
+       "comment": "(seal mode) evenly spaced mid posts along every wall, as many as it takes to keep"
       }
      ]
     },
@@ -6012,6 +6015,11 @@
        "name": "sma_d",
        "default": "6.8",
        "comment": "1/4-36 SMA thread is Ø6.35: 6.8 with the D-flat at 5.7 (was 6.5/5.9 — 0.075 a side, under FDM hole shrink)"
+      },
+      {
+       "name": "sma_wall",
+       "default": "4.0",
+       "comment": "the wall the bulkhead's nut clamps through: the sky wall is spot-faced from INSIDE down to this around the jack (a sealed wall is 5.8; a standard bulkhead's thread is ~8 mm: land + wall + washer + nut)"
       }
      ]
     },
@@ -6063,7 +6071,7 @@
     },
     {
      "name": "Pole mount",
-     "note": "two channels for hose clamps / heavy zip ties",
+     "note": "two channels for hose clamps / heavy zip ties, across the back of the plate AND the shell's skin",
      "params": [
       {
        "name": "strap_w",
@@ -6073,7 +6081,7 @@
       {
        "name": "strap_t",
        "default": "2.0",
-       "comment": "channel depth"
+       "comment": "channel depth (the plate thickens by it behind the floor)"
       }
      ]
     },
@@ -6095,6 +6103,45 @@
        "name": "tol_hole",
        "default": "0.30",
        "comment": "catalog default — core_tol_hole(), canary_core_lib"
+      },
+      {
+       "name": "post_d",
+       "default": "5.0",
+       "comment": "screw post Ø — the plate screws thread into the post ends"
+      },
+      {
+       "name": "screw_size",
+       "default": "m2",
+       "enum": [
+        "m2",
+        "m2.5",
+        "m3"
+       ],
+       "comment": "plate screw — the core lib's registry sets pilot, clearance and head seat; \"m2\" keeps the validated numbers below"
+      },
+      {
+       "name": "screw_head",
+       "default": "pan",
+       "enum": [
+        "pan",
+        "flat"
+       ],
+       "comment": "pan = flat-floored seat (what the O-ring gland needs), flat = 90° countersink"
+      },
+      {
+       "name": "screw_d",
+       "default": "1.6",
+       "comment": "(m2 only) self-tap pilot Ø — the print-validated number this pod was drawn on; other sizes read scr_pilot()"
+      },
+      {
+       "name": "screw_head_d",
+       "default": "4.0",
+       "comment": "(m2 pan only) head Ø — the validated seat; other sizes read scr_pan_d()/scr_flat_d()"
+      },
+      {
+       "name": "screw_head_h",
+       "default": "2.0",
+       "comment": "(m2 pan only) head seat depth — the validated seat; other sizes read scr_pan_h()/scr_flat_h()"
       },
       {
        "name": "usb_w",
@@ -6167,12 +6214,12 @@
         0.2,
         1.2
        ],
-       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
+       "comment": "45° cove where the cavity meets the walls, at the face and at the ledge (canary_core_lib pl_cavity_cut); 0 = the old square corner"
       },
       {
        "name": "lid_key",
        "default": "true",
-       "comment": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
+       "comment": "poka-yoke: a rib on the +Y bore wall and a slot in the plate's edge — a symmetric post pattern fits"
       }
      ]
     },
@@ -6183,7 +6230,7 @@
       {
        "name": "opt_mark",
        "default": "false",
-       "comment": "deboss the house wordmark on the lid (canary_mark_lib)"
+       "comment": "deboss the house wordmark on the face (canary_mark_lib)"
       },
       {
        "name": "mark_size",
@@ -6193,12 +6240,12 @@
       {
        "name": "mark_depth",
        "default": "0.5",
-       "comment": "deboss depth (the lid prints face-down -> crisp first-layer voids)"
+       "comment": "deboss depth (the shell prints face-down -> crisp first-layer voids)"
       },
       {
        "name": "mark_dx",
        "default": "0.0",
-       "comment": "mark center offset from the LID-plate center"
+       "comment": "mark center offset from the face center"
       },
       {
        "name": "mark_dy",
@@ -6221,12 +6268,30 @@
        "default": "opt_seal"
       },
       {
+       "name": "ledge_w",
+       "default": "pl_ledge(e_seal, gasket_w, tol_slide)",
+       "comment": "gasket + a cheek each side, or one contact band"
+      },
+      {
        "name": "wall_eff",
-       "default": "e_seal ? max(wall_t, gasket_w + 2*core_min_wall()) : wall_t"
+       "default": "max(wall_t, ledge_w + core_min_wall())",
+       "comment": "the skin outside the plate's bore stays a structural wall"
+      },
+      {
+       "name": "scr_d",
+       "default": "(screw_size == \"m2\") ? screw_d : scr_pilot(screw_size)"
+      },
+      {
+       "name": "scr_c",
+       "default": "max(scr_d + 2*tol_hole, scr_clear(screw_size))"
       },
       {
        "name": "pd",
-       "default": "post_d"
+       "default": "max(post_d, scr_post_min(screw_size))"
+      },
+      {
+       "name": "e_gland",
+       "default": "e_seal"
       },
       {
        "name": "post_corner",
@@ -6237,8 +6302,19 @@
        "default": "clip_clear + clip_t"
       },
       {
-       "name": "head_pad",
-       "default": "max(0, screw_head_h + 1.0 - lid_t)"
+       "name": "bot_margin",
+       "default": "max(board_clear, floor_cove + 0.4)",
+       "comment": "the LoRa board's bottom edge off the bottom wall"
+      },
+      {
+       "name": "bay_wall",
+       "default": "1.2",
+       "comment": "the 18650 bay's ring wall (its pocket is 0.3 a side over the holder)"
+      },
+      {
+       "name": "bay_margin",
+       "default": "bot_margin + bay_wall + 0.3",
+       "comment": "the holder off the bottom wall, its ring wall between"
       },
       {
        "name": "col_lb",
@@ -6250,8 +6326,18 @@
       },
       {
        "name": "roof_foot_d",
-       "default": "screw_head_d + 4.0",
+       "default": "head_d + 4.0",
        "comment": "the roof screw's foot: the head seat + a 2 mm rim"
+      },
+      {
+       "name": "roof_foot_h",
+       "default": "3.0",
+       "comment": "the foot's height on the face"
+      },
+      {
+       "name": "roof_seat",
+       "default": "1.4",
+       "comment": "the roof screw's head seats this far up its foot"
       },
       {
        "name": "roof_post_x",
@@ -6259,16 +6345,16 @@
       },
       {
        "name": "inner_x",
-       "default": "max(col_lb + 2 + col_bh + 2*post_corner, 2*(roof_post_x + post_d/2 + 0.2))"
+       "default": "max(col_lb + 2 + col_bh + 2*post_corner, 2*(roof_post_x + pd/2 - 0.2))"
       },
       {
        "name": "inner_y",
-       "default": "max(lb_l, bh_l) + 2*board_clear + 10",
+       "default": "max(lb_l + 2*bot_margin, bh_l + 2*bay_margin) + 10",
        "comment": "+ wire room at the top"
       },
       {
        "name": "cav_d",
-       "default": "max(max(standoff_h + pcb_t + lb_stack, bh_h) + 1.5, bh_h + 0.01 + lip_h + 0.3)"
+       "default": "max(standoff_h + pcb_t + lb_stack, bh_h) + 1.5"
       },
       {
        "name": "out_x",
@@ -6292,11 +6378,11 @@
       },
       {
        "name": "lb_cy",
-       "default": "-inner_y/2 + board_clear + lb_l/2"
+       "default": "-inner_y/2 + bot_margin + lb_l/2"
       },
       {
        "name": "bh_cy",
-       "default": "-inner_y/2 + board_clear + bh_l/2"
+       "default": "-inner_y/2 + bay_margin + bh_l/2"
       },
       {
        "name": "sma_land_d",
@@ -6304,7 +6390,7 @@
       },
       {
        "name": "sma_z",
-       "default": "min(floor_t + cav_d/2, base_d - skirt_h - 0.4 - sma_land_d/2)"
+       "default": "floor_t + cav_d/2"
       },
       {
        "name": "gland_x",
@@ -6324,25 +6410,99 @@
        "default": "lb_cx + lb_w/2 + 0.75 + weep_d()/2"
       },
       {
-       "name": "skirt_gap",
-       "default": "tol_slide + 0.2"
+       "name": "weep_z",
+       "default": "floor_t + (e_seal ? gasket_groove + core_min_web() : 0.2) + weep_d()/2"
       },
       {
-       "name": "plate_x",
-       "default": "e_seal ? out_x + 2*(skirt_gap + skirt_t) : out_x"
+       "name": "mount_extra0",
+       "default": "strap_t"
       },
       {
-       "name": "plate_y",
-       "default": "e_seal ? out_y + 2*(skirt_gap + skirt_t) : out_y"
+       "name": "plate_t",
+       "default": "pl_thick(floor_t, mount_extra0, screw_size, screw_head, e_gland)"
       },
       {
-       "name": "plate_r",
-       "default": "e_seal ? corner_r + skirt_gap + skirt_t : corner_r"
+       "name": "mount_extra",
+       "default": "plate_t - floor_t",
+       "comment": "the plate below z = 0 (the strap slab, or the head's floor)"
+      },
+      {
+       "name": "pl_r",
+       "default": "pl_recess(plate_t, screw_size, screw_head, e_gland)"
+      },
+      {
+       "name": "pl_L",
+       "default": "pl_len(plate_t, pl_r, screw_size, screw_head)"
+      },
+      {
+       "name": "pl_eng",
+       "default": "pl_engage(plate_t, pl_r, screw_size, screw_head)"
+      },
+      {
+       "name": "pl_pil",
+       "default": "pl_pilot(plate_t, pl_r, screw_size, screw_head)"
+      },
+      {
+       "name": "post_h",
+       "default": "cav_d - pl_relief()",
+       "comment": "face underside -> the relief over the ledge plane"
+      },
+      {
+       "name": "shell_d",
+       "default": "cav_d + plate_t",
+       "comment": "the walls, face underside -> the back face"
+      },
+      {
+       "name": "bore_r",
+       "default": "core_cav_r(corner_r, wall_eff) + ledge_w"
+      },
+      {
+       "name": "roof_L",
+       "default": "hw_len(roof_foot_h - roof_seat + lid_t, 0, hw_engage(screw_size))"
+      },
+      {
+       "name": "roof_pil",
+       "default": "roof_L - (roof_foot_h - roof_seat) + 1.0",
+       "comment": "from the face's outer plane, blind"
+      },
+      {
+       "name": "post_cx",
+       "default": "inner_x/2 - pd/2 + 0.2"
+      },
+      {
+       "name": "post_cy",
+       "default": "inner_y/2 - pd/2 + 0.2"
+      },
+      {
+       "name": "span_x",
+       "default": "2*post_cx",
+       "comment": "corner to corner along X (the ±Y walls)"
+      },
+      {
+       "name": "span_y",
+       "default": "2*post_cy",
+       "comment": "corner to corner along Y (the ±X walls)"
+      },
+      {
+       "name": "n_mid_x",
+       "default": "(e_seal && seal_mid_posts) ? max(0, ceil(span_x/40 - 1e-9) - 1) : 0"
+      },
+      {
+       "name": "n_mid_y",
+       "default": "(e_seal && seal_mid_posts) ? max(0, ceil(span_y/40 - 1e-9) - 1) : 0"
       },
       {
        "name": "key_x",
        "default": "inner_x/2 - post_corner - 2.5",
-       "comment": "lid key: +Y wall, inboard of the +X corner post (battery side)"
+       "comment": "plate key: +Y bore wall, inboard of the +X corner post (battery side)"
+      },
+      {
+       "name": "sma_wall_eff",
+       "default": "min(sma_wall, wall_eff)"
+      },
+      {
+       "name": "_seal_span",
+       "default": "max(span_x/(n_mid_x + 1), span_y/(n_mid_y + 1))"
       }
      ]
     }
@@ -7915,7 +8075,7 @@
       {
        "name": "cam_dy",
        "default": "0.0",
-       "comment": "Sense camera sits toward the antenna end, not dead center"
+       "comment": "Sense camera sits over the USB end (brd_xiao_sense_cam_dx/dy), not dead center"
       },
       {
        "name": "ko_ring_d",

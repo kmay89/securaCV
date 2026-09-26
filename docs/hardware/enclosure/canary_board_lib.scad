@@ -115,8 +115,8 @@ function brd_ws169_glass_h() = 41.13;
 // round the barrel — MEASURE before a print that depends on it. The WAP's
 // window, disc seat and camera stack read these through its manifest.
 function brd_xiao_sense_cam_h()  = 12.7;   // lens top above the PCB top face
-function brd_xiao_sense_cam_dx() = 6.95;   // module center along the length, from the board center, + = away from the USB
-function brd_xiao_sense_cam_dy() = 0;      // module center across the width, from the board center (see above)
+function brd_xiao_sense_cam_dx() = -6.95;  // module center along the length, from the board center, + = away from the USB (it sits at the USB end)
+function brd_xiao_sense_cam_dy() = -0.64;  // module center across the width, from the board center, + = the long edge on the LEFT with the USB toward you and the parts up (see above)
 function brd_xiao_sense_cam_fp() = 8.0;    // module footprint, square side (the lens barrel's envelope)
 
 // ---------------------------------------------------------------------------
