@@ -609,32 +609,32 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "c2pa"
-version = "0.90.22"
+version = "0.91.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20fb4160e041eef6dcf2fa3b92db50b8f28d4cf4415dff44bf727cb28c3a58cb"
+checksum = "09db97539c7fbc753ede6fddfb430dbece729d0970da68e9cc959c6eb211e700"
 dependencies = [
  "asn1-rs",
  "async-generic",
  "async-trait",
  "atree",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bcder",
  "brotli",
  "byteorder",
  "byteordered",
  "bytes",
  "c2pa_cbor",
+ "c2pa_raw_crypto",
  "chrono",
  "console_log",
  "const-hex",
- "const-oid 0.9.6",
  "coset",
- "der 0.7.10",
- "ecdsa",
+ "der 0.8.1",
  "ed25519-dalek 2.2.0",
  "extfmt",
  "getrandom 0.2.17",
  "getrandom 0.3.4",
+ "getrandom 0.4.2",
  "glob",
  "hex",
  "http",
@@ -649,16 +649,11 @@ dependencies = [
  "nom 7.1.3",
  "non-empty-string",
  "nonempty-collections",
- "num-bigint-dig",
- "p256",
- "p384",
- "p521",
- "pem 3.0.6",
- "pkcs1",
+ "pem",
  "pkcs8 0.10.2",
  "png_pong",
  "quick-xml",
- "rand 0.8.7",
+ "rand 0.10.3",
  "rand_chacha 0.9.0",
  "range-set",
  "rasn",
@@ -667,7 +662,6 @@ dependencies = [
  "rasn-pkix",
  "regex",
  "riff",
- "rsa",
  "serde",
  "serde-transcode",
  "serde-wasm-bindgen",
@@ -677,7 +671,6 @@ dependencies = [
  "serde_with",
  "sha1 0.11.0",
  "sha2 0.11.0",
- "spki 0.7.3",
  "static-iref",
  "tempfile",
  "thiserror 2.0.18",
@@ -695,13 +688,37 @@ dependencies = [
 
 [[package]]
 name = "c2pa_cbor"
-version = "0.77.2"
+version = "0.78.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a32d9f47773390b9e3400021ddd9ef7a8d61b8a6501cf72aecd6409d6d447c89"
+checksum = "b413817d7fcff304f37381bb36de9b5fa08c060b3bd4916de7fcbe0d0c874254"
 dependencies = [
  "half",
  "serde",
  "serde_bytes",
+]
+
+[[package]]
+name = "c2pa_raw_crypto"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea8b0035cb7a2d51e0664be21e1f5635d6cb572256beab9a7356b6ca3e3b6743"
+dependencies = [
+ "const-hex",
+ "ecdsa",
+ "ed25519-dalek 2.2.0",
+ "getrandom 0.2.17",
+ "p256",
+ "p384",
+ "p521",
+ "pkcs1",
+ "pkcs8 0.10.2",
+ "rand 0.8.7",
+ "rsa",
+ "serde",
+ "sha2 0.11.0",
+ "spki 0.7.3",
+ "thiserror 2.0.18",
+ "zeroize",
 ]
 
 [[package]]
@@ -1335,7 +1352,6 @@ dependencies = [
  "digest 0.10.7",
  "elliptic-curve",
  "rfc6979",
- "sha2 0.10.9",
  "signature 2.2.0",
  "spki 0.7.3",
 ]
@@ -1409,7 +1425,6 @@ dependencies = [
  "ff",
  "generic-array",
  "group",
- "hkdf 0.12.4",
  "pem-rfc7468 0.7.0",
  "pkcs8 0.10.2",
  "rand_core 0.6.4",
@@ -1750,11 +1765,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0de51e6874e94e7bf76d726fc5d13ba782deca734ff60d5bb2fb2607c7406555"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 6.0.0",
  "rand_core 0.10.1",
  "wasip2",
  "wasip3",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2056,15 +2073,6 @@ name = "hex_fmt"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b07f60793ff0a4d9cef0f18e63b5357e06209987153a64648c972c1e5aff336f"
-
-[[package]]
-name = "hkdf"
-version = "0.12.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b5f8eb2ad728638ea2c7d47a21db23b7b58a72ed6a38256b8a1849f15fbbdf7"
-dependencies = [
- "hmac 0.12.1",
-]
 
 [[package]]
 name = "hkdf"
@@ -2811,7 +2819,6 @@ dependencies = [
  "num-iter",
  "num-traits",
  "rand 0.8.7",
- "serde",
  "smallvec",
  "zeroize",
 ]
@@ -3062,16 +3069,6 @@ name = "peeking_take_while"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b17cddbe7ec3f8bc800887bab5e717348c95ea2ca0b1bf0837fb964dc67099"
-
-[[package]]
-name = "pem"
-version = "3.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
-dependencies = [
- "base64 0.22.1",
- "serde_core",
-]
 
 [[package]]
 name = "pem"
@@ -3685,7 +3682,7 @@ version = "0.14.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8774e05a7d0de114588e6a28fe7e71694b82614ed569d86d8b389dfbc98b8ad8"
 dependencies = [
- "pem 4.0.0",
+ "pem",
  "ring",
  "rustls-pki-types",
  "time",
@@ -5674,7 +5671,7 @@ dependencies = [
  "gstreamer-app",
  "gstreamer-video",
  "hex",
- "hkdf 0.13.0",
+ "hkdf",
  "image",
  "libc",
  "libseccomp",
