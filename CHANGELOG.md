@@ -13,8 +13,9 @@
 - **A forward clock step cannot expire rows sealed minutes ago.** Each store
   keeps a bounded ring of monotonic-clock samples (one per 10-minute
   interval, 14 days, FR-4); when the wall clock has run ahead of the
-  monotonic clock across a sample by more than a bucket, rows after it are
-  aged by the monotonic clock. Agreeing clocks leave the stamps in charge,
+  monotonic clock across a sample by more than the step tolerance (30 s,
+  the clock monitor's default), rows after it are aged by the monotonic
+  clock. Agreeing clocks leave the stamps in charge,
   so aging a row by rewriting `created_at` still works in tests.
 - **`witnessd` holds one retention pass after a sealed `ClockSkew`** so the
   pass runs on the settled clock. `docs/failure_semantics.md` states the

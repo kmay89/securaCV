@@ -48,9 +48,11 @@ no adversary needs. Two bounds hold regardless of the wall clock:
 - **A forward step cannot expire what was just sealed.** The store keeps a
   bounded ring of `(monotonic instant, wall time, first rowid)` samples, one
   per 10-minute interval over the last 14 days of this process. When the wall
-  clock has run ahead of the monotonic clock across a sample by more than one
-  bucket — an RTC-less hub taking its first NTP sync after boot, an operator
-  correcting a clock that was years behind — the rows after that sample are
+  clock has run ahead of the monotonic clock across a sample by more than the
+  step tolerance (30 s, the clock monitor's default skew tolerance, so every
+  step that seals a `ClockSkew` also engages the floor) — an RTC-less hub
+  taking its first NTP sync after boot, an operator correcting a clock that
+  was years behind — the rows after that sample are
   aged by the monotonic clock, not the stamp: a row appended less than
   `retention − 10 min` ago is never pruned. When the two clocks agree the
   stamps are trusted as before.

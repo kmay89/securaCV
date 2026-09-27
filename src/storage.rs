@@ -35,14 +35,19 @@ pub trait SealedLogStore {
 /// bucket, the coarsest unit the log itself keeps. The interval is also the
 /// floor's slack (see `protected_from`).
 const AGE_FLOOR_SAMPLE_INTERVAL: Duration = Duration::from_secs(600);
-/// Ring capacity: 2016 ten-minute slots cover 14 days in ~48 KiB. Bounded by
+/// Ring capacity: 2016 ten-minute slots cover 14 days. Bounded by
 /// construction (FR-4); a longer run simply forgets its oldest samples and
 /// those rows fall back to the wall-clock rule.
 const AGE_FLOOR_SAMPLES: usize = 2016;
 /// How far the wall clock may run ahead of the monotonic clock across a
-/// sample before the stamps after it stop being trusted for expiry: one
-/// bucket, so ordinary NTP slew never trips it.
-const AGE_FLOOR_STEP_TOLERANCE: Duration = Duration::from_secs(600);
+/// sample before the stamps after it stop being trusted for expiry. Matches
+/// `witnessd`'s default clock-skew tolerance, so any step the clock monitor
+/// would seal also engages the floor; a smaller step prunes at most that
+/// many seconds early, well inside a bucket. Ordinary crystal drift can
+/// exceed this over the ring's window and engage the floor spuriously —
+/// harmless, because the floor only ever ages a row by the clock that
+/// cannot be stepped.
+const AGE_FLOOR_STEP_TOLERANCE: Duration = Duration::from_secs(30);
 
 /// A lower bound on the age of the rows this process appended, kept on the
 /// **monotonic** clock so a wall-clock step cannot shorten it.
@@ -881,6 +886,11 @@ mod age_floor_tests {
         let later = Duration::from_secs(3_000);
         let slewed = wall + later + AGE_FLOOR_STEP_TOLERANCE;
         assert_eq!(floor.protected_from(DAY, base + later, slewed), None);
+        // ...and one second past the tolerance is a step: the retention pass
+        // with the default 30 s skew tolerance would have sealed a ClockSkew
+        // for it, and the floor must cover the same steps the hold does.
+        let stepped = slewed + Duration::from_secs(1);
+        assert_eq!(floor.protected_from(DAY, base + later, stepped), Some(1));
     }
 
     #[test]
