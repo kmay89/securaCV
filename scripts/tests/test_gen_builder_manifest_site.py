@@ -470,10 +470,68 @@ class SiteCarry(unittest.TestCase):
         self._real_manifest = gbm.MANIFEST
         gbm.MANIFEST = Path(self._tmp.name) / "builder_manifest.json"
         gbm.MANIFEST.write_text(self.fresh, encoding="utf-8")
+        self._real_contract = gbm.SITE_CONTRACT_OUT
+        gbm.SITE_CONTRACT_OUT = Path(self._tmp.name) / "site_contract.json"
 
     def tearDown(self):
         gbm.MANIFEST = self._real_manifest
+        gbm.SITE_CONTRACT_OUT = self._real_contract
         self._tmp.cleanup()
+
+    # ── the reverse carry: the site's runtime contract on this tree ──────
+    CONTRACT = {"generated_by": "scripts/make-upstream-contract.mjs",
+                "paths": ["docs/hardware/enclosure/canary_sense_front.stl",
+                          "canary-local/devices/catalog.json"],
+                "patterns": ["canary-local/figures/*.svg"]}
+
+    def test_no_contract_on_the_site_is_a_notice_not_a_failure(self):
+        rc, out, _ = self.run_main("--site", str(self.site))
+        self.assertEqual(rc, 0)
+        self.assertIn("has no upstream-contract.json — the reverse carry is skipped", out)
+        self.assertFalse(gbm.SITE_CONTRACT_OUT.exists())
+        rc, out, _ = self.run_main("--site", str(self.site), "--check")
+        self.assertEqual(rc, 0)
+        self.assertIn("reverse carry is skipped", out)
+
+    def test_the_contract_is_carried_normalized_and_checked(self):
+        (self.site / "upstream-contract.json").write_text(
+            json.dumps({**self.CONTRACT, "paths": list(reversed(self.CONTRACT["paths"])) * 2}),
+            encoding="utf-8")
+        rc, out, _ = self.run_main("--site", str(self.site))
+        self.assertEqual(rc, 0)
+        self.assertIn("wrote", out)
+        # with the site carries current, a missing carried copy is what --check names
+        gbm.SITE_CONTRACT_OUT.unlink()
+        _, out, err = self.run_main("--site", str(self.site), "--check")
+        self.assertIsNotNone(err)
+        self.assertIn("site_contract.json is stale against the site's upstream-contract.json",
+                      str(err))
+        rc, out, _ = self.run_main("--site", str(self.site))
+        self.assertEqual(rc, 0)
+        carried = json.loads(gbm.SITE_CONTRACT_OUT.read_text(encoding="utf-8"))
+        self.assertEqual(carried, {"carried_from": "securacv_website/upstream-contract.json",
+                                   "generated_by": self.CONTRACT["generated_by"],
+                                   "paths": sorted(self.CONTRACT["paths"]),   # sorted, deduplicated
+                                   "patterns": self.CONTRACT["patterns"]})
+        rc, out, _ = self.run_main("--site", str(self.site), "--check")
+        self.assertEqual(rc, 0)
+        self.assertIn("site_contract.json is current", out)
+        rc, out, _ = self.run_main("--site", str(self.site))
+        self.assertIn("site_contract.json is unchanged", out)
+        # the site moves a path: the carried copy is stale until rerun
+        (self.site / "upstream-contract.json").write_text(
+            json.dumps({**self.CONTRACT, "paths": ["canary-local/devices/figures.json"]}),
+            encoding="utf-8")
+        _, out, err = self.run_main("--site", str(self.site), "--check")
+        self.assertIn("is stale against the site's", str(err))
+
+    def test_a_malformed_contract_is_refused(self):
+        for bad in ('{"paths": "x"}', '{"paths": ["/abs"]}', '{"paths": ["a/../b"]}',
+                    '{"paths": [], "patterns": [3]}', "not json"):
+            (self.site / "upstream-contract.json").write_text(bad, encoding="utf-8")
+            _, out, err = self.run_main("--site", str(self.site))
+            self.assertIsNotNone(err, bad)
+            self.assertFalse(gbm.SITE_CONTRACT_OUT.exists(), bad)
 
     def run_main(self, *argv: str) -> tuple[int | None, str, SystemExit | None]:
         with redirect_stdout(io.StringIO()) as out:
