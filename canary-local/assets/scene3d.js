@@ -15,6 +15,27 @@
 // highlights to catch on and a view-space contact shadow that grounds
 // the floating product. Tuned for the Apple-product-page look while
 // staying a single zero-dependency file.
+//
+// GPU lifecycle (2026-09-27): a page holds ONE WebGL context, however many
+// DeviceScenes it mounts. Every scene renders through a shared context on
+// a detached canvas and blits its frame into its own <canvas> (a 2D
+// surface), so fleet.html's 28 cards plus a sheet no longer ask Chromium
+// for 29 contexts — it caps live contexts near 16 and loses the oldest,
+// which blanked the first cards. A scene retains each part's source
+// arrays beside its GL buffers: start() gates the frame loop on an
+// IntersectionObserver (plus document visibility), an off-screen card
+// stops its loop and sheds its buffers (_releaseGL), and the next draw
+// re-uploads them (_acquireGL). A lost context (webglcontextlost is
+// preventDefault-ed, restore is asked for) rebuilds programs, textures and
+// buffers from the same retained data on webglcontextrestored, so an
+// eviction never leaves a blank card. The public surface is unchanged:
+// new DeviceScene(canvas, src), addMesh/clearParts/removePart, start/stop,
+// draw, onTick, project, scene.gl (the shared context); dispose() is new.
+// Shader compile/link failures still throw from the first constructor on
+// the page (tests/render_probe.mjs relies on it). Between passes no vertex
+// attribute stays enabled — an enabled array whose buffer a later
+// clearParts() deleted was the "drawArrays: no buffer is bound to enabled
+// attribute" the shadow quad tripped on after a real-shape swap.
 
 import { activeFinish, finishColor } from "./finishes.js";
 import { parseGLB } from "./glb.js";
@@ -447,21 +468,77 @@ void main() {
   gl_FragColor = vec4(vec3(0.02, 0.025, 0.035) * a, a);
 }`;
 
-// ── scene ───────────────────────────────────────────────────────────────
-export class DeviceScene {
-  /**
-   * @param canvas 3D canvas
-   * @param screenSource <canvas> the emulator draws into (or null)
-   */
-  constructor(canvas, screenSource) {
-    this.canvas = canvas;
-    this.src = screenSource;
+// ── the GPU: one shared context, every scene a viewport in it ───────────
+// The Lab mounts a DeviceScene per card (fleet.html: one per registry
+// device, plus the open sheet). Each used to own a WebGL context; Chromium
+// keeps ~16 alive and silently loses the oldest, so the first cards went
+// blank. Now every scene on a page renders through ONE context on a
+// detached canvas — its frame lands in the card's own <canvas> through a
+// 2D blit — so the page holds one context for any number of viewers.
+// A scene retains its part data, so its buffers can be shed while it is
+// off-screen and re-uploaded on the way back, and a lost context (a GPU
+// reset, an eviction by some other library's contexts) rebuilds from the
+// same retained data when it is restored.
+let sharedGPU = null;
+
+class SharedGPU {
+  constructor() {
+    this.canvas = null;
+    this.gl = null;
+    this.lost = false;
+    this.gen = 0;           // bumped whenever every GL object became invalid
+    this.scenes = new Set();
+    this.software = false;
+    this._loseExt = null;
+    this._restoreAt = 0;
+  }
+
+  static get() {
+    if (!sharedGPU) sharedGPU = new SharedGPU();
+    return sharedGPU;
+  }
+
+  /** The live context, creating it (and compiling the shaders — loudly:
+   * a compile/link failure throws) on first use; null while it is lost. */
+  ensure() {
+    if (!this.gl) this._acquire();
+    return this.lost ? null : this.gl;
+  }
+
+  _acquire() {
+    const canvas = document.createElement("canvas");
     const gl = canvas.getContext("webgl", {
       antialias: true,
       alpha: true,
       premultipliedAlpha: true,
     });
+    if (!gl) throw new Error("scene3d: WebGL is not available");
+    canvas.addEventListener("webglcontextlost", (e) => {
+      e.preventDefault();       // ask the browser to restore it
+      this.lost = true;
+      this._restoreAt = 0;
+    });
+    canvas.addEventListener("webglcontextrestored", () => {
+      this.lost = false;
+      this.gen++;               // every buffer, texture and program is gone
+      this._build();            // throws loudly if the shaders no longer compile
+    });
+    this.canvas = canvas;
     this.gl = gl;
+    this.lost = false;
+    this.gen++;
+    this._loseExt = gl.getExtension("WEBGL_lose_context");
+    try {
+      const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+      const renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : "";
+      this.software = /swiftshader|llvmpipe|software|angle \(google/i.test(renderer);
+    } catch { this.software = false; }
+    this._build();
+  }
+
+  // programs, locations, the shadow quad — everything that is not per-scene
+  _build() {
+    const gl = this.gl;
     // specular anti-aliasing needs screen-space normal derivatives
     gl.getExtension("OES_standard_derivatives");
     this.prog = this._program(VS, FS);
@@ -469,8 +546,12 @@ export class DeviceScene {
     for (const n of ["uProj", "uView", "uModel", "uColor", "uGloss", "uMetal", "uUseTex",
                      "uEmissive", "uTex", "uClipZ", "uMinZ", "uOverhangOn", "uUnlit"])
       this.u[n] = gl.getUniformLocation(this.prog, n);
+    this.a = {
+      pos: gl.getAttribLocation(this.prog, "aPos"),
+      nrm: gl.getAttribLocation(this.prog, "aNrm"),
+      uv: gl.getAttribLocation(this.prog, "aUv"),
+    };
     // contact-shadow pass (own tiny program + unit quad)
-    this.shadow = null; // {y, rx, rz, alpha} in world units, or null
     this.sprog = this._program(SHADOW_VS, SHADOW_FS);
     this.su = {
       proj: gl.getUniformLocation(this.sprog, "uProj"),
@@ -483,51 +564,6 @@ export class DeviceScene {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.squad);
     gl.bufferData(gl.ARRAY_BUFFER,
       new Float32Array([-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1]), gl.STATIC_DRAW);
-    this.overhangOn = false;
-    this.clipZ = 1e9;
-    this.viewY = 0; // vertical look-at offset (plate scenes sit above y=0)
-    this.a = {
-      pos: gl.getAttribLocation(this.prog, "aPos"),
-      nrm: gl.getAttribLocation(this.prog, "aNrm"),
-      uv: gl.getAttribLocation(this.prog, "aUv"),
-    };
-    this.parts = [];
-    // bumped by every clearParts(): an async build (a figure model still in
-    // flight) checks it before adding parts, so a later build that already
-    // owns the scene — a real-shape upgrade, a rebuild — is never doubled
-    this.buildGen = 0;
-    this.rot = { x: -0.28, y: 0.55 }; // presentation pose
-    this.home = { x: -0.28, y: 0.55 };
-    this.vel = { x: 0, y: 0 };
-    this.t = 0;
-    this.dist = 150;
-    this.glow = 1;
-    this.dirtySerial = -1;
-    this.tex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, this.tex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
-                  new Uint8Array([0, 0, 0, 255]));
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    this._wireOrbit();
-    this._raf = null;
-    // Adaptive resolution: the studio shading is real work, and software
-    // rasterizers (headless CI, weak iGPUs) pay for every fragment. Track
-    // an EMA of frame time and scale the backing store down until the
-    // scene is fluid again — sharpness costs nothing on a real GPU and
-    // fluidity beats sharpness everywhere else. A software renderer is
-    // known at birth, so it starts cheap instead of discovering it.
-    this.resScale = 1;
-    try {
-      const dbg = gl.getExtension("WEBGL_debug_renderer_info");
-      const renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : "";
-      if (/swiftshader|llvmpipe|software|angle \(google/i.test(renderer)) this.resScale = 0.4;
-    } catch { /* keep 1 */ }
-    this._ft = 16;
-    this._lastT = 0;
-    this._cool = 0;
   }
 
   _program(vs, fs) {
@@ -549,6 +585,114 @@ export class DeviceScene {
     return p;
   }
 
+  /** Lost and not coming back on its own: ask for it, at most once a second. */
+  tryRestore() {
+    const now = Date.now();
+    if (!this.lost || !this._loseExt || now - this._restoreAt < 1000) return;
+    this._restoreAt = now;
+    try { this._loseExt.restoreContext(); } catch { /* the browser will say no */ }
+  }
+
+  /** Grow the backing store to hold a W×H frame (never shrinks: a resize
+   * reallocates the drawing buffer, and cards of many sizes share it). */
+  fit(W, H) {
+    const c = this.canvas;
+    if (c.width < W || c.height < H) {
+      c.width = Math.max(c.width, W);
+      c.height = Math.max(c.height, H);
+    }
+  }
+
+  /** The last scene is gone: hand the context back to the browser. The next
+   * scene starts from a fresh canvas (a canvas keeps its one context for
+   * life, lost or not, so the old one is dropped rather than reused). */
+  release() {
+    const gl = this.gl;
+    if (!gl) return;
+    if (!this.lost) {
+      try {
+        gl.deleteBuffer(this.squad);
+        gl.deleteProgram(this.prog);
+        gl.deleteProgram(this.sprog);
+        if (this._loseExt) this._loseExt.loseContext();
+      } catch { /* already gone */ }
+    }
+    this.canvas = null;
+    this.gl = null;
+    this.lost = false;
+    this._loseExt = null;
+    this.prog = this.sprog = this.squad = null;
+  }
+}
+
+// ── scene ───────────────────────────────────────────────────────────────
+export class DeviceScene {
+  /**
+   * @param canvas 3D canvas
+   * @param screenSource <canvas> the emulator draws into (or null)
+   */
+  constructor(canvas, screenSource) {
+    this.canvas = canvas;
+    this.src = screenSource;
+    this._gpu = SharedGPU.get();
+    this._gpu.ensure();            // first scene on the page: throws on shader failure
+    this._gpu.scenes.add(this);
+    // the card shows the shared context's frame through its own 2D surface
+    this.ctx2d = canvas.getContext("2d");
+    this.shadow = null; // {y, rx, rz, alpha} in world units, or null
+    this.overhangOn = false;
+    this.clipZ = 1e9;
+    this.viewY = 0; // vertical look-at offset (plate scenes sit above y=0)
+    this.parts = [];
+    // bumped by every clearParts(): an async build (a figure model still in
+    // flight) checks it before adding parts, so a later build that already
+    // owns the scene — a real-shape upgrade, a rebuild — is never doubled
+    this.buildGen = 0;
+    this.rot = { x: -0.28, y: 0.55 }; // presentation pose
+    this.home = { x: -0.28, y: 0.55 };
+    this.vel = { x: 0, y: 0 };
+    this.t = 0;
+    this.dist = 150;
+    this.glow = 1;
+    this.dirtySerial = -1;
+    this._tex = null;    // { tex, gen }: the live-screen texture, per context generation
+    this._wireOrbit();
+    this._raf = null;
+    // lifecycle: the loop runs only while start() was called AND the card is
+    // in (or near) the viewport AND the page is visible — off-screen cards
+    // cost nothing and hold no GPU memory
+    this._running = false;
+    this._inView = true;       // until an IntersectionObserver says otherwise
+    this._pageVisible = typeof document === "undefined" || document.visibilityState !== "hidden";
+    this._io = null;
+    this._onVis = null;
+    // Adaptive resolution: the studio shading is real work, and software
+    // rasterizers (headless CI, weak iGPUs) pay for every fragment. Track
+    // an EMA of frame time and scale the backing store down until the
+    // scene is fluid again — sharpness costs nothing on a real GPU and
+    // fluidity beats sharpness everywhere else. A software renderer is
+    // known at birth, so it starts cheap instead of discovering it.
+    this.resScale = this._gpu.software ? 0.4 : 1;
+    this._ft = 16;
+    this._lastT = 0;
+    this._cool = 0;
+  }
+
+  /** The shared WebGL context this scene draws through (null while lost). */
+  get gl() { return this._gpu.lost ? null : this._gpu.gl; }
+
+  /** How many contexts and loops the page holds — what a probe asserts on. */
+  static stats() {
+    const g = sharedGPU;
+    let running = 0;
+    if (g) for (const s of g.scenes) if (s._raf) running++;
+    return {
+      contexts: g && g.gl && !g.lost ? 1 : 0,
+      scenes: g ? g.scenes.size : 0,
+      running,
+    };
+  }
+
   // The floating-product grounding: a soft ellipse below the object, in
   // view space (the object spins; its shadow shouldn't). Opt-in per scene.
   setContactShadow({ y = -30, rx = 40, rz = 30, alpha = 0.34 } = {}) {
@@ -559,7 +703,18 @@ export class DeviceScene {
   addMesh(builder, { color = [0.5, 0.5, 0.5], gloss = 0.2, metal = 0, screen = false,
                      model = M4.ident(), lines = false, unlit = false,
                      clippable = false, minZ = 0, role = null } = {}) {
-    const gl = this.gl;
+    const pos = builder.pos instanceof Float32Array ? builder.pos : new Float32Array(builder.pos);
+    const nv = pos.length / 3;
+    // every enabled attribute must read a buffer big enough for the draw: a
+    // mesh that carries no normals or uvs (an STL, a line list) gets zeros,
+    // never an empty buffer under an enabled attribute
+    const fill = (arr, per) => {
+      const want = nv * per;
+      if (arr && arr.length >= want) return arr instanceof Float32Array ? arr : new Float32Array(arr);
+      const out = new Float32Array(want);
+      if (arr && arr.length) out.set(arr instanceof Float32Array ? arr : new Float32Array(arr));
+      return out;
+    };
     const part = {
       model,
       color,
@@ -575,31 +730,83 @@ export class DeviceScene {
       clippable,
       minZ,
       count: builder.idx.length,
-      vbo: gl.createBuffer(),
-      nbo: gl.createBuffer(),
-      ubo: gl.createBuffer(),
-      ibo: gl.createBuffer(),
+      // retained source data: the buffers below are re-uploaded from these
+      // after a release (off-screen) or a context loss
+      src: {
+        pos,
+        nrm: fill(builder.nrm, 3),
+        uv: fill(builder.uv, 2),
+        idx: builder.idx instanceof Uint16Array ? builder.idx : new Uint16Array(builder.idx),
+      },
+      vbo: null,
+      nbo: null,
+      ubo: null,
+      ibo: null,
+      gen: -1,   // the context generation the buffers belong to
     };
-    gl.bindBuffer(gl.ARRAY_BUFFER, part.vbo);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(builder.pos), gl.STATIC_DRAW);
-    gl.bindBuffer(gl.ARRAY_BUFFER, part.nbo);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(builder.nrm), gl.STATIC_DRAW);
-    gl.bindBuffer(gl.ARRAY_BUFFER, part.ubo);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(builder.uv), gl.STATIC_DRAW);
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, part.ibo);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(builder.idx), gl.STATIC_DRAW);
     this.parts.push(part);
     return part;
   }
 
+  _upload(part) {
+    const gl = this._gpu.gl;
+    part.vbo = gl.createBuffer();
+    part.nbo = gl.createBuffer();
+    part.ubo = gl.createBuffer();
+    part.ibo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, part.vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, part.src.pos, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, part.nbo);
+    gl.bufferData(gl.ARRAY_BUFFER, part.src.nrm, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, part.ubo);
+    gl.bufferData(gl.ARRAY_BUFFER, part.src.uv, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, part.ibo);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, part.src.idx, gl.STATIC_DRAW);
+    part.gen = this._gpu.gen;
+  }
+
+  _free(part) {
+    const g = this._gpu;
+    if (part.gen === g.gen && g.gl && !g.lost) {
+      for (const b of ["vbo", "nbo", "ubo", "ibo"]) g.gl.deleteBuffer(part[b]);
+    }
+    part.vbo = part.nbo = part.ubo = part.ibo = null;
+    part.gen = -1;
+  }
+
+  /** Make sure this scene's GPU objects exist on the live context — the
+   * context itself, and every retained part's buffers. */
+  _acquireGL() {
+    const gl = this._gpu.ensure();
+    if (!gl) return null;
+    for (const p of this.parts) if (p.gen !== this._gpu.gen) this._upload(p);
+    if (!this._tex || this._tex.gen !== this._gpu.gen) {
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+                    new Uint8Array([0, 0, 0, 255]));
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      this._tex = { tex, gen: this._gpu.gen };
+    }
+    return gl;
+  }
+
+  /** Shed this scene's GPU objects (the parts stay, retained; the next draw
+   * re-uploads them). The context itself is shared and stays until the last
+   * scene is disposed. */
+  _releaseGL() {
+    for (const p of this.parts) this._free(p);
+    const g = this._gpu;
+    if (this._tex && this._tex.gen === g.gen && g.gl && !g.lost) g.gl.deleteTexture(this._tex.tex);
+    this._tex = null;
+  }
+
   clearParts() {
     this.buildGen++;
-    for (const p of this.parts) {
-      this.gl.deleteBuffer(p.vbo);
-      this.gl.deleteBuffer(p.nbo);
-      this.gl.deleteBuffer(p.ubo);
-      this.gl.deleteBuffer(p.ibo);
-    }
+    for (const p of this.parts) this._free(p);
     this.parts = [];
   }
 
@@ -662,22 +869,69 @@ export class DeviceScene {
     }, { passive: false });
   }
 
+  /** Run the frame loop — while the card is on screen. Idempotent. */
   start() {
-    if (this._raf) return;
-    const step = () => {
-      this._raf = requestAnimationFrame(step);
-      if (this.onTick) this.onTick(); // per-frame hook: cable rigs, LEDs, prop animation
-      this.draw();
-    };
-    step();
+    if (this._running) return;
+    this._running = true;
+    this._watch();
+    this._syncLoop();
   }
   stop() {
-    if (this._raf) cancelAnimationFrame(this._raf);
-    this._raf = null;
+    this._running = false;
+    this._unwatch();
+    this._syncLoop();
+  }
+  /** stop() and give back every GPU object this scene holds; the last
+   * scene out releases the page's context. A stopped scene keeps its
+   * buffers (a caller may still draw() it by hand); a disposed one is done. */
+  dispose() {
+    this.stop();
+    this._releaseGL();
+    this._gpu.scenes.delete(this);
+    if (this._gpu.scenes.size === 0) this._gpu.release();
+  }
+
+  _watch() {
+    if (this._io || typeof IntersectionObserver === "undefined") return;
+    this._io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.target !== this.canvas) continue;
+        this._inView = e.isIntersecting;
+        if (!this._inView) this._releaseGL(); // off-screen: hold nothing on the GPU
+      }
+      this._syncLoop();
+    }, { rootMargin: "25%" });
+    this._io.observe(this.canvas);
+    this._onVis = () => {
+      this._pageVisible = document.visibilityState !== "hidden";
+      this._syncLoop();
+    };
+    document.addEventListener("visibilitychange", this._onVis);
+  }
+  _unwatch() {
+    if (this._io) { this._io.disconnect(); this._io = null; }
+    if (this._onVis) { document.removeEventListener("visibilitychange", this._onVis); this._onVis = null; }
+    this._inView = true;
+  }
+  _syncLoop() {
+    const want = this._running && this._inView && this._pageVisible;
+    if (want && !this._raf) {
+      const step = () => {
+        this._raf = requestAnimationFrame(step);
+        if (this.onTick) this.onTick(); // per-frame hook: cable rigs, LEDs, prop animation
+        this.draw();
+      };
+      step();
+    } else if (!want && this._raf) {
+      cancelAnimationFrame(this._raf);
+      this._raf = null;
+    }
   }
 
   draw() {
-    const gl = this.gl;
+    const gl = this._acquireGL();
+    if (!gl) { this._gpu.tryRestore(); return; } // context lost: skip the frame, ask for it back
+    const gpu = this._gpu;
     const now = (typeof performance !== "undefined" ? performance.now() : 0);
     if (this._lastT) {
       this._ft += (Math.min(now - this._lastT, 100) - this._ft) * 0.1;
@@ -699,6 +953,7 @@ export class DeviceScene {
       this.canvas.width = W;
       this.canvas.height = H;
     }
+    gpu.fit(W, H);
     gl.viewport(0, 0, W, H);
     gl.clearColor(0, 0, 0, 0);
     gl.enable(gl.DEPTH_TEST);
@@ -722,8 +977,9 @@ export class DeviceScene {
     }
 
     // live screen texture
+    const tex = this._tex.tex;
     if (this.src) {
-      gl.bindTexture(gl.TEXTURE_2D, this.tex);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
       try {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this.src);
       } catch { /* canvas not ready yet */ }
@@ -732,55 +988,71 @@ export class DeviceScene {
     const proj = M4.persp(0.62, W / H, 5, 2000);
     const view = M4.translate(0, -this.viewY, -this.dist);
     const spin = M4.mul(M4.rotX(this.rot.x), M4.rotY(this.rot.y));
+    const { u, a, su, sa } = gpu;
 
     // the grounding shadow, under everything, blended, no depth write
     if (this.shadow) {
-      gl.useProgram(this.sprog);
+      gl.useProgram(gpu.sprog);
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // premultiplied
       gl.depthMask(false);
-      gl.uniformMatrix4fv(this.su.proj, false, proj);
-      gl.uniform3f(this.su.center, 0, this.shadow.y - this.viewY, -this.dist);
-      gl.uniform2f(this.su.radii, this.shadow.rx, this.shadow.rz);
-      gl.uniform1f(this.su.alpha, this.shadow.alpha);
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.squad);
-      gl.vertexAttribPointer(this.sa, 2, gl.FLOAT, false, 0, 0);
-      gl.enableVertexAttribArray(this.sa);
+      gl.uniformMatrix4fv(su.proj, false, proj);
+      gl.uniform3f(su.center, 0, this.shadow.y - this.viewY, -this.dist);
+      gl.uniform2f(su.radii, this.shadow.rx, this.shadow.rz);
+      gl.uniform1f(su.alpha, this.shadow.alpha);
+      gl.bindBuffer(gl.ARRAY_BUFFER, gpu.squad);
+      gl.vertexAttribPointer(sa, 2, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(sa);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
+      gl.disableVertexAttribArray(sa);
       gl.depthMask(true);
       gl.disable(gl.BLEND);
     }
 
-    gl.useProgram(this.prog);
-    gl.uniformMatrix4fv(this.u.uProj, false, proj);
-    gl.uniformMatrix4fv(this.u.uView, false, view);
-    gl.uniform1i(this.u.uTex, 0);
+    gl.useProgram(gpu.prog);
+    gl.uniformMatrix4fv(u.uProj, false, proj);
+    gl.uniformMatrix4fv(u.uView, false, view);
+    gl.uniform1i(u.uTex, 0);
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.tex);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.enableVertexAttribArray(a.pos);
+    gl.enableVertexAttribArray(a.nrm);
+    gl.enableVertexAttribArray(a.uv);
 
     for (const p of this.parts) {
-      gl.uniformMatrix4fv(this.u.uModel, false, M4.mul(spin, p.model));
-      gl.uniform3fv(this.u.uColor, (p.role && finishColor(p.role)) || p.color);
-      gl.uniform1f(this.u.uGloss, p.gloss);
-      gl.uniform1f(this.u.uMetal, p.metal || 0);
-      gl.uniform1f(this.u.uUseTex, p.screen ? 1 : 0);
-      gl.uniform1f(this.u.uEmissive, this.glow);
-      gl.uniform1f(this.u.uClipZ, p.clippable ? this.clipZ : 1e9);
-      gl.uniform1f(this.u.uMinZ, p.minZ || 0);
-      gl.uniform1f(this.u.uOverhangOn, this.overhangOn && p.clippable ? 1 : 0);
-      gl.uniform1f(this.u.uUnlit, p.unlit ? 1 : 0);
+      gl.uniformMatrix4fv(u.uModel, false, M4.mul(spin, p.model));
+      gl.uniform3fv(u.uColor, (p.role && finishColor(p.role)) || p.color);
+      gl.uniform1f(u.uGloss, p.gloss);
+      gl.uniform1f(u.uMetal, p.metal || 0);
+      gl.uniform1f(u.uUseTex, p.screen ? 1 : 0);
+      gl.uniform1f(u.uEmissive, this.glow);
+      gl.uniform1f(u.uClipZ, p.clippable ? this.clipZ : 1e9);
+      gl.uniform1f(u.uMinZ, p.minZ || 0);
+      gl.uniform1f(u.uOverhangOn, this.overhangOn && p.clippable ? 1 : 0);
+      gl.uniform1f(u.uUnlit, p.unlit ? 1 : 0);
       gl.bindBuffer(gl.ARRAY_BUFFER, p.vbo);
-      gl.vertexAttribPointer(this.a.pos, 3, gl.FLOAT, false, 0, 0);
-      gl.enableVertexAttribArray(this.a.pos);
+      gl.vertexAttribPointer(a.pos, 3, gl.FLOAT, false, 0, 0);
       gl.bindBuffer(gl.ARRAY_BUFFER, p.nbo);
-      gl.vertexAttribPointer(this.a.nrm, 3, gl.FLOAT, false, 0, 0);
-      gl.enableVertexAttribArray(this.a.nrm);
+      gl.vertexAttribPointer(a.nrm, 3, gl.FLOAT, false, 0, 0);
       gl.bindBuffer(gl.ARRAY_BUFFER, p.ubo);
-      gl.vertexAttribPointer(this.a.uv, 2, gl.FLOAT, false, 0, 0);
-      gl.enableVertexAttribArray(this.a.uv);
+      gl.vertexAttribPointer(a.uv, 2, gl.FLOAT, false, 0, 0);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, p.ibo);
       gl.drawElements(p.lines ? gl.LINES : gl.TRIANGLES, p.count,
                       gl.UNSIGNED_SHORT, 0);
+    }
+    // leave no attribute enabled between passes: an enabled array whose
+    // buffer a later clearParts() deletes is exactly the "no buffer is bound
+    // to enabled attribute" the shadow quad's drawArrays used to trip on
+    gl.disableVertexAttribArray(a.pos);
+    gl.disableVertexAttribArray(a.nrm);
+    gl.disableVertexAttribArray(a.uv);
+
+    // the frame is in the shared context's bottom-left W×H; the card shows it
+    // (same task, so the drawing buffer is still intact)
+    const c2 = this.ctx2d;
+    if (c2) {
+      c2.clearRect(0, 0, W, H);
+      c2.drawImage(gpu.canvas, 0, gpu.canvas.height - H, W, H, 0, 0, W, H);
     }
   }
 
@@ -811,7 +1083,7 @@ export class DeviceScene {
   removePart(part) {
     const i = this.parts.indexOf(part);
     if (i < 0) return;
-    for (const b of ["vbo", "nbo", "ubo", "ibo"]) this.gl.deleteBuffer(part[b]);
+    this._free(part);
     this.parts.splice(i, 1);
   }
 }

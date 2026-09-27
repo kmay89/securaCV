@@ -78,10 +78,11 @@ try {
     await frames(24);                          // settle: sway, shadow, glass
     scene.stop();
     scene.draw();                              // final deterministic frame
-    const gl = scene.gl;
-    const px = new Uint8Array(gl.drawingBufferWidth * gl.drawingBufferHeight * 4);
-    gl.readPixels(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight,
-                  gl.RGBA, gl.UNSIGNED_BYTE, px);
+    // the scene draws into the page's ONE shared context, bottom-left, at
+    // its card's size (scene3d.js "GPU lifecycle") — read exactly that rect
+    const gl = scene.gl, W = cv.width, H = cv.height;
+    const px = new Uint8Array(W * H * 4);
+    gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, px);
     let covered = 0, sum = 0, sumSq = 0, n = 0;
     for (let i = 0; i < px.length; i += 16) {   // sample every 4th pixel
       if (px[i + 3] > 8) {
