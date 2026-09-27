@@ -16,8 +16,12 @@ breathing-confirmed lock (P0 binary) and breath/heart-rate BPM numerics (P1).
 
 - Vitals are **wellbeing signals, not medical data**: never sealed-logged,
   never precise-timestamped, health/status channel only, P1 opt-in for numerics.
-- The contract enforcer allowlists only `PresenceInRestrictedZone`
-  (+ `TamperDetected`) for this device — a vitals payload physically cannot seal.
+- A vitals payload cannot seal because nothing in the vocabulary can carry
+  one: the firmware has no vitals event type and the dictionary has no
+  vitals claim kind. The per-device allowlist the design doc describes (an
+  `mr60` adapter descriptor admitting only `PresenceInRestrictedZone` +
+  `TamperDetected`) is **not implemented** yet; the vocabulary is the
+  enforcement point today (design doc §4.3).
 
 ## Constraints
 

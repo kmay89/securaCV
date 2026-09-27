@@ -330,6 +330,11 @@ export class PresenceFSM {
     const ev = { state_changed: false, count_changed: false, stalled: false };
 
     // ---- DEADLINE FIRST (stall-safe): a dead UART can never freeze us ----
+    if (now - this.lastFrameMs >= this.cfg.stall_timeout_ms) {
+      // the target run ends with the link, Unknown included: a returning
+      // frame starts a fresh debounce (mirrors mr60_presence.cpp)
+      this.rawTarget = false;
+    }
     if (this.state !== Presence.Unknown && now - this.lastFrameMs >= this.cfg.stall_timeout_ms) {
       ev.count_changed = this.count !== CountBucket.Zero;
       this.state = Presence.Unknown;
@@ -356,11 +361,12 @@ export class PresenceFSM {
     const prevState = this.state;
 
     if (frame.has_target) {
+      // a target frame only ever leads to Present, after the debounce; from
+      // Unknown it stays Unknown meanwhile — the firmware signs nothing from
+      // Unknown, and a "cleared" over a body would be a false record
+      // (mirrors mr60_presence.cpp)
       if (this.state !== Presence.Present && now - this.targetSinceMs >= this.cfg.present_debounce_ms) {
         this.state = Presence.Present;
-      } else if (this.state === Presence.Unknown) {
-        // first data after a stall: report something promptly, settle via debounce
-        this.state = Presence.Clear;
       }
     } else {
       if (this.state !== Presence.Clear && now - this.targetGoneMs >= this.cfg.clear_timeout_ms) {

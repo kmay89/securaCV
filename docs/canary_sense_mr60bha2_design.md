@@ -4,7 +4,15 @@ Status: **in progress** — Phase 0 (toolchain + sensing core) and Phase 2
 (MQTT + HA discovery + signed pull-OTA + runtime config + Ed25519 witness
 signing with NVS hash chain and HA-verified trust surface) are in the tree;
 the hardware bench passes remain (see
-`firmware/projects/canary-sense/README.md` for live status)
+`firmware/projects/canary-sense/README.md` for live status). **Read the
+numbers below as the vendor's envelope, not ours:** the UART decoder is
+built from the ESPHome component's frame layout and host-tested against
+frames the test itself builds — it has not yet parsed a frame from a real
+module, and the `[BENCH]` flags in `mr60_uart.h` (distance unit, target-count
+frame) are open. No range, accuracy or false-positive figure on this page
+has been measured by this project; the sources are Seeed's datasheet and
+wiki, and [`docs/hardware/mr60bha2_radar_notes.md`](./hardware/mr60bha2_radar_notes.md)
+§2 lists what the bench still has to confirm.
 Hardware: Seeed Studio MR60BHA2 60GHz mmWave Kit (radar module + XIAO ESP32-C6)
 Firmware project (new): `firmware/projects/canary-sense`
 Sibling hardware (follow-on, same protocol family): MR60FDA2 fall-detection kit
@@ -39,7 +47,9 @@ That makes it the strongest privacy story of any canary so far:
 | Heart rate | no | no | **~85% accuracy, ≤1.5 m** |
 | Target count | bbox count | aggregate only | yes |
 | Ambient light | no | no | yes (BH1750, 1–65,535 lux) |
-| Affected by light/temp/dust | yes (camera) | no | no |
+| Affected by light/dust | yes (camera) | no | no |
+| Affected by temperature | no | no | noise floor rises with temperature — keep the radome off hot surfaces and out of appliance exhaust (`firmware/boards/boards.json`) |
+| Affected by moving air / fabric | no | yes (CSI) | **yes** — fans, A/C flow and swaying curtains are the documented #1 false-positive; placement, not a setting, is the fix (§3 of the radar notes) |
 
 It also *complements* rather than replaces the existing canaries: CSI presence
 (canary-wap) and radar presence (canary-sense) fail independently — different
@@ -95,7 +105,7 @@ mapping:
 |---|---|---|---|---|
 | Person presence (binary) | `PresenceInRestrictedZone` | `PresenceInRestrictedZone` | P0 | FSM-debounced like canary-vision (presence → dwelling) |
 | Target count | `PresenceInRestrictedZone` (count as confidence-weighted aggregate attribute) | same | P0 | bucketed counts only (0 / 1 / 2+), never a track log |
-| Distance to target | *not exported as an event* | — | P2 | used on-device for zone gating only; raw distance never leaves device (coarse `near/mid/far` may appear in HA diagnostics) |
+| Distance to target | coarse `range` band on the presence events | — | P2 | raw centimeters never leave the device; the `near/mid/far` band is a field of every signed `presence_*` / `occupancy_changed` event and of the retained state (there is no event-level gating on it today — a band is coarse enough to ride the event, and the code does exactly that) |
 | Breathing detected (binary lock) | wellbeing signal (health channel, not sealed-log event) | — | P0 | mirrors `core.breathing` semantics from CSI modules (`docs/csi_modules.md`): `breathing_confirmed` / `breathing_lost` |
 | Breathing rate (BPM numeric) | wellbeing signal | — | **P1 opt-in** | same gate as CSI BPM today |
 | Heart rate (BPM numeric) | wellbeing signal | — | **P1 opt-in** | new signal class; never sealed-logged, never precise-timestamped, HA-local only |
@@ -108,7 +118,10 @@ mapping:
    cage).** Ceiling/wall mount, presence FSM emits signed
    `PresenceInRestrictedZone` claims with coarse time buckets. Works in total
    darkness where canary-vision can't, and indoors where canary-wap CSI is
-   noisy (HVAC airflow doesn't affect radar).
+   noisy. (Moving air is not free for radar either: a fan or an A/C vent in
+   the sector is the documented false-positive, so the placement rules in
+   the radar notes apply; what radar is immune to is the multipath churn
+   that makes CSI noisy in a busy room.)
 2. **After-hours occupancy corroboration.** Pairs with Frigate/canary-vision:
    radar presence + camera person-detection in the same zone bucket gives a
    two-physics corroborated event — much stronger evidentiary weight in the
@@ -262,15 +275,22 @@ Track B uptake justifies it.
 2. **Adapter**: extend `mqtt_sensor` route config (Track B) with an
    `mr60bha2` profile (entity-name → claim mapping, confidence defaults,
    target-count bucketing). Track A devices arrive via the existing canary
-   MQTT path (`securacv/<device_id>/events`, signature-verified against
-   pinned pubkeys in `device_pubkeys`), so the kernel needs **zero schema
-   change** for presence.
+   MQTT path (`securacv/<device_id>/events`). Note what verifies where: the
+   Home Assistant integration verifies the device signature against its
+   TOFU-pinned key; the kernel's `mqtt_sensor` adapter does **not** verify
+   device signatures on ingest (events it seals are kernel-signed at ingest,
+   attestation `adapter`), and there is no `device_pubkeys` store in the
+   kernel today. The kernel still needs **zero schema change** for presence.
 3. **Wellbeing channel**: vitals deliberately bypass the sealed log. They ride
-   the health/status topic (like battery and breathing-score do today) and
-   exist only as HA entities. Enforced by the contract enforcer: adapter
-   descriptor for the mr60 profile allowlists only
-   `PresenceInRestrictedZone` (+ `TamperDetected` for lux corroboration), so
-   a buggy or malicious payload physically cannot seal a heart-rate record.
+   the retained state topic (never the signed events) and exist only as HA
+   entities. **What holds this today, honestly:** the firmware has no vitals
+   event type to emit, and the dictionary has no vitals claim kind for the
+   kernel to accept — a heart-rate record cannot seal because nothing in the
+   vocabulary can carry one. The per-device adapter descriptor that would
+   allowlist only `PresenceInRestrictedZone` (+ `TamperDetected`) for an
+   `mr60` profile is **not implemented**: `mqtt_sensor` routes accept the
+   generic claim set, and there is no `mr60bha2` profile. The vocabulary is
+   the enforcement point until that lands.
 4. **Corroboration (stretch, Phase 4)**: a small post-ingest annotator that
    marks events sharing (zone, time_bucket) across ≥2 independent adapters
    with a `corroborated_by` metadata field — additive, doesn't touch the

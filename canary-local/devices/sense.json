@@ -432,8 +432,8 @@
         "suffix": "health",
         "retained": true,
         "cadence": "~60 s + on reconnect",
-        "payload": "{\"battery\":100,\"battery_present\":false,\"memory_free\":145120,\"uptime\":312,\"firmware_version\":\"2.4.15\",\"public_key\":\"\u2026\"}",
-        "note": "carries the pubkey Home Assistant TOFU-pins on first sight \u2014 the green-badge trust anchor"
+        "payload": "{\"battery\":100,\"battery_present\":false,\"memory_free\":145120,\"uptime\":312,\"firmware_version\":\"2.4.15\",\"public_key\":\"\u2026\",\"radar\":{\"link_ok\":true,\"last_frame_age_ms\":412,\"frame_errors\":0}}",
+        "note": "carries the pubkey Home Assistant TOFU-pins on first sight \u2014 the green-badge trust anchor \u2014 and the radar-link object HA's diagnostic sensor reads (link_ok / last_frame_age_ms / frame_errors)"
       },
       {
         "suffix": "update/state",
@@ -665,7 +665,7 @@
       "title": "Restricted-zone witness",
       "where": "workshop, server closet, storage cage",
       "how": "ceiling/wall mount; the presence FSM emits signed PresenceInRestrictedZone claims with coarse time buckets",
-      "why": "works in total darkness where a camera can't, and indoors where WiFi-CSI is noisy \u2014 HVAC airflow doesn't affect radar"
+      "why": "works in total darkness where a camera can't, and indoors where WiFi-CSI is noisy \u2014 though a fan or A/C vent in the sector is radar's documented false-positive, so placement matters"
     },
     {
       "title": "After-hours corroboration",
@@ -736,10 +736,22 @@
       "sense": "none"
     },
     {
-      "cap": "Affected by light / temp / dust",
+      "cap": "Affected by light / dust",
       "vision": "yes (camera)",
       "wap": "no",
       "sense": "no"
+    },
+    {
+      "cap": "Affected by temperature",
+      "vision": "no",
+      "wap": "no",
+      "sense": "noise floor rises with temperature \u2014 keep the radome off hot surfaces"
+    },
+    {
+      "cap": "Affected by moving air / fabric",
+      "vision": "no",
+      "wap": "yes",
+      "sense": "yes \u2014 fans, A/C flow, swaying curtains (the documented #1 false-positive)"
     }
   ],
   "placement": {

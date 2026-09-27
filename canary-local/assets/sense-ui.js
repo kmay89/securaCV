@@ -88,7 +88,10 @@ export function makePresenceFSM(cfg) {
     tick(frame, now) {
       const before = state, beforeCount = count;
       // deadline first: silence past the stall window is Unknown, always
-      if (now - lastFrame >= cfg.stall_ms) { state = "unknown"; range = "unknown"; }
+      // (the target run ends with the link, so a returning frame runs a fresh
+      // debounce instead of promoting itself off the pre-stall clock — mirrors
+      // mr60_presence.cpp)
+      if (now - lastFrame >= cfg.stall_ms) { state = "unknown"; range = "unknown"; rawTarget = false; }
       if (frame) {
         lastFrame = now;
         if (frame.hasTarget) {

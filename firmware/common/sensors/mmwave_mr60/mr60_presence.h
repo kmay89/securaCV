@@ -94,6 +94,9 @@ public:
     Presence    state() const { return state_; }
     CountBucket count() const { return count_; }
     RangeBand   range() const { return range_; }
+    // `millis()` of the last presence frame (or the last reset). The health
+    // payload reports `now - last_frame_ms()` as the radar link's frame age.
+    uint32_t    last_frame_ms() const { return last_frame_ms_; }
 
 private:
     static CountBucket bucket_of(uint8_t raw);
