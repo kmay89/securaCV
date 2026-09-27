@@ -26,7 +26,7 @@ namespace canary::net {
   // Witness trust surface (canary-wap wire schema):
   //   health — retained; carries public_key so HA TOFU-pins the device.
   //   chain  — retained; signed head+length, verified by HA's verify_chain.
-  void publish_health_retained(const Topics& topics);
+  void publish_health_retained(const Topics& topics, const SenseSnapshot& s);
   void publish_chain_retained(const Topics& topics);
 
   // HA discovery (retained)

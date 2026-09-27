@@ -111,6 +111,7 @@ static PresenceConfig make_presence_config() {
 static PresenceFSM g_presence(PresenceConfig{});
 
 static void poll_sense_cfg_commands(uint32_t now);
+static void refresh_snapshot(uint32_t now_ms);  // the health publish reads it
 
 #ifdef CANARY_SENSE_VITALS
 using securacv::mmwave::VitalsConfig;
@@ -178,7 +179,8 @@ static bool mqtt_supervise(uint32_t now) {
     canary::net::publish_status_retained(TOPICS, "online");
     // Trust surface: health carries the pubkey HA TOFU-pins on; the
     // retained chain head lets HA verify continuity immediately.
-    canary::net::publish_health_retained(TOPICS);
+    refresh_snapshot(now);
+    canary::net::publish_health_retained(TOPICS, g_snap);
     canary::net::publish_chain_retained(TOPICS);
     g_last_health_ms = now;
     return true;
@@ -510,6 +512,7 @@ static void refresh_snapshot(uint32_t now_ms) {
   g_snap.range     = range_str(g_presence.range());
   g_snap.radar_ok  = (g_presence.state() != Presence::Unknown);
   g_snap.frame_errors = g_parser.error_count();
+  g_snap.radar_frame_age_ms = now_ms - g_presence.last_frame_ms();  // wrap-safe
   g_snap.uptime_s  = now_ms / 1000;
   g_snap.ts_ms     = now_ms;
 }
@@ -960,7 +963,8 @@ void loop() {
   // store and diagnostics).
   if ((int32_t)(now - g_last_health_ms) >= (int32_t)HEALTH_PUBLISH_MS) {
     g_last_health_ms = now;
-    canary::net::publish_health_retained(TOPICS);
+    refresh_snapshot(now);
+    canary::net::publish_health_retained(TOPICS, g_snap);
   }
 
   // Health heartbeat. Under heap pressure the diagnostics ladder stretches

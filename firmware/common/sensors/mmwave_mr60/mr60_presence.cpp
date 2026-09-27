@@ -1,11 +1,21 @@
 /**
  * @file mr60_presence.cpp
- * @brief Presence / count FSM implementation (Phase 0 skeleton).
+ * @brief Presence / count FSM implementation.
  *
- * The debounce + stall logic is real and host-testable; it runs correctly even
- * while mr60_uart's decoder is still a stub (every tick then sees a
- * FrameKind::None frame and the FSM drives itself to Unknown on the stall
- * deadline — the safe direction).
+ * The debounce + stall logic is host-tested against golden frames from
+ * mr60_uart's decoder (firmware/tests_host/test_mr60_uart.cpp). A silent
+ * radar still drives the FSM: every tick then sees a FrameKind::None frame
+ * and the deadline check moves it to Unknown — the safe direction.
+ *
+ * What leaves Unknown, and why it matters: Unknown is the state the caller
+ * signs NOTHING from (canary-sense records `presence_detected` on Present
+ * and `presence_cleared` on Clear). A frame that reports a target must
+ * therefore never take the FSM to Clear on its way to Present — it used to,
+ * "so we report something promptly", and canary-sense sealed a signed
+ * `presence_cleared` record while the radar was reporting a body. Now a
+ * target frame after Unknown starts the debounce run and the state stays
+ * Unknown until Present is earned; a no-target frame after Unknown goes to
+ * Clear, which is what the radar said.
  */
 
 #include "mr60_presence.h"
@@ -55,6 +65,10 @@ PresenceEvent PresenceFSM::tick(const Frame& frame, uint32_t now_ms) {
         state_ = Presence::Unknown;
         count_ = CountBucket::Zero;
         range_ = RangeBand::Unknown;
+        // The target run ends with the link: the first frame after the radar
+        // comes back starts a fresh debounce, so a stale `target_since_ms_`
+        // cannot promote one returning frame straight to Present.
+        raw_target_ = false;
         ev.state_changed = true;
         ev.stalled       = true;
         ev.state = state_;
@@ -86,14 +100,13 @@ PresenceEvent PresenceFSM::tick(const Frame& frame, uint32_t now_ms) {
     const Presence prev_state = state_;
 
     if (frame.has_target) {
+        // A target frame only ever leads to Present, after the debounce.
+        // From Unknown it stays Unknown meanwhile: the caller signs nothing
+        // from Unknown, and a signed "cleared" while a body is in view is
+        // a false record, not a prompt one (see the file comment).
         if (state_ != Presence::Present &&
             elapsed(now_ms, target_since_ms_, cfg_.present_debounce_ms)) {
             state_ = Presence::Present;
-        } else if (state_ == Presence::Unknown) {
-            // First data after a stall: leave Unknown promptly so we report
-            // *something* rather than waiting a full debounce while clearly
-            // seeing a target. Settle to Present via the debounce above.
-            state_ = Presence::Clear;
         }
     } else {
         if (state_ != Presence::Clear &&

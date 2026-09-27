@@ -381,11 +381,15 @@ void publish_event(const Topics& topics, const char* json_payload) {
   publish_checked("EVENT", topics.events, json_payload, false);
 }
 
-void publish_health_retained(const Topics& topics) {
+void publish_health_retained(const Topics& topics, const SenseSnapshot& s) {
   // Same field set as canary-wap's mains-powered health publish: HA's
   // health handler reads memory/uptime/firmware and — crucially —
-  // TOFU-pins the device from `public_key` on first sight.
-  char msg[384];
+  // TOFU-pins the device from `public_key` on first sight. The `radar`
+  // object is the wire contract HA's radar-link diagnostic sensor reads
+  // (custom_components/securacv/sensor.py, SecuraCVCanaryRadarLinkSensor:
+  // link_ok / last_frame_age_ms / frame_errors) — it used to be documented
+  // there and published nowhere, so the entity never left "unknown".
+  char msg[512];
   const int n = snprintf(msg, sizeof(msg),
            "{"
            "\"battery\":100,"
@@ -393,12 +397,20 @@ void publish_health_retained(const Topics& topics) {
            "\"memory_free\":%lu,"
            "\"uptime\":%lu,"
            "\"firmware_version\":\"%s\","
-           "\"public_key\":\"%s\""
+           "\"public_key\":\"%s\","
+           "\"radar\":{"
+             "\"link_ok\":%s,"
+             "\"last_frame_age_ms\":%lu,"
+             "\"frame_errors\":%lu"
+           "}"
            "}",
            (unsigned long)ESP.getFreeHeap(),
            (unsigned long)(ms_now() / 1000UL),
            CANARY_FW_VERSION,
-           device_signature::pubkey_hex());
+           device_signature::pubkey_hex(),
+           s.radar_ok ? "true" : "false",
+           (unsigned long)s.radar_frame_age_ms,
+           (unsigned long)s.frame_errors);
   if (n <= 0 || (size_t)n >= sizeof(msg)) return;
   publish_checked("HEALTH", topics.health, msg, true);
 }

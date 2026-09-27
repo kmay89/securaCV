@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Canary Sense: a returning radar never signs "cleared" over a body, HA's radar-link sensor gets its data, and the radar docs stop outrunning the decoder
+
+- **The presence FSM no longer passes through Clear on the way back from a
+  stall.** The first target frame after Unknown used to move the state to
+  Clear "so we report something promptly", and canary-sense sealed a signed
+  `presence_cleared` record while the radar was reporting a body. A target
+  frame now starts the debounce and the state stays Unknown until Present
+  is earned; a no-target frame goes to Clear, which is what the radar said.
+  A stall also ends the target run, so a returning frame cannot be promoted
+  to Present off a debounce clock that ran before the link dropped
+  (`mr60_presence.cpp`; `test_presence_fsm_stall_recovery_never_reports_clear_with_a_target`,
+  and the integration test's old assertion, which pinned the defect, now
+  pins the fix).
+- **The health payload carries the `radar` object HA reads.** Home
+  Assistant's radar-link diagnostic sensor documented a wire contract
+  (`link_ok`, `last_frame_age_ms`, `frame_errors`) that no firmware
+  published, so the entity never left "unknown". canary-sense now publishes
+  it in every retained health message (`PresenceFSM::last_frame_ms()`).
+- **The radar docs say what is decoded and what is vendor copy.** The
+  design doc now states that no range, accuracy or false-positive figure on
+  it was measured here, that the decoder has not yet parsed a real module's
+  frame, that the coarse `range` band rides every signed presence event
+  (raw centimeters do not), that temperature and moving air do affect the
+  radar, and that the per-device claim allowlist it described is not
+  implemented — the vocabulary is what keeps a vitals record from sealing.
+  The coarse-class design stops claiming direction and a Doppler spectrum
+  the firmware does not decode. The Lab's house copy stops calling the
+  breathing rate Ed25519-signed (it rides the unsigned state topic) and
+  argues the radar's privacy from what the host reads rather than
+  asserting it. `sense.json` regenerated.
+
 ### A power cut mid-append no longer reads as tampering in the card's witness log
 
 - **The torn line is sealed onto its own line.** A power cut mid-append

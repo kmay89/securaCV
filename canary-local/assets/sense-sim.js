@@ -335,6 +335,8 @@ export class PresenceFSM {
       this.state = Presence.Unknown;
       this.count = CountBucket.Zero;
       this.range = RangeBand.Unknown;
+      // the target run ends with the link: a returning frame starts a fresh debounce
+      this.rawTarget = false;
       ev.state_changed = true;
       ev.stalled = true;
       ev.state = this.state; ev.count = this.count; ev.range = this.range;
@@ -356,11 +358,12 @@ export class PresenceFSM {
     const prevState = this.state;
 
     if (frame.has_target) {
+      // a target frame only ever leads to Present, after the debounce; from
+      // Unknown it stays Unknown meanwhile — the firmware signs nothing from
+      // Unknown, and a "cleared" over a body would be a false record
+      // (mirrors mr60_presence.cpp)
       if (this.state !== Presence.Present && now - this.targetSinceMs >= this.cfg.present_debounce_ms) {
         this.state = Presence.Present;
-      } else if (this.state === Presence.Unknown) {
-        // first data after a stall: report something promptly, settle via debounce
-        this.state = Presence.Clear;
       }
     } else {
       if (this.state !== Presence.Clear && now - this.targetGoneMs >= this.cfg.clear_timeout_ms) {

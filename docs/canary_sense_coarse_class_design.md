@@ -18,8 +18,12 @@ for anyone.
 
 Sense already computes almost everything the classifier needs and throws most of it away:
 
-- It already reports **presence**, **occupancy 0/1/2+**, **approaching/receding direction**, a
-  **motion/Doppler spectrum** (the 8-band activity display), and range bands.
+- It already reports **presence**, **occupancy 0/1/2+** and **range bands** — those are the
+  five frame types the decoder parses today (presence, target count, distance, breath rate,
+  heart rate; `mr60_uart.h`). **It does not yet decode direction or any Doppler/velocity
+  spectrum**: the "8-band activity display" is the Sense Lab's simulation, not a firmware
+  output. The classifier below therefore needs one new decoded input before it can start,
+  and §2 says which.
 - The BumbleBee papers' recipe for "walk / run / crawl / human-vs-vehicle" is just **spectrogram
   features → a light SVM/decision-tree** ([MDPI *Sensors* 2012](https://www.mdpi.com/1424-8220/12/2/1336),
   [IEEE GRSL 2015](https://ieeexplore.ieee.org/document/7172472/)). We already have the spectrogram;
@@ -27,17 +31,21 @@ Sense already computes almost everything the classifier needs and throws most of
 - The output maps onto vocabulary and a pipeline the fleet **already has** (see §5) — so the
   drift-gated dictionary doesn't move for the recommended Phase 0.
 
-The genuinely new *device* (Ranger) exists because our FMCW radar's ~1–2 W budget can't live on a
-fencepost. But indoors, on mains power, **the classification itself is a firmware feature, not a new
+The genuinely new *device* (Ranger) exists because our FMCW radar's power budget (the kit draws
+under a watt; see the radar notes) can't live on a fencepost battery. But indoors, on mains power, **the classification itself is a firmware feature, not a new
 part.**
 
 ---
 
 ## 2 · Signal source — use what's decoded, not the unverified frame
 
-**Primary features come from the aggregate Doppler/motion data the firmware already decodes** — the
-per-frame velocity/Doppler spectrum, motion magnitude, and range band. This keeps the feature path
-on ground we already stand on.
+**Primary features would come from aggregate Doppler/motion data — a per-frame velocity/Doppler
+spectrum or motion magnitude — plus the range band the firmware already decodes.** The first two
+are **not decoded today**: the MR60BHA2's documented scalar frames carry presence, count, distance
+and vitals, and whether the module exposes a motion/velocity aggregate at all (as opposed to the
+partnership-gated point cloud) is a bench question, not a settled fact. So Phase 0's first task is
+to establish that input; until it exists this design has nothing to classify on. Range band is the
+one feature on ground we already stand on.
 
 **Deliberately NOT depended on: the raw 3D point cloud (`0x0A08`).** The radar notes flag that frame
 as *partnership-gated and unverified* ([`mr60bha2_radar_notes.md`](./hardware/mr60bha2_radar_notes.md)
@@ -84,7 +92,7 @@ three hard rules of its own:**
    vehicle — it is **never** retained or matched as a gait signature. Gait ID is
    [absent from the codebase by design](./strategy/14-pose-estimation-v2-ai.md) and stays that way.
    The moment a "classifier" starts telling *individuals* apart, it's the thing we don't build.
-3. **Activity (walk/run/crawl) is an unsealed hint only.** Like Sense's existing "Active" state, the
+3. **Activity (walk/run/crawl) is an unsealed hint only.** Like the CSI canary's activity hint (Sense itself has only unknown / clear / present today), the
    velocity-band activity guess is a *local/dashboard* signal — never a sealed claim, because
    behavior inference sits closer to the line than size does.
 
