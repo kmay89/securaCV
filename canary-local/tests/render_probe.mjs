@@ -15,10 +15,12 @@
 // Uses playwright (or playwright-core with PW_EXECUTABLE set).
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { extname, join, dirname, resolve, sep } from "node:path";
+import { extname, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { indexTree, lookup } from "./probe_server.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const FILES = indexTree(ROOT);
 const MIME = {
   ".html": "text/html", ".js": "text/javascript", ".json": "application/json",
   ".css": "text/css", ".glb": "model/gltf-binary",
@@ -41,14 +43,11 @@ const server = createServer(async (req, res) => {
     return;
   }
   try {
-    // the URL is untrusted: decode it, refuse any ".." segment, resolve it
-    // under ROOT and read the RESOLVED path only (CodeQL's path-injection
-    // sanitizer: the value that reaches readFile is the one that was checked)
-    const decoded = decodeURIComponent(path);
-    if (decoded.split("/").includes("..")) throw new Error("outside root");
-    const rp = resolve(ROOT, "." + decoded);
-    if (rp !== ROOT && !rp.startsWith(ROOT + sep)) throw new Error("outside root");
-    const body = await readFile(rp);
+    // the URL never becomes a path: it is looked up in the tree's index
+    // (probe_server.mjs), so the path that reaches readFile is the index's
+    const file = lookup(FILES, req.url);
+    if (!file) throw new Error("not in the tree");
+    const body = await readFile(file);
     res.writeHead(200, { "content-type": MIME[extname(path)] || "application/octet-stream" });
     res.end(body);
   } catch {
