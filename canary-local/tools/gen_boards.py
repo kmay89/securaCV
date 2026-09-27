@@ -14,29 +14,52 @@ boards/boards.config.json it:
      lie about the mesh the browser will show.
 
 Committed GLBs are NOT byte-drift-gated (tessellation varies by cascadio build,
-exactly as preview STLs vary by openscad build); boards.json IS gated, and
-tests/boards.test.js re-derives its facts from the committed GLBs.
+exactly as preview STLs vary by openscad build); boards.json IS gated, in two
+halves: tests/boards.test.js re-derives the GEOMETRY facts (dims, triangles,
+parts, materials) from the committed GLBs with the page's own loader, and
+`--check` here re-derives everything ELSE — the fields this generator copies
+from boards/boards.config.json (name, vendor, mpn, devices, pose, pads,
+pinout, blurb, doc, provenance, the GLB and STEP paths) and the device →
+boards index — and diffs them against the committed file. A pinout row or a
+pose edited in the config without rerunning this used to ship the old value
+with every gate green: nothing in CI ran this file at all.
+
+    python3 canary-local/tools/gen_boards.py            # regenerate (needs cascadio etc.)
+    python3 canary-local/tools/gen_boards.py --check    # CI gate: config-derived facts vs boards.json
+
+--check needs neither cascadio nor a GLB: it takes each board's geometry
+facts from the committed row (they are the mesh's, and boards.test.js holds
+them to it), rebuilds the record around them and compares. Runs in
+canary-local.yml beside the figures gate.
 
 Local authoring tool — needs `pip install cascadio trimesh numpy` for the
 vendor-STEP boards, plus `shapely manifold3d` for the procedural Waveshare
-(rounded outline + boolean cutouts). CI does not run it (it verifies the
-committed outputs with node only), so those extra deps stay off the CI path.
+(rounded outline + boolean cutouts). Only --check runs in CI, so those extra
+deps stay off the CI path (they are imported lazily below for that reason).
 """
 import gzip
 import json
 import os
 import shutil
 import subprocess
+import sys
+from pathlib import Path
 
-import cascadio
-import numpy as np
-import trimesh
-from shapely.geometry import Polygon
-from trimesh.transformations import rotation_matrix
-from trimesh.visual import TextureVisuals
-from trimesh.visual.material import PBRMaterial
+try:  # the tessellation stack: needed to BUILD, never to --check
+    import cascadio
+    import numpy as np
+    import trimesh
+    from shapely.geometry import Polygon
+    from trimesh.transformations import rotation_matrix
+    from trimesh.visual import TextureVisuals
+    from trimesh.visual.material import PBRMaterial
+except ImportError as _e:  # pragma: no cover - depends on the environment
+    cascadio = np = trimesh = Polygon = rotation_matrix = TextureVisuals = PBRMaterial = None
+    _MISSING = _e
+else:
+    _MISSING = None
 
-from _tooling import repo_root
+from _tooling import die, repo_root
 
 REPO = repo_root()
 CFG = REPO / "boards" / "boards.config.json"
@@ -362,30 +385,30 @@ def build_board(cfg):
     return out, facts
 
 
-def main():
-    cfg = json.loads(CFG.read_text())
-    OUT_GLB_DIR.mkdir(parents=True, exist_ok=True)
-    boards = {}
-    for b in cfg["boards"]:
-        out, facts = build_board(b)
-        rel = os.path.relpath(out, REPO / "canary-local").replace("\\", "/")
-        boards[b["id"]] = {
-            "name": b["name"], "vendor": b["vendor"], "mpn": b.get("mpn"),
-            "devices": b["devices"], "glb": rel,
-            # procedural boards (built from photos/spec) have no vendor STEP
-            **({} if b["source"] == "procedural" else {"source_step": "boards/vendor/" + b["source"]}),
-            "dims_mm": facts["dims_mm"], "triangles": facts["triangles"],
-            "parts": facts["parts"], "materials": facts["materials"],
-            "pose": b["pose"],
-            # pads (full castellation map) and per-row anchor/anchors ride along
-            # verbatim — raw GLB mm, authored from tools/pin_anchors.mjs islands
-            **({"pads": b["pads"]} if "pads" in b else {}),
-            "pinout": b["pinout"], "blurb": b["blurb"],
-            "doc": b.get("doc"), "provenance": b["provenance"],
-        }
-        print(f"OK {b['id']}: {facts['dims_mm']} mm · {facts['triangles']:,} tris · "
-              f"{facts['parts']} parts · {len(facts['materials'])} materials → {rel}")
+GEOMETRY_FACTS = ("dims_mm", "triangles", "parts", "materials")
 
+
+def record(b, facts, rel):
+    """One boards.json row: the config's own fields around the GLB's facts.
+    The ONE place the row's shape is written, so --check compares exactly
+    what a build would write."""
+    return {
+        "name": b["name"], "vendor": b["vendor"], "mpn": b.get("mpn"),
+        "devices": b["devices"], "glb": rel,
+        # procedural boards (built from photos/spec) have no vendor STEP
+        **({} if b["source"] == "procedural" else {"source_step": "boards/vendor/" + b["source"]}),
+        "dims_mm": facts["dims_mm"], "triangles": facts["triangles"],
+        "parts": facts["parts"], "materials": facts["materials"],
+        "pose": b["pose"],
+        # pads (full castellation map) and per-row anchor/anchors ride along
+        # verbatim — raw GLB mm, authored from tools/pin_anchors.mjs islands
+        **({"pads": b["pads"]} if "pads" in b else {}),
+        "pinout": b["pinout"], "blurb": b["blurb"],
+        "doc": b.get("doc"), "provenance": b["provenance"],
+    }
+
+
+def document(boards):
     # device -> [board_id, ...] in config order (primary board first). A device
     # can carry more than one board (e.g. the Watch is a plain XIAO stacked in
     # the Round Display); board-lab.js renders a picker when the list has >1.
@@ -393,8 +416,7 @@ def main():
     for bid, e in boards.items():
         for d in e["devices"]:
             dev_index.setdefault(d, []).append(bid)
-
-    doc = {
+    return {
         "generated_by": "canary-local/tools/gen_boards.py",
         "note": ("Vendor board CAD (boards/vendor/*.step) tessellated to a committed "
                  "GLB by cascadio; geometry facts recomputed from the committed mesh by "
@@ -403,8 +425,85 @@ def main():
         "device_board": dev_index,
         "boards": boards,
     }
+
+
+def glb_rel(cfg_board):
+    out = OUT_GLB_DIR / (cfg_board["id"] + ".glb")
+    return out, os.path.relpath(out, REPO / "canary-local").replace("\\", "/")
+
+
+def check(cfg_path=CFG, out_json=OUT_JSON, repo=REPO):
+    """The committed boards.json is what this generator would write from the
+    config today, geometry facts aside (those are the committed mesh's, gated
+    by tests/boards.test.js). Returns the list of problems; empty is a pass."""
+    cfg = json.loads(Path(cfg_path).read_text())
+    out_json = Path(out_json)
+    if not out_json.exists():
+        return [f"{out_json.relative_to(repo)} is missing — run the generator"]
+    have = json.loads(out_json.read_text())
+    have_boards = have.get("boards") if isinstance(have.get("boards"), dict) else {}
+    bad = []
+    boards = {}
+    for b in cfg["boards"]:
+        got = have_boards.get(b["id"])
+        if not isinstance(got, dict):
+            bad.append(f"{b['id']}: in boards.config.json but not in boards.json — run the generator")
+            continue
+        out, rel = glb_rel(b)
+        if not out.exists():
+            bad.append(f"{b['id']}: committed GLB missing: {out.relative_to(repo)} — run the generator")
+        # the geometry facts are the committed mesh's — read from the row,
+        # never trusted here beyond their shape (boards.test.js proves them)
+        facts = {k: got.get(k) for k in GEOMETRY_FACTS}
+        if any(facts[k] is None for k in GEOMETRY_FACTS):
+            bad.append(f"{b['id']}: boards.json row lacks {[k for k in GEOMETRY_FACTS if facts[k] is None]}"
+                       " — run the generator")
+            continue
+        want = record(b, facts, rel)
+        boards[b["id"]] = want
+        for key in sorted(set(want) | set(got)):
+            if want.get(key) != got.get(key):
+                bad.append(f"{b['id']}.{key}: boards.config.json says {json.dumps(want.get(key))[:120]}, "
+                           f"boards.json has {json.dumps(got.get(key))[:120]} — run the generator")
+    for stray in sorted(set(have_boards) - {b["id"] for b in cfg["boards"]}):
+        bad.append(f"{stray}: in boards.json but not in boards.config.json — run the generator")
+    if not bad:
+        want_doc = document(boards)
+        for key in ("generated_by", "note", "device_board"):
+            if want_doc[key] != have.get(key):
+                bad.append(f"boards.json {key}: {json.dumps(have.get(key))[:160]} — run the generator")
+        if set(have) != set(want_doc):
+            bad.append(f"boards.json top-level keys {sorted(have)} != {sorted(want_doc)} — run the generator")
+    return bad
+
+
+def main():
+    if "--check" in sys.argv:
+        bad = check()
+        for b in bad:
+            print(f"::error::gen_boards: {b}" if os.environ.get("GITHUB_ACTIONS") else f"gen_boards: {b}",
+                  file=sys.stderr)
+        if bad:
+            sys.exit(1)
+        n = len(json.loads(CFG.read_text())["boards"])
+        print(f"boards.json OK ({n} boards match boards.config.json)")
+        return
+    if _MISSING is not None:
+        die(f"building the GLBs needs the tessellation stack ({_MISSING}); "
+            "pip install cascadio trimesh numpy shapely manifold3d — or run --check")
+    cfg = json.loads(CFG.read_text())
+    OUT_GLB_DIR.mkdir(parents=True, exist_ok=True)
+    boards = {}
+    for b in cfg["boards"]:
+        out, facts = build_board(b)
+        _, rel = glb_rel(b)
+        boards[b["id"]] = record(b, facts, rel)
+        print(f"OK {b['id']}: {facts['dims_mm']} mm · {facts['triangles']:,} tris · "
+              f"{facts['parts']} parts · {len(facts['materials'])} materials → {rel}")
+
+    doc = document(boards)
     OUT_JSON.write_text(json.dumps(doc, indent=1) + "\n")
-    print(f"\nOK boards.json: {len(boards)} boards; device map {dev_index}")
+    print(f"\nOK boards.json: {len(boards)} boards; device map {doc['device_board']}")
 
 
 if __name__ == "__main__":

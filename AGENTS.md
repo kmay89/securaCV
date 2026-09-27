@@ -208,6 +208,7 @@ These run on every PR. Run the relevant one locally before you push.
 | `scripts/lint_md_links.py` | Every relative link and `#anchor` in every tracked `.md` resolves — including the ~160 files outside `docs/` |
 | `scripts/lint_fleet_word.py` | A group of Canaries is a *fleet* — the banned bird-group word fails the build (rule 3, now deterministic) |
 | `scripts/lint_spelling.py` | US spellings everywhere (rule 3b); the banned forms live in its regex and nowhere else |
+| `scripts/lint_previews.py` | Every enclosure preview PNG the README, the docs or the catalogs embed exists, none on disk is unreferenced, and each has a `render.sh` recipe (CI renders with `--no-png`, so this is the only gate on them) |
 | `scripts/lint_glossary_status.py` | The glossary's device-line Status column equals the verdict `figures.json` derives (or an honest non-ladder label); a new table row needs a `ROW_MAP` entry in the same commit |
 | `scripts/lint_dictionary_sync.py` | Rust/Python/JS/firmware vocabularies match `spec/witness_dictionary.json` |
 | `scripts/gen_agent_entrypoints.py --check` | Vendor agent files match this file's brief block |

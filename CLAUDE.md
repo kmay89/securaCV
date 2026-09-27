@@ -153,6 +153,7 @@ devices/<slug>/device.json cad.params
   → render.sh --no-png           (the STLs; OpenSCAD 2021.01)
   → gen_assembled_dims.py        (assembled envelopes, measured off the fit-checked unions)
   → gen_hardware.py              (each preset's HARDWARE echo + lid-rib headroom → hardware.json; BOM join)
+  → gen_assembly_poses.py        (each case's seated datums → the Lab benches' poses in assembly.json)
   → gen_enclosures.py            (enclosures / catalog / build / workshop .json — catalog.json is
                                   figure evidence, so it is current BEFORE the figures read it)
   → gen_figures.mjs              (figures.json, the SVGs, fleet_figures.h / _art.h, FleetFigures.swift)
@@ -160,6 +161,9 @@ devices/<slug>/device.json cad.params
   → firmware/projects/canary-display/setup.sh regen   (only when fleet_figures*.h moved) — then STOP
   → dispatch the dist rebuild → pull it
   → gen_flash.py → gen_builder_manifest.py [--site <website-checkout>]
+      (with --site it also carries the website's upstream-contract.json BACK as
+       canary-local/devices/site_contract.json — the runtime paths the site fetches from
+       this tree; scripts/tests/test_site_contract.py holds every one to the tree)
   → gen_stamp.py --check, gen_mark_svg.py --check (report-only; a STAMP_REV bump is a human's call)
   → in the website repo, after the carry: its make-*-glb.mjs (the AR models re-read cad-dims.json)
 ```

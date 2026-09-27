@@ -1116,6 +1116,58 @@ def write_site(carries: dict[str, bytes], site: Path) -> list[str]:
     return written
 
 
+# ── the reverse carry: what the WEBSITE fetches from THIS tree at runtime ──
+# The showroom, story and figures pages fetch STLs, board GLBs, figure SVGs
+# and the device catalogs live from this repository (raw.githubusercontent,
+# github.io). The website derives the list of those paths from its own
+# sources into upstream-contract.json (its scripts/make-upstream-contract.mjs,
+# byte-gated there). A --site run carries that contract HERE, and
+# scripts/tests/test_site_contract.py holds every path and pattern in it to
+# the tree — so a rename on this side fails this repository's CI, not a
+# visitor's browser. Absent on the site (a checkout older than the
+# contract), the carry is skipped with a notice; once carried it is a
+# committed file the test reads.
+SITE_CONTRACT_IN = "upstream-contract.json"
+SITE_CONTRACT_OUT = REPO / "canary-local" / "devices" / "site_contract.json"
+
+
+def _rel(p: Path) -> str:
+    """p relative to the repository for messages (the tests redirect the
+    carried file into a temp dir, where it is not under REPO)."""
+    try:
+        return str(p.relative_to(REPO))
+    except ValueError:
+        return p.name
+
+
+def site_contract(site: Path) -> bytes | None:
+    """The bytes canary-local/devices/site_contract.json must hold for the
+    website checkout `site`, or None when the site has no contract yet."""
+    src = site / SITE_CONTRACT_IN
+    if not src.is_file():
+        return None
+    try:
+        data = json.loads(src.read_text(encoding="utf-8"))
+    except ValueError as e:
+        sys.exit(f"{src} is not JSON: {e}")
+    paths = data.get("paths")
+    patterns = data.get("patterns", [])
+    if not isinstance(paths, list) or not all(isinstance(x, str) and x for x in paths):
+        sys.exit(f"{src}: \"paths\" must be a list of repository-relative paths")
+    if not isinstance(patterns, list) or not all(isinstance(x, str) and x for x in patterns):
+        sys.exit(f"{src}: \"patterns\" must be a list of glob patterns")
+    for x in [*paths, *patterns]:
+        if x.startswith("/") or ".." in x.split("/"):
+            sys.exit(f"{src}: {x!r} is not a repository-relative path")
+    out = {
+        "carried_from": f"securacv_website/{SITE_CONTRACT_IN}",
+        "generated_by": data.get("generated_by", ""),
+        "paths": sorted(set(paths)),
+        "patterns": sorted(set(patterns)),
+    }
+    return (json.dumps(out, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--check", action="store_true",
@@ -1153,6 +1205,14 @@ def main(argv: list[str] | None = None) -> int:
             sys.exit("rerun gen_builder_manifest.py --site "
                      f"{args.site} (then the site's model generators, if cad-dims.json moved)")
         print(f"website carries in {args.site} are up to date ({total} files)")
+        contract = site_contract(args.site)
+        if contract is None:
+            print(f"{args.site} has no {SITE_CONTRACT_IN} — the reverse carry is skipped")
+        elif not (SITE_CONTRACT_OUT.is_file() and SITE_CONTRACT_OUT.read_bytes() == contract):
+            sys.exit(f"{_rel(SITE_CONTRACT_OUT)} is stale against the site's "
+                     f"{SITE_CONTRACT_IN} — rerun gen_builder_manifest.py --site {args.site}")
+        else:
+            print(f"{_rel(SITE_CONTRACT_OUT)} is current")
         return 0
     written = write_site(carries, args.site)
     if written:
@@ -1163,6 +1223,14 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"website carries in {args.site} are already current ({total} files) — "
               f"nothing written")
+    contract = site_contract(args.site)
+    if contract is None:
+        print(f"{args.site} has no {SITE_CONTRACT_IN} — the reverse carry is skipped")
+    elif SITE_CONTRACT_OUT.is_file() and SITE_CONTRACT_OUT.read_bytes() == contract:
+        print(f"{_rel(SITE_CONTRACT_OUT)} is unchanged — not rewritten")
+    else:
+        SITE_CONTRACT_OUT.write_bytes(contract)
+        print(f"wrote {SITE_CONTRACT_OUT}")
     return 0
 
 

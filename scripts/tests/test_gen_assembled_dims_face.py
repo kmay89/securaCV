@@ -151,5 +151,48 @@ class TheCommittedLedgerNamesEachDeclaredFace(unittest.TestCase):
         self.assertEqual(sorted(led["device.canary-combo"]["features_fig_mm"]), ["lens", "radome"])
 
 
+SEAT = {"part": "stand", "pos": [0.0, 3.028, 27.356], "rot": [65.0, 0.0, 0.0]}
+
+
+class SeatMovedNeverFallsThrough(unittest.TestCase):
+    """The Watch's cradle seat (`seat_scad`): the stand's own P0 / slope
+    echo, which real-shapes.js poses the drum at. Same contract as the
+    face: equal within TOL passes, and nothing the checker cannot read as
+    the echoed seat is ever "equal"."""
+
+    def test_equal_and_absent_pass(self):
+        self.assertFalse(gad.seat_moved(SEAT, json.loads(json.dumps(SEAT))))
+        near = {"part": "stand", "pos": [0.0, 3.028 + gad.TOL / 2, 27.356], "rot": [65.0, 0.0, 0.0]}
+        self.assertFalse(gad.seat_moved(SEAT, near))
+        self.assertFalse(gad.seat_moved(None, None))
+
+    def test_anything_it_cannot_read_as_the_seat_is_moved(self):
+        for got in (
+            {"part": "stand", "pos": [0.0, 3.1, 27.356], "rot": [65.0, 0.0, 0.0]},   # the seat moved
+            {"part": "stand", "pos": [0.0, 3.028, 27.356], "rot": [60.0, 0.0, 0.0]},  # the recline moved
+            {"part": "base", "pos": [0.0, 3.028, 27.356], "rot": [65.0, 0.0, 0.0]},   # another part
+            None,                                                                       # the row lost its seat
+            {"part": "stand", "pos": [0.0, 3.028, 27.356]},                             # a key is missing
+            {**SEAT, "why": "x"},                                                       # an extra key
+            {"part": "stand", "pos": [0.0, 3.028], "rot": [65.0, 0.0, 0.0]},           # the wrong shape
+            {"part": "stand", "pos": [0.0, "3.028", 27.356], "rot": [65.0, 0.0, 0.0]},  # a string
+            {"part": "stand", "pos": [0.0, True, 27.356], "rot": [65.0, 0.0, 0.0]},     # a bool
+            {"part": "stand", "pos": [0.0, float("nan"), 27.356], "rot": [65.0, 0.0, 0.0]},
+            [0.0, 3.028, 27.356, 65.0, 0.0, 0.0],                                       # the echo, not the record
+        ):
+            with self.subTest(got=got):
+                self.assertTrue(gad.seat_moved(SEAT, got))
+        self.assertTrue(gad.seat_moved(None, dict(SEAT)), "a stray committed seat is moved too")
+
+    def test_the_committed_ledger_names_the_seat_exactly_where_the_row_does(self):
+        have = json.loads((ENC / "assembled_dims.json").read_text())["devices"]
+        for fig_id, spec in gad.DEVICES.items():
+            with self.subTest(fig_id=fig_id):
+                self.assertEqual("seat" in spec, "seat_scad" in have[fig_id])
+                if "seat" in spec:
+                    self.assertEqual(have[fig_id]["seat_scad"]["part"], spec["seat"]["part"])
+                    self.assertFalse(gad.seat_moved(have[fig_id]["seat_scad"], have[fig_id]["seat_scad"]))
+
+
 if __name__ == "__main__":
     unittest.main()

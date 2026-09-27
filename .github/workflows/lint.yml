@@ -176,6 +176,14 @@ jobs:
         # It also self-tests that its ban pattern never starts matching correct
         # English (characteristic, realistic, colored, …).
         run: python3 scripts/lint_spelling.py
+      - name: Enclosure preview PNGs — referenced, present, and renderable
+        # docs/hardware/enclosure/README.md embeds one preview_*.png per
+        # printable variant and the Lab's catalogs carry the same names, but
+        # the PNGs come from a hand list at the end of render.sh and
+        # enclosure.yml runs `render.sh --no-png` — so a README image nobody
+        # rendered, a PNG nothing embeds any more, or a recipe dropped from
+        # render.sh all went unnoticed. This names each one.
+        run: python3 scripts/lint_previews.py
       - name: A group of Canaries is a fleet (AGENTS.md rule 3)
         # Rule 3 had prose and an advisory review but no deterministic gate —
         # a PR using the banned bird-group word in a new doc, comment, or
