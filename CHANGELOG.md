@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### The fleet's semantics are written down, and the mesh specs say which relay exists
+
+- **`docs/FLEET_SEMANTICS.md`** — what "online", "verified" and "the
+  mesh" mean, precisely: the four membership views (hub roll-call,
+  display glass, device roster, Opera) and that none reconciles with
+  another; the roll-call's one-window failure detector and its bounded
+  replay; trust-on-first-use in three stores that never sync, with the
+  broker as the boundary; no cross-device ordering, correlation (by
+  design), fusion or consensus, and a hub election with no term or epoch;
+  relay specified for Opera and Beacon and built for neither, Chirp's
+  soft-accept and missing Sybil check; every scale figure a cap or an
+  estimate. Each row names its code; §8 lists what is not claimed; §9
+  says which rows have no test and are established by reading.
+- **`spec/canary_mesh_network_v0.md` and `spec/beacon_channel_v0.md`**
+  carry implementation-status notes where they describe relay: Opera has
+  no relay path, Beacon's hop and relay-rate constants are defined and
+  never read. The Beacon spec also notes the unsynced-receiver freshness
+  bypass and the unreachable tamper auto-revoke. `spec/README.md`'s
+  maturity rows say so too.
+- **`device_trust.md`** no longer says a hostile broker "cannot spoof a
+  Canary": it cannot forge a signed publish for a pinned key, and the
+  page now lists what it can still do. **`network_coexistence.md`** no
+  longer answers "eight Canaries?" with a percentage nobody measured.
+- **`mesh_session.h`** stops saying peers verify the election; the
+  receiver persists the announced winner unverified, which is now written
+  beside the handler's declaration as an open item.
+
 ### Retention prunes a prefix, and a clock step cannot expire what was just sealed
 
 - **A clock regression no longer takes live rows with it.** The retention

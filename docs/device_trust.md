@@ -15,9 +15,17 @@ publish** before letting it update entity state. A mismatch fires a
 persistent notification but doesn't drop the payload — your entities
 still update, but they're marked as **unverified** in their attributes.
 
-If you only care about the upshot: **a hostile MQTT broker cannot
-spoof a Canary**, and **a re-flashed Canary will surface a clear
-"key changed" notification** instead of silently going unverified.
+If you only care about the upshot: **a hostile MQTT broker cannot forge
+a signed publish for a Canary whose key you have pinned**, and **a
+re-flashed Canary will surface a clear "key changed" notification**
+instead of silently going unverified. What a broker *can* still do is
+narrower and stated in ["What's NOT solved yet"](#whats-not-solved-yet)
+below and in [`FLEET_SEMANTICS.md`](FLEET_SEMANTICS.md) §4: replay a
+captured signed publish (the hub's roll-call bounds that to one window
+per chain advance it missed), invent device ids and sign for them with
+its own key before the real one is pinned, and hold a pinned id in a
+"key mismatch" state. Signatures bound authorship; the broker remains the
+trust boundary.
 
 ## What's signed
 

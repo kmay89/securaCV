@@ -188,6 +188,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 <details>
 <summary><strong>Radio, mesh & sensing internals</strong> — how Canaries feel and talk</summary>
 
+- [**Fleet semantics**](FLEET_SEMANTICS.md) — what "online", "verified" and "the mesh" mean, precisely: four membership views that never reconcile, a one-window failure detector, trust-on-first-use in three stores, no cross-device ordering or consensus (correlation is forbidden by design; the rest is not built), relay specified for Opera and Beacon and built for neither, every scale figure a cap or an estimate — with the code behind each row and the list of what is not claimed
 - [BLE protocol](ble_protocol.md) · [BLE mesh + Opera tandem (design only)](BLE_MESH_OPERA_TANDEM.md)
 - [ESP-NOW mesh evaluation](mesh_esp_now_evaluation.md) · [ESP32 mesh sensing design](esp32_mesh_sensing_design.md)
 - [Meshtastic integration](meshtastic_integration.md) — witnesses on the property line

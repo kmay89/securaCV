@@ -506,8 +506,13 @@ void set_channel_lock_handler(channel_lock_received_fn fn);
  * HUB ELECTION — failover broadcast (PR 4c)
  *
  * When a sensor detects Hub absence, it broadcasts HUB_ELECTION with
- * the elected fingerprint. Peers verify the election is deterministic
- * (lowest fingerprint wins) and adopt the new Hub.
+ * the elected fingerprint. The rule is deterministic (lowest fingerprint
+ * wins), but a receiving peer does NOT re-derive it: the handler in
+ * csi_modules_integration.cpp persists whatever HUB_ELECTED fingerprint
+ * the frame carries, and there is no term or epoch, so two sides of a
+ * partition can each elect a coordinator and issue conflicting locks
+ * until the partition heals (docs/FLEET_SEMANTICS.md §5). Verifying the
+ * announced winner against the local peer view is an open item.
  * ────────────────────────────────────────────────────────────────────────── */
 
 bool send_hub_election(mesh_hub_election::Event event,

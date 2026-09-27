@@ -169,8 +169,8 @@ payload also carries `routine_allowed`, `routine_denied`, and
 
 | Question | Answer |
 |----------|--------|
-| Can I put 8 Canaries on the same home network? | Yes. Airtime stays ≤ 2% × 8 = 16% only if every Canary is *also* getting tampered with simultaneously. Routine cap is per-device; in practice you'll see < 1% per Canary at idle. |
-| Will the mesh slow down my home WiFi? | No measurable impact. The airtime cap is one full order of magnitude below what a single phone uses streaming video. |
+| Can I put 8 Canaries on the same home network? | The cap is per device: each Canary's governor holds its own routine airtime at or under the per-device budget, and the budgets add — eight Canaries could reach 8 × the routine cap only if all eight were in their urgent class at once. **The aggregate has not been measured**: there is no fleet or broker benchmark in the tree ([`BENCHMARKS.md`](BENCHMARKS.md), "what this does not cover"), and the governor's figures are its own estimate of framing and fan-out, not a reading from the air. Nothing coordinates airtime across devices. |
+| Will the mesh slow down my home WiFi? | The per-device cap is designed to sit well below what one phone streaming video uses; whether a fleet's aggregate is measurable on a given network is exactly the measurement the previous row says has not been made. |
 | What channel should I set my router to? | Anything. The Canaries follow you. |
 | What if STA drops? | Mesh rides the AP channel (Canaries always run AP mode for local admin). If AP is also down, mesh falls back to channel 6. |
 | Can I disable mesh entirely? | Yes — `mesh.enabled = false` in NVS / admin UI. Canaries still witness; they just don't gossip. |
