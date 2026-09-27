@@ -59,16 +59,20 @@ PresenceEvent PresenceFSM::tick(const Frame& frame, uint32_t now_ms) {
     // Before trusting any incoming data, fail the FSM safe if the radar has
     // gone silent. This must precede the data guard so a dead UART can never
     // freeze us on the last good frame.
+    if (elapsed(now_ms, last_frame_ms_, cfg_.stall_timeout_ms)) {
+        // The target run ends with the link, whatever state the link dropped
+        // in — Unknown included, since a run can be open there while the
+        // debounce is still being earned. The first frame after the radar
+        // comes back starts a fresh debounce, so a stale `target_since_ms_`
+        // cannot promote one returning frame straight to Present.
+        raw_target_ = false;
+    }
     if (state_ != Presence::Unknown &&
         elapsed(now_ms, last_frame_ms_, cfg_.stall_timeout_ms)) {
         ev.count_changed = (count_ != CountBucket::Zero);
         state_ = Presence::Unknown;
         count_ = CountBucket::Zero;
         range_ = RangeBand::Unknown;
-        // The target run ends with the link: the first frame after the radar
-        // comes back starts a fresh debounce, so a stale `target_since_ms_`
-        // cannot promote one returning frame straight to Present.
-        raw_target_ = false;
         ev.state_changed = true;
         ev.stalled       = true;
         ev.state = state_;

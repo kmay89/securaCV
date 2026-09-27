@@ -484,6 +484,25 @@ void test_presence_fsm_stall_recovery_never_reports_clear_with_a_target() {
     e = fsm.tick(decode_one(p, frame_people(true)), t);
     assert(e.state_changed && fsm.state() == Presence::Present);
 
+    // A stall while STILL Unknown (a run opened, the debounce not yet
+    // earned, then silence) must also end the run: the returning frame is
+    // a fresh start, not the tail of a run that spanned the outage.
+    t += 5001;
+    e = fsm.tick(Frame(), t);
+    assert(e.stalled && fsm.state() == Presence::Unknown);
+    t += 10;
+    (void)fsm.tick(decode_one(p, frame_people(true)), t);   // opens a run
+    assert(fsm.state() == Presence::Unknown);
+    t += 5001;                                                // silence, still Unknown
+    e = fsm.tick(Frame(), t);
+    assert(!e.state_changed && fsm.state() == Presence::Unknown);
+    t += 10;
+    e = fsm.tick(decode_one(p, frame_people(true)), t);
+    assert(fsm.state() == Presence::Unknown);               // fresh debounce, not instant Present
+    t += 300;
+    e = fsm.tick(decode_one(p, frame_people(true)), t);
+    assert(e.state_changed && fsm.state() == Presence::Present);
+
     // And the other way: link returns reporting NO target -> Clear at once,
     // which is what the radar said.
     t += 5001;

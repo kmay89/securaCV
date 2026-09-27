@@ -330,13 +330,16 @@ export class PresenceFSM {
     const ev = { state_changed: false, count_changed: false, stalled: false };
 
     // ---- DEADLINE FIRST (stall-safe): a dead UART can never freeze us ----
+    if (now - this.lastFrameMs >= this.cfg.stall_timeout_ms) {
+      // the target run ends with the link, Unknown included: a returning
+      // frame starts a fresh debounce (mirrors mr60_presence.cpp)
+      this.rawTarget = false;
+    }
     if (this.state !== Presence.Unknown && now - this.lastFrameMs >= this.cfg.stall_timeout_ms) {
       ev.count_changed = this.count !== CountBucket.Zero;
       this.state = Presence.Unknown;
       this.count = CountBucket.Zero;
       this.range = RangeBand.Unknown;
-      // the target run ends with the link: a returning frame starts a fresh debounce
-      this.rawTarget = false;
       ev.state_changed = true;
       ev.stalled = true;
       ev.state = this.state; ev.count = this.count; ev.range = this.range;

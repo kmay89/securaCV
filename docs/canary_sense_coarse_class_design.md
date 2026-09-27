@@ -9,8 +9,8 @@ Doppler node.
 
 **The one-sentence version:** teach the Sense radar to attach a *coarse size/type class* — **"large
 mover"** (person/vehicle-scale) vs **"small mover"** (animal-scale) — to the presence it already
-reports, from Doppler features it already receives, without tracking, identifying, or storing a path
-for anyone.
+reports, from Doppler features the firmware would first have to decode (§2 — it does not today),
+without tracking, identifying, or storing a path for anyone.
 
 ---
 
@@ -26,8 +26,9 @@ Sense already computes almost everything the classifier needs and throws most of
   and §2 says which.
 - The BumbleBee papers' recipe for "walk / run / crawl / human-vs-vehicle" is just **spectrogram
   features → a light SVM/decision-tree** ([MDPI *Sensors* 2012](https://www.mdpi.com/1424-8220/12/2/1336),
-  [IEEE GRSL 2015](https://ieeexplore.ieee.org/document/7172472/)). We already have the spectrogram;
-  we're adding the small classifier on top.
+  [IEEE GRSL 2015](https://ieeexplore.ieee.org/document/7172472/)). The classifier is small; the
+  spectrogram is the part we do **not** have yet (§2), so "nearly free" means "no new hardware and
+  a small model", not "no new firmware input".
 - The output maps onto vocabulary and a pipeline the fleet **already has** (see §5) — so the
   drift-gated dictionary doesn't move for the recommended Phase 0.
 

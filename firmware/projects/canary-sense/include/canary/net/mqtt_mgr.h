@@ -26,7 +26,20 @@ namespace canary::net {
   // Witness trust surface (canary-wap wire schema):
   //   health — retained; carries public_key so HA TOFU-pins the device.
   //   chain  — retained; signed head+length, verified by HA's verify_chain.
-  void publish_health_retained(const Topics& topics, const SenseSnapshot& s);
+  // Radar-link health for the retained health payload's `radar` object —
+  // the wire contract Home Assistant's radar-link diagnostic sensor reads
+  // (custom_components/securacv/sensor.py, SecuraCVCanaryRadarLinkSensor:
+  // link_ok / last_frame_age_ms / frame_errors). A product with no radar,
+  // or one whose UART has not been sampled yet, passes nullptr and the
+  // object is left out, which HA reads as "unknown" rather than "down".
+  struct RadarLinkHealth {
+    bool     link_ok           = false;  // a presence frame arrived inside the stall window
+    uint32_t last_frame_age_ms = 0;      // ms since the last presence frame
+    uint32_t frame_errors      = 0;      // checksum/oversize drops (monotonic)
+  };
+
+  void publish_health_retained(const Topics& topics,
+                               const RadarLinkHealth* radar = nullptr);
   void publish_chain_retained(const Topics& topics);
 
   // HA discovery (retained)

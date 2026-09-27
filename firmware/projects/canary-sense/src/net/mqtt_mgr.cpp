@@ -381,14 +381,25 @@ void publish_event(const Topics& topics, const char* json_payload) {
   publish_checked("EVENT", topics.events, json_payload, false);
 }
 
-void publish_health_retained(const Topics& topics, const SenseSnapshot& s) {
+void publish_health_retained(const Topics& topics, const RadarLinkHealth* radar) {
   // Same field set as canary-wap's mains-powered health publish: HA's
   // health handler reads memory/uptime/firmware and — crucially —
-  // TOFU-pins the device from `public_key` on first sight. The `radar`
-  // object is the wire contract HA's radar-link diagnostic sensor reads
-  // (custom_components/securacv/sensor.py, SecuraCVCanaryRadarLinkSensor:
+  // TOFU-pins the device from `public_key` on first sight. The optional
+  // `radar` object is the wire contract HA's radar-link diagnostic sensor
+  // reads (custom_components/securacv/sensor.py, SecuraCVCanaryRadarLinkSensor:
   // link_ok / last_frame_age_ms / frame_errors) — it used to be documented
-  // there and published nowhere, so the entity never left "unknown".
+  // there and published nowhere, so the entity never left "unknown". A
+  // caller with no radar, or one that has not sampled its UART yet, passes
+  // nullptr: the object is omitted, and HA keeps "unknown" instead of
+  // reading a not-yet-observed link as "down".
+  char radar_json[96] = "";
+  if (radar) {
+    snprintf(radar_json, sizeof(radar_json),
+             ",\"radar\":{\"link_ok\":%s,\"last_frame_age_ms\":%lu,\"frame_errors\":%lu}",
+             radar->link_ok ? "true" : "false",
+             (unsigned long)radar->last_frame_age_ms,
+             (unsigned long)radar->frame_errors);
+  }
   char msg[512];
   const int n = snprintf(msg, sizeof(msg),
            "{"
@@ -397,20 +408,14 @@ void publish_health_retained(const Topics& topics, const SenseSnapshot& s) {
            "\"memory_free\":%lu,"
            "\"uptime\":%lu,"
            "\"firmware_version\":\"%s\","
-           "\"public_key\":\"%s\","
-           "\"radar\":{"
-             "\"link_ok\":%s,"
-             "\"last_frame_age_ms\":%lu,"
-             "\"frame_errors\":%lu"
-           "}"
+           "\"public_key\":\"%s\""
+           "%s"
            "}",
            (unsigned long)ESP.getFreeHeap(),
            (unsigned long)(ms_now() / 1000UL),
            CANARY_FW_VERSION,
            device_signature::pubkey_hex(),
-           s.radar_ok ? "true" : "false",
-           (unsigned long)s.radar_frame_age_ms,
-           (unsigned long)s.frame_errors);
+           radar_json);
   if (n <= 0 || (size_t)n >= sizeof(msg)) return;
   publish_checked("HEALTH", topics.health, msg, true);
 }

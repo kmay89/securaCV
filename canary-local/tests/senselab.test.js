@@ -221,6 +221,14 @@ test("PresenceFSM: debounce, clear timeout, stall — the firmware integration w
   let ev = fsm.tick(pf(true), 10);
   assert.strictEqual(fsm.state, S.Presence.Unknown);
   assert.ok(!ev.state_changed);
+  // a stall while still Unknown ends the open run: silence past stall_ms,
+  // then a target frame is a fresh start, not an instant Present
+  ev = fsm.tick({ kind: S.FrameKind.None }, 10 + cfg.stall_timeout_ms);
+  assert.strictEqual(fsm.state, S.Presence.Unknown);
+  ev = fsm.tick(pf(true), 20 + cfg.stall_timeout_ms);
+  assert.strictEqual(fsm.state, S.Presence.Unknown, "no instant Present off the pre-stall clock");
+  fsm.reset(0);
+  ev = fsm.tick(pf(true), 10);
   // sustained target settles to Present via the debounce
   ev = fsm.tick(pf(true), 10 + cfg.present_debounce_ms);
   assert.strictEqual(fsm.state, S.Presence.Present);
