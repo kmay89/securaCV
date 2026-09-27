@@ -156,8 +156,10 @@ def classify_malformed(records, malformed, genesis):
     - the record after it does not advance (seq at or below the record
       before): reordered or replayed — an integrity failure whether or not
       a fragment sits between them;
-    - nothing after it: not a torn tail (that is handled by the caller), so
-      nothing vouches for it — a failure;
+    - nothing after it: the last complete line of the file. That is what a
+      second power cut leaves when the sealing newline landed but the
+      record behind it did not — a sealed torn append at the end, with the
+      chain ending at the record before it. Tolerated like a torn tail;
     - nothing before it: judged against the genesis when it is known (a
       torn first append is bridged by seq 1 chaining from genesis); without
       a genesis it cannot be judged, and is noted, not failed — the run
@@ -180,9 +182,18 @@ def classify_malformed(records, malformed, genesis):
                 after = rec
                 break
         if after is None:
-            failures.append(
-                f"{reason} — nothing chains across it (it is not the final "
-                f"line of a torn append, and no later record vouches for it)")
+            # The last complete line, with no record after it. That is the
+            # writer's second-cut shape: the sealing newline landed and the
+            # record behind it did not, so the old fragment is now a sealed
+            # line at the end of the file. Nothing chains across it because
+            # nothing follows it; nothing is missing either — the chain
+            # ends at the record before it, exactly as a torn tail would.
+            # Tolerated like a torn tail, and named so a reader can tell a
+            # crash artifact from an integrity finding.
+            scars.append(
+                f"line {lineno}: sealed torn append at the end of the file "
+                f"(a second power cut after the sealing newline landed) — "
+                f"the chain ends at the record before it")
             continue
         if before is None:
             if genesis is None:

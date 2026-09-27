@@ -207,6 +207,20 @@ def main() -> int:
     check(code == 1, "the backward sequence fails, fragment or not")
     check("does not advance" in out, "the failure names the backward sequence")
 
+    print("second power cut: the sealing newline landed, the record did not")
+    # Fragment sealed onto its own line at EOF, nothing after it: the writer's
+    # documented second-cut shape. The chain ends at seq 6 and nothing is
+    # missing, so this verifies like a torn tail.
+    sealed_end = lines + [lines[5][: 40] + "\n"]
+    code, out = run_verify(sealed_end, pub_hex, device_id)
+    check(code == 0, "a sealed torn append at the end is tolerated")
+    check("sealed torn append at the end" in out, "and named as such")
+    check("signatures verified : 6/6" in out, "every real record still verified")
+    # ...and a third cut leaving both a sealed scar and a new torn tail.
+    sealed_then_torn = lines + [lines[5][: 40] + "\n", lines[5][: 30]]
+    code, out = run_verify(sealed_then_torn, pub_hex, device_id)
+    check(code == 0, "sealed scar at the end plus a torn tail: tolerated")
+
     print("a scar as the last complete line before a torn tail")
     scar_then_torn = lines[:3] + [fragment] + lines[3:5] + [lines[5][: 50]]
     code, out = run_verify(scar_then_torn, pub_hex, device_id)

@@ -23,9 +23,11 @@
   nothing is missing. When the record after it jumps ahead, the line sits
   at a gap boundary and is reported as the gap it is — a destroyed record
   reads exactly like a deleted one, which a gap already reports, so the
-  verdict does not change. A backward sequence, a line nothing follows, or
+  verdict does not change. A sealed torn append at the very end of the
+  file — the writer's second-cut shape, the newline landed and the record
+  behind it did not — is tolerated like a torn tail. A backward sequence or
   a leading line the genesis does not bridge still fails, and the message
-  says why. Seven new cases in `tools/test_verify_witness_log.py`.
+  says why. Eight new cases in `tools/test_verify_witness_log.py`.
 
 ### The fleet's semantics are written down, and the mesh specs say which relay exists
 
