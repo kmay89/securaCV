@@ -31,6 +31,8 @@
 // eviction never leaves a blank card. The public surface is unchanged:
 // new DeviceScene(canvas, src), addMesh/clearParts/removePart, start/stop,
 // draw, onTick, project, scene.gl (the shared context); dispose() is new.
+// A scene is in the page's set only while started or drawing; stop() sheds
+// its GPU objects and leaves the set, so a stop()-only teardown leaks nothing.
 // Shader compile/link failures still throw from the first constructor on
 // the page (tests/render_probe.mjs relies on it). Between passes no vertex
 // attribute stays enabled — an enabled array whose buffer a later
@@ -636,7 +638,10 @@ export class DeviceScene {
     this.src = screenSource;
     this._gpu = SharedGPU.get();
     this._gpu.ensure();            // first scene on the page: throws on shader failure
-    this._gpu.scenes.add(this);
+    // NOT registered yet: a scene joins the page's set when it starts its
+    // loop or draws, and leaves it when it stops — so a card torn down with
+    // stop() (the Board, Assemble, Enclosure, Hub and Board Room tabs) holds
+    // nothing on the GPU and nothing holds it (Codex on #1737)
     // the card shows the shared context's frame through its own 2D surface
     this.ctx2d = canvas.getContext("2d");
     this.shadow = null; // {y, rx, rz, alpha} in world units, or null
@@ -873,21 +878,30 @@ export class DeviceScene {
   start() {
     if (this._running) return;
     this._running = true;
+    this._gpu.scenes.add(this);
     this._watch();
     this._syncLoop();
   }
+  /** Pause the loop and give back every GPU object this scene holds (its
+   * parts stay retained, so start() or a hand-driven draw() re-uploads
+   * them), and leave the page's set: a card torn down with stop() holds
+   * nothing on the GPU and nothing holds it. The page's one context stays
+   * (a hand-driven draw() right after stop() must still be synchronous —
+   * a lost context comes back only asynchronously); dispose() is what
+   * gives it back when the last scene goes. */
   stop() {
     this._running = false;
     this._unwatch();
     this._syncLoop();
-  }
-  /** stop() and give back every GPU object this scene holds; the last
-   * scene out releases the page's context. A stopped scene keeps its
-   * buffers (a caller may still draw() it by hand); a disposed one is done. */
-  dispose() {
-    this.stop();
     this._releaseGL();
     this._gpu.scenes.delete(this);
+  }
+  /** stop(), drop the retained parts, and — when this was the last scene
+   * on the page — release the context: a disposed scene is done. */
+  dispose() {
+    this.stop();
+    this.parts = [];
+    this.buildGen++;
     if (this._gpu.scenes.size === 0) this._gpu.release();
   }
 
@@ -929,6 +943,7 @@ export class DeviceScene {
   }
 
   draw() {
+    this._gpu.scenes.add(this);    // a hand-driven scene counts while it draws
     const gl = this._acquireGL();
     if (!gl) { this._gpu.tryRestore(); return; } // context lost: skip the frame, ask for it back
     const gpu = this._gpu;
