@@ -28,7 +28,7 @@ where that design is written down.
 | Host clock step (forward or back) | yes | §2.4 | the chain is not ordered by the wall clock; a step is sealed as `ClockSkew`; retention is bounded against both directions |
 | Device clock absent | yes | §2.4 | device buckets are uptime-based and say so; wall time comes from GPS (WAP), SNTP (display) or nothing (Sense, Vision) |
 | Message loss, duplication, reordering (MQTT) | yes | §2.3 | at-most-once from a device; duplicates and losses are bounded and described, not prevented |
-| Broker outage, network partition | yes | §2.3 | devices keep sealing locally; the hub keeps sealing its own sources; nothing replays across a partition except the PlatformIO tree's bounded RAM queue |
+| Broker outage, network partition | yes | §2.3 | devices keep sealing locally; the hub keeps sealing its own sources; nothing replays across a partition except the PlatformIO tree's bounded RAM queue and, when that product owns a card, its SD event backfill |
 | Sensor silent, corrupt, stuck | yes | §2.7 | silent and corrupt are detected and reported; stuck is not |
 | Storage exhaustion (disk, NVS, card) | yes | §2.8 | detected and sealed on the hub; counted and retried on a Canary |
 | A device that lies (Byzantine) | **no**, beyond signatures | [`spec/threat_model.md`](../spec/threat_model.md), [`device_trust.md`](device_trust.md) | a signature proves *who* asserted a claim, never that it is true; there is no cross-device consensus |
@@ -85,12 +85,16 @@ that wants "a wipe is detected" sets the mark path to append-only or external
 media; the module's own doc comment lists the residuals.
 
 **Retention.** Rows older than the configured retention are pruned behind a
-signed checkpoint, in one transaction with the delete. Two clock faults used
-to turn that into loss and are closed in #1738: the prune is now a **prefix**
-(a clock regression between two appends cannot sweep in-retention rows out
-with a later, older-stamped row), and after a forward step the rows this
-process sealed are aged by the monotonic clock, not the stamp. The residuals
-are stated in `failure_semantics.md`, "Retention under clock faults".
+signed checkpoint, in one transaction with the delete. **As of this writing
+two clock faults turn that into loss:** the pass picks the newest row whose
+stamp is expired and deletes every row at or below its id, so a clock
+regression between two appends (a later row with an older stamp) sweeps
+in-retention rows out with it, and a forward step (an RTC-less hub taking
+its first NTP sync after boot) makes every row sealed minutes ago "older
+than retention". #1738 (open) changes the prune to a **prefix** and ages the
+rows this process sealed by the monotonic clock once the wall clock has
+stepped; its residuals are stated in `failure_semantics.md` on that branch.
+Until it lands, the host clock is trusted for retention, full stop.
 
 **Liveness.** A watchdog thread aborts the process when the main loop makes
 no progress for 60 s (`witnessd.rs`; unit-tested). Whether anything restarts
@@ -110,10 +114,16 @@ state boot recovery repairs.
 Recovery reads the tail, skips the torn line, adopts the last complete record
 as head when it is strictly ahead of NVS *and* re-hashes and verifies under
 this device's key (`witness_store.h`, `sd_wins`, `tail_parse`;
-`test_witness_store_logic.cpp`). The next append seals the torn fragment
-onto its own line and the offline verifier reads it as a power-cut scar,
-not tampering (#1739). The record that tore is gone; its sequence number is
-reused by the next record, chained from the last complete one.
+`test_witness_store_logic.cpp`). The record that tore is gone; its sequence
+number is reused by the next record, chained from the last complete one.
+**As of this writing the next append is written straight after the torn
+fragment**, so the fragment and that record become one malformed line
+mid-file, and `tools/verify_witness_log.py` reports it as an integrity
+failure: an ordinary power cut reads as tampering on the next verification,
+and the first post-reboot record is lost to the verifier with it. #1739
+(open) seals the fragment onto its own line before the first append of a
+mount and teaches the verifier to read a fragment the chain continues across
+as a power-cut scar.
 
 **Power loss, no card.** NVS holds a head up to nine records old. The device
 resumes from it and **re-signs those sequence numbers with new content**:
@@ -149,11 +159,23 @@ oversize refused, drops counted; `mqtt_offline_queue.h`,
 `test_mqtt_offline_queue.cpp`) and replays it in order on reconnect; a
 replay whose publish "succeeded" and was lost is not retried, and a replay
 whose publish failed is retried, so the queue can produce **either** a loss
-or a duplicate, and it is lost on reboot. Sense, Vision and Sentinel have no
-queue: an event sealed while offline is not published at all, and the gap
-shows as a jump in the retained chain length (`canary-sense/src/main.cpp`,
-`record_event_now`). The record itself is never at risk: it is sealed into
-the device chain before any publish is attempted.
+or a duplicate, and it is lost on reboot. **With a card, the same tree
+recovers further:** its CSI event log's backfill (`csi_event_backfill.h`,
+driven by `csi_event_egress_pump()`; host-tested against a model of Home
+Assistant's replay gate) replays committed rows from `/EVENTS/today.ndjson`
+once the RAM queue has drained, across a reboot, never below the id
+watermark Home Assistant last verified (a ceiling persisted in NVS before
+an id is handed over, so a reboot never republishes one and skips at most a
+stride of undelivered ones), in id order so a newer row never overtakes an
+older one, and never for tamper alerts, which go at commit whatever the
+backlog. An outage longer than the RAM queue is therefore recovered from
+the card on that product; what it can still lose is a row that never
+reached the card and a row the ceiling skipped. Sense, Vision and Sentinel
+have neither queue nor backfill: an event sealed while offline is not
+published at all, and the gap shows as a jump in the retained chain length
+(`canary-sense/src/main.cpp`, `record_event_now`). The record itself is
+never at risk on any product: it is sealed into the device chain before any
+publish is attempted.
 
 **Into the hub.** `adapter_host` subscribes at QoS 1 but connects with
 `clean_start`, so anything published while the hub was down is gone
@@ -284,13 +306,19 @@ has no jitter (`securacv_mqtt.cpp`; strategy doc 12, F4).
 - **Radar (Canary Sense).** A silent UART drives the presence FSM to
   `Unknown` after the stall deadline, before any data is trusted
   (`mr60_presence.cpp`, deadline-before-data); `Unknown` is radar-link
-  health, not a witness event, and reaches Home Assistant as a problem
-  sensor and, since #1740, as the health payload's `radar` object. Corrupt
-  frames are dropped by checksum and counted; there is no alarm threshold
-  on the count. A radar that reports the same value forever is **not**
-  detected — the FSMs read a steady value as a held lock. There is no radar
-  self-test, no warm-up gate, and the decoder has not yet parsed a frame
-  from a real module (#1740 says so in the design doc).
+  health, not a witness event, and reaches Home Assistant as the firmware's
+  own "radar link problem" binary sensor. Home Assistant's separate
+  radar-link diagnostic sensor reads a `radar` object from the health
+  payload that **no firmware publishes as of this writing**, so that entity
+  stays "unknown"; #1740 (open) adds the object. The same PR fixes a
+  stall-recovery defect on the evidence path: today the first target frame
+  after a stall moves the FSM through `Clear`, and canary-sense signs a
+  `presence_cleared` record while a body is in view. Corrupt frames are
+  dropped by checksum and counted; there is no alarm threshold on the
+  count. A radar that reports the same value forever is **not** detected —
+  the FSMs read a steady value as a held lock. There is no radar self-test,
+  no warm-up gate, and the decoder has not yet parsed a frame from a real
+  module.
 - **Camera / RTSP ingest (hub).** An ingest supervisor latches one
   `GapMissingData` per outage after `ingest.failure_threshold_s` and
   reconnects with capped, unjittered backoff (`witnessd.rs`,
@@ -342,12 +370,14 @@ has no jitter (`securacv_mqtt.cpp`; strategy doc 12, F4).
 | Seal-then-verify round-trips any event sequence | proptest in `src/lib.rs` |
 | Unclean stop is sealed on reopen | `src/lib.rs` lifecycle tests |
 | Tail truncation / rollback fail closed with the mark | `src/verify_runner.rs` high-water-mark tests |
-| Retention prunes a prefix; a step cannot expire fresh rows | `retention_prunes_a_prefix_so_a_clock_regression_cannot_take_live_rows`, `storage::age_floor_tests` (#1738) |
+| Retention prunes a prefix; a step cannot expire fresh rows | **not on main** — `retention_prunes_a_prefix_so_a_clock_regression_cannot_take_live_rows` and `storage::age_floor_tests` arrive with #1738 |
 | One `ClockSkew` per excursion | `clock_monitor_seals_one_record_per_bucket_regression` (`witnessd.rs`) |
 | Device chain pair cannot tear; refused persists are retried | `test_chain_state.cpp`, `test_chain_persist.cpp` |
-| Torn tail is skipped, sealed, and read as a scar | `test_witness_store_logic.cpp`, `tools/test_verify_witness_log.py` (#1739) |
+| Torn tail is skipped on recovery | `test_witness_store_logic.cpp` (`tail_parse`) |
+| Torn tail is sealed before the next append and read as a scar | **not on main** — `tail_is_torn` and the scar cases in `tools/test_verify_witness_log.py` arrive with #1739 |
 | Wi-Fi backoff bounded and jittered; never-online never reboots | `test_wifi_join_policy.cpp`, `scripts/lint_wifi_join_policy.py` |
 | Offline queue bounded, ordered, tamper-first | `test_mqtt_offline_queue.cpp` |
-| Silent radar fails safe; a returning radar never signs "cleared" over a body | `test_mr60_uart.cpp` (#1740) |
+| Silent radar fails safe | `test_mr60_uart.cpp` (stall cases) |
+| A returning radar never signs "cleared" over a body | **not on main** — the stall-recovery cases arrive with #1740 |
 | Boot-time tail verification enters safe mode | `witnessd` boot path (#990); corrupt-store open is **not** covered |
 | Watchdog aborts a stalled loop | `witnessd.rs` watchdog unit test |

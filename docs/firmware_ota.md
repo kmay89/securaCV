@@ -421,9 +421,13 @@ user actions through the update system that leaves a device unrecoverable.**
     ANY install channel exists; vision validates immediately after WiFi,
     BEFORE its blocking MQTT connect, so a broker outage can't cause a
     spurious revert.
-- **Expected (safe) edge:** power-cycling the device during the first
-  minute after an update — before it confirms itself — reverts it to the
-  previous version. Nothing is lost; the update is simply offered again.
+- **Expected (safe) edge:** power-cycling the device after an update but
+  before the boot self-test confirms the image reverts it to the previous
+  version. On `canary-ota` that window closes seconds into boot — the
+  self-test runs right after the required checks register and calls
+  `esp_ota_mark_app_valid_cancel_rollback()` when they pass — so it is a
+  pending-verification window, not a fixed minute. Nothing is lost; the
+  update is simply offered again.
 - **Outcome bookkeeping survives every path:** the engine records the
   install target the moment the boot partition flips (not at reboot), so
   deferred reboots, battery-gated installs, and BLE-pushed images all get
@@ -452,7 +456,7 @@ user actions through the update system that leaves a device unrecoverable.**
 | Update file corrupted or forged | Refused before install (SHA-256 + Ed25519 + format checks) | Nothing — error shown in plain language |
 | New firmware crashes or hangs on first boot | `canary-ota`: bootloader restores previous firmware on the next start. Shipping Arduino/PlatformIO builds: **no revert** — the image was auto-confirmed; the WAP's crash-loop safe mode and every product's task watchdog are what remain | `canary-ota`: nothing. Others: USB reflash |
 | New firmware boots but fails its health check | `canary-ota`: restores previous firmware automatically. Others: the failure is logged; the image stays | `canary-ota`: nothing. Others: reflash or push a fixed image |
-| Power cycled in the first minute after an update | `canary-ota`: returns to previous firmware (unconfirmed images don't stick). Others: the new image stays | `canary-ota`: press Install again. Others: nothing |
+| Power cycled after an update, before the boot self-test confirms it | `canary-ota`: returns to previous firmware (unconfirmed images don't stick; the window closes seconds into boot, when the self-test passes). Others: the new image stays | `canary-ota`: press Install again. Others: nothing |
 | Wrong update server address saved | Checks fail with a clear message; firmware untouched | Clear the field (Settings) to return to the official server |
 | Wrong variant's manifest configured | Product check refuses the image | Fix the address; nothing was installed |
 | WiFi password changed at the router | canary/WAP: own AP + dashboard still up — reconfigure there. vision/sense: after a few failed joins for a fixable reason, the board raises its own `SecuraCV-XXXX` setup network (the shared setup portal); sensing continues underneath | Reconnect via dashboard (canary/WAP), or join the setup network from a phone and enter the new password (vision/sense) — a USB reflash always works too |
