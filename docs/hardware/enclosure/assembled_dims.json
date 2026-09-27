@@ -81,6 +81,19 @@
    "face_fig_mm": {
     "w": 39.4,
     "h": 39.4
+   },
+   "seat_scad": {
+    "part": "stand",
+    "pos": [
+     0.0,
+     3.028,
+     27.356
+    ],
+    "rot": [
+     65.0,
+     0.0,
+     0.0
+    ]
    }
   },
   "device.canary-sense": {

@@ -648,6 +648,56 @@ const CONFIG_FIGURE = {
   'canary-display/nightstand7': 'device.canary-display-dash7',
 };
 
+// firmware/configs/<family>/<flavor> that legitimately have NO figure row,
+// each with the reason. This list exists so that absence is never silent: a
+// new config directory that nobody mapped used to fall through as
+// "unmapped" with no failure (the map only complained about a row that named
+// a non-figure), so a new flavor's device type quietly read "no figure for
+// this hardware yet" on every surface. Now every config.h on disk is either
+// a CONFIG_FIGURE row or an entry here, and a stale entry (a config that was
+// mapped, or removed) fails the build the same way.
+const CONFIG_FIGURELESS = new Map([
+  ['canary-sentinel/door', 'the Sentinel line has no figure yet: neither devices/canary-sentinel '
+    + 'nor devices/canary-sentinel-lite names one (no case is drawn)'],
+  ['canary-sentinel/hallway', 'a Sentinel fusion preset (no DEVICE_TYPE of its own); figureless '
+    + 'with the line'],
+  ['canary-sentinel/mailbox-lite', 'a Sentinel fusion preset (no DEVICE_TYPE of its own); '
+    + 'figureless with the line'],
+  ['canary-sentinel/perimeter-demo', 'a Sentinel fusion preset (no DEVICE_TYPE of its own); '
+    + 'figureless with the line'],
+  ['canary-sentinel/window', 'a Sentinel fusion preset (no DEVICE_TYPE of its own); figureless '
+    + 'with the line'],
+]);
+
+{
+  // Every config directory on disk (a config.h, with or without a published
+  // DEVICE_TYPE) is accounted for: mapped, or explained above. Listed all at
+  // once so one run names every gap.
+  const onDisk = [];
+  const base = join(ROOT, 'firmware/configs');
+  for (const fam of readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory())) {
+    for (const flav of readdirSync(join(base, fam.name), { withFileTypes: true }).filter((e) => e.isDirectory())) {
+      if (existsSync(join(base, fam.name, flav.name, 'config.h'))) onDisk.push(`${fam.name}/${flav.name}`);
+    }
+  }
+  const unaccounted = onDisk.filter((k) => !(k in CONFIG_FIGURE) && !CONFIG_FIGURELESS.has(k)).sort();
+  if (unaccounted.length) {
+    throw new Error(`figures: firmware/configs/ has ${unaccounted.length} flavor(s) with neither a `
+      + `CONFIG_FIGURE row nor a CONFIG_FIGURELESS entry: ${unaccounted.join(', ')}. Map each to its `
+      + 'figure, or list it as figureless with the reason.');
+  }
+  const stale = [...CONFIG_FIGURELESS.keys()].filter((k) => !onDisk.includes(k) || k in CONFIG_FIGURE).sort();
+  if (stale.length) {
+    throw new Error(`figures: CONFIG_FIGURELESS lists ${stale.join(', ')}, but `
+      + 'each is now either mapped in CONFIG_FIGURE or no longer a config directory — remove the entry.');
+  }
+  for (const [k, why] of CONFIG_FIGURELESS) {
+    if (typeof why !== 'string' || why.trim().length < 20) {
+      throw new Error(`figures: CONFIG_FIGURELESS entry ${k} needs a reason (a sentence, not a tag).`);
+    }
+  }
+}
+
 const configRows = deviceTypes
   .map((c) => ({ ...c, figureId: CONFIG_FIGURE[`${c.family}/${c.flavor}`] || null }))
   .map((c) => ({ ...c, fig: c.figureId ? byIdBuilt.get(c.figureId) : null }))
@@ -791,6 +841,9 @@ for (const m of manifests) {
  *   • every config that publishes a DEVICE_TYPE and is compiled by a figured
  *     device must HAVE a row — a new drawn device cannot leave its type
  *     reading "no figure for this hardware yet";
+ *   • every config directory on disk is a row or a CONFIG_FIGURELESS entry
+ *     with a reason (above) — a config nobody mapped is a build failure,
+ *     never a silent "unmapped";
  *   • a figured manifest compiling a config the row maps to a DIFFERENT
  *     figure is a DISPUTE: two boards publish that device type with two
  *     shapes. Which picture a shared type draws (or whether it should draw

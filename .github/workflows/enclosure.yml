@@ -24,6 +24,17 @@ on:
       # (gen_assembly_poses.py --check), so a hand edit must run the gate
       - "canary-local/devices/assembly.json"
       - "canary-local/boards/**"
+      # the Lab's preview meshes are RENDERED by canary-local/tools/
+      # gen_enclosures.py (RENDER_PRESETS, --check-previews) and the fit
+      # matrix below reads its catalog, so an edit to the generator itself
+      # must run the gate it defines — a preset added there without its mesh
+      # went unnoticed until the next .scad edit
+      - "canary-local/tools/**"
+      # the device manifests own the released cases' board knobs
+      # (cad.params → gen_cad_params.py → the .scad literal) and the printable
+      # sets gen_enclosures.py and gen_builder_manifest.py read; both of
+      # those --checks run only here, so a manifest edit must run them
+      - "devices/*/device.json"
   pull_request:
     branches: [ "main" ]
     paths:
@@ -34,6 +45,8 @@ on:
       - "scripts/lint_design_lang.py"
       - "canary-local/devices/assembly.json"
       - "canary-local/boards/**"
+      - "canary-local/tools/**"
+      - "devices/*/device.json"
 
 permissions:
   contents: read
@@ -68,9 +81,10 @@ jobs:
       # gen_cad_params.py writes them, and this proves a .scad edit did not
       # bypass the manifest. It reads the same parser as the builder check
       # below (parse_scad), so the knobs a manifest may own and the knobs the
-      # builder shows are one set. devices/** is deliberately NOT in this
-      # workflow's paths — lint.yml gates a manifest-only edit — so the fit
-      # matrix does not run for every manifest change.
+      # builder shows are one set. lint.yml gates a manifest-only edit too
+      # (unfiltered), and devices/*/device.json is in this workflow's paths as well:
+      # gen_enclosures.py and gen_builder_manifest.py read the manifests and
+      # their --checks run only here, so a manifest edit must run them.
       - name: Manifest-owned knobs equal the case literals
         run: python3 gen_cad_params.py --check
 
