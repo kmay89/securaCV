@@ -132,6 +132,11 @@ sensitive = ["zone:front_boundary"]  # Zones that trigger vault sealing
 # tuned for SD-card endurance (default 300s = 288 passes/day). Events persist
 # at most retention + check_interval.
 #
+# The pass prunes only the expired PREFIX of the chain, and a wall clock that
+# steps forward cannot expire rows sealed minutes ago (the store ages them by
+# the monotonic clock once it sees the step). See docs/failure_semantics.md,
+# "Retention under clock faults".
+#
 [retention]
 seconds = 604800  # 7 days
 check_interval_seconds = 300

@@ -35,6 +35,37 @@ per frame/loop iteration.
 | Sensor disagreement | `SensorDisagreement` | **Not emitted.** No multi-sensor consensus layer exists; adapters are independent. Deferred until a consensus mechanism lands — emitting it without one would be fabrication |
 | Firmware integrity failure | `FirmwareIntegrity` | **Not emitted.** No firmware attestation infrastructure exists on the host kernel. Deferred to the firmware-attestation work |
 
+### Retention under clock faults
+
+Retention ages a sealed row by its `created_at` stamp — the wall clock at the
+moment of sealing — so a wall clock that moves is a way to lose evidence that
+no adversary needs. Two bounds hold regardless of the wall clock:
+
+- **The prune is a prefix.** The pass finds the first row whose stamp is still
+  inside retention and prunes only the rows *before* it. A clock that stepped
+  back between two appends leaves a later row with an older stamp; that row
+  stops the prefix instead of dragging the live rows before it out with it.
+- **A forward step cannot expire what was just sealed.** The store keeps a
+  bounded ring of `(monotonic instant, wall time, first rowid)` samples, one
+  per 10-minute interval over the last 14 days of this process. When the wall
+  clock has run ahead of the monotonic clock across a sample by more than the
+  step tolerance (30 s, the clock monitor's default skew tolerance, so every
+  step that seals a `ClockSkew` also engages the floor) — an RTC-less hub
+  taking its first NTP sync after boot, an operator correcting a clock that
+  was years behind — the rows after that sample are
+  aged by the monotonic clock, not the stamp: a row appended less than
+  `retention − 10 min` ago is never pruned. When the two clocks agree the
+  stamps are trusted as before.
+- **A declared excursion holds the pass.** `witnessd` skips one retention pass
+  after the clock monitor seals a `ClockSkew` record, so pruning resumes on
+  the settled clock; a clock that steps every interval holds retention every
+  interval (loud, by design — the ClockSkew records say why).
+
+What this does **not** cover: rows sealed by an earlier process have no
+monotonic history, so a clock that was already wrong at boot governs them by
+stamp alone; and a forward step larger than 14 days outruns the ring. Both
+are the host-clock trust assumption, stated rather than hidden.
+
 ### System trace records (not failures)
 
 - `lifecycle` (`start` / `shutdown_clean`): every daemon start and clean

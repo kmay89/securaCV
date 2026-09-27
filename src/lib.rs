@@ -7733,6 +7733,84 @@ mod tests {
         Ok(())
     }
 
+    /// A failure record stamped with an explicit bucket: the one append path
+    /// that lets a test seal a row with a chosen `created_at`.
+    fn seal_failure_at(kernel: &mut Kernel, cfg: &KernelConfig, start_epoch_s: u64) -> Result<()> {
+        kernel.append_failure_event(
+            FailureType::ClockSkew,
+            TimeBucket {
+                start_epoch_s,
+                size_s: TEN_MINUTES_S,
+            },
+            Some("test".to_string()),
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn retention_prunes_a_prefix_so_a_clock_regression_cannot_take_live_rows() -> Result<()> {
+        // Row 1 is sealed on the current clock. Then the clock steps back two
+        // days and row 2 is sealed with that older stamp. The pruner used to
+        // take "the newest expired row and everything below it": row 2 is
+        // expired, so row 1 — inside retention by every clock — went with it.
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        let now = TimeBucket::now_10min()?.start_epoch_s;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        seal_failure_at(&mut kernel, &cfg, now - 2 * 86_400)?;
+        assert_eq!(sealed_event_hashes(&kernel)?.len(), 2);
+
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(86_400))?;
+
+        assert_eq!(
+            sealed_event_hashes(&kernel)?.len(),
+            2,
+            "the in-retention row stops the prefix; the regressed row behind it stays too"
+        );
+        assert!(
+            checkpoint_rows(&kernel)?.is_empty(),
+            "nothing pruned, nothing checkpointed"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn retention_prunes_only_the_expired_prefix() -> Result<()> {
+        // Rows 1-2 expired, row 3 live, row 4 regressed: the prefix ends at
+        // row 2, the checkpoint stands there, and the chain still verifies.
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        let now = TimeBucket::now_10min()?.start_epoch_s;
+        seal_failure_at(&mut kernel, &cfg, now - 3 * 86_400)?;
+        seal_failure_at(&mut kernel, &cfg, now - 3 * 86_400)?;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        seal_failure_at(&mut kernel, &cfg, now - 2 * 86_400)?;
+        let before = sealed_event_hashes(&kernel)?;
+        assert_eq!(before.len(), 4);
+        let (_, h2) = before[1];
+
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(86_400))?;
+
+        let after = sealed_event_hashes(&kernel)?;
+        assert_eq!(
+            after.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            vec![3, 4]
+        );
+        let checkpoints = checkpoint_rows(&kernel)?;
+        assert_eq!(checkpoints.len(), 1);
+        assert_eq!((checkpoints[0].1, checkpoints[0].2), (2, h2));
+        let report = crate::verify_runner::run_full_verify(
+            &kernel.conn,
+            None,
+            None,
+            SignatureMode::Compat,
+            |_| {},
+        )?;
+        assert!(report.chain_valid, "{:?}", report.error);
+        Ok(())
+    }
+
     #[test]
     fn retention_without_anchor_table_writes_one_checkpoint() -> Result<()> {
         let (mut kernel, cfg) = setup_test_kernel()?;
