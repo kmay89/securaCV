@@ -1977,6 +1977,11 @@ static void persist_chain_state() {
 // streak; a successful append re-arms the latch.
 
 static bool g_witness_sd_warned = false;
+// The card's file ends in a torn line (power cut mid-append). Set by
+// witness_recover_from_sd() on every mount, cleared by the first append
+// that seals the fragment onto its own line — see
+// witness_store::tail_is_torn for why the next record must not share it.
+static bool g_witness_tail_torn = false;
 
 static bool witness_sd_fail(const char* why) {
   if (!g_witness_sd_warned) {
@@ -1997,11 +2002,17 @@ static bool sd_append_witness_record(const WitnessRecord* rec) {
   if (!SD.exists("/WITNESS") && !SD.mkdir("/WITNESS"))
     return witness_sd_fail("mkdir /WITNESS failed");
 
-  char line[witness_store::RECORD_LINE_MAX];
-  const size_t n = witness_store::line_build(
-      line, sizeof(line), rec->seq, rec->time_bucket, (uint8_t)rec->type,
-      rec->payload_hash, rec->prev_hash, rec->chain_hash, rec->signature);
-  if (n == 0) return witness_sd_fail("line build failed");
+  // A torn tail is sealed by a leading '\n' in the SAME write as the record,
+  // so a second power cut cannot leave the terminator without its line.
+  char line[witness_store::RECORD_LINE_MAX + 1];
+  size_t off = 0;
+  if (g_witness_tail_torn) line[off++] = '\n';
+  const size_t built = witness_store::line_build(
+      line + off, sizeof(line) - off, rec->seq, rec->time_bucket,
+      (uint8_t)rec->type, rec->payload_hash, rec->prev_hash, rec->chain_hash,
+      rec->signature);
+  if (built == 0) return witness_sd_fail("line build failed");
+  const size_t n = off + built;
 
   // FILE_APPEND + close-per-write: a power cut at most loses the in-flight
   // line, never the file structure (crash model of csi_event_log.cpp and
@@ -2011,6 +2022,7 @@ static bool sd_append_witness_record(const WitnessRecord* rec) {
   const size_t wrote = f.write((const uint8_t*)line, n);
   f.close();
   if (wrote != n) return witness_sd_fail("short write (card full?)");
+  g_witness_tail_torn = false;  // the fragment is sealed on its own line
   g_witness_sd_warned = false;  // healthy again — re-arm the warning latch
   return true;
 #else
@@ -2029,6 +2041,7 @@ static bool sd_append_witness_record(const WitnessRecord* rec) {
 // a tampered tail must never move our chain head.
 static void witness_recover_from_sd() {
 #if FEATURE_SD_STORAGE
+  g_witness_tail_torn = false;  // re-judged from this mount's file
   File f = SD.open("/WITNESS/records.jsonl", FILE_READ);
   if (!f) return;
   const size_t size = f.size();
@@ -2048,6 +2061,7 @@ static void witness_recover_from_sd() {
   f.close();
   if (got == 0) return;
   tail[got] = '\0';
+  g_witness_tail_torn = witness_store::tail_is_torn(tail, got);
 
   witness_store::TailRecord rec;
   if (!witness_store::tail_parse(tail, &rec)) return;

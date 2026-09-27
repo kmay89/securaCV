@@ -442,6 +442,10 @@ static bool sd_append_fail(const char* why) {
   return false;
 }
 
+// One tail read per mount generation answers two questions: does the
+// card's history fork the chain we are about to extend, and does the file
+// end in a torn line that the next append must terminate first.
+//
 // Fork guard for mounts that land AFTER boot recovery already ran (a card
 // inserted late, or a boot whose mount outlived its wait budget).
 // witness_recover_from_sd() reconciles the SD tail with the NVS head only
@@ -454,7 +458,17 @@ static bool sd_append_fail(const char* why) {
 // the gap honestly) until a reboot reconciles — and a foreign card whose
 // history is ahead of ours is refused for the same reason, instead of
 // having our chain interleaved into someone else's file.
-static bool sd_tail_forks_chain(uint32_t next_seq) {
+//
+// Torn tail: a power cut mid-append leaves the in-flight line without its
+// '\n'. Boot recovery skips it (witness_store::tail_parse), which is right,
+// but appending straight after it used to concatenate the next record onto
+// the fragment — one malformed line mid-file, which the offline verifier
+// could not tell from tampering. `*torn` reports it so the first append of
+// this mount seals the fragment onto its own line (a scar the verifier
+// recognizes: the record after it chains contiguously from the record
+// before it — witness_store::tail_is_torn says why).
+static bool sd_tail_forks_chain(uint32_t next_seq, bool* torn) {
+  if (torn) *torn = false;
   File f = SD.open("/WITNESS/records.jsonl", FILE_READ);
   if (!f) return false;  // no history — nothing to fork
   const size_t size = f.size();
@@ -473,6 +487,7 @@ static bool sd_tail_forks_chain(uint32_t next_seq) {
   f.close();
   if (got == 0) return false;
   tail[got] = '\0';
+  if (torn) *torn = witness_store::tail_is_torn(tail, got);
 
   witness_store::TailRecord rec;
   if (!witness_store::tail_parse(tail, &rec)) return false;  // torn tail — tolerated
@@ -492,19 +507,29 @@ static bool sd_append_record(const WitnessRecord* rec) {
   // covers a card that was mounted before the first record of the boot.
   static uint32_t s_fork_checked_gen = 0;
   static bool s_fork_blocked = false;
+  static bool s_tail_torn = false;  // seal the fragment before the first append
   const uint32_t gen = storage_mount_generation();
   if (gen != s_fork_checked_gen) {
     s_fork_checked_gen = gen;
-    s_fork_blocked = sd_tail_forks_chain(rec->seq);
+    s_fork_blocked = sd_tail_forks_chain(rec->seq, &s_tail_torn);
   }
   if (s_fork_blocked)
     return sd_append_fail("SD history ahead of this chain - reboot to reconcile");
 
-  char line[witness_store::RECORD_LINE_MAX];
-  const size_t n = witness_store::line_build(
-      line, sizeof(line), rec->seq, rec->time_bucket, (uint8_t)rec->type,
-      rec->payload_hash, rec->prev_hash, rec->chain_hash, rec->signature);
-  if (n == 0) return sd_append_fail("line build failed");
+  // A torn tail is sealed by a leading '\n' in the SAME write as the record,
+  // so a second power cut cannot leave the terminator without its line: if
+  // only the '\n' lands, the old fragment is on its own line and the file
+  // ends clean; if the new line tears too, the next mount sees one sealed
+  // scar and one new torn tail, both of which the verifier tolerates.
+  char line[witness_store::RECORD_LINE_MAX + 1];
+  size_t off = 0;
+  if (s_tail_torn) line[off++] = '\n';
+  const size_t built = witness_store::line_build(
+      line + off, sizeof(line) - off, rec->seq, rec->time_bucket,
+      (uint8_t)rec->type, rec->payload_hash, rec->prev_hash, rec->chain_hash,
+      rec->signature);
+  if (built == 0) return sd_append_fail("line build failed");
+  const size_t n = off + built;
 
   // Card-op failures below also feed the storage manager's consecutive-error
   // counter: past its policy threshold the card is marked lost and the loop's
@@ -528,6 +553,7 @@ static bool sd_append_record(const WitnessRecord* rec) {
     storage_note_write_failure();
     return sd_append_fail("short write (card full?)");
   }
+  s_tail_torn = false;  // the fragment is sealed; later appends start clean
 
   storage_note_write_success();
   g_health.sd_writes++;

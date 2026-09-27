@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### A power cut mid-append no longer reads as tampering in the card's witness log
+
+- **The torn line is sealed onto its own line.** A power cut mid-append
+  leaves `/WITNESS/records.jsonl` ending in half a line. Boot recovery
+  already skipped it (the head resumes from the last complete record),
+  but the next append started on the same line, so the fragment and a
+  complete record read as one malformed line mid-file — which
+  `tools/verify_witness_log.py` counted as an integrity failure. Both
+  writers (the PlatformIO `securacv_witness` library and the canary-wap
+  sketch) now read the tail once per mount, and when it is torn the first
+  append leads with a newline in the same write, so a second cut cannot
+  leave the terminator without its line (`witness_store::tail_is_torn`,
+  host-tested; the append glue is compile-tested by CI's firmware builds,
+  not host-tested).
+- **The verifier judges a malformed line by its neighbors, never by
+  itself.** When the nearest record after it chains contiguously from the
+  nearest record before it (seq + 1, prev equal to that record's chain
+  hash) it is a power-cut scar: the fragment was never chained upon and
+  nothing is missing. When the record after it jumps ahead, the line sits
+  at a gap boundary and is reported as the gap it is — a destroyed record
+  reads exactly like a deleted one, which a gap already reports, so the
+  verdict does not change. A backward sequence, a line nothing follows, or
+  a leading line the genesis does not bridge still fails, and the message
+  says why. Seven new cases in `tools/test_verify_witness_log.py`.
+
 ### The fleet's semantics are written down, and the mesh specs say which relay exists
 
 - **`docs/FLEET_SEMANTICS.md`** — what "online", "verified" and "the
