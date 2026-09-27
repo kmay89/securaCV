@@ -287,7 +287,11 @@ old key) whose firmware carries the new public key.
 
 The engine persists a **monotonic minimum-version floor** in NVS. A validly
 signed but older image — e.g. replayed by a hostile mirror — is rejected
-even after a physical downgrade, because the floor only ever rises. The
+because the floor only ever rises. The floor lives in NVS, not in an eFuse:
+someone with physical access who erases NVS erases the floor with it, so
+"even after a physical downgrade" holds against a remote mirror, not against
+a hand on the board (the hardware root-of-trust design covers the eFuse
+path; it is not enabled). The
 decision logic is host-tested (`firmware/common/ota/test_ota_logic.cpp`).
 
 BLE OTA enforces the **same floor through the same function** since
@@ -377,6 +381,23 @@ HTTP-only build gets plain HTTP, token included.
 The design goal is stronger than "hard to brick": **there is no sequence of
 user actions through the update system that leaves a device unrecoverable.**
 
+> **Where each property holds today.** The A/B rollback net below — a new
+> image staying `PENDING_VERIFY` until its boot self-test confirms it, and
+> reverting otherwise — is live only where the bootloader's rollback config
+> is enabled: the `canary-ota` ESP-IDF project
+> (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` in its `sdkconfig`). **In the
+> shipping Arduino and PlatformIO builds that config is not enabled, the
+> Arduino core auto-confirms a new image on its first boot, and a bad first
+> boot does not revert.** There, the properties that hold are the ones that
+> need no bootloader help: signature and product checks before install,
+> writes to the inactive slot only, the NVS anti-rollback floor, and the
+> mask-ROM download mode as the last resort. Enabling the config in the
+> shipping builds is tracked in the self-* roadmap
+> ([`design/self_star_roadmap.md`](design/self_star_roadmap.md), "boot
+> safe-mode / A/B rollback"); until it lands, read the "crashes on first
+> boot" and "fails its health check" rows of the recovery matrix as
+> `canary-ota` only.
+
 - **A/B partitions:** updates are written only to the inactive slot; the
   running firmware is never touched. Power loss at any point during the
   download or flash lands on a bootable slot.
@@ -400,9 +421,13 @@ user actions through the update system that leaves a device unrecoverable.**
     ANY install channel exists; vision validates immediately after WiFi,
     BEFORE its blocking MQTT connect, so a broker outage can't cause a
     spurious revert.
-- **Expected (safe) edge:** power-cycling the device during the first
-  minute after an update — before it confirms itself — reverts it to the
-  previous version. Nothing is lost; the update is simply offered again.
+- **Expected (safe) edge:** power-cycling the device after an update but
+  before the boot self-test confirms the image reverts it to the previous
+  version. On `canary-ota` that window closes seconds into boot — the
+  self-test runs right after the required checks register and calls
+  `esp_ota_mark_app_valid_cancel_rollback()` when they pass — so it is a
+  pending-verification window, not a fixed minute. Nothing is lost; the
+  update is simply offered again.
 - **Outcome bookkeeping survives every path:** the engine records the
   install target the moment the boot partition flips (not at reboot), so
   deferred reboots, battery-gated installs, and BLE-pushed images all get
@@ -429,9 +454,9 @@ user actions through the update system that leaves a device unrecoverable.**
 |---|---|---|
 | Power/WiFi lost mid-download | Old firmware keeps running; partial download discarded | Nothing — press Install again whenever |
 | Update file corrupted or forged | Refused before install (SHA-256 + Ed25519 + format checks) | Nothing — error shown in plain language |
-| New firmware crashes or hangs on first boot | Bootloader restores previous firmware on the next start | Nothing — rollback is recorded; update re-offered |
-| New firmware boots but fails its health check | Restores previous firmware automatically | Nothing — reason shown in HA / dashboard |
-| Power cycled in the first minute after an update | Returns to previous firmware (unconfirmed images don't stick) | Press Install again |
+| New firmware crashes or hangs on first boot | `canary-ota`: bootloader restores previous firmware on the next start. Shipping Arduino/PlatformIO builds: **no revert** — the image was auto-confirmed; the WAP's crash-loop safe mode and every product's task watchdog are what remain | `canary-ota`: nothing. Others: USB reflash |
+| New firmware boots but fails its health check | `canary-ota`: restores previous firmware automatically. Others: the failure is logged; the image stays | `canary-ota`: nothing. Others: reflash or push a fixed image |
+| Power cycled after an update, before the boot self-test confirms it | `canary-ota`: returns to previous firmware (unconfirmed images don't stick; the window closes seconds into boot, when the self-test passes). Others: the new image stays | `canary-ota`: press Install again. Others: nothing |
 | Wrong update server address saved | Checks fail with a clear message; firmware untouched | Clear the field (Settings) to return to the official server |
 | Wrong variant's manifest configured | Product check refuses the image | Fix the address; nothing was installed |
 | WiFi password changed at the router | canary/WAP: own AP + dashboard still up — reconfigure there. vision/sense: after a few failed joins for a fixable reason, the board raises its own `SecuraCV-XXXX` setup network (the shared setup portal); sensing continues underneath | Reconnect via dashboard (canary/WAP), or join the setup network from a phone and enter the new password (vision/sense) — a USB reflash always works too |

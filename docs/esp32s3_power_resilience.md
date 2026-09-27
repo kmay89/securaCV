@@ -18,9 +18,12 @@ fault. Symptoms you'll see in the field:
 
 - "BLE init failed" / "WiFi AP failed to start" in the boot log — because the
   reset interrupts bring-up part-way.
-- A **boot loop** that trips `safe_mode_check()` (3 reboots in 60 s), which then
-  disables the optional peripherals — so the device looks "broken" and BLE/WiFi
-  are off, masking the real cause (power).
+- A **boot loop** that trips `safe_mode_check()` (three consecutive crash
+  resets — panic, watchdog or brownout — with no 60 s stable run between
+  them), which then disables the optional peripherals — so the device looks
+  "broken" and BLE/WiFi are off, masking the real cause (power). The full
+  rule, with its bounded recovery reboots, is in
+  [`FAULT_MODEL.md`](FAULT_MODEL.md) §2.6.
 
 ## What the firmware does
 
