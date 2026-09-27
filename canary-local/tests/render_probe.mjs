@@ -41,10 +41,14 @@ const server = createServer(async (req, res) => {
     return;
   }
   try {
-    const file = join(ROOT, path);
-    const rp = resolve(file);
+    // the URL is untrusted: decode it, refuse any ".." segment, resolve it
+    // under ROOT and read the RESOLVED path only (CodeQL's path-injection
+    // sanitizer: the value that reaches readFile is the one that was checked)
+    const decoded = decodeURIComponent(path);
+    if (decoded.split("/").includes("..")) throw new Error("outside root");
+    const rp = resolve(ROOT, "." + decoded);
     if (rp !== ROOT && !rp.startsWith(ROOT + sep)) throw new Error("outside root");
-    const body = await readFile(file);
+    const body = await readFile(rp);
     res.writeHead(200, { "content-type": MIME[extname(path)] || "application/octet-stream" });
     res.end(body);
   } catch {
