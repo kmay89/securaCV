@@ -83,6 +83,12 @@ Each transport provides the same logical message interface.
 
 - **Fully Connected Mesh**: Every device maintains connections to all opera members
 - **Hop Limit**: Maximum 3 hops for relayed messages (prevents amplification)
+
+> **Implementation status (v0.2): relay is not built.** `mesh_network.cpp`
+> carries no relay path and no hop count; a frame reaches exactly the peers
+> in ESP-NOW range of its sender, one radio hop. "Fully connected" therefore
+> means "every peer the radio can hear", and the hop limit above bounds a
+> mechanism that does not yet exist. See `docs/FLEET_SEMANTICS.md` §6.
 - **Heartbeat**: Devices ping every 30 seconds to maintain presence
 - **Max Opera Size**: 16 devices (prevents resource exhaustion)
 
@@ -581,7 +587,9 @@ When a canary detects a critical event:
 
 1. Immediately broadcast `TAMPER_ALERT` or `POWER_ALERT` to all peers
 2. If power is failing, broadcast `OFFLINE_IMMINENT` as final message
-3. Messages are relayed by other opera members (max 3 hops)
+3. Messages are relayed by other opera members (max 3 hops) — **specified,
+   not built (v0.2)**: today an alert is heard only by peers in direct
+   range of the sender
 4. Receiving devices store alert in local log with sender attribution
 
 ### 6.2 Alert Priority
