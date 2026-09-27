@@ -117,6 +117,26 @@ static void test_tail_parse_picks_newest_complete() {
   CHECK(rec.seq == 42);
 }
 
+static void test_tail_is_torn_reads_the_last_byte() {
+  uint8_t ph[32], prev[32], ch[32], sig[64];
+  fill_fixture(ph, prev, ch, sig);
+  char l1[RECORD_LINE_MAX];
+  const size_t n = line_build(l1, sizeof(l1), 41, 6, 0, ph, prev, ch, sig);
+  CHECK(n > 0);
+
+  /* A complete line ends in '\n': nothing to terminate. */
+  CHECK(!tail_is_torn(l1, n));
+  /* The same line cut mid-append: torn. */
+  CHECK(tail_is_torn(l1, n / 2));
+  /* Cut right before its newline: still torn — the newline is the seal. */
+  CHECK(tail_is_torn(l1, n - 1));
+  /* Nothing read (empty file, or a read that returned nothing): not torn. */
+  CHECK(!tail_is_torn(l1, 0));
+  CHECK(!tail_is_torn(NULL, 5));
+  /* A lone terminator: the previous fragment was already sealed. */
+  CHECK(!tail_is_torn("\n", 1));
+}
+
 static void test_line_parse_rejects_malformed() {
   TailRecord rec;
 
@@ -258,6 +278,7 @@ int main() {
   test_hex_helpers();
   test_line_golden_and_roundtrip();
   test_tail_parse_picks_newest_complete();
+  test_tail_is_torn_reads_the_last_byte();
   test_line_parse_rejects_malformed();
   test_seq_tamper_breaks_chain_hash_binding();
   test_sd_wins_decision();
