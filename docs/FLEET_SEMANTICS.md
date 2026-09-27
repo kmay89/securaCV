@@ -156,8 +156,11 @@ that the session id is in the nearby table, and `NearbyDevice` has no
 first-seen field. Beacon's receive path has one more: when the receiver's
 clock is unsynced the freshness branch is empty ("accept but flag" —
 nothing is flagged), so a captured frame can be re-accepted after the
-32-slot dedup ring rolls or the device reboots, within the per-key 24 h
-budget. Auto-revoke on a peer's tamper report (`AGENTS.md`, Beacon rule 11)
+32-slot dedup ring rolls or the device reboots — and a reboot also zeroes
+the per-key and per-pair 24 h budgets (`init()` clears the rate tables;
+`load_audit_log()` restores the audit entries, not the budgets), so the
+budget does not bound the replay across reboots. Auto-revoke on a peer's
+tamper report (`AGENTS.md`, Beacon rule 11)
 is unreachable from a WAP peer today because `broadcast_tamper_alert` has
 no caller.
 

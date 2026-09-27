@@ -500,7 +500,10 @@ The two-pubkey origination requirement is the primary defense. Layered on top:
 > receiver whose wall clock is unsynced skips the freshness and expiry
 > checks — the code's branch reads "accept but flag" and flags nothing — so
 > a captured frame can be re-accepted once the 32-slot dedup ring rolls or
-> the device reboots, within the per-key 24 h origination budget. And
+> the device reboots. The per-key and per-pair 24 h budgets do not bound
+> that across a reboot: `init()` zeroes both rate tables and
+> `load_audit_log()` restores the audit entries but does not rebuild the
+> budgets from them, so every reboot starts the budgets fresh. And
 > auto-revoke on a peer's tamper report is unreachable from a WAP peer,
 > because `broadcast_tamper_alert` has no caller. Both are open items, not
 > properties; `docs/FLEET_SEMANTICS.md` §6 keeps the list.
