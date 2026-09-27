@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Retention prunes a prefix, and a clock step cannot expire what was just sealed
+
+- **A clock regression no longer takes live rows with it.** The retention
+  pass used to pick the newest expired row and delete everything at or
+  below its id; a row sealed after the clock stepped back carried an older
+  stamp, so the in-retention rows before it went too. The pass now prunes
+  only the prefix before the first row still inside retention (`storage.rs`;
+  pinned by `retention_prunes_a_prefix_so_a_clock_regression_cannot_take_live_rows`).
+- **A forward clock step cannot expire rows sealed minutes ago.** Each store
+  keeps a bounded ring of monotonic-clock samples (one per 10-minute
+  interval, 14 days, FR-4); when the wall clock has run ahead of the
+  monotonic clock across a sample by more than a bucket, rows after it are
+  aged by the monotonic clock. Agreeing clocks leave the stamps in charge,
+  so aging a row by rewriting `created_at` still works in tests.
+- **`witnessd` holds one retention pass after a sealed `ClockSkew`** so the
+  pass runs on the settled clock. `docs/failure_semantics.md` states the
+  bounds and what they leave out (rows from an earlier process, a step past
+  the ring).
+
 ### The airtime governor charges what goes on the air, a chain-state write NVS refuses is retried, the WAP's settings sessions stop closing each other, the key-pinning steps name each product's source, and CI keeps one host-test list and fails a logic test's node or python3 read outside its path filter (#1725)
 
 - **The airtime governor charges what goes on the air: an ESP-NOW framing
