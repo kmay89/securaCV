@@ -15,7 +15,7 @@
 // Uses playwright (or playwright-core with PW_EXECUTABLE set).
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { extname, dirname, resolve } from "node:path";
+import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { indexTree, lookup } from "./probe_server.mjs";
 
