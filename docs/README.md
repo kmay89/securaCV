@@ -181,6 +181,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Database key rotation](db_key_rotation.md) · [post-quantum mode](pqc_mode.md)
 - [Identity & transport](identity_transport.md) — who speaks, on what wire
 - [Failure semantics](failure_semantics.md) — what breaks loudly, and why
+- [Fault model and recovery](FAULT_MODEL.md) — what survives what: crash, power loss, clock steps, lost and duplicated messages, silent sensors, full storage — per component, with the code and the test behind each row, the self-stabilization argument for the Wi-Fi retry policy and its holes, and the list of what is **not** claimed (no end-to-end delivery guarantee, no cross-device ordering, no Byzantine tolerance, no crash-injection tests yet)
 - [Evidence lifecycle](evidence_lifecycle.md) — the full custody story
 
 </details>

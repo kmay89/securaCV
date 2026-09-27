@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### The fault model is written down, and four docs stop promising recovery the code does not do
+
+- **`docs/FAULT_MODEL.md`** — what survives what, per component: the hub's
+  sealed log under crash and power loss (and what the chain cannot see
+  without the opt-in high-water mark), a Canary's two-tier chain under a
+  torn line and under a card-less power cut (the re-signed sequence
+  numbers, stated), MQTT's at-most-once reality on both ends, the clocks,
+  the Wi-Fi retry policy's self-stabilization argument with its three
+  holes (unjittered outage reboot, RAM-only `ever_online` opening the
+  setup portal, single-step tests), crash loops, sensors and storage. Every
+  row names its code and its test, or says **not built**; §3 lists what
+  is not claimed. Linked from the docs map and from the threat model's new
+  §4, which says faults are not adversaries and are not unhandled.
+- **`firmware_ota.md`** now says where the no-brick properties hold: the
+  A/B revert net is live only in the `canary-ota` ESP-IDF project; the
+  shipping Arduino/PlatformIO builds auto-confirm a new image and a bad
+  first boot does not revert. The recovery matrix rows say so, and the
+  anti-rollback floor is described as NVS, not eFuse.
+- **`timestamping.md`** no longer says nothing can be removed without
+  breaking verification: the chain cannot bind its own length, and the
+  page says what does.
+- **`boot_policy.h`** no longer describes its boot-path wiring as landed
+  and hardware-validated; nothing calls it yet.
+- **`esp32s3_power_resilience.md`** states the WAP crash-loop rule as the
+  code has it (three consecutive crash resets, cleared by a stable minute),
+  and **`failure_semantics.md`** says `PowerLoss` is hub-only.
+
 ### Canary Sense: a returning radar never signs "cleared" over a body, HA's radar-link sensor gets its data, and the radar docs stop outrunning the decoder
 
 - **The presence FSM no longer passes through Clear on the way back from a
