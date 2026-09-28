@@ -990,8 +990,8 @@
      "seated": {
       "pos": [
        0,
-       -3.682,
-       79.008
+       -2.682,
+       47.629
       ],
       "rot": [
        245,
@@ -1026,8 +1026,8 @@
      "seated": {
       "pos": [
        0,
-       -1.506,
-       77.994
+       -0.506,
+       46.615
       ],
       "rot": [
        65,
@@ -1060,8 +1060,8 @@
      "seated": {
       "pos": [
        0,
-       14.082,
-       70.725
+       15.082,
+       39.346
       ],
       "rot": [
        65,
@@ -1093,23 +1093,23 @@
      "instances": [
       [
        55.55,
-       27.816,
-       103.49
+       28.816,
+       72.112
       ],
       [
        55.55,
-       -2.19,
-       39.142
+       -1.19,
+       7.764
       ],
       [
        -55.55,
-       27.816,
-       103.49
+       28.816,
+       72.112
       ],
       [
        -55.55,
-       -2.19,
-       39.142
+       -1.19,
+       7.764
       ]
      ],
      "irot": [
@@ -1138,7 +1138,7 @@
     {
      "title": "Start with the desk cradle",
      "readmeStep": 0,
-     "note": "Prints flat, no hardware: front lip and back rail form the bottom channel, the fin takes the 25-degree lean. Shown seated so the assembly axis reads true."
+     "note": "Prints flat, no hardware: front lip and back rail form the bottom channel, the fin takes the 25-degree lean. Cut for a 90-degree USB-C lead, cable to the back: its head drops into the base pocket and the cable leaves under the fin, so the case sits on the base plate. Shown seated so the assembly axis reads true."
     },
     {
      "title": "The bezel frame",

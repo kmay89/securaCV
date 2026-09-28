@@ -493,7 +493,7 @@
   {
    "id": "dashboard-display-case",
    "name": "Dashboard display case",
-   "for": "Waveshare ESP32-S3-Touch-LCD-4.3 (the [display research](../display_research.md) step-up dashboard): face-down bezel frame, vented screw-on back that clicks onto a wall cradle ([`canary_cradle_lib.scad`](./canary_cradle_lib.scad) — two rigid T-studs carry it, two sprung clips hold the bottom, pull it off for service), free-standing 25° desk cradle. v0.2 retires the old back pattern: a 75 mm M4 pair on one centerline crossed with two keyholes on the other made an X of four holes and two fastener systems, which the dock replaces with one plate and two screws. Panel dims are NOMINAL — measure yours",
+   "for": "Waveshare ESP32-S3-Touch-LCD-4.3 (the [display research](../display_research.md) step-up dashboard): face-down bezel frame, vented screw-on back that clicks onto a wall cradle ([`canary_cradle_lib.scad`](./canary_cradle_lib.scad) — two rigid T-studs carry it, two sprung clips hold the bottom, pull it off for service), free-standing 25° desk cradle that seats the case on its base plate (a 90° USB-C lead's head drops into a pocket and the cable leaves through a tunnel under the fin — a straight lead would need a 31 mm plinth). v0.2 retires the old back pattern: a 75 mm M4 pair on one centerline crossed with two keyholes on the other made an X of four holes and two fastener systems, which the dock replaces with one plate and two screws. Panel dims are NOMINAL — measure yours",
    "status": "in-development",
    "note": "glass drops in, bezel lip 2.5",
    "device": "canary-display-dash",
@@ -8911,6 +8911,63 @@
        "comment": "recline"
       },
       {
+       "name": "stand_w",
+       "default": "120.0",
+       "comment": "base width: the lobes it carries stand at ±(inner_l/2 + lob_o)"
+      },
+      {
+       "name": "stand_t",
+       "default": "4.0",
+       "comment": "base plate thickness: the seat itself on the 90° build"
+      },
+      {
+       "name": "desk_plug",
+       "default": "right_angle",
+       "enum": [
+        "right_angle",
+        "straight"
+       ],
+       "comment": "— the USB-C lead the desk stand is cut for"
+      },
+      {
+       "name": "ra_exit",
+       "default": "8.5",
+       "range": [
+        6.0,
+        0.5,
+        12.0
+       ],
+       "comment": "the lead's axis from the receptacle face, down the plug axis — MEASURE your cable (typ. 7-9)"
+      },
+      {
+       "name": "ra_end",
+       "default": "12.5",
+       "range": [
+        9.0,
+        0.5,
+        16.0
+       ],
+       "comment": "the head's far end from the receptacle face — MEASURE (typ. 11-14)"
+      },
+      {
+       "name": "ra_boot_d",
+       "default": "6.0",
+       "range": [
+        4.0,
+        0.5,
+        8.0
+       ],
+       "comment": "the strain-relief boot leaving the head toward the back — MEASURE"
+      },
+      {
+       "name": "stand_d",
+       "default": "desk_plug == \"straight\" ? 80.0 : 66.0"
+      },
+      {
+       "name": "stand_nose",
+       "default": "desk_plug == \"straight\" ? 16.0 : 10.0"
+      },
+      {
        "name": "plug_l",
        "default": "20.0",
        "range": [
@@ -9035,13 +9092,30 @@
       },
       {
        "name": "seat_y",
-       "default": "-stand_d/2 + 16 + (total_t + 2.0)",
-       "comment": "= chan_back, the channel's rear face: 16 of base, then the tilted display's"
+       "default": "-stand_d/2 + stand_nose + (total_t + 2.0)",
+       "comment": "= chan_back, the channel's rear face: stand_nose of base, then the tilted display's"
       },
       {
-       "name": "seat_z",
-       "default": "cable_drop + boot_z - rx_z",
-       "comment": "the lobe line's height when seated"
+       "name": "ra",
+       "default": "desk_plug == \"right_angle"
+      },
+      {
+       "name": "ra_desk",
+       "default": "0.6",
+       "comment": "the 90° head's lowest corner over the desk"
+      },
+      {
+       "name": "ra_low",
+       "default": "ra_end*cos(stand_ang) + usb_h/2*sin(stand_ang)",
+       "comment": "…below the receptacle"
+      },
+      {
+       "name": "ra_ey",
+       "default": "seat_y + rx_y - ra_exit*sin(stand_ang)"
+      },
+      {
+       "name": "ra_ez",
+       "default": "seat_z + rx_z - ra_exit*cos(stand_ang)"
       },
       {
        "name": "ped_h",
