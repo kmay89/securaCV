@@ -218,9 +218,9 @@ DEVICES = {
     # ---- Dash on its desk stand --------------------------------------------
     # stand(): the display reclines stand_ang with its back face on the fin
     # plane, which the stand derives to pass through the seat point
-    # (seat_y, seat_z — the channel's rear edge on top of the pedestal the
-    # file derives from the plug's boot and the cable's bend, so a straight
-    # USB-C lead clears the desk) — the device's lowest back edge sits there.
+    # (seat_y, seat_z — the channel's rear edge, on the base plate for the
+    # default 90° USB-C lead, or on the pedestal the file derives from a
+    # straight boot and its bend) — the device's lowest back edge sits there.
     # The device frame is gen_assembled_dims.py's: back() as modeled (outer
     # face z = 0), frame() turned face-out about Y at z = back_t + frame_h.
     "canary-display-dash": {
