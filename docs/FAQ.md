@@ -31,8 +31,10 @@ promise isn't that tampering is impossible — it's that tampering becomes
 ### Is it a camera, or software, or both?
 
 Both, and either alone. The **witness kernel** ([`src/`](../src)) is a Rust
-daemon you can point at cameras you already own (RTSP/ONVIF, USB, or via
-Frigate). A **Canary** is a small ESP32-based device running our firmware. Many
+daemon you can point at cameras you already own (any camera that serves an
+RTSP stream, USB, or via Frigate). RTSP decoding is a non-default build feature
+(`rtsp-ffmpeg` / `rtsp-gstreamer`; [RTSP setup](rtsp_setup.md)), and there is no
+ONVIF discovery or control code, only the camera's RTSP stream. A **Canary** is a small ESP32-based device running our firmware. Many
 people run just one or the other. → [the full stack](full_stack_setup.md)
 
 ### Who is it for?

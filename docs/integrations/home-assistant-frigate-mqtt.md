@@ -50,11 +50,11 @@ If your MQTT broker requires TLS, enable TLS for the bridges and provide certifi
 | `MQTT_TLS_CA_PATH` | Path to PEM-encoded CA certificate |
 | `MQTT_TLS_CLIENT_CERT_PATH` | Path to PEM-encoded client certificate (mutual TLS) |
 | `MQTT_TLS_CLIENT_KEY_PATH` | Path to PEM-encoded client private key (mutual TLS) |
-| `MQTT_TLS_BACKEND` | TLS backend: `classic` (default) or `hybrid_pq` (post-quantum) |
+| `MQTT_TLS_BACKEND` | TLS backend: `classic` (default) or `hybrid_pq` (post-quantum; needs a build with `--features pqc-tls`, which is not in the default build) |
 
 ### Hybrid Post-Quantum TLS (Optional)
 
-For forward secrecy against future quantum computers, SecuraCV supports hybrid PQ TLS using X25519Kyber768Draft00 key exchange. This combines classical X25519 with ML-KEM (Kyber768) for defense-in-depth.
+For forward secrecy against future quantum computers, SecuraCV can be built with hybrid PQ TLS (off by default; the default build uses classic TLS only) using X25519Kyber768Draft00 key exchange. This combines classical X25519 with ML-KEM (Kyber768) for defense-in-depth.
 
 **Requirements:**
 - Compile with `--features pqc-tls` to enable hybrid PQ support
