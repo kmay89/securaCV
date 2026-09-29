@@ -2981,6 +2981,13 @@ bool init(httpd_handle_t server, const char* api_token) {
    * boot to avoid id collisions. */
   apply_event_id_floor_from_nvs();
 
+  /* Refill the Today ring from the SD event log's tail. Needs the ceiling
+   * and the floor above (csi_event_inject refuses a row this boot could
+   * still allocate, and a type above the ceiling), and runs before the HAL
+   * so no live event can commit first. No card yet: the loop's mount
+   * transition in canary_wap.ino calls it again, and it runs once. */
+  (void)csi_event_log::load_into_ring();
+
   /* Bring up the CSI HAL. start() defers until WiFi is up; the deferred
    * retry is silent and handled by csi_hal::process().
    *

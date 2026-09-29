@@ -294,10 +294,77 @@ bool append(const csi_event_record_t* rec) {
   return wrote == n;
 }
 
-/* load_into_ring() deferred — see csi_event_log.h. The csi_event_inject
- * helper it needs in the canonical library would touch firmware/common/csi
- * AND its staged copy in lockstep, which is its own scope. The MQTT
- * backfill path below does NOT depend on it and works as-is. */
+size_t load_into_ring() {
+  static bool s_loaded = false;
+  if (s_loaded) return 0;
+  if (!sd_path_ready()) return 0;   /* no card yet (or not ours): try again later */
+  s_loaded = true;                  /* one pass per boot, whatever it finds */
+
+  File f = SD.open(LOG_PATH, FILE_READ);
+  if (!f) return 0;
+  const size_t sz = f.size();
+  size_t start = 0;
+  if (sz > LOAD_TAIL_BYTES) {
+    start = sz - LOAD_TAIL_BYTES;
+    if (!f.seek(start)) { f.close(); return 0; }
+  }
+
+  /* Starting mid-file, the first line is a fragment: drop it. Chunked
+   * reads instead of one read() per byte, since this runs from setup()
+   * over up to LOAD_TAIL_BYTES; the chunk is small because the caller
+   * (csi_integration::init, inside start_http_server) is already deep in
+   * the loop task's stack. */
+  bool skipping = (start > 0);
+  size_t restored = 0;
+  size_t refused  = 0;
+  char line[csi_event_log_line::kLineMax];
+  size_t li = 0;
+  bool overlong = false;
+  uint8_t buf[256];
+  for (;;) {
+    const int n = f.read(buf, sizeof(buf));
+    if (n <= 0) break;
+    for (int i = 0; i < n; ++i) {
+      const char c = (char)buf[i];
+      if (c == '\n') {
+        if (!skipping && !overlong && li > 0) {
+          line[li] = '\0';
+          csi_event_record_t rec;
+          if (csi_event_log_line::parse(line, &rec) && csi_event_inject(&rec)) {
+            restored++;
+          } else {
+            refused++;
+          }
+        }
+        skipping = false;
+        overlong = false;
+        li = 0;
+      } else if (!skipping && !overlong) {
+        if (li < sizeof(line) - 1) {
+          line[li++] = c;
+        } else {
+          overlong = true;   /* no record is this long: not one of ours */
+        }
+      }
+    }
+    yield();   /* keep the idle task (and its watchdog) fed on a big tail */
+  }
+  f.close();
+  /* A last line without its '\n' is the torn tail of a power cut; parse()
+   * refuses a torn record, and a whole one is only missing the newline. */
+  if (!skipping && !overlong && li > 0) {
+    line[li] = '\0';
+    csi_event_record_t rec;
+    if (csi_event_log_line::parse(line, &rec) && csi_event_inject(&rec)) {
+      restored++;
+    } else {
+      refused++;
+    }
+  }
+  Serial.printf("[EVT-LOG] re-injected %u event(s) from the log tail (the ring keeps its newest; %u line(s) refused)\n",
+                (unsigned)restored, (unsigned)refused);
+  return restored;
+}
 
 size_t iterate_since(uint32_t since_event_id, iterate_cb_t cb, void* user) {
   if (!cb || !sd_path_ready()) return 0;

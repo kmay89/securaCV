@@ -279,6 +279,29 @@ clean-http-body:
 run: run-http-body
 clean: clean-http-body
 
+# The SD event log's reboot refill (csi_event_log::load_into_ring): the REAL
+# csi_event_log.cpp and the staged CSI chokepoint (csi_event_inject) over a
+# RAM card (stubs/sd_fake) — tail window, refused lines, owner-file cards,
+# no card writes, once per boot. The staged sources are byte-identical to
+# firmware/common/csi/src (check_csi_sync.sh).
+EVLOAD_BIN = test_csi_event_log_load
+EVLOAD_SRC = test_csi_event_log_load.cpp
+EVLOAD_LIB = $(SRC_DIR)/csi_event_log.cpp $(SRC_DIR)/csi_event.cpp \
+             $(SRC_DIR)/csi_module.cpp $(SRC_DIR)/csi_bundler.cpp
+
+$(EVLOAD_BIN): $(EVLOAD_SRC) $(EVLOAD_LIB) $(SRC_DIR)/csi_event_log.h $(SRC_DIR)/csi_event.h \
+               $(SRC_DIR)/csi_event_log_line.h $(wildcard stubs/sd_fake/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	  -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EVLOAD_SRC) $(EVLOAD_LIB)
+
+.PHONY: run-evlog-load clean-evlog-load
+run-evlog-load: $(EVLOAD_BIN)
+	$(call run_marked,$(EVLOAD_BIN))
+clean-evlog-load:
+	rm -f $(EVLOAD_BIN)
+run: run-evlog-load
+clean: clean-evlog-load
+
 $(BEACON_TAMPER_BIN): $(BEACON_TAMPER_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_TAMPER_SRC) -lcrypto
 

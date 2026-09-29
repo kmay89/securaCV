@@ -23,10 +23,11 @@
  * leaves that log alone: it does not append to it, replay it or truncate it.
  *
  * Lifecycle:
- *   - load_into_ring() runs once at boot after sd mount; reads
- *     all committed records and re-injects them via csi_event_inject
- *     so /api/events/today returns yesterday's tail before any new
- *     event commits this boot.
+ *   - load_into_ring() runs once per boot, after csi_integration has
+ *     restored the privacy ceiling and the event-id floor and the card
+ *     is ready; it reads the log's tail and re-injects each record via
+ *     csi_event_inject so /api/events/today returns the earlier boots'
+ *     tail before any new event commits this boot.
  *   - append() is called from csi_event_on_committed() in
  *     csi_integration.cpp; one fsync-style flush per event so a
  *     hard power cut at most loses the in-flight line.
@@ -82,17 +83,41 @@ bool init();
  */
 bool append(const csi_event_record_t* rec);
 
+/** How far back from the end of the log load_into_ring() reads. The ring
+ *  holds CSI_EVENT_RING_CAP (512) rows; at the usual 150-250 bytes a line,
+ *  the last 128 KB covers it, and the boot never reads the whole 256 KB. */
+constexpr size_t LOAD_TAIL_BYTES = 128u * 1024u;
+
 /**
- * Reserved for a future commit that adds a csi_event_inject helper to
- * the canonical CSI library — would re-insert each persisted record
- * back into the in-memory ring at boot so /api/events/today returns
- * yesterday's tail before a fresh event commits. Not wired today
- * (touching the canonical library + sketch staged copy in lockstep
- * is its own scope; see PR #395 review history). The MQTT bridge
- * backfill via iterate_since() does NOT depend on this — it walks
- * the on-disk log directly.
+ * Put the tail of the on-card log back into the in-memory ring, so
+ * /api/events/today shows the events from before a reboot, not an empty
+ * sheet. Reads the last LOAD_TAIL_BYTES of the log oldest-first and hands
+ * each parsed line to csi_event_inject (the canonical CSI library), which
+ * is where the rules live: it refuses a line whose id this boot could
+ * still allocate, a type this build does not register, a type above the
+ * current privacy ceiling, a duplicate, and everything once a live event
+ * has committed this boot; it re-applies the manifest's allow-list and
+ * sanitizing; it fires no witness write, MQTT publish or SD append.
+ *
+ * Call it after csi_integration has restored the privacy ceiling and the
+ * event-id floor from NVS (without the floor every line is refused, which
+ * is the safe failure). Runs at most once per boot: the first call that
+ * finds the card ready latches; a call with no card returns 0 and leaves
+ * the next call to try. A card that is not this device's (a canary base's
+ * owner file) is left alone, as append() leaves it.
+ *
+ * It restores what the log holds, and the log holds less than the Today
+ * sheet shows live: append() is fed from csi_event_find(), and a bundle
+ * the bundler closes (csi_bundler.cpp run_commit_hooks) never enters the
+ * ring, so closed bundles are neither on the card nor restored. Only
+ * direct (stateless / ambient) commits are. Found 2026-09 while wiring
+ * this; not changed here, since bundle ids also come from a separate,
+ * unpersisted allocator (0x80000000 up, reset every boot).
+ *
+ * Returns the number of rows injected (the ring keeps its newest
+ * CSI_EVENT_RING_CAP of them). Read-only on the card.
  */
-/* size_t load_into_ring(); */  /* deferred */
+size_t load_into_ring();
 
 /**
  * Iterate events with id strictly greater than `since_event_id` and
