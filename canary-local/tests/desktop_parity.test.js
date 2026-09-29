@@ -1322,47 +1322,87 @@ test("the board's own firmware claim never waives the first-contact erase", () =
   assert.match(body[1], /ownerClaimed/, "an explicit human claim must still waive it");
 });
 
-test("the eFuse gap between the two flashers is stated, not hidden", () => {
-  // The browser reads the chip's security fuses (six READ_REGs at eFuse block
-  // 0 through esptool-js); the desktop app genuinely cannot. That's
-  // acceptable — silently omitting it is not, because a missing check reads
-  // as a passed check.
-  //
-  // Why it cannot (A12, checked against the espflash 3.3.0 source rather than
-  // assumed; the full record is docs/unflashed_board_intake.md, "Where the
-  // two flashers differ"): the app runs the espflash CLI, and 3.3.0's
-  // subcommands are board-info, checksum-md5, completions, erase-flash,
-  // erase-parts, erase-region, flash, hold-in-reset, monitor,
-  // partition-table, read-flash, reset, save-image and write-bin — none reads
-  // a register or an eFuse. board-info prints chip + revision, crystal, flash
-  // size, features and MAC; it reads eFuses for the revision and MAC but
-  // prints no security field. Its library can send READ_REG and names the
-  // ROM's GET_SECURITY_INFO, but never sends that in 3.3.0 and exposes
-  // neither on the command line. From espflash 4.0.0, board-info prints a
-  // "Security Information" block (GET_SECURITY_INFO: secure boot, flash
-  // encryption, JTAG, a USB-disable flag — not SECURE_VERSION or
-  // DIS_DOWNLOAD_MANUAL_ENCRYPT), which is the route to a partial native
-  // check — so the pin bump that makes it possible must revisit this
-  // disclosure, and fails here until it does.
+test("security fuses: both flashers read them, off ONE field table", () => {
+  // This used to assert the desktop app disclosed the check as browser-only
+  // (espflash has no fuse-read command — still true of v3.3.0 and v4.3.0).
+  // The desktop now speaks the read-only sliver of the ROM protocol itself
+  // (efuse.rs: SYNC + READ_REG, nothing that can write), so the gap is
+  // closed — and the risk moves to the two field tables drifting apart.
+  // Pin every (key, bit, width) between intake.js and efuse.rs.
   const browser = read(join(CANARY, "assets/flash.js"));
+  const intakeJs = read(join(CANARY, "assets/intake.js"));
+  const efuseRs = read(join(ROOT, "desktop/src-tauri/src/efuse.rs"));
   const html = read(join(ROOT, "desktop/src/index.html"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+
+  // Both sides still HAVE the check, wired to their UIs.
   assert.match(browser, /efuseBlock0Addrs|readSecurityEfuses/,
     "browser flasher lost its security-fuse read");
-  assert.match(html, /id="coldstart-efuse"/,
-    "desktop flasher must say the fuse check is browser-only rather than leave " +
-    "the user assuming it ran");
-  assert.match(html, /browser-only/,
-    "desktop flasher's fuse-gap note no longer names the gap");
-  const pinned = /^ESPFLASH_VERSION=(\d+)\.(\d+)\.(\d+)$/m.exec(read(join(ROOT, ".github/espflash-pins.env")));
-  assert.ok(pinned, "couldn't read ESPFLASH_VERSION from .github/espflash-pins.env");
-  assert.ok(Number(pinned[1]) < 4,
-    `the desktop apps now bundle espflash ${pinned.slice(1).join(".")}, whose board-info prints the ROM's ` +
-    "security info — the \"no fuse-read command\" disclosure (desktop/src/index.html #coldstart-efuse) and " +
-    "docs/unflashed_board_intake.md are no longer the whole truth. Revisit A12: read what board-info now " +
-    "reports, match each field to the browser's, disclose the rest, then move this bound");
-  const doc = read(join(ROOT, "docs/unflashed_board_intake.md"));
-  assert.ok(doc.includes(`the version both desktop apps bundle (${pinned.slice(1).join(".")}, pinned in`),
-    "docs/unflashed_board_intake.md names a different espflash than the pins file — its eFuse record is about another engine");
+  assert.match(html, /id="coldstart-efuse"/, "desktop lost its fuse-check UI");
+  assert.match(appJs, /invoke\("read_security_efuses"/,
+    "desktop frontend no longer invokes the native fuse read");
+  assert.match(libRs, /efuse::read_security_efuses/,
+    "native fuse-read command fell out of the invoke handler");
+
+  // The intake doc's "where the two flashers differ" section is the public
+  // record of this check; it must describe the native read, not the old gap.
+  const intakeDoc = read(join(ROOT, "docs/unflashed_board_intake.md"));
+  assert.ok(intakeDoc.includes("desktop/src-tauri/src/efuse.rs"),
+    "docs/unflashed_board_intake.md no longer names efuse.rs — its two-flashers section is stale");
+  assert.doesNotMatch(intakeDoc, /genuinely browser-only|desktop app cannot read eFuses/,
+    "docs/unflashed_board_intake.md still says the desktop cannot read eFuses");
+
+  // The block-0 geometry agrees.
+  const jsOffset = intakeJs.match(/EFUSE_BLOCK0_RD_OFFSET\s*=\s*(0x[0-9a-fA-F]+)/);
+  const rsOffset = efuseRs.match(/EFUSE_BLOCK0_RD_OFFSET:\s*u32\s*=\s*(0x[0-9a-fA-F_]+)/);
+  assert.ok(jsOffset && rsOffset, "couldn't read EFUSE_BLOCK0_RD_OFFSET from both sides");
+  assert.strictEqual(parseInt(rsOffset[1].replace(/_/g, ""), 16), parseInt(jsOffset[1], 16),
+    "block-0 read offset drifted between intake.js and efuse.rs");
+  const jsWords = intakeJs.match(/EFUSE_BLOCK0_WORDS\s*=\s*(\d+)/);
+  const rsWords = efuseRs.match(/EFUSE_BLOCK0_WORDS:\s*usize\s*=\s*(\d+)/);
+  assert.ok(jsWords && rsWords && jsWords[1] === rsWords[1],
+    "block-0 word count drifted between intake.js and efuse.rs");
+
+  // Every security field: same key, same bit, same width, both sides. The
+  // browser gets EFUSE_BASE from the vendored esptool at runtime; native pins
+  // the bases, so each pinned base must exist in the vendored bundle.
+  const fieldSet = (pairs) => new Set(pairs.map(([k, b, w]) => `${k}@${b}@${w}`));
+  const jsFields = fieldSet(
+    [...intakeJs.matchAll(/key:\s*"([A-Z0-9_]+)",\s*bit:\s*(\d+),\s*width:\s*(\d+)/g)]
+      .map((m) => [m[1], m[2], m[3]]));
+  const rsFields = fieldSet([
+    ...[...efuseRs.matchAll(/field\(\s*"([A-Z0-9_]+)",\s*(\d+),\s*(\d+),/g)].map((m) => [m[1], m[2], m[3]]),
+    ...[...efuseRs.matchAll(/key:\s*"([A-Z0-9_]+)",\s*bit:\s*(\d+),\s*width:\s*(\d+)/g)].map((m) => [m[1], m[2], m[3]]),
+    ...[...efuseRs.matchAll(/\(\s*"([A-Z0-9_]+)",\s*(\d+),\s*(\d+)\s*\)/g)].map((m) => [m[1], m[2], m[3]]),
+  ]);
+  assert.ok(jsFields.size >= 10, "couldn't parse the intake.js field tables");
+  assert.deepStrictEqual([...rsFields].sort(), [...jsFields].sort(),
+    "the security-fuse field tables drifted between intake.js and efuse.rs");
+
+  // Per-chip USB tables can't be swapped between chips unnoticed: compare
+  // each chip's block on both sides, not just the union.
+  for (const chip of ["ESP32-S3", "ESP32-C3", "ESP32-C6"]) {
+    const jsBlock = intakeJs.match(new RegExp(`"${chip}":\\s*\\[([^\\]]*)\\]`));
+    const rsBlock = efuseRs.match(new RegExp(`"${chip}" => Some\\(vec!\\[([^\\]]*)\\]`));
+    assert.ok(jsBlock && rsBlock, `couldn't find the ${chip} USB-fuse table on both sides`);
+    const tuples = (s, re) => [...s.matchAll(re)].map((m) => `${m[1]}@${m[2]}`).sort();
+    assert.deepStrictEqual(
+      tuples(rsBlock[1], /"([A-Z0-9_]+)",\s*(\d+)/g),
+      tuples(jsBlock[1], /key:\s*"([A-Z0-9_]+)",\s*bit:\s*(\d+)/g),
+      `${chip} USB-fuse bits drifted between intake.js and efuse.rs`);
+  }
+
+  // Native EFUSE_BASE addresses come from the vendored esptool-js bundle.
+  const bundle = read(join(CANARY, "assets/vendor/esptool-js/bundle.js"));
+  const bundleBases = new Set([...bundle.matchAll(/EFUSE_BASE\s*=\s*(\d+)/g)].map((m) => Number(m[1])));
+  const nativeBases = [...efuseRs.matchAll(/"(ESP32-[A-Z0-9]+)"\s*=>\s*Some\(0x([0-9a-fA-F_]+)\)/g)]
+    .map((m) => [m[1], parseInt(m[2].replace(/_/g, ""), 16)]);
+  assert.ok(nativeBases.length >= 3, "couldn't parse efuse.rs EFUSE_BASE table");
+  for (const [chip, base] of nativeBases) {
+    assert.ok(bundleBases.has(base),
+      `efuse.rs pins EFUSE_BASE ${base.toString(16)} for ${chip}, but the vendored ` +
+      "esptool-js bundle has no chip at that base — the address is wrong or esptool moved it");
+  }
 });
 
 test("health check: native parsers pin the browser's byte-magics, and the UI reaches the command", () => {

@@ -19,6 +19,7 @@
 //! Everything the user watches scroll by during a flash is `espflash`'s own
 //! output, relayed verbatim over the `flash:log` event.
 
+mod efuse;
 mod fleet;
 mod host;
 mod hub;
@@ -1465,6 +1466,7 @@ pub fn run() {
             saved_wifi_password,
             list_ports,
             detect_chip,
+            efuse::read_security_efuses,
             fetch_manifest,
             witness_discover,
             flash,
