@@ -65,7 +65,7 @@ std::string load(const char* path) {
 void test_header_takes_every_value_from_the_registry() {
   const std::string h = squeeze(load(MESH_NETWORK_H));
 
-  CHECK(count(h, "staticconstuint8_tPROTOCOL_VERSION=mesh_wire::PROTOCOL_VERSION;") == 1);
+  CHECK(count(h, "staticconstuint8_tPROTOCOL_VERSION=mesh_wire::OPERA_VERSION;") == 1);
 
   const std::string en = block_after(h, "enumMessageType:uint8_t");
   CHECK(!en.empty());
@@ -163,7 +163,7 @@ void test_send_path_writes_the_registry_header() {
   CHECK(count(sq, "staticconstexprsize_tWIRE_HEADER_BYTES=2+OPERA_ID_SIZE+FINGERPRINT_SIZE+8+4;") == 1);
   CHECK(count(sq, "static_assert(WIRE_HEADER_BYTES+SIGNATURE_SIZE==102,") == 1);
   // And the sketch pins its enum to the registry at compile time.
-  CHECK(count(sq, "static_assert(PROTOCOL_VERSION==mesh_wire::PROTOCOL_VERSION,") == 1);
+  CHECK(count(sq, "static_assert(PROTOCOL_VERSION==mesh_wire::OPERA_VERSION,") == 1);
   CHECK(count(sq, "static_assert(MSG_TAMPER_ALERT==mesh_wire::TAMPER_ALERT,") == 1);
   CHECK(count(sq, "static_assert(MSG_LEAVE_OPERA==mesh_wire::LEAVE_OPERA,") == 1);
   std::printf("PASS send_path_writes_the_registry_header\n");
@@ -182,7 +182,7 @@ void test_pair_frame_types_are_the_registry_values() {
   // A frame starting with the version byte is never a pairing frame, at
   // any length a pairing frame may have.
   uint8_t frame[mesh_pair_frame::MAX_FRAME_LEN] = {0};
-  frame[0] = mesh_wire::PROTOCOL_VERSION;
+  frame[0] = mesh_wire::OPERA_VERSION;
   const size_t lens[] = {59, 99, 33, 61};
   for (size_t len : lens) {
     uint8_t t = 0; const uint8_t* p = nullptr; size_t pl = 0;

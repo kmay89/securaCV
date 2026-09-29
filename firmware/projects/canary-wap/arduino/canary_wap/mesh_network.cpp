@@ -488,7 +488,7 @@ static bool send_raw_message(const uint8_t* mac, const uint8_t* data, size_t len
 // PlatformIO Canary reads this tree's type byte as the same message. A
 // value typed here instead of taken from mesh_wire.h would silently
 // reopen the disagreement the registry ended.
-static_assert(PROTOCOL_VERSION == mesh_wire::PROTOCOL_VERSION, "version byte drift from the registry");
+static_assert(PROTOCOL_VERSION == mesh_wire::OPERA_VERSION, "version byte drift from the registry");
 static_assert(MSG_TAMPER_ALERT == mesh_wire::TAMPER_ALERT,     "type byte drift from the registry");
 static_assert(MSG_LEAVE_OPERA  == mesh_wire::LEAVE_OPERA,      "type byte drift from the registry");
 static_assert(MSG_CHANNEL_LOCK == mesh_wire::CHANNEL_LOCK,     "type byte drift from the registry");

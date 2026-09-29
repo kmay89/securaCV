@@ -118,12 +118,12 @@ static void test_other_protocols_not_classified() {
   size_t pl = 0;
 
   // A signed Opera frame: the version byte — 1, the registry's
-  // (mesh_wire::PROTOCOL_VERSION, v0.4), or 0, the value this tree sent
+  // (mesh_wire::OPERA_VERSION, v0.4), or 0, the value this tree sent
   // until then — then msg_type, here a pairing type, i.e. the OLD
   // in-header pairing shape. It is signed-length and starts with a
   // version byte: never a pairing frame, under either version.
-  CHECK(mesh_wire::PROTOCOL_VERSION == 1);
-  const uint8_t versions[] = {mesh_wire::PROTOCOL_VERSION, 0};
+  CHECK(mesh_wire::OPERA_VERSION == 1);
+  const uint8_t versions[] = {mesh_wire::OPERA_VERSION, 0};
   for (uint8_t v : versions) {
     uint8_t opera[SIGNED_MIN + 32];
     std::memset(opera, 0xAB, sizeof(opera));

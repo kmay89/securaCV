@@ -73,7 +73,7 @@ namespace mesh_envelope {
 /* Protocol version. Receivers reject frames with a different byte at
  * offset 0. The registry's value (mesh_wire.h) — canary-wap's Opera frames
  * carry the same byte since v0.4. */
-constexpr uint8_t PROTOCOL_VERSION = mesh_wire::PROTOCOL_VERSION;
+constexpr uint8_t PROTOCOL_VERSION = mesh_wire::OPERA_VERSION;
 
 constexpr size_t VERSION_LEN      = 1;
 constexpr size_t MSG_TYPE_LEN     = 1;

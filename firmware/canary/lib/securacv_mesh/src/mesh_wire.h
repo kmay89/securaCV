@@ -22,7 +22,7 @@
  * The outer frame (spec §4.5), identical in both trees:
  *
  *   opera-authenticated (signed):
- *     [version = PROTOCOL_VERSION][type 16..255][opera_id 16][sender_fp 8]
+ *     [version = OPERA_VERSION][type 16..255][opera_id 16][sender_fp 8]
  *     [counter u64 LE][timestamp u32 LE][payload][Ed25519 sig 64]
  *     — mesh_envelope.h's layout, canary-wap's send_to_peer() layout. The
  *     signature is over everything before it, hashed under
@@ -31,7 +31,7 @@
  *     [type 8..12][the raw pairing payload struct]
  *
  * Why the first byte tells the two apart, and the rest of the radio too:
- *   • a signed frame starts with PROTOCOL_VERSION (1);
+ *   • a signed frame starts with OPERA_VERSION (1);
  *   • a pairing frame starts with 8..12 — never 0 or 1, the two version
  *     bytes the trees have used as a first byte, so a receiver that keys on
  *     the first byte (both do) cannot take one for the other whatever the
@@ -64,7 +64,7 @@ namespace mesh_wire {
 
 /* Byte 0 of every signed opera frame. Receivers drop any other value.
  * v0.4 raised canary-wap from 0 to this; the PIO tree already used 1. */
-constexpr uint8_t PROTOCOL_VERSION = 1;
+constexpr uint8_t OPERA_VERSION = 1;
 
 /* ── 0..15: pre-membership pairing, unsigned. 0..7 and 13..15 are reserved
  * and MUST stay unassigned (see the first-byte argument above). ── */
@@ -120,7 +120,7 @@ inline bool is_pairing_type(uint8_t b) { return b >= PAIR_FIRST && b <= PAIR_LAS
 inline bool is_opera_type(uint8_t b)   { return b >= OPERA_FIRST; }
 
 /* The registry's own invariants, checked wherever it is compiled. */
-static_assert(PAIR_FIRST > PROTOCOL_VERSION,
+static_assert(PAIR_FIRST > OPERA_VERSION,
               "a pairing type must never equal the version byte");
 static_assert(PAIR_FIRST > 0, "0 was canary-wap's version byte; keep it unassigned");
 static_assert(PAIR_LAST < OPERA_FIRST, "pairing and opera blocks must not overlap");
@@ -128,7 +128,7 @@ static_assert(HEARTBEAT == OPERA_FIRST && REKEY_ACK == 29 && AUTH_CHALLENGE == 3
               "the two opera blocks must be contiguous and disjoint");
 static_assert(ASSIGNED_LAST < CHIRP_MAGIC && ASSIGNED_LAST < BEACON_MAGIC,
               "no registry value may equal another protocol's magic byte");
-static_assert(PROTOCOL_VERSION != CHIRP_MAGIC && PROTOCOL_VERSION != BEACON_MAGIC,
+static_assert(OPERA_VERSION != CHIRP_MAGIC && OPERA_VERSION != BEACON_MAGIC,
               "the version byte must not equal another protocol's magic byte");
 
 }  /* namespace mesh_wire */

@@ -1439,7 +1439,7 @@ void test_outer_frame_is_the_registry_frame() {
   assert(mesh_session::trusted_peer_count() == 1);
 
   /* 3b. The pre-v0.4 PIO shape: an unsigned type byte, then the envelope. */
-  wap_frame(mesh_wire::PROTOCOL_VERSION, mesh_wire::LEAVE_OPERA, 1, nullptr, 0, &f);
+  wap_frame(mesh_wire::OPERA_VERSION, mesh_wire::LEAVE_OPERA, 1, nullptr, 0, &f);
   f.insert(f.begin(), mesh_wire::LEAVE_OPERA);
   inject_from(b_mac, f.data(), f.size());
   assert(g_left.empty());
@@ -1457,7 +1457,7 @@ void test_outer_frame_is_the_registry_frame() {
    * the three drops above carried: none of them reached verification, so
    * none consumed it. Also the same type byte canary-wap now sends for a
    * leave — 25, not its old 13. */
-  wap_frame(mesh_wire::PROTOCOL_VERSION, mesh_wire::LEAVE_OPERA, 1, nullptr, 0, &f);
+  wap_frame(mesh_wire::OPERA_VERSION, mesh_wire::LEAVE_OPERA, 1, nullptr, 0, &f);
   assert(f[mesh_envelope::OFFSET_VERSION]  == 1);
   assert(f[mesh_envelope::OFFSET_MSG_TYPE] == 25);
   /* The same bytes verify through mesh_envelope's own parser first. */
@@ -1480,7 +1480,7 @@ void test_outer_frame_is_the_registry_frame() {
   assert(g_left.size() == 1);
   assert(mesh_session::trusted_peer_count() == 1);
   /* And counter 2 from the same sender is still live. */
-  wap_frame(mesh_wire::PROTOCOL_VERSION, mesh_wire::LEAVE_OPERA, 2, nullptr, 0, &f);
+  wap_frame(mesh_wire::OPERA_VERSION, mesh_wire::LEAVE_OPERA, 2, nullptr, 0, &f);
   inject_from(b_mac, f.data(), f.size());
   assert(g_left.size() == 2);
   assert(mesh_session::trusted_peer_count() == 0);
@@ -1492,15 +1492,15 @@ void test_outer_frame_is_the_registry_frame() {
    * spent, and a later frame at 3 is a replay; 4 is live. */
   assert(mesh_session::register_trusted_peer(b_pub));
   const uint8_t junk[64] = {0};
-  wap_frame(mesh_wire::PROTOCOL_VERSION, mesh_wire::AUTH_CHALLENGE, 3, junk, sizeof(junk), &f);
+  wap_frame(mesh_wire::OPERA_VERSION, mesh_wire::AUTH_CHALLENGE, 3, junk, sizeof(junk), &f);
   inject_from(b_mac, f.data(), f.size());
   assert(g_left.size() == 2 && g_alerts_rx.empty());
   assert(mesh_session::trusted_peer_count() == 1);
-  wap_frame(mesh_wire::PROTOCOL_VERSION, mesh_wire::LEAVE_OPERA, 3, nullptr, 0, &f);
+  wap_frame(mesh_wire::OPERA_VERSION, mesh_wire::LEAVE_OPERA, 3, nullptr, 0, &f);
   inject_from(b_mac, f.data(), f.size());
   assert(g_left.size() == 2);
   assert(mesh_session::trusted_peer_count() == 1);
-  wap_frame(mesh_wire::PROTOCOL_VERSION, mesh_wire::LEAVE_OPERA, 4, nullptr, 0, &f);
+  wap_frame(mesh_wire::OPERA_VERSION, mesh_wire::LEAVE_OPERA, 4, nullptr, 0, &f);
   inject_from(b_mac, f.data(), f.size());
   assert(g_left.size() == 3);
   assert(mesh_session::trusted_peer_count() == 0);
@@ -1510,7 +1510,7 @@ void test_outer_frame_is_the_registry_frame() {
   g_outs.clear();
   assert(mesh_session::send_tamper_alert(mesh_alert::Kind::ENCLOSURE_TAMPER, 6, 1, 9000));
   assert(g_outs.size() == 1);
-  assert(g_outs[0].bytes[mesh_envelope::OFFSET_VERSION]  == mesh_wire::PROTOCOL_VERSION);
+  assert(g_outs[0].bytes[mesh_envelope::OFFSET_VERSION]  == mesh_wire::OPERA_VERSION);
   assert(g_outs[0].bytes[mesh_envelope::OFFSET_MSG_TYPE] == mesh_wire::TAMPER_ALERT);
   assert(g_outs[0].bytes.size() == mesh_envelope::HEADER_LEN + mesh_alert::PAYLOAD_LEN
                                    + mesh_envelope::SIGNATURE_LEN);

@@ -22,6 +22,10 @@
  *       -I firmware/canary/lib/securacv_mesh/src -o /tmp/t && /tmp/t
  */
 
+/* canary_config.h #defines PROTOCOL_VERSION as a string. The registry must
+ * compile in a translation unit that already has it (PlatformIO canary CI
+ * failed on exactly this once), so define it first. */
+#define PROTOCOL_VERSION "pwk:v0.3.0"
 #include "mesh_wire.h"
 
 #include <cassert>
@@ -31,7 +35,7 @@ namespace {
 
 void test_values_pinned() {
   using namespace mesh_wire;
-  assert(PROTOCOL_VERSION == 1);
+  assert(OPERA_VERSION == 1);
 
   assert(PAIR_DISCOVER == 8  && PAIR_FIRST == 8);
   assert(PAIR_OFFER    == 9);
@@ -72,19 +76,19 @@ void test_first_byte_is_unambiguous() {
   /* The two version bytes the trees have used as a first byte. */
   assert(!is_pairing_type(0) && !is_opera_type(0));
   assert(!is_pairing_type(1) && !is_opera_type(1));
-  assert(!is_pairing_type(PROTOCOL_VERSION));
+  assert(!is_pairing_type(OPERA_VERSION));
   /* Blocks are disjoint and the classifiers say so for every byte. */
   for (int b = 0; b < 256; ++b) {
     const uint8_t v = (uint8_t)b;
     assert(!(is_pairing_type(v) && is_opera_type(v)));
     assert(is_pairing_type(v) == (b >= 8 && b <= 12));
     assert(is_opera_type(v)   == (b >= 16));
-    if (v == PROTOCOL_VERSION) assert(!is_pairing_type(v) && !is_opera_type(v));
+    if (v == OPERA_VERSION) assert(!is_pairing_type(v) && !is_opera_type(v));
   }
   /* Nothing assigned collides with the magics of the other two protocols
    * on the radio, and the version byte does not either. */
   assert(ASSIGNED_LAST < CHIRP_MAGIC && ASSIGNED_LAST < BEACON_MAGIC);
-  assert(PROTOCOL_VERSION != CHIRP_MAGIC && PROTOCOL_VERSION != BEACON_MAGIC);
+  assert(OPERA_VERSION != CHIRP_MAGIC && OPERA_VERSION != BEACON_MAGIC);
   assert(!is_pairing_type(CHIRP_MAGIC) && !is_pairing_type(BEACON_MAGIC));
   std::printf("PASS test_first_byte_is_unambiguous\n");
 }

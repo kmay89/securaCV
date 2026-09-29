@@ -39,7 +39,7 @@ namespace mesh_network {
 // value (mesh_wire.h, spec §4.5 — v0.4, awaiting crypto review, not
 // bench-verified): 1, the same byte the PlatformIO mesh sends. Was 0 until
 // v0.4; a v0.3 canary-wap and a v0.4 one drop each other's Opera frames.
-static const uint8_t PROTOCOL_VERSION = mesh_wire::PROTOCOL_VERSION;
+static const uint8_t PROTOCOL_VERSION = mesh_wire::OPERA_VERSION;
 
 // Network limits
 static const size_t MAX_OPERA_SIZE = 16;           // Maximum peers in an opera

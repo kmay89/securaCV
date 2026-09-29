@@ -17,7 +17,7 @@
  *     counter/signature header. Classified by its first byte.
  *   • An opera-authenticated frame is the signed mesh_envelope itself
  *     (header + payload + Ed25519 signature), nothing in front of it: its
- *     first byte is the version (mesh_wire::PROTOCOL_VERSION), its second
+ *     first byte is the version (mesh_wire::OPERA_VERSION), its second
  *     the signed msg_type (16+). Verified in on_opera_frame against the
  *     sender's TrustedPeer pubkey, opera_id and replay counter, and
  *     dispatched on the SIGNED type.

@@ -261,7 +261,7 @@ void test_msgtype_values_pinned() {
    * The version byte at offset 0 is 1 in both trees. */
   using M = mesh_envelope::MsgType;
   assert(mesh_envelope::PROTOCOL_VERSION == 1);
-  assert(mesh_envelope::PROTOCOL_VERSION == mesh_wire::PROTOCOL_VERSION);
+  assert(mesh_envelope::PROTOCOL_VERSION == mesh_wire::OPERA_VERSION);
   assert(static_cast<uint8_t>(M::TAMPER_ALERT)     == mesh_wire::TAMPER_ALERT);
   assert(static_cast<uint8_t>(M::LEAVE_OPERA)      == mesh_wire::LEAVE_OPERA);
   assert(static_cast<uint8_t>(M::REKEY_ACK)        == mesh_wire::REKEY_ACK);
