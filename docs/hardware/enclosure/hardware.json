@@ -11,10 +11,10 @@
    "case": "Vision doorbell",
    "items": [
     {
-     "qty": 6,
+     "qty": 8,
      "kind": "screw",
-     "spec": "M2 pan x 20 self-tap",
-     "text": "M2 pan x 20 self-tap from the back"
+     "spec": "M2 pan x 8 self-tap",
+     "text": "M2 pan x 8 self-tap (plate to the post ends)"
     },
     {
      "qty": 4,
@@ -26,10 +26,10 @@
      "qty": 1,
      "kind": "security-screw",
      "spec": "M2 x 10 security screw",
-     "text": "M2 x 10 security screw, Torx pin/tri-wing, self-tap (plate foot into the body boss)"
+     "text": "M2 x 10 security screw, Torx pin/tri-wing, self-tap (wall plate foot into the shell's boss)"
     },
     {
-     "qty": 6,
+     "qty": 8,
      "kind": "o-ring",
      "spec": "O-ring 2 ID x 1 CS (under the head)",
      "text": "O-ring 2 ID x 1 CS (under the head)"
@@ -76,12 +76,12 @@
    },
    "bom": {
     "ORG1": {
-     "bom": 6,
-     "echo": 6
+     "bom": 8,
+     "echo": 8
     },
     "SCR5": {
-     "bom": 10,
-     "echo": 10
+     "bom": 12,
+     "echo": 12
     },
     "SCR7": {
      "bom": 4,
@@ -103,10 +103,10 @@
    "case": "Vision doorbell",
    "items": [
     {
-     "qty": 6,
+     "qty": 8,
      "kind": "screw",
-     "spec": "M2 pan x 20 machine (into the inserts)",
-     "text": "M2 pan x 20 machine (into the inserts) from the back"
+     "spec": "M2 pan x 8 machine (into the inserts)",
+     "text": "M2 pan x 8 machine (into the inserts) (plate to the post ends)"
     },
     {
      "qty": 4,
@@ -118,16 +118,16 @@
      "qty": 1,
      "kind": "security-screw",
      "spec": "M2 x 10 security screw",
-     "text": "M2 x 10 security screw, Torx pin/tri-wing, machine thread (into the boss insert) (plate foot into the body boss)"
+     "text": "M2 x 10 security screw, Torx pin/tri-wing, machine thread (into the boss insert) (wall plate foot into the shell's boss)"
     },
     {
-     "qty": 7,
+     "qty": 9,
      "kind": "insert",
      "spec": "M2 heat-set insert 3.5 OD x 4",
      "text": "M2 heat-set insert 3.5 OD x 4 — the +1 seats in the security boss"
     },
     {
-     "qty": 6,
+     "qty": 8,
      "kind": "o-ring",
      "spec": "O-ring 2 ID x 1 CS (under the head)",
      "text": "O-ring 2 ID x 1 CS (under the head)"
@@ -166,7 +166,7 @@
    "bom": {
     "INS1": {
      "bom": 5,
-     "echo": 7
+     "echo": 9
     }
    }
   },
@@ -181,8 +181,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 pan x 16 self-tap",
-     "text": "M2 pan x 16 self-tap from the back"
+     "spec": "M2 pan x 8 self-tap",
+     "text": "M2 pan x 8 self-tap (plate to the post ends)"
     },
     {
      "qty": 1,
@@ -231,8 +231,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 pan x 16 machine (into the inserts)",
-     "text": "M2 pan x 16 machine (into the inserts) from the back"
+     "spec": "M2 pan x 8 machine (into the inserts)",
+     "text": "M2 pan x 8 machine (into the inserts) (plate to the post ends)"
     },
     {
      "qty": 4,
@@ -279,8 +279,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 pan x 12 self-tap",
-     "text": "M2 pan x 12 self-tap from the back"
+     "spec": "M2 pan x 8 self-tap",
+     "text": "M2 pan x 8 self-tap (plate to the post ends)"
     },
     {
      "qty": 4,
@@ -324,7 +324,7 @@
    },
    "bom": {
     "SCR5": {
-     "bom": 10,
+     "bom": 12,
      "echo": 8
     },
     "SCR6": {
@@ -346,8 +346,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 pan x 20 self-tap",
-     "text": "M2 pan x 20 self-tap from the back"
+     "spec": "M2 pan x 8 self-tap",
+     "text": "M2 pan x 8 self-tap (plate to the post ends)"
     },
     {
      "qty": 4,
@@ -391,7 +391,7 @@
    },
    "bom": {
     "SCR5": {
-     "bom": 10,
+     "bom": 12,
      "echo": 8
     },
     "SCR6": {
@@ -414,8 +414,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 pan x 20 machine (into the inserts)",
-     "text": "M2 pan x 20 machine (into the inserts) from the back"
+     "spec": "M2 pan x 8 machine (into the inserts)",
+     "text": "M2 pan x 8 machine (into the inserts) (plate to the post ends)"
     },
     {
      "qty": 4,
@@ -474,8 +474,8 @@
     {
      "qty": 6,
      "kind": "screw",
-     "spec": "M2 pan x 25 self-tap",
-     "text": "M2 pan x 25 self-tap from the back"
+     "spec": "M2 pan x 8 self-tap",
+     "text": "M2 pan x 8 self-tap (plate to the post ends)"
     },
     {
      "qty": 4,
@@ -542,18 +542,18 @@
     "ribs": true,
     "h": 1.0,
     "w": 2.5,
-    "headroom": 4.58,
+    "headroom": 3.38,
     "bound": "lid_headroom",
-    "slack": 3.58,
+    "slack": 2.38,
     "batt_hold": false
    },
    "bom": {
     "ORG1": {
-     "bom": 6,
+     "bom": 8,
      "echo": 6
     },
     "SCR5": {
-     "bom": 10,
+     "bom": 12,
      "echo": 10
     },
     "SCR6": {
@@ -574,8 +574,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 flat x 16 self-tap",
-     "text": "M2 flat x 16 self-tap from the back"
+     "spec": "M2 flat x 10 self-tap",
+     "text": "M2 flat x 10 self-tap (plate to the post ends)"
     },
     {
      "qty": 1,
@@ -607,7 +607,7 @@
    },
    "bom": {
     "SCR3": {
-     "bom": 8,
+     "bom": 12,
      "echo": 4
     }
    }
@@ -622,13 +622,13 @@
    "case": "WAP",
    "items": [
     {
-     "qty": 4,
+     "qty": 8,
      "kind": "screw",
-     "spec": "M2 pan x 12 self-tap",
-     "text": "M2 pan x 12 self-tap from the back"
+     "spec": "M2 pan x 8 self-tap",
+     "text": "M2 pan x 8 self-tap (plate to the post ends)"
     },
     {
-     "qty": 4,
+     "qty": 8,
      "kind": "o-ring",
      "spec": "O-ring 2 ID x 1 CS (under the head)",
      "text": "O-ring 2 ID x 1 CS (under the head)"
@@ -680,19 +680,19 @@
     "ribs": true,
     "h": 1.0,
     "w": 2.5,
-    "headroom": 1.35,
+    "headroom": 1.0,
     "bound": "lid_headroom",
-    "slack": 0.35,
+    "slack": 0.0,
     "batt_hold": true
    },
    "bom": {
     "ORG1": {
-     "bom": 4,
-     "echo": 4
+     "bom": 8,
+     "echo": 8
     },
     "SCR3": {
-     "bom": 8,
-     "echo": 4
+     "bom": 12,
+     "echo": 8
     },
     "SCR4": {
      "bom": 2,
@@ -710,13 +710,13 @@
    "case": "WAP",
    "items": [
     {
-     "qty": 4,
+     "qty": 8,
      "kind": "screw",
-     "spec": "M2 pan x 12 self-tap",
-     "text": "M2 pan x 12 self-tap from the back"
+     "spec": "M2 pan x 8 self-tap",
+     "text": "M2 pan x 8 self-tap (plate to the post ends)"
     },
     {
-     "qty": 4,
+     "qty": 8,
      "kind": "o-ring",
      "spec": "O-ring 2 ID x 1 CS (under the head)",
      "text": "O-ring 2 ID x 1 CS (under the head)"
@@ -767,7 +767,7 @@
      "qty": 4,
      "kind": "screw",
      "spec": "M2 flat x 12 self-tap",
-     "text": "M2 flat x 12 self-tap (shield to the lid's pilots)"
+     "text": "M2 flat x 12 self-tap (shield to the face's pilots)"
     }
    ],
    "bom": {}
@@ -784,8 +784,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 flat x 12 self-tap",
-     "text": "M2 flat x 12 self-tap from the back"
+     "spec": "M2 flat x 10 self-tap",
+     "text": "M2 flat x 10 self-tap (plate to the post ends)"
     },
     {
      "qty": 1,
@@ -805,7 +805,7 @@
    },
    "bom": {
     "SCR3": {
-     "bom": 8,
+     "bom": 12,
      "echo": 4
     }
    }
@@ -823,8 +823,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 flat x 12 machine (into the inserts)",
-     "text": "M2 flat x 12 machine (into the inserts) from the back"
+     "spec": "M2 flat x 10 machine (into the inserts)",
+     "text": "M2 flat x 10 machine (into the inserts) (plate to the post ends)"
     },
     {
      "qty": 4,
@@ -852,7 +852,7 @@
    "set": "doorbell+inserts",
    "csv": "bom_canary_vision.csv",
    "what": "short INS1",
-   "detail": "bom_canary_vision.csv INS1 qty 5 < 7 the CAD echoes"
+   "detail": "bom_canary_vision.csv INS1 qty 5 < 9 the CAD echoes"
   },
   {
    "set": "sense",

@@ -339,6 +339,24 @@ setup_arduino() {
         print_warn "tz_rule not found at ${time_src} — sketch will not compile until firmware/common/time/ is restored"
     fi
 
+    # NvsManager's session depth (the per-task count under the cross-task
+    # lock nvs_store.h holds from begin() to end(); repo sweep F53) is a
+    # single canonical, header-only source shared with the PIO canary tree.
+    # Stage a byte-identical copy next to the sketch; check_csi_sync.sh
+    # guards the two against drift.
+    local storage_src="${FIRMWARE_ROOT}/common/storage"
+    if [ -f "${storage_src}/nvs_session_depth.h" ]; then
+        cp "${storage_src}/nvs_session_depth.h" "${arduino_dir}/" 2>/dev/null || true
+        if [ -f "${arduino_dir}/nvs_session_depth.h" ]; then
+            print_success "Copied nvs_session_depth header"
+        else
+            print_error "Failed to stage nvs_session_depth header to ${arduino_dir}"
+            return 1
+        fi
+    else
+        print_warn "nvs_session_depth not found at ${storage_src} — sketch will not compile until firmware/common/storage/ is restored"
+    fi
+
     print_success "Arduino IDE setup complete!"
     echo ""
     echo "Arduino IDE Instructions:"

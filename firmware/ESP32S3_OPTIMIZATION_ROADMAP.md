@@ -495,7 +495,7 @@ Beyond §1.5:
   NVS writes; a power cut between them left them inconsistent (recoverable via SD-wins **only if a
   card is present**). Now one 39-byte `{version, seq, head, CRC-16}` blob under `chain_st`
   ([`common/witness/chain_state.h`](common/witness/chain_state.h), host-tested;
-  [`securacv_witness.cpp:154`](canary/lib/securacv_witness/src/securacv_witness.cpp) is the single
+  [`securacv_witness.cpp:159`](canary/lib/securacv_witness/src/securacv_witness.cpp) is the single
   writer — the `/api/reboot` handler's own copy of the two-write pair is gone too), which NVS
   commits atomically. Boot reads blob → legacy pair (read-only, never deleted, so a downgrade still
   boots) → genesis. The legacy pair goes stale after the first blob write, so an older image after

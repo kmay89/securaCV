@@ -215,9 +215,20 @@ test("PresenceFSM: debounce, clear timeout, stall — the firmware integration w
   fsm.reset(0);
   const pf = (t) => ({ kind: S.FrameKind.Presence, has_target: t, target_count: t ? 1 : 0, distance_cm: t ? 100 : 0, breath_rate: 0, heart_rate: 0 });
 
-  // first data after boot lifts Unknown→Clear promptly
+  // first target frame after boot starts the debounce and changes nothing:
+  // Unknown never passes through Clear over a body (the firmware signs
+  // presence_cleared on Clear) — mirrors mr60_presence.cpp
   let ev = fsm.tick(pf(true), 10);
-  assert.strictEqual(fsm.state, S.Presence.Clear);
+  assert.strictEqual(fsm.state, S.Presence.Unknown);
+  assert.ok(!ev.state_changed);
+  // a stall while still Unknown ends the open run: silence past stall_ms,
+  // then a target frame is a fresh start, not an instant Present
+  ev = fsm.tick({ kind: S.FrameKind.None }, 10 + cfg.stall_timeout_ms);
+  assert.strictEqual(fsm.state, S.Presence.Unknown);
+  ev = fsm.tick(pf(true), 20 + cfg.stall_timeout_ms);
+  assert.strictEqual(fsm.state, S.Presence.Unknown, "no instant Present off the pre-stall clock");
+  fsm.reset(0);
+  ev = fsm.tick(pf(true), 10);
   // sustained target settles to Present via the debounce
   ev = fsm.tick(pf(true), 10 + cfg.present_debounce_ms);
   assert.strictEqual(fsm.state, S.Presence.Present);

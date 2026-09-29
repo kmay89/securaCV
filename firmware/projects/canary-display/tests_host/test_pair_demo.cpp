@@ -2,7 +2,7 @@
 // (include/canary/pair/pair_demo.h).
 //
 // Builds standalone with g++ — no Arduino, no LVGL, no radio. Run in CI by
-// the "pair demo host test" step in .github/workflows/firmware.yml. Prints
+// this directory's Makefile, which .github/workflows/firmware.yml runs. Prints
 // "ALL PAIR DEMO TESTS PASSED" on success (the CI grep makes a silent pass
 // impossible to fake). Build (from the repo root):
 //

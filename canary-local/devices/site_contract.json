@@ -1,0 +1,34 @@
+{
+  "carried_from": "securacv_website/upstream-contract.json",
+  "generated_by": "scripts/make-upstream-contract.mjs",
+  "paths": [
+    "canary-local/boards/seeed_grove_vision_ai_v2.glb",
+    "canary-local/boards/seeed_round_display_xiao.glb",
+    "canary-local/boards/seeed_xiao_esp32s3_sense.glb",
+    "canary-local/devices/build.json",
+    "canary-local/devices/catalog.json",
+    "canary-local/devices/enclosures.json",
+    "canary-local/devices/figures.json",
+    "canary-local/devices/hatch.json",
+    "canary-local/devices/registry.json",
+    "canary-local/enclosures/preview/canary_combo_back.stl",
+    "canary-local/enclosures/preview/canary_combo_front.stl",
+    "canary-local/enclosures/preview/canary_dash_display_back.stl",
+    "canary-local/enclosures/preview/canary_dash_display_frame.stl",
+    "canary-local/enclosures/preview/canary_dash_display_stand.stl",
+    "canary-local/enclosures/preview/canary_watch_station_bezel.stl",
+    "canary-local/enclosures/preview/canary_watch_station_drum.stl",
+    "canary-local/enclosures/preview/canary_watch_station_stand.stl",
+    "docs/hardware/enclosure/canary_vision_doorbell_body.stl",
+    "docs/hardware/enclosure/canary_vision_doorbell_face.stl",
+    "docs/hardware/enclosure/canary_vision_doorbell_gasket.stl",
+    "docs/hardware/enclosure/canary_vision_doorbell_plate.stl",
+    "docs/hardware/enclosure/canary_wap_enclosure_weather_base.stl",
+    "docs/hardware/enclosure/canary_wap_enclosure_weather_gasket.stl",
+    "docs/hardware/enclosure/canary_wap_enclosure_weather_lid.stl",
+    "docs/hardware/enclosure/canary_wap_enclosure_weather_shield.stl"
+  ],
+  "patterns": [
+    "canary-local/figures/*.svg"
+  ]
+}

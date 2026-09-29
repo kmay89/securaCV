@@ -1,8 +1,9 @@
 /* Minimal Arduino stub for compiling NvsManager's own constructor,
  * destructor, begin() and end() (cut out of
- * canary/lib/securacv_crypto/src/securacv_crypto.cpp by nvs_manager_cut.awk)
- * under test_nvs_manager_lock.cpp. begin() needs Serial.printf for its one
- * timeout line; the stub keeps the last line and counts them. */
+ * canary/lib/securacv_crypto/src/securacv_crypto.cpp by cut_functions.awk)
+ * under test_nvs_manager_lock.cpp, and under test_nvs_store_result.cpp with
+ * the store helpers and the puts under them. begin() needs Serial.printf for
+ * its one timeout line; the stub keeps the last line and counts them. */
 #ifndef STUB_NVS_MANAGER_ARDUINO_H
 #define STUB_NVS_MANAGER_ARDUINO_H
 

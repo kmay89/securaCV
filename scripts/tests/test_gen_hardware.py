@@ -102,8 +102,8 @@ class JoinsTheBom(unittest.TestCase):
         sets = _set("sense", "canary-sense", line)
         _, drift = gh.join(sets, {"bom_canary_sense.csv": {"SCR3": 4}})
         self.assertEqual([d["what"] for d in drift], ["unbilled M2 pan x 10 self-tap"])
-        # the Sense row names PAN x 16 (driven from the back): only that joins
-        line = '"HARDWARE — Sense: 4x M2 pan x 16 self-tap from the back · 1x Ø3 light pipe"'
+        # the Sense row names PAN x 8 (the plate screw, into the post ends): only that joins
+        line = '"HARDWARE — Sense: 4x M2 pan x 8 self-tap (plate to the post ends) · 1x Ø3 light pipe"'
         table, drift = gh.join(_set("sense", "canary-sense", line),
                                {"bom_canary_sense.csv": {"SCR3": 4}})
         self.assertEqual(drift, [])
@@ -133,9 +133,10 @@ class TheCommittedLedgerAgreesWithItself(unittest.TestCase):
     def test_its_drift_is_exactly_the_known_list(self):
         keys = {f"{d['set']}|{d['what']}" for d in self.led["bom_drift"]}
         self.assertEqual(keys, gh.KNOWN_DRIFT)
-        # the drift the gate was built to surface: 7 inserts against INS1 = 5
+        # the drift the gate was built to surface: 9 inserts (eight plate posts and the
+        # security boss) against INS1 = 5
         self.assertIn("doorbell+inserts|short INS1", keys)
-        self.assertEqual(self.led["sets"]["doorbell+inserts"]["bom"]["INS1"], {"bom": 5, "echo": 7})
+        self.assertEqual(self.led["sets"]["doorbell+inserts"]["bom"]["INS1"], {"bom": 5, "echo": 9})
 
     def test_the_join_reproduces_from_the_committed_items_and_csvs(self):
         sets = {sid: {"device": r["device"], "items": r["items"]} for sid, r in self.led["sets"].items()}
@@ -151,7 +152,7 @@ class TheCommittedLedgerAgreesWithItself(unittest.TestCase):
 
     def test_a_table_that_disagrees_is_caught(self):
         text = (ENC / "DESIGN_RULES.md").read_text(encoding="utf-8")
-        wrong = text.replace("| `vision.xiao_weather` | 1.00 | 4.58 |", "| `vision.xiao_weather` | 1.00 | 4.00 |")
+        wrong = text.replace("| `vision.xiao_weather` | 1.00 | 3.38 |", "| `vision.xiao_weather` | 1.00 | 4.00 |")
         self.assertNotEqual(wrong, text)
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "DESIGN_RULES.md"

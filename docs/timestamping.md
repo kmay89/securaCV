@@ -1,9 +1,13 @@
 # Trusted timestamping (RFC 3161 anchors)
 
 The witness chain proves *internal* consistency: every sealed event is
-signed by the device key and hash-linked to its predecessor, so nothing can
-be altered or removed without breaking verification. What the chain cannot
-prove by itself is **when** it existed. A verifier has to take the device's
+signed by the device key and hash-linked to its predecessor, so no event
+between two rows the chain still holds can be altered, reordered or removed
+without breaking verification. Two things the chain cannot prove by itself:
+its own **length** — truncating the tail, restoring an older snapshot or
+wiping the log leaves an internally consistent chain that still verifies
+(the signed high-water mark closes that when it is enabled;
+[`FAULT_MODEL.md`](FAULT_MODEL.md) §2.1) — and **when** it existed. A verifier has to take the device's
 clock — and the continued secrecy of the device key — on trust: an attacker
 who obtained the key could fabricate an entire plausible history, back-dated
 at will.

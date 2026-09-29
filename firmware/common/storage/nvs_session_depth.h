@@ -1,16 +1,23 @@
 /*
- * SecuraCV Canary — NvsManager session depth, the pure half.
+ * SecuraCV — NvsManager session depth, the pure half.
  *
- * NvsManager (securacv_crypto.h) is one Preferences handle on the "securacv"
- * namespace, shared by every task that calls it. Three tasks open sessions on
- * it after setup: the loop (the MQTT reload, the witness chain persist, the
- * birth stamp, factory reset), the one httpd task that serves the API (MQTT
- * status, config and CA; Wi-Fi connect and disconnect; the reboot's chain
- * persist) and the pull-OTA task (the chain persist before its reboot). The
- * handle used to carry a bare open flag, so a session ending on one task
- * closed the handle under the other: a status poll during a reload could
- * read the broker host as empty and leave MQTT off, and a write racing that
- * end() could land nothing while nvs_store_bytes() still returned true.
+ * NvsManager is one Preferences handle on the "securacv" namespace, shared by
+ * every task that calls it. The canary's (firmware/canary/lib/securacv_crypto,
+ * securacv_crypto.cpp) is opened by three tasks after setup: the loop (the
+ * MQTT reload, the witness chain persist, the birth stamp, factory reset), the
+ * one httpd task that serves the API (MQTT status, config and CA; Wi-Fi
+ * connect and disconnect; the reboot's chain persist) and the pull-OTA task
+ * (the chain persist before its reboot). The handle used to carry a bare open
+ * flag, so a session ending on one task closed the handle under the other: a
+ * status poll during a reload could read the broker host as empty and leave
+ * MQTT off, and a write racing that end() could land nothing while
+ * nvs_store_bytes() still returned true. canary-wap's (the header-only
+ * NvsManager in firmware/projects/canary-wap/arduino/canary_wap/nvs_store.h)
+ * is opened by five: the loop task (setup() and loop()), the httpd task
+ * serving the API, the NimBLE host task (a bonded peer's pairing record, a
+ * phone's BLE Wi-Fi provisioning), the Bluetooth bring-up task and the
+ * QR-scan task (a scanned Wi-Fi credential), with the same bare flag until
+ * sweep F53.
  *
  * The fix is in NvsManager, not its callers: a recursive FreeRTOS mutex is
  * taken in begin() and held until the matching end(), so a session belongs
@@ -20,13 +27,19 @@
  * the outer session is still using. That is this header: a depth count and
  * what begin() / end() do to the Preferences handle at each depth. It is
  * the arithmetic only, with no Arduino, no FreeRTOS and no NVS, so
- * firmware/tests_host/test_nvs_session_depth.cpp proves it on the host, and
- * test_nvs_manager_lock.cpp runs NvsManager's own begin() and end() over it
- * against a fake recursive mutex. The FreeRTOS mutex itself is
- * compile-tested by CI's canary envs and has not run on a bench.
+ * firmware/tests_host/test_nvs_session_depth.cpp proves it on the host;
+ * test_nvs_manager_lock.cpp runs the canary NvsManager's own begin() and
+ * end() over it against a fake recursive mutex, and canary-wap's
+ * tests_host/test_nvs_store_lock.cpp does the same with nvs_store.h's. The
+ * FreeRTOS mutex itself is compile-tested by CI's canary envs and the WAP's
+ * PlatformIO and Arduino CLI legs, and has not run on a bench. It lives in
+ * firmware/common/storage/ so every NvsManager takes the same rules: the
+ * canary's PlatformIO tree includes it as "storage/nvs_session_depth.h", and
+ * the canary-wap sketch carries a byte-identical staged copy (setup.sh
+ * arduino stages it, check_csi_sync.sh holds it equal).
  *
- * No caller nests today (every one of the canary's NvsManager sessions is a
- * begin, NVS reads or writes, and its end). The recursive lock and the count
+ * No caller nests today (every NvsManager session in either tree is a begin,
+ * NVS reads or writes, and its end). The recursive lock and the count
  * make a future nested helper safe: it neither stalls 2 s on its own lock
  * nor closes the handle under the session it runs inside.
  *
@@ -64,9 +77,10 @@ constexpr uint8_t kMaxDepth = 8;
 // How long begin() waits for another task's session before it fails soft
 // (returns false, as a failed Preferences::begin always could). The same
 // 2 s the camera lifecycle lock waits (securacv_camera.cpp), well under the
-// 8 s task watchdog the loop is subscribed to; securacv_crypto.cpp holds it
-// under WATCHDOG_TIMEOUT_SEC with a static_assert. That bounds one wait, not
-// a loop pass: a pass that meets a leaked session on several calls can
+// 8 s task watchdog the loop is subscribed to in both trees; each holds it
+// under its own WATCHDOG_TIMEOUT_SEC with a static_assert (the canary's
+// securacv_crypto.cpp, canary-wap's canary_wap.ino). That bounds one wait,
+// not a loop pass: a pass that meets a leaked session on several calls can
 // still outlast the watchdog (whose reset then frees the leaked session).
 constexpr uint32_t kSessionWaitMs = 2000;
 
@@ -146,7 +160,8 @@ inline End on_end(State& s) {
 // invariant end()'s zero-wait take relies on to tell "my session" from
 // "another task's session". test_nvs_session_depth.cpp drives it across
 // three tasks through a model; test_nvs_manager_lock.cpp does the same with
-// securacv_crypto.cpp's own begin() and end().
+// securacv_crypto.cpp's own begin() and end(), and canary-wap's
+// test_nvs_store_lock.cpp with nvs_store.h's across five.
 inline uint8_t end_gives(End e) {
   return e == End::Unbalanced ? 1 : 2;
 }

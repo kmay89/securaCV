@@ -34,8 +34,11 @@
  *   while an image is unconfirmed this layer stands aside and lets A/B rollback
  *   own recovery.
  *
- * THE COUNTER'S LIFECYCLE (the boot-path wiring, landed separately + hardware-
- * validated, calls into the pure functions below):
+ * THE COUNTER'S LIFECYCLE (the boot-path wiring is NOT yet written: no
+ * firmware calls into this header today — its only caller is the host test.
+ * The canary-wap sketch has its own, separate crash-loop counter in
+ * hardware_state.h. When the wiring lands it calls the pure functions below
+ * in this order):
  *   1. Very early in boot, before the risky init: load the persisted count,
  *      call decide(), and PERSIST decision.persist_count *before* proceeding —
  *      so a hang / watchdog reset / brownout during init is still counted.

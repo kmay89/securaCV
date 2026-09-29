@@ -104,7 +104,8 @@ DEVICES = {
             "magnet": [("T", "[board_cx + mag_dx, board_cy + mag_dy, base_h - P_h]")],
             # the pipe's face flush with the lid's outer face
             "lp": [("T", "[board_cx + lp_dx, board_cy + lp_dy, base_h + lid_t - P_len]")],
-            "gasket": [("T", "[0, 0, base_h - gasket_groove]")],
+            # the gasket sits in the groove cut into the LEDGE, from the ledge plane (floor_t) up
+            "gasket": [("T", "[0, 0, floor_t]")],
             # the disc seat: 0.2 below the lid's outer face (lid(): lid_t - (cam_disc_t + 0.2))
             "disc": [("T", "[board_cx + cam_dx, board_cy + cam_dy, base_h + lid_t - (cam_disc_t + 0.2)]")],
             # wap_fitcheck: lid() at z = base_h; the STL is T(0,0,lid_t)·Rx180·lid()
@@ -113,18 +114,18 @@ DEVICES = {
             # tubes standing on the lid's outer face
             "shield": [("T", "[0, 0, base_h + lid_t + sh_t + sh_gap]"), ("R", [180, 0, 0])],
         },
-        # from the back (every preset): the head's top (the builder's csk z = 0)
-        # sits at the recess plane in the back, turned over; the Outdoor build
-        # the tab shows drives pan heads over O-rings
+        # the plate screws (canary_core_lib pl_*): from the plate's back face
+        # (z = -mount_extra), the head recessed pl_r; a flat head's top IS the
+        # recess plane (the builder's csk z = 0), a pan head's bearing face sits
+        # pl_hp above it; turned over. The Outdoor build the tab shows drives
+        # pan heads over O-rings
         "screws": {
-            # the lid screws, from the back: the head's top (the builder's z = 0)
-            # at the recess plane, turned over
             "screws": {"xy": "post_xy()",
-                       "z": "e_back ? -mount_extra + bk_r : base_h + lid_t", "rot": ["e_back ? 180 : 0", 0, 0],
-                       "len": "e_back ? bk_L : hw_len(lid_t, head_pad, hw_engage(screw_size))"},
+                       "z": "-mount_extra + pl_r + pl_hp(screw_size, e_head)", "rot": [180, 0, 0],
+                       "len": "pl_L"},
             # the sun shield's own flat-head screws, flush in the shield's top,
             # down its tubes into the lid's blind pilots
-            "shield_screws": {"xy": "post_xy()", "z": "base_h + lid_t + sh_t + sh_gap", "rot": None,
+            "shield_screws": {"xy": "corner_xy()", "z": "base_h + lid_t + sh_t + sh_gap", "rot": None,
                               "len": "sh_L"},
         },
         "params": {"disc": {"d": "cam_disc_d", "t": "cam_disc_t"},
@@ -140,7 +141,7 @@ DEVICES = {
             # the Grove module rides the XIAO's socket vm_standoff off the floor
             "board": [("T", "[vm_cx, vm_cy, floor_t + vm_standoff]")],
             # the XIAO hangs stack_sock_h under it, face (USB) down, xiao_below of air
-            "xiao": [("T", "[vm_cx, vm_cy - vm_l/2 + xiao_l/2, floor_t + xiao_below + P_t]"),
+            "xiao": [("T", "[vm_cx, vm_cy - vm_l/2 + xiao_l/2, floor_t + xiao_below_eff + P_t]"),
                      ("R", [180, 0, -90])],
             # the OV5647 board screws to the front's posts: its face sits
             # cam_post_eff under the front plate, lens on the aperture
@@ -149,14 +150,12 @@ DEVICES = {
             "flex": [("T", "[vm_cx, vm_cy + vm_l/2 - 3, floor_t + vm_standoff + pcb_t]")],
             "front": [("T", "[0, 0, base_d + lid_t]"), ("R", [180, 0, 0])],
         },
-        # pan heads in cb_flat_cut: the seat floor is head_h under the outer face
-        # screw_from "back" (the house default): driven up from the seat in
-        # the back, the pan head's bearing face bk_hh above its recess; the
-        # builder draws a pan head above z = 0, so it turns over
+        # the plate screws (canary_core_lib pl_*), as on the Sense: from the
+        # plate's back face, the head recessed pl_r, its bearing face pl_hp above
         "screws": {"xy": "post_xy()",
-                   "z": "e_back ? -mount_extra + bk_r + bk_hh(screw_size, screw_head) : base_d + lid_t - head_h",
-                   "rot": ["e_back ? 180 : 0", 0, 0],
-                   "len": "e_back ? bk_L : hw_len(lid_t, head_pad, hw_engage(screw_size))"},
+                   "z": "-mount_extra + pl_r + pl_hp(screw_size, screw_head)",
+                   "rot": [180, 0, 0],
+                   "len": "pl_L"},
         "params": {
             "board": {"w": "vm_w", "h": "vm_l", "t": "pcb_t"},
             "xiao": {"w": "xiao_l", "h": "xiao_w"},
@@ -177,13 +176,15 @@ DEVICES = {
                      ("R", [180, 0, -90])],
             "front": [("T", "[0, 0, base_d + lid_t]"), ("R", [180, 0, 0])],
         },
-        # screw_from "back" (the house default): driven up from the seat in
-        # the back, the pan head's bearing face bk_hh above its recess; the
-        # builder draws a pan head above z = 0, so it turns over
+        # the plate screws (canary_core_lib pl_*): driven up from the seat in
+        # the plate's back face (z = -mount_extra), the head recessed pl_r and
+        # its bearing face pl_hp (a pan head's height; 0 for a flat head, whose
+        # top IS the recess plane) above that; the builder draws a head above
+        # z = 0, so it turns over
         "screws": {"xy": "post_xy()",
-                   "z": "e_back ? -mount_extra + bk_r + bk_hh(screw_size, screw_head) : base_d + lid_t - head_h",
-                   "rot": ["e_back ? 180 : 0", 0, 0],
-                   "len": "e_back ? bk_L : hw_len(lid_t, head_pad, hw_engage(screw_size))"},
+                   "z": "-mount_extra + pl_r + pl_hp(screw_size, screw_head)",
+                   "rot": [180, 0, 0],
+                   "len": "pl_L"},
         "params": {
             "radar": {"w": "radar_w", "h": "radar_l", "t": "pcb_t"},
             "xiao": {"w": "xiao_l", "h": "xiao_w"},
@@ -216,17 +217,17 @@ DEVICES = {
     },
     # ---- Dash on its desk stand --------------------------------------------
     # stand(): the display reclines stand_ang with its back face on the fin
-    # plane, which the stand derives to pass through the channel's rear edge
-    # (chan_back, stand_t) — so the device's lowest back edge sits there.
+    # plane, which the stand derives to pass through the seat point
+    # (seat_y, seat_z — the channel's rear edge, on the base plate for the
+    # default 90° USB-C lead, or on the pedestal the file derives from a
+    # straight boot and its bend) — the device's lowest back edge sits there.
     # The device frame is gen_assembled_dims.py's: back() as modeled (outer
     # face z = 0), frame() turned face-out about Y at z = back_t + frame_h.
     "canary-display-dash": {
         "scad": "canary_dash_display.scad",
         "overrides": {"part": '"back"'},
-        "frame": [("T", "[0, dash_chan_back, stand_t]"), ("R", ["90 - stand_ang", 0, 0]),
-                  ("T", "[0, dash_low_y, 0]")],
-        "defs": ("dash_chan_back = -stand_d/2 + 16 + total_t + 2.0;\n"
-                 "dash_low_y = inner_w/2 + lob_o + lob_d/2;\n"),
+        "frame": [("T", "[0, seat_y, seat_z]"), ("R", ["90 - stand_ang", 0, 0]),
+                  ("T", "[0, lobe_low_y, 0]")],
         "parts": {
             "stand": "world",
             "back": [],

@@ -78,18 +78,32 @@ ESP-NOW just rides it.
 ### `airtime_governor.{h,cpp}`
 
 A rolling-window airtime accountant. Each TX is recorded with an estimated
-airtime cost:
+airtime cost, per frame:
 
 ```
-airtime_us ≈ 192us preamble + (bytes * 8) / 1 Mbps
+airtime_us ≈ 192us preamble + ((bytes + 59) * 8) / 1 Mbps
 ```
 
-(1 Mbps is the conservative fallback rate ESP-NOW uses for broadcasts; real
-unicast traffic is faster.) It is an estimate, not a measurement of the air,
-and it counts only the bytes the caller passes: the CSI probe adds its ~59 B
-of ESP-NOW framing (a 16 B probe is charged as 75 B, 792 µs), while the mesh,
-chirp and Beacon callers pass header + payload and do not yet, so their
-estimates run about 59 B a frame short.
+(1 Mbps is ESP-NOW's default rate, and nothing in this firmware changes it;
+see `csi_probe.h`.) It is an estimate, not a measurement of the air.
+`bytes` is what the caller hands `esp_now_send`, and the governor adds a
+~59 B allowance for ESP-NOW's framing (`ESPNOW_FRAME_OVERHEAD_BYTES`) to
+every frame itself, so no caller adds it: a 16 B CSI probe is charged as
+75 B, 792 µs. The allowance errs high: Espressif's ESP-NOW frame format has
+43 B of fixed fields around the payload of an unencrypted frame, and every
+sender here is unencrypted, so it is 16 B (128 µs) a frame over. ACK time and
+contention are not in the estimate.
+A caller that unicasts one message to several peers is charged one frame per
+unicast, each with its own preamble and framing. The mesh's heartbeat, tamper
+and power alerts go to every peer `broadcast_message` reaches (every
+authenticated peer: connected, stale, offline or alerting), so each is
+charged as one signed frame (38 B header + payload + 64 B signature) per
+peer; a heartbeat is 114 B, 1576 µs a frame. `OFFLINE_IMMINENT` goes to
+every known peer and is charged for each. The chirp and Beacon broadcasts
+are one frame.
+Host-tested (`test_mesh_coexistence`, which also reads `mesh_network.cpp` to
+pin the mesh's charge, and `test_csi_probe_airtime`); the firmware glue is
+compile-tested by CI's WAP Arduino build and not bench-tested.
 
 Sends are summed in 100 ms buckets: a send joins the newest bucket when it
 falls in the same 100 ms, and a bucket leaves the window with its newest
@@ -115,10 +129,19 @@ window reads 1.60 %: a probe fanned out to a full peer table asks for far
 more than the cap, and without the ceiling it took every microsecond the
 window freed, so heartbeats and presence were refused outright. The rest of
 the 2 % (about 0.39 %: all of the remaining 0.40 % but the one 792 µs probe
-frame that may land just past the line) stays for them. The 1.60 % line is
-also where the Beacon reports `airtime_saturated`, so the probe at its
-ceiling does not hold the Beacon in trouble. On the DEV profile, which has
-no mesh, or on a boot where the mesh did not initialize (safe mode, or
+frame that may land just past the line) stays for them: by the estimate, a
+heartbeat to a full Opera of 16 peers (25 216 µs), a chirp presence and a
+Beacon self-test take about 0.28 % together. The 1.60 % line
+is also where the Beacon reports `airtime_saturated`, so the probe at its
+ceiling does not hold the Beacon in trouble by itself; a heartbeat landing on
+a window the probe has filled does take it over the line until as much probe
+airtime ages out. One peer probed at 20 Hz (1.58 %) sits just under the line:
+with an Opera of one, the heartbeat costs it about one frame, but a heartbeat
+to more peers holds the probe off about 100 ms a peer and keeps the window
+over the Beacon's line about 100 ms a peer past the first — 1.6 s and 1.5 s
+for a full Opera of 16, once every 30 s (`test_csi_probe_airtime`). The WAP
+probes no peer today (it only broadcasts, at 10 Hz), so this has not happened
+yet. On the DEV profile, which has no mesh, or on a boot where the mesh did not initialize (safe mode, or
 ESP-NOW refused), the probe also brings the governor up itself; otherwise
 nothing would, and every reservation would pass.
 
@@ -146,8 +169,8 @@ payload also carries `routine_allowed`, `routine_denied`, and
 
 | Question | Answer |
 |----------|--------|
-| Can I put 8 Canaries on the same home network? | Yes. Airtime stays ≤ 2% × 8 = 16% only if every Canary is *also* getting tampered with simultaneously. Routine cap is per-device; in practice you'll see < 1% per Canary at idle. |
-| Will the mesh slow down my home WiFi? | No measurable impact. The airtime cap is one full order of magnitude below what a single phone uses streaming video. |
+| Can I put 8 Canaries on the same home network? | The budget is per device, and it is an estimate: each Canary's governor charges its own routine sends against its own budget, computed from framing and fan-out, never read from the air. In the normal path every device can reach its own budget independently, so eight Canaries can reach eight times it with no urgent traffic at all; urgent sends bypass the budget and push the aggregate above that, and a governor whose usage ring could not be allocated at boot fails open and charges nothing (`airtime_governor.cpp`). **The aggregate has not been measured**: there is no fleet or broker benchmark in the tree ([`BENCHMARKS.md`](BENCHMARKS.md), "what this does not cover"). Nothing coordinates airtime across devices. |
+| Will the mesh slow down my home WiFi? | Whether a fleet's aggregate is noticeable on a given network is exactly the measurement the previous row says has not been made. |
 | What channel should I set my router to? | Anything. The Canaries follow you. |
 | What if STA drops? | Mesh rides the AP channel (Canaries always run AP mode for local admin). If AP is also down, mesh falls back to channel 6. |
 | Can I disable mesh entirely? | Yes — `mesh.enabled = false` in NVS / admin UI. Canaries still witness; they just don't gossip. |
@@ -178,9 +201,10 @@ Should print `ALL MESH COEXISTENCE TESTS PASSED` (the channel policy and
 the governor's window) and `test_csi_probe_airtime: ALL PASSED` (the real
 probe scheduler under the real governor: the gate starts a frame at
 1.59 % and none at 1.60 %, the WAP's 10 Hz broadcast is never denied, one
-peer at 20 Hz stays steady, and eight peers are held at the 1.60 % ceiling
-while the heartbeat keeps its room). Both are host tests of
-the estimate; whether it matches real air is a bench question.
+peer at 20 Hz stays steady with an Opera of one and is held off for 1.6 s a
+heartbeat with an Opera of 16, and eight peers are held at the 1.60 %
+ceiling while the heartbeat keeps its room). Both are host tests of the
+estimate; whether it matches real air is a bench question.
 
 In the field, with two Canaries paired into one Opera, both in STA on the
 home network:

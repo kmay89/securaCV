@@ -809,11 +809,12 @@ def _async_device_status_received(hass: HomeAssistant, entry: ConfigEntry):
 # the device produced over a canonical message. HA verifies that sig
 # against the device's pinned pubkey from the TrustStore.
 #
-# The sensor + binary_sensor handlers call `async_handle_signed_payload`
-# inside their MQTT callbacks with the parsed payload and a verifier
-# function. The helper:
-#   1. TOFU-pins on first sight (when the payload carries a pubkey we
-#      can use, via a /api/device/enroll round-trip kicked off async).
+# The sensor handlers call `_verify_and_record` (sensor.py) inside
+# their MQTT callbacks with the parsed payload and a verifier function.
+# The path:
+#   1. Never pins. TOFU happens in `_async_health_for_tofu` below, from
+#      the `public_key` the health publish carries; no HTTP round-trip is
+#      involved (nothing in the integration fetches /api/device/enroll).
 #   2. Calls the kind-specific verifier (signature.verify_chain etc.).
 #   3. Stamps the result into entry_data["verify"][device_id] so any
 #      entity reading it can surface "verified: true/false".
@@ -841,9 +842,14 @@ def _async_health_for_tofu(hass: HomeAssistant, entry: ConfigEntry):
     TOFU therefore upgrades an *honest* broker from "trust every payload"
     to "detect later tampering"; it does not defend against a broker (or
     co-tenant publisher) that is hostile from the start. Users whose
-    threat model includes a hostile broker must pin keys manually from
-    the device's /enroll page (Options → Pin a device pubkey) and should
-    use broker ACLs to restrict who may publish under the prefix.
+    threat model includes a hostile broker must pin keys manually
+    (Options → Pin a device pubkey) with the key read off the device out
+    of band — canary-wap's /enroll page, USB serial `j` on the
+    firmware/canary build and canary-vision; canary-sense and
+    canary-sentinel show only their fingerprint, which can check this pin
+    but not replace it (docs/device_trust.md, "Where each product shows
+    its key") — and should use broker ACLs to restrict who may publish
+    under the prefix.
     Subsequent publishes are verified against the pin; the warn-loudly-
     accept policy handles the "device legitimately re-flashed" case.
     """

@@ -18,7 +18,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
-#include "nvs_session_depth.h"
+#include "storage/nvs_session_depth.h"  // firmware/common, via -I ../common
 
 // ════════════════════════════════════════════════════════════════════════════
 // NVS MANAGER
@@ -179,6 +179,9 @@ const char* crypto_key_at_rest_label();
 // <label> - <text>", level and text from key_at_rest::boot_level()/boot_text().
 void crypto_print_key_at_rest();
 uint32_t nvs_load_u32(const char* key, uint32_t def = 0);
+// True only when the put wrote the whole value (4 bytes; all `len` bytes, and
+// `len` > 0). False when the session did not open or NVS refused the write.
+// Every caller reads it (repo sweep F55).
 bool nvs_store_u32(const char* key, uint32_t val);
 bool nvs_load_bytes(const char* key, uint8_t* out, size_t len);
 bool nvs_store_bytes(const char* key, const uint8_t* data, size_t len);

@@ -57,6 +57,16 @@ website: gen_builder_manifest.py --site carries them verbatim as the figure's
 places its lens and window (so a feature edit here is a carry, then that
 model's regeneration, like a seam).
 
+A row may also name where the device SITS in a cradle part that is not in
+its envelope: `seat`, the case's own seat expression — `[x, y, z, rx, ry,
+rz]` in the cradle's scad frame, the device's origin and its rotation — is
+echoed back as `seat_scad` (`part` names the cradle). The Watch Station's
+stand bores its divot normal to a reclined face and states the drum's seat
+as P0 / slope in its echo; the Lab card that poses the drum in the stand
+(canary-local/assets/real-shapes.js) used to retype those numbers from the
+echo, and tests/scene_figures.test.js now holds it to this record instead.
+--check re-evaluates it and refuses anything it cannot read back.
+
 The render-and-parse-echo mechanics live in scad_probe.py, shared with
 gen_hardware.py and gen_enclosures.py --check-previews.
 """
@@ -87,29 +97,32 @@ DEVICES = {
         "scad": "canary_wap_enclosure.scad",
         "overrides": {"preset": '"compact_plain"', "part": '"base"'},
         "body": "union() { base(); translate([0, 0, base_h]) lid(); }",
-        "seams": "[base_h]",
-        "placement": "wap_fitcheck: lid at z = base_h",
+        "seams": "[]",   # the piston plate: base is the plate inside lid's walls — no seam crosses the side profile
+        "placement": "wap_fitcheck: lid (the shell) at z = base_h; base (the plate) inside its walls at floor_t",
     },
     "device.canary-vision": {
         "scad": "canary_vision_enclosure.scad",
         "overrides": {"host": '"xiao"', "preset": '"vision_indoor"', "part": '"back"'},
         "body": "union() { back(); translate([0, 0, base_d]) front(); }",
-        "seams": "[base_d]",
-        "placement": "vision_fitcheck: front at z = base_d",
+        "seams": "[]",   # the piston plate: no seam crosses the side profile (see the Sense)
+        "placement": "vision_fitcheck: front at z = base_d (the plate's front face at floor_t, inside the walls)",
     },
     "device.canary-vision-devkit": {
         "scad": "canary_vision_enclosure.scad",
         "overrides": {"host": '"devkit"', "preset": '"vision_indoor"', "part": '"back"'},
         "body": "union() { back(); translate([0, 0, base_d]) front(); }",
-        "seams": "[base_d]",
-        "placement": "vision_fitcheck: front at z = base_d",
+        "seams": "[]",   # the piston plate: no seam crosses the side profile (see the Sense)
+        "placement": "vision_fitcheck: front at z = base_d (the plate's front face at floor_t, inside the walls)",
     },
     "device.canary-sense": {
         "scad": "canary_sense_enclosure.scad",
         "overrides": {"part": '"back"'},
         "body": "union() { back(); translate([0, 0, base_d]) front(); }",
-        "seams": "[base_d]",
-        "placement": "sense_fitcheck: front at z = base_d",
+        # the piston plate: the shell's walls run to the back face, the only
+        # seam is the hairline around the plate ON that face — nothing crosses
+        # the side profile, so the figure draws one band
+        "seams": "[]",
+        "placement": "sense_fitcheck: front at z = base_d (the plate's front face at floor_t, inside the walls)",
     },
     "device.canary-vision-doorbell": {
         # Mounted as it hangs: the body's blind keyhole pockets seat on the
@@ -117,25 +130,24 @@ DEVICES = {
         # face rides the body exactly as doorbell_fitcheck places it.
         "scad": "canary_vision_doorbell.scad",
         "overrides": {"part": '"plate"'},
-        # body() carries its keyhole-pocket thickening at z = -kh_extra, so
-        # landing that back face flush on the plate front (z = plate_t) is a
-        # lift of plate_t + kh_extra; the plate's T-studs bury in the pockets.
+        # body() is the piston plate: its front face at z = floor_t, its back
+        # face at z = -mount_extra (the pocket slab). Landing that back face
+        # flush on the wall plate's front (z = wplate_t) is a lift of
+        # wplate_t + mount_extra; the wall plate's T-studs bury in the pockets.
         # The hang is a slide, not a snap: the body is offered 7.5 higher
         # (pass holes over the stud heads) and dropped until it RESTS ON THE
-        # PLATE'S L-FOOT, whose top sits 0.5 above the plate's bottom edge —
-        # the plate() comments' own datum ("the body rests on the foot 0.5
-        # above the plate's bottom edge"; its studs are drawn slot_l/2 - 0.5
-        # high so the head parks at the slot end exactly there). So the
-        # resting body + face ride 0.5 up the mounting axis (+y), which is
-        # where the assembled envelope gets its extra half-millimeter of
-        # height: the face's top edge clears the plate's by that slide.
-        "body": ("union() { plate(); translate([0, 0.5, plate_t + kh_extra]) "
+        # WALL PLATE'S L-FOOT, whose top sits 0.5 above the wall plate's
+        # bottom edge, so the resting body + face ride 0.5 up the mounting
+        # axis (+y) — the assembled envelope's extra half-millimeter of height.
+        "body": ("union() { plate(); translate([0, 0.5, wplate_t + mount_extra]) "
                  "{ body(); translate([0, 0, base_d]) face(); } }"),
-        # visible bands from the wall out: plate to plate_t (the studs bury in
-        # the body's pockets), body to its front rim, face to the outer plane
-        "seams": "[plate_t, plate_t + kh_extra + base_d]",
-        "placement": ("doorbell_fitcheck: face at z = base_d; body back flush on plate front "
-                      "(T-studs in pockets), resting 0.5 up the slide on the plate's L-foot"),
+        # visible bands from the wall out: the wall plate to wplate_t, then the
+        # face's walls run all the way to the back face — the piston plate is
+        # inside them, so no other seam crosses the side profile
+        "seams": "[wplate_t]",
+        "placement": ("doorbell_fitcheck: face (the shell) at z = base_d; body (the plate) inside its "
+                      "walls at floor_t, back flush on the wall plate front (wplate_t), then the 0.5 slide "
+                      "down onto the foot"),
     },
     "device.canary-display-watch": {
         # The Watch Station has no committed STLs (in development — dev_*.stl
@@ -160,6 +172,12 @@ DEVICES = {
         # the face aperture the glass shows through, centered on the drum axis
         # (bezel() cuts it as cylinder(d = bez_ap_d) at the origin)
         "face": "[bez_ap_d, bez_ap_d]",
+        # where the drum sits in the stand (its own part, outside the
+        # envelope): the stand's divot is bored normal to the reclined face,
+        # and the file states the drum's back-cap seat point P0 and the
+        # pocket axis rotate([slope, 0, 0]) in its "DRUM SEAT" echo — the
+        # same expressions, read back here rather than retyped from the log
+        "seat": {"part": "stand", "expr": "concat(P0, [slope, 0, 0])"},
         "placement": ("bezel() seated frame: face underside on the drum rim, bezel at z = drum_h "
                       "(the nubs' own datum, drum_z = drum_h + bezel_z)"),
     },
@@ -218,7 +236,7 @@ DEVICES = {
         "body": "union() { back(); translate([0, 0, base_d]) front(); }",
         # visible bands from the wall out: the back (keyhole thickening
         # included) to its rim, the front plate beyond
-        "seams": "[mount_extra + base_d]",
+        "seams": "[]",   # the piston plate: no seam crosses the side profile (the plate is inside the shell)
         # what the massing draws on the face, read from the variables front()
         # cuts at (echoed, not measured off the cut): the
         # lens aperture (cylinder(d = cam_ap_d) at lens_x, lens_y) on the
@@ -243,20 +261,26 @@ def measure(fig_id, spec):
     face_echo = "\necho(\"FACE\", {face});".format(face=spec["face"]) if "face" in spec else ""
     features = spec.get("features", {})
     feature_echo = "".join(f"\necho(\"FEATURE_{name}\", {expr});" for name, expr in features.items())
+    seat_spec = spec.get("seat")
+    seat_echo = "\necho(\"SEAT\", {expr});".format(expr=seat_spec["expr"]) if seat_spec else ""
     try:
         res = scad_probe.probe(
             f"assembled_{fig_id}", spec["scad"], spec["overrides"],
-            "{body}\necho(\"SEAMS\", {seams});{face}{features}".format(
-                body=spec["body"], seams=spec["seams"], face=face_echo, features=feature_echo),
+            "{body}\necho(\"SEAMS\", {seams});{face}{features}{seat}".format(
+                body=spec["body"], seams=spec["seams"], face=face_echo, features=feature_echo,
+                seat=seat_echo),
             root=HERE,
         )
         seams = scad_probe.echo_numbers(res, "SEAMS", fig_id)
         face = scad_probe.echo_numbers(res, "FACE", fig_id) if "face" in spec else None
         marks = {name: scad_probe.echo_numbers(res, f"FEATURE_{name}", fig_id) for name in features}
+        seat = scad_probe.echo_numbers(res, "SEAT", fig_id) if seat_spec else None
     except scad_probe.ProbeError as e:
         sys.exit(f"gen_assembled_dims: {e}")
     if face is not None and len(face) != 2:
         sys.exit(f"gen_assembled_dims: {fig_id} face must echo [w, h], got {face}")
+    if seat is not None and (len(seat) != 6 or not all(math.isfinite(v) for v in seat)):
+        sys.exit(f"gen_assembled_dims: {fig_id} seat must echo [x, y, z, rx, ry, rz], got {seat}")
     for name, got in marks.items():
         if len(got) != 4:
             sys.exit(f"gen_assembled_dims: {fig_id} feature {name!r} must echo [cx, cy, w, h], got {got}")
@@ -288,6 +312,12 @@ def measure(fig_id, spec):
                     or f["z"] - f["h"] / 2 < -TOL or f["z"] + f["h"] / 2 > y + TOL):
                 sys.exit(f"gen_assembled_dims: {fig_id} feature {name!r} {f} does not lie on the "
                          f"measured {x} x {y} face — check its expression's frame")
+    if seat is not None:
+        # the device's origin and rotation in the cradle part's own scad frame
+        # (a pose, not a measurement: the case's seat expression, echoed) —
+        # what a card that poses the device in its cradle reads instead of
+        # retyping the echo
+        extra["seat_scad"] = {"part": seat_spec["part"], "pos": seat[:3], "rot": seat[3:]}
     return {
         "scad": spec["scad"],
         "overrides": {k: v.strip('"') for k, v in spec["overrides"].items()},
@@ -330,6 +360,24 @@ def features_moved(fresh, got) -> bool:
     if not isinstance(got, dict) or set(got) != set(fresh):
         return True
     return any(_numbers_moved(fresh[name], got[name], ("x", "z", "w", "h")) for name in fresh)
+
+
+def seat_moved(fresh, got) -> bool:
+    """True unless the committed cradle seat is the echoed one — the same
+    part, each of pos and rot a 3-vector within TOL — or both are absent.
+    Same refusal as face_moved: nothing it cannot read as the seat passes."""
+    if fresh is None or got is None:
+        return (fresh is None) != (got is None)
+    if not isinstance(got, dict) or set(got) != {"part", "pos", "rot"} or got["part"] != fresh["part"]:
+        return True
+    for key in ("pos", "rot"):
+        want, have = fresh[key], got[key]
+        if not isinstance(have, list) or len(have) != 3 or len(want) != 3:
+            return True
+        if any(not isinstance(v, (int, float)) or isinstance(v, bool) or not abs(w - v) <= TOL
+               for w, v in zip(want, have)):
+            return True
+    return False
 
 
 def build():
@@ -398,6 +446,14 @@ def main():
                 sys.exit(
                     f"gen_assembled_dims: {fig_id} features: measured {fresh_feat} vs committed "
                     f"{got_feat} — a face feature moved; regenerate and re-run gen_figures.mjs"
+                )
+            # ...and the cradle seat a card poses the device at (the Watch in
+            # its stand), present exactly where the row names one
+            fresh_seat, got_seat = spec.get("seat_scad"), got.get("seat_scad")
+            if seat_moved(fresh_seat, got_seat):
+                sys.exit(
+                    f"gen_assembled_dims: {fig_id} seat: echoed {fresh_seat} vs committed "
+                    f"{got_seat} — the cradle seat moved; regenerate"
                 )
             for key in ("scad", "overrides", "placement", "fig"):
                 if spec[key] != got.get(key):

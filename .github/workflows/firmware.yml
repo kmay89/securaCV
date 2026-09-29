@@ -1226,295 +1226,24 @@ jobs:
             firmware/canary/lib/securacv_thermal_watchdog/src/securacv_thermal_watchdog.cpp \
             -I firmware/canary/lib/securacv_thermal_watchdog/src
 
-      - name: Build + run canary-display Modbus RTU host test
-        # The RS485/Modbus master's framing + CRC-16/MODBUS live in the pure
-        # core (canary/io/modbus_rtu.h) so every byte on the 4.3B A/B terminal
-        # is host-verified without a board. Anchored on the cataloged
-        # CRC-16/MODBUS check value 0x4B37 plus build/parse roundtrips,
-        # exception decoding, and CRC/addr/func/capacity rejection cases.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-display/include \
-              firmware/projects/canary-display/tests_host/test_modbus_rtu.cpp \
-              -o /tmp/modbus_rtu
-          /tmp/modbus_rtu | tee /tmp/modbus_rtu.log
-          grep -q "ALL .* PASSED" /tmp/modbus_rtu.log
+      - name: Build + run canary-tincan project host tests
+        # The Tin Can's own Makefile: the Canary Link core under its strings
+        # (firmware/common/link: a nonce that repeats across the two
+        # directions of a session, a send counter that rewinds after an
+        # unclean reboot, a revocation that quietly un-revokes, a relay that
+        # trusts the hops/ttl bytes outside the AEAD) and the kid-facing
+        # payload cores. Both suites used to be compiled inline here while
+        # the Makefile itself never ran in CI (sweep CI3); it builds them with
+        # -Werror and checks each one's "ALL ... PASSED" line.
+        run: make -C firmware/projects/canary-tincan/tests_host
 
-      - name: Build + run canary-display CAN frame host test
-        # The CAN 2.0 frame model — id-width/DLC validity, SocketCAN-style
-        # acceptance filtering, and the ASCII log formatter — lives in the pure
-        # core (canary/io/can_frame.h) so it is host-verified without a board.
-        # The TWAI transport itself is compile-checked by the
-        # canary-display-dash-can PlatformIO env.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-display/include \
-              firmware/projects/canary-display/tests_host/test_can_frame.cpp \
-              -o /tmp/can_frame
-          /tmp/can_frame | tee /tmp/can_frame.log
-          grep -q "ALL .* PASSED" /tmp/can_frame.log
-
-      - name: Build + run canary-display field-I/O logic host test
-        # The isolated DI/DO promotion's two testable decisions — input
-        # debounce (reject contact bounce / bus glitches) and the bounded siren
-        # controller (drive only while a real unacked alert stands, capped so it
-        # can't blare forever) — live in the pure core (canary/io/field_io_logic.h)
-        # and are verified without a board. The runtime that reads the CH422G and
-        # reports UNSIGNED local contact events is compile-checked by the
-        # canary-display-dash-b env (HAS_ISOLATED_IO).
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-display/include \
-              firmware/projects/canary-display/tests_host/test_field_io.cpp \
-              -o /tmp/field_io
-          /tmp/field_io | tee /tmp/field_io.log
-          grep -q "ALL .* PASSED" /tmp/field_io.log
-
-      - name: Build + run canary-display PCF8563/PCF85063A RTC host test
-        # Trusted time: the RTC register/calendar core (canary/io/rtc_pcf.h) —
-        # BCD packing, the civil<->days epoch math, and the voltage-low validity
-        # gate that refuses an unreliable clock — is verified without a board
-        # (cross-checked against libc timegm). The runtime that probes 0x51 on
-        # the shared I2C bus and seeds/mirrors the clock is compile-checked by the
-        # canary-display-dash-rtc env (FEATURE_RTC). The second TU pins the
-        # PCF85063A register base (0x04, not the PCF8563 0x02) that the
-        # touch169 build relies on.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-display/include \
-              firmware/projects/canary-display/tests_host/test_rtc_pcf.cpp \
-              -o /tmp/rtc_pcf
-          /tmp/rtc_pcf | tee /tmp/rtc_pcf.log
-          grep -q "ALL .* PASSED" /tmp/rtc_pcf.log
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-display/include \
-              firmware/projects/canary-display/tests_host/test_rtc_pcf85063.cpp \
-              -o /tmp/rtc_pcf85063
-          /tmp/rtc_pcf85063 | tee /tmp/rtc_pcf85063.log
-          grep -q "ALL .* PASSED" /tmp/rtc_pcf85063.log
-
-      - name: Build + run canary-display ESP-NOW peer-decode host test
-        # Router-independent peer presence: the decode that turns a raw ESP-NOW
-        # payload into a fleet-link beacon (fp4 + status) reuses the shared,
-        # host-tested beacon wire contract (canary/net/beacon_parse.h), so an
-        # ESP-NOW frame and a BLE advert from one canary resolve to one witness,
-        # and foreign traffic / noise is rejected before the fleet. The esp_now
-        # transport is compile-checked by the canary-display-dash-espnow env.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-display/include \
-              firmware/projects/canary-display/tests_host/test_espnow_peer.cpp \
-              -o /tmp/espnow_peer
-          /tmp/espnow_peer | tee /tmp/espnow_peer.log
-          grep -q "ALL .* PASSED" /tmp/espnow_peer.log
-
-      - name: Build + run canary-display pair demo host test
-        # The First Light pair demo's pure core (canary/pair/pair_demo.h):
-        # adopt-first-heard + the lock (the card can never silently switch
-        # cameras), the detection-edge rule mirrored from the sender's beacon
-        # payload (both ends of the wire agree on what "now" means), the
-        # fleet-aligned staleness read, the 5 s HoldGate open gesture, and
-        # the boxed-pair auto-open rule (unprovisioned + router-free band
-        # ONLY — a working bedside clock never swaps its face). The LVGL/NVS
-        # shell is compile-checked by the canary-display-nightlight-c3 env.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-display/include \
-              firmware/projects/canary-display/tests_host/test_pair_demo.cpp \
-              -o /tmp/pair_demo
-          /tmp/pair_demo | tee /tmp/pair_demo.log
-          grep -q "ALL .* PASSED" /tmp/pair_demo.log
-
-      - name: Build + run canary-display mode registry host test
-        # The glass's gears (docs/hardware/display_modes.md): boot-gear
-        # resolution from the NVS token + the legacy devmode-bool migration,
-        # the build-capability gate, and the policy invariants — fail-safe to
-        # Fleet on anything unknown/uncarried, OTA only under the product
-        # face, and every non-fleet gear exit-by-long-press + bannered. Pure
-        # core (canary/mode/mode_registry.h); the runtime latch/branch glue
-        # stays a thin shell around these tables.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-display/include \
-              firmware/projects/canary-display/tests_host/test_mode_registry.cpp \
-              -o /tmp/mode_registry
-          /tmp/mode_registry | tee /tmp/mode_registry.log
-          grep -q "ALL .* PASSED" /tmp/mode_registry.log
-
-      - name: Build + run canary-display demo script host test
-        # Demo mode's storyline (canary/mode/demo_script.h) is drift-locked to
-        # the REAL event vocabulary: this links src/fleet/fleet_model.cpp and
-        # pins every scripted beat's intended severity to classify_event(), so
-        # a vocabulary change can't quietly defang the demo's alarm beat. Also
-        # pins the timeline shape (ordered, in-loop, resolves to quiet) and
-        # the wrap-safe fires-once-per-lap stepping.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-display/include \
-              firmware/projects/canary-display/tests_host/test_demo_script.cpp \
-              firmware/projects/canary-display/src/fleet/fleet_model.cpp \
-              -o /tmp/demo_script
-          /tmp/demo_script | tee /tmp/demo_script.log
-          grep -q "ALL .* PASSED" /tmp/demo_script.log
-
-      - name: Build + run canary-display arcade logic host test
-        # Arcade mode's factory claim — one round exercises EVERY touch zone
-        # and the score screen is the QA report — is pinned in the pure core
-        # (canary/mode/arcade_logic.h): the seeded shuffle visits every zone
-        # exactly once and replays from its printed seed, targets never leave
-        # their zone cell, and the verdict fails on a dead zone, a slow zone,
-        # or a stray tap. The LVGL runtime (FEATURE_ARCADE) draws and forwards
-        # taps; it decides nothing.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-display/include \
-              firmware/projects/canary-display/tests_host/test_arcade_logic.cpp \
-              -o /tmp/arcade_logic
-          /tmp/arcade_logic | tee /tmp/arcade_logic.log
-          grep -q "ALL .* PASSED" /tmp/arcade_logic.log
-
-      - name: Build + run canary-display mic logic host test
-        # The mic-bearing dash's two promises (display_mic_variant.md),
-        # pinned without a board: the GATE (off by default; unset pins
-        # hard-block listening; the amber indicator IS the driver-running
-        # bit — no second flag exists to lie; disarm is a Stop the runtime
-        # maps to i2s_driver_uninstall) and the EARS (only the regulated
-        # smoke-T3 / CO-T4 grammars raise events, each needing two cycles;
-        # doorbells, speech-shaped noise, and stale streaks never do). The
-        # I2S runtime is compile-checked by canary-display-dash-mic.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-display/include \
-              firmware/projects/canary-display/tests_host/test_mic_logic.cpp \
-              -o /tmp/mic_logic
-          /tmp/mic_logic | tee /tmp/mic_logic.log
-          grep -q "ALL .* PASSED" /tmp/mic_logic.log
-
-      - name: Build + run canary-display voice score host test
-        # The Canary Voice acoustic core (voice_score.h): the pure score +
-        # audio math behind the sound engine, pinned without a piezo — the
-        # palette resolves for every signature, the pleasant voices stay in
-        # the pentatonic scale while the Tier-1 alarm keeps its frozen IEC
-        # pitches, the rise/fall contours carry the semantics (sunrise/boot
-        # rise, all-clear falls, mute-on/off mirror), every envelope
-        # de-clicks its edges, glissando/warble stay bounded, and the volume
-        # model is monotone, night-silences the gentle categories, and keeps
-        # the Tier-1 alert audible at every volume including Off.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-display/include \
-              firmware/projects/canary-display/tests_host/test_voice_score.cpp \
-              -o /tmp/voice_score
-          /tmp/voice_score | tee /tmp/voice_score.log
-          grep -q "ALL .* PASSED" /tmp/voice_score.log
-
-      - name: Build + run canary-display voice clearance host test
-        # Acoustic clearance (docs/hardware/display_sound_clearance.md): no
-        # signature reproduces a regulated life-safety cadence — ISO 8201
-        # Temporal-Three (fire) or Temporal-Four (CO) — so a status chirp can
-        # never be confused with a real alarm; plus the originality invariants
-        # (pleasant voices stay in the public-domain pentatonic; the alarm uses
-        # only its two IEC frequencies). The detectors self-verify against the
-        # real cadences so the guard can't rot into a rubber stamp.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-display/include \
-              firmware/projects/canary-display/tests_host/test_voice_clearance.cpp \
-              -o /tmp/voice_clearance
-          /tmp/voice_clearance | tee /tmp/voice_clearance.log
-          grep -q "ALL .* PASSED" /tmp/voice_clearance.log
-
-      - name: Build + run canary-display settings write-policy host test
-        # The LAN write API's on-glass-only class (canary/net/settings_policy.h):
-        # the standalone-weather opt-in (wx_direct — the display's one opt-in
-        # outbound path) and its coarse location (wx_loc) are refused by
-        # /api/set for every caller, token or not, so a host on the home WiFi
-        # cannot flip zero-phone-home; the switch is a hand on the glass
-        # (settings > weather > fetch itself). Pins every egress/location key
-        # true, every ordinary knob false, unknown and near-miss keys false,
-        # that the lookup hands the refusal log the table's own constant, and
-        # that the table /api/settings serves under `on_glass` and the
-        # predicate the handler enforces are one thing.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-display/include \
-              firmware/projects/canary-display/tests_host/test_settings_policy.cpp \
-              -o /tmp/settings_policy
-          /tmp/settings_policy | tee /tmp/settings_policy.log
-          grep -q "ALL .* PASSED" /tmp/settings_policy.log
-
-      - name: Build + run Canary Link core host test
-        # The generic authenticated-datagram layer under the Tin Can's strings
-        # (firmware/common/link/) — deliberately NOT kid-specific, because
-        # "many nodes, one radio, no broker, no cloud" is a general problem.
-        # This step exists to pin the mistakes that are cheap to make and
-        # catastrophic to ship: a nonce that repeats across the two directions
-        # of a session (fatal under both ChaCha20-Poly1305 and AES-GCM), a send
-        # counter that rewinds after an unclean reboot, a revocation that
-        # quietly un-revokes, and a relay that treats the mutable hops/ttl
-        # bytes — which sit OUTSIDE the AEAD by design — as if they were
-        # evidence. No board, no radio, no crypto library needed.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/common/link \
-              firmware/projects/canary-tincan/tests_host/test_link_core.cpp \
-              -o /tmp/link_core
-          /tmp/link_core | tee /tmp/link_core.log
-          grep -q "ALL .* PASSED" /tmp/link_core.log
-
-      - name: Build + run Tin Can payload cores host test
-        # The kid-facing layer (docs/design/canary_tincan_kids_watch.md): the
-        # knock codec (a tapped rhythm must survive the wire and land on the
-        # far wrist as the same rhythm), the string model's sender-side knock
-        # cooldown and terminal cut, the Ring's delivery honesty (there is no
-        # "Sent" state, and a NotDelivered always carries a reason a parent can
-        # act on), the tie ceremony's parent-window stranger gate, the stamp
-        # table's append-only wire contract, warmer/colder — which asserts a
-        # fingerprint can hold ONLY household Canary fp4s, never an AP
-        # identifier — and the step duel's daily reset.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-tincan/include \
-              firmware/projects/canary-tincan/tests_host/test_tincan_cores.cpp \
-              -o /tmp/tincan_cores
-          /tmp/tincan_cores | tee /tmp/tincan_cores.log
-          grep -q "ALL .* PASSED" /tmp/tincan_cores.log
-
-      - name: Build + run Canary Companion cores host test
+      - name: Build + run canary-companion project host tests
         # The Night Watch bedside clock and the Pocket Canary
-        # (docs/design/canary_companion.md). Every check here is named after a
-        # mistake rather than after a function, because each of these is a
-        # one-line change to make and a very hard thing to notice afterwards:
-        # a pet that can die or that scores absence against a child; an "ask"
-        # that quietly becomes a notification; a night screen that goes dark
-        # for trouble as readily as for wellness (a dark screen is a CLAIM OF
-        # WELLNESS, so trouble and an unsure clock must both break blackout);
-        # a wake-on-raise that fires when a sleeper rolls over; a voice that
-        # claims it buzzed on a board with no motor fitted; and a settings
-        # mis-tap that wipes a device. No board, no panel, no I2C needed.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-companion/include \
-              firmware/projects/canary-companion/tests_host/test_companion_cores.cpp \
-              -o /tmp/companion_cores
-          /tmp/companion_cores | tee /tmp/companion_cores.log
-          grep -q "ALL .* PASSED" /tmp/companion_cores.log
+        # (docs/design/canary_companion.md), every check named after a mistake
+        # (a pet that can die, a dark screen that hides trouble, a voice that
+        # claims it buzzed with no motor fitted). Same move as the Tin Can
+        # above: its own Makefile, -Werror, the marker check.
+        run: make -C firmware/projects/canary-companion/tests_host
 
       - name: Tin Can sketch copy sync
         # The Arduino bring-up sketch carries a staged copy of knock_codec.h,
@@ -1530,143 +1259,6 @@ jobs:
                   firmware/projects/canary-tincan/arduino/tincan_bringup/knock_codec.h \
             || { echo "::error::tincan_bringup/knock_codec.h has drifted from the canonical header. Re-copy it."; exit 1; }
           echo "Tin Can sketch copy is in sync."
-
-      - name: Build + run canary-wap provisioning-logic host test
-        # The first-run wizard's pure decisions (setup-window keep-alive,
-        # scan-cache freshness, AP-only join suppression, AP teardown
-        # grace) live in provisioning_logic.h so the phone-visible
-        # provisioning behavior is pinned on the host.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-wap/arduino/canary_wap \
-              firmware/projects/canary-wap/tests_host/test_provisioning_logic.cpp \
-              -o /tmp/provisioning_logic
-          /tmp/provisioning_logic | tee /tmp/provisioning_logic.log
-          grep -q "ALL .* PASSED" /tmp/provisioning_logic.log
-
-      - name: Build + run canary-wap self-test-logic host test
-        # The pre-flight health check's verdicts (Bluetooth SKIP vs FAIL vs
-        # ABSENT across boot window / safe mode / DEV builds, Wi-Fi link-down
-        # vs radio-off) live in selftest_logic.h so the "almost everything
-        # failing" false-negatives can't come back.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-wap/arduino/canary_wap \
-              firmware/projects/canary-wap/tests_host/test_selftest_logic.cpp \
-              -o /tmp/selftest_logic
-          /tmp/selftest_logic | tee /tmp/selftest_logic.log
-          grep -q "ALL .* PASSED" /tmp/selftest_logic.log
-
-      - name: Build + run acoustic-pipeline (microphone) host test
-        # Compiles the REAL vendored securacv_audio.cpp against stub
-        # Arduino/ESP-IDF headers and drives synthetic alarm cadences
-        # through a scripted i2s_read — the full pipeline: DC-removed RMS,
-        # envelope hysteresis, the stage-1 tone gate, the T3/T4/knock/
-        # doorbell/glass matchers, self-test mode (relaxed thresholds,
-        # peak_rms, the window-edge event-leak guard), the deferred hard
-        # mute, and the flat-signal (dead mic) watchdog. The vendored copy
-        # is kept identical to firmware/canary's canonical lib by
-        # check_audio_sync.sh, so this run covers both firmwares.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-wap/tests_host/stubs/audio \
-              -I firmware/projects/canary-wap/arduino/canary_wap \
-              firmware/projects/canary-wap/tests_host/test_audio_cadence.cpp \
-              firmware/projects/canary-wap/arduino/canary_wap/securacv_audio.cpp \
-              -o /tmp/audio_cadence
-          /tmp/audio_cadence | tee /tmp/audio_cadence.log
-          grep -q "test_audio_cadence: all tests passed" /tmp/audio_cadence.log
-
-      - name: Build + run canary-wap config-logic host test
-        # The Device-tab runtime config clamps. Most important: the event-time
-        # coarsening bucket can only be widened past its compile-time floor,
-        # never narrowed (Invariant III), and the log threshold can never rise
-        # above WARNING (ERROR/CRITICAL always stored).
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-wap/arduino/canary_wap \
-              firmware/projects/canary-wap/tests_host/test_config_logic.cpp \
-              -o /tmp/config_logic
-          /tmp/config_logic | tee /tmp/config_logic.log
-          grep -q "ALL .* PASSED" /tmp/config_logic.log
-
-      - name: Build + run canary-wap auth-logic host test
-        # Which failed-auth shapes feed the brute-force lockout. A
-        # credential-less request must NOT count — counting it let one
-        # open dashboard tab 429-lock the operator's correct token.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-wap/arduino/canary_wap \
-              firmware/projects/canary-wap/tests_host/test_auth_logic.cpp \
-              -o /tmp/auth_logic
-          /tmp/auth_logic | tee /tmp/auth_logic.log
-          grep -q "ALL .* PASSED" /tmp/auth_logic.log
-
-      - name: Build + run canary-wap Bluetooth-defaults host test
-        # The BLE pairing channel ships ENABLED by default (was disabled,
-        # which read as a dead Bluetooth panel). This pins that the radio
-        # is on out of the box AND that PIN confirmation stays required, so
-        # "on by default" never regresses into "pairs silently".
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-wap/arduino/canary_wap \
-              firmware/projects/canary-wap/tests_host/test_bt_defaults.cpp \
-              -o /tmp/bt_defaults
-          /tmp/bt_defaults | tee /tmp/bt_defaults.log
-          grep -q "ALL .* PASSED" /tmp/bt_defaults.log
-
-      - name: Build + run canary-wap SD-mount logic host test
-        # The decisions around the SD mount worker: the loop's periodic SD
-        # check never attempts a mount in SAFE MODE (the old unconditional
-        # remount re-ran a blocking SD.begin from loop() and crash-looped
-        # safe mode via the 8s task watchdog), never piles onto an
-        # in-flight attempt, and the caller's bounded wait is wrap-safe.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-wap/arduino/canary_wap \
-              firmware/projects/canary-wap/tests_host/test_sd_mount_logic.cpp \
-              -o /tmp/sd_mount_logic
-          /tmp/sd_mount_logic | tee /tmp/sd_mount_logic.log
-          grep -q "ALL .* PASSED" /tmp/sd_mount_logic.log
-
-      - name: Build + run canary-wap peek-stream logic host test
-        # The camera preview's reported numbers: stream uptime freezes at the
-        # recorded end instead of collapsing to 0 (which zeroed the derived
-        # throughput — "0 kbps" for a stream that just ran), avg kbps comes
-        # from real byte totals with no divide-by-zero, and the MJPEG worker's
-        # frame pacing clamps to a >=20ms floor (the yield that keeps the
-        # WDT-subscribed IDLE tasks fed under the priority-3 stream task).
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-wap/arduino/canary_wap \
-              firmware/projects/canary-wap/tests_host/test_peek_stream_logic.cpp \
-              -o /tmp/peek_stream_logic
-          /tmp/peek_stream_logic | tee /tmp/peek_stream_logic.log
-          grep -q "ALL .* PASSED" /tmp/peek_stream_logic.log
-
-      - name: Build + run canary-wap vault logic host test
-        # Sealed-snapshot vault decisions + on-disk format (vault_logic.h):
-        # the fail-closed capture decision table (no key / no SD / no camera /
-        # QR busy / worker busy / cooldown, incl. millis wrap), the byte-exact
-        # 64-byte .svlt header against a golden hex fixture shared verbatim
-        # with tools/test_unseal_snapshot.py, and the ring filename parser
-        # that doubles as the download/delete traversal gate.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-wap/arduino/canary_wap \
-              firmware/projects/canary-wap/tests_host/test_vault_logic.cpp \
-              -o /tmp/vault_logic
-          /tmp/vault_logic | tee /tmp/vault_logic.log
-          grep -q "ALL .* PASSED" /tmp/vault_logic.log
 
       - name: Run sealed-snapshot unseal tool tests (crypto round-trip)
         # The python half of the vault (tools/unseal_snapshot.py): X25519 +
@@ -1687,121 +1279,15 @@ jobs:
         # so the Swift side can never be held to a stale twin.
         run: python3 tools/gen_svlt_parity.py --check
 
-      - name: Build + run canary-wap witness store logic host test
-        # The /WITNESS/records.jsonl durable tier (witness_store.h): the
-        # byte-exact NDJSON line against a golden fixture, tail recovery
-        # (newest complete line wins; torn power-cut lines skipped; junk
-        # lines can't shadow good ones), malformed-field and seq-overflow
-        # rejection, the SD-wins reconciliation decision, and the
-        # seq-binding tamper check (OpenSSL recompute of the chain hash —
-        # libcrypto is preinstalled on ubuntu-latest).
+      - name: Check the witness-page fixture is fresh (generator --check)
+        # spec/fixtures/witness_page_v1.json is byte-compared by the canary-wap
+        # witness page host test (test_witness_page, run by the project
+        # Makefile step below) and decoded by the iPhone app's
+        # WitnessPageFixtureTests against the same public key. This proves the
+        # committed fixture is what the generator writes.
         run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror -Wno-deprecated-declarations \
-              -I firmware/projects/canary-wap/arduino/canary_wap \
-              firmware/projects/canary-wap/tests_host/test_witness_store_logic.cpp \
-              -lcrypto -o /tmp/witness_store_logic
-          /tmp/witness_store_logic | tee /tmp/witness_store_logic.log
-          grep -q "ALL .* PASSED" /tmp/witness_store_logic.log
-
-      - name: Build + run canary-wap witness page host test (+ fixture drift)
-        # GET /api/v1/witness (witness_page.h, spec/witness_api_v1.md): the
-        # ?last=N parser, the RAM ring, the coarse ten-minute anchoring, and a
-        # byte-exact render of the shared fixture spec/fixtures/
-        # witness_page_v1.json rebuilt from real Ed25519-signed records
-        # (OpenSSL). The same fixture is what the iPhone app's
-        # WitnessPageFixtureTests decodes, against the same public key — one
-        # fixture, both ends of the contract. The generator's --check then
-        # proves the committed fixture is what the generator writes.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror -Wno-deprecated-declarations \
-              -I firmware/projects/canary-wap/arduino/canary_wap \
-              firmware/projects/canary-wap/tests_host/test_witness_page.cpp \
-              -lcrypto -o /tmp/witness_page
-          /tmp/witness_page spec/fixtures/witness_page_v1.json | tee /tmp/witness_page.log
-          grep -q "ALL .* PASSED" /tmp/witness_page.log
           python3 -m pip install --quiet cryptography
           python3 spec/fixtures/gen_witness_page_v1.py --check
-
-      - name: Build + run canary-wap beacon audit recovery host test
-        # The beacon-audit chain-head SD recovery guard
-        # (beacon_audit_recover.h): only adopt the newest COMPLETE line's head
-        # when the tail chain-links (each entry's prev == the previous entry's
-        # head, or genesis for a first record). Torn power-cut tails, corrupt
-        # or field-less lines, and unverifiable single fragments are refused so
-        # a stale-NVS boot cannot silently redirect the append-only chain.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-wap/arduino/canary_wap \
-              firmware/projects/canary-wap/tests_host/test_beacon_audit_recover.cpp \
-              -o /tmp/beacon_audit_recover
-          /tmp/beacon_audit_recover | tee /tmp/beacon_audit_recover.log
-          grep -q "ALL .* PASSED" /tmp/beacon_audit_recover.log
-
-      - name: Build + run canary-wap BLE OTA policy host test
-        # BLE OTA protocol v2 (ble_ota_policy.h): the 168-byte header's
-        # layout and strict parse, the domain-separated canonical message
-        # pinned against the fixture shared with test_ota_release.py, and
-        # the accept / refuse / break-glass decision matrix — product
-        # binding, the anti-rollback floor shared with the pull engine
-        # (securacv_ota_update_decision), and the legacy v1 header admitted
-        # only when the owner has armed break-glass — with real Ed25519
-        # signatures (libcrypto is preinstalled on ubuntu-latest).
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror -Wno-deprecated-declarations \
-              -DSECURACV_OTA_HOST_BUILD \
-              -I firmware/projects/canary-wap/arduino/canary_wap \
-              firmware/projects/canary-wap/tests_host/test_ble_ota_policy.cpp \
-              firmware/projects/canary-wap/arduino/canary_wap/securacv_ota.cpp \
-              -lcrypto -o /tmp/ble_ota_policy
-          /tmp/ble_ota_policy | tee /tmp/ble_ota_policy.log
-          grep -q "ALL .* PASSED" /tmp/ble_ota_policy.log
-
-      - name: Build + run canary-wap camera gate logic host test
-        # Camera power management decisions (camera_gate_logic.h): the
-        # peek-surface gate precedence (broken camera > thermal > battery
-        # policy, each with honest user-facing copy) and the idle-standby
-        # decision (never while streaming/QR/sealing; immediate on policy
-        # deny; wrap-safe idle timer otherwise).
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-wap/arduino/canary_wap \
-              firmware/projects/canary-wap/tests_host/test_camera_gate_logic.cpp \
-              -o /tmp/camera_gate_logic
-          /tmp/camera_gate_logic | tee /tmp/camera_gate_logic.log
-          grep -q "ALL .* PASSED" /tmp/camera_gate_logic.log
-
-      - name: Build + run canary-wap health store logic host test
-        # The /HEALTH per-boot jsonl format (health_store_logic.h): JSON
-        # escaping of peer-influenced strings (quote/backslash/control
-        # bytes, atomic truncation), the byte-exact line format, and the
-        # boot filename scheme.
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-wap/arduino/canary_wap \
-              firmware/projects/canary-wap/tests_host/test_health_store_logic.cpp \
-              -o /tmp/health_store_logic
-          /tmp/health_store_logic | tee /tmp/health_store_logic.log
-          grep -q "ALL .* PASSED" /tmp/health_store_logic.log
-
-      - name: Build + run canary-wap power gate logic host test
-        # Round-two power-policy gates (power_gate_logic.h): advisory
-        # feature run/skip (CSI drain) and routine MQTT heartbeat cadence
-        # stretch by power mode (life-safety and event publishes bypass;
-        # overflow saturates rather than wraps).
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-wap/arduino/canary_wap \
-              firmware/projects/canary-wap/tests_host/test_power_gate_logic.cpp \
-              -o /tmp/power_gate_logic
-          /tmp/power_gate_logic | tee /tmp/power_gate_logic.log
-          grep -q "ALL .* PASSED" /tmp/power_gate_logic.log
 
       - name: Run witness log verifier tests (offline chain + signatures)
         # tools/verify_witness_log.py — the off-device half of the
@@ -1812,22 +1298,6 @@ jobs:
         run: |
           python3 -m pip install --quiet cryptography
           python3 tools/test_verify_witness_log.py
-
-      - name: Build + run canary-wap catch-all logic host test
-        # Who owns the shared canary.local catch-all when several Canaries
-        # share a LAN: the fingerprint-staggered claim window, the
-        # detect-own-echo probe classification, and the IP tie-break whose
-        # antisymmetry guarantees exactly one device keeps a double-claim
-        # (both keeping = session-cookie-killing hostname flapping; both
-        # withdrawing = canary.local goes dark).
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
-              -I firmware/projects/canary-wap/arduino/canary_wap \
-              firmware/projects/canary-wap/tests_host/test_catchall_logic.cpp \
-              -o /tmp/catchall_logic
-          /tmp/catchall_logic | tee /tmp/catchall_logic.log
-          grep -q "ALL .* PASSED" /tmp/catchall_logic.log
 
       - name: Build + run pull-OTA engine logic host test
         # The OTA engine's pure-logic subset (semantic version compare,
@@ -1930,11 +1400,17 @@ jobs:
         # The canary-wap project keeps its own host-test Makefile (mesh
         # coexistence, the Opera pairing-frame classifier, chirp/beacon
         # invariants, device signature, the captive-portal DNS response
-        # builder, the BLE OTA header policy).
+        # builder, the BLE OTA header policy, the witness page and store,
+        # the vault, and the sketch's other pure logic suites).
         # Its `run` target builds and
         # runs every suite; each test exits non-zero on failure, so make's
-        # exit code gates the job. Needs libcrypto for the beacon tamper
-        # suite — preinstalled on ubuntu-latest.
+        # exit code gates the job, and the suites this job used to compile
+        # inline keep their step's -Werror and "ALL ... PASSED" check
+        # (run_marked). The Makefiles are the one host-test list (sweep CI3):
+        # scripts/tests/test_host_test_lists.py fails a tests_host source a
+        # workflow compiles inline, and a suite its Makefile does not run.
+        # Needs libcrypto for the beacon tamper and witness suites —
+        # preinstalled on ubuntu-latest.
         run: make -C firmware/projects/canary-wap/tests_host
 
       - name: Build + run firmware/common host tests
@@ -2048,6 +1524,10 @@ jobs:
           firmware/projects/canary-wap/tests_host/test_fleet_beacon
 
       - name: Build + run display beacon-parse + fleet-model host tests
+        # This runs the display's whole host-test Makefile, so it is also
+        # the CI run of every other canary-display suite (the mode registry,
+        # the voice, the RTC, the dash I/O cores and the rest; the mesh +
+        # scout job compiled some of them inline until sweep CI3).
         run: |
           set -euo pipefail
           make -C firmware/projects/canary-display/tests_host

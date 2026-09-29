@@ -139,9 +139,9 @@
      },
      "seated": {
       "pos": [
-       -44.65,
-       5,
-       14.25
+       -32.65,
+       6,
+       17.1
       ]
      },
      "explode": [
@@ -170,9 +170,9 @@
      },
      "seated": {
       "pos": [
-       -33.65,
-       7.5,
-       11.25
+       -39.65,
+       9.5,
+       14.1
       ]
      },
      "explode": [
@@ -200,7 +200,7 @@
       "pos": [
        0,
        0,
-       15.05
+       2
       ]
      },
      "explode": [
@@ -228,9 +228,9 @@
      },
      "seated": {
       "pos": [
-       -38.65,
-       0,
-       17.05
+       -45.6,
+       -0.64,
+       19.9
       ]
      },
      "explode": [
@@ -258,7 +258,7 @@
       "pos": [
        0,
        0,
-       18.25
+       21.1
       ],
       "rot": [
        180,
@@ -285,29 +285,49 @@
      "source": "proc",
      "part": "screw",
      "params": {
-      "len": 12,
+      "len": 8,
       "csk": false
      },
      "instances": [
       [
        47.95,
-       15.2,
-       -1.15
+       20,
+       0.85
       ],
       [
        -47.95,
-       15.2,
-       -1.15
+       20,
+       0.85
       ],
       [
        47.95,
-       -15.2,
-       -1.15
+       -20,
+       0.85
       ],
       [
        -47.95,
-       -15.2,
-       -1.15
+       -20,
+       0.85
+      ],
+      [
+       -15.983,
+       20,
+       0.85
+      ],
+      [
+       -15.983,
+       -20,
+       0.85
+      ],
+      [
+       15.983,
+       20,
+       0.85
+      ],
+      [
+       15.983,
+       -20,
+       0.85
       ]
      ],
      "explode": [
@@ -321,8 +341,8 @@
       -12
      ],
      "step": 6,
-     "name": "M2 screws — driven up from the back into the lid's bosses, over O-rings",
-     "qty": 4,
+     "name": "M2 screws — through the plate's recessed seats into the shell's post ends, over O-rings (four corners + the outdoor build's four mid posts)",
+     "qty": 8,
      "ref": "SCR3",
      "pose": "cad",
      "irot": [
@@ -340,7 +360,7 @@
       "pos": [
        0,
        0,
-       26.65
+       29.5
       ],
       "rot": [
        180,
@@ -374,23 +394,23 @@
      "instances": [
       [
        47.95,
-       15.2,
-       26.65
+       20,
+       29.5
       ],
       [
        -47.95,
-       15.2,
-       26.65
+       20,
+       29.5
       ],
       [
        47.95,
-       -15.2,
-       26.65
+       -20,
+       29.5
       ],
       [
        -47.95,
-       -15.2,
-       26.65
+       -20,
+       29.5
       ]
      ],
      "explode": [
@@ -404,7 +424,7 @@
       20
      ],
      "step": 7,
-     "name": "M2 flat screws — the shield's own, into the lid's blind pilots",
+     "name": "M2 flat screws — the shield's own, into the shell's blind face pilots",
      "qty": 4,
      "ref": "SCR3",
      "pose": "cad"
@@ -492,7 +512,7 @@
      "seated": {
       "pos": [
        0,
-       -13.7,
+       -13.9,
        14
       ]
      },
@@ -524,7 +544,7 @@
      "seated": {
       "pos": [
        0,
-       -23.2,
+       -23.4,
        8.7
       ],
       "rot": [
@@ -558,7 +578,7 @@
      "seated": {
       "pos": [
        0,
-       22.8,
+       22.6,
        13.58
       ],
       "rot": [
@@ -599,7 +619,7 @@
      "seated": {
       "pos": [
        0,
-       3.3,
+       3.1,
        15
       ]
      },
@@ -649,28 +669,28 @@
      "source": "proc",
      "part": "screw",
      "params": {
-      "len": 20
+      "len": 8
      },
      "instances": [
       [
        17.3,
-       33,
-       2
+       32.8,
+       1
       ],
       [
        -17.3,
-       33,
-       2
+       32.8,
+       1
       ],
       [
        17.3,
-       -33,
-       2
+       -32.8,
+       1
       ],
       [
        -17.3,
-       -33,
-       2
+       -32.8,
+       1
       ]
      ],
      "explode": [
@@ -684,7 +704,7 @@
       -12
      ],
      "step": 5,
-     "name": "M2 corner screws — driven up from the back into the face's bosses",
+     "name": "M2 corner screws — through the plate's recessed seats into the shell's post ends",
      "qty": 4,
      "pose": "cad",
      "irot": [
@@ -1118,7 +1138,7 @@
     {
      "title": "Start with the desk cradle",
      "readmeStep": 0,
-     "note": "Prints flat, no hardware: front lip and back rail form the bottom channel, the fin takes the 25-degree lean. Shown seated so the assembly axis reads true."
+     "note": "Prints flat, no hardware: front lip and back rail form the bottom channel, the fin takes the 25-degree lean. Cut for a 90-degree USB-C lead, cable to the back: its head drops into the base pocket and the cable leaves under the fin, so the case sits on the base plate. Shown seated so the assembly axis reads true."
     },
     {
      "title": "The bezel frame",
@@ -1186,7 +1206,7 @@
      "seated": {
       "pos": [
        0,
-       -3.5,
+       -3.7,
        14
       ]
      },
@@ -1216,7 +1236,7 @@
      "seated": {
       "pos": [
        0,
-       -15,
+       -15.2,
        8.7
       ],
       "rot": [
@@ -1270,28 +1290,28 @@
      "source": "proc",
      "part": "screw",
      "params": {
-      "len": 16
+      "len": 8
      },
      "instances": [
       [
        24.3,
-       24.8,
-       2
+       24.6,
+       1
       ],
       [
        -24.3,
-       24.8,
-       2
+       24.6,
+       1
       ],
       [
        24.3,
-       -24.8,
-       2
+       -24.6,
+       1
       ],
       [
        -24.3,
-       -24.8,
-       2
+       -24.6,
+       1
       ]
      ],
      "explode": [
@@ -1305,7 +1325,7 @@
       -12
      ],
      "step": 4,
-     "name": "M2 corner screws — driven up from the back into the face's bosses",
+     "name": "M2 corner screws — through the plate's recessed seats into the shell's post ends",
      "qty": 4,
      "pose": "cad",
      "irot": [

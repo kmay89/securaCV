@@ -562,6 +562,34 @@ static bool broadcast_message(MessageType type, const uint8_t* payload, size_t p
   return any_sent;
 }
 
+// ── What a signed send puts on the air (the airtime governor's charge) ──
+//
+// send_to_peer() writes a 38 B header (version, type, opera id, sender
+// fingerprint, 8 B counter, 4 B timestamp), the payload and the 64 B
+// signature: one ESP-NOW frame per peer. That is what the governor charges
+// per frame; it adds the ESP-NOW framing itself. sizeof(MessageHeader) is
+// 48 (the struct pads the counter to 8 B) and never goes on the air.
+static constexpr size_t WIRE_HEADER_BYTES =
+    2 + OPERA_ID_SIZE + FINGERPRINT_SIZE + 8 + 4;
+static_assert(WIRE_HEADER_BYTES + SIGNATURE_SIZE == 102,
+              "handle_received_message's minimum frame is header + signature");
+
+static constexpr size_t signed_frame_bytes(size_t payload_len) {
+  return WIRE_HEADER_BYTES + payload_len + SIGNATURE_SIZE;
+}
+
+// broadcast_message() unicasts to every peer at PEER_CONNECTED or later —
+// every authenticated peer, whether connected, stale, offline or alerting —
+// so a broadcast is this many frames. Same loop, same predicate
+// (test_mesh_coexistence pins the two together).
+static uint16_t broadcast_peer_count() {
+  uint16_t n = 0;
+  for (uint8_t i = 0; i < g_peer_count; i++) {
+    if (g_peers[i].state >= PEER_CONNECTED) n++;
+  }
+  return n;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // MESSAGE HANDLING
 // ════════════════════════════════════════════════════════════════════════════
@@ -1912,9 +1940,10 @@ bool broadcast_tamper_alert(AlertType type, LogLevel severity, uint32_t witness_
 
   g_alerts_sent++;
   // Tamper alerts are urgent — bypass the routine airtime cap but still
-  // record their cost so telemetry reflects reality.
+  // record their cost (one signed frame per peer broadcast_message reaches)
+  // so telemetry reflects reality.
   airtime_governor::force_reserve_urgent(millis(),
-      sizeof(MessageHeader) + sizeof(payload));
+      signed_frame_bytes(sizeof(payload)), broadcast_peer_count());
   return broadcast_message(MSG_TAMPER_ALERT, (uint8_t*)&payload, sizeof(payload));
 }
 
@@ -1930,7 +1959,7 @@ bool broadcast_power_alert(AlertType type, uint16_t voltage_mv, uint16_t estimat
 
   g_alerts_sent++;
   airtime_governor::force_reserve_urgent(millis(),
-      sizeof(MessageHeader) + sizeof(payload));
+      signed_frame_bytes(sizeof(payload)), broadcast_peer_count());
   return broadcast_message(MSG_POWER_ALERT, (uint8_t*)&payload, sizeof(payload));
 }
 
@@ -1947,9 +1976,10 @@ bool broadcast_offline_imminent(AlertType reason, uint32_t final_seq, const uint
 
   g_alerts_sent++;
   // OFFLINE_IMMINENT is the most urgent message in the protocol — we record
-  // its cost (per-peer fan-out) but never gate it.
+  // its cost (one signed frame to every known peer, the loop below) but
+  // never gate it.
   airtime_governor::force_reserve_urgent(millis(),
-      (sizeof(MessageHeader) + sizeof(payload)) * g_peer_count);
+      signed_frame_bytes(sizeof(payload)), g_peer_count);
 
   // Send to all known peers regardless of connection state
   bool any_sent = false;
@@ -1998,9 +2028,10 @@ void send_heartbeat() {
   // Heartbeat is routine traffic — skip this tick if we'd blow the airtime
   // cap. The peer-stale timer (90 s) is long enough to tolerate a few skipped
   // heartbeats; the only consequence of skipping is a slightly delayed stale
-  // transition for peers that were also being noisy.
-  const size_t wire_bytes = sizeof(MessageHeader) + sizeof(payload);
-  if (!airtime_governor::try_reserve_routine(millis(), wire_bytes)) {
+  // transition for peers that were also being noisy. broadcast_message()
+  // sends one signed frame to each peer it reaches, so that is the charge.
+  if (!airtime_governor::try_reserve_routine(millis(),
+          signed_frame_bytes(sizeof(payload)), broadcast_peer_count())) {
     return;
   }
 

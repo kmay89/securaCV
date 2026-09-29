@@ -413,9 +413,11 @@ void test_presence_fsm_integration() {
     fsm.reset(t);
     assert(fsm.state() == Presence::Unknown);
 
-    // First present frame lifts Unknown -> Clear (debounce not yet met).
+    // First present frame starts the debounce run and changes NOTHING yet:
+    // Unknown never passes through Clear on the way to Present, because the
+    // caller signs `presence_cleared` on Clear and a body is in view.
     PresenceEvent e = fsm.tick(decode_one(p, frame_people(true)), t);
-    assert(e.state_changed && fsm.state() == Presence::Clear);
+    assert(!e.state_changed && fsm.state() == Presence::Unknown);
 
     // Sustained presence past the debounce window -> Present.
     t = 1400;
@@ -444,6 +446,72 @@ void test_presence_fsm_integration() {
     e = fsm.tick(Frame(), t);
     assert(e.stalled && fsm.state() == Presence::Unknown);
     std::printf("PASS test_presence_fsm_integration\n");
+}
+
+// A radar that stalls while a target is in view, then comes back still
+// reporting the target: the FSM must not sign a "cleared" on the way back,
+// and must not promote the first returning frame straight to Present off a
+// debounce clock that was running before the link dropped.
+void test_presence_fsm_stall_recovery_never_reports_clear_with_a_target() {
+    PresenceConfig cfg;  // defaults: 300 debounce, 1500 clear, 5000 stall
+    PresenceFSM fsm(cfg);
+    FrameParser p;
+
+    uint32_t t = 1000;
+    fsm.reset(t);
+    (void)fsm.tick(decode_one(p, frame_people(true)), t);
+    t = 1400;
+    PresenceEvent e = fsm.tick(decode_one(p, frame_people(true)), t);
+    assert(fsm.state() == Presence::Present);
+
+    // Link drops with the target still present: stall -> Unknown.
+    t = 1400 + 5001;
+    e = fsm.tick(Frame(), t);
+    assert(e.stalled && fsm.state() == Presence::Unknown);
+
+    // Link returns, target still there: no state change, no Clear, and no
+    // instant Present (the pre-stall debounce clock must not count).
+    t += 10;
+    e = fsm.tick(decode_one(p, frame_people(true)), t);
+    assert(!e.state_changed);
+    assert(fsm.state() == Presence::Unknown);
+
+    // Target sustained past a fresh debounce window -> Present, once.
+    t += 299;
+    e = fsm.tick(decode_one(p, frame_people(true)), t);
+    assert(fsm.state() == Presence::Unknown);
+    t += 1;
+    e = fsm.tick(decode_one(p, frame_people(true)), t);
+    assert(e.state_changed && fsm.state() == Presence::Present);
+
+    // A stall while STILL Unknown (a run opened, the debounce not yet
+    // earned, then silence) must also end the run: the returning frame is
+    // a fresh start, not the tail of a run that spanned the outage.
+    t += 5001;
+    e = fsm.tick(Frame(), t);
+    assert(e.stalled && fsm.state() == Presence::Unknown);
+    t += 10;
+    (void)fsm.tick(decode_one(p, frame_people(true)), t);   // opens a run
+    assert(fsm.state() == Presence::Unknown);
+    t += 5001;                                                // silence, still Unknown
+    e = fsm.tick(Frame(), t);
+    assert(!e.state_changed && fsm.state() == Presence::Unknown);
+    t += 10;
+    e = fsm.tick(decode_one(p, frame_people(true)), t);
+    assert(fsm.state() == Presence::Unknown);               // fresh debounce, not instant Present
+    t += 300;
+    e = fsm.tick(decode_one(p, frame_people(true)), t);
+    assert(e.state_changed && fsm.state() == Presence::Present);
+
+    // And the other way: link returns reporting NO target -> Clear at once,
+    // which is what the radar said.
+    t += 5001;
+    e = fsm.tick(Frame(), t);
+    assert(e.stalled && fsm.state() == Presence::Unknown);
+    t += 10;
+    e = fsm.tick(decode_one(p, frame_people(false)), t);
+    assert(e.state_changed && fsm.state() == Presence::Clear);
+    std::printf("PASS test_presence_fsm_stall_recovery_never_reports_clear_with_a_target\n");
 }
 
 #ifdef CANARY_SENSE_VITALS
@@ -578,6 +646,7 @@ int main() {
     test_hostile_floats_clamped_not_ub();
     test_truncated_valid_distance_emits_nothing();
     test_presence_fsm_integration();
+    test_presence_fsm_stall_recovery_never_reports_clear_with_a_target();
 #ifdef CANARY_SENSE_VITALS
     test_vitals_fsm_integration();
     test_vitals_lock_survives_interleaved_presence();

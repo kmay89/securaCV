@@ -353,6 +353,9 @@ fn main() -> Result<()> {
     let mut token_mgr = BucketKeyManager::new();
 
     let mut last_prune = Instant::now();
+    // Clock excursions seen at the last retention pass; a pass that finds the
+    // count moved skips pruning once (see `ClockMonitor::excursions`).
+    let mut prune_clock_mark = 0u64;
     let mut last_storage_sample: Option<Instant> = None;
     let mut last_storage_status = witness_kernel::StorageHealthStatus::Good;
     let mut event_count = 0u64;
@@ -552,7 +555,19 @@ fn main() -> Result<()> {
         // retention + check_interval. A failure here is a storage fault to
         // witness (sealed record + health counter), not a reason to exit.
         if last_prune.elapsed() > config.retention_check_interval {
-            if let Err(e) = kernel.enforce_retention_with_checkpoint(cfg.retention) {
+            let clock_excursions = clock_monitor.excursions();
+            if clock_excursions != prune_clock_mark {
+                // The wall clock stepped since the last pass and a ClockSkew
+                // record says so. Retention ages rows by wall-clock stamps, so
+                // hold one interval rather than prune against a clock that
+                // moved minutes ago; the next pass runs on the settled clock.
+                log::warn!(
+                    "retention pass held: {} clock excursion(s) sealed since the last pass; \
+                     pruning resumes next pass on the settled clock",
+                    clock_excursions - prune_clock_mark
+                );
+                prune_clock_mark = clock_excursions;
+            } else if let Err(e) = kernel.enforce_retention_with_checkpoint(cfg.retention) {
                 if let Some(counter) = &storage_write_errors {
                     counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
@@ -938,6 +953,9 @@ struct ClockMonitor {
     baseline_wall: SystemTime,
     baseline_mono: Instant,
     last_bucket_start: Option<u64>,
+    /// Excursions sealed so far (drift or bucket regression). Monotone; the
+    /// retention pass compares it against the value it saw last time.
+    excursions: u64,
 }
 
 impl ClockMonitor {
@@ -947,7 +965,18 @@ impl ClockMonitor {
             baseline_wall: SystemTime::now(),
             baseline_mono: Instant::now(),
             last_bucket_start: None,
+            excursions: 0,
         }
+    }
+
+    /// How many `ClockSkew` records this monitor has sealed. A retention pass
+    /// that sees the count move since its previous pass holds off for one
+    /// interval: the wall clock just stepped, and pruning against a clock
+    /// that moved in the last few minutes is how a forward step turns into
+    /// early deletion (see `MonotonicAgeFloor` in the storage module for the
+    /// bound that holds regardless).
+    fn excursions(&self) -> u64 {
+        self.excursions
     }
 
     /// Absolute difference between observed wall clock and the wall time the
@@ -982,6 +1011,7 @@ impl ClockMonitor {
                 ruleset_hash,
             );
             pipeline.failures_recorded += 1;
+            self.excursions += 1;
             // Re-baseline so a single jump produces a single record.
             self.baseline_wall = SystemTime::now();
             self.baseline_mono = Instant::now();
@@ -1001,6 +1031,7 @@ impl ClockMonitor {
                     ruleset_hash,
                 );
                 pipeline.failures_recorded += 1;
+                self.excursions += 1;
             }
         }
         // Track the observed bucket (even after regression, so one record per jump).
@@ -1804,6 +1835,7 @@ mod tests {
             cfg.ruleset_hash,
         );
         assert_eq!(count_failures(&mut kernel, &cfg, FailureType::ClockSkew), 0);
+        assert_eq!(monitor.excursions(), 0);
 
         // Bucket goes backwards: one ClockSkew record.
         monitor.observe(
@@ -1815,6 +1847,11 @@ mod tests {
             cfg.ruleset_hash,
         );
         assert_eq!(count_failures(&mut kernel, &cfg, FailureType::ClockSkew), 1);
+        assert_eq!(
+            monitor.excursions(),
+            1,
+            "the retention pass reads this count"
+        );
 
         // Staying at the regressed bucket does not re-fire.
         monitor.observe(

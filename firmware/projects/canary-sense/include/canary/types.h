@@ -15,6 +15,7 @@ struct SenseSnapshot {
   // Radar-link health (design doc §6: HEALTH_CAT_SENSOR territory).
   bool     radar_ok     = false;      // false while the UART is stalled
   uint32_t frame_errors = 0;          // checksum/oversize drops (monotonic)
+  uint32_t radar_frame_age_ms = 0;    // ms since the last presence frame
 
   // Ambient light (BH1750); negative = sensor absent.
   float lux = -1.0f;

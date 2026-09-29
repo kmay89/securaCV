@@ -1,12 +1,12 @@
 /**
  * @file mr60_vitals.cpp
- * @brief Breathing/heart lock FSM (Phase 0 skeleton, vitals build only).
+ * @brief Breathing/heart lock FSM (vitals build only).
  *
  * Entire file compiles to nothing unless CANARY_SENSE_VITALS is defined, so a
  * presence-only flavor links zero vitals code. The lock + suppression logic is
- * real and host-testable; it runs correctly even while the UART decoder is a
- * stub (every tick sees FrameKind::None and the lock falls to Lost on its
- * deadline — the safe direction).
+ * host-tested against golden frames from mr60_uart's decoder; a silent radar
+ * still drives it (every tick sees FrameKind::None and the lock falls to Lost
+ * on its deadline — the safe direction).
  */
 
 #ifdef CANARY_SENSE_VITALS

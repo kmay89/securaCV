@@ -2648,6 +2648,10 @@ static void mqtt_publish_health_update() {
   doc["records_verified"] = health.records_verified;
   doc["verify_failures"] = health.verify_failures;
   doc["chain_persists"] = health.chain_persists;
+  /* Chain-state writes to NVS this boot that did not land (repo sweep F55).
+   * Until a retry lands (one follows each record), the NVS fast-boot cache
+   * lags the chain; the SD log, when a card is in, does not. */
+  doc["chain_persist_failures"] = health.chain_persist_failures;
   doc["gps_healthy"] = health.gps_healthy;
   doc["crypto_healthy"] = health.crypto_healthy;
   doc["sd_healthy"] = health.sd_healthy;

@@ -459,12 +459,17 @@ uint32_t nvs_load_u32(const char* key, uint32_t def) {
   return v;
 }
 
+// The two stores below return true only when the put wrote the whole value.
+// Preferences reports the bytes it wrote, 0 when NVS refused the write (a
+// full partition, a flash error); both used to answer true whatever that
+// was, once the session opened (repo sweep F55). The session is ended on
+// every path either way, so a failed write never keeps the NVS lock.
 bool nvs_store_u32(const char* key, uint32_t val) {
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.beginReadWrite()) return false;
-  nvs.putUInt(key, val);
+  const bool wrote = nvs.putUInt(key, val) == sizeof(val);
   nvs.end();
-  return true;
+  return wrote;
 }
 
 bool nvs_load_bytes(const char* key, uint8_t* out, size_t len) {
@@ -477,12 +482,13 @@ bool nvs_load_bytes(const char* key, uint8_t* out, size_t len) {
   return true;
 }
 
+// A zero-length store is false: Preferences refuses it, so nothing was kept.
 bool nvs_store_bytes(const char* key, const uint8_t* data, size_t len) {
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.beginReadWrite()) return false;
-  nvs.putBytes(key, data, len);
+  const size_t put = nvs.putBytes(key, data, len);
   nvs.end();
-  return true;
+  return put != 0 && put == len;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

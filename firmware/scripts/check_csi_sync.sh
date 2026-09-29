@@ -162,6 +162,30 @@ if [ -f "$TZRULE_CANONICAL" ]; then
     fi
 fi
 
+# NvsManager session depth (repo sweep F53): same single-source pattern. The
+# canonical, header-only nvs_session_depth (the per-task session count under
+# the cross-task lock NvsManager holds from begin() to end()) lives at
+# firmware/common/storage/; the PIO canary tree includes it directly, and the
+# canary-wap sketch's nvs_store.h includes a byte-identical staged copy, so
+# both products' settings handles nest and hand off by the same rules.
+NVSDEPTH_CANONICAL="firmware/common/storage/nvs_session_depth.h"
+NVSDEPTH_STAGED="$STAGED/nvs_session_depth.h"
+if [ -f "$NVSDEPTH_CANONICAL" ]; then
+    if [ ! -f "$NVSDEPTH_STAGED" ]; then
+        echo "::error::Missing staged copy: $NVSDEPTH_STAGED"
+        echo "         Run: cp $NVSDEPTH_CANONICAL $NVSDEPTH_STAGED"
+        drift=1
+    elif ! cmp -s "$NVSDEPTH_CANONICAL" "$NVSDEPTH_STAGED"; then
+        echo "::error::Drift detected: $NVSDEPTH_STAGED differs from $NVSDEPTH_CANONICAL"
+        echo "--- diff ($NVSDEPTH_CANONICAL vs $NVSDEPTH_STAGED) ---"
+        diff -u "$NVSDEPTH_CANONICAL" "$NVSDEPTH_STAGED" || true
+        drift=1
+    fi
+else
+    echo "::error::Canonical NvsManager session-depth header not found: $NVSDEPTH_CANONICAL"
+    drift=1
+fi
+
 # ── One CSI HAL: the canary product's lib/securacv_csi is an adapter ──
 # firmware/canary/lib/securacv_csi/src/securacv_csi.cpp used to be a second
 # copy of csi_hal.cpp + csi_features.cpp (~1150 lines), kept equal to the
@@ -335,4 +359,4 @@ if [ "$drift" -ne 0 ]; then
     exit 1
 fi
 
-echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule library copies are in sync; the canary CSI adapter is thin; the event-log line has one builder and one owner file; the event egress keeps its order."
+echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule + nvs-session-depth library copies are in sync; the canary CSI adapter is thin; the event-log line has one builder and one owner file; the event egress keeps its order."

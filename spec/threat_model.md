@@ -83,7 +83,18 @@ It exists to **raise the structural cost of abuse beyond viability**.
 
 ---
 
-## 4. Security Posture Summary
+## 4. Fault Model (non-adversarial)
+
+This document lists adversaries. Faults — a power cut, a clock step, a lost
+or duplicated message, a silent sensor, a full disk — have no intent and are
+not listed here, and "out of scope" above does not mean they are unhandled.
+What the system keeps, loses, detects and does under each fault class, with
+the code and the test behind every claim, is stated in
+[`docs/FAULT_MODEL.md`](../docs/FAULT_MODEL.md). Two boundaries carry over
+unchanged: a device that lies is bounded only by its signature (authorship,
+not truth), and a compromised host is out of scope (`docs/root_paradox.md`).
+
+## 5. Security Posture Summary
 
 The kernel assumes:
 - The network is hostile

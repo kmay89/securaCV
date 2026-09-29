@@ -27,7 +27,7 @@ if str(ENC) not in sys.path:
     sys.path.insert(0, str(ENC))
 import gen_builder_manifest as gbm  # noqa: E402
 
-PRE = re.compile(r"=\s*_pre\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,")
+PRE = re.compile(r"=\s*_pre(?:_p\(\s*pr\s*,|\()\s*([A-Za-z_][A-Za-z0-9_]*)\s*,")
 
 
 class Presets(unittest.TestCase):

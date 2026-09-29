@@ -59,13 +59,13 @@ export const SENSE_COPY = {
   },
   radar: {
     label: "60 GHz mmWave radar",
-    how: "Millimeter-wave radar resolves that someone is there — range and motion — while physically unable to resolve who.",
-    emits: "presence / occupants / range, Ed25519-signed — identity is impossible by construction.",
+    how: "Millimeter-wave radar resolves that someone is there — a target, a coarse range, a count. The firmware reads only those scalars off the module; it never reads the module's point-cloud or waveform frames, and there is no camera or microphone to read.",
+    emits: "presence / occupants / range band, Ed25519-signed — no image, no audio, no per-target track ever exists on the host to leak.",
   },
   breath: {
     label: "radar wellbeing (breathing)",
-    how: "The same radar, tuned soft: it watches the rise and fall of breathing through a duvet — a baby monitor's care with no camera in the room.",
-    emits: "breathing rate + presence, Ed25519-signed — nothing to leak but a heartbeat's rhythm.",
+    how: "The same radar in its wellbeing build: it reports a breathing lock and, at bedside range, a breathing rate — care with no camera in the room. (The module has no tuning; placement does that work.)",
+    emits: "presence, Ed25519-signed; breathing lock and rate ride the unsigned state topic and are never sealed — a wellbeing signal, not evidence.",
   },
   display: {
     label: "display (shows, never senses)",

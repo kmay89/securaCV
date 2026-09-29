@@ -6,7 +6,7 @@
 // visits every zone exactly once and replays from its seed; targets never
 // stray outside their zone cell (else the per-zone claim is void); and the
 // verdict fails on a missed zone, a slow zone, or a stray tap. Run in CI by
-// the "arcade logic host test" step in firmware.yml; prints
+// this directory's Makefile, which firmware.yml runs; prints
 // "ALL ARCADE LOGIC TESTS PASSED" on success. Build (from the repo root):
 //
 //   g++ -std=c++17 -Wall -Wextra -I firmware/projects/canary-display/include

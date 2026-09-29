@@ -4,7 +4,7 @@
 // the relay's dedupe/ttl decisions.
 //
 // Builds standalone with g++ — no Arduino, no radio, no crypto library. Run in
-// CI by the "Tin Can link core host test" step in .github/workflows/firmware.yml.
+// CI by this directory's Makefile, which .github/workflows/firmware.yml runs.
 // Prints "ALL LINK TESTS PASSED" on success (the CI grep makes a silent pass
 // impossible to fake). Build from the repo root:
 //

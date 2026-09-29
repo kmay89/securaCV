@@ -9,12 +9,15 @@
 //  POSE: the case stands UP on the head — radome level and facing the bed is
 //  the bedside pose — and tips forward from there down to 15° below
 //  horizontal. It does NOT hang plumb below the head: a GoPro joint's center
-//  fin points down the stalk, and the case's hinge root collides with it in
-//  any pose within ~90° of that direction (plumb measured 821 mm³ of case
-//  inside the head and stalk, the teeth aside). Measured by hanging the
-//  committed canary_sense_back.stl on the head's bolt axis and sweeping it in
-//  5° steps: zero overlap (the detent teeth aside) from 10° above horizontal
-//  toward the back, through upright, to 15° below horizontal toward the front.
+//  fin points down the stalk, and the case's hinge root collides with it
+//  (plumb measures 2,445 mm³ of case inside the head and stalk, the joint
+//  itself aside). Re-measured 2026-09-26 against the piston-plate shell
+//  (canary_sense_front.stl — the fins are on the shell now, teardrop roots)
+//  hung on the head's bolt axis by sense_hinge_axis_stl() and swept in 5°
+//  steps with the joint (fin_r + 0.4 round the axis) excluded: zero overlap
+//  from 45° past horizontal toward the back (the sweep's end), through
+//  upright, to 20° below horizontal toward the front; 22° hits (15 mm³),
+//  25° hits (57 mm³). pose_low = 15 keeps 5° in hand.
 //
 //  Ballast: the underside has pockets for 4 x M10 washers / US quarters
 //  (~25 mm discs); cover with the ballast lid (glue or tape). Stick-on
@@ -22,11 +25,16 @@
 //
 //  2026-08-23: the teardrop bore now comes from canary_core_lib — same
 //  geometry (the local copy was verbatim), one home.
+//  2026-09-26: case_reach / case_face are read off canary_sense_enclosure.scad
+//  (sense_hinge_reach()/_face(), through `use <>`) — the knobs here had the
+//  reach 1.6 short of the ported shell (71.2 for 72.8); the pose sweep above
+//  re-run against that shell.
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 // ============================================================================
 
 use <canary_core_lib.scad>   // tearbore_x — the teardrop bore the hinge bolt rides
+use <canary_sense_enclosure.scad>   // sense_hinge_reach()/_face()/_back() — the case's reach from its hinge axis, read live
 
 /* [What to render] */
 part = "all";        // ["base","ballast_lid","all"]
@@ -35,8 +43,6 @@ part = "all";        // ["base","ballast_lid","all"]
 base_d   = 92.0;     // base disc diameter
 base_t   = 12.0;     // base thickness
 stalk_h  = 70.0;     // stalk height to the hinge axis region — puts the standing radome ~130 mm over the nightstand
-case_reach = 71.2;   // the Sense case's far edge from its hinge axis — measured off canary_sense_back.stl (out_y/2 + hinge_off)
-case_face  = 14.0;   // the case's radome face from its hinge axis (back 19.5 - fin_r 7.5 + lid 2.0)
 pose_low   = 15;     // the forward tip limit below horizontal — where the case root meets the center fin (header)
 stalk_d  = 16.0;     // stalk diameter
 stalk_tilt = 12;     // stalk lean (degrees, toward the front)  // [0:2:20]
@@ -65,9 +71,17 @@ tol_hole  = 0.30;    // catalog default — core_tol_hole(), canary_core_lib
 $fa = 3; $fs = 0.4;
 
 hinge_hole = hinge_bolt_d + 0.4;
+// the case's reach from its hinge axis — read off canary_sense_enclosure.scad's own
+// derivation (out_y + hinge_off to the far wall; base_d + lid_t - fin_r to the radome
+// face), never retyped here: a case that grows moves this stand's pose limits with it
+case_reach = sense_hinge_reach();
+case_face  = sense_hinge_face();
 head_off = 10.0;                     // bolt axis above the head's base plate
 // the hinge axis as base() places it: the stalk top plus head_off, both along the tilted stalk
 axis_z = base_t - 2 + (stalk_h - 0.2 + head_off)*cos(stalk_tilt);
+// the same point, for a probe that hangs the case on it (the pose sweep in the header)
+function sense_stand_axis() = [0, base_d*0.05 + (stalk_h - 0.2 + head_off)*sin(stalk_tilt), axis_z];
+function sense_stand_head_x() = prong_pitch + prong_t;   // the head's half-width along the bolt
 // the lowest free pose (tipped pose_low below horizontal, radome down-forward) keeps the
 // case's leading corner 2 mm over the base; the plumb pose is not free, so not asserted
 assert(axis_z - case_reach*sin(pose_low) - case_face*cos(pose_low) >= base_t + 2,

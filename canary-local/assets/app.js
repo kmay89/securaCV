@@ -284,7 +284,7 @@ function closeSheet() {
   const c = state.sheet;
   if (!c) return;
   for (const d of c.dispose) try { d(); } catch {}
-  c.scene?.stop();
+  c.scene?.dispose(); // its buffers go back to the page's shared context
   c.emu?.stopFleetHeartbeat();
   state.sheet = null;
   $("#sheet-root").classList.remove("open");

@@ -10,7 +10,14 @@ lines, and checks:
   - every tamper class fails loudly: edited field, wrong key, re-signed
     line, reordered lines;
   - a gap (card-absent period) is reported as segments but still passes;
-  - a torn final line (power cut) is tolerated.
+  - a torn final line (power cut) is tolerated;
+  - a power-cut scar mid-file (a torn append the device sealed onto its
+    own line, with the chain continuing contiguously across it) is
+    tolerated and named; a malformed line at a gap boundary is reported
+    as the gap it is (a destroyed record reads exactly like a deleted
+    one, which the gap already reports); a malformed line the records
+    around it cannot vouch for (a backward sequence, no record after it,
+    a leading line the genesis does not bridge) fails.
 
 Prints "ALL verify_witness_log TESTS PASSED" on success (CI marker).
 """
@@ -144,6 +151,80 @@ def main() -> int:
     evil[-1] = json.dumps(rec)
     code, out = run_verify(evil, pub_hex, device_id)
     check(code == 1, "tampered newline-stripped final record still fails")
+
+    print("power-cut scar mid-file (torn append sealed onto its own line)")
+    # Records 1-3 landed; the append of a fourth record tore; the device
+    # rebooted, recovered head = seq 3, sealed the fragment with a newline
+    # and appended its NEW seq 4 chaining from seq 3 — exactly lines[3:].
+    fragment = lines[3][: len(lines[3]) // 2] + "\n"
+    scarred = lines[:3] + [fragment] + lines[3:]
+    code, out = run_verify(scarred, pub_hex, device_id)
+    check(code == 0, "a sealed scar bridged by a contiguous chain is tolerated")
+    check("power-cut scar" in out, "the scar is named, not hidden")
+    check("1 malformed line(s) tolerated" in out, "the count is printed")
+    check("signatures verified : 6/6" in out, "every real record still verified")
+    check("seq 1..6 (chains from genesis)" in out,
+          "the scar does not split the segment")
+
+    print("two consecutive scars (a second power cut during the sealing append)")
+    twice = lines[:3] + [fragment, lines[3][: 40] + "\n"] + lines[3:]
+    code, out = run_verify(twice, pub_hex, device_id)
+    check(code == 0, "both fragments are bridged by the same contiguous link")
+    check("2 malformed line(s) tolerated" in out, "both scars counted")
+    check(out.count("power-cut scar") == 2, "both named as scars")
+
+    print("torn first append, chain starts at genesis after it")
+    first_torn = [lines[0][: 30] + "\n"] + lines
+    code, out = run_verify(first_torn, pub_hex, device_id)
+    check(code == 0, "a scar before seq 1 is bridged by the genesis anchor")
+    code, out = run_verify(first_torn, pub_hex, None)
+    check(code == 0, "without the genesis, a leading scar is noted, not judged")
+    check("cannot be judged without --device-id" in out,
+          "the note says which run decides it")
+    wrong_genesis = [lines[0][: 30] + "\n"] + lines[1:]  # seq 2 first: no bridge
+    code, out = run_verify(wrong_genesis, pub_hex, device_id)
+    check(code == 1, "a leading malformed line that genesis does not bridge fails")
+
+    print("garbage in place of a record reads as the gap it is")
+    overwritten = list(lines)
+    overwritten[2] = lines[2][: len(lines[2]) // 2] + "\n"  # seq 3 destroyed
+    code, out = run_verify(overwritten, pub_hex, device_id)
+    check(code == 0, "same verdict as deleting the line outright")
+    check("gap boundary" in out, "the line is named as a gap boundary, not a scar")
+    check("destroyed record" in out, "the note says a destroyed record is possible")
+    check("1 gap(s)" in out, "the gap itself is reported as before")
+    check("signatures verified : 5/5" in out, "the surviving records still verify")
+
+    print("a scar followed by a card-absent gap (power cut, then no card)")
+    scar_gap = lines[:3] + [fragment] + lines[4:]  # seq 4 never reached the card
+    code, out = run_verify(scar_gap, pub_hex, device_id)
+    check(code == 0, "an honest crash-then-no-card log is not a failure")
+    check("gap boundary" in out, "reported as a gap boundary")
+
+    print("a malformed line between a backward sequence is NOT a scar")
+    replayed = lines[:4] + [fragment] + [lines[1]]  # seq 2 again after seq 4
+    code, out = run_verify(replayed, pub_hex, device_id)
+    check(code == 1, "the backward sequence fails, fragment or not")
+    check("does not advance" in out, "the failure names the backward sequence")
+
+    print("second power cut: the sealing newline landed, the record did not")
+    # Fragment sealed onto its own line at EOF, nothing after it: the writer's
+    # documented second-cut shape. The chain ends at seq 6 and nothing is
+    # missing, so this verifies like a torn tail.
+    sealed_end = lines + [lines[5][: 40] + "\n"]
+    code, out = run_verify(sealed_end, pub_hex, device_id)
+    check(code == 0, "a sealed torn append at the end is tolerated")
+    check("sealed torn append at the end" in out, "and named as such")
+    check("signatures verified : 6/6" in out, "every real record still verified")
+    # ...and a third cut leaving both a sealed scar and a new torn tail.
+    sealed_then_torn = lines + [lines[5][: 40] + "\n", lines[5][: 30]]
+    code, out = run_verify(sealed_then_torn, pub_hex, device_id)
+    check(code == 0, "sealed scar at the end plus a torn tail: tolerated")
+
+    print("a scar as the last complete line before a torn tail")
+    scar_then_torn = lines[:3] + [fragment] + lines[3:5] + [lines[5][: 50]]
+    code, out = run_verify(scar_then_torn, pub_hex, device_id)
+    check(code == 0, "scar and torn tail coexist (two power cuts, one file)")
 
     print("unreadable file")
     code = vw.verify("/nonexistent/records.jsonl", pub_hex, None)

@@ -181,6 +181,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Database key rotation](db_key_rotation.md) · [post-quantum mode](pqc_mode.md)
 - [Identity & transport](identity_transport.md) — who speaks, on what wire
 - [Failure semantics](failure_semantics.md) — what breaks loudly, and why
+- [Fault model and recovery](FAULT_MODEL.md) — what survives what: crash, power loss, clock steps, lost and duplicated messages, silent sensors, full storage — per component, with the code and the test behind each row, the self-stabilization argument for the Wi-Fi retry policy and its holes, and the list of what is **not** claimed (no end-to-end delivery guarantee, no cross-device ordering, no Byzantine tolerance, no crash-injection tests yet)
 - [Evidence lifecycle](evidence_lifecycle.md) — the full custody story
 
 </details>
@@ -188,6 +189,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 <details>
 <summary><strong>Radio, mesh & sensing internals</strong> — how Canaries feel and talk</summary>
 
+- [**Fleet semantics**](FLEET_SEMANTICS.md) — what "online", "verified" and "the mesh" mean, precisely: four membership views that never reconcile, a one-window failure detector, trust-on-first-use in three stores, no cross-device ordering or consensus (correlation is forbidden by design; the rest is not built), relay specified for Opera and Beacon and built for neither, every scale figure a cap or an estimate — with the code behind each row and the list of what is not claimed
 - [BLE protocol](ble_protocol.md) · [BLE mesh + Opera tandem (design only)](BLE_MESH_OPERA_TANDEM.md)
 - [ESP-NOW mesh evaluation](mesh_esp_now_evaluation.md) · [ESP32 mesh sensing design](esp32_mesh_sensing_design.md)
 - [Meshtastic integration](meshtastic_integration.md) — witnesses on the property line
