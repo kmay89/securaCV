@@ -19,7 +19,9 @@
  *                                                         through untouched)
  *
  * Why the first byte is unambiguous on this radio:
- *   • signed Opera frames start with mesh_network::PROTOCOL_VERSION = 0;
+ *   • signed Opera frames start with mesh_network::PROTOCOL_VERSION — 1
+ *     since v0.4 (the registry's byte), 0 before — and the registry keeps
+ *     both values out of the pairing block (mesh_wire.h static_asserts);
  *   • Chirp frames start with CHIRP_MAGIC = 0xC4, Beacon with 0xB1;
  *   • 8..12 is none of those, and the exact-length rule rejects everything
  *     that merely starts with such a byte.
@@ -29,15 +31,17 @@
  * machine's own checks (roles, confirmation hash, AEAD on COMPLETE) are what
  * authenticate the exchange.
  *
- * This mirrors the PlatformIO mesh's framing (a 1-byte type ahead of the
+ * This is the PlatformIO mesh's framing too (a 1-byte type ahead of the
  * raw pairing payload, firmware/canary/lib/securacv_mesh mesh_session.h),
- * but the two trees still number the types differently (PIO 0..4, WAP 8..12)
- * — they do not pair with each other, and this change does not claim so.
+ * and since v0.4 (spec §4.5) both trees number the types 8..12 — this
+ * tree's values, taken from the shared registry below. They still do not
+ * pair with each other: the payload structs and the key derivation differ
+ * (spec §5.3), and this header does not claim otherwise.
  *
- * Pure header: no Arduino, no ESP-IDF. The sizes and type values here are
- * this header's own constants so the host test can include it alone;
- * mesh_network.cpp static_asserts them against MessageType and the real
- * Pair*Payload structs, so the two cannot drift.
+ * Pure header: no Arduino, no ESP-IDF — mesh_wire.h is pure as well, so the
+ * host test can still include this alone. The sizes are this header's own
+ * constants; mesh_network.cpp static_asserts them against MessageType and
+ * the real Pair*Payload structs, so the two cannot drift.
  * Host test: tests_host/test_mesh_pair_frame.cpp.
  */
 
@@ -48,14 +52,16 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "mesh_wire.h"
+
 namespace mesh_pair_frame {
 
-/* mesh_network::MessageType values (mesh_network.h). */
-constexpr uint8_t TYPE_DISCOVER = 8;
-constexpr uint8_t TYPE_OFFER    = 9;
-constexpr uint8_t TYPE_ACCEPT   = 10;
-constexpr uint8_t TYPE_CONFIRM  = 11;
-constexpr uint8_t TYPE_COMPLETE = 12;
+/* mesh_network::MessageType values — the registry's (mesh_wire.h). */
+constexpr uint8_t TYPE_DISCOVER = mesh_wire::PAIR_DISCOVER;   /*  8 */
+constexpr uint8_t TYPE_OFFER    = mesh_wire::PAIR_OFFER;      /*  9 */
+constexpr uint8_t TYPE_ACCEPT   = mesh_wire::PAIR_ACCEPT;     /* 10 */
+constexpr uint8_t TYPE_CONFIRM  = mesh_wire::PAIR_CONFIRM;    /* 11 */
+constexpr uint8_t TYPE_COMPLETE = mesh_wire::PAIR_COMPLETE;   /* 12 */
 
 /* sizeof(mesh_network::Pair*Payload) — all byte arrays, no padding. */
 constexpr size_t DISCOVER_LEN = 32 + 25 + 1;        /* pubkey, name[25], role = 58 */

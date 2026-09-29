@@ -440,7 +440,7 @@ clean:
 PAIR_FRAME_BIN = test_mesh_pair_frame
 PAIR_FRAME_SRC = test_mesh_pair_frame.cpp
 
-$(PAIR_FRAME_BIN): $(PAIR_FRAME_SRC) $(SRC_DIR)/mesh_pair_frame.h
+$(PAIR_FRAME_BIN): $(PAIR_FRAME_SRC) $(SRC_DIR)/mesh_pair_frame.h $(SRC_DIR)/mesh_wire.h
 	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(PAIR_FRAME_SRC)
 
 .PHONY: run-pair-frame clean-pair-frame
@@ -501,6 +501,34 @@ clean-revocation:
 
 run: run-revocation
 clean: clean-revocation
+
+# v0.4 (spec §4.5 — awaiting crypto review, not bench-verified): the Opera
+# mesh wire registry. mesh_wire.h is the PlatformIO tree's header, staged
+# byte-identical (check_mesh_sync.sh); its own suite runs here against the
+# STAGED copy, and test_mesh_wire_wap pins what mesh_network.{h,cpp} do with
+# it (every MessageType value an initializer from the registry, the version
+# gate before the type read, the header field order on send, the pairing
+# classifier's types) by reading the real files (beacon_source_scan.h).
+WIRE_WAP_BIN    = test_mesh_wire_wap
+WIRE_WAP_SRC    = test_mesh_wire_wap.cpp
+WIRE_STAGED_BIN = test_mesh_wire_staged
+WIRE_STAGED_SRC = ../../../canary/lib/securacv_mesh/test_mesh_wire.cpp
+
+$(WIRE_WAP_BIN): $(WIRE_WAP_SRC) $(SRC_DIR)/mesh_wire.h $(SRC_DIR)/mesh_pair_frame.h $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp beacon_source_scan.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -DMESH_NETWORK_H='"$(abspath $(SRC_DIR))/mesh_network.h"' -o $@ $(WIRE_WAP_SRC)
+
+$(WIRE_STAGED_BIN): $(WIRE_STAGED_SRC) $(SRC_DIR)/mesh_wire.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(WIRE_STAGED_SRC)
+
+.PHONY: run-wire clean-wire
+run-wire: $(WIRE_WAP_BIN) $(WIRE_STAGED_BIN)
+	./$(WIRE_WAP_BIN)
+	./$(WIRE_STAGED_BIN)
+clean-wire:
+	rm -f $(WIRE_WAP_BIN) $(WIRE_STAGED_BIN)
+
+run: run-wire
+clean: clean-wire
 
 # The CSI active probe under the airtime governor (the follow-up to sweep F4,
 # #1696), end to end — the REAL csi_probe scheduler (the sketch's staged copy,

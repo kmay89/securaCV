@@ -254,10 +254,17 @@ void test_le_byte_order_pinned() {
 }
 
 void test_msgtype_values_pinned() {
-  /* The byte at offset 1 of every signed frame (and the session prefix
-   * byte) — wire-stable, never renumber. LEAVE_OPERA (F10) is 25; the
-   * rekey messages (F10-rekey) are 26..29. */
+  /* The byte at offset 1 of every signed frame — wire-stable, never
+   * renumber: since v0.4 these are the registry's values (mesh_wire.h,
+   * spec §4.5) and canary-wap's MessageType carries the same ones.
+   * LEAVE_OPERA (F10) is 25; the rekey messages (F10-rekey) are 26..29.
+   * The version byte at offset 0 is 1 in both trees. */
   using M = mesh_envelope::MsgType;
+  assert(mesh_envelope::PROTOCOL_VERSION == 1);
+  assert(mesh_envelope::PROTOCOL_VERSION == mesh_wire::PROTOCOL_VERSION);
+  assert(static_cast<uint8_t>(M::TAMPER_ALERT)     == mesh_wire::TAMPER_ALERT);
+  assert(static_cast<uint8_t>(M::LEAVE_OPERA)      == mesh_wire::LEAVE_OPERA);
+  assert(static_cast<uint8_t>(M::REKEY_ACK)        == mesh_wire::REKEY_ACK);
   assert(static_cast<uint8_t>(M::HEARTBEAT)        == 16);
   assert(static_cast<uint8_t>(M::CSI_FEATURES)     == 17);
   assert(static_cast<uint8_t>(M::TAMPER_ALERT)     == 18);

@@ -26,10 +26,12 @@
  * format deliberately does not). A receiver renders `kind` through
  * kind_name() and never shows a sender-authored string.
  *
- * Wire compatibility: PIO-only. canary-wap numbers its outer frame type
- * differently (MSG_TAMPER_ALERT = 4, not 18) and carries a different
- * payload struct, so the two trees do not exchange alerts; do not claim
- * cross-tree delivery (spec/canary_mesh_network_v0.md §8.3).
+ * Wire compatibility: PIO-only. Since v0.4 canary-wap sends the same
+ * outer type byte (mesh_wire::TAMPER_ALERT = 18, spec §4.5), but it
+ * carries a different payload struct (54 bytes, with free text), so the
+ * two trees still do not exchange alerts — a receiver here drops the
+ * canary-wap payload on length. Do not claim cross-tree delivery
+ * (spec/canary_mesh_network_v0.md §4.5 table, §8.3).
  *
  * This TU is pure logic: no Arduino, no mbedtls, no transport. It
  * encodes/decodes bytes and is host-build-clean.

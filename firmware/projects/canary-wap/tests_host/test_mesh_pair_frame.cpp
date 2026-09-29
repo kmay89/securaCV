@@ -11,8 +11,9 @@
 //      (the reason it must be classified first).
 //   2. Off-by-one lengths (short and long) are rejected, as is a bare
 //      prefix, a null pointer, and every non-pairing first byte.
-//   3. A signed Opera frame (PROTOCOL_VERSION = 0 at byte 0), a Chirp frame
-//      (0xC4) and a Beacon frame (0xB1) are never classified as pairing.
+//   3. A signed Opera frame (the registry's PROTOCOL_VERSION = 1 at byte 0,
+//      or the pre-v0.4 0), a Chirp frame (0xC4) and a Beacon frame (0xB1)
+//      are never classified as pairing.
 //   4. A signed-length frame whose SECOND byte is a pairing type (the old
 //      in-header pairing path) is not a pairing frame.
 //   5. build() refuses a wrong payload length or a non-pairing type, so the
@@ -116,15 +117,23 @@ static void test_other_protocols_not_classified() {
   const uint8_t* p = nullptr;
   size_t pl = 0;
 
-  // A signed Opera frame: version byte 0 (mesh_network::PROTOCOL_VERSION),
-  // then msg_type — here a pairing type, i.e. the OLD in-header pairing
-  // shape. It is signed-length and starts with 0: never a pairing frame.
-  uint8_t opera[SIGNED_MIN + 32];
-  std::memset(opera, 0xAB, sizeof(opera));
-  opera[0] = 0;                  // PROTOCOL_VERSION (Opera)
-  opera[1] = pf::TYPE_OFFER;     // msg_type
-  CHECK(!pf::classify(opera, sizeof(opera), &t, &p, &pl));
-  CHECK(!pf::classify(opera, SIGNED_MIN, &t, &p, &pl));
+  // A signed Opera frame: the version byte — 1, the registry's
+  // (mesh_wire::PROTOCOL_VERSION, v0.4), or 0, the value this tree sent
+  // until then — then msg_type, here a pairing type, i.e. the OLD
+  // in-header pairing shape. It is signed-length and starts with a
+  // version byte: never a pairing frame, under either version.
+  CHECK(mesh_wire::PROTOCOL_VERSION == 1);
+  const uint8_t versions[] = {mesh_wire::PROTOCOL_VERSION, 0};
+  for (uint8_t v : versions) {
+    uint8_t opera[SIGNED_MIN + 32];
+    std::memset(opera, 0xAB, sizeof(opera));
+    opera[0] = v;                  // PROTOCOL_VERSION (Opera)
+    opera[1] = pf::TYPE_OFFER;     // msg_type
+    CHECK(!pf::classify(opera, sizeof(opera), &t, &p, &pl));
+    CHECK(!pf::classify(opera, SIGNED_MIN, &t, &p, &pl));
+    // ...and not at a pairing length either: the first byte decides.
+    CHECK(!pf::classify(opera, 1 + pf::OFFER_LEN, &t, &p, &pl));
+  }
 
   // Chirp (CHIRP_MAGIC) and Beacon (BEACON_MAGIC) frames.
   uint8_t chirp[99];
@@ -143,8 +152,9 @@ static void test_build_refuses_what_classify_would() {
   uint8_t frame[pf::MAX_FRAME_LEN];
   CHECK(pf::build(pf::TYPE_OFFER, payload, pf::OFFER_LEN - 1, frame, sizeof(frame)) == 0);
   CHECK(pf::build(pf::TYPE_CONFIRM, payload, pf::OFFER_LEN, frame, sizeof(frame)) == 0);
-  CHECK(pf::build(7, payload, 32, frame, sizeof(frame)) == 0);     // MSG_PEER_LIST
-  CHECK(pf::build(13, payload, 32, frame, sizeof(frame)) == 0);    // MSG_LEAVE_OPERA
+  CHECK(pf::build(7, payload, 32, frame, sizeof(frame)) == 0);     // reserved (was MSG_PEER_LIST before v0.4)
+  CHECK(pf::build(13, payload, 32, frame, sizeof(frame)) == 0);    // reserved (was MSG_LEAVE_OPERA before v0.4)
+  CHECK(pf::build(mesh_wire::LEAVE_OPERA, payload, 32, frame, sizeof(frame)) == 0);  // an opera type, not pairing
   CHECK(pf::build(pf::TYPE_OFFER, payload, pf::OFFER_LEN, frame, pf::OFFER_LEN) == 0);
   CHECK(pf::build(pf::TYPE_OFFER, nullptr, pf::OFFER_LEN, frame, sizeof(frame)) == 0);
   CHECK(pf::build(pf::TYPE_OFFER, payload, pf::OFFER_LEN, nullptr, sizeof(frame)) == 0);

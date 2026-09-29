@@ -131,7 +131,7 @@ void test_start_initiator_emits_discover_init() {
   assert(g_outs.size() == 1);
   static const uint8_t BCAST[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
   assert(std::memcmp(g_outs[0].mac, BCAST, 6) == 0);
-  /* Envelope: byte 0 = PAIR_DISCOVER (0). */
+  /* Envelope: byte 0 = PAIR_DISCOVER (8, the registry's). */
   assert(g_outs[0].bytes[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_DISCOVER));
   /* Body is PairDiscoverPayload with role=INITIATOR. */
   mesh_pairing::PairDiscoverPayload disc;
@@ -235,14 +235,15 @@ void test_envelope_msgtype_byte_is_first_byte() {
   std::memcpy(disc.pubkey, joiner_pub, mesh_crypto::PUBKEY_LEN);
   disc.role = mesh_pairing::ROLE_JOINER;
   uint8_t frame[1 + sizeof(disc)];
-  frame[0] = 0;  /* PAIR_DISCOVER */
+  frame[0] = static_cast<uint8_t>(mesh_session::MsgType::PAIR_DISCOVER);  /* 8 */
   std::memcpy(frame + 1, &disc, sizeof(disc));
   mesh_transport::test::inject_recv(joiner_mac, frame, sizeof(frame), -50);
   mesh_transport::process();
 
   assert(g_outs.size() == 1);
-  /* Envelope check: byte 0 == MsgType::PAIR_OFFER (1). */
-  assert(g_outs[0].bytes[0] == 1);
+  /* Envelope check: byte 0 == MsgType::PAIR_OFFER (9, the registry's). */
+  assert(g_outs[0].bytes[0] == 9);
+  assert(g_outs[0].bytes[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_OFFER));
   /* The next sizeof(PairOfferPayload) bytes match a PairOfferPayload. */
   assert(g_outs[0].bytes.size() == 1 + sizeof(mesh_pairing::PairOfferPayload));
   mesh_pairing::PairOfferPayload offer;
@@ -348,21 +349,22 @@ void test_send_beacon_event_signs_and_broadcasts() {
   assert(g_outs.size() == 1);
   const auto& f = g_outs[0];
 
-  /* Wire shape: [session_msg_type=22 (1B)] [Header(38B)] [Payload(25B)] [Sig(64B)]
-   * = 128 bytes total. */
-  const size_t expected_len = 1
-      + mesh_envelope::HEADER_LEN
+  /* Wire shape (spec §4.5): [Header(38B)] [Payload(25B)] [Sig(64B)]
+   * = 127 bytes total, version byte first, the type INSIDE the signed
+   * header — no unsigned prefix (v0.4 dropped the one this tree had). */
+  const size_t expected_len = mesh_envelope::HEADER_LEN
       + mesh_beacon::PAYLOAD_LEN
       + mesh_envelope::SIGNATURE_LEN;
   assert(f.bytes.size() == expected_len);
-  assert(f.bytes[0] == static_cast<uint8_t>(mesh_envelope::MsgType::BEACON_EVENT));
+  assert(f.bytes[mesh_envelope::OFFSET_VERSION]  == mesh_envelope::PROTOCOL_VERSION);
+  assert(f.bytes[mesh_envelope::OFFSET_MSG_TYPE] == static_cast<uint8_t>(mesh_envelope::MsgType::BEACON_EVENT));
 
-  /* Verify the signed envelope (frame minus the leading session byte). */
+  /* Verify the signed envelope — the frame itself. */
   mesh_envelope::Header  hdr;
   const uint8_t*         payload = nullptr;
   size_t                 payload_len = 0;
   assert(mesh_envelope::parse_and_verify(
-      f.bytes.data() + 1, f.bytes.size() - 1,
+      f.bytes.data(), f.bytes.size(),
       pub, &hdr, &payload, &payload_len));
   assert(hdr.version  == mesh_envelope::PROTOCOL_VERSION);
   assert(hdr.msg_type == static_cast<uint8_t>(mesh_envelope::MsgType::BEACON_EVENT));
@@ -415,8 +417,7 @@ void test_send_beacon_event_counter_monotonic() {
   /* counter is LE 64-bit; offset = session-prefix(1) + envelope
    * OFFSET_COUNTER. Use the canonical constant from mesh_envelope.h
    * rather than hand-rolled 1+1+16+8. */
-  const size_t cnt_off = mesh_session::MSGTYPE_HEADER_LEN
-                       + mesh_envelope::OFFSET_COUNTER;
+  const size_t cnt_off = mesh_envelope::OFFSET_COUNTER;
   uint64_t prev = 1;   /* prior test left counter at 1 */
   for (const auto& f : g_outs) {
     uint64_t c = 0;
@@ -474,14 +475,11 @@ size_t build_beacon_frame(const uint8_t sender_pub[mesh_crypto::PUBKEY_LEN],
   h.counter   = counter;
   h.timestamp = 12345;
 
-  /* Serialize+sign. Out goes after the 1-byte session prefix. */
-  if (out_cap < 1 + mesh_envelope::MAX_FRAME_LEN) return 0;
-  out_frame[0] = static_cast<uint8_t>(mesh_envelope::MsgType::BEACON_EVENT);
-  const size_t n = mesh_envelope::serialize_signed(
+  /* Serialize+sign: the envelope is the whole frame (spec §4.5). */
+  if (out_cap < mesh_envelope::MAX_FRAME_LEN) return 0;
+  return mesh_envelope::serialize_signed(
       h, payload, sizeof(payload), sender_priv, sender_pub,
-      out_frame + 1, out_cap - 1);
-  if (n == 0) return 0;
-  return 1 + n;
+      out_frame, out_cap);
 }
 
 void test_register_trusted_peer_basic() {
@@ -528,7 +526,7 @@ void test_beacon_event_roundtrip() {
   mesh_session::set_beacon_event_handler(on_beacon_event_received);
 
   /* Build + inject a signed BEACON_EVENT frame from the sender. */
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   const size_t flen = build_beacon_frame(
       tx_pub, tx_priv, opera_secret, /*counter=*/7,
       mesh_beacon::BeaconState::ARRIVED, "kitchen",
@@ -567,7 +565,7 @@ void test_beacon_event_replay_dropped() {
   uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN];
   for (size_t i = 0; i < sizeof(opera_secret); ++i) opera_secret[i] = (uint8_t)(0xE0 + i);
 
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   const size_t flen = build_beacon_frame(
       tx_pub, tx_priv, opera_secret, /*counter=*/1,
       mesh_beacon::BeaconState::ARRIVED, "replay",
@@ -586,7 +584,7 @@ void test_beacon_event_replay_dropped() {
   assert(g_received.size() == 1);
 
   /* A NEWER counter from the same peer DOES pass through. */
-  uint8_t frame2[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame2[mesh_envelope::MAX_FRAME_LEN];
   const size_t flen2 = build_beacon_frame(
       tx_pub, tx_priv, opera_secret, /*counter=*/2,
       mesh_beacon::BeaconState::DEPARTED, "replay",
@@ -622,7 +620,7 @@ void test_beacon_event_unknown_sender_dropped() {
   g_received.clear();
   mesh_session::set_beacon_event_handler(on_beacon_event_received);
 
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   const size_t flen = build_beacon_frame(
       tx_pub, tx_priv, opera_secret, /*counter=*/1,
       mesh_beacon::BeaconState::ARRIVED, "intruder",
@@ -659,7 +657,7 @@ void test_beacon_event_forged_signature_dropped() {
   g_received.clear();
   mesh_session::set_beacon_event_handler(on_beacon_event_received);
 
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   const size_t flen = build_beacon_frame(
       tx_pub, tx_priv, opera_secret, /*counter=*/1,
       mesh_beacon::BeaconState::ARRIVED, "tamper",
@@ -671,7 +669,7 @@ void test_beacon_event_forged_signature_dropped() {
    * constant — see mesh_envelope.h). The flip invalidates the
    * signature but leaves the sender_fp peek successful, so the
    * parse_and_verify step is what drops the frame. */
-  frame[mesh_session::MSGTYPE_HEADER_LEN + mesh_envelope::OFFSET_PAYLOAD] ^= 0x01;
+  frame[mesh_envelope::OFFSET_PAYLOAD] ^= 0x01;
 
   uint8_t mac[6] = {0x77, 0x77, 0x77, 0x77, 0x77, 0x77};
   assert(mesh_transport::add_peer(mac));
@@ -714,13 +712,13 @@ void test_peer_link_mac_binding() {
 
   /* A frame whose signature does NOT verify must not bind a MAC —
    * otherwise anyone on the channel could relabel a peer's liveness. */
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   size_t flen = build_beacon_frame(
       tx_pub, tx_priv, opera_secret, /*counter=*/1,
       mesh_beacon::BeaconState::ARRIVED, "forged",
       frame, sizeof(frame));
   assert(flen > 0);
-  frame[mesh_session::MSGTYPE_HEADER_LEN + mesh_envelope::OFFSET_PAYLOAD] ^= 0x01;
+  frame[mesh_envelope::OFFSET_PAYLOAD] ^= 0x01;
   uint8_t mac_forged[6] = {0xDE, 0xAD, 0xDE, 0xAD, 0xDE, 0xAD};
   assert(mesh_transport::add_peer(mac_forged));
   mesh_transport::test::inject_recv(mac_forged, frame, flen, -55);
@@ -820,8 +818,7 @@ void test_deinit_clears_opera_auth_state() {
                                          "fresh", 2000));
   assert(g_outs.size() == 1);
   /* counter at session-prefix + envelope OFFSET_COUNTER, LE 64-bit. */
-  const size_t cnt_off = mesh_session::MSGTYPE_HEADER_LEN
-                       + mesh_envelope::OFFSET_COUNTER;
+  const size_t cnt_off = mesh_envelope::OFFSET_COUNTER;
   uint64_t c = 0;
   for (size_t i = 0; i < mesh_envelope::COUNTER_LEN; ++i) {
     c |= ((uint64_t)g_outs[0].bytes[cnt_off + i]) << (8 * i);
@@ -1096,12 +1093,10 @@ size_t build_signed_session_frame(const uint8_t sender_pub[mesh_crypto::PUBKEY_L
   mesh_crypto::compute_fingerprint(sender_pub, h.sender_fp);
   h.counter   = counter;
   h.timestamp = 12345;
-  if (out_cap < 1 + mesh_envelope::MAX_FRAME_LEN) return 0;
-  out_frame[0] = static_cast<uint8_t>(type);
-  const size_t n = mesh_envelope::serialize_signed(
+  if (out_cap < mesh_envelope::MAX_FRAME_LEN) return 0;
+  return mesh_envelope::serialize_signed(
       h, payload, payload_len, sender_priv, sender_pub,
-      out_frame + 1, out_cap - 1);
-  return n == 0 ? 0 : 1 + n;
+      out_frame, out_cap);
 }
 
 size_t build_alert_frame(const uint8_t pub[mesh_crypto::PUBKEY_LEN],
@@ -1158,11 +1153,11 @@ void test_tamper_alert_roundtrip() {
   mesh_session::process(4242);
 
   const uint8_t mac[6] = {0x02, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5};
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   size_t flen = build_alert_frame(tx_pub, tx_priv, secret, /*counter=*/5,
                                   mesh_alert::Kind::CAMERA_TAMPER, 6, 777,
                                   frame, sizeof(frame));
-  assert(flen == 1 + mesh_envelope::HEADER_LEN + mesh_alert::PAYLOAD_LEN
+  assert(flen == mesh_envelope::HEADER_LEN + mesh_alert::PAYLOAD_LEN
                    + mesh_envelope::SIGNATURE_LEN);
   inject_from(mac, frame, flen);
 
@@ -1197,7 +1192,7 @@ void test_tamper_alert_roundtrip() {
   flen = build_alert_frame(tx_pub, tx_priv, secret, 6,
                            mesh_alert::Kind::ENCLOSURE_TAMPER, 6, 778,
                            frame, sizeof(frame));
-  frame[mesh_session::MSGTYPE_HEADER_LEN + mesh_envelope::OFFSET_PAYLOAD] ^= 0x01;
+  frame[mesh_envelope::OFFSET_PAYLOAD] ^= 0x01;
   inject_from(mac, frame, flen);
   assert(mesh_session::alerts_received() == 1);
 
@@ -1252,7 +1247,7 @@ void test_alert_ring_wraps_newest_first() {
 
   const uint8_t mac[6] = {0x02, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5};
   const size_t total = mesh_session::MAX_ALERT_HISTORY + 3;
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   for (size_t i = 1; i <= total; ++i) {
     const size_t flen = build_alert_frame(tx_pub, tx_priv, secret, i,
                                           mesh_alert::Kind::ENCLOSURE_TAMPER, 6,
@@ -1287,11 +1282,12 @@ void test_send_tamper_alert() {
   assert(mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 3, 4321, 20));
   assert(g_outs.size() == 1);
   const std::vector<uint8_t>& f = g_outs[0].bytes;
-  assert(f[0] == static_cast<uint8_t>(mesh_envelope::MsgType::TAMPER_ALERT));
+  assert(f[mesh_envelope::OFFSET_VERSION]  == mesh_envelope::PROTOCOL_VERSION);
+  assert(f[mesh_envelope::OFFSET_MSG_TYPE] == static_cast<uint8_t>(mesh_envelope::MsgType::TAMPER_ALERT));
   mesh_envelope::Header hdr;
   const uint8_t* payload = nullptr;
   size_t plen = 0;
-  assert(mesh_envelope::parse_and_verify(f.data() + 1, f.size() - 1, pub,
+  assert(mesh_envelope::parse_and_verify(f.data(), f.size(), pub,
                                          &hdr, &payload, &plen));
   assert(hdr.msg_type == static_cast<uint8_t>(mesh_envelope::MsgType::TAMPER_ALERT));
   assert(hdr.counter == 1);
@@ -1348,7 +1344,7 @@ void test_enable_disable() {
 
   /* Inbound verified frames are not dispatched while disabled. */
   const uint8_t mac[6] = {0x02, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5};
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   size_t flen = build_alert_frame(tx_pub, tx_priv, secret, 1,
                                   mesh_alert::Kind::ENCLOSURE_TAMPER, 6, 1,
                                   frame, sizeof(frame));
@@ -1382,6 +1378,145 @@ void test_enable_disable() {
   std::printf("PASS test_enable_disable\n");
 }
 
+/* v0.4 (spec §4.5 — awaiting crypto review, not bench-verified): the frame
+ * on the air is the registry's, and nothing else is taken for it.
+ *   1. A frame written byte by byte the way canary-wap's send_to_peer()
+ *      writes it (version, type, opera_id, fp, counter LE, timestamp LE,
+ *      payload, Ed25519 over the rest under DOMAIN_MESSAGE) — with no
+ *      call into mesh_envelope — is verified and dispatched here: the
+ *      outer frames of the two trees are byte-compatible. LEAVE_OPERA is
+ *      the vehicle because its (empty) payload is the same in both trees.
+ *   2. Replayed, it is dropped (the counter is per fingerprint, whatever
+ *      built the frame).
+ *   3. Negative: the pre-v0.4 PIO shape ([unsigned type][envelope]) is
+ *      dropped; a version-0 frame (canary-wap's old byte — a downgrade) is
+ *      dropped even when everything after it verifies under version 1's
+ *      layout; a canary-wap session-layer type (AUTH_CHALLENGE, 30) in a
+ *      valid envelope is not dispatched as anything; a pairing-type first
+ *      byte on a signed-length body never reaches the opera dispatch. None
+ *      of the drops advances the peer's replay counter, so the sender's
+ *      next honest frame is still accepted. */
+void test_outer_frame_is_the_registry_frame() {
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x71 + i);
+  uint8_t a_pub[mesh_crypto::PUBKEY_LEN], a_priv[mesh_crypto::PRIVKEY_LEN];
+  stand_up_session(secret, a_pub, a_priv);
+  mesh_session::set_peer_left_handler(on_peer_left);
+  mesh_session::set_tamper_alert_handler(on_alert_rx);
+  uint8_t b_pub[mesh_crypto::PUBKEY_LEN], b_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(b_pub, b_priv));
+  assert(mesh_session::register_trusted_peer(b_pub));
+  const uint8_t b_mac[6] = {0x02, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5};
+  uint8_t b_fp[mesh_crypto::FINGERPRINT_LEN];
+  mesh_crypto::compute_fingerprint(b_pub, b_fp);
+  uint8_t opera_id[mesh_crypto::OPERA_ID_LEN];
+  mesh_crypto::compute_opera_id(secret, opera_id);
+
+  /* canary-wap's send_to_peer(), field by field, no mesh_envelope call. */
+  auto wap_frame = [&](uint8_t version, uint8_t type, uint64_t counter,
+                       const uint8_t* payload, size_t payload_len,
+                       std::vector<uint8_t>* out) {
+    out->clear();
+    out->push_back(version);
+    out->push_back(type);
+    out->insert(out->end(), opera_id, opera_id + mesh_crypto::OPERA_ID_LEN);
+    out->insert(out->end(), b_fp, b_fp + mesh_crypto::FINGERPRINT_LEN);
+    for (int i = 0; i < 8; i++) out->push_back((uint8_t)((counter >> (i * 8)) & 0xFF));
+    const uint32_t ts = 4242;
+    for (int i = 0; i < 4; i++) out->push_back((uint8_t)((ts >> (i * 8)) & 0xFF));
+    if (payload_len) out->insert(out->end(), payload, payload + payload_len);
+    uint8_t sig[mesh_crypto::SIGNATURE_LEN];
+    assert(mesh_crypto::ed25519_sign(b_priv, b_pub, out->data(), out->size(), sig));
+    out->insert(out->end(), sig, sig + sizeof(sig));
+  };
+  std::vector<uint8_t> f;
+
+  /* 3a. Downgrade: version 0 in front of an otherwise valid frame. */
+  wap_frame(0, mesh_wire::LEAVE_OPERA, 1, nullptr, 0, &f);
+  assert(f.size() == mesh_envelope::MIN_FRAME_LEN);
+  inject_from(b_mac, f.data(), f.size());
+  assert(g_left.empty());
+  assert(mesh_session::trusted_peer_count() == 1);
+
+  /* 3b. The pre-v0.4 PIO shape: an unsigned type byte, then the envelope. */
+  wap_frame(mesh_wire::PROTOCOL_VERSION, mesh_wire::LEAVE_OPERA, 1, nullptr, 0, &f);
+  f.insert(f.begin(), mesh_wire::LEAVE_OPERA);
+  inject_from(b_mac, f.data(), f.size());
+  assert(g_left.empty());
+  assert(mesh_session::trusted_peer_count() == 1);
+
+  /* 3c. A pairing-type first byte on a signed-length body: not a pairing
+   * frame the state machine takes (no pairing runs, wrong length) and
+   * never an opera frame. */
+  wap_frame(mesh_wire::PAIR_OFFER, mesh_wire::LEAVE_OPERA, 1, nullptr, 0, &f);
+  inject_from(b_mac, f.data(), f.size());
+  assert(g_left.empty() && g_outs.empty());
+  assert(mesh_session::trusted_peer_count() == 1);
+
+  /* 1. The registry's frame, as canary-wap writes it, at the SAME counter
+   * the three drops above carried: none of them reached verification, so
+   * none consumed it. Also the same type byte canary-wap now sends for a
+   * leave — 25, not its old 13. */
+  wap_frame(mesh_wire::PROTOCOL_VERSION, mesh_wire::LEAVE_OPERA, 1, nullptr, 0, &f);
+  assert(f[mesh_envelope::OFFSET_VERSION]  == 1);
+  assert(f[mesh_envelope::OFFSET_MSG_TYPE] == 25);
+  /* The same bytes verify through mesh_envelope's own parser first. */
+  {
+    mesh_envelope::Header hdr;
+    const uint8_t* pl = nullptr; size_t plen = 9;
+    assert(mesh_envelope::parse_and_verify(f.data(), f.size(), b_pub, &hdr, &pl, &plen));
+    assert(plen == 0 && hdr.counter == 1 && hdr.timestamp == 4242);
+    assert(std::memcmp(hdr.sender_fp, b_fp, sizeof(b_fp)) == 0);
+  }
+  const std::vector<uint8_t> first = f;
+  inject_from(b_mac, f.data(), f.size());
+  assert(g_left.size() == 1);
+  assert(std::memcmp(g_left[0].fp, b_fp, sizeof(b_fp)) == 0);
+  assert(mesh_session::trusted_peer_count() == 0);
+
+  /* 2. Replayed after a re-registration: the tombstone holds counter 1. */
+  assert(mesh_session::register_trusted_peer(b_pub));
+  inject_from(b_mac, first.data(), first.size());
+  assert(g_left.size() == 1);
+  assert(mesh_session::trusted_peer_count() == 1);
+  /* And counter 2 from the same sender is still live. */
+  wap_frame(mesh_wire::PROTOCOL_VERSION, mesh_wire::LEAVE_OPERA, 2, nullptr, 0, &f);
+  inject_from(b_mac, f.data(), f.size());
+  assert(g_left.size() == 2);
+  assert(mesh_session::trusted_peer_count() == 0);
+
+  /* 3d. canary-wap's session layer (AUTH_CHALLENGE = 30): a valid signed
+   * frame this tree has no handler for. Not a leave, not an alert — but
+   * it IS a verified frame from that peer, so it advances the replay
+   * counter like any other (existing behavior, stated): counter 3 is
+   * spent, and a later frame at 3 is a replay; 4 is live. */
+  assert(mesh_session::register_trusted_peer(b_pub));
+  const uint8_t junk[64] = {0};
+  wap_frame(mesh_wire::PROTOCOL_VERSION, mesh_wire::AUTH_CHALLENGE, 3, junk, sizeof(junk), &f);
+  inject_from(b_mac, f.data(), f.size());
+  assert(g_left.size() == 2 && g_alerts_rx.empty());
+  assert(mesh_session::trusted_peer_count() == 1);
+  wap_frame(mesh_wire::PROTOCOL_VERSION, mesh_wire::LEAVE_OPERA, 3, nullptr, 0, &f);
+  inject_from(b_mac, f.data(), f.size());
+  assert(g_left.size() == 2);
+  assert(mesh_session::trusted_peer_count() == 1);
+  wap_frame(mesh_wire::PROTOCOL_VERSION, mesh_wire::LEAVE_OPERA, 4, nullptr, 0, &f);
+  inject_from(b_mac, f.data(), f.size());
+  assert(g_left.size() == 3);
+  assert(mesh_session::trusted_peer_count() == 0);
+
+  /* Every opera frame THIS tree sends has the same first two bytes. */
+  assert(mesh_session::set_opera_secret(secret));
+  g_outs.clear();
+  assert(mesh_session::send_tamper_alert(mesh_alert::Kind::ENCLOSURE_TAMPER, 6, 1, 9000));
+  assert(g_outs.size() == 1);
+  assert(g_outs[0].bytes[mesh_envelope::OFFSET_VERSION]  == mesh_wire::PROTOCOL_VERSION);
+  assert(g_outs[0].bytes[mesh_envelope::OFFSET_MSG_TYPE] == mesh_wire::TAMPER_ALERT);
+  assert(g_outs[0].bytes.size() == mesh_envelope::HEADER_LEN + mesh_alert::PAYLOAD_LEN
+                                   + mesh_envelope::SIGNATURE_LEN);
+  std::printf("PASS test_outer_frame_is_the_registry_frame\n");
+}
+
 void test_leave_opera() {
   uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
   for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x13 + i);
@@ -1401,13 +1536,14 @@ void test_leave_opera() {
    * opera_id it is leaving. */
   assert(g_outs.size() == 1);
   const std::vector<uint8_t> leave = g_outs[0].bytes;
-  assert(leave[0] == static_cast<uint8_t>(mesh_envelope::MsgType::LEAVE_OPERA));
-  assert(leave[0] == 25);
-  assert(leave.size() == 1 + mesh_envelope::MIN_FRAME_LEN);
+  assert(leave[mesh_envelope::OFFSET_VERSION]  == mesh_envelope::PROTOCOL_VERSION);
+  assert(leave[mesh_envelope::OFFSET_MSG_TYPE] == static_cast<uint8_t>(mesh_envelope::MsgType::LEAVE_OPERA));
+  assert(leave[mesh_envelope::OFFSET_MSG_TYPE] == 25);
+  assert(leave.size() == mesh_envelope::MIN_FRAME_LEN);
   mesh_envelope::Header hdr;
   const uint8_t* payload = nullptr;
   size_t plen = 99;
-  assert(mesh_envelope::parse_and_verify(leave.data() + 1, leave.size() - 1, a_pub,
+  assert(mesh_envelope::parse_and_verify(leave.data(), leave.size(), a_pub,
                                          &hdr, &payload, &plen));
   assert(plen == 0);
   uint8_t expect_id[mesh_crypto::OPERA_ID_LEN];
@@ -1472,7 +1608,7 @@ void test_peer_left_dispatch() {
   mesh_crypto::compute_fingerprint(y_pub, y_fp);
 
   const uint8_t mac[6] = {0x02, 0x11, 0x12, 0x13, 0x14, 0x15};
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
 
   /* Forged LEAVE claiming to be X (signature broken): ignored. */
   size_t flen = build_signed_session_frame(x_pub, x_priv, secret, 1,
@@ -1559,12 +1695,10 @@ size_t build_cross_signed_frame(const uint8_t claimed_fp[mesh_crypto::FINGERPRIN
   std::memcpy(h.sender_fp, claimed_fp, mesh_crypto::FINGERPRINT_LEN);
   h.counter   = counter;
   h.timestamp = 12345;
-  if (out_cap < 1 + mesh_envelope::MAX_FRAME_LEN) return 0;
-  out_frame[0] = static_cast<uint8_t>(type);
-  const size_t n = mesh_envelope::serialize_signed(
+  if (out_cap < mesh_envelope::MAX_FRAME_LEN) return 0;
+  return mesh_envelope::serialize_signed(
       h, payload, payload_len, signer_priv, signer_pub,
-      out_frame + 1, out_cap - 1);
-  return n == 0 ? 0 : 1 + n;
+      out_frame, out_cap);
 }
 
 /* Review finding (fw-mesh #2): "a verified frame only speaks for its own
@@ -1590,7 +1724,7 @@ void test_verified_frame_speaks_only_for_its_signer() {
   mesh_crypto::compute_fingerprint(x_pub, x_fp);
   mesh_crypto::compute_fingerprint(y_pub, y_fp);
   const uint8_t mac[6] = {0x02, 0x6B, 0x6B, 0x6B, 0x6B, 0x6B};
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
 
   /* (1) Y signs a LEAVE whose header claims X: X stays, no callback. */
   size_t flen = build_cross_signed_frame(x_fp, y_pub, y_priv, secret, 1,
@@ -1652,7 +1786,7 @@ void test_replay_tombstones_across_leave_and_repair() {
   const uint8_t mac[6] = {0x02, 0x4D, 0x4D, 0x4D, 0x4D, 0x4D};
 
   /* X alerts (counter 40), then leaves (counter 41); the receiver drops X. */
-  uint8_t alert40[1 + mesh_envelope::MAX_FRAME_LEN], leave41[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t alert40[mesh_envelope::MAX_FRAME_LEN], leave41[mesh_envelope::MAX_FRAME_LEN];
   const size_t alert40_len = build_alert_frame(x_pub, x_priv, secret, 40,
                                                mesh_alert::Kind::ENCLOSURE_TAMPER, 6, 7,
                                                alert40, sizeof(alert40));
@@ -1688,7 +1822,7 @@ void test_replay_tombstones_across_leave_and_repair() {
   assert(mesh_session::trusted_peer_count() == 1);
 
   /* X's genuine new traffic (its counter kept counting) still flows. */
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   size_t flen = build_alert_frame(x_pub, x_priv, secret, 42,
                                   mesh_alert::Kind::TEMP_DRIFT, 3, 8, frame, sizeof(frame));
   inject_from(mac, frame, flen);
@@ -1813,7 +1947,7 @@ void test_leave_keeps_outbound_counter() {
   mesh_envelope::Header hdr;
   const uint8_t* pl = nullptr;
   size_t plen = 0;
-  assert(mesh_envelope::parse_and_verify(g_outs[0].bytes.data() + 1, g_outs[0].bytes.size() - 1,
+  assert(mesh_envelope::parse_and_verify(g_outs[0].bytes.data(), g_outs[0].bytes.size(),
                                          a_pub, &hdr, &pl, &plen));
   assert(hdr.counter == 3);
   std::printf("PASS test_leave_keeps_outbound_counter\n");
@@ -1930,8 +2064,7 @@ bool parse_session_frame(const std::vector<uint8_t>& f,
                          const uint8_t signer_pub[mesh_crypto::PUBKEY_LEN],
                          mesh_envelope::Header* hdr,
                          const uint8_t** payload, size_t* plen) {
-  return f.size() > 1 &&
-         mesh_envelope::parse_and_verify(f.data() + 1, f.size() - 1, signer_pub,
+  return mesh_envelope::parse_and_verify(f.data(), f.size(), signer_pub,
                                          hdr, payload, plen);
 }
 
@@ -1956,7 +2089,7 @@ void test_rekey_session_as_initiator() {
   /* Both peers speak once so their MACs are bound. */
   const uint8_t mac_b[6] = {0x02, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B};
   const uint8_t mac_x[6] = {0x02, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C};
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   size_t flen = build_alert_frame(b_pub, b_priv, S, 1, mesh_alert::Kind::TEMP_DRIFT, 3, 0, frame, sizeof(frame));
   inject_from(mac_b, frame, flen);
   flen = build_alert_frame(x_pub, x_priv, S, 1, mesh_alert::Kind::TEMP_DRIFT, 3, 0, frame, sizeof(frame));
@@ -2117,7 +2250,7 @@ void test_rekey_session_as_survivor() {
   assert(offer.type == mesh_rekey::ActionType::BROADCAST_OFFER);
 
   const uint8_t mac_i[6] = {0x02, 0x1D, 0x1D, 0x1D, 0x1D, 0x1D};
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   size_t flen = build_signed_session_frame(i_pub, i_priv, S, 1, mesh_envelope::MsgType::REKEY_OFFER,
                                            offer.payload, offer.payload_len, frame, sizeof(frame));
   g_outs.clear();
@@ -2216,7 +2349,7 @@ void test_rekey_refusals_and_forgeries() {
   mesh_rekey::context_init(cw);
   const uint8_t surv[1][8] = {{fp_me[0], fp_me[1], fp_me[2], fp_me[3], fp_me[4], fp_me[5], fp_me[6], fp_me[7]}};
   mesh_rekey::Action offer = mesh_rekey::start(cw, fp_w, fp_y, surv, 1, 9, 0);
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   size_t flen = build_signed_session_frame(w_pub, w_priv, S, 1, mesh_envelope::MsgType::REKEY_OFFER,
                                            offer.payload, offer.payload_len, frame, sizeof(frame));
   const uint8_t mac_w[6] = {0x02, 0x3A, 0x3A, 0x3A, 0x3A, 0x3A};
@@ -2230,7 +2363,7 @@ void test_rekey_refusals_and_forgeries() {
   offer = mesh_rekey::start(cz, fp_z, fp_y, surv, 1, 10, 0);
   flen = build_signed_session_frame(z_pub, z_priv, S, 1, mesh_envelope::MsgType::REKEY_OFFER,
                                     offer.payload, offer.payload_len, frame, sizeof(frame));
-  frame[mesh_session::MSGTYPE_HEADER_LEN + mesh_envelope::OFFSET_PAYLOAD] ^= 0x01;
+  frame[mesh_envelope::OFFSET_PAYLOAD] ^= 0x01;
   inject_from(mac_w, frame, flen);
   assert(g_outs.empty());
   assert(!mesh_session::rekey_in_progress());
@@ -2341,7 +2474,7 @@ void test_rekey_frames_speak_only_for_their_signer_once() {
                                                  fp_a, offer.data(), offer.size(), 0);
   assert(acc_b.type == mesh_rekey::ActionType::SEND_ACCEPT);
   assert(acc_y.type == mesh_rekey::ActionType::SEND_ACCEPT);
-  uint8_t acc_b_frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t acc_b_frame[mesh_envelope::MAX_FRAME_LEN];
   const size_t acc_b_len = build_signed_session_frame(b_pub, b_priv, S, 10,
                                                       mesh_envelope::MsgType::REKEY_ACCEPT,
                                                       acc_b.payload, acc_b.payload_len,
@@ -2355,7 +2488,7 @@ void test_rekey_frames_speak_only_for_their_signer_once() {
   inject_from(mac_b, acc_b_frame, acc_b_len);
   assert(g_outs.empty());
 
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   size_t flen = build_signed_session_frame(y_pub, y_priv, S, 20,
                                            mesh_envelope::MsgType::REKEY_ACCEPT,
                                            acc_y.payload, acc_y.payload_len,
@@ -2639,7 +2772,7 @@ void test_bound_peer_is_heard_and_reached() {
   assert(!mesh_session::bind_peer_mac(b_fp, group));
 
   /* Before the bind a frame from B's address is a recv_dropped_no_peer. */
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   size_t n = build_alert_frame(b_pub, b_priv, S, 1, mesh_alert::Kind::CAMERA_TAMPER,
                                5, 11, frame, sizeof(frame));
   mesh_transport::test::inject_recv(mac_b, frame, n, -50);
@@ -2823,7 +2956,7 @@ void test_pairing_over_the_air_as_initiator() {
   assert(transport_has(mac_j));                       /* now the member's radio MAC */
 
   /* Its opera frames are heard. */
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   const size_t n = build_alert_frame(j_pub, j_priv, S, 1, mesh_alert::Kind::TEMP_DRIFT, 3, 4,
                                      frame, sizeof(frame));
   mesh_transport::test::inject_recv(mac_j, frame, n, -40);
@@ -2905,7 +3038,7 @@ void test_failed_pairing_removes_partner_address() {
 
   assert(mesh_session::start_pairing_initiator(S, "Home", 20));
   /* An opera frame from an unknown MAC is not taken, even mid-pairing. */
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   const size_t n = build_alert_frame(j_pub, j_priv, S, 1, mesh_alert::Kind::TEMP_DRIFT, 3, 4,
                                      frame, sizeof(frame));
   mesh_transport::test::inject_recv(mac_j, frame, n, -40);
@@ -2955,9 +3088,9 @@ bool fake_reserve(uint64_t high) {
 }
 
 uint64_t frame_counter(const std::vector<uint8_t>& f) {
-  assert(f.size() > 1 + mesh_envelope::OFFSET_COUNTER + 8);
+  assert(f.size() > mesh_envelope::OFFSET_COUNTER + 8);
   uint64_t v = 0;
-  for (int i = 7; i >= 0; --i) v = (v << 8) | f[1 + mesh_envelope::OFFSET_COUNTER + i];
+  for (int i = 7; i >= 0; --i) v = (v << 8) | f[mesh_envelope::OFFSET_COUNTER + i];
   return v;
 }
 
@@ -3553,7 +3686,7 @@ void test_concurrent_offer_propagates_and_yields() {
   const uint8_t w_surv[2][8] = {{fp_a[0], fp_a[1], fp_a[2], fp_a[3], fp_a[4], fp_a[5], fp_a[6], fp_a[7]},
                                 {fp_x[0], fp_x[1], fp_x[2], fp_x[3], fp_x[4], fp_x[5], fp_x[6], fp_x[7]}};
   mesh_rekey::Action w_offer = mesh_rekey::start(cw, fp_w, fp_y, w_surv, 2, 0xABCD, 150);
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   size_t flen = build_signed_session_frame(w_pub, w_priv, S, 1, mesh_envelope::MsgType::REKEY_OFFER,
                                            w_offer.payload, w_offer.payload_len, frame, sizeof(frame));
   g_outs.clear();
@@ -3652,6 +3785,8 @@ int main() {
   test_alert_ring_wraps_newest_first();
   test_send_tamper_alert();
   test_enable_disable();
+  /* v0.4 — the registry's outer frame (spec §4.5; crypto review pending). */
+  test_outer_frame_is_the_registry_frame();
   test_leave_opera();
   test_peer_left_dispatch();
   /* Review fix — replay tombstones survive leave / re-pair / reboot. */

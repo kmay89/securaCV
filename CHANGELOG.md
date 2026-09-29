@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+### The Opera mesh's two firmware trees agree on the outer frame — a wire break, re-pair after updating
+
+- **One wire registry, both trees (spec §4.5, `mesh_wire.h`).** The
+  PlatformIO mesh and canary-wap numbered the type byte of their signed
+  frame for themselves (`TAMPER_ALERT` was 18 on one and 4 on the other;
+  canary-wap's `CHANNEL_LOCK`/`HUB_ELECTION` sat on the PIO values of
+  `OFFLINE_IMMINENT`/`WITNESS_RECORD`), used different version bytes (1 vs
+  0), and the PIO tree put an unsigned copy of the type ahead of its
+  envelope. Both now take the version byte and every type from one header
+  (canonical in the PIO library, staged byte-identical into the sketch and
+  held there by `check_mesh_sync.sh`), the signed envelope is the frame,
+  and the pairing prefix is `8..12` in both — never a value a version byte
+  has used, so a receiver keying on the first byte cannot take one frame
+  for the other. Host-tested in both trees (`test_mesh_wire`, a frame
+  built canary-wap's way verifying on the PIO session, version-0 and
+  prefixed shapes dropped); **awaiting maintainer crypto review; not
+  bench-verified** — nothing of it has crossed a radio.
+- **Compatibility: this breaks the wire, with no negotiation.** A
+  pre-v0.4 and a post-v0.4 build of either tree drop each other's Opera
+  frames; a mixed opera goes silent rather than degrading. Update every
+  member of an opera together and re-pair. The project has no record of
+  an opera formed on a radio (U1 Track C2 is open), which is why this
+  renumbers instead of adding a second decode path — a statement about
+  what has been tested, not about every flashed device.
+- **What it does not do.** The trees still cannot pair with each other
+  (the pairing payload structs and key derivation differ, F48), and
+  `TAMPER_ALERT` still carries a different payload in each, so no
+  cross-tree frame can be verified today; the type byte is the
+  precondition, not interoperability.
+
 ### The fault model is written down, and four docs stop promising recovery the code does not do
 
 - **`docs/FAULT_MODEL.md`** — what survives what, per component: the hub's
