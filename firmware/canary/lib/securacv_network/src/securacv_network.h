@@ -265,6 +265,18 @@ void network_set_provisioning_gate_hooks(network_gate_fn_t take,
                                          network_gate_fn_t is_open);
 
 // ════════════════════════════════════════════════════════════════════════════
+// DELIBERATE-RESTART HOOK (boot health)
+// ════════════════════════════════════════════════════════════════════════════
+// POST /api/reboot is a restart the device chose, not a crash. main.cpp owns
+// the boot-health gate (firmware/common/health/boot_policy.h: a deliberate
+// restart counts as healthy, so a pending OTA image is confirmed rather than
+// rolled back, and the crash-loop counter is cleared). The lib calls this
+// hook just before ESP.restart(); unregistered, the reboot proceeds as
+// before.
+typedef void (*network_void_fn_t)(void);
+void network_set_before_deliberate_restart_hook(network_void_fn_t fn);
+
+// ════════════════════════════════════════════════════════════════════════════
 // WIFI POWER MANAGEMENT
 // ════════════════════════════════════════════════════════════════════════════
 

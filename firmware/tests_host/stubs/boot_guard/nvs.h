@@ -2,7 +2,8 @@
  * on: a namespace exists only once something was written to it (a read-only
  * open of a never-written namespace is ESP_ERR_NVS_NOT_FOUND), values persist
  * across "reboots" (the test simply calls begin() again), and the test can
- * make every open fail (NVS broken) and count writes (flash wear). */
+ * make every open fail (NVS broken), make opens and reads work but every
+ * write or commit fail (NVS read-only in practice), and count writes. */
 #ifndef STUB_BOOT_GUARD_NVS_H
 #define STUB_BOOT_GUARD_NVS_H
 
@@ -23,8 +24,9 @@ struct FakeNvs {
   std::map<std::string, std::map<std::string, std::vector<uint8_t>>> ns;
   std::vector<std::string> handles;   // handle -> namespace (index + 1)
   bool broken = false;                // every open fails
+  bool writes_fail = false;           // opens/reads work; nvs_set_*/commit fail
   int writes = 0;                     // nvs_set_* calls that stored something
-  void reset() { ns.clear(); handles.clear(); broken = false; writes = 0; }
+  void reset() { ns.clear(); handles.clear(); broken = false; writes_fail = false; writes = 0; }
 };
 static FakeNvs g_fake_nvs;  // one TU per test binary
 
@@ -38,7 +40,9 @@ inline esp_err_t nvs_open(const char* name, nvs_open_mode_t mode, nvs_handle_t* 
   return ESP_OK;
 }
 inline void nvs_close(nvs_handle_t) {}
-inline esp_err_t nvs_commit(nvs_handle_t) { return ESP_OK; }
+inline esp_err_t nvs_commit(nvs_handle_t) {
+  return g_fake_nvs.writes_fail ? ESP_FAIL : ESP_OK;
+}
 
 inline std::map<std::string, std::vector<uint8_t>>& fake_nvs_ns(nvs_handle_t h) {
   return g_fake_nvs.ns[g_fake_nvs.handles.at(h - 1)];
@@ -52,6 +56,7 @@ inline esp_err_t nvs_get_u16(nvs_handle_t h, const char* key, uint16_t* out) {
   return ESP_OK;
 }
 inline esp_err_t nvs_set_u16(nvs_handle_t h, const char* key, uint16_t v) {
+  if (g_fake_nvs.writes_fail) return ESP_FAIL;
   fake_nvs_ns(h)[key] = {(uint8_t)(v & 0xFF), (uint8_t)(v >> 8)};
   g_fake_nvs.writes++;
   return ESP_OK;
@@ -66,6 +71,7 @@ inline esp_err_t nvs_get_blob(nvs_handle_t h, const char* key, void* out, size_t
   return ESP_OK;
 }
 inline esp_err_t nvs_set_blob(nvs_handle_t h, const char* key, const void* v, size_t len) {
+  if (g_fake_nvs.writes_fail) return ESP_FAIL;
   const uint8_t* p = (const uint8_t*)v;
   fake_nvs_ns(h)[key] = std::vector<uint8_t>(p, p + len);
   g_fake_nvs.writes++;

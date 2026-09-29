@@ -876,9 +876,11 @@ static void ota_confirm_and_witness() {
 
 // The healthy gate: confirm the image, then clear the crash-loop counter.
 // Idempotent — only the first call per boot does anything.
+// Also reached from the HTTP task (POST /api/reboot), so the claim is an
+// atomic exchange: exactly one caller confirms, whichever gets there first.
 static void boot_mark_healthy(const char* why) {
-  if (g_boot_healthy || !g_setup_done) return;
-  g_boot_healthy = true;
+  if (!g_setup_done) return;
+  if (__atomic_exchange_n(&g_boot_healthy, true, __ATOMIC_ACQ_REL)) return;
   ota_confirm_and_witness();
   if (bootguard::mark_healthy()) {
     Serial.printf("[OK] Boot healthy (%s) - crash-loop counter cleared\n", why);
@@ -895,7 +897,9 @@ static void boot_health_tick(uint32_t now) {
   }
 }
 
-// Called just before a restart or deep sleep the running loop chose to take:
+// Called just before a restart or deep sleep the running loop chose to take
+// (or one an authenticated POST /api/reboot asked for, via the network lib's
+// deliberate-restart hook):
 // the code decided to stop, it did not fall over, so an image that got this
 // far is confirmed rather than reverted by the reset it is about to cause.
 static void boot_health_before_deliberate_stop() {
@@ -1240,6 +1244,9 @@ void setup() {
     // Wire the BOOT-tap gate before any route can be served (unregistered
     // hooks read as closed, so the order is belt-and-braces, not load-bearing).
     network_set_provisioning_gate_hooks(prov_gate_take_hook, prov_gate_is_open_hook);
+    // POST /api/reboot is a deliberate restart: route it through the
+    // boot-health gate like the loop's own restarts.
+    network_set_before_deliberate_restart_hook(boot_health_before_deliberate_stop);
     if (net.begin(ap_ssid, g_ap_password, device.device_id)) {
       Serial.println("[OK] WiFi AP active");
 #if FEATURE_HTTP_SERVER

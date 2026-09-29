@@ -25,7 +25,8 @@
  *      installed OTA image; bootguard::operator_clear() from the safe-mode
  *      console's "clear & retry".
  *
- * Failure stance: if NVS cannot be opened the guard cannot count, and it says
+ * Failure stance: if NVS cannot be opened — or the count reads but this
+ * boot's count cannot be written back — the guard cannot count, and it says
  * so (Status::nvs_ok == false) and returns Normal. A device whose NVS is gone
  * has bigger problems than a crash loop, and refusing to boot on a storage
  * error would turn a recoverable fault into a brick.
@@ -157,6 +158,14 @@ inline Status begin(uint16_t threshold = bootpolicy::kDefaultSafeModeThreshold) 
   prev = bootpolicy::carry_count(prev, same_image_as_last_boot());
   const bootpolicy::Decision d = bootpolicy::decide(prev, s.image_confirmed, threshold);
   s.nvs_ok = store_count(d.persist_count);
+  if (!s.nvs_ok) {
+    // Read worked, write did not: this boot is not counted, and neither
+    // would operator_clear() be — so safe mode here would be a loop the
+    // console cannot break. Same stance as an unopenable NVS: run normally.
+    s.count = s.prev_count;  // what NVS still holds
+    s.mode = bootpolicy::BootMode::Normal;
+    return s;
+  }
   s.count = d.persist_count;
   s.mode = d.mode;
   return s;

@@ -9,7 +9,9 @@
  *   · every way out works: healthy, operator clear, a different build (OTA,
  *     A/B rollback or USB re-flash) — and re-flashing the SAME build does not;
  *   · an A/B rollback's churn does not inflate the good image's count;
- *   · a broken NVS boots normally and says so; an unreadable image id keeps
+ *   · a broken NVS boots normally and says so — including one that still
+ *     reads but can no longer write, even with a count at the threshold
+ *     (safe mode there could never be cleared); an unreadable image id keeps
  *     the count (the conservative direction);
  *   · a good device's steady state does not write NVS on every healthy.
  *
@@ -171,6 +173,28 @@ static void test_broken_nvs_boots_normally_and_says_so() {
   CHECK(!bootguard::operator_clear());
 }
 
+// The count reads fine but this boot's count cannot be written back (or
+// committed). Safe mode would be a trap: operator_clear() writes through the
+// same failing store, so "clear & retry" would land straight back here.
+static void test_unwritable_nvs_at_threshold_boots_normally() {
+  fresh_device();
+  flash_build(0xA1);
+  const uint16_t T = bootpolicy::kDefaultSafeModeThreshold;
+  for (uint16_t i = 1; i < T; i++) bootguard::begin();  // stored count T-1
+  g_fake_nvs.writes_fail = true;
+  for (int i = 0; i < 5; i++) {
+    bootguard::Status s = bootguard::begin();  // would persist T -> SafeMode
+    CHECK(!s.nvs_ok);
+    CHECK(s.prev_count == T - 1);
+    CHECK(s.count == T - 1);   // nothing new was persisted
+    CHECK(s.mode == BootMode::Normal);
+  }
+  CHECK(!bootguard::operator_clear());
+  // Writes come back: the count resumes where NVS left it, and trips.
+  g_fake_nvs.writes_fail = false;
+  CHECK(bootguard::begin().mode == BootMode::SafeMode);
+}
+
 static void test_unreadable_image_id_keeps_the_count() {
   fresh_device();
   flash_build(0xA1);
@@ -198,6 +222,7 @@ int main() {
   test_pending_image_never_safe_mode();
   test_rollback_churn_does_not_inflate_good_image();
   test_broken_nvs_boots_normally_and_says_so();
+  test_unwritable_nvs_at_threshold_boots_normally();
   test_unreadable_image_id_keeps_the_count();
   test_non_ota_partition_counts_as_confirmed();
 

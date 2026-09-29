@@ -1111,6 +1111,13 @@ void network_set_provisioning_gate_hooks(network_gate_fn_t take,
   s_gate_is_open = is_open;
 }
 
+// Deliberate-restart hook (see the header): main.cpp's boot-health gate.
+static network_void_fn_t s_before_deliberate_restart = nullptr;
+
+void network_set_before_deliberate_restart_hook(network_void_fn_t fn) {
+  s_before_deliberate_restart = fn;
+}
+
 // Every grant TAKES the gate (one tap = one consumer). The is_open hook is
 // only a wiring check for /api/status; nothing here grants on a peek.
 static bool provisioning_gate_take()    { return s_gate_take    ? s_gate_take()    : false; }
@@ -2807,6 +2814,11 @@ static esp_err_t handle_reboot(httpd_req_t* req) {
   witness_get_health().http_requests++;
 
   log_health(LOG_LEVEL_NOTICE, LOG_CAT_USER, "Reboot requested", nullptr);
+
+  // A requested reboot is a deliberate stop, not a crash: let main.cpp's
+  // boot-health gate confirm a pending image and clear the crash-loop
+  // counter first (same order as the serial 'x' path).
+  if (s_before_deliberate_restart) s_before_deliberate_restart();
 
   // The witness lib owns chain persistence (one atomic blob — never the
   // legacy seq/chain pair from here, which was the second torn-write site).

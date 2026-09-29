@@ -38,6 +38,22 @@ reverted a bad image or entered safe mode on real hardware yet; that is
   build — starts the count over. New host test `test_boot_guard.cpp` runs
   the glue over a fake NVS and OTA partition. canary-wap keeps its own
   counter; the display, Sense, Vision and Sentinel have none yet.
+- **Review fixes to the two items above** (not compiled locally — no ESP
+  toolchain here, CI compiles them; the NVS half is host-tested; neither is
+  bench-verified):
+  - If the count reads but this boot's count cannot be written or committed,
+    `bootguard::begin()` now boots normally and reports NVS unavailable. It
+    used to keep the policy's answer, so a stored count at the threshold
+    entered safe mode, and "clear and retry" wrote through the same failing
+    store and came straight back. `test_boot_guard.cpp` covers it with a
+    fake NVS that reads but refuses writes.
+  - `POST /api/reboot` now goes through the same healthy gate as the loop's
+    own restarts, via a deliberate-restart hook the network lib calls before
+    `ESP.restart()`. It used to restart directly, so a reboot asked for in a
+    pending image's first 30 s rolled the image back, and four quick ones on
+    a confirmed image could land it in safe mode. Restarts that still skip
+    the gate: factory reset, the setup-wizard timeout, and the dev-only
+    `POST /api/ota` push.
 - **A bad image on demand.** `SCV_BENCH_CRASH_AFTER_MS` (no env sets it)
   panics a `canary` build that many ms into `loop()`, for Track E.
 

@@ -431,7 +431,8 @@ user actions through the update system that leaves a device unrecoverable.**
     `securacv_ota_boot_self_test()` on boot, or fresh installs revert on
     their second start. Canary's validate block therefore compiles whenever
     ANY install channel exists, and it runs at the healthy gate (after 30 s
-    of `loop()`, or before a restart or deep sleep the loop chooses) so a
+    of `loop()`, or before a restart or deep sleep the loop chooses or
+    `POST /api/reboot` asks for) so a
     crash in the first seconds of `loop()` still reverts; vision validates
     immediately after WiFi, BEFORE its blocking MQTT connect, so a broker
     outage can't cause a spurious revert.

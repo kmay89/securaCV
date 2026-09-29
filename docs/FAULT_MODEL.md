@@ -285,15 +285,17 @@ has no jitter (`securacv_mqtt.cpp`; strategy doc 12, F4).
 - **Canary (PlatformIO tree).** `bootguard::begin()`
   (`firmware/common/health/boot_guard.h`, the NVS glue around the pure
   `boot_policy.h`) counts every boot that does not reach *healthy* —
-  `setup()` returned and `loop()` ran for 30 s, or the loop chose to
-  restart or deep-sleep — and persists the count before any risky init.
+  `setup()` returned and `loop()` ran for 30 s, or the device chose to
+  restart or deep-sleep (the loop's own restarts and an authenticated
+  `POST /api/reboot`) — and persists the count before any risky init.
   Four in a row on a confirmed image stop in a serial safe mode (radio,
   storage, sensors and the witness chain never start); an image still
   pending OTA confirmation never enters it, because the rollback below owns
   that case. The count starts over for a different image (OTA install,
   A/B rollback, USB flash of another build), on a healthy boot, or on the
   operator's confirmed "clear" (serial `c` then `y`, or BOOT held 2 s). If
-  NVS cannot be opened it boots normally and says so. Unlike the WAP's rule,
+  NVS cannot be opened, or the count reads but cannot be written back, it
+  boots normally and says so. Unlike the WAP's rule,
   every unhealthy boot counts, power-on included. Compile-checked; the
   decisions and the glue are host-tested (`test_boot_policy.cpp`,
   `test_boot_guard.cpp`); not bench-verified.
