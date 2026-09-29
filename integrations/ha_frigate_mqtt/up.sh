@@ -18,8 +18,8 @@
 #
 # Linted by shellcheck in .github/workflows/docker-sidecar.yml. Running it
 # needs Docker, which CI's lint job does not start — the run is an
-# operator's (ENTERPRISE_READINESS_TODO.md §6, "Make integration runnable in
-# one command").
+# operator's (firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md §6,
+# "Make integration runnable in one command").
 set -euo pipefail
 
 cd "$(dirname "$0")"
