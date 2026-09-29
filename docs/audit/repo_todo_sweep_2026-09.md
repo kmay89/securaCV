@@ -720,7 +720,7 @@ so — see D2 below.)
   instead of booting it with a key the next boot will not find (a new device
   id and a broken Home Assistant pin). Maintainer to choose: halt, or boot
   with a loud, counted ephemeral identity. Found doing F55.
-- [ ] **F59 [code] canary-wap's NVS writes report success whatever the write
+- [x] **F59 [code] canary-wap's NVS writes report success whatever the write
   did.** `canary_wap.ino`'s `nvs_store_key` / `nvs_store_u32` /
   `nvs_store_bytes` and `tls_store_to_nvs` return true once the session
   opens, `persist_chain_state()` advances `seq_persisted` and
@@ -733,7 +733,20 @@ so — see D2 below.)
   and a sync check for the sketch). The WAP's provisioning also stops when
   its key store returns false, so an honest `nvs_store_key` there is F58's
   choice too. Found doing F55 and F53.
-- [ ] **F60 [code] canary-wap's NVS session-balance check is textual.**
+  *Done:* `nvs_store_u32` / `nvs_store_bytes` / `nvs_store_token` /
+  `tls_store_to_nvs` and `wifi_save_credentials` now answer true only when
+  every put landed (the Wi-Fi connect route answers an error on a failed
+  save — the WAP twin of F61's named start); `note_wall_clock` is the
+  canary's honest version (no half-stamp, one report, minute retry);
+  `persist_chain_state()` writes chain_state.h's single atomic blob under
+  `chain_st` and settles through chain_persist.h (streaks counted in the
+  new `g_health.chain_persist_failures`, retried per its rules), which also
+  retires the reboot handler's inline pair — the httpd/loop interleave has
+  no two-entry window left to tear; boot resumes via `chain_state::choose()`
+  (legacy pair read-only). Both headers are staged copies held by
+  check_csi_sync.sh. `nvs_store_key` deliberately keeps ignoring its put —
+  F58's pending halt-vs-ephemeral call, same posture as the canary's.
+- [x] **F60 [code] canary-wap's NVS session-balance check is textual.**
   F53's `test_nvs_session_balance`
   (`firmware/projects/canary-wap/tests_host/`) reads the sketch's sources as
   text: it fails on a block that opens a session and never ends it, or that
@@ -743,6 +756,18 @@ so — see D2 below.)
   ends shuts every other task out (each waits 2 s, then fails soft). Close
   the gap with an RAII session guard in `nvs_store.h` or a real control-flow
   check. Found doing F53.
+  *Done:* `NvsMainSession` (nvs_store.h) is the RAII guard — constructor is
+  begin(), destructor the end() on every path — and all 25 session sites in
+  the sketch (canary_wap.ino, bluetooth_channel.cpp, vault_snapshot.cpp)
+  plus the nvs_store:: helpers use it; the dead `nvs_open_rw` /
+  `nvs_open_ro` / no-arg `nvs_close` wrappers are deleted. The balance
+  test's second edition enforces the rule that makes the RAII sound and IS
+  textually decidable: no sketch source outside nvs_store.h names
+  NvsManager at all (comments/strings stripped; ESP-IDF's own
+  `nvs_close(handle)` exempt), and the guard's begin-in-ctor/end-in-dtor
+  lines are pinned. test_nvs_store_lock runs the guard's scenarios on the
+  real header (scope close, nested depth, cross-task fail-soft owing no
+  end).
 - [ ] **F61 [code] The canary's other NVS puts are unaudited for a write that
   did not land.** F55 made the chain-state helpers honest; the 64 direct
   `Preferences` / `NvsManager` put calls in 15 files of `firmware/canary`

@@ -67,16 +67,18 @@ static const char* NVS_MESH_NS = "mesh";
  * Every begin() that returns true owes exactly one end() on every path,
  * because the lock is held until then: a session that never ends keeps the
  * lock on its task, and every other task's begin() waits kSessionWaitMs and
- * fails until a reboot. tests_host/test_nvs_session_balance.cpp scans the
- * sketch for a block that opens a session and does not close it. A begin()
- * that returns false owes no end().
+ * fails until a reboot. A begin() that returns false owes no end(). Sketch
+ * code therefore never calls begin()/end() itself: it opens the RAII
+ * NvsMainSession below, whose destructor is the end() on every path, and
+ * tests_host/test_nvs_session_balance.cpp fails the build on any sketch
+ * source outside this header that names NvsManager at all (F60 — the old
+ * textual balance scan could not follow a session ended in only one branch).
  *
- * Example usage:
- *   NvsManager& nvs = NvsManager::instance();
- *   if (nvs.begin(false)) {  // Open for read-write
- *     nvs.putBool("key", true);
- *     nvs.end();
- *   }
+ * Example usage (sketch code):
+ *   NvsMainSession nvs(false);  // false = read-write
+ *   if (nvs.isOpen()) {
+ *     nvs->putBool("key", true);
+ *   }                           // destructor ends the session
  */
 class NvsManager {
 public:
@@ -266,29 +268,55 @@ private:
 };
 
 // ════════════════════════════════════════════════════════════════════════════
-// LEGACY COMPATIBILITY FUNCTIONS
+// RAII GUARD FOR THE MAIN-NAMESPACE SESSION (sweep F60)
 // ════════════════════════════════════════════════════════════════════════════
 
 /*
- * These inline functions provide backward compatibility for code that
- * previously used the global g_prefs object directly. They delegate to
- * the NvsManager singleton.
+ * NvsMainSession is the ONLY way sketch code opens a session on the shared
+ * "securacv" handle. Every begin() that returns true owes exactly one end()
+ * on every path — a session that never ends keeps the lock on its task, and
+ * every other task's begin() waits kSessionWaitMs and fails until a reboot.
+ * The old guard for that rule was a textual scan of the sketch
+ * (tests_host/test_nvs_session_balance.cpp), and a session ended in only one
+ * branch, or left by a break or goto, got past it. This guard closes the
+ * session in its destructor, so the compiler walks the paths instead: a
+ * scope exit — any scope exit — is the end().
+ *
+ * The balance test now enforces the rule that makes this sound: outside this
+ * header, sketch code never names NvsManager at all, so a session it cannot
+ * name is a session it cannot leak. (tests_host code still drives the raw
+ * begin()/end() to simulate cross-task scenarios; that is test scaffolding,
+ * not the sketch.)
+ *
+ * Example:
+ *   NvsMainSession nvs(false);      // false = read-write
+ *   if (!nvs.isOpen()) return false;
+ *   size_t n = nvs->putUInt("key", 1);
+ *   return n == sizeof(uint32_t);   // the destructor ends the session
  */
+class NvsMainSession {
+public:
+  explicit NvsMainSession(bool readOnly)
+      : m_nvs(NvsManager::instance()), m_open(m_nvs.begin(readOnly)) {}
 
-// Open NVS in read-write mode (uses main namespace)
-inline bool nvs_open_rw() {
-  return NvsManager::instance().beginReadWrite();
-}
+  // A guard whose begin() failed owes no end(); the destructor knows.
+  ~NvsMainSession() {
+    if (m_open) m_nvs.end();
+  }
 
-// Open NVS in read-only mode (uses main namespace)
-inline bool nvs_open_ro() {
-  return NvsManager::instance().beginReadOnly();
-}
+  bool isOpen() const { return m_open; }
 
-// Close NVS
-inline void nvs_close() {
-  NvsManager::instance().end();
-}
+  // Accessors on the open session (valid only while isOpen()). begin()/end()
+  // are deliberately NOT reachable through this: the guard owns the pair.
+  NvsManager* operator->() { return &m_nvs; }
+
+  NvsMainSession(const NvsMainSession&) = delete;
+  NvsMainSession& operator=(const NvsMainSession&) = delete;
+
+private:
+  NvsManager& m_nvs;
+  bool m_open;
+};
 
 // ════════════════════════════════════════════════════════════════════════════
 // RAII NVS SESSION CLASS (for module-specific namespaces)
@@ -436,48 +464,35 @@ namespace nvs_store {
 // Get a uint32_t value from NVS
 // Returns the value if key exists, otherwise returns default_val
 inline uint32_t get_u32(const char* key, uint32_t default_val) {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.begin(true)) return default_val;
-  uint32_t val = nvs.getUInt(key, default_val);
-  nvs.end();
-  return val;
+  NvsMainSession nvs(true);
+  if (!nvs.isOpen()) return default_val;
+  return nvs->getUInt(key, default_val);
 }
 
 // Set a uint32_t value in NVS
 // Returns true on success
 inline bool set_u32(const char* key, uint32_t val) {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.begin(false)) return false;
-  size_t written = nvs.putUInt(key, val);
-  nvs.end();
-  return written == sizeof(uint32_t);
+  NvsMainSession nvs(false);
+  if (!nvs.isOpen()) return false;
+  return nvs->putUInt(key, val) == sizeof(uint32_t);
 }
 
 // Get a blob (byte array) from NVS
 // Returns true if key exists and data was read successfully
 inline bool get_blob(const char* key, void* buf, size_t len) {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.begin(true)) return false;
-  bool success = false;
-  if (nvs.isKey(key)) {
-    size_t stored_len = nvs.getBytesLength(key);
-    if (stored_len == len) {
-      size_t read = nvs.getBytes(key, buf, len);
-      success = (read == len);
-    }
-  }
-  nvs.end();
-  return success;
+  NvsMainSession nvs(true);
+  if (!nvs.isOpen()) return false;
+  if (!nvs->isKey(key)) return false;
+  if (nvs->getBytesLength(key) != len) return false;
+  return nvs->getBytes(key, buf, len) == len;
 }
 
 // Set a blob (byte array) in NVS
 // Returns true on success
 inline bool set_blob(const char* key, const void* buf, size_t len) {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.begin(false)) return false;
-  size_t written = nvs.putBytes(key, buf, len);
-  nvs.end();
-  return written == len;
+  NvsMainSession nvs(false);
+  if (!nvs.isOpen()) return false;
+  return nvs->putBytes(key, buf, len) == len;
 }
 
 } // namespace nvs_store
