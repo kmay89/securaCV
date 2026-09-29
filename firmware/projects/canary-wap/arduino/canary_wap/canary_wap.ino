@@ -6419,7 +6419,11 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
     }
   }
 
-  // Save credentials
+  // Save credentials. The previous in-memory state is snapshotted first:
+  // on a failed save it is restored, or wifi_update_status()'s retry tick
+  // would connect with the very credentials this answer reports unsaved
+  // (working until the reboot that forgets them).
+  const WiFiCredentials prev_creds = g_wifi_creds;
   strncpy(g_wifi_creds.ssid, ssid, sizeof(g_wifi_creds.ssid) - 1);
   g_wifi_creds.ssid[sizeof(g_wifi_creds.ssid) - 1] = '\0';
   strncpy(g_wifi_creds.password, password, sizeof(g_wifi_creds.password) - 1);
@@ -6431,6 +6435,7 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   // "saved": a connect from RAM would work until the reboot that forgets
   // the network this answer just called kept (F59).
   if (!wifi_save_credentials()) {
+    g_wifi_creds = prev_creds;
     JsonDocument doc;
     doc["ok"] = false;
     doc["error"] = "Credentials not saved (NVS write failed) - see the device log";
