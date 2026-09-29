@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+### A/B rollback was armed all along; the Canary now counts crash loops and stops in a safe mode
+
+Compile-checked and host-tested. **Not bench-verified** — nothing below has
+reverted a bad image or entered safe mode on real hardware yet; that is
+`docs/V1_BENCH_TEST_RUNBOOK.md`'s new Track E.
+
+- **Correction to the entry below.** The shipping Arduino and PlatformIO
+  builds do not auto-confirm a new OTA image. An Arduino build's bootloader
+  and `sdkconfig.h` come precompiled with the core, and the pinned cores
+  enable `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` (arduino-esp32 2.0.17's
+  `sdkconfig` for esp32 / esp32-s3 / esp32-c3; the 3.x lib-builder's common
+  defconfig). So the OTA engine's `verifyRollbackLater()` override was
+  compiled into every product that links it. `firmware_ota.md`,
+  `FAULT_MODEL.md`, `NEXT_STEPS_2026-07.md` (P0), `self_star_roadmap.md`,
+  `hardware_root_of_trust.md`, `FEATURES.md` and `PARITY_PLAN.md` now say
+  so, with the evidence and the bench caveat.
+- **The OTA engine refuses to build without the rollback config.** The
+  `#if` that compiled the override out on a core without it is now an
+  `#error`, so a core bump that dropped it fails the build instead of
+  disarming the net (`firmware/common/ota/src/securacv_ota.cpp` and its two
+  sketch copies).
+- **Canary (PlatformIO): mark valid only after a healthy boot.** A new image
+  is confirmed once `setup()` has returned and `loop()` has run for 30 s
+  (or the loop chose to restart or deep-sleep), not mid-`setup()`, so a
+  crash in the first seconds of `loop()` reverts too.
+- **Canary (PlatformIO): crash-loop counter and safe mode.** The host-tested
+  `boot_policy.h` decision now has a caller, through
+  `firmware/common/health/boot_guard.h`: an NVS counter persisted before any
+  risky init. Four boots in a row that never reach healthy, on a confirmed
+  image, stop in a serial safe mode — no radio, storage, sensors or witness
+  chain — until someone confirms "clear and retry" (`c` then `y`, or BOOT
+  held 2 s). A pending OTA image never enters it (rollback owns that case),
+  and a different image — OTA, A/B rollback, or a USB flash of another
+  build — starts the count over. New host test `test_boot_guard.cpp` runs
+  the glue over a fake NVS and OTA partition. canary-wap keeps its own
+  counter; the display, Sense, Vision and Sentinel have none yet.
+- **A bad image on demand.** `SCV_BENCH_CRASH_AFTER_MS` (no env sets it)
+  panics a `canary` build that many ms into `loop()`, for Track E.
+
 ### The fault model is written down, and four docs stop promising recovery the code does not do
 
 - **`docs/FAULT_MODEL.md`** — what survives what, per component: the hub's

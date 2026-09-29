@@ -12,7 +12,7 @@
 > **Closes:** the "on-device validation pending" blocker in `v1-roadmap.md` and issue **#610**.
 
 ## How to use this
-Work the four tracks top to bottom. Each step lists the **command/reference**, the **expected
+Work the five tracks top to bottom. Each step lists the **command/reference**, the **expected
 result**, and the **artifact** to capture. File artifacts under `docs/audit/repro/<track>/` (the
 dirs #610 expects to be filled). When every row in the §5 matrix is ✅ with an artifact, flip the
 README badge `v1-rc → v1.0`, date the `CHANGELOG.md [1.0.0]` entry, and bump the crate version
@@ -117,6 +117,28 @@ present. Confirm the v1 image actually runs it.
 
 ---
 
+## Track E — Boot recovery (A/B rollback, crash-loop safe mode)
+
+The one track where *compile-tested* is not an acceptable resting state: these
+features exist to behave correctly when the firmware is broken, so the test is
+to break it on purpose. `canary (PIO)` on a XIAO ESP32-S3; the bad image comes
+from the bench-only `SCV_BENCH_CRASH_AFTER_MS` flag (no env sets it), which
+panics that many ms into `loop()` — before the 30 s healthy gate. Background:
+`firmware_ota.md` ("Where each property holds today") and
+`firmware/common/health/boot_policy.h`.
+
+| # | Step | Expected | Artifact → `docs/audit/repro/boot/` |
+|---|---|---|---|
+| E1 | Flash a good `dev` image over USB; watch serial for 40 s | `Boot attempt 1 of 4 before safe mode`, then `Boot healthy (loop stable)` about 30 s after `WITNESS DEVICE READY` | serial log |
+| E2 | Build a bad image: `PLATFORMIO_BUILD_FLAGS="-DSCV_BENCH_CRASH_AFTER_MS=5000" pio run -e dev`. Install it **over OTA** onto the E1 board — the dev push endpoint, or a signed pull manifest (which needs a version above E1's, or the anti-rollback floor refuses it) | New image boots `(new image, pending confirmation)`, panics at ~5 s; the **next** boot is the E1 image again; after its healthy gate, `fw_update_rolled_back` is in the witness chain | serial log + chain excerpt |
+| E3 | Same bad image, but flash it **over USB** (a confirmed image — nothing to roll back to) | Boots 1–3 panic; boot 4 prints the `SAFE MODE` card; Wi-Fi AP never comes up | serial log |
+| E4 | In safe mode: `c`, then `n` | `Canceled.`; still in safe mode | serial log |
+| E5 | In safe mode: hold BOOT 2 s | `Counter cleared. Restarting normally...`; boots normally (then crash-loops again, since the image is still bad) | serial log |
+| E6 | Flash the good E1 build over USB while in safe mode | Boots normally at `Boot attempt 1` — a different build starts the count over | serial log |
+| E7 | On the good image, pull power within 10 s of boot, four boots in a row | Safe mode on the 4th boot; documents that the counter counts power cuts, which is intended (a brownout loop is a crash loop) | serial log |
+
+---
+
 ## 5. Sign-off matrix (the v1 gate)
 
 | Track | Item | Status | Artifact |
@@ -130,6 +152,8 @@ present. Confirm the v1 image actually runs it.
 | C | #610: O1 / O2 / O3 / replay / non-impersonation | ☐ | |
 | C | `v0.3_closeout.md` ticked; FEATURES.md mesh ✅ | ☐ | |
 | D | HTTPS:443 + redirect + cert match | ☐ | |
+| E | Bad OTA image reverts to the previous image (E2) | ☐ | |
+| E | Confirmed crash loop stops in safe mode; every escape works (E3–E6) | ☐ | |
 
 **Exit criteria → tag v1.0:** every row ✅ with an artifact, all CI checks green, then run the
 tag step (badge `v1-rc → v1.0`, `CHANGELOG [1.0.0]` dated, crate version → `1.0.0`).

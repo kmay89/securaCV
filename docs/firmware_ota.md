@@ -381,22 +381,34 @@ HTTP-only build gets plain HTTP, token included.
 The design goal is stronger than "hard to brick": **there is no sequence of
 user actions through the update system that leaves a device unrecoverable.**
 
-> **Where each property holds today.** The A/B rollback net below — a new
-> image staying `PENDING_VERIFY` until its boot self-test confirms it, and
-> reverting otherwise — is live only where the bootloader's rollback config
-> is enabled: the `canary-ota` ESP-IDF project
-> (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` in its `sdkconfig`). **In the
-> shipping Arduino and PlatformIO builds that config is not enabled, the
-> Arduino core auto-confirms a new image on its first boot, and a bad first
-> boot does not revert.** There, the properties that hold are the ones that
-> need no bootloader help: signature and product checks before install,
-> writes to the inactive slot only, the NVS anti-rollback floor, and the
-> mask-ROM download mode as the last resort. Enabling the config in the
-> shipping builds is tracked in the self-* roadmap
-> ([`design/self_star_roadmap.md`](design/self_star_roadmap.md), "boot
-> safe-mode / A/B rollback"); until it lands, read the "crashes on first
-> boot" and "fails its health check" rows of the recovery matrix as
-> `canary-ota` only.
+> **Where each property holds today (re-checked against the tree and the
+> upstream cores, 2026-09-29).** The A/B rollback net below — a new image
+> staying `PENDING_VERIFY` until its boot self-test confirms it, and reverting
+> otherwise — needs `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` in the bootloader
+> and the IDF libraries. An Arduino build cannot set that from `build_flags`:
+> both come precompiled with the core. **The cores this tree pins already ship
+> it on** — arduino-esp32 2.0.17's precompiled `sdkconfig` for esp32, esp32-s3
+> and esp32-c3 has `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` (and so
+> `CONFIG_APP_ROLLBACK_ENABLE`), and the 3.x lib-builder's common defconfig
+> sets it for every chip. This section used to say the shipping builds lacked
+> it and auto-confirmed every image; that was read off our own
+> `sdkconfig.defaults` files, not the core's, and it was wrong. The engine's
+> `verifyRollbackLater()` override is therefore compiled into every Arduino
+> and PlatformIO product that links it, and since 2026-09-29 it **refuses to
+> compile** against a core whose `sdkconfig.h` lacks the config, so a core
+> bump cannot disarm the net quietly.
+>
+> What that is not: **bench-verified.** Nobody has yet pushed a deliberately
+> bad image to a shipping build over OTA and watched it revert. Read the
+> "crashes on first boot" and "fails its health check" rows of the recovery
+> matrix as *compile-checked and verified against the upstream sources*, not
+> as hardware-verified, until the rollback rows of
+> [`V1_BENCH_TEST_RUNBOOK.md`](V1_BENCH_TEST_RUNBOOK.md) Track E are signed.
+> Where each product confirms its image (the end of the revert window):
+> `canary` (PlatformIO) at its healthy gate — `setup()` returned and `loop()`
+> ran for 30 s (`bootpolicy::kDefaultHealthyDwellMs`); `canary-wap` at the end
+> of `setup()`; the display, Sense, Vision and Sentinel right after Wi-Fi
+> joins; `canary-ota` seconds into `app_main`.
 
 - **A/B partitions:** updates are written only to the inactive slot; the
   running firmware is never touched. Power loss at any point during the
@@ -418,9 +430,11 @@ user actions through the update system that leaves a device unrecoverable.**
     including the dev push endpoint and BLE OTA) must reach
     `securacv_ota_boot_self_test()` on boot, or fresh installs revert on
     their second start. Canary's validate block therefore compiles whenever
-    ANY install channel exists; vision validates immediately after WiFi,
-    BEFORE its blocking MQTT connect, so a broker outage can't cause a
-    spurious revert.
+    ANY install channel exists, and it runs at the healthy gate (after 30 s
+    of `loop()`, or before a restart or deep sleep the loop chooses) so a
+    crash in the first seconds of `loop()` still reverts; vision validates
+    immediately after WiFi, BEFORE its blocking MQTT connect, so a broker
+    outage can't cause a spurious revert.
 - **Expected (safe) edge:** power-cycling the device after an update but
   before the boot self-test confirms the image reverts it to the previous
   version. On `canary-ota` that window closes seconds into boot — the
@@ -454,9 +468,10 @@ user actions through the update system that leaves a device unrecoverable.**
 |---|---|---|
 | Power/WiFi lost mid-download | Old firmware keeps running; partial download discarded | Nothing — press Install again whenever |
 | Update file corrupted or forged | Refused before install (SHA-256 + Ed25519 + format checks) | Nothing — error shown in plain language |
-| New firmware crashes or hangs on first boot | `canary-ota`: bootloader restores previous firmware on the next start. Shipping Arduino/PlatformIO builds: **no revert** — the image was auto-confirmed; the WAP's crash-loop safe mode and every product's task watchdog are what remain | `canary-ota`: nothing. Others: USB reflash |
-| New firmware boots but fails its health check | `canary-ota`: restores previous firmware automatically. Others: the failure is logged; the image stays | `canary-ota`: nothing. Others: reflash or push a fixed image |
-| Power cycled after an update, before the boot self-test confirms it | `canary-ota`: returns to previous firmware (unconfirmed images don't stick; the window closes seconds into boot, when the self-test passes). Others: the new image stays | `canary-ota`: press Install again. Others: nothing |
+| New firmware crashes or hangs before it confirms itself | Bootloader restores the previous firmware on the next start — every product (compile-checked and source-verified; bench row pending, see the note above) | Nothing |
+| New firmware confirms, then keeps crashing | `canary` (PlatformIO): after 4 boots in a row that never reach healthy, it stops in a serial safe mode (radio, storage and sensors off) instead of looping. `canary-wap`: its own crash-loop safe mode. Display, Sense, Vision, Sentinel: nothing counts the resets; the task watchdog restarts them | `canary`: serial `c` then `y`, or hold BOOT 2 s, to retry; flashing a different build starts the count over. Others: USB reflash |
+| New firmware boots but fails its health check | Restores the previous firmware automatically (same caveat as the row above) | Nothing |
+| Power cycled after an update, before the boot self-test confirms it | Returns to the previous firmware (unconfirmed images don't stick). The window is product-specific — see the note above | Press Install again |
 | Wrong update server address saved | Checks fail with a clear message; firmware untouched | Clear the field (Settings) to return to the official server |
 | Wrong variant's manifest configured | Product check refuses the image | Fix the address; nothing was installed |
 | WiFi password changed at the router | canary/WAP: own AP + dashboard still up — reconfigure there. vision/sense: after a few failed joins for a fixable reason, the board raises its own `SecuraCV-XXXX` setup network (the shared setup portal); sensing continues underneath | Reconnect via dashboard (canary/WAP), or join the setup network from a phone and enter the new password (vision/sense) — a USB reflash always works too |

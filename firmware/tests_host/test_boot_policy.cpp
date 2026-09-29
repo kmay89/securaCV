@@ -215,6 +215,27 @@ static void test_default_constants() {
   CHECK(kHealthyReset == 0 && kFreshImageReset == 0 && kOperatorClearReset == 0);
 }
 
+// ── The healthy gate and the fresh-image carry ─────────────────────────────
+static void test_healthy_gate_edges() {
+  using bootpolicy::healthy_reached;
+  using bootpolicy::kDefaultHealthyDwellMs;
+  CHECK(!healthy_reached(false, 0, 10 * kDefaultHealthyDwellMs));  // setup never finished
+  CHECK(!healthy_reached(true, 1000, 1000));
+  CHECK(!healthy_reached(true, 1000, 1000 + kDefaultHealthyDwellMs - 1));
+  CHECK(healthy_reached(true, 1000, 1000 + kDefaultHealthyDwellMs));
+  // Across the millis() wrap.
+  const uint32_t near_wrap = 0xFFFFFFFFu - 5000u;
+  CHECK(!healthy_reached(true, near_wrap, near_wrap + 10000u));
+  CHECK(healthy_reached(true, near_wrap, near_wrap + kDefaultHealthyDwellMs));
+}
+
+static void test_carry_count() {
+  using bootpolicy::carry_count;
+  CHECK(carry_count(7, true) == 7);
+  CHECK(carry_count(7, false) == bootpolicy::kFreshImageReset);
+  CHECK(carry_count(bootpolicy::kBootAttemptCap, false) == 0);
+}
+
 int main() {
   test_first_boot();
   test_good_image_steady_state();
@@ -227,6 +248,8 @@ int main() {
   test_decide_predicate_consistency();
   test_rollback_churn_headroom();
   test_default_constants();
+  test_healthy_gate_edges();
+  test_carry_count();
 
   if (g_failures) {
     std::printf("%d CHECK(s) FAILED\n", g_failures);

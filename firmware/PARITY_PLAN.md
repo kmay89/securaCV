@@ -28,6 +28,17 @@
 > CSI and the boot banner. The release public key header is part of the
 > sync set so one release signature serves pull-OTA on both trees AND the
 > WAP's BLE OTA. End-to-end flow: `docs/firmware_ota.md`.
+>
+> **Rollback note (2026-09-29):** the "OTA A/B with rollback safety" rows
+> below still read the Arduino side as ❌ / ☐. The code is there — the WAP
+> links the shared engine, and its `verifyRollbackLater()` override is live
+> because the Arduino core's own precompiled `sdkconfig` enables the
+> bootloader rollback config (the engine now `#error`s on a core that does
+> not). The cells stay open because the "Bench-proven" column is the
+> closure rule: nobody has yet reverted a bad image on either tree. The
+> bench procedure is `docs/V1_BENCH_TEST_RUNBOOK.md` Track E (written
+> against canary (PIO); the WAP confirms at the end of `setup()`, so the
+> same bad-image flash applies).
 
 ---
 
@@ -174,7 +185,7 @@ cell to ✅ only after the matching bench-runbook track passes** and an artifact
 | →ACTIVE | Hub failover | ☐ | ☐ | ☐ |
 | →ACTIVE | Chirp channel | ☐ | ☐ | ☐ |
 | →Arduino | MQTT + HA Discovery | ☑ | n/a | ☑ |
-| →Arduino | OTA A/B rollback | ☐ | ☐ | ☐ |
+| →Arduino | OTA A/B rollback | ☑ (shared engine; rollback note above) | ☐ | ☐ |
 | →Arduino | Acoustic T3/T4 | ☐ | ☐ | ☐ |
 | →Arduino | Capacitive touch | ☐ | ☐ | ☐ |
 | →Arduino | Deep-sleep HAL | ☐ | ☐ | ☐ |

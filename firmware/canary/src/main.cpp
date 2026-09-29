@@ -169,6 +169,12 @@ static_assert(sizeof(csi_features_t) == 36,
 // Used by the read-only 't' run-all command below.
 #include "health/test_console.h"
 
+// Crash-loop counter + safe-mode decision (health/boot_policy.h, host-tested)
+// and its NVS / OTA-state glue. Counted in setup() before risky init; reset
+// — and a pending OTA image confirmed — once loop() has run healthy for
+// bootpolicy::kDefaultHealthyDwellMs. See boot_health_tick() below.
+#include "health/boot_guard.h"
+
 // Pure, host-tested device self-manifest builder: the machine-readable JSON the
 // 'j' command emits (public-only) so a browser can read this unit over WebSerial
 // — draw the same randomart from the pubkey, and show exactly the tools it has.
@@ -704,6 +710,9 @@ static bool ota_can_install(char* reason, size_t reason_len) {
  * boot partition flips, so deferred or indirect reboots are covered too.) */
 static void ota_before_reboot() {
   witness_persist_chain_state();
+  // A newly installed image deserves a clean run of attempts at "healthy"
+  // (boot_policy.h, kFreshImageReset).
+  bootguard::fresh_image_reset();
 }
 
 static void ota_schedule_next_check(uint32_t delay_ms, uint32_t jitter_ms) {
@@ -815,6 +824,176 @@ static inline uint8_t time_bucket_now() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// BOOT HEALTH — crash-loop counter, safe mode, deferred OTA confirmation
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Two nets, one gate (health/boot_policy.h has the full argument):
+//   · a NEW image that falls over before "healthy" is reverted by the
+//     bootloader's A/B rollback — it stays PENDING_VERIFY until this code
+//     confirms it, and any reset before that boots the previous image;
+//   · a CONFIRMED image that keeps falling over lands in safe mode after
+//     bootpolicy::kDefaultSafeModeThreshold consecutive boots that never
+//     reached healthy.
+// "Healthy" is setup() returned + loop() ran for kDefaultHealthyDwellMs, or a
+// deliberate restart / deep sleep taken from the running loop before that.
+
+static bool     g_setup_done    = false;
+static uint32_t g_setup_done_ms = 0;
+static bool     g_boot_healthy  = false;
+static bootguard::Status g_boot_status = {};
+
+// Confirm — or roll back — a freshly applied OTA image, then witness the
+// outcome. Runs at the healthy gate, not in setup(): an image that survives
+// setup() but crashes in its first seconds of loop() must still revert. If a
+// required probe fails, the engine marks the image invalid and reboots into
+// the previous firmware (does not return).
+//
+// Guard covers BOTH install channels: the engine owns rollback confirmation
+// (verifyRollbackLater), so any build that can install an image — pull OTA or
+// the dev push endpoint — must also confirm it here, or the bootloader
+// reverts it on the next boot.
+static void ota_confirm_and_witness() {
+#if FEATURE_OTA_PULL || FEATURE_OTA_UPDATE
+  securacv_ota_boot_self_test();
+
+  // Witness the update outcome. The engine recorded the install target the
+  // moment the boot partition flipped; running the old version again means
+  // the rollback fired.
+  char target[SECURACV_OTA_VERSION_MAX];
+  if (securacv_ota_take_pending_version(target, sizeof(target))) {
+    if (strcmp(target, FIRMWARE_VERSION) == 0) {
+      ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
+      log_health(LOG_LEVEL_NOTICE, LOG_CAT_SYSTEM,
+                 "Firmware update applied", FIRMWARE_VERSION);
+    } else {
+      ota_witness_event("fw_update_rolled_back", target);
+      log_health(LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,
+                 "Firmware update rolled back", target);
+    }
+  }
+#endif
+}
+
+// The healthy gate: confirm the image, then clear the crash-loop counter.
+// Idempotent — only the first call per boot does anything.
+static void boot_mark_healthy(const char* why) {
+  if (g_boot_healthy || !g_setup_done) return;
+  g_boot_healthy = true;
+  ota_confirm_and_witness();
+  if (bootguard::mark_healthy()) {
+    Serial.printf("[OK] Boot healthy (%s) - crash-loop counter cleared\n", why);
+  } else {
+    Serial.println("[WARN] Boot healthy, but the crash-loop counter could not be cleared (NVS)");
+  }
+}
+
+// Called every loop() pass.
+static void boot_health_tick(uint32_t now) {
+  if (!g_boot_healthy &&
+      bootpolicy::healthy_reached(g_setup_done, g_setup_done_ms, now)) {
+    boot_mark_healthy("loop stable");
+  }
+}
+
+// Called just before a restart or deep sleep the running loop chose to take:
+// the code decided to stop, it did not fall over, so an image that got this
+// far is confirmed rather than reverted by the reset it is about to cause.
+static void boot_health_before_deliberate_stop() {
+  boot_mark_healthy("deliberate restart or sleep");
+}
+
+// ── Safe mode ──────────────────────────────────────────────────────────────
+// Entered instead of normal init when a CONFIRMED image has failed to reach
+// healthy kDefaultSafeModeThreshold boots in a row. Deliberately tiny: no
+// radio, no storage, no sensors, no witness chain — none of the subsystems
+// that could be the thing crashing. It prints what happened and waits for a
+// human. It never mutates anything but the crash-loop counter, and only on an
+// explicit, confirmed request (serial "c" then "y", or BOOT held 2 s).
+// Always escapable, never a brick: "clear & retry" boots normally again, a
+// different build (OTA or USB) starts the count over (carry_count), and an
+// NVS erase clears it too.
+static void safe_mode_print_card() {
+  Serial.println();
+  Serial.println("==================== SAFE MODE ====================");
+  Serial.printf("  Firmware   : %s\n", FIRMWARE_VERSION);
+#ifdef HAVE_OTA_PARTITION
+  {
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    Serial.printf("  Partition  : %s\n", running ? running->label : "unknown");
+  }
+#endif
+  Serial.printf("  Boots that did not reach healthy: %u (safe mode at %u)\n",
+                (unsigned)g_boot_status.count,
+                (unsigned)bootpolicy::kDefaultSafeModeThreshold);
+  Serial.println("  This Canary kept restarting before it finished starting");
+  Serial.println("  up, so it has stopped here instead of trying again.");
+  Serial.println("  Radio, storage and sensors are off. Nothing is recorded.");
+  Serial.println("---------------------------------------------------");
+  Serial.println("  c  clear the counter and restart normally (asks y/n)");
+  Serial.println("  i  print this card again");
+  Serial.println("  BOOT held 2 s: clear the counter and restart normally");
+  Serial.println("  If it comes back here, flash a different build over");
+  Serial.println("  USB (that starts the count over): securacv.com/canary");
+  Serial.println("===================================================");
+}
+
+[[noreturn]] static void safe_mode_clear_and_restart() {
+  if (bootguard::operator_clear()) {
+    Serial.println("[..] Counter cleared. Restarting normally...");
+  } else {
+    Serial.println("[WARN] Could not clear the counter (NVS). Restarting anyway...");
+  }
+  Serial.flush();
+  delay(500);
+  ESP.restart();
+  for (;;) { delay(1000); }
+}
+
+[[noreturn]] static void safe_mode_run() {
+  pinMode(BOOT_BUTTON_GPIO, INPUT_PULLUP);
+  safe_mode_print_card();
+  bool     awaiting_confirm = false;
+  uint32_t confirm_deadline = 0;
+  uint32_t boot_down_since  = 0;
+  uint32_t last_reminder    = millis();
+  for (;;) {
+    const uint32_t now = millis();
+
+    while (Serial.available()) {
+      const char ch = (char)Serial.read();
+      if (awaiting_confirm) {
+        awaiting_confirm = false;
+        if (ch == 'y' || ch == 'Y') safe_mode_clear_and_restart();
+        Serial.println("  Canceled.");
+      } else if (ch == 'c' || ch == 'C') {
+        awaiting_confirm = true;
+        confirm_deadline = now + 10000;
+        Serial.println("  Clear the counter and restart normally? (y/n)");
+      } else if (ch == 'i' || ch == 'I' || ch == '?' || ch == 'h') {
+        safe_mode_print_card();
+      }
+    }
+    if (awaiting_confirm && (int32_t)(now - confirm_deadline) >= 0) {
+      awaiting_confirm = false;
+      Serial.println("  No answer - canceled.");
+    }
+
+    if (digitalRead(BOOT_BUTTON_GPIO) == LOW) {
+      if (boot_down_since == 0) boot_down_since = now ? now : 1;
+      if ((uint32_t)(now - boot_down_since) >= 2000) safe_mode_clear_and_restart();
+    } else {
+      boot_down_since = 0;
+    }
+
+    if ((uint32_t)(now - last_reminder) >= 60000) {
+      last_reminder = now;
+      Serial.println("[SAFE MODE] waiting - press i for details");
+    }
+    delay(20);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // SETUP
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -864,6 +1043,24 @@ void setup() {
       log_health(LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,
                  "Abnormal reset detected", rst_name);
     }
+  }
+
+  // Crash-loop counter: count this boot and persist it BEFORE any risky init,
+  // so a hang or crash anywhere below is counted. A confirmed image that has
+  // not reached healthy for kDefaultSafeModeThreshold boots in a row stops in
+  // safe mode here (does not return); an unconfirmed OTA image never does —
+  // the bootloader's A/B rollback owns that case.
+  g_boot_status = bootguard::begin();
+  if (!g_boot_status.nvs_ok) {
+    Serial.println("[WARN] Crash-loop counter unavailable (NVS) - booting normally");
+  } else {
+    Serial.printf("[..] Boot attempt %u of %u before safe mode%s\n",
+                  (unsigned)g_boot_status.count,
+                  (unsigned)bootpolicy::kDefaultSafeModeThreshold,
+                  g_boot_status.image_confirmed ? "" : " (new image, pending confirmation)");
+  }
+  if (g_boot_status.mode == bootpolicy::BootMode::SafeMode) {
+    safe_mode_run();
   }
 
   // Power-event lineage: classify how the last power session ended (brownout /
@@ -1715,16 +1912,12 @@ void setup() {
   Serial.println("[OK] Thermal watchdog observing");
 #endif
 
-  // Confirm — or roll back — a freshly applied OTA image. Reaching this
-  // line at all means provisioning, storage, and network bring-up survived
-  // the new firmware; the registered probes assert the parts that matter
-  // for the device's job. If a required probe fails, the engine marks the
-  // image invalid and reboots into the previous firmware (does not return).
-  //
-  // Guard covers BOTH install channels: the engine owns rollback
-  // confirmation (verifyRollbackLater), so any build that can install an
-  // image — pull OTA or the dev push endpoint — must also confirm it here,
-  // or the bootloader reverts it on the second boot.
+  // Register the post-update probes. They RUN at the healthy gate
+  // (boot_mark_healthy -> ota_confirm_and_witness), not here: a freshly
+  // applied image is confirmed only after setup() returned AND loop() ran
+  // for bootpolicy::kDefaultHealthyDwellMs, so a crash in its first seconds
+  // of loop() still reverts it. The probes assert the parts that matter for
+  // the device's job; a failed required probe reverts it too.
 #if FEATURE_OTA_PULL || FEATURE_OTA_UPDATE
   {
     static const securacv_selftest_t k_ota_selftests[] = {
@@ -1739,23 +1932,6 @@ void setup() {
     };
     for (size_t i = 0; i < sizeof(k_ota_selftests) / sizeof(k_ota_selftests[0]); i++) {
       securacv_ota_register_selftest(&k_ota_selftests[i]);
-    }
-    securacv_ota_boot_self_test();
-
-    // Witness the update outcome. The engine recorded the install target
-    // the moment the boot partition flipped; running the old version again
-    // means the rollback fired.
-    char target[SECURACV_OTA_VERSION_MAX];
-    if (securacv_ota_take_pending_version(target, sizeof(target))) {
-      if (strcmp(target, FIRMWARE_VERSION) == 0) {
-        ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
-        log_health(LOG_LEVEL_NOTICE, LOG_CAT_SYSTEM,
-                   "Firmware update applied", FIRMWARE_VERSION);
-      } else {
-        ota_witness_event("fw_update_rolled_back", target);
-        log_health(LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,
-                   "Firmware update rolled back", target);
-      }
     }
   }
 #endif
@@ -1870,6 +2046,11 @@ void setup() {
   print_boot_welcome();
 #endif
   Serial.println();
+
+  // setup() survived. The healthy gate opens once loop() has run for
+  // bootpolicy::kDefaultHealthyDwellMs (boot_health_tick).
+  g_setup_done_ms = millis();
+  g_setup_done = true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1879,6 +2060,24 @@ void setup() {
 void loop() {
 #if FEATURE_WATCHDOG
   esp_task_wdt_reset();
+#endif
+
+  // The healthy gate: confirm a pending OTA image and clear the crash-loop
+  // counter once this boot has run long enough to count as healthy.
+  boot_health_tick(millis());
+
+#ifdef SCV_BENCH_CRASH_AFTER_MS
+  // BENCH ONLY — never set by any env. Builds a deliberately bad image for
+  // the boot-recovery bench rows (docs/V1_BENCH_TEST_RUNBOOK.md, Track E):
+  // it panics this many ms into loop(), before the healthy gate, so an OTA'd
+  // copy must revert and a USB-flashed copy must land in safe mode.
+  static_assert(SCV_BENCH_CRASH_AFTER_MS < bootpolicy::kDefaultHealthyDwellMs,
+                "the bench crash must fire before the healthy gate opens");
+  if (g_setup_done && (uint32_t)(millis() - g_setup_done_ms) >= SCV_BENCH_CRASH_AFTER_MS) {
+    Serial.println("[BENCH] SCV_BENCH_CRASH_AFTER_MS: deliberate panic");
+    Serial.flush();
+    abort();
+  }
 #endif
 
 #if FEATURE_MESH_NETWORK
@@ -1966,6 +2165,7 @@ void loop() {
     if (WiFi.status() == WL_CONNECTED) {
       setup_mark_complete();
       Serial.println("[OK] Setup complete — WiFi connected, rebooting...");
+      boot_health_before_deliberate_stop();
       delay(1000);
       ESP.restart();
     }
@@ -2256,6 +2456,10 @@ void loop() {
     lowpower_arm_wake_timer((uint64_t)sleep_sec * 1000000ULL);
     lowpower_arm_wake_touch();
     policy_ack_deep_sleep();
+    // A duty-cycled wake can sleep again before the healthy dwell elapses;
+    // choosing to sleep is not a crash, so it must not count toward safe mode
+    // (nor revert a pending image on the wake).
+    boot_health_before_deliberate_stop();
     lowpower_enter_deep_sleep();
   } else if (policy_should_deep_sleep()) {
     policy_ack_deep_sleep();
@@ -3826,6 +4030,7 @@ static void handle_serial_commands() {
     case 'x':
     case 'X':
       Serial.println("\nRebooting...");
+      boot_health_before_deliberate_stop();
       witness_persist_chain_state();
 #if FEATURE_THERMAL_WATCHDOG
       thermal_wd_persist();

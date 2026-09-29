@@ -47,6 +47,39 @@ Ordered by consequence, not by effort.
 
 ### P0 — the A/B rollback safety net is written but inert in shipping builds
 
+> **Re-checked 2026-09-29 — the premise below was wrong, and the rest is now
+> compile-checked, not bench-verified.** The original text is kept as the
+> record. What the tree and the upstream cores actually say:
+>
+> - **The rollback config was never missing.** An Arduino build takes its
+>   bootloader and `sdkconfig.h` precompiled from the core, not from our
+>   `sdkconfig.defaults`, and the cores this tree pins set
+>   `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` (arduino-esp32 2.0.17's
+>   precompiled `sdkconfig` for esp32 / esp32-s3 / esp32-c3; the 3.x
+>   lib-builder's common defconfig). So the `verifyRollbackLater()` override
+>   was compiled in all along, and every shipping product already calls
+>   `securacv_ota_boot_self_test()`. What changed: the `#if` that would have
+>   compiled the override out is now an `#error`, so a core that drops the
+>   config fails the build instead of disarming the net quietly
+>   (`firmware/common/ota/src/securacv_ota.cpp` and its two sketch copies).
+> - **Mark-valid-after-healthy.** The PlatformIO `canary` now confirms a new
+>   image at a healthy gate — `setup()` returned and `loop()` ran 30 s, or
+>   the loop chose to restart or deep-sleep — instead of mid-`setup()`, so a
+>   crash in the first seconds of `loop()` reverts too. The other products
+>   keep their confirmation points (`firmware_ota.md`).
+> - **Crash-loop counter + safe mode.** Wired into the PlatformIO `canary`
+>   through `firmware/common/health/boot_guard.h` (NVS, not RTC: it must
+>   survive a power cut). Four unhealthy boots of a confirmed image stop in
+>   a serial safe mode; a different image, a healthy boot or a confirmed
+>   operator clear resets it. Host-tested (`test_boot_policy.cpp`,
+>   `test_boot_guard.cpp`). `canary-wap` keeps its own older counter.
+>   **Not wired:** canary-display, Sense, Vision, Sentinel — the display's
+>   `main.cpp` compiles into the Lab emulator and its sources are mirrored
+>   into the Arduino sketch, so wiring it is its own change.
+> - **Still open, and still the point of this item:** the bench test.
+>   `V1_BENCH_TEST_RUNBOOK.md` Track E is the deliberate bad-image flash; the
+>   `SCV_BENCH_CRASH_AFTER_MS` build flag makes the bad image.
+
 The highest-stakes gap in the window, and it is invisible from the outside
 because the engine looks done.
 
@@ -159,7 +192,8 @@ Spread across the window and never collected in one place:
 - The `n` console command wants a real-terminal smoke test.
 - The nightstand-s3 PSRAM mode carries an explicit *"VERIFY on the bench"*
   comment in `firmware/envs/platformio/canary-display.ini`.
-- The P0 rollback work above needs a deliberate bad-image flash.
+- The P0 rollback work above needs a deliberate bad-image flash — now
+  written down as Track E of the runbook below.
 
 **Do:** one bench session against
 [`docs/V1_BENCH_TEST_RUNBOOK.md`](V1_BENCH_TEST_RUNBOOK.md), extended to cover
