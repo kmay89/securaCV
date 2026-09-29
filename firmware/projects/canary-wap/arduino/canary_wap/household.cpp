@@ -467,9 +467,14 @@ bool get_stats(Stats* out) {
 // remaining are user-visible and NOT noised.
 bool get_stats_for_export(Stats* out) {
   if (!get_stats(out)) return false;
-  out->total_resolves_attempted = dp::noisy_u32(out->total_resolves_attempted, 1);
-  out->total_resolves_matched   = dp::noisy_u32(out->total_resolves_matched,   1);
-  out->total_non_rpa_seen       = dp::noisy_u32(out->total_non_rpa_seen,       1);
+  // One release, 3 draws, paid for up front (dp.h BUDGET). Refused or
+  // cut short: the export is withheld and `out` holds nothing, raw or noised.
+  dp::Release rel(3);
+  if (!rel.ok()) { memset(out, 0, sizeof(*out)); return false; }
+  out->total_resolves_attempted = rel.u32(out->total_resolves_attempted, 1);
+  out->total_resolves_matched   = rel.u32(out->total_resolves_matched,   1);
+  out->total_non_rpa_seen       = rel.u32(out->total_non_rpa_seen,       1);
+  if (!rel.complete()) { memset(out, 0, sizeof(*out)); return false; }
   return true;
 }
 

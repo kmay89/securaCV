@@ -302,6 +302,25 @@ clean-evlog-load:
 run: run-evlog-load
 clean: clean-evlog-load
 
+# The differential-privacy budget (dp.h / dp.cpp) is enforced and fails
+# closed: all-or-nothing reservations, value-independent refusals, exact
+# exhaustion, reset on rotation, no overspend under racing threads, and the
+# calibrated noise scale. The REAL dp.cpp over stubs/dp.
+DPBUDGET_BIN = test_dp_budget
+DPBUDGET_SRC = test_dp_budget.cpp
+
+$(DPBUDGET_BIN): $(DPBUDGET_SRC) $(SRC_DIR)/dp.cpp $(SRC_DIR)/dp.h $(SRC_DIR)/health_log.h \
+                 $(wildcard stubs/dp/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -pthread -I stubs/dp -I $(SRC_DIR) -o $@ $(DPBUDGET_SRC) $(SRC_DIR)/dp.cpp
+
+.PHONY: run-dp-budget clean-dp-budget
+run-dp-budget: $(DPBUDGET_BIN)
+	$(call run_marked,$(DPBUDGET_BIN))
+clean-dp-budget:
+	rm -f $(DPBUDGET_BIN)
+run: run-dp-budget
+clean: clean-dp-budget
+
 $(BEACON_TAMPER_BIN): $(BEACON_TAMPER_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_TAMPER_SRC) -lcrypto
 

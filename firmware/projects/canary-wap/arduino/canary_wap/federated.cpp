@@ -48,27 +48,39 @@ static bool throttle_allows_build(uint32_t last_build_ms, bool force) {
   return elapsed_ms(last_build_ms, millis()) >= SHARE_BUILD_MIN_INTERVAL_MS;
 }
 
-// Apply DP noise to a single bucket share in-place. count gets noise
-// with sensitivity 1; sums get noise scaled by feature sensitivity.
-static void apply_dp_noise_to_bucket(BaselineShareBucket* b) {
+// Draws per bucket: count, then sum and sum_sq for each feature.
+static constexpr uint16_t DRAWS_PER_BUCKET = 1 + 2 * baseline::FEATURE_COUNT;
+// Draws per share. Charged by sequential composition (dp.h BUDGET): at the
+// default ε = 1 that is 24 x 9 = 216 ε against a 4 ε session budget, so the
+// share is always withheld today. Charging the disjoint hour buckets by
+// parallel composition (9 ε) would still exceed 4 ε. Unblocking federated
+// sharing is a budget / accounting decision, not a code fix.
+static constexpr uint16_t SHARE_DRAWS =
+    (uint16_t)(baseline::BUCKET_COUNT * DRAWS_PER_BUCKET);
+
+// Apply DP noise to a single bucket share in-place, drawing from `rel`.
+// count gets noise with sensitivity 1; sums get noise scaled by feature
+// sensitivity.
+static void apply_dp_noise_to_bucket(BaselineShareBucket* b, dp::Release& rel) {
   // Count: sensitivity = 1 (one event affects count by 1).
-  b->count = (uint16_t)dp::noisy_u32((uint32_t)b->count, 1);
+  const uint32_t noisy_count = rel.u32((uint32_t)b->count, 1);
+  b->count = noisy_count > UINT16_MAX ? UINT16_MAX : (uint16_t)noisy_count;
 
   for (uint8_t i = 0; i < baseline::FEATURE_COUNT; i++) {
     // sum: sensitivity ~= max feature value; one event shifts sum by up
-    // to that. Use noisy_i32 to allow negative noise (sums can be neg).
-    b->sum[i] = dp::noisy_i32(b->sum[i], SUM_SENSITIVITY[i]);
+    // to that. Signed draw to allow negative noise (sums can be neg).
+    b->sum[i] = rel.i32(b->sum[i], SUM_SENSITIVITY[i]);
 
     // sum_sq: sensitivity = max_feature² (one event shifts sum_sq by
-    // up to that). Since dp::* doesn't have an i64 path, we draw a
-    // single noisy_i32 with the sensitivity clamped to UINT32_MAX and
-    // add it to the int64 accumulator with saturation guards. The
-    // clamp is acceptable because SUM_SENSITIVITY²  (≤ 65025 for our
-    // worst-case feature) stays well under UINT32_MAX.
+    // up to that). There is no i64 draw, so we draw one signed noise
+    // term with the sensitivity clamped to UINT32_MAX and add it to the
+    // int64 accumulator with saturation guards. The clamp is acceptable
+    // because SUM_SENSITIVITY²  (≤ 65025 for our worst-case feature)
+    // stays well under UINT32_MAX.
     const uint64_t sens_sq = (uint64_t)SUM_SENSITIVITY[i] * SUM_SENSITIVITY[i];
     const uint32_t sens_clamped =
         sens_sq > UINT32_MAX ? UINT32_MAX : (uint32_t)sens_sq;
-    const int32_t noise = dp::noisy_i32(0, sens_clamped);
+    const int32_t noise = rel.i32(0, sens_clamped);
     if      (noise > 0 && b->sum_sq[i] > INT64_MAX - noise) b->sum_sq[i] = INT64_MAX;
     else if (noise < 0 && b->sum_sq[i] < INT64_MIN - noise) b->sum_sq[i] = INT64_MIN;
     else                                                    b->sum_sq[i] += noise;
@@ -117,6 +129,13 @@ bool build_baseline_share(BaselineShare* out, bool force) {
   if (!throttle_allows_build(s_last_baseline_build_ms, force)) return false;
 
   memset(out, 0, sizeof(*out));
+
+  // Pay for every draw before any raw bucket is copied in (dp.h BUDGET).
+  // Refused: nothing is built, and the throttle clock and built counter
+  // are left alone so the next session can try again.
+  dp::Release rel(SHARE_DRAWS);
+  if (!rel.ok()) return false;
+
   out->magic         = MAGIC_BASELINE;
   out->wire_version  = WIRE_VERSION_BASELINE;
   out->bucket_count  = baseline::BUCKET_COUNT;
@@ -125,7 +144,8 @@ bool build_baseline_share(BaselineShare* out, bool force) {
   for (uint8_t i = 0; i < baseline::BUCKET_COUNT; i++) {
     baseline::RemoteBucketShare snap;
     if (!baseline::snapshot_bucket(i, &snap)) {
-      // Should not happen; defensive.
+      // Should not happen; defensive. Never hand back a half-built share.
+      memset(out, 0, sizeof(*out));
       return false;
     }
     BaselineShareBucket* b = &out->buckets[i];
@@ -134,7 +154,12 @@ bool build_baseline_share(BaselineShare* out, bool force) {
       b->sum[f]    = snap.sum[f];
       b->sum_sq[f] = snap.sum_sq[f];
     }
-    apply_dp_noise_to_bucket(b);
+    apply_dp_noise_to_bucket(b, rel);
+  }
+  if (!rel.complete()) {
+    // A refused draw left a raw value in place: the share never leaves.
+    memset(out, 0, sizeof(*out));
+    return false;
   }
 
   s_last_baseline_build_ms = millis();
@@ -277,14 +302,19 @@ bool get_stats(Stats* out) {
 
 bool get_stats_for_export(Stats* out) {
   if (!get_stats(out)) return false;
-  out->total_baseline_built   = dp::noisy_u32(out->total_baseline_built,   1);
-  out->total_familiar_built   = dp::noisy_u32(out->total_familiar_built,   1);
-  out->total_baseline_merged  = dp::noisy_u32(out->total_baseline_merged,  1);
-  out->total_familiar_merged  = dp::noisy_u32(out->total_familiar_merged,  1);
-  out->total_rejected_version = dp::noisy_u32(out->total_rejected_version, 1);
-  out->total_rejected_magic   = dp::noisy_u32(out->total_rejected_magic,   1);
-  out->total_rejected_size    = dp::noisy_u32(out->total_rejected_size,    1);
+  // One release, 7 draws, paid for up front (dp.h BUDGET). Refused or
+  // cut short: the export is withheld and `out` holds nothing, raw or noised.
+  dp::Release rel(7);
+  if (!rel.ok()) { memset(out, 0, sizeof(*out)); return false; }
+  out->total_baseline_built   = rel.u32(out->total_baseline_built,   1);
+  out->total_familiar_built   = rel.u32(out->total_familiar_built,   1);
+  out->total_baseline_merged  = rel.u32(out->total_baseline_merged,  1);
+  out->total_familiar_merged  = rel.u32(out->total_familiar_merged,  1);
+  out->total_rejected_version = rel.u32(out->total_rejected_version, 1);
+  out->total_rejected_magic   = rel.u32(out->total_rejected_magic,   1);
+  out->total_rejected_size    = rel.u32(out->total_rejected_size,    1);
   // last_build_age_ms is informational; not noised.
+  if (!rel.complete()) { memset(out, 0, sizeof(*out)); return false; }
   return true;
 }
 
@@ -306,10 +336,32 @@ bool conformance_self_test() {
   const uint32_t saved_rmag = s_total_rejected_magic;
   const uint32_t saved_rsz = s_total_rejected_size;
 
-  // 1. Build a baseline share with force=true (bypass throttle), verify
-  //    magic + version + counts in the header.
+  // 1. Build a baseline share with force=true (bypass throttle). The DP
+  //    budget is enforced (dp.h): when this session cannot pay for the
+  //    whole share, the build must be refused, spend nothing, and hand
+  //    back no bucket data; when it can, the header must be right. At the
+  //    shipped 4 ε budget a share (SHARE_DRAWS x ε) is always refused.
   static BaselineShare bsh;  // 'static' to keep stack pressure low (~1.2 KB)
-  const bool b_ok = build_baseline_share(&bsh, /*force*/true);
+  const bool affordable =
+      (uint32_t)SHARE_DRAWS * dp::DEFAULT_EPSILON_X1000 <= dp::remaining_budget_x1000();
+  const uint32_t spent_before = dp::consumed_budget_x1000();
+  const bool built = build_baseline_share(&bsh, /*force*/true);
+  bool b_ok;
+  if (affordable) {
+    b_ok = built;
+  } else {
+    bool empty = true;
+    const uint8_t* bytes = (const uint8_t*)&bsh;
+    for (size_t k = 0; k < sizeof(bsh); k++) {
+      if (bytes[k] != 0) { empty = false; break; }
+    }
+    b_ok = !built && empty && dp::consumed_budget_x1000() == spent_before;
+    // Steps 2-3 need a well-formed header to corrupt; build one by hand.
+    bsh.magic         = MAGIC_BASELINE;
+    bsh.wire_version  = WIRE_VERSION_BASELINE;
+    bsh.bucket_count  = baseline::BUCKET_COUNT;
+    bsh.feature_count = baseline::FEATURE_COUNT;
+  }
   const bool b_hdr =
       bsh.magic == MAGIC_BASELINE &&
       bsh.wire_version == WIRE_VERSION_BASELINE &&

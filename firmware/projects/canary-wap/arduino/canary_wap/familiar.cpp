@@ -448,21 +448,26 @@ bool get_stats(Stats* out) {
 
 bool get_stats_for_export(Stats* out) {
   if (!get_stats(out)) return false;
+  // One release, 9 draws, paid for up front (dp.h BUDGET). Refused or
+  // cut short: the export is withheld and `out` holds nothing, raw or noised.
+  dp::Release rel(9);
+  if (!rel.ok()) { memset(out, 0, sizeof(*out)); return false; }
   // Activity counters and Bloom-filter loads leak event frequency; both
   // get Gaussian noise. Rotation count (low-info) is also noised for
   // consistency. ms_until_next_rotation is deterministic from rotation
   // cadence, not privacy-sensitive.
-  out->total_notes                  = dp::noisy_u32(out->total_notes,                  1);
-  out->total_rotations              = dp::noisy_u32(out->total_rotations,              1);
-  out->total_ambient_queries        = dp::noisy_u32(out->total_ambient_queries,        1);
-  out->total_ambient_matches        = dp::noisy_u32(out->total_ambient_matches,        1);
-  out->total_always_ignored_queries = dp::noisy_u32(out->total_always_ignored_queries, 1);
-  out->total_always_ignored_matches = dp::noisy_u32(out->total_always_ignored_matches, 1);
+  out->total_notes                  = rel.u32(out->total_notes,                  1);
+  out->total_rotations              = rel.u32(out->total_rotations,              1);
+  out->total_ambient_queries        = rel.u32(out->total_ambient_queries,        1);
+  out->total_ambient_matches        = rel.u32(out->total_ambient_matches,        1);
+  out->total_always_ignored_queries = rel.u32(out->total_always_ignored_queries, 1);
+  out->total_always_ignored_matches = rel.u32(out->total_always_ignored_matches, 1);
   // Bit-set counts: a single note_fingerprint() flips up to BLOOM_HASHES = 8
   // bits; sensitivity is 8 for these popcount-style exports.
-  out->today_bits_set          = dp::noisy_u32(out->today_bits_set,          BLOOM_HASHES);
-  out->yesterday_bits_set      = dp::noisy_u32(out->yesterday_bits_set,      BLOOM_HASHES);
-  out->always_ignored_bits_set = dp::noisy_u32(out->always_ignored_bits_set, IGNORE_HASHES);
+  out->today_bits_set          = rel.u32(out->today_bits_set,          BLOOM_HASHES);
+  out->yesterday_bits_set      = rel.u32(out->yesterday_bits_set,      BLOOM_HASHES);
+  out->always_ignored_bits_set = rel.u32(out->always_ignored_bits_set, IGNORE_HASHES);
+  if (!rel.complete()) { memset(out, 0, sizeof(*out)); return false; }
   return true;
 }
 
