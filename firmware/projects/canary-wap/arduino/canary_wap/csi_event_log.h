@@ -114,10 +114,36 @@ constexpr size_t LOAD_TAIL_BYTES = 128u * 1024u;
  * this; not changed here, since bundle ids also come from a separate,
  * unpersisted allocator (0x80000000 up, reset every boot).
  *
+ * A dismissal survives the reboot: a record the tail also holds a
+ * dismissal line for (flush_dismissals() below) is restored dismissed, and
+ * the dismissal line itself is not a row. If the tail dismisses more ids
+ * than the ring holds, or the set of them cannot be allocated, every row is
+ * restored dismissed rather than any dismissal undone.
+ *
  * Returns the number of rows injected (the ring keeps its newest
  * CSI_EVENT_RING_CAP of them). Read-only on the card.
  */
 size_t load_into_ring();
+
+/**
+ * Record on the card that the user dismissed `event_id` (csi_event_dismiss),
+ * so load_into_ring() does not bring it back undismissed after a reboot.
+ * queue_dismissal() is safe from any task (the HTTP handler) and only
+ * queues; flush_dismissals(), on the loop task where append() runs, appends
+ * the dismissed ring row as one more line in the usual format, with
+ * "dismissed":1. Nothing new reaches the card: the same record append()
+ * already wrote, now marked dismissed. Best-effort like append(): with no
+ * card, a card that is not ours, or a failed write, the dismissal holds for
+ * this boot only. queue_dismissal() is false when the queue (8) is full.
+ * iterate_since() does not replay dismissal lines.
+ */
+bool queue_dismissal(uint32_t event_id);
+size_t flush_dismissals();
+
+#ifdef CSI_TEST_HOST_BUILD
+/** Host tests only: forget this "boot"'s load latch, to simulate a reboot. */
+void test_rearm_load();
+#endif
 
 /**
  * Iterate events with id strictly greater than `since_event_id` and

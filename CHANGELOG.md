@@ -37,6 +37,37 @@ build is the first ESP32 compile they get.
   served counter changes. Budget size and per-bucket accounting are open
   decisions. Host-tested by `tests_host/test_dp_budget.cpp`, which runs the
   real `dp.cpp`, eight racing threads included.
+- **A reboot no longer refills the DP budget, and a rotation cannot be
+  raced** (review of the change above). `rf_presence::init()` restores the
+  4-hour session epoch from NVS, but the ledger started at zero on every
+  boot, so each reboot inside a session granted a whole new budget. Every
+  reservation now writes the session's spend with its epoch to one NVS
+  blob (`dp_ledger`, next to `rf_epoch`) before any draw is honored, and
+  `dp::restore_budget()` reads it back at boot. A write that fails refuses
+  the release. A ledger that cannot be read, or that names a later epoch
+  or more than the budget, reads as spent until the next rotation, and so
+  does a budget nobody restored (safe mode). No stored ledger at all, as on
+  a first boot, gives a fresh budget. Separately, `reset_budget()` could
+  erase a reservation while a release on another task was still drawing
+  against it. The ledger now carries a generation that every reset and
+  restore moves, and a release drawn, or checked with `complete()`, after
+  a reset is refused. Host-tested by new cases in `test_dp_budget.cpp`
+  over a fake ledger store. The NVS store itself (`rf_presence.cpp`) has
+  not been compiled for the ESP32 or run. **Found, not changed:** the
+  owner-authenticated `POST /api/rf/rotate` rotates the session, and with
+  it the budget, on demand.
+- **A dismissed event stays dismissed after a reboot** (same review).
+  `csi_event_dismiss()` changed only the ring, so the reload above brought
+  the event back as `dismissed:0`. The dismiss handler now queues the id,
+  and the loop task (where every other log write happens) appends the
+  dismissed ring row as one more line in the usual format. The load honors
+  it: that record is restored dismissed, and the dismissal line is not a
+  row of its own. If there are more dismissals than the ring holds, or no
+  heap to track them, every row is restored dismissed. MQTT backfill does
+  not replay dismissal lines. With no card, or a card that is not this
+  device's, the dismissal lasts only until the reboot, as before.
+  Host-tested by `tests_host/test_csi_event_log_dismiss.cpp` over the RAM
+  card.
 - **`firmware/FEATURES.md`: Multi-link fusion ✅ → ⚠️** for canary (PIO)
   and canary-wap. Motion direction and the breathing median are deferred
   in `core_multilink_fusion.cpp` and not built, and the 2-link gate that is

@@ -12,13 +12,21 @@
  *     over-drawing a reservation, a refused release, sensitivity 0, ε 0;
  *   - the budget runs out exactly at DEFAULT_BUDGET_X1000 and reset_budget()
  *     (session rotation) restores it;
+ *   - a reboot inside the session does not: every reservation is persisted
+ *     with its epoch before a draw is honored, restore_budget() picks the
+ *     spend back up, a failed write refuses the release, and a ledger that
+ *     cannot be read (or names a later epoch, or more than the budget)
+ *     reads as spent; so does a budget nobody restored;
+ *   - a rotation cannot be raced: a release reserved before a reset can
+ *     neither draw nor complete after it;
  *   - concurrent releases can never together overspend (the reservation is
  *     a compare-and-swap);
  *   - an honored draw is the counter plus noise of the calibrated scale.
  *
  * What it does not pin: that every exporter uses a Release (dp.h no longer
  * offers any other way to draw noise, so an exporter that skipped it would
- * not compile), and the on-device RNG. */
+ * not compile), the on-device RNG, and the NVS ledger_store in
+ * rf_presence.cpp (a fake stands in for it here). */
 
 #include "dp.h"
 #include "health_log.h"
@@ -33,6 +41,34 @@
 void health_log(LogLevel, LogCategory, const char*) {}
 void log_health(LogLevel, LogCategory, const char*, const char*) {}
 
+// A fake ledger_store: the NVS record a reboot would find.
+static bool     g_store_present = false;
+static uint32_t g_store_epoch = 0;
+static uint32_t g_store_consumed = 0;
+static bool     g_store_read_fails = false;
+static bool     g_store_write_fails = false;
+static uint32_t g_store_writes = 0;
+
+namespace dp {
+namespace ledger_store {
+Read read(uint32_t* epoch, uint32_t* consumed_x1000) {
+  if (g_store_read_fails) return READ_FAILED;
+  if (!g_store_present) return READ_ABSENT;
+  *epoch = g_store_epoch;
+  *consumed_x1000 = g_store_consumed;
+  return READ_OK;
+}
+bool write(uint32_t epoch, uint32_t consumed_x1000) {
+  if (g_store_write_fails) return false;
+  g_store_present = true;
+  g_store_epoch = epoch;
+  g_store_consumed = consumed_x1000;
+  g_store_writes++;
+  return true;
+}
+}  // namespace ledger_store
+}  // namespace dp
+
 static int g_fail = 0;
 #define CHECK(cond, msg) do { \
   if (!(cond)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, msg); g_fail++; } \
@@ -43,7 +79,13 @@ int main() {
   const uint16_t E = dp::DEFAULT_EPSILON_X1000;
   CHECK(B == 4000 && E == 1000, "shipped parameters: 4 ε a session, 1 ε a draw");
 
-  dp::reset_budget();
+  // ── Before the ledger is restored, nothing is released. ─────────────────
+  {
+    CHECK(dp::budget_exhausted(), "a budget nobody restored reads as spent");
+    dp::Release rel(1);
+    CHECK(!rel.ok() && rel.u32(42, 1) == 0, "and releases nothing");
+  }
+  CHECK(dp::restore_budget(1), "a first boot (no stored ledger) restores");
   CHECK(dp::remaining_budget_x1000() == B, "a fresh session holds the whole budget");
 
   // ── A release bigger than the budget: all or nothing. ────────────────────
@@ -89,9 +131,78 @@ int main() {
     CHECK(!rel.ok() && rel.u32(42, 1) == 0, "an exhausted session releases nothing");
   }
 
+  // ── A reboot inside the session does not refill it. ──────────────────────
+  CHECK(g_store_present && g_store_epoch == 1 && g_store_consumed == B,
+        "every granted reservation was persisted with its epoch");
+  CHECK(dp::restore_budget(1) && dp::budget_exhausted(),
+        "a reboot into the same epoch restores the spend, not a fresh budget");
+  {
+    dp::Release rel(1);
+    CHECK(!rel.ok(), "so the rebooted session releases nothing more");
+  }
+  CHECK(dp::restore_budget(2) && dp::remaining_budget_x1000() == B,
+        "a boot into a later epoch (an earlier session's ledger) is a fresh budget");
+  {
+    dp::Release rel(2);
+    CHECK(rel.ok() && g_store_epoch == 2 && g_store_consumed == 2 * E,
+          "and its first reservation is persisted against the new epoch");
+  }
+  CHECK(dp::restore_budget(2) && dp::consumed_budget_x1000() == 2 * E,
+        "a partial spend survives a reboot exactly");
+
+  // ── Failures of the store fail closed. ──────────────────────────────────
+  {
+    const uint32_t writes = g_store_writes;
+    g_store_write_fails = true;
+    dp::Release rel(1);
+    CHECK(!rel.ok() && rel.u32(99, 1) == 0, "a reservation that cannot be persisted is refused");
+    CHECK(dp::consumed_budget_x1000() == 2 * E && g_store_writes == writes,
+          "and leaves the ledger as it was");
+    g_store_write_fails = false;
+  }
+  g_store_read_fails = true;
+  CHECK(!dp::restore_budget(2) && dp::budget_exhausted(), "an unreadable ledger reads as spent");
+  g_store_read_fails = false;
+  g_store_epoch = 9;
+  CHECK(!dp::restore_budget(2) && dp::budget_exhausted(),
+        "a ledger naming a later epoch than the session reads as spent");
+  g_store_epoch = 2;
+  g_store_consumed = B + 1;
+  CHECK(!dp::restore_budget(2) && dp::budget_exhausted(),
+        "a ledger holding more than the budget reads as spent");
+  g_store_consumed = 2 * E;
+
   // ── Rotation. ────────────────────────────────────────────────────────────
-  dp::reset_budget();
+  dp::reset_budget(3);
   CHECK(dp::remaining_budget_x1000() == B, "session rotation restores the budget");
+
+  // ── A release cannot cross a rotation. ───────────────────────────────────
+  {
+    dp::Release old_rel(2);
+    CHECK(old_rel.ok(), "a release reserved in session 3");
+    (void)old_rel.u32(5, 1);
+    dp::reset_budget(4);          // another task rotates the session
+    CHECK(old_rel.u32(123456, 1) == 0, "cannot draw after the rotation");
+    CHECK(!old_rel.complete(), "and is not complete, so its export is withheld");
+    dp::Release fresh(4);
+    CHECK(fresh.ok() && dp::remaining_budget_x1000() == 0,
+          "the new session's budget is its own, and exactly the budget");
+  }
+  {
+    dp::reset_budget(5);
+    dp::Release rel(1);
+    (void)rel.u32(5, 1);
+    CHECK(rel.complete(), "a release whose draws all landed is complete ...");
+    dp::reset_budget(6);
+    CHECK(!rel.complete(), "... until the session it was paid from is reset");
+  }
+  {
+    dp::reset_budget(7);
+    dp::Release rel(1);
+    CHECK(dp::restore_budget(7) && !rel.complete() && rel.u32(1, 1) == 0,
+          "a restore is a new generation too");
+  }
+  dp::reset_budget(8);
 
   // ── Draws the reservation did not pay for. ──────────────────────────────
   {
@@ -116,7 +227,7 @@ int main() {
   }
 
   // ── Concurrency: releases racing on one budget never overspend. ─────────
-  dp::reset_budget();
+  dp::reset_budget(9);
   {
     std::atomic<int> granted{0};
     std::vector<std::thread> ts;
@@ -131,6 +242,7 @@ int main() {
     for (auto& t : ts) t.join();
     CHECK(granted.load() == (int)(B / E), "8 racing threads get exactly budget / ε releases");
     CHECK(dp::consumed_budget_x1000() == B, "and the ledger ends exactly at the budget");
+    CHECK(g_store_epoch == 9 && g_store_consumed == B, "and the persisted ledger says so");
   }
 
   // ── Noise scale: the calibrated σ, not a token amount. ───────────────────
@@ -140,7 +252,7 @@ int main() {
     double sum = 0, sum_sq = 0;
     const int N = 4000;
     for (int i = 0; i < N; i++) {
-      dp::reset_budget();
+      dp::reset_budget(10);
       dp::Release rel(1);
       const double d = (double)rel.i32(0, 1);
       sum += d;

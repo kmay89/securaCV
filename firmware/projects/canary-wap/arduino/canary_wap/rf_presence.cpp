@@ -742,6 +742,58 @@ static void fsm_tick(uint32_t now_ms) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// DIFFERENTIAL-PRIVACY LEDGER STORE (dp.h, ledger_store)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The session's DP spend, kept next to the session epoch it belongs to. One
+// small NVS blob, rewritten only when a release is granted (a handful of
+// times a session at the shipped budget).
+
+namespace {
+constexpr const char* DP_LEDGER_KEY = "dp_ledger";
+constexpr uint32_t DP_LEDGER_MAGIC = 0x44504c31u;  // "DPL1"
+struct DpLedgerRecord {
+  uint32_t magic;
+  uint32_t epoch;
+  uint32_t consumed_x1000;
+};
+}  // namespace
+
+}  // namespace rf_presence
+
+namespace dp {
+namespace ledger_store {
+
+Read read(uint32_t* epoch, uint32_t* consumed_x1000) {
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.begin(true)) return READ_FAILED;
+  Read r = READ_FAILED;
+  if (!nvs.isKey(rf_presence::DP_LEDGER_KEY)) {
+    r = READ_ABSENT;
+  } else if (nvs.getBytesLength(rf_presence::DP_LEDGER_KEY) == sizeof(rf_presence::DpLedgerRecord)) {
+    rf_presence::DpLedgerRecord rec;
+    if (nvs.getBytes(rf_presence::DP_LEDGER_KEY, &rec, sizeof(rec)) == sizeof(rec) &&
+        rec.magic == rf_presence::DP_LEDGER_MAGIC) {
+      *epoch = rec.epoch;
+      *consumed_x1000 = rec.consumed_x1000;
+      r = READ_OK;
+    }
+  }
+  nvs.end();
+  return r;
+}
+
+bool write(uint32_t epoch, uint32_t consumed_x1000) {
+  const rf_presence::DpLedgerRecord rec = {rf_presence::DP_LEDGER_MAGIC, epoch, consumed_x1000};
+  return nvs_store::set_blob(rf_presence::DP_LEDGER_KEY, &rec, sizeof(rec));
+}
+
+}  // namespace ledger_store
+}  // namespace dp
+
+namespace rf_presence {
+
+// ════════════════════════════════════════════════════════════════════════════
 // PUBLIC API — INITIALIZATION
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -764,6 +816,11 @@ bool init() {
   // Load session epoch
   s_session_epoch = nvs_store::get_u32("rf_epoch", 0);
   s_session_start_ms = millis();
+
+  // Pick up this session's differential-privacy spend, so a reboot inside
+  // the epoch does not refill the budget (dp.h, BUDGET). Fails closed: an
+  // unreadable ledger leaves the budget spent until the next rotation.
+  dp::restore_budget(s_session_epoch);
 
   // Load settings with validation using named bounds constants
   RfPresenceSettings stored;
@@ -1055,7 +1112,7 @@ void rotate_session() {
   // our MQTT / HTTP surface over a 4 h window now gets a fresh ε budget
   // after each rotation; they can't compose queries across sessions to
   // aggregate below the per-query DP guarantee.
-  dp::reset_budget();
+  dp::reset_budget(s_session_epoch);
 
   health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
     "Session rotated, new epoch=%u", s_session_epoch);

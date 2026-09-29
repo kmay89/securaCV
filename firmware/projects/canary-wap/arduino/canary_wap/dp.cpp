@@ -23,6 +23,7 @@
 
 #include <string.h>
 #include <atomic>
+#include <mutex>
 #include <esp_system.h>  // esp_fill_random
 
 namespace dp {
@@ -102,43 +103,120 @@ int32_t gaussian_sample(uint32_t sigma_units) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// BUDGET (enforced)
+// BUDGET (enforced, persisted, epoch-tagged)
 // ────────────────────────────────────────────────────────────────────────────
 //
-// One session ledger, spent by Release reservations only. The reservation is
-// a compare-and-swap loop, so two tasks exporting at once can never together
-// spend past the budget: one of them is refused instead.
+// One session ledger. Every change to it (a reservation, a session reset, the
+// boot-time restore) happens under s_ledger_mu, so the value a reservation
+// persists is never older than one another task already persisted. Readers
+// (remaining_budget_x1000 and the draws' generation check) load s_ledger
+// without the lock.
+//
+// s_ledger packs the ledger generation (high 16 bits) with the ε spent in it
+// (low 16 bits). The generation moves on every reset and restore, and a
+// Release remembers the generation it was paid from: a draw, or complete(),
+// in any other generation is refused. So a release cannot finish across a
+// session rotation, and a new session's releases never ride on a reservation
+// the reset erased. 16 bits of generation wrap after 65 536 resets: only a
+// release held open across an exact multiple of that many would pass the
+// check, and a release lives for one export call.
+//
+// Until restore_budget() has read the persisted ledger, the budget reads as
+// spent: a device that never restored it (safe mode, a read failure) releases
+// nothing.
 
-static std::atomic<uint32_t> s_consumed_budget_x1000{0};
+static_assert(DEFAULT_BUDGET_X1000 <= 0xFFFFu, "the ledger packs ε spent into 16 bits");
+
+static constexpr uint32_t pack_ledger(uint32_t gen, uint32_t consumed) {
+  return ((gen & 0xFFFFu) << 16) | (consumed & 0xFFFFu);
+}
+static constexpr uint32_t ledger_gen(uint32_t v)      { return v >> 16; }
+static constexpr uint32_t ledger_consumed(uint32_t v) { return v & 0xFFFFu; }
+
+static std::mutex            s_ledger_mu;
+static std::atomic<uint32_t> s_ledger{pack_ledger(0, DEFAULT_BUDGET_X1000)};
+static uint32_t              s_ledger_epoch = 0;  // guarded by s_ledger_mu
 static std::atomic<uint32_t> s_withheld_releases{0};
 
-// All or nothing: spend `cost` if the session budget covers all of it.
-static bool try_spend(uint32_t cost_x1000) {
+// All or nothing: spend `cost` if the session budget covers all of it AND the
+// new total is durably recorded against this session's epoch. A write that
+// fails refuses the release and leaves the ledger as it was, so what a reboot
+// restores always covers every draw that was honored.
+static bool try_spend(uint32_t cost_x1000, uint32_t* gen_out) {
   if (cost_x1000 == 0) return false;
-  uint32_t cur = s_consumed_budget_x1000.load();
-  for (;;) {
-    if (cur > DEFAULT_BUDGET_X1000 ||
-        cost_x1000 > DEFAULT_BUDGET_X1000 - cur) {
-      return false;
-    }
-    if (s_consumed_budget_x1000.compare_exchange_weak(cur, cur + cost_x1000)) {
-      return true;
-    }
-    // cur was reloaded by the failed exchange; re-check against it.
+  std::lock_guard<std::mutex> lock(s_ledger_mu);
+  const uint32_t cur = s_ledger.load();
+  const uint32_t consumed = ledger_consumed(cur);
+  if (consumed > DEFAULT_BUDGET_X1000 ||
+      cost_x1000 > DEFAULT_BUDGET_X1000 - consumed) {
+    return false;
   }
+  const uint32_t next = consumed + cost_x1000;
+  if (!ledger_store::write(s_ledger_epoch, next)) {
+    health_logging::log(health_logging::LEVEL_ERROR, health_logging::CAT_RF,
+      "DP: could not persist the budget ledger; release withheld");
+    return false;
+  }
+  s_ledger.store(pack_ledger(ledger_gen(cur), next));
+  *gen_out = ledger_gen(cur);
+  return true;
 }
 
 uint32_t remaining_budget_x1000() {
-  const uint32_t c = s_consumed_budget_x1000.load();
+  const uint32_t c = ledger_consumed(s_ledger.load());
   return c >= DEFAULT_BUDGET_X1000 ? 0 : DEFAULT_BUDGET_X1000 - c;
 }
 
-uint32_t consumed_budget_x1000() { return s_consumed_budget_x1000.load(); }
+uint32_t consumed_budget_x1000() { return ledger_consumed(s_ledger.load()); }
 
-void reset_budget() {
-  s_consumed_budget_x1000.store(0);
+void reset_budget(uint32_t epoch) {
+  {
+    std::lock_guard<std::mutex> lock(s_ledger_mu);
+    s_ledger_epoch = epoch;
+    s_ledger.store(pack_ledger(ledger_gen(s_ledger.load()) + 1, 0));
+  }
+  // Nothing to persist: a stored ledger from an earlier epoch reads as a
+  // fresh budget on the next boot, and this epoch's first reservation
+  // writes its own.
   health_logging::log(health_logging::LEVEL_INFO, health_logging::CAT_RF,
     "DP: per-session budget reset");
+}
+
+bool restore_budget(uint32_t epoch) {
+  uint32_t stored_epoch = 0;
+  uint32_t stored_consumed = 0;
+  bool ok;
+  {
+    std::lock_guard<std::mutex> lock(s_ledger_mu);
+    const ledger_store::Read r = ledger_store::read(&stored_epoch, &stored_consumed);
+    uint32_t consumed;
+    if (r == ledger_store::READ_ABSENT) {
+      consumed = 0;                           // nothing ever spent on this device
+      ok = true;
+    } else if (r != ledger_store::READ_OK || stored_consumed > DEFAULT_BUDGET_X1000 ||
+               stored_epoch > epoch) {
+      consumed = DEFAULT_BUDGET_X1000;        // unreadable or inconsistent: spent
+      ok = false;
+    } else if (stored_epoch == epoch) {
+      consumed = stored_consumed;             // a reboot inside the session
+      ok = true;
+    } else {
+      consumed = 0;                           // an earlier session's ledger
+      ok = true;
+    }
+    s_ledger_epoch = epoch;
+    s_ledger.store(pack_ledger(ledger_gen(s_ledger.load()) + 1, consumed));
+  }
+  if (ok) {
+    health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
+      "DP: budget restored for epoch %u (%u of %u spent)",
+      (unsigned)epoch, (unsigned)consumed_budget_x1000(), (unsigned)DEFAULT_BUDGET_X1000);
+  } else {
+    health_logging::logf(health_logging::LEVEL_ERROR, health_logging::CAT_RF,
+      "DP: budget ledger unreadable for epoch %u; budget withheld until the next rotation",
+      (unsigned)epoch);
+  }
+  return ok;
 }
 
 bool budget_exhausted() {
@@ -153,7 +231,7 @@ uint32_t withheld_releases() { return s_withheld_releases.load(); }
 
 Release::Release(uint16_t draws, uint16_t epsilon_x1000, uint32_t delta_inv)
     : draws_left_(draws), epsilon_x1000_(epsilon_x1000), delta_inv_(delta_inv),
-      ok_(false), short_(false) {
+      gen_(0), ok_(false), short_(false) {
   // ε = 0 is infinite noise by definition and a caller bug in practice;
   // zero draws is nothing to pay for. Both refuse rather than spend.
   if (draws == 0 || epsilon_x1000 == 0) {
@@ -161,7 +239,7 @@ Release::Release(uint16_t draws, uint16_t epsilon_x1000, uint32_t delta_inv)
     return;
   }
   const uint32_t cost = (uint32_t)draws * (uint32_t)epsilon_x1000;  // ≤ 65535²  < 2^32
-  ok_ = try_spend(cost);
+  ok_ = try_spend(cost, &gen_);
   if (!ok_) {
     s_withheld_releases.fetch_add(1);
     health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
@@ -171,11 +249,21 @@ Release::Release(uint16_t draws, uint16_t epsilon_x1000, uint32_t delta_inv)
   }
 }
 
+// Still in the ledger generation that paid for it (no reset since).
+bool Release::current() const {
+  return ledger_gen(s_ledger.load()) == gen_;
+}
+
+bool Release::complete() const {
+  return ok_ && !short_ && current();
+}
+
 // Pay one draw out of the reservation, and compute its σ. False (and the
-// release marked short) when the reservation is refused or used up, or when
-// the noise would round to nothing — a zero-σ draw is the raw value.
+// release marked short) when the reservation is refused, used up or from a
+// session that has since been reset, or when the noise would round to
+// nothing — a zero-σ draw is the raw value.
 bool Release::take_draw(uint32_t sensitivity, uint32_t* sigma_units) {
-  if (!ok_ || draws_left_ == 0 || sensitivity == 0) {
+  if (!ok_ || draws_left_ == 0 || sensitivity == 0 || !current()) {
     if (!short_ && ok_) s_withheld_releases.fetch_add(1);
     short_ = true;
     return false;

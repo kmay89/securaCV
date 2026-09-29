@@ -74,6 +74,22 @@
  *
  * The budget resets on rf_presence session rotation so an attacker
  * observing over a 4 h window doesn't get arbitrarily precise aggregation.
+ * It is tied to that session, not to the boot:
+ *   - A reboot does not refill it. Each reservation persists the session's
+ *     spend with its epoch (ledger_store, NVS in the firmware) before any
+ *     draw is honored, and rf_presence::init() hands the restored epoch to
+ *     restore_budget(), which picks the spend back up. A write that fails
+ *     refuses the release. A ledger that cannot be read, or that names a
+ *     later epoch or more than the budget, reads as spent until the next
+ *     rotation; so does a budget nobody restored (safe mode skips
+ *     rf_presence::init()). No stored ledger at all (a first boot) is a
+ *     fresh budget.
+ *   - A rotation cannot be raced. The ledger carries a generation that every
+ *     reset and restore moves, and a Release remembers the generation that
+ *     paid for it: a draw, or complete(), after a reset is refused. So a
+ *     release in flight on another task cannot finish in the new session,
+ *     and the new session's releases never spend a reservation the reset
+ *     erased.
  */
 
 #ifndef SECURACV_DP_H
@@ -127,9 +143,10 @@ class Release {
 
   // True when the session budget paid for every draw this release asked for.
   bool ok() const { return ok_; }
-  // True when ok() and no draw was refused. An exporter releases its
-  // values only when this holds.
-  bool complete() const { return ok_ && !short_; }
+  // True when ok(), no draw was refused, and the session that paid for the
+  // release has not been reset since. An exporter releases its values only
+  // when this holds.
+  bool complete() const;
 
   // Noisy draws. A refused draw returns 0 (independent of `value`) and
   // makes complete() false. Counters clamp to their range.
@@ -138,10 +155,12 @@ class Release {
 
  private:
   bool take_draw(uint32_t sensitivity, uint32_t* sigma_units);
+  bool current() const;
 
   uint16_t draws_left_;
   uint16_t epsilon_x1000_;
   uint32_t delta_inv_;
+  uint32_t gen_;   // the ledger generation that paid for this release
   bool     ok_;
   bool     short_;
 };
@@ -156,8 +175,16 @@ uint32_t remaining_budget_x1000();
 // Total consumed since last reset, for diagnostics.
 uint32_t consumed_budget_x1000();
 
-// Reset the per-session budget. Call from rf_presence::rotate_session().
-void reset_budget();
+// Start a fresh budget for session `epoch`. Call from
+// rf_presence::rotate_session(), after the new epoch is persisted. Releases
+// reserved before the reset can no longer draw or complete.
+void reset_budget(uint32_t epoch);
+
+// Pick up session `epoch`'s spend from ledger_store at boot. Call from
+// rf_presence::init() with the epoch it restored. False when the stored
+// ledger could not be read or does not fit this epoch: the budget then reads
+// as spent until the next reset_budget(). Until this runs, it reads as spent.
+bool restore_budget(uint32_t epoch);
 
 // Convenience: is the per-session budget spent?
 bool budget_exhausted();
@@ -165,6 +192,23 @@ bool budget_exhausted();
 // Releases refused since boot (whole releases the budget could not cover,
 // plus releases cut short by a refused draw). Diagnostics only.
 uint32_t withheld_releases();
+
+// ════════════════════════════════════════════════════════════════════════════
+// LEDGER PERSISTENCE (implemented by the firmware over NVS in rf_presence.cpp;
+// by a fake in tests_host/test_dp_budget.cpp)
+// ════════════════════════════════════════════════════════════════════════════
+
+namespace ledger_store {
+enum Read : uint8_t {
+  READ_OK,      // *epoch and *consumed_x1000 hold the stored ledger
+  READ_ABSENT,  // no ledger stored (first boot)
+  READ_FAILED,  // storage unavailable, or a malformed record
+};
+// Called under the ledger lock; must not call back into dp.
+Read read(uint32_t* epoch, uint32_t* consumed_x1000);
+// True only when the record is durably written.
+bool write(uint32_t epoch, uint32_t consumed_x1000);
+}  // namespace ledger_store
 
 // ════════════════════════════════════════════════════════════════════════════
 // INTROSPECTION

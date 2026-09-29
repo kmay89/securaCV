@@ -23,6 +23,7 @@
 #include <Arduino.h>
 #include <FS.h>
 #include <SD.h>
+#include <atomic>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -244,6 +245,127 @@ void reconcile_truncate_remnants() {
   }
 }
 
+/* Walk the whole lines of the log's last LOAD_TAIL_BYTES, oldest first,
+ * handing each (without its '\n', NUL-terminated) to fn. Starting mid-file,
+ * the first line is a fragment and is dropped; an over-long line is not one
+ * of ours and is dropped; a last line without its '\n' (the torn tail of a
+ * power cut, or a whole record missing only the newline) is handed over and
+ * left to parse(). False when the log could not be opened or seeked.
+ *
+ * Chunked reads instead of one read() per byte, since this runs from setup()
+ * over up to LOAD_TAIL_BYTES; the chunk is small because the caller
+ * (csi_integration::init, inside start_http_server) is already deep in the
+ * loop task's stack. */
+typedef void (*line_fn_t)(const char* line, void* user);
+
+bool for_each_tail_line(line_fn_t fn, void* user) {
+  File f = SD.open(LOG_PATH, FILE_READ);
+  if (!f) return false;
+  const size_t sz = f.size();
+  size_t start = 0;
+  if (sz > LOAD_TAIL_BYTES) {
+    start = sz - LOAD_TAIL_BYTES;
+    if (!f.seek(start)) { f.close(); return false; }
+  }
+  bool skipping = (start > 0);
+  char line[csi_event_log_line::kLineMax];
+  size_t li = 0;
+  bool overlong = false;
+  uint8_t buf[256];
+  for (;;) {
+    const int n = f.read(buf, sizeof(buf));
+    if (n <= 0) break;
+    for (int i = 0; i < n; ++i) {
+      const char c = (char)buf[i];
+      if (c == '\n') {
+        if (!skipping && !overlong && li > 0) {
+          line[li] = '\0';
+          fn(line, user);
+        }
+        skipping = false;
+        overlong = false;
+        li = 0;
+      } else if (!skipping && !overlong) {
+        if (li < sizeof(line) - 1) {
+          line[li++] = c;
+        } else {
+          overlong = true;   /* no record is this long: not one of ours */
+        }
+      }
+    }
+    yield();   /* keep the idle task (and its watchdog) fed on a big tail */
+  }
+  f.close();
+  if (!skipping && !overlong && li > 0) {
+    line[li] = '\0';
+    fn(line, user);
+  }
+  return true;
+}
+
+/* A dismissal on the card. append() writes every record the moment it
+ * commits, when it cannot yet be dismissed, so a line with "dismissed":1 is
+ * never an original: it is the dismissal of the record with that id, a copy
+ * of the ring row written by flush_dismissals(). load_into_ring() honors it
+ * and iterate_since() does not replay it. */
+bool is_dismissal(const csi_event_record_t* rec) { return rec->values.dismissed != 0; }
+
+/* The ids the tail dismisses. Sized to the ring (CSI_EVENT_RING_CAP, 512
+ * rows in csi_event.cpp): more dismissals than that, or no heap for the set,
+ * and every restored row is restored dismissed, so a dismissal is never
+ * undone by running out of room to remember it. */
+constexpr size_t kMaxDismissed = 512;
+struct DismissedSet {
+  uint32_t* ids;
+  size_t    n;
+  bool      all;
+};
+
+bool dismissed_contains(const DismissedSet* set, uint32_t id) {
+  if (set->all) return true;
+  for (size_t i = 0; i < set->n; ++i) {
+    if (set->ids[i] == id) return true;
+  }
+  return false;
+}
+
+void collect_dismissal(const char* line, void* user) {
+  DismissedSet* set = (DismissedSet*)user;
+  csi_event_record_t rec;
+  if (set->all || !csi_event_log_line::parse(line, &rec) || !is_dismissal(&rec)) return;
+  if (dismissed_contains(set, rec.event_id)) return;
+  if (set->n == kMaxDismissed) { set->all = true; return; }
+  set->ids[set->n++] = rec.event_id;
+}
+
+struct RestoreCtx {
+  const DismissedSet* dismissed;
+  size_t restored;
+  size_t refused;
+};
+
+void restore_line(const char* line, void* user) {
+  RestoreCtx* ctx = (RestoreCtx*)user;
+  csi_event_record_t rec;
+  if (!csi_event_log_line::parse(line, &rec)) { ctx->refused++; return; }
+  if (is_dismissal(&rec)) return;   /* honored through the set, not a row of its own */
+  if (dismissed_contains(ctx->dismissed, rec.event_id)) rec.values.dismissed = 1;
+  if (csi_event_inject(&rec)) {
+    ctx->restored++;
+  } else {
+    ctx->refused++;
+  }
+}
+
+/* Dismissals queued by queue_dismissal() on whatever task served the
+ * request, and written by flush_dismissals() on the loop task, where every
+ * other write to the log happens (append() from the chokepoint, the head
+ * truncate inside it). A zero slot is free; event id 0 is never an event. */
+constexpr size_t kPendingDismissals = 8;
+std::atomic<uint32_t> s_pending_dismissals[kPendingDismissals];
+
+bool s_load_latched = false;
+
 }  /* namespace */
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -295,76 +417,65 @@ bool append(const csi_event_record_t* rec) {
 }
 
 size_t load_into_ring() {
-  static bool s_loaded = false;
-  if (s_loaded) return 0;
+  if (s_load_latched) return 0;
   if (!sd_path_ready()) return 0;   /* no card yet (or not ours): try again later */
-  s_loaded = true;                  /* one pass per boot, whatever it finds */
+  s_load_latched = true;            /* one pass per boot, whatever it finds */
 
-  File f = SD.open(LOG_PATH, FILE_READ);
-  if (!f) return 0;
-  const size_t sz = f.size();
-  size_t start = 0;
-  if (sz > LOAD_TAIL_BYTES) {
-    start = sz - LOAD_TAIL_BYTES;
-    if (!f.seek(start)) { f.close(); return 0; }
+  /* Two passes over the tail: first the ids it dismisses (a dismissal is
+   * written after its record, so one pass would inject the row before
+   * reading that it was dismissed), then the records, oldest first. */
+  DismissedSet dismissed = {(uint32_t*)malloc(kMaxDismissed * sizeof(uint32_t)), 0, false};
+  if (!dismissed.ids) dismissed.all = true;
+  if (!for_each_tail_line(collect_dismissal, &dismissed)) {
+    free(dismissed.ids);
+    return 0;
   }
-
-  /* Starting mid-file, the first line is a fragment: drop it. Chunked
-   * reads instead of one read() per byte, since this runs from setup()
-   * over up to LOAD_TAIL_BYTES; the chunk is small because the caller
-   * (csi_integration::init, inside start_http_server) is already deep in
-   * the loop task's stack. */
-  bool skipping = (start > 0);
-  size_t restored = 0;
-  size_t refused  = 0;
-  char line[csi_event_log_line::kLineMax];
-  size_t li = 0;
-  bool overlong = false;
-  uint8_t buf[256];
-  for (;;) {
-    const int n = f.read(buf, sizeof(buf));
-    if (n <= 0) break;
-    for (int i = 0; i < n; ++i) {
-      const char c = (char)buf[i];
-      if (c == '\n') {
-        if (!skipping && !overlong && li > 0) {
-          line[li] = '\0';
-          csi_event_record_t rec;
-          if (csi_event_log_line::parse(line, &rec) && csi_event_inject(&rec)) {
-            restored++;
-          } else {
-            refused++;
-          }
-        }
-        skipping = false;
-        overlong = false;
-        li = 0;
-      } else if (!skipping && !overlong) {
-        if (li < sizeof(line) - 1) {
-          line[li++] = c;
-        } else {
-          overlong = true;   /* no record is this long: not one of ours */
-        }
-      }
-    }
-    yield();   /* keep the idle task (and its watchdog) fed on a big tail */
-  }
-  f.close();
-  /* A last line without its '\n' is the torn tail of a power cut; parse()
-   * refuses a torn record, and a whole one is only missing the newline. */
-  if (!skipping && !overlong && li > 0) {
-    line[li] = '\0';
-    csi_event_record_t rec;
-    if (csi_event_log_line::parse(line, &rec) && csi_event_inject(&rec)) {
-      restored++;
-    } else {
-      refused++;
-    }
-  }
+  RestoreCtx ctx = {&dismissed, 0, 0};
+  const bool read_ok = for_each_tail_line(restore_line, &ctx);
+  free(dismissed.ids);
+  if (!read_ok) return ctx.restored;
   Serial.printf("[EVT-LOG] re-injected %u event(s) from the log tail (the ring keeps its newest; %u line(s) refused)\n",
-                (unsigned)restored, (unsigned)refused);
-  return restored;
+                (unsigned)ctx.restored, (unsigned)ctx.refused);
+  if (dismissed.all) {
+    Serial.println("[EVT-LOG] too many dismissals to track (or no heap): every restored event restored dismissed");
+  }
+  return ctx.restored;
 }
+
+bool queue_dismissal(uint32_t event_id) {
+  if (event_id == 0) return false;
+  for (size_t i = 0; i < kPendingDismissals; ++i) {
+    if (s_pending_dismissals[i].load() == event_id) return true;   /* already queued */
+  }
+  for (size_t i = 0; i < kPendingDismissals; ++i) {
+    uint32_t expected = 0;
+    if (s_pending_dismissals[i].compare_exchange_strong(expected, event_id)) return true;
+  }
+  return false;
+}
+
+size_t flush_dismissals() {
+  size_t written = 0;
+  for (size_t i = 0; i < kPendingDismissals; ++i) {
+    const uint32_t id = s_pending_dismissals[i].exchange(0);
+    if (id == 0) continue;
+    /* The ring row, as the dismissal left it: the same record, in the same
+     * line format, that append() already wrote for this id. */
+    csi_event_record_t rec;
+    if (!csi_event_find(id, &rec) || !rec.values.dismissed) continue;
+    if (append(&rec)) {
+      written++;
+    } else {
+      Serial.printf("[EVT-LOG] dismissal of event %lu not written (no card, or a failed write)\n",
+                    (unsigned long)id);
+    }
+  }
+  return written;
+}
+
+#ifdef CSI_TEST_HOST_BUILD
+void test_rearm_load() { s_load_latched = false; }
+#endif
 
 size_t iterate_since(uint32_t since_event_id, iterate_cb_t cb, void* user) {
   if (!cb || !sd_path_ready()) return 0;
@@ -380,7 +491,8 @@ size_t iterate_since(uint32_t since_event_id, iterate_cb_t cb, void* user) {
     if (c == '\n') {
       line[li] = '\0';
       csi_event_record_t rec;
-      if (csi_event_log_line::parse(line, &rec) && rec.event_id > since_event_id) {
+      if (csi_event_log_line::parse(line, &rec) && !is_dismissal(&rec) &&
+          rec.event_id > since_event_id) {
         if (!cb(&rec, user)) { f.close(); return emitted; }
         emitted++;
       }
@@ -392,7 +504,8 @@ size_t iterate_since(uint32_t since_event_id, iterate_cb_t cb, void* user) {
   if (li > 0 && emitted < BACKFILL_MAX) {
     line[li] = '\0';
     csi_event_record_t rec;
-    if (csi_event_log_line::parse(line, &rec) && rec.event_id > since_event_id) {
+    if (csi_event_log_line::parse(line, &rec) && !is_dismissal(&rec) &&
+        rec.event_id > since_event_id) {
       if (cb(&rec, user)) emitted++;
     }
   }

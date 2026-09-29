@@ -921,6 +921,11 @@ esp_err_t handle_events_dismiss(httpd_req_t* req) {
   while (*digit && (*digit < '0' || *digit > '9')) digit++;
   const uint32_t event_id = (uint32_t)strtoul(digit, nullptr, 10);
   const bool ok = csi_event_dismiss(event_id);
+  /* Persist it (written on the loop task by flush_dismissals), so the
+   * reboot refill does not bring the event back undismissed. */
+  if (ok && !csi_event_log::queue_dismissal(event_id)) {
+    Serial.println("[EVT-LOG] dismissal queue full - this dismissal holds until reboot");
+  }
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, ok ? "{\"ok\":true}" : "{\"ok\":false}", -1);
   return ESP_OK;
@@ -3187,6 +3192,10 @@ void loop(bool run_csi) {
    * purpose: bundles opened before a power-gate pause must still commit
    * on time. Cheap — an 8-slot scan, closes only when overdue. */
   csi_bundler_tick();
+
+  /* Write any dismissal the HTTP handler queued, on this task, where every
+   * other write to the SD event log happens. */
+  (void)csi_event_log::flush_dismissals();
 
 #if FEATURE_BLE_SCAN && FEATURE_MESH_NETWORK
   /* Drain the outbound beacon queue first so events the previous tick
