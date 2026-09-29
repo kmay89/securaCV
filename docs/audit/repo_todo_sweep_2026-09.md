@@ -721,7 +721,7 @@ so — see D2 below.)
   id and a broken Home Assistant pin). Maintainer to choose: halt, or boot
   with a loud, counted ephemeral identity. Found doing F55.
 - [x] **F59 [code] canary-wap's NVS writes report success whatever the write
-  did.** `canary_wap.ino`'s `nvs_store_key` / `nvs_store_u32` /
+  did.** (#1749) `canary_wap.ino`'s `nvs_store_key` / `nvs_store_u32` /
   `nvs_store_bytes` and `tls_store_to_nvs` return true once the session
   opens, `persist_chain_state()` advances `seq_persisted` and
   `chain_persists` regardless, and `note_wall_clock()` writes the birth pair
@@ -747,6 +747,7 @@ so — see D2 below.)
   check_csi_sync.sh. `nvs_store_key` deliberately keeps ignoring its put —
   F58's pending halt-vs-ephemeral call, same posture as the canary's.
 - [x] **F60 [code] canary-wap's NVS session-balance check is textual.**
+  (#1749)
   F53's `test_nvs_session_balance`
   (`firmware/projects/canary-wap/tests_host/`) reads the sketch's sources as
   text: it fails on a block that opens a session and never ends it, or that
