@@ -880,13 +880,15 @@ clean: clean-sketch-logic
 # check_csi_sync.sh). test_nvs_store_lock compiles the REAL nvs_store.h over
 # stubs/nvs_store (Serial, String, a typed Preferences that refuses a double
 # begin and counts closed-handle access) and the canary suite's fake
-# recursive mutex, and runs the canary's scenarios on the WAP's code plus its
-# nvs_store:: helpers and legacy wrappers; it also reads canary_wap.ino for
-# the watchdog static_assert. Built twice: the _nolock binary is the first
-# instance() meeting a failed mutex creation. test_nvs_session_balance reads
-# every sketch source and fails on a block that opens a session and does not
-# close it (the vault's pre-F53 shape). Hooked into `run` and `clean` by
-# prerequisite so it adds no hunk to their lists.
+# recursive mutex, and runs the canary's scenarios on the WAP's code plus the
+# RAII NvsMainSession guard (F60) and the nvs_store:: helpers; it also reads
+# canary_wap.ino for the watchdog static_assert. Built twice: the _nolock
+# binary is the first instance() meeting a failed mutex creation.
+# test_nvs_session_balance reads every sketch source and fails on one that
+# names NvsManager outside nvs_store.h — the rule that keeps every session
+# behind the guard (its first edition balanced begin/end pairs textually;
+# the guard's destructor made the compiler walk the paths instead). Hooked
+# into `run` and `clean` by prerequisite so it adds no hunk to their lists.
 NVSLOCK_BIN        = test_nvs_store_lock
 NVSLOCK_NULL_BIN   = test_nvs_store_lock_nolock
 NVSBAL_BIN         = test_nvs_session_balance

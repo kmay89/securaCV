@@ -104,6 +104,27 @@ if [ -f "$WITSTORE_CANONICAL" ]; then
     fi
 fi
 
+# Chain-state blob codec + persist rules (sweep F59): the canonical pure
+# headers live in firmware/common/witness/; the canary-wap sketch carries
+# byte-identical staged copies so a fresh zip download compiles. The PIO
+# canary tree includes the canonicals directly via -I ../common.
+for chain_header in chain_state.h chain_persist.h; do
+    CHAIN_CANONICAL="firmware/common/witness/$chain_header"
+    CHAIN_STAGED="$STAGED/$chain_header"
+    if [ -f "$CHAIN_CANONICAL" ]; then
+        if [ ! -f "$CHAIN_STAGED" ]; then
+            echo "::error::Missing staged copy: $CHAIN_STAGED"
+            echo "         Run: cp $CHAIN_CANONICAL $CHAIN_STAGED"
+            drift=1
+        elif ! cmp -s "$CHAIN_CANONICAL" "$CHAIN_STAGED"; then
+            echo "::error::Drift detected: $CHAIN_STAGED differs from $CHAIN_CANONICAL"
+            echo "--- diff ($CHAIN_CANONICAL vs $CHAIN_STAGED) ---"
+            diff -u "$CHAIN_CANONICAL" "$CHAIN_STAGED" || true
+            drift=1
+        fi
+    fi
+done
+
 # Provisioning QR grammar (onboarding wave): the canonical shared parser
 # lives in firmware/common/provision_qr/; the canary-wap sketch carries a
 # staged copy (the display's setup.sh stages its own via regen).

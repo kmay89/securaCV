@@ -2284,12 +2284,14 @@ test("pre-configured Wi-Fi is honored: present-but-empty keys, and identity neve
     "firmware/canary/lib/securacv_network/src/securacv_network.cpp",
     "firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
   ];
+  // (nvs\.| nvs->: the wap reaches its NvsManager through the RAII
+  // NvsMainSession guard's operator->, the canary through a reference.)
   for (const path of blobLoaders) {
     const src = read(join(ROOT, path));
-    assert.match(src, /nvs\.isKey\(NVS_KEY_WIFI_SSID\)/,
+    assert.match(src, /nvs(?:\.|->)isKey\(NVS_KEY_WIFI_SSID\)/,
       `${path}: the credential loader no longer distinguishes a string-typed ` +
       "seed from an absent one — a string-seeded board would boot unprovisioned");
-    assert.match(src, /nvs\.getString\(NVS_KEY_WIFI_SSID/,
+    assert.match(src, /nvs(?:\.|->)getString\(NVS_KEY_WIFI_SSID/,
       `${path}: the credential loader no longer falls back to a string-scheme ` +
       "seed — a string-seeded board would read empty credentials and boot unprovisioned");
   }

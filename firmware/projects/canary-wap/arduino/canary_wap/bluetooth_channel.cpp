@@ -479,64 +479,60 @@ static void set_state(BluetoothState new_state) {
 // ════════════════════════════════════════════════════════════════════════════
 
 static void load_settings() {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadOnly()) return;
+  NvsMainSession nvs(true);
+  if (!nvs.isOpen()) return;
 
   // Defaults (used when the device has never saved BT settings) come from
   // bt_defaults.h so the first-boot state matches the struct initializer.
-  g_settings.enabled = nvs.getBool(NVS_KEY_BT_ENABLED, bt_defaults::ENABLED);
-  g_settings.auto_advertise = nvs.getBool(NVS_KEY_BT_AUTO_ADV, bt_defaults::AUTO_ADVERTISE);
-  g_settings.allow_pairing = nvs.getBool(NVS_KEY_BT_ALLOW_PAIR, bt_defaults::ALLOW_PAIRING);
-  g_settings.require_pin = nvs.getBool(NVS_KEY_BT_REQ_PIN, bt_defaults::REQUIRE_PIN);
-  g_settings.tx_power = clamp_tx_power(nvs.getChar(NVS_KEY_BT_TX_PWR, 3));
-  g_settings.inactivity_timeout_ms = nvs.getULong(NVS_KEY_BT_TIMEOUT, INACTIVITY_TIMEOUT_MS);
-  g_settings.long_range_mode = nvs.getBool(NVS_KEY_BT_LONG_RANGE, bt_defaults::LONG_RANGE);
+  g_settings.enabled = nvs->getBool(NVS_KEY_BT_ENABLED, bt_defaults::ENABLED);
+  g_settings.auto_advertise = nvs->getBool(NVS_KEY_BT_AUTO_ADV, bt_defaults::AUTO_ADVERTISE);
+  g_settings.allow_pairing = nvs->getBool(NVS_KEY_BT_ALLOW_PAIR, bt_defaults::ALLOW_PAIRING);
+  g_settings.require_pin = nvs->getBool(NVS_KEY_BT_REQ_PIN, bt_defaults::REQUIRE_PIN);
+  g_settings.tx_power = clamp_tx_power(nvs->getChar(NVS_KEY_BT_TX_PWR, 3));
+  g_settings.inactivity_timeout_ms = nvs->getULong(NVS_KEY_BT_TIMEOUT, INACTIVITY_TIMEOUT_MS);
+  g_settings.long_range_mode = nvs->getBool(NVS_KEY_BT_LONG_RANGE, bt_defaults::LONG_RANGE);
 
-  size_t name_len = nvs.getBytesLength(NVS_KEY_BT_NAME);
+  size_t name_len = nvs->getBytesLength(NVS_KEY_BT_NAME);
   if (name_len > 0 && name_len <= MAX_DEVICE_NAME_LEN) {
-    nvs.getBytes(NVS_KEY_BT_NAME, g_settings.device_name, name_len);
+    nvs->getBytes(NVS_KEY_BT_NAME, g_settings.device_name, name_len);
     g_settings.device_name[name_len] = '\0';
   }
 
-  nvs.end();
 }
 
 static void save_settings() {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadWrite()) return;
+  NvsMainSession nvs(false);
+  if (!nvs.isOpen()) return;
 
-  nvs.putBool(NVS_KEY_BT_ENABLED, g_settings.enabled);
-  nvs.putBool(NVS_KEY_BT_AUTO_ADV, g_settings.auto_advertise);
-  nvs.putBool(NVS_KEY_BT_ALLOW_PAIR, g_settings.allow_pairing);
-  nvs.putBool(NVS_KEY_BT_REQ_PIN, g_settings.require_pin);
-  nvs.putChar(NVS_KEY_BT_TX_PWR, g_settings.tx_power);
-  nvs.putULong(NVS_KEY_BT_TIMEOUT, g_settings.inactivity_timeout_ms);
-  nvs.putBool(NVS_KEY_BT_LONG_RANGE, g_settings.long_range_mode);
-  nvs.putBytes(NVS_KEY_BT_NAME, g_settings.device_name, strlen(g_settings.device_name));
+  nvs->putBool(NVS_KEY_BT_ENABLED, g_settings.enabled);
+  nvs->putBool(NVS_KEY_BT_AUTO_ADV, g_settings.auto_advertise);
+  nvs->putBool(NVS_KEY_BT_ALLOW_PAIR, g_settings.allow_pairing);
+  nvs->putBool(NVS_KEY_BT_REQ_PIN, g_settings.require_pin);
+  nvs->putChar(NVS_KEY_BT_TX_PWR, g_settings.tx_power);
+  nvs->putULong(NVS_KEY_BT_TIMEOUT, g_settings.inactivity_timeout_ms);
+  nvs->putBool(NVS_KEY_BT_LONG_RANGE, g_settings.long_range_mode);
+  nvs->putBytes(NVS_KEY_BT_NAME, g_settings.device_name, strlen(g_settings.device_name));
 
-  nvs.end();
 }
 
 static void load_paired_devices() {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadOnly()) return;
+  NvsMainSession nvs(true);
+  if (!nvs.isOpen()) return;
 
-  size_t data_len = nvs.getBytesLength(NVS_KEY_BT_PAIRED);
+  size_t data_len = nvs->getBytesLength(NVS_KEY_BT_PAIRED);
   if (data_len > 0 && data_len <= sizeof(g_paired_devices)) {
-    nvs.getBytes(NVS_KEY_BT_PAIRED, g_paired_devices, data_len);
+    nvs->getBytes(NVS_KEY_BT_PAIRED, g_paired_devices, data_len);
     g_paired_count = data_len / sizeof(PairedDevice);
   }
 
-  nvs.end();
 }
 
 static void save_paired_devices() {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadWrite()) return;
+  NvsMainSession nvs(false);
+  if (!nvs.isOpen()) return;
 
-  nvs.putBytes(NVS_KEY_BT_PAIRED, g_paired_devices, g_paired_count * sizeof(PairedDevice));
+  nvs->putBytes(NVS_KEY_BT_PAIRED, g_paired_devices, g_paired_count * sizeof(PairedDevice));
 
-  nvs.end();
 }
 
 // ════════════════════════════════════════════════════════════════════════════

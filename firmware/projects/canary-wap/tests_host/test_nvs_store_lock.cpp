@@ -1,8 +1,10 @@
 /* Host tests for canary-wap's NvsManager session lock (sweep F53), run on the
- * sketch's own code: the header-only NvsManager, the nvs_store:: helpers and
- * the legacy nvs_open_rw()/nvs_open_ro()/nvs_close() wrappers in
- * arduino/canary_wap/nvs_store.h, included here as the firmware includes
- * them, over the staged nvs_session_depth.h.
+ * sketch's own code: the header-only NvsManager, the RAII NvsMainSession
+ * guard (F60) and the nvs_store:: helpers in arduino/canary_wap/nvs_store.h,
+ * included here as the firmware includes them, over the staged
+ * nvs_session_depth.h. This file drives begin()/end() directly to simulate
+ * the cross-task scenarios; sketch code never does (the balance test holds
+ * it to the guard).
  *
  * Five tasks open sessions on the WAP's one settings handle: the loop task
  * (setup() and loop()), the httpd task serving the API, the NimBLE host task,
@@ -292,20 +294,35 @@ static void test_nvs_store_helpers_wait_for_another_tasks_session() {
   check_idle_and_clean();
 }
 
-// ── the legacy wrappers take the same lock ──────────────────────────────────
+// ── the RAII guard drives the same lock (F60) ───────────────────────────────
 //
-// nvs_open_rw() / nvs_open_ro() / nvs_close() delegate to the same singleton,
-// so a session opened through them is serialized like any other.
-static void test_legacy_wrappers_take_the_same_lock() {
+// NvsMainSession is the only way sketch code opens a main-namespace session.
+// Its constructor is begin(), its destructor the matching end() on every
+// path — so the pair the old textual balance scan approximated is now the
+// compiler's to walk. The scenarios: a guard closes on scope exit, a nested
+// guard on the same task closes only its own depth, a guard on another task
+// fails soft while one is held and owes no end() for it.
+static void test_main_session_guard_closes_on_every_path() {
   g_host_task = LOOP;
-  CHECK(nvs_open_rw());
-  CHECK(lock().owner == LOOP && handle().started && !handle().read_only);
-  g_host_task = HTTPD;
-  CHECK(!nvs_open_ro());                 // waits for the loop's session, fails soft
-  nvs_close();                           // not the httpd task's session to close
-  CHECK(handle().started);
-  g_host_task = LOOP;
-  nvs_close();
+  {
+    NvsMainSession nvs(false);
+    CHECK(nvs.isOpen());
+    CHECK(lock().owner == LOOP && handle().started && !handle().read_only);
+    CHECK(nvs->putBool("guarded", true) == sizeof(bool));
+    {
+      NvsMainSession nested(true);  // nests on this task; the handle stays rw
+      CHECK(nested.isOpen());
+      CHECK(handle().started && !handle().read_only);
+    }
+    CHECK(handle().started);        // the inner destructor closed only its depth
+    g_host_task = HTTPD;
+    {
+      NvsMainSession other(true);   // another task: waits out the hold, fails soft
+      CHECK(!other.isOpen());
+    }                               // a failed guard owes no end() — nothing given
+    CHECK(handle().started);
+    g_host_task = LOOP;
+  }                                 // the outer destructor closes the handle
   check_idle_and_clean();
 }
 
@@ -428,7 +445,7 @@ int main() {
   test_depth_is_bounded();
   test_nvs_store_helpers_close_their_sessions();
   test_nvs_store_helpers_wait_for_another_tasks_session();
-  test_legacy_wrappers_take_the_same_lock();
+  test_main_session_guard_closes_on_every_path();
   test_lock_count_tracks_sessions_across_tasks();
   test_wait_sits_under_the_loop_watchdog();
 
