@@ -127,15 +127,29 @@ panics that many ms into `loop()` — before the 30 s healthy gate. Background:
 `firmware_ota.md` ("Where each property holds today") and
 `firmware/common/health/boot_policy.h`.
 
+Two things that silently spoil a row:
+
+- **A deliberate restart confirms the image.** Serial `x`, `POST /api/reboot`
+  or the setup wizard's finishing reboot before E2's bad image panics counts
+  as a healthy boot: the image is confirmed and there is nothing left to roll
+  back. If one happens during E2, that run is void — reflash the E1 image and
+  start E2 again. Only let the bad image fall over on its own.
+- **A power-on reset is not counted** (a switched outlet or a storm flicker
+  must not put a home device in a no-radio safe mode — same rule as the
+  WAP). The boot line then reads `Boot attempt N of 4 ... (power-on reset:
+  not counted)` with N unchanged, so a row that starts from a cold plug-in
+  can take one boot more than it says. Crash resets (panic, watchdog,
+  brownout) and every other reason count.
+
 | # | Step | Expected | Artifact → `docs/audit/repro/boot/` |
 |---|---|---|---|
-| E1 | Flash a good `dev` image over USB; watch serial for 40 s | `Boot attempt 1 of 4 before safe mode`, then `Boot healthy (loop stable)` about 30 s after `WITNESS DEVICE READY` | serial log |
+| E1 | Flash a good `dev` image over USB; watch serial for 40 s | `Boot attempt 1 of 4 before safe mode` (or `0 of 4 ... (power-on reset: not counted)`), then `Boot healthy (loop stable)` about 30 s after `WITNESS DEVICE READY` | serial log |
 | E2 | Build a bad image: `PLATFORMIO_BUILD_FLAGS="-DSCV_BENCH_CRASH_AFTER_MS=5000" pio run -e dev`. Install it **over OTA** onto the E1 board — the dev push endpoint, or a signed pull manifest (which needs a version above E1's, or the anti-rollback floor refuses it) | New image boots `(new image, pending confirmation)`, panics at ~5 s; the **next** boot is the E1 image again; after its healthy gate, `fw_update_rolled_back` is in the witness chain | serial log + chain excerpt |
-| E3 | Same bad image, but flash it **over USB** (a confirmed image — nothing to roll back to) | Boots 1–3 panic; boot 4 prints the `SAFE MODE` card; Wi-Fi AP never comes up | serial log |
+| E3 | Same bad image, but flash it **over USB** (a confirmed image — nothing to roll back to) | Each boot panics; the boot whose count reaches 4 prints the `SAFE MODE` card (one boot later if the first came up from power-on); Wi-Fi AP never comes up | serial log |
 | E4 | In safe mode: `c`, then `n` | `Canceled.`; still in safe mode | serial log |
 | E5 | In safe mode: hold BOOT 2 s | `Counter cleared. Restarting normally...`; boots normally (then crash-loops again, since the image is still bad) | serial log |
-| E6 | Flash the good E1 build over USB while in safe mode | Boots normally at `Boot attempt 1` — a different build starts the count over | serial log |
-| E7 | On the good image, pull power within 10 s of boot, four boots in a row | Safe mode on the 4th boot; documents that the counter counts power cuts, which is intended (a brownout loop is a crash loop) | serial log |
+| E6 | Flash the good E1 build over USB while in safe mode. On every boot in this track, and once on an image from each toolchain that builds the Canary (PlatformIO and the Arduino IDE / `arduino-cli`), check the `Image identity (app_elf_sha256): non-zero` line — or, for a build without that line, `esptool.py image_info --version 2 <app>.bin` shows a non-zero ELF file SHA256 | Boots normally at `Boot attempt 1` (or `0 ... (power-on reset: not counted)`) — a different build starts the count over. Image identity is `non-zero`; if it is `ZERO`, every build looks like the same image and a re-flash no longer resets the count — file it, the escape hatch is gone | serial log |
+| E7 | On the good image, pull power within 10 s of boot, six boots in a row | Every boot prints `(power-on reset: not counted)`, the count never climbs, and it never enters safe mode: a power cut is not counted (a design choice, matching the WAP — a switched outlet or storm flicker must not take the radio off the air). A brownout reset still counts | serial log |
 
 ---
 

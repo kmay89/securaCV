@@ -432,7 +432,8 @@ user actions through the update system that leaves a device unrecoverable.**
     their second start. Canary's validate block therefore compiles whenever
     ANY install channel exists, and it runs at the healthy gate (after 30 s
     of `loop()`, or before a restart or deep sleep the loop chooses or
-    `POST /api/reboot` asks for) so a
+    `POST /api/reboot` asks for — the HTTP task only raises a flag, and the
+    loop runs the gate and restarts) so a
     crash in the first seconds of `loop()` still reverts; vision validates
     immediately after WiFi, BEFORE its blocking MQTT connect, so a broker
     outage can't cause a spurious revert.
@@ -470,7 +471,7 @@ user actions through the update system that leaves a device unrecoverable.**
 | Power/WiFi lost mid-download | Old firmware keeps running; partial download discarded | Nothing — press Install again whenever |
 | Update file corrupted or forged | Refused before install (SHA-256 + Ed25519 + format checks) | Nothing — error shown in plain language |
 | New firmware crashes or hangs before it confirms itself | Bootloader restores the previous firmware on the next start — every product (compile-checked and source-verified; bench row pending, see the note above) | Nothing |
-| New firmware confirms, then keeps crashing | `canary` (PlatformIO): after 4 boots in a row that never reach healthy, it stops in a serial safe mode (radio, storage and sensors off) instead of looping. `canary-wap`: its own crash-loop safe mode. Display, Sense, Vision, Sentinel: nothing counts the resets; the task watchdog restarts them | `canary`: serial `c` then `y`, or hold BOOT 2 s, to retry; flashing a different build starts the count over. Others: USB reflash |
+| New firmware confirms, then keeps crashing | `canary` (PlatformIO): after 4 boots in a row that never reach healthy (a power-on reset does not count; crash resets do), it stops in a serial safe mode (radio, storage and sensors off) instead of looping. `canary-wap`: its own crash-loop safe mode. Display, Sense, Vision, Sentinel: nothing counts the resets; the task watchdog restarts them | `canary`: serial `c` then `y`, or hold BOOT 2 s, to retry; flashing a different build starts the count over. Others: USB reflash |
 | New firmware boots but fails its health check | Restores the previous firmware automatically (same caveat as the row above) | Nothing |
 | Power cycled after an update, before the boot self-test confirms it | Returns to the previous firmware (unconfirmed images don't stick). The window is product-specific — see the note above | Press Install again |
 | Wrong update server address saved | Checks fail with a clear message; firmware untouched | Clear the field (Settings) to return to the official server |

@@ -13,7 +13,11 @@
  *     reads but can no longer write, even with a count at the threshold
  *     (safe mode there could never be cleared); an unreadable image id keeps
  *     the count (the conservative direction);
- *   · a good device's steady state does not write NVS on every healthy.
+ *   · a good device's steady state does not write NVS on every healthy;
+ *   · a power-on reset neither counts nor clears (a switched outlet must not
+ *     walk the device into safe mode); every other reset reason counts;
+ *   · a boot bound for safe mode with an UNCHANGED count (saturated at the
+ *     cap, or a power-on) still proves NVS takes writes, or fails open.
  *
  * What it cannot prove: that the ESP bootloader actually reverts, that
  * nvs_* behave on silicon as the fake does, or that main.cpp calls these at
@@ -40,9 +44,12 @@ static int g_failures = 0;
     }                                                                  \
   } while (0)
 
+// The crash-loop tests below model crash resets; the power-on rule has its
+// own tests.
 static void fresh_device() {
   g_fake_nvs.reset();
   g_fake_ota = FakeOta{};
+  g_fake_reset_reason = ESP_RST_PANIC;
 }
 
 static void flash_build(uint8_t tag) {
@@ -195,6 +202,96 @@ static void test_unwritable_nvs_at_threshold_boots_normally() {
   CHECK(bootguard::begin().mode == BootMode::SafeMode);
 }
 
+// Saturated at the cap, the count is unchanged boot to boot, so store_count()
+// skips the write and "succeeds" without touching NVS. If NVS has stopped
+// taking writes, that boot must not enter safe mode: operator_clear() would
+// fail and the console could never let it out.
+static void test_unwritable_nvs_at_cap_boots_normally() {
+  fresh_device();
+  flash_build(0xA1);
+  while (bootguard::begin().count < bootpolicy::kBootAttemptCap) {}
+  g_fake_nvs.writes_fail = true;
+  bootguard::Status s = bootguard::begin();
+  CHECK(!s.nvs_ok);
+  CHECK(s.mode == BootMode::Normal);
+  CHECK(!bootguard::operator_clear());
+  // Writes come back: still in safe mode, and the probe passes.
+  g_fake_nvs.writes_fail = false;
+  s = bootguard::begin();
+  CHECK(s.nvs_ok);
+  CHECK(s.mode == BootMode::SafeMode);
+  CHECK(bootguard::operator_clear());
+}
+
+// Same trap by the other road to an unchanged count: a power-on boot at the
+// threshold persists the count it found.
+static void test_unwritable_nvs_power_on_at_threshold_boots_normally() {
+  fresh_device();
+  flash_build(0xA1);
+  drive_into_safe_mode();
+  g_fake_nvs.writes_fail = true;
+  g_fake_reset_reason = ESP_RST_POWERON;
+  bootguard::Status s = bootguard::begin();
+  CHECK(!s.reset_counted);
+  CHECK(!s.nvs_ok);
+  CHECK(s.mode == BootMode::Normal);
+}
+
+// A power-on reset (unplug, switched outlet, smart plug, storm flicker) does
+// not count, and does not clear either.
+static void test_power_on_neither_counts_nor_clears() {
+  fresh_device();
+  flash_build(0xA1);
+  const uint16_t T = bootpolicy::kDefaultSafeModeThreshold;
+  bootguard::begin();                       // a crash reset: count 1
+  g_fake_reset_reason = ESP_RST_POWERON;
+  for (int i = 0; i < 20; i++) {            // a flickering outlet
+    bootguard::Status s = bootguard::begin();
+    CHECK(!s.reset_counted);
+    CHECK(s.count == 1);
+    CHECK(s.mode == BootMode::Normal);
+  }
+  g_fake_reset_reason = ESP_RST_TASK_WDT;   // the crash loop resumes
+  for (uint16_t boot = 2; boot < T; boot++) {
+    CHECK(bootguard::begin().mode == BootMode::Normal);
+  }
+  CHECK(bootguard::begin().mode == BootMode::SafeMode);
+  // Power-cycling is not a way out of safe mode; the operator clear is.
+  g_fake_reset_reason = ESP_RST_POWERON;
+  bootguard::Status held = bootguard::begin();
+  CHECK(held.mode == BootMode::SafeMode);
+  CHECK(held.count == T);
+}
+
+// Every reason but power-on counts, including a software restart that did
+// not go through the healthy gate and a deep-sleep wake (the loop marks
+// healthy before it sleeps, so a wake only counts if that did not happen).
+static void test_every_other_reset_counts() {
+  const esp_reset_reason_t counted[] = {
+      ESP_RST_UNKNOWN, ESP_RST_EXT,     ESP_RST_SW,        ESP_RST_PANIC,
+      ESP_RST_INT_WDT, ESP_RST_TASK_WDT, ESP_RST_WDT,      ESP_RST_DEEPSLEEP,
+      ESP_RST_BROWNOUT, ESP_RST_SDIO,
+  };
+  for (size_t i = 0; i < sizeof(counted) / sizeof(counted[0]); i++) {
+    fresh_device();
+    flash_build(0xA1);
+    g_fake_reset_reason = counted[i];
+    bootguard::Status s = bootguard::begin();
+    CHECK(s.reset_counted);
+    CHECK(s.count == 1);
+  }
+}
+
+static void test_image_id_present() {
+  fresh_device();
+  flash_build(0xA1);
+  CHECK(bootguard::image_id_present());
+  flash_build(0x00);             // a toolchain that leaves app_elf_sha256 zero
+  CHECK(!bootguard::image_id_present());
+  g_fake_ota.desc_ok = false;
+  CHECK(!bootguard::image_id_present());
+}
+
 static void test_unreadable_image_id_keeps_the_count() {
   fresh_device();
   flash_build(0xA1);
@@ -223,6 +320,11 @@ int main() {
   test_rollback_churn_does_not_inflate_good_image();
   test_broken_nvs_boots_normally_and_says_so();
   test_unwritable_nvs_at_threshold_boots_normally();
+  test_unwritable_nvs_at_cap_boots_normally();
+  test_unwritable_nvs_power_on_at_threshold_boots_normally();
+  test_power_on_neither_counts_nor_clears();
+  test_every_other_reset_counts();
+  test_image_id_present();
   test_unreadable_image_id_keeps_the_count();
   test_non_ota_partition_counts_as_confirmed();
 

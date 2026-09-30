@@ -154,12 +154,50 @@ reverted a bad image or entered safe mode on real hardware yet; that is
     store and came straight back. `test_boot_guard.cpp` covers it with a
     fake NVS that reads but refuses writes.
   - `POST /api/reboot` now goes through the same healthy gate as the loop's
-    own restarts, via a deliberate-restart hook the network lib calls before
-    `ESP.restart()`. It used to restart directly, so a reboot asked for in a
+    own restarts. It used to restart directly, so a reboot asked for in a
     pending image's first 30 s rolled the image back, and four quick ones on
     a confirmed image could land it in safe mode. Restarts that still skip
     the gate: factory reset, the setup-wizard timeout, and the dev-only
     `POST /api/ota` push.
+  - **The HTTP path defers to `loop()`.** The first version of the fix above
+    ran the gate on the HTTP task, and the gate writes a witness record
+    (`fw_update_applied`) — chain and SD work the witness lib allows from the
+    loop task only, so it could race the loop's own records and fork the
+    chain; and if the loop's gate got there first, the HTTP task restarted
+    500 ms later while the loop was still mid-self-test, leaving the image
+    pending, so a good update rolled back. Now the handler replies, its hook
+    (`network_set_restart_request_hook`) only raises a flag, and `loop()`
+    runs the gate, persists the chain and restarts — the same sequence as
+    serial `x`, which now shares it. The serial, setup-complete and
+    deep-sleep paths were already on the loop task and are unchanged.
+- **Design change: a power-on reset no longer counts toward safe mode.**
+  The counter now follows the WAP's rule: a boot after a power-on reset
+  neither adds to the count nor clears it; every other reset reason still
+  counts (panic, the watchdogs, brownout, software, external, deep-sleep
+  wake). A switched outlet, a smart plug or a storm flicker must not put a
+  home device into a no-radio safe mode. The cost: a hang no watchdog
+  catches, ended by someone pulling the plug, goes uncounted. A count
+  already at the threshold stays in safe mode across a power cycle. Bench
+  row E7 now expects no safe mode after repeated power pulls
+  (`boot_policy.h` `decide_uncounted()`, `boot_guard.h` `reset_counts()`;
+  host-tested).
+- **Safe mode proves NVS still takes writes before it traps the device.** At
+  the threshold the count is often unchanged (saturated at the cap, or a
+  power-on boot), so the unchanged-value shortcut wrote nothing, reported
+  success, and entered safe mode on an NVS whose `operator_clear()` then
+  failed. A boot bound for safe mode now flips a scratch byte and commits;
+  if that fails it boots normally and reports NVS unavailable. New host
+  tests fail without it.
+- **Image identity on the serial log.** Every boot prints whether the app
+  descriptor's `app_elf_sha256` is non-zero. The "a different build starts
+  the count over" escape depends on it; bench row E6 now checks it for a
+  PlatformIO and an Arduino build.
+- **Known ungated path: the critical-battery deep sleep.**
+  `power_graceful_shutdown()` (`securacv_power.cpp`, reached from the
+  power-event callback registered in `setup()`) deep-sleeps without passing
+  the healthy gate, so a device that keeps waking to a critical battery
+  would count each wake. It is compiled only with `FEATURE_DEEP_SLEEP=1`,
+  which no env sets today; wiring it in is left for whoever turns that on.
 - **A bad image on demand.** `SCV_BENCH_CRASH_AFTER_MS` (no env sets it)
   panics a `canary` build that many ms into `loop()`, for Track E.
 

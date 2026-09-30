@@ -236,6 +236,20 @@ static void test_carry_count() {
   CHECK(carry_count(bootpolicy::kBootAttemptCap, false) == 0);
 }
 
+// A boot that does not count (power-on) keeps the count and its mode.
+static void test_decide_uncounted() {
+  using bootpolicy::decide_uncounted;
+  const uint16_t T = bootpolicy::kDefaultSafeModeThreshold;
+  CHECK(decide_uncounted(0, true).persist_count == 0);
+  CHECK(decide_uncounted(0, true).mode == BootMode::Normal);
+  CHECK(decide_uncounted(T - 1, true).persist_count == T - 1);
+  CHECK(decide_uncounted(T - 1, true).mode == BootMode::Normal);
+  CHECK(decide_uncounted(T, true).persist_count == T);
+  CHECK(decide_uncounted(T, true).mode == BootMode::SafeMode);
+  CHECK(decide_uncounted(T, false).mode == BootMode::Normal);
+  static_assert(decide_uncounted(3, true).persist_count == 3, "constexpr");
+}
+
 int main() {
   test_first_boot();
   test_good_image_steady_state();
@@ -250,6 +264,7 @@ int main() {
   test_default_constants();
   test_healthy_gate_edges();
   test_carry_count();
+  test_decide_uncounted();
 
   if (g_failures) {
     std::printf("%d CHECK(s) FAILED\n", g_failures);

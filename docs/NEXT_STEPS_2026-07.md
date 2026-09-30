@@ -70,7 +70,7 @@ Ordered by consequence, not by effort.
 > - **Crash-loop counter + safe mode.** Wired into the PlatformIO `canary`
 >   through `firmware/common/health/boot_guard.h` (NVS, not RTC: it must
 >   survive a power cut). Four unhealthy boots of a confirmed image stop in
->   a serial safe mode; a different image, a healthy boot or a confirmed
+>   a serial safe mode (a power-on reset is not counted, as on the WAP); a different image, a healthy boot or a confirmed
 >   operator clear resets it. Host-tested (`test_boot_policy.cpp`,
 >   `test_boot_guard.cpp`). `canary-wap` keeps its own older counter.
 >   **Not wired:** canary-display, Sense, Vision, Sentinel — the display's

@@ -61,6 +61,19 @@ inline esp_err_t nvs_set_u16(nvs_handle_t h, const char* key, uint16_t v) {
   g_fake_nvs.writes++;
   return ESP_OK;
 }
+inline esp_err_t nvs_get_u8(nvs_handle_t h, const char* key, uint8_t* out) {
+  auto& m = fake_nvs_ns(h);
+  auto it = m.find(key);
+  if (it == m.end() || it->second.size() != 1) return ESP_ERR_NVS_NOT_FOUND;
+  *out = it->second[0];
+  return ESP_OK;
+}
+inline esp_err_t nvs_set_u8(nvs_handle_t h, const char* key, uint8_t v) {
+  if (g_fake_nvs.writes_fail) return ESP_FAIL;
+  fake_nvs_ns(h)[key] = {v};
+  g_fake_nvs.writes++;
+  return ESP_OK;
+}
 inline esp_err_t nvs_get_blob(nvs_handle_t h, const char* key, void* out, size_t* len) {
   auto& m = fake_nvs_ns(h);
   auto it = m.find(key);

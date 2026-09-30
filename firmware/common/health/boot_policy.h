@@ -48,6 +48,11 @@
  *   1. Very early in boot, before the risky init: load the persisted count,
  *      call decide(), and PERSIST decision.persist_count *before* proceeding —
  *      so a hang / watchdog reset / brownout during init is still counted.
+ *      A boot that follows a power-on reset calls decide_uncounted() instead:
+ *      it neither adds to the count nor clears it. A power cut is not a crash
+ *      (and an unplug-replug loop must not end in a no-radio safe mode); a
+ *      crash still counts on the reset it causes — PANIC, a watchdog,
+ *      BROWNOUT, or any other reason but power-on.
  *   2. If decision.mode == BootMode::SafeMode, enter the safe-mode console and
  *      never fall through to normal init.
  *   3. Once the app reaches "healthy" (setup finished and the main loop has
@@ -170,6 +175,20 @@ inline constexpr Decision decide(uint16_t prev, bool image_confirmed,
 inline constexpr bool in_safe_mode(uint16_t count, bool image_confirmed,
                                    uint16_t threshold = kDefaultSafeModeThreshold) {
   return image_confirmed && count >= threshold;
+}
+
+// The decision for a boot whose reset does NOT count (a power-on reset; the
+// device glue decides which resets count — health/boot_guard.h,
+// reset_counts()). Such a boot neither adds to the count nor clears it, so a
+// switched outlet, a smart plug or a storm flicker cannot walk a home device
+// into a no-radio safe mode, and power-cycling is not a way OUT of safe mode
+// either: a count already at the threshold stays there (the operator clear is
+// the way out). Same rule as the canary-wap sketch's counter.
+inline constexpr Decision decide_uncounted(uint16_t prev, bool image_confirmed,
+                                           uint16_t threshold = kDefaultSafeModeThreshold) {
+  return Decision{prev, in_safe_mode(prev, image_confirmed, threshold)
+                            ? BootMode::SafeMode
+                            : BootMode::Normal};
 }
 
 // The count a boot starts from. A different image than the one that left the

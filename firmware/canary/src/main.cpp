@@ -837,10 +837,17 @@ static inline uint8_t time_bucket_now() {
 // "Healthy" is setup() returned + loop() ran for kDefaultHealthyDwellMs, or a
 // deliberate restart / deep sleep taken from the running loop before that.
 
+// Plain bools on purpose: every read and write of these is on the Arduino
+// loop task (setup() and loop()). POST /api/reboot, the one caller from
+// another task, touches only g_restart_requested below.
 static bool     g_setup_done    = false;
 static uint32_t g_setup_done_ms = 0;
 static bool     g_boot_healthy  = false;
 static bootguard::Status g_boot_status = {};
+
+// Set by the network lib's restart-request hook on the HTTP task (POST
+// /api/reboot); read by loop(). The only cross-task state in this section.
+static bool     g_restart_requested = false;
 
 // Confirm — or roll back — a freshly applied OTA image, then witness the
 // outcome. Runs at the healthy gate, not in setup(): an image that survives
@@ -875,12 +882,14 @@ static void ota_confirm_and_witness() {
 }
 
 // The healthy gate: confirm the image, then clear the crash-loop counter.
-// Idempotent — only the first call per boot does anything.
-// Also reached from the HTTP task (POST /api/reboot), so the claim is an
-// atomic exchange: exactly one caller confirms, whichever gets there first.
+// Idempotent — only the first call per boot does anything. Loop task only:
+// ota_confirm_and_witness() appends a witness record (chain + SD), which the
+// witness lib allows from the loop task alone. POST /api/reboot therefore
+// never calls this; it raises g_restart_requested and loop() does.
 static void boot_mark_healthy(const char* why) {
   if (!g_setup_done) return;
-  if (__atomic_exchange_n(&g_boot_healthy, true, __ATOMIC_ACQ_REL)) return;
+  if (g_boot_healthy) return;
+  g_boot_healthy = true;
   ota_confirm_and_witness();
   if (bootguard::mark_healthy()) {
     Serial.printf("[OK] Boot healthy (%s) - crash-loop counter cleared\n", why);
@@ -897,13 +906,34 @@ static void boot_health_tick(uint32_t now) {
   }
 }
 
-// Called just before a restart or deep sleep the running loop chose to take
-// (or one an authenticated POST /api/reboot asked for, via the network lib's
-// deliberate-restart hook):
+// Called just before a restart or deep sleep the running loop chose to take:
 // the code decided to stop, it did not fall over, so an image that got this
 // far is confirmed rather than reverted by the reset it is about to cause.
 static void boot_health_before_deliberate_stop() {
   boot_mark_healthy("deliberate restart or sleep");
+}
+
+// The deliberate-restart sequence, loop task only: the healthy gate, the
+// chain head, the thermal record, MQTT, then the restart. Serial 'x' and a
+// POST /api/reboot (deferred to loop() through the flag below) both end here.
+static void deliberate_restart_now() {
+  boot_health_before_deliberate_stop();
+  witness_persist_chain_state();
+#if FEATURE_THERMAL_WATCHDOG
+  thermal_wd_persist();
+#endif
+#if FEATURE_HA_MQTT
+  mqtt_disconnect();
+#endif
+  delay(500);
+  ESP.restart();
+}
+
+// The network lib's restart-request hook. Runs on the HTTP task, after the
+// handler has already replied: it only raises the flag. Nothing here may
+// touch the chain, SD or NVS.
+static void boot_health_request_restart() {
+  __atomic_store_n(&g_restart_requested, true, __ATOMIC_RELEASE);
 }
 
 // ── Safe mode ──────────────────────────────────────────────────────────────
@@ -1058,11 +1088,18 @@ void setup() {
   if (!g_boot_status.nvs_ok) {
     Serial.println("[WARN] Crash-loop counter unavailable (NVS) - booting normally");
   } else {
-    Serial.printf("[..] Boot attempt %u of %u before safe mode%s\n",
+    Serial.printf("[..] Boot attempt %u of %u before safe mode%s%s\n",
                   (unsigned)g_boot_status.count,
                   (unsigned)bootpolicy::kDefaultSafeModeThreshold,
+                  g_boot_status.reset_counted ? "" : " (power-on reset: not counted)",
                   g_boot_status.image_confirmed ? "" : " (new image, pending confirmation)");
   }
+  // Bench row E6: a re-flash of another build resets the count only if the
+  // build filled app_elf_sha256 in the app descriptor. Say so on every boot.
+  Serial.printf("[..] Image identity (app_elf_sha256): %s\n",
+                bootguard::image_id_present()
+                    ? "non-zero"
+                    : "ZERO or unreadable - a re-flash will not reset the crash-loop count");
   if (g_boot_status.mode == bootpolicy::BootMode::SafeMode) {
     safe_mode_run();
   }
@@ -1244,9 +1281,10 @@ void setup() {
     // Wire the BOOT-tap gate before any route can be served (unregistered
     // hooks read as closed, so the order is belt-and-braces, not load-bearing).
     network_set_provisioning_gate_hooks(prov_gate_take_hook, prov_gate_is_open_hook);
-    // POST /api/reboot is a deliberate restart: route it through the
-    // boot-health gate like the loop's own restarts.
-    network_set_before_deliberate_restart_hook(boot_health_before_deliberate_stop);
+    // POST /api/reboot is a deliberate restart: the HTTP task only raises a
+    // flag, and loop() runs the boot-health gate and restarts (the gate
+    // writes a witness record, which is loop-task only).
+    network_set_restart_request_hook(boot_health_request_restart);
     if (net.begin(ap_ssid, g_ap_password, device.device_id)) {
       Serial.println("[OK] WiFi AP active");
 #if FEATURE_HTTP_SERVER
@@ -2072,6 +2110,14 @@ void loop() {
   // The healthy gate: confirm a pending OTA image and clear the crash-loop
   // counter once this boot has run long enough to count as healthy.
   boot_health_tick(millis());
+
+  // POST /api/reboot, deferred here from the HTTP task (see
+  // boot_health_request_restart): the healthy gate and the chain work run on
+  // this task, then the restart.
+  if (__atomic_load_n(&g_restart_requested, __ATOMIC_ACQUIRE)) {
+    Serial.println("\nRebooting (POST /api/reboot)...");
+    deliberate_restart_now();
+  }
 
 #ifdef SCV_BENCH_CRASH_AFTER_MS
   // BENCH ONLY — never set by any env. Builds a deliberately bad image for
@@ -4037,16 +4083,7 @@ static void handle_serial_commands() {
     case 'x':
     case 'X':
       Serial.println("\nRebooting...");
-      boot_health_before_deliberate_stop();
-      witness_persist_chain_state();
-#if FEATURE_THERMAL_WATCHDOG
-      thermal_wd_persist();
-#endif
-#if FEATURE_HA_MQTT
-      mqtt_disconnect();
-#endif
-      delay(500);
-      ESP.restart();
+      deliberate_restart_now();
       break;
 
     default:
