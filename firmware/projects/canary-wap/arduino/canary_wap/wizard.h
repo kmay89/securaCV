@@ -94,6 +94,11 @@ struct Status {
   uint32_t total_events_evaluated;
   uint32_t total_ambient_suppressed;
   uint32_t total_household_suppressed;
+
+  // get_status_for_export() only: true when the DP budget withheld the
+  // activity summary above (dp.h). The four counters are then 0 and mean
+  // "not released", not "nothing happened".
+  bool     activity_withheld;
 };
 
 // ════════════════════════════════════════════════════════════════════════════

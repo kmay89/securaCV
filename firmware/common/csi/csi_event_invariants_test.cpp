@@ -53,6 +53,7 @@
 #include "csi_module.h"
 #include "csi_bundler.h"
 #include "csi_witness_payload.h"
+#include "csi_event_log_line.h"
 #include "ble_events_module.h"
 #include "meta_quiet_hours.h"
 #include "core_multilink_fusion.h"
@@ -925,6 +926,175 @@ void test_rssi_bucketed_int8() {
    * The static_asserts above are the enforceable contract. */
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * 16. csi_event_inject — an earlier boot's rows back into the ring
+ *
+ * The rows come off a removable SD card, so inject is a chokepoint of its
+ * own: the manifest (not the card) decides the type's privacy class and
+ * the fields it may carry, the ceiling applies, and nothing it restores
+ * reaches the witness chain or the commit hook a second time.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+csi_event_record_t make_persisted(uint32_t id, const char* type_name) {
+  csi_event_record_t r;
+  memset(&r, 0, sizeof(r));
+  r.event_id      = id;
+  r.first_seen_ms = 123456;
+  r.last_seen_ms  = 123999;
+  r.category      = CSI_CATEGORY_EVENT;
+  r.privacy       = CSI_PRIVACY_P0;
+  r.bundled_count = 1;
+  strncpy(r.module_id, "test.module", CSI_EVENT_NAME_MAX - 1);
+  strncpy(r.type_name, type_name, CSI_EVENT_NAME_MAX - 1);
+  strncpy(r.values.state_name, "active", sizeof(r.values.state_name) - 1);
+  r.values.motion_score = 40;
+  r.values.time_bucket  = 54;
+  return r;
+}
+
+void inject_setup(uint32_t floor) {
+  csi_event_test_reset();
+  reset_captures();
+  csi_module_register(&TEST_MODULE);
+  csi_event_set_event_id_floor(floor);
+}
+
+void test_inject_restores_rows_newest_first_without_hooks() {
+  inject_setup(100);
+  for (uint32_t id = 10; id <= 12; ++id) {
+    const csi_event_record_t r = make_persisted(id, "test_state");
+    EXPECT(csi_event_inject(&r), "an earlier boot's row below the floor is restored");
+  }
+  csi_event_record_t out[8];
+  const size_t n = csi_event_recent(out, 8);
+  EXPECT(n == 3, "three rows restored");
+  EXPECT(n == 3 && out[0].event_id == 12 && out[1].event_id == 11 && out[2].event_id == 10,
+         "injected oldest-first, read back newest-first like live commits");
+  csi_event_record_t found;
+  EXPECT(csi_event_find(11, &found) && found.values.motion_score == 40,
+         "a restored row is findable (dismiss works on it)");
+  EXPECT(g_captured_count == 0, "inject never fires the commit hook (no MQTT / SD re-append)");
+  EXPECT(g_witness_commit_count == 0, "inject never re-witnesses an event");
+  EXPECT(csi_event_get_next_event_id() == 100, "inject allocates no id");
+
+  /* A live commit after the restore still lands newest. */
+  csi_event_values_t v;
+  csi_event_values_init(&v);
+  v.category       = CSI_CATEGORY_EVENT;
+  v.present_fields = CSI_FIELD_MOTION_SCORE;   /* stateless: commits directly */
+  v.motion_score   = 7;
+  const uint32_t live = csi_event_emit("test.module", "test_state", &v);
+  EXPECT(live == 100, "the first live id starts at the floor");
+  EXPECT(csi_event_recent(out, 8) == 4 && out[0].event_id == 100,
+         "a live commit sits ahead of the restored rows");
+}
+
+void test_inject_fails_closed() {
+  inject_setup(100);
+  EXPECT(!csi_event_inject(nullptr), "null refused");
+  csi_event_record_t r = make_persisted(0, "test_state");
+  EXPECT(!csi_event_inject(&r), "id 0 refused");
+
+  r = make_persisted(100, "test_state");
+  EXPECT(!csi_event_inject(&r), "an id this boot can still allocate is refused");
+  r = make_persisted(4000000000u, "test_state");
+  EXPECT(!csi_event_inject(&r), "an id far above the floor is refused");
+
+  r = make_persisted(20, "test_state");
+  strncpy(r.module_id, "not.a.module", CSI_EVENT_NAME_MAX - 1);
+  EXPECT(!csi_event_inject(&r), "an unregistered module is refused");
+  r = make_persisted(20, "no_such_type");
+  EXPECT(!csi_event_inject(&r), "an unregistered event type is refused");
+
+  /* The card claims p0; the manifest says test_p1 is P1. The manifest wins. */
+  r = make_persisted(21, "test_p1");
+  r.privacy = CSI_PRIVACY_P0;
+  EXPECT(!csi_event_inject(&r), "a P1 type is refused under a P0 ceiling whatever the card claims");
+  r = make_persisted(22, "test_p2");
+  EXPECT(!csi_event_inject(&r), "a P2 type is refused under a P0 ceiling");
+
+  csi_event_record_t out[8];
+  EXPECT(csi_event_recent(out, 8) == 0, "no refused record touched the ring");
+
+  csi_event_set_privacy_ceiling(CSI_PRIVACY_P1);
+  r = make_persisted(21, "test_p1");
+  r.privacy = CSI_PRIVACY_P0;
+  EXPECT(csi_event_inject(&r), "the same P1 row is restored once the owner consented to P1");
+  EXPECT(csi_event_find(21, &out[0]) && out[0].privacy == CSI_PRIVACY_P1,
+         "the restored row carries the manifest's class, not the card's");
+  csi_event_set_privacy_ceiling(CSI_PRIVACY_P0);
+
+  r = make_persisted(30, "test_state");
+  EXPECT(csi_event_inject(&r), "first copy restored");
+  EXPECT(!csi_event_inject(&r), "a duplicate id is refused");
+
+  /* Once a live row committed, nothing older may land ahead of it. */
+  csi_event_values_t v;
+  csi_event_values_init(&v);
+  v.category       = CSI_CATEGORY_EVENT;
+  v.present_fields = CSI_FIELD_MOTION_SCORE;
+  EXPECT(csi_event_emit("test.module", "test_state", &v) != 0, "live commit");
+  r = make_persisted(31, "test_state");
+  EXPECT(!csi_event_inject(&r), "inject refuses after a live commit this boot");
+
+  /* No floor restored (NVS lost): next id is 1, so every id is refused. */
+  inject_setup(0);
+  r = make_persisted(5, "test_state");
+  EXPECT(!csi_event_inject(&r), "without the NVS floor nothing is restored");
+}
+
+void test_inject_cleans_like_emit() {
+  inject_setup(100);
+  csi_event_record_t r = make_persisted(40, "test_state");
+  r.values.breathing_rate_bpm = 31;    /* not in test_state's allow-list */
+  r.values.breathing_score    = 77;    /* not allowed */
+  r.values.duration_sec       = 600;   /* not allowed */
+  r.bundled_count             = 9;     /* not allowed */
+  strncpy(r.values.dominant_signal, "motion", sizeof(r.values.dominant_signal) - 1);
+  strncpy(r.values.note, "smuggled", sizeof(r.values.note) - 1);
+  r.values.state_name[1] = (char)0x07; /* non-printable */
+  r.values.time_bucket   = 200;        /* no such 10-minute bucket */
+  r.values.dismissed     = 1;
+  r.privacy              = CSI_PRIVACY_P2;   /* the card's claim is ignored */
+  EXPECT(csi_event_inject(&r), "restored");
+
+  csi_event_record_t got;
+  EXPECT(csi_event_find(40, &got), "findable");
+  EXPECT(got.values.breathing_rate_bpm == 0, "disallowed bpm zeroed");
+  EXPECT(got.values.breathing_score == 0, "disallowed breathing score zeroed");
+  EXPECT(got.values.duration_sec == 0, "disallowed duration zeroed");
+  EXPECT(got.bundled_count == 0 && got.values.bundled_count == 0, "disallowed bundled count zeroed");
+  EXPECT(got.values.dominant_signal[0] == '\0', "disallowed dominant signal cleared");
+  EXPECT(got.values.note[0] == '\0', "disallowed note cleared");
+  EXPECT(got.values.state_name[1] == '?', "non-printable state byte sanitized");
+  EXPECT(got.values.time_bucket == 0, "out-of-range time bucket zeroed");
+  EXPECT(got.values.motion_score == 40, "allowed motion score kept");
+  EXPECT(got.values.dismissed == 1, "the owner's dismissal is kept");
+  EXPECT(got.first_seen_ms == 0 && got.last_seen_ms == 0,
+         "the earlier boot's monotonic stamps are cleared");
+  EXPECT(got.privacy == CSI_PRIVACY_P0, "privacy is the manifest's");
+}
+
+void test_inject_roundtrips_the_log_line() {
+  inject_setup(1000);
+  csi_event_record_t r = make_persisted(500, "test_state");
+  strncpy(r.values.confidence, "observed", sizeof(r.values.confidence) - 1);
+  char line[csi_event_log_line::kLineMax];
+  const size_t n = csi_event_log_line::marshal(&r, line, sizeof(line));
+  EXPECT(n > 0 && line[n - 1] == '\n', "marshalled");
+  line[n - 1] = '\0';
+  csi_event_record_t parsed;
+  EXPECT(csi_event_log_line::parse(line, &parsed), "parsed");
+  EXPECT(csi_event_inject(&parsed), "a line the log wrote is restored");
+  csi_event_record_t got;
+  EXPECT(csi_event_find(500, &got)
+         && strcmp(got.values.state_name, "active") == 0
+         && strcmp(got.values.confidence, "observed") == 0
+         && got.values.motion_score == 40
+         && got.values.time_bucket == 54,
+         "every allowed field survives card -> ring");
+}
+
 }  /* namespace */
 
 extern "C" int csi_event_invariants_run() {
@@ -950,6 +1120,11 @@ extern "C" int csi_event_invariants_run() {
   test_no_peer_mac_in_feature_vector();
   test_beacon_mac_hashed_before_emission();
   test_rssi_bucketed_int8();
+  /* csi_event_inject: the SD event log back into the ring after a reboot. */
+  test_inject_restores_rows_newest_first_without_hooks();
+  test_inject_fails_closed();
+  test_inject_cleans_like_emit();
+  test_inject_roundtrips_the_log_line();
 
   if (g_failures == 0) {
     fprintf(stderr, "[OK] csi_event invariants — all tests passed\n");

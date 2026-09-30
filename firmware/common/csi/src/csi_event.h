@@ -264,6 +264,39 @@ bool csi_event_find(uint32_t event_id, csi_event_record_t* out);
 bool csi_event_dismiss(uint32_t event_id);
 
 /**
+ * Put one record that an earlier boot committed back into the in-memory
+ * ring, so /api/events/today shows the tail of the SD event log after a
+ * reboot (canary-wap's csi_event_log::load_into_ring is the caller).
+ *
+ * Ring only. The event was committed and witnessed when it happened, so
+ * this fires no commit hook, no witness write, no MQTT publish, no SD
+ * append, allocates no id and spends no per-module ceiling.
+ *
+ * The record comes off a removable card, so this fails closed. It returns
+ * false and leaves the ring untouched when:
+ *   - `rec` is null or its event_id is 0;
+ *   - its event_id is at or above the allocator's next id. The host
+ *     restores the id floor from NVS before loading, so every id an earlier
+ *     boot handed out is below it; an id at or above it is one this boot
+ *     can still hand out (a lost floor, another device's card);
+ *   - an event committed live this boot is already in the ring. Injecting
+ *     after that would put older rows ahead of newer ones;
+ *   - a row with the same event_id is already in the ring;
+ *   - its module or event type is not registered on this build;
+ *   - the privacy class the MANIFEST declares for that type (not the class
+ *     the record claims) is above the current privacy ceiling.
+ * What it keeps is cleaned as emit cleans it: fields the type's manifest
+ * does not allow are zeroed, strings are sanitized, a time_bucket outside
+ * 0..143 is zeroed, and the earlier boot's monotonic first/last-seen stamps
+ * are cleared, since they mean nothing on this boot's clock. The dismissed
+ * flag is kept: it is the owner's own mark, set whatever the manifest says.
+ *
+ * Call it only while the ring has no live rows (at boot); injecting
+ * oldest-first leaves the newest record at the head, as a live commit would.
+ */
+bool csi_event_inject(const csi_event_record_t* rec);
+
+/**
  * Reset all in-memory state. Used by tests. Does NOT touch the witness chain.
  */
 void csi_event_test_reset(void);
