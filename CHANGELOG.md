@@ -2,6 +2,82 @@
 
 ## [Unreleased]
 
+### canary-wap: the Today sheet survives a reboot, the DP budget refuses, and the fusion row stops claiming what is not built
+
+How far each of these is proven, stated once: **host-tested only**. None
+was compiled for the ESP32 in the session that wrote it (no Arduino-ESP32
+toolchain there), and none has been bench-run. CI's `firmware.yml` Arduino
+build is the first ESP32 compile they get.
+
+- **The event log reloads into the Today ring after a reboot.**
+  `csi_event_log::load_into_ring()`, declared and deferred since PR #395,
+  now reads the last 128 KB of `/EVENTS/today.ndjson` once per boot and
+  hands each line to a new `csi_event_inject()` in the canonical CSI
+  library. The card is removable, so inject is a chokepoint of its own: it
+  refuses an id at or above the NVS-restored allocator floor, an
+  unregistered module or type, a type whose manifest privacy class is above
+  the ceiling (the class the card claims is ignored), a duplicate, and
+  everything once a live event has committed this boot; it re-applies the
+  allow-list and sanitizing and fires no witness write, MQTT publish or SD
+  append. Host-tested by four new cases in `csi_event_invariants_test.cpp`
+  and by `tests_host/test_csi_event_log_load.cpp`, which runs the real
+  `csi_event_log.cpp` over a RAM card. **Found, not fixed:** a bundle the
+  bundler closes never enters the ring, so it is never appended to the SD
+  log and cannot be restored. Only direct commits are. Bundle ids also come
+  from an allocator that is not persisted.
+- **The differential-privacy budget is enforced and fails closed.**
+  `dp::Release` reserves draws × ε up front, all or nothing; a release the
+  session cannot cover spends nothing, and a draw it did not pay for
+  returns 0 whatever the counter. The free `noisy_*()` functions are gone,
+  and every exporter withholds its export (zeroed, `false`) on refusal.
+  At the shipped 4 ε session budget, charged by sequential composition,
+  the notify, familiar and federated-stats exports and every federated
+  baseline share are always withheld; baseline and household fit once a
+  session. None of these exports has a production caller today, so no
+  served counter changes. Budget size and per-bucket accounting are open
+  decisions. Host-tested by `tests_host/test_dp_budget.cpp`, which runs the
+  real `dp.cpp`, eight racing threads included.
+- **A reboot no longer refills the DP budget, and a rotation cannot be
+  raced** (review of the change above). `rf_presence::init()` restores the
+  4-hour session epoch from NVS, but the ledger started at zero on every
+  boot, so each reboot inside a session granted a whole new budget. Every
+  reservation now writes the session's spend with its epoch to one NVS
+  blob (`dp_ledger`, next to `rf_epoch`) before any draw is honored, and
+  `dp::restore_budget()` reads it back at boot. A write that fails refuses
+  the release. A ledger that cannot be read, or that names a later epoch
+  or more than the budget, reads as spent until the next rotation, and so
+  does a budget nobody restored (safe mode). No stored ledger at all, as on
+  a first boot, gives a fresh budget. Separately, `reset_budget()` could
+  erase a reservation while a release on another task was still drawing
+  against it. The ledger now carries a generation that every reset and
+  restore moves, and a release drawn, or checked with `complete()`, after
+  a reset is refused. Host-tested by new cases in `test_dp_budget.cpp`
+  over a fake ledger store. The NVS store itself (`rf_presence.cpp`) has
+  not been compiled for the ESP32 or run. **Found, not changed:** the
+  owner-authenticated `POST /api/rf/rotate` rotates the session, and with
+  it the budget, on demand.
+- **A dismissed event stays dismissed after a reboot** (same review).
+  `csi_event_dismiss()` changed only the ring, so the reload above brought
+  the event back as `dismissed:0`. The dismiss handler now queues the id,
+  and the loop task (where every other log write happens) appends the
+  dismissed ring row as one more line in the usual format. The load honors
+  it: that record is restored dismissed, and the dismissal line is not a
+  row of its own. If there are more dismissals than the ring holds, or no
+  heap to track them, every row is restored dismissed. MQTT backfill does
+  not replay dismissal lines. With no card, or a card that is not this
+  device's, the dismissal lasts only until the reboot, as before.
+  Host-tested by `tests_host/test_csi_event_log_dismiss.cpp` over the RAM
+  card.
+- **`firmware/FEATURES.md`: Multi-link fusion ✅ → ⚠️** for canary (PIO)
+  and canary-wap. Motion direction and the breathing median are deferred
+  in `core_multilink_fusion.cpp` and not built, and the 2-link gate that is
+  built has no production caller feeding it peer windows.
+- **Not done: a deferred-write queue while the SD card is absent**
+  (`hardware_state.h`). Its correctness is about the append-only witness
+  log across a physical card pull and re-insert (the mount worker, the
+  chain-head recovery, torn-tail sealing), which only a bench run can show.
+  The comment there still says, correctly, that such writes are dropped.
+
 ### The Opera mesh's two firmware trees agree on the outer frame — a wire break, re-pair after updating
 
 - **One wire registry, both trees (spec §4.5, `mesh_wire.h`).** The

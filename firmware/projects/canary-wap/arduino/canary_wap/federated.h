@@ -29,14 +29,18 @@
  *
  * PRIVACY MECHANISMS
  * ==================
- *   • Every share is built through dp::* so per-bucket counts and sums
- *     carry calibrated Gaussian noise BEFORE leaving the device.
+ *   • Every share is built through one dp::Release so per-bucket counts
+ *     and sums carry calibrated Gaussian noise BEFORE leaving the device,
+ *     and a share the session's DP budget cannot pay for is not built at
+ *     all (dp.h BUDGET). At today's 4 ε budget and sequential-composition
+ *     accounting that is every baseline share: federated baseline sharing
+ *     is withheld until the budget / accounting is decided.
  *   • Merge bounds: each peer can contribute at most
  *     baseline::REMOTE_MERGE_MAX_COUNT samples per bucket per merge,
  *     so a malicious peer cannot dominate our local distribution.
  *   • Cadence: shares are emitted at most once per rf_presence session
- *     rotation (4 h). The Phase 7 DP budget resets in lock-step, so
- *     each share consumes a bounded ε per epoch.
+ *     rotation (4 h). The Phase 7 DP budget resets in lock-step and is
+ *     enforced, so a share can never spend more ε than one epoch holds.
  *
  * TRANSPORT
  * =========

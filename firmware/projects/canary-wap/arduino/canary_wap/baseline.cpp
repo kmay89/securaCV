@@ -365,9 +365,14 @@ bool get_stats(Stats* out) {
 
 bool get_stats_for_export(Stats* out) {
   if (!get_stats(out)) return false;
-  out->total_observations    = dp::noisy_u32(out->total_observations,    1);
-  out->total_anomaly_queries = dp::noisy_u32(out->total_anomaly_queries, 1);
-  out->total_anomaly_hits    = dp::noisy_u32(out->total_anomaly_hits,    1);
+  // One release, 3 draws, paid for up front (dp.h BUDGET). Refused or
+  // cut short: the export is withheld and `out` holds nothing, raw or noised.
+  dp::Release rel(3);
+  if (!rel.ok()) { memset(out, 0, sizeof(*out)); return false; }
+  out->total_observations    = rel.u32(out->total_observations,    1);
+  out->total_anomaly_queries = rel.u32(out->total_anomaly_queries, 1);
+  out->total_anomaly_hits    = rel.u32(out->total_anomaly_hits,    1);
+  if (!rel.complete()) { memset(out, 0, sizeof(*out)); return false; }
   return true;
 }
 
