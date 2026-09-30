@@ -5,12 +5,18 @@
  * REAL canonical CSI chokepoint (csi_event.cpp / csi_module.cpp /
  * csi_bundler.cpp) over stubs/sd_fake — a card that lives in RAM — and
  * reboots into a log the way the device does: privacy ceiling and id floor
- * restored first, then load_into_ring(). What it pins:
+ * restored first (arm_load()), then load_into_ring(). What it pins:
  *
+ *   - before arm_load() (csi_integration::init has not restored the floor,
+ *     or never ran because the AP failed), a mounted card is not read and
+ *     nothing latches, so the call after init still loads;
  *   - no card, and a card that is a canary base's (owner file): nothing is
  *     read, and nothing latches, so the call after a mount still loads;
  *   - only the last LOAD_TAIL_BYTES are read, and the fragment the tail
- *     window cuts is dropped, not parsed;
+ *     window cuts is dropped, not parsed; a window that starts exactly on a
+ *     line boundary keeps that whole first line;
+ *   - the walk feeds the task watchdog and lets the idle task run;
+ *   - a live row already in the ring (a late card): nothing is read;
  *   - every line csi_event_inject refuses (an id at or above the floor, an
  *     unregistered type, a type above the ceiling, a duplicate, a torn or
  *     glued line, an over-long line) is refused; the rest land newest-first;
@@ -26,6 +32,8 @@
 #include "csi_module.h"
 
 #include <SD.h>
+#include <Arduino.h>        // stub_task_delays()
+#include <esp_task_wdt.h>  // stub_wdt_feeds()
 
 #include <stdio.h>
 #include <string.h>
@@ -126,17 +134,32 @@ int main() {
   last.pop_back();                                       // no trailing '\n'
   log += last;
 
-  // Expected: the loader seeks to size - LOAD_TAIL_BYTES and drops bytes up
-  // to and including the first '\n' from there (a whole line, if the window
-  // starts on a line boundary).
+  // Expected: the loader reads from size - LOAD_TAIL_BYTES and drops bytes
+  // up to and including the first '\n' from there, unless the window starts
+  // on a line boundary (the byte before it is a '\n').
   CHECK(log.size() > csi_event_log::LOAD_TAIL_BYTES, "the log is longer than the tail window");
   const size_t start = log.size() - csi_event_log::LOAD_TAIL_BYTES;
+  CHECK(log[start - 1] != '\n', "this log's window starts mid-line (test sanity)");
   const size_t first_whole = log.find('\n', start) + 1;
   size_t expected = 0;
   for (const auto& s : starts) {
     if (s.first >= first_whole && s.second) expected++;
   }
   CHECK(expected > 300 && expected < 1000, "the window cuts the good run (test sanity)");
+
+  // ── Not armed: a card is there, but csi_integration::init has not restored
+  //    the id floor (or never ran: the AP failed and start_http_server() with
+  //    it). Nothing read, and no latch. ───────────────────────────────────
+  SD.present = true;
+  SD.dirs.insert("/EVENTS");
+  SD.files["/EVENTS/today.ndjson"] = log;
+  SD.writes = 0;
+  {
+    const size_t read0 = fake_sd_bytes_read();
+    CHECK(csi_event_log::load_into_ring() == 0, "not armed: nothing restored");
+    CHECK(fake_sd_bytes_read() == read0 && SD.writes == 0, "not armed: the card is not even read");
+  }
+  csi_event_log::arm_load();   // csi_integration::init, floor and ceiling restored
 
   // ── No card: nothing, and no latch. ──────────────────────────────────────
   SD.present = false;
@@ -154,12 +177,22 @@ int main() {
 
   // ── This device's card. ──────────────────────────────────────────────────
   SD.writes = 0;
+  const unsigned feeds0 = stub_wdt_feeds();
+  const unsigned delays0 = stub_task_delays();
   const size_t restored = csi_event_log::load_into_ring();
   printf("     restored=%zu expected=%zu\n", restored, expected);
   CHECK(restored == expected, "exactly the good lines inside the tail window are restored");
   CHECK(SD.writes == 0, "the load writes nothing to the card");
   CHECK(SD.files["/EVENTS/today.ndjson"] == log, "the log is byte-for-byte unchanged");
   CHECK(g_committed == 0, "no witness write or commit hook fired");
+  {
+    // Two passes over a 128 KB tail, a feed every 16 chunks of 256 bytes.
+    const unsigned per_pass = (unsigned)(csi_event_log::LOAD_TAIL_BYTES / (256u * 16u));
+    CHECK(stub_wdt_feeds() - feeds0 >= 2 * per_pass - 2,
+          "the walk feeds the task watchdog every 4 KB");
+    CHECK(stub_task_delays() - delays0 == stub_wdt_feeds() - feeds0,
+          "and lets the idle task run each time (vTaskDelay, not yield)");
+  }
 
   csi_event_record_t out[4];
   const size_t n = csi_event_recent(out, 4);
@@ -181,6 +214,59 @@ int main() {
   // ── Once per boot. ───────────────────────────────────────────────────────
   CHECK(csi_event_log::load_into_ring() == 0, "a second call restores nothing");
   CHECK(csi_event_get_next_event_id() == 200000, "the load allocated no id");
+
+  // ── A window that starts exactly on a line boundary keeps its first line.
+  //    6-digit ids make lines of length L, 7-digit ids of L + 1: a lines of
+  //    one and b of the other sum to exactly LOAD_TAIL_BYTES. ─────────────
+  {
+    csi_event_test_reset();                  // reboot
+    csi_event_set_event_id_floor(2000000);
+    csi_event_log::test_rearm_load();
+    csi_event_log::arm_load();
+    const size_t L = line_for(100000, "presence_changed").size();
+    CHECK(line_for(1000000, "presence_changed").size() == L + 1, "7-digit ids are one byte longer");
+    const size_t n = csi_event_log::LOAD_TAIL_BYTES / L;
+    const size_t b = csi_event_log::LOAD_TAIL_BYTES - n * L;
+    CHECK(b <= n, "the split exists (test sanity)");
+    const size_t a = n - b;
+    std::string exact;
+    for (uint32_t id = 900000; id < 900005; ++id) exact += line_for(id, "presence_changed");
+    const size_t head = exact.size();
+    for (uint32_t id = 999999 - (uint32_t)a + 1; id <= 999999; ++id) {
+      exact += line_for(id, "presence_changed");
+    }
+    for (uint32_t id = 1000000; id < 1000000 + (uint32_t)b; ++id) {
+      exact += line_for(id, "presence_changed");
+    }
+    CHECK(exact.size() - head == csi_event_log::LOAD_TAIL_BYTES &&
+          exact[exact.size() - csi_event_log::LOAD_TAIL_BYTES - 1] == '\n',
+          "the window starts exactly on a line (test sanity)");
+    SD.files["/EVENTS/today.ndjson"] = exact;
+    const size_t got = csi_event_log::load_into_ring();
+    printf("     boundary: restored=%zu of %zu\n", got, n);
+    CHECK(got == n, "every line of a boundary-aligned window is restored, the first included");
+    csi_event_record_t head_row;
+    CHECK(!csi_event_find(900004, &head_row), "the line before the window is not read");
+  }
+
+  // ── A late card after a live commit: nothing read, and latched. ─────────
+  {
+    csi_event_test_reset();                  // reboot
+    csi_event_set_event_id_floor(200000);
+    csi_event_log::test_rearm_load();
+    csi_event_log::arm_load();
+    SD.files["/EVENTS/today.ndjson"] = log;
+    std::string row = line_for(150000, "presence_changed");
+    row.pop_back();   // parse() takes the line without its '\n'
+    csi_event_record_t live;
+    CHECK(csi_event_log_line::parse(row.c_str(), &live) && csi_event_inject(&live),
+          "a row in the ring before the card's load (a live commit's stand-in)");
+    const size_t read0 = fake_sd_bytes_read();
+    CHECK(csi_event_log::load_into_ring() == 0, "a ring with a row in it: nothing restored");
+    CHECK(fake_sd_bytes_read() == read0, "and the card's 128 KB tail is not read at all");
+    CHECK(csi_event_log::load_into_ring() == 0 && fake_sd_bytes_read() == read0,
+          "and it latched: the next mount does not read it either");
+  }
 
   if (g_fail == 0) {
     printf("ALL csi_event_log load tests PASSED\n");

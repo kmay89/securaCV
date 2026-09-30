@@ -297,6 +297,10 @@ static void clear_session_tokens() {
   s_token_count = 0;
 }
 
+// The DP budget window is the timed-rotation period (dp.h, BUDGET).
+static_assert(dp::BUDGET_WINDOW_MS == SESSION_ROTATE_MS,
+              "the DP budget refills once per timed-rotation period");
+
 static void check_session_rotation(uint32_t now_ms) {
   // Use wrap-around safe timer comparison
   if (duration_elapsed(s_session_start_ms, now_ms, SESSION_ROTATE_MS)) {
@@ -745,9 +749,10 @@ static void fsm_tick(uint32_t now_ms) {
 // DIFFERENTIAL-PRIVACY LEDGER STORE (dp.h, ledger_store)
 // ════════════════════════════════════════════════════════════════════════════
 //
-// The session's DP spend, kept next to the session epoch it belongs to. One
-// small NVS blob, rewritten only when a release is granted (a handful of
-// times a session at the shipped budget).
+// The DP spend of the current budget window, with the session epoch of its
+// last refill or restore. One small NVS blob, rewritten only when a release
+// is granted or the window refills: at most five times per 4 h window at the
+// shipped budget, whatever a caller does (a rotation writes none).
 
 namespace {
 constexpr const char* DP_LEDGER_KEY = "dp_ledger";
@@ -817,10 +822,11 @@ bool init() {
   s_session_epoch = nvs_store::get_u32("rf_epoch", 0);
   s_session_start_ms = millis();
 
-  // Pick up this session's differential-privacy spend, so a reboot inside
-  // the epoch does not refill the budget (dp.h, BUDGET). Fails closed: an
-  // unreadable ledger leaves the budget spent until the next rotation.
-  dp::restore_budget(s_session_epoch);
+  // Pick up the stored differential-privacy spend, so a reboot does not
+  // refill the budget, and start its window now (dp.h, BUDGET). Fails
+  // closed: an unreadable ledger leaves the budget spent until the next
+  // window.
+  dp::restore_budget(s_session_epoch, s_session_start_ms);
 
   // Load settings with validation using named bounds constants
   RfPresenceSettings stored;
@@ -1040,6 +1046,11 @@ void update() {
     notify::tick(now);
     federated::tick(now);
     wizard::tick(now);
+    // Phase 7: the DP budget's only refill, on its own 4 h uptime clock
+    // (dp.h, BUDGET). Not tied to rotate_session(), which a caller can
+    // trigger; run whether or not sensing is enabled, as the exporters'
+    // budget is not sensing's.
+    dp::refill_if_due(s_session_epoch, now);
     // presence_context tick goes after notify so notify::set_context()
     // calls land in the same loop iteration as the auto-context decision
     // they're driving — the HOME/AWAY flip is reflected immediately.
@@ -1108,11 +1119,12 @@ void rotate_session() {
   // Reset last event to prevent cross-session correlation
   s_last_event = "session_rotated";
 
-  // Phase 7: reset the differential-privacy budget. An attacker observing
-  // our MQTT / HTTP surface over a 4 h window now gets a fresh ε budget
-  // after each rotation; they can't compose queries across sessions to
-  // aggregate below the per-query DP guarantee.
-  dp::reset_budget(s_session_epoch);
+  // Phase 7: the differential-privacy budget is NOT touched here. This
+  // function is also the manual rotation (POST /api/rf/rotate, the opt-in
+  // conformance check), so anything it refilled, any holder of the API
+  // token could refill on demand. The budget refills on its own clock in
+  // update() (dp::refill_if_due, at most once per dp::BUDGET_WINDOW_MS of
+  // uptime); a rotation carries the spend over.
 
   health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
     "Session rotated, new epoch=%u", s_session_epoch);
@@ -1294,7 +1306,9 @@ bool conformance_check_no_mac_storage() {
 
 bool conformance_check_token_rotation() {
   // Verify tokens become invalid after rotation
-  // This test has a side effect (rotates session) so use with caution
+  // This test has a side effect (rotates session) so use with caution.
+  // It does not refill the DP budget: rotate_session() carries the spend
+  // over (dp.h, BUDGET).
 
   uint32_t old_epoch = s_session_epoch;
   uint32_t old_token_count = s_token_count;

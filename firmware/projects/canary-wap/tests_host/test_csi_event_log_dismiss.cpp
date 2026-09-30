@@ -12,6 +12,10 @@
  *     the others as they were, and does not turn the dismissal line into a
  *     row of its own; a dismissal whose record is outside the tail is ignored;
  *   - iterate_since() (MQTT backfill) does not replay the dismissal line;
+ *   - a dismissal that lands between the commit and the commit hook's copy
+ *     of the ring row does not turn the original into a dismissal: append()
+ *     writes it "dismissed":0, the queued dismissal follows, and after a
+ *     reboot the event is restored (dismissed) and backfill still has it;
  *   - the queue is bounded, refuses id 0, and a dismissal with no card, or of
  *     an event no longer in the ring, writes nothing.
  *
@@ -103,6 +107,7 @@ static void reboot() {
   csi_event_test_reset();
   csi_event_set_event_id_floor(1000);   // what NVS restores before the load
   csi_event_log::test_rearm_load();
+  csi_event_log::arm_load();            // csi_integration::init, floor restored
 }
 
 static size_t count_cb_calls = 0;
@@ -115,6 +120,7 @@ int main() {
   csi_event_test_reset();
   csi_module_register(&MODULE);
   csi_event_set_event_id_floor(1000);
+  csi_event_log::arm_load();
 
   // ── Boot 1: three events from an earlier boot on the card. ──────────────
   SD.present = true;
@@ -186,6 +192,40 @@ int main() {
         "with no card, nothing is written");
   SD.present = true;
   CHECK(card_lines().size() == before, "and the card is unchanged");
+
+  // ── A dismissal inside the commit hook's window. csi_integration.cpp's
+  //    hook publishes to MQTT and only then copies the ring row for append();
+  //    the HTTP task can dismiss the row in between. ───────────────────────
+  {
+    SD.files["/EVENTS/today.ndjson"] = "";
+    reboot();
+    CHECK(csi_event_log::load_into_ring() == 0, "an empty log: nothing restored");
+    std::string row = line_for(30, false);
+    row.pop_back();
+    csi_event_record_t committed;
+    CHECK(csi_event_log_line::parse(row.c_str(), &committed) && csi_event_inject(&committed),
+          "event 30 is in the ring (the commit)");
+    CHECK(csi_event_dismiss(30) && csi_event_log::queue_dismissal(30),
+          "the owner dismisses it before the hook copies the row");
+    csi_event_record_t hook_copy;
+    CHECK(csi_event_find(30, &hook_copy) && hook_copy.values.dismissed == 1,
+          "so the hook's copy of the row already says dismissed");
+    CHECK(csi_event_log::append(&hook_copy), "the hook appends it");
+    CHECK(csi_event_log::flush_dismissals() == 1, "the loop task writes the queued dismissal");
+    const std::vector<std::string> lines = card_lines();
+    csi_event_record_t first, second;
+    CHECK(lines.size() == 2 && csi_event_log_line::parse(lines[0].c_str(), &first) &&
+          csi_event_log_line::parse(lines[1].c_str(), &second) &&
+          first.event_id == 30 && first.values.dismissed == 0 &&
+          second.event_id == 30 && second.values.dismissed == 1,
+          "the card holds the original (dismissed:0), then the dismissal");
+    count_cb_calls = 0;
+    CHECK(csi_event_log::iterate_since(0, count_cb, nullptr) == 1 && count_cb_calls == 1,
+          "backfill still replays the event, once");
+    reboot();
+    CHECK(csi_event_log::load_into_ring() == 1 && dismissed_in_ring(30),
+          "after a reboot the event is back, dismissed, not lost");
+  }
 
   if (g_fail == 0) {
     printf("ALL csi_event_log dismiss tests PASSED\n");

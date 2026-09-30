@@ -281,8 +281,10 @@ clean: clean-http-body
 
 # The SD event log's reboot refill (csi_event_log::load_into_ring): the REAL
 # csi_event_log.cpp and the staged CSI chokepoint (csi_event_inject) over a
-# RAM card (stubs/sd_fake) — tail window, refused lines, owner-file cards,
-# no card writes, once per boot. The staged sources are byte-identical to
+# RAM card (stubs/sd_fake) — not before arm_load() (the id floor restored),
+# tail window (a boundary-aligned window keeps its first line), refused
+# lines, owner-file cards, no card writes, the watchdog fed on the walk, no
+# read after a live row, once per boot. The staged sources are byte-identical to
 # firmware/common/csi/src (check_csi_sync.sh).
 EVLOAD_BIN = test_csi_event_log_load
 EVLOAD_SRC = test_csi_event_log_load.cpp
@@ -304,7 +306,8 @@ clean: clean-evlog-load
 
 # A dismissal survives that refill: csi_event_log::queue_dismissal /
 # flush_dismissals write the dismissed row as one more line, load_into_ring
-# restores the event dismissed, iterate_since does not replay the dismissal.
+# restores the event dismissed, iterate_since does not replay the dismissal,
+# and a dismissal inside the commit hook's window does not lose the original.
 # Same REAL sources and RAM card as the load test above.
 EVDISMISS_BIN = test_csi_event_log_dismiss
 EVDISMISS_SRC = test_csi_event_log_dismiss.cpp
@@ -324,16 +327,22 @@ clean: clean-evlog-dismiss
 
 # The differential-privacy budget (dp.h / dp.cpp) is enforced and fails
 # closed: all-or-nothing reservations, value-independent refusals, exact
-# exhaustion, reset on rotation, no refill on a reboot inside the session
-# (the spend persisted with its epoch, over a fake ledger_store), no release
-# completing across a rotation, no overspend under racing threads, and the
-# calibrated noise scale. The REAL dp.cpp over stubs/dp.
+# exhaustion, a refill only on the 4 h uptime clock (never on a manual
+# rotation, never on a reboot: the spend persisted with its epoch, over a
+# fake ledger_store), no release completing across a refill, no overspend
+# under racing threads, and the calibrated noise scale. The REAL dp.cpp over
+# stubs/dp; rf_presence.cpp and rf_presence_api.h are read for source pins
+# (their paths are passed in, so the pins fail closed).
 DPBUDGET_BIN = test_dp_budget
 DPBUDGET_SRC = test_dp_budget.cpp
 
 $(DPBUDGET_BIN): $(DPBUDGET_SRC) $(SRC_DIR)/dp.cpp $(SRC_DIR)/dp.h $(SRC_DIR)/health_log.h \
+                 $(SRC_DIR)/rf_presence.cpp $(SRC_DIR)/rf_presence_api.h beacon_source_scan.h \
                  $(wildcard stubs/dp/*.h)
-	$(CXX) $(CXXFLAGS) -Werror -pthread -I stubs/dp -I $(SRC_DIR) -o $@ $(DPBUDGET_SRC) $(SRC_DIR)/dp.cpp
+	$(CXX) $(CXXFLAGS) -Werror -pthread -I stubs/dp -I $(SRC_DIR) \
+	  -DRF_PRESENCE_CPP='"$(abspath $(SRC_DIR))/rf_presence.cpp"' \
+	  -DRF_PRESENCE_API_H='"$(abspath $(SRC_DIR))/rf_presence_api.h"' \
+	  -o $@ $(DPBUDGET_SRC) $(SRC_DIR)/dp.cpp
 
 .PHONY: run-dp-budget clean-dp-budget
 run-dp-budget: $(DPBUDGET_BIN)

@@ -84,8 +84,9 @@ Fills a `wizard::Status` via `wizard::get_status_for_export(&out)`
 (DP-noised counters).
 
 > **Budget note (2026-09, firmware):** the DP budget in `dp.h` is now
-> enforced and fails closed. A session (one `rf_presence` rotation, 4 h)
-> holds 4 ε; each noised counter costs 1 ε, charged up front for the whole
+> enforced and fails closed. A window (4 h of uptime since the last refill
+> or boot; a manual `POST /api/rf/rotate` does not refill it, and neither
+> does a reboot) holds 4 ε; each noised counter costs 1 ε, charged up front for the whole
 > export. `notify::get_stats_for_export()` noises 9 counters, so it is
 > always withheld today and `wizard::get_status_for_export()` returns
 > `activity_withheld = true` with the four `total_*` counters at 0. "Safe

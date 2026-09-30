@@ -2,6 +2,77 @@
 
 ## [Unreleased]
 
+### canary-wap: review fixes to the DP budget and the event-log reload
+
+An adversarial re-review of the entry below found these. How far each is
+proven: **host-tested only** (`make -C firmware/projects/canary-wap/tests_host`).
+None was compiled for the ESP32 in the session that wrote it, and none has
+been bench-run; CI's `firmware.yml` Arduino build is the first ESP32 compile
+they get.
+
+- **The DP budget no longer refills on demand.** `rf_presence::rotate_session()`
+  reset it, and that function is also the manual rotation: the
+  owner-authenticated `POST /api/rf/rotate`, and `GET /api/rf/conformance`,
+  which ran its rotating check by default. So any holder of the API token
+  could refill ε at will and compose as many releases as it liked, and each
+  forced rotation moved the NVS ledger. The budget now refills only on its
+  own clock: `dp::refill_if_due()`, called from `rf_presence::update()`,
+  refills it when 4 h of uptime (`dp::BUDGET_WINDOW_MS`, static-asserted
+  equal to `SESSION_ROTATE_MS`) have passed since the last refill or boot,
+  and persists the refill. A rotation rotates the tokens and the epoch and
+  carries the spend over; a restore after a reboot carries the stored spend
+  from any epoch at or below the current one and restarts the window, so a
+  reboot only postpones a refill. A budget nobody restored never refills.
+  The ledger's NVS writes are now at most one refill plus four reservations
+  per window, whatever a caller does (each manual rotation still writes
+  `rf_epoch`, as before). What this bounds is ε per 4 h of uptime, not a
+  lifetime total. `GET /api/rf/conformance` no longer rotates unless asked
+  with `skip_rotation=false` (a GET should not change state), and the
+  comment in `rotate_session()` that claimed an observer "can't compose
+  queries across sessions", and `dp.h`'s account of the reset, are
+  rewritten to say what holds. Host-tested by `test_dp_budget.cpp` (the
+  real `dp.cpp`: no refill a millisecond early, none before a restore, a
+  manual rotation plus a reboot carrying the spend, millis wrap, a failed
+  refill write erring toward spent) plus source pins on `rf_presence.cpp`
+  and `rf_presence_api.h`, which fail on the code before this change.
+- **The late-card reload no longer assumes `csi_integration::init` ran.**
+  The SD mount transition in `canary_wap.ino` called `load_into_ring()` on
+  the assumption that init had already restored the event-id floor, but
+  init runs only inside `start_http_server()`, which runs only if the AP
+  came up. On a boot where it did not, a late card was read against the
+  default floor, every row refused, and the once-per-boot latch then shut
+  the reload off. The load is now armed by `csi_event_log::arm_load()`,
+  which init calls once NVS has been read; before that it neither reads nor
+  latches. The comment there said otherwise and is corrected.
+- **A dismissal in the commit hook's window no longer loses the event.**
+  The hook copies the ring row after the MQTT publish, so a dismiss landing
+  in between wrote the original with `"dismissed":1`, which the reload
+  reads as a dismissal line: the event was never restored or backfilled.
+  `append()` now always writes the original `"dismissed":0`; only
+  `flush_dismissals()` writes a 1. The line format
+  (`csi_event_log_line.h`) and the synced CSI copies are unchanged.
+- **The reload no longer drops a whole line when the tail window starts on
+  a line boundary**: it reads the byte before the window and skips only a
+  real fragment.
+- **The reload keeps the task watchdog fed.** The loop said `yield()` fed
+  the idle task's watchdog; it does not (`yield()` never runs the idle
+  tasks, which sit below the loop task, and the watchdog covers both cores'
+  idle tasks and the loop task). It now calls `esp_task_wdt_reset()` and
+  `vTaskDelay(1)` every 4 KB. And a late card with a live event already in
+  the ring is no longer read at all (up to 2 × 128 KB), since every row
+  would be refused.
+- **Wording.** The dismissal line was described as "nothing new reaches the
+  card"; it records that the owner acknowledged the event, and roughly
+  when. That is the owner's own action, kept locally (Invariant IV), and
+  the header now says so. The "Today sheet" is not bounded to today:
+  `today.ndjson` has no daily rotation and a record carries no date (only a
+  time-of-day bucket), so restored rows of any age show as today's. Not
+  fixed (it needs a date on the record); `csi_event_log.h` now says so.
+  `dp::restore_budget()` no longer re-reads the shared ledger outside its
+  lock to log what it restored.
+- **Correction to the entry below:** baseline and household take 3 ε each,
+  so only one of them fits in the 4 ε budget, not both.
+
 ### Opera mesh: three pre-existing canary-wap gaps closed after the v0.4 review
 
 How far this is proven, stated once: **host-tested only** — nothing here
@@ -84,8 +155,8 @@ build is the first ESP32 compile they get.
   and every exporter withholds its export (zeroed, `false`) on refusal.
   At the shipped 4 ε session budget, charged by sequential composition,
   the notify, familiar and federated-stats exports and every federated
-  baseline share are always withheld; baseline and household fit once a
-  session. None of these exports has a production caller today, so no
+  baseline share are always withheld; baseline and household take 3 ε
+  each, so only one of them fits in a 4 ε window (3 + 3 = 6 ε). None of these exports has a production caller today, so no
   served counter changes. Budget size and per-bucket accounting are open
   decisions. Host-tested by `tests_host/test_dp_budget.cpp`, which runs the
   real `dp.cpp`, eight racing threads included.
@@ -107,7 +178,8 @@ build is the first ESP32 compile they get.
   over a fake ledger store. The NVS store itself (`rf_presence.cpp`) has
   not been compiled for the ESP32 or run. **Found, not changed:** the
   owner-authenticated `POST /api/rf/rotate` rotates the session, and with
-  it the budget, on demand.
+  it the budget, on demand. (Changed since: see "review fixes to the DP
+  budget and the event-log reload" above.)
 - **A dismissed event stays dismissed after a reboot** (same review).
   `csi_event_dismiss()` changed only the ring, so the reload above brought
   the event back as `dismissed:0`. The dismiss handler now queues the id,
