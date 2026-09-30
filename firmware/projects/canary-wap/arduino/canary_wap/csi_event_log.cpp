@@ -23,6 +23,7 @@
 #include <Arduino.h>
 #include <FS.h>
 #include <SD.h>
+#include <esp_task_wdt.h>   // fed while the boot reload reads the tail
 #include <atomic>
 #include <stdio.h>
 #include <stdlib.h>
@@ -247,31 +248,51 @@ void reconcile_truncate_remnants() {
 
 /* Walk the whole lines of the log's last LOAD_TAIL_BYTES, oldest first,
  * handing each (without its '\n', NUL-terminated) to fn. Starting mid-file,
- * the first line is a fragment and is dropped; an over-long line is not one
- * of ours and is dropped; a last line without its '\n' (the torn tail of a
- * power cut, or a whole record missing only the newline) is handed over and
- * left to parse(). False when the log could not be opened or seeked.
+ * the first line is a fragment and is dropped, unless the window starts
+ * exactly on a line boundary (the byte before it is a '\n'), when it is a
+ * whole record and is kept; an over-long line is not one of ours and is
+ * dropped; a last line without its '\n' (the torn tail of a power cut, or a
+ * whole record missing only the newline) is handed over and left to
+ * parse(). False when the log could not be opened, seeked or read at the
+ * window's edge.
  *
  * Chunked reads instead of one read() per byte, since this runs from setup()
  * over up to LOAD_TAIL_BYTES; the chunk is small because the caller
  * (csi_integration::init, inside start_http_server) is already deep in the
- * loop task's stack. */
+ * loop task's stack.
+ *
+ * The task watchdog (canary_wap.ino setup: idle tasks of BOTH cores plus the
+ * loop task, which this runs on) is kept fed every WDT_FEED_CHUNKS chunks:
+ * esp_task_wdt_reset() for the loop task's own subscription, and
+ * vTaskDelay(1) so this core's idle task gets to run. yield() would do
+ * neither: it only yields to tasks of equal or higher priority, and the idle
+ * tasks sit below the loop task. A few ms over a whole 128 KB tail. (Where
+ * FEATURE_WATCHDOG leaves the loop task unsubscribed, the reset is a logged
+ * no-op, as it is for hardware_state.h's mount wait.) */
 typedef void (*line_fn_t)(const char* line, void* user);
+
+constexpr size_t TAIL_CHUNK = 256u;
+constexpr unsigned WDT_FEED_CHUNKS = 16u;   /* every 4 KB */
 
 bool for_each_tail_line(line_fn_t fn, void* user) {
   File f = SD.open(LOG_PATH, FILE_READ);
   if (!f) return false;
   const size_t sz = f.size();
-  size_t start = 0;
+  bool skipping = false;
   if (sz > LOAD_TAIL_BYTES) {
-    start = sz - LOAD_TAIL_BYTES;
-    if (!f.seek(start)) { f.close(); return false; }
+    /* Read the byte just before the window: a '\n' there means the window
+     * opens on a whole line. Leaves the file positioned at the window. */
+    const size_t start = sz - LOAD_TAIL_BYTES;
+    if (!f.seek(start - 1)) { f.close(); return false; }
+    const int before = f.read();
+    if (before < 0) { f.close(); return false; }
+    skipping = (before != '\n');
   }
-  bool skipping = (start > 0);
   char line[csi_event_log_line::kLineMax];
   size_t li = 0;
   bool overlong = false;
-  uint8_t buf[256];
+  uint8_t buf[TAIL_CHUNK];
+  unsigned chunks = 0;
   for (;;) {
     const int n = f.read(buf, sizeof(buf));
     if (n <= 0) break;
@@ -293,7 +314,10 @@ bool for_each_tail_line(line_fn_t fn, void* user) {
         }
       }
     }
-    yield();   /* keep the idle task (and its watchdog) fed on a big tail */
+    if (++chunks % WDT_FEED_CHUNKS == 0) {
+      esp_task_wdt_reset();   /* the loop task's own TWDT subscription */
+      vTaskDelay(1);          /* let this core's idle task run */
+    }
   }
   f.close();
   if (!skipping && !overlong && li > 0) {
@@ -303,11 +327,15 @@ bool for_each_tail_line(line_fn_t fn, void* user) {
   return true;
 }
 
-/* A dismissal on the card. append() writes every record the moment it
- * commits, when it cannot yet be dismissed, so a line with "dismissed":1 is
- * never an original: it is the dismissal of the record with that id, a copy
- * of the ring row written by flush_dismissals(). load_into_ring() honors it
- * and iterate_since() does not replay it. */
+/* A dismissal on the card. append() writes every original with
+ * "dismissed":0, whatever the ring row says by then (a dismissal can land
+ * between the commit and the hook's copy of the row: csi_integration.cpp's
+ * commit hook reads the ring after the MQTT publish), so a line with
+ * "dismissed":1 is never an original: it is the dismissal of the record with
+ * that id, a copy of the ring row written by flush_dismissals() through
+ * write_record(). load_into_ring() honors it and iterate_since() does not
+ * replay it. The line format stays csi_event_log_line.h's, shared with the
+ * canary PIO tree: the rule is who writes the 1, not a new key. */
 bool is_dismissal(const csi_event_record_t* rec) { return rec->values.dismissed != 0; }
 
 /* The ids the tail dismisses. Sized to the ring (CSI_EVENT_RING_CAP, 512
@@ -364,7 +392,33 @@ void restore_line(const char* line, void* user) {
 constexpr size_t kPendingDismissals = 8;
 std::atomic<uint32_t> s_pending_dismissals[kPendingDismissals];
 
+/* arm_load(): csi_integration::init has restored the id floor and the
+ * privacy ceiling from NVS. Until then load_into_ring() neither reads nor
+ * latches. */
+std::atomic<bool> s_load_armed{false};
 bool s_load_latched = false;
+
+/* One line, as `rec` says, at the end of the log. */
+bool write_record(const csi_event_record_t* rec) {
+  if (!sd_path_ready()) return false;
+  /* Pre-truncate so the next append doesn't blow past MAX_BYTES.
+   * Cheap when below cap (single stat). */
+  head_truncate_if_oversized();
+
+  char line[512];
+  const size_t n = csi_event_log_line::marshal(rec, line, sizeof(line));
+  if (n == 0) return false;
+
+  /* FILE_APPEND on the Arduino-ESP32 SD library opens for write and
+   * seeks to the end. SD.h's flush() is implicit on close(); we
+   * close after every write so a power cut at most loses the
+   * in-flight line and not the file structure. */
+  File f = SD.open(LOG_PATH, FILE_APPEND);
+  if (!f) return false;
+  const size_t wrote = f.write((const uint8_t*)line, n);
+  f.close();
+  return wrote == n;
+}
 
 }  /* namespace */
 
@@ -396,30 +450,38 @@ bool init() {
 }
 
 bool append(const csi_event_record_t* rec) {
-  if (!sd_path_ready()) return false;
-  /* Pre-truncate so the next append doesn't blow past MAX_BYTES.
-   * Cheap when below cap (single stat). */
-  head_truncate_if_oversized();
-
-  char line[512];
-  const size_t n = csi_event_log_line::marshal(rec, line, sizeof(line));
-  if (n == 0) return false;
-
-  /* FILE_APPEND on the Arduino-ESP32 SD library opens for write and
-   * seeks to the end. SD.h's flush() is implicit on close(); we
-   * close after every write so a power cut at most loses the
-   * in-flight line and not the file structure. */
-  File f = SD.open(LOG_PATH, FILE_APPEND);
-  if (!f) return false;
-  const size_t wrote = f.write((const uint8_t*)line, n);
-  f.close();
-  return wrote == n;
+  if (!rec) return false;
+  /* The original, never the dismissal: see is_dismissal(). A dismissal that
+   * reached the ring row before the hook copied it is written after this
+   * line by flush_dismissals(), since queue_dismissal() queued it. */
+  csi_event_record_t original = *rec;
+  original.values.dismissed = 0;
+  return write_record(&original);
 }
+
+void arm_load() { s_load_armed.store(true); }
 
 size_t load_into_ring() {
   if (s_load_latched) return 0;
+  /* Not before csi_integration::init has restored the id floor and the
+   * ceiling: without the floor inject refuses every row, and latching then
+   * would leave the ring empty for the boot. Not latched, so the call after
+   * init (or a later card) still loads. */
+  if (!s_load_armed.load()) return 0;
   if (!sd_path_ready()) return 0;   /* no card yet (or not ours): try again later */
   s_load_latched = true;            /* one pass per boot, whatever it finds */
+
+  /* A live event already in the ring: csi_event_inject refuses every row
+   * from now on (recency order), so reading up to 2 x LOAD_TAIL_BYTES of a
+   * late card would restore nothing. The ring holds nothing but live rows
+   * before this, the only injector, has run. */
+  {
+    csi_event_record_t probe;
+    if (csi_event_recent(&probe, 1) > 0) {
+      Serial.println("[EVT-LOG] a live event has committed this boot - the earlier boots' log is not reloaded");
+      return 0;
+    }
+  }
 
   /* Two passes over the tail: first the ids it dismisses (a dismissal is
    * written after its record, so one pass would inject the row before
@@ -460,10 +522,11 @@ size_t flush_dismissals() {
     const uint32_t id = s_pending_dismissals[i].exchange(0);
     if (id == 0) continue;
     /* The ring row, as the dismissal left it: the same record, in the same
-     * line format, that append() already wrote for this id. */
+     * line format, that append() already wrote for this id, with
+     * "dismissed":1. */
     csi_event_record_t rec;
     if (!csi_event_find(id, &rec) || !rec.values.dismissed) continue;
-    if (append(&rec)) {
+    if (write_record(&rec)) {
       written++;
     } else {
       Serial.printf("[EVT-LOG] dismissal of event %lu not written (no card, or a failed write)\n",
@@ -474,7 +537,10 @@ size_t flush_dismissals() {
 }
 
 #ifdef CSI_TEST_HOST_BUILD
-void test_rearm_load() { s_load_latched = false; }
+void test_rearm_load() {
+  s_load_latched = false;
+  s_load_armed.store(false);
+}
 #endif
 
 size_t iterate_since(uint32_t since_event_id, iterate_cb_t cb, void* user) {

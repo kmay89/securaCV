@@ -20,6 +20,12 @@ enum sdcard_type_t { CARD_NONE = 0, CARD_MMC, CARD_SD, CARD_SDHC, CARD_UNKNOWN }
 #define FILE_WRITE  "w"
 #define FILE_APPEND "a"
 
+/* Bytes read through any File, so a test can see a path read nothing. */
+inline size_t& fake_sd_bytes_read() {
+  static size_t n = 0;
+  return n;
+}
+
 class File {
  public:
   File() = default;
@@ -34,6 +40,7 @@ class File {
   int available() const { return data_ ? (int)(data_->size() - pos_) : 0; }
   int read() {
     if (!data_ || pos_ >= data_->size()) return -1;
+    fake_sd_bytes_read()++;
     return (unsigned char)(*data_)[pos_++];
   }
   int read(uint8_t* buf, size_t n) {
@@ -42,6 +49,7 @@ class File {
     if (n > left) n = left;
     memcpy(buf, data_->data() + pos_, n);
     pos_ += n;
+    fake_sd_bytes_read() += n;
     return (int)n;
   }
   size_t write(const uint8_t* buf, size_t n);

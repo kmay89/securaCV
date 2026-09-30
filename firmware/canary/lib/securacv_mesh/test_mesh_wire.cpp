@@ -24,9 +24,19 @@
 
 /* canary_config.h #defines PROTOCOL_VERSION as a string. The registry must
  * compile in a translation unit that already has it (PlatformIO canary CI
- * failed on exactly this once), so define it first. */
+ * failed on exactly this once), so define it first. The envelope must too:
+ * its version constant was mesh_envelope::PROTOCOL_VERSION until v0.4's
+ * follow-up, which no TU holding the macro could include (the macro turned
+ * the declaration into `constexpr uint8_t "pwk:v0.3.0" = ...`); it is
+ * OPERA_VERSION now, the registry's name. The canary-wap Makefile builds
+ * this file against the STAGED registry, where there is no envelope, and
+ * passes MESH_WIRE_STAGED_ONLY; the PIO build never does, so the guard
+ * holds there. */
 #define PROTOCOL_VERSION "pwk:v0.3.0"
 #include "mesh_wire.h"
+#ifndef MESH_WIRE_STAGED_ONLY
+#include "mesh_envelope.h"
+#endif
 
 #include <cassert>
 #include <cstdio>
@@ -71,6 +81,19 @@ void test_values_pinned() {
   std::printf("PASS test_values_pinned\n");
 }
 
+#ifndef MESH_WIRE_STAGED_ONLY
+/* The envelope's version byte is the registry's, under its name — and this
+ * TU carries canary_config.h's PROTOCOL_VERSION macro, so compiling at all
+ * is the check that the envelope can be included from the canary sketch. */
+void test_envelope_takes_the_registry_version() {
+  static_assert(mesh_envelope::OPERA_VERSION == mesh_wire::OPERA_VERSION,
+                "the envelope's version byte is the registry's");
+  assert(mesh_envelope::OPERA_VERSION == 1);
+  assert(static_cast<uint8_t>(mesh_envelope::MsgType::TAMPER_ALERT) == mesh_wire::TAMPER_ALERT);
+  std::printf("PASS test_envelope_takes_the_registry_version\n");
+}
+#endif
+
 void test_first_byte_is_unambiguous() {
   using namespace mesh_wire;
   /* The two version bytes the trees have used as a first byte. */
@@ -111,6 +134,9 @@ int main() {
   test_values_pinned();
   test_first_byte_is_unambiguous();
   test_old_disagreements_resolved();
+#ifndef MESH_WIRE_STAGED_ONLY
+  test_envelope_takes_the_registry_version();
+#endif
   std::printf("\nALL MESH_WIRE TESTS PASSED\n");
   return 0;
 }

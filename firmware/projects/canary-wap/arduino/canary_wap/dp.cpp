@@ -106,24 +106,31 @@ int32_t gaussian_sample(uint32_t sigma_units) {
 // BUDGET (enforced, persisted, epoch-tagged)
 // ────────────────────────────────────────────────────────────────────────────
 //
-// One session ledger. Every change to it (a reservation, a session reset, the
-// boot-time restore) happens under s_ledger_mu, so the value a reservation
-// persists is never older than one another task already persisted. Readers
-// (remaining_budget_x1000 and the draws' generation check) load s_ledger
-// without the lock.
+// One ledger: the ε spent in the current window. Every change to it (a
+// reservation, a refill, the boot-time restore) happens under s_ledger_mu,
+// so the value a reservation persists is never older than one another task
+// already persisted. Readers (remaining_budget_x1000 and the draws'
+// generation check) load s_ledger without the lock.
 //
 // s_ledger packs the ledger generation (high 16 bits) with the ε spent in it
-// (low 16 bits). The generation moves on every reset and restore, and a
+// (low 16 bits). The generation moves on every refill and restore, and a
 // Release remembers the generation it was paid from: a draw, or complete(),
 // in any other generation is refused. So a release cannot finish across a
-// session rotation, and a new session's releases never ride on a reservation
-// the reset erased. 16 bits of generation wrap after 65 536 resets: only a
-// release held open across an exact multiple of that many would pass the
-// check, and a release lives for one export call.
+// refill, and a new window's releases never ride on a reservation the refill
+// erased. 16 bits of generation wrap after 65 536 refills: only a release
+// held open across an exact multiple of that many would pass the check, and
+// a release lives for one export call.
 //
 // Until restore_budget() has read the persisted ledger, the budget reads as
-// spent: a device that never restored it (safe mode, a read failure) releases
-// nothing.
+// spent and refill_if_due() does nothing: a device that never restored it
+// (safe mode) releases nothing.
+//
+// The ledger's epoch is the rf_presence session epoch at the last refill or
+// restore, and only those move it: a manual rotation bumps the session epoch
+// but leaves the spend (and its epoch) where they are, and the restore after
+// a reboot carries a spend stored under any epoch at or below the current
+// one. The epoch is a consistency check (a record from a later epoch than
+// the device's is not this device's history), not what decides a refill.
 
 static_assert(DEFAULT_BUDGET_X1000 <= 0xFFFFu, "the ledger packs ε spent into 16 bits");
 
@@ -135,11 +142,13 @@ static constexpr uint32_t ledger_consumed(uint32_t v) { return v & 0xFFFFu; }
 
 static std::mutex            s_ledger_mu;
 static std::atomic<uint32_t> s_ledger{pack_ledger(0, DEFAULT_BUDGET_X1000)};
-static uint32_t              s_ledger_epoch = 0;  // guarded by s_ledger_mu
+static uint32_t              s_ledger_epoch = 0;      // guarded by s_ledger_mu
+static uint32_t              s_window_start_ms = 0;   // guarded by s_ledger_mu
+static bool                  s_restored = false;      // guarded by s_ledger_mu
 static std::atomic<uint32_t> s_withheld_releases{0};
 
-// All or nothing: spend `cost` if the session budget covers all of it AND the
-// new total is durably recorded against this session's epoch. A write that
+// All or nothing: spend `cost` if the window's budget covers all of it AND the
+// new total is durably recorded against the ledger's epoch. A write that
 // fails refuses the release and leaves the ledger as it was, so what a reboot
 // restores always covers every draw that was honored.
 static bool try_spend(uint32_t cost_x1000, uint32_t* gen_out) {
@@ -169,27 +178,42 @@ uint32_t remaining_budget_x1000() {
 
 uint32_t consumed_budget_x1000() { return ledger_consumed(s_ledger.load()); }
 
-void reset_budget(uint32_t epoch) {
+bool refill_if_due(uint32_t epoch, uint32_t now_ms) {
+  bool persisted;
   {
     std::lock_guard<std::mutex> lock(s_ledger_mu);
+    // Never before a restore: an unrestored budget stays spent.
+    if (!s_restored) return false;
+    // Wrap-safe: unsigned difference. A clock that wraps (49.7 days) only
+    // ever makes this late, never early.
+    if ((uint32_t)(now_ms - s_window_start_ms) < BUDGET_WINDOW_MS) return false;
+    s_window_start_ms = now_ms;
     s_ledger_epoch = epoch;
     s_ledger.store(pack_ledger(ledger_gen(s_ledger.load()) + 1, 0));
+    // Persisted so a reboot restores the fresh window's spend, not the last
+    // window's. A failed write only errs toward spent: the reboot then
+    // restores the older, larger spend. The refill stands in RAM either
+    // way; this window's first reservation writes its own record.
+    persisted = ledger_store::write(epoch, 0);
   }
-  // Nothing to persist: a stored ledger from an earlier epoch reads as a
-  // fresh budget on the next boot, and this epoch's first reservation
-  // writes its own.
-  health_logging::log(health_logging::LEVEL_INFO, health_logging::CAT_RF,
-    "DP: per-session budget reset");
+  if (persisted) {
+    health_logging::log(health_logging::LEVEL_INFO, health_logging::CAT_RF,
+      "DP: budget window elapsed; budget refilled");
+  } else {
+    health_logging::log(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
+      "DP: budget refilled, but the ledger write failed (a reboot restores the last window's spend)");
+  }
+  return true;
 }
 
-bool restore_budget(uint32_t epoch) {
+bool restore_budget(uint32_t epoch, uint32_t now_ms) {
   uint32_t stored_epoch = 0;
   uint32_t stored_consumed = 0;
+  uint32_t consumed;
   bool ok;
   {
     std::lock_guard<std::mutex> lock(s_ledger_mu);
     const ledger_store::Read r = ledger_store::read(&stored_epoch, &stored_consumed);
-    uint32_t consumed;
     if (r == ledger_store::READ_ABSENT) {
       consumed = 0;                           // nothing ever spent on this device
       ok = true;
@@ -197,23 +221,27 @@ bool restore_budget(uint32_t epoch) {
                stored_epoch > epoch) {
       consumed = DEFAULT_BUDGET_X1000;        // unreadable or inconsistent: spent
       ok = false;
-    } else if (stored_epoch == epoch) {
-      consumed = stored_consumed;             // a reboot inside the session
-      ok = true;
     } else {
-      consumed = 0;                           // an earlier session's ledger
+      // The stored spend, whatever epoch it was charged in: a reboot inside
+      // the window, or after any number of manual rotations, is not a
+      // refill. Only refill_if_due() refills.
+      consumed = stored_consumed;
       ok = true;
     }
     s_ledger_epoch = epoch;
+    s_window_start_ms = now_ms;
+    s_restored = true;
     s_ledger.store(pack_ledger(ledger_gen(s_ledger.load()) + 1, consumed));
   }
+  // `consumed` is this restore's own value, taken under the lock; the log
+  // does not re-read the shared ledger.
   if (ok) {
     health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
       "DP: budget restored for epoch %u (%u of %u spent)",
-      (unsigned)epoch, (unsigned)consumed_budget_x1000(), (unsigned)DEFAULT_BUDGET_X1000);
+      (unsigned)epoch, (unsigned)consumed, (unsigned)DEFAULT_BUDGET_X1000);
   } else {
     health_logging::logf(health_logging::LEVEL_ERROR, health_logging::CAT_RF,
-      "DP: budget ledger unreadable for epoch %u; budget withheld until the next rotation",
+      "DP: budget ledger unreadable for epoch %u; budget withheld until the next window",
       (unsigned)epoch);
   }
   return ok;
@@ -249,7 +277,7 @@ Release::Release(uint16_t draws, uint16_t epsilon_x1000, uint32_t delta_inv)
   }
 }
 
-// Still in the ledger generation that paid for it (no reset since).
+// Still in the ledger generation that paid for it (no refill or restore since).
 bool Release::current() const {
   return ledger_gen(s_ledger.load()) == gen_;
 }
@@ -260,7 +288,7 @@ bool Release::complete() const {
 
 // Pay one draw out of the reservation, and compute its σ. False (and the
 // release marked short) when the reservation is refused, used up or from a
-// session that has since been reset, or when the noise would round to
+// window that has since been refilled, or when the noise would round to
 // nothing — a zero-σ draw is the raw value.
 bool Release::take_draw(uint32_t sensitivity, uint32_t* sigma_units) {
   if (!ok_ || draws_left_ == 0 || sensitivity == 0 || !current()) {

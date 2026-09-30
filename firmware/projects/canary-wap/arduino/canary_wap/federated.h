@@ -39,8 +39,9 @@
  *     baseline::REMOTE_MERGE_MAX_COUNT samples per bucket per merge,
  *     so a malicious peer cannot dominate our local distribution.
  *   • Cadence: shares are emitted at most once per rf_presence session
- *     rotation (4 h). The Phase 7 DP budget resets in lock-step and is
- *     enforced, so a share can never spend more ε than one epoch holds.
+ *     rotation (4 h). The Phase 7 DP budget refills on its own 4 h
+ *     uptime clock (not on a rotation, which a caller can force) and is
+ *     enforced, so a share can never spend more ε than one window holds.
  *
  * TRANSPORT
  * =========

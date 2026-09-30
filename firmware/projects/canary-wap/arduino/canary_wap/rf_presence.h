@@ -215,7 +215,9 @@ void set_event_callback(RfEventCallback cb);
 // This processes raw BLE/WiFi scans through the privacy barrier
 void update();
 
-// Manual session rotation (for testing/privacy)
+// Manual session rotation (for testing/privacy). Rotates the tokens and the
+// epoch; does NOT refill the differential-privacy budget (dp.h, BUDGET: it
+// refills only on its own 4 h uptime clock, in update()).
 void rotate_session();
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -269,7 +271,9 @@ bool conformance_check_no_mac_storage();
 
 // Verify session tokens rotate correctly
 // WARNING: This test has a side effect - it rotates the session!
-// Only call when you want to actually rotate, or in isolated test mode
+// Only call when you want to actually rotate, or in isolated test mode.
+// GET /api/rf/conformance runs it only on an explicit skip_rotation=false.
+// The rotation does not refill the DP budget.
 bool conformance_check_token_rotation();
 
 // Verify observation buffer contains only aggregates

@@ -51,7 +51,7 @@ static bool throttle_allows_build(uint32_t last_build_ms, bool force) {
 // Draws per bucket: count, then sum and sum_sq for each feature.
 static constexpr uint16_t DRAWS_PER_BUCKET = 1 + 2 * baseline::FEATURE_COUNT;
 // Draws per share. Charged by sequential composition (dp.h BUDGET): at the
-// default ε = 1 that is 24 x 9 = 216 ε against a 4 ε session budget, so the
+// default ε = 1 that is 24 x 9 = 216 ε against a 4 ε window budget, so the
 // share is always withheld today. Charging the disjoint hour buckets by
 // parallel composition (9 ε) would still exceed 4 ε. Unblocking federated
 // sharing is a budget / accounting decision, not a code fix.
