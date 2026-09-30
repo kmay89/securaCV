@@ -115,9 +115,14 @@ void test_replay_gate_is_strict_and_the_first_counter_is_one() {
   const std::string add = squeeze(function_body(code, "add_peer"));
   CHECK(!add.empty());
   CHECK(count(add, "peer->msg_counter_tx=1;") == 1);
+  // Peers restored from NVS take the same convention (Codex P1 on #1752):
+  // a static-zeroed tx would sign counter 0 and the strict gate drops it.
+  const std::string ld = squeeze(function_body(code, "load_peers"));
+  CHECK(count(ld, "g_peers[i].msg_counter_tx=1;") == 1);
+  CHECK(count(ld, "g_peers[i].msg_counter_rx=0;") == 1);
   CHECK(count(add, "peer->msg_counter_rx=0;") == 1);
   CHECK(count(sq, "msg_counter_tx=0;") == 0);
-  CHECK(count(sq, "msg_counter_tx=1;") == 3);
+  CHECK(count(sq, "msg_counter_tx=1;") == 4);  // add_peer, rekey apply, maybe_finalize_rekey, load_peers
   const std::string fin = squeeze(function_body(code, "maybe_finalize_rekey"));
   CHECK(!fin.empty());
   CHECK(count(fin, "g_peers[j].msg_counter_tx=1;") == 1);

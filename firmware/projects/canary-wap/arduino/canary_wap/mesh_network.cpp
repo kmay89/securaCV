@@ -1387,6 +1387,12 @@ static bool load_peers() {
       compute_fingerprint(g_peers[i].pubkey, g_peers[i].fingerprint);
       g_peers[i].state = PEER_OFFLINE;
       g_peers[i].session_established = false;
+      // Same counter convention as add_peer (spec §3.3): the first frame this
+      // boot signs carries counter 1, never the static-zeroed 0 a strict
+      // receiver drops. rx starts at 0 here; load_replay_counters() raises it
+      // to the persisted high-water mark right after.
+      g_peers[i].msg_counter_tx = 1;
+      g_peers[i].msg_counter_rx = 0;
 
       // Register with ESP-NOW
       esp_now_peer_info_t peer_info = {};
