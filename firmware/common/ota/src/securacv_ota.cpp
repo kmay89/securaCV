@@ -495,12 +495,27 @@ static esp_err_t scv_crt_bundle_attach(void *conf)
 // confirms it — and if the new firmware crashes (or hangs into a watchdog
 // reset) at ANY point before that confirmation, the bootloader boots the
 // previous firmware on the very next start. One bad boot, automatic recovery.
-#if defined(CONFIG_APP_ROLLBACK_ENABLE) || defined(CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE)
+//
+// WHERE THE CONFIG COMES FROM. An Arduino build cannot set a bootloader
+// option from build_flags: the bootloader and the IDF libraries come
+// precompiled with the core, and sdkconfig.h (pulled in by Arduino.h above)
+// is the core's. The cores this tree pins set it — arduino-esp32 2.0.17's
+// tools/sdk/<chip>/sdkconfig has CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y for
+// esp32, esp32s3 and esp32c3, and the 3.x lib-builder's defconfig.common sets
+// it for every chip — which is also why the core has this weak hook at all.
+// So the net is armed by the core, not by us, and a core bump that dropped
+// it would silently disarm every shipping build. This used to be an #if that
+// compiled the override out in that case; it is now a hard stop, so losing
+// the revert net is a red build instead of a quiet one. (Verified against
+// the upstream sources on 2026-09-29; the bench test that proves a bad image
+// actually reverts is docs/V1_BENCH_TEST_RUNBOOK.md's rollback row.)
+#if !(defined(CONFIG_APP_ROLLBACK_ENABLE) || defined(CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE))
+  #error "securacv_ota: this Arduino core's sdkconfig does not enable CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE, so a bad OTA image would not revert. Pin a core that enables it (docs/firmware_ota.md, 'Where each property holds today')."
+#endif
 extern "C" bool verifyRollbackLater(void)
 {
     return true;
 }
-#endif
 
 static const char *TAG = "securacv_ota";
 

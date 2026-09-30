@@ -24,7 +24,7 @@ where that design is written down.
 | Hub process crash (panic, `kill -9`, OOM) | yes | §2.1 | no committed event is lost; an unclean stop is sealed on the next boot |
 | Hub power loss (torn write) | yes | §2.1 | at most the uncommitted append is lost; the chain resumes from the last committed row |
 | Canary power loss mid-record | yes | §2.2 | at most the in-flight line is lost; the chain resumes from the last complete record (card) or the last cached head (no card) |
-| Canary brownout / crash loop | yes | §2.6 | bounded: a crash-loop counter and a safe mode on the WAP; a task watchdog on every product that has one; no A/B rollback in the shipping Arduino builds |
+| Canary brownout / crash loop | yes | §2.6 | bounded: a crash-loop counter and a safe mode on the WAP and on the PlatformIO `canary`; a task watchdog on every product that has one; A/B rollback of an unconfirmed OTA image on every product (compile-checked and source-verified, not yet bench-verified) |
 | Host clock step (forward or back) | yes | §2.4 | the chain is not ordered by the wall clock; a step is sealed as `ClockSkew`; retention is bounded against both directions |
 | Device clock absent | yes | §2.4 | device buckets are uptime-based and say so; wall time comes from GPS (WAP), SNTP (display) or nothing (Sense, Vision) |
 | Message loss, duplication, reordering (MQTT) | yes | §2.3 | at-most-once from a device; duplicates and losses are bounded and described, not prevented |
@@ -282,21 +282,47 @@ has no jitter (`securacv_mqtt.cpp`; strategy doc 12, F4).
   both counters (`hardware_state.h`). There is no time window on the
   *counting* — "three reboots in sixty seconds" is the wrong shorthand; it
   is three crash resets with no sixty-second stable run between them.
+- **Canary (PlatformIO tree).** `bootguard::begin()`
+  (`firmware/common/health/boot_guard.h`, the NVS glue around the pure
+  `boot_policy.h`) counts every boot that does not reach *healthy* —
+  `setup()` returned and `loop()` ran for 30 s, or the device chose to
+  restart or deep-sleep (the loop's own restarts, and an authenticated
+  `POST /api/reboot`, which the HTTP task hands to the loop rather than
+  running itself) — and persists the count before any risky init.
+  Four in a row on a confirmed image stop in a serial safe mode (radio,
+  storage, sensors and the witness chain never start); an image still
+  pending OTA confirmation never enters it, because the rollback below owns
+  that case. The count starts over for a different image (OTA install,
+  A/B rollback, USB flash of another build), on a healthy boot, or on the
+  operator's confirmed "clear" (serial `c` then `y`, or BOOT held 2 s). If
+  NVS cannot be opened, or the count reads but cannot be written back
+  (including a real write probe on any boot bound for safe mode), it boots
+  normally and says so. A power-on reset is **not** counted — the same
+  rule as the WAP's: a switched outlet, a smart plug or a storm flicker must
+  not put a home device into a no-radio safe mode. It neither adds to the
+  count nor clears it. Every other reset reason counts (panic, watchdogs,
+  brownout, software, external, deep-sleep wake). The cost: a hang that no
+  watchdog catches, ended by someone pulling the plug, is not counted.
+  Compile-checked; the
+  decisions and the glue are host-tested (`test_boot_policy.cpp`,
+  `test_boot_guard.cpp`); not bench-verified.
 - **Every other product** with a task watchdog (`esp_task_wdt` on Sense,
-  Vision, Display, Sentinel and the PlatformIO tree) resets on a stuck
-  task and logs the reset reason on the next boot. Nothing counts those
-  resets. The generic crash-loop policy in
-  `firmware/common/health/boot_policy.h` is pure decision logic with a host
-  test and **no caller in any boot path**; its header used to say otherwise
-  and now does not.
-- **OTA rollback.** A/B slots exist on every product. The revert net —
-  a new image stays `PENDING_VERIFY` until the boot self-test confirms it —
-  is live only where the bootloader's rollback config is enabled, which is
-  the `canary-ota` ESP-IDF project. **In the shipping Arduino and
-  PlatformIO builds the Arduino core auto-confirms the image and a bad
-  first boot does not revert.** `firmware_ota.md` now says which of its
-  recovery-matrix rows hold where. The anti-rollback version floor is in
-  NVS, which physical access can erase; it is not an eFuse.
+  Vision, Display and Sentinel) resets on a stuck task and logs the reset
+  reason on the next boot. Nothing counts those resets there.
+- **OTA rollback.** A/B slots exist on every product, and the revert net —
+  a new image stays `PENDING_VERIFY` until the boot self-test confirms it,
+  and any reset before that boots the previous image — is compiled into
+  every product. An earlier version of this section said the shipping
+  Arduino and PlatformIO builds lacked the bootloader config and
+  auto-confirmed; the pinned cores' own precompiled `sdkconfig` enables it
+  (checked against arduino-esp32 2.0.17 and the 3.x lib-builder on
+  2026-09-29), and the OTA engine now fails the build on a core that does
+  not. Not yet bench-verified: no deliberately bad image has been pushed to
+  a shipping build and watched to revert (`V1_BENCH_TEST_RUNBOOK.md`,
+  Track E). The confirmation point differs per product
+  (`firmware_ota.md`, "Where each property holds today"). The anti-rollback
+  version floor is in NVS, which physical access can erase; it is not an
+  eFuse.
 - **Brownout.** Logged by reset reason (an `ERROR` entry on the WAP that
   names the supply), not sealed. `failure_semantics.md`'s `PowerLoss` is a
   hub-side proxy; device resets are telemetry.
@@ -381,3 +407,5 @@ has no jitter (`securacv_mqtt.cpp`; strategy doc 12, F4).
 | A returning radar never signs "cleared" over a body | **not on main** — the stall-recovery cases arrive with #1740 |
 | Boot-time tail verification enters safe mode | `witnessd` boot path (#990); corrupt-store open is **not** covered |
 | Watchdog aborts a stalled loop | `witnessd.rs` watchdog unit test |
+| A Canary crash loop degrades to safe mode; a pending image never does; every escape works | `test_boot_policy.cpp`, `test_boot_guard.cpp` (decisions and NVS glue; the boot-path wiring is bench Track E) |
+| A bad OTA image reverts | **not tested** — compile-time `#error` in `securacv_ota.cpp` proves the core enables the config; the revert itself is bench Track E |
