@@ -1149,7 +1149,8 @@ so — see D2 below.)
   behavior). Recommended: allocate bundle ids from the chokepoint allocator
   at commit time, in both trees and the open-row display. The fix must
   reset or migrate `csi.evsent` and Home Assistant's stored mark.
-- [x] **F47 [code] canary-wap's backfill watermark lives in RAM.** Found by
+- [x] **F47 [code] canary-wap's backfill watermark lives in RAM.** (#1754)
+  Found by
   F37 (#1718). Its first reconnect after every boot replays up to 64 ids
   Home Assistant refuses. It could adopt the canary's
   `common/csi/src/csi_event_backfill.h` (NVS ceiling, id-floor cap). A
