@@ -10,8 +10,11 @@ set -euo pipefail
 # LAST staged family in the sketch with no sync guard at all — byte-identical
 # today, and nothing but this file keeps them that way. These modules carry
 # channel-hop and hub-election logic that both builds must agree on, or two
-# Canaries running the two builds stop hearing each other — and (F33) the
-# spec §5.6 REVOCATION_GRACE_MS deny-list both trees keep.
+# Canaries running the two builds stop hearing each other — (F33) the
+# spec §5.6 REVOCATION_GRACE_MS deny-list both trees keep — and (v0.4) the
+# spec §4.5 wire registry, mesh_wire.h: the one assignment of the outer
+# frame's version and type bytes that both trees' enums take their values
+# from. A drift there is the very disagreement the registry exists to end.
 #
 # Can be run from any directory (the repo root is resolved from the script's
 # own location):
@@ -26,6 +29,7 @@ FILES=(
   mesh_channel_hop.h mesh_channel_hop.cpp
   mesh_hub_election.h mesh_hub_election.cpp
   mesh_revocation.h mesh_revocation.cpp
+  mesh_wire.h
 )
 
 drift=0
@@ -54,4 +58,4 @@ if [ "$drift" -ne 0 ]; then
   echo "Mesh module copies are OUT OF SYNC. Edit the canonical file under firmware/canary/lib/securacv_mesh/src/ and copy it into the sketch."
   exit 1
 fi
-echo "Mesh module copies (mesh_beacon / mesh_channel_hop / mesh_hub_election / mesh_revocation) are in sync."
+echo "Mesh module copies (mesh_beacon / mesh_channel_hop / mesh_hub_election / mesh_revocation / mesh_wire) are in sync."
