@@ -82,6 +82,11 @@ bool csi_running();
  *  windows_emitted, frames_dropped_*, etc. Returns false on null arg. */
 bool csi_get_stats(csi_stats_t* out);
 
+/** The event-id floor NVS holds now (0 = none, or NVS unreadable) —
+ *  csi_event_backfill::ceiling_for's cap on csi_mqtt's delivery
+ *  ceiling (F47). */
+uint32_t event_id_floor_stored();
+
 /** Transmitter filter (csi_hal.h). csi_filter_foreign(): the persisted
  *  on/off choice (default on). csi_filter_armed(): the setting is on AND
  *  the HAL holds the associated AP's BSSID, so the filter is actually

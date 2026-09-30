@@ -239,6 +239,7 @@ class Planner {
     m_card_max = 0;
     m_read_fails = 0;
     m_parked = false;
+    m_torn_size = 0;
     m_sent_before = false;
     m_last_send_ms = 0;
     memset(m_fresh, 0, sizeof(m_fresh));
@@ -272,6 +273,7 @@ class Planner {
     m_card_max = tail_id;
     m_read_fails = 0;
     m_parked = false;
+    m_torn_size = 0;
     /* A log with no delivery record behind it (NVS lost its ceiling) is
      * treated as delivered, for the same reason as begin(). */
     if (m_stored == 0 && tail_id > m_through) m_through = tail_id;
@@ -282,6 +284,7 @@ class Planner {
   void card_close() {
     m_card_ok = false;
     m_parked = false;
+    m_torn_size = 0;
   }
 
   /* Nothing on the card is owed any more: no broker is configured, or the
@@ -364,6 +367,14 @@ class Planner {
      * to read until the interval is up. */
     if (m_parked && !may_send) return 0;
     m_parked = false;
+    /* Parked on a torn tail: the last read ended at the log's end inside a
+     * line the host has not sealed yet. Until the log grows there is
+     * nothing new to read, and re-reading the fragment once per loop pass
+     * was a card read for nothing (F47). */
+    if (m_torn_size != 0) {
+      if (m_size == m_torn_size) return 0;
+      m_torn_size = 0;
+    }
     size_t sent = 0;
     for (size_t chunk = 0; chunk < kChunksPerPass && pending(); ++chunk) {
       const uint32_t left = m_size - m_scan_off;
@@ -423,7 +434,10 @@ class Planner {
          * read mid-file is a failed read: retry next pass. A full read with
          * no line break cannot be a record (a line is under kLineMax): it
          * is a damaged run — step over it and resync at the next '\n'. */
-        if ((uint32_t)(m_scan_off + got) >= m_size) break;
+        if ((uint32_t)(m_scan_off + got) >= m_size) {
+          m_torn_size = m_size;
+          break;
+        }
         if (got < kReadChunk) {
           note_read_fail();
           break;
@@ -473,6 +487,7 @@ class Planner {
   /* A retention truncation dropped `cut` bytes from the head of the log. */
   void on_cut(uint32_t cut) {
     m_parked = false;
+    m_torn_size = 0;
     if (m_scan_off >= cut) {
       m_scan_off -= cut;
     } else {
@@ -514,6 +529,9 @@ class Planner {
   uint32_t m_card_max;     /* highest id known on the card */
   uint8_t  m_read_fails;
   bool     m_parked;       /* the walk stopped on a row it will send */
+  uint32_t m_torn_size;    /* log size when the walk stopped on a torn tail
+                              (0 = not stopped there); reads resume when the
+                              log grows past it */
   bool     m_sent_before;
   uint32_t m_last_send_ms;
   uint32_t m_fresh[kFreshIds];

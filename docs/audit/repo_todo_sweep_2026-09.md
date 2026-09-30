@@ -1149,7 +1149,7 @@ so — see D2 below.)
   behavior). Recommended: allocate bundle ids from the chokepoint allocator
   at commit time, in both trees and the open-row display. The fix must
   reset or migrate `csi.evsent` and Home Assistant's stored mark.
-- [ ] **F47 [code] canary-wap's backfill watermark lives in RAM.** Found by
+- [x] **F47 [code] canary-wap's backfill watermark lives in RAM.** Found by
   F37 (#1718). Its first reconnect after every boot replays up to 64 ids
   Home Assistant refuses. It could adopt the canary's
   `common/csi/src/csi_event_backfill.h` (NVS ceiling, id-floor cap). A
@@ -1157,6 +1157,21 @@ so — see D2 below.)
   last whole line before a power cut's torn tail, the canary's walk stays
   pending and re-reads the fragment about once per loop pass until the next
   committed row seals it. Nothing is lost, and the next row goes out.
+  *Done:* csi_mqtt.cpp adopts the header's ceiling rule over its own
+  iterate_since backfill: `persist_delivered_ceiling()` (must_persist
+  cadence, `ceiling_for`'s id-floor cap via the new
+  `csi_integration::event_id_floor_stored()`, same `csi.evsent` key as the
+  canary's egress) runs in `publish_and_advance` BEFORE the id is handed
+  over, and `init()` restores the watermark from the ceiling — max()'d, so
+  a config-POST re-init never moves it back — with Planner::begin's
+  first-boot rule (everything below the restored id floor treated as
+  delivered, the record written then). The torn-tail re-read is fixed in
+  the canonical Planner: the walk parks on a torn tail (`m_torn_size`) and
+  reads again only when the log grows, cleared on card open/close and
+  retention cuts; `test_torn_tail_is_parked_not_reread_every_pass`
+  reproduces the reboot-then-spin scenario and pins zero reads while the
+  log stands still (432 checks). Staged WAP copy re-synced. Not
+  bench-verified on hardware (U1).
 - [ ] **F48 [code+decision] canary-wap's mesh crypto and its interop with the
   PIO tree.** Found by F33 (#1718). canary-wap's AUTH exchange still runs
   X25519 over long-term Ed25519 keys, the bug class F33 part 2 fixed for

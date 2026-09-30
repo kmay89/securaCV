@@ -939,6 +939,49 @@ static int test_unbuildable_row_is_skipped_not_a_stall() {
   return 0;
 }
 
+static int test_torn_tail_is_parked_not_reread_every_pass() {
+  // F47's smaller find: an unbuildable row as the last whole line before a
+  // power cut's torn tail kept the walk pending after the reboot (kNever
+  // never advances the watermark past it), and every loop pass re-read the
+  // torn fragment for nothing until the next commit sealed it. The walk now
+  // parks on the torn tail and reads again only when the log grows.
+  World w; Allocator a;
+  {
+    Planner p;
+    a.boot();
+    p.begin(w.nvs_ceiling, a.stored, w);
+    open_card(w, p);
+    Host h{w, p, a};
+    w.connected = false;
+    for (int i = 0; i < 2; ++i) h.tick(1);   // held: 1..2
+    w.unbuildable_id = a.next;               // 3: the last whole line
+    h.tick(1);
+  }
+  w.log += "{\"id\":4,\"fir";                // the power cut's torn tail
+  Planner p;
+  a.boot();
+  p.begin(w.nvs_ceiling, a.stored, w);
+  open_card(w, p);                           // arms the seal for the next append
+  Host h{w, p, a};
+  w.connected = true;                        // the link returns after the reboot
+  for (int i = 0; i < 60; ++i) h.tick();     // replay 1..2, skip 3, hit the tail
+  CHECK(p.stats().replayed == 2);
+  CHECK(p.stats().unsendable == 1);
+  CHECK(p.pending());                        // 3's id keeps the walk pending...
+  const long parked = h.total_reads;
+  for (int i = 0; i < 50; ++i) h.tick();
+  CHECK(h.total_reads == parked);            // ...parked: no reads while the log stands still
+  // The next commit seals the fragment and grows the log: the walk resumes,
+  // steps past the sealed garbage line, and the new row goes out in turn.
+  h.tick(1);
+  for (int i = 0; i < 60; ++i) h.tick();
+  CHECK(h.total_reads > parked);
+  CHECK(!p.pending());
+  CHECK(w.ha.refused.empty());
+  CHECK(strictly_rising(w.ha.accepted));
+  return 0;
+}
+
 static int test_nvs_failure_still_delivers() {
   World w; Planner p; Allocator a;
   w.nvs_ok = false;
@@ -1483,6 +1526,7 @@ int main() {
   RUN(test_card_lost_while_rows_wait);
   RUN(test_failed_reads_and_damage_do_not_stall_live_rows);
   RUN(test_unbuildable_row_is_skipped_not_a_stall);
+  RUN(test_torn_tail_is_parked_not_reread_every_pass);
   RUN(test_nvs_failure_still_delivers);
   RUN(test_pass_bounds_under_a_big_backlog);
   RUN(test_queue_longer_than_one_drain_holds_the_walk);
