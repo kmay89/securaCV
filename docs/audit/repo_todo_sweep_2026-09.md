@@ -1137,8 +1137,11 @@ so — see D2 below.)
   X25519 over long-term Ed25519 keys, the bug class F33 part 2 fixed for
   pairing, and its rotation encrypts under those session keys. canary-wap
   also HKDFs the pairing key where the PIO tree and spec §5.3 use it raw,
-  and it numbers pairing frames differently, so the two trees cannot pair
-  with each other. Concurrent removals on canary-wap cannot converge without
+  and its pairing payload structs differ from the PIO tree's, so the two
+  trees cannot pair with each other (the outer frame and the type-byte
+  numbering they also disagreed on are reconciled by spec §4.5's
+  `mesh_wire.h` — host-tested, crypto review pending; the payloads and
+  the derivation are what remain). Concurrent removals on canary-wap cannot converge without
   a wire change: `MSG_OPERA_REKEY` names no removed device and has no
   announcement phase. Crypto review and a wire decision first, then code in
   both trees and a cross-tree host test.

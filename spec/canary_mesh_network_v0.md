@@ -1,8 +1,24 @@
-# Canary Mesh Network Protocol v0.3 (Opera Protocol)
+# Canary Mesh Network Protocol v0.4 (Opera Protocol)
 
-Status: Draft v0.3
+Status: Draft v0.4
 Intended Status: Normative
-Last Updated: 2026-09-23
+Last Updated: 2026-09-29
+
+> **v0.4 summary — one outer frame for both trees (§4.5).** The PlatformIO
+> mesh and canary-wap numbered the type byte of their outer frame
+> independently (`TAMPER_ALERT` 18 vs `MSG_TAMPER_ALERT = 4`; canary-wap's
+> `CHANNEL_LOCK` 20 and `HUB_ELECTION` 21 sat on the PIO values of
+> `OFFLINE_IMMINENT` and `WITNESS_RECORD`), used different version bytes (1
+> vs 0), and the PIO tree put an unsigned copy of the type ahead of its
+> envelope. §4.5 now states **one registry** (`mesh_wire.h`, canonical in
+> the PIO library and staged byte-identical into the canary-wap sketch) and
+> **one outer frame** — the signed envelope, version byte first — and both
+> trees' enums take their values from it. Nothing below the envelope
+> changed: several payloads and the pairing exchange still differ (§4.5
+> table), so the trees still cannot pair with, and therefore cannot verify
+> a frame from, each other. **Implemented and host-tested; awaiting
+> maintainer crypto review; not bench-verified** (nothing of it has crossed
+> a radio — U1 Track C2). See §14.
 
 > **v0.3 summary** (PlatformIO tree, `firmware/canary/lib/securacv_mesh`):
 > `LEAVE_OPERA` (§4.2), a compact template-only `TAMPER_ALERT` payload
@@ -177,6 +193,15 @@ mesh_message = {
 }
 ```
 
+> **Implementation status (v0.4): neither tree encodes CBOR.** Both send a
+> fixed binary header in this field order — version (1 B), type (1 B),
+> opera_id (16 B), sender fingerprint (8 B), counter (u64 LE), timestamp
+> (u32 LE) — then the payload and a 64-byte Ed25519 signature over
+> everything before it. The version byte is 1 and the type byte is a
+> number from the §4.5 registry (not a text string). §4.5 is the normative
+> statement of the frame as built; the CDDL above describes the intended
+> self-describing form and is retained as such.
+
 ### 4.2 Control Messages
 
 #### HEARTBEAT
@@ -213,7 +238,7 @@ auth_response_payload = {
 Sent once by a member that is leaving (`POST /api/mesh/leave`), signed under
 the opera it is leaving, with no payload:
 ```cddl
-leave_opera_payload = nil        ; PlatformIO: zero-length payload, msg_type 25
+leave_opera_payload = nil        ; zero-length payload, type byte 25 in both trees (§4.5)
 ```
 A receiver that verifies it — signature against the sender's pinned pubkey,
 `opera_id`, per-peer counter — removes the **signer's own** trust entry and
@@ -236,7 +261,7 @@ verified once more — review finding, fw-mesh.)
 #### REKEY_OFFER / REKEY_ACCEPT / REKEY_SECRET / REKEY_ACK — v0.3 (PlatformIO)
 The `opera_secret` rotation that `remove` runs (§5.6, PlatformIO subsection).
 All four ride opera-authenticated envelopes under the **current** `opera_id`
-(msg_type 26–29); multi-byte integers are little-endian:
+(type bytes 26–29, §4.5); multi-byte integers are little-endian:
 ```cddl
 rekey_offer  = [ rekey_id: u32, eph_pub: bstr .size 32, removed_fp: bstr .size 8 ]  ; 44 B, broadcast
 rekey_accept = [ rekey_id: u32, eph_pub: bstr .size 32 ]                             ; 36 B, to the initiator
@@ -259,15 +284,18 @@ tamper_alert_payload = {
 ```
 
 **PlatformIO tree (v0.3) — compact, template-only payload.** The PIO sender
-(`mesh_session::send_tamper_alert`, envelope msg_type 18) carries a fixed
+(`mesh_session::send_tamper_alert`, type byte 18 — since v0.4 the same byte
+canary-wap's `MSG_TAMPER_ALERT` carries, §4.5) carries a fixed
 6-byte payload (`mesh_alert.h`): `kind` u8 (0 `enclosure_tamper`, 1
 `temp_drift`, 2 `camera_tamper` — the dictionary's firmware tamper `kind`
 vocabulary), `severity` u8 (0–7, LogLevel), `witness_seq` u32 LE (0 = none).
 There is **no free-text `detail` on the wire**: a receiver renders the kind's
 template name and never shows sender-authored text. Any other length, or a
-severity above 7, is dropped. canary-wap sends its own struct (with a 64-byte
-`detail`) under its own outer type (`MSG_TAMPER_ALERT = 4`), so the two trees
-do not exchange alerts — see §8.3.
+severity above 7, is dropped. canary-wap sends its own 54-byte struct (with a
+48-byte `detail`) under the same type byte, so the two trees still do not
+exchange alerts — a PIO receiver drops the canary-wap payload on length, and
+a canary-wap receiver would read the 6-byte one as a truncated struct. The
+payload, not the type byte, is what remains to reconcile (§4.5 table, §8.3).
 
 #### POWER_ALERT
 Broadcast on power loss detection:
@@ -303,6 +331,94 @@ peer_entry = {
   status: tstr
 }
 ```
+
+### 4.5 Wire Type Registry and Outer Frame — v0.4
+
+> **Status: implemented in both trees and host-tested; awaiting maintainer
+> crypto review; not bench-verified** (no frame of either tree has crossed a
+> radio, U1 Track C2). The registry is
+> `firmware/canary/lib/securacv_mesh/src/mesh_wire.h`, canonical, staged
+> byte-identical into `firmware/projects/canary-wap/arduino/canary_wap/`
+> (`firmware/scripts/check_mesh_sync.sh`). Both trees' enums
+> (`mesh_envelope::MsgType`, `mesh_session::MsgType`, `mesh_pairing::MsgType`;
+> `mesh_network::MessageType`, `mesh_pair_frame::TYPE_*`) take their values
+> from it, and the header's own `static_assert`s hold the invariants below
+> wherever it is compiled. Host tests: `test_mesh_wire.cpp` (the numbers,
+> run in both trees), `test_mesh_envelope.cpp`, `test_mesh_session.cpp`
+> (`test_outer_frame_is_the_registry_frame`), canary-wap's
+> `test_mesh_wire_wap.cpp` and `test_mesh_pair_frame.cpp`.
+
+**The outer frame.** One byte, one meaning, both trees. A receiver
+classifies a frame by its **first byte**:
+
+| First byte | Frame | Layout |
+|---|---|---|
+| `1` (`PROTOCOL_VERSION`) | opera-authenticated | `[version 1][type 16..255][opera_id 16][sender_fp 8][counter u64 LE][timestamp u32 LE][payload][Ed25519 signature 64]` — the signature is over every byte before it, hashed under `"securacv:mesh:message:v0"` (`mesh_crypto::DOMAIN_MESSAGE`) in both trees; the type is read from this **signed** header, never from anything in front of it |
+| `8..12` | pre-membership pairing, unsigned | `[type][the raw pairing payload struct]` — there is no peer key to verify against yet; the pairing state machine's own checks authenticate the exchange (§5) |
+| anything else | dropped | `0` (canary-wap's version until v0.4), `2..7`, `13..15`, a stale version, the PIO tree's pre-v0.4 unsigned type prefix, a Chirp (`0xC4`) or Beacon (`0xB1`) magic |
+
+The pairing block is `8..12` (canary-wap's numbering) and not the PIO tree's
+old `0..4` because a pairing type must never equal a version byte: `0` was
+canary-wap's version and `1` is the registry's, so a receiver that keys on
+the first byte — both do — could have taken one frame for the other. The
+registry's `static_assert`s keep `0`, `1`, `0xC4` and `0xB1` out of every
+block. The PIO tree's old prefix byte was an unsigned copy of the signed
+type ahead of the envelope; dropping it removed one unauthenticated byte
+from the frame and made the two layouts identical — no check was weakened,
+since dispatch there already keyed on the signed type.
+
+**The registry.**
+
+| Byte | Name | Payload compatibility across the trees (v0.4) |
+|---|---|---|
+| 0–7 | reserved — never assign | `0` and `1` are version bytes |
+| 8 | `PAIR_DISCOVER` | structs differ (PIO `mesh_pairing`, WAP `PairDiscoverPayload`); cannot pair across trees |
+| 9 | `PAIR_OFFER` | same |
+| 10 | `PAIR_ACCEPT` | same |
+| 11 | `PAIR_CONFIRM` | same |
+| 12 | `PAIR_COMPLETE` | same; canary-wap also HKDFs the pairing key (§5.3) |
+| 13–15 | reserved — never assign | |
+| 16 | `HEARTBEAT` | PIO does not send; WAP struct |
+| 17 | `CSI_FEATURES` | PIO only |
+| 18 | `TAMPER_ALERT` | **differs**: PIO 6-byte template-only (§4.3), WAP 54-byte struct with free text |
+| 19 | `POWER_ALERT` | WAP only |
+| 20 | `OFFLINE_IMMINENT` | WAP only |
+| 21 | `WITNESS_RECORD` | PIO only (reserved) |
+| 22 | `BEACON_EVENT` | **same** — `mesh_beacon` is staged byte-identical |
+| 23 | `CHANNEL_LOCK` | **same** — `mesh_channel_hop` staged |
+| 24 | `HUB_ELECTION` | **same** — `mesh_hub_election` staged |
+| 25 | `LEAVE_OPERA` | **same** — empty |
+| 26–29 | `REKEY_OFFER` / `ACCEPT` / `SECRET` / `ACK` | PIO only (§5.6 PlatformIO subsection) |
+| 30–36 | `AUTH_CHALLENGE`, `AUTH_RESPONSE`, `AUTH_COMPLETE`, `PEER_LIST`, `ENCRYPTED`, `OPERA_REKEY`, `OPERA_REKEY_ACK` | canary-wap's per-peer session layer (§3.1, §5.6 v0.2); PIO drops as unknown |
+| 37–255 | reserved | |
+
+**What this buys, and what it does not.** A type byte now means the same
+message on both sides, and a frame of one tree parses as a frame on the
+other: the session test builds a frame byte by byte the way canary-wap's
+`send_to_peer` writes it and the PIO session verifies and dispatches it (a
+`LEAVE_OPERA`), drops its replay, and drops the version-0 and prefixed
+shapes. But a frame is only verified against a **pinned peer key**, and the
+two trees cannot pair with each other (the pairing structs and key
+derivation differ), so **no cross-tree frame can be verified on a radio
+today**; the four payloads marked *same* would verify once pairing is
+reconciled, `TAMPER_ALERT` would not until its payload is. A verified frame
+of a type the receiver has no handler for (a canary-wap session-layer type
+at a PIO receiver) is dropped **after** it advances the sender's replay
+counter — it is a genuine frame from that peer — which the session test
+states explicitly.
+
+**Compatibility — this is a wire break, stated plainly.** A canary-wap
+built before v0.4 and one built after drop each other's Opera frames
+(version 0 vs 1), and would read each other's type bytes differently if
+they did not; a PIO Canary before and after v0.4 likewise (the prefix
+byte, and pairing `0..4` vs `8..12`). There is no version negotiation and
+no dual-decode: a mixed opera does not degrade, it goes silent. The
+project has no record of an opera formed on a radio in either tree (U1
+Track C2 is open), which is why v0.4 renumbers rather than adds a second
+decode path — but that is a statement about what has been tested, not a
+proof about every flashed device. A device that has stored an opera from a
+pre-v0.4 build must be re-paired after the update, and every member of an
+opera must be updated together.
 
 ## 5. Pairing Protocol
 
@@ -352,8 +468,9 @@ that agreed whatever the keys were); canary-wap uses
 remain, both open: canary-wap feeds the X25519 output through HKDF-SHA256
 (`"securacv:mesh:session:v0"`) before the code and the AEAD, where the formula
 above and the PlatformIO tree use it directly — so the two trees still would
-not show the same code to each other (they also number the pairing frames
-differently, §8.3); and canary-wap's AUTH exchange (§3.1) still runs X25519
+not show the same code to each other (since v0.4 they number the pairing
+frames alike, `8..12`, §4.5, but the payload structs differ); and
+canary-wap's AUTH exchange (§3.1) still runs X25519
 over the long-term Ed25519 identity keys, the same class of bug, in the
 per-peer session keys its §5.6 rekey encrypts under. Neither tree has paired
 on a radio yet (U1 Track C2).
@@ -798,10 +915,13 @@ and, without `uptime_ms`, no time at all — until F33 it rendered the uptime
 as a time of day. canary-wap's web UI shows no alert time. `DELETE` clears the history; the counters keep
 counting. Counters and history are **per boot** — not persisted. Relay
 (§6.1 step 3), `POWER_ALERT` and `OFFLINE_IMMINENT` are not implemented.
-**Not wire-interoperable with canary-wap:** the two trees number the outer
-frame type differently (PIO 18 vs WAP `MSG_TAMPER_ALERT = 4`) and carry
-different payloads; nothing here delivers alerts across trees (the WAP's own
-`broadcast_tamper_alert` has no caller, so it sends none either).
+**Still not interoperable with canary-wap at the payload:** since v0.4 the
+two trees agree on the outer frame and the type byte (18 in both, §4.5),
+but they carry different `TAMPER_ALERT` payloads (6-byte template-only vs
+54-byte struct); nothing here delivers alerts across trees (the WAP's own
+`broadcast_tamper_alert` has no caller, so it sends none either), and the
+trees cannot pair with each other yet, which any cross-tree verification
+needs first.
 
 **`GET /api/mesh` field set:** the implementation emits the exact fields the
 canary web UI consumes — `ok, state, opera_id, opera_name, has_opera,
@@ -1009,3 +1129,14 @@ An implementation conforms to this specification if it:
   `GET /api/mesh/alerts` adds `uptime_ms`, and the web UI shows an alert's
   age instead of a made-up time of day (§8.3); PIO `pair/start` founds an
   opera when the device holds none (§5.4, §8.3).
+- v0.4 (2026-09-29; **implemented, awaiting maintainer crypto review; not
+  bench-verified**): one wire type registry and one outer frame for both
+  trees (§4.5, `mesh_wire.h`, staged and sync-guarded): the signed envelope
+  is the frame, version byte 1 in both (canary-wap was 0), the type byte is
+  the PIO numbering (`TAMPER_ALERT` 18, `LEAVE_OPERA` 25, rekey 26–29;
+  canary-wap's `CHANNEL_LOCK`/`HUB_ELECTION` move from 20/21 to 23/24 and
+  its session-layer types to 30–36), the pairing prefix is `8..12` in both
+  (the PIO tree was `0..4`), and the PIO tree's unsigned type byte ahead of
+  the envelope is gone. §4.1 states that neither tree encodes CBOR. The
+  §4.3/§5.3/§8.3 interop notes now name the payloads and the pairing
+  exchange, not the numbering, as what keeps the trees apart.

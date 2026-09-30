@@ -34,7 +34,7 @@ Canonical specification documents (authoritative sources; do not duplicate witho
 | [`beacon_channel_v0.md`](beacon_channel_v0.md) | Draft v0.1 | Normative (intended) | 🟡 Draft — RF beacon channel (firmware scaffolding; bench status in `docs/audit/mesh_and_chirp_audit_v1.md`; **relay not built** — one radio hop today, `docs/FLEET_SEMANTICS.md` §6) |
 | [`chirp_channel_v0.md`](chirp_channel_v0.md) | Draft v0.2 | Normative (intended) | 🟡 Draft — acoustic chirp channel (audit: `docs/audit/mesh_and_chirp_audit_v1.md`) |
 | [`canary_free_signals_v0.md`](canary_free_signals_v0.md) | Draft v0.1 | Normative (intended) | 🟡 Draft — RF presence signals (mesh fallbacks: flag report F-08; CSI itself is documented in `docs/csi_wifi_sensing_research.md`) |
-| [`canary_mesh_network_v0.md`](canary_mesh_network_v0.md) | Draft v0.2 | Normative (intended) | 🟡 Draft — ESP-NOW/BLE mesh (see F-08; **ESP-NOW only, relay not built** — `docs/FLEET_SEMANTICS.md` §6) |
+| [`canary_mesh_network_v0.md`](canary_mesh_network_v0.md) | Draft v0.4 | Normative (intended) | 🟡 Draft — ESP-NOW/BLE mesh (see F-08; **ESP-NOW only, relay not built** — `docs/FLEET_SEMANTICS.md` §6; §4.5 one wire registry for both firmware trees, **awaiting crypto review, not bench-verified**) |
 | [`gossip_replication_v0.md`](gossip_replication_v0.md) | Draft v0.1 | Normative (intended) | 🟡 Draft — mesh gossip replication (see F-08) |
 | [`beacon_cap_gateway_v0.md`](beacon_cap_gateway_v0.md) | Draft v0.1, **specification only** | Informational | ⚪ Spec-only — explicitly **not implemented** until a future release |
 

@@ -24,6 +24,7 @@
 #include <esp_now.h>
 #endif
 #include "log_level.h"
+#include "mesh_wire.h"          // spec §4.5 wire registry: version + type bytes (staged; check_mesh_sync.sh)
 #include "mesh_beacon.h"        // BEACON_EVENT wire format (PR canary-wap parity)
 #include "mesh_channel_hop.h"   // CHANNEL_LOCK wire format + HopTracker (PR 4b)
 #include "mesh_hub_election.h"  // HUB_ELECTION wire format + HubMonitor (PR 4c)
@@ -34,8 +35,11 @@
 
 namespace mesh_network {
 
-// Protocol version
-static const uint8_t PROTOCOL_VERSION = 0;
+// Protocol version — byte 0 of every signed Opera frame. The registry's
+// value (mesh_wire.h, spec §4.5 — v0.4, awaiting crypto review, not
+// bench-verified): 1, the same byte the PlatformIO mesh sends. Was 0 until
+// v0.4; a v0.3 canary-wap and a v0.4 one drop each other's Opera frames.
+static const uint8_t PROTOCOL_VERSION = mesh_wire::OPERA_VERSION;
 
 // Network limits
 static const size_t MAX_OPERA_SIZE = 16;           // Maximum peers in an opera
@@ -108,43 +112,49 @@ enum PeerState : uint8_t {
   PEER_REMOVED             // Removed from opera
 };
 
-// Message types
+// Message types — the type byte of the outer frame (byte 1 of a signed
+// Opera frame, byte 0 of an unsigned pairing frame). Every value is the
+// registry's (mesh_wire.h, spec §4.5 — v0.4, awaiting crypto review, not
+// bench-verified), shared with the PlatformIO mesh's mesh_envelope::MsgType
+// and mesh_session::MsgType. Until v0.4 this enum counted from 0 for
+// itself: TAMPER_ALERT was 4 here and 18 there, and CHANNEL_LOCK (20) and
+// HUB_ELECTION (21) sat on the PIO values of OFFLINE_IMMINENT and
+// WITNESS_RECORD. Never renumber here — change the registry, and the spec,
+// or nothing. The AUTH_* / PEER_LIST / ENCRYPTED / OPERA_REKEY* types are
+// this tree's per-peer session layer; the PIO tree drops them as unknown.
 enum MessageType : uint8_t {
-  MSG_HEARTBEAT = 0,
-  MSG_AUTH_CHALLENGE,
-  MSG_AUTH_RESPONSE,
-  MSG_AUTH_COMPLETE,
-  MSG_TAMPER_ALERT,
-  MSG_POWER_ALERT,
-  MSG_OFFLINE_IMMINENT,
-  MSG_PEER_LIST,
-  MSG_PAIR_DISCOVER,
-  MSG_PAIR_OFFER,
-  MSG_PAIR_ACCEPT,
-  MSG_PAIR_CONFIRM,
-  MSG_PAIR_COMPLETE,
-  MSG_LEAVE_OPERA,
-  MSG_ENCRYPTED,           // Encrypted payload wrapper
+  MSG_HEARTBEAT       = mesh_wire::HEARTBEAT,          // 16
+  MSG_AUTH_CHALLENGE  = mesh_wire::AUTH_CHALLENGE,     // 30 (session layer)
+  MSG_AUTH_RESPONSE   = mesh_wire::AUTH_RESPONSE,      // 31
+  MSG_AUTH_COMPLETE   = mesh_wire::AUTH_COMPLETE,      // 32
+  MSG_TAMPER_ALERT    = mesh_wire::TAMPER_ALERT,       // 18
+  MSG_POWER_ALERT     = mesh_wire::POWER_ALERT,        // 19
+  MSG_OFFLINE_IMMINENT = mesh_wire::OFFLINE_IMMINENT,  // 20
+  MSG_PEER_LIST       = mesh_wire::PEER_LIST,          // 33 (session layer)
+  MSG_PAIR_DISCOVER   = mesh_wire::PAIR_DISCOVER,      //  8 (unsigned pairing prefix)
+  MSG_PAIR_OFFER      = mesh_wire::PAIR_OFFER,         //  9
+  MSG_PAIR_ACCEPT     = mesh_wire::PAIR_ACCEPT,        // 10
+  MSG_PAIR_CONFIRM    = mesh_wire::PAIR_CONFIRM,       // 11
+  MSG_PAIR_COMPLETE   = mesh_wire::PAIR_COMPLETE,      // 12
+  MSG_LEAVE_OPERA     = mesh_wire::LEAVE_OPERA,        // 25
+  MSG_ENCRYPTED       = mesh_wire::ENCRYPTED,          // 34 (session layer) — encrypted payload wrapper
   // v0.3 (audit O3 closure): transactional opera_secret rotation. Initiated
   // when remove_peer() is called; old surviving members each ACK the new
   // secret before it's committed to NVS.
-  MSG_OPERA_REKEY,         // Initiator → each surviving member; encrypted new secret
-  MSG_OPERA_REKEY_ACK,     // Surviving member → initiator; confirms receipt
+  MSG_OPERA_REKEY     = mesh_wire::OPERA_REKEY,        // 35 — initiator → each surviving member; encrypted new secret
+  MSG_OPERA_REKEY_ACK = mesh_wire::OPERA_REKEY_ACK,    // 36 — surviving member → initiator; confirms receipt
   // PR (canary-wap parity): BLE Scout's arrived/departed transitions
   // broadcast to peer Canaries as a signed envelope carrying the
   // 25-byte mesh_beacon::Payload (state + label). Receivers decode
   // and forward to mesh_network::set_beacon_event_handler.
-  MSG_BEACON_EVENT,
+  MSG_BEACON_EVENT    = mesh_wire::BEACON_EVENT,       // 22
   // PR 4b: Hub → peers coordinated channel-hop proposal.
   // 2-byte mesh_channel_hop::Payload (channel + reason). Receivers
   // apply csi_hal::set_channel_lock() and forward to
   // mesh_network::set_channel_lock_handler.
-  // Note: this numbering is for canary-wap's outer frame type byte,
-  // separate from mesh_envelope::MsgType (PIO's inner signed header).
-  // The two don't interop on the same mesh so the values need not match.
-  MSG_CHANNEL_LOCK = 20,
+  MSG_CHANNEL_LOCK    = mesh_wire::CHANNEL_LOCK,       // 23
   // PR 4c: Hub failover election broadcast.
-  MSG_HUB_ELECTION = 21
+  MSG_HUB_ELECTION    = mesh_wire::HUB_ELECTION        // 24
 };
 
 // Alert types

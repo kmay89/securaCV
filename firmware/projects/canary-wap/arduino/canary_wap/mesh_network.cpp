@@ -484,6 +484,17 @@ static bool send_raw_message(const uint8_t* mac, const uint8_t* data, size_t len
 // minimum in handle_received_message(). Pin that header's constants to the
 // real enum and structs so the sender, the classifier and the handlers
 // cannot drift apart.
+// v0.4 (spec §4.5): the outer frame's bytes are the registry's, so a
+// PlatformIO Canary reads this tree's type byte as the same message. A
+// value typed here instead of taken from mesh_wire.h would silently
+// reopen the disagreement the registry ended.
+static_assert(PROTOCOL_VERSION == mesh_wire::OPERA_VERSION, "version byte drift from the registry");
+static_assert(MSG_TAMPER_ALERT == mesh_wire::TAMPER_ALERT,     "type byte drift from the registry");
+static_assert(MSG_LEAVE_OPERA  == mesh_wire::LEAVE_OPERA,      "type byte drift from the registry");
+static_assert(MSG_CHANNEL_LOCK == mesh_wire::CHANNEL_LOCK,     "type byte drift from the registry");
+static_assert(MSG_HUB_ELECTION == mesh_wire::HUB_ELECTION,     "type byte drift from the registry");
+static_assert(MSG_BEACON_EVENT == mesh_wire::BEACON_EVENT,     "type byte drift from the registry");
+static_assert(MSG_OPERA_REKEY  == mesh_wire::OPERA_REKEY,      "type byte drift from the registry");
 static_assert(mesh_pair_frame::TYPE_DISCOVER == MSG_PAIR_DISCOVER, "pair type drift");
 static_assert(mesh_pair_frame::TYPE_OFFER    == MSG_PAIR_OFFER,    "pair type drift");
 static_assert(mesh_pair_frame::TYPE_ACCEPT   == MSG_PAIR_ACCEPT,   "pair type drift");
@@ -623,7 +634,10 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
 
   size_t offset = 0;
 
-  // Parse header
+  // Parse header. Byte 0 is the registry's version (mesh_wire.h, spec
+  // §4.5: 1 since v0.4 — a v0.3 frame's 0, and the PlatformIO tree's old
+  // unsigned type prefix, both stop here); byte 1 is the registry's type,
+  // read from the SIGNED header below, never from anything in front of it.
   uint8_t version = data[offset++];
   if (version != PROTOCOL_VERSION) {
     return;  // Incompatible version
