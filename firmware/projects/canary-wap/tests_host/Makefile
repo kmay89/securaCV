@@ -581,8 +581,11 @@ WIRE_STAGED_SRC = ../../../canary/lib/securacv_mesh/test_mesh_wire.cpp
 $(WIRE_WAP_BIN): $(WIRE_WAP_SRC) $(SRC_DIR)/mesh_wire.h $(SRC_DIR)/mesh_pair_frame.h $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp beacon_source_scan.h
 	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -DMESH_NETWORK_H='"$(abspath $(SRC_DIR))/mesh_network.h"' -o $@ $(WIRE_WAP_SRC)
 
+# The sketch stages the registry alone, not the PIO envelope that takes its
+# version from it, so the suite's envelope include (its macro-clash guard's
+# second half) is off here; the PIO job compiles it with the envelope.
 $(WIRE_STAGED_BIN): $(WIRE_STAGED_SRC) $(SRC_DIR)/mesh_wire.h
-	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(WIRE_STAGED_SRC)
+	$(CXX) $(CXXFLAGS) -Werror -DMESH_WIRE_STAGED_ONLY -I $(SRC_DIR) -o $@ $(WIRE_STAGED_SRC)
 
 .PHONY: run-wire clean-wire
 run-wire: $(WIRE_WAP_BIN) $(WIRE_STAGED_BIN)
@@ -593,6 +596,31 @@ clean-wire:
 
 run: run-wire
 clean: clean-wire
+
+# The v0.4 review's three pre-existing receive-path gaps (host-tested only,
+# not bench-verified, awaiting crypto review): the replay counter convention
+# (first counter 1, strict greater-than, no rx==0 exemption — the same lines
+# pinned in the PIO mesh_session.cpp), the source MAC bound only after
+# signature + opera_id + replay (it was bound before verify), and every
+# struct-payload handler refusing any length but its struct's (the PIO
+# 6-byte TAMPER_ALERT, mesh_alert.h, used to be read as the 56-byte struct).
+# Reads the real mesh_network.{h,cpp} (beacon_source_scan.h; paths passed in,
+# so the pins fail closed) and includes the PIO mesh_alert.h for its length.
+RX_GATES_BIN = test_mesh_rx_gates_wap
+RX_GATES_SRC = test_mesh_rx_gates_wap.cpp
+PIO_MESH_SRC = ../../../canary/lib/securacv_mesh/src
+
+$(RX_GATES_BIN): $(RX_GATES_SRC) $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(PIO_MESH_SRC)/mesh_session.cpp $(PIO_MESH_SRC)/mesh_alert.h beacon_source_scan.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(PIO_MESH_SRC) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -DMESH_NETWORK_H='"$(abspath $(SRC_DIR))/mesh_network.h"' -DMESH_SESSION_CPP='"$(abspath $(PIO_MESH_SRC))/mesh_session.cpp"' -o $@ $(RX_GATES_SRC)
+
+.PHONY: run-rx-gates clean-rx-gates
+run-rx-gates: $(RX_GATES_BIN)
+	$(call run_marked,$(RX_GATES_BIN))
+clean-rx-gates:
+	rm -f $(RX_GATES_BIN)
+
+run: run-rx-gates
+clean: clean-rx-gates
 
 # The CSI active probe under the airtime governor (the follow-up to sweep F4,
 # #1696), end to end — the REAL csi_probe scheduler (the sketch's staged copy,

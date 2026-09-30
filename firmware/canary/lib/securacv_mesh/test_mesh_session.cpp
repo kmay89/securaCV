@@ -356,7 +356,7 @@ void test_send_beacon_event_signs_and_broadcasts() {
       + mesh_beacon::PAYLOAD_LEN
       + mesh_envelope::SIGNATURE_LEN;
   assert(f.bytes.size() == expected_len);
-  assert(f.bytes[mesh_envelope::OFFSET_VERSION]  == mesh_envelope::PROTOCOL_VERSION);
+  assert(f.bytes[mesh_envelope::OFFSET_VERSION]  == mesh_envelope::OPERA_VERSION);
   assert(f.bytes[mesh_envelope::OFFSET_MSG_TYPE] == static_cast<uint8_t>(mesh_envelope::MsgType::BEACON_EVENT));
 
   /* Verify the signed envelope — the frame itself. */
@@ -366,7 +366,7 @@ void test_send_beacon_event_signs_and_broadcasts() {
   assert(mesh_envelope::parse_and_verify(
       f.bytes.data(), f.bytes.size(),
       pub, &hdr, &payload, &payload_len));
-  assert(hdr.version  == mesh_envelope::PROTOCOL_VERSION);
+  assert(hdr.version  == mesh_envelope::OPERA_VERSION);
   assert(hdr.msg_type == static_cast<uint8_t>(mesh_envelope::MsgType::BEACON_EVENT));
   assert(payload_len  == mesh_beacon::PAYLOAD_LEN);
 
@@ -468,7 +468,7 @@ size_t build_beacon_frame(const uint8_t sender_pub[mesh_crypto::PUBKEY_LEN],
 
   /* Build header. */
   mesh_envelope::Header h;
-  h.version  = mesh_envelope::PROTOCOL_VERSION;
+  h.version  = mesh_envelope::OPERA_VERSION;
   h.msg_type = static_cast<uint8_t>(mesh_envelope::MsgType::BEACON_EVENT);
   mesh_crypto::compute_opera_id(opera_secret, h.opera_id);
   mesh_crypto::compute_fingerprint(sender_pub, h.sender_fp);
@@ -1087,7 +1087,7 @@ size_t build_signed_session_frame(const uint8_t sender_pub[mesh_crypto::PUBKEY_L
                                   const uint8_t* payload, size_t payload_len,
                                   uint8_t* out_frame, size_t out_cap) {
   mesh_envelope::Header h;
-  h.version  = mesh_envelope::PROTOCOL_VERSION;
+  h.version  = mesh_envelope::OPERA_VERSION;
   h.msg_type = static_cast<uint8_t>(type);
   mesh_crypto::compute_opera_id(opera_secret, h.opera_id);
   mesh_crypto::compute_fingerprint(sender_pub, h.sender_fp);
@@ -1282,7 +1282,7 @@ void test_send_tamper_alert() {
   assert(mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 3, 4321, 20));
   assert(g_outs.size() == 1);
   const std::vector<uint8_t>& f = g_outs[0].bytes;
-  assert(f[mesh_envelope::OFFSET_VERSION]  == mesh_envelope::PROTOCOL_VERSION);
+  assert(f[mesh_envelope::OFFSET_VERSION]  == mesh_envelope::OPERA_VERSION);
   assert(f[mesh_envelope::OFFSET_MSG_TYPE] == static_cast<uint8_t>(mesh_envelope::MsgType::TAMPER_ALERT));
   mesh_envelope::Header hdr;
   const uint8_t* payload = nullptr;
@@ -1536,7 +1536,7 @@ void test_leave_opera() {
    * opera_id it is leaving. */
   assert(g_outs.size() == 1);
   const std::vector<uint8_t> leave = g_outs[0].bytes;
-  assert(leave[mesh_envelope::OFFSET_VERSION]  == mesh_envelope::PROTOCOL_VERSION);
+  assert(leave[mesh_envelope::OFFSET_VERSION]  == mesh_envelope::OPERA_VERSION);
   assert(leave[mesh_envelope::OFFSET_MSG_TYPE] == static_cast<uint8_t>(mesh_envelope::MsgType::LEAVE_OPERA));
   assert(leave[mesh_envelope::OFFSET_MSG_TYPE] == 25);
   assert(leave.size() == mesh_envelope::MIN_FRAME_LEN);
@@ -1689,7 +1689,7 @@ size_t build_cross_signed_frame(const uint8_t claimed_fp[mesh_crypto::FINGERPRIN
                                 const uint8_t* payload, size_t payload_len,
                                 uint8_t* out_frame, size_t out_cap) {
   mesh_envelope::Header h;
-  h.version  = mesh_envelope::PROTOCOL_VERSION;
+  h.version  = mesh_envelope::OPERA_VERSION;
   h.msg_type = static_cast<uint8_t>(type);
   mesh_crypto::compute_opera_id(opera_secret, h.opera_id);
   std::memcpy(h.sender_fp, claimed_fp, mesh_crypto::FINGERPRINT_LEN);

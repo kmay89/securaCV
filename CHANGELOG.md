@@ -2,6 +2,58 @@
 
 ## [Unreleased]
 
+### Opera mesh: three pre-existing canary-wap gaps closed after the v0.4 review
+
+How far this is proven, stated once: **host-tested only** — nothing here
+was compiled for the ESP32 or run on a radio, and the changes to the
+receive path are **awaiting maintainer crypto review**, like the v0.4
+registry they follow. CI's `firmware.yml` Arduino build is the first ESP32
+compile they get. The security re-review of #1748 approved the registry
+and found these in `mesh_network.cpp`'s receive path; none was introduced
+by v0.4, and each is pinned by the new `test_mesh_rx_gates_wap.cpp`, which
+fails against the pre-fix file on every one of them.
+
+- **A counter-0 frame could replay indefinitely.** canary-wap started each
+  peer's outbound counter at 0 and, to let that first frame past a fresh
+  receiver, exempted the gate while the receiver's last-seen was still 0
+  (`counter <= rx && rx > 0`) — so a captured counter-0 frame passed again
+  on every replay for as long as no higher counter had arrived. Both trees
+  now share one convention (spec §3.3, §4.5): the first counter signed is
+  1 (`add_peer` and both rekey resets), the last-seen starts at 0, and the
+  gate is strict `counter <= last` with no exemption, which is what the
+  PIO session already did. A counter-0 frame is never fresh at either
+  receiver. The O1 mirror in `test_mesh_opera_security.cpp` says the same.
+- **A member's MAC could be re-pointed without its key.** The receive path
+  rebound `peer->mac_addr` — and re-registered the ESP-NOW peer there —
+  *before* verifying the signature, on a frame that carried the member's
+  `sender_fp` and the `opera_id`, both public. Any radio could point a
+  member's address at itself until the real device's next verified frame:
+  a denial of service with no key. The binding now runs after signature,
+  opera_id and replay all passed, where the PIO session does it, and it
+  unregisters the *old* address before overwriting it (the old order
+  deleted the new one, leaking the old entry in ESP-NOW's peer table).
+- **Struct payloads were read without a length.** `handle_heartbeat` and
+  `handle_tamper_alert` (and the power, offline, auth and rekey handlers,
+  the same shape) cast the payload to their struct without knowing how
+  long it was; a PIO 6-byte `TAMPER_ALERT` (spec §4.3) read as the 56-byte
+  `TamperAlertPayload` took 50 bytes out of the signature that follows it.
+  Every struct handler now takes `payload_len` and refuses any length but
+  `sizeof` its struct, exactly, as the PIO decoders do (`BEACON_EVENT`,
+  `CHANNEL_LOCK` and `HUB_ELECTION` already went through the staged
+  decoders). The spec's registry table had the WAP struct at 54 bytes; it
+  is 56 on the wire (two bytes of padding before `witness_seq`), and says
+  so now.
+- **`mesh_envelope::PROTOCOL_VERSION` is `OPERA_VERSION`.** The PIO
+  envelope's version constant kept the name that `canary_config.h`
+  #defines as a string (`"pwk:v0.3.0"`), so the envelope could not be
+  included from `main.cpp` or any other TU of the canary sketch that has
+  the config; only the registry's constant had been renamed in v0.4. Every
+  reference in the library, its tests and the spec follows, and
+  `test_mesh_wire.cpp`'s macro-clash guard (it #defines the string first)
+  now includes `mesh_envelope.h` too, so the clash cannot come back
+  unnoticed. The canary-wap Makefile builds that suite against the staged
+  registry alone (`MESH_WIRE_STAGED_ONLY`; the sketch has no envelope).
+
 ### canary-wap: the Today sheet survives a reboot, the DP budget refuses, and the fusion row stops claiming what is not built
 
 How far each of these is proven, stated once: **host-tested only**. None
