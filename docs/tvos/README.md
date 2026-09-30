@@ -101,10 +101,12 @@ already own.**
 
 ### What the Business edition gives a venue (all free)
 
-- **Works with their existing cameras.** SecuraCV ingests RTSP / ONVIF /
-  Frigate — *basically any IP camera or NVR* already on the wall (Hikvision,
-  Reolink, Lorex, Ubiquiti, Amcrest, the lot), auto-discovered over ONVIF on
-  the LAN. A witness layer laid **over the cameras they already bought** — no
+- **Works with their existing cameras.** SecuraCV reads any camera that
+  serves an RTSP stream (most ONVIF cameras do), directly or through Frigate
+  — *basically any IP camera or NVR* already on the wall (Hikvision,
+  Reolink, Lorex, Ubiquiti, Amcrest, the lot). There is no ONVIF discovery
+  or control code; the camera's RTSP URL is entered, or Frigate hands it
+  over. A witness layer laid **over the cameras they already bought** — no
   rip-and-replace, no per-camera cloud subscription.
 - **Dispute-proof record.** Chargebacks, slip-and-fall claims, "your bartender
   overserved me," a walk-out, a fight at last call — each a semantic event,
