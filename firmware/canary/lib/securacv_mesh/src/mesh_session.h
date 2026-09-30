@@ -10,26 +10,29 @@
  * (mesh_beacon, mesh_channel_hop, mesh_hub_election, mesh_alert,
  * mesh_rekey).
  *
- * Wire envelope:
- *   • Every mesh-session frame is prefixed with a 1-byte MsgType.
- *   • Pair frames (MsgType 0..4) carry only the raw PairXxxPayload after
- *     the prefix — pairing is a pre-membership flow and does not need
- *     the opera_id/sender_fp/counter/signature outer header.
- *   • MsgType values 16+ are opera-authenticated traffic: the prefix byte
- *     is followed by a full signed mesh_envelope (header + payload +
- *     Ed25519 signature), verified in on_opera_frame against the
- *     sender's TrustedPeer pubkey, opera_id and replay counter.
+ * Wire frames (spec §4.5, the registry in mesh_wire.h — v0.4, awaiting
+ * crypto review, not bench-verified):
+ *   • A pair frame is [MsgType 8..12][raw PairXxxPayload] — pairing is a
+ *     pre-membership flow and does not need the opera_id/sender_fp/
+ *     counter/signature header. Classified by its first byte.
+ *   • An opera-authenticated frame is the signed mesh_envelope itself
+ *     (header + payload + Ed25519 signature), nothing in front of it: its
+ *     first byte is the version (mesh_wire::OPERA_VERSION), its second
+ *     the signed msg_type (16+). Verified in on_opera_frame against the
+ *     sender's TrustedPeer pubkey, opera_id and replay counter, and
+ *     dispatched on the SIGNED type.
  *
  * Wire-compat note:
- *   • canary-wap used to send its pair frames raw (no prefix, no
- *     envelope) while its receive path dropped anything shorter than the
- *     102-byte header+signature minimum, so its pair frames never reached
- *     handle_pair_*. F14 fixed that in canary-wap the same way this bridge
- *     always worked: a 1-byte type prefix, classified before the gate
- *     (canary_wap/mesh_pair_frame.h, host-tested). The trees still do not
- *     pair with EACH OTHER — canary-wap's pair types are 8..12, ours 0..4,
- *     and the signed-envelope version and type numbering differ too (see
- *     mesh_envelope.h "Layout parity").
+ *   • Until v0.4 this bridge put an unsigned copy of the msg_type ahead of
+ *     the envelope (frame[0] = type, envelope at +1) and numbered its pair
+ *     frames 0..4; canary-wap sends the bare envelope with version 0 and
+ *     its own type numbers. Both now send the registry's frame: same
+ *     layout, same version byte, same numbering (canary-wap moved its
+ *     version to 1 and its types to the registry; this tree dropped the
+ *     prefix and moved its pair types to 8..12). The trees still do not
+ *     pair with EACH OTHER — the pairing payload structs and key
+ *     derivation differ (spec §5.3, §4.5) — so no cross-tree frame can be
+ *     verified on a radio yet; the outer frame is the precondition.
  *
  * Layering:
  *   integration_layer (canary main.cpp, host tests)
@@ -74,20 +77,21 @@
 
 namespace mesh_session {
 
-/* MsgType values on the wire. The byte at offset 0 of every mesh_session
- * frame is one of these. Values 0..4 align with mesh_pairing::MsgType
- * exactly so a forwarding switch is trivial. Values 16+ are
- * opera-authenticated traffic — mesh_envelope::MsgType. */
+/* The first byte of a pairing frame is one of these — the registry's
+ * values (mesh_wire.h), equal to mesh_pairing::MsgType so the forwarding
+ * cast is the identity. An opera-authenticated frame starts with the
+ * version byte instead and carries its type INSIDE the signed envelope
+ * (mesh_envelope::MsgType, 16+); a first byte outside both is dropped. */
 enum class MsgType : uint8_t {
-  PAIR_DISCOVER = 0,
-  PAIR_OFFER    = 1,
-  PAIR_ACCEPT   = 2,
-  PAIR_CONFIRM  = 3,
-  PAIR_COMPLETE = 4,
-  /* 5..15 reserved for additional pairing extensions. */
-  /* 16+ is opera-authenticated traffic: see mesh_envelope::MsgType. */
+  PAIR_DISCOVER = mesh_wire::PAIR_DISCOVER,   /*  8 */
+  PAIR_OFFER    = mesh_wire::PAIR_OFFER,      /*  9 */
+  PAIR_ACCEPT   = mesh_wire::PAIR_ACCEPT,     /* 10 */
+  PAIR_CONFIRM  = mesh_wire::PAIR_CONFIRM,    /* 11 */
+  PAIR_COMPLETE = mesh_wire::PAIR_COMPLETE,   /* 12 */
+  /* 0..7 and 13..15 reserved (mesh_wire.h says why 0 and 1 stay free). */
 };
 
+/* The pairing frame's 1-byte type prefix. Opera frames have none. */
 constexpr size_t MSGTYPE_HEADER_LEN = 1;
 constexpr size_t MAX_SESSION_FRAME =
     MSGTYPE_HEADER_LEN + mesh_pairing::MAX_ACTION_PAYLOAD;
