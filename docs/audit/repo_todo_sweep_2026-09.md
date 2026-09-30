@@ -770,7 +770,7 @@ so — see D2 below.)
   real header (scope close, nested depth, cross-task fail-soft owing no
   end).
 - [x] **F61 [code] The canary's other NVS puts are unaudited for a write that
-  did not land.** F55 made the chain-state helpers honest; the 64 direct
+  did not land.** (#1753) F55 made the chain-state helpers honest; the 64 direct
   `Preferences` / `NvsManager` put calls in 15 files of `firmware/canary`
   (outside `securacv_crypto.cpp`) were out of its scope, and a few already
   read their result (`csi_event_egress.cpp`, `mesh_state.cpp`). Start with the
