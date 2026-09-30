@@ -921,6 +921,11 @@ esp_err_t handle_events_dismiss(httpd_req_t* req) {
   while (*digit && (*digit < '0' || *digit > '9')) digit++;
   const uint32_t event_id = (uint32_t)strtoul(digit, nullptr, 10);
   const bool ok = csi_event_dismiss(event_id);
+  /* Persist it (written on the loop task by flush_dismissals), so the
+   * reboot refill does not bring the event back undismissed. */
+  if (ok && !csi_event_log::queue_dismissal(event_id)) {
+    Serial.println("[EVT-LOG] dismissal queue full - this dismissal holds until reboot");
+  }
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, ok ? "{\"ok\":true}" : "{\"ok\":false}", -1);
   return ESP_OK;
@@ -2981,6 +2986,13 @@ bool init(httpd_handle_t server, const char* api_token) {
    * boot to avoid id collisions. */
   apply_event_id_floor_from_nvs();
 
+  /* Refill the Today ring from the SD event log's tail. Needs the ceiling
+   * and the floor above (csi_event_inject refuses a row this boot could
+   * still allocate, and a type above the ceiling), and runs before the HAL
+   * so no live event can commit first. No card yet: the loop's mount
+   * transition in canary_wap.ino calls it again, and it runs once. */
+  (void)csi_event_log::load_into_ring();
+
   /* Bring up the CSI HAL. start() defers until WiFi is up; the deferred
    * retry is silent and handled by csi_hal::process().
    *
@@ -3180,6 +3192,10 @@ void loop(bool run_csi) {
    * purpose: bundles opened before a power-gate pause must still commit
    * on time. Cheap — an 8-slot scan, closes only when overdue. */
   csi_bundler_tick();
+
+  /* Write any dismissal the HTTP handler queued, on this task, where every
+   * other write to the SD event log happens. */
+  (void)csi_event_log::flush_dismissals();
 
 #if FEATURE_BLE_SCAN && FEATURE_MESH_NETWORK
   /* Drain the outbound beacon queue first so events the previous tick

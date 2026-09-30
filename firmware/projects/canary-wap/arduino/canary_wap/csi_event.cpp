@@ -108,6 +108,10 @@ namespace {
  * against dram0_0_seg. Mirrors handle_events_today() in csi_integration.cpp. */
 csi_event_record_t* g_ring = nullptr;
 size_t              g_ring_head = 0;   /* next write slot */
+/* Set by the first live commit (persist_to_ring). From then on
+ * csi_event_inject refuses: an earlier boot's rows injected after a live
+ * row would sit ahead of it in the ring's recency order. */
+bool                g_ring_has_live = false;
 
 constexpr size_t kRingBytes =
     (size_t)CSI_EVENT_RING_CAP * sizeof(csi_event_record_t);
@@ -357,6 +361,7 @@ void persist_to_ring(uint32_t                  event_id,
   rec->module_id[CSI_EVENT_NAME_MAX - 1] = '\0';
   rec->type_name[CSI_EVENT_NAME_MAX - 1] = '\0';
   g_ring_head = (g_ring_head + 1) % CSI_EVENT_RING_CAP;
+  g_ring_has_live = true;
 }
 
 }  /* namespace */
@@ -595,10 +600,69 @@ bool csi_event_dismiss(uint32_t event_id) {
   return found;
 }
 
+bool csi_event_inject(const csi_event_record_t* rec) {
+  if (!rec || rec->event_id == 0) return false;
+
+  /* The manifest, not the card, says what this type is and what it may
+   * carry. An unknown module or type (renamed, removed, or never ours) is
+   * refused, as emit() refuses it. */
+  const csi_module_t* m = lookup_module(rec->module_id);
+  if (!m) return false;
+  const csi_event_decl_t* decl = lookup_decl(m, rec->type_name);
+  if (!decl) return false;
+
+  /* Clean a copy the way emit() cleans values, before taking the lock. */
+  csi_event_record_t clean;
+  memset(&clean, 0, sizeof(clean));
+  clean.event_id = rec->event_id;
+  clean.category = (rec->category == CSI_CATEGORY_AMBIENT
+                    || rec->category == CSI_CATEGORY_ANOMALY)
+                   ? rec->category : CSI_CATEGORY_EVENT;
+  clean.privacy  = decl->privacy;
+  strncpy(clean.module_id, m->id, CSI_EVENT_NAME_MAX - 1);
+  strncpy(clean.type_name, decl->type_name, CSI_EVENT_NAME_MAX - 1);
+  clean.module_id[CSI_EVENT_NAME_MAX - 1] = '\0';
+  clean.type_name[CSI_EVENT_NAME_MAX - 1] = '\0';
+  /* first_seen_ms / last_seen_ms stay 0: the earlier boot's monotonic clock
+   * means nothing on this one. */
+
+  csi_event_values_t v = rec->values;
+  v.category       = clean.category;
+  v.bundled_count  = rec->bundled_count;
+  /* Every field the record could carry is treated as present, so the
+   * allow-list below zeroes each one the manifest does not grant. */
+  const uint8_t dismissed = rec->values.dismissed ? 1 : 0;
+  v.present_fields = 0xFFFFFFFFu;
+  sanitize_strings(&v);
+  apply_allow_list(&v, decl->allowed_fields);
+  if (v.time_bucket >= 144) v.time_bucket = 0;
+  v.dismissed = dismissed;
+  if (dismissed) v.present_fields |= CSI_FIELD_DISMISSED;
+  clean.values        = v;
+  clean.bundled_count = v.bundled_count;
+
+  RingLock _lock;
+  /* Privacy ceiling, read under the same lock as the rest of the decision.
+   * The manifest's class is the one checked. */
+  if (decl->privacy > g_privacy_ceiling) return false;
+  /* An id this boot can still allocate is not an earlier boot's. */
+  if (rec->event_id >= g_next_event_id) return false;
+  /* Recency order: nothing older may land ahead of a live row. */
+  if (g_ring_has_live) return false;
+  if (!ring_ensure()) return false;
+  for (size_t i = 0; i < CSI_EVENT_RING_CAP; ++i) {
+    if (g_ring[i].event_id == rec->event_id) return false;   /* duplicate */
+  }
+  g_ring[g_ring_head] = clean;
+  g_ring_head = (g_ring_head + 1) % CSI_EVENT_RING_CAP;
+  return true;
+}
+
 void csi_event_test_reset(void) {
   RingLock _lock;
   if (g_ring) memset(g_ring, 0, kRingBytes);   /* leave unallocated rings lazy */
   g_ring_head = 0;
+  g_ring_has_live = false;
   g_next_event_id = 1;
   g_privacy_ceiling = CSI_PRIVACY_P0;
   memset(g_counters, 0, sizeof(g_counters));
