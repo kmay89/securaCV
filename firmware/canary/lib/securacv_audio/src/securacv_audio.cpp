@@ -1662,11 +1662,20 @@ bool audio_mute_sync_at_boot(bool muted){ return audio::mute_sync_at_boot(muted)
 void audio_set_mute_callback(audio_mute_cb_t cb) { audio::set_mute_callback(cb); }
 
 bool audio_save_mute_intent(bool muted) {
+  // False unless the put landed (F61): the HTTP route answers "persisted"
+  // from this result, and a mic-privacy intent a reboot silently forgets is
+  // exactly the claim NVS refused. The MQTT path ignores the result, so the
+  // warning here is its honest signal.
   Preferences prefs;
   if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
-  prefs.putBool(NVS_KEY_MIC_MUTED, muted);
+  const bool ok = prefs.putBool(NVS_KEY_MIC_MUTED, muted) == sizeof(bool);
   prefs.end();
-  return true;
+  if (!ok) {
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_SENSOR,
+               "Mic mute intent NOT saved (NVS write failed)",
+               muted ? "muted" : "unmuted");
+  }
+  return ok;
 }
 
 void audio_get_mute_info(audio_mute_info_t* out) { audio::get_mute_info(out); }

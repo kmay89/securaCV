@@ -578,14 +578,26 @@ bool ScvNetworkManager::loadCredentials() {
 }
 
 bool ScvNetworkManager::saveCredentials() {
+  // False unless every entry landed (F61, the WAP's F59 twin): a save NVS
+  // refused used to log "credentials saved", mark the credentials configured
+  // and return true, so a reboot forgot a network the API reported as kept.
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.beginReadWrite()) return false;
 
-  nvs.putBytes(NVS_KEY_WIFI_SSID, m_creds.ssid, strlen(m_creds.ssid));
-  nvs.putBytes(NVS_KEY_WIFI_PASS, m_creds.password, strlen(m_creds.password));
-  nvs.putBool(NVS_KEY_WIFI_EN, m_creds.enabled);
+  const size_t ssid_len = strlen(m_creds.ssid);
+  const size_t pass_len = strlen(m_creds.password);
+  const bool ok =
+      nvs.putBytes(NVS_KEY_WIFI_SSID, m_creds.ssid, ssid_len) == ssid_len &&
+      nvs.putBytes(NVS_KEY_WIFI_PASS, m_creds.password, pass_len) == pass_len &&
+      nvs.putBool(NVS_KEY_WIFI_EN, m_creds.enabled) == sizeof(bool);
 
   nvs.end();
+
+  if (!ok) {
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
+               "WiFi credentials NOT saved (NVS write failed)", m_creds.ssid);
+    return false;
+  }
   m_creds.configured = true;
 
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "WiFi credentials saved", m_creds.ssid);
@@ -3721,9 +3733,25 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   creds.enabled = true;
   creds.configured = true;
 
-  // Transfer local credentials to the manager, then save and connect
+  // Transfer local credentials to the manager, then save and connect. The
+  // previous in-memory state is snapshotted first: on a failed save it is
+  // restored, or the manager's retry tick would connect with the very
+  // credentials this answer reports unsaved (working until the reboot that
+  // forgets them). A save NVS refused is answered as the failure it is, not
+  // glossed as "connecting" — and setup stays incomplete (F61, the WAP's
+  // F59 route twin).
+  const WiFiCredentials prev_creds = net.getCredentials();
   net.setCredentials(creds);
-  net.saveCredentials();
+  if (!net.saveCredentials()) {
+    net.setCredentials(prev_creds);
+    JsonDocument doc;
+    doc["ok"] = false;
+    doc["error"] = "Credentials not saved (NVS write failed) - see the device log";
+    doc["tz"] = tz_outcome;
+    String response;
+    serializeJson(doc, response);
+    return http_send_json(req, response.c_str());
+  }
   net.connectToHome();
 
   // Mark first-time setup as complete now that WiFi credentials are saved

@@ -664,11 +664,20 @@ void CameraManager::saveOrientationToNvs() {
   Preferences prefs;
   if (!prefs.begin(NVS_CAM_NS, false)) return;
 
-  prefs.putUChar(NVS_KEY_HMIRROR, s->status.hmirror ? 1 : 0);
-  prefs.putUChar(NVS_KEY_VFLIP,   s->status.vflip   ? 1 : 0);
+  const bool ok =
+      prefs.putUChar(NVS_KEY_HMIRROR, s->status.hmirror ? 1 : 0) == sizeof(uint8_t) &&
+      prefs.putUChar(NVS_KEY_VFLIP,   s->status.vflip   ? 1 : 0) == sizeof(uint8_t);
   prefs.end();
-  Serial.printf("[CAMERA] Orientation saved: hmirror=%d vflip=%d\n",
-                s->status.hmirror, s->status.vflip);
+  if (ok) {
+    Serial.printf("[CAMERA] Orientation saved: hmirror=%d vflip=%d\n",
+                  s->status.hmirror, s->status.vflip);
+  } else {
+    // "Saved" over a refused put is F61's defect: the live sensor keeps the
+    // orientation, but a reboot loads the old one.
+    Serial.printf("[CAMERA] Orientation NOT saved (NVS write failed): "
+                  "hmirror=%d vflip=%d\n",
+                  s->status.hmirror, s->status.vflip);
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -211,13 +211,19 @@ bool setup_set_device_name(const char* name) {
   strncpy(s_device_name, name, sizeof(s_device_name) - 1);
   s_device_name[sizeof(s_device_name) - 1] = '\0';
 
+  // The live name is applied either way; the log says which claim is true
+  // (F61): "updated" only covers a put that landed, or a reboot reverts a
+  // name the answer called kept.
+  bool persisted = false;
   Preferences prefs;
   if (prefs.begin("securacv", false)) {
-    prefs.putString("dev_name", s_device_name);
+    persisted = prefs.putString("dev_name", s_device_name) == strlen(s_device_name);
     prefs.end();
   }
-  log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM,
-             "Device name updated", s_device_name);
+  log_health(persisted ? LOG_LEVEL_INFO : LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,
+             persisted ? "Device name updated"
+                       : "Device name NOT persisted (NVS write failed)",
+             s_device_name);
   return true;
 }
 
@@ -259,7 +265,7 @@ int setup_set_tz(const char* posix, const char* iana) {
   if (r != tz_rule::Resolve::OK) return (int)r;
   Preferences prefs;
   if (!prefs.begin("securacv", false)) return (int)tz_rule::Resolve::BAD_RULE;
-  prefs.putString("tz", rule);
+  const bool persisted = prefs.putString("tz", rule) == strlen(rule);
   const bool typed = posix && posix[0] != '\0';
   if (!typed && iana && strlen(iana) <= tz_rule::MAX_IANA_LEN) {
     prefs.putString("tz_iana", iana);
@@ -269,7 +275,14 @@ int setup_set_tz(const char* posix, const char* iana) {
   prefs.end();
   setenv("TZ", rule, 1);
   tzset();
-  log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM, "Time zone set", rule);
+  // The zone is live either way (setenv above); a put NVS refused means the
+  // device is back on world time at the next reboot, and the log says so
+  // instead of claiming "set" (F61). The answer stays OK — the live state
+  // the caller asked for is real.
+  log_health(persisted ? LOG_LEVEL_INFO : LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,
+             persisted ? "Time zone set"
+                       : "Time zone set but NOT persisted (NVS write failed)",
+             rule);
   return (int)tz_rule::Resolve::OK;
 }
 
