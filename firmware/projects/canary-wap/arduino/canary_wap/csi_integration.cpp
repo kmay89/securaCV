@@ -623,15 +623,18 @@ void apply_filter_foreign_from_nvs() {
 constexpr const char*    NVS_KEY_EVENT_ID = "ev.next";
 uint32_t                 g_id_floor_stored = 0;
 
-void apply_event_id_floor_from_nvs() {
+/* True when NVS was read (the floor is now what it holds, or none was ever
+ * stored); false when the namespace could not be opened. */
+bool apply_event_id_floor_from_nvs() {
   Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) return;
+  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) return false;
   const uint32_t persisted = (uint32_t)prefs.getULong(NVS_KEY_EVENT_ID, 0);
   prefs.end();
   if (persisted > 0) {
     csi_event_set_event_id_floor(persisted);
     g_id_floor_stored = persisted;
   }
+  return true;
 }
 
 void persist_event_id_floor(uint32_t new_id) {
@@ -2853,7 +2856,11 @@ extern "C" void csi_event_on_committed(uint32_t                  event_id,
    * first_seen_ms / last_seen_ms / bundled_count, which the bundler
    * filled in inside the ring) lives in the in-memory ring; pull a
    * copy via csi_event_find so the on-disk row matches what
-   * csi_event_recent would return. */
+   * csi_event_recent would return. The HTTP task can dismiss the row
+   * between its commit and this copy (the MQTT publish above sits in
+   * between); append() writes it "dismissed":0 regardless, and the queued
+   * dismissal follows as its own line (csi_event_log.h, queue_dismissal),
+   * so the original is never mistaken for a dismissal and lost. */
   csi_event_record_t persist_rec;
   if (csi_event_find(event_id, &persist_rec)) {
     csi_event_log::append(&persist_rec);
@@ -2984,13 +2991,21 @@ bool init(httpd_handle_t server, const char* api_token) {
    * this, csi_mqtt's reconnect-backfill watermark stays sound and
    * csi_event_log no longer needs to wipe the on-disk log on cold
    * boot to avoid id collisions. */
-  apply_event_id_floor_from_nvs();
+  const bool floor_restored = apply_event_id_floor_from_nvs();
 
   /* Refill the Today ring from the SD event log's tail. Needs the ceiling
    * and the floor above (csi_event_inject refuses a row this boot could
-   * still allocate, and a type above the ceiling), and runs before the HAL
-   * so no live event can commit first. No card yet: the loop's mount
-   * transition in canary_wap.ino calls it again, and it runs once. */
+   * still allocate, and a type above the ceiling), so the load is armed
+   * only once NVS has been read; before that (and on a boot where this
+   * init never runs, e.g. the AP failed) load_into_ring() does nothing and
+   * does not latch. Runs before the HAL so no live event can commit first.
+   * No card yet: the loop's mount transition in canary_wap.ino calls it
+   * again, and it runs once. */
+  if (floor_restored) {
+    csi_event_log::arm_load();
+  } else {
+    Serial.println("[EVT-LOG] event-id floor not readable from NVS - the log is not reloaded this boot");
+  }
   (void)csi_event_log::load_into_ring();
 
   /* Bring up the CSI HAL. start() defers until WiFi is up; the deferred

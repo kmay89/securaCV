@@ -132,7 +132,9 @@ inline esp_err_t handle_rf_disable(httpd_req_t* req) {
   return send_success(req, "RF presence disabled");
 }
 
-// POST /api/rf/rotate - Force session rotation (privacy measure)
+// POST /api/rf/rotate - Force session rotation (privacy measure). New tokens
+// and epoch; the DP budget's spend carries over (dp.h, BUDGET), so rotating
+// on demand buys no extra ε.
 inline esp_err_t handle_rf_rotate(httpd_req_t* req) {
   rf_presence::rotate_session();
 
@@ -253,16 +255,19 @@ inline esp_err_t handle_rf_settings_set(httpd_req_t* req) {
 
 // GET /api/rf/conformance - Run conformance checks
 // For privacy verification testing
-// WARNING: The token_rotation check has a SIDE EFFECT - it actually rotates the session!
-// Use the skip_rotation parameter to avoid this if needed
+// The token_rotation check has a SIDE EFFECT - it actually rotates the
+// session - so a plain GET skips it: a GET must not change state. It runs
+// only on an explicit skip_rotation=false (or 0). Even then it does not
+// refill the DP budget; no rotation does (dp.h, BUDGET).
 inline esp_err_t handle_rf_conformance(httpd_req_t* req) {
-  // Check for skip_rotation query parameter
+  // Check for skip_rotation query parameter. Anything but an explicit
+  // "false" / "0" (missing, unparseable, "true") skips the rotation.
   char query_buf[64] = {0};
-  bool skip_rotation = false;
+  bool skip_rotation = true;
   if (httpd_req_get_url_query_str(req, query_buf, sizeof(query_buf)) == ESP_OK) {
     char param_val[8] = {0};
     if (httpd_query_key_value(query_buf, "skip_rotation", param_val, sizeof(param_val)) == ESP_OK) {
-      skip_rotation = (strcmp(param_val, "true") == 0 || strcmp(param_val, "1") == 0);
+      skip_rotation = !(strcmp(param_val, "false") == 0 || strcmp(param_val, "0") == 0);
     }
   }
 
@@ -275,10 +280,10 @@ inline esp_err_t handle_rf_conformance(httpd_req_t* req) {
   // Token rotation test has side effects
   if (skip_rotation) {
     doc["token_rotation"] = "skipped";
-    doc["token_rotation_note"] = "Use skip_rotation=false to run (rotates session)";
+    doc["token_rotation_note"] = "Pass skip_rotation=false to run (rotates the session)";
   } else {
     doc["token_rotation"] = rf_presence::conformance_check_token_rotation();
-    doc["token_rotation_note"] = "Session was rotated as part of this test";
+    doc["token_rotation_note"] = "Session was rotated as part of this test (DP budget not refilled)";
   }
 
   // Calculate overall pass status

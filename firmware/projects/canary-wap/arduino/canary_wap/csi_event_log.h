@@ -22,11 +22,19 @@
  * canary base, which binds its log to its witness key there. This device
  * leaves that log alone: it does not append to it, replay it or truncate it.
  *
+ * "today" is a name, not a bound. The file has no daily rotation (see
+ * LOG_PATH), and a record carries no date: `first`/`last` are the writing
+ * boot's monotonic clock and `tb` is only the time of day (10-minute
+ * bucket). So the reload below restores the log's newest rows whatever
+ * their age, and the Today sheet shows a row from last week at its time of
+ * day as if it were today's. Bounding the reload by date needs a date on
+ * the record (a wall-clock stamp the device may not have); not done.
+ *
  * Lifecycle:
  *   - load_into_ring() runs once per boot, after csi_integration has
- *     restored the privacy ceiling and the event-id floor and the card
- *     is ready; it reads the log's tail and re-injects each record via
- *     csi_event_inject so /api/events/today returns the earlier boots'
+ *     restored the privacy ceiling and the event-id floor (arm_load()) and
+ *     the card is ready; it reads the log's tail and re-injects each record
+ *     via csi_event_inject so /api/events/today returns the earlier boots'
  *     tail before any new event commits this boot.
  *   - append() is called from csi_event_on_committed() in
  *     csi_integration.cpp; one fsync-style flush per event so a
@@ -74,7 +82,9 @@ constexpr size_t BACKFILL_MAX = 64;
 bool init();
 
 /**
- * Append one record to the log. Best-effort: returns false if the SD
+ * Append one record to the log, as committed: its "dismissed" is written 0
+ * whatever `rec` says (a dismissal is its own later line; see
+ * queue_dismissal()). Best-effort: returns false if the SD
  * card is unavailable, the file rolled over and we couldn't truncate,
  * or the write returned short. Callers (the chokepoint hook) should
  * NOT propagate the failure into csi_event_on_committed's return —
@@ -99,12 +109,20 @@ constexpr size_t LOAD_TAIL_BYTES = 128u * 1024u;
  * has committed this boot; it re-applies the manifest's allow-list and
  * sanitizing; it fires no witness write, MQTT publish or SD append.
  *
- * Call it after csi_integration has restored the privacy ceiling and the
- * event-id floor from NVS (without the floor every line is refused, which
- * is the safe failure). Runs at most once per boot: the first call that
- * finds the card ready latches; a call with no card returns 0 and leaves
- * the next call to try. A card that is not this device's (a canary base's
+ * It does nothing, and does not latch, until arm_load() says csi_integration
+ * has restored the privacy ceiling and the event-id floor from NVS (without
+ * the floor every line would be refused, and a latch then would leave the
+ * ring empty for the boot). csi_integration::init runs only when the AP and
+ * the HTTP server came up, so on a boot where they did not, nothing is ever
+ * loaded. Once armed it runs at most once per boot: the first call that
+ * finds the card ready latches; a call with no card returns 0 and leaves the
+ * next call to try. If a live event is already in the ring by then (a card
+ * that mounted late), it latches without reading the card, since inject
+ * would refuse every row. A card that is not this device's (a canary base's
  * owner file) is left alone, as append() leaves it.
+ *
+ * The rows it restores are the log's newest, not today's: see "today is a
+ * name, not a bound" above.
  *
  * It restores what the log holds, and the log holds less than the Today
  * sheet shows live: append() is fed from csi_event_find(), and a bundle
@@ -126,16 +144,30 @@ constexpr size_t LOAD_TAIL_BYTES = 128u * 1024u;
 size_t load_into_ring();
 
 /**
+ * csi_integration::init calls this once the event-id floor (and the privacy
+ * ceiling) are back from NVS, before its own load_into_ring(). Until then
+ * load_into_ring() neither reads nor latches.
+ */
+void arm_load();
+
+/**
  * Record on the card that the user dismissed `event_id` (csi_event_dismiss),
  * so load_into_ring() does not bring it back undismissed after a reboot.
  * queue_dismissal() is safe from any task (the HTTP handler) and only
  * queues; flush_dismissals(), on the loop task where append() runs, appends
  * the dismissed ring row as one more line in the usual format, with
- * "dismissed":1. Nothing new reaches the card: the same record append()
- * already wrote, now marked dismissed. Best-effort like append(): with no
- * card, a card that is not ours, or a failed write, the dismissal holds for
- * this boot only. queue_dismissal() is false when the queue (8) is full.
+ * "dismissed":1. That line adds one fact to the card: that the owner
+ * acknowledged this event, and roughly when (by where it falls in the log;
+ * it carries no time of its own beyond the record's). It is the owner's own
+ * action, kept on the owner's own card and not replayed to MQTT: local, as
+ * Invariant IV (local ownership, spec/invariants.md) asks. Best-effort like
+ * append(): with no card, a card that is not ours, or a failed write, the
+ * dismissal holds for this boot only. queue_dismissal() is false when the queue (8) is full.
  * iterate_since() does not replay dismissal lines.
+ *
+ * append() always writes "dismissed":0 (the original), even when the ring
+ * row was dismissed between the commit and the hook's copy of it, so only a
+ * flush_dismissals() line ever says 1 (csi_event_log.cpp, is_dismissal()).
  */
 bool queue_dismissal(uint32_t event_id);
 size_t flush_dismissals();

@@ -1111,6 +1111,14 @@ void network_set_provisioning_gate_hooks(network_gate_fn_t take,
   s_gate_is_open = is_open;
 }
 
+// Restart-request hook (see the header): hands POST /api/reboot to main.cpp's
+// loop task, which owns the boot-health gate and the witness chain.
+static network_void_fn_t s_restart_request = nullptr;
+
+void network_set_restart_request_hook(network_void_fn_t fn) {
+  s_restart_request = fn;
+}
+
 // Every grant TAKES the gate (one tap = one consumer). The is_open hook is
 // only a wiring check for /api/status; nothing here grants on a peek.
 static bool provisioning_gate_take()    { return s_gate_take    ? s_gate_take()    : false; }
@@ -2808,16 +2816,29 @@ static esp_err_t handle_reboot(httpd_req_t* req) {
 
   log_health(LOG_LEVEL_NOTICE, LOG_CAT_USER, "Reboot requested", nullptr);
 
-  // The witness lib owns chain persistence (one atomic blob — never the
-  // legacy seq/chain pair from here, which was the second torn-write site).
-  witness_persist_chain_state();
-
   JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "Rebooting...";
 
   String response;
   serializeJson(doc, response);
+
+  // A requested reboot is a deliberate stop, not a crash, so it goes through
+  // main.cpp's boot-health gate (confirm a pending image, clear the
+  // crash-loop counter). That gate writes a witness record and the chain
+  // head — loop-task only (securacv_witness.cpp) — so this task does NOT run
+  // it: it replies, raises the request flag, and returns. loop() runs the
+  // gate, persists the chain and restarts, the same sequence as serial 'x'.
+  if (s_restart_request) {
+    http_send_json(req, response.c_str());
+    s_restart_request();
+    return ESP_OK;
+  }
+
+  // No owner registered: the old in-handler path. The witness lib owns chain
+  // persistence (one atomic blob — never the legacy seq/chain pair from here,
+  // which was the second torn-write site).
+  witness_persist_chain_state();
   http_send_json(req, response.c_str());
 
   delay(500);

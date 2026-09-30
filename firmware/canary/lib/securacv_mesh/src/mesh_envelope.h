@@ -72,8 +72,14 @@ namespace mesh_envelope {
 
 /* Protocol version. Receivers reject frames with a different byte at
  * offset 0. The registry's value (mesh_wire.h) — canary-wap's Opera frames
- * carry the same byte since v0.4. */
-constexpr uint8_t PROTOCOL_VERSION = mesh_wire::OPERA_VERSION;
+ * carry the same byte since v0.4. Named OPERA_VERSION, as in the registry,
+ * and not PROTOCOL_VERSION: canary_config.h #defines that name as a string
+ * (the fleet protocol tag), so a constant called PROTOCOL_VERSION cannot be
+ * declared in any translation unit that includes it — this header was
+ * un-includable from main.cpp and every other TU of the canary sketch
+ * until v0.4's follow-up. test_mesh_wire.cpp includes this header behind
+ * that macro to keep it so. */
+constexpr uint8_t OPERA_VERSION = mesh_wire::OPERA_VERSION;
 
 constexpr size_t VERSION_LEN      = 1;
 constexpr size_t MSG_TYPE_LEN     = 1;
@@ -171,7 +177,7 @@ struct Header {
  *
  * The Header argument supplies the per-message fields the caller is
  * expected to fill: msg_type, opera_id, sender_fp, counter, timestamp.
- * The version field is forced to PROTOCOL_VERSION regardless of what
+ * The version field is forced to OPERA_VERSION regardless of what
  * the caller passes (a stale or wrong value cannot leak onto the wire).
  *
  * signer_privkey + signer_pubkey are the long-term Ed25519 keypair of
@@ -191,7 +197,7 @@ size_t serialize_signed(const Header&  header,
  * PARSE + VERIFY
  *
  * Reads [header || payload || signature] from `frame` and:
- *   1. Validates frame_len >= MIN_FRAME_LEN and version == PROTOCOL_VERSION.
+ *   1. Validates frame_len >= MIN_FRAME_LEN and version == OPERA_VERSION.
  *   2. Decodes the header into *out_header (LE byte order).
  *   3. Verifies the trailing 64-byte Ed25519 signature against the
  *      bytes data[0 .. HEADER_LEN + payload_len) using peer_pubkey.
@@ -202,7 +208,7 @@ size_t serialize_signed(const Header&  header,
  *
  * Returns false on:
  *   • frame == nullptr or frame_len < MIN_FRAME_LEN
- *   • version != PROTOCOL_VERSION
+ *   • version != OPERA_VERSION
  *   • signature verification fails (corrupt/forged frame)
  *
  * Does NOT check:

@@ -295,6 +295,18 @@ Mirroring the honesty of the vault RFC's §5.5
   boot-path parts carry real bricking risk and must be hardware-validated before
   merge (see `self_star_roadmap.md` risks). Every Canary then gets rollback
   safety; still un-brickable.
+  *Re-checked 2026-09-29:* the premise that the shipping builds lack
+  `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` was wrong — an Arduino build's
+  bootloader and `sdkconfig.h` come precompiled with the core, and the pinned
+  cores (arduino-esp32 2.0.17; the 3.x lib-builder) enable it, so the override
+  was live all along; `securacv_ota.cpp` now `#error`s on a core that does not.
+  The crash-loop counter and a serial safe mode are wired into the PlatformIO
+  `canary` (`health/boot_guard.h`), which also now confirms a new image only
+  after 30 s of healthy `loop()`. Compile-checked and host-tested, **not
+  bench-verified**; this phase's rule — hardware validation before the
+  boot-path parts are relied on — applies, and the bench procedure is
+  `V1_BENCH_TEST_RUNBOOK.md` Track E. Display, Sense, Vision and Sentinel have
+  no counter yet.
 - **Phase 2 — attestation + flasher awareness (software).** Implement
   `securacv.attest/v1` (challenge-response + measurement) on the existing identity
   key; add the read-only "is this device locked?" probe so the flasher refuses

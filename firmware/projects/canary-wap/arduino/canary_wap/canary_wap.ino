@@ -10807,7 +10807,8 @@ void setup() {
       // bridge's reconnect path has something to backfill from. The
       // Today ring is refilled from it later, by csi_integration::init
       // (csi_event_log::load_into_ring), once the privacy ceiling and the
-      // event-id floor are back from NVS.
+      // event-id floor are back from NVS (csi_event_log::arm_load) - and
+      // not at all on a boot where init does not run.
       csi_event_log::init();
 
       // Reconcile the chain head against the SD log of record — the NVS
@@ -11880,9 +11881,13 @@ void loop() {
       if (!SD.exists("/EXPORT")) SD.mkdir("/EXPORT");
       csi_event_log::init();  // idempotent; self-defers if the card vanished
       // A card that mounted after csi_integration::init: refill the Today
-      // ring now. Once per boot, and csi_event_inject refuses everything
-      // once a live event has committed, so a late card adds nothing out
-      // of order.
+      // ring now. This does NOT assume init ran: init runs only inside
+      // start_http_server(), which runs only if start_wifi_ap() succeeded,
+      // and until init has restored the event-id floor and the privacy
+      // ceiling (csi_event_log::arm_load) the call does nothing and does
+      // not latch. Once armed it runs once per boot, and it reads nothing
+      // once a live event has committed (csi_event_inject would refuse every
+      // row), so a late card adds nothing out of order.
       (void)csi_event_log::load_into_ring();
       witness_recover_from_sd();  // NVS may lag the card's chain tail
       log_health(SCV_LOG_INFO, SCV_CAT_STORAGE, "SD card mounted", nullptr);

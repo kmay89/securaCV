@@ -23,10 +23,14 @@ namespace {
 constexpr size_t OPERA_SECRET_SIZE = 32;
 constexpr size_t OPERA_ID_SIZE     = 16;
 
-// O1: simulated monotonic-counter replay check.
+// O1: simulated monotonic-counter replay check. Strict: counter <= last is
+// a replay, whatever last is. (This mirror used to carry `&& rx > 0`, as
+// the firmware did — the exemption that let a counter-0 frame replay while
+// rx stayed 0; the v0.4 review closed it, and test_mesh_rx_gates_wap pins
+// the real line and the sender's first counter of 1.)
 struct Peer { uint64_t rx_counter = 0; };
 bool counter_accept(Peer& p, uint64_t incoming) {
-  if (incoming <= p.rx_counter && p.rx_counter > 0) return false;
+  if (incoming <= p.rx_counter) return false;
   p.rx_counter = incoming;
   return true;
 }
@@ -91,6 +95,8 @@ int failures = 0;
 
 void test_o1_counter_replay_protection() {
   Peer p;
+  EXPECT(!counter_accept(p, 0), "counter 0 is never fresh, even against a new peer");
+  EXPECT(!counter_accept(p, 0), "and a second 0 is not either (the old rx==0 exemption)");
   EXPECT(counter_accept(p, 1), "first message accepted");
   EXPECT(counter_accept(p, 2), "monotonically increasing accepted");
   EXPECT(!counter_accept(p, 2), "replay of same counter rejected");

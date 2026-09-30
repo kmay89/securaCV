@@ -281,8 +281,10 @@ clean: clean-http-body
 
 # The SD event log's reboot refill (csi_event_log::load_into_ring): the REAL
 # csi_event_log.cpp and the staged CSI chokepoint (csi_event_inject) over a
-# RAM card (stubs/sd_fake) — tail window, refused lines, owner-file cards,
-# no card writes, once per boot. The staged sources are byte-identical to
+# RAM card (stubs/sd_fake) — not before arm_load() (the id floor restored),
+# tail window (a boundary-aligned window keeps its first line), refused
+# lines, owner-file cards, no card writes, the watchdog fed on the walk, no
+# read after a live row, once per boot. The staged sources are byte-identical to
 # firmware/common/csi/src (check_csi_sync.sh).
 EVLOAD_BIN = test_csi_event_log_load
 EVLOAD_SRC = test_csi_event_log_load.cpp
@@ -304,7 +306,8 @@ clean: clean-evlog-load
 
 # A dismissal survives that refill: csi_event_log::queue_dismissal /
 # flush_dismissals write the dismissed row as one more line, load_into_ring
-# restores the event dismissed, iterate_since does not replay the dismissal.
+# restores the event dismissed, iterate_since does not replay the dismissal,
+# and a dismissal inside the commit hook's window does not lose the original.
 # Same REAL sources and RAM card as the load test above.
 EVDISMISS_BIN = test_csi_event_log_dismiss
 EVDISMISS_SRC = test_csi_event_log_dismiss.cpp
@@ -324,16 +327,22 @@ clean: clean-evlog-dismiss
 
 # The differential-privacy budget (dp.h / dp.cpp) is enforced and fails
 # closed: all-or-nothing reservations, value-independent refusals, exact
-# exhaustion, reset on rotation, no refill on a reboot inside the session
-# (the spend persisted with its epoch, over a fake ledger_store), no release
-# completing across a rotation, no overspend under racing threads, and the
-# calibrated noise scale. The REAL dp.cpp over stubs/dp.
+# exhaustion, a refill only on the 4 h uptime clock (never on a manual
+# rotation, never on a reboot: the spend persisted with its epoch, over a
+# fake ledger_store), no release completing across a refill, no overspend
+# under racing threads, and the calibrated noise scale. The REAL dp.cpp over
+# stubs/dp; rf_presence.cpp and rf_presence_api.h are read for source pins
+# (their paths are passed in, so the pins fail closed).
 DPBUDGET_BIN = test_dp_budget
 DPBUDGET_SRC = test_dp_budget.cpp
 
 $(DPBUDGET_BIN): $(DPBUDGET_SRC) $(SRC_DIR)/dp.cpp $(SRC_DIR)/dp.h $(SRC_DIR)/health_log.h \
+                 $(SRC_DIR)/rf_presence.cpp $(SRC_DIR)/rf_presence_api.h beacon_source_scan.h \
                  $(wildcard stubs/dp/*.h)
-	$(CXX) $(CXXFLAGS) -Werror -pthread -I stubs/dp -I $(SRC_DIR) -o $@ $(DPBUDGET_SRC) $(SRC_DIR)/dp.cpp
+	$(CXX) $(CXXFLAGS) -Werror -pthread -I stubs/dp -I $(SRC_DIR) \
+	  -DRF_PRESENCE_CPP='"$(abspath $(SRC_DIR))/rf_presence.cpp"' \
+	  -DRF_PRESENCE_API_H='"$(abspath $(SRC_DIR))/rf_presence_api.h"' \
+	  -o $@ $(DPBUDGET_SRC) $(SRC_DIR)/dp.cpp
 
 .PHONY: run-dp-budget clean-dp-budget
 run-dp-budget: $(DPBUDGET_BIN)
@@ -581,8 +590,11 @@ WIRE_STAGED_SRC = ../../../canary/lib/securacv_mesh/test_mesh_wire.cpp
 $(WIRE_WAP_BIN): $(WIRE_WAP_SRC) $(SRC_DIR)/mesh_wire.h $(SRC_DIR)/mesh_pair_frame.h $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp beacon_source_scan.h
 	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -DMESH_NETWORK_H='"$(abspath $(SRC_DIR))/mesh_network.h"' -o $@ $(WIRE_WAP_SRC)
 
+# The sketch stages the registry alone, not the PIO envelope that takes its
+# version from it, so the suite's envelope include (its macro-clash guard's
+# second half) is off here; the PIO job compiles it with the envelope.
 $(WIRE_STAGED_BIN): $(WIRE_STAGED_SRC) $(SRC_DIR)/mesh_wire.h
-	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(WIRE_STAGED_SRC)
+	$(CXX) $(CXXFLAGS) -Werror -DMESH_WIRE_STAGED_ONLY -I $(SRC_DIR) -o $@ $(WIRE_STAGED_SRC)
 
 .PHONY: run-wire clean-wire
 run-wire: $(WIRE_WAP_BIN) $(WIRE_STAGED_BIN)
@@ -593,6 +605,31 @@ clean-wire:
 
 run: run-wire
 clean: clean-wire
+
+# The v0.4 review's three pre-existing receive-path gaps (host-tested only,
+# not bench-verified, awaiting crypto review): the replay counter convention
+# (first counter 1, strict greater-than, no rx==0 exemption — the same lines
+# pinned in the PIO mesh_session.cpp), the source MAC bound only after
+# signature + opera_id + replay (it was bound before verify), and every
+# struct-payload handler refusing any length but its struct's (the PIO
+# 6-byte TAMPER_ALERT, mesh_alert.h, used to be read as the 56-byte struct).
+# Reads the real mesh_network.{h,cpp} (beacon_source_scan.h; paths passed in,
+# so the pins fail closed) and includes the PIO mesh_alert.h for its length.
+RX_GATES_BIN = test_mesh_rx_gates_wap
+RX_GATES_SRC = test_mesh_rx_gates_wap.cpp
+PIO_MESH_SRC = ../../../canary/lib/securacv_mesh/src
+
+$(RX_GATES_BIN): $(RX_GATES_SRC) $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(PIO_MESH_SRC)/mesh_session.cpp $(PIO_MESH_SRC)/mesh_alert.h beacon_source_scan.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(PIO_MESH_SRC) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -DMESH_NETWORK_H='"$(abspath $(SRC_DIR))/mesh_network.h"' -DMESH_SESSION_CPP='"$(abspath $(PIO_MESH_SRC))/mesh_session.cpp"' -o $@ $(RX_GATES_SRC)
+
+.PHONY: run-rx-gates clean-rx-gates
+run-rx-gates: $(RX_GATES_BIN)
+	$(call run_marked,$(RX_GATES_BIN))
+clean-rx-gates:
+	rm -f $(RX_GATES_BIN)
+
+run: run-rx-gates
+clean: clean-rx-gates
 
 # The CSI active probe under the airtime governor (the follow-up to sweep F4,
 # #1696), end to end — the REAL csi_probe scheduler (the sketch's staged copy,

@@ -23,4 +23,12 @@ static StubSerial Serial;
 
 inline void yield() {}
 
+/* The real Arduino.h brings FreeRTOS in. vTaskDelay() counts, so a test can
+ * see the boot reload let the idle task run (test_csi_event_log_load.cpp). */
+inline unsigned& stub_task_delays() {
+  static unsigned n = 0;
+  return n;
+}
+inline void vTaskDelay(uint32_t) { stub_task_delays()++; }
+
 #endif

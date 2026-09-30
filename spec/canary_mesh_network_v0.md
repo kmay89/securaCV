@@ -155,6 +155,16 @@ ciphertext = ChaCha20-Poly1305(message_key, nonce, plaintext)
   need only "higher"), never a reuse; a reservation that cannot be persisted
   refuses the frame. canary-wap keeps per-peer `msg_counter_tx` in RAM and
   resets it at every re-authentication (its session model) — unchanged.
+  **Counter convention, both trees (v0.4 follow-up):** the first counter a
+  sender signs is **1** (the PIO tree hands out `s_outbound_counter + 1`
+  from 0; canary-wap's `add_peer` and both rekey resets start
+  `msg_counter_tx` at 1), the receiver's last-seen starts at 0, and the
+  gate is strict — `counter <= last_seen` is a replay, whatever `last_seen`
+  is. canary-wap's gate used to carry an exemption (`&& last_seen > 0`) so
+  its old counter-0 first frame could pass, and that exemption let a
+  counter-0 frame pass again on every replay for as long as the last-seen
+  stayed 0; it is gone, and no counter-0 frame is ever fresh (§4.5, the
+  table below the registry).
 - **Nonce Tracking**: Last 64 nonces cached to detect concurrent duplicates.
 - **Timestamp field**: Retained in the wire format for diagnostic and
   debugging purposes. **Not security-bearing in v0.2.** Earlier revisions
@@ -346,14 +356,18 @@ peer_entry = {
 > wherever it is compiled. Host tests: `test_mesh_wire.cpp` (the numbers,
 > run in both trees), `test_mesh_envelope.cpp`, `test_mesh_session.cpp`
 > (`test_outer_frame_is_the_registry_frame`), canary-wap's
-> `test_mesh_wire_wap.cpp` and `test_mesh_pair_frame.cpp`.
+> `test_mesh_wire_wap.cpp` and `test_mesh_pair_frame.cpp`; the receive
+> gates below the frame (the counter convention, the MAC binding, the
+> struct-payload lengths — the v0.4 review's three pre-existing canary-wap
+> findings, closed after it): `test_mesh_rx_gates_wap.cpp`, which pins the
+> same lines in both trees.
 
 **The outer frame.** One byte, one meaning, both trees. A receiver
 classifies a frame by its **first byte**:
 
 | First byte | Frame | Layout |
 |---|---|---|
-| `1` (`PROTOCOL_VERSION`) | opera-authenticated | `[version 1][type 16..255][opera_id 16][sender_fp 8][counter u64 LE][timestamp u32 LE][payload][Ed25519 signature 64]` — the signature is over every byte before it, hashed under `"securacv:mesh:message:v0"` (`mesh_crypto::DOMAIN_MESSAGE`) in both trees; the type is read from this **signed** header, never from anything in front of it |
+| `1` (`mesh_wire::OPERA_VERSION`; `mesh_envelope::OPERA_VERSION` and canary-wap's `mesh_network::PROTOCOL_VERSION` take it) | opera-authenticated | `[version 1][type 16..255][opera_id 16][sender_fp 8][counter u64 LE][timestamp u32 LE][payload][Ed25519 signature 64]` — the signature is over every byte before it, hashed under `"securacv:mesh:message:v0"` (`mesh_crypto::DOMAIN_MESSAGE`) in both trees; the type is read from this **signed** header, never from anything in front of it |
 | `8..12` | pre-membership pairing, unsigned | `[type][the raw pairing payload struct]` — there is no peer key to verify against yet; the pairing state machine's own checks authenticate the exchange (§5) |
 | anything else | dropped | `0` (canary-wap's version until v0.4), `2..7`, `13..15`, a stale version, the PIO tree's pre-v0.4 unsigned type prefix, a Chirp (`0xC4`) or Beacon (`0xB1`) magic |
 
@@ -380,7 +394,7 @@ since dispatch there already keyed on the signed type.
 | 13–15 | reserved — never assign | |
 | 16 | `HEARTBEAT` | PIO does not send; WAP struct |
 | 17 | `CSI_FEATURES` | PIO only |
-| 18 | `TAMPER_ALERT` | **differs**: PIO 6-byte template-only (§4.3), WAP 54-byte struct with free text |
+| 18 | `TAMPER_ALERT` | **differs**: PIO 6-byte template-only (§4.3), WAP 56-byte struct with free text (`TamperAlertPayload`: 1 + 1 + 2 pad + 4 + 48, sent as `sizeof`) — and since the v0.4 follow-up the WAP refuses any other length, so the PIO 6 bytes are dropped rather than read as the struct |
 | 19 | `POWER_ALERT` | WAP only |
 | 20 | `OFFLINE_IMMINENT` | WAP only |
 | 21 | `WITNESS_RECORD` | PIO only (reserved) |
@@ -406,6 +420,19 @@ of a type the receiver has no handler for (a canary-wap session-layer type
 at a PIO receiver) is dropped **after** it advances the sender's replay
 counter — it is a genuine frame from that peer — which the session test
 states explicitly.
+
+**What remains below the envelope, and what is already the same there.**
+The registry settles the bytes of the outer frame; these are the receive
+rules under it, tree by tree (v0.4 follow-up, after the review's three
+canary-wap findings; host-tested, not bench-verified, awaiting crypto
+review):
+
+| Rule | PIO (`mesh_session`) | canary-wap (`mesh_network`) | Across the trees |
+|---|---|---|---|
+| Counter convention (§3.3) | first counter signed is 1; receiver's last-seen starts at 0; `counter <= last` dropped, no exemption | **same** since the follow-up — `msg_counter_tx` starts at 1 in `add_peer` and both rekey resets; the gate is `counter <= msg_counter_rx`, the old `&& rx > 0` exemption gone | **same**: a counter-0 frame is never fresh at either receiver |
+| When the source MAC is bound | after signature, opera_id and replay all passed | **same** since the follow-up (it was before signature: a frame with a member's public `sender_fp` + `opera_id` and any signature re-pointed that member's MAC and its ESP-NOW registration — a keyless denial of service); the old address is unregistered before it is overwritten | **same** |
+| Fixed-size payloads | decoders take the length and refuse any other, exactly (`mesh_alert`, `mesh_beacon`, …; `LEAVE_OPERA` must be empty) | **same** since the follow-up: every struct handler (`HEARTBEAT`, `AUTH_*`, `TAMPER_ALERT`, `POWER_ALERT`, `OFFLINE_IMMINENT`, `OPERA_REKEY[_ACK]`) refuses `payload_len != sizeof(struct)`; `BEACON_EVENT`, `CHANNEL_LOCK`, `HUB_ELECTION` already decoded through the staged modules | **same rule**; the encodings still differ where the registry table says so |
+| Payload encodings, pairing exchange | | | **differ** — the registry table above, §4.3, §5.3, §8.3 |
 
 **Compatibility — this is a wire break, stated plainly.** A canary-wap
 built before v0.4 and one built after drop each other's Opera frames
@@ -1140,3 +1167,18 @@ An implementation conforms to this specification if it:
   the envelope is gone. §4.1 states that neither tree encodes CBOR. The
   §4.3/§5.3/§8.3 interop notes now name the payloads and the pairing
   exchange, not the numbering, as what keeps the trees apart.
+- v0.4 follow-up (2026-09-30; **host-tested only, not bench-verified,
+  awaiting maintainer crypto review**): the security re-review of v0.4
+  approved the registry and found three pre-existing canary-wap receive
+  gaps, closed here — the replay counter convention is the PIO tree's
+  (first counter 1, strict gate, no `rx == 0` exemption: a counter-0 frame
+  had replayed indefinitely while the receiver's last-seen was 0), the
+  source MAC is bound only after the signature (it was bound before it), and
+  every struct-payload handler refuses any length but its struct's (a PIO
+  6-byte `TAMPER_ALERT` had been read as the 56-byte struct, into the
+  signature) — §3.3, §4.5's table below the registry,
+  `test_mesh_rx_gates_wap.cpp`. And one fragility: the PIO envelope's
+  version constant is `mesh_envelope::OPERA_VERSION` (was
+  `PROTOCOL_VERSION`, which `canary_config.h` #defines as a string, so the
+  envelope could not be included from the canary sketch);
+  `test_mesh_wire.cpp` compiles both headers under that macro.

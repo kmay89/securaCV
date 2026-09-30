@@ -43,6 +43,26 @@ renders the fleet the connected device reports.
 **Why (user value).** "Your Canaries at a glance," offline. Reinforces
 self-modeling and makes multi-device ownership legible without a cloud.
 
+**Status (2026-09-29) — supersedes the 2026-07 paragraph below where they
+disagree.** The rollback config premise was wrong: an Arduino build takes its
+bootloader and `sdkconfig.h` precompiled from the core, and the pinned cores
+(arduino-esp32 2.0.17 for esp32 / esp32-s3 / esp32-c3; the 3.x lib-builder)
+set `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`, so the `verifyRollbackLater`
+override has been compiled into every shipping build that links the engine.
+It now fails the build (`#error`) on a core that does not enable it. Steps 1
+and 2 below are wired for the PlatformIO `canary` only: an NVS counter via
+`firmware/common/health/boot_guard.h` (host-tested in
+`tests_host/test_boot_guard.cpp`), a healthy gate (setup returned + 30 s of
+`loop()`) that both clears it and confirms a pending image, and a minimal
+serial safe mode (radio, storage, sensors and the witness chain never start;
+`c`+`y` or BOOT held 2 s clears and retries; a different build starts the
+count over). It prints a status card, not the `trust_card` — the identity it
+would print is one of the subsystems safe mode keeps off. The rule in
+"Risks" below still holds for this code: it is compile-checked, **not**
+proven on hardware, and needs a human sign-off plus the bad-image bench run
+(`docs/V1_BENCH_TEST_RUNBOOK.md` Track E) before anyone relies on it.
+Display, Sense, Vision and Sentinel: not wired.
+
 **Status (2026-07).** The **pure render layer landed** —
 `firmware/common/ui/fleet_view.h` (`scene::fleet_card`) turns a snapshot of the
 roster into the width-aligned, ASCII-floor-safe, dual-tier console card, honest

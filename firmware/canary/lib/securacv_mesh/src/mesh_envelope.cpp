@@ -38,10 +38,10 @@ inline uint32_t read_u32_le(const uint8_t* src) {
 }
 
 /* Encode header into the first HEADER_LEN bytes of dst. Forces
- * version=PROTOCOL_VERSION regardless of header.version. */
+ * version=OPERA_VERSION regardless of header.version. */
 inline void encode_header(uint8_t* dst, const Header& h) {
   size_t off = 0;
-  dst[off++] = PROTOCOL_VERSION;
+  dst[off++] = OPERA_VERSION;
   dst[off++] = h.msg_type;
   memcpy(dst + off, h.opera_id,  OPERA_ID_LEN);     off += OPERA_ID_LEN;
   memcpy(dst + off, h.sender_fp, FINGERPRINT_LEN);  off += FINGERPRINT_LEN;
@@ -51,11 +51,11 @@ inline void encode_header(uint8_t* dst, const Header& h) {
 }
 
 /* Decode the first HEADER_LEN bytes of src into *out. Returns false if
- * the version byte is not PROTOCOL_VERSION. */
+ * the version byte is not OPERA_VERSION. */
 inline bool decode_header(const uint8_t* src, Header* out) {
   size_t off = 0;
   out->version = src[off++];
-  if (out->version != PROTOCOL_VERSION) return false;
+  if (out->version != OPERA_VERSION) return false;
   out->msg_type = src[off++];
   memcpy(out->opera_id,  src + off, OPERA_ID_LEN);    off += OPERA_ID_LEN;
   memcpy(out->sender_fp, src + off, FINGERPRINT_LEN); off += FINGERPRINT_LEN;

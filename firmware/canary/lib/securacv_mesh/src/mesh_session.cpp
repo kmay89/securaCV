@@ -512,7 +512,7 @@ static size_t build_signed_frame(mesh_envelope::MsgType type,
                                  size_t                 out_cap) {
   if (!s_opera_id_set || out == nullptr) return 0;
   mesh_envelope::Header header;
-  header.version   = mesh_envelope::PROTOCOL_VERSION;
+  header.version   = mesh_envelope::OPERA_VERSION;
   header.msg_type  = static_cast<uint8_t>(type);
   memcpy(header.opera_id,  s_opera_id,  sizeof(header.opera_id));
   memcpy(header.sender_fp, s_sender_fp, sizeof(header.sender_fp));
@@ -884,7 +884,7 @@ static void on_transport_recv(const uint8_t mac[6],
   /* The signed envelope, version byte first. PR 5c-4 routes it here; the
    * peer table + signature verify + replay check happen inside, and the
    * message type is read from the SIGNED header there. */
-  if (first == mesh_envelope::PROTOCOL_VERSION) {
+  if (first == mesh_envelope::OPERA_VERSION) {
     on_opera_frame(mac, data, len);
     return;
   }
