@@ -9200,8 +9200,15 @@ static bool wifi_save_credentials() {
     if (!nvs.isOpen()) return false;
     const size_t ssid_len = strlen(g_wifi_creds.ssid);
     const size_t pass_len = strlen(g_wifi_creds.password);
+    // An empty password is an open network, and putBytes refuses len 0 as a
+    // no-op that "matches" 0 == pass_len — so the stale password must be
+    // REMOVED, or a secured->open change answers saved and reloads the old
+    // secret after reboot, failing the join (Codex on #1753; the canary's
+    // saveCredentials carries the same rule).
     ok = nvs->putBytes(NVS_KEY_WIFI_SSID, g_wifi_creds.ssid, ssid_len) == ssid_len &&
-         nvs->putBytes(NVS_KEY_WIFI_PASS, g_wifi_creds.password, pass_len) == pass_len &&
+         (pass_len > 0
+              ? nvs->putBytes(NVS_KEY_WIFI_PASS, g_wifi_creds.password, pass_len) == pass_len
+              : (!nvs->isKey(NVS_KEY_WIFI_PASS) || nvs->remove(NVS_KEY_WIFI_PASS))) &&
          nvs->putBool(NVS_KEY_WIFI_EN, g_wifi_creds.enabled) == sizeof(bool);
     // Saving real credentials is an explicit exit from standalone mode.
     ok = nvs->putBool(NVS_KEY_WIFI_AP_ONLY, false) == sizeof(bool) && ok;

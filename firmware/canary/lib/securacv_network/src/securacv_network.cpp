@@ -586,9 +586,16 @@ bool ScvNetworkManager::saveCredentials() {
 
   const size_t ssid_len = strlen(m_creds.ssid);
   const size_t pass_len = strlen(m_creds.password);
+  // An empty password is an open network, and Preferences::putBytes refuses
+  // len 0 as a no-op that "matches" 0 == pass_len — so the stale password
+  // must be REMOVED, or a secured->open change answers saved and reloads
+  // the old secret after reboot, failing the join (Codex on #1753). An
+  // absent key already is removed (the mqtt write_credentials pattern).
   const bool ok =
       nvs.putBytes(NVS_KEY_WIFI_SSID, m_creds.ssid, ssid_len) == ssid_len &&
-      nvs.putBytes(NVS_KEY_WIFI_PASS, m_creds.password, pass_len) == pass_len &&
+      (pass_len > 0
+           ? nvs.putBytes(NVS_KEY_WIFI_PASS, m_creds.password, pass_len) == pass_len
+           : (!nvs.isKey(NVS_KEY_WIFI_PASS) || nvs.remove(NVS_KEY_WIFI_PASS))) &&
       nvs.putBool(NVS_KEY_WIFI_EN, m_creds.enabled) == sizeof(bool);
 
   nvs.end();
