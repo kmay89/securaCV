@@ -765,21 +765,20 @@ namespace dp {
 namespace ledger_store {
 
 Read read(uint32_t* epoch, uint32_t* consumed_x1000) {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.begin(true)) return READ_FAILED;
+  NvsMainSession nvs(true);  // read-only; the guard ends the session (F60)
+  if (!nvs.isOpen()) return READ_FAILED;
   Read r = READ_FAILED;
-  if (!nvs.isKey(rf_presence::DP_LEDGER_KEY)) {
+  if (!nvs->isKey(rf_presence::DP_LEDGER_KEY)) {
     r = READ_ABSENT;
-  } else if (nvs.getBytesLength(rf_presence::DP_LEDGER_KEY) == sizeof(rf_presence::DpLedgerRecord)) {
+  } else if (nvs->getBytesLength(rf_presence::DP_LEDGER_KEY) == sizeof(rf_presence::DpLedgerRecord)) {
     rf_presence::DpLedgerRecord rec;
-    if (nvs.getBytes(rf_presence::DP_LEDGER_KEY, &rec, sizeof(rec)) == sizeof(rec) &&
+    if (nvs->getBytes(rf_presence::DP_LEDGER_KEY, &rec, sizeof(rec)) == sizeof(rec) &&
         rec.magic == rf_presence::DP_LEDGER_MAGIC) {
       *epoch = rec.epoch;
       *consumed_x1000 = rec.consumed_x1000;
       r = READ_OK;
     }
   }
-  nvs.end();
   return r;
 }
 
