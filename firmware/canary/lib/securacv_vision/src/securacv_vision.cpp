@@ -705,8 +705,14 @@ bool vision_save_config_to_nvs() {
   if (!prefs.begin(NVS_VISION_NS, false)) return false;
   size_t written = prefs.putBytes(NVS_KEY_CONFIG, &vision::s_cfg, sizeof(vision_config_t));
   prefs.end();
+  if (written != sizeof(vision_config_t)) {
+    // The return was already honest; the log said "saved" anyway (F61).
+    Serial.printf("[VISION] Config NOT saved (NVS wrote %u of %u bytes)\n",
+                  (unsigned)written, (unsigned)sizeof(vision_config_t));
+    return false;
+  }
   Serial.printf("[VISION] Config saved to NVS (%u bytes)\n", (unsigned)written);
-  return written == sizeof(vision_config_t);
+  return true;
 }
 
 bool vision_load_config_from_nvs(vision_config_t* out) {

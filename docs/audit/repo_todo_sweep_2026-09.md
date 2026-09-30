@@ -769,8 +769,8 @@ so — see D2 below.)
   lines are pinned. test_nvs_store_lock runs the guard's scenarios on the
   real header (scope close, nested depth, cross-task fail-soft owing no
   end).
-- [ ] **F61 [code] The canary's other NVS puts are unaudited for a write that
-  did not land.** F55 made the chain-state helpers honest; the 64 direct
+- [x] **F61 [code] The canary's other NVS puts are unaudited for a write that
+  did not land.** (#1753) F55 made the chain-state helpers honest; the 64 direct
   `Preferences` / `NvsManager` put calls in 15 files of `firmware/canary`
   (outside `securacv_crypto.cpp`) were out of its scope, and a few already
   read their result (`csi_event_egress.cpp`, `mesh_state.cpp`). Start with the
@@ -781,6 +781,31 @@ so — see D2 below.)
   even a false, so a Wi-Fi save the API reported as done can be silently
   dropped; have the route answer an error when the save fails. Then audit each
   of the rest for a state it claims after a put NVS refused. Found doing F55.
+  *Done:* every direct put site audited (putChar included — the item's 64
+  under-counted by missing it). Seven claimed state over a refused put, now
+  honest: `saveCredentials()` answers true only when every entry landed
+  (WARNING otherwise, the WAP's F59 wording) and `handle_wifi_connect`
+  snapshots the manager's credentials, restores them on a failed save and
+  answers `ok:false` instead of "Connecting..." — setup stays incomplete and
+  the retry tick cannot connect with credentials the answer called unsaved
+  (the WAP route's Codex rollback, ported); `audio_save_mute_intent` returns
+  the put's verdict (the route's `"persisted"` field was already wired to it,
+  so the mic-privacy claim is now real) and WARNs for the result-ignoring
+  MQTT path; the thermal watchdog's `save_nvs()` clears `s_dirty` only when
+  all eleven entries landed, so a failed history save retries next cadence
+  instead of going silently final; the camera's orientation print and the
+  vision config print say NOT saved on a refused put (vision's return was
+  already honest, its log was not); `setup_set_device_name` and
+  `setup_set_tz` keep the live RAM state they really applied but log a
+  WARNING naming the failed persist instead of "updated"/"set". Audited and
+  left as-is, with reasons: mesh_state.cpp (all ten sites), ble_scout.cpp,
+  ble_scout_key.cpp, mqtt's `write_credentials`/TLS writes and auth's bearer
+  persist already read every result; power's cycle/brownout/history saves,
+  canary_power_events.h's lineage log + heartbeat, and diagnostics'
+  self-verifying `test_nvs` probe are best-effort telemetry that claims
+  nothing and retries on its own cadence; `setup_mark_complete` /
+  `setup_check_timeout` fail toward re-entering setup, which is fail-safe.
+  Not bench-verified on hardware (U1).
 
 ### Parity & sub-projects
 
