@@ -415,7 +415,11 @@ firmware, live or backfilled, is now a finding.
   - Setup: an HA-enabled canary image (`release_ha`) with a card in,
     paired to Home Assistant; the MQTT broker on a host you can stop.
   - Repro: stop the broker; commit more than 12 events (presence changes
-    in front of the sensor); restart the broker.
+    in front of the sensor); restart the broker. Since sweep F81 a presence
+    row commits when its bundle closes, two minutes after the state's last
+    refresh or ten minutes after it opened, and `core.presence` commits at
+    most six an hour, so keep the broker down for a few hours, or count the
+    other modules' rows too (the serial log's commit lines).
   - Expected: the serial log shows `[EVT-LOG] /EVENTS/today.ndjson open`
     at boot and `[CSI] event backfill done: N event(s) from the card`
     after the reconnect; HA's event history holds the outage's rows in id
@@ -430,7 +434,9 @@ firmware, live or backfilled, is now a finding.
   - Expected: the pre-reboot backlog arrives in id order with no `replay`
     verdict on any backfilled body (at most ten of its rows may be missing
     — the NVS ceiling's stride). The post-reboot rows, presence included,
-    have higher ids and arrive after it, none refused.
+    have higher ids and arrive after it, none refused. A presence bundle
+    still open at the power cycle never commits (bundles live in RAM until
+    they close, sweep F81): that state is missing, not refused.
   - Artifact: `docs/audit/repro/F37/reboot/`.
 - [ ] **Another device's card is left alone**
   - Setup: a card taken from a canary-wap (or another canary).
@@ -475,7 +481,9 @@ Owner: U1.
   - Repro: start presence, power-cycle mid-presence, let presence start and
     end again.
   - Expected: the post-reboot rows' ids are above every pre-reboot id; no
-    `replay` verdict.
+    `replay` verdict. The presence bundle open at the power cycle is never
+    committed, on either device (sweep F81 made the canary bundle like the
+    canary-wap).
   - Artifact: `docs/audit/repro/F46/reboot-bundle/`.
 - [ ] **A Scout arrival and a loop-task commit at once stay in order**
   - Setup: a canary with a paired BLE Scout beacon and an open presence
@@ -494,6 +502,50 @@ Owner: U1.
   - Expected: the `"open":1` row's `id` is in [2147483648, 3221225472);
     the dashboard shows it as happening now, with no dismiss button.
   - Artifact: `docs/audit/repro/F46/open-row/`.
+
+## Bundled presence rows and the hourly ceiling (F80, F81) — on-device verification
+
+Code: `firmware/common/csi/src/csi_event.cpp` (the ceiling spends a slot by
+what `csi_bundler_admit()` did: an opening keeps it, a merge gives it back),
+`csi_bundler.cpp`, and the canary's `src/csi_modules_integration.cpp` +
+`src/main.cpp` (`securacv_csi_modules_tick()` once per loop, outside the CSI
+power gates, instead of a flush after every window). Host-tested on the real
+library (`firmware/tests_host/test_csi_bundle_ceiling.cpp`) and on the
+canary's real bridge (`test_csi_modules_integration.cpp`); not run on a
+device. Owner: U1.
+
+- [ ] **A steady presence state is one row per bundle on the canary**
+  - Setup: a canary (`release_ha`) paired to Home Assistant, with a card in.
+  - Repro: move in front of the sensor for fifteen minutes, then leave the
+    room for five.
+  - Expected: no `events` body per refresh. One `core.presence` body about
+    ten minutes after the state began, with `"bundled"` above 1 and
+    `"duration_sec"` near 540; the next about two minutes after you leave,
+    `"bundled"` above 1. The card's `/EVENTS/today.ndjson` holds the same
+    rows. Before F81 every refresh (5 s, 20 s, then each minute) was its own
+    body with `"bundled":1` and `"duration_sec":0`, and the sixth spent the
+    hour's ceiling.
+  - Artifact: `docs/audit/repro/F81/steady-presence/`.
+- [ ] **A transition inside the first hour is not held back**
+  - Setup: as above, and a canary-wap beside it.
+  - Repro: twenty minutes in front of both sensors, then leave.
+  - Expected: the canary-wap's `GET /api/events/today` shows the new state
+    open within a few seconds of leaving; on both devices the new state's
+    row commits when its bundle closes. Known limit, not a finding: after
+    about an hour in ONE state the six-an-hour ceiling is full of that
+    state's own rows, and the transition then waits three to ten minutes
+    for a slot (host-measured; record the delay you see).
+  - Artifact: `docs/audit/repro/F81/transition/`.
+- [ ] **A bundle commits while CSI is shed**
+  - Setup: a canary with `FEATURE_POWER_POLICY` on a battery near the
+    battery-saver threshold (battery saver and low power shed CSI;
+    battery-normal does not).
+  - Repro: start presence; let the policy enter battery saver (the health
+    log's "Power policy: mode changed" entry names it); wait three minutes.
+  - Expected: the open presence bundle commits about two minutes after its
+    last observation, with no CSI window arriving (the loop's tick, not the
+    feed, closes it).
+  - Artifact: `docs/audit/repro/F81/csi-shed/`.
 
 ## SoftAP WPA2/WPA3 transition + PMF (F16) — on-device verification
 

@@ -181,6 +181,26 @@ the integration's per-type tamper sensors match. On the canary base that
 bridge carries the SD and enclosure kinds only: its boot story already
 reaches the tamper topic through the power-events classifier.
 
+A row that goes through the bundler (a `core.presence` state, a
+`ble.scout` arrival) is committed, and published, when its bundle closes:
+two minutes after its last observation, or ten minutes after it opened,
+whichever comes first. So it reaches the broker that long after the state
+began, carrying every observation it collapsed (`bundled`) and the span
+from the first to the last (`duration_sec`). A bundle still open at a
+reboot or a power cut is never committed; a `system.integrity` tamper is
+sealed the moment it commits for that reason. Both trees close bundles the
+same way, once per main loop (`csi_bundler_tick`); until sweep F81 the
+canary base closed every bundle after each CSI window, so each of its
+presence observations was a row of its own. A module's hourly ceiling
+counts rows: a bundle that opens spends one slot, an observation merged
+into its open bundle spends none, and a bundle that reopens after its ten
+minutes or its quiet gap spends one like any other opening (sweep F80). A
+state held for an hour therefore spends six slots on its own rows, which
+is all of `core.presence`'s six an hour: until one ages out, the next
+transition is refused, and so is every further observation of the held
+state (measured on the host: the transition waits three to ten minutes,
+and the held state's rows carry one observation each).
+
 Both trees also keep an SD event log, `/EVENTS/today.ndjson`, one committed
 row per line in one shared format
 (`firmware/common/csi/src/csi_event_log_line.h`, so a tool reads either

@@ -114,8 +114,9 @@ void csi_bundler_tick(void);
 /**
  * Force-close every open bundle. Each closed bundle is committed through
  * the chokepoint (it takes its event id then) so the host can update its
- * persistence and UI.
- * Called by csi_event_flush_bundles() and at firmware shutdown.
+ * persistence and UI. Called by csi_event_flush_bundles(), which no
+ * firmware calls today (see csi_event.h); a host closes bundles with
+ * csi_bundler_tick().
  */
 void csi_bundler_flush_all(void);
 

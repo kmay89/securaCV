@@ -2355,6 +2355,42 @@
   the host's.
 - **Date learned:** 2026-10
 
+### A refund decided before the operation it refunds, and a flush that hid it
+- **What happened:** The CSI chokepoint spends a module's hourly ceiling
+  slot per emit and gives it back when the emit only refreshes a bundle
+  that is already open. It asked `csi_bundler_has_open()` first, then
+  called `csi_bundler_admit()`. But the admit expires overdue bundles
+  before it matches: a key whose bundle was open a moment earlier gets
+  closed (a row) and reopened (another row), and the refund decided
+  beforehand let that opening through uncounted. One emit every 121 s
+  committed 714 rows a day under a 6/hour ceiling (sweep F80). The canary
+  never showed it, because it called `csi_event_flush_bundles()` (close
+  everything) after every CSI window, so nothing was ever open to refund;
+  and that flush was its own bug: every presence refresh was a row of its
+  own and spent the ceiling, and real transitions were dropped after three
+  minutes in one state (sweep F81).
+- **Root cause:** A check-then-act across a call that changes the very
+  state it checked. And two bugs in two layers that cancel each other's
+  symptom: the flush made the leak unreachable on one tree, so fixing
+  either one alone moves the device's behavior in a way neither fix
+  intended (the canary ticking without F80 would have refunded every
+  10-minute reopen).
+- **Fix:** The bundler reports what it did, under its slot lock and after
+  expiry (`CSI_BUNDLER_OPENED` keeps the slot, `CSI_BUNDLER_MERGED` gives
+  it back), and `has_open()` is gone. The canary closes bundles with
+  `csi_bundler_tick()` once per main loop, outside the CSI power gates, as
+  the canary-wap does. Both landed together.
+- **Regression check:** `firmware/tests_host/test_csi_bundle_ceiling.cpp`
+  (the real library under a fake clock: a day's rows within the ceiling on
+  the gap and window paths; a merge still refunds) and
+  `test_csi_modules_integration.cpp` (the canary's real bridge playing the
+  main loop: no row and no slot per refresh, one row per closed bundle,
+  a close while CSI is shed). Decide a refund, a count or a permission
+  from what the operation reports it did, never from a question asked
+  before it; and when a host-side workaround (a flush, a retry, a reset)
+  hides a library bug, fix them as one change.
+- **Date learned:** 2026-10
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:

@@ -212,6 +212,17 @@ If your module would naturally emit hundreds of events per hour during
 a noisy period, set `default_ceiling_per_hour` defensively — the runtime
 caps the burst and the bundler still surfaces a single summary row.
 
+The ceiling counts rows, not emits. An emit that opens a bundle spends one
+slot; an emit merged into its key's open bundle spends none; and a bundle
+reopened after its 10-minute window or its 2-minute quiet gap spends one
+like any opening. Re-emitting a held state to refresh its row is therefore
+free inside the window, but a state held past the window reopens every 10
+minutes, which is 6 slots an hour. A ceiling at or under that rate is full
+after about an hour in one state, and then the module's next transition is
+refused until a slot ages out (the ceiling is checked before the bundler
+runs, so the held state's own refreshes are refused too). Size the ceiling
+above the window rate plus the transitions you need to keep.
+
 ## Dismiss feedback
 
 The dashboard's "That was nothing" swipe routes to your
