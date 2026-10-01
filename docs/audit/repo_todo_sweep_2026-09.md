@@ -479,6 +479,20 @@ so — see D2 below.)
   interface. The plain `http`/`securacv` services keep advertising 80 (it
   307-redirects) for a client that cannot do TLS. Host-tested
   (`test_tls_policy`), canary `[env:full]` compiles. Not bench-verified (U1).
+- [ ] **F62 [code+decision] Consume the mDNS TLS advert in the desktop
+  clients.** Found by the #1757 review: the canary now advertises `tls` /
+  `secure_port` over mDNS (F15), but no in-repo discovery client reads them
+  — the Flasher's `desktop/src-tauri/src/fleet.rs` serializes neither into
+  `FleetSighting`, and `desktop/src/app.js` still builds an `http://` URL
+  from the port-80 SRV record (which 307-redirects to a self-signed 443 the
+  default reqwest trust policy then rejects). Closing the loop needs: the two
+  fields carried through `FleetSighting` in BOTH the Flasher and the Lab's
+  twin (`desktop-lab/src-tauri/src/fleet.rs`, held equal by
+  `desktop_parity.test.js`); the frontend transport decision to prefer
+  `https://<secure_port>` when `tls="1"`; and a client TLS-trust model for
+  the self-signed cert — a TOFU pin store or an explicit accept-with-pin
+  flow (security-sensitive, a maintainer decision). Pre-existing gap, not a
+  regression; deferred from #1757 to keep that PR to the advertisement half.
 - [x] **F16 [code] WPA3/PMF + per-device AP password** on the WAP join path —
   done (option (b) — maintainer to confirm): both trees now ask for WPA2/WPA3
   transition on the SoftAP with PMF capable and never required, and for PMF
