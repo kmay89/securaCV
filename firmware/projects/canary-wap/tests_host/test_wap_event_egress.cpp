@@ -39,6 +39,10 @@
  *     commit that lands in the middle of the backfill walk (as the NimBLE
  *     host task's would) publishes nothing and moves nothing; the rows still
  *     arrive once, in order.
+ * And one the old live path broke on the way: it wrote the NVS delivery
+ * ceiling before every publish attempt, connected or not, so any commit
+ * during an outage moved it past the backlog, and a reboot before the
+ * broker returned skipped every row on the card.
  * The rest pin the planner's rules on this device and the RAM hold's: no
  * broker or a changed broker means not owed, a reboot mid-backlog
  * republishes nothing and skips at most a stride, a dismissal line is never
@@ -428,6 +432,18 @@ static void test_commit_inside_the_backfill_walk() {
         "a bundle closing inside the walk publishes nothing from the hook either");
   CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
         "and it arrives after the rows before it, once, in order");
+}
+
+static void test_reboot_in_an_outage_keeps_the_backlog_owed() {
+  printf("-- a reboot during an outage: the card's rows are still owed\n");
+  fresh_device();
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 5; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  boot();                         // power cycle before the broker comes back
+  connect();
+  drain();
+  CHECK(exactly(W.ha.accepted, ids),
+        "no commit during the outage moved the NVS ceiling past them: all five arrive");
 }
 
 #ifndef EGRESS_PRE_FIX
@@ -1215,6 +1231,7 @@ int main() {
   test_reconnect_window_direct_row();
   test_reconnect_window_closed_bundle();
   test_commit_inside_the_backfill_walk();
+  test_reboot_in_an_outage_keeps_the_backlog_owed();
 #ifndef EGRESS_PRE_FIX
   test_steady_state_is_live();
   test_reboot_mid_backlog();
