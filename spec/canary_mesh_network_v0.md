@@ -366,7 +366,9 @@ peer_entry = {
 > gates below the frame (the counter convention, the MAC binding, the
 > struct-payload lengths — the v0.4 review's three pre-existing canary-wap
 > findings, closed after it): `test_mesh_rx_gates_wap.cpp`, which pins the
-> same lines in both trees.
+> same lines in both trees. Since 2026-10-01 the MAC binding's row is "no
+> frame binds an address" (§8.3), and canary-wap's `test_mesh_address_wap`
+> runs it against the real `mesh_network.cpp`.
 
 **The outer frame.** One byte, one meaning, both trees. A receiver
 classifies a frame by its **first byte**:
@@ -436,7 +438,7 @@ review):
 | Rule | PIO (`mesh_session`) | canary-wap (`mesh_network`) | Across the trees |
 |---|---|---|---|
 | Counter convention (§3.3) | first counter signed is 1; receiver's last-seen starts at 0; `counter <= last` dropped, no exemption | **same** since the follow-up — `msg_counter_tx` starts at 1 in `add_peer` and both rekey resets; the gate is `counter <= msg_counter_rx`, the old `&& rx > 0` exemption gone | **same**: a counter-0 frame is never fresh at either receiver |
-| When the source MAC is bound | after signature, opera_id and replay all passed | **same** since the follow-up (it was before signature: a frame with a member's public `sender_fp` + `opera_id` and any signature re-pointed that member's MAC and its ESP-NOW registration — a keyless denial of service); the old address is unregistered before it is overwritten | **same** |
+| Where a member's address comes from (§8.3) | a completed pairing, or NVS `peer_macs` at boot; an opera frame from an address the transport table does not hold drops before verification, and a verified frame's source is recorded as the member's liveness link (any address in that table: the §8.3 peer-fields note) and binds nothing | a completed pairing (`add_peer`; a re-pair re-binds a member already held, logged), or NVS at boot; since 2026-10-01 a frame from any address but the signer's own bound one drops before verification. It used to re-point the member and its ESP-NOW registration at the source of a frame that passed signature, `opera_id` and replay, and before the v0.4 follow-up it did so ahead of the signature (a frame with a member's public `sender_fp` + `opera_id` and any signature: a keyless denial of service) | **same rule**: no frame binds an address; canary-wap's source check is the stricter one |
 | Fixed-size payloads | decoders take the length and refuse any other, exactly (`mesh_alert`, `mesh_beacon`, …; `LEAVE_OPERA` must be empty) | **same** since the follow-up: every struct handler (`HEARTBEAT`, `AUTH_*`, `TAMPER_ALERT`, `POWER_ALERT`, `OFFLINE_IMMINENT`, `OPERA_REKEY[_ACK]`) refuses `payload_len != sizeof(struct)`; `BEACON_EVENT`, `CHANNEL_LOCK`, `HUB_ELECTION` already decoded through the staged modules | **same rule**; the encodings still differ where the registry table says so |
 | Payload encodings, pairing exchange | | | **differ** — the registry table above, §4.3, §5.3, §8.3 |
 
