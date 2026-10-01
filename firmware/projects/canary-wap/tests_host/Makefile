@@ -749,6 +749,31 @@ clean-mesh-liveness:
 run: run-mesh-liveness
 clean: clean-mesh-liveness
 
+# The hand-over from a requesting task to the loop task (sweep F96, F106):
+# the REAL loop_command_ring.h. Commands run in post order across the ticket
+# wrap, a full ring refuses, each waiter collects its own result once, a
+# command not started by the timeout is withdrawn and never runs, one already
+# started is waited for, and with real threads every command runs once, on
+# the loop thread. `make tsan-loop-ring` builds and runs the same suite under
+# -fsanitize=thread (not part of `run`: it needs a sanitizer runtime).
+LOOP_RING_BIN = test_loop_command_ring
+LOOP_RING_SRC = test_loop_command_ring.cpp
+
+$(LOOP_RING_BIN): $(LOOP_RING_SRC) $(SRC_DIR)/loop_command_ring.h
+	$(CXX) $(CXXFLAGS) -Werror -pthread -I $(SRC_DIR) -o $@ $(LOOP_RING_SRC)
+
+.PHONY: run-loop-ring clean-loop-ring tsan-loop-ring
+run-loop-ring: $(LOOP_RING_BIN)
+	$(call run_marked,$(LOOP_RING_BIN))
+tsan-loop-ring: $(LOOP_RING_SRC) $(SRC_DIR)/loop_command_ring.h
+	$(CXX) -std=c++17 -O1 -g -fsanitize=thread -pthread -I $(SRC_DIR) -o $(LOOP_RING_BIN)_tsan $(LOOP_RING_SRC)
+	./$(LOOP_RING_BIN)_tsan
+clean-loop-ring:
+	rm -f $(LOOP_RING_BIN) $(LOOP_RING_BIN)_tsan
+
+run: run-loop-ring
+clean: clean-loop-ring
+
 # The CSI active probe under the airtime governor (the follow-up to sweep F4,
 # #1696), end to end — the REAL csi_probe scheduler (the sketch's staged copy,
 # CSI_TEST_HOST_BUILD), the REAL airtime_governor and the gate body the WAP
