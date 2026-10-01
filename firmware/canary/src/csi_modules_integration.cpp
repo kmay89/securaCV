@@ -15,6 +15,7 @@
 #include "csi_types.h"
 #include "csi_module.h"
 #include "csi_event.h"
+#include "csi_bundler.h"
 
 /* v1 modules — same set the canary-wap Arduino build registers. */
 #include "core_presence.h"
@@ -555,10 +556,19 @@ extern "C" void securacv_csi_modules_feed(const void* features_blob) {
    * the 32-byte vector width; main.cpp's static_assert pins the struct. */
   const csi_features_t* f = static_cast<const csi_features_t*>(features_blob);
   csi_module_tick_all(f);
-  /* Drain bundled events whose 10-minute window has elapsed. The
-   * bundler buffers same-state observations and commits one row per
-   * window; this call is what makes the long tail land. */
-  csi_event_flush_bundles();
+  /* No bundle is closed here. This used to call csi_event_flush_bundles(),
+   * which closes EVERY open bundle, on every window, so a bundle never saw
+   * a second observation: each core.presence refresh committed a row of its
+   * own and spent the hourly ceiling (sweep F81). Bundles close on time in
+   * securacv_csi_modules_tick(), once per main loop. */
+}
+
+extern "C" void securacv_csi_modules_tick(void) {
+  /* Close the bundles past their 10-minute window or 2-minute quiet gap,
+   * and only those, as the canary-wap's csi_integration::loop() does. Not
+   * gated on s_initialized: a bundle already open still commits on time.
+   * Cheap: an 8-slot scan; the commit queues for csi_event_egress_pump(). */
+  csi_bundler_tick();
 }
 
 extern "C" void securacv_csi_modules_tamper_watch(int reset_was_crash,

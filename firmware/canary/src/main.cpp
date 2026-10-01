@@ -2364,6 +2364,15 @@ void loop() {
   }
 #endif
 
+#if FEATURE_CSI
+  // Commit the CSI bundles that are due: past their 10-minute window or their
+  // 2-minute quiet gap (sweep F81, as the canary-wap's loop does). Outside the
+  // CSI power/degrade gates on purpose: the feed closes nothing, so a bundle
+  // opened before CSI is shed must still commit here, on time. The commit
+  // queues for csi_event_egress_pump() below.
+  securacv_csi_modules_tick();
+#endif
+
 #if FEATURE_ACOUSTIC_EVENTS
   #if FEATURE_POWER_POLICY
   if (pf->acoustic)

@@ -66,6 +66,17 @@ bool securacv_csi_modules_init(void);
 void securacv_csi_modules_feed(const void* features_blob);
 
 /**
+ * Close every CSI bundle past its 10-minute window or its 2-minute quiet
+ * gap, and only those (csi_bundler_tick, sweep F81). Call once per main
+ * loop, OUTSIDE the CSI power and degrade gates: the feed above closes
+ * nothing, so this is what commits a bundle, and one opened before CSI is
+ * shed must still commit on time. Same rule as the canary-wap's
+ * csi_integration::loop(). Loop task; the commit queues for the event
+ * egress pump.
+ */
+void securacv_csi_modules_tick(void);
+
+/**
  * Feed the system.integrity tamper watcher once per main loop with the
  * facts only main.cpp can see together: the boot's reset classification
  * (crash / watchdog / brownout, the canary-wap reset_is_crash mapping)
