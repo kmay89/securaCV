@@ -296,6 +296,23 @@ MODINT_BIN  = $(BUILD_DIR)/test_csi_modules_integration
 BACKFILL_HDRS = ../common/csi/src/csi_event_backfill.h $(EVLINE_HDRS) $(IDFLOOR_HDR)
 BACKFILL_BIN  = $(BUILD_DIR)/test_csi_event_backfill
 
+# The canary's committed-event egress itself (canary/src/csi_event_egress.cpp,
+# backlog F37), REAL, with the REAL SD event log adapter
+# (canary/src/csi_event_log.cpp) over a RAM card and the REAL chokepoint, the
+# planner above, the events body builder and the MQTT offline queue, against
+# a model of securacv_mqtt.cpp's event surfaces, the storage manager and Home
+# Assistant's replay gate: rows live, during an outage with and without a
+# card, and across a reboot. stubs/canary_egress: Arduino (a clock the test
+# moves), Preferences, a FreeRTOS queue, a RAM SD card, the storage
+# manager's and the witness's calls.
+CANEGR_SRC  = ../canary/src/csi_event_egress.cpp ../canary/src/csi_event_log.cpp $(IDSPACE_SRC)
+CANEGR_HDRS = ../canary/src/csi_event_egress.h ../canary/src/csi_event_log.h \
+              ../canary/lib/securacv_mqtt/src/securacv_mqtt.h ../canary/include/canary_config.h \
+              ../common/csi/src/csi_event_wire.h ../common/mqtt/mqtt_offline_queue.h \
+              ../common/identity/device_signature.h $(BACKFILL_HDRS) $(IDSPACE_HDRS) \
+              $(wildcard stubs/canary_egress/*.h stubs/canary_egress/freertos/*.h)
+CANEGR_BIN  = $(BUILD_DIR)/test_canary_event_egress
+
 # The canary setup wizard's hub step (canary/lib/securacv_webui/src/
 # securacv_setup_page.cpp), the one UI that writes those fields: its script
 # is lifted out of the C++ raw string and driven against a stub DOM and a
@@ -683,6 +700,13 @@ $(EVLINE_BIN): test_csi_event_log_line.cpp $(EVLINE_HDRS) Makefile | $(BUILD_DIR
 $(BACKFILL_BIN): test_csi_event_backfill.cpp $(BACKFILL_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -I ../common/csi/src test_csi_event_backfill.cpp -o $@
 
+$(CANEGR_BIN): test_canary_event_egress.cpp $(CANEGR_SRC) $(CANEGR_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	    -DFEATURE_CSI=1 -DFEATURE_HA_MQTT=1 -DFEATURE_SD_STORAGE=1 -DFEATURE_WATCHDOG=1 \
+	    -I stubs/canary_egress -I ../canary/include -I ../canary/src \
+	    -I ../canary/lib/securacv_mqtt/src -I ../common/csi/src -I ../common \
+	    test_canary_event_egress.cpp $(CANEGR_SRC) -o $@
+
 $(IDSPACE_BIN): test_csi_event_id_space.cpp $(IDSPACE_SRC) $(IDSPACE_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD -I $(IDSPACE_DIR) \
 	    test_csi_event_id_space.cpp $(IDSPACE_SRC) -o $@
@@ -792,7 +816,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -823,6 +847,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(MODINT_BIN)
 	./$(EVLINE_BIN)
 	./$(BACKFILL_BIN)
+	./$(CANEGR_BIN)
 	./$(PORTAL_BIN)
 	./$(POWEREVT_BIN)
 	./$(SCENE_BIN)

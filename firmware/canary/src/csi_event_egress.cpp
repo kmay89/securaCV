@@ -355,6 +355,24 @@ extern "C" void csi_event_egress_pump(void) {
 #endif
 }
 
+#ifdef CSI_TEST_HOST_BUILD
+extern "C" void csi_event_egress_test_reset(void) {
+  __atomic_store_n(&s_id_floor_stored, 0u, __ATOMIC_RELAXED);
+#if FEATURE_HA_MQTT
+  if (s_queue) {
+    vQueueDelete(s_queue);
+    s_queue = nullptr;
+  }
+  s_dropped = 0;
+  s_dropped_said = 0;
+  s_backfill.reset();
+  s_dest_epoch = 0;
+  s_owner_fp[0] = '\0';
+  s_replay_run = 0;
+#endif
+}
+#endif
+
 #else  // !FEATURE_CSI
 
 extern "C" void csi_event_egress_begin(void) {}

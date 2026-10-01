@@ -62,6 +62,12 @@ void csi_event_egress_begin(void);
  * FEATURE_HA_MQTT. */
 void csi_event_egress_pump(void);
 
+#ifdef CSI_TEST_HOST_BUILD
+/* Host tests only (firmware/tests_host/test_canary_event_egress.cpp): forget
+ * this "boot"'s RAM state, to model a power cycle. NVS and the card stay. */
+void csi_event_egress_test_reset(void);
+#endif
+
 #ifdef __cplusplus
 }
 #endif
