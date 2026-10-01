@@ -1843,8 +1843,15 @@ void update() {
     cancel_pairing();
   }
 
-  // Send periodic heartbeat
-  if (g_mesh_state == MESH_ACTIVE && now - g_last_heartbeat_ms >= HEARTBEAT_INTERVAL_MS) {
+  // Send periodic heartbeat — while MESH_CONNECTING too (sweep F76). It
+  // went out only in MESH_ACTIVE, and ACTIVE needs a member heard, so an
+  // opera that had heard nobody sent nothing at all: every member after
+  // they all rebooted (init() leaves MESH_CONNECTING), and each side of a
+  // fresh pairing, which holds the other at PEER_UNKNOWN. Bounded like any
+  // heartbeat: one frame per member per HEARTBEAT_INTERVAL_MS, under the
+  // airtime governor's routine cap (send_heartbeat).
+  if ((g_mesh_state == MESH_ACTIVE || g_mesh_state == MESH_CONNECTING) &&
+      now - g_last_heartbeat_ms >= HEARTBEAT_INTERVAL_MS) {
     send_heartbeat();
     g_last_heartbeat_ms = now;
   }
@@ -2366,14 +2373,23 @@ void send_heartbeat() {
   // Heartbeat is routine traffic — skip this tick if we'd blow the airtime
   // cap. The peer-stale timer (90 s) is long enough to tolerate a few skipped
   // heartbeats; the only consequence of skipping is a slightly delayed stale
-  // transition for peers that were also being noisy. broadcast_message()
-  // sends one signed frame to each peer it reaches, so that is the charge.
+  // transition for peers that were also being noisy. One signed frame goes
+  // to each member, so that is the charge.
   if (!airtime_governor::try_reserve_routine(millis(),
-          signed_frame_bytes(sizeof(payload)), broadcast_peer_count())) {
+          signed_frame_bytes(sizeof(payload)), g_peer_count)) {
     return;
   }
 
-  broadcast_message(MSG_HEARTBEAT, (uint8_t*)&payload, sizeof(payload));
+  // To every member, whatever its state (F76). broadcast_message() skips
+  // members below PEER_CONNECTED, and a heartbeat is how a member gets
+  // heard: one this device holds at PEER_UNKNOWN (a fresh pairing leaves
+  // its partner there) was never sent one, so the two never heard each
+  // other even with each MESH_ACTIVE through other members. The alerts and
+  // the Beacon, channel-lock and hub-election sends still go to
+  // PEER_CONNECTED and later only.
+  for (uint8_t i = 0; i < g_peer_count; i++) {
+    send_to_peer(&g_peers[i], MSG_HEARTBEAT, (uint8_t*)&payload, sizeof(payload));
+  }
 }
 
 void get_message_stats(uint32_t* sent, uint32_t* received, uint32_t* errors) {

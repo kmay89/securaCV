@@ -8,7 +8,7 @@
 // receiver's ESP-NOW callback and update(). Every frame here was built by
 // the sender's own send path and judged by the receiver's own receive path.
 //
-// Sweep items F71, F73, F74 and F75: each was a way the opera went
+// Sweep items F71, F73, F74, F75 and F76: each was a way the opera went
 // quiet, or a pairing went wrong, with nothing reporting it.
 //   F71  a rebooted device's frames dropped as replays at every member
 //        that had heard it (its send counters restarted at 1);
@@ -18,6 +18,7 @@
 //        was gone (mesh_network relied on other modules to register it,
 //        and its own channel-change listener deleted it);
 //   F75  a pairing finished only if the initiator's owner confirmed first;
+//   F76  an opera whose members it had not heard sent nothing at all.
 //
 // Host-tested only: the stubs stand in for the radio and the flash, so
 // this says nothing about two real boards (U1 Track C2), and the Arduino
@@ -786,6 +787,101 @@ void test_a_bad_confirm_from_another_address_does_not_end_the_pairing() {
   std::printf("PASS a_bad_confirm_from_another_address_does_not_end_the_pairing\n");
 }
 
+// ── F76: an opera with members it has not heard announces itself ───────
+//
+// update() sent a heartbeat only in MESH_ACTIVE, and broadcast_message
+// skips members below PEER_CONNECTED. So an opera that had heard nobody
+// sent nothing: after a fresh pairing each side holds the other at
+// PEER_UNKNOWN, and after every member reboots each one is
+// MESH_CONNECTING. The heartbeat now goes out in MESH_CONNECTING too, to
+// every member whatever its state, at the same 30 s cadence.
+
+void test_a_fresh_pairing_is_heard_both_ways() {
+  // A pairing adds each side to the other at PEER_UNKNOWN. (The initiator's
+  // first heartbeat can follow its COMPLETE in the same update() pass, so
+  // the joiner may have heard it already; the joiner has sent nothing
+  // signed yet.)
+  fresh_device(A);
+  fresh_device(J);
+  pair_to_codes(A, J);
+  confirm_initiator_first(A, J);
+  CHECK(completed(A, J) && completed(J, A));
+  CHECK(entry(A, J)->state == mn::PEER_UNKNOWN);
+  const Traffic t = run({&A, &J}, 2 * mn::HEARTBEAT_INTERVAL_MS);
+  CHECK(t.of(A, J) >= 1 && t.of(J, A) >= 1);
+  CHECK(entry(A, J)->state == mn::PEER_CONNECTED);
+  CHECK(entry(J, A)->state == mn::PEER_CONNECTED);
+  become(A);
+  CHECK(mn::g_mesh_state == mn::MESH_ACTIVE);
+  become(J);
+  CHECK(mn::g_mesh_state == mn::MESH_ACTIVE);
+  std::printf("PASS a_fresh_pairing_is_heard_both_ways\n");
+}
+
+void test_an_opera_whose_members_all_rebooted_comes_back() {
+  fresh_opera({&A, &B, &C});
+  Device* all[3] = {&A, &B, &C};
+  for (Device* d : all) {
+    become(*d);
+    CHECK(mn::g_mesh_state == mn::MESH_CONNECTING);
+  }
+  run({&A, &B, &C}, 2 * mn::HEARTBEAT_INTERVAL_MS);
+  for (Device* d : all) {
+    become(*d);
+    CHECK(mn::g_mesh_state == mn::MESH_ACTIVE);
+    for (Device* o : all) {
+      if (o != d) CHECK(entry(*d, *o)->state == mn::PEER_CONNECTED);
+    }
+  }
+  std::printf("PASS an_opera_whose_members_all_rebooted_comes_back\n");
+}
+
+void test_two_active_members_that_never_heard_each_other_do() {
+  // B and C are each MESH_ACTIVE (they hear A) and hold each other at
+  // PEER_UNKNOWN: what a B-to-C pairing leaves in an opera A already runs.
+  // Heartbeats skipped PEER_UNKNOWN members, so B and C never heard each
+  // other, whatever the opera did.
+  fresh_opera({&A, &B, &C});
+  for (Device* d : {&A, &B, &C}) {
+    become(*d);
+    mn::g_mesh_state = mn::MESH_ACTIVE;
+    for (Device* o : {&A, &B, &C}) {
+      if (o == d) continue;
+      mn::OperaPeer* p = entry(*d, *o);
+      const bool b_and_c = (d != &A && o != &A);
+      p->state = b_and_c ? mn::PEER_UNKNOWN : mn::PEER_CONNECTED;
+      p->last_seen_ms = host_sim::now_ms;
+    }
+  }
+  const Traffic t = run({&A, &B, &C}, 2 * mn::HEARTBEAT_INTERVAL_MS);
+  CHECK(t.of(B, C) >= 1 && t.of(C, B) >= 1);
+  CHECK(entry(B, C)->state == mn::PEER_CONNECTED);
+  CHECK(entry(C, B)->state == mn::PEER_CONNECTED);
+  std::printf("PASS two_active_members_that_never_heard_each_other_do\n");
+}
+
+void test_the_announce_keeps_the_heartbeat_cadence() {
+  // Bounded: one frame per member per HEARTBEAT_INTERVAL_MS, whether the
+  // opera is MESH_CONNECTING or MESH_ACTIVE, and whether the member has
+  // been heard or not. 600 s is 20 intervals; the first goes at once.
+  fresh_opera({&A, &B, &C});
+  fresh_device(K);                                 // an opera of one: nobody to tell
+  become(K);
+  CHECK(mn::start_pairing_initiator(nullptr));
+  mn::cancel_pairing();
+  CHECK(mn::g_peer_count == 0);
+  const size_t k_sent = K.espnow.sent.size();
+  const Traffic t = run({&A, &B, &C, &K}, 600000, 1000);
+  for (Device* d : {&A, &B, &C}) {
+    for (Device* o : {&A, &B, &C}) {
+      if (o == d) continue;
+      CHECK(t.of(*d, *o) >= 20 && t.of(*d, *o) <= 21);
+    }
+  }
+  CHECK(K.espnow.sent.size() == k_sent);
+  std::printf("PASS the_announce_keeps_the_heartbeat_cadence\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -816,6 +912,10 @@ const Test kTests[] = {
     {"a_confirm_from_another_address_does_not_count", test_a_confirm_from_another_address_does_not_count},
     {"a_bad_confirm_from_another_address_does_not_end_the_pairing",
      test_a_bad_confirm_from_another_address_does_not_end_the_pairing},
+    {"a_fresh_pairing_is_heard_both_ways", test_a_fresh_pairing_is_heard_both_ways},
+    {"an_opera_whose_members_all_rebooted_comes_back", test_an_opera_whose_members_all_rebooted_comes_back},
+    {"two_active_members_that_never_heard_each_other_do", test_two_active_members_that_never_heard_each_other_do},
+    {"the_announce_keeps_the_heartbeat_cadence", test_the_announce_keeps_the_heartbeat_cadence},
 };
 
 }  // namespace liveness

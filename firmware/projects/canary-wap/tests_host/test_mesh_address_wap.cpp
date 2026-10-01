@@ -248,9 +248,11 @@ void test_another_members_frame_from_another_address_moves_nothing() {
   // msg_counter_tx), and the envelope names no destination, so A judges a
   // frame B sent C by A's last-seen counter for B. B's counter for C runs
   // ahead of its counter for A whenever B sent C frames A was not sent:
-  // broadcast_message skips a member in PEER_UNKNOWN or
-  // PEER_AUTHENTICATING (one paired after B booted, say). That is set up
-  // directly here: three heartbeats with A at PEER_UNKNOWN in B's table.
+  // the alerts and the Beacon, channel-lock and hub-election sends skip a
+  // member in PEER_UNKNOWN or PEER_AUTHENTICATING (a fresh pairing's
+  // partner, until it is heard). That is set up directly here: three Beacon
+  // events with A at PEER_UNKNOWN in B's table. (This used heartbeats,
+  // which skipped such a member too until F76.)
   fresh_opera();
   deliver(A, B.mac, b_heartbeat_to(A));          // A's last-seen for B: 1
   {
@@ -258,7 +260,9 @@ void test_another_members_frame_from_another_address_moves_nothing() {
     mn::OperaPeer* pa = entry(B, A);
     const mn::PeerState keep = pa->state;
     pa->state = mn::PEER_UNKNOWN;
-    for (int i = 0; i < 3; ++i) mn::send_heartbeat();
+    for (int i = 0; i < 3; ++i) {
+      CHECK(mn::send_beacon_event(mesh_beacon::BeaconState::ARRIVED, "hall") == 1);
+    }
     pa->state = keep;
   }
   const Frame ahead = sent_to(B, C.mac).back();
