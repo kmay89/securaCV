@@ -468,7 +468,7 @@ so — see D2 below.)
   setup and on a start failure, logged (`firmware/FEATURES.md`, the
   canary-wap HTTPS note; PARITY_PLAN's shared TLS line); and the bench, U1
   runbook Track D, D1–D5.
-  *mDNS TLS advertisement done (#PENDING):* the canary's `_securacv._tcp`
+  *mDNS TLS advertisement done (#1757):* the canary's `_securacv._tcp`
   record now carries a `tls` TXT ("1" when the HTTPS server actually came
   up, "0" otherwise — its absence means firmware predating this, not plain
   by choice) and a `secure_port` TXT when live, so a discovery client (the
