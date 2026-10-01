@@ -1253,16 +1253,21 @@ so — see D2 below.)
   `persist_to_ring()` (F46 did not change this). So a presence or tamper
   row leaves `/api/events/today` the moment its bundle closes. It is never
   on the canary-wap's SD log either, because that hook appends only what
-  `csi_event_find` sees, so the WAP's backfill never replays it. Three
-  places said otherwise: the roadmap's Wi-Fi sensing row ("closed bundles
-  reach the event ring", corrected in #1761), the WAP dashboard's comment
-  ("the dismiss appears when the bundle commits", `csi_dashboard_html.h`)
-  and `docs/csi_developer_api.md`'s example of a committed bundled row. In
-  a host probe, one buffered emit then a flush leaves `csi_event_recent`
-  returning 0. F46 removed the old reason (ids from an unpersisted space).
-  Putting closed bundles in the ring changes three things together: the
-  Today sheet, the ring's live-row latch for `csi_event_inject`, and what
-  the WAP replays. Decide them together. Found by F46 (#1761).
+  `csi_event_find` sees, so the WAP's backfill never replays it. The daily
+  summary misses it too: `meta_daily_summary.cpp` (both trees) counts its
+  active and quiet periods from `csi_event_recent()`, and those are
+  core.presence states, which always go through the bundler. Three places
+  say otherwise: the 2.4.15 release notes ("Closed bundles reach the event
+  ring, so `/api/events/today` and the daily summary see them"), the WAP
+  dashboard's comment ("the dismiss appears when the bundle commits",
+  `csi_dashboard_html.h`) and `docs/csi_developer_api.md`'s example of a
+  committed bundled row. A fourth, the roadmap's Wi-Fi sensing row ("closed
+  bundles reach the event ring"), is corrected in #1761. In a host probe,
+  one buffered emit then a flush leaves `csi_event_recent` returning 0. F46
+  removed the old reason (ids from an unpersisted space). Putting closed
+  bundles in the ring changes four things together: the Today sheet, the
+  daily summary's counts, the ring's live-row latch for `csi_event_inject`,
+  and what the WAP replays. Decide them together. Found by F46 (#1761).
 - [ ] **F78 [code] canary-wap's live publish overtakes its own backlog.** On
   reconnect, `MQTT_EVENT_CONNECTED` sets `s_connected` on the esp_mqtt task
   and only flags the backfill for the loop task. A row committed before
@@ -1305,7 +1310,9 @@ so — see D2 below.)
   comment says it drains bundles "whose 10-minute window has elapsed",
   which is what `csi_bundler_tick()` does, and the canary-wap calls that.
   So the canary never refreshes an open bundle: each core.presence refresh
-  commits a new row and spends the hourly ceiling. Switch to
+  commits a new row and spends the hourly ceiling. The 2.4.15 release
+  notes say "Same-state refreshes no longer spend the hourly ceiling"; on
+  the canary they still do. Switch to
   `csi_bundler_tick()` together with F80, since the flush is what hides
   that leak on the canary. Found by F46 (#1761).
 - [ ] **F82 [code+decision] Nothing warns before the event-id space runs

@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### The canary and canary-wap meshes no longer learn a member's radio address from a frame, canary-wap's pairing waits for both owners, the Canary and the Canary WAP give every event one id space, the Lab's WAP page shows real fingerprints, and the display's onboarding bird, lines and halo sit where they should (#1761)
+### The canary and canary-wap meshes no longer learn a member's radio address from a frame, canary-wap's pairing waits for both owners, the Canary and the Canary WAP give every event one id space, the Lab's WAP page shows real fingerprints, and the display's onboarding bird sits at its seat and its scene lines fit on small glass (#1761)
 
 - **The canary mesh no longer learns a peer's radio address from a frame
   (sweep F49 part 3, withdrawn).** #1756 let a verified opera frame from an
@@ -66,9 +66,10 @@
   Assistant's mark or the id floor toward the wrap; below that bound the
   card is still trusted (F79). A device whose delivery record an older
   firmware pushed there resumes its backfill once it is re-pinned in Home
-  Assistant. **Host-tested only**: the ESP32 builds are CI's, and nothing
-  was checked on a bench. The HACS mirror's copy of the new integration
-  test follows in a resync (sweep U6).
+  Assistant. Not changed: the 2.4.15 notes said closed bundles reach the
+  event ring; they still do not (F77). **Host-tested only**: the ESP32
+  builds are CI's, and nothing was checked on a bench. The HACS mirror's
+  copy of the new integration test follows in a resync (sweep U6).
 - **The Lab's WAP page shows real fingerprints (sweep A25).** Its signed
   MQTT examples and its boot log showed an 8-digit key fingerprint. A
   Canary WAP's signed publishes carry 16 lowercase hex digits, and its boot
@@ -78,21 +79,22 @@
   generated data whose length or case differs from what that product
   prints. Page data only; it reaches users with the next Lab and Flasher
   release.
-- **The display's onboarding bird sits where its host placed it, no
-  onboarding line is cut on small glass, and the halo clears the text rows
+- **The display's onboarding bird sits where its host placed it, and on
+  small glass no onboarding line is cut and the halo clears the text rows
   and the QR card (sweep F64-F66).** canary_mark took the bird's base from
   LVGL's laid-out box, which reads 0 before the first layout pass and the
   anchor plus the offset after it. It now reads the host's own offset from
   its anchor (`lv_obj_get_style_x/y`). A native LVGL 8.4 harness showed
   every face's bird off its seat: the onboarding bird walked off the round
   watch a scene at a time, and the 7" portrait column's sat over the clock.
-  Each now draws at its anchor plus its offset. On small glass the halo
-  sits between the Join title and credentials rows, concentric with the QR
-  card. On the touch169 the card's canvas gives up 6-8 px so its corners
-  clear the ring; the module pitch stays the same. The onboarding's titles
-  and bodies are fitted inside the halo at their own latitude through
-  `fit_line()`'s ladder. Two lines have shorter forms, "Check your phone"
-  and "No address". The portrait glass needs them. The touch169 and the
+  Each now draws at its anchor plus its offset. On rectangular small glass
+  the halo sits between the Join title and credentials rows, concentric
+  with the QR card; the round watch keeps its rim ring. On the touch169
+  the card's canvas gives up 6-8 px so its corners clear the ring; the
+  module pitch stays the same. The onboarding's titles and bodies are
+  fitted inside the halo at their own latitude through `fit_line()`'s
+  ladder. Two lines have shorter forms, "Check your phone" and "No
+  address". The portrait glass needs them. The touch169 and the
   AMOLED now show them too, because their lines sit inside the halo where
   their old full-width rows held the whole lines (a decision, F86). A long
   network name keeps its head and tail around "...". `test_canary_mark_seat`
@@ -100,9 +102,12 @@
   onboard_ui.cpp against a model of LVGL 8's position rules and hold what
   they draw; `test_onboard_layout` holds the layout rules on every
   small-glass env. The onboard probe now also fails on a cut PhoneJoined
-  or Fail line. The emulator dist is rebuilt in this PR by CI's pinned
-  emsdk. **Host-tested only**: the ESP32 builds are CI's, and nothing was
-  checked on a bench.
+  or Fail line. Still open: the landscape nightlight's first-meeting
+  splash bird now sits at its coded seat, where the top edge cuts its head
+  (F88); the dash's 300 px halo still runs through its lines (F84); and on
+  the touch169 the Success hop reaches the halo's top arc (F85). The
+  emulator dist is rebuilt in this PR by CI's pinned emsdk. **Host-tested
+  only**: the ESP32 builds are CI's, and nothing was checked on a bench.
 
 ### Home Assistant verifies a Canary WAP's signed publishes and the WAP now sends them in lowercase, Canary Sense and Sentinel show their full key, a Canary Display files a WAP's beacons on its own row and fits its join hints on narrow glass, the WAP's Bluetooth Device Info keeps its id, and the Quiet Hours wheels center (#1727)
 
