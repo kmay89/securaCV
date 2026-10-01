@@ -22,10 +22,12 @@
 // fails: read how its product spells it, then add the rule.
 //
 // The pages' hand-written scripts are read too (sweep A26), under a stricter
-// policy: a script spells no fp or key value itself, it may only interpolate
-// a generated field this walk already holds to a rule. The Vision page's
-// MQTT pane wrote its health row's public_key as "ed25519:…" (canary-vision
-// sends 64 bare lowercase hex digits); its rows come from vision.json now.
+// policy: a payload field a script writes (an object key, bare or quoted,
+// JSON inside a string included, or a property assignment) spells no fp or
+// key value itself; it may only interpolate a generated field this walk
+// already holds to a rule. The Vision page's MQTT pane wrote its health
+// row's public_key as "ed25519:…" (canary-vision sends 64 bare lowercase hex
+// digits); its rows come from vision.json now.
 //
 // Since A27 it also checks the examples that are missing: every events,
 // chain and counts example must carry the signature envelope, so the Home
@@ -649,19 +651,47 @@ test("the Vision pane's fp and key are the test key's (canary-vision derives its
 // ── the pages' hand-written scripts (sweep A26's decision) ─────────────────
 // The JSON walk cannot see an example a page script spells for itself, and
 // the Vision pane's "public_key":"ed25519:…" was one. So the scripts are
-// read too, under a stricter policy than the JSON: a page script spells no
-// fp / fingerprint / pubkey / public_key value of its own. It may only
-// interpolate one from its generated data, `${data.<path>}`, and only a
-// <path> that resolves, in the page's devices/<page>.json, to an example
-// the JSON walk above already holds to exactly one rule (sense-ui.js's
-// `"fp":"${data.device.fp_example}"` is one). A literal, a bare "…" or any
-// other expression fails: move the payload into the generator, where a
-// rule can read it. The console-line words `seed` and `pinned` are not
-// read in scripts, where `seed: 20260719` is a PRNG seed, not a key.
+// read too, under a stricter policy than the JSON: a payload field a page
+// script writes spells no fp / fingerprint / pubkey / public_key value of its
+// own. A payload field is an object key followed by a string value — bare
+// (`fp: "…"`), quoted in either quote, or the escaped `\"fp\":\"…` of JSON
+// written inside a string literal — or a property assignment (`w.fp = "…"`),
+// and the value may sit in any quote, template literals included. Its value
+// may only interpolate one from the page's generated data, `${data.<path>}`,
+// and only a <path> that resolves, in the page's devices/<page>.json, to an
+// example the JSON walk above already holds to exactly one rule
+// (sense-ui.js's `"fp":"${data.device.fp_example}"` is one). A literal, a
+// bare "…" or any other expression fails: move the payload into the
+// generator, where a rule can read it. A plain declaration
+// (`const MQTT_FP_PLACEHOLDER = "AA:BB:CC:…"`, the broker certificate's
+// input hint in flash.js) is not a payload field and is not read. The
+// console-line words `seed` and `pinned` are not read in scripts either,
+// where `seed: 20260719` is a PRNG seed, not a key.
 // The pages' own scripts and the pages themselves (inline <script>s).
 const SCRIPT_DIRS = [["canary-local/assets", /\.m?js$/], ["canary-local", /\.html$/]];
-const SCRIPT_EMBEDDED = new RegExp(`\\\\?"(${NAME})\\\\?"\\s*:\\s*\\\\?"([^"\\\\]*)`, "gi");
+// NAME, plus the camelCase spellings a script may use (publicKey, fpHex).
+const SCRIPT_NAME = "(?:[a-z]+_)*(?:fp|fingerprint|pub_?key|public_?key)(?:_[a-z]+)*(?:Hex)?";
+const QUOTE = "\\\\?[\"'`]"; // a quote, maybe escaped inside a string literal
+const SCRIPT_KEYED = new RegExp(
+  `(?:(?<![\\w$.])${QUOTE}?(${SCRIPT_NAME})${QUOTE}?\\s*:|\\.(${SCRIPT_NAME})\\s*=(?!=))\\s*${QUOTE}([^"'\`\\\\\\n]*)`, "gi");
 const SCRIPT_LINE = /\b(fingerprint|fp|pubkey|public[-_ ]key)(?:\s*[:=]\s*|\s+)([0-9A-Fa-f]{4,}…?|…)(?![0-9A-Za-z_…])/gi;
+
+// The one script value the policy lets stand, each named with its reason. A
+// dead entry (its value no longer in the script) fails, so the list cannot
+// outlive what it excuses.
+const SCRIPT_EXEMPT = [
+  {
+    file: "canary-local/assets/guides.js", label: "fp", value: "0000000000000000",
+    why: "the \"Failed is loud on purpose\" drill's forged chain head: a deliberately foreign fp (all " +
+      "zeros, no key's), in the envelope fp's shape. The display's trust::evaluate_chain checks " +
+      "length, latest_hash and sig, not fp, so the drill fails on the sig; fp is only the " +
+      "correlator mqtt_mgr.cpp stores beside the verdict.",
+    pins: [
+      ["firmware/projects/canary-display/src/net/mqtt_mgr.cpp",
+        "const auto verdict = canary::trust::evaluate_chain(device_id, length, hash, sig);"],
+    ],
+  },
+];
 
 // devices/<page>.json for assets/<page>-ui.js, assets/<page>.js, <page>.html.
 const pageOf = (file) => `${file.replace(/^.*\//, "").replace(/(?:-ui)?\.(?:m?js|html)$/, "")}.json`;
@@ -677,17 +707,20 @@ function scriptVerdict(file, label, value) {
   return null;
 }
 
+function scriptExamplesIn(file, src) {
+  const out = [];
+  for (const m of src.matchAll(SCRIPT_KEYED)) out.push({ file, label: m[1] || m[2], value: m[3] });
+  for (const m of src.matchAll(SCRIPT_LINE)) out.push({ file, label: m[1], value: m[2] });
+  return out;
+}
 function scriptExamples() {
   const out = [];
   for (const [dir, ext] of SCRIPT_DIRS)
-    for (const f of readdirSync(join(REPO, dir)).filter((x) => ext.test(x)).sort()) {
-      const file = `${dir}/${f}`;
-      const src = read(file);
-      for (const m of src.matchAll(SCRIPT_EMBEDDED)) out.push({ file, label: m[1], value: m[2] });
-      for (const m of src.matchAll(SCRIPT_LINE)) out.push({ file, label: m[1], value: m[2] });
-    }
+    for (const f of readdirSync(join(REPO, dir)).filter((x) => ext.test(x)).sort())
+      out.push(...scriptExamplesIn(`${dir}/${f}`, read(`${dir}/${f}`)));
   return out;
 }
+const exemptFor = (ex) => SCRIPT_EXEMPT.find((x) => x.file === ex.file && x.label === ex.label && x.value === ex.value);
 
 test("the script policy: only an interpolated, rule-held generated field passes", () => {
   const sense = "canary-local/assets/sense-ui.js";
@@ -705,10 +738,46 @@ test("the script policy: only an interpolated, rule-held generated field passes"
   assert.strictEqual(pageOf("canary-local/vision.html"), "vision.json");
 });
 
+test("the script walk reads every way a script writes a payload field", () => {
+  const f = "canary-local/assets/x.js";
+  const seen = (src) => scriptExamplesIn(f, src).map((e) => [e.label, e.value]);
+  // an object literal, in every quoting (the forms the A26 review found unread)
+  assert.deepStrictEqual(seen('const h = { fw: v, public_key: "ed25519:…" };'), [["public_key", "ed25519:…"]]);
+  assert.deepStrictEqual(seen('({ v: 1, alg: "ed25519", fp: "7f3a9c21", sig: "x" })'), [["fp", "7f3a9c21"]]);
+  assert.deepStrictEqual(seen("{ 'fp': '7f3a9c21' }"), [["fp", "7f3a9c21"]]);
+  assert.deepStrictEqual(seen('{ "fp": "7f3a9c21" }'), [["fp", "7f3a9c21"]]);
+  assert.deepStrictEqual(seen("{ publicKey: `${data.device.fp_example}` }"), [["publicKey", "${data.device.fp_example}"]]);
+  // JSON written inside a string literal, plain or escaped
+  assert.deepStrictEqual(seen(`'{"fp":"7f3a9c21"}'`), [["fp", "7f3a9c21"]]);
+  assert.deepStrictEqual(seen('"{\\"fp\\":\\"${data.device.fp_example}\\"}"'), [["fp", "${data.device.fp_example}"]]);
+  // a property assignment
+  assert.deepStrictEqual(seen('row.fp = "7f3a9c21";'), [["fp", "7f3a9c21"]]);
+  assert.deepStrictEqual(seen("row.fpHex = '7916ca48';"), [["fpHex", "7916ca48"]]);
+  // a console line a script prints
+  assert.deepStrictEqual(seen('log("fingerprint: 7916CA48…")'), [["fingerprint", "7916CA48…"]]);
+  // not payload fields: a comparison, a ternary's member, a declaration, a word
+  for (const src of ['if (p.fp === "x") {}', 'const v = ok ? w.fp : "none";',
+    'const MQTT_FP_PLACEHOLDER = "AA:BB:CC:…";', '{ fps: "60" }', '{ hasFingerprint: "yes" }'])
+    assert.deepStrictEqual(seen(src), [], src);
+  // and each form the walk reads, written with a literal, fails the policy
+  for (const src of ['{ fp: "7f3a9c21" }', 'row.fp = "7f3a9c21";', "{ 'public_key': '…' }"])
+    for (const ex of scriptExamplesIn("canary-local/assets/sense-ui.js", src))
+      assert.match(scriptVerdict(ex.file, ex.label, ex.value), /spelled in the script/, src);
+});
+
 test("no page script spells an fp or key example of its own", () => {
+  for (const x of SCRIPT_EXEMPT)
+    for (const [file, literal] of x.pins)
+      assert.ok(read(file).includes(literal), `${x.file}'s exemption: ${file} no longer has ${JSON.stringify(literal)}`);
   const found = scriptExamples();
-  const problems = found.map((ex) => scriptVerdict(ex.file, ex.label, ex.value)).filter(Boolean);
+  const problems = found.filter((ex) => !exemptFor(ex)).map((ex) => scriptVerdict(ex.file, ex.label, ex.value)).filter(Boolean);
   assert.deepStrictEqual(problems, []);
+  for (const x of SCRIPT_EXEMPT) {
+    const hits = found.filter((ex) => exemptFor(ex) === x);
+    assert.strictEqual(hits.length, 1, `${x.file} ${x.label} "${x.value}": a dead or doubled exemption (${hits.length} found)`);
+    // a forgery still has the wire's shape, so the drill fails where it says
+    assert.strictEqual(shapeProblem(x.value, RULES[0]), null, `${x.file}: the forged fp is not shaped as an envelope fp`);
+  }
   // the walk reads the scripts at all: sense-ui.js's interpolated fp is in it
   assert.ok(found.some((e) => e.file.endsWith("/sense-ui.js") && e.value === "${data.device.fp_example}"),
     "the script walk found nothing (its match broke?)");
