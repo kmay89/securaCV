@@ -779,10 +779,13 @@ export function buildMqtt(data, bus) {
   const pane = data.mqtt.pane;
   const like = (suffix) => JSON.parse(pane.online.find((r) => r.suffix === suffix).payload);
   const live = { state: like("state"), chain: like("chain"), cfg: like("cfg/state") };
+  const current = { state: live.state, chain: live.chain, "cfg/state": live.cfg };
   let seq = live.chain.length;
   bus.on("online", () => {
     idle.remove();
-    for (const r of pane.online) row("securacv/" + id + "/" + r.suffix, r.payload, r.retain);
+    // a (re)connect republishes the retained surfaces as they stand now
+    for (const r of pane.online)
+      row("securacv/" + id + "/" + r.suffix, current[r.suffix] ? JSON.stringify(current[r.suffix]) : r.payload, r.retain);
   });
   bus.on("mqtt", () => {
     const n = data.mqtt.discovery.entities.length;
