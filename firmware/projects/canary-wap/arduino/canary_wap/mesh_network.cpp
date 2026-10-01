@@ -1435,6 +1435,53 @@ static bool persist_peers() {
   return true;
 }
 
+// Before add_peer re-bound a member it already held (#<W8>), a re-pair
+// appended a second entry for the same key at the address that pairing
+// came from, and persist_peers saved both. Lookups reached only the first,
+// and the verified-frame re-bind (gone, spec §8.3) kept its address
+// current. Loaded as they are, the first entry would hold the member at
+// the address it left, and the re-pair that should fix it would be refused
+// because the duplicate holds the new one (rebind_peer). So each duplicate
+// folds into the first entry, which keeps its name and counters
+// (load_replay_counters raises them to the highest saved for the key) and
+// takes the duplicate's address: the later pairing's, which is the only
+// thing spec §8.3 lets bind one. If another member holds that address, the
+// first entry keeps its own (one address, one member). Then the list is
+// saved and the fold logged, once.
+static void fold_duplicate_peers() {
+  bool folded = false;
+  for (uint8_t i = 0; i < g_peer_count; i++) {
+    for (uint8_t j = i + 1; j < g_peer_count;) {
+      if (memcmp(g_peers[j].pubkey, g_peers[i].pubkey, PUBKEY_SIZE) != 0) {
+        j++;
+        continue;
+      }
+      uint8_t later[6];
+      memcpy(later, g_peers[j].mac_addr, 6);
+      for (uint8_t k = j; k + 1 < g_peer_count; k++) {
+        g_peers[k] = g_peers[k + 1];
+      }
+      g_peer_count--;
+      secure_wipe(&g_peers[g_peer_count], sizeof(OperaPeer));
+      folded = true;
+      if (memcmp(g_peers[i].mac_addr, later, 6) == 0 || find_peer_by_mac(later) != nullptr) {
+        continue;  // the same address, or another member's: it stays registered
+      }
+      uint8_t earlier[6];
+      memcpy(earlier, g_peers[i].mac_addr, 6);
+      memcpy(g_peers[i].mac_addr, later, 6);
+      if (find_peer_by_mac(earlier) == nullptr) {
+        esp_now_del_peer(earlier);
+      }
+    }
+  }
+  if (folded) {
+    persist_peers();
+    health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+               "opera: folded a duplicate member entry into one");
+  }
+}
+
 static bool load_peers() {
   g_prefs.begin(NVS_NS, true);
   g_peer_count = g_prefs.getUChar(NVS_PEER_COUNT, 0);
@@ -1476,6 +1523,7 @@ static bool load_peers() {
   }
 
   g_prefs.end();
+  fold_duplicate_peers();
   return true;
 }
 

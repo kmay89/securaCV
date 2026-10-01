@@ -239,9 +239,11 @@ void test_no_frame_moves_a_members_address() {
   CHECK(count(rx, "mac_addr,mac") == 1);           // the source compare only
   CHECK(count(rx, "esp_now_add_peer(") == 0);
   CHECK(count(rx, "esp_now_del_peer(") == 0);
-  // The one place a member's address changes outside a first add: a re-pair
+  // Where a member's address changes outside a first add: a re-pair
   // (add_peer -> rebind_peer), new address registered before the old one is
-  // dropped, one address per member.
+  // dropped, one address per member. (The other is load_peers folding a
+  // duplicate entry an older firmware's re-pair saved; test_mesh_address_wap
+  // runs it.)
   const std::string add = squeeze(function_body(code, "add_peer"));
   CHECK(count(add, "returnrebind_peer(&g_peers[i],mac);") == 1);
   const std::string rb = squeeze(function_body(code, "rebind_peer"));

@@ -760,6 +760,86 @@ void test_an_initiator_forgets_a_finished_pairing() {
   std::printf("PASS an_initiator_forgets_a_finished_pairing\n");
 }
 
+// ── An entry the old re-pair duplicated ─────────────────────────────────
+//
+// Before #<W8>, a re-pair with a member this device already held appended
+// a second entry for the same key, at the address that pairing came from,
+// and persist_peers saved both. Lookups reached only the first; the frame
+// re-bind kept it current. Without that re-bind the first entry strands
+// the member at the address it left, and the re-pair that should fix it
+// is refused, since the duplicate holds the new address.
+
+size_t merge_logs() {
+  size_t n = 0;
+  for (const std::string& m : g_health) {
+    if (m == "opera: folded a duplicate member entry into one") ++n;
+  }
+  return n;
+}
+
+// A's NVS as the old add_peer left it: B's entry, C's, and a second entry
+// for B at `dup_mac`, with the last-seen counters saved for each.
+void seed_duplicate(const uint8_t dup_mac[6]) {
+  become(A);
+  mn::OperaPeer dup = *entry(A, B);
+  memcpy(dup.mac_addr, dup_mac, 6);
+  strcpy(dup.name, "New Device");
+  dup.msg_counter_rx = 0;
+  become(A);
+  mn::g_peers[mn::g_peer_count++] = dup;
+  CHECK(mn::g_peer_count == 3);
+  CHECK(mn::persist_peers());
+  CHECK(mn::save_replay_counters());
+}
+
+void test_an_old_duplicate_entry_folds_into_one_at_boot() {
+  fresh_opera();
+  deliver(A, B.mac, b_heartbeat_to(A));          // A's last-seen for B: 1
+  uint8_t old_mac[6];
+  memcpy(old_mac, B.mac, 6);
+  const uint8_t new_mac[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0xB2};
+  seed_duplicate(new_mac);
+  g_health.clear();
+  boot(A);
+  CHECK(mn::g_peer_count == 2);
+  mn::OperaPeer* pb = entry(A, B);
+  CHECK(same_mac(pb->mac_addr, new_mac));        // the later pairing's address
+  CHECK(strcmp(pb->name, "B") == 0);             // the first entry's name
+  CHECK(pb->msg_counter_rx == 1);                // and its last-seen counter
+  CHECK(same_mac(entry(A, C)->mac_addr, C.mac));
+  CHECK(A.espnow.has(new_mac) && !A.espnow.has(old_mac) && A.espnow.has(C.mac));
+  CHECK(merge_logs() == 1);
+  become(A);                                     // the fold is saved
+  mn::g_prefs.begin(mn::NVS_NS, true);
+  CHECK(mn::g_prefs.getUChar(mn::NVS_PEER_COUNT, 0) == 2);
+  mn::g_prefs.end();
+  boot(A);                                       // so the next boot has nothing to fold
+  CHECK(mn::g_peer_count == 2);
+  CHECK(same_mac(entry(A, B)->mac_addr, new_mac));
+  CHECK(merge_logs() == 1);
+  memcpy(B.mac, new_mac, 6);                     // B is heard at its new address
+  deliver(A, B.mac, b_heartbeat_to(A));
+  CHECK(entry(A, B)->msg_counter_rx == 2);
+  memcpy(B.mac, old_mac, 6);
+  std::printf("PASS an_old_duplicate_entry_folds_into_one_at_boot\n");
+}
+
+void test_an_old_duplicate_at_another_members_address_is_dropped() {
+  // One address, one member: a duplicate whose address C holds is dropped,
+  // and B keeps the address it had.
+  fresh_opera();
+  seed_duplicate(C.mac);
+  g_health.clear();
+  boot(A);
+  CHECK(mn::g_peer_count == 2);
+  CHECK(same_mac(entry(A, B)->mac_addr, B.mac));
+  CHECK(same_mac(entry(A, C)->mac_addr, C.mac));
+  CHECK(A.espnow.has(B.mac) && A.espnow.has(C.mac));
+  CHECK(merge_logs() == 1);
+  CHECK(a_heartbeat_reaches(B.mac) && a_heartbeat_reaches(C.mac));
+  std::printf("PASS an_old_duplicate_at_another_members_address_is_dropped\n");
+}
+
 }  // namespace
 
 int main() {
@@ -785,6 +865,8 @@ int main() {
   test_a_joiner_takes_the_first_offer_only();
   test_an_initiator_takes_one_accept_from_where_its_offer_went();
   test_an_initiator_forgets_a_finished_pairing();
+  test_an_old_duplicate_entry_folds_into_one_at_boot();
+  test_an_old_duplicate_at_another_members_address_is_dropped();
   std::printf("ALL %d mesh address checks PASSED\n", g_checks);
   return 0;
 }
