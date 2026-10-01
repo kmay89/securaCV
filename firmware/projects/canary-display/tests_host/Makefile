@@ -246,7 +246,7 @@ $(ROUNDFRAME11_BIN): $(ROUNDFRAME11_SRC)
 ONBOARD_BIN = test_onboard_layout
 ONBOARD_SRC = test_onboard_layout.cpp
 
-$(ONBOARD_BIN): $(ONBOARD_SRC) ../include/canary/ui/onboard_layout.h montserrat_metrics.h \
+$(ONBOARD_BIN): $(ONBOARD_SRC) onboard_test_env.h ../include/canary/ui/onboard_layout.h montserrat_metrics.h \
 	  ../../../common/network/wifi_join_policy.h ../../../common/network/provision_core.h
 	$(CXX) -std=gnu++11 -O2 -Wall -Wextra $(INC) -I ../../../common \
 	  '-DFW_DIR="$(abspath ../../..)"' -o $@ $(ONBOARD_SRC)
@@ -316,6 +316,46 @@ clean-mark-seat:
 
 run: run-mark-seat
 clean: clean-mark-seat
+
+# What the onboarding scenes DRAW on small glass (F64, F65, F66): the REAL
+# src/ui/onboard_ui.cpp, round_frame.cpp and canary_mark.cpp against
+# fake_lvgl/lvgl.h, driven through every scene the way provision.cpp drives
+# them, on every small-glass env with both type ladders, QR or not. Every
+# label reads whole (its text no wider than the label, in the font it
+# carries, measured with LVGL's own glyph data), nothing overlaps, and the
+# labels, the QR card and the bird's breath are clear of the halo's stroke,
+# which is small_join()'s; the bird draws at onboard_layout.h's seat.
+# test_onboard_layout holds the rules, this holds the glass to them. Two
+# builds, because round vs rectangular glass is the config's call: the
+# watch's (the round watch) and the nightstand's (the 172/180x320 portrait
+# glass, the touch169, the AMOLED). Hooked into `run` and `clean` by
+# prerequisite.
+SCENES_SRC = test_onboard_scenes.cpp ../src/ui/onboard_ui.cpp \
+  ../src/ui/round_frame.cpp ../src/ui/canary_mark.cpp
+SCENES_DEPS = $(SCENES_SRC) onboard_test_env.h montserrat_metrics.h \
+  fake_lvgl/lvgl.h fake_lvgl/Arduino.h fake_lvgl/esp_random.h \
+  ../include/canary/ui/onboard_layout.h ../include/canary/ui/onboard_ui.h \
+  ../include/canary/ui/round_frame.h ../include/canary/ui/canary_mark.h \
+  ../../../common/network/wifi_join_policy.h ../../../common/network/provision_core.h
+# -Wno-unused-function: round_frame.cpp's panel_w() is unused in the round
+# build (the firmware's own, not this test's).
+SCENES_FLAGS = $(CXXFLAGS) -Werror -Wno-unused-function -I fake_lvgl $(INC) \
+  -I ../../../common '-DFW_DIR="$(abspath ../../..)"'
+
+test_onboard_scenes_round: $(SCENES_DEPS)
+	$(CXX) $(SCENES_FLAGS) -I ../../../configs/canary-display/watch -o $@ $(SCENES_SRC)
+test_onboard_scenes_rect: $(SCENES_DEPS)
+	$(CXX) $(SCENES_FLAGS) -I ../../../configs/canary-display/nightstand -o $@ $(SCENES_SRC)
+
+.PHONY: run-onboard-scenes clean-onboard-scenes
+run-onboard-scenes: test_onboard_scenes_round test_onboard_scenes_rect
+	$(call run_marked,test_onboard_scenes_round)
+	$(call run_marked,test_onboard_scenes_rect)
+clean-onboard-scenes:
+	rm -f test_onboard_scenes_round test_onboard_scenes_rect
+
+run: run-onboard-scenes
+clean: clean-onboard-scenes
 
 # Sweep CI3, one host-test list: the five suites below were built only by
 # their own inline g++ steps in firmware.yml's "Mesh + Scout Host Tests" job,

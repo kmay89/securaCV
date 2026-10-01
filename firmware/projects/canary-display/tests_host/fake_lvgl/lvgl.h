@@ -1,9 +1,12 @@
 // tests_host/fake_lvgl/lvgl.h — LVGL 8's object POSITION model, for host
-// tests that compile a real display TU (src/ui/canary_mark.cpp) with no
-// LVGL on the machine.
+// tests that compile a real display TU (src/ui/canary_mark.cpp, and
+// src/ui/onboard_ui.cpp with src/ui/round_frame.cpp) with no LVGL on the
+// machine.
 //
-// Only what canary_mark.cpp calls, and only the semantics a placement test
-// reads. Where LVGL 8.4 has a rule, this file follows it, cited by function:
+// Only what those TUs call, and only the semantics a placement test reads:
+// where each object's box lands, and what a label says in which font at
+// what width. Nothing is drawn. Where LVGL 8.4 has a rule, this file
+// follows it, cited by function:
 //  * lv_obj_align(obj, align, x, y) stores the anchor and the offset as
 //    styles (LV_STYLE_ALIGN, LV_STYLE_X/Y) — lv_obj_pos.c. lv_obj_set_x/y/
 //    pos write the offset alone. Nothing moves until a layout pass.
@@ -16,6 +19,13 @@
 //  * lv_anim_init defaults (time 500, repeat 1, early_apply 1), and
 //    lv_anim_start applies the start value at once when early_apply is set
 //    and replaces a running anim on the same var and exec_cb (lv_anim.c).
+//  * A label is LV_SIZE_CONTENT until sized (lv_label_constructor): a
+//    layout pass gives it its text's width and its font's line height.
+//    LV_PCT sizes resolve against the parent's content box when set (every
+//    caller here sizes a child of an already-sized parent).
+//  * Text width is lv_txt_get_width at letter_space 0: each glyph's
+//    lv_font_get_glyph_width given the letter after it. A test supplies the
+//    font's glyph widths (lv_font_t::glyph_w) from LVGL's own font data.
 // Timers are recorded, never fired (the blink/flourish cadence places
 // nothing). Anims advance on fake_lvgl::run(ms) — linear, with playback and
 // repeats — so a test can watch the breath and the hop move the bird.
@@ -28,7 +38,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <stdarg.h>
+#include <stdio.h>
+
 #include <algorithm>
+#include <string>
 #include <vector>
 
 #define LVGL_VERSION_MAJOR 8
@@ -45,7 +59,17 @@ inline lv_color_t lv_color_white() { return lv_color_hex(0xFFFFFF); }
 inline lv_color_t lv_color_black() { return lv_color_hex(0x000000); }
 struct lv_font_t {
   int line_height;
+  // lv_font_get_glyph_width(font, letter, next): the test's font data.
+  int (*glyph_w)(const lv_font_t*, uint32_t, uint32_t);
+  const void* dsc;  // the test's own handle for the face
 };
+inline lv_coord_t lv_font_get_line_height(const lv_font_t* f) {
+  return (lv_coord_t)f->line_height;
+}
+inline uint16_t lv_font_get_glyph_width(const lv_font_t* f, uint32_t a,
+                                        uint32_t b) {
+  return f->glyph_w ? (uint16_t)f->glyph_w(f, a, b) : 0;
+}
 
 enum {
   LV_ALIGN_DEFAULT = 0,
@@ -62,8 +86,27 @@ enum {
 typedef uint8_t lv_align_t;
 
 #define LV_PART_MAIN 0x000000u
+#define LV_PART_INDICATOR 0x020000u
+#define LV_PART_KNOB 0x030000u
 #define LV_OPA_TRANSP 0
+#define LV_OPA_20 51
+#define LV_OPA_30 76
+#define LV_OPA_40 102
+#define LV_OPA_50 127
+#define LV_OPA_70 178
 #define LV_OPA_COVER 255
+// lv_area.h: a coordinate with LV_COORD_TYPE_SPEC set is a special value.
+#define LV_COORD_TYPE_SPEC (1 << 13)
+#define LV_PCT(x) ((lv_coord_t)(LV_COORD_TYPE_SPEC | (x)))
+#define LV_SIZE_CONTENT ((lv_coord_t)(LV_COORD_TYPE_SPEC | 2001))
+typedef uint8_t lv_res_t;
+#define LV_RES_INV 0
+#define LV_RES_OK 1
+enum { LV_TEXT_ALIGN_AUTO = 0, LV_TEXT_ALIGN_LEFT, LV_TEXT_ALIGN_CENTER,
+       LV_TEXT_ALIGN_RIGHT };
+enum { LV_LABEL_LONG_WRAP = 0, LV_LABEL_LONG_DOT, LV_LABEL_LONG_SCROLL,
+       LV_LABEL_LONG_SCROLL_CIRCULAR, LV_LABEL_LONG_CLIP };
+enum { LV_SCR_LOAD_ANIM_NONE = 0, LV_SCR_LOAD_ANIM_FADE_ON = 9 };
 #define LV_RADIUS_CIRCLE 0x7FFF
 #define LV_ANIM_REPEAT_INFINITE 0xFFFF
 
@@ -84,6 +127,10 @@ struct lv_event_t {
 };
 typedef void (*lv_event_cb_t)(lv_event_t*);
 
+namespace fake_lvgl {
+enum Kind { kObj = 0, kLabel, kArc, kQr };
+}  // namespace fake_lvgl
+
 struct _lv_obj_t {
   lv_obj_t* parent;
   std::vector<lv_obj_t*> children;
@@ -91,16 +138,27 @@ struct _lv_obj_t {
   lv_coord_t tx, ty;  // LV_STYLE_TRANSLATE_X / _Y
   lv_align_t align;   // LV_STYLE_ALIGN
   lv_coord_t w, h;    // LV_STYLE_WIDTH / HEIGHT (px only)
+  bool content_w, content_h;  // LV_SIZE_CONTENT: sized on layout
   lv_coord_t pad;     // pad_all (the content box's inset)
   lv_coord_t x1, y1;  // the laid-out box (absolute); moves only on layout
   uint32_t flags;
   std::vector<lv_event_cb_t> on_delete;
+  // What the onboarding test reads (nothing else styles anything here).
+  int kind;                   // fake_lvgl::Kind
+  std::string text;           // a label's text; a QR code's payload
+  const lv_font_t* font;      // LV_STYLE_TEXT_FONT (inherited when null)
+  int long_mode;              // a label's lv_label_set_long_mode
+  int text_align;             // LV_STYLE_TEXT_ALIGN
+  lv_coord_t radius;          // LV_STYLE_RADIUS
+  uint32_t bg_color;          // LV_STYLE_BG_COLOR
+  lv_coord_t arc_w_main, arc_w_ind;  // LV_STYLE_ARC_WIDTH per part
 };
 
 namespace fake_lvgl {
 inline int& disp_w() { static int w = 240; return w; }
 inline int& disp_h() { static int h = 240; return h; }
 inline uint32_t& tick() { static uint32_t t = 0; return t; }
+inline lv_obj_t*& active_screen() { static lv_obj_t* s = nullptr; return s; }
 }  // namespace fake_lvgl
 
 inline uint32_t lv_tick_get() { return fake_lvgl::tick(); }
@@ -114,11 +172,21 @@ inline lv_obj_t* lv_obj_create(lv_obj_t* parent) {
   o->align = LV_ALIGN_DEFAULT;
   o->sx = o->sy = o->tx = o->ty = 0;
   o->pad = 0;
+  o->content_w = o->content_h = false;
+  o->kind = fake_lvgl::kObj;
+  o->font = nullptr;
+  o->long_mode = LV_LABEL_LONG_WRAP;
+  o->text_align = LV_TEXT_ALIGN_AUTO;
+  o->radius = 0;
+  o->bg_color = 0;
+  o->arc_w_main = o->arc_w_ind = 0;
   if (parent == nullptr) {
-    // A screen: the display's size, at the origin.
+    // A screen: the display's size, at the origin. The first one is active
+    // (lv_obj_constructor: the display's act_scr when it has none).
     o->w = (lv_coord_t)fake_lvgl::disp_w();
     o->h = (lv_coord_t)fake_lvgl::disp_h();
     o->x1 = o->y1 = 0;
+    if (fake_lvgl::active_screen() == nullptr) fake_lvgl::active_screen() = o;
   } else {
     // lv_obj_constructor: the box starts at the parent's content origin.
     o->w = o->h = 100;  // LV_OBJ default size; every caller here sets one
@@ -128,7 +196,13 @@ inline lv_obj_t* lv_obj_create(lv_obj_t* parent) {
   }
   return o;
 }
+// lv_anim_del, defined with the anims below (same signature).
+inline bool lv_anim_del(void* var, void (*cb)(void*, int32_t));
+// obj_del_core: the children first, LV_EVENT_DELETE, then every anim on the
+// object (lv_anim_del(obj, NULL)).
 inline void lv_obj_del(lv_obj_t* o) {
+  lv_anim_del(o, nullptr);
+  if (fake_lvgl::active_screen() == o) fake_lvgl::active_screen() = nullptr;
   for (size_t i = 0; i < o->children.size(); ++i) {
     o->children[i]->parent = nullptr;
     lv_obj_del(o->children[i]);
@@ -146,11 +220,32 @@ inline void lv_obj_add_event_cb(lv_obj_t* o, lv_event_cb_t cb,
   if (code == LV_EVENT_DELETE) o->on_delete.push_back(cb);
 }
 
-inline void lv_obj_set_size(lv_obj_t* o, lv_coord_t w, lv_coord_t h) {
-  o->w = w;
-  o->h = h;
+namespace fake_lvgl {
+// A width or height as lv_obj_set_size stores it: px, LV_PCT of the
+// parent's content box, or LV_SIZE_CONTENT (resolved on layout).
+inline lv_coord_t dim(const lv_obj_t* o, lv_coord_t v, bool horiz,
+                      bool* content) {
+  *content = false;
+  if (v == LV_SIZE_CONTENT) {
+    *content = true;
+    return 0;
+  }
+  if ((v & LV_COORD_TYPE_SPEC) && o->parent != nullptr) {
+    const int pct = v & ~LV_COORD_TYPE_SPEC;
+    const int base = (horiz ? o->parent->w : o->parent->h) - 2 * o->parent->pad;
+    return (lv_coord_t)(base * pct / 100);
+  }
+  return v;
 }
-inline void lv_obj_set_height(lv_obj_t* o, lv_coord_t h) { o->h = h; }
+}  // namespace fake_lvgl
+
+inline void lv_obj_set_size(lv_obj_t* o, lv_coord_t w, lv_coord_t h) {
+  o->w = fake_lvgl::dim(o, w, true, &o->content_w);
+  o->h = fake_lvgl::dim(o, h, false, &o->content_h);
+}
+inline void lv_obj_set_height(lv_obj_t* o, lv_coord_t h) {
+  o->h = fake_lvgl::dim(o, h, false, &o->content_h);
+}
 inline void lv_obj_set_x(lv_obj_t* o, lv_coord_t x) { o->sx = x; }
 inline void lv_obj_set_y(lv_obj_t* o, lv_coord_t y) { o->sy = y; }
 inline void lv_obj_set_pos(lv_obj_t* o, lv_coord_t x, lv_coord_t y) {
@@ -165,6 +260,7 @@ inline void lv_obj_align(lv_obj_t* o, lv_align_t a, lv_coord_t x, lv_coord_t y) 
   lv_obj_set_style_align(o, a, 0);
   lv_obj_set_pos(o, x, y);
 }
+inline void lv_obj_center(lv_obj_t* o) { lv_obj_align(o, LV_ALIGN_CENTER, 0, 0); }
 inline void lv_obj_set_style_translate_y(lv_obj_t* o, lv_coord_t v, lv_style_selector_t) {
   o->ty = v;
 }
@@ -186,18 +282,120 @@ inline bool lv_obj_has_flag(const lv_obj_t* o, lv_obj_flag_t f) {
   return (o->flags & f) == f;
 }
 
-inline void lv_obj_set_style_radius(lv_obj_t*, lv_coord_t, lv_style_selector_t) {}
-inline void lv_obj_set_style_bg_color(lv_obj_t*, lv_color_t, lv_style_selector_t) {}
+inline void lv_obj_set_style_radius(lv_obj_t* o, lv_coord_t r, lv_style_selector_t) {
+  o->radius = r;
+}
+inline void lv_obj_set_style_bg_color(lv_obj_t* o, lv_color_t c, lv_style_selector_t) {
+  o->bg_color = c.full;
+}
 inline void lv_obj_set_style_bg_opa(lv_obj_t*, lv_opa_t, lv_style_selector_t) {}
 inline void lv_obj_set_style_border_width(lv_obj_t*, lv_coord_t, lv_style_selector_t) {}
 inline void lv_obj_set_style_pad_all(lv_obj_t* o, lv_coord_t p, lv_style_selector_t) {
   o->pad = p;
 }
 
+// ── labels, arcs, QR codes, screens (onboard_ui.cpp's surface) ──────────
+inline lv_obj_t* lv_label_create(lv_obj_t* parent) {
+  lv_obj_t* o = lv_obj_create(parent);
+  o->kind = fake_lvgl::kLabel;
+  o->flags &= ~(uint32_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  o->text = "Text";  // lv_label_constructor's default
+  o->content_w = o->content_h = true;
+  return o;
+}
+inline void lv_label_set_text(lv_obj_t* o, const char* t) {
+  if (t != nullptr) o->text = t;
+}
+inline void lv_label_set_text_fmt(lv_obj_t* o, const char* fmt, ...) {
+  char buf[512];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  o->text = buf;
+}
+inline void lv_label_set_long_mode(lv_obj_t* o, int m) { o->long_mode = m; }
+inline void lv_obj_set_style_text_font(lv_obj_t* o, const lv_font_t* f,
+                                       lv_style_selector_t) {
+  o->font = f;
+}
+// lv_obj_get_style_text_font: the text font is an inherited style.
+inline const lv_font_t* lv_obj_get_style_text_font(const lv_obj_t* o,
+                                                   uint32_t) {
+  for (; o != nullptr; o = o->parent)
+    if (o->font != nullptr) return o->font;
+  return nullptr;
+}
+inline void lv_obj_set_style_text_align(lv_obj_t* o, int a, lv_style_selector_t) {
+  o->text_align = a;
+}
+inline void lv_obj_set_style_text_color(lv_obj_t*, lv_color_t, lv_style_selector_t) {}
+inline void lv_obj_set_style_text_opa(lv_obj_t*, lv_opa_t, lv_style_selector_t) {}
+
+inline lv_obj_t* lv_arc_create(lv_obj_t* parent) {
+  lv_obj_t* o = lv_obj_create(parent);
+  o->kind = fake_lvgl::kArc;
+  return o;
+}
+inline void lv_arc_set_rotation(lv_obj_t*, uint16_t) {}
+inline void lv_arc_set_bg_angles(lv_obj_t*, uint16_t, uint16_t) {}
+inline void lv_arc_set_angles(lv_obj_t*, uint16_t, uint16_t) {}
+inline void lv_obj_set_style_arc_width(lv_obj_t* o, lv_coord_t w,
+                                       lv_style_selector_t sel) {
+  if ((sel & 0xFF0000u) == LV_PART_INDICATOR) o->arc_w_ind = w;
+  else if ((sel & 0xFF0000u) == LV_PART_MAIN) o->arc_w_main = w;
+}
+inline void lv_obj_set_style_arc_opa(lv_obj_t*, lv_opa_t, lv_style_selector_t) {}
+inline void lv_obj_set_style_arc_color(lv_obj_t*, lv_color_t, lv_style_selector_t) {}
+inline void lv_obj_set_style_arc_rounded(lv_obj_t*, bool, lv_style_selector_t) {}
+
+// lv_qrcode_update: the payload is kept, nothing is encoded.
+inline lv_res_t lv_qrcode_update(lv_obj_t* o, const void* data, uint32_t n) {
+  o->text.assign((const char*)data, n);
+  return LV_RES_OK;
+}
+
+inline void lv_obj_center(lv_obj_t* o);  // below, after lv_obj_align
+
+namespace fake_lvgl {
+// lv_txt_get_width at letter_space 0, one line (UTF-8 as lv_txt_utf8_next).
+inline int text_width(const lv_font_t* f, const std::string& t) {
+  std::vector<uint32_t> cps;
+  for (size_t i = 0; i < t.size();) {
+    const unsigned char c = (unsigned char)t[i];
+    int more = c < 0x80 ? 0 : (c & 0xE0) == 0xC0 ? 1 : (c & 0xF0) == 0xE0 ? 2 : 3;
+    uint32_t cp = more == 0 ? c : more == 1 ? (c & 0x1F) : more == 2 ? (c & 0x0F) : (c & 0x07);
+    ++i;
+    for (; more > 0 && i < t.size(); --more, ++i) cp = (cp << 6) | ((unsigned char)t[i] & 0x3F);
+    cps.push_back(cp);
+  }
+  int w = 0;
+  for (size_t k = 0; k < cps.size(); ++k)
+    w += lv_font_get_glyph_width(f, cps[k], k + 1 < cps.size() ? cps[k + 1] : 0);
+  return w;
+}
+}  // namespace fake_lvgl
+inline lv_obj_t* lv_scr_act() { return fake_lvgl::active_screen(); }
+inline void lv_scr_load(lv_obj_t* scr) { fake_lvgl::active_screen() = scr; }
+// lv_scr_load_anim with auto_del: the old screen is deleted once the new one
+// is in (at once here: nothing animates a screen in this model).
+inline void lv_scr_load_anim(lv_obj_t* scr, int, uint32_t, uint32_t,
+                             bool auto_del) {
+  lv_obj_t* old = fake_lvgl::active_screen();
+  fake_lvgl::active_screen() = scr;
+  if (auto_del && old != nullptr && old != scr) lv_obj_del(old);
+}
+
 // lv_obj_refr_pos, for the whole tree under `o` (lv_obj_update_layout).
+// A LV_SIZE_CONTENT label takes its text's extent first (lv_obj_refr_size).
 inline void lv_obj_update_layout(lv_obj_t* o) {
   for (size_t i = 0; i < o->children.size(); ++i) {
     lv_obj_t* c = o->children[i];
+    if (c->kind == fake_lvgl::kLabel && (c->content_w || c->content_h)) {
+      const lv_font_t* f = lv_obj_get_style_text_font(c, LV_PART_MAIN);
+      if (c->content_w) c->w = (lv_coord_t)(f ? fake_lvgl::text_width(f, c->text) : 0);
+      if (c->content_h) c->h = (lv_coord_t)(f ? f->line_height : 0);
+    }
     const int pw = o->w - 2 * o->pad, ph = o->h - 2 * o->pad;
     int x = c->sx + c->tx, y = c->sy + c->ty;
     switch (c->align) {
@@ -260,6 +458,7 @@ struct _lv_anim_t {
 inline int32_t lv_anim_path_linear(const lv_anim_t*) { return 0; }
 inline int32_t lv_anim_path_ease_in_out(const lv_anim_t*) { return 0; }
 inline int32_t lv_anim_path_overshoot(const lv_anim_t*) { return 0; }
+inline int32_t lv_anim_path_ease_out(const lv_anim_t*) { return 0; }
 inline void lv_anim_init(lv_anim_t* a) {
   memset(a, 0, sizeof(*a));
   a->time = 500;
