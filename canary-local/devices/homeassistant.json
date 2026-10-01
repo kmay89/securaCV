@@ -412,7 +412,7 @@
         "intro": "Point a Canary at the broker (its dashboard \u2192 Network tab \u2192 homeassistant.local:1883) and it announces itself within ~30 seconds. Watch the wire:",
         "steps": [
           {
-            "cmd": "mosquitto_sub -h localhost -t 'securacv/#' -v -C 4",
+            "cmd": "mosquitto_sub -h localhost -v -C 4 -t 'securacv/+/status' -t 'securacv/+/health' -t 'securacv/+/chain' -t 'securacv/+/counts'",
             "out": [
               "securacv/canary-s3-4dC2/status {\"online\":true,\"device_type\":\"canary-wap\",\"csi_running\":true,\"wifi_connected\":true,\"rssi\":-58}",
               "securacv/canary-s3-4dC2/health {\"battery\":100,\"battery_present\":false,\"memory_free\":204800,\"uptime\":312,\"firmware_version\":\"2.4.15-wap\",\"public_key\":\"\u2026\"}",

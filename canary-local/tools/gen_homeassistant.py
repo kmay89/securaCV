@@ -273,8 +273,10 @@ TERMINAL = {
 # The lines now come from devices/wap.json (the WAP's TOPICS, the repo test
 # key's device id and fp), and the note says only what signature.py and
 # __init__.py do with them; this file refuses to generate when either
-# moves. The four topics are the retained ones a fresh subscriber is handed
-# first and the ones the note is about.
+# moves. The four topics are the retained ones the note is about, and the
+# command subscribes to exactly those four: the WAP retains more (wap.json
+# lists them), and which four a bare `-t 'securacv/#' -C 4` printed would be
+# whichever the broker hands over first.
 FLEET_SUFFIXES = ("status", "health", "chain", "counts")
 SIGNED_SUFFIXES = ("chain", "counts")
 
@@ -331,7 +333,8 @@ def fleet_chapter(wap):
                  "tab → homeassistant.local:1883) and it announces itself "
                  "within ~30 seconds. Watch the wire:",
         "steps": [
-            {"cmd": f"mosquitto_sub -h localhost -t '{mqtt['prefix']}/#' -v -C {len(lines)}",
+            {"cmd": "mosquitto_sub -h localhost -v -C " + str(len(lines)) + "".join(
+                f" -t '{mqtt['prefix']}/+/{s}'" for s in FLEET_SUFFIXES),
              "out": lines,
              "note": "A Canary WAP's retained topics, keyed as its firmware publishes them (the "
                      "hash, the key and the signatures elided). The integration pins the public_key in health the first "

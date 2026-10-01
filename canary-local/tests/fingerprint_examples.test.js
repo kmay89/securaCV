@@ -619,7 +619,22 @@ const ENVELOPE_PINS = [
   [`${WAP}/device_signature.h`, "constexpr int         SCHEMA_V    = 1;"],
   [`${WAP}/device_signature.h`, 'constexpr const char* ALG_NAME    = "ed25519";'],
   [`${WAP}/csi_mqtt.cpp`, '"\\"alg\\":\\"%s\\",\\"fp\\":\\"%s\\",\\"sig\\":\\"%s\\"}",'],
+  ["firmware/common/identity/device_signature.h", "constexpr size_t SIG_B64URL_LEN = 86;"],
+  [`${WAP}/device_signature.h`, "constexpr size_t SIG_B64URL_LEN = 86;"],
 ];
+// A whole Ed25519 sig is 64 bytes, 86 base64url characters with no padding
+// (device_signature::SIG_B64URL_LEN); an elided one is a shorter prefix
+// and "…"; a bare "…" elides it all.
+function sigProblem(sig) {
+  if (typeof sig !== "string") return `sig ${JSON.stringify(sig)} is not a string`;
+  if (sig === "…") return null;
+  const elided = sig.endsWith("…");
+  const body = elided ? sig.slice(0, -1) : sig;
+  if (!/^[A-Za-z0-9_-]+$/.test(body)) return `sig ${JSON.stringify(sig)} is not base64url`;
+  if (elided ? body.length >= 86 : body.length !== 86)
+    return `sig ${JSON.stringify(sig)} is ${body.length} characters; a whole one is 86 (SIG_B64URL_LEN)`;
+  return null;
+}
 
 function* objects(node, path) {
   if (Array.isArray(node)) { for (let i = 0; i < node.length; i++) yield* objects(node[i], `${path}[${i}]`); return; }
@@ -643,6 +658,17 @@ function signedExamples() {
   return out;
 }
 
+test("the sig check: base64url, 86 characters whole, a shorter prefix elided", () => {
+  assert.strictEqual(sigProblem("…"), null);
+  assert.strictEqual(sigProblem("A".repeat(86)), null);
+  assert.strictEqual(sigProblem("Zm9v_-…"), null);
+  assert.match(sigProblem("ed25519"), /7 characters/, "a word is not a whole sig");
+  assert.match(sigProblem("x"), /1 characters/);
+  assert.match(sigProblem("ed25519:…"), /not base64url/, "the Hub page's old chain sig");
+  assert.match(sigProblem("A".repeat(86) + "…"), /86 characters/, "elides nothing");
+  assert.match(sigProblem(null), /not a string/);
+});
+
 test("every events, chain and counts example carries the v / alg / fp / sig envelope HA reads", () => {
   for (const [file, literal] of ENVELOPE_PINS)
     assert.ok(read(file).includes(literal), `${file} no longer has ${JSON.stringify(literal)}`);
@@ -656,8 +682,9 @@ test("every events, chain and counts example carries the v / alg / fp / sig enve
     if (missing.length) { problems.push(`${at}: no ${missing.join(", ")} — HA reads it as unsigned`); continue; }
     if (p.v !== 1) problems.push(`${at}: v ${p.v}, not device_signature::SCHEMA_V (1)`);
     if (p.alg !== "ed25519") problems.push(`${at}: alg ${p.alg}, not device_signature::ALG_NAME`);
-    if (typeof p.sig !== "string" || !/^(?:[A-Za-z0-9_-]+|[A-Za-z0-9_-]*…)$/.test(p.sig))
-      problems.push(`${at}: sig ${JSON.stringify(p.sig)} is not base64url (elided or whole)`);
+    const sp = sigProblem(p.sig);
+    if (sp) problems.push(`${at}: ${sp}`);
+    if (typeof p.fp !== "string") problems.push(`${at}: fp ${JSON.stringify(p.fp)} is not a string`);
   }
   assert.deepStrictEqual(problems, []);
   const on = (page) => found.filter((e) => e.page === page).length;
@@ -682,7 +709,25 @@ test("the Hub page's fleet wire lines are the WAP page's retained topics, verbat
   }
   const suffixes = lines.map((l) => l.split(" ")[0].split("/").pop());
   for (const want of ["health", "chain", "counts"]) assert.ok(suffixes.includes(want), `no ${want} line`);
-  assert.ok(DATA["homeassistant.json"].ha_demo.device_id === WAP_NAMES.id, "the demo below is the same device");
+  // the command asks for exactly those topics: the WAP retains more, and a
+  // bare '<prefix>/#' with -C 4 would print whichever four came first
+  const cmd = fleet.steps[0].cmd;
+  assert.deepStrictEqual([...cmd.matchAll(/-t '([^']+)'/g)].map((m) => m[1]),
+    suffixes.map((x) => `${wap.mqtt.prefix}/+/${x}`), cmd);
+  assert.ok(cmd.includes(`-C ${lines.length}`), cmd);
+
+  // the demo below is the same device, and reads its numbers off those lines
+  const demo = DATA["homeassistant.json"].ha_demo;
+  assert.strictEqual(demo.device_id, WAP_NAMES.id, "the demo below is the same device");
+  assert.ok(demo.device_name.endsWith(` ${WAP_NAMES.id}`), demo.device_name);
+  assert.ok(demo.drill.notification.body.includes(`Canary ${WAP_NAMES.id} `), demo.drill.notification.body);
+  const payload = (sfx) => JSON.parse(wap.mqtt.topics.find((t) => t.suffix === sfx).payload);
+  const entity = (name) => demo.entities.find((e) => e.name === name).initial;
+  assert.strictEqual(entity("Witness Count"), payload("counts").total.toLocaleString("en-US"));
+  const up = payload("health").uptime;
+  const d = Math.floor(up / 86400), h = Math.floor((up % 86400) / 3600), m = Math.floor((up % 3600) / 60);
+  assert.strictEqual(entity("Uptime"),
+    [d ? `${d}d` : "", h || d ? `${h}h` : "", `${m}m`, d ? "" : `${up % 60}s`].filter(Boolean).join(" "));
 });
 
 test("the Vision pane's fp and key are the test key's (canary-vision derives its fp the WAP's way)", () => {
