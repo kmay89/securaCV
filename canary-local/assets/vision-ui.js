@@ -729,8 +729,10 @@ export function vizEventPayload(example, name, snap, seq) {
     confidence: bb.score,
     voxel: { ...example.voxel, r: v.r, c: v.c },
     bbox: { x: bb.x, y: bb.y, w: bb.w, h: bb.h },
-    // nobody in frame: the coarse optical features read empty too
-    ...(present ? {} : { occupancy: "none", posture: "unknown", proximity: "unknown", occ_mask: 0 }),
+    // the sandbox has one box, so the occupied-cell mask is its cell's bit
+    // (types.h: bit r*cols + c); nobody in frame reads empty throughout
+    occ_mask: present && v.r >= 0 && v.c >= 0 ? 1 << (v.r * example.voxel.cols + v.c) : 0,
+    ...(present ? {} : { occupancy: "none", posture: "unknown", proximity: "unknown" }),
   };
   const out = {};
   for (const k of Object.keys(example)) {
@@ -803,8 +805,10 @@ export function buildMqtt(data, bus) {
       last_event: name,
     });
     row2("state", live.state, true);
-    // the event advanced the chain; main.cpp republishes the signed head
+    // the event advanced the chain; main.cpp republishes the signed head,
+    // whose hash this page cannot know, so it is elided whole once it moves
     live.chain.length = seq;
+    live.chain.latest_hash = "…";
     row2("chain", live.chain, true);
   });
   bus.on("cfg", ({ cfg }) => {

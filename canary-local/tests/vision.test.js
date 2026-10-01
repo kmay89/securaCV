@@ -207,6 +207,9 @@ test("a sandbox event publishes in the firmware's shape, the sandbox's values la
   assert.strictEqual(ev.confidence, 88);
   assert.deepStrictEqual(ev.voxel, { rows: example.voxel.rows, cols: example.voxel.cols, r: 2, c: 0 });
   assert.deepStrictEqual(ev.bbox, { x: 10, y: 20, w: 30, h: 40 });
+  // the mask is the box's own cell (types.h: "occupied 3x3 cells: bit (r*cols + c)")
+  assert.ok(read(join(FW, "include/canary/types.h")).includes("occupied 3x3 cells: bit (r*cols + c)"));
+  assert.strictEqual(ev.occ_mask, 1 << (2 * example.voxel.cols + 0), "r2c0's bit, not the example's r1c1");
   for (const k of ["v", "alg", "fp", "sig"]) assert.strictEqual(ev[k], example[k], `the ${k} envelope field rides along`);
   // with a reason: right after the name, as publish_event_json's reason branch writes it
   const left = vizEventPayload(example, "presence_ended", { ...snap, fsm: { presence: false }, reason: "lost" }, 78);
@@ -216,6 +219,7 @@ test("a sandbox event publishes in the firmware's shape, the sandbox's values la
   assert.strictEqual(left.presence, "clear");
   assert.strictEqual(left.occupants, "0");
   assert.strictEqual(left.occupancy, "none", "nobody in frame reads as no occupancy");
+  assert.strictEqual(left.occ_mask, 0);
   assert.ok(mainCpp.includes('"\\"event\\":\\"%s\\","\n        "\\"reason\\":\\"%s\\","'),
     "main.cpp's reason branch still writes reason right after event");
 });
@@ -498,6 +502,7 @@ test("the MQTT pane renders vision.json's rows, moves them with the sandbox, and
     bus.emit("sim-event", { name: "dwell_started", snap: { ...snap, fsm: { presence: true, dwelling: true } } });
     now = rows();
     assert.strictEqual(JSON.parse(now[base + "chain"]).length, chain0 + 2, "each event advances the signed head");
+    assert.strictEqual(JSON.parse(now[base + "chain"]).latest_hash, "…", "a moved head is not the example's hash");
     assert.strictEqual(JSON.parse(now[base + "events"]).seq, chain0 + 2);
     assert.strictEqual(JSON.parse(now[base + "state"]).dwelling, true);
 
@@ -506,6 +511,22 @@ test("the MQTT pane renders vision.json's rows, moves them with the sandbox, and
     assert.strictEqual(JSON.parse(now[base + "chain"]).length, chain0 + 2, "a reconnect republishes the chain as it stands");
     assert.strictEqual(JSON.parse(now[base + "state"]).last_event, "dwell_started");
     assert.strictEqual(now[base + "health"], data.mqtt.pane.online.find((r) => r.suffix === "health").payload);
+
+    // a tuning slider republishes cfg/state whole, as publish_detect_cfg_retained
+    // writes it (the profile and its label included), with the new values
+    const mqttCpp = read(join(FW, "src/net/mqtt_mgr.cpp"));
+    bus.emit("cfg", { cfg: { person_target: 0, score_min: 61, lost_timeout_ms: 4321, dwell_start_ms: 9876 }, key: "score_min" });
+    const cfgRow = JSON.parse(rows()[base + "cfg/state"]);
+    assert.deepStrictEqual(Object.keys(cfgRow), fmtKeys(mqttCpp, "bool publish_detect_cfg_retained("));
+    assert.strictEqual(cfgRow.profile_label, data.mqtt.cfg_state_example.profile_label);
+    assert.deepStrictEqual([cfgRow.score, cfgRow.lost_ms, cfgRow.dwell_ms], [61, 4321, 9876]);
+
+    // aim/state is publish_aim_state_retained's bare ON / OFF, not JSON
+    assert.ok(mqttCpp.includes('publish_checked("AIM", topics.aim_state, enabled ? "ON" : "OFF", true);'));
+    bus.emit("aim-state", { on: true });
+    assert.strictEqual(rows()[base + "aim/state"], "ON");
+    bus.emit("aim-state", { on: false });
+    assert.strictEqual(rows()[base + "aim/state"], "OFF");
   } finally {
     globalThis.document = saved;
   }
