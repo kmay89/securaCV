@@ -456,6 +456,94 @@ size_t b64url_encode_nopad(const uint8_t* in,
 }  /* namespace device_signature */
 
 /* ──────────────────────────────────────────────────────────────────
+ * The /enroll page's text and its size budget. Outside the ARDUINO
+ * guard on purpose: the handler that uses them is Arduino-only, but the
+ * static_asserts below then run in the host build too
+ * (firmware/projects/canary-wap/tests_host), so an edit to the page
+ * that overflows its buffer fails without an ESP32 toolchain. The
+ * headless variants compile these constants and never reference them.
+ */
+namespace device_identity_api {
+namespace {
+
+constexpr size_t ENROLL_JSON_CAP = 320;   /* the HTML page's raw-payload copy */
+constexpr size_t ENROLL_PAGE_CAP = 2048;
+
+/* Three %s, in order: the fingerprint, the full public key, and the
+ * enrollment JSON. Home Assistant's manual pin takes the device_id and
+ * the full key, never the fingerprint, so the copy sends the reader to
+ * the key and keeps the fingerprint for checking a pin HA already took.
+ * The fingerprint is the one init was handed: a canary-wap on firmware
+ * 2.4.15 or older handed it capitals while HA shows lowercase, hence
+ * "ignoring case" (later WAPs hand it lowercase, HA20; the WAP's other
+ * surfaces still print capitals). No external assets, so the page
+ * still renders behind a router that intercepts other domains. The key
+ * is user-select:all, so a click selects all of it: it is copied, not
+ * typed. */
+constexpr char ENROLL_PAGE_FMT[] =
+    "<!doctype html><meta charset=\"utf-8\">"
+    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+    "<title>SecuraCV Canary — Enroll</title>"
+    "<style>"
+      "body{font-family:system-ui,-apple-system,sans-serif;max-width:560px;margin:32px auto;padding:0 16px;color:#1a1a1a;}"
+      "h1{font-size:20px;margin-bottom:4px;}"
+      "p{color:#555;line-height:1.5;}"
+      ".fp{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:28px;letter-spacing:2px;background:#f4f4f5;padding:16px 20px;border-radius:8px;text-align:center;margin:20px 0;word-break:break-all;}"
+      ".pk{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:#1a1a1a;word-break:break-all;-webkit-user-select:all;user-select:all;}"
+      "details{margin-top:24px;}"
+      "summary{cursor:pointer;color:#0066cc;}"
+      "pre{background:#0d1117;color:#c9d1d9;padding:12px;border-radius:6px;overflow:auto;font-size:12px;}"
+    "</style>"
+    "<h1>Device key</h1>"
+    "<p>To pin this Canary in Home Assistant by hand, open SecuraCV's Configure menu, "
+    "choose Pin a device pubkey, and paste the full public key shown under the fingerprint, "
+    "with the device_id from the raw payload. "
+    "A pinned key protects you from a hostile MQTT broker spoofing the device.</p>"
+    "<p>The fingerprint is a short check, not the key: compare it with the pinned_fingerprint "
+    "on the device's Health sensor in Home Assistant, ignoring case.</p>"
+    "<div class=\"fp\">%s</div>"
+    "<p>Full Ed25519 public key:</p>"
+    "<p class=\"pk\">%s</p>"
+    "<details><summary>Raw enrollment payload (for scripts)</summary>"
+    "<pre>%s</pre></details>";
+
+/* How many positions in s[lo, hi) hold `a`, followed by `b` unless b is
+ * NUL. Halving, so the constexpr recursion stays about log2(n) deep (a
+ * linear walk over a 1.5 KB literal would pass GCC's default depth of
+ * 512), and one return statement, so it is valid C++11 for the core 2.x
+ * build. */
+constexpr size_t count_at(const char* s, size_t lo, size_t hi,
+                          char a, char b) {
+  return hi - lo == 0 ? 0
+       : hi - lo == 1 ? ((s[lo] == a && (b == '\0' || s[lo + 1] == b)) ? 1 : 0)
+       : count_at(s, lo, lo + (hi - lo) / 2, a, b) +
+         count_at(s, lo + (hi - lo) / 2, hi, a, b);
+}
+
+constexpr size_t ENROLL_FMT_LEN = sizeof(ENROLL_PAGE_FMT) - 1;
+static_assert(count_at(ENROLL_PAGE_FMT, 0, ENROLL_FMT_LEN, '%', '\0') == 3 &&
+              count_at(ENROLL_PAGE_FMT, 0, ENROLL_FMT_LEN, '%', 's') == 3,
+              "the /enroll budget below assumes exactly three %s and no "
+              "other conversion (a literal percent sign is %%, two of them)");
+
+/* The formatted worst case: the literal text (each %s is two bytes of
+ * format that print nothing), each argument at its longest, and the
+ * NUL. The fingerprint and key are copies of device_signature's cached
+ * strings, and render_enroll_json refuses to fill more than its buffer
+ * less one. */
+constexpr size_t ENROLL_PAGE_WORST =
+    ENROLL_FMT_LEN - 3 * 2 +
+    (sizeof(device_signature::s_fingerprint_hex) - 1) +
+    (sizeof(device_signature::s_pubkey_hex) - 1) +
+    (ENROLL_JSON_CAP - 1) + 1;
+static_assert(ENROLL_PAGE_WORST <= ENROLL_PAGE_CAP,
+              "the /enroll page can overflow its buffer: shorten the text "
+              "or raise ENROLL_PAGE_CAP (it lives on the httpd task's stack)");
+
+}  /* namespace */
+}  /* namespace device_identity_api */
+
+/* ──────────────────────────────────────────────────────────────────
  * HTTP enrollment endpoints. ARDUINO-only — host tests don't link
  * esp_http_server. Both handlers serve PUBLIC data (device_id, pubkey,
  * fingerprint) so they are intentionally unauthenticated. They read
@@ -586,7 +674,7 @@ esp_err_t handle_enroll_json(httpd_req_t* req) {
 }
 
 esp_err_t handle_enroll_html(httpd_req_t* req) {
-  char json_body[320];
+  char json_body[ENROLL_JSON_CAP];
   /* render_enroll_json already returns 0 on truncation (post-fix), so
    * a single == 0 check covers both empty + truncated. Pre-fix this
    * was an unguarded cast that could feed a >= cap value into the
@@ -597,34 +685,12 @@ esp_err_t handle_enroll_html(httpd_req_t* req) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
   }
-  /* Page deliberately uses inline CSS — no external assets so the
-   * captive-portal flow doesn't break behind a router that intercepts
-   * other domains. The fingerprint is rendered in big monospace text
-   * so an installer can read it off a phone screen and type it into
-   * HA's config flow on a different device. */
-  char page[2048];
-  const int n = snprintf(page, sizeof(page),
-    "<!doctype html><meta charset=\"utf-8\">"
-    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-    "<title>SecuraCV Canary — Enroll</title>"
-    "<style>"
-      "body{font-family:system-ui,-apple-system,sans-serif;max-width:560px;margin:32px auto;padding:0 16px;color:#1a1a1a;}"
-      "h1{font-size:20px;margin-bottom:4px;}"
-      "p{color:#555;line-height:1.5;}"
-      ".fp{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:28px;letter-spacing:2px;background:#f4f4f5;padding:16px 20px;border-radius:8px;text-align:center;margin:20px 0;word-break:break-all;}"
-      ".pk{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#777;word-break:break-all;}"
-      "details{margin-top:24px;}"
-      "summary{cursor:pointer;color:#0066cc;}"
-      "pre{background:#0d1117;color:#c9d1d9;padding:12px;border-radius:6px;overflow:auto;font-size:12px;}"
-    "</style>"
-    "<h1>Device fingerprint</h1>"
-    "<p>Read this fingerprint into Home Assistant when adding this Canary. "
-    "Pinning the fingerprint protects you from a hostile MQTT broker spoofing the device.</p>"
-    "<div class=\"fp\">%s</div>"
-    "<p>Full Ed25519 public key:</p>"
-    "<p class=\"pk\">%s</p>"
-    "<details><summary>Raw enrollment payload (for scripts)</summary>"
-    "<pre>%s</pre></details>",
+  /* The text and its compile-time budget are ENROLL_PAGE_FMT, above the
+   * ARDUINO guard. The fingerprint is rendered large so an installer can
+   * compare it by eye with the pin HA shows; the full key under it is
+   * what HA's manual pin form takes. */
+  char page[ENROLL_PAGE_CAP];
+  const int n = snprintf(page, sizeof(page), ENROLL_PAGE_FMT,
     device_signature::fingerprint_hex(),
     device_signature::pubkey_hex(),
     json_body);

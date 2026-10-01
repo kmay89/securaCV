@@ -485,11 +485,9 @@ subsequent publish.
 
 To check that verification is live: open the chain-length sensor's
 attributes — you should see `verified: true`, `trust_reason: ok`, and
-matching `pinned_fingerprint` / `received_fingerprint` values. (A
-canary-wap may show `mismatch` here even with the right key, because it
-sends its fingerprint in capitals and HA compares it exactly: read from
-source and reproduced on a host, not yet seen on a bench, and an open
-fix.) If your
+matching `pinned_fingerprint` / `received_fingerprint` values, both in
+lowercase (a canary-wap on firmware 2.4.15 or older sends its
+fingerprint in capitals, and HA reads that as the same value). If your
 threat model needs stricter trust than TOFU, pin the device's pubkey
 manually from **Settings → Devices & services → SecuraCV → Configure →
 Pin a device pubkey**. The form takes the `device_id` and the full
@@ -501,10 +499,18 @@ where that is depends on the product:
 - **The `firmware/canary` build** and **canary-vision**: the USB serial
   console, where `j` prints the self-manifest with `device_id` and
   `pubkey` (the `firmware/canary` build's `i` prints the key too).
-- **canary-sense** and **canary-sentinel**: only the fingerprint, in the
-  boot log (`Ed25519 ready  fp=…`). Neither shows its full key off the
-  network, so you can't pin one by hand. Compare that fingerprint with
-  the `pinned_fingerprint` attribute instead.
+- **canary-sense** and **canary-sentinel**, on a firmware release after
+  2.4.15: the boot log on the serial console. Right after
+  `Ed25519 ready  fp=…` it prints `Ed25519 pubkey` and the 64-character
+  key, once per boot, so open the serial monitor and then reset the
+  board. The `Device ID` line later in the same log is the `device_id`.
+  2.4.15 and older show only the fingerprint: compare it with the
+  `pinned_fingerprint` attribute instead. The key line is compiled by CI
+  but has not been read off a unit on a bench, and canary-sentinel has
+  not run on hardware at all. Which port carries that console is
+  unverified as well: read from the build flags, it may be the header
+  pins the radar uses rather than the board's USB-C port (the table
+  linked below has the detail).
 - **The canary-display line**: nothing to pin. A display has no signing
   key.
 

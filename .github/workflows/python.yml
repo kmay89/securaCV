@@ -13,10 +13,22 @@ on:
       - 'requirements_test.txt'
       - '.github/workflows/python.yml'
       # Firmware sources a test reads (test_wap_tamper_health.py builds the
-      # WAP's MQTT health from them), so a firmware-only edit that stops
-      # carrying a tamper level still runs the test that catches it.
+      # WAP's MQTT health from them; test_fingerprint_case.py holds its
+      # WAP-spelled fixture to the encoder canary_wap.ino spells its MQTT
+      # fp and health key with, mqtt_identity.h), so a firmware-only edit
+      # that stops carrying a tamper level, or changes how the WAP spells
+      # its fingerprint, still runs the test that catches it.
       - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp'
       - 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/mqtt_identity.h'
+      # test_key_source_copy.py holds the options-flow copy to the flavor
+      # registry, to the boot key line the two witness.cpp files print and
+      # to the `Device ID` boot line the two main.cpp files print.
+      - 'firmware/flavors.json'
+      - 'firmware/projects/canary-sense/src/witness.cpp'
+      - 'firmware/projects/canary-sentinel/src/witness.cpp'
+      - 'firmware/projects/canary-sense/src/main.cpp'
+      - 'firmware/projects/canary-sentinel/src/main.cpp'
   pull_request:
     branches: [main]
     paths:
@@ -26,10 +38,22 @@ on:
       - 'requirements_test.txt'
       - '.github/workflows/python.yml'
       # Firmware sources a test reads (test_wap_tamper_health.py builds the
-      # WAP's MQTT health from them), so a firmware-only edit that stops
-      # carrying a tamper level still runs the test that catches it.
+      # WAP's MQTT health from them; test_fingerprint_case.py holds its
+      # WAP-spelled fixture to the encoder canary_wap.ino spells its MQTT
+      # fp and health key with, mqtt_identity.h), so a firmware-only edit
+      # that stops carrying a tamper level, or changes how the WAP spells
+      # its fingerprint, still runs the test that catches it.
       - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp'
       - 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/mqtt_identity.h'
+      # test_key_source_copy.py holds the options-flow copy to the flavor
+      # registry, to the boot key line the two witness.cpp files print and
+      # to the `Device ID` boot line the two main.cpp files print.
+      - 'firmware/flavors.json'
+      - 'firmware/projects/canary-sense/src/witness.cpp'
+      - 'firmware/projects/canary-sentinel/src/witness.cpp'
+      - 'firmware/projects/canary-sense/src/main.cpp'
+      - 'firmware/projects/canary-sentinel/src/main.cpp'
 
 permissions:
   contents: read

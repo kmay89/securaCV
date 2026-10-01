@@ -246,7 +246,8 @@ $(ROUNDFRAME11_BIN): $(ROUNDFRAME11_SRC)
 ONBOARD_BIN = test_onboard_layout
 ONBOARD_SRC = test_onboard_layout.cpp
 
-$(ONBOARD_BIN): $(ONBOARD_SRC) ../include/canary/ui/onboard_layout.h montserrat_metrics.h
+$(ONBOARD_BIN): $(ONBOARD_SRC) ../include/canary/ui/onboard_layout.h montserrat_metrics.h \
+	  ../../../common/network/wifi_join_policy.h ../../../common/network/provision_core.h
 	$(CXX) -std=gnu++11 -O2 -Wall -Wextra $(INC) -I ../../../common \
 	  '-DFW_DIR="$(abspath ../../..)"' -o $@ $(ONBOARD_SRC)
 

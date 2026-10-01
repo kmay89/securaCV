@@ -35,7 +35,7 @@ from typing import Any, Optional
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
-from .device_trust import TrustStore, TrustVerdict
+from .device_trust import TrustStore, TrustVerdict, normalize_hex
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -182,6 +182,11 @@ def _verify_with_kind(
             detail="Payload missing sig/fp/alg fields",
         )
     sig_b64, fp, alg = envelope
+    # One spelling for the comparison below and for every verdict field: a
+    # canary-wap on firmware 2.4.15 or older sends its fp in capitals
+    # (canary_wap.ino's `hex_to_str`), the pin is derived lowercase, and hex
+    # case names no different key.
+    fp = normalize_hex(fp)
     if alg != ALG_NAME:
         return TrustVerdict(
             trusted=False,
@@ -213,7 +218,7 @@ def _verify_with_kind(
             detail="No pinned pubkey for this device_id",
         )
 
-    if pinned is not None and pinned.fingerprint_hex != fp:
+    if pinned is not None and normalize_hex(pinned.fingerprint_hex) != fp:
         # The signature MIGHT still be valid for the new key, but the
         # fingerprint pinned in our store doesn't match — that's the
         # mismatch case. We don't even attempt the verify because the
@@ -221,7 +226,7 @@ def _verify_with_kind(
         return TrustVerdict(
             trusted=False,
             reason="mismatch",
-            pinned_fingerprint=pinned.fingerprint_hex,
+            pinned_fingerprint=normalize_hex(pinned.fingerprint_hex),
             received_fingerprint=fp,
             detail="Fingerprint changed without rotation",
         )

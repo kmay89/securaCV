@@ -138,7 +138,7 @@ Security posture of the bridge (`fleet.rs`, unit-tested):
   firmware the pinned release key didn't sign, and never a raw frame.
 
   **What has shipped since, and what it does not fix.** canary-wap now
-  answers `GET /enroll.json?nonce=<hex>` with an Ed25519 signature over
+  answers `GET /api/device/enroll?nonce=<hex>` with an Ed25519 signature over
   `securacv-canary-sig|v1|whoami|<device_id>|<nonce>`. This page previously
   called that endpoint "the structural fix"; **it is not**, and the fleet
   book does not use it to gate anything. A signature over a nonce is not

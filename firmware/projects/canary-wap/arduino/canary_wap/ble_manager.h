@@ -135,8 +135,12 @@ static bool init(const char* deviceIdHash, const char* fwVersion,
     }
 
     // Initialize Opera (server/advertising)
+    // Opera and Chirp keep the pointer they are given (ble_opera reads it
+    // every 5 s for the Device Info characteristic), and the caller's
+    // buffer lives on ble_bringup_task's stack, which is gone once that
+    // task deletes itself. Hand them the static copy above instead.
     #if FEATURE_BLE_OPERA
-    if (ble_opera::init(deviceIdHash, fwVersion, chainHeight, chainHead)) {
+    if (ble_opera::init(g_deviceIdHex, fwVersion, chainHeight, chainHead)) {
         ble_opera::setCommandHandler(handleBleCommand);
         Serial.println("[BLE] Opera subsystem ready");
     } else {
@@ -146,7 +150,7 @@ static bool init(const char* deviceIdHash, const char* fwVersion,
 
     // Initialize Chirp (broadcast alerts)
     #if FEATURE_BLE_CHIRP
-    if (ble_chirp::init(deviceIdHash, chainHead)) {
+    if (ble_chirp::init(g_deviceIdHex, chainHead)) {
         g_chirp_active = true;
         Serial.println("[BLE] Chirp subsystem ready");
     } else {
