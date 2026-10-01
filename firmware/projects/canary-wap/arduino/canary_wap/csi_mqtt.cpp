@@ -56,6 +56,10 @@ std::atomic<bool>        s_connected{false};
 /* A broker is configured (accepting()): written by init(), which a config
  * POST runs on the httpd task, read by the egress on the loop task. */
 std::atomic<bool>        s_accepting{false};
+/* destination_epoch(): bumped by an init() whose destination_digest differs
+ * from the last one an init() loaded this boot (s_dest_known: one has). */
+std::atomic<uint32_t>    s_dest_epoch{0};
+bool                     s_dest_known = false;
 /* Inbound firmware-update commands. MQTT_EVENT_DATA fires on the
  * esp_mqtt task; flash-cycle decisions belong on the main loop, so the
  * handler only latches these flags and the .ino drains them via
@@ -460,8 +464,16 @@ bool init(const char* device_id,
 
   /* The delivery watermark is not this function's: the egress restores it
    * once per boot (csi_event_egress::begin, from csi_integration::init after
-   * the event-id floor), and a re-init keeps it. */
+   * the event-id floor), and a re-init keeps it. A re-init that changes the
+   * destination (host, port, user or prefix) bumps destination_epoch(), and
+   * the egress drops what waited for the old broker; the boot's first init
+   * only records it. */
+  const uint32_t prev_dest = destination_digest(s_active_cfg);
   if (!config_load(&s_active_cfg)) return false;
+  if (s_dest_known && destination_digest(s_active_cfg) != prev_dest) {
+    s_dest_epoch.fetch_add(1, std::memory_order_relaxed);
+  }
+  s_dest_known = true;
   s_accepting.store(s_active_cfg.enabled && s_active_cfg.host[0] != '\0',
                     std::memory_order_relaxed);
   if (!s_active_cfg.enabled) {
@@ -560,6 +572,10 @@ void loop() {
 
 bool accepting() {
   return s_accepting.load(std::memory_order_relaxed);
+}
+
+uint32_t destination_epoch() {
+  return s_dest_epoch.load(std::memory_order_relaxed);
 }
 
 bool connected() {

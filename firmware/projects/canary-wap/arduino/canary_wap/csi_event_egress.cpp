@@ -39,10 +39,11 @@ using csi_mqtt::EventSend;
 constexpr const char* SETTINGS_NS = "csi";
 
 /* Sixteen rows: one bundler tick can close all eight bundle slots at once,
- * and ambient rows commit about once a second, so the queue holds a full
- * close plus a stalled pass or two. A full queue means the loop task is
- * stuck, and then dropping (counted) beats blocking the committing task,
- * which may be the NimBLE host task. */
+ * and an ambient module commits up to once per cooldown (wifi.channel_activity:
+ * 5 s by default, 1 s at its minimum), so the queue holds a full close plus a
+ * stalled pass or two. A full queue means the loop task is stuck, and then
+ * dropping (counted) beats blocking the committing task, which may be the
+ * NimBLE host task. */
 constexpr UBaseType_t kQueueDepth = 16;
 constexpr int         kPumpBudget = 8;   /* rows per loop pass */
 /* Rows the card does not keep, waiting their turn in RAM. */
@@ -114,8 +115,21 @@ struct State {
   size_t   held_count = 0;
   uint32_t held_dropped = 0;
   uint32_t held_dropped_said = 0;
+  uint32_t ambient_dropped = 0;
   uint32_t dropped_said = 0;
   uint32_t replay_run = 0;   /* rows replayed in the current backlog */
+  /* A card that may hold rows older than the ones committed now is not open:
+   * from boot until the card's log first opens, and from a close while rows
+   * waited on it until it opens again. Rows the card does not keep wait in
+   * RAM meanwhile, for at most kCardWaitMs (card_wait_since). The planner
+   * cannot see it: pending() is false while the card is closed. */
+  bool     card_wait = true;
+  uint32_t card_wait_since = 0;
+  /* The broker the backlog is owed to (csi_mqtt::destination_epoch). */
+  uint32_t dest_epoch = 0;
+  /* Nothing on the card was owed when it had not opened yet: apply that
+   * when it opens (not_owed() can only credit rows it has seen). */
+  bool     not_owed_at_open = false;
 
   State() : port(this) {}
 
@@ -125,8 +139,15 @@ struct State {
     --held_count;
   }
   /* Rows arrive in id order (the commit lock orders the queue), so the
-   * hold stays in id order; past kHeldMax the oldest goes. */
+   * hold stays in id order; past kHeldMax the oldest goes. An ambient row is
+   * never held: csi_event.h's contract for CSI_CATEGORY_AMBIENT is "never
+   * persisted, drives live UI only", so one that cannot go out now is
+   * dropped (counted), and a run of them can never evict a real event. */
   void push(const csi_event_record_t& rec, bool fresh) {
+    if (rec.category == CSI_CATEGORY_AMBIENT) {
+      ++ambient_dropped;
+      return;
+    }
     if (held_count == kHeldMax) {
       pop();
       ++held_dropped;
@@ -222,13 +243,14 @@ Link current_link() {
 
 /* One dequeued row. A row the card keeps goes to the planner (on the card;
  * live when nothing older waits, held on the card otherwise). A row it does
- * not keep waits in RAM while anything older waits or the link is down,
- * and otherwise goes to the planner's not-on-card route (live now). */
+ * not keep waits in RAM while anything older waits (on the card, on a card
+ * that is not open now, or in RAM) or the link is down, and otherwise goes
+ * to the planner's not-on-card route (live now). */
 void route(const Committed& ev, const Link& link) {
   State& st = *g_state;
   const bool card_row = ev.ring && st.planner.card_ok();
   if (!card_row && link.accepting &&
-      (st.planner.pending() || st.held_count > 0 || !link.connected)) {
+      (st.planner.pending() || st.card_wait || st.held_count > 0 || !link.connected)) {
     st.push(ev.rec, /*fresh=*/link.connected);
     return;
   }
@@ -237,12 +259,13 @@ void route(const Committed& ev, const Link& link) {
   st.port.row_on_card = true;
 }
 
-/* Rows in the RAM hold, once nothing older waits on the card: through the
- * planner, so each is under the NVS ceiling before it goes and the
- * watermark follows it. */
+/* Rows in the RAM hold, once nothing older waits on the card (or on a card
+ * that is not open now): through the planner, so each is under the NVS
+ * ceiling before it goes and the watermark follows it. */
 void flush_held(const Link& link) {
   State& st = *g_state;
-  while (st.held_count > 0 && link.accepting && link.connected && !st.planner.pending()) {
+  while (st.held_count > 0 && link.accepting && link.connected && !st.planner.pending() &&
+         !st.card_wait) {
     const Held h = st.front();
     st.port.row_on_card = false;
     st.port.flushing = true;
@@ -294,6 +317,12 @@ void begin() {
     }
   }
   g_state->planner.begin(ceiling, csi_integration::event_id_floor_stored(), g_state->port);
+  /* Until the card's log opens this boot, rows the card does not keep wait
+   * for it (it may hold older ones): a slow card mounts after boot
+   * (hardware_state.h "still probing"). */
+  g_state->card_wait = true;
+  g_state->card_wait_since = (uint32_t)millis();
+  g_state->dest_epoch = csi_mqtt::destination_epoch();
 }
 
 void on_committed(uint32_t                  event_id,
@@ -344,16 +373,48 @@ void pump() {
   uint32_t log_size = 0;
   uint32_t tail_id = 0;
   switch (csi_event_log::poll(&log_size, &tail_id)) {
-    case csi_event_log::CardChange::kOpened: st.planner.card_open(log_size, tail_id, link); break;
-    case csi_event_log::CardChange::kClosed: st.planner.card_close(); break;
+    case csi_event_log::CardChange::kOpened:
+      st.planner.card_open(log_size, tail_id, link);
+      st.card_wait = false;
+      if (st.not_owed_at_open) {
+        st.not_owed_at_open = false;
+        st.planner.not_owed(link, st.port);
+      }
+      break;
+    case csi_event_log::CardChange::kClosed:
+      /* Rows still waiting on the card are owed when it comes back (an SD
+       * error's remount, hardware_state.h, is up to SD_RECHECK_INTERVAL_MS
+       * away): rows the card does not keep wait in RAM behind them. */
+      if (st.planner.pending()) {
+        st.card_wait = true;
+        st.card_wait_since = link.now_ms;
+      }
+      st.planner.card_close();
+      break;
     case csi_event_log::CardChange::kUnchanged: break;
+  }
+  /* Bounded: a card that does not open within kCardWaitMs is given up on,
+   * and the rows in RAM go (the rows on it, if it comes back later, are
+   * then below the watermark: HA would refuse them). */
+  if (st.card_wait && (uint32_t)(link.now_ms - st.card_wait_since) >= kCardWaitMs) {
+    st.card_wait = false;
+    if (st.held_count > 0) {
+      Serial.printf("[EVT] event log card not open after %lu s: %u event(s) waiting in RAM go out\n",
+                    (unsigned long)(kCardWaitMs / 1000), (unsigned)st.held_count);
+    }
   }
 
   /* No broker configured: the rows are logged and owed to nobody, so a
-   * broker configured later is not sent stale history. */
-  if (!link.accepting) {
+   * broker configured later is not sent stale history; a changed broker
+   * drops the backlog for the same reason (the canary's rule: what waited
+   * for broker A is not broker B's to see). */
+  const uint32_t epoch = csi_mqtt::destination_epoch();
+  if (!link.accepting || epoch != st.dest_epoch) {
+    st.dest_epoch = epoch;
     st.planner.not_owed(link, st.port);
+    if (!st.planner.card_ok()) st.not_owed_at_open = true;
     st.clear();
+    st.card_wait = false;   /* nothing older is owed any more */
   }
 
   const uint32_t dropped = __atomic_load_n(&s_dropped, __ATOMIC_RELAXED);
@@ -400,6 +461,7 @@ Stats stats() {
   s.dropped = __atomic_load_n(&s_dropped, __ATOMIC_RELAXED);
   if (g_state) {
     s.held_dropped = g_state->held_dropped;
+    s.ambient_dropped = g_state->ambient_dropped;
     s.planner = g_state->planner.stats();
   }
   return s;

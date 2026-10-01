@@ -189,12 +189,15 @@ void arm_load();
  * acknowledged this event, and roughly when (by where it falls in the log;
  * it carries no time of its own beyond the record's). It is the owner's own
  * action, kept on the owner's own card and not replayed to MQTT: local, as
- * Invariant IV (local ownership, spec/invariants.md) asks. Best-effort: with
- * no open log (no card, a card that is not ours), a log at MAX_BYTES (a
- * dismissal never cuts the log; the next committed row's append does) or a
- * failed write, the dismissal holds for this boot only. queue_dismissal()
- * is false when the queue (8) is full. The egress's backfill never replays
- * a dismissal line (csi_event_egress.cpp send_backfill).
+ * Invariant IV (local ownership, spec/invariants.md) asks. While the log
+ * cannot take it (no open log yet: before the egress's first pump pass, a
+ * remount, no card or a card that is not ours; or a log at MAX_BYTES, which
+ * a dismissal never cuts: the next committed row's append does), the
+ * dismissal stays queued, in RAM, and is written once the log can take it.
+ * A failed write drops it (logged), and a reboot drops the queue: then the
+ * dismissal holds for this boot only. queue_dismissal() is false when the
+ * queue (8) is full. The egress's backfill never replays a dismissal line
+ * (csi_event_egress.cpp send_backfill).
  *
  * The egress always logs "dismissed":0 (the original), even when the ring
  * row was dismissed between the commit and the hook's copy of it, so only a
@@ -204,8 +207,8 @@ bool queue_dismissal(uint32_t event_id);
 size_t flush_dismissals();
 
 #ifdef CSI_TEST_HOST_BUILD
-/** Host tests only: forget this "boot"'s RAM state (the load latch and the
- *  open card), to simulate a reboot. */
+/** Host tests only: forget this "boot"'s RAM state (the load latch, the
+ *  open card and the dismissal queue), to simulate a reboot. */
 void test_rearm_load();
 #endif
 

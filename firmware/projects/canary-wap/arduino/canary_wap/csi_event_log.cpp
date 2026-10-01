@@ -80,13 +80,16 @@ void reconcile_truncate_remnants();
  * without us needing to peek at hardware_state's globals.
  *
  * The s_reconciled latch is the hot-plug recovery hook: it flips
- * back to false whenever we see CARD_NONE, then on the next ready
+ * back to false whenever we see CARD_NONE (here, or in poll(), which looks
+ * at the card every pump pass without coming here), then on the next ready
  * transition we run reconcile_truncate_remnants once before
- * returning true. So a card inserted long after boot still gets a
- * cleanup pass before any append can call head_truncate. */
+ * returning true. So a card inserted long after boot, or pulled and
+ * reinserted, still gets a cleanup pass before any append can call
+ * head_truncate. */
+bool s_reconciled = false;
+bool s_foreign_said = false;
+
 bool sd_path_ready() {
-  static bool s_reconciled = false;
-  static bool s_foreign_said = false;
   /* A background mount attempt owns the global SD object (hardware_state.h
    * mount worker): the card struct is mid-initialization, so SD.cardType()
    * can read a garbage non-CARD_NONE value and the SD.open below would race
@@ -508,7 +511,8 @@ bool open_log() {
 /* One line at the end of the log, while it is open. `may_cut`: a committed
  * row's append may drop the oldest quarter first; a dismissal's may not (the
  * egress's planner learns of a cut only from its own appends), so at the cap
- * a dismissal is refused and holds for this boot only. */
+ * a dismissal is refused (flush_dismissals() keeps it queued until a
+ * committed row's append has cut the log). */
 csi_event_backfill::AppendResult append_bytes(const char* line, size_t len, bool may_cut) {
   csi_event_backfill::AppendResult r = {false, s_size, 0};
   if (!s_open || !card_present() || !line || len == 0) return r;
@@ -595,6 +599,12 @@ CardChange poll(uint32_t* size, uint32_t* tail_id) {
   if (!card_present()) {
     s_open = false;
     s_evaluated = false;
+    /* The card may come back as another card, or as this one after a
+     * rewrite whose rename failed (its survivors in the .tmp file): the next
+     * open reconciles first. Without this, only sd_path_ready() saw the card
+     * leave, and nothing calls it while the card is out. */
+    s_reconciled = false;
+    s_foreign_said = false;
   } else if (!s_evaluated) {
     /* A card that went in since the last look (or the first look this
      * boot): looked at once while it stays in, so a refused or broken log
@@ -693,6 +703,11 @@ bool queue_dismissal(uint32_t event_id) {
 }
 
 size_t flush_dismissals() {
+  /* A dismissal waits in the queue while the log cannot take it: no open
+   * log (before the egress's first pump pass, a card being remounted, no
+   * card) or a log at MAX_BYTES (a dismissal never cuts the log; the next
+   * committed row's append does). Taking it now would lose it for good. */
+  if (!s_open || !card_present() || s_size >= MAX_BYTES) return 0;
   size_t written = 0;
   for (size_t i = 0; i < kPendingDismissals; ++i) {
     const uint32_t id = s_pending_dismissals[i].exchange(0);
@@ -716,6 +731,9 @@ size_t flush_dismissals() {
 void test_rearm_load() {
   s_load_latched = false;
   s_load_armed.store(false);
+  for (size_t i = 0; i < kPendingDismissals; ++i) s_pending_dismissals[i].store(0);
+  s_reconciled = false;
+  s_foreign_said = false;
   s_open = false;
   s_reported = false;
   s_evaluated = false;

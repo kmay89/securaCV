@@ -306,8 +306,9 @@ clean: clean-evlog-load
 
 # A dismissal survives that refill: csi_event_log::queue_dismissal /
 # flush_dismissals write the dismissed row as one more line, load_into_ring
-# restores the event dismissed, iterate_since does not replay the dismissal,
-# and a dismissal inside the commit hook's window does not lose the original.
+# restores the event dismissed, a dismissal before the egress logs the
+# original does not lose it, and a dismissal the log cannot take yet (no
+# open log, a log at MAX_BYTES) waits instead of being dropped.
 # Same REAL sources and RAM card as the load test above.
 EVDISMISS_BIN = test_csi_event_log_dismiss
 EVDISMISS_SRC = test_csi_event_log_dismiss.cpp
@@ -331,9 +332,11 @@ clean: clean-evlog-dismiss
 # Assistant's replay gate. A row committed between a reconnect and the
 # loop's drain (a direct row, a closed bundle) waits behind the backlog;
 # a commit inside the backfill walk publishes nothing and moves no
-# watermark; reboots, no broker, dismissals, send and append failures,
-# forged card lines, the RAM hold and the queue bound. stubs/egress: a
-# FreeRTOS queue, Preferences, a clock the test moves.
+# watermark; reboots, no broker or a changed one, dismissals, send, append
+# and body-build failures, forged card lines, the RAM hold (its failure
+# paths, ambient rows, a card not open yet or closed for a moment), torn
+# tails and failed rewrites, and the queue bound. stubs/egress: a FreeRTOS
+# queue, Preferences, a clock the test moves.
 EGRESS_BIN = test_wap_event_egress
 EGRESS_SRC = test_wap_event_egress.cpp
 EGRESS_LIB = $(SRC_DIR)/csi_event_egress.cpp $(EVLOAD_LIB)

@@ -191,6 +191,38 @@ bool publish_tamper_bridge(const char* module_id,
 bool accepting();
 
 /**
+ * Where a committed event is delivered: the broker's host, port and user,
+ * and this device's topic prefix (a different prefix is a different topic
+ * tree, so another consumer). A password, TLS or discovery change is the
+ * same destination. A 32-bit FNV-1a digest, fields separated by a NUL, so
+ * init() can tell a change without keeping a second Config: two different
+ * destinations share a digest with probability 2^-32.
+ */
+inline uint32_t destination_digest(const Config& c) {
+  uint32_t h = 2166136261u;
+  auto mix = [&h](unsigned char b) { h = (h ^ b) * 16777619u; };
+  auto mix_str = [&mix](const char* s) {
+    for (; *s; ++s) mix((unsigned char)*s);
+    mix(0);
+  };
+  mix_str(c.host);
+  mix((unsigned char)(c.port & 0xFF));
+  mix((unsigned char)(c.port >> 8));
+  mix_str(c.user);
+  mix_str(c.prefix);
+  return h;
+}
+
+/**
+ * Bumped by an init() (a config POST, a QR provisioning) that changes the
+ * destination (destination_digest) from the one an earlier init() this boot
+ * loaded; the boot's first init() only records it. The events egress drops
+ * its backlog on a change, as the canary's does on mqtt_destination_epoch():
+ * what waited for one broker is not the next one's to see. Any task.
+ */
+uint32_t destination_epoch();
+
+/**
  * Publish HA MQTT auto-discovery payloads for the canary's full entity
  * set on `homeassistant/{component}/canary_<device_id>/{object_id}/config`.
  * Called from MQTT_EVENT_CONNECTED after the online-status publish so
