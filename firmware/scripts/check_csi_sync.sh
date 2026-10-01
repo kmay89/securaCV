@@ -358,6 +358,29 @@ if ! grep -qF 'SD.exists(csi_event_log_line::kOwnerPath)' "$STAGED/csi_event_log
     drift=1
 fi
 
+# ── One event-id space on the canary-wap (backlog F46) ──
+# The canary's glue is held by check_event_egress_order.py (rule 4); the
+# canary-wap's two touch points are held here. At boot the id floor is
+# restored as boot_floor(<floor>, <delivery ceiling>), so it never sits below
+# the one id space and is held above csi.evsent; and the MQTT backfill never
+# replays a card line at or above the allocator's next id (a forged or
+# foreign line, signed with this device's key, would raise Home Assistant's
+# mark past every real id). test_csi_event_log_dismiss.cpp runs the second
+# on the host; the first is an ESP32-only TU.
+WAP_INTEG="$STAGED/csi_integration.cpp"
+if ! grep -qF 'csi_event_set_event_id_floor(csi_event_id_floor::boot_floor(persisted, delivered));' "$WAP_INTEG" \
+   || ! grep -qF 'prefs.getULong(csi_mqtt::NVS_KEY_DELIVERED, 0)' "$WAP_INTEG"; then
+    echo "::error::$WAP_INTEG must restore the event-id floor as"
+    echo "         csi_event_id_floor::boot_floor(persisted, delivered), the delivery ceiling read"
+    echo "         from csi_mqtt::NVS_KEY_DELIVERED (backlog F46)."
+    drift=1
+fi
+if ! grep -qF 'rec->event_id < csi_event_get_next_event_id();' "$STAGED/csi_event_log.cpp"; then
+    echo "::error::$STAGED/csi_event_log.cpp: iterate_since() must not replay a card line at or"
+    echo "         above csi_event_get_next_event_id() (backlog F46)."
+    drift=1
+fi
+
 # ── The SD event log backfill's glue (backlog F37) ──
 # test_csi_event_backfill.cpp runs the planner against a model. The model
 # refuses a live publish while the MQTT offline queue holds records, and

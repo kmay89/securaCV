@@ -275,6 +275,10 @@ struct World : Port {
 };
 
 // The event-id allocator (csi_event.cpp) with the floor both trees persist.
+// Most scenarios run it from 1: the planner only ever compares ids, so where
+// the space starts does not change what it does. boot_f46() is the firmware
+// since backlog F46 exactly: the allocator starts at kIdSpaceBase and the
+// host restores csi_event_id_floor::boot_floor(floor, delivery ceiling).
 struct Allocator {
   uint32_t nvs_floor = 0;
   uint32_t stored = 0;
@@ -284,6 +288,10 @@ struct Allocator {
     stored = nvs_floor;
     next = 1;
     if (nvs_floor > next) next = nvs_floor;
+  }
+  void boot_f46(uint32_t delivered_ceiling) {
+    stored = nvs_floor;
+    next = csi_event_id_floor::boot_floor(nvs_floor, delivered_ceiling);
   }
   uint32_t allocate() {
     const uint32_t id = next++;
@@ -326,7 +334,7 @@ struct Host {
   bool check_floor_cap = true;   // off only where bundler ids are handed over
 
   Link link() const {
-    return Link{w.configured, w.connected, a.stored, now};
+    return Link{w.configured, w.connected, a.stored, now, a.next};
   }
   size_t tick(int commits = 0, bool tamper_alert = false) {
     w.reads = 0;
@@ -370,11 +378,13 @@ struct Host {
   }
 };
 
-static void open_card(World& w, Planner& p) {
+// The host's card-open, as csi_event_egress_pump() runs it: the link it
+// hands over carries the allocator's next id (current_link()).
+static void open_card(World& w, Planner& p, const Allocator& a) {
   const size_t tail = std::min(w.log.size(), kTailRead);
   const uint32_t id = last_line_id(w.log.data() + (w.log.size() - tail), tail);
   if (w.log.size() && w.log.back() != '\n') w.needs_seal = true;
-  p.card_open((uint32_t)w.log.size(), id);
+  p.card_open((uint32_t)w.log.size(), id, Link{w.configured, w.connected, a.stored, 0, a.next});
 }
 
 static bool strictly_rising(const std::vector<uint32_t>& ids) {
@@ -466,7 +476,7 @@ static int test_steady_state_is_live() {
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   for (int i = 0; i < 30; ++i) h.tick(1);
   CHECK(w.ha.accepted.size() == 30);
@@ -488,7 +498,7 @@ static int test_outage_longer_than_the_queue() {
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   for (int i = 0; i < 5; ++i) h.tick(1);           // live
   w.connected = false;                              // the broker goes away
@@ -526,7 +536,7 @@ static int test_rows_during_the_backlog_wait_their_turn() {
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   w.connected = false;
   for (int i = 0; i < 20; ++i) h.tick(1);
@@ -558,7 +568,7 @@ static int test_tamper_rows_events_copy_waits_its_turn() {
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   w.connected = false;
   for (int i = 0; i < 30; ++i) h.tick(1);
@@ -584,7 +594,7 @@ static int test_reboot_mid_outage_never_republishes() {
   Planner p;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   {
     Host h{w, p, a};
     for (int i = 0; i < 23; ++i) h.tick(1);   // live: ids 1..23
@@ -596,7 +606,7 @@ static int test_reboot_mid_outage_never_republishes() {
   Planner q;
   a.boot();
   q.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, q);
+  open_card(w, q, a);
   // Nothing at or below what HA has is ever replayed: the ceiling is above
   // every id handed over.
   CHECK(q.watermark() >= delivered_before);
@@ -627,7 +637,7 @@ static int test_new_boot_ids_are_not_mistaken_for_delivered() {
   Planner p;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   {
     Host h{w, p, a};
     // Ids that never reach the pump (a P2 row above the privacy ceiling, a
@@ -643,7 +653,7 @@ static int test_new_boot_ids_are_not_mistaken_for_delivered() {
   Planner q;
   a.boot();
   q.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, q);
+  open_card(w, q, a);
   CHECK(q.watermark() < a.next);  // the new boot's first id is not "delivered"
   Host h{w, q, a};
   w.connected = false;
@@ -667,7 +677,7 @@ static int test_first_boot_of_this_firmware() {
   p.begin(0, a.stored, w);
   CHECK(p.watermark() == 499);
   CHECK(w.nvs_ceiling == 500);
-  open_card(w, p);
+  open_card(w, p, a);
   {
     Host h{w, p, a};
     w.connected = false;
@@ -676,7 +686,7 @@ static int test_first_boot_of_this_firmware() {
   Planner q;
   a.boot();
   q.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, q);
+  open_card(w, q, a);
   Host h{w, q, a};
   w.connected = true;
   h.drain();
@@ -686,14 +696,15 @@ static int test_first_boot_of_this_firmware() {
 }
 
 static int test_interleaved_id_spaces_are_never_refused() {
-  // csi_bundler.cpp hands out ids from 0x80000000 in a space no floor
-  // covers, and its rows commit between the chokepoint's. The backfill
-  // walks forward and never sends at or below its watermark, so whatever
-  // the mix, nothing it sends is refused.
+  // Before F46 csi_bundler.cpp handed out ids from 0x80000000 in a space no
+  // floor covered, and its rows committed between the chokepoint's: a card
+  // an older firmware wrote still holds that mix. The backfill walks forward
+  // and never sends at or below its watermark, so whatever the mix, nothing
+  // it sends is refused.
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   h.check_floor_cap = false;   // a bundler id puts the ceiling in its space
   w.connected = false;
@@ -711,43 +722,161 @@ static int test_interleaved_id_spaces_are_never_refused() {
   return 0;
 }
 
-static int test_one_bundled_row_moves_the_watermark_for_good() {
-  // A LIMITATION pinned so the docs' statement of it stays true, not a goal.
-  // Handing over one bundler id (0x80000000 up, a space no floor covers)
-  // moves the ceiling and the watermark into the bundler's space. From then
-  // on the backfill sends no chokepoint row, in that boot or the next. The
-  // fix that makes one id space (an open item) changes this test, and has
-  // to reset csi.evsent when it lands.
-  World w; Planner p; Allocator a;
-  a.boot();
+// ── Backlog F46: one id space ───────────────────────────────────────────
+
+// One row as an older firmware (or a forger) wrote it to the card.
+static void card_line(World& w, uint32_t id) {
+  char line[csi_event_log_line::kLineMax];
+  const csi_event_record_t r = row(id, 5);
+  const size_t n = csi_event_log_line::marshal(&r, line, sizeof(line));
+  w.log.append(line, n);
+}
+
+static int test_upgrade_from_a_bundler_space_ceiling() {
+  // Before F46 the first bundled row a canary handed over moved its
+  // delivery ceiling (csi.evsent) and watermark into the bundler's space for
+  // good (0x80000003 + kStride here), and Home Assistant's mark with them:
+  // from then on the backfill sent no chokepoint row again. The upgrade
+  // resets nothing. The new firmware's ids start at kIdSpaceBase, above
+  // that ceiling and that mark, so its rows go out live and from the card,
+  // across reboots, and none is refused; the old rows stay where they were.
+  World w; Allocator a;
+  // The old firmware's NVS, card and HA mark.
+  a.nvs_floor = 60;                                    // its chokepoint floor
+  w.nvs_ceiling = 0x80000003u + csi_event_id_floor::kStride;
+  for (uint32_t id : {50u, 0x80000000u, 51u, 0x80000001u, 52u, 0x80000003u}) card_line(w, id);
+  w.ha.receive(52, false, false);
+  w.ha.receive(0x80000003u, false, false);
+  const size_t old_accepted = w.ha.accepted.size();
+
+  Planner p;
+  a.boot_f46(w.nvs_ceiling);
+  CHECK(a.next == csi_event_id_floor::kIdSpaceBase);
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
-  Host h{w, p, a};
-  h.check_floor_cap = false;
-  for (int i = 0; i < 3; ++i) h.tick(1);             // live: 1..3
-  const uint32_t bundle = 0x80000000u;
-  CHECK(p.commit(row(bundle, h.now), h.link(), w) == Route::kLive);
-  CHECK(p.watermark() == bundle);
-  CHECK(w.nvs_ceiling == bundle + csi_event_id_floor::kStride);
-  w.connected = false;
-  for (int i = 0; i < 4; ++i) h.tick(1);             // held: 4..7
+  CHECK(p.watermark() == 0x80000003u + csi_event_id_floor::kStride - 1);
+  open_card(w, p, a);
+  CHECK(!p.pending());                                 // the old rows stay put
+  {
+    Host h{w, p, a};
+    for (int i = 0; i < 3; ++i) h.tick(1);             // live
+    w.connected = false;
+    for (int i = 0; i < 4; ++i) h.tick(1);             // held on the card
+  }
+  CHECK(w.ha.accepted.size() == old_accepted + 3);
+  CHECK(w.ha.accepted.back() == csi_event_id_floor::kIdSpaceBase + 2);
+  // A reboot mid-outage: the ceiling now sits in the new space.
+  CHECK(w.nvs_ceiling > csi_event_id_floor::kIdSpaceBase);
+  Planner q;
+  a.boot_f46(w.nvs_ceiling);
+  q.begin(w.nvs_ceiling, a.stored, w);
+  open_card(w, q, a);
+  Host h{w, q, a};
+  for (int i = 0; i < 2; ++i) h.tick(1);               // the next boot's rows, still held
   w.connected = true;
   h.drain();
-  CHECK(p.stats().replayed == 0);
-  for (uint32_t id = 4; id <= 7; ++id) CHECK(times_accepted(w.ha, id) == 0);
+  CHECK(w.ha.refused.empty());                         // nothing new refused
+  CHECK(strictly_rising(w.ha.accepted));
+  CHECK(q.stats().replayed >= 2);                      // the held rows went out from the card
+  for (uint32_t id : {50u, 51u, 52u, 0x80000000u, 0x80000001u}) {
+    CHECK(times_accepted(w.ha, id) <= 1);              // no old row sent again
+  }
+  for (size_t i = old_accepted; i < w.ha.accepted.size(); ++i) {
+    CHECK(w.ha.accepted[i] >= csi_event_id_floor::kIdSpaceBase);
+  }
+  return 0;
+}
+
+static int test_a_forged_card_id_is_never_sent_or_credited() {
+  // A card is input. A line with an id this device never handed out (here
+  // one just under 0xFFFFFFFF) would be signed with the device's key and
+  // sent; Home Assistant would take it, raise its mark past every real id
+  // and refuse the device from then on. Credited, it would push the
+  // delivery ceiling to the top of the space, and the next boot (which
+  // holds its floor above the ceiling) toward the wrap. The planner never
+  // sends it or credits it, whether it sits mid-log or is the tail a card
+  // open reads, and whatever a broker change or a lost NVS asks.
+  const uint32_t forged = 0xFFFFFFF0u;
+  World w; Allocator a;
+  Planner p;
+  a.boot_f46(w.nvs_ceiling);
+  p.begin(w.nvs_ceiling, a.stored, w);
+  open_card(w, p, a);
+  {
+    Host h{w, p, a};
+    for (int i = 0; i < 3; ++i) h.tick(1);             // live
+    w.connected = false;
+    for (int i = 0; i < 3; ++i) h.tick(1);             // held
+    card_line(w, forged);                              // mid-log
+    for (int i = 0; i < 3; ++i) h.tick(1);             // held, after it
+    w.connected = true;
+    h.drain();
+  }
+  CHECK(times_accepted(w.ha, forged) == 0);
+  CHECK(w.ha.refused.empty());
+  CHECK(w.ha.accepted.size() == 9);                    // every real row, once
+  CHECK(p.stats().untrusted == 1);
+  CHECK(p.watermark() < forged);
+  CHECK(w.nvs_ceiling < csi_event_id_floor::kHoldLimit);
+
+  // As the tail a card open reads (a remount, then a broker change asks the
+  // planner to credit everything on the card).
+  card_line(w, forged);
+  p.card_close();
+  open_card(w, p, a);
+  {
+    Host h{w, p, a};
+    p.not_owed(h.link(), w);
+  }
+  CHECK(p.watermark() < a.next);
+  CHECK(w.nvs_ceiling < csi_event_id_floor::kHoldLimit);
+
+  // A reboot: the floor is held above the ceiling, nowhere near the wrap,
+  // and the next rows are accepted.
   Planner q;
-  a.boot();
+  a.boot_f46(w.nvs_ceiling);
+  CHECK(a.next < csi_event_id_floor::kHoldLimit);
   q.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, q);
-  CHECK(q.watermark() > bundle);
-  Host h2{w, q, a};
-  h2.check_floor_cap = false;
+  open_card(w, q, a);
+  Host h{w, q, a};
+  h.tick(1);
+  h.drain();
+  CHECK(times_accepted(w.ha, forged) == 0);
+  CHECK(w.ha.refused.empty());
+  CHECK(w.ha.accepted.back() == a.next - 1);
+
+  // NVS lost (no ceiling: the no-record rule credits the card's tail).
+  World v; Allocator b;
+  card_line(v, forged);
+  Planner r;
+  b.boot_f46(0);
+  r.begin(0, b.stored, v);
+  v.nvs_ok = false;
+  open_card(v, r, b);
+  CHECK(r.watermark() < b.next);
+  return 0;
+}
+
+static int test_rows_committed_after_the_link_was_read_are_trusted() {
+  // The host reads the allocator's next id once per pass (current_link()),
+  // and a row can commit after that, on another task, and reach the card in
+  // the same pass. Its id is at or above the link's id_next, but commit()
+  // saw it, so the walk still sends it in turn.
+  World w; Allocator a; Planner p;
+  a.boot_f46(0);
+  p.begin(0, a.stored, w);
+  open_card(w, p, a);
+  Host h{w, p, a};
   w.connected = false;
-  for (int i = 0; i < 2; ++i) h2.tick(1);            // the next boot's rows
+  const Link stale = h.link();                         // read before the commits
+  for (int i = 0; i < 3; ++i) (void)p.commit(row(a.allocate(), h.now), stale, w);
   w.connected = true;
-  h2.drain();
-  CHECK(q.stats().replayed == 0);
-  CHECK(w.ha.refused_backfill.empty());
+  Link up = stale;
+  up.connected = true;
+  CHECK(up.id_next < a.next);                          // the link is behind
+  CHECK(p.pass(up, w) > 0);
+  h.drain();
+  CHECK(w.ha.accepted.size() == 3);
+  CHECK(p.stats().untrusted == 0);
   return 0;
 }
 
@@ -756,7 +885,7 @@ static int test_retention_cut_moves_the_cursor() {
   w.cap_bytes = 4096;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   for (int i = 0; i < 25; ++i) h.tick(1);  // ~ 4 KB live: the cut runs
   CHECK(w.log.size() < 4096 + 400);
@@ -786,7 +915,7 @@ static int test_no_broker_then_a_broker_is_not_flooded() {
   w.configured = false;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   for (int i = 0; i < 30; ++i) h.tick(1);   // logged, owed to nobody
   CHECK(!w.log.empty());
@@ -796,14 +925,14 @@ static int test_no_broker_then_a_broker_is_not_flooded() {
   // row logged with no broker included).
   w.configured = true;
   p.card_close();
-  open_card(w, p);
+  open_card(w, p, a);
   CHECK(!p.pending());
   w.configured = false;
   // Configured later (and across a reboot): only new rows go out.
   Planner q;
   a.boot();
   q.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, q);
+  open_card(w, q, a);
   w.configured = true;
   Host h2{w, q, a};
   for (int i = 0; i < 3; ++i) h2.tick(1);
@@ -817,7 +946,7 @@ static int test_broker_change_drops_the_backlog() {
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   w.connected = false;
   for (int i = 0; i < 10; ++i) h.tick(1);
@@ -826,14 +955,14 @@ static int test_broker_change_drops_the_backlog() {
   CHECK(!p.pending());
   // A remount does not bring it back...
   p.card_close();
-  open_card(w, p);
+  open_card(w, p, a);
   CHECK(!p.pending());
   // ...and the dropped backlog stays dropped across a reboot too: the watermark
   // moved past it and was persisted before anything new went out.
   Planner q;
   a.boot();
   q.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, q);
+  open_card(w, q, a);
   Host h2{w, q, a};
   w.connected = true;
   h2.drain();
@@ -848,7 +977,7 @@ static int test_card_lost_while_rows_wait() {
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   w.connected = false;
   for (int i = 0; i < 8; ++i) h.tick(1);      // held on the card
@@ -861,7 +990,7 @@ static int test_card_lost_while_rows_wait() {
   // queue raised HA's mark past them they are not sent (HA would refuse).
   CHECK(w.ha.accepted.size() == 4);
   w.card_in = true;
-  open_card(w, p);
+  open_card(w, p, a);
   h.drain();
   h.tick(1);
   CHECK(w.ha.refused.empty());
@@ -873,7 +1002,7 @@ static int test_failed_reads_and_damage_do_not_stall_live_rows() {
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   for (int i = 0; i < 3; ++i) h.tick(1);    // live
   // A damaged run (a cluster of zeros, longer than one read) and a torn
@@ -910,7 +1039,7 @@ static int test_unbuildable_row_is_skipped_not_a_stall() {
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   w.connected = false;
   for (int i = 0; i < 6; ++i) h.tick(1);
@@ -950,7 +1079,7 @@ static int test_torn_tail_is_parked_not_reread_every_pass() {
     Planner p;
     a.boot();
     p.begin(w.nvs_ceiling, a.stored, w);
-    open_card(w, p);
+    open_card(w, p, a);
     Host h{w, p, a};
     w.connected = false;
     for (int i = 0; i < 2; ++i) h.tick(1);   // held: 1..2
@@ -961,7 +1090,7 @@ static int test_torn_tail_is_parked_not_reread_every_pass() {
   Planner p;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);                           // arms the seal for the next append
+  open_card(w, p, a);                           // arms the seal for the next append
   Host h{w, p, a};
   w.connected = true;                        // the link returns after the reboot
   for (int i = 0; i < 60; ++i) h.tick();     // replay 1..2, skip 3, hit the tail
@@ -987,7 +1116,7 @@ static int test_nvs_failure_still_delivers() {
   w.nvs_ok = false;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   for (int i = 0; i < 5; ++i) h.tick(1);
   w.connected = false;
@@ -1003,7 +1132,7 @@ static int test_pass_bounds_under_a_big_backlog() {
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   w.connected = false;
   for (int i = 0; i < 300; ++i) h.tick(1);
@@ -1029,7 +1158,7 @@ static int test_queue_longer_than_one_drain_holds_the_walk() {
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   for (int i = 0; i < 3; ++i) h.tick(1);           // live: 1..3
   w.connected = false;
@@ -1038,7 +1167,7 @@ static int test_queue_longer_than_one_drain_holds_the_walk() {
   for (int i = 0; i < 6; ++i) h.tick(1);           // the offline queue: 4..9
   for (int i = 0; i < 5; ++i) (void)w.publish_or_queue(true, 900 + i, false);
   w.card_in = true;                                // and comes back
-  open_card(w, p);
+  open_card(w, p, a);
   for (int i = 0; i < 8; ++i) h.tick(1);           // held on the card: 10..17
   CHECK(w.offline.size() == 11);                   // three drains' worth
   CHECK(p.pending());
@@ -1073,7 +1202,7 @@ static int test_send_failure_mid_walk_resends_the_row() {
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   w.connected = false;
   for (int i = 0; i < 20; ++i) h.tick(1);          // held: 1..20
@@ -1111,7 +1240,7 @@ static int test_failed_send_then_reboot_skips_at_most_a_stride() {
   Planner p;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   {
     Host h{w, p, a};
     for (int i = 0; i < 10; ++i) h.tick(1);        // live: 1..10 (ceiling 11)
@@ -1125,7 +1254,7 @@ static int test_failed_send_then_reboot_skips_at_most_a_stride() {
   Planner q;
   a.boot();
   q.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, q);
+  open_card(w, q, a);
   Host h{w, q, a};
   w.connected = true;
   h.drain();
@@ -1147,13 +1276,13 @@ static int test_remount_mid_backlog_sends_no_duplicate() {
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   for (int i = 0; i < 5; ++i) h.tick(1);           // live: 1..5
   w.connected = false;
   for (int i = 0; i < 5; ++i) h.tick(1);           // held: 6..10
   p.card_close();                                  // the card drops and remounts
-  open_card(w, p);
+  open_card(w, p, a);
   w.connected = true;
   h.drain();
   CHECK(each_once(w.ha, 1, 10));
@@ -1166,7 +1295,7 @@ static int test_remount_mid_backlog_sends_no_duplicate() {
   for (int i = 0; i < 1000 && p.stats().replayed < 8; ++i) h.tick();
   CHECK(p.pending());
   p.card_close();
-  open_card(w, p);
+  open_card(w, p, a);
   h.drain();
   CHECK(each_once(w.ha, 1, 18));
   CHECK(w.ha.accepted.size() == 18);
@@ -1182,7 +1311,7 @@ static int test_reboot_after_backfill_republishes_nothing() {
   Planner p;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   {
     Host h{w, p, a};
     w.connected = false;
@@ -1194,7 +1323,7 @@ static int test_reboot_after_backfill_republishes_nothing() {
   Planner q;
   a.boot();
   q.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, q);
+  open_card(w, q, a);
   CHECK(q.watermark() >= 25);
   Host h{w, q, a};
   w.connected = false;
@@ -1216,7 +1345,7 @@ static int test_queue_path_then_reboot_republishes_nothing() {
   Planner p;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   {
     Host h{w, p, a};
     w.connected = false;
@@ -1232,7 +1361,7 @@ static int test_queue_path_then_reboot_republishes_nothing() {
   a.boot();
   q.begin(w.nvs_ceiling, a.stored, w);
   w.card_in = true;
-  open_card(w, q);
+  open_card(w, q, a);
   Host h{w, q, a};
   h.drain();
   CHECK(q.stats().replayed == 0);
@@ -1254,7 +1383,7 @@ static int out_of_step_via(Path path) {
   Planner p;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   {
     Host h{w, p, a};
     for (int i = 0; i < 4; ++i) (void)a.allocate();  // 1..4 never reach the pump
@@ -1292,7 +1421,7 @@ static int out_of_step_via(Path path) {
   Planner q;
   a.boot();
   q.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, q);
+  open_card(w, q, a);
   CHECK(q.watermark() < a.next);   // the new boot's first id is not "delivered"
   Host h{w, q, a};
   w.connected = false;
@@ -1306,14 +1435,16 @@ static int out_of_step_via(Path path) {
 
 static int test_nvs_lost_treats_the_card_as_delivered() {
   // NVS comes back empty and refuses writes (no ceiling, no id floor): the
-  // log already on the card is treated as delivered, as on the first boot
-  // of this firmware, rather than replayed into HA's gate (which would take
-  // the last row twice and refuse the rest).
+  // log already on the card is not replayed into HA's gate (which would
+  // take the last row twice and refuse the rest). Since F46 its ids are at
+  // or above the restarted allocator's next id, so the planner neither
+  // sends them nor credits them: the watermark stays below the allocator,
+  // and the card's rows are simply not owed.
   World w; Allocator a;
   Planner p;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   {
     Host h{w, p, a};
     for (int i = 0; i < 10; ++i) h.tick(1);        // live: 1..10
@@ -1325,8 +1456,8 @@ static int test_nvs_lost_treats_the_card_as_delivered() {
   a.boot();
   q.begin(w.nvs_ceiling, a.stored, w);
   CHECK(q.stored_ceiling() == 0);
-  open_card(w, q);
-  CHECK(q.watermark() >= 10);
+  open_card(w, q, a);
+  CHECK(q.watermark() < a.next);   // nothing at or above the allocator credited
   CHECK(!q.pending());
   Host h{w, q, a};
   h.drain();
@@ -1356,7 +1487,7 @@ static int test_isolated_read_failures_do_not_abandon_the_backlog() {
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   w.connected = false;
   for (int i = 0; i < 60; ++i) h.tick(1);          // held: 1..60
@@ -1385,7 +1516,7 @@ static int test_read_past_a_damaged_run_breaks_the_failure_run() {
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   w.connected = false;
   for (int i = 0; i < 3; ++i) h.tick(1);           // held: 1..3
@@ -1421,7 +1552,7 @@ static int test_short_read_mid_file_is_retried_not_stepped_over() {
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   w.connected = false;
   for (int i = 0; i < 10; ++i) h.tick(1);          // held: 1..10
@@ -1463,7 +1594,7 @@ static int test_a_bad_sector_mid_row_gives_up_once() {
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   w.connected = false;
   std::vector<uint32_t> starts;
@@ -1490,13 +1621,13 @@ static int test_isolated_failures_while_skipping_delivered_rows() {
   World w; Planner p; Allocator a;
   a.boot();
   p.begin(w.nvs_ceiling, a.stored, w);
-  open_card(w, p);
+  open_card(w, p, a);
   Host h{w, p, a};
   for (int i = 0; i < 200; ++i) h.tick(1);          // live: 1..200
   w.connected = false;
   for (int i = 0; i < 5; ++i) h.tick(1);            // held: 201..205
   p.card_close();
-  open_card(w, p);                                  // remount: walk from the head
+  open_card(w, p, a);                                  // remount: walk from the head
   w.connected = true;
   const long r0 = w.reads_ever;
   w.fail_read_nos = {r0 + 2, r0 + 6, r0 + 10};      // isolated, all in the skip phase
@@ -1519,7 +1650,9 @@ int main() {
   RUN(test_new_boot_ids_are_not_mistaken_for_delivered);
   RUN(test_first_boot_of_this_firmware);
   RUN(test_interleaved_id_spaces_are_never_refused);
-  RUN(test_one_bundled_row_moves_the_watermark_for_good);
+  RUN(test_upgrade_from_a_bundler_space_ceiling);
+  RUN(test_a_forged_card_id_is_never_sent_or_credited);
+  RUN(test_rows_committed_after_the_link_was_read_are_trusted);
   RUN(test_retention_cut_moves_the_cursor);
   RUN(test_no_broker_then_a_broker_is_not_flooded);
   RUN(test_broker_change_drops_the_backlog);

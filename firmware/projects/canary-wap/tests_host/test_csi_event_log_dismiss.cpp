@@ -12,6 +12,8 @@
  *     the others as they were, and does not turn the dismissal line into a
  *     row of its own; a dismissal whose record is outside the tail is ignored;
  *   - iterate_since() (MQTT backfill) does not replay the dismissal line;
+ *   - nor a line whose id this device never handed out (at or above the
+ *     allocator's next id: forged or foreign, backlog F46);
  *   - a dismissal that lands between the commit and the commit hook's copy
  *     of the ring row does not turn the original into a dismissal: append()
  *     writes it "dismissed":0, the queued dismissal follows, and after a
@@ -225,6 +227,29 @@ int main() {
     reboot();
     CHECK(csi_event_log::load_into_ring() == 1 && dismissed_in_ring(30),
           "after a reboot the event is back, dismissed, not lost");
+  }
+
+  // ── A line this device never handed out is never replayed (F46). A card
+  //    is input: a forged line near the top of the id space would go out
+  //    signed with this device's key, and Home Assistant would refuse the
+  //    device's real events from then on. Every id it handed out is below
+  //    the allocator's next one. ─────────────────────────────────────────
+  {
+    reboot();
+    const uint32_t next = csi_event_get_next_event_id();
+    SD.files["/EVENTS/today.ndjson"] = line_for(40, false) + line_for(0xFFFFFFF0u, false) +
+                                       line_for(next, false) + line_for(next - 1, false) +
+                                       line_for(41, false);
+    std::vector<uint32_t> seen;
+    auto collect = [](const csi_event_record_t* rec, void* user) {
+      static_cast<std::vector<uint32_t>*>(user)->push_back(rec->event_id);
+      return true;
+    };
+    CHECK(csi_event_log::iterate_since(0, collect, &seen) == 3,
+          "backfill replays the three lines this device could have written");
+    CHECK(seen.size() == 3 && seen[0] == 40 && seen[1] == next - 1 && seen[2] == 41,
+          "not the forged id near the top, not the allocator's next id");
+    CHECK(csi_event_get_next_event_id() == next, "and the walk allocated nothing");
   }
 
   if (g_fail == 0) {

@@ -34,7 +34,15 @@ namespace {
  * canary-wap's csi_integration.cpp and host-tested across modeled reboots:
  * s_id_floor_stored is the value NVS holds, and an allocation at or past
  * it writes id + STRIDE before the id goes out. So NVS is always above
- * every id handed out, and a reboot skips ids at worst and reuses none. */
+ * every id handed out, and a reboot skips ids at worst and reuses none.
+ *
+ * One id space (backlog F46): every row, bundled or not, takes its id at
+ * commit from the one allocator, which starts at kIdSpaceBase, above every
+ * id an older firmware handed out. The restore is boot_floor(): it also
+ * holds the floor at or above the backfill's delivery ceiling
+ * (csi.evsent), so a boot whose floor writes failed while its ceiling
+ * writes did not never reissues an id Home Assistant already has. No extra
+ * write: the boot's first allocation is the write. */
 constexpr const char* kNvsNamespace = "securacv";
 constexpr const char* kNvsKeyEventId = "csi.evid";
 /* The SD backfill's delivery ceiling (csi_event_backfill.h): always above
@@ -48,11 +56,10 @@ void restore_event_id_floor() {
   Preferences prefs;
   if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return;
   const uint32_t persisted = (uint32_t)prefs.getULong(kNvsKeyEventId, 0);
+  const uint32_t delivered = (uint32_t)prefs.getULong(kNvsKeyDelivered, 0);
   prefs.end();
-  if (persisted > 0) {
-    csi_event_set_event_id_floor(persisted);
-    __atomic_store_n(&s_id_floor_stored, persisted, __ATOMIC_RELAXED);
-  }
+  csi_event_set_event_id_floor(csi_event_id_floor::boot_floor(persisted, delivered));
+  if (persisted > 0) __atomic_store_n(&s_id_floor_stored, persisted, __ATOMIC_RELAXED);
 }
 
 void persist_event_id_floor(uint32_t new_id) {
@@ -178,6 +185,10 @@ csi_event_backfill::Link current_link() {
   link.connected = mqtt_connected();
   link.id_floor  = __atomic_load_n(&s_id_floor_stored, __ATOMIC_RELAXED);
   link.now_ms    = millis();
+  /* Every id this device handed out is below the allocator's next one, so a
+   * card line at or above it is not ours: the planner never sends or credits
+   * it (backlog F46). */
+  link.id_next   = csi_event_get_next_event_id();
   return link;
 }
 
@@ -281,7 +292,7 @@ extern "C" void csi_event_egress_pump(void) {
   uint32_t log_size = 0;
   uint32_t tail_id = 0;
   switch (csi_event_log::poll(s_owner_fp, &log_size, &tail_id)) {
-    case csi_event_log::Card::kOpened: s_backfill.card_open(log_size, tail_id); break;
+    case csi_event_log::Card::kOpened: s_backfill.card_open(log_size, tail_id, link); break;
     case csi_event_log::Card::kClosed: s_backfill.card_close(); break;
     case csi_event_log::Card::kUnchanged: break;
   }

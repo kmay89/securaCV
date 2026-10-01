@@ -92,12 +92,12 @@ std::atomic<int>         s_last_update_auto{-1};
  * only have verified ids this device handed over, and the ceiling is
  * always above every one of those. */
 uint32_t                 s_last_published_event_id = 0;
-/* The delivery ceiling NVS holds (0 = none yet): csi_event_backfill's
- * rule over this sketch's own iterate_since backfill — the same key the
- * canary PIO tree's egress writes, persisted BEFORE an id is handed
- * over, capped at the id allocator's persisted floor so a new boot's
- * ids are never read as delivered (csi_event_backfill::ceiling_for). */
-constexpr const char*    NVS_KEY_DELIVERED = "csi.evsent";
+/* The delivery ceiling NVS holds (0 = none yet) under NVS_KEY_DELIVERED
+ * (csi_mqtt.h): csi_event_backfill's rule over this sketch's own
+ * iterate_since backfill — the same key the canary PIO tree's egress
+ * writes, persisted BEFORE an id is handed over, capped at the id
+ * allocator's persisted floor so a new boot's ids are never read as
+ * delivered (csi_event_backfill::ceiling_for). */
 uint32_t                 s_delivered_ceiling = 0;
 bool                     s_watermark_restored = false;
 Config                   s_active_cfg   = {};
