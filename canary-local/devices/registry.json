@@ -595,7 +595,7 @@
       "shows": [],
       "modality": "wifi-csi",
       "network": {
-        "mdns": "canary.local + canary-<name>.local",
+        "mdns": "canary.local + canary-<name>.local (unnamed: canary-<4 hex>.local)",
         "web": "full dashboard on device (:80)",
         "mqtt": "sensing + witness chain + mesh"
       },

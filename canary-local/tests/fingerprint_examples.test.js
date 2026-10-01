@@ -52,6 +52,20 @@ const WAP = "firmware/projects/canary-wap/arduino/canary_wap";
 
 const read = (rel) => readFileSync(join(REPO, rel), "utf8");
 
+// ── the repo's Ed25519 test key ────────────────────────────────────────────
+// seed 0x42 x 32 -> Ed25519 public key -> SHA256("securacv:pubkey:fingerprint"
+// || 0x00 || pubkey)[0..8], canary_wap.ino's compute_fingerprint.
+function testKey() {
+  const pkcs8 = Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), Buffer.alloc(32, 0x42)]);
+  const priv = crypto.createPrivateKey({ key: pkcs8, format: "der", type: "pkcs8" });
+  const pub = crypto.createPublicKey(priv).export({ format: "der", type: "spki" }).subarray(-32);
+  const fp = crypto.createHash("sha256")
+    .update("securacv:pubkey:fingerprint").update(Buffer.from([0])).update(pub)
+    .digest().subarray(0, 8);
+  return { pub, fp, fpHex: fp.toString("hex") };
+}
+const KEY = testKey();
+
 // ── what a rule is ─────────────────────────────────────────────────────────
 // page: the devices/*.json file. where: the JSON path the example sits at.
 // labels: what names it (the property, the payload key, or the word before
@@ -166,7 +180,8 @@ function examplesIn(page, data) {
 }
 
 const PAGES = readdirSync(DEVICES).filter((f) => f.endsWith(".json")).sort();
-const EXAMPLES = PAGES.flatMap((page) => examplesIn(page, JSON.parse(readFileSync(join(DEVICES, page), "utf8"))));
+const DATA = Object.fromEntries(PAGES.map((page) => [page, JSON.parse(readFileSync(join(DEVICES, page), "utf8"))]));
+const EXAMPLES = PAGES.flatMap((page) => examplesIn(page, DATA[page]));
 
 const rulesFor = (ex) => RULES.filter((r) => r.page === ex.page && r.where.test(ex.path) && r.labels.includes(ex.label));
 
@@ -234,14 +249,7 @@ test("every fp / pubkey example in the generated JSON has the length and case it
 });
 
 test("the WAP page's fingerprint is the repo test key's, as the firmware test and HA spell it", () => {
-  // seed 0x42 x 32 -> Ed25519 public key -> SHA256("securacv:pubkey:fingerprint"
-  // || 0x00 || pubkey)[0..8], canary_wap.ino's compute_fingerprint.
-  const pkcs8 = Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), Buffer.alloc(32, 0x42)]);
-  const priv = crypto.createPrivateKey({ key: pkcs8, format: "der", type: "pkcs8" });
-  const pub = crypto.createPublicKey(priv).export({ format: "der", type: "spki" }).subarray(-32);
-  const fp = crypto.createHash("sha256")
-    .update("securacv:pubkey:fingerprint").update(Buffer.from([0])).update(pub)
-    .digest().subarray(0, 8).toString("hex");
+  const { pub, fpHex: fp } = KEY;
   assert.ok(read(`${WAP}/canary_wap.ino`).includes('sha256_domain("securacv:pubkey:fingerprint", pub, 32, hash);'),
     "compute_fingerprint's domain moved; re-derive the test key's fp");
   assert.ok(read(`${WAP}/canary_wap.ino`).includes("uint8_t sep = 0x00;"), "sha256_domain's separator moved");
@@ -259,4 +267,86 @@ test("the WAP page's fingerprint is the repo test key's, as the firmware test an
   assert.strictEqual(boot[0].value, fp.toUpperCase(), "the boot line is the same 8 bytes, in hex_to_str's capitals");
   for (const e of wap.filter((x) => x.label === "public_key"))
     assert.strictEqual(e.value, pub.toString("hex"), `${e.path}: not the test key`);
+});
+
+// ── the WAP's names (sweep A29) ────────────────────────────────────────────
+// canary_wap.ino derives three names from pubkey_fp[0..1], and none of them
+// from the MAC:
+//   device id  generate_device_id: DEVICE_ID_PREFIX + unambiguous_suffix16
+//   SSID       generate_ap_ssid:   "SecuraCV-" + the same suffix, same case
+//   mDNS host  generate_mdns_hostname with no friendly name set:
+//              "canary-%02x%02x", four lowercase hex digits, no "-s3-"
+// The page used to show device id canary-s3-ab7k beside SSID SecuraCV-AB7K
+// (one suffix in two cases, which one device cannot produce) and host
+// canary-ab7k.local (k is not hex; only a friendly name could make it). Now
+// every one is the test key's, derived here from the seed, so a page that
+// shows fp 7916ca487912fa1b shows the names that key's device has. HA's
+// tests/test_fingerprint_case.py calls the same device canary-s3-4dC2; it is
+// outside canary-local.yml's path filter, so it is derived here, not read.
+const INO = read(`${WAP}/canary_wap.ino`);
+const WAP_NAME_PINS = [
+  'snprintf(out, cap, "%s%s", DEVICE_ID_PREFIX, suffix)',
+  'snprintf(out, cap, "SecuraCV-%s", suffix)',
+  "out[i] = UNAMBIGUOUS_ALPHABET[v % UNAMBIGUOUS_LEN];",
+  "v = (uint16_t)(v / UNAMBIGUOUS_LEN);",
+  'snprintf(out, cap, "canary-%02x%02x",\n           g_device.pubkey_fp[0], g_device.pubkey_fp[1]);',
+];
+const FP_SUFFIX_CALL = "unambiguous_suffix16((uint16_t)((g_device.pubkey_fp[0] << 8) | g_device.pubkey_fp[1]),\n" +
+  "                       suffix);";
+
+function wapNames(fp) {
+  const alphabet = INO.match(/UNAMBIGUOUS_ALPHABET\[\] =\s*"([^"]+)";/)[1];
+  const prefix = INO.match(/#else\s*static const char\* DEVICE_ID_PREFIX = "([^"]+)";/)[1];
+  let v = (fp[0] << 8) | fp[1];
+  let suffix = "";
+  for (let i = 0; i < 4; i++) {
+    suffix += alphabet[v % alphabet.length];
+    v = Math.floor(v / alphabet.length);
+  }
+  const hex2 = (b) => b.toString(16).padStart(2, "0");
+  return { id: prefix + suffix, ssid: "SecuraCV-" + suffix, host: `canary-${hex2(fp[0])}${hex2(fp[1])}.local` };
+}
+const WAP_NAMES = wapNames(KEY.fp);
+
+// Every string in the generated JSON, with its page and path.
+function* allStrings() {
+  for (const page of PAGES)
+    for (const [path, s] of strings(DATA[page], "")) yield { page, path, s };
+}
+// Placeholders a page may show instead of a value: a SoftAP name nobody owns.
+const SSID_PLACEHOLDER = "SecuraCV-XXXX";
+
+test("the WAP's names derive from the test key the way canary_wap.ino derives them", () => {
+  for (const pin of WAP_NAME_PINS) assert.ok(INO.includes(pin), `canary_wap.ino no longer has ${JSON.stringify(pin)}`);
+  assert.strictEqual(INO.split(FP_SUFFIX_CALL).length - 1, 2,
+    "generate_device_id and generate_ap_ssid no longer both encode pubkey_fp[0..1]");
+  // the derivation itself, on values a reader can check by hand: 0x7916 is
+  // 30998 = 2 + 34*54 + 10*54^2 -> digits 2, 34, 10, 0 -> "4dC2"
+  assert.deepStrictEqual(wapNames(Buffer.from([0x79, 0x16])),
+    { id: "canary-s3-4dC2", ssid: "SecuraCV-4dC2", host: "canary-7916.local" });
+  assert.strictEqual(KEY.fpHex.slice(0, 4), "7916", "the seed's fingerprint moved");
+});
+
+test("every WAP device id, SSID and unnamed host a generated page shows is the test key's", () => {
+  const found = { id: [], ssid: [], host: [] };
+  const problems = [];
+  for (const { page, path, s } of allStrings()) {
+    for (const m of s.matchAll(/\bcanary-[cs]3-[A-Za-z0-9]+/g)) found.id.push({ page, path, v: m[0] });
+    for (const m of s.matchAll(/\bSecuraCV-[A-Za-z0-9]+/g))
+      if (m[0] !== SSID_PLACEHOLDER) found.ssid.push({ page, path, v: m[0] });
+    for (const m of s.matchAll(/\bcanary-[0-9A-Fa-f]{4}\.local\b/g)) found.host.push({ page, path, v: m[0] });
+  }
+  for (const kind of ["id", "ssid", "host"])
+    for (const f of found[kind])
+      if (f.v !== WAP_NAMES[kind]) problems.push(`${f.page} ${f.path}: ${f.v} is not the test key's ${kind} (${WAP_NAMES[kind]})`);
+  assert.deepStrictEqual(problems, []);
+
+  const wap = DATA["wap.json"];
+  assert.strictEqual(wap.device.id_example, WAP_NAMES.id);
+  assert.strictEqual(wap.ap.ssid_example, WAP_NAMES.ssid);
+  assert.strictEqual(wap.ap.mdns_example, WAP_NAMES.host);
+  // the boot log's Device ID and AP lines, and the ready block's two rows
+  const onWap = (kind) => found[kind].filter((f) => f.page === "wap.json").length;
+  assert.ok(onWap("id") >= 3, `wap.json: ${onWap("id")} device ids found (the sweep's match broke?)`);
+  assert.ok(onWap("ssid") >= 3, `wap.json: ${onWap("ssid")} SSIDs found (the sweep's match broke?)`);
 });

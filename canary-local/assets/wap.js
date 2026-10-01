@@ -141,7 +141,7 @@ async function main() {
     for (const [k, v] of [
       ["SoftAP", d.ap.ssid_example + " · WPA2 · ch " + d.ap.channel + " · " + d.ap.max_clients + " client"],
       ["Password", d.ap.password_example + "  (" + d.ap.password_scheme.split(":")[0] + "…, unique per device)"],
-      ["Reach it", "canary.local · " + d.ap.mdns_example + " · " + d.ap.ip],
+      ["Reach it", "canary.local · " + d.ap.mdns_example + " (unnamed; canary-<name>.local once named) · " + d.ap.ip],
       ["Captive", "A→" + d.ap.ip + " (TTL " + d.captive.dns.a_ttl + "s); Apple 200 · Android 204 · Windows NCSI"],
       ["Times out", "abandoned portal reboots after " + d.ap.setup_timeout_min + " min; AP lingers " + d.ap.ap_grace_sec + "s after join"],
     ]) {

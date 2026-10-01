@@ -153,10 +153,13 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
    the broker credentials (if you ran the one-command installer: username
    `canary`, password from **Settings → Apps → Mosquitto broker →
    Configuration → Logins**), save, and let it restart.
-2. If the wizard doesn't appear (or the Canary was set up before), open
-   `http://canary-<id>.local` (the device's unique hostname, shown in the
-   boot banner — e.g. `http://canary-s3-ab7k.local`) or `http://192.168.4.1`
-   in your browser. If you only have one Canary, plain `http://canary.local`
+2. If the wizard doesn't appear (or the Canary was set up before), open its
+   unique hostname or `http://192.168.4.1` in your browser. On a Canary WAP
+   the hostname is `http://canary-<name>.local` once you have named it, and
+   until then `http://canary-` plus four lowercase hex digits, the first two
+   bytes of its key fingerprint (e.g. `http://canary-7916.local`); its serial
+   log's `[PROV] Public key fingerprint:` line starts with the same four
+   digits, in capitals. If you only have one Canary, plain `http://canary.local`
    may also resolve, but each Canary always advertises its unique hostname
    so multiple devices on the same network don't collide. `/setup` on any of
    those addresses reopens the wizard. On a `firmware/canary` unit that is

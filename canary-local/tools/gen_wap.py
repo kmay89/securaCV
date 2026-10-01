@@ -147,13 +147,6 @@ for needle in ("Set up your Canary", "canary.local", "192.168.4.1"):
 must(CAPTIVE_PROBE_H, "Microsoft NCSI", "Windows NCSI body")
 must(CAPTIVE_PROBE_H, "Microsoft Connect Test", "Windows connecttest body")
 
-# Example (illustrative) values — every real device's are unique + private.
-EX_SUFFIX = "AB7K"
-EX_ID = "canary-s3-ab7k"
-EX_SSID = f"{AP_SSID_PREFIX}{EX_SUFFIX}"
-EX_PASS = "cv-7Q2M9XKP4RTN"
-EX_MDNS = "canary-ab7k.local"
-
 # The fingerprint: the repo's Ed25519 test key's (seed 0x42 x 32, public key
 # 2152f8d1...81db12), the key the WAP's tests_host/test_mqtt_identity.cpp and
 # Home Assistant's tests/test_fingerprint_case.py sign with, so the page, the
@@ -164,6 +157,51 @@ EX_MDNS = "canary-ab7k.local"
 # line prints g_device.fingerprint_hex, which hex_to_str spells in capitals.
 EX_FP = "7916ca487912fa1b"
 EX_FP_SERIAL = EX_FP.upper()
+
+# Every other identity example on the page is the same key's (sweep A29), as
+# the firmware derives each one from pubkey_fp[0..1]:
+#   device id  generate_device_id: DEVICE_ID_PREFIX + unambiguous_suffix16
+#   SSID       generate_ap_ssid:   "SecuraCV-" + the same suffix, same case
+#   mDNS host  generate_mdns_hostname, with no friendly name set:
+#              "canary-%02x%02x", four lowercase hex digits, no "-s3-"
+# so the page shows the device id Home Assistant's tests use (DEVICE_ID,
+# canary-s3-4dC2), the SSID that device raises, and the host it advertises
+# until it is named (canary-<name> after). A name the page used to show
+# (canary-ab7k.local) is one only a friendly name could produce. The AP
+# password stays illustrative: it is HMAC-derived from the PRIVATE key, a
+# credential rather than an identity, and no host test pins that derivation.
+UNAMBIGUOUS = grab(INO, r'UNAMBIGUOUS_ALPHABET\[\] =\s*"([^"]+)";', "UNAMBIGUOUS_ALPHABET")
+DEVICE_ID_PREFIX = grab(INO, r'#else\s*static const char\* DEVICE_ID_PREFIX = "([^"]+)";',
+                        "the S3 DEVICE_ID_PREFIX")
+_FP_SUFFIX_CALL = ("unambiguous_suffix16((uint16_t)((g_device.pubkey_fp[0] << 8) | "
+                   "g_device.pubkey_fp[1]),\n                       suffix);")
+if read(INO).count(_FP_SUFFIX_CALL) != 2:
+    die("generate_device_id and generate_ap_ssid no longer both encode pubkey_fp[0..1] — "
+        "re-derive the identity examples")
+must(INO, 'snprintf(out, cap, "%s%s", DEVICE_ID_PREFIX, suffix)', "device id format")
+must(INO, "out[i] = UNAMBIGUOUS_ALPHABET[v % UNAMBIGUOUS_LEN];", "unambiguous_suffix16 digit")
+must(INO, "v = (uint16_t)(v / UNAMBIGUOUS_LEN);", "unambiguous_suffix16 radix step")
+must(INO, 'snprintf(out, cap, "canary-%02x%02x",\n           g_device.pubkey_fp[0], g_device.pubkey_fp[1]);',
+     "unnamed mDNS host fallback")
+if AP_SSID_PREFIX != "SecuraCV-":
+    die(f"AP_SSID_PREFIX {AP_SSID_PREFIX!r} is not generate_ap_ssid's literal \"SecuraCV-\"")
+
+
+def unambiguous_suffix16(v: int) -> str:
+    """canary_wap.ino's unambiguous_suffix16: four base-54 digits, least first."""
+    out = ""
+    for _ in range(4):
+        out += UNAMBIGUOUS[v % len(UNAMBIGUOUS)]
+        v //= len(UNAMBIGUOUS)
+    return out
+
+
+_FP0, _FP1 = bytes.fromhex(EX_FP)[:2]
+EX_SUFFIX = unambiguous_suffix16((_FP0 << 8) | _FP1)
+EX_ID = f"{DEVICE_ID_PREFIX}{EX_SUFFIX}"
+EX_SSID = f"{AP_SSID_PREFIX}{EX_SUFFIX}"
+EX_PASS = "cv-7Q2M9XKP4RTN"
+EX_MDNS = "canary-%02x%02x.local" % (_FP0, _FP1)
 must(MQTT_IDENTITY_H, 'kLowerHex[] = "0123456789abcdef"', "envelope fp spelled in lowercase")
 must(INO, "mqtt_identity::fingerprint_hex(mqtt_fp_hex, g_device.pubkey_fp);",
      "envelope fp spelled by mqtt_identity::fingerprint_hex")
@@ -176,7 +214,9 @@ must(INO, 'Serial.printf("[PROV] Public key fingerprint: %s\\n", g_device.finger
 AP = {
     "ssid_example": EX_SSID,
     "ssid_prefix": AP_SSID_PREFIX,
-    "ssid_note": "last 4 chars are your device's pubkey fingerprint (unambiguous alphabet, no 0/O/1/I/l) — never the MAC",
+    "ssid_note": "the last 4 chars are the first two bytes of your device's pubkey fingerprint "
+                 "in the unambiguous alphabet (no 0/O/o, 1/I/i/l/L), the same suffix, in the same "
+                 "case, as its device id — never the MAC",
     "password_example": EX_PASS,
     "password_scheme": 'WPA2-PSK, device-unique: HMAC-SHA256(privkey, "securacv:ap-password:v1") -> "cv-" + 12 chars',
     "password_note": "printed on the serial console at first boot and on the box card; no shared default; release builds fail closed",
@@ -186,7 +226,7 @@ AP = {
     "hidden": False,
     "http_port": HTTP_PORT,
     "https_port": HTTPS_PORT,
-    "mdns": ["canary.local", "canary-<name>.local"],
+    "mdns": ["canary.local", "canary-<name>.local", "canary-<4 hex>.local"],
     "mdns_example": EX_MDNS,
     "mdns_services": [
         {"service": "_http._tcp", "port": 80},

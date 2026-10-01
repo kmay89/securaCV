@@ -99,7 +99,11 @@ make monitor
    - **http://canary.local** — single-device catch-all (first Canary on the
      network claims it)
    - **http://canary-\<name\>.local** — each device's unique mDNS hostname
-     (e.g. `canary-kitchen.local` after you name it, or `canary-ab7k.local`)
+     once you name it (e.g. `canary-kitchen.local`). Until then it is
+     `canary-` plus four lowercase hex digits, the first two bytes of its key
+     fingerprint (e.g. `canary-7916.local`), not its device id's suffix; the
+     serial log's `[PROV] Public key fingerprint:` line starts with the same
+     four digits, in capitals
    - **http://192.168.4.1** — numeric fallback that always works
    > When a TLS certificate is available the dashboard is served over
    > **HTTPS (port 443)** and plain-HTTP requests are redirected; without a
@@ -222,7 +226,7 @@ as a bearer header or the dashboard's session cookie.
 
 ```json
 {
-  "device_id": "canary-s3-AB7K",
+  "device_id": "canary-s3-4dC2",
   "firmware": "2.1.0",
   "uptime_sec": 3600,
   "chain_seq": 1234,
