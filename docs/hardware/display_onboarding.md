@@ -85,7 +85,8 @@ the AMOLED at the default type. Three different reasons put them there:
   whole line would fit there (221 px of "No address from the router" on a
   222 px line).
 
-The last two are decisions, not limits of the glass, and are filed as such.
+The last two are decisions, not limits of the glass, and are filed as such
+(F86 and F87).
 Everything else reads whole, stepping down to the default Character's type
 under Heirloom where it must ("On your phone" on the round watch's 142 px
 title row; on the portrait glass and the touch169, the bodies, "Check your

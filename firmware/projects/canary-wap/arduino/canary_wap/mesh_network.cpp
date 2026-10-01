@@ -1442,7 +1442,7 @@ static bool persist_peers() {
   return true;
 }
 
-// Before add_peer re-bound a member it already held (#<W8>), a re-pair
+// Before add_peer re-bound a member it already held (#1761), a re-pair
 // appended a second entry for the same key at the address that pairing
 // came from, and persist_peers saved both. Lookups reached only the first,
 // and the verified-frame re-bind (gone, spec §8.3) kept its address

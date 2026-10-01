@@ -453,7 +453,7 @@ void test_a_re_pair_re_binds_the_member_it_holds() {
   CHECK(mn::g_peer_count == 2);
   CHECK(same_mac(entry(B, A)->mac_addr, A.mac));
   // B rebooted to change its address, so its counter for A restarted at 1
-  // (NEW item, open): A drops B's frames 1..3 as replays, from B's new
+  // (F71, open): A drops B's frames 1..3 as replays, from B's new
   // address too, and hears frame 4.
   for (uint64_t want = 1; want <= 3; ++want) {
     const Frame f = b_heartbeat_to(A);
@@ -608,7 +608,7 @@ void test_a_joiner_does_not_complete_before_its_owner_confirms() {
   // and OFFER of A's carries, and sends COMPLETE straight after B's
   // ACCEPT. B's owner has confirmed nothing, and A's screen shows no code.
   // This used to complete: with the opera_secret X re-bound A to X's radio
-  // (a re-pair, since #<W8>), and without it B's opera was replaced by X's.
+  // (a re-pair, since #1761), and without it B's opera was replaced by X's.
   uint8_t x_pub[32];
   memcpy(x_pub, X.pub, sizeof x_pub);
   for (int knows_secret = 0; knows_secret < 2; ++knows_secret) {
@@ -764,7 +764,7 @@ void test_an_initiator_forgets_a_finished_pairing() {
 
 // ── An entry the old re-pair duplicated ─────────────────────────────────
 //
-// Before #<W8>, a re-pair with a member this device already held appended
+// Before #1761, a re-pair with a member this device already held appended
 // a second entry for the same key, at the address that pairing came from,
 // and persist_peers saved both. Lookups reached only the first; the frame
 // re-bind kept it current. Without that re-bind the first entry strands
