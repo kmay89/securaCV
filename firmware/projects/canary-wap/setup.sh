@@ -303,6 +303,24 @@ setup_arduino() {
         print_warn "witness_store not found at ${witness_src} — sketch will not compile until firmware/common/witness/ is restored"
     fi
 
+    # The chain-state blob codec + boot source decision and the
+    # when-to-persist + failure-streak rules (both pure, host-tested) are
+    # single canonical sources shared with the PIO canary tree. Stage
+    # byte-identical copies next to the sketch; check_csi_sync.sh guards them.
+    for chain_header in chain_state.h chain_persist.h; do
+        if [ -f "${witness_src}/${chain_header}" ]; then
+            cp "${witness_src}/${chain_header}" "${arduino_dir}/" 2>/dev/null || true
+            if [ -f "${arduino_dir}/${chain_header}" ]; then
+                print_success "Copied ${chain_header}"
+            else
+                print_error "Failed to stage ${chain_header} to ${arduino_dir}"
+                return 1
+            fi
+        else
+            print_warn "${chain_header} not found at ${witness_src} — sketch will not compile until firmware/common/witness/ is restored"
+        fi
+    done
+
     # GNSS UTC date/time -> validated Unix epoch (the NMEA-time trust window +
     # calendar math the GPS-derived system clock relies on) is a single
     # canonical, header-only source shared with the PIO canary tree

@@ -111,6 +111,10 @@ static PresenceConfig make_presence_config() {
 static PresenceFSM g_presence(PresenceConfig{});
 
 static void poll_sense_cfg_commands(uint32_t now);
+static void refresh_snapshot(uint32_t now_ms);
+// The health payload's radar object, or nullptr while the link has not been
+// judged yet — see radar_link_health().
+static const canary::net::RadarLinkHealth* radar_link_health(uint32_t now_ms);
 
 #ifdef CANARY_SENSE_VITALS
 using securacv::mmwave::VitalsConfig;
@@ -178,7 +182,7 @@ static bool mqtt_supervise(uint32_t now) {
     canary::net::publish_status_retained(TOPICS, "online");
     // Trust surface: health carries the pubkey HA TOFU-pins on; the
     // retained chain head lets HA verify continuity immediately.
-    canary::net::publish_health_retained(TOPICS);
+    canary::net::publish_health_retained(TOPICS, radar_link_health(now));
     canary::net::publish_chain_retained(TOPICS);
     g_last_health_ms = now;
     return true;
@@ -503,6 +507,29 @@ static void set_last_event(const char* e) {
   g_snap.last_event = g_last_event;
 }
 
+// Has the radar link been judged at all? True once a presence frame has
+// been decoded, or once the stall window has elapsed since boot with none —
+// either way the FSM's state is a verdict. Before that (the boot-time MQTT
+// connect runs before loop() has drained the UART even once) the link is
+// simply unobserved, and the health payload must not report it as down.
+static bool     g_radar_frame_seen = false;
+static uint32_t g_radar_boot_ms    = 0;
+static bool radar_link_judged(uint32_t now_ms) {
+  if (g_radar_frame_seen) return true;
+  const uint32_t stall = canary::cfg::sense().stall_timeout_ms;
+  return (int32_t)(now_ms - g_radar_boot_ms) >= (int32_t)stall;
+}
+
+static const canary::net::RadarLinkHealth* radar_link_health(uint32_t now_ms) {
+  static canary::net::RadarLinkHealth h;
+  if (!radar_link_judged(now_ms)) return nullptr;
+  refresh_snapshot(now_ms);
+  h.link_ok           = g_snap.radar_ok;
+  h.last_frame_age_ms = g_snap.radar_frame_age_ms;
+  h.frame_errors      = g_snap.frame_errors;
+  return &h;
+}
+
 static void refresh_snapshot(uint32_t now_ms) {
   g_snap.presence  = presence_str(g_presence.state());
   g_snap.present   = (g_presence.state() == Presence::Present);
@@ -510,6 +537,7 @@ static void refresh_snapshot(uint32_t now_ms) {
   g_snap.range     = range_str(g_presence.range());
   g_snap.radar_ok  = (g_presence.state() != Presence::Unknown);
   g_snap.frame_errors = g_parser.error_count();
+  g_snap.radar_frame_age_ms = now_ms - g_presence.last_frame_ms();  // wrap-safe
   g_snap.uptime_s  = now_ms / 1000;
   g_snap.ts_ms     = now_ms;
 }
@@ -736,6 +764,7 @@ void setup() {
 
   const uint32_t boot_ms = millis();
   g_parser.reset();
+  g_radar_boot_ms = canary::ms_now();
   g_presence.reconfigure(make_presence_config(), boot_ms);
 #ifdef CANARY_SENSE_VITALS
   g_vitals.reconfigure(make_vitals_config(), boot_ms);
@@ -867,6 +896,12 @@ void loop() {
   for (Frame frame = g_parser.poll(); frame.kind != securacv::mmwave::FrameKind::None;
        frame = g_parser.poll()) {
     g_last_raw = frame;  // bench-only echo; see the raw-mode privacy note
+    if (frame.kind == securacv::mmwave::FrameKind::Presence && !g_radar_frame_seen) {
+      // First verdict on the link: the boot-time health publish left the
+      // radar object out; refresh it now instead of after HEALTH_PUBLISH_MS.
+      g_radar_frame_seen = true;
+      g_last_health_ms = now - HEALTH_PUBLISH_MS;
+    }
     drive_fsms(frame, now);
     any_frame = true;
   }
@@ -960,7 +995,7 @@ void loop() {
   // store and diagnostics).
   if ((int32_t)(now - g_last_health_ms) >= (int32_t)HEALTH_PUBLISH_MS) {
     g_last_health_ms = now;
-    canary::net::publish_health_retained(TOPICS);
+    canary::net::publish_health_retained(TOPICS, radar_link_health(now));
   }
 
   // Health heartbeat. Under heap pressure the diagnostics ladder stretches

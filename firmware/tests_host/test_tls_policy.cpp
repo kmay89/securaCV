@@ -177,6 +177,26 @@ static void fingerprint_is_64_lowercase_hex() {
   }
 }
 
+// ── mDNS TLS advertisement (F15) ──────────────────────────────────────────
+
+static void mdns_advert_reflects_tls_state() {
+  // Live: tls="1" and the secure port is advertised.
+  MdnsTlsAdvert on = mdns_tls_advert(true, 443);
+  CHECK(std::strcmp(on.tls_txt, "1") == 0, "live advert says tls=1: %s", on.tls_txt);
+  CHECK(on.advertise_secure_port, "live advert carries the secure port");
+  CHECK(on.secure_port == 443, "live advert port is 443: %u", on.secure_port);
+
+  // Not live: tls="0" and no port (a client must not try a dead 443).
+  MdnsTlsAdvert off = mdns_tls_advert(false, 443);
+  CHECK(std::strcmp(off.tls_txt, "0") == 0, "http-only advert says tls=0: %s", off.tls_txt);
+  CHECK(!off.advertise_secure_port, "http-only advert carries no secure port");
+  CHECK(off.secure_port == 0, "http-only advert port is 0: %u", off.secure_port);
+
+  // A nonstandard secure port is carried through verbatim when live.
+  MdnsTlsAdvert alt = mdns_tls_advert(true, 8443);
+  CHECK(alt.secure_port == 8443, "alt port carried: %u", alt.secure_port);
+}
+
 int main() {
   decide_every_row();
   decide_names_the_first_blocker();
@@ -187,6 +207,7 @@ int main() {
   probes_always_exempt();
   pages_exempt_only_during_setup();
   fingerprint_is_64_lowercase_hex();
+  mdns_advert_reflects_tls_state();
 
   if (g_failures) {
     std::printf("test_tls_policy: %d failure(s)\n", g_failures);

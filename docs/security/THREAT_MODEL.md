@@ -655,6 +655,24 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     not name the removed device, and two concurrent removals on canary-wap
     devices can still split that household (a wire change). Host-tested;
     crypto review and bench pending.
+  - One outer frame for both trees (spec §4.5, `mesh_wire.h` staged
+    byte-identical): the type byte of a signed frame used to mean different
+    messages on the two trees (`TAMPER_ALERT` 18 vs 4; canary-wap's
+    `CHANNEL_LOCK`/`HUB_ELECTION` on the PIO values of `OFFLINE_IMMINENT`/
+    `WITNESS_RECORD`), so a validly signed frame could have been read as a
+    different message on the other side. Both now take the version byte
+    (1) and every type from one registry, the envelope is the frame (the
+    PIO tree's unsigned type prefix is gone — one fewer unauthenticated
+    byte, dispatch already keyed on the signed type), and a pairing type
+    can never equal a version byte. What remains: the payloads of
+    `TAMPER_ALERT` and the pairing exchange differ, so the trees still
+    cannot pair, and a frame is only ever verified against a pinned peer
+    key. This is a wire break with no negotiation: a pre-v0.4 and a
+    post-v0.4 build of either tree drop each other's frames, so an opera
+    is updated as a whole and re-paired (spec §4.5 "Compatibility").
+    Host-tested (a frame built canary-wap's way verifies on the PIO
+    session; version-0 and prefixed shapes are dropped); **maintainer
+    crypto review pending; not bench-verified.**
 
 ### Chirp channel (anonymous, community, soft-alert)
 

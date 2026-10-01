@@ -279,6 +279,79 @@ clean-http-body:
 run: run-http-body
 clean: clean-http-body
 
+# The SD event log's reboot refill (csi_event_log::load_into_ring): the REAL
+# csi_event_log.cpp and the staged CSI chokepoint (csi_event_inject) over a
+# RAM card (stubs/sd_fake) — not before arm_load() (the id floor restored),
+# tail window (a boundary-aligned window keeps its first line), refused
+# lines, owner-file cards, no card writes, the watchdog fed on the walk, no
+# read after a live row, once per boot. The staged sources are byte-identical to
+# firmware/common/csi/src (check_csi_sync.sh).
+EVLOAD_BIN = test_csi_event_log_load
+EVLOAD_SRC = test_csi_event_log_load.cpp
+EVLOAD_LIB = $(SRC_DIR)/csi_event_log.cpp $(SRC_DIR)/csi_event.cpp \
+             $(SRC_DIR)/csi_module.cpp $(SRC_DIR)/csi_bundler.cpp
+
+$(EVLOAD_BIN): $(EVLOAD_SRC) $(EVLOAD_LIB) $(SRC_DIR)/csi_event_log.h $(SRC_DIR)/csi_event.h \
+               $(SRC_DIR)/csi_event_log_line.h $(wildcard stubs/sd_fake/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	  -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EVLOAD_SRC) $(EVLOAD_LIB)
+
+.PHONY: run-evlog-load clean-evlog-load
+run-evlog-load: $(EVLOAD_BIN)
+	$(call run_marked,$(EVLOAD_BIN))
+clean-evlog-load:
+	rm -f $(EVLOAD_BIN)
+run: run-evlog-load
+clean: clean-evlog-load
+
+# A dismissal survives that refill: csi_event_log::queue_dismissal /
+# flush_dismissals write the dismissed row as one more line, load_into_ring
+# restores the event dismissed, iterate_since does not replay the dismissal,
+# and a dismissal inside the commit hook's window does not lose the original.
+# Same REAL sources and RAM card as the load test above.
+EVDISMISS_BIN = test_csi_event_log_dismiss
+EVDISMISS_SRC = test_csi_event_log_dismiss.cpp
+
+$(EVDISMISS_BIN): $(EVDISMISS_SRC) $(EVLOAD_LIB) $(SRC_DIR)/csi_event_log.h $(SRC_DIR)/csi_event.h \
+                  $(SRC_DIR)/csi_event_log_line.h $(wildcard stubs/sd_fake/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	  -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EVDISMISS_SRC) $(EVLOAD_LIB)
+
+.PHONY: run-evlog-dismiss clean-evlog-dismiss
+run-evlog-dismiss: $(EVDISMISS_BIN)
+	$(call run_marked,$(EVDISMISS_BIN))
+clean-evlog-dismiss:
+	rm -f $(EVDISMISS_BIN)
+run: run-evlog-dismiss
+clean: clean-evlog-dismiss
+
+# The differential-privacy budget (dp.h / dp.cpp) is enforced and fails
+# closed: all-or-nothing reservations, value-independent refusals, exact
+# exhaustion, a refill only on the 4 h uptime clock (never on a manual
+# rotation, never on a reboot: the spend persisted with its epoch, over a
+# fake ledger_store), no release completing across a refill, no overspend
+# under racing threads, and the calibrated noise scale. The REAL dp.cpp over
+# stubs/dp; rf_presence.cpp and rf_presence_api.h are read for source pins
+# (their paths are passed in, so the pins fail closed).
+DPBUDGET_BIN = test_dp_budget
+DPBUDGET_SRC = test_dp_budget.cpp
+
+$(DPBUDGET_BIN): $(DPBUDGET_SRC) $(SRC_DIR)/dp.cpp $(SRC_DIR)/dp.h $(SRC_DIR)/health_log.h \
+                 $(SRC_DIR)/rf_presence.cpp $(SRC_DIR)/rf_presence_api.h beacon_source_scan.h \
+                 $(wildcard stubs/dp/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -pthread -I stubs/dp -I $(SRC_DIR) \
+	  -DRF_PRESENCE_CPP='"$(abspath $(SRC_DIR))/rf_presence.cpp"' \
+	  -DRF_PRESENCE_API_H='"$(abspath $(SRC_DIR))/rf_presence_api.h"' \
+	  -o $@ $(DPBUDGET_SRC) $(SRC_DIR)/dp.cpp
+
+.PHONY: run-dp-budget clean-dp-budget
+run-dp-budget: $(DPBUDGET_BIN)
+	$(call run_marked,$(DPBUDGET_BIN))
+clean-dp-budget:
+	rm -f $(DPBUDGET_BIN)
+run: run-dp-budget
+clean: clean-dp-budget
+
 $(BEACON_TAMPER_BIN): $(BEACON_TAMPER_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_TAMPER_SRC) -lcrypto
 
@@ -440,7 +513,7 @@ clean:
 PAIR_FRAME_BIN = test_mesh_pair_frame
 PAIR_FRAME_SRC = test_mesh_pair_frame.cpp
 
-$(PAIR_FRAME_BIN): $(PAIR_FRAME_SRC) $(SRC_DIR)/mesh_pair_frame.h
+$(PAIR_FRAME_BIN): $(PAIR_FRAME_SRC) $(SRC_DIR)/mesh_pair_frame.h $(SRC_DIR)/mesh_wire.h
 	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(PAIR_FRAME_SRC)
 
 .PHONY: run-pair-frame clean-pair-frame
@@ -501,6 +574,62 @@ clean-revocation:
 
 run: run-revocation
 clean: clean-revocation
+
+# v0.4 (spec §4.5 — awaiting crypto review, not bench-verified): the Opera
+# mesh wire registry. mesh_wire.h is the PlatformIO tree's header, staged
+# byte-identical (check_mesh_sync.sh); its own suite runs here against the
+# STAGED copy, and test_mesh_wire_wap pins what mesh_network.{h,cpp} do with
+# it (every MessageType value an initializer from the registry, the version
+# gate before the type read, the header field order on send, the pairing
+# classifier's types) by reading the real files (beacon_source_scan.h).
+WIRE_WAP_BIN    = test_mesh_wire_wap
+WIRE_WAP_SRC    = test_mesh_wire_wap.cpp
+WIRE_STAGED_BIN = test_mesh_wire_staged
+WIRE_STAGED_SRC = ../../../canary/lib/securacv_mesh/test_mesh_wire.cpp
+
+$(WIRE_WAP_BIN): $(WIRE_WAP_SRC) $(SRC_DIR)/mesh_wire.h $(SRC_DIR)/mesh_pair_frame.h $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp beacon_source_scan.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -DMESH_NETWORK_H='"$(abspath $(SRC_DIR))/mesh_network.h"' -o $@ $(WIRE_WAP_SRC)
+
+# The sketch stages the registry alone, not the PIO envelope that takes its
+# version from it, so the suite's envelope include (its macro-clash guard's
+# second half) is off here; the PIO job compiles it with the envelope.
+$(WIRE_STAGED_BIN): $(WIRE_STAGED_SRC) $(SRC_DIR)/mesh_wire.h
+	$(CXX) $(CXXFLAGS) -Werror -DMESH_WIRE_STAGED_ONLY -I $(SRC_DIR) -o $@ $(WIRE_STAGED_SRC)
+
+.PHONY: run-wire clean-wire
+run-wire: $(WIRE_WAP_BIN) $(WIRE_STAGED_BIN)
+	./$(WIRE_WAP_BIN)
+	./$(WIRE_STAGED_BIN)
+clean-wire:
+	rm -f $(WIRE_WAP_BIN) $(WIRE_STAGED_BIN)
+
+run: run-wire
+clean: clean-wire
+
+# The v0.4 review's three pre-existing receive-path gaps (host-tested only,
+# not bench-verified, awaiting crypto review): the replay counter convention
+# (first counter 1, strict greater-than, no rx==0 exemption — the same lines
+# pinned in the PIO mesh_session.cpp), the source MAC bound only after
+# signature + opera_id + replay (it was bound before verify), and every
+# struct-payload handler refusing any length but its struct's (the PIO
+# 6-byte TAMPER_ALERT, mesh_alert.h, used to be read as the 56-byte struct).
+# Reads the real mesh_network.{h,cpp} (beacon_source_scan.h; paths passed in,
+# so the pins fail closed) and includes the PIO mesh_alert.h for its length.
+RX_GATES_BIN = test_mesh_rx_gates_wap
+RX_GATES_SRC = test_mesh_rx_gates_wap.cpp
+PIO_MESH_SRC = ../../../canary/lib/securacv_mesh/src
+
+$(RX_GATES_BIN): $(RX_GATES_SRC) $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(PIO_MESH_SRC)/mesh_session.cpp $(PIO_MESH_SRC)/mesh_alert.h beacon_source_scan.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(PIO_MESH_SRC) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -DMESH_NETWORK_H='"$(abspath $(SRC_DIR))/mesh_network.h"' -DMESH_SESSION_CPP='"$(abspath $(PIO_MESH_SRC))/mesh_session.cpp"' -o $@ $(RX_GATES_SRC)
+
+.PHONY: run-rx-gates clean-rx-gates
+run-rx-gates: $(RX_GATES_BIN)
+	$(call run_marked,$(RX_GATES_BIN))
+clean-rx-gates:
+	rm -f $(RX_GATES_BIN)
+
+run: run-rx-gates
+clean: clean-rx-gates
 
 # The CSI active probe under the airtime governor (the follow-up to sweep F4,
 # #1696), end to end — the REAL csi_probe scheduler (the sketch's staged copy,
@@ -751,13 +880,15 @@ clean: clean-sketch-logic
 # check_csi_sync.sh). test_nvs_store_lock compiles the REAL nvs_store.h over
 # stubs/nvs_store (Serial, String, a typed Preferences that refuses a double
 # begin and counts closed-handle access) and the canary suite's fake
-# recursive mutex, and runs the canary's scenarios on the WAP's code plus its
-# nvs_store:: helpers and legacy wrappers; it also reads canary_wap.ino for
-# the watchdog static_assert. Built twice: the _nolock binary is the first
-# instance() meeting a failed mutex creation. test_nvs_session_balance reads
-# every sketch source and fails on a block that opens a session and does not
-# close it (the vault's pre-F53 shape). Hooked into `run` and `clean` by
-# prerequisite so it adds no hunk to their lists.
+# recursive mutex, and runs the canary's scenarios on the WAP's code plus the
+# RAII NvsMainSession guard (F60) and the nvs_store:: helpers; it also reads
+# canary_wap.ino for the watchdog static_assert. Built twice: the _nolock
+# binary is the first instance() meeting a failed mutex creation.
+# test_nvs_session_balance reads every sketch source and fails on one that
+# names NvsManager outside nvs_store.h — the rule that keeps every session
+# behind the guard (its first edition balanced begin/end pairs textually;
+# the guard's destructor made the compiler walk the paths instead). Hooked
+# into `run` and `clean` by prerequisite so it adds no hunk to their lists.
 NVSLOCK_BIN        = test_nvs_store_lock
 NVSLOCK_NULL_BIN   = test_nvs_store_lock_nolock
 NVSBAL_BIN         = test_nvs_session_balance

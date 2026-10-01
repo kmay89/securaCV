@@ -503,8 +503,8 @@ TOPICS = [
      "payload": '{"v":1,"length":313,"latest_hash":"9c2e…","algorithm":"ed25519","alg":"ed25519","fp":"%s","sig":"…"}' % EX_FP,
      "note": "HA rebuilds the canonical from (device_id, length, latest_hash) and verifies against the TOFU-pinned pubkey"},
     {"suffix": "health", "retained": True, "cadence": "~60 s + on reconnect",
-     "payload": '{"battery":100,"battery_present":false,"memory_free":145120,"uptime":312,"firmware_version":"%s","public_key":"…"}' % FW_VERSION,
-     "note": "carries the pubkey Home Assistant TOFU-pins on first sight — the green-badge trust anchor"},
+     "payload": '{"battery":100,"battery_present":false,"memory_free":145120,"uptime":312,"firmware_version":"%s","public_key":"…","radar":{"link_ok":true,"last_frame_age_ms":412,"frame_errors":0}}' % FW_VERSION,
+     "note": "carries the pubkey Home Assistant TOFU-pins on first sight — the green-badge trust anchor — and the radar-link object HA's diagnostic sensor reads (link_ok / last_frame_age_ms / frame_errors)"},
     {"suffix": "update/state", "retained": True, "cadence": "on OTA state change",
      "payload": '{"installed_version":"%s","latest_version":"%s","in_progress":false,"update_percentage":null}' % (FW_VERSION, FW_VERSION)},
     {"suffix": "update/auto", "retained": True, "cadence": "on toggle", "payload": '"ON" | "OFF"'},
@@ -594,7 +594,7 @@ must(DISC_CPP, "FEATURE_VITALS_BPM_P1", "P1 gate")
 USE_CASES = [
     {"title": "Restricted-zone witness", "where": "workshop, server closet, storage cage",
      "how": "ceiling/wall mount; the presence FSM emits signed PresenceInRestrictedZone claims with coarse time buckets",
-     "why": "works in total darkness where a camera can't, and indoors where WiFi-CSI is noisy — HVAC airflow doesn't affect radar"},
+     "why": "works in total darkness where a camera can't, and indoors where WiFi-CSI is noisy — though a fan or A/C vent in the sector is radar's documented false-positive, so placement matters"},
     {"title": "After-hours corroboration", "where": "paired with a camera / canary-vision zone",
      "how": "radar presence + camera person-detection in the same time bucket = a two-physics corroborated event",
      "why": "much stronger evidentiary weight — and a contradiction (camera says person, radar says empty) surfaces as an anomaly worth flagging"},
@@ -621,7 +621,9 @@ CAPABILITIES = [
     {"cap": "Heart rate", "vision": "no", "wap": "no", "sense": "~85% accuracy, ≤1.5 m"},
     {"cap": "Target count", "vision": "bbox count", "wap": "aggregate only", "sense": "yes (0 / 1 / 2+)"},
     {"cap": "Identity surface at sensor", "vision": "image exists on module", "wap": "none", "sense": "none"},
-    {"cap": "Affected by light / temp / dust", "vision": "yes (camera)", "wap": "no", "sense": "no"},
+    {"cap": "Affected by light / dust", "vision": "yes (camera)", "wap": "no", "sense": "no"},
+    {"cap": "Affected by temperature", "vision": "no", "wap": "no", "sense": "noise floor rises with temperature — keep the radome off hot surfaces"},
+    {"cap": "Affected by moving air / fabric", "vision": "no", "wap": "yes", "sense": "yes — fans, A/C flow, swaying curtains (the documented #1 false-positive)"},
 ]
 must(DESIGN, "fail independently", "multi-witness corroboration")
 

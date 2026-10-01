@@ -140,8 +140,8 @@ CURATED = [
                             "opt_mount", "opt_weep", "screw_head", "opt_shield"],
         "part_labels": {
             "all": "Assembled preview (not for printing)",
-            "base": "Base — the tub",
-            "lid": "Lid",
+            "base": "Back plate — the chassis",
+            "lid": "Shell — face, walls and posts",
             "coupon": "Clip-fit coupon (print first)",
             "gasket": "Gasket ring — print in TPU",
             "shield": "Solar radiation shield",
@@ -150,10 +150,12 @@ CURATED = [
         "part_info": {
             "all": "Every part in place, for looking around — pick a single "
                    "part when you want an STL to print.",
-            "base": "The tub the boards and battery clip into. Prints flat, "
-                    "open side up, no supports.",
-            "lid": "Snaps onto the base; prints face-down. Your options "
-                   "carve its windows, vents and ports.",
+            "base": "The plate the boards and battery clip into. It nests "
+                    "inside the shell's walls and takes the four short screws "
+                    "from the back; prints flat, boards side up, no supports.",
+            "lid": "The one-piece show part — face, side walls and the screw "
+                   "posts — printed face-down; the only seam is on the back. "
+                   "Your options carve its windows, vents and ports.",
             "coupon": "A one-clip fit tester for this case — print it before "
                       "a full lid to dial in the snap.",
             "gasket": "The soft seal ring for weather builds — print in TPU, "
@@ -212,8 +214,8 @@ CURATED = [
                             "mount_style", "opt_weep", "seal_mid_posts"],
         "part_labels": {
             "all": "Assembled preview (not for printing)",
-            "back": "Back shell",
-            "front": "Front face",
+            "back": "Back plate — the chassis",
+            "front": "Shell — face, walls and posts",
             "gasket": "Gasket ring — print in TPU",
             "bracket": "Wall bracket",
             "knob": "Hinge knob",
@@ -222,10 +224,13 @@ CURATED = [
         "part_info": {
             "all": "Every part in place, for looking around — pick a single "
                    "part when you want an STL to print.",
-            "back": "The wall-side shell. Boards clip in; the hinge knuckle "
-                    "or keyholes grow from its back.",
-            "front": "The face with the lens aperture and clear-disc seat — "
-                     "screws into the back with 4× M2.",
+            "back": "The plate the boards clip into. It nests inside the "
+                    "shell's walls and takes the short M2 screws from the "
+                    "back; the keyholes are in it.",
+            "front": "The one-piece show part — the face with the lens "
+                     "aperture and clear-disc seat, the side walls, the screw "
+                     "posts and the hinge fins — printed face-down; the only "
+                     "seam is on the back.",
             "gasket": "The soft seal ring for weather builds — print in TPU; "
                       "switch Weather seal ON first.",
             "bracket": "The wall bracket the hinge clicks into — four screws "
@@ -281,18 +286,21 @@ CURATED = [
                             "opt_weep"],
         "part_labels": {
             "all": "Assembled preview (not for printing)",
-            "body": "Body",
-            "face": "Face",
+            "body": "Body — the back plate, the chassis",
+            "face": "Face — the one-piece shell",
             "plate": "Wall plate",
             "gasket": "Gasket ring — print in TPU",
         },
         "part_info": {
             "all": "Every part in place, for looking around — pick a single "
                    "part when you want an STL to print.",
-            "body": "The main shell the module stack lives in — it hangs on "
-                    "the plate's T-studs and locks with the hidden screw.",
-            "face": "The visible front: lens aperture, button hole, and the "
-                    "gasket groove behind.",
+            "body": "The plate the module stack lives on. It nests inside "
+                    "the face's walls on the short screws from the back, "
+                    "hangs on the wall plate's T-studs and locks with the "
+                    "hidden screw.",
+            "face": "The one-piece show part — lens aperture, button hole, "
+                    "side walls and posts, the gasket ledge inside — printed "
+                    "face-down; the only seam is against the wall plate.",
             "plate": "The wall plate with the T-studs. The wedge angles live "
                      "here — the case aims wherever the plate points.",
             "gasket": "The soft TPU ring that seals face to body against "
@@ -342,8 +350,8 @@ CURATED = [
                             "mount_style"],
         "part_labels": {
             "all": "Assembled preview (not for printing)",
-            "back": "Back shell",
-            "front": "Front face — the radome",
+            "back": "Back plate — the chassis",
+            "front": "Shell — the radome face, walls and posts",
             "gasket": "Gasket ring — print in TPU",
             "bracket": "Wall bracket",
             "knob": "Hinge knob",
@@ -351,10 +359,13 @@ CURATED = [
         "part_info": {
             "all": "Every part in place, for looking around — pick a single "
                    "part when you want an STL to print.",
-            "back": "The mounting shell — the radar carrier clips in with "
-                    "the XIAO hanging beneath it.",
-            "front": "The radome face. The window over the antenna stays "
-                     "thin, flat and empty — that's the physics working.",
+            "back": "The plate the radar carrier clips into, the XIAO "
+                    "hanging beneath it; it nests inside the shell's walls "
+                    "and takes the four short M2 screws from the back.",
+            "front": "The one-piece show part — radome face, side walls, "
+                     "posts and hinge fins, printed face-down. The window "
+                     "over the antenna stays thin, flat and empty — that's "
+                     "the physics working.",
             "gasket": "The soft TPU seal ring — switch Weather seal ON "
                       "first; indoor ceilings rarely need it.",
             "bracket": "Wall bracket for the hinge mount — same part the "
@@ -682,8 +693,11 @@ def build_manifest() -> dict:
         # grays exactly preset_controls while the preset is not "custom" — so
         # the two are one list. The WAP's and the Vision's presets overrode
         # opt_weep while the builder left its checkbox live: a control that
-        # did nothing, with nothing saying so.
-        overridden = set(re.findall(r"=\s*_pre\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,",
+        # did nothing, with nothing saying so. A case that exports a flag per
+        # preset for a fitment to read (the WAP's wap_e_battery(pr)) writes it
+        # as `= _pre_p(pr, opt_x, ...)` (the preset argument spelled `pr`, so the
+        # `_pre()` wrapper's own definition is not read as an override).
+        overridden = set(re.findall(r"=\s*_pre(?:_p\(\s*pr\s*,|\()\s*([A-Za-z_][A-Za-z0-9_]*)\s*,",
                                     src.read_text(encoding="utf-8")))
         if overridden and not spec["preset_param"]:
             sys.exit(f"{spec['file']}: the source has a preset (_pre) but the "
@@ -1102,6 +1116,58 @@ def write_site(carries: dict[str, bytes], site: Path) -> list[str]:
     return written
 
 
+# ── the reverse carry: what the WEBSITE fetches from THIS tree at runtime ──
+# The showroom, story and figures pages fetch STLs, board GLBs, figure SVGs
+# and the device catalogs live from this repository (raw.githubusercontent,
+# github.io). The website derives the list of those paths from its own
+# sources into upstream-contract.json (its scripts/make-upstream-contract.mjs,
+# byte-gated there). A --site run carries that contract HERE, and
+# scripts/tests/test_site_contract.py holds every path and pattern in it to
+# the tree — so a rename on this side fails this repository's CI, not a
+# visitor's browser. Absent on the site (a checkout older than the
+# contract), the carry is skipped with a notice; once carried it is a
+# committed file the test reads.
+SITE_CONTRACT_IN = "upstream-contract.json"
+SITE_CONTRACT_OUT = REPO / "canary-local" / "devices" / "site_contract.json"
+
+
+def _rel(p: Path) -> str:
+    """p relative to the repository for messages (the tests redirect the
+    carried file into a temp dir, where it is not under REPO)."""
+    try:
+        return str(p.relative_to(REPO))
+    except ValueError:
+        return p.name
+
+
+def site_contract(site: Path) -> bytes | None:
+    """The bytes canary-local/devices/site_contract.json must hold for the
+    website checkout `site`, or None when the site has no contract yet."""
+    src = site / SITE_CONTRACT_IN
+    if not src.is_file():
+        return None
+    try:
+        data = json.loads(src.read_text(encoding="utf-8"))
+    except ValueError as e:
+        sys.exit(f"{src} is not JSON: {e}")
+    paths = data.get("paths")
+    patterns = data.get("patterns", [])
+    if not isinstance(paths, list) or not all(isinstance(x, str) and x for x in paths):
+        sys.exit(f"{src}: \"paths\" must be a list of repository-relative paths")
+    if not isinstance(patterns, list) or not all(isinstance(x, str) and x for x in patterns):
+        sys.exit(f"{src}: \"patterns\" must be a list of glob patterns")
+    for x in [*paths, *patterns]:
+        if x.startswith("/") or ".." in x.split("/"):
+            sys.exit(f"{src}: {x!r} is not a repository-relative path")
+    out = {
+        "carried_from": f"securacv_website/{SITE_CONTRACT_IN}",
+        "generated_by": data.get("generated_by", ""),
+        "paths": sorted(set(paths)),
+        "patterns": sorted(set(patterns)),
+    }
+    return (json.dumps(out, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--check", action="store_true",
@@ -1139,6 +1205,14 @@ def main(argv: list[str] | None = None) -> int:
             sys.exit("rerun gen_builder_manifest.py --site "
                      f"{args.site} (then the site's model generators, if cad-dims.json moved)")
         print(f"website carries in {args.site} are up to date ({total} files)")
+        contract = site_contract(args.site)
+        if contract is None:
+            print(f"{args.site} has no {SITE_CONTRACT_IN} — the reverse carry is skipped")
+        elif not (SITE_CONTRACT_OUT.is_file() and SITE_CONTRACT_OUT.read_bytes() == contract):
+            sys.exit(f"{_rel(SITE_CONTRACT_OUT)} is stale against the site's "
+                     f"{SITE_CONTRACT_IN} — rerun gen_builder_manifest.py --site {args.site}")
+        else:
+            print(f"{_rel(SITE_CONTRACT_OUT)} is current")
         return 0
     written = write_site(carries, args.site)
     if written:
@@ -1149,6 +1223,14 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"website carries in {args.site} are already current ({total} files) — "
               f"nothing written")
+    contract = site_contract(args.site)
+    if contract is None:
+        print(f"{args.site} has no {SITE_CONTRACT_IN} — the reverse carry is skipped")
+    elif SITE_CONTRACT_OUT.is_file() and SITE_CONTRACT_OUT.read_bytes() == contract:
+        print(f"{_rel(SITE_CONTRACT_OUT)} is unchanged — not rewritten")
+    else:
+        SITE_CONTRACT_OUT.write_bytes(contract)
+        print(f"wrote {SITE_CONTRACT_OUT}")
     return 0
 
 

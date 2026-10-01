@@ -10,10 +10,13 @@ PQ features are **feature-gated**:
 ```
 cargo build --features pqc-signatures   # ML-DSA-44 signatures
 cargo build --features pqc-vault        # ML-KEM-768 vault encryption
-cargo build --features pqc-tls          # Post-quantum TLS transport
+cargo build --features pqc-tls          # Hybrid PQ key exchange for the MQTT bridges' client TLS
 ```
 
-Dependencies are not compiled unless the corresponding feature is enabled.
+Dependencies are not compiled unless the corresponding feature is enabled. None
+of the three is in the default build: a default build signs with Ed25519 only,
+seals vaults with ChaCha20-Poly1305 only, and its MQTT TLS is classic
+(`MQTT_TLS_BACKEND=hybrid_pq` exits with an error unless `pqc-tls` is compiled in).
 
 ## Signatures (pqc-signatures)
 

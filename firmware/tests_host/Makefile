@@ -116,6 +116,14 @@ TESTCON_BIN = $(BUILD_DIR)/test_test_console
 BOOTPOL_HDR = ../common/health/boot_policy.h
 BOOTPOL_BIN = $(BUILD_DIR)/test_boot_policy
 
+# Boot guard (common/health/boot_guard.h): the NVS / OTA-state glue that feeds
+# boot_policy.h on a device, compiled over a fake NVS and a fake OTA partition
+# (stubs/boot_guard/) — the count persists and trips, a pending image never
+# enters safe mode, every escape works (a different build included, the same
+# build not), rollback churn does not inflate, a broken NVS boots normally.
+BOOTGUARD_HDRS = ../common/health/boot_guard.h $(BOOTPOL_HDR) $(wildcard stubs/boot_guard/*.h)
+BOOTGUARD_BIN = $(BUILD_DIR)/test_boot_guard
+
 # SD mount-recovery decisions (common/storage/sd_mount_policy.h): the pure
 # table around the blocking SD mount/teardown work — never pile onto an
 # in-flight mount (watchdog crash-loop), never rebuild or free driver state
@@ -262,6 +270,13 @@ SETUPPAGE_JS = test_canary_setup_page.test.js
 # "from card, chain-linked" and never "Verified", the card page's next_hint
 # rides the next click as ?hint=, and "no card" retires Load More.
 TIMELINE_JS = test_canary_timeline.test.js
+
+# The canary dashboard's health-log list (securacv_webui.cpp, loadLogs): an
+# entry's timestamp_ms is the device's uptime at log time (repo sweep F49
+# part 1), shown as an age against GET /api/logs' uptime_ms — the same
+# lift-and-stub approach, with Date poisoned so the old wall-clock
+# rendering cannot come back.
+HEALTHLOG_JS = test_canary_health_logs.test.js
 
 # Shared headless setup portal (common/network): the pure timing choreography
 # (AP linger, quiet background retry, stuck-phone hint) plus the canonical
@@ -572,8 +587,19 @@ $(TESTCON_BIN): test_test_console.cpp $(TESTCON_HDR) Makefile | $(BUILD_DIR)
 $(CHAINST_BIN): test_chain_state.cpp $(CHAINST_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_chain_state.cpp -o $@
 
+# Both boot headers are also built as C++11: the PlatformIO canary tree that
+# includes them compiles at the Arduino 2.0.17 core's default -std=gnu++11,
+# where a multi-statement constexpr body is an error. -fsyntax-only would not
+# run them, so the C++11 builds run too.
 $(BOOTPOL_BIN): test_boot_policy.cpp $(BOOTPOL_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_boot_policy.cpp -o $@
+	$(CXX) $(CXXFLAGS) -std=gnu++11 -I ../common test_boot_policy.cpp -o $@_cxx11
+	./$@_cxx11
+
+$(BOOTGUARD_BIN): test_boot_guard.cpp $(BOOTGUARD_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I stubs/boot_guard -I ../common test_boot_guard.cpp -o $@
+	$(CXX) $(CXXFLAGS) -std=gnu++11 -I stubs/boot_guard -I ../common test_boot_guard.cpp -o $@_cxx11
+	./$@_cxx11
 
 $(SDMOUNT_BIN): test_sd_mount_policy.cpp $(SDMOUNT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_sd_mount_policy.cpp -o $@
@@ -712,7 +738,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -725,6 +751,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(USBONB_BIN)
 	./$(TESTCON_BIN)
 	./$(BOOTPOL_BIN)
+	./$(BOOTGUARD_BIN)
 	./$(SDMOUNT_BIN)
 	./$(WIFIJOIN_BIN)
 	./$(PROVGATE_BIN)
@@ -767,6 +794,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(CSIHAL_BIN)
 	$(NODE) --test $(SETUPPAGE_JS)
 	$(NODE) --test $(TIMELINE_JS)
+	$(NODE) --test $(HEALTHLOG_JS)
 
 clean:
 	rm -rf $(BUILD_DIR)

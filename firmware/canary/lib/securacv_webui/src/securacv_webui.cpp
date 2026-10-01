@@ -4733,7 +4733,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div class="log-content">
             <div class="log-message">${escapeHtml(log.message)}</div>
             ${log.detail ? `<div class="log-detail">${escapeHtml(log.detail)}</div>` : ''}
-            <div class="log-meta">${log.category} · ${formatTimestamp(log.timestamp_ms)} · #${log.seq}</div>
+            <div class="log-meta">${[log.category, formatLogAge(log.timestamp_ms, data.uptime_ms), '#' + log.seq].filter(Boolean).join(' · ')}</div>
           </div>
           <div class="log-actions">
             ${log.ack_status !== 'acknowledged' ? 
@@ -5394,15 +5394,34 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // The subtraction is u32, like the firmware's, so it survives the
     // millis() wrap every ~49.7 days.
     function formatAlertAge(timestampMs, uptimeMs) {
-      const u32 = (v) => Number.isInteger(v) && v >= 0 && v <= 0xFFFFFFFF;
-      if (!u32(timestampMs) || !u32(uptimeMs)) return '';
+      const age = formatLogAge(timestampMs, uptimeMs);
+      return age ? `received ${age}` : '';
+    }
+
+    // A health-log entry's timestamp_ms is the same uptime reading (F49
+    // part 1), shown against the uptime_ms the response carries — or not at
+    // all. The entry timestamp is a u32 millis() value; the uptime base may
+    // be wider. While the device has been up less than one millis() period
+    // (~49.7 days = 2^32 ms) no wrap has happened, so the age is exact
+    // (the >>> 0 still covers an age that straddles a single wrap when the
+    // base is itself u32, as the Opera alert list passes it). Once the
+    // uptime proves MORE than one period has elapsed, a u32 entry timestamp
+    // can no longer be placed in its wrap epoch, so the age would be a
+    // guess (an entry 49.7 days + 1 min old would read as 1 min) — omit it
+    // instead (F49 review, the honesty rule). Hoisting lets formatAlertAge
+    // share it; alerts pass a u32 base and so always take the exact path.
+    function formatLogAge(timestampMs, uptimeMs) {
+      if (!Number.isInteger(timestampMs) || timestampMs < 0 ||
+          timestampMs > 0xFFFFFFFF) return '';
+      if (!Number.isInteger(uptimeMs) || uptimeMs < 0) return '';
+      if (uptimeMs > 0xFFFFFFFF) return '';   // can't place a u32 ts past a wrap
       const sec = Math.floor(((uptimeMs - timestampMs) >>> 0) / 1000);
-      if (sec < 60) return `received ${sec} s ago`;
+      if (sec < 60) return `${sec} s ago`;
       const min = Math.floor(sec / 60);
-      if (min < 60) return `received ${min} min ago`;
+      if (min < 60) return `${min} min ago`;
       const h = Math.floor(min / 60);
-      if (h < 24) return `received ${h} h ${min % 60} min ago`;
-      return `received ${Math.floor(h / 24)} d ${h % 24} h ago`;
+      if (h < 24) return `${h} h ${min % 60} min ago`;
+      return `${Math.floor(h / 24)} d ${h % 24} h ago`;
     }
 
     async function loadOperaAlerts() {

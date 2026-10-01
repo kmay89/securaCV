@@ -22,6 +22,8 @@
 #include "health_log.h"
 
 #include <string.h>
+#include <atomic>
+#include <mutex>
 #include <esp_system.h>  // esp_fill_random
 
 namespace dp {
@@ -101,83 +103,231 @@ int32_t gaussian_sample(uint32_t sigma_units) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// CALIBRATED COUNTER NOISE
+// BUDGET (enforced, persisted, epoch-tagged)
 // ────────────────────────────────────────────────────────────────────────────
+//
+// One ledger: the ε spent in the current window. Every change to it (a
+// reservation, a refill, the boot-time restore) happens under s_ledger_mu,
+// so the value a reservation persists is never older than one another task
+// already persisted. Readers (remaining_budget_x1000 and the draws'
+// generation check) load s_ledger without the lock.
+//
+// s_ledger packs the ledger generation (high 16 bits) with the ε spent in it
+// (low 16 bits). The generation moves on every refill and restore, and a
+// Release remembers the generation it was paid from: a draw, or complete(),
+// in any other generation is refused. So a release cannot finish across a
+// refill, and a new window's releases never ride on a reservation the refill
+// erased. 16 bits of generation wrap after 65 536 refills: only a release
+// held open across an exact multiple of that many would pass the check, and
+// a release lives for one export call.
+//
+// Until restore_budget() has read the persisted ledger, the budget reads as
+// spent and refill_if_due() does nothing: a device that never restored it
+// (safe mode) releases nothing.
+//
+// The ledger's epoch is the rf_presence session epoch at the last refill or
+// restore, and only those move it: a manual rotation bumps the session epoch
+// but leaves the spend (and its epoch) where they are, and the restore after
+// a reboot carries a spend stored under any epoch at or below the current
+// one. The epoch is a consistency check (a record from a later epoch than
+// the device's is not this device's history), not what decides a refill.
 
-static int32_t calibrated_noise(uint32_t sensitivity,
-                                uint16_t epsilon_x1000,
-                                uint32_t delta_inv) {
-  const uint32_t sigma_x1000 = compute_sigma_x1000(sensitivity, epsilon_x1000, delta_inv);
-  // gaussian_sample takes sigma in the SAME units as the output — so for
-  // a counter (units of 1), sigma is sigma_x1000 / 1000. Round-to-nearest.
-  const uint32_t sigma_units = (sigma_x1000 + 500) / 1000;
-  if (sigma_units == 0) return 0;
-  consume_budget(epsilon_x1000);
-  return gaussian_sample(sigma_units);
+static_assert(DEFAULT_BUDGET_X1000 <= 0xFFFFu, "the ledger packs ε spent into 16 bits");
+
+static constexpr uint32_t pack_ledger(uint32_t gen, uint32_t consumed) {
+  return ((gen & 0xFFFFu) << 16) | (consumed & 0xFFFFu);
+}
+static constexpr uint32_t ledger_gen(uint32_t v)      { return v >> 16; }
+static constexpr uint32_t ledger_consumed(uint32_t v) { return v & 0xFFFFu; }
+
+static std::mutex            s_ledger_mu;
+static std::atomic<uint32_t> s_ledger{pack_ledger(0, DEFAULT_BUDGET_X1000)};
+static uint32_t              s_ledger_epoch = 0;      // guarded by s_ledger_mu
+static uint32_t              s_window_start_ms = 0;   // guarded by s_ledger_mu
+static bool                  s_restored = false;      // guarded by s_ledger_mu
+static std::atomic<uint32_t> s_withheld_releases{0};
+
+// All or nothing: spend `cost` if the window's budget covers all of it AND the
+// new total is durably recorded against the ledger's epoch. A write that
+// fails refuses the release and leaves the ledger as it was, so what a reboot
+// restores always covers every draw that was honored.
+static bool try_spend(uint32_t cost_x1000, uint32_t* gen_out) {
+  if (cost_x1000 == 0) return false;
+  std::lock_guard<std::mutex> lock(s_ledger_mu);
+  const uint32_t cur = s_ledger.load();
+  const uint32_t consumed = ledger_consumed(cur);
+  if (consumed > DEFAULT_BUDGET_X1000 ||
+      cost_x1000 > DEFAULT_BUDGET_X1000 - consumed) {
+    return false;
+  }
+  const uint32_t next = consumed + cost_x1000;
+  if (!ledger_store::write(s_ledger_epoch, next)) {
+    health_logging::log(health_logging::LEVEL_ERROR, health_logging::CAT_RF,
+      "DP: could not persist the budget ledger; release withheld");
+    return false;
+  }
+  s_ledger.store(pack_ledger(ledger_gen(cur), next));
+  *gen_out = ledger_gen(cur);
+  return true;
 }
 
-uint32_t noisy_u32(uint32_t value, uint32_t sensitivity,
-                   uint16_t epsilon_x1000, uint32_t delta_inv) {
-  const int32_t noise = calibrated_noise(sensitivity, epsilon_x1000, delta_inv);
+uint32_t remaining_budget_x1000() {
+  const uint32_t c = ledger_consumed(s_ledger.load());
+  return c >= DEFAULT_BUDGET_X1000 ? 0 : DEFAULT_BUDGET_X1000 - c;
+}
+
+uint32_t consumed_budget_x1000() { return ledger_consumed(s_ledger.load()); }
+
+bool refill_if_due(uint32_t epoch, uint32_t now_ms) {
+  bool persisted;
+  {
+    std::lock_guard<std::mutex> lock(s_ledger_mu);
+    // Never before a restore: an unrestored budget stays spent.
+    if (!s_restored) return false;
+    // Wrap-safe: unsigned difference. A clock that wraps (49.7 days) only
+    // ever makes this late, never early.
+    if ((uint32_t)(now_ms - s_window_start_ms) < BUDGET_WINDOW_MS) return false;
+    s_window_start_ms = now_ms;
+    s_ledger_epoch = epoch;
+    s_ledger.store(pack_ledger(ledger_gen(s_ledger.load()) + 1, 0));
+    // Persisted so a reboot restores the fresh window's spend, not the last
+    // window's. A failed write only errs toward spent: the reboot then
+    // restores the older, larger spend. The refill stands in RAM either
+    // way; this window's first reservation writes its own record.
+    persisted = ledger_store::write(epoch, 0);
+  }
+  if (persisted) {
+    health_logging::log(health_logging::LEVEL_INFO, health_logging::CAT_RF,
+      "DP: budget window elapsed; budget refilled");
+  } else {
+    health_logging::log(health_logging::LEVEL_WARNING, health_logging::CAT_RF,
+      "DP: budget refilled, but the ledger write failed (a reboot restores the last window's spend)");
+  }
+  return true;
+}
+
+bool restore_budget(uint32_t epoch, uint32_t now_ms) {
+  uint32_t stored_epoch = 0;
+  uint32_t stored_consumed = 0;
+  uint32_t consumed;
+  bool ok;
+  {
+    std::lock_guard<std::mutex> lock(s_ledger_mu);
+    const ledger_store::Read r = ledger_store::read(&stored_epoch, &stored_consumed);
+    if (r == ledger_store::READ_ABSENT) {
+      consumed = 0;                           // nothing ever spent on this device
+      ok = true;
+    } else if (r != ledger_store::READ_OK || stored_consumed > DEFAULT_BUDGET_X1000 ||
+               stored_epoch > epoch) {
+      consumed = DEFAULT_BUDGET_X1000;        // unreadable or inconsistent: spent
+      ok = false;
+    } else {
+      // The stored spend, whatever epoch it was charged in: a reboot inside
+      // the window, or after any number of manual rotations, is not a
+      // refill. Only refill_if_due() refills.
+      consumed = stored_consumed;
+      ok = true;
+    }
+    s_ledger_epoch = epoch;
+    s_window_start_ms = now_ms;
+    s_restored = true;
+    s_ledger.store(pack_ledger(ledger_gen(s_ledger.load()) + 1, consumed));
+  }
+  // `consumed` is this restore's own value, taken under the lock; the log
+  // does not re-read the shared ledger.
+  if (ok) {
+    health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
+      "DP: budget restored for epoch %u (%u of %u spent)",
+      (unsigned)epoch, (unsigned)consumed, (unsigned)DEFAULT_BUDGET_X1000);
+  } else {
+    health_logging::logf(health_logging::LEVEL_ERROR, health_logging::CAT_RF,
+      "DP: budget ledger unreadable for epoch %u; budget withheld until the next window",
+      (unsigned)epoch);
+  }
+  return ok;
+}
+
+bool budget_exhausted() {
+  return remaining_budget_x1000() == 0;
+}
+
+uint32_t withheld_releases() { return s_withheld_releases.load(); }
+
+// ────────────────────────────────────────────────────────────────────────────
+// RELEASE — the only way to draw calibrated noise
+// ────────────────────────────────────────────────────────────────────────────
+
+Release::Release(uint16_t draws, uint16_t epsilon_x1000, uint32_t delta_inv)
+    : draws_left_(draws), epsilon_x1000_(epsilon_x1000), delta_inv_(delta_inv),
+      gen_(0), ok_(false), short_(false) {
+  // ε = 0 is infinite noise by definition and a caller bug in practice;
+  // zero draws is nothing to pay for. Both refuse rather than spend.
+  if (draws == 0 || epsilon_x1000 == 0) {
+    s_withheld_releases.fetch_add(1);
+    return;
+  }
+  const uint32_t cost = (uint32_t)draws * (uint32_t)epsilon_x1000;  // ≤ 65535²  < 2^32
+  ok_ = try_spend(cost, &gen_);
+  if (!ok_) {
+    s_withheld_releases.fetch_add(1);
+    health_logging::logf(health_logging::LEVEL_INFO, health_logging::CAT_RF,
+      "DP: release of %u draw(s) withheld (needs %u, %u of %u left)",
+      (unsigned)draws, (unsigned)cost, (unsigned)remaining_budget_x1000(),
+      (unsigned)DEFAULT_BUDGET_X1000);
+  }
+}
+
+// Still in the ledger generation that paid for it (no refill or restore since).
+bool Release::current() const {
+  return ledger_gen(s_ledger.load()) == gen_;
+}
+
+bool Release::complete() const {
+  return ok_ && !short_ && current();
+}
+
+// Pay one draw out of the reservation, and compute its σ. False (and the
+// release marked short) when the reservation is refused, used up or from a
+// window that has since been refilled, or when the noise would round to
+// nothing — a zero-σ draw is the raw value.
+bool Release::take_draw(uint32_t sensitivity, uint32_t* sigma_units) {
+  if (!ok_ || draws_left_ == 0 || sensitivity == 0 || !current()) {
+    if (!short_ && ok_) s_withheld_releases.fetch_add(1);
+    short_ = true;
+    return false;
+  }
+  const uint32_t sigma_x1000 = compute_sigma_x1000(sensitivity, epsilon_x1000_, delta_inv_);
+  // gaussian_sample takes sigma in the SAME units as the output — so for
+  // a counter (units of 1), sigma is sigma_x1000 / 1000. Round-to-nearest.
+  const uint32_t units = sigma_x1000 >= UINT32_MAX - 500 ? UINT32_MAX / 1000
+                                                         : (sigma_x1000 + 500) / 1000;
+  if (units == 0) {
+    if (!short_) s_withheld_releases.fetch_add(1);
+    short_ = true;
+    return false;
+  }
+  draws_left_--;
+  *sigma_units = units;
+  return true;
+}
+
+uint32_t Release::u32(uint32_t value, uint32_t sensitivity) {
+  uint32_t sigma = 0;
+  if (!take_draw(sensitivity, &sigma)) return 0;
+  const int64_t sum = (int64_t)value + (int64_t)gaussian_sample(sigma);
   // Clamp to [0, UINT32_MAX] preserving counter semantics.
-  if (noise < 0 && (uint32_t)(-noise) > value) return 0;
-  const int64_t sum = (int64_t)value + (int64_t)noise;
   if (sum < 0) return 0;
   if (sum > (int64_t)UINT32_MAX) return UINT32_MAX;
   return (uint32_t)sum;
 }
 
-uint16_t noisy_u16(uint16_t value, uint16_t sensitivity,
-                   uint16_t epsilon_x1000, uint32_t delta_inv) {
-  const uint32_t n = noisy_u32(value, sensitivity, epsilon_x1000, delta_inv);
-  return n > UINT16_MAX ? UINT16_MAX : (uint16_t)n;
-}
-
-uint8_t noisy_u8(uint8_t value, uint8_t sensitivity,
-                 uint16_t epsilon_x1000, uint32_t delta_inv) {
-  const uint32_t n = noisy_u32(value, sensitivity, epsilon_x1000, delta_inv);
-  return n > UINT8_MAX ? UINT8_MAX : (uint8_t)n;
-}
-
-int32_t noisy_i32(int32_t value, uint32_t sensitivity,
-                  uint16_t epsilon_x1000, uint32_t delta_inv) {
-  const int32_t noise = calibrated_noise(sensitivity, epsilon_x1000, delta_inv);
-  const int64_t sum = (int64_t)value + (int64_t)noise;
+int32_t Release::i32(int32_t value, uint32_t sensitivity) {
+  uint32_t sigma = 0;
+  if (!take_draw(sensitivity, &sigma)) return 0;
+  const int64_t sum = (int64_t)value + (int64_t)gaussian_sample(sigma);
   if (sum >  INT32_MAX) return INT32_MAX;
   if (sum <  INT32_MIN) return INT32_MIN;
   return (int32_t)sum;
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// BUDGET TRACKING (advisory)
-// ────────────────────────────────────────────────────────────────────────────
-
-static uint32_t s_consumed_budget_x1000 = 0;
-
-void consume_budget(uint16_t epsilon_x1000) {
-  // Saturate at UINT32_MAX — this counter is informational, not enforced.
-  if (s_consumed_budget_x1000 > UINT32_MAX - epsilon_x1000) {
-    s_consumed_budget_x1000 = UINT32_MAX;
-  } else {
-    s_consumed_budget_x1000 += epsilon_x1000;
-  }
-}
-
-uint32_t remaining_budget_x1000() {
-  if (s_consumed_budget_x1000 >= DEFAULT_BUDGET_X1000) return 0;
-  return DEFAULT_BUDGET_X1000 - s_consumed_budget_x1000;
-}
-
-uint32_t consumed_budget_x1000() { return s_consumed_budget_x1000; }
-
-void reset_budget() {
-  s_consumed_budget_x1000 = 0;
-  health_logging::log(health_logging::LEVEL_INFO, health_logging::CAT_RF,
-    "DP: per-session budget reset");
-}
-
-bool budget_exhausted() {
-  return remaining_budget_x1000() == 0;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -185,9 +335,7 @@ bool budget_exhausted() {
 // ────────────────────────────────────────────────────────────────────────────
 
 bool conformance_self_test() {
-  // Save budget so the test doesn't pollute real telemetry.
-  const uint32_t saved_budget = s_consumed_budget_x1000;
-
+  // Draws gaussian_sample directly: no Release, so no budget is spent.
   constexpr uint32_t N = 1024;
   constexpr uint32_t SIGMA = 100;  // test sigma; large enough for stable stats
 
@@ -237,8 +385,6 @@ bool conformance_self_test() {
       (long long)mean_x1000, (unsigned)est_sigma);
   }
 
-  // Restore budget.
-  s_consumed_budget_x1000 = saved_budget;
   return ok;
 }
 

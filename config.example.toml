@@ -70,7 +70,8 @@ url = "rtsp://username:password@192.168.1.100:554/stream1"
 target_fps = 10              # Frames per second to process
 width = 640                  # Frame width
 height = 480                 # Frame height
-backend = "auto"             # "auto", "gstreamer", or "ffmpeg"
+backend = "auto"             # "auto", "gstreamer", or "ffmpeg". A real rtsp:// URL needs a build with
+                             # --features rtsp-gstreamer or rtsp-ffmpeg; a default build errors on it.
 # transport = "tcp"          # Optional RTSP lower transport ("tcp"/"udp"); omit for the
                              # decoder default. Many cameras/NVRs need "tcp". (ffmpeg backend)
 
@@ -104,7 +105,10 @@ target_fps = 10
 # Detection Backend Configuration
 #
 # backend = "auto" (uses module auto selection), "stub", "cpu", or "tract"
-# tract requires the backend-tract feature and a local ONNX model path.
+# "auto", "stub" and "cpu" all run a frame-difference MOTION detector: events report
+# motion presence, not classified objects. "auto" never picks tract.
+# tract (real ONNX object detection) requires the backend-tract feature and a
+# local ONNX model path.
 #
 [detect]
 backend = "auto"
@@ -131,6 +135,11 @@ sensitive = ["zone:front_boundary"]  # Zones that trigger vault sealing
 # pass that prunes writes a signed checkpoint transaction, so the cadence is
 # tuned for SD-card endurance (default 300s = 288 passes/day). Events persist
 # at most retention + check_interval.
+#
+# The pass prunes only the expired PREFIX of the chain, and a wall clock that
+# steps forward cannot expire rows sealed minutes ago (the store ages them by
+# the monotonic clock once it sees the step). See docs/failure_semantics.md,
+# "Retention under clock faults".
 #
 [retention]
 seconds = 604800  # 7 days

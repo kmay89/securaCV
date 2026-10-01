@@ -202,6 +202,28 @@ inline bool plain_http_exempt(const char* uri, bool setup_active) {
   return false;
 }
 
+// What the mDNS `_securacv._tcp` record should say about TLS (F15), so a
+// discovery client (the Lab, the Flasher) can tell HTTPS is on without
+// probing. The browse record always carries a `tls` TXT — "1" when the
+// HTTPS server actually came up, "0" otherwise (HTTP-only build, no core,
+// a cert that failed, or setup still deferring it) — so its ABSENCE means
+// an old firmware that predates this, not "plain by choice". The secure
+// port is advertised only when TLS is live; a reader that sees tls="1"
+// connects to `secure_port`, and the plain `http`/`securacv` services keep
+// advertising 80 (which 307-redirects) for a client that cannot do TLS.
+struct MdnsTlsAdvert {
+  const char* tls_txt;     // the `tls` TXT value: "1" (live) or "0"
+  bool        advertise_secure_port;  // add a `secure_port` TXT
+  uint16_t    secure_port;            // its value (only when advertised)
+};
+inline MdnsTlsAdvert mdns_tls_advert(bool tls_enabled, uint16_t secure_port) {
+  MdnsTlsAdvert a;
+  a.tls_txt = tls_enabled ? "1" : "0";
+  a.advertise_secure_port = tls_enabled;
+  a.secure_port = tls_enabled ? secure_port : 0;
+  return a;
+}
+
 // Lowercase hex of a SHA-256 digest; `out` receives 64 chars + NUL.
 inline void fingerprint_hex(const uint8_t sha[32], char out[65]) {
   static const char kHex[] = "0123456789abcdef";

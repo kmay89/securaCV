@@ -55,7 +55,7 @@ The Beacon Channel is a **higher-trust, narrowly-scoped, supervised-health broad
 | Magic byte | (carried in opera_id) | `0xC4` | `0xB1` |
 | Templates | None (control plane) | ~25, broad | ~13, life-safety only |
 | Wire size | Variable | ~110 B | ~250 B (signed twice) |
-| Range | Household RF | 3 hops, ~750 m | 3 hops, ~750 m |
+| Range | Household RF | 3 hops, ~750 m | 3 hops, ~750 m (**Beacon relay not built**: one radio hop today; see §8 note) |
 | Channel | Follows STA | Follows STA | Follows STA |
 | Airtime class | Routine + urgent | Routine + urgent | **Always urgent** |
 | Persistence | Always-on | Opt-in | Always-on once paired |
@@ -491,10 +491,22 @@ The two-pubkey origination requirement is the primary defense. Layered on top:
 | Cosign freshness | Cosigner must have been seen in last N seconds | 600 s (10 min) |
 | Bloom dedup | Last 5 minutes of nonces | 4 KB Bloom |
 | Suppress vote | None for Beacon (high-trust origination, not voted) | n/a |
-| Hop limit | Max relay hops | 3 |
-| Relay rate limit | Max relays per minute | 5 |
+| Hop limit | Max relay hops | 3 (**not built** — `MAX_HOP_COUNT` is defined in `beacon_wire.h` and never read; `hop_count` is set to 0 on origination and recorded on receipt; nothing relays) |
+| Relay rate limit | Max relays per minute | 5 (**not built** — `MAX_RELAYS_PER_MINUTE` is defined and never read) |
 | Self-test cadence | Daily | 24 h |
 | Airtime class | Always urgent | `force_reserve_urgent` |
+
+> **Two receive-path facts the table does not show (v0.1 firmware).** A
+> receiver whose wall clock is unsynced skips the freshness and expiry
+> checks — the code's branch reads "accept but flag" and flags nothing — so
+> a captured frame can be re-accepted once the 32-slot dedup ring rolls or
+> the device reboots. The per-key and per-pair 24 h budgets do not bound
+> that across a reboot: `init()` zeroes both rate tables and
+> `load_audit_log()` restores the audit entries but does not rebuild the
+> budgets from them, so every reboot starts the budgets fresh. And
+> auto-revoke on a peer's tamper report is unreachable from a WAP peer,
+> because `broadcast_tamper_alert` has no caller. Both are open items, not
+> properties; `docs/FLEET_SEMANTICS.md` §6 keeps the list.
 
 **Why no suppress voting on Beacon:** Beacon origination is already gated by cryptographic co-signing. Suppress voting on top would create a path where a small majority could silence a legitimate alarm, which is the opposite of smoke-detector reliability. False alarms are addressed by the originators sending a `CANCEL` (`BCN_CLR_FALSE_ALARM`) — the same way the fire service handles them.
 

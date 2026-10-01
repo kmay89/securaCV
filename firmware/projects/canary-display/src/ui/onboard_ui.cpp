@@ -32,6 +32,7 @@ namespace {
 #ifdef CD_FLAVOR_WATCH
 constexpr onboardlayout::CardSpec QR_SPEC = onboardlayout::kSmallGlassCard;
 constexpr lv_coord_t RING_D = 236, RING_W = 3;
+constexpr int BIRD_PX = 40;  // the brand mark's square, this glass family
 #else
 constexpr onboardlayout::CardSpec QR_SPEC = onboardlayout::kWideGlassCard;
 constexpr lv_coord_t RING_D = 300, RING_W = 3;
@@ -54,6 +55,7 @@ lv_obj_t* s_qr = nullptr;
 lv_obj_t* s_creds = nullptr;           // SSID / password fallback text
 lv_obj_t* s_hint = nullptr;
 lv_obj_t* s_note = nullptr;            // small glass: the note row (join_lines)
+lv_obj_t* s_bird = nullptr;            // the brand mark (its seat moves, F50)
 onboardlayout::Stack s_join = {};      // the Join scene's rows (see join_rows)
 #ifdef CD_FLAVOR_WATCH
 // The Join scene's text rows' faces and widths (see refresh_bottom): the
@@ -324,13 +326,12 @@ void onboard_ui_create(const char* ap_ssid, const char* ap_pass) {
   // The brand canary welcomes — the first thing anyone meets on first
   // boot. Hidden while the QR needs the room, hops once on success.
 #ifdef CD_FLAVOR_WATCH
-  lv_obj_t* bird = canary_mark_create(s_content, 40);
-  lv_obj_align(bird, LV_ALIGN_CENTER, 0, -64);
+  s_bird = canary_mark_create(s_content, BIRD_PX);
+  lv_obj_align(s_bird, LV_ALIGN_CENTER, 0, -64);
 #else
-  lv_obj_t* bird = canary_mark_create(s_content, 64);
-  lv_obj_align(bird, LV_ALIGN_CENTER, 0, -104);
+  s_bird = canary_mark_create(s_content, 64);
+  lv_obj_align(s_bird, LV_ALIGN_CENTER, 0, -104);
 #endif
-  (void)bird;
 
 #ifdef CD_FLAVOR_WATCH
   s_title = mk(font_body(), col_text());
@@ -404,6 +405,28 @@ void onboard_ui_stage(ObStage st, const char* detail) {
   s_stage = st;
   s_hint_text[0] = '\0';  // a scene change retires the coach line
   s_hint_narrow[0] = '\0';
+
+#ifdef CD_FLAVOR_WATCH
+  // The bird's seat, BEFORE any mood below runs: the mark records its base
+  // at the first on-stage mood after a placement (canary_mark_rebase), so
+  // the seat must be set first or the pose snaps back to the old one on
+  // the next animation frame (review catch on F50). On the Join scene the
+  // bird is only visible while the QR is away (mood Hidden otherwise), and
+  // its old center-relative perch put its top 12 px inside the round
+  // watch's title band — so there it takes the hidden card's empty seat,
+  // which the stack keeps clear of the title and the credentials on every
+  // glass by construction (join_bird_top). Every other scene centers its
+  // text, well under the usual perch.
+  if (s_bird) {
+    if (st == ObStage::Join) {
+      lv_obj_align(s_bird, LV_ALIGN_TOP_MID, 0,
+                   onboardlayout::join_bird_top(s_join, BIRD_PX));
+    } else {
+      lv_obj_align(s_bird, LV_ALIGN_CENTER, 0, -64);
+    }
+    canary_mark_rebase();
+  }
+#endif
 
   switch (st) {
     case ObStage::Hello:
@@ -525,7 +548,7 @@ void onboard_ui_finish() {
 #endif
   s_scr = nullptr;
   s_ring = s_content = s_title = s_body = nullptr;
-  s_qr_card = s_qr = s_creds = s_hint = s_note = nullptr;
+  s_qr_card = s_qr = s_creds = s_hint = s_note = s_bird = nullptr;
   s_qr_ok = false;
   s_hint_text[0] = '\0';
   s_hint_narrow[0] = '\0';

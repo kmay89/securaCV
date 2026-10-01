@@ -258,12 +258,18 @@ static bool send_raw_message(const uint8_t* mac, const uint8_t* data, size_t len
 static bool send_to_peer(OperaPeer* peer, MessageType type, const uint8_t* payload, size_t len);
 static bool broadcast_message(MessageType type, const uint8_t* payload, size_t len);
 static void handle_received_message(const uint8_t* mac, const uint8_t* data, size_t len);
-static void handle_heartbeat(OperaPeer* peer, const uint8_t* payload);
-static void handle_auth_challenge(const uint8_t* mac, const uint8_t* payload);
-static void handle_auth_response(OperaPeer* peer, const uint8_t* payload);
-static void handle_tamper_alert(OperaPeer* peer, const uint8_t* payload);
-static void handle_power_alert(OperaPeer* peer, const uint8_t* payload);
-static void handle_offline_imminent(OperaPeer* peer, const uint8_t* payload);
+// Every handler of a fixed-size struct payload takes the payload's length
+// and refuses any other size (exact, as the PIO decoders do: a short
+// payload would be read past its end into the signature bytes, a long one
+// carries signed bytes nobody checked). The PIO tree's TAMPER_ALERT is a
+// 6-byte template (spec §4.3); read as this tree's 56-byte struct it was
+// 50 bytes of signature.
+static void handle_heartbeat(OperaPeer* peer, const uint8_t* payload, size_t payload_len);
+static void handle_auth_challenge(const uint8_t* mac, const uint8_t* payload, size_t payload_len);
+static void handle_auth_response(OperaPeer* peer, const uint8_t* payload, size_t payload_len);
+static void handle_tamper_alert(OperaPeer* peer, const uint8_t* payload, size_t payload_len);
+static void handle_power_alert(OperaPeer* peer, const uint8_t* payload, size_t payload_len);
+static void handle_offline_imminent(OperaPeer* peer, const uint8_t* payload, size_t payload_len);
 static void handle_pair_discover(const uint8_t* mac, const uint8_t* payload);
 static void handle_pair_offer(const uint8_t* mac, const uint8_t* payload);
 static void handle_pair_accept(const uint8_t* mac, const uint8_t* payload);
@@ -437,7 +443,13 @@ static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name
   strncpy(peer->name, name, MAX_PEER_NAME_LEN);
   peer->name[MAX_PEER_NAME_LEN] = '\0';
   peer->state = PEER_UNKNOWN;
-  peer->msg_counter_tx = 0;
+  // Counter convention (spec §3.3, §4.5; the PIO tree's since PR 5c-3): the
+  // first counter a sender signs is 1, and a receiver's last-seen starts at
+  // 0 and accepts only a STRICTLY greater counter. Starting tx at 0 meant
+  // every peer's first frame carried counter 0, which the receive gate had
+  // to admit past a fresh rx of 0 — and the exemption it used for that
+  // ("rx > 0") admitted a counter-0 frame again on every replay.
+  peer->msg_counter_tx = 1;
   peer->msg_counter_rx = 0;
   peer->last_seen_ms = 0;
   peer->session_established = false;
@@ -484,6 +496,17 @@ static bool send_raw_message(const uint8_t* mac, const uint8_t* data, size_t len
 // minimum in handle_received_message(). Pin that header's constants to the
 // real enum and structs so the sender, the classifier and the handlers
 // cannot drift apart.
+// v0.4 (spec §4.5): the outer frame's bytes are the registry's, so a
+// PlatformIO Canary reads this tree's type byte as the same message. A
+// value typed here instead of taken from mesh_wire.h would silently
+// reopen the disagreement the registry ended.
+static_assert(PROTOCOL_VERSION == mesh_wire::OPERA_VERSION, "version byte drift from the registry");
+static_assert(MSG_TAMPER_ALERT == mesh_wire::TAMPER_ALERT,     "type byte drift from the registry");
+static_assert(MSG_LEAVE_OPERA  == mesh_wire::LEAVE_OPERA,      "type byte drift from the registry");
+static_assert(MSG_CHANNEL_LOCK == mesh_wire::CHANNEL_LOCK,     "type byte drift from the registry");
+static_assert(MSG_HUB_ELECTION == mesh_wire::HUB_ELECTION,     "type byte drift from the registry");
+static_assert(MSG_BEACON_EVENT == mesh_wire::BEACON_EVENT,     "type byte drift from the registry");
+static_assert(MSG_OPERA_REKEY  == mesh_wire::OPERA_REKEY,      "type byte drift from the registry");
 static_assert(mesh_pair_frame::TYPE_DISCOVER == MSG_PAIR_DISCOVER, "pair type drift");
 static_assert(mesh_pair_frame::TYPE_OFFER    == MSG_PAIR_OFFER,    "pair type drift");
 static_assert(mesh_pair_frame::TYPE_ACCEPT   == MSG_PAIR_ACCEPT,   "pair type drift");
@@ -623,7 +646,10 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
 
   size_t offset = 0;
 
-  // Parse header
+  // Parse header. Byte 0 is the registry's version (mesh_wire.h, spec
+  // §4.5: 1 since v0.4 — a v0.3 frame's 0, and the PlatformIO tree's old
+  // unsigned type prefix, both stop here); byte 1 is the registry's type,
+  // read from the SIGNED header below, never from anything in front of it.
   uint8_t version = data[offset++];
   if (version != PROTOCOL_VERSION) {
     return;  // Incompatible version
@@ -675,37 +701,53 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
     return;
   }
 
-  // Update MAC address if changed (device might have reconnected)
-  if (memcmp(peer->mac_addr, mac, 6) != 0) {
-    memcpy(peer->mac_addr, mac, 6);
-
-    // Re-register with ESP-NOW
-    esp_now_del_peer(peer->mac_addr);
-    esp_now_peer_info_t peer_info = {};
-    memcpy(peer_info.peer_addr, mac, 6);
-    peer_info.channel = ESPNOW_CHANNEL;
-    peer_info.encrypt = false;
-    esp_now_add_peer(&peer_info);
-  }
-
-  // Verify signature
+  // Verify signature. Nothing about the peer is changed before this
+  // line: the sender fingerprint and opera_id are public, so a frame
+  // that carries them proves nothing until the signature does.
   if (!verify_signature(peer->pubkey, data, len - SIGNATURE_SIZE, signature)) {
     g_auth_failures++;
     return;
   }
 
-  // Check for replay (counter must be greater than last seen).
+  // Check for replay (counter must be STRICTLY greater than last seen).
   // v0.2 (audit O1): the per-peer monotonic counter is the authoritative
   // freshness mechanism. The wall-clock TTL check that previously lived
   // here was based on `millis()/1000` (uptime, not wall clock) and produced
   // asymmetric verdicts between peers with different uptimes. It has been
   // removed. The `timestamp` field is preserved on the wire for diagnostic
   // and forensic purposes only and is not security-bearing.
-  if (counter <= peer->msg_counter_rx && peer->msg_counter_rx > 0) {
+  //
+  // The sender's first counter is 1 (add_peer), so a fresh rx of 0 needs no
+  // exemption. The "&& rx > 0" this line used to carry — written so the old
+  // counter-0 first frame could pass — also let a counter-0 frame pass again
+  // on every replay for as long as rx stayed 0. Same rule as the PIO
+  // session's on_opera_frame: counter <= last is a replay, whatever last is.
+  if (counter <= peer->msg_counter_rx) {
     return;  // Replay attack
   }
   peer->msg_counter_rx = counter;
   (void)timestamp;  // intentionally unused as of v0.2 (audit O1)
+
+  // Every check passed: at this instant the source MAC provably spoke for
+  // this fingerprint, so bind it (the device may have reconnected with a
+  // new address). This used to run BEFORE verify_signature, where a frame
+  // with a copied sender_fp and opera_id — both public — and any signature
+  // re-pointed a member's MAC at the attacker's radio, and re-registered
+  // the ESP-NOW peer there, until the real device's next verified frame:
+  // a denial of service with no key. The PIO session binds only after
+  // signature, opera_id and replay all passed; so does this now.
+  if (memcmp(peer->mac_addr, mac, 6) != 0) {
+    // Drop the OLD address's ESP-NOW registration before overwriting it
+    // (the old order deleted the new address, so the old entry leaked in
+    // ESP-NOW's 20-slot peer table), then register the verified one.
+    esp_now_del_peer(peer->mac_addr);
+    memcpy(peer->mac_addr, mac, 6);
+    esp_now_peer_info_t peer_info = {};
+    memcpy(peer_info.peer_addr, mac, 6);
+    peer_info.channel = ESPNOW_CHANNEL;
+    peer_info.encrypt = false;
+    esp_now_add_peer(&peer_info);
+  }
 
   // Update peer state
   peer->last_seen_ms = millis();
@@ -720,22 +762,22 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
   // Handle by message type
   switch (msg_type) {
     case MSG_HEARTBEAT:
-      handle_heartbeat(peer, payload);
+      handle_heartbeat(peer, payload, payload_len);
       break;
     case MSG_AUTH_CHALLENGE:
-      handle_auth_challenge(mac, payload);
+      handle_auth_challenge(mac, payload, payload_len);
       break;
     case MSG_AUTH_RESPONSE:
-      handle_auth_response(peer, payload);
+      handle_auth_response(peer, payload, payload_len);
       break;
     case MSG_TAMPER_ALERT:
-      handle_tamper_alert(peer, payload);
+      handle_tamper_alert(peer, payload, payload_len);
       break;
     case MSG_POWER_ALERT:
-      handle_power_alert(peer, payload);
+      handle_power_alert(peer, payload, payload_len);
       break;
     case MSG_OFFLINE_IMMINENT:
-      handle_offline_imminent(peer, payload);
+      handle_offline_imminent(peer, payload, payload_len);
       break;
     case MSG_OPERA_REKEY:
       // Decrypt the new secret with our existing session key, ACK BEFORE
@@ -752,6 +794,7 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
       // healthy peers.
       {
         if (!peer->session_established) break;
+        if (payload_len != sizeof(OperaRekeyPayload)) break;
         const OperaRekeyPayload* rk = (const OperaRekeyPayload*)payload;
         uint8_t new_secret[OPERA_SECRET_SIZE];
         if (!decrypt_message(peer->session_key, rk->encrypted_secret,
@@ -774,7 +817,7 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
         // ── 3. Invalidate the session so both sides re-auth ──
         peer->session_established = false;
         memset(peer->session_key, 0, SESSION_KEY_SIZE);
-        peer->msg_counter_tx = 0;
+        peer->msg_counter_tx = 1;   // first counter of the new session (add_peer)
         peer->msg_counter_rx = 0;
         health_log(SCV_LOG_INFO, SCV_CAT_CRYPTO,
                    "opera: rekey applied (ACK sent under old opera_id); awaiting re-auth");
@@ -783,6 +826,7 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
     case MSG_OPERA_REKEY_ACK:
       // We're the initiator; record this peer's ACK.
       {
+        if (payload_len != sizeof(OperaRekeyAckPayload)) break;
         const OperaRekeyAckPayload* ack = (const OperaRekeyAckPayload*)payload;
         if (!g_rekey.active) break;
         if (ack->rekey_id != g_rekey.rekey_id) break;
@@ -835,10 +879,12 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
   }
 }
 
-static void handle_heartbeat(OperaPeer* peer, const uint8_t* payload) {
+static void handle_heartbeat(OperaPeer* peer, const uint8_t* payload, size_t payload_len) {
   if (!peer) return;
+  if (payload_len != sizeof(HeartbeatPayload)) return;
 
   const HeartbeatPayload* hb = (const HeartbeatPayload*)payload;
+  (void)hb;  // the fields are not read yet; the size is checked so they can be
 
   // Peer is alive
   if (peer->state != PEER_CONNECTED && peer->state != PEER_ALERT) {
@@ -846,8 +892,9 @@ static void handle_heartbeat(OperaPeer* peer, const uint8_t* payload) {
   }
 }
 
-static void handle_auth_challenge(const uint8_t* mac, const uint8_t* payload) {
+static void handle_auth_challenge(const uint8_t* mac, const uint8_t* payload, size_t payload_len) {
   // Someone is trying to authenticate with us
+  if (payload_len != sizeof(AuthChallengePayload)) return;
   const AuthChallengePayload* challenge = (const AuthChallengePayload*)payload;
 
   // Verify they're in our opera
@@ -890,8 +937,9 @@ static void handle_auth_challenge(const uint8_t* mac, const uint8_t* payload) {
   send_to_peer(peer, MSG_AUTH_RESPONSE, (uint8_t*)&response, sizeof(response));
 }
 
-static void handle_auth_response(OperaPeer* peer, const uint8_t* payload) {
+static void handle_auth_response(OperaPeer* peer, const uint8_t* payload, size_t payload_len) {
   if (!peer) return;
+  if (payload_len != sizeof(AuthResponsePayload)) return;
 
   const AuthResponsePayload* response = (const AuthResponsePayload*)payload;
 
@@ -919,8 +967,9 @@ static void handle_auth_response(OperaPeer* peer, const uint8_t* payload) {
   send_to_peer(peer, MSG_AUTH_COMPLETE, nullptr, 0);
 }
 
-static void handle_tamper_alert(OperaPeer* peer, const uint8_t* payload) {
+static void handle_tamper_alert(OperaPeer* peer, const uint8_t* payload, size_t payload_len) {
   if (!peer) return;
+  if (payload_len != sizeof(TamperAlertPayload)) return;
 
   const TamperAlertPayload* alert = (const TamperAlertPayload*)payload;
 
@@ -954,8 +1003,9 @@ static void handle_tamper_alert(OperaPeer* peer, const uint8_t* payload) {
 #endif
 }
 
-static void handle_power_alert(OperaPeer* peer, const uint8_t* payload) {
+static void handle_power_alert(OperaPeer* peer, const uint8_t* payload, size_t payload_len) {
   if (!peer) return;
+  if (payload_len != sizeof(PowerAlertPayload)) return;
 
   const PowerAlertPayload* alert = (const PowerAlertPayload*)payload;
 
@@ -981,8 +1031,9 @@ static void handle_power_alert(OperaPeer* peer, const uint8_t* payload) {
   }
 }
 
-static void handle_offline_imminent(OperaPeer* peer, const uint8_t* payload) {
+static void handle_offline_imminent(OperaPeer* peer, const uint8_t* payload, size_t payload_len) {
   if (!peer) return;
+  if (payload_len != sizeof(OfflineImminentPayload)) return;
 
   const OfflineImminentPayload* alert = (const OfflineImminentPayload*)payload;
 
@@ -1336,6 +1387,12 @@ static bool load_peers() {
       compute_fingerprint(g_peers[i].pubkey, g_peers[i].fingerprint);
       g_peers[i].state = PEER_OFFLINE;
       g_peers[i].session_established = false;
+      // Same counter convention as add_peer (spec §3.3): the first frame this
+      // boot signs carries counter 1, never the static-zeroed 0 a strict
+      // receiver drops. rx starts at 0 here; load_replay_counters() raises it
+      // to the persisted high-water mark right after.
+      g_peers[i].msg_counter_tx = 1;
+      g_peers[i].msg_counter_rx = 0;
 
       // Register with ESP-NOW
       esp_now_peer_info_t peer_info = {};
@@ -1788,7 +1845,7 @@ static void maybe_finalize_rekey() {
     bool unacked = (g_rekey.pending_acks & (uint16_t)(1u << j)) != 0;
     g_peers[j].session_established = false;
     memset(g_peers[j].session_key, 0, SESSION_KEY_SIZE);
-    g_peers[j].msg_counter_tx = 0;
+    g_peers[j].msg_counter_tx = 1;   // first counter of the new session (add_peer)
     g_peers[j].msg_counter_rx = 0;
     g_peers[j].state = unacked ? PEER_STALE : PEER_AUTHENTICATING;
   }

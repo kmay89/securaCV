@@ -52,6 +52,7 @@ static uint8_t                    s_device_priv[mesh_crypto::PRIVKEY_LEN];
 static PairedCallback     s_paired_cb     = nullptr;
 static FailedCallback     s_failed_cb     = nullptr;
 static CodeReadyCallback  s_code_ready_cb = nullptr;
+static PeerMacLearnedCallback s_peer_mac_learned_cb = nullptr;
 
 /* Opera-authenticated broadcast state (PR 5c-3). Declared here at file
  * scope alongside the other lifecycle-managed state so deinit() can
@@ -302,6 +303,17 @@ static void dispatch_action(const mesh_pairing::Action& a) {
     case mesh_pairing::ActionType::NOTIFY_CODE_READY:
       if (s_code_ready_cb) s_code_ready_cb(a.confirmation_code);
       break;
+    case mesh_pairing::ActionType::SEND_ACCEPT:
+      /* The joiner derives the session and the 6-digit code at ACCEPT
+       * time, and that is its only action — there is no separate
+       * NOTIFY_CODE_READY on this side, so the callback used to fire
+       * for the initiator alone (F49 part 2). The frame went to the
+       * wire above; surface the code the same beat. The action type
+       * is the signal that the code is ready — not a nonzero value:
+       * compute_confirmation_code() is a hash mod 1e6, so 000000 is a
+       * valid code and must still reach the screen. */
+      if (s_code_ready_cb) s_code_ready_cb(a.confirmation_code);
+      break;
     case mesh_pairing::ActionType::NOTIFY_PAIRED: {
       /* Cache the opera name the joiner learned from the OFFER (the
        * initiator already cached its own at start_pairing_initiator;
@@ -499,31 +511,28 @@ static bool next_outbound_counter(uint64_t* out) {
   return true;
 }
 
-/* Build [1-byte session msg type][signed envelope] for an
- * opera-authenticated send. Bumps the outbound counter. Returns the total
- * frame length, or 0 when there is no opera or signing/serialization
- * fails. Used by the F10 senders; the three pre-F10 senders keep their
- * own inline copies of the same sequence. */
+/* Build the signed envelope for an opera-authenticated send — the frame
+ * as it goes on the air (spec §4.5: version byte first, nothing in front
+ * of it; until v0.4 an unsigned copy of the type preceded it). Bumps the
+ * outbound counter. Returns the frame length, or 0 when there is no opera
+ * or signing/serialization fails. Every opera sender goes through here. */
 static size_t build_signed_frame(mesh_envelope::MsgType type,
                                  const uint8_t*         payload,
                                  size_t                 payload_len,
                                  uint32_t               now_ms,
                                  uint8_t*               out,
                                  size_t                 out_cap) {
-  if (!s_opera_id_set || out == nullptr || out_cap < 1) return 0;
+  if (!s_opera_id_set || out == nullptr) return 0;
   mesh_envelope::Header header;
-  header.version   = mesh_envelope::PROTOCOL_VERSION;
+  header.version   = mesh_envelope::OPERA_VERSION;
   header.msg_type  = static_cast<uint8_t>(type);
   memcpy(header.opera_id,  s_opera_id,  sizeof(header.opera_id));
   memcpy(header.sender_fp, s_sender_fp, sizeof(header.sender_fp));
   if (!next_outbound_counter(&header.counter)) return 0;
   header.timestamp = now_ms;
-  out[0] = static_cast<uint8_t>(type);
-  const size_t env_len = mesh_envelope::serialize_signed(
-      header, payload, payload_len,
-      s_device_priv, s_device_pub,
-      out + 1, out_cap - 1);
-  return env_len == 0 ? 0 : 1 + env_len;
+  return mesh_envelope::serialize_signed(header, payload, payload_len,
+                                         s_device_priv, s_device_pub,
+                                         out, out_cap);
 }
 
 /* Forget a trusted peer entirely: copy out its pubkey, drop its transport
@@ -563,7 +572,7 @@ static void revoke_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN], uint32_t
  * CURRENT opera_id — the ACK ordering depends on it. */
 static void send_rekey_frame(const mesh_rekey::Action& a, bool broadcast,
                              uint32_t now_ms) {
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   const size_t n = build_signed_frame(
       static_cast<mesh_envelope::MsgType>(static_cast<uint8_t>(a.msg_type)),
       a.payload, a.payload_len, now_ms, frame, sizeof(frame));
@@ -762,9 +771,9 @@ static void dispatch_verified(TrustedPeer&               peer,
   }
 }
 
-/* PR 5c-4: handle an opera-authenticated frame (type_byte >= 16). The
- * full signed envelope (38B header + payload + 64B signature) starts
- * at data + 1. We must:
+/* PR 5c-4: handle an opera-authenticated frame — the signed envelope
+ * (38B header + payload + 64B signature) IS the frame (spec §4.5; until
+ * v0.4 an unsigned type byte preceded it). We must:
  *   1. Validate frame_len is at least HEADER_LEN + SIG_LEN.
  *   2. Peek the sender_fp from the header without verifying yet.
  *   3. Look up the trusted peer by sender_fp.
@@ -774,13 +783,21 @@ static void dispatch_verified(TrustedPeer&               peer,
  *   7. Update peer.last_counter and dispatch by msg_type.
  *
  * Steps 1-7 ALL drop silently on failure — there's no error feedback
- * to the (possibly malicious) sender. */
-static void on_opera_frame(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN],
-                           const uint8_t* data, size_t len) {
-  /* data[0] is the session msg-type byte; the envelope starts at +1. */
-  const uint8_t* env       = data + MSGTYPE_HEADER_LEN;
-  const size_t   env_len   = len   - MSGTYPE_HEADER_LEN;
-  if (env_len < mesh_envelope::MIN_FRAME_LEN) return;
+ * to the (possibly malicious) sender. Returns true only when every check
+ * passed and the frame was dispatched, so the transport's unknown-sender
+ * hook (F49 part 3) can tell a verified frame from a dropped one.
+ *
+ * `via_unknown` is true only on the unknown-sender path: a frame from a MAC
+ * the transport does not know. That is the only way a trusted peer's NEW
+ * radio address arrives (a known address would not reach the hook), so the
+ * MAC-learning heal below runs there alone — the normal path's sender is
+ * already a bound transport peer, nothing to re-bind. */
+static bool on_opera_frame(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN],
+                           const uint8_t* data, size_t len,
+                           bool via_unknown) {
+  const uint8_t* env       = data;
+  const size_t   env_len   = len;
+  if (env_len < mesh_envelope::MIN_FRAME_LEN) return false;
 
   /* Step 2: peek sender_fp via the canonical offset constant rather
    * than hand-rolled byte arithmetic — keeps the header layout pinned
@@ -788,7 +805,20 @@ static void on_opera_frame(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_
   const uint8_t* sender_fp_in_frame = env + mesh_envelope::OFFSET_SENDER_FP;
 
   TrustedPeer* peer = find_trusted_peer(sender_fp_in_frame);
-  if (peer == nullptr) return;            /* unknown sender */
+  if (peer == nullptr) return false;      /* unknown sender */
+
+  /* On the unknown-sender path (F49 part 3) take only the one case this
+   * path exists for: a trusted peer we ALREADY have a binding for, now
+   * transmitting from a DIFFERENT address — a changed radio MAC. A peer
+   * with no binding yet is left to drop as before (boot binds those from
+   * NVS; hearing a never-bound peer here is a separate change this does
+   * not make), so the check happens before the signature verify — same
+   * drop, same cost, as a frame from a stranger. */
+  if (via_unknown &&
+      (!peer->radio_mac_set ||
+       memcmp(peer->radio_mac, mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) == 0)) {
+    return false;
+  }
 
   /* Step 4: parse + signature verify. */
   mesh_envelope::Header  hdr;
@@ -796,24 +826,24 @@ static void on_opera_frame(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_
   size_t                 payload_len = 0;
   if (!mesh_envelope::parse_and_verify(env, env_len, peer->pubkey,
                                        &hdr, &payload, &payload_len)) {
-    return;                                /* forged or corrupt */
+    return false;                          /* forged or corrupt */
   }
 
   /* Step 5: cross-opera leak. parse_and_verify already checked version
    * and signature; we additionally check the opera_id matches ours so
    * a different opera that happened to pair with this same sender
    * pubkey can't deliver events into our world. */
-  if (!s_opera_id_set) return;
+  if (!s_opera_id_set) return false;
   if (!mesh_crypto::ct_equal(hdr.opera_id, s_opera_id,
                              mesh_crypto::OPERA_ID_LEN)) {
-    return;
+    return false;
   }
 
   /* Step 6: replay defense — strict monotonic counter per-peer. The
    * sender's outbound counter increments per send (PR 5c-3); the
    * receiver tracks last_counter per peer. counter==last_counter is
    * a replay; only counter>last_counter advances. */
-  if (hdr.counter <= peer->last_counter) return;
+  if (hdr.counter <= peer->last_counter) return false;
   peer->last_counter = hdr.counter;
 
   /* Every check passed: at this instant the source MAC provably spoke
@@ -823,8 +853,27 @@ static void on_opera_frame(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_
   memcpy(peer->mac, mac, mesh_transport::MESH_TRANSPORT_MAC_LEN);
   peer->mac_known = true;
 
+  /* And heal the TRANSPORT binding (F49 part 3): reaching here via the
+   * unknown-sender path means the guard above already established this is
+   * a trusted peer whose radio MAC CHANGED — a reflashed board, a replaced
+   * module — whose frames the transport used to drop before any check,
+   * forcing a re-pair. The verify just proved the new address speaks for
+   * this fingerprint (signature + opera_id + strict counter), so re-bind
+   * it. bind_peer_mac removes the old transport entry, registers the new
+   * one, and refuses an address another trusted peer already holds (one
+   * address speaks for one fingerprint — a refusal skips the heal, never
+   * the frame). The learned callback lets the integration layer persist
+   * the new binding so the next boot binds it directly. */
+  if (via_unknown) {
+    if (bind_peer_mac(sender_fp_in_frame, mac) &&
+        s_peer_mac_learned_cb != nullptr) {
+      s_peer_mac_learned_cb(sender_fp_in_frame, mac);
+    }
+  }
+
   /* Step 7: dispatch by envelope msg_type. */
   dispatch_verified(*peer, hdr, payload, payload_len);
+  return true;
 }
 
 /* The long-term pubkey a pairing frame introduces, if it is one of the two
@@ -841,7 +890,7 @@ static const uint8_t* pairing_partner_pubkey(mesh_pairing::MsgType t,
   return nullptr;
 }
 
-/* A PAIR_* frame (type byte 0..4) into the pairing state machine. Returns
+/* A PAIR_* frame (type byte 8..12) into the pairing state machine. Returns
  * false — nothing dispatched — when the frame introduces a deny-listed
  * device (spec §5.6: refused acceptance into future pairing flows). */
 static bool handle_pair_frame(const uint8_t mac[6],
@@ -866,40 +915,53 @@ static bool handle_pair_frame(const uint8_t mac[6],
   return true;
 }
 
-/* mesh_transport recv callback. Decodes the 1-byte MsgType envelope
- * and routes to either the pairing state machine (type_byte <= 4) or
- * the opera-authenticated dispatch (type_byte >= 16). */
+/* mesh_transport recv callback. Classifies a frame by its FIRST byte, as
+ * the registry lays it out (mesh_wire.h, spec §4.5): a pairing type
+ * (8..12) routes to the pairing state machine, the version byte routes to
+ * the opera-authenticated dispatch, and anything else — the reserved
+ * pairing values, a stale version, the pre-v0.4 unsigned type prefix, or
+ * a Chirp/Beacon magic — is dropped silently. The two ranges are disjoint
+ * by the registry's static_asserts, so no frame can be both. */
 static void on_transport_recv(const uint8_t mac[6],
                               const uint8_t* data, size_t len,
                               int8_t /*rssi*/) {
   if (!s_running || data == nullptr || len < MSGTYPE_HEADER_LEN) return;
-  const uint8_t type_byte = data[0];
+  const uint8_t first = data[0];
 
-  /* PAIR_* (0..4) — pre-membership pairing traffic, no envelope. */
-  if (type_byte <= static_cast<uint8_t>(MsgType::PAIR_COMPLETE)) {
+  /* PAIR_* (8..12) — pre-membership pairing traffic, no envelope. */
+  if (mesh_wire::is_pairing_type(first)) {
     handle_pair_frame(mac, data, len);
     return;
   }
 
-  /* 5..15 — reserved for future pairing extensions. Drop silently. */
-  if (type_byte < static_cast<uint8_t>(mesh_envelope::MsgType::HEARTBEAT)) return;
-
-  /* >=16 — opera-authenticated traffic. PR 5c-4 routes it here; the
-   * peer table + signature verify + replay check happen inside. */
-  on_opera_frame(mac, data, len);
+  /* The signed envelope, version byte first. PR 5c-4 routes it here; the
+   * peer table + signature verify + replay check happen inside, and the
+   * message type is read from the SIGNED header there. */
+  if (first == mesh_envelope::OPERA_VERSION) {
+    on_opera_frame(mac, data, len, /*via_unknown=*/false);
+    return;
+  }
 }
 
 /* mesh_transport unknown-sender hook (F33 part 1): a frame from a MAC that
- * is not in the transport table. Only a pairing frame, and only while a
- * pairing runs, is taken — the partner of a pairing is not a peer yet, and
- * the state machine checks roles, MACs, the confirmation hash and the AEAD
- * itself. Everything else stays a recv_dropped_no_peer: an opera frame must
- * come from a bound radio MAC. */
+ * is not in the transport table. A pairing frame is taken while a pairing
+ * runs — the partner of a pairing is not a peer yet, and the state machine
+ * checks roles, MACs, the confirmation hash and the AEAD itself. An opera
+ * envelope is taken too (F49 part 3): a trusted peer whose radio MAC
+ * changed arrives exactly here, and on_opera_frame accepts it only after
+ * the full signature + opera_id + replay checks, then heals the binding.
+ * The verify cost is not a new surface: a spoofer could always force it by
+ * borrowing a bound MAC, and either way must present a trusted peer's
+ * fingerprint to get past the (cheap) table lookup. Everything else stays
+ * a recv_dropped_no_peer. */
 static bool on_transport_unknown(const uint8_t mac[6],
                                  const uint8_t* data, size_t len,
                                  int8_t /*rssi*/) {
   if (!s_running || data == nullptr || len < MSGTYPE_HEADER_LEN) return false;
-  if (data[0] > static_cast<uint8_t>(MsgType::PAIR_COMPLETE)) return false;
+  if (data[0] == mesh_envelope::OPERA_VERSION) {
+    return on_opera_frame(mac, data, len, /*via_unknown=*/true);
+  }
+  if (!mesh_wire::is_pairing_type(data[0])) return false;
   if (!pairing_in_progress()) return false;
   return handle_pair_frame(mac, data, len);
 }
@@ -1009,6 +1071,9 @@ bool is_enabled() { return s_enabled; }
 void set_paired_callback    (PairedCallback     cb) { s_paired_cb     = cb; }
 void set_failed_callback    (FailedCallback     cb) { s_failed_cb     = cb; }
 void set_code_ready_callback(CodeReadyCallback  cb) { s_code_ready_cb = cb; }
+void set_peer_mac_learned_callback(PeerMacLearnedCallback cb) {
+  s_peer_mac_learned_cb = cb;
+}
 
 /* ──────────────────────────────────────────────────────────────────────────
  * PAIRING ENTRY POINTS
@@ -1244,39 +1309,22 @@ bool send_beacon_event(mesh_beacon::BeaconState state,
     return false;
   }
 
-  /* 2. Build the envelope header. The outbound counter is bumped FIRST
-   * so two simultaneous calls (which shouldn't happen — single-task
-   * discipline — but the increment is local anyway) produce distinct
-   * counters. */
-  mesh_envelope::Header header;
-  header.version   = mesh_envelope::PROTOCOL_VERSION;
-  header.msg_type  = static_cast<uint8_t>(mesh_envelope::MsgType::BEACON_EVENT);
-  memcpy(header.opera_id,  s_opera_id,  sizeof(header.opera_id));
-  memcpy(header.sender_fp, s_sender_fp, sizeof(header.sender_fp));
-  if (!next_outbound_counter(&header.counter)) return false;
-  header.timestamp = now_ms;
+  /* 2. Build, sign and serialize the envelope (the outbound counter is
+   * bumped inside, first). The frame is HEADER_LEN(38) + PAYLOAD_LEN(25)
+   * + SIGNATURE_LEN(64) = 127 bytes, version byte first: receivers route
+   * on that byte and read the type from the signed header (spec §4.5). */
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
+  const size_t n = build_signed_frame(mesh_envelope::MsgType::BEACON_EVENT,
+                                      payload, sizeof(payload), now_ms,
+                                      frame, sizeof(frame));
+  if (n == 0) return false;
 
-  /* 3. Serialize + sign. The signed frame is HEADER_LEN(38) +
-   * PAYLOAD_LEN(25) + SIGNATURE_LEN(64) = 127 bytes. We then prepend
-   * a 1-byte session msg type so the same wire dispatch that handles
-   * PAIR_* frames can route this too: receivers see frame[0]=22 and
-   * forward frame[1..] into mesh_envelope::parse_and_verify (peer-
-   * table lookup added in PR 5c-4 / PR 4b). */
-  uint8_t session_frame[1 + mesh_envelope::MAX_FRAME_LEN];
-  session_frame[0] = static_cast<uint8_t>(mesh_envelope::MsgType::BEACON_EVENT);
-  const size_t env_len = mesh_envelope::serialize_signed(
-      header, payload, sizeof(payload),
-      s_device_priv, s_device_pub,
-      session_frame + 1, sizeof(session_frame) - 1);
-  if (env_len == 0) return false;
-
-  /* 4. Broadcast to every paired peer. mesh_transport::broadcast
+  /* 3. Broadcast to every paired peer. mesh_transport::broadcast
    * returns the number of peers that accepted; 0 means no peers
    * known yet (legitimate during early boot before pairing). We
    * still consider that a failure for the send_beacon_event return
    * so the caller can choose to retry / queue. */
-  const size_t n = mesh_transport::broadcast(session_frame, 1 + env_len);
-  return n > 0;
+  return mesh_transport::broadcast(frame, n) > 0;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -1411,12 +1459,20 @@ bool bind_peer_mac(const uint8_t fp [mesh_crypto::FINGERPRINT_LEN],
   /* One address speaks for one fingerprint. */
   const TrustedPeer* holder = find_peer_by_radio_mac(mac);
   if (holder != nullptr && holder != p) return false;
-  if (p->radio_mac_set &&
-      memcmp(p->radio_mac, mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) != 0) {
-    mesh_transport::remove_peer(p->radio_mac);   /* its old address */
-    p->radio_mac_set = false;
+  /* Register the NEW address before dropping the old one. If the transport
+   * add fails transiently (table momentarily full, driver refusal), the
+   * existing binding is left untouched and whole, so the peer stays
+   * eligible for another learning attempt on its next frame (F49 part 3
+   * review) rather than being stranded until a reboot restores it. */
+  const bool changed =
+      !p->radio_mac_set ||
+      memcmp(p->radio_mac, mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) != 0;
+  if (!mesh_transport::has_peer(mac) && !mesh_transport::add_peer(mac)) {
+    return false;
   }
-  if (!mesh_transport::has_peer(mac) && !mesh_transport::add_peer(mac)) return false;
+  if (changed && p->radio_mac_set) {
+    mesh_transport::remove_peer(p->radio_mac);   /* its old address */
+  }
   memcpy(p->radio_mac, mac, mesh_transport::MESH_TRANSPORT_MAC_LEN);
   p->radio_mac_set = true;
   /* The pairing partner's address now belongs to the member. */
@@ -1478,24 +1534,12 @@ bool send_channel_lock(uint8_t channel,
     return false;
   }
 
-  mesh_envelope::Header header;
-  header.version   = mesh_envelope::PROTOCOL_VERSION;
-  header.msg_type  = static_cast<uint8_t>(mesh_envelope::MsgType::CHANNEL_LOCK);
-  memcpy(header.opera_id,  s_opera_id,  sizeof(header.opera_id));
-  memcpy(header.sender_fp, s_sender_fp, sizeof(header.sender_fp));
-  if (!next_outbound_counter(&header.counter)) return false;
-  header.timestamp = now_ms;
-
-  uint8_t session_frame[1 + mesh_envelope::MAX_FRAME_LEN];
-  session_frame[0] = static_cast<uint8_t>(mesh_envelope::MsgType::CHANNEL_LOCK);
-  const size_t env_len = mesh_envelope::serialize_signed(
-      header, payload, sizeof(payload),
-      s_device_priv, s_device_pub,
-      session_frame + 1, sizeof(session_frame) - 1);
-  if (env_len == 0) return false;
-
-  const size_t n = mesh_transport::broadcast(session_frame, 1 + env_len);
-  return n > 0;
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
+  const size_t n = build_signed_frame(mesh_envelope::MsgType::CHANNEL_LOCK,
+                                      payload, sizeof(payload), now_ms,
+                                      frame, sizeof(frame));
+  if (n == 0) return false;
+  return mesh_transport::broadcast(frame, n) > 0;
 }
 
 void set_channel_lock_handler(channel_lock_received_fn fn) {
@@ -1513,24 +1557,12 @@ bool send_hub_election(mesh_hub_election::Event event,
     return false;
   }
 
-  mesh_envelope::Header header;
-  header.version   = mesh_envelope::PROTOCOL_VERSION;
-  header.msg_type  = static_cast<uint8_t>(mesh_envelope::MsgType::HUB_ELECTION);
-  memcpy(header.opera_id,  s_opera_id,  sizeof(header.opera_id));
-  memcpy(header.sender_fp, s_sender_fp, sizeof(header.sender_fp));
-  if (!next_outbound_counter(&header.counter)) return false;
-  header.timestamp = now_ms;
-
-  uint8_t session_frame[1 + mesh_envelope::MAX_FRAME_LEN];
-  session_frame[0] = static_cast<uint8_t>(mesh_envelope::MsgType::HUB_ELECTION);
-  const size_t env_len = mesh_envelope::serialize_signed(
-      header, payload, sizeof(payload),
-      s_device_priv, s_device_pub,
-      session_frame + 1, sizeof(session_frame) - 1);
-  if (env_len == 0) return false;
-
-  const size_t n = mesh_transport::broadcast(session_frame, 1 + env_len);
-  return n > 0;
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
+  const size_t n = build_signed_frame(mesh_envelope::MsgType::HUB_ELECTION,
+                                      payload, sizeof(payload), now_ms,
+                                      frame, sizeof(frame));
+  if (n == 0) return false;
+  return mesh_transport::broadcast(frame, n) > 0;
 }
 
 void set_hub_election_handler(hub_election_received_fn fn) {
@@ -1546,7 +1578,7 @@ bool leave_opera(uint32_t now_ms) {
   if (s_initialized && s_running && s_opera_id_set) {
     /* Signed under the CURRENT opera_id before we forget it, so the
      * survivors can verify it. Best effort: nobody listening is fine. */
-    uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+    uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
     const size_t n = build_signed_frame(mesh_envelope::MsgType::LEAVE_OPERA,
                                         nullptr, 0, now_ms,
                                         frame, sizeof(frame));
@@ -1583,7 +1615,7 @@ bool send_tamper_alert(mesh_alert::Kind kind,
                           payload, sizeof(payload))) {
     return false;
   }
-  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
   const size_t n = build_signed_frame(mesh_envelope::MsgType::TAMPER_ALERT,
                                       payload, sizeof(payload), now_ms,
                                       frame, sizeof(frame));

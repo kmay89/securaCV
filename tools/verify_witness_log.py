@@ -96,14 +96,18 @@ def parse_line(raw: str, lineno: int):
 
 
 def load_records(path: str):
-    """Parse the file; a torn FINAL line is tolerated (power-cut model),
-    torn or malformed lines anywhere else are integrity failures."""
-    records, problems, torn_tail = [], [], False
+    """Parse the file. Returns (records, malformed, torn_tail): `malformed`
+    is every complete line that does not parse, as (lineno, reason). A torn
+    FINAL line is tolerated outright (power-cut model); a malformed line
+    anywhere else is judged by `classify_malformed` against the records
+    around it — a power-cut scar the firmware sealed onto its own line is
+    tolerated, anything else is an integrity failure."""
+    records, malformed, torn_tail = [], [], False
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             raw_lines = f.read().split("\n")
     except OSError as e:
-        return [], [f"error: cannot read '{path}': {e}"], False
+        return [], [(0, f"error: cannot read '{path}': {e}")], False
     # A trailing "" after the final newline is normal. A final line with
     # NO newline is only "torn" if it does not parse as a complete
     # record: a power cut mid-append leaves half a line, but an attacker
@@ -122,13 +126,109 @@ def load_records(path: str):
         try:
             records.append(parse_line(raw, i))
         except ValueError as e:
-            problems.append(str(e))
+            malformed.append((i, str(e)))
     if tail_candidate is not None and tail_candidate.strip():
         try:
             records.append(parse_line(tail_candidate, len(raw_lines)))
         except ValueError:
             torn_tail = True  # genuinely half a line — the crash model
-    return records, problems, torn_tail
+    return records, malformed, torn_tail
+
+
+def classify_malformed(records, malformed, genesis):
+    """Sort malformed lines into what the chain around them can vouch for.
+
+    The firmware appends one line per record and a power cut can cut that
+    line short. On the next mount the device seals the fragment with a
+    newline before its first append (witness_store::tail_is_torn), so the
+    fragment sits on a line of its own and the record after it chains from
+    the last COMPLETE record before it — the fragment was never chained
+    upon. So a malformed line is judged by its neighbors, never by itself:
+
+    - the record after it continues the record before it (seq + 1 and
+      prev == that record's chain hash): a **power-cut scar**, tolerated;
+    - the record after it jumps ahead of the record before it: the line
+      sits at a **gap boundary**. The fragment may be a torn append that
+      the card then missed a stretch of records after, or a destroyed
+      record; either way the records between are not in this file, which
+      is exactly what a gap already means (a deleted line reads the same
+      with no fragment at all). Tolerated and reported as a gap;
+    - the record after it does not advance (seq at or below the record
+      before): reordered or replayed — an integrity failure whether or not
+      a fragment sits between them;
+    - nothing after it: the last complete line of the file. That is what a
+      second power cut leaves when the sealing newline landed but the
+      record behind it did not — a sealed torn append at the end, with the
+      chain ending at the record before it. Tolerated like a torn tail;
+    - nothing before it: judged against the genesis when it is known (a
+      torn first append is bridged by seq 1 chaining from genesis); without
+      a genesis it cannot be judged, and is noted, not failed — the run
+      that passes --device-id is the one that decides.
+
+    Returns (scars, failures): message lists. Scars include the gap-boundary
+    and unjudged cases, each saying which it is.
+    """
+    scars, failures = [], []
+    for lineno, reason in malformed:
+        if lineno == 0:  # a read error, not a line
+            failures.append(reason)
+            continue
+        before = None
+        after = None
+        for rec in records:
+            if rec["lineno"] < lineno:
+                before = rec
+            elif after is None:
+                after = rec
+                break
+        if after is None:
+            # The last complete line, with no record after it. That is the
+            # writer's second-cut shape: the sealing newline landed and the
+            # record behind it did not, so the old fragment is now a sealed
+            # line at the end of the file. Nothing chains across it because
+            # nothing follows it; nothing is missing either — the chain
+            # ends at the record before it, exactly as a torn tail would.
+            # Tolerated like a torn tail, and named so a reader can tell a
+            # crash artifact from an integrity finding.
+            scars.append(
+                f"line {lineno}: sealed torn append at the end of the file "
+                f"(a second power cut after the sealing newline landed) — "
+                f"the chain ends at the record before it")
+            continue
+        if before is None:
+            if genesis is None:
+                scars.append(
+                    f"line {lineno}: malformed line before the first record "
+                    f"— cannot be judged without --device-id (a torn first "
+                    f"append is bridged by seq 1 chaining from genesis)")
+            elif after["seq"] == 1 and after["prev"] == genesis:
+                scars.append(
+                    f"line {lineno}: power-cut scar — a torn first append "
+                    f"sealed onto its own line; seq 1 chains from genesis "
+                    f"past it")
+            else:
+                failures.append(
+                    f"{reason} — the first record (seq {after['seq']}) does "
+                    f"not chain from genesis past it, so this is not a "
+                    f"power-cut scar")
+            continue
+        if after["seq"] == before["seq"] + 1 and after["prev"] == before["ch"]:
+            scars.append(
+                f"line {lineno}: power-cut scar — a torn append sealed onto "
+                f"its own line; seq {after['seq']} chains from seq "
+                f"{before['seq']} across it")
+        elif after["seq"] > before["seq"] + 1:
+            scars.append(
+                f"line {lineno}: malformed line at a gap boundary (seq "
+                f"{before['seq']} before it, seq {after['seq']} after) — a "
+                f"torn append or a destroyed record; the records between "
+                f"are not in this file, which the gap below already reports")
+        else:
+            failures.append(
+                f"{reason} — seq {after['seq']} after it does not advance "
+                f"past seq {before['seq']} before it (reordered or "
+                f"replayed), so this is not a power-cut scar")
+    return scars, failures
 
 
 def verify(path: str, pubkey_hex: str, device_id: str | None) -> int:
@@ -148,13 +248,13 @@ def verify(path: str, pubkey_hex: str, device_id: str | None) -> int:
               file=sys.stderr)
         return 2
 
-    records, problems, torn_tail = load_records(path)
-    failures = list(problems)
+    records, malformed, torn_tail = load_records(path)
     sig_ok = integrity_ok = 0
     segments = []  # (start_seq, end_seq, chained_from_genesis)
 
     genesis = (sha256_domain(DOMAIN_GENESIS, device_id.encode())
                if device_id else None)
+    scars, failures = classify_malformed(records, malformed, genesis)
 
     prev_rec = None
     for rec in records:
@@ -199,6 +299,11 @@ def verify(path: str, pubkey_hex: str, device_id: str | None) -> int:
     if torn_tail:
         print("note: torn final line ignored (power cut mid-append is the "
               "expected crash mode)")
+    if scars:
+        print(f"note: {len(scars)} malformed line(s) tolerated — each is "
+              f"judged by the records around it, never by itself:")
+        for scar in scars:
+            print(f"  {scar}")
     if segments:
         print("segments:")
         for start, end, anchored in segments:
@@ -227,7 +332,10 @@ def verify(path: str, pubkey_hex: str, device_id: str | None) -> int:
 
 
 def inspect(path: str) -> int:
-    records, problems, torn_tail = load_records(path)
+    records, malformed, torn_tail = load_records(path)
+    # Without --device-id inspect knows no genesis: a scar before the first
+    # record reads as a problem here and a scar under verify --device-id.
+    scars, problems = classify_malformed(records, malformed, None)
     print(f"records: {len(records)}")
     if records:
         print(f"seq range: {records[0]['seq']}..{records[-1]['seq']}")
@@ -240,6 +348,8 @@ def inspect(path: str) -> int:
         print(f"newest chain hash: {records[-1]['ch'].hex()}")
     if torn_tail:
         print("note: torn final line present")
+    for scar in scars:
+        print(f"note: {scar}")
     for p in problems:
         print(f"problem: {p}", file=sys.stderr)
     return 0 if not problems else 1

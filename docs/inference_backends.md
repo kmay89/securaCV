@@ -24,8 +24,8 @@ failures and **fail closed**.
 
 | Backend | Capability flag | Status | Notes |
 | --- | --- | --- | --- |
-| Stub | `DeviceCapabilities.stub` | Available | Minimal non-extractive baseline backend. |
-| CPU | `DeviceCapabilities.cpu` | Available | CPU path using the same non-extractive primitives as the stub backend. |
+| Stub | `DeviceCapabilities.stub` | Available | Minimal non-extractive baseline backend: frame-difference motion, not object detection. |
+| CPU | `DeviceCapabilities.cpu` | Available | CPU path using the same non-extractive primitives as the stub backend; also frame-difference motion. `detect.backend = "auto"` resolves to one of these two, never to Tract. |
 | Accelerator | `DeviceCapabilities.accelerator` | **Unavailable** | Requests fail closed until a conforming accelerator backend exists. |
 | Tract (ONNX) | N/A (feature-gated) | Available when enabled | Requires `backend-tract` feature and a local model path; selected explicitly via config/CLI. |
 

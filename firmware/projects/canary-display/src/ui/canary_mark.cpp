@@ -513,6 +513,24 @@ void canary_mark_mood(CanaryMood m) {
   }
 }
 
+void canary_mark_rebase() {
+  if (!s_bird) return;
+  // Forget the recorded base: the next on-stage mood re-reads it from
+  // wherever the host just placed the bird (the same one-shot capture the
+  // first placement used, so live bob/hop offsets are never baked in —
+  // the host's align has already overwritten any offset the last frame
+  // left, and nothing animates between that align and this call).
+  s_base_recorded = false;
+  if (s_mood == CanaryMood::Hidden) return;
+  // On stage: a same-mood set would early-out and leave the running pose
+  // writing from the old base, so re-enter the mood by hand. The Hidden
+  // value here is only the early-out defeat — no hide happens, and the
+  // re-entry repaints pose, timers and bob from the new seat.
+  const CanaryMood m = s_mood;
+  s_mood = CanaryMood::Hidden;
+  canary_mark_mood(m);
+}
+
 void canary_mark_trust(uint16_t days) { s_trust_days = days; }
 
 void canary_mark_temperament(float breath, float flourish, float hop) {

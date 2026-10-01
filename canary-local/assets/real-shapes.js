@@ -87,10 +87,17 @@ function seatPart(scene, parsed, { G, D, R = M4.ident(), color = shell(), gloss 
 
 // canary_watch_station.scad (v0.2) — the drum sinks pocket_dep = 11 into the
 // stand's divot, a cylindrical recess bored NORMAL to the 25°-reclined face.
-// The seat comes from the scad's own echo: DRUM SEAT pos [0, 3.03, 27.36]
-// rot [65, 0, 0] — drum +z along the pocket axis a = (0, −sin65°, cos65°),
-// no azimuth flip (the USB slot at 270° lands in the stand's chin slot).
-// Drum spans 0…21 along a; the snap bezel's face caps it at 23.2.
+// The seat is the scad's own: its "DRUM SEAT" echo (P0, rot [slope, 0, 0]),
+// read back by gen_assembled_dims.py into the ledger's seat_scad row
+// (docs/hardware/enclosure/assembled_dims.json, device.canary-display-watch:
+// pos [0, 3.028, 27.356] rot [65, 0, 0]) — drum +z along the pocket axis
+// a = (0, −sin65°, cos65°), no azimuth flip (the USB slot at 270° lands in
+// the stand's chin slot). Along a: the drum spans 0…drum_h (the ledger's
+// seam, 21), the bezel's face caps the puck at fig.d (23.19) with the bezel
+// centered half its own print height behind that, and the glass — the
+// disc's front ring, `flush` (0.4) below the drum rim — at drum_h − flush,
+// drawn at the bezel's aperture (face_fig_mm, Ø39.4) as every massing draws
+// it. tests/real_shapes.test.js holds every number here to that ledger row.
 async function realWatch(scene) {
   const [drum, bezel, stand] = await Promise.all([
     load("canary_watch_station_drum.stl"),
@@ -102,15 +109,15 @@ async function realWatch(scene) {
   const cS = stand.bbox.center;                          // ≈ (0, 4.07, 29.8)
   const A = 65 * Math.PI / 180;                          // pocket axis = Rx(65°)·ẑ
   const Ra = M4.rotX(A);
-  const p0 = [0, 3.03 - cS[1], 27.36 - cS[2]];           // scad's drum seat, stand-centered
+  const p0 = [0, 3.028 - cS[1], 27.356 - cS[2]];         // the ledger's seat_scad.pos, stand-centered
   const a = [0, -Math.sin(A), Math.cos(A)];
   const along = (s) => [p0[0], p0[1] + a[1] * s, p0[2] + a[2] * s];
   seatPart(scene, stand, { G, D: [0, 0, 0], color: shell2(), gloss: 0.18 });
-  seatPart(scene, drum, { G, D: along(10.5), R: Ra, gloss: 0.22 });           // drum center at s=10.5
-  seatPart(scene, bezel, { G, D: along(20.1), R: M4.mul(Ra, rotXpi), gloss: 0.3 }); // face-down print → face out
-  scene.addMesh(screenPlane(37.5, 37.5, true), {         // the Ø37.7 glass behind the Ø39.4 aperture
+  seatPart(scene, drum, { G, D: along(10.5), R: Ra, gloss: 0.22 });           // drum center: drum_h / 2
+  seatPart(scene, bezel, { G, D: along(20.095), R: M4.mul(Ra, rotXpi), gloss: 0.3 }); // face-down print → face out; fig.d − bezel height / 2
+  scene.addMesh(screenPlane(39.4, 39.4, true), {         // the glass in the Ø39.4 aperture (face_fig_mm)
     screen: true,
-    model: M4.mul(G, M4.mul(M4.translate(...along(20.5)), Ra)),
+    model: M4.mul(G, M4.mul(M4.translate(...along(20.6)), Ra)),   // drum_h − flush
   });
   scene.dist = 185;
 }

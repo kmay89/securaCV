@@ -118,15 +118,14 @@ static bool hex_nibble(char c, uint8_t* out) {
 }
 
 static void persist_config() {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadWrite()) return;
-  nvs.putBool(NVS_KEY_T3,    g_cfg.t3_enabled);
-  nvs.putBool(NVS_KEY_T4,    g_cfg.t4_enabled);
-  nvs.putBool(NVS_KEY_GLASS, g_cfg.glass_enabled);
-  nvs.putBool(NVS_KEY_MOT,   g_cfg.motion_enabled);
-  nvs.putBool(NVS_KEY_MESH,  g_cfg.mesh_enabled);
-  nvs.putUInt(NVS_KEY_COOL,  g_cfg.cooldown_s);
-  nvs.end();
+  NvsMainSession nvs(false);
+  if (!nvs.isOpen()) return;
+  nvs->putBool(NVS_KEY_T3,    g_cfg.t3_enabled);
+  nvs->putBool(NVS_KEY_T4,    g_cfg.t4_enabled);
+  nvs->putBool(NVS_KEY_GLASS, g_cfg.glass_enabled);
+  nvs->putBool(NVS_KEY_MOT,   g_cfg.motion_enabled);
+  nvs->putBool(NVS_KEY_MESH,  g_cfg.mesh_enabled);
+  nvs->putUInt(NVS_KEY_COOL,  g_cfg.cooldown_s);
 }
 
 /* ── The seal worker (one-shot task; never the loop) ────────────────── */
@@ -335,28 +334,40 @@ static void seal_task(void*) {
 
 /* ── Public API ─────────────────────────────────────────────────────── */
 
-void init() {
-  NvsManager& nvs = NvsManager::instance();
-  /* On a factory-fresh unit the namespace doesn't exist yet and a pure
-   * read-only open fails; fall back to read-write, which creates it. The
-   * defaults below are the fresh-unit truth either way (all off, no key). */
-  if (!nvs.beginReadOnly() && !nvs.beginReadWrite()) return;
-  g_cfg.t3_enabled    = nvs.getBool(NVS_KEY_T3, false);
-  g_cfg.t4_enabled    = nvs.getBool(NVS_KEY_T4, false);
-  g_cfg.glass_enabled  = nvs.getBool(NVS_KEY_GLASS, false);
-  g_cfg.motion_enabled = nvs.getBool(NVS_KEY_MOT, false);
-  g_cfg.mesh_enabled   = nvs.getBool(NVS_KEY_MESH, false);
-  uint32_t cool = nvs.getUInt(NVS_KEY_COOL, vault_logic::DEFAULT_COOLDOWN_S);
+static void load_config_from(NvsMainSession& nvs) {
+  g_cfg.t3_enabled    = nvs->getBool(NVS_KEY_T3, false);
+  g_cfg.t4_enabled    = nvs->getBool(NVS_KEY_T4, false);
+  g_cfg.glass_enabled  = nvs->getBool(NVS_KEY_GLASS, false);
+  g_cfg.motion_enabled = nvs->getBool(NVS_KEY_MOT, false);
+  g_cfg.mesh_enabled   = nvs->getBool(NVS_KEY_MESH, false);
+  uint32_t cool = nvs->getUInt(NVS_KEY_COOL, vault_logic::DEFAULT_COOLDOWN_S);
   if (cool < 10)   cool = 10;
   if (cool > 3600) cool = 3600;
   g_cfg.cooldown_s = (uint16_t)cool;
 
-  if (nvs.getBytesLength(NVS_KEY_PUB) == vault_logic::PUBKEY_SIZE) {
-    nvs.getBytes(NVS_KEY_PUB, g_pubkey, vault_logic::PUBKEY_SIZE);
+  if (nvs->getBytesLength(NVS_KEY_PUB) == vault_logic::PUBKEY_SIZE) {
+    nvs->getBytes(NVS_KEY_PUB, g_pubkey, vault_logic::PUBKEY_SIZE);
     sha256_key_id(g_pubkey, g_key_id);
     g_has_pubkey = true;
   }
-  nvs.end();
+}
+
+void init() {
+  /* On a factory-fresh unit the namespace doesn't exist yet and a pure
+   * read-only open fails; fall back to read-write, which creates it. The
+   * defaults above are the fresh-unit truth either way (all off, no key).
+   * Two guards, one at a time: the read-only one is closed before the
+   * fallback opens, so the fallback is a fresh session, not a nested one. */
+  {
+    NvsMainSession ro(true);
+    if (ro.isOpen()) {
+      load_config_from(ro);
+      return;
+    }
+  }
+  NvsMainSession rw(false);
+  if (!rw.isOpen()) return;
+  load_config_from(rw);
 }
 
 Decision request_capture(Trigger t, bool camera_ok, bool qr_active,
@@ -383,12 +394,13 @@ Decision request_capture(Trigger t, bool camera_ok, bool qr_active,
   }
 
   /* Sequence number survives reboots (NVS). */
-  NvsManager& nvs = NvsManager::instance();
   uint32_t seq = 1;
-  if (nvs.beginReadWrite()) {
-    seq = nvs.getUInt(NVS_KEY_SEQ, 0) + 1;
-    nvs.putUInt(NVS_KEY_SEQ, seq);
-    nvs.end();
+  {
+    NvsMainSession nvs(false);
+    if (nvs.isOpen()) {
+      seq = nvs->getUInt(NVS_KEY_SEQ, 0) + 1;
+      nvs->putUInt(NVS_KEY_SEQ, seq);
+    }
   }
 
   g_job.trigger     = t;
@@ -458,10 +470,12 @@ bool set_pubkey_hex(const char* hex64) {
     pub[i] = (uint8_t)((hi << 4) | lo);
   }
 
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadWrite()) return false;
-  const bool stored = nvs.putBytes(NVS_KEY_PUB, pub, sizeof(pub)) == sizeof(pub);
-  nvs.end();
+  bool stored = false;
+  {
+    NvsMainSession nvs(false);
+    if (!nvs.isOpen()) return false;
+    stored = nvs->putBytes(NVS_KEY_PUB, pub, sizeof(pub)) == sizeof(pub);
+  }
   if (!stored) return false;
 
   memcpy(g_pubkey, pub, sizeof(g_pubkey));
@@ -472,10 +486,9 @@ bool set_pubkey_hex(const char* hex64) {
 }
 
 void clear_pubkey() {
-  NvsManager& nvs = NvsManager::instance();
-  if (nvs.beginReadWrite()) {
-    nvs.remove(NVS_KEY_PUB);
-    nvs.end();  /* before persist_config() opens its own */
+  {
+    NvsMainSession nvs(false);  /* closed before persist_config() opens its own */
+    if (nvs.isOpen()) nvs->remove(NVS_KEY_PUB);
   }
   memset(g_pubkey, 0, sizeof(g_pubkey));
   memset(g_key_id, 0, sizeof(g_key_id));

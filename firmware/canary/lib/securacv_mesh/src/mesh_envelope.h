@@ -21,19 +21,23 @@
  * existing `memcpy(..., &timestamp, 4)` on a little-endian Xtensa/x86
  * build.
  *
- * Layout parity with canary-wap — NOT wire interop:
- *   • Field order and widths (version, msg_type, opera_id, sender_fp,
- *     counter, timestamp, payload, signature) mirror canary-wap's outer
- *     frame (firmware/projects/canary-wap/arduino/canary_wap/
- *     mesh_network.cpp send_to_peer / handle_received_message), and the
- *     signature covers data[0 .. HEADER_LEN + payload_len) the same way
- *     (header + payload, not the signature bytes; both hash with
- *     DOMAIN_MESSAGE before Ed25519).
- *   • The two trees still do not exchange frames: the version byte
- *     differs (PROTOCOL_VERSION below is 1; canary-wap's Opera frames
- *     carry mesh_network::PROTOCOL_VERSION = 0 and each side rejects the
- *     other's), and the msg_type numbering differs (MsgType below vs
- *     canary-wap's MessageType, e.g. TAMPER_ALERT 18 vs 4).
+ * This IS the outer frame (spec §4.5, v0.4 — awaiting crypto review, not
+ * bench-verified). It is the same in canary-wap
+ * (firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp
+ * send_to_peer / handle_received_message): field order and widths, the
+ * version byte, the msg_type numbering — all three take their values from
+ * mesh_wire.h, the one registry both trees compile — and the signature,
+ * which covers data[0 .. HEADER_LEN + payload_len) hashed under
+ * DOMAIN_MESSAGE before Ed25519 in both. Until v0.4 the version byte
+ * (1 here, 0 there) and the numbering (TAMPER_ALERT 18 here, 4 there)
+ * differed, and mesh_session put an unsigned copy of the type ahead of
+ * this envelope that canary-wap never had; the frame now goes on the air
+ * as serialized here, nothing in front of it.
+ *
+ * What still keeps the trees apart is BELOW the envelope: several payload
+ * encodings and the pairing exchange (the spec §4.5 table). A type byte
+ * now means the same message on both sides; it does not yet mean the same
+ * bytes inside.
  *
  * What this module does NOT do — and where each piece lives instead:
  *   • The opera-peer table and the pubkey lookup: mesh_session's
@@ -55,6 +59,7 @@
 #define SECURACV_MESH_ENVELOPE_H
 
 #include "mesh_crypto.h"
+#include "mesh_wire.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -66,10 +71,15 @@ namespace mesh_envelope {
  * ────────────────────────────────────────────────────────────────────────── */
 
 /* Protocol version. Receivers reject frames with a different byte at
- * offset 0. NOT canary-wap's Opera value (its mesh_network::
- * PROTOCOL_VERSION is 0; the 1 in its header belongs to chirp_channel) —
- * see "Layout parity" above. */
-constexpr uint8_t PROTOCOL_VERSION = 1;
+ * offset 0. The registry's value (mesh_wire.h) — canary-wap's Opera frames
+ * carry the same byte since v0.4. Named OPERA_VERSION, as in the registry,
+ * and not PROTOCOL_VERSION: canary_config.h #defines that name as a string
+ * (the fleet protocol tag), so a constant called PROTOCOL_VERSION cannot be
+ * declared in any translation unit that includes it — this header was
+ * un-includable from main.cpp and every other TU of the canary sketch
+ * until v0.4's follow-up. test_mesh_wire.cpp includes this header behind
+ * that macro to keep it so. */
+constexpr uint8_t OPERA_VERSION = mesh_wire::OPERA_VERSION;
 
 constexpr size_t VERSION_LEN      = 1;
 constexpr size_t MSG_TYPE_LEN     = 1;
@@ -109,29 +119,33 @@ constexpr size_t MAX_FRAME_LEN    = HEADER_LEN + MAX_PAYLOAD_LEN + SIGNATURE_LEN
 
 /* Message types for opera-authenticated traffic. The byte at offset 1
  * of every signed frame is one of these. Values 0..15 are reserved for
- * pre-membership pairing traffic (see mesh_session::MsgType — those
- * frames have a different, unsigned envelope). 16..255 here. */
+ * pre-membership pairing traffic (mesh_session::MsgType, 8..12 — those
+ * frames have a different, unsigned envelope); 16+ here. Every value is
+ * the registry's (mesh_wire.h, spec §4.5): canary-wap's MessageType takes
+ * the same ones, and 30..36 are its session-layer types, which this tree
+ * drops as unknown. Never renumber here — change the registry, and the
+ * spec, or nothing. */
 enum class MsgType : uint8_t {
-  HEARTBEAT      = 16,
-  CSI_FEATURES   = 17,   /* PR 3 — 32-byte csi_features_t broadcast */
-  TAMPER_ALERT   = 18,
-  POWER_ALERT    = 19,
-  OFFLINE_IMMINENT = 20,
-  WITNESS_RECORD = 21,
-  BEACON_EVENT   = 22,   /* PR 5c — ble.scout arrived/departed broadcast */
-  CHANNEL_LOCK   = 23,   /* PR 4b — coordinated channel-hop proposal */
-  HUB_ELECTION   = 24,   /* PR 4c — Hub failover election broadcast */
-  LEAVE_OPERA    = 25,   /* F10 — "I am leaving"; empty payload. A verified
-                          * LEAVE removes only the SIGNER's own trust entry
-                          * at each receiver (spec §4.2, §8.3). */
+  HEARTBEAT      = mesh_wire::HEARTBEAT,
+  CSI_FEATURES   = mesh_wire::CSI_FEATURES,     /* PR 3 — 32-byte csi_features_t broadcast */
+  TAMPER_ALERT   = mesh_wire::TAMPER_ALERT,
+  POWER_ALERT    = mesh_wire::POWER_ALERT,
+  OFFLINE_IMMINENT = mesh_wire::OFFLINE_IMMINENT,
+  WITNESS_RECORD = mesh_wire::WITNESS_RECORD,
+  BEACON_EVENT   = mesh_wire::BEACON_EVENT,     /* PR 5c — ble.scout arrived/departed broadcast */
+  CHANNEL_LOCK   = mesh_wire::CHANNEL_LOCK,     /* PR 4b — coordinated channel-hop proposal */
+  HUB_ELECTION   = mesh_wire::HUB_ELECTION,     /* PR 4c — Hub failover election broadcast */
+  LEAVE_OPERA    = mesh_wire::LEAVE_OPERA,      /* F10 — "I am leaving"; empty payload. A verified
+                                                 * LEAVE removes only the SIGNER's own trust entry
+                                                 * at each receiver (spec §4.2, §8.3). */
   /* F10-rekey — opera_secret rotation on peer removal (mesh_rekey.h,
    * spec §5.6 PIO). All four ride signed envelopes under the CURRENT
    * opera_id. */
-  REKEY_OFFER    = 26,   /* initiator → all: rekey_id, ephemeral X25519 pub, removed fp */
-  REKEY_ACCEPT   = 27,   /* survivor → initiator: rekey_id, ephemeral X25519 pub */
-  REKEY_SECRET   = 28,   /* initiator → survivor: rekey_id, nonce, AEAD(new secret) */
-  REKEY_ACK      = 29,   /* survivor → initiator, sent BEFORE it switches */
-  /* 30..255 reserved for future use. */
+  REKEY_OFFER    = mesh_wire::REKEY_OFFER,      /* initiator → all: rekey_id, ephemeral X25519 pub, removed fp */
+  REKEY_ACCEPT   = mesh_wire::REKEY_ACCEPT,     /* survivor → initiator: rekey_id, ephemeral X25519 pub */
+  REKEY_SECRET   = mesh_wire::REKEY_SECRET,     /* initiator → survivor: rekey_id, nonce, AEAD(new secret) */
+  REKEY_ACK      = mesh_wire::REKEY_ACK,        /* survivor → initiator, sent BEFORE it switches */
+  /* 30..36 are canary-wap's session layer (mesh_wire.h); 37..255 reserved. */
 };
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -163,7 +177,7 @@ struct Header {
  *
  * The Header argument supplies the per-message fields the caller is
  * expected to fill: msg_type, opera_id, sender_fp, counter, timestamp.
- * The version field is forced to PROTOCOL_VERSION regardless of what
+ * The version field is forced to OPERA_VERSION regardless of what
  * the caller passes (a stale or wrong value cannot leak onto the wire).
  *
  * signer_privkey + signer_pubkey are the long-term Ed25519 keypair of
@@ -183,7 +197,7 @@ size_t serialize_signed(const Header&  header,
  * PARSE + VERIFY
  *
  * Reads [header || payload || signature] from `frame` and:
- *   1. Validates frame_len >= MIN_FRAME_LEN and version == PROTOCOL_VERSION.
+ *   1. Validates frame_len >= MIN_FRAME_LEN and version == OPERA_VERSION.
  *   2. Decodes the header into *out_header (LE byte order).
  *   3. Verifies the trailing 64-byte Ed25519 signature against the
  *      bytes data[0 .. HEADER_LEN + payload_len) using peer_pubkey.
@@ -194,7 +208,7 @@ size_t serialize_signed(const Header&  header,
  *
  * Returns false on:
  *   • frame == nullptr or frame_len < MIN_FRAME_LEN
- *   • version != PROTOCOL_VERSION
+ *   • version != OPERA_VERSION
  *   • signature verification fails (corrupt/forged frame)
  *
  * Does NOT check:

@@ -467,9 +467,33 @@ so — see D2 below.)
   not the build's posture — compile-gated on `esp_https_server.h`, served
   after setup once the on-device certificate loads, and plain HTTP during
   setup and on a start failure, logged (`firmware/FEATURES.md`, the
-  canary-wap HTTPS note; PARITY_PLAN's shared TLS line); the canary's mDNS
-  TXT record, which does not yet advertise TLS, so a discovery client cannot
-  tell HTTPS is on; and the bench, U1 runbook Track D, D1–D5.
+  canary-wap HTTPS note; PARITY_PLAN's shared TLS line); and the bench, U1
+  runbook Track D, D1–D5.
+  *mDNS TLS advertisement done (#1757):* the canary's `_securacv._tcp`
+  record now carries a `tls` TXT ("1" when the HTTPS server actually came
+  up, "0" otherwise — its absence means firmware predating this, not plain
+  by choice) and a `secure_port` TXT when live, so a discovery client (the
+  Lab, the Flasher) can tell HTTPS is on without probing. The decision is
+  the pure, host-tested `tls_policy::mdns_tls_advert`; `begin()` announces
+  before the server exists (tls=0) and `startHttpServer()` re-announces once
+  TLS is up, which the STA_GOT_IP re-announce then carries to the home-WiFi
+  interface. The plain `http`/`securacv` services keep advertising 80 (it
+  307-redirects) for a client that cannot do TLS. Host-tested
+  (`test_tls_policy`), canary `[env:full]` compiles. Not bench-verified (U1).
+- [ ] **F62 [code+decision] Consume the mDNS TLS advert in the desktop
+  clients.** Found by the #1757 review: the canary now advertises `tls` /
+  `secure_port` over mDNS (F15), but no in-repo discovery client reads them
+  — the Flasher's `desktop/src-tauri/src/fleet.rs` serializes neither into
+  `FleetSighting`, and `desktop/src/app.js` still builds an `http://` URL
+  from the port-80 SRV record (which 307-redirects to a self-signed 443 the
+  default reqwest trust policy then rejects). Closing the loop needs: the two
+  fields carried through `FleetSighting` in BOTH the Flasher and the Lab's
+  twin (`desktop-lab/src-tauri/src/fleet.rs`, held equal by
+  `desktop_parity.test.js`); the frontend transport decision to prefer
+  `https://<secure_port>` when `tls="1"`; and a client TLS-trust model for
+  the self-signed cert — a TOFU pin store or an explicit accept-with-pin
+  flow (security-sensitive, a maintainer decision). Pre-existing gap, not a
+  regression; deferred from #1757 to keep that PR to the advertisement half.
 - [x] **F16 [code] WPA3/PMF + per-device AP password** on the WAP join path —
   done (option (b) — maintainer to confirm): both trees now ask for WPA2/WPA3
   transition on the SoftAP with PMF capable and never required, and for PMF
@@ -721,8 +745,8 @@ so — see D2 below.)
   instead of booting it with a key the next boot will not find (a new device
   id and a broken Home Assistant pin). Maintainer to choose: halt, or boot
   with a loud, counted ephemeral identity. Found doing F55.
-- [ ] **F59 [code] canary-wap's NVS writes report success whatever the write
-  did.** `canary_wap.ino`'s `nvs_store_key` / `nvs_store_u32` /
+- [x] **F59 [code] canary-wap's NVS writes report success whatever the write
+  did.** (#1749) `canary_wap.ino`'s `nvs_store_key` / `nvs_store_u32` /
   `nvs_store_bytes` and `tls_store_to_nvs` return true once the session
   opens, `persist_chain_state()` advances `seq_persisted` and
   `chain_persists` regardless, and `note_wall_clock()` writes the birth pair
@@ -734,7 +758,21 @@ so — see D2 below.)
   and a sync check for the sketch). The WAP's provisioning also stops when
   its key store returns false, so an honest `nvs_store_key` there is F58's
   choice too. Found doing F55 and F53.
-- [ ] **F60 [code] canary-wap's NVS session-balance check is textual.**
+  *Done:* `nvs_store_u32` / `nvs_store_bytes` / `nvs_store_token` /
+  `tls_store_to_nvs` and `wifi_save_credentials` now answer true only when
+  every put landed (the Wi-Fi connect route answers an error on a failed
+  save — the WAP twin of F61's named start); `note_wall_clock` is the
+  canary's honest version (no half-stamp, one report, minute retry);
+  `persist_chain_state()` writes chain_state.h's single atomic blob under
+  `chain_st` and settles through chain_persist.h (streaks counted in the
+  new `g_health.chain_persist_failures`, retried per its rules), which also
+  retires the reboot handler's inline pair — the httpd/loop interleave has
+  no two-entry window left to tear; boot resumes via `chain_state::choose()`
+  (legacy pair read-only). Both headers are staged copies held by
+  check_csi_sync.sh. `nvs_store_key` deliberately keeps ignoring its put —
+  F58's pending halt-vs-ephemeral call, same posture as the canary's.
+- [x] **F60 [code] canary-wap's NVS session-balance check is textual.**
+  (#1749)
   F53's `test_nvs_session_balance`
   (`firmware/projects/canary-wap/tests_host/`) reads the sketch's sources as
   text: it fails on a block that opens a session and never ends it, or that
@@ -744,8 +782,20 @@ so — see D2 below.)
   ends shuts every other task out (each waits 2 s, then fails soft). Close
   the gap with an RAII session guard in `nvs_store.h` or a real control-flow
   check. Found doing F53.
-- [ ] **F61 [code] The canary's other NVS puts are unaudited for a write that
-  did not land.** F55 made the chain-state helpers honest; the 64 direct
+  *Done:* `NvsMainSession` (nvs_store.h) is the RAII guard — constructor is
+  begin(), destructor the end() on every path — and all 25 session sites in
+  the sketch (canary_wap.ino, bluetooth_channel.cpp, vault_snapshot.cpp)
+  plus the nvs_store:: helpers use it; the dead `nvs_open_rw` /
+  `nvs_open_ro` / no-arg `nvs_close` wrappers are deleted. The balance
+  test's second edition enforces the rule that makes the RAII sound and IS
+  textually decidable: no sketch source outside nvs_store.h names
+  NvsManager at all (comments/strings stripped; ESP-IDF's own
+  `nvs_close(handle)` exempt), and the guard's begin-in-ctor/end-in-dtor
+  lines are pinned. test_nvs_store_lock runs the guard's scenarios on the
+  real header (scope close, nested depth, cross-task fail-soft owing no
+  end).
+- [x] **F61 [code] The canary's other NVS puts are unaudited for a write that
+  did not land.** (#1753) F55 made the chain-state helpers honest; the 64 direct
   `Preferences` / `NvsManager` put calls in 15 files of `firmware/canary`
   (outside `securacv_crypto.cpp`) were out of its scope, and a few already
   read their result (`csi_event_egress.cpp`, `mesh_state.cpp`). Start with the
@@ -756,6 +806,31 @@ so — see D2 below.)
   even a false, so a Wi-Fi save the API reported as done can be silently
   dropped; have the route answer an error when the save fails. Then audit each
   of the rest for a state it claims after a put NVS refused. Found doing F55.
+  *Done:* every direct put site audited (putChar included — the item's 64
+  under-counted by missing it). Seven claimed state over a refused put, now
+  honest: `saveCredentials()` answers true only when every entry landed
+  (WARNING otherwise, the WAP's F59 wording) and `handle_wifi_connect`
+  snapshots the manager's credentials, restores them on a failed save and
+  answers `ok:false` instead of "Connecting..." — setup stays incomplete and
+  the retry tick cannot connect with credentials the answer called unsaved
+  (the WAP route's Codex rollback, ported); `audio_save_mute_intent` returns
+  the put's verdict (the route's `"persisted"` field was already wired to it,
+  so the mic-privacy claim is now real) and WARNs for the result-ignoring
+  MQTT path; the thermal watchdog's `save_nvs()` clears `s_dirty` only when
+  all eleven entries landed, so a failed history save retries next cadence
+  instead of going silently final; the camera's orientation print and the
+  vision config print say NOT saved on a refused put (vision's return was
+  already honest, its log was not); `setup_set_device_name` and
+  `setup_set_tz` keep the live RAM state they really applied but log a
+  WARNING naming the failed persist instead of "updated"/"set". Audited and
+  left as-is, with reasons: mesh_state.cpp (all ten sites), ble_scout.cpp,
+  ble_scout_key.cpp, mqtt's `write_credentials`/TLS writes and auth's bearer
+  persist already read every result; power's cycle/brownout/history saves,
+  canary_power_events.h's lineage log + heartbeat, and diagnostics'
+  self-verifying `test_nvs` probe are best-effort telemetry that claims
+  nothing and retries on its own cadence; `setup_mark_complete` /
+  `setup_check_timeout` fail toward re-entering setup, which is fail-safe.
+  Not bench-verified on hardware (U1).
 
 ### Parity & sub-projects
 
@@ -1099,7 +1174,8 @@ so — see D2 below.)
   behavior). Recommended: allocate bundle ids from the chokepoint allocator
   at commit time, in both trees and the open-row display. The fix must
   reset or migrate `csi.evsent` and Home Assistant's stored mark.
-- [ ] **F47 [code] canary-wap's backfill watermark lives in RAM.** Found by
+- [x] **F47 [code] canary-wap's backfill watermark lives in RAM.** (#1754)
+  Found by
   F37 (#1718). Its first reconnect after every boot replays up to 64 ids
   Home Assistant refuses. It could adopt the canary's
   `common/csi/src/csi_event_backfill.h` (NVS ceiling, id-floor cap). A
@@ -1107,17 +1183,35 @@ so — see D2 below.)
   last whole line before a power cut's torn tail, the canary's walk stays
   pending and re-reads the fragment about once per loop pass until the next
   committed row seals it. Nothing is lost, and the next row goes out.
+  *Done:* csi_mqtt.cpp adopts the header's ceiling rule over its own
+  iterate_since backfill: `persist_delivered_ceiling()` (must_persist
+  cadence, `ceiling_for`'s id-floor cap via the new
+  `csi_integration::event_id_floor_stored()`, same `csi.evsent` key as the
+  canary's egress) runs in `publish_and_advance` BEFORE the id is handed
+  over, and `init()` restores the watermark from the ceiling — max()'d, so
+  a config-POST re-init never moves it back — with Planner::begin's
+  first-boot rule (everything below the restored id floor treated as
+  delivered, the record written then). The torn-tail re-read is fixed in
+  the canonical Planner: the walk parks on a torn tail (`m_torn_size`) and
+  reads again only when the log grows, cleared on card open/close and
+  retention cuts; `test_torn_tail_is_parked_not_reread_every_pass`
+  reproduces the reboot-then-spin scenario and pins zero reads while the
+  log stands still (432 checks). Staged WAP copy re-synced. Not
+  bench-verified on hardware (U1).
 - [ ] **F48 [code+decision] canary-wap's mesh crypto and its interop with the
   PIO tree.** Found by F33 (#1718). canary-wap's AUTH exchange still runs
   X25519 over long-term Ed25519 keys, the bug class F33 part 2 fixed for
   pairing, and its rotation encrypts under those session keys. canary-wap
   also HKDFs the pairing key where the PIO tree and spec §5.3 use it raw,
-  and it numbers pairing frames differently, so the two trees cannot pair
-  with each other. Concurrent removals on canary-wap cannot converge without
+  and its pairing payload structs differ from the PIO tree's, so the two
+  trees cannot pair with each other (the outer frame and the type-byte
+  numbering they also disagreed on are reconciled by spec §4.5's
+  `mesh_wire.h` — host-tested, crypto review pending; the payloads and
+  the derivation are what remain). Concurrent removals on canary-wap cannot converge without
   a wire change: `MSG_OPERA_REKEY` names no removed device and has no
   announcement phase. Crypto review and a wire decision first, then code in
   both trees and a cross-tree host test.
-- [ ] **F49 [code] Mesh leftovers from F33.** (1) The canary's health-log
+- [~] **F49 [code] Mesh leftovers from F33.** (1) The canary's health-log
   list passes `millis()` to `formatTimestamp`, the same uptime-as-time-of-day
   rendering F33 part 7 fixed for alerts. (2) The joiner side's
   `CodeReadyCallback` never fires: the code arrives on `SEND_ACCEPT`, and
@@ -1127,8 +1221,32 @@ so — see D2 below.)
   PIO residual splits remain: both initiators already handed out, a mutual
   removal, or a lost ACK. A random-loss probe split 3 of 60 runs at 5%
   frame loss (spec §5.6 states it).
+  *Done (#1756), parts 1-3:*
+  (1) `GET /api/logs` now carries `uptime_ms` (handle_logs) and the log list
+  renders each entry's `timestamp_ms` as an age against it (`formatLogAge`,
+  shared with `formatAlertAge`) instead of `new Date(...)` — the made-up
+  time of day is gone. New host test `test_canary_health_logs.test.js`
+  (lifted-and-stubbed, Date poisoned, u32-wrap pinned) in the Makefile and
+  firmware.yml's node step.
+  (2) `dispatch_action` now fires the `CodeReadyCallback` on the joiner's
+  `SEND_ACCEPT` too (its code-derivation beat — there is no separate
+  `NOTIFY_CODE_READY` on that side), with the same code `pairing_confirmation_code()`
+  reports. Pinned by `test_joiner_offer_surfaces_code_with_accept`.
+  (3) A verified opera frame from a trusted peer whose radio MAC CHANGED
+  (reached via the transport's unknown-sender hook, which now routes opera
+  envelopes through the full signature + opera_id + strict-counter verify)
+  re-binds the transport table (`bind_peer_mac`) and fires a new
+  `PeerMacLearnedCallback`; `main.cpp` persists it (`save_peer_mac`) so the
+  next boot binds directly. A never-bound peer still drops (boot binds those
+  from NVS). Pinned by `test_peer_new_radio_mac_is_learned_from_a_verified_frame`
+  (replay and forgery from strange MACs move nothing). All 13 mesh C++
+  suites + the webui node tests + the full firmware host suite pass; canary
+  `[env:full]` compiles. **Part 4 (PIO residual splits) is left open — it
+  rides F48's cross-tree wire decision (a mutual-removal convergence needs a
+  `MSG_OPERA_REKEY` wire change), not something to land alone.** Not
+  bench-verified on hardware (U1).
 - [x] **F50 [code] The display's other join hints still cut on narrow glass.**
-  Found by F45 (#1718). The Fail-stage hints from `join_failure_hint` measure
+  (#1755, #1727) Found by F45 (#1718). The Fail-stage hints from `join_failure_hint` measure
   175-219 px at 12 px ("your router may be out of addresses" is 219), so
   they are cut on the round watch's 142 px band and on the 156/164 px
   portrait rows. The PhoneJoined hint ("no page? open 192.168.4.1") is
@@ -1136,7 +1254,10 @@ so — see D2 below.)
   `fit_line()` with narrow forms. Also, on the round watch's no-QR path,
   the title band appears to overlap the top of the bird, inferred from the
   numbers only. The emulator always renders the QR, so it was not seen.
-  *Done (#1727):* the scenes without credentials (PhoneJoined, Fail) give
+  *Done, twice (#1755, then #1727), and merged into one:* two sessions
+  fixed this in parallel. #1755 merged first; merging `main` into #1727
+  kept #1727's coach line and #1755's bird seat. The coach line (#1727):
+  the scenes without credentials (PhoneJoined, Fail) give
   their hint both rows the credentials leave. `onboardlayout::hint_lines()`
   tries the whole hint on the hint row, then over both rows, then a narrow
   form (`join_failure_hint_narrow()`, new in `wifi_join_policy.h`, one per
@@ -1155,17 +1276,29 @@ so — see D2 below.)
   whole "no page?" hint and the whole wrong-key and absent-network fixes off
   the emulator's glass word for word. With the old dist it fails on the
   watch (the address without "no page?") and on the nightstand ("passwords
-  are case..."). The second observation holds at the layout constants but
-  not on the glass. At the constants, the bird's head (from y 40) sits under
-  the round watch's no-QR title band (30..48, or 30..52 under Heirloom), an
-  overlap of 8 px (12). But canary_mark records the bird's base before
-  LVGL's first layout pass, so the bird rides the panel center (y 98..137 on
-  240 px). That clears the band but puts the bird behind the other scenes'
-  titles (F64). The band's own title is cut under Heirloom ("On your
-  phone", 154 px on 142; F65). The onboarding docs said the hint comes
-  after 9 s; they now say 4 s after the phone joins. Host-tested; the ESP32
-  builds are CI's; not bench-tested. The emulator dist is rebuilt. Found
-  here: F64, F65 and F66.
+  are case..."). #1755 had fitted the coach line to the hint row alone
+  (`fit_line`: the full form, the narrow form, then the floor face) with
+  its own narrow wording, and the merge replaced both. That wording
+  dropped the NoAddress hint's "may" ("router out of addresses") and the
+  catch-all's "try", which `test_wifi_join_policy`'s hedge check (#1727)
+  would fail. The bird (#1755): on small glass the Join scene seats it at the
+  hidden card's center (`join_bird_top`), which the stack keeps clear of
+  the title and the credentials, and `canary_mark_rebase()` re-arms the
+  base capture when the seat moves; the layout test guards the seat on
+  every glass. The second observation holds at the layout constants but
+  not on the glass. At the constants, the bird's head (from y 40) sits
+  under the round watch's no-QR title band (30..48, or 30..52 under
+  Heirloom), an overlap of 8 px (12). But canary_mark records the bird's
+  base before LVGL's first layout pass, so the bird rides the panel center
+  (y 98..137 on 240 px). That clears the band but puts the bird behind the
+  other scenes' titles. The rebase re-reads the base the same way, right
+  after the align and before a layout pass, so the new seat is most likely
+  not where the glass draws the bird either (read from the code, not run;
+  F64). The band's own title is cut under Heirloom ("On your phone", 154
+  px on 142; F65). The onboarding docs said the hint comes after 9 s; they
+  now say 4 s after the phone joins. Host-tested; the ESP32 builds are
+  CI's; not bench-tested. The emulator dist is rebuilt. Found here: F64,
+  F65 and F66.
 - [x] **F51 [code] The airtime governor's window lost sends above 25.6 a
   second, and a saturating probe starved the heartbeat.** Found reconciling
   F4 (#1696) on the host. `airtime_governor.cpp`'s 256-slot ring held sends,
@@ -1237,33 +1370,6 @@ so — see D2 below.)
   measurement of the air. Still open: every other mesh send reserves nothing
   (Beacon event, channel lock, hub election, rekey and its ACK, auth,
   pairing, leave-opera).
-- [ ] **F62 [code] The C6 builds most likely send `Serial` to UART0 on the
-  radar's pins, not to USB.** `firmware/envs/platformio/canary-sense.ini`
-  :78 and `canary-sentinel.ini` :67 add `-UARDUINO_USB_CDC_ON_BOOT` (so do
-  `canary-display.ini` :700, for the C6 nightstand, and `common.ini` :76,
-  for `common_esp32c3`). PlatformIO's `ProcessFlags` appends every `-U`
-  after the `-D` list, and its `CPPDEFINES` removal compares the bare name
-  with a `(name, value)` tuple. So the flag cancels the board's
-  `-DARDUINO_USB_CDC_ON_BOOT=1` (`seeed_xiao_esp32c6.json` in pioarduino
-  55.03.38) instead of being skipped. Arduino-ESP32 3.3.8's
-  `HardwareSerial.h` (:426-440) then defines the macro as 0 and maps
-  `Serial` to `Serial0`, which is UART0, on RX GPIO17 / TX GPIO16 on the C6
-  (:160, :180). `HWCDC.h` (:110-115) declares `HWCDCSerial`, the USB-C
-  port, only when CDC-on-boot is 1. Both XIAO C6 `pins.h` files put the
-  radar's UART1 on TX16/RX17 ('UART0 stays on USB-CDC console'), and
-  Sense's `main.cpp` calls `Serial.begin()` (:677) before
-  `RadarSerial.begin()` (:735). So the Sense boot log, its tuning console
-  and the `Ed25519 pubkey` line HA17 added most likely go to header pins
-  D6/D7, and UART0 and UART1 contend for the radar's pins.
-  `scripts/lint_usb_console.py` and RELEASE_LESSONS (q) state the opposite
-  rule for C3/C6 ('they provide `Serial` on their own, and the S3 flag
-  prevents it'), so no gate notices. This is read from the installed core
-  headers and PlatformIO's source, not seen on a bench. The C3 envs on core
-  2.0.x were not checked. Fix, after a bench read on a XIAO C6 (U1): settle
-  which flag the C6 (and C3) builds need, then change the envs, the release
-  FQBNs and `lint_usb_console.py`'s rule together, and drop the port caveat
-  from `docs/device_trust.md` and Step 6 of `docs/homeassistant_setup.md`.
-  Found reviewing HA17 (#1727).
 - [ ] **F63 [code] canary-sense and canary-sentinel answer no serial `j`, so
   the in-browser flasher's identity card cannot show them.** HA17 (#1727)
   gave both a boot line with the full key, not the `j` self-manifest
@@ -1271,8 +1377,8 @@ so — see D2 below.)
   `device_id` / `pubkey` / `pubkey_fp`), which is what the identity card
   reads. Sentinel reads no serial input, and Sense's serial input belongs
   to the tuning console, which has no identity command, so `j` needs a new
-  input path on both. Which port that input would arrive on is F62's
-  question, so settle F62 first. Found doing HA17.
+  input path on both. Which port that input would arrive on is F67's
+  question, so settle F67 first. Found doing HA17.
 - [ ] **F64 [code] The onboarding bird never sits where its host placed
   it.** canary_mark_mood() records the bird's base with lv_obj_get_x/y at
   its first on-stage mood, and the breath and the poses then write that base
@@ -1292,7 +1398,14 @@ so — see D2 below.)
   style offset (lv_obj_get_style_x/y), then re-place the onboarding bird. At
   its constants the round watch's no-QR title band (30..48 px, 30..52 under
   Heirloom) overlaps the bird's head (from y 40), so that path needs a new
-  position (F50's second observation, #1727). Found by F50 (#1727).
+  position (F50's second observation, #1727). #1755 gave it one: the Join
+  scene aligns the bird to the hidden card's seat (`join_bird_top`, y 94 on
+  the round watch, which the layout test holds clear of the band) and calls
+  `canary_mark_rebase()`. But the rebase only re-arms the same
+  lv_obj_get_x/y capture, which the next mood takes right after the align
+  and before a layout pass, so it reads the old laid-out position (read
+  from the code, not run). The fix here covers it too; check that the drawn
+  bird sits at `join_bird_top`. Found by F50 (#1727).
 - [ ] **F65 [code] The onboarding's scene titles and bodies are cut on small
   glass.** Only the Join scene's credentials rows and the coach line are
   fitted (F45, F50). The titles and bodies keep LV_LABEL_LONG_DOT at a fixed
@@ -1333,6 +1446,34 @@ so — see D2 below.)
   the Join stack's rows, and have test_onboard_layout hold the rows inside
   the ring. Found by F50 (#1727), from the layout constants and seen in
   native LVGL 8.4 renders of onboard_ui.cpp.
+- [ ] **F67 [code] The C6 builds most likely send `Serial` to UART0 on the
+  radar's pins, not to USB.** `firmware/envs/platformio/canary-sense.ini`
+  :78 and `canary-sentinel.ini` :67 add `-UARDUINO_USB_CDC_ON_BOOT` (so do
+  `canary-display.ini` :700, for the C6 nightstand, and `common.ini` :76,
+  for `common_esp32c3`). PlatformIO's `ProcessFlags` appends every `-U`
+  after the `-D` list, and its `CPPDEFINES` removal compares the bare name
+  with a `(name, value)` tuple. So the flag cancels the board's
+  `-DARDUINO_USB_CDC_ON_BOOT=1` (`seeed_xiao_esp32c6.json` in pioarduino
+  55.03.38) instead of being skipped. Arduino-ESP32 3.3.8's
+  `HardwareSerial.h` (:426-440) then defines the macro as 0 and maps
+  `Serial` to `Serial0`, which is UART0, on RX GPIO17 / TX GPIO16 on the C6
+  (:160, :180). `HWCDC.h` (:110-115) declares `HWCDCSerial`, the USB-C
+  port, only when CDC-on-boot is 1. Both XIAO C6 `pins.h` files put the
+  radar's UART1 on TX16/RX17 ('UART0 stays on USB-CDC console'), and
+  Sense's `main.cpp` calls `Serial.begin()` (:677) before
+  `RadarSerial.begin()` (:735). So the Sense boot log, its tuning console
+  and the `Ed25519 pubkey` line HA17 added most likely go to header pins
+  D6/D7, and UART0 and UART1 contend for the radar's pins.
+  `scripts/lint_usb_console.py` and RELEASE_LESSONS (q) state the opposite
+  rule for C3/C6 ('they provide `Serial` on their own, and the S3 flag
+  prevents it'), so no gate notices. This is read from the installed core
+  headers and PlatformIO's source, not seen on a bench. The C3 envs on core
+  2.0.x were not checked. Fix, after a bench read on a XIAO C6 (U1): settle
+  which flag the C6 (and C3) builds need, then change the envs, the release
+  FQBNs and `lint_usb_console.py`'s rule together, and drop the port caveat
+  from `docs/device_trust.md` and Step 6 of `docs/homeassistant_setup.md`.
+  Found reviewing HA17 (#1727), which filed it as F62; renumbered when
+  `main`'s F62 (the desktop clients' mDNS TLS advert, #1757) merged first.
 
 ---
 
@@ -1522,18 +1663,29 @@ so — see D2 below.)
   since native fails closed silently on a malformed field. `MODEL_ADDR` and
   `DEV_FLASH_MANIFEST_URL` stay deliberate constants, still diffed by the
   test.
-- [x] **A12 [code] Desktop Flasher lacks the eFuse-read diagnostic** the
+- [x] **A12 [code] Desktop Flasher lacks the eFuse-read diagnostic** (#1702) the
   browser flasher has (espflash has no fuse-read; the parity test currently
   forces a "browser-only" disclosure). Needs an espflash upstream check or a
   raw-command implementation — investigate, then either implement or record
   why not beside the disclosure.
-  *Investigated, not implemented (#1718):* the pinned espflash 3.3.0 CLI has
-  no register, eFuse or security-info read (`board-info` prints no security
-  field; the library declares `GET_SECURITY_INFO` but never sends it). The
-  reason is recorded beside the parity test's browser-only disclosure and tied
-  to the pin. espflash 4.x's `board-info` prints part of it (not
-  `SECURE_VERSION` or `DIS_DOWNLOAD_MANUAL_ENCRYPT`), so the item reopens with
-  an espflash bump, which needs a bench flash per board.
+  *Done — implemented natively (#1702), after #1718 recorded the upstream
+  check: espflash v3.3.0 (the pinned sidecar) and v4.3.0 (latest) were both
+  downloaded and their command lists enumerated — neither has a fuse-read or
+  read-reg command (`board-info` prints no security field; the library
+  declares `GET_SECURITY_INFO` but never sends it). So
+  `desktop/src-tauri/src/efuse.rs` speaks the read-only sliver of the ROM
+  serial protocol itself (SLIP + SYNC + READ_REG, over the `serialport`
+  crate the WE2 flasher already uses — the flash engine stays
+  espflash-the-CLI): reset into the ROM (classic and USB-Serial/JTAG
+  sequences, verbatim from the vendored esptool-js), read the six block-0
+  words, hard-reset back. The decode is a port of `intake.js` — same fields,
+  bits, widths, three-state clean/touched/active, same user-facing copy —
+  and the desktop-parity test now pins the two tables against each other
+  (mutation-tested: a one-bit drift fails), plus the native `EFUSE_BASE`
+  pins against the vendored esptool-js bundle. A probe that can't reach the
+  ROM reports "not checked", never "clean". NOT bench-verified on hardware
+  (U1): the protocol and reset sequences are host-tested against the
+  vendored implementation, not proven on a board.
 - [ ] **A13 [human-gated by U3/certs] macOS signing/notarization** — both Mac
   apps ship unsigned until `ENABLE_MACOS_SIGNING` + certs exist
   (`desktop-lab/README.md`, `desktop/INSTALL.md`).
@@ -2060,7 +2212,7 @@ so — see D2 below.)
   CI and host-probed against stubs, not bench-tested. Left open: which port
   carries the line. The C6 builds undefine `ARDUINO_USB_CDC_ON_BOOT`, which
   with Arduino-ESP32 3.3.8 maps `Serial` to UART0 on the radar's pins
-  rather than USB (F62). Also left: serial `j` on Sense and Sentinel, which
+  rather than USB (F67). Also left: serial `j` on Sense and Sentinel, which
   the in-browser flasher's identity card needs (F63); a bench read of the
   line on a Sense (Sentinel has not run on hardware); the line on the Sense
   teaching page's staged boot log. The HACS mirror's resync of the changed

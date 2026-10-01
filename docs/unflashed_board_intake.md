@@ -217,15 +217,14 @@ nothing.
 ## Where the two flashers differ, and why we say so
 
 Per CLAUDE.md's "two flashers, two frontends" rule, both get the cold-start
-gesture and the forced erase. One check is genuinely browser-only:
+gesture, the forced erase and the security-fuse read.
 
-**The desktop app cannot read eFuses.** It drives the `espflash` CLI as a
-sidecar, and the version both desktop apps bundle (3.3.0, pinned in
-[`.github/espflash-pins.env`](../.github/espflash-pins.env)) has no command
-that reads one. Rather than silently omit it — a missing check reads as a
-passed check — the desktop app states the gap on the connect step.
-
-Checked against the espflash 3.3.0 source (backlog item A12), not assumed:
+**The desktop app reads eFuses natively — not through espflash.** The
+`espflash` CLI it drives as a sidecar cannot read one: the version both
+desktop apps bundle (3.3.0, pinned in
+[`.github/espflash-pins.env`](../.github/espflash-pins.env)) has no such
+command. Checked against the espflash 3.3.0 source (backlog item A12), not
+assumed:
 
 - Its subcommands are `board-info`, `checksum-md5`, `completions`,
   `erase-flash`, `erase-parts`, `erase-region`, `flash`, `hold-in-reset`,
@@ -241,33 +240,40 @@ Checked against the espflash 3.3.0 source (backlog item A12), not assumed:
   `GET_SECURITY_INFO` command, but 3.3.0 never sends the latter and exposes
   neither on the command line — and the apps run the CLI, not the library.
 
-So the browser's check cannot be matched with this engine, and none of the
-three ways to close the gap is a small change:
+So the app speaks the read-only sliver of the ROM serial protocol itself
+([`desktop/src-tauri/src/efuse.rs`](../desktop/src-tauri/src/efuse.rs)),
+over the same `serialport` link the WE2 flasher and the monitor use: reset
+into the bootloader with the sequences the vendored esptool-js uses (the
+classic bridge sequence first, the USB-Serial/JTAG sequence if that finds
+nothing), `SYNC`, six `READ_REG`s at eFuse block 0, then a hard reset back
+into the firmware. Those are the only two commands the module can send —
+nothing in it writes, burns or uploads a stub — and a probe that cannot
+reach the ROM reports "not checked", never "clean". The flash engine stays
+espflash-the-CLI; this is six register reads, not a second flasher.
 
-1. **Bump the pinned espflash to 4.x.** From 4.0.0, `board-info` also prints
-   a "Security Information" block from the ROM's `GET_SECURITY_INFO`
-   (every chip but the original ESP32, for which it prints "Security
-   features: None"): the raw flags word, secure boot and its key
-   revocations, flash encryption from the parity of `SPI_BOOT_CRYPT_CNT`
-   and the count itself, JTAG soft or hard disable, and a USB-disable flag.
-   That is a different source from the browser's (a flags summary, not the
-   block-0 words), so it can stand in only for the fields it names, each
-   matched to the browser's before it is trusted: nothing in it is the
-   anti-rollback floor (`SECURE_VERSION`) or `DIS_DOWNLOAD_MANUAL_ENCRYPT`,
-   which would stay disclosed as unchecked. It is also a new flash engine
-   in both apps: every command line the engine builds re-checked against
-   4.x, and a bench flash on each board, before it ships.
-2. **Speak the ROM protocol ourselves** — reset into the bootloader, sync,
-   and six `READ_REG`s at block 0, the reads the browser makes through
-   esptool-js. That is a second serial-protocol client beside the one the
-   app delegates to espflash, and it can only be proven on real boards.
-3. **Bundle `espefuse`** (esptool's Python eFuse tool) as a second sidecar,
-   with its own interpreter and pins.
+The decode is a port of the browser's `intake.js`: the same fields, bit
+offsets and widths, the same parity rule for `SPI_BOOT_CRYPT_CNT`, the same
+clean / burned-and-undone / burned-in verdicts and the same words on screen.
+`canary-local/tests/desktop_parity.test.js` pins every `(key, bit, width)`
+between the two files — as a set and per chip — plus the block-0 geometry and
+each native `EFUSE_BASE` against the vendored esptool-js bundle, so the two
+tables cannot drift apart unnoticed. Where the browser reads the fuses
+automatically at intake, the desktop reads them on demand (the *Read its
+security fuses* button on the connect step), bound to the board it read them
+from and cleared when that board goes away; once read, a stop-level finding
+refuses both flash paths, as the browser's blocked confirm card does.
 
-`canary-local/tests/desktop_parity.test.js` ties the disclosure to the pin:
-it fails when the pinned espflash reaches 4.x, so the bump that makes route 1
-possible is the change that revisits this section and the connect step's
-wording.
+Two other routes were considered and not taken: bumping the pinned espflash
+to 4.x, whose `board-info` prints a `GET_SECURITY_INFO` summary (a flags
+word, not the block-0 fields — it names neither `SECURE_VERSION` nor
+`DIS_DOWNLOAD_MANUAL_ENCRYPT`) at the cost of a new flash engine in both
+apps and a bench flash on every board; and bundling `espefuse` as a second
+sidecar with its own interpreter and pins.
+
+**Not bench-verified on hardware yet** (U1): the frames, the decode and the
+reset sequences are host-tested against the vendored esptool-js
+implementation, not proven on a physical board. A protocol mistake fails as
+"not checked", not as a wrong verdict.
 
 The desktop app **can** now read what firmware is resident: `board_passport`
 reads the partition table, otadata and the booted slot's `esp_app_desc_t` over

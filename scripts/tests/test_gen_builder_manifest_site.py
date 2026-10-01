@@ -71,8 +71,8 @@ ASSEMBLED = ENC / "assembled_dims.json"
 # measured envelope's min corner (x along w, z along h) and its extent.
 FEATURES = {
     "device.canary-combo": {
-        "lens": {"h": 10.0, "w": 10.0, "x": 21.6, "z": 59.1},
-        "radome": {"h": 24.0, "w": 24.0, "x": 57.8, "z": 30.6},
+        "lens": {"h": 10.0, "w": 10.0, "x": 22.6, "z": 60.1},
+        "radome": {"h": 24.0, "w": 24.0, "x": 58.8, "z": 31.6},
     },
 }
 # The devices gen_assembled_dims.py measures — the five released multi-part
@@ -80,15 +80,14 @@ FEATURES = {
 # then the snap-bezel face; the Dash: dock pads, back plate, frame) and the
 # CAD-measured Combo (the back, keyhole thickening included, to its rim) —
 # and their seams as the ledger states them (figure-depth mm, unrounded).
+# The piston-plate cases (Sense, Vision, devkit, WAP, Combo) have NO seam on
+# the side profile any more — the plate nests inside the shell's walls — so
+# the ledger records [] for them and the manifest carries no seams_mm; the
+# doorbell keeps the wall plate's reveal.
 SEAMS = {
-    "device.canary-combo": [24.38],
     "device.canary-display-dash": [6, 9],
     "device.canary-display-watch": [21],
-    "device.canary-sense": [19.5],
-    "device.canary-vision": [21.38],
-    "device.canary-vision-devkit": [16.5],
-    "device.canary-vision-doorbell": [4, 28],
-    "device.canary-wap": [13.05],
+    "device.canary-vision-doorbell": [4],
 }
 
 
@@ -221,9 +220,8 @@ class LedgerShape(unittest.TestCase):
                 self.assertNotIn("seams_mm", entry, fid)
         self.assertEqual({fid: e["seams_mm"] for fid, e in self.dims["figures"].items()
                           if "seams_mm" in e}, SEAMS)
-        # unrounded: 13.05 and 21.38 survive as the assembled generator measured them
-        self.assertEqual(self.dims["figures"]["device.canary-wap"]["seams_mm"], [13.05])
-        self.assertEqual(self.dims["figures"]["device.canary-vision"]["seams_mm"], [21.38])
+        # verbatim: the doorbell's wall-plate reveal as the assembled generator measured it
+        self.assertEqual(self.dims["figures"]["device.canary-vision-doorbell"]["seams_mm"], [4])
 
     def test_features_equal_the_assembled_record_verbatim(self):
         # exactly the rows that record features, verbatim and unrounded, and
@@ -272,7 +270,8 @@ class LedgerShape(unittest.TestCase):
         figs = self.dims["figures"]
         wap = figs["device.canary-wap"]["knobs"]
         self.assertEqual(wap, {"board_clear": 0.6, "board_h": 1.2, "board_l": 21.0,
-                               "board_w": 17.5, "stack_camera": 8.0, "stack_plain": 4.5})
+                               "board_w": 17.5, "cam_dx": -6.95, "cam_dy": -0.64,
+                               "cam_lens_h": 12.7, "stack_camera": 11.4, "stack_plain": 4.5})
         # references arrive as the registry's numbers, and the per-case decision
         # survives: the Sense clips say brd_w("xiao") = 17.5, the Vision pins the
         # measured 17.8 — same registry, two manifests, two knobs
@@ -325,8 +324,9 @@ class LedgerShape(unittest.TestCase):
         for rid, row in reg.items():
             self.assertIn(row["evidence"], {"measured", "drawing", "spec", "unmeasured"}, rid)
         facts = self.dims["board_facts"]
-        self.assertEqual(len(facts), 7)
+        self.assertEqual(len(facts), 11)
         self.assertEqual(facts["brd_xiao_w_measured"], 17.8)
+        self.assertEqual(facts["brd_xiao_sense_cam_h"], 12.7)
         self.assertEqual(facts["brd_stack_sock_measured"], 6.5)
         self.assertEqual(facts["brd_ws169_glass_h"], 41.13)
         # the same numbers the resolver hands the cases — one registry, read once
@@ -416,7 +416,7 @@ class ScratchTree(unittest.TestCase):
         # gen_figures.mjs was not re-run — the lens would land on the old box
         with _Tree() as root:
             aj = assembled_copy(root, lambda d: d["devices"]["device.canary-combo"]["fig"]
-                                .__setitem__("w", 88.4))
+                                .__setitem__("w", 90.4))
             with self.assertRaises(SystemExit) as cm:
                 distill(root, None, aj)
             msg = str(cm.exception.code)
@@ -453,7 +453,7 @@ class ScratchTree(unittest.TestCase):
             self.assertNotIn("knobs", figs["device.canary-wap"])
             self.assertNotIn("knobs", figs["device.canary-sense"])
             self.assertIn("knobs", figs["device.canary-vision"])
-            self.assertEqual(figs["device.canary-wap"]["seams_mm"], [13.05])   # still measured
+            self.assertNotIn("seams_mm", figs["device.canary-wap"])   # the plate case has no side seam
 
 
 class SiteCarry(unittest.TestCase):
@@ -470,10 +470,68 @@ class SiteCarry(unittest.TestCase):
         self._real_manifest = gbm.MANIFEST
         gbm.MANIFEST = Path(self._tmp.name) / "builder_manifest.json"
         gbm.MANIFEST.write_text(self.fresh, encoding="utf-8")
+        self._real_contract = gbm.SITE_CONTRACT_OUT
+        gbm.SITE_CONTRACT_OUT = Path(self._tmp.name) / "site_contract.json"
 
     def tearDown(self):
         gbm.MANIFEST = self._real_manifest
+        gbm.SITE_CONTRACT_OUT = self._real_contract
         self._tmp.cleanup()
+
+    # ── the reverse carry: the site's runtime contract on this tree ──────
+    CONTRACT = {"generated_by": "scripts/make-upstream-contract.mjs",
+                "paths": ["docs/hardware/enclosure/canary_sense_front.stl",
+                          "canary-local/devices/catalog.json"],
+                "patterns": ["canary-local/figures/*.svg"]}
+
+    def test_no_contract_on_the_site_is_a_notice_not_a_failure(self):
+        rc, out, _ = self.run_main("--site", str(self.site))
+        self.assertEqual(rc, 0)
+        self.assertIn("has no upstream-contract.json — the reverse carry is skipped", out)
+        self.assertFalse(gbm.SITE_CONTRACT_OUT.exists())
+        rc, out, _ = self.run_main("--site", str(self.site), "--check")
+        self.assertEqual(rc, 0)
+        self.assertIn("reverse carry is skipped", out)
+
+    def test_the_contract_is_carried_normalized_and_checked(self):
+        (self.site / "upstream-contract.json").write_text(
+            json.dumps({**self.CONTRACT, "paths": list(reversed(self.CONTRACT["paths"])) * 2}),
+            encoding="utf-8")
+        rc, out, _ = self.run_main("--site", str(self.site))
+        self.assertEqual(rc, 0)
+        self.assertIn("wrote", out)
+        # with the site carries current, a missing carried copy is what --check names
+        gbm.SITE_CONTRACT_OUT.unlink()
+        _, out, err = self.run_main("--site", str(self.site), "--check")
+        self.assertIsNotNone(err)
+        self.assertIn("site_contract.json is stale against the site's upstream-contract.json",
+                      str(err))
+        rc, out, _ = self.run_main("--site", str(self.site))
+        self.assertEqual(rc, 0)
+        carried = json.loads(gbm.SITE_CONTRACT_OUT.read_text(encoding="utf-8"))
+        self.assertEqual(carried, {"carried_from": "securacv_website/upstream-contract.json",
+                                   "generated_by": self.CONTRACT["generated_by"],
+                                   "paths": sorted(self.CONTRACT["paths"]),   # sorted, deduplicated
+                                   "patterns": self.CONTRACT["patterns"]})
+        rc, out, _ = self.run_main("--site", str(self.site), "--check")
+        self.assertEqual(rc, 0)
+        self.assertIn("site_contract.json is current", out)
+        rc, out, _ = self.run_main("--site", str(self.site))
+        self.assertIn("site_contract.json is unchanged", out)
+        # the site moves a path: the carried copy is stale until rerun
+        (self.site / "upstream-contract.json").write_text(
+            json.dumps({**self.CONTRACT, "paths": ["canary-local/devices/figures.json"]}),
+            encoding="utf-8")
+        _, out, err = self.run_main("--site", str(self.site), "--check")
+        self.assertIn("is stale against the site's", str(err))
+
+    def test_a_malformed_contract_is_refused(self):
+        for bad in ('{"paths": "x"}', '{"paths": ["/abs"]}', '{"paths": ["a/../b"]}',
+                    '{"paths": [], "patterns": [3]}', "not json"):
+            (self.site / "upstream-contract.json").write_text(bad, encoding="utf-8")
+            _, out, err = self.run_main("--site", str(self.site))
+            self.assertIsNotNone(err, bad)
+            self.assertFalse(gbm.SITE_CONTRACT_OUT.exists(), bad)
 
     def run_main(self, *argv: str) -> tuple[int | None, str, SystemExit | None]:
         with redirect_stdout(io.StringIO()) as out:

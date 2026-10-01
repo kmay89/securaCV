@@ -141,6 +141,8 @@
 #include <new>                       // placement-new for the PSRAM GPS ring
 #include "catchall_logic.h"          // pure, host-tested canary.local claim decisions
 #include "witness_store.h"           // pure, host-tested /WITNESS jsonl format + recovery
+#include "chain_state.h"             // pure, host-tested atomic {seq, head} NVS blob + boot source decision
+#include "chain_persist.h"           // pure, host-tested when-to-persist + failure-streak rules
 #include "witness_page.h"            // pure, host-tested GET /api/v1/witness page (spec/witness_api_v1.md)
 #include "fleet_selfreport.h"        // shared /api/fleet body builder (parity by architecture)
 #include "birth_day.h"               // pure, host-tested "when was this key born" rules
@@ -536,6 +538,11 @@ static const char* NVS_KEY_PRIV     = "privkey";
 static const char* NVS_KEY_SEQ      = "seq";
 static const char* NVS_KEY_BOOTS    = "boots";
 static const char* NVS_KEY_CHAIN    = "chain";
+// The live chain entry: {seq, head} as ONE atomic 39-byte blob
+// (chain_state.h), same key as the canary tree. NVS_KEY_SEQ / NVS_KEY_CHAIN
+// above are the legacy pair — read at boot so an older image still counts,
+// never written again (a power cut between their two writes tore them).
+static const char* NVS_KEY_CHAINST  = "chain_st";
 static const char* NVS_KEY_TAMPER   = "tamper";
 static const char* NVS_KEY_LOGSEQ   = "logseq";
 // The day this device's key was born, and whether that day may be called a
@@ -669,6 +676,7 @@ struct DeviceIdentity {
   uint8_t  chain_head[32];
   uint32_t seq;
   uint32_t seq_persisted;
+  chain_persist::Streak chain_persist_streak;  // open NVS-persist failure streak
   uint32_t boot_count;
   uint32_t boot_ms;
   uint32_t tamper_count;
@@ -707,6 +715,7 @@ struct SystemHealth {
   uint32_t gsv_count;
   uint32_t vtg_count;
   uint32_t chain_persists;
+  uint32_t chain_persist_failures;
   uint32_t state_changes;
   uint32_t tamper_events;
   uint32_t uptime_sec;
@@ -1399,8 +1408,9 @@ static void sha256_domain(const char* domain, const uint8_t* data, size_t n, uin
 // NVS PERSISTENCE (using NvsManager singleton from nvs_store.h)
 // ════════════════════════════════════════════════════════════════════════════
 
-// Note: nvs_open_rw(), nvs_open_ro(), and nvs_close() are now provided
-// by nvs_store.h as inline functions that delegate to NvsManager::instance()
+// Note: every session on the shared "securacv" namespace below is an RAII
+// NvsMainSession (nvs_store.h, F60) — its destructor is the end() on every
+// path, and the balance test fails any sketch source that names NvsManager.
 
 // NvsManager::begin() (nvs_store.h) waits at most this long for another
 // task's session and then fails soft, and one wait must sit under the task
@@ -1412,37 +1422,38 @@ static_assert(nvs_session::kSessionWaitMs < WATCHDOG_TIMEOUT_SEC * 1000u,
               "an NvsManager session wait must sit under the loop's task watchdog");
 
 static bool nvs_load_key(uint8_t priv[32]) {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadOnly()) return false;
-  size_t n = nvs.getBytesLength(NVS_KEY_PRIV);
-  if (n != 32) { nvs.end(); return false; }
-  nvs.getBytes(NVS_KEY_PRIV, priv, 32);
-  nvs.end();
+  NvsMainSession nvs(true);
+  if (!nvs.isOpen()) return false;
+  if (nvs->getBytesLength(NVS_KEY_PRIV) != 32) return false;
+  nvs->getBytes(NVS_KEY_PRIV, priv, 32);
   return true;
 }
 
 static bool nvs_store_key(const uint8_t priv[32]) {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadWrite()) return false;
-  nvs.putBytes(NVS_KEY_PRIV, priv, 32);
-  nvs.end();
+  NvsMainSession nvs(false);
+  if (!nvs.isOpen()) return false;
+  // Deliberately does NOT read putBytes' result (the one store helper that
+  // still answers true for a write NVS refused): provisioning stops on
+  // false, and whether a device with a full NVS should halt unprovisioned
+  // or boot with a loud ephemeral identity is F58's pending call — the
+  // canary's nvs_store_key has the same posture, left alone by F55 for the
+  // same reason.
+  nvs->putBytes(NVS_KEY_PRIV, priv, 32);
   return true;
 }
 
 static uint32_t nvs_load_u32(const char* key, uint32_t def = 0) {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadOnly()) return def;
-  uint32_t v = nvs.getUInt(key, def);
-  nvs.end();
-  return v;
+  NvsMainSession nvs(true);
+  if (!nvs.isOpen()) return def;
+  return nvs->getUInt(key, def);
 }
 
+// True only when the whole value landed (F59) — a put NVS refused (a full
+// partition, a flash error) no longer reads as a write.
 static bool nvs_store_u32(const char* key, uint32_t val) {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadWrite()) return false;
-  nvs.putUInt(key, val);
-  nvs.end();
-  return true;
+  NvsMainSession nvs(false);
+  if (!nvs.isOpen()) return false;
+  return nvs->putUInt(key, val) == sizeof(uint32_t);
 }
 
 // Declared up beside sync_clock_from_gps (its only caller); defined here
@@ -1463,11 +1474,27 @@ static bool note_wall_clock(uint32_t unix_s) {
   birth::Stamp fresh;
   if (!birth::consider(stored, now, &fresh)) return false;
 
-  // Order matters: the day is what `recorded()` tests, so writing it last means
-  // a power cut between the two writes leaves no half-stamped birth — the next
-  // boot simply tries again.
-  nvs_store_u32(NVS_KEY_BORN_EX, fresh.exact ? 1 : 0);
-  nvs_store_u32(NVS_KEY_BORN, fresh.day);
+  // Order matters: the day is what `recorded()` tests, so writing it last
+  // means a power cut between the two writes leaves no half-stamped birth —
+  // the next boot simply tries again. A failed write is the same case: the
+  // day is not written after a flag that did not land, and nothing in RAM
+  // claims a stamp NVS does not hold. The caller runs every loop pass, so a
+  // stamp whose write failed waits a minute before it tries again, and the
+  // failure is reported once (the canary's witness_note_wall_clock, ported).
+  static bool s_write_failed = false;
+  static uint32_t s_failed_at_ms = 0;
+  if (s_write_failed && (uint32_t)(millis() - s_failed_at_ms) < 60000u) return false;
+  if (!nvs_store_u32(NVS_KEY_BORN_EX, fresh.exact ? 1 : 0) ||
+      !nvs_store_u32(NVS_KEY_BORN, fresh.day)) {
+    if (!s_write_failed) {
+      Serial.printf("[WARN] BIRTH: key day %lu not stored (NVS write failed); "
+                    "retrying every minute\n", (unsigned long)fresh.day);
+    }
+    s_write_failed = true;
+    s_failed_at_ms = millis();
+    return false;
+  }
+  s_write_failed = false;
   g_device.born_day = fresh.day;
   g_device.born_exact = fresh.exact;
 
@@ -1478,21 +1505,18 @@ static bool note_wall_clock(uint32_t unix_s) {
 }
 
 static bool nvs_load_bytes(const char* key, uint8_t* out, size_t len) {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadOnly()) return false;
-  size_t n = nvs.getBytesLength(key);
-  if (n != len) { nvs.end(); return false; }
-  nvs.getBytes(key, out, len);
-  nvs.end();
+  NvsMainSession nvs(true);
+  if (!nvs.isOpen()) return false;
+  if (nvs->getBytesLength(key) != len) return false;
+  nvs->getBytes(key, out, len);
   return true;
 }
 
+// True only when the whole blob landed (F59), same as the canary's.
 static bool nvs_store_bytes(const char* key, const uint8_t* data, size_t len) {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadWrite()) return false;
-  nvs.putBytes(key, data, len);
-  nvs.end();
-  return true;
+  NvsMainSession nvs(false);
+  if (!nvs.isOpen()) return false;
+  return nvs->putBytes(key, data, len) == len;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1705,21 +1729,19 @@ static void derive_ap_password(const uint8_t privkey[32], char* password, size_t
 // ════════════════════════════════════════════════════════════════════════════
 
 static bool nvs_store_token(const char* token_str) {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadWrite()) return false;
-  size_t written = nvs.putBytes(NVS_KEY_API_TKN, token_str, strlen(token_str));
-  nvs.end();
-  return written > 0;
+  NvsMainSession nvs(false);
+  if (!nvs.isOpen()) return false;
+  const size_t len = strlen(token_str);
+  return nvs->putBytes(NVS_KEY_API_TKN, token_str, len) == len;
 }
 
 static bool nvs_load_token(char* token_str, size_t max_len) {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadOnly()) return false;
-  size_t n = nvs.getBytesLength(NVS_KEY_API_TKN);
-  if (n == 0 || n >= max_len) { nvs.end(); return false; }
-  nvs.getBytes(NVS_KEY_API_TKN, token_str, n);
+  NvsMainSession nvs(true);
+  if (!nvs.isOpen()) return false;
+  size_t n = nvs->getBytesLength(NVS_KEY_API_TKN);
+  if (n == 0 || n >= max_len) return false;
+  nvs->getBytes(NVS_KEY_API_TKN, token_str, n);
   token_str[n] = '\0';
-  nvs.end();
   return strlen(token_str) >= 35;
 }
 
@@ -1728,43 +1750,41 @@ static bool nvs_load_token(char* token_str, size_t max_len) {
 // ════════════════════════════════════════════════════════════════════════════
 
 static bool tls_load_from_nvs() {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadOnly()) return false;
+  NvsMainSession nvs(true);
+  if (!nvs.isOpen()) return false;
 
-  size_t cert_len = nvs.getBytesLength(NVS_KEY_TLS_CERT);
-  size_t key_len  = nvs.getBytesLength(NVS_KEY_TLS_KEY);
+  size_t cert_len = nvs->getBytesLength(NVS_KEY_TLS_CERT);
+  size_t key_len  = nvs->getBytesLength(NVS_KEY_TLS_KEY);
 
-  if (cert_len == 0 || key_len == 0) {
-    nvs.end();
-    return false;
-  }
+  if (cert_len == 0 || key_len == 0) return false;
 
   g_tls_cert_der = (uint8_t*)malloc(cert_len);
   g_tls_key_der  = (uint8_t*)malloc(key_len);
   if (!g_tls_cert_der || !g_tls_key_der) {
     free(g_tls_cert_der); g_tls_cert_der = nullptr;
     free(g_tls_key_der);  g_tls_key_der = nullptr;
-    nvs.end();
     return false;
   }
 
-  nvs.getBytes(NVS_KEY_TLS_CERT, g_tls_cert_der, cert_len);
-  nvs.getBytes(NVS_KEY_TLS_KEY,  g_tls_key_der,  key_len);
+  nvs->getBytes(NVS_KEY_TLS_CERT, g_tls_cert_der, cert_len);
+  nvs->getBytes(NVS_KEY_TLS_KEY,  g_tls_key_der,  key_len);
   g_tls_cert_der_len = cert_len;
   g_tls_key_der_len  = key_len;
-
-  nvs.end();
   return true;
 }
 
+// True only when BOTH entries landed (F59): a certificate stored without
+// its key (or the reverse) would pass tls_load_from_nvs's presence check on
+// the next boot and hand mbedTLS a mismatched pair.
 static bool tls_store_to_nvs() {
   if (!g_tls_cert_der || !g_tls_key_der) return false;
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadWrite()) return false;
-  nvs.putBytes(NVS_KEY_TLS_CERT, g_tls_cert_der, g_tls_cert_der_len);
-  nvs.putBytes(NVS_KEY_TLS_KEY,  g_tls_key_der,  g_tls_key_der_len);
-  nvs.end();
-  return true;
+  NvsMainSession nvs(false);
+  if (!nvs.isOpen()) return false;
+  const bool cert_ok =
+      nvs->putBytes(NVS_KEY_TLS_CERT, g_tls_cert_der, g_tls_cert_der_len) == g_tls_cert_der_len;
+  const bool key_ok =
+      nvs->putBytes(NVS_KEY_TLS_KEY, g_tls_key_der, g_tls_key_der_len) == g_tls_key_der_len;
+  return cert_ok && key_ok;
 }
 
 static void tls_compute_cert_fingerprint() {
@@ -1953,15 +1973,54 @@ static void update_chain(const uint8_t payload_hash[32], uint32_t tb, WitnessRec
   memcpy(g_device.chain_head, rec->chain_hash, 32);
 }
 
+// {seq, chain_head} as the single 39-byte entry chain_state.h defines — the
+// only writer of NVS_KEY_CHAINST; nothing writes NVS_KEY_SEQ / NVS_KEY_CHAIN
+// any more (F38 (b), ported from the canary: a power cut between the pair's
+// two writes left a seq that belonged to a different head, and the reboot
+// path's copy of the pair ran on the httpd task, free to interleave with the
+// loop's between the two entries — one atomic entry has no between). True
+// only when the whole blob landed (nvs_store_bytes reads putBytes since F59).
+static bool persist_chain_blob() {
+  uint8_t blob[chain_state::BLOB_LEN];
+  if (!chain_state::encode(g_device.seq, g_device.chain_head, blob)) return false;
+  return nvs_store_bytes(NVS_KEY_CHAINST, blob, sizeof(blob));
+}
+
 static void persist_chain_state() {
-  nvs_store_u32(NVS_KEY_SEQ, g_device.seq);
-  nvs_store_bytes(NVS_KEY_CHAIN, g_device.chain_head, 32);
-  g_device.seq_persisted = g_device.seq;
-  g_health.chain_persists++;
-  
+  // Only a write that landed moves seq_persisted and counts as a persist;
+  // one that did not is counted beside it and retried after the next record,
+  // then once per interval while the streak lasts, and a failure streak is
+  // reported once, not per retry (chain_persist.h — the canary's rules,
+  // ported). The seq is read before the write: the blob carries at least
+  // this seq, so seq_persisted never claims more than NVS holds.
+  const uint32_t seq = g_device.seq;
+  const bool wrote = persist_chain_blob();
+  char detail[48];  // longest line here is 47 chars
+  switch (chain_persist::settle(seq, wrote, &g_device.seq_persisted,
+                                &g_device.chain_persist_streak,
+                                &g_health.chain_persists,
+                                &g_health.chain_persist_failures)) {
+    case chain_persist::Say::Failed:
+      snprintf(detail, sizeof(detail), "seq %u; retrying, then every %u records",
+               (unsigned)seq, (unsigned)SD_PERSIST_INTERVAL);
+      log_health(SCV_LOG_WARNING, SCV_CAT_STORAGE,
+                 "Chain state not written to NVS", detail);
+      break;
+    case chain_persist::Say::Recovered:
+      snprintf(detail, sizeof(detail), "seq %u; %u failed this boot",
+               (unsigned)seq, (unsigned)g_health.chain_persist_failures);
+      log_health(SCV_LOG_NOTICE, SCV_CAT_STORAGE,
+                 "Chain state written to NVS again", detail);
+      break;
+    case chain_persist::Say::Nothing:
+      break;
+  }
+
   #if DEBUG_CHAIN
-  Serial.print("[CHAIN] Persisted seq=");
-  Serial.println(g_device.seq);
+  if (wrote) {
+    Serial.print("[CHAIN] Persisted seq=");
+    Serial.println(seq);
+  }
   #endif
 }
 
@@ -1978,6 +2037,11 @@ static void persist_chain_state() {
 // streak; a successful append re-arms the latch.
 
 static bool g_witness_sd_warned = false;
+// The card's file ends in a torn line (power cut mid-append). Set by
+// witness_recover_from_sd() on every mount, cleared by the first append
+// that seals the fragment onto its own line — see
+// witness_store::tail_is_torn for why the next record must not share it.
+static bool g_witness_tail_torn = false;
 
 static bool witness_sd_fail(const char* why) {
   if (!g_witness_sd_warned) {
@@ -1998,11 +2062,17 @@ static bool sd_append_witness_record(const WitnessRecord* rec) {
   if (!SD.exists("/WITNESS") && !SD.mkdir("/WITNESS"))
     return witness_sd_fail("mkdir /WITNESS failed");
 
-  char line[witness_store::RECORD_LINE_MAX];
-  const size_t n = witness_store::line_build(
-      line, sizeof(line), rec->seq, rec->time_bucket, (uint8_t)rec->type,
-      rec->payload_hash, rec->prev_hash, rec->chain_hash, rec->signature);
-  if (n == 0) return witness_sd_fail("line build failed");
+  // A torn tail is sealed by a leading '\n' in the SAME write as the record,
+  // so a second power cut cannot leave the terminator without its line.
+  char line[witness_store::RECORD_LINE_MAX + 1];
+  size_t off = 0;
+  if (g_witness_tail_torn) line[off++] = '\n';
+  const size_t built = witness_store::line_build(
+      line + off, sizeof(line) - off, rec->seq, rec->time_bucket,
+      (uint8_t)rec->type, rec->payload_hash, rec->prev_hash, rec->chain_hash,
+      rec->signature);
+  if (built == 0) return witness_sd_fail("line build failed");
+  const size_t n = off + built;
 
   // FILE_APPEND + close-per-write: a power cut at most loses the in-flight
   // line, never the file structure (crash model of csi_event_log.cpp and
@@ -2012,6 +2082,7 @@ static bool sd_append_witness_record(const WitnessRecord* rec) {
   const size_t wrote = f.write((const uint8_t*)line, n);
   f.close();
   if (wrote != n) return witness_sd_fail("short write (card full?)");
+  g_witness_tail_torn = false;  // the fragment is sealed on its own line
   g_witness_sd_warned = false;  // healthy again — re-arm the warning latch
   return true;
 #else
@@ -2030,6 +2101,7 @@ static bool sd_append_witness_record(const WitnessRecord* rec) {
 // a tampered tail must never move our chain head.
 static void witness_recover_from_sd() {
 #if FEATURE_SD_STORAGE
+  g_witness_tail_torn = false;  // re-judged from this mount's file
   File f = SD.open("/WITNESS/records.jsonl", FILE_READ);
   if (!f) return;
   const size_t size = f.size();
@@ -2049,6 +2121,7 @@ static void witness_recover_from_sd() {
   f.close();
   if (got == 0) return;
   tail[got] = '\0';
+  g_witness_tail_torn = witness_store::tail_is_torn(tail, got);
 
   witness_store::TailRecord rec;
   if (!witness_store::tail_parse(tail, &rec)) return;
@@ -2436,8 +2509,12 @@ static bool create_witness_record(const uint8_t* payload, size_t len, RecordType
     g_health.sd_writes++;
   }
 
-  // Persist chain state periodically
-  if ((g_device.seq - g_device.seq_persisted) >= SD_PERSIST_INTERVAL) {
+  // Persist chain state periodically — or retry one that did not land: on
+  // the next record, then once per interval while the streak lasts, so a
+  // lasting failure (a full partition, a leaked session's 2 s wait) is not
+  // paid on every record (chain_persist::due).
+  if (chain_persist::due(g_device.seq, g_device.seq_persisted,
+                         g_device.chain_persist_streak, SD_PERSIST_INTERVAL)) {
     persist_chain_state();
   }
 
@@ -4403,9 +4480,10 @@ static esp_err_t handle_reboot(httpd_req_t* req) {
   
   log_health(SCV_LOG_NOTICE, SCV_CAT_USER, "Reboot requested", nullptr);
   
-  // Persist state
-  nvs_store_u32(NVS_KEY_SEQ, g_device.seq);
-  nvs_store_bytes(NVS_KEY_CHAIN, g_device.chain_head, 32);
+  // Persist state — the same single-entry blob as every other persist. The
+  // old inline seq/chain pair here ran on the httpd task and could
+  // interleave with the loop's persist between its two entries.
+  persist_chain_state();
   
   JsonDocument doc;
   doc["ok"] = true;
@@ -6207,10 +6285,9 @@ static esp_err_t handle_wifi_ap_only(httpd_req_t* req) {
     case WifiChangeAuth::INVALID_TOKEN: return wifi_change_send_invalid_token(req);
   }
 
-  NvsManager& nvs = NvsManager::instance();
-  if (nvs.beginReadWrite()) {
-    nvs.putBool(NVS_KEY_WIFI_AP_ONLY, true);
-    nvs.end();
+  {
+    NvsMainSession nvs(false);
+    if (nvs.isOpen()) nvs->putBool(NVS_KEY_WIFI_AP_ONLY, true);
   }
   g_wifi_ap_only = true;
   g_wifi_creds.enabled = false;
@@ -6343,7 +6420,11 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
     }
   }
 
-  // Save credentials
+  // Save credentials. The previous in-memory state is snapshotted first:
+  // on a failed save it is restored, or wifi_update_status()'s retry tick
+  // would connect with the very credentials this answer reports unsaved
+  // (working until the reboot that forgets them).
+  const WiFiCredentials prev_creds = g_wifi_creds;
   strncpy(g_wifi_creds.ssid, ssid, sizeof(g_wifi_creds.ssid) - 1);
   g_wifi_creds.ssid[sizeof(g_wifi_creds.ssid) - 1] = '\0';
   strncpy(g_wifi_creds.password, password, sizeof(g_wifi_creds.password) - 1);
@@ -6351,7 +6432,19 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   g_wifi_creds.enabled = true;
   g_wifi_creds.configured = true;
 
-  wifi_save_credentials();
+  // A save NVS refused is answered as the failure it is, not glossed as
+  // "saved": a connect from RAM would work until the reboot that forgets
+  // the network this answer just called kept (F59).
+  if (!wifi_save_credentials()) {
+    g_wifi_creds = prev_creds;
+    JsonDocument doc;
+    doc["ok"] = false;
+    doc["error"] = "Credentials not saved (NVS write failed) - see the device log";
+    doc["tz"] = tz_outcome;
+    String response;
+    serializeJson(doc, response);
+    return http_send_json(req, response.c_str());
+  }
 
   // Clear stale failure context from any previous attempt before retrying.
   g_wifi_status.last_fail_reason[0] = '\0';
@@ -6535,10 +6628,9 @@ static esp_err_t handle_wifi_disconnect(httpd_req_t* req) {
   wifi_raise_ap();
 
   // Update NVS
-  NvsManager& nvs = NvsManager::instance();
-  if (nvs.beginReadWrite()) {
-    nvs.putBool(NVS_KEY_WIFI_EN, false);
-    nvs.end();
+  {
+    NvsMainSession nvs(false);
+    if (nvs.isOpen()) nvs->putBool(NVS_KEY_WIFI_EN, false);
   }
 
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "WiFi disconnected", nullptr);
@@ -6583,11 +6675,8 @@ static esp_err_t handle_wifi_reconnect(httpd_req_t* req) {
 
   // Update NVS
   {
-    NvsManager& nvs = NvsManager::instance();
-    if (nvs.beginReadWrite()) {
-      nvs.putBool(NVS_KEY_WIFI_EN, true);
-      nvs.end();
-    }
+    NvsMainSession nvs(false);
+    if (nvs.isOpen()) nvs->putBool(NVS_KEY_WIFI_EN, true);
   }
 
   wifi_connect_to_home();
@@ -9076,52 +9165,68 @@ static const char* wifi_state_name(WiFiProvState s) {
 static bool wifi_load_credentials() {
   memset(&g_wifi_creds, 0, sizeof(g_wifi_creds));
 
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadOnly()) return false;
+  NvsMainSession nvs(true);
+  if (!nvs.isOpen()) return false;
 
   // Standalone preference loads regardless of whether creds exist.
-  g_wifi_ap_only = nvs.getBool(NVS_KEY_WIFI_AP_ONLY, false);
+  g_wifi_ap_only = nvs->getBool(NVS_KEY_WIFI_AP_ONLY, false);
 
-  size_t ssid_len = nvs.getBytesLength(NVS_KEY_WIFI_SSID);
+  size_t ssid_len = nvs->getBytesLength(NVS_KEY_WIFI_SSID);
   if (ssid_len > 0 && ssid_len <= 32) {
-    nvs.getBytes(NVS_KEY_WIFI_SSID, g_wifi_creds.ssid, ssid_len);
+    nvs->getBytes(NVS_KEY_WIFI_SSID, g_wifi_creds.ssid, ssid_len);
     g_wifi_creds.ssid[ssid_len] = '\0';
 
-    size_t pass_len = nvs.getBytesLength(NVS_KEY_WIFI_PASS);
+    size_t pass_len = nvs->getBytesLength(NVS_KEY_WIFI_PASS);
     if (pass_len > 0 && pass_len <= 64) {
-      nvs.getBytes(NVS_KEY_WIFI_PASS, g_wifi_creds.password, pass_len);
+      nvs->getBytes(NVS_KEY_WIFI_PASS, g_wifi_creds.password, pass_len);
       g_wifi_creds.password[pass_len] = '\0';
     }
 
-    g_wifi_creds.enabled = nvs.getBool(NVS_KEY_WIFI_EN, true);
+    g_wifi_creds.enabled = nvs->getBool(NVS_KEY_WIFI_EN, true);
     g_wifi_creds.configured = (strlen(g_wifi_creds.ssid) > 0);
-  } else if (ssid_len == 0 && nvs.isKey(NVS_KEY_WIFI_SSID)) {
+  } else if (ssid_len == 0 && nvs->isKey(NVS_KEY_WIFI_SSID)) {
     // String-typed seed: isKey() is type-blind and getBytesLength() is 0 for
     // string entries, so a present key with no blob bytes is the other
     // encoding, not absence (LESSONS_LEARNED "A seeded credential key is
     // honored whichever NVS TYPE wrote it"). Same caps as the blob path.
-    if (nvs.getString(NVS_KEY_WIFI_SSID, g_wifi_creds.ssid, sizeof(g_wifi_creds.ssid)) > 0) {
-      nvs.getString(NVS_KEY_WIFI_PASS, g_wifi_creds.password, sizeof(g_wifi_creds.password));
-      g_wifi_creds.enabled = nvs.getBool(NVS_KEY_WIFI_EN, true);
+    if (nvs->getString(NVS_KEY_WIFI_SSID, g_wifi_creds.ssid, sizeof(g_wifi_creds.ssid)) > 0) {
+      nvs->getString(NVS_KEY_WIFI_PASS, g_wifi_creds.password, sizeof(g_wifi_creds.password));
+      g_wifi_creds.enabled = nvs->getBool(NVS_KEY_WIFI_EN, true);
       g_wifi_creds.configured = true;
     }
   }
 
-  nvs.end();
   return g_wifi_creds.configured;
 }
 
 static bool wifi_save_credentials() {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadWrite()) return false;
-
-  nvs.putBytes(NVS_KEY_WIFI_SSID, g_wifi_creds.ssid, strlen(g_wifi_creds.ssid));
-  nvs.putBytes(NVS_KEY_WIFI_PASS, g_wifi_creds.password, strlen(g_wifi_creds.password));
-  nvs.putBool(NVS_KEY_WIFI_EN, g_wifi_creds.enabled);
-  // Saving real credentials is an explicit exit from standalone mode.
-  nvs.putBool(NVS_KEY_WIFI_AP_ONLY, false);
-
-  nvs.end();
+  // False unless every entry landed (F59): a save NVS refused used to log
+  // "credentials saved" and mark them configured anyway, so a reboot forgot
+  // a network the user was told was kept.
+  bool ok = false;
+  {
+    NvsMainSession nvs(false);
+    if (!nvs.isOpen()) return false;
+    const size_t ssid_len = strlen(g_wifi_creds.ssid);
+    const size_t pass_len = strlen(g_wifi_creds.password);
+    // An empty password is an open network, and putBytes refuses len 0 as a
+    // no-op that "matches" 0 == pass_len — so the stale password must be
+    // REMOVED, or a secured->open change answers saved and reloads the old
+    // secret after reboot, failing the join (Codex on #1753; the canary's
+    // saveCredentials carries the same rule).
+    ok = nvs->putBytes(NVS_KEY_WIFI_SSID, g_wifi_creds.ssid, ssid_len) == ssid_len &&
+         (pass_len > 0
+              ? nvs->putBytes(NVS_KEY_WIFI_PASS, g_wifi_creds.password, pass_len) == pass_len
+              : (!nvs->isKey(NVS_KEY_WIFI_PASS) || nvs->remove(NVS_KEY_WIFI_PASS))) &&
+         nvs->putBool(NVS_KEY_WIFI_EN, g_wifi_creds.enabled) == sizeof(bool);
+    // Saving real credentials is an explicit exit from standalone mode.
+    ok = nvs->putBool(NVS_KEY_WIFI_AP_ONLY, false) == sizeof(bool) && ok;
+  }
+  if (!ok) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+               "WiFi credentials NOT saved (NVS write failed)", g_wifi_creds.ssid);
+    return false;
+  }
   g_wifi_ap_only = false;
   g_wifi_creds.configured = true;
 
@@ -9130,14 +9235,13 @@ static bool wifi_save_credentials() {
 }
 
 static bool wifi_clear_credentials() {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadWrite()) return false;
-
-  nvs.remove(NVS_KEY_WIFI_SSID);
-  nvs.remove(NVS_KEY_WIFI_PASS);
-  nvs.remove(NVS_KEY_WIFI_EN);
-
-  nvs.end();
+  {
+    NvsMainSession nvs(false);
+    if (!nvs.isOpen()) return false;
+    nvs->remove(NVS_KEY_WIFI_SSID);
+    nvs->remove(NVS_KEY_WIFI_PASS);
+    nvs->remove(NVS_KEY_WIFI_EN);
+  }
 
   memset(&g_wifi_creds, 0, sizeof(g_wifi_creds));
   g_wifi_status.state = WIFI_PROV_AP_ONLY;
@@ -9891,18 +9995,66 @@ static bool provision_device() {
   // in-envelope before they are first read.
   config_load_runtime();
 
-  // Load chain state
-  g_device.seq = nvs_load_u32(NVS_KEY_SEQ, 0);
+  // Load chain state: the atomic {seq, head} blob first, then the legacy
+  // seq/chain pair (read-only — never rewritten or deleted, so an older
+  // image still boots after a downgrade), then genesis — except that a
+  // legacy seq AHEAD of the blob's means an older image ran since our last
+  // blob write, and resuming from the blob would re-sign its seqs on a
+  // second branch. The order is decided by chain_state::choose() and pinned
+  // on the host (the canary's boot, ported).
+  bool genesis = false;
+  {
+    uint8_t blob[chain_state::BLOB_LEN];
+    uint32_t blob_seq = 0;
+    uint8_t blob_head[chain_state::HEAD_LEN];
+    const bool blob_ok =
+        nvs_load_bytes(NVS_KEY_CHAINST, blob, sizeof(blob)) &&
+        chain_state::decode(blob, sizeof(blob), &blob_seq, blob_head);
+    uint8_t legacy_head[chain_state::HEAD_LEN];
+    const bool legacy_present = nvs_load_bytes(NVS_KEY_CHAIN, legacy_head, 32);
+    const uint32_t legacy_seq = legacy_present ? nvs_load_u32(NVS_KEY_SEQ, 0) : 0;
+
+    switch (chain_state::choose(blob_ok, legacy_present, blob_seq, legacy_seq)) {
+      case chain_state::Source::Blob:
+        g_device.seq = blob_seq;
+        memcpy(g_device.chain_head, blob_head, 32);
+        break;
+      case chain_state::Source::Legacy:
+        if (blob_ok) {
+          // Only reachable when legacy_seq > blob_seq: say so once, since it
+          // means the chain already forked under an older image.
+          Serial.printf("[WARN] Chain: legacy seq %u is ahead of chain_st seq %u - an older "
+                        "image ran since the last blob write; resuming from its pair\n",
+                        (unsigned)legacy_seq, (unsigned)blob_seq);
+        }
+        g_device.seq = legacy_seq;
+        memcpy(g_device.chain_head, legacy_head, 32);
+        break;
+      case chain_state::Source::Genesis:
+        // The seq stays whatever the legacy entry says (0 on a fresh
+        // device), exactly as before the blob. The head is persisted below,
+        // after log_seq is loaded.
+        g_device.seq = nvs_load_u32(NVS_KEY_SEQ, 0);
+        sha256_domain("securacv:genesis:v1", (const uint8_t*)g_device.device_id,
+                      strlen(g_device.device_id), g_device.chain_head);
+        genesis = true;
+        break;
+    }
+  }
   g_device.seq_persisted = g_device.seq;
   g_device.boot_count = nvs_load_u32(NVS_KEY_BOOTS, 0) + 1;
-  nvs_store_u32(NVS_KEY_BOOTS, g_device.boot_count);
-  g_device.log_seq = nvs_load_u32(NVS_KEY_LOGSEQ, 0);
-
-  if (!nvs_load_bytes(NVS_KEY_CHAIN, g_device.chain_head, 32)) {
-    // Initialize genesis chain hash
-    sha256_domain("securacv:genesis:v1", (const uint8_t*)g_device.device_id, strlen(g_device.device_id), g_device.chain_head);
-    nvs_store_bytes(NVS_KEY_CHAIN, g_device.chain_head, 32);
+  if (!nvs_store_u32(NVS_KEY_BOOTS, g_device.boot_count)) {
+    // Once per boot by construction. The count this boot reports stands; the
+    // next boot reads the old one and counts this boot again.
+    Serial.printf("[WARN] Boot count %u not stored (NVS write failed): the next boot "
+                  "will repeat it\n", (unsigned)g_device.boot_count);
   }
+  g_device.log_seq = nvs_load_u32(NVS_KEY_LOGSEQ, 0);
+  // The genesis head goes through the same persist as every other write, so
+  // a write that does not land is counted, reported and retried after the
+  // first record. It runs after log_seq is loaded, so a report takes the
+  // next health-log seq, not one the load would hand out again.
+  if (genesis) persist_chain_state();
 
   g_device.boot_ms = millis();
   g_device.initialized = true;
@@ -10669,11 +10821,10 @@ void setup() {
 
       // CSI event persistence: open /EVENTS/today.ndjson so the MQTT
       // bridge's reconnect path has something to backfill from. The
-      // boot-time ring rehydration (re-populating /api/events/today
-      // with yesterday's tail) is deferred — it needs a csi_event_inject
-      // helper in the canonical CSI library that would touch the
-      // firmware/common/csi sources + the staged copy in lockstep, and
-      // that's a separate scope.
+      // Today ring is refilled from it later, by csi_integration::init
+      // (csi_event_log::load_into_ring), once the privacy ceiling and the
+      // event-id floor are back from NVS (csi_event_log::arm_load) - and
+      // not at all on a boot where init does not run.
       csi_event_log::init();
 
       // Reconcile the chain head against the SD log of record — the NVS
@@ -11745,6 +11896,15 @@ void loop() {
       if (!SD.exists("/CHAIN")) SD.mkdir("/CHAIN");
       if (!SD.exists("/EXPORT")) SD.mkdir("/EXPORT");
       csi_event_log::init();  // idempotent; self-defers if the card vanished
+      // A card that mounted after csi_integration::init: refill the Today
+      // ring now. This does NOT assume init ran: init runs only inside
+      // start_http_server(), which runs only if start_wifi_ap() succeeded,
+      // and until init has restored the event-id floor and the privacy
+      // ceiling (csi_event_log::arm_load) the call does nothing and does
+      // not latch. Once armed it runs once per boot, and it reads nothing
+      // once a live event has committed (csi_event_inject would refuse every
+      // row), so a late card adds nothing out of order.
+      (void)csi_event_log::load_into_ring();
       witness_recover_from_sd();  // NVS may lag the card's chain tail
       log_health(SCV_LOG_INFO, SCV_CAT_STORAGE, "SD card mounted", nullptr);
     }

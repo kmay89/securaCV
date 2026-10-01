@@ -81,7 +81,19 @@ namespace and to leave room for future RF-adjacent endpoints
 ### 4.1 GET `/api/rf/status` — aggregate snapshot
 
 Fills a `wizard::Status` via `wizard::get_status_for_export(&out)`
-(DP-noised counters; safe to ship to the SPA on every poll).
+(DP-noised counters).
+
+> **Budget note (2026-09, firmware):** the DP budget in `dp.h` is now
+> enforced and fails closed. A window (4 h of uptime since the last refill
+> or boot; a manual `POST /api/rf/rotate` does not refill it, and neither
+> does a reboot) holds 4 ε; each noised counter costs 1 ε, charged up front for the whole
+> export. `notify::get_stats_for_export()` noises 9 counters, so it is
+> always withheld today and `wizard::get_status_for_export()` returns
+> `activity_withheld = true` with the four `total_*` counters at 0. "Safe
+> to ship on every poll" is therefore not something this route can
+> promise until the budget and its accounting are decided; the route
+> must serialize `activity_withheld` and the SPA must show "withheld",
+> not "0".
 
 Request: no body, no query params.
 
@@ -100,7 +112,8 @@ Response (200):
   "total_alerts_fired": 4,
   "total_events_evaluated": 1281,
   "total_ambient_suppressed": 612,
-  "total_household_suppressed": 38
+  "total_household_suppressed": 38,
+  "activity_withheld": false
 }
 ```
 
@@ -113,8 +126,10 @@ serialises with no manual rename layer:
   `notify::Context`.
 - `training_progress_bps` is basis points (0..10000), clamped
   server-side.
-- All four `total_*` counters are post-DP, fed by `wizard::get_status()`
-  which already calls the underlying `*_for_export` (DP-noised) paths.
+- All four `total_*` counters are post-DP, fed by
+  `wizard::get_status_for_export()`, which calls the underlying
+  `*_for_export` (DP-noised) paths — or withheld, per the budget note
+  above.
   The raw (un-noised) counters are **not** exposed over HTTP. If a
   debug build needs them, the route MUST be gated behind a
   `FEATURE_RF_DEBUG_STATS` compile flag and never default-on.

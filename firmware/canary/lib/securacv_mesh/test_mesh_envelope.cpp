@@ -9,7 +9,7 @@
  *      causes parse_and_verify to fail.
  *   3. Wrong-pubkey: parse_and_verify with a different peer_pubkey
  *      fails (cross-signer rejection).
- *   4. Version byte enforcement: forging version != PROTOCOL_VERSION
+ *   4. Version byte enforcement: forging version != OPERA_VERSION
  *      on the wire fails parse.
  *   5. Frame too short / too long is rejected.
  *   6. LE counter + timestamp byte order pinned at known wire offsets.
@@ -41,7 +41,7 @@ namespace {
 /* Make a deterministic dummy header. */
 mesh_envelope::Header sample_header() {
   mesh_envelope::Header h{};
-  h.version  = mesh_envelope::PROTOCOL_VERSION;
+  h.version  = mesh_envelope::OPERA_VERSION;
   h.msg_type = static_cast<uint8_t>(mesh_envelope::MsgType::CSI_FEATURES);
   for (size_t i = 0; i < mesh_envelope::OPERA_ID_LEN; ++i)
     h.opera_id[i] = (uint8_t)(0x10 + i);
@@ -71,7 +71,7 @@ void test_roundtrip_recovers_payload() {
   assert(mesh_envelope::parse_and_verify(frame, frame_len, pub,
                                           &recovered, &out_payload, &out_payload_len));
 
-  assert(recovered.version  == mesh_envelope::PROTOCOL_VERSION);
+  assert(recovered.version  == mesh_envelope::OPERA_VERSION);
   assert(recovered.msg_type == hdr.msg_type);
   assert(std::memcmp(recovered.opera_id,  hdr.opera_id,  mesh_envelope::OPERA_ID_LEN)    == 0);
   assert(std::memcmp(recovered.sender_fp, hdr.sender_fp, mesh_envelope::FINGERPRINT_LEN) == 0);
@@ -178,7 +178,7 @@ void test_wrong_version_rejected() {
                                                       frame, sizeof(frame));
   /* Overwrite the version byte. parse should fail BEFORE signature check
    * because the version mismatch is a structural error. */
-  frame[0] = mesh_envelope::PROTOCOL_VERSION + 1;
+  frame[0] = mesh_envelope::OPERA_VERSION + 1;
   mesh_envelope::Header recovered{};
   const uint8_t* out = nullptr;
   size_t out_len = 0;
@@ -254,10 +254,17 @@ void test_le_byte_order_pinned() {
 }
 
 void test_msgtype_values_pinned() {
-  /* The byte at offset 1 of every signed frame (and the session prefix
-   * byte) — wire-stable, never renumber. LEAVE_OPERA (F10) is 25; the
-   * rekey messages (F10-rekey) are 26..29. */
+  /* The byte at offset 1 of every signed frame — wire-stable, never
+   * renumber: since v0.4 these are the registry's values (mesh_wire.h,
+   * spec §4.5) and canary-wap's MessageType carries the same ones.
+   * LEAVE_OPERA (F10) is 25; the rekey messages (F10-rekey) are 26..29.
+   * The version byte at offset 0 is 1 in both trees. */
   using M = mesh_envelope::MsgType;
+  assert(mesh_envelope::OPERA_VERSION == 1);
+  assert(mesh_envelope::OPERA_VERSION == mesh_wire::OPERA_VERSION);
+  assert(static_cast<uint8_t>(M::TAMPER_ALERT)     == mesh_wire::TAMPER_ALERT);
+  assert(static_cast<uint8_t>(M::LEAVE_OPERA)      == mesh_wire::LEAVE_OPERA);
+  assert(static_cast<uint8_t>(M::REKEY_ACK)        == mesh_wire::REKEY_ACK);
   assert(static_cast<uint8_t>(M::HEARTBEAT)        == 16);
   assert(static_cast<uint8_t>(M::CSI_FEATURES)     == 17);
   assert(static_cast<uint8_t>(M::TAMPER_ALERT)     == 18);

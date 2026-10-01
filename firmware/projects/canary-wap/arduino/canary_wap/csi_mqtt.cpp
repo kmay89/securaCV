@@ -29,6 +29,8 @@
 #include "api_auth.h"
 #include "device_signature.h"
 #include "csi_event_wire.h"         /* staged copy of firmware/common/csi/src — the shared events body */
+#include "csi_event_backfill.h"     /* staged copy — ceiling_for, the delivery-ceiling rule (F47) */
+#include "csi_event_id_floor.h"     /* staged copy — must_persist, the shared write cadence */
 #include "mqtt_transport_logic.h"  /* staged copy of firmware/common/network/ — check_mqtt_transport_sync.sh */
 
 #include <Arduino.h>
@@ -84,11 +86,20 @@ std::atomic<int>         s_last_update_auto{-1};
  * backfill replay both update it; on a clean run after an HA outage
  * the next CONNECTED triggers iterate_since(this) which only emits
  * the events the broker missed. Non-atomic because every read/write
- * is on the main-loop thread. Resets to 0 on reboot, which means
- * the first post-reboot CONNECTED replays today's full log — that's
- * the right behavior because HA may not have seen the events
- * between the last publish and the power cut either. */
+ * is on the main-loop thread. Across a reboot init() restores it from
+ * the delivery CEILING below (F47): replaying "today's full log" sent
+ * up to MAX_BACKFILL ids Home Assistant's replay gate refuses — HA can
+ * only have verified ids this device handed over, and the ceiling is
+ * always above every one of those. */
 uint32_t                 s_last_published_event_id = 0;
+/* The delivery ceiling NVS holds (0 = none yet): csi_event_backfill's
+ * rule over this sketch's own iterate_since backfill — the same key the
+ * canary PIO tree's egress writes, persisted BEFORE an id is handed
+ * over, capped at the id allocator's persisted floor so a new boot's
+ * ids are never read as delivered (csi_event_backfill::ceiling_for). */
+constexpr const char*    NVS_KEY_DELIVERED = "csi.evsent";
+uint32_t                 s_delivered_ceiling = 0;
+bool                     s_watermark_restored = false;
 Config                   s_active_cfg   = {};
 /* Broker TLS state. The CA lives here (not in Config: a 3 KB PEM has no
  * business on an httpd handler's stack) because esp_mqtt keeps the pointer
@@ -471,6 +482,48 @@ bool init(const char* device_id,
    * boot (s_client is nullptr). */
   teardown_client();
 
+  /* F47: restore the delivery watermark from the persisted ceiling — on
+   * the boot-time init() ONLY. The ceiling is written kStride ahead of
+   * the id it covers, so on a runtime re-init (a /api/mqtt/config POST,
+   * the connection test) reading it back would jump a live watermark
+   * past ids committed but not yet handed over, and iterate_since()
+   * would then skip them for good; the RAM watermark is exact while the
+   * firmware runs, so a re-init keeps it. Only a reboot loses it, and
+   * only there is the stride's skip the accepted trade.
+   * With no ceiling on record (the first boot of this firmware), every
+   * id below the restored id floor is treated as delivered — an earlier
+   * image may have published it, and HA would refuse it again — and the
+   * record starts here, written now so rows still on the card survive a
+   * reboot as owed instead of falling under the same assumption
+   * (csi_event_backfill::Planner::begin's rule; a ceiling is never 0).
+   * A failed write retries on the next hand-over. */
+  if (!s_watermark_restored) {
+    s_watermark_restored = true;
+    Preferences prefs;
+    if (prefs.begin(SETTINGS_NS, /*readOnly=*/true)) {
+      s_delivered_ceiling = (uint32_t)prefs.getULong(NVS_KEY_DELIVERED, 0);
+      prefs.end();
+    }
+    if (s_delivered_ceiling != 0) {
+      if (s_delivered_ceiling - 1 > s_last_published_event_id) {
+        s_last_published_event_id = s_delivered_ceiling - 1;
+      }
+    } else {
+      const uint32_t id_floor = csi_integration::event_id_floor_stored();
+      if (id_floor != 0 && id_floor - 1 > s_last_published_event_id) {
+        s_last_published_event_id = id_floor - 1;
+      }
+      Preferences rw;
+      if (rw.begin(SETTINGS_NS, /*readOnly=*/false)) {
+        const uint32_t c = s_last_published_event_id + 1;
+        if (rw.putULong(NVS_KEY_DELIVERED, (unsigned long)c) > 0) {
+          s_delivered_ceiling = c;
+        }
+        rw.end();
+      }
+    }
+  }
+
   if (!config_load(&s_active_cfg)) return false;
   if (!s_active_cfg.enabled) {
     Serial.println("[MQTT] disabled in NVS — bridge not started");
@@ -669,10 +722,29 @@ size_t build_event_body(char* body, size_t cap,
  * enqueue succeeded AND the new id is higher than what we already
  * tracked. Returns the publish_raw outcome so callers can stop
  * mid-replay (PR #395 review r3213834314). */
+/* csi_event_backfill's persist_for, over this sketch's NVS (F47): before
+ * an id is handed over, NVS must already hold a ceiling above it, capped
+ * at the id allocator's persisted floor. A failed write leaves
+ * s_delivered_ceiling unchanged so the next hand-over tries again; the
+ * row still goes out — delivery cannot wait on flash, the same trade the
+ * id floor makes. */
+static void persist_delivered_ceiling(uint32_t event_id) {
+  if (event_id == 0) return;
+  if (!csi_event_id_floor::must_persist(s_delivered_ceiling, event_id)) return;
+  const uint32_t c = csi_event_backfill::ceiling_for(
+      event_id, csi_integration::event_id_floor_stored());
+  Preferences prefs;
+  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return;
+  const bool wrote = prefs.putULong(NVS_KEY_DELIVERED, (unsigned long)c) > 0;
+  prefs.end();
+  if (wrote) s_delivered_ceiling = c;
+}
+
 static bool publish_and_advance(const char* topic,
                                 const char* body, size_t n,
                                 bool retain,
                                 uint32_t event_id) {
+  persist_delivered_ceiling(event_id);
   if (!publish_raw(topic, body, n, retain)) return false;
   if (event_id > s_last_published_event_id) {
     s_last_published_event_id = event_id;

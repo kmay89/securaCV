@@ -445,16 +445,21 @@ bool get_stats(Stats* out) {
 
 bool get_stats_for_export(Stats* out) {
   if (!get_stats(out)) return false;
-  out->total_evaluated                 = dp::noisy_u32(out->total_evaluated,                 1);
-  out->total_fired                     = dp::noisy_u32(out->total_fired,                     1);
-  out->total_suppressed_household      = dp::noisy_u32(out->total_suppressed_household,      1);
-  out->total_suppressed_ambient        = dp::noisy_u32(out->total_suppressed_ambient,        1);
-  out->total_suppressed_always_ignored = dp::noisy_u32(out->total_suppressed_always_ignored, 1);
-  out->total_suppressed_dedup          = dp::noisy_u32(out->total_suppressed_dedup,          1);
-  out->total_suppressed_context        = dp::noisy_u32(out->total_suppressed_context,        1);
-  out->total_suppressed_severity       = dp::noisy_u32(out->total_suppressed_severity,       1);
-  out->total_suppressed_transient      = dp::noisy_u32(out->total_suppressed_transient,      1);
+  // One release, 9 draws, paid for up front (dp.h BUDGET). Refused or
+  // cut short: the export is withheld and `out` holds nothing, raw or noised.
+  dp::Release rel(9);
+  if (!rel.ok()) { memset(out, 0, sizeof(*out)); return false; }
+  out->total_evaluated                 = rel.u32(out->total_evaluated,                 1);
+  out->total_fired                     = rel.u32(out->total_fired,                     1);
+  out->total_suppressed_household      = rel.u32(out->total_suppressed_household,      1);
+  out->total_suppressed_ambient        = rel.u32(out->total_suppressed_ambient,        1);
+  out->total_suppressed_always_ignored = rel.u32(out->total_suppressed_always_ignored, 1);
+  out->total_suppressed_dedup          = rel.u32(out->total_suppressed_dedup,          1);
+  out->total_suppressed_context        = rel.u32(out->total_suppressed_context,        1);
+  out->total_suppressed_severity       = rel.u32(out->total_suppressed_severity,       1);
+  out->total_suppressed_transient      = rel.u32(out->total_suppressed_transient,      1);
   // current_context + dedup_window_ms are user-set; don't noise.
+  if (!rel.complete()) { memset(out, 0, sizeof(*out)); return false; }
   return true;
 }
 

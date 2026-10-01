@@ -25,18 +25,20 @@ generator READS (its docstring, its imports), not from memory:
    4  gen_assembled_dims    fit-checked unions -> assembled_dims.json       (needs OpenSCAD)
    5  gen_hardware          each committed preset's HARDWARE echo + lid-rib headroom
                             -> hardware.json, joined against the BOM CSVs  (needs OpenSCAD)
-   6  gen_enclosures        README tables + .scad knobs + cad.enclosure_sets
+   6  gen_assembly_poses    each case's seated datums (its own derived names, echoed by
+                            OpenSCAD) -> the Lab benches' poses in assembly.json  (needs OpenSCAD)
+   7  gen_enclosures        README tables + .scad knobs + cad.enclosure_sets
                             -> enclosures / catalog / build / workshop .json
-   7  gen_figures           STL bboxes + assembled_dims + catalog.json -> figures.json, SVGs,
+   8  gen_figures           STL bboxes + assembled_dims + catalog.json -> figures.json, SVGs,
                             fleet_figures.h / fleet_figures_art.h, FleetFigures.swift / FleetSolids.swift
-   8  gen_device_glbs       figures.json verdicts -> the two flashers' .glb
-   9  setup_regen           IF fleet_figures.h or fleet_figures_art.h moved: the Arduino sketch
+   9  gen_device_glbs       figures.json verdicts -> the two flashers' .glb
+  10  setup_regen           IF fleet_figures.h or fleet_figures_art.h moved: the Arduino sketch
                             mirror (firmware/projects/canary-display/setup.sh regen), then STOP —
                             the emulator dist is upstream of the catalogs and only Actions can build it
-  10  gen_flash             dist meta + manifests -> flash.json
-  11  gen_builder_manifest  curated .scad -> builder_manifest.json  [+ --site DIR: the website carries]
-  12  gen_stamp             report-only: --check (a STAMP_REV bump is a human decision, gen_stamp.py)
-  13  gen_mark_svg          report-only: --check (the mark does not move with a board knob)
+  11  gen_flash             dist meta + manifests -> flash.json
+  12  gen_builder_manifest  curated .scad -> builder_manifest.json  [+ --site DIR: the website carries]
+  13  gen_stamp             report-only: --check (a STAMP_REV bump is a human decision, gen_stamp.py)
+  14  gen_mark_svg          report-only: --check (the mark does not move with a board knob)
 
 GEN_ENCLOSURES COMES BEFORE GEN_FIGURES because gen_figures.mjs reads
 canary-local/devices/catalog.json — each figure's catalog evidence (the
@@ -189,6 +191,15 @@ STEPS: tuple[Step, ...] = (
          ("python3", f"{ENC_REL}/gen_hardware.py", "--check"), "argv", True,
          "each committed preset's HARDWARE echo + lid-rib headroom (OpenSCAD) -> hardware.json, "
          "fasteners joined against the BOM CSVs"),
+    # The Lab benches' seated poses are read off each case's own derived
+    # datums (a CAD edit that moves a ledge or a post moves the pose); gated
+    # by enclosure.yml's --check, and until 2026-09-27 missing from this
+    # chain, so a datum move left assembly.json stale until CI said so.
+    Step("gen_assembly_poses",
+         ("python3", f"{ENC_REL}/gen_assembly_poses.py"), ".",
+         ("python3", f"{ENC_REL}/gen_assembly_poses.py", "--check"), "argv", True,
+         "each case's seated datums (OpenSCAD echoes of its own derived names) -> "
+         "canary-local/devices/assembly.json (the Lab benches' poses)"),
     # Before gen_figures, which reads the catalog this writes (a figure's
     # catalog evidence): the order follows what each generator READS.
     Step("gen_enclosures",

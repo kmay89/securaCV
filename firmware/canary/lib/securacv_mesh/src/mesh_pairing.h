@@ -33,6 +33,7 @@
 #define SECURACV_MESH_PAIRING_H
 
 #include "mesh_crypto.h"
+#include "mesh_wire.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -280,7 +281,9 @@ struct Action {
   uint8_t    peer_mac[6];                          /* destination MAC, all-FF for broadcast */
   uint8_t    payload[MAX_ACTION_PAYLOAD];          /* raw payload bytes to send */
   size_t     payload_len;                          /* 0 if no payload */
-  uint32_t   confirmation_code;                    /* non-zero for NOTIFY_CODE_READY */
+  uint32_t   confirmation_code;                    /* non-zero for NOTIFY_CODE_READY,
+                                                      and for the joiner's SEND_ACCEPT
+                                                      (its code-derivation beat, F49) */
 };
 
 /* Pairing timeout. Matches canary-wap (5 min). Crossing this fires
@@ -371,12 +374,16 @@ Action start_joiner(PairingContext& ctx,
  * if the message is unexpected for the current state, returns NONE
  * (silently dropped) — pairing isn't aborted on every stray frame
  * because the same MAC may also be running heartbeat/etc traffic. */
+/* The wire type byte of each pairing frame — the registry's values
+ * (mesh_wire.h, spec §4.5: 8..12, canary-wap's numbering, chosen because a
+ * pairing type must never equal a version byte). v0.4 moved this tree from
+ * 0..4; the frame is [type][raw payload struct] as before. */
 enum class MsgType : uint8_t {
-  DISCOVER = 0,
-  OFFER    = 1,
-  ACCEPT   = 2,
-  CONFIRM  = 3,
-  COMPLETE = 4,
+  DISCOVER = mesh_wire::PAIR_DISCOVER,
+  OFFER    = mesh_wire::PAIR_OFFER,
+  ACCEPT   = mesh_wire::PAIR_ACCEPT,
+  CONFIRM  = mesh_wire::PAIR_CONFIRM,
+  COMPLETE = mesh_wire::PAIR_COMPLETE,
 };
 
 Action receive(PairingContext& ctx,

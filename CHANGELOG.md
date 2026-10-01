@@ -31,7 +31,7 @@
   bench; Canary Sentinel is unreleased and has not run on hardware. And
   which port carries this boot log is unverified: going by the build
   flags, the C6 builds' serial console may be the radar's header pins
-  rather than the USB-C port (sweep F62). Also, the Canary WAP's `/enroll`
+  rather than the USB-C port (sweep F67). Also, the Canary WAP's `/enroll`
   page now tells you to paste its full key, not the fingerprint, which Home
   Assistant's pin form never accepted, and the flasher fleet book names the
   WAP's real enrollment route, `/api/device/enroll?nonce=`, instead of a
@@ -113,6 +113,461 @@
   the receipt, `/api/device-info`, `/api/status`, serial `i` and BLE.
   Host-tested, including a signed events body byte-compared with Home
   Assistant's fixture. Compile-tested by CI. Not seen on a unit.
+
+### canary-wap: review fixes to the DP budget and the event-log reload
+
+An adversarial re-review of the entry below found these. How far each is
+proven: **host-tested only** (`make -C firmware/projects/canary-wap/tests_host`).
+None was compiled for the ESP32 in the session that wrote it, and none has
+been bench-run; CI's `firmware.yml` Arduino build is the first ESP32 compile
+they get.
+
+- **The DP budget no longer refills on demand.** `rf_presence::rotate_session()`
+  reset it, and that function is also the manual rotation: the
+  owner-authenticated `POST /api/rf/rotate`, and `GET /api/rf/conformance`,
+  which ran its rotating check by default. So any holder of the API token
+  could refill ε at will and compose as many releases as it liked, and each
+  forced rotation moved the NVS ledger. The budget now refills only on its
+  own clock: `dp::refill_if_due()`, called from `rf_presence::update()`,
+  refills it when 4 h of uptime (`dp::BUDGET_WINDOW_MS`, static-asserted
+  equal to `SESSION_ROTATE_MS`) have passed since the last refill or boot,
+  and persists the refill. A rotation rotates the tokens and the epoch and
+  carries the spend over; a restore after a reboot carries the stored spend
+  from any epoch at or below the current one and restarts the window, so a
+  reboot only postpones a refill. A budget nobody restored never refills.
+  The ledger's NVS writes are now at most one refill plus four reservations
+  per window, whatever a caller does (each manual rotation still writes
+  `rf_epoch`, as before). What this bounds is ε per 4 h of uptime, not a
+  lifetime total. `GET /api/rf/conformance` no longer rotates unless asked
+  with `skip_rotation=false` (a GET should not change state), and the
+  comment in `rotate_session()` that claimed an observer "can't compose
+  queries across sessions", and `dp.h`'s account of the reset, are
+  rewritten to say what holds. Host-tested by `test_dp_budget.cpp` (the
+  real `dp.cpp`: no refill a millisecond early, none before a restore, a
+  manual rotation plus a reboot carrying the spend, millis wrap, a failed
+  refill write erring toward spent) plus source pins on `rf_presence.cpp`
+  and `rf_presence_api.h`, which fail on the code before this change.
+- **The late-card reload no longer assumes `csi_integration::init` ran.**
+  The SD mount transition in `canary_wap.ino` called `load_into_ring()` on
+  the assumption that init had already restored the event-id floor, but
+  init runs only inside `start_http_server()`, which runs only if the AP
+  came up. On a boot where it did not, a late card was read against the
+  default floor, every row refused, and the once-per-boot latch then shut
+  the reload off. The load is now armed by `csi_event_log::arm_load()`,
+  which init calls once NVS has been read; before that it neither reads nor
+  latches. The comment there said otherwise and is corrected.
+- **A dismissal in the commit hook's window no longer loses the event.**
+  The hook copies the ring row after the MQTT publish, so a dismiss landing
+  in between wrote the original with `"dismissed":1`, which the reload
+  reads as a dismissal line: the event was never restored or backfilled.
+  `append()` now always writes the original `"dismissed":0`; only
+  `flush_dismissals()` writes a 1. The line format
+  (`csi_event_log_line.h`) and the synced CSI copies are unchanged.
+- **The reload no longer drops a whole line when the tail window starts on
+  a line boundary**: it reads the byte before the window and skips only a
+  real fragment.
+- **The reload keeps the task watchdog fed.** The loop said `yield()` fed
+  the idle task's watchdog; it does not (`yield()` never runs the idle
+  tasks, which sit below the loop task, and the watchdog covers both cores'
+  idle tasks and the loop task). It now calls `esp_task_wdt_reset()` and
+  `vTaskDelay(1)` every 4 KB. And a late card with a live event already in
+  the ring is no longer read at all (up to 2 × 128 KB), since every row
+  would be refused.
+- **Wording.** The dismissal line was described as "nothing new reaches the
+  card"; it records that the owner acknowledged the event, and roughly
+  when. That is the owner's own action, kept locally (Invariant IV), and
+  the header now says so. The "Today sheet" is not bounded to today:
+  `today.ndjson` has no daily rotation and a record carries no date (only a
+  time-of-day bucket), so restored rows of any age show as today's. Not
+  fixed (it needs a date on the record); `csi_event_log.h` now says so.
+  `dp::restore_budget()` no longer re-reads the shared ledger outside its
+  lock to log what it restored.
+- **Correction to the entry below:** baseline and household take 3 ε each,
+  so only one of them fits in the 4 ε budget, not both.
+
+### Opera mesh: three pre-existing canary-wap gaps closed after the v0.4 review
+
+How far this is proven, stated once: **host-tested only** — nothing here
+was compiled for the ESP32 or run on a radio, and the changes to the
+receive path are **awaiting maintainer crypto review**, like the v0.4
+registry they follow. CI's `firmware.yml` Arduino build is the first ESP32
+compile they get. The security re-review of #1748 approved the registry
+and found these in `mesh_network.cpp`'s receive path; none was introduced
+by v0.4, and each is pinned by the new `test_mesh_rx_gates_wap.cpp`, which
+fails against the pre-fix file on every one of them.
+
+- **A counter-0 frame could replay indefinitely.** canary-wap started each
+  peer's outbound counter at 0 and, to let that first frame past a fresh
+  receiver, exempted the gate while the receiver's last-seen was still 0
+  (`counter <= rx && rx > 0`) — so a captured counter-0 frame passed again
+  on every replay for as long as no higher counter had arrived. Both trees
+  now share one convention (spec §3.3, §4.5): the first counter signed is
+  1 (`add_peer` and both rekey resets), the last-seen starts at 0, and the
+  gate is strict `counter <= last` with no exemption, which is what the
+  PIO session already did. A counter-0 frame is never fresh at either
+  receiver. The O1 mirror in `test_mesh_opera_security.cpp` says the same.
+- **A member's MAC could be re-pointed without its key.** The receive path
+  rebound `peer->mac_addr` — and re-registered the ESP-NOW peer there —
+  *before* verifying the signature, on a frame that carried the member's
+  `sender_fp` and the `opera_id`, both public. Any radio could point a
+  member's address at itself until the real device's next verified frame:
+  a denial of service with no key. The binding now runs after signature,
+  opera_id and replay all passed, where the PIO session does it, and it
+  unregisters the *old* address before overwriting it (the old order
+  deleted the new one, leaking the old entry in ESP-NOW's peer table).
+- **Struct payloads were read without a length.** `handle_heartbeat` and
+  `handle_tamper_alert` (and the power, offline, auth and rekey handlers,
+  the same shape) cast the payload to their struct without knowing how
+  long it was; a PIO 6-byte `TAMPER_ALERT` (spec §4.3) read as the 56-byte
+  `TamperAlertPayload` took 50 bytes out of the signature that follows it.
+  Every struct handler now takes `payload_len` and refuses any length but
+  `sizeof` its struct, exactly, as the PIO decoders do (`BEACON_EVENT`,
+  `CHANNEL_LOCK` and `HUB_ELECTION` already went through the staged
+  decoders). The spec's registry table had the WAP struct at 54 bytes; it
+  is 56 on the wire (two bytes of padding before `witness_seq`), and says
+  so now.
+- **`mesh_envelope::PROTOCOL_VERSION` is `OPERA_VERSION`.** The PIO
+  envelope's version constant kept the name that `canary_config.h`
+  #defines as a string (`"pwk:v0.3.0"`), so the envelope could not be
+  included from `main.cpp` or any other TU of the canary sketch that has
+  the config; only the registry's constant had been renamed in v0.4. Every
+  reference in the library, its tests and the spec follows, and
+  `test_mesh_wire.cpp`'s macro-clash guard (it #defines the string first)
+  now includes `mesh_envelope.h` too, so the clash cannot come back
+  unnoticed. The canary-wap Makefile builds that suite against the staged
+  registry alone (`MESH_WIRE_STAGED_ONLY`; the sketch has no envelope).
+
+### canary-wap: the Today sheet survives a reboot, the DP budget refuses, and the fusion row stops claiming what is not built
+
+How far each of these is proven, stated once: **host-tested only**. None
+was compiled for the ESP32 in the session that wrote it (no Arduino-ESP32
+toolchain there), and none has been bench-run. CI's `firmware.yml` Arduino
+build is the first ESP32 compile they get.
+
+- **The event log reloads into the Today ring after a reboot.**
+  `csi_event_log::load_into_ring()`, declared and deferred since PR #395,
+  now reads the last 128 KB of `/EVENTS/today.ndjson` once per boot and
+  hands each line to a new `csi_event_inject()` in the canonical CSI
+  library. The card is removable, so inject is a chokepoint of its own: it
+  refuses an id at or above the NVS-restored allocator floor, an
+  unregistered module or type, a type whose manifest privacy class is above
+  the ceiling (the class the card claims is ignored), a duplicate, and
+  everything once a live event has committed this boot; it re-applies the
+  allow-list and sanitizing and fires no witness write, MQTT publish or SD
+  append. Host-tested by four new cases in `csi_event_invariants_test.cpp`
+  and by `tests_host/test_csi_event_log_load.cpp`, which runs the real
+  `csi_event_log.cpp` over a RAM card. **Found, not fixed:** a bundle the
+  bundler closes never enters the ring, so it is never appended to the SD
+  log and cannot be restored. Only direct commits are. Bundle ids also come
+  from an allocator that is not persisted.
+- **The differential-privacy budget is enforced and fails closed.**
+  `dp::Release` reserves draws × ε up front, all or nothing; a release the
+  session cannot cover spends nothing, and a draw it did not pay for
+  returns 0 whatever the counter. The free `noisy_*()` functions are gone,
+  and every exporter withholds its export (zeroed, `false`) on refusal.
+  At the shipped 4 ε session budget, charged by sequential composition,
+  the notify, familiar and federated-stats exports and every federated
+  baseline share are always withheld; baseline and household take 3 ε
+  each, so only one of them fits in a 4 ε window (3 + 3 = 6 ε). None of these exports has a production caller today, so no
+  served counter changes. Budget size and per-bucket accounting are open
+  decisions. Host-tested by `tests_host/test_dp_budget.cpp`, which runs the
+  real `dp.cpp`, eight racing threads included.
+- **A reboot no longer refills the DP budget, and a rotation cannot be
+  raced** (review of the change above). `rf_presence::init()` restores the
+  4-hour session epoch from NVS, but the ledger started at zero on every
+  boot, so each reboot inside a session granted a whole new budget. Every
+  reservation now writes the session's spend with its epoch to one NVS
+  blob (`dp_ledger`, next to `rf_epoch`) before any draw is honored, and
+  `dp::restore_budget()` reads it back at boot. A write that fails refuses
+  the release. A ledger that cannot be read, or that names a later epoch
+  or more than the budget, reads as spent until the next rotation, and so
+  does a budget nobody restored (safe mode). No stored ledger at all, as on
+  a first boot, gives a fresh budget. Separately, `reset_budget()` could
+  erase a reservation while a release on another task was still drawing
+  against it. The ledger now carries a generation that every reset and
+  restore moves, and a release drawn, or checked with `complete()`, after
+  a reset is refused. Host-tested by new cases in `test_dp_budget.cpp`
+  over a fake ledger store. The NVS store itself (`rf_presence.cpp`) has
+  not been compiled for the ESP32 or run. **Found, not changed:** the
+  owner-authenticated `POST /api/rf/rotate` rotates the session, and with
+  it the budget, on demand. (Changed since: see "review fixes to the DP
+  budget and the event-log reload" above.)
+- **A dismissed event stays dismissed after a reboot** (same review).
+  `csi_event_dismiss()` changed only the ring, so the reload above brought
+  the event back as `dismissed:0`. The dismiss handler now queues the id,
+  and the loop task (where every other log write happens) appends the
+  dismissed ring row as one more line in the usual format. The load honors
+  it: that record is restored dismissed, and the dismissal line is not a
+  row of its own. If there are more dismissals than the ring holds, or no
+  heap to track them, every row is restored dismissed. MQTT backfill does
+  not replay dismissal lines. With no card, or a card that is not this
+  device's, the dismissal lasts only until the reboot, as before.
+  Host-tested by `tests_host/test_csi_event_log_dismiss.cpp` over the RAM
+  card.
+- **`firmware/FEATURES.md`: Multi-link fusion ✅ → ⚠️** for canary (PIO)
+  and canary-wap. Motion direction and the breathing median are deferred
+  in `core_multilink_fusion.cpp` and not built, and the 2-link gate that is
+  built has no production caller feeding it peer windows.
+- **Not done: a deferred-write queue while the SD card is absent**
+  (`hardware_state.h`). Its correctness is about the append-only witness
+  log across a physical card pull and re-insert (the mount worker, the
+  chain-head recovery, torn-tail sealing), which only a bench run can show.
+  The comment there still says, correctly, that such writes are dropped.
+
+### The Opera mesh's two firmware trees agree on the outer frame — a wire break, re-pair after updating
+
+- **One wire registry, both trees (spec §4.5, `mesh_wire.h`).** The
+  PlatformIO mesh and canary-wap numbered the type byte of their signed
+  frame for themselves (`TAMPER_ALERT` was 18 on one and 4 on the other;
+  canary-wap's `CHANNEL_LOCK`/`HUB_ELECTION` sat on the PIO values of
+  `OFFLINE_IMMINENT`/`WITNESS_RECORD`), used different version bytes (1 vs
+  0), and the PIO tree put an unsigned copy of the type ahead of its
+  envelope. Both now take the version byte and every type from one header
+  (canonical in the PIO library, staged byte-identical into the sketch and
+  held there by `check_mesh_sync.sh`), the signed envelope is the frame,
+  and the pairing prefix is `8..12` in both — never a value a version byte
+  has used, so a receiver keying on the first byte cannot take one frame
+  for the other. Host-tested in both trees (`test_mesh_wire`, a frame
+  built canary-wap's way verifying on the PIO session, version-0 and
+  prefixed shapes dropped); **awaiting maintainer crypto review; not
+  bench-verified** — nothing of it has crossed a radio.
+- **Compatibility: this breaks the wire, with no negotiation.** A
+  pre-v0.4 and a post-v0.4 build of either tree drop each other's Opera
+  frames; a mixed opera goes silent rather than degrading. Update every
+  member of an opera together and re-pair. The project has no record of
+  an opera formed on a radio (U1 Track C2 is open), which is why this
+  renumbers instead of adding a second decode path — a statement about
+  what has been tested, not about every flashed device.
+- **What it does not do.** The trees still cannot pair with each other
+  (the pairing payload structs and key derivation differ, F48), and
+  `TAMPER_ALERT` still carries a different payload in each, so no
+  cross-tree frame can be verified today; the type byte is the
+  precondition, not interoperability.
+
+### A/B rollback was armed all along; the Canary now counts crash loops and stops in a safe mode
+
+Compile-checked and host-tested. **Not bench-verified** — nothing below has
+reverted a bad image or entered safe mode on real hardware yet; that is
+`docs/V1_BENCH_TEST_RUNBOOK.md`'s new Track E.
+
+- **Correction to the entry below.** The shipping Arduino and PlatformIO
+  builds do not auto-confirm a new OTA image. An Arduino build's bootloader
+  and `sdkconfig.h` come precompiled with the core, and the pinned cores
+  enable `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` (arduino-esp32 2.0.17's
+  `sdkconfig` for esp32 / esp32-s3 / esp32-c3; the 3.x lib-builder's common
+  defconfig). So the OTA engine's `verifyRollbackLater()` override was
+  compiled into every product that links it. `firmware_ota.md`,
+  `FAULT_MODEL.md`, `NEXT_STEPS_2026-07.md` (P0), `self_star_roadmap.md`,
+  `hardware_root_of_trust.md`, `FEATURES.md` and `PARITY_PLAN.md` now say
+  so, with the evidence and the bench caveat.
+- **The OTA engine refuses to build without the rollback config.** The
+  `#if` that compiled the override out on a core without it is now an
+  `#error`, so a core bump that dropped it fails the build instead of
+  disarming the net (`firmware/common/ota/src/securacv_ota.cpp` and its two
+  sketch copies).
+- **Canary (PlatformIO): mark valid only after a healthy boot.** A new image
+  is confirmed once `setup()` has returned and `loop()` has run for 30 s
+  (or the loop chose to restart or deep-sleep), not mid-`setup()`, so a
+  crash in the first seconds of `loop()` reverts too.
+- **Canary (PlatformIO): crash-loop counter and safe mode.** The host-tested
+  `boot_policy.h` decision now has a caller, through
+  `firmware/common/health/boot_guard.h`: an NVS counter persisted before any
+  risky init. Four boots in a row that never reach healthy, on a confirmed
+  image, stop in a serial safe mode — no radio, storage, sensors or witness
+  chain — until someone confirms "clear and retry" (`c` then `y`, or BOOT
+  held 2 s). A pending OTA image never enters it (rollback owns that case),
+  and a different image — OTA, A/B rollback, or a USB flash of another
+  build — starts the count over. New host test `test_boot_guard.cpp` runs
+  the glue over a fake NVS and OTA partition. canary-wap keeps its own
+  counter; the display, Sense, Vision and Sentinel have none yet.
+- **Review fixes to the two items above** (not compiled locally — no ESP
+  toolchain here, CI compiles them; the NVS half is host-tested; neither is
+  bench-verified):
+  - If the count reads but this boot's count cannot be written or committed,
+    `bootguard::begin()` now boots normally and reports NVS unavailable. It
+    used to keep the policy's answer, so a stored count at the threshold
+    entered safe mode, and "clear and retry" wrote through the same failing
+    store and came straight back. `test_boot_guard.cpp` covers it with a
+    fake NVS that reads but refuses writes.
+  - `POST /api/reboot` now goes through the same healthy gate as the loop's
+    own restarts. It used to restart directly, so a reboot asked for in a
+    pending image's first 30 s rolled the image back, and four quick ones on
+    a confirmed image could land it in safe mode. Restarts that still skip
+    the gate: factory reset, the setup-wizard timeout, and the dev-only
+    `POST /api/ota` push.
+  - **The HTTP path defers to `loop()`.** The first version of the fix above
+    ran the gate on the HTTP task, and the gate writes a witness record
+    (`fw_update_applied`) — chain and SD work the witness lib allows from the
+    loop task only, so it could race the loop's own records and fork the
+    chain; and if the loop's gate got there first, the HTTP task restarted
+    500 ms later while the loop was still mid-self-test, leaving the image
+    pending, so a good update rolled back. Now the handler replies, its hook
+    (`network_set_restart_request_hook`) only raises a flag, and `loop()`
+    runs the gate, persists the chain and restarts — the same sequence as
+    serial `x`, which now shares it. The serial, setup-complete and
+    deep-sleep paths were already on the loop task and are unchanged.
+- **Design change: a power-on reset no longer counts toward safe mode.**
+  The counter now follows the WAP's rule: a boot after a power-on reset
+  neither adds to the count nor clears it; every other reset reason still
+  counts (panic, the watchdogs, brownout, software, external, deep-sleep
+  wake). A switched outlet, a smart plug or a storm flicker must not put a
+  home device into a no-radio safe mode. The cost: a hang no watchdog
+  catches, ended by someone pulling the plug, goes uncounted. A count
+  already at the threshold stays in safe mode across a power cycle. Bench
+  row E7 now expects no safe mode after repeated power pulls
+  (`boot_policy.h` `decide_uncounted()`, `boot_guard.h` `reset_counts()`;
+  host-tested).
+- **Safe mode proves NVS still takes writes before it traps the device.** At
+  the threshold the count is often unchanged (saturated at the cap, or a
+  power-on boot), so the unchanged-value shortcut wrote nothing, reported
+  success, and entered safe mode on an NVS whose `operator_clear()` then
+  failed. A boot bound for safe mode now flips a scratch byte and commits;
+  if that fails it boots normally and reports NVS unavailable. New host
+  tests fail without it.
+- **Image identity on the serial log.** Every boot prints whether the app
+  descriptor's `app_elf_sha256` is non-zero. The "a different build starts
+  the count over" escape depends on it; bench row E6 now checks it for a
+  PlatformIO and an Arduino build.
+- **Known ungated path: the critical-battery deep sleep.**
+  `power_graceful_shutdown()` (`securacv_power.cpp`, reached from the
+  power-event callback registered in `setup()`) deep-sleeps without passing
+  the healthy gate, so a device that keeps waking to a critical battery
+  would count each wake. It is compiled only with `FEATURE_DEEP_SLEEP=1`,
+  which no env sets today; wiring it in is left for whoever turns that on.
+- **A bad image on demand.** `SCV_BENCH_CRASH_AFTER_MS` (no env sets it)
+  panics a `canary` build that many ms into `loop()`, for Track E.
+
+### The fault model is written down, and four docs stop promising recovery the code does not do
+
+- **`docs/FAULT_MODEL.md`** — what survives what, per component: the hub's
+  sealed log under crash and power loss (and what the chain cannot see
+  without the opt-in high-water mark), a Canary's two-tier chain under a
+  torn line and under a card-less power cut (the re-signed sequence
+  numbers, stated), MQTT's at-most-once reality on both ends, the clocks,
+  the Wi-Fi retry policy's self-stabilization argument with its three
+  holes (unjittered outage reboot, RAM-only `ever_online` opening the
+  setup portal, single-step tests), crash loops, sensors and storage. Every
+  row names its code and its test, or says **not built**; §3 lists what
+  is not claimed. Linked from the docs map and from the threat model's new
+  §4, which says faults are not adversaries and are not unhandled.
+- **`firmware_ota.md`** now says where the no-brick properties hold: the
+  A/B revert net is live only in the `canary-ota` ESP-IDF project; the
+  shipping Arduino/PlatformIO builds auto-confirm a new image and a bad
+  first boot does not revert. The recovery matrix rows say so, and the
+  anti-rollback floor is described as NVS, not eFuse.
+- **`timestamping.md`** no longer says nothing can be removed without
+  breaking verification: the chain cannot bind its own length, and the
+  page says what does.
+- **`boot_policy.h`** no longer describes its boot-path wiring as landed
+  and hardware-validated; nothing calls it yet.
+- **`esp32s3_power_resilience.md`** states the WAP crash-loop rule as the
+  code has it (three consecutive crash resets, cleared by a stable minute),
+  and **`failure_semantics.md`** says `PowerLoss` is hub-only.
+
+### Canary Sense: a returning radar never signs "cleared" over a body, HA's radar-link sensor gets its data, and the radar docs stop outrunning the decoder
+
+- **The presence FSM no longer passes through Clear on the way back from a
+  stall.** The first target frame after Unknown used to move the state to
+  Clear "so we report something promptly", and canary-sense sealed a signed
+  `presence_cleared` record while the radar was reporting a body. A target
+  frame now starts the debounce and the state stays Unknown until Present
+  is earned; a no-target frame goes to Clear, which is what the radar said.
+  A stall also ends the target run, so a returning frame cannot be promoted
+  to Present off a debounce clock that ran before the link dropped
+  (`mr60_presence.cpp`; `test_presence_fsm_stall_recovery_never_reports_clear_with_a_target`,
+  and the integration test's old assertion, which pinned the defect, now
+  pins the fix).
+- **The health payload carries the `radar` object HA reads.** Home
+  Assistant's radar-link diagnostic sensor documented a wire contract
+  (`link_ok`, `last_frame_age_ms`, `frame_errors`) that no firmware
+  published, so the entity never left "unknown". canary-sense now publishes
+  it in every retained health message (`PresenceFSM::last_frame_ms()`).
+- **The radar docs say what is decoded and what is vendor copy.** The
+  design doc now states that no range, accuracy or false-positive figure on
+  it was measured here, that the decoder has not yet parsed a real module's
+  frame, that the coarse `range` band rides every signed presence event
+  (raw centimeters do not), that temperature and moving air do affect the
+  radar, and that the per-device claim allowlist it described is not
+  implemented — the vocabulary is what keeps a vitals record from sealing.
+  The coarse-class design stops claiming direction and a Doppler spectrum
+  the firmware does not decode. The Lab's house copy stops calling the
+  breathing rate Ed25519-signed (it rides the unsigned state topic) and
+  argues the radar's privacy from what the host reads rather than
+  asserting it. `sense.json` regenerated.
+
+### A power cut mid-append no longer reads as tampering in the card's witness log
+
+- **The torn line is sealed onto its own line.** A power cut mid-append
+  leaves `/WITNESS/records.jsonl` ending in half a line. Boot recovery
+  already skipped it (the head resumes from the last complete record),
+  but the next append started on the same line, so the fragment and a
+  complete record read as one malformed line mid-file — which
+  `tools/verify_witness_log.py` counted as an integrity failure. Both
+  writers (the PlatformIO `securacv_witness` library and the canary-wap
+  sketch) now read the tail once per mount, and when it is torn the first
+  append leads with a newline in the same write, so a second cut cannot
+  leave the terminator without its line (`witness_store::tail_is_torn`,
+  host-tested; the append glue is compile-tested by CI's firmware builds,
+  not host-tested).
+- **The verifier judges a malformed line by its neighbors, never by
+  itself.** When the nearest record after it chains contiguously from the
+  nearest record before it (seq + 1, prev equal to that record's chain
+  hash) it is a power-cut scar: the fragment was never chained upon and
+  nothing is missing. When the record after it jumps ahead, the line sits
+  at a gap boundary and is reported as the gap it is — a destroyed record
+  reads exactly like a deleted one, which a gap already reports, so the
+  verdict does not change. A sealed torn append at the very end of the
+  file — the writer's second-cut shape, the newline landed and the record
+  behind it did not — is tolerated like a torn tail. A backward sequence or
+  a leading line the genesis does not bridge still fails, and the message
+  says why. Eight new cases in `tools/test_verify_witness_log.py`.
+
+### The fleet's semantics are written down, and the mesh specs say which relay exists
+
+- **`docs/FLEET_SEMANTICS.md`** — what "online", "verified" and "the
+  mesh" mean, precisely: the four membership views (hub roll-call,
+  display glass, device roster, Opera) and that none reconciles with
+  another; the roll-call's one-window failure detector and its bounded
+  replay; trust-on-first-use in three stores that never sync, with the
+  broker as the boundary; no cross-device ordering, correlation (by
+  design), fusion or consensus, and a hub election with no term or epoch;
+  relay specified for Opera and Beacon and built for neither, Chirp's
+  soft-accept and missing Sybil check; every scale figure a cap or an
+  estimate. Each row names its code; §8 lists what is not claimed; §9
+  says which rows have no test and are established by reading.
+- **`spec/canary_mesh_network_v0.md` and `spec/beacon_channel_v0.md`**
+  carry implementation-status notes where they describe relay: Opera has
+  no relay path, Beacon's hop and relay-rate constants are defined and
+  never read. The Beacon spec also notes the unsynced-receiver freshness
+  bypass and the unreachable tamper auto-revoke. `spec/README.md`'s
+  maturity rows say so too.
+- **`device_trust.md`** no longer says a hostile broker "cannot spoof a
+  Canary": it cannot forge a signed publish for a pinned key, and the
+  page now lists what it can still do. **`network_coexistence.md`** no
+  longer answers "eight Canaries?" with a percentage nobody measured.
+- **`mesh_session.h`** stops saying peers verify the election; the
+  receiver persists the announced winner unverified, which is now written
+  beside the handler's declaration as an open item.
+
+### Retention prunes a prefix, and a clock step cannot expire what was just sealed
+
+- **A clock regression no longer takes live rows with it.** The retention
+  pass used to pick the newest expired row and delete everything at or
+  below its id; a row sealed after the clock stepped back carried an older
+  stamp, so the in-retention rows before it went too. The pass now prunes
+  only the prefix before the first row still inside retention (`storage.rs`;
+  pinned by `retention_prunes_a_prefix_so_a_clock_regression_cannot_take_live_rows`).
+- **A forward clock step cannot expire rows sealed minutes ago.** Each store
+  keeps a bounded ring of monotonic-clock samples (one per 10-minute
+  interval, 14 days, FR-4); when the wall clock has run ahead of the
+  monotonic clock across a sample by more than the step tolerance (30 s,
+  the clock monitor's default), rows after it are aged by the monotonic
+  clock. Agreeing clocks leave the stamps in charge,
+  so aging a row by rewriting `created_at` still works in tests.
+- **`witnessd` holds one retention pass after a sealed `ClockSkew`** so the
+  pass runs on the settled clock. `docs/failure_semantics.md` states the
+  bounds and what they leave out (rows from an earlier process, a step past
+  the ring).
 
 ### The airtime governor charges what goes on the air, a chain-state write NVS refuses is retried, the WAP's settings sessions stop closing each other, the key-pinning steps name each product's source, and CI keeps one host-test list and fails a logic test's node or python3 read outside its path filter (#1725)
 

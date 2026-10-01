@@ -132,19 +132,22 @@ static void load_nvs() {
 static void save_nvs() {
   Preferences prefs;
   if (!prefs.begin("securacv", false)) return;
-  prefs.putChar("th_min_c", s_history.alltime_min_c);
-  prefs.putChar("th_max_c", s_history.alltime_max_c);
-  prefs.putUInt("th_rt_min", s_history.total_runtime_min);
-  prefs.putUInt("th_thr_min", s_history.throttled_min);
-  prefs.putUInt("th_pau_min", s_history.paused_min);
-  prefs.putUInt("th_thr_cnt", s_history.throttle_events);
-  prefs.putUInt("th_pau_cnt", s_history.pause_events);
-  prefs.putUInt("th_crit_cnt", s_history.critical_events);
-  prefs.putUInt("th_fail_cnt", s_history.sensor_fail_events);
-  prefs.putUInt("th_cold_cnt", s_history.cold_events);
-  prefs.putUInt("th_max_rt", s_history.max_seen_runtime_min);
+  bool ok = prefs.putChar("th_min_c", s_history.alltime_min_c) == sizeof(int8_t);
+  ok = (prefs.putChar("th_max_c", s_history.alltime_max_c) == sizeof(int8_t)) && ok;
+  ok = (prefs.putUInt("th_rt_min", s_history.total_runtime_min) == sizeof(uint32_t)) && ok;
+  ok = (prefs.putUInt("th_thr_min", s_history.throttled_min) == sizeof(uint32_t)) && ok;
+  ok = (prefs.putUInt("th_pau_min", s_history.paused_min) == sizeof(uint32_t)) && ok;
+  ok = (prefs.putUInt("th_thr_cnt", s_history.throttle_events) == sizeof(uint32_t)) && ok;
+  ok = (prefs.putUInt("th_pau_cnt", s_history.pause_events) == sizeof(uint32_t)) && ok;
+  ok = (prefs.putUInt("th_crit_cnt", s_history.critical_events) == sizeof(uint32_t)) && ok;
+  ok = (prefs.putUInt("th_fail_cnt", s_history.sensor_fail_events) == sizeof(uint32_t)) && ok;
+  ok = (prefs.putUInt("th_cold_cnt", s_history.cold_events) == sizeof(uint32_t)) && ok;
+  ok = (prefs.putUInt("th_max_rt", s_history.max_seen_runtime_min) == sizeof(uint32_t)) && ok;
   prefs.end();
-  s_dirty = false;
+  // The dirty flag is the retry: clearing it over a refused put (F61) made
+  // one failed save silently final until the NEXT history change. Left set,
+  // the periodic saver tries again next cadence.
+  if (ok) s_dirty = false;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

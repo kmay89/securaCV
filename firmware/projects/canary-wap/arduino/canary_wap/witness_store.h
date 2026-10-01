@@ -210,6 +210,25 @@ inline bool tail_parse(const char* tail, TailRecord* out) {
 }
 
 /**
+ * Does the file end in a torn line? A power cut mid-append leaves the
+ * in-flight line without its trailing '\n'. `tail_parse` skips that line,
+ * so recovery is right — but the NEXT append used to start on the same
+ * line, concatenating a complete record onto the fragment. The fragment
+ * and the record then read as one malformed line in the middle of the
+ * file, which the offline verifier (tools/verify_witness_log.py) counts
+ * as an integrity failure: an ordinary power cut became indistinguishable
+ * from tampering. The writer asks this once per mount and, when true,
+ * terminates the fragment before its first append, so the fragment sits
+ * on a line of its own — a scar the verifier can tell from tampering
+ * because the record after it chains contiguously from the record before
+ * it. `got` is the number of bytes read into `tail`; an empty read is not
+ * torn (nothing to terminate).
+ */
+inline bool tail_is_torn(const char* tail, size_t got) {
+  return tail != NULL && got > 0 && tail[got - 1] != '\n';
+}
+
+/**
  * Boot reconciliation decision: adopt the SD tail only when it is
  * STRICTLY ahead of the NVS cache. Equal → nothing to do; behind → the
  * chain advanced in RAM/NVS while the card was absent (or an old card

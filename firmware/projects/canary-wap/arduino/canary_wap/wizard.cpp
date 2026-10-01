@@ -281,13 +281,16 @@ bool get_status_for_export(Status* out) {
   if (!s_initialized || !out) return false;
   fill_status_common(out);
 
-  // Use notify's noised variant for the activity counters.
+  // Use notify's noised variant for the activity counters. The DP budget
+  // may withhold it (dp.h); say so rather than let zeros read as "quiet".
   notify::Stats n;
   if (notify::get_stats_for_export(&n)) {
     out->total_alerts_fired         = n.total_fired;
     out->total_events_evaluated     = n.total_evaluated;
     out->total_ambient_suppressed   = n.total_suppressed_ambient;
     out->total_household_suppressed = n.total_suppressed_household;
+  } else {
+    out->activity_withheld = true;
   }
   return true;
 }

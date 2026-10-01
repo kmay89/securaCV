@@ -29,6 +29,7 @@
 // the request actually arrived on).
 #include <lwip/sockets.h>
 #include <esp_netif.h>
+#include <esp_timer.h>  // esp_timer_get_time: a 64-bit microsecond uptime
 
 // F15: self-signed HTTPS. One code path for both cores — dev/release/board
 // envs are Arduino 2.0.17 / IDF 4.4.7, [env:full] is core 3.3.8 / IDF 5.5.4 —
@@ -318,6 +319,14 @@ static constexpr const char* MDNS_HOSTNAME = "canary";
 // home-WiFi interface.
 static char s_mdns_device_id[40] = {0};
 
+// TLS advertisement state for the mDNS TXT records (F15), mirrored to file
+// scope for the same reason as the device id: start_mdns runs from a static
+// event callback and from re-announce paths with no instance in hand. begin()
+// announces mDNS before the HTTPS server comes up, so this starts false and
+// startHttpServer() sets it + re-announces once m_tls_enabled is known.
+static bool     s_mdns_tls_enabled = false;
+static uint16_t s_mdns_secure_port = 0;
+
 // Helper: bring mDNS up on whichever netif is currently routable. We
 // call MDNS.end() first because ESP-IDF mDNS doesn't auto-re-announce
 // when a new netif gains an IP — it binds to the interfaces that were
@@ -336,6 +345,21 @@ static void start_mdns(const char* device_id) {
                      (device_id && device_id[0]) ? device_id : MDNS_HOSTNAME);
   MDNS.addServiceTxt("securacv", "tcp", "fw", FIRMWARE_VERSION);
   MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32S3");
+  // F15: tell a discovery client whether HTTPS is live and on which port.
+  // The decision is the pure, host-tested tls_policy helper; the plain
+  // http/securacv services keep advertising 80 (it 307-redirects) for a
+  // client that cannot do TLS.
+  {
+    const auto adv = canary::net::tls_policy::mdns_tls_advert(
+        s_mdns_tls_enabled, s_mdns_secure_port);
+    MDNS.addServiceTxt("securacv", "tcp", "tls", adv.tls_txt);
+    if (adv.advertise_secure_port) {
+      char port_s[6];
+      snprintf(port_s, sizeof(port_s), "%u", (unsigned)adv.secure_port);
+      MDNS.addServiceTxt("securacv", "tcp", "secure_port",
+                         (const char*)port_s);
+    }
+  }
   char fqdn[48];
   snprintf(fqdn, sizeof(fqdn), "%s.local", MDNS_HOSTNAME);
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "mDNS started", fqdn);
@@ -578,14 +602,33 @@ bool ScvNetworkManager::loadCredentials() {
 }
 
 bool ScvNetworkManager::saveCredentials() {
+  // False unless every entry landed (F61, the WAP's F59 twin): a save NVS
+  // refused used to log "credentials saved", mark the credentials configured
+  // and return true, so a reboot forgot a network the API reported as kept.
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.beginReadWrite()) return false;
 
-  nvs.putBytes(NVS_KEY_WIFI_SSID, m_creds.ssid, strlen(m_creds.ssid));
-  nvs.putBytes(NVS_KEY_WIFI_PASS, m_creds.password, strlen(m_creds.password));
-  nvs.putBool(NVS_KEY_WIFI_EN, m_creds.enabled);
+  const size_t ssid_len = strlen(m_creds.ssid);
+  const size_t pass_len = strlen(m_creds.password);
+  // An empty password is an open network, and Preferences::putBytes refuses
+  // len 0 as a no-op that "matches" 0 == pass_len — so the stale password
+  // must be REMOVED, or a secured->open change answers saved and reloads
+  // the old secret after reboot, failing the join (Codex on #1753). An
+  // absent key already is removed (the mqtt write_credentials pattern).
+  const bool ok =
+      nvs.putBytes(NVS_KEY_WIFI_SSID, m_creds.ssid, ssid_len) == ssid_len &&
+      (pass_len > 0
+           ? nvs.putBytes(NVS_KEY_WIFI_PASS, m_creds.password, pass_len) == pass_len
+           : (!nvs.isKey(NVS_KEY_WIFI_PASS) || nvs.remove(NVS_KEY_WIFI_PASS))) &&
+      nvs.putBool(NVS_KEY_WIFI_EN, m_creds.enabled) == sizeof(bool);
 
   nvs.end();
+
+  if (!ok) {
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
+               "WiFi credentials NOT saved (NVS write failed)", m_creds.ssid);
+    return false;
+  }
   m_creds.configured = true;
 
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "WiFi credentials saved", m_creds.ssid);
@@ -1109,6 +1152,14 @@ void network_set_provisioning_gate_hooks(network_gate_fn_t take,
                                          network_gate_fn_t is_open) {
   s_gate_take    = take;
   s_gate_is_open = is_open;
+}
+
+// Restart-request hook (see the header): hands POST /api/reboot to main.cpp's
+// loop task, which owns the boot-health gate and the witness chain.
+static network_void_fn_t s_restart_request = nullptr;
+
+void network_set_restart_request_hook(network_void_fn_t fn) {
+  s_restart_request = fn;
 }
 
 // Every grant TAKES the gate (one tap = one consumer). The is_open hook is
@@ -1670,6 +1721,13 @@ bool ScvNetworkManager::startHttpServer() {
       registerHttpHandlers(m_https_server);
       Serial.printf("[HTTPS] Server started on port %d\n", HTTPS_PORT);
       log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "HTTPS server started", "port 443");
+      // F15: begin() announced mDNS before this server existed (tls=0); now
+      // that HTTPS is live, re-announce so the `_securacv._tcp` record carries
+      // tls=1 + the secure port. The STA_GOT_IP re-announce reads the same
+      // mirrors, so the home-WiFi interface advertises it too.
+      s_mdns_tls_enabled = true;
+      s_mdns_secure_port = HTTPS_PORT;
+      start_mdns(s_mdns_device_id);
       if (!startRedirectServer()) {
         // The API is up on 443; only the plain-HTTP conveniences (probes,
         // the redirect) are missing. Logged, not fatal.
@@ -1745,6 +1803,14 @@ void ScvNetworkManager::stopHttpServer() {
   }
 #endif
   m_tls_enabled = false;
+  // F15: HTTPS is down, so the mDNS mirrors must stop claiming it — otherwise
+  // the next STA reconnect or raiseAp() re-announce would republish a stale
+  // tls=1 + secure port for a 443 that is no longer listening. Re-announce
+  // now when mDNS is up so the record drops to tls=0 immediately.
+  const bool was_tls = s_mdns_tls_enabled;
+  s_mdns_tls_enabled = false;
+  s_mdns_secure_port = 0;
+  if (was_tls) start_mdns(s_mdns_device_id);
   if (m_http_server) {
     httpd_stop(m_http_server);
     m_http_server = nullptr;
@@ -2722,6 +2788,15 @@ static esp_err_t handle_logs(httpd_req_t* req) {
   JsonDocument doc;
   doc["ok"] = true;
   doc["total"] = count;
+  /* Each entry's timestamp_ms is this device's uptime (millis()) when the
+   * line was logged, not a date — the page shows it as an age against this
+   * same response's uptime, the way /api/mesh/alerts does (F49 part 1).
+   * This base is the 64-bit esp_timer uptime, not millis(): past one
+   * millis() period (~49.7 days) a u32 entry timestamp cannot be placed in
+   * its wrap epoch, and the page omits the age rather than guess one (F49
+   * review). millis() itself is this value truncated to u32, so while the
+   * device has been up less than a period they agree exactly. */
+  doc["uptime_ms"] = (uint64_t)(esp_timer_get_time() / 1000);
 
   JsonArray logs = doc["logs"].to<JsonArray>();
 
@@ -2808,16 +2883,29 @@ static esp_err_t handle_reboot(httpd_req_t* req) {
 
   log_health(LOG_LEVEL_NOTICE, LOG_CAT_USER, "Reboot requested", nullptr);
 
-  // The witness lib owns chain persistence (one atomic blob — never the
-  // legacy seq/chain pair from here, which was the second torn-write site).
-  witness_persist_chain_state();
-
   JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "Rebooting...";
 
   String response;
   serializeJson(doc, response);
+
+  // A requested reboot is a deliberate stop, not a crash, so it goes through
+  // main.cpp's boot-health gate (confirm a pending image, clear the
+  // crash-loop counter). That gate writes a witness record and the chain
+  // head — loop-task only (securacv_witness.cpp) — so this task does NOT run
+  // it: it replies, raises the request flag, and returns. loop() runs the
+  // gate, persists the chain and restarts, the same sequence as serial 'x'.
+  if (s_restart_request) {
+    http_send_json(req, response.c_str());
+    s_restart_request();
+    return ESP_OK;
+  }
+
+  // No owner registered: the old in-handler path. The witness lib owns chain
+  // persistence (one atomic blob — never the legacy seq/chain pair from here,
+  // which was the second torn-write site).
+  witness_persist_chain_state();
   http_send_json(req, response.c_str());
 
   delay(500);
@@ -3700,9 +3788,25 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   creds.enabled = true;
   creds.configured = true;
 
-  // Transfer local credentials to the manager, then save and connect
+  // Transfer local credentials to the manager, then save and connect. The
+  // previous in-memory state is snapshotted first: on a failed save it is
+  // restored, or the manager's retry tick would connect with the very
+  // credentials this answer reports unsaved (working until the reboot that
+  // forgets them). A save NVS refused is answered as the failure it is, not
+  // glossed as "connecting" — and setup stays incomplete (F61, the WAP's
+  // F59 route twin).
+  const WiFiCredentials prev_creds = net.getCredentials();
   net.setCredentials(creds);
-  net.saveCredentials();
+  if (!net.saveCredentials()) {
+    net.setCredentials(prev_creds);
+    JsonDocument doc;
+    doc["ok"] = false;
+    doc["error"] = "Credentials not saved (NVS write failed) - see the device log";
+    doc["tz"] = tz_outcome;
+    String response;
+    serializeJson(doc, response);
+    return http_send_json(req, response.c_str());
+  }
   net.connectToHome();
 
   // Mark first-time setup as complete now that WiFi credentials are saved

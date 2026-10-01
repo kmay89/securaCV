@@ -263,3 +263,33 @@ test("the Dash card seats its case where the CAD ledger measures it", () => {
   close(glassW, row.face_fig_mm.w, "glass width");
   close(glassH, row.face_fig_mm.h, "glass height");
 });
+
+// ── the GPU lifecycle ───────────────────────────────────────────────────
+// fleet.html mounts a DeviceScene per registry device (plus the open sheet).
+// Each used to own a WebGL context; Chromium keeps ~16 alive and loses the
+// oldest, so the first cards went blank — and every device added made it
+// worse. scene3d.js renders every scene through one shared context and gates
+// each card's loop on visibility; tests/scene_lifecycle_probe.mjs mounts
+// forty in a real browser and proves it. This gate holds the probe in CI
+// beside the render probe, and the module to the shape the probe relies on.
+test("CI runs the render probe and the scene lifecycle probe", () => {
+  const workflow = readFileSync(join(ROOT, "../.github/workflows/canary-local.yml"), "utf8");
+  assert.ok(workflow.includes("node canary-local/tests/render_probe.mjs"),
+    "render_probe.mjs is not wired into canary-local.yml");
+  assert.ok(workflow.includes("node canary-local/tests/scene_lifecycle_probe.mjs"),
+    "scene_lifecycle_probe.mjs is not wired into canary-local.yml");
+  assert.ok(existsSync(join(ROOT, "tests/scene_lifecycle_probe.mjs")));
+});
+
+test("a scene retains its part data and shares the page's one context", async () => {
+  const src = readFileSync(join(ROOT, "assets/scene3d.js"), "utf8");
+  // one getContext("webgl") on the page, on a detached canvas — never on the card
+  const ctxCalls = src.match(/getContext\("webgl"/g) || [];
+  assert.strictEqual(ctxCalls.length, 1, "every DeviceScene must draw through the shared context");
+  for (const hook of ["webglcontextlost", "webglcontextrestored", "IntersectionObserver",
+                      "visibilitychange", "_acquireGL()", "_releaseGL()", "static stats()"])
+    assert.ok(src.includes(hook), `scene3d.js lost its ${hook} lifecycle hook`);
+  // the registry's card count is exactly why: past the browser's cap
+  assert.ok(registry.devices.length > 16,
+    `${registry.devices.length} registry devices — the fleet page is past a browser's ~16 live contexts`);
+});

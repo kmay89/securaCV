@@ -229,6 +229,26 @@
 //     and the USB slide channel snugged in the same round. Still open:
 //     hdr_inset (drawing candidates are 1.27 and 2.00 — measure which),
 //     pcb_t, usb_proud, and the pillar pattern insets.
+//
+//  ── CHANGELOG ────────────────────────────────────────────────────────────
+//  2026-09-24  Display-case CAD audit, closed against the rendered meshes of
+//     all five builds (pillars / none / male, usb_a none / male). No geometry
+//     moved in this pass; each item is the audit's finding and the mesh
+//     intersection that now shows it closed:
+//     - usb_a lid bosses vs the BOOT/RST switch bodies: the USB-end pair sits
+//       inboard of the bodies in Y (stand_usb_y) — lid ∩ switch bodies is
+//       EMPTY, and the lid closes (bezel ∩ lid empty at 0.0, contact at -0.1).
+//     - usb_a + male: no brass pillars are assumed (pillars_in excludes the
+//       A board) — the bosses reach the bare PCB (contact at -0.1) and stand
+//       inboard of the 9-pin header rows (lid ∩ pins EMPTY). They stand 7 mm
+//       up-board of the plug shell at usb_a_over = 3.0, a MEASURE item: a
+//       shell running more than ~10 mm back over the PCB would put them on it.
+//     - usb_c overmold: the counterbore (usb_om_cut) reaches the receptacle
+//       face at every board float — the spec-max 12.35 x 6.5 overmold from
+//       the receptacle face outward meets NO case at nominal or 0.2 floated in.
+//     - bridges: the series-A opening's top and the collar's crown are the
+//       bridge-safe 7.0 flats (usb_a_bore2d); no downward flat on any bezel
+//       exceeds the 7.0 rule.
 // ============================================================================
 
 use <canary_mark_lib.scad>   // the house mark; this part wears the wordmark

@@ -257,6 +257,38 @@ test("the presence FSM debounces, clears and stalls at the real constants", asyn
   assert.ok(ev.stalled, "stall transition must be flagged");
 });
 
+test("a radar that returns with a target never passes through clear (mirrors mr60_presence.cpp)", async () => {
+  const { makePresenceFSM } = await import("../assets/sense-ui.js");
+  const cfg = data.fsm.presence;
+  const fsm = makePresenceFSM(cfg);
+  const target = { hasTarget: true, count: 1, distanceCm: 200 };
+  const empty = { hasTarget: false, count: 0, distanceCm: 0 };
+  let t = 1000;
+  fsm.reset(t);
+  fsm.tick(target, t);
+  fsm.tick(target, t + cfg.debounce_ms);
+  assert.strictEqual(fsm.state, "present");
+  // link drops with the target in view -> Unknown
+  t += cfg.debounce_ms + cfg.stall_ms;
+  assert.ok(fsm.tick(null, t).stalled);
+  assert.strictEqual(fsm.state, "unknown");
+  // link returns still reporting the target: no Clear, and no instant
+  // Present off the pre-stall debounce clock — the firmware signs
+  // presence_cleared on Clear, and a body is in view
+  t += 10;
+  const back = fsm.tick(target, t);
+  assert.strictEqual(fsm.state, "unknown", "must not pass through clear over a body");
+  assert.ok(!back.stateChanged, "the returning frame changes nothing yet");
+  fsm.tick(target, t + cfg.debounce_ms - 1);
+  assert.strictEqual(fsm.state, "unknown", "a fresh debounce must run");
+  fsm.tick(target, t + cfg.debounce_ms);
+  assert.strictEqual(fsm.state, "present");
+  // ...and a link that returns reporting no target goes to clear at once
+  t += cfg.debounce_ms + cfg.stall_ms;
+  assert.ok(fsm.tick(null, t).stalled);
+  assert.strictEqual(fsm.tick(empty, t + 10).state, "clear");
+});
+
 test("the vitals FSM locks only on sustained single-target vitals", async () => {
   const { makeVitalsFSM } = await import("../assets/sense-ui.js");
   const v = data.fsm.vitals;

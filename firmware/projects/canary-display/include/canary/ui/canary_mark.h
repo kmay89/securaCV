@@ -49,6 +49,14 @@ lv_obj_t* canary_mark_create(lv_obj_t* parent, int size_px);
 
 void canary_mark_mood(CanaryMood m);
 
+// The host moved the bird (a new lv_obj_align). The mark records its base
+// position once, at the first on-stage mood after placement, and every
+// pose and bob writes from that base — so a later move alone is undone on
+// the next animation frame. Call this right after the new placement:
+// off stage it re-arms the one-shot capture for the next mood; on stage
+// it re-enters the current mood so the pose restarts from the new seat.
+void canary_mark_rebase();
+
 void canary_mark_react(CanaryReact r);
 
 // Trust ladder (consecutive clean days, from the mood engine): gates the

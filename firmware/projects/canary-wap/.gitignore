@@ -1,6 +1,10 @@
 # PlatformIO build directory
 .pio/
 
+# PlatformIO's ino->cpp conversion. src_dir points at the sketch itself, so
+# `pio run` writes the generated translation unit next to canary_wap.ino.
+*.ino.cpp
+
 # IDE files
 .vscode/
 *.code-workspace

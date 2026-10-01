@@ -427,6 +427,7 @@ struct Minted {
   // The PhoneJoined hint's forms: small glass (the hint, then its narrow
   // form), wide glass.
   std::vector<std::string> phone_small, phone_wide;
+  int bird_px;               // onboard_ui.cpp's watch-family brand mark
 };
 static Minted g_minted;
 
@@ -443,6 +444,33 @@ static std::vector<std::string> literals(const std::string& text) {
     out.push_back(lit);
   }
   return out;
+}
+
+// The three #if CD_FLAVOR branches (round / portrait / wide) that follow
+// the first line containing `marker`: each branch's non-comment lines are
+// collected for literals(). False when the shape is not in the file.
+static bool glass_branches(const std::vector<std::string>& ls,
+                           const char* marker, std::string body[3]) {
+  int branch = -1;
+  bool armed = false;
+  for (size_t i = 0; i < ls.size(); i++) {
+    const std::string t = trim(ls[i]);
+    if (!armed) {
+      if (t.find(marker) != std::string::npos) armed = true;
+    } else if (branch < 0 && t == "#if defined(CD_FLAVOR_WATCH) && "
+                                  "!defined(CD_FLAVOR_NIGHTSTAND)") {
+      branch = 0;
+    } else if (branch == 0 && t == "#elif defined(CD_FLAVOR_WATCH)") {
+      branch = 1;
+    } else if (branch == 1 && t == "#else") {
+      branch = 2;
+    } else if (branch == 2 && t == "#endif") {
+      return true;
+    } else if (branch >= 0 && !starts_with(t, "//")) {
+      body[branch] += t + "\n";
+    }
+  }
+  return false;
 }
 
 static void load_minted() {
@@ -491,29 +519,10 @@ static void load_minted() {
   g_minted.ssid_tagged = "SecuraCV-" + slots(4) + "-" + slots(2);
 
   // The stuck-phone hint, per glass, from the branch that sets it.
-  int branch = -1;
-  bool armed = false, done = false;
   std::string body[3];
-  for (size_t i = 0; i < ls.size() && !done; i++) {
-    const std::string t = trim(ls[i]);
-    if (t == "ctx.stuck_hinted = true;") {
-      armed = true;
-    } else if (armed && branch < 0 &&
-               t == "#if defined(CD_FLAVOR_WATCH) && "
-                    "!defined(CD_FLAVOR_NIGHTSTAND)") {
-      branch = 0;
-    } else if (branch == 0 && t == "#elif defined(CD_FLAVOR_WATCH)") {
-      branch = 1;
-    } else if (branch == 1 && t == "#else") {
-      branch = 2;
-    } else if (branch == 2 && t == "#endif") {
-      done = true;
-    } else if (branch >= 0 && !starts_with(t, "//")) {
-      body[branch] += t + "\n";
-    }
-  }
-  CHECK(done, "provision.cpp's stuck-phone hint branches (round / portrait / "
-              "wide) not found after ctx.stuck_hinted = true;");
+  CHECK(glass_branches(ls, "ctx.stuck_hinted = true;", body),
+        "provision.cpp's stuck-phone hint branches (round / portrait / "
+        "wide) not found after ctx.stuck_hinted = true;");
   g_minted.hint_round = literals(body[0]);
   g_minted.hint_small = literals(body[1]);
   g_minted.hint_wide = literals(body[2]);
@@ -524,9 +533,8 @@ static void load_minted() {
         (int)g_minted.hint_wide.size());
   // The PhoneJoined hint, per glass, from the branch that sets it once the
   // phone has sat on the AP for HINT_AFTER_MS without opening the page.
-  branch = -1;
-  armed = false;
-  done = false;
+  int branch = -1;
+  bool armed = false, done = false;
   std::string pj[2];
   for (size_t i = 0; i < ls.size() && !done; i++) {
     const std::string t = trim(ls[i]);
@@ -564,6 +572,14 @@ static void load_minted() {
         "join_failure_hint_narrow() with join_failure_hint(): \"%s\"",
         stmt.c_str());
 
+  // The brand mark's watch-family square, for the Join-scene seat check.
+  const std::string obui =
+      slurp(fw + "/projects/canary-display/src/ui/onboard_ui.cpp");
+  g_minted.bird_px = -1;
+  const size_t bat = obui.find("constexpr int BIRD_PX = ");
+  if (bat != std::string::npos)
+    g_minted.bird_px = std::atoi(obui.c_str() + bat + 24);
+  CHECK(g_minted.bird_px > 0, "onboard_ui.cpp's BIRD_PX not found");
   std::printf("  key %d of %d chars; hints: \"%s\" | \"%s\"%s%s%s | \"%s\"\n",
               g_minted.key_len, (int)g_minted.alpha.size(),
               g_minted.hint_round.empty() ? "" : g_minted.hint_round[0].c_str(),
@@ -969,6 +985,18 @@ static void check_glass(const Env& e, int which, int also) {
           above, below);
   }
   if (small) {
+    // F50: the bird's Join-scene seat (the hidden card's, while no QR is
+    // up — onboard_ui's join_bird_top) stays clear of the title band above
+    // it and the credentials line under it, on every glass.
+    const int bird = g_minted.bird_px;
+    const int seat = join_bird_top(s, bird);
+    CHECK(bird > 0 && bird <= s.card,
+          "%s/%s: the bird (%d px) no longer fits the card's seat (%d px)",
+          n, lad_name, bird, s.card);
+    CHECK(seat >= s.title_top + r.title_h && seat + bird <= s.creds_top,
+          "%s/%s: the bird's seat (%d..%d) crosses the title (..%d) or the "
+          "credentials (%d..)", n, lad_name, seat, seat + bird,
+          s.title_top + r.title_h, s.creds_top);
     check_rows(e, which, s, r, round, fam);
   } else {
     check_wide_rows(e, which, fam);
@@ -1182,6 +1210,20 @@ static void test_f50_pins() {
   h = hint_lines(20, 20, join_failure_hint(JoinFailure::Unknown),
                  join_failure_hint_narrow(JoinFailure::Unknown), std12);
   CHECK(!h.lower.fits, "a 20 px row claimed to fit \"%s\"", h.lower.text);
+  // The bird's Join seat (#1755): its old seat (a fixed -64 from the 240
+  // disc's center) put its top at 36, inside the title band (30..48); the
+  // card's seat starts at 94, under it (the F43 stack's card is 50..178).
+  // These are the layout's numbers. Where the glass draws the bird is F64's:
+  // canary_mark records its base before a layout pass has placed it.
+  Glass watch = {240, 240, true};
+  Rows wr = {18, kSmallGlassCard, 15, 15};
+  Stack w = join_stack(watch, wr);
+  const int old_top = 240 / 2 - 64 - g_minted.bird_px / 2;
+  CHECK(old_top == 36 && old_top < w.title_top + wr.title_h,
+        "the old seat (top %d) no longer documents the defect", old_top);
+  CHECK(join_bird_top(w, g_minted.bird_px) == 94 &&
+            join_bird_top(w, g_minted.bird_px) >= w.title_top + wr.title_h,
+        "the round watch's bird seat is %d", join_bird_top(w, g_minted.bird_px));
 }
 
 // ── degenerate glass: the lines still never cross ─────────────────────────
