@@ -269,8 +269,10 @@ The canary-wap (`csi_event_egress.cpp` over its `csi_event_log.cpp` adapter,
 sweep F78) runs the same planner with the same order: a row goes out live
 only when nothing older waits, the backfill walks the card in id order, two
 rows per pass, and never below the delivered watermark, which survives a
-reboot through the same NVS ceiling. It differs from the canary base in
-four ways:
+reboot through the same NVS ceiling. As on the canary base, with no broker
+configured, or after the broker changes (host, port, user or topic prefix),
+the rows waiting are owed to nobody and the new broker is not sent them. It
+differs from the canary base in four ways:
 
 - the commit hook only queues the row (16 deep; a full queue drops and
   counts). Logging, publishing and the watermark all happen on the loop
@@ -280,14 +282,23 @@ four ways:
   instead (8 rows, the oldest dropped first) while anything older waits or
   the broker is unreachable, and go out in id order with the card's rows.
   These are closed bundles (presence, `system.integrity` tampers), which
-  never reach its card (sweep F77), every row when there is no card, and a
-  row whose card append failed. RAM does not survive a reboot;
+  never reach its card (sweep F77), every row when there is no card or the
+  card is not open, and a row whose card append failed. "Anything older"
+  includes a card that is not open but may hold older rows: from boot until
+  its log first opens (a slow card mounts after boot), and after it closes
+  with rows still waiting (an SD error's remount), for at most 45 s; past
+  that the RAM rows go, and rows on a card that comes back later are
+  skipped. An ambient row (`wifi.channel_activity`, "live UI only") is never
+  held: one that cannot go out at once is dropped and counted. RAM does not
+  survive a reboot;
 - it writes no owner file and leaves a card that has one alone;
 - the tamper-topic bridge publishes when the loop task takes the row from
   the queue, before the row itself, whatever the backfill is doing.
 
 A dismissal line on its card (`"dismissed":1`) is the owner's local record
-and is never replayed.
+and is never replayed. A dismissal the log cannot take yet (no open log, or
+a log at its size cap, which only a committed row's append cuts) waits in
+RAM, up to eight, until it can; a reboot drops it.
 
 ### `POST /api/events/dismiss`
 

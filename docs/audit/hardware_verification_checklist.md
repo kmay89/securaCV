@@ -484,11 +484,27 @@ run. Compile is CI's. Owner: U1.
     verdict; no watchdog or stack fault on the NimBLE host task.
   - Artifact: `docs/audit/repro/F78/scout-close/`.
 - [ ] **A short outage with no card loses no row**
-  - Setup: no card in; paired to HA.
-  - Repro: stop the broker; commit up to eight events; start the broker.
+  - Setup: no card in; paired to HA; up more than 45 s since boot (until
+    then rows wait for a card that may still mount).
+  - Repro: stop the broker; commit up to eight events (presence, a tamper);
+    start the broker.
   - Expected: all of them arrive in id order with `"replay":true`; past
     eight, the serial log names how many the RAM hold dropped, oldest first.
+    Ambient `wifi.channel_activity` rows from the outage are not held and
+    do not arrive (they are live-UI only), and never push out an event.
   - Artifact: `docs/audit/repro/F78/no-card/`.
+- [ ] **A card that mounts late, or remounts mid-backfill, keeps its
+  backlog first**
+  - Setup: a card in with rows still owed from an outage; paired to HA.
+  - Repro: (a) power-cycle with a slow card (or one seated after boot) and
+    commit a presence event before the card mounts; (b) during a backfill,
+    force an SD error (a card that briefly loses contact) so the log closes
+    and remounts, and commit an event meanwhile.
+  - Expected: in both, HA receives the card's owed rows first, then the new
+    event, each once, in id order, no `replay` verdict. If the card is not
+    back within 45 s the serial log says `event log card not open after 45
+    s` and the waiting events go out without it.
+  - Artifact: `docs/audit/repro/F78/late-card/`.
 
 ## One event-id space (F46) — on-device verification
 

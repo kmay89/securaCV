@@ -154,8 +154,11 @@ bool connected();
 /* ── The events egress's wire ──────────────────────────────────────────
  * csi_event_egress.cpp decides which committed csi_event goes out when,
  * and keeps the delivery watermark; these are the publishes it asks for.
- * Safe from any task (publish_raw guards the client), but the egress is
- * their only caller. */
+ * The egress is their only caller, on the loop task. publish_raw only
+ * checks that the client exists and is connected: a runtime init() (a
+ * config POST or a test on the httpd task) destroys the client under it,
+ * so a publish racing that re-init can use a freed handle (pre-existing;
+ * every publish in this file shares it). */
 
 /* What one publish attempt did. */
 enum class EventSend : uint8_t {
