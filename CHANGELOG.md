@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### The canary mesh no longer learns a peer's radio address from a frame (#<W8>)
+### The canary mesh no longer learns a peer's radio address from a frame (#1761)
 
 - **The canary mesh no longer learns a peer's radio address from a frame
   (sweep F49 part 3, withdrawn).** #1756 let a verified opera frame from an

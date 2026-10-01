@@ -1221,7 +1221,7 @@ so — see D2 below.)
   PIO residual splits remain: both initiators already handed out, a mutual
   removal, or a lost ACK. A random-loss probe split 3 of 60 runs at 5%
   frame loss (spec §5.6 states it).
-  *Done (#1756), parts 1-2; part 3 withdrawn (#<W8>):*
+  *Done (#1756), parts 1-2; part 3 withdrawn (#1761):*
   (1) `GET /api/logs` now carries `uptime_ms` (handle_logs) and the log list
   renders each entry's `timestamp_ms` as an age against it (`formatLogAge`,
   shared with `formatAlertAge`) instead of `new Date(...)` — the made-up
@@ -1232,7 +1232,7 @@ so — see D2 below.)
   `SEND_ACCEPT` too (its code-derivation beat — there is no separate
   `NOTIFY_CODE_READY` on that side), with the same code `pairing_confirmation_code()`
   reports. Pinned by `test_joiner_offer_surfaces_code_with_accept`.
-  (3) **Withdrawn (#<W8>).** #1756 sent an opera envelope from an address
+  (3) **Withdrawn (#1761).** #1756 sent an opera envelope from an address
   the transport did not hold through the full verify (signature + opera_id
   + strict counter). On a pass it re-bound the signer's transport binding
   to that address (`bind_peer_mac`) and persisted it
@@ -1290,7 +1290,7 @@ so — see D2 below.)
   bench-verified on hardware (U1).
 - [ ] **F68 [decision] How may a mesh peer's changed radio MAC be learned
   safely?** F49 part 3 (#1756) learned it from any verified opera frame,
-  and it was withdrawn (#<W8>): the envelope signs no address and one
+  and it was withdrawn (#1761): the envelope signs no address and one
   counter serves every destination, so a replayed frame the receiver had
   never heard re-pointed a member at an outsider's radio. Today a changed
   MAC (a swapped module, a new locally-administered address) means a
@@ -1330,7 +1330,7 @@ so — see D2 below.)
   - The long-term key signs nothing in the exchange.
   - canary-wap derives its code the same way (`mesh_pair_crypto`; not
     probed).
-  The review of #<W8> host-probed the PIO tree. An outsider relays an
+  The review of #1761 host-probed the PIO tree. An outsider relays an
   owner-run pairing (A and a new device D) from its own address, no
   spoofing, without touching the ephemeral keys:
   - both screens show the same code;
@@ -1339,7 +1339,7 @@ so — see D2 below.)
     until another re-pair;
   - claiming its own key got it trusted, and it then signed a REKEY_OFFER
     that removed B.
-  The results were identical before #1756, on c104f56 and on #<W8>. Spec
+  The results were identical before #1756, on c104f56 and on #1761. Spec
   §11.1 item 5 ("Man-in-the-Middle: visual confirmation codes") is now
   marked partial.
   Decide:
@@ -1368,7 +1368,7 @@ so — see D2 below.)
   the receiver's `REKEY_ACCEPT` (probed), and in the copy case a later
   removal of the signer strands the copied member. This is pre-existing:
   the same before #1756.
-  Fix, sketched by the #<W8> review and not built:
+  Fix, sketched by the #1761 review and not built:
   - record the link only when the source equals the signer's `radio_mac`,
     or drop opera frames whose source is only the pair contact;
   - have `send_rekey_frame` and `forget_peer` use `radio_mac`.
