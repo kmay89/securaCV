@@ -273,9 +273,9 @@ What this does NOT defend against:
 - **Replay of an exact past publish.** An attacker with broker access
   who captures a real `(device_id, event_id=42, sig)` triple can
   re-publish it. Mitigation: HA's per-device-monotonic `event_id`
-  tracking (already in `s_last_published_event_id`) can detect
-  duplicates — surfacing that as a separate "replay observed" sensor
-  is a follow-up.
+  tracking (its replay gate, which the devices' delivery watermarks are
+  built around) can detect duplicates — surfacing that as a separate
+  "replay observed" sensor is a follow-up.
 - **Pre-TOFU broker spoofing.** If the very first time HA sees a
   device is on a hostile broker, TOFU pins the wrong key. Use manual
   pinning if your broker isn't trusted, with the full key read off the

@@ -453,6 +453,43 @@ firmware, live or backfilled, is now a finding.
     canary, the backfill sends none of the canary-wap's rows.
   - Artifact: `docs/audit/repro/F37/canary-card-in-wap/`.
 
+## canary-wap event egress (F78) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/csi_event_egress.cpp`
+(`csi_event_backfill.h`'s planner, a commit queue, a RAM hold for rows the
+card does not keep) over `csi_event_log.cpp`; `csi_mqtt::loop()` pumps it on
+the loop task. Host-tested
+(`firmware/projects/canary-wap/tests_host/test_wap_event_egress.cpp`) and held
+by `firmware/scripts/check_wap_event_egress.py`; the NimBLE host task
+committing while the loop task backfills is not something a host test can
+run. Compile is CI's. Owner: U1.
+
+- [ ] **A row committed in the reconnect window waits behind the backlog**
+  - Setup: a canary-wap with a card in, paired to Home Assistant; the MQTT
+    broker on a host you can stop.
+  - Repro: stop the broker; commit several events (walk in front of the
+    sensor, so presence bundles close too); start the broker and keep
+    walking while it reconnects.
+  - Expected: the serial log shows `[EVT] event backfill done: N event(s)
+    from the card`; HA's event history holds the outage's rows and the ones
+    committed during the reconnect, each once, in id order; HA shows no
+    `replay` verdict; no `[EVT] egress queue full` line.
+  - Artifact: `docs/audit/repro/F78/reconnect-window/`.
+- [ ] **A ble.scout close during the backfill stays in order**
+  - Setup: as above, with a paired Scout beacon.
+  - Repro: stop the broker, commit a backlog, start the broker, and take the
+    beacon out of range while the backlog drains (a departure commits on the
+    NimBLE host task).
+  - Expected: the departure arrives after the backlog, once; no `replay`
+    verdict; no watchdog or stack fault on the NimBLE host task.
+  - Artifact: `docs/audit/repro/F78/scout-close/`.
+- [ ] **A short outage with no card loses no row**
+  - Setup: no card in; paired to HA.
+  - Repro: stop the broker; commit up to eight events; start the broker.
+  - Expected: all of them arrive in id order with `"replay":true`; past
+    eight, the serial log names how many the RAM hold dropped, oldest first.
+  - Artifact: `docs/audit/repro/F78/no-card/`.
+
 ## One event-id space (F46) — on-device verification
 
 Code: `firmware/common/csi/src/csi_event.cpp` (one allocator, ids taken at

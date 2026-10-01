@@ -2398,6 +2398,39 @@
   from what the operation reports it did, never from a question asked
   before it; and when a host-side workaround (a flush, a retry, a reset)
   hides a library bug, fix them as one change.
+
+### A live path and a backfill that each move one watermark need one owner, on one task
+- **What happened:** On the canary-wap, `MQTT_EVENT_CONNECTED` set the
+  link up on the esp_mqtt task and only flagged the SD backfill for the
+  loop task. A row committed in between went out live and moved the
+  delivery watermark past every unsent row, so the backfill then skipped
+  them, and Home Assistant would have refused them anyway (sweep F78). The
+  live publish also ran on whichever task committed, the NimBLE host task
+  included, under the chokepoint's commit lock, while the backfill wrote
+  the same watermark and NVS ceiling on the loop task with no lock.
+- **Root cause:** Two writers of one ordering decision. The live path
+  asked "is the link up?", when the question is "is anything older still
+  owed?", and it was answered on a different task from the backfill's.
+  Adopting the canary's planner alone would not have closed it: closed
+  bundles never reach the canary-wap's card (F77), so a planner that sends
+  off-card rows at once would let them overtake the backlog the same way.
+- **Fix:** The commit hook only copies the row into a FreeRTOS queue
+  (never blocking, never publishing). One pump on the loop task logs,
+  publishes and moves the watermark, on `csi_event_backfill.h`'s Planner:
+  a row goes live only when nothing older waits on the card or in RAM;
+  rows the card does not keep wait in a small RAM hold, merge into the
+  walk by id, and are not handed to the planner while older rows wait, so
+  the NVS ceiling never passes a row still on the card.
+- **Regression check:**
+  `firmware/projects/canary-wap/tests_host/test_wap_event_egress.cpp` runs
+  the real egress, SD log and CSI library against a model of Home
+  Assistant's replay gate; its reconnect-window and commit-inside-the-walk
+  scenarios fail on the code before the fix, and each of ten mutations of
+  the egress fails a check. `firmware/scripts/check_wap_event_egress.py`
+  holds the hook, the boot order and the esp_mqtt handler (what the host
+  build cannot compile) with 29 mutations. When two paths deliver into one
+  ordered stream, give the order one owner on one task, and ask what is
+  still owed, not whether the link is up.
 - **Date learned:** 2026-10
 
 ## How to Add an Entry

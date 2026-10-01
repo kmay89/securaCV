@@ -265,6 +265,30 @@ those bodies `"replay":true`. On the canary base
   are logged and owed to nobody, and a broker configured later (or a changed
   one) does not receive the old backlog.
 
+The canary-wap (`csi_event_egress.cpp` over its `csi_event_log.cpp` adapter,
+sweep F78) runs the same planner with the same order: a row goes out live
+only when nothing older waits, the backfill walks the card in id order, two
+rows per pass, and never below the delivered watermark, which survives a
+reboot through the same NVS ceiling. It differs from the canary base in
+four ways:
+
+- the commit hook only queues the row (16 deep; a full queue drops and
+  counts). Logging, publishing and the watermark all happen on the loop
+  task, so a row ble.scout commits on the NimBLE host task neither
+  publishes there nor races the backfill;
+- it has no MQTT offline queue. Rows its card does not keep wait in RAM
+  instead (8 rows, the oldest dropped first) while anything older waits or
+  the broker is unreachable, and go out in id order with the card's rows.
+  These are closed bundles (presence, `system.integrity` tampers), which
+  never reach its card (sweep F77), every row when there is no card, and a
+  row whose card append failed. RAM does not survive a reboot;
+- it writes no owner file and leaves a card that has one alone;
+- the tamper-topic bridge publishes when the loop task takes the row from
+  the queue, before the row itself, whatever the backfill is doing.
+
+A dismissal line on its card (`"dismissed":1`) is the owner's local record
+and is never replayed.
+
 ### `POST /api/events/dismiss`
 
 Tells the ring "the user marked this row as 'that was nothing.'" Local-only.
