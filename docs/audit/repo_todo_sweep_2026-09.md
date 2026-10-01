@@ -1196,7 +1196,7 @@ so — see D2 below.)
   PIO residual splits remain: both initiators already handed out, a mutual
   removal, or a lost ACK. A random-loss probe split 3 of 60 runs at 5%
   frame loss (spec §5.6 states it).
-  *Done (#PENDING), parts 1-3:*
+  *Done (#1756), parts 1-3:*
   (1) `GET /api/logs` now carries `uptime_ms` (handle_logs) and the log list
   renders each entry's `timestamp_ms` as an age against it (`formatLogAge`,
   shared with `formatAlertAge`) instead of `new Date(...)` — the made-up
