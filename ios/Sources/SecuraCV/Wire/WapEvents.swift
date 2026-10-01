@@ -13,8 +13,11 @@
 // first contract holder, so it brings the belt.
 //
 // Wire truths a reader must not "fix":
-//   * `id` is a uint32 and the bundler mints ids from 0x8000_0000 up — an
-//     Int32 anywhere in this path overflows on the first bundled event.
+//   * `id` is a uint32 — an Int32 anywhere in this path overflows. A
+//     committed row's id is its event id, 0xC000_0000 and up on firmware
+//     with one event-id space (backlog F46); an open row's is the bundle's
+//     handle, in 0x8000_0000 ..< 0xC000_0000, never an event id (older
+//     firmware minted bundle ids from 0x8000_0000 too).
 //   * `time_bucket` (0…143 ten-minute buckets) is the ONLY time information
 //     on this wire — no epoch, no ISO string. That is Invariant III working,
 //     not an omission. And the buckets are BOOT-RELATIVE on every current

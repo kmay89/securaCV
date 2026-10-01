@@ -2307,6 +2307,50 @@
   out" invariant as the id floor.
 - **Date learned:** 2026-09
 
+### Two allocators feeding one monotonic counter is two counters, and `strtol` is 32 bits on the device
+- **What happened:** Porting the backfill (F37) found that rows through the
+  CSI bundler (presence, the `system.integrity` tampers) took ids from the
+  bundler's own counter: 0x80000000 upward, restarted every boot, no floor,
+  assigned when a bundle OPENED and committed when it closed. Home
+  Assistant's replay gate keeps one mark per device, so it refused the
+  chokepoint rows after any bundle, and every bundle after a reboot; and the
+  first bundled row handed over moved the backfill's persisted watermark
+  into the bundler's space for good (sweep F46). Two further faults sat
+  under it. The event-log parser read ids and millisecond marks with
+  `strtol`, which saturates at 2147483647 on the ESP32's 32-bit `long`, so
+  every bundler id read back wrong on the device while the 64-bit host tests
+  passed. And ble.scout emits from the NimBLE host task in both trees, so a
+  bundle could commit there while the loop task committed another: with ids
+  taken at commit, nothing ordered their arrival at the hooks.
+- **Root cause:** "Monotonic" was a property of each allocator, while the
+  receiver checks it across everything the device sends. An id taken at a
+  different moment from the one it is published at (bundle open versus
+  close) is out of order by construction. And a host test with a 64-bit
+  `long` cannot see a 32-bit parse.
+- **Fix:** One allocator (`csi_event.cpp` `commit_row()`): every row takes
+  its id at commit, and the id and the commit hooks run under one recursive
+  commit lock, so ids reach the witness, SD and MQTT hooks in order from
+  either task. An open bundle has a handle in [0x80000000, 0xC0000000), never
+  an event id. The space starts at 0xC0000000 on every device, above every
+  id an older firmware handed out, so an upgraded device's next id is above
+  Home Assistant's stored mark and nothing has to be reset; at boot the
+  floor is held above the delivery ceiling (`boot_floor()`), and a card line
+  at or above the allocator's next id is never sent or credited, so a forged
+  id cannot drag the floor to the wrap. The parser reads uint32 fields
+  digit by digit and refuses a sign or an overflow.
+- **Regression check:** `firmware/tests_host/test_csi_event_id_space.cpp`
+  links the real chokepoint and bundler and fails on the old library in all
+  six scenarios; `test_csi_event_log_line.cpp` compiles the parser against a
+  `strtol` with the device's range; `test_csi_event_backfill.cpp` covers the
+  upgrade and a forged card id; `firmware/scripts/check_csi_commit_order.py`
+  holds the commit lock's shape (what a single-threaded host build cannot
+  run); `custom_components/securacv/tests/test_replay_one_id_space.py`
+  drives Home Assistant's real gate. When a receiver enforces an order, give
+  the sender one place that decides it, at the moment the value is sent;
+  and run a parser's numeric limits under the target's integer widths, not
+  the host's.
+- **Date learned:** 2026-10
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:
