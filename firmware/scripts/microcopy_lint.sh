@@ -278,6 +278,8 @@ GLASS_SOURCES=(
   "$GLASS_ROOT/src/ui/glance_ui.cpp"
   "$GLASS_ROOT/src/ui/dash_ui.cpp"
   "$GLASS_ROOT/src/ui/onboard_ui.cpp"
+  # The onboarding scenes' titles and bodies live here (scene_copy, F65).
+  "$GLASS_ROOT/include/canary/ui/onboard_layout.h"
   "$GLASS_ROOT/src/ui/theme.cpp"
   "$GLASS_ROOT/src/net/provision.cpp"
   "$GLASS_ROOT/src/care/bedside.cpp"
