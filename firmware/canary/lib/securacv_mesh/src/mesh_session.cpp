@@ -308,10 +308,11 @@ static void dispatch_action(const mesh_pairing::Action& a) {
        * time, and that is its only action — there is no separate
        * NOTIFY_CODE_READY on this side, so the callback used to fire
        * for the initiator alone (F49 part 2). The frame went to the
-       * wire above; surface the code the same beat. */
-      if (s_code_ready_cb && a.confirmation_code != 0) {
-        s_code_ready_cb(a.confirmation_code);
-      }
+       * wire above; surface the code the same beat. The action type
+       * is the signal that the code is ready — not a nonzero value:
+       * compute_confirmation_code() is a hash mod 1e6, so 000000 is a
+       * valid code and must still reach the screen. */
+      if (s_code_ready_cb) s_code_ready_cb(a.confirmation_code);
       break;
     case mesh_pairing::ActionType::NOTIFY_PAIRED: {
       /* Cache the opera name the joiner learned from the OFFER (the
@@ -1458,12 +1459,20 @@ bool bind_peer_mac(const uint8_t fp [mesh_crypto::FINGERPRINT_LEN],
   /* One address speaks for one fingerprint. */
   const TrustedPeer* holder = find_peer_by_radio_mac(mac);
   if (holder != nullptr && holder != p) return false;
-  if (p->radio_mac_set &&
-      memcmp(p->radio_mac, mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) != 0) {
-    mesh_transport::remove_peer(p->radio_mac);   /* its old address */
-    p->radio_mac_set = false;
+  /* Register the NEW address before dropping the old one. If the transport
+   * add fails transiently (table momentarily full, driver refusal), the
+   * existing binding is left untouched and whole, so the peer stays
+   * eligible for another learning attempt on its next frame (F49 part 3
+   * review) rather than being stranded until a reboot restores it. */
+  const bool changed =
+      !p->radio_mac_set ||
+      memcmp(p->radio_mac, mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) != 0;
+  if (!mesh_transport::has_peer(mac) && !mesh_transport::add_peer(mac)) {
+    return false;
   }
-  if (!mesh_transport::has_peer(mac) && !mesh_transport::add_peer(mac)) return false;
+  if (changed && p->radio_mac_set) {
+    mesh_transport::remove_peer(p->radio_mac);   /* its old address */
+  }
   memcpy(p->radio_mac, mac, mesh_transport::MESH_TRANSPORT_MAC_LEN);
   p->radio_mac_set = true;
   /* The pairing partner's address now belongs to the member. */

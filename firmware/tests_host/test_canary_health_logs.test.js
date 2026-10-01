@@ -100,12 +100,35 @@ test("a log row shows its age against the response's uptime, never a date", asyn
   assert.strictEqual(h.dateCalls.length, 0);
 });
 
-test("the age is a u32 difference, so it survives the millis() wrap", () => {
+test("the age is a u32 difference, so it survives a single millis() wrap", () => {
   const h = harness({ ok: true, logs: [] });
   // Logged 4 s before the wrap, read 4 s after it: 8 s, not -4 billion.
   assert.strictEqual(h.t.formatLogAge(0xFFFFFFFF - 3999, 4000), "8 s ago");
   assert.strictEqual(h.t.formatLogAge(0, 0), "0 s ago");
   assert.strictEqual(h.t.formatLogAge(0, 36 * 3600000), "1 d 12 h ago");
+});
+
+test("past one millis() period the age is omitted, not guessed", () => {
+  const h = harness({ ok: true, logs: [] });
+  const PERIOD = 0x100000000;  // 2^32 ms ~= 49.7 days
+  // Uptime just over one period: a u32 entry timestamp can't be placed in
+  // its wrap epoch, so no age is shown rather than a misleading small one.
+  assert.strictEqual(h.t.formatLogAge(1000, PERIOD + 60000), "");
+  assert.strictEqual(h.t.formatLogAge(0xFFFFFFFF, PERIOD + 1), "");
+  // Right up to the boundary it is still exact.
+  assert.strictEqual(h.t.formatLogAge(0, 0xFFFFFFFF), "49 d 17 h ago");
+});
+
+test("a log row past one period shows category and seq but no age", async () => {
+  const h = harness({
+    ok: true, uptime_ms: 0x100000000 + 5 * 60000,  // ~49.7 days + 5 min up
+    logs: [entry(9, 1000)],
+  });
+  await h.t.loadLogs();
+  const html = h.el("logList").innerHTML;
+  assert.match(html, /SYSTEM · #9/);
+  assert.doesNotMatch(html, /ago/);
+  assert.strictEqual(h.dateCalls.length, 0);
 });
 
 test("no uptime_ms (or a non-u32 one) shows no time at all, not a guess", async () => {

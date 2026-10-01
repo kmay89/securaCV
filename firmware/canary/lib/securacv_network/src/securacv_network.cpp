@@ -29,6 +29,7 @@
 // the request actually arrived on).
 #include <lwip/sockets.h>
 #include <esp_netif.h>
+#include <esp_timer.h>  // esp_timer_get_time: a 64-bit microsecond uptime
 
 // F15: self-signed HTTPS. One code path for both cores — dev/release/board
 // envs are Arduino 2.0.17 / IDF 4.4.7, [env:full] is core 3.3.8 / IDF 5.5.4 —
@@ -2751,8 +2752,13 @@ static esp_err_t handle_logs(httpd_req_t* req) {
   doc["total"] = count;
   /* Each entry's timestamp_ms is this device's uptime (millis()) when the
    * line was logged, not a date — the page shows it as an age against this
-   * same response's uptime, the way /api/mesh/alerts does (F49 part 1). */
-  doc["uptime_ms"] = millis();
+   * same response's uptime, the way /api/mesh/alerts does (F49 part 1).
+   * This base is the 64-bit esp_timer uptime, not millis(): past one
+   * millis() period (~49.7 days) a u32 entry timestamp cannot be placed in
+   * its wrap epoch, and the page omits the age rather than guess one (F49
+   * review). millis() itself is this value truncated to u32, so while the
+   * device has been up less than a period they agree exactly. */
+  doc["uptime_ms"] = (uint64_t)(esp_timer_get_time() / 1000);
 
   JsonArray logs = doc["logs"].to<JsonArray>();
 

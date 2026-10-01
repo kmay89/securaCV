@@ -983,15 +983,37 @@ radio MAC is learned when a pairing completes (the address the partner
 paired from), persisted in NVS `peer_macs` (§12.3) and bound again at boot;
 while a pairing runs, the partner's MAC is added for the unicast replies
 and pairing frames from a MAC not in the table reach the pairing state
-machine (nothing else from an unknown MAC does); a peer dropped by a
+machine; a peer dropped by a
 verified `LEAVE_OPERA`, a removal or a rotation leaves the table with it,
 and a pairing that ends without a new member removes the partner's MAC
-again. There is no address learning from opera frames: a peer whose radio
-MAC changes (a replaced board is a new key anyway) is heard again once it
-re-pairs. A finished pairing (paired, canceled or timed out) no longer
+again. A finished pairing (paired, canceled or timed out) no longer
 blocks the next one — until F33 the first pairing a device ran was its last
 until a reboot. Host-tested (`test_mesh_session`, `test_mesh_transport`,
 `test_mesh_state`); not yet run on two radios (U1 Track C2).
+
+**Address relearning from opera frames (v0.3, F49 part 3).** A trusted
+peer's radio MAC can change without a new identity: the same board
+reflashed, a module swapped onto the same device, a router handing out a
+new locally-administered address. Earlier this stranded the peer — its
+frames arrived from an address the transport table did not hold, dropped as
+`recv_dropped_no_peer` before any check, so it was heard again only after a
+re-pair. The transport's unknown-sender path now also hands an
+opera-authenticated envelope (first byte = the opera version) to
+`mesh_session`, which runs it through the FULL receive verification —
+signature under the sender fingerprint's key, `opera_id` match, strict
+monotonic counter — exactly as the normal path does. ONLY on a frame that
+passes every check, and ONLY for a peer that already holds a (now stale)
+binding whose address differs, does the session re-bind the transport table
+to the new MAC and persist it (NVS `peer_macs`, so the next boot binds it
+directly). A frame from a peer with no binding yet still drops (boot binds
+those from NVS, and a never-bound peer is the pairing path's job, not this
+one); a replay, a forgery or a cross-opera frame moves nothing, because the
+re-bind happens after the same gates that guard the normal path. The two
+trees MUST agree on this: a verified opera frame is sufficient proof of a
+peer's current address, so neither side forces a re-pair on a MAC change
+alone. Host-tested
+(`test_peer_new_radio_mac_is_learned_from_a_verified_frame`,
+`test_mesh_rx_gates_wap`); not yet run on two radios (U1 Track C2).
 
 **Add-on → device bridge:** the Home Assistant "Add another Canary" wizard
 (`privacy_witness_kernel/serve_wizard.py` + `wizard/index.html`) forwards
