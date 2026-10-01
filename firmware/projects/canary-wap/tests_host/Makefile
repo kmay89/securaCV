@@ -631,6 +631,33 @@ clean-rx-gates:
 run: run-rx-gates
 clean: clean-rx-gates
 
+# Which address canary-wap sends a member's frames to, and what may change
+# it (spec §8.3), run against the REAL mesh_network.cpp: the file is
+# #included and compiled on the host against stubs/mesh_net (an ESP-NOW peer
+# list and send log, an in-memory NVS, OpenSSL's Ed25519 / SHA-256 /
+# ChaCha20-Poly1305) and stubs/pair_crypto (OpenSSL's X25519), with the
+# real airtime governor, channel policy, deny-list, wire codecs and
+# mesh_crypto linked. mesh_net_sim.h runs several devices on that one image
+# and moves frames between them as bytes.
+MESH_ADDR_BIN = test_mesh_address_wap
+MESH_ADDR_SRC = test_mesh_address_wap.cpp
+MESH_ADDR_LINK = $(SRC_DIR)/airtime_governor.cpp $(SRC_DIR)/mesh_channel_policy.cpp \
+                 $(SRC_DIR)/mesh_revocation.cpp $(SRC_DIR)/mesh_beacon.cpp \
+                 $(SRC_DIR)/mesh_channel_hop.cpp $(SRC_DIR)/mesh_hub_election.cpp \
+                 $(SRC_DIR)/mesh_crypto.cpp
+
+$(MESH_ADDR_BIN): $(MESH_ADDR_SRC) mesh_net_sim.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(MESH_ADDR_LINK)
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(MESH_ADDR_SRC) $(MESH_ADDR_LINK) -lcrypto
+
+.PHONY: run-mesh-address clean-mesh-address
+run-mesh-address: $(MESH_ADDR_BIN)
+	$(call run_marked,$(MESH_ADDR_BIN))
+clean-mesh-address:
+	rm -f $(MESH_ADDR_BIN)
+
+run: run-mesh-address
+clean: clean-mesh-address
+
 # The CSI active probe under the airtime governor (the follow-up to sweep F4,
 # #1696), end to end — the REAL csi_probe scheduler (the sketch's staged copy,
 # CSI_TEST_HOST_BUILD), the REAL airtime_governor and the gate body the WAP
