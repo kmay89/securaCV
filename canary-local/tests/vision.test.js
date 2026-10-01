@@ -433,3 +433,80 @@ test("VisionSim wires the cores together end to end", async () => {
     sim2.tick(data.detect.invoke_period_ms, data.detect.invoke_period_ms);
   assert.deepStrictEqual(events2, [], "the cat is not person-class; nothing may publish");
 });
+
+// buildMqtt itself, on a few lines of fake DOM: the rows it renders are
+// vision.json's, the sandbox moves them, and a reconnect republishes the
+// retained ones as they stand (the firmware's connect does), not as they
+// first were.
+function fakeDom() {
+  class El {
+    constructor(tag) {
+      this.tagName = String(tag).toUpperCase(); this.children = []; this.parent = null;
+      this.className = ""; this._text = ""; this.scrollTop = 0; this.offsetWidth = 0;
+      this.classList = {
+        add: (c) => { if (!this.className.split(" ").includes(c)) this.className = (this.className + " " + c).trim(); },
+        remove: (c) => { this.className = this.className.split(" ").filter((x) => x && x !== c).join(" "); },
+      };
+    }
+    append(...kids) {
+      for (let k of kids) {
+        if (typeof k === "string") { const t = new El("#text"); t._text = k; k = t; }
+        if (k.parent) k.remove();
+        k.parent = this; this.children.push(k);
+      }
+    }
+    remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); this.parent = null; }
+    get textContent() { return this._text + this.children.map((c) => c.textContent).join(""); }
+    set textContent(v) { this._text = String(v); this.children = []; }
+    querySelector(sel) {
+      const cls = sel.replace(/^\./, "");
+      for (const c of this.children) {
+        if (c.className.split(" ").includes(cls)) return c;
+        const hit = c.querySelector(sel);
+        if (hit) return hit;
+      }
+      return null;
+    }
+  }
+  return { createElement: (t) => new El(t), createTextNode: (s) => { const t = new El("#text"); t._text = s; return t; },
+           body: { contains: () => true } };
+}
+function fakeBus() {
+  const fns = {};
+  return { on: (t, f) => (fns[t] ||= []).push(f), emit: (t, p) => (fns[t] || []).forEach((f) => f(p || {})), has: () => false };
+}
+
+test("the MQTT pane renders vision.json's rows, moves them with the sandbox, and reconnects as they stand", async () => {
+  const saved = globalThis.document;
+  globalThis.document = fakeDom();
+  try {
+    const { buildMqtt } = await import("../assets/vision-ui.js");
+    const bus = fakeBus();
+    const outer = buildMqtt(data, bus);
+    const scroll = outer.querySelector("vis-mqtt-scroll");
+    const rows = () => Object.fromEntries(scroll.children.filter((r) => r.className === "vis-mqtt-row" || r.className.includes("vis-mqtt-row"))
+      .map((r) => [r.querySelector("vis-mqtt-topic").children[0].textContent, r.querySelector("vis-mqtt-payload").textContent]));
+    const base = "securacv/" + data.device.id_example + "/";
+    bus.emit("online");
+    let now = rows();
+    for (const r of data.mqtt.pane.online) assert.strictEqual(now[base + r.suffix], r.payload, `${r.suffix}: not vision.json's row`);
+    const chain0 = JSON.parse(now[base + "chain"]).length;
+
+    const snap = { sample: { bbox: { x: 1, y: 2, w: 3, h: 4, score: 90 }, voxel: { r: 1, c: 2 } },
+                   fsm: { presence: true, dwelling: false }, reason: null };
+    bus.emit("sim-event", { name: "presence_started", snap });
+    bus.emit("sim-event", { name: "dwell_started", snap: { ...snap, fsm: { presence: true, dwelling: true } } });
+    now = rows();
+    assert.strictEqual(JSON.parse(now[base + "chain"]).length, chain0 + 2, "each event advances the signed head");
+    assert.strictEqual(JSON.parse(now[base + "events"]).seq, chain0 + 2);
+    assert.strictEqual(JSON.parse(now[base + "state"]).dwelling, true);
+
+    bus.emit("online");
+    now = rows();
+    assert.strictEqual(JSON.parse(now[base + "chain"]).length, chain0 + 2, "a reconnect republishes the chain as it stands");
+    assert.strictEqual(JSON.parse(now[base + "state"]).last_event, "dwell_started");
+    assert.strictEqual(now[base + "health"], data.mqtt.pane.online.find((r) => r.suffix === "health").payload);
+  } finally {
+    globalThis.document = saved;
+  }
+});
