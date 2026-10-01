@@ -69,9 +69,9 @@ shorter form in fewer of the same words, then the default Character's face.
 Two lines have a shorter form: "Nice - check your phone" becomes "Check your
 phone", and the Fail reason "No address from the router" becomes "No
 address" (`join_failure_label_narrow()`; the fix under it still names the
-router). "No address" shows on every small glass but the round watch at the
-default type; "Check your phone" on the same glass but the AMOLED at the
-default type too. Three different reasons put them there:
+router). "No address" shows on every small glass except the round watch at
+the default type; "Check your phone" shows on the same glass except, also,
+the AMOLED at the default type. Three different reasons put them there:
 
 - on the 172/180x320 portrait glass no face holds the whole line in the
   panel's 156/164 px;
