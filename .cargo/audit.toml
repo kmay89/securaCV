@@ -13,10 +13,12 @@ ignore = [
     #
     # No fix exists on the 0.9 line; the constant-time rewrite lands in
     # `rsa` 0.10 (still a release candidate when this was written). `rsa`
-    # is pulled by exactly one crate — `c2pa`, whose 0.90.x line (see
-    # Cargo.lock) requires `rsa ^0.9.10` as a non-optional dependency — so there
-    # is no bump, no feature flag, and no maintained alternative that drops
-    # it. Waiting for `c2pa` to adopt `rsa` 0.10 is the only real fix.
+    # is pulled by exactly one crate — `c2pa`: its 0.90.x line required
+    # `rsa ^0.9.10` as a non-optional dependency, and from 0.91.0 its crypto
+    # crate `c2pa_raw_crypto` (see Cargo.lock) requires it for the
+    # `rust_native_crypto` backend `c2pa-export` selects — so there is no
+    # bump, no feature flag, and no maintained alternative that drops it.
+    # Waiting for `c2pa` to adopt `rsa` 0.10 is the only real fix.
     #
     # securaCV is not exposed: the attack recovers an RSA *private* key by
     # timing repeated private-key operations, and securaCV holds no RSA

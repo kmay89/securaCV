@@ -293,26 +293,27 @@ pub fn sign_export_sidecar(
         }]
     });
 
-    let mut builder = Builder::default()
+    // The builder signs with the signer its context carries.
+    let mut builder = Builder::from_context(Context::new().with_signer(signer))
         .with_definition(definition.to_string())
         .map_err(|e| anyhow!("C2PA manifest definition rejected: {e}"))?;
     builder.set_no_embed(true);
     builder
         .add_assertion(WITNESS_ASSERTION_LABEL, binding)
         .map_err(|e| anyhow!("witness assertion rejected: {e}"))?;
-    // Seeds the hard-binding DataHash assertion slot; the placeholder bytes
-    // themselves are irrelevant for a sidecar and are discarded.
-    builder
-        .data_hashed_placeholder(signer.reserve_size(), "application/c2pa")
-        .map_err(|e| anyhow!("C2PA placeholder failed: {e}"))?;
 
     // Sidecar binding: hash the complete bundle file, no exclusions — the
-    // manifest lives outside the asset, so every byte is covered.
+    // manifest lives outside the asset, so every byte is covered. A sidecar
+    // reserves no space in the asset, so it takes the direct (no-placeholder)
+    // signing path, which needs this real hard binding in place first.
     let mut data_hash = DataHash::new("org.securacv.export_bundle", "sha256");
     data_hash.set_hash(Sha256::digest(bundle_bytes).to_vec());
+    builder
+        .add_assertion(DataHash::LABEL, &data_hash)
+        .map_err(|e| anyhow!("C2PA data-hash binding rejected: {e}"))?;
 
     builder
-        .sign_data_hashed_embeddable(signer.as_ref(), &data_hash, "application/c2pa")
+        .sign_embeddable("application/c2pa")
         .map_err(|e| anyhow!("C2PA signing failed: {e}"))
 }
 

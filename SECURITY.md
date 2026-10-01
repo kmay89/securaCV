@@ -157,12 +157,16 @@ so this was a v5→v5 port (namespace, `MqttOptions::new`/`Broker`,
   constant-time, so an attacker who can submit ciphertexts and measure how
   long the victim takes to process them can recover the RSA **private key**.
   CVSS 5.9 (medium).
-- **Where it comes from:** exactly one crate — `c2pa` (0.90.3 when this
-  analysis was written; the whole 0.90.x line behaves the same), the Content
+- **Where it comes from:** exactly one crate — `c2pa`, the Content
   Credentials SDK behind the optional, non-default `c2pa-export` feature.
-  `c2pa` requires `rsa ^0.9.10` as a **non-optional** dependency (it must be
-  able to *verify* manifests signed with RSA-PSS by other producers), so no
-  feature flag of ours drops it from `Cargo.lock`.
+  Through 0.90.x (0.90.3 when this analysis was written) `c2pa` required
+  `rsa ^0.9.10` itself, as a **non-optional** dependency. From 0.91.0 its
+  crypto lives in a crate of its own, `c2pa_raw_crypto` (0.1.2 in
+  `Cargo.lock`), whose `rust_native_crypto` feature requires `rsa ^0.9.10`;
+  that feature is the pure-Rust backend `c2pa-export` selects, and the only
+  other backend `c2pa` offers is OpenSSL's. Either way `rsa` is there so
+  `c2pa` can *verify* manifests signed with RSA-PSS by other producers, and
+  no feature flag of ours drops it from `Cargo.lock`.
 - **Why securaCV is not exposed:** the attack recovers an RSA private key by
   timing repeated private-key operations, and **securaCV holds no RSA private
   key at all.** The C2PA credential chain is Ed25519 end to end — the CA and
@@ -175,10 +179,11 @@ so this was a v5→v5 port (namespace, `MqttOptions::new`/`Broker`,
   is not in the default feature set.
 - **Fix not yet possible:** there is no fixed release on the `0.9` line. The
   constant-time rewrite lands in `rsa 0.10` (still a release candidate when
-  this analysis was written), and `c2pa` still pins `rsa ^0.9.10` on its
-  current `0.90.x` line (`0.90.16` in `Cargo.lock` today). Nothing we can
-  bump changes the resolved version. The real fix is upstream: `c2pa`
-  adopting `rsa 0.10` once it ships stable.
+  this analysis was written, and at `0.10.0-rc.18` when `c2pa` 0.91.0 was
+  taken), and `c2pa_raw_crypto` 0.1.2, which `c2pa` 0.91.0 requires, still
+  asks for `rsa ^0.9.10`. Nothing we can bump changes the resolved version.
+  The real fix is upstream: `c2pa`'s crypto crate adopting `rsa 0.10` once
+  it ships stable.
 - **What we did instead:** the advisory is ignored explicitly and in the open,
   in [`.cargo/audit.toml`](.cargo/audit.toml), with this analysis as its
   justification. It is an entry with a name on it, not a silenced gate —
