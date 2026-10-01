@@ -1058,6 +1058,34 @@ void test_inject_fails_closed() {
   EXPECT(!csi_event_inject(&r), "without the NVS floor no row of this firmware is restored");
   r = make_persisted(5, "test_state");
   EXPECT(csi_event_inject(&r), "an older firmware's id, below the one id space, is restored");
+
+  /* The handle range [kHandleBase, kIdSpaceBase) is an open bundle's `id`,
+   * never a ring row's, so a card line there is refused whatever the floor:
+   * restored, it would share its id with the next open row on
+   * /api/events/today, and a dismiss by that id would reach it instead. */
+  const uint32_t kH = csi_event_id_floor::kHandleBase;
+  const uint32_t floors[] = {0u, kB + 100};
+  for (uint32_t floor : floors) {
+    inject_setup(floor);
+    r = make_persisted(kH, "test_state");
+    EXPECT(!csi_event_inject(&r), "the first handle is refused");
+    r = make_persisted(kB - 1, "test_state");
+    EXPECT(!csi_event_inject(&r), "the last handle is refused");
+    r = make_persisted(kH - 1, "test_state");
+    EXPECT(csi_event_inject(&r), "an older firmware's id just below the handle range is restored");
+  }
+  inject_setup(kB + 100);
+  r = make_persisted(kH, "test_state");
+  (void)csi_event_inject(&r);
+  csi_event_values_t open_v;
+  csi_event_values_init(&open_v);
+  open_v.category       = CSI_CATEGORY_EVENT;
+  open_v.present_fields = CSI_FIELD_STATE_NAME;
+  strncpy(open_v.state_name, "active", sizeof(open_v.state_name) - 1);
+  const uint32_t handle = csi_event_emit("test.module", "test_state", &open_v);
+  EXPECT(handle == kH, "the boot's first open bundle takes the first handle");
+  csi_event_record_t ring_row;
+  EXPECT(!csi_event_find(handle, &ring_row), "no ring row shares an open bundle's id");
 }
 
 void test_inject_cleans_like_emit() {
@@ -1115,6 +1143,10 @@ void test_inject_roundtrips_the_log_line() {
 }  /* namespace */
 
 extern "C" int csi_event_invariants_run() {
+  /* The allocator's static start, before any test resets it: what a boot
+   * runs with when the host cannot read NVS at all (no floor restored). */
+  EXPECT(csi_event_get_next_event_id() == csi_event_id_floor::kIdSpaceBase,
+         "the allocator starts at kIdSpaceBase before any floor is restored");
   test_disallowed_fields_are_zeroed();
   test_privacy_p1_blocked_under_p0_ceiling();
   test_privacy_p2_never_persists_to_witness();

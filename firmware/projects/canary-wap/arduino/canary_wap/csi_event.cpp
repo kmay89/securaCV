@@ -81,9 +81,12 @@
       RingLock()  { ring_mutex_ensure(); if (g_ring_mutex) xSemaphoreTake(g_ring_mutex, portMAX_DELAY); }
       ~RingLock() { if (g_ring_mutex) xSemaphoreGive(g_ring_mutex); }
     };
-    /* The commit lock (see the file header). Recursive, so a task that
-     * already holds it (set_event_id_floor's caller, a commit's own ring
-     * write) never deadlocks on itself. Created on first use through a
+    /* The commit lock (see the file header). No path takes it twice
+     * today: commit_row() and set_event_id_floor() each take it once, and
+     * persist_to_ring() takes only the ring lock. It is recursive so that a
+     * commit hook that broke the header's rule and emitted would not
+     * deadlock the committing task (that nested commit would reach the
+     * hooks out of id order, which is why the rule exists). Created on first use through a
      * function-local static: ESP-IDF makes that initialization thread-safe
      * (__cxa_guard_acquire), so two tasks committing first at once still
      * share one mutex. Both Arduino-ESP32 cores build on ESP-IDF with
@@ -166,7 +169,11 @@ bool ring_ensure() {
 /* The one allocator (backlog F46). It starts at kIdSpaceBase on every
  * device, above every id an earlier firmware handed out, and the host's
  * restored floor only ever moves it up. Written only under the commit lock
- * (allocate_event_id, set_event_id_floor); read under the ring lock. */
+ * (allocate_event_id, set_event_id_floor). The readers
+ * (csi_event_get_next_event_id, csi_event_inject's bound) take the ring
+ * lock, not the commit lock, so what they read may be a moment stale; it is
+ * one aligned 32-bit word (a single load on the ESP32) and it only rises,
+ * so a stale read is a lower bound, never a torn value. */
 uint32_t            g_next_event_id = csi_event_id_floor::kIdSpaceBase;
 csi_privacy_class_t g_privacy_ceiling = CSI_PRIVACY_P0;
 
@@ -710,6 +717,12 @@ bool csi_event_inject(const csi_event_record_t* rec) {
   if (decl->privacy > g_privacy_ceiling) return false;
   /* An id this boot can still allocate is not an earlier boot's. */
   if (rec->event_id >= g_next_event_id) return false;
+  /* Nor is a handle: an open bundle's `id` lives in [kHandleBase,
+   * kIdSpaceBase) and no firmware's ring row ever did, so a card line
+   * there would share its id with an open row on /api/events/today, and a
+   * dismiss by that id would reach the restored row instead (F46). */
+  if (rec->event_id >= csi_event_id_floor::kHandleBase
+      && rec->event_id < csi_event_id_floor::kIdSpaceBase) return false;
   /* Recency order: nothing older may land ahead of a live row. */
   if (g_ring_has_live) return false;
   if (!ring_ensure()) return false;

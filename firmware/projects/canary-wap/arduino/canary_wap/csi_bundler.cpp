@@ -217,8 +217,9 @@ csi_bundler_outcome_t csi_bundler_admit(const char*         module_id,
     SlotLock _lock;
 
     /* Garbage-collect overdue bundles before any matching attempt. This is
-     * the only path that closes a slot due to time; all mutation happens on
-     * the main loop, the lock exists for the httpd snapshot reader. */
+     * the only path that closes a slot due to time. Admits run on the main
+     * loop and on the NimBLE host task (ble.scout), and the httpd snapshot
+     * reader reads the slots: the lock serializes all three. */
     expire_overdue(now_ms, pending, &npending);
 
     /* The state_name acts as the bundling key. If the module didn't supply

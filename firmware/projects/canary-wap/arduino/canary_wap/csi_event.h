@@ -286,6 +286,10 @@ bool csi_event_dismiss(uint32_t event_id);
  *     restores the id floor from NVS before loading, so every id an earlier
  *     boot handed out is below it; an id at or above it is one this boot
  *     can still hand out (a lost floor, another device's card);
+ *   - its event_id is in [csi_event_id_floor::kHandleBase, kIdSpaceBase):
+ *     an open bundle's handle range, which no firmware's ring row ever
+ *     used (backlog F46), so an open row and a restored row never share
+ *     an id;
  *   - an event committed live this boot is already in the ring. Injecting
  *     after that would put older rows ahead of newer ones;
  *   - a row with the same event_id is already in the ring;

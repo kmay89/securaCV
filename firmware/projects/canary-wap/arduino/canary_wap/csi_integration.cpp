@@ -2881,9 +2881,10 @@ extern "C" void csi_event_on_committed(uint32_t                  event_id,
  * Fires on every event-id allocation. We throttle-persist the floor to
  * NVS (csi_event_id_floor.h's STRIDE) so a subsequent boot can resume
  * from "persisted + safety_margin" via apply_event_id_floor_from_nvs.
- * Without this, a reboot resets g_next_event_id to 1 and csi_mqtt's
- * reconnect-backfill watermark loses the ability to disambiguate
- * previous-boot vs current-boot events. ──────────────────────────── */
+ * Without this, a reboot restarts the allocator at kIdSpaceBase (backlog
+ * F46) and hands out ids an earlier boot already used, so csi_mqtt's
+ * reconnect-backfill watermark could not tell previous-boot events from
+ * current-boot ones. ──────────────────────────── */
 
 extern "C" void csi_event_on_id_advance(uint32_t new_id) {
   /* Cheap gate so we don't hit NVS on every event: one write per boot

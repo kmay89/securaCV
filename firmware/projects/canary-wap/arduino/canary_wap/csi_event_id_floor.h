@@ -17,10 +17,10 @@
  * value above it. The host tracks the value NVS actually holds
  * (`stored`, 0 before the first write). An allocation at or past it
  * writes `id + kStride` first. The hook runs inside the allocator,
- * before the id reaches any consumer. At boot the host restores the
- * allocator's floor AND `stored` from the same persisted value, so the
- * boot's first allocation (the persisted value itself) writes again
- * before that id leaves the device. Cost: one NVS write per boot that
+ * before the id reaches any consumer. At boot the host restores `stored`
+ * from the persisted value and the allocator's floor from boot_floor(),
+ * which is at or above it, so the boot's first allocation (at or past
+ * `stored`) writes again before that id leaves the device. Cost: one NVS write per boot that
  * allocates anything, plus one per kStride ids. A reboot skips at most
  * kStride ids and reuses none.
  *
