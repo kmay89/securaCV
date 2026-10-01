@@ -1196,8 +1196,8 @@ so — see D2 below.)
   PIO residual splits remain: both initiators already handed out, a mutual
   removal, or a lost ACK. A random-loss probe split 3 of 60 runs at 5%
   frame loss (spec §5.6 states it).
-- [ ] **F50 [code] The display's other join hints still cut on narrow glass.**
-  Found by F45 (#1718). The Fail-stage hints from `join_failure_hint` measure
+- [x] **F50 [code] The display's other join hints still cut on narrow glass.**
+  (#1755) Found by F45 (#1718). The Fail-stage hints from `join_failure_hint` measure
   175-219 px at 12 px ("your router may be out of addresses" is 219), so
   they are cut on the round watch's 142 px band and on the 156/164 px
   portrait rows. The PhoneJoined hint ("no page? open 192.168.4.1") is
@@ -1205,6 +1205,23 @@ so — see D2 below.)
   `fit_line()` with narrow forms. Also, on the round watch's no-QR path,
   the title band appears to overlap the top of the bird, inferred from the
   numbers only. The emulator always renders the QR, so it was not seen.
+  *Done:* every failure now carries a narrow form beside the full one, in
+  the shared table (`join_failure_hint_narrow`, wifi_join_policy.h) so the
+  portal and the glass cannot drift, and the display's Fail stage passes
+  the pair; the portrait PhoneJoined hint carries the round glass's bare
+  address as its narrow form. `refresh_bottom`'s non-Join path now fits
+  any standing coach line through `fit_line` (full form, narrow form, then
+  the floor face) against the hint row's measured width instead of letting
+  LVGL cut it. The bird overlap was real (top at y 36 inside the 30..48
+  title band): on small glass the Join scene now seats the bird at the
+  hidden card's center (`join_bird_top`), which the stack keeps clear of
+  the title and the credentials by construction — visible only on the
+  no-QR path, where the bird shows at all. The layout host test fits every
+  standing-hint pair on every panel and both ladders, guards the bird's
+  seat on each, and pins the defect numbers (`test_f50_pins`);
+  `test_wifi_join_policy.cpp` pins that every failure's narrow form exists
+  and is shorter. Emulator dist rebuilt (provision.cpp, onboard_ui.cpp and
+  the policy header all compile into it). Not seen on real glass (U1).
 - [x] **F51 [code] The airtime governor's window lost sends above 25.6 a
   second, and a saturating probe starved the heartbeat.** Found reconciling
   F4 (#1696) on the host. `airtime_governor.cpp`'s 256-slot ring held sends,

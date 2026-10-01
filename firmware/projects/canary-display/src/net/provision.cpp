@@ -961,7 +961,10 @@ void provision_run(bool glass_ok) {
           // hint (anything longer would ellipsize the digits away).
           ui_hint("open 192.168.4.1");
 #elif defined(CD_FLAVOR_WATCH)
-          ui_hint("no page? open 192.168.4.1");
+          // Portrait glass: the whole line where the row holds it; the
+          // round glass's bare address on the 172/180 px rows, where the
+          // full line is 182 px under Heirloom (F50).
+          ui_hint("no page? open 192.168.4.1", "open 192.168.4.1");
 #else
           ui_hint("no page? open your browser: 192.168.4.1");
 #endif
@@ -1007,9 +1010,15 @@ void provision_run(bool glass_ok) {
           // longer version of the same tip). The classic silent killer is
           // a 5 GHz-only network the radio literally cannot see.
           // Same shared table the boot path and the glass use, so the hint a
-          // user reads in the portal is the hint the device logs.
+          // user reads in the portal is the hint the device logs. The
+          // narrow form rides along for the rows the full one cuts on
+          // (every one of these is 175-219 px at 12 px — wider than the
+          // round watch's 142 px band and the 156/164 px portrait rows,
+          // F50); the glass fits the full form first.
           {
-            ui_hint(canary::net::join_failure_hint(classify_status(ws)));
+            const canary::net::JoinFailure f = classify_status(ws);
+            ui_hint(canary::net::join_failure_hint(f),
+                    canary::net::join_failure_hint_narrow(f));
           }
         }
         break;

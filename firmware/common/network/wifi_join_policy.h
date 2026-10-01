@@ -126,6 +126,28 @@ inline const char* join_failure_hint(JoinFailure f) {
 }
 
 /**
+ * @brief [`join_failure_hint`]'s short form, for a row that cannot hold the
+ * full one.
+ *
+ * The display's narrowest rows (the round watch's 142 px band, the 156 and
+ * 164 px portrait rows) cut every full hint above even in the smallest face,
+ * so each failure carries a second form the glass falls back to
+ * (onboard_layout.h's fit_line tries the full one first). Same voice as the
+ * full form; the display's layout host test measures both in LVGL's own
+ * font data against every panel, so a reworded hint that no longer fits
+ * fails there, not on a wrist.
+ */
+inline const char* join_failure_hint_narrow(JoinFailure f) {
+  switch (f) {
+    case JoinFailure::NotFound:    return "2.4 GHz only - not 5";
+    case JoinFailure::BadPassword: return "capital letters count";
+    case JoinFailure::NoAddress:   return "router out of addresses";
+    case JoinFailure::Unknown:     break;
+  }
+  return "closer to the router";
+}
+
+/**
  * @brief Whether a human could plausibly fix this by re-entering credentials.
  *
  * A wrong password or a missing SSID is a **setup** problem: the right response

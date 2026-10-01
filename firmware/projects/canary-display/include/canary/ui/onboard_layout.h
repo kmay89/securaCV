@@ -163,6 +163,18 @@ inline Stack join_stack(const Glass& g, const Rows& r) {
   return s;
 }
 
+// Where the small-glass Join scene seats the bird while the QR is away (no
+// code rendered, so the card is hidden): the card's empty seat, centered.
+// The stack already keeps that area clear of the title band above it and
+// the credentials line under it on every glass, so the bird cannot cross
+// either by construction. The old seat (a fixed offset from the panel's
+// center) put the bird's top 12 px inside the round watch's title band —
+// F50, inferred from the numbers: the emulator always renders the QR, so
+// no screenshot showed it.
+inline int join_bird_top(const Stack& s, int bird) {
+  return s.card_top + (s.card - bird) / 2;
+}
+
 // ── What the text rows say (F45) ──────────────────────────────────────────
 //
 // Round glass has always split the credentials: the network name on the

@@ -43,6 +43,7 @@
 #include "canary/ui/onboard_layout.h"
 #include "montserrat_metrics.h"
 #include "network/provision_core.h"
+#include "network/wifi_join_policy.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -415,6 +416,9 @@ struct Minted {
   std::string ssid_tagged;   // ... + "-" + 2 slots (the unwritable-store path)
   // The stuck-phone hint's forms per glass: round, small rectangular, wide.
   std::vector<std::string> hint_round, hint_small, hint_wide;
+  // The PhoneJoined "no page?" hint's forms per glass (F50), same shape.
+  std::vector<std::string> page_round, page_small, page_wide;
+  int bird_px;               // onboard_ui.cpp's watch-family brand mark
 };
 static Minted g_minted;
 
@@ -431,6 +435,33 @@ static std::vector<std::string> literals(const std::string& text) {
     out.push_back(lit);
   }
   return out;
+}
+
+// The three #if CD_FLAVOR branches (round / portrait / wide) that follow
+// the first line containing `marker`: each branch's non-comment lines are
+// collected for literals(). False when the shape is not in the file.
+static bool glass_branches(const std::vector<std::string>& ls,
+                           const char* marker, std::string body[3]) {
+  int branch = -1;
+  bool armed = false;
+  for (size_t i = 0; i < ls.size(); i++) {
+    const std::string t = trim(ls[i]);
+    if (!armed) {
+      if (t.find(marker) != std::string::npos) armed = true;
+    } else if (branch < 0 && t == "#if defined(CD_FLAVOR_WATCH) && "
+                                  "!defined(CD_FLAVOR_NIGHTSTAND)") {
+      branch = 0;
+    } else if (branch == 0 && t == "#elif defined(CD_FLAVOR_WATCH)") {
+      branch = 1;
+    } else if (branch == 1 && t == "#else") {
+      branch = 2;
+    } else if (branch == 2 && t == "#endif") {
+      return true;
+    } else if (branch >= 0 && !starts_with(t, "//")) {
+      body[branch] += t + "\n";
+    }
+  }
+  return false;
 }
 
 static void load_minted() {
@@ -479,29 +510,10 @@ static void load_minted() {
   g_minted.ssid_tagged = "SecuraCV-" + slots(4) + "-" + slots(2);
 
   // The stuck-phone hint, per glass, from the branch that sets it.
-  int branch = -1;
-  bool armed = false, done = false;
   std::string body[3];
-  for (size_t i = 0; i < ls.size() && !done; i++) {
-    const std::string t = trim(ls[i]);
-    if (t == "ctx.stuck_hinted = true;") {
-      armed = true;
-    } else if (armed && branch < 0 &&
-               t == "#if defined(CD_FLAVOR_WATCH) && "
-                    "!defined(CD_FLAVOR_NIGHTSTAND)") {
-      branch = 0;
-    } else if (branch == 0 && t == "#elif defined(CD_FLAVOR_WATCH)") {
-      branch = 1;
-    } else if (branch == 1 && t == "#else") {
-      branch = 2;
-    } else if (branch == 2 && t == "#endif") {
-      done = true;
-    } else if (branch >= 0 && !starts_with(t, "//")) {
-      body[branch] += t + "\n";
-    }
-  }
-  CHECK(done, "provision.cpp's stuck-phone hint branches (round / portrait / "
-              "wide) not found after ctx.stuck_hinted = true;");
+  CHECK(glass_branches(ls, "ctx.stuck_hinted = true;", body),
+        "provision.cpp's stuck-phone hint branches (round / portrait / "
+        "wide) not found after ctx.stuck_hinted = true;");
   g_minted.hint_round = literals(body[0]);
   g_minted.hint_small = literals(body[1]);
   g_minted.hint_wide = literals(body[2]);
@@ -510,6 +522,36 @@ static void load_minted() {
         "stuck-phone hint forms: %d round, %d portrait, %d wide",
         (int)g_minted.hint_round.size(), (int)g_minted.hint_small.size(),
         (int)g_minted.hint_wide.size());
+
+  // The PhoneJoined "no page?" hint, per glass, the same way (F50).
+  std::string page[3];
+  CHECK(glass_branches(ls, "HINT_AFTER_MS) {", page),
+        "provision.cpp's \"no page?\" hint branches (round / portrait / "
+        "wide) not found after HINT_AFTER_MS");
+  g_minted.page_round = literals(page[0]);
+  g_minted.page_small = literals(page[1]);
+  g_minted.page_wide = literals(page[2]);
+  CHECK(g_minted.page_round.size() == 1 && g_minted.page_small.size() >= 1 &&
+            g_minted.page_small.size() <= 2 && g_minted.page_wide.size() == 1,
+        "\"no page?\" hint forms: %d round, %d portrait, %d wide",
+        (int)g_minted.page_round.size(), (int)g_minted.page_small.size(),
+        (int)g_minted.page_wide.size());
+
+  // The Fail stage really carries the shared table's narrow form (the
+  // literal pairs above are provision.cpp's own; the failure hints come
+  // from wifi_join_policy.h, included here, so nothing retypes them).
+  CHECK(prov.find("join_failure_hint_narrow(f)") != std::string::npos,
+        "provision.cpp's Fail stage no longer passes "
+        "join_failure_hint_narrow");
+
+  // The brand mark's watch-family square, for the Join-scene seat check.
+  const std::string obui =
+      slurp(fw + "/projects/canary-display/src/ui/onboard_ui.cpp");
+  g_minted.bird_px = -1;
+  const size_t bat = obui.find("constexpr int BIRD_PX = ");
+  if (bat != std::string::npos)
+    g_minted.bird_px = std::atoi(obui.c_str() + bat + 24);
+  CHECK(g_minted.bird_px > 0, "onboard_ui.cpp's BIRD_PX not found");
   std::printf("  key %d of %d chars; hints: \"%s\" | \"%s\"%s%s%s | \"%s\"\n",
               g_minted.key_len, (int)g_minted.alpha.size(),
               g_minted.hint_round.empty() ? "" : g_minted.hint_round[0].c_str(),
@@ -655,6 +697,38 @@ static void check_rows(const Env& e, int which, const Stack& s, const Rows& r,
       if (u == 0 && h == 1) typ_hint = j;
     }
   }
+  // F50: outside the Join scene the hint row still carries a coach line —
+  // the PhoneJoined "no page?" address and the Fail stage's fix — through
+  // the same fit (refresh_bottom's non-Join path). Each must land uncut.
+  struct HintPair {
+    const char* full;
+    const char* narrow;
+    const char* who;
+  };
+  const std::vector<std::string>& pages =
+      round ? g_minted.page_round : g_minted.page_small;
+  std::vector<HintPair> standing;
+  {
+    HintPair pg = {pages.empty() ? "" : pages[0].c_str(),
+                   pages.size() > 1 ? pages[1].c_str() : nullptr,
+                   "\"no page?\""};
+    standing.push_back(pg);
+  }
+  for (int f = 0; f < 4; f++) {
+    const canary::net::JoinFailure jf = (canary::net::JoinFailure)f;
+    HintPair fp = {canary::net::join_failure_hint(jf),
+                   canary::net::join_failure_hint_narrow(jf), "join-failure"};
+    standing.push_back(fp);
+  }
+  for (size_t p = 0; p < standing.size(); p++) {
+    Line l;
+    const char* forms[2] = {standing[p].full, standing[p].narrow};
+    fit_line(l, forms, 2, low_w, m);
+    CHECK(l.fits && m(l.text, l.floor) <= low_w,
+          "%s/%s: the %s hint \"%s\" (%s face) is cut on the %d px hint row",
+          n, lad_name, standing[p].who, l.text, face_name(l.floor), low_w);
+  }
+
   char joined[kLineCap];
   std::snprintf(joined, sizeof(joined), kJoinedFmt, ssids[0], keys[0]);
   const Line& typ_hint_line = typ_hint.split ? typ_hint.note : typ_hint.low;
@@ -698,6 +772,17 @@ static void check_wide_rows(const Env& e, int which, int fam) {
                          : text_px(*caption, g_minted.hint_wide[0].c_str());
   CHECK(hint_w <= row, "%s/%s: the stuck-phone hint is %d px on %d px", n,
         lad_name, hint_w, row);
+  // F50: the other standing hints are set raw in the caption face on wide
+  // glass (refresh_bottom's non-watch path) — each must stay inside the row.
+  std::vector<std::string> wides = g_minted.page_wide;
+  for (int f = 0; f < 4; f++)
+    wides.push_back(
+        canary::net::join_failure_hint((canary::net::JoinFailure)f));
+  for (size_t i = 0; i < wides.size(); i++) {
+    const int w = text_px(*caption, wides[i].c_str());
+    CHECK(w <= row, "%s/%s: the hint \"%s\" is %d px on %d px", n, lad_name,
+          wides[i].c_str(), w, row);
+  }
   std::printf("  %20s row %3d  credentials <= %3d px  hint %3d px\n", "", row,
               widest, hint_w);
 }
@@ -797,6 +882,18 @@ static void check_glass(const Env& e, int which, int also) {
           above, below);
   }
   if (small) {
+    // F50: the bird's Join-scene seat (the hidden card's, while no QR is
+    // up — onboard_ui's join_bird_top) stays clear of the title band above
+    // it and the credentials line under it, on every glass.
+    const int bird = g_minted.bird_px;
+    const int seat = join_bird_top(s, bird);
+    CHECK(bird > 0 && bird <= s.card,
+          "%s/%s: the bird (%d px) no longer fits the card's seat (%d px)",
+          n, lad_name, bird, s.card);
+    CHECK(seat >= s.title_top + r.title_h && seat + bird <= s.creds_top,
+          "%s/%s: the bird's seat (%d..%d) crosses the title (..%d) or the "
+          "credentials (%d..)", n, lad_name, seat, seat + bird,
+          s.title_top + r.title_h, s.creds_top);
     check_rows(e, which, s, r, round, fam);
   } else {
     check_wide_rows(e, which, fam);
@@ -921,6 +1018,76 @@ static void test_f45_pins() {
         "a 40 px row claimed to fit");
 }
 
+// ── the F50 hints and the bird's seat, pinned ────────────────────────────
+static void test_f50_pins() {
+  std::printf("F50 rows, pinned:\n");
+  const Face* f12 = face_of(12);
+  const Face* f14 = face_of(14);
+  if (f12 == nullptr || f14 == nullptr || g_minted.page_small.size() != 2) {
+    CHECK(false, "F50 pins need montserrat_12/14 and both portrait forms");
+    return;
+  }
+  using canary::net::JoinFailure;
+  using canary::net::join_failure_hint;
+  using canary::net::join_failure_hint_narrow;
+  // The defect: every full failure hint outruns the round watch's 142 px
+  // band even in the floor face, and the widest outruns the portrait rows
+  // too; the "no page?" line outruns them under Heirloom's 14 px caption.
+  CHECK(text_px(*f12, join_failure_hint(JoinFailure::NoAddress)) == 219,
+        "the NoAddress hint measures %d px at 12 px",
+        text_px(*f12, join_failure_hint(JoinFailure::NoAddress)));
+  for (int f = 0; f < 4; f++) {
+    CHECK(text_px(*f12, join_failure_hint((JoinFailure)f)) > kRoundLowRowW,
+          "failure hint %d no longer needs a narrow form", f);
+    CHECK(text_px(*f12, join_failure_hint_narrow((JoinFailure)f)) <=
+              kRoundLowRowW,
+          "narrow failure hint %d (\"%s\") is %d px — over the %d px band",
+          f, join_failure_hint_narrow((JoinFailure)f),
+          text_px(*f12, join_failure_hint_narrow((JoinFailure)f)),
+          kRoundLowRowW);
+  }
+  const char* page = g_minted.page_small[0].c_str();
+  const char* page_narrow = g_minted.page_small[1].c_str();
+  CHECK(text_px(*f12, page) == 151 && text_px(*f14, page) == 182,
+        "\"no page?\" measures %d / %d px at 12 / 14 px", text_px(*f12, page),
+        text_px(*f14, page));
+  // fit_line picks: the narrow form on the round watch's band, the full
+  // one where the row holds it (the touch169's 224 px).
+  const Measure std12 = {f12, f12};
+  Line l;
+  const char* forms[2] = {join_failure_hint(JoinFailure::NoAddress),
+                          join_failure_hint_narrow(JoinFailure::NoAddress)};
+  fit_line(l, forms, 2, kRoundLowRowW, std12);
+  CHECK(l.fits && !l.floor &&
+            std::strcmp(l.text,
+                        join_failure_hint_narrow(JoinFailure::NoAddress)) == 0,
+        "the round watch's NoAddress hint reads \"%s\"", l.text);
+  fit_line(l, forms, 2, 224, std12);
+  CHECK(l.fits && std::strcmp(l.text,
+                              join_failure_hint(JoinFailure::NoAddress)) == 0,
+        "the touch169's NoAddress hint reads \"%s\"", l.text);
+  // Heirloom portrait (own 14, floor 12): the full "no page?" is cut, so
+  // the bare address stands — in the row's own face, not the floor.
+  const Measure heir = {f14, f12};
+  const char* pforms[2] = {page, page_narrow};
+  fit_line(l, pforms, 2, 156, heir);
+  CHECK(l.fits && !l.floor && std::strcmp(l.text, page_narrow) == 0,
+        "the heirloom nightstand's \"no page?\" hint reads \"%s\" (%s face)",
+        l.text, face_name(l.floor));
+  // The bird: its old seat (a fixed -64 from the 240 disc's center) put its
+  // top at 36, inside the title band (30..48); the card's seat starts at
+  // 94, under it (the F43 stack's card is 50..178).
+  Glass watch = {240, 240, true};
+  Rows wr = {18, kSmallGlassCard, 15, 15};
+  Stack w = join_stack(watch, wr);
+  const int old_top = 240 / 2 - 64 - g_minted.bird_px / 2;
+  CHECK(old_top == 36 && old_top < w.title_top + wr.title_h,
+        "the old seat (top %d) no longer documents the defect", old_top);
+  CHECK(join_bird_top(w, g_minted.bird_px) == 94 &&
+            join_bird_top(w, g_minted.bird_px) >= w.title_top + wr.title_h,
+        "the round watch's bird seat is %d", join_bird_top(w, g_minted.bird_px));
+}
+
 // ── degenerate glass: the lines still never cross ─────────────────────────
 static void test_short_glass() {
   std::printf("short glass:\n");
@@ -983,6 +1150,7 @@ int main() {
   }
   test_f43_pins();
   test_f45_pins();
+  test_f50_pins();
   test_short_glass();
   test_join_payload();
   if (g_fail == 0) {
