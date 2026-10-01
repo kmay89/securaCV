@@ -41,6 +41,8 @@ struct Device {
   uint32_t messages_sent = 0, messages_received = 0, message_errors = 0;
   uint32_t auth_failures = 0, start_time_ms = 0;
   uint32_t last_heartbeat_ms = 0, last_peer_check_ms = 0;
+  uint32_t storm_window_start_ms = 0, storm_window_count = 0;
+  uint32_t storm_pause_until_ms = 0, storm_trigger_count = 0;
   mn::RekeyState rekey = {};
   mn::PairingSession pairing = {};
   // The device's radio and flash.
@@ -68,6 +70,10 @@ inline void save(Device& d) {
   d.start_time_ms = mn::g_start_time_ms;
   d.last_heartbeat_ms = mn::g_last_heartbeat_ms;
   d.last_peer_check_ms = mn::g_last_peer_check_ms;
+  d.storm_window_start_ms = mn::g_storm_window_start_ms;
+  d.storm_window_count = mn::g_storm_window_count;
+  d.storm_pause_until_ms = mn::g_storm_pause_until_ms;
+  d.storm_trigger_count = mn::g_storm_trigger_count;
   d.rekey = mn::g_rekey;
   d.pairing = mn::g_pairing;
 }
@@ -92,6 +98,10 @@ inline void load(Device& d) {
   mn::g_start_time_ms = d.start_time_ms;
   mn::g_last_heartbeat_ms = d.last_heartbeat_ms;
   mn::g_last_peer_check_ms = d.last_peer_check_ms;
+  mn::g_storm_window_start_ms = d.storm_window_start_ms;
+  mn::g_storm_window_count = d.storm_window_count;
+  mn::g_storm_pause_until_ms = d.storm_pause_until_ms;
+  mn::g_storm_trigger_count = d.storm_trigger_count;
   mn::g_rekey = d.rekey;
   mn::g_pairing = d.pairing;
   mn::g_rx_pending = false;
@@ -109,9 +119,12 @@ inline void become(Device& d) {
 // A device powering up: RAM gone, flash and identity kept. Runs the real
 // mesh_network::init() (NVS opera config, peers, deny-list) and the
 // sketch's load_replay_counters() right after it, as canary_wap.ino does.
-// The broadcast address is registered as chirp_channel's broadcast_message
-// does on a device — only while Chirp is enabled: mesh_network.cpp never
-// registers it itself, so a pairing DISCOVER relies on it being there.
+// The broadcast address is registered here because on a device something
+// else registers it: csi_probe::init (the CSI active probe the WAP brings up
+// whenever csi_hal runs), and chirp_channel's or beacon_channel's broadcast
+// sends. mesh_network.cpp never registers it itself, and its channel-change
+// listener deletes it; of those three only chirp and beacon add it back, so
+// after a channel change a pairing DISCOVER relies on one of them.
 inline void boot(Device& d) {
   if (g_cur != nullptr && g_cur != &d) save(*g_cur);
   Device fresh;

@@ -3,10 +3,10 @@
 // in mesh_network.cpp's handle_received_message() and closed after it.
 // Host-tested only; not bench-verified; awaiting maintainer crypto review.
 //
-// mesh_network.cpp needs Arduino, ESP-NOW and the rweather crypto library,
-// so no host test links it. This file reads the real mesh_network.cpp and
-// mesh_network.h, and the PIO tree's mesh_session.cpp (beacon_source_scan.h;
-// the paths are passed in, so every pin fails closed), and pins:
+// This file reads the real mesh_network.cpp and mesh_network.h, and the PIO
+// tree's mesh_session.cpp (beacon_source_scan.h; the paths are passed in,
+// so every pin fails closed), and pins their text. test_mesh_address_wap
+// runs the same mesh_network.cpp on host stubs, for behavior. This pins:
 //
 //   1. The replay counter convention, the same in both trees: the first
 //      counter a sender signs is 1 (add_peer, and both rekey resets), and

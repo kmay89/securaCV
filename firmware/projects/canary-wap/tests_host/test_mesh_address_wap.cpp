@@ -352,11 +352,12 @@ void test_a_member_whose_address_changed_is_not_heard_until_re_paired() {
 const uint8_t BROADCAST[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 // A WAP-to-WAP pairing through the real handlers, every frame carried as
-// bytes from one device's send log to the other's receive path: the
-// joiner's DISCOVER (sent by update() on its 2 s tick), the initiator's
-// OFFER, the joiner's ACCEPT, both CONFIRMs once each owner has accepted
-// the code, and the initiator's COMPLETE.
-void run_pairing(Device& ini, Device& joi) {
+// bytes from one device's send log to the other's receive path, in two
+// halves. To the codes: the joiner's DISCOVER (sent by update() on its 2 s
+// tick), the initiator's OFFER and the joiner's ACCEPT, after which both
+// screens show a code. Then the owners: both confirm the code (the
+// initiator's first), the CONFIRMs cross, and the initiator's COMPLETE.
+void pair_to_codes(Device& ini, Device& joi) {
   become(ini);
   CHECK(mn::start_pairing_initiator(nullptr));
   become(joi);
@@ -376,10 +377,15 @@ void run_pairing(Device& ini, Device& joi) {
   CHECK(accept.size() == 1);
   deliver(ini, joi.mac, accept.back());
   become(ini);
+  CHECK(mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);
   const uint32_t code_ini = mn::g_pairing.confirmation_code;
   become(joi);
+  CHECK(mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);
   const uint32_t code_joi = mn::g_pairing.confirmation_code;
   CHECK(code_ini == code_joi);                   // the two screens agree
+}
+
+void pair_confirm(Device& ini, Device& joi) {
   become(ini);
   CHECK(mn::confirm_pairing());
   become(joi);
@@ -396,8 +402,21 @@ void run_pairing(Device& ini, Device& joi) {
   CHECK(mn::g_mesh_state == mn::MESH_ACTIVE);
 }
 
+void run_pairing(Device& ini, Device& joi) {
+  pair_to_codes(ini, joi);
+  pair_confirm(ini, joi);
+}
+
 void test_a_re_pair_re_binds_the_member_it_holds() {
   fresh_opera();
+  // A has heard B's frames 1..3 and sent B two heartbeats, so A's counters
+  // for B are past where they start: a re-pair that reset them would show.
+  for (int i = 0; i < 3; ++i) deliver(A, B.mac, b_heartbeat_to(A));
+  CHECK(a_heartbeat_reaches(B.mac));
+  CHECK(a_heartbeat_reaches(B.mac));
+  const mn::OperaPeer held = *entry(A, B);
+  CHECK(held.msg_counter_rx == 3 && held.msg_counter_tx == 3);
+  CHECK(held.state == mn::PEER_CONNECTED);
   uint8_t old_mac[6];
   memcpy(old_mac, B.mac, 6);
   B.mac[5] = 0xB2;                               // B's radio address changed
@@ -416,17 +435,33 @@ void test_a_re_pair_re_binds_the_member_it_holds() {
   CHECK(mn::g_peer_count == 2);
   mn::OperaPeer* pb = entry(A, B);
   CHECK(same_mac(pb->mac_addr, B.mac));
-  CHECK(pb->msg_counter_rx == 0);                // the re-pair kept the counter
   CHECK(A.espnow.has(B.mac) && !A.espnow.has(old_mac));
   CHECK(same_mac(entry(A, C)->mac_addr, C.mac));
+  // The re-pair kept what A knew about B: the last counter heard (so no
+  // frame of B's that A has heard becomes fresh again), the next counter A
+  // signs for B, the name A's owner gave B ("New Device" is what a new
+  // member gets) and B's state, which keeps B in A's broadcasts.
+  CHECK(pb->msg_counter_rx == held.msg_counter_rx);
+  CHECK(pb->msg_counter_tx >= held.msg_counter_tx);
+  CHECK(strcmp(pb->name, "B") == 0);
+  CHECK(pb->state == held.state);
+  CHECK(a_heartbeat_reaches(B.mac));             // before A hears B again
+  CHECK(!a_heartbeat_reaches(old_mac));
   become(B);
   CHECK(mn::g_peer_count == 2);
   CHECK(same_mac(entry(B, A)->mac_addr, A.mac));
-  // B is heard from its new address, and A's frames go there.
+  // B rebooted to change its address, so its counter for A restarted at 1
+  // (NEW item, open): A drops B's frames 1..3 as replays, from B's new
+  // address too, and hears frame 4.
+  for (uint64_t want = 1; want <= 3; ++want) {
+    const Frame f = b_heartbeat_to(A);
+    CHECK(counter_of(f) == want);
+    const uint32_t received = a_view_of_b().received;
+    deliver(A, B.mac, f);
+    CHECK(a_view_of_b().received == received);
+  }
   deliver(A, B.mac, b_heartbeat_to(A));
-  CHECK(entry(A, B)->msg_counter_rx == 1);
-  CHECK(a_heartbeat_reaches(B.mac));
-  CHECK(!a_heartbeat_reaches(old_mac));
+  CHECK(entry(A, B)->msg_counter_rx == 4);
   // A frame from the old address now drops like one from any other.
   const uint64_t rx = entry(A, B)->msg_counter_rx;
   deliver(A, old_mac, b_heartbeat_to(A));
@@ -439,6 +474,32 @@ void test_a_re_pair_re_binds_the_member_it_holds() {
   CHECK(A.espnow.has(B.mac) && !A.espnow.has(old_mac));
   memcpy(B.mac, old_mac, 6);
   std::printf("PASS a_re_pair_re_binds_the_member_it_holds\n");
+}
+
+void test_a_re_pair_the_radio_cannot_register_moves_nothing() {
+  // ESP-NOW holds 20 addresses. When the new one cannot be registered the
+  // member stays where it was, registration and all: deleting the old one
+  // first, or moving anyway, would leave A unable to reach B at either.
+  fresh_opera();
+  become(A);
+  for (uint8_t i = 0; A.espnow.peers.size() < ESP_NOW_MAX_TOTAL_PEER_NUM; ++i) {
+    esp_now_peer_info_t p = {};
+    const uint8_t m[6] = {0x02, 0x33, 0x00, 0x00, 0x00, i};
+    memcpy(p.peer_addr, m, 6);
+    CHECK(esp_now_add_peer(&p) == ESP_OK);
+  }
+  const mn::PeerState state = entry(A, B)->state;
+  const uint8_t moved[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0xB2};
+  g_health.clear();
+  become(A);
+  CHECK(!mn::add_peer(B.pub, moved, "B"));
+  CHECK(mn::g_peer_count == 2);
+  CHECK(same_mac(entry(A, B)->mac_addr, B.mac));
+  CHECK(entry(A, B)->state == state);
+  CHECK(A.espnow.has(B.mac) && !A.espnow.has(moved));
+  CHECK(g_health.empty());                       // nothing moved, nothing logged
+  CHECK(a_heartbeat_reaches(B.mac));
+  std::printf("PASS a_re_pair_the_radio_cannot_register_moves_nothing\n");
 }
 
 void test_a_re_pair_is_not_refused_by_a_full_opera() {
@@ -486,6 +547,7 @@ int main() {
   test_a_frame_from_another_members_address_moves_nothing();
   test_a_member_whose_address_changed_is_not_heard_until_re_paired();
   test_a_re_pair_re_binds_the_member_it_holds();
+  test_a_re_pair_the_radio_cannot_register_moves_nothing();
   test_a_re_pair_is_not_refused_by_a_full_opera();
   test_a_re_pair_cannot_take_another_members_address();
   std::printf("ALL %d mesh address checks PASSED\n", g_checks);
