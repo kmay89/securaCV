@@ -1274,6 +1274,10 @@ static void handle_pair_discover(const uint8_t* mac, const uint8_t* payload) {
 
     memcpy(g_pairing.peer_pubkey, discover->pubkey, PUBKEY_SIZE);
     memcpy(g_pairing.peer_mac, mac, 6);
+    // A new partner and new keys: no CONFIRM counts from before them.
+    // (handle_pair_confirm takes one only in MESH_PAIRING_CONFIRM; this and
+    // the same line in handle_pair_accept keep it so if that check goes.)
+    g_pairing.peer_confirmed = false;
 
     // Send pairing offer
     PairOfferPayload offer;
@@ -1377,6 +1381,7 @@ static void handle_pair_accept(const uint8_t* mac, const uint8_t* payload) {
 
   // Compute confirmation code (matches the joiner's: same session key)
   g_pairing.confirmation_code = mesh_pair_crypto::confirmation_code(g_pairing.session_key);
+  g_pairing.peer_confirmed = false;   // only a CONFIRM under this key counts
 
   g_mesh_state = MESH_PAIRING_CONFIRM;
   g_pairing.code_displayed = true;
@@ -1465,6 +1470,10 @@ static void initiator_complete() {
 // (handle_pair_complete); it checks the initiator's CONFIRM hash and needs
 // nothing else from it.
 static void handle_pair_confirm(const uint8_t* mac, const uint8_t* payload) {
+  // Only once the code is shown. Before the ACCEPT the session key is all
+  // zero and the code 0, so anyone can compute that CONFIRM's hash; kept,
+  // it would complete the pairing at the owner's confirm without the
+  // joiner's CONFIRM.
   if (g_mesh_state != MESH_PAIRING_CONFIRM || memcmp(mac, g_pairing.peer_mac, 6) != 0) {
     return;
   }

@@ -924,6 +924,56 @@ void test_a_confirm_from_another_address_does_not_count() {
   std::printf("PASS a_confirm_from_another_address_does_not_count\n");
 }
 
+void test_a_confirm_before_the_code_is_shown_does_not_count() {
+  // F75 made a CONFIRM stick (peer_confirmed) until the initiator's owner
+  // confirms, so when one counts matters. Before the ACCEPT the initiator's
+  // session key is all zero and the code 0: a CONFIRM over those is one
+  // anyone can compute. Sent from the address the OFFER went to while the
+  // initiator is still in MESH_PAIRING_INIT, it must not count, or the
+  // owner's confirm would send COMPLETE without the joiner's CONFIRM.
+  fresh_device(A);
+  fresh_device(J);
+  g_pair_events.clear();
+  become(A);
+  CHECK(mn::start_pairing_initiator(nullptr));
+  become(J);
+  CHECK(mn::start_pairing_joiner());
+  A.espnow.sent.clear();
+  J.espnow.sent.clear();
+  host_sim::now_ms += 2001;
+  become(J);
+  mn::update();
+  deliver(A, J.mac, sent_to(J, BROADCAST).back());   // A offers to J
+  become(A);
+  CHECK(mn::g_mesh_state == mn::MESH_PAIRING_INIT);
+  mn::PairConfirmPayload forged = {};
+  uint8_t zero[mn::SESSION_KEY_SIZE + 4] = {};
+  mn::sha256_domain(mn::DOMAIN_PAIR_CONFIRM, zero, sizeof zero, forged.confirmation_hash);
+  Frame f(1 + sizeof forged);
+  f[0] = mn::MSG_PAIR_CONFIRM;
+  memcpy(f.data() + 1, &forged, sizeof forged);
+  deliver(A, J.mac, f);
+  become(A);
+  CHECK(!mn::g_pairing.peer_confirmed);
+  CHECK(mn::g_mesh_state == mn::MESH_PAIRING_INIT);
+  deliver(J, A.mac, sent_to(A, J.mac).back());       // the OFFER
+  deliver(A, J.mac, sent_to(J, A.mac).back());       // the ACCEPT
+  become(A);
+  CHECK(mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);
+  A.espnow.sent.clear();
+  CHECK(mn::confirm_pairing());                      // A's owner; J's has not confirmed
+  mn::update();
+  CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 0);
+  CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_CONFIRM) == 1);
+  become(J);
+  CHECK(mn::confirm_pairing());
+  deliver(A, J.mac, last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM));
+  CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 1);
+  deliver(J, A.mac, last_pair(A, J.mac, mn::MSG_PAIR_COMPLETE));
+  CHECK(completed(A, J) && completed(J, A));
+  std::printf("PASS a_confirm_before_the_code_is_shown_does_not_count\n");
+}
+
 void test_a_bad_confirm_from_another_address_does_not_end_the_pairing() {
   // A CONFIRM whose hash is wrong ends the pairing (possible MITM) only
   // when it comes from the partner's address. From any other radio it used
@@ -1086,6 +1136,8 @@ const Test kTests[] = {
     {"a_confirm_from_another_address_does_not_count", test_a_confirm_from_another_address_does_not_count},
     {"a_bad_confirm_from_another_address_does_not_end_the_pairing",
      test_a_bad_confirm_from_another_address_does_not_end_the_pairing},
+    {"a_confirm_before_the_code_is_shown_does_not_count",
+     test_a_confirm_before_the_code_is_shown_does_not_count},
     {"a_fresh_pairing_is_heard_both_ways", test_a_fresh_pairing_is_heard_both_ways},
     {"an_opera_whose_members_all_rebooted_comes_back", test_an_opera_whose_members_all_rebooted_comes_back},
     {"two_active_members_that_never_heard_each_other_do", test_two_active_members_that_never_heard_each_other_do},
