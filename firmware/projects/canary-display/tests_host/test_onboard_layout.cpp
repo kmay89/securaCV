@@ -23,6 +23,17 @@
 // ellipsis on the round watch's 142 px band and the 156/164 px portrait rows.
 // For every glass and ladder, hint_lines() is run on each of them, with the
 // narrow form the glass is handed, and each row must fit its width.
+// And no scene's title or body is cut (F65): they kept LONG_DOT at the
+// width they were first fitted to, so "Nice - check your phone" and "No
+// address from the router" were cut on the round watch and the 156/164 px
+// portrait glass, and under Heirloom eleven more lines. For every glass and
+// ladder, each line scene_copy() holds (and each Fail reason with its narrow
+// label, as provision.cpp hands them) goes through fit_line() at the width
+// scene_line_w() gives its latitude, and must read whole; a network name
+// goes through name_line(). And nothing crosses the halo (F66): the 236 px
+// ring ran through the hint rows of the 172/180x320 and 240x280 glass. Every
+// row of every scene and the bird's seats must be wholly inside the ring's
+// stroke or wholly outside it.
 // Text is measured with LVGL's own Montserrat data (montserrat_metrics.h,
 // generated from the pinned LVGL by firmware/scripts/gen_montserrat_metrics.py)
 // the way lv_font_get_glyph_width reads it — never an estimated width.
@@ -1542,8 +1553,8 @@ static void test_f50_pins() {
   // The bird's Join seat (#1755): its old seat (a fixed -64 from the 240
   // disc's center) put its top at 36, inside the title band (30..48); the
   // card's seat starts at 94, under it (the F43 stack's card is 50..178).
-  // These are the layout's numbers. Where the glass draws the bird is F64's:
-  // canary_mark records its base before a layout pass has placed it.
+  // The glass draws the bird at these numbers since F64 (canary_mark reads
+  // the host's offset, not the laid-out box: test_canary_mark_seat).
   Glass watch = {240, 240, true};
   Rows wr = {18, kSmallGlassCard, 15, 15};
   Stack w = join_stack(watch, wr);

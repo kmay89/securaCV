@@ -510,6 +510,7 @@ inline Ring halo_ring(const Glass& g, const Stack& s, const Rows& r) {
   }
   ring.top = s.title_top + r.title_h + kMinGap;
   ring.d = (s.creds_top - kMinGap) - ring.top;
+  if (ring.d < 0) ring.d = 0;  // a stack that overran its window (!fits)
   return ring;
 }
 
@@ -530,14 +531,16 @@ inline int scene_bird_top(const Glass& g, const Ring& ring, int bird) {
   const int dx_a = roundframe::iabs(x0 - cx2);
   const int dx_b = roundframe::iabs(x0 + 2 * bird - cx2);
   const int dx = dx_a > dx_b ? dx_a : dx_b;
-  int top = g.h / 2 - bird / 2 + kSceneBirdOff;
-  for (; top < g.h; ++top) {
+  const int seat = g.h / 2 - bird / 2 + kSceneBirdOff;
+  // Lower, a pixel at a time, by at most half the bird: a halo that cannot
+  // hold it there is not one this seat can fix, and the seat stands.
+  for (int top = seat; top <= seat + bird / 2; ++top) {
     const int dy_a = roundframe::iabs(2 * (top - kBirdBreath) - cy2);
     const int dy_b = roundframe::iabs(2 * (top + bird + kBirdBreath) - cy2);
     const int dy = dy_a > dy_b ? dy_a : dy_b;
-    if ((int64_t)dx * dx + (int64_t)dy * dy <= (int64_t)r2 * r2) break;
+    if ((int64_t)dx * dx + (int64_t)dy * dy <= (int64_t)r2 * r2) return top;
   }
-  return top;
+  return seat;
 }
 
 // ── The scenes' titles and bodies on small glass (F65) ────────────────────
