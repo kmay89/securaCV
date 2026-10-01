@@ -241,6 +241,7 @@ struct PairingSession {
   uint32_t started_ms;
   bool code_displayed;
   bool code_confirmed;
+  bool peer_confirmed;                      // F75: the partner's CONFIRM arrived and verified
 };
 
 // Alert record

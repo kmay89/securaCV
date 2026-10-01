@@ -8,13 +8,14 @@
 // receiver's ESP-NOW callback and update(). Every frame here was built by
 // the sender's own send path and judged by the receiver's own receive path.
 //
-// Sweep items F71 and F74: each was a way the opera went
+// Sweep items F71, F74 and F75: each was a way the opera went
 // quiet, or a pairing went wrong, with nothing reporting it.
 //   F71  a rebooted device's frames dropped as replays at every member
 //        that had heard it (its send counters restarted at 1);
 //   F74  a joiner's DISCOVER went nowhere once the ESP-NOW broadcast peer
 //        was gone (mesh_network relied on other modules to register it,
 //        and its own channel-change listener deleted it);
+//   F75  a pairing finished only if the initiator's owner confirmed first;
 //
 // Host-tested only: the stubs stand in for the radio and the flash, so
 // this says nothing about two real boards (U1 Track C2), and the Arduino
@@ -485,6 +486,134 @@ void test_a_channel_change_re_adds_the_broadcast_peer() {
   std::printf("PASS a_channel_change_re_adds_the_broadcast_peer\n");
 }
 
+// ── F75: the owners confirm in either order ──────────────────────────────
+//
+// handle_pair_confirm acted on the joiner's CONFIRM only if the
+// initiator's own owner had confirmed already, and dropped it otherwise;
+// neither side sent its CONFIRM twice. So a joiner's owner who confirmed
+// first left both devices waiting until the 2-minute timeout. Spec §5.2
+// asks for a confirm on both devices, in no order. The initiator now keeps
+// the joiner's CONFIRM, from the pairing partner's address only, and acts
+// on it when its own owner confirms. Every guard #1761 added stays.
+
+void test_the_joiners_owner_may_confirm_first() {
+  fresh_device(A);
+  fresh_device(J);
+  pair_to_codes(A, J);
+  g_pair_events.clear();
+  become(J);
+  CHECK(mn::confirm_pairing());
+  deliver(A, J.mac, sent_to(J, A.mac).back());
+  become(A);
+  CHECK(mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);   // waits for its owner
+  CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 0);
+  A.espnow.sent.clear();
+  CHECK(mn::confirm_pairing());
+  become(A);
+  mn::update();                                     // A's loop sends the COMPLETE
+  // One frame: the COMPLETE. (A CONFIRM sent just before it could take the
+  // joiner's one-frame receive buffer, and the COMPLETE would be dropped.)
+  const auto to_j = sent_to(A, J.mac);
+  CHECK(to_j.size() == 1 && is_pair_frame(to_j[0], mn::MSG_PAIR_COMPLETE));
+  deliver(J, A.mac, to_j[0]);
+  CHECK(completed(A, J));
+  CHECK(completed(J, A));
+  become(A);
+  uint8_t opera_id[mn::OPERA_ID_SIZE];
+  memcpy(opera_id, mn::g_opera_config.opera_id, sizeof opera_id);
+  become(J);
+  CHECK(memcmp(mn::g_opera_config.opera_id, opera_id, sizeof opera_id) == 0);
+  std::printf("PASS the_joiners_owner_may_confirm_first\n");
+}
+
+void test_the_initiator_still_waits_for_the_joiners_confirm() {
+  // The other order, unchanged: the initiator's owner confirms and its
+  // CONFIRM goes out, but no COMPLETE until the joiner's CONFIRM arrives.
+  fresh_device(A);
+  fresh_device(J);
+  pair_to_codes(A, J);
+  A.espnow.sent.clear();
+  become(A);
+  CHECK(mn::confirm_pairing());
+  CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_CONFIRM) == 1);
+  CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 0);
+  host_sim::now_ms += 60000;                        // the joiner's owner takes a minute
+  become(A);
+  mn::update();
+  CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 0);
+  become(J);
+  CHECK(mn::confirm_pairing());
+  deliver(A, J.mac, sent_to(J, A.mac).back());
+  CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 1);
+  deliver(J, A.mac, sent_to(A, J.mac).back());
+  CHECK(completed(A, J) && completed(J, A));
+  std::printf("PASS the_initiator_still_waits_for_the_joiners_confirm\n");
+}
+
+void test_a_confirm_from_another_address_does_not_count() {
+  // Either order: the joiner's genuine CONFIRM, re-sent from another radio,
+  // is not the joiner's. Confirmed first, the initiator used to take it
+  // from any address.
+  for (int joiner_first = 0; joiner_first < 2; ++joiner_first) {
+    fresh_device(A);
+    fresh_device(J);
+    pair_to_codes(A, J);
+    if (!joiner_first) {
+      become(A);
+      CHECK(mn::confirm_pairing());
+    }
+    become(J);
+    CHECK(mn::confirm_pairing());
+    const Frame confirm_j = sent_to(J, A.mac).back();
+    deliver(A, E_MAC, confirm_j);
+    if (joiner_first) {
+      become(A);
+      CHECK(mn::confirm_pairing());
+    }
+    become(A);
+    mn::update();
+    CHECK(mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);
+    CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 0);
+    CHECK(pair_frames(A, E_MAC, mn::MSG_PAIR_COMPLETE) == 0);
+    deliver(A, J.mac, confirm_j);                  // from the partner's address
+    CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 1);
+    deliver(J, A.mac, sent_to(A, J.mac).back());
+    CHECK(completed(A, J) && completed(J, A));
+  }
+  std::printf("PASS a_confirm_from_another_address_does_not_count\n");
+}
+
+void test_a_bad_confirm_from_another_address_does_not_end_the_pairing() {
+  // A CONFIRM whose hash is wrong ends the pairing (possible MITM) only
+  // when it comes from the partner's address. From any other radio it used
+  // to cancel the pairing once the initiator's owner had confirmed.
+  fresh_device(A);
+  fresh_device(J);
+  pair_to_codes(A, J);
+  become(A);
+  CHECK(mn::confirm_pairing());
+  mn::PairConfirmPayload bad = {};
+  Frame forged(1 + sizeof bad);
+  forged[0] = mn::MSG_PAIR_CONFIRM;
+  memcpy(forged.data() + 1, &bad, sizeof bad);
+  deliver(A, E_MAC, forged);
+  become(A);
+  CHECK(mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);
+  become(J);
+  CHECK(mn::confirm_pairing());
+  deliver(A, J.mac, sent_to(J, A.mac).back());
+  deliver(J, A.mac, sent_to(A, J.mac).back());
+  CHECK(completed(A, J) && completed(J, A));
+  // From the partner's own address it still ends the pairing.
+  fresh_device(A);
+  fresh_device(J);
+  pair_to_codes(A, J);
+  deliver(A, J.mac, forged);
+  become(A);
+  CHECK(!mn::is_pairing());
+  std::printf("PASS a_bad_confirm_from_another_address_does_not_end_the_pairing\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -500,6 +629,12 @@ const Test kTests[] = {
     {"a_discover_goes_out_with_no_broadcast_peer_registered",
      test_a_discover_goes_out_with_no_broadcast_peer_registered},
     {"a_channel_change_re_adds_the_broadcast_peer", test_a_channel_change_re_adds_the_broadcast_peer},
+    {"the_joiners_owner_may_confirm_first", test_the_joiners_owner_may_confirm_first},
+    {"the_initiator_still_waits_for_the_joiners_confirm",
+     test_the_initiator_still_waits_for_the_joiners_confirm},
+    {"a_confirm_from_another_address_does_not_count", test_a_confirm_from_another_address_does_not_count},
+    {"a_bad_confirm_from_another_address_does_not_end_the_pairing",
+     test_a_bad_confirm_from_another_address_does_not_end_the_pairing},
 };
 
 }  // namespace liveness

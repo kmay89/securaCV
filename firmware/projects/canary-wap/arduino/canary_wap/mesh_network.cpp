@@ -1328,8 +1328,58 @@ static void handle_pair_accept(const uint8_t* mac, const uint8_t* payload) {
   }
 }
 
+// The initiator's half of a pairing both owners confirmed: seal the
+// opera_secret to the joiner in COMPLETE, add the joiner, and forget the
+// pairing. Runs from update() on the loop task (initiator_step), whichever
+// owner confirmed first.
+static void initiator_complete() {
+  PairCompletePayload complete;
+
+  // Encrypt opera secret with session key
+  uint8_t nonce[NONCE_SIZE];
+  uint8_t tag[16];
+  encrypt_message(g_pairing.session_key, g_opera_config.opera_secret, OPERA_SECRET_SIZE,
+                 complete.encrypted_secret, nonce, tag);
+  memcpy(complete.nonce, nonce, NONCE_SIZE);
+  memcpy(complete.encrypted_secret + OPERA_SECRET_SIZE, tag, 16);
+
+  send_pair_frame(g_pairing.peer_mac, MSG_PAIR_COMPLETE, &complete, sizeof(complete));
+
+  // Add joiner to our opera
+  add_peer(g_pairing.peer_pubkey, g_pairing.peer_mac, "New Device");
+  persist_peers();
+
+  // Clear sensitive pairing data, as the joiner does. Kept, the finished
+  // pairing's ephemeral key and confirmed code let a radio that overheard
+  // the OFFER send its own ACCEPT and CONFIRM until the timeout, and this
+  // branch sealed the opera_secret under that radio's session key.
+  const PairingRole role = g_pairing.role;
+  const uint32_t code = g_pairing.confirmation_code;
+  secure_wipe(&g_pairing, sizeof(g_pairing));
+
+  g_mesh_state = MESH_ACTIVE;
+
+  if (g_pairing_callback) {
+    g_pairing_callback(role, code, true);
+  }
+}
+
+// A CONFIRM counts only from the pairing partner: the address the
+// initiator's OFFER went to, or the joiner's came from. This took one from
+// any address, and a wrong hash from any radio ended the pairing once the
+// owner had confirmed.
+//
+// Either owner may confirm first (spec §5.2; sweep F75). This acted on the
+// joiner's CONFIRM only if the initiator's owner had confirmed already and
+// dropped it otherwise; neither side sends its CONFIRM twice, so a joiner's
+// owner who confirmed first left both devices waiting for the 2-minute
+// timeout. The initiator now keeps a verified CONFIRM (peer_confirmed) and
+// completes when its own owner confirms (initiator_step). The joiner's
+// next step is COMPLETE, which it takes only after its own owner confirmed
+// (handle_pair_complete); it checks the initiator's CONFIRM hash and needs
+// nothing else from it.
 static void handle_pair_confirm(const uint8_t* mac, const uint8_t* payload) {
-  if (g_mesh_state != MESH_PAIRING_CONFIRM || !g_pairing.code_confirmed) {
+  if (g_mesh_state != MESH_PAIRING_CONFIRM || memcmp(mac, g_pairing.peer_mac, 6) != 0) {
     return;
   }
 
@@ -1348,37 +1398,19 @@ static void handle_pair_confirm(const uint8_t* mac, const uint8_t* payload) {
     return;
   }
 
-  // If we're initiator, send the opera secret
   if (g_pairing.role == PAIR_ROLE_INITIATOR) {
-    PairCompletePayload complete;
+    g_pairing.peer_confirmed = true;   // initiator_step completes once its owner has
+  }
+}
 
-    // Encrypt opera secret with session key
-    uint8_t nonce[NONCE_SIZE];
-    uint8_t tag[16];
-    encrypt_message(g_pairing.session_key, g_opera_config.opera_secret, OPERA_SECRET_SIZE,
-                   complete.encrypted_secret, nonce, tag);
-    memcpy(complete.nonce, nonce, NONCE_SIZE);
-    memcpy(complete.encrypted_secret + OPERA_SECRET_SIZE, tag, 16);
-
-    send_pair_frame(g_pairing.peer_mac, MSG_PAIR_COMPLETE, &complete, sizeof(complete));
-
-    // Add joiner to our opera
-    add_peer(g_pairing.peer_pubkey, g_pairing.peer_mac, "New Device");
-    persist_peers();
-
-    // Clear sensitive pairing data, as the joiner does. Kept, the finished
-    // pairing's ephemeral key and confirmed code let a radio that overheard
-    // the OFFER send its own ACCEPT and CONFIRM until the timeout, and this
-    // branch sealed the opera_secret under that radio's session key.
-    const PairingRole role = g_pairing.role;
-    const uint32_t code = g_pairing.confirmation_code;
-    secure_wipe(&g_pairing, sizeof(g_pairing));
-
-    g_mesh_state = MESH_ACTIVE;
-
-    if (g_pairing_callback) {
-      g_pairing_callback(role, code, true);
-    }
+// Called from update(): an initiator whose owner and joiner have both
+// confirmed sends COMPLETE. Here rather than in confirm_pairing(), which
+// the REST handler calls from the HTTP server's task, so the peer table
+// and NVS are written on the loop task only.
+static void initiator_step() {
+  if (g_mesh_state == MESH_PAIRING_CONFIRM && g_pairing.role == PAIR_ROLE_INITIATOR &&
+      g_pairing.code_confirmed && g_pairing.peer_confirmed) {
+    initiator_complete();
   }
 }
 
@@ -1761,6 +1793,9 @@ void update() {
                                            (int)g_rx_len, g_rx_rssi);
     g_rx_pending = false;
   }
+
+  // F75: a pairing both owners confirmed, in either order.
+  initiator_step();
 
   // v0.3 (audit O3): if a rekey is in flight, finalize when all peers have
   // ACKed or the timeout expires.
@@ -2160,6 +2195,15 @@ bool confirm_pairing() {
   }
 
   g_pairing.code_confirmed = true;
+
+  // F75: the joiner confirmed first, so it is owed the COMPLETE, which the
+  // next update() sends (initiator_step). Not a CONFIRM as well: two frames
+  // back to back can meet the joiner's one-frame receive buffer
+  // (espnow_recv_cb drops a frame while one is pending), and the COMPLETE
+  // would be the one dropped. The joiner does not need this side's CONFIRM.
+  if (g_pairing.role == PAIR_ROLE_INITIATOR && g_pairing.peer_confirmed) {
+    return true;
+  }
 
   // Send confirmation message
   PairConfirmPayload confirm;
