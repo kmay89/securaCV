@@ -2,6 +2,92 @@
 
 ## [Unreleased]
 
+### canary-wap's mesh is heard after a reboot and pairs in either confirm order, the PIO mesh takes a member's frame only from its own address, the Canary bundles its presence rows and the hourly limit counts every row, and the Lab's examples match the firmware (#<W9>)
+
+- **canary-wap's mesh is heard after a reboot, pairs in either confirm order,
+  and finds its members (sweep F71, F73-F76).** A rebooted canary-wap's frames
+  are now heard at once. Each member's send counter is reserved ahead in NVS
+  (`tx_ctrs`), and a boot resumes every member above the highest reservation.
+  Before, members dropped its frames as replays until each counter climbed
+  back. The first boot after this update has no record and resumes above 2^40,
+  which no older boot reached, so it is heard at once too. Flash wear is about
+  3 writes a day for a whole opera at the heartbeat, and a flood costs about
+  one write per 5 minutes (arithmetic and host counts, not measured wear). The
+  owners can now confirm a pairing in either order; before, a pairing whose
+  joiner was confirmed first timed out. A CONFIRM counts only from the pairing
+  partner's address, and only once the code is shown. A pairing whose partner
+  the device cannot hold (deny-listed, a full opera, an address another member
+  holds) now fails, sends and stores nothing, and is logged. Before, it
+  reported success, and the initiator sealed the opera key to a partner it
+  then refused. The pairing DISCOVER registers the ESP-NOW broadcast peer
+  itself, and a channel change re-adds it instead of deleting it. An opera
+  whose members it has not heard, after a fresh pairing or after every member
+  rebooted, now sends its 30 s heartbeat while connecting and to unheard
+  members, so the members find each other; before, it sent nothing. The new
+  `test_mesh_liveness_wap` runs the real `mesh_network.cpp`, and each of its
+  26 tests fails with its fix reverted. Found and not fixed: a CONFIRM
+  reflected from the joiner's address still counts (F94), and removing a
+  member splits a canary-wap opera: its key rotation goes only to members with
+  an AUTH session, and nothing opens one, so every survivor must re-pair
+  (F95). **Host-tested only**: the Arduino compile is CI's, and it is not
+  bench-tested.
+- **The PIO Canary's mesh takes a member's Opera frame only from that member's
+  own radio address (sweep F70).** The receiver used to verify a member's
+  frame from any address its transport table held (another member's, or a
+  running pairing's partner), record that address as the member's, send its
+  rekey replies there, and drop it from the table when the member was removed.
+  So an outsider that answered a pairing could replay a member's unheard frame
+  and receive this device's REKEY_ACCEPT, and a radio copying another member's
+  address could get that member stranded by a later removal. Such frames now
+  drop before verification, as on canary-wap, and a member with no bound
+  address is heard from nowhere until it pairs again. The rekey replies and
+  removals use the member's bound address. Four new `test_mesh_session` tests
+  fail on the old code. **Host-tested only**: the `[env:full]` compile is
+  CI's, and it is not bench-tested.
+- **Canary presence rows are one row per bundle, and the hourly limit counts
+  every row (sweep F80, F81).** The Canary closed every open bundle after each
+  one-second CSI window, so each presence refresh was a row of its own and
+  spent the hourly limit; after about three minutes in one state the next real
+  change was dropped. It now closes a bundle when it is due, ten minutes after
+  it opened or two minutes after its last observation, as the Canary WAP does.
+  A refresh inside those ten minutes costs nothing, and the row carries every
+  observation and the time they span. A return to a state within two minutes
+  joins its open bundle, so a row's span can take in a brief other state. This
+  holds for every Canary row that names a state, not only presence: a row now
+  reaches Home Assistant two to ten minutes after its state began (an
+  unusual-motion row two minutes after the motion, where it used to arrive
+  within a second), stamped with its close, in the order bundles close. The
+  Canary's last-event sensor (whose value is the state), its timestamp, the
+  voice brief and Home Assistant watches follow that. A row still open at a
+  reboot is lost; a tamper row still lands at once. The events body's
+  `bundled` is now the row's own count live, from the offline queue and in a
+  replay, on both devices (the live body said 1). On both devices a bundle
+  that reopens after its ten minutes or a quiet gap now counts against the
+  limit; before, a refresh could reopen one uncounted (in a host test of the
+  shared library, one observation every 121 s made 714 rows a day under a
+  limit of 144). Not fixed, and measured on the host: a state held for an hour
+  or more fills core.presence's limit of six an hour with its own rows, and
+  the next change then waits up to about ten minutes for a slot (F90).
+  **Host-tested only**: the ESP32 builds are CI's, and nothing was checked on
+  a bench.
+- **Lab examples traced to the firmware (sweep A26-A29).** The WAP page's
+  device id, SoftAP name and unnamed `.local` host are now derived from the
+  repo test key the way the firmware derives them (`canary-s3-4dC2`,
+  `SecuraCV-4dC2`, `canary-7916.local`). Ten docs that showed WAP names no
+  Canary can have now show the real shapes: a suffix's fourth character is
+  always `2`, and the unnamed host comes from the key fingerprint, never the
+  MAC. The Sense and Vision pages show their Hardware ID as the 16-character
+  pseudonym a unit prints, with the host and MQTT client id built from it. The
+  Home Assistant page's "Meet the fleet" step prints the WAP's real retained
+  topics, and its note says what the integration does with them. The Vision
+  page's MQTT pane is keyed as the firmware publishes it. Lab tests now hold
+  these examples to the firmware, along with every fp or key value a page
+  script writes in a payload field and every signed-topic example in the
+  generated page data (sandbox scenes aside, A30). A repo lint holds the docs'
+  WAP names to the firmware's recipe. Page data, docs, three page scripts and
+  the Lab CI's step order; host-tested, no firmware changed. Reaches users
+  with the next Lab and Flasher release.
+
 ### The canary and canary-wap meshes no longer learn a member's radio address from a frame, canary-wap's pairing waits for both owners, the Canary and the Canary WAP give every event one id space, the Lab's WAP page shows real fingerprints, and the display's onboarding bird sits at its seat and its scene lines fit on small glass (#1761)
 
 - **The canary mesh no longer learns a peer's radio address from a frame
