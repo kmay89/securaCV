@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### The canary mesh no longer learns a peer's radio address from a frame (#1761)
+### The canary and canary-wap meshes no longer learn a member's radio address from a frame, and canary-wap's pairing waits for both owners (#1761)
 
 - **The canary mesh no longer learns a peer's radio address from a frame
   (sweep F49 part 3, withdrawn).** #1756 let a verified opera frame from an
@@ -25,9 +25,32 @@
   marked partial. A re-pair cannot start with eight members bound. During
   any pairing, an outsider can steer where a member's rekey replies go
   (F70). How a changed address could be learned safely is a decision (F68).
-  canary-wap still re-binds on any verified frame (open). **Host-tested
-  only**: the mesh exists only in the `[env:full]` developer build, the
-  compile is CI's, and it is not bench-tested.
+  **Host-tested only**: the mesh exists only in the `[env:full]` developer
+  build, the compile is CI's, and it is not bench-tested.
+- **canary-wap no longer moves a mesh member to whatever address its frame
+  came from, and its pairing waits for both owners (spec §8.3; sweep F49,
+  F71-F76 filed).** canary-wap re-pointed a member's radio address at the
+  source of any frame that passed its signature and counter checks, and
+  those checks do not cover an address. So anyone in range who recorded a
+  member's frame that the receiver had not heard yet could re-send it from
+  their own radio and take that member's traffic: heartbeats, alerts and
+  Beacon events. Because canary-wap counts per destination, a frame the
+  member sent to *another* member worked too, and it silenced the member's
+  own frames for a while. A frame from any address but the member's own now
+  drops before verification. A member whose radio address really changed
+  comes back by re-pairing with each member, and that now works. A re-pair
+  used to add a duplicate entry that nothing read, and a duplicate an older
+  version saved is folded into one at startup. Since a pairing now moves an
+  address, the pairing itself was tightened. A joining canary-wap used to
+  finish a pairing before its owner confirmed the code. A canary-wap that
+  had just added a member kept that pairing's keys for two minutes, long
+  enough for a nearby radio to get the opera's secret. Both now follow the
+  PlatformIO Canary's pairing steps. A move is logged, because a relayed
+  pairing with matching codes can still claim a member's key. A new host
+  harness runs the real `mesh_network.cpp` (`test_mesh_address_wap`), and 15
+  of its 19 tests fail on the old code. **Host-tested only**: the Arduino
+  compile is CI's, and the canary-wap mesh (in the default build, active
+  once an owner forms an opera) has not run on two radios.
 
 ### Home Assistant verifies a Canary WAP's signed publishes and the WAP now sends them in lowercase, Canary Sense and Sentinel show their full key, a Canary Display files a WAP's beacons on its own row and fits its join hints on narrow glass, the WAP's Bluetooth Device Info keeps its id, and the Quiet Hours wheels center (#1727)
 

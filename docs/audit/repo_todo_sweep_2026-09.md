@@ -1268,10 +1268,8 @@ so — see D2 below.)
   - `test_bound_peer_new_address_is_dropped_not_learned` (#1756's test,
     rewritten)
   - `test_repair_moves_a_trusted_peers_address`
-  Spec §8.3 now says a verified frame MUST NOT bind an address. canary-wap
-  still re-points a member's MAC on any verified frame
-  (`handle_received_message`); that is not probed and stays open. Its
-  comment now says it does not conform. How a changed MAC could be learned
+  Spec §8.3 now says a verified frame MUST NOT bind an address. How a
+  changed MAC could be learned
   safely is F68.
   The review of the withdrawal found pre-existing limits, and they are
   documented here, not fixed:
@@ -1282,6 +1280,64 @@ so — see D2 below.)
     partner's, with no spoofing (F70).
   Spec §11.1 items 4 and 5 are now marked partial. Host-tested only; not
   bench-verified (U1).
+  canary-wap's half (#1761). canary-wap's `handle_received_message`
+  re-pointed a member's `mac_addr`, and its ESP-NOW registration, at the
+  source of any frame that passed `opera_id`, signature and its per-peer
+  counter. A host probe ran the real `mesh_network.cpp` on new host stubs
+  (`tests_host/stubs/mesh_net`, `mesh_net_sim.h`: several simulated devices,
+  frames carried as bytes). It showed:
+  - a frame B sent A that A missed, re-sent from an outsider's own address,
+    moved B to the outsider. A dropped B's address from its ESP-NOW list and
+    sent its frames for B there until B's next frame (its 30 s heartbeat)
+    arrived;
+  - canary-wap counts per destination and the envelope names none. So a
+    frame B sent C did the same whenever B's counter for C ran ahead of A's
+    last-seen for B. A also kept that counter, so B's own frames dropped as
+    replays and B stayed bound to the outsider until its counter for A
+    passed it;
+  - after a power cut, a frame A heard since its last 5-minute counter save
+    did the same;
+  - from C's copied address, B's next real frame deleted C's ESP-NOW
+    registration, so A could no longer reach C.
+  Now a frame whose source is not the signer's own bound address drops
+  before `verify_signature`. It spends no counter, reaches no handler and
+  counts in `auth_failures`. No signed frame writes an address. That is
+  stricter than the PIO tree (F70).
+  The re-pair path could not re-bind either: `add_peer` appended a second
+  entry for a key it already held, which no lookup reached, and a full opera
+  refused it. It now re-binds the existing entry:
+  - the new address is registered first;
+  - an address another member holds is refused;
+  - counters, name and state are kept;
+  - the move is logged as a health WARNING.
+  A changed address needs a re-pair with each member that holds it.
+  canary-wap keeps its key in NVS, so a swapped module joins as a new
+  member; an NVS image moved to another board, or a relay (F69), reaches the
+  re-bind. A full canary-wap opera (16) still takes a re-pair (host-tested
+  through `add_peer`, not a full pairing). A duplicate entry the old
+  `add_peer` saved is folded into one at boot. It takes the later pairing's
+  address unless another member holds it, and the fold is logged.
+  Since a pairing now binds addresses, the review ran the pairing handlers
+  the same way and found two paths that needed no owner:
+  - a joiner took COMPLETE before its owner confirmed. Whoever answered its
+    DISCOVER first replaced its opera, or, with the opera_secret and a
+    member's public key, re-bound that member;
+  - an initiator kept a finished pairing's keys until the 2-minute timeout,
+    so a radio that overheard its OFFER got the opera_secret sealed to it
+    (pre-existing).
+  Both are closed as on the PIO state machine. The joiner takes the first
+  OFFER, and a COMPLETE only after its owner confirmed. The initiator takes
+  one ACCEPT, from where its OFFER went, and wipes the pairing after
+  COMPLETE.
+  Pinned by `test_mesh_address_wap` (19 tests against the real file; 15 fail
+  on 89a4c56) and by `test_mesh_rx_gates_wap`'s
+  `no_frame_moves_a_members_address` (fails on 89a4c56). Spec §8.3, §4.5's
+  table, §3.3, §11.1 item 5, THREAT_MODEL and LESSONS_LEARNED are updated.
+  Still open on canary-wap: a radio copying a member's own address can
+  deliver that member's unheard frames, including ones sent to other
+  members. They are dispatched and silence the member until its counter
+  catches up (host-probed). Host-tested only; the Arduino compile is CI's;
+  not bench-verified (U1).
   All 13 mesh C++
   suites + the webui node tests + the full firmware host suite pass; canary
   `[env:full]` compiles. **Part 4 (PIO residual splits) is left open — it
@@ -1294,8 +1350,7 @@ so — see D2 below.)
   counter serves every destination, so a replayed frame the receiver had
   never heard re-pointed a member at an outsider's radio. Today a changed
   MAC (a swapped module, a new locally-administered address) means a
-  re-pair on the PIO tree, while canary-wap still re-binds on any verified
-  frame. Options:
+  re-pair on the PIO tree, and on canary-wap too since #1761. Options:
   (a) **A signed self-asserted MAC.** The sender puts its own radio
   address in the signed bytes (a payload field or a header field under the
   shared `mesh_wire.h` registry). A receiver binds an address only when the
@@ -1317,8 +1372,9 @@ so — see D2 below.)
   an already-trusted member at its own radio and persist it, or get its
   own key trusted (F69). On the PIO tree a re-pair also cannot start with
   eight members bound. Choosing (c) means F69 lands first.
-  Also decide canary-wap's side: drop its verified-frame re-bind to meet
-  spec §8.3, or carry whichever option is chosen. Found by the adversarial
+  canary-wap's side: it dropped its verified-frame re-bind (#1761), and it
+  re-pairs like the PIO tree, one member at a time. Whichever option is
+  chosen is carried to both trees. Found by the adversarial
   review of #1756.
 
 - [ ] **F69 [code+decision] Pairing does not authenticate the
@@ -1328,8 +1384,15 @@ so — see D2 below.)
     ignores the ACCEPT's `device_pubkey`.
   - PIO joiner: takes the OFFER's `device_pubkey`.
   - The long-term key signs nothing in the exchange.
-  - canary-wap derives its code the same way (`mesh_pair_crypto`; not
-    probed).
+  - canary-wap derives its code the same way (`mesh_pair_crypto`). Since
+    #1761 its re-pair re-binds a member it already holds. So a relayed
+    pairing whose codes match, claiming a member's key, re-binds that member
+    to the relay's radio there too, until another re-pair (host-probed);
+    before, it added an unreachable duplicate entry. On canary-wap the relay
+    is the main way to reach that re-bind: its key lives in NVS, so a
+    swapped module joins as a new member. The move is logged as a health
+    WARNING. canary-wap's joiner needed no relay at all before #1761, since
+    it took COMPLETE before its owner confirmed; #1761 closed that.
   The review of #1761 host-probed the PIO tree. An outsider relays an
   owner-run pairing (A and a new device D) from its own address, no
   spoofing, without touching the ephemeral keys:
@@ -1375,6 +1438,93 @@ so — see D2 below.)
   This churns tests that inject from hand-added addresses. Documented in
   THREAT_MODEL "Opera mesh", spec §8.3 (peer fields) and the PeerLink doc
   in mesh_session.h.
+  canary-wap does not have this: since #1761 it accepts a member's frame
+  only from that member's own bound address and records nothing from a
+  frame's source.
+- [ ] **F71 [code] canary-wap's mesh send counters restart at 1 on every
+  boot.** `load_peers` sets each member's `msg_counter_tx` to 1, while
+  receivers keep and persist their last-seen. So after a canary-wap reboots,
+  every member drops its frames as replays until its counter for that member
+  climbs back past what the member last saw: one heartbeat per 30 s, for as
+  many frames as it sent that member before. Host-probed with the #1761
+  harness: after five heard heartbeats and a reboot, the sender's frames
+  1..5 dropped and 6 was heard. The PIO tree fixed the same thing in F33
+  part 3 (`mesh_out_ctr` reserve-ahead). canary-wap needs it per member, or
+  one counter (see the next item). It also decides how soon a member is
+  heard after a re-pair, if the member rebooted to change its address
+  (`test_mesh_address_wap`'s re-pair test pins that frames 1..3 drop). Spec
+  §3.3 now states it. Found by the canary-wap half of the F49 part 3
+  withdrawal (#1761).
+- [ ] **F72 [decision] canary-wap counts per destination, but its envelope
+  names no destination.** A receiver judges a frame its member sent to
+  another member against its own last-seen for that member. Such a frame is
+  fresh whenever the member's counter for the other member ran ahead. That
+  happens, for example, while the receiver sits at `PEER_UNKNOWN` in the
+  member's table, which broadcasts skip; a fresh pairing leaves the partner
+  there (host-probed with the #1761 harness). Since #1761 only a radio
+  copying the member's own address can deliver one (ESP-NOW does not
+  authenticate a source). It is dispatched and pushes the receiver's
+  last-seen ahead, which silences the member until its counter catches up
+  (host-probed). Options:
+  - put the destination fingerprint in the signed bytes (a wire change under
+    spec §4.5's registry, with F48);
+  - use one outbound counter per sender, as on the PIO tree. That makes any
+    unheard frame fresh at every member instead.
+  See THREAT_MODEL "Still open on canary-wap". Found by the canary-wap half
+  of the F49 part 3 withdrawal (#1761).
+- [ ] **F73 [code] canary-wap's pairing reports success when `add_peer`
+  refused the partner.** `handle_pair_confirm` (initiator) and
+  `handle_pair_complete` (joiner) ignore `add_peer`'s result. In each of
+  these cases the handler still persists the list, sets `MESH_ACTIVE` and
+  fires the pairing callback with success:
+  - a deny-listed key;
+  - a full opera (16) for a new member;
+  - since #1761, a re-pair onto an address another member holds, or one
+    ESP-NOW cannot register (its list holds 20).
+  It should return the failure to the owner instead. Found while fixing the
+  re-pair (#1761), from code.
+- [ ] **F74 [code] canary-wap's mesh does not keep the ESP-NOW broadcast
+  peer registered.** `send_pair_frame(BROADCAST_ADDR, MSG_PAIR_DISCOVER,
+  ...)` relies on another module's registration. `csi_probe::init` adds it
+  once; the WAP brings the CSI active probe up whenever csi_hal runs.
+  `chirp_channel`'s and `beacon_channel`'s broadcasts add it before each
+  send. `mesh_network`'s channel-change listener deletes it, and only chirp
+  and beacon add it back. `esp_now_send` refuses an address that is not in
+  the peer list (ESP_ERR_ESPNOW_NOT_FOUND). So after a channel change, with
+  Chirp off (its default) and no Beacon broadcast since, neither a joiner's
+  DISCOVER nor the CSI probe's own broadcast is sent. Whether the first
+  boot's channel poll lands before or after `csi_probe::init` is a timing
+  question, not established. In the #1761 host sim the first `poll_radio()`
+  dropped the registration this way. Found from code and the sim; not
+  bench-verified. Fix: register the broadcast peer where the DISCOVER is
+  sent, and have the listener re-add it instead of only deleting it.
+- [ ] **F75 [code] A canary-wap pairing completes only if the initiator's
+  owner confirms the code first.** `handle_pair_confirm` acts on the
+  joiner's CONFIRM only when this device's own `code_confirmed` is already
+  set, ignores it otherwise, and neither side sends its CONFIRM twice. So if
+  the joiner's owner confirms first, the initiator never sends COMPLETE, and
+  both sides time out after 2 minutes. Spec §5.2 asks the owner to confirm
+  on both devices, in no order. Host-probed with the #1761 harness: the same
+  on 89a4c56 and after #1761. The PlatformIO tree's state machine also drops
+  a peer's CONFIRM that arrives before its owner's (`either_handle_confirm`
+  acts only in AWAITING_CONFIRM_PEER); whether it re-sends was not checked.
+  Fix: keep an early CONFIRM and act on it at the owner's confirm, or
+  re-send CONFIRM until COMPLETE arrives. Found by the canary-wap half of
+  the F49 part 3 withdrawal (#1761).
+- [ ] **F76 [code] canary-wap's opera heartbeats only after it hears a
+  member, and two cases leave it nothing to hear:
+  - update() sends a heartbeat only in MESH_ACTIVE, and `broadcast_message`
+    skips members below PEER_CONNECTED;
+  - after a fresh WAP-to-WAP pairing, each side holds the other at
+    PEER_UNKNOWN.** Host-probed with the #1761 harness: neither side sent
+    the other a frame in 10 simulated minutes, on 89a4c56 and after #1761;
+  - after a reboot of every member, init() leaves the opera at
+    MESH_CONNECTING, and ACTIVE needs a member heard. Host-probed by the
+    #1761 review: three members booted from NVS stayed CONNECTING and sent
+    nothing for 2 minutes.
+  A Beacon event, a channel lock or a hub election (sent to OFFLINE members
+  too) would start it on a device. Not bench-verified. Found by the
+  canary-wap half of the F49 part 3 withdrawal (#1761).
 - [x] **F50 [code] The display's other join hints still cut on narrow glass.**
   (#1755, #1727) Found by F45 (#1718). The Fail-stage hints from `join_failure_hint` measure
   175-219 px at 12 px ("your router may be out of addresses" is 219), so
