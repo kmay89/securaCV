@@ -18,13 +18,17 @@
  *   - csi_integration.cpp's glue: the commit hook (privacy gate, then
  *     csi_event_egress::on_committed), the id floor's NVS persistence
  *     (csi_event_on_id_advance) and its boot restore
- *     (apply_event_id_floor_from_nvs, then csi_event_egress::begin), and
- *     csi_integration::loop's flush_dismissals() before csi_mqtt::loop's
- *     pump on each main-loop pass;
+ *     (apply_event_id_floor_from_nvs, then csi_event_egress::begin, both
+ *     before the modules register), and csi_integration::loop's
+ *     flush_dismissals() before csi_mqtt::loop's pump on each main-loop
+ *     pass;
+ *   - csi_mqtt's tamper bridge: the real csi_event_wire body builder decides
+ *     whether a row has one;
  *   - the esp_mqtt task: connect() flips the link up.
  * firmware/scripts/check_wap_event_egress.py holds the firmware's hook and
  * call sites to that glue (the hook only enqueues, after the privacy gate;
- * begin once, after the floor restore; the pump once, on the loop task).
+ * begin once, after the floor restore and before the modules register; the
+ * pump once, on the loop task).
  *
  * The three F78 properties, each failing on the code before the fix (built
  * with -DEGRESS_PRE_FIX against the sources the fix replaced):
@@ -47,6 +51,19 @@
  * review fixes replaced, the late-card, closed-card, broker-change, ambient
  * and dismissal-wait scenarios fail.
  *
+ * Both proofs build this file, with this tests_host's Makefile and stubs,
+ * against older sketch sources. From the repo root, with <rev> the
+ * extraction commit (13c862c: the pre-fix logic moved unchanged into
+ * csi_event_egress.cpp, except that it now sends the tamper bridge when
+ * the events body does not build) and <flag> EGRESS_PRE_FIX, or the first
+ * fix (3fc1f93) and EGRESS_BEFORE_REVIEW:
+ *   d=$(mktemp -d); git archive <rev> firmware | tar -x -C "$d"
+ *   rm -rf "$d/firmware/projects/canary-wap/tests_host"
+ *   git archive HEAD firmware/projects/canary-wap/tests_host | tar -x -C "$d"
+ *   make -C "$d/firmware/projects/canary-wap/tests_host" test_wap_event_egress \
+ *     CXXFLAGS="-std=c++17 -O2 -Wall -Wextra -Wpedantic -D<flag>"
+ *   "$d/firmware/projects/canary-wap/tests_host/test_wap_event_egress"
+ *
  * What it does not pin: the real SD driver, esp_mqtt, FreeRTOS scheduling
  * (the host build compiles the chokepoint's locks out; the interleaving is
  * modeled by committing from inside a publish). Bench territory. */
@@ -55,6 +72,7 @@
 #include "csi_event_id_floor.h"
 #include "csi_event_log.h"
 #include "csi_event_log_line.h"
+#include "csi_event_wire.h"
 #include "csi_integration.h"
 #include "csi_module.h"
 #include "csi_mqtt.h"
@@ -84,6 +102,9 @@ namespace csi_event_egress { constexpr uint32_t kCardWaitMs = 45000; }
 bool sd_mount_in_flight() { return false; }
 
 static int g_fail = 0;
+/* Ids handed over with NVS not past them, over every scenario (F47); main()
+ * checks it is zero at the end. */
+static int g_ceiling_violations_total = 0;
 #define CHECK(cond, msg) do { \
   if (!(cond)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, msg); g_fail++; } \
   else { printf("ok   %s\n", msg); } } while (0)
@@ -150,7 +171,10 @@ EventSend publish_event_row(const csi_event_record_t& rec, uint16_t, bool replay
   if (W.fail_next_publishes > 0) { W.fail_next_publishes--; return EventSend::kNotNow; }
   /* NVS must already hold a delivery ceiling above the id (F47), unless
    * NVS refuses writes. */
-  if (!host_nvs().fail_puts && nvs_get(NVS_KEY_DELIVERED) <= rec.event_id) W.ceiling_violations++;
+  if (!host_nvs().fail_puts && nvs_get(NVS_KEY_DELIVERED) <= rec.event_id) {
+    W.ceiling_violations++;
+    g_ceiling_violations_total++;
+  }
   W.wire.push_back(rec.event_id);
   W.ha.receive(rec.event_id, replay);
   if (W.after_publish) {
@@ -160,8 +184,13 @@ EventSend publish_event_row(const csi_event_record_t& rec, uint16_t, bool replay
   }
   return EventSend::kSent;
 }
-bool publish_tamper_bridge(const char* module_id, const char*, const csi_event_values_t*) {
-  if (strcmp(module_id, "system.integrity") != 0) return false;
+bool publish_tamper_bridge(const char* module_id, const char* type_name,
+                           const csi_event_values_t* values) {
+  /* csi_mqtt.cpp: no bridge body, no publish. */
+  char body[128];
+  if (!csi_event_wire::build_tamper_bridge_body(body, sizeof(body), module_id, type_name, values)) {
+    return false;
+  }
   W.tamper_bridges++;
   return W.connected;
 }
@@ -219,8 +248,9 @@ static const csi_module_t MODULE = {
   "test.egress", CSI_PRIVACY_P0, EVENTS, sizeof(EVENTS) / sizeof(EVENTS[0]),
   noop_init, noop_tick, nullptr, nullptr,
 };
+/* As tamper_events_module.cpp declares it: system.integrity's "tamper". */
 static const csi_event_decl_t TAMPER_EVENTS[] = {
-  { "integrity_event", CSI_FIELD_STATE_NAME | CSI_FIELD_TIME_BUCKET, CSI_PRIVACY_P0, 0 },
+  { "tamper", CSI_FIELD_STATE_NAME | CSI_FIELD_TIME_BUCKET, CSI_PRIVACY_P0, 0 },
 };
 static const csi_module_t TAMPER_MODULE = {
   "system.integrity", CSI_PRIVACY_P0, TAMPER_EVENTS, 1, noop_init, noop_tick, nullptr, nullptr,
@@ -354,6 +384,8 @@ static void test_reconnect_window_direct_row() {
   CHECK(exactly(W.ha.accepted, ids), "HA has every row once, in id order");
   CHECK(W.ha.refused.empty(), "and refused none");
   CHECK(W.ceiling_violations == 0, "every id was under the NVS ceiling before it went");
+  CHECK(!W.ha.replay.empty() && W.ha.replay.back() == false,
+        "the window row, committed with the link up, is news: replay:false");
 }
 
 static void test_reconnect_window_closed_bundle() {
@@ -525,7 +557,7 @@ static void test_tamper_bridge_does_not_wait() {
   fresh_device();
   for (int i = 0; i < 4; ++i) { emit_ping(); loop_pass(); }
   connect();
-  const uint32_t t = commit_closed_bundle("system.integrity", "integrity_event", "sd_removed");
+  const uint32_t t = commit_closed_bundle("system.integrity", "tamper", "sd_removed");
   loop_pass();
   CHECK(W.tamper_bridges == 1, "the bridge went on the first pass");
   CHECK(!has(W.ha.accepted, t), "its events row waits behind the backlog");
@@ -546,6 +578,19 @@ static void test_the_hook_never_blocks() {
   drain();
   CHECK(exactly(W.ha.accepted, std::vector<uint32_t>(ids.begin(), ids.begin() + 16)),
         "the queued 16 go out in order");
+}
+
+static void test_a_burst_drains_in_two_passes() {
+  printf("-- a full queue's burst (a bundler tick closing every slot, a stall) drains in two passes\n");
+  fresh_device();
+  connect();
+  loop_pass();
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 16; ++i) ids.push_back(emit_ping());   // the loop task stalls
+  loop_pass();
+  CHECK(W.ha.accepted.size() == 8, "one pass takes eight rows off the queue (kPumpBudget)");
+  loop_pass();
+  CHECK(exactly(W.ha.accepted, ids), "the next takes the rest, in order");
 }
 
 static void test_ram_row_goes_before_a_newer_card_row() {
@@ -701,11 +746,35 @@ static void test_forged_card_line_is_never_sent() {
   boot();   // the next id is now above every id the card holds
   const uint32_t next = csi_event_get_next_event_id();
   SD.files["/EVENTS/today.ndjson"] += card_line(0xFFFFFFF0u) + card_line(next);
+  /* Just below the allocator's next id: a line this device could have
+   * written, so it is sent like any other. */
+  SD.files["/EVENTS/today.ndjson"] += card_line(next - 1);
   csi_event_log::test_rearm_load();   // the card is opened again on this boot
   connect();
   drain();
-  CHECK(exactly(W.ha.accepted, ids), "the real rows go out; the forged ids do not");
+  ids.push_back(next - 1);
+  CHECK(exactly(W.ha.accepted, ids),
+        "the real rows and the line below the allocator's next id go out; the forged ids do not");
   CHECK(csi_event_egress::watermark() < next, "and the watermark never takes them");
+  CHECK(csi_event_get_next_event_id() == next, "and the walk allocated no id");
+}
+
+static void test_upgrade_floor_without_a_ceiling() {
+  printf("-- an upgrade's first boot (an id floor in NVS, no delivery ceiling): the card's older rows count as delivered\n");
+  fresh_device();
+  const uint32_t floor = csi_event_id_floor::kIdSpaceBase + 0x10000u;
+  /* An earlier image persisted the floor and may have published the rows
+   * below it; it wrote no ceiling. */
+  host_nvs().u32.clear();
+  host_nvs().u32["csi/ev.next"] = floor;
+  SD.files["/EVENTS/today.ndjson"] = card_line(floor - 0x200u) + card_line(floor - 0x100u);
+  boot();
+  connect();
+  drain();
+  CHECK(W.wire.empty(), "rows below the restored floor are not replayed into HA's gate");
+  const uint32_t d = emit_ping();
+  drain(4);
+  CHECK(d >= floor && exactly(W.ha.accepted, {d}), "and the boot's first row goes out live");
 }
 
 static void test_dismissal_written_before_its_original() {
@@ -1112,6 +1181,7 @@ int main() {
   test_bundles_and_card_rows_interleave_in_order();
   test_tamper_bridge_does_not_wait();
   test_the_hook_never_blocks();
+  test_a_burst_drains_in_two_passes();
   test_ram_row_goes_before_a_newer_card_row();
   test_held_row_does_not_raise_the_ceiling_past_the_card();
   test_held_row_with_the_link_up_skips_at_most_a_stride();
@@ -1121,6 +1191,7 @@ int main() {
   test_failed_append_waits_behind_the_backlog();
   test_unconfigured_broker_drops_the_backlog();
   test_forged_card_line_is_never_sent();
+  test_upgrade_floor_without_a_ceiling();
   test_dismissal_written_before_its_original();
   test_dismissed_inside_the_hook_is_logged_as_the_original();
   test_nvs_failure_still_delivers();
@@ -1141,6 +1212,9 @@ int main() {
   test_idle_passes_read_nothing();
   test_broken_rewrite_closes_the_log();
 #endif
+
+  CHECK(g_ceiling_violations_total == 0,
+        "in every scenario, each id was under the NVS ceiling before it went (F47)");
 
   if (g_fail == 0) {
     printf("ALL wap event egress tests PASSED\n");
