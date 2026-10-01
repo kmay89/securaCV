@@ -1078,16 +1078,27 @@ void test_two_active_members_that_never_heard_each_other_do() {
   std::printf("PASS two_active_members_that_never_heard_each_other_do\n");
 }
 
+// An opera configured with no members, as a boot leaves one (init(): a
+// configured opera is MESH_CONNECTING): nobody to tell.
+void opera_of_one(Device& d) {
+  fresh_device(d);
+  become(d);
+  host_sim::fill_random(mn::g_opera_config.opera_secret, mn::OPERA_SECRET_SIZE);
+  mn::compute_opera_id(mn::g_opera_config.opera_secret, mn::g_opera_config.opera_id);
+  mn::g_opera_config.configured = true;
+  mn::g_opera_config.enabled = true;
+  strcpy(mn::g_opera_config.opera_name, "alone");
+  CHECK(mn::persist_opera_config());
+  boot(d);
+  CHECK(mn::g_mesh_state == mn::MESH_CONNECTING && mn::g_peer_count == 0);
+}
+
 void test_the_announce_keeps_the_heartbeat_cadence() {
   // Bounded: one frame per member per HEARTBEAT_INTERVAL_MS, whether the
   // opera is MESH_CONNECTING or MESH_ACTIVE, and whether the member has
   // been heard or not. 600 s is 20 intervals; the first goes at once.
   fresh_opera({&A, &B, &C});
-  fresh_device(K);                                 // an opera of one: nobody to tell
-  become(K);
-  CHECK(mn::start_pairing_initiator(nullptr));
-  mn::cancel_pairing();
-  CHECK(mn::g_peer_count == 0);
+  opera_of_one(K);
   const size_t k_sent = K.espnow.sent.size();
   const Traffic t = run({&A, &B, &C, &K}, 600000, 1000);
   for (Device* d : {&A, &B, &C}) {
@@ -1097,7 +1108,36 @@ void test_the_announce_keeps_the_heartbeat_cadence() {
     }
   }
   CHECK(K.espnow.sent.size() == k_sent);
+  become(K);
+  CHECK(mn::g_mesh_state == mn::MESH_CONNECTING);   // it ran the announce, to no one
   std::printf("PASS the_announce_keeps_the_heartbeat_cadence\n");
+}
+
+// Signed frames `from` sent to `to` (pairing frames are shorter).
+size_t signed_frames(const Device& from, const Device& to) {
+  size_t n = 0;
+  for (const Frame& f : sent_to(from, to.mac)) n += f.size() >= 102 ? 1 : 0;
+  return n;
+}
+
+void test_an_opera_nobody_answers_keeps_the_heartbeat_cadence() {
+  // The announce while MESH_CONNECTING is the same 30 s heartbeat, however
+  // long nobody answers: A runs alone for 10 minutes (B and C are off),
+  // stays MESH_CONNECTING, and sends each of them 20 or 21 frames.
+  fresh_opera({&A, &B, &C});
+  A.espnow.sent.clear();
+  for (uint32_t t = 0; t < 600000; t += 1000) {
+    host_sim::now_ms += 1000;
+    become(A);
+    mn::update();
+  }
+  become(A);
+  CHECK(mn::g_mesh_state == mn::MESH_CONNECTING);
+  for (const Device* o : {&B, &C}) {
+    const size_t n = signed_frames(A, *o);
+    CHECK(n >= 20 && n <= 21);
+  }
+  std::printf("PASS an_opera_nobody_answers_keeps_the_heartbeat_cadence\n");
 }
 
 struct Test {
@@ -1142,6 +1182,8 @@ const Test kTests[] = {
     {"an_opera_whose_members_all_rebooted_comes_back", test_an_opera_whose_members_all_rebooted_comes_back},
     {"two_active_members_that_never_heard_each_other_do", test_two_active_members_that_never_heard_each_other_do},
     {"the_announce_keeps_the_heartbeat_cadence", test_the_announce_keeps_the_heartbeat_cadence},
+    {"an_opera_nobody_answers_keeps_the_heartbeat_cadence",
+     test_an_opera_nobody_answers_keeps_the_heartbeat_cadence},
 };
 
 }  // namespace liveness
