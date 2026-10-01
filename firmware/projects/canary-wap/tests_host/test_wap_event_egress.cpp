@@ -46,7 +46,8 @@
  * The rest pin the planner's rules on this device and the RAM hold's: no
  * broker or a changed broker means not owed, a reboot mid-backlog
  * republishes nothing and skips at most a stride, a dismissal line is never
- * replayed, a send failure keeps its row (on the card and in RAM), rows the
+ * replayed, a send failure keeps its row (on the card and in RAM), a row
+ * waiting in RAM writes no ceiling past the card rows after it, rows the
  * card does not keep wait in RAM in order (also while the card is not open
  * yet or briefly closed, for at most kCardWaitMs), ambient rows are never
  * held, the hook never blocks, and the card adapter (torn tails, short
@@ -752,6 +753,50 @@ static void test_failed_append_in_an_outage_keeps_the_backlog_owed() {
         "a failed append that opens an outage does not cover the card rows after it");
 }
 
+/* Rows wait in RAM with the link up when the flush's publish fails. A row
+ * routed then (a closed bundle, or a row whose card append fails) waits
+ * behind them and must not write its own ceiling: the flush already wrote
+ * one for the oldest RAM row, and a ceiling for an id more than a stride
+ * past it would cover the card rows that follow. The gap is natural: a
+ * card that mounts late, and ambient spikes during the outage, which take
+ * ids but are never held. */
+static void test_row_behind_a_failed_flush_writes_no_ceiling() {
+  printf("-- a row behind a RAM row whose flush failed, a stride of ids later, writes no ceiling\n");
+  for (int bundle = 0; bundle < 2; ++bundle) {
+    fresh_device();
+    SD.present = false;            // power cycle; the card has not mounted yet
+    boot();
+    const uint32_t h = commit_closed_bundle(); loop_pass();   // link down: RAM
+    int ambient = 0;
+    for (int i = 0; i < (int)csi_event_id_floor::kStride - 1; ++i) {
+      if (emit_ambient()) ambient++;                          // never held: dropped
+      for (int k = 0; k < 20; ++k) loop_pass();               // one spike per 1 s cooldown
+    }
+    SD.present = true;             // the card mounts: an empty log, nothing waiting
+    loop_pass();
+    connect();
+    if (!bundle) SD.fail_writes = true;
+    const uint32_t r = bundle ? commit_closed_bundle() : emit_ping();
+    W.fail_next_publishes = 1;     // the flush's publish of the RAM row fails
+    loop_pass();
+    SD.fail_writes = false;
+    CHECK(ambient == (int)csi_event_id_floor::kStride - 1 &&
+          r >= h + csi_event_id_floor::kStride && W.ha.accepted.empty(),
+          "a stride of ids past the RAM row, and nothing has gone out");
+    CHECK(nvs_get(csi_mqtt::NVS_KEY_DELIVERED) <= r,
+          bundle ? "the bundle waiting behind it wrote no ceiling"
+                 : "the failed-append row waiting behind it wrote no ceiling");
+    W.connected = false;           // the link drops again
+    std::vector<uint32_t> ids;
+    for (int i = 0; i < 3; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+    boot();                        // power cycle: the RAM rows are gone
+    connect();
+    drain();
+    CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+          "the card rows after them are still owed after the reboot, and arrive");
+  }
+}
+
 static void test_unconfigured_broker_drops_the_backlog() {
   printf("-- a broker unconfigured during an outage: the backlog is owed to nobody\n");
   fresh_device();
@@ -1265,6 +1310,7 @@ int main() {
   test_dismissal_line_ahead_of_unsent_rows();
   test_failed_append_waits_behind_the_backlog();
   test_failed_append_in_an_outage_keeps_the_backlog_owed();
+  test_row_behind_a_failed_flush_writes_no_ceiling();
   test_unconfigured_broker_drops_the_backlog();
   test_forged_card_line_is_never_sent();
   test_upgrade_floor_without_a_ceiling();
