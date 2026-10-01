@@ -101,7 +101,7 @@ transition) and the `setup()`/loop wiring per the recipe.
    **If the glass stays dark, the board is not bricked and you are not
    blind:** the firmware keeps running — the USB serial console carries
    the full boot scene + `MIC1`/`DBG1` grammars, and once WiFi is up the
-   device serves its own live web mirror (`http://<device-id>.local`) —
+   device serves its own live web mirror (`http://<device-id>-<pseudonym>.local`) —
    a display with broken glass still mirrors, by design. Dark glass =
    the ST7701 init follow-up, worked with the mirror as your screen.
 2. Open **debug mode** (Settings → modes → debug) → the I²C census page.

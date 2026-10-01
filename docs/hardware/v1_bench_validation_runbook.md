@@ -68,7 +68,7 @@ verified" badge* on hardware, plus reboot/backfill and tamper-negative behavior.
 2. Join from a phone; the captive portal (`setup_wizard.h`) should redirect any
    hostname to `192.168.4.1`.
 3. Enter home-WiFi credentials (or use BLE provisioning). Record the `device_id`
-   (e.g. `canary-s3-AABB`) and the pubkey fingerprint from the device's `/enroll`
+   (e.g. `canary-s3-4dC2`) and the pubkey fingerprint from the device's `/enroll`
    page.
 
 **Pass:** device joins WiFi STA; dashboard reachable at `canary-<name>.local`;

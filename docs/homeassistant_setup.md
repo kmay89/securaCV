@@ -157,11 +157,12 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
    unique hostname or `http://192.168.4.1` in your browser. On a Canary WAP
    the hostname is `http://canary-<name>.local` once you have named it, and
    until then `http://canary-` plus four lowercase hex digits, the first two
-   bytes of its key fingerprint (e.g. `http://canary-7916.local`); its serial
-   log's `[PROV] Public key fingerprint:` line starts with the same four
-   digits, in capitals. If you only have one Canary, plain `http://canary.local`
-   may also resolve, but each Canary always advertises its unique hostname
-   so multiple devices on the same network don't collide. `/setup` on any of
+   bytes of its key fingerprint (e.g. `http://canary-7916.local`); at the
+   default log level its serial log names it on the
+   `[INFO/NETWORK] mDNS started | canary-7916` line. If you only have one
+   Canary, plain `http://canary.local` may also resolve, but each Canary
+   always advertises its unique hostname so multiple devices on the same
+   network don't collide. `/setup` on any of
    those addresses reopens the wizard. On a `firmware/canary` unit that is
    already set up, a page loaded over your home WiFi arrives without its API
    token, so its saves are refused. The page carries the token only for the

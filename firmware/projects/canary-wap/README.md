@@ -101,9 +101,9 @@ make monitor
    - **http://canary-\<name\>.local** — each device's unique mDNS hostname
      once you name it (e.g. `canary-kitchen.local`). Until then it is
      `canary-` plus four lowercase hex digits, the first two bytes of its key
-     fingerprint (e.g. `canary-7916.local`), not its device id's suffix; the
-     serial log's `[PROV] Public key fingerprint:` line starts with the same
-     four digits, in capitals
+     fingerprint (e.g. `canary-7916.local`), not its device id's suffix; at
+     the default log level the serial log names it on the
+     `[INFO/NETWORK] mDNS started | canary-7916` line
    - **http://192.168.4.1** — numeric fallback that always works
    > When a TLS certificate is available the dashboard is served over
    > **HTTPS (port 443)** and plain-HTTP requests are redirected; without a

@@ -27,8 +27,8 @@ what changes once a second device joins the network.
 | microSD, GPS | Optional |
 
 Each board has a globally-unique hardware identity. The firmware derives a
-stable per-device handle from it (`device_id` = `canary-s3-AABB`, AP SSID
-`SecuraCV-AABB`), so you never have to configure anything to make two devices
+stable per-device handle from it (`device_id` = `canary-s3-4dC2`, AP SSID
+`SecuraCV-4dC2`), so you never have to configure anything to make two devices
 distinct at the hardware level. The four-character suffix is encoded in an
 unambiguous alphabet (no `0/O/o` or `1/I/i/l/L`), so it never contains glyphs
 you might misread. Because the handle is derived from immutable hardware, it is
@@ -57,7 +57,7 @@ On first boot the device starts a WiFi Access Point and a captive portal.
 
 ## Step 2 — Add Canary #1 to your home network
 
-1. On your phone/laptop, join the WiFi network **`SecuraCV-AABB`** (the last 4
+1. On your phone/laptop, join the WiFi network **`SecuraCV-4dC2`** (the last 4
    characters are unique to this board). The AP password is device-unique and
    printed on the provisioning receipt / serial log.
 2. A "sign in to network" page appears. Open **`http://canary.local`** in a real
@@ -74,7 +74,7 @@ After it rejoins, Canary #1 is reachable at:
 
 ## Step 3 — Flash Canary #2 and add it
 
-Repeat Steps 1–2 with the second board. Join its AP (`SecuraCV-CCDD` — a
+Repeat Steps 1–2 with the second board. Join its AP (`SecuraCV-Kx82` — a
 different suffix), open `http://canary.local`, and name it e.g. `livingroom`.
 
 > While you are connected to Canary #2's *own* AP during setup, `canary.local`
@@ -93,7 +93,9 @@ collided on `canary.local` and which one answered was unpredictable. That is
 fixed:
 
 - **Every device** now advertises a **unique** hostname:
-  `canary-<name>.local`, or `canary-<mac-suffix>.local` if unnamed.
+  `canary-<name>.local`, or, if unnamed, `canary-` plus four lowercase hex
+  digits, the first two bytes of its key fingerprint (`canary-<4 hex>.local`,
+  e.g. `canary-7916.local`), never the MAC.
 - **`canary.local`** is claimed as an *additional* catch-all by the **first
   device that grabs it** (first-wins). A second device detects it's already
   taken and does **not** fight for it — it relies on its unique name.

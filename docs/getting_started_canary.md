@@ -69,7 +69,7 @@ That's the entire hardware setup.
 On your phone, open Wi-Fi settings. You'll see a new network named
 something like:
 
-> **SecuraCV-AB7K**
+> **SecuraCV-4dC2**
 
 The four characters at the end are unique to your Canary. Tap the
 network and enter the **AP password** from your card. (The password is
@@ -501,8 +501,10 @@ Home Assistant can discover it):
 2. Tap **Scan**, choose your home SSID, enter the password.
 3. The Canary stays on its own network *and* joins yours (dual-mode).
 
-The dashboard URL becomes `http://canary-<your-id>.local` once it joins
-your home network.
+Once it joins your home network the dashboard is also at
+`http://canary-<name>.local` after you name it, and until then at
+`http://canary-` plus four lowercase hex digits, the first two bytes of its
+key fingerprint (e.g. `http://canary-7916.local`).
 
 **Before you switch over, save your recovery kit.** On the dashboard, tap
 **Settings → Save recovery kit**. It downloads `canary-recovery-kit.json`:
