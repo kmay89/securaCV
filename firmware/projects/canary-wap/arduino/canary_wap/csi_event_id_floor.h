@@ -49,18 +49,19 @@
  *
  * Headroom: 2^30 ids (1,073,741,824) before the 32-bit counter wraps.
  * Every committed row takes one, ambient rows included. The most a device
- * can commit in a day is the sum of three things:
+ * can commit in a day is the sum of two things:
  *   - one uncapped ambient module at one row per CSI window:
  *     wifi.channel_activity has no hourly ceiling and its cooldown goes
  *     down to 1 s (86,400);
  *   - the other 15 modules at the 255/hour override's maximum
  *     (15 x 255 x 24 = 91,800; the two uncapped meta modules emit about
- *     once a day);
- *   - bundles that reopen on a refresh the hourly ceiling refunded: at most
- *     one per bundler slot per CSI_BUNDLER_MAX_GAP_MS (8 x 720 = 5,760).
- * That is 183,960 a day: about 16 years (5,836 days). At the shipped
+ *     once a day). Bundled rows are inside that: every bundle opening
+ *     spends its module's ceiling, a reopen after a quiet gap or a
+ *     10-minute window included (sweep F80; before it a refunded refresh
+ *     could reopen a bundle uncounted, up to 8 x 720 = 5,760 more a day).
+ * That is 178,200 a day: about 16.5 years (6,025 days). At the shipped
  * defaults (a 5 s cooldown; manifest ceilings of at most 60 an hour) it is
- * under 17,280 + 15 x 60 x 24 + 5,760 = 44,640 a day: about 65 years. At
+ * under 17,280 + 15 x 60 x 24 = 38,880 a day: about 75 years. At
  * exhaustion the counter wraps. Ids restart at 1 (0 is never handed out),
  * and each later boot first reissues 0xFFFFFFFF (floor_for saturates).
  * From then on Home Assistant refuses the device's events, and nothing on
