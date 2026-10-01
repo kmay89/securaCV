@@ -1186,7 +1186,7 @@ so — see D2 below.)
   a wire change: `MSG_OPERA_REKEY` names no removed device and has no
   announcement phase. Crypto review and a wire decision first, then code in
   both trees and a cross-tree host test.
-- [ ] **F49 [code] Mesh leftovers from F33.** (1) The canary's health-log
+- [~] **F49 [code] Mesh leftovers from F33.** (1) The canary's health-log
   list passes `millis()` to `formatTimestamp`, the same uptime-as-time-of-day
   rendering F33 part 7 fixed for alerts. (2) The joiner side's
   `CodeReadyCallback` never fires: the code arrives on `SEND_ACCEPT`, and
@@ -1196,6 +1196,30 @@ so — see D2 below.)
   PIO residual splits remain: both initiators already handed out, a mutual
   removal, or a lost ACK. A random-loss probe split 3 of 60 runs at 5%
   frame loss (spec §5.6 states it).
+  *Done (#PENDING), parts 1-3:*
+  (1) `GET /api/logs` now carries `uptime_ms` (handle_logs) and the log list
+  renders each entry's `timestamp_ms` as an age against it (`formatLogAge`,
+  shared with `formatAlertAge`) instead of `new Date(...)` — the made-up
+  time of day is gone. New host test `test_canary_health_logs.test.js`
+  (lifted-and-stubbed, Date poisoned, u32-wrap pinned) in the Makefile and
+  firmware.yml's node step.
+  (2) `dispatch_action` now fires the `CodeReadyCallback` on the joiner's
+  `SEND_ACCEPT` too (its code-derivation beat — there is no separate
+  `NOTIFY_CODE_READY` on that side), with the same code `pairing_confirmation_code()`
+  reports. Pinned by `test_joiner_offer_surfaces_code_with_accept`.
+  (3) A verified opera frame from a trusted peer whose radio MAC CHANGED
+  (reached via the transport's unknown-sender hook, which now routes opera
+  envelopes through the full signature + opera_id + strict-counter verify)
+  re-binds the transport table (`bind_peer_mac`) and fires a new
+  `PeerMacLearnedCallback`; `main.cpp` persists it (`save_peer_mac`) so the
+  next boot binds directly. A never-bound peer still drops (boot binds those
+  from NVS). Pinned by `test_peer_new_radio_mac_is_learned_from_a_verified_frame`
+  (replay and forgery from strange MACs move nothing). All 13 mesh C++
+  suites + the webui node tests + the full firmware host suite pass; canary
+  `[env:full]` compiles. **Part 4 (PIO residual splits) is left open — it
+  rides F48's cross-tree wire decision (a mutual-removal convergence needs a
+  `MSG_OPERA_REKEY` wire change), not something to land alone.** Not
+  bench-verified on hardware (U1).
 - [x] **F50 [code] The display's other join hints still cut on narrow glass.**
   (#1755) Found by F45 (#1718). The Fail-stage hints from `join_failure_hint` measure
   175-219 px at 12 px ("your router may be out of addresses" is 219), so

@@ -589,6 +589,19 @@ static void register_paired_peer() {
   }
 }
 
+/* F49 part 3: a verified opera frame proved a trusted peer now transmits
+ * from a new radio MAC and the session re-bound it; persist the binding
+ * (same FE-gated "peer_macs" record the pairing-time save writes). */
+static void on_mesh_peer_mac_learned(
+    const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN],
+    const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN]) {
+  if (!mesh_state::save_peer_mac(fingerprint, mac)) {
+    Serial.println("[WARN] Peer's new radio MAC not persisted — it is bound "
+                   "for this boot, and re-learned from its first frame after "
+                   "a reboot");
+  }
+}
+
 static void on_pairing_succeeded(const uint8_t* secret, uint32_t code) {
   if (secret == nullptr) {
     Serial.printf("[OK] Paired as initiator (code=%06u) — opera_secret "
@@ -1531,6 +1544,12 @@ void setup() {
     mesh_session::set_rekey_commit_handler(&on_mesh_rekey_commit);
     /* F33 part 6: the revocation deny-list. */
     mesh_session::set_peer_revoked_handler(&on_mesh_peer_revoked);
+    /* F49 part 3: a verified frame from a trusted peer's NEW radio MAC
+     * re-binds the transport table in the session; persist the learned
+     * address so the next boot binds it directly instead of re-learning
+     * through the unknown-sender path. Best effort, like the pairing-time
+     * save: a failure costs one extra learn per boot, not the session. */
+    mesh_session::set_peer_mac_learned_callback(&on_mesh_peer_mac_learned);
     /* F33 part 4: pair/start with no opera founds one; persisted first. */
     mesh_session::set_opera_create_handler(&on_mesh_opera_create);
   } else {

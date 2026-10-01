@@ -281,7 +281,9 @@ struct Action {
   uint8_t    peer_mac[6];                          /* destination MAC, all-FF for broadcast */
   uint8_t    payload[MAX_ACTION_PAYLOAD];          /* raw payload bytes to send */
   size_t     payload_len;                          /* 0 if no payload */
-  uint32_t   confirmation_code;                    /* non-zero for NOTIFY_CODE_READY */
+  uint32_t   confirmation_code;                    /* non-zero for NOTIFY_CODE_READY,
+                                                      and for the joiner's SEND_ACCEPT
+                                                      (its code-derivation beat, F49) */
 };
 
 /* Pairing timeout. Matches canary-wap (5 min). Crossing this fires

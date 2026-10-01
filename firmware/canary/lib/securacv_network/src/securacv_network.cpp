@@ -2749,6 +2749,10 @@ static esp_err_t handle_logs(httpd_req_t* req) {
   JsonDocument doc;
   doc["ok"] = true;
   doc["total"] = count;
+  /* Each entry's timestamp_ms is this device's uptime (millis()) when the
+   * line was logged, not a date — the page shows it as an age against this
+   * same response's uptime, the way /api/mesh/alerts does (F49 part 1). */
+  doc["uptime_ms"] = millis();
 
   JsonArray logs = doc["logs"].to<JsonArray>();
 

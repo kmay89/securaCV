@@ -84,6 +84,20 @@ void on_paired(const uint8_t* secret, uint32_t code) {
 void on_failed() { g_failed_fired = true; }
 void on_code_ready(uint32_t code) { g_code_ready = code; }
 
+/* F49 part 3: the learned radio-MAC bindings, in arrival order. */
+struct LearnedMac {
+  uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
+  uint8_t mac[6];
+};
+std::vector<LearnedMac> g_macs_learned;
+void on_mac_learned(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                    const uint8_t mac[6]) {
+  LearnedMac l;
+  std::memcpy(l.fp, fp, sizeof(l.fp));
+  std::memcpy(l.mac, mac, sizeof(l.mac));
+  g_macs_learned.push_back(l);
+}
+
 void reset_world() {
   mesh_session::deinit();
   mesh_transport::deinit();
@@ -156,6 +170,53 @@ void test_start_joiner_emits_discover_join() {
   assert(disc.role == mesh_pairing::ROLE_JOINER);
   std::printf("PASS test_start_joiner_emits_discover_join  (frame_len=%zu)\n",
               g_outs[0].bytes.size());
+}
+
+void test_joiner_offer_surfaces_code_with_accept() {
+  /* F49 part 2: the joiner derives the session and the 6-digit code when
+   * the OFFER lands, and its only action is SEND_ACCEPT — there is no
+   * separate NOTIFY_CODE_READY on this side, so the CodeReadyCallback
+   * used to fire for the initiator alone. Pin: an OFFER into a joiner
+   * fires the callback once, with the same code pairing_confirmation_code()
+   * (what GET /api/mesh exposes in PAIRING_CONFIRM) reports, in the same
+   * beat as the ACCEPT frame going to the wire. */
+  reset_world();
+  assert(mesh_session::start_pairing_joiner(/*now_ms=*/100));
+  g_outs.clear();
+  assert(g_code_ready == 0);
+
+  const uint8_t initiator_mac[6] = {0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0x01};
+  assert(mesh_transport::add_peer(initiator_mac));
+
+  /* The initiator's OFFER: its ephemeral + device pubkeys. Fresh keys are
+   * enough — the joiner's derivation only needs valid curve points. */
+  uint8_t i_pub[mesh_crypto::PUBKEY_LEN], i_priv[mesh_crypto::PRIVKEY_LEN];
+  uint8_t i_eph_pub[mesh_crypto::PUBKEY_LEN], i_eph_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(i_pub, i_priv));
+  assert(mesh_crypto::x25519_generate_keypair(i_eph_pub, i_eph_priv));
+  mesh_pairing::PairOfferPayload offer{};
+  std::memcpy(offer.ephemeral_pubkey, i_eph_pub, mesh_crypto::PUBKEY_LEN);
+  std::memcpy(offer.device_pubkey,    i_pub,     mesh_crypto::PUBKEY_LEN);
+  std::snprintf(offer.opera_name, sizeof(offer.opera_name), "TheirOpera");
+
+  uint8_t frame[1 + sizeof(offer)];
+  frame[0] = static_cast<uint8_t>(mesh_session::MsgType::PAIR_OFFER);
+  std::memcpy(frame + 1, &offer, sizeof(offer));
+  mesh_transport::test::inject_recv(initiator_mac, frame, sizeof(frame), -50);
+  mesh_transport::process();
+
+  /* The ACCEPT went out, to the initiator. */
+  assert(g_outs.size() == 1);
+  assert(std::memcmp(g_outs[0].mac, initiator_mac, 6) == 0);
+  assert(g_outs[0].bytes[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_ACCEPT));
+  assert(mesh_session::pairing_state() == mesh_pairing::State::AWAITING_CONFIRM);
+
+  /* And the code reached the UI callback, matching the API's report. */
+  assert(g_code_ready != 0);
+  assert(g_code_ready == mesh_session::pairing_confirmation_code());
+
+  std::printf("PASS test_joiner_offer_surfaces_code_with_accept  (code=%u)\n",
+              (unsigned)g_code_ready);
 }
 
 void test_incoming_discover_triggers_offer_unicast() {
@@ -1234,6 +1295,98 @@ void test_tamper_alert_roundtrip() {
   assert(mesh_session::alerts_received() == 0);
   assert(mesh_session::get_alerts(recs, mesh_session::MAX_ALERT_HISTORY) == 0);
   std::printf("PASS test_tamper_alert_roundtrip\n");
+}
+
+void test_peer_new_radio_mac_is_learned_from_a_verified_frame() {
+  /* F49 part 3: a trusted peer whose radio MAC changed used to need a
+   * re-pair — its frames arrived from an address the transport dropped
+   * (recv_dropped_no_peer) before any signature check. Now the unknown-
+   * sender hook routes an opera envelope through the full verification
+   * (signature + opera_id + strict counter), and only a frame that
+   * passes it all re-binds the transport table and fires the learned
+   * callback. A replay or a forgery from a strange MAC moves nothing. */
+  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x47 + i);
+  uint8_t rx_pub[mesh_crypto::PUBKEY_LEN], rx_priv[mesh_crypto::PRIVKEY_LEN];
+  stand_up_session(secret, rx_pub, rx_priv);
+
+  uint8_t tx_pub[mesh_crypto::PUBKEY_LEN], tx_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(tx_pub, tx_priv));
+  assert(mesh_session::register_trusted_peer(tx_pub));
+  uint8_t tx_fp[mesh_crypto::FINGERPRINT_LEN];
+  mesh_crypto::compute_fingerprint(tx_pub, tx_fp);
+  mesh_session::set_tamper_alert_handler(on_alert_rx);
+  mesh_session::set_peer_mac_learned_callback(on_mac_learned);
+  g_macs_learned.clear();
+
+  /* The address the peer paired from, bound the way boot does it. */
+  const uint8_t mac_a[6] = {0x02, 0xA1, 0xA2, 0xA3, 0xA4, 0xAA};
+  assert(mesh_session::bind_peer_mac(tx_fp, mac_a));
+  assert(mesh_transport::has_peer(mac_a));
+
+  /* A frame from the bound address: delivered, nothing re-learned. */
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
+  size_t flen = build_alert_frame(tx_pub, tx_priv, secret, /*counter=*/5,
+                                  mesh_alert::Kind::CAMERA_TAMPER, 6, 100,
+                                  frame, sizeof(frame));
+  mesh_transport::test::inject_recv(mac_a, frame, flen, -50);
+  mesh_transport::process();
+  assert(mesh_session::alerts_received() == 1);
+  assert(g_macs_learned.empty());
+
+  /* The peer moves: the same signer transmits from a NEW address the
+   * transport has never seen (no add_peer here — that is the point). */
+  const uint8_t mac_b[6] = {0x02, 0xB1, 0xB2, 0xB3, 0xB4, 0xBB};
+  flen = build_alert_frame(tx_pub, tx_priv, secret, 6,
+                           mesh_alert::Kind::ENCLOSURE_TAMPER, 6, 101,
+                           frame, sizeof(frame));
+  mesh_transport::test::inject_recv(mac_b, frame, flen, -50);
+  mesh_transport::process();
+  /* Delivered through the unknown-sender path... */
+  assert(mesh_session::alerts_received() == 2);
+  /* ...the transport binding healed (old address out, new one in)... */
+  assert(mesh_transport::has_peer(mac_b));
+  assert(!mesh_transport::has_peer(mac_a));
+  /* ...and the integration layer was told, once, so it can persist. */
+  assert(g_macs_learned.size() == 1);
+  assert(std::memcmp(g_macs_learned[0].fp, tx_fp, sizeof(tx_fp)) == 0);
+  assert(std::memcmp(g_macs_learned[0].mac, mac_b, 6) == 0);
+
+  /* A REPLAY of that frame from yet another strange address moves
+   * nothing: the counter check refuses it before any learning. */
+  const uint8_t mac_c[6] = {0x02, 0xC1, 0xC2, 0xC3, 0xC4, 0xCC};
+  mesh_transport::test::inject_recv(mac_c, frame, flen, -50);
+  mesh_transport::process();
+  assert(mesh_session::alerts_received() == 2);
+  assert(mesh_transport::has_peer(mac_b));
+  assert(!mesh_transport::has_peer(mac_c));
+  assert(g_macs_learned.size() == 1);
+
+  /* A FORGERY (payload bit flipped after signing) under a fresh counter
+   * from a strange address moves nothing either. */
+  const uint8_t mac_d[6] = {0x02, 0xD1, 0xD2, 0xD3, 0xD4, 0xDD};
+  flen = build_alert_frame(tx_pub, tx_priv, secret, 7,
+                           mesh_alert::Kind::TEMP_DRIFT, 3, 0,
+                           frame, sizeof(frame));
+  frame[mesh_envelope::OFFSET_PAYLOAD] ^= 0x01;
+  mesh_transport::test::inject_recv(mac_d, frame, flen, -50);
+  mesh_transport::process();
+  assert(mesh_session::alerts_received() == 2);
+  assert(!mesh_transport::has_peer(mac_d));
+  assert(g_macs_learned.size() == 1);
+
+  /* The healed address now takes the normal (known-peer) path. */
+  flen = build_alert_frame(tx_pub, tx_priv, secret, 8,
+                           mesh_alert::Kind::TEMP_DRIFT, 3, 102,
+                           frame, sizeof(frame));
+  mesh_transport::test::inject_recv(mac_b, frame, flen, -50);
+  mesh_transport::process();
+  assert(mesh_session::alerts_received() == 3);
+  assert(g_macs_learned.size() == 1);   /* already bound: no re-learn */
+
+  mesh_session::set_peer_mac_learned_callback(nullptr);
+  mesh_session::deinit();
+  std::printf("PASS test_peer_new_radio_mac_is_learned_from_a_verified_frame\n");
 }
 
 void test_alert_ring_wraps_newest_first() {
@@ -3754,6 +3907,7 @@ int main() {
   std::srand(0xC51F0);
   test_start_initiator_emits_discover_init();
   test_start_joiner_emits_discover_join();
+  test_joiner_offer_surfaces_code_with_accept();
   test_incoming_discover_triggers_offer_unicast();
   test_envelope_msgtype_byte_is_first_byte();
   test_unknown_msgtype_is_silently_dropped();
@@ -3782,6 +3936,7 @@ int main() {
   test_build_mesh_json_buffer_too_small();
   /* F10 — enable, leave, the alerts channel; F11 attribution. */
   test_tamper_alert_roundtrip();
+  test_peer_new_radio_mac_is_learned_from_a_verified_frame();
   test_alert_ring_wraps_newest_first();
   test_send_tamper_alert();
   test_enable_disable();

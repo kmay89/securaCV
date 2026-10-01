@@ -117,12 +117,26 @@ using PairedCallback = void (*)(const uint8_t* opera_secret_or_null,
 using FailedCallback = void (*)();
 
 /* Fires when both ephemeral keys have been exchanged and the 6-digit
- * code is ready for the user to confirm on this device's screen. */
+ * code is ready for the user to confirm on this device's screen. Both
+ * roles: the initiator's at its NOTIFY_CODE_READY, the joiner's in the
+ * same beat as its ACCEPT goes to the wire (F49 part 2). */
 using CodeReadyCallback = void (*)(uint32_t confirmation_code);
+
+/* Fires when a verified opera frame re-binds a trusted peer's radio MAC
+ * (F49 part 3) — the peer transmits from a new address, the frame proves
+ * the address speaks for the fingerprint (signature + opera_id + replay
+ * all passed), and bind_peer_mac has already updated the transport table.
+ * The integration layer should persist it (mesh_state::save_peer_mac) so
+ * the next boot binds the new address directly; without that the first
+ * frame after every reboot takes the unknown-sender path once. */
+using PeerMacLearnedCallback =
+    void (*)(const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN],
+             const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN]);
 
 void set_paired_callback(PairedCallback cb);
 void set_failed_callback(FailedCallback cb);
 void set_code_ready_callback(CodeReadyCallback cb);
+void set_peer_mac_learned_callback(PeerMacLearnedCallback cb);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * LIFECYCLE

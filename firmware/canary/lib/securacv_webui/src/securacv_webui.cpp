@@ -4733,7 +4733,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div class="log-content">
             <div class="log-message">${escapeHtml(log.message)}</div>
             ${log.detail ? `<div class="log-detail">${escapeHtml(log.detail)}</div>` : ''}
-            <div class="log-meta">${log.category} · ${formatTimestamp(log.timestamp_ms)} · #${log.seq}</div>
+            <div class="log-meta">${[log.category, formatLogAge(log.timestamp_ms, data.uptime_ms), '#' + log.seq].filter(Boolean).join(' · ')}</div>
           </div>
           <div class="log-actions">
             ${log.ack_status !== 'acknowledged' ? 
@@ -5394,15 +5394,24 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // The subtraction is u32, like the firmware's, so it survives the
     // millis() wrap every ~49.7 days.
     function formatAlertAge(timestampMs, uptimeMs) {
+      const age = formatLogAge(timestampMs, uptimeMs);
+      return age ? `received ${age}` : '';
+    }
+
+    // A health-log entry's timestamp_ms is the same uptime reading (F49
+    // part 1), shown against the uptime_ms GET /api/logs carries — or not
+    // at all. Same u32 arithmetic as the alerts above; hoisting lets
+    // formatAlertAge share it.
+    function formatLogAge(timestampMs, uptimeMs) {
       const u32 = (v) => Number.isInteger(v) && v >= 0 && v <= 0xFFFFFFFF;
       if (!u32(timestampMs) || !u32(uptimeMs)) return '';
       const sec = Math.floor(((uptimeMs - timestampMs) >>> 0) / 1000);
-      if (sec < 60) return `received ${sec} s ago`;
+      if (sec < 60) return `${sec} s ago`;
       const min = Math.floor(sec / 60);
-      if (min < 60) return `received ${min} min ago`;
+      if (min < 60) return `${min} min ago`;
       const h = Math.floor(min / 60);
-      if (h < 24) return `received ${h} h ${min % 60} min ago`;
-      return `received ${Math.floor(h / 24)} d ${h % 24} h ago`;
+      if (h < 24) return `${h} h ${min % 60} min ago`;
+      return `${Math.floor(h / 24)} d ${h % 24} h ago`;
     }
 
     async function loadOperaAlerts() {
