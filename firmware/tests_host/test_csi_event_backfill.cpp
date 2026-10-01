@@ -856,6 +856,117 @@ static int test_a_forged_card_id_is_never_sent_or_credited() {
   return 0;
 }
 
+static int test_restore_rule() {
+  using csi_event_id_floor::boot_floor;
+  using csi_event_id_floor::kHoldLimit;
+  using csi_event_id_floor::kIdSpaceBase;
+  // A ceiling on record: the watermark sits just under it, nothing written.
+  Restored r = restore(kIdSpaceBase + 0x10, kIdSpaceBase + 0x20);
+  CHECK(r.through == kIdSpaceBase + 0x0F && r.write == 0);
+  // An F37 canary's bundler-space ceiling, and one held above a failed
+  // floor write: both kept (the allocator starts above the first, and
+  // boot_floor holds it at the second).
+  r = restore(0x8000000Du, 60);
+  CHECK(r.through == 0x8000000Cu && r.write == 0);
+  r = restore(kIdSpaceBase + 0x100, kIdSpaceBase + 0x50);
+  CHECK(r.through == kIdSpaceBase + 0xFF && r.write == 0);
+  r = restore(kHoldLimit, 60);
+  CHECK(r.through == kHoldLimit - 1 && r.write == 0);
+  // A device whose own ids got past kHoldLimit, its floor above its ceiling.
+  r = restore(kHoldLimit + 0x50, kHoldLimit + 0x60);
+  CHECK(r.through == kHoldLimit + 0x4F && r.write == 0);
+  // No record: the first boot of this firmware (unchanged by F46).
+  r = restore(0, 60);
+  CHECK(r.through == 59 && r.write == 60);
+  r = restore(0, 0);
+  CHECK(r.through == 0 && r.write == 1);
+  // A ceiling the allocator did not follow (an older firmware wrote
+  // 0xFFFFFFFF for a forged "id":-5 line): no record, restarted just under
+  // where this boot's ids start, and rewritten there.
+  r = restore(0xFFFFFFFFu, 60);
+  CHECK(r.through == kIdSpaceBase - 1 && r.write == kIdSpaceBase);
+  r = restore(0xFFFFFFFFu, 0);
+  CHECK(r.through == kIdSpaceBase - 1 && r.write == kIdSpaceBase);
+  r = restore(kHoldLimit + 1, kIdSpaceBase + 0x500);
+  CHECK(r.through == kIdSpaceBase + 0x4FF && r.write == kIdSpaceBase + 0x500);
+  // Whatever NVS holds, the restored watermark is below the id this boot's
+  // allocator starts at, so no row this boot commits reads as delivered.
+  const uint32_t vals[] = {0u, 1u, 60u, 0x80000000u, 0x8000000Du, kIdSpaceBase,
+                           kIdSpaceBase + 7, kHoldLimit - 1, kHoldLimit,
+                           kHoldLimit + 1, 0xFFFFFFF0u, 0xFFFFFFFFu};
+  for (uint32_t c : vals) {
+    for (uint32_t f : vals) {
+      if (restore(c, f).through >= boot_floor(f, c)) {
+        std::fprintf(stderr, "FAIL restore(%#x, %#x) at or past boot_floor\n", c, f);
+        return 1;
+      }
+    }
+  }
+  ++g_checks;
+  return 0;
+}
+
+static int test_a_poisoned_ceiling_does_not_stop_the_backfill() {
+  // An older firmware read a forged "id":-5 card line as 0xFFFFFFFB, sent
+  // it, and saved its delivery ceiling at the top of the space. On upgrade,
+  // boot_floor ignores that ceiling (kHoldLimit) and the allocator starts
+  // at kIdSpaceBase; Home Assistant's mark sits at 0xFFFFFFFB and refuses
+  // everything until the device is re-pinned. After the re-pin, the live
+  // rows go out, and so must the rows held during a later outage, on this
+  // boot and the next. Before the fix the planner restored its watermark
+  // from that ceiling (0xFFFFFFFE) and never sent a held row again.
+  World w; Allocator a;
+  a.nvs_floor = 60;                                    // the old chokepoint floor
+  w.nvs_ceiling = 0xFFFFFFFFu;
+  for (uint32_t id : {50u, 51u, 0xFFFFFFFBu}) card_line(w, id);
+  w.ha.receive(51, false, false);
+  w.ha.receive(0xFFFFFFFBu, false, false);
+
+  Planner p;
+  a.boot_f46(w.nvs_ceiling);
+  CHECK(a.next == csi_event_id_floor::kIdSpaceBase);
+  p.begin(w.nvs_ceiling, a.stored, w);
+  CHECK(p.watermark() < a.next);                       // this boot's rows are owed
+  CHECK(w.nvs_ceiling == csi_event_id_floor::kIdSpaceBase);   // rewritten
+  open_card(w, p, a);
+  CHECK(!p.pending());                                 // the old rows stay put
+  {
+    Host h{w, p, a};
+    h.tick(1);                                         // refused: HA's mark is still up
+    CHECK(w.ha.refused.size() == 1);
+    w.ha = Ha{};                                       // the owner re-pins the device
+    for (int i = 0; i < 2; ++i) h.tick(1);             // live
+    w.connected = false;
+    for (int i = 0; i < 3; ++i) h.tick(1);             // held on the card
+    w.connected = true;
+    h.drain();
+  }
+  CHECK(w.ha.accepted.size() == 5);
+  CHECK(p.stats().replayed == 3);
+  CHECK(w.ha.refused.empty());
+  CHECK(strictly_rising(w.ha.accepted));
+  // The next boot: its record is the rewritten ceiling, and an outage on it
+  // is replayed the same way.
+  Planner q;
+  a.boot_f46(w.nvs_ceiling);
+  q.begin(w.nvs_ceiling, a.stored, w);
+  CHECK(q.watermark() < a.next);
+  open_card(w, q, a);
+  Host h{w, q, a};
+  h.tick(1);                                           // live
+  w.connected = false;
+  for (int i = 0; i < 3; ++i) h.tick(1);               // held
+  w.connected = true;
+  h.drain();
+  CHECK(w.ha.refused.empty());
+  CHECK(w.ha.accepted.size() == 9);
+  CHECK(q.stats().replayed == 3);
+  CHECK(strictly_rising(w.ha.accepted));
+  CHECK(times_accepted(w.ha, 0xFFFFFFFBu) == 0);
+  CHECK(w.nvs_ceiling < csi_event_id_floor::kHoldLimit);
+  return 0;
+}
+
 static int test_rows_committed_after_the_link_was_read_are_trusted() {
   // The host reads the allocator's next id once per pass (current_link()),
   // and a row can commit after that, on another task, and reach the card in
@@ -1653,6 +1764,8 @@ int main() {
   RUN(test_upgrade_from_a_bundler_space_ceiling);
   RUN(test_a_forged_card_id_is_never_sent_or_credited);
   RUN(test_rows_committed_after_the_link_was_read_are_trusted);
+  RUN(test_restore_rule);
+  RUN(test_a_poisoned_ceiling_does_not_stop_the_backfill);
   RUN(test_retention_cut_moves_the_cursor);
   RUN(test_no_broker_then_a_broker_is_not_flooded);
   RUN(test_broker_change_drops_the_backlog);

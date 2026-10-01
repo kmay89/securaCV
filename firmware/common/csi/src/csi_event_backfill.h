@@ -125,6 +125,42 @@ inline uint32_t ceiling_for(uint32_t id, uint32_t id_floor) {
   return (id_floor > id && id_floor < c) ? id_floor : c;
 }
 
+/* The delivery record a host restores at boot: Planner::begin's rule, and
+ * the canary-wap's csi_mqtt::init applies it to its own backfill. From the
+ * ceiling NVS holds (`nvs_ceiling`, 0 = none) and the event-id floor NVS
+ * holds (`id_floor`, 0 = none): `through` is the watermark, `write` the
+ * ceiling to persist now (0 = keep the one NVS holds).
+ *   - A ceiling on record: the watermark sits just under it.
+ *   - No ceiling (the first boot of this firmware on this device): every id
+ *     below the floor is treated as delivered (an earlier firmware may have
+ *     published it, and HA would refuse it again), and the record starts
+ *     there, written now, so rows held on the card this boot are still owed
+ *     after a reboot instead of falling under the same assumption. A
+ *     ceiling is never 0.
+ *   - A ceiling the allocator did not follow
+ *     (csi_event_id_floor::ceiling_ignored: past kHoldLimit, above the
+ *     floor; an older firmware wrote one for a forged card line): this
+ *     boot's ids start below it, so as the watermark it would read every
+ *     row this boot commits as delivered, and the backfill would never send
+ *     a held row again, on any boot (backlog F46). It is no record: the
+ *     watermark starts just under where the allocator starts
+ *     (boot_floor), and the ceiling is rewritten there. */
+struct Restored {
+  uint32_t through;
+  uint32_t write;
+};
+
+inline Restored restore(uint32_t nvs_ceiling, uint32_t id_floor) {
+  if (nvs_ceiling != 0 && !csi_event_id_floor::ceiling_ignored(id_floor, nvs_ceiling)) {
+    return Restored{nvs_ceiling - 1, 0};
+  }
+  const uint32_t start = (nvs_ceiling != 0)
+      ? csi_event_id_floor::boot_floor(id_floor, 0)
+      : id_floor;
+  const uint32_t through = (start != 0) ? start - 1 : 0;
+  return Restored{through, through + 1};
+}
+
 /* The id of the last whole, well-formed line in buf[0..n) — a read of the
  * log's tail — or 0 when there is none. Only '\n'-terminated lines count: a
  * torn fragment after the last newline is ignored, and so is a partial line
@@ -268,22 +304,19 @@ class Planner {
   }
 
   /* Boot. `nvs_ceiling` is the persisted delivery ceiling (0 = never
-   * written), `id_floor` the event-id floor restored at boot (0 = none). */
+   * written), `id_floor` the event-id floor NVS holds (0 = none). The rule
+   * is restore()'s. A record that must be rewritten (none, or one the
+   * allocator did not follow) counts as none until the write lands, so a
+   * failed write is retried at the next hand-over. */
   void begin(uint32_t nvs_ceiling, uint32_t id_floor, Port& port) {
     reset();
-    m_stored = nvs_ceiling;
-    if (nvs_ceiling != 0) {
-      m_through = nvs_ceiling - 1;
+    const Restored r = restore(nvs_ceiling, id_floor);
+    m_through = r.through;
+    if (r.write == 0) {
+      m_stored = nvs_ceiling;
       return;
     }
-    /* No delivery record: the first boot of this firmware on this device.
-     * Every id handed out before this boot is treated as delivered (an
-     * earlier firmware may have published it, and HA would refuse it
-     * again), and the record starts here — written now, so that rows held
-     * on the card this boot are still owed after a reboot instead of
-     * falling under the same assumption. A ceiling is never 0. */
-    m_through = (id_floor != 0) ? id_floor - 1 : 0;
-    if (port.persist_ceiling(m_through + 1)) m_stored = m_through + 1;
+    if (port.persist_ceiling(r.write)) m_stored = r.write;
   }
 
   /* The host opened this card's log: `size` bytes, last id `tail_id`. A

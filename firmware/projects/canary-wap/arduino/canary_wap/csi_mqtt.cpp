@@ -490,12 +490,16 @@ bool init(const char* device_id,
    * would then skip them for good; the RAM watermark is exact while the
    * firmware runs, so a re-init keeps it. Only a reboot loses it, and
    * only there is the stride's skip the accepted trade.
-   * With no ceiling on record (the first boot of this firmware), every
-   * id below the restored id floor is treated as delivered — an earlier
-   * image may have published it, and HA would refuse it again — and the
-   * record starts here, written now so rows still on the card survive a
-   * reboot as owed instead of falling under the same assumption
-   * (csi_event_backfill::Planner::begin's rule; a ceiling is never 0).
+   * The rule is csi_event_backfill::restore(), Planner::begin's, host-
+   * tested in test_csi_event_backfill.cpp. With no ceiling on record (the
+   * first boot of this firmware), every id below the restored id floor is
+   * treated as delivered — an earlier image may have published it, and HA
+   * would refuse it again — and the record starts here, written now so
+   * rows still on the card survive a reboot as owed instead of falling
+   * under the same assumption (a ceiling is never 0). A ceiling the id
+   * allocator did not follow (past kHoldLimit; an older firmware wrote one
+   * for a forged card line) is no record either (backlog F46): kept, it
+   * would read every row this boot commits as delivered, on every boot.
    * A failed write retries on the next hand-over. */
   if (!s_watermark_restored) {
     s_watermark_restored = true;
@@ -504,15 +508,13 @@ bool init(const char* device_id,
       s_delivered_ceiling = (uint32_t)prefs.getULong(NVS_KEY_DELIVERED, 0);
       prefs.end();
     }
-    if (s_delivered_ceiling != 0) {
-      if (s_delivered_ceiling - 1 > s_last_published_event_id) {
-        s_last_published_event_id = s_delivered_ceiling - 1;
-      }
-    } else {
-      const uint32_t id_floor = csi_integration::event_id_floor_stored();
-      if (id_floor != 0 && id_floor - 1 > s_last_published_event_id) {
-        s_last_published_event_id = id_floor - 1;
-      }
+    const csi_event_backfill::Restored restored = csi_event_backfill::restore(
+        s_delivered_ceiling, csi_integration::event_id_floor_stored());
+    if (restored.through > s_last_published_event_id) {
+      s_last_published_event_id = restored.through;
+    }
+    if (restored.write != 0) {
+      s_delivered_ceiling = 0;   /* no record until the rewrite lands */
       Preferences rw;
       if (rw.begin(SETTINGS_NS, /*readOnly=*/false)) {
         const uint32_t c = s_last_published_event_id + 1;

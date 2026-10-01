@@ -100,12 +100,23 @@ static_assert(kHandleBase < kIdSpaceBase && kIdSpaceBase < kHoldLimit,
 //     reissuing them would be refused;
 //   - but never raised to a ceiling past kHoldLimit (see above). Such a
 //     device's HA mark is past it too; re-pinning the device in HA resets
-//     the mark, and the allocator is still far from the wrap.
+//     the mark, and the allocator is still far from the wrap. The backfill
+//     drops that ceiling as its record too (ceiling_ignored below), or it
+//     would never send a held row again.
 // `persisted_floor` / `delivered_ceiling` are what NVS holds (0 = none).
 inline uint32_t boot_floor(uint32_t persisted_floor, uint32_t delivered_ceiling) {
   uint32_t f = (persisted_floor > kIdSpaceBase) ? persisted_floor : kIdSpaceBase;
   if (delivered_ceiling > f && delivered_ceiling <= kHoldLimit) f = delivered_ceiling;
   return f;
+}
+
+// Did boot_floor() leave the allocator below this delivery ceiling? Only
+// for a ceiling past kHoldLimit that is above the persisted floor (see
+// kHoldLimit). Such a ceiling no longer bounds this boot's ids, so a backfill
+// must not restore its watermark from it: every row this boot commits would
+// read as delivered (csi_event_backfill::restore treats it as no record).
+inline bool ceiling_ignored(uint32_t persisted_floor, uint32_t delivered_ceiling) {
+  return delivered_ceiling > boot_floor(persisted_floor, delivered_ceiling);
 }
 
 // Must the allocation of `new_id` write the floor before the id goes out?

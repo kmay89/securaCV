@@ -21,6 +21,7 @@
 #include "../common/csi/src/csi_event_id_floor.h"
 
 using csi_event_id_floor::boot_floor;
+using csi_event_id_floor::ceiling_ignored;
 using csi_event_id_floor::floor_for;
 using csi_event_id_floor::kHoldLimit;
 using csi_event_id_floor::kIdSpaceBase;
@@ -253,6 +254,16 @@ static int test_boot_floor_rules() {
   CHECK(boot_floor(0, kHoldLimit + 1) == kIdSpaceBase);
   CHECK(boot_floor(kIdSpaceBase + 7, UINT32_MAX) == kIdSpaceBase + 7);
   CHECK(0xFFFFFFFFu - kHoldLimit >= (1u << 28) - 1);
+  // The ceilings boot_floor did not follow, which the backfill drops as its
+  // record (csi_event_backfill::restore): exactly those above where the
+  // allocator starts.
+  CHECK(!ceiling_ignored(0, 0));
+  CHECK(!ceiling_ignored(500, 0x8000000Du));
+  CHECK(!ceiling_ignored(kIdSpaceBase + 20, kIdSpaceBase + 35));
+  CHECK(!ceiling_ignored(0, kHoldLimit));
+  CHECK(ceiling_ignored(0, kHoldLimit + 1));
+  CHECK(ceiling_ignored(kIdSpaceBase + 7, UINT32_MAX));
+  CHECK(!ceiling_ignored(kHoldLimit + 100, kHoldLimit + 50));   // the floor got there itself
   return 0;
 }
 
