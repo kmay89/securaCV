@@ -1197,7 +1197,7 @@ so — see D2 below.)
   removal, or a lost ACK. A random-loss probe split 3 of 60 runs at 5%
   frame loss (spec §5.6 states it).
 - [x] **F50 [code] The display's other join hints still cut on narrow glass.**
-  Found by F45 (#1718). The Fail-stage hints from `join_failure_hint` measure
+  (#1755) Found by F45 (#1718). The Fail-stage hints from `join_failure_hint` measure
   175-219 px at 12 px ("your router may be out of addresses" is 219), so
   they are cut on the round watch's 142 px band and on the 156/164 px
   portrait rows. The PhoneJoined hint ("no page? open 192.168.4.1") is
