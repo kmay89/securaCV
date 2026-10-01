@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "onboard_ui.h"
 #include "round_frame_core.h"
 
 // Onboard Layout — where the first-boot Join scene puts its QR and captions.
@@ -175,6 +176,13 @@ inline int join_bird_top(const Stack& s, int bird) {
   return s.card_top + (s.card - bird) / 2;
 }
 
+// The bird's seat in every other small-glass scene: centered across, its
+// center this far above the panel's center, over the scene's title (the
+// round watch's 40 px bird at y 36..76) — see scene_bird_top, which keeps
+// it inside the halo (F66).
+constexpr int kSceneBirdOff = -64;
+constexpr int kBirdBreath = 2;  // canary_mark's breath, either way of the seat
+
 // ── What the text rows say (F45) ──────────────────────────────────────────
 //
 // Round glass has always split the credentials: the network name on the
@@ -271,11 +279,12 @@ inline int text_width(const char* s, GlyphW glyph_w) {
   return w;
 }
 
-// One low row: its text and the face it is drawn in.
+// One row: its text and the face it is drawn in.
 struct Line {
   char text[kLineCap];
   bool floor;  // stepped down to the floor face
   bool fits;   // the text is inside its row (false: nothing could be)
+  bool cut;    // shortened around "..." (name_line only; never our copy)
 };
 
 struct JoinLines {
@@ -289,6 +298,7 @@ inline void set_line(Line& out, const char* text, bool floor, bool fits) {
   snprintf(out.text, sizeof(out.text), "%s", text ? text : "");
   out.floor = floor;
   out.fits = fits;
+  out.cut = false;
 }
 
 // The first of `forms` (longest first; null or empty entries skipped) that
@@ -454,6 +464,239 @@ inline HintLines hint_lines(int upper_w, int lower_w, const char* hint,
   }
   set_line(out.lower, last, true, last[0] == '\0');
   return out;
+}
+
+// ── The halo ring on small glass (F66) ───────────────────────────────────
+//
+// The ring is the one element every scene keeps (onboard_ui.cpp). It used to
+// be 236 px and centered on every small glass: the round watch's rim, and on
+// rectangular glass a circle that ran through the rows under the QR card —
+// its bottom arc crossed the hint row on the 172/180x320 portrait glass
+// (y 275..278 against 269..284) and on the 240x280 touch169 (255..258
+// against 239..254, both rows of a split fix under Heirloom), and the rows'
+// ends crossed its sides. The text was drawn over the arc.
+//
+// The rule:
+//  * Round glass keeps the rim's ring (the disc less kRoundRingRimGap a
+//    side). Every row there is fitted to the disc's chord kEdgeMargin inside
+//    the rim, which is the ring's inner edge, so every row is inside it.
+//  * Rectangular glass sets the ring in the band between the Join scene's
+//    title row and its credentials row, kMinGap clear of each: concentric
+//    with the QR card, the way the dash's halo is with its card. So no row
+//    of the stack — the title above, the credentials, hint and note rows
+//    and the coach lines that take them in PhoneJoined and Fail (hint_lines)
+//    below — can reach the ring, by construction, on any glass. On the
+//    narrow portrait glass the ring is wider than the panel and runs off its
+//    sides, as the 236 px ring always did.
+//  * Every centered scene line is fitted no wider than the ring's inner
+//    chord at its latitude (scene_line_w), so the lines between are inside.
+//    The host test holds every row of every scene, and the bird's seat,
+//    clear of the ring's stroke on every display env and ladder.
+constexpr int kRingStroke = 3;       // onboard_ui.cpp's arc width
+constexpr int kRoundRingRimGap = 2;  // the round ring is 236 px on 240
+
+struct Ring {
+  int d;    // outer diameter (the arc object's side)
+  int top;  // y of its top edge; it is centered on the panel horizontally
+};
+
+inline Ring halo_ring(const Glass& g, const Stack& s, const Rows& r) {
+  Ring ring;
+  if (g.round) {
+    const int dia = g.w < g.h ? g.w : g.h;
+    ring.d = dia - 2 * kRoundRingRimGap;
+    ring.top = (g.h - ring.d) / 2;
+    return ring;
+  }
+  ring.top = s.title_top + r.title_h + kMinGap;
+  ring.d = (s.creds_top - kMinGap) - ring.top;
+  return ring;
+}
+
+// The top of the bird's seat in every small-glass scene but Join: its
+// center kSceneBirdOff above the panel's center, or as little lower as
+// keeps its box — breathing kBirdBreath px either way — inside the halo's
+// stroke. Only the 240x280 touch169 under Heirloom needs the nudge: 1 px.
+// (The Success scene's one hop rises from here, up to canary_mark's 18 px
+// apex ceiling; on the touch169 the hop's top reaches the halo's top arc
+// for its apex. The host test holds the seat, not the hop.) Integer math
+// at twice the scale, so a ring of odd diameter keeps its half-pixel
+// center.
+inline int scene_bird_top(const Glass& g, const Ring& ring, int bird) {
+  const int cx2 = 2 * (g.w / 2 - ring.d / 2) + ring.d;
+  const int cy2 = 2 * ring.top + ring.d;
+  const int r2 = ring.d - 2 * kRingStroke;
+  const int x0 = 2 * (g.w / 2 - bird / 2);
+  const int dx_a = roundframe::iabs(x0 - cx2);
+  const int dx_b = roundframe::iabs(x0 + 2 * bird - cx2);
+  const int dx = dx_a > dx_b ? dx_a : dx_b;
+  int top = g.h / 2 - bird / 2 + kSceneBirdOff;
+  for (; top < g.h; ++top) {
+    const int dy_a = roundframe::iabs(2 * (top - kBirdBreath) - cy2);
+    const int dy_b = roundframe::iabs(2 * (top + bird + kBirdBreath) - cy2);
+    const int dy = dy_a > dy_b ? dy_a : dy_b;
+    if ((int64_t)dx * dx + (int64_t)dy * dy <= (int64_t)r2 * r2) break;
+  }
+  return top;
+}
+
+// ── The scenes' titles and bodies on small glass (F65) ────────────────────
+//
+// Hello, PhoneJoined, Connecting, Fail and Success each set a title over a
+// body, centered under the bird. They kept LV_LABEL_LONG_DOT at a fixed
+// width: the round watch's title kept the 138 px it was fitted to at y 28
+// (142 px after the Join scene's title row) though it sits near the disc's
+// equator, and rectangular glass gave every line the panel less 16 px. So
+// "Nice - check your phone" (197 px at 16 px) and "No address from the
+// router" (221) were cut on the round watch and the 156/164 px portrait
+// glass, and under Heirloom eleven more lines there (F65).
+//
+// The rule, one for every small glass (the watch branch of onboard_ui.cpp):
+//  * A centered line is fitted to the width at its own latitude
+//    (scene_line_w): the disc's chord on round glass; on rectangular glass
+//    the panel less its side pads, and no wider than the halo's inner chord
+//    there (halo_ring). The Join title is fitted to its row like the rows
+//    under it.
+//  * Its forms, longest first, in the line's own face, then in the floor
+//    face (fit_line): the title is set in the Character's body face and the
+//    body in its caption face, and each steps down to the default
+//    Character's face of the same role. A shorter form says the same thing
+//    in fewer words, and exists only where no face holds the whole line on
+//    some shipped glass. The host test proves every line of every scene
+//    reads whole on every display env with both ladders.
+//  * Nothing is cut — except a network name, the user's own words, which
+//    no shorter form can say: name_line.
+
+// Where each centered line sits: its center's offset from the panel's
+// center. Hello's pair sits a little lower and looser than the rest.
+constexpr int kHelloTitleOff = -12;
+constexpr int kHelloBodyOff = 16;
+constexpr int kSceneTitleOff = -16;
+constexpr int kSceneBodyOff = 14;
+
+// A line's forms, longest first; a null narrow form means none.
+struct Forms {
+  const char* full;
+  const char* narrow;
+};
+
+// The words of a scene. A null title is the stage's detail (Fail:
+// join_failure_label and its narrow form, which provision.cpp hands the
+// glass, with this title when it hands none); a null body is the network
+// name the stage's detail carries (Connecting: name_line).
+struct SceneCopy {
+  Forms title;
+  Forms body;
+  int title_off;
+  int body_off;
+};
+
+inline Forms make_forms(const char* full, const char* narrow) {
+  Forms f;
+  f.full = full;
+  f.narrow = narrow;
+  return f;
+}
+
+inline SceneCopy scene_copy(ObStage st) {
+  SceneCopy c;
+  c.title_off = kSceneTitleOff;
+  c.body_off = kSceneBodyOff;
+  switch (st) {
+    case ObStage::Hello:
+      c.title = make_forms("Hello.", nullptr);
+      c.body = make_forms("Let's get you connected.", nullptr);
+      c.title_off = kHelloTitleOff;
+      c.body_off = kHelloBodyOff;
+      break;
+    case ObStage::Join:
+      // The Join scene's title rides the stack's title row (join_title);
+      // its body is empty — the QR card and the credentials hold the room.
+      c.title = make_forms(nullptr, nullptr);
+      c.body = make_forms("", nullptr);
+      break;
+    case ObStage::PhoneJoined:
+      c.title = make_forms("Nice - check your phone", "Check your phone");
+      c.body = make_forms("a setup page is opening", nullptr);
+      break;
+    case ObStage::Connecting:
+      c.title = make_forms("Joining", nullptr);
+      c.body = make_forms(nullptr, nullptr);
+      break;
+    case ObStage::Fail:
+      c.title = make_forms("That didn't work", nullptr);
+      c.body = make_forms("try again on your phone", nullptr);
+      break;
+    case ObStage::Success:
+      c.title = make_forms("You're in.", nullptr);
+      c.body = make_forms("looking for your canaries", nullptr);
+      break;
+  }
+  return c;
+}
+
+// The small-glass Join title, on the stack's title row ("Scan me" while the
+// card is up; when no code rendered, the way in is the text under it).
+inline const char* join_title(bool qr) {
+  return qr ? "Scan me" : "On your phone";
+}
+
+// The width a centered scene line may take, its top at y_top with line
+// height h (see the rule above).
+inline int scene_line_w(const Glass& g, const Ring& ring, int y_top, int h) {
+  if (g.round) {
+    const int dia = g.w < g.h ? g.w : g.h;
+    const int y0 = (g.h - dia) / 2;
+    return roundframe::band_chord(dia, roundframe::kEdgeMargin, y_top - y0,
+                                  h);
+  }
+  const int w = g.w - 2 * roundframe::kRectSidePad;
+  const int r = ring.d / 2 - kRingStroke - kMinGap;
+  const int cy = ring.top + ring.d / 2;
+  const int a = roundframe::iabs(y_top - cy);
+  const int b = roundframe::iabs(y_top + h - cy);
+  const int chord = 2 * roundframe::half_chord_at(r, a > b ? a : b);
+  return chord < w ? chord : w;
+}
+
+// The Connecting scene's body: the network name the phone just sent. Whole
+// in the row's own face, else whole in the floor face. A name wider than
+// that is the user's own text, so no shorter form of ours can say it: it
+// keeps its head and its tail around "..." in the floor face. The end of a
+// network name is where routers and extenders put what tells a household's
+// networks apart ("-5G", "_2.4", "-EXT"), and the 2.4 GHz band is the first
+// thing a NotFound failure asks about, so the tail stays (LVGL's LONG_DOT
+// would keep only the head). The cut falls between code points: the old
+// "%.28s" clip counted bytes and could split a UTF-8 sequence. `cut` says
+// the name was shortened; `fits` is false only when even "..." does not.
+template <class Measure>
+inline void name_line(Line& out, const char* name, int row_w,
+                      Measure measure) {
+  const char* whole[1] = {name};
+  fit_line(out, whole, 1, row_w, measure);
+  if (out.fits || name == nullptr || name[0] == '\0') return;
+  int starts[kLineCap];
+  int n = 0;
+  int i = 0;
+  while (name[i] != '\0' && n < kLineCap - 1) {
+    starts[n++] = i;
+    utf8_next(name, &i);
+  }
+  starts[n] = i;
+  char buf[kLineCap];
+  for (int keep = n - 1; keep >= 1; --keep) {
+    const int head = (keep + 1) / 2;
+    const int tail = keep / 2;
+    snprintf(buf, sizeof(buf), "%.*s...%s", starts[head], name,
+             name + starts[n - tail]);
+    if (measure(buf, true) <= row_w) {
+      set_line(out, buf, true, true);
+      out.cut = true;
+      return;
+    }
+  }
+  set_line(out, "...", true, measure("...", true) <= row_w);
+  out.cut = true;
 }
 
 }  // namespace canary::ui::onboardlayout

@@ -59,10 +59,29 @@ key on the nightstand and nightlight, the title's band on the round watch
 (the title yields while the hint stands: with the QR up, the card speaks for
 itself; without one, the hint replaces "On your phone").
 None of those rows (the name, the key, the hint) is ever cut to an ellipsis
-(F45). The scene titles and bodies are not fitted that way yet: under
-Heirloom the round watch's title band is 142 px and cuts "On your phone"
-(154 px), which is what the Join scene says when its QR did not render, and
-the later scenes' titles and bodies are cut on the smallest glass too.
+(F45).
+
+Nor is any scene's title or body (F65). Each line is fitted to the width at
+its own latitude — the disc's chord on the round watch, the panel less its
+side pads on rectangular glass and no wider than the halo there — and tries
+its words in the Character's own face, then a shorter form of the same
+words, then the default Character's face. Two lines have a shorter form,
+because no face holds them whole on the 156/164 px portrait glass: "Nice -
+check your phone" becomes "Check your phone", and the Fail reason "No address
+from the router" becomes "No address" (`join_failure_label_narrow()`; the
+fix under it still names the router). Everything else reads whole, stepping
+down to the default Character's type under Heirloom where it must ("On your
+phone" on the round watch's 142 px title row; on the portrait glass and the
+touch169, the bodies, "Check your phone" and the other four Fail titles).
+
+The one line whose words are not ours is the network name in "Joining
+<HomeNet>": it is whole in the line's face or the default Character's, and
+a name too wide for either keeps its head and its tail around "..."
+("Kitchen-Mes...-Upstair-5G" on the 172 px nightstand). The end of a network
+name is what tells a household's networks apart ("-5G", "_2.4", "-EXT"), and
+the 2.4 GHz band is the first thing a failed join asks about, so the tail
+stays; the cut falls between characters (the old 28-byte clip could split
+one).
 
 The same holds for the hints after the Join scene. When the phone sits on the
 setup network without opening the page, the glass adds "no page? open
@@ -97,7 +116,22 @@ the ambient UI — still enumerated, still rationed:
 | Portal: ✓ draw-in | 500 + 350 ms | completion, drawn not popped |
 
 Nothing else moves. The halo ring persists across every glass scene so the
-eye has continuity while the words change.
+eye has continuity while the words change. On the round watch it rides the
+rim, and every row sits inside it. On rectangular small glass it sits in the
+band between the Join scene's title and its credentials rows, concentric
+with the QR card (the way the dash's halo is with its card), so no row under
+it — the credentials, the hint, a split coach line — runs through its arc;
+the old 236 px ring crossed the hint row on the 172/180x320 portrait glass
+and the 240x280 touch169 (F66). On the narrow portrait glass the ring is
+wider than the panel and runs off its sides, as it always did.
+
+The bird sits where the scene places it: over the title, inside the halo
+(on the 240x280 touch169 under Heirloom, 1 px lower than elsewhere to stay
+inside), and in the QR card's empty seat when the Join scene has no code to
+show. It used to ride the panel's center behind "Hello." and then walk
+further off the glass at each scene: the mark read its seat from LVGL's
+layout before the layout had run (F64). The Success scene's one hop rises
+from that seat; on the touch169 the top of the hop reaches the halo's arc.
 
 ## No dead ends (the recovery matrix)
 
@@ -145,6 +179,8 @@ look failed on the phone — hard-won WAP lesson.)
 | State machine + AP + portal | `src/net/provision.cpp` (`FEATURE_ONBOARDING`) |
 | Glass scenes | `src/ui/onboard_ui.cpp` — own LVGL screen, auto-deleted at handoff |
 | Join-scene geometry | `include/canary/ui/onboard_layout.h` — title, QR card and caption lines stacked from the panel and the fonts' line heights, never crossing (host-tested on every display env's panel by `tests_host/test_onboard_layout.cpp`; `canary-local/tests/onboard_probe.mjs` checks the card is clean on each emulated flavor) |
+| Scene words and the halo | the same header's `scene_copy()` (every scene's title and body, and their shorter forms), `scene_line_w()` and `name_line()` (F65), `halo_ring()` and `scene_bird_top()` (F66). The host test fits every title and body of every scene on every display env and ladder and requires each one whole (the network name: whole, or its head and tail around "..."), and holds every row of every scene and the bird's seats clear of the halo's stroke; the probe fails on an ellipsis in each flavor's PhoneJoined and Fail scenes |
+| The bird's seat | `src/ui/canary_mark.cpp` records the host's own offset from its anchor (`lv_obj_get_style_x/y`), so the bird is drawn where `lv_obj_align` put it, before or after a layout pass (F64; `tests_host/test_canary_mark_seat.cpp`) |
 | Join-scene text | the same header's `join_lines()` — the credentials joined where they fit their row, else split (name, then key, and a standing hint on the note row: nothing displaces the name or the key), shorter forms before a smaller face, never an ellipsis (F45). The host test measures every glass and ladder with LVGL's glyph metrics (`tests_host/montserrat_metrics.h`, from `firmware/scripts/gen_montserrat_metrics.py`) over the widest name and key the unit can mint, and requires both on the glass with and without the stuck-phone hint; the probe fails on an ellipsis in each flavor's Join scene and reads the firmware's own labels (the emulator's `emu_screen_labels`) for the name and key it printed, before and after the hint. After the Join scene, `hint_lines()` gives the coach line both of the empty credentials rows: whole on one where it fits, else split at a clause over two, else the shorter form (F50). The host test runs every failure's fix and the "no page?" hint through it on every env and ladder and requires the whole form; the probe reads the whole "no page?" hint and the wrong-key and absent-network fixes off each flavor's glass |
 | NVS persistence | `canary::cfg::set_wifi_credentials()` (success only) |
 | Boot hook | `main.cpp`: placeholder creds → `provision_run()` before the watchdog arms |

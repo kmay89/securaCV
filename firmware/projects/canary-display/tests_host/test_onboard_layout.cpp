@@ -580,6 +580,54 @@ static void load_minted() {
   if (bat != std::string::npos)
     g_minted.bird_px = std::atoi(obui.c_str() + bat + 24);
   CHECK(g_minted.bird_px > 0, "onboard_ui.cpp's BIRD_PX not found");
+
+  // F65: the Fail title is handed with its narrow form, the way the hint is
+  // (the narrow label is a rung fit_line falls back to).
+  const size_t fcall = prov.find("ui_stage(canary::ui::ObStage::Fail,");
+  const std::string fstmt =
+      fcall == std::string::npos
+          ? std::string()
+          : prov.substr(fcall, prov.find(';', fcall) - fcall);
+  CHECK(fstmt.find("canary::net::join_failure_label_narrow(") !=
+            std::string::npos,
+        "provision.cpp's Fail stage no longer hands the glass "
+        "join_failure_label_narrow() with the reason: \"%s\"",
+        fstmt.c_str());
+  // F65: every title and body the glass sets comes from onboard_layout.h
+  // (scene_copy / join_title, fitted by scene_text), which this test
+  // measures. A literal set straight on the title or body label bypasses
+  // the fit and the measure — only the wide glass's Join titles (content-
+  // sized on an 800 px panel) and empty lines are set that way.
+  {
+    const char* const kWideJoin[] = {"Scan with your phone camera",
+                                     "On your phone, join this network"};
+    const char* const kSetters[] = {"lv_label_set_text(s_title, ",
+                                    "lv_label_set_text(s_body, "};
+    for (int k = 0; k < 2; ++k) {
+      for (size_t at = obui.find(kSetters[k]); at != std::string::npos;
+           at = obui.find(kSetters[k], at + 1)) {
+        const std::string stmt =
+            obui.substr(at, obui.find(';', at) - at);
+        const std::vector<std::string> lits = literals(stmt);
+        for (size_t i = 0; i < lits.size(); ++i) {
+          bool ok = lits[i].empty();
+          for (int w = 0; w < 2; ++w) ok = ok || lits[i] == kWideJoin[w];
+          CHECK(ok, "onboard_ui.cpp sets \"%s\" on a scene label directly "
+                    "(%s...): scene copy lives in onboard_layout.h",
+                lits[i].c_str(), kSetters[k]);
+        }
+      }
+    }
+    CHECK(obui.find("lv_label_set_text_fmt(s_title") == std::string::npos &&
+              obui.find("lv_label_set_text_fmt(s_body") == std::string::npos,
+          "onboard_ui.cpp formats a scene title or body itself (the old "
+          "\"%%.28s\" network-name clip) instead of fitting it");
+    // F66: the small-glass halo is onboard_layout.h's, not a constant.
+    CHECK(obui.find("onboardlayout::halo_ring(") != std::string::npos &&
+              obui.find("RING_D = 236") == std::string::npos,
+          "onboard_ui.cpp no longer seats the small-glass halo with "
+          "onboardlayout::halo_ring()");
+  }
   std::printf("  key %d of %d chars; hints: \"%s\" | \"%s\"%s%s%s | \"%s\"\n",
               g_minted.key_len, (int)g_minted.alpha.size(),
               g_minted.hint_round.empty() ? "" : g_minted.hint_round[0].c_str(),
@@ -886,8 +934,283 @@ static void check_wide_rows(const Env& e, int which, int fam) {
         "%s/%s: the PhoneJoined hint is %d px on %d px", n, lad_name, phone_w,
         row);
   if (phone_w > coach_w) coach_w = phone_w;
+  // F65: the Connecting scene's network name, in the body face, never past
+  // the panel's row: whole, or cut around "..." (name_line).
+  const Face* body = face_of(g_ladder[fam][which][kBody]);
+  const Face* body_floor = face_of(g_ladder[fam][0][kBody]);
+  CHECK(body && body_floor, "%s/%s: a wide body face is not carried", n,
+        lad_name);
+  if (body && body_floor) {
+    const Measure bm = {body, body_floor};
+    const std::string names[2] = {"HomeNet", std::string(32, 'W')};
+    for (int k = 0; k < 2; ++k) {
+      Line line;
+      name_line(line, names[k].c_str(), row, bm);
+      CHECK(line.fits && bm(line.text, line.floor) <= row &&
+                (k == 1 || !line.cut),
+            "%s/%s: the network name \"%s\" is \"%s\" on %d px", n, lad_name,
+            names[k].c_str(), line.text, row);
+    }
+  }
   std::printf("  %20s row %3d  credentials <= %3d px  hint %3d px  coach "
               "lines <= %3d px\n", "", row, widest, hint_w, coach_w);
+}
+
+// ── F65 / F66: the scenes' lines and the halo on small glass ─────────────
+
+// A box on the glass: [x0, x0 + w) x [y0, y0 + h), what for the messages.
+struct Box {
+  std::string what;
+  int x0, y0, w, h;
+};
+
+static const char* stage_name(ObStage st) {
+  switch (st) {
+    case ObStage::Hello: return "Hello";
+    case ObStage::Join: return "Join";
+    case ObStage::PhoneJoined: return "PhoneJoined";
+    case ObStage::Connecting: return "Connecting";
+    case ObStage::Fail: return "Fail";
+    case ObStage::Success: return "Success";
+  }
+  return "?";
+}
+
+// One centered line a scene sets on small glass, and the forms it is handed.
+struct SceneLine {
+  std::string what;
+  const char* full;
+  const char* narrow;
+  int off;     // its center's offset from the panel's center
+  bool title;  // the body face (title) or the caption face (body)
+  bool name;   // a network name (name_line), not our copy
+};
+
+// Every centered line of every scene but Join (whose title rides the
+// stack's title row): scene_copy's words, each Fail reason with its narrow
+// label as provision.cpp hands them, and a typical network name.
+static std::vector<SceneLine> scene_lines() {
+  static const ObStage kStages[] = {ObStage::Hello, ObStage::PhoneJoined,
+                                    ObStage::Connecting, ObStage::Fail,
+                                    ObStage::Success};
+  std::vector<SceneLine> out;
+  for (size_t i = 0; i < sizeof(kStages) / sizeof(kStages[0]); ++i) {
+    const ObStage st = kStages[i];
+    const SceneCopy c = scene_copy(st);
+    const std::string n = stage_name(st);
+    CHECK(c.title.full != nullptr && c.title.full[0] != '\0',
+          "%s has no title of its own", n.c_str());
+    SceneLine t = {n + " title", c.title.full, c.title.narrow, c.title_off,
+                   true, false};
+    out.push_back(t);
+    if (st == ObStage::Fail) {
+      for (int f = 0; f < kFailureCount; ++f) {
+        SceneLine l = {n + " title (" +
+                           canary::net::join_failure_label(kFailures[f]) + ")",
+                       canary::net::join_failure_label(kFailures[f]),
+                       canary::net::join_failure_label_narrow(kFailures[f]),
+                       c.title_off, true, false};
+        out.push_back(l);
+      }
+    }
+    if (c.body.full == nullptr) {
+      SceneLine b = {n + " body (a network name)", "HomeNet", nullptr,
+                     c.body_off, false, true};
+      out.push_back(b);
+    } else {
+      CHECK(c.body.full[0] != '\0', "%s has an empty body", n.c_str());
+      SceneLine b = {n + " body", c.body.full, c.body.narrow, c.body_off,
+                     false, false};
+      out.push_back(b);
+    }
+  }
+  return out;
+}
+
+// F65 on small glass: each scene's title and body reads whole — one of its
+// forms, uncut, in the line's face or the floor face — in the width the
+// glass fits it to (scene_line_w); and the Join title on its row. The boxes
+// the labels take are appended to `boxes` for the halo check.
+static void check_scenes(const Env& e, int which, const Stack& s,
+                         const Rows& r, const Glass& g, const Ring& ring,
+                         int fam, std::vector<Box>* boxes) {
+  const char* n = e.name.c_str();
+  const char* lad_name = which == 0 ? "default" : "heirloom";
+  const Face* t_own = face_of(g_ladder[fam][which][kBody]);
+  const Face* t_floor = face_of(g_ladder[fam][0][kBody]);
+  const Face* b_own = face_of(g_ladder[fam][which][kCaption]);
+  const Face* b_floor = face_of(g_ladder[fam][0][kCaption]);
+  CHECK(t_own && t_floor && b_own && b_floor,
+        "%s/%s: a scene face is not in montserrat_metrics.h (re-run "
+        "gen_montserrat_metrics.py)", n, lad_name);
+  if (!t_own || !t_floor || !b_own || !b_floor) return;
+  const Measure tm = {t_own, t_floor};
+  const Measure bm = {b_own, b_floor};
+  std::string summary;
+  const std::vector<SceneLine> lines = scene_lines();
+  for (size_t i = 0; i < lines.size(); ++i) {
+    const SceneLine& sl = lines[i];
+    const Measure& m = sl.title ? tm : bm;
+    const int h = montserrat_line_h(sl.title ? t_own->size : b_own->size);
+    const int y_top = e.h / 2 + sl.off - h / 2;
+    const int w = scene_line_w(g, ring, y_top, h);
+    Line line;
+    if (sl.name) {
+      name_line(line, sl.full, w, m);
+    } else {
+      const char* forms[2] = {sl.full, sl.narrow};
+      fit_line(line, forms, 2, w, m);
+    }
+    const bool whole = std::strcmp(line.text, sl.full) == 0;
+    const bool narrow = sl.narrow != nullptr &&
+                        std::strcmp(line.text, sl.narrow) == 0;
+    CHECK(w > 0 && line.fits && !line.cut && (whole || narrow) &&
+              m(line.text, line.floor) <= w,
+          "%s/%s: %s: \"%s\" (%s face, %d px) on a %d px line — not one of "
+          "\"%s\" / \"%s\" read whole", n, lad_name, sl.what.c_str(),
+          line.text, face_name(line.floor), m(line.text, line.floor), w,
+          sl.full, sl.narrow ? sl.narrow : "");
+    // The label's box: LV_ALIGN_CENTER of a w x (chosen face) label.
+    const int hc = montserrat_line_h(
+        line.floor ? (sl.title ? t_floor->size : b_floor->size)
+                   : (sl.title ? t_own->size : b_own->size));
+    Box b = {sl.what, e.w / 2 - w / 2, e.h / 2 - hc / 2 + sl.off, w, hc};
+    boxes->push_back(b);
+    if (!whole || line.floor) {
+      char one[160];
+      std::snprintf(one, sizeof(one), "%s%s -> \"%s\"%s", summary.empty() ? "" : ", ",
+                    sl.what.c_str(), line.text, line.floor ? " (floor)" : "");
+      summary += one;
+    }
+  }
+  // The widest name a network can have (32 bytes, every one 'W'): cut
+  // around "...", never past its line (name_line).
+  {
+    const SceneCopy c = scene_copy(ObStage::Connecting);
+    const int h = montserrat_line_h(b_own->size);
+    const int w = scene_line_w(g, ring, e.h / 2 + c.body_off - h / 2, h);
+    const std::string widest(32, 'W');
+    Line line;
+    name_line(line, widest.c_str(), w, bm);
+    CHECK(line.fits && bm(line.text, line.floor) <= w,
+          "%s/%s: a 32-byte network name is \"%s\" (%d px) on a %d px line",
+          n, lad_name, line.text, bm(line.text, line.floor), w);
+  }
+  // The Join title, on the stack's title row (set_join_title).
+  const int dia = e.w < e.h ? e.w : e.h;
+  const int y0 = (e.h - dia) / 2;
+  const int title_w = g.round ? band_chord_px(dia, s.title_top - y0, r.title_h)
+                              : e.w - 2 * roundframe::kRectSidePad;
+  for (int qr = 0; qr < 2; ++qr) {
+    const char* forms[1] = {join_title(qr != 0)};
+    Line line;
+    fit_line(line, forms, 1, title_w, tm);
+    CHECK(line.fits && std::strcmp(line.text, forms[0]) == 0,
+          "%s/%s: the Join title \"%s\" is cut on its %d px row", n,
+          lad_name, forms[0], title_w);
+    if (line.floor) {
+      char one[160];
+      std::snprintf(one, sizeof(one), "%sJoin title -> \"%s\" (floor)",
+                    summary.empty() ? "" : ", ", line.text);
+      summary += one;
+    }
+  }
+  std::printf("  %20s scenes: %s\n", "",
+              summary.empty() ? "every line whole in its own face"
+                              : summary.c_str());
+}
+
+// Where a box sits against a halo of diameter d whose top is at `top`, on a
+// panel w px wide (the arc is lv_obj_align'ed TOP_MID): 1 wholly inside the
+// stroke's inner circle, 2 wholly outside its outer circle, 0 across it.
+static int ring_side(int w, int d, int top, const Box& b) {
+  const double cx = (w / 2 - d / 2) + d / 2.0;
+  const double cy = top + d / 2.0;
+  const double r_out = d / 2.0;
+  const double r_in = r_out - kRingStroke;
+  const double x0 = b.x0, x1 = b.x0 + b.w, ya = b.y0, yb = b.y0 + b.h;
+  double far2 = 0;
+  const double xs[2] = {x0, x1}, ys[2] = {ya, yb};
+  for (int a = 0; a < 2; ++a) {
+    for (int c = 0; c < 2; ++c) {
+      const double d2 =
+          (xs[a] - cx) * (xs[a] - cx) + (ys[c] - cy) * (ys[c] - cy);
+      if (d2 > far2) far2 = d2;
+    }
+  }
+  const double nx = cx < x0 ? x0 : cx > x1 ? x1 : cx;
+  const double ny = cy < ya ? ya : cy > yb ? yb : cy;
+  const double near2 = (nx - cx) * (nx - cx) + (ny - cy) * (ny - cy);
+  if (far2 <= r_in * r_in) return 1;
+  if (near2 >= r_out * r_out) return 2;
+  return 0;
+}
+
+// F66: no row of any scene, nor the bird at either of its seats, crosses the
+// halo's stroke on small glass: each is wholly inside the stroke's inner
+// circle or wholly outside its outer one.
+static void check_ring(const Env& e, int which, const Stack& s,
+                       const Rows& r, const Glass& g, const Ring& ring,
+                       std::vector<Box> boxes) {
+  const char* n = e.name.c_str();
+  const char* lad_name = which == 0 ? "default" : "heirloom";
+  // The arc object: lv_obj_align(TOP_MID, 0, top) of a d x d box.
+  const double cx = (e.w / 2 - ring.d / 2) + ring.d / 2.0;
+  const double cy = ring.top + ring.d / 2.0;
+  const double r_out = ring.d / 2.0;
+  const double r_in = r_out - kRingStroke;
+  CHECK(ring.d > 2 * kRingStroke, "%s/%s: a %d px halo", n, lad_name,
+        ring.d);
+  // The Join stack's rows, as the glass fits them.
+  const int dia = e.w < e.h ? e.w : e.h;
+  const int y0 = (e.h - dia) / 2;
+  struct Row {
+    const char* what;
+    int top, h;
+  };
+  const Row rows[] = {{"the Join title row", s.title_top, r.title_h},
+                      {"the credentials row", s.creds_top, r.creds_h},
+                      {"the hint row", s.hint_top, r.hint_h},
+                      {"the note row", s.note_top, r.hint_h}};
+  for (size_t i = 0; i < sizeof(rows) / sizeof(rows[0]); ++i) {
+    const int w = g.round ? band_chord_px(dia, rows[i].top - y0, rows[i].h)
+                          : e.w - 2 * roundframe::kRectSidePad;
+    Box b = {rows[i].what, e.w / 2 - w / 2, rows[i].top, w, rows[i].h};
+    boxes.push_back(b);
+  }
+  // The bird, breathing (+-2 px) at each seat: the scenes' and the Join
+  // scene's while the QR is away.
+  const int bird = g_minted.bird_px;
+  const int seats[2] = {scene_bird_top(g, ring, bird),
+                        join_bird_top(s, bird)};
+  // The seat is CENTER kSceneBirdOff unless the halo needs it lower, and
+  // then by no more than a few px.
+  const int nominal = e.h / 2 - bird / 2 + kSceneBirdOff;
+  CHECK(seats[0] >= nominal && seats[0] <= nominal + 4,
+        "%s/%s: the bird's seat moved from %d to %d", n, lad_name, nominal,
+        seats[0]);
+  const char* seat_name[2] = {"the bird's seat", "the bird's Join seat"};
+  for (int k = 0; k < 2; ++k) {
+    for (int bob = -2; bob <= 2; bob += 4) {
+      Box b = {seat_name[k], e.w / 2 - bird / 2, seats[k] + bob, bird, bird};
+      boxes.push_back(b);
+    }
+  }
+  int inside = 0, outside = 0;
+  for (size_t i = 0; i < boxes.size(); ++i) {
+    const Box& b = boxes[i];
+    const int side = ring_side(e.w, ring.d, ring.top, b);
+    if (side == 1) inside++;
+    if (side == 2) outside++;
+    CHECK(side != 0,
+          "%s/%s: %s (%d..%d x %d..%d) crosses the halo's stroke (center "
+          "%.1f,%.1f, radius %.1f..%.1f)", n, lad_name, b.what.c_str(),
+          b.x0, b.x0 + b.w, b.y0, b.y0 + b.h, cx, cy, r_in, r_out);
+  }
+  std::printf("  %20s halo %3d px at y %3d..%3d: %d boxes inside, %d outside;"
+              " bird at %d%s\n", "", ring.d, ring.top, ring.top + ring.d,
+              inside, outside, seats[0],
+              seats[0] == nominal ? "" : " (nudged into the halo)");
 }
 
 static void check_glass(const Env& e, int which, int also) {
@@ -998,6 +1321,12 @@ static void check_glass(const Env& e, int which, int also) {
           "credentials (%d..)", n, lad_name, seat, seat + bird,
           s.title_top + r.title_h, s.creds_top);
     check_rows(e, which, s, r, round, fam);
+    // F65 and F66: every scene's lines read whole, and nothing crosses the
+    // halo.
+    const Ring ring = halo_ring(g, s, r);
+    std::vector<Box> boxes;
+    check_scenes(e, which, s, r, g, ring, fam, &boxes);
+    check_ring(e, which, s, r, g, ring, boxes);
   } else {
     check_wide_rows(e, which, fam);
   }
@@ -1226,6 +1555,194 @@ static void test_f50_pins() {
         "the round watch's bird seat is %d", join_bird_top(w, g_minted.bird_px));
 }
 
+// ── the F65 lines, pinned (LVGL's metrics, the real copy) ──────────────
+static void test_f65_pins() {
+  std::printf("F65 scene lines, pinned:\n");
+  const Face* f12 = face_of(12);
+  const Face* f14 = face_of(14);
+  const Face* f16 = face_of(16);
+  const Face* f20 = face_of(20);
+  if (!f12 || !f14 || !f16 || !f20) {
+    CHECK(false, "F65 pins need montserrat_12/14/16/20");
+    return;
+  }
+  // The defect: the lines kept the width they were first fitted to. The
+  // round watch's title, 138 px (fitted at y 28) in Hello and 142 px (the
+  // Join title row) after it, and every portrait line, the panel less 16 px
+  // (156 on the nightstand): these are the lines that measured wider.
+  CHECK(band_chord_px(240, 28, 18) == 138 && band_chord_px(240, 30, 18) == 142,
+        "round title widths %d / %d", band_chord_px(240, 28, 18),
+        band_chord_px(240, 30, 18));
+  const struct {
+    const Face* f;
+    const char* text;
+    int px;
+  } kOld[] = {
+      {f16, "Nice - check your phone", 197},
+      {f16, "No address from the router", 221},
+      {f16, "Network not found", 154},
+      {f20, "On your phone", 154},
+      {f20, "Wrong password", 175},
+      {f20, "Couldn't connect", 176},
+      {f20, "That didn't work", 167},
+      {f14, "Let's get you connected.", 179},
+      {f14, "a setup page is opening", 176},
+      {f14, "try again on your phone", 176},
+      {f14, "looking for your canaries", 180},
+  };
+  for (size_t i = 0; i < sizeof(kOld) / sizeof(kOld[0]); ++i) {
+    CHECK(text_px(*kOld[i].f, kOld[i].text) == kOld[i].px,
+          "\"%s\" at %d px is %d px", kOld[i].text, kOld[i].f->size,
+          text_px(*kOld[i].f, kOld[i].text));
+  }
+  // The fix, on the same glass: the round watch's PhoneJoined title is
+  // fitted at its own latitude (95..113: 224 px), so the whole line holds;
+  // on the nightstand's 156 px it takes the narrow form, still 16 px.
+  Glass watch = {240, 240, true};
+  Rows wr = {18, kSmallGlassCard, 15, 15};
+  const Stack ws = join_stack(watch, wr);
+  const Ring wring = halo_ring(watch, ws, wr);
+  CHECK(wring.d == 236 && wring.top == 2, "round halo %d at %d", wring.d,
+        wring.top);
+  const int title_top = 120 + kSceneTitleOff - 9;
+  CHECK(scene_line_w(watch, wring, title_top, 18) == 224,
+        "round title line %d px", scene_line_w(watch, wring, title_top, 18));
+  const Measure std16 = {f16, f16};
+  const SceneCopy pj = scene_copy(ObStage::PhoneJoined);
+  const char* pj_forms[2] = {pj.title.full, pj.title.narrow};
+  Line line;
+  fit_line(line, pj_forms, 2, 224, std16);
+  CHECK(line.fits && !line.floor &&
+            std::strcmp(line.text, "Nice - check your phone") == 0,
+        "round PhoneJoined title \"%s\"", line.text);
+  fit_line(line, pj_forms, 2, 156, std16);
+  CHECK(line.fits && !line.floor &&
+            std::strcmp(line.text, "Check your phone") == 0,
+        "nightstand PhoneJoined title \"%s\"", line.text);
+  // Heirloom on the nightstand: no form fits in 20 px, so the narrow one
+  // steps down to the default Character's 16 px; a Fail reason with no
+  // shorter true form keeps its words and steps down ("Wrong password",
+  // 137 px at 16).
+  const Measure heir_t = {f20, f16};
+  fit_line(line, pj_forms, 2, 156, heir_t);
+  CHECK(line.fits && line.floor &&
+            std::strcmp(line.text, "Check your phone") == 0,
+        "heirloom nightstand PhoneJoined title \"%s\" (%s)", line.text,
+        face_name(line.floor));
+  using canary::net::JoinFailure;
+  const char* bad[2] = {
+      canary::net::join_failure_label(JoinFailure::BadPassword),
+      canary::net::join_failure_label_narrow(JoinFailure::BadPassword)};
+  fit_line(line, bad, 2, 156, heir_t);
+  CHECK(line.fits && line.floor &&
+            std::strcmp(line.text, "Wrong password") == 0,
+        "heirloom nightstand BadPassword title \"%s\"", line.text);
+  const char* addr[2] = {
+      canary::net::join_failure_label(JoinFailure::NoAddress),
+      canary::net::join_failure_label_narrow(JoinFailure::NoAddress)};
+  fit_line(line, addr, 2, 156, std16);
+  CHECK(line.fits && std::strcmp(line.text, "No address") == 0,
+        "nightstand NoAddress title \"%s\"", line.text);
+}
+
+// ── a network name that does not fit (name_line, F65) ─────────────────────
+// A uniform measure: every code point 7 px in the row's face, 6 in the
+// floor's, whatever the font carries (a name can hold any UTF-8).
+struct Uniform {
+  int operator()(const char* t, bool fl) const {
+    int i = 0, n = 0;
+    while (utf8_next(t, &i) != 0) ++n;
+    return n * (fl ? 6 : 7);
+  }
+};
+
+static void test_name_line() {
+  std::printf("network names (name_line):\n");
+  const Face* f12 = face_of(12);
+  if (!f12) {
+    CHECK(false, "name_line pins need montserrat_12");
+    return;
+  }
+  const Measure std12 = {f12, f12};
+  Line line;
+  // A name that fits is the name, whole, in the row's face.
+  name_line(line, "HomeNet", 156, std12);
+  CHECK(line.fits && !line.cut && !line.floor &&
+            std::strcmp(line.text, "HomeNet") == 0,
+        "HomeNet -> \"%s\"", line.text);
+  // One that fits only in the floor face is whole there.
+  const Uniform u;
+  name_line(line, "ABCDEFGHIJKLMNOPQRSTUVWX", 150, u);  // 168 / 144 px
+  CHECK(line.fits && !line.cut && line.floor &&
+            std::strcmp(line.text, "ABCDEFGHIJKLMNOPQRSTUVWX") == 0,
+        "a floor-face name -> \"%s\"", line.text);
+  // Wider than that: its head and its tail around "...", in the floor face
+  // — the band suffix stays on the glass.
+  const char* longname = "Kitchen-Mesh-Extender-Upstair-5G";  // 32 bytes
+  name_line(line, longname, 156, std12);
+  std::printf("  \"%s\" on 156 px -> \"%s\" (%d px)\n", longname, line.text,
+              std12(line.text, true));
+  CHECK(line.fits && line.cut && line.floor &&
+            std::strcmp(line.text, "Kitchen-Mes...-Upstair-5G") == 0 &&
+            std12(line.text, true) <= 156,
+        "a long name -> \"%s\"", line.text);
+  // The cut falls between code points (the old "%.28s" counted bytes).
+  const char* utf = "Caf\xC3\xA9-\xC3\x9C" "ber-\xE2\x98\x95-Netz-\xC3\xB1\xC3\xB1\xC3\xB1";
+  for (int row = 18; row <= 140; row += 1) {
+    name_line(line, utf, row, u);
+    int i = 0;
+    bool broken = false;
+    for (uint32_t cp = utf8_next(line.text, &i); cp != 0;
+         cp = utf8_next(line.text, &i))
+      if (cp == 0xFFFD) broken = true;
+    CHECK(!broken && (line.cut ? u(line.text, true) <= row : true),
+          "a %d px row cut \"%s\" inside a character: \"%s\"", row, utf,
+          line.text);
+  }
+  // Nothing at all fits: it says so.
+  CHECK(std12("...", true) == 9, "\"...\" is %d px", std12("...", true));
+  name_line(line, longname, 8, std12);
+  CHECK(!line.fits && line.cut, "an 8 px row claimed to fit \"%s\"",
+        line.text);
+}
+
+// ── the F66 halo, pinned ────────────────────────────────────────────────
+static void test_f66_pins() {
+  std::printf("F66 halo, pinned:\n");
+  // The defect: one 236 px ring, centered, on every small glass. On the
+  // 172x320 portrait glass its bottom arc (y 275..278 at the center) runs
+  // through the hint row (269..284); on the 240x280 touch169 (255..258)
+  // through the hint row (239..254).
+  const Box ns_hint = {"nightstand hint row", 8, 269, 156, 15};
+  const Box t_hint = {"touch169 hint row", 8, 239, 224, 15};
+  CHECK(ring_side(172, 236, (320 - 236) / 2, ns_hint) == 0 &&
+            ring_side(240, 236, (280 - 236) / 2, t_hint) == 0,
+        "the old 236 px ring no longer documents the crossing");
+  // The fix: the band between the stack's title and credentials rows.
+  // 172x320, default ladder: title 36..54, credentials from 254 -> a 196 px
+  // halo from y 56 (concentric with the card, 90..218); 240x280: title
+  // 26..44, credentials from 224 -> 176 px from y 46 (card 70..198).
+  Glass ns = {172, 320, false};
+  Rows nr = {18, kSmallGlassCard, 15, 15};
+  const Stack nst = join_stack(ns, nr);
+  const Ring nring = halo_ring(ns, nst, nr);
+  CHECK(nring.d == 196 && nring.top == 56 &&
+            nring.top + nring.d / 2 == nst.card_top + nst.card / 2,
+        "nightstand halo %d at %d (card %d..%d)", nring.d, nring.top,
+        nst.card_top, nst.card_top + nst.card);
+  CHECK(ring_side(172, nring.d, nring.top, ns_hint) == 2,
+        "the nightstand's hint row crosses its halo");
+  Glass t = {240, 280, false};
+  const Stack tst = join_stack(t, nr);
+  const Ring tring = halo_ring(t, tst, nr);
+  CHECK(tring.d == 176 && tring.top == 46,
+        "touch169 halo %d at %d", tring.d, tring.top);
+  const Box t_creds = {"touch169 credentials row", 8, 224, 224, 15};
+  CHECK(ring_side(240, tring.d, tring.top, t_creds) == 2 &&
+            ring_side(240, tring.d, tring.top, t_hint) == 2,
+        "the touch169's low rows cross its halo");
+}
+
 // ── degenerate glass: the lines still never cross ─────────────────────────
 static void test_short_glass() {
   std::printf("short glass:\n");
@@ -1289,6 +1806,9 @@ int main() {
   test_f43_pins();
   test_f45_pins();
   test_f50_pins();
+  test_f65_pins();
+  test_name_line();
+  test_f66_pins();
   test_short_glass();
   test_join_payload();
   if (g_fail == 0) {

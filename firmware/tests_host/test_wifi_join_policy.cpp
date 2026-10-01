@@ -277,6 +277,42 @@ static void the_narrow_forms_say_no_more_than_the_hint() {
   }
 }
 
+static void the_narrow_labels_are_the_label_in_fewer_words() {
+  // The Fail scene's title on narrow glass (F65): never longer than the
+  // label, never a cut, and every word it keeps is the label's own (the
+  // label is a few words of fact; a shorter form drops words, it does not
+  // say anything new). NoAddress has one: its label is 221 px at 16 px.
+  for (JoinFailure f : kAllFailures) {
+    const std::string label = join_failure_label(f);
+    const char* n = join_failure_label_narrow(f);
+    CHECK(n && *n, "narrow label missing for failure %u", (unsigned)f);
+    if (!n) continue;
+    const std::string narrow = n;
+    CHECK(narrow.size() <= label.size(), "narrow label \"%s\" is longer than \"%s\"",
+          narrow.c_str(), label.c_str());
+    CHECK(narrow.find("...") == std::string::npos &&
+              narrow.find("\xE2\x80\xA6") == std::string::npos,
+          "\"%s\" is a cut, not a form", narrow.c_str());
+    size_t at = 0;
+    while (at < narrow.size()) {
+      size_t end = narrow.find(' ', at);
+      if (end == std::string::npos) end = narrow.size();
+      const std::string word = narrow.substr(at, end - at);
+      CHECK(has_word(label, word.c_str()) ||
+                (at == 0 && word.size() > 0 &&
+                 has_word(label, (std::string(1, (char)(word[0] | 0x20)) +
+                                  word.substr(1)).c_str())),
+            "\"%s\" says \"%s\", which \"%s\" does not", narrow.c_str(),
+            word.c_str(), label.c_str());
+      at = end + 1;
+    }
+  }
+  CHECK(std::string(join_failure_label_narrow(JoinFailure::NoAddress)) ==
+            "No address",
+        "the no-address title's narrow form is \"%s\"",
+        join_failure_label_narrow(JoinFailure::NoAddress));
+}
+
 int main() {
   a_link_that_never_worked_is_never_rebooted();
   a_link_that_worked_and_dropped_may_reboot();
@@ -289,6 +325,7 @@ int main() {
   every_failure_has_text_for_every_surface();
   the_two_common_failures_name_their_real_cause();
   the_narrow_forms_say_no_more_than_the_hint();
+  the_narrow_labels_are_the_label_in_fewer_words();
 
   if (g_failures == 0) {
     std::printf("test_wifi_join_policy: all checks passed\n");
