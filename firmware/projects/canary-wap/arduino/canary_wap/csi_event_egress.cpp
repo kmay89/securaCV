@@ -80,6 +80,11 @@ class WapPort : public csi_event_backfill::Port {
   bool      row_on_card = true;    /* the row being committed may go on the card */
   bool      flushing    = false;   /* commit() is handing over a row from the RAM hold */
   bool      flush_fresh = false;
+  const Link* link      = nullptr;   /* route()'s link, during its commit */
+  /* The commit in progress is a row whose card append failed and that will
+   * wait in RAM behind older rows (or for the link): its NVS ceiling is not
+   * written now (see card_append). route() clears it after the commit. */
+  bool      ceiling_held = false;
   EventSend last        = EventSend::kSent;   /* the last publish this port made */
 
   AppendResult card_append(const char* line, size_t len) override;
@@ -90,6 +95,10 @@ class WapPort : public csi_event_backfill::Port {
   Sent send_backfill(const csi_event_record_t& rec, bool fresh) override;
   bool hand_to_queue(const csi_event_record_t& rec, bool deferred) override;
   bool persist_ceiling(uint32_t ceiling) override {
+    /* Not written, as if NVS had refused: the planner keeps its stored
+     * value and writes again before the row is handed over (flush_held's
+     * commit, or the backfill send above it). */
+    if (ceiling_held) return false;
     Preferences prefs;
     if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return false;
     const bool wrote = prefs.putULong(csi_mqtt::NVS_KEY_DELIVERED, (unsigned long)ceiling) > 0;
@@ -173,7 +182,17 @@ AppendResult WapPort::card_append(const char* line, size_t len) {
   /* A row the card does not keep (a closed bundle, or a row from the RAM
    * hold): refused here, so the planner takes its not-on-card route. */
   if (!row_on_card) return AppendResult{false, m_st->planner.log_size(), 0};
-  return csi_event_log::append_line(line, len);
+  const AppendResult r = csi_event_log::append_line(line, len);
+  /* The append failed, so the planner takes its not-on-card route, which
+   * writes the NVS ceiling for this row before hand_to_queue(). When the row
+   * is going to wait in RAM behind rows still on the card or in RAM, or for
+   * the link (hand_to_queue's own test), that ceiling would cover the rows
+   * on the card, and a reboot before they go would skip every one of them.
+   * Hold it back; it is written when the row is actually handed over. */
+  if (!r.ok && link && link->accepting) {
+    ceiling_held = !link->connected || m_st->planner.pending() || m_st->held_count > 0;
+  }
+  return r;
 }
 
 bool WapPort::send_held_below(uint32_t id) {
@@ -255,8 +274,11 @@ void route(const Committed& ev, const Link& link) {
     return;
   }
   st.port.row_on_card = card_row;
+  st.port.link = &link;
   (void)st.planner.commit(ev.rec, link, st.port);
+  st.port.link = nullptr;
   st.port.row_on_card = true;
+  st.port.ceiling_held = false;
 }
 
 /* Rows in the RAM hold, once nothing older waits on the card (or on a card

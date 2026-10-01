@@ -707,6 +707,21 @@ static void test_failed_append_waits_behind_the_backlog() {
         "it goes out after the backlog, every row once, in order");
 }
 
+static void test_failed_append_in_an_outage_keeps_the_backlog_owed() {
+  printf("-- a row whose append fails during an outage, then a reboot: the card's rows are still owed\n");
+  fresh_device();
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 5; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  SD.fail_writes = true;
+  (void)emit_ping(); loop_pass();   // link down: waits in RAM, behind the card's rows
+  SD.fail_writes = false;
+  boot();                           // power cycle: the RAM row is gone
+  connect();
+  drain();
+  CHECK(exactly(W.ha.accepted, ids),
+        "the waiting row did not move the NVS ceiling past them: all five arrive");
+}
+
 static void test_unconfigured_broker_drops_the_backlog() {
   printf("-- a broker unconfigured during an outage: the backlog is owed to nobody\n");
   fresh_device();
@@ -1218,6 +1233,7 @@ int main() {
   test_failed_append_waits_behind_a_ram_row();
   test_dismissal_line_ahead_of_unsent_rows();
   test_failed_append_waits_behind_the_backlog();
+  test_failed_append_in_an_outage_keeps_the_backlog_owed();
   test_unconfigured_broker_drops_the_backlog();
   test_forged_card_line_is_never_sent();
   test_upgrade_floor_without_a_ceiling();

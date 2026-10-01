@@ -54,10 +54,12 @@
  * F47), written before an id is handed over and capped at the id
  * allocator's persisted floor (csi_event_backfill::ceiling_for); begin()
  * restores it with Planner::begin's rule (csi_event_backfill::restore). A
- * row held in RAM never writes the ceiling while card rows wait (it is not
- * handed to the planner then); the backfill's own hand-over still writes it
- * up to kStride ids ahead of the row it sends (F47's trade), so a reboot
- * mid-backfill can skip up to kStride card rows.
+ * row held in RAM never writes the ceiling while card rows wait: route()
+ * does not hand it to the planner then, and a row whose card append failed
+ * (which the planner's not-on-card route would persist before handing it
+ * over) has that write held back until it goes. The backfill's own
+ * hand-over still writes it up to kStride ids ahead of the row it sends
+ * (F47's trade), so a reboot mid-backfill can skip up to kStride card rows.
  */
 
 #ifndef SECURACV_WAP_CSI_EVENT_EGRESS_H
