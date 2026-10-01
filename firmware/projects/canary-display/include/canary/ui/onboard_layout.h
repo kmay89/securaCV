@@ -76,6 +76,9 @@ struct CardSpec {
 };
 constexpr CardSpec kSmallGlassCard = {112, 8};
 constexpr CardSpec kWideGlassCard = {208, 12};
+// The card's corner radius (onboard_ui.cpp sets it; small_join keeps the
+// rounded corners inside the halo).
+constexpr int kCardRadius = 10;
 
 // Smallest canvas that keeps `qr`'s module pitch for the join code.
 inline int qr_floor(int qr) {
@@ -490,8 +493,20 @@ inline HintLines hint_lines(int upper_w, int lower_w, const char* hint,
 //    sides, as the 236 px ring always did.
 //  * Every centered scene line is fitted no wider than the ring's inner
 //    chord at its latitude (scene_line_w), so the lines between are inside.
-//    The host test holds every row of every scene, and the bird's seat,
-//    clear of the ring's stroke on every display env and ladder.
+//    On the touch169 and the AMOLED that chord is narrower than the panel's
+//    row, and it is what puts their two shorter forms on the glass (F65).
+//  * The QR card's rounded corners stay kMinGap inside the ring too: where
+//    the band is too tight for them (the touch169 alone: its 128 px card in
+//    a 176 px ring), the canvas gives up pixels the way join_stack's does —
+//    two at a time, so the card keeps its center and equal air, never its
+//    pad and never its module pitch (small_join).
+//  * The host test holds every row of every scene, the bird's seats and
+//    the card clear of the ring's stroke on every small-glass env with both
+//    ladders, and drives onboard_ui.cpp itself to hold what it draws.
+//  * The round watch's rows are fitted to the disc's chord kEdgeMargin
+//    inside the rim, which is the ring's inner edge itself: a row's box
+//    clears the stroke by the chord's rounding (1.7 px at the closest), not
+//    by kMinGap as on rectangular glass.
 constexpr int kRingStroke = 3;       // onboard_ui.cpp's arc width
 constexpr int kRoundRingRimGap = 2;  // the round ring is 236 px on 240
 
@@ -515,15 +530,62 @@ inline Ring halo_ring(const Glass& g, const Stack& s, const Rows& r) {
   return ring;
 }
 
+// True when the card's rounded corners (kCardRadius) are at least kMinGap
+// inside the ring's stroke. Integer math at twice the scale (the ring of
+// odd diameter keeps its half-pixel center); both are lv_obj_align'ed
+// TOP_MID on a panel g.w wide.
+inline bool card_inside_ring(const Glass& g, const Ring& ring, const Stack& s) {
+  const int cx2 = 2 * (g.w / 2 - ring.d / 2) + ring.d;
+  const int cy2 = 2 * ring.top + ring.d;
+  const int x0 = g.w / 2 - s.card / 2;
+  const int dx_a = roundframe::iabs(2 * (x0 + kCardRadius) - cx2);
+  const int dx_b = roundframe::iabs(2 * (x0 + s.card - kCardRadius) - cx2);
+  const int dy_a = roundframe::iabs(2 * (s.card_top + kCardRadius) - cy2);
+  const int dy_b =
+      roundframe::iabs(2 * (s.card_top + s.card - kCardRadius) - cy2);
+  const int64_t dx = dx_a > dx_b ? dx_a : dx_b;
+  const int64_t dy = dy_a > dy_b ? dy_a : dy_b;
+  // The corner arcs' centers within (inner radius - gap - corner radius).
+  const int64_t r2 =
+      ring.d - 2 * kRingStroke - 2 * kMinGap - 2 * kCardRadius;
+  return r2 > 0 && dx * dx + dy * dy <= r2 * r2;
+}
+
+// The small-glass Join stack and its halo (the watch branch of
+// onboard_ui.cpp): join_stack, halo_ring, and on rectangular glass the
+// canvas trimmed two px at a time, never below qr_floor(), until the card
+// is inside the ring (card_inside_ring). The rows do not move, so neither
+// does the ring.
+struct SmallJoin {
+  Stack stack;
+  Ring halo;
+};
+
+inline SmallJoin small_join(const Glass& g, const Rows& r) {
+  SmallJoin j;
+  j.stack = join_stack(g, r);
+  j.halo = halo_ring(g, j.stack, r);
+  if (g.round) return j;
+  const int floor_qr = qr_floor(r.card.qr);
+  while (!card_inside_ring(g, j.halo, j.stack) &&
+         j.stack.qr - 2 >= floor_qr) {
+    j.stack.qr -= 2;
+    j.stack.card -= 2;
+    j.stack.card_top += 1;
+  }
+  return j;
+}
+
 // The top of the bird's seat in every small-glass scene but Join: its
 // center kSceneBirdOff above the panel's center, or as little lower as
 // keeps its box — breathing kBirdBreath px either way — inside the halo's
 // stroke. Only the 240x280 touch169 under Heirloom needs the nudge: 1 px.
-// (The Success scene's one hop rises from here, up to canary_mark's 18 px
-// apex ceiling; on the touch169 the hop's top reaches the halo's top arc
-// for its apex. The host test holds the seat, not the hop.) Integer math
-// at twice the scale, so a ring of odd diameter keeps its half-pixel
-// center.
+// (The Success scene's one hop rises from here: 12 px at the default
+// Character, 14 at most for a shipped one, 15 under canary_mark's clamp of
+// the temperament, plus the overshoot path's brief swing past it. On the
+// touch169 the hop's top reaches the halo's top arc for its apex. The host
+// test holds the seat, not the hop.) Integer math at twice the scale, so a
+// ring of odd diameter keeps its half-pixel center.
 inline int scene_bird_top(const Glass& g, const Ring& ring, int bird) {
   const int cx2 = 2 * (g.w / 2 - ring.d / 2) + ring.d;
   const int cy2 = 2 * ring.top + ring.d;
@@ -565,9 +627,17 @@ inline int scene_bird_top(const Glass& g, const Ring& ring, int bird) {
 //    face (fit_line): the title is set in the Character's body face and the
 //    body in its caption face, and each steps down to the default
 //    Character's face of the same role. A shorter form says the same thing
-//    in fewer words, and exists only where no face holds the whole line on
-//    some shipped glass. The host test proves every line of every scene
-//    reads whole on every display env with both ladders.
+//    in its own words, fewer of them, and exists only where no face holds
+//    the whole line in the width some shipped glass gives it. Two lines
+//    have one: "Check your phone" and the Fail reason "No address". On the
+//    172/180x320 portrait glass no face holds the whole line in the panel's
+//    156/164 px; on the touch169 and the AMOLED the panel would, but the
+//    halo's inner chord does not (F66); on the round watch under Heirloom
+//    the ladder reaches the shorter form in the Character's face before
+//    the whole line in the default face. The host test pins where each
+//    shows, and proves every line of every scene reads whole on every
+//    small-glass env with both ladders. (Wide glass sets its titles and
+//    bodies content-sized; only its network name is fitted.)
 //  * Nothing is cut — except a network name, the user's own words, which
 //    no shorter form can say: name_line.
 

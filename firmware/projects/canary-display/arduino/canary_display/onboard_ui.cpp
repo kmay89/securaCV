@@ -29,7 +29,7 @@ namespace {
 
 // Geometry per glass. The QR card is asked for here; where it and the
 // Join scene's lines sit is onboard_layout.h's call (s_join below), and on
-// small glass so is the halo ring (s_halo: onboardlayout::halo_ring, F66).
+// small glass so is the halo ring (s_halo: onboardlayout::small_join, F66).
 #ifdef CD_FLAVOR_WATCH
 constexpr onboardlayout::CardSpec QR_SPEC = onboardlayout::kSmallGlassCard;
 constexpr lv_coord_t RING_W = onboardlayout::kRingStroke;
@@ -337,8 +337,15 @@ onboardlayout::Stack join_rows() {
 #ifdef CD_FLAVOR_WATCH
   s_glass = g;
   s_rows = r;
-#endif
+  // The halo: the rim's ring on round glass; on rectangular glass the band
+  // between the stack's title and credentials rows, with the card's corners
+  // inside it (small_join, F66).
+  const onboardlayout::SmallJoin j = onboardlayout::small_join(g, r);
+  s_halo = j.halo;
+  return j.stack;
+#else
   return onboardlayout::join_stack(g, r);
+#endif
 }
 
 // A scene's title and body (F65). The words are onboard_layout.h's
@@ -477,9 +484,7 @@ void onboard_ui_create(const char* ap_ssid, const char* ap_pass) {
   s_floor_font = character_def(Character::QuietGlass).type.caption;
   s_title_font = font_body();
   s_title_floor = character_def(Character::QuietGlass).type.body;
-  // The halo: the rim's ring on round glass; on rectangular glass the band
-  // between the stack's title and credentials rows (halo_ring, F66).
-  s_halo = onboardlayout::halo_ring(s_glass, s_join, s_rows);
+  // The halo, as join_rows() placed it (small_join).
   lv_obj_set_size(s_ring, s_halo.d, s_halo.d);
   lv_obj_align(s_ring, LV_ALIGN_TOP_MID, 0, s_halo.top);
   s_creds_w = rf_row_width(s_join.creds_top, line_h(s_creds));
@@ -503,7 +508,7 @@ void onboard_ui_create(const char* ap_ssid, const char* ap_pass) {
   // QR on a white card — scanners want dark-on-light (proof-sheet lesson).
   lv_obj_set_style_bg_color(s_qr_card, lv_color_white(), 0);
   lv_obj_set_style_bg_opa(s_qr_card, LV_OPA_COVER, 0);
-  lv_obj_set_style_radius(s_qr_card, 10, 0);
+  lv_obj_set_style_radius(s_qr_card, onboardlayout::kCardRadius, 0);
   lv_obj_set_style_border_width(s_qr_card, 0, 0);
   lv_obj_set_style_pad_all(s_qr_card, QR_SPEC.pad, 0);
   lv_obj_clear_flag(s_qr_card, LV_OBJ_FLAG_SCROLLABLE);

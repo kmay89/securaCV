@@ -64,6 +64,7 @@
 #include "network/provision_core.h"
 #include "network/wifi_join_policy.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -633,11 +634,12 @@ static void load_minted() {
               obui.find("lv_label_set_text_fmt(s_body") == std::string::npos,
           "onboard_ui.cpp formats a scene title or body itself (the old "
           "\"%%.28s\" network-name clip) instead of fitting it");
-    // F66: the small-glass halo is onboard_layout.h's, not a constant.
-    CHECK(obui.find("onboardlayout::halo_ring(") != std::string::npos &&
+    // F66: the small-glass halo is onboard_layout.h's, not a constant
+    // (what the glass draws with it is test_onboard_scenes').
+    CHECK(obui.find("onboardlayout::small_join(") != std::string::npos &&
               obui.find("RING_D = 236") == std::string::npos,
           "onboard_ui.cpp no longer seats the small-glass halo with "
-          "onboardlayout::halo_ring()");
+          "onboardlayout::small_join()");
   }
   std::printf("  key %d of %d chars; hints: \"%s\" | \"%s\"%s%s%s | \"%s\"\n",
               g_minted.key_len, (int)g_minted.alpha.size(),
@@ -1058,6 +1060,8 @@ static void check_scenes(const Env& e, int which, const Stack& s,
   const Measure tm = {t_own, t_floor};
   const Measure bm = {b_own, b_floor};
   std::string summary;
+  // Where the two shorter forms show (the doc's and the Done text's list).
+  bool phone_narrow = false, address_narrow = false;
   const std::vector<SceneLine> lines = scene_lines();
   for (size_t i = 0; i < lines.size(); ++i) {
     const SceneLine& sl = lines[i];
@@ -1075,6 +1079,10 @@ static void check_scenes(const Env& e, int which, const Stack& s,
     const bool whole = std::strcmp(line.text, sl.full) == 0;
     const bool narrow = sl.narrow != nullptr &&
                         std::strcmp(line.text, sl.narrow) == 0;
+    if (narrow && std::strcmp(sl.full, "Nice - check your phone") == 0)
+      phone_narrow = true;
+    if (narrow && std::strcmp(sl.full, "No address from the router") == 0)
+      address_narrow = true;
     CHECK(w > 0 && line.fits && !line.cut && (whole || narrow) &&
               m(line.text, line.floor) <= w,
           "%s/%s: %s: \"%s\" (%s face, %d px) on a %d px line — not one of "
@@ -1093,6 +1101,25 @@ static void check_scenes(const Env& e, int which, const Stack& s,
                     sl.what.c_str(), line.text, line.floor ? " (floor)" : "");
       summary += one;
     }
+  }
+  // The shorter forms show on every small glass but the round watch at the
+  // default ladder, and "Check your phone" not on the AMOLED there either.
+  // The portrait glass needs them (no face holds the whole line in 156/164
+  // px); the touch169 and the AMOLED take them for the halo's inner chord
+  // (F66), where their old rows held the whole line; the round watch under
+  // Heirloom reaches them in the Character's face before the whole line in
+  // the default face (fit_line's order). A change here is a change to what
+  // docs/hardware/display_onboarding.md says the glass shows.
+  {
+    const bool round_default = g.round && which == 0;
+    const bool want_address = !round_default;
+    const bool want_phone = !round_default && !(e.amoled && which == 0);
+    CHECK(phone_narrow == want_phone && address_narrow == want_address,
+          "%s/%s: \"Check your phone\" %s, \"No address\" %s — the doc says "
+          "%s and %s", n, lad_name, phone_narrow ? "shows" : "does not show",
+          address_narrow ? "shows" : "does not show",
+          want_phone ? "shows" : "does not show",
+          want_address ? "shows" : "does not show");
   }
   // The widest name a network can have (32 bytes, every one 'W'): cut
   // around "...", never past its line (name_line).
@@ -1189,6 +1216,32 @@ static void check_ring(const Env& e, int which, const Stack& s,
     Box b = {rows[i].what, e.w / 2 - w / 2, rows[i].top, w, rows[i].h};
     boxes.push_back(b);
   }
+  // The QR card (lv_obj_align TOP_MID, kCardRadius corners): its rounded
+  // corners at least kMinGap inside the stroke. A box test would be too
+  // strict (the corners are cut) — the farthest point of a rounded square
+  // from a center is a corner arc's center plus the radius. The 236 px ring
+  // the touch169 had cleared its card; F66's 176 px one met its corners
+  // (86.4 px from the center, the stroke 85..88) until small_join trimmed
+  // the canvas.
+  {
+    const double x0 = e.w / 2 - s.card / 2;
+    const double y0 = s.card_top;
+    const double cr = kCardRadius;
+    double reach = 0;
+    const double ax[2] = {x0 + cr, x0 + s.card - cr};
+    const double ay[2] = {y0 + cr, y0 + s.card - cr};
+    for (int a = 0; a < 2; ++a) {
+      for (int c = 0; c < 2; ++c) {
+        const double d = std::sqrt((ax[a] - cx) * (ax[a] - cx) +
+                                   (ay[c] - cy) * (ay[c] - cy)) + cr;
+        if (d > reach) reach = d;
+      }
+    }
+    CHECK(reach + kMinGap <= r_in,
+          "%s/%s: the QR card (%d px at y %d, %d px corners) reaches %.1f px "
+          "from the halo's center; its stroke starts at %.1f", n, lad_name,
+          s.card, s.card_top, kCardRadius, reach, r_in);
+  }
   // The bird, breathing (+-2 px) at each seat: the scenes' and the Join
   // scene's while the QR is away.
   const int bird = g_minted.bird_px;
@@ -1246,7 +1299,10 @@ static void check_glass(const Env& e, int which, int also) {
   r.card = small ? kSmallGlassCard : kWideGlassCard;
   r.creds_h = montserrat_line_h(creds_f);
   r.hint_h = montserrat_line_h(hint_f);
-  const Stack s = join_stack(g, r);
+  // Small glass: the stack and the halo as onboard_ui.cpp's watch branch
+  // takes them (small_join: the card trimmed inside the halo, F66).
+  const SmallJoin sj = small_join(g, r);
+  const Stack s = small ? sj.stack : join_stack(g, r);
 
   const char* lad_name = which == 0 ? "default" : "heirloom";
   char who[64];
@@ -1334,7 +1390,9 @@ static void check_glass(const Env& e, int which, int also) {
     check_rows(e, which, s, r, round, fam);
     // F65 and F66: every scene's lines read whole, and nothing crosses the
     // halo.
-    const Ring ring = halo_ring(g, s, r);
+    const Ring ring = sj.halo;
+    CHECK(ring.d == halo_ring(g, s, r).d && ring.top == halo_ring(g, s, r).top,
+          "%s/%s: small_join's halo is not halo_ring's", n, lad_name);
     std::vector<Box> boxes;
     check_scenes(e, which, s, r, g, ring, fam, &boxes);
     check_ring(e, which, s, r, g, ring, boxes);
@@ -1656,6 +1714,64 @@ static void test_f65_pins() {
         "nightstand NoAddress title \"%s\"", line.text);
 }
 
+// The words of `s`, lowercased: runs of letters, digits and apostrophes.
+static std::vector<std::string> words_of(const char* s) {
+  std::vector<std::string> out;
+  std::string w;
+  for (const char* p = s;; ++p) {
+    const char c = *p;
+    const bool in = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                    (c >= '0' && c <= '9') || c == '\'';
+    if (in) {
+      w += (char)(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+    } else if (!w.empty()) {
+      out.push_back(w);
+      w.clear();
+    }
+    if (c == '\0') break;
+  }
+  return out;
+}
+
+// A scene's shorter form says the same thing in fewer of its own words
+// (test_wifi_join_policy holds the Fail labels' narrow forms the same way):
+// shorter, not a cut, and every word of it is a word of the whole line.
+static void test_scene_narrow_words() {
+  std::printf("scene copy's shorter forms:\n");
+  static const ObStage kStages[] = {ObStage::Hello,      ObStage::Join,
+                                    ObStage::PhoneJoined, ObStage::Connecting,
+                                    ObStage::Fail,       ObStage::Success};
+  int seen = 0;
+  for (size_t i = 0; i < sizeof(kStages) / sizeof(kStages[0]); ++i) {
+    const SceneCopy c = scene_copy(kStages[i]);
+    const Forms* forms[2] = {&c.title, &c.body};
+    for (int k = 0; k < 2; ++k) {
+      const Forms& f = *forms[k];
+      if (f.narrow == nullptr) continue;
+      seen++;
+      CHECK(f.full != nullptr && std::strlen(f.narrow) < std::strlen(f.full) &&
+                std::strstr(f.narrow, "...") == nullptr,
+            "%s: \"%s\" is not a shorter form of \"%s\"",
+            stage_name(kStages[i]), f.narrow, f.full ? f.full : "(none)");
+      if (f.full == nullptr) continue;
+      const std::vector<std::string> whole = words_of(f.full);
+      const std::vector<std::string> part = words_of(f.narrow);
+      CHECK(!part.empty(), "%s: an empty shorter form",
+            stage_name(kStages[i]));
+      for (size_t w = 0; w < part.size(); ++w) {
+        bool found = false;
+        for (size_t v = 0; v < whole.size(); ++v) found = found || part[w] == whole[v];
+        CHECK(found, "%s: \"%s\" says \"%s\", which \"%s\" does not",
+              stage_name(kStages[i]), f.narrow, part[w].c_str(), f.full);
+      }
+      std::printf("  %s: \"%s\" -> \"%s\"\n", stage_name(kStages[i]), f.full,
+                  f.narrow);
+    }
+  }
+  CHECK(seen >= 1, "no scene line has a shorter form (F65 gave PhoneJoined's "
+                   "title one)");
+}
+
 // ── a network name that does not fit (name_line, F65) ─────────────────────
 // A uniform measure: every code point 7 px in the row's face, 6 in the
 // floor's, whatever the font carries (a name can hold any UTF-8).
@@ -1689,12 +1805,12 @@ static void test_name_line() {
         "a floor-face name -> \"%s\"", line.text);
   // Wider than that: its head and its tail around "...", in the floor face
   // — the band suffix stays on the glass.
-  const char* longname = "Kitchen-Mesh-Extender-Upstair-5G";  // 32 bytes
+  const char* longname = "Basement-Mesh-Extender-Office-5G";  // 32 bytes
   name_line(line, longname, 156, std12);
   std::printf("  \"%s\" on 156 px -> \"%s\" (%d px)\n", longname, line.text,
               std12(line.text, true));
   CHECK(line.fits && line.cut && line.floor &&
-            std::strcmp(line.text, "Kitchen-Mes...-Upstair-5G") == 0 &&
+            std::strcmp(line.text, "Basement-M...-Office-5G") == 0 &&
             std12(line.text, true) <= 156,
         "a long name -> \"%s\"", line.text);
   // The cut falls between code points (the old "%.28s" counted bytes).
@@ -1752,6 +1868,33 @@ static void test_f66_pins() {
   CHECK(ring_side(240, tring.d, tring.top, t_creds) == 2 &&
             ring_side(240, tring.d, tring.top, t_hint) == 2,
         "the touch169's low rows cross its halo");
+  // The touch169's 128 px card in that 176 px ring: its 10 px corners reach
+  // 86.4 px from the shared center, inside the stroke (85..88). small_join
+  // trims the canvas to 106 px (card 122 at 73..195, the corners 82.1 px
+  // out), still 3 px a module: the join code's pitch holds, a lower version
+  // fills the canvas. Under Heirloom (172 px from y 49): 104 px, card 120.
+  CHECK(!card_inside_ring(t, tring, tst) && tst.card == 128,
+        "the touch169's untrimmed card no longer documents the defect");
+  const SmallJoin tj = small_join(t, nr);
+  CHECK(tj.halo.d == 176 && tj.halo.top == 46 && tj.stack.qr == 106 &&
+            tj.stack.card == 122 && tj.stack.card_top == 73 &&
+            tj.stack.title_top == tst.title_top &&
+            tj.stack.creds_top == tst.creds_top &&
+            tj.stack.qr / kJoinQrModules == kSmallGlassCard.qr / kJoinQrModules,
+        "touch169 small_join: halo %d at %d, qr %d, card %d at %d",
+        tj.halo.d, tj.halo.top, tj.stack.qr, tj.stack.card,
+        tj.stack.card_top);
+  const Rows hr = {22, kSmallGlassCard, 16, 16};
+  const SmallJoin th = small_join(t, hr);
+  CHECK(th.halo.d == 172 && th.halo.top == 49 && th.stack.qr == 104 &&
+            th.stack.card == 120 && th.stack.card_top == 75,
+        "heirloom touch169 small_join: halo %d at %d, qr %d, card %d at %d",
+        th.halo.d, th.halo.top, th.stack.qr, th.stack.card,
+        th.stack.card_top);
+  // Every other small glass keeps its card whole.
+  const SmallJoin nj = small_join(ns, nr);
+  CHECK(nj.stack.qr == kSmallGlassCard.qr && nj.halo.d == 196,
+        "the nightstand's card was trimmed to %d", nj.stack.qr);
 }
 
 // ── degenerate glass: the lines still never cross ─────────────────────────
@@ -1833,6 +1976,7 @@ int main() {
   test_f45_pins();
   test_f50_pins();
   test_f65_pins();
+  test_scene_narrow_words();
   test_name_line();
   test_f66_pins();
   test_short_glass();
