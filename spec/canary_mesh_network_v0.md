@@ -460,7 +460,7 @@ review):
 | Rule | PIO (`mesh_session`) | canary-wap (`mesh_network`) | Across the trees |
 |---|---|---|---|
 | Counter convention (§3.3) | first counter signed is 1; receiver's last-seen starts at 0; `counter <= last` dropped, no exemption | **same** since the follow-up — `msg_counter_tx` starts at 1 in `add_peer` and both rekey resets; the gate is `counter <= msg_counter_rx`, the old `&& rx > 0` exemption gone | **same**: a counter-0 frame is never fresh at either receiver |
-| Where a member's address comes from (§8.3) | a completed pairing, or NVS `peer_macs` at boot; an opera frame from an address the transport table does not hold drops before verification, and a verified frame's source is recorded as the member's liveness link (any address in that table: the §8.3 peer-fields note) and binds nothing | a completed pairing (`add_peer`; a re-pair re-binds a member already held, logged; the joiner completes only after its owner confirmed), or NVS at boot (an older firmware's duplicate entry folded into one); since 2026-10-01 a frame from any address but the signer's own bound one drops before verification. It used to re-point the member and its ESP-NOW registration at the source of a frame that passed signature, `opera_id` and replay, and before the v0.4 follow-up it did so ahead of the signature (a frame with a member's public `sender_fp` + `opera_id` and any signature: a keyless denial of service) | **same rule**: no frame binds an address; canary-wap's source check is the stricter one |
+| Where a member's address comes from (§8.3) | a completed pairing, or NVS `peer_macs` at boot; a member's opera frame from any address but its own bound one drops before verification (F70; from an address the transport table does not hold it always did), and a frame binds, moves or records no address. Until F70 a verified frame's source, which could be any address in that table, was recorded as the member's address and used for its rekey replies (the §8.3 peer-fields note) | a completed pairing (`add_peer`; a re-pair re-binds a member already held, logged; the joiner completes only after its owner confirmed), or NVS at boot (an older firmware's duplicate entry folded into one); since 2026-10-01 a frame from any address but the signer's own bound one drops before verification. It used to re-point the member and its ESP-NOW registration at the source of a frame that passed signature, `opera_id` and replay, and before the v0.4 follow-up it did so ahead of the signature (a frame with a member's public `sender_fp` + `opera_id` and any signature: a keyless denial of service) | **same rule**, source check included since F70: a member's frame is taken only from its own bound address, and no frame binds an address |
 | Fixed-size payloads | decoders take the length and refuse any other, exactly (`mesh_alert`, `mesh_beacon`, …; `LEAVE_OPERA` must be empty) | **same** since the follow-up: every struct handler (`HEARTBEAT`, `AUTH_*`, `TAMPER_ALERT`, `POWER_ALERT`, `OFFLINE_IMMINENT`, `OPERA_REKEY[_ACK]`) refuses `payload_len != sizeof(struct)`; `BEACON_EVENT`, `CHANNEL_LOCK`, `HUB_ELECTION` already decoded through the staged modules | **same rule**; the encodings still differ where the registry table says so |
 | Payload encodings, pairing exchange | | | **differ** — the registry table above, §4.3, §5.3, §8.3 |
 
@@ -1037,27 +1037,35 @@ empty (the UI falls back to "Unknown Device") — a placeholder pending a
 peer-metadata store. `alerts_received` is the §8.2 per-peer count of
 verified `TAMPER_ALERT` frames this boot. `state`/`last_seen_sec`/`rssi`
 are real joins against the ESP-NOW transport peer table:
-`mesh_session` records the source MAC of every **fully verified**
-opera-authenticated frame against the sender's fingerprint (signature,
-opera_id and replay checks all passed), and the handler joins that MAC into
-the transport table's liveness. The checks prove who signed the frame, not
-which radio sent it — the envelope signs no address (the F49 part 3 note
-below) — so only an address already in the transport table is ever
-recorded, and none of them moves a binding. Any address in that table can
-be recorded for a peer, though, not only the peer's own binding: while a
-pairing runs the partner's address is in it (an outsider that answers the
-pairing from its own radio needs no spoofing), and ESP-NOW does not
-authenticate a source, so a radio copying another member's address
-qualifies too. Either can deliver a peer's not-yet-heard frame and become
-that peer's recorded address, which the PlatformIO session also uses as
-the destination of its rekey unicasts to the peer and takes out of the
-transport table when it forgets the peer. That steers the peer's rekey
-replies to the outsider, and a later removal can strand the member whose
-address was copied (host-probed, the same before #1756; open — recording
-it only from the peer's own binding would close it, not built). A trusted peer that has not sent a verified
-frame this boot — or whose MAC has aged out of the transport table —
-reports the OFFLINE/never defaults, and `peers_online` in `GET /api/mesh`
-counts only peers heard this boot (v0.3, F33).
+`mesh_session` reports each peer's bound radio MAC once a **fully
+verified** opera-authenticated frame (signature, opera_id and replay checks
+all passed) has arrived from it, and the handler joins that MAC into the
+transport table's liveness. The checks prove who signed a frame, not which
+radio sent it — the envelope signs no address (the F49 part 3 note below)
+— so a member's frame is taken only from that member's own binding (F70):
+from any other address, even one the transport table holds, it is dropped
+before verification, spends no counter and reaches no handler, and no frame
+binds, moves or records an address. Until F70 the PlatformIO session took
+a member's verified frame from any address in that table and recorded
+that address as the member's, and the table holds more than the member's
+own: while a pairing runs, the partner's (an outsider that answers the
+pairing from its own radio needs no spoofing), and every other member's (a
+radio can copy one; ESP-NOW does not authenticate a source). Either could
+deliver a member's not-yet-heard frame and become its recorded address,
+which the session also used as the destination of its rekey unicasts to
+the member and took out of the transport table when it forgot the member.
+That sent the receiver's `REKEY_ACCEPT` to the outsider, and a later
+removal of the member could strand the member whose address was copied
+(host-probed, the same before #1756). The rekey unicasts now go to the
+binding, and forgetting a member removes only the binding. A radio copying
+the member's *own* address still gets the member's not-yet-heard frames
+dispatched, as on canary-wap: nothing tells it apart, and it moves no
+address (a member's later frames still count above it, since a PlatformIO
+sender uses one counter, §3.3). A trusted peer that has not sent a verified
+frame this boot — or since a re-pair moved its binding, or whose MAC has
+aged out of the transport table — reports the OFFLINE/never defaults, and
+`peers_online` in `GET /api/mesh` counts only peers heard this boot (v0.3,
+F33).
 
 **The transport peer table (v0.3, F33 part 1).** The ESP-NOW transport
 delivers frames only from MACs in its peer table and `broadcast()` sends only
@@ -1108,8 +1116,9 @@ So the relearn is withdrawn. A verified opera frame is **not** proof of
 its sender's radio address, and an implementation MUST NOT bind or re-bind
 a peer's address from one. The PlatformIO tree drops every opera frame from
 an address its transport table does not hold, before any verification
-(`recv_dropped_no_peer`, as before #1756), so a frame cannot move a binding
-and spends no counter; a peer's address is bound only when a pairing
+(`recv_dropped_no_peer`, as before #1756), and, since F70, a member's frame
+from any address but the member's own binding (the peer-fields note above),
+so a frame cannot move a binding and spends no counter; a peer's address is bound only when a pairing
 completes (the address the partner paired from — re-pairing a device that
 is already trusted re-binds it) and restored from NVS `peer_macs` at boot.
 A changed radio MAC means a re-pair, with two limits. The pairing does not
@@ -1127,9 +1136,10 @@ member leaves or is removed (host-probed). Learning a new address safely
 needs either a wire change (the address signed into a payload, under the §4.5
 registry) or a challenge the new address must answer with the peer's key;
 that is an open decision, not built. **canary-wap conforms (2026-10-01),
-and is stricter:** its `handle_received_message` drops a frame whose source
-is not the signer's own bound address before the signature check, so it
-spends no counter and reaches no handler. No signed opera frame writes an
+with the source rule the PlatformIO tree took in F70:** its
+`handle_received_message` drops a frame whose source is not the signer's
+own bound address before the signature check, so it spends no counter and
+reaches no handler. No signed opera frame writes an
 address there any more; only a completed pairing does. Before, it
 re-pointed a member's address, and
 its ESP-NOW registration, at the source of any frame that passed `opera_id`,
@@ -1147,9 +1157,9 @@ own frames dropped as replays and the binding stayed on the outsider until
 the member's counter climbed past it. After a power cut, frames heard since
 the last 5-minute counter save did the same. And a copied member address
 made the member's next real frame delete that other member's ESP-NOW
-registration, so the receiver could no longer reach it. Unlike the PlatformIO tree, which accepts a
-verified frame from any address in its transport table (the peer-fields
-note above), canary-wap accepts one only from the signer's own address.
+registration, so the receiver could no longer reach it. Like the
+PlatformIO tree since F70 (the peer-fields note above), canary-wap accepts a
+verified frame only from the signer's own address.
 A changed radio MAC means a re-pair there too, with each member that holds
 the device: one pairing re-binds one member's entry, where a frame used to
 move it at every member at once. The member is then heard once its counter

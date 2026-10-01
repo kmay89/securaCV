@@ -330,28 +330,27 @@ bool send_beacon_event(mesh_beacon::BeaconState state,
                        const char*              label,
                        uint32_t                 now_ms);
 
-/* Live-link view of the trusted peers: the address each peer's last
- * verified frame arrived from. It is recorded ONLY from a fully verified
- * opera-authenticated frame — signature, opera_id and replay checks all
- * passed — and only for an address already in the transport table (a
- * frame from any other address is dropped unread, RADIO ADDRESSES below).
- * That proves the frame is the peer's, not that the peer transmitted it:
- * the envelope signs no address, so any address in the table can deliver
- * one of the peer's frames this device has not heard yet, and become the
- * recorded one. Two such addresses need nothing from the peer: while a
- * pairing runs (either role), the partner's address is in the table, so an
- * outsider that answers the pairing from its own address can replay there
- * with no spoofing until the pairing ends (host-probed as initiator); and
- * ESP-NOW does not authenticate a source, so a radio copying another bound
- * member's address can too. The recorded address is not only a status value: the session
- * sends its rekey unicasts to the peer there (send_rekey_frame) and takes
- * it out of the transport table when it forgets the peer (forget_peer), so
- * such a replay steers the peer's rekey replies to that address, and a
- * later removal of the peer can strand the member whose address it was
- * (open, THREAT_MODEL "Opera mesh"). Best-effort liveness, not a binding:
- * a peer that moves to an address it did not pair from is not heard there
- * at all until it re-pairs (RADIO ADDRESSES below). mac_known is false
- * until the first verified frame this boot.
+/* Live-link view of the trusted peers: each peer's bound radio MAC
+ * (RADIO ADDRESSES below), once a fully verified opera-authenticated frame
+ * — signature, opera_id and replay checks all passed — has arrived from it.
+ * mac_known is false, and mac zero, until the first one this boot, and
+ * again after bind_peer_mac() moves the binding (a re-pair) until one
+ * arrives at the new address. A peer's frame from any other address is not
+ * taken at all (F70): the transport table also holds every other member's
+ * address and, while a pairing runs, the partner's, and the envelope signs
+ * no address, so any of those could deliver a frame of the peer's that this
+ * device has not heard yet. Until F70 such a frame was dispatched and its
+ * source became the peer's link, which the session also used for its rekey
+ * unicasts to the peer and took out of the transport table when it forgot
+ * the peer: an outsider that answered a pairing from its own radio got this
+ * device's REKEY_ACCEPT (host-probed), and a radio copying another member's
+ * address could make a later removal of the peer strand that member. Now
+ * the rekey unicasts go to the binding, forgetting the peer removes only
+ * the binding, and the link is the binding. ESP-NOW does not authenticate a
+ * source, so a radio copying the peer's OWN address can still deliver the
+ * peer's unheard frames; nothing tells it apart, and it moves no address.
+ * Best-effort liveness, not proof of presence: a peer that moves to an
+ * address it did not pair from is not heard there at all until it re-pairs.
  *
  * Returns the number of in-use entries written (≤ cap). Threading: the
  * table is mutated on the main loop; the REST handlers read it from the
@@ -386,6 +385,8 @@ size_t get_peer_links(PeerLink* out, size_t cap);
  *
  * Frames are silently dropped (no error feedback) when:
  *   • sender_fp doesn't match any trusted peer (unknown sender);
+ *   • the frame did not come from that peer's bound radio MAC (F70 —
+ *     checked before the signature, so it spends no counter);
  *   • Ed25519 signature verification fails (forged or corrupted);
  *   • counter <= last_counter for that peer (replay);
  *   • opera_id in the header doesn't match our own (cross-opera leak —
@@ -455,6 +456,9 @@ size_t trusted_peer_count();
  *     check from whatever address replays it. #1756 (F49 part 3) re-bound a
  *     peer on such a frame and persisted it; that let an outsider who
  *     recorded one re-point the member at its own radio, and is withdrawn.
+ *     For the same reason a peer's frame from an address the table DOES
+ *     hold — another member's, or a running pairing's partner — is dropped
+ *     unread too, unless it is that peer's own binding (F70, PeerLink above).
  *     So a peer whose radio MAC changed (a replaced module, a new
  *     locally-administered address) is heard again after a re-pair, which
  *     binds the address the partner paired from; re-pairing a device that
@@ -473,10 +477,12 @@ size_t trusted_peer_count();
  *   • A peer that is dropped — a verified LEAVE, unregister, a removal or a
  *     rotation that forgets it, clear_trusted_peers() — leaves the transport
  *     table with it.
- * online_peer_count(): trusted peers whose verified-frame MAC (PeerLink
- * mac_known, below) is in the transport table in the ACTIVE window — a
- * peer bound at boot that has not been heard this boot is NOT online, even
- * though its fresh transport entry starts ACTIVE. GET /api/mesh uses it.
+ * online_peer_count(): trusted peers heard from their binding (PeerLink
+ * mac_known, above) whose binding is in the transport table in the ACTIVE
+ * window — a peer bound at boot that has not been heard this boot is NOT
+ * online, even though its fresh transport entry starts ACTIVE, and neither
+ * is one re-bound and not yet heard at the new address. GET /api/mesh uses
+ * it.
  * Threading: bind_peer_mac is main-loop only (it mutates both tables);
  * online_peer_count only reads, like get_peer_links().
  * ────────────────────────────────────────────────────────────────────────── */
@@ -485,8 +491,9 @@ bool   bind_peer_mac(const uint8_t fp [mesh_crypto::FINGERPRINT_LEN],
                      const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN]);
 size_t online_peer_count();
 
-/* Drop ONE trusted peer by fingerprint (empties its slot and MAC binding;
- * its replay counter becomes a tombstone). Returns true iff an entry was
+/* Drop ONE trusted peer by fingerprint (empties its slot and takes its
+ * bound MAC, and no other address, out of the transport table; its replay
+ * counter becomes a tombstone). Returns true iff an entry was
  * removed. Used by the verified-LEAVE_OPERA receive path and by peer
  * removal. The NVS copy is the integration layer's
  * (mesh_state::remove_trusted_peer). */

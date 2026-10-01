@@ -5341,16 +5341,16 @@ static esp_err_t handle_scout_unpair(httpd_req_t* req) {
 //
 // MAC↔fingerprint join: the persisted trusted-peer set keys on Ed25519
 // pubkey (→ fingerprint), while the live transport peer table keys on
-// MAC. mesh_session bridges them — it records the source MAC of every
-// FULLY VERIFIED opera-authenticated frame against the sender's
-// fingerprint (get_peer_links), so per-peer state / last_seen / rssi
-// below are the transport table's real numbers once a peer has spoken
-// this boot. A peer that has not yet sent a verified frame reports
-// OFFLINE/never — best-effort by design, documented in
-// spec/canary_mesh_network_v0.md §8. (The table itself is filled by
-// mesh_session from each peer's persisted radio MAC — F33 part 1 — so a
-// peer's entry exists from boot; the verified-frame MAC is what says it
-// has actually been heard.)
+// MAC. mesh_session bridges them — get_peer_links reports each peer's
+// bound radio MAC once a FULLY VERIFIED opera-authenticated frame has
+// arrived from it (a peer's frame from any other address is not taken,
+// F70), so per-peer state / last_seen / rssi below are the transport
+// table's real numbers once a peer has spoken this boot. A peer that has
+// not yet sent a verified frame reports OFFLINE/never — best-effort by
+// design, documented in spec/canary_mesh_network_v0.md §8. (The table
+// itself is filled by mesh_session from each peer's persisted radio MAC —
+// F33 part 1 — so a peer's entry exists from boot; mac_known is what says
+// it has actually been heard.)
 // ════════════════════════════════════════════════════════════════════════════
 
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
@@ -5405,8 +5405,8 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
   witness_get_health().http_requests++;
 
   // Trusted peers are the durable membership set (pubkeys); liveness
-  // comes from joining each fingerprint's verified-frame MAC
-  // (mesh_session::get_peer_links) against the live transport table
+  // comes from joining each fingerprint's bound MAC, once heard
+  // (mesh_session::get_peer_links), against the live transport table
   // (see section header + spec §8).
   uint8_t pubkeys[mesh_state::MAX_TRUSTED_PEERS * mesh_crypto::PUBKEY_LEN];
   size_t  count = 0;
@@ -5441,7 +5441,7 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
     views[i].rssi          = 0;
     views[i].alerts_received = 0;          // until the session has a link row
 
-    // fp → last verified MAC → live transport entry. A peer that has
+    // fp → bound MAC (once heard) → live transport entry. A peer that has
     // not sent a verified frame this boot, or whose MAC has left the
     // transport table, keeps the OFFLINE/never defaults above.
     for (size_t l = 0; l < n_links; ++l) {

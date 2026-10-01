@@ -609,13 +609,16 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   and re-sent from any radio in range and still pass signature, `opera_id`
   and counter. The PlatformIO tree therefore takes no radio address from a
   frame: an opera frame from an address its transport table does not hold
-  is dropped before verification, and a member's address is bound only by a
-  completed pairing (or restored from NVS at boot), so a changed radio MAC
-  means a re-pair — with the two limits in the next bullet. F49 part 3
-  (#1756) briefly re-bound and persisted a member's address on such a
-  frame, which let an outsider re-point the member at its own radio (host
-  probe: the receiver's next rotation sent its OFFER to the outsider, and
-  the 60 s commit dropped the member when it stayed silent); withdrawn,
+  is dropped before verification, and so, since F70, is a member's frame
+  from any address but the member's own binding (the bullet on where a
+  verified frame's source is recorded, below); a member's address is bound
+  only by a completed pairing (or restored from NVS at boot), so a changed
+  radio MAC means a re-pair — with the limits in the bullet on the pairing
+  code below. F49 part 3 (#1756) briefly re-bound and persisted a member's
+  address on such a frame, which let an outsider re-point the member at
+  its own radio (host probe: the receiver's next rotation sent its OFFER
+  to the outsider, and the 60 s commit dropped the member when it stayed
+  silent); withdrawn,
   spec §8.3. canary-wap re-pointed a member's address, and its ESP-NOW
   registration, at the source of any frame that passed its checks; a host
   probe against its real `mesh_network.cpp` showed that a frame the
@@ -711,27 +714,32 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   cannot start while eight members are bound: the transport table has no
   slot for the new address, so the pairing's replies cannot be sent until
   a member leaves or is removed (host-probed).
-- **Still open: where a verified frame's source is recorded.** The
-  PlatformIO receiver notes the address each member's last verified frame
-  arrived from (its liveness link), and that can be any address in the
-  transport table, not only the member's own binding. Two get there without
-  the member. While a pairing runs, the partner's address is in the
-  table, so an outsider that answers the pairing from its own address can
+- **Where a verified frame's source is recorded: closed on the PlatformIO
+  tree (F70).** Until F70 the PlatformIO receiver took a member's verified
+  frame from any address in its transport table and recorded that address
+  as the member's (its liveness link), and the table holds more than the
+  member's own binding. While a pairing runs, the partner's address is in
+  it, so an outsider that answered the pairing from its own address could
   deliver a member's not-yet-heard frame there with no spoofing until the
-  pairing ends (probed with the receiver as initiator; as joiner it adds
-  the address of whoever sends it an OFFER the same way, not probed). And
-  because ESP-NOW does not
-  authenticate the source address, a radio that copies another bound
-  member's address can do the same. No binding moves, but the receiver
-  then records that address for the signer: its rekey replies to the
-  signer go there (host probe: a replayed `REKEY_OFFER` from the pairing
-  partner's address got the receiver's `REKEY_ACCEPT` sent to the
-  outsider), and a later removal of the signer takes that address out of
-  the transport table, which strands the member whose address was copied.
-  Host-probed on the PlatformIO tree, the same before #1756. A likely fix,
-  not built: record the link only when the frame comes from the signer's
-  own bound address, and send rekey unicasts and drop addresses by that
-  binding.
+  pairing ended (as initiator or as joiner); and because ESP-NOW does not
+  authenticate the source address, a radio that copied another bound
+  member's address could do the same. No binding moved, but the receiver
+  sent its rekey replies to the member at the recorded address (host
+  probe: a replayed `REKEY_OFFER` from the pairing partner's address got
+  the receiver's `REKEY_ACCEPT` sent to the outsider), and a later removal
+  of the member took that address out of the transport table, stranding
+  the member whose address was copied. The same before #1756. Now a
+  member's frame from any address but its own binding is dropped before
+  verification, as on canary-wap: it spends no counter, reaches no handler
+  and records nothing. The rekey unicasts go to the binding, forgetting a
+  member removes only the binding, and the liveness link is the binding
+  once a verified frame has arrived from it. What remains is a radio that
+  copies the member's *own* address: it still gets the member's
+  not-yet-heard frames dispatched, as on canary-wap. Nothing can tell it
+  apart, it moves no address, and on this tree the member's later frames
+  still count above it (one counter per sender). Host-tested
+  (`test_mesh_session`, three tests that fail on the code before F70); not
+  bench-verified.
 - `opera_secret` storage requires flash encryption enabled
   (eFuse `FLASH_CRYPT_CNT > 0`); load/save paths refuse on FE-off devices
   and log loudly (v0.2 audit O2). That keeps the secret off un-fused
