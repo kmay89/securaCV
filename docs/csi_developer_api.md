@@ -207,9 +207,13 @@ those bodies `"replay":true`. On the canary base
   boot), so an upgraded device's next rows are above Home Assistant's
   stored mark and nothing is reset, on the device or in Home Assistant. At
   boot the id floor is held at or above the delivery ceiling (NVS
-  `csi.evsent`). A card line whose id this device never handed out (at or
-  above the allocator's next id: forged or foreign) is never sent and never
-  counted as delivered;
+  `csi.evsent`), unless that ceiling is past 0xF0000000 (an older firmware
+  wrote one for a forged card line): the floor and the backfill both treat
+  such a ceiling as no record. A card line at or above the allocator's next
+  id is never sent and never counted as delivered, so a forged id cannot
+  push Home Assistant's mark or the id floor toward the wrap. Below that
+  bound the log is trusted input: the backfill signs and sends what a line
+  says;
 - a row committed while the link was up but held behind the backlog is sent
   with `"replay":false`, since it is news; everything else the backfill sends
   says `"replay":true`;

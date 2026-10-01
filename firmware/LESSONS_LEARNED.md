@@ -2336,8 +2336,12 @@
   Home Assistant's stored mark and nothing has to be reset; at boot the
   floor is held above the delivery ceiling (`boot_floor()`), and a card line
   at or above the allocator's next id is never sent or credited, so a forged
-  id cannot drag the floor to the wrap. The parser reads uint32 fields
-  digit by digit and refuses a sign or an overflow.
+  id cannot drag the floor to the wrap. A ceiling `boot_floor()` will not
+  follow (past 0xF0000000) is no record for the backfill either
+  (`csi_event_backfill::restore()`): the floor and the watermark are
+  restored by one rule, or the backfill reads every new row as delivered.
+  The parser reads uint32 fields digit by digit and refuses a sign or an
+  overflow.
 - **Regression check:** `firmware/tests_host/test_csi_event_id_space.cpp`
   links the real chokepoint and bundler and fails on the old library in all
   six scenarios; `test_csi_event_log_line.cpp` compiles the parser against a

@@ -481,10 +481,12 @@ Owner: U1.
   - Setup: a canary with a paired BLE Scout beacon and an open presence
     bundle near its quiet-gap close.
   - Repro: bring the beacon in range as the presence bundle closes, a few
-    times.
+    times; then repeat with the broker slowed or blocked (a firewall rule
+    that drops its packets), so a publish holds the commit lock.
   - Expected: the `events` bodies' ids rise in publish order; no `replay`
-    verdict; no watchdog reset (the commit lock is held across the commit
-    hooks on both tasks).
+    verdict; no watchdog reset and no BLE supervision drop (the commit lock
+    is held across the commit hooks on both tasks, the canary-wap's MQTT
+    publish included).
   - Artifact: `docs/audit/repro/F46/scout-race/`.
 - [ ] **Open rows carry handles**
   - Setup: a canary-wap on this firmware.

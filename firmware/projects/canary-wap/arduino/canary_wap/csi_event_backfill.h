@@ -69,7 +69,11 @@
  * of the space. So the planner never sends or credits a card line at or
  * above the BOUND: the allocator's next id as the host reads it each pass
  * (Link::id_next), or past the highest id commit() has seen this boot,
- * whichever is higher. Every id this device handed out is below it.
+ * whichever is higher. Every id this device handed out is below it. The
+ * converse does not hold: below the bound the log is trusted input. A
+ * forged line there (an id a reboot skipped, or one the allocator had
+ * passed by the time the walk read it) is signed and sent as it reads, and
+ * one written ahead of real rows moves the watermark past them.
  */
 
 #ifndef SECURACV_CSI_EVENT_BACKFILL_H
