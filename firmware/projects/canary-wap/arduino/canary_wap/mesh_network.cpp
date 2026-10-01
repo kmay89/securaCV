@@ -1328,11 +1328,43 @@ static void handle_pair_accept(const uint8_t* mac, const uint8_t* payload) {
   }
 }
 
-// The initiator's half of a pairing both owners confirmed: seal the
-// opera_secret to the joiner in COMPLETE, add the joiner, and forget the
-// pairing. Runs from update() on the loop task (initiator_step), whichever
-// owner confirmed first.
+// A pairing this device cannot finish because add_peer refused the partner:
+// a deny-listed key (spec §5.6), a new member for a full opera, a re-pair
+// onto an address another member holds, or an address ESP-NOW cannot
+// register (its list holds 20). Nothing is sent or stored, the opera is as
+// it was, the owner's callback reports the failure, and the log says why
+// the code on the screen led nowhere (sweep F73). The pairing handlers used
+// to ignore add_peer's result: they persisted, went MESH_ACTIVE and
+// reported success, and the initiator sealed the opera_secret to a partner
+// it then did not hold.
+static void fail_pairing() {
+  const PairingRole role = g_pairing.role;
+  secure_wipe(&g_pairing, sizeof(g_pairing));
+  if (g_opera_config.configured) {
+    g_mesh_state = g_peer_count > 0 ? MESH_CONNECTING : MESH_NO_OPERA;
+  } else {
+    g_mesh_state = MESH_NO_OPERA;
+  }
+  health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+             "opera: pairing failed: partner refused (removed, opera full, or address unavailable)");
+  if (g_pairing_callback) {
+    g_pairing_callback(role, 0, false);
+  }
+}
+
+// The initiator's half of a pairing both owners confirmed: add the joiner,
+// seal the opera_secret to it in COMPLETE, and forget the pairing. Runs
+// from update() on the loop task (initiator_step), whichever owner
+// confirmed first. The joiner is added first, so a refusal ends the
+// pairing before the opera_secret leaves this device (F73); the joiner,
+// sent nothing, times out.
 static void initiator_complete() {
+  if (!add_peer(g_pairing.peer_pubkey, g_pairing.peer_mac, "New Device")) {
+    fail_pairing();
+    return;
+  }
+  persist_peers();
+
   PairCompletePayload complete;
 
   // Encrypt opera secret with session key
@@ -1344,10 +1376,6 @@ static void initiator_complete() {
   memcpy(complete.encrypted_secret + OPERA_SECRET_SIZE, tag, 16);
 
   send_pair_frame(g_pairing.peer_mac, MSG_PAIR_COMPLETE, &complete, sizeof(complete));
-
-  // Add joiner to our opera
-  add_peer(g_pairing.peer_pubkey, g_pairing.peer_mac, "New Device");
-  persist_peers();
 
   // Clear sensitive pairing data, as the joiner does. Kept, the finished
   // pairing's ephemeral key and confirmed code let a radio that overheard
@@ -1438,15 +1466,22 @@ static void handle_pair_complete(const uint8_t* mac, const uint8_t* payload) {
     return;
   }
 
+  // Hold the initiator first (F73): a refusal leaves this device's opera
+  // as it was, in RAM and in NVS. (The initiator has already added this
+  // device; it cannot know.)
+  if (!add_peer(g_pairing.peer_pubkey, g_pairing.peer_mac, "Opera Creator")) {
+    secure_wipe(opera_secret, sizeof(opera_secret));
+    fail_pairing();
+    return;
+  }
+
   // Initialize our opera config
   memcpy(g_opera_config.opera_secret, opera_secret, OPERA_SECRET_SIZE);
-  compute_opera_id(opera_secret, g_opera_config.opera_id);
+  secure_wipe(opera_secret, sizeof(opera_secret));
+  compute_opera_id(g_opera_config.opera_secret, g_opera_config.opera_id);
   g_opera_config.configured = true;
   g_opera_config.enabled = true;
   strncpy(g_opera_config.opera_name, "My Opera", MAX_OPERA_NAME_LEN);
-
-  // Add initiator as first peer
-  add_peer(g_pairing.peer_pubkey, g_pairing.peer_mac, "Opera Creator");
 
   // Persist
   persist_opera_config();

@@ -8,10 +8,12 @@
 // receiver's ESP-NOW callback and update(). Every frame here was built by
 // the sender's own send path and judged by the receiver's own receive path.
 //
-// Sweep items F71, F74 and F75: each was a way the opera went
+// Sweep items F71, F73, F74 and F75: each was a way the opera went
 // quiet, or a pairing went wrong, with nothing reporting it.
 //   F71  a rebooted device's frames dropped as replays at every member
 //        that had heard it (its send counters restarted at 1);
+//   F73  a pairing whose partner add_peer refused still persisted, went
+//        MESH_ACTIVE and reported success;
 //   F74  a joiner's DISCOVER went nowhere once the ESP-NOW broadcast peer
 //        was gone (mesh_network relied on other modules to register it,
 //        and its own channel-change listener deleted it);
@@ -198,6 +200,17 @@ size_t pair_frames(const Device& from, const uint8_t to[6], uint8_t type) {
   size_t n = 0;
   for (const Frame& f : sent_to(from, to)) n += is_pair_frame(f, type) ? 1 : 0;
   return n;
+}
+
+// The last pairing frame of `type` that `from` sent `to` (a heartbeat can
+// follow a COMPLETE in the same update() pass, so "the last frame" is not it).
+Frame last_pair(const Device& from, const uint8_t to[6], uint8_t type) {
+  const auto frames = sent_to(from, to);
+  for (size_t i = frames.size(); i-- > 0;) {
+    if (is_pair_frame(frames[i], type)) return frames[i];
+  }
+  CHECK(false);
+  return Frame();
 }
 
 // The DISCOVER, OFFER and ACCEPT, each carried as bytes, after which both
@@ -424,6 +437,163 @@ void test_a_damaged_reservation_record_is_logged_and_replaced() {
   std::printf("PASS a_damaged_reservation_record_is_logged_and_replaced\n");
 }
 
+// ── F73: a pairing add_peer refuses fails, and says so ──────────────────
+//
+// handle_pair_confirm (initiator) and handle_pair_complete (joiner)
+// ignored add_peer's result: whatever it refused, they persisted, went
+// MESH_ACTIVE and reported success. The initiator also sealed the
+// opera_secret to the partner it then did not hold. Now the partner is
+// added first; a refusal ends the pairing before anything is sent or
+// stored, logs it, and the callback reports the failure. (The other side
+// cannot know: an initiator that refuses sends no COMPLETE, so its joiner
+// times out; a joiner that refuses has already let its initiator add it.)
+
+void check_initiator_refused(Device& ini, Device& joi, uint8_t peers_before) {
+  become(ini);
+  CHECK(pair_frames(ini, joi.mac, mn::MSG_PAIR_COMPLETE) == 0);
+  CHECK(mn::g_mesh_state != mn::MESH_ACTIVE);
+  CHECK(!mn::is_pairing());
+  CHECK(mn::g_peer_count == peers_before);
+  CHECK(nvs_peer_count(ini) == peers_before);
+  const PairEvent* ev = last_event_of(ini);
+  CHECK(ev != nullptr && ev->role == mn::PAIR_ROLE_INITIATOR && !ev->success);
+  CHECK(logged("opera: pairing failed"));
+  become(ini);
+  static const uint8_t zero[32] = {};
+  CHECK(memcmp(mn::g_pairing.session_key, zero, sizeof zero) == 0);   // nothing left
+}
+
+void test_an_initiator_with_a_full_opera_refuses_the_pairing() {
+  for (int joiner_first = 0; joiner_first < 2; ++joiner_first) {
+    fresh_opera({&A, &B, &C});
+    fill_opera(A);                                  // 16 members
+    fresh_device(J);
+    pair_to_codes(A, J);
+    g_pair_events.clear();
+    g_health.clear();
+    if (joiner_first) {
+      // The F75 path: the joiner's CONFIRM is kept until A's owner confirms.
+      become(J);
+      CHECK(mn::confirm_pairing());
+      deliver(A, J.mac, last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM));
+      become(A);
+      A.espnow.sent.clear();
+      CHECK(mn::confirm_pairing());
+      mn::update();                                 // the refusal comes on A's loop
+    } else {
+      confirm_initiator_first(A, J);
+    }
+    check_initiator_refused(A, J, mn::MAX_OPERA_SIZE);
+    become(A);
+    CHECK(mn::g_mesh_state == mn::MESH_CONNECTING);
+    become(J);
+    CHECK(mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);   // J waits, then times out
+    mn::cancel_pairing();
+  }
+  std::printf("PASS an_initiator_with_a_full_opera_refuses_the_pairing\n");
+}
+
+void test_an_initiator_refuses_a_partner_removed_during_the_pairing() {
+  // A re-pairs with B; while the codes are shown, A's owner removes B, so
+  // B is deny-listed (spec §5.6). The old handler sent B the opera_secret
+  // when B's ESP-NOW registration let it, and reported success.
+  fresh_opera({&A, &B, &C});
+  pair_to_codes(A, B);
+  g_pair_events.clear();
+  g_health.clear();
+  become(A);
+  uint8_t fp[mn::FINGERPRINT_SIZE];
+  mn::compute_fingerprint(B.pub, fp);
+  CHECK(mn::remove_peer(fp));
+  confirm_initiator_first(A, B);
+  check_initiator_refused(A, B, 1);
+  CHECK(entry(A, B) == nullptr);
+  std::printf("PASS an_initiator_refuses_a_partner_removed_during_the_pairing\n");
+}
+
+void test_an_initiator_refuses_a_re_pair_onto_another_members_address() {
+  // B, which A holds, re-pairs from the address A holds for C (a copied
+  // address). add_peer refuses it (one address, one member); the old
+  // handler still sealed the opera_secret to that address and reported
+  // success.
+  fresh_opera({&A, &B, &C});
+  uint8_t b_mac[6];
+  memcpy(b_mac, B.mac, 6);
+  memcpy(B.mac, C.mac, 6);
+  pair_to_codes(A, B);
+  g_pair_events.clear();
+  g_health.clear();
+  confirm_initiator_first(A, B);
+  check_initiator_refused(A, B, 2);
+  CHECK(same_mac(entry(A, B)->mac_addr, b_mac));
+  CHECK(same_mac(entry(A, C)->mac_addr, C.mac));
+  memcpy(B.mac, b_mac, 6);
+  std::printf("PASS an_initiator_refuses_a_re_pair_onto_another_members_address\n");
+}
+
+void test_a_joiner_with_a_full_opera_keeps_its_own() {
+  // B holds 16 members and joins J's new opera. Its add_peer refuses J, so
+  // B keeps the opera it had, in RAM and in NVS. The old handler replaced
+  // B's opera with J's, saved it, and reported success.
+  fresh_opera({&A, &B, &C});
+  fill_opera(B);
+  boot(B);
+  become(B);
+  uint8_t opera_id[mn::OPERA_ID_SIZE];
+  memcpy(opera_id, mn::g_opera_config.opera_id, sizeof opera_id);
+  const std::vector<uint8_t> nvs_id = nvs_value(B, "mesh/opera_id");
+  CHECK(nvs_id.size() == mn::OPERA_ID_SIZE);
+  fresh_device(J);
+  pair_to_codes(J, B);
+  g_pair_events.clear();
+  g_health.clear();
+  confirm_initiator_first(J, B);
+  CHECK(pair_frames(J, B.mac, mn::MSG_PAIR_COMPLETE) == 1);   // J completed its side
+  become(B);
+  CHECK(memcmp(mn::g_opera_config.opera_id, opera_id, sizeof opera_id) == 0);
+  CHECK(nvs_value(B, "mesh/opera_id") == nvs_id);
+  CHECK(mn::g_peer_count == mn::MAX_OPERA_SIZE);
+  CHECK(nvs_peer_count(B) == mn::MAX_OPERA_SIZE);
+  CHECK(entry(B, J) == nullptr);
+  become(B);
+  CHECK(mn::g_mesh_state == mn::MESH_CONNECTING);
+  const PairEvent* ev = last_event_of(B);
+  CHECK(ev != nullptr && ev->role == mn::PAIR_ROLE_JOINER && !ev->success);
+  CHECK(logged("opera: pairing failed"));
+  std::printf("PASS a_joiner_with_a_full_opera_keeps_its_own\n");
+}
+
+void test_a_joiner_refuses_an_initiator_removed_during_the_pairing() {
+  // B re-pairs with A; once B's owner has confirmed, B's owner removes A.
+  // The COMPLETE that follows names a deny-listed key.
+  fresh_opera({&A, &B, &C});
+  pair_to_codes(A, B);
+  g_pair_events.clear();
+  g_health.clear();
+  become(A);
+  CHECK(mn::confirm_pairing());
+  become(B);
+  CHECK(mn::confirm_pairing());
+  const Frame confirm_b = last_pair(B, A.mac, mn::MSG_PAIR_CONFIRM);
+  uint8_t fp[mn::FINGERPRINT_SIZE];
+  mn::compute_fingerprint(A.pub, fp);
+  become(B);
+  CHECK(mn::remove_peer(fp));
+  deliver(A, B.mac, confirm_b);
+  const Frame complete = last_pair(A, B.mac, mn::MSG_PAIR_COMPLETE);
+  deliver(B, A.mac, complete);
+  become(B);
+  CHECK(mn::g_mesh_state != mn::MESH_ACTIVE);
+  CHECK(!mn::is_pairing());
+  CHECK(mn::g_peer_count == 1);
+  CHECK(nvs_peer_count(B) == 1);
+  CHECK(entry(B, A) == nullptr);
+  const PairEvent* ev = last_event_of(B);
+  CHECK(ev != nullptr && ev->role == mn::PAIR_ROLE_JOINER && !ev->success);
+  CHECK(logged("opera: pairing failed"));
+  std::printf("PASS a_joiner_refuses_an_initiator_removed_during_the_pairing\n");
+}
+
 // ── F74: the DISCOVER registers the broadcast peer it is sent to ────────
 //
 // ESP-NOW sends only to a registered address, the broadcast one included
@@ -503,7 +673,7 @@ void test_the_joiners_owner_may_confirm_first() {
   g_pair_events.clear();
   become(J);
   CHECK(mn::confirm_pairing());
-  deliver(A, J.mac, sent_to(J, A.mac).back());
+  deliver(A, J.mac, last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM));
   become(A);
   CHECK(mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);   // waits for its owner
   CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 0);
@@ -511,11 +681,13 @@ void test_the_joiners_owner_may_confirm_first() {
   CHECK(mn::confirm_pairing());
   become(A);
   mn::update();                                     // A's loop sends the COMPLETE
-  // One frame: the COMPLETE. (A CONFIRM sent just before it could take the
-  // joiner's one-frame receive buffer, and the COMPLETE would be dropped.)
-  const auto to_j = sent_to(A, J.mac);
-  CHECK(to_j.size() == 1 && is_pair_frame(to_j[0], mn::MSG_PAIR_COMPLETE));
-  deliver(J, A.mac, to_j[0]);
+  // One pairing frame: the COMPLETE, and no CONFIRM before it (two frames
+  // back to back could meet the joiner's one-frame receive buffer, and the
+  // COMPLETE would be the one dropped).
+  CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_CONFIRM) == 0);
+  CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 1);
+  CHECK(is_pair_frame(sent_to(A, J.mac).front(), mn::MSG_PAIR_COMPLETE));
+  deliver(J, A.mac, last_pair(A, J.mac, mn::MSG_PAIR_COMPLETE));
   CHECK(completed(A, J));
   CHECK(completed(J, A));
   become(A);
@@ -543,9 +715,9 @@ void test_the_initiator_still_waits_for_the_joiners_confirm() {
   CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 0);
   become(J);
   CHECK(mn::confirm_pairing());
-  deliver(A, J.mac, sent_to(J, A.mac).back());
+  deliver(A, J.mac, last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM));
   CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 1);
-  deliver(J, A.mac, sent_to(A, J.mac).back());
+  deliver(J, A.mac, last_pair(A, J.mac, mn::MSG_PAIR_COMPLETE));
   CHECK(completed(A, J) && completed(J, A));
   std::printf("PASS the_initiator_still_waits_for_the_joiners_confirm\n");
 }
@@ -564,7 +736,7 @@ void test_a_confirm_from_another_address_does_not_count() {
     }
     become(J);
     CHECK(mn::confirm_pairing());
-    const Frame confirm_j = sent_to(J, A.mac).back();
+    const Frame confirm_j = last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM);
     deliver(A, E_MAC, confirm_j);
     if (joiner_first) {
       become(A);
@@ -577,7 +749,7 @@ void test_a_confirm_from_another_address_does_not_count() {
     CHECK(pair_frames(A, E_MAC, mn::MSG_PAIR_COMPLETE) == 0);
     deliver(A, J.mac, confirm_j);                  // from the partner's address
     CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 1);
-    deliver(J, A.mac, sent_to(A, J.mac).back());
+    deliver(J, A.mac, last_pair(A, J.mac, mn::MSG_PAIR_COMPLETE));
     CHECK(completed(A, J) && completed(J, A));
   }
   std::printf("PASS a_confirm_from_another_address_does_not_count\n");
@@ -601,8 +773,8 @@ void test_a_bad_confirm_from_another_address_does_not_end_the_pairing() {
   CHECK(mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);
   become(J);
   CHECK(mn::confirm_pairing());
-  deliver(A, J.mac, sent_to(J, A.mac).back());
-  deliver(J, A.mac, sent_to(A, J.mac).back());
+  deliver(A, J.mac, last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM));
+  deliver(J, A.mac, last_pair(A, J.mac, mn::MSG_PAIR_COMPLETE));
   CHECK(completed(A, J) && completed(J, A));
   // From the partner's own address it still ends the pairing.
   fresh_device(A);
@@ -626,6 +798,15 @@ const Test kTests[] = {
      test_a_reservation_that_cannot_be_stored_refuses_the_frame},
     {"a_damaged_reservation_record_is_logged_and_replaced",
      test_a_damaged_reservation_record_is_logged_and_replaced},
+    {"an_initiator_with_a_full_opera_refuses_the_pairing",
+     test_an_initiator_with_a_full_opera_refuses_the_pairing},
+    {"an_initiator_refuses_a_partner_removed_during_the_pairing",
+     test_an_initiator_refuses_a_partner_removed_during_the_pairing},
+    {"an_initiator_refuses_a_re_pair_onto_another_members_address",
+     test_an_initiator_refuses_a_re_pair_onto_another_members_address},
+    {"a_joiner_with_a_full_opera_keeps_its_own", test_a_joiner_with_a_full_opera_keeps_its_own},
+    {"a_joiner_refuses_an_initiator_removed_during_the_pairing",
+     test_a_joiner_refuses_an_initiator_removed_during_the_pairing},
     {"a_discover_goes_out_with_no_broadcast_peer_registered",
      test_a_discover_goes_out_with_no_broadcast_peer_registered},
     {"a_channel_change_re_adds_the_broadcast_peer", test_a_channel_change_re_adds_the_broadcast_peer},
