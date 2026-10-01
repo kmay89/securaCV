@@ -1,6 +1,6 @@
 // canary-local/tests/fingerprint_examples.test.js — every fingerprint and
-// public-key example a Lab page shows is spelled the way its product spells
-// it (sweep A25).
+// public-key example in the Lab pages' generated JSON (canary-local/devices/
+// *.json) is spelled the way its product spells it (sweep A25).
 //
 // The WAP page's signed MQTT examples carried "fp":"7f3a9c21", and its boot
 // log "Public key fingerprint: 7f3a9c21". Both are 8 hex digits. The envelope
@@ -20,6 +20,15 @@
 // shorter; a bare "…" (as every example sig is) is not checked. Each rule's
 // spelling is pinned to the source that writes it. An example no rule covers
 // fails: read how its product spells it, then add the rule.
+//
+// What it does not see. It reads the generated JSON and nothing else, so an
+// example a page's hand-written script spells for itself is out of its
+// reach: the Vision page's simulated MQTT pane (assets/vision-ui.js) writes
+// its health row's public_key as "ed25519:…", and canary-vision sends 64
+// bare lowercase hex digits. And it checks the examples that are there, not
+// the ones that are missing: the Home Assistant page's WAP chain line
+// (gen_homeassistant.py) carries no fp at all, so nothing here reads it.
+// Both were found in this sweep's review and are open items of their own.
 //
 // The WAP's examples are also the repo's Ed25519 test key's (seed 0x42 x 32):
 // the key the WAP's tests_host/test_mqtt_identity.cpp builds its events body
