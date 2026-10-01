@@ -18,7 +18,7 @@
     ],
     "modality": "camera",
     "network": {
-      "mdns": "canary-<fp>.local (advertise-only)",
+      "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
       "web": "SPA on device (LittleFS)",
       "mqtt": "presence/dwelling/confidence + signed chain"
     },
@@ -419,7 +419,7 @@
       },
       {
         "tag": "[--]",
-        "text": "Hardware ID  b3f2a9c41d5e  (salted pseudonym \u2014 never the MAC)"
+        "text": "Hardware ID  fH3dtqtBGrpRDhAN  (salted pseudonym \u2014 never the MAC)"
       },
       {
         "tag": "[OK]",
@@ -427,7 +427,7 @@
       },
       {
         "tag": "[MQTT]",
-        "text": "Connecting 192.168.1.10:1883 as canary_vision_001 ..."
+        "text": "Connecting 192.168.1.10:1883 as securacv-canary_vision_001-fH3dtqtBGrpRDhAN ..."
       },
       {
         "tag": "[MQTT]",

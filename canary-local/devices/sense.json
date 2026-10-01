@@ -4,8 +4,8 @@
   "device": {
     "id_example": "canary_sense_001",
     "fp_example": "b7e2c49a11f03d5c",
-    "host_example": "canary-sense-001-b7e2c4",
-    "hwid_example": "9f41c2d8a06be375",
+    "host_example": "canary-sense-001-88XFJv",
+    "hwid_example": "88XFJv8Ztmy3dr4R",
     "name": "Canary Sense",
     "product_name": "SecuraCV Canary Sense",
     "device_type": "canary-sense",
@@ -25,7 +25,7 @@
     ],
     "modality": "radar",
     "network": {
-      "mdns": "canary-<fp>.local (advertise-only)",
+      "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
       "web": "none",
       "mqtt": "presence/occupants/range + signed chain"
     },
@@ -320,11 +320,11 @@
       },
       {
         "tag": "[MDNS]",
-        "text": "Fleet advert up as canary-sense-001-b7e2c4.local (_securacv._tcp)"
+        "text": "Fleet advert up as canary-sense-001-88XFJv.local (_securacv._tcp)"
       },
       {
         "tag": "[MQTT]",
-        "text": "Connecting 192.168.1.10:1883 as canary_sense_001 ..."
+        "text": "Connecting 192.168.1.10:1883 as securacv-canary_sense_001-88XFJv8Ztmy3dr4R ..."
       },
       {
         "tag": "[MQTT]",

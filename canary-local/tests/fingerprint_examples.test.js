@@ -350,3 +350,165 @@ test("every WAP device id, SSID and unnamed host a generated page shows is the t
   assert.ok(onWap("id") >= 3, `wap.json: ${onWap("id")} device ids found (the sweep's match broke?)`);
   assert.ok(onWap("ssid") >= 3, `wap.json: ${onWap("ssid")} SSIDs found (the sweep's match broke?)`);
 });
+
+// ── the salted device pseudonym (sweep A28) ────────────────────────────────
+// canary-sense and canary-vision print a "Hardware ID", name their MQTT client
+// and their mDNS host after device_pseudonym::device_id_hex: SHA-256 of
+// "canary:device-id:v1:" || a per-device salt, rendered as 16 characters of
+// the 54-character unambiguous alphabet (no 0/O/o, no 1/I/i/l/L). The Sense
+// page showed 9f41c2d8a06be375 and the Vision page b3f2a9c41d5e (12): hex,
+// which no unit prints. The Sense host, canary-sense-001-b7e2c4, borrowed
+// the fingerprint's first six digits, where make_hostname appends the
+// pseudonym's first six characters, case kept. The generators now derive
+// each from an example salt (_pseudonym.py), the two salts the shared
+// header's host test derives with, and this derives them again.
+const PSEUDO_H = "firmware/common/identity/device_pseudonym.h";
+const PSEUDO_HOST_TEST = "firmware/projects/canary-wap/tests_host/test_device_pseudonym_common.cpp";
+const PSEUDO_PINS = [
+  [PSEUDO_H, 'constexpr char   DOMAIN[]    = "canary:device-id:v1:";'],
+  [PSEUDO_H, 'constexpr char     ALPHABET[]     = "23456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";'],
+  [PSEUDO_H, "constexpr unsigned ALPHABET_LIMIT = 216;"],
+  [PSEUDO_H, "constexpr size_t TOKEN_BYTES = 8;"],
+  [PSEUDO_H, "constexpr size_t HEX_LEN     = TOKEN_BYTES * 2;"],
+  [PSEUDO_H, "memcpy(input + off, detail::DOMAIN, detail::DOMAIN_LEN); off += detail::DOMAIN_LEN;"],
+  [PSEUDO_H, "memcpy(input + off, secret, secret_len);"],
+  [PSEUDO_H, "if (hash[i] < detail::ALPHABET_LIMIT) {"],
+  [PSEUDO_H, "out_hex[produced++] = detail::ALPHABET[hash[i] % detail::ALPHABET_LEN];"],
+  [PSEUDO_H, "out_hex[produced] = detail::ALPHABET[produced];"],
+  [PSEUDO_HOST_TEST, "memset(secret,  0x11, sizeof(secret));"],
+  [PSEUDO_HOST_TEST, "memset(secret2, 0x22, sizeof(secret2));"],
+];
+const PSEUDO_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";
+const PSEUDO_SHAPE = new RegExp(`^[${PSEUDO_ALPHABET}]{16}$`);
+
+function pseudonym(salt) {
+  const h = crypto.createHash("sha256").update("canary:device-id:v1:").update(salt).digest();
+  let out = "";
+  for (const b of h) {
+    if (out.length >= 16) break;
+    if (b < 216) out += PSEUDO_ALPHABET[b % 54];
+  }
+  while (out.length < 16) out += PSEUDO_ALPHABET[out.length];
+  return out;
+}
+// mdns_mgr.cpp's make_hostname: the id cut to 23 bytes, '_', ' ' and '.'
+// turned to '-', then '-' and the pseudonym's first six characters.
+function makeHostname(deviceId, pseudo) {
+  const base = (deviceId || "canary").slice(0, 23).replace(/[_ .]/g, "-");
+  return `${base}-${pseudo.slice(0, 6)}`;
+}
+
+// The pages whose product prints the pseudonym, the salt each example uses,
+// and the sources that spell the recipe.
+const PSEUDO_PAGES = {
+  "sense.json": { project: "firmware/projects/canary-sense", salt: 0x11 },
+  "vision.json": { project: "firmware/projects/canary-vision", salt: 0x22 },
+};
+function projectPins(project) {
+  return [
+    [`${project}/src/main.cpp`, 'boot_kv("Hardware ID", devid_hex);'],
+    [`${project}/src/net/mdns_mgr.cpp`, "char base[24];"],
+    [`${project}/src/net/mdns_mgr.cpp`, 'copy_str(base, sizeof(base), device_id && device_id[0] ? device_id : "canary");'],
+    [`${project}/src/net/mdns_mgr.cpp`, "if (*p == '_' || *p == ' ' || *p == '.') *p = '-';"],
+    [`${project}/src/net/mdns_mgr.cpp`, 'snprintf(out, cap, "%s-%.6s", base, devid_hex);'],
+    [`${project}/src/net/mqtt_mgr.cpp`, 'String clientId = String("securacv-") + cfg.device_id + "-" + devid_hex;'],
+    [`${project}/src/net/mqtt_mgr.cpp`, '"Connecting %s:%u as %s ...\\n", cfg.mqtt_host, cfg.mqtt_port, clientId.c_str()'],
+  ];
+}
+// What each page's product prints, derived.
+function pseudoNames(page) {
+  const { salt } = PSEUDO_PAGES[page];
+  const id = DATA[page].device.id_example;
+  const p = pseudonym(Buffer.alloc(32, salt));
+  return { pseudonym: p, host: `${makeHostname(id, p)}.local`, client: `securacv-${id}-${p}` };
+}
+
+// Every pseudonym example, wherever it sits: a hwid-named property, a
+// "Hardware ID <x>" console line, and the client id a "Connecting <broker>
+// as <x> ..." line names.
+const HWID_PROP = /^(?:[a-z]+_)*(?:hwid|hardware_id|pseudonym)(?:_[a-z]+)*$/i;
+function pseudoExamples() {
+  const out = [];
+  for (const page of PAGES)
+    for (const [path, s, prop] of strings(DATA[page], "")) {
+      if (prop) continue; // fp-family properties: the RULES above
+      const key = path.split(".").pop();
+      if (HWID_PROP.test(key)) out.push({ page, path, kind: "pseudonym", value: s });
+      for (const m of s.matchAll(/\bHardware ID\s+(\S+)/g)) out.push({ page, path, kind: "pseudonym", value: m[1] });
+      for (const m of s.matchAll(/\bConnecting \S+ as (\S+) \.\.\./g)) out.push({ page, path, kind: "client", value: m[1] });
+    }
+  return out;
+}
+
+// Every .local host a generated page names: a fixed name, a template (it
+// ends in a <placeholder>, so the match below skips it), or an example a
+// product derives — the WAP's unnamed fallback (sweep A29) or make_hostname.
+const FIXED_HOSTS = new Set(["canary.local", "homeassistant.local"]);
+function hostExamples() {
+  const out = [];
+  for (const page of PAGES)
+    for (const [path, s] of strings(DATA[page], "")) {
+      const key = path.split(".").pop();
+      if (/^host_example$/.test(key)) { out.push({ page, path, value: `${s}.local` }); continue; }
+      for (const m of s.matchAll(/(?<![\w.<>-])[A-Za-z0-9][A-Za-z0-9_-]*\.local\b/g))
+        if (!FIXED_HOSTS.has(m[0])) out.push({ page, path, value: m[0] });
+    }
+  return out;
+}
+const HOST_RULES = {
+  "wap.json": () => WAP_NAMES.host,
+  "homeassistant.json": () => WAP_NAMES.host,
+  "sense.json": () => pseudoNames("sense.json").host,
+  "vision.json": () => pseudoNames("vision.json").host,
+};
+
+test("the pseudonym recipe is the firmware's, and the derivation reproduces it", () => {
+  for (const [file, literal] of [...PSEUDO_PINS, ...Object.values(PSEUDO_PAGES).flatMap((p) => projectPins(p.project))])
+    assert.ok(read(file).includes(literal), `${file} no longer has ${JSON.stringify(literal)}`);
+  for (const { project } of Object.values(PSEUDO_PAGES)) {
+    const body = read(`${project}/src/net/mdns_mgr.cpp`).split("void make_hostname(")[1].split("\n}\n")[0];
+    assert.ok(!/tolower|toupper/.test(body), `${project}'s make_hostname changes case now; the example host must follow`);
+  }
+  // the derivation on its own: 16 characters, the alphabet only, stable
+  const a = pseudonym(Buffer.alloc(32, 0x11));
+  assert.match(a, PSEUDO_SHAPE);
+  assert.strictEqual(a, pseudonym(Buffer.alloc(32, 0x11)));
+  assert.notStrictEqual(a, pseudonym(Buffer.alloc(32, 0x22)));
+  assert.strictEqual(makeHostname("canary_sense_001", a), `canary-sense-001-${a.slice(0, 6)}`);
+  assert.strictEqual(makeHostname("a.b c_d", "XYZabcdef"), "a-b-c-d-XYZabc", "case kept, separators hyphenated");
+});
+
+test("every Hardware ID and MQTT client id a generated page shows is the pseudonym its product prints", () => {
+  const found = pseudoExamples();
+  const problems = [];
+  for (const ex of found) {
+    const at = `${ex.page} ${ex.path}`;
+    if (!PSEUDO_PAGES[ex.page]) { problems.push(`${at}: ${ex.kind} ${ex.value} on a page with no pseudonym rule`); continue; }
+    const want = pseudoNames(ex.page);
+    if (ex.kind === "pseudonym") {
+      if (!PSEUDO_SHAPE.test(ex.value))
+        problems.push(`${at}: "${ex.value}" is not 16 characters of the unambiguous alphabet (device_pseudonym::HEX_LEN)`);
+      else if (ex.value !== want.pseudonym) problems.push(`${at}: "${ex.value}" is not the example salt's pseudonym (${want.pseudonym})`);
+    } else if (ex.value !== want.client) {
+      problems.push(`${at}: client id "${ex.value}" is not mqtt_mgr.cpp's securacv-<id>-<pseudonym> (${want.client})`);
+    }
+  }
+  assert.deepStrictEqual(problems, []);
+  const count = (page, kind) => found.filter((e) => e.page === page && e.kind === kind).length;
+  assert.ok(count("sense.json", "pseudonym") >= 1, "sense.json: the hwid example went missing (the sweep's match broke?)");
+  assert.ok(count("vision.json", "pseudonym") >= 1, "vision.json: the Hardware ID line went missing");
+  assert.ok(count("sense.json", "client") >= 1 && count("vision.json", "client") >= 1, "a Connecting line went missing");
+});
+
+test("every .local host a generated page names is a fixed name, a template, or the host its product derives", () => {
+  const found = hostExamples();
+  const problems = [];
+  for (const ex of found) {
+    const rule = HOST_RULES[ex.page];
+    if (!rule) { problems.push(`${ex.page} ${ex.path}: host ${ex.value} on a page with no host rule`); continue; }
+    if (ex.value !== rule()) problems.push(`${ex.page} ${ex.path}: host ${ex.value} is not the one its product derives (${rule()})`);
+  }
+  assert.deepStrictEqual(problems, []);
+  assert.ok(found.some((e) => e.page === "wap.json"), "wap.json: the unnamed host went missing");
+  assert.ok(found.filter((e) => e.page === "sense.json").length >= 2, "sense.json: host_example and the [MDNS] line");
+});

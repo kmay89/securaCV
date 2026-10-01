@@ -45,6 +45,7 @@ import json
 import re
 from pathlib import Path
 
+from _pseudonym import SALT_B, client_id, pseudonym
 from _tooling import die, repo_root
 
 REPO = repo_root()
@@ -468,7 +469,14 @@ must(HA_DISCOVERY_CPP, "Home Assistant discovery published (retained).", "discov
 must(MAIN_CPP, "Ed25519 identity ready (events signed)", "witness ready line")
 
 EX_IP = "192.168.1.117"
-EX_HEX = "b3f2a9c41d5e"
+# The salted MAC-free pseudonym main.cpp prints as "Hardware ID"
+# (device_pseudonym::device_id_hex): 16 characters of the unambiguous
+# alphabet, derived from an example salt by the header's own construction
+# (_pseudonym.py) — not hex, which no unit prints (sweep A28). The MQTT
+# client id the connect line names carries it too.
+EX_HWID = pseudonym(SALT_B)
+EX_CLIENT_ID = client_id(DEVICE_ID, EX_HWID, MQTT_MGR_CPP)
+must(MAIN_CPP, 'boot_kv("Hardware ID", devid_hex);', "Hardware ID boot line")
 
 SERIAL = {
     "port_hint": "the XIAO's USB-C · USB-CDC serial · 115200 8N1  (pio device monitor)",
@@ -504,9 +512,9 @@ SERIAL = {
         {"tag": "", "text": "              ,_,  ))"},
         {"tag": "", "text": "             (o.o)  ))     Connecting to MQTT..."},
         {"tag": "[--]", "text": f"Device ID  {DEVICE_ID}"},
-        {"tag": "[--]", "text": f"Hardware ID  {EX_HEX}  (salted pseudonym — never the MAC)"},
+        {"tag": "[--]", "text": f"Hardware ID  {EX_HWID}  (salted pseudonym — never the MAC)"},
         {"tag": "[OK]", "text": "Witness  Ed25519 identity ready (events signed)"},
-        {"tag": "[MQTT]", "text": f"Connecting 192.168.1.10:1883 as {DEVICE_ID} ..."},
+        {"tag": "[MQTT]", "text": f"Connecting 192.168.1.10:1883 as {EX_CLIENT_ID} ..."},
         {"tag": "[MQTT]", "text": "Connected."},
         {"tag": "[DISC]", "text": "Home Assistant discovery published (retained)."},
     ],

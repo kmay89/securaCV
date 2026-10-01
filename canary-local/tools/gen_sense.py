@@ -43,6 +43,7 @@ import json
 import re
 from pathlib import Path
 
+from _pseudonym import SALT_A, client_id, make_hostname, pseudonym
 from _tooling import die, repo_root
 
 REPO = repo_root()
@@ -142,11 +143,16 @@ if not sense_reg:
 # Illustrative values — a real unit derives its own from its NVS identity.
 EX_ID = DEVICE_ID_SEED                      # the compiled first-boot seed
 EX_FP = "b7e2c49a11f03d5c"                  # 16-hex Ed25519 fingerprint (witness.cpp fp_hex[16])
-EX_HOST = "canary-sense-001-b7e2c4"         # mdns make_hostname(): id hyphenated + 6-hex pseudonym
-EX_HWID = "9f41c2d8a06be375"                # salted MAC-free pseudonym (device_pseudonym)
+# The salted MAC-free pseudonym (device_pseudonym::device_id_hex): 16
+# characters of the unambiguous alphabet, derived here from an example salt
+# by the header's own construction (_pseudonym.py), never hand-typed hex
+# (sweep A28). make_hostname() appends its first six characters to the
+# hyphenated id, case kept; the MQTT client id carries all sixteen.
+EX_HWID = pseudonym(SALT_A)
+EX_HOST = make_hostname(EX_ID, EX_HWID, MDNS_CPP)
+EX_CLIENT_ID = client_id(EX_ID, EX_HWID, MQTT_CPP)
 EX_BROKER = "192.168.1.10"
 must(WITNESS_CPP, "fp_hex[16] = '\\0'", "16-hex fingerprint length")
-must(MDNS_CPP, '"%s-%.6s", base, devid_hex', "mdns hostname recipe")
 
 # --------------------------------------------------------------------------- #
 # 2. the radar — hardware envelope + the real UART wire protocol
@@ -403,7 +409,7 @@ BOOT = [
     {"tag": "", "text": ". . . . ."},
     {"tag": "[WIFI]", "text": "Connected IP=192.168.1.62 RSSI=-54dBm", "src": "Connected IP=%s RSSI=%ddBm", "srcf": WIFI_CPP},
     {"tag": "[MDNS]", "text": f"Fleet advert up as {EX_HOST}.local (_securacv._tcp)", "src": "Fleet advert up as %s.local", "srcf": MDNS_CPP},
-    {"tag": "[MQTT]", "text": f"Connecting {EX_BROKER}:1883 as {EX_ID} ...", "src": "Connecting %s:%u as %s ...", "srcf": MQTT_CPP},
+    {"tag": "[MQTT]", "text": f"Connecting {EX_BROKER}:1883 as {EX_CLIENT_ID} ...", "src": "Connecting %s:%u as %s ...", "srcf": MQTT_CPP},
     {"tag": "[MQTT]", "text": "Connected.", "src": '"MQTT", "Connected."', "srcf": MQTT_CPP},
     {"tag": "[DISC]", "text": "Home Assistant discovery published (retained).", "src": "Home Assistant discovery published (retained).", "srcf": DISC_CPP},
     {"tag": "[OTA]", "text": "Pull-OTA engine ready.", "src": '"OTA", "Pull-OTA engine ready."', "srcf": OTA_CPP},

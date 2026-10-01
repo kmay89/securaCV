@@ -555,7 +555,7 @@
       "shows": [],
       "modality": "camera",
       "network": {
-        "mdns": "canary-<fp>.local (advertise-only)",
+        "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
         "web": "SPA on device (LittleFS)",
         "mqtt": "presence/dwelling/confidence + signed chain"
       },
@@ -634,7 +634,7 @@
       "shows": [],
       "modality": "radar",
       "network": {
-        "mdns": "canary-<fp>.local (advertise-only)",
+        "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
         "web": "none",
         "mqtt": "presence/occupants/range + signed chain"
       },
