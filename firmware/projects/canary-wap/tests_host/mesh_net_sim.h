@@ -119,12 +119,11 @@ inline void become(Device& d) {
 // A device powering up: RAM gone, flash and identity kept. Runs the real
 // mesh_network::init() (NVS opera config, peers, deny-list) and the
 // sketch's load_replay_counters() right after it, as canary_wap.ino does.
-// The broadcast address is registered here because on a device something
-// else registers it: csi_probe::init (the CSI active probe the WAP brings up
-// whenever csi_hal runs), and chirp_channel's or beacon_channel's broadcast
-// sends. mesh_network.cpp never registers it itself, and its channel-change
-// listener deletes it; of those three only chirp and beacon add it back, so
-// after a channel change a pairing DISCOVER relies on one of them.
+// Nothing here registers the ESP-NOW broadcast address. This used to,
+// standing in for csi_probe::init and chirp's and Beacon's broadcast sends,
+// because mesh_network.cpp sent its DISCOVER relying on them and its
+// channel-change listener deleted the registration; since F74 the DISCOVER
+// registers it and the listener re-adds it (test_mesh_liveness_wap).
 inline void boot(Device& d) {
   if (g_cur != nullptr && g_cur != &d) save(*g_cur);
   Device fresh;
@@ -138,15 +137,11 @@ inline void boot(Device& d) {
   g_cur = &d;
   mn::init(d.priv, d.pub, d.name);
   mn::load_replay_counters();
-  // The channel policy's first poll reports a channel change, and the
-  // listener init() registered drops the broadcast registration. Settle it
-  // here (the policy is one per image, and every simulated device shares
-  // the channel), then register broadcast (see above), so no update()
-  // later drops it from under a test.
+  // The channel policy's first poll reports a channel change, and runs the
+  // listener init() registered. Settle it here (the policy is one per
+  // image, and every simulated device shares the channel), so no update()
+  // later runs it from under a test.
   mesh_channel_policy::poll_radio();
-  esp_now_peer_info_t bc = {};
-  memset(bc.peer_addr, 0xFF, 6);
-  if (!esp_now_is_peer_exist(bc.peer_addr)) esp_now_add_peer(&bc);
 }
 
 inline void make_device(Device& d, const char* name, uint8_t mac_last) {

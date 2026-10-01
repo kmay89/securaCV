@@ -564,6 +564,25 @@ static_assert(mesh_pair_frame::OFFER_LEN    == sizeof(PairOfferPayload),    "pai
 static_assert(mesh_pair_frame::CONFIRM_LEN  == sizeof(PairConfirmPayload),  "pair size drift");
 static_assert(mesh_pair_frame::COMPLETE_LEN == sizeof(PairCompletePayload), "pair size drift");
 
+// ESP-NOW sends only to a registered address, the broadcast one included
+// (esp_now_send returns ESP_ERR_ESPNOW_NOT_FOUND otherwise). The pairing
+// DISCOVER is this module's only broadcast, and it used to rely on another
+// module having registered the address: csi_probe::init, or a Chirp or
+// Beacon broadcast. The channel-change listener below deleted it, and
+// only Chirp's and Beacon's sends put it back (sweep F74). Registered with
+// the settings those three use (channel 0: follow the radio; unencrypted),
+// so whichever module registers it first, the others' sends still work;
+// one that finds it registered (ESP_ERR_ESPNOW_EXIST) has it.
+static bool ensure_broadcast_peer() {
+  if (esp_now_is_peer_exist(BROADCAST_ADDR)) return true;
+  esp_now_peer_info_t peer_info = {};
+  memcpy(peer_info.peer_addr, BROADCAST_ADDR, 6);
+  peer_info.channel = ESPNOW_CHANNEL;
+  peer_info.encrypt = false;
+  const esp_err_t err = esp_now_add_peer(&peer_info);
+  return err == ESP_OK || err == ESP_ERR_ESPNOW_EXIST;
+}
+
 static bool send_pair_frame(const uint8_t* mac, MessageType type,
                             const void* payload, size_t payload_len) {
   uint8_t frame[mesh_pair_frame::MAX_FRAME_LEN];
@@ -1590,14 +1609,18 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
 
   // Subscribe to channel changes so we can re-register the ESP-NOW broadcast
   // peer when STA reconnects on a different channel. With peer.channel = 0
-  // (set in add_peer / load_peers / broadcast_message) ESP-NOW already follows
-  // the radio, but on some IDF versions the peer cache caches the channel —
-  // dropping and re-adding the broadcast peer guarantees a clean transition.
+  // (set in add_peer / load_peers / ensure_broadcast_peer) ESP-NOW already
+  // follows the radio, but on some IDF versions the peer cache caches the
+  // channel — dropping and re-adding the broadcast peer guarantees a clean
+  // transition. It used to only drop it, which left the pairing DISCOVER,
+  // the CSI probe's broadcast and every other module's that does not re-add
+  // it before sending with nothing to send to (sweep F74).
   mesh_channel_policy::register_listener(
       [](uint8_t /*old_ch*/, uint8_t /*new_ch*/) {
         if (esp_now_is_peer_exist(BROADCAST_ADDR)) {
           esp_now_del_peer(BROADCAST_ADDR);
         }
+        ensure_broadcast_peer();
       });
 
   // Load persisted config
@@ -1747,6 +1770,7 @@ void update() {
       strncpy(discover.device_name, g_device_name, MAX_PEER_NAME_LEN);
       discover.role = (uint8_t)g_pairing.role;
 
+      ensure_broadcast_peer();   // F74: not another module's to provide
       send_pair_frame(BROADCAST_ADDR, MSG_PAIR_DISCOVER, &discover, sizeof(discover));
       last_discover = now;
     }

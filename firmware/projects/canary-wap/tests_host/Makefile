@@ -660,6 +660,27 @@ clean-mesh-address:
 run: run-mesh-address
 clean: clean-mesh-address
 
+# Whether a canary-wap opera comes up, stays reachable, and says so when a
+# pairing fails (sweep F71, F73, F74, F75, F76), on the same harness and
+# link as test_mesh_address_wap: send counters that survive a reboot, a
+# refused partner reported as a failure, the DISCOVER's broadcast
+# registration, the owners confirming in either order, and an unheard opera
+# announcing itself.
+MESH_LIVE_BIN = test_mesh_liveness_wap
+MESH_LIVE_SRC = test_mesh_liveness_wap.cpp
+
+$(MESH_LIVE_BIN): $(MESH_LIVE_SRC) mesh_net_sim.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(MESH_ADDR_LINK)
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(MESH_LIVE_SRC) $(MESH_ADDR_LINK) -lcrypto
+
+.PHONY: run-mesh-liveness clean-mesh-liveness
+run-mesh-liveness: $(MESH_LIVE_BIN)
+	$(call run_marked,$(MESH_LIVE_BIN))
+clean-mesh-liveness:
+	rm -f $(MESH_LIVE_BIN)
+
+run: run-mesh-liveness
+clean: clean-mesh-liveness
+
 # The CSI active probe under the airtime governor (the follow-up to sweep F4,
 # #1696), end to end — the REAL csi_probe scheduler (the sketch's staged copy,
 # CSI_TEST_HOST_BUILD), the REAL airtime_governor and the gate body the WAP
