@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### The canary mesh no longer learns a peer's radio address from a frame (#<W8>)
+
+- **The canary mesh no longer learns a peer's radio address from a frame
+  (sweep F49 part 3, withdrawn).** #1756 let a verified opera frame from an
+  address the transport did not know move a trusted peer's binding to that
+  address, and persisted it. The envelope signs no source or destination
+  address, a sender spends one counter across every destination, and frames
+  are unencrypted. So anyone in range who recorded a member's frame the
+  receiver had not heard yet could re-send it from their own radio and
+  re-point the member there. A host probe showed the receiver's next key
+  rotation going to the outsider, and a silent member being dropped at the
+  60 s commit. Opera frames from unbound addresses are dropped again, before
+  verification, and a changed radio MAC means a re-pair. Four new
+  `test_mesh_session` tests fail on #1756's code. Spec §8.3 now says a
+  verified frame MUST NOT bind an address, and the threat model and
+  `firmware/LESSONS_LEARNED.md` are updated. The review found pre-existing
+  limits, now documented and not fixed. The 6-digit pairing code does not
+  cover the long-term keys, so an outsider relaying an owner-run pairing can
+  re-point a trusted member at its own radio, or get its own key trusted
+  (F69). Spec §11.1's man-in-the-middle and eavesdropping items are now
+  marked partial. A re-pair cannot start with eight members bound. During
+  any pairing, an outsider can steer where a member's rekey replies go
+  (F70). How a changed address could be learned safely is a decision (F68).
+  canary-wap still re-binds on any verified frame (open). **Host-tested
+  only**: the mesh exists only in the `[env:full]` developer build, the
+  compile is CI's, and it is not bench-tested.
+
 ### Home Assistant verifies a Canary WAP's signed publishes and the WAP now sends them in lowercase, Canary Sense and Sentinel show their full key, a Canary Display files a WAP's beacons on its own row and fits its join hints on narrow glass, the WAP's Bluetooth Device Info keeps its id, and the Quiet Hours wheels center (#1727)
 
 - **Home Assistant: a Canary WAP's signed publishes now verify (sweep

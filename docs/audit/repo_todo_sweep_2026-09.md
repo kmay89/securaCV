@@ -1221,7 +1221,7 @@ so — see D2 below.)
   PIO residual splits remain: both initiators already handed out, a mutual
   removal, or a lost ACK. A random-loss probe split 3 of 60 runs at 5%
   frame loss (spec §5.6 states it).
-  *Done (#1756), parts 1-3:*
+  *Done (#1756), parts 1-2; part 3 withdrawn (#<W8>):*
   (1) `GET /api/logs` now carries `uptime_ms` (handle_logs) and the log list
   renders each entry's `timestamp_ms` as an age against it (`formatLogAge`,
   shared with `formatAlertAge`) instead of `new Date(...)` — the made-up
@@ -1232,19 +1232,149 @@ so — see D2 below.)
   `SEND_ACCEPT` too (its code-derivation beat — there is no separate
   `NOTIFY_CODE_READY` on that side), with the same code `pairing_confirmation_code()`
   reports. Pinned by `test_joiner_offer_surfaces_code_with_accept`.
-  (3) A verified opera frame from a trusted peer whose radio MAC CHANGED
-  (reached via the transport's unknown-sender hook, which now routes opera
-  envelopes through the full signature + opera_id + strict-counter verify)
-  re-binds the transport table (`bind_peer_mac`) and fires a new
-  `PeerMacLearnedCallback`; `main.cpp` persists it (`save_peer_mac`) so the
-  next boot binds directly. A never-bound peer still drops (boot binds those
-  from NVS). Pinned by `test_peer_new_radio_mac_is_learned_from_a_verified_frame`
-  (replay and forgery from strange MACs move nothing). All 13 mesh C++
+  (3) **Withdrawn (#<W8>).** #1756 sent an opera envelope from an address
+  the transport did not hold through the full verify (signature + opera_id
+  + strict counter). On a pass it re-bound the signer's transport binding
+  to that address (`bind_peer_mac`) and persisted it
+  (`PeerMacLearnedCallback`, then `main.cpp` `save_peer_mac`). That verify
+  does not establish an address:
+  - the envelope signs no source or destination;
+  - the PIO sender spends one outbound counter across every destination;
+  - frames go out unencrypted (`encrypt = false`).
+  So any genuine member frame the receiver had not heard passed the verify
+  when an outsider re-sent it from its own address. That covers a missed
+  broadcast, a rekey frame unicast to another member, or, after the
+  receiver reboots, a frame heard since its last 5-minute counter save.
+  A host probe against main (c104f56) showed the receiver:
+  - moving B's binding to the outsider and dropping B's real address;
+  - sending its next rotation OFFER to the outsider alone (the 60 s commit
+    then forgot B when B stayed silent);
+  - answering a replayed `REKEY_OFFER` with its `REKEY_ACCEPT` to the
+    outsider.
+  #1756's own test replayed only a frame the receiver had already heard,
+  which the counter stops anyway.
+  Now:
+  - the unknown-sender hook takes pairing frames only again, so opera
+    frames from unbound addresses drop as `recv_dropped_no_peer` before any
+    verify;
+  - `on_opera_frame` is void again, with no `via_unknown`;
+  - the callback and `main.cpp`'s save of it are gone;
+  - a changed radio MAC means a re-pair, which re-binds an already-trusted
+    device.
+  Kept: `bind_peer_mac`'s add-before-remove order (#1756 review).
+  Pinned by four tests, each failing on #1756's code:
+  - `test_unheard_broadcast_replayed_from_a_new_address_moves_nothing`
+  - `test_unheard_rekey_offer_replayed_from_a_new_address_moves_nothing`
+  - `test_bound_peer_new_address_is_dropped_not_learned` (#1756's test,
+    rewritten)
+  - `test_repair_moves_a_trusted_peers_address`
+  Spec §8.3 now says a verified frame MUST NOT bind an address. canary-wap
+  still re-points a member's MAC on any verified frame
+  (`handle_received_message`); that is not probed and stays open. Its
+  comment now says it does not conform. How a changed MAC could be learned
+  safely is F68.
+  The review of the withdrawal found pre-existing limits, and they are
+  documented here, not fixed:
+  - the re-pair it points to does not authenticate the long-term key (F69);
+  - on the PIO tree a re-pair cannot start with eight members bound,
+    because the transport table has no slot for the new address;
+  - the address a verified frame is recorded under can be a pairing
+    partner's, with no spoofing (F70).
+  Spec §11.1 items 4 and 5 are now marked partial. Host-tested only; not
+  bench-verified (U1).
+  All 13 mesh C++
   suites + the webui node tests + the full firmware host suite pass; canary
   `[env:full]` compiles. **Part 4 (PIO residual splits) is left open — it
   rides F48's cross-tree wire decision (a mutual-removal convergence needs a
   `MSG_OPERA_REKEY` wire change), not something to land alone.** Not
   bench-verified on hardware (U1).
+- [ ] **F68 [decision] How may a mesh peer's changed radio MAC be learned
+  safely?** F49 part 3 (#1756) learned it from any verified opera frame,
+  and it was withdrawn (#<W8>): the envelope signs no address and one
+  counter serves every destination, so a replayed frame the receiver had
+  never heard re-pointed a member at an outsider's radio. Today a changed
+  MAC (a swapped module, a new locally-administered address) means a
+  re-pair on the PIO tree, while canary-wap still re-binds on any verified
+  frame. Options:
+  (a) **A signed self-asserted MAC.** The sender puts its own radio
+  address in the signed bytes (a payload field or a header field under the
+  shared `mesh_wire.h` registry). A receiver binds an address only when the
+  frame names it and it equals the frame's source. This is a cross-tree
+  wire change, so it is F48's territory. It stops a replay from the
+  outsider's own address. It does not stop ESP-NOW source spoofing, but a
+  spoofer can then only point the member at the member's own named
+  address.
+  (b) **A challenge the new address must answer.** A frame from a new
+  address for a trusted fingerprint triggers a fresh nonce, and the new
+  address must return it signed with the peer's key before any re-bind.
+  That defeats replay, but costs new message types (also a wire change), a
+  round trip, and a rate limit so strangers cannot make the device sign
+  and send on demand.
+  (c) **Keep re-pairing.** No wire change, but a re-pair is only as strong
+  as pairing. Pairing binds whatever long-term key the DISCOVER or OFFER
+  carried, and the 6-digit code covers only the ephemeral exchange. So an
+  outsider relaying an owner-run pairing from its own address can re-point
+  an already-trusted member at its own radio and persist it, or get its
+  own key trusted (F69). On the PIO tree a re-pair also cannot start with
+  eight members bound. Choosing (c) means F69 lands first.
+  Also decide canary-wap's side: drop its verified-frame re-bind to meet
+  spec §8.3, or carry whichever option is chosen. Found by the adversarial
+  review of #1756.
+
+- [ ] **F69 [code+decision] Pairing does not authenticate the
+  long-term keys.** On both trees the 6-digit code and the CONFIRM hash
+  are derived from the ephemeral X25519 session key only.
+  - PIO initiator: takes `ctx.peer_pubkey` from the plaintext DISCOVER and
+    ignores the ACCEPT's `device_pubkey`.
+  - PIO joiner: takes the OFFER's `device_pubkey`.
+  - The long-term key signs nothing in the exchange.
+  - canary-wap derives its code the same way (`mesh_pair_crypto`; not
+    probed).
+  The review of #<W8> host-probed the PIO tree. An outsider relays an
+  owner-run pairing (A and a new device D) from its own address, no
+  spoofing, without touching the ephemeral keys:
+  - both screens show the same code;
+  - claiming B's key made A re-bind trusted member B to the outsider's
+    radio, and main.cpp would persist it, so B's own frames then drop
+    until another re-pair;
+  - claiming its own key got it trusted, and it then signed a REKEY_OFFER
+    that removed B.
+  The results were identical before #1756, on c104f56 and on #<W8>. Spec
+  §11.1 item 5 ("Man-in-the-Middle: visual confirmation codes") is now
+  marked partial.
+  Decide:
+  - either bind both long-term public keys into the code and the CONFIRM
+    hash, or sign the transcript with each side's long-term key. Either is
+    a cross-tree wire change with canary-wap (F48's registry) and needs
+    maintainer crypto review;
+  - whether a pairing that presents an already-trusted fingerprint should
+    re-bind silently. Today the only sign is main.cpp's WARN "Peer pubkey
+    persisted but mesh_session register failed (table full or already
+    registered)".
+
+- [ ] **F70 [code] Record a verified frame's source only from the signer's
+  own binding.** `on_opera_frame` records the source of every verified
+  frame as the signer's link (`TrustedPeer::mac`). Any address in the
+  transport table qualifies, and two need nothing from the signer:
+  - while a pairing runs, the partner's address is in the table
+    (`ensure_pair_contact`), so an outsider that answers the pairing from
+    its own radio can replay a member's unheard frame there with no
+    spoofing until the pairing ends (host-probed with the receiver as
+    initiator);
+  - a radio copying another bound member's address can do the same
+    (ESP-NOW does not authenticate a source).
+  `send_rekey_frame` unicasts the signer's rekey replies to that link, and
+  `forget_peer` removes it from the transport table. So the outsider gets
+  the receiver's `REKEY_ACCEPT` (probed), and in the copy case a later
+  removal of the signer strands the copied member. This is pre-existing:
+  the same before #1756.
+  Fix, sketched by the #<W8> review and not built:
+  - record the link only when the source equals the signer's `radio_mac`,
+    or drop opera frames whose source is only the pair contact;
+  - have `send_rekey_frame` and `forget_peer` use `radio_mac`.
+  This churns tests that inject from hand-added addresses. Documented in
+  THREAT_MODEL "Opera mesh", spec §8.3 (peer fields) and the PeerLink doc
+  in mesh_session.h.
 - [x] **F50 [code] The display's other join hints still cut on narrow glass.**
   (#1755, #1727) Found by F45 (#1718). The Fail-stage hints from `join_failure_hint` measure
   175-219 px at 12 px ("your router may be out of addresses" is 219), so
