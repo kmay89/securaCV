@@ -95,22 +95,30 @@ struct TrustedPeer {
   uint8_t  pubkey    [mesh_crypto::PUBKEY_LEN];
   uint64_t last_counter;
   bool     in_use;
-  /* MAC↔fingerprint join (PR-8 follow-up): the address this peer's last
-   * verified frame (signature + opera_id + replay) arrived from — always
-   * one already in the transport table, since a frame from any other
-   * address is dropped unread. Lets /api/mesh/peers join the durable
-   * membership set against the live transport table's liveness/RSSI. */
-  uint8_t  mac[mesh_transport::MESH_TRANSPORT_MAC_LEN];
-  bool     mac_known;
+  /* Liveness (PR-8 follow-up, F70): a fully verified frame (signature +
+   * opera_id + replay) has arrived from radio_mac since it was bound. Lets
+   * /api/mesh/peers join the durable membership set against the live
+   * transport table's liveness/RSSI at that address. There is no second,
+   * frame-recorded address: until F70 the session kept one here (`mac`,
+   * the source of the last verified frame), any address in the transport
+   * table could become it — a pairing partner's, another member's copied
+   * one — and the rekey unicasts and forget_peer() used it. A frame from
+   * anywhere but radio_mac is now dropped before verification
+   * (on_opera_frame), so the only address a peer has is the one it is
+   * bound to. Cleared when bind_peer_mac() moves the binding. */
+  bool     heard;
   /* Verified TAMPER_ALERT frames from this peer (F11 residual). Counted
    * in dispatch_verified, i.e. only after signature + opera_id + replay
-   * checks — the same trust argument as the MAC binding above. */
+   * checks — the same trust argument as `heard` above. */
   uint32_t alerts_received;
   /* The address this peer is registered under in mesh_transport's table
    * (F33 part 1): learned at pairing, restored at boot through
    * bind_peer_mac(). Without it the transport drops every frame the peer
-   * sends (recv_dropped_no_peer) and broadcast() never reaches it. Taken
-   * out of the table whenever the peer is dropped (drop_trusted_slot). */
+   * sends (recv_dropped_no_peer) and broadcast() never reaches it, and
+   * the session takes none of the peer's frames from any other address.
+   * The rekey unicasts to the peer go here (send_rekey_frame), and it is
+   * taken out of the table whenever the peer is dropped
+   * (drop_trusted_slot). */
   uint8_t  radio_mac[mesh_transport::MESH_TRANSPORT_MAC_LEN];
   bool     radio_mac_set;
 };
@@ -534,15 +542,17 @@ static size_t build_signed_frame(mesh_envelope::MsgType type,
                                          out, out_cap);
 }
 
-/* Forget a trusted peer entirely: copy out its pubkey, drop its transport
- * MAC when one is bound (so later broadcasts stop reaching it), then
- * unregister it. Returns false when fp is not trusted. */
+/* Forget a trusted peer entirely: copy out its pubkey, then unregister it,
+ * which takes its own radio MAC out of the transport table (so later
+ * broadcasts stop reaching it) and no other address. Until F70 this also
+ * removed the address the peer's last verified frame came from, which could
+ * be another member's copied address: removing the signer stranded that
+ * member. Returns false when fp is not trusted. */
 static bool forget_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
                         uint8_t       pubkey_out[mesh_crypto::PUBKEY_LEN]) {
   TrustedPeer* p = find_trusted_peer(fp);
   if (p == nullptr) return false;
   memcpy(pubkey_out, p->pubkey, mesh_crypto::PUBKEY_LEN);
-  if (p->mac_known) mesh_transport::remove_peer(p->mac);
   drop_trusted_slot(p);
   return true;
 }
@@ -567,8 +577,11 @@ static void revoke_peer(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN], uint32_t
 }
 
 /* Sign and send one rekey payload: broadcast, or unicast to dest_fp's
- * verified MAC (broadcast when none is bound yet). Signed under the
- * CURRENT opera_id — the ACK ordering depends on it. */
+ * bound radio MAC (broadcast when none is bound). Signed under the
+ * CURRENT opera_id — the ACK ordering depends on it. Until F70 the unicast
+ * went to the address dest's last verified frame came from, so a replay of
+ * dest's frame from a pairing partner's or a copied address steered this
+ * device's reply (a REKEY_ACCEPT) there. */
 static void send_rekey_frame(const mesh_rekey::Action& a, bool broadcast,
                              uint32_t now_ms) {
   uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
@@ -577,8 +590,8 @@ static void send_rekey_frame(const mesh_rekey::Action& a, bool broadcast,
       a.payload, a.payload_len, now_ms, frame, sizeof(frame));
   if (n == 0) return;
   const TrustedPeer* dest = broadcast ? nullptr : find_trusted_peer(a.dest_fp);
-  if (dest != nullptr && dest->mac_known) {
-    mesh_transport::send_to_peer(dest->mac, frame, n);
+  if (dest != nullptr && dest->radio_mac_set) {
+    mesh_transport::send_to_peer(dest->radio_mac, frame, n);
   } else {
     mesh_transport::broadcast(frame, n);
   }
@@ -775,7 +788,8 @@ static void dispatch_verified(TrustedPeer&               peer,
  * v0.4 an unsigned type byte preceded it). We must:
  *   1. Validate frame_len is at least HEADER_LEN + SIG_LEN.
  *   2. Peek the sender_fp from the header without verifying yet.
- *   3. Look up the trusted peer by sender_fp.
+ *   3. Look up the trusted peer by sender_fp, and take the frame only
+ *      from that peer's own bound radio MAC (F70).
  *   4. parse_and_verify with that peer's pubkey.
  *   5. Reject if opera_id doesn't match our own (cross-opera leak).
  *   6. Reject if counter <= peer.last_counter (replay).
@@ -800,6 +814,28 @@ static void on_opera_frame(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_
 
   TrustedPeer* peer = find_trusted_peer(sender_fp_in_frame);
   if (peer == nullptr) return;            /* unknown sender */
+
+  /* Step 3 (F70): a member's frame is taken only from the member's own
+   * binding — the address it paired from, or restored at boot. The
+   * transport table holds other addresses too: every other member's,
+   * and, while a pairing runs, the partner's (ensure_pair_contact), which
+   * an outsider gets there by answering the pairing from its own radio.
+   * The envelope signs no address and a sender spends one counter across
+   * every destination, so any of them could deliver a genuine frame of
+   * this member's that this device has not heard yet, and pass every
+   * check below. Until F70 that frame was dispatched and its source
+   * recorded as the member's address, which the rekey replies were sent
+   * to and forget_peer() removed: an outsider answering a pairing got
+   * this device's REKEY_ACCEPT, and a radio copying another member's
+   * address made a later removal of the signer strand that member. Now it
+   * drops here, before the signature check, so it spends no counter and
+   * reaches no handler. A radio copying the member's OWN address still
+   * passes (ESP-NOW does not authenticate a source); nothing here can
+   * tell it apart, and nothing it sends moves an address. */
+  if (!peer->radio_mac_set ||
+      memcmp(mac, peer->radio_mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) != 0) {
+    return;
+  }
 
   /* Step 4: parse + signature verify. */
   mesh_envelope::Header  hdr;
@@ -828,14 +864,10 @@ static void on_opera_frame(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_
   peer->last_counter = hdr.counter;
 
   /* Every check passed: the frame is this signer's, and it reached us
-   * from an address already in the transport table. Record that address
-   * for the /api/mesh/peers liveness join, refreshed on every verified
-   * frame. It is not proof the signer transmitted from it — the envelope
-   * signs no source address (on_transport_unknown) — which is why a frame
-   * never moves the transport binding (radio_mac): only pairing and the
-   * boot restore do. */
-  memcpy(peer->mac, mac, mesh_transport::MESH_TRANSPORT_MAC_LEN);
-  peer->mac_known = true;
+   * from the signer's own binding. Mark the peer heard for the
+   * /api/mesh/peers liveness join (at radio_mac). The frame writes no
+   * address: only pairing and the boot restore bind one. */
+  peer->heard = true;
 
   /* Step 7: dispatch by envelope msg_type. */
   dispatch_verified(*peer, hdr, payload, payload_len);
@@ -913,7 +945,7 @@ static void on_transport_recv(const uint8_t mac[6],
  * pairing runs, is taken — the partner of a pairing is not a peer yet, and
  * the state machine checks roles, MACs, the confirmation hash and the AEAD
  * itself. Everything else stays a recv_dropped_no_peer: an opera frame must
- * come from a bound radio MAC.
+ * come from a bound radio MAC — its signer's own, on_opera_frame adds (F70).
  *
  * That includes an opera frame that WOULD verify. #1756 (F49 part 3) took
  * one here, and when it passed signature + opera_id + strict counter it
@@ -1341,8 +1373,7 @@ bool register_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]) {
       }
       /* No verified frame yet this registration — the liveness join
        * reports the peer OFFLINE until one arrives. */
-      memset(s_trusted_peers[i].mac, 0, sizeof(s_trusted_peers[i].mac));
-      s_trusted_peers[i].mac_known    = false;
+      s_trusted_peers[i].heard        = false;
       s_trusted_peers[i].in_use       = true;
       return true;
     }
@@ -1413,8 +1444,14 @@ size_t get_peer_links(PeerLink* out, size_t cap) {
   for (size_t i = 0; i < MAX_TRUSTED_PEERS && n < cap; ++i) {
     if (!s_trusted_peers[i].in_use) continue;
     memcpy(out[n].fp,  s_trusted_peers[i].sender_fp, mesh_crypto::FINGERPRINT_LEN);
-    memcpy(out[n].mac, s_trusted_peers[i].mac,       mesh_transport::MESH_TRANSPORT_MAC_LEN);
-    out[n].mac_known = s_trusted_peers[i].mac_known;
+    /* The peer's binding, once a verified frame has arrived from it. */
+    const bool heard = s_trusted_peers[i].heard && s_trusted_peers[i].radio_mac_set;
+    if (heard) {
+      memcpy(out[n].mac, s_trusted_peers[i].radio_mac, mesh_transport::MESH_TRANSPORT_MAC_LEN);
+    } else {
+      memset(out[n].mac, 0, mesh_transport::MESH_TRANSPORT_MAC_LEN);
+    }
+    out[n].mac_known = heard;
     out[n].alerts_received = s_trusted_peers[i].alerts_received;
     ++n;
   }
@@ -1444,6 +1481,9 @@ bool bind_peer_mac(const uint8_t fp [mesh_crypto::FINGERPRINT_LEN],
   }
   memcpy(p->radio_mac, mac, mesh_transport::MESH_TRANSPORT_MAC_LEN);
   p->radio_mac_set = true;
+  /* Heard at the old address says nothing about the new one: the peer is
+   * not online until a verified frame arrives from here. */
+  if (changed) p->heard = false;
   /* The pairing partner's address now belongs to the member. */
   if (s_pair_contact_added &&
       memcmp(s_pair_contact_mac, mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) == 0) {
@@ -1459,10 +1499,11 @@ size_t online_peer_count() {
   size_t online = 0;
   for (size_t i = 0; i < MAX_TRUSTED_PEERS; ++i) {
     const TrustedPeer& p = s_trusted_peers[i];
-    if (!p.in_use || !p.mac_known) continue;   /* not heard from this boot */
+    /* Not heard from its binding since it was bound (this boot). */
+    if (!p.in_use || !p.heard || !p.radio_mac_set) continue;
     for (size_t t = 0; t < n_live; ++t) {
       if (live[t].in_use && live[t].state == mesh_transport::PeerState::ACTIVE &&
-          memcmp(live[t].mac, p.mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) == 0) {
+          memcmp(live[t].mac, p.radio_mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) == 0) {
         ++online;
         break;
       }

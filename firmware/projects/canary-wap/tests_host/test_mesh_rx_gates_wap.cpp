@@ -25,8 +25,9 @@
 //      where any signature did it (a keyless DoS). A verified frame does
 //      not prove which radio sent it, so a replayed one passed too:
 //      test_mesh_address_wap runs that against the real file. The PIO
-//      session records the source of a verified frame as a liveness link,
-//      after its replay gate, which the pin's last checks hold.
+//      session has the same source rule since F70 (it used to record the
+//      source of a verified frame as the member's address, from any address
+//      in its transport table), which the pin's last checks hold.
 //   3. Every handler of a fixed-size struct payload takes payload_len and
 //      refuses any other size, exactly (the PIO decoders' rule). The PIO
 //      tree's TAMPER_ALERT is mesh_alert::PAYLOAD_LEN = 6 bytes; read as
@@ -251,18 +252,34 @@ void test_no_frame_moves_a_members_address() {
   CHECK(count(rb, "if(holder!=nullptr&&holder!=peer){returnfalse;}") == 1);
   CHECK(before(rb, "esp_now_add_peer(&peer_info)", "esp_now_del_peer(peer->mac_addr);"));
   CHECK(before(rb, "esp_now_del_peer(peer->mac_addr);", "memcpy(peer->mac_addr,mac,6);"));
-  // The PIO session records its liveness link (peer->mac, never the
-  // transport binding) after its replay gate. It does not re-bind from a
-  // frame at all (spec §8.3); its frames from an unbound address are
-  // dropped before this function runs.
+  // The PIO session has the same rule since F70: a member's frame is taken
+  // only from the member's own binding (radio_mac), compared between its
+  // lookup and its signature check, and after its replay gate the frame
+  // only marks the member heard. Until F70 it recorded the frame's source
+  // as the member's address (peer->mac), from any address in its transport
+  // table. Its frames from an address the table does not hold are dropped
+  // before this function runs, and nothing here writes an address (spec
+  // §8.3).
   const std::string pio = load(MESH_SESSION_CPP);
   const std::string prx = squeeze(function_body(pio, "on_opera_frame"));
   CHECK(!prx.empty());
+  const std::string pio_lookup = "TrustedPeer*peer=find_trusted_peer(sender_fp_in_frame);";
+  const std::string pio_source =
+      "if(!peer->radio_mac_set||memcmp(mac,peer->radio_mac,mesh_transport::MESH_TRANSPORT_MAC_LEN)!=0){return;}";
+  const std::string pio_verify = "mesh_envelope::parse_and_verify(";
   const std::string pio_replay = "if(hdr.counter<=peer->last_counter)return;";
-  const std::string pio_bind   = "memcpy(peer->mac,mac,mesh_transport::MESH_TRANSPORT_MAC_LEN);peer->mac_known=true;";
-  CHECK(count(prx, pio_bind) == 1);
-  CHECK(before(prx, "mesh_envelope::parse_and_verify(", pio_replay));
-  CHECK(before(prx, pio_replay, pio_bind));
+  const std::string pio_heard  = "peer->heard=true;";
+  CHECK(count(prx, pio_lookup) == 1);
+  CHECK(count(prx, pio_source) == 1);
+  CHECK(count(prx, pio_heard) == 1);
+  CHECK(before(prx, pio_lookup, pio_source));
+  CHECK(before(prx, pio_source, pio_verify));
+  CHECK(before(prx, pio_verify, pio_replay));
+  CHECK(before(prx, pio_replay, pio_heard));
+  CHECK(count(prx, "memcpy(") == 0);
+  CHECK(count(prx, "bind_peer_mac(") == 0);
+  CHECK(count(prx, "mesh_transport::add_peer(") == 0);
+  CHECK(count(prx, "mesh_transport::remove_peer(") == 0);
   std::printf("PASS no_frame_moves_a_members_address\n");
 }
 
