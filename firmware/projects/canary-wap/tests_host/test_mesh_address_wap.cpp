@@ -178,6 +178,118 @@ void test_a_frame_already_heard_moves_nothing() {
   std::printf("PASS a_frame_already_heard_moves_nothing\n");
 }
 
+
+// ── A re-pair re-binds the member it already holds ──────────────────────
+
+const uint8_t BROADCAST[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+// A WAP-to-WAP pairing through the real handlers, every frame carried as
+// bytes from one device's send log to the other's receive path: the
+// joiner's DISCOVER (sent by update() on its 2 s tick), the initiator's
+// OFFER, the joiner's ACCEPT, both CONFIRMs once each owner has accepted
+// the code, and the initiator's COMPLETE.
+void run_pairing(Device& ini, Device& joi) {
+  become(ini);
+  CHECK(mn::start_pairing_initiator(nullptr));
+  become(joi);
+  CHECK(mn::start_pairing_joiner());
+  ini.espnow.sent.clear();
+  joi.espnow.sent.clear();
+  host_sim::now_ms += 2001;
+  become(joi);
+  mn::update();
+  const auto disc = sent_to(joi, BROADCAST);
+  CHECK(!disc.empty());
+  deliver(ini, joi.mac, disc.back());
+  const auto offer = sent_to(ini, joi.mac);
+  CHECK(offer.size() == 1);
+  deliver(joi, ini.mac, offer.back());
+  const auto accept = sent_to(joi, ini.mac);
+  CHECK(accept.size() == 1);
+  deliver(ini, joi.mac, accept.back());
+  become(ini);
+  const uint32_t code_ini = mn::g_pairing.confirmation_code;
+  become(joi);
+  const uint32_t code_joi = mn::g_pairing.confirmation_code;
+  CHECK(code_ini == code_joi);                   // the two screens agree
+  become(ini);
+  CHECK(mn::confirm_pairing());
+  become(joi);
+  CHECK(mn::confirm_pairing());
+  const Frame confirm_ini = sent_to(ini, joi.mac).back();
+  const Frame confirm_joi = sent_to(joi, ini.mac).back();
+  deliver(ini, joi.mac, confirm_joi);            // the initiator adds the joiner
+  const Frame complete = sent_to(ini, joi.mac).back();
+  deliver(joi, ini.mac, confirm_ini);
+  deliver(joi, ini.mac, complete);               // the joiner adds the initiator
+  become(ini);
+  CHECK(mn::g_mesh_state == mn::MESH_ACTIVE);
+  become(joi);
+  CHECK(mn::g_mesh_state == mn::MESH_ACTIVE);
+}
+
+void test_a_re_pair_re_binds_the_member_it_holds() {
+  fresh_opera();
+  uint8_t old_mac[6];
+  memcpy(old_mac, B.mac, 6);
+  B.mac[5] = 0xB2;                               // B's radio address changed
+  boot(B);
+  run_pairing(A, B);
+  // A holds B once, at the address the pairing completed from, and the
+  // ESP-NOW list follows; B holds A once.
+  become(A);
+  CHECK(mn::g_peer_count == 2);
+  mn::OperaPeer* pb = entry(A, B);
+  CHECK(same_mac(pb->mac_addr, B.mac));
+  CHECK(pb->msg_counter_rx == 0);                // the re-pair kept the counter
+  CHECK(A.espnow.has(B.mac) && !A.espnow.has(old_mac));
+  CHECK(same_mac(entry(A, C)->mac_addr, C.mac));
+  become(B);
+  CHECK(mn::g_peer_count == 2);
+  CHECK(same_mac(entry(B, A)->mac_addr, A.mac));
+  // B is heard from its new address, and A's frames go there.
+  deliver(A, B.mac, b_heartbeat_to(A));
+  CHECK(entry(A, B)->msg_counter_rx == 1);
+  CHECK(a_heartbeat_reaches(B.mac));
+  CHECK(!a_heartbeat_reaches(old_mac));
+  // The move is in A's NVS: a reboot binds the new address.
+  boot(A);
+  CHECK(mn::g_peer_count == 2);
+  CHECK(same_mac(entry(A, B)->mac_addr, B.mac));
+  CHECK(A.espnow.has(B.mac) && !A.espnow.has(old_mac));
+  memcpy(B.mac, old_mac, 6);
+  std::printf("PASS a_re_pair_re_binds_the_member_it_holds\n");
+}
+
+void test_a_re_pair_is_not_refused_by_a_full_opera() {
+  fresh_opera();
+  become(A);
+  while (mn::g_peer_count < mn::MAX_OPERA_SIZE) {
+    uint8_t priv[32], pub[32];
+    host_sim::fill_random(priv, sizeof priv);
+    Ed25519::derivePublicKey(pub, priv);
+    const uint8_t mac[6] = {0x02, 0x10, 0x00, 0x00, 0x00, mn::g_peer_count};
+    CHECK(mn::add_peer(pub, mac, "filler"));
+  }
+  const uint8_t moved[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0xB2};
+  CHECK(mn::add_peer(B.pub, moved, "B"));
+  CHECK(mn::g_peer_count == mn::MAX_OPERA_SIZE);
+  CHECK(same_mac(entry(A, B)->mac_addr, moved));
+  CHECK(A.espnow.has(moved) && !A.espnow.has(B.mac));
+  std::printf("PASS a_re_pair_is_not_refused_by_a_full_opera\n");
+}
+
+void test_a_re_pair_cannot_take_another_members_address() {
+  fresh_opera();
+  become(A);
+  CHECK(!mn::add_peer(B.pub, C.mac, "B"));
+  CHECK(mn::g_peer_count == 2);
+  CHECK(same_mac(entry(A, B)->mac_addr, B.mac));
+  CHECK(same_mac(entry(A, C)->mac_addr, C.mac));
+  CHECK(A.espnow.has(B.mac) && A.espnow.has(C.mac));
+  std::printf("PASS a_re_pair_cannot_take_another_members_address\n");
+}
+
 }  // namespace
 
 int main() {
@@ -187,6 +299,9 @@ int main() {
   test_a_frame_from_the_bound_address_is_heard();
   test_a_forged_frame_from_another_address_moves_nothing();
   test_a_frame_already_heard_moves_nothing();
+  test_a_re_pair_re_binds_the_member_it_holds();
+  test_a_re_pair_is_not_refused_by_a_full_opera();
+  test_a_re_pair_cannot_take_another_members_address();
   std::printf("ALL %d mesh address checks PASSED\n", g_checks);
   return 0;
 }

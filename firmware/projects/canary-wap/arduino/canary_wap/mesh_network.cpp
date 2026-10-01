@@ -425,12 +425,50 @@ static OperaPeer* find_peer_by_fingerprint(const uint8_t* fp) {
   return nullptr;
 }
 
-static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name) {
-  if (g_peer_count >= MAX_OPERA_SIZE) {
+// A pairing with a device this one already holds moves that member to the
+// address the pairing completed from (spec §8.3: a re-pair is how a member
+// whose radio address changed is heard again). The new address is
+// registered before the old one is dropped, so a refused add leaves the
+// member where it was (the PlatformIO tree's bind_peer_mac order), and an
+// address another member holds is refused: one address, one member. The
+// counters, state and name stay; a re-pair re-opens no replay window.
+static bool rebind_peer(OperaPeer* peer, const uint8_t* mac) {
+  if (memcmp(peer->mac_addr, mac, 6) == 0) {
+    return true;
+  }
+  const OperaPeer* holder = find_peer_by_mac(mac);
+  if (holder != nullptr && holder != peer) {
     return false;
   }
+  if (!esp_now_is_peer_exist(mac)) {
+    esp_now_peer_info_t peer_info = {};
+    memcpy(peer_info.peer_addr, mac, 6);
+    peer_info.channel = ESPNOW_CHANNEL;
+    peer_info.encrypt = false;
+    if (esp_now_add_peer(&peer_info) != ESP_OK) {
+      return false;
+    }
+  }
+  esp_now_del_peer(peer->mac_addr);
+  memcpy(peer->mac_addr, mac, 6);
+  return true;
+}
+
+static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name) {
   // F33: a deny-listed device is not taken back inside its grace.
   if (is_revoked_pubkey(pubkey)) {
+    return false;
+  }
+  // Already a member: a re-pair. This appended a second entry for the same
+  // key, which find_peer_by_fingerprint never reached (the first one, with
+  // the old address, answered every lookup), so the re-pair moved nothing
+  // and took a slot; and a full opera refused it outright.
+  for (uint8_t i = 0; i < g_peer_count; i++) {
+    if (memcmp(g_peers[i].pubkey, pubkey, PUBKEY_SIZE) == 0) {
+      return rebind_peer(&g_peers[i], mac);
+    }
+  }
+  if (g_peer_count >= MAX_OPERA_SIZE) {
     return false;
   }
 

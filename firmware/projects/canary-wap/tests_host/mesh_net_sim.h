@@ -123,6 +123,12 @@ inline void boot(Device& d) {
   g_cur = &d;
   mn::init(d.priv, d.pub, d.name);
   mn::load_replay_counters();
+  // The channel policy's first poll reports a channel change, and the
+  // listener init() registered drops the broadcast registration. Settle it
+  // here (the policy is one per image, and every simulated device shares
+  // the channel), then register broadcast as chirp_channel does on a
+  // device, so no update() later drops it from under a test.
+  mesh_channel_policy::poll_radio();
   esp_now_peer_info_t bc = {};
   memset(bc.peer_addr, 0xFF, 6);
   if (!esp_now_is_peer_exist(bc.peer_addr)) esp_now_add_peer(&bc);
