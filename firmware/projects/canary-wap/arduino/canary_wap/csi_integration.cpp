@@ -2971,20 +2971,16 @@ bool init(httpd_handle_t server, const char* api_token) {
    * correct fail-closed behavior. */
   g_api_token = api_token;
 
-  register_v1_modules();
-
-  /* Restore persisted privacy ceiling (defaults to P0 — privacy-first).
-   * Done before HAL start so the very first /api/csi/window request after
-   * boot honors the user's prior choice rather than always 403'ing. */
-  apply_privacy_ceiling_from_nvs();
-
   /* Restore the event-id floor from NVS so allocations stay globally
-   * monotone across reboots. Done before any module ticks (which can
-   * call csi_event_emit and trigger an allocation) so the very first
-   * post-reboot id starts at the persisted floor instead of 1. With
-   * this, the events egress's backfill watermark stays sound and
-   * csi_event_log no longer needs to wipe the on-disk log on cold
-   * boot to avoid id collisions. */
+   * monotone across reboots. Before register_v1_modules(), as the canary
+   * restores it in csi_event_egress_begin() before its modules: a module
+   * may emit while it registers (ble_scout_init() reports its init), and
+   * a stateless emit there would allocate from kIdSpaceBase and write
+   * that floor over the persisted one (sweep F83). Today that emit is
+   * state-bearing, so it only opens a bundle and commits later; this
+   * order does not lean on that. With the floor restored, the events
+   * egress's backfill watermark stays sound and csi_event_log no longer
+   * needs to wipe the on-disk log on cold boot to avoid id collisions. */
   const bool floor_restored = apply_event_id_floor_from_nvs();
 
   /* The committed-event egress (csi_event_egress.h): its queue, and its
@@ -2993,12 +2989,16 @@ bool init(httpd_handle_t server, const char* api_token) {
    * before: on the first boot of this firmware (no ceiling yet) the
    * restore treats every id below the floor as delivered (an earlier image
    * may have published it), and with no floor it would replay the card's
-   * whole log into Home Assistant's replay gate. Before any module ticks,
-   * so a committed row finds the queue there.
-   * (register_v1_modules above can only open a bundle: ble.scout's
-   * init-failure emit is state-bearing, and a bundle commits, taking its
-   * id, when it closes in loop().) */
+   * whole log into Home Assistant's replay gate. Before the modules
+   * register, so any row they commit finds the queue there. */
   csi_event_egress::begin();
+
+  register_v1_modules();
+
+  /* Restore persisted privacy ceiling (defaults to P0 — privacy-first).
+   * Done before HAL start so the very first /api/csi/window request after
+   * boot honors the user's prior choice rather than always 403'ing. */
+  apply_privacy_ceiling_from_nvs();
 
   /* Refill the Today ring from the SD event log's tail. Needs the ceiling
    * and the floor above (csi_event_inject refuses a row this boot could

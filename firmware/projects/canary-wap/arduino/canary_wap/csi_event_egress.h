@@ -79,9 +79,9 @@ constexpr uint32_t kCardWaitMs = 45000;
 
 /* Setup, loop task: csi_integration::init calls it once the event-id floor
  * is back from NVS (it reads csi_integration::event_id_floor_stored) and
- * before any module can commit on the loop task. Allocates the egress and
- * its queue and restores the delivery watermark. Once per boot: a second
- * call is a no-op. */
+ * before the modules register (register_v1_modules), so any row they commit
+ * finds the queue. Allocates the egress and its queue and restores the
+ * delivery watermark. Once per boot: a second call is a no-op. */
 void begin();
 
 /* The chokepoint's commit hook, after csi_integration's privacy gate. Any

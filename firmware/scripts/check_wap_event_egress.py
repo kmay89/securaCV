@@ -33,7 +33,12 @@ the egress's own rules the test reaches only through behavior.
    `pump(`, `current_link(`).
 3. Boot order. In `csi_integration::init`, `csi_event_egress::begin();`
    runs exactly once, after `apply_event_id_floor_from_nvs()`: the planner
-   restores its watermark with the floor NVS holds.
+   restores its watermark with the floor NVS holds. Both come before the
+   one `register_v1_modules();` (sweep F83): a module that emits while it
+   registers (ble_scout_init() reports its init) must allocate from the
+   restored floor, never write a floor from the id space's base over the
+   persisted one, and must find the egress's queue there. The canary does
+   the same in `csi_event_egress_begin()`, before its modules.
 4. The loop task. `csi_mqtt::loop()` calls `csi_event_egress::pump();`.
    The esp_mqtt event handler (`mqtt_event_handler`) names nothing from
    `csi_event_egress::` and publishes no row, `publish_event_row(`
@@ -223,6 +228,14 @@ def check_boot_order(integ: str, errors: list[str]) -> None:
         errors.append(f"{INTEG_CPP}: csi_integration::init() must call `{begin}` after "
                       "apply_event_id_floor_from_nvs() — the planner restores its watermark with "
                       "the floor NVS holds")
+    modules = "register_v1_modules();"
+    if body.count(modules) != 1:
+        errors.append(f"{INTEG_CPP}: csi_integration::init() must call `{modules}` exactly once")
+    elif floor < 0 or body.find(modules) < floor or body.find(modules) < body.find(begin):
+        errors.append(f"{INTEG_CPP}: csi_integration::init() must restore the event-id floor "
+                      f"(apply_event_id_floor_from_nvs()) and call `{begin}` before `{modules}` — "
+                      "a module that commits while it registers would allocate from the id "
+                      "space's base and write that floor over the persisted one (F83)")
 
 
 def check_loop_task(mqtt: str, errors: list[str]) -> None:
@@ -499,6 +512,15 @@ def moved_begin(i: str, e: str, m: str) -> "tuple[str, str, str]":
     return i, e, m
 
 
+def modules_before(anchor: str) -> Mutation:
+    """register_v1_modules(); moved to just before `anchor` in init()."""
+    def mutate(i: str, e: str, m: str) -> "tuple[str, str, str]":
+        i = mutate_in(i, SIG_INIT, r"\n[ \t]*register_v1_modules\(\);", "")
+        i = mutate_in(i, SIG_INIT, "(" + anchor + ")", r"register_v1_modules(); \1")
+        return i, e, m
+    return mutate
+
+
 MUTATIONS: list[tuple[str, Mutation]] = [
     ("the hook forwards nothing",
      on_i(SIG_HOOK, r"\n[ \t]*csi_event_egress::on_committed\([^;]*;", "")),
@@ -519,6 +541,13 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("begin() runs before the floor is restored", moved_begin),
     ("begin() is never called",
      on_i(SIG_INIT, r"\n[ \t]*csi_event_egress::begin\(\);", "")),
+    # Rule 3, F83: the floor and the egress come before the modules register.
+    ("the modules register before the floor is restored",
+     modules_before(r"const\s+bool\s+floor_restored")),
+    ("the modules register between the floor and the egress",
+     modules_before(r"csi_event_egress::begin\(\);")),
+    ("the modules also register before the floor",
+     on_i(SIG_INIT, r"(g_api_token\s*=\s*api_token\s*;)", r"\1 register_v1_modules();")),
     ("the esp_mqtt handler pumps the egress",
      on_m(SIG_HANDLER, r"(s_connected\.store\(true,[^;]*;)", r"\1 csi_event_egress::pump();")),
     ("the esp_mqtt handler publishes a row",
@@ -655,7 +684,8 @@ def main() -> int:
     if errors or problems:
         return 1
     print(f"canary-wap event egress holds: the commit hook only enqueues, after the privacy gate; "
-          f"the egress runs once, on the loop task, after the id floor; live rows wait behind the "
+          f"the egress runs once, on the loop task, after the id floor and before the modules "
+          f"register; live rows wait behind the "
           f"card and RAM backlog; the tamper bridge goes first; a changed broker bumps the epoch "
           f"({len(MUTATIONS)} mutations refused).")
     return 0
