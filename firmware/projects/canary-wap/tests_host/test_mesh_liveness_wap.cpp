@@ -406,6 +406,15 @@ void test_the_reservation_costs_one_write_per_block() {
   CHECK(counter_of(sent_to(B, A.mac).back()) == 4 * kBlock + 1);
   CHECK(counter_of(sent_to(B, C.mac).back()) == 4 * kBlock + 1);
   CHECK(host_sim::nvs_writes[kTxKey] == 6);
+  // An entry outside the member table has no place in the record, so
+  // nothing is signed for it (no caller passes one).
+  mn::OperaPeer stray = *entry(B, A);
+  stray.msg_counter_tx_reserved = 0;
+  const mn::HeartbeatPayload hb = {};
+  become(B);
+  const size_t sent = B.espnow.sent.size();
+  CHECK(!mn::send_to_peer(&stray, mn::MSG_HEARTBEAT, reinterpret_cast<const uint8_t*>(&hb), sizeof hb));
+  CHECK(B.espnow.sent.size() == sent && host_sim::nvs_writes[kTxKey] == 6);
   std::printf("PASS the_reservation_costs_one_write_per_block\n");
 }
 

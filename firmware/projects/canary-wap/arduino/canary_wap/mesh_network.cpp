@@ -658,8 +658,12 @@ static bool g_tx_reserve_warned = false;
 static uint32_t g_tx_reserve_warned_ms = 0;
 
 static bool reserve_tx_counter(OperaPeer* peer) {
-  // Only a member in the table has a place in the record.
-  if (peer < g_peers || peer >= g_peers + g_peer_count) return false;
+  // Only a member in the table has a place in the record. (Equality, not
+  // a range check: relational comparison of a pointer from elsewhere with
+  // one into g_peers is unspecified.)
+  bool in_table = false;
+  for (uint8_t i = 0; i < g_peer_count && !in_table; i++) in_table = (&g_peers[i] == peer);
+  if (!in_table) return false;
   const uint64_t next = peer->msg_counter_tx;
   if (next == 0) return false;   // 2^64 frames to one member: never, but never wrap
   if (next <= peer->msg_counter_tx_reserved) return true;
