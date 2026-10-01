@@ -16,9 +16,10 @@ tests_host/montserrat_metrics.h:
   * the kerning classes of those glyphs and the class-pair table;
   * kern_scale and line_height.
 
-The faces carried are the ones the Join rows can set: every Character type
-ladder's label and caption sizes, parsed out of src/ui/character.cpp (so a
-ladder change regenerates the table, and CI names the stale file).
+The faces carried are the ones the onboarding's rows can set: every
+Character type ladder's body, label and caption sizes, parsed out of
+src/ui/character.cpp (so a ladder change regenerates the table, and CI
+names the stale file).
 
 The source is the LVGL checkout the emulator build fetches
 (canary-local/emulator/third_party/lvgl, pinned by build.sh's LVGL_TAG);
@@ -50,11 +51,12 @@ DEFAULT_LVGL = ROOT / "canary-local/emulator/third_party/lvgl"
 # and the bullet (the two non-ASCII code points the display font carries).
 CODEPOINTS = list(range(0x20, 0x7F)) + [0xB0, 0x2022]
 
-# The roles whose faces the Join scene's low rows use (onboard_ui.cpp: the
-# small glass sets both rows in the caption face and steps down to the
-# default Character's caption; the wide glass sets its credentials in the
-# label face and the hint in the caption face).
-ROLES = ("label", "caption")
+# The roles whose faces the onboarding's rows use (onboard_ui.cpp: the
+# small glass sets the Join scene's low rows and the scenes' bodies in the
+# caption face and its titles in the body face, each stepping down to the
+# default Character's face of the same role, F65; the wide glass sets its
+# credentials in the label face and the hint in the caption face).
+ROLES = ("body", "label", "caption")
 
 
 def fail(msg: str) -> None:
@@ -155,8 +157,8 @@ def render(lvgl: Path, tag: str) -> str:
         "//",
         "// The numbers LVGL's one-line measure reads (lv_font_get_glyph_width:",
         "// adv_w, the kerning classes and their pair table, kern_scale) for the",
-        "// glyphs the display font carries, in the faces the first-boot Join",
-        "// scene's rows can set. test_onboard_layout.cpp measures with them.",
+        "// glyphs the display font carries, in the faces the first-boot",
+        "// onboarding's rows can set. test_onboard_layout.cpp measures with them.",
         "#pragma once",
         "",
         "namespace montserrat_metrics {",
