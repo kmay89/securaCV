@@ -292,6 +292,31 @@ run:$(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCA
 clean:
 	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN) $(ONBOARD_BIN) $(POLICY_BIN)
 
+# The brand canary's seat (src/ui/canary_mark.cpp, F64): the bird is drawn
+# where its host aligned it — the host's anchor plus its offset — whether its
+# first on-stage mood comes before LVGL's first layout pass or after it, under
+# every anchor, and across canary_mark_rebase()'s re-seats (the onboarding's
+# scenes). Compiles the REAL canary_mark.cpp against fake_lvgl/lvgl.h, LVGL
+# 8's position rules and nothing else; the pinned boxes are the ones the real
+# LVGL 8.4 drew in a native harness. Hooked into `run` and `clean` by
+# prerequisite.
+MARKSEAT_BIN = test_canary_mark_seat
+MARKSEAT_SRC = test_canary_mark_seat.cpp
+
+$(MARKSEAT_BIN): $(MARKSEAT_SRC) ../src/ui/canary_mark.cpp ../include/canary/ui/canary_mark.h \
+	  fake_lvgl/lvgl.h fake_lvgl/Arduino.h fake_lvgl/esp_random.h
+	$(CXX) $(CXXFLAGS) -Werror -I fake_lvgl $(INC) -I ../../../configs/canary-display/watch \
+	  -o $@ $(MARKSEAT_SRC) ../src/ui/canary_mark.cpp
+
+.PHONY: run-mark-seat clean-mark-seat
+run-mark-seat: $(MARKSEAT_BIN)
+	$(call run_marked,$(MARKSEAT_BIN))
+clean-mark-seat:
+	rm -f $(MARKSEAT_BIN)
+
+run: run-mark-seat
+clean: clean-mark-seat
+
 # Sweep CI3, one host-test list: the five suites below were built only by
 # their own inline g++ steps in firmware.yml's "Mesh + Scout Host Tests" job,
 # so `make` here never ran them and the two lists could drift. Each rule keeps

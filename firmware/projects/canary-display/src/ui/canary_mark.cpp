@@ -27,6 +27,9 @@ lv_timer_t* s_look_timer = nullptr;  // one-shot glance-aside return
 lv_anim_t s_bob;
 CanaryMood s_mood = CanaryMood::Hidden;
 int s_size = 0;
+// The bird's base: the host's placement, as the style offset from the
+// anchor it aligned to (see host_offset_x/y). Every pose and the breath
+// write their offsets on top of it.
 int s_base_y = 0;
 int s_base_x = 0;
 bool s_eye_shut = false;
@@ -52,6 +55,26 @@ int s_beak_x = 0, s_beak_y = 0;
 lv_color_t col_feather() { return lv_color_hex(0xFFD44F); }
 lv_color_t col_wing()    { return lv_color_hex(0xE3B33C); }
 lv_color_t col_beak()    { return lv_color_hex(0xF08C2E); }
+
+// Where the host put the bird, in the coordinate every writer here uses.
+// lv_obj_align(bird, anchor, x, y) stores the anchor and the offset (x, y)
+// as styles, and lv_obj_set_x/y — the poses, the breath, the hop — write
+// that offset alone; LVGL draws the bird at the anchor plus the offset at
+// its next layout pass. So the base is the style offset. lv_obj_get_x/y is
+// not: it reads the laid-out box, which is (0, 0) until LVGL's first layout
+// pass (a base read then lost the host's offset and the bird rode its
+// anchor: the panel's center on the round watch, F64) and afterwards the
+// anchor's position plus the offset (a base read then, under any anchor
+// but TOP_LEFT, moved the bird by the anchor's own distance from the
+// parent's corner — on every re-read: canary_mark_rebase walked the
+// onboarding bird off the round glass, a scene at a time). Same call on
+// LVGL 8 and 9.
+int host_offset_x(lv_obj_t* o) {
+  return (int)lv_obj_get_style_x(o, LV_PART_MAIN);
+}
+int host_offset_y(lv_obj_t* o) {
+  return (int)lv_obj_get_style_y(o, LV_PART_MAIN);
+}
 
 lv_obj_t* dot(lv_obj_t* parent, int x, int y, int w, int h, lv_color_t c) {
   lv_obj_t* o = lv_obj_create(parent);
@@ -418,8 +441,8 @@ lv_obj_t* canary_mark_create(lv_obj_t* parent, int s) {
 
   s_bird = c;
   s_size = s;
-  s_base_y = lv_obj_get_y(c);
-  s_base_x = lv_obj_get_x(c);
+  s_base_y = host_offset_y(c);
+  s_base_x = host_offset_x(c);
   lv_obj_add_event_cb(c, on_delete, LV_EVENT_DELETE, nullptr);
   s_blink = lv_timer_create(blink_cb, 2900, nullptr);
   s_flourish = lv_timer_create(flourish_cb, 30000, nullptr);
@@ -458,10 +481,12 @@ void canary_mark_mood(CanaryMood m) {
   // Capture the base ONCE, at the first on-stage mood after the host has
   // placed the bird. Re-reading on every transition would bake live
   // bob/hop offsets (up to the 12 px hop apex) into the base and the
-  // bird would drift (review catch). The poses restore from this base.
+  // bird would drift (review catch). The poses restore from this base,
+  // which is the host's style offset whether or not LVGL has laid the
+  // bird out yet (host_offset_x/y, F64).
   if (!s_base_recorded) {
-    s_base_y = lv_obj_get_y(s_bird);
-    s_base_x = lv_obj_get_x(s_bird);
+    s_base_y = host_offset_y(s_bird);
+    s_base_x = host_offset_x(s_bird);
     s_base_recorded = true;
   }
   lv_obj_clear_flag(s_bird, LV_OBJ_FLAG_HIDDEN);
@@ -519,7 +544,9 @@ void canary_mark_rebase() {
   // wherever the host just placed the bird (the same one-shot capture the
   // first placement used, so live bob/hop offsets are never baked in —
   // the host's align has already overwritten any offset the last frame
-  // left, and nothing animates between that align and this call).
+  // left, and nothing animates between that align and this call). The
+  // capture reads the style offset the align just wrote, so it needs no
+  // layout pass in between (host_offset_x/y, F64).
   s_base_recorded = false;
   if (s_mood == CanaryMood::Hidden) return;
   // On stage: a same-mood set would early-out and leave the running pose
