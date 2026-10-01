@@ -706,10 +706,12 @@ size_t flush_dismissals() {
   /* A dismissal waits in the queue while the log cannot take it: no open
    * log (before the egress's first pump pass, a card being remounted, no
    * card) or a log at MAX_BYTES (a dismissal never cuts the log; the next
-   * committed row's append does). Taking it now would lose it for good. */
-  if (!s_open || !card_present() || s_size >= MAX_BYTES) return 0;
+   * committed row's append does). Taking it now would lose it for good.
+   * Asked before each one: an earlier dismissal in this flush can be the
+   * line that takes the log to the cap. */
   size_t written = 0;
   for (size_t i = 0; i < kPendingDismissals; ++i) {
+    if (!s_open || !card_present() || s_size >= MAX_BYTES) break;
     const uint32_t id = s_pending_dismissals[i].exchange(0);
     if (id == 0) continue;
     /* The ring row, as the dismissal left it: the same record, in the same

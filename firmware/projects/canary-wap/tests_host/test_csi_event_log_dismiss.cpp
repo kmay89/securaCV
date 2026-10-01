@@ -18,7 +18,8 @@
  *   - a dismissal never cuts the log (the egress's planner learns of a cut
  *     only from its own appends): at MAX_BYTES it stays queued, and is
  *     written once a committed row's append has cut the log, so it still
- *     holds after a reboot;
+ *     holds after a reboot; also when an earlier dismissal in the same flush
+ *     is what took the log to the cap;
  *   - a dismissal queued while the log cannot take it (no card, or the card
  *     not opened yet by the egress's first pump pass) waits and is written
  *     once the log is open;
@@ -285,6 +286,37 @@ int main() {
     csi_event_set_event_id_floor(100000);
     CHECK(csi_event_log::load_into_ring() > 0 && dismissed_in_ring(last),
           "after a reboot the row comes back dismissed, not undone by the cap");
+  }
+
+  // ── Two dismissals queued just under the cap: the first one's line takes
+  //    the log past MAX_BYTES, so the second must wait, not be taken from
+  //    the queue and refused. ─────────────────────────────────────────────
+  {
+    const size_t line_len = line_for(50, false).size();
+    std::string big;
+    uint32_t id = 50;
+    while (big.size() + line_len < csi_event_log::MAX_BYTES) big += line_for(id++, false);
+    SD.files["/EVENTS/today.ndjson"] = big;
+    reboot();
+    csi_event_set_event_id_floor(100000);
+    (void)csi_event_log::load_into_ring();
+    open_card();
+    const uint32_t a = id - 2, b = id - 1;
+    CHECK(csi_event_dismiss(a) && csi_event_log::queue_dismissal(a) &&
+          csi_event_dismiss(b) && csi_event_log::queue_dismissal(b),
+          "two rows dismissed while the log is just under the cap");
+    CHECK(csi_event_log::flush_dismissals() == 1 &&
+          SD.files["/EVENTS/today.ndjson"].size() >= csi_event_log::MAX_BYTES,
+          "the first dismissal is written and takes the log to the cap");
+    CHECK(csi_event_log::flush_dismissals() == 0, "the second waits while the log is at the cap");
+    const std::string next = line_for(id, false);
+    CHECK(csi_event_log::append_line(next.data(), next.size()).cut > 0,
+          "a committed row's append cuts the log");
+    CHECK(csi_event_log::flush_dismissals() == 1, "then the second dismissal is written, not lost");
+    reboot();
+    csi_event_set_event_id_floor(100000);
+    CHECK(csi_event_log::load_into_ring() > 0 && dismissed_in_ring(a) && dismissed_in_ring(b),
+          "after a reboot both rows come back dismissed");
   }
 
   if (g_fail == 0) {
