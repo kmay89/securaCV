@@ -1291,14 +1291,16 @@ so — see D2 below.)
   Heirloom), an overlap of 8 px (12). But canary_mark records the bird's
   base before LVGL's first layout pass, so the bird rides the panel center
   (y 98..137 on 240 px). That clears the band but puts the bird behind the
-  other scenes' titles. The rebase re-reads the base the same way, right
-  after the align and before a layout pass, so the new seat is most likely
-  not where the glass draws the bird either (read from the code, not run;
-  F64). The band's own title is cut under Heirloom ("On your phone", 154
+  other scenes' titles. #1755's rebase re-reads the base the same way, and
+  after the Join scene that moves the bird off the glass: in the emulator,
+  the round watch's PhoneJoined scene draws no bird at all on the merged
+  tree, where 8f40cd8 (just before #1755) drew it behind the title (F64).
+  The band's own title is cut under Heirloom ("On your phone", 154
   px on 142; F65). The onboarding docs said the hint comes after 9 s; they
   now say 4 s after the phone joins. Host-tested; the ESP32 builds are
-  CI's; not bench-tested. The emulator dist is rebuilt. Found here: F64,
-  F65 and F66.
+  CI's; not bench-tested. The emulator dist is rebuilt from the merged
+  tree, and `onboard_probe.mjs` passes on it for all five display flavors
+  and fleet.html (a local Chromium run). Found here: F64, F65 and F66.
 - [x] **F51 [code] The airtime governor's window lost sends above 25.6 a
   second, and a saturating probe starved the heartbeat.** Found reconciling
   F4 (#1696) on the host. `airtime_governor.cpp`'s 256-slot ring held sends,
@@ -1403,9 +1405,15 @@ so — see D2 below.)
   the round watch, which the layout test holds clear of the band) and calls
   `canary_mark_rebase()`. But the rebase only re-arms the same
   lv_obj_get_x/y capture, which the next mood takes right after the align
-  and before a layout pass, so it reads the old laid-out position (read
-  from the code, not run). The fix here covers it too; check that the drawn
-  bird sits at `join_bird_top`. Found by F50 (#1727).
+  and before a layout pass. It reads the bird's last laid-out position, and
+  pose_rest() and the breath write that back as the style offset under the
+  new alignment, so every scene change moves the bird by where it last
+  stood. Seen in the emulator: the round watch's PhoneJoined scene draws
+  no bird at all on the tree that merged #1755 (by the arithmetic it is
+  past the glass's right edge), where 8f40cd8, just before #1755, drew it
+  at the panel center behind the title. The fix here covers both; check
+  that the drawn bird sits where each scene places it. Found by F50
+  (#1727).
 - [ ] **F65 [code] The onboarding's scene titles and bodies are cut on small
   glass.** Only the Join scene's credentials rows and the coach line are
   fitted (F45, F50). The titles and bodies keep LV_LABEL_LONG_DOT at a fixed
