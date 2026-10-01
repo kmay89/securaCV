@@ -266,7 +266,7 @@ csi_bundler_outcome_t csi_bundler_admit(const char*         module_id,
        * up-to-date bundle row. */
       *values = open->values;
       if (handle_out) *handle_out = open->handle;
-      outcome = CSI_BUNDLER_BUFFERED;
+      outcome = CSI_BUNDLER_MERGED;
     } else {
       /* New bundle. */
       Slot* fresh = find_free_slot(pending, &npending);
@@ -289,8 +289,10 @@ csi_bundler_outcome_t csi_bundler_admit(const char*         module_id,
       if (handle_out) *handle_out = fresh->handle;
       /* New bundle: caller should NOT persist directly. The bundle commits
        * later through the close path (commit_closed), and takes its event
-       * id then. */
-      outcome = CSI_BUNDLER_BUFFERED;
+       * id then. An OPENING even when this key's own bundle was open a
+       * moment ago and expire_overdue() above just closed it: that close
+       * is a row, and so is this bundle (sweep F80). */
+      outcome = CSI_BUNDLER_OPENED;
     }
   }  /* lock released */
 
@@ -346,14 +348,6 @@ size_t csi_bundler_open_count(void) {
   size_t n = 0;
   for (size_t i = 0; i < CSI_BUNDLER_SLOTS; ++i) if (g_slots[i].used) ++n;
   return n;
-}
-
-bool csi_bundler_has_open(const char* module_id,
-                          const char* type_name,
-                          const char* state_name) {
-  if (!module_id || !type_name || !state_name) return false;
-  SlotLock _lock;
-  return find_open_slot(module_id, type_name, state_name) != nullptr;
 }
 
 size_t csi_bundler_snapshot_open(csi_event_record_t* out, size_t max) {

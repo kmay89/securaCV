@@ -563,14 +563,9 @@ uint32_t csi_event_emit(const char*               module_id,
   }
 
   /* 5. Pre-account the emit against the per-module hourly ceiling. We
-   *    increment first and roll back on rejection so that buffered emits
-   *    (which only commit later via the bundler) still count toward the
-   *    same cap as direct commits. A same-key REFRESH of a bundle that is
-   *    already open is the one exception (see the BUFFERED branch), so we
-   *    ask the bundler up front whether this admit would merge. */
-  const bool refreshes_open_bundle =
-      (v.present_fields & CSI_FIELD_STATE_NAME) && v.state_name[0] != '\0'
-      && csi_bundler_has_open(module_id, type_name, v.state_name);
+   *    increment first and roll back below when the emit turns out to make
+   *    no row, so that bundle openings (which only commit later, through
+   *    the bundler) count toward the same cap as direct commits. */
   counter->buckets[5] += 1;
 
   /* 6. Bundling. The bundler buffers same-state events into a single open
@@ -579,20 +574,31 @@ uint32_t csi_event_emit(const char*               module_id,
   csi_bundler_outcome_t outcome = csi_bundler_admit(
       module_id, type_name, decl->privacy, &v, &handle);
 
-  if (outcome == CSI_BUNDLER_BUFFERED) {
-    /* Rolled into an open bundle, or just opened a new one. An OPENING is
-     * a future committed row and keeps its ceiling slot. A REFRESH of a
-     * bundle that was already open produces no new row and must not
-     * consume one: core.presence re-emits its open state at 5 / 20 / every
-     * 60 windows to refresh duration and confidence, and with a 6/hour
-     * ceiling those refreshes exhausted the cap in ~3 minutes of sustained
-     * presence, after which the REAL state transitions were silently
-     * dropped.
+  if (outcome == CSI_BUNDLER_MERGED) {
+    /* A REFRESH of a bundle that was open, and still open, when the admit
+     * ran: no new row, so it gives its slot back. core.presence re-emits
+     * its open state at 5 / 20 / every 60 windows to refresh duration and
+     * confidence, and with a 6/hour ceiling those refreshes exhausted the
+     * cap in ~3 minutes of sustained presence, after which the REAL state
+     * transitions were silently dropped.
+     *
+     * The refund is decided by what the admit DID (sweep F80), never by
+     * asking beforehand whether the key was open: the admit first expires
+     * an overdue bundle (its quiet gap or its 10-minute window) and then
+     * OPENS a new one for the same key. Refunded, that opening was a row
+     * the ceiling never counted: one emit every 121 s committed 714 rows a
+     * day under a 6/hour ceiling.
      *
      * The bundle has no event id yet: it takes one when it commits
      * (commit_row), and its dismiss route is recorded then. What returns
      * is the open bundle's handle, in [kHandleBase, kIdSpaceBase). */
-    if (refreshes_open_bundle) counter->buckets[5] -= 1;
+    counter->buckets[5] -= 1;
+    return handle;
+  }
+
+  if (outcome == CSI_BUNDLER_OPENED) {
+    /* A new bundle: a future committed row, so it keeps its slot. Same
+     * handle rule as above. */
     return handle;
   }
 

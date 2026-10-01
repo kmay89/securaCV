@@ -11,16 +11,27 @@
  * Bundling is the only path emitted events take to persistence. The chokepoint
  * (csi_event::emit) calls `csi_bundler_admit` which returns:
  *
- *   CSI_BUNDLER_BUFFERED — emit opened a bundle or was rolled into an open
- *                         one. The bundle commits later (window close, quiet
- *                         gap, or an explicit flush). Out-param is the open
- *                         bundle's HANDLE, not an event id.
+ *   CSI_BUNDLER_OPENED   — emit opened a NEW bundle: a row that will commit
+ *                         later (window close, quiet gap, or an explicit
+ *                         flush). Out-param is the open bundle's HANDLE, not
+ *                         an event id.
+ *
+ *   CSI_BUNDLER_MERGED   — emit was rolled into a bundle that was open, and
+ *                         still open, when the admit ran: no new row.
+ *                         Out-param is that bundle's handle.
  *
  *   CSI_BUNDLER_COMMIT   — the emit cannot be keyed (ambient, or no state
  *                         name): the chokepoint commits it directly.
  *                         Out-param is 0.
  *
  *   CSI_BUNDLER_DROPPED  — bad input (null module, type or values).
+ *
+ * The hourly ceiling is spent by what admit DID (sweep F80): an opening and
+ * a direct commit each spend a slot, a merge gives its slot back. Asking
+ * first whether a key is open is not the same question: admit expires an
+ * overdue bundle (its quiet gap or its 10-minute window) before it matches,
+ * and then opens a new one, a row a refund decided beforehand would let
+ * through uncounted.
  *
  * Ids (backlog F46): a bundle takes its event id when it COMMITS, from the
  * chokepoint's one allocator (csi_event_commit_bundle_ in csi_event.cpp,
@@ -46,9 +57,10 @@ extern "C" {
 #endif
 
 typedef enum {
-  CSI_BUNDLER_COMMIT   = 0,   /* emit immediately */
-  CSI_BUNDLER_BUFFERED = 1,   /* rolled into an open bundle */
-  CSI_BUNDLER_DROPPED  = 2,   /* dropped as redundant */
+  CSI_BUNDLER_COMMIT   = 0,   /* not bundled: commit it now */
+  CSI_BUNDLER_OPENED   = 1,   /* opened a new bundle (a future row) */
+  CSI_BUNDLER_DROPPED  = 2,   /* bad input */
+  CSI_BUNDLER_MERGED   = 3,   /* rolled into a bundle already open (no row) */
 } csi_bundler_outcome_t;
 
 /* Window definitions, in milliseconds. The plan's 10-minute window and
@@ -69,11 +81,18 @@ typedef enum {
  * Outcomes:
  *   COMMIT   — caller should persist this emit immediately. Reserved for
  *              ambient and stateless emits that the bundler cannot key.
- *   BUFFERED — emit was accepted into a new or existing bundle. The bundle
- *              commits later, through the chokepoint, and takes its event
- *              id then. `*handle_out` carries the open bundle's handle
- *              (stable while it is open; not an event id).
+ *   OPENED   — emit opened a new bundle (after closing any overdue one,
+ *              its own key's included). The bundle commits later, through
+ *              the chokepoint, and takes its event id then. `*handle_out`
+ *              carries the open bundle's handle (stable while it is open;
+ *              not an event id).
+ *   MERGED   — emit was rolled into the open bundle of its key; no new row.
+ *              `*handle_out` carries that bundle's handle.
  *   DROPPED  — emit rejected (currently only on bad input).
+ *
+ * Merge-or-open is decided under the slot lock, after overdue bundles are
+ * expired, so the outcome is the one fact the caller may spend the hourly
+ * ceiling by (sweep F80).
  */
 csi_bundler_outcome_t csi_bundler_admit(const char*           module_id,
                                         const char*           type_name,
@@ -121,16 +140,6 @@ void csi_bundler_reset(void);
  * Diagnostics: number of currently open bundles.
  */
 size_t csi_bundler_open_count(void);
-
-/**
- * True if an open bundle already exists for this (module, type, state) key —
- * i.e. the next admit of the same key would MERGE into it rather than open a
- * new one. csi_event_emit asks this before admitting so a same-state refresh
- * does not consume a per-module hourly ceiling slot (only openings do).
- */
-bool csi_bundler_has_open(const char* module_id,
-                          const char* type_name,
-                          const char* state_name);
 
 /**
  * Copy up to `max` currently OPEN bundles into `out`, newest activity first.
