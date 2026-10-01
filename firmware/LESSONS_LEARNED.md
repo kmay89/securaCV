@@ -2015,13 +2015,31 @@
   second entry for a key it already held, which no lookup reached, so a
   re-pair moved nothing (the frame re-bind had been hiding that). It now
   re-binds the entry it holds and logs the move.
+- **And the review of that fix found three more, by running it too:**
+  - Closing the frame path made the pairing handlers the only thing that
+    binds an address, and they had not been written for that. A joiner
+    took COMPLETE before its owner confirmed the code. An initiator kept a
+    finished pairing's keys until the timeout, and sealed the
+    `opera_secret` to whoever answered its old OFFER. Both are fixed: they
+    now follow the PlatformIO tree's pairing state machine.
+  - The new `add_peer` met what the old one had saved: an NVS duplicate
+    of the member, which now stranded it and blocked its re-pair. Such a
+    duplicate is now folded into one entry at boot.
+  - One regression check was vacuous. "The re-pair kept the counter"
+    compared 0 with 0, so a re-pair that reset the counter passed. It now
+    checks a counter that was raised first.
 - **Rule:** When a security property of a file "no host test can link" is
   in question, stub the platform and run the real file. About 550 lines of
   stubs and simulator (`tests_host/stubs/mesh_net`, `mesh_net_sim.h`) bought
-  the probe, the regression tests and the re-pair defect.
+  the probe, the regression tests and the re-pair defect. When you close
+  one path to a piece of state, re-read every other path that writes it:
+  it is now the only one. When a fix changes what a writer stores, load
+  what the old writer stored. And check a value the bug would change: a
+  mutant that resets the field must fail the test.
 - **Regression check:** canary-wap `tests_host/test_mesh_address_wap`
-  (all but its three baseline tests fail on 89a4c56) and
-  `test_mesh_rx_gates_wap`'s `no_frame_moves_a_members_address`.
+  (15 of its 19 tests fail on 89a4c56, and 6 fail on this change's first
+  version, 54861ef) and `test_mesh_rx_gates_wap`'s
+  `no_frame_moves_a_members_address`.
 - **Date learned:** 2026-10
 
 ### On a dual-stack listener an IPv4 client arrives as an IPv6 address

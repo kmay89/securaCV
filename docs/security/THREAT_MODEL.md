@@ -625,6 +625,24 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   drop another member's ESP-NOW registration. Since 2026-10-01 it drops a
   frame whose source is not the signer's own bound address before
   verification, and a re-pair re-binds a member it already holds (logged).
+  A changed address therefore needs a re-pair with each member that holds
+  it, where one frame used to move it everywhere; an entry an older
+  firmware's re-pair duplicated is folded into one at boot (logged).
+- **canary-wap's pairing waits for its owners (2026-10-01).** Once a
+  re-pair could re-bind a member, the pairing handlers bound addresses,
+  and pairing frames are unsigned. Two ways to drive them with no owner
+  action were host-probed and closed. A joiner took COMPLETE as soon as it
+  showed its code, before its owner confirmed: an outsider that answered
+  its DISCOVER first finished the pairing, replacing the joiner's opera
+  or, holding the `opera_secret` and presenting a member's public key,
+  re-binding that member to its own radio. And an initiator kept a
+  finished pairing's ephemeral key and confirmed code until the 2-minute
+  timeout, so a radio that overheard its OFFER could send its own ACCEPT
+  and CONFIRM and get the `opera_secret` sealed to it in a COMPLETE anyone
+  in range can read (pre-existing). Now, as on the PlatformIO tree, the
+  joiner takes the first OFFER and a COMPLETE only after its owner
+  confirmed, and the initiator takes one ACCEPT, from where its OFFER
+  went, and wipes the pairing once COMPLETE is sent. Host-tested only.
 - **Still open on canary-wap: a radio copying a member's own address.**
   ESP-NOW does not authenticate a source, so a radio that copies member
   B's bound address passes canary-wap's address check. It can deliver B's

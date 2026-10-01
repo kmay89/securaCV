@@ -427,14 +427,18 @@ static OperaPeer* find_peer_by_fingerprint(const uint8_t* fp) {
 
 // A pairing with a device this one already holds moves that member to the
 // address the pairing completed from (spec §8.3: a re-pair is how a member
-// whose radio address changed is heard again). The new address is
-// registered before the old one is dropped, so a refused add leaves the
-// member where it was (the PlatformIO tree's bind_peer_mac order), and an
-// address another member holds is refused: one address, one member. The
-// counters, state and name stay; a re-pair re-opens no replay window.
-// The move is logged: the 6-digit code does not cover the long-term key a
-// pairing presents (spec §11.1 item 5), so a relayed pairing can claim a
-// member's key from another radio, and this line is the owner's only sign.
+// whose radio address changed is heard again). Only a pairing this
+// device's owner confirmed gets here: the initiator acts on the joiner's
+// CONFIRM only after its own owner's, and the joiner takes COMPLETE only
+// after its owner's (handle_pair_confirm, handle_pair_complete). The new
+// address is registered before the old one is dropped, so a refused add
+// leaves the member where it was (the PlatformIO tree's bind_peer_mac
+// order), and an address another member holds is refused: one address,
+// one member. The counters, state and name stay; a re-pair re-opens no
+// replay window. The move is logged: the 6-digit code does not cover the
+// long-term key a pairing presents (spec §11.1 item 5), so a relayed
+// pairing whose codes match can claim a member's key from another radio,
+// and this line is the owner's only sign.
 static bool rebind_peer(OperaPeer* peer, const uint8_t* mac) {
   if (memcmp(peer->mac_addr, mac, 6) == 0) {
     return true;
@@ -754,9 +758,12 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
   // the envelope names none), or one heard since the last counter save
   // before a power cut. This used to re-point the member's address and its
   // ESP-NOW registration at such a frame's source. A member whose radio
-  // address really changed is heard again after a re-pair (add_peer). ESP-NOW
-  // does not authenticate a source, so a radio copying the member's own
-  // address still gets past this line; nothing below moves an address.
+  // address really changed is heard again after a re-pair with this device
+  // (add_peer), once its counter for this device passes the last one heard
+  // here (a member that rebooted restarts its counters: spec §3.3, open).
+  // ESP-NOW does not authenticate a source, so a radio copying the
+  // member's own address still gets past this line; nothing below moves an
+  // address.
   if (memcmp(peer->mac_addr, mac, 6) != 0) {
     g_auth_failures++;
     return;

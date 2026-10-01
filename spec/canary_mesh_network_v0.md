@@ -438,7 +438,7 @@ review):
 | Rule | PIO (`mesh_session`) | canary-wap (`mesh_network`) | Across the trees |
 |---|---|---|---|
 | Counter convention (§3.3) | first counter signed is 1; receiver's last-seen starts at 0; `counter <= last` dropped, no exemption | **same** since the follow-up — `msg_counter_tx` starts at 1 in `add_peer` and both rekey resets; the gate is `counter <= msg_counter_rx`, the old `&& rx > 0` exemption gone | **same**: a counter-0 frame is never fresh at either receiver |
-| Where a member's address comes from (§8.3) | a completed pairing, or NVS `peer_macs` at boot; an opera frame from an address the transport table does not hold drops before verification, and a verified frame's source is recorded as the member's liveness link (any address in that table: the §8.3 peer-fields note) and binds nothing | a completed pairing (`add_peer`; a re-pair re-binds a member already held, logged), or NVS at boot; since 2026-10-01 a frame from any address but the signer's own bound one drops before verification. It used to re-point the member and its ESP-NOW registration at the source of a frame that passed signature, `opera_id` and replay, and before the v0.4 follow-up it did so ahead of the signature (a frame with a member's public `sender_fp` + `opera_id` and any signature: a keyless denial of service) | **same rule**: no frame binds an address; canary-wap's source check is the stricter one |
+| Where a member's address comes from (§8.3) | a completed pairing, or NVS `peer_macs` at boot; an opera frame from an address the transport table does not hold drops before verification, and a verified frame's source is recorded as the member's liveness link (any address in that table: the §8.3 peer-fields note) and binds nothing | a completed pairing (`add_peer`; a re-pair re-binds a member already held, logged; the joiner completes only after its owner confirmed), or NVS at boot (an older firmware's duplicate entry folded into one); since 2026-10-01 a frame from any address but the signer's own bound one drops before verification. It used to re-point the member and its ESP-NOW registration at the source of a frame that passed signature, `opera_id` and replay, and before the v0.4 follow-up it did so ahead of the signature (a frame with a member's public `sender_fp` + `opera_id` and any signature: a keyless denial of service) | **same rule**: no frame binds an address; canary-wap's source check is the stricter one |
 | Fixed-size payloads | decoders take the length and refuse any other, exactly (`mesh_alert`, `mesh_beacon`, …; `LEAVE_OPERA` must be empty) | **same** since the follow-up: every struct handler (`HEARTBEAT`, `AUTH_*`, `TAMPER_ALERT`, `POWER_ALERT`, `OFFLINE_IMMINENT`, `OPERA_REKEY[_ACK]`) refuses `payload_len != sizeof(struct)`; `BEACON_EVENT`, `CHANNEL_LOCK`, `HUB_ELECTION` already decoded through the staged modules | **same rule**; the encodings still differ where the registry table says so |
 | Payload encodings, pairing exchange | | | **differ** — the registry table above, §4.3, §5.3, §8.3 |
 
@@ -1064,8 +1064,9 @@ registry) or a challenge the new address must answer with the peer's key;
 that is an open decision, not built. **canary-wap conforms (2026-10-01),
 and is stricter:** its `handle_received_message` drops a frame whose source
 is not the signer's own bound address before the signature check, so it
-spends no counter and reaches no handler. Nothing in its receive path
-writes an address any more. Before, it re-pointed a member's address, and
+spends no counter and reaches no handler. No signed opera frame writes an
+address there any more; only a completed pairing does. Before, it
+re-pointed a member's address, and
 its ESP-NOW registration, at the source of any frame that passed `opera_id`,
 signature and replay. A host probe against the real `mesh_network.cpp`
 showed how far that reached there. A frame the receiver missed, re-sent
@@ -1083,18 +1084,48 @@ the last 5-minute counter save did the same. And a copied member address
 made the member's next real frame delete that other member's ESP-NOW
 registration, so the receiver could no longer reach it. Unlike the PlatformIO tree, which accepts a
 verified frame from any address in its transport table (the peer-fields
-note above), canary-wap accepts one only from the signer's own address. A
-changed radio MAC means a re-pair there too. Its `add_peer` now re-binds a
-member it already holds to the address the pairing completed from (new
-address registered first; an address another member holds refused;
-counters kept), and logs the move. It used to append a second entry that no
-lookup reached, and a full opera refused it. The same pairing limit
-applies: canary-wap's code covers only the ephemeral exchange too, and a
-relay claiming a member's key re-binds that member to the relay's radio
-(host-probed on canary-wap after this change; before it, the relay only
-added an unreachable duplicate). Unlike the PlatformIO tree's eight-member
-limit, a full canary-wap opera (16) still takes a re-pair, since ESP-NOW's
-list has 20 entries (host-tested through `add_peer`, not a full pairing). What remains, open: ESP-NOW does not authenticate a source,
+note above), canary-wap accepts one only from the signer's own address.
+A changed radio MAC means a re-pair there too, with each member that holds
+the device: one pairing re-binds one member's entry, where a frame used to
+move it at every member at once. The member is then heard once its counter
+for that member passes the last one heard, so a member that rebooted to
+change its address waits for its counters to climb back (§3.3, open).
+canary-wap keeps its identity key in the device's NVS, so a swapped module
+comes back with a new key and joins as a new member; what reaches a re-bind
+is an NVS image moved to another board, or the relay below. Its `add_peer`
+now re-binds a member it already holds to the address the pairing
+completed from (new address registered first; an address another member
+holds refused; counters, name and state kept), and logs the move. It used
+to append a second entry that no lookup reached, and a full opera refused
+it. An entry an older firmware duplicated that way is folded into one at
+boot, at the later pairing's address unless another member holds it, and
+the fold is logged. Because a pairing binds addresses, canary-wap's
+pairing handlers now keep the PlatformIO state machine's order: the joiner
+takes the first `PAIR_OFFER` only, and `PAIR_COMPLETE` only after its owner
+confirmed the code; the initiator takes one `PAIR_ACCEPT`, from the address
+its OFFER went to, before it shows a code, and wipes the pairing once its
+COMPLETE is sent. Before, the joiner took a COMPLETE as soon as it showed a
+code, so whoever answered its DISCOVER first finished the pairing with no
+owner on that side. Without the `opera_secret` that replaced the joiner's
+opera; with it and a member's public key, once a re-pair re-binds, it
+re-bound that member to its own radio (both host-probed; the second only
+on the change's own re-pair step, since before it the joiner added an
+unreachable duplicate). And the initiator kept a finished
+pairing until the 2-minute timeout, so a radio that overheard its OFFER
+could send its own ACCEPT and CONFIRM and have the `opera_secret` sealed to
+it in a COMPLETE anyone in range can read (host-probed; it predates the
+change). The pairing limit above applies too: canary-wap's code covers only
+the ephemeral exchange, and a relay of an owner-run pairing, its codes
+matching on both screens, that claims a member's key re-binds that member
+to the relay's radio until another re-pair (host-probed on canary-wap
+after this change; before it, the relay only added an unreachable
+duplicate). Unlike the PlatformIO tree's eight-member limit, a full
+canary-wap opera (16) still takes a re-pair, since ESP-NOW's list has 20
+entries (host-tested through `add_peer`, not a full pairing). One
+canary-wap pairing limit is unchanged and open: its initiator acts on the
+joiner's CONFIRM only once its own owner has confirmed, and nothing is sent
+twice, so if the joiner's owner confirms first the pairing does not
+complete and times out (host-probed, before and after). What remains, open: ESP-NOW does not authenticate a source,
 so a radio copying a member's own address still delivers that member's
 not-yet-heard frames — including ones sent to other members — and they are
 dispatched and move the receiver's last-seen counter, silencing the member
@@ -1335,4 +1366,9 @@ An implementation conforms to this specification if it:
   move logged. A host probe showed the old re-bind reached further there
   than a missed frame, because canary-wap counts per destination. §3.3 now
   also says that a rebooted canary-wap sender is dropped as a replay until
-  its counters climb back (open).
+  its counters climb back (open). Since a pairing binds addresses there,
+  canary-wap's pairing handlers keep the PlatformIO order: the joiner takes
+  the first OFFER and a COMPLETE only after its owner confirmed; the
+  initiator takes one ACCEPT, from where its OFFER went, and wipes the
+  pairing after COMPLETE. A duplicate entry an older firmware's re-pair
+  saved is folded into one at boot.
