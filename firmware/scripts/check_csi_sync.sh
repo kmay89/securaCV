@@ -50,7 +50,7 @@ for dst in "$STAGED"/csi_*.h "$STAGED"/csi_*.cpp \
     # optional Home Assistant bridge — none of these are portable across
     # consumers of the CSI library, so they live next to the sketch only.
     case "$name" in
-        csi_integration.h|csi_integration.cpp|csi_dashboard_html.h|csi_mqtt.h|csi_mqtt.cpp|csi_event_log.h|csi_event_log.cpp) continue ;;
+        csi_integration.h|csi_integration.cpp|csi_dashboard_html.h|csi_mqtt.h|csi_mqtt.cpp|csi_event_log.h|csi_event_log.cpp|csi_event_egress.h|csi_event_egress.cpp) continue ;;
     esac
     if [ ! -f "$CANONICAL/$name" ]; then
         echo "::error::Stale staged file (no canonical source): $dst"
@@ -378,8 +378,8 @@ if ! grep -qF 'csi_event_set_event_id_floor(csi_event_id_floor::boot_floor(persi
     echo "         from csi_mqtt::NVS_KEY_DELIVERED (backlog F46)."
     drift=1
 fi
-if ! grep -qF 'csi_event_backfill::restore(' "$STAGED/csi_mqtt.cpp"; then
-    echo "::error::$STAGED/csi_mqtt.cpp must restore its delivery watermark with"
+if ! grep -qF 'csi_event_backfill::restore(' "$STAGED/csi_event_egress.cpp"; then
+    echo "::error::$STAGED/csi_event_egress.cpp must restore its delivery watermark with"
     echo "         csi_event_backfill::restore() (Planner::begin's rule, host-tested): a ceiling the"
     echo "         id allocator did not follow is no record (backlog F46)."
     drift=1

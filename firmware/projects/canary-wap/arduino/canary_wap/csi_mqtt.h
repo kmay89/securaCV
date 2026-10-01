@@ -151,36 +151,43 @@ void loop();
 /** True iff the underlying MQTT client is connected to the broker. */
 bool connected();
 
-/**
- * Push one CSI event to {prefix}/{device_id}/events. Called from the
- * csi_event_on_committed() strong override after the chokepoint has
- * cleared the event. No-op when MQTT is disabled or disconnected.
- *
- * event_id is the same id csi_event allocated; tracked internally as
- * the high-water-mark of "events HA has seen" so a subsequent MQTT
- * reconnect knows where to start the backfill replay.
- */
-void publish_event(uint32_t                  event_id,
-                   const char*               module_id,
-                   const char*               type_name,
-                   csi_event_category_t      category,
-                   csi_privacy_class_t       privacy,
-                   const csi_event_values_t* values);
+/* ── The events egress's wire ──────────────────────────────────────────
+ * csi_event_egress.cpp decides which committed csi_event goes out when,
+ * and keeps the delivery watermark; these are the publishes it asks for.
+ * Safe from any task (publish_raw guards the client), but the egress is
+ * their only caller. */
+
+/* What one publish attempt did. */
+enum class EventSend : uint8_t {
+  kSent,         /* handed to esp_mqtt */
+  kNotNow,       /* not connected, or the client refused the publish */
+  kUnbuildable,  /* the body does not build: this row can never go out */
+};
 
 /**
- * Replay an on-disk event during MQTT-reconnect backfill. Same wire
- * format as publish_event but anchors the timestamp at the original
- * first_seen_ms (so HA's history places the event at the right
- * moment instead of "now") and uses the persisted bundled_count.
- * Called by the main-loop drain triggered when the MQTT bridge
- * reconnects after an outage.
- *
- * Returns true on successful enqueue so the backfill iterator can
- * stop mid-replay if a publish fails — letting later successes
- * advance the watermark past a failed record would permanently
- * skip it on subsequent reconnects.
+ * Publish one committed csi_event on {prefix}/{device_id}/events, in the
+ * shared body (csi_event_wire.h): signed, its event_id, the row's
+ * first_seen_ms as the timestamp, `bundled_count`, and `replay` (HA Device
+ * Triggers filter replayed rows out, so old events do not re-fire
+ * automations after a reconnect).
  */
-bool publish_event_record(const csi_event_record_t* rec);
+EventSend publish_event_row(const csi_event_record_t& rec,
+                            uint16_t bundled_count,
+                            bool replay);
+
+/**
+ * The per-kind tamper bridge: a system.integrity row republished on
+ * {prefix}/{device_id}/tamper in the shape HA's tamper binary sensors
+ * parse (csi_event_wire::build_tamper_bridge_body). Not retained. Returns
+ * false when the row is not a tamper kind or the publish failed.
+ */
+bool publish_tamper_bridge(const char* module_id,
+                           const char* type_name,
+                           const csi_event_values_t* values);
+
+/** True exactly once after each MQTT_EVENT_CONNECTED: the SD backfill
+ *  should run (csi_event_egress::pump drains it on the main loop). */
+bool take_backfill_request();
 
 /**
  * Publish HA MQTT auto-discovery payloads for the canary's full entity

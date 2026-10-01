@@ -35,6 +35,7 @@
 #include "tune_ui.h"
 #include "csi_mqtt.h"             // optional MQTT bridge (publishes events)
 #include "csi_event_log.h"        // SD-backed event persistence + backfill
+#include "csi_event_egress.h"     // committed events -> SD log + MQTT, in id order
 #include "api_auth.h"             // api_auth_check() — Bearer token gate
 
 #include <Arduino.h>
@@ -2851,28 +2852,11 @@ extern "C" void csi_event_on_committed(uint32_t                  event_id,
   s->module_id[CSI_EVENT_NAME_MAX - 1] = '\0';
   s->type_name[CSI_EVENT_NAME_MAX - 1] = '\0';
 
-  /* Forward to MQTT (no-op when the bridge is disabled or the broker
-   * is unreachable). Same privacy ceiling already gated the snapshot
-   * write above, so we forward whatever we accepted into g_snapshot
-   * — no new chokepoint to keep in sync. event_id flows through so
-   * csi_mqtt can track the high-water-mark for backfill on reconnect. */
-  csi_mqtt::publish_event(event_id, s->module_id, s->type_name, category, privacy, values);
-
-  /* Persist to SD so today's history survives a reboot AND so the
-   * MQTT bridge can backfill HA after an outage (csi_event_log
-   * iterate_since walks the same file). The full record (including
-   * first_seen_ms / last_seen_ms / bundled_count, which the bundler
-   * filled in inside the ring) lives in the in-memory ring; pull a
-   * copy via csi_event_find so the on-disk row matches what
-   * csi_event_recent would return. The HTTP task can dismiss the row
-   * between its commit and this copy (the MQTT publish above sits in
-   * between); append() writes it "dismissed":0 regardless, and the queued
-   * dismissal follows as its own line (csi_event_log.h, queue_dismissal),
-   * so the original is never mistaken for a dismissal and lost. */
-  csi_event_record_t persist_rec;
-  if (csi_event_find(event_id, &persist_rec)) {
-    csi_event_log::append(&persist_rec);
-  }
+  /* The events egress (csi_event_egress.h): the MQTT `events` / `tamper`
+   * publishes and the SD event log. Same privacy ceiling already gated the
+   * snapshot write above, so we forward whatever we accepted into
+   * g_snapshot — no new chokepoint to keep in sync. */
+  csi_event_egress::on_committed(event_id, s->module_id, s->type_name, category, privacy, values);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
