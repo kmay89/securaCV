@@ -258,7 +258,8 @@ struct Link {
                           device handed out is below it, so a card line at
                           or above it is never sent or credited (F46).
                           0 = unknown: then only ids commit() has seen are
-                          trusted, and the earlier boots' rows wait. */
+                          trusted, and the walk passes over the earlier
+                          boots' rows for good (counted as untrusted). */
 };
 
 enum class Route : uint8_t {

@@ -317,12 +317,20 @@ static int test_boot_loop_cost_and_headroom() {
   CHECK(d.nvs_writes == (uint32_t)boots);
   CHECK(last - first == (uint32_t)(boots - 1) * kStride);
   // The space: 2^30 ids. A boot every 5 s (17,280 a day) at kStride ids a
-  // boot lasts about 17 years; the manifests' ceiling at its most (16
-  // modules x 255/hour, 97,920 rows a day) about 30.
+  // boot lasts about 17 years. The most a device can commit in a day (the
+  // header's sum): the uncapped ambient module at one row a second, the
+  // other 15 modules at the 255/hour override, and bundles the hourly
+  // ceiling refunded, one per bundler slot (8) per 2-minute gap. That
+  // lasts about 16 years; the shipped defaults about 65.
   const uint64_t space = 0x100000000ull - kIdSpaceBase;
   CHECK(space == (1ull << 30));
   CHECK(space / (17280ull * kStride) / 365 >= 17);
-  CHECK(space / 97920ull / 365 >= 30);
+  const uint64_t worst = 86400ull + 15ull * 255 * 24 + 8ull * (24 * 60 / 2);
+  CHECK(worst == 183960);
+  CHECK(space / worst == 5836);                 // days: about 16 years
+  const uint64_t shipped = 86400ull / 5 + 15ull * 60 * 24 + 8ull * (24 * 60 / 2);
+  CHECK(shipped == 44640);
+  CHECK(space / shipped / 365 >= 65);
   return 0;
 }
 

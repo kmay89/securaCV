@@ -47,10 +47,24 @@
  * is needed here, not a per-device value: a canary-wap from before #1754
  * kept no record of the bundler ids it sent.
  *
- * Headroom: 2^30 ids (1,073,741,824) before the 32-bit counter wraps. At
- * the most the manifests allow (16 modules at a 255/hour override, about
- * 98,000 a day) that is about 30 years; at the shipped ceilings (at most
- * 30/hour per module) far longer. A boot loop costs what it cost before
+ * Headroom: 2^30 ids (1,073,741,824) before the 32-bit counter wraps.
+ * Every committed row takes one, ambient rows included. The most a device
+ * can commit in a day is the sum of three things:
+ *   - one uncapped ambient module at one row per CSI window:
+ *     wifi.channel_activity has no hourly ceiling and its cooldown goes
+ *     down to 1 s (86,400);
+ *   - the other 15 modules at the 255/hour override's maximum
+ *     (15 x 255 x 24 = 91,800; the two uncapped meta modules emit about
+ *     once a day);
+ *   - bundles that reopen on a refresh the hourly ceiling refunded: at most
+ *     one per bundler slot per CSI_BUNDLER_MAX_GAP_MS (8 x 720 = 5,760).
+ * That is 183,960 a day: about 16 years (5,836 days). At the shipped
+ * defaults (a 5 s cooldown; manifest ceilings of at most 60 an hour) it is
+ * under 17,280 + 15 x 60 x 24 + 5,760 = 44,640 a day: about 65 years. At
+ * exhaustion the counter wraps. Ids restart at 1 (0 is never handed out),
+ * and each later boot first reissues 0xFFFFFFFF (floor_for saturates).
+ * From then on Home Assistant refuses the device's events, and nothing on
+ * the device says so. A boot loop costs what it cost before
  * F46: one floor write per boot that allocates (one write, not more, even
  * when boot_floor() holds the floor above the delivery ceiling: the boot's
  * first allocation is the write), and up to kStride skipped ids. A boot
