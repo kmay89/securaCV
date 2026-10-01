@@ -43,6 +43,8 @@ struct Device {
   uint32_t last_heartbeat_ms = 0, last_peer_check_ms = 0;
   uint32_t storm_window_start_ms = 0, storm_window_count = 0;
   uint32_t storm_pause_until_ms = 0, storm_trigger_count = 0;
+  bool tx_reserve_warned = false;
+  uint32_t tx_reserve_warned_ms = 0;
   mn::RekeyState rekey = {};
   mn::PairingSession pairing = {};
   // The device's radio and flash.
@@ -74,6 +76,8 @@ inline void save(Device& d) {
   d.storm_window_count = mn::g_storm_window_count;
   d.storm_pause_until_ms = mn::g_storm_pause_until_ms;
   d.storm_trigger_count = mn::g_storm_trigger_count;
+  d.tx_reserve_warned = mn::g_tx_reserve_warned;
+  d.tx_reserve_warned_ms = mn::g_tx_reserve_warned_ms;
   d.rekey = mn::g_rekey;
   d.pairing = mn::g_pairing;
 }
@@ -102,6 +106,8 @@ inline void load(Device& d) {
   mn::g_storm_window_count = d.storm_window_count;
   mn::g_storm_pause_until_ms = d.storm_pause_until_ms;
   mn::g_storm_trigger_count = d.storm_trigger_count;
+  mn::g_tx_reserve_warned = d.tx_reserve_warned;
+  mn::g_tx_reserve_warned_ms = d.tx_reserve_warned_ms;
   mn::g_rekey = d.rekey;
   mn::g_pairing = d.pairing;
   mn::g_rx_pending = false;

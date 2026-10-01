@@ -144,6 +144,13 @@ static uint32_t g_storm_window_count    = 0;
 static uint32_t g_storm_pause_until_ms  = 0;
 static uint32_t g_storm_trigger_count   = 0;
 
+// Read-only: is the gate holding every send? send_to_peer asks first, so
+// a refused frame spends no counter (F71's write bound rests on it).
+static bool storm_paused() {
+  return g_storm_pause_until_ms != 0 &&
+         (int32_t)(millis() - g_storm_pause_until_ms) < 0;
+}
+
 static bool storm_gate() {
   const uint32_t now = millis();
   if (g_storm_pause_until_ms != 0 &&
@@ -604,40 +611,91 @@ static bool send_pair_frame(const uint8_t* mac, MessageType type,
 // back past what the member last saw (one heartbeat per 30 s). Now no
 // counter above a member's stored reservation is signed until a new one,
 // TX_COUNTER_RESERVE_BLOCK ahead, is stored (persist_tx_reservations), and
-// a boot resumes one past the stored one (load_tx_reservations). A crash
-// anywhere, between a reservation and its frame included, costs a gap of
-// unused counters, which receivers accept (they need only "higher"), never
-// a counter signed twice. A reservation NVS refuses refuses the frame.
-// Flash wear: one write per 1024 frames to a member, of one record holding
-// every member's reservation (16 B each, at most 256 B). At the 30 s
-// heartbeat a member takes about 2880 frames a day, so under 3 writes a
-// day per member and under 45 for a full opera of 16 — next to the 288 a
-// day of the same size the sketch's 5-minute last-seen save already makes.
-// The storm gate's ceiling (100 frames in a second, then 30 s of silence)
-// holds even a flood to one member to about one write every 5 minutes.
-// Counting stays per member: the rekey resets below set a member's counter
-// back to 1 for the new session, under the reservation it already has.
+// a boot resumes every member one past the highest reservation stored for
+// any of them (load_tx_reservations). A crash anywhere, between a
+// reservation and its frame included, costs a gap of unused counters,
+// which receivers accept (they need only "higher"), never a counter signed
+// twice under one key. A reservation NVS refuses refuses the frame, and
+// the log says so.
+//
+// Flash wear: one write per 1024 counters spent to a member, of one record
+// holding every member's reservation (16 B each, at most 256 B), and one
+// write covers every member that needs a reservation at that moment. A
+// boot sets every member at the same counter and the heartbeat goes to
+// every member once per 30 s, so their counters cross a block together:
+// about 2880 heartbeats a day cost under 3 writes a day for the whole
+// opera. Counters out of step cost at most one write per member per 1024
+// frames to it: under 45 a day for a full opera of 16 at the heartbeat
+// cadence, next to the 288 writes a day of the same size the sketch's
+// 5-minute last-seen save already makes. A membership change adds one
+// (persist_peers). The storm gate bounds a flood too: send_to_peer spends
+// no counter while the gate holds (storm_paused), so at most 101 counters
+// go per 31 s (100 frames, the one that trips the gate, then 30 s of
+// silence): about one write per 5 minutes however fast a caller sends. A
+// frame refused after it is signed (an ESP-NOW error, the frame that trips
+// the gate) still spends its counter.
+//
+// Counting stays per member (one counter per sender is sweep F72's
+// option): the rekey resets below set a member's counter back to 1 for
+// the new session, under the reservation it already has.
 static constexpr uint64_t TX_COUNTER_RESERVE_BLOCK = 1024;
 static const char* NVS_TX_RESERVED = "tx_ctrs";
 static constexpr size_t TX_RESERVE_ENTRY_SIZE = FINGERPRINT_SIZE + sizeof(uint64_t);
+// Where every member resumes when no record says how far its counter went
+// (load_tx_reservations). Members stored with no record at all mean NVS
+// written by firmware from before F71, which counted from 1 at every boot:
+// no boot of it reached 2^40 (10,000 frames a second to one member for
+// over three years). A record that is there but unreadable may hide
+// counters this firmware signed above 2^40 since; at the rates above they
+// stay far below 2^48.
+static constexpr uint64_t TX_COUNTER_FLOOR_NO_RECORD = 1ULL << 40;
+static constexpr uint64_t TX_COUNTER_FLOOR_UNREADABLE = 1ULL << 48;
+// A reservation NVS refuses pauses that member's sends, and nothing else
+// would say why its members go STALE: logged at most once per interval
+// while the refusals last.
+static constexpr uint32_t TX_RESERVE_WARN_INTERVAL_MS = 300000;
+static bool g_tx_reserve_warned = false;
+static uint32_t g_tx_reserve_warned_ms = 0;
 
 static bool reserve_tx_counter(OperaPeer* peer) {
+  // Only a member in the table has a place in the record.
+  if (peer < g_peers || peer >= g_peers + g_peer_count) return false;
   const uint64_t next = peer->msg_counter_tx;
   if (next == 0) return false;   // 2^64 frames to one member: never, but never wrap
   if (next <= peer->msg_counter_tx_reserved) return true;
-  const uint64_t kept = peer->msg_counter_tx_reserved;
-  peer->msg_counter_tx_reserved = (next - 1 > UINT64_MAX - TX_COUNTER_RESERVE_BLOCK)
-                                      ? UINT64_MAX
-                                      : next - 1 + TX_COUNTER_RESERVE_BLOCK;
+  // One write covers every member past its reservation: after a boot that
+  // is all of them, and their first heartbeats cost one write, not one each.
+  uint64_t kept[MAX_OPERA_SIZE];
+  for (uint8_t i = 0; i < g_peer_count; i++) {
+    kept[i] = g_peers[i].msg_counter_tx_reserved;
+    const uint64_t n = g_peers[i].msg_counter_tx;
+    if (n == 0 || n <= kept[i]) continue;
+    g_peers[i].msg_counter_tx_reserved = (n - 1 > UINT64_MAX - TX_COUNTER_RESERVE_BLOCK)
+                                             ? UINT64_MAX
+                                             : n - 1 + TX_COUNTER_RESERVE_BLOCK;
+  }
   if (!persist_tx_reservations()) {
-    peer->msg_counter_tx_reserved = kept;
+    for (uint8_t i = 0; i < g_peer_count; i++) g_peers[i].msg_counter_tx_reserved = kept[i];
+    const uint32_t now = millis();
+    if (!g_tx_reserve_warned || now - g_tx_reserve_warned_ms >= TX_RESERVE_WARN_INTERVAL_MS) {
+      g_tx_reserve_warned = true;
+      g_tx_reserve_warned_ms = now;
+      health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+                 "opera: send-counter reservation refused by NVS; sends to a member paused");
+    }
     return false;
   }
+  g_tx_reserve_warned = false;
   return true;
 }
 
 static bool send_to_peer(OperaPeer* peer, MessageType type, const uint8_t* payload, size_t payload_len) {
   if (!peer || !g_opera_config.configured) {
+    return false;
+  }
+  // Ahead of the counter: a frame the storm gate will refuse spends none,
+  // and no reservation is written for it (see TX_COUNTER_RESERVE_BLOCK).
+  if (storm_paused()) {
     return false;
   }
   if (!reserve_tx_counter(peer)) {
@@ -1572,6 +1630,11 @@ static bool persist_peers() {
   }
 
   g_prefs.end();
+  // F71: the send-counter record lists the members too, so stored members
+  // with no record mean NVS from before it (load_tx_reservations). Its own
+  // write and handle; a refusal leaves the last record, which still covers
+  // every counter signed.
+  persist_tx_reservations();
   return true;
 }
 
@@ -1648,10 +1711,10 @@ static bool load_peers() {
       g_peers[i].session_established = false;
       // Same counter convention as add_peer (spec §3.3): the first frame this
       // boot signs carries counter 1, never the static-zeroed 0 a strict
-      // receiver drops — unless a reservation was stored for the member, and
-      // then one past it (load_tx_reservations, below). rx starts at 0 here;
-      // load_replay_counters() raises it to the persisted high-water mark
-      // right after.
+      // receiver drops — unless any counter was signed before, and then one
+      // past the highest reservation stored (load_tx_reservations, below).
+      // rx starts at 0 here; load_replay_counters() raises it to the
+      // persisted high-water mark right after.
       g_peers[i].msg_counter_tx = 1;
       g_peers[i].msg_counter_rx = 0;
       g_peers[i].msg_counter_tx_reserved = 0;
@@ -1666,8 +1729,10 @@ static bool load_peers() {
   }
 
   g_prefs.end();
+  // F71: before anything is sent, and before fold_duplicate_peers, whose
+  // persist_peers writes the record from what is in RAM.
+  load_tx_reservations();
   fold_duplicate_peers();
-  load_tx_reservations();   // F71: before anything is sent
   return true;
 }
 
@@ -2574,9 +2639,13 @@ bool load_replay_counters() {
 // SEND COUNTER RESERVATIONS (F71 — see reserve_tx_counter)
 //
 // NVS key "tx_ctrs": fingerprint (8 B) || reservation (u64) for every member
-// with one. Not flash-encryption gated, like "replay_ctrs" beside it (the
-// PlatformIO tree's mesh_out_ctr isn't either): counts, not secrets, and a
-// gate would restart the counters at every boot of an FE-off board.
+// (0: nothing reserved for it yet, so nothing signed to it). Written by
+// every reservation and by every persist_peers, so on this firmware a
+// device that stores members stores the record too: members with no record
+// mean NVS from before it (load_tx_reservations). Not flash-encryption
+// gated, like "replay_ctrs" beside it (the PlatformIO tree's mesh_out_ctr
+// isn't either): counts, not secrets, and a gate would restart the
+// counters at every boot of an FE-off board.
 // ════════════════════════════════════════════════════════════════════════════
 
 // Both use their own Preferences handle, not g_prefs: this runs on the send
@@ -2586,15 +2655,14 @@ bool load_replay_counters() {
 // Preferences::putBytes returns the length only after nvs_commit succeeds,
 // on both cores canary-wap builds.
 static bool persist_tx_reservations() {
+  if (g_peer_count == 0) return true;   // nothing to hold; an old record is harmless
   uint8_t blob[MAX_OPERA_SIZE * TX_RESERVE_ENTRY_SIZE];
   size_t n = 0;
   for (uint8_t i = 0; i < g_peer_count; i++) {
-    if (g_peers[i].msg_counter_tx_reserved == 0) continue;
     memcpy(blob + n, g_peers[i].fingerprint, FINGERPRINT_SIZE);
     memcpy(blob + n + FINGERPRINT_SIZE, &g_peers[i].msg_counter_tx_reserved, sizeof(uint64_t));
     n += TX_RESERVE_ENTRY_SIZE;
   }
-  if (n == 0) return true;
   Preferences prefs;
   if (!prefs.begin(NVS_NS, false)) return false;
   const size_t put = prefs.putBytes(NVS_TX_RESERVED, blob, n);
@@ -2602,34 +2670,60 @@ static bool persist_tx_reservations() {
   return put == n;
 }
 
-// Each member's counter resumes one past its stored reservation, so no
-// counter signed before the boot is signed again. A member with none
-// starts at 1 (load_peers), as does every member when the record is not
-// whole entries: there is then no way to know how far a counter went, and
-// the boot says so.
+// Every member resumes one past the highest reservation stored for any of
+// them, so no counter signed before the boot is signed again, and the boot
+// leaves no member's counter ahead of another's. Each resuming from its own
+// reservation left them up to a block apart, and sweep F72's open gap (a
+// frame to one member, replayed at another from this device's address,
+// silences this device there until its counter for that member catches
+// up) grew by up to a block at every boot; aligned, a boot closes it.
+// Nothing is written here: the first send reserves for every member at
+// once (reserve_tx_counter), so a boot loop that never sends wears nothing.
+//
+// Members loaded and no record: NVS from before F71 (see persist_peers),
+// whose counters restarted at 1 at every boot. Every member resumes above
+// TX_COUNTER_FLOOR_NO_RECORD, which no such boot reached, so the first boot
+// after the update is heard at once, not only after each counter climbs
+// back past the old one. A record that is there but unreadable resumes
+// above TX_COUNTER_FLOOR_UNREADABLE, and the boot says so. That is above
+// everything signed since the update, unless the device has resumed from
+// that floor once already: a second unreadable record resumes below its
+// own history, and its members drop its frames until each counter climbs
+// back past the one they last heard (spec §3.3).
 static void load_tx_reservations() {
+  if (g_peer_count == 0) return;
+  uint64_t high = 0;
   Preferences prefs;
-  if (!prefs.begin(NVS_NS, true)) return;   // no namespace yet: nothing stored
-  if (!prefs.isKey(NVS_TX_RESERVED)) {
+  const bool opened = prefs.begin(NVS_NS, true);
+  if (!opened || !prefs.isKey(NVS_TX_RESERVED)) {
+    if (opened) prefs.end();
+    high = TX_COUNTER_FLOOR_NO_RECORD;
+    health_log(SCV_LOG_INFO, SCV_CAT_MESH,
+               "opera: no send-counter record; counters resume above 2^40");
+  } else {
+    uint8_t blob[MAX_OPERA_SIZE * TX_RESERVE_ENTRY_SIZE];
+    const size_t got = prefs.getBytes(NVS_TX_RESERVED, blob, sizeof(blob));
     prefs.end();
-    return;
+    if (got == 0 || (got % TX_RESERVE_ENTRY_SIZE) != 0) {
+      high = TX_COUNTER_FLOOR_UNREADABLE;
+      health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+                 "opera: send-counter reservations unreadable; counters resume above 2^48");
+    } else {
+      // Every entry, a member's that has since gone included: what matters
+      // is the highest counter this device can have signed.
+      for (size_t off = 0; off < got; off += TX_RESERVE_ENTRY_SIZE) {
+        uint64_t reserved;
+        memcpy(&reserved, blob + off + FINGERPRINT_SIZE, sizeof(uint64_t));
+        if (reserved > high) high = reserved;
+      }
+    }
   }
-  uint8_t blob[MAX_OPERA_SIZE * TX_RESERVE_ENTRY_SIZE];
-  const size_t got = prefs.getBytes(NVS_TX_RESERVED, blob, sizeof(blob));
-  prefs.end();
-  if (got == 0 || (got % TX_RESERVE_ENTRY_SIZE) != 0) {
-    health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
-               "opera: send-counter reservations unreadable; counters restart at 1");
-    return;
-  }
-  for (size_t off = 0; off < got; off += TX_RESERVE_ENTRY_SIZE) {
-    uint64_t reserved;
-    memcpy(&reserved, blob + off + FINGERPRINT_SIZE, sizeof(uint64_t));
-    OperaPeer* peer = find_peer_by_fingerprint(blob + off);
-    if (peer == nullptr || reserved <= peer->msg_counter_tx_reserved) continue;
-    peer->msg_counter_tx_reserved = reserved;
-    // At UINT64_MAX no counter is left: 0 makes reserve_tx_counter refuse.
-    peer->msg_counter_tx = (reserved == UINT64_MAX) ? 0 : reserved + 1;
+  for (uint8_t i = 0; i < g_peer_count; i++) {
+    // Covered up to `high`, and nothing above it signed; the next counter
+    // needs a reservation. At UINT64_MAX no counter is left: 0 makes
+    // reserve_tx_counter refuse.
+    g_peers[i].msg_counter_tx_reserved = high;
+    g_peers[i].msg_counter_tx = (high == UINT64_MAX) ? 0 : high + 1;
   }
 }
 

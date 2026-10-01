@@ -331,7 +331,8 @@ Traffic run(const std::vector<Device*>& devs, uint32_t ms, uint32_t step_ms = 50
 // Each member's counter is now reserved ahead in NVS (the PlatformIO
 // tree's F33 part 3, per member): before the first counter above its
 // reservation is signed, a new reservation 1024 ahead is stored, and a
-// boot resumes above the stored one.
+// boot resumes every member above the highest one stored. With no record
+// (NVS from before F71) or an unreadable one, a boot resumes above a floor.
 
 void test_a_rebooted_member_is_heard_at_once() {
   fresh_opera({&A, &B, &C});
@@ -377,40 +378,167 @@ void test_no_counter_is_signed_twice_across_reboots() {
 }
 
 void test_the_reservation_costs_one_write_per_block() {
-  // Wear: one NVS write per 1024 frames to a member, not one per frame.
+  // Wear: one NVS write per 1024 counters spent to a member, not one per
+  // frame, and one write covers every member that needs a reservation.
   fresh_opera({&A, &B, &C});
   host_sim::nvs_writes.clear();
   for (int i = 0; i < 2100; ++i) CHECK(frame_to(B, A));   // counters 1..2100
-  CHECK(host_sim::nvs_writes[kTxKey] == 3);               // at 1, 1025 and 2049
+  CHECK(host_sim::nvs_writes[kTxKey] == 3);               // at 1 (C's too), 1025, 2049
   for (int i = 0; i < 1100; ++i) CHECK(frame_to(B, C));   // 1..1100 for C
-  CHECK(host_sim::nvs_writes[kTxKey] == 5);               // C's at 1 and 1025
+  CHECK(host_sim::nvs_writes[kTxKey] == 4);               // C's at 1025 only
   // One record holds both members' reservations: fingerprint + u64 each.
   CHECK(nvs_value(B, kTxKey).size() == 2 * (mn::FINGERPRINT_SIZE + 8));
+  // The boot sets both one past the highest reservation (A's, 3072), and
+  // their first frames cost one write between them.
   boot(B);
   B.espnow.sent.clear();
   CHECK(frame_to(B, A) && frame_to(B, C));
   CHECK(counter_of(sent_to(B, A.mac).back()) == 3 * kBlock + 1);
-  CHECK(counter_of(sent_to(B, C.mac).back()) == 2 * kBlock + 1);
+  CHECK(counter_of(sent_to(B, C.mac).back()) == 3 * kBlock + 1);
+  CHECK(host_sim::nvs_writes[kTxKey] == 5);
+  // At the heartbeat cadence the members' counters cross a block together:
+  // 1024 rounds to both cost one write, not one per member.
+  for (uint64_t i = 0; i < kBlock; ++i) {
+    host_sim::now_ms += mn::HEARTBEAT_INTERVAL_MS;
+    become(B);
+    mn::send_heartbeat();
+  }
+  CHECK(counter_of(sent_to(B, A.mac).back()) == 4 * kBlock + 1);
+  CHECK(counter_of(sent_to(B, C.mac).back()) == 4 * kBlock + 1);
+  CHECK(host_sim::nvs_writes[kTxKey] == 6);
   std::printf("PASS the_reservation_costs_one_write_per_block\n");
+}
+
+void test_a_boot_aligns_every_members_counter() {
+  // Counting is per member, and the envelope names no destination, so a
+  // frame B sent C, replayed at A from B's address, is taken there, and
+  // A then drops B's frames until B's counter for A catches up (sweep F72,
+  // open). Each member resuming from its own reservation could leave the
+  // two counters up to a block further apart after a boot: B's for A at
+  // 1000 and for C at 1025 resumed at 1025 and 2049, and that replay then
+  // silenced B at A for 1025 frames, not 25. The boot now resumes both at
+  // one counter.
+  fresh_opera({&A, &B, &C});
+  for (int i = 0; i < 1000; ++i) CHECK(frame_to(B, A));              // B to A: 1..1000
+  for (uint64_t i = 0; i <= kBlock; ++i) CHECK(frame_to(B, C));      // B to C: 1..1025
+  deliver(A, B.mac, sent_to(B, A.mac).back());
+  deliver(C, B.mac, sent_to(B, C.mac).back());
+  boot(B);
+  B.espnow.sent.clear();
+  CHECK(frame_to(B, A) && frame_to(B, C));
+  const Frame to_a = sent_to(B, A.mac).back();
+  const Frame to_c = sent_to(B, C.mac).back();
+  CHECK(counter_of(to_a) == counter_of(to_c));
+  CHECK(counter_of(to_a) == 2 * kBlock + 1);
+  // The replay still costs A the frame with the same counter, and no more.
+  deliver(A, B.mac, to_c);
+  CHECK(entry(A, B)->msg_counter_rx == counter_of(to_c));
+  CHECK(frame_to(B, A));
+  become(A);
+  const uint32_t received = mn::g_messages_received;
+  deliver(A, B.mac, sent_to(B, A.mac).back());
+  become(A);
+  CHECK(mn::g_messages_received == received + 1);
+  std::printf("PASS a_boot_aligns_every_members_counter\n");
+}
+
+void test_the_first_boot_after_the_update_is_heard_at_once() {
+  // NVS from before F71 holds the members and no send-counter record, and
+  // its counters restarted at 1 at every boot. The first boot on this
+  // firmware resumes every member above 2^40, which no boot of the old one
+  // reached, instead of at 1 (members drop those until each counter climbs
+  // back past the one they last heard: the old uptime's worth of frames).
+  fresh_opera({&A, &B, &C});
+  for (int i = 0; i < 5; ++i) deliver(A, B.mac, heartbeat_to(B, A));
+  B.nvs.erase(kTxKey);                                   // as the old firmware left it
+  g_health.clear();
+  boot(B);
+  CHECK(logged("opera: no send-counter record"));
+  B.espnow.sent.clear();
+  const Frame f = heartbeat_to(B, A);
+  CHECK(counter_of(f) == (1ULL << 40) + 1);
+  become(A);
+  const uint32_t received = mn::g_messages_received;
+  deliver(A, B.mac, f);
+  become(A);
+  CHECK(mn::g_messages_received == received + 1);
+  // The record is written then, so the next boot resumes from it.
+  CHECK(nvs_value(B, kTxKey).size() == 2 * (mn::FINGERPRINT_SIZE + 8));
+  g_health.clear();
+  boot(B);
+  CHECK(!logged("opera: no send-counter record"));
+  CHECK(counter_of(heartbeat_to(B, A)) == (1ULL << 40) + kBlock + 1);
+  // A device that stored members on this firmware has a record even if it
+  // sent nothing (persist_peers writes it), so its first counter is 1.
+  fresh_opera({&A, &B, &C});
+  CHECK(nvs_value(B, kTxKey).size() == 2 * (mn::FINGERPRINT_SIZE + 8));
+  CHECK(counter_of(heartbeat_to(B, A)) == 1);
+  std::printf("PASS the_first_boot_after_the_update_is_heard_at_once\n");
+}
+
+size_t times_logged(const char* message) {
+  size_t n = 0;
+  for (const std::string& m : g_health) n += m.find(message) != std::string::npos ? 1 : 0;
+  return n;
+}
+
+void test_a_fold_on_the_first_boot_keeps_the_floor() {
+  // load_peers folds a duplicate member entry the old add_peer left, and
+  // saves the list (persist_peers, which writes the send-counter record
+  // from RAM). On NVS from before F71 that save would write a record of
+  // zeros ahead of the reading, and the boot would resume at 1; the record
+  // is read first.
+  fresh_opera({&A, &B, &C});
+  for (int i = 0; i < 5; ++i) deliver(A, B.mac, heartbeat_to(B, A));
+  mn::OperaPeer dup = *entry(B, A);                 // the old re-pair's second entry
+  become(B);
+  mn::g_peers[mn::g_peer_count++] = dup;
+  CHECK(mn::persist_peers());
+  B.nvs.erase(kTxKey);                              // as the old firmware left it
+  g_health.clear();
+  boot(B);
+  CHECK(logged("opera: folded a duplicate member entry into one"));
+  become(B);
+  CHECK(mn::g_peer_count == 2);
+  const Frame f = heartbeat_to(B, A);
+  CHECK(counter_of(f) == (1ULL << 40) + 1);
+  become(A);
+  const uint32_t received = mn::g_messages_received;
+  deliver(A, B.mac, f);
+  become(A);
+  CHECK(mn::g_messages_received == received + 1);
+  std::printf("PASS a_fold_on_the_first_boot_keeps_the_floor\n");
 }
 
 void test_a_reservation_that_cannot_be_stored_refuses_the_frame() {
   // A counter is never signed before its reservation is durable: when NVS
-  // refuses the write, the frame is not sent, and the counter is not spent.
+  // refuses the write, the frame is not sent, the counter is not spent,
+  // and the log says why the member stops hearing this device, once per
+  // 5 minutes while the refusals last.
+  const char* const kRefused = "opera: send-counter reservation refused by NVS";
   fresh_opera({&A, &B, &C});
   B.espnow.sent.clear();
+  g_health.clear();
   host_sim::nvs_writes_fail = true;
   CHECK(!frame_to(B, A));                          // the first needs a reservation
+  CHECK(!frame_to(B, C));                          // and so does C's
+  CHECK(times_logged(kRefused) == 1);
+  for (int i = 0; i < 10; ++i) CHECK(!frame_to(B, A));
+  CHECK(times_logged(kRefused) == 1);              // not once per frame
+  host_sim::now_ms += 300000;
+  CHECK(!frame_to(B, A));
+  CHECK(times_logged(kRefused) == 2);              // again after 5 minutes
   host_sim::nvs_writes_fail = false;
-  CHECK(sent_to(B, A.mac).empty());
+  CHECK(sent_to(B, A.mac).empty() && sent_to(B, C.mac).empty());
   CHECK(frame_to(B, A));
   CHECK(counter_of(sent_to(B, A.mac).back()) == 1);
   for (uint64_t i = 2; i <= kBlock; ++i) CHECK(frame_to(B, A));
   host_sim::nvs_writes_fail = true;
   CHECK(!frame_to(B, A));                          // 1025 crosses the reservation
-  CHECK(!frame_to(B, C));                          // and C's first needs one
+  CHECK(times_logged(kRefused) == 3);              // a new run of refusals is logged
+  CHECK(frame_to(B, C));                           // C's first was reserved with A's 1
   host_sim::nvs_writes_fail = false;
-  CHECK(sent_to(B, C.mac).empty());
+  CHECK(counter_of(sent_to(B, C.mac).back()) == 1);
   CHECK(counter_of(sent_to(B, A.mac).back()) == kBlock);
   CHECK(frame_to(B, A));
   CHECK(counter_of(sent_to(B, A.mac).back()) == kBlock + 1);
@@ -421,21 +549,61 @@ void test_a_reservation_that_cannot_be_stored_refuses_the_frame() {
 }
 
 void test_a_damaged_reservation_record_is_logged_and_replaced() {
-  // A record that is not whole entries is not trusted for any member: the
-  // counters start at 1 (as before F71), the boot says so, and the next
-  // reservation writes a whole record again.
+  // A record that is not whole entries is not trusted for any member. The
+  // boot says so and resumes every member above 2^48, above anything this
+  // firmware signed since the 2^40 floor of the first boot after the
+  // update; it used to restart them at 1, and every member that had heard
+  // the device dropped its frames. The next reservation writes a whole
+  // record again.
   fresh_opera({&A, &B, &C});
-  CHECK(frame_to(B, A));
-  CHECK(nvs_value(B, kTxKey).size() == mn::FINGERPRINT_SIZE + 8);
+  for (int i = 0; i < 5; ++i) deliver(A, B.mac, heartbeat_to(B, A));
+  CHECK(nvs_value(B, kTxKey).size() == 2 * (mn::FINGERPRINT_SIZE + 8));
   B.nvs[kTxKey].pop_back();
   g_health.clear();
   boot(B);
   CHECK(logged("opera: send-counter reservations unreadable"));
   B.espnow.sent.clear();
-  CHECK(frame_to(B, A));
-  CHECK(counter_of(sent_to(B, A.mac).back()) == 1);
-  CHECK(nvs_value(B, kTxKey).size() == mn::FINGERPRINT_SIZE + 8);
+  const Frame f = heartbeat_to(B, A);
+  CHECK(counter_of(f) == (1ULL << 48) + 1);
+  become(A);
+  const uint32_t received = mn::g_messages_received;
+  deliver(A, B.mac, f);
+  become(A);
+  CHECK(mn::g_messages_received == received + 1);
+  CHECK(nvs_value(B, kTxKey).size() == 2 * (mn::FINGERPRINT_SIZE + 8));
   std::printf("PASS a_damaged_reservation_record_is_logged_and_replaced\n");
+}
+
+void test_a_flood_spends_no_counter_while_the_storm_gate_holds() {
+  // The storm gate (100 frames in a second, then 30 s of silence) ran
+  // after send_to_peer had reserved and spent the counter, so a flood
+  // spent one counter per call and wrote a reservation per 1024 calls,
+  // whatever reached the air. send_to_peer now asks the gate first.
+  fresh_opera({&A, &B, &C});
+  host_sim::nvs_writes.clear();
+  become(B);
+  B.espnow.sent.clear();
+  mn::OperaPeer* p = entry(B, A);
+  const mn::HeartbeatPayload hb = {};
+  const auto flood = [&](uint32_t ms) {            // 50 sends every 10 ms: 5000 a second
+    for (uint32_t t = 0; t < ms; t += 10) {
+      host_sim::now_ms += 10;
+      for (int i = 0; i < 50; ++i) {
+        mn::send_to_peer(p, mn::MSG_HEARTBEAT, reinterpret_cast<const uint8_t*>(&hb), sizeof hb);
+      }
+    }
+  };
+  flood(1000);
+  CHECK(sent_to(B, A.mac).size() == 100);
+  CHECK(p->msg_counter_tx == 102);                 // 100 sent, 1 refused by the gate it tripped
+  CHECK(host_sim::nvs_writes[kTxKey] == 1);
+  flood(599000);                                   // ten minutes in all
+  const uint64_t spent = p->msg_counter_tx - 1;
+  CHECK(spent == sent_to(B, A.mac).size() + mn::g_storm_trigger_count);
+  CHECK(host_sim::nvs_writes[kTxKey] == 1 + spent / kBlock);
+  CHECK(host_sim::nvs_writes[kTxKey] <= 3);        // about one per 5 minutes
+  host_sim::now_ms += 31000;                       // let the gate settle for later tests
+  std::printf("PASS a_flood_spends_no_counter_while_the_storm_gate_holds\n");
 }
 
 // ── F73: a pairing add_peer refuses fails, and says so ──────────────────
@@ -894,6 +1062,12 @@ const Test kTests[] = {
      test_a_reservation_that_cannot_be_stored_refuses_the_frame},
     {"a_damaged_reservation_record_is_logged_and_replaced",
      test_a_damaged_reservation_record_is_logged_and_replaced},
+    {"a_boot_aligns_every_members_counter", test_a_boot_aligns_every_members_counter},
+    {"a_fold_on_the_first_boot_keeps_the_floor", test_a_fold_on_the_first_boot_keeps_the_floor},
+    {"the_first_boot_after_the_update_is_heard_at_once",
+     test_the_first_boot_after_the_update_is_heard_at_once},
+    {"a_flood_spends_no_counter_while_the_storm_gate_holds",
+     test_a_flood_spends_no_counter_while_the_storm_gate_holds},
     {"an_initiator_with_a_full_opera_refuses_the_pairing",
      test_an_initiator_with_a_full_opera_refuses_the_pairing},
     {"an_initiator_refuses_a_partner_removed_during_the_pairing",
