@@ -145,9 +145,79 @@ test("every HA discovery entity name is a real literal in ha_discovery.cpp", () 
   }
 });
 
+// The JSON keys an snprintf format in a firmware function writes, in order.
+const fmtKeys = (src, signature, from, to) => {
+  let body = src.split(signature)[1].split("\n}\n")[0];
+  if (from) body = body.slice(body.indexOf(from), body.indexOf(to, body.indexOf(from)));
+  return [...body.matchAll(/\\"([a-z_]+)\\":/g)].map((m) => m[1]);
+};
+const flatKeys = (o) => Object.entries(o).flatMap(([k, v]) =>
+  [k, ...(v && typeof v === "object" && !Array.isArray(v) ? flatKeys(v) : [])]);
+
 test("cfg example carries the firmware's own JSON keys", () => {
-  for (const k of Object.keys(data.mqtt.cfg_state_example))
+  // publish_detect_cfg_retained's keys, in order; each but profile_label
+  // (the profile's display name) is a key the tuning table explains
+  const mqttCpp = read(join(FW, "src/net/mqtt_mgr.cpp"));
+  const keys = fmtKeys(mqttCpp, "bool publish_detect_cfg_retained(");
+  assert.deepStrictEqual(Object.keys(data.mqtt.cfg_state_example), keys);
+  for (const k of keys.filter((x) => x !== "profile_label"))
     assert.ok(data.tuning.some((t) => t.key === k), "cfg key not in tuning table: " + k);
+});
+
+// Sweep A26: the MQTT pane's rows used to be hand-written in vision-ui.js
+// ({"fw":…,"public_key":"ed25519:…"} on health, {"length":1,"head":"…"} on
+// chain). They come from vision.json now, keyed as the firmware publishes.
+test("every MQTT pane row is keyed as the firmware publishes it", () => {
+  const mqttCpp = read(join(FW, "src/net/mqtt_mgr.cpp"));
+  const witnessCpp = read(join(FW, "src/witness.cpp"));
+  const want = {
+    status: fmtKeys(mqttCpp, "void publish_status_retained("),
+    "cfg/state": fmtKeys(mqttCpp, "bool publish_detect_cfg_retained("),
+    state: fmtKeys(mqttCpp, "void publish_state_retained("),
+    health: fmtKeys(mqttCpp, "void publish_health_retained("),
+    chain: fmtKeys(mqttCpp, "void publish_chain_retained(", "if (signed_ok) {", "} else {"),
+    events: [...fmtKeys(mainCpp, "static void publish_event_json(", "} else {", "canary::net::publish_event("),
+      ...fmtKeys(witnessCpp, "bool sign_event_envelope(")],
+  };
+  const pane = data.mqtt.pane;
+  assert.ok(pane && Array.isArray(pane.online), "vision.json carries the pane's rows");
+  const rows = [...pane.online, pane.events];
+  for (const [suffix, keys] of Object.entries(want)) {
+    const row = rows.find((r) => r.suffix === suffix);
+    assert.ok(row, `the pane has no ${suffix} row`);
+    assert.deepStrictEqual(flatKeys(JSON.parse(row.payload)), keys, `${suffix}: not the firmware's keys`);
+    assert.ok(topicsH.includes(`"securacv/%s/${suffix}"`), `${suffix}: not a topic topics.h builds`);
+  }
+  // aim/state is a bare ON/OFF, not a JSON string
+  assert.ok(mqttCpp.includes('enabled ? "ON" : "OFF"'));
+  assert.strictEqual(rows.find((r) => r.suffix === "aim/state").payload, "OFF");
+});
+
+test("a sandbox event publishes in the firmware's shape, the sandbox's values laid over it", async () => {
+  const { vizEventPayload } = await import("../assets/vision-ui.js");
+  const example = JSON.parse(data.mqtt.pane.events.payload);
+  const snap = { sample: { bbox: { x: 10, y: 20, w: 30, h: 40, score: 88 }, voxel: { r: 2, c: 0 } },
+                 fsm: { presence: true, dwelling: false }, reason: null };
+  const ev = vizEventPayload(example, "presence_started", snap, 77);
+  assert.deepStrictEqual(Object.keys(ev), Object.keys(example), "every key, in the firmware's order");
+  assert.strictEqual(ev.event, "presence_started");
+  assert.strictEqual(ev.seq, 77);
+  assert.strictEqual(ev.presence, "present");
+  assert.strictEqual(ev.occupants, "1");
+  assert.strictEqual(ev.confidence, 88);
+  assert.deepStrictEqual(ev.voxel, { rows: example.voxel.rows, cols: example.voxel.cols, r: 2, c: 0 });
+  assert.deepStrictEqual(ev.bbox, { x: 10, y: 20, w: 30, h: 40 });
+  for (const k of ["v", "alg", "fp", "sig"]) assert.strictEqual(ev[k], example[k], `the ${k} envelope field rides along`);
+  // with a reason: right after the name, as publish_event_json's reason branch writes it
+  const left = vizEventPayload(example, "presence_ended", { ...snap, fsm: { presence: false }, reason: "lost" }, 78);
+  const keys = Object.keys(left);
+  assert.strictEqual(keys[keys.indexOf("event") + 1], "reason");
+  assert.strictEqual(left.reason, "lost");
+  assert.strictEqual(left.presence, "clear");
+  assert.strictEqual(left.occupants, "0");
+  assert.strictEqual(left.occupancy, "none", "nobody in frame reads as no occupancy");
+  assert.ok(mainCpp.includes('"\\"event\\":\\"%s\\","\n        "\\"reason\\":\\"%s\\","'),
+    "main.cpp's reason branch still writes reason right after event");
 });
 
 // ── 5. serial boot lines trace to firmware sources ─────────────────────────

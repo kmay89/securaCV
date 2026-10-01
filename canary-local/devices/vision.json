@@ -661,29 +661,47 @@
       "score": 70,
       "lost_ms": 1500,
       "dwell_ms": 10000,
-      "profile": "room_presence"
+      "profile": "room_presence",
+      "profile_label": "Room presence"
     },
-    "event_example": {
-      "device_id": "canary_vision_001",
-      "device_type": "canary-vision",
-      "event": "presence_started",
-      "seq": 42,
-      "presence": "present",
-      "occupants": "one",
-      "range": "near",
-      "signed": true,
-      "confidence": 91,
-      "voxel": {
-        "rows": 3,
-        "cols": 3,
-        "r": 1,
-        "c": 1
-      },
-      "bbox": {
-        "x": 96,
-        "y": 88,
-        "w": 64,
-        "h": 128
+    "pane": {
+      "source": "payload keys from mqtt_mgr.cpp + main.cpp",
+      "online": [
+        {
+          "suffix": "status",
+          "retain": true,
+          "payload": "{\"device_id\":\"canary_vision_001\",\"device_type\":\"canary-vision\",\"status\":\"online\",\"ip\":\"192.168.1.117\",\"rssi\":-52,\"heap_free\":183424,\"heap_min\":171032,\"degraded\":\"normal\",\"ts_ms\":41250}"
+        },
+        {
+          "suffix": "cfg/state",
+          "retain": true,
+          "payload": "{\"target\":0,\"score\":70,\"lost_ms\":1500,\"dwell_ms\":10000,\"profile\":\"room_presence\",\"profile_label\":\"Room presence\"}"
+        },
+        {
+          "suffix": "state",
+          "retain": true,
+          "payload": "{\"device_id\":\"canary_vision_001\",\"device_type\":\"canary-vision\",\"profile\":\"room_presence\",\"presence\":false,\"dwelling\":false,\"presence_ms\":0,\"dwell_ms\":0,\"confidence\":0,\"voxel\":{\"rows\":3,\"cols\":3,\"r\":-1,\"c\":-1},\"bbox\":{\"x\":0,\"y\":0,\"w\":0,\"h\":0},\"occupancy\":\"none\",\"posture\":\"unknown\",\"proximity\":\"unknown\",\"occ_mask\":0,\"last_event\":\"boot\",\"uptime_s\":41,\"ts_ms\":41250}"
+        },
+        {
+          "suffix": "health",
+          "retain": true,
+          "payload": "{\"battery\":100,\"battery_present\":false,\"memory_free\":183424,\"uptime\":41,\"firmware_version\":\"2.4.15\",\"public_key\":\"2152f8d1\u2026\"}"
+        },
+        {
+          "suffix": "chain",
+          "retain": true,
+          "payload": "{\"v\":1,\"length\":12,\"latest_hash\":\"5d0e\u2026\",\"algorithm\":\"ed25519\",\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
+        },
+        {
+          "suffix": "aim/state",
+          "retain": true,
+          "payload": "OFF"
+        }
+      ],
+      "events": {
+        "suffix": "events",
+        "retain": false,
+        "payload": "{\"device_id\":\"canary_vision_001\",\"device_type\":\"canary-vision\",\"profile\":\"room_presence\",\"event\":\"presence_started\",\"seq\":13,\"bucket_uptime_s\":0,\"presence\":\"present\",\"occupants\":\"1\",\"range\":\"unknown\",\"signed\":true,\"ts_ms\":41250,\"presence_ms\":0,\"dwell_ms\":0,\"visit_ms\":0,\"confidence\":91,\"voxel\":{\"rows\":3,\"cols\":3,\"r\":1,\"c\":1},\"bbox\":{\"x\":96,\"y\":88,\"w\":64,\"h\":128},\"occupancy\":\"one\",\"posture\":\"upright\",\"proximity\":\"mid\",\"occ_mask\":16,\"v\":1,\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
       }
     }
   },

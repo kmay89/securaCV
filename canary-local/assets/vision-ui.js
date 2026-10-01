@@ -715,6 +715,31 @@ export function buildSerial(data, bus) {
 }
 
 // ── §the MQTT explorer ────────────────────────────────────────────────────
+// A sandbox event as main.cpp's publish_event_json writes it: the generated
+// example (every key, in the firmware's order, with the v/alg/fp/sig
+// envelope) with the sandbox's own values laid over it, and a reason, when
+// the event has one, right after its name, where the firmware puts it.
+export function vizEventPayload(example, name, snap, seq) {
+  const bb = snap.sample.bbox || { x: 0, y: 0, w: 0, h: 0, score: 0 };
+  const v = snap.sample.voxel || { r: -1, c: -1 };
+  const present = !!snap.fsm.presence;
+  const over = {
+    event: name, seq,
+    presence: present ? "present" : "clear", occupants: present ? "1" : "0",
+    confidence: bb.score,
+    voxel: { ...example.voxel, r: v.r, c: v.c },
+    bbox: { x: bb.x, y: bb.y, w: bb.w, h: bb.h },
+    // nobody in frame: the coarse optical features read empty too
+    ...(present ? {} : { occupancy: "none", posture: "unknown", proximity: "unknown", occ_mask: 0 }),
+  };
+  const out = {};
+  for (const k of Object.keys(example)) {
+    out[k] = k in over ? over[k] : example[k];
+    if (k === "event" && snap.reason) out.reason = snap.reason;
+  }
+  return out;
+}
+
 export function buildMqtt(data, bus) {
   const id = data.device.id_example;
   const wrap = el("div", "wap-mqtt");
@@ -722,7 +747,7 @@ export function buildMqtt(data, bus) {
   const dots = el("span", "hub-term-dots");
   dots.append(el("i"), el("i"), el("i"));
   bar.append(dots, el("span", "hub-term-title", "your broker · securacv/" + id + "/#"),
-    el("span", "hub-term-sim", "topics from topics.h · payloads from main.cpp"));
+    el("span", "hub-term-sim", "topics from topics.h · " + data.mqtt.pane.source));
   const scroll = el("div", "wap-term-scroll vis-mqtt-scroll");
   wrap.append(bar, scroll);
 
@@ -749,15 +774,15 @@ export function buildMqtt(data, bus) {
     "quiet — boot the device in the console (or just poke the sandbox) and the retained surfaces fill in");
   scroll.append(idle);
 
+  // Every payload is vision.json's (gen_vision.py), keyed as mqtt_mgr.cpp
+  // and main.cpp publish it; the sandbox only overlays its own values.
+  const pane = data.mqtt.pane;
+  const like = (suffix) => JSON.parse(pane.online.find((r) => r.suffix === suffix).payload);
+  const live = { state: like("state"), chain: like("chain"), cfg: like("cfg/state") };
+  let seq = live.chain.length;
   bus.on("online", () => {
     idle.remove();
-    const base = "securacv/" + id;
-    row(base + "/status", '"online"', true);
-    row(base + "/cfg/state", JSON.stringify(data.mqtt.cfg_state_example), true);
-    row(base + "/state", '{"presence":"empty","occupants":"none","confidence":0}', true);
-    row(base + "/health", '{"fw":"' + data.device.fw_version + '","public_key":"ed25519:…"}', true);
-    row(base + "/chain", '{"length":1,"head":"…"}', true);
-    row(base + "/aim/state", '"OFF"', true);
+    for (const r of pane.online) row("securacv/" + id + "/" + r.suffix, r.payload, r.retain);
   });
   bus.on("mqtt", () => {
     const n = data.mqtt.discovery.entities.length;
@@ -765,29 +790,32 @@ export function buildMqtt(data, bus) {
   });
   bus.on("sim-event", ({ name, snap }) => {
     const base = "securacv/" + id;
-    const bb = snap.sample.bbox || { x: 0, y: 0, w: 0, h: 0, score: 0 };
-    const v = snap.sample.voxel || { r: -1, c: -1 };
-    row(base + "/events", JSON.stringify({
-      event: name, ...(snap.reason ? { reason: snap.reason } : {}),
-      signed: true, confidence: bb.score,
-      voxel: { r: v.r, c: v.c }, bbox: { x: bb.x, y: bb.y, w: bb.w, h: bb.h },
-    }), false);
-    row(base + "/state", JSON.stringify({
-      presence: snap.fsm.presence ? (snap.fsm.dwelling ? "dwelling" : "present") : "empty",
-      confidence: bb.score,
-    }), true);
+    const row2 = (suffix, obj, retain) => row(base + "/" + suffix, JSON.stringify(obj), retain);
+    const ev = vizEventPayload(JSON.parse(pane.events.payload), name, snap, ++seq);
+    row2("events", ev, false);
+    Object.assign(live.state, {
+      presence: !!snap.fsm.presence, dwelling: !!snap.fsm.dwelling,
+      confidence: ev.confidence, voxel: ev.voxel, bbox: ev.bbox,
+      occupancy: ev.occupancy, posture: ev.posture, proximity: ev.proximity, occ_mask: ev.occ_mask,
+      last_event: name,
+    });
+    row2("state", live.state, true);
+    // the event advanced the chain; main.cpp republishes the signed head
+    live.chain.length = seq;
+    row2("chain", live.chain, true);
   });
   bus.on("cfg", ({ cfg }) => {
-    row("securacv/" + id + "/cfg/state", JSON.stringify({
+    Object.assign(live.cfg, {
       target: cfg.person_target, score: cfg.score_min,
       lost_ms: cfg.lost_timeout_ms, dwell_ms: cfg.dwell_start_ms,
-    }), true);
+    });
+    row("securacv/" + id + "/cfg/state", JSON.stringify(live.cfg), true);
   });
   bus.on("aim-frame", ({ payload }) => {
     row("securacv/" + id + "/aim", JSON.stringify(payload), false);
   });
   bus.on("aim-state", ({ on }) => {
-    row("securacv/" + id + "/aim/state", on ? '"ON"' : '"OFF"', true);
+    row("securacv/" + id + "/aim/state", on ? "ON" : "OFF", true);
   });
 
   // the topic reference table

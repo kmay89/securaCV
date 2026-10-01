@@ -21,11 +21,11 @@
 // spelling is pinned to the source that writes it. An example no rule covers
 // fails: read how its product spells it, then add the rule.
 //
-// What it does not see. It reads the generated JSON and nothing else, so an
-// example a page's hand-written script spells for itself is out of its
-// reach: the Vision page's simulated MQTT pane (assets/vision-ui.js) writes
-// its health row's public_key as "ed25519:…", and canary-vision sends 64
-// bare lowercase hex digits (an open item of its own, A26).
+// The pages' hand-written scripts are read too (sweep A26), under a stricter
+// policy: a script spells no fp or key value itself, it may only interpolate
+// a generated field this walk already holds to a rule. The Vision page's
+// MQTT pane wrote its health row's public_key as "ed25519:…" (canary-vision
+// sends 64 bare lowercase hex digits); its rows come from vision.json now.
 //
 // Since A27 it also checks the examples that are missing: every events,
 // chain and counts example must carry the signature envelope, so the Home
@@ -34,7 +34,8 @@
 // id, SSID and unnamed host; the Sense and Vision pseudonym, host and MQTT
 // client id) to the derivation, not just to a shape.
 //
-// The WAP's examples are also the repo's Ed25519 test key's (seed 0x42 x 32):
+// The WAP's examples (and, since A26, the Vision pane's) are also the repo's
+// Ed25519 test key's (seed 0x42 x 32):
 // the key the WAP's tests_host/test_mqtt_identity.cpp builds its events body
 // with, and that Home Assistant's tests/test_fingerprint_case.py fixtures
 // (WAP_EVENT and friends) are signed by. Each of those derives the key from
@@ -80,6 +81,7 @@ const PAYLOAD = /^\.mqtt\.topics\[\d+\]\.payload$/;
 // The Hub page's "Meet the fleet" wire lines are the WAP's payloads (A27).
 const WAP_WIRE = /^(?:\.mqtt\.topics\[\d+\]\.payload|\.terminal\.chapters\[\d+\]\.steps\[\d+\]\.out\[\d+\])$/;
 const WAP_PAGES = ["wap.json", "homeassistant.json"];
+const VISION_PANE = /^\.mqtt\.pane\.(?:online\[\d+\]|events)\.payload$/;
 const RULES = [
   {
     page: WAP_PAGES, where: WAP_WIRE, labels: ["fp"], len: 16, kase: "lower",
@@ -126,6 +128,27 @@ const RULES = [
     what: "the Sense's health public_key (device_signature::pubkey_hex)",
     pins: [
       ["firmware/projects/canary-sense/src/net/mqtt_mgr.cpp", "device_signature::pubkey_hex(),"],
+      ["firmware/common/identity/device_signature.cpp", "hex_encode(pub, 32, s_pubkey_hex, sizeof(s_pubkey_hex));"],
+      ["firmware/common/identity/device_signature.cpp", 'static const char H[] = "0123456789abcdef";'],
+    ],
+  },
+  {
+    // the Vision page's MQTT pane (sweep A26): rows gen_vision.py keys as
+    // mqtt_mgr.cpp / main.cpp publish them
+    page: "vision.json", where: VISION_PANE, labels: ["fp"], len: 16, kase: "lower",
+    what: "the Vision's envelope fp (witness.cpp fp_hex, device_signature::fingerprint_hex)",
+    pins: [
+      ["firmware/projects/canary-vision/src/witness.cpp", 'static const char H[] = "0123456789abcdef";'],
+      ["firmware/projects/canary-vision/src/witness.cpp", "fp_hex[16] = '\\0';"],
+      ["firmware/projects/canary-vision/src/witness.cpp", "device_signature::init(s_priv, s_pub, canary::cfg::get().device_id, fp_hex);"],
+      ["firmware/projects/canary-vision/src/net/mqtt_mgr.cpp", "device_signature::fingerprint_hex(),"],
+    ],
+  },
+  {
+    page: "vision.json", where: VISION_PANE, labels: ["public_key"], len: 64, kase: "lower",
+    what: "the Vision's health public_key (device_signature::pubkey_hex)",
+    pins: [
+      ["firmware/projects/canary-vision/src/net/mqtt_mgr.cpp", "device_signature::pubkey_hex());"],
       ["firmware/common/identity/device_signature.cpp", "hex_encode(pub, 32, s_pubkey_hex, sizeof(s_pubkey_hex));"],
       ["firmware/common/identity/device_signature.cpp", 'static const char H[] = "0123456789abcdef";'],
     ],
@@ -604,4 +627,89 @@ test("the Hub page's fleet wire lines are the WAP page's retained topics, verbat
   const suffixes = lines.map((l) => l.split(" ")[0].split("/").pop());
   for (const want of ["health", "chain", "counts"]) assert.ok(suffixes.includes(want), `no ${want} line`);
   assert.ok(DATA["homeassistant.json"].ha_demo.device_id === WAP_NAMES.id, "the demo below is the same device");
+});
+
+test("the Vision pane's fp and key are the test key's (canary-vision derives its fp the WAP's way)", () => {
+  const witness = read("firmware/projects/canary-vision/src/witness.cpp");
+  assert.ok(witness.includes('constexpr const char* DOMAIN_FINGERPRINT = "securacv:pubkey:fingerprint";'));
+  assert.ok(witness.includes("sha256_domain(DOMAIN_FINGERPRINT, s_pub, sizeof(s_pub), fp_hash);"));
+  assert.ok(read("firmware/common/witness/witness_chain.h").includes("const unsigned char wc_sep = 0x00;"),
+    "wc_sha256_domain's separator moved; re-derive the test key's fp");
+  const vision = EXAMPLES.filter((e) => e.page === "vision.json" && VISION_PANE.test(e.path));
+  const fps = vision.filter((e) => e.label === "fp");
+  assert.ok(fps.length >= 2, "the pane's chain and events rows each carry an fp");
+  for (const e of fps) assert.strictEqual(e.value, KEY.fpHex, `${e.path}: not the test key's fp`);
+  const keys = vision.filter((e) => e.label === "public_key");
+  assert.strictEqual(keys.length, 1, "one health public_key");
+  assert.ok(KEY.pub.toString("hex").startsWith(keys[0].value.replace(/…$/, "")), "the health key is the test key's, elided");
+  const signedRows = signedExamples().filter((e) => e.page === "vision.json").map((e) => e.suffix).sort();
+  assert.deepStrictEqual(signedRows, ["chain", "events"], "the envelope rule reads the pane's chain and events rows");
+});
+
+// ── the pages' hand-written scripts (sweep A26's decision) ─────────────────
+// The JSON walk cannot see an example a page script spells for itself, and
+// the Vision pane's "public_key":"ed25519:…" was one. So the scripts are
+// read too, under a stricter policy than the JSON: a page script spells no
+// fp / fingerprint / pubkey / public_key value of its own. It may only
+// interpolate one from its generated data, `${data.<path>}`, and only a
+// <path> that resolves, in the page's devices/<page>.json, to an example
+// the JSON walk above already holds to exactly one rule (sense-ui.js's
+// `"fp":"${data.device.fp_example}"` is one). A literal, a bare "…" or any
+// other expression fails: move the payload into the generator, where a
+// rule can read it. The console-line words `seed` and `pinned` are not
+// read in scripts, where `seed: 20260719` is a PRNG seed, not a key.
+// The pages' own scripts and the pages themselves (inline <script>s).
+const SCRIPT_DIRS = [["canary-local/assets", /\.m?js$/], ["canary-local", /\.html$/]];
+const SCRIPT_EMBEDDED = new RegExp(`\\\\?"(${NAME})\\\\?"\\s*:\\s*\\\\?"([^"\\\\]*)`, "gi");
+const SCRIPT_LINE = /\b(fingerprint|fp|pubkey|public[-_ ]key)(?:\s*[:=]\s*|\s+)([0-9A-Fa-f]{4,}…?|…)(?![0-9A-Za-z_…])/gi;
+
+// devices/<page>.json for assets/<page>-ui.js, assets/<page>.js, <page>.html.
+const pageOf = (file) => `${file.replace(/^.*\//, "").replace(/(?:-ui)?\.(?:m?js|html)$/, "")}.json`;
+
+function scriptVerdict(file, label, value) {
+  const m = value.match(/^\$\{data((?:\.[A-Za-z_][A-Za-z0-9_]*)+)\}$/);
+  if (!m) return `${file}: ${label} "${value}" is spelled in the script — move it into the generator's data`;
+  const page = pageOf(file);
+  if (!DATA[page]) return `${file}: ${label} "${value}" — no devices/${page} for this script to read it from`;
+  const hits = EXAMPLES.filter((e) => e.page === page && e.path === m[1]);
+  if (hits.length !== 1 || rulesFor(hits[0]).length !== 1)
+    return `${file}: ${label} "${value}" — ${page} ${m[1]} is not an example the JSON walk holds to a rule`;
+  return null;
+}
+
+function scriptExamples() {
+  const out = [];
+  for (const [dir, ext] of SCRIPT_DIRS)
+    for (const f of readdirSync(join(REPO, dir)).filter((x) => ext.test(x)).sort()) {
+      const file = `${dir}/${f}`;
+      const src = read(file);
+      for (const m of src.matchAll(SCRIPT_EMBEDDED)) out.push({ file, label: m[1], value: m[2] });
+      for (const m of src.matchAll(SCRIPT_LINE)) out.push({ file, label: m[1], value: m[2] });
+    }
+  return out;
+}
+
+test("the script policy: only an interpolated, rule-held generated field passes", () => {
+  const sense = "canary-local/assets/sense-ui.js";
+  assert.strictEqual(scriptVerdict(sense, "fp", "${data.device.fp_example}"), null);
+  assert.match(scriptVerdict("canary-local/assets/vision-ui.js", "public_key", "ed25519:…"), /spelled in the script/,
+    "the Vision pane's old health row");
+  assert.match(scriptVerdict(sense, "fp", "b7e2c49a11f03d5c"), /spelled in the script/, "even a correct literal");
+  assert.match(scriptVerdict(sense, "fp", "…"), /spelled in the script/);
+  assert.match(scriptVerdict(sense, "fp", "${fp}"), /spelled in the script/, "not a data path");
+  assert.match(scriptVerdict(sense, "fp", "${data.device.name}"), /not an example/, "a field no rule holds");
+  assert.match(scriptVerdict(sense, "fp", "${data.device.nope}"), /not an example/);
+  assert.match(scriptVerdict("canary-local/assets/app.js", "fp", "${data.device.fp_example}"), /no devices\/app\.json/);
+  assert.strictEqual(pageOf("canary-local/assets/vision-ui.js"), "vision.json");
+  assert.strictEqual(pageOf("canary-local/assets/wap.js"), "wap.json");
+  assert.strictEqual(pageOf("canary-local/vision.html"), "vision.json");
+});
+
+test("no page script spells an fp or key example of its own", () => {
+  const found = scriptExamples();
+  const problems = found.map((ex) => scriptVerdict(ex.file, ex.label, ex.value)).filter(Boolean);
+  assert.deepStrictEqual(problems, []);
+  // the walk reads the scripts at all: sense-ui.js's interpolated fp is in it
+  assert.ok(found.some((e) => e.file.endsWith("/sense-ui.js") && e.value === "${data.device.fp_example}"),
+    "the script walk found nothing (its match broke?)");
 });
