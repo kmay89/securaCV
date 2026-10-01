@@ -109,7 +109,9 @@ inline void become(Device& d) {
 // A device powering up: RAM gone, flash and identity kept. Runs the real
 // mesh_network::init() (NVS opera config, peers, deny-list) and the
 // sketch's load_replay_counters() right after it, as canary_wap.ino does.
-// The broadcast address is registered as chirp_channel does on a device.
+// The broadcast address is registered as chirp_channel's broadcast_message
+// does on a device — only while Chirp is enabled: mesh_network.cpp never
+// registers it itself, so a pairing DISCOVER relies on it being there.
 inline void boot(Device& d) {
   if (g_cur != nullptr && g_cur != &d) save(*g_cur);
   Device fresh;
@@ -126,8 +128,8 @@ inline void boot(Device& d) {
   // The channel policy's first poll reports a channel change, and the
   // listener init() registered drops the broadcast registration. Settle it
   // here (the policy is one per image, and every simulated device shares
-  // the channel), then register broadcast as chirp_channel does on a
-  // device, so no update() later drops it from under a test.
+  // the channel), then register broadcast (see above), so no update()
+  // later drops it from under a test.
   mesh_channel_policy::poll_radio();
   esp_now_peer_info_t bc = {};
   memset(bc.peer_addr, 0xFF, 6);
