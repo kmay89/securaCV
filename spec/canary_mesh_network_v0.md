@@ -153,14 +153,20 @@ ciphertext = ChaCha20-Poly1305(message_key, nonce, plaintext)
   mark. NVS is written once per 1024 frames; a crash anywhere, including
   between a reservation and its first frame, costs an unused gap (receivers
   need only "higher"), never a reuse; a reservation that cannot be persisted
-  refuses the frame. canary-wap keeps per-peer `msg_counter_tx` in RAM and
-  resets it at every re-authentication (its session model) — unchanged —
-  and at boot, so a rebooted canary-wap's frames drop as replays at every
-  member that heard it, until its counter for that member climbs back past
-  what the member last saw (host-probed with the `test_mesh_address_wap`
-  harness; open). Its counters are also per destination, and the envelope
-  names none, so a receiver judges a frame its sender addressed to another
-  member by its own last-seen counter for that sender.
+  refuses the frame. canary-wap keeps one `msg_counter_tx` per member (its
+  counters are per destination) and, since F71 (host-tested, not
+  bench-verified), reserves each the same way: before it uses the first
+  counter above a member's stored reservation it stores one 1024 ahead (NVS
+  `tx_ctrs`, one record of 8 B fingerprint + u64 per member, §12.3), and at
+  boot each member's counter resumes one past its stored reservation. A
+  record that is not whole entries is logged at boot and every counter
+  starts at 1. Until F71 the counters restarted at 1 at every boot, so a
+  rebooted canary-wap's frames dropped as replays at every member that had
+  heard it, until its counter for that member climbed back. Its rekey
+  (§5.6) still resets a member's counter to 1 for the new session (its
+  session model), under the reservation already stored. The envelope names
+  no destination, so a receiver judges a frame its sender addressed to
+  another member by its own last-seen counter for that sender (open).
   **Counter convention, both trees (v0.4 follow-up):** the first counter a
   sender signs is **1** (the PIO tree hands out `s_outbound_counter + 1`
   from 0; canary-wap's `add_peer` and both rekey resets start
@@ -467,9 +473,34 @@ Pairing adds a new device to an existing opera (or creates a new opera). The pro
 2. **Joiner** (new device) enters "join opera" mode via UI
 3. Devices discover each other via ESP-NOW broadcast or WiFi scan
 4. **Visual Verification**: Both devices display 6-digit code derived from session
-5. User confirms codes match on both devices
+5. User confirms codes match on both devices, in either order
 6. Opera secret is securely transferred to joiner
 7. Joiner's public key is added to all opera members
+
+canary-wap (F75, host-tested, not bench-verified): the initiator keeps a
+joiner's `PAIR_CONFIRM` that arrives before its own owner confirms (verified,
+and only from the pairing partner's address) and sends `PAIR_COMPLETE` when
+its owner does, without a `PAIR_CONFIRM` of its own first: two frames back to
+back can meet the joiner's one-frame receive buffer, and the COMPLETE would be
+the one dropped. Until F75 it dropped such a CONFIRM, nothing re-sends one,
+and a pairing whose joiner was confirmed first timed out. A CONFIRM from any
+other address counts for nothing on either side. The PlatformIO tree's state
+machine still drops a CONFIRM that arrives before its own owner's
+(`either_handle_confirm` acts only in `AWAITING_CONFIRM_PEER`) and sends its
+CONFIRM once, so there a joiner confirmed first still ends in the 5-minute
+timeout (host-probed; open).
+
+A device that cannot hold its partner fails the pairing: a deny-listed key
+(§5.6), a new member for a full opera, a re-pair onto an address another
+member holds, or an address its radio cannot register. canary-wap (F73,
+host-tested): the initiator adds the joiner before anything is sent, so on a
+refusal no `PAIR_COMPLETE` goes out and its joiner times out; a joiner that
+refuses the initiator keeps the opera it had, in RAM and in NVS. Either way
+nothing is stored, the device is not `MESH_ACTIVE`, the refusal is logged and
+the pairing callback reports failure. A joiner's refusal comes after its
+initiator has added it; the initiator cannot know. Until F73 both handlers
+ignored the refusal, persisted, went `MESH_ACTIVE` and reported success, and
+the initiator sealed the `opera_secret` to a partner it then did not hold.
 
 ### 5.3 Pairing Security
 
@@ -775,6 +806,16 @@ MESH_PAIRING_JOIN    → In pairing mode as joiner (new device)
 MESH_PAIRING_CONFIRM → Awaiting user confirmation of pairing code
 MESH_ERROR           → Fatal error, requires restart
 ```
+
+canary-wap (F76, host-tested, not bench-verified) sends its heartbeat
+(§4.2) every 30 s in `MESH_CONNECTING` as well as `MESH_ACTIVE`, to every
+member whatever its peer state (§7.2): that is how an opera that has heard no
+member gets heard. It used to send it only in `MESH_ACTIVE`, which needs a
+member heard, and only to members at `PEER_CONNECTED` or later, so an opera
+whose members had all rebooted, or a fresh pairing (each side holds the other
+at `PEER_UNKNOWN`), sent nothing at all. Its alerts and its Beacon,
+channel-lock and hub-election sends still go to members at `PEER_CONNECTED`
+or later only. (The PlatformIO tree sends no heartbeat.)
 
 ### 7.2 Peer States
 
@@ -1088,8 +1129,9 @@ note above), canary-wap accepts one only from the signer's own address.
 A changed radio MAC means a re-pair there too, with each member that holds
 the device: one pairing re-binds one member's entry, where a frame used to
 move it at every member at once. The member is then heard once its counter
-for that member passes the last one heard, so a member that rebooted to
-change its address waits for its counters to climb back (§3.3, open).
+for that member passes the last one heard; a member that rebooted to
+change its address resumes its counters above every one it signed (§3.3,
+F71), so its first frame after the re-pair is heard.
 canary-wap keeps its identity key in the device's NVS, so a swapped module
 comes back with a new key and joins as a new member; what reaches a re-bind
 is an NVS image moved to another board, or the relay below. Its `add_peer`
@@ -1121,11 +1163,11 @@ to the relay's radio until another re-pair (host-probed on canary-wap
 after this change; before it, the relay only added an unreachable
 duplicate). Unlike the PlatformIO tree's eight-member limit, a full
 canary-wap opera (16) still takes a re-pair, since ESP-NOW's list has 20
-entries (host-tested through `add_peer`, not a full pairing). One
-canary-wap pairing limit is unchanged and open: its initiator acts on the
-joiner's CONFIRM only once its own owner has confirmed, and nothing is sent
-twice, so if the joiner's owner confirms first the pairing does not
-complete and times out (host-probed, before and after). What remains, open: ESP-NOW does not authenticate a source,
+entries (host-tested through `add_peer`, not a full pairing). Its initiator
+used to act on the joiner's CONFIRM only once its own owner had confirmed,
+and nothing is sent twice, so a pairing whose joiner was confirmed first
+timed out (host-probed); since F75 the owners confirm in either order, and
+a CONFIRM counts only from the pairing partner's address (§5.2). What remains, open: ESP-NOW does not authenticate a source,
 so a radio copying a member's own address still delivers that member's
 not-yet-heard frames — including ones sent to other members — and they are
 dispatched and move the receiver's last-seen counter, silencing the member
@@ -1278,7 +1320,11 @@ board — and `mesh_out_ctr` (u64, F33, §3.3), the outbound counter's
 reserve-ahead high-water mark, not gated either: a count, not a secret, and
 gating it would restart the counter at every reboot of an FE-off board. The `opera_id` is not stored; it is derived from the secret at boot.
 canary-wap (NVS namespace `mesh`) stores the same deny-list blob under
-`revoked` (F33), behind its flash-encryption gate.
+`revoked` (F33), behind its flash-encryption gate, and — F71 — `tx_ctrs`
+(up to 16 × (8 B fingerprint + u64)), each member's send-counter
+reservation (§3.3), not gated, like the last-seen counters it keeps under
+`replay_ctrs`: counts, not secrets, and a gate would restart the counters
+at every boot of an FE-off board.
 
 ## 13. Conformance
 
@@ -1372,3 +1418,14 @@ An implementation conforms to this specification if it:
   initiator takes one ACCEPT, from where its OFFER went, and wipes the
   pairing after COMPLETE. A duplicate entry an older firmware's re-pair
   saved is folded into one at boot.
+- v0.4 follow-up, canary-wap liveness (2026-10-01; **host-tested only, not
+  bench-verified**; sweep F71, F73–F76): a rebooted canary-wap's frames are
+  heard at once — each member's send counter is reserved ahead in NVS
+  `tx_ctrs` and a boot resumes above it (§3.3, §12.3); the owners confirm a
+  pairing in either order, and a CONFIRM counts only from the pairing
+  partner's address (§5.2, §8.3); a pairing whose partner the device cannot
+  hold fails, sending and storing nothing, instead of reporting success
+  (§5.2); the pairing DISCOVER registers the ESP-NOW broadcast peer itself,
+  and a channel change re-adds it rather than deleting it; and an opera with
+  members it has not heard sends its heartbeat while `MESH_CONNECTING` too,
+  to every member whatever its state, at the same 30 s cadence (§7.1).

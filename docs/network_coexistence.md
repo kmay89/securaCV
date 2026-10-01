@@ -68,7 +68,10 @@ neither                           →  channel = 6            (fallback)
 On the firmware build, the policy samples `WiFi.status()` / `WiFi.channel()`
 each iteration of `mesh_network::update()`. When the effective channel
 changes, listeners fire — the Opera implementation uses one to drop the
-ESP-NOW broadcast peer so it re-registers cleanly on the new channel.
+ESP-NOW broadcast peer and register it again at once, so it is registered
+cleanly on the new channel. (Until sweep F74 it only dropped it, and only
+a Chirp or Beacon broadcast put it back; the Opera pairing DISCOVER now
+registers it too, where it is sent.)
 
 ESP-NOW peer entries are now created with `peer.channel = 0`, which the
 ESP-IDF treats as "use current radio channel." This is the only correct

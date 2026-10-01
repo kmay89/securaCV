@@ -642,7 +642,16 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   in range can read (pre-existing). Now, as on the PlatformIO tree, the
   joiner takes the first OFFER and a COMPLETE only after its owner
   confirmed, and the initiator takes one ACCEPT, from where its OFFER
-  went, and wipes the pairing once COMPLETE is sent. Host-tested only.
+  went, and wipes the pairing once COMPLETE is sent. Since F75 the owners
+  may confirm in either order (the initiator keeps a joiner's early
+  CONFIRM), and a CONFIRM counts only from the pairing partner's address:
+  the joiner's genuine CONFIRM re-sent from another radio no longer
+  completes a pairing, and a wrong hash from another radio no longer
+  cancels one. Since F73 a pairing whose partner the device cannot hold (a
+  deny-listed key, a full opera, an address another member holds) fails
+  and is logged: the initiator adds the joiner before anything is sent, so
+  it no longer seals the `opera_secret` to a partner it then refuses, and a
+  refusing joiner keeps its own opera. Host-tested only.
 - **Still open on canary-wap: a radio copying a member's own address.**
   ESP-NOW does not authenticate a source, so a radio that copies member
   B's bound address passes canary-wap's address check. It can deliver B's
@@ -653,10 +662,11 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   for B moves up, so B's own frames drop as replays until B's counter for
   the receiver catches up. No address moves (host-probed; open). A
   destination in the signed bytes would stop the cross-member case (a wire
-  change); the power-cut window is the counter-save cadence. Separately, a
-  rebooted canary-wap restarts its per-member counters at 1 (spec §3.3), so
-  every member that heard it drops its frames until they climb back past
-  what that member last saw (host-probed; open).
+  change); the power-cut window is the counter-save cadence. Since F71 a
+  rebooted canary-wap no longer restarts its per-member send counters at 1:
+  each is reserved ahead in NVS and resumes above every counter it signed
+  (spec §3.3), so no member drops its frames as replays and no counter is
+  signed twice (host-tested).
 - **The 6-digit pairing code does not cover the long-term keys**
   (pre-existing; found in the review of the F49 part 3 withdrawal). The
   code and the CONFIRM hash are derived from the ephemeral X25519 session
