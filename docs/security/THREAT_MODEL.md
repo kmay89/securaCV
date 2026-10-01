@@ -731,14 +731,16 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   the member whose address was copied. The same before #1756. Now a
   member's frame from any address but its own binding is dropped before
   verification, as on canary-wap: it spends no counter, reaches no handler
-  and records nothing. The rekey unicasts go to the binding, forgetting a
+  and records nothing. A member with no binding at all (none restored at
+  boot, or a pairing whose bind was refused) has no address its frames
+  are taken from until a pairing binds one. The rekey unicasts go to the binding, forgetting a
   member removes only the binding, and the liveness link is the binding
   once a verified frame has arrived from it. What remains is a radio that
   copies the member's *own* address: it still gets the member's
   not-yet-heard frames dispatched, as on canary-wap. Nothing can tell it
   apart, it moves no address, and on this tree the member's later frames
   still count above it (one counter per sender). Host-tested
-  (`test_mesh_session`, three tests that fail on the code before F70); not
+  (`test_mesh_session`, four tests that fail on the code before F70); not
   bench-verified.
 - `opera_secret` storage requires flash encryption enabled
   (eFuse `FLASH_CRYPT_CNT > 0`); load/save paths refuse on FE-off devices

@@ -1045,7 +1045,9 @@ radio sent it — the envelope signs no address (the F49 part 3 note below)
 — so a member's frame is taken only from that member's own binding (F70):
 from any other address, even one the transport table holds, it is dropped
 before verification, spends no counter and reaches no handler, and no frame
-binds, moves or records an address. Until F70 the PlatformIO session took
+binds, moves or records an address. A member with no binding (none restored
+from `peer_macs` at boot, or a pairing whose bind was refused) has no
+address its frames are taken from until a pairing binds one. Until F70 the PlatformIO session took
 a member's verified frame from any address in that table and recorded
 that address as the member's, and the table holds more than the member's
 own: while a pairing runs, the partner's (an outsider that answers the

@@ -816,7 +816,10 @@ static void on_opera_frame(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_
   if (peer == nullptr) return;            /* unknown sender */
 
   /* Step 3 (F70): a member's frame is taken only from the member's own
-   * binding — the address it paired from, or restored at boot. The
+   * binding — the address it paired from, or restored at boot. A member
+   * with no binding (no peer_macs entry at boot, or a pairing whose bind
+   * was refused) has none, so none of its frames is taken until one is
+   * bound: `!radio_mac_set` is half of this check, not a shortcut. The
    * transport table holds other addresses too: every other member's,
    * and, while a pairing runs, the partner's (ensure_pair_contact), which
    * an outsider gets there by answering the pairing from its own radio.
