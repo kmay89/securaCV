@@ -1803,6 +1803,14 @@ void ScvNetworkManager::stopHttpServer() {
   }
 #endif
   m_tls_enabled = false;
+  // F15: HTTPS is down, so the mDNS mirrors must stop claiming it — otherwise
+  // the next STA reconnect or raiseAp() re-announce would republish a stale
+  // tls=1 + secure port for a 443 that is no longer listening. Re-announce
+  // now when mDNS is up so the record drops to tls=0 immediately.
+  const bool was_tls = s_mdns_tls_enabled;
+  s_mdns_tls_enabled = false;
+  s_mdns_secure_port = 0;
+  if (was_tls) start_mdns(s_mdns_device_id);
   if (m_http_server) {
     httpd_stop(m_http_server);
     m_http_server = nullptr;
