@@ -67,8 +67,9 @@
   replay, on both devices (the live body said 1). On both devices a bundle
   that reopens after its ten minutes or a quiet gap now counts against the
   limit; before, a refresh could reopen one uncounted (in a host test of the
-  shared library, one observation every 121 s made 714 rows a day under a
-  limit of 144). Not fixed, and measured on the host: a state held for an hour
+  shared library with nothing ticking the bundles, one observation every
+  121 s made 714 rows a day under a limit of 144; a host that ticks every
+  pass leaked only when an emit reached the expiry in the same pass). Not fixed, and measured on the host: a state held for an hour
   or more fills core.presence's limit of six an hour with its own rows, and
   the next change then waits up to about ten minutes for a slot (F90).
   **Host-tested only**: the ESP32 builds are CI's, and nothing was checked on

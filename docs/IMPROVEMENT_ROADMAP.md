@@ -688,7 +688,7 @@ backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md))
 rather than this list, taking items PR #1761 filed. It closes none of the rows
 above; the one sentence it changes is §2's Wi-Fi sensing row (the canary's
 bundles, F81). Each package was built in its own worktree, reviewed
-adversarially and fixed before it was merged. Four packages:
+adversarially and fixed before it joined the PR. Four packages:
 
 - **canary-wap's mesh: heard after a reboot, either confirm order, members
   found (sweep F71, F73-F76).** Each member's send counter is reserved ahead

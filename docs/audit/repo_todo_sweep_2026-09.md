@@ -3275,8 +3275,9 @@ so — see D2 below.)
   in lint.yml's unfiltered run, builds the 65,536 suffixes the recipe can
   produce and holds every doc under `docs/` (except the dated audits),
   `tools/`, `firmware/` and `canary-local/` to them and to the hosts a WAP
-  advertises; it found 16 problems in the docs as they stood. Page data and
-  docs only, host-tested; no firmware changed. Found here: A35 (two firmware
+  advertises; it found 16 problems in the docs as they stood. Page data, docs
+  and one `wap.js` line (the unnamed host's note), host-tested; no firmware
+  changed. Found here: A35 (two firmware
   comments and a test fixture) and D10 (the docs call the suffix unique).
 - [ ] **A30 [code] The WAP and Sense Lab pages' sandbox scenes publish
   abbreviated payloads.** `gen_wap.py`'s and `gen_sense.py`'s `SANDBOX`
