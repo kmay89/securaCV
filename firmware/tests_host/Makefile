@@ -271,6 +271,13 @@ SETUPPAGE_JS = test_canary_setup_page.test.js
 # rides the next click as ?hint=, and "no card" retires Load More.
 TIMELINE_JS = test_canary_timeline.test.js
 
+# The canary dashboard's health-log list (securacv_webui.cpp, loadLogs): an
+# entry's timestamp_ms is the device's uptime at log time (repo sweep F49
+# part 1), shown as an age against GET /api/logs' uptime_ms — the same
+# lift-and-stub approach, with Date poisoned so the old wall-clock
+# rendering cannot come back.
+HEALTHLOG_JS = test_canary_health_logs.test.js
+
 # Shared headless setup portal (common/network): the pure timing choreography
 # (AP linger, quiet background retry, stuck-phone hint) plus the canonical
 # provision_core byte-math (A-only captive DNS, probe classification, JSON
@@ -787,6 +794,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(CSIHAL_BIN)
 	$(NODE) --test $(SETUPPAGE_JS)
 	$(NODE) --test $(TIMELINE_JS)
+	$(NODE) --test $(HEALTHLOG_JS)
 
 clean:
 	rm -rf $(BUILD_DIR)
