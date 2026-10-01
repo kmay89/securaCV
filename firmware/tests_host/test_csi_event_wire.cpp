@@ -230,6 +230,48 @@ static int test_worst_case_fits_the_canary_offline_slot() {
   return 0;
 }
 
+// Sweep F81 made every state-bearing canary row a bundle, and the live
+// callers (the canary's send_live / hand_to_queue, the canary-wap's
+// publish_event) passed a literal 1 while the card line and its replay
+// carried the bundle's count: one row, "bundled":1 live and "bundled":12
+// replayed. The body now says the row's own count on every path.
+static int test_bundled_is_the_rows_own_count() {
+  const Signer none = {nullptr, 1, "ed25519", nullptr};
+  csi_event_values_t v = presence_values();
+  char body[768];
+
+  // A closed bundle, published live by a caller that passes 1: its values
+  // carry the roll-ins (csi_bundler.cpp), and the body says them.
+  v.bundled_count = 12;
+  CHECK(build_event_body(body, sizeof(body), 5, "core.presence", "presence",
+                         CSI_CATEGORY_EVENT, CSI_PRIVACY_P1, &v, 0, 1, false,
+                         none) > 0);
+  CHECK(std::strstr(body, "\"duration_sec\":120,\"bundled\":12,") != nullptr);
+  CHECK(csi_event_wire::bundled_on_wire(&v, 1) == 12);
+
+  // A card replay: csi_event_log_line::parse fills the record's count, not
+  // the values', so the caller's count is the one that holds it.
+  v.bundled_count = 0;
+  CHECK(build_event_body(body, sizeof(body), 5, "core.presence", "presence",
+                         CSI_CATEGORY_EVENT, CSI_PRIVACY_P1, &v, 0, 12, true,
+                         none) > 0);
+  CHECK(std::strstr(body, "\"bundled\":12,\"replay\":true") != nullptr);
+
+  // A row committed directly is one observation on every path, including
+  // its card line's replay (marshal writes the record's 0).
+  CHECK(build_event_body(body, sizeof(body), 5, "system.integrity", "tamper",
+                         CSI_CATEGORY_ANOMALY, CSI_PRIVACY_P0, &v, 0, 0, true,
+                         none) > 0);
+  CHECK(std::strstr(body, "\"bundled\":1,\"replay\":true") != nullptr);
+  CHECK(csi_event_wire::bundled_on_wire(&v, 1) == 1);
+  CHECK(csi_event_wire::bundled_on_wire(nullptr, 0) == 1);
+
+  // The widest count is carried, not clipped.
+  v.bundled_count = 65535;
+  CHECK(csi_event_wire::bundled_on_wire(&v, 1) == 65535);
+  return 0;
+}
+
 static int test_tamper_bridge_only_for_integrity_rows() {
   csi_event_values_t v;
   std::memset(&v, 0, sizeof(v));
@@ -255,6 +297,7 @@ int main() {
   if (test_overflow_returns_zero_never_a_clipped_body()) return 1;
   if (test_worst_case_fits_the_canary_offline_slot()) return 1;
   if (test_tamper_bridge_only_for_integrity_rows()) return 1;
+  if (test_bundled_is_the_rows_own_count()) return 1;
   std::printf("test_csi_event_wire: %d checks passed\n", g_checks);
   return 0;
 }

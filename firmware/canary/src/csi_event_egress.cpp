@@ -144,9 +144,12 @@ class EgressPort : public csi_event_backfill::Port {
   size_t card_read(uint32_t off, char* buf, size_t cap) override {
     return csi_event_log::read_at(off, buf, cap);
   }
-  /* A row committed just now: F29's live body (bundled 1, not a replay). */
+  /* A row committed just now: F29's live body, not a replay. Its count is
+   * the row's own (a closed bundle's roll-ins; 1 for a direct row, which
+   * csi_event_wire::bundled_on_wire() makes of a 0), the same count the
+   * card line and its replay carry (sweep F81 made canary rows bundles). */
   csi_event_backfill::Sent send_live(const csi_event_record_t& rec) override {
-    const size_t n = build_body(m_body, sizeof(m_body), rec, /*bundled=*/1, /*replay=*/false);
+    const size_t n = build_body(m_body, sizeof(m_body), rec, rec.bundled_count, /*replay=*/false);
     if (n == 0) return csi_event_backfill::Sent::kNever;
     return mqtt_publish_event_live(m_body) ? csi_event_backfill::Sent::kYes
                                            : csi_event_backfill::Sent::kNotNow;
@@ -161,9 +164,10 @@ class EgressPort : public csi_event_backfill::Port {
                                            : csi_event_backfill::Sent::kNotNow;
   }
   /* Not on the card: F29's path — live, or into the MQTT layer's offline
-   * queue with `"replay":true` when built while the link is down. */
+   * queue with `"replay":true` when built while the link is down. The
+   * row's own count, as send_live(). */
   bool hand_to_queue(const csi_event_record_t& rec, bool deferred) override {
-    const size_t n = build_body(m_body, sizeof(m_body), rec, /*bundled=*/1, deferred);
+    const size_t n = build_body(m_body, sizeof(m_body), rec, rec.bundled_count, deferred);
     return n > 0 && mqtt_publish_event(m_body);
   }
   bool persist_ceiling(uint32_t ceiling) override {
