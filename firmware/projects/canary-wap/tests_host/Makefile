@@ -609,10 +609,12 @@ clean: clean-wire
 # The v0.4 review's three pre-existing receive-path gaps (host-tested only,
 # not bench-verified, awaiting crypto review): the replay counter convention
 # (first counter 1, strict greater-than, no rx==0 exemption — the same lines
-# pinned in the PIO mesh_session.cpp), the source MAC bound only after
-# signature + opera_id + replay (it was bound before verify), and every
-# struct-payload handler refusing any length but its struct's (the PIO
-# 6-byte TAMPER_ALERT, mesh_alert.h, used to be read as the 56-byte struct).
+# pinned in the PIO mesh_session.cpp), no frame moving a member's address
+# (spec §8.3: a frame from any address but the signer's bound one drops
+# before verify; it was re-bound after verify, and before that ahead of
+# it), and every struct-payload handler refusing any length but its
+# struct's (the PIO 6-byte TAMPER_ALERT, mesh_alert.h, used to be read as
+# the 56-byte struct).
 # Reads the real mesh_network.{h,cpp} (beacon_source_scan.h; paths passed in,
 # so the pins fail closed) and includes the PIO mesh_alert.h for its length.
 RX_GATES_BIN = test_mesh_rx_gates_wap

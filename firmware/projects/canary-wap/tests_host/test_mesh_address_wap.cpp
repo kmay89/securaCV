@@ -179,6 +179,171 @@ void test_a_frame_already_heard_moves_nothing() {
 }
 
 
+// ── Spec §8.3: a verified frame does not move a member's address ────────
+//
+// The checks a frame passes (opera_id, a signature under the member's key,
+// a counter above the last one heard) prove who signed it, not which radio
+// sent it: the envelope signs no address. canary-wap used to re-point the
+// member's address, and its ESP-NOW registration, at the source of any
+// frame that passed them. So a genuine frame of B's that A had not heard
+// yet, re-sent from E's own radio, moved B to E: A's frames for B went to
+// E, and B's real address left A's ESP-NOW list. Each test below re-sends
+// such a frame from another address and fails on that code. Now a frame
+// whose source is not the signer's bound address is dropped before the
+// signature check: nothing moves, no counter is spent, nothing is
+// dispatched, and it counts as an auth failure.
+
+int g_beacons = 0;
+void count_beacon(const uint8_t*, mesh_beacon::BeaconState, const char*) { ++g_beacons; }
+
+// The drop, as A's state shows it.
+void check_dropped(const BView& before, const BView& after) {
+  CHECK(after.bound_to_b);
+  CHECK(after.espnow_b);
+  CHECK(!after.espnow_e);
+  CHECK(after.rx == before.rx);                  // no counter spent
+  CHECK(after.received == before.received);      // not dispatched
+  CHECK(after.auth_failures == before.auth_failures + 1);
+}
+
+void test_a_missed_frame_from_another_address_moves_nothing() {
+  fresh_opera();
+  deliver(A, B.mac, b_heartbeat_to(A));          // A hears B's counter 1
+  const Frame missed = b_heartbeat_to(A);        // counter 2: A misses it
+  CHECK(counter_of(missed) == 2);
+  const BView before = a_view_of_b();
+  deliver(A, E_MAC, missed);                     // E re-sends it
+  check_dropped(before, a_view_of_b());
+  CHECK(a_heartbeat_reaches(B.mac));
+  CHECK(!a_heartbeat_reaches(E_MAC));
+  // No counter was spent, so the frame itself is still good from B.
+  deliver(A, B.mac, missed);
+  CHECK(a_view_of_b().rx == 2);
+  deliver(A, B.mac, b_heartbeat_to(A));
+  CHECK(a_view_of_b().rx == 3 && a_view_of_b().bound_to_b);
+  std::printf("PASS a_missed_frame_from_another_address_moves_nothing\n");
+}
+
+void test_a_missed_frame_from_another_address_is_not_acted_on() {
+  fresh_opera();
+  mn::set_beacon_event_handler(count_beacon);
+  g_beacons = 0;
+  become(B);
+  CHECK(mn::send_beacon_event(mesh_beacon::BeaconState::ARRIVED, "hall") == 2);
+  const Frame ev = sent_to(B, A.mac).back();
+  deliver(A, E_MAC, ev);
+  CHECK(g_beacons == 0);
+  CHECK(a_view_of_b().bound_to_b);
+  deliver(A, B.mac, ev);                         // the same frame from B is heard
+  CHECK(g_beacons == 1);
+  mn::set_beacon_event_handler(nullptr);
+  std::printf("PASS a_missed_frame_from_another_address_is_not_acted_on\n");
+}
+
+void test_another_members_frame_from_another_address_moves_nothing() {
+  // canary-wap counts per destination (send_to_peer takes the peer's own
+  // msg_counter_tx), and the envelope names no destination, so A judges a
+  // frame B sent C by A's last-seen counter for B. B's counter for C runs
+  // ahead of its counter for A whenever B sent C frames A was not sent:
+  // broadcast_message skips a member in PEER_UNKNOWN or
+  // PEER_AUTHENTICATING (one paired after B booted, say). That is set up
+  // directly here: three heartbeats with A at PEER_UNKNOWN in B's table.
+  fresh_opera();
+  deliver(A, B.mac, b_heartbeat_to(A));          // A's last-seen for B: 1
+  {
+    become(B);
+    mn::OperaPeer* pa = entry(B, A);
+    const mn::PeerState keep = pa->state;
+    pa->state = mn::PEER_UNKNOWN;
+    for (int i = 0; i < 3; ++i) mn::send_heartbeat();
+    pa->state = keep;
+  }
+  const Frame ahead = sent_to(B, C.mac).back();
+  CHECK(counter_of(ahead) == 4);
+  const BView before = a_view_of_b();
+  CHECK(before.rx == 1);
+  deliver(A, E_MAC, ahead);
+  check_dropped(before, a_view_of_b());
+  // B is not silenced: its own next frame to A (counter 2) is heard. The
+  // old code had moved A's last-seen to 4, so B's frames 2..4 dropped as
+  // replays and B stayed bound to E until its counter for A passed 4.
+  const Frame next = b_heartbeat_to(A);
+  CHECK(counter_of(next) == 2);
+  deliver(A, B.mac, next);
+  CHECK(a_view_of_b().rx == 2 && a_view_of_b().bound_to_b);
+  CHECK(a_heartbeat_reaches(B.mac));
+  std::printf("PASS another_members_frame_from_another_address_moves_nothing\n");
+}
+
+void test_a_frame_heard_before_a_power_cut_moves_nothing() {
+  // The sketch saves the last-seen counters every 5 minutes and before a
+  // planned reboot; a power cut loses what A heard since the last save, so
+  // those frames are fresh at A again.
+  fresh_opera();
+  deliver(A, B.mac, b_heartbeat_to(A));
+  become(A);
+  CHECK(mn::save_replay_counters());             // last-seen 1 saved
+  deliver(A, B.mac, b_heartbeat_to(A));
+  const Frame heard = b_heartbeat_to(A);
+  deliver(A, B.mac, heard);
+  CHECK(a_view_of_b().rx == 3);
+  boot(A);                                       // power cut, no save since
+  const BView before = a_view_of_b();
+  CHECK(before.rx == 1);
+  deliver(A, E_MAC, heard);
+  check_dropped(before, a_view_of_b());
+  CHECK(a_heartbeat_reaches(B.mac));
+  std::printf("PASS a_frame_heard_before_a_power_cut_moves_nothing\n");
+}
+
+void test_a_frame_from_another_members_address_moves_nothing() {
+  // ESP-NOW does not authenticate a source, so a radio can copy C's
+  // address. B's missed frame from there used to bind B to C's address;
+  // B's next real frame then deleted C's ESP-NOW registration while A's
+  // entry for C still held it, and A could no longer reach C.
+  fresh_opera();
+  deliver(A, B.mac, b_heartbeat_to(A));
+  const Frame missed = b_heartbeat_to(A);
+  const BView before = a_view_of_b();
+  deliver(A, C.mac, missed);
+  const BView after = a_view_of_b();
+  CHECK(after.bound_to_b && after.espnow_b);
+  CHECK(after.rx == before.rx && after.received == before.received);
+  CHECK(after.auth_failures == before.auth_failures + 1);
+  CHECK(same_mac(entry(A, C)->mac_addr, C.mac));
+  deliver(A, B.mac, b_heartbeat_to(A));
+  CHECK(A.espnow.has(C.mac));
+  CHECK(a_heartbeat_reaches(B.mac));
+  CHECK(a_heartbeat_reaches(C.mac));
+  std::printf("PASS a_frame_from_another_members_address_moves_nothing\n");
+}
+
+void test_a_member_whose_address_changed_is_not_heard_until_re_paired() {
+  // A changed radio address (a swapped module, a reflash that sets a new
+  // one) now means a re-pair, as on the PlatformIO tree: A keeps sending
+  // to the address the pairing bound and drops B's frames from the new
+  // one. (B reboots to change its address, so its counters restart at 1;
+  // its frame 1 would drop as a replay either way, and frame 2 is the one
+  // the old code re-bound on.)
+  fresh_opera();
+  deliver(A, B.mac, b_heartbeat_to(A));
+  const uint8_t old_mac[6] = {B.mac[0], B.mac[1], B.mac[2], B.mac[3], B.mac[4], B.mac[5]};
+  B.mac[5] = 0xB2;
+  boot(B);
+  for (int i = 0; i < 2; ++i) {
+    const Frame f = b_heartbeat_to(A);
+    deliver(A, B.mac, f);
+  }
+  mn::OperaPeer* pb = entry(A, B);
+  CHECK(same_mac(pb->mac_addr, old_mac));
+  CHECK(pb->msg_counter_rx == 1);
+  CHECK(A.espnow.has(old_mac) && !A.espnow.has(B.mac));
+  CHECK(a_heartbeat_reaches(old_mac));
+  CHECK(!a_heartbeat_reaches(B.mac));
+  memcpy(B.mac, old_mac, 6);
+  std::printf("PASS a_member_whose_address_changed_is_not_heard_until_re_paired\n");
+}
+
 // ── A re-pair re-binds the member it already holds ──────────────────────
 
 const uint8_t BROADCAST[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
@@ -252,6 +417,11 @@ void test_a_re_pair_re_binds_the_member_it_holds() {
   CHECK(entry(A, B)->msg_counter_rx == 1);
   CHECK(a_heartbeat_reaches(B.mac));
   CHECK(!a_heartbeat_reaches(old_mac));
+  // A frame from the old address now drops like one from any other.
+  const uint64_t rx = entry(A, B)->msg_counter_rx;
+  deliver(A, old_mac, b_heartbeat_to(A));
+  CHECK(entry(A, B)->msg_counter_rx == rx);
+  CHECK(same_mac(entry(A, B)->mac_addr, B.mac));
   // The move is in A's NVS: a reboot binds the new address.
   boot(A);
   CHECK(mn::g_peer_count == 2);
@@ -299,6 +469,12 @@ int main() {
   test_a_frame_from_the_bound_address_is_heard();
   test_a_forged_frame_from_another_address_moves_nothing();
   test_a_frame_already_heard_moves_nothing();
+  test_a_missed_frame_from_another_address_moves_nothing();
+  test_a_missed_frame_from_another_address_is_not_acted_on();
+  test_another_members_frame_from_another_address_moves_nothing();
+  test_a_frame_heard_before_a_power_cut_moves_nothing();
+  test_a_frame_from_another_members_address_moves_nothing();
+  test_a_member_whose_address_changed_is_not_heard_until_re_paired();
   test_a_re_pair_re_binds_the_member_it_holds();
   test_a_re_pair_is_not_refused_by_a_full_opera();
   test_a_re_pair_cannot_take_another_members_address();

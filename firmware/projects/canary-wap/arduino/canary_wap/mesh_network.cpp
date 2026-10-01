@@ -739,6 +739,24 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
     return;
   }
 
+  // A member's frames come from the address its pairing bound (spec §8.3):
+  // drop one from any other address here, before the signature check, so
+  // it spends no counter, reaches no handler and moves nothing. The checks
+  // below prove who signed a frame, not which radio sent it — the envelope
+  // signs no address — so a genuine frame of the member's that this device
+  // has not heard yet passes them from any radio that re-sends it: one it
+  // missed, one sent to another member (counters are per destination, and
+  // the envelope names none), or one heard since the last counter save
+  // before a power cut. This used to re-point the member's address and its
+  // ESP-NOW registration at such a frame's source. A member whose radio
+  // address really changed is heard again after a re-pair (add_peer). ESP-NOW
+  // does not authenticate a source, so a radio copying the member's own
+  // address still gets past this line; nothing below moves an address.
+  if (memcmp(peer->mac_addr, mac, 6) != 0) {
+    g_auth_failures++;
+    return;
+  }
+
   // Verify signature. Nothing about the peer is changed before this
   // line: the sender fingerprint and opera_id are public, so a frame
   // that carries them proves nothing until the signature does.
@@ -766,36 +784,12 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
   peer->msg_counter_rx = counter;
   (void)timestamp;  // intentionally unused as of v0.2 (audit O1)
 
-  // Every check passed, and the block below re-points the member's MAC and
-  // its ESP-NOW registration at this frame's source (for a device that came
-  // back with a new address). Spec §8.3 withdraws that step and now forbids
-  // it, so this tree does not conform yet (open). The checks prove who
-  // signed the frame, not which radio sent it: the envelope signs no
-  // address, so a genuine frame of the member's meant for this device that
-  // it has not received yet (one it missed, say) passes them from any radio
-  // that replays it. How far that reaches here (per-peer counters, a
-  // heartbeat) has not been probed. The
-  // PIO session takes no address from a frame at all: an opera frame from
-  // an address its transport table does not hold is dropped before any
-  // check, and the source of a verified one is recorded as a liveness link,
-  // never as the member's binding.
-  // What the ORDER below still fixes: this used to run BEFORE
-  // verify_signature, where a frame with a copied sender_fp and opera_id —
-  // both public — and any signature re-pointed a member's MAC at the
-  // attacker's radio, and re-registered the ESP-NOW peer there, until the
-  // real device's next verified frame: a denial of service with no key.
-  if (memcmp(peer->mac_addr, mac, 6) != 0) {
-    // Drop the OLD address's ESP-NOW registration before overwriting it
-    // (the old order deleted the new address, so the old entry leaked in
-    // ESP-NOW's 20-slot peer table), then register the verified one.
-    esp_now_del_peer(peer->mac_addr);
-    memcpy(peer->mac_addr, mac, 6);
-    esp_now_peer_info_t peer_info = {};
-    memcpy(peer_info.peer_addr, mac, 6);
-    peer_info.channel = ESPNOW_CHANNEL;
-    peer_info.encrypt = false;
-    esp_now_add_peer(&peer_info);
-  }
+  // Every check passed. Nothing here re-binds the member's address: the
+  // gate above only lets a frame through from the address the member
+  // already has (spec §8.3). This spot used to re-point that address and
+  // the ESP-NOW registration at the frame's source, and before that it ran
+  // ahead of verify_signature, where a forged frame from any radio did it
+  // with no key at all.
 
   // Update peer state
   peer->last_seen_ms = millis();

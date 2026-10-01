@@ -15,19 +15,18 @@
 //      frame could pass a fresh rx of 0 — and passed a counter-0 frame
 //      again on every replay for as long as rx stayed 0. A model of each
 //      gate, held to the pinned line, shows the hole and its closure.
-//   2. The ORDER of canary-wap's MAC re-bind: the source MAC is bound to the
-//      peer — and re-registered with ESP-NOW — only after signature,
-//      opera_id and replay all passed. It used to be bound BEFORE
-//      verify_signature, so a frame carrying a member's public sender_fp
-//      and opera_id with any signature re-pointed that member's MAC (a
-//      keyless DoS). And the OLD address is the one unregistered, before it
-//      is overwritten. This pins the order of a re-bind that spec §8.3 now
-//      forbids (a verified frame does not prove which radio sent it, so a
-//      replayed one passes too): canary-wap does not conform yet, and the
-//      pin holds the order only until that is decided. The PIO session no
-//      longer binds from a frame; it records the source of a verified frame
-//      as a liveness link, after its replay gate, which the pin's last
-//      checks hold.
+//   2. No frame moves a member's address (spec §8.3). A frame whose source
+//      is not the signer's bound address is dropped between the lookup and
+//      verify_signature, by a read-only compare, and the receive path
+//      writes no address and touches no ESP-NOW registration anywhere.
+//      canary-wap used to re-point the member's address and ESP-NOW
+//      registration at the source of a frame that passed signature,
+//      opera_id and replay — and, before that, ahead of verify_signature,
+//      where any signature did it (a keyless DoS). A verified frame does
+//      not prove which radio sent it, so a replayed one passed too:
+//      test_mesh_address_wap runs that against the real file. The PIO
+//      session records the source of a verified frame as a liveness link,
+//      after its replay gate, which the pin's last checks hold.
 //   3. Every handler of a fixed-size struct payload takes payload_len and
 //      refuses any other size, exactly (the PIO decoders' rule). The PIO
 //      tree's TAMPER_ALERT is mesh_alert::PAYLOAD_LEN = 6 bytes; read as
@@ -204,54 +203,56 @@ void test_replay_gate_is_strict_and_the_first_counter_is_one() {
   std::printf("PASS replay_gate_is_strict_and_the_first_counter_is_one\n");
 }
 
-// ── 2. The MAC binding ──────────────────────────────────────────────────
+// ── 2. No frame moves a member's address ────────────────────────────────
 
-void test_mac_is_bound_only_after_every_check() {
+void test_no_frame_moves_a_members_address() {
   const std::string code = load(MESH_NETWORK_CPP);
   const std::string rx   = squeeze(function_body(code, "handle_received_message"));
   CHECK(!rx.empty());
 
-  const std::string lookup = "OperaPeer*peer=find_peer_by_fingerprint(sender_fp);";
-  const std::string verify = "if(!verify_signature(peer->pubkey,data,len-SIGNATURE_SIZE,signature)){g_auth_failures++;return;}";
-  const std::string replay = "if(counter<=peer->msg_counter_rx){return;}";
-  // The binding, whole: unregister the OLD address, then overwrite it,
-  // then register the verified one — all under one memcmp.
-  const std::string bind =
-      "if(memcmp(peer->mac_addr,mac,6)!=0){"
-      "esp_now_del_peer(peer->mac_addr);"
-      "memcpy(peer->mac_addr,mac,6);"
-      "esp_now_peer_info_tpeer_info={};"
-      "memcpy(peer_info.peer_addr,mac,6);"
-      "peer_info.channel=ESPNOW_CHANNEL;"
-      "peer_info.encrypt=false;"
-      "esp_now_add_peer(&peer_info);}";
+  const std::string lookup  = "OperaPeer*peer=find_peer_by_fingerprint(sender_fp);";
+  const std::string unknown = "if(!peer){g_auth_failures++;return;}";
+  const std::string source  = "if(memcmp(peer->mac_addr,mac,6)!=0){g_auth_failures++;return;}";
+  const std::string verify  = "if(!verify_signature(peer->pubkey,data,len-SIGNATURE_SIZE,signature)){g_auth_failures++;return;}";
+  const std::string replay  = "if(counter<=peer->msg_counter_rx){return;}";
   CHECK(count(rx, lookup) == 1);
+  CHECK(count(rx, source) == 1);
   CHECK(count(rx, verify) == 1);
   CHECK(count(rx, replay) == 1);
-  CHECK(count(rx, bind) == 1);
-  // The only write to the peer's MAC in the receive path is that one.
-  CHECK(count(rx, "memcpy(peer->mac_addr,") == 1);
-  CHECK(count(rx, "esp_now_add_peer(") == 1);
-  // Order: lookup, verify, replay, bind. `before` fails if a second copy of
-  // the later text is inserted ahead of the earlier one, so a bind moved
-  // back up would fail here even if the one below stayed.
-  CHECK(before(rx, lookup, verify));
+  // Order: lookup, source, verify, replay. `before` fails if a second copy
+  // of the later text is inserted ahead of the earlier one.
+  CHECK(before(rx, lookup, source));
+  CHECK(before(rx, source, verify));
   CHECK(before(rx, verify, replay));
-  CHECK(before(rx, replay, bind));
-  // Nothing about the peer is written between the lookup and the verify:
-  // the text between them holds no assignment through `peer->`.
+  // Between the lookup and the verify there is the unknown-peer drop and
+  // the source drop, and nothing else: no write through `peer->`, no
+  // ESP-NOW call.
   {
     const size_t a = rx.find(lookup) + lookup.size();
     const size_t b = rx.find(verify);
     CHECK(a <= b);
-    const std::string between = rx.substr(a, b - a);
-    CHECK(count(between, "peer->") == 0);
-    CHECK(count(between, "esp_now_") == 0);
+    CHECK(rx.substr(a, b - a) == unknown + source);
   }
+  // The receive path writes no address and registers or drops no ESP-NOW
+  // peer — not after the checks either, where the re-bind used to be.
+  CHECK(count(rx, "memcpy(peer->mac_addr,") == 0);
+  CHECK(count(rx, "mac_addr,mac") == 1);           // the source compare only
+  CHECK(count(rx, "esp_now_add_peer(") == 0);
+  CHECK(count(rx, "esp_now_del_peer(") == 0);
+  // The one place a member's address changes outside a first add: a re-pair
+  // (add_peer -> rebind_peer), new address registered before the old one is
+  // dropped, one address per member.
+  const std::string add = squeeze(function_body(code, "add_peer"));
+  CHECK(count(add, "returnrebind_peer(&g_peers[i],mac);") == 1);
+  const std::string rb = squeeze(function_body(code, "rebind_peer"));
+  CHECK(!rb.empty());
+  CHECK(count(rb, "if(holder!=nullptr&&holder!=peer){returnfalse;}") == 1);
+  CHECK(before(rb, "esp_now_add_peer(&peer_info)", "esp_now_del_peer(peer->mac_addr);"));
+  CHECK(before(rb, "esp_now_del_peer(peer->mac_addr);", "memcpy(peer->mac_addr,mac,6);"));
   // The PIO session records its liveness link (peer->mac, never the
-  // transport binding) at the same point: after its replay gate. It does not
-  // re-bind from a frame at all (spec §8.3); its frames from an unbound
-  // address are dropped before this function runs.
+  // transport binding) after its replay gate. It does not re-bind from a
+  // frame at all (spec §8.3); its frames from an unbound address are
+  // dropped before this function runs.
   const std::string pio = load(MESH_SESSION_CPP);
   const std::string prx = squeeze(function_body(pio, "on_opera_frame"));
   CHECK(!prx.empty());
@@ -260,7 +261,7 @@ void test_mac_is_bound_only_after_every_check() {
   CHECK(count(prx, pio_bind) == 1);
   CHECK(before(prx, "mesh_envelope::parse_and_verify(", pio_replay));
   CHECK(before(prx, pio_replay, pio_bind));
-  std::printf("PASS mac_is_bound_only_after_every_check\n");
+  std::printf("PASS no_frame_moves_a_members_address\n");
 }
 
 // ── 3. Struct payloads are length-checked ───────────────────────────────
@@ -398,7 +399,7 @@ void test_struct_handlers_check_the_payload_length() {
 
 int main() {
   test_replay_gate_is_strict_and_the_first_counter_is_one();
-  test_mac_is_bound_only_after_every_check();
+  test_no_frame_moves_a_members_address();
   test_struct_handlers_check_the_payload_length();
   std::printf("\nALL mesh receive gate (canary-wap) tests PASSED (%d checks)\n", g_checks);
   return 0;
