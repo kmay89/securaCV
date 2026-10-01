@@ -9,9 +9,24 @@
  * .bss segment, which the full build was tipping into overflow.
  *
  * Concurrency: emits originate from the main loop (the CSI HAL features
- * callback drives module ticks which call emit()); commits happen on the
- * same loop. There is no ISR path. The bundler and per-module ceiling
- * counters are therefore single-threaded.
+ * callback drives module ticks which call emit()), and from the NimBLE host
+ * task: ble.scout emits an arrival from its advert callback in both trees,
+ * and that admit can close another bundle and commit it on that task. There
+ * is no ISR path.
+ *
+ * Every committed row takes its event id when it commits, from the one
+ * allocator below (backlog F46: one id space, see csi_event_id_floor.h).
+ * commit_row() takes the id and runs the commit hooks under one recursive
+ * COMMIT LOCK, so whichever task commits, ids reach the hooks (witness
+ * chain, SD event log, MQTT) in the order they were taken. Without it, two
+ * tasks committing at once could hand id N+1 to the hooks before N, and
+ * Home Assistant's replay gate refuses N once it has verified N+1. The
+ * lock order is commit lock, then ring lock (persist_to_ring runs inside a
+ * commit); nothing takes the commit lock while holding the ring lock. A
+ * commit hook must not emit: a nested commit on the same task would take
+ * the next id and reach the hooks before the row it interrupted.
+ * firmware/scripts/check_csi_commit_order.py (run by check_csi_sync.sh)
+ * holds the source to that shape.
  *
  * The in-memory event ring (g_ring / g_ring_head), however, is also read by
  * the HTTP server task: csi_event_recent() and csi_event_find() back the
@@ -25,6 +40,7 @@
 
 #include "csi_event.h"
 #include "csi_bundler.h"
+#include "csi_event_id_floor.h"   /* kIdSpaceBase: where the one id space starts */
 
 #include <string.h>
 #include <stdint.h>
@@ -65,9 +81,25 @@
       RingLock()  { ring_mutex_ensure(); if (g_ring_mutex) xSemaphoreTake(g_ring_mutex, portMAX_DELAY); }
       ~RingLock() { if (g_ring_mutex) xSemaphoreGive(g_ring_mutex); }
     };
+    /* The commit lock (see the file header). Recursive, so a task that
+     * already holds it (set_event_id_floor's caller, a commit's own ring
+     * write) never deadlocks on itself. Created on first use through a
+     * function-local static: ESP-IDF makes that initialization thread-safe
+     * (__cxa_guard_acquire), so two tasks committing first at once still
+     * share one mutex. Both Arduino-ESP32 cores build on ESP-IDF with
+     * configUSE_RECURSIVE_MUTEXES set. */
+    SemaphoreHandle_t commit_mutex() {
+      static SemaphoreHandle_t m = xSemaphoreCreateRecursiveMutex();
+      return m;
+    }
+    struct CommitLock {
+      CommitLock()  { if (commit_mutex()) xSemaphoreTakeRecursive(commit_mutex(), portMAX_DELAY); }
+      ~CommitLock() { if (commit_mutex()) xSemaphoreGiveRecursive(commit_mutex()); }
+    };
   }  /* namespace */
 #else
-  namespace { struct RingLock {}; }  /* host test build is single-threaded */
+  namespace { struct RingLock { RingLock() {} }; }    /* host test build is single-threaded */
+  namespace { struct CommitLock { CommitLock() {} }; }  /* user-provided: no unused warning */
 #endif
 
 /* Internal hook from csi_module.cpp so dismiss can route correctly. */
@@ -131,7 +163,11 @@ bool ring_ensure() {
   if (g_ring) memset(g_ring, 0, kRingBytes);
   return g_ring != nullptr;
 }
-uint32_t            g_next_event_id = 1;
+/* The one allocator (backlog F46). It starts at kIdSpaceBase on every
+ * device, above every id an earlier firmware handed out, and the host's
+ * restored floor only ever moves it up. Written only under the commit lock
+ * (allocate_event_id, set_event_id_floor); read under the ring lock. */
+uint32_t            g_next_event_id = csi_event_id_floor::kIdSpaceBase;
 csi_privacy_class_t g_privacy_ceiling = CSI_PRIVACY_P0;
 
 /* Per-module hourly counters (sliding 60-minute window via 6 × 10-minute
@@ -302,6 +338,7 @@ void sanitize_strings(csi_event_values_t* v) {
 extern "C" __attribute__((weak))
 void csi_event_on_id_advance(uint32_t /*new_id*/) {}
 
+/* Called only by commit_row(), under the commit lock. */
 uint32_t allocate_event_id() {
   uint32_t id = g_next_event_id++;
   if (id == 0) id = g_next_event_id++;   /* never return 0; that means rejected */
@@ -362,6 +399,33 @@ void persist_to_ring(uint32_t                  event_id,
   rec->type_name[CSI_EVENT_NAME_MAX - 1] = '\0';
   g_ring_head = (g_ring_head + 1) % CSI_EVENT_RING_CAP;
   g_ring_has_live = true;
+}
+
+/* Commit one row (backlog F46): take its id from the one allocator and run
+ * the commit hooks, under the commit lock, so ids reach the hooks in the
+ * order they were taken whichever task commits. Both commit paths come
+ * here: emit()'s direct commit (ambient and stateless rows, which also land
+ * in the ring) and a bundle's close (csi_event_commit_bundle_, called by
+ * csi_bundler.cpp from the copy it made under its slot lock). P0 and
+ * qualifying P1 rows go to the witness chain; P2 stays local; ambient rows
+ * never persist. Returns the id. */
+uint32_t commit_row(const char*               module_id,
+                    const char*               type_name,
+                    csi_privacy_class_t       privacy,
+                    const csi_event_values_t* v,
+                    bool                      to_ring) {
+  CommitLock _commit;
+  const uint32_t event_id = allocate_event_id();
+  if (privacy <= CSI_PRIVACY_P1 && v->category != CSI_CATEGORY_AMBIENT) {
+    (void)csi_event_commit_witness(event_id, module_id, type_name,
+                                   v->category, v);
+  }
+  if (to_ring) persist_to_ring(event_id, module_id, type_name, v->category, privacy, v);
+  csi_module_record_emission_(event_id, module_id);
+  /* Stream callback (host-provided). */
+  csi_event_on_committed(event_id, module_id, type_name,
+                         v->category, privacy, v);
+  return event_id;
 }
 
 }  /* namespace */
@@ -504,9 +568,9 @@ uint32_t csi_event_emit(const char*               module_id,
 
   /* 6. Bundling. The bundler buffers same-state events into a single open
    *    bundle, ambient events bypass it, and stateless events fall through. */
-  uint32_t event_id = 0;
+  uint32_t handle = 0;
   csi_bundler_outcome_t outcome = csi_bundler_admit(
-      module_id, type_name, decl->privacy, &v, &event_id);
+      module_id, type_name, decl->privacy, &v, &handle);
 
   if (outcome == CSI_BUNDLER_BUFFERED) {
     /* Rolled into an open bundle, or just opened a new one. An OPENING is
@@ -516,10 +580,13 @@ uint32_t csi_event_emit(const char*               module_id,
      * 60 windows to refresh duration and confidence, and with a 6/hour
      * ceiling those refreshes exhausted the cap in ~3 minutes of sustained
      * presence, after which the REAL state transitions were silently
-     * dropped. */
+     * dropped.
+     *
+     * The bundle has no event id yet: it takes one when it commits
+     * (commit_row), and its dismiss route is recorded then. What returns
+     * is the open bundle's handle, in [kHandleBase, kIdSpaceBase). */
     if (refreshes_open_bundle) counter->buckets[5] -= 1;
-    csi_module_record_emission_(event_id, module_id);
-    return event_id;
+    return handle;
   }
 
   if (outcome == CSI_BUNDLER_DROPPED) {
@@ -528,23 +595,19 @@ uint32_t csi_event_emit(const char*               module_id,
   }
 
   /* outcome == CSI_BUNDLER_COMMIT: this emit is a pass-through (ambient or
-   * stateless) and must be persisted directly here. */
-  if (event_id == 0) event_id = allocate_event_id();
+   * stateless) and is committed here, into the ring too. */
+  return commit_row(module_id, type_name, decl->privacy, &v, /*to_ring=*/true);
+}
 
-  /* P0 and qualifying P1 events go to the witness chain; P2 stays local.
-   * Ambient events never persist. */
-  if (decl->privacy <= CSI_PRIVACY_P1 && v.category != CSI_CATEGORY_AMBIENT) {
-    (void)csi_event_commit_witness(event_id, module_id, type_name,
-                                   v.category, &v);
-  }
-  persist_to_ring(event_id, module_id, type_name, v.category, decl->privacy, &v);
-  csi_module_record_emission_(event_id, module_id);
-
-  /* Stream callback (host-provided). */
-  csi_event_on_committed(event_id, module_id, type_name,
-                         v.category, decl->privacy, &v);
-
-  return event_id;
+/* A closed bundle, from the copy csi_bundler.cpp made under its slot lock.
+ * Internal to the CSI library (declared in csi_bundler.cpp). Closed bundles
+ * do not enter the ring (unchanged by F46). */
+uint32_t csi_event_commit_bundle_(const char*               module_id,
+                                  const char*               type_name,
+                                  csi_privacy_class_t       privacy,
+                                  const csi_event_values_t* values) {
+  if (!module_id || !type_name || !values) return 0;
+  return commit_row(module_id, type_name, privacy, values, /*to_ring=*/false);
 }
 
 void csi_event_flush_bundles(void) {
@@ -663,7 +726,7 @@ void csi_event_test_reset(void) {
   if (g_ring) memset(g_ring, 0, kRingBytes);   /* leave unallocated rings lazy */
   g_ring_head = 0;
   g_ring_has_live = false;
-  g_next_event_id = 1;
+  g_next_event_id = csi_event_id_floor::kIdSpaceBase;
   g_privacy_ceiling = CSI_PRIVACY_P0;
   memset(g_counters, 0, sizeof(g_counters));
   g_counter_count = 0;
@@ -697,6 +760,7 @@ void csi_event_test_reset(void) {
  * rewind ids back into the live range. ────────────────────────────── */
 
 void csi_event_set_event_id_floor(uint32_t floor) {
+  CommitLock _commit;   /* the allocator's writer lock; then the ring's */
   RingLock _lock;
   if (floor > g_next_event_id) g_next_event_id = floor;
 }

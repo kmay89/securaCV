@@ -292,7 +292,7 @@ EVLOAD_LIB = $(SRC_DIR)/csi_event_log.cpp $(SRC_DIR)/csi_event.cpp \
              $(SRC_DIR)/csi_module.cpp $(SRC_DIR)/csi_bundler.cpp
 
 $(EVLOAD_BIN): $(EVLOAD_SRC) $(EVLOAD_LIB) $(SRC_DIR)/csi_event_log.h $(SRC_DIR)/csi_event.h \
-               $(SRC_DIR)/csi_event_log_line.h $(wildcard stubs/sd_fake/*.h)
+               $(SRC_DIR)/csi_event_log_line.h $(SRC_DIR)/csi_event_id_floor.h $(wildcard stubs/sd_fake/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
 	  -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EVLOAD_SRC) $(EVLOAD_LIB)
 
@@ -313,7 +313,7 @@ EVDISMISS_BIN = test_csi_event_log_dismiss
 EVDISMISS_SRC = test_csi_event_log_dismiss.cpp
 
 $(EVDISMISS_BIN): $(EVDISMISS_SRC) $(EVLOAD_LIB) $(SRC_DIR)/csi_event_log.h $(SRC_DIR)/csi_event.h \
-                  $(SRC_DIR)/csi_event_log_line.h $(wildcard stubs/sd_fake/*.h)
+                  $(SRC_DIR)/csi_event_log_line.h $(SRC_DIR)/csi_event_id_floor.h $(wildcard stubs/sd_fake/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
 	  -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EVDISMISS_SRC) $(EVLOAD_LIB)
 

@@ -9,17 +9,27 @@
  *   - csi_bundler_flush_all() is called explicitly
  *   - a new emit arrives but no slot is free (oldest bundle is forced closed)
  *
- * Threading: emits run on the main loop only, but csi_bundler_snapshot_open()
- * is read from the esp_http_server worker task (the /api/events/today
- * handler serializes open bundles so a live alarm is visible before its
- * bundle closes). The slot table therefore takes a FreeRTOS mutex — the same
- * pattern as csi_event.cpp's ring — and, mirroring csi_event_dismiss's rule,
- * the commit hooks (witness signing, SD append, MQTT) NEVER run under the
- * lock: closes copy the slot out under the mutex and run the hooks from the
- * copy after release, still on the emitting (main-loop) task.
+ * Threading: emits run on the main loop and on the NimBLE host task
+ * (ble.scout's arrivals), and csi_bundler_snapshot_open() is read from the
+ * esp_http_server worker task (the /api/events/today handler serializes
+ * open bundles so a live alarm is visible before its bundle closes). The
+ * slot table therefore takes a FreeRTOS mutex — the same pattern as
+ * csi_event.cpp's ring — and, mirroring csi_event_dismiss's rule, the
+ * commit NEVER runs under it: closes copy the slot out under the mutex and
+ * commit the copy after release, on the emitting task.
+ *
+ * Ids (backlog F46): an open bundle has no event id. It carries a HANDLE
+ * from [kHandleBase, kIdSpaceBase) (csi_event_id_floor.h), which is what
+ * csi_event_emit returns for a buffered emit and what snapshot_open reports
+ * as an open row's id. The bundle takes its event id when it commits, from
+ * the chokepoint's one allocator, through csi_event_commit_bundle_(), which
+ * takes the id and runs the commit hooks under the chokepoint's commit lock.
+ * This file never allocates an event id and never calls a commit hook
+ * itself (check_csi_commit_order.py holds it to that).
  */
 
 #include "csi_bundler.h"
+#include "csi_event_id_floor.h"   /* kHandleBase / kIdSpaceBase */
 
 #include <string.h>
 
@@ -34,21 +44,13 @@
   }
 #endif
 
-/* Forward declaration of the chokepoint's commit hooks. The bundler calls
- * these when a bundle closes so the host application sees the merged row. */
-extern "C" {
-bool csi_event_commit_witness(uint32_t                  event_id,
-                              const char*               module_id,
-                              const char*               type_name,
-                              csi_event_category_t      category,
-                              const csi_event_values_t* values);
-void csi_event_on_committed(uint32_t                  event_id,
-                            const char*               module_id,
-                            const char*               type_name,
-                            csi_event_category_t      category,
-                            csi_privacy_class_t       privacy,
-                            const csi_event_values_t* values);
-}
+/* The chokepoint's commit of a closed bundle (csi_event.cpp, internal to
+ * the library): takes the row's event id from the one allocator and runs
+ * the host's commit hooks, under the chokepoint's commit lock. */
+extern "C" uint32_t csi_event_commit_bundle_(const char*               module_id,
+                                             const char*               type_name,
+                                             csi_privacy_class_t       privacy,
+                                             const csi_event_values_t* values);
 
 #ifndef CSI_BUNDLER_SLOTS
 #define CSI_BUNDLER_SLOTS 8
@@ -70,7 +72,7 @@ void csi_event_on_committed(uint32_t                  event_id,
     };
   }  /* namespace */
 #else
-  namespace { struct SlotLock {}; }  /* host test build is single-threaded */
+  namespace { struct SlotLock { SlotLock() {} }; }  /* host test build is single-threaded */
 #endif
 
 namespace {
@@ -81,7 +83,7 @@ struct Slot {
   char                type_name[CSI_EVENT_NAME_MAX];
   char                state_name[CSI_EVENT_NAME_MAX];
 
-  uint32_t            event_id;
+  uint32_t            handle;        /* not an event id: see the file header */
   uint32_t            opened_ms;
   uint32_t            last_seen_ms;
   csi_event_values_t  values;
@@ -89,8 +91,7 @@ struct Slot {
 };
 
 Slot     g_slots[CSI_BUNDLER_SLOTS] = {};
-uint32_t g_next_event_id = 0x80000000u;  /* high bit set so bundler ids don't
-                                            collide with chokepoint ids. */
+uint32_t g_next_handle = csi_event_id_floor::kHandleBase;
 
 bool same_key(const Slot* s,
               const char* module_id,
@@ -101,10 +102,14 @@ bool same_key(const Slot* s,
       && strcmp(s->state_name, state_name) == 0;
 }
 
-uint32_t allocate_id() {
-  uint32_t id = g_next_event_id++;
-  if (id == 0) id = g_next_event_id++;
-  return id;
+/* An open bundle's handle: [kHandleBase, kIdSpaceBase), wrapping inside
+ * it, so it is never 0 and never an event id. Under the slot lock. */
+uint32_t allocate_handle() {
+  const uint32_t h = g_next_handle++;
+  if (g_next_handle >= csi_event_id_floor::kIdSpaceBase) {
+    g_next_handle = csi_event_id_floor::kHandleBase;
+  }
+  return h;
 }
 
 /* Finalize a bundle's duration into the 16-bit field. uint32_t subtraction
@@ -120,11 +125,10 @@ uint16_t span_seconds(uint32_t opened_ms, uint32_t last_seen_ms) {
 }
 
 /* Close a slot WITH THE LOCK HELD: finalize its fields, park a copy in
- * `pending`, and clear the slot. The commit hooks are deliberately NOT run
- * here — the caller runs run_commit_hooks() on each pending copy after
- * releasing the lock, so witness signing / SD / MQTT never execute under
- * the slot mutex (and never on the httpd task, since only main-loop
- * callers close slots). */
+ * `pending`, and clear the slot. The commit is deliberately NOT run here —
+ * the caller runs commit_closed() on each pending copy after releasing the
+ * lock, so id allocation, witness signing, SD and MQTT never execute under
+ * the slot mutex (and never on the httpd task, which only snapshots). */
 void close_slot_locked(Slot* s, Slot* pending, size_t* npending) {
   if (!s->used) return;
   s->values.duration_sec = span_seconds(s->opened_ms, s->last_seen_ms);
@@ -134,16 +138,11 @@ void close_slot_locked(Slot* s, Slot* pending, size_t* npending) {
   memset(s, 0, sizeof(*s));
 }
 
-/* Commit one closed bundle through the host hooks, from the copy.
- * Witness chain receives only P0 and P1 events (P2 is power-user/local). */
-void run_commit_hooks(const Slot* c) {
-  if (c->values.category != CSI_CATEGORY_AMBIENT
-      && c->privacy <= CSI_PRIVACY_P1) {
-    (void)csi_event_commit_witness(c->event_id, c->module_id, c->type_name,
-                                   c->values.category, &c->values);
-  }
-  csi_event_on_committed(c->event_id, c->module_id, c->type_name,
-                         c->values.category, c->privacy, &c->values);
+/* Commit one closed bundle, from the copy: the chokepoint gives it its
+ * event id and runs the hooks (the witness chain receives only P0 and P1
+ * rows; P2 is power-user/local), all under its commit lock. */
+void commit_closed(const Slot* c) {
+  (void)csi_event_commit_bundle_(c->module_id, c->type_name, c->privacy, &c->values);
 }
 
 Slot* find_open_slot(const char* module_id,
@@ -193,15 +192,15 @@ csi_bundler_outcome_t csi_bundler_admit(const char*         module_id,
                                         const char*         type_name,
                                         csi_privacy_class_t privacy,
                                         csi_event_values_t* values,
-                                        uint32_t*           event_id_out) {
+                                        uint32_t*           handle_out) {
   if (!module_id || !type_name || !values) {
-    if (event_id_out) *event_id_out = 0;
+    if (handle_out) *handle_out = 0;
     return CSI_BUNDLER_DROPPED;
   }
 
   /* Ambient bypasses the bundler entirely. */
   if (values->category == CSI_CATEGORY_AMBIENT) {
-    if (event_id_out) *event_id_out = 0;
+    if (handle_out) *handle_out = 0;
     (void)privacy;
     return CSI_BUNDLER_COMMIT;
   }
@@ -226,7 +225,7 @@ csi_bundler_outcome_t csi_bundler_admit(const char*         module_id,
      * one we can't bundle — return COMMIT and let the chokepoint persist. */
     if ((values->present_fields & CSI_FIELD_STATE_NAME) == 0
         || values->state_name[0] == '\0') {
-      if (event_id_out) *event_id_out = 0;
+      if (handle_out) *handle_out = 0;
       outcome = CSI_BUNDLER_COMMIT;
     } else if (Slot* open = find_open_slot(module_id, type_name, values->state_name)) {
       /* Roll into the existing bundle. */
@@ -265,7 +264,7 @@ csi_bundler_outcome_t csi_bundler_admit(const char*         module_id,
       /* Mirror the live snapshot back to the caller so the dashboard sees the
        * up-to-date bundle row. */
       *values = open->values;
-      if (event_id_out) *event_id_out = open->event_id;
+      if (handle_out) *handle_out = open->handle;
       outcome = CSI_BUNDLER_BUFFERED;
     } else {
       /* New bundle. */
@@ -278,7 +277,7 @@ csi_bundler_outcome_t csi_bundler_admit(const char*         module_id,
       fresh->type_name[sizeof(fresh->type_name) - 1]   = '\0';
       fresh->state_name[sizeof(fresh->state_name) - 1] = '\0';
 
-      fresh->event_id     = allocate_id();
+      fresh->handle       = allocate_handle();
       fresh->opened_ms    = now_ms;
       fresh->last_seen_ms = now_ms;
       fresh->values       = *values;
@@ -286,14 +285,15 @@ csi_bundler_outcome_t csi_bundler_admit(const char*         module_id,
       fresh->values.present_fields |= CSI_FIELD_BUNDLED_COUNT;
       fresh->privacy      = privacy;
 
-      if (event_id_out) *event_id_out = fresh->event_id;
+      if (handle_out) *handle_out = fresh->handle;
       /* New bundle: caller should NOT persist directly. The bundle commits
-       * later through the close path's commit hooks (witness + on_committed). */
+       * later through the close path (commit_closed), and takes its event
+       * id then. */
       outcome = CSI_BUNDLER_BUFFERED;
     }
   }  /* lock released */
 
-  for (size_t i = 0; i < npending; ++i) run_commit_hooks(&pending[i]);
+  for (size_t i = 0; i < npending; ++i) commit_closed(&pending[i]);
   return outcome;
 }
 
@@ -305,7 +305,7 @@ void csi_bundler_tick(void) {
     SlotLock _lock;
     expire_overdue(now_ms, pending, &npending);
   }
-  for (size_t i = 0; i < npending; ++i) run_commit_hooks(&pending[i]);
+  for (size_t i = 0; i < npending; ++i) commit_closed(&pending[i]);
 }
 
 void csi_bundler_flush_all(void) {
@@ -317,7 +317,7 @@ void csi_bundler_flush_all(void) {
       if (g_slots[i].used) close_slot_locked(&g_slots[i], pending, &npending);
     }
   }
-  for (size_t i = 0; i < npending; ++i) run_commit_hooks(&pending[i]);
+  for (size_t i = 0; i < npending; ++i) commit_closed(&pending[i]);
 }
 
 void csi_bundler_flush_key(const char* module_id,
@@ -331,13 +331,13 @@ void csi_bundler_flush_key(const char* module_id,
     Slot* s = find_open_slot(module_id, type_name, state_name);
     if (s) close_slot_locked(s, pending, &npending);
   }
-  if (npending) run_commit_hooks(&pending[0]);
+  if (npending) commit_closed(&pending[0]);
 }
 
 void csi_bundler_reset(void) {
   SlotLock _lock;
   memset(g_slots, 0, sizeof(g_slots));
-  g_next_event_id = 0x80000000u;
+  g_next_handle = csi_event_id_floor::kHandleBase;
 }
 
 size_t csi_bundler_open_count(void) {
@@ -365,7 +365,7 @@ size_t csi_bundler_snapshot_open(csi_event_record_t* out, size_t max) {
       if (!s->used) continue;
       csi_event_record_t* r = &out[n++];
       memset(r, 0, sizeof(*r));
-      r->event_id      = s->event_id;
+      r->event_id      = s->handle;   /* a handle: the row has no event id yet */
       r->first_seen_ms = s->opened_ms;
       r->last_seen_ms  = s->last_seen_ms;
       r->category      = s->values.category;

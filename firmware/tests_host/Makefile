@@ -246,6 +246,21 @@ EVLINE_HDRS = ../common/csi/src/csi_event_log_line.h ../common/csi/src/csi_event
               ../canary/src/csi_event_log.h ../common/csi/src/csi_event_backfill.h
 EVLINE_BIN  = $(BUILD_DIR)/test_csi_event_log_line
 
+# The one event-id space (backlog F46), on the REAL CSI library: csi_event.cpp
+# (the chokepoint's one allocator, which takes every row's id at commit),
+# csi_bundler.cpp (open bundles carry handles and commit through it) and
+# csi_module.cpp. Interleaved bundled and direct rows, bundles closed out of
+# order and across modeled reboots, rise in commit order from kIdSpaceBase,
+# and a model of Home Assistant's replay gate refuses none of them; an
+# upgraded device's next events are accepted with nothing reset. The
+# library's own -Wstringop-truncation at -O2 (a bounded strncpy in the
+# bundler) is not this test's to fix, so it is not an error here.
+IDSPACE_DIR  = ../common/csi/src
+IDSPACE_SRC  = $(IDSPACE_DIR)/csi_event.cpp $(IDSPACE_DIR)/csi_bundler.cpp $(IDSPACE_DIR)/csi_module.cpp
+IDSPACE_HDRS = $(IDSPACE_DIR)/csi_event.h $(IDSPACE_DIR)/csi_bundler.h $(IDSPACE_DIR)/csi_module.h \
+               $(IDSPACE_DIR)/csi_types.h $(IDFLOOR_HDR)
+IDSPACE_BIN  = $(BUILD_DIR)/test_csi_event_id_space
+
 # The canary's reconnect backfill from that log
 # (common/csi/src/csi_event_backfill.h, backlog F37): whole outages, reboots
 # and card faults replayed against a model of Home Assistant's replay gate —
@@ -642,6 +657,10 @@ $(EVLINE_BIN): test_csi_event_log_line.cpp $(EVLINE_HDRS) Makefile | $(BUILD_DIR
 $(BACKFILL_BIN): test_csi_event_backfill.cpp $(BACKFILL_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -I ../common/csi/src test_csi_event_backfill.cpp -o $@
 
+$(IDSPACE_BIN): test_csi_event_id_space.cpp $(IDSPACE_SRC) $(IDSPACE_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD -I $(IDSPACE_DIR) \
+	    test_csi_event_id_space.cpp $(IDSPACE_SRC) -o $@
+
 $(PORTAL_BIN): test_setup_portal_logic.cpp $(PORTAL_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_setup_portal_logic.cpp -o $@
 
@@ -738,7 +757,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -764,6 +783,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(CONTACT_BIN)
 	./$(EVWIRE_BIN)
 	./$(IDFLOOR_BIN)
+	./$(IDSPACE_BIN)
 	./$(EVLINE_BIN)
 	./$(BACKFILL_BIN)
 	./$(PORTAL_BIN)
