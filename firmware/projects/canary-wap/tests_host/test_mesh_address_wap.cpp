@@ -322,8 +322,10 @@ void test_a_frame_from_another_members_address_moves_nothing() {
 }
 
 void test_a_member_whose_address_changed_is_not_heard_until_re_paired() {
-  // A changed radio address (a swapped module, a reflash that sets a new
-  // one) now means a re-pair, as on the PlatformIO tree: A keeps sending
+  // A changed radio address (B's NVS, which holds its key, moved to
+  // another board) now means a re-pair, as on the PlatformIO tree; a
+  // swapped module comes back with a new key and joins as a new member.
+  // Until then A keeps sending
   // to the address the pairing bound and drops B's frames from the new
   // one. (B reboots to change its address, so its counters restart at 1;
   // its frame 1 would drop as a replay either way, and frame 2 is the one
