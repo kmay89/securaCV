@@ -609,11 +609,21 @@ jobs:
           fi
       - name: Board-facts snapshot shape (vendor pin maps — refreshed by board-facts-freshness.yml)
         run: python3 canary-local/tools/gen_board_facts.py
+      - name: WAP data drift (parsed from the canary-wap firmware + docs)
+        # Before the Hub step: gen_homeassistant.py prints the WAP's retained
+        # topics from wap.json in its "Meet the fleet" step, so a stale
+        # wap.json is named here, with both generators, in one round.
+        run: |
+          python3 canary-local/tools/gen_wap.py
+          if ! git diff --exit-code -- canary-local/devices/wap.json; then
+            echo "::error::generated WAP data stale — run canary-local/tools/gen_wap.py, then canary-local/tools/gen_homeassistant.py (the Hub page's fleet step reads wap.json), and commit both (the firmware moved)"
+            exit 1
+          fi
       - name: Hub data drift (deterministic run — upstream snapshot preserved verbatim)
         run: |
           python3 canary-local/tools/gen_homeassistant.py
           if ! git diff --exit-code -- canary-local/devices/homeassistant.json; then
-            echo "::error::generated hub data stale — run canary-local/tools/gen_homeassistant.py and commit"
+            echo "::error::generated hub data stale — run canary-local/tools/gen_homeassistant.py and commit (it reads devices/wap.json: after a gen_wap.py change, run gen_wap.py first)"
             exit 1
           fi
       - name: Hub image drift (derived from the Hub snapshot + flasher safety gate + HA assets)
@@ -693,13 +703,6 @@ jobs:
           python3 canary-local/tools/gen_start.py
           if ! git diff --exit-code -- canary-local/devices/start.json; then
             echo "::error::generated guide data stale — run canary-local/tools/gen_start.py and commit"
-            exit 1
-          fi
-      - name: WAP data drift (parsed from the canary-wap firmware + docs)
-        run: |
-          python3 canary-local/tools/gen_wap.py
-          if ! git diff --exit-code -- canary-local/devices/wap.json; then
-            echo "::error::generated WAP data stale — run canary-local/tools/gen_wap.py and commit (the firmware moved)"
             exit 1
           fi
       - name: Vision data drift (parsed from the canary-vision firmware + docs)
