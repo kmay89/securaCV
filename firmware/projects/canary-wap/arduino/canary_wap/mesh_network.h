@@ -192,6 +192,7 @@ struct OperaPeer {
   PeerState state;
   uint64_t msg_counter_tx;                  // Outgoing message counter
   uint64_t msg_counter_rx;                  // Last received counter
+  uint64_t msg_counter_tx_reserved;         // Highest tx counter stored in NVS (F71)
   uint32_t last_seen_ms;                    // Last heartbeat received
   uint32_t last_tx_ms;                      // Last message sent
   int8_t rssi;                              // Signal strength

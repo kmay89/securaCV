@@ -8,8 +8,10 @@
 // receiver's ESP-NOW callback and update(). Every frame here was built by
 // the sender's own send path and judged by the receiver's own receive path.
 //
-// Sweep item F74 was a way the opera went
+// Sweep items F71 and F74: each was a way the opera went
 // quiet, or a pairing went wrong, with nothing reporting it.
+//   F71  a rebooted device's frames dropped as replays at every member
+//        that had heard it (its send counters restarted at 1);
 //   F74  a joiner's DISCOVER went nowhere once the ESP-NOW broadcast peer
 //        was gone (mesh_network relied on other modules to register it,
 //        and its own channel-change listener deleted it);
@@ -303,6 +305,124 @@ Traffic run(const std::vector<Device*>& devs, uint32_t ms, uint32_t step_ms = 50
   return t;
 }
 
+// ── F71: a reboot resumes above every counter a member can have seen ────
+//
+// canary-wap counts per destination: each member has its own
+// msg_counter_tx. Receivers keep and persist their last-seen counter for
+// each sender and drop anything not above it. load_peers used to start
+// every counter at 1 again, so after a reboot every member that had heard
+// this device dropped its frames as replays until the counter for that
+// member climbed back past what it last saw: one heartbeat per 30 s.
+// Each member's counter is now reserved ahead in NVS (the PlatformIO
+// tree's F33 part 3, per member): before the first counter above its
+// reservation is signed, a new reservation 1024 ahead is stored, and a
+// boot resumes above the stored one.
+
+void test_a_rebooted_member_is_heard_at_once() {
+  fresh_opera({&A, &B, &C});
+  for (int i = 0; i < 5; ++i) deliver(A, B.mac, heartbeat_to(B, A));
+  CHECK(entry(A, B)->msg_counter_rx == 5);
+  boot(B);                                         // B reboots; A remembers 5
+  become(A);
+  const uint32_t received = mn::g_messages_received;
+  const Frame f = heartbeat_to(B, A);
+  CHECK(counter_of(f) > 5);                        // was 1, dropped as a replay
+  deliver(A, B.mac, f);
+  become(A);
+  CHECK(mn::g_messages_received == received + 1);
+  CHECK(entry(A, B)->msg_counter_rx == counter_of(f));
+  std::printf("PASS a_rebooted_member_is_heard_at_once\n");
+}
+
+void test_no_counter_is_signed_twice_across_reboots() {
+  // A boot resumes one past the stored reservation, so a counter signed
+  // before the reboot is never signed again, whatever happened after the
+  // reservation was stored (a crash before the frame went out included):
+  // the cost is a gap, which receivers accept, since they need only
+  // "higher".
+  fresh_opera({&A, &B, &C});
+  std::vector<uint64_t> seen;
+  for (int round = 0; round < 3; ++round) {
+    for (int i = 0; i < 2 + round; ++i) {
+      const Frame f = heartbeat_to(B, A);
+      seen.push_back(counter_of(f));
+      become(A);
+      const uint32_t received = mn::g_messages_received;
+      deliver(A, B.mac, f);
+      become(A);
+      CHECK(mn::g_messages_received == received + 1);   // every one heard
+    }
+    boot(B);
+  }
+  const std::vector<uint64_t> want = {1, 2, kBlock + 1, kBlock + 2, kBlock + 3,
+                                      2 * kBlock + 1, 2 * kBlock + 2, 2 * kBlock + 3,
+                                      2 * kBlock + 4};
+  CHECK(seen == want);
+  std::printf("PASS no_counter_is_signed_twice_across_reboots\n");
+}
+
+void test_the_reservation_costs_one_write_per_block() {
+  // Wear: one NVS write per 1024 frames to a member, not one per frame.
+  fresh_opera({&A, &B, &C});
+  host_sim::nvs_writes.clear();
+  for (int i = 0; i < 2100; ++i) CHECK(frame_to(B, A));   // counters 1..2100
+  CHECK(host_sim::nvs_writes[kTxKey] == 3);               // at 1, 1025 and 2049
+  for (int i = 0; i < 1100; ++i) CHECK(frame_to(B, C));   // 1..1100 for C
+  CHECK(host_sim::nvs_writes[kTxKey] == 5);               // C's at 1 and 1025
+  // One record holds both members' reservations: fingerprint + u64 each.
+  CHECK(nvs_value(B, kTxKey).size() == 2 * (mn::FINGERPRINT_SIZE + 8));
+  boot(B);
+  B.espnow.sent.clear();
+  CHECK(frame_to(B, A) && frame_to(B, C));
+  CHECK(counter_of(sent_to(B, A.mac).back()) == 3 * kBlock + 1);
+  CHECK(counter_of(sent_to(B, C.mac).back()) == 2 * kBlock + 1);
+  std::printf("PASS the_reservation_costs_one_write_per_block\n");
+}
+
+void test_a_reservation_that_cannot_be_stored_refuses_the_frame() {
+  // A counter is never signed before its reservation is durable: when NVS
+  // refuses the write, the frame is not sent, and the counter is not spent.
+  fresh_opera({&A, &B, &C});
+  B.espnow.sent.clear();
+  host_sim::nvs_writes_fail = true;
+  CHECK(!frame_to(B, A));                          // the first needs a reservation
+  host_sim::nvs_writes_fail = false;
+  CHECK(sent_to(B, A.mac).empty());
+  CHECK(frame_to(B, A));
+  CHECK(counter_of(sent_to(B, A.mac).back()) == 1);
+  for (uint64_t i = 2; i <= kBlock; ++i) CHECK(frame_to(B, A));
+  host_sim::nvs_writes_fail = true;
+  CHECK(!frame_to(B, A));                          // 1025 crosses the reservation
+  CHECK(!frame_to(B, C));                          // and C's first needs one
+  host_sim::nvs_writes_fail = false;
+  CHECK(sent_to(B, C.mac).empty());
+  CHECK(counter_of(sent_to(B, A.mac).back()) == kBlock);
+  CHECK(frame_to(B, A));
+  CHECK(counter_of(sent_to(B, A.mac).back()) == kBlock + 1);
+  boot(B);
+  CHECK(frame_to(B, A));
+  CHECK(counter_of(sent_to(B, A.mac).back()) == 2 * kBlock + 1);
+  std::printf("PASS a_reservation_that_cannot_be_stored_refuses_the_frame\n");
+}
+
+void test_a_damaged_reservation_record_is_logged_and_replaced() {
+  // A record that is not whole entries is not trusted for any member: the
+  // counters start at 1 (as before F71), the boot says so, and the next
+  // reservation writes a whole record again.
+  fresh_opera({&A, &B, &C});
+  CHECK(frame_to(B, A));
+  CHECK(nvs_value(B, kTxKey).size() == mn::FINGERPRINT_SIZE + 8);
+  B.nvs[kTxKey].pop_back();
+  g_health.clear();
+  boot(B);
+  CHECK(logged("opera: send-counter reservations unreadable"));
+  B.espnow.sent.clear();
+  CHECK(frame_to(B, A));
+  CHECK(counter_of(sent_to(B, A.mac).back()) == 1);
+  CHECK(nvs_value(B, kTxKey).size() == mn::FINGERPRINT_SIZE + 8);
+  std::printf("PASS a_damaged_reservation_record_is_logged_and_replaced\n");
+}
+
 // ── F74: the DISCOVER registers the broadcast peer it is sent to ────────
 //
 // ESP-NOW sends only to a registered address, the broadcast one included
@@ -370,6 +490,13 @@ struct Test {
   void (*fn)();
 };
 const Test kTests[] = {
+    {"a_rebooted_member_is_heard_at_once", test_a_rebooted_member_is_heard_at_once},
+    {"no_counter_is_signed_twice_across_reboots", test_no_counter_is_signed_twice_across_reboots},
+    {"the_reservation_costs_one_write_per_block", test_the_reservation_costs_one_write_per_block},
+    {"a_reservation_that_cannot_be_stored_refuses_the_frame",
+     test_a_reservation_that_cannot_be_stored_refuses_the_frame},
+    {"a_damaged_reservation_record_is_logged_and_replaced",
+     test_a_damaged_reservation_record_is_logged_and_replaced},
     {"a_discover_goes_out_with_no_broadcast_peer_registered",
      test_a_discover_goes_out_with_no_broadcast_peer_registered},
     {"a_channel_change_re_adds_the_broadcast_peer", test_a_channel_change_re_adds_the_broadcast_peer},

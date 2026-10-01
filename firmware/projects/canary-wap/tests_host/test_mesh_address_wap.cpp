@@ -327,9 +327,9 @@ void test_a_member_whose_address_changed_is_not_heard_until_re_paired() {
   // swapped module comes back with a new key and joins as a new member.
   // Until then A keeps sending
   // to the address the pairing bound and drops B's frames from the new
-  // one. (B reboots to change its address, so its counters restart at 1;
-  // its frame 1 would drop as a replay either way, and frame 2 is the one
-  // the old code re-bound on.)
+  // one. (B reboots to change its address; since F71 its counter for A
+  // resumes above every one A has heard, so these frames would pass the
+  // replay gate, and only the address drops them.)
   fresh_opera();
   deliver(A, B.mac, b_heartbeat_to(A));
   const uint8_t old_mac[6] = {B.mac[0], B.mac[1], B.mac[2], B.mac[3], B.mac[4], B.mac[5]};
@@ -337,7 +337,10 @@ void test_a_member_whose_address_changed_is_not_heard_until_re_paired() {
   boot(B);
   for (int i = 0; i < 2; ++i) {
     const Frame f = b_heartbeat_to(A);
+    CHECK(counter_of(f) > 1);                    // fresh to the replay gate
+    const uint32_t failures = a_view_of_b().auth_failures;
     deliver(A, B.mac, f);
+    CHECK(a_view_of_b().auth_failures == failures + 1);   // the address drops it
   }
   mn::OperaPeer* pb = entry(A, B);
   CHECK(same_mac(pb->mac_addr, old_mac));
@@ -452,18 +455,19 @@ void test_a_re_pair_re_binds_the_member_it_holds() {
   become(B);
   CHECK(mn::g_peer_count == 2);
   CHECK(same_mac(entry(B, A)->mac_addr, A.mac));
-  // B rebooted to change its address, so its counter for A restarted at 1
-  // (F71, open): A drops B's frames 1..3 as replays, from B's new
-  // address too, and hears frame 4.
-  for (uint64_t want = 1; want <= 3; ++want) {
+  // B rebooted to change its address. Its counter for A resumes one past
+  // the block it reserved before the reboot (F71, test_mesh_liveness_wap),
+  // so A hears B's very first frame after the re-pair, from B's new
+  // address. (Until F71 B's counter restarted at 1, and this pinned that
+  // A dropped B's frames 1..3 as replays and first heard frame 4.)
+  {
     const Frame f = b_heartbeat_to(A);
-    CHECK(counter_of(f) == want);
+    CHECK(counter_of(f) == mn::TX_COUNTER_RESERVE_BLOCK + 1);
     const uint32_t received = a_view_of_b().received;
     deliver(A, B.mac, f);
-    CHECK(a_view_of_b().received == received);
+    CHECK(a_view_of_b().received == received + 1);
+    CHECK(entry(A, B)->msg_counter_rx == mn::TX_COUNTER_RESERVE_BLOCK + 1);
   }
-  deliver(A, B.mac, b_heartbeat_to(A));
-  CHECK(entry(A, B)->msg_counter_rx == 4);
   // A frame from the old address now drops like one from any other.
   const uint64_t rx = entry(A, B)->msg_counter_rx;
   deliver(A, old_mac, b_heartbeat_to(A));
