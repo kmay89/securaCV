@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### The canary and canary-wap meshes no longer learn a member's radio address from a frame, and canary-wap's pairing waits for both owners (#1761)
+### The canary and canary-wap meshes no longer learn a member's radio address from a frame, canary-wap's pairing waits for both owners, the Canary and the Canary WAP give every event one id space, the Lab's WAP page shows real fingerprints, and the display's onboarding bird, lines and halo sit where they should (#1761)
 
 - **The canary mesh no longer learns a peer's radio address from a frame
   (sweep F49 part 3, withdrawn).** #1756 let a verified opera frame from an
@@ -51,6 +51,58 @@
   of its 19 tests fail on the old code. **Host-tested only**: the Arduino
   compile is CI's, and the canary-wap mesh (in the default build, active
   once an owner forms an opera) has not run on two radios.
+- **One event-id space on the Canary and the Canary WAP (sweep F46).**
+  Presence and tamper rows that went through the CSI bundler took their
+  ids from a second counter (0x80000000 up, restarted every boot). So Home
+  Assistant refused as replays the ordinary rows after any presence row,
+  and every presence row after a reboot. Every committed row now takes its
+  id when it commits, from one allocator that starts at 0xC0000000 on
+  every device, under a lock that keeps ids in order between the main loop
+  and the Bluetooth task. An upgraded device needs no reset in Home
+  Assistant: its next ids are above anything older firmware sent. The SD
+  event log now reads ids as unsigned 32-bit numbers (the ESP32's 32-bit
+  `long` cut them off). Neither backfill sends or credits a card line at or
+  above the allocator's next id, so a forged id cannot push Home
+  Assistant's mark or the id floor toward the wrap; below that bound the
+  card is still trusted (F79). A device whose delivery record an older
+  firmware pushed there resumes its backfill once it is re-pinned in Home
+  Assistant. **Host-tested only**: the ESP32 builds are CI's, and nothing
+  was checked on a bench. The HACS mirror's copy of the new integration
+  test follows in a resync (sweep U6).
+- **The Lab's WAP page shows real fingerprints (sweep A25).** Its signed
+  MQTT examples and its boot log showed an 8-digit key fingerprint. A
+  Canary WAP's signed publishes carry 16 lowercase hex digits, and its boot
+  log prints the same 16 in capitals. The page now shows both spellings,
+  for the same test key the firmware and Home Assistant tests use. A new
+  page test fails on any fingerprint or public-key example in a Lab page's
+  generated data whose length or case differs from what that product
+  prints. Page data only; it reaches users with the next Lab and Flasher
+  release.
+- **The display's onboarding bird sits where its host placed it, no
+  onboarding line is cut on small glass, and the halo clears the text rows
+  and the QR card (sweep F64-F66).** canary_mark took the bird's base from
+  LVGL's laid-out box, which reads 0 before the first layout pass and the
+  anchor plus the offset after it. It now reads the host's own offset from
+  its anchor (`lv_obj_get_style_x/y`). A native LVGL 8.4 harness showed
+  every face's bird off its seat: the onboarding bird walked off the round
+  watch a scene at a time, and the 7" portrait column's sat over the clock.
+  Each now draws at its anchor plus its offset. On small glass the halo
+  sits between the Join title and credentials rows, concentric with the QR
+  card. On the touch169 the card's canvas gives up 6-8 px so its corners
+  clear the ring; the module pitch stays the same. The onboarding's titles
+  and bodies are fitted inside the halo at their own latitude through
+  `fit_line()`'s ladder. Two lines have shorter forms, "Check your phone"
+  and "No address". The portrait glass needs them. The touch169 and the
+  AMOLED now show them too, because their lines sit inside the halo where
+  their old full-width rows held the whole lines (a decision, F86). A long
+  network name keeps its head and tail around "...". `test_canary_mark_seat`
+  and `test_onboard_scenes` (new) compile the real canary_mark.cpp and
+  onboard_ui.cpp against a model of LVGL 8's position rules and hold what
+  they draw; `test_onboard_layout` holds the layout rules on every
+  small-glass env. The onboard probe now also fails on a cut PhoneJoined
+  or Fail line. The emulator dist is rebuilt in this PR by CI's pinned
+  emsdk. **Host-tested only**: the ESP32 builds are CI's, and nothing was
+  checked on a bench.
 
 ### Home Assistant verifies a Canary WAP's signed publishes and the WAP now sends them in lowercase, Canary Sense and Sentinel show their full key, a Canary Display files a WAP's beacons on its own row and fits its join hints on narrow glass, the WAP's Bluetooth Device Info keeps its id, and the Quiet Hours wheels center (#1727)
 
