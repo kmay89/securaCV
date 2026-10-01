@@ -99,6 +99,7 @@ uint32_t                 s_last_published_event_id = 0;
  * ids are never read as delivered (csi_event_backfill::ceiling_for). */
 constexpr const char*    NVS_KEY_DELIVERED = "csi.evsent";
 uint32_t                 s_delivered_ceiling = 0;
+bool                     s_watermark_restored = false;
 Config                   s_active_cfg   = {};
 /* Broker TLS state. The CA lives here (not in Config: a 3 KB PEM has no
  * business on an httpd handler's stack) because esp_mqtt keeps the pointer
@@ -481,16 +482,23 @@ bool init(const char* device_id,
    * boot (s_client is nullptr). */
   teardown_client();
 
-  /* F47: restore the delivery watermark from the persisted ceiling.
-   * max(): a config-POST re-init must never move a live watermark back.
+  /* F47: restore the delivery watermark from the persisted ceiling — on
+   * the boot-time init() ONLY. The ceiling is written kStride ahead of
+   * the id it covers, so on a runtime re-init (a /api/mqtt/config POST,
+   * the connection test) reading it back would jump a live watermark
+   * past ids committed but not yet handed over, and iterate_since()
+   * would then skip them for good; the RAM watermark is exact while the
+   * firmware runs, so a re-init keeps it. Only a reboot loses it, and
+   * only there is the stride's skip the accepted trade.
    * With no ceiling on record (the first boot of this firmware), every
    * id below the restored id floor is treated as delivered — an earlier
    * image may have published it, and HA would refuse it again — and the
    * record starts here, written now so rows still on the card survive a
    * reboot as owed instead of falling under the same assumption
    * (csi_event_backfill::Planner::begin's rule; a ceiling is never 0).
-   * A failed write retries on the next init or the next hand-over. */
-  {
+   * A failed write retries on the next hand-over. */
+  if (!s_watermark_restored) {
+    s_watermark_restored = true;
     Preferences prefs;
     if (prefs.begin(SETTINGS_NS, /*readOnly=*/true)) {
       s_delivered_ceiling = (uint32_t)prefs.getULong(NVS_KEY_DELIVERED, 0);
