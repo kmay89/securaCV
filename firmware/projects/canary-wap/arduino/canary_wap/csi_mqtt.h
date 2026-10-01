@@ -141,10 +141,10 @@ bool init(const char* device_id,
           const char* public_key_hex);
 
 /**
- * Per-tick pump. Currently a no-op (esp_mqtt manages its own task and
- * supervises reconnection internally), but reserved as the place to
- * land any future main-loop synchronization (e.g. backfill events from
- * the SD ring once SD persistence lands).
+ * Per-tick pump, main loop. esp_mqtt manages its own task and supervises
+ * reconnection internally; this runs the committed-event egress
+ * (csi_event_egress::pump): the SD event log, the live publishes and the
+ * reconnect backfill, all on this task.
  */
 void loop();
 
@@ -185,9 +185,10 @@ bool publish_tamper_bridge(const char* module_id,
                            const char* type_name,
                            const csi_event_values_t* values);
 
-/** True exactly once after each MQTT_EVENT_CONNECTED: the SD backfill
- *  should run (csi_event_egress::pump drains it on the main loop). */
-bool take_backfill_request();
+/** A broker is configured (the bridge is enabled and names a host): the
+ *  committed events are owed to it. False rows are logged and owed to
+ *  nobody (csi_event_egress.h). Any task. */
+bool accepting();
 
 /**
  * Publish HA MQTT auto-discovery payloads for the canary's full entity

@@ -325,6 +325,34 @@ clean-evlog-dismiss:
 run: run-evlog-dismiss
 clean: clean-evlog-dismiss
 
+# The committed-event egress (backlog F78): the REAL csi_event_egress.cpp,
+# csi_event_log.cpp over the RAM card and the staged CSI chokepoint, with
+# the staged csi_event_backfill.h planner, against a model of Home
+# Assistant's replay gate. A row committed between a reconnect and the
+# loop's drain (a direct row, a closed bundle) waits behind the backlog;
+# a commit inside the backfill walk publishes nothing and moves no
+# watermark; reboots, no broker, dismissals, send and append failures,
+# forged card lines, the RAM hold and the queue bound. stubs/egress: a
+# FreeRTOS queue, Preferences, a clock the test moves.
+EGRESS_BIN = test_wap_event_egress
+EGRESS_SRC = test_wap_event_egress.cpp
+EGRESS_LIB = $(SRC_DIR)/csi_event_egress.cpp $(EVLOAD_LIB)
+
+$(EGRESS_BIN): $(EGRESS_SRC) $(EGRESS_LIB) $(SRC_DIR)/csi_event_egress.h $(SRC_DIR)/csi_event_log.h \
+               $(SRC_DIR)/csi_event.h $(SRC_DIR)/csi_event_backfill.h $(SRC_DIR)/csi_event_log_line.h \
+               $(SRC_DIR)/csi_event_id_floor.h $(SRC_DIR)/csi_mqtt.h \
+               $(wildcard stubs/egress/*.h stubs/egress/freertos/*.h stubs/sd_fake/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	  -I stubs/egress -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EGRESS_SRC) $(EGRESS_LIB)
+
+.PHONY: run-wap-egress clean-wap-egress
+run-wap-egress: $(EGRESS_BIN)
+	$(call run_marked,$(EGRESS_BIN))
+clean-wap-egress:
+	rm -f $(EGRESS_BIN)
+run: run-wap-egress
+clean: clean-wap-egress
+
 # The differential-privacy budget (dp.h / dp.cpp) is enforced and fails
 # closed: all-or-nothing reservations, value-independent refusals, exact
 # exhaustion, a refill only on the 4 h uptime clock (never on a manual

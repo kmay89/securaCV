@@ -8,10 +8,13 @@
  * Pure: no Arduino, no SD, no MQTT, no clock. The host does the I/O through
  * a Port and passes the link state and time in. Used by the canary PIO tree
  * (src/csi_event_egress.cpp over its loop-task SD adapter,
- * src/csi_event_log.cpp); the canary-wap sketch carries a staged copy
- * (check_csi_sync.sh) but still drives its own csi_event_log backfill.
- * Host-tested by firmware/tests_host/test_csi_event_backfill.cpp, which
- * replays whole outages against a model of Home Assistant's replay gate.
+ * src/csi_event_log.cpp) and, from a staged copy (check_csi_sync.sh), by the
+ * canary-wap sketch (csi_event_egress.cpp over its csi_event_log.cpp
+ * adapter, backlog F78). Host-tested by
+ * firmware/tests_host/test_csi_event_backfill.cpp, which replays whole
+ * outages against a model of Home Assistant's replay gate, and on the
+ * canary-wap by tests_host/test_wap_event_egress.cpp, against the real SD
+ * event log and CSI library.
  *
  * The rule every choice below serves: Home Assistant's replay gate
  * (custom_components/securacv/sensor.py `_replay_gate`) refuses a signed
@@ -129,8 +132,7 @@ inline uint32_t ceiling_for(uint32_t id, uint32_t id_floor) {
   return (id_floor > id && id_floor < c) ? id_floor : c;
 }
 
-/* The delivery record a host restores at boot: Planner::begin's rule, and
- * the canary-wap's csi_mqtt::init applies it to its own backfill. From the
+/* The delivery record a host restores at boot: Planner::begin's rule. From the
  * ceiling NVS holds (`nvs_ceiling`, 0 = none) and the event-id floor NVS
  * holds (`id_floor`, 0 = none): `through` is the watermark, `write` the
  * ceiling to persist now (0 = keep the one NVS holds).

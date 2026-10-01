@@ -2,7 +2,8 @@
  * csi_event_log.cpp uses (cardType, exists, mkdir, open, remove, rename;
  * File's bool, size, seek, available, read, write, close), over a map of
  * path -> bytes. A test inserts, pulls and fills the card through
- * SD.files / SD.dirs / SD.present, and counts writes through SD.writes. */
+ * SD.files / SD.dirs / SD.present, counts writes through SD.writes, and
+ * makes every write fail through SD.fail_writes. */
 #ifndef STUB_SD_FAKE_SD_H
 #define STUB_SD_FAKE_SD_H
 
@@ -67,6 +68,7 @@ class FakeSD {
   std::map<std::string, std::string> files;
   std::set<std::string> dirs;
   size_t writes = 0;   // every byte-changing call: write, mkdir, remove, rename, open-for-write
+  bool fail_writes = false;   // File::write writes nothing (a card that refuses writes)
 
   sdcard_type_t cardType() const { return present ? CARD_SDHC : CARD_NONE; }
   bool exists(const char* p) const {
@@ -113,7 +115,7 @@ inline FakeSD& fake_sd_instance() {
 #define SD fake_sd_instance()
 
 inline size_t File::write(const uint8_t* buf, size_t n) {
-  if (!data_ || !writable_) return 0;
+  if (!data_ || !writable_ || fake_sd_instance().fail_writes) return 0;
   fake_sd_instance().writes++;
   data_->append((const char*)buf, n);
   pos_ = data_->size();

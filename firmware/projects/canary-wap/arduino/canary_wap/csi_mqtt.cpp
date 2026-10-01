@@ -53,12 +53,9 @@ constexpr const char* DEFAULT_PREFIX = "securacv";
 
 esp_mqtt_client_handle_t s_client       = nullptr;
 std::atomic<bool>        s_connected{false};
-/* Set to true on every CONNECTED event; drained on the main loop by
- * csi_event_egress::pump (take_backfill_request), which walks the SD log
- * and replays anything past its delivery watermark. We don't backfill
- * from inside the MQTT event callback because that fires on the MQTT
- * task and would contend with the main loop's append() path. */
-std::atomic<bool>        s_backfill_pending{false};
+/* A broker is configured (accepting()): written by init(), which a config
+ * POST runs on the httpd task, read by the egress on the loop task. */
+std::atomic<bool>        s_accepting{false};
 /* Inbound firmware-update commands. MQTT_EVENT_DATA fires on the
  * esp_mqtt task; flash-cycle decisions belong on the main loop, so the
  * handler only latches these flags and the .ino drains them via
@@ -199,12 +196,11 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
         }
       }
 #endif
-      /* Flag the main loop to walk the SD log and backfill any events
-       * the broker missed during the outage. We don't drain here
-       * because the MQTT event handler runs on its own task and a
-       * file-system walk on this critical path would block reconnect
-       * fastpath callbacks. */
-      s_backfill_pending.store(true, std::memory_order_relaxed);
+      /* No events from here: the egress (csi_event_egress.cpp) runs on the
+       * main loop, sees the link up on its next pass and resumes the SD
+       * backfill itself, in id order, before anything committed since. A
+       * file-system walk on this task would block the reconnect fastpath,
+       * and a publish from it would race the backfill. */
       break;
     }
     case MQTT_EVENT_DATA: {
@@ -462,11 +458,12 @@ bool init(const char* device_id,
    * boot (s_client is nullptr). */
   teardown_client();
 
-  /* The events egress restores its delivery watermark once per boot
-   * (csi_event_egress::begin; a re-init keeps it). */
-  csi_event_egress::begin();
-
+  /* The delivery watermark is not this function's: the egress restores it
+   * once per boot (csi_event_egress::begin, from csi_integration::init after
+   * the event-id floor), and a re-init keeps it. */
   if (!config_load(&s_active_cfg)) return false;
+  s_accepting.store(s_active_cfg.enabled && s_active_cfg.host[0] != '\0',
+                    std::memory_order_relaxed);
   if (!s_active_cfg.enabled) {
     Serial.println("[MQTT] disabled in NVS — bridge not started");
     return true;
@@ -556,12 +553,13 @@ bool init(const char* device_id,
 }
 
 void loop() {
-  /* The events egress: the SD backfill CONNECTED asked for. */
+  /* The committed-event egress: the SD log, the live publishes and the
+   * reconnect backfill, on this (the main loop's) task. */
   csi_event_egress::pump();
 }
 
-bool take_backfill_request() {
-  return s_backfill_pending.exchange(false, std::memory_order_relaxed);
+bool accepting() {
+  return s_accepting.load(std::memory_order_relaxed);
 }
 
 bool connected() {

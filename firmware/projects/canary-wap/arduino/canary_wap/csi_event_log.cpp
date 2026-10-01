@@ -2,19 +2,19 @@
  * @file csi_event_log.cpp
  * @brief SD-backed event persistence — see csi_event_log.h for contract.
  *
- * Threading: append() and iterate_since() can fire from the same main
- * loop / HTTP-handler context that already serializes through the
- * httpd worker pool, so no extra mutex is needed. The MQTT task
- * calls iterate_since on reconnect — that path is also serialized
- * (we drain on the main loop, not in the MQTT event callback) to
- * avoid contending with append().
+ * Threading: loop task only (csi_event_log.h). The events egress
+ * (csi_event_egress.cpp) is the log's writer and its backfill's reader, and
+ * runs in its pump on the loop task; the commit hook only queues rows for
+ * it. Dismissal lines and the boot reload run on the loop task too. Only
+ * queue_dismissal() is called from another task (the HTTP handler), and it
+ * touches nothing but an atomic queue.
  *
  * Failure model: every SD operation is best-effort. The dashboard's
  * Today sheet still reads from the in-memory ring, and the MQTT
- * bridge still publishes live events through csi_event_on_committed;
- * persistence failures degrade history coverage but don't break
- * functionality. Errors are logged via Serial only when SD is
- * supposed to be available — silent when no card is mounted.
+ * bridge still publishes rows the card could not keep (the egress holds
+ * them in RAM, in order); persistence failures degrade history coverage
+ * but don't break functionality. Errors are logged via Serial only when
+ * SD is supposed to be available — silent when no card is mounted.
  */
 
 #include "csi_event_log.h"
@@ -52,7 +52,7 @@ namespace {
 
 constexpr const char* DIR_PATH = "/EVENTS";
 
-/* Scratch path for the atomic-rewrite dance head_truncate_if_oversized
+/* Scratch path for the atomic-rewrite dance head_truncate
  * uses. Living next to LOG_PATH (same directory) keeps both files on
  * the same FAT cluster chain so SD.rename() stays a single directory-
  * entry update — the only operation FAT guarantees as atomic against
@@ -83,7 +83,7 @@ void reconcile_truncate_remnants();
  * back to false whenever we see CARD_NONE, then on the next ready
  * transition we run reconcile_truncate_remnants once before
  * returning true. So a card inserted long after boot still gets a
- * cleanup pass before any append() can call head_truncate. */
+ * cleanup pass before any append can call head_truncate. */
 bool sd_path_ready() {
   static bool s_reconciled = false;
   static bool s_foreign_said = false;
@@ -160,17 +160,28 @@ bool sd_path_ready() {
  * truncate inside the kill-by-watchdog window is negligible. */
 constexpr size_t STREAM_BUF_SZ = 1024u;
 
-bool head_truncate_if_oversized() {
+/* The log's size after a truncation (head_truncate sets it; the adapter
+ * below keeps it). */
+uint32_t s_size = 0;
+
+/* Returns the bytes dropped from the head (0 = nothing dropped). `*broken`
+ * = the old log is gone but the rename failed: the survivors sit in the
+ * .tmp file, which only the next mount's reconcile may promote, so the log
+ * must not be written again until the card is pulled (an append would
+ * create a fresh log, and the reconcile would then drop the survivors). */
+uint32_t head_truncate(bool* broken) {
   File f = SD.open(LOG_PATH, FILE_READ);
-  if (!f) return true;  /* nothing to truncate */
+  if (!f) return 0;  /* nothing to truncate */
   const size_t sz = f.size();
-  if (sz < MAX_BYTES) { f.close(); return true; }
+  if (sz < MAX_BYTES) { f.close(); return 0; }
 
   const size_t drop = sz / 4;
   /* Walk to the first line break at or after `drop` so we don't
    * leave a half-line at the new head. */
-  if (!f.seek(drop)) { f.close(); return false; }
+  if (!f.seek(drop)) { f.close(); return 0; }
+  size_t cut = drop;
   while (f.available()) {
+    cut++;
     if (f.read() == '\n') break;
   }
 
@@ -182,7 +193,7 @@ bool head_truncate_if_oversized() {
    * retries truncation from scratch, and a reboot triggers reconcile
    * which would also clean a stranded .tmp. */
   File w = SD.open(TMP_PATH, FILE_WRITE);
-  if (!w) { f.close(); return false; }
+  if (!w) { f.close(); return 0; }
 
   uint8_t stream_buf[STREAM_BUF_SZ];
   bool stream_ok = true;
@@ -198,7 +209,7 @@ bool head_truncate_if_oversized() {
   w.close();
   if (!stream_ok) {
     SD.remove(TMP_PATH);
-    return false;
+    return 0;
   }
 
   /* Step 2: commit. The remove + rename pair is the irreducible non-
@@ -208,14 +219,16 @@ bool head_truncate_if_oversized() {
    * will see TMP_PATH alone on the next mount and promote it. */
   SD.remove(LOG_PATH);
   if (!SD.rename(TMP_PATH, LOG_PATH)) {
-    Serial.println("[EVT-LOG] truncate rename failed — reconcile will recover on next mount");
-    return false;
+    Serial.println("[EVT-LOG] truncate rename failed — log closed; reconcile will recover on next mount");
+    *broken = true;
+    return 0;
   }
-  return true;
+  s_size = (uint32_t)(sz - cut);
+  return (uint32_t)cut;
 }
 
 /* Boot-time reconciliation for the atomic-rewrite states described in
- * head_truncate_if_oversized's comment. Runs once from init(). The
+ * head_truncate's comment. Runs on each mount (sd_path_ready). The
  * three observable shapes after a crash mid-rewrite are:
  *
  *   - Both LOG_PATH and TMP_PATH exist  → rewrite was interrupted
@@ -327,13 +340,13 @@ bool for_each_tail_line(line_fn_t fn, void* user) {
   return true;
 }
 
-/* A dismissal on the card. append() writes every original with
+/* A dismissal on the card. The egress logs every original with
  * "dismissed":0, whatever the ring row says by then (a dismissal can land
- * between the commit and the hook's copy of the row: csi_integration.cpp's
- * commit hook reads the ring after the MQTT publish), so a line with
+ * between the commit and the hook's copy of the row, which the egress
+ * appends a loop pass later), so a line with
  * "dismissed":1 is never an original: it is the dismissal of the record with
  * that id, a copy of the ring row written by flush_dismissals() through
- * write_record(). load_into_ring() honors it and iterate_since() does not
+ * write_record(). load_into_ring() honors it and the egress's backfill does not
  * replay it. The line format stays csi_event_log_line.h's, shared with the
  * canary PIO tree: the rule is who writes the 1, not a new key. */
 bool is_dismissal(const csi_event_record_t* rec) { return rec->values.dismissed != 0; }
@@ -387,7 +400,7 @@ void restore_line(const char* line, void* user) {
 
 /* Dismissals queued by queue_dismissal() on whatever task served the
  * request, and written by flush_dismissals() on the loop task, where every
- * other write to the log happens (append() from the chokepoint, the head
+ * other write to the log happens (the egress's append_line(), the head
  * truncate inside it). A zero slot is free; event id 0 is never an event. */
 constexpr size_t kPendingDismissals = 8;
 std::atomic<uint32_t> s_pending_dismissals[kPendingDismissals];
@@ -398,26 +411,154 @@ std::atomic<uint32_t> s_pending_dismissals[kPendingDismissals];
 std::atomic<bool> s_load_armed{false};
 bool s_load_latched = false;
 
-/* One line, as `rec` says, at the end of the log. */
-bool write_record(const csi_event_record_t* rec) {
-  if (!sd_path_ready()) return false;
-  /* Pre-truncate so the next append doesn't blow past MAX_BYTES.
-   * Cheap when below cap (single stat). */
-  head_truncate_if_oversized();
+/* ── The egress's card adapter (poll / append_line / read_at) ──────────── */
 
-  char line[512];
-  const size_t n = csi_event_log_line::marshal(rec, line, sizeof(line));
-  if (n == 0) return false;
+bool     s_open = false;       /* the log is usable now */
+bool     s_reported = false;   /* what the last poll told the egress */
+bool     s_evaluated = false;  /* this card was looked at since it went in */
+bool     s_needs_seal = false; /* the log ends in a torn line: '\n' first */
+uint32_t s_tail_id = 0;
 
+/* No mount attempt in flight and a card in the slot: the cheap check every
+ * card call makes (the owner file and /EVENTS are checked once, at open). */
+bool card_present() {
+  return !sd_mount_in_flight() && SD.cardType() != CARD_NONE;
+}
+
+/* The id of the last row in buf[0..n): the last whole, well-formed line
+ * that is not a dismissal; 0 when there is none. `head_is_line_start` says
+ * whether buf[0] starts a line (the file's start) or may be mid-line. */
+uint32_t last_row_in(const char* buf, size_t n, bool head_is_line_start) {
+  size_t end = n;
+  while (end > 0 && buf[end - 1] != '\n') --end;   /* drop a torn fragment */
+  while (end > 0) {
+    const size_t nl = end - 1;
+    size_t start = nl;
+    while (start > 0 && buf[start - 1] != '\n') --start;
+    if (start == 0 && !head_is_line_start) break;   /* a partial line */
+    const size_t len = nl - start;
+    if (len > 0 && len < csi_event_log_line::kLineMax) {
+      char line[csi_event_log_line::kLineMax];
+      memcpy(line, buf + start, len);
+      line[len] = '\0';
+      csi_event_record_t rec;
+      if (csi_event_log_line::parse(line, &rec) && rec.values.dismissed == 0) {
+        return rec.event_id;
+      }
+    }
+    end = start;
+  }
+  return 0;
+}
+
+/* The log's last row, read backwards a window at a time, up to
+ * TAIL_SCAN_MAX bytes: dismissal lines (copies of older rows) can follow
+ * the last row, and the planner must not take an older id for the card's
+ * newest. A window is longer than any line, so a line cut by one window's
+ * start is whole in the next. */
+constexpr size_t TAIL_SCAN_WINDOW = 768;
+static_assert(TAIL_SCAN_WINDOW > csi_event_log_line::kLineMax,
+              "a line cut by a window's start must fit the next window whole");
+
+uint32_t last_row_id(File& f, uint32_t size) {
+  char buf[TAIL_SCAN_WINDOW];
+  uint32_t end = size;
+  uint32_t scanned = 0;
+  while (end > 0 && scanned < TAIL_SCAN_MAX) {
+    const uint32_t start = (end > TAIL_SCAN_WINDOW) ? end - (uint32_t)TAIL_SCAN_WINDOW : 0;
+    if (!f.seek(start)) return 0;
+    const int got = f.read((uint8_t*)buf, end - start);
+    if (got <= 0 || (uint32_t)got != end - start) return 0;
+    const uint32_t id = last_row_in(buf, (size_t)got, start == 0);
+    if (id != 0 || start == 0) return id;
+    /* Next window ends just after this one's first line break: the line
+     * this window cut is whole there. */
+    const char* nl = static_cast<const char*>(memchr(buf, '\n', (size_t)got));
+    if (!nl) return 0;   /* a window with no line break: not our format */
+    const uint32_t next_end = start + (uint32_t)(nl - buf) + 1;
+    scanned += end - next_end;
+    end = next_end;
+  }
+  return 0;
+}
+
+/* A card that went in: its log's size, last row and torn tail. False when
+ * the card is not usable for the log (a canary base's, /EVENTS missing and
+ * not creatable, or the log will not open). */
+bool open_log() {
+  s_size = 0;
+  s_tail_id = 0;
+  s_needs_seal = false;
+  if (!sd_path_ready()) return false;      /* owner file, /EVENTS, reconcile */
+  if (!SD.exists(LOG_PATH)) return true;   /* created by the first append */
+  File f = SD.open(LOG_PATH, FILE_READ);
+  if (!f) return false;
+  s_size = (uint32_t)f.size();
+  if (s_size > 0) {
+    if (f.seek(s_size - 1)) {
+      const int last = f.read();
+      s_needs_seal = (last >= 0 && last != '\n');
+    }
+    s_tail_id = last_row_id(f, s_size);
+  }
+  f.close();
+  return true;
+}
+
+/* One line at the end of the log, while it is open. `may_cut`: a committed
+ * row's append may drop the oldest quarter first; a dismissal's may not (the
+ * egress's planner learns of a cut only from its own appends), so at the cap
+ * a dismissal is refused and holds for this boot only. */
+csi_event_backfill::AppendResult append_bytes(const char* line, size_t len, bool may_cut) {
+  csi_event_backfill::AppendResult r = {false, s_size, 0};
+  if (!s_open || !card_present() || !line || len == 0) return r;
+  if (s_size >= MAX_BYTES) {
+    if (!may_cut) return r;
+    bool broken = false;
+    const uint32_t cut = head_truncate(&broken);
+    if (broken) {
+      s_open = false;   /* the next poll reports it closed */
+      r.size = s_size;
+      return r;
+    }
+    r.cut = cut;
+  }
   /* FILE_APPEND on the Arduino-ESP32 SD library opens for write and
    * seeks to the end. SD.h's flush() is implicit on close(); we
    * close after every write so a power cut at most loses the
    * in-flight line and not the file structure. */
   File f = SD.open(LOG_PATH, FILE_APPEND);
-  if (!f) return false;
-  const size_t wrote = f.write((const uint8_t*)line, n);
+  if (!f) {
+    r.size = s_size;
+    return r;
+  }
+  if (s_needs_seal) {
+    if (f.write((const uint8_t*)"\n", 1) != 1) {
+      f.close();
+      r.size = s_size;
+      return r;
+    }
+    s_size += 1;
+    s_needs_seal = false;
+  }
+  const size_t wrote = f.write((const uint8_t*)line, len);
   f.close();
-  return wrote == n;
+  s_size += (uint32_t)wrote;
+  r.size = s_size;
+  if (wrote != len) {
+    if (wrote > 0) s_needs_seal = true;   /* a torn line now ends the log */
+    return r;
+  }
+  r.ok = true;
+  return r;
+}
+
+/* One dismissal line, as `rec` says, at the end of the log. */
+bool write_record(const csi_event_record_t* rec) {
+  char line[csi_event_log_line::kLineMax];
+  const size_t n = csi_event_log_line::marshal(rec, line, sizeof(line));
+  if (n == 0) return false;
+  return append_bytes(line, n, /*may_cut=*/false).ok;
 }
 
 }  /* namespace */
@@ -449,14 +590,49 @@ bool init() {
   return true;
 }
 
-bool append(const csi_event_record_t* rec) {
-  if (!rec) return false;
-  /* The original, never the dismissal: see is_dismissal(). A dismissal that
-   * reached the ring row before the hook copied it is written after this
-   * line by flush_dismissals(), since queue_dismissal() queued it. */
-  csi_event_record_t original = *rec;
-  original.values.dismissed = 0;
-  return write_record(&original);
+CardChange poll(uint32_t* size, uint32_t* tail_id) {
+  bool opened_now = false;
+  if (!card_present()) {
+    s_open = false;
+    s_evaluated = false;
+  } else if (!s_evaluated) {
+    /* A card that went in since the last look (or the first look this
+     * boot): looked at once while it stays in, so a refused or broken log
+     * stays closed until the card is pulled. */
+    s_evaluated = true;
+    s_open = open_log();
+    opened_now = s_open;
+  }
+  if (opened_now) {
+    s_reported = true;
+    if (size) *size = s_size;
+    if (tail_id) *tail_id = s_tail_id;
+    Serial.printf("[EVT-LOG] %s open: %lu bytes, last row %lu\n", LOG_PATH,
+                  (unsigned long)s_size, (unsigned long)s_tail_id);
+    return CardChange::kOpened;
+  }
+  if (s_reported && !s_open) {
+    s_reported = false;
+    return CardChange::kClosed;
+  }
+  return CardChange::kUnchanged;
+}
+
+csi_event_backfill::AppendResult append_line(const char* line, size_t len) {
+  return append_bytes(line, len, /*may_cut=*/true);
+}
+
+size_t read_at(uint32_t off, char* buf, size_t cap) {
+  if (!s_open || !card_present() || !buf || cap == 0) return 0;
+  File f = SD.open(LOG_PATH, FILE_READ);
+  if (!f) return 0;
+  size_t got = 0;
+  if (f.seek(off)) {
+    const int n = f.read((uint8_t*)buf, cap);
+    got = (n > 0) ? (size_t)n : 0;
+  }
+  f.close();
+  return got;
 }
 
 void arm_load() { s_load_armed.store(true); }
@@ -522,7 +698,7 @@ size_t flush_dismissals() {
     const uint32_t id = s_pending_dismissals[i].exchange(0);
     if (id == 0) continue;
     /* The ring row, as the dismissal left it: the same record, in the same
-     * line format, that append() already wrote for this id, with
+     * line format, that the egress already logged for this id, with
      * "dismissed":1. */
     csi_event_record_t rec;
     if (!csi_event_find(id, &rec) || !rec.values.dismissed) continue;
@@ -540,55 +716,13 @@ size_t flush_dismissals() {
 void test_rearm_load() {
   s_load_latched = false;
   s_load_armed.store(false);
+  s_open = false;
+  s_reported = false;
+  s_evaluated = false;
+  s_size = 0;
+  s_needs_seal = false;
+  s_tail_id = 0;
 }
 #endif
-
-/* A line the backfill may replay: one record, not a dismissal, above the
- * watermark, and one this device handed out. Every id it handed out is below
- * the allocator's next one (a line is appended after its id is taken), so a
- * line at or above it is forged or foreign: replayed, it would go out signed
- * with this device's key, raise Home Assistant's mark past every real id and
- * the delivery ceiling with it, which the next boot holds the id floor above
- * (backlog F46). Read per line, so a row committed during the walk is not
- * mistaken for one. */
-static bool replayable(const char* line, uint32_t since_event_id, csi_event_record_t* rec) {
-  return csi_event_log_line::parse(line, rec) && !is_dismissal(rec) &&
-         rec->event_id > since_event_id &&
-         rec->event_id < csi_event_get_next_event_id();
-}
-
-size_t iterate_since(uint32_t since_event_id, iterate_cb_t cb, void* user) {
-  if (!cb || !sd_path_ready()) return 0;
-  File f = SD.open(LOG_PATH, FILE_READ);
-  if (!f) return 0;
-
-  size_t emitted = 0;
-  char line[512];
-  size_t li = 0;
-  while (f.available() && emitted < BACKFILL_MAX) {
-    const int c = f.read();
-    if (c < 0) break;
-    if (c == '\n') {
-      line[li] = '\0';
-      csi_event_record_t rec;
-      if (replayable(line, since_event_id, &rec)) {
-        if (!cb(&rec, user)) { f.close(); return emitted; }
-        emitted++;
-      }
-      li = 0;
-    } else if (li < sizeof(line) - 1) {
-      line[li++] = (char)c;
-    }
-  }
-  if (li > 0 && emitted < BACKFILL_MAX) {
-    line[li] = '\0';
-    csi_event_record_t rec;
-    if (replayable(line, since_event_id, &rec)) {
-      if (cb(&rec, user)) emitted++;
-    }
-  }
-  f.close();
-  return emitted;
-}
 
 }  /* namespace csi_event_log */

@@ -1,144 +1,299 @@
 /**
  * @file csi_event_egress.cpp
- * @brief See csi_event_egress.h. Moved verbatim in behavior from
- *        csi_mqtt.cpp (the watermark, its NVS ceiling and the iterate_since
- *        backfill) and csi_integration.cpp's commit hook (the live publish
- *        and the SD append).
+ * @brief The canary-wap's committed-event egress (backlog F78). See the
+ *        header for the threading and the order it keeps.
+ *
+ * The decisions are csi_event_backfill.h's Planner (staged copy), the same
+ * the canary PIO tree's src/csi_event_egress.cpp runs; this file is the
+ * glue: the commit queue, the card through csi_event_log's adapter, the
+ * wire through csi_mqtt, the NVS ceiling, and the one thing the canary does
+ * not need, a RAM hold for rows the card does not keep (closed bundles,
+ * backlog F77), so they wait behind the backlog instead of overtaking it.
  */
 
 #include "csi_event_egress.h"
 
-#include "csi_event_backfill.h"   /* staged copy — ceiling_for, restore (F47, F46) */
-#include "csi_event_id_floor.h"   /* staged copy — must_persist, the shared write cadence */
 #include "csi_event_log.h"
 #include "csi_integration.h"
 #include "csi_mqtt.h"
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+
+#include <new>
+#include <stdlib.h>
 #include <string.h>
 
 namespace csi_event_egress {
 
 namespace {
 
+using csi_event_backfill::AppendResult;
+using csi_event_backfill::Link;
+using csi_event_backfill::Route;
+using csi_event_backfill::Sent;
+using csi_mqtt::EventSend;
+
 constexpr const char* SETTINGS_NS = "csi";
 
-/* Highest event_id published since boot. The live publish and the
- * backfill replay both update it; on a clean run after an HA outage the
- * next CONNECTED triggers iterate_since(this) which only emits the events
- * the broker missed. Across a reboot begin() restores it from the delivery
- * CEILING below (F47): replaying "today's full log" sent up to
- * BACKFILL_MAX ids Home Assistant's replay gate refuses — HA can only have
- * verified ids this device handed over, and the ceiling is always above
- * every one of those. */
-uint32_t s_last_published_event_id = 0;
-/* The delivery ceiling NVS holds (0 = none yet) under NVS_KEY_DELIVERED
- * (csi_mqtt.h): csi_event_backfill's rule over this sketch's own
- * iterate_since backfill — the same key the canary PIO tree's egress
- * writes, persisted BEFORE an id is handed over, capped at the id
- * allocator's persisted floor so a new boot's ids are never read as
- * delivered (csi_event_backfill::ceiling_for). */
-uint32_t s_delivered_ceiling = 0;
-bool     s_watermark_restored = false;
+/* Sixteen rows: one bundler tick can close all eight bundle slots at once,
+ * and ambient rows commit about once a second, so the queue holds a full
+ * close plus a stalled pass or two. A full queue means the loop task is
+ * stuck, and then dropping (counted) beats blocking the committing task,
+ * which may be the NimBLE host task. */
+constexpr UBaseType_t kQueueDepth = 16;
+constexpr int         kPumpBudget = 8;   /* rows per loop pass */
+/* Rows the card does not keep, waiting their turn in RAM. */
+constexpr size_t      kHeldMax    = 8;
 
-/* csi_event_backfill's persist_for, over this sketch's NVS (F47): before
- * an id is handed over, NVS must already hold a ceiling above it, capped
- * at the id allocator's persisted floor. A failed write leaves
- * s_delivered_ceiling unchanged so the next hand-over tries again; the
- * row still goes out — delivery cannot wait on flash, the same trade the
- * id floor makes. */
-void persist_delivered_ceiling(uint32_t event_id) {
-  if (event_id == 0) return;
-  if (!csi_event_id_floor::must_persist(s_delivered_ceiling, event_id)) return;
-  const uint32_t c = csi_event_backfill::ceiling_for(
-      event_id, csi_integration::event_id_floor_stored());
-  Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return;
-  const bool wrote = prefs.putULong(csi_mqtt::NVS_KEY_DELIVERED, (unsigned long)c) > 0;
-  prefs.end();
-  if (wrote) s_delivered_ceiling = c;
+/* One committed row, copied out of the chokepoint's callback. */
+struct Committed {
+  csi_event_record_t rec;
+  bool               ring;   /* a ring row: the kind the SD log keeps */
+};
+
+struct Held {
+  csi_event_record_t rec;
+  bool               fresh;  /* committed while the link was up: not a replay */
+};
+
+Sent to_sent(EventSend s) {
+  switch (s) {
+    case EventSend::kSent:        return Sent::kYes;
+    case EventSend::kUnbuildable: return Sent::kNever;
+    case EventSend::kNotNow:      break;
+  }
+  return Sent::kNotNow;
 }
 
-/* The "publish-then-advance-watermark" pattern, so the live emit and the
- * backfill replay agree on what counts as "HA has seen this id" (PR #395
- * review r3213834627): the watermark advances only when the enqueue
- * succeeded AND the id is higher than what we already tracked. Returns the
- * publish outcome so the backfill can stop mid-replay (PR #395 review
- * r3213834314). */
-bool publish_and_advance(const csi_event_record_t& rec, uint16_t bundled, bool replay) {
-  persist_delivered_ceiling(rec.event_id);
-  if (csi_mqtt::publish_event_row(rec, bundled, replay) != csi_mqtt::EventSend::kSent) {
-    return false;
+struct State;
+
+/* The planner's side of the device: the card (csi_event_log's adapter),
+ * the wire (csi_mqtt) and the NVS ceiling. */
+class WapPort : public csi_event_backfill::Port {
+ public:
+  explicit WapPort(State* st) : m_st(st) {}
+
+  bool      row_on_card = true;    /* the row being committed may go on the card */
+  bool      flushing    = false;   /* commit() is handing over a row from the RAM hold */
+  bool      flush_fresh = false;
+  EventSend last        = EventSend::kSent;   /* the last publish this port made */
+
+  AppendResult card_append(const char* line, size_t len) override;
+  size_t card_read(uint32_t off, char* buf, size_t cap) override {
+    return csi_event_log::read_at(off, buf, cap);
   }
-  if (rec.event_id > s_last_published_event_id) {
-    s_last_published_event_id = rec.event_id;
+  Sent send_live(const csi_event_record_t& rec) override;
+  Sent send_backfill(const csi_event_record_t& rec, bool fresh) override;
+  bool hand_to_queue(const csi_event_record_t& rec, bool deferred) override;
+  bool persist_ceiling(uint32_t ceiling) override {
+    Preferences prefs;
+    if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return false;
+    const bool wrote = prefs.putULong(csi_mqtt::NVS_KEY_DELIVERED, (unsigned long)ceiling) > 0;
+    prefs.end();
+    return wrote;
+  }
+
+ private:
+  /* Rows in the RAM hold older than `id` go first. False = one could not
+   * go now (it stays, and so does `id`). */
+  bool send_held_below(uint32_t id);
+  State* m_st;
+};
+
+/* Everything the pump owns. Loop task only. On the heap (PSRAM when there
+ * is one), not in .bss: the planner's read buffer and the RAM hold are
+ * ~2.7 KB, and the full build's internal-DRAM .bss is the tight budget. */
+struct State {
+  csi_event_backfill::Planner planner;
+  WapPort  port;
+  Held     held[kHeldMax];
+  size_t   held_head = 0;
+  size_t   held_count = 0;
+  uint32_t held_dropped = 0;
+  uint32_t held_dropped_said = 0;
+  uint32_t dropped_said = 0;
+  uint32_t replay_run = 0;   /* rows replayed in the current backlog */
+
+  State() : port(this) {}
+
+  const Held& front() const { return held[held_head]; }
+  void pop() {
+    held_head = (held_head + 1) % kHeldMax;
+    --held_count;
+  }
+  /* Rows arrive in id order (the commit lock orders the queue), so the
+   * hold stays in id order; past kHeldMax the oldest goes. */
+  void push(const csi_event_record_t& rec, bool fresh) {
+    if (held_count == kHeldMax) {
+      pop();
+      ++held_dropped;
+    }
+    Held& h = held[(held_head + held_count) % kHeldMax];
+    h.rec = rec;
+    h.fresh = fresh;
+    ++held_count;
+  }
+  void clear() {
+    held_head = 0;
+    held_count = 0;
+  }
+};
+
+State*        g_state = nullptr;
+/* Written once by begin() (loop task), read by on_committed() from any
+ * task: published with release/acquire. */
+QueueHandle_t s_queue = nullptr;
+uint32_t      s_dropped = 0;   /* atomic add from the committing task */
+
+AppendResult WapPort::card_append(const char* line, size_t len) {
+  /* A row the card does not keep (a closed bundle, or a row from the RAM
+   * hold): refused here, so the planner takes its not-on-card route. */
+  if (!row_on_card) return AppendResult{false, m_st->planner.log_size(), 0};
+  return csi_event_log::append_line(line, len);
+}
+
+bool WapPort::send_held_below(uint32_t id) {
+  while (m_st->held_count > 0 && m_st->front().rec.event_id < id) {
+    const Held& h = m_st->front();
+    /* The planner wrote the ceiling for `id` before this send, and every
+     * held id is below it, so NVS already covers them. */
+    if (csi_mqtt::publish_event_row(h.rec, /*bundled=*/1, /*replay=*/!h.fresh) ==
+        EventSend::kNotNow) {
+      return false;
+    }
+    m_st->pop();   /* sent, or a body that can never build: gone either way */
   }
   return true;
 }
 
-/* iterate_since callback used by the backfill drain. We stop iterating
- * the moment either the broker drops OR a publish fails to enqueue
- * (queue full, network glitch, etc.) so the watermark doesn't tick
- * past a record that never reached HA — letting later successful
- * publishes "skip over" the failed one would permanently lose the
- * event on subsequent reconnects (PR #395 review r3213834314). The
- * next CONNECTED rearms the request and we resume from the unchanged
- * watermark. For backfill, the timestamp is the event's first_seen_ms
- * so HA's history places it at the right moment instead of "now", the
- * bundled count comes straight from the on-disk record, and is_replay
- * marks the payload so HA Device Triggers can filter it out (PR #398
- * review r3214114357). */
-bool backfill_publish_cb(const csi_event_record_t* rec, void* /*user*/) {
-  if (!csi_mqtt::connected()) return false;
-  return publish_and_advance(*rec, rec->bundled_count, /*replay=*/true);
+/* A row committed just now, on the card, nothing older on the card: it
+ * still waits while older rows wait in RAM (they go first, in send_backfill,
+ * once the backfill reaches it). */
+Sent WapPort::send_live(const csi_event_record_t& rec) {
+  if (m_st->held_count > 0) return Sent::kNotNow;
+  last = csi_mqtt::publish_event_row(rec, /*bundled=*/1, /*replay=*/false);
+  return to_sent(last);
+}
+
+/* A row from the card, in id order. Rows waiting in RAM below it go first.
+ * A dismissal line is the owner's local record (csi_event_log.h), never
+ * replayed. */
+Sent WapPort::send_backfill(const csi_event_record_t& rec, bool fresh) {
+  if (rec.values.dismissed != 0) return Sent::kNever;
+  if (!send_held_below(rec.event_id)) return Sent::kNotNow;
+  last = csi_mqtt::publish_event_row(rec, rec.bundled_count, /*replay=*/!fresh);
+  return to_sent(last);
+}
+
+/* A row that is not on the card. From the RAM hold (flushing): publish it.
+ * Otherwise (its append failed, or nothing was waiting when it was routed
+ * here): live when nothing older waits and the link is up; else it waits
+ * in RAM behind the older rows instead of overtaking them, and the planner
+ * is told it was not handed over (so the watermark does not move). */
+bool WapPort::hand_to_queue(const csi_event_record_t& rec, bool deferred) {
+  if (flushing) {
+    last = csi_mqtt::publish_event_row(rec, /*bundled=*/1, /*replay=*/!flush_fresh);
+    return last == EventSend::kSent;
+  }
+  if (!deferred && !m_st->planner.pending() && m_st->held_count == 0) {
+    last = csi_mqtt::publish_event_row(rec, /*bundled=*/1, /*replay=*/false);
+    if (last == EventSend::kSent) return true;
+    if (last == EventSend::kUnbuildable) return false;
+  }
+  m_st->push(rec, /*fresh=*/!deferred);
+  return false;
+}
+
+Link current_link() {
+  Link link;
+  link.accepting = csi_mqtt::accepting();
+  link.connected = csi_mqtt::connected();
+  link.id_floor  = csi_integration::event_id_floor_stored();
+  link.now_ms    = (uint32_t)millis();
+  /* Every id this device handed out is below the allocator's next one, so
+   * a card line at or above it is not ours: the planner never sends or
+   * credits it (backlog F46). */
+  link.id_next   = csi_event_get_next_event_id();
+  return link;
+}
+
+/* One dequeued row. A row the card keeps goes to the planner (on the card;
+ * live when nothing older waits, held on the card otherwise). A row it does
+ * not keep waits in RAM while anything older waits or the link is down,
+ * and otherwise goes to the planner's not-on-card route (live now). */
+void route(const Committed& ev, const Link& link) {
+  State& st = *g_state;
+  const bool card_row = ev.ring && st.planner.card_ok();
+  if (!card_row && link.accepting &&
+      (st.planner.pending() || st.held_count > 0 || !link.connected)) {
+    st.push(ev.rec, /*fresh=*/link.connected);
+    return;
+  }
+  st.port.row_on_card = card_row;
+  (void)st.planner.commit(ev.rec, link, st.port);
+  st.port.row_on_card = true;
+}
+
+/* Rows in the RAM hold, once nothing older waits on the card: through the
+ * planner, so each is under the NVS ceiling before it goes and the
+ * watermark follows it. */
+void flush_held(const Link& link) {
+  State& st = *g_state;
+  while (st.held_count > 0 && link.accepting && link.connected && !st.planner.pending()) {
+    const Held h = st.front();
+    st.port.row_on_card = false;
+    st.port.flushing = true;
+    st.port.flush_fresh = h.fresh;
+    const Route r = st.planner.commit(h.rec, link, st.port);
+    st.port.flushing = false;
+    st.port.row_on_card = true;
+    if (r != Route::kQueued && st.port.last != EventSend::kUnbuildable) break;  /* next pass */
+    st.pop();
+  }
+}
+
+void* egress_alloc(size_t n) {
+#if defined(ARDUINO)
+  void* p = ps_malloc(n);
+  return p ? p : malloc(n);
+#else
+  return malloc(n);
+#endif
 }
 
 }  // namespace
 
 void begin() {
-  /* F47: restore the delivery watermark from the persisted ceiling — on
-   * the boot-time call ONLY. The ceiling is written kStride ahead of the
-   * id it covers, so on a runtime re-init (a /api/mqtt/config POST, the
-   * connection test) reading it back would jump a live watermark past ids
-   * committed but not yet handed over, and iterate_since() would then skip
-   * them for good; the RAM watermark is exact while the firmware runs, so
-   * a re-init keeps it. Only a reboot loses it, and only there is the
-   * stride's skip the accepted trade.
-   * The rule is csi_event_backfill::restore(), Planner::begin's, host-
-   * tested in test_csi_event_backfill.cpp. With no ceiling on record (the
-   * first boot of this firmware), every id below the restored id floor is
-   * treated as delivered — an earlier image may have published it, and HA
-   * would refuse it again — and the record starts here, written now so
-   * rows still on the card survive a reboot as owed instead of falling
-   * under the same assumption (a ceiling is never 0). A ceiling the id
-   * allocator did not follow (past kHoldLimit; an older firmware wrote one
-   * for a forged card line) is no record either (backlog F46): kept, it
-   * would read every row this boot commits as delivered, on every boot.
-   * A failed write retries on the next hand-over. */
-  if (s_watermark_restored) return;
-  s_watermark_restored = true;
-  Preferences prefs;
-  if (prefs.begin(SETTINGS_NS, /*readOnly=*/true)) {
-    s_delivered_ceiling = (uint32_t)prefs.getULong(csi_mqtt::NVS_KEY_DELIVERED, 0);
-    prefs.end();
+  if (g_state) return;
+  void* mem = egress_alloc(sizeof(State));
+  if (!mem) {
+    Serial.println("[EVT] event egress unavailable (no memory) - events stay local");
+    return;
   }
-  const csi_event_backfill::Restored restored = csi_event_backfill::restore(
-      s_delivered_ceiling, csi_integration::event_id_floor_stored());
-  if (restored.through > s_last_published_event_id) {
-    s_last_published_event_id = restored.through;
+  g_state = new (mem) State();
+  if (!__atomic_load_n(&s_queue, __ATOMIC_ACQUIRE)) {
+    QueueHandle_t q = xQueueCreate(kQueueDepth, sizeof(Committed));
+    if (!q) {
+      Serial.println("[EVT] event egress queue unavailable - events stay local");
+    }
+    __atomic_store_n(&s_queue, q, __ATOMIC_RELEASE);
   }
-  if (restored.write != 0) {
-    s_delivered_ceiling = 0;   /* no record until the rewrite lands */
-    Preferences rw;
-    if (rw.begin(SETTINGS_NS, /*readOnly=*/false)) {
-      const uint32_t c = s_last_published_event_id + 1;
-      if (rw.putULong(csi_mqtt::NVS_KEY_DELIVERED, (unsigned long)c) > 0) {
-        s_delivered_ceiling = c;
-      }
-      rw.end();
+  /* The delivery record: Planner::begin restores the watermark from the
+   * ceiling NVS holds (csi_event_backfill::restore: no ceiling, or one the
+   * allocator did not follow, is no record, and everything below the
+   * restored id floor counts as delivered). */
+  uint32_t ceiling = 0;
+  {
+    Preferences prefs;
+    if (prefs.begin(SETTINGS_NS, /*readOnly=*/true)) {
+      ceiling = (uint32_t)prefs.getULong(csi_mqtt::NVS_KEY_DELIVERED, 0);
+      prefs.end();
     }
   }
+  g_state->planner.begin(ceiling, csi_integration::event_id_floor_stored(), g_state->port);
 }
 
 void on_committed(uint32_t                  event_id,
@@ -147,67 +302,121 @@ void on_committed(uint32_t                  event_id,
                   csi_event_category_t      category,
                   csi_privacy_class_t       privacy,
                   const csi_event_values_t* values) {
-  if (!values) return;
-  /* Forward to MQTT (no-op when the bridge is disabled or the broker is
-   * unreachable): the live body, stamped now, bundled 1, not a replay.
-   * event_id flows through so the watermark tracks the high-water-mark
-   * for backfill on reconnect. */
-  csi_event_record_t live;
-  memset(&live, 0, sizeof(live));
-  live.event_id      = event_id;
-  live.first_seen_ms = (uint32_t)millis();
-  live.last_seen_ms  = live.first_seen_ms;
-  live.category      = category;
-  live.privacy       = privacy;
-  live.bundled_count = 1;
-  live.values        = *values;
-  strncpy(live.module_id, module_id ? module_id : "?", CSI_EVENT_NAME_MAX - 1);
-  strncpy(live.type_name, type_name ? type_name : "?", CSI_EVENT_NAME_MAX - 1);
-  (void)publish_and_advance(live, /*bundled=*/1, /*replay=*/false);
-  (void)csi_mqtt::publish_tamper_bridge(module_id, type_name, values);
-
-  /* Persist to SD so today's history survives a reboot AND so the MQTT
-   * bridge can backfill HA after an outage (csi_event_log iterate_since
-   * walks the same file). The full record (including first_seen_ms /
-   * last_seen_ms / bundled_count, which the bundler filled in inside the
-   * ring) lives in the in-memory ring; pull a copy via csi_event_find so
-   * the on-disk row matches what csi_event_recent would return. The HTTP
-   * task can dismiss the row between its commit and this copy (the MQTT
-   * publish above sits in between); append() writes it "dismissed":0
-   * regardless, and the queued dismissal follows as its own line
-   * (csi_event_log.h, queue_dismissal), so the original is never mistaken
-   * for a dismissal and lost. */
-  csi_event_record_t persist_rec;
-  if (csi_event_find(event_id, &persist_rec)) {
-    csi_event_log::append(&persist_rec);
+  QueueHandle_t q = __atomic_load_n(&s_queue, __ATOMIC_ACQUIRE);
+  if (!values || !q) return;
+  Committed c;
+  memset(&c, 0, sizeof(c));
+  /* A ring row (stateless and ambient commits) is the record the SD log
+   * keeps: the ring's copy, so the line matches what csi_event_recent
+   * returns (first/last seen, bundled count). csi_event_find takes the ring
+   * lock, which the chokepoint's lock order allows under the commit lock.
+   * Logged as the original: a dismissal that reached the ring row first is
+   * its own later line (csi_event_log.h, queue_dismissal). A closed bundle
+   * never enters the ring (backlog F77): its copy is built from the commit. */
+  if (csi_event_find(event_id, &c.rec)) {
+    c.ring = true;
+    c.rec.values.dismissed = 0;
+  } else {
+    c.ring = false;
+    c.rec.event_id      = event_id;
+    c.rec.first_seen_ms = (uint32_t)millis();
+    c.rec.last_seen_ms  = c.rec.first_seen_ms;
+    c.rec.category      = category;
+    c.rec.privacy       = privacy;
+    c.rec.bundled_count = values->bundled_count;
+    c.rec.values        = *values;
+    strncpy(c.rec.module_id, module_id ? module_id : "?", CSI_EVENT_NAME_MAX - 1);
+    strncpy(c.rec.type_name, type_name ? type_name : "?", CSI_EVENT_NAME_MAX - 1);
+  }
+  /* Never block the committing task (it may be the NimBLE host task). */
+  if (xQueueSend(q, &c, 0) != pdTRUE) {
+    __atomic_add_fetch(&s_dropped, 1u, __ATOMIC_RELAXED);
   }
 }
 
 void pump() {
-  /* Backfill drain. esp_mqtt runs its own task and signals reconnect via
-   * csi_mqtt::take_backfill_request(); we drain on the main loop because
-   * the SD walk can take longer than the MQTT event callback should hold,
-   * and append() also runs on the main loop so we serialize naturally
-   * without a mutex. */
-  if (csi_mqtt::take_backfill_request()) {
-    if (csi_mqtt::connected()) {
-      const size_t n = csi_event_log::iterate_since(
-          s_last_published_event_id, backfill_publish_cb, nullptr);
-      if (n > 0) {
-        Serial.printf("[MQTT] backfill replayed %u events past id=%lu\n",
-                      (unsigned)n, (unsigned long)s_last_published_event_id);
-      }
-    }
+  QueueHandle_t q = __atomic_load_n(&s_queue, __ATOMIC_ACQUIRE);
+  if (!g_state || !q) return;
+  State& st = *g_state;
+  const Link link = current_link();
+
+  /* The card, loop task only (csi_event_log.h). */
+  uint32_t log_size = 0;
+  uint32_t tail_id = 0;
+  switch (csi_event_log::poll(&log_size, &tail_id)) {
+    case csi_event_log::CardChange::kOpened: st.planner.card_open(log_size, tail_id, link); break;
+    case csi_event_log::CardChange::kClosed: st.planner.card_close(); break;
+    case csi_event_log::CardChange::kUnchanged: break;
+  }
+
+  /* No broker configured: the rows are logged and owed to nobody, so a
+   * broker configured later is not sent stale history. */
+  if (!link.accepting) {
+    st.planner.not_owed(link, st.port);
+    st.clear();
+  }
+
+  const uint32_t dropped = __atomic_load_n(&s_dropped, __ATOMIC_RELAXED);
+  if (dropped != st.dropped_said) {
+    st.dropped_said = dropped;
+    Serial.printf("[EVT] egress queue full: %lu committed event(s) not logged or published\n",
+                  (unsigned long)dropped);
+  }
+  if (st.held_dropped != st.held_dropped_said) {
+    st.held_dropped_said = st.held_dropped;
+    Serial.printf("[EVT] %lu event(s) the card could not keep dropped from the RAM hold\n",
+                  (unsigned long)st.held_dropped);
+  }
+
+  Committed ev;
+  for (int budget = kPumpBudget; budget > 0; --budget) {
+    if (xQueueReceive(q, &ev, 0) != pdTRUE) break;
+    /* The per-kind tamper bridge first: HA's tamper sensors match
+     * {"type": <kind>} on the tamper topic, and a tamper alert never waits
+     * on the card or on a backlog. Not retained. */
+    (void)csi_mqtt::publish_tamper_bridge(ev.rec.module_id, ev.rec.type_name, &ev.rec.values);
+    /* Then the row, in its turn. */
+    route(ev, link);
+  }
+
+  /* Backfill: rows the broker has not seen, from the card, in id order, a
+   * bounded amount per pass; then rows waiting in RAM, once nothing older
+   * waits on the card. */
+  const size_t replayed = st.planner.pass(link, st.port);
+  flush_held(link);
+  if (replayed > 0) {
+    st.replay_run += (uint32_t)replayed;
+  } else if (st.replay_run > 0 && !st.planner.pending()) {
+    Serial.printf("[EVT] event backfill done: %lu event(s) from the card\n",
+                  (unsigned long)st.replay_run);
+    st.replay_run = 0;
   }
 }
 
-uint32_t watermark() { return s_last_published_event_id; }
+uint32_t watermark() { return g_state ? g_state->planner.watermark() : 0; }
+
+Stats stats() {
+  Stats s = {};
+  s.dropped = __atomic_load_n(&s_dropped, __ATOMIC_RELAXED);
+  if (g_state) {
+    s.held_dropped = g_state->held_dropped;
+    s.planner = g_state->planner.stats();
+  }
+  return s;
+}
 
 #ifdef CSI_TEST_HOST_BUILD
 void test_reset() {
-  s_last_published_event_id = 0;
-  s_delivered_ceiling = 0;
-  s_watermark_restored = false;
+  if (g_state) {
+    g_state->~State();
+    free(g_state);
+    g_state = nullptr;
+  }
+  if (s_queue) {
+    vQueueDelete(s_queue);
+    s_queue = nullptr;
+  }
+  s_dropped = 0;
 }
 #endif
 

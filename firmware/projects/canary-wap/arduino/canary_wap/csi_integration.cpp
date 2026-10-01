@@ -604,7 +604,8 @@ void apply_filter_foreign_from_nvs() {
  * Lifts the cross-reboot collision in event_id allocation. csi_event
  * starts from g_next_event_id = 1 every boot, so a previous-boot id=50
  * and a current-boot id=50 are indistinguishable to anything that
- * tracks ids — most notably csi_mqtt's reconnect-backfill watermark.
+ * tracks ids — most notably the events egress's reconnect-backfill
+ * watermark (csi_event_egress.cpp).
  * PR #395 worked around it by clearing the SD log on cold boot. This
  * commit removes that workaround by persisting the allocator's next-
  * id to NVS and restoring at boot.
@@ -624,7 +625,7 @@ void apply_filter_foreign_from_nvs() {
  * One id space (backlog F46): the allocator starts at kIdSpaceBase, above
  * every id an older firmware handed out, so a floor an older firmware
  * persisted changes nothing. The restore is boot_floor(): it also holds the
- * floor at or above the MQTT backfill's delivery ceiling (csi_mqtt's
+ * floor at or above the events egress's delivery ceiling (csi_mqtt::
  * NVS_KEY_DELIVERED, in this same namespace), so a boot whose floor writes
  * failed while its ceiling writes did not never reissues an id Home
  * Assistant already has. No extra write: the boot's first allocation is
@@ -2981,10 +2982,23 @@ bool init(httpd_handle_t server, const char* api_token) {
    * monotone across reboots. Done before any module ticks (which can
    * call csi_event_emit and trigger an allocation) so the very first
    * post-reboot id starts at the persisted floor instead of 1. With
-   * this, csi_mqtt's reconnect-backfill watermark stays sound and
+   * this, the events egress's backfill watermark stays sound and
    * csi_event_log no longer needs to wipe the on-disk log on cold
    * boot to avoid id collisions. */
   const bool floor_restored = apply_event_id_floor_from_nvs();
+
+  /* The committed-event egress (csi_event_egress.h): its queue, and its
+   * delivery watermark restored from the NVS ceiling with the floor just
+   * restored (it reads event_id_floor_stored). After the floor, never
+   * before: on the first boot of this firmware (no ceiling yet) the
+   * restore treats every id below the floor as delivered (an earlier image
+   * may have published it), and with no floor it would replay the card's
+   * whole log into Home Assistant's replay gate. Before any module ticks,
+   * so a committed row finds the queue there.
+   * (register_v1_modules above can only open a bundle: ble.scout's
+   * init-failure emit is state-bearing, and a bundle commits, taking its
+   * id, when it closes in loop().) */
+  csi_event_egress::begin();
 
   /* Refill the Today ring from the SD event log's tail. Needs the ceiling
    * and the floor above (csi_event_inject refuses a row this boot could
