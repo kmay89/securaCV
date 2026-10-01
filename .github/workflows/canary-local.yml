@@ -169,6 +169,11 @@ on:
       # table must name exactly the routes mod.rs answers before the token check
       - "src/api/mod.rs"
       - "custom_components/securacv/manifest.json"
+      # gen_homeassistant.py's "Meet the fleet" note says what these two do
+      # with the WAP's wire lines (TOFU pin, envelope check) and refuses to
+      # generate when they move, so the Hub data drift step runs on them
+      - "custom_components/securacv/signature.py"
+      - "custom_components/securacv/__init__.py"
       - "hacs.json"
       - "sbom/README.md"
       # files desktop_parity.test.js reads outside every tree above: the udev
@@ -377,6 +382,11 @@ on:
       # table must name exactly the routes mod.rs answers before the token check
       - "src/api/mod.rs"
       - "custom_components/securacv/manifest.json"
+      # gen_homeassistant.py's "Meet the fleet" note says what these two do
+      # with the WAP's wire lines (TOFU pin, envelope check) and refuses to
+      # generate when they move, so the Hub data drift step runs on them
+      - "custom_components/securacv/signature.py"
+      - "custom_components/securacv/__init__.py"
       - "hacs.json"
       - "sbom/README.md"
       # files desktop_parity.test.js reads outside every tree above: the udev

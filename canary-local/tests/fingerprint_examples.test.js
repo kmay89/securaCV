@@ -25,10 +25,14 @@
 // example a page's hand-written script spells for itself is out of its
 // reach: the Vision page's simulated MQTT pane (assets/vision-ui.js) writes
 // its health row's public_key as "ed25519:…", and canary-vision sends 64
-// bare lowercase hex digits. And it checks the examples that are there, not
-// the ones that are missing: the Home Assistant page's WAP chain line
-// (gen_homeassistant.py) carries no fp at all, so nothing here reads it.
-// Both were found in this sweep's review and are open items of their own.
+// bare lowercase hex digits (an open item of its own, A26).
+//
+// Since A27 it also checks the examples that are missing: every events,
+// chain and counts example must carry the signature envelope, so the Home
+// Assistant page's old WAP chain line (no v, alg or fp) fails below. Since
+// A28 and A29 it holds the names a key or a salt derives (the WAP's device
+// id, SSID and unnamed host; the Sense and Vision pseudonym, host and MQTT
+// client id) to the derivation, not just to a shape.
 //
 // The WAP's examples are also the repo's Ed25519 test key's (seed 0x42 x 32):
 // the key the WAP's tests_host/test_mqtt_identity.cpp builds its events body
@@ -73,9 +77,12 @@ const KEY = testKey();
 // ("any" where the product parses either). pins: [file, literal] pairs that
 // make the spelling the source's, not this file's belief.
 const PAYLOAD = /^\.mqtt\.topics\[\d+\]\.payload$/;
+// The Hub page's "Meet the fleet" wire lines are the WAP's payloads (A27).
+const WAP_WIRE = /^(?:\.mqtt\.topics\[\d+\]\.payload|\.terminal\.chapters\[\d+\]\.steps\[\d+\]\.out\[\d+\])$/;
+const WAP_PAGES = ["wap.json", "homeassistant.json"];
 const RULES = [
   {
-    page: "wap.json", where: PAYLOAD, labels: ["fp"], len: 16, kase: "lower",
+    page: WAP_PAGES, where: WAP_WIRE, labels: ["fp"], len: 16, kase: "lower",
     what: "the WAP's envelope fp (mqtt_identity::fingerprint_hex, sweep HA20)",
     pins: [
       [`${WAP}/mqtt_identity.h`, 'kLowerHex[] = "0123456789abcdef"'],
@@ -86,7 +93,7 @@ const RULES = [
     ],
   },
   {
-    page: "wap.json", where: PAYLOAD, labels: ["public_key"], len: 64, kase: "lower",
+    page: WAP_PAGES, where: WAP_WIRE, labels: ["public_key"], len: 64, kase: "lower",
     what: "the WAP's health public_key (mqtt_identity::public_key_hex)",
     pins: [
       [`${WAP}/mqtt_identity.h`, "constexpr size_t KEY_BYTES   = 32;"],
@@ -183,7 +190,7 @@ const PAGES = readdirSync(DEVICES).filter((f) => f.endsWith(".json")).sort();
 const DATA = Object.fromEntries(PAGES.map((page) => [page, JSON.parse(readFileSync(join(DEVICES, page), "utf8"))]));
 const EXAMPLES = PAGES.flatMap((page) => examplesIn(page, DATA[page]));
 
-const rulesFor = (ex) => RULES.filter((r) => r.page === ex.page && r.where.test(ex.path) && r.labels.includes(ex.label));
+const rulesFor = (ex) => RULES.filter((r) => [].concat(r.page).includes(ex.page) && r.where.test(ex.path) && r.labels.includes(ex.label));
 
 // null when the value is spelled by the rule, else what is wrong with it.
 function shapeProblem(value, rule) {
@@ -511,4 +518,90 @@ test("every .local host a generated page names is a fixed name, a template, or t
   assert.deepStrictEqual(problems, []);
   assert.ok(found.some((e) => e.page === "wap.json"), "wap.json: the unnamed host went missing");
   assert.ok(found.filter((e) => e.page === "sense.json").length >= 2, "sense.json: host_example and the [MDNS] line");
+});
+
+// ── a signed topic's example carries its envelope (sweep A27) ──────────────
+// The checks above read the fps that are present; an example with no fp at
+// all passed them. The Home Assistant page's WAP chain line was one:
+// {"length":1284,"latest_hash":"9f2c…","sig":"ed25519:…"}, no v, alg or fp,
+// which HA's signature.py reads as unsigned ("Payload missing sig/fp/alg
+// fields") under a note saying the integration verifies it. events, chain
+// and counts are the topics a Canary signs, so every example of one carries
+// v, alg, fp and sig (a sig or hash elided with "…" is still an example of
+// the field). Two kinds of string are examples: a topic-contract entry (an
+// object with that suffix and a payload) and a wire line ("<prefix>/<id>/
+// chain {…}"). Not covered: a sandbox scene's publishes (`.sandbox[…]`),
+// which spell only the fields the scene changes ({"length":+1} is not even
+// JSON) — an open item of their own.
+const SIGNED_TOPIC = /^(?:events|chain|counts)$/;
+const ENVELOPE_PINS = [
+  ["firmware/common/identity/device_signature.h", "constexpr int         SCHEMA_V    = 1;"],
+  ["firmware/common/identity/device_signature.h", 'constexpr const char* ALG_NAME    = "ed25519";'],
+  [`${WAP}/device_signature.h`, "constexpr int         SCHEMA_V    = 1;"],
+  [`${WAP}/device_signature.h`, 'constexpr const char* ALG_NAME    = "ed25519";'],
+  [`${WAP}/csi_mqtt.cpp`, '"\\"alg\\":\\"%s\\",\\"fp\\":\\"%s\\",\\"sig\\":\\"%s\\"}",'],
+];
+
+function* objects(node, path) {
+  if (Array.isArray(node)) { for (let i = 0; i < node.length; i++) yield* objects(node[i], `${path}[${i}]`); return; }
+  if (node && typeof node === "object") {
+    yield [path, node];
+    for (const [k, v] of Object.entries(node)) yield* objects(v, `${path}.${k}`);
+  }
+}
+function signedExamples() {
+  const out = [];
+  for (const page of PAGES) {
+    for (const [path, o] of objects(DATA[page], ""))
+      if (typeof o.suffix === "string" && SIGNED_TOPIC.test(o.suffix) && typeof o.payload === "string" &&
+          !path.startsWith(".sandbox"))
+        out.push({ page, path, suffix: o.suffix, payload: o.payload });
+    for (const [path, s] of strings(DATA[page], "")) {
+      const m = s.match(/^[a-z]+\/[^/\s]+\/(events|chain|counts) (\{.*\})$/);
+      if (m) out.push({ page, path, suffix: m[1], payload: m[2] });
+    }
+  }
+  return out;
+}
+
+test("every events, chain and counts example carries the v / alg / fp / sig envelope HA reads", () => {
+  for (const [file, literal] of ENVELOPE_PINS)
+    assert.ok(read(file).includes(literal), `${file} no longer has ${JSON.stringify(literal)}`);
+  const found = signedExamples();
+  const problems = [];
+  for (const ex of found) {
+    const at = `${ex.page} ${ex.path} (${ex.suffix})`;
+    let p;
+    try { p = JSON.parse(ex.payload); } catch { problems.push(`${at}: not JSON: ${ex.payload}`); continue; }
+    const missing = ["v", "alg", "fp", "sig"].filter((k) => !(k in p));
+    if (missing.length) { problems.push(`${at}: no ${missing.join(", ")} — HA reads it as unsigned`); continue; }
+    if (p.v !== 1) problems.push(`${at}: v ${p.v}, not device_signature::SCHEMA_V (1)`);
+    if (p.alg !== "ed25519") problems.push(`${at}: alg ${p.alg}, not device_signature::ALG_NAME`);
+    if (typeof p.sig !== "string" || !/^(?:[A-Za-z0-9_-]+|[A-Za-z0-9_-]*…)$/.test(p.sig))
+      problems.push(`${at}: sig ${JSON.stringify(p.sig)} is not base64url (elided or whole)`);
+  }
+  assert.deepStrictEqual(problems, []);
+  const on = (page) => found.filter((e) => e.page === page).length;
+  assert.ok(on("wap.json") >= 3 && on("sense.json") >= 2, "the topic contracts' signed examples went missing");
+  assert.ok(on("homeassistant.json") >= 2, "the Hub page's chain and counts wire lines went missing");
+});
+
+test("the Hub page's fleet wire lines are the WAP page's retained topics, verbatim", () => {
+  const wap = DATA["wap.json"];
+  const fleet = DATA["homeassistant.json"].terminal.chapters.find((c) => c.id === "fleet");
+  const lines = fleet.steps.flatMap((s) => s.out);
+  assert.ok(lines.length >= 4, "the fleet step prints its wire");
+  for (const line of lines) {
+    const m = line.match(/^([a-z]+)\/([^/\s]+)\/(\S+) (.*)$/);
+    assert.ok(m, `not a "<topic> <payload>" line: ${line}`);
+    const [, prefix, id, suffix, payload] = m;
+    assert.strictEqual(prefix, wap.mqtt.prefix);
+    assert.strictEqual(id, WAP_NAMES.id, "the device is the test key's WAP");
+    const t = wap.mqtt.topics.find((x) => x.suffix === suffix);
+    assert.ok(t && t.retained, `${suffix}: not one of the WAP's retained topics`);
+    assert.strictEqual(payload, t.payload, `${suffix}: not gen_wap.py's payload`);
+  }
+  const suffixes = lines.map((l) => l.split(" ")[0].split("/").pop());
+  for (const want of ["health", "chain", "counts"]) assert.ok(suffixes.includes(want), `no ${want} line`);
+  assert.ok(DATA["homeassistant.json"].ha_demo.device_id === WAP_NAMES.id, "the demo below is the same device");
 });
