@@ -531,12 +531,243 @@ void test_a_re_pair_cannot_take_another_members_address() {
   std::printf("PASS a_re_pair_cannot_take_another_members_address\n");
 }
 
+// ── Only a pairing both owners confirmed binds an address ──────────────
+//
+// Pairing frames are unsigned (they come before membership), and a
+// re-pair re-binds a member this device already holds. So a pairing
+// handler that runs ahead of its owner, or that a stranger can restart,
+// moves a member as surely as the receive path used to. Outsider X runs
+// this firmware on its own radio; where it sends a frame the firmware
+// would not, the test builds it with the firmware's own functions.
+
+Device X, J;
+
+// An ACCEPT built against an OVERHEARD offer: X's own ephemeral key, so X
+// holds the session key it leads to (written to `session_key`).
+Frame accept_from(Device& x, const Frame& offer, const uint8_t to[6], uint8_t session_key[32]) {
+  CHECK(offer.size() == 1 + sizeof(mn::PairOfferPayload) && offer[0] == mn::MSG_PAIR_OFFER);
+  mn::PairOfferPayload heard;
+  memcpy(&heard, offer.data() + 1, sizeof heard);
+  become(x);
+  uint8_t eph_pub[32], eph_priv[32];
+  CHECK(mesh_pair_crypto::generate_keypair(eph_pub, eph_priv, esp_fill_random));
+  CHECK(mn::derive_session_key(eph_priv, heard.ephemeral_pubkey, session_key));
+  mn::PairOfferPayload acc = {};
+  memcpy(acc.ephemeral_pubkey, eph_pub, 32);
+  memcpy(acc.device_pubkey, x.pub, 32);
+  if (!esp_now_is_peer_exist(to)) {
+    esp_now_peer_info_t p = {};
+    memcpy(p.peer_addr, to, 6);
+    CHECK(esp_now_add_peer(&p) == ESP_OK);
+  }
+  x.espnow.sent.clear();
+  CHECK(mn::send_pair_frame(to, mn::MSG_PAIR_ACCEPT, &acc, sizeof acc));
+  return sent_to(x, to).back();
+}
+
+// The CONFIRM that session key leads to (hash of the key and its code).
+Frame confirm_from(Device& x, const uint8_t session_key[32], const uint8_t to[6]) {
+  become(x);
+  const uint32_t code = mesh_pair_crypto::confirmation_code(session_key);
+  uint8_t in[mn::SESSION_KEY_SIZE + 4];
+  memcpy(in, session_key, mn::SESSION_KEY_SIZE);
+  memcpy(in + mn::SESSION_KEY_SIZE, &code, 4);
+  mn::PairConfirmPayload cf;
+  mn::sha256_domain(mn::DOMAIN_PAIR_CONFIRM, in, sizeof in, cf.confirmation_hash);
+  x.espnow.sent.clear();
+  CHECK(mn::send_pair_frame(to, mn::MSG_PAIR_CONFIRM, &cf, sizeof cf));
+  return sent_to(x, to).back();
+}
+
+// The COMPLETE X's firmware sends only after both CONFIRMs, sent at once:
+// the opera_secret X holds, sealed under X's current session key.
+Frame early_complete(Device& x, const uint8_t to[6]) {
+  become(x);
+  mn::PairCompletePayload c;
+  uint8_t nonce[mn::NONCE_SIZE], tag[16];
+  CHECK(mn::encrypt_message(mn::g_pairing.session_key, mn::g_opera_config.opera_secret,
+                            mn::OPERA_SECRET_SIZE, c.encrypted_secret, nonce, tag));
+  memcpy(c.nonce, nonce, mn::NONCE_SIZE);
+  memcpy(c.encrypted_secret + mn::OPERA_SECRET_SIZE, tag, 16);
+  x.espnow.sent.clear();
+  CHECK(mn::send_pair_frame(to, mn::MSG_PAIR_COMPLETE, &c, sizeof c));
+  return sent_to(x, to).back();
+}
+
+void fresh_device(Device& d) {
+  d.nvs.clear();
+  d.espnow = host_sim::EspNow();
+  boot(d);
+}
+
+void test_a_joiner_does_not_complete_before_its_owner_confirms() {
+  // B, which holds A and C, starts a join (to add a member, or to re-pair).
+  // X answers B's DISCOVER presenting A's public key, which every DISCOVER
+  // and OFFER of A's carries, and sends COMPLETE straight after B's
+  // ACCEPT. B's owner has confirmed nothing, and A's screen shows no code.
+  // This used to complete: with the opera_secret X re-bound A to X's radio
+  // (a re-pair, since #<W8>), and without it B's opera was replaced by X's.
+  uint8_t x_pub[32];
+  memcpy(x_pub, X.pub, sizeof x_pub);
+  for (int knows_secret = 0; knows_secret < 2; ++knows_secret) {
+    fresh_opera();
+    become(A);
+    const mn::OperaConfig a_cfg = mn::g_opera_config;
+    memcpy(X.pub, A.pub, sizeof X.pub);
+    fresh_device(X);
+    if (knows_secret) mn::g_opera_config = a_cfg;
+    CHECK(mn::start_pairing_initiator(nullptr));
+    become(B);
+    uint8_t opera_id[mn::OPERA_ID_SIZE];
+    memcpy(opera_id, mn::g_opera_config.opera_id, sizeof opera_id);
+    CHECK(mn::start_pairing_joiner());
+    B.espnow.sent.clear();
+    X.espnow.sent.clear();
+    host_sim::now_ms += 2001;
+    become(B);
+    mn::update();
+    deliver(X, B.mac, sent_to(B, BROADCAST).back());
+    deliver(B, X.mac, sent_to(X, B.mac).back());   // X's OFFER
+    deliver(X, B.mac, sent_to(B, X.mac).back());   // B's ACCEPT: both show a code
+    become(B);
+    CHECK(mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);
+    CHECK(!mn::g_pairing.code_confirmed);
+    g_health.clear();
+    deliver(B, X.mac, early_complete(X, B.mac));
+    become(B);
+    CHECK(mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);   // still waiting on its owner
+    CHECK(memcmp(opera_id, mn::g_opera_config.opera_id, sizeof opera_id) == 0);
+    CHECK(mn::g_peer_count == 2);
+    CHECK(same_mac(entry(B, A)->mac_addr, A.mac));
+    CHECK(B.espnow.has(A.mac));
+    CHECK(g_health.empty());
+    mn::cancel_pairing();                          // B's owner walks away
+    become(A);
+    A.espnow.sent.clear();
+    mn::send_heartbeat();
+    become(B);
+    const uint32_t received = mn::g_messages_received;
+    deliver(B, A.mac, sent_to(A, B.mac).back());
+    become(B);
+    CHECK(mn::g_messages_received == received + 1);  // B still hears A
+  }
+  memcpy(X.pub, x_pub, sizeof x_pub);
+  std::printf("PASS a_joiner_does_not_complete_before_its_owner_confirms\n");
+}
+
+void test_a_joiner_takes_the_first_offer_only() {
+  // Once B shows a code, a later OFFER (X answering the DISCOVER it also
+  // heard) used to re-key B's pairing to X: a new code, B's CONFIRM sent to
+  // X. An owner who compared the first code and then pressed confirm would
+  // have confirmed X's.
+  fresh_opera();
+  fresh_device(X);
+  CHECK(mn::start_pairing_initiator(nullptr));
+  pair_to_codes(A, B);
+  become(B);
+  const uint32_t code = mn::g_pairing.confirmation_code;
+  const Frame disc = sent_to(B, BROADCAST).back();
+  X.espnow.sent.clear();
+  deliver(X, B.mac, disc);
+  const auto x_offer = sent_to(X, B.mac);
+  CHECK(x_offer.size() == 1);
+  B.espnow.sent.clear();
+  deliver(B, X.mac, x_offer.back());
+  become(B);
+  CHECK(mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);
+  CHECK(mn::g_pairing.confirmation_code == code);
+  CHECK(same_mac(mn::g_pairing.peer_mac, A.mac));
+  CHECK(sent_to(B, X.mac).empty());              // no ACCEPT went to X
+  pair_confirm(A, B);
+  become(B);
+  CHECK(mn::g_peer_count == 2);
+  CHECK(same_mac(entry(B, A)->mac_addr, A.mac));
+  std::printf("PASS a_joiner_takes_the_first_offer_only\n");
+}
+
+void test_an_initiator_takes_one_accept_from_where_its_offer_went() {
+  // X overheard A's OFFER to B. An ACCEPT from X's own address used to be
+  // taken (A showed X's code), and so did a second ACCEPT after A showed
+  // a code (a new code under the owner's eyes). The OFFER's address is the
+  // joiner's, and the first ACCEPT from it is the one.
+  fresh_opera();
+  fresh_device(X);
+  become(A);
+  CHECK(mn::start_pairing_initiator(nullptr));
+  become(B);
+  CHECK(mn::start_pairing_joiner());
+  A.espnow.sent.clear();
+  B.espnow.sent.clear();
+  host_sim::now_ms += 2001;
+  become(B);
+  mn::update();
+  deliver(A, B.mac, sent_to(B, BROADCAST).back());
+  const Frame offer = sent_to(A, B.mac).back();
+  uint8_t x_key[32];
+  deliver(A, X.mac, accept_from(X, offer, A.mac, x_key));
+  become(A);
+  CHECK(mn::g_mesh_state == mn::MESH_PAIRING_INIT);   // not taken
+  deliver(B, A.mac, offer);
+  deliver(A, B.mac, sent_to(B, A.mac).back());       // B's own ACCEPT
+  become(A);
+  CHECK(mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);
+  const uint32_t code = mn::g_pairing.confirmation_code;
+  uint8_t key[mn::SESSION_KEY_SIZE];
+  memcpy(key, mn::g_pairing.session_key, sizeof key);
+  deliver(A, B.mac, accept_from(X, offer, A.mac, x_key));  // ESP-NOW does not authenticate a source
+  become(A);
+  CHECK(mn::g_pairing.confirmation_code == code);
+  CHECK(memcmp(mn::g_pairing.session_key, key, sizeof key) == 0);
+  become(B);
+  CHECK(mn::g_pairing.confirmation_code == code);
+  pair_confirm(A, B);
+  std::printf("PASS an_initiator_takes_one_accept_from_where_its_offer_went\n");
+}
+
+void test_an_initiator_forgets_a_finished_pairing() {
+  // A pairs a new device J. X overheard A's OFFER to J and, after the
+  // pairing, sends A an ACCEPT and the CONFIRM its own session key leads
+  // to, from J's address. A used to keep the finished pairing's state (its
+  // ephemeral key, its confirmed code) until the 2-minute timeout, take
+  // both, and seal the opera_secret under X's session key in a COMPLETE
+  // anyone in range can read. No owner did anything.
+  fresh_opera();
+  fresh_device(X);
+  fresh_device(J);
+  pair_to_codes(A, J);
+  const Frame offer = sent_to(A, J.mac).front();
+  pair_confirm(A, J);
+  become(A);
+  CHECK(mn::g_peer_count == 3);
+  uint8_t x_key[32];
+  const Frame acc = accept_from(X, offer, A.mac, x_key);
+  const Frame cf = confirm_from(X, x_key, A.mac);
+  A.espnow.sent.clear();
+  deliver(A, J.mac, acc);
+  deliver(A, J.mac, cf);
+  become(A);
+  CHECK(mn::g_mesh_state == mn::MESH_ACTIVE);
+  CHECK(mn::g_peer_count == 3);
+  for (const host_sim::Sent& f : A.espnow.sent) {
+    CHECK(f.bytes.empty() || f.bytes[0] != mn::MSG_PAIR_COMPLETE);
+  }
+  // Nothing of the pairing is left to take: no role, no keys, no code.
+  static const uint8_t zero[32] = {};
+  CHECK(mn::g_pairing.role == mn::PAIR_ROLE_NONE);
+  CHECK(!mn::g_pairing.code_confirmed);
+  CHECK(memcmp(mn::g_pairing.ephemeral_privkey, zero, sizeof zero) == 0);
+  CHECK(memcmp(mn::g_pairing.session_key, zero, sizeof zero) == 0);
+  std::printf("PASS an_initiator_forgets_a_finished_pairing\n");
+}
+
 }  // namespace
 
 int main() {
   make_device(A, "A", 0xA1);
   make_device(B, "B", 0xB1);
   make_device(C, "C", 0xC1);
+  make_device(X, "X", 0xEE);
+  make_device(J, "J", 0xD1);
   test_a_frame_from_the_bound_address_is_heard();
   test_a_forged_frame_from_another_address_moves_nothing();
   test_a_frame_already_heard_moves_nothing();
@@ -550,6 +781,10 @@ int main() {
   test_a_re_pair_the_radio_cannot_register_moves_nothing();
   test_a_re_pair_is_not_refused_by_a_full_opera();
   test_a_re_pair_cannot_take_another_members_address();
+  test_a_joiner_does_not_complete_before_its_owner_confirms();
+  test_a_joiner_takes_the_first_offer_only();
+  test_an_initiator_takes_one_accept_from_where_its_offer_went();
+  test_an_initiator_forgets_a_finished_pairing();
   std::printf("ALL %d mesh address checks PASSED\n", g_checks);
   return 0;
 }

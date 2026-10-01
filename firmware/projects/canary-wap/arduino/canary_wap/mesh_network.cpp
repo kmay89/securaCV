@@ -1163,7 +1163,11 @@ static void handle_pair_discover(const uint8_t* mac, const uint8_t* payload) {
 }
 
 static void handle_pair_offer(const uint8_t* mac, const uint8_t* payload) {
-  if (g_pairing.role != PAIR_ROLE_JOINER) {
+  // The first OFFER is the one (the PlatformIO tree's joiner_handle_offer):
+  // a later one used to re-key a pairing already showing its code, so an
+  // owner who compared one code could confirm another's, and the CONFIRM
+  // then went to whoever sent the later OFFER.
+  if (g_pairing.role != PAIR_ROLE_JOINER || g_mesh_state != MESH_PAIRING_JOIN) {
     return;
   }
 
@@ -1221,7 +1225,13 @@ static void handle_pair_offer(const uint8_t* mac, const uint8_t* payload) {
 }
 
 static void handle_pair_accept(const uint8_t* mac, const uint8_t* payload) {
-  if (g_pairing.role != PAIR_ROLE_INITIATOR) {
+  // One ACCEPT, from the address the OFFER went to, while no code is shown
+  // yet (the PlatformIO tree's initiator_handle_accept). This took any
+  // ACCEPT in any state: one from a radio that overheard the OFFER, a
+  // second one that re-keyed a pairing already showing its code, and one
+  // after the pairing had finished (see handle_pair_confirm).
+  if (g_pairing.role != PAIR_ROLE_INITIATOR || g_mesh_state != MESH_PAIRING_INIT ||
+      memcmp(mac, g_pairing.peer_mac, 6) != 0) {
     return;
   }
 
@@ -1283,16 +1293,31 @@ static void handle_pair_confirm(const uint8_t* mac, const uint8_t* payload) {
     add_peer(g_pairing.peer_pubkey, g_pairing.peer_mac, "New Device");
     persist_peers();
 
+    // Clear sensitive pairing data, as the joiner does. Kept, the finished
+    // pairing's ephemeral key and confirmed code let a radio that overheard
+    // the OFFER send its own ACCEPT and CONFIRM until the timeout, and this
+    // branch sealed the opera_secret under that radio's session key.
+    const PairingRole role = g_pairing.role;
+    const uint32_t code = g_pairing.confirmation_code;
+    secure_wipe(&g_pairing, sizeof(g_pairing));
+
     g_mesh_state = MESH_ACTIVE;
 
     if (g_pairing_callback) {
-      g_pairing_callback(g_pairing.role, g_pairing.confirmation_code, true);
+      g_pairing_callback(role, code, true);
     }
   }
 }
 
 static void handle_pair_complete(const uint8_t* mac, const uint8_t* payload) {
-  if (g_pairing.role != PAIR_ROLE_JOINER || g_mesh_state != MESH_PAIRING_CONFIRM) {
+  // Only after this device's owner confirmed the code (confirm_pairing):
+  // a real initiator sends COMPLETE only once that CONFIRM arrived. This
+  // took a COMPLETE as soon as the code was shown, so whoever answered the
+  // DISCOVER first finished the pairing with no owner on this side: it
+  // replaced the opera, or, holding the opera_secret and presenting a
+  // member's public key, re-bound that member to its own radio (add_peer).
+  if (g_pairing.role != PAIR_ROLE_JOINER || g_mesh_state != MESH_PAIRING_CONFIRM ||
+      !g_pairing.code_confirmed) {
     return;
   }
 
