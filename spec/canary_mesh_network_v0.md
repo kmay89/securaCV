@@ -154,7 +154,13 @@ ciphertext = ChaCha20-Poly1305(message_key, nonce, plaintext)
   between a reservation and its first frame, costs an unused gap (receivers
   need only "higher"), never a reuse; a reservation that cannot be persisted
   refuses the frame. canary-wap keeps per-peer `msg_counter_tx` in RAM and
-  resets it at every re-authentication (its session model) — unchanged.
+  resets it at every re-authentication (its session model) — unchanged —
+  and at boot, so a rebooted canary-wap's frames drop as replays at every
+  member that heard it, until its counter for that member climbs back past
+  what the member last saw (host-probed with the `test_mesh_address_wap`
+  harness; open). Its counters are also per destination, and the envelope
+  names none, so a receiver judges a frame its sender addressed to another
+  member by its own last-seen counter for that sender.
   **Counter convention, both trees (v0.4 follow-up):** the first counter a
   sender signs is **1** (the PIO tree hands out `s_outbound_counter + 1`
   from 0; canary-wap's `add_peer` and both rekey resets start
@@ -1053,16 +1059,52 @@ pairing's replies cannot be sent and the re-pair cannot start until a
 member leaves or is removed (host-probed). Learning a new address safely
 needs either a wire change (the address signed into a payload, under the §4.5
 registry) or a challenge the new address must answer with the peer's key;
-that is an open decision, not built. **canary-wap does not conform yet:**
-its `handle_received_message` still re-points a member's MAC (and its
-ESP-NOW registration) at the source of any frame that passes its
-`opera_id`, signature and replay checks — the step withdrawn here. How far
-a replay reaches there has not been probed (its counters are per peer and
-it sends a heartbeat, so the details differ); open. Host-tested
+that is an open decision, not built. **canary-wap conforms (2026-10-01),
+and is stricter:** its `handle_received_message` drops a frame whose source
+is not the signer's own bound address before the signature check, so it
+spends no counter and reaches no handler. Nothing in its receive path
+writes an address any more. Before, it re-pointed a member's address, and
+its ESP-NOW registration, at the source of any frame that passed `opera_id`,
+signature and replay. A host probe against the real `mesh_network.cpp`
+showed how far that reached there. A frame the receiver missed, re-sent
+from an outsider's radio, moved the member there, and the receiver's frames
+for the member went to the outsider until the member's next frame arrived
+(its 30 s heartbeat, while it is `MESH_ACTIVE`). canary-wap's counters are
+per destination and the envelope names none, so a frame the member sent to
+*another* member did the same whenever the member's counter for that member
+ran ahead (for example while the receiver sat at `PEER_UNKNOWN` in the
+member's table, which broadcasts skip; the probe set that state directly).
+The receiver then also took that counter as its last-seen, so the member's
+own frames dropped as replays and the binding stayed on the outsider until
+the member's counter climbed past it. After a power cut, frames heard since
+the last 5-minute counter save did the same. And a copied member address
+made the member's next real frame delete that other member's ESP-NOW
+registration, so the receiver could no longer reach it. Unlike the PlatformIO tree, which accepts a
+verified frame from any address in its transport table (the peer-fields
+note above), canary-wap accepts one only from the signer's own address. A
+changed radio MAC means a re-pair there too. Its `add_peer` now re-binds a
+member it already holds to the address the pairing completed from (new
+address registered first; an address another member holds refused;
+counters kept), and logs the move. It used to append a second entry that no
+lookup reached, and a full opera refused it. The same pairing limit
+applies: canary-wap's code covers only the ephemeral exchange too, and a
+relay claiming a member's key re-binds that member to the relay's radio
+(host-probed on canary-wap after this change; before it, the relay only
+added an unreachable duplicate). Unlike the PlatformIO tree's eight-member
+limit, a full canary-wap opera (16) still takes a re-pair, since ESP-NOW's
+list has 20 entries (host-tested through `add_peer`, not a full pairing). What remains, open: ESP-NOW does not authenticate a source,
+so a radio copying a member's own address still delivers that member's
+not-yet-heard frames — including ones sent to other members — and they are
+dispatched and move the receiver's last-seen counter, silencing the member
+until its counter catches up (no address moves; host-probed). A
+destination in the signed bytes would stop the cross-member case (a wire
+change). Host-tested
 (`test_bound_peer_new_address_is_dropped_not_learned`,
 `test_unheard_broadcast_replayed_from_a_new_address_moves_nothing`,
 `test_unheard_rekey_offer_replayed_from_a_new_address_moves_nothing`,
-`test_repair_moves_a_trusted_peers_address`); not yet run on two radios
+`test_repair_moves_a_trusted_peers_address`; canary-wap:
+`test_mesh_address_wap`, against the real `mesh_network.cpp` on host stubs,
+and `test_mesh_rx_gates_wap`); not yet run on two radios
 (U1 Track C2).
 
 **Add-on → device bridge:** the Home Assistant "Add another Canary" wizard
@@ -1131,8 +1173,9 @@ The web UI MUST include a "Opera" panel showing:
    that swaps the long-term public key the DISCOVER or OFFER carries, which
    signs nothing in the exchange. A relay doing that can get its own key
    trusted, or re-bind an already-trusted member to its radio (§8.3;
-   host-probed on the PlatformIO tree; canary-wap derives the code the
-   same way, not probed). Closing it needs both long-term keys in the code
+   host-probed on the PlatformIO tree; on canary-wap, which derives the code
+   the same way, host-probed for a relay claiming a member's key). Closing
+   it needs both long-term keys in the code
    and the CONFIRM hash, or a transcript signed with them: a wire change on
    both trees, open.
 6. **Resource Exhaustion**: Max opera size, rate limiting
@@ -1282,3 +1325,12 @@ An implementation conforms to this specification if it:
   PlatformIO frames are not encrypted); and the address a verified frame is
   recorded under can be a pairing partner's or a copied one (§8.3 peer
   fields).
+- v0.4 follow-up, canary-wap conforms to §8.3 (2026-10-01; **host-tested only,
+  not bench-verified**): canary-wap no longer re-points a member's address
+  at the source of a verified frame. A frame from any address but the
+  signer's bound one drops before verification, and a re-pair re-binds a
+  member already held (it used to add an unreachable duplicate), with the
+  move logged. A host probe showed the old re-bind reached further there
+  than a missed frame, because canary-wap counts per destination. §3.3 now
+  also says that a rebooted canary-wap sender is dropped as a replay until
+  its counters climb back (open).

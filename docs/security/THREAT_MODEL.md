@@ -616,8 +616,29 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   frame, which let an outsider re-point the member at its own radio (host
   probe: the receiver's next rotation sent its OFFER to the outsider, and
   the 60 s commit dropped the member when it stayed silent); withdrawn,
-  spec §8.3. Still open: canary-wap re-points a member's address on any
-  frame that passes its checks (spec §8.3, not probed).
+  spec §8.3. canary-wap re-pointed a member's address, and its ESP-NOW
+  registration, at the source of any frame that passed its checks; a host
+  probe against its real `mesh_network.cpp` showed that a frame the
+  receiver missed, a frame the member sent to another member (canary-wap
+  counts per destination), or one heard before a power cut moved the member
+  to an outsider's radio, and a copied member address made the receiver
+  drop another member's ESP-NOW registration. Since 2026-10-01 it drops a
+  frame whose source is not the signer's own bound address before
+  verification, and a re-pair re-binds a member it already holds (logged).
+- **Still open on canary-wap: a radio copying a member's own address.**
+  ESP-NOW does not authenticate a source, so a radio that copies member
+  B's bound address passes canary-wap's address check. It can deliver B's
+  not-yet-heard frames: ones B sent to other members whose counter is above
+  the receiver's last-seen for B (B's counters are per destination and the
+  envelope names none), or, after a power cut, frames heard since the last
+  5-minute counter save. They are dispatched, and the receiver's last-seen
+  for B moves up, so B's own frames drop as replays until B's counter for
+  the receiver catches up. No address moves (host-probed; open). A
+  destination in the signed bytes would stop the cross-member case (a wire
+  change); the power-cut window is the counter-save cadence. Separately, a
+  rebooted canary-wap restarts its per-member counters at 1 (spec §3.3), so
+  every member that heard it drops its frames until they climb back past
+  what that member last saw (host-probed; open).
 - **The 6-digit pairing code does not cover the long-term keys**
   (pre-existing; found in the review of the F49 part 3 withdrawal). The
   code and the CONFIRM hash are derived from the ephemeral X25519 session
@@ -633,8 +654,12 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   unbound address until another re-pair, which runs the same exchange.
   Claiming its own key makes the outsider a trusted member, able to sign a
   rotation that removes a real one. Host-probed on the PlatformIO tree,
-  with the same results before #1756, on #1756 and after the withdrawal;
-  canary-wap derives its code the same way (not probed). What the code
+  with the same results before #1756, on #1756 and after the withdrawal.
+  canary-wap derives its code the same way. Since its re-pair re-binds a
+  member it already holds (2026-10-01), a relay claiming a member's key
+  re-binds that member to the relay's radio there too (host-probed;
+  before, the relay added a duplicate entry no lookup reached); the move
+  is logged as a health WARNING, the owner's only sign. What the code
   does bind is the ephemeral exchange: by construction (not probed end to
   end), a relay that swaps an ephemeral key shows different codes on the
   two screens, which is what keeps the `opera_secret` sealed in COMPLETE

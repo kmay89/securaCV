@@ -1966,7 +1966,9 @@
   means a re-pair (which binds the address the partner paired from). Binding
   an address from a frame safely needs the address inside the signature (a
   wire change) or a challenge the new address answers with the peer's key —
-  an open decision. canary-wap still re-binds on any verified frame; open.
+  an open decision. canary-wap re-bound on any verified frame too; it drops
+  a frame from any address but the signer's own since 2026-10-01 (the next
+  entry).
 - **And the fallback is only as safe as its own proof:** the review then
   ran the same outsider against the re-pair the fix pointed to. The 6-digit
   code covers only the ephemeral exchange, not the long-term key the
@@ -1985,6 +1987,41 @@
   and `test_repair_moves_a_trusted_peers_address`. When a test of a
   "replayed frame" only replays one the receiver already heard, it has
   tested the counter, not the trust decision.
+- **Date learned:** 2026-10
+
+### A pin on the order of a step is not a test of the step
+- **What happened:** canary-wap's `mesh_network.cpp` re-pointed a mesh
+  member's radio address, and its ESP-NOW registration, at the source of
+  any frame that passed `opera_id`, signature and replay. Spec §8.3 had
+  already withdrawn that step on the PlatformIO tree. The file needs
+  Arduino, ESP-NOW and the rweather crypto library, so no host test linked
+  it. Its receive path was held by source-text pins, and those pinned the
+  ORDER of the re-bind (after the signature, not before), which kept
+  passing while the step itself was the hole. Compiling the real file on
+  host stubs and replaying frames between simulated devices showed how
+  far it reached. canary-wap counts per destination and the envelope names
+  none, so a frame a member sent to *another* member re-pointed it too,
+  and it left the receiver's last-seen counter ahead, which silenced the
+  member's own frames. A copied member address made the receiver delete a
+  third member's ESP-NOW registration.
+- **Root cause:** Same as the entry above: a verified frame proves who
+  signed it, not which radio sent it or whom it was for. Plus a gap in the
+  tests: a text pin can say where a step sits, not what it does when an
+  adversary feeds it.
+- **Fix:** A frame whose source is not the signer's own bound address
+  drops before the signature check. The receive path writes no address.
+  A re-pair is the way back for a member whose radio really changed. That
+  path had its own defect, found only by running it: `add_peer` appended a
+  second entry for a key it already held, which no lookup reached, so a
+  re-pair moved nothing (the frame re-bind had been hiding that). It now
+  re-binds the entry it holds and logs the move.
+- **Rule:** When a security property of a file "no host test can link" is
+  in question, stub the platform and run the real file. About 550 lines of
+  stubs and simulator (`tests_host/stubs/mesh_net`, `mesh_net_sim.h`) bought
+  the probe, the regression tests and the re-pair defect.
+- **Regression check:** canary-wap `tests_host/test_mesh_address_wap`
+  (all but its three baseline tests fail on 89a4c56) and
+  `test_mesh_rx_gates_wap`'s `no_frame_moves_a_members_address`.
 - **Date learned:** 2026-10
 
 ### On a dual-stack listener an IPv4 client arrives as an IPv6 address
