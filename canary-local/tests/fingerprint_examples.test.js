@@ -548,6 +548,57 @@ test("every .local host a generated page names is a fixed name, a template, or t
   assert.ok(found.filter((e) => e.page === "sense.json").length >= 2, "sense.json: host_example and the [MDNS] line");
 });
 
+// The templates too (an example host is only one unit's): a card's
+// network.mdns names the shape its firmware composes. The Sense and Vision
+// cards said canary-<fp>.local, a host neither advertises; the WAP's named
+// only canary-<name>.local, though an unnamed WAP answers at canary-<4 hex>.
+// Each product family that derives its host is read from the source that
+// composes it; no template anywhere may promise a host built from the
+// fingerprint or the MAC (generate_mdns_hostname: "never the MAC").
+const DISPLAY_HOST_H = "firmware/projects/canary-display/include/canary/net/hostname.h";
+const PSEUDO_HOST_FMT = 'snprintf(out, cap, "%s-%.6s", base, devid_hex);';
+const HOST_TEMPLATES = {
+  "canary-display": { want: ["<device-id>-<pseudonym>.local"], pins: [[DISPLAY_HOST_H, PSEUDO_HOST_FMT]] },
+  "canary-sense": { want: ["<device-id>-<pseudonym>.local"],
+    pins: [["firmware/projects/canary-sense/src/net/mdns_mgr.cpp", PSEUDO_HOST_FMT]] },
+  "canary-vision": { want: ["<device-id>-<pseudonym>.local"],
+    pins: [["firmware/projects/canary-vision/src/net/mdns_mgr.cpp", PSEUDO_HOST_FMT]] },
+  "canary-wap": { want: ["canary-<name>.local", "canary-<4 hex>.local"],
+    pins: [[`${WAP}/canary_wap.ino`, 'snprintf(out, cap, "canary-%s", label);'],
+      [`${WAP}/canary_wap.ino`, WAP_NAME_PINS[4]]] },
+};
+const BAD_TEMPLATE = /<[^<>]*\b(?:fp|fingerprint|mac(?:-suffix)?)\b[^<>]*>[\w<>-]*\.local\b/i;
+
+test("every mDNS template names the host its firmware composes, never one from the fp or the MAC", () => {
+  for (const { pins } of Object.values(HOST_TEMPLATES))
+    for (const [file, literal] of pins)
+      assert.ok(read(file).includes(literal), `${file} no longer has ${JSON.stringify(literal)}`);
+  const problems = [];
+  for (const { page, path, s } of allStrings())
+    if (BAD_TEMPLATE.test(s)) problems.push(`${page} ${path}: ${s.match(BAD_TEMPLATE)[0]} is no host a Canary advertises`);
+  const reg = DATA["registry.json"].devices;
+  let held = 0;
+  for (const dev of reg) {
+    const rule = HOST_TEMPLATES[dev.family];
+    if (!rule) continue;
+    held++;
+    for (const want of rule.want)
+      if (!String(dev.network && dev.network.mdns).includes(want))
+        problems.push(`registry.json ${dev.id}: network.mdns ${JSON.stringify(dev.network && dev.network.mdns)} does not name ${want}`);
+  }
+  // each product page shows its registry card's network block as it stands
+  for (const [page, id] of [["sense.json", "canary-sense"], ["vision.json", "canary-vision"], ["wap.json", "canary-wap"]])
+    assert.deepStrictEqual(DATA[page].device.network, reg.find((d) => d.id === id).network, `${page}: not its registry card's network`);
+  for (const want of HOST_TEMPLATES["canary-wap"].want)
+    assert.ok(DATA["wap.json"].ap.mdns.includes(want), `wap.json ap.mdns does not list ${want}`);
+  assert.deepStrictEqual(problems, []);
+  assert.ok(held >= 12, `only ${held} registry cards held to a host template (a family renamed?)`);
+  // the WAP page's "Reach it" row says which host the example is
+  assert.ok(read("canary-local/assets/wap.js").includes(
+    '["Reach it", "canary.local · " + d.ap.mdns_example + " (unnamed; canary-<name>.local once named) · " + d.ap.ip],'),
+  "wap.js's Reach it row no longer says the example host is the unnamed one");
+});
+
 // ── a signed topic's example carries its envelope (sweep A27) ──────────────
 // The checks above read the fps that are present; an example with no fp at
 // all passed them. The Home Assistant page's WAP chain line was one:
