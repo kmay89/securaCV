@@ -13,16 +13,18 @@ it against the real SD event log and CSI library.
 
 That test cannot compile three files: `csi_integration.cpp` (the commit
 hook, the boot order), `csi_mqtt.cpp` (the loop's pump, the esp_mqtt event
-handler) and the device-only paths of the egress itself. It models them.
-This check holds the source to the model, and to the egress's own rules the
-test reaches only through behavior.
+handler, the broker-change epoch) and the device-only paths of the egress
+itself. It models them. This check holds the source to the model, and to
+the egress's own rules the test reaches only through behavior.
 
 ## The rules
 
 1. The commit hook. `csi_integration.cpp`'s `csi_event_on_committed()`
-   hands the row to `csi_event_egress::on_committed(` exactly once, and
-   names nothing from `csi_mqtt::` or `csi_event_log::`: it may run on the
-   NimBLE host task under the commit lock, where a publish or a card write
+   hands the row to `csi_event_egress::on_committed(` exactly once, after
+   its privacy gate (`if (privacy > csi_event_get_privacy_ceiling())
+   return;`), names no other `csi_event_egress::` function, and names
+   nothing from `csi_mqtt::` or `csi_event_log::`: it may run on the NimBLE
+   host task under the commit lock, where a publish, a pump or a card write
    is the bug.
 2. The egress's `on_committed()` only enqueues: one `xQueueSend(` with a
    zero timeout (never blocks the committing task), and nothing from
@@ -34,9 +36,10 @@ test reaches only through behavior.
    restores its watermark with the floor NVS holds.
 4. The loop task. `csi_mqtt::loop()` calls `csi_event_egress::pump();`.
    The esp_mqtt event handler (`mqtt_event_handler`) names nothing from
-   `csi_event_egress::` and publishes no row, and `publish_event_row(`
-   appears in `csi_mqtt.cpp` only where it is defined: every events
-   publish is the egress's.
+   `csi_event_egress::` and publishes no row, `publish_event_row(`
+   appears in `csi_mqtt.cpp` only where it is defined, and the one
+   `build_topic(..., "events")` is inside it: every events publish is the
+   egress's.
 5. The link and the floor. `current_link()` sets `link.id_floor` from
    `csi_integration::event_id_floor_stored()` and `link.id_next` from
    `csi_event_get_next_event_id()`, once each; `pump()` takes its link,
@@ -58,10 +61,29 @@ test reaches only through behavior.
    `planner.pass(` and then `flush_held(`.
 8. The RAM hold. In `route()`, before `st.planner.commit(`, an `if` holds
    the row (`st.push(` then `return;`) when one `&&` term is the `||` chain
-   of `st.planner.pending()`, `st.held_count > 0` and `!link.connected`: a
-   row the card does not keep waits while anything older waits or the link
-   is down, and is never handed to the planner (which would write the NVS
-   ceiling past the rows waiting on the card).
+   of `st.planner.pending()`, `st.card_wait`, `st.held_count > 0` and
+   `!link.connected`: a row the card does not keep waits while anything
+   older waits (on the card, on a card that is not open now, in RAM) or the
+   link is down, and is never handed to the planner (which would write the
+   NVS ceiling past the rows waiting on the card).
+9. One pump, one begin, sketch-wide. Across the sketch's `.cpp`, `.h` and
+   `.ino` files (comments and strings blanked), `csi_event_egress::pump(`
+   appears exactly once, in `csi_mqtt::loop()`, and
+   `csi_event_egress::begin(` exactly once, in `csi_integration::init`; no
+   file says `using namespace csi_event_egress`. A second caller (an httpd
+   handler, the esp_mqtt task, the commit hook) would run the egress's
+   publishes, card writes and watermark on a second task.
+10. The planner's not-on-card hand-over. `WapPort::hand_to_queue()`'s live
+    publish (the one after its `if (flushing)` block) sits in an `if` whose
+    `&&` terms include `!deferred`, `!m_st->planner.pending()` and
+    `m_st->held_count == 0`: a row whose append failed goes live only when
+    nothing older waits on the card or in RAM.
+11. The broker-change epoch. In `csi_mqtt::init()`,
+    `destination_digest(s_active_cfg)` is taken before
+    `config_load(&s_active_cfg)` and compared after it, and a difference
+    with `s_dest_known` set bumps `s_dest_epoch.fetch_add(`; `s_dest_known
+    = true;` follows. `destination_epoch()` returns `s_dest_epoch`. The
+    egress's side (a changed epoch drops the backlog) is host-tested.
 
 ## It proves it bites
 
@@ -98,6 +120,7 @@ SKETCH = "firmware/projects/canary-wap/arduino/canary_wap"
 INTEG_CPP = f"{SKETCH}/csi_integration.cpp"
 EGRESS_CPP = f"{SKETCH}/csi_event_egress.cpp"
 MQTT_CPP = f"{SKETCH}/csi_mqtt.cpp"
+SKETCH_GLOBS = ("*.cpp", "*.h", "*.ino")
 
 SIG_HOOK = r"\bvoid\s+csi_event_on_committed\s*\([^)]*\)"
 SIG_INIT = r"\bbool\s+init\s*\(\s*httpd_handle_t\s+server[^)]*\)"
@@ -110,6 +133,12 @@ SIG_PUMP = r"\bvoid\s+pump\s*\(\s*\)"
 SIG_ROUTE = r"\bvoid\s+route\s*\([^)]*\)"
 SIG_LOOP = r"\bvoid\s+loop\s*\(\s*\)"
 SIG_HANDLER = r"\bvoid\s+mqtt_event_handler\s*\([^)]*\)"
+SIG_PUBLISH_ROW = r"\bEventSend\s+publish_event_row\s*\([^)]*\)"
+SIG_HAND_TO_QUEUE = r"\bbool\s+WapPort::hand_to_queue\s*\([^)]*\)"
+SIG_MQTT_INIT = r"\bbool\s+init\s*\(\s*const\s+char\s*\*\s*device_id[^)]*\)"
+SIG_DEST_EPOCH = r"\buint32_t\s+destination_epoch\s*\(\s*\)"
+SIG_DISMISS = r"\besp_err_t\s+handle_events_dismiss\s*\([^)]*\)"
+SIG_INTEG_LOOP = r"\bvoid\s+loop\s*\(\s*bool\s+run_csi\s*\)"
 
 CONTROL_FLOW = r"\b(?:if|else|for|while|do|switch|return|continue|break|goto)\b"
 PUMP_LOOP = "for(intbudget=kPumpBudget;budget>0;--budget)"
@@ -117,7 +146,9 @@ ENQUEUE_ONLY_FORBIDDEN = ("csi_mqtt::", "csi_event_log::", "Preferences", "g_sta
                           "route(", "flush_held(", "pump(", "current_link(")
 BRIDGE_GAP_FORBIDDEN = ("planner", "held", "replay_run", "link.connected", "csi_mqtt::connected(",
                         "csi_event_log::")
-HOLD_TERMS = {"st.planner.pending()", "st.held_count>0", "!link.connected"}
+HOLD_TERMS = {"st.planner.pending()", "st.card_wait", "st.held_count>0", "!link.connected"}
+HAND_OVER_TERMS = {"!deferred", "!m_st->planner.pending()", "m_st->held_count==0"}
+PRIVACY_GATE = "privacy>csi_event_get_privacy_ceiling()"
 
 
 def body_of(code: str, sig: str, what: str, errors: list[str]) -> str | None:
@@ -142,9 +173,17 @@ def check_hook(integ: str, errors: list[str]) -> None:
     body = body_of(code, SIG_HOOK, f"{INTEG_CPP}: csi_event_on_committed()", errors)
     if body is None:
         return
-    if body.count("csi_event_egress::on_committed(") != 1:
+    call = "csi_event_egress::on_committed("
+    if body.count(call) != 1 or body.count("csi_event_egress::") != 1:
         errors.append(f"{INTEG_CPP}: csi_event_on_committed() must hand the row to "
-                      "csi_event_egress::on_committed( exactly once")
+                      f"{call} exactly once and name no other csi_event_egress:: function — "
+                      "the hook may run on the NimBLE host task under the commit lock")
+    else:
+        at = body.find(call)
+        if PRIVACY_GATE not in ifs_returning(body[:at], r"return\s*;"):
+            errors.append(f"{INTEG_CPP}: csi_event_on_committed() must refuse a row above the "
+                          "privacy ceiling (`if (privacy > csi_event_get_privacy_ceiling()) "
+                          f"return;`) before {call}")
     for tok in ("csi_mqtt::", "csi_event_log::"):
         if tok in body:
             errors.append(f"{INTEG_CPP}: csi_event_on_committed() names `{tok}` — the hook may run "
@@ -201,6 +240,16 @@ def check_loop_task(mqtt: str, errors: list[str]) -> None:
     if code.count("publish_event_row(") != 1:
         errors.append(f"{MQTT_CPP}: publish_event_row( appears outside its definition — every "
                       "events publish is the egress's")
+    # The events topic is built in one place, publish_event_row's body. The
+    # literal is a string, so it is found in the source and placed by the
+    # blanked code (same offsets), which also drops matches inside comments.
+    span = the_body(code, SIG_PUBLISH_ROW, f"{MQTT_CPP}: publish_event_row()", errors)
+    sites = [m.start() for m in re.finditer(r'\bbuild_topic\s*\([^;]*"events"\s*\)', mqtt)
+             if code.startswith("build_topic", m.start())]
+    if span is not None and (len(sites) != 1 or not span[0] <= sites[0] < span[1]):
+        errors.append(f"{MQTT_CPP}: the events topic (`build_topic(..., \"events\")`) must be built "
+                      "once, in publish_event_row() — a row published anywhere else bypasses the "
+                      "egress's order (F78)")
 
 
 def check_link_glue(egress: str, errors: list[str]) -> None:
@@ -324,10 +373,93 @@ def check_route_hold(egress: str, errors: list[str]) -> None:
     if not held:
         errors.append(f"{EGRESS_CPP}: route() must hold a row the card does not keep in RAM "
                       "(`st.push(...); return;`) before st.planner.commit( when "
-                      "`st.planner.pending() || st.held_count > 0 || !link.connected`")
+                      "`st.planner.pending() || st.card_wait || st.held_count > 0 || "
+                      "!link.connected`")
 
 
-def check(integ: str, egress: str, mqtt: str) -> list[str]:
+def check_single_callers(integ: str, mqtt: str, others: dict[str, str], errors: list[str]) -> None:
+    files = dict(others)
+    files[INTEG_CPP] = integ
+    files[MQTT_CPP] = mqtt
+    code = {name: blank_comments_and_strings(src) for name, src in files.items()}
+    for name, c in code.items():
+        if re.search(r"\busing\s+namespace\s+csi_event_egress\b", c):
+            errors.append(f"{name}: `using namespace csi_event_egress` hides the egress's callers "
+                          "from this check — call it qualified")
+    for call, home, sig, where in (("csi_event_egress::pump(", MQTT_CPP, SIG_LOOP, "csi_mqtt::loop()"),
+                                   ("csi_event_egress::begin(", INTEG_CPP, SIG_INIT,
+                                    "csi_integration::init")):
+        sites = [name for name, c in code.items() for _ in range(c.count(call))]
+        span = the_body(code[home], sig, f"{home}: {where}", [])
+        inside = span is not None and call in code[home][span[0]:span[1]]
+        if len(sites) != 1 or not inside:
+            errors.append(f"{SKETCH}: `{call}` must appear exactly once in the sketch, in {where} "
+                          f"(found {len(sites)}: {', '.join(sorted(set(sites))) or 'none'}) — a "
+                          "second caller runs the egress on a second task")
+
+
+def check_hand_over(egress: str, errors: list[str]) -> None:
+    code = blank_comments_and_strings(egress)
+    body = body_of(code, SIG_HAND_TO_QUEUE, f"{EGRESS_CPP}: WapPort::hand_to_queue()", errors)
+    if body is None:
+        return
+    flushing = re.search(r"\bif\s*\(\s*flushing\s*\)\s*\{", body)
+    pubs = [m.start() for m in re.finditer(r"publish_event_row\(", body)]
+    after = [p for p in pubs if flushing and p > flushing.end()]
+    guarded = False
+    if flushing:
+        close = body.find("}", flushing.end())
+        after = [p for p in pubs if p > close]
+    for pub in after[:1]:
+        for m in re.finditer(r"\bif\s*\(", body[:pub]):
+            cl = matching_paren(body, m.end() - 1)
+            if cl < 0:
+                continue
+            block = body[cl + 1:]
+            if not block.lstrip().startswith("{"):
+                continue
+            open_at = cl + 1 + (len(block) - len(block.lstrip()))
+            depth, end = 0, -1
+            for j in range(open_at, len(body)):
+                if body[j] == "{":
+                    depth += 1
+                elif body[j] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = j
+                        break
+            if not (open_at < pub < end):
+                continue
+            terms = {unwrap(t) for t in top_level_terms(unwrap(body[m.end():cl]), "&&")}
+            if HAND_OVER_TERMS <= terms:
+                guarded = True
+    if not guarded:
+        errors.append(f"{EGRESS_CPP}: WapPort::hand_to_queue() must publish a row that is not on the "
+                      "card only inside `if (!deferred && !m_st->planner.pending() && "
+                      "m_st->held_count == 0) {...}` — a failed append never overtakes older rows")
+
+
+def check_destination_epoch(mqtt: str, errors: list[str]) -> None:
+    code = blank_comments_and_strings(mqtt)
+    init = body_of(code, SIG_MQTT_INIT, f"{MQTT_CPP}: csi_mqtt::init()", errors)
+    if init is not None:
+        s = squash(init)
+        before = s.find("constuint32_tprev_dest=destination_digest(s_active_cfg);")
+        load = s.find("config_load(&s_active_cfg)")
+        bump = s.find("if(s_dest_known&&destination_digest(s_active_cfg)!=prev_dest){"
+                      "s_dest_epoch.fetch_add(")
+        known = s.find("s_dest_known=true;")
+        if not (0 <= before < load < bump < known):
+            errors.append(f"{MQTT_CPP}: csi_mqtt::init() must take destination_digest(s_active_cfg) "
+                          "before config_load(&s_active_cfg), bump s_dest_epoch when it changed "
+                          "(s_dest_known set), then set s_dest_known = true — the egress drops what "
+                          "waited for the old broker on that epoch")
+    epoch = body_of(code, SIG_DEST_EPOCH, f"{MQTT_CPP}: csi_mqtt::destination_epoch()", errors)
+    if epoch is not None and "returns_dest_epoch.load(" not in squash(epoch):
+        errors.append(f"{MQTT_CPP}: csi_mqtt::destination_epoch() must return s_dest_epoch")
+
+
+def check(integ: str, egress: str, mqtt: str, others: dict[str, str] | None = None) -> list[str]:
     errors: list[str] = []
     check_hook(integ, errors)
     check_enqueue_only(egress, errors)
@@ -337,6 +469,9 @@ def check(integ: str, egress: str, mqtt: str) -> list[str]:
     check_port_sends(egress, errors)
     check_pump_order(egress, errors)
     check_route_hold(egress, errors)
+    check_single_callers(integ, mqtt, others or {}, errors)
+    check_hand_over(egress, errors)
+    check_destination_epoch(mqtt, errors)
     return errors
 
 
@@ -389,6 +524,9 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("the esp_mqtt handler publishes a row",
      on_m(SIG_HANDLER, r"(s_connected\.store\(true,[^;]*;)",
           r"\1 { csi_event_record_t r = {}; (void)publish_event_row(r, 1, false); }")),
+    ("the esp_mqtt handler publishes on the events topic itself",
+     on_m(SIG_HANDLER, r"(s_connected\.store\(true,[^;]*;)",
+          r'\1 { char t[192]; build_topic(t, sizeof(t), "events"); publish_raw(t, "{}", 2, false); }')),
     ("the loop does not pump",
      on_m(SIG_LOOP, r"\n[ \t]*csi_event_egress::pump\(\);", "")),
     ("current_link() drops the id floor",
@@ -425,15 +563,57 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      on_e(SIG_ROUTE, r"if\s*\(\s*!card_row\s*&&\s*link\.accepting\s*&&\s*\([^{]*\)\s*\)\s*\{",
           "if (false) {")),
     ("route() holds only while the link is down",
-     on_e(SIG_ROUTE, r"st\.planner\.pending\(\)\s*\|\|\s*st\.held_count\s*>\s*0\s*\|\|\s*", "")),
+     on_e(SIG_ROUTE, r"st\.planner\.pending\(\)\s*\|\|\s*st\.card_wait\s*\|\|\s*"
+                     r"st\.held_count\s*>\s*0\s*\|\|\s*", "")),
     ("route() lets a row overtake the RAM hold",
      on_e(SIG_ROUTE, r"\|\|\s*st\.held_count\s*>\s*0\s*", "")),
+    ("route() lets a row overtake a card that is not open",
+     on_e(SIG_ROUTE, r"\|\|\s*st\.card_wait\s*", "")),
     ("route() hands a held row to the planner too",
      on_e(SIG_ROUTE, r"(st\.push\([^;]*;)\s*return\s*;", r"\1")),
+    # Rule 1: the hook names only on_committed, after the privacy gate.
+    ("the hook also pumps the egress",
+     on_i(SIG_HOOK, r"(csi_event_egress::on_committed\([^;]*;)", r"\1 csi_event_egress::pump();")),
+    ("the hook reads the egress's watermark",
+     on_i(SIG_HOOK, r"(csi_event_egress::on_committed\([^;]*;)",
+          r"\1 (void)csi_event_egress::watermark();")),
+    ("the hook forwards before the privacy gate",
+     on_i(SIG_HOOK, r"(if\s*\(\s*privacy\s*>\s*csi_event_get_privacy_ceiling\(\)\s*\)\s*return\s*;)",
+          r"csi_event_egress::on_committed(event_id, module_id, type_name, category, privacy, values); \1")),
+    # Rule 9: one pump, one begin, sketch-wide.
+    ("the dismiss handler pumps the egress (httpd task)",
+     on_i(SIG_DISMISS, r"(httpd_resp_set_type\()", r"csi_event_egress::pump(); \1")),
+    ("csi_integration::loop pumps the egress too",
+     on_i(SIG_INTEG_LOOP, r"(csi_bundler_tick\(\);)", r"\1 csi_event_egress::pump();")),
+    ("the pump moves out of csi_mqtt::loop into csi_integration::loop",
+     lambda i, e, m: (mutate_in(i, SIG_INTEG_LOOP, r"(csi_bundler_tick\(\);)", r"\1 csi_event_egress::pump();"),
+                      e, mutate_in(m, SIG_LOOP, r"\n[ \t]*csi_event_egress::pump\(\);", ""))),
+    ("csi_mqtt::init calls begin() a second time",
+     on_m(SIG_MQTT_INIT, r"(teardown_client\(\);)", r"\1 csi_event_egress::begin();")),
+    ("csi_mqtt.cpp hides the pump's caller behind a using-directive",
+     lambda i, e, m: (i, e, m.replace('#include "csi_event_egress.h"',
+                                      '#include "csi_event_egress.h"\nusing namespace csi_event_egress;', 1))),
+    # Rule 10: hand_to_queue's live publish waits for older rows.
+    ("hand_to_queue publishes past rows waiting in RAM",
+     on_e(SIG_HAND_TO_QUEUE, r"\s*&&\s*m_st->held_count\s*==\s*0", "")),
+    ("hand_to_queue publishes past rows waiting on the card",
+     on_e(SIG_HAND_TO_QUEUE, r"\s*&&\s*!m_st->planner\.pending\(\)", "")),
+    ("hand_to_queue publishes a deferred row live",
+     on_e(SIG_HAND_TO_QUEUE, r"!deferred\s*&&\s*", "")),
+    # Rule 11: a changed broker bumps the epoch.
+    ("init() never bumps the destination epoch",
+     on_m(SIG_MQTT_INIT, r"\n[ \t]*s_dest_epoch\.fetch_add\([^;]*;", "")),
+    ("init() reads the old destination after the load",
+     on_m(SIG_MQTT_INIT, r"(const\s+uint32_t\s+prev_dest\s*=\s*destination_digest\(s_active_cfg\);)\s*"
+                         r"(if\s*\(\s*!config_load\(&s_active_cfg\)\)\s*return\s+false;)", r"\2 \1")),
+    ("init() never records that a destination is known",
+     on_m(SIG_MQTT_INIT, r"\n[ \t]*s_dest_known\s*=\s*true\s*;", "")),
+    ("destination_epoch() returns a constant",
+     on_m(SIG_DEST_EPOCH, r"return\s+s_dest_epoch\.load\([^;]*;", "return 0;")),
 ]
 
 
-def self_test(integ: str, egress: str, mqtt: str) -> list[str]:
+def self_test(integ: str, egress: str, mqtt: str, others: dict[str, str]) -> list[str]:
     problems = []
     for name, mutate in MUTATIONS:
         try:
@@ -444,26 +624,40 @@ def self_test(integ: str, egress: str, mqtt: str) -> list[str]:
             continue
         if (i, e, m) == (integ, egress, mqtt):
             problems.append(f"self-test: mutation '{name}' changed nothing")
-        elif not check(i, e, m):
+        elif not check(i, e, m, others):
             problems.append(f"self-test: the check did not bite on mutation '{name}'")
     return problems
+
+
+def sketch_others() -> dict[str, str]:
+    """Every other source file of the sketch, by repo-relative path."""
+    skip = {INTEG_CPP, MQTT_CPP}
+    out = {}
+    for pattern in SKETCH_GLOBS:
+        for path in sorted((REPO / SKETCH).glob(pattern)):
+            rel = path.relative_to(REPO).as_posix()
+            if rel not in skip:
+                out[rel] = path.read_text(encoding="utf-8", errors="replace")
+    return out
 
 
 def main() -> int:
     integ = (REPO / INTEG_CPP).read_text(encoding="utf-8")
     egress = (REPO / EGRESS_CPP).read_text(encoding="utf-8")
     mqtt = (REPO / MQTT_CPP).read_text(encoding="utf-8")
-    errors = check(integ, egress, mqtt)
+    others = sketch_others()
+    errors = check(integ, egress, mqtt, others)
     for err in errors:
         print(f"::error::{err}")
-    problems = self_test(integ, egress, mqtt)
+    problems = self_test(integ, egress, mqtt, others)
     for problem in problems:
         print(f"::error::{problem}")
     if errors or problems:
         return 1
-    print(f"canary-wap event egress holds: the commit hook only enqueues, the egress runs on the "
-          f"loop task after the id floor, live rows wait behind the card and RAM backlog, the "
-          f"tamper bridge goes first ({len(MUTATIONS)} mutations refused).")
+    print(f"canary-wap event egress holds: the commit hook only enqueues, after the privacy gate; "
+          f"the egress runs once, on the loop task, after the id floor; live rows wait behind the "
+          f"card and RAM backlog; the tamper bridge goes first; a changed broker bumps the epoch "
+          f"({len(MUTATIONS)} mutations refused).")
     return 0
 
 
