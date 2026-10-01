@@ -600,6 +600,29 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
 - All frames Ed25519-signed; per-peer monotonic counter for replay
   protection (v0.2: wall-clock TTL retired per audit O1 — the counter is the
   authoritative freshness mechanism).
+- A signature proves who signed a frame, not which radio sent it or whom it
+  was for. The envelope signs no source or destination address, a
+  PlatformIO sender spends one outbound counter across every destination,
+  and frames go out unencrypted (peers registered with `encrypt = false`).
+  So a member's genuine frame that a receiver has not heard yet — a missed
+  broadcast, a rotation frame unicast to another member — can be recorded
+  and re-sent from any radio in range and still pass signature, `opera_id`
+  and counter. The PlatformIO tree therefore takes no radio address from a
+  frame: an opera frame from an address its transport table does not hold
+  is dropped before verification, and a member's address is bound only by a
+  completed pairing (or restored from NVS at boot), so a changed radio MAC
+  means a re-pair. F49 part 3 (#1756) briefly re-bound and persisted a
+  member's address on such a frame, which let an outsider re-point the
+  member at its own radio (host probe: the receiver's next rotation sent
+  its OFFER to the outsider, and the 60 s commit dropped the member when it
+  stayed silent); withdrawn, spec §8.3. Still open: canary-wap re-points a
+  member's address on any frame that passes its checks (spec §8.3, not
+  probed); and because ESP-NOW does not authenticate the source address, a
+  radio that copies one bound member's address can deliver another
+  member's not-yet-heard frame on the normal path — no binding moves, but
+  the receiver then records the copied address as the signer's last-heard
+  address, which its rekey replies use and a later removal of the signer
+  takes out of the transport table (host-probed on the PlatformIO tree).
 - `opera_secret` storage requires flash encryption enabled
   (eFuse `FLASH_CRYPT_CNT > 0`); load/save paths refuse on FE-off devices
   and log loudly (v0.2 audit O2). That keeps the secret off un-fused

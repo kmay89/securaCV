@@ -1942,6 +1942,40 @@
   invisible to it).
 - **Date learned:** 2026-09
 
+### A verified frame proves who signed it, not which radio sent it
+- **What happened:** To spare a re-pair when a trusted mesh peer's radio MAC
+  changed, F49 part 3 (#1756) let an opera frame from an address the
+  transport did not know re-bind that peer's address — and persist it — once
+  it passed signature, `opera_id` and the strict counter. A host probe
+  against the merged code recorded a broadcast member B sent while receiver
+  A was not listening and re-sent it to A from a third radio's own address:
+  A moved B's binding to the outsider, B's real address left A's table, and
+  A's next rotation sent its OFFER to the outsider alone and, B being
+  silent, forgot B at the 60 s commit. A replayed `REKEY_OFFER` sent A's `REKEY_ACCEPT` to the
+  outsider the same way.
+- **Root cause:** "Fresh and verified" was read as "this address speaks for
+  this key". The envelope signs no source or destination address, the
+  PlatformIO sender spends one outbound counter across every destination,
+  and the frames are not encrypted, so any genuine frame the receiver has
+  not heard yet — a missed broadcast, a frame unicast to another member —
+  passes every check from wherever it is replayed. The strict counter only
+  stops frames the receiver already heard, the one case #1756's test tried.
+- **Fix:** The unknown-sender hook takes pairing frames only again; an opera
+  frame from an unbound address drops before verification, the learned-MAC
+  callback and `main.cpp`'s save of it are gone, and a changed radio MAC
+  means a re-pair (which binds the address the partner paired from). Binding
+  an address from a frame safely needs the address inside the signature (a
+  wire change) or a challenge the new address answers with the peer's key —
+  an open decision. canary-wap still re-binds on any verified frame; open.
+- **Regression check:** `test_mesh_session`'s
+  `test_unheard_broadcast_replayed_from_a_new_address_moves_nothing` and
+  `test_unheard_rekey_offer_replayed_from_a_new_address_moves_nothing` (both
+  fail on #1756's code), `test_bound_peer_new_address_is_dropped_not_learned`
+  and `test_repair_moves_a_trusted_peers_address`. When a test of a
+  "replayed frame" only replays one the receiver already heard, it has
+  tested the counter, not the trust decision.
+- **Date learned:** 2026-10
+
 ### On a dual-stack listener an IPv4 client arrives as an IPv6 address
 - **What happened:** The canary's provisioning gate (backlog F20, gap #11)
   lets a phone on the SoftAP fetch its setup receipt without a bearer, and

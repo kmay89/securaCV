@@ -84,20 +84,6 @@ void on_paired(const uint8_t* secret, uint32_t code) {
 void on_failed() { g_failed_fired = true; }
 void on_code_ready(uint32_t code) { g_code_ready = code; }
 
-/* F49 part 3: the learned radio-MAC bindings, in arrival order. */
-struct LearnedMac {
-  uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
-  uint8_t mac[6];
-};
-std::vector<LearnedMac> g_macs_learned;
-void on_mac_learned(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
-                    const uint8_t mac[6]) {
-  LearnedMac l;
-  std::memcpy(l.fp, fp, sizeof(l.fp));
-  std::memcpy(l.mac, mac, sizeof(l.mac));
-  g_macs_learned.push_back(l);
-}
-
 void reset_world() {
   mesh_session::deinit();
   mesh_transport::deinit();
@@ -741,9 +727,11 @@ void test_beacon_event_forged_signature_dropped() {
 }
 
 void test_peer_link_mac_binding() {
-  /* get_peer_links: the MAC↔fingerprint binding is learned ONLY from a
+  /* get_peer_links: the MAC↔fingerprint link is recorded ONLY from a
    * fully verified frame — never from an unverified one — and refreshes
-   * when the peer speaks from a new address. */
+   * when a verified frame arrives from another address the transport
+   * table holds. (An address it does not hold is never heard at all: the
+   * F49 part 3 tests in the transport-table section below.) */
   reset_world();
   mesh_session::deinit();
 
@@ -808,8 +796,8 @@ void test_peer_link_mac_binding() {
   assert(mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS) == 1);
   assert(std::memcmp(links[0].mac, mac_a, sizeof(mac_a)) == 0);
 
-  /* The peer reboots onto a new address: the next verified frame
-   * refreshes the binding. */
+  /* A verified frame from another address in the transport table (added
+   * by hand here, the way a re-pair binds it) refreshes the link. */
   uint8_t mac_b[6] = {0x02, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E};
   flen = build_beacon_frame(
       tx_pub, tx_priv, opera_secret, /*counter=*/3,
@@ -1295,98 +1283,6 @@ void test_tamper_alert_roundtrip() {
   assert(mesh_session::alerts_received() == 0);
   assert(mesh_session::get_alerts(recs, mesh_session::MAX_ALERT_HISTORY) == 0);
   std::printf("PASS test_tamper_alert_roundtrip\n");
-}
-
-void test_peer_new_radio_mac_is_learned_from_a_verified_frame() {
-  /* F49 part 3: a trusted peer whose radio MAC changed used to need a
-   * re-pair — its frames arrived from an address the transport dropped
-   * (recv_dropped_no_peer) before any signature check. Now the unknown-
-   * sender hook routes an opera envelope through the full verification
-   * (signature + opera_id + strict counter), and only a frame that
-   * passes it all re-binds the transport table and fires the learned
-   * callback. A replay or a forgery from a strange MAC moves nothing. */
-  uint8_t secret[mesh_crypto::OPERA_SECRET_LEN];
-  for (size_t i = 0; i < sizeof(secret); ++i) secret[i] = (uint8_t)(0x47 + i);
-  uint8_t rx_pub[mesh_crypto::PUBKEY_LEN], rx_priv[mesh_crypto::PRIVKEY_LEN];
-  stand_up_session(secret, rx_pub, rx_priv);
-
-  uint8_t tx_pub[mesh_crypto::PUBKEY_LEN], tx_priv[mesh_crypto::PRIVKEY_LEN];
-  assert(mesh_crypto::ed25519_generate_keypair(tx_pub, tx_priv));
-  assert(mesh_session::register_trusted_peer(tx_pub));
-  uint8_t tx_fp[mesh_crypto::FINGERPRINT_LEN];
-  mesh_crypto::compute_fingerprint(tx_pub, tx_fp);
-  mesh_session::set_tamper_alert_handler(on_alert_rx);
-  mesh_session::set_peer_mac_learned_callback(on_mac_learned);
-  g_macs_learned.clear();
-
-  /* The address the peer paired from, bound the way boot does it. */
-  const uint8_t mac_a[6] = {0x02, 0xA1, 0xA2, 0xA3, 0xA4, 0xAA};
-  assert(mesh_session::bind_peer_mac(tx_fp, mac_a));
-  assert(mesh_transport::has_peer(mac_a));
-
-  /* A frame from the bound address: delivered, nothing re-learned. */
-  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
-  size_t flen = build_alert_frame(tx_pub, tx_priv, secret, /*counter=*/5,
-                                  mesh_alert::Kind::CAMERA_TAMPER, 6, 100,
-                                  frame, sizeof(frame));
-  mesh_transport::test::inject_recv(mac_a, frame, flen, -50);
-  mesh_transport::process();
-  assert(mesh_session::alerts_received() == 1);
-  assert(g_macs_learned.empty());
-
-  /* The peer moves: the same signer transmits from a NEW address the
-   * transport has never seen (no add_peer here — that is the point). */
-  const uint8_t mac_b[6] = {0x02, 0xB1, 0xB2, 0xB3, 0xB4, 0xBB};
-  flen = build_alert_frame(tx_pub, tx_priv, secret, 6,
-                           mesh_alert::Kind::ENCLOSURE_TAMPER, 6, 101,
-                           frame, sizeof(frame));
-  mesh_transport::test::inject_recv(mac_b, frame, flen, -50);
-  mesh_transport::process();
-  /* Delivered through the unknown-sender path... */
-  assert(mesh_session::alerts_received() == 2);
-  /* ...the transport binding healed (old address out, new one in)... */
-  assert(mesh_transport::has_peer(mac_b));
-  assert(!mesh_transport::has_peer(mac_a));
-  /* ...and the integration layer was told, once, so it can persist. */
-  assert(g_macs_learned.size() == 1);
-  assert(std::memcmp(g_macs_learned[0].fp, tx_fp, sizeof(tx_fp)) == 0);
-  assert(std::memcmp(g_macs_learned[0].mac, mac_b, 6) == 0);
-
-  /* A REPLAY of that frame from yet another strange address moves
-   * nothing: the counter check refuses it before any learning. */
-  const uint8_t mac_c[6] = {0x02, 0xC1, 0xC2, 0xC3, 0xC4, 0xCC};
-  mesh_transport::test::inject_recv(mac_c, frame, flen, -50);
-  mesh_transport::process();
-  assert(mesh_session::alerts_received() == 2);
-  assert(mesh_transport::has_peer(mac_b));
-  assert(!mesh_transport::has_peer(mac_c));
-  assert(g_macs_learned.size() == 1);
-
-  /* A FORGERY (payload bit flipped after signing) under a fresh counter
-   * from a strange address moves nothing either. */
-  const uint8_t mac_d[6] = {0x02, 0xD1, 0xD2, 0xD3, 0xD4, 0xDD};
-  flen = build_alert_frame(tx_pub, tx_priv, secret, 7,
-                           mesh_alert::Kind::TEMP_DRIFT, 3, 0,
-                           frame, sizeof(frame));
-  frame[mesh_envelope::OFFSET_PAYLOAD] ^= 0x01;
-  mesh_transport::test::inject_recv(mac_d, frame, flen, -50);
-  mesh_transport::process();
-  assert(mesh_session::alerts_received() == 2);
-  assert(!mesh_transport::has_peer(mac_d));
-  assert(g_macs_learned.size() == 1);
-
-  /* The healed address now takes the normal (known-peer) path. */
-  flen = build_alert_frame(tx_pub, tx_priv, secret, 8,
-                           mesh_alert::Kind::TEMP_DRIFT, 3, 102,
-                           frame, sizeof(frame));
-  mesh_transport::test::inject_recv(mac_b, frame, flen, -50);
-  mesh_transport::process();
-  assert(mesh_session::alerts_received() == 3);
-  assert(g_macs_learned.size() == 1);   /* already bound: no re-learn */
-
-  mesh_session::set_peer_mac_learned_callback(nullptr);
-  mesh_session::deinit();
-  std::printf("PASS test_peer_new_radio_mac_is_learned_from_a_verified_frame\n");
 }
 
 void test_alert_ring_wraps_newest_first() {
@@ -2997,6 +2893,251 @@ void test_removed_peer_leaves_transport_table() {
   std::printf("PASS test_removed_peer_leaves_transport_table\n");
 }
 
+/* ── F49 part 3, withdrawn — a frame from a new address moves no binding ──
+ *
+ * A verified frame proves who SIGNED it, not which radio sent it. The
+ * envelope signs version, msg_type, opera_id, sender_fp, counter, timestamp
+ * and payload — no source address, no destination — and a sender spends ONE
+ * outbound counter across every destination. So a genuine frame of member
+ * B's that this device has not heard yet (a broadcast it missed while off,
+ * out of range or on a lost frame; a rotation frame B unicast to another
+ * member) passes signature, opera_id and the strict counter from ANY
+ * address. #1756 let such a frame, arriving from an address the transport
+ * did not hold, move B's binding there and hand it to main.cpp to persist.
+ * These pin that it no longer can: a frame from an unbound address drops
+ * (recv_dropped_no_peer) before any check, as it did before #1756, B stays
+ * bound where it paired, and a changed radio MAC means a re-pair. */
+
+/* The address this device last verified `fp` speaking from, if any. */
+bool verified_link_mac(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN], uint8_t out[6]) {
+  mesh_session::PeerLink links[mesh_session::MAX_TRUSTED_PEERS];
+  const size_t n = mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS);
+  for (size_t i = 0; i < n; ++i) {
+    if (std::memcmp(links[i].fp, fp, mesh_crypto::FINGERPRINT_LEN) == 0 && links[i].mac_known) {
+      std::memcpy(out, links[i].mac, 6);
+      return true;
+    }
+  }
+  return false;
+}
+
+void test_bound_peer_new_address_is_dropped_not_learned() {
+  /* Rewritten from #1756's test_peer_new_radio_mac_is_learned_from_a_verified_frame,
+   * which pinned the opposite: a fresh, verified frame from a bound peer's
+   * NEW address re-bound the peer there and fired a learned-MAC callback
+   * that main.cpp persisted. "Fresh and verified" turned out not to mean
+   * "sent by that peer, from that address" (the block comment above; the two
+   * tests below replay one from an outsider), so that path is gone. What
+   * holds now: the frame drops like any frame from an unknown address, even
+   * though it would verify; the peer stays bound to the address it paired
+   * from; its counter is not spent, so the same frame from that address
+   * still lands; and a re-pair — which binds the address the partner paired
+   * from — is what moves it. */
+  uint8_t S[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x47 + i);
+  uint8_t rx_pub[mesh_crypto::PUBKEY_LEN], rx_priv[mesh_crypto::PRIVKEY_LEN];
+  stand_up_session(S, rx_pub, rx_priv);
+  mesh_session::set_tamper_alert_handler(on_alert_rx);
+
+  uint8_t tx_pub[mesh_crypto::PUBKEY_LEN], tx_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(tx_pub, tx_priv));
+  assert(mesh_session::register_trusted_peer(tx_pub));
+  uint8_t tx_fp[mesh_crypto::FINGERPRINT_LEN];
+  mesh_crypto::compute_fingerprint(tx_pub, tx_fp);
+
+  /* The address the peer paired from, bound the way boot does it. */
+  const uint8_t mac_a[6] = {0x02, 0xA1, 0xA2, 0xA3, 0xA4, 0xAA};
+  assert(mesh_session::bind_peer_mac(tx_fp, mac_a));
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
+  size_t n = build_alert_frame(tx_pub, tx_priv, S, /*counter=*/5,
+                               mesh_alert::Kind::CAMERA_TAMPER, 6, 100,
+                               frame, sizeof(frame));
+  mesh_transport::test::inject_recv(mac_a, frame, n, -50);
+  mesh_transport::process();
+  assert(mesh_session::alerts_received() == 1);
+
+  /* The same signer, a fresh counter, an address the transport has never
+   * seen (no add_peer — that is the point). */
+  const uint8_t mac_b[6] = {0x02, 0xB1, 0xB2, 0xB3, 0xB4, 0xBB};
+  n = build_alert_frame(tx_pub, tx_priv, S, 6, mesh_alert::Kind::ENCLOSURE_TAMPER, 6, 101,
+                        frame, sizeof(frame));
+  const uint32_t drops = dropped_no_peer();
+  mesh_transport::test::inject_recv(mac_b, frame, n, -50);
+  mesh_transport::process();
+  /* No re-bind: the old address stays, the new one is not let in... */
+  uint8_t seen[6];
+  assert(transport_has(mac_a));
+  assert(!transport_has(mac_b));
+  assert(verified_link_mac(tx_fp, seen) && std::memcmp(seen, mac_a, 6) == 0);
+  /* ...because the frame was dropped unread, not dispatched. */
+  assert(mesh_session::alerts_received() == 1);
+  assert(dropped_no_peer() == drops + 1);
+
+  /* Its counter was not spent: from the bound address it lands. */
+  mesh_transport::test::inject_recv(mac_a, frame, n, -50);
+  mesh_transport::process();
+  assert(mesh_session::alerts_received() == 2);
+
+  /* A re-pair moves it: a completed pairing binds the address the partner
+   * paired from (end_pair_contact -> bind_peer_mac), and main.cpp's
+   * PairedCallback persists that one. The old address leaves the table. */
+  assert(mesh_session::bind_peer_mac(tx_fp, mac_b));
+  assert(transport_has(mac_b) && !transport_has(mac_a));
+  n = build_alert_frame(tx_pub, tx_priv, S, 7, mesh_alert::Kind::TEMP_DRIFT, 3, 102,
+                        frame, sizeof(frame));
+  mesh_transport::test::inject_recv(mac_b, frame, n, -50);
+  mesh_transport::process();
+  assert(mesh_session::alerts_received() == 3);
+  assert(verified_link_mac(tx_fp, seen) && std::memcmp(seen, mac_b, 6) == 0);
+  std::printf("PASS test_bound_peer_new_address_is_dropped_not_learned\n");
+}
+
+void test_unheard_broadcast_replayed_from_a_new_address_moves_nothing() {
+  /* Member B broadcast a BEACON_EVENT that this device, A, never heard; an
+   * outsider E recorded it off the air and sends it to A from E's own
+   * address (no spoofing: E's real MAC, which no member holds). On #1756, A
+   * dispatched it, moved B's binding to E — B's real address left A's
+   * transport table — and fired the learned-MAC callback main.cpp
+   * persisted; A's next rotation then sent its OFFER to E alone, B never
+   * answered, and the 60 s commit forgot B. */
+  uint8_t S[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x93 + i);
+  uint8_t a_pub[mesh_crypto::PUBKEY_LEN], a_priv[mesh_crypto::PRIVKEY_LEN];
+  stand_up_session(S, a_pub, a_priv);
+  mesh_session::set_beacon_event_handler(on_beacon_event_received);
+  g_received.clear();
+
+  uint8_t b_pub[32], b_priv[32], c_pub[32], c_priv[32], b_fp[8], c_fp[8];
+  assert(mesh_crypto::ed25519_generate_keypair(b_pub, b_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(c_pub, c_priv));
+  mesh_crypto::compute_fingerprint(b_pub, b_fp);
+  mesh_crypto::compute_fingerprint(c_pub, c_fp);
+  assert(mesh_session::register_trusted_peer(b_pub));
+  assert(mesh_session::register_trusted_peer(c_pub));
+  const uint8_t mac_b[6] = {0x02, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB};
+  const uint8_t mac_c[6] = {0x02, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC};
+  const uint8_t mac_e[6] = {0x02, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE};
+  assert(mesh_session::bind_peer_mac(b_fp, mac_b));
+  assert(mesh_session::bind_peer_mac(c_fp, mac_c));
+
+  /* B's broadcast, counter 1, signed with B's own key. */
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
+  const size_t n = build_beacon_frame(b_pub, b_priv, S, /*counter=*/1,
+                                      mesh_beacon::BeaconState::ARRIVED, "front-door",
+                                      frame, sizeof(frame));
+  assert(n > 0);
+
+  /* E delivers it. */
+  const uint32_t drops = dropped_no_peer();
+  mesh_transport::test::inject_recv(mac_e, frame, n, -40);
+  mesh_transport::process();
+  /* B stays bound to its real address; E is not let in. */
+  uint8_t seen[6];
+  assert(transport_has(mac_b) && transport_has(mac_c));
+  assert(!transport_has(mac_e));
+  assert(!verified_link_mac(b_fp, seen));
+  /* Dropped unread, not dispatched — and with no learned-MAC callback left
+   * in the session, nothing reaches main.cpp to persist. */
+  assert(g_received.empty());
+  assert(dropped_no_peer() == drops + 1);
+
+  /* The drop spent none of B's counter: the copy B itself sends lands. */
+  mesh_transport::test::inject_recv(mac_b, frame, n, -40);
+  mesh_transport::process();
+  assert(g_received.size() == 1);
+  assert(verified_link_mac(b_fp, seen) && std::memcmp(seen, mac_b, 6) == 0);
+
+  /* A rotation A starts (removing C) reaches B: the OFFER, and its retry,
+   * go to B's real address and nowhere else. */
+  g_outs.clear();
+  uint8_t removed[mesh_crypto::PUBKEY_LEN];
+  assert(mesh_session::remove_peer(c_fp, 1000, removed) ==
+         mesh_session::RemoveResult::STARTED);
+  assert(g_outs.size() == 1);
+  assert(std::memcmp(g_outs[0].mac, mac_b, 6) == 0);
+  assert(g_outs[0].bytes[mesh_envelope::OFFSET_MSG_TYPE] ==
+         static_cast<uint8_t>(mesh_envelope::MsgType::REKEY_OFFER));
+  g_outs.clear();
+  mesh_session::process(1000 + mesh_rekey::REKEY_RETRY_MS);
+  assert(g_outs.size() == 1);
+  assert(std::memcmp(g_outs[0].mac, mac_b, 6) == 0);
+  std::printf("PASS test_unheard_broadcast_replayed_from_a_new_address_moves_nothing\n");
+}
+
+void test_unheard_rekey_offer_replayed_from_a_new_address_moves_nothing() {
+  /* B removes member C and sends its REKEY_OFFER; A never heard its copy,
+   * and E sends it to A from E's address. On #1756, A re-bound B to E,
+   * joined the rotation, and unicast its REKEY_ACCEPT — meant for the
+   * initiator, B — to E. */
+  uint8_t S[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0xA7 + i);
+  uint8_t a_pub[mesh_crypto::PUBKEY_LEN], a_priv[mesh_crypto::PRIVKEY_LEN];
+  stand_up_session(S, a_pub, a_priv);
+
+  uint8_t b_pub[32], b_priv[32], c_pub[32], c_priv[32];
+  uint8_t a_fp[8], b_fp[8], c_fp[8];
+  assert(mesh_crypto::ed25519_generate_keypair(b_pub, b_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(c_pub, c_priv));
+  mesh_crypto::compute_fingerprint(a_pub, a_fp);
+  mesh_crypto::compute_fingerprint(b_pub, b_fp);
+  mesh_crypto::compute_fingerprint(c_pub, c_fp);
+  assert(mesh_session::register_trusted_peer(b_pub));
+  assert(mesh_session::register_trusted_peer(c_pub));
+  const uint8_t mac_b[6] = {0x02, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB};
+  const uint8_t mac_c[6] = {0x02, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC};
+  const uint8_t mac_e[6] = {0x02, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE};
+  assert(mesh_session::bind_peer_mac(b_fp, mac_b));
+  assert(mesh_session::bind_peer_mac(c_fp, mac_c));
+
+  /* B's genuine OFFER (B removes C; A is the survivor), counter 2. */
+  mesh_rekey::Context cb;
+  mesh_rekey::context_init(cb);
+  uint8_t surv[1][mesh_crypto::FINGERPRINT_LEN];
+  std::memcpy(surv[0], a_fp, sizeof(a_fp));
+  mesh_rekey::Action offer = mesh_rekey::start(cb, b_fp, c_fp, surv, 1, 0x5157, 0);
+  assert(offer.type == mesh_rekey::ActionType::BROADCAST_OFFER);
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
+  const size_t n = build_signed_session_frame(b_pub, b_priv, S, /*counter=*/2,
+                                              mesh_envelope::MsgType::REKEY_OFFER,
+                                              offer.payload, offer.payload_len,
+                                              frame, sizeof(frame));
+  assert(n > 0);
+
+  /* E delivers it. */
+  g_outs.clear();
+  const uint32_t drops = dropped_no_peer();
+  mesh_transport::test::inject_recv(mac_e, frame, n, -40);
+  mesh_transport::process();
+  /* B stays bound to its real address; E is not let in. */
+  uint8_t seen[6];
+  assert(transport_has(mac_b) && transport_has(mac_c));
+  assert(!transport_has(mac_e));
+  assert(!verified_link_mac(b_fp, seen));
+  /* Dropped unread: no rotation joined, C neither forgotten nor
+   * deny-listed, and nothing sent — no ACCEPT to E, or to anyone. */
+  assert(!mesh_session::rekey_in_progress());
+  assert(mesh_session::trusted_peer_count() == 2);
+  assert(!mesh_session::is_revoked(c_fp));
+  assert(g_outs.empty());
+  assert(dropped_no_peer() == drops + 1);
+
+  /* The OFFER from B's own address still lands, and the ACCEPT goes back
+   * to B's real address. */
+  mesh_transport::test::inject_recv(mac_b, frame, n, -40);
+  mesh_transport::process();
+  assert(mesh_session::rekey_in_progress());
+  assert(mesh_session::is_revoked(c_fp));
+  assert(g_outs.size() == 1);
+  assert(std::memcmp(g_outs[0].mac, mac_b, 6) == 0);
+  mesh_envelope::Header hdr;
+  const uint8_t* pl = nullptr;
+  size_t plen = 0;
+  assert(parse_session_frame(g_outs[0].bytes, a_pub, &hdr, &pl, &plen));
+  assert(hdr.msg_type == static_cast<uint8_t>(mesh_envelope::MsgType::REKEY_ACCEPT));
+  mesh_rekey::wipe(offer);
+  std::printf("PASS test_unheard_rekey_offer_replayed_from_a_new_address_moves_nothing\n");
+}
+
 /* Integration-layer stand-in for main.cpp's PairedCallback: persist the
  * joiner's secret (here: set it) and register the partner. */
 std::vector<uint8_t> g_paired_mac;
@@ -3222,6 +3363,94 @@ void test_failed_pairing_removes_partner_address() {
   assert(mesh_session::pairing_state() == mesh_pairing::State::DISCOVERING_JOINER);
   mesh_session::cancel_pairing();
   std::printf("PASS test_failed_pairing_removes_partner_address\n");
+}
+
+/* main.cpp's PairedCallback as it treats a device it ALREADY trusts:
+ * register_trusted_peer refuses the duplicate (main.cpp logs it and goes
+ * on), and the partner's address is the one it persists (save_peer_mac). */
+void on_paired_known_peer(const uint8_t* secret, uint32_t code) {
+  on_paired(secret, code);
+  if (secret != nullptr) assert(mesh_session::set_opera_secret(secret));
+  uint8_t peer_pub[32];
+  assert(mesh_session::get_paired_peer_pubkey(peer_pub));
+  assert(!mesh_session::register_trusted_peer(peer_pub));   /* already trusted */
+  uint8_t mac[6];
+  assert(mesh_session::get_paired_peer_mac(mac));
+  g_paired_mac.assign(mac, mac + 6);
+}
+
+/* With F49 part 3 withdrawn, a re-pair is how a trusted peer whose radio
+ * MAC changed is heard again. J is trusted and bound to the address it
+ * first paired from, and now transmits from a new one: its opera frames
+ * from there drop, unread; a pairing run from there (an owner's act, the
+ * code confirmed on both screens) binds the new address, takes the old one
+ * out of the table, and hands main.cpp the address to persist. */
+void test_repair_moves_a_trusted_peers_address() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0xB3 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  mesh_session::set_paired_callback(on_paired_known_peer);
+  mesh_session::set_tamper_alert_handler(on_alert_rx);
+  g_paired_mac.clear();
+
+  const uint8_t me[6]      = {0x24, 0x0A, 0xC4, 0x00, 0x04, 0x01};   /* this session */
+  const uint8_t mac_old[6] = {0x24, 0x0A, 0xC4, 0x00, 0x04, 0x02};
+  const uint8_t mac_new[6] = {0x24, 0x0A, 0xC4, 0x00, 0x04, 0x03};
+  uint8_t j_pub[32], j_priv[32], j_fp[8];
+  assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+  mesh_crypto::compute_fingerprint(j_pub, j_fp);
+  assert(mesh_session::register_trusted_peer(j_pub));
+  assert(mesh_session::bind_peer_mac(j_fp, mac_old));
+
+  /* J's opera frame from its new address: dropped, the binding unmoved. */
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
+  const size_t n = build_alert_frame(j_pub, j_priv, S, 1, mesh_alert::Kind::TEMP_DRIFT, 3, 4,
+                                     frame, sizeof(frame));
+  const uint32_t drops = dropped_no_peer();
+  mesh_transport::test::inject_recv(mac_new, frame, n, -40);
+  mesh_transport::process();
+  assert(g_alerts_rx.empty() && dropped_no_peer() == drops + 1);
+  assert(transport_has(mac_old) && !transport_has(mac_new));
+
+  /* The owner re-pairs J; J runs it from its new address. */
+  mesh_pairing::PairingContext cj;
+  mesh_pairing::context_init(cj);
+  mesh_pairing::Action a = mesh_pairing::start_joiner(cj, j_pub, j_priv, 10);
+  assert(mesh_session::start_pairing_initiator(S, "Home", 20));
+  const std::vector<uint8_t> disc = wire(a);
+  mesh_transport::test::inject_recv(mac_new, disc.data(), disc.size(), -40);
+  mesh_transport::process();
+  const std::vector<uint8_t> offer = last_to(mac_new);
+  assert(!offer.empty() && offer[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_OFFER));
+  feed_pure(cj, me, offer, 30, &a);
+  assert(a.type == mesh_pairing::ActionType::SEND_ACCEPT);
+  const std::vector<uint8_t> accept = wire(a);
+  mesh_transport::test::inject_recv(mac_new, accept.data(), accept.size(), -40);
+  mesh_transport::process();
+  assert(mesh_session::confirm_pairing_code(40));
+  const std::vector<uint8_t> conf_i = last_to(mac_new);
+  a = mesh_pairing::confirm_code(cj, 40);
+  const std::vector<uint8_t> conf_j = wire(a);
+  mesh_transport::test::inject_recv(mac_new, conf_j.data(), conf_j.size(), -40);
+  mesh_transport::process();
+  const std::vector<uint8_t> complete = last_to(mac_new);
+  feed_pure(cj, me, conf_i, 50, &a);
+  feed_pure(cj, me, complete, 50, &a);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+  mesh_session::process(60);
+
+  /* Re-bound to the address it paired from; the old one is out; still one
+   * member; and main.cpp is handed the new address to persist. */
+  assert(g_paired_fired);
+  assert(g_paired_mac.size() == 6 && std::memcmp(g_paired_mac.data(), mac_new, 6) == 0);
+  assert(mesh_session::trusted_peer_count() == 1);
+  assert(transport_has(mac_new) && !transport_has(mac_old));
+  /* The frame that was dropped spent no counter: from here it lands. */
+  mesh_transport::test::inject_recv(mac_new, frame, n, -40);
+  mesh_transport::process();
+  assert(g_alerts_rx.size() == 1);
+  std::printf("PASS test_repair_moves_a_trusted_peers_address\n");
 }
 
 /* ── F33 part 3 — the outbound counter survives a reboot ──────────────── */
@@ -3936,7 +4165,6 @@ int main() {
   test_build_mesh_json_buffer_too_small();
   /* F10 — enable, leave, the alerts channel; F11 attribution. */
   test_tamper_alert_roundtrip();
-  test_peer_new_radio_mac_is_learned_from_a_verified_frame();
   test_alert_ring_wraps_newest_first();
   test_send_tamper_alert();
   test_enable_disable();
@@ -3965,9 +4193,14 @@ int main() {
   /* F33 part 1 — the transport peer table on the device. */
   test_bound_peer_is_heard_and_reached();
   test_removed_peer_leaves_transport_table();
+  /* F49 part 3 withdrawn — a frame from a new address moves no binding. */
+  test_bound_peer_new_address_is_dropped_not_learned();
+  test_unheard_broadcast_replayed_from_a_new_address_moves_nothing();
+  test_unheard_rekey_offer_replayed_from_a_new_address_moves_nothing();
   test_pairing_over_the_air_as_initiator();
   test_pairing_over_the_air_as_joiner();
   test_failed_pairing_removes_partner_address();
+  test_repair_moves_a_trusted_peers_address();
   /* F33 part 3 — the outbound counter survives a reboot. */
   test_outbound_counter_reserve_ahead();
   test_outbound_counter_without_reservation_restarts();
