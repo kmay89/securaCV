@@ -3297,6 +3297,10 @@ bool csi_running() {
   return csi_hal::is_running();
 }
 
+uint32_t event_id_floor_stored() {
+  return g_id_floor_stored;
+}
+
 bool csi_get_stats(csi_stats_t* out) {
   if (!out) return false;
   return csi_hal::get_stats(out);
