@@ -412,6 +412,28 @@ void onboard_ui_stage(ObStage st, const char* detail) {
   s_hint_text[0] = '\0';  // a scene change retires the coach line
   s_hint_narrow[0] = '\0';
 
+#ifdef CD_FLAVOR_WATCH
+  // The bird's seat, BEFORE any mood below runs: the mark records its base
+  // at the first on-stage mood after a placement (canary_mark_rebase), so
+  // the seat must be set first or the pose snaps back to the old one on
+  // the next animation frame (review catch on F50). On the Join scene the
+  // bird is only visible while the QR is away (mood Hidden otherwise), and
+  // its old center-relative perch put its top 12 px inside the round
+  // watch's title band — so there it takes the hidden card's empty seat,
+  // which the stack keeps clear of the title and the credentials on every
+  // glass by construction (join_bird_top). Every other scene centers its
+  // text, well under the usual perch.
+  if (s_bird) {
+    if (st == ObStage::Join) {
+      lv_obj_align(s_bird, LV_ALIGN_TOP_MID, 0,
+                   onboardlayout::join_bird_top(s_join, BIRD_PX));
+    } else {
+      lv_obj_align(s_bird, LV_ALIGN_CENTER, 0, -64);
+    }
+    canary_mark_rebase();
+  }
+#endif
+
   switch (st) {
     case ObStage::Hello:
       show_qr(false);
@@ -500,22 +522,6 @@ void onboard_ui_stage(ObStage st, const char* detail) {
   if (st != ObStage::Fail && st != ObStage::Success) {
     lv_obj_set_style_text_color(s_title, col_text(), 0);
   }
-#ifdef CD_FLAVOR_WATCH
-  // The bird's seat. On the Join scene it is only visible while the QR is
-  // away (mood Hidden otherwise), and its old center-relative perch put its
-  // top 12 px inside the round watch's title band (F50) — so there it takes
-  // the hidden card's empty seat, which the stack keeps clear of the title
-  // and the credentials on every glass by construction (join_bird_top).
-  // Every other scene centers its text, well under the usual perch.
-  if (s_bird) {
-    if (st == ObStage::Join) {
-      lv_obj_align(s_bird, LV_ALIGN_TOP_MID, 0,
-                   onboardlayout::join_bird_top(s_join, BIRD_PX));
-    } else {
-      lv_obj_align(s_bird, LV_ALIGN_CENTER, 0, -64);
-    }
-  }
-#endif
   refresh_bottom();
   content_enter();
 }
