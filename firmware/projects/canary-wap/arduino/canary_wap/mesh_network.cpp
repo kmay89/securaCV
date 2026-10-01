@@ -2579,8 +2579,12 @@ bool load_replay_counters() {
 // gate would restart the counters at every boot of an FE-off board.
 // ════════════════════════════════════════════════════════════════════════════
 
-// True only when the record is committed (Preferences::putBytes returns the
-// length only after nvs_commit succeeds, on both cores canary-wap builds).
+// Both use their own Preferences handle, not g_prefs: this runs on the send
+// path, which remove_peer() reaches from the REST handler's task, and a
+// Preferences object another task has begun refuses a second begin() (NVS
+// itself takes concurrent handles). True only when the record is committed:
+// Preferences::putBytes returns the length only after nvs_commit succeeds,
+// on both cores canary-wap builds.
 static bool persist_tx_reservations() {
   uint8_t blob[MAX_OPERA_SIZE * TX_RESERVE_ENTRY_SIZE];
   size_t n = 0;
@@ -2591,9 +2595,10 @@ static bool persist_tx_reservations() {
     n += TX_RESERVE_ENTRY_SIZE;
   }
   if (n == 0) return true;
-  if (!g_prefs.begin(NVS_NS, false)) return false;
-  const size_t put = g_prefs.putBytes(NVS_TX_RESERVED, blob, n);
-  g_prefs.end();
+  Preferences prefs;
+  if (!prefs.begin(NVS_NS, false)) return false;
+  const size_t put = prefs.putBytes(NVS_TX_RESERVED, blob, n);
+  prefs.end();
   return put == n;
 }
 
@@ -2603,14 +2608,15 @@ static bool persist_tx_reservations() {
 // whole entries: there is then no way to know how far a counter went, and
 // the boot says so.
 static void load_tx_reservations() {
-  g_prefs.begin(NVS_NS, true);
-  if (!g_prefs.isKey(NVS_TX_RESERVED)) {
-    g_prefs.end();
+  Preferences prefs;
+  if (!prefs.begin(NVS_NS, true)) return;   // no namespace yet: nothing stored
+  if (!prefs.isKey(NVS_TX_RESERVED)) {
+    prefs.end();
     return;
   }
   uint8_t blob[MAX_OPERA_SIZE * TX_RESERVE_ENTRY_SIZE];
-  const size_t got = g_prefs.getBytes(NVS_TX_RESERVED, blob, sizeof(blob));
-  g_prefs.end();
+  const size_t got = prefs.getBytes(NVS_TX_RESERVED, blob, sizeof(blob));
+  prefs.end();
   if (got == 0 || (got % TX_RESERVE_ENTRY_SIZE) != 0) {
     health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
                "opera: send-counter reservations unreadable; counters restart at 1");
