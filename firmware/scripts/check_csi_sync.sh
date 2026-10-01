@@ -366,8 +366,9 @@ fi
 # runs csi_event_backfill.h's Planner, whose begin() restores the watermark
 # with restore() (a ceiling the allocator did not follow is no record) and
 # whose walk never sends or credits a card line at or above the allocator's
-# next id. test_csi_event_backfill.cpp runs the planner and
-# test_wap_event_egress.cpp the egress on the host.
+# next id; check_wap_event_egress.py (rule 5, below) holds the egress to
+# handing it that floor and that bound. test_csi_event_backfill.cpp runs the
+# planner and test_wap_event_egress.cpp the egress on the host.
 WAP_INTEG="$STAGED/csi_integration.cpp"
 if ! grep -qF 'csi_event_set_event_id_floor(csi_event_id_floor::boot_floor(persisted, delivered));' "$WAP_INTEG" \
    || ! grep -qF 'prefs.getULong(csi_mqtt::NVS_KEY_DELIVERED, 0)' "$WAP_INTEG"; then
@@ -386,6 +387,19 @@ fi
 # and this check holds the source to them. Each run it also mutates the
 # source in memory, to prove the check bites.
 if ! python3 firmware/scripts/check_event_egress_order.py; then
+    drift=1
+fi
+
+# ── The canary-wap's event egress (backlog F78) ──
+# test_wap_event_egress.cpp drives the egress against the real SD event log
+# and CSI library, and models what it cannot compile: the commit hook in
+# csi_integration.cpp (it only enqueues), the boot order (the egress begins
+# after the id floor), the loop task's pump in csi_mqtt.cpp (and nothing
+# from the esp_mqtt task). This check holds those sources to the model, and
+# the egress to its order rules (live rows wait behind the card and RAM
+# backlog, the tamper bridge goes first). It mutates the sources in memory
+# each run to prove it bites.
+if ! python3 firmware/scripts/check_wap_event_egress.py; then
     drift=1
 fi
 
