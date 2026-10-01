@@ -736,6 +736,20 @@ static void test_failed_append_in_an_outage_keeps_the_backlog_owed() {
   drain();
   CHECK(exactly(W.ha.accepted, ids),
         "the waiting row did not move the NVS ceiling past them: all five arrive");
+  /* Nothing waiting yet: the failed row is the first of the outage, and the
+   * card's rows come after it. Its ceiling (kStride ids past it) would
+   * cover them. */
+  fresh_device();
+  SD.fail_writes = true;
+  (void)emit_ping(); loop_pass();
+  SD.fail_writes = false;
+  ids.clear();
+  for (int i = 0; i < 3; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  boot();
+  connect();
+  drain();
+  CHECK(exactly(W.ha.accepted, ids),
+        "a failed append that opens an outage does not cover the card rows after it");
 }
 
 static void test_unconfigured_broker_drops_the_backlog() {
