@@ -1283,7 +1283,11 @@ so — see D2 below.)
   inject latch and the Today sheet do not apply: it calls no
   `csi_event_inject` and serves no `/api/events/today`. On the canary-wap, a
   closed bundle put in the ring would set `g_ring_has_live` like any live row.
-- [ ] **F78 [code] canary-wap's live publish overtakes its own backlog.** On
+  *Since F78 (#<W9>):* on the canary-wap a closed bundle that cannot go out at
+  once waits in the egress's 8-row RAM hold and merges into the backfill by
+  id, so a short broker outage no longer loses it. It is still never on the
+  card, so a reboot, or more than eight rows waiting, still does.
+- [x] **F78 [code] canary-wap's live publish overtakes its own backlog.** On
   reconnect, `MQTT_EVENT_CONNECTED` sets `s_connected` on the esp_mqtt task
   and only flags the backfill for the loop task. A row committed before
   `csi_mqtt::loop()` drains it goes out live through `publish_and_advance`,
@@ -1296,6 +1300,65 @@ so — see D2 below.)
   both write `s_last_published_event_id` and `s_delivered_ceiling` with no
   lock between them. Adopting `csi_event_backfill::Planner` on the WAP, as
   F47 suggested, would fix both. Found by F46 (#1761).
+  *Done (#<W9>):* the canary-wap's egress runs `csi_event_backfill.h`'s
+  Planner, as the canary's does, in a new sketch-local
+  `csi_event_egress.{h,cpp}`. The commit hook (`csi_integration.cpp`) only
+  copies the row into a 16-deep FreeRTOS queue: it never blocks (a full queue
+  drops and counts), never publishes, and never touches the card or the
+  watermark, so nothing runs under the commit lock on the NimBLE host task.
+  `csi_mqtt::loop()`'s pump, on the loop task, is the one writer: each row's
+  tamper bridge first, then the row, live only when nothing older is owed.
+  Card rows wait on the card, and the backfill walks them in id order, two per
+  pass, until caught up (no longer 64 per CONNECTED). Rows the card does not
+  keep wait in an 8-row RAM hold (oldest dropped first, counted) and merge
+  into the walk by id: closed bundles (never on this card, F77), rows whose
+  append failed, and every row while no card is open. "Older" includes a card
+  that is not open but may hold older rows: from boot until its log first
+  opens (a slow mount), and after it closes with rows waiting (an SD error's
+  remount), for at most 45 s (`kCardWaitMs`); a card that comes back later has
+  its rows skipped. An ambient row is never held: one that cannot go out at
+  once is dropped, counted. With no broker configured, or after the broker
+  changes (host, port, user or topic prefix: `csi_mqtt::destination_epoch()`),
+  the waiting rows are owed to nobody, as on the canary. The NVS delivery
+  ceiling is written on a hand-over, never for a row that will wait in RAM
+  behind older ones (a failed card append's write is held back in `WapPort`
+  until the row goes); the walk's own hand-over still writes it up to
+  `kStride` ids ahead (F47's trade). `MQTT_EVENT_CONNECTED` flags nothing now.
+  `csi_event_log` keeps the reload and dismissals and gains the planner's card
+  adapter (`poll`, `append_line` reporting the retention cut, `read_at`,
+  torn-tail sealing); `iterate_since` and `append` are gone; a pulled card now
+  resets the reconcile latch, so a reinserted card reconciles a failed
+  rewrite. A dismissal line never cuts the log and is never replayed; one the
+  log cannot take yet (no open log, or a log at its cap, including a cap an
+  earlier dismissal in the same flush reached) stays queued in RAM, up to
+  eight, until it can, and a reboot drops it. Also fixed on the way: the old
+  live path wrote the delivery ceiling before every publish attempt, connected
+  or not, so a reboot during an outage skipped the whole card backlog.
+  `tests_host/test_wap_event_egress.cpp` runs the real egress, SD log and CSI
+  library against a model of HA's replay gate (45 scenarios, 132 checks).
+  Built on the extraction commit (13c862c: the old logic moved unchanged,
+  except that it sends the tamper bridge when the events body does not build),
+  its reconnect-window, commit-inside-the-walk and reboot-in-an-outage
+  scenarios fail 9 checks. Built on the first fix (3fc1f93), 20 checks fail
+  (the late-card, closed-card, broker-change, ambient, reinserted-card and
+  delivery-ceiling scenarios), and 8 in the dismiss suite (the waiting
+  dismissals). A 66-mutation sweep of the egress and the card adapter: 61 fail
+  a host suite, one (the RAM flush moved before the walk, a one-pass delay)
+  fails `check_wap_event_egress.py`, and four are equivalent (listed in the
+  PR). `firmware/scripts/check_wap_event_egress.py` (49 self-test mutations,
+  run by `check_csi_sync.sh`) holds what the host build cannot compile: the
+  hook (only `on_committed`, after the privacy gate), one pump in
+  `csi_mqtt::loop()` and one `begin()` in `csi_integration::init` sketch-wide,
+  the boot order (floor and egress before the modules, F83), the esp_mqtt
+  handler and the broker epoch. Behavior changes beyond the fix: a broker
+  configured later, or a changed one, is not sent the backlog; with no card, a
+  short outage delivers up to 8 rows (was: lost); rows committed in the first
+  45 s after boot wait for a card that may still mount; an ambient row that
+  cannot go out at once is dropped. Residual: RAM-held rows and waiting
+  dismissals do not survive a reboot (for closed bundles that is F77's call);
+  a loop-task stall past 16 commits now drops rows from the card too.
+  Host-tested; the ESP32 compile is CI's; not bench-tested (U1: the five F78
+  rows in `hardware_verification_checklist.md`). Found here: F103-F106.
 - [ ] **F79 [code+decision] Below the backfill's bound, the SD event log is
   trusted input.** Both backfills (the canary's
   `csi_event_backfill::Planner`, the canary-wap's `iterate_since`) refuse a
@@ -1421,7 +1484,7 @@ so — see D2 below.)
   health or diagnostic flag once the allocator passes `kHoldLimit`
   (0xF0000000), and decide the recovery (a re-pin plus a reset of the floor
   and `csi.evsent`). Found by F46's review (#1761).
-- [ ] **F83 [code] The canary-wap can commit an event before its id floor
+- [x] **F83 [code] The canary-wap can commit an event before its id floor
   is restored.** `csi_integration::init` calls `register_v1_modules()`
   before `apply_event_id_floor_from_nvs()`. `ble_scout_init()` emits
   `initialized("failed")` when `ble_scout_key_init()` fails, and that
@@ -1430,6 +1493,89 @@ so — see D2 below.)
   `csi.evsent` then limits the reissued ids. It is rare (it needs a
   key-store failure) and older than F46. Restore the floor first, as the
   canary does (`csi_event_egress_begin`). Found by F46 (#1761).
+  *Done (#<W9>), as hardening: the premise was false.* The first build's
+  judgment stood. On this base nothing commits between `register_v1_modules()`
+  and `apply_event_id_floor_from_nvs()`: `ble_scout_init()`'s
+  `emit_initialized("failed")` carries a state_name, so `csi_event_emit` hands
+  it to the bundler, which opens a bundle (`CSI_BUNDLER_BUFFERED`): no event
+  id, no `csi_event_on_id_advance`, no NVS floor write. The bundle commits
+  when it closes in `loop()`, after the restore, with an id from the restored
+  floor. A host probe on the real staged sources (`ble_scout.cpp`,
+  `ble_scout_state.cpp`, `ble_scan.cpp`, `csi_event.cpp`, `csi_module.cpp`,
+  `csi_bundler.cpp`, the key store failing) counted 0 id advances and 0
+  commits during init, and both reviews confirmed it independently on every
+  boot path: `csi_module_register` runs no module init, the mesh handlers
+  installed there only log, no bundle slot is open at boot for an admit to
+  evict, and ble.scout's NimBLE-task emits start only after
+  `ble_bringup_finalize`. 8cc07ec landed anyway because that verdict leaned on
+  one emit staying state-bearing and nothing committed held it: the tests
+  review showed that dropping the state_name from the "failed" emit would
+  reopen F83 with every gate green, and the concurrency review found the
+  reorder a two-line move the static check already accepted.
+  `csi_integration::init` now restores the floor and starts the egress
+  (`csi_event_egress::begin()`) before `register_v1_modules()`, as the canary
+  restores its floor in `csi_event_egress_begin()` before its modules; the SD
+  log reload, which needs the module manifests, stays after.
+  `check_wap_event_egress.py`'s boot-order rule requires the order (three
+  self-test mutations), and it fails on the `csi_integration.cpp` before
+  8cc07ec. No device behavior changes today, so no host test can fail before
+  it. The ESP32 compile is CI's; not bench-tested.
+- [ ] **F103 [code] On the canary, a failed card append during an outage moves
+  the delivery ceiling past the backlog.** On the canary, a row whose card
+  append fails while a backlog waits moves the NVS delivery ceiling past that
+  backlog. `Planner::commit`'s not-on-card route writes the ceiling
+  (`persist_for`) before `hand_to_queue`; the canary then sends the row live
+  or into its MQTT offline queue (the planner header's documented trade), so a
+  reboot before the backlog drains skips the rows still on the card. The
+  canary-wap no longer does (its `WapPort` declines that one write while the
+  row will wait in RAM, and writes it when the row goes, #<W9>), but the
+  canary's offline queue publishes later without asking the planner, so the
+  same hold there needs the queue's drain to write the ceiling first. Fix it
+  in the canonical planner or the canary's port, with a scenario in
+  `test_csi_event_backfill.cpp` (a failed append during an outage, then a
+  reboot: every card row still arrives). Found by F78 (#<W9>).
+- [ ] **F104 [code+decision] On the canary, a row committed while its card is
+  not open overtakes the card's backlog.** On the canary, a row committed
+  while its card is not open overtakes the card's backlog.
+  `Planner::card_close()` keeps no note that rows were waiting, and
+  `Planner::commit` routes a row as not on the card whenever the card is
+  closed: live when the link is up (the ceiling and the watermark move past
+  the card's rows), or into the offline queue, whose drain raises HA's mark
+  past them. When the card reopens, `card_open` finds its tail at or below the
+  watermark and parks the walk at the end, so the rows still on it are never
+  sent. `test_csi_event_backfill.cpp`'s `test_card_lost_while_rows_wait` pins
+  that loss as the planner's rule. The canary-wap now holds such rows in RAM
+  behind a card that may hold older ones, from boot until its log first opens
+  and after a close with rows waiting, for at most 45 s (`kCardWaitMs`,
+  #<W9>); the canary's pump (`csi_event_egress_pump`) has no counterpart.
+  Decide whether the canary takes the same bounded wait in its port (with a
+  scenario: a card closed mid-backlog, a commit, the card back) or states the
+  loss as the trade. On the canary this is from reading the planner and the
+  pump, not a probe. Found by F78's review (#<W9>).
+- [ ] **F105 [code+decision] Ambient rows reach the SD event log and the
+  `events` topic.** Ambient rows reach the SD event log and the `events`
+  topic, though `csi_event.h` says `CSI_CATEGORY_AMBIENT` is "never persisted,
+  drives live UI only". Both trees' egresses log and publish every committed
+  ring row the privacy ceiling passes, and `wifi.channel_activity` commits
+  ambient ring rows, up to one per cooldown (5 s by default, 1 s at its
+  minimum). A host probe on the canary-wap's egress commits one ambient emit
+  and finds 230 bytes on the card and one `events` publish; the hook before
+  F78 did the same. Since #<W9> the canary-wap never holds an ambient row in
+  RAM (one that cannot go out at once is dropped, counted), but with a card in
+  they are still logged and replayed. Decide whether ambient rows go to the
+  card and the broker; if not, filter them in both egresses, which also keeps
+  the canary-wap's 16-row commit queue far from full. Found by F78 (#<W9>).
+- [ ] **F106 [code] The canary-wap's `csi_mqtt::init()` destroys the esp_mqtt
+  client under a concurrent publish.** The canary-wap's `csi_mqtt::init()`
+  destroys the esp_mqtt client under a concurrent publish. A config POST or
+  `POST /api/mqtt/test` runs `init()` on the httpd task, which calls
+  `teardown_client()` (`esp_mqtt_client_stop`, `esp_mqtt_client_destroy`, then
+  `s_client = nullptr`), while the loop task's egress (or any other publish in
+  `csi_mqtt.cpp`) can be inside `publish_raw()` with the old handle, which
+  only null-checks it. Pre-existing; F78 narrowed it to one publishing task
+  for events, and `csi_mqtt.h` now says so. Hand a runtime re-init to the loop
+  task (`csi_mqtt::loop()`), or guard the client with a lock, and hold it with
+  a static check. Found by F78's review (#<W9>).
 - [ ] **F90 [decision] A held state fills core.presence's hourly ceiling.**
   Every bundle reopening is a row the ceiling counts (F80), and a held state
   reopens its bundle every 10 minutes: 6 rows an hour, all of core.presence's

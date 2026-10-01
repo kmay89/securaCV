@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### canary-wap's mesh is heard after a reboot and pairs in either confirm order, the PIO mesh takes a member's frame only from its own address, the Canary bundles its presence rows and the hourly limit counts every row, and the Lab's examples match the firmware (#<W9>)
+### canary-wap's mesh is heard after a reboot and pairs in either confirm order, the PIO mesh takes a member's frame only from its own address, the Canary bundles its presence rows and the hourly limit counts every row, canary-wap's new events wait behind its backlog, and the Lab's examples match the firmware (#<W9>)
 
 - **canary-wap's mesh is heard after a reboot, pairs in either confirm order,
   and finds its members (sweep F71, F73-F76).** A rebooted canary-wap's frames
@@ -74,6 +74,30 @@
   the next change then waits up to about ten minutes for a slot (F90).
   **Host-tested only**: the ESP32 builds are CI's, and nothing was checked on
   a bench.
+- **canary-wap no longer lets a new event overtake its own backlog after a
+  broker outage (sweep F78; F83 hardened).** On reconnect, an event committed
+  before the main loop drained the SD backfill went out live and moved the
+  delivery watermark past every unsent row, so those rows were never sent (and
+  Home Assistant would have refused them). The live publish also ran on
+  whichever task committed, the Bluetooth host task included, while the
+  backfill ran on the main loop, both writing the watermark with no lock; a
+  reconnect replayed at most 64 rows; and a reboot during an outage skipped
+  the whole backlog, because every commit wrote the delivery ceiling first.
+  The canary-wap now runs the canary's backfill planner. The commit hook only
+  queues the row, and one pump on the main loop logs it to the card, sends it
+  live only when nothing older is owed, and replays the card in id order until
+  it is caught up. Presence and tamper rows, which never reach the
+  canary-wap's card (F77), and rows committed while the card is not open (a
+  slow mount or a remount, for up to 45 s) wait in RAM (up to 8) behind the
+  backlog instead of overtaking it; ambient rows are not held. A broker that
+  is unconfigured or changed is not sent the old backlog, as on the canary. A
+  dismissal the card cannot take yet waits in RAM (until a reboot) instead of
+  being lost. The event-id floor is now restored before the modules register
+  (F83: nothing committed there, but the order no longer depends on it).
+  `test_wap_event_egress.cpp` runs the real egress, SD log and event library;
+  its reconnect, interleaving and reboot scenarios fail on the old code, and
+  `check_wap_event_egress.py` holds the parts a host build cannot compile.
+  **Host-tested only**: the ESP32 compile is CI's, and it is not bench-tested.
 - **Lab examples traced to the firmware (sweep A26-A29).** The WAP page's
   device id, SoftAP name and unnamed `.local` host are now derived from the
   repo test key the way the firmware derives them (`canary-s3-4dC2`,
