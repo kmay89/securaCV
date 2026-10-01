@@ -33,7 +33,10 @@
 // goes through name_line(). And nothing crosses the halo (F66): the 236 px
 // ring ran through the hint rows of the 172/180x320 and 240x280 glass. Every
 // row of every scene and the bird's seats must be wholly inside the ring's
-// stroke or wholly outside it.
+// stroke or wholly outside it, and the QR card's rounded corners inside it.
+// Those are onboard_layout.h's rules, on every small-glass env; wide glass
+// measures only the network name here. test_onboard_scenes.cpp holds
+// onboard_ui.cpp to the same rules, reading what it draws.
 // Text is measured with LVGL's own Montserrat data (montserrat_metrics.h,
 // generated from the pinned LVGL by firmware/scripts/gen_montserrat_metrics.py)
 // the way lv_font_get_glyph_width reads it — never an estimated width.
@@ -771,7 +774,7 @@ static int ring_side(int w, int d, int top, const Box& b) {
 
 // F66: no row of any scene, nor the bird at either of its seats, crosses the
 // halo's stroke on small glass: each is wholly inside the stroke's inner
-// circle or wholly outside its outer one.
+// circle or wholly outside its outer one; the QR card is inside.
 static void check_ring(const Env& e, int which, const Stack& s,
                        const Rows& r, const Glass& g, const Ring& ring,
                        std::vector<Box> boxes) {

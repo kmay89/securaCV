@@ -504,9 +504,9 @@ inline HintLines hint_lines(int upper_w, int lower_w, const char* hint,
 //    the card clear of the ring's stroke on every small-glass env with both
 //    ladders, and drives onboard_ui.cpp itself to hold what it draws.
 //  * The round watch's rows are fitted to the disc's chord kEdgeMargin
-//    inside the rim, which is the ring's inner edge itself: a row's box
-//    clears the stroke by the chord's rounding (1.7 px at the closest), not
-//    by kMinGap as on rectangular glass.
+//    inside the rim, which is the ring's inner edge itself: a full-width
+//    row's box reaches that edge (its corners within a pixel of the stroke,
+//    by the chord's rounding), where rectangular glass keeps kMinGap.
 constexpr int kRingStroke = 3;       // onboard_ui.cpp's arc width
 constexpr int kRoundRingRimGap = 2;  // the round ring is 236 px on 240
 

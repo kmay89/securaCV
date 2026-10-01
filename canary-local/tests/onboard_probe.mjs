@@ -326,7 +326,10 @@ async function walkHarness(flavor) {
       });
     await shotAs(`onboard_fail_${reason}`);
     // F65: the reason above the fix, and the line under it, read whole too
-    // ("No address from the router" was cut on narrow glass).
+    // ("Network not found" was cut on the old round watch's 142 px title).
+    // This walk can cause two failures, the wrong key and the absent
+    // network; the other two reasons' titles are test_onboard_layout's and
+    // test_onboard_scenes' to hold.
     await new Promise((r) => setTimeout(r, 400));
     const cutFail = await E(joinEllipses);
     check(cutFail.length === 0, `after a ${reason} failure the glass cuts ${cutFail.length} line(s) to an ` +
