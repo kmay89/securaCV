@@ -1001,6 +1001,35 @@ static void test_broker_change_drops_the_backlog() {
   CHECK(W.wire.empty(), "a card that opens after the change is not replayed to the new broker either");
 }
 
+static void test_row_routed_with_no_broker_is_not_owed_later() {
+  printf("-- a row routed while no broker is configured is owed to nobody, even if one is set the next pass\n");
+  fresh_device(/*card=*/false);
+  W.accepting = false;
+  loop_pass();
+  const uint32_t x = commit_closed_bundle();
+  loop_pass();                    // routed with no broker: not owed (not held in RAM for later)
+  W.accepting = true;
+  connect();
+  drain(4);
+  CHECK(!has(W.wire, x), "it is not sent to the broker configured after it");
+  const uint32_t y = emit_ping();
+  drain(4);
+  CHECK(exactly(W.ha.accepted, {y}), "the next row goes out live");
+}
+
+static void test_no_broker_ends_the_card_wait() {
+  printf("-- no broker configured: nothing is owed, so a row after the broker is set does not wait for a card\n");
+  fresh_device(/*card=*/false);
+  W.accepting = false;
+  loop_pass();                    // owed to nobody: there is nothing a card could hold for it
+  W.accepting = true;
+  connect();
+  loop_pass();
+  const uint32_t a = emit_ping();
+  drain(4);
+  CHECK(exactly(W.ha.accepted, {a}), "the row goes out at once, not after kCardWaitMs");
+}
+
 #ifndef EGRESS_BEFORE_REVIEW
 static void test_destination_digest() {
   printf("-- the destination digest: host, port, user and prefix move it; a password or TLS change does not\n");
@@ -1202,6 +1231,8 @@ int main() {
   test_card_closed_mid_backfill_holds_new_rows();
   test_card_wait_is_bounded();
   test_broker_change_drops_the_backlog();
+  test_row_routed_with_no_broker_is_not_owed_later();
+  test_no_broker_ends_the_card_wait();
 #ifndef EGRESS_BEFORE_REVIEW
   test_destination_digest();
 #endif
