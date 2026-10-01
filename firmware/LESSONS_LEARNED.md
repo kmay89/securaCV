@@ -2407,7 +2407,14 @@
   them, and Home Assistant would have refused them anyway (sweep F78). The
   live publish also ran on whichever task committed, the NimBLE host task
   included, under the chokepoint's commit lock, while the backfill wrote
-  the same watermark and NVS ceiling on the loop task with no lock.
+  the same watermark and NVS ceiling on the loop task with no lock. And
+  it wrote that ceiling before every publish attempt, connected or not,
+  so any commit during an outage covered the whole backlog, and a reboot
+  before the broker returned skipped every row on the card. (F47 says
+  "before an id is handed over"; an attempt that cannot go is not a
+  hand-over. The planner's not-on-card route has the same shape for a
+  row whose card append failed; the canary-wap's port holds that write
+  back until the row goes.)
 - **Root cause:** Two writers of one ordering decision. The live path
   asked "is the link up?", when the question is "is anything older still
   owed?", and it was answered on a different task from the backfill's.

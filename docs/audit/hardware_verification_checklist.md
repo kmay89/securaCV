@@ -483,6 +483,15 @@ run. Compile is CI's. Owner: U1.
   - Expected: the departure arrives after the backlog, once; no `replay`
     verdict; no watchdog or stack fault on the NimBLE host task.
   - Artifact: `docs/audit/repro/F78/scout-close/`.
+- [ ] **A reboot during an outage keeps the card's backlog owed**
+  - Setup: a canary-wap with a card in, paired to Home Assistant.
+  - Repro: stop the broker; commit several events; power-cycle the
+    canary-wap; start the broker once it is back up.
+  - Expected: HA receives every row of the outage once, in id order, with
+    `"replay":true`, and no `replay` verdict. (Before F78 every commit
+    during the outage wrote the delivery ceiling past the backlog, and
+    this sent nothing.)
+  - Artifact: `docs/audit/repro/F78/reboot-in-outage/`.
 - [ ] **A short outage with no card loses no row**
   - Setup: no card in; paired to HA; up more than 45 s since boot (until
     then rows wait for a card that may still mount).
