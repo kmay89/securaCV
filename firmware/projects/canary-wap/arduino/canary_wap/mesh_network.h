@@ -28,6 +28,8 @@
 #include "mesh_beacon.h"        // BEACON_EVENT wire format (PR canary-wap parity)
 #include "mesh_channel_hop.h"   // CHANNEL_LOCK wire format + HopTracker (PR 4b)
 #include "mesh_hub_election.h"  // HUB_ELECTION wire format + HubMonitor (PR 4c)
+#include "loop_command_ring.h"  // F96: owner commands handed to the loop task
+#include <string.h>
 
 // ════════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -386,8 +388,7 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
 // Shutdown mesh network
 void deinit();
 
-// Enable or disable mesh networking
-void set_enabled(bool enabled);
+// Is mesh networking on? (Turned on and off by MESH_CMD_SET_ENABLED.)
 bool is_enabled();
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -439,9 +440,6 @@ bool get_self_fingerprint(uint8_t out[FINGERPRINT_SIZE]);
 // Get online peer count
 uint8_t get_online_peer_count();
 
-// Remove peer from opera (requires re-keying)
-bool remove_peer(const uint8_t* fingerprint);
-
 // ──────────────────────────────────────────────────────────────────────────
 // Opera management
 // ──────────────────────────────────────────────────────────────────────────
@@ -449,27 +447,9 @@ bool remove_peer(const uint8_t* fingerprint);
 // Get opera configuration
 const OperaConfig* get_opera_config();
 
-// Set opera name
-bool set_opera_name(const char* name);
-
-// Leave current opera
-bool leave_opera();
-
 // ──────────────────────────────────────────────────────────────────────────
 // Pairing
 // ──────────────────────────────────────────────────────────────────────────
-
-// Start pairing as initiator (existing opera member or creating new opera)
-bool start_pairing_initiator(const char* opera_name = nullptr);
-
-// Start pairing as joiner (joining existing opera)
-bool start_pairing_joiner();
-
-// Cancel ongoing pairing
-void cancel_pairing();
-
-// Confirm pairing code matches
-bool confirm_pairing();
 
 // Get pairing session state
 const PairingSession* get_pairing_session();
@@ -493,8 +473,73 @@ bool broadcast_offline_imminent(AlertType reason, uint32_t final_seq, const uint
 // Get recent alerts
 const MeshAlert* get_alerts(size_t* count);
 
-// Clear alert history
-void clear_alerts();
+// ──────────────────────────────────────────────────────────────────────────
+// Owner commands (sweep F96)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// What the owner asks for over REST: turn the mesh on or off, pair, confirm
+// the code, cancel, leave, remove a member, rename the opera, clear the
+// alert list. The REST handlers run on esp_http_server's task, and what
+// these change (the peer table, the pairing session, the opera config and
+// its one NVS handle, the alert history) is update()'s, on the loop task.
+// So the functions that do it are internal to mesh_network.cpp, and a
+// handler hands a Command to submit() instead: submit() posts it to a ring
+// of COMMAND_SLOTS that update() drains first thing on every pass (a
+// disabled mesh included, so MESH_CMD_SET_ENABLED can turn it back on), and
+// waits for the result.
+//
+// The wait is bounded for a command the loop task has not started: after
+// timeout_ms it is withdrawn and never runs. kDone: it ran, and *ok is what
+// it returned (true for the commands that cannot fail: SET_ENABLED,
+// PAIR_CANCEL, CLEAR_ALERTS). kBusy (every slot taken) and kWithdrawn: it
+// did not run and will not, and *ok is false; the handler answers with
+// not_run_status() / not_run_error(), the PlatformIO tree's codes for the
+// same two cases (spec §8.3): 409 mesh_busy and 503 mesh_timeout. A command
+// the loop task has started is waited for until it is done (it never waits
+// on another task). Never call submit() from the loop task: it would wait
+// for itself, and the command would be withdrawn.
+
+enum CommandType : uint8_t {
+  MESH_CMD_SET_ENABLED = 0,  // flag: on (true) or off
+  MESH_CMD_PAIR_START,       // the initiator; flag: name is the new opera's name (else the default)
+  MESH_CMD_PAIR_JOIN,
+  MESH_CMD_PAIR_CONFIRM,
+  MESH_CMD_PAIR_CANCEL,
+  MESH_CMD_LEAVE,
+  MESH_CMD_REMOVE_PEER,      // fingerprint
+  MESH_CMD_RENAME,           // name
+  MESH_CMD_CLEAR_ALERTS,
+};
+
+struct Command {
+  CommandType type;
+  bool        flag;
+  uint8_t     fingerprint[FINGERPRINT_SIZE];
+  char        name[MAX_OPERA_NAME_LEN + 1];
+};
+
+// A command of `type` with every other field zero.
+inline Command make_command(CommandType type) {
+  Command cmd;
+  memset(&cmd, 0, sizeof(cmd));
+  cmd.type = type;
+  return cmd;
+}
+
+static const size_t   COMMAND_SLOTS   = 4;
+static const uint32_t COMMAND_WAIT_MS = 2000;   // for the loop task to start it
+static const uint32_t COMMAND_POLL_MS = 5;
+
+loop_command_ring::Wait submit(const Command& cmd, bool* ok,
+                               uint32_t timeout_ms = COMMAND_WAIT_MS);
+
+// The REST answer to a command that did not run (any Wait but kDone).
+inline int not_run_status(loop_command_ring::Wait w) {
+  return w == loop_command_ring::Wait::kBusy ? 409 : 503;
+}
+inline const char* not_run_error(loop_command_ring::Wait w) {
+  return w == loop_command_ring::Wait::kBusy ? "mesh_busy" : "mesh_timeout";
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Callbacks

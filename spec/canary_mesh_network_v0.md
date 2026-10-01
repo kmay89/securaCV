@@ -878,6 +878,24 @@ server registers (`securacv_webui.cpp` and `web_ui.h` send `remove` with a
 `{fingerprint}` body, not the `/remove/:fp` path v0.2 listed; `enable`,
 `name` and the alerts `DELETE` were missing).
 
+**canary-wap: the changing routes run on the loop task (sweep F96).** The
+PlatformIO tree's rule (§8.3) holds on canary-wap too: `pair/start`,
+`pair/join`, `pair/confirm`, `pair/cancel`, `leave`, `name`, `enable`,
+`remove` and the alerts `DELETE` no longer change the peer table, the
+pairing session, the opera config (or its NVS handle) or the alert history
+from the HTTP server's task, where they raced `mesh_network::update()`. The
+handler validates its body and hands one command to a four-slot ring that
+`update()` drains on the loop task before anything else (a disabled mesh
+included, so `enable` can turn it back on), then waits up to 2 s for the
+loop task to start it. Two errors follow, with the PlatformIO tree's codes:
+`mesh_busy` (409, four requests already waiting) and `mesh_timeout` (503,
+the loop task did not start it in time; it was withdrawn and did not run).
+A command the loop task has started is waited for and answered with its
+own result, so every other answer is unchanged. A request sent while the
+device is still booting, before its loop runs, gets `mesh_timeout`.
+Host-tested (`test_mesh_commands_wap.cpp`, `test_loop_command_ring.cpp`);
+the Arduino compile is CI's; not bench-tested.
+
 ### 8.2 Response Formats
 
 ```json

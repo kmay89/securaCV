@@ -47,6 +47,8 @@ struct Device {
   uint32_t tx_reserve_warned_ms = 0;
   mn::RekeyState rekey = {};
   mn::PairingSession pairing = {};
+  // The owner's commands waiting for this device's loop task (F96).
+  decltype(mn::g_commands) commands;
   // The device's radio and flash.
   host_sim::EspNow espnow;
   host_sim::NvsStore nvs;
@@ -80,6 +82,7 @@ inline void save(Device& d) {
   d.tx_reserve_warned_ms = mn::g_tx_reserve_warned_ms;
   d.rekey = mn::g_rekey;
   d.pairing = mn::g_pairing;
+  d.commands = mn::g_commands;
 }
 
 inline void load(Device& d) {
@@ -110,6 +113,7 @@ inline void load(Device& d) {
   mn::g_tx_reserve_warned_ms = d.tx_reserve_warned_ms;
   mn::g_rekey = d.rekey;
   mn::g_pairing = d.pairing;
+  mn::g_commands = d.commands;
   mn::g_rx_pending = false;
   host_sim::espnow = &d.espnow;
   host_sim::nvs = &d.nvs;

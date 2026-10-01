@@ -29,8 +29,9 @@
  * command or a result, so they are short and never block. The host tests
  * pass their own (none, or a std::mutex for the two-thread test).
  *
- * Nothing here includes Arduino or FreeRTOS, so the host tests compile it
- * as is. Callers that wait pass their clock and their sleep (millis() and
+ * Nothing here needs Arduino or FreeRTOS (FreeRTOS.h is included when the
+ * build has it, for PortMuxLock only), so the host tests compile it as is.
+ * Callers that wait pass their clock and their sleep (millis() and
  * vTaskDelay on the device).
  */
 
@@ -41,6 +42,15 @@
 #include <stdint.h>
 
 #include <type_traits>
+
+/* FreeRTOS's port macros, for PortMuxLock below, wherever FreeRTOS is: the
+ * device, and the host builds whose stubs provide it. The ring itself needs
+ * none of it. */
+#if defined(__has_include)
+#if __has_include(<freertos/FreeRTOS.h>)
+#include <freertos/FreeRTOS.h>
+#endif
+#endif
 
 namespace loop_command_ring {
 
@@ -60,11 +70,10 @@ enum class Wait : uint8_t {
   kWithdrawn,  /* the wait ran out before the loop task started it: it never runs */
 };
 
-/* The device's lock: a FreeRTOS spinlock. Defined where FreeRTOS's port
- * macros are, so include <freertos/FreeRTOS.h> before this header. Usable
- * from any task on both chips the canary-wap builds for (the S3's two
- * Xtensa cores and the C3's one RISC-V core), the same portMUX critical
- * section ble_scout.cpp and wifi_presence.h already take. */
+/* The device's lock: a FreeRTOS spinlock, defined where FreeRTOS's port
+ * macros are. Usable from any task on both chips the canary-wap builds for
+ * (the S3's two Xtensa cores and the C3's one RISC-V core): the same
+ * portMUX critical section ble_scout.cpp and wifi_presence.h already take. */
 #ifdef portMUX_INITIALIZER_UNLOCKED
 struct PortMuxLock {
   portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;

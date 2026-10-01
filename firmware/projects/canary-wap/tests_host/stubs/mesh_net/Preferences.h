@@ -33,8 +33,12 @@ class Preferences {
   }
   void end() {}
   bool isKey(const char* key) { return host_sim::nvs->count(k(key)) != 0; }
-  bool remove(const char* key) { return !ro_ && host_sim::nvs->erase(k(key)) != 0; }
+  bool remove(const char* key) {
+    if (!ro_) host_sim::note_side_effect();
+    return !ro_ && host_sim::nvs->erase(k(key)) != 0;
+  }
   size_t putBytes(const char* key, const void* v, size_t n) {
+    if (!ro_) host_sim::note_side_effect();
     if (ro_ || host_sim::nvs_writes_fail) return 0;
     const uint8_t* b = static_cast<const uint8_t*>(v);
     (*host_sim::nvs)[k(key)].assign(b, b + n);

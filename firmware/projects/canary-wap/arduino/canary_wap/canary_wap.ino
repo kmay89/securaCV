@@ -3297,7 +3297,9 @@ static esp_err_t http_send_json(httpd_req_t* req, const char* json) {
 static esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_code) {
   httpd_resp_set_status(req, status_code == 400 ? "400 Bad Request" :
                               status_code == 404 ? "404 Not Found" :
-                              status_code == 500 ? "500 Internal Server Error" : "400 Bad Request");
+                              status_code == 409 ? "409 Conflict" :
+                              status_code == 500 ? "500 Internal Server Error" :
+                              status_code == 503 ? "503 Service Unavailable" : "400 Bad Request");
   char response[128];
   snprintf(response, sizeof(response), "{\"ok\":false,\"error\":\"%s\"}", error_code);
   return http_send_json(req, response);
@@ -5753,6 +5755,15 @@ static esp_err_t handle_peek_sensor_set(httpd_req_t* req) {
 
 #if FEATURE_MESH_NETWORK
 
+// The owner's mesh commands run on the loop task, not here (sweep F96): the
+// peer table, the pairing session, the opera config and its NVS handle are
+// mesh_network::update()'s. A handler builds a Command and hands it to
+// mesh_network::submit(), which waits up to COMMAND_WAIT_MS for the loop
+// task to start it. When the command did not run, the answer says so:
+// 409 mesh_busy (four already waiting) or 503 mesh_timeout (the loop task
+// did not reach it in time; it was withdrawn and never runs), the
+// PlatformIO tree's codes (spec §8.3). "ok" always means it happened.
+
 static esp_err_t handle_mesh_status(httpd_req_t* req) {
   g_health.http_requests++;
 
@@ -5854,7 +5865,12 @@ static esp_err_t handle_mesh_alerts(httpd_req_t* req) {
 
 static esp_err_t handle_mesh_alerts_clear(httpd_req_t* req) {
   g_health.http_requests++;
-  mesh_network::clear_alerts();
+  bool ok = false;
+  const loop_command_ring::Wait w =
+      mesh_network::submit(mesh_network::make_command(mesh_network::MESH_CMD_CLEAR_ALERTS), &ok);
+  if (w != loop_command_ring::Wait::kDone) {
+    return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
+  }
   return http_send_json(req, "{\"ok\":true}");
 }
 
@@ -5872,7 +5888,13 @@ static esp_err_t handle_mesh_enable(httpd_req_t* req) {
   }
 
   bool enabled = body["enabled"] | false;
-  mesh_network::set_enabled(enabled);
+  mesh_network::Command cmd = mesh_network::make_command(mesh_network::MESH_CMD_SET_ENABLED);
+  cmd.flag = enabled;
+  bool ok = false;
+  const loop_command_ring::Wait w = mesh_network::submit(cmd, &ok);
+  if (w != loop_command_ring::Wait::kDone) {
+    return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
+  }
   log_health(SCV_LOG_INFO, SCV_CAT_MESH, enabled ? "Mesh enabled" : "Mesh disabled", nullptr);
 
   return http_send_json(req, "{\"ok\":true}");
@@ -5891,7 +5913,20 @@ static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
     opera_name = body["name"] | (const char*)nullptr;
   }
 
-  if (mesh_network::start_pairing_initiator(opera_name)) {
+  // The name rides in the command (truncated to MAX_OPERA_NAME_LEN, as
+  // start_pairing_initiator() stores it); none given keeps the default.
+  mesh_network::Command cmd = mesh_network::make_command(mesh_network::MESH_CMD_PAIR_START);
+  if (opera_name) {
+    cmd.flag = true;
+    strncpy(cmd.name, opera_name, mesh_network::MAX_OPERA_NAME_LEN);
+    cmd.name[mesh_network::MAX_OPERA_NAME_LEN] = '\0';
+  }
+  bool ok = false;
+  const loop_command_ring::Wait w = mesh_network::submit(cmd, &ok);
+  if (w != loop_command_ring::Wait::kDone) {
+    return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
+  }
+  if (ok) {
     log_health(SCV_LOG_INFO, SCV_CAT_MESH, "Pairing started (initiator)", nullptr);
     return http_send_json(req, "{\"ok\":true}");
   }
@@ -5901,7 +5936,13 @@ static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
 static esp_err_t handle_mesh_pair_join(httpd_req_t* req) {
   g_health.http_requests++;
 
-  if (mesh_network::start_pairing_joiner()) {
+  bool ok = false;
+  const loop_command_ring::Wait w =
+      mesh_network::submit(mesh_network::make_command(mesh_network::MESH_CMD_PAIR_JOIN), &ok);
+  if (w != loop_command_ring::Wait::kDone) {
+    return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
+  }
+  if (ok) {
     log_health(SCV_LOG_INFO, SCV_CAT_MESH, "Pairing started (joiner)", nullptr);
     return http_send_json(req, "{\"ok\":true}");
   }
@@ -5911,7 +5952,13 @@ static esp_err_t handle_mesh_pair_join(httpd_req_t* req) {
 static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req) {
   g_health.http_requests++;
 
-  if (mesh_network::confirm_pairing()) {
+  bool ok = false;
+  const loop_command_ring::Wait w =
+      mesh_network::submit(mesh_network::make_command(mesh_network::MESH_CMD_PAIR_CONFIRM), &ok);
+  if (w != loop_command_ring::Wait::kDone) {
+    return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
+  }
+  if (ok) {
     log_health(SCV_LOG_INFO, SCV_CAT_MESH, "Pairing confirmed", nullptr);
     return http_send_json(req, "{\"ok\":true}");
   }
@@ -5920,7 +5967,12 @@ static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req) {
 
 static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req) {
   g_health.http_requests++;
-  mesh_network::cancel_pairing();
+  bool ok = false;
+  const loop_command_ring::Wait w =
+      mesh_network::submit(mesh_network::make_command(mesh_network::MESH_CMD_PAIR_CANCEL), &ok);
+  if (w != loop_command_ring::Wait::kDone) {
+    return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
+  }
   log_health(SCV_LOG_INFO, SCV_CAT_MESH, "Pairing canceled", nullptr);
   return http_send_json(req, "{\"ok\":true}");
 }
@@ -5928,7 +5980,13 @@ static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req) {
 static esp_err_t handle_mesh_leave(httpd_req_t* req) {
   g_health.http_requests++;
 
-  if (mesh_network::leave_opera()) {
+  bool ok = false;
+  const loop_command_ring::Wait w =
+      mesh_network::submit(mesh_network::make_command(mesh_network::MESH_CMD_LEAVE), &ok);
+  if (w != loop_command_ring::Wait::kDone) {
+    return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
+  }
+  if (ok) {
     log_health(SCV_LOG_WARNING, SCV_CAT_MESH, "Left opera", nullptr);
     return http_send_json(req, "{\"ok\":true}");
   }
@@ -5954,13 +6012,18 @@ static esp_err_t handle_mesh_remove(httpd_req_t* req) {
   }
 
   // Parse hex fingerprint
-  uint8_t fp[8];
+  mesh_network::Command cmd = mesh_network::make_command(mesh_network::MESH_CMD_REMOVE_PEER);
   for (int i = 0; i < 8; i++) {
     char byte_hex[3] = { fp_hex[i*2], fp_hex[i*2+1], 0 };
-    fp[i] = (uint8_t)strtol(byte_hex, nullptr, 16);
+    cmd.fingerprint[i] = (uint8_t)strtol(byte_hex, nullptr, 16);
   }
 
-  if (mesh_network::remove_peer(fp)) {
+  bool ok = false;
+  const loop_command_ring::Wait w = mesh_network::submit(cmd, &ok);
+  if (w != loop_command_ring::Wait::kDone) {
+    return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
+  }
+  if (ok) {
     log_health(SCV_LOG_WARNING, SCV_CAT_MESH, "Peer removed", fp_hex);
     return http_send_json(req, "{\"ok\":true}");
   }
@@ -5985,7 +6048,15 @@ static esp_err_t handle_mesh_name(httpd_req_t* req) {
     return http_send_error(req, 400, "invalid_name");
   }
 
-  if (mesh_network::set_opera_name(name)) {
+  mesh_network::Command cmd = mesh_network::make_command(mesh_network::MESH_CMD_RENAME);
+  strncpy(cmd.name, name, mesh_network::MAX_OPERA_NAME_LEN);   // length checked above
+  cmd.name[mesh_network::MAX_OPERA_NAME_LEN] = '\0';
+  bool ok = false;
+  const loop_command_ring::Wait w = mesh_network::submit(cmd, &ok);
+  if (w != loop_command_ring::Wait::kDone) {
+    return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
+  }
+  if (ok) {
     log_health(SCV_LOG_INFO, SCV_CAT_MESH, "Opera name changed", name);
     return http_send_json(req, "{\"ok\":true}");
   }

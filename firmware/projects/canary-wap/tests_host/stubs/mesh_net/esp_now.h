@@ -15,6 +15,8 @@
 #include <string.h>
 #include <vector>
 
+#include "Arduino.h"   // host_sim::note_side_effect
+
 typedef int esp_err_t;
 #ifndef ESP_OK
 #define ESP_OK 0
@@ -79,6 +81,7 @@ inline esp_err_t esp_now_unregister_recv_cb() { host_sim::espnow->recv_cb = null
 inline esp_err_t esp_now_unregister_send_cb() { host_sim::espnow->send_cb = nullptr; return ESP_OK; }
 inline bool esp_now_is_peer_exist(const uint8_t* mac) { return host_sim::espnow->has(mac); }
 inline esp_err_t esp_now_add_peer(const esp_now_peer_info_t* p) {
+  host_sim::note_side_effect();
   if (p == nullptr) return ESP_ERR_ESPNOW_ARG;
   if (host_sim::espnow->has(p->peer_addr)) return ESP_ERR_ESPNOW_EXIST;
   if (host_sim::espnow->peers.size() >= ESP_NOW_MAX_TOTAL_PEER_NUM) return ESP_ERR_ESPNOW_FULL;
@@ -86,6 +89,7 @@ inline esp_err_t esp_now_add_peer(const esp_now_peer_info_t* p) {
   return ESP_OK;
 }
 inline esp_err_t esp_now_del_peer(const uint8_t* mac) {
+  host_sim::note_side_effect();
   auto& v = host_sim::espnow->peers;
   for (size_t i = 0; i < v.size(); ++i) {
     if (memcmp(v[i].data(), mac, 6) == 0) { v.erase(v.begin() + (long)i); return ESP_OK; }
@@ -93,6 +97,7 @@ inline esp_err_t esp_now_del_peer(const uint8_t* mac) {
   return ESP_ERR_ESPNOW_NOT_FOUND;
 }
 inline esp_err_t esp_now_send(const uint8_t* mac, const uint8_t* data, size_t len) {
+  host_sim::note_side_effect();
   if (!host_sim::espnow->inited) return ESP_ERR_ESPNOW_NOT_INIT;
   if (mac == nullptr || !host_sim::espnow->has(mac)) return ESP_ERR_ESPNOW_NOT_FOUND;
   host_sim::Sent s;

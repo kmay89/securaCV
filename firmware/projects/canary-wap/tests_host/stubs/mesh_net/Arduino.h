@@ -1,6 +1,11 @@
 /* Host stand-in for <Arduino.h> (canary-wap mesh_network host harness).
  * millis() reads a clock the test sets; esp_fill_random is a fixed-seed
- * xorshift, so every run draws the same keys and nonces. */
+ * xorshift, so every run draws the same keys and nonces.
+ *
+ * on_httpd_task: a test sets it while it plays the HTTP server's task
+ * (test_mesh_commands_wap, sweep F96). Every NVS write and ESP-NOW peer or
+ * send call made meanwhile is counted in httpd_side_effects: those belong
+ * to the loop task. */
 #ifndef STUB_MESH_NET_ARDUINO_H
 #define STUB_MESH_NET_ARDUINO_H
 
@@ -14,6 +19,11 @@
 namespace host_sim {
 inline uint32_t now_ms = 1000;
 inline uint64_t rng_state = 0x9E3779B97F4A7C15ull;
+inline bool on_httpd_task = false;
+inline unsigned httpd_side_effects = 0;
+inline void note_side_effect() {
+  if (on_httpd_task) ++httpd_side_effects;
+}
 inline void fill_random(void* buf, size_t len) {
   uint8_t* p = static_cast<uint8_t*>(buf);
   for (size_t i = 0; i < len; ++i) {

@@ -35,6 +35,8 @@
 #include <mbedtls/sha256.h>
 #include <mbedtls/hkdf.h>
 #include <ChaChaPoly.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 namespace mesh_network {
 
@@ -188,10 +190,12 @@ static bool storm_gate() {
 //
 // Threading invariant (gemini P1 follow-up): every mutator of `g_rekey`
 // lives in the main loop task:
-//   - `remove_peer()` is invoked from the REST handler thread, but the
-//     existing wifi_provision serializer + Bearer-gate trampoline ensure
-//     it's called on the main task. (See mesh_network.cpp's other
-//     loop-driven mutators: handle_received_message, update().)
+//   - `remove_peer()` runs from update() (loop task): `POST /api/mesh/remove`
+//     hands MESH_CMD_REMOVE_PEER to submit(), and update() drains the
+//     command ring before anything else (sweep F96). This note used to say a
+//     "wifi_provision serializer" put the REST handler's call on the main
+//     task; no such serializer existed, and the handler called remove_peer()
+//     on esp_http_server's task.
 //   - `maybe_finalize_rekey()` is called from `update()` (loop task).
 //   - The case MSG_OPERA_REKEY_ACK branch in handle_received_message
 //     also runs on the loop task, because ESP-NOW frames are queued via
@@ -217,6 +221,13 @@ static RekeyState g_rekey = {};
 
 // Pairing
 static PairingSession g_pairing;
+
+// The owner's commands on their way to the loop task (sweep F96): posted by
+// submit() on esp_http_server's task, drained by update() on the loop task
+// (run_command). A portMUX spinlock guards the slots; it is held only to
+// copy a command or a result in or out, never while one runs.
+static loop_command_ring::Ring<Command, bool, COMMAND_SLOTS, loop_command_ring::PortMuxLock>
+    g_commands;
 
 // Alert history
 /* PSRAM-resident (csi_mem.h): ~2.9 KB of semantic alert metadata, loop-task
@@ -292,6 +303,19 @@ static void persist_revocations();
 static void load_revocations();
 static bool is_revoked_pubkey(const uint8_t* pubkey);
 static void store_alert(const MeshAlert* alert);
+// The owner's commands (sweep F96). Internal: they change what update()
+// owns, so only the loop task runs them, through run_command() (update()'s
+// drain of g_commands) or update()'s own paths. A REST handler hands a
+// Command to submit() instead (mesh_network.h).
+static void set_enabled(bool enabled);
+static bool remove_peer(const uint8_t* fingerprint);
+static bool set_opera_name(const char* name);
+static bool leave_opera();
+static bool start_pairing_initiator(const char* opera_name);
+static bool start_pairing_joiner();
+static void cancel_pairing();
+static bool confirm_pairing();
+static void clear_alerts();
 
 // ════════════════════════════════════════════════════════════════════════════
 // ESP-NOW CALLBACKS
@@ -1503,9 +1527,10 @@ static void handle_pair_confirm(const uint8_t* mac, const uint8_t* payload) {
 }
 
 // Called from update(): an initiator whose owner and joiner have both
-// confirmed sends COMPLETE. Here rather than in confirm_pairing(), which
-// the REST handler calls from the HTTP server's task, so the peer table
-// and NVS are written on the loop task only.
+// confirmed sends COMPLETE. Written when confirm_pairing() ran on the HTTP
+// server's task, to keep the peer table and NVS on the loop task; since
+// sweep F96 confirm_pairing() runs there too (update()'s command drain), and
+// this stays the one place a pairing completes from either order (F75).
 static void initiator_step() {
   if (g_mesh_state == MESH_PAIRING_CONFIRM && g_pairing.role == PAIR_ROLE_INITIATOR &&
       g_pairing.code_confirmed && g_pairing.peer_confirmed) {
@@ -1852,7 +1877,7 @@ void deinit() {
   g_mesh_state = MESH_DISABLED;
 }
 
-void set_enabled(bool enabled) {
+static void set_enabled(bool enabled) {
   g_opera_config.enabled = enabled;
   persist_opera_config();
 
@@ -1871,7 +1896,62 @@ bool is_enabled() {
   return g_opera_config.enabled;
 }
 
+// One owner command, on the loop task (update()'s drain of g_commands).
+static bool run_command(const Command& cmd) {
+  switch (cmd.type) {
+    case MESH_CMD_SET_ENABLED:
+      set_enabled(cmd.flag);
+      return true;
+    case MESH_CMD_PAIR_START: {
+      char name[MAX_OPERA_NAME_LEN + 1];
+      memcpy(name, cmd.name, sizeof(name));
+      name[MAX_OPERA_NAME_LEN] = '\0';
+      return start_pairing_initiator(cmd.flag ? name : nullptr);
+    }
+    case MESH_CMD_PAIR_JOIN:
+      return start_pairing_joiner();
+    case MESH_CMD_PAIR_CONFIRM:
+      return confirm_pairing();
+    case MESH_CMD_PAIR_CANCEL:
+      cancel_pairing();
+      return true;
+    case MESH_CMD_LEAVE:
+      return leave_opera();
+    case MESH_CMD_REMOVE_PEER:
+      return remove_peer(cmd.fingerprint);
+    case MESH_CMD_RENAME: {
+      char name[MAX_OPERA_NAME_LEN + 1];
+      memcpy(name, cmd.name, sizeof(name));
+      name[MAX_OPERA_NAME_LEN] = '\0';
+      return set_opera_name(name);
+    }
+    case MESH_CMD_CLEAR_ALERTS:
+      clear_alerts();
+      return true;
+  }
+  return false;
+}
+
+loop_command_ring::Wait submit(const Command& cmd, bool* ok, uint32_t timeout_ms) {
+  bool result = false;
+  const loop_command_ring::Wait w = loop_command_ring::submit(
+      g_commands, cmd, &result, timeout_ms, COMMAND_POLL_MS,
+      []() { return (uint32_t)millis(); },
+      [](uint32_t ms) {
+        const TickType_t ticks = pdMS_TO_TICKS(ms);
+        vTaskDelay(ticks > 0 ? ticks : 1);
+      });
+  if (ok != nullptr) *ok = (w == loop_command_ring::Wait::kDone) && result;
+  return w;
+}
+
 void update() {
+  // The owner's commands first, and before the early return below: a
+  // disabled mesh still runs MESH_CMD_SET_ENABLED (sweep F96). Also before
+  // init(): the commands ran whether or not init() did before they moved
+  // here, and still do.
+  g_commands.drain(run_command);
+
   if (!g_initialized || g_mesh_state == MESH_DISABLED) {
     return;
   }
@@ -2107,7 +2187,7 @@ uint8_t get_online_peer_count() {
   return count;
 }
 
-bool remove_peer(const uint8_t* fingerprint) {
+static bool remove_peer(const uint8_t* fingerprint) {
   for (uint8_t i = 0; i < g_peer_count; i++) {
     if (memcmp(g_peers[i].fingerprint, fingerprint, FINGERPRINT_SIZE) == 0) {
       // The slot is about to be overwritten by the shift below.
@@ -2225,13 +2305,13 @@ const OperaConfig* get_opera_config() {
   return &g_opera_config;
 }
 
-bool set_opera_name(const char* name) {
+static bool set_opera_name(const char* name) {
   strncpy(g_opera_config.opera_name, name, MAX_OPERA_NAME_LEN);
   g_opera_config.opera_name[MAX_OPERA_NAME_LEN] = '\0';
   return persist_opera_config();
 }
 
-bool leave_opera() {
+static bool leave_opera() {
   // Broadcast leave message to peers
   broadcast_message(MSG_LEAVE_OPERA, nullptr, 0);
 
@@ -2252,7 +2332,7 @@ bool leave_opera() {
   return true;
 }
 
-bool start_pairing_initiator(const char* opera_name) {
+static bool start_pairing_initiator(const char* opera_name) {
   if (g_mesh_state == MESH_PAIRING_INIT || g_mesh_state == MESH_PAIRING_JOIN) {
     return false;  // Already pairing
   }
@@ -2282,7 +2362,7 @@ bool start_pairing_initiator(const char* opera_name) {
   return true;
 }
 
-bool start_pairing_joiner() {
+static bool start_pairing_joiner() {
   if (g_mesh_state == MESH_PAIRING_INIT || g_mesh_state == MESH_PAIRING_JOIN) {
     return false;
   }
@@ -2295,7 +2375,7 @@ bool start_pairing_joiner() {
   return true;
 }
 
-void cancel_pairing() {
+static void cancel_pairing() {
   memset(&g_pairing, 0, sizeof(g_pairing));
 
   if (g_opera_config.configured) {
@@ -2309,7 +2389,7 @@ void cancel_pairing() {
   }
 }
 
-bool confirm_pairing() {
+static bool confirm_pairing() {
   if (g_mesh_state != MESH_PAIRING_CONFIRM || !g_pairing.code_displayed) {
     return false;
   }
@@ -2419,7 +2499,7 @@ const MeshAlert* get_alerts(size_t* count) {
   return g_alert_history;
 }
 
-void clear_alerts() {
+static void clear_alerts() {
   g_alert_count = 0;
   g_alert_head = 0;
   if (!g_alert_history)
@@ -2662,9 +2742,11 @@ bool load_replay_counters() {
 // ════════════════════════════════════════════════════════════════════════════
 
 // Both use their own Preferences handle, not g_prefs: this runs on the send
-// path, which remove_peer() reaches from the REST handler's task, and a
-// Preferences object another task has begun refuses a second begin() (NVS
-// itself takes concurrent handles). True only when the record is committed:
+// path, which remove_peer() reached from the REST handler's task when this
+// was written, and a Preferences object another task has begun refuses a
+// second begin() (NVS itself takes concurrent handles). Since sweep F96
+// remove_peer() runs on the loop task (update()'s command drain); the own
+// handle stays, as it costs nothing and needs no reasoning about tasks. True only when the record is committed:
 // Preferences::putBytes returns the length only after nvs_commit succeeds,
 // on both cores canary-wap builds.
 static bool persist_tx_reservations() {
