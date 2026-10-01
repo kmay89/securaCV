@@ -31,6 +31,9 @@
  * next append then glues a whole record onto it; the field scanner alone
  * reads that pair as the torn record's id carrying the next record's
  * fields, and a torn line on its own as a record with most fields zero.
+ * It also refuses a line whose `id`, `first` or `last` is not a decimal in
+ * 0..4294967295 (a sign, an overflow): those three are read as uint32 by
+ * json_u32(), never through `long` (backlog F46, below).
  */
 
 #ifndef SECURACV_CSI_EVENT_LOG_LINE_H
@@ -97,7 +100,10 @@ inline size_t marshal(const csi_event_record_t* rec, char* out, size_t cap) {
 }
 
 /* Pull one integer field by name; `dflt` on a miss. The needle carries the
- * quotes and the colon, so a key never matches inside another key. */
+ * quotes and the colon, so a key never matches inside another key. For the
+ * small fields only (counts, scores, the bucket): it reads through `long`,
+ * which is 32 bits on the ESP32. The id and the millisecond marks go
+ * through json_u32() below. */
 inline long json_int(const char* line, const char* key, long dflt) {
   char needle[32];
   const int kn = snprintf(needle, sizeof(needle), "\"%s\":", key);
@@ -109,6 +115,41 @@ inline long json_int(const char* line, const char* key, long dflt) {
   char* end = nullptr;
   const long v = strtol(p, &end, 10);
   return (end == p) ? dflt : v;
+}
+
+/* What json_u32() found. */
+enum class U32 : uint8_t {
+  kOk,       /* a decimal in 0..4294967295; *out holds it */
+  kMissing,  /* no such key; *out untouched */
+  kBad,      /* the key is there but its value is not one (a sign, an
+                overflow, no digit); *out untouched */
+};
+
+/* Pull one unsigned 32-bit field by name. Not strtol: the ESP32's `long` is
+ * 32 bits, so strtol saturates at 2147483647, and every id at or above
+ * 0x80000000 (the old bundler's, and every id since the one event-id space
+ * starts at 0xC0000000, csi_event_id_floor.h) and every millisecond mark
+ * past 24.8 days of uptime read back as 2147483647 on the device while a
+ * 64-bit host test read them right (backlog F46). strtol also takes a sign,
+ * so "-5" read back as 0xFFFFFFFB. Digits only, at most UINT32_MAX; the
+ * same leading quote / blank tolerance as json_int(), and it stops at the
+ * first non-digit as strtol did. */
+inline U32 json_u32(const char* line, const char* key, uint32_t* out) {
+  char needle[32];
+  const int kn = snprintf(needle, sizeof(needle), "\"%s\":", key);
+  if (kn <= 0 || (size_t)kn >= sizeof(needle)) return U32::kMissing;
+  const char* k = strstr(line, needle);
+  if (!k) return U32::kMissing;
+  const char* p = k + kn;
+  while (*p == ' ' || *p == '\t' || *p == '"') p++;
+  if (*p < '0' || *p > '9') return U32::kBad;
+  uint64_t v = 0;
+  for (; *p >= '0' && *p <= '9'; ++p) {
+    v = v * 10u + (uint64_t)(*p - '0');
+    if (v > 0xFFFFFFFFull) return U32::kBad;
+  }
+  *out = (uint32_t)v;
+  return U32::kOk;
 }
 
 /* Pull one string field by name into `out` ("" on a miss). */
@@ -135,15 +176,24 @@ inline bool well_formed(const char* line) {
 }
 
 /* Parse one line (without its '\n') into `out`. False for a line that is
- * not one well-formed record, or whose id is 0 (no such event). */
+ * not one well-formed record, whose id is 0 (no such event) or not a
+ * uint32, or whose `first` / `last` is there but not a uint32 (a missing
+ * one reads 0, as before). */
 inline bool parse(const char* line, csi_event_record_t* out) {
   if (!line || !out) return false;
   memset(out, 0, sizeof(*out));
   if (!well_formed(line)) return false;
-  out->event_id      = (uint32_t)json_int(line, "id",       0);
-  if (out->event_id == 0) return false;
-  out->first_seen_ms = (uint32_t)json_int(line, "first",    0);
-  out->last_seen_ms  = (uint32_t)json_int(line, "last",     0);
+  uint32_t id = 0;
+  if (json_u32(line, "id", &id) != U32::kOk || id == 0) {
+    memset(out, 0, sizeof(*out));
+    return false;
+  }
+  out->event_id = id;
+  if (json_u32(line, "first", &out->first_seen_ms) == U32::kBad ||
+      json_u32(line, "last",  &out->last_seen_ms)  == U32::kBad) {
+    memset(out, 0, sizeof(*out));
+    return false;
+  }
   out->bundled_count = (uint16_t)json_int(line, "bundled",  1);
   char cat[12]  = {};
   char priv[4]  = {};
