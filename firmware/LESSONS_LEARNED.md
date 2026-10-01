@@ -2379,13 +2379,22 @@
   expiry (`CSI_BUNDLER_OPENED` keeps the slot, `CSI_BUNDLER_MERGED` gives
   it back), and `has_open()` is gone. The canary closes bundles with
   `csi_bundler_tick()` once per main loop, outside the CSI power gates, as
-  the canary-wap does. Both landed together.
+  the canary-wap does. Both landed together. The review then found the
+  canary's live body still saying `"bundled":1`, a literal that was true of
+  every canary row until F81 made its rows bundles (the canary-wap's live
+  body had said 1 for its bundles all along); the shared wire builder now
+  publishes the row's own count on every path.
 - **Regression check:** `firmware/tests_host/test_csi_bundle_ceiling.cpp`
   (the real library under a fake clock: a day's rows within the ceiling on
   the gap and window paths; a merge still refunds) and
   `test_csi_modules_integration.cpp` (the canary's real bridge playing the
   main loop: no row and no slot per refresh, one row per closed bundle,
-  a close while CSI is shed). Decide a refund, a count or a permission
+  a close while CSI is shed), `test_csi_event_wire.cpp` (the body's
+  `bundled` is the row's own) and `firmware/scripts/check_csi_bundle_tick.py`
+  (`main.cpp`'s loop calls the tick, outside the gates: no host suite
+  compiles `main.cpp`, so deleting the call passed every test). When a
+  change alters what a row is, look for every literal that described the
+  old one. Decide a refund, a count or a permission
   from what the operation reports it did, never from a question asked
   before it; and when a host-side workaround (a flush, a retry, a reset)
   hides a library bug, fix them as one change.

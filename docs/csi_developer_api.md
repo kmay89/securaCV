@@ -181,25 +181,37 @@ the integration's per-type tamper sensors match. On the canary base that
 bridge carries the SD and enclosure kinds only: its boot story already
 reaches the tamper topic through the power-events classifier.
 
-A row that goes through the bundler (a `core.presence` state, a
-`ble.scout` arrival) is committed, and published, when its bundle closes:
-two minutes after its last observation, or ten minutes after it opened,
-whichever comes first. So it reaches the broker that long after the state
-began, carrying every observation it collapsed (`bundled`) and the span
-from the first to the last (`duration_sec`). A bundle still open at a
-reboot or a power cut is never committed; a `system.integrity` tamper is
-sealed the moment it commits for that reason. Both trees close bundles the
-same way, once per main loop (`csi_bundler_tick`); until sweep F81 the
-canary base closed every bundle after each CSI window, so each of its
-presence observations was a row of its own. A module's hourly ceiling
-counts rows: a bundle that opens spends one slot, an observation merged
-into its open bundle spends none, and a bundle that reopens after its ten
-minutes or its quiet gap spends one like any other opening (sweep F80). A
-state held for an hour therefore spends six slots on its own rows, which
-is all of `core.presence`'s six an hour: until one ages out, the next
-transition is refused, and so is every further observation of the held
-state (measured on the host: the transition waits three to ten minutes,
-and the held state's rows carry one observation each).
+Every row that names a state, other than an ambient one, goes through the
+bundler: a `core.presence` state, `core.breathing`'s confirmed and lost,
+`anomaly.baseline`'s unusual motion, `core.multilink_fusion`'s confirmed
+motion, `meta.empty_room_baseline`'s status and, on BLE builds, a
+`ble.scout` arrival or departure. Such a row is committed, and published,
+when its bundle closes: two minutes after its last observation, or ten
+minutes after it opened, whichever comes first. So it reaches the broker
+two to ten minutes after its first observation, and a row that never merges
+(an `anomaly.baseline` row, whose cooldown is ten minutes by default) two
+minutes after it. The body's `timestamp` is the close, and rows arrive in
+the order their bundles close, not the order their states began. A return
+to a state within two minutes joins the bundle still open for it, so a
+row's span can take in a brief other state. The row carries every
+observation it collapsed (`bundled`, the same count live, from the offline
+queue and in a replay, at least 1 for a row committed directly) and the
+span from the first to the last (`duration_sec`). A bundle still open at a
+reboot or a power cut is never committed; `system.integrity` closes its own
+key the moment it emits for that reason, so a tamper commits at once. Both
+trees close bundles the same way, once per main loop (`csi_bundler_tick`);
+until sweep F81 the canary base closed every bundle after each CSI window,
+so each of its observations was a row of its own, committed within a
+second. A module's hourly ceiling counts rows: a bundle that opens spends
+one slot, an observation merged into its open bundle spends none, and a
+bundle that reopens after its ten minutes or its quiet gap spends one like
+any other opening (sweep F80). A state held for an hour therefore spends
+six slots on its own rows, which is all of `core.presence`'s six an hour:
+until one ages out, the next transition is refused, and so is every further
+observation of the held state (measured on the host: after an hour or more
+in one state the transition waits up to about ten minutes, 7 to 602 s
+depending on when a slot ages out, and the held state's rows carry one
+observation each).
 
 Both trees also keep an SD event log, `/EVENTS/today.ndjson`, one committed
 row per line in one shared format

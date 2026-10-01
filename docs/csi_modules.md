@@ -208,6 +208,16 @@ You don't have to deduplicate same-state events yourself. The bundler in
 tuple within a 10-minute window into one row with an aggregated duration.
 You emit; the runtime does the rest.
 
+The row commits, and reaches the broker, when its bundle closes: two
+minutes after the last observation or ten minutes after the first,
+whichever comes first, so two to ten minutes after the state began, with
+every observation counted in `bundled`. Until then it lives in RAM, and a
+reboot or power cut loses it. A row that must reach the broker at once
+(`system.integrity`'s tamper kinds) closes its own key with
+`csi_bundler_flush_key()` right after the emit, and gives up merging for
+it. Ambient rows and rows without a `state_name` bypass the bundler and
+commit at the emit.
+
 If your module would naturally emit hundreds of events per hour during
 a noisy period, set `default_ceiling_per_hour` defensively — the runtime
 caps the burst and the bundler still surfaces a single summary row.
@@ -219,8 +229,9 @@ like any opening. Re-emitting a held state to refresh its row is therefore
 free inside the window, but a state held past the window reopens every 10
 minutes, which is 6 slots an hour. A ceiling at or under that rate is full
 after about an hour in one state, and then the module's next transition is
-refused until a slot ages out (the ceiling is checked before the bundler
-runs, so the held state's own refreshes are refused too). Size the ceiling
+refused until a slot ages out, up to about ten minutes (the ceiling is
+checked before the bundler runs, so the held state's own refreshes are
+refused too). Size the ceiling
 above the window rate plus the transitions you need to keep.
 
 ## Dismiss feedback

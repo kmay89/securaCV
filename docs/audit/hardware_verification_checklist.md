@@ -509,10 +509,13 @@ Code: `firmware/common/csi/src/csi_event.cpp` (the ceiling spends a slot by
 what `csi_bundler_admit()` did: an opening keeps it, a merge gives it back),
 `csi_bundler.cpp`, and the canary's `src/csi_modules_integration.cpp` +
 `src/main.cpp` (`securacv_csi_modules_tick()` once per loop, outside the CSI
-power gates, instead of a flush after every window). Host-tested on the real
-library (`firmware/tests_host/test_csi_bundle_ceiling.cpp`) and on the
-canary's real bridge (`test_csi_modules_integration.cpp`); not run on a
-device. Owner: U1.
+power gates, instead of a flush after every window), and
+`csi_event_wire.h` (`bundled` is the row's own count on every path).
+Host-tested on the real library (`firmware/tests_host/test_csi_bundle_ceiling.cpp`),
+on the canary's real bridge (`test_csi_modules_integration.cpp`, a stand-in
+for `main.cpp`'s loop) and on the wire builder (`test_csi_event_wire.cpp`);
+`main.cpp`'s call is held by `firmware/scripts/check_csi_bundle_tick.py` and
+compiled by CI; not run on a device. Owner: U1.
 
 - [ ] **A steady presence state is one row per bundle on the canary**
   - Setup: a canary (`release_ha`) paired to Home Assistant, with a card in.
@@ -533,9 +536,22 @@ device. Owner: U1.
     open within a few seconds of leaving; on both devices the new state's
     row commits when its bundle closes. Known limit, not a finding: after
     about an hour in ONE state the six-an-hour ceiling is full of that
-    state's own rows, and the transition then waits three to ten minutes
-    for a slot (host-measured; record the delay you see).
+    state's own rows, and the transition then waits up to about ten
+    minutes for a slot (host-measured: 7 to 602 s, depending on when a slot
+    ages out; record the delay you see).
   - Artifact: `docs/audit/repro/F81/transition/`.
+- [ ] **An anomaly row waits for its bundle on the canary**
+  - Setup: a canary (`release_ha`) paired to Home Assistant, the room empty
+    and quiet for a few minutes (`anomaly.baseline` learns the quiet).
+  - Repro: walk through the room once, briefly; note the time.
+  - Expected: the `anomaly.baseline` `unusual_motion` body reaches Home
+    Assistant about two minutes after the motion (its bundle closes on the
+    quiet gap; its ten-minute cooldown means nothing merges into it), with
+    `"bundled":1`, where before F81 it arrived within a second. Known
+    behavior, handed up as a decision, not a finding: every state-bearing
+    row but a `system.integrity` tamper now waits for its bundle, and a
+    restart inside those two minutes loses it.
+  - Artifact: `docs/audit/repro/F81/anomaly-latency/`.
 - [ ] **A bundle commits while CSI is shed**
   - Setup: a canary with `FEATURE_POWER_POLICY` on a battery near the
     battery-saver threshold (battery saver and low power shed CSI;
