@@ -12,9 +12,13 @@
 // called once per main loop, closes only the bundles that are due (their
 // 10-minute window or their 2-minute quiet gap), as the canary-wap does.
 //
-// The test plays main.cpp's loop: one CSI window a second through
-// securacv_csi_modules_feed(), then securacv_csi_modules_tick(). Rows are
-// what csi_event_on_committed sees (the egress queue's input on a device).
+// The test plays a stand-in for main.cpp's loop: one CSI window a second
+// through securacv_csi_modules_feed(), then securacv_csi_modules_tick().
+// Rows are what csi_event_on_committed sees (the egress queue's input on a
+// device). It pins the bridge's split (the feed closes nothing, the tick
+// closes what is due); main.cpp itself is compiled by CI, not here, and
+// firmware/scripts/check_csi_bundle_tick.py holds its loop() to calling the
+// tick once, outside the CSI power and degrade gates, before the egress pump.
 //
 // Each test fails on the bridge before F81 (built with a no-op
 // securacv_csi_modules_tick, which is what main.cpp ran there: nothing).
@@ -115,7 +119,7 @@ static csi_features_t window_of(int8_t doppler) {
 static const csi_features_t kActive = window_of(80);
 static const csi_features_t kEmpty = window_of(0);
 
-// main.cpp's loop, one pass per CSI window (1 Hz).
+// A stand-in for main.cpp's loop, one pass per CSI window (1 Hz).
 static void loop_pass(const csi_features_t* f) {
   g_host_millis += 1000;
   if (f) securacv_csi_modules_feed(f);   // nullptr: CSI shed, no window

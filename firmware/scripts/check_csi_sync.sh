@@ -414,14 +414,25 @@ if ! python3 firmware/scripts/check_csi_commit_order.py; then
     drift=1
 fi
 
+# ── The canary's bundle tick (sweep F81) ──
+# The canary closes CSI bundles on time with csi_bundler_tick(), which its
+# main loop runs through securacv_csi_modules_tick() once per pass, outside
+# the CSI power and degrade gates; the bridge's feed closes nothing.
+# test_csi_modules_integration.cpp plays a stand-in for that loop (no host
+# suite compiles main.cpp), so this check holds main.cpp's call to that
+# shape. It mutates the source in memory each run to prove it bites.
+if ! python3 firmware/scripts/check_csi_bundle_tick.py; then
+    drift=1
+fi
+
 if [ "$drift" -ne 0 ]; then
     echo ""
     echo "The committed copies under $STAGED/ must match their canonical sources,"
     echo "and the canary CSI library must stay a thin adapter over them."
     echo "Re-stage with: firmware/projects/canary-wap/setup.sh arduino"
-    echo "(An event-log owner, event egress order or commit order error above is a rule"
+    echo "(An event-log owner, event egress order, commit order or bundle tick error above is a rule"
     echo " about the source, not a copy: fix the code it names.)"
     exit 1
 fi
 
-echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule + nvs-session-depth library copies are in sync; the canary CSI adapter is thin; the event-log line has one builder and one owner file; the event egress keeps its order; the chokepoint commits in id order."
+echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule + nvs-session-depth library copies are in sync; the canary CSI adapter is thin; the event-log line has one builder and one owner file; the event egress keeps its order; the chokepoint commits in id order; the canary ticks its bundles."

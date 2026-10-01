@@ -272,7 +272,8 @@ CEILING_BIN  = $(BUILD_DIR)/test_csi_bundle_ceiling
 # The canary's CSI module bridge (canary/src/csi_modules_integration.cpp,
 # sweep F81), REAL, over the same library and the modules it registers,
 # against stubbed Arduino / Preferences / csi_hal hooks and a fake clock
-# (the test plays main.cpp's loop): a same-state refresh inside a bundle's
+# (the test plays a stand-in for main.cpp's loop; check_csi_bundle_tick.py
+# holds main.cpp's own call): a same-state refresh inside a bundle's
 # 10-minute window commits no row and spends no ceiling, and a bundle
 # commits once, on its window or quiet gap, even while CSI is shed.
 MODINT_DIR  = ../common/csi/src
