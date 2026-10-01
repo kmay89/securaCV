@@ -945,7 +945,8 @@ static void on_transport_recv(const uint8_t mac[6],
  * pairing runs, is taken — the partner of a pairing is not a peer yet, and
  * the state machine checks roles, MACs, the confirmation hash and the AEAD
  * itself. Everything else stays a recv_dropped_no_peer: an opera frame must
- * come from a bound radio MAC — its signer's own, on_opera_frame adds (F70).
+ * come from a bound radio MAC (and, since F70, on_opera_frame takes it only
+ * from its signer's own).
  *
  * That includes an opera frame that WOULD verify. #1756 (F49 part 3) took
  * one here, and when it passed signature + opera_id + strict counter it
