@@ -319,6 +319,14 @@ static constexpr const char* MDNS_HOSTNAME = "canary";
 // home-WiFi interface.
 static char s_mdns_device_id[40] = {0};
 
+// TLS advertisement state for the mDNS TXT records (F15), mirrored to file
+// scope for the same reason as the device id: start_mdns runs from a static
+// event callback and from re-announce paths with no instance in hand. begin()
+// announces mDNS before the HTTPS server comes up, so this starts false and
+// startHttpServer() sets it + re-announces once m_tls_enabled is known.
+static bool     s_mdns_tls_enabled = false;
+static uint16_t s_mdns_secure_port = 0;
+
 // Helper: bring mDNS up on whichever netif is currently routable. We
 // call MDNS.end() first because ESP-IDF mDNS doesn't auto-re-announce
 // when a new netif gains an IP — it binds to the interfaces that were
@@ -337,6 +345,21 @@ static void start_mdns(const char* device_id) {
                      (device_id && device_id[0]) ? device_id : MDNS_HOSTNAME);
   MDNS.addServiceTxt("securacv", "tcp", "fw", FIRMWARE_VERSION);
   MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32S3");
+  // F15: tell a discovery client whether HTTPS is live and on which port.
+  // The decision is the pure, host-tested tls_policy helper; the plain
+  // http/securacv services keep advertising 80 (it 307-redirects) for a
+  // client that cannot do TLS.
+  {
+    const auto adv = canary::net::tls_policy::mdns_tls_advert(
+        s_mdns_tls_enabled, s_mdns_secure_port);
+    MDNS.addServiceTxt("securacv", "tcp", "tls", adv.tls_txt);
+    if (adv.advertise_secure_port) {
+      char port_s[6];
+      snprintf(port_s, sizeof(port_s), "%u", (unsigned)adv.secure_port);
+      MDNS.addServiceTxt("securacv", "tcp", "secure_port",
+                         (const char*)port_s);
+    }
+  }
   char fqdn[48];
   snprintf(fqdn, sizeof(fqdn), "%s.local", MDNS_HOSTNAME);
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "mDNS started", fqdn);
@@ -1698,6 +1721,13 @@ bool ScvNetworkManager::startHttpServer() {
       registerHttpHandlers(m_https_server);
       Serial.printf("[HTTPS] Server started on port %d\n", HTTPS_PORT);
       log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "HTTPS server started", "port 443");
+      // F15: begin() announced mDNS before this server existed (tls=0); now
+      // that HTTPS is live, re-announce so the `_securacv._tcp` record carries
+      // tls=1 + the secure port. The STA_GOT_IP re-announce reads the same
+      // mirrors, so the home-WiFi interface advertises it too.
+      s_mdns_tls_enabled = true;
+      s_mdns_secure_port = HTTPS_PORT;
+      start_mdns(s_mdns_device_id);
       if (!startRedirectServer()) {
         // The API is up on 443; only the plain-HTTP conveniences (probes,
         // the redirect) are missing. Logged, not fatal.

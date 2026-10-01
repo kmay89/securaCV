@@ -466,9 +466,19 @@ so — see D2 below.)
   not the build's posture — compile-gated on `esp_https_server.h`, served
   after setup once the on-device certificate loads, and plain HTTP during
   setup and on a start failure, logged (`firmware/FEATURES.md`, the
-  canary-wap HTTPS note; PARITY_PLAN's shared TLS line); the canary's mDNS
-  TXT record, which does not yet advertise TLS, so a discovery client cannot
-  tell HTTPS is on; and the bench, U1 runbook Track D, D1–D5.
+  canary-wap HTTPS note; PARITY_PLAN's shared TLS line); and the bench, U1
+  runbook Track D, D1–D5.
+  *mDNS TLS advertisement done (#PENDING):* the canary's `_securacv._tcp`
+  record now carries a `tls` TXT ("1" when the HTTPS server actually came
+  up, "0" otherwise — its absence means firmware predating this, not plain
+  by choice) and a `secure_port` TXT when live, so a discovery client (the
+  Lab, the Flasher) can tell HTTPS is on without probing. The decision is
+  the pure, host-tested `tls_policy::mdns_tls_advert`; `begin()` announces
+  before the server exists (tls=0) and `startHttpServer()` re-announces once
+  TLS is up, which the STA_GOT_IP re-announce then carries to the home-WiFi
+  interface. The plain `http`/`securacv` services keep advertising 80 (it
+  307-redirects) for a client that cannot do TLS. Host-tested
+  (`test_tls_policy`), canary `[env:full]` compiles. Not bench-verified (U1).
 - [x] **F16 [code] WPA3/PMF + per-device AP password** on the WAP join path —
   done (option (b) — maintainer to confirm): both trees now ask for WPA2/WPA3
   transition on the SoftAP with PMF capable and never required, and for PMF
