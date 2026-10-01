@@ -157,16 +157,32 @@ ciphertext = ChaCha20-Poly1305(message_key, nonce, plaintext)
   counters are per destination) and, since F71 (host-tested, not
   bench-verified), reserves each the same way: before it uses the first
   counter above a member's stored reservation it stores one 1024 ahead (NVS
-  `tx_ctrs`, one record of 8 B fingerprint + u64 per member, §12.3), and at
-  boot each member's counter resumes one past its stored reservation. A
-  record that is not whole entries is logged at boot and every counter
-  starts at 1. Until F71 the counters restarted at 1 at every boot, so a
+  `tx_ctrs`, one record of 8 B fingerprint + u64 per member, §12.3; one
+  write covers every member past its reservation), and a boot resumes
+  every member one past the highest reservation stored for any of them.
+  So a boot also brings the members' counters level; the gap between them
+  below (open) then grows only with the traffic one member gets and
+  another does not, until the next boot. A reservation NVS refuses refuses
+  the frame and is logged, at most once per 5 minutes while the refusals
+  last. `send_to_peer` spends no counter while the storm gate holds, so
+  even a flood costs about one write per 5 minutes (at most 101 counters
+  per 31 s). Until F71 the counters restarted at 1 at every boot, so a
   rebooted canary-wap's frames dropped as replays at every member that had
-  heard it, until its counter for that member climbed back. Its rekey
-  (§5.6) still resets a member's counter to 1 for the new session (its
-  session model), under the reservation already stored. The envelope names
-  no destination, so a receiver judges a frame its sender addressed to
-  another member by its own last-seen counter for that sender (open).
+  heard it, until its counter for that member climbed back. **The first
+  boot after the update** finds members stored and no record (the record
+  is written with the member list since F71, so that means NVS from an
+  older firmware) and resumes every member above 2^40, which no boot of the
+  older firmware reached, so that boot is heard at once too. A record that
+  is there but unreadable is logged and every member resumes above 2^48,
+  above anything signed since the update; a device that has already
+  resumed from that floor once resumes below its own history at a second
+  unreadable record, and its members drop its frames until each counter
+  climbs back past the one they last heard. Its rekey (§5.6) still resets
+  a member's counter to 1 for the new session (its session model), under
+  the reservation already stored, so a counter is never signed twice under
+  one key. The envelope names no destination, so a receiver judges a frame
+  its sender addressed to another member by its own last-seen counter for
+  that sender (open).
   **Counter convention, both trees (v0.4 follow-up):** the first counter a
   sender signs is **1** (the PIO tree hands out `s_outbound_counter + 1`
   from 0; canary-wap's `add_peer` and both rekey resets start
@@ -479,12 +495,20 @@ Pairing adds a new device to an existing opera (or creates a new opera). The pro
 
 canary-wap (F75, host-tested, not bench-verified): the initiator keeps a
 joiner's `PAIR_CONFIRM` that arrives before its own owner confirms (verified,
-and only from the pairing partner's address) and sends `PAIR_COMPLETE` when
-its owner does, without a `PAIR_CONFIRM` of its own first: two frames back to
+only from the pairing partner's address, and only once the code is shown:
+before the ACCEPT the session key is all zero, so anyone can compute that
+hash) and sends `PAIR_COMPLETE` when its owner does, without a `PAIR_CONFIRM` of its own first: two frames back to
 back can meet the joiner's one-frame receive buffer, and the COMPLETE would be
 the one dropped. Until F75 it dropped such a CONFIRM, nothing re-sends one,
 and a pairing whose joiner was confirmed first timed out. A CONFIRM from any
-other address counts for nothing on either side. The PlatformIO tree's state
+other address counts for nothing on either side. The address is not
+authenticated, though, and the CONFIRM hash is the same in both directions,
+so the initiator's own CONFIRM, re-sent to it from the joiner's address,
+counts as the joiner's: the initiator completes and holds a joiner whose
+owner never confirmed, and the joiner drops the COMPLETE (host-probed on
+canary-wap, the same before F75; the PlatformIO tree computes the same
+role-free hash, read from code; open: a hash bound to the sender's role is
+a wire change). The PlatformIO tree's state
 machine still drops a CONFIRM that arrives before its own owner's
 (`either_handle_confirm` acts only in `AWAITING_CONFIRM_PEER`) and sends its
 CONFIRM once, so there a joiner confirmed first still ends in the 5-minute
@@ -1322,7 +1346,9 @@ gating it would restart the counter at every reboot of an FE-off board. The `ope
 canary-wap (NVS namespace `mesh`) stores the same deny-list blob under
 `revoked` (F33), behind its flash-encryption gate, and — F71 — `tx_ctrs`
 (up to 16 × (8 B fingerprint + u64)), each member's send-counter
-reservation (§3.3), not gated, like the last-seen counters it keeps under
+reservation (§3.3; 0 for a member nothing was signed to yet, written with
+the member list too, so members stored with no record mean NVS from an
+older firmware), not gated, like the last-seen counters it keeps under
 `replay_ctrs`: counts, not secrets, and a gate would restart the counters
 at every boot of an FE-off board.
 
@@ -1421,9 +1447,11 @@ An implementation conforms to this specification if it:
 - v0.4 follow-up, canary-wap liveness (2026-10-01; **host-tested only, not
   bench-verified**; sweep F71, F73–F76): a rebooted canary-wap's frames are
   heard at once — each member's send counter is reserved ahead in NVS
-  `tx_ctrs` and a boot resumes above it (§3.3, §12.3); the owners confirm a
-  pairing in either order, and a CONFIRM counts only from the pairing
-  partner's address (§5.2, §8.3); a pairing whose partner the device cannot
+  `tx_ctrs`, a boot resumes every member above the highest reservation, and
+  the first boot after the update, which finds no record, above 2^40
+  (§3.3, §12.3); the owners confirm a pairing in either order, and a
+  CONFIRM counts only from the pairing partner's address and only once the
+  code is shown (§5.2, §8.3); a pairing whose partner the device cannot
   hold fails, sending and storing nothing, instead of reporting success
   (§5.2); the pairing DISCOVER registers the ESP-NOW broadcast peer itself,
   and a channel change re-adds it rather than deleting it; and an opera with

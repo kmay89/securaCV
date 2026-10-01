@@ -644,10 +644,16 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   confirmed, and the initiator takes one ACCEPT, from where its OFFER
   went, and wipes the pairing once COMPLETE is sent. Since F75 the owners
   may confirm in either order (the initiator keeps a joiner's early
-  CONFIRM), and a CONFIRM counts only from the pairing partner's address:
-  the joiner's genuine CONFIRM re-sent from another radio no longer
-  completes a pairing, and a wrong hash from another radio no longer
-  cancels one. Since F73 a pairing whose partner the device cannot hold (a
+  CONFIRM), and a CONFIRM counts only from the pairing partner's address,
+  and only once the code is shown: the joiner's genuine CONFIRM re-sent
+  from another radio no longer completes a pairing, and a wrong hash from
+  another radio no longer cancels one. The address check does not stop a
+  reflection (open): the CONFIRM hash is the same in both directions, so
+  the initiator's own CONFIRM, re-sent to it from the joiner's address,
+  counts as the joiner's, and the initiator then holds a joiner whose owner
+  never confirmed (the joiner drops the COMPLETE; host-probed, the same
+  before F75). A hash bound to the sender's role would stop it (a wire
+  change). Since F73 a pairing whose partner the device cannot hold (a
   deny-listed key, a full opera, an address another member holds) fails
   and is logged: the initiator adds the joiner before anything is sent, so
   it no longer seals the `opera_secret` to a partner it then refuses, and a
@@ -664,9 +670,17 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   destination in the signed bytes would stop the cross-member case (a wire
   change); the power-cut window is the counter-save cadence. Since F71 a
   rebooted canary-wap no longer restarts its per-member send counters at 1:
-  each is reserved ahead in NVS and resumes above every counter it signed
-  (spec §3.3), so no member drops its frames as replays and no counter is
-  signed twice (host-tested).
+  each is reserved ahead in NVS, and a boot resumes every member above the
+  highest counter it reserved for any of them (spec §3.3), and no counter
+  is signed twice under one key (a rekey restarts them at 1 under the new
+  key). The first boot after the update finds no record and resumes above
+  2^40, which no older boot reached, so it is heard at once too. An
+  unreadable record resumes above 2^48, above anything signed since the
+  update; a second unreadable record resumes below the device's own
+  history, and its members drop its frames until each counter climbs back.
+  A boot also brings every member's counter level, so the cross-member gap
+  above starts again from nothing at each boot rather than growing by up
+  to a reservation block (host-tested).
 - **The 6-digit pairing code does not cover the long-term keys**
   (pre-existing; found in the review of the F49 part 3 withdrawal). The
   code and the CONFIRM hash are derived from the ephemeral X25519 session
