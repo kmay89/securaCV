@@ -432,6 +432,9 @@ static OperaPeer* find_peer_by_fingerprint(const uint8_t* fp) {
 // member where it was (the PlatformIO tree's bind_peer_mac order), and an
 // address another member holds is refused: one address, one member. The
 // counters, state and name stay; a re-pair re-opens no replay window.
+// The move is logged: the 6-digit code does not cover the long-term key a
+// pairing presents (spec §11.1 item 5), so a relayed pairing can claim a
+// member's key from another radio, and this line is the owner's only sign.
 static bool rebind_peer(OperaPeer* peer, const uint8_t* mac) {
   if (memcmp(peer->mac_addr, mac, 6) == 0) {
     return true;
@@ -451,6 +454,8 @@ static bool rebind_peer(OperaPeer* peer, const uint8_t* mac) {
   }
   esp_now_del_peer(peer->mac_addr);
   memcpy(peer->mac_addr, mac, 6);
+  health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+             "opera: a re-pair moved a member to a new radio address");
   return true;
 }
 

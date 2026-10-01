@@ -36,10 +36,13 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <vector>
 
 // The sketch provides these on a device (canary_wap.ino, chirp_channel.cpp).
-void health_log(LogLevel, LogCategory, const char*) {}
+// health_log keeps what the code under test logged, for the tests to read.
+std::vector<std::string> g_health;
+void health_log(LogLevel, LogCategory, const char* message) { g_health.push_back(message); }
 void log_health(LogLevel, LogCategory, const char*, const char*) {}
 namespace chirp_channel {
 void dispatch_espnow_message(const uint8_t*, const uint8_t*, int, int8_t) {}
@@ -399,7 +402,14 @@ void test_a_re_pair_re_binds_the_member_it_holds() {
   memcpy(old_mac, B.mac, 6);
   B.mac[5] = 0xB2;                               // B's radio address changed
   boot(B);
+  g_health.clear();
   run_pairing(A, B);
+  // The move is logged on A (the only side whose member moved).
+  size_t moved_logs = 0;
+  for (const std::string& m : g_health) {
+    if (m == "opera: a re-pair moved a member to a new radio address") ++moved_logs;
+  }
+  CHECK(moved_logs == 1);
   // A holds B once, at the address the pairing completed from, and the
   // ESP-NOW list follows; B holds A once.
   become(A);
