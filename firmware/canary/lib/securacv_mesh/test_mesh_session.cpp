@@ -2906,7 +2906,8 @@ void test_removed_peer_leaves_transport_table() {
  * did not hold, move B's binding there and hand it to main.cpp to persist.
  * These pin that it no longer can: a frame from an unbound address drops
  * (recv_dropped_no_peer) before any check, as it did before #1756, B stays
- * bound where it paired, and a changed radio MAC means a re-pair. */
+ * bound where it paired, and a changed radio MAC means a re-pair (with the
+ * limits test_repair_moves_a_trusted_peers_address names). */
 
 /* The address this device last verified `fp` speaking from, if any. */
 bool verified_link_mac(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN], uint8_t out[6]) {
@@ -3382,9 +3383,20 @@ void on_paired_known_peer(const uint8_t* secret, uint32_t code) {
 /* With F49 part 3 withdrawn, a re-pair is how a trusted peer whose radio
  * MAC changed is heard again. J is trusted and bound to the address it
  * first paired from, and now transmits from a new one: its opera frames
- * from there drop, unread; a pairing run from there (an owner's act, the
- * code confirmed on both screens) binds the new address, takes the old one
- * out of the table, and hands main.cpp the address to persist. */
+ * from there drop, unread; a pairing run from there binds the new address,
+ * takes the old one out of the table, and hands main.cpp the address to
+ * persist.
+ *
+ * This pins the mechanism, not that a re-pair is safe. The pairing binds
+ * whatever long-term key the DISCOVER (here) or OFFER carried: the 6-digit
+ * code and the CONFIRM hash cover only the ephemeral X25519 exchange. So an
+ * outsider relaying an owner-run pairing between two devices, from its own
+ * address, gets matching codes on both screens while claiming a trusted
+ * member's key, and this same path then re-binds that member to the
+ * outsider's radio and main.cpp persists it. Pre-existing (the same before
+ * #1756); open, and closing it needs a wire change. Nor does a re-pair
+ * start with eight members bound: the transport table has no slot for J's
+ * new address, so the OFFER cannot be sent. */
 void test_repair_moves_a_trusted_peers_address() {
   uint8_t S[32];
   for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0xB3 + i);

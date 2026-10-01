@@ -336,13 +336,22 @@ bool send_beacon_event(mesh_beacon::BeaconState state,
  * passed — and only for an address already in the transport table (a
  * frame from any other address is dropped unread, RADIO ADDRESSES below).
  * That proves the frame is the peer's, not that the peer transmitted it:
- * the envelope signs no address, so a radio copying another bound
- * member's address could deliver one of the peer's frames this device
- * has not heard yet. Best-effort liveness, which is the quality the
- * /api/mesh/peers join wants — not a binding: a peer that moves to an
- * address it did not pair from is not heard there at all until it
- * re-pairs. mac_known is false until the first verified frame this
- * boot.
+ * the envelope signs no address, so any address in the table can deliver
+ * one of the peer's frames this device has not heard yet, and become the
+ * recorded one. Two such addresses need nothing from the peer: while a
+ * pairing runs (either role), the partner's address is in the table, so an
+ * outsider that answers the pairing from its own address can replay there
+ * with no spoofing until the pairing ends (host-probed as initiator); and
+ * ESP-NOW does not authenticate a source, so a radio copying another bound
+ * member's address can too. The recorded address is not only a status value: the session
+ * sends its rekey unicasts to the peer there (send_rekey_frame) and takes
+ * it out of the transport table when it forgets the peer (forget_peer), so
+ * such a replay steers the peer's rekey replies to that address, and a
+ * later removal of the peer can strand the member whose address it was
+ * (open, THREAT_MODEL "Opera mesh"). Best-effort liveness, not a binding:
+ * a peer that moves to an address it did not pair from is not heard there
+ * at all until it re-pairs (RADIO ADDRESSES below). mac_known is false
+ * until the first verified frame this boot.
  *
  * Returns the number of in-use entries written (≤ cap). Threading: the
  * table is mutated on the main loop; the REST handlers read it from the
@@ -450,6 +459,17 @@ size_t trusted_peer_count();
  *     locally-administered address) is heard again after a re-pair, which
  *     binds the address the partner paired from; re-pairing a device that
  *     is already trusted re-binds it, and main.cpp persists the new one.
+ *     Two limits on that. The pairing does not authenticate the long-term
+ *     key it binds: the 6-digit code and the CONFIRM hash cover only the
+ *     ephemeral X25519 exchange, and the key is taken as the DISCOVER or
+ *     OFFER carried it. So an outsider relaying an owner-run pairing, from
+ *     its own address, gets matching codes on both screens while choosing
+ *     that key: claiming a trusted member's key re-binds the member to the
+ *     outsider's radio (persisted), and claiming its own gets it trusted.
+ *     Pre-existing, the same before #1756; open. And with eight members
+ *     bound the transport table has no slot for the new address, so the
+ *     pairing's replies cannot be sent and the re-pair cannot start until
+ *     a member leaves or is removed (with seven bound it starts).
  *   • A peer that is dropped — a verified LEAVE, unregister, a removal or a
  *     rotation that forgets it, clear_trusted_peers() — leaves the transport
  *     table with it.

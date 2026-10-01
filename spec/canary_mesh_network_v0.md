@@ -970,7 +970,18 @@ opera_id and replay checks all passed), and the handler joins that MAC into
 the transport table's liveness. The checks prove who signed the frame, not
 which radio sent it — the envelope signs no address (the F49 part 3 note
 below) — so only an address already in the transport table is ever
-recorded, and none of them moves a binding. A trusted peer that has not sent a verified
+recorded, and none of them moves a binding. Any address in that table can
+be recorded for a peer, though, not only the peer's own binding: while a
+pairing runs the partner's address is in it (an outsider that answers the
+pairing from its own radio needs no spoofing), and ESP-NOW does not
+authenticate a source, so a radio copying another member's address
+qualifies too. Either can deliver a peer's not-yet-heard frame and become
+that peer's recorded address, which the PlatformIO session also uses as
+the destination of its rekey unicasts to the peer and takes out of the
+transport table when it forgets the peer. That steers the peer's rekey
+replies to the outsider, and a later removal can strand the member whose
+address was copied (host-probed, the same before #1756; open — recording
+it only from the peer's own binding would close it, not built). A trusted peer that has not sent a verified
 frame this boot — or whose MAC has aged out of the transport table —
 reports the OFFLINE/never defaults, and `peers_online` in `GET /api/mesh`
 counts only peers heard this boot (v0.3, F33).
@@ -1028,8 +1039,19 @@ an address its transport table does not hold, before any verification
 and spends no counter; a peer's address is bound only when a pairing
 completes (the address the partner paired from — re-pairing a device that
 is already trusted re-binds it) and restored from NVS `peer_macs` at boot.
-A changed radio MAC means a re-pair. Learning a new address safely needs
-either a wire change (the address signed into a payload, under the §4.5
+A changed radio MAC means a re-pair, with two limits. The pairing does not
+authenticate the long-term key it binds (§11.1): the 6-digit code and the
+CONFIRM hash cover only the ephemeral X25519 exchange, and the key is
+taken as the DISCOVER or OFFER carried it, so an outsider relaying an
+owner-run pairing from its own address gets matching codes on both
+screens while choosing that key. Claiming a trusted member's key re-binds
+the member to the outsider's radio and persists it; claiming its own gets
+it trusted (host-probed on the PlatformIO tree, the same before #1756;
+open, a wire change). And on the PlatformIO tree, with eight members
+bound the transport table has no slot for the new address, so the
+pairing's replies cannot be sent and the re-pair cannot start until a
+member leaves or is removed (host-probed). Learning a new address safely
+needs either a wire change (the address signed into a payload, under the §4.5
 registry) or a challenge the new address must answer with the peer's key;
 that is an open decision, not built. **canary-wap does not conform yet:**
 its `handle_received_message` still re-points a member's MAC (and its
@@ -1098,8 +1120,21 @@ The web UI MUST include a "Opera" panel showing:
 1. **Neighbor Interference**: Opera ID isolation prevents cross-talk
 2. **Replay Attacks**: Message counters and timestamp validation
 3. **Spoofing**: Ed25519 signatures on all messages
-4. **Eavesdropping**: ChaCha20-Poly1305 encryption
-5. **Man-in-the-Middle**: Visual confirmation codes during pairing
+4. **Eavesdropping**: ChaCha20-Poly1305 seals the `opera_secret` a pairing
+   or a rotation hands over. Partial: the PlatformIO tree's opera frames
+   themselves are signed, not encrypted (§8.3), so anyone in range reads
+   their payloads.
+5. **Man-in-the-Middle**: Visual confirmation codes during pairing.
+   Partial: the code and the CONFIRM hash are derived from the ephemeral
+   X25519 session key only, so they detect a relay that swaps an ephemeral
+   key (different codes on the two screens, by construction) but not one
+   that swaps the long-term public key the DISCOVER or OFFER carries, which
+   signs nothing in the exchange. A relay doing that can get its own key
+   trusted, or re-bind an already-trusted member to its radio (§8.3;
+   host-probed on the PlatformIO tree; canary-wap derives the code the
+   same way, not probed). Closing it needs both long-term keys in the code
+   and the CONFIRM hash, or a transcript signed with them: a wire change on
+   both trees, open.
 6. **Resource Exhaustion**: Max opera size, rate limiting
 
 ### 11.2 Threats Not Mitigated
@@ -1241,3 +1276,9 @@ An implementation conforms to this specification if it:
   member at its own radio. Opera frames from unbound addresses drop again,
   a changed radio MAC means a re-pair, and the spec now says a verified
   frame MUST NOT bind an address (§8.3); canary-wap does not conform yet.
+  The review of the withdrawal found two pre-existing limits, now stated
+  rather than fixed: a pairing does not authenticate the long-term key it
+  binds, so §11.1 items 4 and 5 are marked partial (item 4 because the
+  PlatformIO frames are not encrypted); and the address a verified frame is
+  recorded under can be a pairing partner's or a copied one (§8.3 peer
+  fields).

@@ -1967,6 +1967,17 @@
   an address from a frame safely needs the address inside the signature (a
   wire change) or a challenge the new address answers with the peer's key —
   an open decision. canary-wap still re-binds on any verified frame; open.
+- **And the fallback is only as safe as its own proof:** the review then
+  ran the same outsider against the re-pair the fix pointed to. The 6-digit
+  code covers only the ephemeral exchange, not the long-term key the
+  DISCOVER or OFFER carries, so a relay of an owner-run pairing shows
+  matching codes while re-binding a trusted member to the relay's radio, or
+  getting the relay's own key trusted (pre-existing, open). The fix's
+  first draft (a test comment and the ledger's option text) called the
+  re-pair "the code confirmed on both screens" as if that settled it.
+  When a fix names the path that replaces a
+  withdrawn one, probe that path with the same adversary before the docs
+  lean on it.
 - **Regression check:** `test_mesh_session`'s
   `test_unheard_broadcast_replayed_from_a_new_address_moves_nothing` and
   `test_unheard_rekey_offer_replayed_from_a_new_address_moves_nothing` (both

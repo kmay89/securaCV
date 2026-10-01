@@ -15,12 +15,19 @@
 //      frame could pass a fresh rx of 0 — and passed a counter-0 frame
 //      again on every replay for as long as rx stayed 0. A model of each
 //      gate, held to the pinned line, shows the hole and its closure.
-//   2. The source MAC is bound to the peer — and re-registered with
-//      ESP-NOW — only after signature, opera_id and replay all passed, as
-//      the PIO session does. It used to be bound BEFORE verify_signature,
-//      so a frame carrying a member's public sender_fp and opera_id with
-//      any signature re-pointed that member's MAC (a keyless DoS). And the
-//      OLD address is the one unregistered, before it is overwritten.
+//   2. The ORDER of canary-wap's MAC re-bind: the source MAC is bound to the
+//      peer — and re-registered with ESP-NOW — only after signature,
+//      opera_id and replay all passed. It used to be bound BEFORE
+//      verify_signature, so a frame carrying a member's public sender_fp
+//      and opera_id with any signature re-pointed that member's MAC (a
+//      keyless DoS). And the OLD address is the one unregistered, before it
+//      is overwritten. This pins the order of a re-bind that spec §8.3 now
+//      forbids (a verified frame does not prove which radio sent it, so a
+//      replayed one passes too): canary-wap does not conform yet, and the
+//      pin holds the order only until that is decided. The PIO session no
+//      longer binds from a frame; it records the source of a verified frame
+//      as a liveness link, after its replay gate, which the pin's last
+//      checks hold.
 //   3. Every handler of a fixed-size struct payload takes payload_len and
 //      refuses any other size, exactly (the PIO decoders' rule). The PIO
 //      tree's TAMPER_ALERT is mesh_alert::PAYLOAD_LEN = 6 bytes; read as
@@ -241,7 +248,10 @@ void test_mac_is_bound_only_after_every_check() {
     CHECK(count(between, "peer->") == 0);
     CHECK(count(between, "esp_now_") == 0);
   }
-  // The PIO session binds at the same point: after its replay gate.
+  // The PIO session records its liveness link (peer->mac, never the
+  // transport binding) at the same point: after its replay gate. It does not
+  // re-bind from a frame at all (spec §8.3); its frames from an unbound
+  // address are dropped before this function runs.
   const std::string pio = load(MESH_SESSION_CPP);
   const std::string prx = squeeze(function_body(pio, "on_opera_frame"));
   CHECK(!prx.empty());

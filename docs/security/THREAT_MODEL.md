@@ -611,18 +611,60 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   frame: an opera frame from an address its transport table does not hold
   is dropped before verification, and a member's address is bound only by a
   completed pairing (or restored from NVS at boot), so a changed radio MAC
-  means a re-pair. F49 part 3 (#1756) briefly re-bound and persisted a
-  member's address on such a frame, which let an outsider re-point the
-  member at its own radio (host probe: the receiver's next rotation sent
-  its OFFER to the outsider, and the 60 s commit dropped the member when it
-  stayed silent); withdrawn, spec §8.3. Still open: canary-wap re-points a
-  member's address on any frame that passes its checks (spec §8.3, not
-  probed); and because ESP-NOW does not authenticate the source address, a
-  radio that copies one bound member's address can deliver another
-  member's not-yet-heard frame on the normal path — no binding moves, but
-  the receiver then records the copied address as the signer's last-heard
-  address, which its rekey replies use and a later removal of the signer
-  takes out of the transport table (host-probed on the PlatformIO tree).
+  means a re-pair — with the two limits in the next bullet. F49 part 3
+  (#1756) briefly re-bound and persisted a member's address on such a
+  frame, which let an outsider re-point the member at its own radio (host
+  probe: the receiver's next rotation sent its OFFER to the outsider, and
+  the 60 s commit dropped the member when it stayed silent); withdrawn,
+  spec §8.3. Still open: canary-wap re-points a member's address on any
+  frame that passes its checks (spec §8.3, not probed).
+- **The 6-digit pairing code does not cover the long-term keys**
+  (pre-existing; found in the review of the F49 part 3 withdrawal). The
+  code and the CONFIRM hash are derived from the ephemeral X25519 session
+  key alone, and the long-term Ed25519 key a pairing binds is taken as the
+  DISCOVER (joiner to initiator) or OFFER (initiator to joiner) carried it;
+  that key signs nothing in the exchange. So an outsider that relays an
+  owner-run pairing between the two devices, from its own address and
+  without touching the ephemeral keys, gets matching codes on both screens
+  while choosing the key the initiator records (the joiner takes the
+  OFFER's key the same way; that side was not probed). Claiming an
+  already-trusted member's key re-binds that member to the outsider's radio
+  and persists it, and the member's own frames then drop as coming from an
+  unbound address until another re-pair, which runs the same exchange.
+  Claiming its own key makes the outsider a trusted member, able to sign a
+  rotation that removes a real one. Host-probed on the PlatformIO tree,
+  with the same results before #1756, on #1756 and after the withdrawal;
+  canary-wap derives its code the same way (not probed). What the code
+  does bind is the ephemeral exchange: by construction (not probed end to
+  end), a relay that swaps an ephemeral key shows different codes on the
+  two screens, which is what keeps the `opera_secret` sealed in COMPLETE
+  from it. Fixing the key substitution needs both long-term keys in the
+  code and the CONFIRM hash, or a transcript signed with them: a wire
+  change on both trees, open. On the PlatformIO tree the re-pair also
+  cannot start while eight members are bound: the transport table has no
+  slot for the new address, so the pairing's replies cannot be sent until
+  a member leaves or is removed (host-probed).
+- **Still open: where a verified frame's source is recorded.** The
+  PlatformIO receiver notes the address each member's last verified frame
+  arrived from (its liveness link), and that can be any address in the
+  transport table, not only the member's own binding. Two get there without
+  the member. While a pairing runs, the partner's address is in the
+  table, so an outsider that answers the pairing from its own address can
+  deliver a member's not-yet-heard frame there with no spoofing until the
+  pairing ends (probed with the receiver as initiator; as joiner it adds
+  the address of whoever sends it an OFFER the same way, not probed). And
+  because ESP-NOW does not
+  authenticate the source address, a radio that copies another bound
+  member's address can do the same. No binding moves, but the receiver
+  then records that address for the signer: its rekey replies to the
+  signer go there (host probe: a replayed `REKEY_OFFER` from the pairing
+  partner's address got the receiver's `REKEY_ACCEPT` sent to the
+  outsider), and a later removal of the signer takes that address out of
+  the transport table, which strands the member whose address was copied.
+  Host-probed on the PlatformIO tree, the same before #1756. A likely fix,
+  not built: record the link only when the frame comes from the signer's
+  own bound address, and send rekey unicasts and drop addresses by that
+  binding.
 - `opera_secret` storage requires flash encryption enabled
   (eFuse `FLASH_CRYPT_CNT > 0`); load/save paths refuse on FE-off devices
   and log loudly (v0.2 audit O2). That keeps the secret off un-fused

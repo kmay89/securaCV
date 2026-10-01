@@ -728,14 +728,24 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
   peer->msg_counter_rx = counter;
   (void)timestamp;  // intentionally unused as of v0.2 (audit O1)
 
-  // Every check passed: at this instant the source MAC provably spoke for
-  // this fingerprint, so bind it (the device may have reconnected with a
-  // new address). This used to run BEFORE verify_signature, where a frame
-  // with a copied sender_fp and opera_id — both public — and any signature
-  // re-pointed a member's MAC at the attacker's radio, and re-registered
-  // the ESP-NOW peer there, until the real device's next verified frame:
-  // a denial of service with no key. The PIO session binds only after
-  // signature, opera_id and replay all passed; so does this now.
+  // Every check passed, and the block below re-points the member's MAC and
+  // its ESP-NOW registration at this frame's source (for a device that came
+  // back with a new address). Spec §8.3 withdraws that step and now forbids
+  // it, so this tree does not conform yet (open). The checks prove who
+  // signed the frame, not which radio sent it: the envelope signs no
+  // address, so a genuine frame of the member's meant for this device that
+  // it has not received yet (one it missed, say) passes them from any radio
+  // that replays it. How far that reaches here (per-peer counters, a
+  // heartbeat) has not been probed. The
+  // PIO session takes no address from a frame at all: an opera frame from
+  // an address its transport table does not hold is dropped before any
+  // check, and the source of a verified one is recorded as a liveness link,
+  // never as the member's binding.
+  // What the ORDER below still fixes: this used to run BEFORE
+  // verify_signature, where a frame with a copied sender_fp and opera_id —
+  // both public — and any signature re-pointed a member's MAC at the
+  // attacker's radio, and re-registered the ESP-NOW peer there, until the
+  // real device's next verified frame: a denial of service with no key.
   if (memcmp(peer->mac_addr, mac, 6) != 0) {
     // Drop the OLD address's ESP-NOW registration before overwriting it
     // (the old order deleted the new address, so the old entry leaked in
