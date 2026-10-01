@@ -370,14 +370,26 @@ if ! python3 firmware/scripts/check_event_egress_order.py; then
     drift=1
 fi
 
+# ── The chokepoint's commit order (backlog F46) ──
+# Every committed csi_event takes its id at commit from csi_event.cpp's one
+# allocator, and the id and the commit hooks run under one recursive commit
+# lock, so ids reach the hooks in order from the loop task and the NimBLE
+# host task alike (test_csi_event_id_space.cpp covers one task; the host
+# build compiles the locks out). This check holds the source to that shape,
+# and the bundler to committing through it, outside its slot lock. It
+# mutates the source in memory each run to prove it bites.
+if ! python3 firmware/scripts/check_csi_commit_order.py; then
+    drift=1
+fi
+
 if [ "$drift" -ne 0 ]; then
     echo ""
     echo "The committed copies under $STAGED/ must match their canonical sources,"
     echo "and the canary CSI library must stay a thin adapter over them."
     echo "Re-stage with: firmware/projects/canary-wap/setup.sh arduino"
-    echo "(An event-log owner or event egress order error above is a rule about the"
-    echo " source, not a copy: fix the code it names.)"
+    echo "(An event-log owner, event egress order or commit order error above is a rule"
+    echo " about the source, not a copy: fix the code it names.)"
     exit 1
 fi
 
-echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule + nvs-session-depth library copies are in sync; the canary CSI adapter is thin; the event-log line has one builder and one owner file; the event egress keeps its order."
+echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule + nvs-session-depth library copies are in sync; the canary CSI adapter is thin; the event-log line has one builder and one owner file; the event egress keeps its order; the chokepoint commits in id order."
