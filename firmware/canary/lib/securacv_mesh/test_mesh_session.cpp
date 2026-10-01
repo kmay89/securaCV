@@ -838,12 +838,48 @@ void test_peer_link_mac_binding() {
 
   /* A re-bind (a re-pair) moves the link with the binding; the peer is not
    * heard at the new address until a frame arrives from it, and the frame
-   * dropped above spent no counter, so it lands now. */
+   * dropped above spent no counter, so it lands there (after the two
+   * refusals just below). */
   assert(mesh_session::bind_peer_mac(expected_fp, mac_b));
   assert(!mesh_transport::has_peer(mac_a));
   assert(mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS) == 1);
   assert(!links[0].mac_known);
   assert(mesh_session::online_peer_count() == 0);
+
+  /* Only a fresh frame of THIS opera marks the new binding. From mac_b, a
+   * replay of the spent counter-2 frame and a frame signed for another
+   * opera (counter 9, unspent) both verify, and both mark nothing,
+   * dispatch nothing and spend nothing: the counter-3 frame still lands
+   * below. (The base's "a REPLAYED frame from a different MAC must not
+   * rebind" asserted the replay check ran before the link was recorded;
+   * that frame now drops at the source, so the replay and opera_id checks
+   * are pinned here, at the binding.) */
+  uint8_t stale[mesh_envelope::MAX_FRAME_LEN];
+  size_t stale_len = build_beacon_frame(
+      tx_pub, tx_priv, opera_secret, /*counter=*/2,
+      mesh_beacon::BeaconState::ARRIVED, "kitchen",
+      stale, sizeof(stale));
+  assert(stale_len > 0);
+  mesh_transport::test::inject_recv(mac_b, stale, stale_len, -55);
+  mesh_transport::process();
+  assert(mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS) == 1);
+  assert(!links[0].mac_known);
+  assert(mesh_session::online_peer_count() == 0);
+  assert(g_received.size() == 1);
+  uint8_t other_opera[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(other_opera); ++i) other_opera[i] = (uint8_t)(0x5A + i);
+  stale_len = build_beacon_frame(
+      tx_pub, tx_priv, other_opera, /*counter=*/9,
+      mesh_beacon::BeaconState::ARRIVED, "kitchen",
+      stale, sizeof(stale));
+  assert(stale_len > 0);
+  mesh_transport::test::inject_recv(mac_b, stale, stale_len, -55);
+  mesh_transport::process();
+  assert(mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS) == 1);
+  assert(!links[0].mac_known);
+  assert(mesh_session::online_peer_count() == 0);
+  assert(g_received.size() == 1);
+
   mesh_transport::test::inject_recv(mac_b, frame, flen, -55);
   mesh_transport::process();
   assert(mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS) == 1);
@@ -3854,6 +3890,108 @@ void test_forgetting_a_peer_drops_only_its_own_address() {
   std::printf("PASS test_forgetting_a_peer_drops_only_its_own_address\n");
 }
 
+/* A member with NO binding has no address its frames are taken from. That
+ * state is real: main.cpp's boot restore registers every persisted pubkey
+ * and binds only those with a peer_macs entry (none for NVS written before
+ * F33 part 1, or after a save_peer_mac that failed), and a pairing whose
+ * bind_peer_mac was refused (the address is another member's, or the
+ * transport table is full) leaves the member registered and unbound. Until
+ * F70 any address in the transport table delivered its frames: another
+ * member's, or a running pairing's partner's. The source check's first
+ * half (`!radio_mac_set`) is what this pins; the bound tests above never
+ * reach it. */
+void test_unbound_member_frame_is_never_taken() {
+  uint8_t S[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x5B + i);
+  uint8_t a_pub[32], a_priv[32], a_fp[8];
+  stand_up_session(S, a_pub, a_priv);           /* this device: A */
+  mesh_crypto::compute_fingerprint(a_pub, a_fp);
+  mesh_session::set_beacon_event_handler(on_beacon_event_received);
+  mesh_session::set_peer_revoked_handler(on_peer_revoked);
+  g_received.clear();
+  g_revoked.clear();
+
+  /* U registered with no binding; C bound where it paired. */
+  uint8_t u_pub[32], u_priv[32], u_fp[8], c_pub[32], c_priv[32], c_fp[8];
+  assert(mesh_crypto::ed25519_generate_keypair(u_pub, u_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(c_pub, c_priv));
+  mesh_crypto::compute_fingerprint(u_pub, u_fp);
+  mesh_crypto::compute_fingerprint(c_pub, c_fp);
+  const uint8_t mac_u[6] = {0x24, 0x0A, 0xC4, 0x00, 0x73, 0x0A};
+  const uint8_t mac_c[6] = {0x24, 0x0A, 0xC4, 0x00, 0x73, 0x0C};
+  const uint8_t mac_o[6] = {0x24, 0x0A, 0xC4, 0x00, 0x73, 0x0E};
+  assert(mesh_session::register_trusted_peer(u_pub));
+  assert(mesh_session::register_trusted_peer(c_pub) && mesh_session::bind_peer_mac(c_fp, mac_c));
+
+  /* U's frames that A never heard: a broadcast (counter 1), and the
+   * REKEY_OFFER of U's removal of C, with A a survivor (counter 2). */
+  uint8_t beacon[mesh_envelope::MAX_FRAME_LEN];
+  const size_t beacon_len = build_beacon_frame(u_pub, u_priv, S, 1,
+                                               mesh_beacon::BeaconState::ARRIVED, "shed",
+                                               beacon, sizeof(beacon));
+  mesh_rekey::Context cu;
+  mesh_rekey::context_init(cu);
+  uint8_t surv[1][mesh_crypto::FINGERPRINT_LEN];
+  std::memcpy(surv[0], a_fp, sizeof(a_fp));
+  mesh_rekey::Action u_offer = mesh_rekey::start(cu, u_fp, c_fp, surv, 1, 0x7373, 0);
+  assert(u_offer.type == mesh_rekey::ActionType::BROADCAST_OFFER);
+  uint8_t offer[mesh_envelope::MAX_FRAME_LEN];
+  const size_t offer_len = build_signed_session_frame(u_pub, u_priv, S, 2,
+                                                      mesh_envelope::MsgType::REKEY_OFFER,
+                                                      u_offer.payload, u_offer.payload_len,
+                                                      offer, sizeof(offer));
+
+  /* (a) U's broadcast from member C's address (a radio copying it). */
+  mesh_transport::test::inject_recv(mac_c, beacon, beacon_len, -40);
+  mesh_transport::process();
+  uint8_t seen[6];
+  assert(g_received.empty());                   /* not dispatched */
+  assert(!verified_link_mac(u_fp, seen));       /* nothing recorded for U */
+  assert(!verified_link_mac(c_fp, seen));       /* nor credited to C */
+  assert(transport_has(mac_c));
+
+  /* (b) Outsider O answers A's pairing from its own radio, then sends U's
+   * OFFER. Until F70: A joined the rotation, revoked C, took C's address
+   * out of the table, and sent its REKEY_ACCEPT to O, the only address
+   * left. */
+  uint8_t o_pub[32], o_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(o_pub, o_priv));
+  mesh_session::process(10);
+  assert(mesh_session::start_pairing_initiator(S, "Home", 10));
+  mesh_pairing::PairingContext co;
+  mesh_pairing::context_init(co);
+  const std::vector<uint8_t> disc = wire(mesh_pairing::start_joiner(co, o_pub, o_priv, 10));
+  mesh_transport::test::inject_recv(mac_o, disc.data(), disc.size(), -40);
+  mesh_transport::process();
+  assert(transport_has(mac_o));                 /* the pairing partner */
+  g_outs.clear();
+  mesh_transport::test::inject_recv(mac_o, offer, offer_len, -40);
+  mesh_transport::process();
+  assert(!mesh_session::rekey_in_progress());   /* no rotation joined... */
+  assert(!mesh_session::is_revoked(c_fp));      /* ...C neither revoked */
+  assert(g_revoked.empty() && mesh_session::trusted_peer_count() == 2);
+  assert(transport_has(mac_c));                 /* nor taken out of the table */
+  assert(g_outs.empty());                       /* and no REKEY_ACCEPT, to O or anyone */
+  assert(!verified_link_mac(u_fp, seen));
+  mesh_session::cancel_pairing();
+  assert(!transport_has(mac_o));
+
+  /* Neither drop spent U's counter: bound, U's own copies land, and the
+   * ACCEPT goes to U's binding alone. */
+  assert(mesh_session::bind_peer_mac(u_fp, mac_u));
+  g_outs.clear();
+  mesh_transport::test::inject_recv(mac_u, beacon, beacon_len, -40);
+  mesh_transport::test::inject_recv(mac_u, offer, offer_len, -40);
+  mesh_transport::process();
+  assert(g_received.size() == 1);
+  assert(verified_link_mac(u_fp, seen) && std::memcmp(seen, mac_u, 6) == 0);
+  assert(mesh_session::rekey_in_progress() && mesh_session::is_revoked(c_fp));
+  assert(sent_of_type(mesh_envelope::MsgType::REKEY_ACCEPT) == 1);
+  assert(g_outs.size() == 1 && sent_to(mac_u) == 1);
+  mesh_rekey::wipe(u_offer);
+  std::printf("PASS test_unbound_member_frame_is_never_taken\n");
+}
+
 /* ── F33 part 3 — the outbound counter survives a reboot ──────────────── */
 
 /* A fake NVS for mesh_state::save/load_outbound_counter. */
@@ -4606,6 +4744,7 @@ int main() {
   test_pair_contact_replay_records_nothing_and_gets_no_accept();
   test_copied_member_address_moves_no_link();
   test_forgetting_a_peer_drops_only_its_own_address();
+  test_unbound_member_frame_is_never_taken();
   /* F33 part 3 — the outbound counter survives a reboot. */
   test_outbound_counter_reserve_ahead();
   test_outbound_counter_without_reservation_restarts();
