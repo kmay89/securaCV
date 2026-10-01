@@ -194,11 +194,20 @@ static void every_failure_has_text_for_every_surface() {
     const char* label = join_failure_label(f);
     const char* detail = join_failure_detail(f);
     const char* hint = join_failure_hint(f);
+    const char* narrow = join_failure_hint_narrow(f);
     CHECK(label && *label, "label missing for failure %u", (unsigned)f);
     CHECK(detail && *detail, "detail missing for failure %u", (unsigned)f);
     CHECK(hint && *hint, "hint missing for failure %u", (unsigned)f);
+    CHECK(narrow && *narrow, "narrow hint missing for failure %u",
+          (unsigned)f);
     CHECK(std::strlen(label) <= 32,
           "label must fit a small status line: \"%s\"", label);
+    // The narrow form exists for the rows the full hint cannot hold (the
+    // display's layout host test measures both against every panel), so it
+    // must actually be the shorter of the two.
+    CHECK(std::strlen(narrow) < std::strlen(hint),
+          "the narrow hint (\"%s\") is no shorter than the full one (\"%s\")",
+          narrow, hint);
     // The detail is what replaced a silent reboot; it must say the device is
     // still up, or the user reads it as a fatal error and power-cycles.
     CHECK(std::string(detail).find("Staying up") != std::string::npos,

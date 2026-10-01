@@ -32,6 +32,7 @@ namespace {
 #ifdef CD_FLAVOR_WATCH
 constexpr onboardlayout::CardSpec QR_SPEC = onboardlayout::kSmallGlassCard;
 constexpr lv_coord_t RING_D = 236, RING_W = 3;
+constexpr int BIRD_PX = 40;  // the brand mark's square, this glass family
 #else
 constexpr onboardlayout::CardSpec QR_SPEC = onboardlayout::kWideGlassCard;
 constexpr lv_coord_t RING_D = 300, RING_W = 3;
@@ -54,6 +55,7 @@ lv_obj_t* s_qr = nullptr;
 lv_obj_t* s_creds = nullptr;           // SSID / password fallback text
 lv_obj_t* s_hint = nullptr;
 lv_obj_t* s_note = nullptr;            // small glass: the note row (join_lines)
+lv_obj_t* s_bird = nullptr;            // the brand mark (its seat moves, F50)
 onboardlayout::Stack s_join = {};      // the Join scene's rows (see join_rows)
 #ifdef CD_FLAVOR_WATCH
 // The Join scene's text rows' faces and widths (see refresh_bottom): the
@@ -130,11 +132,27 @@ void refresh_bottom() {
     return;
   }
   lv_obj_set_style_text_font(s_creds, s_row_font, 0);
-  lv_obj_set_style_text_font(s_hint, s_row_font, 0);
   lv_obj_set_style_text_color(s_hint, col_faint(), 0);
   lv_label_set_text(s_note, "");
-#endif
+  // F50: outside the Join scene a coach line still rides the stack's hint
+  // row — the PhoneJoined "no page?" address, the Fail stage's fix — and
+  // this glass knows that row's width. Fit it exactly the way the Join
+  // scene fits its rows (full form, narrow form, then the floor face)
+  // instead of letting LVGL cut it to an ellipsis.
+  {
+    const lv_font_t* own_f = s_row_font;
+    const lv_font_t* floor_f = s_floor_font;
+    onboardlayout::Line l;
+    const char* forms[2] = {s_hint_text, s_hint_narrow};
+    onboardlayout::fit_line(l, forms, 2, s_low_w,
+                            [own_f, floor_f](const char* t, bool fl) {
+                              return text_w(t, fl ? floor_f : own_f);
+                            });
+    set_row(s_hint, l);
+  }
+#else
   lv_label_set_text(s_hint, s_hint_text);
+#endif
 }
 
 // Scene fade, applied to the TEXT of the labels rather than as one
@@ -314,13 +332,12 @@ void onboard_ui_create(const char* ap_ssid, const char* ap_pass) {
   // The brand canary welcomes — the first thing anyone meets on first
   // boot. Hidden while the QR needs the room, hops once on success.
 #ifdef CD_FLAVOR_WATCH
-  lv_obj_t* bird = canary_mark_create(s_content, 40);
-  lv_obj_align(bird, LV_ALIGN_CENTER, 0, -64);
+  s_bird = canary_mark_create(s_content, BIRD_PX);
+  lv_obj_align(s_bird, LV_ALIGN_CENTER, 0, -64);
 #else
-  lv_obj_t* bird = canary_mark_create(s_content, 64);
-  lv_obj_align(bird, LV_ALIGN_CENTER, 0, -104);
+  s_bird = canary_mark_create(s_content, 64);
+  lv_obj_align(s_bird, LV_ALIGN_CENTER, 0, -104);
 #endif
-  (void)bird;
 
 #ifdef CD_FLAVOR_WATCH
   s_title = mk(font_body(), col_text());
@@ -483,6 +500,22 @@ void onboard_ui_stage(ObStage st, const char* detail) {
   if (st != ObStage::Fail && st != ObStage::Success) {
     lv_obj_set_style_text_color(s_title, col_text(), 0);
   }
+#ifdef CD_FLAVOR_WATCH
+  // The bird's seat. On the Join scene it is only visible while the QR is
+  // away (mood Hidden otherwise), and its old center-relative perch put its
+  // top 12 px inside the round watch's title band (F50) — so there it takes
+  // the hidden card's empty seat, which the stack keeps clear of the title
+  // and the credentials on every glass by construction (join_bird_top).
+  // Every other scene centers its text, well under the usual perch.
+  if (s_bird) {
+    if (st == ObStage::Join) {
+      lv_obj_align(s_bird, LV_ALIGN_TOP_MID, 0,
+                   onboardlayout::join_bird_top(s_join, BIRD_PX));
+    } else {
+      lv_obj_align(s_bird, LV_ALIGN_CENTER, 0, -64);
+    }
+  }
+#endif
   refresh_bottom();
   content_enter();
 }
@@ -515,7 +548,7 @@ void onboard_ui_finish() {
 #endif
   s_scr = nullptr;
   s_ring = s_content = s_title = s_body = nullptr;
-  s_qr_card = s_qr = s_creds = s_hint = s_note = nullptr;
+  s_qr_card = s_qr = s_creds = s_hint = s_note = s_bird = nullptr;
   s_qr_ok = false;
   s_hint_text[0] = '\0';
   s_hint_narrow[0] = '\0';
