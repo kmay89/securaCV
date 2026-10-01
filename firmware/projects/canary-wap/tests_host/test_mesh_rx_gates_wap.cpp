@@ -155,7 +155,11 @@ void test_replay_gate_is_strict_and_the_first_counter_is_one() {
   CHECK(count(next, "constuint64_tnext=s_outbound_counter+1;") == 1);
   const std::string prx = squeeze(function_body(pio, "on_opera_frame"));
   CHECK(!prx.empty());
-  CHECK(count(prx, "if(hdr.counter<=peer->last_counter)return;peer->last_counter=hdr.counter;") == 1);
+  // on_opera_frame returns bool since F49 part 3 (the unknown-sender hook
+  // needs to know a verified frame from a dropped one), so the gate's drop
+  // is `return false;` — the strict `<=` and the record-right-after are
+  // unchanged, which is what this pin guards.
+  CHECK(count(prx, "if(hdr.counter<=peer->last_counter)returnfalse;peer->last_counter=hdr.counter;") == 1);
 
   // The models, held to those lines by the pins above.
   {
@@ -241,7 +245,7 @@ void test_mac_is_bound_only_after_every_check() {
   const std::string pio = load(MESH_SESSION_CPP);
   const std::string prx = squeeze(function_body(pio, "on_opera_frame"));
   CHECK(!prx.empty());
-  const std::string pio_replay = "if(hdr.counter<=peer->last_counter)return;";
+  const std::string pio_replay = "if(hdr.counter<=peer->last_counter)returnfalse;";
   const std::string pio_bind   = "memcpy(peer->mac,mac,mesh_transport::MESH_TRANSPORT_MAC_LEN);peer->mac_known=true;";
   CHECK(count(prx, pio_bind) == 1);
   CHECK(before(prx, "mesh_envelope::parse_and_verify(", pio_replay));
