@@ -5,10 +5,11 @@
 // The WAP page's signed MQTT examples carried "fp":"7f3a9c21", and its boot
 // log "Public key fingerprint: 7f3a9c21". Both are 8 hex digits. The envelope
 // fp is 16 (the 8 bytes of pubkey_fp) and lowercase since HA20; the boot line
-// prints g_device.fingerprint_hex, 16 capitals. Nothing failed on either: the
-// generators hold a line's static prefix to the firmware, never its example
-// value. An example of the wrong length or case teaches a reader the wrong
-// shape to expect, or to compare by eye against a TOFU pin.
+// prints g_device.fingerprint_hex, 16 capitals. Nothing failed on either:
+// gen_wap.py held each topic's suffix and the boot lines' prefixes to the
+// firmware, not the fp values written into them. An example of the wrong
+// length or case teaches a reader the wrong shape to expect, or to compare by
+// eye against a TOFU pin.
 //
 // So this walks every generated JSON in devices/ and finds each fp,
 // fingerprint, pubkey and public_key example in it: a property, a key inside
