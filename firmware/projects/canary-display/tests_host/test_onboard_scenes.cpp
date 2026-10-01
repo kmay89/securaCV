@@ -338,9 +338,11 @@ void check_frame(Run& G, const char* scene, const Says& says) {
     const std::string body = at(G, 1), name = says.name;
     const size_t dots = body.find("...");
     const bool whole = body == name;
+    // find() put the dots inside body, so dots + 3 <= body.size(): the
+    // tail lengths below never wrap.
     const bool cut = dots != std::string::npos && dots > 0 &&
                      name.compare(0, dots, body, 0, dots) == 0 &&
-                     body.size() - dots - 3 > 0 &&
+                     body.size() > dots + 3 &&
                      name.size() >= body.size() - dots - 3 &&
                      name.compare(name.size() - (body.size() - dots - 3),
                                   std::string::npos, body, dots + 3,
