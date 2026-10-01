@@ -46,11 +46,14 @@ const alive = (node) => document.body.contains(node);
 
 // Flatten the serial data into one ordered list of {cls,text} console lines:
 // the banner scenes, the tagged net bring-up log, then the ready scene —
-// the exact order main.cpp's setup() prints them.
+// the exact order main.cpp's setup() prints them. A boot line with no tag is
+// a scene main.cpp prints in the middle of the log (the MQTT scene and its
+// Hardware ID): it keeps its indent, as the banner's lines do.
 export function bootLines(serial) {
   const out = [];
   for (const t of serial.banner || []) out.push({ cls: "wap-b", text: t });
   for (const s of serial.boot || []) {
+    if (!s.tag) { out.push({ cls: "wap-b", text: s.text }); continue; }
     const kind = (serial.tags || {})[s.tag] || "prov";
     const cls = { done: "ok", wifi: "net", mqtt: "net", witness: "prov", heap: "faint" }[kind] || "prov";
     out.push({ cls: "wap-" + cls, text: `${s.tag} ${s.text}`.trim() });

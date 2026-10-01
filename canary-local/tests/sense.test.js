@@ -181,6 +181,27 @@ test("boot banner + radar scene anchors exist in the sources", () => {
   assert.ok(data.serial.banner.some((l) => l.includes("MR60BHA2 60GHz FMCW radar")));
 });
 
+test("the console prints main.cpp's MQTT scene, Hardware ID included, where setup() prints it", async () => {
+  // main.cpp: the fleet advert, then the scene (art, separator, boot_kv rows
+  // in boot_banner.cpp's "    %-12s%s"), then the one bounded connect.
+  const kv = (k, v) => "    " + k.padEnd(12) + v;
+  const boot = data.serial.boot;
+  const at = (pred, what) => { const i = boot.findIndex(pred); assert.ok(i >= 0, "no " + what); return i; };
+  const mdns = at((s) => s.tag === "[MDNS]", "[MDNS] line");
+  const art = at((s) => s.text.endsWith("Connecting to MQTT..."), "MQTT scene");
+  const hw = at((s) => s.text === kv("Hardware ID", data.device.hwid_example), "Hardware ID line");
+  const conn = at((s) => s.tag === "[MQTT]" && s.text.startsWith("Connecting "), "[MQTT] connect line");
+  assert.ok(mdns < art && art < hw && hw < conn, "the scene sits between the advert and the connect");
+  assert.strictEqual(boot[hw - 1].text, kv("Device ID", data.device.id_example));
+  assert.strictEqual(boot[hw + 1].text, kv("Heartbeat", "every " + cint(cfgDefault, "CS_HEARTBEAT_MS") + " ms"));
+  assert.ok(mainCpp.includes('boot_kv("Hardware ID", devid_hex);'));
+  // the page shows the scene as printed: a line with no tag keeps its indent
+  const { bootLines } = await import("../assets/sense-ui.js");
+  const lines = bootLines(data.serial).map((l) => l.text);
+  assert.ok(lines.includes(kv("Hardware ID", data.device.hwid_example)), "the Hardware ID line lost its indent");
+  assert.ok(lines.includes("           .  ((( o )))  ))     Connecting to MQTT..."));
+});
+
 test("runtime serial lines are main.cpp's own printf formats", () => {
   assert.ok(mainCpp.includes('"[presence] -> %s%s"'));
   assert.ok(mainCpp.includes('"[vitals] breathing %s%s"'));

@@ -401,6 +401,49 @@ for needle in ('boot_kv("Sensor",  "MR60BHA2 60GHz FMCW radar (UART)")',
                '"%lu ms debounce, %lu ms clear, %lu ms stall"'):
     must(MAIN_CPP, needle, f"radar boot scene {needle!r}")
 
+# main.cpp's MQTT scene, printed between the fleet advert and the one bounded
+# connect attempt: the scene art, a separator, then boot_kv lines in
+# boot_banner.cpp's "    %-12s%s" — the Device ID, the salted Hardware ID
+# (device_pseudonym::device_id_hex, sweep A28: the pseudonym this page's host
+# and client id are built from), the heartbeat and the HA prefix.
+MQTT_ART = ["              .   .   .  ))",
+            "           .  ((( o )))  ))     Connecting to MQTT...",
+            "              '   '   '"]
+SCENE_SRC = "\n".join(f'  boot_line("{line}");' for line in MQTT_ART) + """
+  boot_separator();
+  boot_kv("Device ID", canary::cfg::get().device_id);
+  char devid_hex[device_pseudonym::HEX_LEN + 1] = {0};
+  if (device_pseudonym::device_id_hex(devid_hex, sizeof(devid_hex))) {
+    boot_kv("Hardware ID", devid_hex);  // salted pseudonym, not the raw MAC
+  }
+  boot_kvf("Heartbeat", "every %lu ms", (unsigned long)HEARTBEAT_MS);
+  boot_kv("HA prefix", HA_DISCOVERY_PREFIX);
+  boot_blank();"""
+must(MAIN_CPP, SCENE_SRC, "MQTT boot scene (art, separator, Device ID, Hardware ID, heartbeat, HA prefix, blank)")
+_main = read(MAIN_CPP)
+if not (_main.index("canary::net::mdns_init();") < _main.index(SCENE_SRC)
+        < _main.index("if (!mqtt_supervise(canary::ms_now())) {")):
+    die("main.cpp no longer prints the MQTT scene between mdns_init() and the first mqtt_supervise()")
+must(BANNER_CPP, 'out("    ------------------------------------------------\\n");', "boot_separator")
+must(BANNER_CPP, 'out("    %-12s%s\\n", key, value ? value : "--");', "boot_kv format")
+must(BANNER_CPP, 'out("    %-12s%s\\n", key, val);', "boot_kvf format")
+must(PROJECT_CFG_H, "HEARTBEAT_MS = CS_HEARTBEAT_MS;", "heartbeat config")
+must(PROJECT_CFG_H, "HA_DISCOVERY_PREFIX = CS_HA_DISCOVERY_PREFIX;", "HA prefix config")
+
+
+def boot_kv(key: str, value: str) -> str:
+    return f"    {key:<12}{value}"
+
+
+MQTT_SCENE = MQTT_ART + [
+    "    ------------------------------------------------",
+    boot_kv("Device ID", EX_ID),
+    boot_kv("Hardware ID", EX_HWID),
+    boot_kv("Heartbeat", f"every {grab_int(CFG_DEFAULT, 'CS_HEARTBEAT_MS')} ms"),
+    boot_kv("HA prefix", grab_str(CFG_DEFAULT, "CS_HA_DISCOVERY_PREFIX")),
+    "",
+]
+
 BOOT = [
     {"tag": "[BH1750]", "text": "ambient light sensor online", "src": '"BH1750", "ambient light sensor online"', "srcf": MAIN_CPP},
     {"tag": "[WITNESS]", "text": "Generated new Ed25519 identity (first boot).", "src": "Generated new Ed25519 identity (first boot).", "srcf": WITNESS_CPP},
@@ -409,6 +452,8 @@ BOOT = [
     {"tag": "", "text": ". . . . ."},
     {"tag": "[WIFI]", "text": "Connected IP=192.168.1.62 RSSI=-54dBm", "src": "Connected IP=%s RSSI=%ddBm", "srcf": WIFI_CPP},
     {"tag": "[MDNS]", "text": f"Fleet advert up as {EX_HOST}.local (_securacv._tcp)", "src": "Fleet advert up as %s.local", "srcf": MDNS_CPP},
+    # a line with no tag prints verbatim (sense-ui.js bootLines keeps its indent)
+    *({"tag": "", "text": line} for line in MQTT_SCENE),
     {"tag": "[MQTT]", "text": f"Connecting {EX_BROKER}:1883 as {EX_CLIENT_ID} ...", "src": "Connecting %s:%u as %s ...", "srcf": MQTT_CPP},
     {"tag": "[MQTT]", "text": "Connected.", "src": '"MQTT", "Connected."', "srcf": MQTT_CPP},
     {"tag": "[DISC]", "text": "Home Assistant discovery published (retained).", "src": "Home Assistant discovery published (retained).", "srcf": DISC_CPP},

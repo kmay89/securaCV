@@ -466,7 +466,7 @@ function pseudoExamples() {
       if (prop) continue; // fp-family properties: the RULES above
       const key = path.split(".").pop();
       if (HWID_PROP.test(key)) out.push({ page, path, kind: "pseudonym", value: s });
-      for (const m of s.matchAll(/\bHardware ID\s+(\S+)/g)) out.push({ page, path, kind: "pseudonym", value: m[1] });
+      for (const m of s.matchAll(/\bHardware ID\s+(\S+)/g)) out.push({ page, path, kind: "console", value: m[1] });
       for (const m of s.matchAll(/\bConnecting \S+ as (\S+) \.\.\./g)) out.push({ page, path, kind: "client", value: m[1] });
     }
   return out;
@@ -517,7 +517,7 @@ test("every Hardware ID and MQTT client id a generated page shows is the pseudon
     const at = `${ex.page} ${ex.path}`;
     if (!PSEUDO_PAGES[ex.page]) { problems.push(`${at}: ${ex.kind} ${ex.value} on a page with no pseudonym rule`); continue; }
     const want = pseudoNames(ex.page);
-    if (ex.kind === "pseudonym") {
+    if (ex.kind === "pseudonym" || ex.kind === "console") {
       if (!PSEUDO_SHAPE.test(ex.value))
         problems.push(`${at}: "${ex.value}" is not 16 characters of the unambiguous alphabet (device_pseudonym::HEX_LEN)`);
       else if (ex.value !== want.pseudonym) problems.push(`${at}: "${ex.value}" is not the example salt's pseudonym (${want.pseudonym})`);
@@ -528,7 +528,10 @@ test("every Hardware ID and MQTT client id a generated page shows is the pseudon
   assert.deepStrictEqual(problems, []);
   const count = (page, kind) => found.filter((e) => e.page === page && e.kind === kind).length;
   assert.ok(count("sense.json", "pseudonym") >= 1, "sense.json: the hwid example went missing (the sweep's match broke?)");
-  assert.ok(count("vision.json", "pseudonym") >= 1, "vision.json: the Hardware ID line went missing");
+  // each page's console prints the line its product prints (main.cpp's
+  // boot_kv("Hardware ID", devid_hex)), not only a property no page renders
+  for (const page of Object.keys(PSEUDO_PAGES))
+    assert.strictEqual(count(page, "console"), 1, `${page}: its serial console shows no Hardware ID line`);
   assert.ok(count("sense.json", "client") >= 1 && count("vision.json", "client") >= 1, "a Connecting line went missing");
 });
 
