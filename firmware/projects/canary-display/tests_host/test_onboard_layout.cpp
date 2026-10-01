@@ -1766,6 +1766,21 @@ static void test_short_glass() {
             s.card_top + s.card + kMinGap <= s.creds_top &&
             s.creds_top + r.creds_h <= s.hint_top,
         "an overfull stack let two rows cross");
+  // ...and the halo and the bird's seat stay sane on it: a ring no smaller
+  // than the card it surrounds (the stack's gaps hold even here), and the
+  // bird nudged by no more than half itself.
+  {
+    Glass tiny = {240, 60, false};
+    const Stack ts = join_stack(tiny, r);
+    const Ring ring = halo_ring(tiny, ts, r);
+    CHECK(ring.d >= ts.card, "a %d px halo round a %d px card", ring.d,
+          ts.card);
+    const int seat = scene_bird_top(tiny, ring, 40);
+    const int nominal = 60 / 2 - 20 + kSceneBirdOff;
+    CHECK(seat >= nominal && seat <= nominal + 20,
+          "the bird's seat ran to %d on a 60 px glass (authored %d)", seat,
+          nominal);
+  }
   // A round window a little short: the canvas gives up pixels, not pitch.
   Glass rg = {240, 240, true};
   Rows rr = {22, kSmallGlassCard, 16, 16};  // the heirloom watch

@@ -509,8 +509,9 @@ inline Ring halo_ring(const Glass& g, const Stack& s, const Rows& r) {
     return ring;
   }
   ring.top = s.title_top + r.title_h + kMinGap;
+  // Never smaller than the card: join_stack keeps kMinGap on both sides
+  // of it even when the stack overruns its window.
   ring.d = (s.creds_top - kMinGap) - ring.top;
-  if (ring.d < 0) ring.d = 0;  // a stack that overran its window (!fits)
   return ring;
 }
 
