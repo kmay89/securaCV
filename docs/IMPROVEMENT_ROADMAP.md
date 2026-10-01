@@ -699,9 +699,11 @@ adversarially and fixed before it was merged. Four packages:
   whose partner the device cannot hold fails and stores nothing. The pairing
   DISCOVER registers the broadcast peer itself, and an opera with unheard
   members sends its heartbeat while connecting and to every member.
-  Host-tested against the real `mesh_network.cpp` (`test_mesh_liveness_wap`,
-  26 tests, each failing with its fix reverted); the Arduino compile is CI's;
-  not bench-tested. Files F94-F100, among them a reflected CONFIRM (F94) and
+  Host-tested against the real `mesh_network.cpp` (`test_mesh_liveness_wap`:
+  of its 26 tests, 24 fail with their fix reverted, one fails only when the
+  code-shown check that #1761's code already had is removed, and one pins the
+  unchanged initiator-first order); the Arduino compile is CI's; not
+  bench-tested. Files F94-F100, among them a reflected CONFIRM (F94) and
   an opera that splits when a member is removed, since nothing opens the AUTH
   session its rotation needs (F95).
 - **The PIO mesh takes a member's frame only from its bound address (sweep

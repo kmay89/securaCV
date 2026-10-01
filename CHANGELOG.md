@@ -16,17 +16,20 @@
   owners can now confirm a pairing in either order; before, a pairing whose
   joiner was confirmed first timed out. A CONFIRM counts only from the pairing
   partner's address, and only once the code is shown. A pairing whose partner
-  the device cannot hold (deny-listed, a full opera, an address another member
-  holds) now fails, sends and stores nothing, and is logged. Before, it
-  reported success, and the initiator sealed the opera key to a partner it
-  then refused. The pairing DISCOVER registers the ESP-NOW broadcast peer
+  the device cannot hold (deny-listed, a full opera, a re-pair onto an address
+  another member holds) now fails, sends and stores nothing, and is logged.
+  Before, it reported success, and the initiator sealed the opera key to a
+  partner it then refused. A new member at an address another member holds is
+  still taken (F98). The pairing DISCOVER registers the ESP-NOW broadcast peer
   itself, and a channel change re-adds it instead of deleting it. An opera
   whose members it has not heard, after a fresh pairing or after every member
   rebooted, now sends its 30 s heartbeat while connecting and to unheard
   members, so the members find each other; before, it sent nothing. The new
-  `test_mesh_liveness_wap` runs the real `mesh_network.cpp`, and each of its
-  26 tests fails with its fix reverted. Found and not fixed: a CONFIRM
-  reflected from the joiner's address still counts (F94), and removing a
+  `test_mesh_liveness_wap` runs the real `mesh_network.cpp`. Of its 26 tests,
+  24 fail with their fix reverted. One fails only with the code-shown check
+  removed, a check #1761's code already had, and one pins the unchanged
+  initiator-first order. Found and not fixed: a CONFIRM reflected from the
+  joiner's address still counts (F94), and removing a
   member splits a canary-wap opera: its key rotation goes only to members with
   an AUTH session, and nothing opens one, so every survivor must re-pair
   (F95). **Host-tested only**: the Arduino compile is CI's, and it is not

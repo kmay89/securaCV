@@ -1899,9 +1899,11 @@ so — see D2 below.)
   with a full opera, and a joiner whose initiator was removed mid-pairing.
   Correction to the item: its ESP-NOW-full case (a list of 20) cannot be
   reached through the pairing handlers, because the DISCOVER/OFFER step has
-  already registered the partner's address. It stays covered at `add_peer`
-  (`test_mesh_address_wap`), and spec §5.2 says so. Host-tested only; the
-  Arduino compile is CI's; not bench-verified (U1).
+  already registered the partner's address (`esp_now_add_peer` in the
+  DISCOVER and OFFER handlers). It stays covered at `add_peer`
+  (`test_mesh_address_wap`). Spec §5.2 still lists that address among the
+  refusals, with no note that a pairing cannot reach it. Host-tested only;
+  the Arduino compile is CI's; not bench-verified (U1).
 - [x] **F74 [code] canary-wap's mesh does not keep the ESP-NOW broadcast
   peer registered.** `send_pair_frame(BROADCAST_ADDR, MSG_PAIR_DISCOVER,
   ...)` relies on another module's registration. `csi_probe::init` adds it
