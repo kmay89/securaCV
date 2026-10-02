@@ -905,6 +905,13 @@ fails on byte drift.
   every `BENCH_FIXES` flow stages cleanly. Registry `bench` blocks are
   validated (drivers name real wires, every LED carries its honesty
   note, witnesses carry no bench).
+- `tests/vision.test.js`, `tests/eyes.test.js` and `tests/audio.test.js`
+  drive the committed Vision and WAP audio cores in `emulator/dist/`. With
+  `LAB_CORES=native` they drive this tree's sources instead, built with g++
+  from the sources `build.sh` hands em++ and served to the same tests. That
+  proves a core change page-side before CI's pinned-emsdk rebuild lands, with
+  no emsdk. CI runs them both ways. See
+  [`tests/native/README.md`](tests/native/README.md).
 - `tests/boot_probe.mjs` + CI (`.github/workflows/canary-local.yml`):
   rebuilds both flavors from the tree, boots the watch in headless
   Chromium, and asserts the framebuffer flushed, the boot banner sang,
