@@ -535,12 +535,13 @@ jobs:
         # Here tests/native/cores.js builds the Vision and WAP audio cores from
         # the sources, flags and include paths build.sh hands em++ (read from
         # build.sh), with the runner's g++, and serves them to the same tests
-        # (sweep A40). It runs whenever the step above ran, red or green (the
-        # `if:`), because its answer matters most when that step is red: green
-        # here and red above on a core change means the sources are right and
-        # the dist is stale (Actions -> "Rebuild emulator dist (pinned
-        # emsdk)"). The dist still ships; this proves the sources.
-        if: ${{ !cancelled() && steps.dist-node-tests.outcome != 'skipped' }}
+        # (sweep A40). It runs whenever the step above ran, red or green, and
+        # not when the run is stopped (the `if:`), because its answer matters
+        # most when that step is red: green here and red above on a core
+        # change means the sources are right and the dist is stale (Actions ->
+        # "Rebuild emulator dist (pinned emsdk)"). The dist still ships; this
+        # proves the sources.
+        if: ${{ (success() || failure()) && steps.dist-node-tests.outcome != 'skipped' }}
         env:
           LAB_CORES: native
           PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads
