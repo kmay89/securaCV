@@ -335,8 +335,20 @@ Action initiator_handle_accept(PairingContext& ctx,
  * the opera_secret to the joiner under the session key, go PAIRED and arm
  * the NOTIFY_PAIRED the next tick() returns. Layout: ct || tag, then the
  * nonce. Its callers: either_handle_confirm (the joiner's CONFIRM arrives
- * after this side's owner confirmed) and confirm_code (it arrived before). */
+ * after this side's owner confirmed) and confirm_code (it arrived before).
+ *
+ * The COMPLETE carries this side's own CONFIRM to go in front of it
+ * (Action::leading_confirm), in both orders. An updated joiner does not
+ * need it. A joiner on firmware before F97 does: it reads a CONFIRM only
+ * after its own owner confirmed, and takes a COMPLETE only after that, so
+ * it never read the one confirm_code sent before its owner confirmed, and
+ * in the joiner-first order none was sent. Without this CONFIRM such a
+ * joiner dropped the COMPLETE while this side reported PAIRED (host-probed
+ * against the pre-F97 code, both orders). Built here, before the session
+ * key is wiped. */
 Action initiator_complete(PairingContext& ctx) {
+  PairConfirmPayload lead{};
+  compute_confirmation_hash(ctx.session_key, ctx.confirmation_code, lead.confirmation_hash);
   PairCompletePayload complete{};
   uint8_t nonce[mesh_crypto::AEAD_NONCE_LEN];
   mesh_crypto::aead_generate_nonce(nonce);
@@ -366,6 +378,8 @@ Action initiator_complete(PairingContext& ctx) {
   Action a = make_send_action(ActionType::SEND_COMPLETE, ctx.peer_mac,
                               &complete, sizeof(complete));
   a.confirmation_code = ctx.confirmation_code;
+  a.leading_confirm = lead;
+  a.leading_confirm_present = true;
   return a;
 }
 
@@ -387,12 +401,16 @@ Action initiator_complete(PairingContext& ctx) {
  * code is shown (AWAITING_CONFIRM or later): before the ACCEPT the
  * initiator's session key is all zero, so anyone can compute that hash.
  *   • The initiator keeps a verified early CONFIRM (peer_confirmed) and
- *     completes at its own owner's confirm (confirm_code), sending the
- *     COMPLETE alone: the joiner does not need this side's CONFIRM.
+ *     completes at its own owner's confirm (confirm_code). Every COMPLETE
+ *     goes out with this side's CONFIRM in front of it (initiator_complete),
+ *     for a joiner on firmware before F97; an updated joiner does not need
+ *     it.
  *   • The joiner checks the initiator's CONFIRM in either order and needs
  *     nothing else from it: it takes the COMPLETE once its own owner has
  *     confirmed (joiner_handle_complete), and the COMPLETE decrypting under
- *     the session key is the proof the CONFIRM was.
+ *     the session key is the proof the CONFIRM was. The CONFIRM in front of
+ *     the COMPLETE is checked like any other; one arriving after the
+ *     joiner already moved to AWAITING_COMPLETE is dropped.
  * A wrong hash from the partner's address ends the pairing in either order,
  * as it did after the owner's confirm. Not closed (F94): the hash is the
  * same in both directions and the address is not authenticated, so the
@@ -427,7 +445,7 @@ Action either_handle_confirm(PairingContext& ctx,
     return initiator_complete(ctx);
   }
   /* Joiner: the hash matched. After its own owner's confirm it now waits
-   * for the COMPLETE alone; before it, nothing changes (the COMPLETE is
+   * for the COMPLETE only; before it, nothing changes (the COMPLETE is
    * still taken only after this owner confirms). */
   if (ctx.state == State::AWAITING_CONFIRM_PEER) ctx.state = State::AWAITING_COMPLETE;
   return make_action(ActionType::NONE);
@@ -524,11 +542,14 @@ Action confirm_code(PairingContext& ctx, uint32_t now_ms) {
   (void)now_ms;
 
   /* F97: the joiner's owner confirmed first and its CONFIRM is kept. The
-   * joiner is owed the COMPLETE, and only the COMPLETE: it takes one after
-   * its own owner's confirm without this side's CONFIRM, so a CONFIRM in
-   * front of it would be one more frame for nothing (on canary-wap, where
-   * the receive buffer holds one frame, the one that got the COMPLETE
-   * dropped). */
+   * joiner is owed the COMPLETE now. It goes with this side's CONFIRM in
+   * front of it (initiator_complete): an updated joiner takes the COMPLETE
+   * without it, but a joiner on firmware before F97 waits in
+   * AWAITING_CONFIRM_PEER for exactly that CONFIRM and drops a COMPLETE
+   * that comes alone. Two frames back to back are safe here: the
+   * transport's receive ring holds eight. canary-wap sends the COMPLETE
+   * alone (F75), because its receive buffer holds one frame and the second
+   * frame would be the one dropped. */
   if (ctx.role == ROLE_INITIATOR && ctx.peer_confirmed) return initiator_complete(ctx);
 
   PairConfirmPayload confirm{};

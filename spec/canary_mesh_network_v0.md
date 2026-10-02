@@ -559,11 +559,26 @@ the `PAIR_COMPLETE` too, so the initiator reported the pairing done and held
 a member that never joined, while the joiner timed out (host-probed, both
 orders). Now a CONFIRM counts only from the pairing partner's address and
 only once the code is shown (`AWAITING_CONFIRM` or later); the initiator
-keeps a joiner's early CONFIRM and, at its own owner's confirm, sends the
-`PAIR_COMPLETE` alone; the joiner checks the initiator's CONFIRM in either
-order and takes the `PAIR_COMPLETE` once its own owner has confirmed, which
-needs nothing else from the initiator (only the session key opens it); and
-a wrong hash from the partner's address ends the pairing in either order.
+keeps a joiner's early CONFIRM and completes at its own owner's confirm; the
+joiner checks the initiator's CONFIRM in either order and takes the
+`PAIR_COMPLETE` once its own owner has confirmed, which needs nothing else
+from the initiator (only the session key opens it); and a wrong hash from
+the partner's address ends the pairing in either order.
+
+One difference from canary-wap: the PlatformIO initiator sends its own
+`PAIR_CONFIRM` immediately in front of every `PAIR_COMPLETE`, in both
+orders. An updated joiner does not need it. A joiner on firmware before F97
+does: it reads a CONFIRM only after its own owner confirmed and takes a
+COMPLETE only after such a CONFIRM. With the COMPLETE alone, an updated
+initiator reported the pairing done and kept the member while that joiner
+dropped the COMPLETE, in both orders; with the CONFIRM in front, the pair
+completes in both orders (host-probed against the pre-F97 code). Two frames
+back to back are safe on this tree, whose transport ring holds eight
+received frames; canary-wap's one-frame buffer is why it sends the COMPLETE
+alone. The other mix does not fully work: a pre-F97 initiator still drops
+an updated joiner's early CONFIRM, so that pair completes only when the
+initiator's owner confirms first; in the other order both sides time out,
+as two pre-F97 devices did, and neither keeps the other.
 
 A device that cannot hold its partner fails the pairing: a deny-listed key
 (§5.6), a new member for a full opera, a re-pair onto an address another
@@ -1673,9 +1688,11 @@ An implementation conforms to this specification if it:
   only, not bench-verified**; sweep F97, F101, F102): the PlatformIO owners
   confirm a pairing in either order, with canary-wap's F75 rules — a CONFIRM
   counts only from the partner's address and once the code is shown, the
-  initiator sends the COMPLETE alone after a joiner's early CONFIRM, and the
-  joiner takes the COMPLETE once its own owner confirmed (§5.2; until F97 no
-  order completed with frames delivered as sent); the opera senders unicast
+  initiator keeps a joiner's early CONFIRM, and the joiner takes the COMPLETE
+  once its own owner confirmed (§5.2; until F97 no order completed with
+  frames delivered as sent); unlike canary-wap, every PlatformIO COMPLETE
+  goes out with the initiator's CONFIRM in front of it, so a joiner on the
+  older firmware completes too (§5.2); the opera senders unicast
   to the members' bound radio MACs only, and count only those (§8.3); and a
   pairing's address is persisted only once the session bound it, with
   `peer_macs` refusing an address another fingerprint holds (§8.3, §12.3).

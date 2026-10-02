@@ -194,16 +194,18 @@ static_assert(sizeof(PairCompletePayload) ==
  *     → derive session_key + code
  *     → NOTIFY_CODE_READY (UI prompt)
  *
- *   The owners confirm in either order (spec §5.2; F97). Initiator's
- *   owner first:
+ *   The owners confirm in either order (spec §5.2; F97). Every COMPLETE
+ *   goes out with the initiator's own CONFIRM immediately in front of it
+ *   (Action::leading_confirm). Initiator's owner first:
  *
  *   confirm_code() [after user OK]
- *     → SEND_CONFIRM (hash) ─────────────►   handle (CONFIRM) — hash checked,
- *                                              nothing else needed from it
+ *     → SEND_CONFIRM (hash) ─────────────►   handle (CONFIRM) — hash checked
+ *                                              (a pre-F97 joiner drops it)
  *                                            confirm_code() [after user OK]
  *   handle (CONFIRM) ◄──────────────────────  → SEND_CONFIRM (hash)
  *     → verify hash matches
- *     → SEND_COMPLETE (AEAD(opera_secret))►   handle (COMPLETE) — taken once
+ *     → SEND_COMPLETE: CONFIRM (hash) ────►   handle (CONFIRM) — hash checked
+ *                      then AEAD(secret) ─►   handle (COMPLETE) — taken once
  *     → tick() returns NOTIFY_PAIRED            this owner confirmed
  *                                            → decrypt → NOTIFY_PAIRED
  *
@@ -213,7 +215,8 @@ static_assert(sizeof(PairCompletePayload) ==
  *   handle (CONFIRM) ◄──────────────────────  → SEND_CONFIRM (hash)
  *     → verify hash, keep it (peer_confirmed)
  *   confirm_code() [after user OK]
- *     → SEND_COMPLETE, no CONFIRM ────────►   handle (COMPLETE)
+ *     → SEND_COMPLETE: CONFIRM (hash) ────►   handle (CONFIRM) — hash checked
+ *                      then AEAD(secret) ─►   handle (COMPLETE)
  *     → tick() returns NOTIFY_PAIRED          → decrypt → NOTIFY_PAIRED
  *
  *   A CONFIRM counts only from the partner's address and only once the
@@ -222,6 +225,18 @@ static_assert(sizeof(PairCompletePayload) ==
  *   so in either order one was dropped: the joiner's owner first left both
  *   sides waiting for the 5-minute timeout, and the initiator's owner first
  *   left the initiator PAIRED and the joiner dropping the COMPLETE.
+ *
+ *   An updated joiner takes the COMPLETE without the CONFIRM in front of
+ *   it. That CONFIRM is for a joiner on firmware before F97, which reads a
+ *   CONFIRM only after its own owner confirmed and takes a COMPLETE only
+ *   after such a CONFIRM: with it, an updated initiator pairs such a joiner
+ *   in either order; without it, the initiator would report PAIRED and the
+ *   joiner drop the COMPLETE. canary-wap (F75) sends the COMPLETE alone,
+ *   because its receive buffer holds one frame; this tree's transport ring
+ *   holds eight. A pre-F97 initiator still drops an updated joiner's early
+ *   CONFIRM, so that pair completes only when the initiator's owner
+ *   confirms first; in the other order both sides time out, as two pre-F97
+ *   devices did.
  *
  * On any failure or 5-minute timeout, both sides transition to FAILED
  * and the integration layer is told via NOTIFY_FAILED.
@@ -305,6 +320,15 @@ struct Action {
   uint32_t   confirmation_code;                    /* non-zero for NOTIFY_CODE_READY,
                                                       and for the joiner's SEND_ACCEPT
                                                       (its code-derivation beat, F49) */
+  /* SEND_COMPLETE only (F97): the initiator's own PAIR_CONFIRM, to go to
+   * peer_mac immediately before the COMPLETE, as its own frame. Every
+   * COMPLETE carries one. An updated joiner does not need it; a joiner on
+   * firmware before F97 takes a COMPLETE only after reading the
+   * initiator's CONFIRM once its own owner has confirmed, so without this
+   * CONFIRM it drops the COMPLETE while the initiator reports PAIRED.
+   * Built before the session key is wiped. */
+  bool               leading_confirm_present;
+  PairConfirmPayload leading_confirm;
 };
 
 /* Pairing timeout. Matches canary-wap (5 min). Crossing this fires
@@ -355,8 +379,9 @@ struct PairingContext {
 
   /* Initiator only (F97): the joiner's CONFIRM arrived, from the partner's
    * address and with the right hash, before this device's own owner
-   * confirmed. confirm_code() then sends the COMPLETE, with no CONFIRM of
-   * its own. Cleared by fail() and at PAIRED. */
+   * confirmed. confirm_code() then returns the SEND_COMPLETE (its own
+   * CONFIRM rides in front of it, as with every COMPLETE). Cleared by
+   * fail() and at PAIRED. */
   bool     peer_confirmed;
 
   /* One-shot flag: set when the initiator transitions to PAIRED after
@@ -427,8 +452,8 @@ Action tick(PairingContext& ctx, uint32_t now_ms);
 /* User-driven confirmation that the 6-digit code matches on both
  * screens. Valid only in AWAITING_CONFIRM (a second call returns NONE).
  * Returns SEND_CONFIRM, or — on an initiator that already holds the
- * joiner's verified CONFIRM (F97) — SEND_COMPLETE, after which the next
- * tick() returns NOTIFY_PAIRED. */
+ * joiner's verified CONFIRM (F97) — SEND_COMPLETE (with its leading
+ * CONFIRM), after which the next tick() returns NOTIFY_PAIRED. */
 Action confirm_code(PairingContext& ctx, uint32_t now_ms);
 
 /* Abort pairing from any state. Wipes the ephemeral key + session

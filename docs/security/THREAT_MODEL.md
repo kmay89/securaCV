@@ -790,8 +790,14 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     F75 rules now hold here: a CONFIRM counts only from the partner's
     address and once the code is shown (before it, the all-zero session
     key makes the hash anyone's), the initiator keeps a joiner's early
-    CONFIRM and sends the COMPLETE alone, and the joiner takes the COMPLETE
-    only after its own owner confirmed. The reflection above stays open.
+    CONFIRM, and the joiner takes the COMPLETE only after its own owner
+    confirmed. Every PlatformIO COMPLETE goes out with the initiator's own
+    CONFIRM in front of it, so a joiner on firmware before F97 completes
+    too, in either order; without it, an updated initiator would report
+    success with such a joiner, which drops the COMPLETE (host-probed). A
+    pre-F97 initiator with an updated joiner completes only when the
+    initiator's owner confirms first; otherwise both time out and neither
+    keeps the other. The reflection above stays open.
   - *Opera sends to members only.* Until F101 every opera sender (tamper
     alert, beacon event, channel lock, hub election, LEAVE, rekey OFFER)
     went to every address in the transport table, which, while a pairing

@@ -302,6 +302,16 @@ static void dispatch_action(const mesh_pairing::Action& a) {
       /* A unicast needs the destination in the transport table; the
        * pairing partner is not a peer yet (F33 part 1). */
       ensure_pair_contact(a.peer_mac);
+      if (a.type == mesh_pairing::ActionType::SEND_COMPLETE && a.leading_confirm_present) {
+        /* F97: the initiator's own CONFIRM goes first, as its own frame, so
+         * a joiner on firmware before F97 (which takes a COMPLETE only
+         * after reading that CONFIRM) completes too. An updated joiner
+         * checks it and does not need it. */
+        uint8_t cf[MSGTYPE_HEADER_LEN + sizeof(mesh_pairing::PairConfirmPayload)];
+        cf[0] = static_cast<uint8_t>(MsgType::PAIR_CONFIRM);
+        memcpy(cf + MSGTYPE_HEADER_LEN, &a.leading_confirm, sizeof(a.leading_confirm));
+        mesh_transport::send_to_peer(a.peer_mac, cf, sizeof(cf));
+      }
       mesh_transport::send_to_peer(a.peer_mac, frame, frame_len);
     }
   }

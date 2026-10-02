@@ -3333,6 +3333,28 @@ std::vector<uint8_t> wire(const mesh_pairing::Action& a) {
   return f;
 }
 
+/* Every frame an action puts on the air, in order: for a COMPLETE, the
+ * initiator's own CONFIRM in front of it (F97), then the COMPLETE. */
+std::vector<std::vector<uint8_t>> wire_all(const mesh_pairing::Action& a) {
+  std::vector<std::vector<uint8_t>> out;
+  if (a.type == mesh_pairing::ActionType::SEND_COMPLETE) {
+    assert(a.leading_confirm_present);
+    std::vector<uint8_t> cf(1 + sizeof(a.leading_confirm));
+    cf[0] = static_cast<uint8_t>(mesh_session::MsgType::PAIR_CONFIRM);
+    std::memcpy(cf.data() + 1, &a.leading_confirm, sizeof(a.leading_confirm));
+    out.push_back(cf);
+  }
+  out.push_back(wire(a));
+  return out;
+}
+
+void inject_all(const uint8_t from[6], const std::vector<std::vector<uint8_t>>& frames) {
+  for (const auto& f : frames) {
+    mesh_transport::test::inject_recv(from, f.data(), f.size(), -40);
+    mesh_transport::process();
+  }
+}
+
 /* A whole pairing over the air as the INITIATOR, with nothing added to the
  * transport table by hand: the joiner's frames arrive from an unknown MAC,
  * the partner's address is added for the replies, and on PAIRED the new
@@ -3388,6 +3410,7 @@ void test_pairing_over_the_air_as_initiator() {
   const std::vector<uint8_t> complete = last_to(mac_j);
   assert(!complete.empty() &&
          complete[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_COMPLETE));
+  assert(g_outs.size() >= 2 && g_outs[g_outs.size() - 2].bytes == conf_i);   /* F97: in front */
   feed_pure(cj, me, conf_i, 50, &a);
   feed_pure(cj, me, complete, 50, &a);
   assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
@@ -3454,9 +3477,7 @@ void test_pairing_over_the_air_as_joiner() {
   mesh_transport::process();
   feed_pure(ci, me, conf_j, 60, &a);
   assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
-  const std::vector<uint8_t> complete = wire(a);
-  mesh_transport::test::inject_recv(mac_i, complete.data(), complete.size(), -40);
-  mesh_transport::process();
+  inject_all(mac_i, wire_all(a));                     /* its CONFIRM, then the COMPLETE */
   assert(g_paired_fired && g_paired_with_secret);
   assert(std::memcmp(g_paired_secret, S, 32) == 0);
   assert(g_paired_mac.size() == 6 && std::memcmp(g_paired_mac.data(), mac_i, 6) == 0);
@@ -3468,9 +3489,10 @@ void test_pairing_over_the_air_as_joiner() {
 /* F97 through the session, as the INITIATOR, the joiner's owner confirming
  * first: its CONFIRM arrives before this device's owner confirms. The
  * session sends nothing then; the owner's confirm, through the REST slot,
- * sends exactly one frame, the COMPLETE (no CONFIRM in front of it), and the
- * same process() reports PAIRED. On the code before F97 the CONFIRM was
- * dropped, the confirm sent a CONFIRM, and both sides timed out. */
+ * sends exactly two frames to the joiner, this side's CONFIRM and then the
+ * COMPLETE, and the same process() reports PAIRED. On the code before F97
+ * the CONFIRM was dropped, the confirm sent a CONFIRM alone, and both sides
+ * timed out. */
 void test_pairing_over_the_air_joiner_confirms_first() {
   uint8_t S[32];
   for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x97 + i);
@@ -3514,14 +3536,19 @@ void test_pairing_over_the_air_joiner_confirms_first() {
   mesh_session::RequestResult res;
   assert(mesh_session::take_request_result(&res));
   assert(res.status == mesh_session::RequestStatus::OK);
-  assert(g_outs.size() == 1);
+  assert(g_outs.size() == 2);
   assert(std::memcmp(g_outs[0].mac, mac_j, 6) == 0);
-  assert(g_outs[0].bytes[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_COMPLETE));
+  assert(std::memcmp(g_outs[1].mac, mac_j, 6) == 0);
+  assert(g_outs[0].bytes == conf_j);                  /* the hash is the same both ways */
+  assert(g_outs[1].bytes[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_COMPLETE));
   assert(g_paired_fired);
   assert(mesh_session::trusted_peer_count() == 1);
   assert(transport_has(mac_j));
 
-  feed_pure(cj, me, g_outs[0].bytes, 50, &a);
+  feed_pure(cj, me, g_outs[0].bytes, 45, &a);
+  assert(a.type == mesh_pairing::ActionType::NONE);
+  assert(cj.state == mesh_pairing::State::AWAITING_COMPLETE);
+  feed_pure(cj, me, g_outs[1].bytes, 50, &a);
   assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
   uint8_t got[32];
   assert(mesh_pairing::consume_opera_secret(cj, got));
@@ -3573,9 +3600,7 @@ void test_pairing_over_the_air_initiator_confirms_first() {
   assert(g_outs[0].bytes[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_CONFIRM));
   feed_pure(ci, me, g_outs[0].bytes, 70, &a);
   assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
-  const std::vector<uint8_t> complete = wire(a);
-  mesh_transport::test::inject_recv(mac_i, complete.data(), complete.size(), -40);
-  mesh_transport::process();
+  inject_all(mac_i, wire_all(a));                     /* its CONFIRM again, then the COMPLETE */
   assert(g_paired_fired && g_paired_with_secret);
   assert(std::memcmp(g_paired_secret, S, 32) == 0);
   assert(mesh_session::pairing_state() == mesh_pairing::State::PAIRED);
@@ -3583,6 +3608,100 @@ void test_pairing_over_the_air_initiator_confirms_first() {
   mesh_session::process(80 + mesh_pairing::PAIRING_TIMEOUT_MS);
   assert(!g_failed_fired);
   std::printf("PASS test_pairing_over_the_air_initiator_confirms_first\n");
+}
+
+/* A joiner on firmware before F97 (c6a305b's rules), modeled on a pure
+ * joiner context: it reads a CONFIRM only once its own owner confirmed
+ * (AWAITING_CONFIRM_PEER) and takes a COMPLETE only after such a CONFIRM
+ * (AWAITING_COMPLETE); anything else it drops unread. */
+void feed_pre_f97_joiner(mesh_pairing::PairingContext& cj, const uint8_t from[6],
+                         const std::vector<uint8_t>& frame, uint32_t now,
+                         mesh_pairing::Action* out) {
+  assert(!frame.empty());
+  if (frame[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_CONFIRM) &&
+      cj.state != mesh_pairing::State::AWAITING_CONFIRM_PEER) {
+    *out = mesh_pairing::Action{};
+    return;
+  }
+  if (frame[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_COMPLETE) &&
+      cj.state != mesh_pairing::State::AWAITING_COMPLETE) {
+    *out = mesh_pairing::Action{};
+    return;
+  }
+  feed_pure(cj, from, frame, now, out);
+}
+
+/* F97 against older firmware: this session as the INITIATOR pairs a joiner
+ * on the pre-F97 rules in either order, every frame it sends delivered as
+ * sent. It works because the COMPLETE goes out with this side's CONFIRM in
+ * front of it. With the COMPLETE sent alone (the first F97 change), the
+ * joiner dropped it in both orders while this side reported PAIRED, and
+ * main.cpp registered, bound and stored a member that never joined. */
+void test_pairing_over_the_air_with_a_pre_f97_joiner() {
+  for (int joiner_first = 0; joiner_first < 2; ++joiner_first) {
+    uint8_t S[32];
+    for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0xB7 + i);
+    uint8_t pub[32], priv[32];
+    stand_up_session(nullptr, pub, priv);
+    mesh_session::set_paired_callback(on_paired_register);
+    assert(mesh_session::set_opera_secret(S));
+    g_paired_mac.clear();
+
+    const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x00, 0x97, 0x51};
+    const uint8_t mac_j[6] = {0x24, 0x0A, 0xC4, 0x00, 0x97, 0x52};
+    uint8_t j_pub[32], j_priv[32];
+    assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+    mesh_pairing::PairingContext cj;
+    mesh_pairing::context_init(cj);
+    mesh_pairing::Action a = mesh_pairing::start_joiner(cj, j_pub, j_priv, 10);
+    const std::vector<uint8_t> disc = wire(a);
+
+    assert(mesh_session::start_pairing_initiator(S, "Home", 20));
+    mesh_transport::test::inject_recv(mac_j, disc.data(), disc.size(), -40);
+    mesh_transport::process();
+    feed_pure(cj, me, last_to(mac_j), 25, &a);
+    const std::vector<uint8_t> accept = wire(a);
+    mesh_transport::test::inject_recv(mac_j, accept.data(), accept.size(), -40);
+    mesh_transport::process();
+    assert(mesh_session::pairing_state() == mesh_pairing::State::AWAITING_CONFIRM);
+
+    if (joiner_first) {
+      a = mesh_pairing::confirm_code(cj, 30);
+      const std::vector<uint8_t> conf_j = wire(a);
+      mesh_transport::test::inject_recv(mac_j, conf_j.data(), conf_j.size(), -40);
+      mesh_transport::process();
+      g_outs.clear();
+      assert(mesh_session::confirm_pairing_code(40));
+    } else {
+      g_outs.clear();
+      assert(mesh_session::confirm_pairing_code(30));
+      assert(g_outs.size() == 1);
+      feed_pre_f97_joiner(cj, me, g_outs[0].bytes, 31, &a);   /* dropped unread */
+      assert(a.type == mesh_pairing::ActionType::NONE);
+      assert(cj.state == mesh_pairing::State::AWAITING_CONFIRM);
+      a = mesh_pairing::confirm_code(cj, 35);
+      const std::vector<uint8_t> conf_j = wire(a);
+      g_outs.clear();
+      mesh_transport::test::inject_recv(mac_j, conf_j.data(), conf_j.size(), -40);
+      mesh_transport::process();
+    }
+    /* Every frame this session sent the joiner since, in order. */
+    size_t to_j = 0;
+    a = mesh_pairing::Action{};
+    for (const OutFrame& f : g_outs) {
+      if (std::memcmp(f.mac, mac_j, 6) != 0) continue;
+      ++to_j;
+      feed_pre_f97_joiner(cj, me, f.bytes, 50, &a);
+    }
+    assert(to_j == 2);
+    assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+    uint8_t got[32];
+    assert(mesh_pairing::consume_opera_secret(cj, got));
+    assert(std::memcmp(got, S, sizeof(S)) == 0);
+    mesh_session::process(60);
+    assert(g_paired_fired && mesh_session::trusted_peer_count() == 1);
+  }
+  std::printf("PASS test_pairing_over_the_air_with_a_pre_f97_joiner  (both orders)\n");
 }
 
 /* A pairing that ends without a member takes the partner's address out of
@@ -5212,6 +5331,7 @@ int main() {
   test_pairing_over_the_air_as_joiner();
   test_pairing_over_the_air_joiner_confirms_first();
   test_pairing_over_the_air_initiator_confirms_first();
+  test_pairing_over_the_air_with_a_pre_f97_joiner();
   test_failed_pairing_removes_partner_address();
   test_repair_moves_a_trusted_peers_address();
   test_paired_peer_bound_reports_the_bind();
