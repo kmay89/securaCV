@@ -11,11 +11,16 @@ internal to `mesh_network.cpp`, a handler hands a `Command` to
 `mesh_network::submit()`, and `update()` drains the command ring on the
 loop task (`loop_command_ring.h`).
 
-Sweep F106: `csi_mqtt::init()` tears the esp_mqtt client down and builds a
+Sweep F106: `csi_mqtt::init()` tore the esp_mqtt client down and built a
 new one. A config POST and `POST /api/mqtt/test` ran it on the httpd task,
 and a QR hub provision on the scanner's, under a loop-task publish holding
 the old handle. Now the client is the loop task's: other tasks call
-`request_reinit()`, and `csi_mqtt::loop()` runs the re-init.
+`request_reinit()`, and `csi_mqtt::loop()` serves the re-init. And the loop
+task never stops a client itself (the F106 review): `esp_mqtt_client_stop()`
+can wait out a whole connect attempt (the esp_mqtt task holds the client's
+lock across it, 10 s by default), past the loop task's 8 s panic watchdog.
+The loop task detaches the client and a one-shot worker (`retire_task`)
+stops and destroys it; a later pass opens the new one.
 
 `test_mesh_commands_wap.cpp`, `test_mqtt_reinit.cpp` and
 `test_loop_command_ring.cpp` run the real code on the host. No host test can
@@ -52,15 +57,34 @@ Mesh (F96):
 
 MQTT (F106):
 
-6. In `csi_mqtt.cpp`, `teardown_client(` is called only inside `init()`, and
-   `init(` only inside `loop()` (the definition aside); `loop()` serves the
-   re-init (`init(nullptr, nullptr, nullptr)` then
-   `s_reinit_served.store(`), and `request_reinit()` only bumps
-   `s_reinit_wanted`. The esp_mqtt event handler names neither.
+6. In `csi_mqtt.cpp`, who touches the client:
+   - `esp_mqtt_client_stop(` is called only in `retire_task()` (the worker),
+     and `esp_mqtt_client_destroy(` only there and once in `open_client()`,
+     on its own never-started `client` after a failed
+     `esp_mqtt_client_start(`. `esp_mqtt_client_init(` and
+     `esp_mqtt_client_start(` are called only in `open_client()`, which
+     publishes the client (`s_client.store(client`) before it starts it.
+     `s_client` is written (`=`, `.store(`, `.exchange(`) only in
+     `open_client()` and `detach_client()`.
+   - `retire_task` is never called: `retire_finished()` hands it to
+     `xTaskCreate(`, and nothing else creates it. `detach_client(` and
+     `retire_finished(` are called only in `serve_reinit()`,
+     `open_client(` only in `serve_reinit()` and `init()`, bare `init(`
+     nowhere, and `serve_reinit(` once, in `loop()`, before
+     `csi_event_egress::pump(`.
+   - `serve_reinit()` returns while `retire_finished()` is false, both before
+     it looks at the requests and after `detach_client()`; reads
+     `s_reinit_wanted` into `wanted` after that, then runs `open_client()`,
+     then `s_reinit_served.store(wanted`.
+   - `request_reinit()` only bumps `s_reinit_wanted`.
+   - The esp_mqtt event handler returns first for a client that is not
+     `s_client` (`e->client != s_client.load(`), subscribes on `e->client`
+     only, and names no lifecycle function.
 7. `handle_config_post` and `handle_test` each call `request_reinit(`; no
    HTTP handler anywhere in the sketch names `init(` / `csi_mqtt::init(`,
-   `teardown_client(`, `csi_mqtt::loop(`, `mesh_network::update(` or a
-   `publish_` function (the owner commands of rule 1 are rule 5's).
+   a lifecycle function of rule 6, an `esp_mqtt_client_*(` call, a write of
+   `s_client`, `csi_mqtt::loop(`, `mesh_network::update(` or a `publish_`
+   function (the owner commands of rule 1 are rule 5's).
    `set_update_auto_state()` only caches (no `publish_raw(`, no
    `build_topic(`), and `loop()` publishes the `update/auto` topic.
 8. Across the sketch: `csi_mqtt::init(` is called once, from
@@ -133,6 +157,9 @@ SIG_SET_AUTO = r"\bvoid\s+set_update_auto_state\s*\([^)]*\)"
 SIG_EVENT_HANDLER = r"\bvoid\s+mqtt_event_handler\s*\([^)]*\)"
 SIG_CONFIG_POST = r"\besp_err_t\s+handle_config_post\s*\([^)]*\)"
 SIG_TEST = r"\besp_err_t\s+handle_test\s*\([^)]*\)"
+SIG_SERVE = r"\bvoid\s+serve_reinit\s*\(\s*\)"
+SIG_OPEN = r"\bbool\s+open_client\s*\(\s*\)"
+SIG_RETIRE_FINISHED = r"\bbool\s+retire_finished\s*\(\s*\)"
 SIG_INO_LOOP = r"\bvoid\s+loop\s*\(\s*\)"
 SIG_SETUP = r"\bvoid\s+setup\s*\(\s*\)"
 SIG_START_HTTP = r"\bstatic\s+void\s+start_http_server\s*\(\s*\)"
@@ -334,28 +361,99 @@ def check_mesh_sketch(ino: str, others: dict[str, str], errors: list[str]) -> No
 
 # ── MQTT (F106) ──────────────────────────────────────────────────────────
 
+# Who may call what in csi_mqtt.cpp (rule 6): the call, the functions it may
+# appear in, and why.
+MQTT_CALLERS = (
+    ("esp_mqtt_client_stop", ("retire_task",),
+     "a stop can wait out a connect attempt, past the loop task's watchdog: only the worker stops"),
+    ("esp_mqtt_client_destroy", ("retire_task", "open_client"),
+     "only the worker destroys a client that ran; open_client() only its own unstarted one"),
+    ("esp_mqtt_client_init", ("open_client",), "only open_client() makes a client"),
+    ("esp_mqtt_client_start", ("open_client",), "only open_client() starts a client"),
+    ("detach_client", ("serve_reinit",), "only the loop task's re-init detaches the client"),
+    ("retire_finished", ("serve_reinit",), "only the loop task's re-init retires the client"),
+    ("open_client", ("serve_reinit", "init"), "the client opens on the loop task: the boot, then a re-init"),
+    ("serve_reinit", ("loop",), "the re-init is served by loop(), on the loop task"),
+)
+# A write of the client handle.
+S_CLIENT_WRITE = r"\bs_client\s*(?:=(?!=)|\.store\s*\(|\.exchange\s*\(|\.compare_exchange_\w+\s*\()"
+
+
 def check_mqtt_reinit(mqtt: str, errors: list[str]) -> None:
     code = blank_comments_and_strings(mqtt)
     spans = named_bodies(code)
-    for m in re.finditer(r"(?<![\w:.>])teardown_client\s*\(", code):
-        where = enclosing_function(spans, m.start())
-        if where is not None and where != "init":
-            errors.append(f"{MQTT_CPP}: {where}() calls teardown_client() — only init() does, and "
-                          "init() runs on the loop task (F106)")
+
+    def where_of(m: re.Match) -> str | None:
+        return enclosing_function(spans, m.start())
+
+    for call, allowed, why in MQTT_CALLERS:
+        for m in re.finditer(r"(?<![\w:.>])" + call + r"\s*\(", code):
+            where = where_of(m)
+            if where is None or where == call:
+                continue                      # the definition's own header
+            if where not in allowed:
+                errors.append(f"{MQTT_CPP}: {where}() calls {call}() — {why} (F106)")
+    for m in re.finditer(S_CLIENT_WRITE, code):
+        where = where_of(m)
+        if where not in ("open_client", "detach_client"):
+            errors.append(f"{MQTT_CPP}: {where + '()' if where else 'file scope'} writes s_client — only open_client() "
+                          "and detach_client(), on the loop task, do (F106)")
     for m in re.finditer(BARE_INIT, code):
-        where = enclosing_function(spans, m.start())
-        if where is not None and where != "loop":
-            errors.append(f"{MQTT_CPP}: {where}() calls init() — a re-init runs from loop(), on the "
-                          "loop task; other tasks call request_reinit() (F106)")
+        where = where_of(m)
+        if where is not None:
+            errors.append(f"{MQTT_CPP}: {where}() calls init() — init() is the boot's (the sketch's "
+                          "start_http_server); a re-init is serve_reinit()'s, and other tasks call "
+                          "request_reinit() (F106)")
+    for m in re.finditer(r"(?<![\w:.>])retire_task\b", code):
+        where = where_of(m)
+        if where is None or where == "retire_task":
+            continue
+        tail = code[m.end():m.end() + 8]
+        before = code[max(0, m.start() - 24):m.start()]
+        if where != "retire_finished" or not re.search(r"\bxTaskCreate\s*\(\s*$", before) or \
+                tail.lstrip().startswith("("):
+            errors.append(f"{MQTT_CPP}: {where}() names retire_task other than as "
+                          "retire_finished()'s xTaskCreate( argument — the stop runs on that worker, "
+                          "never on the caller's task (F106)")
+    opened = body_of(code, SIG_OPEN, f"{MQTT_CPP}: open_client()", errors)
+    if opened is not None:
+        s = squash(opened)
+        at_store = s.find("s_client.store(client")
+        at_start = s.find("esp_mqtt_client_start(client")
+        destroys = re.findall(r"esp_mqtt_client_destroy\(([^)]*)\)", s)
+        if at_store < 0 or at_start < 0 or at_store > at_start:
+            errors.append(f"{MQTT_CPP}: open_client() must store the new client in s_client before "
+                          "esp_mqtt_client_start( — its event handler ignores any other client (F106)")
+        if destroys and (destroys != ["client"] or s.find("esp_mqtt_client_destroy(") < at_start):
+            errors.append(f"{MQTT_CPP}: open_client() destroys {destroys} — only its own client, "
+                          "after a failed esp_mqtt_client_start( (never started: nothing to wait for) (F106)")
+    serve = body_of(code, SIG_SERVE, f"{MQTT_CPP}: serve_reinit()", errors)
+    if serve is not None:
+        s = squash(serve)
+        first_guard = s.find("if(!retire_finished())return;")
+        at_wanted_cmp = s.find("s_reinit_wanted.load(")
+        at_detach = s.find("detach_client();")
+        second_guard = s.find("if(!retire_finished())return;", at_detach) if at_detach >= 0 else -1
+        at_capture = s.rfind("constuint32_twanted=s_reinit_wanted.load(")
+        at_open = s.find("open_client();")
+        at_served = s.find("s_reinit_served.store(wanted")
+        ok = (0 <= first_guard < at_wanted_cmp and first_guard < at_detach < second_guard < at_capture
+              < at_open < at_served and s.count("open_client(") == 1)
+        if not ok:
+            errors.append(f"{MQTT_CPP}: serve_reinit() must wait for a retiring client without "
+                          "blocking (`if (!retire_finished()) return;` first, and again after "
+                          "detach_client()), then read `const uint32_t wanted = s_reinit_wanted.load(` "
+                          "(a request made before the open's NVS read is the open's), run "
+                          "open_client() once, then `s_reinit_served.store(wanted` (F106)")
     loop = body_of(code, SIG_MQTT_LOOP, f"{MQTT_CPP}: csi_mqtt::loop()", errors)
     if loop is not None:
         s = squash(loop)
-        at_init = s.find("init(nullptr,nullptr,nullptr);")
-        at_served = s.find("s_reinit_served.store(")
-        if at_init < 0 or at_served < at_init or "s_reinit_wanted.load(" not in s:
-            errors.append(f"{MQTT_CPP}: csi_mqtt::loop() must serve a requested re-init "
-                          "(read s_reinit_wanted, run init(nullptr, nullptr, nullptr), then "
-                          "s_reinit_served.store() (F106)")
+        at_serve = s.find("serve_reinit();")
+        at_pump = s.find("csi_event_egress::pump();")
+        if s.count("serve_reinit();") != 1 or at_pump < 0 or at_serve > at_pump:
+            errors.append(f"{MQTT_CPP}: csi_mqtt::loop() must call serve_reinit() once, before "
+                          "csi_event_egress::pump() — the pass that opens a new destination's client "
+                          "is the pass the pump sees its epoch (F106)")
         # The topic is a string: found in the source, placed by the blanked
         # code's offsets (the same in both).
         span = the_body(code, SIG_MQTT_LOOP, "", [])
@@ -364,10 +462,15 @@ def check_mqtt_reinit(mqtt: str, errors: list[str]) -> None:
                 "publish_raw(" not in loop:
             errors.append(f"{MQTT_CPP}: csi_mqtt::loop() must publish the update/auto state "
                           "set_update_auto_state() left (F106)")
+    finished = body_of(code, SIG_RETIRE_FINISHED, f"{MQTT_CPP}: retire_finished()", errors)
+    if finished is not None and "xTaskCreate(retire_task," not in squash(finished):
+        errors.append(f"{MQTT_CPP}: retire_finished() must hand the detached client to "
+                      "xTaskCreate(retire_task, ...) — the stop is the worker's (F106)")
     req = body_of(code, SIG_REQUEST, f"{MQTT_CPP}: request_reinit()", errors)
     if req is not None:
         if "s_reinit_wanted.fetch_add(" not in squash(req) or re.search(
-                BARE_INIT + r"|teardown_client\s*\(|publish", req):
+                BARE_INIT + r"|\b(?:open_client|serve_reinit|detach_client|retire_finished)\s*\(|publish",
+                req):
             errors.append(f"{MQTT_CPP}: request_reinit() only bumps s_reinit_wanted — any task "
                           "calls it (F106)")
     auto = body_of(code, SIG_SET_AUTO, f"{MQTT_CPP}: set_update_auto_state()", errors)
@@ -375,8 +478,20 @@ def check_mqtt_reinit(mqtt: str, errors: list[str]) -> None:
         errors.append(f"{MQTT_CPP}: set_update_auto_state() publishes — it runs on the httpd task "
                       "too, and only caches; loop() publishes (F106)")
     handler = body_of(code, SIG_EVENT_HANDLER, f"{MQTT_CPP}: mqtt_event_handler()", errors)
-    if handler is not None and re.search(BARE_INIT + r"|\bteardown_client\s*\(", handler):
-        errors.append(f"{MQTT_CPP}: mqtt_event_handler() re-inits — it runs on the esp_mqtt task (F106)")
+    if handler is not None:
+        s = squash(handler)
+        guard = re.search(r"if\(!e\|\|e->client!=s_client\.load\([^)]*\)\)return;", s)
+        if guard is None or guard.start() > s.find("switch("):
+            errors.append(f"{MQTT_CPP}: mqtt_event_handler() must return first for an event whose "
+                          "client is not s_client (`if (!e || e->client != s_client.load(...)) return;`) "
+                          "— a detached client runs on until its worker's stop returns (F106)")
+        if re.search(r"esp_mqtt_client_subscribe\((?!e->client,)", s):
+            errors.append(f"{MQTT_CPP}: mqtt_event_handler() subscribes on another client than "
+                          "e->client — the loop task may have detached s_client meanwhile (F106)")
+        if re.search(BARE_INIT + r"|\b(?:open_client|serve_reinit|detach_client|retire_finished|"
+                     r"esp_mqtt_client_stop|esp_mqtt_client_destroy)\s*\(", handler):
+            errors.append(f"{MQTT_CPP}: mqtt_event_handler() runs a client lifecycle step — it runs on "
+                          "the esp_mqtt task (F106)")
     for sig, what in ((SIG_CONFIG_POST, "handle_config_post()"), (SIG_TEST, "handle_test()")):
         body = body_of(code, sig, f"{MQTT_CPP}: {what}", errors)
         if body is not None and body.count("request_reinit(") != 1:
@@ -390,7 +505,10 @@ def check_mqtt_reinit(mqtt: str, errors: list[str]) -> None:
 HTTPD_FORBIDDEN = (
     (BARE_INIT, "init("),
     (r"\bcsi_mqtt::init\s*\(", "csi_mqtt::init("),
-    (r"\bteardown_client\s*\(", "teardown_client("),
+    (r"\b(?:open_client|serve_reinit|detach_client|retire_finished)\s*\(|\bretire_task\b",
+     "a client lifecycle step of csi_mqtt.cpp"),
+    (r"\besp_mqtt_client_\w+\s*\(", "an esp_mqtt_client_ call"),
+    (S_CLIENT_WRITE, "a write of s_client"),
     (r"\bcsi_mqtt::loop\s*\(", "csi_mqtt::loop("),
     (r"\bmesh_network::update\s*\(", "mesh_network::update("),
     (r"(?<![\w:.>])publish_\w+\s*\(", "a publish_ function"),
@@ -564,23 +682,73 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      on("mesh_cpp", SIG_SUBMIT, r"(bool\s+result\s*=\s*false;)", r"\1 g_commands.drain(run_command);")),
     ("the ESP-NOW receive callback drains the ring",
      on("mesh_cpp", SIG_RECV_CB, r"(g_rx_pending\s*=\s*true;)", r"\1 g_commands.drain(run_command);")),
-    # Rule 6: the MQTT client is torn down and built only by loop()'s init().
+    # Rule 6: the loop task serves a re-init without ever stopping a client;
+    # only the worker stops one.
     ("the config POST runs init() itself",
      on("mqtt", SIG_CONFIG_POST, r"\(void\)wait_reinit\(request_reinit\(\),\s*kReinitWaitMs\);",
         "init(s_device_id, s_firmware_version, s_public_key_hex);")),
     ("the test handler runs init() itself",
      on("mqtt", SIG_TEST, r"wait_reinit\(request_reinit\(\),\s*kTestBudgetMs\)",
         "init(s_device_id, s_firmware_version, s_public_key_hex)")),
-    ("the test handler tears the client down",
-     on("mqtt", SIG_TEST, r"(const\s+uint32_t\s+start\s*=\s*millis\(\);)", r"teardown_client(); \1")),
+    ("the test handler stops and destroys the client by hand (the review's S1)",
+     on("mqtt", SIG_TEST, r"(const\s+uint32_t\s+start\s*=\s*millis\(\);)",
+        r"{ esp_mqtt_client_handle_t c = s_client.load(); if (c) { esp_mqtt_client_stop(c); "
+        r"esp_mqtt_client_destroy(c); s_client = nullptr; } } \1")),
+    ("the config POST publishes on the client directly (the review's S2)",
+     on("mqtt", SIG_CONFIG_POST, r"(\(void\)wait_reinit\(request_reinit\(\),\s*kReinitWaitMs\);)",
+        r'\1 esp_mqtt_client_publish(s_client.load(), "t", "p", 1, 0, 0);')),
     ("loop() no longer serves re-inits",
-     on("mqtt", SIG_MQTT_LOOP, r"\(void\)init\(nullptr,\s*nullptr,\s*nullptr\);", "")),
+     on("mqtt", SIG_MQTT_LOOP, r"\n[ \t]*serve_reinit\(\);", "")),
+    ("loop() serves the re-init after the pump (the review's MQ3)",
+     lambda s: on("mqtt", SIG_MQTT_LOOP, r"(csi_event_egress::pump\(\);)", r"\1 serve_reinit();")(
+         on("mqtt", SIG_MQTT_LOOP, r"\n[ \t]*serve_reinit\(\);", "")(s))),
+    ("serve_reinit() stops the old client on the loop task (the reviewed shape)",
+     on("mqtt", SIG_SERVE, r"detach_client\(\);\s*if\s*\(!retire_finished\(\)\)\s*return;[^\n]*",
+        "esp_mqtt_client_handle_t old = s_client.exchange(nullptr); "
+        "esp_mqtt_client_stop(old); esp_mqtt_client_destroy(old);")),
+    ("serve_reinit() opens the new client before the worker is done",
+     on("mqtt", SIG_SERVE, r"(detach_client\(\);\s*)if\s*\(!retire_finished\(\)\)\s*return;",
+        r"\1(void)retire_finished();")),
+    ("serve_reinit() opens while a client is still retiring",
+     on("mqtt", SIG_SERVE, r"if\s*\(!retire_finished\(\)\)\s*return;", "")),
+    ("serve_reinit() marks every request so far served (the review's MQ2)",
+     on("mqtt", SIG_SERVE, r"s_reinit_served\.store\(wanted,", "s_reinit_served.store(s_reinit_wanted.load(),")),
+    ("serve_reinit() reads the requests before it detaches",
+     lambda s: on("mqtt", SIG_SERVE, r"(\n[ \t]*if\s*\(s_client\.load\()",
+                  r"\n  const uint32_t wanted = s_reinit_wanted.load(std::memory_order_acquire);\1")(
+         on("mqtt", SIG_SERVE, r"\n[ \t]*const\s+uint32_t\s+wanted\s*=\s*s_reinit_wanted\.load\([^;]*;", "")(s))),
+    ("init() stops an open client in place",
+     on("mqtt", r"\bbool\s+init\s*\([^)]*\)", r"\(void\)request_reinit\(\);",
+        "{ esp_mqtt_client_handle_t old = s_client.exchange(nullptr); esp_mqtt_client_stop(old); "
+        "esp_mqtt_client_destroy(old); }")),
+    ("retire_finished() stops the client itself when the worker cannot start",
+     on("mqtt", SIG_RETIRE_FINISHED, r"(if\s*\(!s_retire_create_failed_logged\)\s*\{)",
+        r"esp_mqtt_client_stop(s_retiring); esp_mqtt_client_destroy(s_retiring); \1")),
+    ("retire_finished() runs the worker's body in place",
+     on("mqtt", SIG_RETIRE_FINISHED,
+        r"if\s*\(xTaskCreate\(retire_task,[^;]*?\)\s*!=\s*pdPASS\)\s*\{",
+        "retire_task(s_retiring); if (false) {")),
+    ("loop() stops the client itself",
+     on("mqtt", SIG_MQTT_LOOP, r"(csi_event_egress::pump\(\);)", r"esp_mqtt_client_stop(s_client.load()); \1")),
+    ("open_client() destroys the open client",
+     on("mqtt", SIG_OPEN, r"(ca_load\(\);)", r"esp_mqtt_client_destroy(s_client.load()); \1")),
+    ("open_client() starts the client before it is s_client",
+     lambda s: on("mqtt", SIG_OPEN, r'(\n[ \t]*Serial\.printf\("\[MQTT\] bridge started)',
+                  r"\n  s_client.store(client, std::memory_order_release);\1")(
+         on("mqtt", SIG_OPEN, r"\n[ \t]*s_client\.store\(client,[^;]*;", "")(s))),
+    ("publish_raw() clears the client",
+     on("mqtt", r"\bbool\s+publish_raw\s*\([^)]*\)", r"(if\s*\(msg_id\s*<\s*0\))",
+        r"if (msg_id < -1) s_client = nullptr; \1")),
     ("request_reinit() re-inits in place",
-     on("mqtt", SIG_REQUEST, r"(return\s+s_reinit_wanted)", r"(void)init(nullptr, nullptr, nullptr); \1")),
-    ("loop() tears down outside init()",
-     on("mqtt", SIG_MQTT_LOOP, r"(csi_event_egress::pump\(\);)", r"teardown_client(); \1")),
+     on("mqtt", SIG_REQUEST, r"(return\s+s_reinit_wanted)", r"serve_reinit(); \1")),
     ("the esp_mqtt handler re-inits",
      on("mqtt", SIG_EVENT_HANDLER, r"(s_connected\.store\(false,[^;]*;)", r"\1 (void)init(nullptr, nullptr, nullptr);")),
+    ("the esp_mqtt handler stops its own client",
+     on("mqtt", SIG_EVENT_HANDLER, r"(s_connected\.store\(false,[^;]*;)", r"\1 esp_mqtt_client_stop(e->client);")),
+    ("the esp_mqtt handler handles a detached client's events",
+     on("mqtt", SIG_EVENT_HANDLER, r"if\s*\(!e\s*\|\|\s*e->client\s*!=\s*s_client\.load\([^)]*\)\)\s*return;", "")),
+    ("the esp_mqtt handler subscribes on s_client",
+     on("mqtt", SIG_EVENT_HANDLER, r"esp_mqtt_client_subscribe\(e->client,", "esp_mqtt_client_subscribe(s_client.load(),")),
     ("set_update_auto_state publishes in place",
      on("mqtt", SIG_SET_AUTO, r"(s_update_auto_dirty\.store\([^;]*;)",
         r'\1 { char t[192]; build_topic(t, sizeof(t), "update/auto"); publish_raw(t, "ON", 2, true); }')),
@@ -658,7 +826,8 @@ def main() -> int:
         return 1
     print(f"canary-wap loop-task ownership holds: the mesh's owner commands are internal to "
           f"mesh_network.cpp and run from update()'s drain, the REST handlers only submit, and the "
-          f"MQTT client is torn down and rebuilt only by loop()'s re-init "
+          f"MQTT client is replaced only by loop()'s re-init, which never stops a client (the "
+          f"retire_task worker does) "
           f"({len(MUTATIONS)} mutations refused).")
     return 0
 
