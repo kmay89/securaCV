@@ -126,6 +126,7 @@ struct State {
   uint32_t held_dropped = 0;
   uint32_t held_dropped_said = 0;
   uint32_t ambient_dropped = 0;
+  uint32_t unsent_dropped = 0;   /* not on the card, body never built: gone (stats()) */
   uint32_t dropped_said = 0;
   uint32_t replay_run = 0;   /* rows replayed in the current backlog */
   /* A card that may hold rows older than the ones committed now is not open:
@@ -216,10 +217,10 @@ bool WapPort::send_held_below(uint32_t id) {
     const Held& h = m_st->front();
     /* The planner wrote the ceiling for `id` before this send, and every
      * held id is below it, so NVS already covers them. */
-    if (csi_mqtt::publish_event_row(h.rec, /*bundled=*/1, /*replay=*/!h.fresh) ==
-        EventSend::kNotNow) {
-      return false;
-    }
+    const EventSend sent =
+        csi_mqtt::publish_event_row(h.rec, /*bundled=*/1, /*replay=*/!h.fresh);
+    if (sent == EventSend::kNotNow) return false;
+    if (sent == EventSend::kUnbuildable) ++m_st->unsent_dropped;
     m_st->pop();   /* sent, or a body that can never build: gone either way */
   }
   return true;
@@ -257,7 +258,10 @@ bool WapPort::hand_to_queue(const csi_event_record_t& rec, bool deferred) {
   if (!deferred && !m_st->planner.pending() && m_st->held_count == 0) {
     last = csi_mqtt::publish_event_row(rec, /*bundled=*/1, /*replay=*/false);
     if (last == EventSend::kSent) return true;
-    if (last == EventSend::kUnbuildable) return false;
+    if (last == EventSend::kUnbuildable) {
+      ++m_st->unsent_dropped;   /* never builds: gone, counted */
+      return false;
+    }
   }
   m_st->push(rec, /*fresh=*/!deferred);
   return false;
@@ -317,6 +321,7 @@ void flush_held(const Link& link) {
     st.port.flushing = false;
     st.port.row_on_card = true;
     if (r != Route::kQueued && st.port.last != EventSend::kUnbuildable) break;  /* next pass */
+    if (st.port.last == EventSend::kUnbuildable) ++st.unsent_dropped;
     st.pop();
   }
 }
@@ -505,6 +510,7 @@ Stats stats() {
   if (g_state) {
     s.held_dropped = g_state->held_dropped;
     s.ambient_dropped = g_state->ambient_dropped;
+    s.unsent_dropped = g_state->unsent_dropped;
     s.planner = g_state->planner.stats();
   }
   return s;

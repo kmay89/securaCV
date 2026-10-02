@@ -95,6 +95,10 @@ constexpr int         kPumpBudget = 4;   // rows per loop pass
 QueueHandle_t         s_queue = nullptr;
 uint32_t              s_dropped = 0;     // queue full; atomic add
 uint32_t              s_dropped_said = 0;  // what the log last reported
+/* Rows no card kept that were lost unsent at the hand-over to the MQTT
+ * layer, refused with nothing to keep them (route(); csi_event_egress_stats(),
+ * backlog F109). Loop task only. */
+uint32_t              s_unsent_dropped = 0;
 
 void copy_name(char (&dst)[CSI_EVENT_NAME_MAX], const char* src) {
   strncpy(dst, src ? src : "", CSI_EVENT_NAME_MAX - 1);
@@ -413,7 +417,14 @@ void route(const csi_event_record_t& rec, const csi_event_backfill::Link& link) 
     return;
   }
   s_port.link = &link;
-  (void)s_backfill.commit(rec, link, s_port);
+  const csi_event_backfill::Route r = s_backfill.commit(rec, link, s_port);
+  /* kUnsent with the ceiling held is a row that moved into the hold
+   * (EgressPort::hand_to_queue; the hold counts what it drops). Otherwise
+   * the MQTT layer refused it (an offline queue with no memory, or one full
+   * of tamper alerts while the link is down) and nothing keeps it: lost,
+   * and counted, so a card-less canary's loss is not read as a hand-over
+   * (sweep F109's review). */
+  if (r == csi_event_backfill::Route::kUnsent && !s_port.ceiling_held) ++s_unsent_dropped;
   s_port.link = nullptr;
   s_port.ceiling_held = false;
 }
@@ -646,6 +657,7 @@ CsiEventEgressStats csi_event_egress_stats() {
   s.dropped = __atomic_load_n(&s_dropped, __ATOMIC_RELAXED);
   s.held_dropped = s_hold.dropped;
   s.ambient_dropped = s_hold.ambient_dropped;
+  s.unsent_dropped = s_unsent_dropped;
   s.planner = s_backfill.stats();
 #endif
   return s;
@@ -665,6 +677,7 @@ extern "C" void csi_event_egress_test_reset(void) {
   }
   s_dropped = 0;
   s_dropped_said = 0;
+  s_unsent_dropped = 0;
   s_backfill.reset();
   s_dest_epoch = 0;
   s_owner_fp[0] = '\0';

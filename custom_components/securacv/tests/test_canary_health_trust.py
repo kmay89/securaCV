@@ -148,6 +148,7 @@ _WORST = {
     # space warning (sweep F82).
     "csi_event_egress": {
         "dropped": _U32, "held_dropped": _U32, "ambient_dropped": _U32,
+        "unsent_dropped": _U32,
         "planner": {
             "live": _U32, "held": _U32, "queued": _U32, "replayed": _U32,
             "skipped": _U32, "untrusted": _U32, "unsendable": _U32,

@@ -1012,8 +1012,11 @@ MUTATIONS: list[tuple[str, Mutation]] = [
                                 r"\1 (void)s_backfill.commit(to_record(ev), link, s_port);",
                                 need="xQueueReceive("))),
     ("route() never commits a row",
-     lambda m, e: (m, mutate_in(e, SIG_ROUTE, r"\(void\)\s*s_backfill\.commit\(([^;]*)\);",
-                                r"s_hold.push(\1);"))),
+     lambda m, e: (m, mutate_in(e, SIG_ROUTE,
+                                r"const\s+csi_event_backfill::Route\s+r\s*=\s*"
+                                r"s_backfill\.commit\(([^;]*)\);",
+                                r"s_hold.push(\1); "
+                                r"const csi_event_backfill::Route r = csi_event_backfill::Route::kHeld;"))),
     ("backfill pass before the rows",
      lambda m, e: (m, mutate_in(
          mutate_in(e, SIG_PUMP, r"s_backfill\.pass\(", "s_backfill.stats(",

@@ -111,16 +111,30 @@ void csi_event_egress_test_reset(void);
  *                    or every row that had to wait when the hold has no
  *                    memory;
  *   ambient_dropped  ambient rows that had to wait (they are never held);
+ *   unsent_dropped   rows no card kept that were lost unsent where they
+ *                    left for the MQTT layer: it refused them (its offline
+ *                    queue has no memory, or is full of tamper alerts while
+ *                    the link is down) and nothing kept them. (The
+ *                    canary-wap counts a body that would not build here; a
+ *                    canary body always builds: the 768-byte buffer holds
+ *                    the widest, and the signature envelope is bounded.) A
+ *                    row the offline queue took and later evicted is not
+ *                    here: that is the queue's own dropped_overflow, which
+ *                    the health publish carries beside these
+ *                    (`offline_queue`);
  *   planner          the backfill planner's own counters
  *                    (csi_event_backfill::Stats: live, held, queued,
  *                    replayed, skipped, untrusted, unsendable,
- *                    truncated_unsent, read_giveups).
+ *                    truncated_unsent, read_giveups). They count paths, not
+ *                    a ledger of rows: docs/csi_developer_api.md says what
+ *                    each one counts and what none of them does.
  * Loop task (the pump's), as the health publish is. All zero without
  * FEATURE_HA_MQTT, where nothing leaves the device. */
 struct CsiEventEgressStats {
   uint32_t                  dropped;
   uint32_t                  held_dropped;
   uint32_t                  ambient_dropped;
+  uint32_t                  unsent_dropped;
   csi_event_backfill::Stats planner;
 };
 CsiEventEgressStats csi_event_egress_stats();

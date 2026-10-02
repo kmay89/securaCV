@@ -983,6 +983,11 @@ static void test_unbuildable_rows_are_skipped_not_stalled() {
   connect();
   drain();
   CHECK(exactly(W.ha.accepted, ids), "every other row arrives once, in id order");
+  /* Sweep F109's review: each is counted where it was lost. The card's in
+   * the planner's unsendable, the two from the RAM hold in unsent_dropped. */
+  CHECK(csi_event_egress::stats().planner.unsendable == 1, "the card row counts as unsendable");
+  CHECK(csi_event_egress::stats().unsent_dropped == 2,
+        "the merged and the flushed RAM rows count as unsent_dropped");
   const uint32_t bad_live = commit_closed_bundle();             // nothing waits: the live route
   W.unbuildable.insert(bad_live);
   const uint32_t after = emit_ping();
@@ -990,6 +995,7 @@ static void test_unbuildable_rows_are_skipped_not_stalled() {
   CHECK(W.ha.accepted.back() == after && !has(W.wire, bad_live),
         "a live row whose body never builds does not hold the next one");
   CHECK(W.unbuildable_tries == 4, "each was tried once, never retried");
+  CHECK(csi_event_egress::stats().unsent_dropped == 3, "the live row counts too");
 }
 
 /* ── A card that is not open (yet, or for a moment) ────────────────────── */

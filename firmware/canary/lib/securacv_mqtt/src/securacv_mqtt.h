@@ -33,8 +33,8 @@
 // pins. With every field at its type's widest it reached ~1200 B, a
 // 1272 B packet on a topic at its 63-char cap, which the old 1280 B buffer
 // held with 8 B to spare (F55). The event egress's counters and the
-// event-id space flag (sweeps F109, F82) bring the worst case to a 1610 B
-// packet: 1664 holds it with 54 B to spare (+384 B of heap for the client's
+// event-id space flag (sweeps F109, F82) bring the worst case to a 1638 B
+// packet: 1664 holds it with 26 B to spare (+384 B of heap for the client's
 // buffer). Almost any new health key needs a larger buffer first.
 // custom_components/securacv/tests/test_canary_health_trust.py holds every
 // health key to it.

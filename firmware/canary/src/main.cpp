@@ -3076,7 +3076,8 @@ static void mqtt_publish_health_update() {
 #if FEATURE_CSI
   /* What the committed-event egress did this boot (sweep F109): rows it
    * dropped (a full egress queue, the RAM hold's oldest, ambient rows that
-   * had to wait) and the backfill planner's counters, under the names the
+   * had to wait, rows the MQTT layer refused with no card to keep them)
+   * and the backfill planner's counters, under the names the
    * canary-wap's csi_event_egress::stats() uses (csi_event_egress.h). They
    * reached only Serial before. Same task as the pump, so no torn read. */
   {
@@ -3085,6 +3086,7 @@ static void mqtt_publish_health_update() {
     ego["dropped"] = st.dropped;
     ego["held_dropped"] = st.held_dropped;
     ego["ambient_dropped"] = st.ambient_dropped;
+    ego["unsent_dropped"] = st.unsent_dropped;
     JsonObject plo = ego["planner"].to<JsonObject>();
     plo["live"] = st.planner.live;
     plo["held"] = st.planner.held;

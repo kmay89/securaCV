@@ -539,6 +539,8 @@ static void test_failed_append_in_an_outage_waits_its_turn() {
   std::vector<uint32_t> ids;
   for (int i = 0; i < 5; ++i) { ids.push_back(emit_ping()); loop_pass(); }
   ids.push_back(commit_with_a_failed_append());
+  CHECK(csi_event_egress_stats().unsent_dropped == 0,
+        "the planner's kUnsent for a row that moved into the hold is no loss (F109's review)");
   for (int i = 0; i < 2; ++i) { ids.push_back(emit_ping()); loop_pass(); }
   connect();
   drain();
@@ -1051,6 +1053,8 @@ static void test_hold_flush_refused_by_a_full_queue_is_kept() {
   drain();                                    /* the wait ends with the link down: the flush is refused */
   CHECK(W.ha.accepted.empty() && g_offline.size() == kOfflineSlots,
         "no event displaced a tamper alert");
+  CHECK(csi_event_egress_stats().unsent_dropped == 0,
+        "a refused flush keeps its row in the hold: nothing is counted lost (F109's review)");
   connect();
   drain(40);
   CHECK(W.tampers == (int)kOfflineSlots, "the tamper alerts go first");
@@ -1144,6 +1148,61 @@ static void test_egress_counts_what_it_did() {
         st.planner.queued == 0 && st.planner.live == 0, "a reboot starts the counters over");
 }
 
+/* Sweep F109's review: with no card, a row the MQTT layer refuses is lost
+ * (the planner's Route::kUnsent, which route() used to discard), and
+ * planner.queued never counted it. unsent_dropped does. A row the offline
+ * queue takes and later evicts is the queue's own count (its
+ * dropped_overflow, which the health publish carries as `offline_queue`),
+ * not the egress's: planner.queued counts it as handed over. */
+static void test_card_less_losses_are_counted() {
+  std::printf("-- F109 review: no card, the MQTT layer refuses rows: lost, and counted as unsent_dropped\n");
+  /* The offline queue has no memory (its allocation failed); the link is down. */
+  fresh_device(/*card=*/false);
+  drain();   /* past the wait for a card that is not there */
+  g_offline.init(nullptr, 0, kOfflineSlotBytes);   /* inert: every push refused */
+  for (int i = 0; i < 3; ++i) { (void)emit_ping(); loop_pass(); }
+  connect();
+  drain(20);
+  CsiEventEgressStats st = csi_event_egress_stats();
+  CHECK(W.ha.accepted.empty(), "an inert offline queue and the link down: the three rows are lost");
+  CHECK(st.unsent_dropped == 3 && st.planner.queued == 0,
+        "counted as unsent_dropped, not as queued");
+  CHECK(st.dropped == 0 && st.held_dropped == 0 && st.ambient_dropped == 0,
+        "and in no other counter");
+
+  /* A queue full of tamper alerts refuses an event while the link is down. */
+  fresh_device(/*card=*/false);
+  drain();
+  for (size_t i = 0; i < kOfflineSlots; ++i) {
+    (void)mqtt_publish_tamper("{\"type\":\"sd_removed\"}", /*retained=*/false);
+  }
+  for (int i = 0; i < 2; ++i) { (void)emit_ping(); loop_pass(); }
+  st = csi_event_egress_stats();
+  CHECK(st.unsent_dropped == 2 && st.planner.queued == 0,
+        "the two events the tamper-full queue refused are counted as unsent_dropped");
+  CHECK(g_offline.stats().dropped_overflow == 2,
+        "the queue counts its refusals too: such a row is in both objects");
+  connect();
+  drain(20);
+  CHECK(W.tampers == (int)kOfflineSlots && W.ha.accepted.empty(),
+        "the tamper alerts arrive; the two events never do");
+
+  /* An outage longer than the queue: it evicts the oldest events. */
+  fresh_device(/*card=*/false);
+  drain();
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 14; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  connect();
+  drain(20);
+  st = csi_event_egress_stats();
+  const std::vector<uint32_t> kept(ids.begin() + 2, ids.end());
+  CHECK(exactly(W.ha.accepted, kept), "fourteen rows in the outage, twelve arrive");
+  CHECK(st.planner.queued == 14 && st.unsent_dropped == 0,
+        "the egress handed all fourteen over: queued counts them");
+  CHECK(g_offline.stats().dropped_overflow == 2,
+        "the two the queue evicted are its dropped_overflow (health's offline_queue)");
+}
+
 static void test_failed_append_as_the_card_opens_waits_behind_the_hold() {
   std::printf("-- F103: a row whose append fails in the pass a late card opens waits behind the held row\n");
   fresh_device();
@@ -1210,6 +1269,7 @@ int main() {
   test_hold_overflow_drops_the_oldest();
   test_failed_append_as_the_card_opens_waits_behind_the_hold();
   test_egress_counts_what_it_did();
+  test_card_less_losses_are_counted();
   test_id_space_low_is_flagged();
 
   CHECK(g_ceiling_violations_total == 0,

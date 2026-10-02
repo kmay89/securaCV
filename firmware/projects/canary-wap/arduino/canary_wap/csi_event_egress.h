@@ -112,6 +112,9 @@ struct Stats {
   uint32_t dropped;          /* commits the full queue refused */
   uint32_t held_dropped;     /* rows the RAM hold dropped, oldest first */
   uint32_t ambient_dropped;  /* ambient rows that could not go out at once (never held) */
+  uint32_t unsent_dropped;   /* rows not on the card lost unsent: a body that would not
+                                build (a row the MQTT layer refuses waits in the RAM hold;
+                                on the canary its offline queue can refuse one outright) */
   csi_event_backfill::Stats planner;
 };
 Stats stats();
