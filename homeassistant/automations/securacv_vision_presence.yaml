@@ -23,7 +23,10 @@
 # visit lasted (visit_ms, counted to the frame that declared the person gone,
 # so it includes the device's lost timeout). dwell_ms is 0 on both: the dwell
 # starts on dwell_started's frame, and interaction_likely follows
-# presence_ended.
+# presence_ended. The confidence is printed for dwell_started only: it is the
+# best person box's score on the frame the event was sent from, and
+# interaction_likely is sent from an empty frame after the person has gone,
+# so it always reads 0 there.
 
 # ---------------------------------------------------------------------------
 # A) Dwell / interaction alert
@@ -67,8 +70,8 @@
           {%- if trigger.payload_json.reason is defined %}
           ({{ trigger.payload_json.reason }})
           {%- endif %}
-          — confidence {{ trigger.payload_json.confidence | default(0) }}%,
-          {{ 'in view %ds so far' % (((trigger.payload_json.presence_ms | default(0)) / 1000) | round | int)
+          — {{ 'confidence %d%%, in view %ds so far' % (trigger.payload_json.confidence | default(0) | int,
+                 ((trigger.payload_json.presence_ms | default(0)) / 1000) | round | int)
              if trigger.payload_json.event == 'dwell_started'
              else 'stayed %ds' % (((trigger.payload_json.visit_ms | default(0)) / 1000) | round | int) }}
         data:

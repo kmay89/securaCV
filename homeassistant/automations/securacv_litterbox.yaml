@@ -73,12 +73,14 @@
     - service: notify.mobile_app_your_phone
       data:
         title: "🐈 Litter box visit"
+        # No confidence here: interaction_likely is sent from an empty frame
+        # after the cat has gone, so its confidence (the frame's best box
+        # score) is always 0. visit_ms is how long the visit lasted.
         message: >-
           Visit completed
           ({{ trigger.payload_json.reason | default('dwell_then_left') }}) —
           in the box about
-          {{ ((trigger.payload_json.visit_ms | default(0)) / 1000) | round(0) }}s,
-          confidence {{ trigger.payload_json.confidence | default(0) }}%.
+          {{ ((trigger.payload_json.visit_ms | default(0)) / 1000) | round(0) | int }}s.
         data:
           tag: "securacv-litterbox-DEVICE_ID"
           group: "SecuraCV"

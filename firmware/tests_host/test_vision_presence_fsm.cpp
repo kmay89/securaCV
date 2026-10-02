@@ -189,6 +189,9 @@ static void test_linger_dwell_ended_reports_its_dwell() {
   assert(std::strcmp(s.reason, "dwell_then_left") == 0);
   assert(s.snap.dwell_ms == 0);
   assert(s.snap.visit_ms == visit);
+  // sent from an empty frame after the person has gone: no box, so its
+  // confidence is 0 (the HA alerts no longer print it, sweep HA26)
+  assert(s.snap.confidence == 0 && !s.snap.presence);
   std::printf("  linger: dwell_ended carries %lu ms, presence_ended 0, visit %lu ms\n",
               (unsigned long)ended.snap.dwell_ms, (unsigned long)visit);
 }
