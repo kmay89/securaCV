@@ -348,7 +348,7 @@ the Lab from the dashboard (long-press on the version chip, or
 | --- | --- |
 | `GET /tune` | the Tuning Lab UI |
 | `GET /api/tune/coefficients` | every registered tuning knob, current values |
-| `POST /api/tune/coefficients` | update one knob; persists to NVS |
+| `POST /api/tune/coefficients` | update one knob; persists to NVS, applies at once and from every boot |
 | `GET /api/tune/preset` | export a signed JSON tuning bundle |
 | `POST /api/tune/preset` | import a signed JSON tuning bundle |
 
@@ -444,6 +444,10 @@ reports `night_mode: true`).
 
 Writes one or more dashboard settings, then drives `reinit_module()`
 for the affected module(s) so the new value lands on the next tick.
+Saved values also apply from every boot: the modules read them in their
+boot `init()` (sweep F93; before it, a boot ran on the modules' defaults
+until the next settings change). The calibration's apply and the Tuning
+Lab's coefficients behave the same way.
 The wire keys are deliberately short (the dashboard's controls surface,
 not the full module-tunable surface):
 

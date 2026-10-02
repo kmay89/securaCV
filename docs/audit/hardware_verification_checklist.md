@@ -685,6 +685,49 @@ compiled by CI; not run on a device. Owner: U1.
     feed, closes it).
   - Artifact: `docs/audit/repro/F81/csi-shed/`.
 
+## CSI modules' saved settings at boot (F93) — on-device verification
+
+Code: `firmware/common/csi/src/csi_module.cpp` (`csi_module_init_all()`
+runs each registered module's `init()` once; `csi_module_tick_all()` ticks
+none before it), `csi_module_settings_nvs.h` (the key map and NVS read rule
+both trees share), the canary's `src/csi_modules_integration.cpp` (the boot
+init at the end of `securacv_csi_modules_init()`) and the canary-wap's
+`csi_integration.cpp` (`init()`, right after `register_v1_modules()`) and
+`csi_settings_nvs.cpp` (its readers). Host-tested on the canary's real
+bridge (`firmware/tests_host/test_csi_module_boot.cpp`) and on the
+canary-wap's real readers with the staged library and modules
+(`firmware/projects/canary-wap/tests_host/test_wap_module_boot.cpp`); the
+boot order is held by `check_event_egress_order.py` (rule 8) and
+`check_wap_event_egress.py` (rule 3) and compiled by CI; not run on a
+device. Owner: U1.
+
+- [ ] **A saved preset applies from the first minute after a reboot**
+  - Setup: a canary-wap on this firmware, dashboard open.
+  - Repro: set the preset to "sensitive" (or the sensitivity slider to
+    100); `POST /api/reboot`; when it is back, make a small motion in
+    front of it (a hand wave at a few meters) within the first minute.
+  - Expected: `GET /api/events/today` shows a `subtle` (or stronger) open
+    row for it. Then set "quiet", reboot, repeat: the same motion stays
+    `empty`. Before F93 both boots ran on the balanced default until a
+    setting was changed.
+  - Artifact: `docs/audit/repro/F93/preset-after-reboot/`.
+- [ ] **A Tuning Lab cooldown applies after a reboot**
+  - Setup: as above, `/tune` open.
+  - Repro: set `anomaly.baseline.cooldown_sec` to 30; reboot; leave the
+    room quiet for two minutes; walk through twice, about 40 s apart.
+  - Expected: two `unusual_motion` observations (one row, `"bundled":2`,
+    or two rows); with the default 600 s, one.
+  - Artifact: `docs/audit/repro/F93/cooldown-after-reboot/`.
+- [ ] **A canary with nothing stored behaves as before**
+  - Setup: a canary (`release_ha`) on this firmware, freshly flashed (no
+    canary-wap image ever stored settings on the board; nothing on the
+    canary writes them).
+  - Expected: presence and anomaly rows as on the previous firmware; the
+    boot log shows CSI armed as before. The one difference by design: the
+    activity ribbon's first 15-minute bucket starts when the modules
+    initialize in `setup()`, not at power-on.
+  - Artifact: `docs/audit/repro/F93/canary-defaults/`.
+
 ## SoftAP WPA2/WPA3 transition + PMF (F16) — on-device verification
 
 Code: `firmware/common/network/ap_security_policy.h` (host-tested), applied

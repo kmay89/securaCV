@@ -2187,6 +2187,37 @@
   only when it landed.
 - **Date learned:** 2026-09
 
+### A lifecycle promise in an interface header is not a call anybody makes
+- **What happened:** `csi_module.h` said the runtime "guarantees init() is
+  called exactly once before any tick(), with the module's persisted
+  settings". Nothing did: `csi_module_register()` only records a module, the
+  canary's bridge registered and ticked without ever calling `init()`, and
+  the canary-wap called it only from `reinit_module()` after a settings
+  POST, a calibration apply or a Tuning Lab change (sweep F93). So a saved
+  preset, threshold, pet mode or anomaly cooldown did nothing after a
+  reboot until the owner touched a setting again, and on the canary its
+  NVS-backed `csi_module_settings_*` overrides were dead code. Two host
+  tests asserted in comments that `register()` had already run `init()`.
+- **Root cause:** The guarantee lived in prose on the interface, and the
+  modules' static defaults equal what `init()` computes from an empty NVS,
+  so a device that was never configured behaves identically either way:
+  only a stored value shows the gap, and the canary-wap's re-init on every
+  change hid it within a boot.
+- **Fix:** `csi_module_init_all()` runs each registered module's `init()`
+  once (latched per module), and `csi_module_tick_all()` ticks no module
+  whose boot init has not run, so the promise holds by construction and a
+  host that forgets the call gets a dead pipeline, not quietly ignored
+  settings. Both trees call it once, after the event-id floor and the
+  egress and before the first tick, and both read settings by one rule
+  (`csi_module_settings_nvs.h`).
+- **Regression check:** `firmware/tests_host/test_csi_module_boot.cpp` and
+  `firmware/projects/canary-wap/tests_host/test_wap_module_boot.cpp` boot
+  with stored rows and assert each applies from the first windows, each
+  module reads its rows once per boot, and the boot init commits nothing;
+  the static checks hold each tree's call site and order. When an interface
+  promises a lifecycle, test it with a value that differs from the default.
+- **Date learned:** 2026-10
+
 ## Event egress: the receiver remembers across reboots and outages
 
 ### An id floor written every N ids hands the same ids out again after a short boot

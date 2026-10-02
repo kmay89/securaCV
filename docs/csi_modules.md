@@ -29,9 +29,13 @@ typedef struct csi_module {
 ```
 
 A module declares (a) the events it can emit, (b) the fields each event
-carries, (c) its default settings. The runtime calls `tick()` once per CSI
-window; modules may call `csi_event_emit()` from inside `tick()`. Modules
-**must not** reach into each other's state.
+carries, (c) its default settings. The host calls `init()` once at boot,
+through `csi_module_init_all()`, after the modules register and before the
+first CSI window; the runtime then calls `tick()` once per CSI window, and
+never ticks a module whose boot `init()` has not run. Modules may call
+`csi_event_emit()` from inside `tick()`; `init()` must not emit (it runs
+during the host's boot, before the canary-wap refills its Today ring from
+the SD log). Modules **must not** reach into each other's state.
 
 ### The breathing time base
 
@@ -259,7 +263,22 @@ static void on_init(const csi_module_settings_t* s) {
 ```
 
 Settings keys must start with the module id — that's the convention the
-host uses to namespace NVS storage and the Tuning Lab UI.
+Tuning Lab UI groups by. Both firmware trees read them by one rule,
+[`csi_module_settings_nvs.h`](../firmware/common/csi/src/csi_module_settings_nvs.h):
+NVS namespace `"csi"`, the short key its table maps the dotted key to (NVS
+keys are 15 characters at most), a typed read, and your default for a key
+the table does not map, a row that is absent or a namespace that will not
+open. So a new setting needs a row in that table before any device stores
+or reads it. The library's own helpers are weak and return the default; a
+host that stores settings overrides them (the canary in its module bridge,
+the canary-wap in `csi_settings_nvs.cpp`).
+
+`init()` reads them once per boot (sweep F93: before it, neither tree ran
+`init()` at boot, so a stored value applied on the canary-wap only after a
+settings change in the same boot, and never on the canary). After a
+settings change the canary-wap re-runs the module's `init()` directly
+(`reinit_module()`), so write `init()` to reset your state and re-read
+everything. The canary has no surface that writes these rows.
 
 ## Registering at boot
 
@@ -272,7 +291,19 @@ void register_csi_modules() {
 }
 ```
 
-That's the whole story. The chokepoint, bundler, ceiling, witness chain,
+Then run every registered module's `init()` once, before the first CSI
+window can reach `csi_module_tick_all()`:
+
+```c
+register_csi_modules();
+csi_module_init_all(nullptr);   // each module's init(), once, stored settings
+```
+
+Both trees do this at a fixed point in their boot: after the event-id floor
+is restored and the events egress has begun, so nothing a module commits
+can take an id from below the floor (`check_wap_event_egress.py` rule 3 and
+`check_event_egress_order.py` rule 8 hold the order). That's the whole
+story. The chokepoint, bundler, ceiling, witness chain,
 SSE stream, dashboard ribbon, and Tuning Lab all keep working without
 further wiring.
 
