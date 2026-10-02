@@ -799,9 +799,17 @@ export function buildMqtt(data, bus) {
   let stateNow = templates.base;   // the retained state row as it stands
   let lastEvent = null;            // the last witnessed event (g_last_event)
   const said = {};                 // the retained string each topic last got
+  // The publish phase runs only while the broker is up (mqtt_supervise):
+  // before the bench connects, the lab's events still advance the chain
+  // (record_event_now chains first and returns before publishing) and the
+  // state row still moves, but nothing reaches the broker; the snapshot on
+  // connect then lands each topic as it stands, an offline gap showing as a
+  // jump in the chain length.
+  let connected = false;
   const retainedTopic = (sfx) => !!(m.topics.find((t) => t.suffix === sfx) || {}).retained;
   function retain(sfx, payload) {
     said[sfx] = payload;
+    if (!connected) return;
     mqttApply(store, { topic: topicOf(sfx), payload, retain: true });
     renderRetained();
   }
@@ -813,9 +821,10 @@ export function buildMqtt(data, bus) {
     const moved = payload !== said.state;
     stateNow = row;
     retain("state", payload);
-    if (moved) pushStream(topicOf("state"), payload, "");
+    if (moved && connected) pushStream(topicOf("state"), payload, "");
   }
   bus.on("mqtt", () => {
+    connected = true;
     const seq = m.topics.filter((t) => t.retained);
     (async () => {
       for (const t of seq) {
@@ -833,8 +842,8 @@ export function buildMqtt(data, bus) {
     // head at that length; the state row follows when the loop publishes it
     const seq = chain.length + 1;
     lastEvent = e.event;
-    pushStream(topicOf("events"), JSON.stringify(senseEventPayload(eventExample, e, seq)), "live");
     chain = senseChainPayload(chain, seq);
+    if (connected) pushStream(topicOf("events"), JSON.stringify(senseEventPayload(eventExample, e, seq)), "live");
     retain("chain", JSON.stringify(chain));
   });
   bus.on("labstate", ({ snap }) => {
@@ -851,7 +860,7 @@ export function buildMqtt(data, bus) {
       }
       const retained = retainedTopic(pub.suffix);
       if (retained) retain(pub.suffix, pub.payload);
-      pushStream(topicOf(pub.suffix), pub.payload, retained ? "" : "live");
+      if (connected) pushStream(topicOf(pub.suffix), pub.payload, retained ? "" : "live");
     }
   });
   return wrap;

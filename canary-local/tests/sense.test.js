@@ -256,8 +256,8 @@ test("the lab's events and chain rows are sense.json's, laid over (senseEventPay
 });
 
 test("the MQTT pane publishes a lab event, then the chain head at its seq", async () => {
-  const { withFakeDom, fakeBus } = require("./fixtures/fake_dom.js");
-  await withFakeDom(async () => {
+  const { withFakeDom, withFakeClock, fakeBus } = require("./fixtures/fake_dom.js");
+  await withFakeDom(() => withFakeClock(async (clock) => {
     const { buildMqtt } = await import("../assets/sense-ui.js");
     const bus = fakeBus();
     const wrap = buildMqtt(data, bus);
@@ -265,6 +265,7 @@ test("the MQTT pane publishes a lab event, then the chain head at its seq", asyn
     const stream = () => wrap.all("wap-mqtt-ev").map((r) => [r.children[0].textContent, r.children[1].textContent]);
     const retained = () => Object.fromEntries(wrap.all("wap-mqtt-row").map((r) => [r.children[0].textContent, r.children[1].textContent]));
     const chain0 = topicEx("chain").length;
+    bus.emit("mqtt");
     bus.emit("labevent", { event: "presence_detected", presence: "present", occupants: "1", range: "near" });
     bus.emit("labevent", { event: "occupancy_changed", presence: "present", occupants: "2+", range: "near" });
     const evs = stream().filter(([t]) => t === topic("events")).map(([, p]) => JSON.parse(p));
@@ -285,7 +286,9 @@ test("the MQTT pane publishes a lab event, then the chain head at its seq", asyn
     bus.emit("sandboxpub", { pubs: data.sandbox.find((s) => s.id === "identify").mqtt });
     assert.ok(stream().some(([t, p]) => t === topic("identify") && p === "on"), "the bare identify echo, not retained");
     assert.ok(!(topic("identify") in retained()));
-  });
+    await clock.advance(150 * data.mqtt.topics.length + 200);   // let the retained snapshot finish
+    assert.strictEqual(JSON.parse(retained()[topic("chain")]).length, chain0 + 2, "the snapshot lands the chain as it stands");
+  }));
 });
 
 test("the state row: the lab's snapshot over the build's example, published when main.cpp would", async () => {
@@ -453,6 +456,31 @@ test("the MQTT pane's note names the non-retained topics and what the lab leaves
     assert.match(note, /occupancy_changed to 0 occupants before presence_cleared/, "the step the lab leaves out");
   });
   assert.doesNotMatch(read(join(ROOT, "assets/sense.js")), /exact MQTT/, "the sandbox lede");
+});
+
+// record_event_now chains first and returns before publishing while the
+// broker is down; the loop's publish phase is skipped too. So before the
+// bench connects nothing reaches the pane, and the snapshot on connect lands
+// the chain and the state as they stand (an offline gap is a jump in length).
+test("before the broker is up, the lab's events chain but publish nothing", async () => {
+  const { withFakeDom, withFakeClock, fakeBus } = require("./fixtures/fake_dom.js");
+  assert.ok(mainCpp.includes("  if (!canary::net::mqtt_connected()) return;"), "record_event_now's offline return");
+  await withFakeDom(() => withFakeClock(async (clock) => {
+    const { buildMqtt } = await import("../assets/sense-ui.js");
+    const bus = fakeBus();
+    const wrap = buildMqtt(data, bus);
+    const topic = (sfx) => `securacv/${data.device.id_example}/${sfx}`;
+    const retained = () => Object.fromEntries(wrap.all("wap-mqtt-row").map((r) => [r.children[0].textContent, r.children[1].textContent]));
+    bus.emit("labevent", { event: "presence_detected", presence: "present", occupants: "1", range: "mid" });
+    bus.emit("labstate", { snap: { presence: true, presence_state: "present", occupants: "1", range: "mid", radar_ok: true } });
+    assert.deepStrictEqual(wrap.all("wap-mqtt-ev"), [], "nothing streams offline");
+    assert.deepStrictEqual(retained(), {}, "nothing is retained offline");
+    bus.emit("mqtt");
+    await clock.advance(150 * data.mqtt.topics.length + 200);
+    assert.strictEqual(JSON.parse(retained()[topic("chain")]).length, topicEx("chain").length + 1, "the chain moved offline");
+    assert.strictEqual(JSON.parse(retained()[topic("state")]).last_event, "presence_detected");
+    assert.ok(!wrap.all("wap-mqtt-ev").some((r) => r.children[0].textContent === topic("events")), "the offline event is not replayed");
+  }));
 });
 
 test("a stall drops the count with the link, as mr60_presence.cpp does", async () => {
