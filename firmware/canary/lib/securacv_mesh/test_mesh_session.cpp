@@ -352,9 +352,15 @@ void test_cancel_pairing_fires_failed_callback() {
   reset_world();
   assert(mesh_session::start_pairing_joiner(100));
   g_failed_fired = false;
+  g_failed_fp.assign(8, 0xEE);
   mesh_session::cancel_pairing();
   assert(g_failed_fired);
   assert(mesh_session::pairing_state() == mesh_pairing::State::FAILED);
+  /* F118's FailedCallback: the reason, and no partner — no DISCOVER or
+   * OFFER named one yet, so the fingerprint is nullptr, not a fingerprint
+   * of an all-zero key or of whatever the stack held. */
+  assert(g_failed_why == mesh_pairing::FailReason::CANCELED);
+  assert(g_failed_fp.empty());
   std::printf("PASS test_cancel_pairing_fires_failed_callback\n");
 }
 
@@ -4466,6 +4472,39 @@ void test_boot_restore_binds_neither_member_of_a_shared_address() {
   std::printf("PASS test_boot_restore_binds_neither_member_of_a_shared_address\n");
 }
 
+/* The fourth verdict. A member's entry that bind_peer_mac refuses on its
+ * own (here a broadcast address; or no room in the transport table) is
+ * REFUSED: not bound, not counted, and kept in NVS, as before F119/F120 —
+ * stored_mac_must_drop keeps it, so only SHARED and UNTRUSTED entries go. */
+void test_boot_restore_keeps_a_refused_entry() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x21 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  reset_fake_main_nvs();
+  const uint8_t bc[6]    = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+  const uint8_t mac_c[6] = {0x24, 0x0A, 0xC4, 0x21, 0x00, 0x0C};
+  uint8_t m_pub[32], m_priv[32], m_fp[8], c_pub[32], c_priv[32], c_fp[8];
+  assert(mesh_crypto::ed25519_generate_keypair(m_pub, m_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(c_pub, c_priv));
+  mesh_crypto::compute_fingerprint(m_pub, m_fp);
+  mesh_crypto::compute_fingerprint(c_pub, c_fp);
+  g_nvs_pubs.emplace_back(m_pub, m_pub + 32);
+  g_nvs_pubs.emplace_back(c_pub, c_pub + 32);
+  raw_blob_entry(m_fp, bc);
+  raw_blob_entry(c_fp, mac_c);
+  const size_t len_before = g_nvs_macs_len;
+
+  size_t bound = 99;
+  std::vector<mesh_session::StoredMacVerdict> v = main_like_boot(pub, priv, S, true, &bound);
+  assert(v.size() == 2 && bound == 1);
+  assert(v[0] == mesh_session::StoredMacVerdict::REFUSED);
+  assert(v[1] == mesh_session::StoredMacVerdict::BOUND);
+  assert(g_nvs_macs_len == len_before);              /* both kept */
+  assert(heard_from(c_pub, c_priv, S, 1, mac_c));
+  std::printf("PASS test_boot_restore_keeps_a_refused_entry\n");
+}
+
 /* F120. A member removed while its peer_macs entry stayed (the NVS removal
  * is best effort): its pubkey is gone from NVS, its entry is not. The
  * restore binds nothing for it (UNTRUSTED) and the entry is dropped; an
@@ -6211,6 +6250,7 @@ int main() {
   test_stored_mac_must_drop_truth_table();
   test_boot_restore_binds_neither_member_of_a_shared_address();
   test_boot_restore_drops_entries_of_peers_no_longer_trusted();
+  test_boot_restore_keeps_a_refused_entry();
   /* F70 */
   test_pair_contact_replay_records_nothing_and_gets_no_accept();
   test_copied_member_address_moves_no_link();
