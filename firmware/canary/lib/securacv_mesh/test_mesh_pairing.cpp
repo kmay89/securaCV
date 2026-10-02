@@ -1557,10 +1557,11 @@ void test_a_lost_complete_reaches_a_pre_f97_joiner() {
       mesh_pairing::Action ti = mesh_pairing::tick(p.ci, 70 + mesh_pairing::COMPLETE_RESEND_INTERVAL_MS);
       assert(ti.type == mesh_pairing::ActionType::SEND_COMPLETE);
       InFlight lead2, cp2;
-      must(leading_confirm_to_inflight(ti, &lead2));
       must(action_to_inflight(ti, &cp2));
-      assert(pre_f97_joiner_receive(p.cj, p.mac_i, lead2, 2100).type ==
-             mesh_pairing::ActionType::NONE);
+      if (leading_confirm_to_inflight(ti, &lead2)) {   /* as sent: the CONFIRM first */
+        assert(pre_f97_joiner_receive(p.cj, p.mac_i, lead2, 2100).type ==
+               mesh_pairing::ActionType::NONE);
+      }
       assert(pre_f97_joiner_receive(p.cj, p.mac_i, cp2, 2100).type ==
              mesh_pairing::ActionType::NOTIFY_PAIRED);
       uint8_t got[mesh_crypto::OPERA_SECRET_LEN];

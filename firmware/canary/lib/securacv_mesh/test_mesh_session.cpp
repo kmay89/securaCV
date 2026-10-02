@@ -5544,6 +5544,239 @@ size_t sends_to_mark() {
   return (size_t)(g_nvs_ctr - mesh_session::outbound_counter());
 }
 
+/* ── F134 — the initiator sends a lost COMPLETE again ────────────────────
+ *
+ * mesh_pairing keeps the frames it sent and its tick sends them again every
+ * 2 s; the session ends the copies when the member is heard, when it is no
+ * longer a member bound where it paired from, and when this device no
+ * longer holds the opera the COMPLETE carried. */
+
+/* This session as the INITIATOR at loop time T0, the joiner's owner first,
+ * its own owner's confirm through the REST slot at T0 + 10: the CONFIRM
+ * and the COMPLETE go to mac_j and NOTIFY_PAIRED runs in the same pass.
+ * Returns those two frames; nothing is delivered to the joiner. */
+std::vector<std::vector<uint8_t>> initiator_completes(const uint8_t S[32], const uint8_t me[6],
+                                                      const uint8_t mac_j[6],
+                                                      const uint8_t j_pub[32],
+                                                      const uint8_t j_priv[32], uint32_t T0,
+                                                      mesh_pairing::PairingContext& cj) {
+  mesh_session::process(T0);
+  initiator_to_code(S, me, mac_j, j_pub, j_priv, T0, cj);
+  mesh_pairing::Action a = mesh_pairing::confirm_code(cj, T0 + 5);
+  const std::vector<uint8_t> conf_j = wire(a);
+  mesh_transport::test::inject_recv(mac_j, conf_j.data(), conf_j.size(), -40);
+  mesh_transport::process();
+  g_outs.clear();
+  assert(rest_confirm(T0 + 10) == mesh_session::RequestStatus::OK);
+  assert(g_paired_fired);
+  std::vector<std::vector<uint8_t>> sent;
+  for (const auto& o : g_outs) {
+    assert(std::memcmp(o.mac, mac_j, 6) == 0);
+    sent.push_back(o.bytes);
+  }
+  assert(sent.size() == 2);
+  assert(sent[0][0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_CONFIRM));
+  assert(sent[1][0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_COMPLETE));
+  g_outs.clear();
+  return sent;
+}
+
+/* Through the session, both frames of the COMPLETE lost: nothing goes to
+ * the joiner for 2 s, then exactly the same two frames, to it alone; the
+ * joiner opens the copy. The copies go on (nothing heard it yet: this tree
+ * sends nothing on a timer), a verified frame from another member does not
+ * end them, and the joiner's own first verified frame does: nothing more
+ * for the rest of the window. Fails on the code before F134 (no copy), and
+ * with the heard check removed from on_opera_frame (copies to the window's
+ * end). */
+void test_a_lost_complete_is_sent_again_through_the_session() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x34 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  reset_fake_main_nvs();
+  mesh_session::set_paired_callback(main_like_paired);
+  mesh_session::set_paired_peer_bound_callback(main_like_bound);
+  mesh_session::set_tamper_alert_handler(on_alert_rx);
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x13, 0x40, 0x01};
+  const uint8_t mac_j[6] = {0x24, 0x0A, 0xC4, 0x13, 0x40, 0x02};
+  const uint8_t mac_k[6] = {0x24, 0x0A, 0xC4, 0x13, 0x40, 0x0B};
+  uint8_t k_pub[32], k_priv[32], k_fp[8];
+  assert(mesh_crypto::ed25519_generate_keypair(k_pub, k_priv));
+  assert(mesh_session::register_trusted_peer(k_pub));
+  mesh_crypto::compute_fingerprint(k_pub, k_fp);
+  assert(mesh_session::bind_peer_mac(k_fp, mac_k));
+  uint8_t j_pub[32], j_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+  mesh_pairing::PairingContext cj;
+  const uint32_t T0 = 200000, T = T0 + 10;
+  const auto first = initiator_completes(S, me, mac_j, j_pub, j_priv, T0, cj);
+  assert(cj.state == mesh_pairing::State::AWAITING_CONFIRM_PEER);   /* got nothing */
+
+  for (uint32_t t = T; t < T + mesh_pairing::COMPLETE_RESEND_INTERVAL_MS; t += 100) {
+    mesh_session::process(t);
+  }
+  assert(g_outs.empty());
+  mesh_session::process(T + mesh_pairing::COMPLETE_RESEND_INTERVAL_MS);
+  assert(g_outs.size() == 2 && sent_to(mac_j) == 2);
+  assert(g_outs[0].bytes == first[0] && g_outs[1].bytes == first[1]);
+  mesh_pairing::Action a;
+  feed_pure(cj, me, g_outs[0].bytes, T + 2000, &a);
+  feed_pure(cj, me, g_outs[1].bytes, T + 2000, &a);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+  uint8_t got[32];
+  assert(mesh_pairing::consume_opera_secret(cj, got));
+  assert(std::memcmp(got, S, sizeof(S)) == 0);
+
+  /* Not heard yet: the next copy comes. Another member's frame changes
+   * nothing. */
+  g_outs.clear();
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
+  size_t n = build_alert_frame(k_pub, k_priv, S, 1, mesh_alert::Kind::TEMP_DRIFT, 3, 7,
+                               frame, sizeof(frame));
+  mesh_transport::test::inject_recv(mac_k, frame, n, -40);
+  mesh_transport::process();
+  assert(g_alerts_rx.size() == 1);
+  mesh_session::process(T + 2 * mesh_pairing::COMPLETE_RESEND_INTERVAL_MS);
+  assert(sent_to(mac_j) == 2);
+
+  /* The joiner's first frame: no more copies, to the window's end. */
+  n = build_alert_frame(j_pub, j_priv, S, 1, mesh_alert::Kind::TEMP_DRIFT, 3, 8,
+                        frame, sizeof(frame));
+  mesh_transport::test::inject_recv(mac_j, frame, n, -40);
+  mesh_transport::process();
+  assert(g_alerts_rx.size() == 2);
+  g_outs.clear();
+  for (uint32_t t = T + 4100; t < T + mesh_pairing::COMPLETE_RESEND_WINDOW_MS + 5000; t += 500) {
+    mesh_session::process(t);
+  }
+  assert(g_outs.empty());
+  assert(mesh_session::pairing_state() == mesh_pairing::State::PAIRED);
+  assert(g_failed_count == 0 && g_bound_calls.size() == 1);
+  std::printf("PASS test_a_lost_complete_is_sent_again_through_the_session\n");
+}
+
+/* The copies end, with no copy sent, as soon as they can no longer help:
+ *   0  control — nothing changes, and a copy goes out at 2 s;
+ *   1  the member is removed (unregistered: a LEAVE, a removal, a rotation
+ *      that dropped it all end that way);
+ *   2  this device leaves the opera (REST LEAVE);
+ *   3  the opera's secret changes (a rotation's commit installs a new one);
+ *   4  the member's bind failed (its PairedCallback registered nothing);
+ *   5  a new pairing starts (its own frames only);
+ *   6  nobody hears it: (WINDOW - 1) / INTERVAL copies, then none;
+ *   7  the member is bound at another address since (the copies would go
+ *      where it no longer is).
+ * Fails on the code before F134 (no copy in case 0), and with the session's
+ * check removed (cases 1-4 send copies). */
+void test_complete_copies_stop_when_they_can_no_longer_help() {
+  uint8_t S[32], S2[32];
+  for (size_t i = 0; i < sizeof(S); ++i) { S[i] = (uint8_t)(0x44 + i); S2[i] = (uint8_t)(0x54 + i); }
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x13, 0x41, 0x01};
+  const uint8_t mac_j[6] = {0x24, 0x0A, 0xC4, 0x13, 0x41, 0x02};
+  const uint8_t mac_m[6] = {0x24, 0x0A, 0xC4, 0x13, 0x41, 0x0E};
+  for (int c = 0; c <= 7; ++c) {
+    uint8_t pub[32], priv[32];
+    stand_up_session(S, pub, priv);
+    reset_fake_main_nvs();
+    mesh_session::set_paired_callback(c == 4 ? main_like_paired_unregistered : main_like_paired);
+    mesh_session::set_paired_peer_bound_callback(main_like_bound);
+    uint8_t j_pub[32], j_priv[32], j_fp[8];
+    assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+    mesh_crypto::compute_fingerprint(j_pub, j_fp);
+    mesh_pairing::PairingContext cj;
+    const uint32_t T0 = 300000, T = T0 + 10;
+    initiator_completes(S, me, mac_j, j_pub, j_priv, T0, cj);
+    switch (c) {
+      case 1: assert(mesh_session::unregister_trusted_peer(j_fp)); break;
+      case 2: {
+        assert(mesh_session::submit_request(make_request(mesh_session::RequestType::LEAVE)));
+        mesh_session::process(T + 100);
+        mesh_session::RequestResult res;
+        assert(mesh_session::take_request_result(&res));
+        assert(res.status == mesh_session::RequestStatus::OK);
+        break;
+      }
+      case 3: assert(mesh_session::set_opera_secret(S2)); break;
+      case 4: assert(g_bound_calls.size() == 1 && !g_bound_calls[0].bound); break;
+      case 5: assert(mesh_session::start_pairing_joiner(T + 100)); break;
+      case 7: assert(mesh_session::bind_peer_mac(j_fp, mac_m)); break;
+      default: break;
+    }
+    g_outs.clear();
+    size_t copies = 0;
+    const uint32_t until = c == 6 ? T + mesh_pairing::COMPLETE_RESEND_WINDOW_MS + 10000
+                                  : T + 3 * mesh_pairing::COMPLETE_RESEND_INTERVAL_MS + 50;
+    for (uint32_t t = T + 200; t < until; t += 100) {
+      mesh_transport::test::set_now_ms(t);   /* the storm limiter's clock (100 sends/s) */
+      mesh_session::process(t);
+    }
+    for (const auto& o : g_outs) {
+      if (std::memcmp(o.mac, mac_j, 6) == 0 &&
+          o.bytes[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_COMPLETE)) {
+        ++copies;
+      }
+    }
+    if (c == 0) {
+      assert(copies == 3 && sent_to(mac_j) == 6);
+    } else if (c == 6) {
+      assert(copies == (mesh_pairing::COMPLETE_RESEND_WINDOW_MS - 1) /
+                       mesh_pairing::COMPLETE_RESEND_INTERVAL_MS);
+    } else {
+      assert(sent_to(mac_j) == 0);
+      if (c == 5) {   /* the new pairing's DISCOVER, nothing else */
+        assert(mesh_session::pairing_state() == mesh_pairing::State::DISCOVERING_JOINER);
+      } else {
+        assert(mesh_session::pairing_state() == mesh_pairing::State::PAIRED);
+      }
+    }
+  }
+  std::printf("PASS test_complete_copies_stop_when_they_can_no_longer_help"
+              "  (removed, left, rotated, unbound, new pairing, window, moved)\n");
+}
+
+/* As the JOINER: copies of the COMPLETE reaching a session already PAIRED
+ * do nothing — no second PairedCallback or bind, nothing sent, no failure. */
+void test_complete_copies_reaching_a_paired_joiner_do_nothing() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x64 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(nullptr, pub, priv);
+  reset_fake_main_nvs();
+  mesh_session::set_paired_callback(main_like_paired);
+  mesh_session::set_paired_peer_bound_callback(main_like_bound);
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x13, 0x42, 0x01};
+  const uint8_t mac_i[6] = {0x24, 0x0A, 0xC4, 0x13, 0x42, 0x02};
+  uint8_t i_pub[32], i_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(i_pub, i_priv));
+  mesh_pairing::PairingContext ci;
+  mesh_pairing::context_init(ci);
+  mesh_pairing::Action a = mesh_pairing::start_initiator(ci, i_pub, i_priv, S, "Home", 10);
+  assert(mesh_session::start_pairing_joiner(20));
+  feed_pure(ci, me, last_to((const uint8_t[6]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}), 30, &a);
+  const std::vector<uint8_t> offer = wire(a);
+  mesh_transport::test::inject_recv(mac_i, offer.data(), offer.size(), -40);
+  mesh_transport::process();
+  feed_pure(ci, me, last_to(mac_i), 40, &a);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_CODE_READY);
+  assert(mesh_session::confirm_pairing_code(50));
+  feed_pure(ci, me, last_to(mac_i), 60, &a);
+  a = mesh_pairing::confirm_code(ci, 70);
+  assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
+  inject_all(mac_i, wire_all(a));
+  assert(g_paired_fired && g_paired_with_secret && g_bound_calls.size() == 1);
+  g_outs.clear();
+  for (uint32_t t = 2070; t < 12070; t += 2000) {
+    mesh_session::process(t);
+    mesh_pairing::Action copy = mesh_pairing::tick(ci, t);
+    if (copy.type == mesh_pairing::ActionType::SEND_COMPLETE) inject_all(mac_i, wire_all(copy));
+  }
+  assert(ci.complete_copies >= 4);
+  assert(g_outs.empty() && g_bound_calls.size() == 1 && g_failed_count == 0);
+  assert(mesh_session::pairing_state() == mesh_pairing::State::PAIRED);
+  std::printf("PASS test_complete_copies_reaching_a_paired_joiner_do_nothing\n");
+}
+
 /* ── F135 — a cancel leaves an ended pairing alone ───────────────────────
  *
  * The REST pair/cancel runs at the start of process(), before the pairing
@@ -6375,6 +6608,10 @@ int main() {
   test_a_partner_the_initiator_cannot_hold_fails_the_pairing();
   test_the_initiator_asks_again_before_it_seals();
   test_a_joiner_that_cannot_hold_its_initiator_fails_the_pairing();
+  /* F134 — the initiator sends a lost COMPLETE again. */
+  test_a_lost_complete_is_sent_again_through_the_session();
+  test_complete_copies_stop_when_they_can_no_longer_help();
+  test_complete_copies_reaching_a_paired_joiner_do_nothing();
   /* F135 — a cancel leaves an ended pairing alone. */
   test_a_cancel_after_the_complete_still_reports_paired();
   test_a_cancel_on_a_failed_pairing_fires_nothing_again();

@@ -134,6 +134,18 @@ static TrustedPeer s_trusted_peers[MAX_TRUSTED_PEERS];
 static uint8_t s_pair_contact_mac[mesh_transport::MESH_TRANSPORT_MAC_LEN];
 static bool    s_pair_contact_added = false;
 
+/* F134: what the initiator's COMPLETE copies (mesh_pairing) belong to: the
+ * opera the pairing sealed (its id, from the secret start_pairing_initiator
+ * was given) and the member it completed with (its fingerprint, recorded
+ * when NOTIFY_PAIRED is dispatched). The copies go on only while that
+ * member is trusted and bound at the address it paired from and this
+ * device still holds that opera (end_complete_copies_unless_wanted), and
+ * they end once the member is heard (on_opera_frame). */
+static uint8_t s_copies_opera_id[mesh_crypto::OPERA_ID_LEN];
+static bool    s_copies_opera_id_set = false;
+static uint8_t s_copies_member_fp[mesh_crypto::FINGERPRINT_LEN];
+static bool    s_copies_member_set = false;
+
 /* Replay tombstones (review fix). A peer that leaves or is removed used to
  * take its last_counter with it; re-registering the same device into the
  * same, un-rotated opera restarted the counter at 0, so every frame it had
@@ -365,6 +377,11 @@ static void dispatch_action(const mesh_pairing::Action& a) {
       memcpy(member_mac, s_ctx.peer_mac, sizeof(member_mac));
       const bool bound = end_pair_contact(/*paired=*/true);
       if (s_paired_bound_cb) s_paired_bound_cb(member_fp, member_mac, bound);
+      /* F134: an initiator's COMPLETE copies are for this member. */
+      if (mesh_pairing::complete_resend_running(s_ctx)) {
+        memcpy(s_copies_member_fp, member_fp, sizeof(s_copies_member_fp));
+        s_copies_member_set = true;
+      }
       break;
     }
     case mesh_pairing::ActionType::NOTIFY_FAILED: {
@@ -518,6 +535,36 @@ static bool pairing_in_progress() {
     default:
       return true;
   }
+}
+
+/* F134: forget what the COMPLETE copies belonged to (a new pairing, deinit). */
+static void forget_complete_copies_owner() {
+  s_copies_opera_id_set = false;
+  s_copies_member_set   = false;
+  memset(s_copies_opera_id, 0, sizeof(s_copies_opera_id));
+  memset(s_copies_member_fp, 0, sizeof(s_copies_member_fp));
+}
+
+/* F134: the initiator's COMPLETE copies go on only while they can still do
+ * what they are for: the member the pairing completed with is trusted and
+ * bound at the address it paired from (the copies go there; a member that
+ * left, was removed or rotated out, or whose bind failed, is owed nothing),
+ * and this device still holds the opera whose secret the COMPLETE carries
+ * (not left, not rotated: a copy would hand over a retired secret). Called
+ * by process() before the pairing tick, which is what sends a copy; the
+ * NOTIFY_PAIRED that tick reports first registers and binds the member, so
+ * nothing is judged before it. canary-wap's F100 copies stop on the same
+ * conditions. */
+static void end_complete_copies_unless_wanted() {
+  if (!mesh_pairing::complete_resend_running(s_ctx)) return;
+  if (s_ctx.pending_notify_paired) return;
+  const TrustedPeer* m = s_copies_member_set ? find_trusted_peer(s_copies_member_fp) : nullptr;
+  const bool wanted =
+      m != nullptr && m->radio_mac_set &&
+      memcmp(m->radio_mac, s_ctx.peer_mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) == 0 &&
+      s_opera_id_set && s_copies_opera_id_set &&
+      mesh_crypto::ct_equal(s_opera_id, s_copies_opera_id, mesh_crypto::OPERA_ID_LEN);
+  if (!wanted) mesh_pairing::stop_complete_resend(s_ctx);
 }
 
 static void reset_alerts() {
@@ -941,6 +988,17 @@ static void on_opera_frame(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_
    * address: only pairing and the boot restore bind one. */
   peer->heard = true;
 
+  /* F134: the member this device's COMPLETE copies are for is heard. It
+   * signed a fresh frame under this opera, so it holds the opera_secret:
+   * no more copies. (Nothing on the wire acknowledges a COMPLETE, and this
+   * tree's members send nothing on a timer, so until it sends something
+   * the copies run to the end of their window.) */
+  if (s_copies_member_set && mesh_pairing::complete_resend_running(s_ctx) &&
+      mesh_crypto::ct_equal(peer->sender_fp, s_copies_member_fp,
+                            mesh_crypto::FINGERPRINT_LEN)) {
+    mesh_pairing::stop_complete_resend(s_ctx);
+  }
+
   /* Step 7: dispatch by envelope msg_type. */
   dispatch_verified(*peer, hdr, payload, payload_len);
 }
@@ -1070,6 +1128,7 @@ void deinit() {
   mesh_pairing::context_init(s_ctx);   /* wipes ephem/session/secret */
   s_pair_contact_added = false;
   memset(s_pair_contact_mac, 0, sizeof(s_pair_contact_mac));
+  forget_complete_copies_owner();
   secure_zero(s_device_priv, sizeof(s_device_priv));
   s_paired_cb = nullptr;
   s_failed_cb = nullptr;
@@ -1178,6 +1237,13 @@ bool start_pairing_initiator(const uint8_t opera_secret[mesh_crypto::OPERA_SECRE
                                     opera_secret, opera_name, now_ms,
                                     &can_hold_partner);   /* F118 */
   if (a.type == mesh_pairing::ActionType::NONE) return false;
+  /* F134: the opera this pairing's COMPLETE (and its copies) will carry;
+   * the previous pairing's copies ended with its context. */
+  forget_complete_copies_owner();
+  if (opera_secret != nullptr) {
+    mesh_crypto::compute_opera_id(opera_secret, s_copies_opera_id);
+    s_copies_opera_id_set = true;
+  }
   /* Cache the opera display name for GET /api/mesh. The initiator knows
    * it up front (it's the existing opera's name); the joiner learns it
    * from the OFFER and caches it on NOTIFY_PAIRED. RAM copy only — see
@@ -1194,6 +1260,7 @@ bool start_pairing_joiner(uint32_t now_ms) {
       mesh_pairing::start_joiner(s_ctx, s_device_pub, s_device_priv, now_ms,
                                  &can_hold_partner);   /* F118 */
   if (a.type == mesh_pairing::ActionType::NONE) return false;
+  forget_complete_copies_owner();   /* F134: a joiner sends no copies */
   dispatch_action(a);
   return true;
 }
@@ -1297,6 +1364,7 @@ void process(uint32_t now_ms) {
   drain_request(now_ms);
   if (!s_running) return;
   mesh_revocation::expire(s_revoked, now_ms);
+  end_complete_copies_unless_wanted();   /* F134: before the tick sends one */
   mesh_pairing::Action a = mesh_pairing::tick(s_ctx, now_ms);
   dispatch_action(a);
   /* Rotation driver: the SECRETs held through the settle window (one per
