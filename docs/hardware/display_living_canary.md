@@ -118,14 +118,22 @@ watch's disc. A canvas too short to hold that seat with the bird's highest
 hop — the nightlight's 320x180 landscape, which a saved rotation boots into
 — drops the bird just enough to keep the hop on the glass, and the bubble
 then hangs from just under the bird instead of the center (F88). Every other
-canvas draws as it always did. `tests_host/test_splash_layout.cpp` holds the
-header's seats, the bird over its highest hop and the tallest bubble, on
-every canvas the splash runs on; `tests_host/test_splash_scenes.cpp` holds
-`splash.cpp` to them, compiling it against the host tests' fake LVGL and
-playing both splashes on the same canvases to read where the bird and the
-bubble land. Not held, only printed: on the AMOLED the centered bubble's
-tallest form reaches into the bird's box, and on the 172 and 180 px wide
-portrait glass the 196 px bubble is wider than the canvas.
+canvas draws as it always did. The bubble is as wide as the glass family
+asks (196 px on small glass), and no wider than the canvas less 4 px a
+side: on the 172 and 180 px wide portrait glass it is 164 and 172 px, so its
+border and rounded corners are on the glass (F160). Its tail, the small
+turned square under the bird, is aligned again whenever the typed line
+changes, so it stays on the bubble's top edge as a centered bubble grows
+both ways (F158). `tests_host/test_splash_layout.cpp` holds the header's
+seats, the bird over its highest hop and the tallest bubble at the width
+each canvas gives it, on every canvas the splash runs on;
+`tests_host/test_splash_scenes.cpp` holds `splash.cpp` to them, compiling it
+against the host tests' fake LVGL and playing both splashes on the same
+canvases to read where the bird, the bubble and its tail land. Not held,
+only printed: on the AMOLED the centered bubble's tallest form reaches into
+the bird's box, and so, by more since the bubble narrowed, does the 172 px
+glass's under Heirloom with a wide-lettered pseudonym (a 112 px bubble, 15
+px into the box).
 
 ## The performance engine (`firmware/common/story/` — pure, host-tested)
 
