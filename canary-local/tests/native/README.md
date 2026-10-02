@@ -88,8 +88,10 @@ that dies, answers twice or hangs fails its call (a hung core is also killed).
 
 CI runs both. `canary-local.yml`'s page logic job runs the three tests on
 the committed dist, then again with `LAB_CORES=native`. Its runner has g++
-and needs no emsdk. If the native run passes and the dist run fails after a
-core change, the sources are right and the dist is stale.
+and needs no emsdk. The native step runs whenever the dist step ran, even
+when the dist step failed (its `if:`), so after a core change you see both
+answers: native green and dist red means the sources are right and the dist
+is stale.
 
 ## Which tests drive a dist core
 
