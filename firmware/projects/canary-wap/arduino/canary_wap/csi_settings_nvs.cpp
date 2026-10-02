@@ -213,12 +213,21 @@ bool store_presence_from_settings(Preferences& prefs, const char* body) {
   return stored;
 }
 
+PresenceThresholds presence_threshold_defaults(void) {
+  PresenceThresholds t;
+  t.motion    = 35;
+  t.active    = 75;
+  t.breathing = 30;
+  return t;
+}
+
 PresenceThresholds read_presence_thresholds(Preferences& prefs) {
   using csi_module_settings_nvs::nvs_key_for;
+  const PresenceThresholds d = presence_threshold_defaults();
   PresenceThresholds t;
-  t.motion    = prefs.getInt(nvs_key_for("core.presence.motion_threshold"), 35);
-  t.active    = prefs.getInt(nvs_key_for("core.presence.active_threshold"), 75);
-  t.breathing = prefs.getInt(nvs_key_for("core.presence.breathing_threshold"), 30);
+  t.motion    = prefs.getInt(nvs_key_for("core.presence.motion_threshold"), d.motion);
+  t.active    = prefs.getInt(nvs_key_for("core.presence.active_threshold"), d.active);
+  t.breathing = prefs.getInt(nvs_key_for("core.presence.breathing_threshold"), d.breathing);
   return t;
 }
 

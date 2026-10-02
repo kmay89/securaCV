@@ -110,8 +110,14 @@ struct PresenceThresholds {
   int32_t breathing;
 };
 
-/** The stored direct thresholds, each absent row the balanced 35 / 75 / 30
- *  the calibration's status has always shown for it. */
+/** The balanced 35 / 75 / 30 the calibration's status has always shown for
+ *  a threshold nothing stored: read_presence_thresholds()'s default for an
+ *  absent row, and the status's whole answer when NVS does not open (as on
+ *  a first boot after an erase, sweep F150), so the two cannot differ. */
+PresenceThresholds presence_threshold_defaults(void);
+
+/** The stored direct thresholds, each absent row its
+ *  presence_threshold_defaults() value. */
 PresenceThresholds read_presence_thresholds(Preferences& prefs);
 
 /** Store a calibration's thresholds. `prefs` is open read-write on the "csi"

@@ -923,8 +923,9 @@ esp_err_t handle_calibrate_status(httpd_req_t* req) {
    * reboots). */
   Preferences prefs;
   bool prefs_ok = csi_module_settings_nvs::begin_read_only(prefs);
-  /* Through the key map, the rows core.presence reads (sweep F151). */
-  PresenceThresholds current = {35, 75, 30};
+  /* Through the key map, the rows core.presence reads (sweep F151); with
+   * NVS not open, the reader's own defaults. */
+  PresenceThresholds current = presence_threshold_defaults();
   if (prefs_ok) {
     current = read_presence_thresholds(prefs);
     prefs.end();
@@ -991,9 +992,10 @@ esp_err_t handle_calibrate_apply(httpd_req_t* req) {
   }
   /* Stored by the key map, on the rows core.presence's init() reads
    * (store_presence_thresholds(), sweep F151). */
-  const PresenceThresholds proposed = {(int32_t)g_calibration.proposed_motion,
-                                       (int32_t)g_calibration.proposed_active,
-                                       (int32_t)g_calibration.proposed_breathing};
+  PresenceThresholds proposed;
+  proposed.motion    = (int32_t)g_calibration.proposed_motion;
+  proposed.active    = (int32_t)g_calibration.proposed_active;
+  proposed.breathing = (int32_t)g_calibration.proposed_breathing;
   (void)store_presence_thresholds(prefs, proposed);
   prefs.end();
 
