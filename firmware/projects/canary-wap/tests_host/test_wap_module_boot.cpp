@@ -25,8 +25,11 @@
 // ble.scout) have empty init() bodies, which it also reads.
 //
 // Each test of a stored setting fails with csi_module_init_all() made a
-// no-op (the canary-wap before F93, which ran no init at boot); the commit
-// test and the source pin pass there too, and guard the new boot path.
+// no-op (the canary-wap before F93, which ran no init at boot); the
+// missing-namespace test, the commit test and the source pin pass there
+// too, and guard the new boot path. The once-per-boot and
+// missing-namespace tests fail with the boot init handing
+// csi_module_init_all() no session (a handle per setting).
 //
 // Build/run: make -C firmware/projects/canary-wap/tests_host
 

@@ -8,8 +8,9 @@
 // canary ever called a module's init(), so its csi_module_settings_*
 // overrides were never read: a stored preset, threshold, pet mode or
 // anomaly cooldown changed nothing. Now securacv_csi_modules_init() runs
-// csi_module_init_all() after it registers the modules, and the library
-// ticks no module before its init.
+// init_modules_from_nvs() after it registers the modules: every module's
+// init(), once, through csi_module_init_all() and one read-only NVS handle
+// for the whole boot. The library ticks no module before its init.
 //
 // A "boot" here is what main.cpp's setup() does for the CSI pipeline, in
 // its order: RAM state gone, NVS kept; csi_event_egress_begin() restores the
@@ -17,11 +18,12 @@
 // securacv_csi_modules_init(). main.cpp itself is CI's to compile;
 // check_event_egress_order.py (rule 8) holds it to that order.
 //
-// Each test of a stored setting fails with the bridge's
-// csi_module_init_all() call removed (the canary before F93), and the
-// library test fails with csi_module_tick_all() ticking a module before its
-// init. The commit test passes on the old bridge too (it ran no init at
-// all); it guards the new boot path.
+// Against the canary before F93 (no boot init, a tick for every registered
+// module) every test fails but two: the commit test (the old bridge ran no
+// init, so nothing could commit there) and the key-map test, which guard
+// the new boot path. The once-per-boot and missing-namespace tests also
+// fail with the boot init handing csi_module_init_all() no session (a
+// handle per setting).
 //
 // Build/run: make -C firmware/tests_host (the CI "host tests" job).
 
