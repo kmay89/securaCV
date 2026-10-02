@@ -1168,6 +1168,10 @@ jobs:
           # against the uptime_ms of the JSON test_mesh_session pins, never
           # as a date (F33 part 7). node is setup-node's 22 (top of the job).
           node --test firmware/tests_host/test_canary_mesh_alerts.test.js
+          # Its pairing poll (F133): a failed pairing is reported as failed,
+          # never as complete, from the pairing_seq / pairing_result /
+          # pairing_fail_reason fields test_mesh_session pins.
+          node --test firmware/tests_host/test_canary_mesh_pairing_poll.test.js
 
           # ble_scan + ble_scout_state — pure-logic, only link
           # ble_scan.cpp / ble_scout_state.cpp from the lib, plus

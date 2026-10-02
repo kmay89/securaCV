@@ -5275,6 +5275,12 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     let operaState = null;
     let pairingPollingInterval = null;
+    // The pairing this page started (F133): its number from the POST
+    // pair/start or pair/join answer, which side this Canary plays, and
+    // whether this page's owner has confirmed the code.
+    let pairingSeq = null;
+    let pairingMode = null;
+    let pairingConfirmed = false;
 
     async function refreshOpera() {
       const data = await api('/api/mesh');
@@ -5458,6 +5464,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         return;
       }
 
+      pairingSeq = Number.isInteger(data.pairing_seq) ? data.pairing_seq : null;
+      pairingMode = mode;
+      pairingConfirmed = false;
       document.getElementById('operaNoOpera').style.display = 'none';
       document.getElementById('operaHasOpera').style.display = 'none';
       document.getElementById('operaPairing').style.display = 'block';
@@ -5470,6 +5479,53 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       startPairingPolling();
     }
 
+    // What GET /api/mesh says became of the pairing this page started
+    // (F133): 'code' (show the 6 digits), 'waiting', 'paired', 'failed', or
+    // 'ended' (not this page's pairing any more: another one started, or
+    // the Canary restarted). The state alone cannot tell: a Canary already
+    // in an opera is ACTIVE or CONNECTING after a failed pairing exactly as
+    // after a finished one, and the page used to call both "complete".
+    // pairing_result and pairing_seq say which; without them (firmware
+    // before F133) this claims neither a success nor a failure.
+    function pairingVerdict(data, mySeq) {
+      const pairing = typeof data.state === 'string' && data.state.startsWith('PAIRING');
+      // 000000 is a code like any other: test for a number, not a truthy one.
+      const code = data.state === 'PAIRING_CONFIRM' && Number.isInteger(data.pairing_code);
+      if (typeof data.pairing_result !== 'string' || !Number.isInteger(data.pairing_seq)) {
+        if (code) return 'code';
+        return pairing ? 'waiting' : 'ended';
+      }
+      if (mySeq !== null && data.pairing_seq !== mySeq) return 'ended';
+      if (data.pairing_result === 'paired') return 'paired';
+      if (data.pairing_result === 'failed') return 'failed';
+      if (data.pairing_result === 'none') return 'ended';
+      return code ? 'code' : 'waiting';
+    }
+
+    // Why a pairing failed, in words (GET /api/mesh pairing_fail_reason,
+    // and the confirm's 409 partner_refused).
+    function pairingFailText(reason) {
+      switch (reason) {
+        case 'timeout':
+          return 'it timed out before both Canaries confirmed the code (5 minutes).';
+        case 'canceled':
+          return 'it was canceled.';
+        case 'partner_refused':
+          return 'this Canary cannot take that device into its opera: the opera is full, ' +
+                 'another member already uses its radio address, or it was removed. ' +
+                 'The health log names it.';
+        case 'bad_confirm':
+          return 'the other device\'s confirmation did not match this one. Check that both ' +
+                 'screens show the same code, then try again.';
+        case 'bad_complete':
+          return 'the opera key from the other device could not be opened. Try again.';
+        case 'crypto':
+          return 'a pairing key could not be made. Try again.';
+        default:
+          return 'it ended (' + (reason || 'no reason given') + ').';
+      }
+    }
+
     function startPairingPolling() {
       if (pairingPollingInterval) clearInterval(pairingPollingInterval);
 
@@ -5477,23 +5533,38 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         const data = await api('/api/mesh');
         if (!data.ok) return;
 
-        if (data.state === 'PAIRING_CONFIRM' && data.pairing_code) {
-          // Show confirmation code
-          document.getElementById('pairingStatus').textContent = 'Verify the code matches on both devices:';
+        const verdict = pairingVerdict(data, pairingSeq);
+        if (verdict === 'code') {
           document.getElementById('pairingCodeValue').textContent = String(data.pairing_code).padStart(6, '0');
           document.getElementById('pairingCode').style.display = 'block';
-          document.getElementById('pairingConfirmBtn').style.display = 'inline-flex';
-        } else if (data.state === 'ACTIVE' || data.state === 'CONNECTING') {
-          // Pairing complete
-          stopPairingPolling();
-          refreshOpera();
-          if (data.state === 'ACTIVE') {
-            alert('Successfully joined opera!');
+          if (pairingConfirmed) {
+            // This owner confirmed; the other Canary's owner has not yet.
+            document.getElementById('pairingStatus').textContent =
+              'Confirmed here. Waiting for the other device to confirm...';
+            document.getElementById('pairingConfirmBtn').style.display = 'none';
+          } else {
+            document.getElementById('pairingStatus').textContent = 'Verify the code matches on both devices:';
+            document.getElementById('pairingConfirmBtn').style.display = 'inline-flex';
           }
-        } else if (data.state === 'NO_OPERA' || data.state === 'DISABLED') {
-          // Pairing canceled or failed
+        } else if (verdict === 'paired') {
           stopPairingPolling();
           refreshOpera();
+          // An initiator cannot hear that its COMPLETE arrived (nothing on
+          // the air acknowledges one; it sends copies for a while, F134),
+          // so it says what it knows.
+          alert(pairingMode === 'join' ? 'Joined the opera.' :
+                'Pairing complete on this Canary: it now trusts the new device. ' +
+                'Check that the other device shows it joined.');
+        } else if (verdict === 'failed') {
+          stopPairingPolling();
+          refreshOpera();
+          alert('Pairing did not complete: ' + pairingFailText(data.pairing_fail_reason));
+        } else if (verdict === 'ended') {
+          stopPairingPolling();
+          refreshOpera();
+          if (Number.isInteger(data.pairing_seq) && pairingSeq !== null) {
+            alert('This pairing ended: another pairing started on this Canary, or it restarted.');
+          }
         }
       }, 1000);
     }
@@ -5508,9 +5579,19 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function confirmPairing() {
       const data = await api('/api/mesh/pair/confirm', 'POST');
       if (!data.ok) {
+        if (data.error === 'partner_refused') {
+          // The confirm ended the pairing (F118): say so once, here.
+          stopPairingPolling();
+          refreshOpera();
+          alert('Pairing did not complete: ' + pairingFailText('partner_refused'));
+          return;
+        }
         alert('Pairing confirmation failed: ' + (data.error || 'Unknown error'));
+        return;
       }
-      document.getElementById('pairingStatus').textContent = 'Completing pairing...';
+      pairingConfirmed = true;
+      document.getElementById('pairingStatus').textContent =
+        'Confirmed here. Waiting for the other device to confirm...';
       document.getElementById('pairingConfirmBtn').style.display = 'none';
     }
 
