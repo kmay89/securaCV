@@ -1088,8 +1088,13 @@ peer table, the pairing session, the opera config and the alert history
 from the HTTP server's task while `update()` wrote them, so one response
 could mix two passes (a member's name read mid-shift after a removal, a
 pairing code read while a cancel wiped it). `update()` now publishes a view
-at the end of every pass (its early return included; `init()` publishes the
-first, since the HTTP server starts before it): the status, the opera's
+at the end of every pass (its early return included) and after each owner
+command it drains, before that command's result is posted (`run_command()`),
+and `init()` publishes the first, since the HTTP server starts before it.
+So a read right after a POST answers shows what the POST did, though the
+loop task may still be at the rest of that pass: the dashboard reloads the
+peer list right after a removal, and the opera panel right after a cancel,
+rename, enable or leave. The view holds the status, the opera's
 name and enabled flag, the pairing code while it is shown, and each member
 as the peer list shows it, with no key. `/api/mesh` and `/peers` read a
 whole copy of the last one; `/alerts` reads the alert history whole and

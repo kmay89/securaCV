@@ -419,7 +419,9 @@ MeshStatus get_status();
 // member's name read mid-shift after a removal, a pairing code read while
 // cancel_pairing() wipes it, an alert half overwritten. update() publishes
 // a StatusView at the end of every pass (an early return included) and
-// init() publishes the first; read_status() copies the last one whole, and
+// after each owner command it drains (before the command's handler answers,
+// so a read right after a POST shows what it did), and init() publishes the
+// first; read_status() copies the last one whole, and
 // read_alerts() copies the alert history whole, from one moment
 // (loop_snapshot.h). Neither waits for the loop task. Neither carries a
 // key: a PeerView is what the peer list shows, and the opera_secret and

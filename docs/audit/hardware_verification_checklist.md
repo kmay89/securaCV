@@ -658,7 +658,8 @@ are not something a host test can run. Compile is CI's. Owner: U1.
 ## canary-wap mesh status reads and membership (F110, F113, F116) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp`
-(`publish_view()` at the end of every `update()` pass, `read_status()` and
+(`publish_view()` at the end of every `update()` pass and after each owner
+command, `read_status()` and
 `read_alerts()` for the status routes through `loop_snapshot.h`;
 `persist_opera_config()` / `load_opera_config()` for a leave; `retire_rx()`
 and the `rx_tombs` NVS record for a re-added member) and the three status
@@ -673,9 +674,11 @@ handlers in `canary_wap.ino`. Host-tested (`tests_host/test_loop_snapshot.cpp`,
     and re-pair the other board; trigger a tamper alert on it a few times
     (open its case) and clear the alerts.
   - Expected: every page refresh answers (no `mesh_busy` or `mesh_timeout`
-    on a GET), the code shows while it is on screen and is gone once
-    canceled, the peer list and counts agree with each other on every
-    refresh, and the alert list shows each alert whole.
+    on a GET), the code shows while it is on screen and is gone as soon as
+    the cancel answers (not only at the next refresh), a removed member is
+    gone from the list the page reloads right after the removal, the peer
+    list and counts agree with each other on every refresh, and the alert
+    list shows each alert whole.
   - Artifact: `docs/audit/repro/F110/status-routes/`.
 - [ ] **A board that left its opera founds a new one after a reboot**
   - Setup: two paired boards.

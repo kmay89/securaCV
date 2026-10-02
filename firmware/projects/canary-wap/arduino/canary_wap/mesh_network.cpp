@@ -293,9 +293,10 @@ static loop_snapshot::Log<MeshAlert, MAX_ALERT_HISTORY, loop_command_ring::PortM
     g_alert_log;
 
 // What the status routes show (sweep F110): published by the loop task at
-// the end of every update() pass and by init() (publish_view), read whole by
-// read_status() from esp_http_server's task. About 0.8 KB of internal SRAM;
-// a pass that changed nothing it shows costs a compare, not a copy.
+// the end of every update() pass, after each owner command and by init()
+// (publish_view), read whole by read_status() from esp_http_server's task.
+// About 0.8 KB of internal SRAM; a pass that changed nothing it shows costs
+// a compare, not a copy.
 static loop_snapshot::Value<StatusView, loop_command_ring::PortMuxLock> g_status_view;
 
 // Callbacks
@@ -2142,41 +2143,59 @@ bool is_enabled() {
 }
 
 // One owner command, on the loop task (update()'s drain of g_commands).
+// It publishes the view before it returns, so before the drain posts its
+// result and the handler answers (sweep F110's review): the dashboard reads
+// GET /api/mesh or /peers right after a POST answers (removePeer() then
+// loadPeers(), refreshOpera() after cancel, rename, enable and leave), while
+// the loop task may still be at the rest of this pass (rx, the rekey's NVS
+// write, the heartbeat), and the read must show what the command did.
 static bool run_command(const Command& cmd) {
+  bool ok = false;
   switch (cmd.type) {
     case MESH_CMD_SET_ENABLED:
       set_enabled(cmd.flag);
-      return true;
+      ok = true;
+      break;
     case MESH_CMD_PAIR_START: {
       char name[MAX_OPERA_NAME_LEN + 1];
       memcpy(name, cmd.name, sizeof(name));
       name[MAX_OPERA_NAME_LEN] = '\0';
-      return start_pairing_initiator(cmd.flag ? name : nullptr);
+      ok = start_pairing_initiator(cmd.flag ? name : nullptr);
+      break;
     }
     case MESH_CMD_PAIR_JOIN:
-      return start_pairing_joiner();
+      ok = start_pairing_joiner();
+      break;
     case MESH_CMD_PAIR_CONFIRM:
-      return confirm_pairing();
+      ok = confirm_pairing();
+      break;
     case MESH_CMD_PAIR_CANCEL:
       cancel_pairing();
-      return true;
+      ok = true;
+      break;
     case MESH_CMD_LEAVE:
-      return leave_opera();
+      ok = leave_opera();
+      break;
     case MESH_CMD_REMOVE_PEER:
-      return remove_peer(cmd.fingerprint);
+      ok = remove_peer(cmd.fingerprint);
+      break;
     case MESH_CMD_RENAME: {
       char name[MAX_OPERA_NAME_LEN + 1];
       memcpy(name, cmd.name, sizeof(name));
       name[MAX_OPERA_NAME_LEN] = '\0';
-      return set_opera_name(name);
+      ok = set_opera_name(name);
+      break;
     }
     case MESH_CMD_CLEAR_ALERTS:
       clear_alerts();
-      return true;
+      ok = true;
+      break;
     case MESH_CMD_SAVE_REPLAY:
-      return save_replay_counters();
+      ok = save_replay_counters();
+      break;
   }
-  return false;
+  publish_view();   // F110: what this command did, before its handler answers
+  return ok;
 }
 
 loop_command_ring::Wait submit(const Command& cmd, bool* ok, uint32_t timeout_ms) {
@@ -2366,8 +2385,9 @@ MeshStatus get_status() {
 }
 
 // The loop task: what the status routes show, from this pass (sweep F110).
-// Called at the end of every update() pass, its early return included, and
-// by init() and deinit(); nothing else publishes.
+// Called at the end of every update() pass, its early return included, after
+// each owner command (run_command(), before the handler answers), and by
+// init() and deinit(); nothing else publishes.
 static void publish_view() {
   StatusView v;
   memset(&v, 0, sizeof(v));

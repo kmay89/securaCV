@@ -26,8 +26,9 @@ stops and destroys it; a later pass opens the new one.
 Sweep F110: `GET /api/mesh`, `/api/mesh/peers` and `/api/mesh/alerts` read
 the peer table, the pairing session, the opera config and the alert history
 on the httpd task while `update()` writes them on the loop task. Now
-`update()` publishes a `StatusView` at the end of every pass (and `init()`
-the first), the alert history is a log the loop task changes under its lock,
+`update()` publishes a `StatusView` at the end of every pass and after each
+command it drains (and `init()` the first), the alert history is a log the
+loop task changes under its lock,
 and the three routes read whole copies through `read_status()` and
 `read_alerts()` (`loop_snapshot.h`).
 
@@ -83,9 +84,13 @@ Mesh status reads (F110):
    writes. `handle_mesh_status` and `handle_mesh_peers` each call
    `mesh_network::read_status(` once, and `handle_mesh_alerts` calls
    `mesh_network::read_alerts(` once. In `mesh_network.cpp`:
-   `publish_view(` is called only from `update()`, `init()` and `deinit()`,
-   and `update()` calls it right before its every `return` and as its last
-   statement; `g_status_view.publish(` only in `publish_view()`,
+   `publish_view(` is called only from `update()`, `run_command()`,
+   `init()` and `deinit()`; `update()` calls it right before its every
+   `return` and as its last statement, and `run_command()` has one `return`,
+   right after it (so the view shows a command before the drain posts its
+   result and the handler answers: the dashboard reads the status right
+   after a POST, while the loop task may still be at the rest of that pass);
+   `g_status_view.publish(` only in `publish_view()`,
    `g_status_view.read(` only in `read_status()`, `g_alert_log.read(` only in
    `read_alerts()`, `.append(` only in `store_alert()`, `.clear(` only in
    `clear_alerts()`, `.attach(` only in `init()` and `clear_alerts()`, and
@@ -437,8 +442,8 @@ LIVE_STATE = ("g_peers", "g_peer_count", "g_pairing", "g_opera_config", "g_mesh_
               "fill_status", "get_status", "get_alerts", "publish_view", "storage")
 # Who may touch the published copies and the alert log, in mesh_network.cpp.
 VIEW_CALLS = (
-    (r"\bpublish_view\s*\(", ("update", "init", "deinit"), "publish_view()",
-     "the loop task publishes: update()'s passes, init() and deinit()"),
+    (r"\bpublish_view\s*\(", ("update", "run_command", "init", "deinit"), "publish_view()",
+     "the loop task publishes: update()'s passes, each drained command, init() and deinit()"),
     (r"\bg_status_view\s*\.\s*publish\s*\(", ("publish_view",), "g_status_view.publish(",
      "publish_view() builds the one view"),
     (r"\bg_status_view\s*\.\s*read\s*\(", ("read_status",), "g_status_view.read(",
@@ -455,6 +460,7 @@ VIEW_CALLS = (
      "g_alert_log.storage(", "a write through the storage would bypass the log's lock"),
 )
 SIG_PUBLISH_VIEW = r"\bstatic\s+void\s+publish_view\s*\(\s*\)"
+SIG_RUN_COMMAND = r"\bstatic\s+bool\s+run_command\s*\([^)]*\)"
 SIG_READ_STATUS = r"\bvoid\s+read_status\s*\([^)]*\)"
 SIG_READ_ALERTS = r"\bsize_t\s+read_alerts\s*\([^)]*\)"
 
@@ -500,6 +506,13 @@ def check_mesh_status_reads(ino: str, others: dict[str, str], mesh_cpp: str, err
             errors.append(f"{MESH_CPP}: update() must call publish_view() right before every return "
                           "and as its last statement — the status routes show the pass it ends, "
                           "a disabled mesh's included (F110)")
+    run = body_of(code, SIG_RUN_COMMAND, f"{MESH_CPP}: run_command()", errors)
+    if run is not None:
+        rets = [m.start() for m in re.finditer(r"\breturn\b", run)]
+        if len(rets) != 1 or not squash(run[:rets[0]]).endswith("publish_view();"):
+            errors.append(f"{MESH_CPP}: run_command() must return once, right after publish_view() — "
+                          "the drain posts the result when it returns and the handler answers at once, "
+                          "so a status read right after the POST must already show the command (F110)")
     for sig, what, reads in ((SIG_READ_STATUS, "read_status()", "g_status_view.read("),
                              (SIG_READ_ALERTS, "read_alerts()", "g_alert_log.read(")):
         body = body_of(code, sig, f"{MESH_CPP}: {what}", errors)
@@ -888,6 +901,14 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      on("mesh_cpp", r"\bstatic\s+void\s+store_alert\s*\([^)]*\)",
         r"\(void\)g_alert_log\.append\(\*alert\);",
         "if (g_alert_log.storage()) g_alert_log.storage()[0] = *alert;")),
+    ("run_command() answers before it publishes (a read right after the POST shows the old pass)",
+     on("mesh_cpp", SIG_RUN_COMMAND, r"\n[ \t]*publish_view\(\);[^\n]*\n", "\n")),
+    ("run_command() returns from a case before it publishes",
+     on("mesh_cpp", SIG_RUN_COMMAND, r"ok\s*=\s*remove_peer\(cmd\.fingerprint\);\s*break;",
+        "return remove_peer(cmd.fingerprint);")),
+    ("run_command() publishes before it runs the command",
+     lambda s: on("mesh_cpp", SIG_RUN_COMMAND, r"\n[ \t]*publish_view\(\);[^\n]*\n", "\n")(
+         on("mesh_cpp", SIG_RUN_COMMAND, r"(bool\s+ok\s*=\s*false;)", r"\1 publish_view();")(s))),
     ("a second place publishes the view",
      on("mesh_cpp", SIG_UPDATE, r"(g_commands\.drain\(run_command\);)",
         r"\1 { StatusView v = {}; (void)g_status_view.publish(v); }")),

@@ -128,10 +128,18 @@ struct Rest {
   std::string name_before_turn;
 };
 
+// How much of a pass the loop task gets at its turn.
+enum class Turn {
+  kPass,    // a whole update() pass
+  kDrain,   // only update()'s first statement, its drain of the commands:
+            // on a device the handler answers as soon as the drain posts the
+            // result, while the loop task may still be at the rest of the pass
+};
+
 // `d`'s REST handler submits `cmd` (the HTTP server's task), and the loop
-// task gets one update() pass on the handler's `turn_at`-th sleep (never,
+// task gets one turn (`how`) on the handler's `turn_at`-th sleep (never,
 // when 0). Returns what the handler saw.
-Rest rest(Device& d, const mn::Command& cmd, unsigned turn_at = 1) {
+Rest rest(Device& d, const mn::Command& cmd, unsigned turn_at = 1, Turn how = Turn::kPass) {
   become(d);
   Rest r;
   const uint32_t start = host_sim::now_ms;
@@ -145,7 +153,13 @@ Rest rest(Device& d, const mn::Command& cmd, unsigned turn_at = 1) {
     }
     if (turn_at != 0 && r.sleeps == turn_at) {
       host_sim::on_httpd_task = false;   // the loop task's turn
-      mn::update();
+      if (how == Turn::kPass) {
+        mn::update();
+      } else {
+        // update()'s own first statement (check_wap_loop_commands.py rule 3
+        // holds it to exactly this).
+        mn::g_commands.drain(mn::run_command);
+      }
       ++r.loop_turns;
       host_sim::on_httpd_task = true;
     }
@@ -629,16 +643,23 @@ void test_a_disabled_mesh_publishes_its_state() {
   CHECK(rest(A, off).ok);
   mn::StatusView v = status_read(A);
   CHECK(v.status.state == mn::MESH_DISABLED && !v.enabled);
+  // Off, it keeps its opera: the dashboard picks the opera panel (not
+  // "create or join") from has_opera, so it is the opera's, not `enabled`.
+  CHECK(v.has_opera && v.peer_count == 1);
   mn::Command on = cmd_of(mn::MESH_CMD_SET_ENABLED);
   on.flag = true;
   CHECK(rest(A, on).ok);
   v = status_read(A);
-  CHECK(v.status.state == mn::MESH_CONNECTING && v.enabled);
+  CHECK(v.status.state == mn::MESH_CONNECTING && v.enabled && v.has_opera);
   // A leave, which a disabled mesh's pass also returns early after.
   CHECK(rest(A, off).ok);
   CHECK(rest(A, cmd_of(mn::MESH_CMD_LEAVE)).ok);
   v = status_read(A);
   CHECK(!v.has_opera && v.peer_count == 0);
+  // On again with no opera: enabled, and no opera to show.
+  CHECK(rest(A, on).ok);
+  v = status_read(A);
+  CHECK(v.status.state == mn::MESH_NO_OPERA && v.enabled && !v.has_opera);
   std::printf("PASS a_disabled_mesh_publishes_its_state\n");
 }
 
@@ -726,6 +747,115 @@ void test_the_alerts_read_is_the_history_in_storage_order() {
   std::printf("PASS the_alerts_read_is_the_history_in_storage_order\n");
 }
 
+// `A` as initiator and `J` as joiner, driven to the point where A shows
+// its confirmation code (the ACCEPT's pass); returns the code.
+uint32_t pair_to_code_shown(Turn how) {
+  fresh_device(A);
+  fresh_device(J);
+  CHECK(rest(A, cmd_of(mn::MESH_CMD_PAIR_START), 1, how).ok);
+  CHECK(rest(J, cmd_of(mn::MESH_CMD_PAIR_JOIN), 1, how).ok);
+  host_sim::now_ms += 2001;
+  become(J);
+  mn::update();
+  deliver(A, J.mac, sent_to(J, BROADCAST).back());
+  deliver(J, A.mac, sent_to(A, J.mac).back());
+  deliver(A, J.mac, sent_to(J, A.mac).back());
+  become(A);
+  CHECK(mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM && mn::g_pairing.code_displayed);
+  return mn::g_pairing.confirmation_code;
+}
+
+// A read right after a POST answers shows what the POST did (the F110
+// review). The dashboard reloads the peer list right after
+// POST /api/mesh/remove answers, and the opera panel right after cancel,
+// rename, enable and leave; a handler answers as soon as update()'s drain
+// posts its command's result, and on a device the loop task may then still
+// be at the rest of that pass (rx, the rekey's NVS write, the heartbeat).
+// So the loop task's turn here is the drain alone: the command publishes.
+void test_a_read_right_after_a_post_shows_what_it_did() {
+  fresh_opera({&A, &B, &C});
+  become(A);
+  mn::update();
+  mn::StatusView v = status_read(A);
+  CHECK(v.peer_count == 2 && name_at(v, 0) == "B" && name_at(v, 1) == "C");
+
+  Rest r = rest(A, remove_of(B), 1, Turn::kDrain);
+  CHECK(r.wait == lcr::Wait::kDone && r.ok && r.loop_turns == 1);
+  v = status_read(A);
+  CHECK(v.peer_count == 1 && name_at(v, 0) == "C");
+
+  mn::Command rn = cmd_of(mn::MESH_CMD_RENAME);
+  strcpy(rn.name, "attic");
+  CHECK(rest(A, rn, 1, Turn::kDrain).ok);
+  v = status_read(A);
+  CHECK(std::string(v.opera_name) == "attic");
+
+  mn::Command off = cmd_of(mn::MESH_CMD_SET_ENABLED);
+  CHECK(rest(A, off, 1, Turn::kDrain).ok);
+  v = status_read(A);
+  CHECK(v.status.state == mn::MESH_DISABLED && !v.enabled && v.has_opera);
+  mn::Command on = off;
+  on.flag = true;
+  CHECK(rest(A, on, 1, Turn::kDrain).ok);
+  v = status_read(A);
+  CHECK(v.status.state == mn::MESH_CONNECTING && v.enabled);
+
+  CHECK(rest(A, cmd_of(mn::MESH_CMD_LEAVE), 1, Turn::kDrain).ok);
+  v = status_read(A);
+  CHECK(!v.has_opera && !v.enabled && v.peer_count == 0 && v.status.state == mn::MESH_NO_OPERA);
+
+  // pair/start shows the pairing at once; cancel takes the code away at once.
+  const uint32_t code = pair_to_code_shown(Turn::kDrain);
+  v = status_read(A);
+  CHECK(v.pairing_code_shown && v.pairing_code == code);
+  CHECK(rest(A, cmd_of(mn::MESH_CMD_PAIR_CANCEL), 1, Turn::kDrain).ok);
+  v = status_read(A);
+  CHECK(v.status.state != mn::MESH_PAIRING_CONFIRM);
+  CHECK(!v.pairing_code_shown && v.pairing_code == 0);
+  fresh_device(J);
+  CHECK(rest(J, cmd_of(mn::MESH_CMD_PAIR_JOIN), 1, Turn::kDrain).ok);
+  CHECK(status_read(J).status.state == mn::MESH_PAIRING_JOIN);
+  std::printf("PASS a_read_right_after_a_post_shows_what_it_did\n");
+}
+
+// Every field the peer list shows comes from the published member (the
+// F110 review): its state, RSSI, alert count and last-seen, after a member
+// was heard and sent an alert, equal the live entry's.
+void test_the_peer_list_shows_each_members_heard_state() {
+  fresh_opera({&A, &B});
+  host_sim::now_ms += mn::HEARTBEAT_INTERVAL_MS;
+  become(B);
+  const size_t b_before = sent_to(B, A.mac).size();
+  mn::send_heartbeat();
+  CHECK(sent_to(B, A.mac).size() == b_before + 1);
+  deliver(A, B.mac, sent_to(B, A.mac).back());     // A hears B, at RSSI -50
+  become(A);
+  const size_t a_before = sent_to(A, B.mac).size();
+  mn::send_heartbeat();
+  CHECK(sent_to(A, B.mac).size() == a_before + 1);
+  deliver(B, A.mac, sent_to(A, B.mac).back());     // B hears A: B is ACTIVE
+  host_sim::now_ms += 1000;
+  become(B);
+  CHECK(mn::g_mesh_state == mn::MESH_ACTIVE);
+  CHECK(mn::broadcast_tamper_alert(mn::ALERT_TAMPER, SCV_LOG_WARNING, 7, "lid"));
+  deliver(A, B.mac, sent_to(B, A.mac).back());     // A takes B's alert
+  const mn::OperaPeer* live = entry(A, B);
+  CHECK(live != nullptr);
+  CHECK(live->state == mn::PEER_ALERT && live->rssi == -50 && live->alerts_received == 1);
+  CHECK(live->last_seen_ms == host_sim::now_ms);
+  const mn::StatusView v = status_read(A);
+  CHECK(v.peer_count == 1);
+  const mn::PeerView& p = v.peers[0];
+  CHECK(memcmp(p.fingerprint, live->fingerprint, mn::FINGERPRINT_SIZE) == 0);
+  CHECK(std::string(p.name) == live->name);
+  CHECK(p.state == live->state);
+  CHECK(p.rssi == live->rssi);
+  CHECK(p.alerts_received == live->alerts_received);
+  CHECK(p.last_seen_ms == live->last_seen_ms);
+  CHECK(v.status.peers_online == 1 && v.status.alerts_received == 1);
+  std::printf("PASS the_peer_list_shows_each_members_heard_state\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -753,6 +883,8 @@ const Test kTests[] = {
      test_a_status_read_counts_uptime_and_touches_nothing},
     {"the_alerts_read_is_the_history_in_storage_order",
      test_the_alerts_read_is_the_history_in_storage_order},
+    {"a_read_right_after_a_post_shows_what_it_did", test_a_read_right_after_a_post_shows_what_it_did},
+    {"the_peer_list_shows_each_members_heard_state", test_the_peer_list_shows_each_members_heard_state},
 };
 
 }  // namespace commands
