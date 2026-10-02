@@ -2453,6 +2453,41 @@
   the link is up.
 - **Date learned:** 2026-10
 
+### A fix on one device's port is not a fix on the other's, and a held ceiling alone does not stop an overtake
+- **What happened:** F78 gave the canary-wap's egress a RAM hold, a
+  bounded wait for a card that may hold older rows, and a held-back ceiling
+  for a failed card append. The canary runs the same planner through its
+  own port and got none of it (sweeps F103, F104). The F103 report said a
+  failed append during an outage wrote the NVS ceiling past the card's
+  backlog, so a reboot skipped it. A host probe on the planner showed it
+  was worse: with no reboot at all, the row went into the MQTT offline
+  queue, the watermark moved to it, and the queue (which drains before the
+  backfill, so queued tamper alerts go first) delivered it ahead of the
+  card's rows. The backfill never sent them, and Home Assistant would have
+  refused them. A row committed while the card was out for a moment did
+  the same.
+- **Root cause:** The planner's not-on-card route is right only when
+  nothing older is owed, and the hosts, not the planner, know whether a
+  card that is not open may still hold older rows. The canary-wap's port
+  answered that; the canary's handed every such row over at once. Its glue
+  had no host test of its own (the planner test runs a model world), so
+  the gap was visible only by reading both ports side by side.
+- **Fix:** The canary's port now holds such rows in RAM, behind the card's
+  rows, for at most the canary-wap's 45 s (`csi_event_backfill::kCardWaitMs`,
+  one constant for both), declines their ceiling write until they go
+  through the planner, and with a card open waits for the link too, since
+  a hand-over's ceiling runs `kStride` ids past the row. The offline queue
+  is then never given a row older rows wait ahead of, so its drain needs
+  no ceiling write of its own.
+- **Regression check:** `firmware/tests_host/test_canary_event_egress.cpp`
+  compiles the canary's real egress and SD adapter over the real
+  chokepoint, planner and offline queue; its F103 and F104 scenarios fail
+  on the egress before each fix, and 16 mutations of the hold each fail it.
+  When one device's port gains a rule its sibling's port needs, put the
+  shared value in the shared header and give the sibling's glue a test
+  that compiles it.
+- **Date learned:** 2026-10
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:

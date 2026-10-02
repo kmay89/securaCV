@@ -515,6 +515,63 @@ run. Compile is CI's. Owner: U1.
     s` and the waiting events go out without it.
   - Artifact: `docs/audit/repro/F78/late-card/`.
 
+## Canary base: rows the card cannot take (F103, F104) — on-device verification
+
+Code: `firmware/canary/src/csi_event_egress.cpp` (a RAM hold of eight rows,
+the canary-wap's 45 s card wait, `csi_event_backfill::kCardWaitMs`).
+Host-tested on the real egress and SD adapter
+(`firmware/tests_host/test_canary_event_egress.cpp`); the PlatformIO compile
+is CI's. Owner: U1. The serial lines below are the egress's own.
+
+- [ ] **A failed card append during an outage keeps the backlog owed**
+  - Setup: an HA-enabled canary (`release_ha`) with a card in, paired to
+    Home Assistant; the broker on a host you can stop; a card that starts
+    refusing writes on cue (one filled to capacity, or a worn card known to
+    fail writes).
+  - Repro: stop the broker; commit several events; make the next append
+    fail (fill the card) and commit one more; (a) start the broker; (b)
+    repeat, but power-cycle the canary before starting the broker.
+  - Expected: (a) HA receives the outage's card rows, then the row whose
+    append failed, each once, in id order, no `replay` verdict; (b) the
+    card rows arrive after the reboot, at most ten of the outage's first
+    rows missing (the NVS ceiling's stride, as in F37's reboot row), and
+    the failed row, held in RAM, is lost. Before F103 the failed row went
+    first and HA never received the card's rows, reboot or not.
+  - Artifact: `docs/audit/repro/F103/failed-append/`.
+- [ ] **A card that leaves mid-backlog and comes back within 45 s**
+  - Setup: as above, with an ordinary card.
+  - Repro: stop the broker; commit a backlog; start the broker; while the
+    backfill runs, pull the card and reseat it within 30 s (the storage
+    manager's recheck remounts it), committing an event while it is out.
+  - Expected: HA receives the whole backlog, then the event committed while
+    the card was out, each once, in id order. If the card stays out past
+    45 s the serial log says `[CSI] event log card not open after 45 s: N
+    event(s) waiting in RAM go out`, the waiting event goes, and the rows
+    left on the card are not sent when it returns.
+  - Artifact: `docs/audit/repro/F104/card-out/`.
+- [ ] **A card that mounts late at boot keeps its backlog first**
+  - Setup: a card with rows still owed from an outage (stop the broker,
+    commit, power off).
+  - Repro: power on with the card out and the broker up; once an event
+    commits (the serial log's commit lines; since sweep F81 a presence row
+    commits two to ten minutes after its state began, so this needs a row
+    from another module, or several tries), seat the card. The storage
+    manager re-probes every 30 s, and the wait is 45 s from boot, so the
+    event must commit early and the card go in at once.
+  - Expected: HA receives the card's owed rows first, then the new event,
+    each once, in id order.
+  - Artifact: `docs/audit/repro/F104/late-card/`.
+- [ ] **No card: the first 45 s after boot**
+  - Setup: no card; paired to HA.
+  - Repro: watch the serial log for an event that commits in the first
+    45 s after boot (since sweep F81 a presence row commits when its bundle
+    closes, two to ten minutes after the state began, so this may take a
+    few boots, or a module whose rows commit at once).
+  - Expected: it reaches HA about 45 s after boot (it waits for a card that
+    may still mount); events after that go at once. An ambient
+    `wifi.channel_activity` row from those 45 s does not arrive.
+  - Artifact: `docs/audit/repro/F104/no-card/`.
+
 ## One event-id space (F46) — on-device verification
 
 Code: `firmware/common/csi/src/csi_event.cpp` (one allocator, ids taken at

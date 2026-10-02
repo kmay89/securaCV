@@ -258,6 +258,18 @@ those bodies `"replay":true`. On the canary base
   canary-wap on firmware from before that rule does not know the file, and
   would append its own rows to a canary's log, which that canary then
   replays under its own key;
+- a row the card cannot take waits in RAM (8 rows, the oldest dropped
+  first) instead of overtaking the card's rows (sweeps F103, F104): one
+  committed while the card is not open but may hold older rows (from boot
+  until its log first opens, and after it closes with rows still waiting,
+  for at most 45 s, the canary-wap's wait), and one whose append failed
+  while older rows wait or the broker is unreachable. It goes in id order
+  with the card's rows once nothing older waits, and writes no NVS delivery
+  ceiling until then, so a reboot never reads the card's rows as delivered
+  on its account. Past the 45 s the card is given up: the waiting rows go,
+  and rows on a card that comes back later are skipped. An ambient row
+  (`wifi.channel_activity`, "live UI only") is never held: one that cannot
+  go at once is dropped. RAM does not survive a reboot;
 - with no card, rows use the MQTT offline queue (12 records) as before, where
   tamper alerts outrank events: once the queue is full, a new row pushes out
   the oldest queued event, never a tamper alert. A body built while the
@@ -290,7 +302,10 @@ differs from the canary base in four ways:
   that the RAM rows go, and rows on a card that comes back later are
   skipped. An ambient row (`wifi.channel_activity`, "live UI only") is never
   held: one that cannot go out at once is dropped and counted. RAM does not
-  survive a reboot;
+  survive a reboot. The canary base holds the same rows the same way (its
+  card keeps closed bundles, so those are not among them), but once nothing
+  older waits and no card is open its offline queue takes them while the
+  broker is unreachable;
 - it writes no owner file and leaves a card that has one alone;
 - the tamper-topic bridge publishes when the loop task takes the row from
   the queue, before the row itself, whatever the backfill is doing.
