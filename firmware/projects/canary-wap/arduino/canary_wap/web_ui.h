@@ -2698,7 +2698,23 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         if (typeof latestVersion !== 'string' || latestVersion.length === 0) return false;
         return latestVersion !== dismissedVersion;
       }
-      return { peekStreamUrl, shouldRetryPeek, PEEK_MAX_RETRIES, BLE_CHIRP_ENDPOINT, fmtKbps, otaBannerVisible, cameraPanelState };
+      // The Chirp send card from GET /api/chirp: what the countdown line
+      // says, whether Send is off, and whether the warming-up hint shows. A
+      // wall clock not set yet (cannot_send_reason "clock_unsynced", sweep
+      // F146) said "Ready" with Send on, and the send was refused.
+      function chirpSendGate(data) {
+        if (!data.presence_met) return { text: 'Warming up\u2026', sendDisabled: true, presenceHint: true };
+        if (data.cooldown_remaining_sec > 0) {
+          const mins = Math.floor(data.cooldown_remaining_sec / 60);
+          const secs = data.cooldown_remaining_sec % 60;
+          return { text: `${mins}:${secs.toString().padStart(2, '0')}`, sendDisabled: true, presenceHint: false };
+        }
+        if (data.cannot_send_reason === 'clock_unsynced') {
+          return { text: 'Waiting for GPS time\u2026', sendDisabled: true, presenceHint: false };
+        }
+        return { text: 'Ready', sendDisabled: false, presenceHint: false };
+      }
+      return { peekStreamUrl, shouldRetryPeek, PEEK_MAX_RETRIES, BLE_CHIRP_ENDPOINT, fmtKbps, otaBannerVisible, cameraPanelState, chirpSendGate };
     })();
     if (typeof module !== 'undefined' && module.exports) { module.exports = WebUiLogic; }
     /* WEBUI_LOGIC:END */
@@ -4120,21 +4136,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const enabled = data.state !== 'disabled';
       document.getElementById('chirpEnabled').checked = enabled;
 
-      if (!data.presence_met) {
-        document.getElementById('chirpCooldown').textContent = 'Warming up…';
-        document.getElementById('chirpSendBtn').disabled = true;
-        document.getElementById('chirpPresenceHint').style.display = 'block';
-      } else if (data.cooldown_remaining_sec > 0) {
-        const mins = Math.floor(data.cooldown_remaining_sec / 60);
-        const secs = data.cooldown_remaining_sec % 60;
-        document.getElementById('chirpCooldown').textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
-        document.getElementById('chirpSendBtn').disabled = true;
-        document.getElementById('chirpPresenceHint').style.display = 'none';
-      } else {
-        document.getElementById('chirpCooldown').textContent = 'Ready';
-        document.getElementById('chirpSendBtn').disabled = false;
-        document.getElementById('chirpPresenceHint').style.display = 'none';
-      }
+      const gate = WebUiLogic.chirpSendGate(data);
+      document.getElementById('chirpCooldown').textContent = gate.text;
+      document.getElementById('chirpSendBtn').disabled = gate.sendDisabled;
+      document.getElementById('chirpPresenceHint').style.display = gate.presenceHint ? 'block' : 'none';
 
       const badge = document.getElementById('chirpBadge');
       const stateText = document.getElementById('chirpState');

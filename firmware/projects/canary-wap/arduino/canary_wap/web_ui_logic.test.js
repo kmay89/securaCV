@@ -147,3 +147,36 @@ describe('otaBannerVisible', () => {
     assert.equal(L.otaBannerVisible(true, null, ''), false);
   });
 });
+
+// The Chirp send card, from GET /api/chirp's answer (chirp_api.h). The route
+// names cannot_send_reason "clock_unsynced" when only the wall clock stops a
+// send (sweep F146); the card said "Ready" with Send on, and the send was
+// refused (as a cooldown, before F146).
+describe('chirpSendGate', () => {
+  const ready = { presence_met: true, cooldown_remaining_sec: 0, can_send: true };
+  it('is Ready with Send on when the device can send', () => {
+    assert.deepEqual({ ...L.chirpSendGate(ready) },
+                     { text: 'Ready', sendDisabled: false, presenceHint: false });
+  });
+  it('waits for GPS time, Send off, when the clock is not set', () => {
+    const g = L.chirpSendGate({ ...ready, can_send: false, cannot_send_reason: 'clock_unsynced' });
+    assert.equal(g.sendDisabled, true);
+    assert.equal(g.presenceHint, false);
+    assert.match(g.text, /GPS time/);
+    assert.notEqual(g.text, 'Ready');
+  });
+  it('keeps the warm-up first, with its hint', () => {
+    const g = L.chirpSendGate({ ...ready, presence_met: false, can_send: false,
+                                cannot_send_reason: 'presence_required' });
+    assert.equal(g.text, 'Warming up…');
+    assert.equal(g.sendDisabled, true);
+    assert.equal(g.presenceHint, true);
+  });
+  it('counts a cooldown down as m:ss', () => {
+    const g = L.chirpSendGate({ ...ready, cooldown_remaining_sec: 125, can_send: false,
+                                cannot_send_reason: 'cooldown' });
+    assert.equal(g.text, '2:05');
+    assert.equal(g.sendDisabled, true);
+    assert.equal(g.presenceHint, false);
+  });
+});
