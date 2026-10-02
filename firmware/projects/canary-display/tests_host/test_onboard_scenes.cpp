@@ -29,18 +29,22 @@
 // on every display env (the round watch in this binary's watch build;
 // the 172/180x320 portrait glass, the touch169 and the AMOLED in its
 // nightstand build; the 800x480 dash, dash7 and nightstand7 in its dash
-// build), with both type ladders, with the QR rendered and without it.
+// build), and on the panels main.cpp turns before provision_run() (the
+// nightlight's 320x180 landscape, F157; the dash line's 480x800 portrait,
+// F156), with both type ladders, with the QR rendered and without it.
 // On wide glass (F84) the halo is wide_ring()'s, every centered title and
 // body is fitted inside it like small glass's, no title box overlaps its
-// body's, the Join rows (content-sized there) stay on the panel and
-// outside the ring, and the bird keeps bird_seat()'s one seat. Not held
-// there: the QR card's rounded corners, which reach past the 300 px ring's
-// stroke on that glass (filed), and the 480x800 portrait dash (filed).
+// body's, the Join rows (fitted to the panel's row: the worded line whole
+// on the 800 px panel, split over two rows where it does not fit, F156)
+// stay on the panel and outside the ring, and the bird keeps bird_seat()'s
+// one seat. On landscape small glass the halo, the card and the bird stand
+// beside the text column (F157). Not held: the QR card's rounded corners
+// on wide glass, which reach past the 300 px ring's stroke (filed).
 //
 // The fake is held to LVGL by test_canary_mark_seat's pins (boxes the real
-// LVGL 8.4.0 drew in a native harness). The Success hop is not held: its
-// apex reaches the touch169's halo (filed); the bird is read once it has
-// settled back to its breath.
+// LVGL 8.4.0 drew in a native harness). The Success hop is held on the
+// glass (F157), not inside the halo: its apex reaches the touch169's
+// (filed); the bird's seat is read once it has settled back to its breath.
 //
 // Prints "ALL ONBOARD SCENES TESTS PASSED" on success.
 
@@ -68,9 +72,9 @@ static const bool kWideBuild = true;
 #else
 #error "test_onboard_scenes builds against the watch, nightstand or dash config"
 #endif
-// The labels onboard_ui_create() makes: title, body, credentials, hint, and
-// on small glass the note row.
-static const int kLabels = kWideBuild ? 4 : 5;
+// The labels onboard_ui_create() makes: title, body, credentials, hint and
+// the note row (on wide glass too since F156).
+static const int kLabels = 5;
 // The brand mark's square on this glass family (onboard_layout.h's).
 static const int kBirdPx = kWideBuild ? kWideBirdPx : kSmallBirdPx;
 
@@ -171,9 +175,10 @@ struct Run {
   const Env* env;
   int which;
   bool qr;
+  bool turned;  // the panel a quarter turned (main.cpp's saved rotation)
   onboardlayout::Glass g;
-  // What onboard_layout.h says this glass gets: small_join's stack and halo
-  // on small glass; join_stack's and wide_ring's on wide glass.
+  // What onboard_layout.h says this glass gets: small_join's stack, halo
+  // and column on small glass; wide_join's on wide glass.
   onboardlayout::SmallJoin j;
   lv_obj_t* scr;
   lv_obj_t* ring;
@@ -187,9 +192,9 @@ const char* const kLabelName[5] = {"title", "body", "credentials row",
                                    "hint row", "note row"};
 
 std::string who(const Run& G, const char* scene) {
-  char b[160];
-  std::snprintf(b, sizeof(b), "%s/%s/%s: %s", G.env->name.c_str() + 15,
-                G.which == 0 ? "default" : "heirloom",
+  char b[200];
+  std::snprintf(b, sizeof(b), "%s %dx%d/%s/%s: %s", G.env->name.c_str() + 15,
+                G.env->w, G.env->h, G.which == 0 ? "default" : "heirloom",
                 G.qr ? "qr" : "no-qr", scene);
   return b;
 }
@@ -223,7 +228,6 @@ bool find_objects(Run* G) {
       }
     }
   }
-  if (n < 5) G->labels[4] = nullptr;
   CHECK(G->ring && G->bird && G->card && n == kLabels,
         "%s: the onboarding screen is not ring + content{bird, card, %d "
         "labels} (ring %d, bird %d, card %d, %d labels)",
@@ -312,20 +316,25 @@ void check_frame(Run& G, const char* scene, const Says& says) {
   G.frames++;
   const std::string w = who(G, scene);
   const char* n = w.c_str();
-  const Span sp = settle(G, says.settle_hop ? 1200 : 0, 2600);
+  // Success: the one earned hop first (on the glass, F157: the landscape
+  // nightlight's lifted the bird's box to y -7), then the bird once it has
+  // settled back to its breath.
+  Span hop = {0, 0, 0, 0, false};
+  if (says.settle_hop) hop = settle(G, 0, 1200);
+  const Span sp = settle(G, 0, 2600);
   const int pw = G.env->w, ph = G.env->h;
 
   // The halo: small_join's (wide_ring's on wide glass) size and seat, the
   // stroke onboard_layout.h fits the lines inside.
   const onboardlayout::Ring& halo = G.j.halo;
   CHECK(G.ring->w == halo.d && G.ring->h == halo.d &&
-            G.ring->x1 == pw / 2 - halo.d / 2 && G.ring->y1 == halo.top &&
-            G.ring->arc_w_ind == kRingStroke,
+            G.ring->x1 == pw / 2 - halo.d / 2 + halo.x &&
+            G.ring->y1 == halo.top && G.ring->arc_w_ind == kRingStroke,
         "%s: the halo is %d x %d at (%d, %d), stroke %d; %s places "
         "%d at (%d, %d), stroke %d", n, G.ring->w, G.ring->h, G.ring->x1,
         G.ring->y1, G.ring->arc_w_ind,
-        kWideBuild ? "wide_ring" : "small_join", halo.d,
-        pw / 2 - halo.d / 2, halo.top, kRingStroke);
+        kWideBuild ? "wide_join" : "small_join", halo.d,
+        pw / 2 - halo.d / 2 + halo.x, halo.top, kRingStroke);
   const double cx = G.ring->x1 + G.ring->w / 2.0;
   const double cy = G.ring->y1 + G.ring->h / 2.0;
   const double r_out = G.ring->w / 2.0;
@@ -384,15 +393,31 @@ void check_frame(Run& G, const char* scene, const Says& says) {
   }
   if (says.join && kWideBuild) {
     // Wide glass: one worded credentials row (kWideScanFmt, or
-    // kWideTypeFmt when no QR rendered) and the hint row under it.
+    // kWideTypeFmt when no QR rendered) and the hint row under it where the
+    // panel's row holds the line — every 800 px glass, as before F156 —
+    // else the name over the key, and a standing hint on the note row.
     char creds[160];
     std::snprintf(creds, sizeof(creds),
                   G.qr ? kWideScanFmt : kWideTypeFmt, kSsid, kPass);
-    const bool hint = says.stuck.empty() ? at(G, 3).empty()
-                                         : one_of(at(G, 3), says.stuck);
-    CHECK(at(G, 2) == creds && hint,
-          "%s: the Join rows say \"%s\" | \"%s\"", n, at(G, 2).c_str(),
-          at(G, 3).c_str());
+    const bool joined = at(G, 2) == creds;
+    bool ssid = false, key = false, hint = says.stuck.empty();
+    for (int k = 2; k < 5; ++k) {
+      ssid = ssid || at(G, k).find(kSsid) != std::string::npos;
+      key = key || at(G, k).find(kPass) != std::string::npos;
+      hint = hint || one_of(at(G, k), says.stuck);
+    }
+    // One row where the panel's row holds the worded line in the label
+    // face (every 800 px glass does, for any name and key: the layout test
+    // proves it), else split.
+    const int row = pw - 2 * roundframe::kRectSidePad;
+    const bool one_row = fake_lvgl::text_width(font_label(), creds) <= row;
+    CHECK(ssid && key && hint && joined == one_row &&
+              (joined || pw < 800) && (!joined || at(G, 4).empty()),
+          "%s: the Join rows say \"%s\" | \"%s\" | \"%s\" (the name %s, the "
+          "key %s, the hint %s; the worded line %s)", n, at(G, 2).c_str(),
+          at(G, 3).c_str(), at(G, 4).c_str(), ssid ? "on" : "MISSING",
+          key ? "on" : "MISSING", hint ? "whole" : "MISSING",
+          joined ? "whole on one row" : "split");
   } else if (says.join) {
     // The name and the key stay on the glass (F45), and a standing hint
     // reads whole on its row.
@@ -412,8 +437,8 @@ void check_frame(Run& G, const char* scene, const Says& says) {
     const bool ok = says.coach.empty() ? at(G, 2).empty() && at(G, 3).empty()
                                        : at(G, 2).empty() &&
                                              one_of(at(G, 3), says.coach);
-    CHECK(ok, "%s: the coach rows say \"%s\" | \"%s\"", n,
-          at(G, 2).c_str(), at(G, 3).c_str());
+    CHECK(ok && at(G, 4).empty(), "%s: the coach rows say \"%s\" | \"%s\" | "
+          "\"%s\"", n, at(G, 2).c_str(), at(G, 3).c_str(), at(G, 4).c_str());
   } else {
     // The coach line: whole on the hint row, or over both rows.
     std::string line = at(G, 2);
@@ -433,10 +458,10 @@ void check_frame(Run& G, const char* scene, const Says& says) {
   CHECK(card_up == (says.join && G.qr), "%s: the QR card is %s", n,
         card_up ? "up" : "hidden");
   CHECK(G.card->w == G.j.stack.card && G.card->y1 == G.j.stack.card_top &&
-            G.card->x1 == pw / 2 - G.j.stack.card / 2,
+            G.card->x1 == pw / 2 - G.j.stack.card / 2 + halo.x,
         "%s: the card is %d px at (%d, %d); the stack places %d at (%d, %d)",
         n, G.card->w, G.card->x1, G.card->y1, G.j.stack.card,
-        pw / 2 - G.j.stack.card / 2, G.j.stack.card_top);
+        pw / 2 - G.j.stack.card / 2 + halo.x, G.j.stack.card_top);
   if (card_up) {
     const lv_obj_t* qr = G.card->children.empty() ? nullptr : G.card->children[0];
     const onboardlayout::CardSpec spec =
@@ -478,20 +503,28 @@ void check_frame(Run& G, const char* scene, const Says& says) {
     const onboardlayout::Seat st = bird_seat(
         G.g, kWideBuild, G.j.stack, G.j.halo,
         says.join ? ObStage::Join : ObStage::Hello);
+    // Landscape small glass seats it at the card's seat, the halo's
+    // center, in every scene (F157).
+    const bool land = !kWideBuild && small_landscape(G.g);
     const int seat = kWideBuild  ? ph / 2 - bird / 2 + kWideBirdOff
-                     : join_seat ? join_bird_top(G.j.stack, bird)
+                     : (join_seat || land) ? join_bird_top(G.j.stack, bird)
                                  : scene_bird_top(G.g, G.j.halo, bird);
-    CHECK(st.d == bird && st.x == pw / 2 - bird / 2 && st.y == seat,
+    const int seat_x = pw / 2 - bird / 2 + (land ? halo.x : 0);
+    CHECK(st.d == bird && st.x == seat_x && st.y == seat,
           "%s: bird_seat() names %d px at (%d, %d); the scene's seat is %d "
-          "px at (%d, %d)", n, st.d, st.x, st.y, bird, pw / 2 - bird / 2,
-          seat);
-    CHECK(sp.x_lo == pw / 2 - bird / 2 && sp.x_hi == sp.x_lo &&
+          "px at (%d, %d)", n, st.d, st.x, st.y, bird, seat_x, seat);
+    CHECK(sp.x_lo == seat_x && sp.x_hi == sp.x_lo &&
               sp.y_lo >= seat - kBirdBreath && sp.y_hi <= seat + kBirdBreath,
           "%s: the bird draws at x %d..%d y %d..%d; its seat is x %d y %d "
           "(%s), breathing %d px", n, sp.x_lo, sp.x_hi, sp.y_lo, sp.y_hi,
-          pw / 2 - bird / 2, seat,
+          seat_x, seat,
           kWideBuild ? "the wide seat"
+          : land ? "the halo's center"
           : join_seat ? "join_bird_top" : "scene_bird_top", kBirdBreath);
+    CHECK(!says.settle_hop || (hop.shown && hop.y_lo >= 0 &&
+                               hop.y_hi + bird <= ph && hop.y_lo < sp.y_lo),
+          "%s: the Success hop draws the bird at y %d..%d on the %d px "
+          "glass (seat %d)", n, hop.y_lo, hop.y_hi + bird, ph, seat);
     int sx = 0, sy = 0, sd = 0;
     CHECK(onboard_ui_bird_seat(&sx, &sy, &sd) && sx == st.x && sy == st.y &&
               sd == st.d,
@@ -533,7 +566,7 @@ Says scene_says(ObStage st) {
 }
 
 // One glass, one ladder, QR or not: every scene, in provision.cpp's order.
-void run_glass(const Env& e, int which, bool qr) {
+void run_glass(const Env& e, int which, bool qr, bool turned) {
   fake_lvgl::disp_w() = e.w;
   fake_lvgl::disp_h() = e.h;
   g_fam = (e.dash || e.amoled) ? kBig : e.lean ? kLean : kStd;
@@ -544,6 +577,7 @@ void run_glass(const Env& e, int which, bool qr) {
   G.env = &e;
   G.which = which;
   G.qr = qr;
+  G.turned = turned;
   G.frames = 0;
   G.g.w = e.w;
   G.g.h = e.h;
@@ -556,8 +590,7 @@ void run_glass(const Env& e, int which, bool qr) {
     r.card = kWideGlassCard;
     r.creds_h = font_label()->line_height;
     r.hint_h = font_caption()->line_height;
-    G.j.stack = join_stack(G.g, r);
-    G.j.halo = wide_ring(G.g);
+    G.j = wide_join(G.g, r);
   } else {
     r.title_h = font_body()->line_height;
     r.card = kSmallGlassCard;
@@ -589,7 +622,9 @@ void run_glass(const Env& e, int which, bool qr) {
   check_frame(G, "Hello", hello);
 
   Says join = scene_says(ObStage::Join);
-  join.title = v2(kWideBuild ? wide_join_title(qr) : join_title(qr), "");
+  join.title = kWideBuild ? v2(wide_join_title(qr).full,
+                               wide_join_title(qr).narrow)
+                          : v2(join_title(qr), "");
   join.body = v1("");
   join.join = true;
   join.bird_shown = !qr;
@@ -658,13 +693,14 @@ void run_glass(const Env& e, int which, bool qr) {
   onboard_ui_finish();
   CHECK(lv_scr_act() == home, "%s: onboard_ui_finish did not go home",
         who(G, "finish").c_str());
-  std::printf("  %-18s %3dx%-3d %s %-8s %-5s %2d scenes  halo %3d at y %3d  "
-              "card %3d (qr %3d)\n",
+  std::printf("  %-18s %3dx%-3d %s %-8s %-5s %2d scenes  halo %3d at (%3d, "
+              "%3d)  card %3d (qr %3d)%s\n",
               e.name.c_str() + 15, e.w, e.h,
               kRoundBuild ? "round" : kWideBuild ? "wide " : "rect ",
               which == 0 ? "default" : "heirloom", qr ? "qr" : "no-qr",
-              G.frames, G.j.halo.d, G.j.halo.top, G.j.stack.card,
-              G.j.stack.qr);
+              G.frames, G.j.halo.d, e.w / 2 - G.j.halo.d / 2 + G.j.halo.x,
+              G.j.halo.top, G.j.stack.card, G.j.stack.qr,
+              turned ? "  (turned)" : "");
   lv_obj_del(home);
 }
 
@@ -678,7 +714,12 @@ int main() {
               kRoundBuild  ? "round watch"
               : kWideBuild ? "wide glass"
                            : "rectangular small glass");
-  int glass = 0;
+  // The panels main.cpp turns before provision_run() (F156, F157): the
+  // nightlight's saved landscape rotation (320x180) and the dash line's
+  // saved portrait one (480x800). Read off main.cpp, not typed.
+  bool nl_turns = false, dash_turns = false;
+  check_boot_rotation("canary::net::provision_run(", &nl_turns, &dash_turns);
+  int glass = 0, turned = 0;
   for (size_t i = 0; i < envs.size(); ++i) {
     const Env& e = envs[i];
     const bool mine = kWideBuild    ? e.dash
@@ -691,11 +732,28 @@ int main() {
                       envs[j].cfg == e.cfg && envs[j].lean == e.lean);
     if (seen) continue;
     glass++;
-    for (int which = 0; which < 2; ++which)
-      for (int qr = 1; qr >= 0; --qr) run_glass(e, which, qr != 0);
+    const std::string cfg = slurp(std::string(FW_DIR) +
+                                  "/configs/canary-display/" + e.cfg +
+                                  "/config.h");
+    const bool turns = (define_int(cfg, "CD_NIGHTLIGHT") == 1 && nl_turns) ||
+                       (e.dash && dash_turns);
+    for (int t = 0; t < (turns ? 2 : 1); ++t) {
+      Env c = e;
+      if (t) {
+        c.w = e.h;
+        c.h = e.w;
+        turned++;
+      }
+      for (int which = 0; which < 2; ++which)
+        for (int qr = 1; qr >= 0; --qr) run_glass(c, which, qr != 0, t == 1);
+    }
   }
   CHECK(glass >= (kRoundBuild ? 1 : kWideBuild ? 3 : 4),
         "only %d glass envs for this build", glass);
+  // The wide build turns the dash, dash7 and nightstand7; the small one the
+  // nightlight. The round watch turns nothing.
+  CHECK(turned == (kRoundBuild ? 0 : kWideBuild ? 3 : 1),
+        "%d turned panels for this build", turned);
   if (g_fail == 0) {
     std::printf("ALL ONBOARD SCENES TESTS PASSED\n");
     return 0;

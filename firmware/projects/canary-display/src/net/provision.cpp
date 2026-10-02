@@ -927,7 +927,12 @@ void provision_run(bool glass_ok) {
           ui_hint("can't join? forget it on your phone",
                   "forget it on your phone");
 #else
-          ui_hint("can't join? on your phone, forget this network - then scan again");
+          // Wide glass: the whole line where the panel's row holds it (the
+          // 800 px one); the fix alone where it does not (a dash or 7" glass
+          // turned portrait, 480x800, whose 464 px row holds neither form
+          // in the Heirloom face, so the glass steps down a face, F156).
+          ui_hint("can't join? on your phone, forget this network - then scan again",
+                  "on your phone, forget this network - then scan again");
 #endif
         } else if (s_glass && !ctx.dimmed &&
 #if CD_PORTAL_PAIR_DEMO

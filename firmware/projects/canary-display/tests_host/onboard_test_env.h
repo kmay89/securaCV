@@ -34,24 +34,10 @@ using namespace canary::ui;
 using namespace canary::ui::onboardlayout;
 
 static int g_fail = 0;
-// A report-only pass (test_onboard_layout's turned panels, filed): a check
-// that does not hold is counted in g_reported, the first few printed as
-// "known", and the run still passes.
-static bool g_report_only = false;
-static int g_reported = 0;
-static int g_reported_shown = 0;
 
 #define CHECK(cond, ...)                                  \
   do {                                                    \
     if (!(cond)) {                                        \
-      if (g_report_only) {                                \
-        g_reported++;                                     \
-        if (g_reported_shown++ >= 3) break;               \
-        std::printf("  known, not held: ");               \
-        std::printf(__VA_ARGS__);                         \
-        std::printf("\n");                                \
-        break;                                            \
-      }                                                   \
       std::printf("  FAIL (%s:%d): ", __FILE__, __LINE__); \
       std::printf(__VA_ARGS__);                           \
       std::printf("\n");                                  \
@@ -451,9 +437,12 @@ inline void load_minted_core() {
   g_minted.hint_round = literals(body[0]);
   g_minted.hint_small = literals(body[1]);
   g_minted.hint_wide = literals(body[2]);
+  // Wide glass hands its narrow form too (F156): a dash or 7" glass turned
+  // portrait has a 464 px row, which the whole hint overruns.
   CHECK(g_minted.hint_round.size() == 1 && g_minted.hint_small.size() >= 1 &&
-            g_minted.hint_small.size() <= 2 && g_minted.hint_wide.size() == 1,
-        "stuck-phone hint forms: %d round, %d portrait, %d wide",
+            g_minted.hint_small.size() <= 2 && g_minted.hint_wide.size() == 2,
+        "stuck-phone hint forms: %d round, %d portrait, %d wide (want the "
+        "hint and its narrow form)",
         (int)g_minted.hint_round.size(), (int)g_minted.hint_small.size(),
         (int)g_minted.hint_wide.size());
   // The PhoneJoined hint, per glass, from the branch that sets it once the
