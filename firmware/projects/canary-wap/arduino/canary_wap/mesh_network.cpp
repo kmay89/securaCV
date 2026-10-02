@@ -3119,13 +3119,18 @@ static void load_rx_tombstones() {
   }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// REPLAY COUNTER PERSISTENCE
+// ════════════════════════════════════════════════════════════════════════════
+
 static const char* NVS_REPLAY_KEY = "replay_ctrs";
 constexpr size_t REPLAY_ENTRY_SIZE = FINGERPRINT_SIZE + sizeof(uint64_t);
 
 bool save_replay_counters() {
   if (g_peer_count == 0) {
-    // No peers remain: drop any stale replay blob so a later re-pair can't
-    // restore counters that belong to peers that no longer exist.
+    // No peers remain: drop the blob, which holds members only. What this
+    // device last heard from each dropped member is its tombstone (F116),
+    // which a re-pair restores.
     g_prefs.begin(NVS_NS, false);
     if (g_prefs.isKey(NVS_REPLAY_KEY)) g_prefs.remove(NVS_REPLAY_KEY);
     g_prefs.end();
