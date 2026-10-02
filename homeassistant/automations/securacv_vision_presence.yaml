@@ -16,7 +16,12 @@
 #
 # These trigger on the firmware's raw MQTT event stream
 # (securacv/<device_id>/events), so they carry the event's reason field —
-# richer than watching the last_event sensor flip.
+# richer than watching the last_event sensor flip. The message reads the
+# clocks each event actually carries (firmware/projects/canary-vision/README.md,
+# "The clocks and the cell on an event row"): dwell_started reports how long
+# the person has been in view (presence_ms), interaction_likely how long the
+# visit lasted (visit_ms). dwell_ms is 0 on both: the dwell starts on
+# dwell_started's frame, and interaction_likely follows presence_ended.
 
 # ---------------------------------------------------------------------------
 # A) Dwell / interaction alert
@@ -61,7 +66,9 @@
           ({{ trigger.payload_json.reason }})
           {%- endif %}
           — confidence {{ trigger.payload_json.confidence | default(0) }}%,
-          dwell {{ ((trigger.payload_json.dwell_ms | default(0)) / 1000) | round(0) }}s
+          {{ 'in view %ds so far' % (((trigger.payload_json.presence_ms | default(0)) / 1000) | round | int)
+             if trigger.payload_json.event == 'dwell_started'
+             else 'stayed %ds' % (((trigger.payload_json.visit_ms | default(0)) / 1000) | round | int) }}
         data:
           tag: "securacv-vision-DEVICE_ID"
           group: "SecuraCV"
