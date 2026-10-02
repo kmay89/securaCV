@@ -29,6 +29,18 @@ on:
       - 'firmware/projects/canary-sentinel/src/witness.cpp'
       - 'firmware/projects/canary-sense/src/main.cpp'
       - 'firmware/projects/canary-sentinel/src/main.cpp'
+      # test_canary_health_trust.py holds the canary's health publish
+      # (main.cpp) to its MQTT buffer (securacv_mqtt.h, the topic size in
+      # securacv_mqtt.cpp), its egress counters to the canary-wap's Stats and
+      # the planner's, and its offline-queue keys to the queue's Stats.
+      - 'firmware/canary/src/main.cpp'
+      - 'firmware/canary/src/csi_event_egress.h'
+      - 'firmware/canary/src/csi_event_egress.cpp'
+      - 'firmware/canary/lib/securacv_mqtt/src/securacv_mqtt.h'
+      - 'firmware/canary/lib/securacv_mqtt/src/securacv_mqtt.cpp'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_event_egress.h'
+      - 'firmware/common/csi/src/csi_event_backfill.h'
+      - 'firmware/common/mqtt/mqtt_offline_queue.h'
   pull_request:
     branches: [main]
     paths:
@@ -54,6 +66,18 @@ on:
       - 'firmware/projects/canary-sentinel/src/witness.cpp'
       - 'firmware/projects/canary-sense/src/main.cpp'
       - 'firmware/projects/canary-sentinel/src/main.cpp'
+      # test_canary_health_trust.py holds the canary's health publish
+      # (main.cpp) to its MQTT buffer (securacv_mqtt.h, the topic size in
+      # securacv_mqtt.cpp), its egress counters to the canary-wap's Stats and
+      # the planner's, and its offline-queue keys to the queue's Stats.
+      - 'firmware/canary/src/main.cpp'
+      - 'firmware/canary/src/csi_event_egress.h'
+      - 'firmware/canary/src/csi_event_egress.cpp'
+      - 'firmware/canary/lib/securacv_mqtt/src/securacv_mqtt.h'
+      - 'firmware/canary/lib/securacv_mqtt/src/securacv_mqtt.cpp'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_event_egress.h'
+      - 'firmware/common/csi/src/csi_event_backfill.h'
+      - 'firmware/common/mqtt/mqtt_offline_queue.h'
 
 permissions:
   contents: read
