@@ -43,6 +43,10 @@
 // overlap its body's (on any glass), and the Join rows and the bird's seat
 // must keep clear of the stroke. test_onboard_scenes.cpp holds
 // onboard_ui.cpp to the same rules, reading what it draws.
+// The panels main.cpp turns before provision_run() (the nightlight's
+// 320x180 landscape, the dash line's 480x800 portrait) run every check too,
+// report-only: the layout does not fit there yet (filed), so what does not
+// hold is counted and printed, and nothing fails until it is fixed.
 // Text is measured with LVGL's own Montserrat data (montserrat_metrics.h,
 // generated from the pinned LVGL by firmware/scripts/gen_montserrat_metrics.py)
 // the way lv_font_get_glyph_width reads it — never an estimated width.
@@ -1593,6 +1597,45 @@ static void test_join_payload() {
   }
 }
 
+// The panels main.cpp turns before provision_run(): a nightlight's and a
+// dash line glass's saved rotation is applied in setup() before the
+// onboarding, and provision_run() also reopens it from loop() when
+// wifi_wants_setup(). So the first-boot scenes run on the turned panel too
+// (the nightlight's 320x180 landscape, the dash's 480x800 portrait). The
+// layout does not fit there yet (filed: the landscape nightlight's lines,
+// card, note row and bird; the portrait dash's Join rows). Every check runs
+// on them, but report-only: what does not hold is counted and the first
+// few printed, and nothing fails until that is fixed.
+static void report_turned_glass(const std::vector<Env>& envs) {
+  bool nl = false, dash = false;
+  check_boot_rotation("canary::net::provision_run(", &nl, &dash);
+  std::printf("turned panels (report only: filed, not held):\n");
+  for (size_t i = 0; i < envs.size(); i++) {
+    const Env& e = envs[i];
+    const std::string cfg = slurp(std::string(FW_DIR) +
+                                  "/configs/canary-display/" + e.cfg +
+                                  "/config.h");
+    const bool turns = (define_int(cfg, "CD_NIGHTLIGHT") == 1 && nl) ||
+                       (e.dash && dash);
+    bool seen = false;
+    for (size_t j = 0; j < i; j++)
+      seen = seen || (envs[j].w == e.w && envs[j].h == e.h &&
+                      envs[j].cfg == e.cfg && envs[j].lean == e.lean);
+    if (!turns || seen) continue;
+    Env t = e;
+    t.w = e.h;
+    t.h = e.w;
+    const int before = g_reported;
+    g_report_only = true;
+    g_reported_shown = 0;
+    check_glass(t, 0, 0);
+    check_glass(t, 1, 0);
+    g_report_only = false;
+    std::printf("  %s turned to %dx%d: %d check(s) do not hold\n",
+                e.name.c_str(), t.w, t.h, g_reported - before);
+  }
+}
+
 int main() {
   load_ladders();
   load_minted();
@@ -1615,6 +1658,7 @@ int main() {
     check_glass(envs[i], 0, also);
     check_glass(envs[i], 1, also);
   }
+  report_turned_glass(envs);
   test_f43_pins();
   test_f45_pins();
   test_f50_pins();

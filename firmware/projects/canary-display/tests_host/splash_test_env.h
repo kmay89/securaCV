@@ -92,39 +92,9 @@ struct Canvas {
   bool round;     // the round watch (its config's own build of splash.cpp)
 };
 
-// main.cpp applies a saved rotation before splash_play() only under these
-// two flavors' guards; anything else turning the glass first is a canvas
-// this test does not know.
+// main.cpp's saved rotations before the splash (onboard_test_env.h).
 inline void check_boot_rotation(bool* nightlight, bool* dash) {
-  const std::string main_cpp = slurp(std::string(FW_DIR) +
-                                     "/projects/canary-display/src/main.cpp");
-  const size_t setup = main_cpp.find("void setup() {");
-  const size_t splash = main_cpp.find("canary::ui::splash_play(", setup);
-  CHECK(setup != std::string::npos && splash != std::string::npos,
-        "main.cpp: setup() or its splash_play() call not found");
-  *nightlight = *dash = false;
-  if (setup == std::string::npos || splash == std::string::npos) return;
-  const std::vector<std::string> ls =
-      lines_of(main_cpp.substr(setup, splash - setup));
-  std::vector<std::string> guards;
-  for (size_t i = 0; i < ls.size(); ++i) {
-    const std::string t = trim(ls[i]);
-    if (starts_with(t, "#if")) guards.push_back(t);
-    else if (starts_with(t, "#endif") && !guards.empty()) guards.pop_back();
-    else if (t.find("set_rotation(") != std::string::npos ||
-             t.find("set_panel_rotation(") != std::string::npos) {
-      bool known = false;
-      for (size_t g = 0; g < guards.size(); ++g) {
-        if (guards[g] == "#ifdef CD_NIGHTLIGHT") *nightlight = known = true;
-        if (guards[g] == "#ifdef CD_FLAVOR_DASH") *dash = known = true;
-      }
-      CHECK(known, "main.cpp turns the glass before the splash outside the "
-                   "nightlight's and the dash's guards: %s", t.c_str());
-    }
-  }
-  CHECK(*nightlight && *dash, "main.cpp no longer applies the nightlight's "
-                              "(%d) and the dash's (%d) saved rotation before "
-                              "splash_play()", *nightlight, *dash);
+  check_boot_rotation("canary::ui::splash_play(", nightlight, dash);
 }
 
 inline std::vector<Canvas> canvases(const std::vector<Env>& envs) {
