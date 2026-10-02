@@ -3,8 +3,10 @@
 // outage. Pins the drop policy (oldest out, never truncate; a tamper alert
 // outranks an event, so a burst of events cannot push a queued tamper
 // out), the peek-then-pop drain contract (a failed replay keeps the
-// record), FIFO order across wrap and across a mid-queue eviction, and the
-// inert behavior of a queue whose storage never arrived.
+// record), FIFO order across wrap and across a mid-queue eviction, the
+// inert behavior of a queue whose storage never arrived, and the
+// publish-or-queue order the canary's MQTT layer runs (publish_or_queue():
+// while the queue still drains, a new record joins its back, backlog F107).
 //
 // Build/run: make -C firmware/tests_host (the CI "host tests" job).
 
@@ -255,6 +257,101 @@ int main() {
       outage.pop_front();
     }
     CHECK(outage.empty());
+  }
+
+  // ── publish_or_queue(): the order a discrete record goes out in ──
+  // Backlog F107: while the queue still drains an outage, a new record
+  // joins its back instead of going live, so it never overtakes an older
+  // queued event (Home Assistant's replay gate would refuse that one) or a
+  // queued tamper alert. securacv_mqtt.cpp's events and tamper surfaces run
+  // exactly this function; the canary's egress relies on it for every row
+  // it hands over off the card.
+  {
+    Queue o;
+    CHECK(o.init(storage, sizeof(storage), kPayload));
+    std::string sent;          // what went out live, in order
+    int sends = 0;
+    int ensures = 0;
+    bool send_ok = true;
+    auto publish = [&](bool link_up, Kind k, const char* payload) {
+      return mqtt_offline_queue::publish_or_queue(
+          o, link_up, k, false, payload,
+          [&]() {
+            ++sends;
+            if (send_ok) sent += std::string(payload) + ";";
+            return send_ok;
+          },
+          [&]() { ++ensures; });
+    };
+    auto drain = [&]() {
+      std::string out;
+      const char* rec = nullptr;
+      while (o.front(nullptr, nullptr, &rec)) {
+        out += std::string(rec) + ";";
+        o.pop_front();
+      }
+      return out;
+    };
+
+    // Link up, nothing queued: live, the queue untouched.
+    CHECK(publish(true, mqtt_offline_queue::KIND_EVENT, "e1"));
+    CHECK(sent == "e1;" && o.empty() && ensures == 0);
+
+    // Link down: queued, never sent.
+    sent.clear();
+    sends = 0;
+    CHECK(publish(false, mqtt_offline_queue::KIND_EVENT, "e2"));
+    CHECK(publish(false, mqtt_offline_queue::KIND_TAMPER, "t3"));
+    CHECK(sends == 0 && o.size() == 2 && ensures == 2);
+
+    // The link is back and the outage still drains: a new event and a new
+    // tamper alert join the back, behind e2 and t3, and nothing goes live.
+    CHECK(publish(true, mqtt_offline_queue::KIND_EVENT, "e4"));
+    CHECK(publish(true, mqtt_offline_queue::KIND_TAMPER, "t5"));
+    CHECK(sends == 0 && sent.empty());
+    CHECK(drain() == "e2;t3;e4;t5;");
+
+    // Link up, nothing queued, the send fails: queued for the drain.
+    send_ok = false;
+    CHECK(publish(true, mqtt_offline_queue::KIND_EVENT, "e6"));
+    CHECK(sends == 1 && o.size() == 1);
+    send_ok = true;
+    // ...and the next record waits behind it rather than overtaking it.
+    CHECK(publish(true, mqtt_offline_queue::KIND_EVENT, "e7"));
+    CHECK(sends == 1 && drain() == "e6;e7;");
+
+    // What the queue refuses goes live while the link is up (delivery beats
+    // ordering there): a payload over the slot size, and an event a full
+    // queue of tamper alerts refuses.
+    sends = 0;
+    sent.clear();
+    CHECK(publish(false, mqtt_offline_queue::KIND_EVENT, "e8"));
+    const std::string oversize(kPayload + 1, 'x');
+    CHECK(publish(true, mqtt_offline_queue::KIND_EVENT, oversize.c_str()));
+    CHECK(sends == 1 && sent == oversize + ";");
+    CHECK(drain() == "e8;");
+    for (int i = 0; i < 4; ++i) CHECK(publish(false, mqtt_offline_queue::KIND_TAMPER, "t"));
+    CHECK(o.size() == o.capacity());
+    sent.clear();
+    CHECK(publish(true, mqtt_offline_queue::KIND_EVENT, "e9"));
+    CHECK(sent == "e9;" && o.size() == o.capacity());
+    // With the link down the same event is refused, so the caller re-arms.
+    CHECK(!publish(false, mqtt_offline_queue::KIND_EVENT, "e10"));
+    CHECK(drain() == "t;t;t;t;");
+
+    // No payload: nothing sent, nothing queued.
+    sends = 0;
+    ensures = 0;
+    CHECK(!publish(true, mqtt_offline_queue::KIND_EVENT, nullptr));
+    CHECK(sends == 0 && ensures == 0 && o.empty());
+
+    // An inert queue (its storage never arrived): the storage hook runs, the
+    // push refuses, and the caller is told.
+    Queue none;
+    CHECK(!mqtt_offline_queue::publish_or_queue(
+        none, false, mqtt_offline_queue::KIND_EVENT, false, "e11",
+        []() { return true; }, [&]() { ++ensures; }));
+    CHECK(ensures == 1);
   }
 
   // ── re-init resets contents and counters ──

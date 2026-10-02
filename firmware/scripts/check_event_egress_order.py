@@ -134,11 +134,36 @@ bridge in that order but cannot compile `main.cpp`:
    and `init_modules_from_nvs(`, and `setup()`'s the only call of
    `securacv_csi_modules_init(`.
 
+Rule 1 holds the live send's refusal; the other half of the order is what a
+buffered publish does while the offline queue still drains (backlog F107).
+Every row the egress hands over off the card (its RAM hold's flush included)
+goes through `mqtt_publish_event()`, and before F107 nothing held that a row
+sent then joins the back of the queue rather than going live past the
+outage's queued rows: both host tests transcribed the branch, so deleting it
+from `securacv_mqtt.cpp` kept every gate green. The order now lives in
+`firmware/common/mqtt/mqtt_offline_queue.h`'s `publish_or_queue()`, which
+`test_mqtt_offline_queue.cpp`, `test_csi_event_backfill.cpp` and
+`test_canary_event_egress.cpp` compile:
+
+9. The publish-or-queue order. In `mqtt_offline_queue.h`'s
+   `publish_or_queue()`, one `if (link_up && !q.empty())` whose statement is
+   `if (q.push(kind, retained, payload)) return true;` comes before the one
+   live `send()`, and that send is guarded by `link_up &&`. In
+   `securacv_mqtt.cpp`, the static `publish_or_queue()` is the one statement
+   `return mqtt_offline_queue::publish_or_queue(s_offline_q,
+   s_mqtt.connected(), kind, retained, payload, [&]() { return
+   s_mqtt.publish(topic, payload, retained); }, offline_queue_ensure);` and
+   pushes nothing itself; `mqtt_publish_event()` and `mqtt_publish_tamper()`
+   end `return publish_or_queue(mqtt_offline_queue::KIND_EVENT,
+   s_topic_events, ...)` (`KIND_TAMPER`, `s_topic_tamper`) and call neither
+   `s_mqtt.publish(` nor `s_offline_q.push(`. Its mutations run on
+   `securacv_mqtt.cpp` and the header together.
+
 ## It proves it bites
 
 Each run applies a set of mutations to the sources, in memory, and requires
 the check to fail on every one (rule 8 has its own set, on `main.cpp` and
-the bridge). The reviewers' edits are in that set. So
+the bridge, and so does rule 9, on `securacv_mqtt.cpp` and the header). The reviewers' edits are in that set. So
 the check is proven against the code as it stands. If a refactor moves an
 anchor a mutation needs, the run fails and says so; it does not pass quietly.
 
@@ -158,6 +183,7 @@ MQTT_CPP = "firmware/canary/lib/securacv_mqtt/src/securacv_mqtt.cpp"
 EGRESS_CPP = "firmware/canary/src/csi_event_egress.cpp"
 MAIN_CPP = "firmware/canary/src/main.cpp"
 BRIDGE_CPP = "firmware/canary/src/csi_modules_integration.cpp"
+QUEUE_H = "firmware/common/mqtt/mqtt_offline_queue.h"
 CANARY_DIRS = ("firmware/canary/src", "firmware/canary/lib")
 
 
@@ -337,6 +363,10 @@ SIG_LOOP = r"\bvoid\s+loop\s*\(\s*(?:void)?\s*\)"
 SIG_MODULES_INIT = r"\bbool\s+securacv_csi_modules_init\s*\(\s*(?:void)?\s*\)"
 SIG_MODULES_FEED = r"\bvoid\s+securacv_csi_modules_feed\s*\([^)]*\)"
 SIG_BOOT_INIT_FN = r"\bsize_t\s+init_modules_from_nvs\s*\(\s*(?:void)?\s*\)"
+SIG_WRAPPER = r"\bstatic\s+bool\s+publish_or_queue\s*\([^)]*\)"
+SIG_SHARED_ORDER = r"\binline\s+bool\s+publish_or_queue\s*\([^)]*\)"
+SIG_PUB_EVENT = r"\bbool\s+mqtt_publish_event\s*\([^)]*\)"
+SIG_PUB_TAMPER = r"\bbool\s+mqtt_publish_tamper\s*\([^)]*\)"
 
 # What the tamper bridge's `if` may test (each `&&` term, squashed).
 BRIDGE_TERMS = (
@@ -818,6 +848,98 @@ def check_boot(main_src: str, bridge_src: str, others: dict[str, str]) -> list[s
     return errors
 
 
+def lambda_body(arg: str) -> str | None:
+    """The squashed body of a `[...](...) { ... }` lambda argument, or None."""
+    m = re.fullmatch(r"\[[^\]]*\]\(\)(?:->bool)?\{(.*)\}", arg)
+    return m.group(1) if m else None
+
+
+def check_publish_order(mqtt_src: str, queue_src: str) -> list[str]:
+    """Rule 9: the publish-or-queue order, shared and used (backlog F107)."""
+    errors: list[str] = []
+    # The order itself, in mqtt_offline_queue.h.
+    code = blank_comments_and_strings(queue_src)
+    where = f"{QUEUE_H}: publish_or_queue()"
+    span = the_body(code, SIG_SHARED_ORDER, where, errors)
+    if span is not None:
+        body = code[span[0]:span[1]]
+        sends = [m.start() for m in re.finditer(r"\bsend\s*\(\s*\)", body)]
+        joins = []
+        for m in re.finditer(r"\bif\s*\(", body):
+            got = enclosing_if(body, m.end())
+            if got is None or got[0] != m.start():
+                continue
+            terms = sorted(unwrap(t) for t in top_level_terms(unwrap(got[1]), "&&"))
+            stmt = squash(body[got[2]:got[3]])
+            if terms == ["!q.empty()", "link_up"] and \
+                    "if(q.push(kind,retained,payload))returntrue;" in stmt:
+                joins.append(got)
+        if len(sends) != 1:
+            errors.append(f"{where}: expected one live send (`send()`), found {len(sends)}")
+        elif len(joins) != 1:
+            errors.append(
+                f"{where}: while the link is up and the offline queue still holds records, a new "
+                "record must join its back: one `if (link_up && !q.empty()) { if (q.push(kind, "
+                "retained, payload)) return true; }` (found "
+                f"{len(joins)}). Without it a new event goes live ahead of the outage's queued "
+                "rows, and Home Assistant's replay gate refuses every one of them.")
+        else:
+            if joins[0][3] > sends[0]:
+                errors.append(f"{where}: the queued records' turn must come BEFORE the live send — "
+                              "a record sent first overtakes the outage's queued rows")
+            send_if = enclosing_if(body, sends[0])
+            if send_if is None or "link_up" not in \
+                    [unwrap(t) for t in top_level_terms(unwrap(send_if[1]), "&&")]:
+                errors.append(f"{where}: the live send must be guarded by `link_up &&`")
+    # The canary's MQTT layer runs it, for both of its queued surfaces.
+    code = blank_comments_and_strings(mqtt_src)
+    where = f"{MQTT_CPP}: publish_or_queue()"
+    span = the_body(code, SIG_WRAPPER, where, errors)
+    if span is not None:
+        body = code[span[0]:span[1]]
+        flat = squash(body)
+        call = "returnmqtt_offline_queue::publish_or_queue("
+        args = call_args(flat, "mqtt_offline_queue::publish_or_queue(")
+        ok = flat.startswith(call) and args is not None and \
+            matching_paren(flat, len(call) - 1) == len(flat) - 2 and flat.endswith(");")
+        if ok:
+            send = lambda_body(args[5]) if len(args) == 7 else None
+            ensure = args[6] if len(args) == 7 else ""
+            ok = args[:5] == ["s_offline_q", "s_mqtt.connected()", "kind", "retained", "payload"] \
+                and send == "returns_mqtt.publish(topic,payload,retained);" \
+                and (ensure == "offline_queue_ensure" or
+                     lambda_body(ensure) == "offline_queue_ensure();")
+        if not ok:
+            errors.append(
+                f"{where}: must be the one statement `return mqtt_offline_queue::publish_or_queue("
+                "s_offline_q, s_mqtt.connected(), kind, retained, payload, [&]() { return "
+                "s_mqtt.publish(topic, payload, retained); }, offline_queue_ensure);` — the order "
+                "the egress host tests compile (backlog F107)")
+        for extra in ("s_offline_q.push(", "s_offline_q.clear("):
+            if extra in body:
+                errors.append(f"{where}: must not call {extra} itself")
+    for sig, name, kind, topic in ((SIG_PUB_EVENT, "mqtt_publish_event", "KIND_EVENT",
+                                    "s_topic_events"),
+                                   (SIG_PUB_TAMPER, "mqtt_publish_tamper", "KIND_TAMPER",
+                                    "s_topic_tamper")):
+        where = f"{MQTT_CPP}: {name}()"
+        span = the_body(code, sig, where, errors)
+        if span is None:
+            continue
+        body = code[span[0]:span[1]]
+        args = call_args(body, "publish_or_queue(")
+        last = squash(body).rsplit(";", 2)[-2] if ";" in body else ""
+        if args is None or not last.startswith("returnpublish_or_queue(") or len(args) != 4 or \
+                args[0] != f"mqtt_offline_queue::{kind}" or args[1] != topic:
+            errors.append(f"{where}: must end `return publish_or_queue(mqtt_offline_queue::{kind}, "
+                          f"{topic}, ...)` — the one way a {name.split('_')[-1]} leaves the "
+                          "device, behind the outage's queued records")
+        for bypass in ("s_mqtt.publish(", "s_offline_q.push("):
+            if bypass in body:
+                errors.append(f"{where}: calls {bypass} past the publish-or-queue order")
+    return errors
+
+
 def check(mqtt_src: str, egress_src: str) -> list[str]:
     errors: list[str] = []
     check_live_publish(mqtt_src, errors)
@@ -1078,6 +1200,77 @@ def self_test_boot(main_src: str, bridge_src: str, others: dict[str, str]) -> li
     return problems
 
 
+QueueMutation = Callable[[str, str], "tuple[str, str]"]
+
+
+def on_mqtt(sig: str, pat: str, repl: str) -> QueueMutation:
+    return lambda m, h: (mutate_in(m, sig, pat, repl), h)
+
+
+def on_queue(pat: str, repl: str) -> QueueMutation:
+    return lambda m, h: (m, mutate_in(h, SIG_SHARED_ORDER, pat, repl))
+
+
+QUEUE_JOIN = r"[ \t]*if\s*\(\s*link_up\s*&&\s*!q\.empty\(\)\s*\)\s*\{[^}]*\}\n"
+QUEUE_MUTATIONS: list[tuple[str, QueueMutation]] = [
+    # The order itself (also caught by test_mqtt_offline_queue and
+    # test_canary_event_egress, which compile it).
+    ("the shared order sends live while the outage still drains",
+     on_queue(QUEUE_JOIN, "")),
+    ("the shared order sends live before it joins the queue",
+     on_queue(r"(" + QUEUE_JOIN + r")([ \t]*if\s*\(\s*link_up\s*&&\s*send\(\)\s*\)\s*return\s+true\s*;\n)",
+              r"\2\1")),
+    ("the shared order joins the queue only while the link is down",
+     on_queue(r"if\s*\(\s*link_up\s*&&\s*!q\.empty\(\)\s*\)", "if (!link_up && !q.empty())")),
+    ("the shared order joins the queue only when it is empty",
+     on_queue(r"(if\s*\(\s*link_up\s*&&\s*)!(q\.empty\(\)\s*\))", r"\1\2")),
+    ("the shared order sends live without asking the link",
+     on_queue(r"if\s*\(\s*link_up\s*&&\s*send\(\)\s*\)", "if (send())")),
+    # securacv_mqtt.cpp: the order is the one it runs.
+    ("the MQTT layer's own order again, live first",
+     on_mqtt(SIG_WRAPPER, r"return\s+mqtt_offline_queue::publish_or_queue\(.*\);",
+             "if (payload == nullptr) return false;\n"
+             "  if (s_mqtt.connected() && s_mqtt.publish(topic, payload, retained)) return true;\n"
+             "  offline_queue_ensure();\n"
+             "  return s_offline_q.push(kind, retained, payload);")),
+    ("the MQTT layer hands the order a link that is never up",
+     on_mqtt(SIG_WRAPPER, r"s_mqtt\.connected\(\)", "false")),
+    ("the MQTT layer sends live ahead of the order",
+     on_mqtt(SIG_WRAPPER, r"(return\s+mqtt_offline_queue::publish_or_queue\()",
+             r"if (s_mqtt.connected() && s_mqtt.publish(topic, payload, retained)) return true; \1")),
+    ("the MQTT layer queues past the storage hook",
+     on_mqtt(SIG_WRAPPER, r"(return\s+mqtt_offline_queue::publish_or_queue\()",
+             r"if (!s_mqtt.connected()) return s_offline_q.push(kind, retained, payload); \1")),
+    ("the order's live send publishes nothing",
+     on_mqtt(SIG_WRAPPER, r"return\s+s_mqtt\.publish\(topic,\s*payload,\s*retained\);", "return true;")),
+    ("an event goes live past the queued records",
+     on_mqtt(SIG_PUB_EVENT, r"(return\s+publish_or_queue\()",
+             r"if (s_mqtt.publish(s_topic_events, json_payload, false)) return true;\n  \1")),
+    ("a tamper alert goes live past the queued records",
+     on_mqtt(SIG_PUB_TAMPER, r"(return\s+publish_or_queue\()",
+             r"if (s_mqtt.publish(s_topic_tamper, json_payload, retained)) return true;\n  \1")),
+    ("an event is queued as a tamper alert",
+     on_mqtt(SIG_PUB_EVENT, r"mqtt_offline_queue::KIND_EVENT", "mqtt_offline_queue::KIND_TAMPER")),
+]
+
+
+def self_test_queue(mqtt_src: str, queue_src: str) -> list[str]:
+    problems = []
+    for name, mutate in QUEUE_MUTATIONS:
+        try:
+            m, h = mutate(mqtt_src, queue_src)
+        except AnchorMissing as missing:
+            problems.append(f"self-test: publish-order mutation '{name}' no longer applies "
+                            f"(anchor {missing}) — the source changed shape; update this guard's "
+                            "mutations with it")
+            continue
+        if (m, h) == (mqtt_src, queue_src):
+            problems.append(f"self-test: publish-order mutation '{name}' changed nothing")
+        elif not check_publish_order(m, h):
+            problems.append(f"self-test: the check did not bite on publish-order mutation '{name}'")
+    return problems
+
+
 def canary_others() -> dict[str, str]:
     """Every other source file of the canary tree, by repo-relative path."""
     out = {}
@@ -1113,20 +1306,24 @@ def main() -> int:
     egress_src = (REPO / EGRESS_CPP).read_text(encoding="utf-8")
     main_src = (REPO / MAIN_CPP).read_text(encoding="utf-8")
     bridge_src = (REPO / BRIDGE_CPP).read_text(encoding="utf-8")
+    queue_src = (REPO / QUEUE_H).read_text(encoding="utf-8")
     others = canary_others()
-    errors = check(mqtt_src, egress_src) + check_boot(main_src, bridge_src, others)
+    errors = (check(mqtt_src, egress_src) + check_boot(main_src, bridge_src, others)
+              + check_publish_order(mqtt_src, queue_src))
     for err in errors:
         print(f"::error::{err}")
-    problems = self_test(mqtt_src, egress_src) + self_test_boot(main_src, bridge_src, others)
+    problems = (self_test(mqtt_src, egress_src) + self_test_boot(main_src, bridge_src, others)
+                + self_test_queue(mqtt_src, queue_src))
     for problem in problems:
         print(f"::error::{problem}")
     if errors or problems:
         return 1
-    print(f"Event egress order holds: the live publish waits for the offline queue, the "
-          f"planner's sends never buffer, the tamper bridge goes first, the planner gets the "
-          f"id floor and the broker-change epoch; the modules register and run their boot init "
-          f"after the floor and before the first tick "
-          f"({len(MUTATIONS) + len(BOOT_MUTATIONS)} mutations refused).")
+    print(f"Event egress order holds: the live publish waits for the offline queue, and a "
+          f"new record joins the queue's back while it drains (one shared order, run by both "
+          f"queued surfaces); the planner's sends never buffer, the tamper bridge goes first, "
+          f"the planner gets the id floor and the broker-change epoch; the modules register "
+          f"and run their boot init after the floor and before the first tick "
+          f"({len(MUTATIONS) + len(BOOT_MUTATIONS) + len(QUEUE_MUTATIONS)} mutations refused).")
     return 0
 
 

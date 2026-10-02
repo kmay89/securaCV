@@ -23,6 +23,12 @@
  * capacity is refused and counted, never truncated — a truncated JSON
  * payload would parse as junk downstream.
  *
+ * The order a discrete record is published in is here too:
+ * publish_or_queue() below, which the canary's securacv_mqtt.cpp calls for
+ * its events and tamper surfaces, and which the egress host tests compile
+ * (backlog F107). While the queue still drains, a new record joins its back
+ * instead of going live, so it never overtakes the records from the outage.
+ *
  * Pure: no Arduino, no globals, no clock. Single-task use (the MQTT loop
  * task owns push and drain both) — no locking inside. Host-tested by
  * firmware/tests_host/test_mqtt_offline_queue.cpp.
@@ -207,6 +213,38 @@ class Queue {
   size_t   m_size;
   Stats    m_stats;
 };
+
+/* Publish one discrete record (an event or a tamper alert) on the live link,
+ * or buffer it: the MQTT layer's publish-or-queue order (backlog F107).
+ *
+ *   - Link up while the queue still holds records from an outage: the record
+ *     joins the back of the queue, so the replay stays in order. A new event
+ *     never overtakes an older queued one (Home Assistant's replay gate would
+ *     then refuse the older one), and nothing overtakes a queued tamper
+ *     alert. The canary's event egress relies on it for every row it hands
+ *     over off the card, its RAM hold's flush included (csi_event_egress.cpp,
+ *     backlog F104). A record the queue refuses (one over the slot size, or
+ *     an event a full queue of tamper alerts refuses) falls through to the
+ *     live send: delivery beats ordering there.
+ *   - Link up and the queue empty: sent live; a failed send is queued.
+ *   - Link down: queued.
+ *
+ * `send()` publishes the record on the live link (true = the client took
+ * it). `ensure_storage()` runs before a push into a queue that may have no
+ * storage yet (the canary allocates it on first use). True = sent or
+ * buffered; false only when the queue is inert or refuses the record, so the
+ * caller keeps its own re-arm for exactly those. */
+template <typename Send, typename EnsureStorage>
+inline bool publish_or_queue(Queue& q, bool link_up, Kind kind, bool retained,
+                             const char* payload, Send send, EnsureStorage ensure_storage) {
+  if (payload == nullptr) return false;
+  if (link_up && !q.empty()) {
+    if (q.push(kind, retained, payload)) return true;
+  }
+  if (link_up && send()) return true;
+  ensure_storage();
+  return q.push(kind, retained, payload);
+}
 
 }  /* namespace mqtt_offline_queue */
 

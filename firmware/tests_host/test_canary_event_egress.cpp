@@ -11,14 +11,15 @@
  * the floor's NVS writes and the commit hook are the firmware's.
  *
  * The model around it (this file):
- *   - securacv_mqtt.cpp's event surfaces: mqtt_publish_event() is its
- *     publish_or_queue() (live when the link is up and the offline queue is
- *     empty, else into the queue, behind the records already there),
- *     mqtt_publish_event_live() refuses while the link is down or the queue
- *     holds records, mqtt_loop() drains up to four queued records a pass,
- *     mqtt_destination_epoch() moves when the broker changes.
- *     firmware/scripts/check_event_egress_order.py holds securacv_mqtt.cpp to
- *     the live refusal and the epoch;
+ *   - securacv_mqtt.cpp's event surfaces: mqtt_publish_event() and
+ *     mqtt_publish_tamper() run the real publish-or-queue order
+ *     (mqtt_offline_queue::publish_or_queue, backlog F107: live when the link
+ *     is up and the offline queue is empty, else into the queue, behind the
+ *     records already there), mqtt_publish_event_live() refuses while the
+ *     link is down or the queue holds records, mqtt_loop() drains up to four
+ *     queued records a pass, mqtt_destination_epoch() moves when the broker
+ *     changes. firmware/scripts/check_event_egress_order.py holds
+ *     securacv_mqtt.cpp to the shared order, the live refusal and the epoch;
  *   - Home Assistant's replay gate (custom_components/securacv/sensor.py
  *     `_replay_gate`): an events body whose event_id is below the last one it
  *     verified is refused. Bodies are parsed for event_id and replay;
@@ -206,20 +207,20 @@ static bool link_send(mqtt_offline_queue::Kind kind, const char* payload) {
   return true;
 }
 
-static bool queue_push(mqtt_offline_queue::Kind kind, bool retained, const char* payload) {
-  if (kind == mqtt_offline_queue::KIND_EVENT) handed_over(body_id(payload));
-  return g_offline.push(kind, retained, payload);
-}
-
-/* securacv_mqtt.cpp's publish_or_queue(). */
+/* securacv_mqtt.cpp's publish_or_queue(): the real order
+ * (mqtt_offline_queue::publish_or_queue, backlog F107) over the real queue,
+ * with this file's link. A record the queue took is handed over too: its
+ * events id must already be under the NVS ceiling (nothing writes NVS
+ * between the push and this check). */
 static bool publish_or_queue(mqtt_offline_queue::Kind kind, const char* payload, bool retained) {
-  if (payload == nullptr) return false;
-  const bool link_up = W.connected;
-  if (link_up && !g_offline.empty()) {
-    if (queue_push(kind, retained, payload)) return true;
+  const uint32_t queued_before = g_offline.stats().queued;
+  const bool ok = mqtt_offline_queue::publish_or_queue(
+      g_offline, W.connected, kind, retained, payload,
+      [&]() { return link_send(kind, payload); }, []() {});
+  if (kind == mqtt_offline_queue::KIND_EVENT && g_offline.stats().queued != queued_before) {
+    handed_over(body_id(payload));
   }
-  if (link_up && link_send(kind, payload)) return true;
-  return queue_push(kind, retained, payload);
+  return ok;
 }
 
 bool mqtt_accepting() { return W.accepting; }
@@ -443,6 +444,55 @@ static void test_no_card_outage_uses_the_offline_queue() {
   connect();
   drain(20);
   CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(), "and they arrive, in order");
+}
+
+static uint32_t commit_with_a_failed_append();
+
+/* ── F107: a row handed over off the card never overtakes the queue ───── */
+
+/* The offline queue drains four records a pass (mqtt_loop()), so after an
+ * outage longer than that, rows from the outage are still queued when the
+ * pump hands the next row over. It must join the back of the queue
+ * (mqtt_offline_queue::publish_or_queue): sent live, it would raise Home
+ * Assistant's mark past the queued rows, and the replay gate would refuse
+ * every one of them. */
+static void test_row_after_an_outage_waits_behind_the_queue() {
+  std::printf("-- F107: no card, an outage longer than one drain: a row committed as the link returns waits its turn\n");
+  fresh_device(/*card=*/false);
+  drain();   /* past the wait for a card that is not there */
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 6; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  CHECK(g_offline.size() == 6, "six rows queued in the outage");
+  connect();
+  ids.push_back(emit_ping());   /* routed in the pass the queue drains four */
+  loop_pass();
+  CHECK(g_offline.size() == 3, "the new row joined the back of the queue, behind the two left");
+  drain(20);
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "all seven arrive, in id order, none refused");
+}
+
+/* The RAM hold's flush hands its rows to the same order (backlog F104). A
+ * row whose card append failed while the link was down waits in the hold;
+ * when the link returns, the hold flushes in the pass the queue still drains
+ * the outage's older rows. */
+static void test_held_row_flush_waits_behind_the_queue() {
+  std::printf("-- F107: a held row flushed as the link returns waits behind the outage's queued rows\n");
+  fresh_device(/*card=*/false);
+  drain();   /* past the wait for a card that is not there */
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 6; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  CHECK(g_offline.size() == 6, "six rows queued while no card was in");
+  card_back();               /* a card goes in: nothing on it is owed */
+  loop_pass();
+  ids.push_back(commit_with_a_failed_append());   /* the link is down: it waits in the hold */
+  CHECK(g_offline.size() == 6 && W.ha.accepted.empty(), "the failed row was neither queued nor sent");
+  connect();
+  loop_pass();               /* four queued rows go; the hold flushes */
+  CHECK(g_offline.size() == 3, "the held row joined the back of the queue, behind the two left");
+  drain(20);
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "the six queued rows, then the held row, none refused");
 }
 
 /* ── F103: a failed card append never overtakes, nor covers, the card ──── */
@@ -1044,6 +1094,8 @@ int main() {
   test_outage_with_a_card_backfills_in_order();
   test_reboot_in_an_outage_keeps_the_backlog_owed();
   test_no_card_outage_uses_the_offline_queue();
+  test_row_after_an_outage_waits_behind_the_queue();
+  test_held_row_flush_waits_behind_the_queue();
   test_failed_append_in_an_outage_then_a_reboot();
   test_failed_append_in_an_outage_waits_its_turn();
   test_failed_append_mid_backfill_waits_its_turn();

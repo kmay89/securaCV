@@ -708,7 +708,7 @@ $(IDFLOOR_BIN): test_csi_event_id_floor.cpp $(IDFLOOR_HDR) Makefile | $(BUILD_DI
 $(EVLINE_BIN): test_csi_event_log_line.cpp $(EVLINE_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -I ../common/csi/src test_csi_event_log_line.cpp -o $@
 
-$(BACKFILL_BIN): test_csi_event_backfill.cpp $(BACKFILL_HDRS) Makefile | $(BUILD_DIR)
+$(BACKFILL_BIN): test_csi_event_backfill.cpp $(BACKFILL_HDRS) $(MQTTQUEUE_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -I ../common/csi/src test_csi_event_backfill.cpp -o $@
 
 $(CANEGR_BIN): test_canary_event_egress.cpp $(CANEGR_SRC) $(CANEGR_HDRS) Makefile | $(BUILD_DIR)
