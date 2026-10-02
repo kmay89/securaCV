@@ -113,10 +113,12 @@ static uint8_t g_peer_count = 0;
 static mesh_revocation::List g_revoked;
 static bool g_revoked_stored = false;
 
-// The highest send-counter reservation this device has stored, or read
-// back at boot, for any member, a removed one included (sweep F99; see
-// reserve_tx_counter). A new member's counter starts one past it.
-static uint64_t g_tx_high_reserved = 0;
+// The highest send counter this device can have signed, to any member, a
+// removed one included (sweep F99; see TX_COUNTER_RESERVE_BLOCK): every
+// counter send_to_peer spends since the boot, above the highest reservation
+// the boot read back (anything up to it may have been signed before). A new
+// member's counter starts one past it.
+static uint64_t g_tx_high_signed = 0;
 
 // BLE-Scout BEACON_EVENT handler (canary-wap parity for PIO
 // mesh_session::set_beacon_event_handler). nullptr means inbound
@@ -585,18 +587,25 @@ static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name
   // to admit past a fresh rx of 0 — and the exemption it used for that
   // ("rx > 0") admitted a counter-0 frame again on every replay.
   //
-  // A new member starts one past the highest counter this device has
-  // reserved for anyone, as a boot resumes every member (sweep F99): 1 on a
-  // device that has reserved none. The device may be one this one removed
-  // (or left), and a removal is one-sided: the removed device keeps its
-  // last-seen counter for this one, and a re-pair re-binds this device
-  // there, counters and all. A new member's counter started at 1, so this
-  // device's frames dropped there until it climbed back. It is "covered up
-  // to" that reservation: nothing above it has been signed to anyone, and
-  // its first send stores a block above it (reserve_tx_counter).
-  peer->msg_counter_tx = (g_tx_high_reserved == UINT64_MAX) ? 0 : g_tx_high_reserved + 1;
+  // A new member starts one past the highest counter this device can have
+  // signed to anyone (sweep F99): 1 on a device that has signed none. The
+  // device may be one this one removed (or left), and a removal is
+  // one-sided: the removed device keeps its last-seen counter for this one,
+  // and a re-pair re-binds this device there, counters and all. A new
+  // member's counter started at 1, so this device's frames dropped there
+  // until it climbed back. Past what was signed, not past what was
+  // reserved: a reservation runs up to a block ahead, and a start there put
+  // the new member's counters that far ahead of every other member's,
+  // which widens sweep F72's open gap (a frame to one member, replayed at
+  // another from this device's address, silences this device there until
+  // its counter for that member catches up) by up to a block until the
+  // next boot levels them. It is "covered up to" that counter: nothing
+  // above it has been signed to anyone, so the record may say so for it
+  // (a reboot before its first send resumes above it), and its first send
+  // stores a block above it (reserve_tx_counter).
+  peer->msg_counter_tx = (g_tx_high_signed == UINT64_MAX) ? 0 : g_tx_high_signed + 1;
   peer->msg_counter_rx = 0;
-  peer->msg_counter_tx_reserved = g_tx_high_reserved;
+  peer->msg_counter_tx_reserved = g_tx_high_signed;
   peer->last_seen_ms = 0;
   peer->session_established = false;
 
@@ -724,13 +733,15 @@ static bool send_pair_frame(const uint8_t* mac, MessageType type,
 // frame refused after it is signed (an ESP-NOW error, the frame that trips
 // the gate) still spends its counter.
 //
-// A new member starts one past the highest reservation this device has
-// stored for anyone (g_tx_high_reserved, sweep F99), as a boot resumes
-// every member: it may be a device this one removed or left, which kept
-// its last-seen counter for this one. A removal holds every survivor to
-// that reservation before the list is saved, so the record keeps it when
-// the member that held it is gone; with no member left the record is not
-// rewritten, and a boot reads it with no member loaded too.
+// A new member starts one past the highest counter this device can have
+// signed to anyone (g_tx_high_signed, sweep F99): it may be a device this
+// one removed or left, which kept its last-seen counter for this one. That
+// is every counter spent since the boot, and the highest reservation the
+// boot read back (a boot resumes every member above it). A removal holds
+// every survivor's reservation to it before the list is saved, so the
+// record still covers the removed member's counters when its entry is
+// gone; with no member left the record is not rewritten, and a boot reads
+// it with no member loaded too.
 //
 // Counting stays per member (one counter per sender is sweep F72's
 // option). A rotation leaves every counter where it is (sweep F95, see
@@ -788,11 +799,6 @@ static bool reserve_tx_counter(OperaPeer* peer) {
     return false;
   }
   g_tx_reserve_warned = false;
-  for (uint8_t i = 0; i < g_peer_count; i++) {
-    if (g_peers[i].msg_counter_tx_reserved > g_tx_high_reserved) {
-      g_tx_high_reserved = g_peers[i].msg_counter_tx_reserved;
-    }
-  }
   return true;
 }
 
@@ -821,8 +827,10 @@ static bool send_to_peer(OperaPeer* peer, MessageType type, const uint8_t* paylo
   memcpy(msg + offset, g_device_fingerprint, FINGERPRINT_SIZE);
   offset += FINGERPRINT_SIZE;
 
-  // Counter (8 bytes, little-endian)
+  // Counter (8 bytes, little-endian). Spent from here on, sent or not
+  // (F99: a new member starts past it).
   uint64_t counter = peer->msg_counter_tx++;
+  if (counter > g_tx_high_signed) g_tx_high_signed = counter;
   for (int i = 0; i < 8; i++) {
     msg[offset++] = (counter >> (i * 8)) & 0xFF;
   }
@@ -2357,16 +2365,16 @@ static bool remove_peer(const uint8_t* fingerprint) {
       g_peer_count--;
 
       // F99: the removed device keeps its last-seen counter for this one,
-      // and a re-pair starts it one past the highest reservation this
-      // device stored (add_peer), the removed member's included. Each
-      // survivor is held to that reservation (it is covered up to it:
-      // nothing above it has been signed), so the save below does not drop
-      // it with the removed member's entry, and a boot after it resumes
-      // above it too. With no survivor the record is not rewritten
-      // (persist_tx_reservations) and still holds it.
+      // and a re-pair starts it one past the highest counter this device
+      // can have signed (add_peer), the removed member's included. Each
+      // survivor's reservation is held to that counter (it is covered up to
+      // it: nothing above it has been signed), so the save below still
+      // covers what was signed to the removed member when its entry goes,
+      // and a boot after it resumes above it too. With no survivor the
+      // record is not rewritten (persist_tx_reservations) and still covers it.
       for (uint8_t j = 0; j < g_peer_count; j++) {
-        if (g_peers[j].msg_counter_tx_reserved < g_tx_high_reserved) {
-          g_peers[j].msg_counter_tx_reserved = g_tx_high_reserved;
+        if (g_peers[j].msg_counter_tx_reserved < g_tx_high_signed) {
+          g_peers[j].msg_counter_tx_reserved = g_tx_high_signed;
         }
       }
 
@@ -2979,9 +2987,10 @@ static bool persist_tx_reservations() {
 // back past the one they last heard (spec §3.3).
 //
 // It also runs with no member loaded (init(): an opera with none left, or
-// none loaded because flash encryption is off), for g_tx_high_reserved alone:
-// a member added later starts one past it (add_peer, F99), and the device
-// may be one that kept its last-seen counter for this one. With no member
+// none loaded because flash encryption is off), for g_tx_high_signed alone:
+// anything up to `high` may have been signed, a member added later starts
+// one past it (add_peer, F99), and the device may be one that kept its
+// last-seen counter for this one. With no member
 // and no record nothing was reserved (or it was on a firmware from before
 // F71, whose counters restarted at 1 at every boot), and a new member starts
 // at 1.
@@ -3020,7 +3029,7 @@ static void load_tx_reservations() {
     g_peers[i].msg_counter_tx_reserved = high;
     g_peers[i].msg_counter_tx = (high == UINT64_MAX) ? 0 : high + 1;
   }
-  if (high > g_tx_high_reserved) g_tx_high_reserved = high;
+  if (high > g_tx_high_signed) g_tx_high_signed = high;
 }
 
 size_t send_hub_election(mesh_hub_election::Event event,

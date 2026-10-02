@@ -36,7 +36,7 @@ struct Device {
   uint8_t peer_count = 0;
   mesh_revocation::List revoked = {};
   bool revoked_stored = false;
-  uint64_t tx_high_reserved = 0;
+  uint64_t tx_high_signed = 0;
   mn::MeshState state = mn::MESH_DISABLED;
   bool espnow_initialized = false;
   uint32_t messages_sent = 0, messages_received = 0, message_errors = 0;
@@ -67,7 +67,7 @@ inline void save(Device& d) {
   d.peer_count = mn::g_peer_count;
   d.revoked = mn::g_revoked;
   d.revoked_stored = mn::g_revoked_stored;
-  d.tx_high_reserved = mn::g_tx_high_reserved;
+  d.tx_high_signed = mn::g_tx_high_signed;
   d.state = mn::g_mesh_state;
   d.espnow_initialized = mn::g_espnow_initialized;
   d.messages_sent = mn::g_messages_sent;
@@ -100,7 +100,7 @@ inline void load(Device& d) {
   mn::g_peer_count = d.peer_count;
   mn::g_revoked = d.revoked;
   mn::g_revoked_stored = d.revoked_stored;
-  mn::g_tx_high_reserved = d.tx_high_reserved;
+  mn::g_tx_high_signed = d.tx_high_signed;
   mn::g_mesh_state = d.state;
   mn::g_espnow_initialized = d.espnow_initialized;
   mn::g_messages_sent = d.messages_sent;

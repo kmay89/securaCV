@@ -201,20 +201,29 @@ ciphertext = ChaCha20-Poly1305(message_key, nonce, plaintext)
   last-seen reset was in RAM only, a member that rebooted before its
   5-minute `replay_ctrs` save restored the old value with the same effect.
   **A new member** (F99, host-tested) starts one past the highest
-  reservation the device stored for anyone, a removed member's included
-  (1 on a device that has stored none): a device this one removed or left
-  keeps its last-seen counter for it, and a re-pair re-binds this one there
-  with its counters, so a counter restarted at 1 dropped there until it
-  climbed back. A removal holds every survivor to that reservation before
-  the record is rewritten, the record is not rewritten when no member is
-  left, and a boot reads it with no member loaded too (an opera emptied, or
-  not loaded because flash encryption is off). The envelope names no destination, so a receiver judges a frame
-  its sender addressed to another member by its own last-seen counter for
-  that sender (open).
+  counter the device can have signed to anyone, a removed member's
+  included: every counter spent since the boot, above the highest
+  reservation the boot read back (1 on a device that has signed none). A
+  device this one removed or left keeps its last-seen counter for it, and
+  a re-pair re-binds this one there with its counters, so a counter
+  restarted at 1 dropped there until it climbed back. The new member is
+  recorded as covered up to that counter, so a reboot before its first
+  frame resumes above it too. A removal holds every survivor's reservation
+  to it before the record is rewritten, the record is not rewritten when
+  no member is left, and a boot reads it with no member loaded too (an
+  opera emptied, or not loaded because flash encryption is off). Past what
+  was signed, not past what was reserved: a reservation runs up to a block
+  ahead, and F99 first started a new member there, a block ahead of every
+  other member's counter until the next boot, which widened the gap below.
+  A new member now starts level with the busiest member; after a busy
+  member is removed it starts as far ahead of the others as that member's
+  traffic was, until the next boot levels them. The envelope names no
+  destination, so a receiver judges a frame its sender addressed to
+  another member by its own last-seen counter for that sender (open).
   **Counter convention, both trees (v0.4 follow-up):** the first counter a
   sender signs is **1** (the PIO tree hands out `s_outbound_counter + 1`
   from 0; canary-wap's `add_peer` starts `msg_counter_tx` at 1 on a device
-  that has reserved no counter, and one past its highest reservation
+  that has signed no counter, and one past the highest it can have signed
   otherwise, F99), the receiver's last-seen starts at 0, and the
   gate is strict — `counter <= last_seen` is a replay, whatever `last_seen`
   is. canary-wap's gate used to carry an exemption (`&& last_seen > 0`) so
@@ -488,7 +497,7 @@ review):
 
 | Rule | PIO (`mesh_session`) | canary-wap (`mesh_network`) | Across the trees |
 |---|---|---|---|
-| Counter convention (§3.3) | first counter signed is 1; receiver's last-seen starts at 0; `counter <= last` dropped, no exemption | **same** since the follow-up — `msg_counter_tx` starts at 1 in `add_peer` on a device that has reserved none (one past its highest reservation otherwise, F99; a rotation resets no counter since F95); the gate is `counter <= msg_counter_rx`, the old `&& rx > 0` exemption gone | **same**: a counter-0 frame is never fresh at either receiver |
+| Counter convention (§3.3) | first counter signed is 1; receiver's last-seen starts at 0; `counter <= last` dropped, no exemption | **same** since the follow-up — `msg_counter_tx` starts at 1 in `add_peer` on a device that has signed none (one past the highest it can have signed otherwise, F99; a rotation resets no counter since F95); the gate is `counter <= msg_counter_rx`, the old `&& rx > 0` exemption gone | **same**: a counter-0 frame is never fresh at either receiver |
 | Where a member's address comes from (§8.3) | a completed pairing, or NVS `peer_macs` at boot; a member's opera frame from any address but its own bound one drops before verification (F70; from an address the transport table does not hold it always did), and a frame binds, moves or records no address. Until F70 a verified frame's source, which could be any address in that table, was recorded as the member's address and used for its rekey replies (the §8.3 peer-fields note) | a completed pairing (`add_peer`; a re-pair re-binds a member already held, logged; the joiner completes only after its owner confirmed), or NVS at boot (an older firmware's duplicate entry folded into one); since 2026-10-01 a frame from any address but the signer's own bound one drops before verification. It used to re-point the member and its ESP-NOW registration at the source of a frame that passed signature, `opera_id` and replay, and before the v0.4 follow-up it did so ahead of the signature (a frame with a member's public `sender_fp` + `opera_id` and any signature: a keyless denial of service) | **same rule**, source check included since F70: a member's frame is taken only from its own bound address, and no frame binds an address |
 | Fixed-size payloads | decoders take the length and refuse any other, exactly (`mesh_alert`, `mesh_beacon`, …; `LEAVE_OPERA` must be empty) | **same** since the follow-up: every struct handler (`HEARTBEAT`, `AUTH_*`, `TAMPER_ALERT`, `POWER_ALERT`, `OFFLINE_IMMINENT`, `OPERA_REKEY[_ACK]`) refuses `payload_len != sizeof(struct)`; `BEACON_EVENT`, `CHANNEL_LOCK`, `HUB_ELECTION` already decoded through the staged modules | **same rule**; the encodings still differ where the registry table says so |
 | Payload encodings, pairing exchange | | | **differ** — the registry table above, §4.3, §5.3, §8.3 |
@@ -1452,10 +1461,11 @@ canary-wap (NVS namespace `mesh`) stores the same deny-list blob under
 (up to 16 × (8 B fingerprint + u64)), each member's send-counter
 reservation (§3.3; 0 for a member nothing was signed to yet on a device
 that has reserved none, written with the member list too, so members
-stored with no record mean NVS from an older firmware; since F99 a removal
-holds every survivor to the highest reservation before the rewrite, the
-record is not rewritten when no member is left, and a boot reads it with
-no member loaded too), not gated, like the last-seen counters it keeps under
+stored with no record mean NVS from an older firmware; since F99 a new
+member is recorded as covered up to the highest counter the device can
+have signed, a removal holds every survivor's reservation to that counter
+before the rewrite, the record is not rewritten when no member is left, and
+a boot reads it with no member loaded too), not gated, like the last-seen counters it keeps under
 `replay_ctrs`: counts, not secrets, and a gate would restart the counters
 at every boot of an FE-off board.
 
@@ -1570,9 +1580,9 @@ An implementation conforms to this specification if it:
   complete as it stands (its response is a 262 B frame, and its keys would
   not agree; §3.1, §5.6; open, F48); a rotation keeps every counter, so the
   re-pair that rejoins a survivor, or a reboot before the last-seen save, is
-  heard at once (§3.3); a new member starts one past the highest send-counter
-  reservation the device stored, so a device re-paired after a removal or a
-  leave hears it at once (§3.3, §12.3); a new key at an address another
+  heard at once (§3.3); a new member starts one past the highest send
+  counter the device can have signed, so a device re-paired after a removal
+  or a leave hears it at once (§3.3, §12.3); a new key at an address another
   member holds is refused (§5.2, §8.3); and the initiator sends its
   `PAIR_COMPLETE` again until it hears the joiner, for at most the pairing
   timeout, while a joiner drops a COMPLETE it cannot open instead of ending

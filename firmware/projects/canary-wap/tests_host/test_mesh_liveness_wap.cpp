@@ -1222,9 +1222,9 @@ void test_an_opera_nobody_answers_keeps_the_heartbeat_cadence() {
 // started at 1 (F71's record holds current members only), so the re-paired
 // device dropped the remover's frames until that counter climbed back
 // (host-probed with the #1761 harness: B dropped A's frames 1..5 and heard
-// 6). A new member now starts one past the highest reservation the device
-// stored for anyone, a removed member's included, as a boot resumes every
-// member.
+// 6). A new member now starts one past the highest counter the device can
+// have signed to anyone, a removed member's included: every counter spent
+// since the boot, above the highest reservation the boot read back.
 
 // `self` takes `from`'s next heartbeat (a verified, fresh frame).
 bool hears_next_heartbeat(Device& self, Device& from) {
@@ -1276,8 +1276,8 @@ void test_a_removed_members_reservation_outlives_it_and_a_reboot() {
   // reboots before the re-pair. The removal's save dropped B's entry from
   // the record, so the boot resumed C one past the first block, and the
   // re-pair started B a block above that (C's first heartbeats reserved
-  // one), below what B had heard. A removal now holds every survivor to
-  // the highest reservation.
+  // one), below what B had heard. A removal now holds every survivor's
+  // reservation to the highest counter signed.
   fresh_opera({&A, &B, &C});
   for (uint64_t i = 0; i < 3 * kBlock; ++i) CHECK(frame_to(A, B));
   deliver(B, A.mac, sent_to(A, B.mac).back());
@@ -1334,6 +1334,58 @@ void test_a_device_whose_opera_was_not_loaded_re_pairs_above_its_counters() {
   CHECK(hears_next_heartbeat(B, A));
   host_sim::flash_encrypted = true;
   std::printf("PASS a_device_whose_opera_was_not_loaded_re_pairs_above_its_counters\n");
+}
+
+void test_a_reboot_before_the_first_send_keeps_a_re_paired_member_above() {
+  // The re-pair's own save writes the record, and the new member's place in
+  // it says how far it is covered: up to the counter it starts above. A
+  // reboot before the first frame to it (a pairing stops the heartbeat
+  // timer, so that can be 30 s) resumes from the record alone. A new member
+  // recorded at 0 would leave nothing in it above what B heard: here A
+  // removed its last member, so the record held B's old entry alone, and
+  // the re-pair replaced it.
+  fresh_opera({&A, &B});
+  for (int i = 0; i < 5; ++i) deliver(B, A.mac, heartbeat_to(A, B));
+  remove_member(A, B);
+  boot(A);
+  past_the_grace(A);
+  A.espnow.sent.clear();
+  re_pair(A, B);
+  for (const Frame& f : sent_to(A, B.mac)) CHECK(f.size() < 102);   // only pairing frames
+  boot(A);
+  CHECK(entry(A, B)->msg_counter_tx > 5);
+  CHECK(hears_next_heartbeat(B, A));
+  std::printf("PASS a_reboot_before_the_first_send_keeps_a_re_paired_member_above\n");
+}
+
+void test_a_new_member_starts_level_with_the_busiest_member() {
+  // Counting is per member, and a frame to one member, replayed at another
+  // from this device's address, silences this device there until its
+  // counter for that member catches up (sweep F72, open). F99 first started
+  // a new member one past the highest reservation, which runs up to a
+  // block above anything signed, so a pairing left the new member's
+  // counters up to a block ahead of every other member's until the next
+  // boot (host-probed: A's 41st frame to B against its 1025th to J, and
+  // one A-to-J frame replayed at B cost B 984 of A's heartbeats, about
+  // 8 hours). It starts one past the highest counter signed now: level
+  // with the busiest member, and a replay costs one frame.
+  fresh_opera({&A, &B, &C});
+  for (int i = 0; i < 40; ++i) CHECK(frame_to(A, B));    // A to B: 1..40
+  for (int i = 0; i < 5; ++i) CHECK(frame_to(A, C));     // A to C: 1..5
+  deliver(B, A.mac, sent_to(A, B.mac).back());
+  fresh_device(J);
+  re_pair(A, J);
+  // Level with B (a heartbeat the pairing's last pass sent moves both),
+  // where it started a block above it.
+  CHECK(entry(A, J)->msg_counter_tx == entry(A, B)->msg_counter_tx);
+  CHECK(entry(A, J)->msg_counter_tx < kBlock);
+  const Frame to_b = heartbeat_to(A, B);
+  const Frame to_j = sent_to(A, J.mac).back();           // the same heartbeat, to J
+  CHECK(counter_of(to_j) == counter_of(to_b));
+  deliver(B, A.mac, to_j);                               // replayed from A's address
+  CHECK(entry(B, A)->msg_counter_rx == counter_of(to_b));
+  CHECK(hears_next_heartbeat(B, A));
+  std::printf("PASS a_new_member_starts_level_with_the_busiest_member\n");
 }
 
 // ── F95: a removal's rotation reaches no member; counters across it ────
@@ -1734,6 +1786,10 @@ const Test kTests[] = {
      test_a_device_re_paired_after_its_partner_held_no_one_hears_it},
     {"a_device_whose_opera_was_not_loaded_re_pairs_above_its_counters",
      test_a_device_whose_opera_was_not_loaded_re_pairs_above_its_counters},
+    {"a_reboot_before_the_first_send_keeps_a_re_paired_member_above",
+     test_a_reboot_before_the_first_send_keeps_a_re_paired_member_above},
+    {"a_new_member_starts_level_with_the_busiest_member",
+     test_a_new_member_starts_level_with_the_busiest_member},
     {"no_session_opens_and_a_removal_splits_the_opera", test_no_session_opens_and_a_removal_splits_the_opera},
     {"a_survivor_re_paired_after_a_rotation_hears_the_remover_at_once",
      test_a_survivor_re_paired_after_a_rotation_hears_the_remover_at_once},

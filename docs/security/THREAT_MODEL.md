@@ -687,10 +687,14 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   is signed twice. A rotation keeps the counters (since F95's counter fix;
   it used to restart them at 1, and a member that had not switched, or
   rebooted before its 5-minute last-seen save, dropped the restarted
-  frames), and a new member starts above every reservation the device
-  stored, a removed member's included (F99: a device re-paired after a
+  frames), and a new member starts above every counter the device can
+  have signed, a removed member's included (F99: a device re-paired after a
   removal or a leave kept its last-seen counter and dropped a counter that
-  restarted at 1). The first boot after the update finds no record and resumes above
+  restarted at 1). It starts level with the busiest member, not at the
+  reservation a block ahead of it, which would have widened the
+  cross-member gap above by up to a block at every pairing; after a busy
+  member is removed the new one starts as far ahead of the others as that
+  member's traffic was, until the next boot. The first boot after the update finds no record and resumes above
   2^40, which no older boot reached, so it is heard at once too. An
   unreadable record resumes above 2^48, above anything signed since the
   update; a second unreadable record resumes below the device's own
