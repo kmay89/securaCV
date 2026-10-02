@@ -388,18 +388,55 @@ test("mqttApply obeys retention (retained stored, events not, clear removes)", a
   assert.ok(!("a/status" in store), "clear must remove");
 });
 
-test("pillForEvent maps CSI events to the right presence pill", async () => {
-  const { pillForEvent } = await import("../assets/wap-ui.js");
-  assert.strictEqual(pillForEvent("motion"), "Motion");
-  assert.strictEqual(pillForEvent("empty"), "Quiet");
-  assert.strictEqual(pillForEvent("subtle"), "Presence");
-  assert.strictEqual(pillForEvent("mic_mute"), null);
-  // every pill it can return is one the page knows how to render
+test("a scene's pill is its own, one the page renders; a mute moves no pill", async () => {
+  const { pillForScene } = await import("../assets/wap-ui.js");
   const known = new Set(data.sensing.pills.map((p) => p.name));
-  for (const ev of ["motion", "subtle", "empty", "active", "present"]) {
-    const p = pillForEvent(ev);
-    if (p) assert.ok(known.has(p), "pillForEvent returned unknown pill: " + p);
+  for (const sc of data.sandbox) {
+    const p = pillForScene(sc);
+    if (sc.pill) assert.strictEqual(p, sc.pill, sc.id);
+    if (p) assert.ok(known.has(p), sc.id + ": pill " + p + " is not one the page renders");
   }
+  assert.strictEqual(pillForScene(data.sandbox.find((s) => s.id === "mute")), null);
+  // the sit scene's row is the firmware's `quiet`; the guide's Quiet pill
+  // means an empty room, so the pill must not follow the word
+  const sit = data.sandbox.find((s) => s.id === "sit");
+  assert.strictEqual(sit.event, "quiet");
+  assert.strictEqual(pillForScene(sit), "Presence");
+});
+
+// A presence scene says one word on every surface a click moves: the console
+// line, the event word and the events row's state, and its scores land in that
+// state under core.presence's derive_target_state at the default (balanced)
+// preset, read here from core_presence.cpp itself.
+test("every presence scene's words are its row's state, and its scores land there", () => {
+  const cp = read(join(FW, "core_presence.cpp"));
+  const bal = cp.match(/default: base_motion = (\d+); base_active = (\d+); base_breathing = (\d+); break; \/\/ balanced/);
+  assert.ok(bal, "core_presence.cpp's balanced preset");
+  const [mThr, aThr, bThr] = bal.slice(1).map(Number);
+  assert.ok(cp.includes('csi_module_settings_int(s, "core.presence.preset",      1);'), "balanced is the default preset");
+  assert.ok(cp.includes('csi_module_settings_int(s, "core.presence.sensitivity", 50);'), "the slider defaults to neutral");
+  const body = cp.slice(cp.indexOf("State derive_target_state("), cp.indexOf("void on_init("));
+  const order = ["return STATE_TOGETHER", "return STATE_ACTIVE", "return STATE_QUIET", "if (motion >= s_motion_threshold) return STATE_SUBTLE", "return STATE_EMPTY"]
+    .map((n) => body.indexOf(n));
+  assert.ok(order.every((i, k) => i > 0 && (k === 0 || i > order[k - 1])), "derive_target_state's order: together, active, quiet, subtle, empty");
+  const derive = (motion, breathing) =>
+    motion >= Math.min(aThr + 20, 127) ? null // together or active, by the streak
+      : motion >= aThr ? "active" : breathing >= bThr ? "quiet" : motion >= mThr ? "subtle" : "empty";
+  let n = 0;
+  for (const sc of data.sandbox) {
+    const row = (sc.mqtt || []).find((p) => p.suffix === "events");
+    if (!row) continue;
+    const e = JSON.parse(row.payload);
+    if (e.module !== "core.presence") continue;
+    n++;
+    assert.strictEqual(sc.event, e.state, sc.id + ": event word vs the row's state");
+    assert.strictEqual(sc.serial, "witness record: state=" + e.state, sc.id + ": console line vs the row's state");
+    assert.strictEqual(derive(e.motion, e.breathing), e.state,
+      sc.id + ": motion " + e.motion + ", breathing " + e.breathing + " under " + [mThr, aThr, bThr]);
+  }
+  assert.ok(n >= 3, "the wave, sit and leave scenes publish presence rows");
+  const ex = JSON.parse(data.mqtt.topics.find((t) => t.suffix === "events").payload);
+  assert.strictEqual(derive(ex.motion, ex.breathing), ex.state, "the events example's scores land in its state");
 });
 
 // ── 5. the flash section — the bench skills can't go stale ─────────────────

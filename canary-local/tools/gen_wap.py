@@ -839,19 +839,67 @@ def lay_over(payload: str, set_: dict, advance: list, label: str) -> str:
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
 
+# A presence scene's state is the one core.presence's derive_target_state
+# lands its scores in under the balanced preset at the neutral slider (the
+# default: preset 1, sensitivity 50, so the offset is 0) with pet mode off.
+# Scores at the together gate are refused, since the streak decides those.
+# Its console line and event word are that state, so the three
+# surfaces a click moves say the same word. The pill is the getting-started
+# guide's vocabulary (Quiet / Presence / Motion / Active), which is not the
+# firmware's; which one the page should speak is an open decision, so the
+# blurb names both.
+_BAL = re.search(r"default: base_motion = (\d+); base_active = (\d+); base_breathing = (\d+); break; // balanced",
+                 read(CORE_PRESENCE_CPP))
+if not _BAL:
+    die("core.presence's balanced preset: not found in core_presence.cpp — firmware changed?")
+BALANCED = tuple(int(x) for x in _BAL.groups())  # (motion, active, breathing)
+must(CORE_PRESENCE_CPP, "  const int32_t preset = csi_module_settings_int(s, \"core.presence.preset\",      1);\n"
+     "  const int32_t sens   = csi_module_settings_int(s, \"core.presence.sensitivity\", 50);", "balanced, neutral by default")
+must(CORE_PRESENCE_CPP, "  const int together_gate = (s_active_threshold + 20 > 127) ? 127 : (s_active_threshold + 20);\n"
+     "  if (motion >= together_gate && streak >= 5) return STATE_TOGETHER;\n"
+     "  if (motion >= s_active_threshold)                     return STATE_ACTIVE;", "together, then active")
+must(CORE_PRESENCE_CPP, "  if (breathing >= s_breathing_threshold) {\n"
+     "    if (s_pet_mode && streak < s_pet_mode_required_win) return STATE_SUBTLE;\n    return STATE_QUIET;\n  }\n"
+     "  if (motion >= s_motion_threshold) return STATE_SUBTLE;\n  return STATE_EMPTY;", "quiet, subtle, empty")
+
+
+def derive_state(motion: int, breathing: int) -> str:
+    m_thr, a_thr, b_thr = BALANCED
+    if motion >= min(a_thr + 20, 127):
+        return None  # together or active, by the streak: a scene must not sit on that line
+    if motion >= a_thr:
+        return "active"
+    if breathing >= b_thr:
+        return "quiet"
+    if motion >= m_thr:
+        return "subtle"
+    return "empty"
+
+
+def presence_scene(id_, label, blurb, pill, state, motion, breathing):
+    if derive_state(motion, breathing) != state:
+        die(f"sandbox {id_}: motion {motion}, breathing {breathing} is {derive_state(motion, breathing)!r} "
+            f"under core.presence's balanced thresholds {BALANCED}, not {state!r}")
+    return {"id": id_, "label": label, "blurb": blurb, "pill": pill, "event": state,
+            "serial": "witness record: state=" + state,
+            "mqtt": [presence_row(state, motion, breathing)] + RECORD}
+
+
+_EX = json.loads(TOPIC_PAYLOAD["events"])
+if derive_state(_EX["motion"], _EX["breathing"]) != _EX["state"]:
+    die(f"the events example's motion {_EX['motion']}, breathing {_EX['breathing']} do not land in "
+        f"{_EX['state']!r} under core.presence's balanced thresholds {BALANCED}")
+
 SANDBOX = [
-    {"id": "wave", "label": "Wave your arm",
-     "blurb": "Room-scale movement lights the CSI motion gauge.",
-     "pill": "Motion", "event": "motion", "serial": "witness record: state=motion",
-     "mqtt": [presence_row("active", 78, 8)] + RECORD},
-    {"id": "sit", "label": "Sit still and breathe",
-     "blurb": "Micro-motion settles the device into Presence; the breathing band lights up.",
-     "pill": "Presence", "event": "subtle", "serial": "witness record: state=subtle",
-     "mqtt": [presence_row("quiet", 12, 41)] + RECORD},
-    {"id": "leave", "label": "Leave the room",
-     "blurb": "The field goes still; presence clears to Quiet.",
-     "pill": "Quiet", "event": "empty", "serial": "witness record: state=empty",
-     "mqtt": [presence_row("empty", 2, 3)] + RECORD},
+    presence_scene("wave", "Wave your arm",
+                   "Room-scale movement lights the CSI motion gauge; the firmware calls it active (the guide's Motion pill).",
+                   "Motion", "active", 78, 8),
+    presence_scene("sit", "Sit still and breathe",
+                   "A still, breathing person lights the breathing band; the firmware calls it quiet (the guide's Presence pill).",
+                   "Presence", "quiet", 12, 41),
+    presence_scene("leave", "Leave the room",
+                   "The field goes still; the firmware reports empty (the guide's Quiet pill).",
+                   "Quiet", "empty", 2, 3),
     {"id": "smoke", "label": "Fire a T3 smoke cadence",
      "blurb": "The mic matches the NFPA-72 smoke pattern; the Acoustic card turns red and a signed sensing event fires an HA notification.",
      "pill": "Motion", "event": "smoke_alarm_t3", "serial": "acoustic: matched smoke_alarm_t3",
@@ -859,7 +907,7 @@ SANDBOX = [
      "ha": "binary_sensor.<id>_smoke_alarm -> ON"},
     {"id": "co", "label": "Fire a T4 CO cadence",
      "blurb": "The mic matches the UL-2034 CO pattern.",
-     "event": "co_alarm_t4", "serial": "acoustic: matched co_alarm_t4",
+     "pill": "Motion", "event": "co_alarm_t4", "serial": "acoustic: matched co_alarm_t4",
      "mqtt": [{"suffix": "sensing", "set": {"acoustic_event": "co_alarm_t4"}, "advance": ["t4_detected"]}] + RECORD,
      "ha": "binary_sensor.<id>_co_alarm -> ON"},
     {"id": "mute", "label": "Mute the microphone",

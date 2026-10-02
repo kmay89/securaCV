@@ -885,10 +885,10 @@
     {
       "id": "wave",
       "label": "Wave your arm",
-      "blurb": "Room-scale movement lights the CSI motion gauge.",
+      "blurb": "Room-scale movement lights the CSI motion gauge; the firmware calls it active (the guide's Motion pill).",
       "pill": "Motion",
-      "event": "motion",
-      "serial": "witness record: state=motion",
+      "event": "active",
+      "serial": "witness record: state=active",
       "mqtt": [
         {
           "suffix": "events",
@@ -932,10 +932,10 @@
     {
       "id": "sit",
       "label": "Sit still and breathe",
-      "blurb": "Micro-motion settles the device into Presence; the breathing band lights up.",
+      "blurb": "A still, breathing person lights the breathing band; the firmware calls it quiet (the guide's Presence pill).",
       "pill": "Presence",
-      "event": "subtle",
-      "serial": "witness record: state=subtle",
+      "event": "quiet",
+      "serial": "witness record: state=quiet",
       "mqtt": [
         {
           "suffix": "events",
@@ -979,7 +979,7 @@
     {
       "id": "leave",
       "label": "Leave the room",
-      "blurb": "The field goes still; presence clears to Quiet.",
+      "blurb": "The field goes still; the firmware reports empty (the guide's Quiet pill).",
       "pill": "Quiet",
       "event": "empty",
       "serial": "witness record: state=empty",
@@ -1066,6 +1066,7 @@
       "id": "co",
       "label": "Fire a T4 CO cadence",
       "blurb": "The mic matches the UL-2034 CO pattern.",
+      "pill": "Motion",
       "event": "co_alarm_t4",
       "serial": "acoustic: matched co_alarm_t4",
       "mqtt": [

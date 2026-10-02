@@ -65,14 +65,15 @@ export function mqttApply(store, msg) {
   return store;
 }
 
-// A sandbox/CSI event → the presence pill it lands the dashboard on (or null
-// if it doesn't move presence, e.g. a mic mute).
-export function pillForEvent(ev) {
-  return {
-    motion: "Motion", present: "Presence", subtle: "Presence",
-    empty: "Quiet", quiet: "Quiet", active: "Active",
-    smoke_alarm_t3: "Motion", co_alarm_t4: "Motion",
-  }[ev] || null;
+// A sandbox scene → the presence pill it lands the dashboard sketch on (or
+// null if it doesn't move presence, e.g. a mic mute). The pill is the scene's
+// own, in the getting-started guide's vocabulary. Its `event` is the
+// firmware's word (core.presence's state, or the acoustic type), and the two
+// vocabularies differ: the firmware's `quiet` is a still, breathing person,
+// the guide's Quiet an empty room. So the pill is never derived from the
+// event (a map from one to the other used to turn `quiet` into Quiet).
+export function pillForScene(sc) {
+  return (sc && sc.pill) || null;
 }
 
 // A sandbox publish as csi_mqtt.cpp writes it (sweep A30): the topic's
@@ -974,7 +975,7 @@ export function buildDashboard(data, bus) {
 
   bus.on("online", () => { setPill("Quiet", data.sensing.pills.find((p) => p.name === "Quiet")?.meaning); danceSpectrum(false); });
   bus.on("event", (e) => {
-    const name = pillForEvent(e.id === "smoke" ? "motion" : e.id === "co" ? "motion" : e.event);
+    const name = pillForScene(e);
     const meaning = data.sensing.pills.find((p) => p.name === name)?.meaning;
     if (name) setPill(name, meaning);
     const hot = ["wave", "smoke", "co"].includes(e.id);
