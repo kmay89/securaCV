@@ -26,149 +26,19 @@
 // printed, not held: on the AMOLED the centered bubble's tallest form
 // reaches into the bird's box (filed).
 //
-// Reads the tree through FW_DIR; C++11 like test_onboard_layout.cpp (the
-// header is compiled by the core-2.0.17 sketch at gnu++11). Prints "ALL
-// SPLASH LAYOUT TESTS PASSED" on success.
+// This test holds the header. test_splash_scenes.cpp holds splash.cpp to it:
+// it compiles the real splash.cpp against fake_lvgl and reads where the bird
+// and the bubble land on the same canvases (the wrap model below is shared
+// with that fake through lv_txt_wrap.h, so these native pins hold both).
+//
+// Reads the tree through FW_DIR. The test is C++17 (story_scripts.h's inline
+// variables); the Makefile holds the header alone to gnu++11 first, since
+// the core-2.0.17 sketch compiles it there. Prints "ALL SPLASH LAYOUT TESTS
+// PASSED" on success.
 
-#include "canary/ui/splash_layout.h"
-#include "onboard_test_env.h"
-#include "story/story_scripts.h"
-
-namespace sl = canary::ui::splashlayout;
+#include "splash_test_env.h"
 
 namespace {
-
-// ── LVGL 8.4's label wrap (lv_txt.c: lv_txt_get_next_word,
-// _lv_txt_get_next_line, lv_txt_get_size) at letter_space 0, no recolor,
-// LV_TXT_LINE_BREAK_LONG_LEN 0 and LV_TXT_BREAK_CHARS " ,.;:-_" (the
-// display's lv_conf leaves both at LVGL's defaults). ASCII only: the
-// script's lines are.
-bool is_break(uint32_t c) {
-  const char* b = " ,.;:-_";
-  for (int i = 0; b[i]; ++i)
-    if (c == (uint32_t)b[i]) return true;
-  return false;
-}
-
-uint32_t next_word(const char* txt, const Face& f, int max_w, int* word_w,
-                   bool force) {
-  if (txt[0] == '\0') return 0;
-  const uint32_t kNone = 0xFFFFFFFFu;
-  uint32_t i = 0, word_len = 0, break_index = kNone;
-  int cur_w = 0;
-  uint32_t letter = (unsigned char)txt[0];
-  uint32_t letter_next = 0;
-  while (txt[i] != '\0') {
-    letter_next = (unsigned char)txt[i + 1];
-    word_len++;
-    const int lw = glyph_px(f, letter, letter_next);
-    cur_w += lw;
-    if (break_index == kNone && cur_w > max_w) break_index = i;
-    if (letter == '\n' || letter == '\r' || is_break(letter)) {
-      if (i == 0 && break_index == kNone) *word_w = cur_w;
-      word_len--;
-      break;
-    }
-    if (break_index == kNone) *word_w = cur_w;
-    i++;
-    letter = letter_next;
-  }
-  if (break_index == kNone) {
-    if (word_len == 0) i = i + 1;
-    return i;
-  }
-  if (force) return break_index;
-  *word_w = 0;
-  return 0;
-}
-
-uint32_t next_line(const char* txt, const Face& f, int max_w) {
-  uint32_t i = 0;
-  while (txt[i] != '\0' && max_w > 0) {
-    int word_w = 0;
-    const uint32_t adv = next_word(txt + i, f, max_w, &word_w, i == 0);
-    max_w -= word_w;
-    if (adv == 0) break;
-    i += adv;
-    if (txt[i] == '\n' || txt[i] == '\r') {
-      i++;
-      break;
-    }
-  }
-  if (i == 0) i = 1;
-  return i;
-}
-
-// The wrapped text's height (lv_txt_get_size, line_space 0).
-int text_h(const char* txt, const Face& f, int max_w) {
-  int lines = 0;
-  for (uint32_t at = 0; txt[at] != '\0';) {
-    at += next_line(txt + at, f, max_w);
-    lines++;
-  }
-  return (lines == 0 ? 1 : lines) * f.line_height;
-}
-
-// The speech bubble's height around a line (splash.cpp's frame).
-int bubble_h(const char* txt, const Face& f, const sl::Family& fam) {
-  return text_h(txt, f, fam.bubble_w - sl::kBubbleTextInset) + 2 * sl::kBubblePad +
-         2 * sl::kBubbleBorder;
-}
-
-// The pseudonym's length (device_pseudonym.h: HEX_LEN = TOKEN_BYTES * 2;
-// read, since its host branch wants OpenSSL).
-int g_hex_len = 0;
-
-void load_hex_len() {
-  const std::string dp = slurp(std::string(FW_DIR) +
-                               "/common/identity/device_pseudonym.h");
-  const char* key = "constexpr size_t TOKEN_BYTES = ";
-  const size_t at = dp.find(key);
-  CHECK(at != std::string::npos &&
-            dp.find("HEX_LEN     = TOKEN_BYTES * 2;") != std::string::npos,
-        "device_pseudonym.h's HEX_LEN is no longer TOKEN_BYTES * 2");
-  g_hex_len = at == std::string::npos
-                  ? 16
-                  : 2 * std::atoi(dp.c_str() + at + std::strlen(key));
-}
-
-// The tallest bubble the first meeting shows for one pseudonym: every line
-// of story::kHello, `%s` expanded the way the StoryTeller does.
-int tallest_for(const Face& f, const sl::Family& fam, const std::string& subject,
-                std::string* which) {
-  int best = 0;
-  canary::story::StoryTeller teller;
-  teller.set_subject(subject.c_str());
-  for (uint8_t k = 0; k < canary::story::kHello.n; ++k) {
-    const canary::story::Beat* b = &canary::story::kHello.beats[k];
-    if (b->line == nullptr) continue;
-    char buf[192];
-    teller.expand(b, buf, sizeof(buf));
-    const int h = bubble_h(buf, f, fam);
-    if (h > best) {
-      best = h;
-      if (which) *which = b->line;
-    }
-  }
-  return best;
-}
-
-// ...and for any pseudonym the unit can show: HEX_LEN of any one character
-// of the minting alphabet it is drawn from (the widest such, or the one
-// whose letters break the worst).
-int tallest_bubble(const Face& f, const sl::Family& fam, std::string* which) {
-  int best = 0;
-  for (size_t c = 0; c < g_minted.alpha.size(); ++c) {
-    std::string line;
-    const int h = tallest_for(f, fam, std::string((size_t)g_hex_len,
-                                                  g_minted.alpha[c]), &line);
-    if (h > best) {
-      best = h;
-      if (which) *which = line;
-    }
-  }
-  return best;
-}
 
 // ── canary_mark's hop: how high it lifts the bird ────────────────────────
 // lv_bezier3 (lv_math.c) and lv_anim_path_overshoot's control points
@@ -211,112 +81,6 @@ int derived_hop_reach() {
               "overshoot's swing; kHopReach %d\n", base, ceil, apex, reach,
               sl::kHopReach);
   return reach;
-}
-
-// ── the canvases the splash runs on ──────────────────────────────────────
-struct Canvas {
-  std::string what;
-  int w, h;
-  bool wide;      // splash.cpp's wide branch (the dash line)
-  int fam;        // character.cpp's ladder family
-  bool turned;    // the panel a quarter turned (a saved rotation)
-};
-
-// main.cpp applies a saved rotation before splash_play() only under these
-// two flavors' guards; anything else turning the glass first is a canvas
-// this test does not know.
-void check_boot_rotation(bool* nightlight, bool* dash) {
-  const std::string main_cpp = slurp(std::string(FW_DIR) +
-                                     "/projects/canary-display/src/main.cpp");
-  const size_t setup = main_cpp.find("void setup() {");
-  const size_t splash = main_cpp.find("canary::ui::splash_play(", setup);
-  CHECK(setup != std::string::npos && splash != std::string::npos,
-        "main.cpp: setup() or its splash_play() call not found");
-  *nightlight = *dash = false;
-  if (setup == std::string::npos || splash == std::string::npos) return;
-  const std::vector<std::string> ls =
-      lines_of(main_cpp.substr(setup, splash - setup));
-  std::vector<std::string> guards;
-  for (size_t i = 0; i < ls.size(); ++i) {
-    const std::string t = trim(ls[i]);
-    if (starts_with(t, "#if")) guards.push_back(t);
-    else if (starts_with(t, "#endif") && !guards.empty()) guards.pop_back();
-    else if (t.find("set_rotation(") != std::string::npos ||
-             t.find("set_panel_rotation(") != std::string::npos) {
-      bool known = false;
-      for (size_t g = 0; g < guards.size(); ++g) {
-        if (guards[g] == "#ifdef CD_NIGHTLIGHT") *nightlight = known = true;
-        if (guards[g] == "#ifdef CD_FLAVOR_DASH") *dash = known = true;
-      }
-      CHECK(known, "main.cpp turns the glass before the splash outside the "
-                   "nightlight's and the dash's guards: %s", t.c_str());
-    }
-  }
-  CHECK(*nightlight && *dash, "main.cpp no longer applies the nightlight's "
-                              "(%d) and the dash's (%d) saved rotation before "
-                              "splash_play()", *nightlight, *dash);
-}
-
-std::vector<Canvas> canvases(const std::vector<Env>& envs) {
-  bool nl_turns = false, dash_turns = false;
-  check_boot_rotation(&nl_turns, &dash_turns);
-  std::vector<Canvas> out;
-  for (size_t i = 0; i < envs.size(); ++i) {
-    const Env& e = envs[i];
-    const std::string cfg = slurp(std::string(FW_DIR) +
-                                  "/configs/canary-display/" + e.cfg +
-                                  "/config.h");
-    const bool nightlight = define_int(cfg, "CD_NIGHTLIGHT") == 1;
-    const int fam = (e.dash || e.amoled) ? kBig : e.lean ? kLean : kStd;
-    const bool turns = (nightlight && nl_turns) || (e.dash && dash_turns);
-    for (int t = 0; t < (turns ? 2 : 1); ++t) {
-      Canvas c;
-      c.what = e.name.substr(15);
-      c.w = t ? e.h : e.w;
-      c.h = t ? e.w : e.h;
-      c.wide = e.dash;
-      c.fam = fam;
-      c.turned = t == 1;
-      bool seen = false;
-      for (size_t k = 0; k < out.size(); ++k)
-        seen = seen || (out[k].w == c.w && out[k].h == c.h &&
-                        out[k].wide == c.wide && out[k].fam == c.fam);
-      if (!seen) out.push_back(c);
-    }
-  }
-  return out;
-}
-
-// splash.cpp seats through this header: the family per branch, the bird at
-// seat()'s offset, the bubble hung when seat() says so.
-void check_splash_source() {
-  std::printf("splash.cpp:\n");
-  const std::string sp = slurp(std::string(FW_DIR) +
-                               "/projects/canary-display/src/ui/splash.cpp");
-  const char* const kNeeds[] = {
-      "constexpr splashlayout::Family GLASS = splashlayout::kSmallGlass;",
-      "constexpr splashlayout::Family GLASS = splashlayout::kWideGlass;",
-      "splashlayout::seat(\n      (int)lv_disp_get_ver_res(NULL), GLASS, "
-      "first_meeting);",
-      "canary_mark_create(scr, BIRD);",
-      "lv_obj_align(bird, LV_ALIGN_CENTER, 0, seat.bird_off);",
-      "lv_obj_align(bub, LV_ALIGN_TOP_MID, 0, seat.bubble_top);",
-      "lv_obj_align(bub, LV_ALIGN_CENTER, 0, BUB_Y);",
-      "lv_obj_set_width(line, BUB_W - splashlayout::kBubbleTextInset);",
-      "lv_obj_set_style_pad_all(bub, splashlayout::kBubblePad, 0);",
-      "lv_obj_set_style_border_width(bub, splashlayout::kBubbleBorder, 0);",
-  };
-  for (size_t i = 0; i < sizeof(kNeeds) / sizeof(kNeeds[0]); ++i)
-    CHECK(sp.find(kNeeds[i]) != std::string::npos,
-          "splash.cpp no longer says: %s", kNeeds[i]);
-  // The watch branch is small glass (the nightstand aliases into it).
-  const size_t w = sp.find("#ifdef CD_FLAVOR_WATCH\n  // Intro: bird high");
-  const size_t small = sp.find("splashlayout::kSmallGlass;");
-  const size_t wide = sp.find("splashlayout::kWideGlass;");
-  CHECK(w != std::string::npos && w < small && small < wide,
-        "splash.cpp: kSmallGlass is no longer the CD_FLAVOR_WATCH branch's");
-  CHECK(sp.find("#define CD_FLAVOR_WATCH 1") != std::string::npos,
-        "splash.cpp no longer renders the nightstand line as small glass");
 }
 
 // The wrap model against what the real LVGL 8.4 drew: a native harness
@@ -456,7 +220,6 @@ int main() {
   load_minted_core();
   load_hex_len();
   const std::vector<Env> envs = load_envs();
-  check_splash_source();
   const int reach = derived_hop_reach();
   CHECK(reach == sl::kHopReach, "splash_layout.h's kHopReach is %d; canary_mark's "
         "hop reaches %d", sl::kHopReach, reach);

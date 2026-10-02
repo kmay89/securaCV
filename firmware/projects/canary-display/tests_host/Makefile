@@ -304,7 +304,7 @@ MARKSEAT_BIN = test_canary_mark_seat
 MARKSEAT_SRC = test_canary_mark_seat.cpp
 
 $(MARKSEAT_BIN): $(MARKSEAT_SRC) ../src/ui/canary_mark.cpp ../include/canary/ui/canary_mark.h \
-	  fake_lvgl/lvgl.h fake_lvgl/Arduino.h fake_lvgl/esp_random.h
+	  fake_lvgl/lvgl.h fake_lvgl/Arduino.h fake_lvgl/esp_random.h lv_txt_wrap.h
 	$(CXX) $(CXXFLAGS) -Werror -I fake_lvgl $(INC) -I ../../../configs/canary-display/watch \
 	  -o $@ $(MARKSEAT_SRC) ../src/ui/canary_mark.cpp
 
@@ -334,7 +334,7 @@ clean: clean-mark-seat
 SCENES_SRC = test_onboard_scenes.cpp ../src/ui/onboard_ui.cpp \
   ../src/ui/round_frame.cpp ../src/ui/canary_mark.cpp
 SCENES_DEPS = $(SCENES_SRC) onboard_test_env.h montserrat_metrics.h \
-  fake_lvgl/lvgl.h fake_lvgl/Arduino.h fake_lvgl/esp_random.h \
+  fake_lvgl/lvgl.h fake_lvgl/Arduino.h fake_lvgl/esp_random.h lv_txt_wrap.h \
   ../include/canary/ui/onboard_layout.h ../include/canary/ui/onboard_ui.h \
   ../include/canary/ui/round_frame.h ../include/canary/ui/canary_mark.h \
   ../../../common/network/wifi_join_policy.h ../../../common/network/provision_core.h
@@ -456,8 +456,8 @@ clean: clean-io-cores
 SPLASH_BIN = test_splash_layout
 SPLASH_SRC = test_splash_layout.cpp
 
-$(SPLASH_BIN): $(SPLASH_SRC) onboard_test_env.h ../include/canary/ui/splash_layout.h \
-	  montserrat_metrics.h ../../../common/story/story.h ../../../common/story/story_scripts.h
+$(SPLASH_BIN): $(SPLASH_SRC) splash_test_env.h lv_txt_wrap.h onboard_test_env.h \
+	  ../include/canary/ui/splash_layout.h montserrat_metrics.h ../../../common/story/story.h ../../../common/story/story_scripts.h
 	echo '#include "canary/ui/splash_layout.h"' | \
 	  $(CXX) -std=gnu++11 -Wall -Wextra -Werror $(INC) -fsyntax-only -x c++ -
 	$(CXX) $(CXXFLAGS) -Werror $(INC) -I ../../../common \
@@ -471,3 +471,46 @@ clean-splash-layout:
 
 run: run-splash-layout
 clean: clean-splash-layout
+
+# Where the boot splash DRAWS the bird and the speech bubble (F88): the REAL
+# src/ui/splash.cpp and canary_mark.cpp against fake_lvgl/lvgl.h, with the
+# Arduino clock, Preferences and the pseudonym faked beside it, playing the
+# first meeting (the whole script) and hello again on every canvas of the
+# build's glass with both type ladders. The bird breathes down to exactly
+# the seat splash_layout.h names and hops under kHopReach, on the canvas;
+# the bubble sits where seat() says (hung under a moved bird, centered
+# otherwise) in whatever height its typed line wraps to, on the canvas and
+# clear of a moved bird; its tallest is test_splash_layout's measure. Three
+# builds, because the glass family is the config's call: the watch's (the
+# round watch), the nightstand's (every CD_FLAVOR_NIGHTSTAND canvas,
+# the nightlight's turned one included) and the dash's (the wide glass).
+# Hooked into `run` and `clean` by prerequisite.
+SPLASH_SCENES_SRC = test_splash_scenes.cpp ../src/ui/splash.cpp ../src/ui/canary_mark.cpp
+SPLASH_SCENES_DEPS = $(SPLASH_SCENES_SRC) splash_test_env.h onboard_test_env.h \
+  lv_txt_wrap.h montserrat_metrics.h fake_lvgl/lvgl.h fake_lvgl/Arduino.h \
+  fake_lvgl/Preferences.h fake_lvgl/esp_random.h fake_lvgl/identity/device_pseudonym.h \
+  ../include/canary/ui/splash_layout.h ../include/canary/ui/splash.h \
+  ../include/canary/ui/canary_mark.h ../include/canary/ui/round_frame_core.h \
+  ../../../common/story/story.h ../../../common/story/story_scripts.h
+# fake_lvgl comes before ../../../common: its identity/device_pseudonym.h
+# stands in for the NVS-backed one.
+SPLASH_SCENES_FLAGS = $(CXXFLAGS) -Werror -I fake_lvgl $(INC) -I ../../../common \
+  '-DFW_DIR="$(abspath ../../..)"'
+
+test_splash_scenes_round: $(SPLASH_SCENES_DEPS)
+	$(CXX) $(SPLASH_SCENES_FLAGS) -I ../../../configs/canary-display/watch -o $@ $(SPLASH_SCENES_SRC)
+test_splash_scenes_rect: $(SPLASH_SCENES_DEPS)
+	$(CXX) $(SPLASH_SCENES_FLAGS) -I ../../../configs/canary-display/nightstand -o $@ $(SPLASH_SCENES_SRC)
+test_splash_scenes_wide: $(SPLASH_SCENES_DEPS)
+	$(CXX) $(SPLASH_SCENES_FLAGS) -I ../../../configs/canary-display/dash -o $@ $(SPLASH_SCENES_SRC)
+
+.PHONY: run-splash-scenes clean-splash-scenes
+run-splash-scenes: test_splash_scenes_round test_splash_scenes_rect test_splash_scenes_wide
+	$(call run_marked,test_splash_scenes_round)
+	$(call run_marked,test_splash_scenes_rect)
+	$(call run_marked,test_splash_scenes_wide)
+clean-splash-scenes:
+	rm -f test_splash_scenes_round test_splash_scenes_rect test_splash_scenes_wide
+
+run: run-splash-scenes
+clean: clean-splash-scenes
