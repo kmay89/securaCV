@@ -25,7 +25,9 @@ size_t csi_settings_nvs_init_modules(void);
 /* ── Quiet Hours ─────────────────────────────────────────────────────────
  * Three rows in the "csi" namespace, under the shared key map's keys for
  * core.quiet_hours.enabled / start_min / end_min (qh.en, qh.start, qh.end),
- * written by POST /api/settings and by the Tuning Lab. No module reads them:
+ * written by POST /api/settings (store_quiet_hours_from_settings()) and by
+ * the Tuning Lab, both through the key map. Devices hold them under those
+ * names, so the names stay (test_wap_tune_lab.cpp). No module reads them:
  * the chokepoint holds them (csi_event_set_quiet_window).
  *
  * The one default a device that never stored them runs: off, 23:00 to
@@ -46,6 +48,20 @@ struct QuietHours {
 /** The stored Quiet Hours, each absent row its default above. `prefs` is
  *  open on the "csi" namespace (read-only is enough). */
 QuietHours read_quiet_hours(Preferences& prefs);
+
+/** Store the "quiet_hours" object of a POST /api/settings body (the
+ *  dashboard's Quiet Hours panel): {"enabled": true|false, "start_min": M,
+ *  "end_min": M}, each field optional, minutes clamped to 0..1439, a value
+ *  sent as a string read as the bare one. Only the object's own fields
+ *  count, so a top-level "enabled" (or any other object's) is not read as
+ *  Quiet Hours. Each field lands on the row read_quiet_hours() reads, through
+ *  the shared key map. `prefs` is open read-write on the "csi" namespace;
+ *  `body` is NUL-terminated, and is written to while the object is parsed
+ *  and given back unchanged. Returns true when it stored any row (the caller
+ *  then re-applies with apply_quiet_hours_from_nvs()). It lived in
+ *  csi_integration.cpp's handle_settings_post(), which no host suite
+ *  compiles, with the keys spelled by hand; test_wap_tune_lab.cpp runs it. */
+bool store_quiet_hours_from_settings(Preferences& prefs, char* body);
 
 /** Push the stored Quiet Hours into the chokepoint
  *  (csi_event_set_quiet_window, a pure state update the HTTP server task

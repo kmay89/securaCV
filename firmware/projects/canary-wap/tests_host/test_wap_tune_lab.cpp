@@ -16,14 +16,23 @@
 // re-applies the stored window to the chokepoint when a core.quiet_hours.*
 // knob is stored, as /api/settings does, on the same (HTTP server) task.
 //
+// The dashboard's Quiet Hours (POST /api/settings) wrote "qh.en" /
+// "qh.start" / "qh.end" by hand in csi_integration.cpp while the reader went
+// through the shared key map, and no suite ran the writes. The store moved
+// to csi_settings_nvs.cpp (store_quiet_hours_from_settings()), by the key
+// map; it runs here against the reader and the Lab, the rows' stored names
+// are pinned, and the handler is pinned to the store and its one apply.
+//
 // What runs here is REAL: the Tuning Lab's table and POST (csi_tune_lab.cpp),
-// the Quiet Hours reader and apply (csi_settings_nvs.cpp), the staged CSI
+// the Quiet Hours reader, store and apply (csi_settings_nvs.cpp), the staged CSI
 // library (chokepoint, bundler, module registry) and the staged modules, over
 // a fake NVS (stubs/module_boot). What is modeled: csi_integration.cpp, which
 // no host suite compiles. Its handlers are thin around these functions, and
 // the source pins at the end hold them to that (each pin is checked against
 // in-memory mutations of the source, so it is known to bite): GET
-// /api/settings reads Quiet Hours through read_quiet_hours(); the POST hands
+// /api/settings reads Quiet Hours through read_quiet_hours(), and its POST
+// stores them through store_quiet_hours_from_settings() and applies them
+// once after closing NVS; the Tuning Lab POST hands
 // its body to tune_post() with reinit_module(), whose body is the model's;
 // the bundle import is that POST; the boot applies Quiet Hours; and the
 // table and the apply are defined nowhere else.
@@ -331,6 +340,122 @@ static int test_a_bundle_import_applies_every_knob() {
   return 0;
 }
 
+// ── The dashboard's Quiet Hours and the Lab's are the same rows ─────────
+
+// POST /api/settings stores its "quiet_hours" object through
+// store_quiet_hours_from_settings(), then (when it stored a row) applies
+// with apply_quiet_hours_from_nvs(), as the pinned handler does. What it
+// stores is what GET /api/settings (read_quiet_hours()), the boot apply and
+// the Tuning Lab read, and what the Lab stores is what the dashboard reads.
+// Only the object's own fields count, minutes clamp, a string value reads as
+// the bare one, and the body comes back unchanged. Before, the handler
+// wrote "qh.en" / "qh.start" / "qh.end" by hand while the reader went
+// through the key map, and nothing ran the writes: a key spelled
+// differently on one side saved a window nothing read.
+static bool dashboard_post(const char* json) {
+  char body[384];
+  std::snprintf(body, sizeof(body), "%s", json);
+  Preferences prefs;
+  if (!prefs.begin(csi_module_settings_nvs::kNamespace, /*readOnly=*/false)) return false;
+  const bool qh_changed = store_quiet_hours_from_settings(prefs, body);
+  prefs.end();
+  if (std::strcmp(body, json) != 0) return false;   // the body comes back as it was
+  if (qh_changed) apply_quiet_hours_from_nvs();
+  return qh_changed;
+}
+
+static int test_the_dashboard_writes_the_rows_the_device_reads() {
+  host_prefs().clear();
+  reboot_and_boot();
+  set_clock(12 * 60);
+  CHECK(ping_commits());
+
+  // The dashboard turns Quiet Hours on for 11:30 to 12:30.
+  CHECK(dashboard_post("{\"pet_mode\":true,\"quiet_hours\":{\"enabled\":true,"
+                       "\"start_min\":690,\"end_min\":750},\"privacy_ceiling\":\"p0\"}"));
+  CHECK(!ping_commits());                      // applied at once
+  {
+    Preferences prefs;
+    CHECK(prefs.begin("csi", /*readOnly=*/true));
+    const QuietHours qh = read_quiet_hours(prefs);   // GET /api/settings
+    prefs.end();
+    CHECK(qh.enabled && qh.start_min == 690 && qh.end_min == 750);
+  }
+  CHECK(lab_value("core.quiet_hours.enabled") == 1);   // the Lab reads them
+  CHECK(lab_value("core.quiet_hours.start_min") == 690);
+  CHECK(lab_value("core.quiet_hours.end_min") == 750);
+  reboot_and_boot();                           // and so does the boot
+  set_clock(12 * 60);
+  CHECK(!ping_commits());
+
+  // The Lab moves the start; the dashboard's GET reads the Lab's row.
+  CHECK(tune_post("{\"core.quiet_hours.start_min\":725}", reinit_module_model).changed == 1);
+  {
+    Preferences prefs;
+    CHECK(prefs.begin("csi", /*readOnly=*/true));
+    CHECK(read_quiet_hours(prefs).start_min == 725);
+    prefs.end();
+  }
+
+  // Only the object's own fields: a top-level "enabled" is not Quiet Hours.
+  // Minutes clamp; a string value reads as the bare one.
+  CHECK(dashboard_post("{\"enabled\":false,\"quiet_hours\":{\"start_min\":-5,\"end_min\":\"5000\"}}"));
+  {
+    Preferences prefs;
+    CHECK(prefs.begin("csi", /*readOnly=*/true));
+    const QuietHours qh = read_quiet_hours(prefs);
+    prefs.end();
+    CHECK(qh.enabled);
+    CHECK(qh.start_min == 0);
+    CHECK(qh.end_min == 1439);
+  }
+
+  // Nothing to store: no object, or no field it can read.
+  const size_t rows = host_prefs().i32.size() + host_prefs().flag.size();
+  CHECK(!dashboard_post("{\"pet_mode\":false}"));
+  CHECK(!dashboard_post("{\"quiet_hours\":{\"enabled\":\"maybe\",\"start_min\":\"soon\"}}"));
+  CHECK(!dashboard_post("{\"quiet_hours\":true,\"enabled\":true}"));
+  CHECK(host_prefs().i32.size() + host_prefs().flag.size() == rows);
+
+  // Off, from the dashboard: the window closes at once.
+  set_clock(12 * 60 + 10);
+  CHECK(!ping_commits());
+  CHECK(dashboard_post("{\"quiet_hours\":{\"enabled\":false}}"));
+  CHECK(ping_commits());
+  host_prefs().clear();
+  return 0;
+}
+
+// Devices hold their Quiet Hours under these names: the dashboard wrote them
+// by hand before the shared key map spelled them, and both writers and the
+// reader now take them from the map. Renaming a row (in the map, so on
+// every side at once) would agree with itself and lose every saved window
+// at the upgrade.
+static int test_the_quiet_hours_rows_keep_their_stored_names() {
+  using csi_module_settings_nvs::nvs_key_for;
+  CHECK(std::strcmp(csi_module_settings_nvs::kNamespace, "csi") == 0);
+  CHECK(nvs_key_for("core.quiet_hours.enabled") != nullptr);
+  CHECK(std::strcmp(nvs_key_for("core.quiet_hours.enabled"), "qh.en") == 0);
+  CHECK(nvs_key_for("core.quiet_hours.start_min") != nullptr);
+  CHECK(std::strcmp(nvs_key_for("core.quiet_hours.start_min"), "qh.start") == 0);
+  CHECK(nvs_key_for("core.quiet_hours.end_min") != nullptr);
+  CHECK(std::strcmp(nvs_key_for("core.quiet_hours.end_min"), "qh.end") == 0);
+
+  // A window an older image saved under those names is the one read.
+  host_prefs().clear();
+  host_prefs().flag["csi/qh.en"] = true;
+  host_prefs().i32["csi/qh.start"] = 600;
+  host_prefs().i32["csi/qh.end"] = 660;
+  Preferences prefs;
+  CHECK(prefs.begin("csi", /*readOnly=*/true));
+  const QuietHours qh = read_quiet_hours(prefs);
+  prefs.end();
+  CHECK(qh.enabled && qh.start_min == 600 && qh.end_min == 660);
+  CHECK(lab_value("core.quiet_hours.start_min") == 600);
+  host_prefs().clear();
+  return 0;
+}
+
 // ── The table: every knob applies at once, to its own group ─────────────
 static int test_every_knob_applies_at_once_to_its_group() {
   for (size_t i = 0; i < TUNE_COEFF_COUNT; ++i) {
@@ -428,6 +553,7 @@ static size_t count_of(const std::string& s, const std::string& what) {
 }
 
 static const char* const kSettingsGet = R"(\besp_err_t\s+handle_settings_get\s*\(\s*httpd_req_t\s*\*\s*req\s*\)\s*\{)";
+static const char* const kSettingsPost = R"(\besp_err_t\s+handle_settings_post\s*\(\s*httpd_req_t\s*\*\s*req\s*\)\s*\{)";
 static const char* const kTunePost = R"(\besp_err_t\s+handle_tune_post_coefficients\s*\(\s*httpd_req_t\s*\*\s*req\s*\)\s*\{)";
 static const char* const kTunePreset = R"(\besp_err_t\s+handle_tune_post_preset\s*\(\s*httpd_req_t\s*\*\s*req\s*\)\s*\{)";
 static const char* const kRegister = R"(\bvoid\s+register_v1_modules\s*\(\s*\)\s*\{)";
@@ -440,6 +566,27 @@ static std::vector<std::string> pin_problems(const std::string& integ) {
   const std::string get = code_body(integ, kSettingsGet);
   if (get.empty() || count_of(get, "read_quiet_hours(prefs)") != 1 || get.find("\"qh.") != std::string::npos) {
     out.push_back("GET /api/settings reads Quiet Hours other than through read_quiet_hours(prefs)");
+  }
+  // POST /api/settings: the dashboard's Quiet Hours go through the tested
+  // store (no row spelled by hand, no parse of its own), count as a write
+  // (or a Quiet-Hours-only POST answers 400), and are applied once, after
+  // the handle closes, when a row was stored.
+  const std::string set = code_body(integ, kSettingsPost);
+  const size_t store_at = set.find("constboolqh_changed=store_quiet_hours_from_settings(prefs,body);"
+                                   "if(qh_changed)wrote_anything=true;");
+  const size_t end_at = set.find("prefs.end();");
+  const size_t apply_at = set.find("if(qh_changed)apply_quiet_hours_from_nvs();");
+  if (set.empty() || store_at == std::string::npos ||
+      count_of(set, "store_quiet_hours_from_settings(") != 1) {
+    out.push_back("POST /api/settings does not store Quiet Hours through store_quiet_hours_from_settings()");
+  }
+  if (set.find("\"qh.") != std::string::npos || set.find("\\\"quiet_hours\\\"") != std::string::npos ||
+      set.find("\\\"start_min\\\"") != std::string::npos || set.find("\\\"end_min\\\"") != std::string::npos) {
+    out.push_back("POST /api/settings parses or stores Quiet Hours itself");
+  }
+  if (apply_at == std::string::npos || count_of(set, "apply_quiet_hours_from_nvs(") != 1 ||
+      end_at == std::string::npos || !(store_at < end_at && end_at < apply_at)) {
+    out.push_back("POST /api/settings does not apply a stored Quiet Hours change once, after closing NVS");
   }
   const std::string post = code_body(integ, kTunePost);
   if (post.empty() || count_of(post, "tune_post(") != 1 ||
@@ -503,6 +650,20 @@ static int test_csi_integration_is_thin_around_the_tested_code() {
     {"reinit_module() skips deinit", "if (m->deinit) m->deinit();", ""},
     {"a local apply comes back", "void reinit_module(const char* module_id) {",
      "void apply_quiet_hours_from_nvs(void) {}\nvoid reinit_module(const char* module_id) {"},
+    // The settings POST (the reviewer's probes X8 and X10, and their kin).
+    {"the settings POST writes a Quiet Hours row by hand",
+     "const bool qh_changed = store_quiet_hours_from_settings(prefs, body);",
+     "const bool qh_changed = store_quiet_hours_from_settings(prefs, body);\n"
+     "  if (strstr(body, \"\\\"start_min\\\"\")) prefs.putInt(\"qh.st\", 0);"},
+    {"the settings POST parses Quiet Hours itself",
+     "const bool qh_changed = store_quiet_hours_from_settings(prefs, body);",
+     "bool qh_changed = false;\n  if (strstr(body, \"\\\"quiet_hours\\\"\")) qh_changed = true;"},
+    {"the settings POST does not apply Quiet Hours", "  if (qh_changed) apply_quiet_hours_from_nvs();\n", ""},
+    {"the settings POST applies before closing NVS",
+     "  const bool qh_changed = store_quiet_hours_from_settings(prefs, body);\n",
+     "  const bool qh_changed = store_quiet_hours_from_settings(prefs, body);\n"
+     "  if (qh_changed) apply_quiet_hours_from_nvs();\n"},
+    {"a Quiet-Hours-only settings POST answers 400", "  if (qh_changed) wrote_anything = true;\n", ""},
   };
   for (const Mutation& mu : kMutations) {
     std::string src = integ;
@@ -528,6 +689,8 @@ int main(int argc, char** argv) {
     {"the_dashboard_starts_from_the_same_window", test_the_dashboard_starts_from_the_same_window},
     {"a_lab_quiet_hours_change_applies_at_once", test_a_lab_quiet_hours_change_applies_at_once},
     {"a_bundle_import_applies_every_knob", test_a_bundle_import_applies_every_knob},
+    {"the_dashboard_writes_the_rows_the_device_reads", test_the_dashboard_writes_the_rows_the_device_reads},
+    {"the_quiet_hours_rows_keep_their_stored_names", test_the_quiet_hours_rows_keep_their_stored_names},
     {"every_knob_applies_at_once_to_its_group", test_every_knob_applies_at_once_to_its_group},
     {"the_post_stores_only_known_knobs", test_the_post_stores_only_known_knobs},
     {"csi_integration_is_thin_around_the_tested_code", test_csi_integration_is_thin_around_the_tested_code},

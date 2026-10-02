@@ -657,8 +657,10 @@ without recompiling. The override is read once per boot.
 
 ## Quiet Hours gating
 
-The dashboard's Quiet Hours range (NVS keys `qh.en`, `qh.start`, `qh.end`)
-is collected in the household's local time. The chokepoint compares it
+The dashboard's Quiet Hours range (NVS keys `qh.en`, `qh.start`, `qh.end`,
+the shared key map's rows for `core.quiet_hours.enabled` / `start_min` /
+`end_min`, which the Tuning Lab reads and writes too) is collected in the
+household's local time. The chokepoint compares it
 against the device's own clock, which follows the household time zone once
 one is set (`tz` above — seeded at setup from the phone's zone, which the
 setup wizard sends as `tz_iana` on `/api/wifi/connect`; applied with
@@ -682,7 +684,12 @@ csi_settings_nvs.cpp::apply_quiet_hours_from_nvs()`, which
 Lab's POST (`csi_tune_lab.cpp`'s `tune_post()`, also the bundle import)
 calls when it stores a `core.quiet_hours.*` knob (sweep F128). A device
 that never stored the range runs it off, 23:00 to 07:00
-(`kQuietHoursDefault*` in `csi_settings_nvs.h`, sweep F123).
+(`kQuietHoursDefault*` in `csi_settings_nvs.h`, sweep F123). The
+`/api/settings` POST stores the range through
+`store_quiet_hours_from_settings()` beside it, by the same key map, so
+what the dashboard saves is what `GET /api/settings`, the boot and the
+Tuning Lab read (`test_wap_tune_lab.cpp` runs both writers against the
+reader).
 
 ---
 

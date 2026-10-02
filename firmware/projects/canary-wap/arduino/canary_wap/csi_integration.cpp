@@ -1203,69 +1203,14 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
     }
   }
 
-  /* "quiet_hours": {"enabled": true|false, "start_min": M, "end_min": M}
-   *
-   * The original implementation gated on "\"quiet_hours\"" at the top
-   * level but then searched for "\"enabled\"" / "\"start_min\"" /
-   * "\"end_min\"" from the start of the body — meaning a future
-   * top-level `enabled` field (or any other object that happens to
-   * contain `enabled`) could overwrite qh.en with the wrong value.
-   *
-   * Walk the brace pair of the quiet_hours object and search ONLY
-   * within that span. We temporarily nul-terminate at the closing
-   * brace so strstr can't see past it, then restore the byte. Body
-   * is a local buffer; mutating it is fine. */
-  bool qh_changed = false;
-  if (char* qh_key = (char*)strstr(body, "\"quiet_hours\"")) {
-    char* qh_open = strchr(qh_key, '{');
-    if (qh_open) {
-      int depth = 1;
-      char* p = qh_open + 1;
-      for (; *p; ++p) {
-        if (*p == '{') depth++;
-        else if (*p == '}') {
-          if (--depth == 0) break;
-        }
-      }
-      /* p now points at the matching close brace, or '\0' if malformed.
-       * Either way, nul-terminate one past it so strstr sees only the
-       * object's contents. Save the byte to restore after parsing. */
-      char saved = *p;
-      *p = '\0';
-
-      if (const char* e = strstr(qh_open, "\"enabled\"")) {
-        if (const char* v = strchr(e, ':')) {
-          v++;
-          while (*v == ' ' || *v == '\t' || *v == '"') v++;
-          if (strncmp(v, "true", 4) == 0) {
-            prefs.putBool("qh.en", true);  wrote_anything = true; qh_changed = true;
-          } else if (strncmp(v, "false", 5) == 0) {
-            prefs.putBool("qh.en", false); wrote_anything = true; qh_changed = true;
-          }
-        }
-      }
-      auto put_minute = [&](const char* tag, const char* nvs) {
-        const char* k = strstr(qh_open, tag);
-        if (!k) return;
-        const char* v = strchr(k, ':');
-        if (!v) return;
-        v++;
-        while (*v == ' ' || *v == '\t' || *v == '"') v++;
-        char* vend = nullptr;
-        long n = strtol(v, &vend, 10);
-        if (vend == v) return;
-        if (n < 0)    n = 0;
-        if (n > 1439) n = 1439;
-        prefs.putInt(nvs, (int32_t)n);
-        wrote_anything = true;
-        qh_changed = true;
-      };
-      put_minute("\"start_min\"", "qh.start");
-      put_minute("\"end_min\"",   "qh.end");
-
-      *p = saved;  /* restore for any later parsers and for cleanliness */
-    }
-  }
+  /* "quiet_hours": {"enabled": true|false, "start_min": M, "end_min": M},
+   * stored by store_quiet_hours_from_settings() (csi_settings_nvs.cpp):
+   * only the object's own fields, on the rows read_quiet_hours() reads,
+   * through the shared key map. It is host-tested there with the reader
+   * and the apply (test_wap_tune_lab.cpp, whose source pins hold this
+   * handler to the call and to the apply below). */
+  const bool qh_changed = store_quiet_hours_from_settings(prefs, body);
+  if (qh_changed) wrote_anything = true;
 
   /* "privacy_ceiling": "p0" | "p1" | "p2". Persisted as int 0/1/2 so
    * apply_privacy_ceiling_from_nvs() can compare against the

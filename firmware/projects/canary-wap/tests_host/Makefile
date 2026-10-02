@@ -396,13 +396,15 @@ clean: clean-wap-module-boot
 
 # The Tuning Lab and its Quiet Hours (sweeps F123, F128): the REAL
 # csi_tune_lab.cpp (the knobs' table and the POST's store-and-apply) and
-# csi_settings_nvs.cpp (the one Quiet Hours default, its reader and its
-# apply to the chokepoint), with the staged CSI library and modules over the
-# same fake NVS (stubs/module_boot). The Lab declares the device's own
-# Quiet Hours default, which the dashboard starts from too; a Quiet Hours
-# knob or bundle import applies to the chokepoint at once; every knob
-# applies to its own group. It reads csi_integration.cpp to hold its
-# handlers thin around that code (mutation-checked).
+# csi_settings_nvs.cpp (the one Quiet Hours default, its reader, the
+# dashboard's store and the apply to the chokepoint), with the staged CSI
+# library and modules over the same fake NVS (stubs/module_boot). The Lab
+# declares the device's own Quiet Hours default, which the dashboard starts
+# from too; a Quiet Hours knob or bundle import applies to the chokepoint at
+# once; every knob applies to its own group; the dashboard and the Lab write
+# the rows the reader reads, under their stored names. It reads
+# csi_integration.cpp to hold its handlers thin around that code
+# (mutation-checked).
 TUNELAB_BIN = test_wap_tune_lab
 TUNELAB_SRC = test_wap_tune_lab.cpp
 TUNELAB_LIB = $(SRC_DIR)/csi_tune_lab.cpp $(SRC_DIR)/csi_settings_nvs.cpp \
