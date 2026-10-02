@@ -725,7 +725,11 @@ stays wiped; nothing is sealed again), and sends both again every 2 s, to
 the pairing partner's address only, for at most the 5-minute pairing
 timeout after the first send, which the joiner's own wait cannot outlast: at
 most 149 copies. The session ends them early when it hears the joiner (its
-first verified fresh frame under this opera, so it holds the secret), and
+first verified fresh frame under this opera, from the address it paired
+from, so it holds the secret; its key went out in clear in its DISCOVER, so
+a frame bearing its fingerprint that fails any check a member's frame must
+pass, a bad signature, another address, another opera or a replayed
+counter, is dropped and ends nothing), and
 before any copy is due when the joiner is no longer a member bound at the
 address it paired from (removed, left, rotated out, a bind that failed) or
 this device no longer holds the opera the COMPLETE carried (left, rotated);
@@ -754,7 +758,9 @@ that landed after the initiator's COMPLETE went out used to turn the
 completed pairing into a failed one: the joiner held the secret and the
 initiator never registered, bound or stored it. On a failed pairing it
 reported the failure again. A cancel now ends only a running pairing; one
-that has completed or failed is left as it ended.
+that has completed or failed is left as it ended, and a completed one's
+COMPLETE copies (F134) go on: with its first COMPLETE lost, they are the
+joiner's only way in.
 
 ### 5.3 Pairing Security
 

@@ -899,8 +899,11 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     air (its CONFIRM and the sealed COMPLETE, byte for byte; the pairing
     key stays wiped and nothing is sealed again) every 2 s, to the
     partner's address only, for at most the 5-minute pairing timeout, and
-    stops when it hears the joiner, when the joiner is no longer a member
-    bound where it paired from, or when the opera is left or rotated. The
+    stops when it hears the joiner (a verified fresh frame from the address
+    it paired from: its fingerprint is public, so a forged, relayed or
+    replayed frame bearing it ends nothing), when the joiner is no longer a
+    member bound where it paired from, or when the opera is left or
+    rotated. The
     copies disclose nothing the first send did not: the same ciphertext,
     to the same address. No frame redirects them or brings one early: a
     CONFIRM reaching a completed initiator, the joiner's, replayed or
@@ -915,14 +918,16 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   - *A cancel after the end (F135).* A `pair/cancel` that landed after the
     initiator's COMPLETE went out used to fail the completed pairing: the
     joiner held the `opera_secret` while the initiator never trusted or
-    stored it. A cancel now ends only a running pairing.
+    stored it. A cancel now ends only a running pairing, and leaves a
+    completed one's COMPLETE copies running.
   - *The pairing screen (F133).* The web UI called any pairing that ended
     in `ACTIVE` or `CONNECTING` complete, a timeout, a refusal (above) or a
     cancel included. `GET /api/mesh` now reports the last pairing's number,
     outcome and failure reason, and the page reports a failure as one.
-  Pinned by host tests in `test_mesh_pairing` and `test_mesh_session` and a
-  node test of the page's poll, each failing on the code before its fix
-  and by mutation; an interop probe in scratch ran the pairing library
+  Pinned by host tests in `test_mesh_pairing` and `test_mesh_session`, a
+  node test of the page's poll and a source pin of the handlers' wiring
+  (`scripts/tests/test_canary_mesh_status_wiring.py`), each failing on the
+  code before its fix and by mutation; an interop probe in scratch ran the pairing library
   against the pre-F117, wave-10 and pre-F97 libraries; the canary build is
   CI's; not bench-verified.
 - **A canary-wap that left its opera stored an all-zero one (F113).** Its
