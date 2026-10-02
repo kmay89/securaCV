@@ -17,7 +17,10 @@
  * Tick path:
  *   process() drives mesh_pairing::tick() once per call. The initiator
  *   NOTIFY_PAIRED arrives via this path; joiner NOTIFY_PAIRED arrives
- *   inline from the COMPLETE recv handler.
+ *   inline from the COMPLETE recv handler. So do the initiator's copies
+ *   of its COMPLETE (F134), which process() ends first when they can no
+ *   longer help (end_complete_copies_unless_wanted) and on_opera_frame
+ *   ends when the member is heard.
  */
 
 #include "mesh_session.h"

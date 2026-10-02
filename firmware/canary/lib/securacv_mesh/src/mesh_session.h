@@ -285,7 +285,13 @@ bool get_paired_peer_mac(uint8_t out[mesh_transport::MESH_TRANSPORT_MAC_LEN]);
  *
  * Call process() at any reasonable cadence; it drives the pairing
  * tick() (5-min timeout + initiator NOTIFY_PAIRED) and dispatches any
- * pending Actions out via mesh_transport.
+ * pending Actions out via mesh_transport. On an initiator that includes
+ * the copies of its COMPLETE (F134: every 2 s, to the member's address,
+ * for at most the pairing timeout); process() ends them when the member
+ * is no longer trusted and bound at the address it paired from or this
+ * device no longer holds that opera, and the receive path ends them when
+ * the member is heard. The copies need process()'s clock to advance:
+ * the same now_ms the receive path stamps frames with.
  * ────────────────────────────────────────────────────────────────────────── */
 
 void process(uint32_t now_ms);

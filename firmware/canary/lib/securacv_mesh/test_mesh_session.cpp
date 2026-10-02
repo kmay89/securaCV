@@ -5631,6 +5631,26 @@ void test_a_lost_complete_is_sent_again_through_the_session() {
   assert(mesh_pairing::consume_opera_secret(cj, got));
   assert(std::memcmp(got, S, sizeof(S)) == 0);
 
+  /* Frames that reach a completed initiator move nothing and bring no
+   * copy early: its own CONFIRM reflected (the joiner's is the same bytes:
+   * one hash both ways) and its COMPLETE replayed, from the joiner's
+   * address; the same and a joiner's DISCOVER from a third radio (dropped
+   * at the transport: no pairing runs). */
+  g_outs.clear();
+  const uint8_t mac_x[6] = {0x24, 0x0A, 0xC4, 0x13, 0x40, 0x0F};
+  mesh_pairing::PairingContext cx;
+  mesh_pairing::context_init(cx);
+  const std::vector<uint8_t> disc_x = wire(mesh_pairing::start_joiner(cx, k_pub, k_priv, T + 2100));
+  for (const uint8_t* from : {mac_j, mac_x}) {
+    mesh_transport::test::inject_recv(from, first[0].data(), first[0].size(), -40);
+    mesh_transport::test::inject_recv(from, first[1].data(), first[1].size(), -40);
+    mesh_transport::test::inject_recv(from, disc_x.data(), disc_x.size(), -40);
+    mesh_transport::process();
+  }
+  mesh_session::process(T + 2 * mesh_pairing::COMPLETE_RESEND_INTERVAL_MS - 1);
+  assert(g_outs.empty());
+  assert(mesh_session::pairing_state() == mesh_pairing::State::PAIRED);
+
   /* Not heard yet: the next copy comes. Another member's frame changes
    * nothing. */
   g_outs.clear();
