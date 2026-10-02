@@ -112,10 +112,30 @@ queue and drops them. So:
    the system.integrity story already narrates (`power_loss`, `watchdog`,
    `unexpected_reboot`).
 
+The modules' boot (sweep F93) is the last rule. Registration initializes
+no CSI module, and the library ticks none before its init, so on the canary
+the boot order is: the floor, then the modules and their init, then the
+first tick. `firmware/tests_host/test_csi_module_boot.cpp` boots the real
+bridge in that order but cannot compile `main.cpp`:
+
+8. The boot. In `firmware/canary/src/main.cpp`'s `setup()`,
+   `csi_event_egress_begin();` (it restores the event-id floor) and
+   `securacv_csi_modules_init();` each appear once, in that order, both
+   before `csi::set_features_callback(` (the first window's tick) and
+   `csi::start(`. In the bridge
+   (`firmware/canary/src/csi_modules_integration.cpp`),
+   `securacv_csi_modules_init()` runs `csi_module_init_all(nullptr);` once,
+   after its last `csi_module_register(` and `ble_scout_init(`, as a
+   statement of its own body (no `if`, block or `#if` around it). Across
+   `firmware/canary/src` and `firmware/canary/lib` that is the only call of
+   `csi_module_init_all(`, and `setup()`'s the only call of
+   `securacv_csi_modules_init(`.
+
 ## It proves it bites
 
 Each run applies a set of mutations to the sources, in memory, and requires
-the check to fail on every one. The reviewers' edits are in that set. So
+the check to fail on every one (rule 8 has its own set, on `main.cpp` and
+the bridge). The reviewers' edits are in that set. So
 the check is proven against the code as it stands. If a refactor moves an
 anchor a mutation needs, the run fails and says so; it does not pass quietly.
 
@@ -133,6 +153,9 @@ from typing import Callable
 REPO = Path(__file__).resolve().parents[2]
 MQTT_CPP = "firmware/canary/lib/securacv_mqtt/src/securacv_mqtt.cpp"
 EGRESS_CPP = "firmware/canary/src/csi_event_egress.cpp"
+MAIN_CPP = "firmware/canary/src/main.cpp"
+BRIDGE_CPP = "firmware/canary/src/csi_modules_integration.cpp"
+CANARY_DIRS = ("firmware/canary/src", "firmware/canary/lib")
 
 
 class AnchorMissing(Exception):
@@ -263,6 +286,26 @@ def enclosing_if(text: str, pos: int) -> tuple[int, str, int, int] | None:
     return None
 
 
+def top_level_statement(body: str, pos: int) -> bool:
+    """`pos` starts a statement of `body` itself: inside no nested `{}`
+    block or open `#if`, and not the statement an unbraced `if`, `else`,
+    `for` or `while` controls (the code before it ends in `;`, `{` or `}`)."""
+    head = body[:pos]
+    if head.count("{") != head.count("}"):
+        return False
+    depth = 0
+    for line in head.splitlines():
+        directive = line.strip()
+        if re.match(r"#\s*if", directive):
+            depth += 1
+        elif re.match(r"#\s*endif\b", directive):
+            depth -= 1
+    if depth != 0:
+        return False
+    code = "\n".join(l for l in head.splitlines() if not l.strip().startswith("#")).rstrip()
+    return code == "" or code[-1] in ";{}"
+
+
 def call_args(text: str, call: str) -> list[str] | None:
     """The top-level arguments of the first `call` (e.g. `f(`), squashed."""
     at = text.find(call)
@@ -286,6 +329,10 @@ SIG_EPOCH = r"\buint32_t\s+mqtt_destination_epoch\s*\(\s*(?:void)?\s*\)"
 SIG_BOOT_STORY = r"\bbool\s+boot_story_bridged_elsewhere\s*\(\s*const\s+char\s*\*\s*kind\s*\)"
 SIG_RESTORE = r"\bvoid\s+restore_event_id_floor\s*\(\s*(?:void)?\s*\)"
 SIG_ROUTE = r"\bvoid\s+route\s*\([^)]*\)"
+SIG_SETUP = r"\bvoid\s+setup\s*\(\s*(?:void)?\s*\)"
+SIG_LOOP = r"\bvoid\s+loop\s*\(\s*(?:void)?\s*\)"
+SIG_MODULES_INIT = r"\bbool\s+securacv_csi_modules_init\s*\(\s*(?:void)?\s*\)"
+SIG_MODULES_FEED = r"\bvoid\s+securacv_csi_modules_feed\s*\([^)]*\)"
 
 # What the tamper bridge's `if` may test (each `&&` term, squashed).
 BRIDGE_TERMS = (
@@ -678,6 +725,83 @@ def check_boot_story_filter(egress_src: str, errors: list[str]) -> None:
             f"{sorted(BOOT_STORY_KINDS)} — any other test, or kind, silences tamper bridges")
 
 
+def call_sites(files: dict[str, str], name: str) -> list[str]:
+    """The file of every call of `name(` (comments and strings blanked); a
+    declaration or definition (`bool name(`, `size_t name(`) is not a call."""
+    sites = []
+    for path, src in files.items():
+        if name not in src:
+            continue
+        code = blank_comments_and_strings(src)
+        for m in re.finditer(r"\b" + name + r"\s*\(", code):
+            if not re.search(r"\b(?:bool|size_t|void)\s+$", code[:m.start()]):
+                sites.append(path)
+    return sites
+
+
+def check_boot(main_src: str, bridge_src: str, others: dict[str, str]) -> list[str]:
+    """Rule 8 (sweep F93): the floor, then the modules and their boot init,
+    then the first tick."""
+    errors: list[str] = []
+    code = blank_comments_and_strings(main_src)
+    span = the_body(code, SIG_SETUP, f"{MAIN_CPP}: setup()", errors)
+    if span is not None:
+        body = code[span[0]:span[1]]
+        begin, init = "csi_event_egress_begin();", "securacv_csi_modules_init();"
+        b, i = body.find(begin), body.find(init)
+        callback, start = body.find("csi::set_features_callback("), body.find("csi::start(")
+        if body.count(begin) != 1 or body.count(init) != 1:
+            errors.append(f"{MAIN_CPP}: setup() must call `{begin}` and `{init}` once each")
+        elif not 0 <= b < i:
+            errors.append(f"{MAIN_CPP}: setup() must restore the event-id floor (`{begin}`) "
+                          f"before `{init}` registers the modules and runs their boot init — "
+                          "anything they commit takes its id from the restored floor "
+                          "(F46, F83, F93)")
+        elif callback < 0 or start < 0 or not i < callback or not i < start:
+            errors.append(f"{MAIN_CPP}: setup() must call `{init}` before "
+                          "csi::set_features_callback( and csi::start( — the library ticks no "
+                          "module before its boot init, so a window ahead of it is a dead "
+                          "pipeline (F93)")
+    code = blank_comments_and_strings(bridge_src)
+    span = the_body(code, SIG_MODULES_INIT, f"{BRIDGE_CPP}: securacv_csi_modules_init()", errors)
+    if span is not None:
+        body = code[span[0]:span[1]]
+        boot_init = "csi_module_init_all(nullptr);"
+        if body.count("csi_module_init_all(") != 1 or body.count(boot_init) != 1:
+            errors.append(f"{BRIDGE_CPP}: securacv_csi_modules_init() must run the modules' boot "
+                          f"init, `{boot_init}`, exactly once — registration initializes nothing, "
+                          "so a stored setting would never apply on the canary (F93)")
+        else:
+            at = body.find(boot_init)
+            last = max([m.start() for m in re.finditer(r"\bcsi_module_register\s*\(", body)] +
+                       [m.start() for m in re.finditer(r"\bble_scout_init\s*\(", body)] + [-1])
+            if last < 0 or at < last:
+                errors.append(f"{BRIDGE_CPP}: securacv_csi_modules_init() must call `{boot_init}` "
+                              "after its last csi_module_register( and ble_scout_init( — it "
+                              "initializes only the modules registered so far (F93)")
+            if not top_level_statement(body, at):
+                errors.append(f"{BRIDGE_CPP}: `{boot_init}` must be a statement of "
+                              "securacv_csi_modules_init()'s own body — no `if`, block or `#if` "
+                              "around it: every boot initializes the modules (F93)")
+    files = dict(others)
+    files[MAIN_CPP] = main_src
+    files[BRIDGE_CPP] = bridge_src
+    sites = call_sites(files, "csi_module_init_all")
+    if sites != [BRIDGE_CPP]:
+        errors.append(f"firmware/canary: `csi_module_init_all(` must be called once, in "
+                      f"{BRIDGE_CPP}'s securacv_csi_modules_init() (found {len(sites)}: "
+                      f"{', '.join(sorted(set(sites))) or 'none'}) (F93)")
+    sites = call_sites(files, "securacv_csi_modules_init")
+    span = the_body(blank_comments_and_strings(main_src), SIG_SETUP, f"{MAIN_CPP}: setup()", [])
+    in_setup = span is not None and \
+        "securacv_csi_modules_init(" in blank_comments_and_strings(main_src)[span[0]:span[1]]
+    if sites != [MAIN_CPP] or not in_setup:
+        errors.append(f"firmware/canary: `securacv_csi_modules_init(` must be called once, in "
+                      f"{MAIN_CPP}'s setup() (found {len(sites)}: "
+                      f"{', '.join(sorted(set(sites))) or 'none'}) (F93)")
+    return errors
+
+
 def check(mqtt_src: str, egress_src: str) -> list[str]:
     errors: list[str] = []
     check_live_publish(mqtt_src, errors)
@@ -866,6 +990,83 @@ MUTATIONS: list[tuple[str, Mutation]] = [
 ]
 
 
+BootMutation = Callable[[str, str], "tuple[str, str]"]
+
+
+def on_main(sig: str, pat: str, repl: str) -> BootMutation:
+    return lambda mn, br: (mutate_in(mn, sig, pat, repl), br)
+
+
+def on_bridge(sig: str, pat: str, repl: str) -> BootMutation:
+    return lambda mn, br: (mn, mutate_in(br, sig, pat, repl))
+
+
+BOOT_INIT_LINE = r"\n[ \t]*csi_module_init_all\(nullptr\);"
+BOOT_MUTATIONS: list[tuple[str, BootMutation]] = [
+    ("the bridge never runs the modules' boot init",
+     on_bridge(SIG_MODULES_INIT, BOOT_INIT_LINE, "")),
+    ("the boot init runs before the modules register",
+     lambda mn, br: (mn, mutate_in(mutate_in(br, SIG_MODULES_INIT, BOOT_INIT_LINE, ""),
+                                   SIG_MODULES_INIT, r"(csi_event_set_privacy_ceiling\()",
+                                   r"csi_module_init_all(nullptr); \1"))),
+    ("the boot init runs before the last module registers",
+     lambda mn, br: (mn, mutate_in(mutate_in(br, SIG_MODULES_INIT, BOOT_INIT_LINE, ""),
+                                   SIG_MODULES_INIT, r"(csi_module_register\(tamper_events_module\(\)\);)",
+                                   r"csi_module_init_all(nullptr); \1"))),
+    ("the boot init runs only on a second call",
+     on_bridge(SIG_MODULES_INIT, r"(csi_module_init_all\(nullptr\);)", r"if (s_initialized) \1")),
+    ("the boot init sits in a block",
+     on_bridge(SIG_MODULES_INIT, r"(csi_module_init_all\(nullptr\);)", r"{ if (!s_initialized) { \1 } }")),
+    ("the boot init is compiled out on builds without the Scout",
+     on_bridge(SIG_MODULES_INIT, r"(csi_module_init_all\(nullptr\);)",
+               "\n#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN\n  \\1\n#endif\n")),
+    ("the feed runs the boot init again",
+     on_bridge(SIG_MODULES_FEED, r"(csi_module_tick_all\(f\);)", r"csi_module_init_all(nullptr); \1")),
+    ("setup() registers the modules before it restores the floor",
+     lambda mn, br: (mutate_in(mutate_in(mn, SIG_SETUP, r"\n[ \t]*csi_event_egress_begin\(\);", ""),
+                               SIG_SETUP, r"(securacv_csi_modules_init\(\);)",
+                               r"\1 csi_event_egress_begin();"), br)),
+    ("setup() never restores the floor",
+     on_main(SIG_SETUP, r"\n[ \t]*csi_event_egress_begin\(\);", "")),
+    ("setup() installs the first tick before the modules' boot init",
+     lambda mn, br: (mutate_in(mutate_in(mn, SIG_SETUP, r"\n[ \t]*securacv_csi_modules_init\(\);", ""),
+                               SIG_SETUP, r"(csi::set_features_callback\(.*?\}\);)",
+                               r"\1 securacv_csi_modules_init();"), br)),
+    ("loop() initializes the modules again",
+     on_main(SIG_LOOP, r"(securacv_csi_modules_tick\(\);)", r"\1 securacv_csi_modules_init();")),
+]
+
+
+def self_test_boot(main_src: str, bridge_src: str, others: dict[str, str]) -> list[str]:
+    problems = []
+    for name, mutate in BOOT_MUTATIONS:
+        try:
+            mn, br = mutate(main_src, bridge_src)
+        except AnchorMissing as missing:
+            problems.append(f"self-test: boot mutation '{name}' no longer applies "
+                            f"(anchor {missing}) — the source changed shape; update this guard's "
+                            "mutations with it")
+            continue
+        if (mn, br) == (main_src, bridge_src):
+            problems.append(f"self-test: boot mutation '{name}' changed nothing")
+        elif not check_boot(mn, br, others):
+            problems.append(f"self-test: the check did not bite on boot mutation '{name}'")
+    return problems
+
+
+def canary_others() -> dict[str, str]:
+    """Every other source file of the canary tree, by repo-relative path."""
+    out = {}
+    for d in CANARY_DIRS:
+        for path in sorted((REPO / d).rglob("*")):
+            if path.suffix not in (".cpp", ".h", ".c"):
+                continue
+            rel = path.relative_to(REPO).as_posix()
+            if rel not in (MAIN_CPP, BRIDGE_CPP):
+                out[rel] = path.read_text(encoding="utf-8", errors="replace")
+    return out
+
+
 def self_test(mqtt_src: str, egress_src: str) -> list[str]:
     problems = []
     for name, mutate in MUTATIONS:
@@ -886,17 +1087,22 @@ def self_test(mqtt_src: str, egress_src: str) -> list[str]:
 def main() -> int:
     mqtt_src = (REPO / MQTT_CPP).read_text(encoding="utf-8")
     egress_src = (REPO / EGRESS_CPP).read_text(encoding="utf-8")
-    errors = check(mqtt_src, egress_src)
+    main_src = (REPO / MAIN_CPP).read_text(encoding="utf-8")
+    bridge_src = (REPO / BRIDGE_CPP).read_text(encoding="utf-8")
+    others = canary_others()
+    errors = check(mqtt_src, egress_src) + check_boot(main_src, bridge_src, others)
     for err in errors:
         print(f"::error::{err}")
-    problems = self_test(mqtt_src, egress_src)
+    problems = self_test(mqtt_src, egress_src) + self_test_boot(main_src, bridge_src, others)
     for problem in problems:
         print(f"::error::{problem}")
     if errors or problems:
         return 1
     print(f"Event egress order holds: the live publish waits for the offline queue, the "
           f"planner's sends never buffer, the tamper bridge goes first, the planner gets the "
-          f"id floor and the broker-change epoch ({len(MUTATIONS)} mutations refused).")
+          f"id floor and the broker-change epoch; the modules register and run their boot init "
+          f"after the floor and before the first tick "
+          f"({len(MUTATIONS) + len(BOOT_MUTATIONS)} mutations refused).")
     return 0
 
 

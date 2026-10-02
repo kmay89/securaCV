@@ -386,8 +386,12 @@ fi
 # publishes the tamper bridge before it commits the row; it also hands the
 # planner the allocator's id floor and drops the backlog on a broker change.
 # Those are the firmware's job (securacv_mqtt.cpp, csi_event_egress.cpp),
-# and this check holds the source to them. Each run it also mutates the
-# source in memory, to prove the check bites.
+# and this check holds the source to them. It also holds the canary's CSI
+# boot (rule 8, sweep F93): setup() restores the floor, then the bridge
+# registers the modules and runs their boot init once, before the first
+# tick (test_csi_module_boot.cpp boots the bridge; main.cpp is CI's to
+# compile). Each run it also mutates the source in memory, to prove the
+# check bites.
 if ! python3 firmware/scripts/check_event_egress_order.py; then
     drift=1
 fi
@@ -399,8 +403,10 @@ fi
 # after the id floor), the loop task's pump in csi_mqtt.cpp (and nothing
 # from the esp_mqtt task). This check holds those sources to the model, and
 # the egress to its order rules (live rows wait behind the card and RAM
-# backlog, the tamper bridge goes first). It mutates the sources in memory
-# each run to prove it bites.
+# backlog, the tamper bridge goes first). Its boot-order rule also holds the
+# modules' boot init (sweep F93: once, after register_v1_modules(), before
+# the first tick), which test_wap_module_boot.cpp models. It mutates the
+# sources in memory each run to prove it bites.
 if ! python3 firmware/scripts/check_wap_event_egress.py; then
     drift=1
 fi
@@ -438,4 +444,4 @@ if [ "$drift" -ne 0 ]; then
     exit 1
 fi
 
-echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule + nvs-session-depth library copies are in sync; the canary CSI adapter is thin; the event-log line has one builder and one owner file; the event egress keeps its order on both devices; the chokepoint commits in id order; the canary ticks its bundles."
+echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule + nvs-session-depth library copies are in sync; the canary CSI adapter is thin; the event-log line has one builder and one owner file; the event egress keeps its order on both devices; the CSI modules run their boot init once, after the floor and before the first tick, on both devices; the chokepoint commits in id order; the canary ticks its bundles."

@@ -126,6 +126,7 @@ from check_event_egress_order import (  # noqa: E402  (shared C++ scanning helpe
     mutate_in,
     squash,
     the_body,
+    top_level_statement,
     top_level_terms,
     unwrap,
 )
@@ -188,26 +189,6 @@ def ifs_returning(text: str, ret: str) -> list[str]:
         if re.match(r"\s*\{?\s*" + ret, text[close + 1:]):
             conds.append(unwrap(text[m.end():close]))
     return conds
-
-
-def top_level_statement(body: str, pos: int) -> bool:
-    """`pos` starts a statement of `body` itself: inside no nested `{}`
-    block or open `#if`, and not the statement an unbraced `if`, `else`,
-    `for` or `while` controls (the code before it ends in `;`, `{` or `}`)."""
-    head = body[:pos]
-    if head.count("{") != head.count("}"):
-        return False
-    depth = 0
-    for line in head.splitlines():
-        directive = line.strip()
-        if re.match(r"#\s*if", directive):
-            depth += 1
-        elif re.match(r"#\s*endif\b", directive):
-            depth -= 1
-    if depth != 0:
-        return False
-    code = "\n".join(l for l in head.splitlines() if not l.strip().startswith("#")).rstrip()
-    return code == "" or code[-1] in ";{}"
 
 
 def check_boot_init_callers(integ: str, others: dict[str, str], errors: list[str]) -> None:
