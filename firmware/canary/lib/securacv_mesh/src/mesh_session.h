@@ -221,6 +221,19 @@ void cancel_pairing         ();
 /* Why the current pairing is FAILED; NONE while it is not (F118). */
 mesh_pairing::FailReason pairing_fail_reason();
 
+/* F133 — the last pairing's outcome, for GET /api/mesh. pairing_seq()
+ * counts the pairings started since init() (start_pairing_initiator /
+ * start_pairing_joiner that started one; 0: none yet); pairing_outcome()
+ * is what the latest one came to (mesh_pairing::Outcome). A page that
+ * started pairing N reads its own result while pairing_seq() is N, and
+ * knows a later pairing (or a reboot, which starts the count again)
+ * replaced it once it is not. The POST pair/start and pair/join answers
+ * carry the N they started (RequestResult::pairing_seq). The httpd task
+ * reads these the way GET /api/mesh reads the rest of the session's
+ * state: without a lock, each value whole. */
+uint32_t              pairing_seq();
+mesh_pairing::Outcome pairing_outcome();
+
 /* F118 — spec §5.2: may this device hold `pubkey` as a member at `mac`?
  * The PartnerGate the session hands every pairing it starts, so the
  * pairing fails before the initiator seals the opera_secret, and before a
@@ -1050,6 +1063,8 @@ struct RequestResult {
   RemoveResult  remove;     /* REMOVE */
   uint8_t       removed_pubkey[mesh_crypto::PUBKEY_LEN];  /* REMOVE, STARTED/COMMITTED */
   bool          created;    /* PAIR_START {create}: a new opera exists now */
+  uint32_t      pairing_seq;   /* PAIR_START / PAIR_JOIN, OK: the pairing it
+                                * started (pairing_seq(), F133) */
 };
 
 bool submit_request(const Request& req);

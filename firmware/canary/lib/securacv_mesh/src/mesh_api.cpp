@@ -71,7 +71,8 @@ bool build_mesh_status_json(char*  out,
                             size_t   peers_total,
                             size_t   peers_online,
                             uint32_t alerts_received,
-                            uint32_t pairing_code) {
+                            uint32_t pairing_code,
+                            const PairingReport* last_pairing) {
   if (out == nullptr || cap == 0) return false;
 
   const char* state = mesh_pairing::mesh_state_name(
@@ -108,6 +109,20 @@ bool build_mesh_status_json(char*  out,
   if (strcmp(state, "PAIRING_CONFIRM") == 0) {
     n = snprintf(out + pos, cap - pos, ",\"pairing_code\":%u",
                  (unsigned)pairing_code);
+    if (n < 0 || (size_t)n >= cap - pos) return false;
+    pos += (size_t)n;
+  }
+
+  /* F133: the last pairing's outcome, after every older field. The fail
+   * reason is "none" unless the outcome is FAILED. */
+  if (last_pairing != nullptr) {
+    const bool failed = last_pairing->outcome == mesh_pairing::Outcome::FAILED;
+    n = snprintf(out + pos, cap - pos,
+                 ",\"pairing_seq\":%lu,\"pairing_result\":\"%s\",\"pairing_fail_reason\":\"%s\"",
+                 (unsigned long)last_pairing->seq,
+                 mesh_pairing::outcome_name(last_pairing->outcome),
+                 mesh_pairing::fail_reason_name(failed ? last_pairing->fail_reason
+                                                       : mesh_pairing::FailReason::NONE));
     if (n < 0 || (size_t)n >= cap - pos) return false;
     pos += (size_t)n;
   }

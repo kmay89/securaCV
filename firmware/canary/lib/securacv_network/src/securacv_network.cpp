@@ -5387,13 +5387,22 @@ static esp_err_t handle_mesh_status(httpd_req_t* req) {
   const uint32_t alerts_received = mesh_session::alerts_received();
   const uint32_t pairing_code    = mesh_session::pairing_confirmation_code();
 
-  char body[512];
+  // F133: the last pairing's outcome and number, so the web UI's pairing
+  // poll tells a failed pairing from a finished one (the state alone reads
+  // ACTIVE or CONNECTING after both on a device already in an opera).
+  mesh_api::PairingReport last_pairing;
+  last_pairing.seq         = mesh_session::pairing_seq();
+  last_pairing.outcome     = mesh_session::pairing_outcome();
+  last_pairing.fail_reason = mesh_session::pairing_fail_reason();
+
+  char body[mesh_api::STATUS_JSON_CAP];
   if (!mesh_api::build_mesh_status_json(
           body, sizeof(body),
           mesh_session::is_enabled(), has_opera,
           have_id ? opera_id : nullptr,
           opera_name, pstate,
-          peers_total, peers_online, alerts_received, pairing_code)) {
+          peers_total, peers_online, alerts_received, pairing_code,
+          &last_pairing)) {
     return http_send_error(req, 500, "encode_failed");
   }
   return http_send_json(req, body);
@@ -5547,6 +5556,7 @@ static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
   doc["ok"] = true;
   doc["created"] = res.created;
   doc["state"] = "PAIRING_INIT";
+  doc["pairing_seq"] = res.pairing_seq;   // F133: GET /api/mesh reports this pairing's outcome under it
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
@@ -5574,6 +5584,7 @@ static esp_err_t handle_mesh_pair_join(httpd_req_t* req) {
   JsonDocument doc;
   doc["ok"] = true;
   doc["state"] = "PAIRING_JOIN";
+  doc["pairing_seq"] = res.pairing_seq;   // F133
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());

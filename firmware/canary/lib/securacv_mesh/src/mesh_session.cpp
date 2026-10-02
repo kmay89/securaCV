@@ -146,6 +146,11 @@ static bool    s_copies_opera_id_set = false;
 static uint8_t s_copies_member_fp[mesh_crypto::FINGERPRINT_LEN];
 static bool    s_copies_member_set = false;
 
+/* F133: pairings started since init(); GET /api/mesh reports it beside the
+ * latest one's outcome, so a page tells its own pairing's result from an
+ * earlier one's. */
+static uint32_t s_pairing_seq = 0;
+
 /* Replay tombstones (review fix). A peer that leaves or is removed used to
  * take its last_counter with it; re-registering the same device into the
  * same, un-rotated opera restarted the counter at 0, so every frame it had
@@ -1129,6 +1134,7 @@ void deinit() {
   s_pair_contact_added = false;
   memset(s_pair_contact_mac, 0, sizeof(s_pair_contact_mac));
   forget_complete_copies_owner();
+  s_pairing_seq = 0;
   secure_zero(s_device_priv, sizeof(s_device_priv));
   s_paired_cb = nullptr;
   s_failed_cb = nullptr;
@@ -1237,6 +1243,7 @@ bool start_pairing_initiator(const uint8_t opera_secret[mesh_crypto::OPERA_SECRE
                                     opera_secret, opera_name, now_ms,
                                     &can_hold_partner);   /* F118 */
   if (a.type == mesh_pairing::ActionType::NONE) return false;
+  ++s_pairing_seq;   /* F133 */
   /* F134: the opera this pairing's COMPLETE (and its copies) will carry;
    * the previous pairing's copies ended with its context. */
   forget_complete_copies_owner();
@@ -1260,6 +1267,7 @@ bool start_pairing_joiner(uint32_t now_ms) {
       mesh_pairing::start_joiner(s_ctx, s_device_pub, s_device_priv, now_ms,
                                  &can_hold_partner);   /* F118 */
   if (a.type == mesh_pairing::ActionType::NONE) return false;
+  ++s_pairing_seq;                  /* F133 */
   forget_complete_copies_owner();   /* F134: a joiner sends no copies */
   dispatch_action(a);
   return true;
@@ -1287,6 +1295,8 @@ mesh_pairing::FailReason pairing_fail_reason() {
                                                      : mesh_pairing::FailReason::NONE;
 }
 uint32_t            pairing_confirmation_code() { return s_ctx.confirmation_code; }
+uint32_t              pairing_seq()     { return s_pairing_seq; }
+mesh_pairing::Outcome pairing_outcome() { return mesh_pairing::outcome_of(s_ctx); }
 
 bool get_paired_peer_mac(uint8_t out[mesh_transport::MESH_TRANSPORT_MAC_LEN]) {
   if (out == nullptr) return false;
@@ -2078,6 +2088,7 @@ static void execute_request(const Request& req, uint32_t now_ms, RequestResult* 
         ok = start_pairing_joiner(now_ms);
       }
       if (!ok) res->status = RequestStatus::REFUSED;
+      else     res->pairing_seq = s_pairing_seq;   /* F133: the one it started */
       break;
     }
     case RequestType::PAIR_CONFIRM:

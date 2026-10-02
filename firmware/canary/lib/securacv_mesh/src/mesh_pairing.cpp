@@ -97,6 +97,25 @@ const char* fail_reason_name(FailReason r) {
   return "unknown";
 }
 
+Outcome outcome_of(const PairingContext& ctx) {
+  switch (ctx.state) {
+    case State::IDLE:   return Outcome::NONE;
+    case State::FAILED: return Outcome::FAILED;
+    case State::PAIRED: return ctx.pending_notify_paired ? Outcome::RUNNING : Outcome::PAIRED;
+    default:            return Outcome::RUNNING;
+  }
+}
+
+const char* outcome_name(Outcome o) {
+  switch (o) {
+    case Outcome::NONE:    return "none";
+    case Outcome::RUNNING: return "running";
+    case Outcome::PAIRED:  return "paired";
+    case Outcome::FAILED:  return "failed";
+  }
+  return "none";
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * STATE-MACHINE INTERNALS
  * ────────────────────────────────────────────────────────────────────────── */

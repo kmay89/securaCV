@@ -384,6 +384,22 @@ enum class FailReason : uint8_t {
 /* A short lowercase name for logs ("partner_refused"). */
 const char* fail_reason_name(FailReason r);
 
+/* What a pairing came to, as GET /api/mesh reports it (F133), with a
+ * sequence number the session keeps, so a page can tell its own pairing's
+ * result from an earlier one's:
+ *   NONE     no pairing (IDLE: none since boot, or about to start one);
+ *   RUNNING  between start_* and an end, and an initiator's PAIRED until its
+ *            NOTIFY_PAIRED has been returned (the member is not yet
+ *            registered);
+ *   PAIRED   done: the joiner opened the COMPLETE, or the initiator sent it
+ *            (nothing acknowledges a COMPLETE; F134's copies go on after);
+ *   FAILED   ended without a member; fail_reason says why.
+ * Until F133 the page read only the steady state, and an initiator that
+ * already held an opera returned to exactly the state a success leaves
+ * (ACTIVE or CONNECTING) after a timeout, a refusal or a cancel. */
+enum class Outcome : uint8_t { NONE = 0, RUNNING, PAIRED, FAILED };
+const char* outcome_name(Outcome o);   /* "none", "running", "paired", "failed" */
+
 /* May this device hold the partner — `peer_pubkey` at `peer_mac` — as a
  * member (F118; spec §5.2: a device that cannot hold its partner fails the
  * pairing)? The integration layer answers from its own tables:
@@ -608,6 +624,9 @@ bool stop_complete_resend(PairingContext& ctx);
 
 /* F134: is the initiator still sending copies of its COMPLETE? */
 bool complete_resend_running(const PairingContext& ctx);
+
+/* F133: what this pairing came to (Outcome, above). */
+Outcome outcome_of(const PairingContext& ctx);
 
 /* User-driven confirmation that the 6-digit code matches on both
  * screens. Valid only in AWAITING_CONFIRM (a second call returns NONE).

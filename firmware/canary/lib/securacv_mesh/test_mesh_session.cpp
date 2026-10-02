@@ -5780,10 +5780,13 @@ void test_complete_copies_reaching_a_paired_joiner_do_nothing() {
   std::printf("PASS test_complete_copies_reaching_a_paired_joiner_do_nothing\n");
 }
 
-/* ── F135 — a cancel leaves an ended pairing alone ───────────────────────
+/* ── F133 — GET /api/mesh reports the last pairing's outcome ─────────────
  *
- * The REST pair/cancel runs at the start of process(), before the pairing
- * tick. Until F135 mesh_pairing::cancel() failed every state but IDLE. */
+ * The web UI's pairing poll read only `state`, and an initiator already in
+ * an opera returns to ACTIVE or CONNECTING after a timeout, a refusal or a
+ * cancel exactly as after a success, so the page said the pairing was
+ * complete. The body now carries pairing_seq, pairing_result and
+ * pairing_fail_reason, after every older field. */
 
 /* PAIR_CANCEL through the REST slot, as the handler sends it. */
 mesh_session::RequestStatus rest_cancel(uint32_t now) {
@@ -5793,6 +5796,211 @@ mesh_session::RequestStatus rest_cancel(uint32_t now) {
   assert(mesh_session::take_request_result(&res));
   return res.status;
 }
+
+/* GET /api/mesh's body, built from the same session calls
+ * securacv_network.cpp's handle_mesh_status makes. */
+std::string status_body() {
+  uint8_t opera_id[mesh_crypto::OPERA_ID_LEN];
+  const bool have_id = mesh_session::get_opera_id(opera_id);
+  char name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
+  mesh_session::get_opera_name(name, sizeof(name));
+  mesh_api::PairingReport last;
+  last.seq         = mesh_session::pairing_seq();
+  last.outcome     = mesh_session::pairing_outcome();
+  last.fail_reason = mesh_session::pairing_fail_reason();
+  char body[mesh_api::STATUS_JSON_CAP];
+  assert(mesh_api::build_mesh_status_json(
+      body, sizeof(body), mesh_session::is_enabled(), mesh_session::has_opera(),
+      have_id ? opera_id : nullptr, name, mesh_session::pairing_state(),
+      mesh_session::trusted_peer_count(), mesh_session::online_peer_count(),
+      mesh_session::alerts_received(), mesh_session::pairing_confirmation_code(), &last));
+  return body;
+}
+
+bool has(const std::string& body, const char* frag) { return body.find(frag) != std::string::npos; }
+
+/* The builder: the three fields come after every older one, so the body
+ * without them is the old body byte for byte (a page that reads only the
+ * old fields parses it as before); the fail reason is "none" unless the
+ * result is "failed"; with no report the body is the old one. */
+void test_build_mesh_status_json_reports_the_last_pairing() {
+  uint8_t opera_id[mesh_crypto::OPERA_ID_LEN];
+  for (size_t i = 0; i < sizeof(opera_id); ++i) opera_id[i] = (uint8_t)(0x30 + i);
+  char old_body[mesh_api::STATUS_JSON_CAP], body[mesh_api::STATUS_JSON_CAP];
+  assert(mesh_api::build_mesh_status_json(old_body, sizeof(old_body), true, true, opera_id,
+                                          "Home", mesh_pairing::State::FAILED, 2, 1, 0, 0));
+  assert(std::strstr(old_body, "pairing_") == nullptr);
+  struct Case { mesh_pairing::Outcome o; mesh_pairing::FailReason r; const char* tail; };
+  const Case cases[] = {
+    {mesh_pairing::Outcome::FAILED, mesh_pairing::FailReason::TIMEOUT,
+     ",\"pairing_seq\":3,\"pairing_result\":\"failed\",\"pairing_fail_reason\":\"timeout\"}"},
+    {mesh_pairing::Outcome::FAILED, mesh_pairing::FailReason::PARTNER_REFUSED,
+     ",\"pairing_seq\":3,\"pairing_result\":\"failed\",\"pairing_fail_reason\":\"partner_refused\"}"},
+    {mesh_pairing::Outcome::FAILED, mesh_pairing::FailReason::CANCELED,
+     ",\"pairing_seq\":3,\"pairing_result\":\"failed\",\"pairing_fail_reason\":\"canceled\"}"},
+    /* A reason the outcome does not carry is not reported. */
+    {mesh_pairing::Outcome::PAIRED, mesh_pairing::FailReason::TIMEOUT,
+     ",\"pairing_seq\":3,\"pairing_result\":\"paired\",\"pairing_fail_reason\":\"none\"}"},
+    {mesh_pairing::Outcome::RUNNING, mesh_pairing::FailReason::NONE,
+     ",\"pairing_seq\":3,\"pairing_result\":\"running\",\"pairing_fail_reason\":\"none\"}"},
+    {mesh_pairing::Outcome::NONE, mesh_pairing::FailReason::NONE,
+     ",\"pairing_seq\":3,\"pairing_result\":\"none\",\"pairing_fail_reason\":\"none\"}"},
+  };
+  for (const Case& c : cases) {
+    const mesh_api::PairingReport rep{3, c.o, c.r};
+    assert(mesh_api::build_mesh_status_json(body, sizeof(body), true, true, opera_id, "Home",
+                                            mesh_pairing::State::FAILED, 2, 1, 0, 0, &rep));
+    const std::string want = std::string(old_body, std::strlen(old_body) - 1) + c.tail;
+    assert(want == body);
+  }
+  std::printf("PASS test_build_mesh_status_json_reports_the_last_pairing\n");
+}
+
+/* STATUS_JSON_CAP (the handler's buffer) holds the widest body: a 32-byte
+ * opera name of control bytes (six bytes each, escaped), the pairing code,
+ * every number at its widest and the longest result and reason. */
+void test_status_json_fits_worst_case() {
+  uint8_t opera_id[mesh_crypto::OPERA_ID_LEN];
+  std::memset(opera_id, 0xFF, sizeof(opera_id));
+  char name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
+  std::memset(name, 0x01, mesh_pairing::MAX_OPERA_NAME_LEN);
+  name[mesh_pairing::MAX_OPERA_NAME_LEN] = '\0';
+  const mesh_api::PairingReport rep{0xFFFFFFFFu, mesh_pairing::Outcome::FAILED,
+                                    mesh_pairing::FailReason::PARTNER_REFUSED};
+  char body[mesh_api::STATUS_JSON_CAP];
+  assert(mesh_api::build_mesh_status_json(body, sizeof(body), false, true, opera_id, name,
+                                          mesh_pairing::State::AWAITING_CONFIRM_PEER,
+                                          0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 999999, &rep));
+  assert(has(body, "\"pairing_code\":999999") && has(body, "\"pairing_seq\":4294967295"));
+  /* ...and the 512 bytes the handler allocated before F133 would not. */
+  char old_buf[512];
+  assert(!mesh_api::build_mesh_status_json(old_buf, sizeof(old_buf), false, true, opera_id, name,
+                                           mesh_pairing::State::AWAITING_CONFIRM_PEER,
+                                           0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 999999, &rep));
+  std::printf("PASS test_status_json_fits_worst_case  (%zu of %zu B)\n", std::strlen(body),
+              mesh_api::STATUS_JSON_CAP);
+}
+
+/* Through the session, as an initiator already in an opera (the page's
+ * case: CONNECTING or ACTIVE after a failure as after a success), each
+ * ending is told apart, and each pairing has its own number:
+ *   1  a timeout          → CONNECTING, failed, timeout;
+ *   2  a cancel (REST)    → failed, canceled; the POST answer names seq 2;
+ *   3  a refusal at the confirm (a member holds the partner's address)
+ *                         → failed, partner_refused;
+ *   4  a success          → paired; while the NOTIFY_PAIRED is still due
+ *                           (the COMPLETE sent in a transport pass, the
+ *                           member not yet registered) → running;
+ * and, as a JOINER, 5 a success → paired, and the REST join names seq 5.
+ * Fails on the code before F133: the body has no such fields and the
+ * state alone is CONNECTING after 1-3 as after 4. */
+void test_get_mesh_tells_each_pairing_outcome() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x33 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  mesh_session::set_paired_callback(on_paired_register);
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x13, 0x30, 0x01};
+  const uint8_t mac_j[6] = {0x24, 0x0A, 0xC4, 0x13, 0x30, 0x02};
+  const uint8_t mac_c[6] = {0x24, 0x0A, 0xC4, 0x13, 0x30, 0x0C};
+  add_bound_member(mac_c);
+  std::string b = status_body();
+  assert(has(b, "\"pairing_seq\":0,\"pairing_result\":\"none\",\"pairing_fail_reason\":\"none\""));
+  assert(has(b, "\"state\":\"CONNECTING\""));
+
+  /* 1: a timeout. */
+  uint8_t j_pub[32], j_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+  mesh_pairing::PairingContext cj;
+  initiator_to_code(S, me, mac_j, j_pub, j_priv, 1000, cj);
+  b = status_body();
+  assert(has(b, "\"state\":\"PAIRING_CONFIRM\"") &&
+         has(b, "\"pairing_seq\":1,\"pairing_result\":\"running\""));
+  mesh_session::process(1000 + mesh_pairing::PAIRING_TIMEOUT_MS);
+  b = status_body();
+  assert(has(b, "\"state\":\"CONNECTING\""));
+  assert(has(b, "\"pairing_seq\":1,\"pairing_result\":\"failed\",\"pairing_fail_reason\":\"timeout\""));
+
+  /* 2: a cancel through the REST slot; the start's answer names its seq. */
+  mesh_session::Request st = make_request(mesh_session::RequestType::PAIR_START);
+  std::memcpy(st.opera_secret, S, sizeof(S));
+  assert(mesh_session::submit_request(st));
+  mesh_session::process(400000);
+  mesh_session::RequestResult res;
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::OK && res.pairing_seq == 2);
+  assert(has(status_body(), "\"pairing_seq\":2,\"pairing_result\":\"running\""));
+  assert(rest_cancel(400100) == mesh_session::RequestStatus::OK);
+  b = status_body();
+  assert(has(b, "\"state\":\"CONNECTING\""));
+  assert(has(b, "\"pairing_seq\":2,\"pairing_result\":\"failed\",\"pairing_fail_reason\":\"canceled\""));
+
+  /* 3: refused at the confirm: the partner pairs from C's address. */
+  uint8_t x_pub[32], x_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(x_pub, x_priv));
+  initiator_to_code(S, me, mac_c, x_pub, x_priv, 500000, cj);
+  assert(rest_confirm(500010) == mesh_session::RequestStatus::PARTNER_REFUSED);
+  b = status_body();
+  assert(has(b, "\"state\":\"CONNECTING\""));
+  assert(has(b, "\"pairing_seq\":3,\"pairing_result\":\"failed\","
+                "\"pairing_fail_reason\":\"partner_refused\""));
+
+  /* 4: a success, the COMPLETE sent in a transport pass: running until the
+   * next process() reports PAIRED and registers the member. */
+  initiator_to_code(S, me, mac_j, j_pub, j_priv, 600000, cj);
+  assert(rest_confirm(600010) == mesh_session::RequestStatus::OK);
+  mesh_pairing::Action a = mesh_pairing::confirm_code(cj, 600020);
+  const std::vector<uint8_t> conf_j = wire(a);
+  mesh_transport::test::inject_recv(mac_j, conf_j.data(), conf_j.size(), -40);
+  mesh_transport::process();
+  assert(mesh_session::pairing_state() == mesh_pairing::State::PAIRED);
+  assert(has(status_body(), "\"pairing_seq\":4,\"pairing_result\":\"running\""));
+  mesh_session::process(600030);
+  b = status_body();
+  assert(has(b, "\"pairing_seq\":4,\"pairing_result\":\"paired\",\"pairing_fail_reason\":\"none\""));
+  assert(mesh_session::trusted_peer_count() == 2);
+
+  /* 5: as a joiner, through the REST slot. */
+  uint8_t pub2[32], priv2[32];
+  stand_up_session(nullptr, pub2, priv2);
+  mesh_session::set_paired_callback(on_paired_register);
+  assert(has(status_body(), "\"pairing_seq\":0"));
+  for (int k = 0; k < 4; ++k) {   /* four earlier pairings, canceled */
+    assert(mesh_session::start_pairing_joiner(100 + k));
+    mesh_session::cancel_pairing();
+  }
+  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::PAIR_JOIN)));
+  mesh_session::process(1000);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::OK && res.pairing_seq == 5);
+  mesh_pairing::PairingContext ci;
+  mesh_pairing::context_init(ci);
+  const uint8_t mac_i[6] = {0x24, 0x0A, 0xC4, 0x13, 0x30, 0x11};
+  uint8_t i_pub[32], i_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(i_pub, i_priv));
+  a = mesh_pairing::start_initiator(ci, i_pub, i_priv, S, "Home", 1000);
+  feed_pure(ci, me, last_to((const uint8_t[6]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}), 1010, &a);
+  const std::vector<uint8_t> offer = wire(a);
+  mesh_transport::test::inject_recv(mac_i, offer.data(), offer.size(), -40);
+  mesh_transport::process();
+  feed_pure(ci, me, last_to(mac_i), 1020, &a);
+  assert(mesh_session::confirm_pairing_code(1030));
+  feed_pure(ci, me, last_to(mac_i), 1040, &a);
+  a = mesh_pairing::confirm_code(ci, 1050);
+  inject_all(mac_i, wire_all(a));
+  b = status_body();
+  assert(has(b, "\"pairing_seq\":5,\"pairing_result\":\"paired\",\"pairing_fail_reason\":\"none\""));
+  /* A reboot starts the count again. */
+  uint8_t pub3[32], priv3[32];
+  stand_up_session(nullptr, pub3, priv3);
+  assert(has(status_body(), "\"pairing_seq\":0,\"pairing_result\":\"none\""));
+  std::printf("PASS test_get_mesh_tells_each_pairing_outcome\n");
+}
+
+/* ── F135 — a cancel leaves an ended pairing alone ───────────────────────
+ *
+ * The REST pair/cancel runs at the start of process(), before the pairing
+ * tick. Until F135 mesh_pairing::cancel() failed every state but IDLE. */
 
 /* As the INITIATOR, its owner first: the joiner's CONFIRM arrives in a
  * transport pass and the session sends its CONFIRM and the COMPLETE (PAIRED,
@@ -6611,6 +6819,10 @@ int main() {
   test_a_partner_the_initiator_cannot_hold_fails_the_pairing();
   test_the_initiator_asks_again_before_it_seals();
   test_a_joiner_that_cannot_hold_its_initiator_fails_the_pairing();
+  /* F133 — GET /api/mesh reports the last pairing's outcome. */
+  test_build_mesh_status_json_reports_the_last_pairing();
+  test_status_json_fits_worst_case();
+  test_get_mesh_tells_each_pairing_outcome();
   /* F134 — the initiator sends a lost COMPLETE again. */
   test_a_lost_complete_is_sent_again_through_the_session();
   test_complete_copies_stop_when_they_can_no_longer_help();

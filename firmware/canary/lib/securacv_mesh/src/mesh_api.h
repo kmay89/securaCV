@@ -53,7 +53,13 @@ namespace mesh_api {
  *                     empty names (the handler has no name source), every
  *                     number at its widest.
  *   ALERTS_JSON_CAP — MAX_ALERTS_JSON rows (mesh_session::MAX_ALERT_HISTORY)
- *                     at their widest. */
+ *                     at their widest.
+ *   STATUS_JSON_CAP — GET /api/mesh with a 32-byte opera name of control
+ *                     bytes (each escaped to six), the pairing code and the
+ *                     last pairing's report (F133) at their widest: 517
+ *                     bytes, past the 512 the handler used to allocate
+ *                     (426 before F133). */
+constexpr size_t STATUS_JSON_CAP  = 640;
 constexpr size_t PEERS_JSON_CAP   = 1536;
 constexpr size_t MAX_ALERTS_JSON  = 16;
 constexpr size_t ALERTS_JSON_CAP  = 3072;
@@ -73,7 +79,27 @@ constexpr size_t ALERTS_JSON_CAP  = 3072;
  *
  * pairing_code is the 6-digit confirmation code; it is only serialized
  * when pairing_state maps to PAIRING_CONFIRM.
+ *
+ * F133 — the last pairing's outcome, when `last_pairing` is given (the
+ * handler always gives it): three fields added after the others, so a
+ * page that reads only the old ones parses the body as before:
+ *   pairing_seq          pairings started since boot (0: none); the POST
+ *                        pair/start and pair/join answers name theirs;
+ *   pairing_result       "none" | "running" | "paired" | "failed"
+ *                        (mesh_pairing::outcome_name);
+ *   pairing_fail_reason  why it failed (mesh_pairing::fail_reason_name:
+ *                        "timeout", "canceled", "partner_refused", ...),
+ *                        "none" unless pairing_result is "failed".
+ * Until F133 the page could read only `state`, and an initiator already in
+ * an opera returns to ACTIVE or CONNECTING after a failure as after a
+ * success, so the page called a timeout, a refusal or a cancel complete.
  * ────────────────────────────────────────────────────────────────────────── */
+struct PairingReport {
+  uint32_t                 seq;
+  mesh_pairing::Outcome    outcome;
+  mesh_pairing::FailReason fail_reason;
+};
+
 bool build_mesh_status_json(char*  out,
                             size_t cap,
                             bool   enabled,
@@ -84,7 +110,8 @@ bool build_mesh_status_json(char*  out,
                             size_t   peers_total,
                             size_t   peers_online,
                             uint32_t alerts_received,
-                            uint32_t pairing_code);
+                            uint32_t pairing_code,
+                            const PairingReport* last_pairing = nullptr);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * GET /api/mesh/peers — peer list
