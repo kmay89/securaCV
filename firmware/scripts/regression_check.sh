@@ -785,24 +785,28 @@ fi
 
 echo ""
 
-# ── Check: canary-wap loop-task ownership (sweep F96, F106, F110) ────
-# The mesh's owner commands (pair, confirm, cancel, leave, remove, rename,
-# enable, clear alerts) and the MQTT client's teardown and rebuild belong to
-# the loop task. The REST handlers ran them on esp_http_server's task (and a
-# QR provisioning on the scanner's), racing mesh_network::update() and the
-# loop task's publishes. The mesh status routes read the state update()
-# writes; they read the copies it publishes instead (F110). The host tests
-# run the hand-over and the copies (test_mesh_commands_wap, test_mqtt_reinit,
-# test_loop_command_ring, test_loop_snapshot); this holds the sketch's
-# source to them, and mutates it in memory to prove it bites.
+# ── Check: canary-wap loop-task ownership (sweep F96, F106, F110, F111, F112) ────
+# The mesh's, Chirp's and Bluetooth's owner commands (pair, confirm, cancel,
+# send, mute, enable, settings and the rest) and the MQTT client's teardown
+# and rebuild belong to the loop task. The REST handlers ran them on
+# esp_http_server's task (and a QR provisioning on the scanner's), racing
+# mesh_network::update(), chirp_channel::update(), bluetooth_channel::update()
+# and the loop task's publishes. The mesh status routes read the state update()
+# writes; they read the copies it publishes instead (F110). The loop's
+# publishes wait on the network inside esp_mqtt, so every client carries a
+# network timeout under the loop's watchdog (F112). The host tests run the
+# hand-over and the copies (test_mesh_commands_wap, test_chirp_commands_wap,
+# test_bluetooth_commands_wap, test_mqtt_reinit, test_loop_command_ring,
+# test_loop_snapshot); this holds the sketch's source to them, and mutates it
+# in memory to prove it bites.
 section "Reliability: canary-wap loop-task ownership"
 
 LOOP_CMD_CHECK="$SCRIPT_DIR/check_wap_loop_commands.py"
 if [ -f "$LOOP_CMD_CHECK" ]; then
   if LOOP_CMD_OUT=$(python3 "$LOOP_CMD_CHECK" 2>&1); then
-    check_pass "mesh commands and MQTT re-inits run on the loop task; mesh status routes read its copies"
+    check_pass "mesh, Chirp and Bluetooth commands and MQTT re-inits run on the loop task; mesh status routes read its copies; MQTT network waits sit under its watchdog"
   else
-    check_fail "a canary-wap HTTP path changes, or reads live, what the loop task owns"
+    check_fail "a canary-wap HTTP path changes the mesh, Chirp, Bluetooth or the MQTT client off the loop task, reads live what the loop task owns, or an MQTT wait can outlast the watchdog"
     echo "$LOOP_CMD_OUT" | sed 's/^/    /'
   fi
 else

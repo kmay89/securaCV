@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Hold the canary-wap's loop-task ownership: mesh commands, mesh status reads
-and MQTT re-inits.
+"""Hold the canary-wap's loop-task ownership: mesh, Chirp and Bluetooth
+commands, mesh status reads, MQTT re-inits, and the MQTT client's network
+timeout.
 
 Sweep F96: `canary_wap.ino`'s `handle_mesh_*` REST handlers called
 `remove_peer`, `leave_opera`, `start_pairing_*`, `cancel_pairing`,
@@ -139,6 +140,52 @@ MQTT (F106):
    (`qr_scan_task_fn`) calls `csi_mqtt::request_reinit(`. No file says
    `using namespace csi_mqtt`.
 
+Chirp and Bluetooth (F111): `chirp_api.h`'s and `bluetooth_api.h`'s
+handlers called the channels' mutators on esp_http_server's task while
+`chirp_channel::update()` and `bluetooth_channel::update()` read and write
+the same state on the loop task (and a Bluetooth PIN confirm and the pairing
+timeout's cancel could both answer and delete one pending pairing). Now each
+POST hands a `Command` to the channel's `submit()`, and `update()` drains
+its ring (`test_chirp_commands_wap.cpp`, `test_bluetooth_commands_wap.cpp`).
+
+C1. `mesh_network.h`'s `namespace chirp_channel` declares none of
+    `CHIRP_MUTATORS`, and `bluetooth_channel.h` none of `BT_MUTATORS`; each
+    channel's .cpp defines each of its own once, `static`.
+C2. In each .cpp they are called only from `run_command()` and the paths
+    that always called them (`CHIRP_INTERNAL`, `BT_INTERNAL`: the uncalled
+    lifecycle helpers, the Bluetooth bring-up's `init()`, its NimBLE
+    callbacks, `update()`'s timeouts and the mutators' own composition).
+    `run_command(` is never called directly; `update()` drains the ring once,
+    before its first `return` (a disabled channel still takes `enable`), and
+    nothing else drains; `submit()` only posts and waits. In
+    `bluetooth_channel.cpp` no function calls a bare `init(`: a command never
+    brings the NimBLE stack up (it can block past the loop task's watchdog).
+C3. Each changing handler (`CHIRP_HANDLERS`, `BT_HANDLERS`) calls the
+    channel's `submit(` exactly once and answers a command that did not run
+    with `send_not_run(`, which sets its status line with
+    `http_status_line(<channel>::not_run_status(w))`.
+C4. Across the sketch (comments and strings blanked), no file but the
+    channel's .cpp names `chirp_channel::<mutator>(` or
+    `bluetooth_channel::<mutator>(`, and none says `using namespace` for
+    either. `<channel>::submit(` appears only in HTTP handlers (from the loop
+    task it would wait for itself), and `<channel>::update(` once, from the
+    sketch's `loop()`. `bluetooth_channel::init(` is called only by
+    `bluetooth_api.h`'s `bring_up()` (an HTTP handler's, as `enable()` did
+    there before) and the sketch's `ble_bringup_task()`.
+
+MQTT network timeout (F112): every loop-task publish runs
+`esp_mqtt_client_publish()`, which writes the socket on the calling task
+and takes the client's API lock, held by the esp_mqtt task across its own
+socket operations; esp_mqtt's default timeout for each is 10 s, past the
+loop task's 8 s watchdog (`test_mqtt_reinit.cpp`'s F112 tests).
+
+M1. `open_client()` sets `cfg.network.timeout_ms = (int)kNetworkTimeoutMs;`
+    before `esp_mqtt_client_init(&cfg)`. `csi_mqtt.h` defines
+    `kNetworkTimeoutMs` (> 0) and `kNetworkOpsBudget` (>= 3: the esp_mqtt
+    task's connect is three operations in a row), and their product sits
+    under `canary_wap.ino`'s `WATCHDOG_TIMEOUT_SEC` in milliseconds; the
+    sketch static_asserts the same.
+
 ## It proves it bites
 
 Each run applies mutations to the sources in memory and requires the check
@@ -176,6 +223,12 @@ INO = f"{SKETCH}/canary_wap.ino"
 MESH_H = f"{SKETCH}/mesh_network.h"
 MESH_CPP = f"{SKETCH}/mesh_network.cpp"
 MQTT_CPP = f"{SKETCH}/csi_mqtt.cpp"
+MQTT_H = f"{SKETCH}/csi_mqtt.h"
+CHIRP_CPP = f"{SKETCH}/chirp_channel.cpp"
+CHIRP_API = f"{SKETCH}/chirp_api.h"
+BT_H = f"{SKETCH}/bluetooth_channel.h"
+BT_CPP = f"{SKETCH}/bluetooth_channel.cpp"
+BT_API = f"{SKETCH}/bluetooth_api.h"
 SKETCH_GLOBS = ("*.cpp", "*.h", "*.ino")
 
 MUTATORS = ("set_enabled", "remove_peer", "set_opera_name", "leave_opera",
@@ -749,6 +802,238 @@ def check_mqtt_sketch(ino: str, others: dict[str, str], errors: list[str]) -> No
                       "csi_mqtt::request_reinit( — it runs on the scanner's task (F106)")
 
 
+# ── Chirp and Bluetooth (F111) ───────────────────────────────────────────
+
+CHIRP_MUTATORS = ("enable", "disable", "send_chirp", "send_all_clear", "confirm_chirp",
+                  "dismiss_chirp", "clear_chirps", "mute", "unmute", "set_relay_enabled",
+                  "set_urgency_filter", "deinit")
+# Who may call a Chirp mutator in chirp_channel.cpp besides run_command(): the
+# uncalled deinit() and send_all_clear(), which compose them.
+CHIRP_INTERNAL = {"disable": ("deinit",), "send_chirp": ("send_all_clear",)}
+CHIRP_HANDLERS = ("handle_chirp_enable", "handle_chirp_disable", "handle_chirp_send",
+                  "handle_chirp_ack", "handle_chirp_dismiss", "handle_chirp_mute",
+                  "handle_chirp_unmute", "handle_chirp_settings", "handle_chirp_confirm")
+
+BT_MUTATORS = ("enable", "disable", "start_advertising", "stop_advertising", "start_scan",
+               "stop_scan", "clear_scan_results", "start_pairing", "cancel_pairing",
+               "confirm_pairing", "reject_pairing", "disconnect", "remove_paired_device",
+               "clear_all_paired_devices", "set_device_trusted", "set_device_blocked",
+               "set_settings", "set_device_name", "set_tx_power", "deinit")
+# Who may call a Bluetooth mutator in bluetooth_channel.cpp besides
+# run_command(): the paths that always did. The bring-up's init() (on its
+# worker, or a handler's bring_up()), the NimBLE host's onDisconnect(), the
+# loop task's update() and its timeouts, and the mutators composing each
+# other. A new caller is a new task onto this state.
+BT_INTERNAL = {
+    "enable": ("init", "set_settings"),
+    "disable": ("set_settings",),
+    "start_advertising": ("init", "onDisconnect", "start_pairing"),
+    "stop_advertising": ("deinit", "disable"),
+    "stop_scan": ("deinit", "disable", "handle_scan_timeout"),
+    "clear_scan_results": ("start_scan",),
+    "cancel_pairing": ("update", "reject_pairing"),
+    "disconnect": ("deinit", "disable", "handle_inactivity_timeout"),
+}
+BT_HANDLERS = ("handle_bluetooth_enable", "handle_bluetooth_disable",
+               "handle_bluetooth_advertise_start", "handle_bluetooth_advertise_stop",
+               "handle_bluetooth_scan_start", "handle_bluetooth_scan_stop",
+               "handle_bluetooth_scan_clear", "handle_bluetooth_pair_start",
+               "handle_bluetooth_pair_cancel", "handle_bluetooth_pair_confirm",
+               "handle_bluetooth_pair_reject", "handle_bluetooth_paired_remove",
+               "handle_bluetooth_paired_clear", "handle_bluetooth_paired_trust",
+               "handle_bluetooth_paired_block", "handle_bluetooth_disconnect",
+               "handle_bluetooth_settings_set", "handle_bluetooth_name_set",
+               "handle_bluetooth_power_set")
+
+SIG_CHANNEL_SUBMIT = r"\bloop_command_ring::Wait\s+submit\s*\([^)]*\)"
+SIG_SEND_NOT_RUN = r"\besp_err_t\s+send_not_run\s*\([^)]*\)"
+SIG_BRING_UP = r"\binline\s+bool\s+bring_up\s*\(\s*\)"
+SIG_BT_BRINGUP_TASK = r"\bstatic\s+void\s+ble_bringup_task\s*\([^)]*\)"
+SIG_BT_ENABLE = r"\bstatic\s+bool\s+enable\s*\(\s*\)"
+# Each channel: (tag, ns, header, header namespace, cpp, api, mutators, internal callers, handlers)
+CHANNELS = (
+    ("Chirp", "chirp_channel", MESH_H, CHIRP_CPP, CHIRP_API, CHIRP_MUTATORS, CHIRP_INTERNAL,
+     CHIRP_HANDLERS),
+    ("Bluetooth", "bluetooth_channel", BT_H, BT_CPP, BT_API, BT_MUTATORS, BT_INTERNAL, BT_HANDLERS),
+)
+
+
+def check_channel_internal(tag: str, ns: str, h_name: str, h_src: str, cpp_name: str, cpp_src: str,
+                           mutators: tuple[str, ...], internal: dict[str, tuple[str, ...]],
+                           errors: list[str]) -> None:
+    """Rules C1, C2 for one channel."""
+    hcode = namespace_block(blank_comments_and_strings(h_src), ns)
+    for fn in mutators:
+        if re.search(r"(?<![\w:.>])" + fn + r"\s*\(", hcode):
+            errors.append(f"{h_name}: declares {fn}() in namespace {ns} — the owner commands stay "
+                          f"internal to {cpp_name.rsplit('/', 1)[-1]}, so no other task can call "
+                          "them (F111)")
+    code = blank_comments_and_strings(cpp_src)
+    for fn in mutators:
+        defs = list(re.finditer(r"\b(?:bool|void)\s+" + fn + r"\s*\([^;{}]*\)\s*\{", code))
+        if len(defs) != 1:
+            errors.append(f"{cpp_name}: expected one definition of {fn}(), found {len(defs)}")
+            continue
+        line_start = code.rfind("\n", 0, defs[0].start()) + 1
+        if not re.match(r"\s*(?:\[\[maybe_unused\]\]\s*)?static\b", code[line_start:defs[0].start() + 1]):
+            errors.append(f"{cpp_name}: {fn}() must be defined static — the {tag} owner commands "
+                          "are internal to it (F111)")
+    spans = named_bodies(code)
+    for fn in mutators:
+        allowed = ("run_command",) + internal.get(fn, ())
+        for m in re.finditer(r"(?<![\w:.>])" + fn + r"\s*\(", code):
+            where = enclosing_function(spans, m.start())
+            if where is None:
+                continue                      # a declaration or the definition's own header
+            if where not in allowed:
+                errors.append(f"{cpp_name}: {where}() calls {fn}() — a {tag} owner command runs "
+                              f"from run_command() (update()'s drain) or {', '.join(allowed[1:]) or 'nothing else'} "
+                              "(F111)")
+    for m in re.finditer(r"(?<![\w:.>])run_command\s*\(", code):
+        where = enclosing_function(spans, m.start())
+        if where is not None:
+            errors.append(f"{cpp_name}: run_command( is called directly in {where}() — only "
+                          "update()'s drain runs it (F111)")
+    update = body_of(code, SIG_UPDATE, f"{cpp_name}: update()", errors)
+    if update is not None:
+        drain = "g_commands.drain(run_command);"
+        ret = re.search(r"\breturn\b", update)
+        at = update.find("g_commands.drain(")
+        if squash(update).count(drain) != 1 or at < 0 or (ret is not None and ret.start() < at):
+            errors.append(f"{cpp_name}: update() must run `{drain}` once, before its first return — "
+                          f"a disabled {tag} channel still takes enable (F111)")
+    drains = [enclosing_function(spans, m.start()) for m in re.finditer(r"\.drain\s*\(", code)]
+    if drains != ["update"]:
+        errors.append(f"{cpp_name}: the command ring is drained in {drains or 'nothing'} — only "
+                      "update(), on the loop task, drains it (F111)")
+    submit = body_of(code, SIG_CHANNEL_SUBMIT, f"{cpp_name}: submit()", errors)
+    if submit is not None:
+        if "loop_command_ring::submit(" not in submit:
+            errors.append(f"{cpp_name}: submit() must post and wait through loop_command_ring::submit(")
+        for tok in mutators + ("run_command", "drain"):
+            if re.search(r"(?<![\w:.>])" + tok + r"\s*\(", submit):
+                errors.append(f"{cpp_name}: submit() names {tok}( — it runs on the HTTP server's "
+                              "task and only posts the command and waits (F111)")
+    if ns == "bluetooth_channel":
+        for m in re.finditer(BARE_INIT, code):
+            where = enclosing_function(spans, m.start())
+            if where is not None:
+                errors.append(f"{cpp_name}: {where}() calls init() — bringing the NimBLE stack up "
+                              "can block past the loop task's watchdog, so no command does it; the "
+                              "bring-up worker and a handler's bring_up() do (F111)")
+
+
+@functools.lru_cache(maxsize=1024)
+def channel_file_findings(name: str, c: str) -> tuple[str, ...]:
+    """Rule C4's per-file part for one blanked file."""
+    out = []
+    handlers = None
+    for tag, ns, _h, cpp, _api, mutators, _internal, _handlers in CHANNELS:
+        if re.search(r"\busing\s+namespace\s+" + ns + r"\b", c):
+            out.append(f"{name}: `using namespace {ns}` hides the {tag} channel's callers from this "
+                       "check — call it qualified")
+        if name == cpp or (ns + "::") not in c:
+            continue
+        for fn in mutators:
+            if re.search(r"\b" + ns + "::" + fn + r"\s*\(", c):
+                out.append(f"{name}: calls {ns}::{fn}() — hand a Command to {ns}::submit() instead; "
+                           "update() runs it on the loop task (F111)")
+        if handlers is None:
+            handlers = handler_spans(c)
+        for m in re.finditer(r"\b" + ns + r"::submit\s*\(", c):
+            if enclosing_function(handlers, m.start()) is None:
+                out.append(f"{name}: {ns}::submit( outside an HTTP handler — from the loop task it "
+                           "would wait for itself (F111)")
+    return tuple(out)
+
+
+def check_channels(ino: str, others: dict[str, str], errors: list[str]) -> None:
+    files = dict(others)
+    files[INO] = ino
+    code = {name: blank_comments_and_strings(src) for name, src in files.items()}
+    for name, c in code.items():
+        errors.extend(channel_file_findings(name, c))
+    loop = body_of(code[INO], SIG_INO_LOOP, f"{INO}: loop()", errors)
+    for tag, ns, h, cpp, api, mutators, internal, handlers in CHANNELS:
+        if h not in files or cpp not in files or api not in files:
+            errors.append(f"{SKETCH}: the {tag} channel's sources ({h}, {cpp}, {api}) are missing")
+            continue
+        check_channel_internal(tag, ns, h, files[h], cpp, files[cpp], mutators, internal, errors)
+        api_code = code[api]
+        for hname in handlers:
+            body = body_of(api_code, r"\besp_err_t\s+" + hname + r"\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)",
+                           f"{api}: {hname}()", errors)
+            if body is None:
+                continue
+            if body.count(ns + "::submit(") != 1 or "send_not_run(" not in body:
+                errors.append(f"{api}: {hname}() must hand its command to {ns}::submit( once and "
+                              "answer one that did not run with send_not_run( (F111)")
+        nr = body_of(api_code, SIG_SEND_NOT_RUN, f"{api}: send_not_run()", errors)
+        if nr is not None and f"httpd_resp_set_status(req,http_status_line({ns}::not_run_status(w)));" \
+                not in squash(nr):
+            errors.append(f"{api}: send_not_run() must set its status with "
+                          f"httpd_resp_set_status(req, http_status_line({ns}::not_run_status(w))) — "
+                          "409 busy and 503 timeout, not 200 (F111)")
+        total = sum(c.count(ns + "::update(") for c in code.values())
+        if loop is None or loop.count(ns + "::update(") != 1 or total != 1:
+            errors.append(f"{SKETCH}: {ns}::update( must be called once, from the sketch's loop() "
+                          f"(found {total}) — its drain is the loop task's (F111)")
+    # Who brings the Bluetooth stack up: the boot worker and a handler's bring_up().
+    allowed = []
+    for name, sig in ((BT_API, SIG_BRING_UP), (INO, SIG_BT_BRINGUP_TASK)):
+        if name in code:
+            span = the_body(code[name], sig, f"{name}: {sig}", errors)
+            if span is not None:
+                allowed.append((name, span))
+    for name, c in code.items():
+        for p in call_sites(c, "bluetooth_channel::init"):
+            if not any(name == n and s <= p < e for n, (s, e) in allowed):
+                errors.append(f"{name}: calls bluetooth_channel::init( outside bluetooth_api.h's "
+                              "bring_up() and the sketch's ble_bringup_task() — the NimBLE bring-up "
+                              "never runs on the loop task (F111)")
+
+
+# ── MQTT network timeout (F112) ──────────────────────────────────────────
+
+def int_constant(code: str, name: str) -> int | None:
+    m = re.search(r"\b" + name + r"\s*=\s*(\d+)\s*[uUlL]*\s*;", code)
+    return None if m is None else int(m.group(1))
+
+
+def check_mqtt_timeout(ino: str, mqtt_h: str | None, mqtt: str, errors: list[str]) -> None:
+    code = blank_comments_and_strings(mqtt)
+    opened = body_of(code, SIG_OPEN, f"{MQTT_CPP}: open_client()", errors)
+    if opened is not None:
+        s = squash(opened)
+        at_set = s.find("cfg.network.timeout_ms=(int)kNetworkTimeoutMs;")
+        at_init = s.find("esp_mqtt_client_init(&cfg)")
+        if at_set < 0 or at_init < 0 or at_set > at_init:
+            errors.append(f"{MQTT_CPP}: open_client() must set `cfg.network.timeout_ms = "
+                          "(int)kNetworkTimeoutMs;` before esp_mqtt_client_init(&cfg) — esp_mqtt's "
+                          "10 s default holds a loop-task publish past the 8 s watchdog (F112)")
+    if mqtt_h is None:
+        errors.append(f"{MQTT_H}: missing")
+        return
+    hcode = blank_comments_and_strings(mqtt_h)
+    icode = blank_comments_and_strings(ino)
+    timeout = int_constant(hcode, "kNetworkTimeoutMs")
+    budget = int_constant(hcode, "kNetworkOpsBudget")
+    watchdog_s = int_constant(icode, "WATCHDOG_TIMEOUT_SEC")
+    if timeout is None or budget is None or watchdog_s is None:
+        errors.append(f"{MQTT_H}: kNetworkTimeoutMs and kNetworkOpsBudget (and {INO}'s "
+                      "WATCHDOG_TIMEOUT_SEC) must be integer constants this check can read (F112)")
+    elif timeout <= 0 or budget < 3 or budget * timeout >= watchdog_s * 1000:
+        errors.append(f"{MQTT_H}: kNetworkOpsBudget ({budget}, at least 3: the esp_mqtt task's "
+                      f"connect) x kNetworkTimeoutMs ({timeout} ms) must sit under the loop task's "
+                      f"{watchdog_s} s watchdog (F112)")
+    assert_ok = re.search(r"static_assert\(csi_mqtt::kNetworkTimeoutMs>0&&csi_mqtt::kNetworkOpsBudget"
+                          r"\*csi_mqtt::kNetworkTimeoutMs<WATCHDOG_TIMEOUT_SEC\*1000u,", squash(icode))
+    if assert_ok is None:
+        errors.append(f"{INO}: must static_assert(csi_mqtt::kNetworkTimeoutMs > 0 && "
+                      "csi_mqtt::kNetworkOpsBudget * csi_mqtt::kNetworkTimeoutMs < "
+                      "WATCHDOG_TIMEOUT_SEC * 1000u, ...) — the device build's own pin (F112)")
+
+
 def check(ino: str, mesh_h: str, mesh_cpp: str, mqtt: str, others: dict[str, str]) -> list[str]:
     errors: list[str] = []
     files = dict(others)
@@ -764,6 +1049,8 @@ def check(ino: str, mesh_h: str, mesh_cpp: str, mqtt: str, others: dict[str, str
     check_mqtt_reinit(mqtt, errors)
     check_httpd_paths(files, errors)
     check_mqtt_sketch(ino, rest, errors)
+    check_channels(ino, rest, errors)
+    check_mqtt_timeout(ino, files.get(MQTT_H), mqtt, errors)
     return errors
 
 
@@ -789,6 +1076,33 @@ def raw(key: str, old: str, new: str) -> Mutation:
         out[key] = s[key].replace(old, new, 1)
         return out
     return mutate
+
+
+def on_other(path: str, sig: str, pattern: str, repl: str, need: str | None = None) -> Mutation:
+    """A mutation of one of the sketch's other files (`others`, by path)."""
+    def mutate(s: dict) -> dict:
+        others = dict(s["others"])
+        others[path] = mutate_in(others[path], sig, pattern, repl, need=need)
+        out = dict(s)
+        out["others"] = others
+        return out
+    return mutate
+
+
+def raw_other(path: str, old: str, new: str) -> Mutation:
+    def mutate(s: dict) -> dict:
+        others = dict(s["others"])
+        if others[path].count(old) != 1:
+            raise AnchorMissing(old)
+        others[path] = others[path].replace(old, new, 1)
+        out = dict(s)
+        out["others"] = others
+        return out
+    return mutate
+
+
+def api_handler(h: str) -> str:
+    return r"\binline\s+esp_err_t\s+" + h + r"\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)"
 
 
 def ino_handler(h: str) -> str:
@@ -1007,11 +1321,112 @@ MUTATIONS: list[tuple[str, Mutation]] = [
         r"\1 csi_mqtt::loop();")),
     ("the sketch hides the bridge's callers behind a using-directive",
      raw("ino", '#include "csi_mqtt.h"', '#include "csi_mqtt.h"\nusing namespace csi_mqtt;')),
+    # Rules C1-C4: the Chirp channel's commands (F111).
+    ("the Chirp send handler calls send_chirp itself",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"),
+              r"const\s+loop_command_ring::Wait\s+w\s*=\s*chirp_channel::submit\(cmd,\s*&r\);",
+              "r.ok = chirp_channel::send_chirp(template_id, urgency, detail, ttl); "
+              "const loop_command_ring::Wait w = loop_command_ring::Wait::kDone;")),
+    ("the Chirp mute handler answers 200 to a command that did not run",
+     on_other(CHIRP_API, api_handler("handle_chirp_mute"),
+              r"if\s*\(w\s*!=\s*loop_command_ring::Wait::kDone\)\s*return\s+send_not_run\(req,\s*w\);",
+              "(void)w;")),
+    ("the Chirp settings handler stores the relay setting on the httpd task too",
+     on_other(CHIRP_API, api_handler("handle_chirp_settings"), r"(cmd\.set_relay\s*=\s*true;)",
+              r"\1 chirp_channel::set_relay_enabled(input[\"relay_enabled\"].as<bool>());")),
+    ("the Chirp not-run answer goes out as 200",
+     on_other(CHIRP_API, SIG_SEND_NOT_RUN,
+              r"httpd_resp_set_status\(req,\s*http_status_line\(chirp_channel::not_run_status\(w\)\)\);", "")),
+    ("mesh_network.h declares chirp_channel::mute again",
+     raw("mesh_h", "bool is_muted();", "bool mute(uint8_t duration_minutes);\nbool is_muted();")),
+    ("chirp_channel.cpp defines unmute without static",
+     raw_other(CHIRP_CPP, "static void unmute() {\n", "void unmute() {\n")),
+    ("chirp_channel's update() drains after its disabled return",
+     lambda s: on_other(CHIRP_CPP, SIG_UPDATE, r"\n[ \t]*g_commands\.drain\(run_command\);", "")(
+         on_other(CHIRP_CPP, SIG_UPDATE, r"(uint32_t\s+now\s*=\s*millis\(\);)",
+                  r"g_commands.drain(run_command); \1")(s))),
+    ("chirp_channel's update() never drains",
+     on_other(CHIRP_CPP, SIG_UPDATE, r"\n[ \t]*g_commands\.drain\(run_command\);", "")),
+    ("chirp_channel's submit() runs the command in place",
+     on_other(CHIRP_CPP, SIG_CHANNEL_SUBMIT, r"(Result\s+r;)",
+              r"\1 r = run_command(cmd); if (result != nullptr) *result = r; "
+              r"return loop_command_ring::Wait::kDone;")),
+    ("chirp_channel's send_presence() mutes the channel",
+     on_other(CHIRP_CPP, r"\bstatic\s+void\s+send_presence\s*\(\s*\)", r"(ChirpHeader\*\s+hdr\s*=)",
+              r"(void)mute(15); \1")),
+    ("the sketch's loop() submits a Chirp command (it would wait for itself)",
+     on("ino", SIG_INO_LOOP, r"(chirp_channel::update\(\);)",
+        r"\1 (void)chirp_channel::submit(chirp_channel::make_command(chirp_channel::CHIRP_CMD_UNMUTE), nullptr);")),
+    ("the sketch calls chirp_channel::update twice",
+     on("ino", SIG_INO_LOOP, r"(chirp_channel::update\(\);)", r"\1 chirp_channel::update();")),
+    # Rules C1-C4: the Bluetooth channel's commands (F111).
+    ("the Bluetooth confirm handler calls confirm_pairing itself",
+     on_other(BT_API, api_handler("handle_bluetooth_pair_confirm"),
+              r"const\s+loop_command_ring::Wait\s+w\s*=\s*bluetooth_channel::submit\(cmd,\s*&r\);",
+              "r.ok = bluetooth_channel::confirm_pairing(cmd.pin); "
+              "const loop_command_ring::Wait w = loop_command_ring::Wait::kDone;")),
+    ("the Bluetooth cancel handler cancels on the httpd task too",
+     on_other(BT_API, api_handler("handle_bluetooth_pair_cancel"),
+              r"(return\s+send_success\(req,\s*\"Pairing canceled\"\);)",
+              r"bluetooth_channel::cancel_pairing(); \1")),
+    ("the Bluetooth enable handler enables in place",
+     on_other(BT_API, api_handler("handle_bluetooth_enable"),
+              r"const\s+loop_command_ring::Wait\s+w\s*=\s*bluetooth_channel::submit\([^;]*;",
+              "r.ok = bluetooth_channel::enable(); "
+              "const loop_command_ring::Wait w = loop_command_ring::Wait::kDone;")),
+    ("the Bluetooth scan-stop handler answers 200 to a command that did not run",
+     on_other(BT_API, api_handler("handle_bluetooth_scan_stop"),
+              r"if\s*\(w\s*!=\s*loop_command_ring::Wait::kDone\)\s*return\s+send_not_run\(req,\s*w\);",
+              "(void)w;")),
+    ("the Bluetooth not-run answer goes out as 200",
+     on_other(BT_API, SIG_SEND_NOT_RUN,
+              r"httpd_resp_set_status\(req,\s*http_status_line\(bluetooth_channel::not_run_status\(w\)\)\);",
+              "")),
+    ("bluetooth_channel.h declares disable again",
+     raw_other(BT_H, "bool is_enabled();\nbool is_advertising();",
+               "void disable();\nbool is_enabled();\nbool is_advertising();")),
+    ("bluetooth_channel.cpp defines confirm_pairing without static",
+     raw_other(BT_CPP, "static bool confirm_pairing(uint32_t pin) {\n", "bool confirm_pairing(uint32_t pin) {\n")),
+    ("bluetooth_channel's update() drains after its early return",
+     lambda s: on_other(BT_CPP, SIG_UPDATE, r"\n[ \t]*g_commands\.drain\(run_command\);", "")(
+         on_other(BT_CPP, SIG_UPDATE, r"(static\s+uint32_t\s+last_status_update\s*=\s*0;)",
+                  r"g_commands.drain(run_command); \1")(s))),
+    ("bluetooth_channel's update() never drains",
+     on_other(BT_CPP, SIG_UPDATE, r"\n[ \t]*g_commands\.drain\(run_command\);", "")),
+    ("bluetooth_channel's submit() runs the command in place",
+     on_other(BT_CPP, SIG_CHANNEL_SUBMIT, r"(Result\s+r;)",
+              r"\1 r = run_command(cmd); if (result != nullptr) *result = r; "
+              r"return loop_command_ring::Wait::kDone;")),
+    ("bluetooth_channel's enable() brings the stack up again (on the loop task)",
+     on_other(BT_CPP, SIG_BT_ENABLE, r"if\s*\(!g_initialized\)\s*return\s+false;",
+              "if (!g_initialized) { if (!init()) return false; }")),
+    ("bluetooth_channel's update_status_characteristic() disconnects",
+     on_other(BT_CPP, r"\bstatic\s+void\s+update_status_characteristic\s*\(\s*\)",
+              r"(if\s*\(!g_status_char\)\s*return;)", r"\1 (void)disconnect();")),
+    ("the sketch's loop() brings the Bluetooth stack up",
+     on("ino", SIG_INO_LOOP, r"(bluetooth_channel::update\(\);)", r"(void)bluetooth_channel::init(); \1")),
+    ("the sketch hides the Bluetooth channel's callers behind a using-directive",
+     raw("ino", '#include "bluetooth_api.h"', '#include "bluetooth_api.h"\nusing namespace bluetooth_channel;')),
+    # Rule M1: the MQTT client's network timeout (F112).
+    ("open_client() leaves esp_mqtt's 10 s network timeout",
+     on("mqtt", SIG_OPEN, r"\n[ \t]*cfg\.network\.timeout_ms\s*=\s*\(int\)kNetworkTimeoutMs;", "")),
+    ("open_client() sets the timeout after the client is made",
+     lambda s: on("mqtt", SIG_OPEN, r"(esp_mqtt_client_register_event\()",
+                  r"cfg.network.timeout_ms = (int)kNetworkTimeoutMs; \1")(
+         on("mqtt", SIG_OPEN, r"\n[ \t]*cfg\.network\.timeout_ms\s*=\s*\(int\)kNetworkTimeoutMs;", "")(s))),
+    ("kNetworkTimeoutMs grows past the watchdog's budget",
+     raw_other(MQTT_H, "constexpr uint32_t kNetworkTimeoutMs = 2000;", "constexpr uint32_t kNetworkTimeoutMs = 3000;")),
+    ("kNetworkOpsBudget shrinks below the connect's three operations",
+     raw_other(MQTT_H, "constexpr uint32_t kNetworkOpsBudget = 3;", "constexpr uint32_t kNetworkOpsBudget = 1;")),
+    ("the sketch drops its static_assert of the MQTT timeout budget",
+     raw("ino", "static_assert(csi_mqtt::kNetworkTimeoutMs > 0 &&", "static_assert(true ||")),
 ]
 
 
 def self_test(srcs: dict, others: dict[str, str]) -> list[str]:
     problems = []
+    srcs = dict(srcs)
+    srcs["others"] = others
     for name, mutate in MUTATIONS:
         try:
             m = mutate(srcs)
@@ -1021,7 +1436,7 @@ def self_test(srcs: dict, others: dict[str, str]) -> list[str]:
             continue
         if m == srcs:
             problems.append(f"self-test: mutation '{name}' changed nothing")
-        elif not check(m["ino"], m["mesh_h"], m["mesh_cpp"], m["mqtt"], others):
+        elif not check(m["ino"], m["mesh_h"], m["mesh_cpp"], m["mqtt"], m.get("others", others)):
             problems.append(f"self-test: the check did not bite on mutation '{name}'")
     return problems
 
@@ -1054,11 +1469,12 @@ def main() -> int:
         print(f"::error::{problem}")
     if errors or problems:
         return 1
-    print(f"canary-wap loop-task ownership holds: the mesh's owner commands are internal to "
-          f"mesh_network.cpp and run from update()'s drain, the REST handlers only submit, the "
-          f"status routes read only what update() published, and the "
-          f"MQTT client is replaced only by loop()'s re-init, which never stops a client (the "
-          f"retire_task worker does) "
+    print(f"canary-wap loop-task ownership holds: the mesh's, Chirp's and Bluetooth's owner "
+          f"commands are internal to their channels and run from update()'s drain, the REST "
+          f"handlers only submit, the mesh status routes read only what update() published, "
+          f"the MQTT client is replaced only by loop()'s re-init, which never stops a client "
+          f"(the retire_task worker does), and every client's network timeout keeps a "
+          f"loop-task publish under the watchdog "
           f"({len(MUTATIONS)} mutations refused).")
     return 0
 
