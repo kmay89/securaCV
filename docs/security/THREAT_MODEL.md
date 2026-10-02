@@ -655,8 +655,9 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   the initiator's own CONFIRM, re-sent to it from the joiner's address,
   counts as the joiner's, and the initiator then holds a joiner whose owner
   never confirmed (the joiner drops the COMPLETE; host-probed, the same
-  before F75). A hash bound to the sender's role would stop it (a wire
-  change). Since F73 a pairing whose partner the device cannot hold (a
+  before F75, and on the PlatformIO tree, which computes the same hash,
+  the same before and after F97). A hash bound to the sender's role would
+  stop it (a wire change). Since F73 a pairing whose partner the device cannot hold (a
   deny-listed key, a full opera, an address another member holds) fails
   and is logged: the initiator adds the joiner before anything is sent, so
   it no longer seals the `opera_secret` to a partner it then refuses, and a
@@ -719,6 +720,9 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   already-trusted member's key re-binds that member to the outsider's radio
   and persists it, and the member's own frames then drop as coming from an
   unbound address until another re-pair, which runs the same exchange.
+  (From an address no other member holds: since F102 the PlatformIO tree
+  refuses the bind at an address another member holds and persists
+  nothing; before, it persisted it anyway, below.)
   Claiming its own key makes the outsider a trusted member, able to sign a
   rotation that removes a real one. Host-probed on the PlatformIO tree,
   with the same results before #1756, on #1756 and after the withdrawal.
@@ -776,6 +780,40 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   still count above it (one counter per sender). Host-tested
   (`test_mesh_session`, four tests that fail on the code before F70); not
   bench-verified.
+- **PlatformIO pairing and sends (F97, F101, F102; host-tested only).**
+  Three gaps the F70 work found, closed:
+  - *Either confirm order.* Until F97 the PlatformIO pairing took a
+    CONFIRM only after its own owner had confirmed and sent its own once,
+    so no order completed with frames delivered as sent. Worse than a
+    timeout, an initiator confirmed first reported success and held a
+    member whose joiner had dropped the COMPLETE (host-probed). canary-wap's
+    F75 rules now hold here: a CONFIRM counts only from the partner's
+    address and once the code is shown (before it, the all-zero session
+    key makes the hash anyone's), the initiator keeps a joiner's early
+    CONFIRM and sends the COMPLETE alone, and the joiner takes the COMPLETE
+    only after its own owner confirmed. The reflection above stays open.
+  - *Opera sends to members only.* Until F101 every opera sender (tamper
+    alert, beacon event, channel lock, hub election, LEAVE, rekey OFFER)
+    went to every address in the transport table, which, while a pairing
+    runs, includes the partner's: an outsider answering a pairing got them
+    all, and they counted as sent (with no member, a tamper alert reported
+    sent and a leave reported `notified`; host-probed). The frames are
+    signed, not encrypted, so this disclosed nothing a radio in range could
+    not overhear; the harm was a false "sent". Now each goes to the
+    members' bound radio MACs only, and only those sends count.
+  - *An address persisted only once bound.* Until F102 `main.cpp` persisted
+    a just-paired member's address before the session's bind, which refuses
+    an address another member holds, and the boot restore binds stored
+    addresses in order. So a re-pair of member J relayed from member C's
+    copied address (the relay above) was written as J's address, and after
+    a reboot J held it and C, refused its own, was not heard at all
+    (host-probed). The address is now persisted from a callback that runs
+    after the bind, only when it took, and NVS refuses an address another
+    fingerprint holds; a refused bind is logged by fingerprint and leaves
+    the member's previous binding as it was.
+  Pinned by host tests in `test_mesh_pairing`, `test_mesh_session` and
+  `test_mesh_state` that fail on the code before each fix, and a source pin
+  on `main.cpp`'s wiring; the canary build is CI's; not bench-verified.
 - `opera_secret` storage requires flash encryption enabled
   (eFuse `FLASH_CRYPT_CNT > 0`); load/save paths refuse on FE-off devices
   and log loudly (v0.2 audit O2). That keeps the secret off un-fused
