@@ -510,9 +510,10 @@ size_t trusted_peer_count();
  * trusted peers:
  *   • bind_peer_mac(fp, mac) — a trusted peer's radio MAC goes into the
  *     transport table and is remembered with the peer (it replaces an older
- *     address of the same peer). Called at boot for every persisted
- *     (fingerprint, MAC) pair (main.cpp, mesh_state peer_macs) and by the
- *     session itself when a pairing completes. Refused for an untrusted
+ *     address of the same peer). Called at boot for the persisted
+ *     (fingerprint, MAC) pairs (restore_peer_macs below, from main.cpp's
+ *     mesh_state peer_macs) and by the session itself when a pairing
+ *     completes. Refused for an untrusted
  *     fingerprint, a broadcast/group/zero MAC, a MAC another peer holds, or
  *     a full transport table.
  *   • While a pairing runs, the partner's MAC — not a peer yet — is added
@@ -566,6 +567,51 @@ size_t trusted_peer_count();
 bool   bind_peer_mac(const uint8_t fp [mesh_crypto::FINGERPRINT_LEN],
                      const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN]);
 size_t online_peer_count();
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * BOOT RESTORE OF THE STORED ADDRESSES  (F33 part 1; F119, F120)
+ *
+ * restore_peer_macs() binds the persisted (fingerprint, MAC) entries —
+ * mesh_state peer_macs, in blob order — and says what became of each, so
+ * the integration layer can drop the ones that must go. Call it after every
+ * stored pubkey has been registered (register_trusted_peer), as main.cpp's
+ * setup does. Per entry:
+ *   • UNTRUSTED (F120): its fingerprint is not a registered peer — a
+ *     member whose NVS removal failed (remove_trusted_peer drops the entry
+ *     best effort), or a deny-listed key. Never bound. It is to be dropped:
+ *     since F102 save_peer_mac refuses an address another fingerprint
+ *     holds, so a stale entry kept forever blocks storing that address for
+ *     the member that pairs from it next (bound for the boot, not stored,
+ *     unheard after the next reboot).
+ *   • SHARED (F119): another registered fingerprint's entry holds the same
+ *     address — a blob written before F102, when a re-pair from another
+ *     member's address was stored (in place, so the blob's order says
+ *     nothing about which entry is right) and upsert took an address
+ *     another fingerprint held. NEITHER is bound, and both are to be
+ *     dropped, so both members are heard from nowhere until each re-pairs.
+ *     Binding in blob order (the code before F119) gave the address to
+ *     whichever entry came first; in F102's scenario that was the member
+ *     that did not own it, and the owner was not heard at all. Keeping both
+ *     entries unbound would not let the owner's re-pair repair it: the
+ *     other entry still holds the address, so save_peer_mac refuses the
+ *     owner's, and after the next reboot it is unheard again. Dropping both
+ *     does, and logs once.
+ *   • BOUND: bound to its member.
+ *   • REFUSED: a registered fingerprint, the only one at its address, that
+ *     bind_peer_mac refused anyway (a broadcast/group/zero address, no room
+ *     in the transport table). Kept, as before.
+ * An entry whose address only an UNTRUSTED entry shares is not SHARED: a
+ * fingerprint that is not a member cannot own it. Writes n verdicts to
+ * `out` and returns how many entries were bound. Main-loop task. */
+enum class StoredMacVerdict : uint8_t {
+  BOUND = 0,
+  REFUSED,
+  UNTRUSTED,
+  SHARED,
+};
+size_t restore_peer_macs(const uint8_t (*fps)[mesh_crypto::FINGERPRINT_LEN],
+                         const uint8_t (*macs)[mesh_transport::MESH_TRANSPORT_MAC_LEN],
+                         size_t n, StoredMacVerdict* out);
 
 /* Drop ONE trusted peer by fingerprint (empties its slot and takes its
  * bound MAC, and no other address, out of the transport table; its replay

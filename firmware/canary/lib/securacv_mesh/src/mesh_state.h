@@ -218,10 +218,15 @@ bool clear_trusted_peers();
  *                       (mesh_session PairedPeerBoundCallback).
  *   load_peer_macs()  — every stored entry; true with count 0 when none.
  *                       False on null, cap < MAX_TRUSTED_PEERS, FE off, a
- *                       read failure or a malformed blob.
+ *                       read failure or a malformed blob. main.cpp hands
+ *                       them to mesh_session::restore_peer_macs at boot.
  *   remove_peer_mac() — drop one fingerprint's entry; true when it is gone
  *                       afterwards (idempotent). remove_trusted_peer() calls
- *                       it for the removed pubkey's fingerprint.
+ *                       it for the removed pubkey's fingerprint, best
+ *                       effort; main.cpp's boot restore for every entry
+ *                       restore_peer_macs calls UNTRUSTED (no longer a
+ *                       member, F120) or SHARED (an address two members'
+ *                       entries hold, from before F102, F119).
  *   clear_peer_macs() — erase the key; idempotent.
  * Host build: save/remove/clear → true, load → true with count 0.
  *

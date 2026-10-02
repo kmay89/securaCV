@@ -32,6 +32,20 @@ neighbors), and tells the FailedCallback why. main.cpp's half:
 * on_mesh_pairing_failed logs a PARTNER_REFUSED to the health log;
 * it is installed with set_failed_callback.
 
+And the boot restore of the stored addresses (F119, F120;
+test_boot_restore_binds_neither_member_of_a_shared_address and
+test_boot_restore_drops_entries_of_peers_no_longer_trusted run the
+stand-in):
+
+* setup registers the stored pubkeys (register_trusted_peer, after
+  load_trusted_peers) before it hands the stored addresses to
+  mesh_session::restore_peer_macs, and main.cpp binds no address by hand
+  (no bind_peer_mac call);
+* it drops the SHARED and UNTRUSTED entries with remove_peer_mac (the one
+  call), only when the pubkey list was read (`peers_loaded`, the result of
+  load_trusted_peers): a failed read registers nobody, and every entry would
+  look untrusted.
+
 Each rule is shown to fail on a mutation of the real file, so the pin cannot
 read as covered while catching nothing.
 
@@ -150,6 +164,41 @@ def check(src: str) -> list[str]:
         problems.append(f"{FAILED_FN} does not log a PARTNER_REFUSED to the health log")
     if not re.search(r"set_failed_callback\s*\(\s*&?\s*" + FAILED_FN + r"\s*\)", code):
         problems.append(f"{FAILED_FN} is not installed with set_failed_callback")
+
+    # F119, F120: the boot restore.
+    if re.search(r"\bbind_peer_mac\s*\(", code):
+        problems.append("main.cpp binds a stored address by hand (bind_peer_mac); "
+                        "the boot restore is restore_peer_macs")
+    restore = re.search(r"\brestore_peer_macs\s*\(", code)
+    load = re.search(r"\bload_trusted_peers\s*\(", code)
+    if restore is None:
+        problems.append("the boot restore does not call restore_peer_macs")
+    elif load is None or load.start() > restore.start():
+        problems.append("restore_peer_macs runs before load_trusted_peers")
+    else:
+        between = code[load.end():restore.start()]
+        if not re.search(r"\bregister_trusted_peer\s*\(", between):
+            problems.append("the stored pubkeys are not registered before restore_peer_macs")
+    loaded = re.search(r"\bconst\s+bool\s+peers_loaded\s*=\s*mesh_state::load_trusted_peers\s*\(",
+                       code)
+    if loaded is None:
+        problems.append("peers_loaded is not the result of load_trusted_peers")
+    removes = [m.start() for m in re.finditer(r"\bremove_peer_mac\s*\(", code)]
+    if len(removes) != 1:
+        problems.append(f"remove_peer_mac is called {len(removes)} times; expected once, "
+                        f"in the boot restore")
+    elif restore is not None:
+        if removes[0] < restore.start():
+            problems.append("remove_peer_mac runs before restore_peer_macs")
+        else:
+            span = code[restore.start():removes[0]]
+            if not re.search(r"\bpeers_loaded\b", span):
+                problems.append("the boot restore drops entries without the pubkey list "
+                                "(not gated on peers_loaded)")
+            if not (re.search(r"StoredMacVerdict::SHARED", span) and
+                    re.search(r"StoredMacVerdict::UNTRUSTED", span)):
+                problems.append("the boot restore does not drop exactly the SHARED and "
+                                "UNTRUSTED entries")
     return problems
 
 
@@ -216,6 +265,34 @@ class PairBindWiring(unittest.TestCase):
         self.assertEqual(body.count("  log_health("), 1)
         src = self.src.replace(body, body.replace("  log_health(", "  (void)(", 1))
         self.assertTrue(any("does not log a PARTNER_REFUSED" in p for p in check(src)))
+
+    def test_the_old_blob_order_bind_loop_fails(self) -> None:
+        # The code before F119/F120: every stored entry bound in blob order.
+        src = self.mutate(
+            "              mesh_session::restore_peer_macs(mac_fps, mac_addrs, n_macs, verdicts);",
+            "              0;\n"
+            "          for (size_t i = 0; i < n_macs; ++i) "
+            "mesh_session::bind_peer_mac(mac_fps[i], mac_addrs[i]);")
+        problems = check(src)
+        self.assertTrue(any("by hand" in p for p in problems), problems)
+        self.assertTrue(any("does not call restore_peer_macs" in p for p in problems), problems)
+
+    def test_restore_before_the_pubkeys_fails(self) -> None:
+        src = self.mutate(
+            "          if (mesh_session::register_trusted_peer(\n"
+            "                  peers_buf + i * mesh_crypto::PUBKEY_LEN)) {",
+            "          if (peers_buf[i]) {")
+        self.assertTrue(any("not registered before" in p for p in check(src)))
+
+    def test_a_drop_without_the_pubkey_list_fails(self) -> None:
+        src = self.mutate("i < n_macs && peers_loaded; ++i", "i < n_macs; ++i")
+        self.assertTrue(any("not gated on peers_loaded" in p for p in check(src)))
+
+    def test_a_drop_of_bound_entries_fails(self) -> None:
+        src = self.mutate(
+            "            if (!shared && verdicts[i] != mesh_session::StoredMacVerdict::UNTRUSTED) continue;\n",
+            "            if (!shared) {}\n")
+        self.assertTrue(any("exactly the SHARED and UNTRUSTED" in p for p in check(src)))
 
 
 if __name__ == "__main__":

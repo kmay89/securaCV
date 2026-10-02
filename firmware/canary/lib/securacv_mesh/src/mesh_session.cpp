@@ -1571,6 +1571,39 @@ bool bind_peer_mac(const uint8_t fp [mesh_crypto::FINGERPRINT_LEN],
   return true;
 }
 
+size_t restore_peer_macs(const uint8_t (*fps)[mesh_crypto::FINGERPRINT_LEN],
+                         const uint8_t (*macs)[mesh_transport::MESH_TRANSPORT_MAC_LEN],
+                         size_t n, StoredMacVerdict* out) {
+  if (fps == nullptr || macs == nullptr || out == nullptr) return 0;
+  /* Classify every entry before binding any, so an address two members'
+   * entries share is bound to neither whatever the blob order (F119). */
+  for (size_t i = 0; i < n; ++i) {
+    out[i] = find_trusted_peer(fps[i]) != nullptr ? StoredMacVerdict::BOUND
+                                                  : StoredMacVerdict::UNTRUSTED;   /* F120 */
+  }
+  for (size_t i = 0; i < n; ++i) {
+    if (out[i] == StoredMacVerdict::UNTRUSTED) continue;
+    for (size_t j = 0; j < n; ++j) {
+      if (j == i || out[j] == StoredMacVerdict::UNTRUSTED) continue;
+      if (memcmp(macs[i], macs[j], mesh_transport::MESH_TRANSPORT_MAC_LEN) == 0 &&
+          memcmp(fps[i], fps[j], mesh_crypto::FINGERPRINT_LEN) != 0) {
+        out[i] = StoredMacVerdict::SHARED;
+        break;
+      }
+    }
+  }
+  size_t bound = 0;
+  for (size_t i = 0; i < n; ++i) {
+    if (out[i] != StoredMacVerdict::BOUND) continue;
+    if (bind_peer_mac(fps[i], macs[i])) {
+      ++bound;
+    } else {
+      out[i] = StoredMacVerdict::REFUSED;
+    }
+  }
+  return bound;
+}
+
 bool can_hold_partner(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN],
                       const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN]) {
   if (pubkey == nullptr || mac == nullptr || !mac_is_unicast(mac)) return false;

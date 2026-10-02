@@ -4317,6 +4317,210 @@ void test_successful_repair_is_persisted_across_reboot() {
   std::printf("PASS test_successful_repair_is_persisted_across_reboot\n");
 }
 
+/* ── F119, F120 — the boot restore of the stored addresses ─────────────────
+ *
+ * main.cpp's setup registers every stored pubkey, then hands the stored
+ * peer_macs entries to restore_peer_macs and drops from NVS the ones it
+ * calls UNTRUSTED or SHARED — only when the pubkey list was read (a failed
+ * read registers nobody, and every entry would look untrusted). Until F119
+ * and F120 it bound each entry in blob order and dropped nothing. */
+
+/* That restore, on the fake NVS: a reboot with the same device keys and
+ * opera secret. Returns the verdicts. */
+std::vector<mesh_session::StoredMacVerdict> main_like_boot(const uint8_t pub[32],
+                                                           const uint8_t priv[32],
+                                                           const uint8_t S[32],
+                                                           bool peers_loaded = true,
+                                                           size_t* bound_out = nullptr) {
+  reset_world();
+  mesh_session::deinit();
+  assert(mesh_session::init(pub, priv) && mesh_session::start());
+  assert(mesh_session::set_opera_secret(S));
+  mesh_session::set_tamper_alert_handler(on_alert_rx);
+  g_alerts_rx.clear();
+  if (peers_loaded) {
+    for (const auto& p : g_nvs_pubs) (void)mesh_session::register_trusted_peer(p.data());
+  }
+  mesh_state::PeerMac stored[mesh_state::MAX_TRUSTED_PEERS];
+  size_t n = 0;
+  assert(mesh_state::peer_mac_blob::decode(g_nvs_macs, g_nvs_macs_len, stored,
+                                           mesh_state::MAX_TRUSTED_PEERS, &n));
+  uint8_t fps[mesh_state::MAX_TRUSTED_PEERS][8];
+  uint8_t macs[mesh_state::MAX_TRUSTED_PEERS][6];
+  for (size_t i = 0; i < n; ++i) {
+    std::memcpy(fps[i], stored[i].fingerprint, 8);
+    std::memcpy(macs[i], stored[i].mac, 6);
+  }
+  std::vector<mesh_session::StoredMacVerdict> v(n);
+  const size_t bound = mesh_session::restore_peer_macs(fps, macs, n, v.data());
+  if (bound_out != nullptr) *bound_out = bound;
+  if (peers_loaded) {
+    for (size_t i = 0; i < n; ++i) {
+      if (v[i] == mesh_session::StoredMacVerdict::UNTRUSTED ||
+          v[i] == mesh_session::StoredMacVerdict::SHARED) {
+        assert(mesh_state::peer_mac_blob::remove(g_nvs_macs, &g_nvs_macs_len, fps[i]));
+      }
+    }
+  }
+  return v;
+}
+
+/* A raw peer_macs entry appended to the fake blob, bypassing upsert (which
+ * since F102 refuses a held address): how a blob written before F102 looks. */
+void raw_blob_entry(const uint8_t fp[8], const uint8_t mac[6]) {
+  std::memcpy(g_nvs_macs + g_nvs_macs_len, fp, 8);
+  std::memcpy(g_nvs_macs + g_nvs_macs_len + 8, mac, 6);
+  g_nvs_macs_len += mesh_state::PEER_MAC_ENTRY_LEN;
+}
+
+bool heard_from(const uint8_t pub[32], const uint8_t priv[32], const uint8_t S[32],
+                uint64_t counter, const uint8_t mac[6]) {
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
+  const size_t n = build_alert_frame(pub, priv, S, 1, mesh_alert::Kind::TEMP_DRIFT, 3, counter,
+                                     frame, sizeof(frame));
+  const size_t before = g_alerts_rx.size();
+  mesh_transport::test::inject_recv(mac, frame, n, -40);
+  mesh_transport::process();
+  return g_alerts_rx.size() == before + 1;
+}
+
+/* F119. The blob F102's scenario left on firmware before F102: J paired at
+ * X, C at its own address, then J re-paired from C's address, and the old
+ * upsert rewrote J's entry (the first) in place — two entries, one address.
+ * The restore binds neither (SHARED, SHARED) and drops both: neither member
+ * is heard from that address, nobody holds it in the transport table, and
+ * the blob is empty. Each member then re-pairs and is stored; after another
+ * reboot C is heard at its address and J at X. In blob order (the code
+ * before F119) J took C's address and C was not heard at all. Why drop
+ * both rather than keep them unbound: with J's entry kept, C's re-pair
+ * could not be stored (upsert refuses an address another fingerprint
+ * holds, F102), and C would be unheard again after the next reboot. */
+void test_boot_restore_binds_neither_member_of_a_shared_address() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x19 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  reset_fake_main_nvs();
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x19, 0x00, 0x01};
+  const uint8_t mac_x[6] = {0x24, 0x0A, 0xC4, 0x19, 0x00, 0x0A};
+  const uint8_t mac_c[6] = {0x24, 0x0A, 0xC4, 0x19, 0x00, 0x0C};
+  uint8_t j_pub[32], j_priv[32], j_fp[8], c_pub[32], c_priv[32], c_fp[8];
+  assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(c_pub, c_priv));
+  mesh_crypto::compute_fingerprint(j_pub, j_fp);
+  mesh_crypto::compute_fingerprint(c_pub, c_fp);
+  g_nvs_pubs.emplace_back(j_pub, j_pub + 32);
+  g_nvs_pubs.emplace_back(c_pub, c_pub + 32);
+  raw_blob_entry(j_fp, mac_c);
+  raw_blob_entry(c_fp, mac_c);
+
+  /* Why both go: with J's entry there, C's address cannot be stored. */
+  {
+    uint8_t blob[mesh_state::PEER_MACS_BLOB_MAX];
+    size_t len = 0;
+    assert(mesh_state::peer_mac_blob::upsert(blob, &len, j_fp, mac_c));
+    assert(!mesh_state::peer_mac_blob::upsert(blob, &len, c_fp, mac_c));
+  }
+
+  size_t bound = 99;
+  std::vector<mesh_session::StoredMacVerdict> v = main_like_boot(pub, priv, S, true, &bound);
+  assert(v.size() == 2 && bound == 0);
+  assert(v[0] == mesh_session::StoredMacVerdict::SHARED);
+  assert(v[1] == mesh_session::StoredMacVerdict::SHARED);
+  assert(mesh_session::trusted_peer_count() == 2);
+  assert(!transport_has(mac_c));
+  assert(!heard_from(c_pub, c_priv, S, 1, mac_c));
+  assert(!heard_from(j_pub, j_priv, S, 2, mac_c));
+  assert(g_nvs_macs_len == 0);                       /* both dropped */
+
+  /* Each re-pairs from its own address, and is stored. */
+  mesh_session::set_paired_callback(main_like_paired);
+  mesh_session::set_paired_peer_bound_callback(main_like_bound);
+  assert(pair_from(S, me, mac_c, c_pub, c_priv, 100));
+  assert(pair_from(S, me, mac_x, j_pub, j_priv, 200));
+  assert(g_bound_calls.size() == 2 && g_bound_calls[0].bound && g_bound_calls[1].bound);
+  assert(g_nvs_macs_len == 2 * mesh_state::PEER_MAC_ENTRY_LEN);
+
+  v = main_like_boot(pub, priv, S, true, &bound);
+  assert(bound == 2);
+  assert(v[0] == mesh_session::StoredMacVerdict::BOUND && v[1] == mesh_session::StoredMacVerdict::BOUND);
+  assert(heard_from(c_pub, c_priv, S, 3, mac_c));
+  assert(heard_from(j_pub, j_priv, S, 4, mac_x));
+  assert(!heard_from(j_pub, j_priv, S, 5, mac_c));
+  std::printf("PASS test_boot_restore_binds_neither_member_of_a_shared_address\n");
+}
+
+/* F120. A member removed while its peer_macs entry stayed (the NVS removal
+ * is best effort): its pubkey is gone from NVS, its entry is not. The
+ * restore binds nothing for it (UNTRUSTED) and the entry is dropped; an
+ * untrusted entry at a member's address does not make that member's entry
+ * SHARED. A new member N then pairs from the removed one's address and is
+ * stored, and after a reboot is heard there. Kept, the stale entry made
+ * N's address impossible to store (upsert refuses it), so N was unheard
+ * after every reboot. A boot whose pubkey list could not be read drops
+ * nothing (and binds nothing: nobody is registered). */
+void test_boot_restore_drops_entries_of_peers_no_longer_trusted() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x20 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  reset_fake_main_nvs();
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x20, 0x00, 0x01};
+  const uint8_t mac_1[6] = {0x24, 0x0A, 0xC4, 0x20, 0x00, 0x0A};
+  const uint8_t mac_2[6] = {0x24, 0x0A, 0xC4, 0x20, 0x00, 0x0B};
+  uint8_t x_pub[32], x_priv[32], x_fp[8], y_fp[8], c_pub[32], c_priv[32], c_fp[8];
+  uint8_t n_pub[32], n_priv[32], n_fp[8], y_pub[32], y_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(x_pub, x_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(y_pub, y_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(c_pub, c_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(n_pub, n_priv));
+  mesh_crypto::compute_fingerprint(x_pub, x_fp);
+  mesh_crypto::compute_fingerprint(y_pub, y_fp);
+  mesh_crypto::compute_fingerprint(c_pub, c_fp);
+  mesh_crypto::compute_fingerprint(n_pub, n_fp);
+  g_nvs_pubs.emplace_back(c_pub, c_pub + 32);       /* X and Y were removed */
+  raw_blob_entry(x_fp, mac_1);
+  raw_blob_entry(c_fp, mac_2);
+  raw_blob_entry(y_fp, mac_2);
+
+  /* A boot that could not read the pubkey list drops nothing. */
+  const size_t len_before = g_nvs_macs_len;
+  size_t bound = 99;
+  std::vector<mesh_session::StoredMacVerdict> v = main_like_boot(pub, priv, S, false, &bound);
+  assert(bound == 0 && g_nvs_macs_len == len_before);
+
+  /* Why the entry must go: with X's entry there, N's address at mac_1
+   * cannot be stored. */
+  {
+    uint8_t blob[mesh_state::PEER_MACS_BLOB_MAX];
+    std::memcpy(blob, g_nvs_macs, g_nvs_macs_len);
+    size_t len = g_nvs_macs_len;
+    assert(!mesh_state::peer_mac_blob::upsert(blob, &len, n_fp, mac_1));
+  }
+
+  v = main_like_boot(pub, priv, S, true, &bound);
+  assert(v.size() == 3 && bound == 1);
+  assert(v[0] == mesh_session::StoredMacVerdict::UNTRUSTED);
+  assert(v[1] == mesh_session::StoredMacVerdict::BOUND);
+  assert(v[2] == mesh_session::StoredMacVerdict::UNTRUSTED);
+  assert(!transport_has(mac_1));
+  assert(heard_from(c_pub, c_priv, S, 1, mac_2));
+  assert(!heard_from(x_pub, x_priv, S, 1, mac_1));
+  assert(g_nvs_macs_len == mesh_state::PEER_MAC_ENTRY_LEN);   /* C's only */
+
+  /* N pairs from X's old address: bound, stored, heard after a reboot. */
+  mesh_session::set_paired_callback(main_like_paired);
+  mesh_session::set_paired_peer_bound_callback(main_like_bound);
+  assert(pair_from(S, me, mac_1, n_pub, n_priv, 100));
+  assert(g_bound_calls.size() == 1 && g_bound_calls[0].bound);
+  assert(g_nvs_macs_len == 2 * mesh_state::PEER_MAC_ENTRY_LEN);
+  v = main_like_boot(pub, priv, S, true, &bound);
+  assert(bound == 2);
+  assert(heard_from(n_pub, n_priv, S, 1, mac_1));
+  assert(heard_from(c_pub, c_priv, S, 2, mac_2));
+  std::printf("PASS test_boot_restore_drops_entries_of_peers_no_longer_trusted\n");
+}
+
 /* ── F70 — a member's frame is taken only from the member's own binding ──
  *
  * The transport table holds more addresses than a member's own: every
@@ -5885,6 +6089,9 @@ int main() {
   test_paired_peer_bound_reports_the_bind();
   test_refused_repair_bind_is_not_persisted_across_reboot();
   test_successful_repair_is_persisted_across_reboot();
+  /* F119, F120 — the boot restore of the stored addresses. */
+  test_boot_restore_binds_neither_member_of_a_shared_address();
+  test_boot_restore_drops_entries_of_peers_no_longer_trusted();
   /* F70 */
   test_pair_contact_replay_records_nothing_and_gets_no_accept();
   test_copied_member_address_moves_no_link();

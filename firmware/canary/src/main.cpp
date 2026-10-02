@@ -1496,8 +1496,9 @@ void setup() {
       uint8_t peers_buf[mesh_state::MAX_TRUSTED_PEERS
                         * mesh_crypto::PUBKEY_LEN];
       size_t peers_count = 0;
-      if (mesh_state::load_trusted_peers(peers_buf, sizeof(peers_buf),
-                                         &peers_count)) {
+      const bool peers_loaded =
+          mesh_state::load_trusted_peers(peers_buf, sizeof(peers_buf), &peers_count);
+      if (peers_loaded) {
         size_t registered = 0;
         for (size_t i = 0; i < peers_count; ++i) {
           if (mesh_session::register_trusted_peer(
@@ -1512,19 +1513,48 @@ void setup() {
       }
       /* Put the trusted peers' radio MACs back into the transport table
        * (F33 part 1) — without them mesh_transport drops every frame they
-       * send (recv_dropped_no_peer) and broadcast() reaches nobody. An
-       * entry whose fingerprint is not a registered peer binds nothing. */
+       * send (recv_dropped_no_peer) and broadcast() reaches nobody. After
+       * the pubkeys above: restore_peer_macs binds only a registered
+       * fingerprint's entry. It binds neither entry of an address two
+       * members' entries share (F119: a blob from before F102; in blob
+       * order the wrong one could take it) and nothing for a fingerprint
+       * that is no longer a member (F120). Both kinds are dropped from NVS
+       * here, so the members re-pair and the re-pair is stored (a kept
+       * entry holds the address, and save_peer_mac refuses it to anyone
+       * else) — but only when the pubkey list was read: a failed read
+       * registers nobody, and every entry would look untrusted. */
       {
         mesh_state::PeerMac macs[mesh_state::MAX_TRUSTED_PEERS];
         size_t n_macs = 0;
-        if (mesh_state::load_peer_macs(macs, mesh_state::MAX_TRUSTED_PEERS, &n_macs)) {
-          size_t bound = 0;
+        if (mesh_state::load_peer_macs(macs, mesh_state::MAX_TRUSTED_PEERS, &n_macs) &&
+            n_macs > 0) {
+          uint8_t mac_fps[mesh_state::MAX_TRUSTED_PEERS][mesh_crypto::FINGERPRINT_LEN];
+          uint8_t mac_addrs[mesh_state::MAX_TRUSTED_PEERS][mesh_transport::MESH_TRANSPORT_MAC_LEN];
           for (size_t i = 0; i < n_macs; ++i) {
-            if (mesh_session::bind_peer_mac(macs[i].fingerprint, macs[i].mac)) ++bound;
+            memcpy(mac_fps[i], macs[i].fingerprint, sizeof(mac_fps[i]));
+            memcpy(mac_addrs[i], macs[i].mac, sizeof(mac_addrs[i]));
           }
-          if (n_macs > 0) {
-            Serial.printf("[OK] Bound %u/%u peer radio MACs from NVS\n",
-                          (unsigned)bound, (unsigned)n_macs);
+          mesh_session::StoredMacVerdict verdicts[mesh_state::MAX_TRUSTED_PEERS];
+          const size_t bound =
+              mesh_session::restore_peer_macs(mac_fps, mac_addrs, n_macs, verdicts);
+          Serial.printf("[OK] Bound %u/%u peer radio MACs from NVS\n",
+                        (unsigned)bound, (unsigned)n_macs);
+          for (size_t i = 0; i < n_macs && peers_loaded; ++i) {
+            const bool shared = verdicts[i] == mesh_session::StoredMacVerdict::SHARED;
+            if (!shared && verdicts[i] != mesh_session::StoredMacVerdict::UNTRUSTED) continue;
+            const bool dropped = mesh_state::remove_peer_mac(mac_fps[i]);
+            char hex[mesh_crypto::FINGERPRINT_LEN * 2 + 1];
+            mesh_fp_hex(mac_fps[i], hex);
+            if (shared) {
+              Serial.printf("[WARN] Peer %s: its stored radio address is stored for another "
+                            "member too; not bound%s — re-pair it\n",
+                            hex, dropped ? ", entry dropped" : "");
+              log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
+                         "Opera stored address shared; re-pair", hex);
+            } else {
+              Serial.printf("[INFO] Stored radio address of %s, no longer a member, %s\n",
+                            hex, dropped ? "dropped" : "not dropped (NVS)");
+            }
           }
         }
       }
