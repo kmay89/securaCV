@@ -721,16 +721,17 @@ export function buildSerial(data, bus) {
 // the event has one, right after its name, where the firmware puts it.
 // Its clocks and coarse features are the sandbox's too (sweep A37), as the
 // firmware takes them from its FSM snapshot on the tick that emits the
-// event: presence_ms and dwell_ms from the firmware core's FSM (dwell_ms is
-// 0 on every event tick, as the device's is: the FSM starts or clears the
-// dwell on the tick that emits each event), posture,
-// proximity, the person count's occupancy bucket and the occupied-cell mask
-// from its detection pipeline, ts_ms the sandbox clock (as the core saw it)
-// plus the pane's clock.t0_ms, and visit_ms the last stay, which the caller
-// latches at presence_ended (the core does not return it).
+// event. From the firmware core's FSM: presence_ms, dwell_ms (0 on
+// dwell_started, where the dwell starts; on dwell_ended the dwell it
+// closed, sweep F130), visit_ms (the last completed stay, latched at
+// presence_ended) and the voxel, the tracker's settled cell (sweep A39: it
+// lags the frame's cell by a few frames and keeps the last cell once the
+// frame is empty). From its detection pipeline: posture, proximity, the
+// person count's occupancy bucket and the occupied-cell mask. ts_ms is the
+// sandbox clock (as the core saw it) plus the pane's clock.t0_ms.
 export function vizEventPayload(example, name, snap, seq, clock = {}) {
   const bb = snap.sample.bbox || { x: 0, y: 0, w: 0, h: 0, score: 0 };
-  const v = snap.sample.voxel || { r: -1, c: -1 };
+  const v = snap.fsm.voxel;
   const present = !!snap.fsm.presence;
   const ts = (clock.t0_ms || 0) + ((snap.t || 0) >>> 0);
   const names = clock.occupancy || ["none", "one", "two", "several"];
@@ -742,9 +743,9 @@ export function vizEventPayload(example, name, snap, seq, clock = {}) {
     ts_ms: ts,
     presence_ms: snap.fsm.presence_ms | 0,
     dwell_ms: snap.fsm.dwell_ms | 0,
-    visit_ms: clock.visit_ms | 0,
+    visit_ms: snap.fsm.visit_ms | 0,
     confidence: snap.fsm.confidence != null ? snap.fsm.confidence : bb.score,
-    voxel: { ...example.voxel, r: v.r, c: v.c },
+    voxel: { ...example.voxel, rows: v.rows, cols: v.cols, r: v.r, c: v.c },
     bbox: { x: bb.x, y: bb.y, w: bb.w, h: bb.h },
     occupancy: names[Math.min(count, names.length - 1)],
     posture: snap.sample.posture || "unknown",
@@ -800,10 +801,8 @@ export function buildMqtt(data, bus) {
   const live = { state: like("state"), chain: like("chain"), cfg: like("cfg/state") };
   const current = { state: live.state, chain: live.chain, "cfg/state": live.cfg };
   let seq = live.chain.length;
-  // the sandbox clock's zero sits at the rows' own ts_ms; visit_ms is the
-  // last stay, latched when presence ends (PresenceFSM::tick's last_visit_ms_)
-  const clock = { t0_ms: pane.clock.t0_ms, occupancy: pane.occupancy, visit_ms: 0 };
-  let presentSince = null;
+  // the sandbox clock's zero sits at the rows' own ts_ms
+  const clock = { t0_ms: pane.clock.t0_ms, occupancy: pane.occupancy };
   bus.on("online", () => {
     idle.remove();
     // a (re)connect republishes the retained surfaces as they stand now
@@ -817,9 +816,6 @@ export function buildMqtt(data, bus) {
   bus.on("sim-event", ({ name, snap }) => {
     const base = "securacv/" + id;
     const row2 = (suffix, obj, retain) => row(base + "/" + suffix, JSON.stringify(obj), retain);
-    const now = (snap.t || 0) >>> 0;
-    if (name === "presence_started") presentSince = now;
-    if (name === "presence_ended" && presentSince != null) { clock.visit_ms = now - presentSince; presentSince = null; }
     const ev = vizEventPayload(JSON.parse(pane.events.payload), name, snap, ++seq, clock);
     row2("events", ev, false);
     // publish_state_now, on the same tick: the same snapshot, as the state row keys it

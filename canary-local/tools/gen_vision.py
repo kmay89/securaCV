@@ -61,6 +61,7 @@ MAIN_CPP = FW / "src/main.cpp"
 VISION_MGR_CPP = FW / "src/vision/vision_mgr.cpp"
 DETECTION_PIPELINE_H = FW / "include/canary/vision/detection_pipeline.h"
 PRESENCE_FSM_CPP = FW / "src/state/presence_fsm.cpp"
+VOXEL_TRACKER_CPP = FW / "src/state/voxel_tracker.cpp"
 HA_DISCOVERY_CPP = FW / "src/ha/ha_discovery.cpp"
 WIFI_MGR_CPP = FW / "src/net/wifi_mgr.cpp"
 MQTT_MGR_CPP = FW / "src/net/mqtt_mgr.cpp"
@@ -719,7 +720,13 @@ must(MQTT_MGR_CPP, 'publish_checked("AIM", topics.aim_state, enabled ? "ON" : "O
 must(MQTT_MGR_CPP, "publish_status_retained(g_topics, \"online\");", "status on connect")
 
 EX_TS_MS, EX_UPTIME_S, EX_HEAP, EX_HEAP_MIN, EX_CHAIN = 41250, 41, 183424, 171032, 12
-VOXEL_IDLE = {"rows": VOXEL_ROWS, "cols": VOXEL_COLS, "r": -1, "c": -1}
+# The state row's voxel is the tracker's settled cell (snapshot.voxel =
+# voxel_tracker_.stable()). Until someone has been seen it is the tracker's
+# reset value, Voxel{-1,-1,0,0}: no rows or cols either, which is what the
+# device's first state row prints (the example used to say 3 x 3).
+must(PRESENCE_FSM_CPP, "s.voxel = voxel_tracker_.stable();", "the rows publish the settled cell")
+must(VOXEL_TRACKER_CPP, "  stable_ = Voxel{-1,-1,0,0};", "the tracker's reset cell")
+VOXEL_IDLE = {"rows": 0, "cols": 0, "r": -1, "c": -1}
 PANE_ONLINE = [
     ("status", True, keyed_as({
         "device_id": DEVICE_ID, "device_type": DEVICE_TYPE, "status": "online", "ip": EX_IP,
@@ -751,16 +758,16 @@ EVENT_PANE = keyed_as({
 # The sandbox's clock and box move the event's and state's clocks and coarse
 # features too (sweep A37), the way the firmware's own snapshot does: the
 # page's VisionSim feeds the committed WASM core (canary-local/emulator/
-# vision, built from presence_fsm.cpp and detection_pipeline.h), which
-# returns the FSM's presence_ms and dwell_ms (0 on dwell_started, where the
-# FSM sets dwell_start_ms_; on dwell_ended the length of the dwell it closed,
-# latched in ended_dwell_ms_ for that tick because dwelling_ is cleared
-# before the snapshot, sweep F130; 0 on the rest, which are not dwelling)
-# and the frame's posture, proximity, person count and occupied-cell mask. ts_ms is that clock plus
-# the example's ts_ms (the sandbox clock starts where these rows stand),
-# bucket_uptime_s its 10-minute bucket, and visit_ms the last stay's length,
-# latched at presence_ended as PresenceFSM::tick latches last_visit_ms_ (the
-# core does not return it, so the pane keeps it from the events it sees).
+# vision, built from presence_fsm.cpp, voxel_tracker.cpp and
+# detection_pipeline.h), which returns the FSM snapshot's presence_ms,
+# dwell_ms (0 on dwell_started, where the FSM sets dwell_start_ms_; on
+# dwell_ended the length of the dwell it closed, latched in ended_dwell_ms_
+# for that tick because dwelling_ is cleared before the snapshot, sweep F130;
+# 0 on the rest, which are not dwelling), visit_ms (last_visit_ms_, the
+# last completed stay) and voxel (the tracker's settled cell, sweep A39),
+# and the frame's posture, proximity, person count and occupied-cell mask.
+# ts_ms is that clock plus the example's ts_ms (the sandbox clock starts
+# where these rows stand) and bucket_uptime_s its 10-minute bucket.
 OPTICAL_H = FW / "include/canary/vision/optical_features.h"
 CORE_BINDINGS = REPO / "canary-local/emulator/vision/vision_core_bindings.cpp"
 for needle in ("s.presence_ms = presence_ ? (now_ms - presence_start_ms_) : 0;",
@@ -783,7 +790,11 @@ must(MAIN_CPP, "    last_heartbeat_ms = now_ms;\n    publish_heartbeat_now(now_m
      "the heartbeat's state row carries the running dwell")
 for needle in ('"\\"person_count\\":%u,\\"posture\\":\\"%s\\","',
                '"\\"proximity\\":\\"%s\\",\\"voxel_mask\\":%u},"',
-               '"\\"confidence\\":%d,\\"presence_ms\\":%lu,\\"dwell_ms\\":%lu},"',
+               '"\\"confidence\\":%d,\\"presence_ms\\":%lu,\\"dwell_ms\\":%lu,"',
+               '"\\"visit_ms\\":%lu,"',
+               '"\\"voxel\\":{\\"r\\":%d,\\"c\\":%d,\\"rows\\":%u,\\"cols\\":%u}},"',
+               "(unsigned long)g_snapshot.visit_ms,",
+               "g_snapshot.voxel.r, g_snapshot.voxel.c,",
                "return JSON.parse(tickJson(nowMs >>> 0));"):
     must(CORE_BINDINGS if "JSON" not in needle else REPO / "canary-local/emulator/web/vision-core.js",
          needle, "the WASM core returns what the pane reads")
@@ -795,13 +806,14 @@ MQTT["pane"] = {
     "source": "payload keys from mqtt_mgr.cpp + main.cpp",
     "clock": {"t0_ms": EX_TS_MS,
               "note": "Every key is the firmware's, and so are the values the sandbox moves: presence_ms, "
+                      "visit_ms (the last completed stay), the voxel (its tracker's settled cell, which "
+                      "trails the frame's cell by a few frames and stays put once the frame is empty), "
                       "posture, proximity, occupancy and occ_mask come from the firmware core this page runs, "
-                      "ts_ms is its clock, and visit_ms the last stay. dwell_ms is the core's too: 0 on "
-                      "dwell_started, where the dwell starts, the length of the dwell it closed on "
-                      "dwell_ended, and 0 on the other events, which are not dwelling; a running dwell rides "
-                      "the state heartbeat, which this pane does not stage. Two values stay illustrative: the "
-                      "voxel is the frame's cell (the device publishes its tracker's settled cell, which the "
-                      "core does not return), and a moved chain head's hash is elided."},
+                      "and ts_ms is its clock. dwell_ms is the core's too: 0 on dwell_started, where the "
+                      "dwell starts, the length of the dwell it closed on dwell_ended, and 0 on the other "
+                      "events, which are not dwelling; a running dwell rides the state heartbeat, which this "
+                      "pane does not stage. One value stays illustrative: a moved chain head's hash is "
+                      "elided."},
     "occupancy": OCCUPANCY,
     "online": [{"suffix": s, "retain": r, "payload": payload(o)} for s, r, o in PANE_ONLINE]
               + [{"suffix": "aim/state", "retain": True, "payload": "OFF"}],

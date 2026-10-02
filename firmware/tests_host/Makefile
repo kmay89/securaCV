@@ -521,6 +521,18 @@ VISFSM_HDR = $(VISION_INC)/canary/state/presence_fsm.h \
              $(VISION_INC)/canary/types.h
 VISFSM_BIN = $(BUILD_DIR)/test_vision_presence_fsm
 
+# The Vision core the Lab runs (emulator/dist/canary-vision-core.js), built
+# natively from the five sources build.sh's vision flavor hands em++, with the
+# emulator's Arduino shim and a one-macro emscripten.h stub. Holds the tick
+# JSON the Vision page's MQTT pane reads: the tracker's settled cell and
+# visit_ms (sweep A39), and dwell_ended's dwell (F130) through the ABI.
+EMU_DIR    = ../../canary-local/emulator
+VISCORE_SRC = $(VISION_SRC)/detect_config.cpp $(VISFSM_SRC) \
+              $(EMU_DIR)/vision/vision_core_bindings.cpp $(EMU_DIR)/vision/vision_core_shim.cpp
+VISCORE_HDR = $(VISFSM_HDR) $(VISION_CFG)/config.h $(wildcard $(EMU_DIR)/shim/*.h) \
+              stubs/emscripten/emscripten.h
+VISCORE_BIN = $(BUILD_DIR)/test_vision_core_bindings
+
 # Sentinel multi-sensor fusion brain (common/fusion/sentinel_fusion.*): the
 # board-agnostic evidence-fusion engine compiled by projects/canary-sentinel on
 # device and here on the host. Pins the anti-evasion scoring (independence
@@ -814,6 +826,10 @@ $(VISPROF_BIN): test_vision_profiles.cpp $(VISPROF_HDR) Makefile | $(BUILD_DIR)
 $(VISFSM_BIN): test_vision_presence_fsm.cpp $(VISFSM_SRC) $(VISFSM_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(VISION_INC) -I $(VISION_CFG) test_vision_presence_fsm.cpp $(VISFSM_SRC) -o $@
 
+$(VISCORE_BIN): test_vision_core_bindings.cpp $(VISCORE_SRC) $(VISCORE_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DARDUINO=10812 -I stubs/emscripten -I $(EMU_DIR)/shim -I $(EMU_DIR)/vision \
+	    -I $(VISION_INC) -I $(VISION_CFG) test_vision_core_bindings.cpp $(VISCORE_SRC) -o $@
+
 $(FUSION_BIN): test_sentinel_fusion.cpp $(FUSION_SRC) $(FUSION_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -DSENTINEL_FUSION_TEST_HOST -I $(FUSION_DIR) test_sentinel_fusion.cpp $(FUSION_SRC) -o $@
 
@@ -849,7 +865,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -898,6 +914,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(VISION_PIPE_BIN)
 	./$(VISPROF_BIN)
 	./$(VISFSM_BIN)
+	./$(VISCORE_BIN)
 	./$(FUSION_BIN)
 	./$(PRESET_DOOR_BIN)
 	./$(PRESET_LITE_BIN)

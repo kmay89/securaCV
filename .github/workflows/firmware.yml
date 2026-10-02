@@ -18,6 +18,11 @@ on:
       - 'tools/test_unseal_snapshot.py'
       - 'tools/gen_svlt_parity.py'
       - 'tools/fixtures/vault/**'
+      # The Vision core's browser ABI and the Arduino shim it builds against:
+      # firmware/tests_host's test_vision_core_bindings.cpp links them with
+      # the canary-vision sources, so an edit to either alone must run it.
+      - 'canary-local/emulator/vision/**'
+      - 'canary-local/emulator/shim/**'
       - '.github/workflows/firmware.yml'
       # The release workflow is a checked INPUT here, not just a neighbor:
       # "Regression Guards" runs check_ota_channels.py, which reads the
@@ -42,6 +47,11 @@ on:
       - 'tools/test_unseal_snapshot.py'
       - 'tools/gen_svlt_parity.py'
       - 'tools/fixtures/vault/**'
+      # The Vision core's browser ABI and the Arduino shim it builds against:
+      # firmware/tests_host's test_vision_core_bindings.cpp links them with
+      # the canary-vision sources, so an edit to either alone must run it.
+      - 'canary-local/emulator/vision/**'
+      - 'canary-local/emulator/shim/**'
       - '.github/workflows/firmware.yml'
       # The release workflow is a checked INPUT here, not just a neighbor:
       # "Regression Guards" runs check_ota_channels.py, which reads the

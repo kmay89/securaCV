@@ -151,11 +151,16 @@ event (`publish_event_json` in `src/main.cpp`, `PresenceFSM::snapshot` in
 | `presence_ms` | every row | how long the current stay has lasted; 0 on `presence_started` (it starts on that frame) and once the stay has ended |
 | `dwell_ms` | every row | the running dwell while dwelling; on `dwell_ended`, how long the dwell it closed lasted (held until the next frame); otherwise 0. `dwell_started` reads 0 because the dwell starts on that frame |
 | `visit_ms` | every row | how long the last **completed** stay lasted, latched at `presence_ended` and kept until the next one ends; 0 before any stay has ended |
+| `voxel` | every row | the voxel tracker's settled cell, not the frame's: it moves on the third consecutive frame whose cell differs from it, to that frame's cell (`VOXEL_STABLE_N` in `src/state/voxel_tracker.cpp`) and keeps the last cell once the frame is empty, so `presence_ended` still names where the person was; before anyone has been seen it is `r`/`c` -1 with `rows`/`cols` 0 |
 
 A running dwell is therefore on the `state` rows (each heartbeat republishes
 one) and the dwell's final length on its `dwell_ended` row. The behavior is
 host-tested in
-[`firmware/tests_host/test_vision_presence_fsm.cpp`](../../tests_host/test_vision_presence_fsm.cpp).
+[`firmware/tests_host/test_vision_presence_fsm.cpp`](../../tests_host/test_vision_presence_fsm.cpp),
+and the Lab's Vision page runs the same FSM and tracker (its WebAssembly core,
+held to them by
+[`firmware/tests_host/test_vision_core_bindings.cpp`](../../tests_host/test_vision_core_bindings.cpp)),
+so its MQTT pane shows these values as the device computes them.
 
 Discovery (retained):
 - `homeassistant/binary_sensor/<device_id>/presence/config`

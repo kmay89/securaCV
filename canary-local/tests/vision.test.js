@@ -196,12 +196,14 @@ test("every MQTT pane row is keyed as the firmware publishes it", () => {
 test("a sandbox event publishes in the firmware's shape, the sandbox's values laid over it", async () => {
   const { vizEventPayload } = await import("../assets/vision-ui.js");
   const example = JSON.parse(data.mqtt.pane.events.payload);
-  const clock = { t0_ms: data.mqtt.pane.clock.t0_ms, occupancy: data.mqtt.pane.occupancy, visit_ms: 0 };
-  // a snapshot as the firmware core returns it (vision_core_bindings.cpp)
+  const clock = { t0_ms: data.mqtt.pane.clock.t0_ms, occupancy: data.mqtt.pane.occupancy };
+  // a snapshot as the firmware core returns it (vision_core_bindings.cpp):
+  // the frame's cell under sample, the tracker's settled cell under fsm
   const snap = { t: 5000.7,
-                 sample: { bbox: { x: 10, y: 20, w: 30, h: 40, score: 88 }, voxel: { r: 2, c: 0 },
+                 sample: { bbox: { x: 10, y: 20, w: 30, h: 40, score: 88 }, voxel: { r: 2, c: 0, rows: 3, cols: 3 },
                            person_count: 2, posture: "ambiguous", proximity: "far", voxel_mask: 64 + 8 },
-                 fsm: { presence: true, dwelling: false, confidence: 88, presence_ms: 3200, dwell_ms: 0 }, reason: null };
+                 fsm: { presence: true, dwelling: false, confidence: 88, presence_ms: 3200, dwell_ms: 0,
+                        visit_ms: 0, voxel: { r: 1, c: 0, rows: 3, cols: 3 } }, reason: null };
   const ev = vizEventPayload(example, "presence_started", snap, 77, clock);
   assert.deepStrictEqual(Object.keys(ev), Object.keys(example), "every key, in the firmware's order");
   assert.strictEqual(ev.event, "presence_started");
@@ -209,7 +211,9 @@ test("a sandbox event publishes in the firmware's shape, the sandbox's values la
   assert.strictEqual(ev.presence, "present");
   assert.strictEqual(ev.occupants, "1");
   assert.strictEqual(ev.confidence, 88);
-  assert.deepStrictEqual(ev.voxel, { rows: example.voxel.rows, cols: example.voxel.cols, r: 2, c: 0 });
+  // sweep A39: the voxel is the settled cell publish_event_json writes, not the frame's
+  assert.deepStrictEqual(ev.voxel, { rows: 3, cols: 3, r: 1, c: 0 });
+  assert.deepStrictEqual(Object.keys(ev.voxel), Object.keys(example.voxel), "the voxel's keys, in the firmware's order");
   assert.deepStrictEqual(ev.bbox, { x: 10, y: 20, w: 30, h: 40 });
   // sweep A37: the clocks and coarse features are the snapshot's, not the example's
   assert.strictEqual(ev.ts_ms, clock.t0_ms + 5000, "the core's clock (t >>> 0) plus the rows' own ts_ms");
@@ -221,16 +225,19 @@ test("a sandbox event publishes in the firmware's shape, the sandbox's values la
   for (const k of ["v", "alg", "fp", "sig"]) assert.strictEqual(ev[k], example[k], `the ${k} envelope field rides along`);
   // with a reason: right after the name, as publish_event_json's reason branch writes it
   const left = vizEventPayload(example, "presence_ended",
-    { t: 9000, sample: { bbox: null, voxel: { r: -1, c: -1 }, person_count: 0, posture: "unknown", proximity: "unknown", voxel_mask: 0 },
-      fsm: { presence: false, dwelling: false, confidence: 0, presence_ms: 0, dwell_ms: 0 }, reason: "lost" },
-    78, { ...clock, visit_ms: 4000 });
+    { t: 9000, sample: { bbox: null, voxel: { r: -1, c: -1, rows: 3, cols: 3 }, person_count: 0, posture: "unknown", proximity: "unknown", voxel_mask: 0 },
+      fsm: { presence: false, dwelling: false, confidence: 0, presence_ms: 0, dwell_ms: 0,
+             visit_ms: 4000, voxel: { r: 1, c: 0, rows: 3, cols: 3 } }, reason: "lost" },
+    78, { ...clock, visit_ms: 9999 });
   const keys = Object.keys(left);
   assert.strictEqual(keys[keys.indexOf("event") + 1], "reason");
   assert.strictEqual(left.reason, "lost");
   assert.strictEqual(left.presence, "clear");
   assert.strictEqual(left.occupants, "0");
   assert.strictEqual(left.occupancy, "none", "nobody in frame reads as no occupancy");
-  assert.deepStrictEqual([left.posture, left.proximity, left.occ_mask, left.visit_ms], ["unknown", "unknown", 0, 4000]);
+  assert.deepStrictEqual([left.posture, left.proximity, left.occ_mask, left.visit_ms], ["unknown", "unknown", 0, 4000],
+    "visit_ms is the core's last_visit_ms_ (A39), never a latch the caller keeps");
+  assert.deepStrictEqual([left.voxel.r, left.voxel.c], [1, 0], "the empty frame leaves the settled cell where it was");
   assert.ok(mainCpp.includes('"\\"event\\":\\"%s\\","\n        "\\"reason\\":\\"%s\\","'),
     "main.cpp's reason branch still writes reason right after event");
   // the occupancy words are optical_features.h's buckets
@@ -239,13 +246,43 @@ test("a sandbox event publishes in the firmware's shape, the sandbox's values la
     [...optical.split("inline const char* occupancy_name(int count) {")[1].split("\n}\n")[0].matchAll(/return "([a-z]+)";/g)].map((m) => m[1]));
 });
 
+// Sweep A39: the committed core returns what the pane reads. The tick JSON's
+// "fsm" object is the FSM snapshot publish_event_json writes from; a dist
+// built before vision_core_bindings.cpp returned the settled cell and
+// visit_ms has neither, and the pane would read undefined. This holds the
+// committed dist's keys to the bindings source, so a stale dist fails here,
+// by name, rather than as a wrong number further down.
+test("the committed Vision core returns the fsm keys its bindings print (sweep A39)", async () => {
+  const bindings = read(join(ROOT, "emulator/vision/vision_core_bindings.cpp"));
+  const fmt = bindings.split('"\\"fsm\\":{')[1].split('"\\"event\\":%s')[0];
+  const printed = [...fmt.matchAll(/\\"(\w+)\\":/g)].map((m) => m[1]);
+  assert.deepStrictEqual(printed, ["presence", "dwelling", "confidence", "presence_ms", "dwell_ms", "visit_ms",
+    "voxel", "r", "c", "rows", "cols"], "the bindings' fsm object");
+  const core = await firmwareCore();
+  core.reset();
+  const idle = core.tick(1000, []);
+  const flat = (o) => Object.entries(o).flatMap(([k, v]) => (v && typeof v === "object" ? [k, ...flat(v)] : [k]));
+  assert.deepStrictEqual(flat(idle.fsm), printed,
+    "canary-local/emulator/dist/canary-vision-core.js predates vision_core_bindings.cpp: rebuild the dist " +
+    "(build.sh vision, or Actions -> \"Rebuild emulator dist (pinned emsdk)\")");
+  // nobody seen yet: the tracker's reset cell, which the pane's retained state row shows
+  const stateRow = JSON.parse(data.mqtt.pane.online.find((r) => r.suffix === "state").payload);
+  const v = idle.fsm.voxel;
+  assert.deepStrictEqual(stateRow.voxel, { rows: v.rows, cols: v.cols, r: v.r, c: v.c });
+  assert.deepStrictEqual(stateRow.voxel, { rows: 0, cols: 0, r: -1, c: -1 });
+  assert.strictEqual(idle.fsm.visit_ms, 0);
+});
+
 // Sweep A37, end to end: the pane's events, driven by VisionSim on the
 // committed firmware core, carry the FSM's own clocks and the frame's own
 // coarse features. Before it, ts_ms, presence_ms, dwell_ms and visit_ms kept
 // the example's values for every event, and posture and proximity read
 // upright / mid for any box while someone was present. Sweep F130: the
-// dwell_ended row carries the dwell it closed (the core is presence_fsm.cpp,
-// so this needs a dist built from it; the old core said 0).
+// dwell_ended row carries the dwell it closed. Sweep A39: the voxel is the
+// tracker's settled cell and visit_ms the FSM's last_visit_ms_, both from
+// the core, where the pane used to show the frame's cell and keep its own
+// visit latch. Both need a dist built from this tree's presence_fsm.cpp and
+// vision_core_bindings.cpp (the test below names a stale one).
 test("the pane's clocks and coarse features follow the sandbox (sweep A37)", async () => {
   const { withFakeDom, fakeBus } = require("./fixtures/fake_dom.js");
   const optical = read(join(FW, "include/canary/vision/optical_features.h"));
@@ -290,6 +327,11 @@ test("the pane's clocks and coarse features follow the sandbox (sweep A37)", asy
       assert.strictEqual(e.ev.posture, bb ? posture(bb.w, bb.h) : "unknown", e.name + ": posture is the box's");
       assert.strictEqual(e.ev.proximity, bb ? proximity(bb.w, bb.h) : "unknown", e.name + ": proximity is the box's");
       assert.strictEqual(e.ev.occ_mask, e.snap.sample.voxel_mask);
+      // sweep A39: the voxel and visit_ms are the FSM snapshot's, as publish_event_json writes them
+      const fv = e.snap.fsm.voxel;
+      assert.deepStrictEqual(e.ev.voxel, { rows: fv.rows, cols: fv.cols, r: fv.r, c: fv.c }, e.name + ": the settled cell");
+      assert.deepStrictEqual(e.state.voxel, e.ev.voxel, e.name + ": and the state row's");
+      assert.strictEqual(e.ev.visit_ms, e.snap.fsm.visit_ms, e.name + ": visit_ms is the core's");
     }
     const start = at("presence_started"), dwell = at("dwell_started"), end = at("presence_ended");
     assert.strictEqual(start.ev.presence_ms, 0, "presence starts on that tick");
@@ -314,9 +356,14 @@ test("the pane's clocks and coarse features follow the sandbox (sweep A37)", asy
     assert.strictEqual(end.ev.visit_ms, end.t - start.t, "presence_ended reports the stay it closed");
     assert.deepStrictEqual([end.ev.posture, end.ev.proximity, end.ev.occupancy], ["unknown", "unknown", "none"],
       "no box, no coarse features: not the example's upright / mid");
+    // the empty frame has no cell; the device still names the cell the person settled in
+    assert.strictEqual(end.snap.sample.voxel.r, -1, "presence_ended's frame is empty");
+    assert.ok(end.ev.voxel.r >= 0 && end.ev.voxel.c >= 0, "the settled cell stays put");
+    assert.deepStrictEqual(end.ev.voxel, dend.ev.voxel, "no one seen since dwell_ended: the tracker did not move");
     // the pane says which values stay illustrative
     assert.strictEqual(outer.all("vis-mqtt-note")[0].textContent, data.mqtt.pane.clock.note);
-    assert.match(data.mqtt.pane.clock.note, /voxel is the frame's cell/);
+    assert.match(data.mqtt.pane.clock.note, /the voxel \(its tracker's settled cell/);
+    assert.doesNotMatch(data.mqtt.pane.clock.note, /frame's cell \(|does not return/, "A39: the core returns both");
     assert.match(data.mqtt.pane.clock.note, /the length of the dwell it closed on dwell_ended/);
     assert.doesNotMatch(data.mqtt.pane.clock.note, /dwell_ms is 0 on every event row/, "F130: dwell_ended carries the dwell");
     assert.ok(fsmCpp.includes("s.dwell_ms    = dwelling_ ? (now_ms - dwell_start_ms_) : ended_dwell_ms_;"),
@@ -598,10 +645,12 @@ test("the MQTT pane renders vision.json's rows, moves them with the sandbox, and
     for (const r of data.mqtt.pane.online) assert.strictEqual(now[base + r.suffix], r.payload, `${r.suffix}: not vision.json's row`);
     const chain0 = JSON.parse(now[base + "chain"]).length;
 
-    const snap = { sample: { bbox: { x: 1, y: 2, w: 3, h: 4, score: 90 }, voxel: { r: 1, c: 2 } },
-                   fsm: { presence: true, dwelling: false }, reason: null };
+    // the core's tick shape (vision_core_bindings.cpp): the settled cell under fsm
+    const cell = { r: 1, c: 2, rows: 3, cols: 3 };
+    const snap = { sample: { bbox: { x: 1, y: 2, w: 3, h: 4, score: 90 }, voxel: cell },
+                   fsm: { presence: true, dwelling: false, visit_ms: 0, voxel: cell }, reason: null };
     bus.emit("sim-event", { name: "presence_started", snap });
-    bus.emit("sim-event", { name: "dwell_started", snap: { ...snap, fsm: { presence: true, dwelling: true } } });
+    bus.emit("sim-event", { name: "dwell_started", snap: { ...snap, fsm: { ...snap.fsm, dwelling: true } } });
     now = rows();
     assert.strictEqual(JSON.parse(now[base + "chain"]).length, chain0 + 2, "each event advances the signed head");
     assert.strictEqual(JSON.parse(now[base + "chain"]).latest_hash, "…", "a moved head is not the example's hash");

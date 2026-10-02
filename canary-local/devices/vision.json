@@ -668,7 +668,7 @@
       "source": "payload keys from mqtt_mgr.cpp + main.cpp",
       "clock": {
         "t0_ms": 41250,
-        "note": "Every key is the firmware's, and so are the values the sandbox moves: presence_ms, posture, proximity, occupancy and occ_mask come from the firmware core this page runs, ts_ms is its clock, and visit_ms the last stay. dwell_ms is the core's too: 0 on dwell_started, where the dwell starts, the length of the dwell it closed on dwell_ended, and 0 on the other events, which are not dwelling; a running dwell rides the state heartbeat, which this pane does not stage. Two values stay illustrative: the voxel is the frame's cell (the device publishes its tracker's settled cell, which the core does not return), and a moved chain head's hash is elided."
+        "note": "Every key is the firmware's, and so are the values the sandbox moves: presence_ms, visit_ms (the last completed stay), the voxel (its tracker's settled cell, which trails the frame's cell by a few frames and stays put once the frame is empty), posture, proximity, occupancy and occ_mask come from the firmware core this page runs, and ts_ms is its clock. dwell_ms is the core's too: 0 on dwell_started, where the dwell starts, the length of the dwell it closed on dwell_ended, and 0 on the other events, which are not dwelling; a running dwell rides the state heartbeat, which this pane does not stage. One value stays illustrative: a moved chain head's hash is elided."
       },
       "occupancy": [
         "none",
@@ -690,7 +690,7 @@
         {
           "suffix": "state",
           "retain": true,
-          "payload": "{\"device_id\":\"canary_vision_001\",\"device_type\":\"canary-vision\",\"profile\":\"room_presence\",\"presence\":false,\"dwelling\":false,\"presence_ms\":0,\"dwell_ms\":0,\"confidence\":0,\"voxel\":{\"rows\":3,\"cols\":3,\"r\":-1,\"c\":-1},\"bbox\":{\"x\":0,\"y\":0,\"w\":0,\"h\":0},\"occupancy\":\"none\",\"posture\":\"unknown\",\"proximity\":\"unknown\",\"occ_mask\":0,\"last_event\":\"boot\",\"uptime_s\":41,\"ts_ms\":41250}"
+          "payload": "{\"device_id\":\"canary_vision_001\",\"device_type\":\"canary-vision\",\"profile\":\"room_presence\",\"presence\":false,\"dwelling\":false,\"presence_ms\":0,\"dwell_ms\":0,\"confidence\":0,\"voxel\":{\"rows\":0,\"cols\":0,\"r\":-1,\"c\":-1},\"bbox\":{\"x\":0,\"y\":0,\"w\":0,\"h\":0},\"occupancy\":\"none\",\"posture\":\"unknown\",\"proximity\":\"unknown\",\"occ_mask\":0,\"last_event\":\"boot\",\"uptime_s\":41,\"ts_ms\":41250}"
         },
         {
           "suffix": "health",
