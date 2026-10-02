@@ -15,6 +15,7 @@
 #include "mesh_pair_crypto.h"      // F33: clamped X25519 pairing keys, session key, 6-digit code
 #include "mesh_revocation.h"       // F33: spec §5.6 REVOCATION_GRACE_MS deny-list (staged, shared)
 #include "mesh_channel_policy.h"
+#include "loop_snapshot.h"        // F110: what the status routes read
 #include "csi_mem.h"
 #include "airtime_governor.h"
 #include "log_level.h"
@@ -278,17 +279,24 @@ static CompleteResend g_complete_resend = {};
 static constexpr uint32_t COMPLETE_RESEND_MS = 2000;   // the DISCOVER's cadence
 
 // Alert history
-/* PSRAM-resident (csi_mem.h): ~2.9 KB of semantic alert metadata, loop-task
- * access only (all rx processing is deferred out of the ESP-NOW callback).
- * g_peers deliberately stays in internal SRAM: OperaPeer carries session
- * keys, and key material belongs on-die, not on an externally probeable
- * PSRAM bus. Allocated in init(); NULL disables alert history (records
- * dropped, count stays 0). */
-static MeshAlert* g_alert_history = nullptr;
+/* PSRAM-resident (csi_mem.h): ~2.9 KB of semantic alert metadata, written on
+ * the loop task only (all rx processing is deferred out of the ESP-NOW
+ * callback). g_peers deliberately stays in internal SRAM: OperaPeer carries
+ * session keys, and key material belongs on-die, not on an externally
+ * probeable PSRAM bus. Allocated in init(); none disables alert history
+ * (records dropped, count stays 0). A log another task reads whole
+ * (read_alerts, sweep F110): store_alert() and clear_alerts() change it
+ * under its lock. */
 static constexpr size_t ALERT_HISTORY_BYTES =
     MAX_ALERT_HISTORY * sizeof(MeshAlert);
-static size_t g_alert_count = 0;
-static size_t g_alert_head = 0;
+static loop_snapshot::Log<MeshAlert, MAX_ALERT_HISTORY, loop_command_ring::PortMuxLock>
+    g_alert_log;
+
+// What the status routes show (sweep F110): published by the loop task at
+// the end of every update() pass and by init() (publish_view), read whole by
+// read_status() from esp_http_server's task. About 0.8 KB of internal SRAM;
+// a pass that changed nothing it shows costs a compare, not a copy.
+static loop_snapshot::Value<StatusView, loop_command_ring::PortMuxLock> g_status_view;
 
 // Callbacks
 static AlertCallback g_alert_callback = nullptr;
@@ -355,6 +363,7 @@ static bool retire_rx(const OperaPeer* peer);
 static void persist_rx_tombstones();
 static void load_rx_tombstones();
 static void store_alert(const MeshAlert* alert);
+static void publish_view();
 // The owner's commands (sweep F96). Internal: they change what update()
 // owns, so only the loop task runs them, through run_command() (update()'s
 // drain of g_commands) or update()'s own paths. A REST handler hands a
@@ -2002,12 +2011,7 @@ static bool load_peers() {
 }
 
 static void store_alert(const MeshAlert* alert) {
-  if (!g_alert_history) return;  /* alloc failed — history disabled */
-  g_alert_history[g_alert_head] = *alert;
-  g_alert_head = (g_alert_head + 1) % MAX_ALERT_HISTORY;
-  if (g_alert_count < MAX_ALERT_HISTORY) {
-    g_alert_count++;
-  }
+  (void)g_alert_log.append(*alert);   /* no storage (alloc failed): history disabled */
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2023,9 +2027,11 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
   /* Alert history lives in PSRAM; allocate before anything can store an
    * alert (store_alert drops records while this is NULL). Sizing:
    * MAX_ALERT_HISTORY (32) x sizeof(MeshAlert) (~92 B) = ~2.9 KB. */
-  if (!g_alert_history) {
-    g_alert_history = (MeshAlert*)csi_large_calloc(ALERT_HISTORY_BYTES);
-    if (!g_alert_history) {
+  if (g_alert_log.storage() == nullptr) {
+    MeshAlert* history = (MeshAlert*)csi_large_calloc(ALERT_HISTORY_BYTES);
+    if (history != nullptr) {
+      g_alert_log.attach(history);
+    } else {
       health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
                  "mesh: alert history alloc failed — history disabled");
     }
@@ -2040,6 +2046,7 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
   // Initialize ESP-NOW
   if (esp_now_init() != ESP_OK) {
     g_mesh_state = MESH_ERROR;
+    publish_view();
     return false;
   }
 
@@ -2096,6 +2103,9 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
     g_mesh_state = MESH_DISABLED;
   }
 
+  // F110: the HTTP server is up before init() (setup()), so the status
+  // routes see this boot's state from here, not only from the first pass.
+  publish_view();
   return true;
 }
 
@@ -2109,6 +2119,7 @@ void deinit() {
   g_espnow_initialized = false;
   g_initialized = false;
   g_mesh_state = MESH_DISABLED;
+  publish_view();
 }
 
 static void set_enabled(bool enabled) {
@@ -2189,6 +2200,7 @@ void update() {
   g_commands.drain(run_command);
 
   if (!g_initialized || g_mesh_state == MESH_DISABLED) {
+    publish_view();   // F110: what the commands above changed (enable, leave, ...)
     return;
   }
 
@@ -2299,10 +2311,16 @@ void update() {
       last_discover = now;
     }
   }
+
+  // F110: the status routes see this pass whole, from here until the next.
+  publish_view();
 }
 
-MeshStatus get_status() {
-  MeshStatus status;
+// Zeroed first, padding included, so publish_view()'s compare sees only
+// what changed.
+static void fill_status(MeshStatus* out) {
+  memset(out, 0, sizeof(*out));
+  MeshStatus& status = *out;
   status.state = g_mesh_state;
   status.espnow_active = g_espnow_initialized;
   status.peers_total = g_peer_count;
@@ -2339,8 +2357,53 @@ MeshStatus get_status() {
     snprintf(status.opera_id_hex + i * 2, sizeof(status.opera_id_hex) - i * 2, "%02x", g_opera_config.opera_id[i]);
   }
   status.opera_id_hex[OPERA_ID_SIZE * 2] = '\0';
+}
 
+MeshStatus get_status() {
+  MeshStatus status;
+  fill_status(&status);
   return status;
+}
+
+// The loop task: what the status routes show, from this pass (sweep F110).
+// Called at the end of every update() pass, its early return included, and
+// by init() and deinit(); nothing else publishes.
+static void publish_view() {
+  StatusView v;
+  memset(&v, 0, sizeof(v));
+  fill_status(&v.status);
+  v.status.uptime_ms = 0;            // read_status() counts it at the read
+  v.start_ms = g_start_time_ms;
+  v.enabled = g_opera_config.enabled;
+  v.has_opera = g_opera_config.configured;
+  memcpy(v.opera_name, g_opera_config.opera_name, sizeof(v.opera_name));
+  v.pairing_code_shown = g_mesh_state == MESH_PAIRING_CONFIRM && g_pairing.code_displayed;
+  v.pairing_code = v.pairing_code_shown ? g_pairing.confirmation_code : 0;
+  v.peer_count = g_peer_count;
+  for (uint8_t i = 0; i < g_peer_count && i < MAX_OPERA_SIZE; i++) {
+    PeerView& p = v.peers[i];
+    memcpy(p.name, g_peers[i].name, sizeof(p.name));
+    memcpy(p.fingerprint, g_peers[i].fingerprint, FINGERPRINT_SIZE);
+    p.state = g_peers[i].state;
+    p.rssi = g_peers[i].rssi;
+    p.alerts_received = g_peers[i].alerts_received;
+    p.last_seen_ms = g_peers[i].last_seen_ms;
+  }
+  (void)g_status_view.publish(v);
+}
+
+void read_status(StatusView* out) {
+  if (!g_status_view.read(out)) {
+    // Before init() publishes: what get_status() said then.
+    memset(out, 0, sizeof(*out));
+    out->status.state = MESH_DISABLED;
+    memset(out->status.opera_id_hex, '0', OPERA_ID_SIZE * 2);
+  }
+  out->status.uptime_ms = millis() - out->start_ms;
+}
+
+size_t read_alerts(MeshAlert* out, size_t cap) {
+  return g_alert_log.read(out, cap);
 }
 
 const char* state_name(MeshState state) {
@@ -2770,16 +2833,16 @@ bool broadcast_offline_imminent(AlertType reason, uint32_t final_seq, const uint
 }
 
 const MeshAlert* get_alerts(size_t* count) {
-  *count = g_alert_count;
-  return g_alert_history;
+  *count = g_alert_log.count();
+  return g_alert_log.storage();
 }
 
 static void clear_alerts() {
-  g_alert_count = 0;
-  g_alert_head = 0;
-  if (!g_alert_history)
-    g_alert_history = (MeshAlert*)csi_large_calloc(ALERT_HISTORY_BYTES);
-  if (g_alert_history) memset(g_alert_history, 0, ALERT_HISTORY_BYTES);
+  if (g_alert_log.storage() == nullptr) {
+    MeshAlert* history = (MeshAlert*)csi_large_calloc(ALERT_HISTORY_BYTES);
+    if (history != nullptr) g_alert_log.attach(history);
+  }
+  g_alert_log.clear();
 }
 
 void set_alert_callback(AlertCallback callback) {

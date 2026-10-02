@@ -402,8 +402,59 @@ void update();
 // Status
 // ──────────────────────────────────────────────────────────────────────────
 
-// Get current mesh status
+// Get current mesh status. The loop task's (as every reader of the live
+// state below: get_peer*, get_opera_config, get_pairing_session,
+// get_alerts, is_*/has_opera); another task reads the published view
+// (read_status, read_alerts).
 MeshStatus get_status();
+
+// ──────────────────────────────────────────────────────────────────────────
+// The status routes' view (sweep F110)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// GET /api/mesh, /api/mesh/peers and /api/mesh/alerts run on
+// esp_http_server's task, and what they show (the peer table, the pairing
+// session, the opera config, the alert history) is update()'s, written on
+// the loop task. Read in place, a response could mix two passes: a
+// member's name read mid-shift after a removal, a pairing code read while
+// cancel_pairing() wipes it, an alert half overwritten. update() publishes
+// a StatusView at the end of every pass (an early return included) and
+// init() publishes the first; read_status() copies the last one whole, and
+// read_alerts() copies the alert history whole, from one moment
+// (loop_snapshot.h). Neither waits for the loop task. Neither carries a
+// key: a PeerView is what the peer list shows, and the opera_secret and
+// session keys stay in the live table.
+
+// One member, as the peer list shows it.
+struct PeerView {
+  char name[MAX_PEER_NAME_LEN + 1];
+  uint8_t fingerprint[FINGERPRINT_SIZE];
+  PeerState state;
+  int8_t rssi;
+  uint8_t alerts_received;
+  uint32_t last_seen_ms;                    // 0: never heard
+};
+
+// One pass, as the status routes show it.
+struct StatusView {
+  MeshStatus status;                        // uptime_ms: as of the read
+  uint32_t start_ms;                        // what uptime_ms counts from
+  bool enabled;
+  bool has_opera;
+  char opera_name[MAX_OPERA_NAME_LEN + 1];
+  bool pairing_code_shown;                  // MESH_PAIRING_CONFIRM, code displayed
+  uint32_t pairing_code;                    // 0 unless shown
+  uint8_t peer_count;                       // == status.peers_total
+  PeerView peers[MAX_OPERA_SIZE];
+};
+
+// Any task. The last pass update() published; before init() publishes the
+// first, a disabled mesh with no opera (what get_status() said then).
+void read_status(StatusView* out);
+
+// Any task. Copies the alert history (at most `cap` alerts, in the order
+// it is stored, which get_alerts() returns too) and returns how many.
+size_t read_alerts(MeshAlert* out, size_t cap);
 
 // Get mesh state as string
 const char* state_name(MeshState state);
@@ -470,7 +521,8 @@ bool broadcast_power_alert(AlertType type, uint16_t voltage_mv, uint16_t estimat
 // Broadcast offline imminent to all peers (call just before shutdown)
 bool broadcast_offline_imminent(AlertType reason, uint32_t final_seq, const uint8_t* final_chain_hash);
 
-// Get recent alerts
+// Get recent alerts: the loop task's (another task copies them with
+// read_alerts, sweep F110).
 const MeshAlert* get_alerts(size_t* count);
 
 // ──────────────────────────────────────────────────────────────────────────

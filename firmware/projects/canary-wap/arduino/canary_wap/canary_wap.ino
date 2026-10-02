@@ -5761,20 +5761,26 @@ static esp_err_t handle_peek_sensor_set(httpd_req_t* req) {
 // did not reach it in time; it was withdrawn and never runs), the
 // PlatformIO tree's codes (spec §8.3). "ok" always means it happened.
 
+// The three status routes read what update() last published (sweep F110),
+// never the live peer table, pairing session or alert history: those are
+// the loop task's, and a read from here could mix two of its passes.
+// read_status() and read_alerts() copy them whole and never wait for the
+// loop task. The responses are what they were.
+
 static esp_err_t handle_mesh_status(httpd_req_t* req) {
   g_health.http_requests++;
 
-  mesh_network::MeshStatus status = mesh_network::get_status();
-  const mesh_network::OperaConfig* config = mesh_network::get_opera_config();
-  const mesh_network::PairingSession* pairing = mesh_network::get_pairing_session();
+  mesh_network::StatusView v;
+  mesh_network::read_status(&v);
+  const mesh_network::MeshStatus& status = v.status;
 
   JsonDocument doc;
   doc["ok"] = true;
   doc["state"] = mesh_network::state_name(status.state);
-  doc["enabled"] = mesh_network::is_enabled();
-  doc["has_opera"] = mesh_network::has_opera();
+  doc["enabled"] = v.enabled;
+  doc["has_opera"] = v.has_opera;
   doc["opera_id"] = status.opera_id_hex;
-  doc["opera_name"] = config->opera_name;
+  doc["opera_name"] = v.opera_name;
   doc["peers_total"] = status.peers_total;
   doc["peers_online"] = status.peers_online;
   doc["peers_offline"] = status.peers_offline;
@@ -5787,8 +5793,8 @@ static esp_err_t handle_mesh_status(httpd_req_t* req) {
   doc["uptime_ms"] = status.uptime_ms;
 
   // Include pairing code if in pairing confirm state
-  if (status.state == mesh_network::MESH_PAIRING_CONFIRM && pairing->code_displayed) {
-    doc["pairing_code"] = pairing->confirmation_code;
+  if (status.state == mesh_network::MESH_PAIRING_CONFIRM && v.pairing_code_shown) {
+    doc["pairing_code"] = v.pairing_code;
   }
 
   String response;
@@ -5799,15 +5805,16 @@ static esp_err_t handle_mesh_status(httpd_req_t* req) {
 static esp_err_t handle_mesh_peers(httpd_req_t* req) {
   g_health.http_requests++;
 
-  uint8_t count = mesh_network::get_peer_count();
+  mesh_network::StatusView v;
+  mesh_network::read_status(&v);
+  const uint8_t count = v.peer_count;
   JsonDocument doc;
   doc["ok"] = true;
   doc["count"] = count;
 
   JsonArray peers = doc["peers"].to<JsonArray>();
-  for (uint8_t i = 0; i < count; i++) {
-    const mesh_network::OperaPeer* peer = mesh_network::get_peer(i);
-    if (!peer) continue;
+  for (uint8_t i = 0; i < count && i < mesh_network::MAX_OPERA_SIZE; i++) {
+    const mesh_network::PeerView* peer = &v.peers[i];
 
     JsonObject p = peers.add<JsonObject>();
     p["name"] = peer->name;
@@ -5835,8 +5842,13 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
 static esp_err_t handle_mesh_alerts(httpd_req_t* req) {
   g_health.http_requests++;
 
-  size_t count = 0;
-  const mesh_network::MeshAlert* alerts = mesh_network::get_alerts(&count);
+  // The copy is about 3 KB: the heap, not this task's stack.
+  mesh_network::MeshAlert* alerts = (mesh_network::MeshAlert*)malloc(
+      mesh_network::MAX_ALERT_HISTORY * sizeof(mesh_network::MeshAlert));
+  if (alerts == nullptr) {
+    return http_send_error(req, 500, "out_of_memory");
+  }
+  const size_t count = mesh_network::read_alerts(alerts, mesh_network::MAX_ALERT_HISTORY);
 
   JsonDocument doc;
   doc["ok"] = true;
@@ -5857,6 +5869,7 @@ static esp_err_t handle_mesh_alerts(httpd_req_t* req) {
 
   String response;
   serializeJson(doc, response);
+  free(alerts);
   return http_send_json(req, response.c_str());
 }
 
