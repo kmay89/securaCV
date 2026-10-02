@@ -26,7 +26,12 @@
 //  * the tail is up whenever the bubble is, and at every refresh sits on
 //    the bubble's top edge as it stands, centered and kTailInset px into it
 //    (F158: it was aligned once, to the empty bubble, and a centered bubble
-//    grew past it as its line wrapped);
+//    grew past it as its line wrapped). This reads the tail OBJECT's box:
+//    nothing is drawn here, and only the LVGL 9 builds (the dash line, the
+//    C6 nightstand) draw the tail at all; LVGL 8.4 refuses its turned,
+//    rounded square's alpha layer (see splash.cpp);
+//  * the bubble's line is set only when its text changes (each set redraws
+//    it; it was set at every frame of the script before F158);
 //  * the tallest bubble it drew is the tallest test_splash_layout measures
 //    for that pseudonym (the bubble's width, padding, border and label
 //    inset are the header's, read off what was drawn);
@@ -166,6 +171,7 @@ struct Read {
   int tail_fails;           // ...and found it off the bubble's top edge
   int tail_moves;           // times the tail's seat changed while shown
   int tail_last_y;
+  int line_same_sets;       // the bubble's line set to the text it held
 };
 
 Read g_read;
@@ -230,6 +236,7 @@ void refresh() {
   }
   R.bubble_frames++;
   R.bubble_w = bub->w;
+  R.line_same_sets = bub->children[0]->same_text_sets;
   const int bh = bub->h;
   if (bh > R.bubble_tallest) {
     R.bubble_tallest = bh;
@@ -382,6 +389,11 @@ void play(const Canvas& cv, int which, bool first, const std::string& subject) {
   CHECK(R.tail_frames == R.bubble_frames && R.tail_frames > 0,
         "%s: the tail was read at %d of the bubble's %d refreshes", n,
         R.tail_frames, R.bubble_frames);
+  // ...and the line is set only when its text changes (each set redraws
+  // it; F158 sets it, and re-aligns the tail, only then).
+  CHECK(R.line_same_sets == 0,
+        "%s: the bubble's line was set %d times to the text it already held "
+        "(each set redraws it)", n, R.line_same_sets);
   const Face* f = face_of(g_ladder[g_fam][which][kLabel]);
   const int tallest = f ? tallest_for(*f, g_fam_drawn, subject, nullptr) : -1;
   CHECK(R.bubble_tallest == tallest,

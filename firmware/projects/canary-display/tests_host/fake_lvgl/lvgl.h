@@ -161,14 +161,21 @@ struct _lv_obj_t {
   lv_coord_t x1, y1;  // the laid-out box (absolute); moves only on layout
   uint32_t flags;
   std::vector<lv_event_cb_t> on_delete;
-  // What the onboarding test reads (nothing else styles anything here).
+  // What the onboarding and splash tests read (nothing else styles
+  // anything here).
   int kind;                   // fake_lvgl::Kind
   std::string text;           // a label's text; a QR code's payload
+  // lv_label_set_text(_fmt) calls that left the text as it was (or passed
+  // NULL, LVGL's "refresh the text"): each still invalidates the label in
+  // LVGL 8.4 (lv_label_refr_text), so each is a redraw of an unchanged line.
+  int same_text_sets;
   const lv_font_t* font;      // LV_STYLE_TEXT_FONT (inherited when null)
   int long_mode;              // a label's lv_label_set_long_mode
   int text_align;             // LV_STYLE_TEXT_ALIGN
   lv_coord_t radius;          // LV_STYLE_RADIUS
   uint32_t bg_color;          // LV_STYLE_BG_COLOR
+  uint32_t text_color;        // LV_STYLE_TEXT_COLOR as set on the object
+  bool text_color_set;        // (not inherited: the test reads what it set)
   lv_coord_t arc_w_main, arc_w_ind;  // LV_STYLE_ARC_WIDTH per part
 };
 
@@ -198,6 +205,9 @@ inline lv_obj_t* lv_obj_create(lv_obj_t* parent) {
   o->text_align = LV_TEXT_ALIGN_AUTO;
   o->radius = 0;
   o->bg_color = 0;
+  o->text_color = 0;
+  o->same_text_sets = 0;
+  o->text_color_set = false;
   o->arc_w_main = o->arc_w_ind = 0;
   if (parent == nullptr) {
     // A screen: the display's size, at the origin. The first one is active
@@ -335,7 +345,11 @@ inline lv_obj_t* lv_label_create(lv_obj_t* parent) {
   return o;
 }
 inline void lv_label_set_text(lv_obj_t* o, const char* t) {
-  if (t != nullptr) o->text = t;
+  if (t == nullptr || o->text == t) {
+    o->same_text_sets++;
+    return;
+  }
+  o->text = t;
 }
 inline void lv_label_set_text_fmt(lv_obj_t* o, const char* fmt, ...) {
   char buf[512];
@@ -343,6 +357,7 @@ inline void lv_label_set_text_fmt(lv_obj_t* o, const char* fmt, ...) {
   va_start(ap, fmt);
   vsnprintf(buf, sizeof(buf), fmt, ap);
   va_end(ap);
+  if (o->text == buf) o->same_text_sets++;
   o->text = buf;
 }
 inline void lv_label_set_long_mode(lv_obj_t* o, int m) { o->long_mode = m; }
@@ -360,7 +375,11 @@ inline const lv_font_t* lv_obj_get_style_text_font(const lv_obj_t* o,
 inline void lv_obj_set_style_text_align(lv_obj_t* o, int a, lv_style_selector_t) {
   o->text_align = a;
 }
-inline void lv_obj_set_style_text_color(lv_obj_t*, lv_color_t, lv_style_selector_t) {}
+inline void lv_obj_set_style_text_color(lv_obj_t* o, lv_color_t c,
+                                        lv_style_selector_t) {
+  o->text_color = c.full;
+  o->text_color_set = true;
+}
 inline void lv_obj_set_style_text_opa(lv_obj_t*, lv_opa_t, lv_style_selector_t) {}
 // Not modeled: text widths are measured at letter_space 0 (no caller here
 // reads a spaced label's box).

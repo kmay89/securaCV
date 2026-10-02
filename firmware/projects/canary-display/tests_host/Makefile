@@ -483,8 +483,9 @@ clean: clean-splash-layout
 # the seat splash_layout.h names and hops under kHopReach, on the canvas;
 # the bubble sits where seat() says (hung under a moved bird, centered
 # otherwise) in whatever height its typed line wraps to, on the canvas, its
-# sides too (F160), and clear of a moved bird, with its tail on its top edge
-# at every refresh (F158); its tallest is test_splash_layout's measure. Three
+# sides too (F160), and clear of a moved bird, with its tail object on its
+# top edge at every refresh (F158; only the LVGL 9 builds draw the tail);
+# its tallest is test_splash_layout's measure. Three
 # builds, because the glass family is the config's call: the watch's (the
 # round watch), the nightstand's (every CD_FLAVOR_NIGHTSTAND canvas,
 # the nightlight's turned one included) and the dash's (the wide glass).

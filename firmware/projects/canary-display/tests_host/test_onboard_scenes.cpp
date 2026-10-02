@@ -19,6 +19,18 @@
 //    row or over two);
 //  * no two labels with text overlap, and on rectangular glass each is on
 //    the panel;
+//  * each credentials, hint and note row with text sits on the row the
+//    stack names for it (creds_top, hint_top, note_top), as wide as
+//    fit_row makes it and centered on the column, at least as tall as the
+//    line of the face it carries, in its role's face (the caption face; on
+//    wide glass the label face for the name and the key) and its role's
+//    color (the name and the key muted, a hint faint) (F156, F157);
+//  * the Join scene's title and rows read exactly what onboard_layout.h
+//    says for this panel and the hint provision.cpp handed (the title's
+//    forms through fit_line, wide_join_lines / join_lines at fit_row's
+//    widths), in the face it chose: onboard_ui.cpp hands each line's forms
+//    in their order, so the 800 px glass keeps the whole title and the
+//    whole stuck-phone hint (F156);
 //  * the halo is the one small_join() places (size, seat, stroke), and
 //    every label, the visible QR card (its rounded corners) and the bird
 //    over its whole breath are wholly inside the stroke's inner circle or
@@ -54,6 +66,7 @@
 #include "canary/ui/canary_mark.h"
 #include "canary/ui/character.h"
 #include "canary/ui/onboard_ui.h"
+#include "canary/ui/round_frame.h"
 #include "canary/ui/theme.h"
 #include "network/wifi_join_policy.h"
 #include "onboard_test_env.h"
@@ -290,6 +303,89 @@ std::string at(const Run& G, int k) {
   return G.labels[k] != nullptr ? G.labels[k]->text : std::string();
 }
 
+int face_px(const lv_font_t* f) {
+  return f != nullptr ? ((const Face*)f->dsc)->size : 0;
+}
+
+// A role's face and its floor (the default Character's face of the role),
+// measured the way onboard_ui.cpp's text_w measures: what its fit_line and
+// wide_join_lines / join_lines calls take.
+struct Pair {
+  const lv_font_t* own;
+  const lv_font_t* floor;
+  int operator()(const char* t, bool fl) const {
+    return fake_lvgl::text_width(fl ? floor : own, t);
+  }
+  const lv_font_t* face(const Line& l) const { return l.floor ? floor : own; }
+};
+
+// What onboard_layout.h says the Join scene's title and rows read on this
+// panel, in which face (F45, F65, F156, F157): the title's forms through
+// fit_line on its row, the rows through wide_join_lines (wide glass) or
+// join_lines (small glass) at the widths fit_row gives them, with the
+// stuck-phone hint provision.cpp handed the glass (`stuck`, none if empty).
+// Index as Run::labels: 0 the title, 2..4 the credentials, hint and note
+// rows (1, the body, is empty in the Join scene).
+struct JoinWant {
+  Line line[5];
+  const lv_font_t* face[5];
+};
+
+JoinWant join_want(const Run& G, const std::vector<std::string>& stuck) {
+  JoinWant w = JoinWant();
+  const CharacterDef& qg = character_def(Character::QuietGlass);
+  const char* hint = stuck.empty() ? "" : stuck[0].c_str();
+  const char* narrow = stuck.size() > 1 ? stuck[1].c_str() : nullptr;
+  set_line(w.line[1], "", false, true);
+  w.face[1] = nullptr;
+  if (kWideBuild) {
+    const Pair title = {font_title(), qg.type.title};
+    const Pair creds = {font_label(), qg.type.label};
+    const Pair cap = {font_caption(), qg.type.caption};
+    const Forms tf = wide_join_title(G.qr);
+    const char* forms[2] = {tf.full, tf.narrow};
+    fit_line(w.line[0], forms, 2, G.j.col.w, title);
+    w.face[0] = title.face(w.line[0]);
+    const JoinLines j = wide_join_lines(G.qr, G.j.col.w, kSsid, kPass, hint,
+                                        narrow, creds, cap);
+    w.line[2] = j.creds;
+    w.face[2] = creds.face(j.creds);
+    w.line[3] = j.low;
+    w.face[3] = j.split ? creds.face(j.low) : cap.face(j.low);
+    w.line[4] = j.note;
+    w.face[4] = cap.face(j.note);
+    return w;
+  }
+  const Pair title = {font_body(), qg.type.body};
+  const Pair cap = {font_caption(), qg.type.caption};
+  // The rows' widths: fit_row's at each row, for the caption face the
+  // labels are made in (the disc's chord on round glass).
+  const int lh = font_caption()->line_height;
+  const int creds_w =
+      G.g.round ? rf_row_width(G.j.stack.creds_top, lh) : G.j.col.w;
+  const int low_w = G.g.round ? rf_row_width(G.j.stack.hint_top, lh) : G.j.col.w;
+  const int note_w = G.g.round ? rf_row_width(G.j.stack.note_top, lh) : G.j.col.w;
+  const JoinLines j = join_lines(G.g.round, creds_w, low_w, note_w, kSsid,
+                                 kPass, hint, narrow, cap);
+  w.line[2] = j.creds;
+  w.line[3] = j.low;
+  w.line[4] = j.note;
+  for (int k = 2; k < 5; ++k) w.face[k] = cap.face(w.line[k]);
+  // The title yields its band to the note row on round glass.
+  if (G.g.round && j.note.text[0] != '\0') {
+    set_line(w.line[0], "", false, true);
+    w.face[0] = nullptr;
+    return w;
+  }
+  const int title_w =
+      G.g.round ? rf_row_width(G.j.stack.title_top, font_body()->line_height)
+                : G.j.col.w;
+  const char* forms[1] = {join_title(G.qr)};
+  fit_line(w.line[0], forms, 1, title_w, title);
+  w.face[0] = title.face(w.line[0]);
+  return w;
+}
+
 // Run the scene's motion with a layout pass every 5 ms (a refresh), and
 // read the bird's drawn box over it.
 struct Span {
@@ -368,6 +464,49 @@ void check_frame(Run& G, const char* scene, const Says& says) {
     drawn.push_back(b);
   }
 
+  // The text rows (F156, F157): each of the credentials, hint and note
+  // labels that shows text sits on the row onboard_layout.h's stack names
+  // for it, as wide as fit_row makes it and centered on the column (the
+  // panel's row; the column beside the halo on landscape small glass; the
+  // disc's chord at that row on round glass), at least as tall as the line
+  // of the face it carries (a shorter box clips its descenders), in its
+  // role's face or the default Character's (the caption face on small
+  // glass; on wide glass the label face for the network name and the key,
+  // the caption face for a hint or a coach line), and in its role's color
+  // (the name and the key muted, a hint faint).
+  const int row_top[3] = {G.j.stack.creds_top, G.j.stack.hint_top,
+                          G.j.stack.note_top};
+  const CharacterDef& qg = character_def(Character::QuietGlass);
+  for (int k = 2; k < kLabels; ++k) {
+    const lv_obj_t* l = G.labels[k];
+    if (l->text.empty()) continue;
+    const int top = row_top[k - 2];
+    const int rw = G.g.round ? rf_row_width(top, l->h) : G.j.col.w;
+    const int rx = pw / 2 - rw / 2 + G.j.col.x;
+    CHECK(l->y1 == top && l->x1 == rx && l->w == rw,
+          "%s: the %s \"%s\" is %d px at (%d, %d); its row is %d px at "
+          "(%d, %d)", n, kLabelName[k], l->text.c_str(), (int)l->w,
+          (int)l->x1, (int)l->y1, rw, rx, top);
+    const lv_font_t* f = lv_obj_get_style_text_font(l, LV_PART_MAIN);
+    CHECK(f != nullptr && l->h >= f->line_height,
+          "%s: the %s \"%s\" is %d px tall in montserrat_%d (its line is "
+          "%d): the box clips the line", n, kLabelName[k], l->text.c_str(),
+          (int)l->h, face_px(f), f ? f->line_height : 0);
+    const bool cred = says.join && (l->text.find(kSsid) != std::string::npos ||
+                                    l->text.find(kPass) != std::string::npos);
+    const lv_font_t* own = kWideBuild && cred ? font_label() : font_caption();
+    const lv_font_t* fl = kWideBuild && cred ? qg.type.label : qg.type.caption;
+    CHECK(f == own || f == fl,
+          "%s: the %s \"%s\" is in montserrat_%d; its role's face is "
+          "montserrat_%d (montserrat_%d as the floor)", n, kLabelName[k],
+          l->text.c_str(), face_px(f), face_px(own), face_px(fl));
+    const uint32_t c = cred ? col_muted().full : col_faint().full;
+    CHECK(l->text_color_set && l->text_color == c,
+          "%s: the %s \"%s\" is #%06X; a%s is #%06X", n, kLabelName[k],
+          l->text.c_str(), (unsigned)l->text_color,
+          cred ? " name or a key (muted)" : " hint (faint)", (unsigned)c);
+  }
+
   // What they say.
   CHECK(one_of(at(G, 0), says.title), "%s: the title says \"%s\"", n,
         at(G, 0).c_str());
@@ -390,6 +529,24 @@ void check_frame(Run& G, const char* scene, const Says& says) {
   } else {
     CHECK(one_of(at(G, 1), says.body), "%s: the body says \"%s\"", n,
           at(G, 1).c_str());
+  }
+  if (says.join) {
+    // Exactly what onboard_layout.h says, in the face it chose (join_want):
+    // the forms in their order, longest first, so the 800 px glass keeps
+    // the whole title and the whole stuck-phone hint (F156) and a split
+    // sets the key in the credentials' face.
+    const JoinWant want = join_want(G, says.stuck);
+    const int order[4] = {0, 2, 3, 4};
+    for (int i = 0; i < 4; ++i) {
+      const int k = order[i];
+      const lv_font_t* f = lv_obj_get_style_text_font(G.labels[k], LV_PART_MAIN);
+      const bool empty = want.line[k].text[0] == '\0';
+      CHECK(at(G, k) == want.line[k].text && (empty || f == want.face[k]),
+            "%s: the %s reads \"%s\" in montserrat_%d; onboard_layout.h "
+            "says \"%s\" in montserrat_%d", n, kLabelName[k],
+            at(G, k).c_str(), face_px(f), want.line[k].text,
+            face_px(want.face[k]));
+    }
   }
   if (says.join && kWideBuild) {
     // Wide glass: one worded credentials row (kWideScanFmt, or
