@@ -260,14 +260,13 @@ IDSPACE_SRC  = $(IDSPACE_DIR)/csi_event.cpp $(IDSPACE_DIR)/csi_bundler.cpp $(IDS
 IDSPACE_HDRS = $(IDSPACE_DIR)/csi_event.h $(IDSPACE_DIR)/csi_bundler.h $(IDSPACE_DIR)/csi_module.h \
                $(IDSPACE_DIR)/csi_types.h $(IDFLOOR_HDR)
 IDSPACE_BIN  = $(BUILD_DIR)/test_csi_event_id_space
-
-# The hourly ceiling against the bundler (sweep F80), on the same REAL
-# library under a fake monotonic clock (the test defines clock_gettime): an
-# emit that reopens its own key's bundle after a quiet gap or the 10-minute
+# The hourly ceiling against the bundler's refresh refund (backlog F80): the
+# same real library, on a clock the test moves (CSI_TEST_CLOCK). An emit
+# that reopens its own key's bundle after a quiet gap or the 10-minute
 # window spends a slot like any opening, so a day's rows stay within the
 # ceiling; a refresh that merges into its open bundle still gives its slot
 # back.
-CEILING_BIN  = $(BUILD_DIR)/test_csi_bundle_ceiling
+CEILING_BIN  = $(BUILD_DIR)/test_csi_bundler_ceiling
 
 # The canary's CSI module bridge (canary/src/csi_modules_integration.cpp,
 # sweep F81), REAL, over the same library and the modules it registers,
@@ -723,9 +722,9 @@ $(IDSPACE_BIN): test_csi_event_id_space.cpp $(IDSPACE_SRC) $(IDSPACE_HDRS) Makef
 	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD -I $(IDSPACE_DIR) \
 	    test_csi_event_id_space.cpp $(IDSPACE_SRC) -o $@
 
-$(CEILING_BIN): test_csi_bundle_ceiling.cpp $(IDSPACE_SRC) $(IDSPACE_HDRS) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD -I $(IDSPACE_DIR) \
-	    test_csi_bundle_ceiling.cpp $(IDSPACE_SRC) -o $@
+$(CEILING_BIN): test_csi_bundler_ceiling.cpp $(IDSPACE_SRC) $(IDSPACE_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD -DCSI_TEST_CLOCK -I $(IDSPACE_DIR) \
+	    test_csi_bundler_ceiling.cpp $(IDSPACE_SRC) -o $@
 
 $(MODINT_BIN): test_csi_modules_integration.cpp $(MODINT_SRC) $(MODINT_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \

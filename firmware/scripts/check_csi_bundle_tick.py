@@ -22,10 +22,12 @@ This check is that wiring's guard.
 In `firmware/canary/src/main.cpp`'s `loop()`:
 
 1. `securacv_csi_modules_tick()` is called exactly once.
-2. The only preprocessor conditional around the call that opens inside
-   `loop()` is `#if FEATURE_CSI`, and the call is in its `#if` branch, not
-   an `#else` or `#elif` (so no `FEATURE_POWER_POLICY` or
-   `FEATURE_DIAGNOSTICS` block wraps it).
+2. No preprocessor conditional opened inside `loop()` wraps the call: no
+   `FEATURE_POWER_POLICY` or `FEATURE_DIAGNOSTICS` block, and not
+   `#if FEATURE_CSI` either. The system.integrity tamper feed runs in every
+   build, CSI-off ones included, and its bundles must close there too
+   (#1763 put the call under no `#if`; #1762 had it under `#if FEATURE_CSI`,
+   and the merge kept #1763's).
 3. The call is a statement of its own at the top level of the loop body:
    inside no nested block (`{ ... }`), and not the statement an unbraced
    `if`, `else`, `for` or `while` controls. The text before it, with
@@ -77,7 +79,6 @@ SIG_TICK = r"\bvoid\s+securacv_csi_modules_tick\s*\(\s*(?:void)?\s*\)"
 SIG_FEED = r"\bvoid\s+securacv_csi_modules_feed\s*\([^)]*\)"
 TICK_CALL = "securacv_csi_modules_tick("
 PUMP_CALL = "csi_event_egress_pump("
-GUARD = "#ifFEATURE_CSI"
 DIRECTIVE = re.compile(r"^[ \t]*#[ \t]*(\w+)([^\n]*)", re.M)
 
 
@@ -127,10 +128,11 @@ def check_loop(main_src: str, errors: list[str]) -> None:
         return
     at = calls[0]
     conds = conditionals_at(body, at)
-    if conds != [(GUARD, False)]:
-        errors.append(f"{where}: securacv_csi_modules_tick() must sit directly in an "
-                      "`#if FEATURE_CSI` block (its #if branch) and in no other conditional "
-                      f"opened in loop(); found {[d + (' (else)' if e else '') for d, e in conds]}")
+    if conds:
+        errors.append(f"{where}: securacv_csi_modules_tick() must sit in no preprocessor "
+                      "conditional opened in loop(), `#if FEATURE_CSI` included (the tamper "
+                      "feed's bundles close in every build); found "
+                      f"{[d + (' (else)' if e else '') for d, e in conds]}")
     flat = blank_directives(body)
     depth = flat[:at].count("{") - flat[:at].count("}")
     before = flat[:at].rstrip()
@@ -191,9 +193,8 @@ def mutate_in(src: str, signature: str, pattern: str, repl: str) -> str:
 
 
 TICK_STMT = r"\n([ \t]*)securacv_csi_modules_tick\(\)\s*;"
-# The whole `#if FEATURE_CSI` block around it, comments included.
-TICK_BLOCK = (r"\n#if FEATURE_CSI\n(?:[ \t]*//[^\n]*\n)*[ \t]*securacv_csi_modules_tick\(\)\s*;"
-              r"\s*\n#endif")
+# The call with the comment block above it.
+TICK_BLOCK = r"\n(?:[ \t]*//[^\n]*\n)*[ \t]*securacv_csi_modules_tick\(\)\s*;"
 
 
 def in_loop(pattern: str, repl: str) -> Callable[[str, str], tuple[str, str]]:
@@ -222,17 +223,16 @@ MUTATIONS: list[tuple[str, Callable[[str, str], tuple[str, str]]]] = [
     ("the tick under a second preprocessor gate",
      in_loop(TICK_STMT, "\n#if FEATURE_POWER_POLICY\n\\1securacv_csi_modules_tick();\n#endif")),
     ("the tick in the #else branch",
-     in_loop(TICK_STMT, "\n#else\n\\1securacv_csi_modules_tick();")),
-    ("the tick's guard narrowed",
-     in_loop(r"#if FEATURE_CSI(\s*\n(?:[ \t]*//[^\n]*\n)*[ \t]*securacv_csi_modules_tick\(\))",
-             r"#if FEATURE_CSI && FEATURE_DIAGNOSTICS\1")),
+     in_loop(TICK_STMT, "\n#if FEATURE_CSI\n#else\n\\1securacv_csi_modules_tick();\n#endif")),
+    ("the tick back under #if FEATURE_CSI",
+     in_loop(TICK_STMT, "\n#if FEATURE_CSI\n\\1securacv_csi_modules_tick();\n#endif")),
     ("the tick called twice", in_loop(TICK_STMT, r"\g<0>\n\1securacv_csi_modules_tick();")),
     ("the loop returns before the tick",
      in_loop(TICK_STMT, "\n\\1if (millis() == 0) return;\\g<0>")),
     ("the tick after the egress pump",
      lambda m, b: (mutate_in(mutate_in(m, SIG_LOOP, TICK_BLOCK, ""), SIG_LOOP,
                              r"\n[ \t]*// Create witness records at interval",
-                             "\n#if FEATURE_CSI\n  securacv_csi_modules_tick();\n#endif"
+                             "\n  securacv_csi_modules_tick();"
                              r"\g<0>"), b)),
     # The bridge.
     ("the bridge's tick closes nothing",
@@ -274,7 +274,7 @@ def main() -> int:
     if errors or problems:
         return 1
     print("CSI bundle tick holds: the canary's loop ticks the bundler once, under "
-          "#if FEATURE_CSI alone, outside the CSI power and degrade gates, before the event "
+          "no #if, outside the CSI power and degrade gates, before the event "
           f"egress pump; the bridge's feed closes nothing ({len(MUTATIONS)} mutations refused).")
     return 0
 

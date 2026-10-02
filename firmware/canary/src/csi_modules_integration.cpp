@@ -517,19 +517,10 @@ extern "C" void securacv_csi_modules_feed(const void* features_blob) {
    * the 32-byte vector width; main.cpp's static_assert pins the struct. */
   const csi_features_t* f = static_cast<const csi_features_t*>(features_blob);
   csi_module_tick_all(f);
-  /* No bundle is closed here. This used to call csi_event_flush_bundles(),
-   * which closes EVERY open bundle, on every window, so a bundle never saw
-   * a second observation: each core.presence refresh committed a row of its
-   * own and spent the hourly ceiling (sweep F81). Bundles close on time in
-   * securacv_csi_modules_tick(), once per main loop. */
-}
-
-extern "C" void securacv_csi_modules_tick(void) {
-  /* Close the bundles past their 10-minute window or 2-minute quiet gap,
-   * and only those, as the canary-wap's csi_integration::loop() does. Not
-   * gated on s_initialized: a bundle already open still commits on time.
-   * Cheap: an 8-slot scan; the commit queues for csi_event_egress_pump(). */
-  csi_bundler_tick();
+  /* Bundles are closed by securacv_csi_modules_tick(), once per main
+   * loop, not here: this callback stops while battery saver or heap
+   * degradation skips csi::process(), and a bundle must still close on
+   * time then. */
 }
 
 extern "C" void securacv_csi_modules_tamper_watch(int reset_was_crash,
@@ -551,6 +542,20 @@ extern "C" void securacv_csi_modules_tamper_watch_contact(int enclosure_open) {
    * here would only lose the adoption. */
   tamper_events_watch_contact(enclosure_open ? TAMPER_CONTACT_OPEN
                                              : TAMPER_CONTACT_CLOSED);
+}
+
+extern "C" void securacv_csi_modules_tick(void) {
+  /* Close the bundles whose 10-minute window or 2-minute quiet gap has
+   * elapsed, and only those; the commit runs here, on the loop task. It
+   * used to be csi_event_flush_bundles() after every module tick, which
+   * closes EVERY open bundle: each core.presence refresh then opened a new
+   * bundle, committed a row and spent the hourly ceiling, which a refresh
+   * of an open bundle must not (backlog F81). The canary-wap ticks the same
+   * way, once per loop. Not gated on s_initialized: with nothing open the
+   * tick is a bounded slot scan that closes nothing. On HA builds the row a
+   * closing bundle commits queues for csi_event_egress_pump(), which loop()
+   * runs after this (check_csi_bundle_tick.py holds both). */
+  csi_bundler_tick();
 }
 
 extern "C" void securacv_csi_modules_deinit(void) {

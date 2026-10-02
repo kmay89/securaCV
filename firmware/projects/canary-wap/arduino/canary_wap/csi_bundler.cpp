@@ -36,6 +36,11 @@
 #ifdef ARDUINO
   #include <Arduino.h>
   static inline uint32_t bundler_now_ms() { return millis(); }
+#elif defined(CSI_TEST_CLOCK)
+  /* Host tests that need to move time (a 2-minute gap, an hour of emits)
+   * supply the clock; csi_event.cpp reads the same one. */
+  extern "C" uint32_t csi_test_now_ms(void);
+  static inline uint32_t bundler_now_ms() { return csi_test_now_ms(); }
 #else
   #include <time.h>
   static inline uint32_t bundler_now_ms() {
@@ -266,7 +271,7 @@ csi_bundler_outcome_t csi_bundler_admit(const char*         module_id,
        * up-to-date bundle row. */
       *values = open->values;
       if (handle_out) *handle_out = open->handle;
-      outcome = CSI_BUNDLER_MERGED;
+      outcome = CSI_BUNDLER_MERGED;   /* no new row: the chokepoint refunds its ceiling slot */
     } else {
       /* New bundle. */
       Slot* fresh = find_free_slot(pending, &npending);
@@ -291,8 +296,8 @@ csi_bundler_outcome_t csi_bundler_admit(const char*         module_id,
        * later through the close path (commit_closed), and takes its event
        * id then. An OPENING even when this key's own bundle was open a
        * moment ago and expire_overdue() above just closed it: that close
-       * is a row, and so is this bundle (sweep F80). */
-      outcome = CSI_BUNDLER_OPENED;
+       * is a row, and so is this bundle (backlog F80). */
+      outcome = CSI_BUNDLER_BUFFERED;
     }
   }  /* lock released */
 
@@ -348,6 +353,14 @@ size_t csi_bundler_open_count(void) {
   size_t n = 0;
   for (size_t i = 0; i < CSI_BUNDLER_SLOTS; ++i) if (g_slots[i].used) ++n;
   return n;
+}
+
+bool csi_bundler_has_open(const char* module_id,
+                          const char* type_name,
+                          const char* state_name) {
+  if (!module_id || !type_name || !state_name) return false;
+  SlotLock _lock;
+  return find_open_slot(module_id, type_name, state_name) != nullptr;
 }
 
 size_t csi_bundler_snapshot_open(csi_event_record_t* out, size_t max) {

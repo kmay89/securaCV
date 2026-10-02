@@ -1282,8 +1282,8 @@ so — see D2 below.)
   bundles in the ring changes four things together: the Today sheet, the
   daily summary's counts, the ring's live-row latch for `csi_event_inject`,
   and what the WAP replays. Decide them together. Found by F46 (#1761).
-  *Since F81 (#1762):* the canary commits one row per closed bundle (at most
-  ten minutes long, every observation in `bundled`, the span in
+  *Since F81 (#1763, #1762):* the canary commits one row per closed bundle
+  (at most ten minutes long, every observation in `bundled`, the span in
   `duration_sec`) instead of one per refresh, as the canary-wap does. So once
   closed bundles reach the ring, the daily summary's active and quiet counts
   count bundles: a state held for three hours is about 18 rows, one per
@@ -1409,17 +1409,26 @@ so — see D2 below.)
   F46's id-space headroom counts the leak. Fix: decide the refund from
   admit's outcome (merged or opened), not from `has_open()` before it.
   Found by F46's review (#1761).
-  *Done (#1762):* the ceiling is spent by what the admit did.
-  `csi_bundler_admit()` reports `CSI_BUNDLER_OPENED` (a new bundle, a future
-  row: the emit keeps its slot) or `CSI_BUNDLER_MERGED` (rolled into the
-  bundle that was still open: the slot goes back), decided under its slot lock
-  after overdue bundles expire. `csi_bundler_has_open()` is gone, and
-  `CSI_BUNDLER_BUFFERED` is renamed `CSI_BUNDLER_OPENED`.
-  `firmware/tests_host/test_csi_bundle_ceiling.cpp` drives the real library
-  under a fake clock. One emit every 121 s with nothing ticking commits 144
-  rows a day under a 6/hour ceiling (714 before). A 60 s refresh beside one
-  new state every 10 minutes commits 144 (286 before). A refresh that merges
-  still gives its slot back.
+  *Done (#1763):* `csi_bundler_admit()` now names a merge
+  (`CSI_BUNDLER_MERGED`: rolled into a bundle still open after admit's own
+  expiry, no new row) apart from an opening (`CSI_BUNDLER_BUFFERED`), and
+  `csi_event_emit` refunds the ceiling slot on a merge only;
+  `csi_bundler_has_open()` stays, as a diagnostic. On both trees (the
+  canary-wap copies are synced). `firmware/tests_host/test_csi_bundler_ceiling.cpp`
+  runs the probe on the real library with a test clock (`CSI_TEST_CLOCK`):
+  the emit every 121 s commits 144 rows a day (714 before), no hour holds
+  more than the ceiling, and refreshes of an open bundle still spend
+  nothing. Not seen on a device (U1).
+  *Also (#1762):* #1762 fixed the same item in parallel and merged onto
+  #1763's mechanism (its own rename of `CSI_BUNDLER_BUFFERED` and removal of
+  `has_open()` were dropped in the merge). It adds three tests to
+  `test_csi_bundler_ceiling.cpp` (folded in from its own ceiling test when
+  the two merged), on a day anchored where the module's counter is created:
+  the 121 s probe commits exactly 144 rows, so every hour
+  still gets its six; a 60 s refresh beside one new state every 10 minutes,
+  whose bundle closes on its 10-minute window inside a refresh's admit,
+  commits 144 (286 before, 143 of them the refreshed state); and thirty
+  merges into one open bundle leave five of the six slots for new states.
   Correction to the item: the canary-wap was less exposed than it says. A host
   that ticks every loop pass mostly closes an overdue bundle before the next
   emit can reopen it: with a 1 s tick the 121 s probe commits 144 a day on the
@@ -1431,9 +1440,9 @@ so — see D2 below.)
   With the leak gone F46's headroom loses its refund term: at most 178,200
   rows a day, about 16.5 years (6,025 days), and about 75 years at the shipped
   defaults (`csi_event_id_floor.h`, pinned in `test_csi_event_id_floor.cpp`;
-  F46 and F82 are corrected). The canary-wap's staged copies are re-staged.
-  Host-tested; the ESP32 compiles are CI's; not bench-verified (U1: the
-  F80/F81 rows in `hardware_verification_checklist.md`). Found here: F90.
+  F46 and F82 are corrected). Bench rows: the F80/F81 section of
+  `hardware_verification_checklist.md` (U1). Host-tested; the ESP32 compiles
+  are CI's; not bench-verified. Found here: F90, which #1763 filed too.
 - [x] **F81 [code] The canary flushes every open bundle on every CSI
   window.** `firmware/canary/src/csi_modules_integration.cpp` calls
   `csi_event_flush_bundles()` (close all) after each module tick. Its
@@ -1445,13 +1454,19 @@ so — see D2 below.)
   the canary they still do. Switch to
   `csi_bundler_tick()` together with F80, since the flush is what hides
   that leak on the canary. Found by F46 (#1761).
-  *Done (#1762), with F80:* the canary's `securacv_csi_modules_feed()` closes
-  no bundle. `securacv_csi_modules_tick()`, new in the bridge, runs
-  `csi_bundler_tick()`, and `main.cpp`'s `loop()` calls it once per pass,
-  outside the CSI power and degrade gates and before
-  `csi_event_egress_pump()`, where the canary-wap's loop ticks. So a bundle
-  opened before CSI is shed still commits on its window or quiet gap, and its
-  row goes out in the same pass.
+  *Done (#1763):* the canary calls `csi_bundler_tick()` once per main
+  loop (`securacv_csi_modules_tick()`), as the canary-wap does, so a bundle
+  closes for its window or its quiet gap only and a refresh merges. The
+  tick sits outside the CSI power and heap gates: the feature callback
+  stops while they skip `csi::process()`, and an open bundle must still
+  close on time then (Codex review on #1763). Both trees now spend one ceiling
+  slot per bundle, which F90 follows up. Built for the canary, not run on
+  one (U1).
+  *Also (#1762), with F80:* #1762 fixed the same item in parallel and merged
+  onto #1763's bridge function and placement. The call runs before
+  `csi_event_egress_pump()`, so a bundle that closes is published in the same
+  pass, and a bundle opened before CSI is shed still commits on its window or
+  quiet gap.
   - `firmware/tests_host/test_csi_modules_integration.cpp` builds the canary's
     real bridge over the real library and modules (stubbed Arduino,
     Preferences and csi_hal hooks, a fake clock) and plays a stand-in for
@@ -1463,10 +1478,12 @@ so — see D2 below.)
     `main.cpp`'s call.
   - `main.cpp`'s call is not host-tested: no suite compiles `main.cpp`.
     `firmware/scripts/check_csi_bundle_tick.py`, run by `check_csi_sync.sh`,
-    holds it: one call, directly under `#if FEATURE_CSI`, a top-level
-    statement no gate controls, nothing leaving the loop before it, before the
-    egress pump, and a feed that closes nothing (16 mutations refused). CI
-    compiles it.
+    holds it: one call, under no `#if` (#1763's placement; #1762 had put it
+    under `#if FEATURE_CSI`, and the merge kept #1763's, since the
+    system.integrity tamper feed runs in every build and its bundles must
+    close there too), a top-level statement no gate controls, nothing leaving
+    the loop before it, before the egress pump, and a feed that closes nothing
+    (16 mutations refused). CI compiles it.
   - The events body's `bundled` is now the row's own count on every path on
     both trees (`csi_event_wire::bundled_on_wire()`, pinned in
     `test_csi_event_wire.cpp`). The canary's live and queued bodies said 1, as
@@ -1501,14 +1518,15 @@ so — see D2 below.)
   F80/F81 bench section with an anomaly-latency row, and LESSONS_LEARNED. The
   2.4.15 note "same-state refreshes no longer spend the hourly ceiling" now
   holds on the canary too, inside a bundle's ten minutes. Host-tested; the
-  PlatformIO builds are CI's; not bench-verified (U1). Found here: F90, F91,
-  F92 and F93.
+  PlatformIO builds are CI's; not bench-verified (U1). Found here: F90 (which
+  #1763 filed too), F91, F92 and F93.
 - [ ] **F82 [code+decision] Nothing warns before the event-id space runs
   out.** The allocator has 2^30 ids from 0xC0000000 (F46), about 16.5 years at
-  the most a device can commit (since F80, #1762). At exhaustion ids restart
-  at 1, and each later boot first reissues 0xFFFFFFFF. Home Assistant then
-  refuses the device from then on, and nothing on the device says so. Add a
-  health or diagnostic flag once the allocator passes `kHoldLimit`
+  the most a device can commit (since F80; recomputed in #1762). At
+  exhaustion ids restart at 1, and each later boot first reissues
+  0xFFFFFFFF. Home Assistant then refuses the device from then on, and
+  nothing on the device says so. Add a health or diagnostic flag once the
+  allocator passes `kHoldLimit`
   (0xF0000000), and decide the recovery (a re-pin plus a reset of the floor
   and `csi.evsent`). Found by F46's review (#1761).
 - [x] **F83 [code] The canary-wap can commit an event before its id floor
@@ -1520,33 +1538,34 @@ so — see D2 below.)
   `csi.evsent` then limits the reissued ids. It is rare (it needs a
   key-store failure) and older than F46. Restore the floor first, as the
   canary does (`csi_event_egress_begin`). Found by F46 (#1761).
-  *Done (#1762), as hardening: the premise was false.* The first build's
-  judgment stood. On this base nothing commits between `register_v1_modules()`
-  and `apply_event_id_floor_from_nvs()`: `ble_scout_init()`'s
-  `emit_initialized("failed")` carries a state_name, so `csi_event_emit` hands
-  it to the bundler, which opens a bundle (`CSI_BUNDLER_BUFFERED`): no event
-  id, no `csi_event_on_id_advance`, no NVS floor write. The bundle commits
-  when it closes in `loop()`, after the restore, with an id from the restored
-  floor. A host probe on the real staged sources (`ble_scout.cpp`,
-  `ble_scout_state.cpp`, `ble_scan.cpp`, `csi_event.cpp`, `csi_module.cpp`,
-  `csi_bundler.cpp`, the key store failing) counted 0 id advances and 0
-  commits during init, and both reviews confirmed it independently on every
-  boot path: `csi_module_register` runs no module init, the mesh handlers
-  installed there only log, no bundle slot is open at boot for an admit to
-  evict, and ble.scout's NimBLE-task emits start only after
-  `ble_bringup_finalize`. 8cc07ec landed anyway because that verdict leaned on
-  one emit staying state-bearing and nothing committed held it: the tests
-  review showed that dropping the state_name from the "failed" emit would
-  reopen F83 with every gate green, and the concurrency review found the
-  reorder a two-line move the static check already accepted.
-  `csi_integration::init` now restores the floor and starts the egress
-  (`csi_event_egress::begin()`) before `register_v1_modules()`, as the canary
-  restores its floor in `csi_event_egress_begin()` before its modules; the SD
-  log reload, which needs the module manifests, stays after.
-  `check_wap_event_egress.py`'s boot-order rule requires the order (three
-  self-test mutations), and it fails on the `csi_integration.cpp` before
-  8cc07ec. No device behavior changes today, so no host test can fail before
-  it. The ESP32 compile is CI's; not bench-tested.
+  *Done (#1763):* `csi_integration::init` restores the floor before
+  `register_v1_modules()`. Built, not run on a device (U1).
+  *Also (#1762), as hardening: the premise was false.* #1762 reordered the
+  same two calls in parallel. On #1761's base nothing commits between
+  `register_v1_modules()` and `apply_event_id_floor_from_nvs()`:
+  `ble_scout_init()`'s `emit_initialized("failed")` carries a state_name, so
+  `csi_event_emit` hands it to the bundler, which opens a bundle
+  (`CSI_BUNDLER_BUFFERED`): no event id, no `csi_event_on_id_advance`, no NVS
+  floor write. The bundle commits when it closes in `loop()`, after the
+  restore, with an id from the restored floor. A host probe on the real staged
+  sources (`ble_scout.cpp`, `ble_scout_state.cpp`, `ble_scan.cpp`,
+  `csi_event.cpp`, `csi_module.cpp`, `csi_bundler.cpp`, the key store failing)
+  counted 0 id advances and 0 commits during init, and both reviews confirmed
+  it independently on every boot path: `csi_module_register` runs no module
+  init, the mesh handlers installed there only log, no bundle slot is open at
+  boot for an admit to evict, and ble.scout's NimBLE-task emits start only
+  after `ble_bringup_finalize`. The reorder landed anyway because that verdict
+  leaned on one emit staying state-bearing and nothing committed held it: the
+  tests review showed that dropping the state_name from the "failed" emit
+  would reopen F83 with every gate green. #1762 also starts the egress
+  (`csi_event_egress::begin()`, F78) after the floor and before
+  `register_v1_modules()`, as the canary restores its floor in
+  `csi_event_egress_begin()` before its modules; the SD log reload, which
+  needs the module manifests, stays after (and F93 runs the modules'
+  `init()` after them). `check_wap_event_egress.py`'s boot-order rule
+  requires that order (self-test mutations), and it fails on the
+  `csi_integration.cpp` before F83. No device behavior changes today, so no
+  host test can fail before it. The ESP32 compile is CI's; not bench-tested.
 - [x] **F103 [code] On the canary, a failed card append during an outage moves
   the delivery ceiling past the backlog.** On the canary, a row whose card
   append fails while a backlog waits moves the NVS delivery ceiling past that
@@ -1807,25 +1826,31 @@ so — see D2 below.)
   for the loop's publishes. From esp-mqtt's source (master branch, as F106's
   review read it), not from the pinned core's copy; not probed. Found by
   F106's review (#1762).
-- [ ] **F90 [decision] A held state fills core.presence's hourly ceiling.**
-  Every bundle reopening is a row the ceiling counts (F80), and a held state
-  reopens its bundle every 10 minutes: 6 rows an hour, all of core.presence's
-  6/hour ceiling. core.presence refreshes every state, empty included, so
-  after about an hour in any one state the ceiling is full of that state's own
-  rows. Its next transition is refused until a slot ages out, and so is every
-  refresh of the held state, because the ceiling is checked before the bundler
-  runs. On the canary's real bridge (host, fake clock; holds of one to one and
-  a third hours in 7 s steps) the transition out waits up to about ten
-  minutes, 7 to 602 s depending on when a slot ages out, and every later row
-  of the held state carries one observation and 0 s. The canary-wap behaved
-  the same before F80: its loop ticks before the window's emits, so its
-  reopens were already counted (on the old library, 2 of 17 clock phases
-  admitted a transition at once after two hours in one state).
-  Options: a ceiling above the window rate (12/hour for core.presence, a
-  privacy-contract change); counting a same-key window reopen as a
-  continuation; and, whichever is chosen, refusing at a full ceiling only an
-  emit that needs a slot, decided from the admit's outcome as the refund now
-  is. Found by F80 and F81 (#1762).
+- [ ] **F90 [code+decision] An hour of unbroken presence fills a 6/hour
+  ceiling by itself.** A bundle closes at its 10-minute window even while
+  the room stays occupied, and the next refresh opens a new one: a new row,
+  which spends a ceiling slot (F80 made that true on every path). So
+  sustained presence opens six bundles an hour, `core.presence`'s whole
+  ceiling (6), and a real state change after that is dropped at the
+  ceiling until the oldest slot rotates out. core.presence refreshes every
+  state, empty included, so after about an hour in any one state the ceiling
+  is full of that state's own rows, and every refresh of the held state is
+  refused too, because the ceiling is checked before the bundler runs. On
+  the canary's real bridge (host, fake clock; holds of one to one and a third
+  hours in 7 s steps) the transition out waits up to about ten minutes, 7 to
+  602 s depending on when a slot ages out, and every later row of the held
+  state carries one observation and 0 s. The canary-wap already did this
+  before F80 (its loop tick closes the bundle before the next refresh admits,
+  so its reopens were already counted; on the old library, 2 of 17 clock
+  phases admitted a transition at once after two hours in one state). The
+  canary did worse before F81 (every refresh spent a slot).
+  Options: a window rollover of a bundle still inside its quiet gap counts
+  as the same presence (a continuation); or the ceiling reserves room for a
+  change of state; or `core.presence`'s ceiling rises above the window rate
+  (12/hour, a privacy-contract change); and, whichever is chosen, refuse at a
+  full ceiling only an emit that needs a slot, decided from the admit's
+  outcome as the refund now is, and extend `test_csi_bundler_ceiling.cpp`.
+  Filed by both PRs: found doing F80 (#1763), and by F80 and F81 (#1762).
 - [ ] **F91 [decision] Anomaly rows wait in an open bundle.** Every
   non-ambient row with a state goes through the bundler, ANOMALY rows
   included, and commits only when its bundle closes. `anomaly.baseline`'s

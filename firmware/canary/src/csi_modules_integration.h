@@ -71,17 +71,6 @@ bool securacv_csi_modules_init(void);
 void securacv_csi_modules_feed(const void* features_blob);
 
 /**
- * Close every CSI bundle past its 10-minute window or its 2-minute quiet
- * gap, and only those (csi_bundler_tick, sweep F81). Call once per main
- * loop, OUTSIDE the CSI power and degrade gates: the feed above closes
- * nothing, so this is what commits a bundle, and one opened before CSI is
- * shed must still commit on time. Same rule as the canary-wap's
- * csi_integration::loop(). Loop task; the commit queues for the event
- * egress pump.
- */
-void securacv_csi_modules_tick(void);
-
-/**
  * Feed the system.integrity tamper watcher once per main loop with the
  * facts only main.cpp can see together: the boot's reset classification
  * (crash / watchdog / brownout, the canary-wap reset_is_crash mapping)
@@ -110,6 +99,18 @@ void securacv_csi_modules_tamper_watch(int reset_was_crash,
  * the call above.
  */
 void securacv_csi_modules_tamper_watch_contact(int enclosure_open);
+
+/**
+ * Close the CSI bundles that are due (their 10-minute window or 2-minute
+ * quiet gap has elapsed) — csi_bundler_tick(). Call once per main loop,
+ * OUTSIDE the CSI power/degrade gates: the feature callback stops while
+ * they skip csi::process(), and an open bundle (presence, or a
+ * system.integrity tamper) must still close and commit on time. Safe to
+ * call before init(). The feed above closes no bundle, so this is what
+ * commits one; same rule as the canary-wap's csi_integration::loop().
+ * Loop task; on HA builds the row queues for the event egress pump.
+ */
+void securacv_csi_modules_tick(void);
 
 /**
  * Tear down the pipeline. Optional — only needed if the host wants

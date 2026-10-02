@@ -194,30 +194,40 @@
   fail on the old code. **Host-tested only**: the `[env:full]` compile is
   CI's, and it is not bench-tested.
 - **Canary presence rows are one row per bundle, and the hourly limit counts
-  every row (sweep F80, F81).** The Canary closed every open bundle after each
-  one-second CSI window, so each presence refresh was a row of its own and
-  spent the hourly limit; after about three minutes in one state the next real
-  change was dropped. It now closes a bundle when it is due, ten minutes after
-  it opened or two minutes after its last observation, as the Canary WAP does.
-  A refresh inside those ten minutes costs nothing, and the row carries every
-  observation and the time they span. A return to a state within two minutes
-  joins its open bundle, so a row's span can take in a brief other state. This
-  holds for every Canary row that names a state, not only presence: a row now
-  reaches Home Assistant two to ten minutes after its state began (an
-  unusual-motion row two minutes after the motion, where it used to arrive
-  within a second), stamped with its close, in the order bundles close. The
-  Canary's last-event sensor (whose value is the state), its timestamp, the
-  voice brief and Home Assistant watches follow that. A row still open at a
-  reboot is lost; a tamper row still lands at once. The events body's
+  every row (sweep F80, F81).** #1763 landed both first, and this merges onto
+  its code. The Canary closed every open bundle after each one-second CSI
+  window, so each presence refresh was a row of its own and spent the hourly
+  limit; after about three minutes in one state the next real change was
+  dropped. It now closes a bundle when it is due, ten minutes after it opened
+  or two minutes after its last observation, once per main loop and outside
+  the battery and memory gates, as the Canary WAP does. On both devices a
+  bundle that reopens after its ten minutes or a quiet gap now counts against
+  the limit; before, a refresh could reopen one uncounted (in a host test of
+  the shared library with nothing ticking the bundles, one observation every
+  121 s made 714 rows a day under a limit of 144; now 144).
+  What #1762, which fixed the same two in parallel, adds: the events body's
   `bundled` is now the row's own count live, from the offline queue and in a
-  replay, on both devices (the live body said 1). On both devices a bundle
-  that reopens after its ten minutes or a quiet gap now counts against the
-  limit; before, a refresh could reopen one uncounted (in a host test of the
-  shared library with nothing ticking the bundles, one observation every
-  121 s made 714 rows a day under a limit of 144; a host that ticks every
-  pass leaked only when an emit reached the expiry in the same pass). Not fixed, and measured on the host: a state held for an hour
-  or more fills core.presence's limit of six an hour with its own rows, and
-  the next change then waits up to about ten minutes for a slot (F90).
+  replay, on both devices (the live body said 1); host tests of the Canary's
+  real CSI bridge playing its main loop, three more ceiling probes (exactly
+  144 rows on a day that starts with the limit's counter, and a 60 s refresh
+  beside a new state every ten minutes, 286 rows a day before, now within
+  the limit), and a static check that holds the main loop's call in place;
+  and the account of what the change means. A refresh inside a bundle's ten
+  minutes costs nothing, and the row carries every observation and the time
+  they span. A return to a state within two minutes joins its open bundle, so
+  a row's span can take in a brief other state. This holds for every Canary
+  row that names a state, not only presence: a row now reaches Home Assistant
+  two to ten minutes after its state began (an unusual-motion row two minutes
+  after the motion, where it used to arrive within a second), stamped with
+  its close, in the order bundles close. The Canary's last-event sensor
+  (whose value is the state), its timestamp, the voice brief and Home
+  Assistant watches follow that. A row still open at a reboot is lost; a
+  tamper row still lands at once. A host that ticks every pass leaked only
+  when an emit reached the expiry in the same pass, so the Canary WAP was
+  less exposed than the limit leak's 714 suggests. Not fixed, and measured on
+  the host: a state held for an hour or more fills core.presence's limit of
+  six an hour with its own rows, and the next change then waits up to about
+  ten minutes for a slot (F90, which both PRs filed).
   **Host-tested only**: the ESP32 builds are CI's, and nothing was checked on
   a bench.
 - **canary-wap no longer lets a new event overtake its own backlog after a
@@ -238,8 +248,9 @@
   backlog instead of overtaking it; ambient rows are not held. A broker that
   is unconfigured or changed is not sent the old backlog, as on the canary. A
   dismissal the card cannot take yet waits in RAM (until a reboot) instead of
-  being lost. The event-id floor is now restored before the modules register
-  (F83: nothing committed there, but the order no longer depends on it).
+  being lost. The event-id floor is restored before the modules register, as
+  #1763 also did, and the egress starts there too (F83: nothing committed
+  there, but the order no longer depends on it).
   `test_wap_event_egress.cpp` runs the real egress, SD log and event library;
   its reconnect, interleaving and reboot scenarios fail on the old code, and
   `check_wap_event_egress.py` holds the parts a host build cannot compile.

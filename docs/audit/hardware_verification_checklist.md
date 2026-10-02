@@ -712,7 +712,7 @@ what `csi_bundler_admit()` did: an opening keeps it, a merge gives it back),
 `src/main.cpp` (`securacv_csi_modules_tick()` once per loop, outside the CSI
 power gates, instead of a flush after every window), and
 `csi_event_wire.h` (`bundled` is the row's own count on every path).
-Host-tested on the real library (`firmware/tests_host/test_csi_bundle_ceiling.cpp`),
+Host-tested on the real library (`firmware/tests_host/test_csi_bundler_ceiling.cpp`),
 on the canary's real bridge (`test_csi_modules_integration.cpp`, a stand-in
 for `main.cpp`'s loop) and on the wire builder (`test_csi_event_wire.cpp`);
 `main.cpp`'s call is held by `firmware/scripts/check_csi_bundle_tick.py` and

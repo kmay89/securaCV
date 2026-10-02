@@ -322,7 +322,7 @@ static int test_boot_loop_cost_and_headroom() {
   // other 15 modules at the 255/hour override, bundled rows included (every
   // bundle opening spends the ceiling since sweep F80, which removed the
   // 8 x 720 rows a day a refunded refresh could reopen;
-  // test_csi_bundle_ceiling.cpp holds the library to it). That lasts about
+  // test_csi_bundler_ceiling.cpp holds the library to it). That lasts about
   // 16.5 years; the shipped defaults about 75.
   const uint64_t space = 0x100000000ull - kIdSpaceBase;
   CHECK(space == (1ull << 30));

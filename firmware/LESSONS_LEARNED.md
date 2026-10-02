@@ -2389,49 +2389,54 @@
   the host's.
 - **Date learned:** 2026-10
 
-### A refund decided before the operation it refunds, and a flush that hid it
-- **What happened:** The CSI chokepoint spends a module's hourly ceiling
-  slot per emit and gives it back when the emit only refreshes a bundle
-  that is already open. It asked `csi_bundler_has_open()` first, then
-  called `csi_bundler_admit()`. But the admit expires overdue bundles
-  before it matches: a key whose bundle was open a moment earlier gets
-  closed (a row) and reopened (another row), and the refund decided
-  beforehand let that opening through uncounted. One emit every 121 s
-  committed 714 rows a day under a 6/hour ceiling (sweep F80). The canary
-  never showed it, because it called `csi_event_flush_bundles()` (close
-  everything) after every CSI window, so nothing was ever open to refund;
-  and that flush was its own bug: every presence refresh was a row of its
-  own and spent the ceiling, and real transitions were dropped after three
-  minutes in one state (sweep F81).
-- **Root cause:** A check-then-act across a call that changes the very
-  state it checked. And two bugs in two layers that cancel each other's
-  symptom: the flush made the leak unreachable on one tree, so fixing
-  either one alone moves the device's behavior in a way neither fix
-  intended (the canary ticking without F80 would have refunded every
-  10-minute reopen).
-- **Fix:** The bundler reports what it did, under its slot lock and after
-  expiry (`CSI_BUNDLER_OPENED` keeps the slot, `CSI_BUNDLER_MERGED` gives
-  it back), and `has_open()` is gone. The canary closes bundles with
-  `csi_bundler_tick()` once per main loop, outside the CSI power gates, as
-  the canary-wap does. Both landed together. The review then found the
-  canary's live body still saying `"bundled":1`, a literal that was true of
-  every canary row until F81 made its rows bundles (the canary-wap's live
-  body had said 1 for its bundles all along); the shared wire builder now
-  publishes the row's own count on every path.
-- **Regression check:** `firmware/tests_host/test_csi_bundle_ceiling.cpp`
-  (the real library under a fake clock: a day's rows within the ceiling on
-  the gap and window paths; a merge still refunds) and
+### A refund decided before the call it refunds, and a flush that hid it (CSI hourly ceiling, F80, F81)
+- **What happened:** The CSI chokepoint refunds an emit's hourly-ceiling
+  slot when the emit only refreshes a bundle that is already open (it adds
+  no row). It asked `csi_bundler_has_open()` whether the bundle was open,
+  then called `csi_bundler_admit()`, which first expires overdue bundles.
+  When the bundle had just gone quiet for 2 minutes, admit closed it and
+  opened a new one: a new row, refunded as a refresh. One emit every 121 s
+  committed 714 rows a day under a 6/hour ceiling (144 allowed). The canary
+  hid it by closing every bundle on every window (F81), which also made
+  every refresh spend a slot, the opposite bug: real transitions were
+  dropped after about three minutes in one state. #1763 and #1762 found and
+  fixed both, in parallel.
+- **Root cause:** The question ("will this merge?") was asked of a state
+  that the answering call changes before it acts. Time-based expiry inside
+  admit made the answer stale whenever the gap had just elapsed. And two
+  bugs in two layers canceled each other's symptom: the flush made the
+  leak unreachable on one tree, so fixing either alone moves the device in
+  a way neither fix intended (the canary ticking without F80 would have
+  refunded every 10-minute reopen).
+- **Fix:** Admit reports what it did, decided under its own lock after its
+  own expiry: `CSI_BUNDLER_MERGED` (no new row) or `CSI_BUNDLER_BUFFERED`
+  (a new bundle). Only a merge is refunded; `has_open()` stays, as a
+  diagnostic. The canary ticks the bundler (`csi_bundler_tick()`) once per
+  main loop instead of flushing it in the CSI callback; the tick sits
+  outside the CSI power and heap gates, since that callback stops while
+  they hold and a bundle must still close. Both landed together (#1763's
+  mechanism; #1762's parallel fix was merged onto it). #1762's review then
+  found the canary's live body still saying `"bundled":1`, a literal that
+  was true of every canary row until F81 made its rows bundles (the
+  canary-wap's live body had said 1 for its bundles all along); the shared
+  wire builder now publishes the row's own count on every path.
+- **Regression check:** `firmware/tests_host/test_csi_bundler_ceiling.cpp`
+  runs the real library on a clock the test moves (`CSI_TEST_CLOCK`): the
+  121 s probe stays at 144 rows a day (714 on the old library), exactly 144
+  on a day anchored at the counter, the 10-minute window reopen within the
+  ceiling (286 before), and refreshes of an open bundle spend nothing.
   `test_csi_modules_integration.cpp` (the canary's real bridge playing the
-  main loop: no row and no slot per refresh, one row per closed bundle,
-  a close while CSI is shed), `test_csi_event_wire.cpp` (the body's
-  `bundled` is the row's own) and `firmware/scripts/check_csi_bundle_tick.py`
-  (`main.cpp`'s loop calls the tick, outside the gates: no host suite
-  compiles `main.cpp`, so deleting the call passed every test). When a
-  change alters what a row is, look for every literal that described the
-  old one. Decide a refund, a count or a permission
-  from what the operation reports it did, never from a question asked
-  before it; and when a host-side workaround (a flush, a retry, a reset)
-  hides a library bug, fix them as one change.
+  main loop: no row and no slot per refresh, one row per closed bundle, a
+  close while CSI is shed), `test_csi_event_wire.cpp` (the body's `bundled`
+  is the row's own) and `firmware/scripts/check_csi_bundle_tick.py`
+  (`main.cpp`'s loop calls the tick, under no `#if`, outside the gates: no
+  host suite compiles `main.cpp`, so deleting the call passed every test).
+  When a decision depends on what a call will do, take it from the call's
+  result, not from a look before it. When a change alters what a row is,
+  look for every literal that described the old one; and when a host-side
+  workaround (a flush, a retry, a reset) hides a library bug, fix them as
+  one change.
+- **Date learned:** 2026-10
 
 ### A live path and a backfill that each move one watermark need one owner, on one task
 - **What happened:** On the canary-wap, `MQTT_EVENT_CONNECTED` set the

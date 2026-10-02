@@ -2393,14 +2393,14 @@ void loop() {
   }
 #endif
 
-#if FEATURE_CSI
-  // Commit the CSI bundles that are due: past their 10-minute window or their
-  // 2-minute quiet gap (sweep F81, as the canary-wap's loop does). Outside the
-  // CSI power/degrade gates on purpose: the feed closes nothing, so a bundle
-  // opened before CSI is shed must still commit here, on time. The commit
-  // queues for csi_event_egress_pump() below.
+  // Close the CSI bundles that are due, every loop and outside the CSI
+  // gates above: the feature callback stops while battery saver or heap
+  // degradation skips csi::process(), and an open bundle (presence, or a
+  // system.integrity tamper) still has to close and commit on time. Under
+  // no #if either: the tamper feed above runs in every build. On HA builds
+  // the row it commits queues for csi_event_egress_pump() below (sweep F81;
+  // firmware/scripts/check_csi_bundle_tick.py holds this placement).
   securacv_csi_modules_tick();
-#endif
 
 #if FEATURE_ACOUSTIC_EVENTS
   #if FEATURE_POWER_POLICY

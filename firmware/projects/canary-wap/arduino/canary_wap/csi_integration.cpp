@@ -2871,15 +2871,17 @@ bool init(httpd_handle_t server, const char* api_token) {
   g_api_token = api_token;
 
   /* Restore the event-id floor from NVS so allocations stay globally
-   * monotone across reboots. Before register_v1_modules(), as the canary
-   * restores it in csi_event_egress_begin() before its modules: a module
-   * may emit while it registers (ble_scout_init() reports its init), and
-   * a stateless emit there would allocate from kIdSpaceBase and write
-   * that floor over the persisted one (sweep F83). Today that emit is
-   * state-bearing, so it only opens a bundle and commits later; this
-   * order does not lean on that. With the floor restored, the events
-   * egress's backfill watermark stays sound and csi_event_log no longer
-   * needs to wipe the on-disk log on cold boot to avoid id collisions. */
+   * monotone across reboots. Done FIRST, before the modules register
+   * (backlog F83), as the canary restores its floor in
+   * csi_event_egress_begin() before its modules: a module may emit while it
+   * registers (ble_scout_init() emits initialized("failed") when its key
+   * store fails), and a commit there, with g_id_floor_stored still 0, would
+   * allocate from kIdSpaceBase and write that floor over the persisted one
+   * before this read it. Today that emit is state-bearing, so it only opens
+   * a bundle and commits later, after this restore; this order does not
+   * lean on that. With the floor restored, the events egress's backfill
+   * watermark stays sound and csi_event_log no longer needs to wipe the
+   * on-disk log on cold boot to avoid id collisions. */
   const bool floor_restored = apply_event_id_floor_from_nvs();
 
   /* The committed-event egress (csi_event_egress.h): its queue, and its
