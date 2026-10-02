@@ -294,6 +294,11 @@ test("the pane's clocks and coarse features follow the sandbox (sweep A37)", asy
     assert.strictEqual(end.ev.visit_ms, end.t - start.t, "presence_ended reports the stay it closed");
     assert.deepStrictEqual([end.ev.posture, end.ev.proximity, end.ev.occupancy], ["unknown", "unknown", "none"],
       "no box, no coarse features: not the example's upright / mid");
+    // the pane says which values stay illustrative
+    assert.strictEqual(outer.all("vis-mqtt-note")[0].textContent, data.mqtt.pane.clock.note);
+    assert.match(data.mqtt.pane.clock.note, /voxel is the frame's cell/);
+    assert.ok(read(join(FW, "src/state/presence_fsm.cpp")).includes("s.voxel = voxel_tracker_.stable();"),
+      "the device publishes its tracker's settled cell");
   });
 });
 

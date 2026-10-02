@@ -874,7 +874,7 @@ export function buildMqtt(data, bus) {
     data.mqtt.discovery.entities.length + " Home Assistant entities, announced by the device itself"), ents);
 
   const outer = el("div");
-  outer.append(wrap, det, det2,
+  outer.append(wrap, el("p", "muted fineprint vis-mqtt-note", pane.clock.note), det, det2,
     el("p", "muted fineprint", data.mqtt.discovery.note));
   return outer;
 }

@@ -784,9 +784,11 @@ if OCCUPANCY != ["none", "one", "two", "several"] or "if (count <= 0)" not in _o
 MQTT["pane"] = {
     "source": "payload keys from mqtt_mgr.cpp + main.cpp",
     "clock": {"t0_ms": EX_TS_MS,
-              "note": "ts_ms is the sandbox clock plus the example's ts_ms; presence_ms, dwell_ms, posture, "
-                      "proximity, occupancy and occ_mask are the firmware core's; visit_ms is latched at "
-                      "presence_ended"},
+              "note": "Every key is the firmware's, and so are the values the sandbox moves: presence_ms, "
+                      "dwell_ms, posture, proximity, occupancy and occ_mask come from the firmware core this "
+                      "page runs, ts_ms is its clock, and visit_ms the last stay. Two stay illustrative: the "
+                      "voxel is the frame's cell (the device publishes its tracker's settled cell, which the "
+                      "core does not return), and a moved chain head's hash is elided."},
     "occupancy": OCCUPANCY,
     "online": [{"suffix": s, "retain": r, "payload": payload(o)} for s, r, o in PANE_ONLINE]
               + [{"suffix": "aim/state", "retain": True, "payload": "OFF"}],
