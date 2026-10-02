@@ -704,7 +704,13 @@ boot order is held by `check_event_egress_order.py` (rule 8) and
 device. Owner: U1.
 
 - [ ] **A saved preset applies from the first minute after a reboot**
-  - Setup: a canary-wap on this firmware, dashboard open.
+  - Setup: a canary-wap on this firmware, dashboard open, on a board with
+    no stored presence threshold (no `cp.mt`, `cp.at` or `cp.bt` row in
+    the `csi` namespace): never calibrated, no Tuning Lab threshold
+    change, per-row reset, "Reset all" or bundle import. Each of those
+    stores the thresholds, and a stored threshold wins over the preset and
+    the sensitivity (at boot and at once, before F93 as after it), so on
+    such a board this row cannot pass. Erase NVS first when unsure.
   - Repro: set the preset to "sensitive" (or the sensitivity slider to
     100); `POST /api/reboot`; when it is back, make a small motion in
     front of it (a hand wave at a few meters) within the first minute.
@@ -713,6 +719,18 @@ device. Owner: U1.
     `empty`. Before F93 both boots ran on the balanced default until a
     setting was changed.
   - Artifact: `docs/audit/repro/F93/preset-after-reboot/`.
+- [ ] **A stored threshold still wins over the preset after a reboot**
+  - Setup: the board from the row above, then a calibration applied
+    (`POST /api/csi/calibrate/apply`) or the Tuning Lab's "Reset all".
+  - Repro: set the preset to "sensitive"; reboot; repeat the small motion.
+  - Expected: the board reads it by the stored thresholds (after "Reset
+    all", the balanced 35 / 75 / 30: the motion that read `subtle` above
+    stays `empty`), while `GET /api/settings` still reports
+    `"preset": "sensitive"`. Host-pinned by
+    `test_a_stored_threshold_wins_over_the_saved_preset`
+    (`test_wap_module_boot.cpp`). Not an F93 change; recorded so a
+    calibrated board is not read as F93 failing.
+  - Artifact: `docs/audit/repro/F93/threshold-over-preset/`.
 - [ ] **A Tuning Lab cooldown applies after a reboot**
   - Setup: as above, `/tune` open.
   - Repro: set `anomaly.baseline.cooldown_sec` to 30; reboot; leave the

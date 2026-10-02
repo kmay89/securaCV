@@ -348,12 +348,26 @@ the Lab from the dashboard (long-press on the version chip, or
 | --- | --- |
 | `GET /tune` | the Tuning Lab UI |
 | `GET /api/tune/coefficients` | every registered tuning knob, current values |
-| `POST /api/tune/coefficients` | update one knob; persists to NVS, applies at once and from every boot |
+| `POST /api/tune/coefficients` | update one knob; persists to NVS; a module knob applies at once and from every boot, a Quiet Hours knob from the next boot |
 | `GET /api/tune/preset` | export a signed JSON tuning bundle |
 | `POST /api/tune/preset` | import a signed JSON tuning bundle |
 
 Tuning bundles ride the existing witness-chain export format — no new
 persistence layer.
+
+A coefficient POST re-runs the `init()` of the module it belongs to
+(`core.presence`, `core.breathing`, `anomaly.baseline`), so the new value
+lands on the next tick, and every module reads its stored values in its
+boot `init()` (sweep F93). The three `core.quiet_hours.*` knobs are the
+exception: no module reads them, the Tuning Lab only stores them, and the
+chokepoint picks them up at the next boot (or at once from a Quiet Hours
+change through `POST /api/settings`). A bundle import is the same handler,
+so it stores every coefficient in the bundle, the three presence
+thresholds included. So do the Lab's per-row **reset** and **Reset all**,
+which POST each coefficient's default as a stored value. A stored
+`core.presence.motion_threshold`, `active_threshold` or
+`breathing_threshold` wins over the dashboard's preset and sensitivity
+(they set only the default of those reads), at boot as after a change.
 
 ---
 
@@ -447,7 +461,13 @@ for the affected module(s) so the new value lands on the next tick.
 Saved values also apply from every boot: the modules read them in their
 boot `init()` (sweep F93; before it, a boot ran on the modules' defaults
 until the next settings change). The calibration's apply and the Tuning
-Lab's coefficients behave the same way.
+Lab's module coefficients behave the same way; a Tuning Lab Quiet Hours
+change applies from the next boot (see the Tuning Lab section above). The
+preset and sensitivity set only the default of `core.presence`'s three
+thresholds: once a threshold is stored directly (the calibration's apply
+stores all three; so do the Tuning Lab's reset buttons and a bundle
+import), the stored threshold wins, at boot as at once, while
+`GET /api/settings` keeps reporting the saved preset.
 The wire keys are deliberately short (the dashboard's controls surface,
 not the full module-tunable surface):
 
