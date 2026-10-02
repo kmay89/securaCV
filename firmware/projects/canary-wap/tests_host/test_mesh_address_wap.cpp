@@ -909,6 +909,10 @@ void test_an_old_duplicate_entry_folds_into_one_at_boot() {
   mn::g_prefs.begin(mn::NVS_NS, true);
   CHECK(mn::g_prefs.getUChar(mn::NVS_PEER_COUNT, 0) == 2);
   mn::g_prefs.end();
+  // ... and the slot it freed goes (sweep F137): peer_2 held the duplicate,
+  // B's key under the later pairing's address and name.
+  CHECK(A.nvs.count("mesh/peer_0") == 1 && A.nvs.count("mesh/peer_1") == 1);
+  CHECK(A.nvs.count("mesh/peer_2") == 0);
   boot(A);                                       // so the next boot has nothing to fold
   CHECK(mn::g_peer_count == 2);
   CHECK(same_mac(entry(A, B)->mac_addr, new_mac));

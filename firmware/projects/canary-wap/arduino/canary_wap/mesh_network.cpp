@@ -1899,13 +1899,29 @@ static bool load_opera_config() {
   return g_opera_config.configured;
 }
 
+// The list is peer_cnt and peer_0..peer_<peer_cnt - 1>. Every slot at or
+// above the count is removed (sweep F137): a removal shifts the list down a
+// slot and a leave empties it, and the slots they freed used to stay, each
+// a former member's public key, radio address and name (or a survivor's
+// copy), on a flash that is not encrypted even on a fused board (spec
+// §5.5). Nothing loaded them, as load_peers reads peer_cnt entries. No list
+// held more than MAX_OPERA_SIZE (add_peer refuses past it, and the
+// duplicate entries an older re-pair appended counted against it too).
+// isKey() first: Preferences::remove() of a key that is not there logs an
+// error-level line (nvs_erase_key fails NOT_FOUND), so a save that frees no
+// slot reads each one and writes nothing.
 static bool persist_peers() {
   g_prefs.begin(NVS_NS, false);
   g_prefs.putUChar(NVS_PEER_COUNT, g_peer_count);
 
-  for (uint8_t i = 0; i < g_peer_count; i++) {
+  for (uint8_t i = 0; i < MAX_OPERA_SIZE; i++) {
     char key[16];
     snprintf(key, sizeof(key), "%s%d", NVS_PEER_PREFIX, i);
+
+    if (i >= g_peer_count) {
+      if (g_prefs.isKey(key)) g_prefs.remove(key);
+      continue;
+    }
 
     // Store pubkey + mac + name
     uint8_t peer_data[PUBKEY_SIZE + 6 + MAX_PEER_NAME_LEN];
@@ -2561,6 +2577,11 @@ static bool remove_peer(const uint8_t* fingerprint) {
       }
 
       persist_peers();
+      // F137: the last-seen record lists members by fingerprint, and kept
+      // the removed one's entry until the sketch's next 5-minute save.
+      // Saved now, as the survivors stand (with none, the key goes); what
+      // this device last heard from the removed member is its tombstone.
+      (void)save_replay_counters();
 
       // F33 (spec §5.6): refused re-entry for REVOCATION_GRACE_MS.
       mesh_revocation::add(g_revoked, removed_fp, millis());
@@ -2704,6 +2725,9 @@ static bool leave_opera() {
   // (sweep F113; they were stored as zeros and loaded back as an opera).
   persist_opera_config();
   persist_peers();
+  // F137: with no member left the last-seen record goes now, not at the
+  // sketch's next 5-minute save; each member heard has its tombstone.
+  (void)save_replay_counters();
 
   g_mesh_state = MESH_NO_OPERA;
   return true;
@@ -3264,6 +3288,36 @@ bool load_replay_counters() {
 // counters at every boot of an FE-off board.
 // ════════════════════════════════════════════════════════════════════════════
 
+// With no member left (the last one removed, or a leave) the record is
+// kept for one number: a member added later starts past every counter this
+// device can have signed (F99, add_peer), and a boot reads that from it with
+// no member loaded. It used to be left as the last save wrote it, every
+// entry a former member's fingerprint (sweep F137), which the reader never
+// reads: load_tx_reservations takes the highest counter of any entry. So it
+// is written again as one entry under an all-zero fingerprint, holding
+// g_tx_high_signed: every counter spent this boot and the highest
+// reservation the boot read back (an unreadable record's floor included),
+// so past every counter signed, which is all a new member's start needs
+// (past what was signed, not what was reserved, as add_peer has it). A
+// record already in that form costs no write; none (nothing ever reserved)
+// stays none. True when the record says it, or there is none.
+static bool persist_tx_floor_without_members() {
+  uint8_t floor_entry[TX_RESERVE_ENTRY_SIZE] = {};
+  memcpy(floor_entry + FINGERPRINT_SIZE, &g_tx_high_signed, sizeof(uint64_t));
+  Preferences prefs;
+  if (!prefs.begin(NVS_NS, false)) return false;
+  bool ok = true;
+  if (prefs.isKey(NVS_TX_RESERVED)) {
+    uint8_t blob[MAX_OPERA_SIZE * TX_RESERVE_ENTRY_SIZE];
+    const size_t got = prefs.getBytes(NVS_TX_RESERVED, blob, sizeof(blob));
+    if (got != sizeof(floor_entry) || memcmp(blob, floor_entry, sizeof(floor_entry)) != 0) {
+      ok = prefs.putBytes(NVS_TX_RESERVED, floor_entry, sizeof(floor_entry)) == sizeof(floor_entry);
+    }
+  }
+  prefs.end();
+  return ok;
+}
+
 // Both use their own Preferences handle, not g_prefs: this runs on the send
 // path, which remove_peer() reached from the REST handler's task when this
 // was written, and a Preferences object another task has begun refuses a
@@ -3273,7 +3327,7 @@ bool load_replay_counters() {
 // Preferences::putBytes returns the length only after nvs_commit succeeds,
 // on both cores canary-wap builds.
 static bool persist_tx_reservations() {
-  if (g_peer_count == 0) return true;   // nothing to hold; an old record is harmless
+  if (g_peer_count == 0) return persist_tx_floor_without_members();
   uint8_t blob[MAX_OPERA_SIZE * TX_RESERVE_ENTRY_SIZE];
   size_t n = 0;
   for (uint8_t i = 0; i < g_peer_count; i++) {

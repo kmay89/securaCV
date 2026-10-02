@@ -60,6 +60,7 @@
 #pragma GCC diagnostic pop
 #include "mesh_net_sim.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -2197,6 +2198,187 @@ void test_a_reflashed_device_with_a_new_key_is_heard_at_once() {
   std::printf("PASS a_reflashed_device_with_a_new_key_is_heard_at_once\n");
 }
 
+// ── F137: a member dropped from the table leaves nothing that names it ──
+//
+// persist_peers() wrote peer_cnt and peer_0..peer_<n-1> and removed no key:
+// after a removal the last slot's old entry stayed (a public key, radio
+// address and name: the removed member's, or a survivor's copy one slot
+// up), and after a leave every slot did (host-probed on #1762's harness:
+// after A removed C, peer_1 was still in A's NVS; after A left, peer_0
+// was). Nothing loaded them (load_peers reads peer_cnt entries), but they
+// named the household's former members on a flash that is not encrypted
+// even on a fused board (spec §5.5). The same went for the two counter
+// records, by fingerprint: "replay_ctrs" kept a removed member's entry
+// until the sketch's next 5-minute save, and "tx_ctrs" kept every former
+// member's after the last one went (it is not rewritten with no member, so
+// a member added later starts past the counters it holds, F99).
+//
+// What a dropped member leaves on purpose, by fingerprint only: its entry
+// in the deny-list (spec §5.6, 7 days, flash-encryption gated) when it was
+// removed, and its last-seen tombstone (F116) when it was heard.
+
+// The "mesh/peer_<i>" slots `d`'s NVS holds.
+std::vector<int> peer_slots(const Device& d) {
+  std::vector<int> out;
+  for (int i = 0; i < 64; ++i) {
+    if (d.nvs.count("mesh/peer_" + std::to_string(i)) != 0) out.push_back(i);
+  }
+  return out;
+}
+
+// The keys of `d`'s NVS whose value holds `bytes`.
+std::vector<std::string> keys_holding(const Device& d, const uint8_t* bytes, size_t n) {
+  std::vector<std::string> out;
+  for (const auto& kv : d.nvs) {
+    const std::vector<uint8_t>& v = kv.second;
+    if (std::search(v.begin(), v.end(), bytes, bytes + n) != v.end()) out.push_back(kv.first);
+  }
+  return out;
+}
+
+std::vector<std::string> keys_holding_fingerprint(const Device& d, const Device& of) {
+  uint8_t fp[mn::FINGERPRINT_SIZE];
+  mn::compute_fingerprint(of.pub, fp);
+  return keys_holding(d, fp, sizeof fp);
+}
+
+// Does slot `slot` of `d`'s stored list hold `member` (key, then address)?
+bool slot_holds(const Device& d, int slot, const Device& member) {
+  const std::vector<uint8_t> v = nvs_value(d, "mesh/peer_" + std::to_string(slot));
+  return v.size() >= mn::PUBKEY_SIZE + 6 && memcmp(v.data(), member.pub, mn::PUBKEY_SIZE) == 0 &&
+         memcmp(v.data() + mn::PUBKEY_SIZE, member.mac, 6) == 0;
+}
+
+// The send-counter record as one entry under no member's fingerprint: what
+// a device with no member left stores (F137). Returns its counter, or 0
+// when the record is anything else.
+uint64_t anonymous_tx_record(const Device& d) {
+  const std::vector<uint8_t> v = nvs_value(d, kTxKey);
+  if (v.size() != mn::FINGERPRINT_SIZE + 8) return 0;
+  if (!all_zero(v.data(), mn::FINGERPRINT_SIZE)) return 0;
+  uint64_t c = 0;
+  memcpy(&c, v.data() + mn::FINGERPRINT_SIZE, 8);
+  return c;
+}
+
+void test_a_removed_member_leaves_no_slot_behind() {
+  // A holds B, C and J (slots 0, 1, 2) and has heard each; the sketch's
+  // 5-minute save has stored what it heard.
+  fresh_opera({&A, &B, &C, &J});
+  heard_heartbeats(A, B, 3);
+  heard_heartbeats(A, C, 3);
+  heard_heartbeats(A, J, 3);
+  become(A);
+  CHECK(mn::save_replay_counters());
+  CHECK((peer_slots(A) == std::vector<int>{0, 1, 2}));
+  const unsigned errors = host_sim::nvs_error_logs;
+  host_sim::nvs_removes.clear();
+
+  // The member in the first slot goes: the others move down a slot.
+  remove_member(A, B);
+  CHECK(nvs_peer_count(A) == 2);
+  CHECK((peer_slots(A) == std::vector<int>{0, 1}));      // peer_2 stayed
+  CHECK(slot_holds(A, 0, C) && slot_holds(A, 1, J));
+  CHECK(keys_holding(A, B.pub, sizeof B.pub).empty());  // B's key nowhere
+  CHECK(keys_holding(A, B.mac, sizeof B.mac).empty());  // nor its address
+  CHECK((keys_holding_fingerprint(A, B) == std::vector<std::string>{"mesh/revoked", "mesh/rx_tombs"}));
+  CHECK(host_sim::nvs_removes["mesh/peer_2"] == 1);
+
+  // The one in the last slot goes.
+  remove_member(A, J);
+  CHECK(nvs_peer_count(A) == 1);
+  CHECK((peer_slots(A) == std::vector<int>{0}));         // peer_1 stayed
+  CHECK(slot_holds(A, 0, C));
+  CHECK(keys_holding(A, J.pub, sizeof J.pub).empty());
+  CHECK(keys_holding(A, J.mac, sizeof J.mac).empty());
+  CHECK((keys_holding_fingerprint(A, J) == std::vector<std::string>{"mesh/revoked", "mesh/rx_tombs"}));
+
+  // A boot loads the one member left, and only it.
+  boot(A);
+  become(A);
+  CHECK(mn::g_peer_count == 1);
+  CHECK(entry(A, C) != nullptr);
+  CHECK(hears_next_heartbeat(A, C));
+  // A save that frees no slot removes nothing (and asks NVS to remove no
+  // key that is not there, which Preferences logs as an error).
+  host_sim::nvs_removes.clear();
+  become(A);
+  CHECK(mn::persist_peers());
+  CHECK(host_sim::nvs_removes.empty());
+  CHECK(host_sim::nvs_error_logs == errors);
+  std::printf("PASS a_removed_member_leaves_no_slot_behind\n");
+}
+
+void test_a_device_that_left_holds_no_member() {
+  // C was heard (it leaves a tombstone, F116), B never was (none).
+  fresh_opera({&A, &B, &C});
+  for (int i = 0; i < 4; ++i) CHECK(frame_to(A, B));     // A has signed counters
+  heard_heartbeats(A, C, 5);
+  become(A);
+  CHECK(mn::save_replay_counters());
+  const unsigned errors = host_sim::nvs_error_logs;
+  CHECK(mn::leave_opera());                              // its LEAVE_OPERA frames spend counters too
+  const uint64_t signed_high = mn::g_tx_high_signed;
+  CHECK(signed_high >= 4);
+  CHECK(nvs_peer_count(A) == 0);
+  CHECK(peer_slots(A).empty());                          // peer_0 and peer_1 stayed
+  for (const Device* d : {&B, &C}) {
+    CHECK(keys_holding(A, d->pub, sizeof d->pub).empty());
+    CHECK(keys_holding(A, d->mac, sizeof d->mac).empty());
+  }
+  CHECK(keys_holding_fingerprint(A, B).empty());         // was in tx_ctrs and replay_ctrs
+  CHECK((keys_holding_fingerprint(A, C) == std::vector<std::string>{"mesh/rx_tombs"}));
+  CHECK(!nvs_has(A, "replay_ctrs"));                     // no member, no last-seen record
+  // The send-counter record stays, for the counter a member added later
+  // starts past (F99), under no member's fingerprint.
+  CHECK(anonymous_tx_record(A) == signed_high);
+  CHECK(host_sim::nvs_error_logs == errors);
+
+  // Nothing comes back at a boot, and a new pairing starts past every
+  // counter A signed.
+  boot(A);
+  become(A);
+  CHECK(mn::g_peer_count == 0);
+  CHECK(mn::g_tx_high_signed == signed_high);
+  mn::set_enabled(true);
+  fresh_device(J);
+  re_pair(A, J);
+  CHECK(entry(A, J)->msg_counter_tx > signed_high);
+  CHECK(hears_next_heartbeat(J, A));
+  std::printf("PASS a_device_that_left_holds_no_member\n");
+}
+
+void test_removing_the_last_member_keeps_only_the_counter_floor() {
+  // The last member goes: no rotation, no survivor. Its fingerprint stays
+  // in the deny-list and its tombstone, the record keeps the counter
+  // floor under no fingerprint, and a reboot and a re-pair start the
+  // member above everything A signed it.
+  fresh_opera({&A, &B});
+  for (int i = 0; i < 6; ++i) CHECK(frame_to(A, B));
+  deliver(B, A.mac, sent_to(A, B.mac).back());
+  heard_heartbeats(A, B, 2);
+  become(A);
+  CHECK(mn::save_replay_counters());
+  const uint64_t signed_high = mn::g_tx_high_signed;
+  remove_member(A, B);
+  CHECK(peer_slots(A).empty());
+  CHECK(keys_holding(A, B.pub, sizeof B.pub).empty());
+  CHECK((keys_holding_fingerprint(A, B) == std::vector<std::string>{"mesh/revoked", "mesh/rx_tombs"}));
+  CHECK(!nvs_has(A, "replay_ctrs"));
+  CHECK(anonymous_tx_record(A) == signed_high);
+  // Saved again with nothing new to say, the record is not rewritten.
+  host_sim::nvs_writes.clear();
+  become(A);
+  CHECK(mn::persist_peers());
+  CHECK(host_sim::nvs_writes[kTxKey] == 0);
+  boot(A);
+  past_the_grace(A);
+  re_pair(A, B);
+  CHECK(entry(A, B)->msg_counter_tx > signed_high);
+  CHECK(hears_next_heartbeat(B, A));
+  std::printf("PASS removing_the_last_member_keeps_only_the_counter_floor\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -2302,6 +2484,10 @@ const Test kTests[] = {
      test_a_device_whose_counters_went_back_is_released_by_a_second_removal},
     {"a_reflashed_device_with_a_new_key_is_heard_at_once",
      test_a_reflashed_device_with_a_new_key_is_heard_at_once},
+    {"a_removed_member_leaves_no_slot_behind", test_a_removed_member_leaves_no_slot_behind},
+    {"a_device_that_left_holds_no_member", test_a_device_that_left_holds_no_member},
+    {"removing_the_last_member_keeps_only_the_counter_floor",
+     test_removing_the_last_member_keeps_only_the_counter_floor},
 };
 
 }  // namespace liveness

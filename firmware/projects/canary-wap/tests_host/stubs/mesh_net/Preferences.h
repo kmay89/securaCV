@@ -10,7 +10,18 @@
  * putBytes (or a null value) is refused the same way and writes nothing,
  * as the real one's `!value || !len` guard has it: the old value stays.
  * putString("") does store an empty value (nvs_set_str stores ""), and
- * returns strlen, 0. */
+ * returns strlen, 0.
+ *
+ * remove() and isKey() follow Arduino-ESP32's Preferences.cpp, which is
+ * byte-identical in 3.3.8 (PlatformIO's pin) and 3.3.12 (the latest 3.x
+ * tag when sweep F137 read it): remove() refuses a read-only handle or a
+ * null key before NVS sees it (false, nothing logged), and otherwise calls
+ * nvs_erase_key(), which answers ESP_ERR_NVS_NOT_FOUND for a key that is
+ * not there; Preferences logs that at error level ("nvs_erase_key fail")
+ * and returns false. Each such line counts in host_sim::nvs_error_logs, and
+ * each key it did remove in host_sim::nvs_removes ("<namespace>/<key>").
+ * isKey() logs nothing, and is false for a key longer than NVS's 15
+ * characters. */
 #ifndef STUB_MESH_NET_PREFERENCES_H
 #define STUB_MESH_NET_PREFERENCES_H
 
@@ -25,6 +36,8 @@ using NvsStore = std::map<std::string, std::vector<uint8_t>>;
 inline NvsStore default_nvs;
 inline NvsStore* nvs = &default_nvs;
 inline std::map<std::string, unsigned> nvs_writes;
+inline std::map<std::string, unsigned> nvs_removes;
+inline unsigned nvs_error_logs = 0;
 inline bool nvs_writes_fail = false;
 }  // namespace host_sim
 
@@ -36,10 +49,19 @@ class Preferences {
     return true;
   }
   void end() {}
-  bool isKey(const char* key) { return host_sim::nvs->count(k(key)) != 0; }
+  bool isKey(const char* key) {
+    if (key == nullptr || strlen(key) > 15) return false;
+    return host_sim::nvs->count(k(key)) != 0;
+  }
   bool remove(const char* key) {
-    if (!ro_) host_sim::note_side_effect();
-    return !ro_ && host_sim::nvs->erase(k(key)) != 0;
+    if (ro_ || key == nullptr) return false;
+    host_sim::note_side_effect();
+    if (host_sim::nvs->erase(k(key)) == 0) {
+      ++host_sim::nvs_error_logs;   // log_e("nvs_erase_key fail: %s %s", key, ...)
+      return false;
+    }
+    ++host_sim::nvs_removes[k(key)];
+    return true;
   }
   size_t putBytes(const char* key, const void* v, size_t n) {
     if (v == nullptr || n == 0) return 0;   // refused before nvs_set_blob
