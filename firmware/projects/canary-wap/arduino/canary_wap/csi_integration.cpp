@@ -52,7 +52,8 @@
 #include <csi_types.h>
 #include <csi_module.h>
 #include "csi_module_settings_nvs.h"  // the module settings' NVS rule, shared with the canary (F93)
-#include "csi_settings_nvs.h"         // the modules' boot init (F93)
+#include "csi_settings_nvs.h"         // the modules' boot init (F93); stored Quiet Hours (F123, F128)
+#include "csi_tune_lab.h"             // the Tuning Lab's knobs and its POST (F123, F128)
 #include <csi_event.h>
 #include "csi_event_id_floor.h"   // when to write the id floor (common/csi, host-tested)
 #include <csi_bundler.h>          // snapshot_open() — live rows for /api/events/today
@@ -437,21 +438,12 @@ void reinit_module(const char* module_id) {
   if (m->init)   m->init(nullptr);
 }
 
-/* Read the persisted Quiet Hours range from NVS and push it into the
- * chokepoint. Called both at boot (register_v1_modules) and on
- * /api/settings POST. Defaults match the dashboard's UI defaults
- * (23:00 → 07:00) so a never-set device is congruent with what a
- * fresh installer sees. The chokepoint setter is a pure state update
- * — held-summary flushing happens on the next emit, not here. */
-void apply_quiet_hours_from_nvs() {
-  Preferences qprefs;
-  if (!qprefs.begin(SETTINGS_NS, /*readOnly=*/true)) return;
-  const bool    qh_en    = qprefs.getBool("qh.en",    false);
-  const int32_t qh_start = qprefs.getInt ("qh.start", 23 * 60);
-  const int32_t qh_end   = qprefs.getInt ("qh.end",    7 * 60);
-  qprefs.end();
-  csi_event_set_quiet_window((uint16_t)qh_start, (uint16_t)qh_end, qh_en);
-}
+/* The stored Quiet Hours and their apply to the chokepoint
+ * (apply_quiet_hours_from_nvs(), read_quiet_hours() and the one default
+ * they share, 23:00 to 07:00, off) are csi_settings_nvs.cpp's, which a host
+ * suite compiles (sweeps F123, F128). Called at boot (register_v1_modules),
+ * on a Quiet Hours change through /api/settings, and by the Tuning Lab's
+ * POST (tune_post()). */
 
 /* Household time zone (repo sweep F28). NVS "csi"/"tz" holds the POSIX rule;
  * "tz.iana" the IANA name it was mapped from (for the dashboard to show), and
@@ -1055,9 +1047,9 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
   const bool    pet_mode    = prefs.getBool("cp.pet_mode", false);
   const int32_t preset_idx  = prefs.getInt ("cp.preset",   1);   // default balanced
   const int32_t sensitivity = prefs.getInt ("cp.sens",     50);  // default neutral
-  const bool    qh_enabled  = prefs.getBool("qh.en",       false);
-  const int32_t qh_start    = prefs.getInt ("qh.start",    23 * 60);  // 11 PM default
-  const int32_t qh_end      = prefs.getInt ("qh.end",       7 * 60);  //  7 AM default
+  /* Quiet Hours through the one reader, with the one default the
+   * chokepoint and the Tuning Lab use too (sweep F123). */
+  const QuietHours qh       = read_quiet_hours(prefs);
   /* Privacy ceiling: persisted P0/P1/P2 choice (default P0 = anti-snitch).
    * Read separately from the in-memory chokepoint state (which apply_*
    * keeps in sync) so we always echo what's on disk, not what the
@@ -1094,7 +1086,7 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
      "\"privacy_ceiling\":\"%s\",\"filter_foreign\":%s,"
      "\"tz\":\"%s\",\"tz_iana\":\"%s\"}",
     pet_mode ? "true" : "false", preset_str, (long)sensitivity,
-    qh_enabled ? "true" : "false", (long)qh_start, (long)qh_end,
+    qh.enabled ? "true" : "false", (long)qh.start_min, (long)qh.end_min,
     privacy_str, filter_foreign ? "true" : "false", tz, tz_iana);
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, buf, -1);
@@ -1492,107 +1484,11 @@ esp_err_t handle_sense_page(httpd_req_t* req) {
  * tinkerer can ship a baseline between devices or back up before
  * experiments.
  *
- * Why a separate metadata table next to the key map?
- *   The key map only knows the (full_key, nvs_key) pair — it can't
- *   render a slider on its own. The metadata below adds the bits the
- *   UI needs (label, kind, range, default) and the bit the POST
- *   handler needs (which module to reinit). Adding a coefficient is a
- *   row here and a row in the shared key map (which the canary reads
- *   by too).
+ * The knobs' table (TUNE_COEFFS: label, kind, range, default, what a change
+ * applies) and the POST's store-and-apply (tune_post()) are
+ * csi_tune_lab.cpp's, which a host suite compiles (sweeps F123, F128);
+ * these handlers are the HTTP around them.
  * ────────────────────────────────────────────────────────────────────────── */
-
-enum TuneKind { TK_INT, TK_BOOL, TK_MINUTES };
-
-struct TuneCoeff {
-  const char* full_key;       /* e.g. "core.presence.preset" */
-  const char* group;          /* "core.presence" */
-  const char* label;          /* short human label for the slider */
-  TuneKind    kind;           /* INT | BOOL | MINUTES (HH:MM render) */
-  int32_t     min_v;
-  int32_t     max_v;
-  int32_t     default_v;
-  const char* reinit_module;  /* module id to reinit on change ("" = none) */
-};
-
-const TuneCoeff TUNE_COEFFS[] = {
-  /* Presence — preset (0=sensitive,1=balanced,2=quiet) + sensitivity slider
-   * map onto the three direct thresholds; exposing all five lets a
-   * tuner pin individual values without the preset overriding them. */
-  { "core.presence.preset",              "core.presence",  "Preset (0=sensitive 1=balanced 2=quiet)", TK_INT,     0,    2,    1,  "core.presence" },
-  { "core.presence.sensitivity",         "core.presence",  "Sensitivity (0..100)",                     TK_INT,     0,    100,  50, "core.presence" },
-  { "core.presence.motion_threshold",    "core.presence",  "Motion threshold",                          TK_INT,     5,    120,  35, "core.presence" },
-  { "core.presence.active_threshold",    "core.presence",  "Active threshold",                          TK_INT,     5,    120,  75, "core.presence" },
-  { "core.presence.breathing_threshold", "core.presence",  "Breathing threshold",                       TK_INT,     5,    120,  30, "core.presence" },
-  { "core.presence.pet_mode",            "core.presence",  "Pet mode",                                  TK_BOOL,    0,    1,    0,  "core.presence" },
-  { "core.presence.pet_mode_seconds",    "core.presence",  "Pet-mode confirm window (sec)",             TK_INT,     5,    120,  30, "core.presence" },
-  /* Multipath shimmer rejection — large RSSI swing without Doppler is
-   * reflection noise, not motion. Defaults mirror core_presence.cpp. */
-  { "core.presence.shimmer_enabled",     "core.presence",  "Shimmer rejection enabled",                 TK_BOOL,    0,    1,    1,  "core.presence" },
-  { "core.presence.shimmer_rssi_swing",  "core.presence",  "Shimmer RSSI swing threshold (dB)",         TK_INT,     1,    50,   8,  "core.presence" },
-  { "core.presence.shimmer_doppler_floor","core.presence", "Shimmer Doppler floor",                     TK_INT,     1,    120,  30, "core.presence" },
-
-  /* Breathing — Goertzel band lock parameters. */
-  { "core.breathing.lock_threshold",     "core.breathing", "Lock threshold",                            TK_INT,     5,    120,  30, "core.breathing" },
-  { "core.breathing.confirm_seconds",    "core.breathing", "Confirm window (sec)",                      TK_INT,     5,    60,   20, "core.breathing" },
-
-  /* Quiet hours — minutes-of-day window the dashboard dims and future
-   * notification paths can suppress against. */
-  { "core.quiet_hours.enabled",          "core.quiet_hours","Enabled",                                  TK_BOOL,    0,    1,    0,  "" },
-  { "core.quiet_hours.start_min",        "core.quiet_hours","Start",                                    TK_MINUTES, 0,    1439, 0,  "" },
-  { "core.quiet_hours.end_min",          "core.quiet_hours","End",                                      TK_MINUTES, 0,    1439, 480,"" },
-
-  /* Anomaly baseline — out-of-pattern detector envelope. The runtime
-   * clamps these inside the module on read; the UI mirrors the same
-   * envelope so a tuner can't accidentally pick a value the runtime
-   * will silently round off. */
-  { "anomaly.baseline.spike_ratio",      "anomaly.baseline","Spike ratio (× baseline, 100 = 1.0×)",    TK_INT,     110,  1000, 250,"anomaly.baseline" },
-  { "anomaly.baseline.min_motion",       "anomaly.baseline","Motion floor",                            TK_INT,     1,    100,  60, "anomaly.baseline" },
-  { "anomaly.baseline.min_breathing",    "anomaly.baseline","Breathing floor",                         TK_INT,     1,    100,  50, "anomaly.baseline" },
-  { "anomaly.baseline.cooldown_sec",     "anomaly.baseline","Per-channel cooldown (sec)",              TK_INT,     30,   3600, 600,"anomaly.baseline" },
-};
-
-const TuneCoeff* tune_coeff_for(const char* full_key) {
-  if (!full_key) return nullptr;
-  for (const TuneCoeff& c : TUNE_COEFFS) {
-    if (strcmp(c.full_key, full_key) == 0) return &c;
-  }
-  return nullptr;
-}
-
-int32_t tune_clamp(const TuneCoeff& c, int32_t v) {
-  if (v < c.min_v) return c.min_v;
-  if (v > c.max_v) return c.max_v;
-  return v;
-}
-
-/* Read the persisted value for one coefficient, or fall back to its
- * declared default. The declared default mirrors what each module
- * passes as its `csi_module_settings_int default` argument; if a value
- * has never been written, GET should still return that exact default
- * so the slider position matches what the module would actually use.
- *
- * Defensive guard: if a TuneCoeff is ever added without a matching
- * key-map row, nvs_key_for() returns nullptr and we fall back to
- * the declared default rather than passing NULL into Preferences. */
-int32_t tune_read_value(Preferences& prefs, const TuneCoeff& c) {
-  const char* nvs = nvs_key_for(c.full_key);
-  if (!nvs) return c.default_v;
-  if (c.kind == TK_BOOL) {
-    return prefs.getBool(nvs, c.default_v != 0) ? 1 : 0;
-  }
-  return prefs.getInt(nvs, c.default_v);
-}
-
-void tune_write_value(Preferences& prefs, const TuneCoeff& c, int32_t v) {
-  const char* nvs = nvs_key_for(c.full_key);
-  if (!nvs) return;
-  v = tune_clamp(c, v);
-  if (c.kind == TK_BOOL) {
-    prefs.putBool(nvs, v != 0);
-  } else {
-    prefs.putInt(nvs, v);
-  }
-}
 
 esp_err_t handle_tune_page(httpd_req_t* req) {
   /* P2 surface. The page is a top-level navigation so we can't return
@@ -1625,7 +1521,8 @@ esp_err_t handle_tune_get_coefficients(httpd_req_t* req) {
    * even as the table grows past the 16-coefficient v1 set. */
   httpd_resp_send_chunk(req, "{\"coefficients\":[", -1);
   bool first = true;
-  for (const TuneCoeff& c : TUNE_COEFFS) {
+  for (size_t i = 0; i < TUNE_COEFF_COUNT; ++i) {
+    const TuneCoeff& c = TUNE_COEFFS[i];
     int32_t v = prefs_ok ? tune_read_value(prefs, c) : c.default_v;
     char buf[320];
     const char* kind_str = (c.kind == TK_BOOL) ? "bool"
@@ -1645,11 +1542,14 @@ esp_err_t handle_tune_get_coefficients(httpd_req_t* req) {
   return ESP_OK;
 }
 
-/* Find one or more "key":value pairs in the body and write each. The
- * parser is intentionally minimal — it walks the body looking for
- * keys we recognize from TUNE_COEFFS and a numeric or true/false RHS.
- * Any unrecognized key is silently ignored (P2; tinkerers are not
- * expected to need detailed feedback on typos). */
+/* POST /api/tune/coefficients (and /api/tune/preset, below): the body's
+ * "<full_key>": value pairs are stored and applied by tune_post()
+ * (csi_tune_lab.cpp): each module touched re-runs its init() through
+ * reinit_module(), and a Quiet Hours knob re-applies the stored window to
+ * the chokepoint (sweep F128), here on the HTTP server task as
+ * /api/settings applies its own changes. Any unrecognized key is silently
+ * ignored (P2; tinkerers are not expected to need detailed feedback on
+ * typos). */
 esp_err_t handle_tune_post_coefficients(httpd_req_t* req) {
   CSI_AUTH_OR_RETURN(req);
   httpd_resp_set_type(req, "application/json");
@@ -1672,71 +1572,20 @@ esp_err_t handle_tune_post_coefficients(httpd_req_t* req) {
   }
   body[total] = '\0';
 
-  Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) {
-    free(body);
+  const TunePost post = tune_post(body, reinit_module);
+  free(body);
+
+  if (!post.nvs_ok) {
     httpd_resp_set_status(req, "503 Service Unavailable");
     return httpd_resp_send(req, "{\"ok\":false,\"reason\":\"nvs unavailable\"}", -1);
   }
-
-  /* Track which modules we need to reinit. A small fixed set keeps
-   * us from reinit-spamming when one POST changes several coefficients
-   * that all live under the same module. */
-  bool reinit_presence  = false;
-  bool reinit_breathing = false;
-  bool reinit_anomaly   = false;
-  int  changed = 0;
-
-  for (const TuneCoeff& c : TUNE_COEFFS) {
-    /* Locate "<full_key>" in the body, then walk to the colon and
-     * the value. We require the surrounding quotes so that
-     * "core.presence.pet_mode" doesn't accidentally match
-     * "not_pet_mode" or similar substrings. */
-    char needle[80];
-    int nl = snprintf(needle, sizeof(needle), "\"%s\"", c.full_key);
-    if (nl <= 0 || nl >= (int)sizeof(needle)) continue;
-    const char* p = strstr(body, needle);
-    if (!p) continue;
-    p += nl;
-    while (*p == ' ' || *p == '\t') p++;
-    if (*p != ':') continue;
-    p++;
-    while (*p == ' ' || *p == '\t') p++;
-
-    int32_t v;
-    if (c.kind == TK_BOOL) {
-      if      (strncmp(p, "true",  4) == 0) v = 1;
-      else if (strncmp(p, "false", 5) == 0) v = 0;
-      else if (strncmp(p, "1",     1) == 0) v = 1;
-      else if (strncmp(p, "0",     1) == 0) v = 0;
-      else continue;
-    } else {
-      char* end = nullptr;
-      long n = strtol(p, &end, 10);
-      if (end == p) continue;
-      v = (int32_t)n;
-    }
-
-    tune_write_value(prefs, c, v);
-    changed++;
-    if      (strcmp(c.reinit_module, "core.presence")    == 0) reinit_presence  = true;
-    else if (strcmp(c.reinit_module, "core.breathing")   == 0) reinit_breathing = true;
-    else if (strcmp(c.reinit_module, "anomaly.baseline") == 0) reinit_anomaly   = true;
-  }
-  prefs.end();
-  free(body);
-
-  if (changed == 0) {
+  if (post.changed == 0) {
     httpd_resp_set_status(req, "400 Bad Request");
     return httpd_resp_send(req, "{\"ok\":false,\"reason\":\"no recognized keys\"}", -1);
   }
 
-  if (reinit_presence)  reinit_module("core.presence");
-  if (reinit_breathing) reinit_module("core.breathing");
-  if (reinit_anomaly)   reinit_module("anomaly.baseline");
-
   char ok[48];
-  snprintf(ok, sizeof(ok), "{\"ok\":true,\"changed\":%d}", changed);
+  snprintf(ok, sizeof(ok), "{\"ok\":true,\"changed\":%d}", post.changed);
   return httpd_resp_send(req, ok, -1);
 }
 
@@ -1759,7 +1608,8 @@ esp_err_t handle_tune_get_preset(httpd_req_t* req) {
 
   httpd_resp_send_chunk(req, "{", -1);
   bool first = true;
-  for (const TuneCoeff& c : TUNE_COEFFS) {
+  for (size_t i = 0; i < TUNE_COEFF_COUNT; ++i) {
+    const TuneCoeff& c = TUNE_COEFFS[i];
     int32_t v = prefs_ok ? tune_read_value(prefs, c) : c.default_v;
     char buf[160];
     int n = snprintf(buf, sizeof(buf), "%s\"%s\":%ld",

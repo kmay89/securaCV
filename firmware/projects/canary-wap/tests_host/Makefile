@@ -368,7 +368,8 @@ clean: clean-wap-egress
 # to keep its module list the device's.
 MODBOOT_BIN = test_wap_module_boot
 MODBOOT_SRC = test_wap_module_boot.cpp
-MODBOOT_LIB = $(SRC_DIR)/csi_settings_nvs.cpp $(SRC_DIR)/csi_event.cpp $(SRC_DIR)/csi_bundler.cpp \
+MODBOOT_LIB = $(SRC_DIR)/csi_settings_nvs.cpp $(SRC_DIR)/csi_tune_lab.cpp \
+              $(SRC_DIR)/csi_event.cpp $(SRC_DIR)/csi_bundler.cpp \
               $(SRC_DIR)/csi_module.cpp $(SRC_DIR)/core_presence.cpp $(SRC_DIR)/core_breathing.cpp \
               $(SRC_DIR)/core_activity_ribbon.cpp $(SRC_DIR)/meta_daily_summary.cpp \
               $(SRC_DIR)/meta_quiet_hours.cpp $(SRC_DIR)/anomaly_baseline.cpp \
@@ -377,7 +378,7 @@ MODBOOT_LIB = $(SRC_DIR)/csi_settings_nvs.cpp $(SRC_DIR)/csi_event.cpp $(SRC_DIR
               $(SRC_DIR)/tamper_events_module.cpp
 
 $(MODBOOT_BIN): $(MODBOOT_SRC) $(MODBOOT_LIB) $(SRC_DIR)/csi_module.h $(SRC_DIR)/csi_module_settings_nvs.h \
-                $(SRC_DIR)/csi_settings_nvs.h \
+                $(SRC_DIR)/csi_settings_nvs.h $(SRC_DIR)/csi_tune_lab.h \
                 $(SRC_DIR)/csi_event.h $(SRC_DIR)/csi_bundler.h $(SRC_DIR)/csi_integration.cpp \
                 $(SRC_DIR)/acoustic_events_module.cpp $(SRC_DIR)/vault_events_module.cpp $(SRC_DIR)/ble_scout.cpp \
                 $(wildcard stubs/module_boot/*.h)
@@ -392,6 +393,38 @@ clean-wap-module-boot:
 	rm -f $(MODBOOT_BIN)
 run: run-wap-module-boot
 clean: clean-wap-module-boot
+
+# The Tuning Lab and its Quiet Hours (sweeps F123, F128): the REAL
+# csi_tune_lab.cpp (the knobs' table and the POST's store-and-apply) and
+# csi_settings_nvs.cpp (the one Quiet Hours default, its reader and its
+# apply to the chokepoint), with the staged CSI library and modules over the
+# same fake NVS (stubs/module_boot). The Lab declares the device's own
+# Quiet Hours default, which the dashboard starts from too; a Quiet Hours
+# knob or bundle import applies to the chokepoint at once; every knob
+# applies to its own group. It reads csi_integration.cpp to hold its
+# handlers thin around that code (mutation-checked).
+TUNELAB_BIN = test_wap_tune_lab
+TUNELAB_SRC = test_wap_tune_lab.cpp
+TUNELAB_LIB = $(SRC_DIR)/csi_tune_lab.cpp $(SRC_DIR)/csi_settings_nvs.cpp \
+              $(SRC_DIR)/csi_event.cpp $(SRC_DIR)/csi_bundler.cpp $(SRC_DIR)/csi_module.cpp \
+              $(SRC_DIR)/core_presence.cpp $(SRC_DIR)/core_breathing.cpp \
+              $(SRC_DIR)/anomaly_baseline.cpp $(SRC_DIR)/meta_quiet_hours.cpp
+
+$(TUNELAB_BIN): $(TUNELAB_SRC) $(TUNELAB_LIB) $(SRC_DIR)/csi_tune_lab.h $(SRC_DIR)/csi_settings_nvs.h \
+                $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/csi_module.h $(SRC_DIR)/csi_event.h \
+                $(SRC_DIR)/csi_integration.cpp $(SRC_DIR)/csi_dashboard_html.h \
+                $(wildcard stubs/module_boot/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
+	  -I stubs/module_boot -I $(SRC_DIR) -o $@ $(TUNELAB_SRC) $(TUNELAB_LIB)
+
+.PHONY: run-wap-tune-lab clean-wap-tune-lab
+run-wap-tune-lab: $(TUNELAB_BIN)
+	$(call run_marked,$(TUNELAB_BIN))
+clean-wap-tune-lab:
+	rm -f $(TUNELAB_BIN)
+run: run-wap-tune-lab
+clean: clean-wap-tune-lab
 
 # The differential-privacy budget (dp.h / dp.cpp) is enforced and fails
 # closed: all-or-nothing reservations, value-independent refusals, exact

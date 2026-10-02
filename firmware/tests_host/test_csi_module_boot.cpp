@@ -205,7 +205,7 @@ static int test_stored_sensitivity_and_thresholds_apply_at_boot() {
 // "sensitive" preset (25) keeps the preset from lowering it. A canary-wap
 // image stores all three thresholds on a calibration apply, a Tuning Lab
 // reset (its TUNE_COEFFS defaults, 35 / 75 / 30, as rows; the canary-wap's
-// test_wap_module_boot.cpp reads them from the source) or a bundle import,
+// test_wap_module_boot.cpp reads them from its real table) or a bundle import,
 // and a board with those rows reads like the balanced default whatever its
 // preset row says. The precedence predates F93; this pins what the docs and
 // the CHANGELOG say about it. The first case fails on the canary before F93

@@ -57,6 +57,7 @@
 #include "csi_module.h"
 #include "csi_module_settings_nvs.h"
 #include "csi_settings_nvs.h"
+#include "csi_tune_lab.h"
 
 #include "anomaly_baseline.h"
 #include "ble_events_module.h"
@@ -225,17 +226,14 @@ static int test_saved_thresholds_and_pet_mode_apply_at_boot() {
   return 0;
 }
 
-// The Tuning Lab's default for a coefficient, read from TUNE_COEFFS: the
-// value its per-row "reset" and "Reset all" POST (tune_ui.h), which
-// tune_write_value() stores as a row like any other. -1 if absent.
+// The Tuning Lab's default for a coefficient, from the real TUNE_COEFFS
+// (csi_tune_lab.cpp): the value its per-row "reset" and "Reset all" POST
+// (tune_ui.h), which tune_write_value() stores as a row like any other. -1
+// if absent.
 static std::string read_source(const char* name);
-static int32_t tune_default_of(const std::string& integ, const char* full_key) {
-  // { "<key>", "<group>", "<label>", TK_*, min, max, default, "<reinit>" },
-  const std::string row = std::string(R"(\{\s*")") + full_key +
-                          R"("\s*,\s*"[^"]*"\s*,\s*"[^"]*"\s*,\s*\w+\s*,\s*-?\d+\s*,\s*-?\d+\s*,\s*(-?\d+)\s*,)";
-  std::smatch m;
-  if (!std::regex_search(integ, m, std::regex(row))) return -1;
-  return (int32_t)std::stol(m[1].str());
+static int32_t tune_default_of(const char* full_key) {
+  const TuneCoeff* c = tune_coeff_for(full_key);
+  return c != nullptr ? c->default_v : -1;
 }
 
 // A threshold stored directly wins over the saved preset and sensitivity,
@@ -262,20 +260,18 @@ static int test_a_stored_threshold_wins_over_the_saved_preset() {
 
   // "sensitive" beside the rows the Tuning Lab's reset buttons store: the
   // device's own TUNE_COEFFS defaults, the balanced thresholds.
-  const std::string integ = read_source("csi_integration.cpp");
-  CHECK(!integ.empty());
   const char* const kThresholds[] = {"core.presence.motion_threshold",
                                      "core.presence.active_threshold",
                                      "core.presence.breathing_threshold"};
   host_prefs().clear();
   store_int("cp.preset", 0);
   for (const char* full : kThresholds) {
-    const int32_t d = tune_default_of(integ, full);
+    const int32_t d = tune_default_of(full);
     CHECK(d > 0);
     CHECK(nvs::nvs_key_for(full) != nullptr);
     store_int(nvs::nvs_key_for(full), d);
   }
-  CHECK(tune_default_of(integ, "core.presence.motion_threshold") == 35);
+  CHECK(tune_default_of("core.presence.motion_threshold") == 35);
   reboot_and_boot();
   hold(window_of(30));
   CHECK(presence_open("empty"));              // sensitive alone reads "subtle"

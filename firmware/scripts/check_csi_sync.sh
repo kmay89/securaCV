@@ -48,11 +48,13 @@ for dst in "$STAGED"/csi_*.h "$STAGED"/csi_*.cpp \
     # of the firmware/common/csi library. csi_integration is the host-side
     # wiring; csi_dashboard_html is the headline UI; csi_mqtt is the
     # optional Home Assistant bridge; csi_settings_nvs holds the sketch's
-    # Preferences-backed csi_module_settings_* overrides and the modules'
-    # boot init (sweep F93) — none of these are portable across consumers
-    # of the CSI library, so they live next to the sketch only.
+    # Preferences-backed csi_module_settings_* overrides, the modules'
+    # boot init (sweep F93) and the stored Quiet Hours (F123, F128);
+    # csi_tune_lab holds the Tuning Lab's knobs and its POST (F123, F128) —
+    # none of these are portable across consumers of the CSI library, so
+    # they live next to the sketch only.
     case "$name" in
-        csi_integration.h|csi_integration.cpp|csi_dashboard_html.h|csi_mqtt.h|csi_mqtt.cpp|csi_event_log.h|csi_event_log.cpp|csi_event_egress.h|csi_event_egress.cpp|csi_settings_nvs.h|csi_settings_nvs.cpp) continue ;;
+        csi_integration.h|csi_integration.cpp|csi_dashboard_html.h|csi_mqtt.h|csi_mqtt.cpp|csi_event_log.h|csi_event_log.cpp|csi_event_egress.h|csi_event_egress.cpp|csi_settings_nvs.h|csi_settings_nvs.cpp|csi_tune_lab.h|csi_tune_lab.cpp) continue ;;
     esac
     if [ ! -f "$CANONICAL/$name" ]; then
         echo "::error::Stale staged file (no canonical source): $dst"

@@ -131,9 +131,10 @@ footer code{background:var(--card-hi);padding:1px 5px;border-radius:4px}
 <footer>
   <strong>Notes.</strong>
   Settings are read with <code>csi_module_settings_int / _bool</code>; the host
-  override at <code>csi_integration.cpp</code> backs them with NVS via Preferences.
-  Each POST triggers a re-init of the affected module so the new value lands on
-  the next tick. The presets file is plain JSON: <code>{ "&lt;full.key&gt;": &lt;value&gt;, ... }</code>.
+  override in <code>csi_settings_nvs.cpp</code> backs them with NVS via Preferences.
+  Each POST re-runs the affected module's init, or re-applies Quiet Hours, so the
+  new value lands on the next tick. The presets file is plain, unsigned JSON:
+  <code>{ "&lt;full.key&gt;": &lt;value&gt;, ... }</code>.
   Open <code>/tune?tune=1</code> from anywhere to land here.
 </footer>
 
