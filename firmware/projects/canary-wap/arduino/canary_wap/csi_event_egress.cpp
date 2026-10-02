@@ -16,6 +16,8 @@
 #include "csi_event_log.h"
 #include "csi_integration.h"
 #include "csi_mqtt.h"
+#include "loop_command_ring.h"   /* PortMuxLock, for the stats snapshot */
+#include "loop_snapshot.h"       /* the counters other tasks read (F149) */
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -190,6 +192,9 @@ State*        g_state = nullptr;
  * task: published with release/acquire. */
 QueueHandle_t s_queue = nullptr;
 uint32_t      s_dropped = 0;   /* atomic add from the committing task */
+/* The counters as the last pump left them, for other tasks (read_stats(),
+ * sweep F149): pump() publishes, the loop task being the one writer. */
+loop_snapshot::Value<Stats, loop_command_ring::PortMuxLock> s_stats_view;
 
 AppendResult WapPort::card_append(const char* line, size_t len) {
   /* A row the card does not keep (a closed bundle, or a row from the RAM
@@ -500,6 +505,9 @@ void pump() {
                   (unsigned long)st.replay_run);
     st.replay_run = 0;
   }
+
+  /* Last: what this pass did, for the tasks that may not read State. */
+  s_stats_view.publish(stats());
 }
 
 uint32_t watermark() { return g_state ? g_state->planner.watermark() : 0; }
@@ -516,6 +524,11 @@ Stats stats() {
   return s;
 }
 
+bool read_stats(Stats* out) {
+  if (out == nullptr) return false;
+  return s_stats_view.read(out);
+}
+
 #ifdef CSI_TEST_HOST_BUILD
 void test_reset() {
   if (g_state) {
@@ -528,6 +541,8 @@ void test_reset() {
     s_queue = nullptr;
   }
   s_dropped = 0;
+  /* A reboot clears RAM: nothing to read until the first pump. */
+  s_stats_view = loop_snapshot::Value<Stats, loop_command_ring::PortMuxLock>();
 }
 #endif
 

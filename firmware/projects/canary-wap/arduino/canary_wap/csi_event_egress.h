@@ -66,7 +66,9 @@
 #define SECURACV_WAP_CSI_EVENT_EGRESS_H
 
 #include <csi_event.h>
+#include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include "csi_event_backfill.h"   /* staged copy — the planner's Stats */
 
@@ -117,7 +119,59 @@ struct Stats {
                                 on the canary its offline queue can refuse one outright) */
   csi_event_backfill::Stats planner;
 };
+/* The loop task (the pump writes the counters there; csi_mqtt's egress
+ * publish reads them on it). Any other task reads read_stats(). */
 Stats stats();
+
+/* Any task (sweep F149): the counters as the last pump() left them, a whole
+ * copy (loop_snapshot.h). pump() publishes them as its last step, every
+ * pass (an unchanged copy takes no lock), so this is at most one loop pass
+ * old; `dropped`, which a committing task bumps, as of that pass. False,
+ * with *out untouched, before the first pump. GET /api/diagnostics, on the
+ * httpd task, reads this, never stats(). */
+bool read_stats(Stats* out);
+
+/* Thirteen u32 counters and nothing else: no padding for a snapshot's
+ * byte compare to trip on, and a counter added to Stats or to the
+ * planner's fails here until stats_json() below spells it. */
+static_assert(sizeof(csi_event_backfill::Stats) == 9 * sizeof(uint32_t),
+              "the planner's Stats changed: add the counter to stats_json()");
+static_assert(sizeof(Stats) == 13 * sizeof(uint32_t),
+              "Stats changed: add the counter to stats_json()");
+
+/* The counters as one JSON object, in the names the canary PIO tree's MQTT
+ * health spells its `csi_event_egress` object with (sweep F109), so a host
+ * reads both devices with one parser:
+ *   {"dropped":N,"held_dropped":N,"ambient_dropped":N,"unsent_dropped":N,
+ *    "planner":{"live":N,"held":N,"queued":N,"replayed":N,"skipped":N,
+ *               "untrusted":N,"unsendable":N,"truncated_unsent":N,
+ *               "read_giveups":N}}
+ * The canary-wap's MQTT `egress` topic (csi_mqtt::publish_egress) carries
+ * it as its whole body, and GET /api/diagnostics as `csi_event_egress`.
+ * kStatsJsonMax holds it with every counter at 4294967295 (319 bytes and
+ * the NUL). Returns its length, or 0 (and `out` holds no partial object)
+ * when it does not fit `cap`. Pure: any task, any copy. */
+constexpr size_t kStatsJsonMax = 384;
+inline size_t stats_json(const Stats& s, char* out, size_t cap) {
+  if (out == nullptr || cap == 0) return 0;
+  const csi_event_backfill::Stats& p = s.planner;
+  const int n = snprintf(out, cap,
+      "{\"dropped\":%lu,\"held_dropped\":%lu,\"ambient_dropped\":%lu,"
+      "\"unsent_dropped\":%lu,\"planner\":{\"live\":%lu,\"held\":%lu,"
+      "\"queued\":%lu,\"replayed\":%lu,\"skipped\":%lu,\"untrusted\":%lu,"
+      "\"unsendable\":%lu,\"truncated_unsent\":%lu,\"read_giveups\":%lu}}",
+      (unsigned long)s.dropped, (unsigned long)s.held_dropped,
+      (unsigned long)s.ambient_dropped, (unsigned long)s.unsent_dropped,
+      (unsigned long)p.live, (unsigned long)p.held, (unsigned long)p.queued,
+      (unsigned long)p.replayed, (unsigned long)p.skipped,
+      (unsigned long)p.untrusted, (unsigned long)p.unsendable,
+      (unsigned long)p.truncated_unsent, (unsigned long)p.read_giveups);
+  if (n <= 0 || (size_t)n >= cap) {
+    out[0] = '\0';
+    return 0;
+  }
+  return (size_t)n;
+}
 
 #ifdef CSI_TEST_HOST_BUILD
 /* Host tests only: forget this "boot"'s RAM state, to simulate a reboot. */

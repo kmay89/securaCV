@@ -1183,6 +1183,77 @@ static void test_ambient_rows_are_not_held() {
   CHECK(live != 0 && W.ha.accepted.back() == live, "with the link up an ambient row goes live");
 }
 
+/* ── The counters, for other tasks and the wire (sweep F149) ──────────── */
+
+static bool same_stats(const csi_event_egress::Stats& a, const csi_event_egress::Stats& b) {
+  return memcmp(&a, &b, sizeof(a)) == 0;
+}
+
+static void test_other_tasks_read_what_the_pump_published() {
+  printf("-- GET /api/diagnostics (httpd task) reads the counters the last pump published, whole\n");
+  fresh_device(/*card=*/false);   /* begin() ran; no pump yet */
+  csi_event_egress::Stats seen;
+  memset(&seen, 0xA5, sizeof(seen));
+  CHECK(!csi_event_egress::read_stats(&seen), "before the first pump there is nothing to read");
+  CHECK(seen.dropped == 0xA5A5A5A5u && seen.planner.read_giveups == 0xA5A5A5A5u,
+        "and the reader's copy is untouched");
+  loop_pass();
+  CHECK(csi_event_egress::read_stats(&seen) && same_stats(seen, csi_event_egress::stats()),
+        "after a pass: the loop task's counters, every field");
+  /* An outage with no card: past the RAM hold's 8 rows the oldest go, and
+   * an ambient row that cannot go out is dropped. */
+  for (int i = 0; i < 12; ++i) { emit_ping(); loop_pass(); }
+  CHECK(emit_ambient() != 0, "an ambient row commits during the outage");
+  loop_pass();
+  CHECK(csi_event_egress::read_stats(&seen) && seen.held_dropped == 4 && seen.ambient_dropped == 1,
+        "the hold's and the ambient drops reach the reader");
+  CHECK(same_stats(seen, csi_event_egress::stats()), "every field as the loop task has it");
+  connect();
+  drain();
+  CHECK(csi_event_egress::read_stats(&seen) && seen.planner.queued > 0 &&
+            same_stats(seen, csi_event_egress::stats()),
+        "the planner's counters too, after the hold drained");
+  /* The committing task bumps `dropped` at once; the reader sees it after
+   * the next pass, never a half-written copy. */
+  for (int i = 0; i < 20; ++i) emit_ping();   /* the loop task stalls */
+  CHECK(csi_event_egress::stats().dropped == 4, "the loop task's view counts the 4 refused at once");
+  CHECK(csi_event_egress::read_stats(&seen) && seen.dropped == 0, "the published copy is the last pass's");
+  loop_pass();
+  CHECK(csi_event_egress::read_stats(&seen) && seen.dropped == 4, "the next pass publishes them");
+  CHECK(host_sim::mux_depth == 0, "every critical section the snapshot took was closed");
+  boot();
+  CHECK(!csi_event_egress::read_stats(&seen), "a reboot: nothing to read until its first pump");
+  loop_pass();
+  CHECK(csi_event_egress::read_stats(&seen) && seen.held_dropped == 0 && seen.dropped == 0,
+        "and the counters start over");
+}
+
+static void test_the_counters_spell_the_canarys_names() {
+  printf("-- stats_json(): each counter under the name the canary's MQTT health uses (F109), and the widest fits\n");
+  csi_event_egress::Stats s;
+  s.dropped = 101; s.held_dropped = 102; s.ambient_dropped = 103; s.unsent_dropped = 104;
+  s.planner.live = 105; s.planner.held = 106; s.planner.queued = 107; s.planner.replayed = 108;
+  s.planner.skipped = 109; s.planner.untrusted = 110; s.planner.unsendable = 111;
+  s.planner.truncated_unsent = 112; s.planner.read_giveups = 113;
+  char buf[csi_event_egress::kStatsJsonMax];
+  size_t n = csi_event_egress::stats_json(s, buf, sizeof(buf));
+  CHECK(std::string(buf, n) ==
+            "{\"dropped\":101,\"held_dropped\":102,\"ambient_dropped\":103,\"unsent_dropped\":104,"
+            "\"planner\":{\"live\":105,\"held\":106,\"queued\":107,\"replayed\":108,"
+            "\"skipped\":109,\"untrusted\":110,\"unsendable\":111,\"truncated_unsent\":112,"
+            "\"read_giveups\":113}}",
+        "every field under its own name, the planner's nested as the canary nests them");
+  CHECK(strlen(buf) == n, "the length returned is the object's");
+  memset(&s, 0xFF, sizeof(s));
+  n = csi_event_egress::stats_json(s, buf, sizeof(buf));
+  CHECK(n == 319 && n < csi_event_egress::kStatsJsonMax, "every counter at 4294967295: 319 bytes, inside kStatsJsonMax");
+  char tight[320];
+  CHECK(csi_event_egress::stats_json(s, tight, sizeof(tight)) == 319, "exactly its size plus the NUL fits");
+  CHECK(csi_event_egress::stats_json(s, tight, 319) == 0 && tight[0] == '\0',
+        "one byte short: refused, and no partial object is left behind");
+  CHECK(csi_event_egress::stats_json(s, nullptr, 64) == 0, "no buffer: refused");
+}
+
 /* ── The card adapter (csi_event_log.cpp) ──────────────────────────────── */
 
 static void test_torn_tail_at_open_is_sealed() {
@@ -1381,6 +1452,8 @@ int main() {
   test_destination_digest();
 #endif
   test_ambient_rows_are_not_held();
+  test_other_tasks_read_what_the_pump_published();
+  test_the_counters_spell_the_canarys_names();
   test_torn_tail_at_open_is_sealed();
   test_short_write_is_sealed();
   test_torn_but_whole_line_is_sent_once();
