@@ -1022,7 +1022,8 @@ device. Owner: U1.
 Code: `firmware/projects/canary-wap/arduino/canary_wap/csi_tune_lab.cpp`
 (the Lab's knobs and `tune_post()`, which stores a POST and applies it) and
 `csi_settings_nvs.cpp` (the one Quiet Hours default, 23:00 to 07:00, off;
-its reader; its apply to the chokepoint). Host-tested
+its reader; the dashboard's store, by the same key map; its apply to the
+chokepoint). Host-tested
 (`firmware/projects/canary-wap/tests_host/test_wap_tune_lab.cpp`) with the
 staged CSI library; the handlers in `csi_integration.cpp` are compiled by CI
 and held to that code by the test's source pins; not run on a device.
@@ -1049,6 +1050,16 @@ Owner: U1.
     change in between. Before F128 the Lab change did nothing until a
     reboot or a dashboard Quiet Hours change.
   - Artifact: `docs/audit/repro/F128/lab-applies-at-once/`.
+- [ ] **The dashboard and the Lab keep one window**
+  - Setup: as above.
+  - Repro: in the dashboard, turn Quiet hours on for 22:00 to 06:00 and
+    save; open `/tune`; there, move Start to 22:30; reload the dashboard;
+    reboot the device and reload both.
+  - Expected: the Lab first shows Enabled on, Start 22:00, End 06:00; after
+    the Lab change the dashboard's Quiet hours row and `GET /api/settings`
+    show 22:30 (`"start_min":1350`), and after the reboot both pages still
+    do.
+  - Artifact: `docs/audit/repro/F123/dashboard-and-lab-one-window/`.
 
 ## SoftAP WPA2/WPA3 transition + PMF (F16) — on-device verification
 
