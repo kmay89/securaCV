@@ -122,9 +122,29 @@ using FailedCallback = void (*)();
  * same beat as its ACCEPT goes to the wire (F49 part 2). */
 using CodeReadyCallback = void (*)(uint32_t confirmation_code);
 
+/* Fires once per completed pairing, both roles, right after the
+ * PairedCallback returns and the session has tried to bind the new member
+ * to the address it paired from (bind_peer_mac, RADIO ADDRESSES below).
+ * `fp` is the member's fingerprint, `mac` that address, and `bound`
+ * whether the bind took. The integration layer persists the address
+ * (mesh_state::save_peer_mac) from here, and only when `bound` (F102).
+ * Until F102 main.cpp persisted it from the PairedCallback, which runs
+ * before the bind, so a bind the session refused — the address another
+ * member holds (a re-pair relayed from a member's copied address, F69), a
+ * full transport table, a member the callback could not register — was
+ * still written, and the next boot's restore, which binds peer_macs in
+ * blob order, could give that address to the wrong member (host-probed:
+ * the member whose address it really was then dropped every frame it
+ * sent). On `bound == false` the member keeps the binding it had (or
+ * none), in RAM and NVS. Main-loop task, like the PairedCallback. */
+using PairedPeerBoundCallback = void (*)(const uint8_t fp [mesh_crypto::FINGERPRINT_LEN],
+                                         const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN],
+                                         bool          bound);
+
 void set_paired_callback(PairedCallback cb);
 void set_failed_callback(FailedCallback cb);
 void set_code_ready_callback(CodeReadyCallback cb);
+void set_paired_peer_bound_callback(PairedPeerBoundCallback cb);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * LIFECYCLE
@@ -197,10 +217,11 @@ uint32_t            pairing_confirmation_code();
 bool get_paired_peer_pubkey(uint8_t out[mesh_crypto::PUBKEY_LEN]);
 
 /* The pairing partner's radio MAC (F33 part 1), from AWAITING_CONFIRM on,
- * like get_paired_peer_pubkey(). The integration layer persists it from its
- * PairedCallback (mesh_state::save_peer_mac) so the next boot can bind it;
- * the session binds it for this boot itself (bind_peer_mac, right after the
- * callback returns, once the callback has registered the peer). */
+ * like get_paired_peer_pubkey(). The session binds it for this boot itself
+ * (bind_peer_mac, right after the PairedCallback returns, once the callback
+ * has registered the peer) and then hands it, with the bind's outcome, to
+ * the PairedPeerBoundCallback, from which the integration layer persists it
+ * (F102) — not from the PairedCallback, which runs before the bind. */
 bool get_paired_peer_mac(uint8_t out[mesh_transport::MESH_TRANSPORT_MAC_LEN]);
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -479,8 +500,11 @@ size_t trusted_peer_count();
  *     So a peer whose radio MAC changed (a replaced module, a new
  *     locally-administered address) is heard again after a re-pair, which
  *     binds the address the partner paired from; re-pairing a device that
- *     is already trusted re-binds it, and main.cpp persists the new one.
- *     Two limits on that. The pairing does not authenticate the long-term
+ *     is already trusted re-binds it, and main.cpp persists the new one
+ *     once the bind took (PairedPeerBoundCallback; F102). A re-pair from
+ *     an address another member holds is refused that bind, and nothing
+ *     is persisted: the device keeps the address it had. Two limits on
+ *     that. The pairing does not authenticate the long-term
  *     key it binds: the 6-digit code and the CONFIRM hash cover only the
  *     ephemeral X25519 exchange, and the key is taken as the DISCOVER or
  *     OFFER carried it. So an outsider relaying an owner-run pairing, from

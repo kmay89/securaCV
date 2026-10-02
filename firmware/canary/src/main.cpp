@@ -554,18 +554,9 @@ static void register_paired_peer() {
   if (mesh_session::get_paired_peer_pubkey(peer_pub)) {
     const bool peer_save_ok = mesh_state::save_trusted_peer(peer_pub);
     const bool peer_set_ok  = mesh_session::register_trusted_peer(peer_pub);
-    /* Its radio address (F33 part 1): the session binds it into the
-     * transport table for this boot once this callback returns; persist it
-     * so the next boot can bind it too (FE-gated, like the pubkey). */
-    uint8_t peer_mac[mesh_transport::MESH_TRANSPORT_MAC_LEN];
-    if (mesh_session::get_paired_peer_mac(peer_mac)) {
-      uint8_t peer_fp[mesh_crypto::FINGERPRINT_LEN];
-      mesh_crypto::compute_fingerprint(peer_pub, peer_fp);
-      if (!mesh_state::save_peer_mac(peer_fp, peer_mac)) {
-        Serial.println("[WARN] Peer radio MAC not persisted — after a reboot "
-                       "this peer is not heard until it pairs again");
-      }
-    }
+    /* Its radio address (F33 part 1) is bound by the session once this
+     * callback returns, and persisted from on_mesh_paired_peer_bound()
+     * after that, only when the bind took (F102). */
     if (peer_save_ok && peer_set_ok) {
       Serial.println("[OK] Peer pubkey persisted + registered for RX");
     } else if (peer_set_ok && !peer_save_ok) {
@@ -586,6 +577,37 @@ static void register_paired_peer() {
   } else {
     Serial.println("[WARN] Paired but mesh_session has no peer pubkey "
                    "available — receive from this peer won't work");
+  }
+}
+
+/* The session's bind of a just-paired member to the address it paired from
+ * (F102). Persist the address only when the bind took: until F102 it was
+ * saved from register_paired_peer(), which runs before the bind, so an
+ * address the session refused — one another member holds, as a re-pair
+ * relayed from a member's copied address presents it (F69), or a full
+ * transport table — was written anyway, and the next boot's restore,
+ * which binds peer_macs in blob order, could hand it to the wrong member
+ * (host-probed: the member that owned it was then not heard at all). A
+ * refused bind keeps the member's previous binding, in RAM and in NVS — a
+ * new member has none, and is heard from nowhere until it pairs from an
+ * address no member holds — and lands in the health log by fingerprint.
+ * FE-gated like the pubkey. */
+static void on_mesh_paired_peer_bound(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                                      const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN],
+                                      bool bound) {
+  if (!bound) {
+    char hex[mesh_crypto::FINGERPRINT_LEN * 2 + 1];
+    mesh_fp_hex(fp, hex);
+    Serial.printf("[WARN] Paired peer %s: its radio address was not bound "
+                  "(another member holds it, or the table is full) and is not "
+                  "persisted\n", hex);
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
+               "Opera pairing address refused", hex);
+    return;
+  }
+  if (!mesh_state::save_peer_mac(fp, mac)) {
+    Serial.println("[WARN] Peer radio MAC not persisted — after a reboot "
+                   "this peer is not heard until it pairs again");
   }
 }
 
@@ -1521,6 +1543,9 @@ void setup() {
      * pairing; its persistence is the integration layer's
      * responsibility before calling start_pairing_initiator). */
     mesh_session::set_paired_callback(&on_pairing_succeeded);
+    /* F102: the partner's address is persisted after the session's bind,
+     * and only when it took. */
+    mesh_session::set_paired_peer_bound_callback(&on_mesh_paired_peer_bound);
     /* F10: a peer's signed LEAVE drops its NVS entry; a peer's verified
      * TAMPER_ALERT lands in the health log. Installed here rather than in
      * securacv_csi_modules_init() so they are live on mesh builds without

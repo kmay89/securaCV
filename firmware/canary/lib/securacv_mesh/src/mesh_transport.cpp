@@ -272,6 +272,13 @@ static void espnow_recv_cb(const uint8_t* mac,
 
 #ifdef CSI_TEST_HOST_BUILD
 namespace test {
+  void reset_storm_limiter() {
+    s_storm_window_start_ms = 0;
+    s_storm_window_count    = 0;
+    s_storm_pause_until_ms  = 0;
+    s_storm_trigger_count   = 0;
+  }
+
   void inject_recv(const uint8_t mac[MESH_TRANSPORT_MAC_LEN],
                    const uint8_t* data, size_t len, int8_t rssi_dbm) {
     if (data == nullptr || len == 0 || len > MESH_TRANSPORT_PAYLOAD_MAX) return;

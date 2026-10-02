@@ -311,6 +311,18 @@ bool upsert(uint8_t* blob, size_t* len,
             const uint8_t mac[PEER_MAC_LEN]) {
   if (blob == nullptr || len == nullptr || fingerprint == nullptr || mac == nullptr) return false;
   if (!valid_len(*len)) return false;
+  /* One address, one fingerprint (F102), as bind_peer_mac has it. The boot
+   * restore binds entries in blob order, so a second fingerprint stored at
+   * an address gave it to whichever entry came first: host-probed, a
+   * re-pair relayed from member C's address recorded member J there, and
+   * after a reboot J held it and C, refused its own address, was not heard
+   * at all. */
+  for (size_t off = 0; off < *len; off += PEER_MAC_ENTRY_LEN) {
+    if (memcmp(blob + off + mesh_crypto::FINGERPRINT_LEN, mac, PEER_MAC_LEN) == 0 &&
+        !mesh_crypto::ct_equal(blob + off, fingerprint, mesh_crypto::FINGERPRINT_LEN)) {
+      return false;
+    }
+  }
   size_t off = find(blob, *len, fingerprint);
   if (off == *len) {
     if (*len + PEER_MAC_ENTRY_LEN > PEER_MACS_BLOB_MAX) return false;   /* full */

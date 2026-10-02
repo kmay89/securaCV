@@ -265,6 +265,30 @@ void test_peer_mac_blob() {
   assert(len == 7 * PEER_MAC_ENTRY_LEN);
   assert(peer_mac_blob::decode(blob, len, out, MAX_TRUSTED_PEERS, &n) && n == 7);
   assert(std::memcmp(out[0].fingerprint, fp[1], 8) == 0 && std::memcmp(out[6].fingerprint, fp[7], 8) == 0);
+  /* One address, one fingerprint (F102). fp[2] cannot take the address
+   * fp[3] holds (mac[8] since the replace above), as a new entry or as a
+   * move; the blob is untouched. fp[3] re-saving its own address is fine,
+   * and once fp[3] moves away the address is free for fp[2]. On the code
+   * before F102 both refusals were accepted, and the boot restore, which
+   * binds in blob order, gave the address to fp[2]. */
+  std::memcpy(before, blob, sizeof(blob));
+  size_t len_before = len;
+  assert(!peer_mac_blob::upsert(blob, &len, fp[2], mac[8]));
+  assert(len == len_before && std::memcmp(before, blob, sizeof(blob)) == 0);
+  assert(peer_mac_blob::upsert(blob, &len, fp[3], mac[8]));
+  assert(len == len_before && std::memcmp(before, blob, sizeof(blob)) == 0);
+  assert(peer_mac_blob::remove(blob, &len, fp[7]));
+  std::memcpy(before, blob, sizeof(blob));
+  len_before = len;
+  assert(!peer_mac_blob::upsert(blob, &len, fp[8], mac[4]));          /* new fp, fp[4]'s address */
+  assert(len == len_before && std::memcmp(before, blob, sizeof(blob)) == 0);
+  assert(peer_mac_blob::upsert(blob, &len, fp[3], mac[0]));           /* fp[3] moves on */
+  assert(peer_mac_blob::upsert(blob, &len, fp[2], mac[8]));           /* its old one is free */
+  assert(peer_mac_blob::upsert(blob, &len, fp[7], mac[7]));           /* back to 7 entries */
+  assert(peer_mac_blob::decode(blob, len, out, MAX_TRUSTED_PEERS, &n) && n == 7);
+  for (size_t i = 0; i < n; ++i) {
+    for (size_t k = i + 1; k < n; ++k) assert(std::memcmp(out[i].mac, out[k].mac, 6) != 0);
+  }
   /* A malformed length is refused everywhere: a torn write is not a table. */
   size_t bad = 13;
   assert(!peer_mac_blob::valid_len(bad));

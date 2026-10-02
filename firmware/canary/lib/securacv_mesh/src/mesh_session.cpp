@@ -52,6 +52,7 @@ static uint8_t                    s_device_priv[mesh_crypto::PRIVKEY_LEN];
 static PairedCallback     s_paired_cb     = nullptr;
 static FailedCallback     s_failed_cb     = nullptr;
 static CodeReadyCallback  s_code_ready_cb = nullptr;
+static PairedPeerBoundCallback s_paired_bound_cb = nullptr;
 
 /* Opera-authenticated broadcast state (PR 5c-3). Declared here at file
  * scope alongside the other lifecycle-managed state so deinit() can
@@ -252,7 +253,7 @@ static inline MsgType pairing_msg_to_session(mesh_pairing::MsgType m) {
 /* Pairing-contact bookkeeping (F33 part 1), defined with the trusted-peer
  * table below. */
 static void ensure_pair_contact(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN]);
-static void end_pair_contact(bool paired);
+static bool end_pair_contact(bool paired);
 
 /* Map mesh_pairing::Action to a session-frame outgoing MsgType. Returns
  * (out_msg_type, dest_mac, payload, len) by reference; caller decides
@@ -339,8 +340,19 @@ static void dispatch_action(const mesh_pairing::Action& a) {
        * asm barrier) so the compiler can't elide this. */
       secure_zero(opera_secret, sizeof(opera_secret));
       /* The callback registered the new member: it takes the pairing
-       * partner's address over as its radio MAC. */
-      end_pair_contact(/*paired=*/true);
+       * partner's address over as its radio MAC, and the integration layer
+       * hears whether it did (F102). Until F102 the PairedCallback was the
+       * only hook, and main.cpp persisted the partner's address from it,
+       * before this bind ran: a bind refused here (an address another
+       * member holds, a full table) was still written to NVS, and the next
+       * boot bound it. So the address is persisted from the bound callback
+       * now, and only when bound. */
+      uint8_t member_fp[mesh_crypto::FINGERPRINT_LEN];
+      uint8_t member_mac[mesh_transport::MESH_TRANSPORT_MAC_LEN];
+      mesh_crypto::compute_fingerprint(s_ctx.peer_pubkey, member_fp);
+      memcpy(member_mac, s_ctx.peer_mac, sizeof(member_mac));
+      const bool bound = end_pair_contact(/*paired=*/true);
+      if (s_paired_bound_cb) s_paired_bound_cb(member_fp, member_mac, bound);
       break;
     }
     case mesh_pairing::ActionType::NOTIFY_FAILED:
@@ -450,14 +462,19 @@ static void ensure_pair_contact(const uint8_t mac[mesh_transport::MESH_TRANSPORT
   s_pair_contact_added = true;
 }
 
-static void end_pair_contact(bool paired) {
+/* End a pairing's hold on the partner's address. On PAIRED, first bind the
+ * new member to the address it paired from — when the PairedCallback
+ * registered it (a full table does not) — and return whether that bind
+ * took (F102: the address is persisted only then). bind_peer_mac refuses
+ * an address another member holds, a broadcast/group/zero MAC, or a full
+ * transport table. */
+static bool end_pair_contact(bool paired) {
+  bool bound = false;
   if (paired) {
-    /* Bind the new member to the address it paired from — when the
-     * PairedCallback registered it (a full table does not). */
     uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
     mesh_crypto::compute_fingerprint(s_ctx.peer_pubkey, fp);
     if (find_trusted_peer(fp) != nullptr) {
-      bind_peer_mac(fp, s_ctx.peer_mac);   /* clears s_pair_contact_added on a match */
+      bound = bind_peer_mac(fp, s_ctx.peer_mac);   /* clears s_pair_contact_added on a match */
     }
   }
   if (s_pair_contact_added && find_peer_by_radio_mac(s_pair_contact_mac) == nullptr) {
@@ -465,6 +482,7 @@ static void end_pair_contact(bool paired) {
   }
   s_pair_contact_added = false;
   memset(s_pair_contact_mac, 0, sizeof(s_pair_contact_mac));
+  return bound;
 }
 
 /* True while a pairing exchange is between start_* and a terminal state.
@@ -1033,6 +1051,7 @@ void deinit() {
   s_paired_cb = nullptr;
   s_failed_cb = nullptr;
   s_code_ready_cb = nullptr;
+  s_paired_bound_cb = nullptr;
   /* PR 5c-3 follow-up: clear opera-auth state so a deinit()/init()
    * cycle starts clean — without this, has_opera_secret() would lie
    * about a stale opera_id from the prior run. The opera_id and
@@ -1109,6 +1128,7 @@ bool is_enabled() { return s_enabled; }
 void set_paired_callback    (PairedCallback     cb) { s_paired_cb     = cb; }
 void set_failed_callback    (FailedCallback     cb) { s_failed_cb     = cb; }
 void set_code_ready_callback(CodeReadyCallback  cb) { s_code_ready_cb = cb; }
+void set_paired_peer_bound_callback(PairedPeerBoundCallback cb) { s_paired_bound_cb = cb; }
 
 /* ──────────────────────────────────────────────────────────────────────────
  * PAIRING ENTRY POINTS

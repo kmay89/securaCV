@@ -230,6 +230,12 @@ namespace test {
   using PeerAddHook = bool (*)(const uint8_t* mac);
   void set_peer_add_hook(PeerAddHook h);
 
+  /* Forget the storm limiter's window, count and pause. deinit()/init()
+   * keep them, and the virtual clock restarts at 0 between tests, so a
+   * suite's sends otherwise add up across tests in one 1-second window
+   * until the limiter pauses every later test's sends. */
+  void reset_storm_limiter();
+
   /* Inject an incoming frame as if ESP-NOW had delivered it. Drives the
    * recv path including peer last_seen + RSSI updates. */
   void inject_recv(const uint8_t mac[MESH_TRANSPORT_MAC_LEN],

@@ -96,6 +96,9 @@ void reset_world() {
   std::memset(g_paired_secret, 0, sizeof(g_paired_secret));
 
   mesh_transport::test::set_now_ms(0);
+  /* Each test starts with no send history: the limiter's window would
+   * otherwise span every test run at virtual time 0. */
+  mesh_transport::test::reset_storm_limiter();
   mesh_transport::test::set_send_hook(capture_send);
   mesh_transport::test::set_peer_add_hook(nullptr);
   assert(mesh_transport::init(mesh_transport::Config::defaults()));
@@ -3730,6 +3733,230 @@ void test_repair_moves_a_trusted_peers_address() {
   std::printf("PASS test_repair_moves_a_trusted_peers_address\n");
 }
 
+/* ── F102 — a pairing's address is persisted only once the session bound it ──
+ *
+ * dispatch_action's NOTIFY_PAIRED runs the PairedCallback, then binds the
+ * new member to the address it paired from (end_pair_contact →
+ * bind_peer_mac). Until F102 main.cpp persisted that address from the
+ * PairedCallback (register_paired_peer → save_peer_mac), before the bind,
+ * and peer_mac_blob::upsert took an address another fingerprint held. So a
+ * re-pair the session refused to bind — member J presenting its key from
+ * member C's address, which F69's unauthenticated re-pair lets a relay do —
+ * was still written as J's address, and the next boot, which binds
+ * peer_macs in blob order, gave C's address to J and refused C's own: C was
+ * not heard at all. Now the session reports the bind through the
+ * PairedPeerBoundCallback, main.cpp persists from there and only when it
+ * took, and upsert refuses the address too. */
+
+/* A stand-in for main.cpp's mesh wiring, on a fake NVS: the PairedCallback
+ * persists the pubkey and registers it (register_paired_peer, and the
+ * joiner's secret), and the bound callback persists the address only when
+ * bound (on_mesh_paired_peer_bound), through the real blob helper. */
+struct BoundCall {
+  uint8_t fp[8];
+  uint8_t mac[6];
+  bool    bound;
+  bool    after_paired_cb;
+};
+std::vector<BoundCall>             g_bound_calls;
+std::vector<std::vector<uint8_t>>  g_nvs_pubs;
+uint8_t                            g_nvs_macs[mesh_state::PEER_MACS_BLOB_MAX];
+size_t                             g_nvs_macs_len = 0;
+bool                               g_in_paired_cb_done = false;
+
+void main_like_paired(const uint8_t* secret, uint32_t code) {
+  on_paired(secret, code);
+  if (secret != nullptr) assert(mesh_session::set_opera_secret(secret));
+  uint8_t pub[32];
+  assert(mesh_session::get_paired_peer_pubkey(pub));
+  bool stored = false;
+  for (const auto& p : g_nvs_pubs) stored |= std::memcmp(p.data(), pub, 32) == 0;
+  if (!stored) g_nvs_pubs.emplace_back(pub, pub + 32);
+  (void)mesh_session::register_trusted_peer(pub);   /* refused when already trusted */
+  g_in_paired_cb_done = true;
+}
+
+void main_like_bound(const uint8_t fp[8], const uint8_t mac[6], bool bound) {
+  BoundCall c;
+  std::memcpy(c.fp, fp, 8);
+  std::memcpy(c.mac, mac, 6);
+  c.bound = bound;
+  c.after_paired_cb = g_in_paired_cb_done;
+  g_bound_calls.push_back(c);
+  if (bound) (void)mesh_state::peer_mac_blob::upsert(g_nvs_macs, &g_nvs_macs_len, fp, mac);
+}
+
+void reset_fake_main_nvs() {
+  g_bound_calls.clear();
+  g_nvs_pubs.clear();
+  std::memset(g_nvs_macs, 0, sizeof(g_nvs_macs));
+  g_nvs_macs_len = 0;
+}
+
+/* Run one whole pairing with this session as the INITIATOR and a pure
+ * joiner holding (j_pub, j_priv) at mac_j, the joiner's owner confirming
+ * first. Returns once the session's NOTIFY_PAIRED has fired. */
+void pair_from(const uint8_t S[32], const uint8_t me[6], const uint8_t mac_j[6],
+               const uint8_t j_pub[32], const uint8_t j_priv[32], uint32_t t) {
+  g_in_paired_cb_done = false;
+  g_paired_fired = false;
+  mesh_pairing::PairingContext cj;
+  mesh_pairing::context_init(cj);
+  mesh_pairing::Action a = mesh_pairing::start_joiner(cj, j_pub, j_priv, t);
+  assert(mesh_session::start_pairing_initiator(S, "Home", t));
+  const std::vector<uint8_t> disc = wire(a);
+  mesh_transport::test::inject_recv(mac_j, disc.data(), disc.size(), -40);
+  mesh_transport::process();
+  feed_pure(cj, me, last_to(mac_j), t + 1, &a);
+  assert(a.type == mesh_pairing::ActionType::SEND_ACCEPT);
+  const std::vector<uint8_t> accept = wire(a);
+  mesh_transport::test::inject_recv(mac_j, accept.data(), accept.size(), -40);
+  mesh_transport::process();
+  a = mesh_pairing::confirm_code(cj, t + 2);
+  const std::vector<uint8_t> conf_j = wire(a);
+  mesh_transport::test::inject_recv(mac_j, conf_j.data(), conf_j.size(), -40);
+  mesh_transport::process();
+  assert(mesh_session::confirm_pairing_code(t + 3));
+  mesh_session::process(t + 4);
+  assert(g_paired_fired);
+  feed_pure(cj, me, last_to(mac_j), t + 5, &a);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+}
+
+/* The bound callback fires once per completed pairing, after the
+ * PairedCallback, with the outcome of the bind: true for a new member at a
+ * free address, false for a re-pair from an address another member holds
+ * (the binding stays where it was) and false for a member the
+ * PairedCallback could not register (the trusted table full). */
+void test_paired_peer_bound_reports_the_bind() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x02 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  reset_fake_main_nvs();
+  mesh_session::set_paired_callback(main_like_paired);
+  mesh_session::set_paired_peer_bound_callback(main_like_bound);
+  mesh_session::set_tamper_alert_handler(on_alert_rx);
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x02, 0x00, 0x01};
+  const uint8_t mac_x[6] = {0x24, 0x0A, 0xC4, 0x02, 0x00, 0x0A};
+  const uint8_t mac_c[6] = {0x24, 0x0A, 0xC4, 0x02, 0x00, 0x0C};
+  uint8_t j_pub[32], j_priv[32], j_fp[8], c_pub[32], c_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(c_pub, c_priv));
+  mesh_crypto::compute_fingerprint(j_pub, j_fp);
+
+  /* A new member at a free address: bound. */
+  pair_from(S, me, mac_x, j_pub, j_priv, 100);
+  assert(g_bound_calls.size() == 1);
+  assert(g_bound_calls[0].bound && g_bound_calls[0].after_paired_cb);
+  assert(std::memcmp(g_bound_calls[0].fp, j_fp, 8) == 0);
+  assert(std::memcmp(g_bound_calls[0].mac, mac_x, 6) == 0);
+  pair_from(S, me, mac_c, c_pub, c_priv, 200);
+  assert(g_bound_calls.size() == 2 && g_bound_calls[1].bound);
+
+  /* J re-pairs from C's address: the bind is refused and reported. */
+  pair_from(S, me, mac_c, j_pub, j_priv, 300);
+  assert(g_bound_calls.size() == 3);
+  assert(!g_bound_calls[2].bound && g_bound_calls[2].after_paired_cb);
+  assert(std::memcmp(g_bound_calls[2].fp, j_fp, 8) == 0);
+  assert(std::memcmp(g_bound_calls[2].mac, mac_c, 6) == 0);
+  /* The session kept J at X and C at its own address. */
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
+  size_t n = build_alert_frame(c_pub, c_priv, S, 1, mesh_alert::Kind::TEMP_DRIFT, 3, 1,
+                               frame, sizeof(frame));
+  mesh_transport::test::inject_recv(mac_c, frame, n, -40);
+  n = build_alert_frame(j_pub, j_priv, S, 1, mesh_alert::Kind::TEMP_DRIFT, 3, 2,
+                        frame, sizeof(frame));
+  mesh_transport::test::inject_recv(mac_x, frame, n, -40);
+  mesh_transport::process();
+  assert(g_alerts_rx.size() == 2);
+
+  /* A member the PairedCallback cannot register: eight are trusted, one of
+   * them unbound so the transport table still has a slot for the partner. */
+  for (int i = 0; i < 5; ++i) {
+    const uint8_t m[6] = {0x24, 0x0A, 0xC4, 0x02, 0x01, (uint8_t)i};
+    add_bound_member(m);
+  }
+  uint8_t u_pub[32], u_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(u_pub, u_priv));
+  assert(mesh_session::register_trusted_peer(u_pub));
+  assert(mesh_session::trusted_peer_count() == mesh_session::MAX_TRUSTED_PEERS);
+  const uint8_t mac_n[6] = {0x24, 0x0A, 0xC4, 0x02, 0x00, 0x0D};
+  uint8_t n_pub[32], n_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(n_pub, n_priv));
+  pair_from(S, me, mac_n, n_pub, n_priv, 400);
+  assert(g_bound_calls.size() == 4 && !g_bound_calls[3].bound);
+  assert(!transport_has(mac_n));   /* the partner's address left with the pairing */
+  std::printf("PASS test_paired_peer_bound_reports_the_bind\n");
+}
+
+/* The F102 probe, end to end with main.cpp's wiring on a fake NVS: J paired
+ * at X, C at its own address, then J re-paired from C's address. After a
+ * reboot that restores the pubkeys and binds the stored addresses in blob
+ * order, as main.cpp's setup does, C is heard from its own address and J
+ * from X; J's frames from C's address are not taken. Before F102 NVS
+ * recorded J at C's address, J took it at the reboot, and C was not heard
+ * at all. */
+void test_refused_repair_bind_is_not_persisted_across_reboot() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x12 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  reset_fake_main_nvs();
+  mesh_session::set_paired_callback(main_like_paired);
+  mesh_session::set_paired_peer_bound_callback(main_like_bound);
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x02, 0x10, 0x01};
+  const uint8_t mac_x[6] = {0x24, 0x0A, 0xC4, 0x02, 0x10, 0x0A};
+  const uint8_t mac_c[6] = {0x24, 0x0A, 0xC4, 0x02, 0x10, 0x0C};
+  uint8_t j_pub[32], j_priv[32], j_fp[8], c_pub[32], c_priv[32], c_fp[8];
+  assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(c_pub, c_priv));
+  mesh_crypto::compute_fingerprint(j_pub, j_fp);
+  mesh_crypto::compute_fingerprint(c_pub, c_fp);
+  pair_from(S, me, mac_x, j_pub, j_priv, 100);   /* J first: its entry is first in the blob */
+  pair_from(S, me, mac_c, c_pub, c_priv, 200);
+  pair_from(S, me, mac_c, j_pub, j_priv, 300);   /* the re-pair from C's address */
+
+  mesh_state::PeerMac stored[mesh_state::MAX_TRUSTED_PEERS];
+  size_t n_stored = 0;
+  assert(mesh_state::peer_mac_blob::decode(g_nvs_macs, g_nvs_macs_len, stored,
+                                           mesh_state::MAX_TRUSTED_PEERS, &n_stored));
+  assert(n_stored == 2);
+  assert(std::memcmp(stored[0].fingerprint, j_fp, 8) == 0 && std::memcmp(stored[0].mac, mac_x, 6) == 0);
+  assert(std::memcmp(stored[1].fingerprint, c_fp, 8) == 0 && std::memcmp(stored[1].mac, mac_c, 6) == 0);
+
+  /* Reboot as main.cpp's setup does: same device keys, the secret, every
+   * stored pubkey registered, then every stored address bound in order. */
+  reset_world();
+  mesh_session::deinit();
+  assert(mesh_session::init(pub, priv) && mesh_session::start());
+  assert(mesh_session::set_opera_secret(S));
+  mesh_session::set_tamper_alert_handler(on_alert_rx);
+  g_alerts_rx.clear();
+  for (const auto& p : g_nvs_pubs) assert(mesh_session::register_trusted_peer(p.data()));
+  size_t bound = 0;
+  for (size_t i = 0; i < n_stored; ++i) {
+    bound += mesh_session::bind_peer_mac(stored[i].fingerprint, stored[i].mac) ? 1 : 0;
+  }
+  assert(bound == 2);
+
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
+  size_t n = build_alert_frame(c_pub, c_priv, S, 1, mesh_alert::Kind::TEMP_DRIFT, 3, 1,
+                               frame, sizeof(frame));
+  mesh_transport::test::inject_recv(mac_c, frame, n, -40);
+  mesh_transport::process();
+  assert(g_alerts_rx.size() == 1 && std::memcmp(g_alerts_rx[0].fp, c_fp, 8) == 0);
+  n = build_alert_frame(j_pub, j_priv, S, 1, mesh_alert::Kind::TEMP_DRIFT, 3, 2,
+                        frame, sizeof(frame));
+  mesh_transport::test::inject_recv(mac_c, frame, n, -40);   /* J, from C's address */
+  mesh_transport::process();
+  assert(g_alerts_rx.size() == 1);
+  mesh_transport::test::inject_recv(mac_x, frame, n, -40);   /* J, from its own */
+  mesh_transport::process();
+  assert(g_alerts_rx.size() == 2 && std::memcmp(g_alerts_rx[1].fp, j_fp, 8) == 0);
+  std::printf("PASS test_refused_repair_bind_is_not_persisted_across_reboot\n");
+}
+
 /* ── F70 — a member's frame is taken only from the member's own binding ──
  *
  * The transport table holds more addresses than a member's own: every
@@ -4987,6 +5214,8 @@ int main() {
   test_pairing_over_the_air_initiator_confirms_first();
   test_failed_pairing_removes_partner_address();
   test_repair_moves_a_trusted_peers_address();
+  test_paired_peer_bound_reports_the_bind();
+  test_refused_repair_bind_is_not_persisted_across_reboot();
   /* F70 */
   test_pair_contact_replay_records_nothing_and_gets_no_accept();
   test_copied_member_address_moves_no_link();
