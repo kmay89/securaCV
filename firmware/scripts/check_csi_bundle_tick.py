@@ -24,10 +24,14 @@ In `firmware/canary/src/main.cpp`'s `loop()`:
 1. `securacv_csi_modules_tick()` is called exactly once.
 2. No preprocessor conditional opened inside `loop()` wraps the call: no
    `FEATURE_POWER_POLICY` or `FEATURE_DIAGNOSTICS` block, and not
-   `#if FEATURE_CSI` either. The system.integrity tamper feed runs in every
-   build, CSI-off ones included, and its bundles must close there too
-   (#1763 put the call under no `#if`; #1762 had it under `#if FEATURE_CSI`,
-   and the merge kept #1763's).
+   `#if FEATURE_CSI` either. That is #1763's placement, which the merge kept
+   (#1762 had the call under `#if FEATURE_CSI`). It costs nothing in a
+   CSI-off build: no module registers there (`securacv_csi_modules_init()`
+   runs only under `FEATURE_CSI`, after `csi::init`), so nothing opens and
+   the tick scans eight empty slots. A system.integrity tamper never waits
+   for the tick in any build: the module seals its own key with
+   `csi_bundler_flush_key()` at emit. The rule forbids every wrapper so that
+   no gate added later can strand an open bundle.
 3. The call is a statement of its own at the top level of the loop body:
    inside no nested block (`{ ... }`), and not the statement an unbraced
    `if`, `else`, `for` or `while` controls. The text before it, with
@@ -130,8 +134,8 @@ def check_loop(main_src: str, errors: list[str]) -> None:
     conds = conditionals_at(body, at)
     if conds:
         errors.append(f"{where}: securacv_csi_modules_tick() must sit in no preprocessor "
-                      "conditional opened in loop(), `#if FEATURE_CSI` included (the tamper "
-                      "feed's bundles close in every build); found "
+                      "conditional opened in loop(), `#if FEATURE_CSI` included (#1763's "
+                      "placement: no gate may strand an open bundle); found "
                       f"{[d + (' (else)' if e else '') for d, e in conds]}")
     flat = blank_directives(body)
     depth = flat[:at].count("{") - flat[:at].count("}")

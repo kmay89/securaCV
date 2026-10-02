@@ -1479,11 +1479,19 @@ so — see D2 below.)
   - `main.cpp`'s call is not host-tested: no suite compiles `main.cpp`.
     `firmware/scripts/check_csi_bundle_tick.py`, run by `check_csi_sync.sh`,
     holds it: one call, under no `#if` (#1763's placement; #1762 had put it
-    under `#if FEATURE_CSI`, and the merge kept #1763's, since the
-    system.integrity tamper feed runs in every build and its bundles must
-    close there too), a top-level statement no gate controls, nothing leaving
-    the loop before it, before the egress pump, and a feed that closes nothing
-    (16 mutations refused). CI compiles it.
+    under `#if FEATURE_CSI`, and the merge kept #1763's), a top-level
+    statement no gate controls, nothing leaving the loop before it, before
+    the egress pump, and a feed that closes nothing (16 mutations refused).
+    CI compiles it. The bare call costs nothing with CSI off: no module
+    registers there (`securacv_csi_modules_init()` runs only under
+    `FEATURE_CSI`, after `csi::init`), so nothing opens and the tick scans
+    eight empty slots. A `system.integrity` tamper never waits for the tick:
+    it seals its own key with `csi_bundler_flush_key()` at emit. The rule
+    forbids every wrapper so that no later gate can strand an open bundle.
+    In a host probe of the real bridge and modules, an hour of loop passes
+    with the tamper feed running and no init registered no module and opened
+    no bundle; after init, with no tick at all, every tamper row committed
+    at its emit and no pass saw a `system.integrity` bundle open.
   - The events body's `bundled` is now the row's own count on every path on
     both trees (`csi_event_wire::bundled_on_wire()`, pinned in
     `test_csi_event_wire.cpp`). The canary's live and queued bodies said 1, as

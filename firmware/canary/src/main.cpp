@@ -2395,10 +2395,15 @@ void loop() {
 
   // Close the CSI bundles that are due, every loop and outside the CSI
   // gates above: the feature callback stops while battery saver or heap
-  // degradation skips csi::process(), and an open bundle (presence, or a
-  // system.integrity tamper) still has to close and commit on time. Under
-  // no #if either: the tamper feed above runs in every build. On HA builds
-  // the row it commits queues for csi_event_egress_pump() below (sweep F81;
+  // degradation skips csi::process(), and an open bundle (core.presence's,
+  // or any other row that names a state) still has to close and commit on
+  // time. A system.integrity tamper never waits for this: it seals its own
+  // key with csi_bundler_flush_key() the moment it emits. Under no #if
+  // either (#1763's placement): with FEATURE_CSI off no module registers
+  // (securacv_csi_modules_init() runs only under it, after csi::init), so
+  // nothing opens and the tick is a bounded scan that closes nothing, and
+  // no wrapper means no later gate can strand a bundle. On HA builds the
+  // row it commits queues for csi_event_egress_pump() below (sweep F81;
   // firmware/scripts/check_csi_bundle_tick.py holds this placement).
   securacv_csi_modules_tick();
 

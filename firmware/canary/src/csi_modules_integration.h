@@ -104,9 +104,12 @@ void securacv_csi_modules_tamper_watch_contact(int enclosure_open);
  * Close the CSI bundles that are due (their 10-minute window or 2-minute
  * quiet gap has elapsed) — csi_bundler_tick(). Call once per main loop,
  * OUTSIDE the CSI power/degrade gates: the feature callback stops while
- * they skip csi::process(), and an open bundle (presence, or a
- * system.integrity tamper) must still close and commit on time. Safe to
- * call before init(). The feed above closes no bundle, so this is what
+ * they skip csi::process(), and an open bundle (core.presence's, or any
+ * other row that names a state) must still close and commit on time. A
+ * system.integrity tamper does not wait for it: the module seals its own
+ * key with csi_bundler_flush_key() at emit. Safe to call before init():
+ * with no module registered nothing opens, and the tick is a bounded scan
+ * that closes nothing. The feed above closes no bundle, so this is what
  * commits one; same rule as the canary-wap's csi_integration::loop().
  * Loop task; on HA builds the row queues for the event egress pump.
  */
