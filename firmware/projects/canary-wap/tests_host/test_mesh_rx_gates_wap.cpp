@@ -136,8 +136,11 @@ void test_replay_gate_is_strict_and_the_first_counter_is_one() {
   // The receiver's last-seen starts at 0, or since F116 at the tombstone
   // a member this device dropped left (test_mesh_liveness_wap runs it).
   const std::string ld = squeeze(function_body(code, "load_peers"));
-  CHECK(count(ld, "g_peers[i].msg_counter_tx=1;") == 1);
-  CHECK(count(ld, "g_peers[i].msg_counter_rx=tomb!=nullptr?tomb->last_seen:0;") == 1);
+  // (Each entry is `p`, the next free place: a slot that does not read
+  // whole is not loaded, F137's review.)
+  CHECK(count(ld, "OperaPeer&p=g_peers[g_peer_count++];") == 1);
+  CHECK(count(ld, "p.msg_counter_tx=1;") == 1);
+  CHECK(count(ld, "p.msg_counter_rx=tomb!=nullptr?tomb->last_seen:0;") == 1);
   CHECK(count(add, "peer->msg_counter_rx=tomb!=nullptr?tomb->last_seen:0;") == 1);
   CHECK(count(sq, "msg_counter_tx=0;") == 0);
   CHECK(count(sq, "msg_counter_tx=1;") == 1);  // load_peers

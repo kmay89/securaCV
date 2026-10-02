@@ -21,11 +21,18 @@
  * and returns false. Each such line counts in host_sim::nvs_error_logs, and
  * each key it did remove in host_sim::nvs_removes ("<namespace>/<key>").
  * isKey() logs nothing, and is false for a key longer than NVS's 15
- * characters. */
+ * characters.
+ *
+ * A test can also refuse the writes to some keys only
+ * (host_sim::nvs_fail_keys, "<namespace>/<key>"), as a partition that
+ * fills part way through a save does: IDF refuses each set it has no
+ * room for (ESP_ERR_NVS_NOT_ENOUGH_SPACE) and still erases, so remove()
+ * goes on working under either switch. */
 #ifndef STUB_MESH_NET_PREFERENCES_H
 #define STUB_MESH_NET_PREFERENCES_H
 
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -39,6 +46,7 @@ inline std::map<std::string, unsigned> nvs_writes;
 inline std::map<std::string, unsigned> nvs_removes;
 inline unsigned nvs_error_logs = 0;
 inline bool nvs_writes_fail = false;
+inline std::set<std::string> nvs_fail_keys;
 }  // namespace host_sim
 
 class Preferences {
@@ -97,7 +105,7 @@ class Preferences {
   std::string k(const char* key) const { return ns_ + "/" + key; }
   bool store(const char* key, const void* v, size_t n) {
     if (!ro_) host_sim::note_side_effect();
-    if (ro_ || host_sim::nvs_writes_fail) return false;
+    if (ro_ || host_sim::nvs_writes_fail || host_sim::nvs_fail_keys.count(k(key)) != 0) return false;
     const uint8_t* b = static_cast<const uint8_t*>(v);
     (*host_sim::nvs)[k(key)].assign(b, b + n);
     ++host_sim::nvs_writes[k(key)];

@@ -361,7 +361,7 @@ static void handle_pair_accept(const uint8_t* mac, const uint8_t* payload);
 static void handle_pair_confirm(const uint8_t* mac, const uint8_t* payload);
 static void handle_pair_complete(const uint8_t* mac, const uint8_t* payload);
 static bool persist_opera_config();
-static bool load_opera_config();
+static bool load_opera_config(bool* member_slots_without_opera);
 static bool persist_peers();
 static bool load_peers();
 static bool persist_tx_reservations();
@@ -804,8 +804,10 @@ static bool send_pair_frame(const uint8_t* mac, MessageType type,
 // boot read back (a boot resumes every member above it). A removal holds
 // every survivor's reservation to it before the list is saved, so the
 // record still covers the removed member's counters when its entry is
-// gone; with no member left the record is not rewritten, and a boot reads
-// it with no member loaded too.
+// gone; with no member left the record is rewritten once, as one entry
+// under an all-zero fingerprint holding the highest counter signed
+// (persist_tx_floor_without_members, sweep F137), and a boot reads it with
+// no member loaded too.
 //
 // Counting stays per member (one counter per sender is sweep F72's
 // option). A rotation leaves every counter where it is (sweep F95, see
@@ -1859,7 +1861,33 @@ static bool all_zero(const uint8_t* p, size_t n) {
   return acc == 0;
 }
 
-static bool load_opera_config() {
+static void peer_slot_key(char (&key)[16], uint8_t i) {
+  snprintf(key, sizeof(key), "%s%d", NVS_PEER_PREFIX, i);
+}
+
+// Does NVS (an open handle) hold a member slot at or above `from`? No list
+// held more than MAX_OPERA_SIZE (add_peer refuses past it, and the
+// duplicate entries an older re-pair appended counted against it too).
+static bool stored_member_slots_from(Preferences& prefs, uint8_t from) {
+  for (uint8_t i = from; i < MAX_OPERA_SIZE; i++) {
+    char key[16];
+    peer_slot_key(key, i);
+    if (prefs.isKey(key)) return true;
+  }
+  return false;
+}
+
+// `member_slots_without_opera` is set when no opera loads on a board with
+// flash encryption on while NVS holds a member slot (init() removes them).
+// Members are stored after an opera (the joiner stores its opera before
+// its members, the initiator founds one before it adds any), so such
+// slots are what a leave on firmware from before F137 left (beside an
+// empty opera, before F113, or none), or a list stored after NVS refused
+// its opera: nothing loads them, as load_peers runs only with an opera.
+// Never set on a board with flash encryption off, whose stored members
+// are the subject of sweep F141's decision.
+static bool load_opera_config(bool* member_slots_without_opera) {
+  *member_slots_without_opera = false;
   if (!flash_encryption_enabled()) {
     // Refuse to load any stored secret. Wipe in-memory state and log loudly.
     memset(g_opera_config.opera_secret, 0, OPERA_SECRET_SIZE);
@@ -1879,7 +1907,6 @@ static bool load_opera_config() {
   strncpy(g_opera_config.opera_name, name.c_str(), MAX_OPERA_NAME_LEN);
   g_opera_config.opera_name[MAX_OPERA_NAME_LEN] = '\0';
   g_opera_config.configured = (id_len == OPERA_ID_SIZE && secret_len == OPERA_SECRET_SIZE);
-  g_prefs.end();
   // An all-zero id or secret is no opera (sweep F113): what a leave on
   // firmware from before F113 stored (persist_opera_config). Taken as
   // configured, it was kept by the next start_pairing_initiator() instead
@@ -1887,9 +1914,13 @@ static bool load_opera_config() {
   // secret it is sent, held another id than the initiator's stored zero
   // one, so each dropped the other's frames. Refused, it is nothing to
   // load, and the next pairing overwrites it.
-  if (g_opera_config.configured &&
-      (all_zero(g_opera_config.opera_id, OPERA_ID_SIZE) ||
-       all_zero(g_opera_config.opera_secret, OPERA_SECRET_SIZE))) {
+  const bool empty = g_opera_config.configured &&
+                     (all_zero(g_opera_config.opera_id, OPERA_ID_SIZE) ||
+                      all_zero(g_opera_config.opera_secret, OPERA_SECRET_SIZE));
+  *member_slots_without_opera =
+      (!g_opera_config.configured || empty) && stored_member_slots_from(g_prefs, 0);
+  g_prefs.end();
+  if (empty) {
     secure_wipe(g_opera_config.opera_secret, OPERA_SECRET_SIZE);
     memset(g_opera_config.opera_id, 0, OPERA_ID_SIZE);
     g_opera_config.configured = false;
@@ -1904,24 +1935,29 @@ static bool load_opera_config() {
 // slot and a leave empties it, and the slots they freed used to stay, each
 // a former member's public key, radio address and name (or a survivor's
 // copy), on a flash that is not encrypted even on a fused board (spec
-// §5.5). Nothing loaded them, as load_peers reads peer_cnt entries. No list
-// held more than MAX_OPERA_SIZE (add_peer refuses past it, and the
-// duplicate entries an older re-pair appended counted against it too).
+// §5.5). Nothing loaded them, as load_peers reads peer_cnt entries.
 // isKey() first: Preferences::remove() of a key that is not there logs an
 // error-level line (nvs_erase_key fails NOT_FOUND), so a save that frees no
 // slot reads each one and writes nothing.
+//
+// The order is what makes a refused write safe (a full NVS refuses a set
+// and still erases): the live slots first, in order, then the count, and
+// the slots above it only once both are stored. A refused slot stops the
+// save there, before the count; a refused count stops it before any
+// removal. So a boot reads the list as it was or as it is now: a removal's
+// shift stopped part way holds the member after the last slot written
+// twice, which the boot's fold (fold_duplicate_peers) makes one, and a
+// slot written above a count that was not is the boot's to remove
+// (load_peers). The count first, then the removals whatever it answered,
+// left a count over slots that were gone: a boot loaded the removed
+// member back, lost a survivor, and loaded an absent slot as an all-zero
+// member (F137's review, host-probed). True when the list is stored.
 static bool persist_peers() {
   g_prefs.begin(NVS_NS, false);
-  g_prefs.putUChar(NVS_PEER_COUNT, g_peer_count);
-
-  for (uint8_t i = 0; i < MAX_OPERA_SIZE; i++) {
+  bool ok = true;
+  for (uint8_t i = 0; ok && i < g_peer_count; i++) {
     char key[16];
-    snprintf(key, sizeof(key), "%s%d", NVS_PEER_PREFIX, i);
-
-    if (i >= g_peer_count) {
-      if (g_prefs.isKey(key)) g_prefs.remove(key);
-      continue;
-    }
+    peer_slot_key(key, i);
 
     // Store pubkey + mac + name
     uint8_t peer_data[PUBKEY_SIZE + 6 + MAX_PEER_NAME_LEN];
@@ -1929,7 +1965,13 @@ static bool persist_peers() {
     memcpy(peer_data + PUBKEY_SIZE, g_peers[i].mac_addr, 6);
     memcpy(peer_data + PUBKEY_SIZE + 6, g_peers[i].name, MAX_PEER_NAME_LEN);
 
-    g_prefs.putBytes(key, peer_data, sizeof(peer_data));
+    ok = g_prefs.putBytes(key, peer_data, sizeof(peer_data)) == sizeof(peer_data);
+  }
+  if (ok) ok = g_prefs.putUChar(NVS_PEER_COUNT, g_peer_count) == 1;
+  for (uint8_t i = g_peer_count; ok && i < MAX_OPERA_SIZE; i++) {
+    char key[16];
+    peer_slot_key(key, i);
+    if (g_prefs.isKey(key)) g_prefs.remove(key);
   }
 
   g_prefs.end();
@@ -1938,7 +1980,7 @@ static bool persist_peers() {
   // write and handle; a refusal leaves the last record, which still covers
   // every counter signed.
   persist_tx_reservations();
-  return true;
+  return ok;
 }
 
 // Before add_peer re-bound a member it already held (#1761), a re-pair
@@ -1953,8 +1995,8 @@ static bool persist_peers() {
 // takes the duplicate's address: the later pairing's, which is the only
 // thing spec §8.3 lets bind one. If another member holds that address, the
 // first entry keeps its own (one address, one member). Then the list is
-// saved and the fold logged, once.
-static void fold_duplicate_peers() {
+// saved (by load_peers) and the fold logged, once. True when one folded.
+static bool fold_duplicate_peers() {
   bool folded = false;
   for (uint8_t i = 0; i < g_peer_count; i++) {
     for (uint8_t j = i + 1; j < g_peer_count;) {
@@ -1982,64 +2024,93 @@ static void fold_duplicate_peers() {
     }
   }
   if (folded) {
-    persist_peers();
     health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
                "opera: folded a duplicate member entry into one");
   }
+  return folded;
 }
 
+// A slot that does not read whole (absent, or another length) is not
+// loaded: it used to count as a member, all zero (key, address and
+// fingerprint), which nothing would ever hear from. The members after it
+// move up; the next save stores the list as loaded.
+//
+// Slots above the stored count are removed here too (sweep F137, on its
+// review): persist_peers removes them at every save from F137 on, but an
+// older firmware's removal or leave left them, and a pairing whose count
+// write NVS refused leaves the new member's. Nothing else runs at a boot
+// that would (only a membership change saves the list), so a device
+// updated with its former members' entries on the flash kept them until
+// its next pairing or removal. Read on the load's own handle (isKey, no
+// write, nothing logged); the list is saved only when one is there, and
+// then the next boot finds none.
 static bool load_peers() {
   g_prefs.begin(NVS_NS, true);
-  g_peer_count = g_prefs.getUChar(NVS_PEER_COUNT, 0);
+  uint8_t stored = g_prefs.getUChar(NVS_PEER_COUNT, 0);
 
-  if (g_peer_count > MAX_OPERA_SIZE) {
-    g_peer_count = MAX_OPERA_SIZE;
+  if (stored > MAX_OPERA_SIZE) {
+    stored = MAX_OPERA_SIZE;
   }
 
-  for (uint8_t i = 0; i < g_peer_count; i++) {
+  g_peer_count = 0;
+  bool unreadable = false;
+  for (uint8_t i = 0; i < stored; i++) {
     char key[16];
-    snprintf(key, sizeof(key), "%s%d", NVS_PEER_PREFIX, i);
+    peer_slot_key(key, i);
 
     uint8_t peer_data[PUBKEY_SIZE + 6 + MAX_PEER_NAME_LEN];
     size_t len = g_prefs.getBytes(key, peer_data, sizeof(peer_data));
 
-    if (len == sizeof(peer_data)) {
-      memcpy(g_peers[i].pubkey, peer_data, PUBKEY_SIZE);
-      memcpy(g_peers[i].mac_addr, peer_data + PUBKEY_SIZE, 6);
-      memcpy(g_peers[i].name, peer_data + PUBKEY_SIZE + 6, MAX_PEER_NAME_LEN);
-      g_peers[i].name[MAX_PEER_NAME_LEN] = '\0';
-
-      compute_fingerprint(g_peers[i].pubkey, g_peers[i].fingerprint);
-      g_peers[i].state = PEER_OFFLINE;
-      g_peers[i].session_established = false;
-      // Same counter convention as add_peer (spec §3.3): the first frame this
-      // boot signs carries counter 1, never the static-zeroed 0 a strict
-      // receiver drops — unless any counter was signed before, and then one
-      // past the highest reservation stored (load_tx_reservations, below).
-      // rx starts at the member's last-seen tombstone in this opera, if it
-      // has one (a member re-added since its removal: sweep F116; its
-      // counter may not be in "replay_ctrs" until the next 5-minute save),
-      // else at 0; load_replay_counters() raises it to the persisted
-      // high-water mark right after.
-      g_peers[i].msg_counter_tx = 1;
-      const RxTombstone* tomb = find_rx_tombstone(g_peers[i].fingerprint, g_opera_config.opera_id);
-      g_peers[i].msg_counter_rx = tomb != nullptr ? tomb->last_seen : 0;
-      g_peers[i].msg_counter_tx_reserved = 0;
-
-      // Register with ESP-NOW
-      esp_now_peer_info_t peer_info = {};
-      memcpy(peer_info.peer_addr, g_peers[i].mac_addr, 6);
-      peer_info.channel = ESPNOW_CHANNEL;
-      peer_info.encrypt = false;
-      esp_now_add_peer(&peer_info);
+    if (len != sizeof(peer_data)) {
+      unreadable = true;
+      continue;
     }
+    OperaPeer& p = g_peers[g_peer_count++];
+    memcpy(p.pubkey, peer_data, PUBKEY_SIZE);
+    memcpy(p.mac_addr, peer_data + PUBKEY_SIZE, 6);
+    memcpy(p.name, peer_data + PUBKEY_SIZE + 6, MAX_PEER_NAME_LEN);
+    p.name[MAX_PEER_NAME_LEN] = '\0';
+
+    compute_fingerprint(p.pubkey, p.fingerprint);
+    p.state = PEER_OFFLINE;
+    p.session_established = false;
+    // Same counter convention as add_peer (spec §3.3): the first frame this
+    // boot signs carries counter 1, never the static-zeroed 0 a strict
+    // receiver drops — unless any counter was signed before, and then one
+    // past the highest reservation stored (load_tx_reservations, below).
+    // rx starts at the member's last-seen tombstone in this opera, if it
+    // has one (a member re-added since its removal: sweep F116; its
+    // counter may not be in "replay_ctrs" until the next 5-minute save),
+    // else at 0; load_replay_counters() raises it to the persisted
+    // high-water mark right after.
+    p.msg_counter_tx = 1;
+    const RxTombstone* tomb = find_rx_tombstone(p.fingerprint, g_opera_config.opera_id);
+    p.msg_counter_rx = tomb != nullptr ? tomb->last_seen : 0;
+    p.msg_counter_tx_reserved = 0;
+
+    // Register with ESP-NOW
+    esp_now_peer_info_t peer_info = {};
+    memcpy(peer_info.peer_addr, p.mac_addr, 6);
+    peer_info.channel = ESPNOW_CHANNEL;
+    peer_info.encrypt = false;
+    esp_now_add_peer(&peer_info);
   }
+  const bool stale_slots = stored_member_slots_from(g_prefs, stored);
 
   g_prefs.end();
-  // F71: before anything is sent, and before fold_duplicate_peers, whose
-  // persist_peers writes the record from what is in RAM.
+  if (unreadable) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+               "opera: a stored member entry is unreadable; not loaded");
+  }
+  // F71: before anything is sent, and before the save below, whose
+  // persist_tx_reservations writes the record from what is in RAM.
   load_tx_reservations();
-  fold_duplicate_peers();
+  const bool folded = fold_duplicate_peers();
+  if (folded || stale_slots) persist_peers();
+  if (stale_slots) {
+    health_log(SCV_LOG_INFO, SCV_CAT_MESH,
+               "opera: removed stored member entries above the member count");
+  }
   return true;
 }
 
@@ -2113,7 +2184,8 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
       });
 
   // Load persisted config
-  load_opera_config();
+  bool member_slots_without_opera = false;
+  load_opera_config(&member_slots_without_opera);
   load_revocations();   // F33: the §5.6 deny-list
   load_rx_tombstones(); // F116: before load_peers, which starts a member at its own
   if (g_opera_config.configured) {
@@ -2123,6 +2195,16 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
     // the opera was not), but a member added later starts above every
     // counter this device reserved before.
     load_tx_reservations();
+    if (member_slots_without_opera) {
+      // F137 (on its review): a leave on older firmware kept every slot,
+      // and the records by fingerprint with them. Saved as a leave saves
+      // now: no slot, the send-counter record's floor under no
+      // fingerprint (read just above), no last-seen record. Once.
+      (void)persist_peers();
+      (void)save_replay_counters();
+      health_log(SCV_LOG_INFO, SCV_CAT_MESH,
+                 "opera: removed stored member entries no opera holds");
+    }
   }
 
   g_start_time_ms = millis();
@@ -2569,7 +2651,8 @@ static bool remove_peer(const uint8_t* fingerprint) {
       // it: nothing above it has been signed), so the save below still
       // covers what was signed to the removed member when its entry goes,
       // and a boot after it resumes above it too. With no survivor the
-      // record is not rewritten (persist_tx_reservations) and still covers it.
+      // save below writes the record as one entry under no fingerprint,
+      // holding that counter (persist_tx_floor_without_members, F137).
       for (uint8_t j = 0; j < g_peer_count; j++) {
         if (g_peers[j].msg_counter_tx_reserved < g_tx_high_signed) {
           g_peers[j].msg_counter_tx_reserved = g_tx_high_signed;

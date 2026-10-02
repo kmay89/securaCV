@@ -1306,8 +1306,8 @@ void test_a_removed_members_reservation_outlives_it_and_a_reboot() {
 
 void test_a_device_re_paired_after_its_partner_held_no_one_hears_it() {
   // Two ways A ends up holding no member while B keeps A: A removes its
-  // last member (the record is not rewritten with no member; a boot reads
-  // it all the same), or A leaves (B is not told: canary-wap acts on no
+  // last member (with no member the record keeps one entry under no
+  // fingerprint, F137; a boot reads it all the same), or A leaves (B is not told: canary-wap acts on no
   // LEAVE_OPERA).
   for (int leave = 0; leave < 2; ++leave) {
     fresh_opera({&A, &B});
@@ -2210,8 +2210,9 @@ void test_a_reflashed_device_with_a_new_key_is_heard_at_once() {
 // even on a fused board (spec §5.5). The same went for the two counter
 // records, by fingerprint: "replay_ctrs" kept a removed member's entry
 // until the sketch's next 5-minute save, and "tx_ctrs" kept every former
-// member's after the last one went (it is not rewritten with no member, so
-// a member added later starts past the counters it holds, F99).
+// member's after the last one went (it was not rewritten with no member,
+// for the counter a member added later starts past, F99; it now keeps
+// that counter under no fingerprint).
 //
 // What a dropped member leaves on purpose, by fingerprint only: its entry
 // in the deny-list (spec §5.6, 7 days, flash-encryption gated) when it was
@@ -2379,6 +2380,257 @@ void test_removing_the_last_member_keeps_only_the_counter_floor() {
   std::printf("PASS removing_the_last_member_keeps_only_the_counter_floor\n");
 }
 
+// ── F137's review: a refused save, and what older firmware left ─────────
+//
+// persist_peers() wrote the count first and removed the slots above it
+// whatever the count write answered. A full NVS refuses a set and still
+// erases, so a refused count over removed slots stood in NVS: a boot
+// loaded the removed member back, lost the survivor whose slot was
+// removed, and loaded the absent slot as a member with an all-zero key
+// and address (host-probed at 65a159c). Now the live slots go first, then
+// the count, and the slots above it only once both are stored; a slot a
+// boot cannot read is not loaded; and a boot removes the slots an older
+// firmware's removal or leave left (only a membership change saved the
+// list before, so they stayed until the next one). On a board with flash
+// encryption off the stored members stay: what is done with them is sweep
+// F141's decision.
+
+// A stored slot as persist_peers writes it: key, address, name.
+std::vector<uint8_t> slot_value(const Device& member) {
+  std::vector<uint8_t> v(mn::PUBKEY_SIZE + 6 + mn::MAX_PEER_NAME_LEN, 0);
+  memcpy(v.data(), member.pub, mn::PUBKEY_SIZE);
+  memcpy(v.data() + mn::PUBKEY_SIZE, member.mac, 6);
+  memcpy(v.data() + mn::PUBKEY_SIZE + 6, member.name,
+         std::min(strlen(member.name), static_cast<size_t>(mn::MAX_PEER_NAME_LEN)));
+  return v;
+}
+
+// The highest counter any entry of `d`'s send-counter record holds (what
+// a boot resumes above).
+uint64_t tx_record_high(const Device& d) {
+  const std::vector<uint8_t> v = nvs_value(d, kTxKey);
+  uint64_t high = 0;
+  for (size_t off = 0; off + mn::FINGERPRINT_SIZE + 8 <= v.size(); off += mn::FINGERPRINT_SIZE + 8) {
+    uint64_t c = 0;
+    memcpy(&c, v.data() + off + mn::FINGERPRINT_SIZE, 8);
+    high = std::max(high, c);
+  }
+  return high;
+}
+
+// `d` after a boot holds exactly `members`, none of them all zero.
+bool boots_holding(Device& d, const std::vector<const Device*>& members) {
+  boot(d);
+  become(d);
+  bool ok = mn::g_peer_count == members.size();
+  for (uint8_t i = 0; i < mn::g_peer_count; ++i) {
+    if (all_zero(mn::g_peers[i].pubkey, mn::PUBKEY_SIZE)) ok = false;
+  }
+  for (const Device* m : members) {
+    if (entry(d, *m) == nullptr) ok = false;
+  }
+  return ok;
+}
+
+void test_a_refused_save_leaves_a_list_a_boot_reads_whole() {
+  // Every write refused (a full partition): the removal does not reach
+  // NVS, and a boot loads the list as it was, the first slot's or the
+  // last slot's removal alike.
+  for (const Device* gone : {&B, &J}) {
+    fresh_opera({&A, &B, &C, &J});
+    host_sim::nvs_writes_fail = true;
+    remove_member(A, *gone);
+    host_sim::nvs_writes_fail = false;
+    CHECK((peer_slots(A) == std::vector<int>{0, 1, 2}));
+    CHECK(nvs_peer_count(A) == 3);
+    CHECK(boots_holding(A, {&B, &C, &J}));              // was B, C and a zero member; J lost
+  }
+
+  // The first slot refused, in a longer list: the save stops there, and
+  // the slots after it keep the list as it was (written on, they held
+  // B, J, K, K: C lost at the next boot).
+  fresh_opera({&A, &B, &C, &J, &K});
+  host_sim::nvs_fail_keys = {"mesh/peer_0"};
+  remove_member(A, B);
+  host_sim::nvs_fail_keys.clear();
+  CHECK(slot_holds(A, 0, B) && slot_holds(A, 1, C) && slot_holds(A, 2, J) && slot_holds(A, 3, K));
+  CHECK(boots_holding(A, {&B, &C, &J, &K}));
+
+  // Only the count refused: the shifted slots are stored above it, and a
+  // boot reads the list as it is now (the duplicate the shift left folds).
+  fresh_opera({&A, &B, &C, &J});
+  host_sim::nvs_fail_keys = {"mesh/peer_cnt"};
+  remove_member(A, B);
+  host_sim::nvs_fail_keys.clear();
+  CHECK(nvs_peer_count(A) == 3);
+  CHECK((peer_slots(A) == std::vector<int>{0, 1, 2}));  // nothing removed under the old count
+  CHECK(slot_holds(A, 0, C) && slot_holds(A, 1, J) && slot_holds(A, 2, J));
+  CHECK(boots_holding(A, {&C, &J}));
+  CHECK((peer_slots(A) == std::vector<int>{0, 1}));     // the boot's save made it one
+  CHECK(nvs_peer_count(A) == 2);
+  CHECK(keys_holding(A, B.pub, sizeof B.pub).empty());
+
+  // A slot refused part way through the shift: the save stops there, and
+  // a boot still reads the list as it is now.
+  fresh_opera({&A, &B, &C, &J});
+  host_sim::nvs_fail_keys = {"mesh/peer_1"};
+  remove_member(A, B);
+  host_sim::nvs_fail_keys.clear();
+  CHECK(nvs_peer_count(A) == 3);
+  CHECK(slot_holds(A, 0, C) && slot_holds(A, 1, C) && slot_holds(A, 2, J));
+  CHECK(boots_holding(A, {&C, &J}));                    // was C alone: J lost
+
+  // A pairing whose count write was refused: the new member's slot is
+  // above the stored count, and the boot removes it.
+  fresh_opera({&A, &B});
+  become(A);
+  CHECK(mn::add_peer(K.pub, K.mac, K.name));
+  host_sim::nvs_fail_keys = {"mesh/peer_cnt"};
+  CHECK(!mn::persist_peers());
+  host_sim::nvs_fail_keys.clear();
+  CHECK((peer_slots(A) == std::vector<int>{0, 1}));
+  g_health.clear();
+  CHECK(boots_holding(A, {&B}));
+  CHECK((peer_slots(A) == std::vector<int>{0}));
+  CHECK(keys_holding(A, K.pub, sizeof K.pub).empty());
+  CHECK(logged("opera: removed stored member entries above the member count"));
+
+  // And the save says so: the list not stored is false.
+  become(A);
+  host_sim::nvs_writes_fail = true;
+  CHECK(!mn::persist_peers());
+  host_sim::nvs_writes_fail = false;
+  CHECK(mn::persist_peers());
+  std::printf("PASS a_refused_save_leaves_a_list_a_boot_reads_whole\n");
+}
+
+void test_an_unreadable_slot_is_not_loaded_as_a_member() {
+  for (const char* damage : {"absent", "short"}) {
+    fresh_opera({&A, &B, &C, &J});
+    if (std::string(damage) == "absent") {
+      A.nvs.erase("mesh/peer_1");
+    } else {
+      A.nvs["mesh/peer_1"].resize(mn::PUBKEY_SIZE);
+    }
+    g_health.clear();
+    CHECK(boots_holding(A, {&B, &J}));                  // was B, a zero member, J
+    CHECK(logged("opera: a stored member entry is unreadable; not loaded"));
+    CHECK(hears_next_heartbeat(A, J));                  // J, moved up a place, is heard
+    // The next save stores the list as loaded.
+    become(A);
+    CHECK(mn::persist_peers());
+    CHECK((peer_slots(A) == std::vector<int>{0, 1}));
+    CHECK(slot_holds(A, 0, B) && slot_holds(A, 1, J));
+  }
+  std::printf("PASS an_unreadable_slot_is_not_loaded_as_a_member\n");
+}
+
+void test_a_boot_removes_the_slots_an_older_removal_left() {
+  // An older firmware's removals of C and of J (A holds B), then the
+  // update: the boot removes both slots, once.
+  fresh_opera({&A, &B});
+  A.nvs["mesh/peer_1"] = slot_value(C);
+  A.nvs["mesh/peer_2"] = slot_value(J);
+  g_health.clear();
+  CHECK(boots_holding(A, {&B}));
+  CHECK((peer_slots(A) == std::vector<int>{0}));
+  CHECK(slot_holds(A, 0, B));
+  for (const Device* d : {&C, &J}) {
+    CHECK(keys_holding(A, d->pub, sizeof d->pub).empty());
+    CHECK(keys_holding(A, d->mac, sizeof d->mac).empty());
+  }
+  CHECK(logged("opera: removed stored member entries above the member count"));
+  CHECK(hears_next_heartbeat(A, B));
+  // The next boot finds none, and writes and removes nothing.
+  host_sim::nvs_writes.clear();
+  host_sim::nvs_removes.clear();
+  g_health.clear();
+  CHECK(boots_holding(A, {&B}));
+  CHECK(host_sim::nvs_writes.empty() && host_sim::nvs_removes.empty());
+  CHECK(!logged("opera: removed stored member entries"));
+
+  // An older firmware's removal of the last member: the opera stays, the
+  // count is 0, peer_0 and the send-counter record still name B.
+  fresh_opera({&A, &B});
+  for (int i = 0; i < 3; ++i) CHECK(frame_to(A, B));
+  become(A);
+  const uint64_t high = tx_record_high(A);
+  CHECK(high >= mn::g_tx_high_signed && high > 0);
+  A.nvs["mesh/peer_cnt"] = {0};
+  CHECK(!keys_holding_fingerprint(A, B).empty());       // tx_ctrs
+  CHECK(boots_holding(A, {}));
+  CHECK(peer_slots(A).empty());
+  CHECK(keys_holding(A, B.pub, sizeof B.pub).empty());
+  CHECK(keys_holding_fingerprint(A, B).empty());
+  CHECK(anonymous_tx_record(A) == high);                 // the floor, under no fingerprint
+  std::printf("PASS a_boot_removes_the_slots_an_older_removal_left\n");
+}
+
+void test_a_boot_removes_the_members_an_older_leave_left() {
+  // An older firmware's leave: the count 0, every slot and both counter
+  // records kept, and no opera (removed) or an empty one (before F113).
+  for (int empty_opera = 0; empty_opera < 2; ++empty_opera) {
+    fresh_opera({&A, &B, &C});
+    for (int i = 0; i < 4; ++i) CHECK(frame_to(A, B));
+    heard_heartbeats(A, C, 2);
+    become(A);
+    CHECK(mn::save_replay_counters());
+    const uint64_t high = tx_record_high(A);
+    CHECK(high >= mn::g_tx_high_signed && high > 0);
+    A.nvs["mesh/peer_cnt"] = {0};
+    if (empty_opera) {
+      A.nvs["mesh/opera_id"] = std::vector<uint8_t>(mn::OPERA_ID_SIZE, 0);
+      A.nvs["mesh/opera_sec"] = std::vector<uint8_t>(mn::OPERA_SECRET_SIZE, 0);
+    } else {
+      A.nvs.erase("mesh/opera_id");
+      A.nvs.erase("mesh/opera_sec");
+    }
+    CHECK(nvs_has(A, "replay_ctrs"));
+    g_health.clear();
+    CHECK(boots_holding(A, {}));
+    CHECK(!mn::g_opera_config.configured);
+    CHECK(peer_slots(A).empty());
+    for (const Device* d : {&B, &C}) {
+      CHECK(keys_holding(A, d->pub, sizeof d->pub).empty());
+      CHECK(keys_holding(A, d->mac, sizeof d->mac).empty());
+      CHECK(keys_holding_fingerprint(A, *d).empty());   // no tombstone: the older leave kept none
+    }
+    CHECK(!nvs_has(A, "replay_ctrs"));
+    CHECK(anonymous_tx_record(A) == high);
+    CHECK(logged("opera: removed stored member entries no opera holds"));
+    // Once: the next boot finds nothing to remove.
+    host_sim::nvs_writes.clear();
+    host_sim::nvs_removes.clear();
+    CHECK(boots_holding(A, {}));
+    CHECK(host_sim::nvs_writes.empty() && host_sim::nvs_removes.empty());
+    // And a pairing starts above every counter A signed.
+    become(A);
+    mn::set_enabled(true);
+    fresh_device(J);
+    re_pair(A, J);
+    CHECK(entry(A, J)->msg_counter_tx > high);
+    CHECK(hears_next_heartbeat(J, A));
+  }
+  std::printf("PASS a_boot_removes_the_members_an_older_leave_left\n");
+}
+
+void test_a_board_without_flash_encryption_keeps_its_stored_members() {
+  // No opera loads (spec §5.5, audit O2), and the stored members stay as
+  // they are: sweep F141 decides what such a boot does with them (one
+  // option reads them, to keep each one's last-seen counter).
+  fresh_opera({&A, &B, &C});
+  host_sim::flash_encrypted = false;
+  host_sim::nvs_writes.clear();
+  host_sim::nvs_removes.clear();
+  g_health.clear();
+  CHECK(boots_holding(A, {}));
+  host_sim::flash_encrypted = true;
+  CHECK((peer_slots(A) == std::vector<int>{0, 1}));
+  CHECK(host_sim::nvs_removes.empty());
+  CHECK(!logged("opera: removed stored member entries"));
+  std::printf("PASS a_board_without_flash_encryption_keeps_its_stored_members\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -2488,6 +2740,12 @@ const Test kTests[] = {
     {"a_device_that_left_holds_no_member", test_a_device_that_left_holds_no_member},
     {"removing_the_last_member_keeps_only_the_counter_floor",
      test_removing_the_last_member_keeps_only_the_counter_floor},
+    {"a_refused_save_leaves_a_list_a_boot_reads_whole", test_a_refused_save_leaves_a_list_a_boot_reads_whole},
+    {"an_unreadable_slot_is_not_loaded_as_a_member", test_an_unreadable_slot_is_not_loaded_as_a_member},
+    {"a_boot_removes_the_slots_an_older_removal_left", test_a_boot_removes_the_slots_an_older_removal_left},
+    {"a_boot_removes_the_members_an_older_leave_left", test_a_boot_removes_the_members_an_older_leave_left},
+    {"a_board_without_flash_encryption_keeps_its_stored_members",
+     test_a_board_without_flash_encryption_keeps_its_stored_members},
 };
 
 }  // namespace liveness
