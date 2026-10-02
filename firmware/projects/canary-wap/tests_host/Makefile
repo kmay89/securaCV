@@ -758,7 +758,7 @@ clean: clean-mesh-liveness
 MESH_CMD_BIN = test_mesh_commands_wap
 MESH_CMD_SRC = test_mesh_commands_wap.cpp
 
-$(MESH_CMD_BIN): $(MESH_CMD_SRC) mesh_net_sim.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(SRC_DIR)/loop_command_ring.h $(MESH_ADDR_LINK)
+$(MESH_CMD_BIN): $(MESH_CMD_SRC) mesh_net_sim.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/http_status_line.h $(MESH_ADDR_LINK)
 	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(MESH_CMD_SRC) $(MESH_ADDR_LINK) -lcrypto
 
 .PHONY: run-mesh-commands clean-mesh-commands

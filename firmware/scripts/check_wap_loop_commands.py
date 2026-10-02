@@ -53,7 +53,9 @@ Mesh (F96):
    run with `mesh_network::not_run_status(`. `mesh_network::submit(` appears
    only in HTTP handlers (a function taking `httpd_req_t*`): from the loop
    task it would wait for itself. `mesh_network::update(` is called once,
-   from the sketch's `loop()`.
+   from the sketch's `loop()`. `http_send_error()` sets its status line with
+   `http_status_line(status_code)` (`http_status_line.h`, host-tested), so a
+   409 `mesh_busy` and a 503 `mesh_timeout` go out with their own lines.
 
 MQTT (F106):
 
@@ -147,6 +149,7 @@ CHANGING_HANDLERS = ("handle_mesh_alerts_clear", "handle_mesh_enable", "handle_m
                      "handle_mesh_leave", "handle_mesh_remove", "handle_mesh_name")
 
 SIG_HANDLER = r"\besp_err_t\s+(\w+)\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)"
+SIG_SEND_ERROR = r"\bstatic\s+esp_err_t\s+http_send_error\s*\([^)]*\)"
 SIG_UPDATE = r"\bvoid\s+update\s*\(\s*\)"
 SIG_SUBMIT = r"\bloop_command_ring::Wait\s+submit\s*\([^)]*\)"
 SIG_RECV_CB = r"\bstatic\s+void\s+espnow_recv_cb\s*\([^)]*\)"
@@ -352,6 +355,11 @@ def check_mesh_sketch(ino: str, others: dict[str, str], errors: list[str]) -> No
         if body.count("mesh_network::submit(") != 1 or "mesh_network::not_run_status(" not in body:
             errors.append(f"{INO}: {h}() must hand its command to mesh_network::submit( once and "
                           "answer one that did not run with mesh_network::not_run_status( (F96)")
+    herr = body_of(ino_code, SIG_SEND_ERROR, f"{INO}: http_send_error()", errors)
+    if herr is not None and "httpd_resp_set_status(req,http_status_line(status_code));" not in squash(herr):
+        errors.append(f"{INO}: http_send_error() must set its status with "
+                      "httpd_resp_set_status(req, http_status_line(status_code)) — the host-tested table "
+                      "(http_status_line.h) that gives 409 mesh_busy and 503 mesh_timeout their lines (F96)")
     loop = body_of(ino_code, SIG_INO_LOOP, f"{INO}: loop()", errors)
     total = sum(c.count("mesh_network::update(") for c in code.values())
     if loop is None or loop.count("mesh_network::update(") != 1 or total != 1:
@@ -646,6 +654,10 @@ MUTATIONS: list[tuple[str, Mutation]] = [
         r"\1 (void)mesh_network::submit(mesh_network::make_command(mesh_network::MESH_CMD_CLEAR_ALERTS), nullptr);")),
     ("the sketch hides the mesh's callers behind a using-directive",
      raw("ino", '#include "mesh_network.h"', '#include "mesh_network.h"\nusing namespace mesh_network;')),
+    ("http_send_error() goes back to the pre-F96 status chain (409 and 503 sent as 400)",
+     on("ino", SIG_SEND_ERROR, r"http_status_line\(status_code\)",
+        'status_code == 400 ? "400 Bad Request" : status_code == 404 ? "404 Not Found" : '
+        'status_code == 500 ? "500 Internal Server Error" : "400 Bad Request"')),
     ("the sketch calls mesh_network::update twice",
      on("ino", SIG_INO_LOOP, r"(mesh_network::update\(\);)", r"\1 mesh_network::update();")),
     # Rule 1: the owner commands are internal.

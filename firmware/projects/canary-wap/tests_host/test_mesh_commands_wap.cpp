@@ -40,6 +40,7 @@
 #include MESH_NETWORK_CPP
 #pragma GCC diagnostic pop
 #include "mesh_net_sim.h"
+#include "http_status_line.h"   // the status line http_send_error() sends
 
 #include <cstdio>
 #include <cstdlib>
@@ -342,14 +343,19 @@ void test_a_disabled_mesh_still_takes_the_enable_command() {
 // ── Bounded waits ───────────────────────────────────────────────────────
 
 // The loop task never gets to it: the handler stops waiting at
-// COMMAND_WAIT_MS, the command is withdrawn (the 503 mesh_busy is true:
-// nothing happened), and a later update() does not run it.
+// COMMAND_WAIT_MS, the command is withdrawn (the 503 mesh_timeout is true:
+// nothing happened), and a later update() does not run it. The handler's
+// answer is the PlatformIO tree's for the case: 503 mesh_timeout, with a
+// 503 status line.
 void test_a_command_the_loop_task_does_not_reach_is_withdrawn() {
   fresh_opera({&A, &B, &C});
   host_sim::httpd_side_effects = 0;
   const Rest r = rest(A, remove_of(C), /*turn_at=*/0);
   CHECK(r.wait == lcr::Wait::kWithdrawn);
   CHECK(!r.ok);
+  CHECK(mn::not_run_status(r.wait) == 503);
+  CHECK(std::strcmp(mn::not_run_error(r.wait), "mesh_timeout") == 0);
+  CHECK(std::strcmp(http_status_line(mn::not_run_status(r.wait)), "503 Service Unavailable") == 0);
   CHECK(r.waited_ms == mn::COMMAND_WAIT_MS);
   CHECK(r.sleeps == mn::COMMAND_WAIT_MS / mn::COMMAND_POLL_MS);
   become(A);
@@ -375,8 +381,9 @@ void test_a_command_reached_just_in_time_reports_its_result() {
   std::printf("PASS a_command_reached_just_in_time_reports_its_result\n");
 }
 
-// Four commands already waiting: a fifth handler answers 503 at once,
-// without waiting, and its command never runs.
+// Four commands already waiting: a fifth handler answers 409 mesh_busy at
+// once (the PlatformIO tree's answer, with a 409 status line), without
+// waiting, and its command never runs.
 void test_a_full_ring_answers_busy_at_once() {
   fresh_opera({&A, &B, &C});
   become(A);
@@ -386,6 +393,9 @@ void test_a_full_ring_answers_busy_at_once() {
   const Rest r = rest(A, remove_of(C), /*turn_at=*/1);
   CHECK(r.wait == lcr::Wait::kBusy && !r.ok);
   CHECK(r.sleeps == 0 && r.waited_ms == 0);
+  CHECK(mn::not_run_status(r.wait) == 409);
+  CHECK(std::strcmp(mn::not_run_error(r.wait), "mesh_busy") == 0);
+  CHECK(std::strcmp(http_status_line(mn::not_run_status(r.wait)), "409 Conflict") == 0);
   become(A);
   mn::update();                                 // runs the four, not the fifth
   CHECK(mn::g_commands.queued() == 0);
@@ -462,6 +472,20 @@ void test_a_pairing_driven_over_rest_completes() {
   std::printf("PASS a_pairing_driven_over_rest_completes\n");
 }
 
+// The status line of every code an error answer in canary_wap.ino carries
+// (http_send_error: 400, 409, 500, 503, and 404). Before F96 every code but
+// 400, 404 and 500 went out as "400 Bad Request", the audio self-test's 409
+// and the BLE chirp send's 503 among them; an unknown code still does.
+void test_every_error_code_has_its_status_line() {
+  CHECK(std::strcmp(http_status_line(400), "400 Bad Request") == 0);
+  CHECK(std::strcmp(http_status_line(404), "404 Not Found") == 0);
+  CHECK(std::strcmp(http_status_line(409), "409 Conflict") == 0);
+  CHECK(std::strcmp(http_status_line(500), "500 Internal Server Error") == 0);
+  CHECK(std::strcmp(http_status_line(503), "503 Service Unavailable") == 0);
+  CHECK(std::strcmp(http_status_line(418), "400 Bad Request") == 0);
+  std::printf("PASS every_error_code_has_its_status_line\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -478,6 +502,7 @@ const Test kTests[] = {
     {"a_full_ring_answers_busy_at_once", test_a_full_ring_answers_busy_at_once},
     {"commands_run_in_the_order_they_were_posted", test_commands_run_in_the_order_they_were_posted},
     {"a_pairing_driven_over_rest_completes", test_a_pairing_driven_over_rest_completes},
+    {"every_error_code_has_its_status_line", test_every_error_code_has_its_status_line},
 };
 
 }  // namespace commands

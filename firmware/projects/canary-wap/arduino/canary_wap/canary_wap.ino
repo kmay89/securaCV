@@ -179,6 +179,7 @@ extern "C" {
 }
 #include "csi_dashboard_html.h"  // CSI_DASHBOARD_HTML — the Phase-3 headline UI now served at /
 #include "mesh_network.h"
+#include "http_status_line.h"    // pure, host-tested: the status line of an error answer
 #include "mesh_channel_policy.h"  // Channel decision (STA-follow) for MQTT telemetry
 #include "airtime_governor.h"     // Rolling airtime stats for MQTT telemetry
 #include "bluetooth_channel.h"
@@ -3295,11 +3296,7 @@ static esp_err_t http_send_json(httpd_req_t* req, const char* json) {
 }
 
 static esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_code) {
-  httpd_resp_set_status(req, status_code == 400 ? "400 Bad Request" :
-                              status_code == 404 ? "404 Not Found" :
-                              status_code == 409 ? "409 Conflict" :
-                              status_code == 500 ? "500 Internal Server Error" :
-                              status_code == 503 ? "503 Service Unavailable" : "400 Bad Request");
+  httpd_resp_set_status(req, http_status_line(status_code));
   char response[128];
   snprintf(response, sizeof(response), "{\"ok\":false,\"error\":\"%s\"}", error_code);
   return http_send_json(req, response);
