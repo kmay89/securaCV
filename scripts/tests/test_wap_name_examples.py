@@ -20,6 +20,16 @@ So this reads the recipe from canary_wap.ino, builds the set of suffixes it
 can produce, and holds every user-facing doc to it. Placeholders (XXXX) pass.
 docs/audit/ is not read: a dated audit quotes the wrong examples it found.
 
+Sources too (sweep A35): two firmware comments and a Lab test fixture
+showed canary-s3-AB7K and SecuraCV-7fA3 after the docs were corrected,
+because this read docs only. So the WAP's sketch, the shared firmware under
+firmware/common/, the Lab (canary-local/), the Home Assistant integration and
+tools/ are read as well, every line, comments and string literals alike. The
+display (firmware/projects/canary-display) is not: its SoftAP is
+"SecuraCV-%.4s" of its own token, another product's recipe. A source line
+that must keep a WAP-shaped name no WAP has is a named exemption below, with
+its reason, and the test fails on an exemption that no longer matches.
+
 Why here and not beside canary-local/tests/fingerprint_examples.test.js
 (which holds the Lab page's names to the same recipe): the input is prose
 anywhere under docs/, tools/ and the firmware READMEs, and canary-local.yml's
@@ -106,6 +116,26 @@ def doc_files(root: Path) -> list[str]:
     return keep
 
 
+SOURCE_EXTS = (".h", ".hpp", ".c", ".cpp", ".ino", ".js", ".mjs", ".cjs", ".py",
+               ".html", ".json", ".sh", ".css")
+SOURCE_ROOTS = ("firmware/projects/canary-wap/", "firmware/common/", "canary-local/",
+                "custom_components/", "tools/")
+
+# (file, the line's text that may stay, why). Each must match exactly one line.
+SOURCE_EXEMPT = (
+    ("firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h",
+     "// from the device's actual per-device hostname (canary-s3-XXXX.local) so",
+     "describes what updateMdnsLinkFromDevice does: it builds the close-out link "
+     "from /api/status's device_id, a host no WAP advertises (filed as a bug, not "
+     "a comment to correct here: the comment is true to the code)"),
+)
+
+
+def source_files(root: Path) -> list[str]:
+    tracked = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True, check=True).stdout.split("\n")
+    return [f for f in tracked if f.endswith(SOURCE_EXTS) and f.startswith(SOURCE_ROOTS)]
+
+
 ABC = "23456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz"
 MUST_PASS = [
     "device_id = `canary-s3-4dC2`, AP SSID `SecuraCV-4dC2`",
@@ -173,6 +203,37 @@ class TheDocs(unittest.TestCase):
             for i, line in enumerate(text.split("\n"), 1):
                 problems += [f"{rel}:{i}: {p}" for p in problems_in(line, valid)]
         self.assertEqual(problems, [])
+
+
+class TheSources(unittest.TestCase):
+    maxDiff = None
+
+    def test_every_wap_name_in_the_sources_is_one_a_wap_can_have(self):
+        valid = valid_suffixes(alphabet(ino()))
+        files = source_files(REPO)
+        self.assertGreater(len(files), 500, "the source walk found almost nothing (git ls-files broke?)")
+        for want in ("firmware/projects/canary-wap/arduino/canary_wap/csi_dashboard_html.h",
+                     "firmware/common/encoding/cbor.h", "canary-local/tests/flash.test.js"):
+            self.assertIn(want, files, "sweep A35's three files are read")
+        problems, used = [], {x: 0 for x in SOURCE_EXEMPT}
+        for rel in files:
+            try:
+                text = (REPO / rel).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            for i, line in enumerate(text.split("\n"), 1):
+                found = problems_in(line, valid)
+                if not found:
+                    continue
+                hit = next((x for x in SOURCE_EXEMPT if x[0] == rel and line.strip() == x[1]), None)
+                if hit:
+                    used[hit] += 1
+                    continue
+                problems += [f"{rel}:{i}: {p}" for p in found]
+        self.assertEqual(problems, [])
+        for x, n in used.items():
+            with self.subTest(exempt=x[0]):
+                self.assertEqual(n, 1, f"a dead or doubled exemption: {x[1]!r} ({x[2]})")
 
 
 if __name__ == "__main__":

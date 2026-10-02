@@ -1327,7 +1327,7 @@ test("buildDiagnosticReport: the serial tail is scrubbed of credential lines", a
   // signatures and selftest PASS rows come through untouched.
   const { buildDiagnosticReport, sanitizeLogTail } = await core();
   const tail = [
-    "[WIFI] AP started: SecuraCV-7fA3 (password: cv-supersecret1)",
+    "[WIFI] AP started: SecuraCV-4dC2 (password: cv-supersecret1)",
     "[PROV]   WiFi PASS : cv-supersecret1",
     'Password: cv-supersecret1',
     '║    "ap_password": "cv-supersecret1",',

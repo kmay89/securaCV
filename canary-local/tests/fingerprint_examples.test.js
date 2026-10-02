@@ -308,11 +308,11 @@ test("the WAP page's fingerprint is the repo test key's, as the firmware test an
 //   SSID       generate_ap_ssid:   "SecuraCV-" + the same suffix, same case
 //   mDNS host  generate_mdns_hostname with no friendly name set:
 //              "canary-%02x%02x", four lowercase hex digits, no "-s3-"
-// The page used to show device id canary-s3-ab7k beside SSID SecuraCV-AB7K
-// (one suffix in two cases, which one device cannot produce) and host
-// canary-ab7k.local (k is not hex; only a friendly name could make it). Now
-// every one is the test key's, derived here from the seed, so a page that
-// shows fp 7916ca487912fa1b shows the names that key's device has. HA's
+// The page used to show a device id and an SSID that spelled one suffix in
+// two cases (which one device cannot produce; sweep A29 has the old pair) and
+// a host whose last character was not hex (only a friendly name could make
+// it). Now every one is the test key's, derived here from the seed, so a page
+// that shows fp 7916ca487912fa1b shows the names that key's device has. HA's
 // tests/test_fingerprint_case.py calls the same device canary-s3-4dC2; it is
 // outside canary-local.yml's path filter, so it is derived here, not read.
 const INO = read(`${WAP}/canary_wap.ino`);
