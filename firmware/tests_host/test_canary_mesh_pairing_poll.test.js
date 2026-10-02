@@ -19,7 +19,8 @@
 //     ends the poll without claiming either;
 //   - 000000 is shown like any other code (the old test was truthiness);
 //   - after this owner's confirm, the poll no longer offers the confirm
-//     button again; a confirm refused with partner_refused says so once;
+//     button again, and the next pairing in the same page starts
+//     unconfirmed; a confirm refused with partner_refused says so once;
 //   - a body without the F133 fields (older firmware) claims neither a
 //     success nor a failure.
 // The functions are lifted out of the C++ raw string by literal markers and
@@ -185,6 +186,37 @@ test("the code shows, 000000 included, and the confirm is offered until this own
   assert.strictEqual(p.el("pairingCodeValue").textContent, "000042");
   assert.strictEqual(p.el("pairingConfirmBtn").style.display, "none");
   assert.ok(p.polling() && p.alerts.length === 0);
+});
+
+test("a second pairing in the same page offers its own confirm", async () => {
+  // startPairing() starts each pairing unconfirmed: an owner who confirmed
+  // one pairing and presses Add Device again sees the next code with the
+  // confirm button, not "Confirmed here" (that pairing could only time out).
+  let seq = 0;
+  const p = page({
+    "/api/mesh/pair/start": () => ({ ok: true, state: "PAIRING_INIT", pairing_seq: ++seq }),
+    "/api/mesh/pair/confirm": () => ({ ok: true }),
+    "/api/mesh": [
+      { ...after(1, "running", "none", "PAIRING_CONFIRM"), pairing_code: 111111 },
+      after(1, "paired", "none"),
+      { ...after(2, "running", "none", "PAIRING_CONFIRM"), pairing_code: 222222 },
+    ],
+  });
+  await p.t.startPairing("init");
+  await p.poll();
+  await p.t.confirmPairing();
+  assert.strictEqual(p.t.state().pairingConfirmed, true);
+  await p.poll();
+  assert.ok(!p.polling() && p.alerts.length === 1);
+  assert.match(p.alerts[0], /Pairing complete on this Canary/);
+  await p.t.startPairing("init");
+  assert.strictEqual(p.t.state().pairingSeq, 2);
+  assert.strictEqual(p.t.state().pairingConfirmed, false);
+  await p.poll();
+  assert.strictEqual(p.el("pairingCodeValue").textContent, "222222");
+  assert.strictEqual(p.el("pairingConfirmBtn").style.display, "inline-flex");
+  assert.match(p.el("pairingStatus").textContent, /Verify the code/);
+  assert.ok(p.polling() && p.alerts.length === 1);
 });
 
 test("a confirm refused with partner_refused says so once and stops the poll", async () => {
