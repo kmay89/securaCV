@@ -274,7 +274,8 @@ those bodies `"replay":true`. On the canary base
   with the card's rows once nothing older waits, and writes no NVS delivery
   ceiling until then, so a reboot never reads the card's rows as delivered
   on its account. Past the 45 s the card is given up: the waiting rows go,
-  and rows on a card that comes back later are skipped. An ambient row
+  and rows on a card that comes back later are never sent (the backfill
+  starts past them, and no counter shows them). An ambient row
   (`wifi.channel_activity`, "live UI only") is never held: one that cannot
   go at once is dropped and counted. RAM does not survive a reboot, and a
   broker change drops what waits (owed to neither broker, as the offline
@@ -296,16 +297,61 @@ those bodies `"replay":true`. On the canary base
   `publish_or_queue()`, sweep F107). With no broker configured, rows
   are logged and owed to nobody, and a broker configured later (or a changed
   one) does not receive the old backlog;
-- what the egress did since boot rides its MQTT health (sweep F109), under
-  the names the canary-wap's `csi_event_egress::stats()` uses: a
-  `csi_event_egress` object with `dropped` (commits its full egress queue
-  refused), `held_dropped` (rows the RAM hold dropped, oldest first),
-  `ambient_dropped` (ambient rows that had to wait) and `planner`, the
-  backfill planner's counters (`live`, `held`, `queued`, `replayed`,
-  `skipped`, `untrusted`, `unsendable`, `truncated_unsent`, `read_giveups`).
-  They start over at every boot. The canary-wap keeps the same counters but
-  publishes none of them yet, and the Home Assistant integration reads
-  neither.
+- what the egress did since boot rides its MQTT health (sweep F109) as a
+  `csi_event_egress` object, under the names the canary-wap's
+  `csi_event_egress::stats()` uses, beside an `offline_queue` object (the
+  MQTT layer's queue). They count paths, not a ledger of rows: a row can
+  pass through two of them, and some rows pass through none (below). They
+  start over at every boot. The canary-wap keeps the same `csi_event_egress`
+  counters but publishes none of them yet, and the Home Assistant
+  integration reads neither. Each one counts:
+  - `dropped`: commits the full egress queue refused (the loop task was
+    stuck). The row is on neither the card nor the wire.
+  - `held_dropped`: rows the RAM hold dropped to make room, oldest first,
+    and, on the canary, rows that had to wait while the hold had no memory.
+  - `ambient_dropped`: ambient rows that had to wait (they are never held).
+  - `unsent_dropped`: rows no card kept that were lost at the hand-over to
+    the MQTT layer: it refused them (an offline queue with no memory, or one
+    full of tamper alerts while the broker is unreachable) and nothing kept
+    them. The canary-wap has no offline queue (a refused row waits in its
+    hold), so there it counts only rows whose body would not build, which a
+    canary body always does.
+  - `planner.live`: rows on the card sent at once.
+  - `planner.held`: rows on the card left for the backfill. Each is counted
+    again in `planner.replayed` when the backfill sends it, but `held` minus
+    `replayed` is not "still owed": `replayed` also counts rows an earlier
+    boot left on the card, and a broker change or a card given up after its
+    45 s wait abandons held rows without counting them.
+  - `planner.queued`: rows not on the card handed to the MQTT layer, sent
+    live or into its offline queue, and rows from the RAM hold that went
+    once nothing older waited. On a canary with no card every row lands
+    here, sent at once or not; a row the offline queue later evicts is still
+    counted here and is in `offline_queue.dropped_overflow`.
+  - `planner.replayed`: rows the backfill sent from the card, an earlier
+    boot's included.
+  - `planner.skipped`: card lines (or damaged runs) the backfill walked
+    past: delivered already, torn, foreign to the format, or (also counted
+    as `planner.untrusted`) carrying an id this device never handed out. A
+    card that opens with nothing owed on it is not walked, so its lines are
+    not counted.
+  - `planner.unsendable`: card lines the backfill could never send: a body
+    that would not build, and on the canary-wap a dismissal line (never
+    replayed).
+  - `planner.truncated_unsent`: retention cuts of the log that dropped rows
+    still waiting.
+  - `planner.read_giveups`: walks abandoned after repeated failed card reads.
+  - `offline_queue.dropped_overflow`, `dropped_oversize`, `dropped_flushed`
+    (canary only): records the MQTT offline queue evicted or refused when
+    full, refused as larger than a slot, or discarded at a broker change.
+    Events and tamper alerts share the queue, so these count both. An event
+    a full queue of tamper alerts refuses with the broker unreachable is in
+    `dropped_overflow` and in `unsent_dropped`.
+
+  Rows in no counter: a RAM-held row sent ahead of a card row (it leaves
+  through the backfill's send, which counts only the card row), rows the
+  hold drops at a broker change (owed to nobody), card rows abandoned when
+  the 45 s card wait runs out or the broker changes, and a held row whose
+  card copy was already sent.
 
 The canary-wap (`csi_event_egress.cpp` over its `csi_event_log.cpp` adapter,
 sweep F78) runs the same planner with the same order: a row goes out live
@@ -329,8 +375,8 @@ differs from the canary base in four ways:
   includes a card that is not open but may hold older rows: from boot until
   its log first opens (a slow card mounts after boot), and after it closes
   with rows still waiting (an SD error's remount), for at most 45 s; past
-  that the RAM rows go, and rows on a card that comes back later are
-  skipped. An ambient row (`wifi.channel_activity`, "live UI only") is never
+  that the RAM rows go, and rows on a card that comes back later are never
+  sent (no counter shows them). An ambient row (`wifi.channel_activity`, "live UI only") is never
   held: one that cannot go out at once is dropped and counted. RAM does not
   survive a reboot. The canary base holds the same rows the same way (its
   card keeps closed bundles, so those are not among them), but once nothing

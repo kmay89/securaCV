@@ -549,7 +549,7 @@ Full background, threat model, and rotation procedure: see
 | `securacv/{device_id}/update/cmd` | HA → Device | `install` — start a firmware update |
 | `homeassistant/*/securacv_*/config` | Device → HA | HA MQTT Discovery config (retained) |
 
-Two `health` keys the integration does not read yet, for a bench run or a
+Three `health` keys the integration does not read yet, for a bench run or a
 field report (`mosquitto_sub -t 'securacv/+/health'`):
 
 - `event_id_space_low` (Canary base and canary-wap): `true` once the
@@ -560,11 +560,23 @@ field report (`mosquitto_sub -t 'securacv/+/health'`):
 - `csi_event_egress` (Canary base): what its committed-event egress did
   since boot — `dropped` (commits its egress queue had no room for),
   `held_dropped` (rows dropped from its 8-row RAM hold, oldest first),
-  `ambient_dropped` (`wifi.channel_activity` rows that had to wait) and
-  `planner`, the SD backfill's counters (`live`, `held`, `queued`,
+  `ambient_dropped` (`wifi.channel_activity` rows that had to wait),
+  `unsent_dropped` (rows no card kept that the MQTT layer refused, lost)
+  and `planner`, the SD backfill's counters (`live`, `held`, `queued`,
   `replayed`, `skipped`, `untrusted`, `unsendable`, `truncated_unsent`,
-  `read_giveups`). See [the CSI developer API](csi_developer_api.md) for
-  what each path does.
+  `read_giveups`).
+- `offline_queue` (Canary base): what the MQTT layer's 12-record offline
+  queue dropped since boot — `dropped_overflow` (evicted or refused when
+  full: an outage longer than the queue loses its oldest events here),
+  `dropped_oversize` and `dropped_flushed` (discarded when the broker
+  changed). Events and tamper alerts together.
+
+These count paths, not rows: `planner.queued` counts a row handed to the
+offline queue even if the queue evicts it later (then it is in
+`offline_queue.dropped_overflow` too), and `planner.held` minus
+`planner.replayed` is not what is still owed. [The CSI developer
+API](csi_developer_api.md) defines each counter and lists the rows none of
+them counts.
 
 ### Transport catalog
 

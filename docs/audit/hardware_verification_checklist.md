@@ -579,14 +579,17 @@ is CI's. Owner: U1. The serial lines below are the egress's own.
 ## The egress's counters and the event-id warning (F109, F82) — on-device verification
 
 Code: `firmware/canary/src/csi_event_egress.cpp` (`csi_event_egress_stats()`,
-`csi_event_egress_id_space_low()`), carried by `main.cpp`'s
-`mqtt_publish_health_update()` as `csi_event_egress` and
+`csi_event_egress_id_space_low()`) and `securacv_mqtt.cpp`
+(`mqtt_offline_queue_stats()`), carried by `main.cpp`'s
+`mqtt_publish_health_update()` as `csi_event_egress`, `offline_queue` and
 `event_id_space_low`; the canary-wap's `csi_mqtt::publish_health()` carries
 `event_id_space_low` too. The flag is `csi_event_id_floor::space_low()` of
 the allocator's next id. Host-tested (`test_canary_event_egress.cpp`,
-`test_csi_event_id_floor.cpp`, the canary-wap's `test_mqtt_reinit.cpp`, and
-`test_canary_health_trust.py` for the canary's worst-case packet against its
-1664 B MQTT buffer); the compiles are CI's. Owner: U1.
+`test_csi_event_id_floor.cpp`, the canary-wap's `test_mqtt_reinit.cpp` and
+`test_wap_event_egress.cpp`, and `test_canary_health_trust.py` for the
+canary's worst-case packet against its 1792 B MQTT buffer); the compiles
+are CI's. Owner: U1. What each counter counts, and the rows none of them
+does, is in `docs/csi_developer_api.md`.
 
 - [ ] **The canary's health counts what its egress did**
   - Setup: an HA-enabled canary (`release_ha`) with a card in, paired to
@@ -597,20 +600,31 @@ the allocator's next id. Host-tested (`test_canary_event_egress.cpp`,
     then wait for the next health publish (once a minute).
   - Expected: the health body holds a `csi_event_egress` object whose
     `planner.live` counts the first rows, `planner.held` and
-    `planner.replayed` the outage's, and whose `dropped`, `held_dropped` and
-    `ambient_dropped` match any drop lines the serial log printed (0 when
-    none). The publish arrives whole (no missing health while it is the
-    largest yet).
+    `planner.replayed` the outage's, and whose `dropped`, `held_dropped`,
+    `ambient_dropped` and `unsent_dropped` match any drop lines the serial
+    log printed (0 when none), and an `offline_queue` object of zeros. The
+    publish arrives whole (no missing health while it is the largest yet).
+  - Then take the card out, reboot, wait past the 45 s card wait, stop the
+    broker, commit fourteen events, start the broker again and wait for the
+    next health publish.
+  - Expected: Home Assistant receives the newest twelve;
+    `planner.queued` is 14 and `offline_queue.dropped_overflow` 2 (the
+    queue evicted the two oldest), `unsent_dropped` 0.
   - Artifact: `docs/audit/repro/F109/health-counters/`.
 - [ ] **Both devices warn before the event-id space runs out**
-  - Setup: a canary and a canary-wap you can write NVS on (a bench unit
-    whose Home Assistant entry you will re-pin afterwards).
-  - Repro: write the `securacv` namespace's `csi.evid` to `4026531840`
-    (0xF0000000) and reboot; watch the health topic. Then write it back
-    below that and reboot again.
+  - Setup: a canary and a canary-wap you can write NVS on (bench units
+    whose Home Assistant entries you will re-pin afterwards). Each keeps its
+    event-id floor and its delivery ceiling under its own names:
+    - canary: namespace `securacv`, floor `csi.evid`, ceiling `csi.evsent`;
+    - canary-wap: namespace `csi`, floor `ev.next`, ceiling `csi.evsent`.
+  - Repro: note both keys' values on each device, then write the floor key
+    to `4026531840` (0xF0000000) and reboot; watch the health topic. Then
+    write both keys back to the values you noted and reboot again.
   - Expected: `"event_id_space_low":true` from the first health publish
     after the first reboot, and `false` after the second; the device's
-    events after the first reboot carry ids at or above 4026531840.
+    events after the first reboot carry ids at or above 4026531840. Home
+    Assistant then refuses the device's later events as replays (its mark
+    is past them) until the re-pin.
   - Artifact: `docs/audit/repro/F82/id-space-low/`.
 
 ## canary-wap loop-task ownership (F96, F106) — on-device verification

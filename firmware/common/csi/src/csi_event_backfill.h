@@ -295,11 +295,15 @@ enum class Route : uint8_t {
   kNotOwed,  /* no broker configured: logged, owed to nobody */
 };
 
+/* They count paths, not a ledger of rows: docs/csi_developer_api.md says
+ * what each counts and lists the rows none of them does. */
 struct Stats {
-  uint32_t live;
-  uint32_t held;
-  uint32_t queued;
-  uint32_t replayed;
+  uint32_t live;               /* on the card and sent at once */
+  uint32_t held;               /* on the card, left for the backfill (counted again in
+                                  replayed if it goes; held - replayed is not "owed") */
+  uint32_t queued;             /* not on the card, handed to the host's MQTT layer
+                                  (live or into its offline queue, or a RAM-held row) */
+  uint32_t replayed;           /* sent by the backfill from the card, earlier boots' too */
   uint32_t skipped;            /* lines passed over: delivered, torn or foreign to the format */
   uint32_t untrusted;          /* lines whose id this device never handed out (also skipped) */
   uint32_t unsendable;         /* lines whose body would not build */

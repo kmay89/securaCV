@@ -2585,6 +2585,31 @@
   header the glue could call instead, and model only what is left.
 - **Date learned:** 2026-10
 
+### A counter set read from one layer misses the loss in the next one
+- **What happened:** The canary's egress counters (sweep F109) carried the
+  backfill planner's Stats and the egress's own drops, and a review probe
+  found that on a canary with no card the commonest loss reached none of
+  them. route() discarded the planner's `Route::kUnsent` with `(void)`, so a
+  row the MQTT layer refused was in no counter, and a row its offline queue
+  took and later evicted was counted as `queued`, a hand-over. Only the
+  offline queue's own Stats knew, and they reached only a health-log line.
+- **Root cause:** The counters were chosen by what one module could see,
+  not by asking where a row can be lost on its way out. A discarded return
+  value was the loss, unrecorded.
+- **Fix:** route() counts a kUnsent that did not move the row into the RAM
+  hold as `unsent_dropped` (the canary-wap's Stats gains the field for its
+  never-builds drops), and the health publish carries the offline queue's
+  drops as `offline_queue`. The API doc defines each counter by path and
+  lists the rows none of them counts.
+- **Regression check:** `test_canary_event_egress.cpp`
+  (`test_card_less_losses_are_counted`, and the ceiling-held check in
+  `test_failed_append_in_an_outage_waits_its_turn`), the canary-wap's
+  `test_unbuildable_rows_are_skipped_not_stalled`, and
+  `test_canary_health_trust.py`. Before calling a set of loss counters
+  complete, walk each path a row can leave by and name the counter it ends
+  in; a `(void)` on a result that can mean "lost" is the first place to look.
+- **Date learned:** 2026-10
+
 ## Tasks: work that changes a module's state runs on the task that owns it
 
 ### A comment that promises a serializer is not a serializer, and "idempotent" is not "thread-safe"
