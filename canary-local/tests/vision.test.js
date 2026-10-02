@@ -590,8 +590,12 @@ test("firmware wasm: a stable voxel qualifies interaction without dwell", async 
 // a long one is not an interaction, and presence_started names the cell the
 // visit began in. Before it the tracker kept the earlier visit's settle time
 // and cell, so this revisit ended in zone_interaction_then_left and opened on
-// the first visit's cell. Needs a dist built from this tree's
-// presence_fsm.cpp (CI's pinned-emsdk rebuild); on an older dist it fails here.
+// the first visit's cell. And (F152's review) a qualifying visit followed by a
+// sighting on the very frame after its presence_ended still reports
+// interaction_likely, on the frame after the next presence_started, with its
+// own visit_ms; the FSM before it sent nothing. Needs a dist built from this
+// tree's presence_fsm.cpp (CI's pinned-emsdk rebuild); on an older dist it
+// fails here.
 test("firmware wasm: each visit starts its own interaction clock and cell (sweep F152)", async () => {
   const core = await firmwareCore();
   core.configure({ ...data.detect, dwell_start_ms: 60000, lost_timeout_ms: 500 });
@@ -626,6 +630,19 @@ test("firmware wasm: each visit starts its own interaction clock and cell (sweep
   run(15000, 19000, corner);
   run(19000, 24000, []);
   assert.deepStrictEqual(events, ["presence_started", "presence_ended", "interaction_likely:zone_interaction_then_left"]);
+  // a 4 s visit, then someone in the frame right after its presence_ended:
+  // the ended visit's interaction_likely still goes out, one frame later
+  events.length = 0;
+  run(24000, 28000, center);
+  let t = 28000, ended = null;
+  for (; !ended; t += 100) { const k = core.tick(t, []); if (k.event) { events.push(k.event); ended = k; } }
+  const again = core.tick(t, corner);
+  assert.strictEqual(again.event, "presence_started");
+  const late = core.tick(t + 100, corner);
+  assert.strictEqual(late.event, "interaction_likely", "the ended visit's report, owed");
+  assert.strictEqual(late.reason, "zone_interaction_then_left");
+  assert.strictEqual(late.fsm.visit_ms, ended.fsm.visit_ms, "with the ended visit's length");
+  assert.ok(late.fsm.presence, "sent while the next visit is present");
 });
 
 test("iou + nms behave like a de-dup pass", async () => {

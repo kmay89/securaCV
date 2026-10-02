@@ -18,8 +18,11 @@
 // visit no longer inherits an earlier one's interaction clock: pinned below
 // because the README, the pane's note and the bindings comment say so.
 // (Before F152 the tracker was reset only in reset(), at boot, and a later
-// visit opened on the previous visit's cell; A39 pinned that.) And (sweep
-// F130) dwell_ended's dwell_ms is the dwell it closed, through the same
+// visit opened on the previous visit's cell; A39 pinned that.) A visit that
+// qualified still reports interaction_likely when someone is seen on the
+// frame right after its presence_ended (F152's review): on the frame after
+// the next visit's presence_started, with the ended visit's visit_ms. And
+// (sweep F130) dwell_ended's dwell_ms is the dwell it closed, through the same
 // ABI, counted to the frame that declared the person gone, so it includes
 // the lost timeout.
 //
@@ -204,6 +207,42 @@ void test_each_visit_opens_on_its_own_cell() {
   std::printf("  next visit opened on its own cell; a 0.5 s pass ended without interaction_likely\n");
 }
 
+void test_back_to_back_visit_through_the_abi() {
+  vision_emu_reset();
+  vision_emu_set_config(PERSON_TARGET, SCORE_MIN, LOST_TIMEOUT_MS, DWELL_START_MS);
+  unsigned int t = 1000;
+  Tick k = frame(t, 1, 1);
+  assert(event_is(k, "presence_started"));
+  for (int i = 0; i < 39; ++i) frame(t += 100, 1, 1);  // 4 s in (1,1): it qualifies
+  for (;;) {
+    k = frame(t += 100);
+    if (event_is(k, "presence_ended")) break;
+    assert(!has(k.json, "\"event\":\"interaction_likely\"") && t < 10000);
+  }
+  const long visit = int_at(k.fsm, "visit_ms");
+  assert(visit > 4000);
+  // seen again on the very next frame, in (0,2): the next visit starts...
+  k = frame(t += 100, 0, 2);
+  assert(event_is(k, "presence_started"));
+  // ...and the ended visit's interaction_likely goes out on the frame after
+  k = frame(t += 100, 0, 2);
+  assert(event_is(k, "interaction_likely"));
+  assert(has(k.json, "\"reason\":\"zone_interaction_then_left\""));
+  assert(int_at(k.fsm, "visit_ms") == visit);  // the ended visit's length
+  assert(has(k.fsm, "\"presence\":true") && int_at(k.fsm, "confidence") == 90);  // the new visit's frame
+  assert(int_at(k.fsm_voxel, "r") == 0 && int_at(k.fsm_voxel, "c") == 2);
+  // the 1 s visit then ends without one of its own
+  for (int i = 0; i < 8; ++i) frame(t += 100, 0, 2);
+  bool ended = false;
+  for (const unsigned int stop = t + LOST_TIMEOUT_MS + INTERACTION_AFTER_LEAVE_WINDOW_MS + 1000; t < stop;) {
+    k = frame(t += 100);
+    if (event_is(k, "presence_ended")) ended = true;
+    assert(!event_is(k, "interaction_likely"));
+  }
+  assert(ended);
+  std::printf("  a visit seen again on the next frame still reported interaction_likely (%ld ms)\n", visit);
+}
+
 void test_dwell_ended_through_the_abi() {
   vision_emu_reset();
   vision_emu_set_config(PERSON_TARGET, SCORE_MIN, 500, 1000);
@@ -243,6 +282,7 @@ int main() {
   assert(has(vision_emu_contract_json(), "\"schema\":\"securacv.canary-vision.core/v1\""));
   test_settled_cell_and_visit();
   test_each_visit_opens_on_its_own_cell();
+  test_back_to_back_visit_through_the_abi();
   test_dwell_ended_through_the_abi();
   std::printf("ALL VISION CORE BINDING TESTS PASSED\n");
   return 0;

@@ -169,16 +169,22 @@ ends every stay on a device today.
 
 ### When `interaction_likely` fires
 
-`interaction_likely` is sent on the frame after `presence_ended`, if nobody
-is in it (a person seen on that frame starts a new visit instead) and it
-falls within `INTERACTION_AFTER_LEAVE_WINDOW_MS` (3 s), when the visit that
-just ended qualified: it dwelled (reason `dwell_then_left`), or the person
-stayed in one settled cell for `ZONE_INTERACTION_MS` (2.5 s) of that visit
-(reason `zone_interaction_then_left`). Each visit is judged on its own: the tracker
+`interaction_likely` is sent once a visit has ended, when that visit
+qualified: it dwelled (reason `dwell_then_left`), or the person stayed in
+one settled cell for `ZONE_INTERACTION_MS` (2.5 s) of that visit (reason
+`zone_interaction_then_left`). Each visit is judged on its own: the tracker
 and its clock start again on the frame that starts the visit, so a short
 visit after a long one does not inherit the earlier visit's time in a cell.
-It fires after the person has gone, so its row reads `confidence` 0 (no box
-in that frame); `visit_ms` says how long the visit lasted.
+
+It goes out on the frame after `presence_ended`, within
+`INTERACTION_AFTER_LEAVE_WINDOW_MS` (3 s) of it. When someone is seen on
+that very frame, the frame starts the next visit (`presence_started`) and
+the ended visit's `interaction_likely` follows on the frame after, still
+inside the window. Its `visit_ms` says how long the ended visit lasted
+either way. The rest of the row is the frame it was sent from, after the
+visit: `confidence` 0 (no box) on the usual frame, or, when it was held
+back a frame, the next visit's box, with `presence` true and the next
+visit's cell. So its confidence says nothing about the visit it reports.
 
 A running dwell is on the `state` rows (each heartbeat republishes
 one) and the dwell's final length on its `dwell_ended` row. The behavior is
@@ -251,8 +257,12 @@ stateDiagram-v2
     Counting --> Counting: person_now continues, or back within the grace
   }
 
-  Idle --> InteractionLikely: left & this visit qualified & within window
+  Idle --> InteractionLikely: next frame, this visit qualified, within window
   InteractionLikely --> Idle: after publish
+  note right of InteractionLikely
+    Seen again on that very frame: presence_started goes first,
+    and interaction_likely follows on the frame after, while Present
+  end note
 ```
 
 ## License
