@@ -269,7 +269,16 @@ those bodies `"replay":true`. On the canary base
   on its account. Past the 45 s the card is given up: the waiting rows go,
   and rows on a card that comes back later are skipped. An ambient row
   (`wifi.channel_activity`, "live UI only") is never held: one that cannot
-  go at once is dropped. RAM does not survive a reboot;
+  go at once is dropped. RAM does not survive a reboot, and a broker change
+  drops what waits (owed to neither broker, as the offline queue's flush).
+  So on a canary with an SD slot but no usable card (none in, another
+  device's, or one that never mounts), a row committed in the first 45 s
+  after boot arrives up to 45 s late, or not at all if the canary reboots
+  or its broker changes first: such a canary in a boot loop shorter than
+  45 s delivers no events-topic row (tamper alerts do not wait). A failed
+  append can still have landed every byte but the newline; the next append
+  seals that line and the backfill sends it, and the waiting copy, now at
+  or below the delivered watermark, is dropped, not sent twice;
 - with no card, rows use the MQTT offline queue (12 records) as before, where
   tamper alerts outrank events: once the queue is full, a new row pushes out
   the oldest queued event, never a tamper alert. A body built while the

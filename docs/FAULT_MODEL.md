@@ -172,7 +172,12 @@ failed, waits in RAM behind the card's rows, for at most 45 s while the
 card is out; sweeps F103, F104), and never for tamper alerts, which go at
 commit whatever the backlog. An outage longer than the RAM queue is therefore recovered from
 the card on that product; what it can still lose is a row that never
-reached the card and a row the ceiling skipped. Sense, Vision and Sentinel
+reached the card, a row the ceiling skipped, and a row waiting in RAM when
+the device reboots or its broker changes. That last includes every row
+committed in the first 45 s after a boot on a canary with an SD slot but
+no usable card, so such a canary in a boot loop shorter than 45 s delivers
+no events-topic row at all (tamper alerts, the boot's power verdict among
+them, do not wait). Sense, Vision and Sentinel
 have neither queue nor backfill: an event sealed while offline is not
 published at all, and the gap shows as a jump in the retained chain length
 (`canary-sense/src/main.cpp`, `record_event_now`). The record itself is

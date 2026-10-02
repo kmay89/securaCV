@@ -52,8 +52,12 @@
  * open it waits for the link (the ceiling it would write could cover the
  * card rows after it). So the offline queue, which drains later without
  * asking the planner, is never given a row older rows wait ahead of. Rows
- * in the hold do not survive a reboot. Host-tested on the real source by
- * firmware/tests_host/test_canary_event_egress.cpp.
+ * in the hold do not survive a reboot, and a broker change drops them, so on
+ * a build with a card slot but no usable card a row from the first 45 s
+ * after boot is lost if the canary reboots (or its broker changes) first. A
+ * held row the backfill already sent from the card (a failed append that
+ * landed all but its newline) is dropped, not sent twice. Host-tested on
+ * the real source by firmware/tests_host/test_canary_event_egress.cpp.
  *
  * Event-id continuity: csi_event_on_id_advance writes the allocator's
  * floor to NVS (common/csi/src/csi_event_id_floor.h: before the first id

@@ -2482,10 +2482,40 @@
 - **Regression check:** `firmware/tests_host/test_canary_event_egress.cpp`
   compiles the canary's real egress and SD adapter over the real
   chokepoint, planner and offline queue; its F103 and F104 scenarios fail
-  on the egress before each fix, and 16 mutations of the hold each fail it.
-  When one device's port gains a rule its sibling's port needs, put the
-  shared value in the shared header and give the sibling's glue a test
-  that compiles it.
+  on the egress before each fix. The implementer's own 16 mutations of the
+  hold each failed it, and review then found 18 more that passed: a close's
+  wait timed from boot (F104's loss back for any close after 45 s of
+  uptime), a 1 s wait, the hold dropping its newest row, held rows sent
+  with the wrong replay flag, a held row's failed publish popped. Each now
+  has a scenario (two further mutations change nothing a host can see). When one device's port gains a rule its sibling's port
+  needs, put the shared value in the shared header and give the sibling's
+  glue a test that compiles it; and do not take your own mutation set as
+  the measure of a suite: every timing constant and every clause a comment
+  states needs a scenario that a wrong value fails.
+- **Date learned:** 2026-10
+
+### A failed card append is not proof the row is not on the card
+- **What happened:** Both egresses hold a row whose SD append fails while
+  older rows wait (F78 on the canary-wap, F103 on the canary). Review of
+  F103 found a short write that lands every byte of the line but its
+  newline: `append()` reports it failed, so the row waits in RAM, and the
+  next append writes the newline first, which turns the fragment into a
+  whole line. The backfill walk then sent the card's copy, and the RAM copy
+  went too, before the next card row or when the hold flushed. Home
+  Assistant's replay gate passes an equal id, so its triggers fired twice.
+  The canary-wap had done it since F78.
+- **Root cause:** The hold treated "the append failed" as "the row is not
+  on the card". The card adapter seals a torn tail on the next write, which
+  is right for the log, so a failure can become a success one append later.
+- **Fix:** Both egresses drop a held row at or below the planner's
+  watermark instead of sending it (the canary's `delivered_from_card()`,
+  the canary-wap's `State::front_delivered()`): the walk only raises the
+  watermark past a row it sent, or one the planner already treats as
+  delivered.
+- **Regression check:** `test_canary_event_egress.cpp` and
+  `test_wap_event_egress.cpp` each run the scenario on both paths out of
+  the hold, through a fake card that lands all but a line's last byte
+  (`SD.short_by_next`); each fails on the egress before the fix.
 - **Date learned:** 2026-10
 
 ## How to Add an Entry

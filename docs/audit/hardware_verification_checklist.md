@@ -569,7 +569,10 @@ is CI's. Owner: U1. The serial lines below are the egress's own.
     few boots, or a module whose rows commit at once).
   - Expected: it reaches HA about 45 s after boot (it waits for a card that
     may still mount); events after that go at once. An ambient
-    `wifi.channel_activity` row from those 45 s does not arrive.
+    `wifi.channel_activity` row from those 45 s does not arrive. Then
+    press reset within 45 s of such a commit line: that event never
+    arrives (it waited in RAM), while the tamper topic's boot verdict
+    still does.
   - Artifact: `docs/audit/repro/F104/no-card/`.
 
 ## One event-id space (F46) — on-device verification
