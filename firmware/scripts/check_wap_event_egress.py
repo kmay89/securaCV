@@ -103,18 +103,27 @@ the egress's own rules the test reaches only through behavior.
     egress's side (a changed epoch drops the backlog) is host-tested.
 12. The counters, off the loop task (sweep F149). `stats()` reads the
     pump's own state, so only the loop task may call it: across the sketch
-    (comments and strings blanked) `csi_event_egress::stats(` is called
-    once, in `csi_mqtt.cpp`'s `publish_egress()` (the egress topic), and
-    `csi_mqtt::publish_egress(` once, in the sketch's `loop()`
-    (`canary_wap.ino`). Every other task reads the copy the pump publishes:
-    in the egress, `s_stats_view.publish(stats());` is `pump()`'s last
-    statement and the file's one `s_stats_view.publish(`, and
+    (comments and strings blanked, whitespace squashed, so `stats (` is a
+    call too) `csi_event_egress::stats(` is called once, in `csi_mqtt.cpp`'s
+    `publish_egress()` (the egress topic), and `csi_mqtt::publish_egress(`
+    once, in the sketch's `loop()` (`canary_wap.ino`), at the health
+    cadence: the statement right after the `csi_mqtt::publish_health(...)`
+    call, inside the one `if (now - s_mqtt_health_ms >=
+    power_gate::routine_interval_ms(60000UL, pmode))` block, which sits in
+    `if (csi_mqtt::connected())`. Every other task reads the copy the pump
+    publishes: in the egress, `s_stats_view.publish(stats());` is `pump()`'s
+    last statement and the file's one `s_stats_view.publish(`, and
     `s_stats_view.read(` appears once, in `read_stats()`, which names none
     of the pump's state (`g_state`, `stats(`, `planner`, `held`,
     `s_dropped`). `handle_diagnostics` (GET /api/diagnostics, the httpd
-    task) calls `csi_event_egress::read_stats(`. What the copy holds after
-    each pass, and the JSON both surfaces spell, is host-tested
-    (test_wap_event_egress.cpp, test_mqtt_reinit.cpp).
+    task) reads the counters with `const bool have_egress =
+    csi_event_egress::read_stats(&egress_stats);`, spells no body of its own
+    (no `snprintf(`), and builds it with `wap_diagnostics::build_json(in,
+    have_egress ? &egress_stats : nullptr, buf, sizeof(buf))` into `char
+    buf[wap_diagnostics::kJsonMax];`, which it sends. What the copy holds
+    after each pass, the JSON both surfaces spell, and that the widest
+    diagnostics body fits kJsonMax are host-tested (test_wap_event_egress.cpp,
+    test_mqtt_reinit.cpp, test_wap_diagnostics.cpp).
 
 ## It proves it bites
 
@@ -140,6 +149,7 @@ from check_event_egress_order import (  # noqa: E402  (shared C++ scanning helpe
     blank_comments_and_strings,
     bodies,
     call_args,
+    enclosing_if,
     matching_paren,
     mutate_in,
     squash,
@@ -189,6 +199,14 @@ SIG_READ_STATS = r"\bbool\s+read_stats\s*\(\s*Stats\s*\*\s*\w+\s*\)"
 SIG_PUBLISH_EGRESS = r"\bvoid\s+publish_egress\s*\(\s*\)"
 SIG_DIAGNOSTICS = r"\bstatic\s+esp_err_t\s+handle_diagnostics\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)"
 SIG_SKETCH_LOOP = r"\bvoid\s+loop\s*\(\s*\)"
+HEALTH_BLOCK = (r"\bif\s*\(\s*now\s*-\s*s_mqtt_health_ms\s*>=\s*"
+                r"power_gate::routine_interval_ms\s*\(\s*60000UL\s*,\s*pmode\s*\)\s*\)")
+DIAG_MUST = (
+    "constboolhave_egress=csi_event_egress::read_stats(&egress_stats);",
+    "charbuf[wap_diagnostics::kJsonMax];",
+    "if(wap_diagnostics::build_json(in,have_egress?&egress_stats:nullptr,buf,sizeof(buf))==0){",
+    "returnhttp_send_json(req,buf);",
+)
 READ_STATS_FORBIDDEN = (r"\bg_state\b", r"\bstats\s*\(", r"\bplanner\b", r"\bheld\w*", r"\bs_dropped\b")
 
 CONTROL_FLOW = r"\b(?:if|else|for|while|do|switch|return|continue|break|goto)\b"
@@ -615,17 +633,58 @@ def check_stats_off_the_loop(integ: str, egress: str, mqtt: str, others: dict[st
     for call, home, sig, where in (
             ("csi_event_egress::stats(", MQTT_CPP, SIG_PUBLISH_EGRESS, "csi_mqtt.cpp's publish_egress()"),
             ("csi_mqtt::publish_egress(", INO, SIG_SKETCH_LOOP, "the sketch's loop()")):
-        sites = [name for name, c in code_of.items() for _ in re.finditer(re.escape(call), c)]
+        # Squashed, so `stats (` and `csi_mqtt :: publish_egress (` are calls too.
+        sites = [name for name, c in code_of.items() for _ in range(squash(c).count(call))]
         span = the_body(code_of[home], sig, f"{home}: {where}", []) if home in code_of else None
-        inside = span is not None and code_of[home][span[0]:span[1]].count(call) == 1
+        inside = span is not None and squash(code_of[home][span[0]:span[1]]).count(call) == 1
         if len(sites) != 1 or not inside:
             errors.append(f"{SKETCH}: `{call}` must be called exactly once in the sketch, in {where} "
                           f"(found {len(sites)}: {', '.join(sorted(set(sites))) or 'none'}) — "
                           "stats() reads the pump's state, which only the loop task may (F149)")
+    check_egress_cadence(code_of.get(INO, ""), errors)
     diag = body_of(code_of.get(INO, ""), SIG_DIAGNOSTICS, f"{INO}: handle_diagnostics()", errors)
-    if diag is not None and "csi_event_egress::read_stats(" not in diag:
-        errors.append(f"{INO}: handle_diagnostics() (the httpd task) must read the egress's counters "
-                      "through csi_event_egress::read_stats( (F149)")
+    if diag is not None:
+        flat = squash(diag)
+        missing = [m for m in DIAG_MUST if flat.count(m) != 1]
+        if missing or "snprintf(" in flat:
+            errors.append(f"{INO}: handle_diagnostics() (the httpd task) must read the egress's counters "
+                          "with `const bool have_egress = csi_event_egress::read_stats(&egress_stats);` and "
+                          "build its body with wap_diagnostics::build_json(in, have_egress ? &egress_stats "
+                          ": nullptr, buf, sizeof(buf)) into `char buf[wap_diagnostics::kJsonMax];`, which "
+                          "it sends, spelling none of its own (no snprintf) — the builder and its worst "
+                          "case are host-tested (F149)"
+                          + (f"; missing: {', '.join(missing)}" if missing else "; it calls snprintf("))
+
+
+def check_egress_cadence(ino: str, errors: list[str]) -> None:
+    """Rule 12: the egress topic goes out at the health cadence, right after
+    the health publish it names, and only while the link is up."""
+    what = (f"{INO}: `csi_mqtt::publish_egress();` must be the statement right after the "
+            "`csi_mqtt::publish_health(...)` call, inside loop()'s one `if (now - s_mqtt_health_ms >= "
+            "power_gate::routine_interval_ms(60000UL, pmode))` block within `if (csi_mqtt::connected())` "
+            "— the egress body names the health it follows, at its cadence (F149)")
+    span = the_body(ino, SIG_SKETCH_LOOP, f"{INO}: loop()", [])
+    if span is None:
+        errors.append(what + " (no loop())")
+        return
+    loop = ino[span[0]:span[1]]
+    blocks = bodies(loop, HEALTH_BLOCK)
+    if len(blocks) != 1:
+        errors.append(what + f" (found {len(blocks)} health blocks)")
+        return
+    start, end = blocks[0]
+    outer = enclosing_if(loop, re.search(HEALTH_BLOCK, loop).start())
+    if outer is None or squash(outer[1]) != "csi_mqtt::connected()":
+        errors.append(what + " (the health block is not inside `if (csi_mqtt::connected())`)")
+    block = loop[start:end]
+    health = list(re.finditer(r"csi_mqtt\s*::\s*publish_health\s*\(", block))
+    if len(health) != 1:
+        errors.append(what + f" (found {len(health)} publish_health calls in the block)")
+        return
+    close = matching_paren(block, health[0].end() - 1)
+    after = squash(block[close + 1:]) if close >= 0 else ""
+    if not after.startswith(";csi_mqtt::publish_egress();"):
+        errors.append(what)
 
 
 def check(integ: str, egress: str, mqtt: str, others: dict[str, str] | None = None) -> list[str]:
@@ -863,6 +922,16 @@ def on_3(mutation: Mutation) -> OthersMutation:
     return mutate
 
 
+def egress_moved(anchor: str, repl: str) -> OthersMutation:
+    """`csi_mqtt::publish_egress();` moved, in loop(), to `anchor`."""
+    def mutate(i: str, e: str, m: str, o: dict) -> "tuple[str, str, str, dict]":
+        o = dict(o)
+        src = mutate_in(o[INO], SIG_SKETCH_LOOP, r"\n[ \t]*csi_mqtt::publish_egress\(\);", "")
+        o[INO] = mutate_in(src, SIG_SKETCH_LOOP, anchor, repl)
+        return i, e, m, o
+    return mutate
+
+
 OTHERS_MUTATIONS: list[tuple[str, OthersMutation]] = [
     ("the pump never publishes its counters",
      on_3(on_e(SIG_PUMP, r"\n[ \t]*s_stats_view\.publish\(stats\(\)\);", ""))),
@@ -887,6 +956,35 @@ OTHERS_MUTATIONS: list[tuple[str, OthersMutation]] = [
      on_3(on_m(SIG_PUBLISH_EGRESS, r"csi_event_egress::stats\(\)", "csi_event_egress::Stats{}"))),
     ("csi_integration::loop reads stats() too",
      on_3(on_i(SIG_INTEG_LOOP, r"(csi_bundler_tick\(\);)", r"\1 (void)csi_event_egress::stats();"))),
+    # The review's whitespace variants: a space before `(` is a call too.
+    ("GET /api/diagnostics calls `stats ()` with a space",
+     on_o(INO, SIG_DIAGNOSTICS, r"(g_health\.http_requests\+\+;)",
+          r"\1 csi_event_egress::Stats again = csi_event_egress::stats (); (void)again;")),
+    ("a second egress publish, every pass, hides behind a space",
+     on_o(INO, SIG_SKETCH_LOOP, r"(csi_mqtt::loop\(\);)", r"\1 csi_mqtt::publish_egress ();")),
+    # The egress topic's cadence: right after the health publish it names.
+    ("the egress topic publishes every loop pass",
+     egress_moved(r"(csi_mqtt::loop\(\);)", r"\1 csi_mqtt::publish_egress();")),
+    ("the egress topic leaves the health block",
+     egress_moved(r"(if\s*\(\s*csi_mqtt::connected\(\)\s*\)\s*\{\s*static\s+uint32_t\s+s_mqtt_status_ms)",
+                  r"csi_mqtt::publish_egress(); \1")),
+    ("the egress topic publishes before the health it names",
+     egress_moved(r"(csi_mqtt::publish_health\()", r"csi_mqtt::publish_egress(); \1")),
+    ("the egress topic is compiled out of some builds",
+     on_o(INO, SIG_SKETCH_LOOP, r"(csi_mqtt::publish_egress\(\);)", "\n#if FEATURE_EGRESS_TOPIC\n      \\1\n#endif\n")),
+    ("the health block runs while the link is down",
+     on_o(INO, SIG_SKETCH_LOOP, r"if\s*\(\s*csi_mqtt::connected\(\)\s*\)\s*\{(\s*static\s+uint32_t\s+s_mqtt_status_ms)",
+          r"if (!csi_mqtt::connected()) {\1")),
+    # GET /api/diagnostics: the builder, its buffer, the counters.
+    ("GET /api/diagnostics builds into its old 512-byte buffer",
+     on_o(INO, SIG_DIAGNOSTICS, r"char\s+buf\[wap_diagnostics::kJsonMax\];", "char buf[512];")),
+    ("GET /api/diagnostics never passes the counters",
+     on_o(INO, SIG_DIAGNOSTICS, r"have_egress\s*\?\s*&egress_stats\s*:\s*nullptr", "nullptr")),
+    ("GET /api/diagnostics spells its own body",
+     on_o(INO, SIG_DIAGNOSTICS, r"(\n[ \t]*return\s+http_send_json\(req,\s*buf\);)",
+          r' (void)snprintf(buf, sizeof(buf), "{\\"ok\\":true}");\1')),
+    ("GET /api/diagnostics sends something other than the body",
+     on_o(INO, SIG_DIAGNOSTICS, r"return\s+http_send_json\(req,\s*buf\);", 'return http_send_json(req, "{}");')),
 ]
 
 

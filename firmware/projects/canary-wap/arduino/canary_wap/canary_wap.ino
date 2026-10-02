@@ -164,6 +164,7 @@
 #include "contact_tamper.h"      // enclosure contact debounce (FEATURE_TAMPER_GPIO)
 #include "csi_mqtt.h"            // Optional MQTT bridge for HA integration
 #include "csi_event_egress.h"    // the egress's counters, for GET /api/diagnostics (F149)
+#include "wap_diagnostics.h"     // pure, host-tested: GET /api/diagnostics's body (F149)
 #include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
 #include "mqtt_identity.h"       // pure, host-tested: the MQTT fp + health key, lowercase (HA20)
 #include "csi_event_log.h"       // SD-backed event persistence + MQTT backfill
@@ -3680,61 +3681,35 @@ static esp_err_t handle_system_metrics(httpd_req_t* req) {
 static esp_err_t handle_diagnostics(httpd_req_t* req) {
   g_health.http_requests++;
 
-  sys_monitor::DegradeLevel degrade = sys_monitor::get_degrade_level();
-  sys_monitor::SDHealthStats sd_h = sys_monitor::get_sd_health();
+  const sys_monitor::DegradeLevel degrade = sys_monitor::get_degrade_level();
+  const sys_monitor::SDHealthStats sd_h = sys_monitor::get_sd_health();
+  wap_diagnostics::Inputs in = {};
+  in.heap_free          = sys_monitor::g_sys_metrics.heap_free;
+  in.heap_min_free      = sys_monitor::g_sys_metrics.heap_min_free;
+  in.heap_largest_block = sys_monitor::g_sys_metrics.heap_largest_block;
+  in.heap_total         = sys_monitor::g_sys_metrics.heap_total;
+  in.degrade_level      = (uint8_t)degrade;
+  in.degrade_name       = sys_monitor::degrade_level_name(degrade);
+  in.sd_total_writes    = sd_h.total_writes;
+  in.sd_write_errors    = sd_h.write_errors;
+  in.sd_usage_pct       = sd_h.usage_pct;
+  in.sd_space_warning   = sd_h.space_warning;
+  in.sd_space_critical  = sd_h.space_critical;
+  in.uptime_sec         = sys_monitor::g_sys_metrics.uptime_sec;
 
   // The egress's counters as the loop task's last pump published them
   // (this is the httpd task: csi_event_egress::stats() reads the pump's own
   // state, which only the loop task may), in the names of the canary's MQTT
   // health and of this device's egress topic. null before the first pump.
-  char egress[csi_event_egress::kStatsJsonMax];
-  csi_event_egress::Stats egress_stats;
-  if (!csi_event_egress::read_stats(&egress_stats) ||
-      csi_event_egress::stats_json(egress_stats, egress, sizeof(egress)) == 0) {
-    strcpy(egress, "null");
-  }
+  csi_event_egress::Stats egress_stats = {};
+  const bool have_egress = csi_event_egress::read_stats(&egress_stats);
 
-  // Worst case 663 bytes: every number at 10 digits, "EMERGENCY", and a
-  // 319-byte egress object (it was 512 before the object).
-  char buf[768];
-  int len = snprintf(buf, sizeof(buf),
-    "{"
-    "\"ok\":true,"
-    "\"heap\":{"
-      "\"free\":%u,"
-      "\"min_free\":%u,"
-      "\"largest_block\":%u,"
-      "\"total\":%u"
-    "},"
-    "\"degradation\":{"
-      "\"level\":%u,"
-      "\"level_name\":\"%s\""
-    "},"
-    "\"sd_health\":{"
-      "\"total_writes\":%u,"
-      "\"write_errors\":%u,"
-      "\"usage_pct\":%u,"
-      "\"space_warning\":%s,"
-      "\"space_critical\":%s"
-    "},"
-    "\"uptime_sec\":%u,"
-    "\"csi_event_egress\":%s"
-    "}",
-    (unsigned)sys_monitor::g_sys_metrics.heap_free,
-    (unsigned)sys_monitor::g_sys_metrics.heap_min_free,
-    (unsigned)sys_monitor::g_sys_metrics.heap_largest_block,
-    (unsigned)sys_monitor::g_sys_metrics.heap_total,
-    (unsigned)degrade,
-    sys_monitor::degrade_level_name(degrade),
-    (unsigned)sd_h.total_writes,
-    (unsigned)sd_h.write_errors,
-    (unsigned)sd_h.usage_pct,
-    sd_h.space_warning  ? "true" : "false",
-    sd_h.space_critical ? "true" : "false",
-    (unsigned)sys_monitor::g_sys_metrics.uptime_sec,
-    egress);
-
-  if (len <= 0 || len >= (int)sizeof(buf)) {
+  // The body and its worst case (649 bytes) are wap_diagnostics.h's, host-
+  // tested (test_wap_diagnostics.cpp); check_wap_event_egress.py rule 12
+  // holds this buffer to its kJsonMax.
+  char buf[wap_diagnostics::kJsonMax];
+  if (wap_diagnostics::build_json(in, have_egress ? &egress_stats : nullptr,
+                                  buf, sizeof(buf)) == 0) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
   }
 

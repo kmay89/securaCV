@@ -357,6 +357,29 @@ clean-wap-egress:
 run: run-wap-egress
 clean: clean-wap-egress
 
+# GET /api/diagnostics's body (sweep F149): the REAL wap_diagnostics.h the
+# handler builds it with. Every key, the egress counters as an object (null
+# before the first pump), and the widest body inside the route's kJsonMax
+# buffer; sys_monitor.h is read (its path passed in, so the read fails closed)
+# for the longest degradation-level name. check_wap_event_egress.py rule 12
+# holds the handler to the builder and the buffer.
+DIAG_BIN = test_wap_diagnostics
+DIAG_SRC = test_wap_diagnostics.cpp
+
+$(DIAG_BIN): $(DIAG_SRC) $(SRC_DIR)/wap_diagnostics.h $(SRC_DIR)/csi_event_egress.h \
+             $(SRC_DIR)/csi_event_backfill.h $(SRC_DIR)/sys_monitor.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) \
+	  -DSYS_MONITOR_H='"$(abspath $(SRC_DIR))/sys_monitor.h"' -o $@ $(DIAG_SRC)
+
+.PHONY: run-wap-diagnostics clean-wap-diagnostics
+run-wap-diagnostics: $(DIAG_BIN)
+	$(call run_marked,$(DIAG_BIN))
+clean-wap-diagnostics:
+	rm -f $(DIAG_BIN)
+
+run: run-wap-diagnostics
+clean: clean-wap-diagnostics
+
 # The CSI modules' boot init (sweep F93): the REAL csi_settings_nvs.cpp (the
 # sketch's csi_module_settings_* readers, by the shared
 # csi_module_settings_nvs.h rule, and its boot init through one read-only
