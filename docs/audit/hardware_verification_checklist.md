@@ -690,10 +690,12 @@ compiled by CI; not run on a device. Owner: U1.
 Code: `firmware/common/csi/src/csi_module.cpp` (`csi_module_init_all()`
 runs each registered module's `init()` once; `csi_module_tick_all()` ticks
 none before it), `csi_module_settings_nvs.h` (the key map and NVS read rule
-both trees share), the canary's `src/csi_modules_integration.cpp` (the boot
-init at the end of `securacv_csi_modules_init()`) and the canary-wap's
-`csi_integration.cpp` (`init()`, right after `register_v1_modules()`) and
-`csi_settings_nvs.cpp` (its readers). Host-tested on the canary's real
+both trees share, with one read-only handle for a boot), the canary's
+`src/csi_modules_integration.cpp` (`init_modules_from_nvs()`, at the end of
+`securacv_csi_modules_init()`) and the canary-wap's `csi_integration.cpp`
+(`init()` calls `csi_settings_nvs_init_modules()` right after
+`register_v1_modules()`) and `csi_settings_nvs.cpp` (its readers and that
+boot init). Host-tested on the canary's real
 bridge (`firmware/tests_host/test_csi_module_boot.cpp`) and on the
 canary-wap's real readers with the staged library and modules
 (`firmware/projects/canary-wap/tests_host/test_wap_module_boot.cpp`); the

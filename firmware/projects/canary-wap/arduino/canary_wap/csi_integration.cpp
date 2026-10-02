@@ -428,7 +428,8 @@ using csi_module_settings_nvs::nvs_key_for;
 /* Reinit a module whose settings changed: its init() re-reads them. Cheap
  * — modules are stateless apart from a few static counters that init()
  * resets. Called after a settings POST, a calibration apply or a Tuning
- * Lab change; the boot's init is csi_module_init_all() in init() below. */
+ * Lab change; the boot's init is csi_settings_nvs_init_modules() in init()
+ * below. A NULL settings handle: each read opens NVS for itself. */
 void reinit_module(const char* module_id) {
   const csi_module_t* m = csi_module_find(module_id);
   if (!m) return;

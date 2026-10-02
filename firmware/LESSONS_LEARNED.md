@@ -2209,7 +2209,9 @@
   host that forgets the call gets a dead pipeline, not quietly ignored
   settings. Both trees call it once, after the event-id floor and the
   egress and before the first tick, and both read settings by one rule
-  (`csi_module_settings_nvs.h`).
+  (`csi_module_settings_nvs.h`), through one read-only NVS handle for the
+  whole boot: the first cut opened one per setting, which on a canary
+  (no `csi` namespace) would have logged sixteen failed opens per boot.
 - **Regression check:** `firmware/tests_host/test_csi_module_boot.cpp` and
   `firmware/projects/canary-wap/tests_host/test_wap_module_boot.cpp` boot
   with stored rows and assert each applies from the first windows, each
