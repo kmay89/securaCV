@@ -128,6 +128,93 @@ test("every MQTT topic suffix appears in csi_mqtt.cpp", () => {
   }
 });
 
+// Sweep A32: the events example used to carry seven of the wire body's
+// seventeen keys (no module, category, privacy, timestamp, zone, confidence,
+// duration_sec, replay...) and a state, "motion", that no module emits. Every
+// topic's example is now keyed as the firmware writes it: the snprintf
+// format's keys, in its order (csi_event_wire.h's for the events and tamper
+// bodies, the one builder both trees publish through).
+const eventWireH = read(join(FW, "csi_event_wire.h"));
+const fnBody = (src, signature) => {
+  const i = src.indexOf(signature);
+  assert.ok(i >= 0, "not found: " + signature);
+  const j = src.indexOf("\n}\n", i);
+  return src.slice(i, j < 0 ? undefined : j);
+};
+const slice = (src, from, to) => {
+  const i = src.indexOf(from);
+  assert.ok(i >= 0, "not found: " + from);
+  const j = src.indexOf(to, i + from.length);
+  assert.ok(j >= 0, "not found: " + to);
+  return src.slice(i, j);
+};
+const keysOf = (fragment) => [...fragment.matchAll(/\\"([a-z_0-9]+)\\":/g)].map((m) => m[1]);
+function firmwareKeys() {
+  const wire = fnBody(eventWireH, "inline size_t build_event_body(");
+  const health = fnBody(csiMqttCpp, "void publish_health(");
+  const signedBranch = (sig) => keysOf(slice(fnBody(csiMqttCpp, sig), "if (signed_ok) {", "} else {"));
+  return {
+    status: keysOf(fnBody(csiMqttCpp, "void publish_status(")),
+    events: [...keysOf(slice(wire, "const int n = snprintf(body, cap,", "if (n <= 0")),
+             ...keysOf(slice(wire, "if (signed_ok) {", "} else {"))],
+    chain: signedBranch("void publish_chain("),
+    counts: signedBranch("void publish_counts("),
+    // the battery-less branch, then the tamper levels, each sent only when reported
+    health: [...keysOf(slice(health, "} else {", "if (n <= 0")), ...keysOf(slice(health, "if (n <= 0", "if (len + 1"))],
+    tamper: keysOf(fnBody(eventWireH, "inline size_t build_tamper_bridge_body(")),
+    sensing: keysOf(slice(ino, "char sensing_json[320];", "if (sn > 0")),
+    mesh: keysOf(fnBody(csiMqttCpp, "void publish_mesh(")),
+    chirp: keysOf(fnBody(csiMqttCpp, "void publish_chirp_state(")),
+    beacon: keysOf(fnBody(csiMqttCpp, "void publish_beacon_state(")),
+    "update/state": [...new Set([...fnBody(ino, "static void ota_publish_update_state() {")
+      .matchAll(/doc\["([a-z_]+)"\]/g)].map((m) => m[1]))],
+  };
+}
+const OPTIONAL_KEYS = { health: ["sd_mounted", "enclosure_open"], "update/state": ["release_url", "release_summary"] };
+
+test("every MQTT topic example is keyed as the firmware publishes it (sweep A32)", () => {
+  const want = firmwareKeys();
+  assert.deepStrictEqual(want.events.slice(-4), ["v", "alg", "fp", "sig"], "the wire body ends in the envelope");
+  assert.ok(want.events.length >= 20, "csi_event_wire.h's body parsed thin: " + want.events);
+  for (const t of data.mqtt.topics) {
+    if (t.payload.startsWith('"')) continue;   // the bare ON/OFF and muted/live strings
+    assert.ok(want[t.suffix], t.suffix + ": no firmware format to hold the example to");
+    const keys = Object.keys(JSON.parse(t.payload));
+    const opt = OPTIONAL_KEYS[t.suffix] || [];
+    assert.deepStrictEqual(keys, want[t.suffix].filter((k) => !opt.includes(k) || keys.includes(k)),
+      t.suffix + ": not the firmware's keys, in its order");
+  }
+  // the bare strings are csi_mqtt.cpp's own
+  assert.ok(csiMqttCpp.includes('const char* pl = enabled ? "ON" : "OFF";'));
+  assert.ok(csiMqttCpp.includes('const char* pl = muted ? "muted" : "live";'));
+});
+
+test("the events example is a row the WAP commits: its module, type, state and id space", () => {
+  const ev = JSON.parse(data.mqtt.topics.find((t) => t.suffix === "events").payload);
+  const presence = read(join(FW, "core_presence.cpp"));
+  const states = presence.match(/const char\* STATE_NAMES\[STATE__COUNT\] = \{\s*([^}]*)\}/)[1].match(/"([a-z]+)"/g)
+    .map((x) => x.slice(1, -1));
+  assert.ok(presence.includes(`(void)csi_event_emit("${ev.module}", "${ev.type}", &v);`), ev.module + "/" + ev.type);
+  assert.ok(states.includes(ev.state), `core.presence emits ${states}, not ${ev.state}`);
+  assert.ok(!states.includes("motion"), "the old example's state is still not one");
+  // csi_event_wire.h writes the state name as event_type too
+  assert.ok(eventWireH.includes("    (unsigned long)event_id,\n    state_s,\n"));
+  assert.strictEqual(ev.event_type, ev.state);
+  assert.deepStrictEqual([ev.category, ev.privacy], ["event", "p0"], "a presence row is a P0 event");
+  // ids start at kIdSpaceBase on every device (sweep F46)
+  const base = Number(read(join(FW, "csi_event_id_floor.h")).match(/constexpr uint32_t kIdSpaceBase = (0x[0-9A-Fa-f]+)u;/)[1]);
+  assert.ok(ev.event_id >= base && ev.event_id < 0xF0000000, `event_id ${ev.event_id} is not in [kIdSpaceBase, kHoldLimit)`);
+  assert.strictEqual(ev.signed, true, "a body with the envelope says signed");
+});
+
+test("the health example is the FULL build's: an SD card mounted, no tamper contact", () => {
+  const health = JSON.parse(data.mqtt.topics.find((t) => t.suffix === "health").payload);
+  assert.strictEqual(health.sd_mounted, true, "the boot log mounts a card, so health carries sd_mounted");
+  assert.ok(!("enclosure_open" in health), "FEATURE_TAMPER_GPIO is off in every shipped profile");
+  assert.ok(ino.includes("tamper_lv.sd_mounted = (g_hw.sd_state != SD_ABSENT) ? 1 : 0;"));
+  assert.ok(data.serial.boot.some((b) => b.text === "SD card ready for witness records"));
+});
+
 test("every HA discovery entity object_id is a real one", () => {
   assert.strictEqual(data.mqtt.discovery.entities.length, 24);
   for (const e of data.mqtt.discovery.entities)

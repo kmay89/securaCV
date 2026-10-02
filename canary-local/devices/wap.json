@@ -491,7 +491,7 @@
         "suffix": "events",
         "retained": false,
         "cadence": "per committed CSI event",
-        "payload": "{\"event_id\":1234,\"event_type\":\"motion\",\"state\":\"motion\",\"motion\":72,\"breathing\":8,\"signed\":true,\"v\":1,\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
+        "payload": "{\"event_id\":3221226706,\"event_type\":\"active\",\"timestamp\":312,\"zone\":\"\",\"confidence\":\"tentative\",\"signed\":true,\"module\":\"core.presence\",\"type\":\"presence_changed\",\"category\":\"event\",\"privacy\":\"p0\",\"state\":\"active\",\"motion\":78,\"breathing\":8,\"bpm\":0,\"duration_sec\":0,\"bundled\":1,\"replay\":false,\"v\":1,\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
       },
       {
         "suffix": "chain",
@@ -503,7 +503,7 @@
         "suffix": "health",
         "retained": true,
         "cadence": "~60 s",
-        "payload": "{\"battery\":100,\"battery_present\":false,\"memory_free\":204800,\"uptime\":312,\"firmware_version\":\"2.4.15-wap\",\"public_key\":\"\u2026\"}"
+        "payload": "{\"battery\":100,\"battery_present\":false,\"memory_free\":204800,\"uptime\":312,\"firmware_version\":\"2.4.15-wap\",\"public_key\":\"\u2026\",\"sd_mounted\":true}"
       },
       {
         "suffix": "counts",

@@ -20,7 +20,12 @@ Sources of truth (all in-repo, deterministic, offline):
       setup_wizard.h        NVS keys, setup timeout, DNS port, device-name cap
       setup_page_html.h     CAPTIVE_PORTAL_HTML  (rendered verbatim)
       boot_banner.cpp       boot scene text
-      csi_mqtt.cpp          MQTT prefix, topics, HA discovery entity/trigger set
+      csi_mqtt.cpp          MQTT prefix, topics, each topic's payload keys,
+                            HA discovery entity/trigger set
+      csi_event_wire.h      the events and tamper bodies' keys (the one wire builder)
+      core_presence.cpp, acoustic_events_module.cpp, tamper_events_module.cpp
+                            the module / type / state an events example names
+      csi_event_id_floor.h  where event ids start (kIdSpaceBase)
       mqtt_identity.h       the spelling of the MQTT fp and public_key (lowercase)
   docs/getting_started_canary.md   sensing pills, dashboard cards
   canary-local/devices/registry.json   fw_train + the canary-wap card facts
@@ -45,6 +50,11 @@ BOOT_BANNER_CPP = FW / "boot_banner.cpp"
 CAPTIVE_PROBE_H = FW / "captive_probe.h"
 CSI_MQTT_CPP = FW / "csi_mqtt.cpp"
 MQTT_IDENTITY_H = FW / "mqtt_identity.h"
+EVENT_WIRE_H = FW / "csi_event_wire.h"
+ID_FLOOR_H = FW / "csi_event_id_floor.h"
+CORE_PRESENCE_CPP = FW / "core_presence.cpp"
+ACOUSTIC_CPP = FW / "acoustic_events_module.cpp"
+TAMPER_CPP = FW / "tamper_events_module.cpp"
 COMPANION_H = FW / "companion_pwa.h"
 DOC = REPO / "docs/getting_started_canary.md"
 REGISTRY = REPO / "canary-local/devices/registry.json"
@@ -84,6 +94,43 @@ def grab(path: Path, pattern: str, label: str, flags=0) -> str:
     if not m:
         die(f"{label}: pattern /{pattern}/ not found in {path.relative_to(REPO)}")
     return m.group(1)
+
+
+def fn_body(path: Path, signature: str, label: str) -> str:
+    """A function's text, from its signature to the closing brace in column 0."""
+    text = read(path)
+    i = text.find(signature)
+    if i < 0:
+        die(f"{label}: {signature!r} not found in {path.relative_to(REPO)}")
+    j = text.find("\n}\n", i)
+    return text[i:j if j >= 0 else len(text)]
+
+
+def between(text: str, start: str, end: str, label: str) -> str:
+    i = text.find(start)
+    j = text.find(end, i + len(start)) if i >= 0 else -1
+    if i < 0 or j < 0:
+        die(f"{label}: {start!r} … {end!r} not found")
+    return text[i:j]
+
+
+def fmt_keys(fragment: str) -> list:
+    """The JSON keys a C format string writes, in order."""
+    return re.findall(r'\\"([a-z_0-9]+)\\":', fragment)
+
+
+def keyed_as(payload: str, keys: list, label: str, optional=()) -> str:
+    """Refuse an example whose keys are not the firmware's, in its order.
+    `optional` keys are ones the firmware writes only sometimes; an example
+    may carry any of them, in their place."""
+    try:
+        ex = list(json.loads(payload).keys())
+    except ValueError:
+        die(f"MQTT {label}: example is not JSON: {payload}")
+    want = [k for k in keys if k not in optional or k in ex]
+    if ex != want:
+        die(f"MQTT {label}: example keys {ex} are not the firmware's {want}")
+    return payload
 
 
 # --------------------------------------------------------------------------- #
@@ -464,15 +511,126 @@ must(CSI_MQTT_CPP, '"%s/%s/%s"', "MQTT build_topic format")
 must(CSI_MQTT_CPP, '{\\"online\\":false}', "MQTT LWT payload")
 must(CSI_MQTT_CPP, '\\"device_type\\":\\"canary-wap\\"', "MQTT status device_type")
 
+# Every topic's example is keyed as the firmware publishes it (sweep A32):
+# its keys, in their order, are the snprintf format's (or, for the events and
+# tamper bodies, csi_event_wire.h's, the one builder both trees publish
+# through), and this file refuses to write when they differ. Values are
+# illustrative. Before this the events example carried seven of the wire
+# body's seventeen keys plus the envelope, and a state ("motion") no module
+# emits.
+_wire_ev = fn_body(EVENT_WIRE_H, "inline size_t build_event_body(", "events body")
+EVENT_ENVELOPE_KEYS = fmt_keys(between(_wire_ev, "if (signed_ok) {", "} else {", "the signed envelope"))
+_ev_fmt = between(_wire_ev, "const int n = snprintf(body, cap,", "if (n <= 0", "the events body format")
+EVENT_KEYS = fmt_keys(_ev_fmt)
+if EVENT_ENVELOPE_KEYS != ["v", "alg", "fp", "sig"] or not _ev_fmt.replace(" ", "").count('"%s"\n"}"'):
+    die("csi_event_wire.h's body no longer ends in the v/alg/fp/sig envelope")
+must(EVENT_WIRE_H, '"\\"event_type\\":\\"%s\\","', "event_type rides the body")
+must(EVENT_WIRE_H, "    (unsigned long)event_id,\n    state_s,\n", "event_type is the state name")
+TAMPER_KEYS = fmt_keys(fn_body(EVENT_WIRE_H, "inline size_t build_tamper_bridge_body(", "tamper body"))
+
+
+def _signed(sig: str) -> list:
+    return fmt_keys(between(fn_body(CSI_MQTT_CPP, sig, sig), "if (signed_ok) {", "} else {", sig))
+
+
+_health = fn_body(CSI_MQTT_CPP, "void publish_health(", "health")
+HEALTH_KEYS = (fmt_keys(between(_health, "} else {", "if (n <= 0", "health without a battery"))
+               + fmt_keys(between(_health, "if (n <= 0", "if (len + 1", "health's tamper levels")))
+HEALTH_OPTIONAL = ("sd_mounted", "enclosure_open")
+_ota = fn_body(INO, "static void ota_publish_update_state() {", "update/state")
+UPDATE_KEYS = list(dict.fromkeys(re.findall(r'doc\["([a-z_]+)"\]', _ota)))
+KEYS = {
+    "status": fmt_keys(fn_body(CSI_MQTT_CPP, "void publish_status(", "status")),
+    "events": EVENT_KEYS + EVENT_ENVELOPE_KEYS,
+    "chain": _signed("void publish_chain("),
+    "health": HEALTH_KEYS,
+    "counts": _signed("void publish_counts("),
+    "tamper": TAMPER_KEYS,
+    "sensing": fmt_keys(between(read(INO), "char sensing_json[320];", "if (sn > 0", "sensing")),
+    "mesh": fmt_keys(fn_body(CSI_MQTT_CPP, "void publish_mesh(", "mesh")),
+    "chirp": fmt_keys(fn_body(CSI_MQTT_CPP, "void publish_chirp_state(", "chirp")),
+    "beacon": fmt_keys(fn_body(CSI_MQTT_CPP, "void publish_beacon_state(", "beacon")),
+    "update/state": UPDATE_KEYS,
+}
+OPTIONAL = {"health": HEALTH_OPTIONAL, "update/state": ("release_url", "release_summary")}
+# the bare-string topics: what csi_mqtt.cpp writes, verbatim
+must(CSI_MQTT_CPP, 'const char* pl = enabled ? "ON" : "OFF";', "update/auto is a bare ON/OFF")
+must(CSI_MQTT_CPP, 'const char* pl = muted ? "muted" : "live";', "mic/state is a bare muted/live")
+# The health example is the FULL profile's, the build the boot log above
+# narrates: an SD card mounted this boot, so sd_mounted rides every health
+# publish (F41); FEATURE_TAMPER_GPIO is off in every shipped profile, so
+# enclosure_open does not.
+must(INO, "tamper_lv.sd_mounted = (g_hw.sd_state != SD_ABSENT) ? 1 : 0;", "sd_mounted once a card mounted")
+must(FW / "build_config.h", "#define FEATURE_TAMPER_GPIO   0\n  #endif\n  #define FEATURE_WATCHDOG      1\n"
+     "  #define FEATURE_STATE_LOG     1\n  #define FEATURE_MESH_NETWORK  1", "FULL ships without the tamper contact")
+
+# Event ids start at kIdSpaceBase on every device (sweep F46), so an example
+# id below it is one no WAP sends.
+ID_SPACE_BASE = int(grab(ID_FLOOR_H, r"constexpr uint32_t kIdSpaceBase = (0x[0-9A-Fa-f]+)u;", "kIdSpaceBase"), 16)
+EX_EVENT_ID = ID_SPACE_BASE + 1234
+EX_UPTIME_S = 312
+
+# What an events example may name: a module the WAP registers, a type its
+# manifest declares, a state that type emits, and the category and privacy
+# class the wire then spells (csi_event_wire.h's category_word/privacy_word).
+PRESENCE_STATES = re.findall(r'"([a-z]+)"', grab(CORE_PRESENCE_CPP,
+    r"const char\* STATE_NAMES\[STATE__COUNT\] = \{\s*([^}]*)\}", "core.presence's STATE_NAMES"))
+must(CORE_PRESENCE_CPP, '(void)csi_event_emit("core.presence", "presence_changed", &v);', "core.presence emit")
+must(CORE_PRESENCE_CPP, "  v.category       = CSI_CATEGORY_EVENT;\n  v.present_fields = CSI_FIELD_STATE_NAME", "presence rows are events")
+must(ACOUSTIC_CPP, 'type_name = "smoke_alarm_t3"; state = "smoke_alarm";', "smoke row")
+must(ACOUSTIC_CPP, 'type_name = "co_alarm_t4";    state = "co_alarm";', "CO row")
+must(TAMPER_CPP, 'emit_kind("sd_remove")', "the SD-removed tamper kind")
+EMITTERS = {
+    ("core.presence", "presence_changed"): {"states": PRESENCE_STATES, "category": "event", "privacy": "p0",
+                                            "csi": True},
+    ("acoustic.events", "smoke_alarm_t3"): {"states": ["smoke_alarm"], "category": "anomaly", "privacy": "p0",
+                                            "csi": False},
+    ("acoustic.events", "co_alarm_t4"): {"states": ["co_alarm"], "category": "anomaly", "privacy": "p0",
+                                         "csi": False},
+}
+must(EVENT_WIRE_H, 'return (c == CSI_CATEGORY_AMBIENT) ? "ambient"\n       : (c == CSI_CATEGORY_ANOMALY) ? "anomaly" : "event";',
+     "category words")
+must(EVENT_WIRE_H, 'return (p == CSI_PRIVACY_P2) ? "p2" : (p == CSI_PRIVACY_P1) ? "p1" : "p0";', "privacy words")
+
+
+def event_body(**over) -> str:
+    """An events body as csi_event_wire.h builds it, signed by the test key."""
+    body = {"event_id": EX_EVENT_ID, "event_type": "", "timestamp": EX_UPTIME_S, "zone": "",
+            "confidence": "tentative", "signed": True, "module": "core.presence", "type": "presence_changed",
+            "category": "event", "privacy": "p0", "state": "", "motion": 0, "breathing": 0, "bpm": 0,
+            "duration_sec": 0, "bundled": 1, "replay": False,
+            "v": 1, "alg": "ed25519", "fp": EX_FP, "sig": "…"}
+    body.update(over)
+    body["event_type"] = body["state"]
+    return json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+
+
+def check_event(payload: str, label: str) -> None:
+    e = json.loads(payload)
+    em = EMITTERS.get((e.get("module"), e.get("type")))
+    if not em:
+        die(f"{label}: no WAP module emits {e.get('module')}/{e.get('type')}")
+    if e["state"] not in em["states"] or e["event_type"] != e["state"]:
+        die(f"{label}: {e['module']}/{e['type']} does not emit state {e['state']!r} (it emits {em['states']})")
+    if (e["category"], e["privacy"]) != (em["category"], em["privacy"]):
+        die(f"{label}: {e['module']}/{e['type']} is {em['category']}/{em['privacy']}, not "
+            f"{e['category']}/{e['privacy']}")
+    if not em["csi"] and (e["motion"] or e["breathing"] or e["bpm"]):
+        die(f"{label}: {e['module']} carries no CSI scores")
+    if e["event_id"] < ID_SPACE_BASE:
+        die(f"{label}: event_id {e['event_id']} is below kIdSpaceBase ({ID_SPACE_BASE})")
+
+
 TOPICS = [
     {"suffix": "status", "retained": True, "cadence": "on connect + ~30 s",
      "payload": '{"online":true,"device_type":"canary-wap","csi_running":true,"wifi_connected":true,"rssi":-58}'},
     {"suffix": "events", "retained": False, "cadence": "per committed CSI event",
-     "payload": '{"event_id":1234,"event_type":"motion","state":"motion","motion":72,"breathing":8,"signed":true,"v":1,"alg":"ed25519","fp":"' + EX_FP + '","sig":"…"}'},
+     "payload": event_body(state="active", motion=78, breathing=8)},
     {"suffix": "chain", "retained": True, "cadence": "on each new record",
      "payload": '{"v":1,"length":312,"latest_hash":"a1b2…","algorithm":"ed25519","alg":"ed25519","fp":"' + EX_FP + '","sig":"…"}'},
     {"suffix": "health", "retained": True, "cadence": "~60 s",
-     "payload": '{"battery":100,"battery_present":false,"memory_free":204800,"uptime":312,"firmware_version":"' + FW_VERSION + '","public_key":"…"}'},
+     "payload": '{"battery":100,"battery_present":false,"memory_free":204800,"uptime":' + str(EX_UPTIME_S)
+                + ',"firmware_version":"' + FW_VERSION + '","public_key":"…","sd_mounted":true}'},
     {"suffix": "counts", "retained": True, "cadence": "on each new record",
      "payload": '{"v":1,"total":312,"alg":"ed25519","fp":"' + EX_FP + '","sig":"…"}'},
     {"suffix": "tamper", "retained": False, "cadence": "per committed system.integrity event (live only, never backfill)",
@@ -492,6 +650,14 @@ TOPICS = [
     {"suffix": "update/auto", "retained": True, "cadence": "on toggle", "payload": '"ON" | "OFF"'},
     {"suffix": "mic/state", "retained": True, "cadence": "on mute toggle", "payload": '"muted" | "live"'},
 ]
+for t in TOPICS:
+    if t["suffix"] in KEYS:
+        keyed_as(t["payload"], KEYS[t["suffix"]], t["suffix"], OPTIONAL.get(t["suffix"], ()))
+    elif t["suffix"] not in ("update/auto", "mic/state"):
+        die(f"MQTT topic {t['suffix']!r} has no firmware key list to hold its example to")
+check_event(next(t for t in TOPICS if t["suffix"] == "events")["payload"], "the events example")
+must(FW / "chirp_channel.cpp", 'case CHIRP_LISTENING:    return "listening";', "chirp state word")
+must(FW / "beacon_channel.cpp", 'case BEACON_STATE_NORMAL:      return "Normal";', "beacon state word")
 SUBSCRIBED = [
     {"suffix": "update/cmd", "payload": '"install"'},
     {"suffix": "update/auto/cmd", "payload": '"ON" | "OFF"'},
