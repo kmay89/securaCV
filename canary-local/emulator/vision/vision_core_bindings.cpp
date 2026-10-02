@@ -119,8 +119,9 @@ EMSCRIPTEN_KEEPALIVE int vision_emu_push_box(int x, int y, int w, int h,
 // reading (its cell is the primary box's); "fsm" is what the device
 // publishes: the clocks (presence_ms, dwell_ms, and visit_ms, the last
 // completed stay the FSM latches at presence_ended) and the voxel tracker's
-// settled cell, which moves on the third consecutive frame away from it and
-// keeps the last cell once the frame is empty (sweep A39).
+// settled cell, which moves only once the person has been seen away from it
+// three times in a row, and keeps the last cell once the frame is empty
+// (sweep A39).
 EMSCRIPTEN_KEEPALIVE const char* vision_emu_tick_json(unsigned int now_ms) {
   g_sample = canary::vision::detection::sample_from_boxes(
       g_boxes, canary::cfg::detect());

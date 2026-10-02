@@ -139,19 +139,19 @@ Base:
 - `securacv/<device_id>/cfg/state` (retained; live detection settings + watch profile)
 - `securacv/<device_id>/cfg/{target,score,lost,dwell,profile}/set` (commands)
 
-### The clocks on an event row
+### The clocks and the cell on an event row
 
 Every `events` row, and the `state` row published on the same tick, is read
 from the presence FSM's snapshot right after the frame that emitted the
 event (`publish_event_json` in `src/main.cpp`, `PresenceFSM::snapshot` in
-`src/state/presence_fsm.cpp`). So the three clocks mean:
+`src/state/presence_fsm.cpp`). So the clocks and the cell mean:
 
 | Field | On which rows | Value |
 |---|---|---|
 | `presence_ms` | every row | how long the current stay has lasted; 0 on `presence_started` (it starts on that frame) and once the stay has ended |
 | `dwell_ms` | every row | the running dwell while dwelling; on `dwell_ended`, how long the dwell it closed lasted (held until the next frame); otherwise 0. `dwell_started` reads 0 because the dwell starts on that frame |
-| `visit_ms` | every row | how long the last **completed** stay lasted, latched at `presence_ended` and kept until the next one ends; 0 before any stay has ended |
-| `voxel` | every row | the voxel tracker's settled cell, not the frame's: it moves on the third consecutive frame whose cell differs from it, to that frame's cell (`VOXEL_STABLE_N` in `src/state/voxel_tracker.cpp`) and keeps the last cell once the frame is empty, so `presence_ended` still names where the person was; before anyone has been seen it is `r`/`c` -1 with `rows`/`cols` 0 |
+| `visit_ms` | `events` rows (the `state` row has no such key) | how long the last **completed** stay lasted, latched at `presence_ended` and kept until the next one ends; 0 before any stay has ended |
+| `voxel` | every row | the voxel tracker's settled cell, not the frame's: it moves to a new cell only once the person has been seen away from it three times in a row (`VOXEL_STABLE_N` in `src/state/voxel_tracker.cpp`), and it keeps the last cell once the frame is empty, so `presence_ended` still names where the person was; before anyone has been seen it is `r`/`c` -1 with `rows`/`cols` 0 |
 
 A running dwell is therefore on the `state` rows (each heartbeat republishes
 one) and the dwell's final length on its `dwell_ended` row. The behavior is

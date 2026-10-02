@@ -9,9 +9,10 @@
 // Pinned (sweep A39): the "fsm" object carries the voxel tracker's settled
 // cell (snapshot.voxel, the cell publish_event_json writes) and visit_ms
 // (last_visit_ms_), so the pane no longer shows the frame's cell or keeps a
-// latch of its own. The settled cell differs from the frame's: it moves on
-// the third consecutive frame away from it (voxel_tracker.cpp's
-// VOXEL_STABLE_N), and stays on the last cell once the frame is empty. And (sweep F130) dwell_ended's dwell_ms is the
+// latch of its own. The settled cell differs from the frame's: it moves
+// only once the person has been seen away from it three times in a row
+// (voxel_tracker.cpp's VOXEL_STABLE_N), and stays on the last cell once the
+// frame is empty. And (sweep F130) dwell_ended's dwell_ms is the
 // dwell it closed, through the same ABI.
 //
 // Before A39 the fsm object had neither key, and this suite fails on it.
