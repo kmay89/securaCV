@@ -49,6 +49,11 @@
 #ifdef ARDUINO
   #include <Arduino.h>
   static inline uint32_t csi_event_now_ms() { return millis(); }
+#elif defined(CSI_TEST_CLOCK)
+  /* The host test's clock (see csi_bundler.cpp): the hourly ceiling and the
+   * bundler's window must read the same time. */
+  extern "C" uint32_t csi_test_now_ms(void);
+  static inline uint32_t csi_event_now_ms() { return csi_test_now_ms(); }
 #else
   #include <time.h>
   static inline uint32_t csi_event_now_ms() {
@@ -566,11 +571,7 @@ uint32_t csi_event_emit(const char*               module_id,
    *    increment first and roll back on rejection so that buffered emits
    *    (which only commit later via the bundler) still count toward the
    *    same cap as direct commits. A same-key REFRESH of a bundle that is
-   *    already open is the one exception (see the BUFFERED branch), so we
-   *    ask the bundler up front whether this admit would merge. */
-  const bool refreshes_open_bundle =
-      (v.present_fields & CSI_FIELD_STATE_NAME) && v.state_name[0] != '\0'
-      && csi_bundler_has_open(module_id, type_name, v.state_name);
+   *    already open is the one exception (see the MERGED branch). */
   counter->buckets[5] += 1;
 
   /* 6. Bundling. The bundler buffers same-state events into a single open
@@ -579,9 +580,9 @@ uint32_t csi_event_emit(const char*               module_id,
   csi_bundler_outcome_t outcome = csi_bundler_admit(
       module_id, type_name, decl->privacy, &v, &handle);
 
-  if (outcome == CSI_BUNDLER_BUFFERED) {
-    /* Rolled into an open bundle, or just opened a new one. An OPENING is
-     * a future committed row and keeps its ceiling slot. A REFRESH of a
+  if (outcome == CSI_BUNDLER_BUFFERED || outcome == CSI_BUNDLER_MERGED) {
+    /* Opened a new bundle, or rolled into an open one. An OPENING is a
+     * future committed row and keeps its ceiling slot. A REFRESH of a
      * bundle that was already open produces no new row and must not
      * consume one: core.presence re-emits its open state at 5 / 20 / every
      * 60 windows to refresh duration and confidence, and with a 6/hour
@@ -589,10 +590,16 @@ uint32_t csi_event_emit(const char*               module_id,
      * presence, after which the REAL state transitions were silently
      * dropped.
      *
+     * Which one it was is admit's answer, decided after its own expiry —
+     * never a has_open() asked before it. A key whose bundle admit just
+     * closed (a quiet gap of CSI_BUNDLER_MAX_GAP_MS, or the window) opens a
+     * new bundle, and that row is counted (backlog F80: refunding it let
+     * one emit every 121 s commit ~5x the ceiling).
+     *
      * The bundle has no event id yet: it takes one when it commits
      * (commit_row), and its dismiss route is recorded then. What returns
      * is the open bundle's handle, in [kHandleBase, kIdSpaceBase). */
-    if (refreshes_open_bundle) counter->buckets[5] -= 1;
+    if (outcome == CSI_BUNDLER_MERGED) counter->buckets[5] -= 1;
     return handle;
   }
 

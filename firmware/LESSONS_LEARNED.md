@@ -2355,6 +2355,33 @@
   the host's.
 - **Date learned:** 2026-10
 
+### A refund decided before the call it refunds (CSI hourly ceiling, F80)
+- **What happened:** The CSI chokepoint refunds an emit's hourly-ceiling
+  slot when the emit only refreshes a bundle that is already open (it adds
+  no row). It asked `csi_bundler_has_open()` whether the bundle was open,
+  then called `csi_bundler_admit()`, which first expires overdue bundles.
+  When the bundle had just gone quiet for 2 minutes, admit closed it and
+  opened a new one: a new row, refunded as a refresh. One emit every 121 s
+  committed 714 rows a day under a 6/hour ceiling (144 allowed). The canary
+  hid it by closing every bundle on every window (F81), which also made
+  every refresh spend a slot, the opposite bug.
+- **Root cause:** The question ("will this merge?") was asked of a state
+  that the answering call changes before it acts. Time-based expiry inside
+  admit made the answer stale whenever the gap had just elapsed.
+- **Fix:** Admit reports what it did, decided under its own lock after its
+  own expiry: `CSI_BUNDLER_MERGED` (no new row) or `CSI_BUNDLER_BUFFERED`
+  (a new bundle). Only a merge is refunded. The canary ticks the bundler
+  (`csi_bundler_tick()`) once per main loop instead of flushing it in the
+  CSI callback; the tick sits outside the CSI power and heap gates, since
+  that callback stops while they hold and a bundle must still close.
+- **Regression check:** `firmware/tests_host/test_csi_bundler_ceiling.cpp`
+  runs the real library on a clock the test moves (`CSI_TEST_CLOCK`): the
+  121 s probe stays at 144 rows a day (714 on the old library), no hour
+  holds more than the ceiling, and refreshes of an open bundle spend
+  nothing. When a decision depends on what a call will do, take it from
+  the call's result, not from a look before it.
+- **Date learned:** 2026-10
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:

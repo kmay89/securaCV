@@ -2364,6 +2364,12 @@ void loop() {
   }
 #endif
 
+  // Close the CSI bundles that are due, every loop and outside the CSI
+  // gates above: the feature callback stops while battery saver or heap
+  // degradation skips csi::process(), and an open bundle (presence, or a
+  // system.integrity tamper) still has to close and commit on time.
+  securacv_csi_modules_tick();
+
 #if FEATURE_ACOUSTIC_EVENTS
   #if FEATURE_POWER_POLICY
   if (pf->acoustic)

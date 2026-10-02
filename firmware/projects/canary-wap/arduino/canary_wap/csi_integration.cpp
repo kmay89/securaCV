@@ -2986,21 +2986,23 @@ bool init(httpd_handle_t server, const char* api_token) {
    * correct fail-closed behavior. */
   g_api_token = api_token;
 
+  /* Restore the event-id floor from NVS so allocations stay globally
+   * monotone across reboots. Done FIRST, before the modules register:
+   * registration can already commit (ble_scout_init emits
+   * initialized("failed") when its key store fails), and that commit's
+   * floor write, with g_id_floor_stored still 0, would overwrite the
+   * persisted floor before this read it (backlog F83). The canary restores
+   * its floor first too (csi_event_egress_begin). With this, csi_mqtt's
+   * reconnect-backfill watermark stays sound and csi_event_log no longer
+   * needs to wipe the on-disk log on cold boot to avoid id collisions. */
+  const bool floor_restored = apply_event_id_floor_from_nvs();
+
   register_v1_modules();
 
   /* Restore persisted privacy ceiling (defaults to P0 — privacy-first).
    * Done before HAL start so the very first /api/csi/window request after
    * boot honors the user's prior choice rather than always 403'ing. */
   apply_privacy_ceiling_from_nvs();
-
-  /* Restore the event-id floor from NVS so allocations stay globally
-   * monotone across reboots. Done before any module ticks (which can
-   * call csi_event_emit and trigger an allocation) so the very first
-   * post-reboot id starts at the persisted floor instead of 1. With
-   * this, csi_mqtt's reconnect-backfill watermark stays sound and
-   * csi_event_log no longer needs to wipe the on-disk log on cold
-   * boot to avoid id collisions. */
-  const bool floor_restored = apply_event_id_floor_from_nvs();
 
   /* Refill the Today ring from the SD event log's tail. Needs the ceiling
    * and the floor above (csi_event_inject refuses a row this boot could

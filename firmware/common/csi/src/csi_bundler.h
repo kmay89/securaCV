@@ -11,10 +11,18 @@
  * Bundling is the only path emitted events take to persistence. The chokepoint
  * (csi_event::emit) calls `csi_bundler_admit` which returns:
  *
- *   CSI_BUNDLER_BUFFERED — emit opened a bundle or was rolled into an open
- *                         one. The bundle commits later (window close, quiet
+ *   CSI_BUNDLER_BUFFERED — emit OPENED a new bundle: a future committed row.
+ *                         The bundle commits later (window close, quiet
  *                         gap, or an explicit flush). Out-param is the open
  *                         bundle's HANDLE, not an event id.
+ *
+ *   CSI_BUNDLER_MERGED   — emit was rolled into a bundle that was already
+ *                         open, and adds no row. Out-param is that bundle's
+ *                         handle. Decided under the slot lock AFTER admit's
+ *                         own expiry, so a key whose bundle just closed for
+ *                         its quiet gap or window opens anew (BUFFERED), and
+ *                         the chokepoint refunds an hourly-ceiling slot only
+ *                         for a true merge (backlog F80).
  *
  *   CSI_BUNDLER_COMMIT   — the emit cannot be keyed (ambient, or no state
  *                         name): the chokepoint commits it directly.
@@ -47,8 +55,9 @@ extern "C" {
 
 typedef enum {
   CSI_BUNDLER_COMMIT   = 0,   /* emit immediately */
-  CSI_BUNDLER_BUFFERED = 1,   /* rolled into an open bundle */
-  CSI_BUNDLER_DROPPED  = 2,   /* dropped as redundant */
+  CSI_BUNDLER_BUFFERED = 1,   /* opened a new bundle */
+  CSI_BUNDLER_DROPPED  = 2,   /* bad input */
+  CSI_BUNDLER_MERGED   = 3,   /* rolled into an already-open bundle */
 } csi_bundler_outcome_t;
 
 /* Window definitions, in milliseconds. The plan's 10-minute window and
@@ -69,10 +78,12 @@ typedef enum {
  * Outcomes:
  *   COMMIT   — caller should persist this emit immediately. Reserved for
  *              ambient and stateless emits that the bundler cannot key.
- *   BUFFERED — emit was accepted into a new or existing bundle. The bundle
- *              commits later, through the chokepoint, and takes its event
- *              id then. `*handle_out` carries the open bundle's handle
- *              (stable while it is open; not an event id).
+ *   BUFFERED — emit opened a new bundle. The bundle commits later,
+ *              through the chokepoint, and takes its event id then.
+ *              `*handle_out` carries the open bundle's handle (stable
+ *              while it is open; not an event id).
+ *   MERGED   — emit was rolled into a bundle already open, so it adds no
+ *              row. `*handle_out` is that bundle's handle.
  *   DROPPED  — emit rejected (currently only on bad input).
  */
 csi_bundler_outcome_t csi_bundler_admit(const char*           module_id,
@@ -123,10 +134,11 @@ void csi_bundler_reset(void);
 size_t csi_bundler_open_count(void);
 
 /**
- * True if an open bundle already exists for this (module, type, state) key —
- * i.e. the next admit of the same key would MERGE into it rather than open a
- * new one. csi_event_emit asks this before admitting so a same-state refresh
- * does not consume a per-module hourly ceiling slot (only openings do).
+ * True if an open bundle exists for this (module, type, state) key right now.
+ * A diagnostic only: it does NOT predict the next admit, which first expires
+ * overdue bundles and may then open a new one. The chokepoint decides its
+ * ceiling refund from admit's outcome (CSI_BUNDLER_MERGED), never from this
+ * (backlog F80).
  */
 bool csi_bundler_has_open(const char* module_id,
                           const char* type_name,

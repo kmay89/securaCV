@@ -1293,7 +1293,7 @@ so — see D2 below.)
   (review probes on the real planner). Options: a per-line MAC under a
   device key, or replaying only rows the witness chain vouches for. Not
   tracked in the roadmap or the gaps ledger. Found by F46's review (#1761).
-- [ ] **F80 [code] A refresh refund can reopen a bundle without spending
+- [x] **F80 [code] A refresh refund can reopen a bundle without spending
   the hourly ceiling.** `csi_event_emit` refunds an emit's ceiling slot
   when `csi_bundler_has_open()` finds its key. But `csi_bundler_admit()`
   then expires that slot (a gap of at least `CSI_BUNDLER_MAX_GAP_MS`, or
@@ -1305,7 +1305,17 @@ so — see D2 below.)
   F46's id-space headroom counts the leak. Fix: decide the refund from
   admit's outcome (merged or opened), not from `has_open()` before it.
   Found by F46's review (#1761).
-- [ ] **F81 [code] The canary flushes every open bundle on every CSI
+  *Done (#1763):* `csi_bundler_admit()` now names a merge
+  (`CSI_BUNDLER_MERGED`: rolled into a bundle still open after admit's own
+  expiry, no new row) apart from an opening (`CSI_BUNDLER_BUFFERED`), and
+  `csi_event_emit` refunds the ceiling slot on a merge only;
+  `csi_bundler_has_open()` stays, as a diagnostic. On both trees (the
+  canary-wap copies are synced). `firmware/tests_host/test_csi_bundler_ceiling.cpp`
+  runs the probe on the real library with a test clock (`CSI_TEST_CLOCK`):
+  the emit every 121 s commits 144 rows a day (714 before), no hour holds
+  more than the ceiling, and refreshes of an open bundle still spend
+  nothing. Not seen on a device (U1).
+- [x] **F81 [code] The canary flushes every open bundle on every CSI
   window.** `firmware/canary/src/csi_modules_integration.cpp` calls
   `csi_event_flush_bundles()` (close all) after each module tick. Its
   comment says it drains bundles "whose 10-minute window has elapsed",
@@ -1316,6 +1326,14 @@ so — see D2 below.)
   the canary they still do. Switch to
   `csi_bundler_tick()` together with F80, since the flush is what hides
   that leak on the canary. Found by F46 (#1761).
+  *Done (#1763):* the canary calls `csi_bundler_tick()` once per main
+  loop (`securacv_csi_modules_tick()`), as the canary-wap does, so a bundle
+  closes for its window or its quiet gap only and a refresh merges. The
+  tick sits outside the CSI power and heap gates: the feature callback
+  stops while they skip `csi::process()`, and an open bundle must still
+  close on time then (Codex review on #1763). Both trees now spend one ceiling
+  slot per bundle, which F90 follows up. Built for the canary, not run on
+  one (U1).
 - [ ] **F82 [code+decision] Nothing warns before the event-id space runs
   out.** The allocator has 2^30 ids from 0xC0000000 (F46), about 16 years
   at the most a device can commit. At exhaustion ids restart at 1, and each
@@ -1324,7 +1342,7 @@ so — see D2 below.)
   diagnostic flag once the allocator passes `kHoldLimit` (0xF0000000), and
   decide the recovery (a re-pin plus a reset of the floor and
   `csi.evsent`). Found by F46's review (#1761).
-- [ ] **F83 [code] The canary-wap can commit an event before its id floor
+- [x] **F83 [code] The canary-wap can commit an event before its id floor
   is restored.** `csi_integration::init` calls `register_v1_modules()`
   before `apply_event_id_floor_from_nvs()`. `ble_scout_init()` emits
   `initialized("failed")` when `ble_scout_key_init()` fails, and that
@@ -1333,6 +1351,8 @@ so — see D2 below.)
   `csi.evsent` then limits the reissued ids. It is rare (it needs a
   key-store failure) and older than F46. Restore the floor first, as the
   canary does (`csi_event_egress_begin`). Found by F46 (#1761).
+  *Done (#1763):* `csi_integration::init` restores the floor before
+  `register_v1_modules()`. Built, not run on a device (U1).
 - [ ] **F48 [code+decision] canary-wap's mesh crypto and its interop with the
   PIO tree.** Found by F33 (#1718). canary-wap's AUTH exchange still runs
   X25519 over long-term Ed25519 keys, the bug class F33 part 2 fixed for
@@ -2135,6 +2155,19 @@ so — see D2 below.)
   from `docs/device_trust.md` and Step 6 of `docs/homeassistant_setup.md`.
   Found reviewing HA17 (#1727), which filed it as F62; renumbered when
   `main`'s F62 (the desktop clients' mDNS TLS advert, #1757) merged first.
+- [ ] **F90 [code+decision] An hour of unbroken presence fills a 6/hour
+  ceiling by itself.** A bundle closes at its 10-minute window even while
+  the room stays occupied, and the next refresh opens a new one: a new row,
+  which spends a ceiling slot (F80 made that true on every path). So
+  sustained presence opens six bundles an hour, `core.presence`'s whole
+  ceiling (6), and a real state change after that is dropped at the
+  ceiling until the oldest slot rotates out. The canary-wap already did
+  this before F80 (its loop tick closes the bundle before the next refresh
+  admits). The canary did worse before F81 (every refresh spent a slot).
+  Options: a window rollover of a bundle still inside its quiet gap counts
+  as the same presence; or the ceiling reserves room for a change of state;
+  or `core.presence`'s ceiling rises. Whichever is chosen, extend
+  `test_csi_bundler_ceiling.cpp`. Found doing F80 (#1763).
 
 ---
 
