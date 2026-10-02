@@ -217,7 +217,16 @@ ciphertext = ChaCha20-Poly1305(message_key, nonce, plaintext)
   other member's counter until the next boot, which widened the gap below.
   A new member now starts level with the busiest member; after a busy
   member is removed it starts as far ahead of the others as that member's
-  traffic was, until the next boot levels them. The envelope names no
+  traffic was, until the next boot levels them. **A re-added member's
+  last-seen** (F116, host-tested) starts where this device left it: a
+  member dropped by a removal or a leave leaves its last-seen counter as a
+  tombstone (§4.2, §12.3), and `add_peer` (initiator and joiner side) and a
+  boot start the re-added member there. It used to start at 0, so in an
+  opera whose id had not changed (removing the last member rotates
+  nothing; a re-pair into the same opera after a leave) every frame the
+  member had signed before was fresh once more, and one replayed at the
+  re-pair counted as the joiner heard and ended the COMPLETE resend (§5.2).
+  The envelope names no
   destination, so a receiver judges a frame its sender addressed to
   another member by its own last-seen counter for that sender (open).
   **Counter convention, both trees (v0.4 follow-up):** the first counter a
@@ -333,6 +342,19 @@ leaver keeps its own outbound counter across the leave, so its frames after
 a re-pair continue above the tombstone its peers hold. (Before the fix,
 registration restarted the counter at 0 and each of those recorded frames
 verified once more — review finding, fw-mesh.)
+canary-wap acts on no `LEAVE_OPERA` it receives (the member stays until the
+owner removes it), but since F116 (host-tested) it keeps the same kind of
+tombstone for every member it drops itself, at a removal (§5.6) or at its
+own leave: at most eight, the oldest dropped first, under NVS `rx_tombs`
+(§12.3), applied by `add_peer` on either side of the re-pair and at boot.
+A device whose own counters went back while it kept its key (its
+`tx_ctrs` record lost, §3.3) would drop at its tombstone for good, so a
+removal of a member not heard above the tombstone its re-add restored
+releases it, and the next re-pair starts it at 0, as every re-add did
+before F116: the owner's way out, at the cost of reopening the window for
+that member. A device whose NVS was erased has a new key, so no tombstone
+applies; one that kept its NVS resumes its counters above everything it
+signed (§3.3).
 
 #### REKEY_OFFER / REKEY_ACCEPT / REKEY_SECRET / REKEY_ACK — v0.3 (PlatformIO)
 The `opera_secret` rotation that `remove` runs (§5.6, PlatformIO subsection).
@@ -654,6 +676,13 @@ key is dropped and the pairing goes on (to its timeout, if no good one
 comes): it used to end the pairing, from any address, so any radio could
 cancel a confirmed pairing, and the copies of an earlier pairing's
 COMPLETE would end the same joiner's next pairing with that initiator.
+"Heard" is judged against the joiner's last-seen counter when the COMPLETE
+went out, which for a joiner this device dropped before is its tombstone
+since F116 (§3.3, §4.2), not 0: a frame it signed before, replayed from its
+address at the re-pair, no longer ends the copies. A genuine frame it sent
+another member and this device has not heard still can (the envelope names
+no destination, F72), as can one heard since this device's last 5-minute
+last-seen save before a reboot.
 
 ### 5.3 Pairing Security
 
@@ -714,6 +743,16 @@ if it cannot be persisted no opera is created (`opera_not_persisted`) — a
 secret the founding device forgot at its next reboot would strand every
 device that joined it. It never replaces an opera the device already holds
 (`opera_exists`). §8.3 has the route.
+
+canary-wap stores an opera only while it has one (F113, host-tested): a
+leave, and a turn on or rename after it, removes the `opera_id` and
+`opera_sec` keys, and a boot does not load an all-zero id or secret. Its
+leave used to store the zeroed config as it stood, the next boot loaded
+that as an opera, and `pair/start` then kept it instead of founding one:
+the joiner derived its `opera_id` from the zero secret it was sent, the
+initiator kept the stored zero id, and each dropped the other's frames. NVS
+an older firmware's leave wrote is refused the same way (logged once at
+that boot) and overwritten at the next pairing.
 
 ### 5.5 Flash Encryption Requirement — v0.2
 
@@ -1041,6 +1080,25 @@ before the restart go the same way (one more command through the same
 ring). The loop task writes them; a save it does not start within 2 s does
 not run, and the periodic save (every 5 minutes) is the last one on flash.
 Host-tested (`test_mesh_commands_wap.cpp`, `test_loop_command_ring.cpp`);
+the Arduino compile is CI's; not bench-tested.
+
+**canary-wap: the status routes read what the loop task published (sweep
+F110).** `GET /api/mesh`, `/api/mesh/peers` and `/api/mesh/alerts` read the
+peer table, the pairing session, the opera config and the alert history
+from the HTTP server's task while `update()` wrote them, so one response
+could mix two passes (a member's name read mid-shift after a removal, a
+pairing code read while a cancel wiped it). `update()` now publishes a view
+at the end of every pass (its early return included; `init()` publishes the
+first, since the HTTP server starts before it): the status, the opera's
+name and enabled flag, the pairing code while it is shown, and each member
+as the peer list shows it, with no key. `/api/mesh` and `/peers` read a
+whole copy of the last one; `/alerts` reads the alert history whole and
+from one moment, as the loop task changes it under a lock
+(`loop_snapshot.h`). Neither waits for the loop task, so these three never
+answer `mesh_busy` or `mesh_timeout`; their responses are unchanged
+(uptime is counted at the read), and a refused allocation for the alerts
+copy answers 500 `out_of_memory`. Host-tested (`test_loop_snapshot.cpp`,
+under real threads and ThreadSanitizer too, and `test_mesh_commands_wap.cpp`);
 the Arduino compile is CI's; not bench-tested.
 
 ### 8.2 Response Formats
@@ -1642,7 +1700,12 @@ have signed, a removal holds every survivor's reservation to that counter
 before the rewrite, the record is not rewritten when no member is left, and
 a boot reads it with no member loaded too), not gated, like the last-seen counters it keeps under
 `replay_ctrs`: counts, not secrets, and a gate would restart the counters
-at every boot of an FE-off board.
+at every boot of an FE-off board. Since F116 it also stores `rx_tombs` (up
+to 8 × (8 B fingerprint + u64), oldest first), the last-seen counters of
+members it dropped (§4.2), written at each removal or leave that changes
+them and removed when none is left; not gated either, for the same reason.
+Its `opera_id` and `opera_sec` keys are there only while it holds an opera
+(F113, §5.4).
 
 ## 13. Conformance
 

@@ -655,6 +655,47 @@ are not something a host test can run. Compile is CI's. Owner: U1.
     celebrates it.
   - Artifact: `docs/audit/repro/F106/qr-hub/`.
 
+## canary-wap mesh status reads and membership (F110, F113, F116) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp`
+(`publish_view()` at the end of every `update()` pass, `read_status()` and
+`read_alerts()` for the status routes through `loop_snapshot.h`;
+`persist_opera_config()` / `load_opera_config()` for a leave; `retire_rx()`
+and the `rx_tombs` NVS record for a re-added member) and the three status
+handlers in `canary_wap.ino`. Host-tested (`tests_host/test_loop_snapshot.cpp`,
+`test_mesh_commands_wap.cpp`, `test_mesh_liveness_wap.cpp`) and held by
+`firmware/scripts/check_wap_loop_commands.py`. Compile is CI's. Owner: U1.
+
+- [ ] **The Opera page reads as before while the opera is busy**
+  - Setup: two paired canary-wap boards, the web UI's Opera page open on
+    one, the csi dashboard's Fleet sheet open on the other.
+  - Repro: start a new pairing and watch the code appear; cancel it; remove
+    and re-pair the other board; trigger a tamper alert on it a few times
+    (open its case) and clear the alerts.
+  - Expected: every page refresh answers (no `mesh_busy` or `mesh_timeout`
+    on a GET), the code shows while it is on screen and is gone once
+    canceled, the peer list and counts agree with each other on every
+    refresh, and the alert list shows each alert whole.
+  - Artifact: `docs/audit/repro/F110/status-routes/`.
+- [ ] **A board that left its opera founds a new one after a reboot**
+  - Setup: two paired boards.
+  - Repro: on one, Leave the opera; reboot it; turn the mesh on, Create
+    Opera and pair a third board (or the same one) with it.
+  - Expected: after the reboot the Opera page shows no opera (`has_opera`
+    false); the new pairing completes and both boards show each other
+    connected within about a minute.
+  - Artifact: `docs/audit/repro/F113/leave-reboot/`.
+- [ ] **A board removed and re-paired is heard at once, and a reflashed one too**
+  - Setup: two paired boards, A and B, exchanging heartbeats for a few
+    minutes.
+  - Repro: on A, remove B (its only member); wait out the 7-day deny-list
+    grace (a debug build with a short grace, or leave A powered for 7
+    days); re-pair A and B. Then erase B's flash, reflash it, and pair it
+    with A again (removing B's old entry on A first).
+  - Expected: after each re-pair B shows connected on A within about a
+    minute, and A's serial log shows no `pairing COMPLETE never answered`.
+  - Artifact: `docs/audit/repro/F116/re-pair/`.
+
 ## One event-id space (F46) — on-device verification
 
 Code: `firmware/common/csi/src/csi_event.cpp` (one allocator, ids taken at

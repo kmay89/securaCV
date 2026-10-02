@@ -711,6 +711,26 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   A boot also brings every member's counter level, so the cross-member gap
   above starts again from nothing at each boot rather than growing by up
   to a reservation block (host-tested).
+- **A re-added member's old frames stay replays on canary-wap (F116).**
+  A member a canary-wap dropped (removed, or left behind at its own leave)
+  used to take its last-seen counter with it, and a re-pair started it at
+  0. In an opera whose id had not changed (removing the last member
+  rotates nothing; a re-pair into the same opera after a leave) every
+  frame the member had signed before, alerts included, was fresh once
+  more, and one replayed from its address at the re-pair counted as the
+  joiner heard and ended the COMPLETE resend (host-probed). The PlatformIO
+  tree already kept such counters as tombstones; canary-wap now does too,
+  in NVS (`rx_tombs`), and a re-add on either side of the pairing, or a
+  boot, starts the member there. Limits: eight at most, so a ninth drop
+  evicts the oldest, whose window reopens at its next re-add; and a
+  removal of a member not heard above the tombstone its re-add restored
+  releases it, so the next re-add starts at 0 again. That release is the
+  owner's way back for a device whose own counters went back while it kept
+  its key (its send-counter record lost), which would otherwise drop at its
+  tombstone for good; it reopens the window for that member. A frame the
+  member sent another member and this device has not heard is still fresh
+  here (the cross-member gap above, open), and so is one heard since the
+  last 5-minute last-seen save before a reboot. Host-tested only.
 - **The 6-digit pairing code does not cover the long-term keys**
   (pre-existing; found in the review of the F49 part 3 withdrawal). The
   code and the CONFIRM hash are derived from the ephemeral X25519 session
@@ -858,6 +878,15 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   verdict), and the `main.cpp` source pin, which holds its restore loop and
   its refusal log to their exact form; the canary build is CI's; not
   bench-verified.
+- **A canary-wap that left its opera stored an all-zero one (F113).** Its
+  leave saved the zeroed opera config as it stood, the next boot loaded the
+  zero `opera_id` and `opera_secret` as an opera, and the next pairing it
+  started kept that opera and sealed the zero secret, which anyone can
+  know, to the joiner (whose `opera_id`, derived from it, then differed
+  from the initiator's stored zero one, so the two never heard each
+  other; host-probed). The id and secret are now removed while no opera
+  is configured, and a boot loads no all-zero id or secret, so NVS an
+  older firmware's leave wrote is refused too. Host-tested only.
 - `opera_secret` storage requires flash encryption enabled
   (eFuse `FLASH_CRYPT_CNT > 0`); load/save paths refuse on FE-off devices
   and log loudly (v0.2 audit O2). That keeps the secret off un-fused
