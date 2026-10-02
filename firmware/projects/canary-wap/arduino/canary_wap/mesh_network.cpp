@@ -238,6 +238,22 @@ static loop_command_ring::Ring<Command, bool, COMMAND_SLOTS, loop_command_ring::
 // it and hands the save to it from any other task. Written once, before the
 // pre-reboot hook that reads it is installed; read with an acquire load.
 static TaskHandle_t g_loop_task = nullptr;
+// The initiator's last PAIR_COMPLETE, kept so it can be sent again (sweep
+// F100; see complete_resend_step). The frame is the one already on the air:
+// the opera_secret sealed under the finished pairing's session key, which
+// is wiped. Nothing here can seal anything again.
+struct CompleteResend {
+  bool active;
+  PairCompletePayload payload;
+  uint8_t fingerprint[FINGERPRINT_SIZE];   // the joiner, as a member
+  uint8_t opera_id[OPERA_ID_SIZE];         // the opera the sealed secret is
+  uint64_t rx_at_complete;                 // its last-seen counter then
+  uint32_t first_ms;
+  uint32_t last_ms;
+  uint16_t copies_sent;                    // sends the radio took
+};
+static CompleteResend g_complete_resend = {};
+static constexpr uint32_t COMPLETE_RESEND_MS = 2000;   // the DISCOVER's cadence
 
 // Alert history
 /* PSRAM-resident (csi_mem.h): ~2.9 KB of semantic alert metadata, loop-task
@@ -1528,7 +1544,23 @@ static void initiator_complete() {
   memcpy(complete.nonce, nonce, NONCE_SIZE);
   memcpy(complete.encrypted_secret + OPERA_SECRET_SIZE, tag, 16);
 
-  send_pair_frame(g_pairing.peer_mac, MSG_PAIR_COMPLETE, &complete, sizeof(complete));
+  // F100: sent again until the joiner is heard (complete_resend_step), so
+  // a send refused here (the storm gate, the radio) or lost on the air is
+  // not the end of it, and the sends are counted: a COMPLETE that never
+  // went out is logged as that, not as one the joiner did not answer.
+  const bool sent = send_pair_frame(g_pairing.peer_mac, MSG_PAIR_COMPLETE, &complete, sizeof(complete));
+  const OperaPeer* joiner = find_peer_by_mac(g_pairing.peer_mac);
+  secure_wipe(&g_complete_resend, sizeof(g_complete_resend));
+  if (joiner != nullptr) {
+    g_complete_resend.active = true;
+    g_complete_resend.payload = complete;
+    memcpy(g_complete_resend.fingerprint, joiner->fingerprint, FINGERPRINT_SIZE);
+    memcpy(g_complete_resend.opera_id, g_opera_config.opera_id, OPERA_ID_SIZE);
+    g_complete_resend.rx_at_complete = joiner->msg_counter_rx;
+    g_complete_resend.first_ms = millis();
+    g_complete_resend.last_ms = g_complete_resend.first_ms;
+    g_complete_resend.copies_sent = sent ? 1 : 0;
+  }
 
   // Clear sensitive pairing data, as the joiner does. Kept, the finished
   // pairing's ephemeral key and confirmed code let a radio that overheard
@@ -1597,6 +1629,48 @@ static void initiator_step() {
   if (g_mesh_state == MESH_PAIRING_CONFIRM && g_pairing.role == PAIR_ROLE_INITIATOR &&
       g_pairing.code_confirmed && g_pairing.peer_confirmed) {
     initiator_complete();
+  }
+}
+
+// Called from update(): the initiator's COMPLETE, sent again every
+// COMPLETE_RESEND_MS until the joiner is heard (sweep F100). It went out
+// once and its send was not checked, so a COMPLETE lost on the air, or
+// refused by the storm gate, left the initiator holding a member that never
+// joined while the joiner timed out. Nothing on the wire acknowledges a
+// COMPLETE, so "heard" is the joiner's first verified frame since: a
+// joiner that took it is MESH_ACTIVE and sends its heartbeat (F76), and
+// one that already has it drops the copies (it is no longer pairing).
+// Bounded by PAIRING_TIMEOUT_MS after the first send, which outlasts the
+// joiner's own wait (its pairing started before this COMPLETE): at most 60
+// copies of a 61-byte frame. It stops early if the joiner is no longer a
+// member, or the opera rotated or was left (the copy seals a secret that is
+// no longer this opera's). One never answered is logged: the pairing was
+// reported a success, and the owner's only sign that the member may not
+// have joined is this line, which also says whether any copy was sent at
+// all (every send refused: the storm gate held, or the radio failed).
+static void complete_resend_step() {
+  if (!g_complete_resend.active) return;
+  const uint32_t now = millis();
+  const OperaPeer* joiner = find_peer_by_fingerprint(g_complete_resend.fingerprint);
+  bool done = joiner == nullptr || !g_opera_config.configured ||
+              memcmp(g_opera_config.opera_id, g_complete_resend.opera_id, OPERA_ID_SIZE) != 0 ||
+              joiner->msg_counter_rx > g_complete_resend.rx_at_complete;
+  if (!done && (uint32_t)(now - g_complete_resend.first_ms) >= PAIRING_TIMEOUT_MS) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+               g_complete_resend.copies_sent == 0
+                   ? "opera: pairing COMPLETE could not be sent; the new member has not joined"
+                   : "opera: pairing COMPLETE never answered; the new member may not have joined");
+    done = true;
+  }
+  if (done) {
+    secure_wipe(&g_complete_resend, sizeof(g_complete_resend));
+    return;
+  }
+  if ((uint32_t)(now - g_complete_resend.last_ms) < COMPLETE_RESEND_MS) return;
+  g_complete_resend.last_ms = now;
+  if (send_pair_frame(joiner->mac_addr, MSG_PAIR_COMPLETE, &g_complete_resend.payload,
+                      sizeof(g_complete_resend.payload))) {
+    g_complete_resend.copies_sent++;
   }
 }
 
@@ -2059,6 +2133,8 @@ void update() {
 
   // F75: a pairing both owners confirmed, in either order.
   initiator_step();
+  // F100: its COMPLETE, until the joiner is heard.
+  complete_resend_step();
 
   // v0.3 (audit O3): if a rekey is in flight, finalize when all peers have
   // ACKed or the timeout expires.

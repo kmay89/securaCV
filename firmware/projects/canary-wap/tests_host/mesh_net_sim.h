@@ -50,6 +50,7 @@ struct Device {
   mn::PairingSession pairing = {};
   // The owner's commands waiting for this device's loop task (F96).
   decltype(mn::g_commands) commands;
+  mn::CompleteResend complete_resend = {};
   // The device's radio and flash.
   host_sim::EspNow espnow;
   host_sim::NvsStore nvs;
@@ -85,6 +86,7 @@ inline void save(Device& d) {
   d.rekey = mn::g_rekey;
   d.pairing = mn::g_pairing;
   d.commands = mn::g_commands;
+  d.complete_resend = mn::g_complete_resend;
 }
 
 inline void load(Device& d) {
@@ -117,6 +119,7 @@ inline void load(Device& d) {
   mn::g_rekey = d.rekey;
   mn::g_pairing = d.pairing;
   mn::g_commands = d.commands;
+  mn::g_complete_resend = d.complete_resend;
   mn::g_rx_pending = false;
   host_sim::espnow = &d.espnow;
   host_sim::nvs = &d.nvs;

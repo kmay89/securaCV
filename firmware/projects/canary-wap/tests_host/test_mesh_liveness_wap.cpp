@@ -8,7 +8,7 @@
 // receiver's ESP-NOW callback and update(). Every frame here was built by
 // the sender's own send path and judged by the receiver's own receive path.
 //
-// Sweep items F71, F73-F76, F95, F98 and F99: each was a way the opera
+// Sweep items F71, F73-F76, F95 and F98-F100: each was a way the opera
 // went quiet, or a pairing went wrong, with nothing reporting it.
 //   F71  a rebooted device's frames dropped as replays at every member
 //        that had heard it (its send counters restarted at 1);
@@ -27,7 +27,9 @@
 //        and the AUTH exchange cannot open one as it stands, pinned here),
 //        and the rotation set every counter back, so the re-pair that
 //        rejoins a survivor, or a reboot before the last-seen save, cost
-//        frames until they climbed back (fixed: they carry on).
+//        frames until they climbed back (fixed: they carry on);
+//   F100 a pairing COMPLETE lost on the air, or refused by the storm gate,
+//        was never sent again, and the joiner timed out.
 //
 // Host-tested only: the stubs stand in for the radio and the flash, so
 // this says nothing about two real boards (U1 Track C2), and the Arduino
@@ -1468,6 +1470,149 @@ void test_a_rotation_that_reaches_a_member_keeps_every_counter() {
   std::printf("PASS a_rotation_that_reaches_a_member_keeps_every_counter\n");
 }
 
+// ── F100: the COMPLETE goes again until the joiner is heard ─────────────
+//
+// The initiator sent its COMPLETE once and did not check the send, so a
+// COMPLETE lost on the air, or refused by the storm gate, left it holding a
+// member that never joined while the joiner timed out. It now sends the
+// same frame again every 2 s until the joiner's first verified frame, for
+// at most PAIRING_TIMEOUT_MS, and says so if none comes.
+
+// The pairing up to the initiator's COMPLETE (both owners confirmed, the
+// initiator's first), which is then lost: nothing the initiator sent from
+// the joiner's CONFIRM on reaches the joiner.
+void complete_lost(Device& ini, Device& joi) {
+  pair_to_codes(ini, joi);
+  become(ini);
+  CHECK(mn::confirm_pairing());
+  become(joi);
+  CHECK(mn::confirm_pairing());
+  ini.espnow.sent.clear();
+  deliver(ini, joi.mac, last_pair(joi, ini.mac, mn::MSG_PAIR_CONFIRM));
+  CHECK(pair_frames(ini, joi.mac, mn::MSG_PAIR_COMPLETE) == 1);   // sent, and lost
+  become(joi);
+  CHECK(mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);
+}
+
+void test_a_lost_complete_is_sent_again_until_the_joiner_is_heard() {
+  fresh_device(A);
+  fresh_device(J);
+  complete_lost(A, J);
+  run({&A, &J}, 40000);
+  CHECK(completed(J, A));
+  CHECK(completed(A, J));
+  CHECK(entry(A, J)->msg_counter_rx > 0);          // A heard J
+  const size_t copies = pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE);
+  CHECK(copies >= 2);
+  become(A);
+  CHECK(!mn::g_complete_resend.active);
+  run({&A, &J}, 60000);
+  CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == copies);   // none once heard
+  become(A);
+  uint8_t opera_id[mn::OPERA_ID_SIZE];
+  memcpy(opera_id, mn::g_opera_config.opera_id, sizeof opera_id);
+  become(J);
+  CHECK(memcmp(mn::g_opera_config.opera_id, opera_id, sizeof opera_id) == 0);
+  std::printf("PASS a_lost_complete_is_sent_again_until_the_joiner_is_heard\n");
+}
+
+void test_an_unanswered_complete_stops_at_the_pairing_timeout_and_says_so() {
+  // The joiner never answers (switched off, or it refused the initiator,
+  // F73): one copy per 2 s for 120 s, then a WARNING, once.
+  const char* const kUnanswered = "opera: pairing COMPLETE never answered";
+  fresh_device(A);
+  fresh_device(J);
+  complete_lost(A, J);
+  g_health.clear();
+  for (uint32_t t = 0; t < 150000; t += 500) {
+    host_sim::now_ms += 500;
+    become(A);
+    mn::update();
+  }
+  const size_t copies = pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE);
+  CHECK(copies >= 58 && copies <= 61);
+  CHECK(times_logged(kUnanswered) == 1);
+  become(A);
+  CHECK(!mn::g_complete_resend.active);
+  std::printf("PASS an_unanswered_complete_stops_at_the_pairing_timeout_and_says_so\n");
+}
+
+void test_a_complete_the_storm_gate_refused_goes_out_when_it_reopens() {
+  fresh_device(A);
+  fresh_device(J);
+  pair_to_codes(A, J);
+  become(A);
+  CHECK(mn::confirm_pairing());
+  become(J);
+  CHECK(mn::confirm_pairing());
+  become(A);
+  mn::g_storm_pause_until_ms = host_sim::now_ms + 30000;   // a flood just tripped it
+  A.espnow.sent.clear();
+  deliver(A, J.mac, last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM));
+  CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 0);   // refused: was the end of it
+  run({&A, &J}, 40000);
+  CHECK(completed(J, A) && completed(A, J));
+  std::printf("PASS a_complete_the_storm_gate_refused_goes_out_when_it_reopens\n");
+}
+
+void test_a_complete_that_never_went_out_is_logged_as_that() {
+  // The send is checked: when no copy went out in the whole window (here
+  // the storm gate holds throughout), the log says the COMPLETE could not
+  // be sent, not that the joiner did not answer.
+  fresh_device(A);
+  fresh_device(J);
+  pair_to_codes(A, J);
+  become(A);
+  CHECK(mn::confirm_pairing());
+  become(J);
+  CHECK(mn::confirm_pairing());
+  become(A);
+  mn::g_storm_pause_until_ms = host_sim::now_ms + 200000;
+  A.espnow.sent.clear();
+  g_health.clear();
+  deliver(A, J.mac, last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM));
+  for (uint32_t t = 0; t < 150000; t += 500) {
+    host_sim::now_ms += 500;
+    become(A);
+    mn::update();
+  }
+  CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 0);
+  CHECK(times_logged("opera: pairing COMPLETE could not be sent") == 1);
+  CHECK(times_logged("opera: pairing COMPLETE never answered") == 0);
+  host_sim::now_ms += 60000;                        // let the gate settle for later tests
+  std::printf("PASS a_complete_that_never_went_out_is_logged_as_that\n");
+}
+
+void test_the_complete_is_not_sent_again_once_it_is_not_the_operas() {
+  // The copy seals the opera_secret the pairing handed over. Once the joiner
+  // is no longer a member, or the opera rotated (a member removed), it is
+  // not sent again. (A stop condition of the resend itself: the code before
+  // F100 sent no copy at all.)
+  fresh_device(A);
+  fresh_device(J);
+  complete_lost(A, J);
+  remove_member(A, J);
+  for (int i = 0; i < 20; ++i) {
+    host_sim::now_ms += 500;
+    become(A);
+    mn::update();
+  }
+  CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 1);
+  fresh_opera({&A, &B});
+  fresh_device(J);
+  complete_lost(A, J);
+  remove_member(A, B);                              // the rotation commits at once (F95)
+  for (int i = 0; i < 20; ++i) {
+    host_sim::now_ms += 500;
+    become(A);
+    mn::update();
+  }
+  CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 1);
+  become(A);
+  CHECK(!mn::g_complete_resend.active);
+  std::printf("PASS the_complete_is_not_sent_again_once_it_is_not_the_operas\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -1529,6 +1674,16 @@ const Test kTests[] = {
      test_a_survivor_re_paired_after_a_rotation_hears_the_remover_at_once},
     {"a_rotation_that_reaches_a_member_keeps_every_counter",
      test_a_rotation_that_reaches_a_member_keeps_every_counter},
+    {"a_lost_complete_is_sent_again_until_the_joiner_is_heard",
+     test_a_lost_complete_is_sent_again_until_the_joiner_is_heard},
+    {"an_unanswered_complete_stops_at_the_pairing_timeout_and_says_so",
+     test_an_unanswered_complete_stops_at_the_pairing_timeout_and_says_so},
+    {"a_complete_the_storm_gate_refused_goes_out_when_it_reopens",
+     test_a_complete_the_storm_gate_refused_goes_out_when_it_reopens},
+    {"a_complete_that_never_went_out_is_logged_as_that",
+     test_a_complete_that_never_went_out_is_logged_as_that},
+    {"the_complete_is_not_sent_again_once_it_is_not_the_operas",
+     test_the_complete_is_not_sent_again_once_it_is_not_the_operas},
 };
 
 }  // namespace liveness
