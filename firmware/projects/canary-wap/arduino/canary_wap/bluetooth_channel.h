@@ -283,8 +283,9 @@ BluetoothSettings get_settings();
 // submit() from the loop task: it would wait for itself.
 //
 // The NimBLE host task's callbacks (a connect, a passkey to confirm, a bond,
-// a scan result) still write the same state from that task: F111 moved the
-// HTTP task off it, not the radio's.
+// a scan result) do not write it either (sweep F143): each posts an event
+// that update() applies on the loop task, before the commands
+// (bluetooth_channel.cpp, "BLE CALLBACKS").
 
 enum CommandType : uint8_t {
   BT_CMD_ENABLE = 0,
@@ -388,8 +389,9 @@ void set_pairing_callback(PairingCallback cb);
 void set_scan_callback(ScanCallback cb);
 void set_data_callback(DataCallback cb);
 
-// Update (call from loop). Runs the owner's commands first (above), on every
-// pass, a disabled or not-yet-started channel's included.
+// Update (call from loop). Applies what the NimBLE host task reported, then
+// runs the owner's commands (above), first on every pass, a disabled or
+// not-yet-started channel's included.
 void update();
 
 // Utilities

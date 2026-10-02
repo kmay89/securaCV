@@ -862,18 +862,30 @@ clean: clean-chirp-commands
 # command brings the stack up (init() is the handler's or the worker's);
 # withdrawn, busy and post order through the real submit() and update().
 # And a settings POST's "enabled" turns Bluetooth off and on the way
-# POST /disable and /enable do (sweep F144).
+# POST /disable and /enable do (sweep F144); the NimBLE host task's
+# callbacks change nothing until update() applies their events on the loop
+# task, the pending pairing's copy has one owner, and a full event queue
+# keeps a link's room and fails a pairing closed (sweep F143).
 BT_CMD_BIN = test_bluetooth_commands_wap
 BT_CMD_SRC = test_bluetooth_commands_wap.cpp
 
-$(BT_CMD_BIN): $(BT_CMD_SRC) $(wildcard stubs/bt/*.h stubs/bt/freertos/*.h) $(SRC_DIR)/bluetooth_channel.cpp $(SRC_DIR)/bluetooth_channel.h $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/http_status_line.h $(SRC_DIR)/ble_standard_profiles.h $(SRC_DIR)/bt_defaults.h $(SRC_DIR)/ble_heap_guard.h
-	$(CXX) $(CXXFLAGS) -Werror -I stubs/bt -I $(SRC_DIR) -DBLUETOOTH_CHANNEL_CPP='"$(abspath $(SRC_DIR))/bluetooth_channel.cpp"' -o $@ $(BT_CMD_SRC)
+BT_CMD_DEPS = $(BT_CMD_SRC) $(wildcard stubs/bt/*.h stubs/bt/freertos/*.h) $(SRC_DIR)/bluetooth_channel.cpp $(SRC_DIR)/bluetooth_channel.h $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/loop_event_queue.h $(SRC_DIR)/http_status_line.h $(SRC_DIR)/ble_standard_profiles.h $(SRC_DIR)/bt_defaults.h $(SRC_DIR)/ble_heap_guard.h
 
-.PHONY: run-bt-commands clean-bt-commands
+$(BT_CMD_BIN): $(BT_CMD_DEPS)
+	$(CXX) $(CXXFLAGS) -Werror -pthread -I stubs/bt -I $(SRC_DIR) -DBLUETOOTH_CHANNEL_CPP='"$(abspath $(SRC_DIR))/bluetooth_channel.cpp"' -o $@ $(BT_CMD_SRC)
+
+# `make tsan-bt-commands` runs the same suite under -fsanitize=thread (not
+# part of `run`: it needs a sanitizer runtime). Its threaded test plays the
+# NimBLE host task, the loop task and the HTTP server's on three threads
+# (sweep F143): a callback that wrote the channel's state is a race there.
+.PHONY: run-bt-commands clean-bt-commands tsan-bt-commands
 run-bt-commands: $(BT_CMD_BIN)
 	$(call run_marked,$(BT_CMD_BIN))
+tsan-bt-commands: $(BT_CMD_DEPS)
+	$(CXX) -std=c++17 -O1 -g -fsanitize=thread -pthread -I stubs/bt -I $(SRC_DIR) -DBLUETOOTH_CHANNEL_CPP='"$(abspath $(SRC_DIR))/bluetooth_channel.cpp"' -o $(BT_CMD_BIN)_tsan $(BT_CMD_SRC)
+	./$(BT_CMD_BIN)_tsan
 clean-bt-commands:
-	rm -f $(BT_CMD_BIN)
+	rm -f $(BT_CMD_BIN) $(BT_CMD_BIN)_tsan
 
 run: run-bt-commands
 clean: clean-bt-commands
@@ -963,6 +975,33 @@ clean-loop-snapshot:
 
 run: run-loop-snapshot
 clean: clean-loop-snapshot
+
+# What another task reports, handed to the loop task to apply (sweep F143):
+# the REAL loop_event_queue.h, which the NimBLE host task's Bluetooth
+# callbacks post through. Post order is apply order across the wrap; a full
+# queue refuses and counts; a post under a lower limit (a scan result)
+# leaves the reserve to the rest (a link up or down, a passkey); consume()
+# applies what waited when it started, with no lock held; with real threads
+# (three producers, one consumer) every event is applied once or counted,
+# in each producer's order. `make tsan-loop-events` runs it under
+# -fsanitize=thread (not part of `run`: it needs a sanitizer runtime).
+LOOP_EV_BIN = test_loop_event_queue
+LOOP_EV_SRC = test_loop_event_queue.cpp
+
+$(LOOP_EV_BIN): $(LOOP_EV_SRC) $(SRC_DIR)/loop_event_queue.h
+	$(CXX) $(CXXFLAGS) -Werror -pthread -I $(SRC_DIR) -o $@ $(LOOP_EV_SRC)
+
+.PHONY: run-loop-events clean-loop-events tsan-loop-events
+run-loop-events: $(LOOP_EV_BIN)
+	$(call run_marked,$(LOOP_EV_BIN))
+tsan-loop-events: $(LOOP_EV_SRC) $(SRC_DIR)/loop_event_queue.h
+	$(CXX) -std=c++17 -O1 -g -fsanitize=thread -pthread -I $(SRC_DIR) -o $(LOOP_EV_BIN)_tsan $(LOOP_EV_SRC)
+	./$(LOOP_EV_BIN)_tsan
+clean-loop-events:
+	rm -f $(LOOP_EV_BIN) $(LOOP_EV_BIN)_tsan
+
+run: run-loop-events
+clean: clean-loop-events
 
 # The CSI active probe under the airtime governor (the follow-up to sweep F4,
 # #1696), end to end — the REAL csi_probe scheduler (the sketch's staged copy,

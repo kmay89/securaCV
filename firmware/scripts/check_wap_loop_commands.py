@@ -222,6 +222,23 @@ BV1. A settings POST that turns Bluetooth on does it the way
      reads `const bool was_enabled = g_settings.enabled;` before it assigns
      `g_settings = settings;` and names no `is_enabled(`: the reader returns
      the value just assigned, which is how both of its branches were dead.
+BV2. The NimBLE host task's callbacks touch none of the channel's state
+     (F143). In `bluetooth_channel.cpp` the callbacks (`BT_CALLBACKS`:
+     `onConnect`, `onDisconnect`, `onAuthenticationComplete`,
+     `onPassKeyDisplay`, `onConfirmPassKey`, `onWrite`, `onRead`,
+     `onResult`, `onScanEnd`) and the helpers they build their events with
+     (`make_event`, `link_event`, `post_event`) name none of `BT_LIVE_STATE`
+     and call no function of the file but those helpers and
+     `detect_device_type` (which reads only the advertisement).
+     `g_events.post(` is called only in `post_event()`, and `post_event(`
+     only in the callbacks. `update()` applies the events with
+     `g_events.consume(apply_event);` once, before its first `return` and
+     before `g_commands.drain(run_command);` (a link that ends while
+     Bluetooth is off still ends; a command acts on the radio's latest
+     state), and nothing else consumes them. `apply_event(` is never called
+     (only `consume` runs it), and each `apply_<event>()` only from
+     `apply_event()`. The event queue's room for a link's events, and what a
+     full queue does, are `test_bluetooth_commands_wap.cpp`'s.
 
 ## It proves it bites
 
@@ -858,13 +875,14 @@ BT_MUTATORS = ("enable", "disable", "start_advertising", "stop_advertising", "st
                "set_settings", "set_device_name", "set_tx_power", "deinit")
 # Who may call a Bluetooth mutator in bluetooth_channel.cpp besides
 # run_command(): the paths that always did. The bring-up's init() (on its
-# worker, or a handler's bring_up()), the NimBLE host's onDisconnect(), the
-# loop task's update() and its timeouts, and the mutators composing each
-# other. A new caller is a new task onto this state.
+# worker, or a handler's bring_up()), a link's end as the loop task applies
+# it (apply_disconnect(), since F143: the NimBLE host's onDisconnect() only
+# reports it), the loop task's update() and its timeouts, and the mutators
+# composing each other. A new caller is a new task onto this state.
 BT_INTERNAL = {
     "enable": ("init", "set_settings"),
     "disable": ("set_settings",),
-    "start_advertising": ("init", "onDisconnect", "start_pairing"),
+    "start_advertising": ("init", "apply_disconnect", "start_pairing"),   # F143: the loop task's
     "stop_advertising": ("deinit", "disable"),
     "stop_scan": ("deinit", "disable", "handle_scan_timeout"),
     "clear_scan_results": ("start_scan",),
@@ -1357,12 +1375,88 @@ def check_bluetooth_settings_enable(api_src: str, cpp_src: str, errors: list[str
                           "assigned: both branches were dead) (F144)")
 
 
+# BV2 (F143): the NimBLE host task's callbacks, the helpers they build and
+# post their events with, and what the loop task's side of the queue is.
+BT_CALLBACKS = ("onConnect", "onDisconnect", "onAuthenticationComplete", "onPassKeyDisplay",
+                "onConfirmPassKey", "onWrite", "onRead", "onResult", "onScanEnd")
+BT_EVENT_HELPERS = ("make_event", "link_event", "post_event")
+BT_CALLBACK_CALLS = BT_EVENT_HELPERS + ("detect_device_type",)
+BT_EVENT_APPLIERS = ("apply_connect", "apply_disconnect", "apply_auth_complete",
+                     "apply_passkey_display", "apply_confirm_passkey", "apply_scan_result",
+                     "apply_scan_end", "apply_activity")
+# The channel's state: the loop task's (update(), its commands and the
+# events it applies). A callback on the NimBLE host task names none of it.
+BT_LIVE_STATE = ("g_state", "g_settings", "g_initialized", "g_connection", "g_pairing",
+                 "g_pending_pair_info", "g_pending_pair_active", "g_connection_handle",
+                 "g_connection_mtu", "g_paired_devices", "g_paired_count", "g_scanned_devices",
+                 "g_scanned_count", "g_scanning", "g_scan_start_ms", "g_scan_duration_ms",
+                 "g_total_connections", "g_total_bytes_sent", "g_total_bytes_received",
+                 "g_advertising_start_ms", "g_advertising_total_ms", "g_connected_total_ms",
+                 "g_advertising", "g_scanner", "g_server", "g_status_char", "g_commands",
+                 "g_conn_callback", "g_pair_callback", "g_scan_callback", "g_events_dropped_seen",
+                 "g_events_dropped_logged_ms")
+BT_LIVE_STATE_RE = r"\b(" + "|".join(BT_LIVE_STATE) + r")\b"
+CALL_RE = r"(?<![\w:.>])([A-Za-z_]\w*)\s*\("
+
+
+def check_bluetooth_callbacks(cpp_src: str, errors: list[str]) -> None:
+    """Rule BV2 (F143)."""
+    code = blank_comments_and_strings(cpp_src)
+    spans = named_bodies(code)
+    defined = {name for name, _s, _e in spans}
+    for name, s, e in spans:
+        if name not in BT_CALLBACKS + BT_EVENT_HELPERS:
+            continue
+        body = code[s:e]
+        hit = re.search(BT_LIVE_STATE_RE, body)
+        if hit:
+            errors.append(f"{BT_CPP}: {name}() names {hit.group(1)} — it runs on the NimBLE host task "
+                          "(or builds a callback's event there); the channel's state is the loop "
+                          "task's: post an event for update() to apply (F143)")
+        for m in re.finditer(CALL_RE, body):
+            callee = m.group(1)
+            if callee in defined and callee not in BT_CALLBACK_CALLS and callee != name:
+                errors.append(f"{BT_CPP}: {name}() calls {callee}() — a NimBLE callback only "
+                              f"builds and posts its event ({', '.join(BT_CALLBACK_CALLS)}); "
+                              "update() applies it on the loop task (F143)")
+    for pattern, allowed, label in (
+            (r"\bg_events\s*\.\s*post\s*\(", ("post_event",), "g_events.post("),
+            (r"(?<![\w:.>])post_event\s*\(", BT_CALLBACKS, "post_event("),
+            (r"\bg_events\s*\.\s*consume\s*\(", ("update",), "g_events.consume("),
+            (r"(?<![\w:.>])apply_event\s*\(", (), "apply_event(")) + tuple(
+            (r"(?<![\w:.>])" + a + r"\s*\(", ("apply_event",), a + "(") for a in BT_EVENT_APPLIERS):
+        for m in re.finditer(pattern, code):
+            where = enclosing_function(spans, m.start())
+            if where is None:
+                continue                      # a declaration or the definition's own header
+            if where not in allowed:
+                errors.append(f"{BT_CPP}: {where}() names {label} — only "
+                              f"{', '.join(allowed) or 'g_events.consume(apply_event)'} may: the "
+                              "NimBLE host task posts events, the loop task's update() applies "
+                              "them (F143)")
+    update = body_of(code, SIG_UPDATE, f"{BT_CPP}: update()", errors)
+    if update is not None:
+        sq = squash(update)
+        consume = "g_events.consume(apply_event);"
+        drain = "g_commands.drain(run_command);"
+        ret = re.search(r"\breturn\b", update)
+        at = update.find("g_events.consume(")
+        if sq.count(consume) != 1 or at < 0 or (ret is not None and ret.start() < at) or \
+                sq.find(consume) > sq.find(drain):
+            errors.append(f"{BT_CPP}: update() must apply the NimBLE host task's events with "
+                          f"`{consume}` once, before its first return and before `{drain}` — a "
+                          "link that ends while Bluetooth is off still ends, and a command acts on "
+                          "the radio's latest state (F143)")
+
+
 def check_bluetooth_views(files: dict[str, str], errors: list[str]) -> None:
-    """Rules BV1..: the Bluetooth channel's settings enable (F144)."""
+    """Rules BV1..: the Bluetooth channel's settings enable (F144) and the
+    NimBLE host task's events (F143)."""
     if BT_API not in files or BT_CPP not in files:
         errors.append(f"{SKETCH}: the Bluetooth channel's sources ({BT_API}, {BT_CPP}) are missing")
         return
     check_bluetooth_settings_enable(files[BT_API], files[BT_CPP], errors)
+    check_bluetooth_callbacks(files[BT_CPP], errors)
 
 
 def check(ino: str, mesh_h: str, mesh_cpp: str, mqtt: str, others: dict[str, str]) -> list[str]:
@@ -1844,6 +1938,51 @@ BV_MUTATIONS: list[tuple[str, Mutation]] = [
                         r"\1 const bool was_enabled = g_settings.enabled;")(
          on_other(BT_CPP, SIG_BT_SET_SETTINGS, r"const\s+bool\s+was_enabled\s*=\s*g_settings\.enabled;",
                   "")(s))),
+]
+# Rule BV2: the NimBLE host task's callbacks (F143).
+SIG_BT_CB = r"\bvoid\s+{}\s*\([^)]*\)\s*override"
+BV_MUTATIONS += [
+    ("onConnect writes the connection on the NimBLE host task",
+     on_other(BT_CPP, SIG_BT_CB.format("onConnect"), r"(\(void\)post_event\()",
+              r"g_connection.connected = true; \1")),
+    ("onAuthenticationComplete saves the paired list on the NimBLE host task",
+     on_other(BT_CPP, SIG_BT_CB.format("onAuthenticationComplete"), r"(\(void\)post_event\()",
+              r"save_paired_devices(); \1")),
+    ("onConfirmPassKey takes the pending pairing itself (the pre-F143 race)",
+     on_other(BT_CPP, SIG_BT_CB.format("onConfirmPassKey"), r"(e\.u\.passkey\.conn\s*=\s*new)",
+              r"delete g_pending_pair_info; \1")),
+    ("onResult counts the scan table on the NimBLE host task",
+     on_other(BT_CPP, SIG_BT_CB.format("onResult"), r"(\(void\)post_event\()",
+              r"if (g_scanned_count < MAX_SCANNED_DEVICES) { } \1")),
+    ("onScanEnd clears the scan flag in place",
+     on_other(BT_CPP, SIG_BT_CB.format("onScanEnd"), r"(\(void\)post_event\()", r"g_scanning = false; \1")),
+    ("onWrite applies its activity in place",
+     on_other(BT_CPP, SIG_BT_CB.format("onWrite"), r"\(void\)post_event\(e,\s*EVENT_LOSSY_LIMIT\);",
+              "apply_activity(e);")),
+    ("link_event reads the live connection",
+     on_other(BT_CPP, r"\bstatic\s+Event\s+link_event\s*\([^)]*\)", r"(return\s+e;)",
+              r"e.u.link.reason = g_connection.connected; \1")),
+    ("post_event applies the event in place (the callbacks' old shape)",
+     on_other(BT_CPP, r"\bstatic\s+bool\s+post_event\s*\([^)]*\)", r"return\s+g_events\.post\(e,\s*limit\);",
+              "(void)limit; apply_event(e); return true;")),
+    ("the bring-up posts an event",
+     on_other(BT_CPP, r"\bbool\s+init\s*\(\s*\)", r"(g_initialized\s*=\s*true;)",
+              r"\1 (void)post_event(make_event(BT_EV_SCAN_END));")),
+    ("update() never applies the events",
+     on_other(BT_CPP, SIG_UPDATE, r"\n[ \t]*g_events\.consume\(apply_event\);", "")),
+    ("update() applies the events after its early return",
+     lambda s: on_other(BT_CPP, SIG_UPDATE, r"\n[ \t]*g_events\.consume\(apply_event\);", "")(
+         on_other(BT_CPP, SIG_UPDATE, r"(static\s+uint32_t\s+last_status_update\s*=\s*0;)",
+                  r"g_events.consume(apply_event); \1")(s))),
+    ("update() runs the commands before the events",
+     on_other(BT_CPP, SIG_UPDATE,
+              r"g_events\.consume\(apply_event\);(\s*)g_commands\.drain\(run_command\);",
+              r"g_commands.drain(run_command);\1g_events.consume(apply_event);")),
+    ("handle_scan_timeout consumes the events too",
+     on_other(BT_CPP, r"\bstatic\s+void\s+handle_scan_timeout\s*\(\s*\)", r"(if\s*\(!g_scanning\)\s*return;)",
+              r"\1 g_events.consume(apply_event);")),
+    ("update() applies a link's end directly",
+     on_other(BT_CPP, SIG_UPDATE, r"(handle_scan_timeout\(\);)", r"\1 if (false) apply_disconnect(make_event(BT_EV_DISCONNECT));")),
 ]
 MUTATIONS += BV_MUTATIONS
 

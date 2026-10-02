@@ -12,6 +12,7 @@
 
 #include "bluetooth_channel.h"
 #include "bt_defaults.h"
+#include "loop_event_queue.h"   // F143: what the NimBLE host task reports, applied by update()
 #include "ble_heap_guard.h"
 #include "nvs_store.h"
 
@@ -217,148 +218,124 @@ static bool set_device_name(const char* name);
 static bool set_tx_power(int8_t power);
 
 // ════════════════════════════════════════════════════════════════════════════
-// BLE CALLBACKS
+// BLE CALLBACKS: what the NimBLE host task reports (sweep F143)
 // ════════════════════════════════════════════════════════════════════════════
+//
+// The callbacks below run on the NimBLE host task. Before F143 they wrote
+// the connection, the pairing session and its pending Numeric-Comparison
+// answer, the paired list (and saved it to NVS there), the scan results,
+// the scan flag and the state, and restarted advertising, while update()
+// and the owner's commands read and wrote the same on the loop task with no
+// lock. The sharpest case: onConfirmPassKey() deleted and replaced the
+// pending pairing while a PIN confirm or the pairing timeout on the loop
+// task could be answering and deleting it.
+//
+// Now a callback names none of that state. It describes what happened (an
+// Event, from its own arguments and millis()) and posts it to g_events
+// (loop_event_queue.h); update() applies each event, in the order posted,
+// on the loop task (apply_event), before the owner's commands. The pending
+// pairing's heap copy travels in its event: whoever holds the pointer owns
+// it, so exactly one taker answers and deletes it.
+//
+// The queue holds EVENT_SLOTS events. A scan result and a link's activity
+// (a GATT read or write) are posted only while fewer than EVENT_LOSSY_LIMIT
+// wait, so a burst of advertisements or writes never takes the room kept
+// for a link's own events (up, down, a passkey, a bond). When an event
+// still finds no room (the loop task stalled for that long), it is dropped
+// and counted; update() writes the count to the health log. A passkey to
+// confirm that finds no room is answered no on this task instead (as is
+// one whose copy could not be allocated): the pairing fails closed, and
+// the phone may try again.
+
+enum EventType : uint8_t {
+  BT_EV_CONNECT = 0,
+  BT_EV_DISCONNECT,
+  BT_EV_AUTH_COMPLETE,
+  BT_EV_PASSKEY_DISPLAY,
+  BT_EV_CONFIRM_PASSKEY,
+  BT_EV_SCAN_RESULT,
+  BT_EV_SCAN_END,
+  BT_EV_ACTIVITY,
+};
+
+// A link, as a server callback's NimBLEConnInfo named it.
+struct LinkEvent {
+  uint16_t handle;
+  uint8_t address[BLE_ADDRESS_LENGTH];
+  uint8_t address_type;
+  bool encrypted;
+  bool authenticated;
+  bool bonded;
+  int32_t reason;                           // BT_EV_DISCONNECT
+};
+
+struct PasskeyEvent {
+  uint32_t pin;
+  NimBLEConnInfo* conn;                     // BT_EV_CONFIRM_PASSKEY: the loop task's to answer and delete
+};
+
+struct ActivityEvent {
+  uint32_t rx_bytes;
+};
+
+struct Event {
+  EventType type;
+  uint32_t at_ms;                           // millis() when the callback ran
+  union {
+    LinkEvent link;
+    PasskeyEvent passkey;
+    ScannedDevice scan;                     // BT_EV_SCAN_RESULT: last_seen_ms is at_ms
+    ActivityEvent activity;
+  } u;
+};
+
+static const size_t EVENT_SLOTS = 24;
+static const size_t EVENT_LOSSY_LIMIT = 16;
+
+static loop_event_queue::Queue<Event, EVENT_SLOTS, loop_command_ring::PortMuxLock> g_events;
+static uint32_t g_events_dropped_seen = 0;       // the loop task's: the count last logged
+static uint32_t g_events_dropped_logged_ms = 0;
+
+// An Event of `type`, at the callback's time, the rest zero.
+static Event make_event(EventType type) {
+  Event e;
+  memset(&e, 0, sizeof(e));
+  e.type = type;
+  e.at_ms = millis();
+  return e;
+}
+
+// The link a server callback names, from its own argument.
+static Event link_event(EventType type, NimBLEConnInfo& connInfo) {
+  Event e = make_event(type);
+  e.u.link.handle = connInfo.getConnHandle();
+  memcpy(e.u.link.address, connInfo.getAddress().getBase()->val, BLE_ADDRESS_LENGTH);
+  e.u.link.address_type = connInfo.getAddress().getType();
+  e.u.link.encrypted = connInfo.isEncrypted();
+  e.u.link.authenticated = connInfo.isAuthenticated();
+  e.u.link.bonded = connInfo.isBonded();
+  return e;
+}
+
+// The one way an event reaches the loop task. False when the queue had no
+// room for it (`limit` events waiting): it was dropped and counted.
+static bool post_event(const Event& e, size_t limit = EVENT_SLOTS) {
+  return g_events.post(e, limit);
+}
 
 class ServerCallbacks : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer* server, NimBLEConnInfo& connInfo) override {
-    g_connection.connected = true;
-    g_connection_handle = connInfo.getConnHandle();
-    memcpy(g_connection.address, connInfo.getAddress().getBase()->val, BLE_ADDRESS_LENGTH);
-
-    NimBLEAddress addr(connInfo.getAddress());
-    strncpy(g_connection.name, addr.toString().c_str(), MAX_DEVICE_NAME_LEN);
-    g_connection.name[MAX_DEVICE_NAME_LEN] = '\0';
-
-    g_connection.connected_since_ms = millis();
-    g_connection.last_activity_ms = millis();
-    g_connection.bytes_sent = 0;
-    g_connection.bytes_received = 0;
-
-    // Request a faster connection interval. Units: 1.25 ms for interval,
-    // 10 ms for supervision timeout. The (24, 40, 0, 400) range is inside
-    // Apple's accepted band (min 15 ms, range >= 15 ms, timeout >= 2 s)
-    // so iOS won't reject and renegotiate to 30 ms+. Android typically
-    // honors the request directly. Falls back silently to the default
-    // 30-ms interval if the peer refuses.
-    server->updateConnParams(connInfo.getConnHandle(), 24, 40, 0, 400);
-
-    // If long-range mode is on, request a PHY switch to LE Coded S=8.
-    // BLE_HCI_LE_PHY_CODED_PREF_MASK = 0x04, S=8 option = 0x0002. Peer can
-    // refuse and we keep 1M — there's no downside to trying.
-    if (g_settings.long_range_mode) {
-      ble_gap_set_prefered_le_phy(connInfo.getConnHandle(),
-                                  0x04, 0x04, 0x0002);
-    }
-
-    // Update security level
-    if (connInfo.isEncrypted()) {
-      g_connection.security = connInfo.isAuthenticated() ? SEC_AUTHENTICATED : SEC_ENCRYPTED;
-    } else {
-      g_connection.security = SEC_NONE;
-    }
-
-    g_total_connections++;
-    set_state(BT_CONNECTED);
-
-    // Tell the presence sensor to drop to reduced-duty so the live console
-    // link gets more radio time. ble_presence stops/restarts the scanner
-    // with the new parameters internally.
-    ble_presence::notify_console_connected(true);
-
-    if (g_settings.notify_on_connect) {
-      char detail[64];
-      format_address(g_connection.address, detail);
-      log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE device connected", detail);
-    }
-
-    if (g_conn_callback) {
-      g_conn_callback(&g_connection, true);
-    }
-
-    // Stop advertising while connected
-    if (g_advertising && g_advertising->isAdvertising()) {
-      g_advertising->stop();
-    }
+  void onConnect(NimBLEServer* /*server*/, NimBLEConnInfo& connInfo) override {
+    (void)post_event(link_event(BT_EV_CONNECT, connInfo));
   }
 
-  void onDisconnect(NimBLEServer* server, NimBLEConnInfo& connInfo, int reason) override {
-    uint32_t connected_duration = millis() - g_connection.connected_since_ms;
-    g_connected_total_ms += connected_duration;
-
-    if (g_settings.notify_on_connect) {
-      char detail[80];
-      snprintf(detail, sizeof(detail), "Duration: %lus, Reason: %d",
-               (unsigned long)(connected_duration / 1000), reason);
-      log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE device disconnected", detail);
-    }
-
-    if (g_conn_callback) {
-      g_conn_callback(&g_connection, false);
-    }
-
-    memset(&g_connection, 0, sizeof(g_connection));
-    g_connection_handle = 0xFFFF;
-    g_connection_mtu = 23;
-    set_state(BT_IDLE);
-
-    // Restore the presence sensor's normal duty cycle now that the radio
-    // doesn't need to favor a live link.
-    ble_presence::notify_console_connected(false);
-
-    // Resume advertising if enabled
-    if (g_settings.enabled && g_settings.auto_advertise) {
-      start_advertising();
-    }
+  void onDisconnect(NimBLEServer* /*server*/, NimBLEConnInfo& connInfo, int reason) override {
+    Event e = link_event(BT_EV_DISCONNECT, connInfo);
+    e.u.link.reason = reason;
+    (void)post_event(e);
   }
 
   void onAuthenticationComplete(NimBLEConnInfo& connInfo) override {
-    if (connInfo.isAuthenticated()) {
-      g_connection.security = SEC_AUTHENTICATED;
-      if (connInfo.isBonded()) {
-        g_connection.security = SEC_BONDED;
-
-        // Add to paired devices
-        bool found = false;
-        for (size_t i = 0; i < g_paired_count; i++) {
-          if (memcmp(g_paired_devices[i].address, connInfo.getAddress().getBase()->val, BLE_ADDRESS_LENGTH) == 0) {
-            g_paired_devices[i].last_connected_ms = millis();
-            g_paired_devices[i].connection_count++;
-            g_paired_devices[i].security = SEC_BONDED;
-            found = true;
-            break;
-          }
-        }
-
-        if (!found && g_paired_count < MAX_PAIRED_DEVICES) {
-          PairedDevice* dev = &g_paired_devices[g_paired_count++];
-          memcpy(dev->address, connInfo.getAddress().getBase()->val, BLE_ADDRESS_LENGTH);
-          dev->address_type = connInfo.getAddress().getType();
-          strncpy(dev->name, g_connection.name, MAX_DEVICE_NAME_LEN);
-          dev->name[MAX_DEVICE_NAME_LEN] = '\0';
-          dev->paired_timestamp = millis() / 1000;
-          dev->last_connected_ms = millis();
-          dev->connection_count = 1;
-          dev->security = SEC_BONDED;
-          dev->trusted = false;
-          dev->blocked = false;
-
-          save_paired_devices();
-          log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "New device paired", g_connection.name);
-        }
-      }
-
-      g_pairing.state = PAIR_COMPLETE;
-      if (g_pair_callback) {
-        g_pair_callback(&g_pairing);
-      }
-    } else {
-      g_pairing.state = PAIR_FAILED;
-      log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "Pairing failed", nullptr);
-      if (g_pair_callback) {
-        g_pair_callback(&g_pairing);
-      }
-    }
+    (void)post_event(link_event(BT_EV_AUTH_COMPLETE, connInfo));
   }
 
   uint32_t onPassKeyDisplay() override {
@@ -369,17 +346,11 @@ class ServerCallbacks : public NimBLEServerCallbacks {
       passkey = esp_random();
     } while (passkey >= (UINT32_MAX - (UINT32_MAX % 1000000)));
     passkey %= 1000000;
-    g_pairing.pin_code = passkey;
-    g_pairing.state = PAIR_PIN_DISPLAYED;
-    g_pairing.pin_displayed = true;
-
-    char pin_str[16];
-    snprintf(pin_str, sizeof(pin_str), "%06lu", (unsigned long)passkey);
-    log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH, "Pairing PIN displayed", pin_str);
-
-    if (g_pair_callback) {
-      g_pair_callback(&g_pairing);
-    }
+    Event e = make_event(BT_EV_PASSKEY_DISPLAY);
+    e.u.passkey.pin = passkey;
+    // Dropped (no room): the owner never sees the digits and the pairing
+    // fails at the phone, closed.
+    (void)post_event(e);
     return passkey;
   }
 
@@ -387,99 +358,318 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     // BLE Numeric Comparison: the peer and we both saw `pin` derived from the
     // ECDH handshake. The user must visually verify the same six digits show
     // on both screens before we tell NimBLE to accept — this is the bit that
-    // closes Man-In-The-Middle. We stash the conn info and surface the PIN to
-    // the SPA; confirm_pairing()/reject_pairing()/cancel_pairing() drain it.
-    delete g_pending_pair_info;
-    g_pending_pair_info = new NimBLEConnInfo(connInfo);
-    g_pending_pair_active = true;
-
-    g_pairing.state = PAIR_CONFIRMING;
-    g_pairing.pin_code = pin;
-    g_pairing.pin_displayed = true;
-    g_pairing.user_confirmed = false;
-
-    char pin_str[16];
-    snprintf(pin_str, sizeof(pin_str), "%06lu", (unsigned long)pin);
-    log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH,
-               "BLE pairing PIN — awaiting user confirmation", pin_str);
-
-    if (g_pair_callback) {
-      g_pair_callback(&g_pairing);
+    // closes Man-In-The-Middle. The conn info goes to the loop task in the
+    // event (a heap copy: NimBLE-Arduino 2.x makes NimBLEConnInfo's default
+    // constructor private), which surfaces the PIN to the SPA; the owner's
+    // confirm, reject or cancel, or the pairing timeout, answers it there.
+    // Intentionally NO injectConfirmPasskey(..., true) here.
+    Event e = make_event(BT_EV_CONFIRM_PASSKEY);
+    e.u.passkey.pin = pin;
+    // ESP32 Arduino builds run with exceptions off: a failed `new` is null.
+    e.u.passkey.conn = new NimBLEConnInfo(connInfo);
+    if (e.u.passkey.conn == nullptr || !post_event(e)) {
+      // Not handed over: answered no here, so NimBLE does not wait on an
+      // answer nobody can give. Fails closed.
+      delete e.u.passkey.conn;
+      NimBLEDevice::injectConfirmPasskey(connInfo, false);
     }
-    // Intentionally NO injectConfirmPasskey() here. The pairing timeout
-    // (PAIRING_TIMEOUT_MS) will reject if the user doesn't respond.
   }
 };
 
 class CharacteristicCallbacks : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo& connInfo) override {
-    g_connection.last_activity_ms = millis();
-
+  void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo& /*connInfo*/) override {
     std::string value = characteristic->getValue();
-    g_connection.bytes_received += value.length();
-    g_total_bytes_received += value.length();
+    Event e = make_event(BT_EV_ACTIVITY);
+    e.u.activity.rx_bytes = (uint32_t)value.length();
+    (void)post_event(e, EVENT_LOSSY_LIMIT);
 
+    // The data hook runs here, on the NimBLE host task, as it always did
+    // (nothing sets it today).
     if (g_data_callback && value.length() > 0) {
       g_data_callback((const uint8_t*)value.data(), value.length());
     }
   }
 
-  void onRead(NimBLECharacteristic* characteristic, NimBLEConnInfo& connInfo) override {
-    g_connection.last_activity_ms = millis();
+  void onRead(NimBLECharacteristic* /*characteristic*/, NimBLEConnInfo& /*connInfo*/) override {
+    (void)post_event(make_event(BT_EV_ACTIVITY), EVENT_LOSSY_LIMIT);
   }
 };
 
 class ScanCallbacks : public NimBLEScanCallbacks {
   void onResult(const NimBLEAdvertisedDevice* device) override {
-    // Check if already in list
-    for (size_t i = 0; i < g_scanned_count; i++) {
-      if (memcmp(g_scanned_devices[i].address, device->getAddress().getBase()->val, BLE_ADDRESS_LENGTH) == 0) {
-        // Update existing entry
-        g_scanned_devices[i].rssi = device->getRSSI();
-        g_scanned_devices[i].last_seen_ms = millis();
-        return;
-      }
+    Event e = make_event(BT_EV_SCAN_RESULT);
+    ScannedDevice& entry = e.u.scan;
+    memcpy(entry.address, device->getAddress().getBase()->val, BLE_ADDRESS_LENGTH);
+    if (device->haveName()) {
+      strncpy(entry.name, device->getName().c_str(), MAX_DEVICE_NAME_LEN);
+      entry.name[MAX_DEVICE_NAME_LEN] = '\0';
+    } else {
+      entry.name[0] = '\0';
     }
-
-    // Add new device
-    if (g_scanned_count < MAX_SCANNED_DEVICES) {
-      ScannedDevice* entry = &g_scanned_devices[g_scanned_count++];
-      memcpy(entry->address, device->getAddress().getBase()->val, BLE_ADDRESS_LENGTH);
-
-      if (device->haveName()) {
-        strncpy(entry->name, device->getName().c_str(), MAX_DEVICE_NAME_LEN);
-        entry->name[MAX_DEVICE_NAME_LEN] = '\0';
-      } else {
-        entry->name[0] = '\0';
-      }
-
-      entry->rssi = device->getRSSI();
-      entry->connectable = device->isConnectable();
-      entry->type = detect_device_type(device);
-      entry->has_securacv_service = device->isAdvertisingService(NimBLEUUID(SERVICE_UUID));
-      entry->last_seen_ms = millis();
-
-      if (g_scan_callback) {
-        g_scan_callback(entry);
-      }
-    }
+    entry.rssi = device->getRSSI();
+    entry.connectable = device->isConnectable();
+    entry.type = detect_device_type(device);
+    entry.has_securacv_service = device->isAdvertisingService(NimBLEUUID(SERVICE_UUID));
+    entry.last_seen_ms = e.at_ms;
+    (void)post_event(e, EVENT_LOSSY_LIMIT);
   }
 
   void onScanEnd(const NimBLEScanResults& /*results*/, int /*reason*/) override {
-    g_scanning = false;
-    set_state(g_connection.connected ? BT_CONNECTED : BT_IDLE);
-    log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE scan complete",
-               String(g_scanned_count).c_str());
-    // Hand the radio back to the always-on presence loop. Safe to call
-    // even when the user-triggered scan reached its natural duration
-    // rather than going through stop_scan().
-    ble_presence::resume_continuous_scan();
+    (void)post_event(make_event(BT_EV_SCAN_END));
   }
 };
 
 static ServerCallbacks g_server_callbacks;
 static CharacteristicCallbacks g_char_callbacks;
 static ScanCallbacks g_scan_callbacks;
+
+// ── The loop task applies them ─────────────────────────────────────────
+
+static void apply_connect(const Event& e) {
+  const LinkEvent& link = e.u.link;
+  g_connection.connected = true;
+  g_connection_handle = link.handle;
+  memcpy(g_connection.address, link.address, BLE_ADDRESS_LENGTH);
+
+  NimBLEAddress addr(link.address, link.address_type);
+  strncpy(g_connection.name, addr.toString().c_str(), MAX_DEVICE_NAME_LEN);
+  g_connection.name[MAX_DEVICE_NAME_LEN] = '\0';
+
+  g_connection.connected_since_ms = e.at_ms;
+  g_connection.last_activity_ms = e.at_ms;
+  g_connection.bytes_sent = 0;
+  g_connection.bytes_received = 0;
+
+  // Request a faster connection interval. Units: 1.25 ms for interval,
+  // 10 ms for supervision timeout. The (24, 40, 0, 400) range is inside
+  // Apple's accepted band (min 15 ms, range >= 15 ms, timeout >= 2 s)
+  // so iOS won't reject and renegotiate to 30 ms+. Android typically
+  // honors the request directly. Falls back silently to the default
+  // 30-ms interval if the peer refuses. (Asked from the loop task since
+  // F143, a pass after the link came up; a link already gone refuses it.)
+  if (g_server) {
+    g_server->updateConnParams(link.handle, 24, 40, 0, 400);
+  }
+
+  // If long-range mode is on, request a PHY switch to LE Coded S=8.
+  // BLE_HCI_LE_PHY_CODED_PREF_MASK = 0x04, S=8 option = 0x0002. Peer can
+  // refuse and we keep 1M — there's no downside to trying.
+  if (g_settings.long_range_mode) {
+    ble_gap_set_prefered_le_phy(link.handle, 0x04, 0x04, 0x0002);
+  }
+
+  // Update security level
+  if (link.encrypted) {
+    g_connection.security = link.authenticated ? SEC_AUTHENTICATED : SEC_ENCRYPTED;
+  } else {
+    g_connection.security = SEC_NONE;
+  }
+
+  g_total_connections++;
+  set_state(BT_CONNECTED);
+
+  // Tell the presence sensor to drop to reduced-duty so the live console
+  // link gets more radio time. ble_presence stops/restarts the scanner
+  // with the new parameters internally.
+  ble_presence::notify_console_connected(true);
+
+  if (g_settings.notify_on_connect) {
+    char detail[64];
+    format_address(g_connection.address, detail);
+    log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE device connected", detail);
+  }
+
+  if (g_conn_callback) {
+    g_conn_callback(&g_connection, true);
+  }
+
+  // Stop advertising while connected
+  if (g_advertising && g_advertising->isAdvertising()) {
+    g_advertising->stop();
+  }
+}
+
+static void apply_disconnect(const Event& e) {
+  // A link whose connect event was dropped (a full queue) adds no time.
+  uint32_t connected_duration = 0;
+  if (g_connection.connected) {
+    connected_duration = e.at_ms - g_connection.connected_since_ms;
+    g_connected_total_ms += connected_duration;
+  }
+
+  if (g_settings.notify_on_connect) {
+    char detail[80];
+    snprintf(detail, sizeof(detail), "Duration: %lus, Reason: %d",
+             (unsigned long)(connected_duration / 1000), (int)e.u.link.reason);
+    log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE device disconnected", detail);
+  }
+
+  if (g_conn_callback) {
+    g_conn_callback(&g_connection, false);
+  }
+
+  memset(&g_connection, 0, sizeof(g_connection));
+  g_connection_handle = 0xFFFF;
+  g_connection_mtu = 23;
+  // A link that ends after Bluetooth was turned off (POST /disable, or the
+  // settings' "enabled": false, which drop it) leaves it off, not idle.
+  set_state(g_settings.enabled ? BT_IDLE : BT_DISABLED);
+
+  // Restore the presence sensor's normal duty cycle now that the radio
+  // doesn't need to favor a live link.
+  ble_presence::notify_console_connected(false);
+
+  // Resume advertising if enabled
+  if (g_settings.enabled && g_settings.auto_advertise) {
+    start_advertising();
+  }
+}
+
+static void apply_auth_complete(const Event& e) {
+  const LinkEvent& link = e.u.link;
+  if (link.authenticated) {
+    g_connection.security = SEC_AUTHENTICATED;
+    if (link.bonded) {
+      g_connection.security = SEC_BONDED;
+
+      // Add to paired devices
+      bool found = false;
+      for (size_t i = 0; i < g_paired_count; i++) {
+        if (memcmp(g_paired_devices[i].address, link.address, BLE_ADDRESS_LENGTH) == 0) {
+          g_paired_devices[i].last_connected_ms = e.at_ms;
+          g_paired_devices[i].connection_count++;
+          g_paired_devices[i].security = SEC_BONDED;
+          found = true;
+          break;
+        }
+      }
+
+      if (!found && g_paired_count < MAX_PAIRED_DEVICES) {
+        PairedDevice* dev = &g_paired_devices[g_paired_count++];
+        memcpy(dev->address, link.address, BLE_ADDRESS_LENGTH);
+        dev->address_type = link.address_type;
+        strncpy(dev->name, g_connection.name, MAX_DEVICE_NAME_LEN);
+        dev->name[MAX_DEVICE_NAME_LEN] = '\0';
+        dev->paired_timestamp = e.at_ms / 1000;
+        dev->last_connected_ms = e.at_ms;
+        dev->connection_count = 1;
+        dev->security = SEC_BONDED;
+        dev->trusted = false;
+        dev->blocked = false;
+
+        save_paired_devices();
+        log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "New device paired", g_connection.name);
+      }
+    }
+
+    g_pairing.state = PAIR_COMPLETE;
+    if (g_pair_callback) {
+      g_pair_callback(&g_pairing);
+    }
+  } else {
+    g_pairing.state = PAIR_FAILED;
+    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "Pairing failed", nullptr);
+    if (g_pair_callback) {
+      g_pair_callback(&g_pairing);
+    }
+  }
+}
+
+static void apply_passkey_display(const Event& e) {
+  g_pairing.pin_code = e.u.passkey.pin;
+  g_pairing.state = PAIR_PIN_DISPLAYED;
+  g_pairing.pin_displayed = true;
+
+  char pin_str[16];
+  snprintf(pin_str, sizeof(pin_str), "%06lu", (unsigned long)e.u.passkey.pin);
+  log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH, "Pairing PIN displayed", pin_str);
+
+  if (g_pair_callback) {
+    g_pair_callback(&g_pairing);
+  }
+}
+
+static void apply_confirm_passkey(const Event& e) {
+  // The event's copy is the loop task's now. One left from an earlier
+  // passkey that nobody answered is replaced, as it always was (NimBLE
+  // times that attempt out).
+  delete g_pending_pair_info;
+  g_pending_pair_info = e.u.passkey.conn;
+  g_pending_pair_active = true;
+
+  g_pairing.state = PAIR_CONFIRMING;
+  g_pairing.pin_code = e.u.passkey.pin;
+  g_pairing.pin_displayed = true;
+  g_pairing.user_confirmed = false;
+
+  char pin_str[16];
+  snprintf(pin_str, sizeof(pin_str), "%06lu", (unsigned long)e.u.passkey.pin);
+  log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH,
+             "BLE pairing PIN — awaiting user confirmation", pin_str);
+
+  if (g_pair_callback) {
+    g_pair_callback(&g_pairing);
+  }
+  // The pairing timeout (PAIRING_TIMEOUT_MS) rejects it if the user doesn't
+  // respond.
+}
+
+static void apply_scan_result(const Event& e) {
+  const ScannedDevice& seen = e.u.scan;
+  // Check if already in list
+  for (size_t i = 0; i < g_scanned_count; i++) {
+    if (memcmp(g_scanned_devices[i].address, seen.address, BLE_ADDRESS_LENGTH) == 0) {
+      // Update existing entry
+      g_scanned_devices[i].rssi = seen.rssi;
+      g_scanned_devices[i].last_seen_ms = seen.last_seen_ms;
+      return;
+    }
+  }
+
+  // Add new device
+  if (g_scanned_count < MAX_SCANNED_DEVICES) {
+    ScannedDevice* entry = &g_scanned_devices[g_scanned_count++];
+    *entry = seen;
+    if (g_scan_callback) {
+      g_scan_callback(entry);
+    }
+  }
+}
+
+static void apply_scan_end(const Event& /*e*/) {
+  // Once per scan: stop_scan() (the owner's, or update()'s scan timeout)
+  // may have ended it on this task already.
+  if (!g_scanning) return;
+  g_scanning = false;
+  set_state(g_connection.connected ? BT_CONNECTED : BT_IDLE);
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE scan complete",
+             String(g_scanned_count).c_str());
+  // Hand the radio back to the always-on presence loop. Safe to call
+  // even when the user-triggered scan reached its natural duration
+  // rather than going through stop_scan().
+  ble_presence::resume_continuous_scan();
+}
+
+static void apply_activity(const Event& e) {
+  g_connection.last_activity_ms = e.at_ms;
+  g_connection.bytes_received += e.u.activity.rx_bytes;
+  g_total_bytes_received += e.u.activity.rx_bytes;
+}
+
+// One event, on the loop task (update()'s consume of g_events).
+static void apply_event(const Event& e) {
+  switch (e.type) {
+    case BT_EV_CONNECT:         apply_connect(e); break;
+    case BT_EV_DISCONNECT:      apply_disconnect(e); break;
+    case BT_EV_AUTH_COMPLETE:   apply_auth_complete(e); break;
+    case BT_EV_PASSKEY_DISPLAY: apply_passkey_display(e); break;
+    case BT_EV_CONFIRM_PASSKEY: apply_confirm_passkey(e); break;
+    case BT_EV_SCAN_RESULT:     apply_scan_result(e); break;
+    case BT_EV_SCAN_END:        apply_scan_end(e); break;
+    case BT_EV_ACTIVITY:        apply_activity(e); break;
+  }
+}
+
 
 // ════════════════════════════════════════════════════════════════════════════
 // STATE MANAGEMENT
@@ -1526,14 +1716,30 @@ loop_command_ring::Wait submit(const Command& cmd, Result* result, uint32_t time
 }
 
 void update() {
-  // The owner's commands first, and before the early return below: a
-  // disabled channel still runs BT_CMD_ENABLE (sweep F111).
+  // What the NimBLE host task reported since the last pass (sweep F143),
+  // then the owner's commands (F111), both before the early return below:
+  // a link that ends after Bluetooth is turned off still ends here, and a
+  // disabled channel still runs BT_CMD_ENABLE. The events come first so a
+  // command acts on the radio's latest state (a PIN confirm finds the
+  // passkey the stack just asked about).
+  g_events.consume(apply_event);
   g_commands.drain(run_command);
+
+  // Events a full queue refused, in the health log at most once a minute.
+  uint32_t now = millis();
+  const uint32_t dropped = g_events.dropped();
+  if (dropped != g_events_dropped_seen &&
+      (g_events_dropped_logged_ms == 0 || now - g_events_dropped_logged_ms >= 60000)) {
+    char detail[48];
+    snprintf(detail, sizeof(detail), "%lu since boot", (unsigned long)dropped);
+    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "BLE events dropped (queue full)", detail);
+    g_events_dropped_seen = dropped;
+    g_events_dropped_logged_ms = now != 0 ? now : 1;
+  }
 
   if (!g_initialized || !g_settings.enabled) return;
 
   static uint32_t last_status_update = 0;
-  uint32_t now = millis();
 
   // Refresh the offline-console snapshot. Internally throttled to its own
   // SNAPSHOT_PERIOD_MS so calling on every iteration is cheap; only sends

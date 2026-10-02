@@ -14,8 +14,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <atomic>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -68,10 +70,25 @@ enum : uint16_t {
 
 #define BLE_HS_IO_DISPLAY_YESNO 1
 
+namespace host_sim {
+// Heap copies of a NimBLEConnInfo alive (the pending Numeric Comparison's,
+// sweep F143): one owner deletes each once, so it comes back to 0.
+inline std::atomic<int> conn_heap{0};
+}  // namespace host_sim
+
 // One link's view, copied by value (bluetooth_channel.cpp keeps a heap copy
 // of the one awaiting a Numeric Comparison answer).
 class NimBLEConnInfo {
  public:
+  static void* operator new(size_t n) {
+    ++host_sim::conn_heap;
+    return ::operator new(n);
+  }
+  static void operator delete(void* p) {
+    if (p == nullptr) return;
+    --host_sim::conn_heap;
+    ::operator delete(p);
+  }
   uint16_t handle = 1;
   NimBLEAddress address;
   bool encrypted = false, authenticated = false, bonded = false;
@@ -149,17 +166,20 @@ class NimBLEAdvertising {
  public:
   void addServiceUUID(const NimBLEUUID&) {}
   void setAppearance(uint16_t) {}
+  // NimBLE's own state, which it keeps under its own lock (ble_gap's):
+  // read and written atomically here, so the threaded test finds only the
+  // channel's races.
   bool start() {
     host_sim::note("adv_start");
-    advertising_ = true;
+    __atomic_store_n(&advertising_, true, __ATOMIC_RELEASE);
     return true;
   }
   bool stop() {
     host_sim::note("adv_stop");
-    advertising_ = false;
+    __atomic_store_n(&advertising_, false, __ATOMIC_RELEASE);
     return true;
   }
-  bool isAdvertising() const { return advertising_; }
+  bool isAdvertising() const { return __atomic_load_n(&advertising_, __ATOMIC_ACQUIRE); }
  private:
   bool advertising_ = false;
 };
@@ -197,15 +217,15 @@ class NimBLEScan {
   void setWindow(uint16_t) {}
   bool start(uint32_t, bool = false, bool = true) {
     host_sim::note("scan_start");
-    scanning_ = true;
+    __atomic_store_n(&scanning_, true, __ATOMIC_RELEASE);
     return true;
   }
   bool stop() {
     host_sim::note("scan_stop");
-    scanning_ = false;
+    __atomic_store_n(&scanning_, false, __ATOMIC_RELEASE);
     return true;
   }
-  bool isScanning() const { return scanning_; }
+  bool isScanning() const { return __atomic_load_n(&scanning_, __ATOMIC_ACQUIRE); }
  private:
   NimBLEScanCallbacks* cb_ = nullptr;
   bool scanning_ = false;
@@ -217,6 +237,7 @@ struct PasskeyAnswer {
   bool accept;
   std::string task;
 };
+inline std::mutex passkey_mu;
 inline std::vector<PasskeyAnswer> passkey_answers;
 inline bool nimble_up = false;
 inline std::unique_ptr<NimBLEServer> server;
@@ -255,6 +276,7 @@ class NimBLEDevice {
   static NimBLEScan* getScan() { return &host_sim::scan; }
   static bool injectConfirmPasskey(const NimBLEConnInfo& c, bool accept) {
     host_sim::note("passkey_answer");
+    std::lock_guard<std::mutex> g(host_sim::passkey_mu);
     host_sim::passkey_answers.push_back({c.getConnHandle(), accept, host_sim::task});
     return true;
   }

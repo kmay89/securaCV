@@ -19,11 +19,11 @@
 // init(), which brings the NimBLE stack up and can block past the loop
 // task's watchdog, so no command makes it.
 //
-// The harness is one thread, so a task is a role the test plays
-// (host_sim::task): "httpd" while a handler waits in submit(), "loop" for
-// update()'s passes (given on the handler's sleeps, in the stub vTaskDelay),
-// "nimble" for the NimBLE host's callbacks, "bringup" for the boot worker's
-// init(). The handlers' own source is held by
+// Every test but the threaded one is one thread, so a task is a role the
+// test plays (host_sim::task): "httpd" while a handler waits in submit(),
+// "loop" for update()'s passes (given on the handler's sleeps, in the stub
+// vTaskDelay), "nimble" for the NimBLE host's callbacks, "bringup" for the
+// boot worker's init(). The handlers' own source is held by
 // firmware/scripts/check_wap_loop_commands.py (ArduinoJson, which they build
 // their answers with, is not on the host).
 //
@@ -32,10 +32,19 @@
 // branches were dead; it now turns Bluetooth off as a disable does and on as
 // an enable does (a command still never brings the stack up).
 //
+// And the NimBLE host task's callbacks (sweep F143): a connect, a passkey
+// shown or to confirm, a bond, a GATT read or write, a scan result, a
+// scan's end and a disconnect wrote the channel's state (and saved the
+// paired list, and restarted advertising) on the NimBLE host task. Each now
+// posts an event (loop_event_queue.h) that update() applies on the loop
+// task; the pending pairing's heap copy travels in its event, so it has one
+// owner. Played deterministically ("nimble" between the loop task's
+// passes), and for real on three threads (the NimBLE host task, the loop
+// task, the HTTP server's), which `make tsan-bt-commands` runs under
+// ThreadSanitizer.
+//
 // Host-tested only: the stand-in is not NimBLE, and nothing here runs a
-// radio; the Arduino compile is CI's (firmware.yml's canary-wap legs). The
-// NimBLE host task's own writes to this state (a connect, a passkey to
-// confirm, a bond) are not moved by F111, and nothing here races them.
+// radio; the Arduino compile is CI's (firmware.yml's canary-wap legs).
 //
 // Run: ./test_bluetooth_commands_wap [name]
 
@@ -43,12 +52,15 @@
 #error "BLUETOOTH_CHANNEL_CPP (absolute path to bluetooth_channel.cpp) must be defined"
 #endif
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "Arduino.h"
@@ -59,22 +71,28 @@
 // nvs_store.h's NvsMainSession, over an in-memory store; every write records
 // the task that made it.
 #define SECURACV_NVS_STORE_H
+// (A lock of its own, as the device's NVS has: the threaded test finds only
+// the channel's races.)
 namespace host_sim {
 inline std::map<std::string, std::vector<uint8_t>> main_nvs;
+inline std::recursive_mutex main_nvs_mu;
 }  // namespace host_sim
 class FakeMainNvs {
  public:
   size_t putBytes(const char* k, const void* v, size_t n) {
     host_sim::note("nvs_write");
+    std::lock_guard<std::recursive_mutex> g(host_sim::main_nvs_mu);
     const uint8_t* b = static_cast<const uint8_t*>(v);
     host_sim::main_nvs[k].assign(b, b + n);
     return n;
   }
   size_t getBytesLength(const char* k) {
+    std::lock_guard<std::recursive_mutex> g(host_sim::main_nvs_mu);
     auto it = host_sim::main_nvs.find(k);
     return it == host_sim::main_nvs.end() ? 0 : it->second.size();
   }
   size_t getBytes(const char* k, void* buf, size_t n) {
+    std::lock_guard<std::recursive_mutex> g(host_sim::main_nvs_mu);
     auto it = host_sim::main_nvs.find(k);
     if (it == host_sim::main_nvs.end() || it->second.size() > n) return 0;
     if (!it->second.empty()) memcpy(buf, it->second.data(), it->second.size());
@@ -123,7 +141,9 @@ bool init(NimBLEServer* server, const uint8_t release_pubkey[32]);
 
 // What the sketch links in on a device (canary_wap.ino and the BLE modules).
 std::vector<std::string> g_health;
+std::mutex g_health_mu;   // the device's health log takes its own lock
 void log_health(LogLevel, LogCategory, const char* message, const char*) {
+  std::lock_guard<std::mutex> g(g_health_mu);
   g_health.push_back(message);
 }
 namespace ble_ota {
@@ -205,6 +225,13 @@ void boot(bool bring_up = true, bool wipe = true) {
   bc::g_scanned_count = 0;
   bc::g_scanning = false;
   bc::g_commands = decltype(bc::g_commands)();
+  bc::g_events.consume([](const bc::Event& e) {      // a copy a test left waiting
+    if (e.type == bc::BT_EV_CONFIRM_PASSKEY) delete e.u.passkey.conn;
+  });
+  bc::g_events = decltype(bc::g_events)();
+  bc::g_events_dropped_seen = 0;
+  bc::g_events_dropped_logged_ms = 0;
+  CHECK(host_sim::conn_heap == 0);                   // every pending copy was deleted once
   if (bring_up) {
     host_sim::task = "bringup";
     CHECK(bc::init());
@@ -266,6 +293,15 @@ void on_nimble(const std::function<void()>& fn) {
   host_sim::task = was;
 }
 
+// One pass of the loop task: what the NimBLE host task reported is applied
+// there (sweep F143), with the owner's commands.
+void loop_pass() {
+  const std::string was = host_sim::task;
+  host_sim::task = "loop";
+  bc::update();
+  host_sim::task = was;
+}
+
 NimBLEConnInfo link(uint16_t handle, uint8_t last_byte) {
   NimBLEConnInfo c;
   c.handle = handle;
@@ -281,6 +317,7 @@ void pairing_awaiting_confirm(uint32_t pin, const NimBLEConnInfo& phone) {
   CHECK(start.wait == lcr::Wait::kDone && start.r.ok);
   NimBLEConnInfo c = phone;
   on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(c, pin); });
+  loop_pass();
   CHECK(bc::g_pairing.state == bc::PAIR_CONFIRMING && bc::g_pending_pair_active);
 }
 
@@ -402,6 +439,7 @@ void test_every_command_runs_on_the_loop_task() {
   host_sim::server->peers = {11};
   on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
   on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
+  loop_pass();
   CHECK(bc::g_connection.connected && bc::g_paired_count == 1);
   host_sim::calls.clear();
 
@@ -583,6 +621,7 @@ void test_trust_and_block_take_the_owners_flag() {
   host_sim::server->peers = {11};
   on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
   on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
+  loop_pass();
   CHECK(bc::g_paired_count == 1);
   bc::Command t = cmd_of(bc::BT_CMD_PAIRED_TRUST);
   memcpy(t.address, phone.address.getBase()->val, 6);
@@ -612,6 +651,7 @@ void test_paired_clear_forgets_every_device() {
   host_sim::server->peers = {11};
   on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
   on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
+  loop_pass();
   CHECK(bc::g_paired_count == 1);
   host_sim::bonds = {phone.address, link(12, 0xD2).address};
   host_sim::calls.clear();
@@ -650,6 +690,335 @@ void test_advertise_and_pair_turn_bluetooth_on() {
   CHECK(host_sim::count("nimble_init") == 0);
   none_on_httpd();
   std::printf("PASS advertise_and_pair_turn_bluetooth_on\n");
+}
+
+// ── The NimBLE host task's callbacks (sweep F143) ───────────────────────
+
+// How many health-log lines say `message`.
+size_t health_says(const char* message) {
+  size_t n = 0;
+  for (const std::string& m : g_health) n += m == message;
+  return n;
+}
+
+// A link up, a bond, a scan's results and its end, a link down: each
+// callback, on the NimBLE host task, changes none of the channel's state
+// and makes no radio, bond or NVS call; the loop task's next pass applies
+// it, in order, and the advertising restart and the paired list's NVS save
+// are the loop task's. Before F143 each callback wrote the state, saved the
+// paired list and restarted advertising on the NimBLE host task itself.
+void test_a_callback_changes_nothing_until_the_loop_task_applies_it() {
+  boot();
+  CHECK(host_sim::advertising.isAdvertising() && bc::g_state == bc::BT_ADVERTISING);
+  NimBLEConnInfo phone = link(21, 0xE1);
+  phone.encrypted = phone.authenticated = phone.bonded = true;
+  host_sim::server->peers = {21};
+  host_sim::now_ms = 50000;
+  const uint32_t connections_before = bc::g_total_connections;
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  host_sim::now_ms = 50400;                                 // the loop task's turn comes later
+  CHECK(!bc::g_connection.connected && bc::g_state == bc::BT_ADVERTISING);
+  CHECK(bc::g_total_connections == connections_before);
+  CHECK(host_sim::count("", "nimble") == 0);
+  loop_pass();
+  CHECK(bc::g_connection.connected && bc::g_connection_handle == 21);
+  CHECK(bc::g_total_connections == connections_before + 1);
+  CHECK(bc::g_connection.connected_since_ms == 50000);       // when the stack said so
+  CHECK(bc::g_state == bc::BT_CONNECTED && !host_sim::advertising.isAdvertising());
+  CHECK(host_sim::count("adv_stop", "loop") == 1);
+
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
+  CHECK(bc::g_paired_count == 0 && bc::g_connection.security == bc::SEC_AUTHENTICATED);
+  CHECK(host_sim::count("nvs_write", "nimble") == 0);
+  loop_pass();
+  CHECK(bc::g_paired_count == 1 && bc::g_connection.security == bc::SEC_BONDED);
+  CHECK(memcmp(bc::g_paired_devices[0].address, phone.address.getBase()->val, 6) == 0);
+  CHECK(bc::g_paired_devices[0].last_connected_ms == 50400);
+  CHECK(host_sim::count("nvs_write", "loop") > 0);
+
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x13); });
+  CHECK(bc::g_connection.connected && !host_sim::advertising.isAdvertising());
+  loop_pass();
+  CHECK(!bc::g_connection.connected && bc::g_connection_handle == 0xFFFF);
+  CHECK(host_sim::advertising.isAdvertising() && bc::g_state == bc::BT_ADVERTISING);
+  CHECK(host_sim::count("adv_start", "loop") == 1);
+
+  // A scan: its results and its end wait for the loop task too.
+  bc::Command scan = cmd_of(bc::BT_CMD_SCAN_START);
+  scan.duration_ms = 5000;
+  CHECK(rest(scan).r.ok && bc::g_scanning);
+  NimBLEAdvertisedDevice watch;
+  const uint8_t a1[6] = {1, 2, 3, 4, 5, 6};
+  watch.address = NimBLEAddress(a1, 0);
+  watch.name = "Garmin watch";
+  watch.rssi = -70;
+  on_nimble([&] { host_sim::scan.callbacks()->onResult(&watch); });
+  watch.rssi = -55;                                          // heard again, closer
+  on_nimble([&] { host_sim::scan.callbacks()->onResult(&watch); });
+  on_nimble([&] { host_sim::scan.callbacks()->onScanEnd(NimBLEScanResults(), 0); });
+  CHECK(bc::g_scanned_count == 0 && bc::g_scanning && bc::g_state == bc::BT_SCANNING);
+  loop_pass();
+  CHECK(bc::g_scanned_count == 1 && bc::g_scanned_devices[0].rssi == -55);
+  CHECK(strcmp(bc::g_scanned_devices[0].name, "Garmin watch") == 0);
+  CHECK(bc::g_scanned_devices[0].type == bc::DEV_WEARABLE);
+  CHECK(!bc::g_scanning && bc::g_state == bc::BT_IDLE);
+  CHECK(host_sim::count("", "nimble") == 0);
+  none_on_httpd();
+  std::printf("PASS a_callback_changes_nothing_until_the_loop_task_applies_it\n");
+}
+
+// The pending Numeric-Comparison pairing has one owner. Its heap copy
+// travels in the callback's event, so the NimBLE host task never touches
+// the pending pointer: a second passkey before the loop task's pass, a PIN
+// confirm that waits while the stack asks again, and the pairing timeout
+// each find one pending pairing, answer it once and delete it once (the
+// stand-in counts the heap copies alive). Before F143 onConfirmPassKey()
+// deleted and replaced the pending copy on the NimBLE host task while the
+// loop task's confirm or timeout could be answering and deleting it.
+void test_the_pending_pairing_has_one_owner() {
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  NimBLEConnInfo phone = link(31, 0xF1);
+  on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(phone, 111111); });
+  CHECK(bc::g_pending_pair_info == nullptr && !bc::g_pending_pair_active);
+  CHECK(bc::g_pairing.state == bc::PAIR_INITIATED);
+  CHECK(host_sim::conn_heap == 1);                           // in the event
+  // The stack asks again before the loop task's pass (the phone retried).
+  on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(phone, 222222); });
+  CHECK(host_sim::conn_heap == 2);
+  loop_pass();
+  CHECK(bc::g_pairing.state == bc::PAIR_CONFIRMING && bc::g_pairing.pin_code == 222222);
+  CHECK(bc::g_pending_pair_active && bc::g_pending_pair_info != nullptr);
+  CHECK(host_sim::conn_heap == 1);                           // the first, replaced, deleted once
+  CHECK(host_sim::passkey_answers.empty());
+
+  // A confirm waits for the loop task while the stack asks a third time:
+  // the loop task's pass applies the new passkey, then the confirm, which
+  // names it: one answer, yes, and the copy deleted.
+  bc::Command c = cmd_of(bc::BT_CMD_PAIR_CONFIRM);
+  c.pin = 333333;
+  Rest r;
+  {
+    unsigned sleeps = 0;
+    host_sim::on_task_delay = [&](uint32_t ms) {
+      host_sim::now_ms += ms;
+      ++sleeps;
+      if (sleeps == 1) on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(phone, 333333); });
+      if (sleeps == 2) loop_pass();
+    };
+    host_sim::task = "httpd";
+    r.wait = bc::submit(c, &r.r);
+    host_sim::task = "loop";
+    host_sim::on_task_delay = nullptr;
+  }
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok);
+  CHECK(host_sim::passkey_answers.size() == 1 && host_sim::passkey_answers[0].accept);
+  CHECK(host_sim::passkey_answers[0].task == "loop");
+  CHECK(bc::g_pending_pair_info == nullptr && !bc::g_pending_pair_active);
+  CHECK(host_sim::conn_heap == 0);
+
+  // A passkey the stack asks in the pass the pairing times out: applied,
+  // then answered no by the timeout, once.
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  host_sim::now_ms += bc::PAIRING_TIMEOUT_MS;
+  on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(phone, 444444); });
+  loop_pass();
+  CHECK(host_sim::passkey_answers.size() == 1 && !host_sim::passkey_answers[0].accept);
+  CHECK(host_sim::passkey_answers[0].task == "loop");
+  CHECK(bc::g_pairing.state == bc::PAIR_NONE && host_sim::conn_heap == 0);
+  CHECK(host_sim::count("", "nimble") == 0);
+  none_on_httpd();
+  std::printf("PASS the_pending_pairing_has_one_owner\n");
+}
+
+// The queue full (the loop task stalled): a scan result or a link's
+// activity is posted only while fewer than EVENT_LOSSY_LIMIT wait, so the
+// rest of the room is a link's; an event that finds no room is dropped and
+// counted, the count goes to the health log once a minute at most, and a
+// passkey to confirm that finds no room is answered no on the NimBLE host
+// task (fails closed) with its copy deleted there.
+void test_a_full_queue_keeps_the_links_room_and_fails_a_pairing_closed() {
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  bc::Command scan = cmd_of(bc::BT_CMD_SCAN_START);
+  scan.duration_ms = 5000;
+  CHECK(rest(scan).r.ok);
+  NimBLEConnInfo phone = link(41, 0xA4);
+  host_sim::server->peers = {41};
+  // A burst of advertisements: twenty heard before the loop task's pass.
+  for (uint8_t i = 0; i < 20; ++i) {
+    NimBLEAdvertisedDevice d;
+    const uint8_t a[6] = {i, 9, 9, 9, 9, 9};
+    d.address = NimBLEAddress(a, 0);
+    on_nimble([&] { host_sim::scan.callbacks()->onResult(&d); });
+  }
+  CHECK(bc::g_events.waiting() == bc::EVENT_LOSSY_LIMIT && bc::g_events.dropped() == 4);
+  // A phone connects and the stack asks for a passkey: the reserve holds them.
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(phone, 555555); });
+  CHECK(bc::g_events.dropped() == 4 && host_sim::passkey_answers.empty());
+  // Fill the rest; then a second passkey finds no room: answered no here.
+  while (bc::g_events.waiting() < bc::EVENT_SLOTS) {
+    on_nimble([&] { host_sim::scan.callbacks()->onScanEnd(NimBLEScanResults(), 0); });
+  }
+  NimBLEConnInfo other = link(42, 0xA5);
+  on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(other, 666666); });
+  CHECK(bc::g_events.dropped() == 5);
+  CHECK(host_sim::passkey_answers.size() == 1 && !host_sim::passkey_answers[0].accept);
+  CHECK(host_sim::passkey_answers[0].task == "nimble" && host_sim::passkey_answers[0].handle == 42);
+  CHECK(host_sim::conn_heap == 1);                           // only the queued one's copy
+  g_health.clear();
+  loop_pass();
+  CHECK(bc::g_events.waiting() == 0);
+  CHECK(bc::g_scanned_count == bc::EVENT_LOSSY_LIMIT);       // the sixteen that fit
+  CHECK(bc::g_connection.connected);                         // the link's events kept
+  CHECK(bc::g_pairing.state == bc::PAIR_CONFIRMING && bc::g_pairing.pin_code == 555555);
+  CHECK(health_says("BLE events dropped (queue full)") == 1);
+  // More drops within the minute: counted, not logged again; after it, logged.
+  for (int i = 0; i < 30; ++i) {
+    on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0); });
+  }
+  loop_pass();
+  CHECK(health_says("BLE events dropped (queue full)") == 1);
+  host_sim::now_ms += 60000;
+  loop_pass();
+  CHECK(health_says("BLE events dropped (queue full)") == 2);
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_CANCEL)).r.ok);
+  CHECK(host_sim::conn_heap == 0);
+  std::printf("PASS a_full_queue_keeps_the_links_room_and_fails_a_pairing_closed\n");
+}
+
+// A link that ends after Bluetooth was turned off (the settings' "enabled":
+// false, or POST /disable, drops it) leaves it off: the state stays
+// disabled and nothing advertises. Before, the disconnect set it idle.
+void test_a_link_that_ends_after_bluetooth_is_off_leaves_it_off() {
+  boot();
+  NimBLEConnInfo phone = link(51, 0xB5);
+  host_sim::server->peers = {51};
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  loop_pass();
+  bc::Command off = cmd_of(bc::BT_CMD_SETTINGS);
+  off.set_mask = bc::BT_SET_ENABLED;
+  CHECK(rest(off).r.ok && bc::g_state == bc::BT_DISABLED);
+  host_sim::calls.clear();
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x16); });
+  loop_pass();
+  CHECK(!bc::g_connection.connected && bc::g_state == bc::BT_DISABLED);
+  CHECK(host_sim::count("adv_start") == 0 && !host_sim::advertising.isAdvertising());
+  std::printf("PASS a_link_that_ends_after_bluetooth_is_off_leaves_it_off\n");
+}
+
+// A scan's end is applied once: when the owner (or update()'s scan
+// timeout) stopped the scan first, the stack's end of it changes nothing,
+// so a pairing started since keeps its state.
+void test_a_scan_end_is_applied_once() {
+  boot();
+  bc::Command scan = cmd_of(bc::BT_CMD_SCAN_START);
+  scan.duration_ms = 5000;
+  CHECK(rest(scan).r.ok);
+  CHECK(rest(cmd_of(bc::BT_CMD_SCAN_STOP)).r.ok && !bc::g_scanning);
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok && bc::g_state == bc::BT_PAIRING);
+  g_health.clear();
+  on_nimble([&] { host_sim::scan.callbacks()->onScanEnd(NimBLEScanResults(), 0); });
+  loop_pass();
+  CHECK(bc::g_state == bc::BT_PAIRING && health_says("BLE scan complete") == 0);
+  std::printf("PASS a_scan_end_is_applied_once\n");
+}
+
+// ── Two tasks at once (sweep F143), for ThreadSanitizer ─────────────────
+
+// The NimBLE host task's callbacks on one thread, the loop task's passes on
+// another (this one) and the HTTP server's commands on a third, as on the
+// device, where the NimBLE host task runs beside the loop task. A link, a
+// passkey shown and one to confirm, a bond, a GATT write, a scan result and
+// a scan's end, a link down, over and over, while update() runs and the
+// owner's commands arrive. What must hold: no crash; every pending
+// pairing's copy deleted once (none left, none twice: the stand-in counts
+// them); no more passkey answers than passkeys asked; the NimBLE host
+// task's own calls only the answers a full queue makes; the paired list in
+// its bounds. `make tsan-bt-commands` runs the suite under
+// -fsanitize=thread, where a callback that writes the channel's state (the
+// pre-F143 code) is a reported data race.
+void test_threads_callbacks_loop_and_commands() {
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  host_sim::server->peers = {61};
+  NimBLEServerCallbacks* server_cb = host_sim::server->callbacks();
+  NimBLEScanCallbacks* scan_cb = &bc::g_scan_callbacks;
+  NimBLECharacteristicCallbacks* char_cb = &bc::g_char_callbacks;
+  NimBLECharacteristic* command_char = bc::g_command_char;
+  CHECK(server_cb != nullptr && command_char != nullptr);
+  std::atomic<bool> nimble_done{false};
+  std::atomic<uint32_t> passkeys_asked{0};
+  constexpr int kRounds = 2000;
+
+  std::thread nimble([&] {
+    host_sim::task = "nimble";
+    NimBLEConnInfo phone = link(61, 0xC6);
+    phone.encrypted = phone.authenticated = phone.bonded = true;
+    for (int i = 0; i < kRounds; ++i) {
+      server_cb->onConnect(host_sim::server.get(), phone);
+      (void)server_cb->onPassKeyDisplay();
+      passkeys_asked.fetch_add(1);
+      server_cb->onConfirmPassKey(phone, 100000u + (uint32_t)i);
+      server_cb->onAuthenticationComplete(phone);
+      char_cb->onWrite(command_char, phone);
+      char_cb->onRead(command_char, phone);
+      NimBLEAdvertisedDevice d;
+      const uint8_t a[6] = {(uint8_t)(i % 40), 7, 7, 7, 7, 7};
+      d.address = NimBLEAddress(a, 0);
+      scan_cb->onResult(&d);
+      scan_cb->onScanEnd(NimBLEScanResults(), 0);
+      server_cb->onDisconnect(host_sim::server.get(), phone, 0x13);
+      // A radio's pace: wait while the loop task is behind, so its passes
+      // and these callbacks interleave rather than the queue filling.
+      while (bc::g_events.waiting() > bc::EVENT_SLOTS / 2) std::this_thread::yield();
+    }
+    nimble_done.store(true);
+  });
+
+  const bc::CommandType kinds[] = {bc::BT_CMD_PAIR_CONFIRM, bc::BT_CMD_PAIR_START,
+                                   bc::BT_CMD_SCAN_START,   bc::BT_CMD_PAIR_REJECT,
+                                   bc::BT_CMD_DISCONNECT,   bc::BT_CMD_SCAN_STOP,
+                                   bc::BT_CMD_PAIR_CANCEL,  bc::BT_CMD_ADVERTISE_START,
+                                   bc::BT_CMD_PAIRED_CLEAR, bc::BT_CMD_SCAN_CLEAR};
+  std::atomic<uint32_t> commands_done{0};
+  std::thread httpd([&] {
+    host_sim::task = "httpd";
+    for (uint32_t i = 0; !nimble_done.load(); ++i) {
+      bc::Command c = cmd_of(kinds[i % (sizeof kinds / sizeof kinds[0])]);
+      c.pin = 100000u + i;
+      c.duration_ms = 1000;
+      bc::Result r;
+      if (bc::submit(c, &r, 40) == lcr::Wait::kDone) commands_done.fetch_add(1);
+    }
+  });
+
+  host_sim::task = "loop";
+  while (!nimble_done.load()) {
+    bc::update();
+    host_sim::now_ms += 1;
+    std::this_thread::yield();
+  }
+  nimble.join();
+  httpd.join();
+  bc::update();                                              // what is left
+  CHECK(bc::g_events.waiting() == 0);
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_CANCEL)).r.ok);
+  CHECK(host_sim::conn_heap == 0);
+  size_t answers = 0;
+  {
+    std::lock_guard<std::mutex> g(host_sim::passkey_mu);
+    answers = host_sim::passkey_answers.size();
+  }
+  CHECK(answers <= passkeys_asked.load());
+  CHECK(host_sim::count("", "nimble") == host_sim::count("passkey_answer", "nimble"));
+  CHECK(bc::g_paired_count <= bc::MAX_PAIRED_DEVICES && bc::g_scanned_count <= bc::MAX_SCANNED_DEVICES);
+  CHECK(host_sim::mux_depth == 0);
+  std::printf("PASS threads_callbacks_loop_and_commands (%u commands ran, %zu passkey answers, "
+              "%u events dropped)\n", (unsigned)commands_done.load(), answers,
+              (unsigned)bc::g_events.dropped());
 }
 
 // ── The settings' "enabled" (sweep F144) ────────────────────────────────
@@ -857,6 +1226,15 @@ const Test kTests[] = {
     {"trust_and_block_take_the_owners_flag", test_trust_and_block_take_the_owners_flag},
     {"paired_clear_forgets_every_device", test_paired_clear_forgets_every_device},
     {"advertise_and_pair_turn_bluetooth_on", test_advertise_and_pair_turn_bluetooth_on},
+    {"a_callback_changes_nothing_until_the_loop_task_applies_it",
+     test_a_callback_changes_nothing_until_the_loop_task_applies_it},
+    {"the_pending_pairing_has_one_owner", test_the_pending_pairing_has_one_owner},
+    {"a_full_queue_keeps_the_links_room_and_fails_a_pairing_closed",
+     test_a_full_queue_keeps_the_links_room_and_fails_a_pairing_closed},
+    {"a_link_that_ends_after_bluetooth_is_off_leaves_it_off",
+     test_a_link_that_ends_after_bluetooth_is_off_leaves_it_off},
+    {"a_scan_end_is_applied_once", test_a_scan_end_is_applied_once},
+    {"threads_callbacks_loop_and_commands", test_threads_callbacks_loop_and_commands},
     {"settings_enabled_false_turns_bluetooth_off", test_settings_enabled_false_turns_bluetooth_off},
     {"settings_enabled_true_turns_bluetooth_on_as_enable_does",
      test_settings_enabled_true_turns_bluetooth_on_as_enable_does},

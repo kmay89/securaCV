@@ -16,34 +16,48 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <atomic>
+#include <mutex>
 #include <string>
 #include <vector>
 
+/* The threaded test (sweep F143: the NimBLE host task's callbacks on one
+ * thread, the loop task on another, run under -fsanitize=thread by `make
+ * tsan-bt-commands`) shares what is here: the clock is atomic, the task
+ * name is each thread's own, and the call record takes a lock, so the only
+ * races left to find are the channel's own. */
 namespace host_sim {
-inline uint32_t now_ms = 1000;
-inline std::string task = "loop";
+inline std::atomic<uint32_t> now_ms{1000};
+inline thread_local std::string task = "loop";
 struct Call {
   std::string what;
   std::string task;
 };
+inline std::mutex calls_mu;
 inline std::vector<Call> calls;   // radio, bond and NVS calls, in order
-inline void note(const char* what) { calls.push_back({what, task}); }
+inline void note(const char* what) {
+  std::lock_guard<std::mutex> g(calls_mu);
+  calls.push_back({what, task});
+}
 inline unsigned count(const std::string& what, const std::string& on_task = "") {
+  std::lock_guard<std::mutex> g(calls_mu);
   unsigned n = 0;
   for (const Call& c : calls) {
     if ((what.empty() || c.what == what) && (on_task.empty() || c.task == on_task)) ++n;
   }
   return n;
 }
-inline uint32_t rng = 0x12345678u;
+inline std::atomic<uint32_t> rng{0x12345678u};
 }  // namespace host_sim
 
-inline uint32_t millis() { return host_sim::now_ms; }
+inline uint32_t millis() { return host_sim::now_ms.load(); }
 inline uint32_t esp_random() {
-  host_sim::rng ^= host_sim::rng << 13;
-  host_sim::rng ^= host_sim::rng >> 17;
-  host_sim::rng ^= host_sim::rng << 5;
-  return host_sim::rng;
+  uint32_t x = host_sim::rng.load();
+  x ^= x << 13;
+  x ^= x >> 17;
+  x ^= x << 5;
+  host_sim::rng.store(x);
+  return x;
 }
 
 struct HostSerial {

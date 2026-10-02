@@ -7,6 +7,7 @@
 #define STUB_BT_FREERTOS_TASK_H
 
 #include <functional>
+#include <thread>
 
 #include "../Arduino.h"
 #include "FreeRTOS.h"
@@ -20,6 +21,7 @@ inline void vTaskDelay(TickType_t ticks) {
     host_sim::on_task_delay((uint32_t)ticks);
   } else {
     host_sim::now_ms += (uint32_t)ticks;
+    std::this_thread::yield();   // the threaded test: let the loop thread run
   }
 }
 
