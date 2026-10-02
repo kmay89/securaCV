@@ -149,11 +149,18 @@ event (`publish_event_json` in `src/main.cpp`, `PresenceFSM::snapshot` in
 | Field | On which rows | Value |
 |---|---|---|
 | `presence_ms` | every row | how long the current stay has lasted; 0 on `presence_started` (it starts on that frame) and once the stay has ended |
-| `dwell_ms` | every row | the running dwell while dwelling; on `dwell_ended`, how long the dwell it closed lasted (held until the next frame); otherwise 0. `dwell_started` reads 0 because the dwell starts on that frame |
-| `visit_ms` | `events` rows (the `state` row has no such key) | how long the last **completed** stay lasted, latched at `presence_ended` and kept until the next one ends; 0 before any stay has ended |
-| `voxel` | every row | the voxel tracker's settled cell, not the frame's: it moves to a new cell only once the person has been seen away from it three times in a row (`VOXEL_STABLE_N` in `src/state/voxel_tracker.cpp`), and it keeps the last cell once the frame is empty, so `presence_ended` still names where the person was; before anyone has been seen it is `r`/`c` -1 with `rows`/`cols` 0 |
+| `dwell_ms` | every row | the running dwell while dwelling; on `dwell_ended`, the length of the dwell it closed, counted to the frame that declared the person gone, so it includes the lost timeout (below), and held until the next frame; otherwise 0. `dwell_started` reads 0 because the dwell starts on that frame |
+| `visit_ms` | `events` rows (the `state` row has no such key) | the length of the last **completed** stay, from `presence_started` to the frame that declared the person gone, so it includes the lost timeout too; latched at `presence_ended` and kept until the next one ends; 0 before any stay has ended |
+| `voxel` | every row | the voxel tracker's settled cell, not the frame's: it moves to a new cell only once the person has been seen away from it three times in a row (`VOXEL_STABLE_N` in `src/state/voxel_tracker.cpp`), and it keeps the last cell once the frame is empty, so `presence_ended` still names where the person was. It is not reset between visits either, so a later visit's `presence_started`, and its frames until the new cell settles, name the previous visit's cell. Before anyone has been seen since boot it is `r`/`c` -1 with `rows`/`cols` 0 |
 
-A running dwell is therefore on the `state` rows (each heartbeat republishes
+Neither length stops at the last sighting. The FSM declares the person gone
+on the first frame more than `lost_ms` after it last saw them (the lost
+timeout in the table above: 1.5 s by default, 4 s in the `litter_box`
+preset, settable from 0.25 s to 60 s), and `dwell_ended`'s `dwell_ms` and
+`visit_ms` both run to that frame. So with the default timeout a dwell whose
+subject was last seen 1.9 s after it started reports about 3.5 s.
+
+A running dwell is on the `state` rows (each heartbeat republishes
 one) and the dwell's final length on its `dwell_ended` row. The behavior is
 host-tested in
 [`firmware/tests_host/test_vision_presence_fsm.cpp`](../../tests_host/test_vision_presence_fsm.cpp),

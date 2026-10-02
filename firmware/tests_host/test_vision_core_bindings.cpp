@@ -12,8 +12,13 @@
 // latch of its own. The settled cell differs from the frame's: it moves
 // only once the person has been seen away from it three times in a row
 // (voxel_tracker.cpp's VOXEL_STABLE_N), and stays on the last cell once the
-// frame is empty. And (sweep F130) dwell_ended's dwell_ms is the
-// dwell it closed, through the same ABI.
+// frame is empty. It is not reset between visits either (PresenceFSM
+// resets its tracker only in reset(), at boot), so a later visit's
+// presence_started, and its frames until the new cell settles, name the
+// previous visit's cell: pinned below because the README, the pane's note
+// and this file's bindings comment say so. And (sweep F130) dwell_ended's
+// dwell_ms is the dwell it closed, through the same ABI, counted to the
+// frame that declared the person gone, so it includes the lost timeout.
 //
 // Before A39 the fsm object had neither key, and this suite fails on it.
 
@@ -145,6 +150,41 @@ void test_settled_cell_and_visit() {
   std::printf("  settled cell held 2 frames, visit %ld ms\n", int_at(ended.fsm, "visit_ms"));
 }
 
+// A second visit after the first has ended, in another cell. The settled
+// cell is the tracker's, and PresenceFSM::tick does not reset the tracker at
+// presence_started, so the new visit opens on the old visit's cell and moves
+// only once the person has been seen in the new one three times in a row.
+// (The tracker's settle time carries over too, which is why a short later
+// visit can end in interaction_likely: filed as its own item, not pinned.)
+void test_settled_cell_carries_into_the_next_visit() {
+  vision_emu_reset();
+  vision_emu_set_config(PERSON_TARGET, SCORE_MIN, LOST_TIMEOUT_MS, DWELL_START_MS);
+  unsigned int t = 1000;
+  Tick k = frame(t, 2, 0);
+  assert(event_is(k, "presence_started"));
+  for (int i = 0; i < 10; ++i) frame(t += 100, 2, 0);
+  for (t += 100;; t += 100) {
+    k = frame(t);
+    if (event_is(k, "presence_ended")) break;
+    assert(t < 10000);
+  }
+  // long enough later that no leave-side event is pending
+  t += INTERACTION_AFTER_LEAVE_WINDOW_MS + 1000;
+  k = frame(t);
+  assert(int_at(k.fsm_voxel, "r") == 2 && int_at(k.fsm_voxel, "c") == 0);
+
+  // the next visit, in (0,2)
+  k = frame(t += 100, 0, 2);
+  assert(event_is(k, "presence_started"));
+  assert(int_at(k.sample_voxel, "r") == 0 && int_at(k.sample_voxel, "c") == 2);
+  assert(int_at(k.fsm_voxel, "r") == 2 && int_at(k.fsm_voxel, "c") == 0);  // the last visit's
+  k = frame(t += 100, 0, 2);
+  assert(int_at(k.fsm_voxel, "r") == 2 && int_at(k.fsm_voxel, "c") == 0);
+  k = frame(t += 100, 0, 2);
+  assert(int_at(k.fsm_voxel, "r") == 0 && int_at(k.fsm_voxel, "c") == 2);  // settled
+  std::printf("  next visit opened on the last visit's cell, settled on its third frame\n");
+}
+
 void test_dwell_ended_through_the_abi() {
   vision_emu_reset();
   vision_emu_set_config(PERSON_TARGET, SCORE_MIN, 500, 1000);
@@ -160,6 +200,7 @@ void test_dwell_ended_through_the_abi() {
     }
   }
   assert(dwell_at == 1000);
+  const unsigned int last_seen = t - 100;
   for (;; t += 100) {
     k = frame(t);
     if (event_is(k, "dwell_ended")) break;
@@ -167,6 +208,10 @@ void test_dwell_ended_through_the_abi() {
   }
   assert(has(k.fsm, "\"dwelling\":false"));
   assert(int_at(k.fsm, "dwell_ms") == (long)(t - dwell_at));
+  // counted to the frame that declared the person gone, not to the last
+  // sighting: the length includes the lost timeout (500 ms here)
+  assert(t - last_seen > 500);
+  assert(int_at(k.fsm, "dwell_ms") > (long)(last_seen - dwell_at) + 500);
   k = frame(t += 100);
   assert(event_is(k, "presence_ended"));
   assert(int_at(k.fsm, "dwell_ms") == 0);
@@ -178,6 +223,7 @@ int main() {
   // the core this suite links is the one the contract names
   assert(has(vision_emu_contract_json(), "\"schema\":\"securacv.canary-vision.core/v1\""));
   test_settled_cell_and_visit();
+  test_settled_cell_carries_into_the_next_visit();
   test_dwell_ended_through_the_abi();
   std::printf("ALL VISION CORE BINDING TESTS PASSED\n");
   return 0;

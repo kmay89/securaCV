@@ -13,6 +13,8 @@
 //     reports the same length (not a running clock), and the next frame,
 //     whatever it emits, starts from 0 again.
 //   * visit_ms keeps its own latch (last_visit_ms_), untouched.
+//   * both lengths run to the frame that declared the person gone, so they
+//     include the lost timeout (the README's clocks table says so).
 //
 // presence_fsm.cpp and voxel_tracker.cpp are linked verbatim; the only
 // stand-in is canary::cfg::detect(), the NVS-backed tuning, which is
@@ -112,6 +114,9 @@ static void test_linger_dwell_ended_reports_its_dwell() {
   assert(ended.snap.presence);  // presence_ended follows on the next tick
   assert(ended.snap.dwell_ms == ended.t - dwell_at);
   assert(ended.snap.dwell_ms > 0);
+  // ...which runs to the frame that declared the person gone, not to the
+  // last sighting: the length includes the lost timeout (the README says so)
+  assert(ended.snap.dwell_ms > (last_seen - dwell_at) + LOST_TIMEOUT_MS);
   assert(ended.snap.presence_ms == ended.t - present_at);
   // a heartbeat before the next frame reads the same length, not a clock
   assert(fsm.snapshot(ended.t + 40, "dwell_ended").dwell_ms == ended.t - dwell_at);
@@ -124,6 +129,7 @@ static void test_linger_dwell_ended_reports_its_dwell() {
   assert(s.snap.dwell_ms == 0);
   assert(s.snap.presence_ms == 0);
   assert(s.snap.visit_ms == t - present_at);  // last_visit_ms_, unchanged
+  assert(s.snap.visit_ms > (last_seen - present_at) + LOST_TIMEOUT_MS);  // the tail too
   const uint32_t visit = s.snap.visit_ms;
 
   t += 100;

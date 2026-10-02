@@ -20,8 +20,10 @@
 # clocks each event actually carries (firmware/projects/canary-vision/README.md,
 # "The clocks and the cell on an event row"): dwell_started reports how long
 # the person has been in view (presence_ms), interaction_likely how long the
-# visit lasted (visit_ms). dwell_ms is 0 on both: the dwell starts on
-# dwell_started's frame, and interaction_likely follows presence_ended.
+# visit lasted (visit_ms, counted to the frame that declared the person gone,
+# so it includes the device's lost timeout). dwell_ms is 0 on both: the dwell
+# starts on dwell_started's frame, and interaction_likely follows
+# presence_ended.
 
 # ---------------------------------------------------------------------------
 # A) Dwell / interaction alert

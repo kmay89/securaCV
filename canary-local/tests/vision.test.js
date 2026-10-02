@@ -145,6 +145,31 @@ test("every HA discovery entity name is a real literal in ha_discovery.cpp", () 
   }
 });
 
+// What the page says the voxel and the lengths mean (the A39/F130 review):
+// the settled cell is reset only at boot, so it carries into the next visit
+// and stays after a visit ends; dwell_ended's dwell_ms and visit_ms run to
+// the frame that declared the person gone, lost timeout included. Data-only:
+// it needs no core, so it holds the words whatever dist is committed.
+test("the pane note and the Voxel entity say how the settled cell and the lengths behave", () => {
+  const note = data.mqtt.pane.clock.note;
+  const tracker = read(join(FW, "src/state/voxel_tracker.cpp"));
+  // the facts the words stand on
+  assert.ok(fsmCpp.includes("s.voxel = voxel_tracker_.stable();"));
+  assert.strictEqual(fsmCpp.split("voxel_tracker_.reset();").length - 1, 1, "reset only in PresenceFSM::reset()");
+  assert.strictEqual(mainCpp.split("fsm.reset();").length - 1, 1, "which main.cpp calls once, at boot");
+  assert.ok(tracker.includes("  stable_ = Voxel{-1,-1,0,0};"));
+  assert.ok(fsmCpp.includes("if (presence_ && (now_ms - last_seen_ms_) > canary::cfg::detect().lost_timeout_ms) {"));
+  assert.ok(fsmCpp.includes("ended_dwell_ms_ = now_ms - dwell_start_ms_;"));
+  assert.ok(fsmCpp.includes("last_visit_ms_ = now_ms - presence_start_ms_;"));
+  // the words
+  assert.match(note, /stays put once the frame is empty and is not reset between visits/);
+  assert.match(note, /That length and visit_ms run to the frame that declared the person gone, so both include the lost timeout/);
+  const voxel = data.mqtt.discovery.entities.find((e) => e.name === "Voxel");
+  assert.match(voxel.desc, /last settled in/);
+  assert.match(voxel.desc, /it stays after they leave, and reads -1,-1 only until someone is seen/);
+  assert.doesNotMatch(voxel.desc, /occupied cell/, "the sensor is the settled cell, not the frame's occupied one");
+});
+
 // The JSON keys an snprintf format in a firmware function writes, in order.
 const fmtKeys = (src, signature, from, to) => {
   let body = src.split(signature)[1].split("\n}\n")[0];

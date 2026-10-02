@@ -118,10 +118,13 @@ EMSCRIPTEN_KEEPALIVE int vision_emu_push_box(int x, int y, int w, int h,
 // and publish_state_retained read on that tick. "sample" is the frame's own
 // reading (its cell is the primary box's); "fsm" is what the device
 // publishes: the clocks (presence_ms, dwell_ms, and visit_ms, the last
-// completed stay the FSM latches at presence_ended) and the voxel tracker's
-// settled cell, which moves only once the person has been seen away from it
-// three times in a row, and keeps the last cell once the frame is empty
-// (sweep A39).
+// completed stay the FSM latches at presence_ended; dwell_ended's dwell_ms
+// and visit_ms both run to the frame that declared the person gone, so they
+// include the lost timeout) and the voxel tracker's settled cell, which
+// moves only once the person has been seen away from it three times in a
+// row, keeps the last cell once the frame is empty, and is not reset
+// between visits, so a later visit's presence_started, and its frames until
+// the new cell settles, name the previous visit's cell (sweep A39).
 EMSCRIPTEN_KEEPALIVE const char* vision_emu_tick_json(unsigned int now_ms) {
   g_sample = canary::vision::detection::sample_from_boxes(
       g_boxes, canary::cfg::detect());

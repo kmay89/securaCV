@@ -571,7 +571,7 @@
         {
           "name": "Voxel",
           "component": "sensor",
-          "desc": "the occupied cell of the 3\u00d73 grid, as \"r,c\""
+          "desc": "the cell of the 3\u00d73 grid the subject last settled in, as \"r,c\"; it stays after they leave, and reads -1,-1 only until someone is seen"
         },
         {
           "name": "Occupancy",
@@ -668,7 +668,7 @@
       "source": "payload keys from mqtt_mgr.cpp + main.cpp",
       "clock": {
         "t0_ms": 41250,
-        "note": "Every key is the firmware's, and so are the values the sandbox moves: presence_ms, visit_ms (the last completed stay), the voxel (its tracker's settled cell, which trails the frame's cell by a few frames and stays put once the frame is empty), posture, proximity, occupancy and occ_mask come from the firmware core this page runs, and ts_ms is its clock. dwell_ms is the core's too: 0 on dwell_started, where the dwell starts, the length of the dwell it closed on dwell_ended, and 0 on the other events, which are not dwelling; a running dwell rides the state heartbeat, which this pane does not stage. One value stays illustrative: a moved chain head's hash is elided."
+        "note": "Every key is the firmware's, and so are the values the sandbox moves: presence_ms, visit_ms (the last completed stay), the voxel (its tracker's settled cell, which trails the frame's cell by a few frames, stays put once the frame is empty and is not reset between visits, so a new visit starts on the last one's cell until its own settles), posture, proximity, occupancy and occ_mask come from the firmware core this page runs, and ts_ms is its clock. dwell_ms is the core's too: 0 on dwell_started, where the dwell starts, the length of the dwell it closed on dwell_ended, and 0 on the other events, which are not dwelling. That length and visit_ms run to the frame that declared the person gone, so both include the lost timeout. A running dwell rides the state heartbeat, which this pane does not stage. One value stays illustrative: a moved chain head's hash is elided."
       },
       "occupancy": [
         "none",

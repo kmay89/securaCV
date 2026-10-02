@@ -582,7 +582,8 @@ ENTITY_META = {
     "Presence": ("binary_sensor", "someone is here (motion class)"),
     "Dwelling": ("binary_sensor", "someone has stayed — occupancy class"),
     "Confidence": ("sensor", "best-box score, 0–100 %"),
-    "Voxel": ("sensor", f"the occupied cell of the {VOXEL_COLS}×{VOXEL_ROWS} grid, as \"r,c\""),
+    "Voxel": ("sensor", f"the cell of the {VOXEL_COLS}×{VOXEL_ROWS} grid the subject last settled in, as "
+                        "\"r,c\"; it stays after they leave, and reads -1,-1 only until someone is seen"),
     "Occupancy": ("sensor", "coarse count bucket — none / one / two / several, never an exact tally"),
     "Posture": ("sensor", "coarse posture ordinal from box shape — upright / horizontal / ambiguous"),
     "Proximity": ("sensor", "coarse distance ordinal from box area — near / mid / far"),
@@ -726,6 +727,14 @@ EX_TS_MS, EX_UPTIME_S, EX_HEAP, EX_HEAP_MIN, EX_CHAIN = 41250, 41, 183424, 17103
 # device's first state row prints (the example used to say 3 x 3).
 must(PRESENCE_FSM_CPP, "s.voxel = voxel_tracker_.stable();", "the rows publish the settled cell")
 must(VOXEL_TRACKER_CPP, "  stable_ = Voxel{-1,-1,0,0};", "the tracker's reset cell")
+# ...and it is reset nowhere else: PresenceFSM::reset() is its one caller and
+# main.cpp calls that once, at boot, so the settled cell (and the time it
+# settled) carries from one visit into the next, as the pane's note says.
+if (read(PRESENCE_FSM_CPP).count("voxel_tracker_.reset();") != 1
+        or "  voxel_tracker_.reset();\n}" not in read(PRESENCE_FSM_CPP)
+        or read(MAIN_CPP).count("fsm.reset();") != 1):
+    die("the voxel tracker is reset somewhere other than PresenceFSM::reset() at boot: "
+        "the pane note's \"not reset between visits\" is stale")
 VOXEL_IDLE = {"rows": 0, "cols": 0, "r": -1, "c": -1}
 PANE_ONLINE = [
     ("status", True, keyed_as({
@@ -764,7 +773,10 @@ EVENT_PANE = keyed_as({
 # dwell_ended the length of the dwell it closed, latched in ended_dwell_ms_
 # for that tick because dwelling_ is cleared before the snapshot, sweep F130;
 # 0 on the rest, which are not dwelling), visit_ms (last_visit_ms_, the
-# last completed stay) and voxel (the tracker's settled cell, sweep A39),
+# last completed stay; it and dwell_ended's length both run to the frame
+# that declared the person gone, lost timeout included) and voxel (the
+# tracker's settled cell, sweep A39, which PresenceFSM resets only in
+# reset(), at boot, so it carries from one visit into the next),
 # and the frame's posture, proximity, person count and occupied-cell mask.
 # ts_ms is that clock plus the example's ts_ms (the sandbox clock starts
 # where these rows stand) and bucket_uptime_s its 10-minute bucket.
@@ -807,11 +819,15 @@ MQTT["pane"] = {
     "clock": {"t0_ms": EX_TS_MS,
               "note": "Every key is the firmware's, and so are the values the sandbox moves: presence_ms, "
                       "visit_ms (the last completed stay), the voxel (its tracker's settled cell, which "
-                      "trails the frame's cell by a few frames and stays put once the frame is empty), "
+                      "trails the frame's cell by a few frames, stays put once the frame is empty and is not "
+                      "reset between visits, so a new visit starts on the last one's cell until its own "
+                      "settles), "
                       "posture, proximity, occupancy and occ_mask come from the firmware core this page runs, "
                       "and ts_ms is its clock. dwell_ms is the core's too: 0 on dwell_started, where the "
                       "dwell starts, the length of the dwell it closed on dwell_ended, and 0 on the other "
-                      "events, which are not dwelling; a running dwell rides the state heartbeat, which this "
+                      "events, which are not dwelling. That length and visit_ms run to the frame that "
+                      "declared the person gone, so both include the lost timeout. A running dwell rides "
+                      "the state heartbeat, which this "
                       "pane does not stage. One value stays illustrative: a moved chain head's hash is "
                       "elided."},
     "occupancy": OCCUPANCY,
