@@ -146,23 +146,29 @@ test("every HA discovery entity name is a real literal in ha_discovery.cpp", () 
 });
 
 // What the page says the voxel and the lengths mean (the A39/F130 review):
-// the settled cell is reset only at boot, so it carries into the next visit
-// and stays after a visit ends; dwell_ended's dwell_ms and visit_ms run to
-// the frame that declared the person gone, lost timeout included. Data-only:
-// it needs no core, so it holds the words whatever dist is committed.
+// the settled cell stays after a visit ends, and each visit starts its own
+// tracker (sweep F152: reset at boot and on the frame that starts a visit),
+// so a visit opens on its own cell; dwell_ended's dwell_ms and visit_ms run
+// to the frame that declared the person gone, lost timeout included.
+// Data-only: it needs no core, so it holds the words whatever dist is
+// committed.
 test("the pane note and the Voxel entity say how the settled cell and the lengths behave", () => {
   const note = data.mqtt.pane.clock.note;
   const tracker = read(join(FW, "src/state/voxel_tracker.cpp"));
   // the facts the words stand on
   assert.ok(fsmCpp.includes("s.voxel = voxel_tracker_.stable();"));
-  assert.strictEqual(fsmCpp.split("voxel_tracker_.reset();").length - 1, 1, "reset only in PresenceFSM::reset()");
+  assert.strictEqual(fsmCpp.split("voxel_tracker_.reset();").length - 1, 2,
+    "reset in PresenceFSM::reset() and on the frame that starts a visit");
+  assert.ok(fsmCpp.includes("    if (!presence_) voxel_tracker_.reset();\n    voxel_tracker_.update(vs.voxel, now_ms);\n"),
+    "a new visit's first frame resets the tracker before it seeds the cell (sweep F152)");
   assert.strictEqual(mainCpp.split("fsm.reset();").length - 1, 1, "which main.cpp calls once, at boot");
   assert.ok(tracker.includes("  stable_ = Voxel{-1,-1,0,0};"));
   assert.ok(fsmCpp.includes("if (presence_ && (now_ms - last_seen_ms_) > canary::cfg::detect().lost_timeout_ms) {"));
   assert.ok(fsmCpp.includes("ended_dwell_ms_ = now_ms - dwell_start_ms_;"));
   assert.ok(fsmCpp.includes("last_visit_ms_ = now_ms - presence_start_ms_;"));
   // the words
-  assert.match(note, /stays put once the frame is empty and is not reset between visits/);
+  assert.match(note, /stays put once the frame is empty; each visit starts on its own cell, the one presence_started saw/);
+  assert.doesNotMatch(note, /not reset between visits|starts on the last one's cell/, "F152: each visit starts its own tracker");
   assert.match(note, /That length and visit_ms run to the frame that declared the person gone, so both include the lost timeout/);
   const voxel = data.mqtt.discovery.entities.find((e) => e.name === "Voxel");
   assert.match(voxel.desc, /last settled in/);
@@ -563,6 +569,48 @@ test("firmware wasm: a stable voxel qualifies interaction without dwell", async 
   core.tick(2600, person);
   assert.strictEqual(core.tick(3200, []).event, "presence_ended");
   assert.strictEqual(core.tick(6301, []).event, null);
+});
+
+// Sweep F152: each visit starts its own voxel tracker, so a short visit after
+// a long one is not an interaction, and presence_started names the cell the
+// visit began in. Before it the tracker kept the earlier visit's settle time
+// and cell, so this revisit ended in zone_interaction_then_left and opened on
+// the first visit's cell. Needs a dist built from this tree's
+// presence_fsm.cpp (CI's pinned-emsdk rebuild); on an older dist it fails here.
+test("firmware wasm: each visit starts its own interaction clock and cell (sweep F152)", async () => {
+  const core = await firmwareCore();
+  core.configure({ ...data.detect, dwell_start_ms: 60000, lost_timeout_ms: 500 });
+  const at = (cx, cy) => [{ x: cx - 20, y: cy - 40, w: 40, h: 80, score: 90, target: 0 }];
+  const center = at(120, 120), corner = at(200, 40);
+  const events = [];
+  const run = (from, to, boxes) => {
+    let last = null;
+    for (let t = from; t < to; t += 100) {
+      const k = core.tick(t, boxes);
+      if (k.event) events.push(k.reason ? k.event + ":" + k.reason : k.event);
+      if (k.event === "presence_started") last = k;
+    }
+    return last;
+  };
+  // a 4 s visit settled in the center cell qualifies by the zone rule
+  const first = run(0, 4000, center);
+  assert.deepStrictEqual([first.fsm.voxel.r, first.fsm.voxel.c], [1, 1]);
+  run(4000, 9000, []);
+  assert.deepStrictEqual(events, ["presence_started", "presence_ended", "interaction_likely:zone_interaction_then_left"]);
+  // a 1 s pass through the top-right cell does not, and opens on its own cell
+  events.length = 0;
+  const pass = run(9000, 10000, corner);
+  assert.deepStrictEqual([pass.sample.voxel.r, pass.sample.voxel.c], [0, 2]);
+  assert.deepStrictEqual([pass.fsm.voxel.r, pass.fsm.voxel.c], [0, 2],
+    "presence_started names the cell this visit began in, not the last visit's (1,1)");
+  run(10000, 15000, []);
+  assert.deepStrictEqual(events, ["presence_started", "presence_ended"],
+    "a 1 s visit after a 4 s one is not an interaction");
+  // and a long settled visit after it still is
+  events.length = 0;
+  run(15000, 19000, corner);
+  run(19000, 24000, []);
+  assert.deepStrictEqual(events, ["presence_started", "presence_ended", "interaction_likely:zone_interaction_then_left"]);
 });
 
 test("iou + nms behave like a de-dup pass", async () => {

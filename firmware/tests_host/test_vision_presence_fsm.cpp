@@ -16,6 +16,26 @@
 //   * both lengths run to the frame that declared the person gone, so they
 //     include the lost timeout (the README's clocks table says so).
 //
+// Pinned here (sweep F152): each visit starts its own voxel tracker. Before,
+// PresenceFSM reset the tracker only in reset(), at boot, so a later visit's
+// interaction clock (now - stable_enter_ms >= ZONE_INTERACTION_MS) started in
+// an earlier visit and almost every visit but the first ended in
+// interaction_likely (zone_interaction_then_left), however short it was; and
+// its presence_started named the earlier visit's cell. A 1 s revisit and a
+// 0.5 s pass in another cell after a 4 s visit end without it now, a long
+// settled visit still ends with it, and presence_started names the cell the
+// visit began in.
+//
+// Pinned here (sweep F154), in a second build of this file with
+// -DVISION_DWELL_END_GRACE_MS=4000 (longer than the 1.5 s lost timeout):
+// the dwell end grace holds a dweller present and dwelling past the lost
+// timeout, a dweller back within it keeps the dwell, and once it has passed
+// dwell_ended still fires with the dwell's length before presence_ended.
+// Before, the FSM cleared the dwell silently and sent presence_ended at the
+// lost timeout, so the dwell's end was never reported. The grace is for
+// dwellers only, and a lost timeout longer than the grace still governs.
+// The shipped build (grace 0) runs the rest of the file.
+//
 // presence_fsm.cpp and voxel_tracker.cpp are linked verbatim; the only
 // stand-in is canary::cfg::detect(), the NVS-backed tuning, which is
 // replaced by a struct the test owns so no Arduino shim is needed.
@@ -24,6 +44,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 #include "canary/config.h"
 #include "canary/detect_config.h"
@@ -73,6 +94,37 @@ static bool step(PresenceFSM& fsm, const VisionSample& vs, uint32_t t, Seen& out
 }
 
 static bool is(const Seen& s, const char* name) { return s.name && std::strcmp(s.name, name) == 0; }
+
+// One visit: `ms` of person frames in cell (r, c) from `t`, then empty frames
+// until the post-leave window has closed. Returns every event, in order, as
+// "name" or "name:reason", and leaves `t` after the last empty frame.
+struct Visit {
+  std::string events;
+  StateSnapshot started{};  // presence_started's snapshot
+  bool interaction = false;
+  const char* reason = nullptr;
+};
+static Visit visit(PresenceFSM& fsm, uint32_t& t, int r, int c, uint32_t ms) {
+  Visit v;
+  Seen s;
+  const auto note = [&]() {
+    if (!v.events.empty()) v.events += ' ';
+    v.events += s.name;
+    if (s.reason) { v.events += ':'; v.events += s.reason; }
+    if (is(s, "presence_started")) v.started = s.snap;
+    if (is(s, "interaction_likely")) { v.interaction = true; v.reason = s.reason; }
+  };
+  for (const uint32_t end = t + ms; t < end; t += 100)
+    if (step(fsm, person(r, c), t, s)) note();
+  const uint32_t quiet = t + canary::cfg::detect().lost_timeout_ms + DWELL_END_GRACE_MS +
+                         INTERACTION_AFTER_LEAVE_WINDOW_MS + 1000;
+  for (; t < quiet; t += 100)
+    if (step(fsm, empty(), t, s)) note();
+  return v;
+}
+
+// The shipped build's dwell tests (grace 0: the lost timeout ends every stay).
+#if VISION_DWELL_END_GRACE_MS == 0
 
 // A person stays past the dwell start, then leaves. Frames every 100 ms, the
 // firmware's INVOKE_PERIOD_MS.
@@ -202,11 +254,223 @@ static void test_reset_clears_the_latch() {
   assert(z.dwell_ms == 0 && z.visit_ms == 0 && !z.presence && !z.dwelling);
 }
 
+#endif  // VISION_DWELL_END_GRACE_MS == 0
+
+// ---- sweep F152: each visit starts its own interaction clock ----
+
+// The visits below never dwell (each is far under DWELL_START_MS), so the
+// only way they qualify is zone_interaction_then_left: seen in one settled
+// cell for ZONE_INTERACTION_MS of this visit.
+static_assert(4000 >= ZONE_INTERACTION_MS + 1000 && 4000 < DWELL_START_MS, "a long settled visit");
+static_assert(1000 < ZONE_INTERACTION_MS, "a short visit");
+
+// A fresh FSM's 1 s visit: no interaction (this held before F152 too).
+static void test_fresh_short_visit_is_not_an_interaction() {
+  PresenceFSM fsm;
+  fsm.reset();
+  uint32_t t = 1000;
+  const Visit v = visit(fsm, t, 1, 1, 1000);
+  assert(v.events == "presence_started presence_ended");
+  assert(!v.interaction);
+}
+
+// A 4 s visit settled in one cell is an interaction (and still is); a 1 s
+// revisit in the same cell after it is not. Before F152 the revisit's
+// interaction clock was the first visit's settle time, so its second frame
+// qualified and it ended in zone_interaction_then_left.
+static void test_revisit_starts_its_own_clock() {
+  PresenceFSM fsm;
+  fsm.reset();
+  uint32_t t = 1000;
+  const Visit first = visit(fsm, t, 1, 1, 4000);
+  assert(first.events == "presence_started presence_ended interaction_likely:zone_interaction_then_left");
+  t += 30000;  // any later time
+  const Visit again = visit(fsm, t, 1, 1, 1000);
+  assert(again.events == "presence_started presence_ended");
+  assert(!again.interaction);
+  std::printf("  1 s revisit after a 4 s visit: %s\n", again.events.c_str());
+}
+
+// A 0.5 s pass through another cell after a 4 s visit: no interaction, and
+// its presence_started names the cell the pass began in. Before F152 it named
+// the last visit's cell (the tracker kept it until the new one settled, three
+// frames in) and the pass ended in interaction_likely.
+static void test_pass_in_another_cell_names_its_own_cell() {
+  PresenceFSM fsm;
+  fsm.reset();
+  uint32_t t = 1000;
+  const Visit first = visit(fsm, t, 2, 0, 4000);
+  assert(first.interaction);
+  assert(first.started.voxel.r == 2 && first.started.voxel.c == 0);
+  const Visit pass = visit(fsm, t, 0, 2, 500);
+  assert(pass.events == "presence_started presence_ended");
+  assert(pass.started.voxel.r == 0 && pass.started.voxel.c == 2);  // not (2,0)
+  assert(pass.started.voxel.rows == VOXEL_ROWS && pass.started.voxel.cols == VOXEL_COLS);
+  std::printf("  0.5 s pass in (0,2) after a 4 s visit in (2,0): %s, opened on (%d,%d)\n",
+              pass.events.c_str(), pass.started.voxel.r, pass.started.voxel.c);
+}
+
+// After short visits, a long settled one still qualifies, on its own clock:
+// not before ZONE_INTERACTION_MS of this visit in one cell.
+static void test_long_settled_visit_still_qualifies() {
+  PresenceFSM fsm;
+  fsm.reset();
+  uint32_t t = 1000;
+  visit(fsm, t, 1, 1, 1000);
+  visit(fsm, t, 0, 0, 500);
+  const Visit stay = visit(fsm, t, 1, 1, 4000);
+  assert(stay.events == "presence_started presence_ended interaction_likely:zone_interaction_then_left");
+  assert(std::strcmp(stay.reason, "zone_interaction_then_left") == 0);
+  // a visit that leaves just short of the zone window does not
+  const Visit nearly = visit(fsm, t, 1, 1, ZONE_INTERACTION_MS - 200);
+  assert(!nearly.interaction);
+  // and one that stays just past it does
+  const Visit just = visit(fsm, t, 1, 1, ZONE_INTERACTION_MS + 200);
+  assert(just.interaction);
+}
+
+// The first sighting after boot seeds the settled cell, as before.
+static void test_first_visit_after_boot_opens_on_its_cell() {
+  PresenceFSM fsm;
+  fsm.reset();
+  const StateSnapshot idle = fsm.snapshot(0, "boot");
+  assert(idle.voxel.r == -1 && idle.voxel.c == -1);
+  uint32_t t = 1000;
+  const Visit v = visit(fsm, t, 2, 1, 300);
+  assert(v.started.voxel.r == 2 && v.started.voxel.c == 1);
+  // and the cell stays after the visit ends (presence_ended names where they were)
+  const StateSnapshot after = fsm.snapshot(t, "presence_ended");
+  assert(after.voxel.r == 2 && after.voxel.c == 1);
+}
+
+// ---- sweep F154: the dwell end grace (the build with a grace) ----
+#if VISION_DWELL_END_GRACE_MS > 0
+
+// Stay past the dwell start in (1,1); returns the dwell_started tick and
+// leaves `t` on the frame after the last sighting.
+static uint32_t dwell_then_leave(PresenceFSM& fsm, uint32_t& t, uint32_t& present_at,
+                                 uint32_t& last_seen) {
+  Seen s;
+  present_at = t;
+  assert(step(fsm, person(), t, s) && is(s, "presence_started"));
+  uint32_t dwell_at = 0;
+  for (t += 100; t <= present_at + DWELL_START_MS + 1000; t += 100)
+    if (step(fsm, person(), t, s) && is(s, "dwell_started")) dwell_at = t;
+  assert(dwell_at == present_at + DWELL_START_MS);
+  last_seen = t - 100;
+  return dwell_at;
+}
+
+static void test_grace_holds_the_dweller_then_dwell_ended_fires() {
+  static_assert(DWELL_END_GRACE_MS > LOST_TIMEOUT_MS, "the grace build");
+  PresenceFSM fsm;
+  fsm.reset();
+  Seen s;
+  uint32_t t = 1000, present_at = 0, last_seen = 0;
+  const uint32_t dwell_at = dwell_then_leave(fsm, t, present_at, last_seen);
+  // past the lost timeout and up to the grace: still present and dwelling,
+  // the dwell running, nothing sent
+  for (; t - last_seen <= DWELL_END_GRACE_MS; t += 100) {
+    assert(!step(fsm, empty(), t, s));
+    assert(s.snap.presence && s.snap.dwelling);
+    assert(s.snap.dwell_ms == t - dwell_at);
+    assert(s.snap.confidence == 0);  // nobody in this frame
+  }
+  // the first frame past the grace ends the dwell, with its length
+  assert(t - last_seen > DWELL_END_GRACE_MS);
+  assert(step(fsm, empty(), t, s) && is(s, "dwell_ended"));
+  assert(s.snap.presence && !s.snap.dwelling);
+  assert(s.snap.dwell_ms == t - dwell_at);
+  assert(s.snap.dwell_ms > (last_seen - dwell_at) + DWELL_END_GRACE_MS);
+  const uint32_t ended = t;
+  // then the stay, on the next frame
+  t += 100;
+  assert(step(fsm, empty(), t, s) && is(s, "presence_ended"));
+  assert(!s.snap.presence && s.snap.dwell_ms == 0);
+  assert(s.snap.visit_ms == t - present_at);
+  t += 100;
+  assert(step(fsm, empty(), t, s) && is(s, "interaction_likely"));
+  assert(std::strcmp(s.reason, "dwell_then_left") == 0);
+  std::printf("  grace %lu ms: dwell_ended %lu ms after the last sighting, dwell %lu ms\n",
+              (unsigned long)DWELL_END_GRACE_MS, (unsigned long)(ended - last_seen),
+              (unsigned long)(ended - dwell_at));
+}
+
+// A dweller who drops out of frame for longer than the lost timeout but less
+// than the grace keeps the dwell: no event at all, and the dwell runs on from
+// where it started.
+static void test_dweller_back_within_the_grace_keeps_the_dwell() {
+  PresenceFSM fsm;
+  fsm.reset();
+  Seen s;
+  uint32_t t = 1000, present_at = 0, last_seen = 0;
+  const uint32_t dwell_at = dwell_then_leave(fsm, t, present_at, last_seen);
+  const uint32_t gap = LOST_TIMEOUT_MS + (DWELL_END_GRACE_MS - LOST_TIMEOUT_MS) / 2;
+  for (; t - last_seen < gap; t += 100) assert(!step(fsm, empty(), t, s));
+  assert(t - last_seen > LOST_TIMEOUT_MS);
+  for (int i = 0; i < 20; ++i, t += 100) {
+    assert(!step(fsm, person(), t, s));  // no presence_started, no dwell_started
+    assert(s.snap.presence && s.snap.dwelling);
+    assert(s.snap.dwell_ms == t - dwell_at);
+    assert(s.snap.presence_ms == t - present_at);
+  }
+}
+
+// The grace is for dwellers: a walk-by is let go at the lost timeout.
+static void test_grace_is_for_dwellers_only() {
+  PresenceFSM fsm;
+  fsm.reset();
+  Seen s;
+  uint32_t t = 1000;
+  for (const uint32_t end = t + 2000; t < end; t += 100) step(fsm, person(), t, s);
+  const uint32_t last_seen = t - 100;
+  for (;; t += 100) {
+    if (step(fsm, empty(), t, s)) break;
+    assert(t - last_seen <= LOST_TIMEOUT_MS);
+  }
+  assert(is(s, "presence_ended"));
+  assert(t - last_seen > LOST_TIMEOUT_MS && t - last_seen <= LOST_TIMEOUT_MS + 100);
+}
+
+// A lost timeout longer than the grace governs a dweller too.
+static void test_longer_lost_timeout_governs() {
+  canary::cfg::g_test_cfg.lost_timeout_ms = DWELL_END_GRACE_MS + 2000;
+  PresenceFSM fsm;
+  fsm.reset();
+  Seen s;
+  uint32_t t = 1000, present_at = 0, last_seen = 0;
+  dwell_then_leave(fsm, t, present_at, last_seen);
+  for (;; t += 100) {
+    if (step(fsm, empty(), t, s)) break;
+    assert(t - last_seen <= DWELL_END_GRACE_MS + 2000);
+  }
+  assert(is(s, "dwell_ended"));
+  assert(t - last_seen > DWELL_END_GRACE_MS + 2000);
+  canary::cfg::g_test_cfg.lost_timeout_ms = LOST_TIMEOUT_MS;
+}
+#endif  // VISION_DWELL_END_GRACE_MS > 0
+
 int main() {
+  test_fresh_short_visit_is_not_an_interaction();
+  test_revisit_starts_its_own_clock();
+  test_pass_in_another_cell_names_its_own_cell();
+  test_long_settled_visit_still_qualifies();
+  test_first_visit_after_boot_opens_on_its_cell();
+#if VISION_DWELL_END_GRACE_MS > 0
+  test_grace_holds_the_dweller_then_dwell_ended_fires();
+  test_dweller_back_within_the_grace_keeps_the_dwell();
+  test_grace_is_for_dwellers_only();
+  test_longer_lost_timeout_governs();
+  std::printf("ALL VISION PRESENCE FSM TESTS PASSED (dwell end grace %lu ms)\n",
+              (unsigned long)DWELL_END_GRACE_MS);
+#else
+  // the shipped grace: 0, the lost timeout ends every stay
+  static_assert(DWELL_END_GRACE_MS == 0, "the shipped build");
   test_linger_dwell_ended_reports_its_dwell();
   test_return_after_dwell_ended_starts_from_zero();
   test_walk_by_never_dwells();
   test_reset_clears_the_latch();
   std::printf("ALL VISION PRESENCE FSM TESTS PASSED\n");
+#endif
   return 0;
 }

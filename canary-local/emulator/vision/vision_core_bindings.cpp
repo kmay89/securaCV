@@ -122,9 +122,9 @@ EMSCRIPTEN_KEEPALIVE int vision_emu_push_box(int x, int y, int w, int h,
 // and visit_ms both run to the frame that declared the person gone, so they
 // include the lost timeout) and the voxel tracker's settled cell, which
 // moves only once the person has been seen away from it three times in a
-// row, keeps the last cell once the frame is empty, and is not reset
-// between visits, so a later visit's presence_started, and its frames until
-// the new cell settles, name the previous visit's cell (sweep A39).
+// row and keeps the last cell once the frame is empty (sweep A39). Each
+// visit starts its own tracker, so a visit's presence_started names the
+// cell that visit began in (sweep F152).
 EMSCRIPTEN_KEEPALIVE const char* vision_emu_tick_json(unsigned int now_ms) {
   g_sample = canary::vision::detection::sample_from_boxes(
       g_boxes, canary::cfg::detect());

@@ -510,8 +510,9 @@ VISPROF_BIN = $(BUILD_DIR)/test_vision_profiles
 # Canary Vision presence FSM (src/state/presence_fsm.cpp + voxel_tracker.cpp,
 # linked verbatim): the clocks each event row carries, read from the snapshot
 # publish_event_json takes on the tick that emitted the event. Pins dwell_ended
-# reporting the dwell it closed (sweep F130), dwell_started's 0, and visit_ms's
-# own latch. detect() is the test's struct, so no Arduino shim is linked.
+# reporting the dwell it closed (sweep F130), dwell_started's 0, visit_ms's own
+# latch, and each visit's own interaction clock and opening cell (F152).
+# detect() is the test's struct, so no Arduino shim is linked.
 VISION_SRC = ../projects/canary-vision/src
 VISFSM_SRC = $(VISION_SRC)/state/presence_fsm.cpp $(VISION_SRC)/state/voxel_tracker.cpp
 VISFSM_HDR = $(VISION_INC)/canary/state/presence_fsm.h \
@@ -520,6 +521,12 @@ VISFSM_HDR = $(VISION_INC)/canary/state/presence_fsm.h \
              $(VISION_INC)/canary/config.h \
              $(VISION_INC)/canary/types.h
 VISFSM_BIN = $(BUILD_DIR)/test_vision_presence_fsm
+# The same suite built with a dwell end grace longer than the default lost
+# timeout (config.h's VISION_DWELL_END_GRACE_MS, 0 in every shipped build):
+# the grace holds a dweller past the lost timeout and dwell_ended still
+# fires with its length (sweep F154). main() picks the grace suite.
+VISFSM_GRACE_MS  = 4000
+VISFSM_GRACE_BIN = $(BUILD_DIR)/test_vision_presence_fsm_grace
 
 # The Vision core the Lab runs (emulator/dist/canary-vision-core.js), built
 # natively from the five sources build.sh's vision flavor hands em++, with the
@@ -826,6 +833,10 @@ $(VISPROF_BIN): test_vision_profiles.cpp $(VISPROF_HDR) Makefile | $(BUILD_DIR)
 $(VISFSM_BIN): test_vision_presence_fsm.cpp $(VISFSM_SRC) $(VISFSM_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(VISION_INC) -I $(VISION_CFG) test_vision_presence_fsm.cpp $(VISFSM_SRC) -o $@
 
+$(VISFSM_GRACE_BIN): test_vision_presence_fsm.cpp $(VISFSM_SRC) $(VISFSM_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DVISION_DWELL_END_GRACE_MS=$(VISFSM_GRACE_MS) -I $(VISION_INC) -I $(VISION_CFG) \
+	    test_vision_presence_fsm.cpp $(VISFSM_SRC) -o $@
+
 $(VISCORE_BIN): test_vision_core_bindings.cpp $(VISCORE_SRC) $(VISCORE_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -DARDUINO=10812 -I stubs/emscripten -I $(EMU_DIR)/shim -I $(EMU_DIR)/vision \
 	    -I $(VISION_INC) -I $(VISION_CFG) test_vision_core_bindings.cpp $(VISCORE_SRC) -o $@
@@ -865,7 +876,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -914,6 +925,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(VISION_PIPE_BIN)
 	./$(VISPROF_BIN)
 	./$(VISFSM_BIN)
+	./$(VISFSM_GRACE_BIN)
 	./$(VISCORE_BIN)
 	./$(FUSION_BIN)
 	./$(PRESET_DOOR_BIN)

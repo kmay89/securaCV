@@ -151,14 +151,34 @@ event (`publish_event_json` in `src/main.cpp`, `PresenceFSM::snapshot` in
 | `presence_ms` | every row | how long the current stay has lasted; 0 on `presence_started` (it starts on that frame) and once the stay has ended |
 | `dwell_ms` | every row | the running dwell while dwelling; on `dwell_ended`, the length of the dwell it closed, counted to the frame that declared the person gone, so it includes the lost timeout (below), and held until the next frame; otherwise 0. `dwell_started` reads 0 because the dwell starts on that frame |
 | `visit_ms` | `events` rows (the `state` row has no such key) | the length of the last **completed** stay, from `presence_started` to the frame that declared the person gone, so it includes the lost timeout too; latched at `presence_ended` and kept until the next one ends; 0 before any stay has ended |
-| `voxel` | every row | the voxel tracker's settled cell, not the frame's: it moves to a new cell only once the person has been seen away from it three times in a row (`VOXEL_STABLE_N` in `src/state/voxel_tracker.cpp`), and it keeps the last cell once the frame is empty, so `presence_ended` still names where the person was. It is not reset between visits either, so a later visit's `presence_started`, and its frames until the new cell settles, name the previous visit's cell. Before anyone has been seen since boot it is `r`/`c` -1 with `rows`/`cols` 0 |
+| `voxel` | every row | the voxel tracker's settled cell, not the frame's: it moves to a new cell only once the person has been seen away from it three times in a row (`VOXEL_STABLE_N` in `src/state/voxel_tracker.cpp`), and it keeps the last cell once the frame is empty, so `presence_ended` still names where the person was. Each visit starts its own tracker, so `presence_started` names the cell the person was first seen in on that visit, and the rows between visits keep naming where the last visit settled until then. Before anyone has been seen since boot it is `r`/`c` -1 with `rows`/`cols` 0 |
 
 Neither length stops at the last sighting. The FSM declares the person gone
 on the first frame more than `lost_ms` after it last saw them (the lost
 timeout in the table above: 1.5 s by default, 4 s in the `litter_box`
 preset, settable from 0.25 s to 60 s), and `dwell_ended`'s `dwell_ms` and
 `visit_ms` both run to that frame. So with the default timeout a dwell whose
-subject was last seen 1.9 s after it started reports about 3.5 s.
+subject was last seen 1.9 s after it started reports about 3.5 s. A dweller
+is held for `DWELL_END_GRACE_MS` instead (`include/canary/config.h`) when
+that is longer than the lost timeout: they stay present and dwelling until
+they have gone unseen for longer than the grace, a dweller seen again within
+it keeps the dwell, and `dwell_ended` (with the dwell's length, which then
+includes the grace) and `presence_ended` follow once it has passed. The
+grace is compile-time and 0 in every shipped build, so the lost timeout
+ends every stay on a device today.
+
+### When `interaction_likely` fires
+
+`interaction_likely` is sent on the frame after `presence_ended`, if nobody
+is in it (a person seen on that frame starts a new visit instead) and it
+falls within `INTERACTION_AFTER_LEAVE_WINDOW_MS` (3 s), when the visit that
+just ended qualified: it dwelled (reason `dwell_then_left`), or the person
+stayed in one settled cell for `ZONE_INTERACTION_MS` (2.5 s) of that visit
+(reason `zone_interaction_then_left`). Each visit is judged on its own: the tracker
+and its clock start again on the frame that starts the visit, so a short
+visit after a long one does not inherit the earlier visit's time in a cell.
+It fires after the person has gone, so its row reads `confidence` 0 (no box
+in that frame); `visit_ms` says how long the visit lasted.
 
 A running dwell is on the `state` rows (each heartbeat republishes
 one) and the dwell's final length on its `dwell_ended` row. The behavior is
@@ -216,11 +236,10 @@ Compile-tested; not yet bench-tested against a TLS broker.
 stateDiagram-v2
   [*] --> Idle
 
-  Idle --> Present: person_now
-  Present --> Idle: lost_timeout
-  Present --> Dwelling: present >= dwell_start_ms
-  Dwelling --> Present: (optional) dwell_end_grace
-  Dwelling --> Idle: lost_timeout
+  Idle --> Present: person_now (presence_started)
+  Present --> Idle: unseen > lost_timeout (presence_ended)
+  Present --> Dwelling: present >= dwell_start_ms (dwell_started)
+  Dwelling --> Present: unseen > max(lost_timeout, dwell_end_grace) (dwell_ended)
 
   state Present {
     [*] --> Watching
@@ -229,10 +248,10 @@ stateDiagram-v2
 
   state Dwelling {
     [*] --> Counting
-    Counting --> Counting: person_now continues
+    Counting --> Counting: person_now continues, or back within the grace
   }
 
-  Idle --> InteractionLikely: leave & qualified & within window
+  Idle --> InteractionLikely: left & this visit qualified & within window
   InteractionLikely --> Idle: after publish
 ```
 

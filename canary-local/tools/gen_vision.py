@@ -727,14 +727,19 @@ EX_TS_MS, EX_UPTIME_S, EX_HEAP, EX_HEAP_MIN, EX_CHAIN = 41250, 41, 183424, 17103
 # device's first state row prints (the example used to say 3 x 3).
 must(PRESENCE_FSM_CPP, "s.voxel = voxel_tracker_.stable();", "the rows publish the settled cell")
 must(VOXEL_TRACKER_CPP, "  stable_ = Voxel{-1,-1,0,0};", "the tracker's reset cell")
-# ...and it is reset nowhere else: PresenceFSM::reset() is its one caller and
-# main.cpp calls that once, at boot, so the settled cell (and the time it
-# settled) carries from one visit into the next, as the pane's note says.
-if (read(PRESENCE_FSM_CPP).count("voxel_tracker_.reset();") != 1
-        or "  voxel_tracker_.reset();\n}" not in read(PRESENCE_FSM_CPP)
+# ...and it is reset in two places only: PresenceFSM::reset(), which main.cpp
+# calls once, at boot, and the frame that starts a visit, before that frame's
+# update (sweep F152), so each visit's presence_started names the cell it
+# began in and the cell the last visit settled in stays only until then, as
+# the pane's note says.
+_fsm_src = read(PRESENCE_FSM_CPP)
+if (_fsm_src.count("voxel_tracker_.reset();") != 2
+        or "  voxel_tracker_.reset();\n}" not in _fsm_src
+        or "    if (!presence_) voxel_tracker_.reset();\n    voxel_tracker_.update(vs.voxel, now_ms);\n"
+           not in _fsm_src
         or read(MAIN_CPP).count("fsm.reset();") != 1):
-    die("the voxel tracker is reset somewhere other than PresenceFSM::reset() at boot: "
-        "the pane note's \"not reset between visits\" is stale")
+    die("the voxel tracker is no longer reset at boot and on the frame that starts a visit "
+        "(and nowhere else): the pane note's \"each visit starts on its own cell\" is stale")
 VOXEL_IDLE = {"rows": 0, "cols": 0, "r": -1, "c": -1}
 PANE_ONLINE = [
     ("status", True, keyed_as({
@@ -775,8 +780,8 @@ EVENT_PANE = keyed_as({
 # 0 on the rest, which are not dwelling), visit_ms (last_visit_ms_, the
 # last completed stay; it and dwell_ended's length both run to the frame
 # that declared the person gone, lost timeout included) and voxel (the
-# tracker's settled cell, sweep A39, which PresenceFSM resets only in
-# reset(), at boot, so it carries from one visit into the next),
+# tracker's settled cell, sweep A39, which PresenceFSM resets at boot and on
+# the frame that starts a visit, sweep F152, so each visit opens on its own),
 # and the frame's posture, proximity, person count and occupied-cell mask.
 # ts_ms is that clock plus the example's ts_ms (the sandbox clock starts
 # where these rows stand) and bucket_uptime_s its 10-minute bucket.
@@ -790,8 +795,8 @@ for needle in ("s.presence_ms = presence_ ? (now_ms - presence_start_ms_) : 0;",
                "last_visit_ms_ = now_ms - presence_start_ms_;\n    return emit(out_event, \"presence_ended\");",
                "presence_start_ms_ = now_ms;",
                "      dwelling_ = true;\n      dwell_start_ms_ = now_ms;\n      return emit(out_event, \"dwell_started\");",
-               "        ended_dwell_ms_ = now_ms - dwell_start_ms_;\n        dwelling_ = false;\n"
-               "        return emit(out_event, \"dwell_ended\");",
+               "      ended_dwell_ms_ = now_ms - dwell_start_ms_;\n      dwelling_ = false;\n"
+               "      return emit(out_event, \"dwell_ended\");",
                "s.posture      = posture_;", "s.proximity    = proximity_;", "s.voxel_mask   = voxel_mask_;",
                "s.ts_ms      = now_ms;"):
     must(PRESENCE_FSM_CPP, needle, "the FSM snapshot the pane derives its clocks from")
@@ -819,9 +824,8 @@ MQTT["pane"] = {
     "clock": {"t0_ms": EX_TS_MS,
               "note": "Every key is the firmware's, and so are the values the sandbox moves: presence_ms, "
                       "visit_ms (the last completed stay), the voxel (its tracker's settled cell, which "
-                      "trails the frame's cell by a few frames, stays put once the frame is empty and is not "
-                      "reset between visits, so a new visit starts on the last one's cell until its own "
-                      "settles), "
+                      "trails the frame's cell by a few frames and stays put once the frame is empty; each "
+                      "visit starts on its own cell, the one presence_started saw), "
                       "posture, proximity, occupancy and occ_mask come from the firmware core this page runs, "
                       "and ts_ms is its clock. dwell_ms is the core's too: 0 on dwell_started, where the "
                       "dwell starts, the length of the dwell it closed on dwell_ended, and 0 on the other "

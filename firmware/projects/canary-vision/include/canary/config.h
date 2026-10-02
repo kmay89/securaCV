@@ -95,7 +95,16 @@ static constexpr uint32_t LOST_TIMEOUT_MS = 1500;
 
 // Dwell
 static constexpr uint32_t DWELL_START_MS      = 10000;
-static constexpr uint32_t DWELL_END_GRACE_MS  = 0;
+// How long a DWELLING person may go unseen before the dwell ends, when that
+// is longer than the (runtime) lost timeout: the grace holds them present and
+// dwelling, and dwell_ended still fires with the dwell's length once it has
+// passed (src/state/presence_fsm.cpp, sweep F154). 0 in every shipped build,
+// which leaves the lost timeout in charge. Compile-time only; a build sets it
+// with -DVISION_DWELL_END_GRACE_MS=<ms> (the host suite builds both ways).
+#ifndef VISION_DWELL_END_GRACE_MS
+#define VISION_DWELL_END_GRACE_MS 0
+#endif
+static constexpr uint32_t DWELL_END_GRACE_MS  = VISION_DWELL_END_GRACE_MS;
 
 // Interaction heuristic
 static constexpr uint32_t INTERACTION_AFTER_LEAVE_WINDOW_MS = 3000;

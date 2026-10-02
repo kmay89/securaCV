@@ -54,6 +54,14 @@ bool PresenceFSM::tick(const VisionSample& vs, uint32_t now_ms, EventMsg& out_ev
 
   if (vs.person_now) {
     last_seen_ms_ = now_ms;
+    // A new visit starts its own tracker (sweep F152): the cell the last
+    // visit settled in, and the time it settled, say nothing about this one.
+    // Without it a later visit's interaction clock (stable_enter_ms) started
+    // in an earlier visit, so almost any later visit ended in
+    // interaction_likely. Reset before the update, so the first sighting
+    // seeds the settled cell, and presence_started names the cell this
+    // visit began in, as the first visit after boot always did.
+    if (!presence_) voxel_tracker_.reset();
     voxel_tracker_.update(vs.voxel, now_ms);
 
     if (!presence_) {
@@ -85,14 +93,19 @@ bool PresenceFSM::tick(const VisionSample& vs, uint32_t now_ms, EventMsg& out_ev
 
   if (presence_ && (now_ms - last_seen_ms_) > canary::cfg::detect().lost_timeout_ms) {
     if (dwelling_) {
-      if (DWELL_END_GRACE_MS == 0 || (now_ms - last_seen_ms_) >= DWELL_END_GRACE_MS) {
-        // Latch the finished dwell, on the clock the running dwell used, so
-        // the dwell_ended row says how long it lasted.
-        ended_dwell_ms_ = now_ms - dwell_start_ms_;
-        dwelling_ = false;
-        return emit(out_event, "dwell_ended");
-      }
+      // The dwell end grace holds a dweller past the lost timeout when it is
+      // the longer wait (sweep F154): they stay present and dwelling until
+      // they have gone unseen for longer than the grace too, so one who
+      // drops out of frame for less keeps the dwell, and a dwell that does
+      // end still sends dwell_ended with its length. Before, a grace longer
+      // than the lost timeout cleared the dwell silently and ended the stay
+      // on this tick. 0, the shipped value, leaves the lost timeout in charge.
+      if ((now_ms - last_seen_ms_) <= DWELL_END_GRACE_MS) return false;
+      // Latch the finished dwell, on the clock the running dwell used, so
+      // the dwell_ended row says how long it lasted.
+      ended_dwell_ms_ = now_ms - dwell_start_ms_;
       dwelling_ = false;
+      return emit(out_event, "dwell_ended");
     }
 
     presence_ = false;
