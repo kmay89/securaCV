@@ -21,9 +21,15 @@
  *   - at boot, one read-only handle for every module's init(): the host
  *     derives its csi_module_settings from Session below and hands one to
  *     csi_module_init_all(), and a namespace that will not open makes every
- *     read of that boot the default, after one attempt (Arduino's
- *     Preferences logs each failed open, and a canary's NVS has no "csi"
- *     namespace unless a canary-wap image made one);
+ *     read of that boot the default, after one attempt;
+ *   - a namespace that was never created (a canary's NVS has no "csi"
+ *     namespace unless a canary-wap image made one) is found by asking
+ *     IDF's nvs_open() first, which answers ESP_ERR_NVS_NOT_FOUND without
+ *     logging, and the boot then opens nothing: Arduino's
+ *     Preferences::begin() logs every failed open at error level ("nvs_open
+ *     failed: NOT_FOUND"), and the release envs keep error logs (sweep
+ *     F125). Any other answer still tries the open, so a real NVS fault
+ *     keeps its log line;
  *   - outside a session (a NULL handle: the canary-wap's re-init after a
  *     settings change), one read-only handle per read, closed before it
  *     returns;
@@ -40,7 +46,8 @@
  *
  * Header-only and Arduino-free: the readers take the Preferences type as a
  * template parameter, so the host tests instantiate them over a fake store.
- * C++11 (the canary's core-2.x envs).
+ * The namespace probe calls IDF's NVS C API ("nvs.h", in both Arduino-ESP32
+ * cores; the host tests stub it). C++11 (the canary's core-2.x envs).
  *
  * A host wires it up in three pieces (both trees do exactly this):
  *
@@ -63,6 +70,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+
+#include "nvs.h"   /* IDF's NVS C API: the quiet namespace probe (sweep F125) */
 
 namespace csi_module_settings_nvs {
 
@@ -131,8 +140,34 @@ struct Session {
   bool open = false;
 };
 
+/** What IDF's NVS says of a namespace before anything opens it. */
+enum class NamespaceState : uint8_t {
+  kPresent,   /* a read-only open succeeded (and was closed again) */
+  kAbsent,    /* ESP_ERR_NVS_NOT_FOUND: nothing ever created it */
+  kUnknown,   /* any other error: NVS not initialized, a bad partition... */
+};
+
+/** Probe `ns` with IDF's nvs_open(), which, unlike Arduino's
+ *  Preferences::begin(), logs nothing when the namespace is absent (sweep
+ *  F125). A namespace that is there is opened and closed again. */
+inline NamespaceState probe_namespace(const char* ns) {
+  nvs_handle_t handle;
+  const esp_err_t err = nvs_open(ns, NVS_READONLY, &handle);
+  if (err == ESP_OK) {
+    nvs_close(handle);
+    return NamespaceState::kPresent;
+  }
+  return err == ESP_ERR_NVS_NOT_FOUND ? NamespaceState::kAbsent : NamespaceState::kUnknown;
+}
+
+/** Open the boot's read-only handle. A namespace never created opens
+ *  nothing and logs nothing: every read of the session is its default, as
+ *  a refused open would make it. Present or unknown, Preferences opens it
+ *  (and logs a real fault, as before). */
 template <class Prefs>
 void begin(Session<Prefs>& session) {
+  session.open = false;
+  if (probe_namespace(kNamespace) == NamespaceState::kAbsent) return;
   session.open = session.prefs.begin(kNamespace, /*readOnly=*/true);
 }
 

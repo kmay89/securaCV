@@ -283,7 +283,7 @@ MODINT_SRC  = ../canary/src/csi_modules_integration.cpp $(IDSPACE_SRC) \
               $(MODINT_DIR)/core_multilink_fusion.cpp $(MODINT_DIR)/meta_empty_room_baseline.cpp \
               $(MODINT_DIR)/tamper_events_module.cpp
 MODINT_HDRS = ../canary/src/csi_modules_integration.h $(IDSPACE_HDRS) $(wildcard $(MODINT_DIR)/*.h) \
-              stubs/csi_modules/Preferences.h stubs/csi_hal/Arduino.h
+              stubs/csi_modules/Preferences.h stubs/csi_modules/nvs.h stubs/csi_hal/Arduino.h
 MODINT_BIN  = $(BUILD_DIR)/test_csi_modules_integration
 
 # The CSI modules' boot init on the canary (sweep F93): the same REAL bridge,

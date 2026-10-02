@@ -21,9 +21,17 @@
 // Against the canary before F93 (no boot init, a tick for every registered
 // module) every test fails but two: the commit test (the old bridge ran no
 // init, so nothing could commit there) and the key-map test, which guard
-// the new boot path. The once-per-boot and missing-namespace tests also
-// fail with the boot init handing csi_module_init_all() no session (a
-// handle per setting).
+// the new boot path. The once-per-boot and NVS-fault tests also fail with
+// the boot init handing csi_module_init_all() no session (a handle per
+// setting).
+//
+// Sweep F125: a canary's NVS has no "csi" namespace unless a canary-wap
+// image made one, and Arduino-ESP32's Preferences::begin() logs an
+// error-level "nvs_open failed: NOT_FOUND" for the boot's read-only open of
+// it. The shared session's begin() asks IDF's nvs_open() first, which says
+// NOT_FOUND without that log, and opens nothing. The clean-boot test fails
+// with begin() going straight to Preferences (the code before F125): one
+// Preferences open, one error line.
 //
 // Build/run: make -C firmware/tests_host (the CI "host tests" job).
 
@@ -104,6 +112,8 @@ static void reboot_and_boot() {
   g_first_committed_id = 0;
   host_prefs().begins = 0;
   host_prefs().opens = 0;
+  host_prefs().error_logs = 0;
+  host_prefs().probes = 0;
   host_prefs().gets.clear();
   (void)securacv_csi_modules_init();
 }
@@ -294,15 +304,46 @@ static int test_init_runs_once_per_boot() {
 }
 
 // Nothing on the canary creates the "csi" namespace, and NVS refuses a
-// read-only open of a namespace never created (Arduino's Preferences logs
-// each refusal). The boot then tries once, not once per setting, and every
-// module runs on its defaults.
-static int test_a_missing_namespace_costs_the_boot_one_open() {
+// read-only open of a namespace never created; Arduino's Preferences logs
+// that refusal at error level, which the release envs keep (sweep F125).
+// A clean canary's boot asks IDF's nvs_open() once, which answers NOT_FOUND
+// without a log, and then opens nothing: no Preferences open, no error
+// line, every module on its defaults. A board a canary-wap image wrote
+// opens once, still without an error line.
+static int test_a_clean_canary_boot_logs_no_nvs_error() {
+  host_prefs().clear();
+  reboot_and_boot();
+  CHECK(host_prefs().error_logs == 0);
+  CHECK(host_prefs().begins == 0);
+  CHECK(host_prefs().probes == 1);
+  CHECK(host_prefs().gets.empty());
+  hold(window_of(30));
+  CHECK(presence_open("empty"));              // the balanced default
+  CHECK(!presence_open("subtle"));
+
+  store_int("cp.preset", 0);                  // a canary-wap image's row
+  reboot_and_boot();
+  CHECK(host_prefs().probes == 1);
+  CHECK(host_prefs().begins == 1);
+  CHECK(host_prefs().opens == 1);
+  CHECK(host_prefs().error_logs == 0);
+  hold(window_of(30));
+  CHECK(presence_open("subtle"));
+  host_prefs().clear();
+  return 0;
+}
+
+// NVS itself refusing every open (a fault, not a missing namespace): the
+// probe cannot tell, so the boot tries the Preferences open once, not once
+// per setting, and that fault keeps its one error line; every module runs on
+// its defaults.
+static int test_an_nvs_fault_costs_the_boot_one_open() {
   host_prefs().clear();
   host_prefs().fail_begin = true;
   reboot_and_boot();
   CHECK(host_prefs().begins == 1);
   CHECK(host_prefs().opens == 0);
+  CHECK(host_prefs().error_logs == 1);
   CHECK(host_prefs().gets.empty());
   hold(window_of(30));
   CHECK(presence_open("empty"));              // the balanced default
@@ -427,6 +468,19 @@ static int test_the_shared_settings_rule() {
     nvs::end(session);
     CHECK(!session.open);
   }
+  // A session over a namespace NVS does not hold opens nothing and logs
+  // nothing (F125), and answers every read with its default.
+  {
+    host_prefs().clear();
+    csi_module_settings_nvs::Session<Preferences> session;
+    nvs::begin(session);
+    CHECK(!session.open);
+    CHECK(host_prefs().probes == 1);
+    CHECK(host_prefs().begins == 0);
+    CHECK(host_prefs().error_logs == 0);
+    CHECK(nvs::read_int<Preferences>(&session, "core.presence.preset", 1) == 1);
+    nvs::end(session);
+  }
   // A session whose open was refused answers every read with its default,
   // and opens nothing more.
   {
@@ -451,7 +505,8 @@ int main() {
   if (test_stored_pet_mode_applies_at_boot()) return 1;
   if (test_a_stored_anomaly_cooldown_applies_at_boot()) return 1;
   if (test_init_runs_once_per_boot()) return 1;
-  if (test_a_missing_namespace_costs_the_boot_one_open()) return 1;
+  if (test_a_clean_canary_boot_logs_no_nvs_error()) return 1;
+  if (test_an_nvs_fault_costs_the_boot_one_open()) return 1;
   if (test_nothing_commits_during_the_boot_init()) return 1;
   if (test_no_module_ticks_before_its_boot_init()) return 1;
   if (test_the_shared_settings_rule()) return 1;

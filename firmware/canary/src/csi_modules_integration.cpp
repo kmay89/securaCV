@@ -353,7 +353,9 @@ static void on_csi_watchdog(uint32_t silent_ms, uint32_t attempt) {
  * The settings handle is a read session: at boot, init_modules_from_nvs()
  * opens the namespace once and every module's init() reads through it. A
  * canary whose NVS has no "csi" namespace (nothing on the canary creates
- * one) then costs one failed open at boot, not one per setting.
+ * one) costs one probe at boot through IDF's nvs_open(), which logs nothing,
+ * and no Preferences open, so a clean boot logs no "nvs_open failed" error
+ * (sweep F125).
  * ────────────────────────────────────────────────────────────────────────── */
 
 struct csi_module_settings : csi_module_settings_nvs::Session<Preferences> {};

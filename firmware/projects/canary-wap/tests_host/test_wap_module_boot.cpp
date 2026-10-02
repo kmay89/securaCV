@@ -26,10 +26,17 @@
 //
 // Each test of a stored setting fails with csi_module_init_all() made a
 // no-op (the canary-wap before F93, which ran no init at boot); the
-// missing-namespace test, the commit test and the source pin pass there
-// too, and guard the new boot path. The once-per-boot and
-// missing-namespace tests fail with the boot init handing
-// csi_module_init_all() no session (a handle per setting).
+// NVS-fault test, the commit test and the source pin pass there too, and
+// guard the new boot path. The once-per-boot and NVS-fault tests fail with
+// the boot init handing csi_module_init_all() no session (a handle per
+// setting).
+//
+// Sweep F125: the boot's read-only open asks IDF's nvs_open() first
+// (csi_module_settings_nvs.h, shared with the canary), so a board whose NVS
+// holds no "csi" namespace (a canary-wap's first boot after an erase) opens
+// nothing for the modules and logs no Preferences error for it. The
+// never-written test fails with begin() going straight to Preferences (the
+// code before F125).
 //
 // Build/run: make -C firmware/projects/canary-wap/tests_host
 
@@ -139,6 +146,8 @@ static void reboot_and_boot() {
   g_first_committed_id = 0;
   host_prefs().begins = 0;
   host_prefs().opens = 0;
+  host_prefs().error_logs = 0;
+  host_prefs().probes = 0;
   host_prefs().gets.clear();
   register_v1_modules_model();                // register_v1_modules()
   (void)csi_settings_nvs_init_modules();      // F93
@@ -344,14 +353,40 @@ static int test_init_runs_once_per_boot_and_a_change_still_applies() {
   return 0;
 }
 
-// A namespace that will not open (a device that never wrote one): the boot
-// tries once, not once per setting, and every module runs on its defaults.
-static int test_a_missing_namespace_costs_the_boot_one_open() {
+// A board whose NVS never held the namespace (the first boot after an
+// erase): the boot's probe finds it absent through IDF's nvs_open(), which
+// logs nothing, and the modules' boot init opens nothing and logs no
+// Preferences error (F125); every module runs on its defaults. Once a
+// settings surface has written a row, the boot opens once, as before.
+static int test_a_never_written_namespace_opens_nothing_at_boot() {
+  host_prefs().clear();
+  reboot_and_boot();
+  CHECK(host_prefs().error_logs == 0);
+  CHECK(host_prefs().begins == 0);
+  CHECK(host_prefs().probes == 1);
+  CHECK(host_prefs().gets.empty());
+  hold(window_of(30));
+  CHECK(presence_open("empty"));
+
+  store_int("cp.preset", 0);
+  reboot_and_boot();
+  CHECK(host_prefs().begins == 1);
+  CHECK(host_prefs().opens == 1);
+  CHECK(host_prefs().error_logs == 0);
+  host_prefs().clear();
+  return 0;
+}
+
+// NVS refusing every open (a fault): the boot tries the Preferences open
+// once, not once per setting, keeps that fault's one error line, and every
+// module runs on its defaults.
+static int test_an_nvs_fault_costs_the_boot_one_open() {
   host_prefs().clear();
   host_prefs().fail_begin = true;
   reboot_and_boot();
   CHECK(host_prefs().begins == 1);
   CHECK(host_prefs().opens == 0);
+  CHECK(host_prefs().error_logs == 1);
   CHECK(host_prefs().gets.empty());
   hold(window_of(30));
   CHECK(presence_open("empty"));
@@ -461,7 +496,8 @@ int main() {
   if (test_a_stored_threshold_wins_over_the_saved_preset()) return 1;
   if (test_a_saved_anomaly_cooldown_applies_at_boot()) return 1;
   if (test_init_runs_once_per_boot_and_a_change_still_applies()) return 1;
-  if (test_a_missing_namespace_costs_the_boot_one_open()) return 1;
+  if (test_a_never_written_namespace_opens_nothing_at_boot()) return 1;
+  if (test_an_nvs_fault_costs_the_boot_one_open()) return 1;
   if (test_nothing_commits_during_the_boot_init()) return 1;
   if (test_the_model_is_register_v1_modules()) return 1;
   std::printf("ALL wap_module_boot TESTS PASSED (%d checks)\n", g_checks);
