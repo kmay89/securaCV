@@ -31,7 +31,7 @@
 
 import { DeviceScene, BUILDERS } from "./scene3d.js";
 import { upgradeRealShape } from "./real-shapes.js";
-import { withId, mqttApply } from "./wap-ui.js";
+import { withId, mqttApply, paneNote } from "./wap-ui.js";
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -764,10 +764,10 @@ export function buildMqtt(data, bus) {
   cols.append(retainedCol, streamCol);
   wrap.append(cols);
 
+  // the non-retained topics come from each topic's own flag (paneNote)
   const note = el("p", "ondevice wap-note");
   note.append(el("strong", null, "How to read this: "), document.createTextNode(
-    "the topic tree and payloads are the exact strings mqtt_mgr.cpp publishes; only events and the " +
-    "identify echo are non-retained. " + m.offline_note + "."));
+    paneNote(m, id) + " " + m.offline_note[0].toUpperCase() + m.offline_note.slice(1) + "."));
   wrap.append(note);
 
   const store = {};

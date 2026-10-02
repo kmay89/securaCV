@@ -820,7 +820,8 @@
         "triggers": "6/6"
       },
       "note": "the device announces its own entities the instant it connects \u2014 no YAML, no manual entities"
-    }
+    },
+    "pane_note": "Every topic and every key, in its order, is the firmware's. What this page cannot know reads \u2026: each sig, the health topic's public_key, and a chain head's hash once a scene moves it. The timing is compressed: the device commits a presence row, and the witness record that moves counts and chain, when the row's bundle closes (a 2-minute quiet gap or a 10-minute window), where the sandbox publishes them at the click and keeps the example's timestamp; and the smoke, CO and mute scenes leave out the acoustic.events row the device bundles beside them. The broker is staged; the contract is real."
   },
   "sensing": {
     "pills": [

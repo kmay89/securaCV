@@ -181,7 +181,8 @@ async function main() {
   function renderSandbox(d, b) {
     const s = section("sandbox", "try it", "The sandbox",
       "Every button drives a real signal path: it lands the presence pill, writes a witness " +
-      "record on the serial console, and publishes the exact MQTT the firmware would. Fire a T3 " +
+      "record on the serial console, and publishes the firmware's own MQTT payloads (a presence " +
+      "row at the click, not when its bundle closes). Fire a T3 " +
       "smoke cadence or mute the mic — watch all three surfaces move together.");
     const pad = el("div", "wap-sandbox");
     const readout = el("p", "muted wap-sandbox-read", "Power the device up above, or just tap a card — the bench will bring it online for you.");

@@ -358,6 +358,30 @@ test("the MQTT pane publishes each scene over the topic as it stands, retained b
   });
 });
 
+// The pane's "how to read this" (A30 review): the non-retained topics come
+// from each topic's flag (the old note said only events, though tamper is
+// live-only too), and it says what is elided and how the timing differs,
+// instead of claiming the exact strings. The sandbox lede may not claim them.
+test("the MQTT pane's note names every non-retained topic and what the sandbox stages", async () => {
+  const { withFakeDom, fakeBus } = require("./fixtures/fake_dom.js");
+  const live = data.mqtt.topics.filter((t) => !t.retained).map((t) => t.suffix);
+  assert.deepStrictEqual(live, ["events", "tamper"]);
+  assert.ok(csiMqttCpp.includes("publish_tamper_bridge"), "the tamper bridge");
+  await withFakeDom(async () => {
+    const { buildMqtt, paneNote } = await import("../assets/wap-ui.js");
+    const wrap = buildMqtt(data, fakeBus());
+    const note = wrap.all("wap-note")[0].textContent;
+    assert.strictEqual(note, "How to read this: " + paneNote(data.mqtt, data.device.id_example));
+    for (const sfx of live) assert.ok(note.includes(`${data.mqtt.prefix}/${data.device.id_example}/${sfx}`), sfx);
+    assert.match(note, /are not retained, every other topic is/);
+    assert.doesNotMatch(note, /exact strings|only [^ ]+ is non-retained/);
+    for (const elided of ["sig", "public_key", "hash"]) assert.ok(note.includes(elided), elided);
+    assert.match(note, /bundle closes/);
+    assert.match(note, /acoustic\.events row/);
+  });
+  assert.doesNotMatch(read(join(ROOT, "assets/wap.js")), /exact MQTT/, "the sandbox lede");
+});
+
 // The sandbox's main path: tap a card on an offline bench. wap.js emits
 // online, mqtt and the scene in one click, so the scene publishes before the
 // retained snapshot (160 ms a topic) reaches chain and counts. The snapshot

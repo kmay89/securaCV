@@ -536,6 +536,7 @@
     ],
     "offline_note": "no broker? the witness keeps sensing and chaining \u2014 every transition still advances the NVS-persisted hash chain; an outage shows up as a jump in seq/chain length, never lost tamper evidence",
     "heartbeat_ms": 5000,
+    "pane_note": "Every topic and every key, in its order, is the firmware's, and the radar lab publishes when the firmware would, at its own thresholds: an event and the chain head on a witnessed transition, the state row on a change and every heartbeat. One step is left out: when the room empties, the device records an occupancy_changed to 0 occupants before presence_cleared (its count follows each radar frame), and the lab does not. What this page cannot know reads \u2026: each sig, the health topic's public_key, and a chain head's hash once it moves; the fp is an illustrative one, not the repo test key's. uptime_s, ts_ms and bucket_uptime_s keep the example's values, since the page has no device clock, and the status and health heartbeats are not staged.",
     "discovery": {
       "prefix": "homeassistant",
       "config_topic": "homeassistant/<component>/<device_id>/<object_id>/config",

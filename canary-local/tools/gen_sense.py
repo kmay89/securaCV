@@ -678,6 +678,14 @@ N_WELLBEING = len(ENTITIES)
 # presence change, a count change and any vitals change (and the lux loop on a
 # 5 lx move); the loop publishes it then, and on every heartbeat. A range band
 # that moves alone dirties nothing, so it waits for the heartbeat.
+# The count bucket follows every radar frame while presence waits out its
+# timers, and a count change while Present is a witnessed occupancy_changed:
+# so an emptying room records one to "0" before presence_cleared. The lab
+# keeps the count until Clear; the pane note says so.
+must(PRESENCE_H.with_suffix(".cpp"), "    count_ = frame.has_target ? bucket_of(frame.target_count) : CountBucket::Zero;",
+     "the count follows each frame")
+must(MAIN_CPP, "    if (g_presence.state() == Presence::Present) {\n      set_last_event(\"occupancy_changed\");\n"
+     "      record_event_now(\"occupancy_changed\", now);", "a count change while Present is witnessed")
 HEARTBEAT_MS = grab_int(CFG_DEFAULT, "CS_HEARTBEAT_MS")
 if grab_int(CFG_WELLBEING, "CS_HEARTBEAT_MS") != HEARTBEAT_MS:
     die("the two Sense builds beat at different rates; the lab stages one")
@@ -702,6 +710,17 @@ MQTT = {
     # the loop republishes the state row every heartbeat (the radar lab
     # stages it, so a range band that moves alone still reaches the broker)
     "heartbeat_ms": HEARTBEAT_MS,
+    # what the MQTT pane says about itself (A30 review); the pane adds the
+    # non-retained topics from each topic's own flag
+    "pane_note": "Every topic and every key, in its order, is the firmware's, and the radar lab publishes "
+                 "when the firmware would, at its own thresholds: an event and the chain head on a "
+                 "witnessed transition, the state row on a change and every heartbeat. One step is left "
+                 "out: when the room empties, the device records an occupancy_changed to 0 occupants before "
+                 "presence_cleared (its count follows each radar frame), and the lab does not. What this page "
+                 "cannot know reads …: each sig, the health topic's public_key, and a chain head's hash "
+                 "once it moves; the fp is an illustrative one, not the repo test key's. uptime_s, ts_ms "
+                 "and bucket_uptime_s keep the example's values, since the page has no device clock, and "
+                 "the status and health heartbeats are not staged.",
     "discovery": {
         "prefix": grab_str(CFG_DEFAULT, "CS_HA_DISCOVERY_PREFIX"),
         "config_topic": "homeassistant/<component>/<device_id>/<object_id>/config",

@@ -992,6 +992,15 @@ export function buildDashboard(data, bus) {
 }
 
 // ── the MQTT explorer ─────────────────────────────────────────────────────
+// The pane's "how to read this": the topics that are not retained, read off
+// each topic's retained flag, then wap.json's note on what is elided and how
+// the sandbox's timing differs from the device's.
+export function paneNote(m, id) {
+  const live = m.topics.filter((t) => !t.retained).map((t) => withId(m.topic_pattern.replace("<suffix>", t.suffix), id));
+  return "prefix " + m.prefix + "; " + live.join(" and ") + (live.length === 1 ? " is" : " are") +
+    " not retained, every other topic is. " + m.pane_note;
+}
+
 export function buildMqtt(data, bus) {
   const m = data.mqtt, id = data.device.id_example;
   const wrap = el("div", "wap-mqtt");
@@ -1026,10 +1035,10 @@ export function buildMqtt(data, bus) {
   disc.append(dgrid);
   wrap.append(disc);
 
+  // which topics are not retained comes from each topic's own flag (the old
+  // note named events alone, though tamper is live-only too)
   const note = el("p", "ondevice wap-note");
-  note.append(el("strong", null, "How to read this: "), document.createTextNode(
-    "the topic tree and payloads are the exact strings csi_mqtt.cpp publishes (prefix " + m.prefix +
-    ", only " + withId(m.topic_pattern.replace("<suffix>", "events"), id) + " is non-retained). The broker is staged; the contract is real."));
+  note.append(el("strong", null, "How to read this: "), document.createTextNode(paneNote(m, id)));
   wrap.append(note);
 
   const store = {};

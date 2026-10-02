@@ -440,6 +440,21 @@ test("each sandbox scene, played through the radar lab, publishes the rows sense
   });
 });
 
+test("the MQTT pane's note names the non-retained topics and what the lab leaves out", async () => {
+  const { withFakeDom, fakeBus } = require("./fixtures/fake_dom.js");
+  const live = data.mqtt.topics.filter((t) => !t.retained).map((t) => t.suffix);
+  assert.deepStrictEqual(live, ["events", "identify"]);
+  await withFakeDom(async () => {
+    const { buildMqtt } = await import("../assets/sense-ui.js");
+    const note = buildMqtt(data, fakeBus()).all("wap-note")[0].textContent;
+    for (const sfx of live) assert.ok(note.includes(`securacv/${data.device.id_example}/${sfx}`), sfx);
+    assert.doesNotMatch(note, /exact strings/);
+    for (const k of ["sig", "public_key", "hash", "fp", "uptime_s", "ts_ms", "bucket_uptime_s"]) assert.ok(note.includes(k), k);
+    assert.match(note, /occupancy_changed to 0 occupants before presence_cleared/, "the step the lab leaves out");
+  });
+  assert.doesNotMatch(read(join(ROOT, "assets/sense.js")), /exact MQTT/, "the sandbox lede");
+});
+
 test("a stall drops the count with the link, as mr60_presence.cpp does", async () => {
   const { makePresenceFSM } = await import("../assets/sense-ui.js");
   const cfg = data.fsm.presence;

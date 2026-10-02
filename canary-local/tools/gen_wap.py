@@ -936,6 +936,29 @@ for sc in SANDBOX:
 for word in ("smoke_alarm_t3", "co_alarm_t4"):
     must(CSI_MQTT_CPP, f"value_json.acoustic_event == '{word}'", f"HA reads {word}")
 
+# What the MQTT pane says about itself (A30 review): its keys are the
+# firmware's, but some values are elided and the sandbox's timing is
+# compressed, so the note says which (the pane adds the non-retained topics
+# from each topic's own flag). A non-ambient row is a bundle the device
+# commits, with its witness record, when the bundle closes; the acoustic
+# module bundles a row beside each alarm and mute, which no scene publishes.
+BUNDLER_H = FW / "csi_bundler.h"
+must(BUNDLER_H, "#define CSI_BUNDLER_WINDOW_MS  (10u * 60u * 1000u)", "the 10-minute bundle window")
+must(BUNDLER_H, "#define CSI_BUNDLER_MAX_GAP_MS (2u * 60u * 1000u)", "the 2-minute quiet gap")
+must(FW / "csi_bundler.cpp", "  /* Ambient bypasses the bundler entirely. */\n  if (values->category == CSI_CATEGORY_AMBIENT) {",
+     "only ambient rows skip the bundler")
+must(ACOUSTIC_CPP, '(void)csi_event_emit("acoustic.events",\n                       muted ? "mic_muted" : "mic_unmuted", &v);',
+     "a mute is an acoustic.events row too")
+if any("sig" not in json.loads(t["payload"]) for t in TOPICS if t["suffix"] in ("events", "chain", "counts")):
+    die("the pane note says each signed row's sig is elided")
+MQTT["pane_note"] = (
+    "Every topic and every key, in its order, is the firmware's. What this page cannot know reads …: each sig, "
+    "the health topic's public_key, and a chain head's hash once a scene moves it. The timing is compressed: "
+    "the device commits a presence row, and the witness record that moves counts and chain, when the row's "
+    "bundle closes (a 2-minute quiet gap or a 10-minute window), where the sandbox publishes them at the click "
+    "and keeps the example's timestamp; and the smoke, CO and mute scenes leave out the acoustic.events row the "
+    "device bundles beside them. The broker is staged; the contract is real.")
+
 # --------------------------------------------------------------------------- #
 # 8.5 flashing — the bench skills (parsed from the firmware README + build
 #     files + docs, so the teaching can never go stale against the toolchain)
