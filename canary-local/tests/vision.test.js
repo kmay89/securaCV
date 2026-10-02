@@ -145,6 +145,21 @@ test("every HA discovery entity name is a real literal in ha_discovery.cpp", () 
   }
 });
 
+// The Presence and Dwelling entities (sweep HA25 made them able to turn on):
+// the class the page names is the device_class the discovery announces.
+// Presence is an occupancy sensor (the page used to say motion), and
+// Dwelling announces no class (the page used to say occupancy).
+test("the Presence and Dwelling entity descriptions name the class discovery announces", () => {
+  const block = (name) => haCpp.split('\\"name\\":\\"' + name + '\\",')[1].split("publish_cfg(")[0];
+  const cls = (name) => (block(name).match(/\\"device_class\\":\\"(\w+)\\"/) || [])[1];
+  const desc = (name) => data.mqtt.discovery.entities.find((e) => e.name === name).desc;
+  assert.strictEqual(cls("Presence"), "occupancy");
+  assert.match(desc("Presence"), /occupancy class/);
+  assert.doesNotMatch(desc("Presence"), /motion/);
+  assert.strictEqual(cls("Dwelling"), undefined);
+  assert.doesNotMatch(desc("Dwelling"), /class/);
+});
+
 // What the page says the voxel and the lengths mean (the A39/F130 review):
 // the settled cell stays after a visit ends, and each visit starts its own
 // tracker (sweep F152: reset at boot and on the frame that starts a visit),

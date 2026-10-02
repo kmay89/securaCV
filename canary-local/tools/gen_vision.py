@@ -579,8 +579,8 @@ ENTITIES = [n for n in raw_names if "%" not in n] + number_names
 if "Presence" not in ENTITIES or "Aim assist" not in ENTITIES:
     die(f"HA entity parse broke: {ENTITIES}")
 ENTITY_META = {
-    "Presence": ("binary_sensor", "someone is here (motion class)"),
-    "Dwelling": ("binary_sensor", "someone has stayed — occupancy class"),
+    "Presence": ("binary_sensor", "someone is here — occupancy class"),
+    "Dwelling": ("binary_sensor", "someone has stayed past the dwell start"),
     "Confidence": ("sensor", "best-box score, 0–100 %"),
     "Voxel": ("sensor", f"the cell of the {VOXEL_COLS}×{VOXEL_ROWS} grid the subject last settled in, as "
                         "\"r,c\"; it stays after they leave, and reads -1,-1 only until someone is seen"),

@@ -556,12 +556,12 @@
         {
           "name": "Presence",
           "component": "binary_sensor",
-          "desc": "someone is here (motion class)"
+          "desc": "someone is here \u2014 occupancy class"
         },
         {
           "name": "Dwelling",
           "component": "binary_sensor",
-          "desc": "someone has stayed \u2014 occupancy class"
+          "desc": "someone has stayed past the dwell start"
         },
         {
           "name": "Confidence",
