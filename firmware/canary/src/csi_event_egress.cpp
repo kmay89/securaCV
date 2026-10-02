@@ -150,13 +150,13 @@ uint32_t                    s_replay_run = 0;  // rows replayed in the current b
  * watermark (HA would refuse them). An ambient row is never held (csi_event.h:
  * "never persisted, drives live UI only"): one that cannot go at once is
  * dropped (counted, backlog F109), so a burst of them never evicts a real
- * event. Held rows do not
- * survive a reboot or a broker change, as the offline queue's do not: with
- * a card slot and no usable card, the rows of the first kCardWaitMs after
- * boot are lost to a reboot that comes sooner. The canary-wap's
- * egress keeps the same hold (its csi_event_egress.cpp); the one difference
- * is the canary's offline queue, which takes a held row once nothing older
- * waits and no card is open, while the link is down. Loop task only. */
+ * event. Held rows do not survive a reboot or a broker change, as the
+ * offline queue's do not: with a card slot and no usable card, the rows of
+ * the first kCardWaitMs after boot are lost to a reboot that comes sooner.
+ * The canary-wap's egress keeps the same hold (its csi_event_egress.cpp);
+ * the one difference is the canary's offline queue, which takes a held row
+ * once nothing older waits and no card is open, while the link is down.
+ * Loop task only. */
 constexpr size_t kHeldMax = 8;   // the canary-wap's
 
 struct Held {
