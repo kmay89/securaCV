@@ -557,8 +557,14 @@ A device that cannot hold its partner fails the pairing: a deny-listed key
 member holds, a new member at such an address (canary-wap since F98: one
 address, one member; its `add_peer` used to append one, and the two
 entries shared one ESP-NOW registration that removing either deleted for
-both), or an address its radio cannot register. canary-wap (F73,
-host-tested): the initiator adds the joiner before anything is sent, so on a
+both), or an address its radio cannot register. canary-wap logs a refusal
+because another member holds the address on a line of its own, which names
+the way through: remove that member first. The routine case is a device
+whose NVS was erased or that was reflashed: it keeps its radio address and
+comes back with a new key, so each member that still holds its old entry
+refuses it until that entry is removed, and on canary-wap each such removal
+splits that member from the opera until F48 (§5.6, F95; host-tested).
+canary-wap (F73, host-tested): the initiator adds the joiner before anything is sent, so on a
 refusal no `PAIR_COMPLETE` goes out and its joiner times out; a joiner that
 refuses the initiator keeps the opera it had, in RAM and in NVS. Either way
 nothing is stored, the device is not `MESH_ACTIVE`, the refusal is logged and
@@ -1264,7 +1270,13 @@ for that member passes the last one heard; a member that rebooted to
 change its address resumes its counters above every one it signed (§3.3,
 F71), so its first frame after the re-pair is heard.
 canary-wap keeps its identity key in the device's NVS, so a swapped module
-comes back with a new key and joins as a new member; what reaches a re-bind
+comes back with a new key and joins as a new member. So does a device whose
+NVS was erased or that was reflashed, but at its old radio address: since
+F98 a member that still holds its old entry there refuses it until that
+entry is removed (the refusal is logged as such, §5.2), and on canary-wap
+each such removal splits that member from the opera until F48 (§5.6, F95;
+host-tested). Before F98 the new key was added beside the old entry, at the
+same address. What reaches a re-bind
 is an NVS image moved to another board, or the relay below. Its `add_peer`
 now re-binds a member it already holds to the address the pairing
 completed from (new address registered first; an address another member

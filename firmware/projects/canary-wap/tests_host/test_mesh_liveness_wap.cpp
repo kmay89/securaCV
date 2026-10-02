@@ -637,6 +637,8 @@ void test_a_flood_spends_no_counter_while_the_storm_gate_holds() {
 // cannot know: an initiator that refuses sends no COMPLETE, so its joiner
 // times out; a joiner that refuses has already let its initiator add it.)
 
+const char* const kHeldAddress = "opera: pairing refused: another member holds that radio address";
+
 void check_initiator_refused(Device& ini, Device& joi, uint8_t peers_before) {
   become(ini);
   CHECK(pair_frames(ini, joi.mac, mn::MSG_PAIR_COMPLETE) == 0);
@@ -714,6 +716,7 @@ void test_an_initiator_refuses_a_re_pair_onto_another_members_address() {
   g_health.clear();
   confirm_initiator_first(A, B);
   check_initiator_refused(A, B, 2);
+  CHECK(times_logged(kHeldAddress) == 1);          // which refusal it was
   CHECK(same_mac(entry(A, B)->mac_addr, b_mac));
   CHECK(same_mac(entry(A, C)->mac_addr, C.mac));
   memcpy(B.mac, b_mac, 6);
@@ -735,6 +738,7 @@ void test_an_initiator_refuses_a_new_member_at_another_members_address() {
   g_health.clear();
   confirm_initiator_first(A, J);
   check_initiator_refused(A, J, 2);
+  CHECK(times_logged(kHeldAddress) == 1);
   CHECK(entry(A, J) == nullptr);
   CHECK(same_mac(entry(A, C)->mac_addr, C.mac));
   become(A);
@@ -770,6 +774,7 @@ void test_a_joiner_refuses_a_new_initiator_at_another_members_address() {
   const PairEvent* ev = last_event_of(B);
   CHECK(ev != nullptr && ev->role == mn::PAIR_ROLE_JOINER && !ev->success);
   CHECK(logged("opera: pairing failed"));
+  CHECK(times_logged(kHeldAddress) == 1);
   memcpy(J.mac, j_mac, 6);
   std::printf("PASS a_joiner_refuses_a_new_initiator_at_another_members_address\n");
 }
@@ -1522,6 +1527,40 @@ void test_a_rotation_that_reaches_a_member_keeps_every_counter() {
   std::printf("PASS a_rotation_that_reaches_a_member_keeps_every_counter\n");
 }
 
+// ── F98 with F95: a device back at its old address with a new key ──────
+
+void test_a_device_back_with_a_new_key_rejoins_once_its_old_entry_is_removed() {
+  // An NVS erase or a reflash keeps C's radio address and gives C a new
+  // key. A still holds C's old entry there, so C's pairing is refused (one
+  // address, one member), and the log says why. Before F98 the new key was
+  // added beside the old one. The way through is to remove the old entry;
+  // on canary-wap that removal's rotation reaches no member (F95, open
+  // until F48: no_session_opens_and_a_removal_splits_the_opera pins why),
+  // so A then holds an opera_id of its own, split from B until B re-pairs
+  // with it.
+  fresh_opera({&A, &B, &C});
+  uint8_t old_fp[mn::FINGERPRINT_SIZE];
+  mn::compute_fingerprint(C.pub, old_fp);
+  make_device(C, "C", 0xC1);                        // same address, new key
+  fresh_device(C);
+  pair_to_codes(A, C);
+  g_pair_events.clear();
+  g_health.clear();
+  confirm_initiator_first(A, C);
+  check_initiator_refused(A, C, 2);
+  CHECK(times_logged(kHeldAddress) == 1);
+  become(C);
+  mn::cancel_pairing();
+  become(A);
+  CHECK(mn::remove_peer(old_fp));
+  mn::update();                                     // the rotation commits (F95)
+  re_pair(A, C);
+  CHECK(entry(A, C) != nullptr && same_mac(entry(A, C)->mac_addr, C.mac));
+  CHECK(opera_id_of(A) == opera_id_of(C));
+  CHECK(opera_id_of(A) != opera_id_of(B));          // F95: B was not told
+  std::printf("PASS a_device_back_with_a_new_key_rejoins_once_its_old_entry_is_removed\n");
+}
+
 // ── F100: the COMPLETE goes again until the joiner is heard ─────────────
 //
 // The initiator sent its COMPLETE once and did not check the send, so a
@@ -1813,6 +1852,8 @@ const Test kTests[] = {
      test_an_initiator_refuses_a_new_member_at_another_members_address},
     {"a_joiner_refuses_a_new_initiator_at_another_members_address",
      test_a_joiner_refuses_a_new_initiator_at_another_members_address},
+    {"a_device_back_with_a_new_key_rejoins_once_its_old_entry_is_removed",
+     test_a_device_back_with_a_new_key_rejoins_once_its_old_entry_is_removed},
     {"a_joiner_with_a_full_opera_keeps_its_own", test_a_joiner_with_a_full_opera_keeps_its_own},
     {"a_joiner_refuses_an_initiator_removed_during_the_pairing",
      test_a_joiner_refuses_an_initiator_removed_during_the_pairing},

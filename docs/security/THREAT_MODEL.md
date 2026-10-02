@@ -663,7 +663,11 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   refusing joiner keeps its own opera. Since F98 that includes a new key at
   an address another member holds, which `add_peer` used to append: the two
   entries shared one ESP-NOW registration, and removing either stranded the
-  other. Since F100 the initiator sends its COMPLETE again every 2 s until
+  other. Such a refusal is logged on its own line. Its routine case is a
+  device whose NVS was erased or that was reflashed: it keeps its radio
+  address with a new key, and each member that holds its old entry refuses
+  it until that entry is removed, which on canary-wap splits that member
+  from the opera until F48 (the rotation below). Since F100 the initiator sends its COMPLETE again every 2 s until
   it hears the joiner, for at most the 2-minute pairing timeout, and logs
   one never answered (it went once, unchecked); the copies are the frame
   already on the air, and the pairing key stays wiped. A joiner drops a

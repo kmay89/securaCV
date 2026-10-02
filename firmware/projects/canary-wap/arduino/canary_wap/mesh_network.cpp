@@ -508,6 +508,17 @@ static void release_mac(const uint8_t* mac, const OperaPeer* self) {
   }
 }
 
+// A pairing refused because another member holds the address it came from
+// (one address, one member: rebind_peer, add_peer). fail_pairing's line
+// cannot say which refusal it was, and this one has a way through: remove
+// the member that holds the address. That is typically a device's own old
+// entry: an NVS erase or a reflash keeps its radio address and gives it a
+// new key, so it comes back as a new member where its old self still is.
+static void log_held_address() {
+  health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+             "opera: pairing refused: another member holds that radio address; remove it first");
+}
+
 // A pairing with a device this one already holds moves that member to the
 // address the pairing completed from (spec §8.3: a re-pair is how a member
 // whose radio address changed is heard again). Only a pairing this
@@ -527,6 +538,7 @@ static bool rebind_peer(OperaPeer* peer, const uint8_t* mac) {
     return true;
   }
   if (other_holder_of(mac, peer) != nullptr) {
+    log_held_address();
     return false;
   }
   if (!esp_now_is_peer_exist(mac)) {
@@ -565,6 +577,7 @@ static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name
   // other was then sent nothing (esp_now_send refuses an unregistered
   // address).
   if (other_holder_of(mac, nullptr) != nullptr) {
+    log_held_address();
     return false;
   }
   if (g_peer_count >= MAX_OPERA_SIZE) {
