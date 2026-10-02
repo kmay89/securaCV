@@ -121,7 +121,9 @@
   the cell it began in, and a visit followed by a sighting on the very next
   frame still gets its `interaction_likely`, one frame later. The compile-time
   dwell end grace (0 in every shipped build) now holds a dweller past the lost
-  timeout and still reports the dwell's end. The Vision's Presence and
+  timeout and still reports the dwell's end; a dweller seen on the one frame
+  between a dwell's end and the visit's end still starts a second dwell, as
+  before (F186). The Vision's Presence and
   Dwelling binary sensors, the Sense's and Sentinel's Presence, the Sense's
   Breathing confirmed and the Sentinel's Anomaly and Channel blinded rendered
   "True"/"False" against payloads "true"/"false" and stayed unknown in Home
