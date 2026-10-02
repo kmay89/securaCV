@@ -165,7 +165,8 @@
   another member holds) now fails, sends and stores nothing, and is logged.
   Before, it reported success, and the initiator sealed the opera key to a
   partner it then refused. A new member at an address another member holds was
-  still taken (F98; refused since #<W10>). The pairing DISCOVER registers the ESP-NOW broadcast peer
+  still taken (F98; refused since #<W10>). The pairing DISCOVER registers the
+  ESP-NOW broadcast peer
   itself, and a channel change re-adds it instead of deleting it. An opera
   whose members it has not heard, after a fresh pairing or after every member
   rebooted, now sends its 30 s heartbeat while connecting and to unheard
