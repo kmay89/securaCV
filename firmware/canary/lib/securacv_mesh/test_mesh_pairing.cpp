@@ -1083,25 +1083,36 @@ void test_the_joiners_confirm_resend_is_bounded() {
   std::printf("PASS test_the_joiners_confirm_resend_is_bounded  (%zu copies)\n", sent_at.size());
 }
 
-/* Two updated devices are unchanged by the re-send: in both orders, every
- * frame delivered as sent and both sides ticked every 50 ms, the joiner
- * sends one CONFIRM and the initiator one COMPLETE (with its CONFIRM in
- * front), as before F117: the COMPLETE lands before a re-send is due. A
- * copy that did go out would reach an initiator already PAIRED, which
- * drops it (checked at the end). */
+/* Two updated devices are unchanged by the joiner's re-send: in both
+ * orders, every frame delivered as sent and both sides ticked every 50 ms,
+ * the joiner sends one CONFIRM, as before F117: the COMPLETE lands before
+ * a re-send is due. A copy that did go out would reach an initiator
+ * already PAIRED, which drops it (checked at the end). The initiator sends
+ * its COMPLETE (with its CONFIRM in front) once before the joiner is
+ * PAIRED; what it sends after are F134's copies, every
+ * COMPLETE_RESEND_INTERVAL_MS, each byte for byte the first, which the
+ * PAIRED joiner drops (nothing here plays the session that hears the
+ * joiner and ends them). */
 void test_two_updated_devices_resend_nothing() {
   for (int joiner_first = 0; joiner_first < 2; ++joiner_first) {
     Pair p;
     pair_to_code(p);
     struct Q { bool to_j; InFlight f; };
     std::vector<Q> air;
-    int confirms_from_j = 0, completes = 0;
+    int confirms_from_j = 0, completes = 0, completes_before_paired = 0;
+    std::vector<uint8_t> first_complete;
     auto put = [&](bool from_i, const mesh_pairing::Action& a) {
       InFlight lead, f;
       if (leading_confirm_to_inflight(a, &lead)) air.push_back(Q{from_i, lead});
       if (action_to_inflight(a, &f)) {
         if (!from_i && f.type == mesh_pairing::MsgType::CONFIRM) ++confirms_from_j;
-        if (f.type == mesh_pairing::MsgType::COMPLETE) ++completes;
+        if (f.type == mesh_pairing::MsgType::COMPLETE) {
+          ++completes;
+          if (p.cj.state != mesh_pairing::State::PAIRED) ++completes_before_paired;
+          if (first_complete.empty()) first_complete = f.bytes;
+          assert(f.bytes == first_complete);           /* a copy, not a new seal */
+          assert(std::memcmp(f.to, p.mac_j, 6) == 0);
+        }
         air.push_back(Q{from_i, f});
       }
     };
@@ -1124,7 +1135,8 @@ void test_two_updated_devices_resend_nothing() {
       drain(t);
     }
     assert(p.ci.state == mesh_pairing::State::PAIRED && p.cj.state == mesh_pairing::State::PAIRED);
-    assert(confirms_from_j == 1 && completes == 1);
+    assert(confirms_from_j == 1 && completes_before_paired == 1);
+    assert(completes == 1 + (int)p.ci.complete_copies && p.ci.complete_copies > 0);
     uint8_t got[mesh_crypto::OPERA_SECRET_LEN];
     assert(mesh_pairing::consume_opera_secret(p.cj, got));
     assert(std::memcmp(got, p.secret, sizeof(got)) == 0);
@@ -1338,6 +1350,347 @@ void test_every_failure_says_why() {
   std::printf("PASS test_every_failure_says_why\n");
 }
 
+/* ── F134 — a lost COMPLETE is sent again ─────────────────────────────────
+ *
+ * Nothing on the wire acknowledges a COMPLETE, and the initiator reports
+ * PAIRED once it sent one. Until F134 it went once: lost on the air, it left
+ * the initiator holding a member that never joined, while the joiner
+ * re-sent its CONFIRM (F117) to an initiator that dropped it, and timed
+ * out. Now the initiator keeps the two frames it sent and tick() sends them
+ * again every COMPLETE_RESEND_INTERVAL_MS, to the partner, for at most
+ * COMPLETE_RESEND_WINDOW_MS after the first send, unless the integration
+ * layer ends them (stop_complete_resend). */
+
+/* Drive a pair to the initiator's SEND_COMPLETE, either owner first, the
+ * joiner's owner confirming at `t` and the other 10 ms later or earlier;
+ * returns that action. */
+mesh_pairing::Action pair_to_complete(Pair& p, bool joiner_first, uint32_t t) {
+  pair_to_code(p);
+  mesh_pairing::Action a;
+  if (joiner_first) {
+    a = mesh_pairing::confirm_code(p.cj, t);
+    InFlight cfj; must(action_to_inflight(a, &cfj));
+    assert(deliver(p.ci, p.mac_j, cfj, t).type == mesh_pairing::ActionType::NONE);
+    a = mesh_pairing::confirm_code(p.ci, t + 10);
+  } else {
+    a = mesh_pairing::confirm_code(p.ci, t - 10);
+    InFlight cfi; must(action_to_inflight(a, &cfi));
+    assert(deliver(p.cj, p.mac_i, cfi, t - 10).type == mesh_pairing::ActionType::NONE);
+    a = mesh_pairing::confirm_code(p.cj, t);
+    InFlight cfj; must(action_to_inflight(a, &cfj));
+    a = deliver(p.ci, p.mac_j, cfj, t + 10);
+  }
+  assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE && a.leading_confirm_present);
+  assert(p.ci.state == mesh_pairing::State::PAIRED);
+  return a;
+}
+
+/* The COMPLETE is lost (and, in the second variant, the CONFIRM in front
+ * of it too, and in the third the first copy as well), in both orders,
+ * both sides ticked every 50 ms and every other frame delivered as sent.
+ * The joiner's F117 re-sends reach the PAIRED initiator and change
+ * nothing; the copies come at exactly the interval after the first send,
+ * the same bytes, to the joiner, and the next one that arrives completes
+ * it with the secret. Fails on the code before F134: no copy, and the
+ * joiner times out. */
+void test_a_lost_complete_is_sent_again_until_the_joiner_takes_it() {
+  for (int joiner_first = 0; joiner_first < 2; ++joiner_first) {
+    for (int lose = 0; lose < 3; ++lose) {
+      Pair p;
+      const uint32_t t_c = 1000 + 10;
+      mesh_pairing::Action a = pair_to_complete(p, joiner_first, 1000);
+      InFlight lead0, cp0;
+      must(leading_confirm_to_inflight(a, &lead0));
+      must(action_to_inflight(a, &cp0));
+      if (lose == 0) {   /* only the COMPLETE lost */
+        mesh_pairing::Action r = deliver(p.cj, p.mac_i, lead0, t_c);
+        assert(r.type == mesh_pairing::ActionType::NONE);
+        assert(p.cj.state == mesh_pairing::State::AWAITING_COMPLETE);
+      }
+      std::vector<uint32_t> copies_at;
+      int joiner_confirms = 0;
+      uint32_t paired_at = 0;
+      for (uint32_t t = t_c + 50; t < t_c + 20000 && paired_at == 0; t += 50) {
+        mesh_pairing::Action ti = mesh_pairing::tick(p.ci, t);
+        if (ti.type == mesh_pairing::ActionType::SEND_COMPLETE) {
+          InFlight lead, cp;
+          must(leading_confirm_to_inflight(ti, &lead));
+          must(action_to_inflight(ti, &cp));
+          assert(std::memcmp(cp.to, p.mac_j, 6) == 0 && std::memcmp(lead.to, p.mac_j, 6) == 0);
+          assert(cp.bytes == cp0.bytes && lead.bytes == lead0.bytes);
+          copies_at.push_back(t - t_c);
+          if (lose == 2 && copies_at.size() == 1) continue;   /* the first copy lost too */
+          assert(deliver(p.cj, p.mac_i, lead, t).type == mesh_pairing::ActionType::NONE);
+          mesh_pairing::Action r = deliver(p.cj, p.mac_i, cp, t);
+          if (r.type == mesh_pairing::ActionType::NOTIFY_PAIRED) paired_at = t;
+        } else {
+          assert(ti.type == mesh_pairing::ActionType::NONE ||
+                 ti.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+        }
+        mesh_pairing::Action tj = mesh_pairing::tick(p.cj, t);
+        if (tj.type == mesh_pairing::ActionType::SEND_CONFIRM) {
+          ++joiner_confirms;
+          InFlight f; must(action_to_inflight(tj, &f));
+          assert(deliver(p.ci, p.mac_j, f, t).type == mesh_pairing::ActionType::NONE);
+        } else {
+          assert(tj.type == mesh_pairing::ActionType::NONE);
+        }
+      }
+      assert(paired_at != 0);
+      for (size_t i = 0; i < copies_at.size(); ++i) {
+        assert(copies_at[i] == (uint32_t)(i + 1) * mesh_pairing::COMPLETE_RESEND_INTERVAL_MS);
+      }
+      assert(copies_at.size() == (lose == 2 ? 2u : 1u));
+      /* The joiner that read the leading CONFIRM re-sent its own (F117)
+       * before the copy came; the initiator answered none of them. */
+      assert(joiner_confirms == (lose == 0 ? 1 : 0));
+      uint8_t got[mesh_crypto::OPERA_SECRET_LEN];
+      assert(mesh_pairing::consume_opera_secret(p.cj, got));
+      assert(std::memcmp(got, p.secret, sizeof(got)) == 0);
+      assert(mesh_pairing::complete_resend_running(p.ci));   /* nothing heard it here */
+    }
+  }
+  std::printf("PASS test_a_lost_complete_is_sent_again_until_the_joiner_takes_it"
+              "  (both orders; COMPLETE, both frames, and a copy lost)\n");
+}
+
+/* With nothing answering, the copies are bounded: one every interval after
+ * the first send, the last before the window ends, so
+ * (COMPLETE_RESEND_WINDOW_MS - 1) / COMPLETE_RESEND_INTERVAL_MS of them,
+ * then none; the kept frames are wiped and the pairing stays PAIRED. The
+ * joiner, which started before the COMPLETE, gave up before the window
+ * ended. Fails with the window removed (a copy past it). */
+void test_the_complete_copies_are_bounded() {
+  Pair p;
+  const uint32_t t_c = 5000 + 10;
+  mesh_pairing::Action a = pair_to_complete(p, true, 5000);
+  InFlight cp0; must(action_to_inflight(a, &cp0));
+  assert(mesh_pairing::tick(p.ci, t_c).type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+  uint32_t copies = 0, last = 0;
+  for (uint32_t t = t_c; t < t_c + 2 * mesh_pairing::COMPLETE_RESEND_WINDOW_MS; t += 100) {
+    mesh_pairing::Action ti = mesh_pairing::tick(p.ci, t);
+    if (ti.type == mesh_pairing::ActionType::SEND_COMPLETE) {
+      InFlight cp; must(action_to_inflight(ti, &cp));
+      assert(cp.bytes == cp0.bytes && std::memcmp(cp.to, p.mac_j, 6) == 0);
+      ++copies;
+      last = t - t_c;
+    } else {
+      assert(ti.type == mesh_pairing::ActionType::NONE);
+    }
+  }
+  assert(copies == (mesh_pairing::COMPLETE_RESEND_WINDOW_MS - 1) /
+                   mesh_pairing::COMPLETE_RESEND_INTERVAL_MS);
+  assert(last < mesh_pairing::COMPLETE_RESEND_WINDOW_MS);
+  assert(p.ci.complete_copies == copies);
+  assert(!mesh_pairing::complete_resend_running(p.ci));
+  assert(p.ci.state == mesh_pairing::State::PAIRED);
+  const uint8_t zero[sizeof(mesh_pairing::PairCompletePayload)] = {0};
+  assert(std::memcmp(&p.ci.kept_complete, zero, sizeof(p.ci.kept_complete)) == 0);
+  assert(std::memcmp(&p.ci.kept_confirm, zero, sizeof(p.ci.kept_confirm)) == 0);
+  /* The joiner's own wait, from its start (10), ended inside the window. */
+  assert(10 + mesh_pairing::PAIRING_TIMEOUT_MS < t_c + mesh_pairing::COMPLETE_RESEND_WINDOW_MS);
+  std::printf("PASS test_the_complete_copies_are_bounded  (%u copies)\n", (unsigned)copies);
+}
+
+/* stop_complete_resend() ends the copies at once and wipes the kept
+ * frames; the pairing stays PAIRED and its NOTIFY_PAIRED, still pending,
+ * fires. A second call reports there was nothing to stop. A joiner never
+ * has copies. */
+void test_stop_complete_resend_ends_the_copies() {
+  Pair p;
+  const uint32_t t_c = 1000 + 10;
+  mesh_pairing::Action a = pair_to_complete(p, false, 1000);
+  InFlight lead, cp;
+  must(leading_confirm_to_inflight(a, &lead));
+  must(action_to_inflight(a, &cp));
+  assert(mesh_pairing::complete_resend_running(p.ci));
+  assert(mesh_pairing::stop_complete_resend(p.ci));
+  assert(!mesh_pairing::complete_resend_running(p.ci));
+  assert(!mesh_pairing::stop_complete_resend(p.ci));
+  assert(p.ci.state == mesh_pairing::State::PAIRED);
+  assert(mesh_pairing::tick(p.ci, t_c).type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+  for (uint32_t t = t_c; t < t_c + 30000; t += 100) {
+    assert(mesh_pairing::tick(p.ci, t).type == mesh_pairing::ActionType::NONE);
+  }
+  const uint8_t zero[sizeof(mesh_pairing::PairCompletePayload)] = {0};
+  assert(std::memcmp(&p.ci.kept_complete, zero, sizeof(p.ci.kept_complete)) == 0);
+  assert(deliver(p.cj, p.mac_i, lead, t_c).type == mesh_pairing::ActionType::NONE);
+  assert(deliver(p.cj, p.mac_i, cp, t_c).type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+  assert(!mesh_pairing::complete_resend_running(p.cj));
+  assert(!mesh_pairing::stop_complete_resend(p.cj));
+  std::printf("PASS test_stop_complete_resend_ends_the_copies\n");
+}
+
+/* A pre-F97 joiner (the model above: a CONFIRM read only in
+ * AWAITING_CONFIRM_PEER, a COMPLETE taken only in AWAITING_COMPLETE) whose
+ * COMPLETE was lost, or both frames were: each copy carries the
+ * initiator's CONFIRM in front, so it completes. A copy of the COMPLETE
+ * alone would leave the both-lost case stuck in AWAITING_CONFIRM_PEER. */
+void test_a_lost_complete_reaches_a_pre_f97_joiner() {
+  for (int joiner_first = 0; joiner_first < 2; ++joiner_first) {
+    for (int lose_both = 0; lose_both < 2; ++lose_both) {
+      Pair p;
+      pair_to_code(p);
+      mesh_pairing::Action a;
+      if (joiner_first) {
+        a = mesh_pairing::confirm_code(p.cj, 50);
+        InFlight cfj; must(action_to_inflight(a, &cfj));
+        assert(deliver(p.ci, p.mac_j, cfj, 60).type == mesh_pairing::ActionType::NONE);
+        a = mesh_pairing::confirm_code(p.ci, 70);
+      } else {
+        a = mesh_pairing::confirm_code(p.ci, 50);
+        InFlight cfi; must(action_to_inflight(a, &cfi));
+        assert(pre_f97_joiner_receive(p.cj, p.mac_i, cfi, 55).type ==
+               mesh_pairing::ActionType::NONE);              /* dropped unread */
+        a = mesh_pairing::confirm_code(p.cj, 60);
+        InFlight cfj; must(action_to_inflight(a, &cfj));
+        a = deliver(p.ci, p.mac_j, cfj, 70);
+      }
+      assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
+      InFlight lead; must(leading_confirm_to_inflight(a, &lead));
+      if (!lose_both) {
+        assert(pre_f97_joiner_receive(p.cj, p.mac_i, lead, 75).type ==
+               mesh_pairing::ActionType::NONE);
+        assert(p.cj.state == mesh_pairing::State::AWAITING_COMPLETE);
+      }
+      assert(mesh_pairing::tick(p.ci, 80).type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+      mesh_pairing::Action ti = mesh_pairing::tick(p.ci, 70 + mesh_pairing::COMPLETE_RESEND_INTERVAL_MS);
+      assert(ti.type == mesh_pairing::ActionType::SEND_COMPLETE);
+      InFlight lead2, cp2;
+      must(leading_confirm_to_inflight(ti, &lead2));
+      must(action_to_inflight(ti, &cp2));
+      assert(pre_f97_joiner_receive(p.cj, p.mac_i, lead2, 2100).type ==
+             mesh_pairing::ActionType::NONE);
+      assert(pre_f97_joiner_receive(p.cj, p.mac_i, cp2, 2100).type ==
+             mesh_pairing::ActionType::NOTIFY_PAIRED);
+      uint8_t got[mesh_crypto::OPERA_SECRET_LEN];
+      assert(mesh_pairing::consume_opera_secret(p.cj, got));
+      assert(std::memcmp(got, p.secret, sizeof(got)) == 0);
+    }
+  }
+  std::printf("PASS test_a_lost_complete_reaches_a_pre_f97_joiner  (both orders; one or both frames lost)\n");
+}
+
+/* Nothing that reaches a PAIRED initiator moves its copies anywhere but the
+ * partner, or makes it send anything else: the joiner's CONFIRM replayed
+ * from the joiner's address, the initiator's own CONFIRM reflected from it
+ * (F94), both of them from a third radio, a third radio's DISCOVER (role
+ * joiner, its own key), and an OFFER, ACCEPT and COMPLETE from either
+ * address are all dropped (NONE); the copies keep their 2 s cadence from
+ * the first send (no CONFIRM brings one early), keep their bytes and go to
+ * the partner's address only, and the partner's key and address in the
+ * context do not move. */
+void test_frames_reaching_a_paired_initiator_send_the_secret_nowhere_else() {
+  Pair p;
+  pair_to_code(p);
+  mesh_pairing::Action a = mesh_pairing::confirm_code(p.cj, 50);
+  InFlight cfj; must(action_to_inflight(a, &cfj));
+  assert(deliver(p.ci, p.mac_j, cfj, 60).type == mesh_pairing::ActionType::NONE);
+  a = mesh_pairing::confirm_code(p.ci, 100);
+  assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
+  InFlight lead0, cp0;
+  must(leading_confirm_to_inflight(a, &lead0));
+  must(action_to_inflight(a, &cp0));
+  uint8_t peer_pub[32], peer_mac[6];
+  std::memcpy(peer_pub, p.ci.peer_pubkey, 32);
+  std::memcpy(peer_mac, p.ci.peer_mac, 6);
+
+  /* The stray frames, built once. */
+  uint8_t x_pub[32], x_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(x_pub, x_priv));
+  mesh_pairing::PairDiscoverPayload disc{};
+  std::memcpy(disc.pubkey, x_pub, 32);
+  disc.role = mesh_pairing::ROLE_JOINER;
+  mesh_pairing::PairOfferPayload offer{};
+  std::memcpy(offer.device_pubkey, x_pub, 32);
+  std::memcpy(offer.ephemeral_pubkey, x_pub, 32);
+  std::vector<std::pair<mesh_pairing::MsgType, std::vector<uint8_t>>> strays = {
+      {mesh_pairing::MsgType::CONFIRM, cfj.bytes},     /* the joiner's, replayed */
+      {mesh_pairing::MsgType::CONFIRM, lead0.bytes},   /* its own, reflected (F94) */
+      {mesh_pairing::MsgType::DISCOVER,
+       std::vector<uint8_t>((const uint8_t*)&disc, (const uint8_t*)&disc + sizeof(disc))},
+      {mesh_pairing::MsgType::OFFER,
+       std::vector<uint8_t>((const uint8_t*)&offer, (const uint8_t*)&offer + sizeof(offer))},
+      {mesh_pairing::MsgType::ACCEPT,
+       std::vector<uint8_t>((const uint8_t*)&offer, (const uint8_t*)&offer + sizeof(offer))},
+      {mesh_pairing::MsgType::COMPLETE, cp0.bytes},
+  };
+  const uint8_t* froms[2] = {p.mac_j, p.mac_x};
+
+  std::vector<uint32_t> copies_at;
+  for (uint32_t t = 100; t < 100 + 3 * mesh_pairing::COMPLETE_RESEND_INTERVAL_MS + 50; t += 50) {
+    for (const uint8_t* from : froms) {
+      for (const auto& s : strays) {
+        mesh_pairing::Action r =
+            mesh_pairing::receive(p.ci, from, s.first, s.second.data(), s.second.size(), t);
+        assert(r.type == mesh_pairing::ActionType::NONE);
+      }
+    }
+    mesh_pairing::Action ti = mesh_pairing::tick(p.ci, t);
+    if (ti.type == mesh_pairing::ActionType::SEND_COMPLETE) {
+      InFlight lead, cp;
+      must(leading_confirm_to_inflight(ti, &lead));
+      must(action_to_inflight(ti, &cp));
+      assert(std::memcmp(cp.to, p.mac_j, 6) == 0 && std::memcmp(lead.to, p.mac_j, 6) == 0);
+      assert(cp.bytes == cp0.bytes && lead.bytes == lead0.bytes);
+      copies_at.push_back(t - 100);
+    } else {
+      assert(ti.type == mesh_pairing::ActionType::NONE ||
+             ti.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+    }
+  }
+  assert(copies_at.size() == 3);
+  for (size_t i = 0; i < copies_at.size(); ++i) {
+    assert(copies_at[i] == (uint32_t)(i + 1) * mesh_pairing::COMPLETE_RESEND_INTERVAL_MS);
+  }
+  assert(std::memcmp(p.ci.peer_pubkey, peer_pub, 32) == 0);
+  assert(std::memcmp(p.ci.peer_mac, peer_mac, 6) == 0);
+  assert(p.ci.state == mesh_pairing::State::PAIRED);
+  std::printf("PASS test_frames_reaching_a_paired_initiator_send_the_secret_nowhere_else\n");
+}
+
+/* The copies do not lower the joiner's bar: a joiner whose owner has not
+ * confirmed (the initiator completed on its own CONFIRM reflected to it,
+ * F94) drops every copy, and takes one only after its owner confirms,
+ * inside the window. (So the reflection no longer always leaves the
+ * initiator with a member that never joined: it still does when the
+ * joiner's owner never confirms.) */
+void test_a_copy_is_taken_only_after_the_joiners_owner_confirms() {
+  Pair p;
+  pair_to_code(p);
+  /* The initiator's owner confirms; its CONFIRM is reflected back to it
+   * from the joiner's address. */
+  mesh_pairing::Action a = mesh_pairing::confirm_code(p.ci, 50);
+  InFlight cfi; must(action_to_inflight(a, &cfi));
+  a = deliver(p.ci, p.mac_j, cfi, 60);
+  assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);   /* F94, still open */
+  assert(mesh_pairing::tick(p.ci, 60).type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+  int copies = 0;
+  uint32_t paired_at = 0;
+  const uint32_t owner_at = 30100;   /* on the 100 ms tick grid */
+  for (uint32_t t = 100; t < 60 + 60000 && paired_at == 0; t += 100) {
+    if (t == owner_at) {
+      assert(mesh_pairing::confirm_code(p.cj, t).type == mesh_pairing::ActionType::SEND_CONFIRM);
+    }
+    mesh_pairing::Action ti = mesh_pairing::tick(p.ci, t);
+    if (ti.type != mesh_pairing::ActionType::SEND_COMPLETE) continue;
+    ++copies;
+    InFlight lead, cp;
+    must(leading_confirm_to_inflight(ti, &lead));
+    must(action_to_inflight(ti, &cp));
+    deliver(p.cj, p.mac_i, lead, t);
+    mesh_pairing::Action r = deliver(p.cj, p.mac_i, cp, t);
+    if (t < owner_at) {
+      assert(r.type == mesh_pairing::ActionType::NONE);
+      assert(p.cj.state == mesh_pairing::State::AWAITING_CONFIRM && !p.cj.opera_secret_present);
+    } else if (r.type == mesh_pairing::ActionType::NOTIFY_PAIRED) {
+      paired_at = t;
+    }
+  }
+  assert(copies > 10 && paired_at >= owner_at && paired_at < owner_at + 2100);
+  std::printf("PASS test_a_copy_is_taken_only_after_the_joiners_owner_confirms\n");
+}
+
 /* ── F135 — cancel() leaves an ended pairing alone ────────────────────────
  *
  * Until F135 cancel() failed every state but IDLE. A cancel that landed
@@ -1488,6 +1841,12 @@ int main() {
   test_the_initiator_seals_nothing_to_a_refused_partner();
   test_the_joiner_opens_nothing_from_a_refused_partner();
   test_every_failure_says_why();
+  test_a_lost_complete_is_sent_again_until_the_joiner_takes_it();
+  test_the_complete_copies_are_bounded();
+  test_stop_complete_resend_ends_the_copies();
+  test_a_lost_complete_reaches_a_pre_f97_joiner();
+  test_frames_reaching_a_paired_initiator_send_the_secret_nowhere_else();
+  test_a_copy_is_taken_only_after_the_joiners_owner_confirms();
   test_a_cancel_after_the_complete_leaves_the_pairing_paired();
   test_a_cancel_on_a_failed_pairing_reports_nothing_again();
   test_a_cancel_with_nothing_running_does_nothing();
