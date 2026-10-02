@@ -1032,8 +1032,8 @@ esp_err_t handle_calibrate_apply(httpd_req_t* req) {
  * Pet Mode is the only key on the wire today; preset / sensitivity-slider
  * round-trips will land in a follow-up that maps preset → motion/active/
  * breathing thresholds. The NVS schema (cp.pet_mode et al.) is already
- * defined in SETTING_KEYS, so future endpoint expansion is purely
- * additive.
+ * defined in csi_module_settings_nvs.h's key map, so future endpoint
+ * expansion is purely additive.
  * ────────────────────────────────────────────────────────────────────────── */
 
 esp_err_t handle_settings_get(httpd_req_t* req) {
@@ -1482,19 +1482,20 @@ esp_err_t handle_sense_page(httpd_req_t* req) {
 /* ──────────────────────────────────────────────────────────────────────────
  * TUNING LAB (Pillar D / Tier 4 #10)
  *
- * Hidden P2 surface at /tune. Lists every NVS-backed coefficient in
- * SETTING_KEYS as a labeled slider with min, max, default. Save/Load
+ * Hidden P2 surface at /tune. Lists every NVS-backed coefficient in the
+ * shared key map (csi_module_settings_nvs.h) as a labeled slider with min,
+ * max, default. Save/Load
  * preset writes/reads a local JSON bundle (no network egress) so a
  * tinkerer can ship a baseline between devices or back up before
  * experiments.
  *
- * Why a separate metadata table next to SETTING_KEYS?
- *   SETTING_KEYS only knows the (full_key, nvs_key) pair — it can't
+ * Why a separate metadata table next to the key map?
+ *   The key map only knows the (full_key, nvs_key) pair — it can't
  *   render a slider on its own. The metadata below adds the bits the
  *   UI needs (label, kind, range, default) and the bit the POST
- *   handler needs (which module to reinit). Co-locating these two
- *   tables keeps the abbreviation map small while still making "add
- *   a new coefficient" a one-place change.
+ *   handler needs (which module to reinit). Adding a coefficient is a
+ *   row here and a row in the shared key map (which the canary reads
+ *   by too).
  * ────────────────────────────────────────────────────────────────────────── */
 
 enum TuneKind { TK_INT, TK_BOOL, TK_MINUTES };
@@ -1568,7 +1569,7 @@ int32_t tune_clamp(const TuneCoeff& c, int32_t v) {
  * so the slider position matches what the module would actually use.
  *
  * Defensive guard: if a TuneCoeff is ever added without a matching
- * SETTING_KEYS row, nvs_key_for() returns nullptr and we fall back to
+ * key-map row, nvs_key_for() returns nullptr and we fall back to
  * the declared default rather than passing NULL into Preferences. */
 int32_t tune_read_value(Preferences& prefs, const TuneCoeff& c) {
   const char* nvs = nvs_key_for(c.full_key);
