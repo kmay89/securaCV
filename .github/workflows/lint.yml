@@ -122,7 +122,9 @@ jobs:
         #  • Home Assistant templates (test_ha_discovery_binary_sensors.py,
         #    test_vision_dashboard_voxel.py, test_vision_automation_clocks.py)
         #    — rendered with jinja2, Home Assistant's template engine, at HA's
-        #    own pin (package_constraints.txt: Jinja2==3.1.6). Installed here
+        #    own pin (package_constraints.txt: Jinja2==3.1.6), in HA's own
+        #    environment (scripts/tests/_ha_jinja.py: its sandbox, its
+        #    LoggingUndefined and its round/int/float filters). Installed here
         #    because they used to skip without it, and this job never had it:
         #    the discovery test holds every binary sensor the Vision, Sense and
         #    Sentinel announce to a payload HA matches (sweep HA25).

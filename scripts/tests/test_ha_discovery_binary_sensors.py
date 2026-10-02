@@ -30,13 +30,25 @@ raise. (The Sense's Radar link problem sensor already rendered strings.)
 
 This test extracts every binary_sensor announcement from the three C++ files
 (the snprintf format, decoded and parsed as the JSON it publishes), holds each
-field to a JSON boolean on that product's state row, and renders each
-template with jinja2 the way Home Assistant does: an
-ImmutableSandboxedEnvironment whose undefined logs as HA's LoggingUndefined
-does, the row as value/value_json, the result stripped and compared with ==.
-jinja2 is pinned in lint.yml's scripts/tests step at Home Assistant's own pin
+to the field it is named for and that field to a JSON boolean on that
+product's state row, and renders each template with jinja2 the way Home
+Assistant does (_ha_jinja.environment(): HA's sandbox, its LoggingUndefined
+and its filters), the row as value/value_json, the result stripped and
+compared with ==. Every sensor but the Sense's Radar link problem must read
+a row without its field as off with no template warning: that is the reason
+the default sits inside the test, so it is held by object id, never by
+searching the template for the text that provides it. jinja2 is pinned in
+lint.yml's scripts/tests step at Home Assistant's own pin
 (package_constraints.txt: Jinja2==3.1.6) and imported unconditionally: a
 skipped render test reads as covered while catching nothing.
+
+The longer template made each payload longer, so the announcements are also
+built for the longest device id the firmware accepts (runtime_config.h:
+device_id[48], so 47 characters) with each product's real manufacturer,
+model (every flavor's) and firmware version, devObj and availObj cut at
+their own declared sizes as snprintf cuts them, and each must fit the p[]
+buffer it is formatted into: at 768 bytes the Vision's Presence JSON was
+cut off mid-object from a 40-character id.
 
 Run:  python3 -m unittest discover -s scripts/tests -p 'test_ha_discovery_binary_sensors.py' -v
 CI:   .github/workflows/lint.yml (unittest discover -s scripts/tests)
@@ -49,15 +61,20 @@ import re
 import unittest
 from pathlib import Path
 
-import jinja2
-from jinja2.sandbox import ImmutableSandboxedEnvironment
+import _ha_jinja
 
 REPO = Path(__file__).resolve().parents[2]
+FIRMWARE = REPO / "firmware"
+# product -> object id -> the state row field that sensor is named for
 PRODUCTS = {
-    "canary-vision": {"presence", "dwelling"},
-    "canary-sense": {"presence", "radar_link", "breathing"},
-    "canary-sentinel": {"presence", "anomaly", "channel_denied"},
+    "canary-vision": {"presence": "presence", "dwelling": "dwelling"},
+    "canary-sense": {"presence": "presence", "radar_link": "radar_ok", "breathing": "breathing_locked"},
+    "canary-sentinel": {"presence": "presence", "anomaly": "anomaly_active",
+                        "channel_denied": "channel_denied"},
 }
+# The one sensor that is ON when its field is false or missing: a problem
+# sensor over `radar_ok` (a missing row field reads as a link problem).
+INVERTED = {("canary-sense", "radar_link")}
 
 _LITERAL = re.compile(r'"((?:[^"\\]|\\.)*)"')
 
@@ -112,21 +129,58 @@ def fill(fmt: str, args: list[str], values: dict[str, str]) -> str:
     return _CONV.sub(lambda m: values.get(next(it), "x"), fmt)
 
 
+def discovery_source(product: str) -> str:
+    return (FIRMWARE / "projects" / product / "src/ha/ha_discovery.cpp").read_text(encoding="utf-8")
+
+
+def announcements(product: str, ids: dict[str, str]) -> dict[str, tuple[str, int]]:
+    """object id -> (the bytes each binary_sensor announcement formats, as
+    text, and the size of the p[] buffer it is formatted into), with devObj
+    and availObj cut at their declared sizes the way snprintf cuts them."""
+    src = discovery_source(product)
+    values = dict(ids)
+    for obj in ("devObj", "availObj"):
+        decl = re.search(r"char %s\[(\d+)\];" % obj, src)
+        fmt, args = snprintf_call(src, decl.start())
+        whole = fill(fmt, args, ids).encode("utf-8")
+        values[obj] = whole[:int(decl.group(1)) - 1].decode("utf-8", errors="ignore")
+    found = {}
+    for m in re.finditer(r'char t\[\d+\], p\[(\d+)\];\s*'
+                         r'topic_for\("binary_sensor", "([a-z_]+)", t, sizeof\(t\)\);', src):
+        fmt, args = snprintf_call(src, m.end())
+        found[m.group(2)] = (fill(fmt, args, values), int(m.group(1)))
+    # every binary_sensor announcement was matched with its buffer declaration
+    assert len(found) == src.count('topic_for("binary_sensor",'), product
+    return found
+
+
 def binary_sensors(product: str) -> dict[str, dict]:
     """object id -> the discovery JSON each binary_sensor announcement publishes."""
-    src = (REPO / "firmware/projects" / product / "src/ha/ha_discovery.cpp").read_text(encoding="utf-8")
-    dev_fmt, dev_args = snprintf_call(src, src.index("char devObj["))
-    avail_fmt, avail_args = snprintf_call(src, src.index("char availObj["))
     ids = {"DEVICE_ID": "canary_test_001", "topics.state": "securacv/canary_test_001/state",
            "topics.status": "securacv/canary_test_001/status"}
-    values = dict(ids)
-    values["devObj"] = fill(dev_fmt, dev_args, ids)
-    values["availObj"] = fill(avail_fmt, avail_args, ids)
-    found = {}
-    for m in re.finditer(r'topic_for\("binary_sensor", "([a-z_]+)", t, sizeof\(t\)\);', src):
-        fmt, args = snprintf_call(src, m.end())
-        found[m.group(1)] = json.loads(fill(fmt, args, values))
+    return {oid: json.loads(text) for oid, (text, _) in announcements(product, ids).items()}
+
+
+def string_constants(product: str, name: str) -> set[str]:
+    """Every value the firmware can give the string constant `name`: its
+    literal in the project's config.h, or, when it is set from a flavor macro,
+    that macro's value in every flavor's config.h (firmware/configs/<product>)."""
+    cfg = (FIRMWARE / "projects" / product / "include/canary/config.h").read_text(encoding="utf-8")
+    m = re.search(r"\b%s\s*=\s*(\"[^\"]*\"|[A-Z_]+);" % name, cfg)
+    assert m, (product, name)
+    if m.group(1).startswith('"'):
+        return {m.group(1)[1:-1]}
+    found = set()
+    for flavor in sorted((FIRMWARE / "configs" / product).glob("*/config.h")):
+        found |= set(re.findall(r'#define\s+%s\s+"([^"]*)"' % m.group(1), flavor.read_text(encoding="utf-8")))
+    assert found, (product, name, m.group(1))
     return found
+
+
+def longest_device_id(product: str) -> str:
+    rc = (FIRMWARE / "projects" / product / "include/canary/runtime_config.h").read_text(encoding="utf-8")
+    size = int(re.search(r"char device_id\[(\d+)\];", rc).group(1))
+    return "d" * (size - 1)
 
 
 def state_row_booleans(product: str) -> set[str]:
@@ -148,44 +202,28 @@ def state_row_booleans(product: str) -> set[str]:
             if k and c == "%s" and re.fullmatch(r'.+\?\s*"true"\s*:\s*"false"', a)}
 
 
-class HaLog:
-    """Home Assistant's LoggingUndefined (helpers/template.py), recording."""
-
-    def __init__(self):
-        self.warnings: list[str] = []
-        log = self
-
-        class LoggingUndefined(jinja2.Undefined):
-            def __str__(self):
-                log.warnings.append(self._undefined_message)
-                return super().__str__()
-
-            def __iter__(self):
-                log.warnings.append(self._undefined_message)
-                return super().__iter__()
-
-            def __bool__(self):
-                log.warnings.append(self._undefined_message)
-                return super().__bool__()
-
-        self.env = ImmutableSandboxedEnvironment(undefined=LoggingUndefined)
-
-
 def ha_state(entity: dict, payload: str) -> tuple[bool | None, str, list[str]]:
     """What HA's MQTT binary sensor makes of `payload` on the state topic:
-    True (on), False (off) or None (no matching payload: left as it was)."""
-    ha = HaLog()
+    True (on), False (off) or None (no matching payload: left as it was),
+    with the template warnings HA would log rendering it."""
+    warnings: list[str] = []
     variables = {"value": payload}
     try:
         variables["value_json"] = json.loads(payload)
     except ValueError:
         pass
-    rendered = ha.env.from_string(entity["value_template"]).render(**variables).strip()
+    env = _ha_jinja.environment(warnings)
+    rendered = env.from_string(entity["value_template"]).render(**variables).strip()
     if rendered == entity["payload_on"]:
-        return True, rendered, ha.warnings
+        return True, rendered, warnings
     if rendered == entity["payload_off"]:
-        return False, rendered, ha.warnings
-    return None, rendered, ha.warnings
+        return False, rendered, warnings
+    return None, rendered, warnings
+
+
+def firmware_version(product: str) -> str:
+    ver = (FIRMWARE / "projects" / product / "include/canary/version.h").read_text(encoding="utf-8")
+    return re.search(r'#define CANARY_FW_VERSION "([^"]+)"', ver).group(1)
 
 
 def field_of(entity: dict) -> str:
@@ -198,7 +236,13 @@ class EveryBinarySensorTurnsOnAndOff(unittest.TestCase):
     def test_the_announcements_are_the_ones_expected(self):
         for product, want in PRODUCTS.items():
             with self.subTest(product=product):
-                self.assertEqual(set(binary_sensors(product)), want)
+                self.assertEqual(set(binary_sensors(product)), set(want))
+
+    def test_each_reads_the_field_it_is_named_for(self):
+        for product, want in PRODUCTS.items():
+            for oid, entity in binary_sensors(product).items():
+                with self.subTest(product=product, sensor=oid):
+                    self.assertEqual(field_of(entity), want[oid])
 
     def test_each_reads_a_json_boolean_off_its_state_row(self):
         for product in PRODUCTS:
@@ -222,19 +266,40 @@ class EveryBinarySensorTurnsOnAndOff(unittest.TestCase):
                         state, rendered, warnings = ha_state(entity, row)
                         self.assertIsNotNone(state, f"{product} {oid}: HA finds no matching payload "
                                                     f"for {rendered!r} ({entity['value_template']})")
-                        want = (not value) if oid == "radar_link" else value  # a problem when NOT ok
+                        want = (not value) if (product, oid) in INVERTED else value  # a problem when NOT ok
                         self.assertIs(state, want)
                         self.assertEqual(warnings, [])
 
     def test_a_row_without_the_field_reads_off_quietly(self):
+        # Held by object id, not by looking for `| default(false)` in the
+        # template: a template that drops the default (HA logs a warning on
+        # every row without the field) or flips it (`| default(true)` reads
+        # such a row as on) must fail here, not be skipped.
+        checked = 0
         for product in PRODUCTS:
             for oid, entity in binary_sensors(product).items():
-                if "| default(false)" not in entity["value_template"]:
-                    continue  # radar_link: `not value_json.radar_ok`, a problem if the row lacks it
+                if (product, oid) in INVERTED:
+                    continue  # `not value_json.radar_ok`: a row without it is a link problem
                 with self.subTest(product=product, sensor=oid):
                     state, rendered, warnings = ha_state(entity, '{"device_id":"canary_test_001"}')
                     self.assertIs(state, False, rendered)
                     self.assertEqual(warnings, [], "HA would log a template warning on every row")
+                checked += 1
+        self.assertEqual(checked, sum(len(v) for v in PRODUCTS.values()) - len(INVERTED))
+
+    def test_each_fits_its_buffer_for_the_longest_device_id(self):
+        for product in PRODUCTS:
+            did = longest_device_id(product)
+            self.assertEqual(len(did), 47, product)
+            for manufacturer in string_constants(product, "MANUFACTURER"):
+                for model in string_constants(product, "MODEL"):
+                    ids = {"DEVICE_ID": did, "topics.state": f"securacv/{did}/state",
+                           "topics.status": f"securacv/{did}/status", "MANUFACTURER": manufacturer,
+                           "MODEL": model, "CANARY_FW_VERSION": firmware_version(product)}
+                    for oid, (text, size) in announcements(product, ids).items():
+                        with self.subTest(product=product, model=model, sensor=oid):
+                            self.assertLess(len(text.encode("utf-8")), size,
+                                            f"snprintf cuts the {oid} discovery JSON at {size - 1} bytes")
 
     def test_the_old_template_never_matched(self):
         # what the three products announced before HA25, rendered the same way

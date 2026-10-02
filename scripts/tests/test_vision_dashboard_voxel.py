@@ -22,9 +22,10 @@ present: dwell_ended's row, the rows through the lost timeout, a heartbeat
 taken on a frame that missed them. Each visit now starts its own tracker
 (sweep F152), so while Presence is on the cell is this visit's.
 
-This renders the card with jinja2 (Home Assistant's template engine; lint.yml
-installs it at HA's pin, so it is imported unconditionally) and pins the
-firmware lines the card relies on.
+This renders the card in Home Assistant's template environment
+(_ha_jinja.environment(): its sandbox, its LoggingUndefined and its own
+`int` filter; jinja2 itself is installed by lint.yml at HA's pin, so it is
+imported unconditionally) and pins the firmware lines the card relies on.
 
 Run:  python3 -m unittest discover -s scripts/tests -p 'test_vision_dashboard_voxel.py' -v
 CI:   .github/workflows/lint.yml (unittest discover -s scripts/tests)
@@ -35,7 +36,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-import jinja2
+import _ha_jinja
 import yaml
 
 REPO = Path(__file__).resolve().parents[2]
@@ -55,8 +56,10 @@ def card() -> dict:
 
 def render(voxel: str, presence: str, confidence: str = "0") -> list[str]:
     states = {VOXEL: voxel, PRESENCE: presence, CONFIDENCE: confidence}
-    tmpl = jinja2.Environment().from_string(card()["content"])
+    warnings: list[str] = []
+    tmpl = _ha_jinja.environment(warnings).from_string(card()["content"])
     text = tmpl.render(states=lambda entity: states.get(entity, "unknown"))
+    assert warnings == [], warnings  # HA would log each one
     return [line.strip() for line in text.splitlines() if line.strip()]
 
 

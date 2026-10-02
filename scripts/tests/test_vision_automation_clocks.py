@@ -24,9 +24,11 @@ and never on interaction_likely.
 
 This holds the recipes to that: the alert triggers on those two events, its
 message never reads dwell_ms, it reads each event's own clock, and both
-messages are rendered with jinja2 (Home Assistant's template engine; lint.yml
-installs it at HA's pin, so it is imported unconditionally) for the rows the
-device sends.
+messages are rendered for the rows the device sends in Home Assistant's
+template environment (_ha_jinja.environment(): its sandbox and its own
+`round` and `int` filters, so a number prints as HA prints it: `round(0)`
+returns an int there, "17" where plain jinja2 prints "17.0"; jinja2 itself
+is installed by lint.yml at HA's pin, so it is imported unconditionally).
 
 Run:  python3 -m unittest discover -s scripts/tests -p 'test_vision_automation_clocks.py' -v
 CI:   .github/workflows/lint.yml (unittest discover -s scripts/tests)
@@ -38,8 +40,8 @@ import re
 import unittest
 from pathlib import Path
 
+import _ha_jinja
 import yaml
-from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 REPO = Path(__file__).resolve().parents[2]
 RECIPE = REPO / "homeassistant/automations/securacv_vision_presence.yaml"
@@ -63,9 +65,11 @@ class Trigger:
 
 
 def render(automation: dict, payload: dict) -> str:
-    # Home Assistant renders templates in a sandboxed environment
-    tmpl = ImmutableSandboxedEnvironment().from_string(automation["action"][0]["data"]["message"])
-    return re.sub(r"\s+", " ", tmpl.render(trigger=Trigger(payload))).strip()
+    warnings: list[str] = []
+    tmpl = _ha_jinja.environment(warnings).from_string(automation["action"][0]["data"]["message"])
+    text = re.sub(r"\s+", " ", tmpl.render(trigger=Trigger(payload))).strip()
+    assert warnings == [], warnings  # HA would log each one
+    return text
 
 
 # interaction_likely as the device sends it (firmware/tests_host/
@@ -111,6 +115,16 @@ class TheLingeringAlert(unittest.TestCase):
         # HA26: it is sent from an empty frame, so its confidence is always 0
         self.assertNotIn("confidence", render(alert(), LEFT))
         self.assertNotIn("confidence", render(alert(), {**LEFT, "reason": "zone_interaction_then_left"}))
+
+
+class TheEnvironmentIsHomeAssistants(unittest.TestCase):
+    def test_round_and_int_print_as_home_assistant_prints_them(self):
+        env = _ha_jinja.environment()
+        self.assertEqual(env.from_string("{{ (16700 / 1000) | round(0) }}").render(), "17")
+        self.assertEqual(env.from_string("{{ (16700 / 1000) | round(1) }}").render(), "16.7")
+        self.assertEqual(env.from_string("{{ 'x' | int(0) }}").render(), "0")
+        with self.assertRaises(ValueError):  # no default: a template error in HA, 0 in jinja2
+            env.from_string("{{ 'x' | int }}").render()
 
 
 class TheLitterBoxVisitAlert(unittest.TestCase):
