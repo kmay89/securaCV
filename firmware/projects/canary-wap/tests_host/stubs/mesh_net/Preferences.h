@@ -6,7 +6,11 @@
  * (host_sim::nvs_writes_fail): on the Arduino-ESP32 cores canary-wap
  * builds with (PlatformIO's pinned 3.3.8, the Arduino CLI leg's latest
  * 3.x), putBytes returns 0 when nvs_set_blob or nvs_commit fails (a full
- * or worn partition), and the value is not stored. */
+ * or worn partition), and the value is not stored. A zero-length
+ * putBytes (or a null value) is refused the same way and writes nothing,
+ * as the real one's `!value || !len` guard has it: the old value stays.
+ * putString("") does store an empty value (nvs_set_str stores ""), and
+ * returns strlen, 0. */
 #ifndef STUB_MESH_NET_PREFERENCES_H
 #define STUB_MESH_NET_PREFERENCES_H
 
@@ -38,12 +42,8 @@ class Preferences {
     return !ro_ && host_sim::nvs->erase(k(key)) != 0;
   }
   size_t putBytes(const char* key, const void* v, size_t n) {
-    if (!ro_) host_sim::note_side_effect();
-    if (ro_ || host_sim::nvs_writes_fail) return 0;
-    const uint8_t* b = static_cast<const uint8_t*>(v);
-    (*host_sim::nvs)[k(key)].assign(b, b + n);
-    ++host_sim::nvs_writes[k(key)];
-    return n;
+    if (v == nullptr || n == 0) return 0;   // refused before nvs_set_blob
+    return store(key, v, n) ? n : 0;
   }
   size_t getBytes(const char* key, void* buf, size_t max_len) {
     auto it = host_sim::nvs->find(k(key));
@@ -61,7 +61,10 @@ class Preferences {
     uint8_t b = 0;
     return getBytes(key, &b, 1) == 1 ? b : def;
   }
-  size_t putString(const char* key, const char* v) { return putBytes(key, v, strlen(v)); }
+  size_t putString(const char* key, const char* v) {
+    if (v == nullptr) return 0;
+    return store(key, v, strlen(v)) ? strlen(v) : 0;
+  }
   String getString(const char* key, const char* def = "") {
     auto it = host_sim::nvs->find(k(key));
     if (it == host_sim::nvs->end()) return String(def);
@@ -70,6 +73,14 @@ class Preferences {
   }
  private:
   std::string k(const char* key) const { return ns_ + "/" + key; }
+  bool store(const char* key, const void* v, size_t n) {
+    if (!ro_) host_sim::note_side_effect();
+    if (ro_ || host_sim::nvs_writes_fail) return false;
+    const uint8_t* b = static_cast<const uint8_t*>(v);
+    (*host_sim::nvs)[k(key)].assign(b, b + n);
+    ++host_sim::nvs_writes[k(key)];
+    return true;
+  }
   std::string ns_;
   bool ro_ = false;
 };

@@ -1931,13 +1931,23 @@ void test_an_empty_opera_older_firmware_stored_is_not_loaded() {
 // joiner, which had lost the COMPLETE, timed out (host-probed on #<W10>'s
 // code). A dropped member's last-seen counter is now kept as a tombstone
 // (the PlatformIO tree's CounterTombstone), at most eight, persisted, and
-// a re-add starts there.
+// a re-add starts there. Only a re-add into the opera the member was
+// dropped from: its old frames carry that opera_id, and every other opera
+// drops them at the id check, so a tombstone restored elsewhere (after a
+// rotation, or in a new opera) guards nothing and keeps out a member whose
+// counters restart, as every member on firmware from before F71 does.
 
-uint64_t tombstone_of(Device& self, const Device& other) {
+// One stored tombstone: fingerprint, opera_id, last-seen counter.
+constexpr size_t kTombBytes = mn::FINGERPRINT_SIZE + mn::OPERA_ID_SIZE + 8;
+
+// `self`'s tombstone for `other` in the opera `opera` (by default the one
+// `self` holds now), or 0.
+uint64_t tombstone_of(Device& self, const Device& other, const std::vector<uint8_t>& opera = {}) {
   become(self);
   uint8_t fp[mn::FINGERPRINT_SIZE];
   mn::compute_fingerprint(other.pub, fp);
-  const mn::RxTombstone* t = mn::find_rx_tombstone(fp);
+  const mn::RxTombstone* t =
+      mn::find_rx_tombstone(fp, opera.empty() ? mn::g_opera_config.opera_id : opera.data());
   return t == nullptr ? 0 : t->last_seen;
 }
 
@@ -1987,7 +1997,7 @@ void test_a_removed_members_last_seen_outlives_a_reboot() {
   fresh_opera({&A, &B});
   const std::vector<Frame> recorded = heard_heartbeats(A, B, 5);
   remove_member(A, B);
-  CHECK(nvs_value(A, "mesh/rx_tombs").size() == mn::FINGERPRINT_SIZE + 8);
+  CHECK(nvs_value(A, "mesh/rx_tombs").size() == kTombBytes);
   boot(A);
   past_the_grace(A);
   re_pair(A, B);
@@ -2008,8 +2018,8 @@ void test_a_device_that_left_keeps_its_members_last_seen() {
   const std::vector<uint8_t> opera = opera_id_of(C);
   become(A);
   CHECK(mn::leave_opera());
-  CHECK(tombstone_of(A, C) == 5);
-  CHECK(tombstone_of(A, B) == 0);                   // never heard: none kept
+  CHECK(tombstone_of(A, C, opera) == 5);            // for the opera it left
+  CHECK(tombstone_of(A, B, opera) == 0);            // never heard: none kept
   re_pair(C, A);
   CHECK(opera_id_of(A) == opera);
   CHECK(entry(A, C)->msg_counter_rx >= 5);          // was 0
@@ -2018,11 +2028,83 @@ void test_a_device_that_left_keeps_its_members_last_seen() {
   std::printf("PASS a_device_that_left_keeps_its_members_last_seen\n");
 }
 
+void test_a_device_that_left_keeps_its_members_last_seen_across_a_boot() {
+  // The same, with a boot between the leave and the re-pair: the leave
+  // stored the tombstones (rx_tombs), and the boot reads them back.
+  fresh_opera({&A, &B, &C});
+  const std::vector<Frame> recorded = heard_heartbeats(A, C, 5);
+  const std::vector<uint8_t> opera = opera_id_of(C);
+  become(A);
+  CHECK(mn::leave_opera());
+  CHECK(nvs_value(A, "mesh/rx_tombs").size() == kTombBytes);
+  boot(A);
+  CHECK(tombstone_of(A, C, opera) == 5);
+  become(A);
+  mn::set_enabled(true);                            // a leave turns the mesh off
+  re_pair(C, A);
+  CHECK(opera_id_of(A) == opera);
+  CHECK(entry(A, C)->msg_counter_rx >= 5);
+  CHECK(drops_all(A, C, recorded));
+  CHECK(hears_next_heartbeat(A, C));
+  std::printf("PASS a_device_that_left_keeps_its_members_last_seen_across_a_boot\n");
+}
+
+void test_a_tombstone_is_not_restored_in_a_rotated_opera() {
+  // A removal with a survivor rotates the opera (F95; it commits at the
+  // next pass, having reached no one), so the removed member's recorded
+  // frames carry an opera_id A no longer holds and drop at the id check:
+  // its tombstone guards nothing in the rotated opera. Restored there, it
+  // kept out a member whose counters restart (here B, set back to 1
+  // after the re-pair, as firmware from before F71 does at every boot)
+  // until they climbed past it.
+  fresh_opera({&A, &B, &C});
+  const std::vector<Frame> recorded = heard_heartbeats(A, B, 5);
+  const std::vector<uint8_t> old_id = opera_id_of(A);
+  remove_member(A, B);
+  become(A);
+  mn::update();                                     // the rotation commits
+  CHECK(opera_id_of(A) != old_id);
+  CHECK(tombstone_of(A, B, old_id) == 5);           // kept, for the opera B was in
+  past_the_grace(A);
+  re_pair(A, B);
+  CHECK(entry(A, B)->msg_counter_rx == 0);          // was 5
+  CHECK(drops_all(A, B, recorded));                 // the old opera's frames
+  entry(B, A)->msg_counter_tx = 1;
+  CHECK(hears_next_heartbeat(A, B));
+  CHECK(tombstone_of(A, B, old_id) == 5);           // still there, for that opera
+  std::printf("PASS a_tombstone_is_not_restored_in_a_rotated_opera\n");
+}
+
+void test_a_joiner_restores_a_tombstone_only_in_the_opera_it_joins() {
+  // The joiner's side: A removed C, its last member, and kept its opera
+  // (and C's tombstone in it). C left that opera too, founded another and
+  // pairs A into it, starting its counters for A at 1, as firmware from
+  // before F71 does at every add. A adds C under the opera it is joining,
+  // not the one it still holds when the COMPLETE arrives, so C is heard.
+  fresh_opera({&A, &C});
+  heard_heartbeats(A, C, 5);
+  const std::vector<uint8_t> old_id = opera_id_of(A);
+  remove_member(A, C);                              // the last member: nothing rotates
+  CHECK(tombstone_of(A, C) == 5);
+  become(C);
+  CHECK(mn::leave_opera());
+  mn::g_tx_high_signed = 0;                         // C's add starts A's counter at 1
+  past_the_grace(A);
+  re_pair(C, A);                                    // C founds a new opera
+  CHECK(opera_id_of(A) == opera_id_of(C) && opera_id_of(A) != old_id);
+  CHECK(entry(C, A)->msg_counter_tx < 5);
+  CHECK(entry(A, C)->msg_counter_rx < 5);           // what it heard since; was 5
+  CHECK(hears_next_heartbeat(A, C));
+  CHECK(tombstone_of(A, C, old_id) == 5);
+  std::printf("PASS a_joiner_restores_a_tombstone_only_in_the_opera_it_joins\n");
+}
+
 void test_the_tombstones_are_bounded_and_the_oldest_goes() {
-  // Eight at most, in RAM and in NVS (128 B); the ninth removal drops the
+  // Eight at most, in RAM and in NVS (256 B); the ninth removal drops the
   // oldest. A member never heard leaves none.
   fresh_opera({&A, &B});
   fill_opera(A);
+  const std::vector<uint8_t> opera = opera_id_of(A);
   become(A);
   std::vector<std::vector<uint8_t>> fps;
   for (uint8_t i = 0; i < mn::g_peer_count; ++i) {
@@ -2036,17 +2118,17 @@ void test_the_tombstones_are_bounded_and_the_oldest_goes() {
   }
   become(A);
   CHECK(mn::g_rx_tomb_count == mn::MAX_RX_TOMBSTONES);
-  CHECK(mn::find_rx_tombstone(fps[0].data()) == nullptr);   // the oldest went
-  CHECK(mn::find_rx_tombstone(fps[9].data()) == nullptr);   // never heard
+  CHECK(mn::find_rx_tombstone(fps[0].data(), opera.data()) == nullptr);   // the oldest went
+  CHECK(mn::find_rx_tombstone(fps[9].data(), opera.data()) == nullptr);   // never heard
   for (size_t k = 1; k < 9; ++k) {
-    const mn::RxTombstone* t = mn::find_rx_tombstone(fps[k].data());
+    const mn::RxTombstone* t = mn::find_rx_tombstone(fps[k].data(), opera.data());
     CHECK(t != nullptr && t->last_seen == 100 + k);
   }
-  CHECK(nvs_value(A, "mesh/rx_tombs").size() == mn::MAX_RX_TOMBSTONES * (mn::FINGERPRINT_SIZE + 8));
+  CHECK(nvs_value(A, "mesh/rx_tombs").size() == mn::MAX_RX_TOMBSTONES * kTombBytes);
   boot(A);
   become(A);
   CHECK(mn::g_rx_tomb_count == mn::MAX_RX_TOMBSTONES);
-  CHECK(mn::find_rx_tombstone(fps[1].data())->last_seen == 101);
+  CHECK(mn::find_rx_tombstone(fps[1].data(), opera.data())->last_seen == 101);
   std::printf("PASS the_tombstones_are_bounded_and_the_oldest_goes\n");
 }
 
@@ -2086,7 +2168,9 @@ void test_a_device_whose_counters_went_back_is_released_by_a_second_removal() {
   CHECK(!hears_next_heartbeat(A, B));               // B's counter 1.. is below it
   remove_member(A, B);
   CHECK(tombstone_of(A, B) == 0);                   // released
-  CHECK(nvs_value(A, "mesh/rx_tombs").empty());
+  CHECK(!nvs_has(A, "rx_tombs"));                   // the key removed, not left as it was
+  boot(A);
+  CHECK(tombstone_of(A, B) == 0);                   // and no boot brings it back
   past_the_grace(A);
   re_pair(A, B);
   CHECK(entry(A, B)->msg_counter_rx == 0);
@@ -2206,6 +2290,11 @@ const Test kTests[] = {
      test_a_replayed_frame_does_not_end_a_re_added_members_complete_resend},
     {"a_removed_members_last_seen_outlives_a_reboot", test_a_removed_members_last_seen_outlives_a_reboot},
     {"a_device_that_left_keeps_its_members_last_seen", test_a_device_that_left_keeps_its_members_last_seen},
+    {"a_device_that_left_keeps_its_members_last_seen_across_a_boot",
+     test_a_device_that_left_keeps_its_members_last_seen_across_a_boot},
+    {"a_tombstone_is_not_restored_in_a_rotated_opera", test_a_tombstone_is_not_restored_in_a_rotated_opera},
+    {"a_joiner_restores_a_tombstone_only_in_the_opera_it_joins",
+     test_a_joiner_restores_a_tombstone_only_in_the_opera_it_joins},
     {"the_tombstones_are_bounded_and_the_oldest_goes", test_the_tombstones_are_bounded_and_the_oldest_goes},
     {"a_tombstone_is_raised_by_what_was_heard_since_the_re_add",
      test_a_tombstone_is_raised_by_what_was_heard_since_the_re_add},
