@@ -12046,8 +12046,10 @@ void loop() {
   // Update mesh network
   #if FEATURE_MESH_NETWORK
   mesh_network::update();
-  // Service the community chirp channel too (no-op until the user enables
-  // it; needed so cooldowns, bloom-filter resets and relay TTLs advance).
+  // Service the community chirp channel too: cooldowns, bloom-filter resets
+  // and relay TTLs advance here. Call it every pass, enabled or not: it
+  // drains the owner's REST commands first, POST /api/chirp/enable among
+  // them (sweep F111; check_wap_loop_commands.py rule C4).
   chirp_channel::update();
   {
     static uint32_t s_last_replay_save_ms = 0;
@@ -12060,7 +12062,8 @@ void loop() {
   }
   #endif
 
-  // Update Bluetooth (legacy channel)
+  // Update Bluetooth (legacy channel). Every pass, enabled or not: it
+  // drains the owner's REST commands first, an enable among them (F111).
   #if FEATURE_BLUETOOTH
   bluetooth_channel::update();
   #endif

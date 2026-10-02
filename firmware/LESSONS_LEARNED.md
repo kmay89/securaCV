@@ -2677,10 +2677,15 @@
   (`enable()` refuses until `init()` has run); a handler that turns
   Bluetooth on calls `init()` on its own task first (`bring_up()`, the call
   `enable()` made there before), then submits the command.
-- **Regression check:** `test_bluetooth_commands_wap.cpp`'s
-  `no_command_brings_the_stack_up` and `check_wap_loop_commands.py`'s rules
-  C2 and C4 (no bare `init(` in `bluetooth_channel.cpp`;
-  `bluetooth_channel::init(` only in `bring_up()` and the boot worker).
+- **Regression check:** both halves. That no command brings the stack up:
+  `test_bluetooth_commands_wap.cpp`'s `no_command_brings_the_stack_up` and
+  `check_wap_loop_commands.py`'s rules C2 and C4 (no bare `init(` in
+  `bluetooth_channel.cpp`; `bluetooth_channel::init(` only in `bring_up()`
+  and the boot worker). That the handlers still do: rule C3 requires the
+  enable, advertise and pair handlers to call `bring_up()` before they
+  submit (no host test compiles the handlers), because a split that drops
+  that half fails quietly: a device whose boot bring-up failed can never
+  turn Bluetooth on from the dashboard, and every test still passes.
 - **Date learned:** 2026-10
 
 ## How to Add an Entry

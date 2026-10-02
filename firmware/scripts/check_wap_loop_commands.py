@@ -161,17 +161,36 @@ C2. In each .cpp they are called only from `run_command()` and the paths
     `bluetooth_channel.cpp` no function calls a bare `init(`: a command never
     brings the NimBLE stack up (it can block past the loop task's watchdog).
 C3. Each changing handler (`CHIRP_HANDLERS`, `BT_HANDLERS`) calls the
-    channel's `submit(` exactly once and answers a command that did not run
-    with `send_not_run(`, which sets its status line with
-    `http_status_line(<channel>::not_run_status(w))`.
+    channel's `submit(` exactly once, as
+    `const loop_command_ring::Wait w = <channel>::submit(...);`, and the
+    statement right after it is
+    `if (w != loop_command_ring::Wait::kDone) return send_not_run(req, w);`
+    (a withdrawn command ran nothing and must not answer success);
+    `send_not_run()` sets its status line with
+    `http_status_line(<channel>::not_run_status(w))`. What the handler hands
+    over (`CHIRP_HANDLER_COMMANDS`, `BT_HANDLER_COMMANDS`): the command type
+    its route names (the ack: "confirmed" confirms, "resolved" dismisses), and
+    each Command field that type consumes, filled from the request once,
+    before the submit. The settings POSTs fill each field in its own
+    `if (input["<key>"]...)` block and name it there, with the flag or mask
+    bit that field's key maps to (`CHIRP_SETTINGS_FIELDS`,
+    `BT_SETTINGS_FIELDS`), and nowhere else. After the command ran, a handler
+    calls nothing on the channel but pure lookups (`AFTER_SUBMIT_CALLS`): it
+    answers from the Result. The Bluetooth enable, advertise and pair
+    handlers bring the stack up first (`if (... !bring_up()) { return`): no
+    command runs `init()`, so without it a device whose boot bring-up failed
+    could never turn Bluetooth on.
 C4. Across the sketch (comments and strings blanked), no file but the
     channel's .cpp names `chirp_channel::<mutator>(` or
     `bluetooth_channel::<mutator>(`, and none says `using namespace` for
     either. `<channel>::submit(` appears only in HTTP handlers (from the loop
     task it would wait for itself), and `<channel>::update(` once, from the
-    sketch's `loop()`. `bluetooth_channel::init(` is called only by
-    `bluetooth_api.h`'s `bring_up()` (an HTTP handler's, as `enable()` did
-    there before) and the sketch's `ble_bringup_task()`.
+    sketch's `loop()`, as a statement of its own at the top level of its body
+    with no `return` before it: the drain runs every pass, a disabled
+    channel's included (that is where its enable waits).
+    `bluetooth_channel::init(` is called only by `bluetooth_api.h`'s
+    `bring_up()` (an HTTP handler's, as `enable()` did there before) and the
+    sketch's `ble_bringup_task()`.
 
 MQTT network timeout (F112): every loop-task publish runs
 `esp_mqtt_client_publish()`, which writes the socket on the calling task
@@ -845,6 +864,86 @@ BT_HANDLERS = ("handle_bluetooth_enable", "handle_bluetooth_disable",
                "handle_bluetooth_settings_set", "handle_bluetooth_name_set",
                "handle_bluetooth_power_set")
 
+# What each changing handler hands the loop task (rule C3): the command type
+# it makes, and the fields of the Command it fills from the request, each
+# assigned once, before its submit(. A field the handler drops or overrides
+# is the owner's choice lost on the way (an urgent chirp sent as info, a
+# PIN confirm with no PIN). The ack handler's type depends on the request
+# ("confirmed" or "resolved"); it is held on the source with its strings.
+CMD_ONLY = ()
+CHIRP_HANDLER_COMMANDS = {
+    "handle_chirp_enable": ("CHIRP_CMD_ENABLE", CMD_ONLY),
+    "handle_chirp_disable": ("CHIRP_CMD_DISABLE", CMD_ONLY),
+    "handle_chirp_send": ("CHIRP_CMD_SEND", ("cmd.template_id=template_id;", "cmd.urgency=urgency;",
+                                             "cmd.detail=detail;", "cmd.ttl_minutes=ttl;")),
+    "handle_chirp_ack": (None, ("memcpy(cmd.nonce,nonce,sizeof(cmd.nonce));",)),
+    "handle_chirp_dismiss": ("CHIRP_CMD_DISMISS", ("&cmd.nonce[i]",)),
+    "handle_chirp_mute": ("CHIRP_CMD_MUTE", ("cmd.duration_minutes=duration;",)),
+    "handle_chirp_unmute": ("CHIRP_CMD_UNMUTE", CMD_ONLY),
+    "handle_chirp_settings": ("CHIRP_CMD_SETTINGS", CMD_ONLY),     # its fields: CHIRP_SETTINGS_PAIRS
+    "handle_chirp_confirm": ("CHIRP_CMD_CONFIRM", ("&cmd.nonce[i]",)),
+}
+CHIRP_ACK_TYPE = ('strcmp(ack_type_str,"confirmed")==0?chirp_channel::CHIRP_CMD_CONFIRM'
+                  ':chirp_channel::CHIRP_CMD_DISMISS')
+BT_ADDRESS = "bluetooth_channel::parse_address(input[\"\"].as<constchar*>(),cmd.address)"
+BT_HANDLER_COMMANDS = {
+    "handle_bluetooth_enable": ("BT_CMD_ENABLE", CMD_ONLY),
+    "handle_bluetooth_disable": ("BT_CMD_DISABLE", CMD_ONLY),
+    "handle_bluetooth_advertise_start": ("BT_CMD_ADVERTISE_START", CMD_ONLY),
+    "handle_bluetooth_advertise_stop": ("BT_CMD_ADVERTISE_STOP", CMD_ONLY),
+    "handle_bluetooth_scan_start": ("BT_CMD_SCAN_START", ("cmd.duration_ms=duration_ms;",)),
+    "handle_bluetooth_scan_stop": ("BT_CMD_SCAN_STOP", CMD_ONLY),
+    "handle_bluetooth_scan_clear": ("BT_CMD_SCAN_CLEAR", CMD_ONLY),
+    "handle_bluetooth_pair_start": ("BT_CMD_PAIR_START", CMD_ONLY),
+    "handle_bluetooth_pair_cancel": ("BT_CMD_PAIR_CANCEL", CMD_ONLY),
+    "handle_bluetooth_pair_confirm": ("BT_CMD_PAIR_CONFIRM", ("cmd.pin=input[\"\"].as<uint32_t>();",)),
+    "handle_bluetooth_pair_reject": ("BT_CMD_PAIR_REJECT", CMD_ONLY),
+    "handle_bluetooth_paired_remove": ("BT_CMD_PAIRED_REMOVE", (BT_ADDRESS,)),
+    "handle_bluetooth_paired_clear": ("BT_CMD_PAIRED_CLEAR", CMD_ONLY),
+    "handle_bluetooth_paired_trust": ("BT_CMD_PAIRED_TRUST", (BT_ADDRESS, "cmd.flag=trusted;")),
+    "handle_bluetooth_paired_block": ("BT_CMD_PAIRED_BLOCK", (BT_ADDRESS, "cmd.flag=blocked;")),
+    "handle_bluetooth_disconnect": ("BT_CMD_DISCONNECT", CMD_ONLY),
+    "handle_bluetooth_settings_set": ("BT_CMD_SETTINGS",               # its fields: BT_SETTINGS_FIELDS
+                                      ("bluetooth_channel::BluetoothSettings&settings=cmd.settings;",)),
+    "handle_bluetooth_name_set": ("BT_CMD_NAME", ("strncpy(cmd.name,",)),
+    "handle_bluetooth_power_set": ("BT_CMD_POWER", ("cmd.power=power;",)),
+}
+# The handlers that bring the Bluetooth stack up on their own task before
+# they submit (bring_up(): the init() enable() ran there before F111). A
+# command never runs init(), so without this a device whose boot bring-up
+# failed could never turn Bluetooth on again.
+BT_BRING_UP_HANDLERS = {
+    "handle_bluetooth_enable": "if(!bring_up()){return",
+    "handle_bluetooth_advertise_start": "if(!bluetooth_channel::is_enabled()&&!bring_up()){return",
+    "handle_bluetooth_pair_start": "if(!bluetooth_channel::is_enabled()&&!bring_up()){return",
+}
+# The settings POSTs: each `if (input["<key>"]...) { ... }` block fills one
+# field and names that field (and only it) for the loop task.
+CHIRP_SETTINGS_FIELDS = {          # key: (the field it fills, the flag that names it)
+    "relay_enabled": ("cmd.relay_enabled", "cmd.set_relay=true;"),
+    "urgency_filter": ("cmd.urgency_filter", "cmd.set_filter=true;"),
+}
+BT_SETTINGS_FIELDS = {             # key: (the field it fills, the mask bit that names it)
+    "enabled": ("settings.enabled", "cmd.set_mask|=bluetooth_channel::BT_SET_ENABLED;"),
+    "auto_advertise": ("settings.auto_advertise", "cmd.set_mask|=bluetooth_channel::BT_SET_AUTO_ADVERTISE;"),
+    "allow_pairing": ("settings.allow_pairing", "cmd.set_mask|=bluetooth_channel::BT_SET_ALLOW_PAIRING;"),
+    "require_pin": ("settings.require_pin", "cmd.set_mask|=bluetooth_channel::BT_SET_REQUIRE_PIN;"),
+    "device_name": ("settings.device_name", "cmd.set_mask|=bluetooth_channel::BT_SET_DEVICE_NAME;"),
+    "tx_power": ("settings.tx_power", "cmd.set_mask|=bluetooth_channel::BT_SET_TX_POWER;"),
+    "inactivity_timeout_sec": ("settings.inactivity_timeout_ms",
+                               "cmd.set_mask|=bluetooth_channel::BT_SET_INACTIVITY;"),
+    "notify_on_connect": ("settings.notify_on_connect",
+                          "cmd.set_mask|=bluetooth_channel::BT_SET_NOTIFY_ON_CONNECT;"),
+    "long_range_mode": ("settings.long_range_mode", "cmd.set_mask|=bluetooth_channel::BT_SET_LONG_RANGE;"),
+}
+# What a handler may call on the channel after its command ran: pure lookups
+# of its request's own values. State the command changed is answered from
+# the Result the loop task read, never from a live reader on this task.
+AFTER_SUBMIT_CALLS = {"chirp_channel": ("get_template_text", "urgency_name"), "bluetooth_channel": ()}
+# Right after `const loop_command_ring::Wait w = <ns>::submit(...);`: every
+# answer but kDone is a command that did not run.
+NOT_RUN_GUARD = "if(w!=loop_command_ring::Wait::kDone)returnsend_not_run(req,w);"
+
 SIG_CHANNEL_SUBMIT = r"\bloop_command_ring::Wait\s+submit\s*\([^)]*\)"
 SIG_SEND_NOT_RUN = r"\besp_err_t\s+send_not_run\s*\([^)]*\)"
 SIG_BRING_UP = r"\binline\s+bool\s+bring_up\s*\(\s*\)"
@@ -923,6 +1022,167 @@ def check_channel_internal(tag: str, ns: str, h_name: str, h_src: str, cpp_name:
                               "bring-up worker and a handler's bring_up() do (F111)")
 
 
+@functools.lru_cache(maxsize=512)
+def blank_comments_only(src: str) -> str:
+    """Comments become spaces; string literals stay (a request key, the ack
+    type's "confirmed"). Offsets and newlines are kept, as in
+    blank_comments_and_strings()."""
+    out: list[str] = []
+    i, n = 0, len(src)
+    while i < n:
+        if src.startswith("//", i):
+            j = src.find("\n", i)
+            j = n if j < 0 else j
+            out.append(" " * (j - i))
+            i = j
+        elif src.startswith("/*", i):
+            j = src.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out.append(re.sub(r"[^\n]", " ", src[i:j]))
+            i = j
+        elif src[i] in "\"'":
+            quote = src[i]
+            j = i + 1
+            while j < n and src[j] != quote and src[j] != "\n":
+                j += 2 if src[j] == "\\" else 1
+            j = min(j + 1, n)
+            out.append(src[i:j])
+            i = j
+        else:
+            out.append(src[i])
+            i += 1
+    return "".join(out)
+
+
+SETTINGS_BLOCK = r"\bif\s*\(\s*input\s*\[\s*\"\s*\"\s*\]\s*\.\s*is\s*<\s*JsonVariant\s*>\s*\(\s*\)\s*\)\s*\{"
+# A write of a Command or settings field in a squashed block: `cmd.x = `,
+# `settings.x[...] = ` or `strncpy(settings.x, `.
+FIELD_WRITE = r"(?<![\w.])((?:settings|cmd)\.\w+)(?:\[[^\]]*\])?=(?!=)|strncpy\(((?:settings|cmd)\.\w+),"
+
+
+def check_settings_blocks(api: str, h: str, body: str, kept: str, fields: dict[str, tuple[str, str]],
+                          errors: list[str]) -> None:
+    """Rule C3's settings part: each `if (input["<key>"]...) { ... }` block of a
+    settings POST fills the one field its key names and names it for the loop
+    task (the flag or mask bit), and nothing fills or names one outside them."""
+    seen: list[str] = []
+    outside = body
+    for m in re.finditer(SETTINGS_BLOCK, body):
+        key_m = re.search(r'input\s*\[\s*"(\w+)"', kept[m.start():m.end()])
+        end = close_brace(body, m.end() - 1)
+        if key_m is None or end < 0:
+            errors.append(f"{api}: {h}() has a settings block this check cannot read (F111)")
+            continue
+        key = key_m.group(1)
+        seen.append(key)
+        block = squash(body[m.end():end])
+        outside = outside[:m.start()] + " " * (end + 1 - m.start()) + outside[end + 1:]
+        if key not in fields:
+            errors.append(f"{api}: {h}() reads \"{key}\", which this check does not know — add it to "
+                          "the settings table with the field it fills (F111)")
+            continue
+        field, flag = fields[key]
+        written = {a or b for a, b in re.findall(FIELD_WRITE, block)}
+        flag_field = re.match(r"(cmd\.\w+)", flag).group(1)
+        if written - {flag_field} != {field} or block.count(flag) != 1 or \
+                len(re.findall(r"cmd\.set_mask\|=", block)) > (1 if "set_mask" in flag else 0):
+            errors.append(f"{api}: {h}()'s \"{key}\" block must fill {field} and name it with "
+                          f"`{flag}` (and nothing else) — the loop task applies only the fields a "
+                          "POST names, so a field filled but not named is dropped, and one named "
+                          "but not filled is reset (F111)")
+    for key in fields:
+        if seen.count(key) != 1:
+            errors.append(f"{api}: {h}() must read \"{key}\" in one settings block (found "
+                          f"{seen.count(key)}) (F111)")
+    s_out = squash(outside)
+    stray = {a or b for a, b in re.findall(FIELD_WRITE, s_out)} & \
+        ({f for f, _ in fields.values()} | {re.match(r"(cmd\.\w+)", fl).group(1) for _, fl in fields.values()})
+    if stray or "cmd.set_mask|=" in s_out:
+        errors.append(f"{api}: {h}() fills or names {sorted(stray) or 'a mask bit'} outside its "
+                      "settings blocks (F111)")
+
+
+def check_channel_handlers(ns: str, api: str, api_src: str, errors: list[str]) -> None:
+    """Rule C3's per-handler part: what each changing handler hands the loop
+    task, how it answers a command that did not run, and what it answers from."""
+    code = blank_comments_and_strings(api_src)
+    kept = blank_comments_only(api_src)
+    spec = CHIRP_HANDLER_COMMANDS if ns == "chirp_channel" else BT_HANDLER_COMMANDS
+    call = ns + "::submit("
+    decl = "constloop_command_ring::Waitw=" + call
+    for h, (ctype, fields) in spec.items():
+        span = the_body(code, r"\besp_err_t\s+" + h + r"\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)",
+                        f"{api}: {h}()", errors)
+        if span is None:
+            continue
+        body = code[span[0]:span[1]]
+        s = squash(body)
+        at = s.find(call)
+        if at < 0 or s.count(call) != 1:
+            continue                                  # rule C3's count reports it
+        close = matching_paren(s, at + len(call) - 1)
+        args = s[at + len(call):close]
+        before, after = s[:at], s[close + 1:]
+        if not before.endswith(decl[:-len(call)]) or not after.startswith(";" + NOT_RUN_GUARD):
+            errors.append(f"{api}: {h}() must take `const loop_command_ring::Wait w = {call}...);` "
+                          f"and answer every Wait but kDone with `{NOT_RUN_GUARD}` right after it — "
+                          "a withdrawn command ran nothing, and must not answer success (F111)")
+        made = f"{ns}::make_command({ns}::{ctype})" if ctype else None
+        if ctype is None:                             # the ack: confirmed or resolved
+            if CHIRP_ACK_TYPE not in squash(kept[span[0]:span[1]]) or args != "cmd,&r":
+                errors.append(f"{api}: {h}() must submit `cmd` made as `{CHIRP_ACK_TYPE}` — "
+                              "\"confirmed\" confirms, \"resolved\" dismisses (F111)")
+        elif args == made + ",&r":
+            if fields:
+                errors.append(f"{api}: {h}() submits a bare {ctype} — it must fill {', '.join(fields)} "
+                              "first (F111)")
+        elif args != "cmd,&r" or before.count(f"{ns}::Commandcmd={made};") != 1 or \
+                s.count("make_command(") != 1:
+            errors.append(f"{api}: {h}() must submit {made} (as `cmd`, made once, or inline) — the "
+                          "command its route names (F111)")
+        for f in fields:
+            target = re.match(r"(cmd\.\w+)=", f)
+            writes = len(re.findall(re.escape(target.group(1)) + r"(?:\[[^\]]*\])?=(?!=)", s)) if target else 1
+            if before.count(f) != 1 or f in after or writes != 1:
+                errors.append(f"{api}: {h}() must fill the command with `{f}` once, before it "
+                              "submits — the owner's request, not a default (F111)")
+        for m in re.finditer(r"\b" + ns + r"::(\w+)\s*\(", after):
+            if m.group(1) not in AFTER_SUBMIT_CALLS[ns]:
+                errors.append(f"{api}: {h}() calls {ns}::{m.group(1)}() after its command ran — "
+                              "answer from the Result the loop task read (`r.`), not from state "
+                              "the loop task may be changing (F111)")
+        if h in BT_BRING_UP_HANDLERS and BT_BRING_UP_HANDLERS[h] not in before:
+            errors.append(f"{api}: {h}() must bring the stack up on its own task before it submits "
+                          f"(`{BT_BRING_UP_HANDLERS[h]} ...`): no command runs init(), so without it a "
+                          "device whose boot bring-up failed never turns Bluetooth on (F111)")
+    for h, fields in (("handle_chirp_settings", CHIRP_SETTINGS_FIELDS),
+                      ("handle_bluetooth_settings_set", BT_SETTINGS_FIELDS)):
+        if h not in spec:
+            continue
+        span = the_body(code, r"\besp_err_t\s+" + h + r"\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)", "", [])
+        if span is not None:
+            check_settings_blocks(api, h, code[span[0]:span[1]], kept[span[0]:span[1]], fields, errors)
+
+
+def check_loop_calls_updates(ino_code: str, errors: list[str]) -> None:
+    """Rule C4's loop() part: each channel's update() is its own statement at
+    loop()'s top level, with no return before it: its drain runs every pass,
+    a disabled channel's too (that is where an enable waits)."""
+    span = the_body(ino_code, SIG_INO_LOOP, "", [])
+    if span is None:
+        return
+    body = re.sub(r"(?m)^[ \t]*#.*$", lambda m: " " * len(m.group(0)), ino_code[span[0]:span[1]])
+    for _tag, ns, *_rest in CHANNELS:
+        for m in re.finditer(r"\b" + ns + r"::update\s*\(", body):
+            pre = body[:m.start()]
+            depth = pre.count("{") - pre.count("}")
+            prev = pre.rstrip()[-1:]
+            if depth != 0 or prev not in (";", "{", "}", "") or re.search(r"\breturn\b", pre):
+                errors.append(f"{INO}: loop() must call {ns}::update() every pass, as a statement of "
+                              "its own at its top level with no return before it — a disabled "
+                              "channel's enable waits in its ring for that drain (F111)")
+
+
 @functools.lru_cache(maxsize=1024)
 def channel_file_findings(name: str, c: str) -> tuple[str, ...]:
     """Rule C4's per-file part for one blanked file."""
@@ -974,10 +1234,12 @@ def check_channels(ino: str, others: dict[str, str], errors: list[str]) -> None:
             errors.append(f"{api}: send_not_run() must set its status with "
                           f"httpd_resp_set_status(req, http_status_line({ns}::not_run_status(w))) — "
                           "409 busy and 503 timeout, not 200 (F111)")
+        check_channel_handlers(ns, api, files[api], errors)
         total = sum(c.count(ns + "::update(") for c in code.values())
         if loop is None or loop.count(ns + "::update(") != 1 or total != 1:
             errors.append(f"{SKETCH}: {ns}::update( must be called once, from the sketch's loop() "
                           f"(found {total}) — its drain is the loop task's (F111)")
+    check_loop_calls_updates(code[INO], errors)
     # Who brings the Bluetooth stack up: the boot worker and a handler's bring_up().
     allowed = []
     for name, sig in ((BT_API, SIG_BRING_UP), (INO, SIG_BT_BRINGUP_TASK)):
@@ -1407,6 +1669,73 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      on("ino", SIG_INO_LOOP, r"(bluetooth_channel::update\(\);)", r"(void)bluetooth_channel::init(); \1")),
     ("the sketch hides the Bluetooth channel's callers behind a using-directive",
      raw("ino", '#include "bluetooth_api.h"', '#include "bluetooth_api.h"\nusing namespace bluetooth_channel;')),
+    # Rule C4, loop(): the drains run every pass (the F111 review's X8, X9).
+    ("the sketch's loop() runs chirp_channel::update() only while Chirp is on",
+     on("ino", SIG_INO_LOOP, r"(chirp_channel::update\(\);)", r"if (chirp_channel::is_enabled()) \1")),
+    ("the sketch's loop() runs bluetooth_channel::update() only while Bluetooth is on",
+     on("ino", SIG_INO_LOOP, r"(bluetooth_channel::update\(\);)", r"if (bluetooth_channel::is_enabled()) \1")),
+    ("the sketch's loop() can return before the channels' drains",
+     on("ino", SIG_INO_LOOP, r"(mesh_network::update\(\);)", r"if (millis() < 1000) return; \1")),
+    # Rule C3, the not-run answer (the review's X11, X12).
+    ("the Chirp disable handler answers success to a withdrawn command",
+     on_other(CHIRP_API, api_handler("handle_chirp_disable"),
+              r"if\s*\(w\s*!=\s*loop_command_ring::Wait::kDone\)",
+              "if (w == loop_command_ring::Wait::kBusy)")),
+    ("the Bluetooth disable handler answers success to a withdrawn command",
+     on_other(BT_API, api_handler("handle_bluetooth_disable"),
+              r"if\s*\(w\s*!=\s*loop_command_ring::Wait::kDone\)",
+              "if (w == loop_command_ring::Wait::kBusy)")),
+    # Rule C3, bring_up() (the review's B-j, B-k).
+    ("the Bluetooth enable handler no longer brings the stack up",
+     on_other(BT_API, api_handler("handle_bluetooth_enable"),
+              r"if\s*\(!bring_up\(\)\)\s*\{[^}]*\}", "")),
+    ("the Bluetooth advertise handler no longer brings the stack up",
+     on_other(BT_API, api_handler("handle_bluetooth_advertise_start"),
+              r"if\s*\(!bluetooth_channel::is_enabled\(\)\s*&&\s*!bring_up\(\)\)\s*\{[^}]*\}", "")),
+    ("the Bluetooth pair handler no longer brings the stack up",
+     on_other(BT_API, api_handler("handle_bluetooth_pair_start"),
+              r"if\s*\(!bluetooth_channel::is_enabled\(\)\s*&&\s*!bring_up\(\)\)\s*\{[^}]*\}", "")),
+    # Rule C3, what the command carries (the review's C-k, C-l, C-m, B-n, B-g).
+    ("the Chirp ack handler dismisses a confirmation",
+     on_other(CHIRP_API, api_handler("handle_chirp_ack"),
+              r"\?\s*chirp_channel::CHIRP_CMD_CONFIRM(\s*):\s*chirp_channel::CHIRP_CMD_DISMISS",
+              r"? chirp_channel::CHIRP_CMD_DISMISS\1: chirp_channel::CHIRP_CMD_CONFIRM")),
+    ("the Chirp ack handler drops the nonce",
+     on_other(CHIRP_API, api_handler("handle_chirp_ack"),
+              r"\n[ \t]*memcpy\(cmd\.nonce,\s*nonce,\s*sizeof\(cmd\.nonce\)\);", "")),
+    ("the Chirp send handler drops the TTL",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"), r"\n[ \t]*cmd\.ttl_minutes\s*=\s*ttl;", "")),
+    ("the Chirp send handler sends every chirp as info",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"), r"(cmd\.ttl_minutes\s*=\s*ttl;)",
+              r"\1 cmd.urgency = chirp_channel::CHIRP_URG_INFO;")),
+    ("the Chirp mute handler drops the duration",
+     on_other(CHIRP_API, api_handler("handle_chirp_mute"), r"\n[ \t]*cmd\.duration_minutes\s*=\s*duration;", "")),
+    ("the Chirp unmute handler submits a mute",
+     on_other(CHIRP_API, api_handler("handle_chirp_unmute"), r"chirp_channel::CHIRP_CMD_UNMUTE",
+              "chirp_channel::CHIRP_CMD_MUTE")),
+    ("the Chirp settings handler fills the relay setting without naming it",
+     on_other(CHIRP_API, api_handler("handle_chirp_settings"), r"\n[ \t]*cmd\.set_relay\s*=\s*true;", "")),
+    ("the Chirp settings handler answers the relay setting from the live state",
+     on_other(CHIRP_API, api_handler("handle_chirp_settings"), r"=\s*r\.relay_enabled;",
+              "= chirp_channel::is_relay_enabled();")),
+    ("the Bluetooth PIN confirm handler drops the PIN",
+     on_other(BT_API, api_handler("handle_bluetooth_pair_confirm"),
+              r"\n[ \t]*cmd\.pin\s*=\s*input\[\"pin\"\]\.as<uint32_t>\(\);", "")),
+    ("the Bluetooth trust handler always trusts",
+     on_other(BT_API, api_handler("handle_bluetooth_paired_trust"), r"cmd\.flag\s*=\s*trusted;", "cmd.flag = true;")),
+    ("the Bluetooth pair handler answers allow_pairing from the live settings",
+     on_other(BT_API, api_handler("handle_bluetooth_pair_start"), r"if\s*\(!r\.allow_pairing\)",
+              "if (!bluetooth_channel::get_settings().allow_pairing)")),
+    ("the Bluetooth settings handler fills require_pin without naming it",
+     on_other(BT_API, api_handler("handle_bluetooth_settings_set"),
+              r"\n[ \t]*cmd\.set_mask\s*\|=\s*bluetooth_channel::BT_SET_REQUIRE_PIN;", "")),
+    ("the Bluetooth settings handler names the wrong field for long_range_mode",
+     on_other(BT_API, api_handler("handle_bluetooth_settings_set"),
+              r"bluetooth_channel::BT_SET_LONG_RANGE;", "bluetooth_channel::BT_SET_REQUIRE_PIN;")),
+    ("the Bluetooth settings handler fills a copy of the command's settings",
+     on_other(BT_API, api_handler("handle_bluetooth_settings_set"),
+              r"bluetooth_channel::BluetoothSettings&\s*settings\s*=\s*cmd\.settings;",
+              "bluetooth_channel::BluetoothSettings settings = cmd.settings;")),
     # Rule M1: the MQTT client's network timeout (F112).
     ("open_client() leaves esp_mqtt's 10 s network timeout",
      on("mqtt", SIG_OPEN, r"\n[ \t]*cfg\.network\.timeout_ms\s*=\s*\(int\)kNetworkTimeoutMs;", "")),
