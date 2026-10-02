@@ -661,7 +661,11 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   deny-listed key, a full opera, an address another member holds) fails
   and is logged: the initiator adds the joiner before anything is sent, so
   it no longer seals the `opera_secret` to a partner it then refuses, and a
-  refusing joiner keeps its own opera. Since F98 that includes a new key at
+  refusing joiner keeps its own opera. The PlatformIO tree does the same
+  since F118, and earlier: the check runs at the owner's confirm, before
+  any CONFIRM goes out, so a joiner that cannot hold its initiator never
+  gets the secret sealed to it (canary-wap's joiner refuses at the
+  COMPLETE, after its initiator has added it). Since F98 that includes a new key at
   an address another member holds, which `add_peer` used to append: the two
   entries shared one ESP-NOW registration, and removing either stranded the
   other. Such a refusal is logged on its own line. Its routine case is a
@@ -720,9 +724,10 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   already-trusted member's key re-binds that member to the outsider's radio
   and persists it, and the member's own frames then drop as coming from an
   unbound address until another re-pair, which runs the same exchange.
-  (From an address no other member holds: since F102 the PlatformIO tree
-  refuses the bind at an address another member holds and persists
-  nothing; before, it persisted it anyway, below.)
+  (From an address no other member holds: since F118 the PlatformIO tree
+  fails a re-pair from an address another member holds at the owner's
+  confirm; from F102 until then it completed, refused the bind and
+  persisted nothing; before F102 it persisted the address anyway, below.)
   Claiming its own key makes the outsider a trusted member, able to sign a
   rotation that removes a real one. Host-probed on the PlatformIO tree,
   with the same results before #1756, on #1756 and after the withdrawal.
@@ -795,9 +800,14 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     CONFIRM in front of it, so a joiner on firmware before F97 completes
     too, in either order; without it, an updated initiator would report
     success with such a joiner, which drops the COMPLETE (host-probed). A
-    pre-F97 initiator with an updated joiner completes only when the
-    initiator's owner confirms first; otherwise both time out and neither
-    keeps the other. The reflection above stays open.
+    pre-F97 initiator with an updated joiner completed only when the
+    initiator's owner confirmed first; otherwise both timed out and
+    neither kept the other. Since F117 the updated joiner re-sends its
+    CONFIRM, at most three times and only to its partner, once it has read
+    the initiator's CONFIRM after its own owner confirmed, and that pair
+    completes in both orders (host-probed against the pre-F97 library);
+    the copies carry the hash its first CONFIRM already put on the air. The
+    reflection above stays open.
   - *Opera sends to members only.* Until F101 every opera sender (tamper
     alert, beacon event, channel lock, hub election, LEAVE, rekey OFFER)
     went to every address in the transport table, which, while a pairing
@@ -820,6 +830,31 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   Pinned by host tests in `test_mesh_pairing`, `test_mesh_session` and
   `test_mesh_state` that fail on the code before each fix, and a source pin
   on `main.cpp`'s wiring; the canary build is CI's; not bench-verified.
+- **PlatformIO refusals and stored addresses (F118-F120; host-tested
+  only).**
+  - *A partner the device cannot hold fails the pairing (F118).* Until
+    F118 the PlatformIO initiator sealed the `opera_secret` before anything
+    checked the partner, both sides reported success, and the partner's
+    key was registered and stored; only the address bind then failed. A
+    re-pair relayed from another member's copied address (the relay above)
+    thus left a trusted member heard from nowhere, sent nothing and holding
+    a slot. Now the pairing asks first — at the owner's confirm, again
+    before the seal and before the joiner opens the secret — and a refusal
+    sends, seals and stores nothing, answers the confirm `409
+    partner_refused` and is logged by fingerprint. The relay can still
+    claim a member's key from an address no member holds (above; F69).
+  - *Stored addresses at boot (F119, F120).* A `peer_macs` blob written
+    before F102 can hold one address under two fingerprints, and the boot
+    restore bound in stored order, which in F102's scenario gave the address
+    to the member that did not own it. Now neither entry is bound, both are
+    dropped and the shared address is logged, so both members re-pair. An
+    entry whose fingerprint is no longer a member is dropped too: kept, it
+    held its address in NVS for good, so the next member to pair from that
+    address was unheard after every reboot. Nothing is dropped when the
+    pubkey list could not be read.
+  Pinned by host tests in `test_mesh_pairing` and `test_mesh_session`
+  that fail with each check removed, and the `main.cpp` source pin; the
+  canary build is CI's; not bench-verified.
 - `opera_secret` storage requires flash encryption enabled
   (eFuse `FLASH_CRYPT_CNT > 0`); load/save paths refuse on FE-off devices
   and log loudly (v0.2 audit O2). That keeps the secret off un-fused

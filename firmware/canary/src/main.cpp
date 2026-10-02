@@ -591,7 +591,10 @@ static void register_paired_peer() {
  * refused bind keeps the member's previous binding, in RAM and in NVS — a
  * new member has none, and is heard from nowhere until it pairs from an
  * address no member holds — and lands in the health log by fingerprint.
- * FE-gated like the pubkey. */
+ * Since F118 the refusals the session can foresee end the pairing before
+ * this (on_mesh_pairing_failed logs them), so a false here is one it could
+ * not: the register above refused, or the radio driver did. FE-gated like
+ * the pubkey. */
 static void on_mesh_paired_peer_bound(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
                                       const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN],
                                       bool bound) {

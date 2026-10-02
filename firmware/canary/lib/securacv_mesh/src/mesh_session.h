@@ -144,7 +144,12 @@ using CodeReadyCallback = void (*)(uint32_t confirmation_code);
  * blob order, could give that address to the wrong member (host-probed:
  * the member whose address it really was then dropped every frame it
  * sent). On `bound == false` the member keeps the binding it had (or
- * none), in RAM and NVS. Main-loop task, like the PairedCallback. */
+ * none), in RAM and NVS. Since F118 the cases the session can foresee — an
+ * address another member holds, a full opera or transport table — fail the
+ * pairing before PAIRED (can_hold_partner), so no callback runs for them;
+ * `bound == false` is left to what it cannot foresee: a PairedCallback
+ * that did not register the member, a radio driver refusing the address.
+ * Main-loop task, like the PairedCallback. */
 using PairedPeerBoundCallback = void (*)(const uint8_t fp [mesh_crypto::FINGERPRINT_LEN],
                                          const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN],
                                          bool          bound);
@@ -538,9 +543,10 @@ size_t trusted_peer_count();
  *     binds the address the partner paired from; re-pairing a device that
  *     is already trusted re-binds it, and main.cpp persists the new one
  *     once the bind took (PairedPeerBoundCallback; F102). A re-pair from
- *     an address another member holds is refused that bind, and nothing
- *     is persisted: the device keeps the address it had. Two limits on
- *     that. The pairing does not authenticate the long-term
+ *     an address another member holds fails at the owner's confirm, before
+ *     anything is sealed (F118, can_hold_partner); until F118 it completed,
+ *     the bind was refused and nothing persisted. Either way the device
+ *     keeps the address it had. Two limits on that. The pairing does not authenticate the long-term
  *     key it binds: the 6-digit code and the CONFIRM hash cover only the
  *     ephemeral X25519 exchange, and the key is taken as the DISCOVER or
  *     OFFER carried it. So an outsider relaying an owner-run pairing, from

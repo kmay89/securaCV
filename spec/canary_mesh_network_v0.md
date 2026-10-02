@@ -575,10 +575,24 @@ dropped the COMPLETE, in both orders; with the CONFIRM in front, the pair
 completes in both orders (host-probed against the pre-F97 code). Two frames
 back to back are safe on this tree, whose transport ring holds eight
 received frames; canary-wap's one-frame buffer is why it sends the COMPLETE
-alone. The other mix does not fully work: a pre-F97 initiator still drops
-an updated joiner's early CONFIRM, so that pair completes only when the
-initiator's owner confirms first; in the other order both sides time out,
-as two pre-F97 devices did, and neither keeps the other.
+alone.
+
+The other mix (F117, host-tested, not bench-verified): an initiator on
+firmware before F97 drops a CONFIRM that arrives before its own owner
+confirms, and answers only one it reads after that, with a `PAIR_COMPLETE`
+alone. Until F117 the updated joiner sent its CONFIRM once, so when the
+joiner's owner confirmed first both sides timed out, as two pre-F97 devices
+did, and neither kept the other (host-probed with the pre-F97 library
+compiled beside this one). Now the joiner sends its CONFIRM again once it
+has read the initiator's CONFIRM after its own owner confirmed, which says
+the initiator's owner has confirmed too: 1 s after that, then every 2 s, at
+most three times, only to the pairing partner and only while no COMPLETE
+has come. The pre-F97 initiator answers the copy with the COMPLETE, and the
+pair completes in both orders. An updated initiator sends its COMPLETE right
+behind its CONFIRM, so two updated devices exchange the same frames as
+before (host-probed, both orders, the owners' confirms 0 s to 4 minutes
+apart); a copy that did go out would reach an initiator already done, which
+drops it.
 
 A device that cannot hold its partner fails the pairing: a deny-listed key
 (§5.6), a new member for a full opera, a re-pair onto an address another
@@ -592,6 +606,28 @@ whose NVS was erased or that was reflashed: it keeps its radio address and
 comes back with a new key, so each member that still holds its old entry
 refuses it until that entry is removed, and on canary-wap each such removal
 splits that member from the opera until F48 (§5.6, F95; host-tested).
+PlatformIO tree (F118, host-tested, not bench-verified): the session asks
+whether it can hold the partner — the same refusals its trusted-peer table
+and its address binding make: a deny-listed key, a new member for a full
+opera (8), an address another member is bound to, a broadcast or zero
+address, no room in the transport table — at this side's owner's confirm,
+before any `PAIR_CONFIRM` goes out (both roles); on the initiator again
+before it seals the `opera_secret` into the `PAIR_COMPLETE`; on the joiner
+again before it opens one. A refusal ends the pairing: nothing is sent,
+sealed, opened or stored, a refusal at the confirm answers the confirm
+request with `409 partner_refused`, and every refusal goes to the health
+log with the partner's fingerprint. A
+joiner that refuses at its confirm sends no CONFIRM, so its initiator never
+seals the secret to it and times out; unlike canary-wap, the initiator does
+not end up holding a member that refused. Until F118 the PlatformIO
+initiator sealed the secret first, both sides reported success and stored
+the partner's key, and only then did the address bind fail: a trusted
+member heard from nowhere and sent nothing, holding a slot until removed.
+The transport-table case is reached only by a joiner whose own
+`PAIR_ACCEPT` could not be sent for want of that room (its initiator never
+shows a code): an initiator's partner, and any joiner's that got its
+ACCEPT out, already has its address in the table for the pairing's
+replies.
 canary-wap (F73, host-tested): the initiator adds the joiner before anything is sent, so on a
 refusal no `PAIR_COMPLETE` goes out and its joiner times out; a joiner that
 refuses the initiator keeps the opera it had, in RAM and in NVS. Either way
@@ -1177,7 +1213,8 @@ radio sent it — the envelope signs no address (the F49 part 3 note below)
 from any other address, even one the transport table holds, it is dropped
 before verification, spends no counter and reaches no handler, and no frame
 binds, moves or records an address. A member with no binding (none restored
-from `peer_macs` at boot, or a pairing whose bind was refused) has no
+from `peer_macs` at boot, an entry the boot restore dropped as shared, F119,
+or a pairing whose bind was refused) has no
 address its frames are taken from until a pairing binds one. Until F70 the PlatformIO session took
 a member's verified frame from any address in that table and recorded
 that address as the member's, and the table holds more than the member's
@@ -1253,6 +1290,38 @@ has none, and is heard from nowhere until it pairs from a free address),
 and is logged by fingerprint. Host-tested (`test_mesh_session`,
 `test_mesh_state`, and a source pin on `main.cpp`'s wiring in
 `scripts/tests`); `main.cpp` is compiled by CI only; not bench-verified.
+Since F118 the refusals the session can foresee (an address another member
+holds, a full opera) end the pairing before it completes (§5.2), so the
+bind's report is left to what the session cannot foresee (the paired
+callback not registering the member, the radio driver refusing the
+address).
+
+**The boot restore drops shared and stale entries (F119, F120).** At boot
+`main.cpp` registers the stored pubkeys and hands the stored `peer_macs`
+entries to `mesh_session::restore_peer_macs`, which classifies every entry
+before it binds any:
+- an entry whose fingerprint is not a registered peer — a member removed
+  while its entry stayed (the NVS removal is best effort), a deny-listed
+  key — is never bound and is dropped from NVS (F120). Kept, it held its
+  address in `peer_macs` for good, and since F102 `peer_macs` refuses an
+  address another fingerprint holds, so a member pairing from it was bound
+  for the boot and not stored: unheard after every reboot;
+- two registered fingerprints' entries at one address — a blob written
+  before F102, when a re-pair from another member's address was stored, in
+  place, so the blob's order says nothing about which entry is right — are
+  both left unbound and both dropped, and the shared address goes to the
+  health log (F119). Both members are then heard from nowhere until each
+  re-pairs, and the re-pairs are stored. Binding in stored order, as before,
+  gave the address to the first entry, which in F102's scenario was the
+  member that did not own it, and the owner was not heard at all. Keeping
+  both entries unbound would not have let the owner's re-pair be stored (the
+  other entry still holds the address), so after the next reboot the owner
+  would be unheard again;
+- every other entry is bound as before.
+Entries are dropped only when the pubkey list was read: a failed read
+registers nobody, and every entry would look stale. Host-tested
+(`test_mesh_session`, the `scripts/tests` source pin on `main.cpp`'s
+restore); not bench-verified.
 
 **No address learning from opera frames (v0.3, F49 part 3 — withdrawn).**
 A trusted peer's radio MAC can change without a new identity (a module
@@ -1297,8 +1366,9 @@ taken as the DISCOVER or OFFER carried it, so an outsider relaying an
 owner-run pairing from its own address gets matching codes on both
 screens while choosing that key. Claiming a trusted member's key re-binds
 the member to the outsider's radio and persists it (from an address no
-other member holds: since F102 one another member holds is refused the
-bind, and nothing is persisted); claiming its own gets it trusted
+other member holds: since F118 a re-pair from one another member holds
+fails at the owner's confirm, and from F102 until then it was refused the
+bind and nothing was persisted); claiming its own gets it trusted
 (host-probed on the PlatformIO tree, the same before #1756; open, a wire
 change). The code binds even the ephemeral exchange only weakly (§11.1):
 a relay that swaps both ephemeral keys can grind its second one until the
@@ -1545,7 +1615,9 @@ peers' counters and — v0.3 — the tombstones of dropped peers, §4.2),
 `elected_hub` (8 B) and — v0.3 —
 `opera_name` (up to 32 B), `peer_macs` (up to 8 × (8 B fingerprint +
 6 B radio MAC), F33; one entry per fingerprint and, since F102, one
-fingerprint per address) and `mesh_revoked` (the §5.6 deny-list: up to 8 ×
+fingerprint per address; at boot an entry for a fingerprint that is not a
+member, and both entries of an address two members' entries hold, are
+dropped, F119/F120, §8.3) and `mesh_revoked` (the §5.6 deny-list: up to 8 ×
 (8 B fingerprint + 4 B remaining ms, little-endian), F33), all behind the
 flash-encryption gate (§5.5), plus
 `mesh_enabled` (1 B), which is **not** gated: it is a preference, and gating
@@ -1696,3 +1768,13 @@ An implementation conforms to this specification if it:
   to the members' bound radio MACs only, and count only those (§8.3); and a
   pairing's address is persisted only once the session bound it, with
   `peer_macs` refusing an address another fingerprint holds (§8.3, §12.3).
+- v0.4 follow-up, PlatformIO pairing refusals and stored addresses
+  (2026-10-02; **host-tested only, not bench-verified**; sweep F117-F120):
+  a PlatformIO device that cannot hold its pairing partner fails the
+  pairing at its owner's confirm, and again before the initiator seals or
+  the joiner opens the `opera_secret`, with nothing sent or stored (§5.2);
+  an updated PlatformIO joiner re-sends its CONFIRM, at most three times,
+  once it has read the initiator's, so an initiator on the pre-F97 firmware
+  completes in both orders (§5.2); and the boot restore drops a `peer_macs`
+  entry whose fingerprint is not a member and both entries of an address
+  two members' entries hold, binding neither (§8.3, §12.3).

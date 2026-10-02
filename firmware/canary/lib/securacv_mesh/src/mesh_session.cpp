@@ -356,7 +356,9 @@ static void dispatch_action(const mesh_pairing::Action& a) {
        * before this bind ran: a bind refused here (an address another
        * member holds, a full table) was still written to NVS, and the next
        * boot bound it. So the address is persisted from the bound callback
-       * now, and only when bound. */
+       * now, and only when bound. Since F118 those refusals end the pairing
+       * before it gets here (can_hold_partner, the pairing's PartnerGate);
+       * the bound callback still reports any bind that fails anyway. */
       uint8_t member_fp[mesh_crypto::FINGERPRINT_LEN];
       uint8_t member_mac[mesh_transport::MESH_TRANSPORT_MAC_LEN];
       mesh_crypto::compute_fingerprint(s_ctx.peer_pubkey, member_fp);
@@ -881,8 +883,9 @@ static void on_opera_frame(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_
 
   /* Step 3 (F70): a member's frame is taken only from the member's own
    * binding — the address it paired from, or restored at boot. A member
-   * with no binding (no peer_macs entry at boot, or a pairing whose bind
-   * was refused) has none, so none of its frames is taken until one is
+   * with no binding (no peer_macs entry at boot, an entry the boot restore
+   * dropped as shared, F119, or a pairing whose bind was refused) has
+   * none, so none of its frames is taken until one is
    * bound: `!radio_mac_set` is half of this check, not a shortcut. The
    * transport table holds other addresses too: every other member's,
    * and, while a pairing runs, the partner's (ensure_pair_contact), which
