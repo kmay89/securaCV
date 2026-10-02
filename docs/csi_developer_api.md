@@ -239,8 +239,13 @@ those bodies `"replay":true`. On the canary base
   F46). That allocator starts at 0xC0000000 on every device, above every id
   an older firmware handed out (its bundler's ids started at 0x80000000 each
   boot), so an upgraded device's next rows are above Home Assistant's
-  stored mark and nothing is reset, on the device or in Home Assistant. At
-  boot the id floor is held at or above the delivery ceiling (NVS
+  stored mark and nothing is reset, on the device or in Home Assistant. The
+  space holds 2^30 ids; at the wrap ids restart at 1 and Home Assistant
+  refuses the device from then on. Both devices' MQTT health carries
+  `event_id_space_low` (sweep F82), true once the allocator's next id
+  reaches 0xF0000000 (2^28 ids before the wrap, about four years at the
+  most a device can commit) and after a wrap. It only warns: what recovers
+  the device is still a decision. At boot the id floor is held at or above the delivery ceiling (NVS
   `csi.evsent`), unless that ceiling is past 0xF0000000 (an older firmware
   wrote one for a forged card line): the floor and the backfill both treat
   such a ceiling as no record. A card line at or above the allocator's next
@@ -271,8 +276,9 @@ those bodies `"replay":true`. On the canary base
   on its account. Past the 45 s the card is given up: the waiting rows go,
   and rows on a card that comes back later are skipped. An ambient row
   (`wifi.channel_activity`, "live UI only") is never held: one that cannot
-  go at once is dropped. RAM does not survive a reboot, and a broker change
-  drops what waits (owed to neither broker, as the offline queue's flush).
+  go at once is dropped and counted. RAM does not survive a reboot, and a
+  broker change drops what waits (owed to neither broker, as the offline
+  queue's flush).
   So on a canary with an SD slot but no usable card (none in, another
   device's, or one that never mounts), a row committed in the first 45 s
   after boot arrives up to 45 s late, or not at all if the canary reboots
@@ -284,9 +290,22 @@ those bodies `"replay":true`. On the canary base
 - with no card, rows use the MQTT offline queue (12 records) as before, where
   tamper alerts outrank events: once the queue is full, a new row pushes out
   the oldest queued event, never a tamper alert. A body built while the
-  broker is unreachable says `"replay":true`. With no broker configured, rows
+  broker is unreachable says `"replay":true`. While the queue still drains
+  an outage, a row handed to it joins its back instead of going live, so it
+  never overtakes the outage's rows (`mqtt_offline_queue.h`'s
+  `publish_or_queue()`, sweep F107). With no broker configured, rows
   are logged and owed to nobody, and a broker configured later (or a changed
-  one) does not receive the old backlog.
+  one) does not receive the old backlog;
+- what the egress did since boot rides its MQTT health (sweep F109), under
+  the names the canary-wap's `csi_event_egress::stats()` uses: a
+  `csi_event_egress` object with `dropped` (commits its full egress queue
+  refused), `held_dropped` (rows the RAM hold dropped, oldest first),
+  `ambient_dropped` (ambient rows that had to wait) and `planner`, the
+  backfill planner's counters (`live`, `held`, `queued`, `replayed`,
+  `skipped`, `untrusted`, `unsendable`, `truncated_unsent`, `read_giveups`).
+  They start over at every boot. The canary-wap keeps the same counters but
+  publishes none of them yet, and the Home Assistant integration reads
+  neither.
 
 The canary-wap (`csi_event_egress.cpp` over its `csi_event_log.cpp` adapter,
 sweep F78) runs the same planner with the same order: a row goes out live

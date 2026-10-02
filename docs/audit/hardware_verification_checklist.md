@@ -576,6 +576,43 @@ is CI's. Owner: U1. The serial lines below are the egress's own.
     still does.
   - Artifact: `docs/audit/repro/F104/no-card/`.
 
+## The egress's counters and the event-id warning (F109, F82) — on-device verification
+
+Code: `firmware/canary/src/csi_event_egress.cpp` (`csi_event_egress_stats()`,
+`csi_event_egress_id_space_low()`), carried by `main.cpp`'s
+`mqtt_publish_health_update()` as `csi_event_egress` and
+`event_id_space_low`; the canary-wap's `csi_mqtt::publish_health()` carries
+`event_id_space_low` too. The flag is `csi_event_id_floor::space_low()` of
+the allocator's next id. Host-tested (`test_canary_event_egress.cpp`,
+`test_csi_event_id_floor.cpp`, the canary-wap's `test_mqtt_reinit.cpp`, and
+`test_canary_health_trust.py` for the canary's worst-case packet against its
+1664 B MQTT buffer); the compiles are CI's. Owner: U1.
+
+- [ ] **The canary's health counts what its egress did**
+  - Setup: an HA-enabled canary (`release_ha`) with a card in, paired to
+    Home Assistant; `mosquitto_sub -v -t 'securacv/+/health'` on the broker
+    host, which you can stop.
+  - Repro: commit a few events with the broker up; stop the broker, commit
+    a few more, start it again and wait for `[CSI] event backfill done`;
+    then wait for the next health publish (once a minute).
+  - Expected: the health body holds a `csi_event_egress` object whose
+    `planner.live` counts the first rows, `planner.held` and
+    `planner.replayed` the outage's, and whose `dropped`, `held_dropped` and
+    `ambient_dropped` match any drop lines the serial log printed (0 when
+    none). The publish arrives whole (no missing health while it is the
+    largest yet).
+  - Artifact: `docs/audit/repro/F109/health-counters/`.
+- [ ] **Both devices warn before the event-id space runs out**
+  - Setup: a canary and a canary-wap you can write NVS on (a bench unit
+    whose Home Assistant entry you will re-pin afterwards).
+  - Repro: write the `securacv` namespace's `csi.evid` to `4026531840`
+    (0xF0000000) and reboot; watch the health topic. Then write it back
+    below that and reboot again.
+  - Expected: `"event_id_space_low":true` from the first health publish
+    after the first reboot, and `false` after the second; the device's
+    events after the first reboot carry ids at or above 4026531840.
+  - Artifact: `docs/audit/repro/F82/id-space-low/`.
+
 ## canary-wap loop-task ownership (F96, F106) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp`

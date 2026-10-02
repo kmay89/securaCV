@@ -549,6 +549,23 @@ Full background, threat model, and rotation procedure: see
 | `securacv/{device_id}/update/cmd` | HA → Device | `install` — start a firmware update |
 | `homeassistant/*/securacv_*/config` | Device → HA | HA MQTT Discovery config (retained) |
 
+Two `health` keys the integration does not read yet, for a bench run or a
+field report (`mosquitto_sub -t 'securacv/+/health'`):
+
+- `event_id_space_low` (Canary base and canary-wap): `true` once the
+  device's event-id counter nears the end of its space, about four years
+  before it wraps at the most a device can commit, and after a wrap. Past
+  the wrap Home Assistant refuses the device's events as replays. The
+  recovery is not decided yet; the flag only warns.
+- `csi_event_egress` (Canary base): what its committed-event egress did
+  since boot — `dropped` (commits its egress queue had no room for),
+  `held_dropped` (rows dropped from its 8-row RAM hold, oldest first),
+  `ambient_dropped` (`wifi.channel_activity` rows that had to wait) and
+  `planner`, the SD backfill's counters (`live`, `held`, `queued`,
+  `replayed`, `skipped`, `untrusted`, `unsendable`, `truncated_unsent`,
+  `read_giveups`). See [the CSI developer API](csi_developer_api.md) for
+  what each path does.
+
 ### Transport catalog
 
 The integration models multi-transport resilience (`custom_components/securacv/const.py`).

@@ -2561,6 +2561,30 @@
   the hold, through a fake card that lands all but a line's last byte
   (`SD.short_by_next`); each fails on the egress before the fix.
 
+### A branch that two host tests transcribe is held by neither
+- **What happened:** The canary egress's ordering leans on one branch in
+  `securacv_mqtt.cpp`'s `publish_or_queue()`: while the MQTT offline queue
+  still drains an outage, a new event joins its back instead of going live
+  past the queued rows. Both host tests that replay outages
+  (`test_csi_event_backfill.cpp`, `test_canary_event_egress.cpp`) copied
+  that branch into their own model, and the static check held only the live
+  send's refusal, so deleting the branch from the firmware kept every gate
+  green (sweep F107). One of the two copies did not even match the firmware:
+  with the link up and the queue full of tamper alerts, it refused an event
+  the firmware sends live.
+- **Root cause:** A test that transcribes the code under test proves the
+  transcription. Nothing tied the copy to the source it describes.
+- **Fix:** The branch moved into the pure `mqtt_offline_queue.h`
+  (`publish_or_queue()`), which `securacv_mqtt.cpp` calls and all three
+  host tests compile, and a static rule holds the firmware to calling it.
+- **Regression check:** `check_event_egress_order.py` rule 9 (13 self-test
+  mutations, on the header and on `securacv_mqtt.cpp`);
+  `test_mqtt_offline_queue.cpp` and two `test_canary_event_egress.cpp`
+  scenarios fail when the branch is removed or moved after the live send.
+  When a host test has to model glue it cannot compile, look for a pure
+  header the glue could call instead, and model only what is left.
+- **Date learned:** 2026-10
+
 ## Tasks: work that changes a module's state runs on the task that owns it
 
 ### A comment that promises a serializer is not a serializer, and "idempotent" is not "thread-safe"
