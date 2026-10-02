@@ -498,24 +498,10 @@ tz_rule::Resolve clear_tz() {
   return tz_rule::Resolve::OK;
 }
 
-/* Restore the persisted privacy ceiling at boot. Without this every
- * reboot reverts to P0 and the user has to re-consent to P1/P2 every
- * power cycle, which made the Tuning Lab effectively unreachable.
- * Default is P0 (privacy-first) — any out-of-range value falls back to
- * P0 rather than silently elevating to a more permissive level. */
-void apply_privacy_ceiling_from_nvs() {
-  Preferences pprefs;
-  if (!pprefs.begin(SETTINGS_NS, /*readOnly=*/true)) return;
-  const int32_t raw = pprefs.getInt("cp.pc", (int32_t)CSI_PRIVACY_P0);
-  pprefs.end();
-  csi_privacy_class_t ceiling;
-  switch (raw) {
-    case (int32_t)CSI_PRIVACY_P1: ceiling = CSI_PRIVACY_P1; break;
-    case (int32_t)CSI_PRIVACY_P2: ceiling = CSI_PRIVACY_P2; break;
-    default:                      ceiling = CSI_PRIVACY_P0; break;
-  }
-  csi_event_set_privacy_ceiling(ceiling);
-}
+/* The persisted privacy ceiling's reader, store and apply
+ * (apply_privacy_ceiling_from_nvs(), at boot and after a POST stores it) are
+ * csi_settings_nvs.cpp's, by the shared key map's core.privacy_ceiling row
+ * (sweep F151). */
 
 /* Transmitter filter (csi_hal.h): accept CSI frames only from the router
  * this station is associated with (and registered peer Canaries). On by
@@ -935,13 +921,15 @@ esp_err_t handle_calibrate_status(httpd_req_t* req) {
    * reboots). */
   Preferences prefs;
   bool prefs_ok = prefs.begin(SETTINGS_NS, /*readOnly=*/true);
-  const int32_t cur_motion =
-      prefs_ok ? prefs.getInt("cp.mt", 35) : 35;
-  const int32_t cur_active =
-      prefs_ok ? prefs.getInt("cp.at", 75) : 75;
-  const int32_t cur_breath =
-      prefs_ok ? prefs.getInt("cp.bt", 30) : 30;
-  if (prefs_ok) prefs.end();
+  /* Through the key map, the rows core.presence reads (sweep F151). */
+  PresenceThresholds current = {35, 75, 30};
+  if (prefs_ok) {
+    current = read_presence_thresholds(prefs);
+    prefs.end();
+  }
+  const int32_t cur_motion = current.motion;
+  const int32_t cur_active = current.active;
+  const int32_t cur_breath = current.breathing;
 
   char buf[320];
   switch (g_calibration.state) {
@@ -999,9 +987,12 @@ esp_err_t handle_calibrate_apply(httpd_req_t* req) {
     httpd_resp_send(req, "{\"ok\":false,\"reason\":\"nvs unavailable\"}", -1);
     return ESP_OK;
   }
-  prefs.putInt("cp.mt", (int32_t)g_calibration.proposed_motion);
-  prefs.putInt("cp.at", (int32_t)g_calibration.proposed_active);
-  prefs.putInt("cp.bt", (int32_t)g_calibration.proposed_breathing);
+  /* Stored by the key map, on the rows core.presence's init() reads
+   * (store_presence_thresholds(), sweep F151). */
+  const PresenceThresholds proposed = {(int32_t)g_calibration.proposed_motion,
+                                       (int32_t)g_calibration.proposed_active,
+                                       (int32_t)g_calibration.proposed_breathing};
+  (void)store_presence_thresholds(prefs, proposed);
   prefs.end();
 
   /* Reinit core.presence so the new thresholds take effect on the next
@@ -1044,9 +1035,12 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
     httpd_resp_send(req, "{\"ok\":false,\"reason\":\"settings store unavailable\"}", -1);
     return ESP_OK;
   }
-  const bool    pet_mode    = prefs.getBool("cp.pet_mode", false);
-  const int32_t preset_idx  = prefs.getInt ("cp.preset",   1);   // default balanced
-  const int32_t sensitivity = prefs.getInt ("cp.sens",     50);  // default neutral
+  /* core.presence's pet mode, preset and sensitivity, through the key map
+   * the module reads them by, with its defaults (sweep F151). */
+  const PresenceSettings presence = read_presence_settings(prefs);
+  const bool    pet_mode    = presence.pet_mode;
+  const int32_t preset_idx  = presence.preset;
+  const int32_t sensitivity = presence.sensitivity;
   /* Quiet Hours through the one reader, with the one default the
    * chokepoint and the Tuning Lab use too (sweep F123). */
   const QuietHours qh       = read_quiet_hours(prefs);
@@ -1054,7 +1048,7 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
    * Read separately from the in-memory chokepoint state (which apply_*
    * keeps in sync) so we always echo what's on disk, not what the
    * chokepoint thinks. */
-  const int32_t privacy_raw = prefs.getInt("cp.pc", (int32_t)CSI_PRIVACY_P0);
+  const int32_t privacy_raw = read_privacy_ceiling(prefs);
   /* Transmitter filter (default on). */
   const bool    filter_foreign = prefs.getBool(NVS_KEY_FILTER_FOREIGN, true);
   /* Household time zone (F28): "" while unset (the device keeps UTC). Both
@@ -1095,10 +1089,11 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
 
 esp_err_t handle_settings_post(httpd_req_t* req) {
   CSI_AUTH_OR_RETURN(req);
-  /* Body is small JSON. Recognized keys:
-   *   "pet_mode":    true|false  → cp.pet_mode (bool)
-   *   "preset":      "sensitive"|"balanced"|"quiet" → cp.preset (int 0..2)
-   *   "sensitivity": 0..100      → cp.sens (int)
+  /* Body is small JSON. Recognized keys (each stored under the shared key
+   * map's row for its dotted key, csi_module_settings_nvs.h):
+   *   "pet_mode":    true|false  → core.presence.pet_mode (bool)
+   *   "preset":      "sensitive"|"balanced"|"quiet" → core.presence.preset (int 0..2)
+   *   "sensitivity": 0..100      → core.presence.sensitivity (int)
    * Hand-parse to keep ArduinoJson out of this TU. We search for the
    * QUOTED key in every case so a body like {"not_pet_mode": true}
    * doesn't accidentally match. Buffer sized for the full payload:
@@ -1155,53 +1150,12 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
     return ESP_OK;
   }
 
-  /* "pet_mode": true|false */
-  if (const char* k = strstr(body, "\"pet_mode\"")) {
-    if (const char* v = strchr(k, ':')) {
-      v++;
-      while (*v == ' ' || *v == '\t' || *v == '"') v++;
-      if (strncmp(v, "true", 4) == 0) {
-        prefs.putBool("cp.pet_mode", true);  wrote_anything = true;
-      } else if (strncmp(v, "false", 5) == 0) {
-        prefs.putBool("cp.pet_mode", false); wrote_anything = true;
-      }
-    }
-  }
-
-  /* "preset": "sensitive" | "balanced" | "quiet". Stored as int 0/1/2
-   * so core_presence.cpp's switch is fast and the NVS row is small. */
-  if (const char* k = strstr(body, "\"preset\"")) {
-    if (const char* v = strchr(k, ':')) {
-      v++;
-      while (*v == ' ' || *v == '\t' || *v == '"') v++;
-      int32_t idx = -1;
-      if      (strncmp(v, "sensitive", 9) == 0) idx = 0;
-      else if (strncmp(v, "balanced",  8) == 0) idx = 1;
-      else if (strncmp(v, "quiet",     5) == 0) idx = 2;
-      if (idx >= 0) {
-        prefs.putInt("cp.preset", idx);
-        wrote_anything = true;
-      }
-    }
-  }
-
-  /* "sensitivity": 0..100 (clamped). Skip `"` too so a value sent as
-   * a string ({"sensitivity":"75"}) parses the same as a bare number,
-   * matching the pet_mode and preset parsers above. */
-  if (const char* k = strstr(body, "\"sensitivity\"")) {
-    if (const char* v = strchr(k, ':')) {
-      v++;
-      while (*v == ' ' || *v == '\t' || *v == '"') v++;
-      char* end = nullptr;
-      long n = strtol(v, &end, 10);
-      if (end != v) {
-        if (n < 0)   n = 0;
-        if (n > 100) n = 100;
-        prefs.putInt("cp.sens", (int32_t)n);
-        wrote_anything = true;
-      }
-    }
-  }
+  /* "pet_mode", "preset" and "sensitivity": core.presence's own rows,
+   * stored by store_presence_from_settings() (csi_settings_nvs.cpp) through
+   * the shared key map its init() reads by (sweep F151). They were written
+   * here by literal key, which no host suite compiled; test_wap_tune_lab.cpp
+   * runs the store and its source pins hold this handler to it. */
+  if (store_presence_from_settings(prefs, body)) wrote_anything = true;
 
   /* "quiet_hours": {"enabled": true|false, "start_min": M, "end_min": M},
    * stored by store_quiet_hours_from_settings() (csi_settings_nvs.cpp):
@@ -1212,26 +1166,12 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
   const bool qh_changed = store_quiet_hours_from_settings(prefs, body);
   if (qh_changed) wrote_anything = true;
 
-  /* "privacy_ceiling": "p0" | "p1" | "p2". Persisted as int 0/1/2 so
-   * apply_privacy_ceiling_from_nvs() can compare against the
-   * CSI_PRIVACY_* enum directly. Unrecognized values are ignored — the
-   * existing persisted value (or P0 default) survives. */
-  bool ceiling_changed = false;
-  if (const char* k = strstr(body, "\"privacy_ceiling\"")) {
-    if (const char* v = strchr(k, ':')) {
-      v++;
-      while (*v == ' ' || *v == '\t' || *v == '"') v++;
-      int32_t val = -1;
-      if      (strncmp(v, "p0", 2) == 0) val = (int32_t)CSI_PRIVACY_P0;
-      else if (strncmp(v, "p1", 2) == 0) val = (int32_t)CSI_PRIVACY_P1;
-      else if (strncmp(v, "p2", 2) == 0) val = (int32_t)CSI_PRIVACY_P2;
-      if (val >= 0) {
-        prefs.putInt("cp.pc", val);
-        wrote_anything = true;
-        ceiling_changed = true;
-      }
-    }
-  }
+  /* "privacy_ceiling": "p0" | "p1" | "p2", stored by
+   * store_privacy_ceiling_from_settings() through the key map's
+   * core.privacy_ceiling row, the one apply_privacy_ceiling_from_nvs() and
+   * the GET above read (sweep F151). Unrecognized values store nothing. */
+  const bool ceiling_changed = store_privacy_ceiling_from_settings(prefs, body);
+  if (ceiling_changed) wrote_anything = true;
 
   /* "filter_foreign": true|false → csi.ff (bool). Applied to the HAL below
    * so the next frame sees it; no reboot. */

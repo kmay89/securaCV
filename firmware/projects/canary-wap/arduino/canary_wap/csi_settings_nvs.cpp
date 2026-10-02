@@ -147,3 +147,132 @@ void apply_quiet_hours_from_nvs(void) {
   prefs.end();
   csi_event_set_quiet_window((uint16_t)qh.start_min, (uint16_t)qh.end_min, qh.enabled);
 }
+
+/* ── core.presence: the dashboard and the calibration (sweep F151) ──── */
+
+PresenceSettings read_presence_settings(Preferences& prefs) {
+  using csi_module_settings_nvs::nvs_key_for;
+  PresenceSettings s;
+  s.pet_mode    = prefs.getBool(nvs_key_for("core.presence.pet_mode"), false);
+  s.preset      = prefs.getInt(nvs_key_for("core.presence.preset"), 1);   /* balanced */
+  s.sensitivity = prefs.getInt(nvs_key_for("core.presence.sensitivity"), 50);
+  return s;
+}
+
+bool store_presence_from_settings(Preferences& prefs, const char* body) {
+  using csi_module_settings_nvs::nvs_key_for;
+  bool stored = false;
+
+  /* "pet_mode": true|false */
+  if (const char* k = strstr(body, "\"pet_mode\"")) {
+    if (const char* v = strchr(k, ':')) {
+      v++;
+      while (*v == ' ' || *v == '\t' || *v == '"') v++;
+      if (strncmp(v, "true", 4) == 0) {
+        prefs.putBool(nvs_key_for("core.presence.pet_mode"), true);  stored = true;
+      } else if (strncmp(v, "false", 5) == 0) {
+        prefs.putBool(nvs_key_for("core.presence.pet_mode"), false); stored = true;
+      }
+    }
+  }
+
+  /* "preset": "sensitive" | "balanced" | "quiet". Stored as int 0/1/2
+   * so core_presence.cpp's switch is fast and the NVS row is small. */
+  if (const char* k = strstr(body, "\"preset\"")) {
+    if (const char* v = strchr(k, ':')) {
+      v++;
+      while (*v == ' ' || *v == '\t' || *v == '"') v++;
+      int32_t idx = -1;
+      if      (strncmp(v, "sensitive", 9) == 0) idx = 0;
+      else if (strncmp(v, "balanced",  8) == 0) idx = 1;
+      else if (strncmp(v, "quiet",     5) == 0) idx = 2;
+      if (idx >= 0) {
+        prefs.putInt(nvs_key_for("core.presence.preset"), idx);
+        stored = true;
+      }
+    }
+  }
+
+  /* "sensitivity": 0..100 (clamped). Skip `"` too so a value sent as
+   * a string ({"sensitivity":"75"}) parses the same as a bare number,
+   * matching the pet_mode and preset parsers above. */
+  if (const char* k = strstr(body, "\"sensitivity\"")) {
+    if (const char* v = strchr(k, ':')) {
+      v++;
+      while (*v == ' ' || *v == '\t' || *v == '"') v++;
+      char* end = nullptr;
+      long n = strtol(v, &end, 10);
+      if (end != v) {
+        if (n < 0)   n = 0;
+        if (n > 100) n = 100;
+        prefs.putInt(nvs_key_for("core.presence.sensitivity"), (int32_t)n);
+        stored = true;
+      }
+    }
+  }
+  return stored;
+}
+
+PresenceThresholds read_presence_thresholds(Preferences& prefs) {
+  using csi_module_settings_nvs::nvs_key_for;
+  PresenceThresholds t;
+  t.motion    = prefs.getInt(nvs_key_for("core.presence.motion_threshold"), 35);
+  t.active    = prefs.getInt(nvs_key_for("core.presence.active_threshold"), 75);
+  t.breathing = prefs.getInt(nvs_key_for("core.presence.breathing_threshold"), 30);
+  return t;
+}
+
+bool store_presence_thresholds(Preferences& prefs, const PresenceThresholds& thresholds) {
+  using csi_module_settings_nvs::nvs_key_for;
+  const bool motion = prefs.putInt(nvs_key_for("core.presence.motion_threshold"), thresholds.motion) > 0;
+  const bool active = prefs.putInt(nvs_key_for("core.presence.active_threshold"), thresholds.active) > 0;
+  const bool breathing =
+      prefs.putInt(nvs_key_for("core.presence.breathing_threshold"), thresholds.breathing) > 0;
+  return motion && active && breathing;
+}
+
+/* ── The privacy ceiling ─────────────────────────────────────────────── */
+
+int32_t read_privacy_ceiling(Preferences& prefs) {
+  return prefs.getInt(csi_module_settings_nvs::nvs_key_for("core.privacy_ceiling"),
+                      (int32_t)CSI_PRIVACY_P0);
+}
+
+bool store_privacy_ceiling_from_settings(Preferences& prefs, const char* body) {
+  /* "privacy_ceiling": "p0" | "p1" | "p2". Persisted as int 0/1/2 so
+   * apply_privacy_ceiling_from_nvs() can compare against the
+   * CSI_PRIVACY_* enum directly. Unrecognized values are ignored — the
+   * existing persisted value (or P0 default) survives. */
+  const char* k = strstr(body, "\"privacy_ceiling\"");
+  if (k == nullptr) return false;
+  const char* v = strchr(k, ':');
+  if (v == nullptr) return false;
+  v++;
+  while (*v == ' ' || *v == '\t' || *v == '"') v++;
+  int32_t val = -1;
+  if      (strncmp(v, "p0", 2) == 0) val = (int32_t)CSI_PRIVACY_P0;
+  else if (strncmp(v, "p1", 2) == 0) val = (int32_t)CSI_PRIVACY_P1;
+  else if (strncmp(v, "p2", 2) == 0) val = (int32_t)CSI_PRIVACY_P2;
+  if (val < 0) return false;
+  prefs.putInt(csi_module_settings_nvs::nvs_key_for("core.privacy_ceiling"), val);
+  return true;
+}
+
+/* Restore the persisted privacy ceiling. Without this every reboot reverts
+ * to P0 and the user has to re-consent to P1/P2 every power cycle, which made
+ * the Tuning Lab effectively unreachable. Default is P0 (privacy-first): any
+ * out-of-range value falls back to P0 rather than silently elevating to a more
+ * permissive level. Moved from csi_integration.cpp (sweep F151). */
+void apply_privacy_ceiling_from_nvs(void) {
+  Preferences prefs;
+  if (!prefs.begin(csi_module_settings_nvs::kNamespace, /*readOnly=*/true)) return;
+  const int32_t raw = read_privacy_ceiling(prefs);
+  prefs.end();
+  csi_privacy_class_t ceiling;
+  switch (raw) {
+    case (int32_t)CSI_PRIVACY_P1: ceiling = CSI_PRIVACY_P1; break;
+    case (int32_t)CSI_PRIVACY_P2: ceiling = CSI_PRIVACY_P2; break;
+    default:                      ceiling = CSI_PRIVACY_P0; break;
+  }
+  csi_event_set_privacy_ceiling(ceiling);
+}

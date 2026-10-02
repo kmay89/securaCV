@@ -1125,6 +1125,32 @@ Owner: U1.
     do.
   - Artifact: `docs/audit/repro/F123/dashboard-and-lab-one-window/`.
 
+## canary-wap dashboard presence settings and calibration (F151) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/csi_settings_nvs.cpp`
+(`store_presence_from_settings()`, `store_presence_thresholds()`,
+`store_privacy_ceiling_from_settings()` and their readers, by the shared key
+map core.presence reads by) and the handlers in `csi_integration.cpp` that
+call them. Host-tested (`tests_host/test_wap_tune_lab.cpp`, whose source pins
+hold the handlers to those functions and keep every other sketch source from
+spelling a module setting's NVS key); the compile is CI's; not run on a
+device. Owner: U1.
+
+- [ ] **What the dashboard and the calibration save is what the device runs**
+  - Setup: a canary-wap on this firmware with NVS erased, the dashboard and
+    `/tune` open.
+  - Repro: in the dashboard set Pet mode on, the preset to "sensitive" and the
+    sensitivity slider to 75, and save; reload `/tune`. Run a calibration and
+    apply it; reload `/tune` again. Set the privacy ceiling to P1. Reboot and
+    reload both pages.
+  - Expected: `/tune` shows Pet mode on, Preset 0 and Sensitivity 75 after the
+    first save, and the calibration's proposed motion / active / breathing
+    thresholds after the apply (`GET /api/csi/calibrate/status` then shows them
+    as `current`); `GET /api/settings` reports `"pet_mode":true`,
+    `"preset":"sensitive"`, `"sensitivity":75` and `"privacy_ceiling":"p1"`,
+    and all of it survives the reboot.
+  - Artifact: `docs/audit/repro/F151/dashboard-and-calibration-rows/`.
+
 ## SoftAP WPA2/WPA3 transition + PMF (F16) — on-device verification
 
 Code: `firmware/common/network/ap_security_policy.h` (host-tested), applied

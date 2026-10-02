@@ -43,10 +43,13 @@
 //
 // Build/run: make -C firmware/projects/canary-wap/tests_host
 
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <regex>
 #include <sstream>
@@ -456,6 +459,177 @@ static int test_the_quiet_hours_rows_keep_their_stored_names() {
   return 0;
 }
 
+// ── F151: the dashboard's and the calibration's presence rows ───────────
+//
+// POST /api/settings stored the dashboard's pet mode, preset and sensitivity
+// as "cp.pet_mode", "cp.preset" and "cp.sens", and the calibration's apply
+// its thresholds as "cp.mt", "cp.at" and "cp.bt", by literal key in
+// csi_integration.cpp, while core.presence reads them through the shared
+// key map. No suite compiled the handlers: renaming the POST's "cp.sens" to
+// "cp.sen" left every canary-wap host suite, check_csi_sync.sh and
+// regression_check.sh green (probed on #1762's head), and on a device the
+// slider would have saved a value no module read. The stores and readers
+// moved to csi_settings_nvs.cpp, by the key map, and run here against the
+// module's own read (csi_module_settings_int / _bool with no session, as
+// reinit_module()'s init(nullptr) reads) and the Tuning Lab's; the source
+// pins below hold the handlers to them and keep any module setting's NVS
+// key out of every other sketch source. The privacy ceiling's "cp.pc" was
+// spelled by hand in three places too, and goes the same way.
+
+// A dashboard POST body through the presence store, as the handler runs it.
+static bool presence_post(const char* json) {
+  Preferences prefs;
+  if (!prefs.begin(csi_module_settings_nvs::kNamespace, /*readOnly=*/false)) return false;
+  const bool stored = store_presence_from_settings(prefs, json);
+  prefs.end();
+  return stored;
+}
+
+static PresenceSettings get_presence() {
+  Preferences prefs;
+  PresenceSettings s = {false, -1, -1};
+  if (prefs.begin(csi_module_settings_nvs::kNamespace, /*readOnly=*/true)) {
+    s = read_presence_settings(prefs);
+    prefs.end();
+  }
+  return s;
+}
+
+static int test_the_dashboard_writes_the_presence_rows_the_module_reads() {
+  host_prefs().clear();
+  reboot_and_boot();
+  // Nothing stored: GET reports core.presence's own defaults.
+  host_prefs().created.insert("csi");
+  PresenceSettings s = get_presence();
+  CHECK(!s.pet_mode && s.preset == 1 && s.sensitivity == 50);
+  CHECK(s.preset == csi_module_settings_int(nullptr, "core.presence.preset", 1));
+  CHECK(s.sensitivity == csi_module_settings_int(nullptr, "core.presence.sensitivity", 50));
+
+  // The dashboard saves all three; a value sent as a string reads as the
+  // bare one.
+  CHECK(presence_post("{\"pet_mode\":true,\"preset\":\"sensitive\",\"sensitivity\":\"75\"}"));
+  // What core.presence's init() reads (the key map, no session: the
+  // re-init after the POST), what the Lab reads, and what GET reports.
+  CHECK(csi_module_settings_bool(nullptr, "core.presence.pet_mode", false));
+  CHECK(csi_module_settings_int(nullptr, "core.presence.preset", -1) == 0);
+  CHECK(csi_module_settings_int(nullptr, "core.presence.sensitivity", -1) == 75);
+  CHECK(lab_value("core.presence.pet_mode") == 1);
+  CHECK(lab_value("core.presence.preset") == 0);
+  CHECK(lab_value("core.presence.sensitivity") == 75);
+  s = get_presence();
+  CHECK(s.pet_mode && s.preset == 0 && s.sensitivity == 75);
+  // Under the names devices hold them under.
+  CHECK(host_prefs().flag.count("csi/cp.pet_mode") == 1 && host_prefs().flag["csi/cp.pet_mode"]);
+  CHECK(host_prefs().i32.count("csi/cp.preset") == 1 && host_prefs().i32["csi/cp.preset"] == 0);
+  CHECK(host_prefs().i32.count("csi/cp.sens") == 1 && host_prefs().i32["csi/cp.sens"] == 75);
+
+  // One key at a time, clamped; the other rows stay.
+  CHECK(presence_post("{\"sensitivity\":250}"));
+  CHECK(csi_module_settings_int(nullptr, "core.presence.sensitivity", -1) == 100);
+  CHECK(presence_post("{\"sensitivity\":-4}"));
+  CHECK(csi_module_settings_int(nullptr, "core.presence.sensitivity", -1) == 0);
+  CHECK(presence_post("{\"preset\":\"quiet\",\"pet_mode\":false}"));
+  CHECK(csi_module_settings_int(nullptr, "core.presence.preset", -1) == 2);
+  CHECK(!csi_module_settings_bool(nullptr, "core.presence.pet_mode", true));
+
+  // Nothing it can read stores nothing: an unknown preset, a key inside
+  // another, a value that is not one.
+  const size_t rows = host_prefs().i32.size() + host_prefs().flag.size();
+  CHECK(!presence_post("{\"preset\":\"loud\"}"));
+  CHECK(!presence_post("{\"not_pet_mode\":true,\"sensitivity\":\"high\"}"));
+  CHECK(!presence_post("{\"quiet_hours\":{\"enabled\":true}}"));
+  CHECK(host_prefs().i32.size() + host_prefs().flag.size() == rows);
+  CHECK(csi_module_settings_int(nullptr, "core.presence.preset", -1) == 2);
+  host_prefs().clear();
+  return 0;
+}
+
+static int test_the_calibration_writes_the_thresholds_the_module_reads() {
+  host_prefs().clear();
+  reboot_and_boot();
+  host_prefs().created.insert("csi");
+  {
+    Preferences prefs;
+    CHECK(prefs.begin("csi", /*readOnly=*/true));
+    const PresenceThresholds t = read_presence_thresholds(prefs);   // the status's "current"
+    prefs.end();
+    CHECK(t.motion == 35 && t.active == 75 && t.breathing == 30);
+  }
+  {
+    Preferences prefs;
+    CHECK(prefs.begin("csi", /*readOnly=*/false));
+    const PresenceThresholds proposed = {41, 83, 27};
+    CHECK(store_presence_thresholds(prefs, proposed));
+    prefs.end();
+  }
+  CHECK(csi_module_settings_int(nullptr, "core.presence.motion_threshold", -1) == 41);
+  CHECK(csi_module_settings_int(nullptr, "core.presence.active_threshold", -1) == 83);
+  CHECK(csi_module_settings_int(nullptr, "core.presence.breathing_threshold", -1) == 27);
+  CHECK(lab_value("core.presence.motion_threshold") == 41);
+  CHECK(lab_value("core.presence.active_threshold") == 83);
+  CHECK(lab_value("core.presence.breathing_threshold") == 27);
+  {
+    Preferences prefs;
+    CHECK(prefs.begin("csi", /*readOnly=*/true));
+    const PresenceThresholds t = read_presence_thresholds(prefs);
+    prefs.end();
+    CHECK(t.motion == 41 && t.active == 83 && t.breathing == 27);
+  }
+  CHECK(host_prefs().i32["csi/cp.mt"] == 41);
+  CHECK(host_prefs().i32["csi/cp.at"] == 83);
+  CHECK(host_prefs().i32["csi/cp.bt"] == 27);
+  // NVS that takes no row reports it.
+  {
+    Preferences prefs;
+    CHECK(prefs.begin("csi", /*readOnly=*/true));
+    const PresenceThresholds proposed = {50, 90, 40};
+    CHECK(!store_presence_thresholds(prefs, proposed));   // a read-only handle stores nothing
+    prefs.end();
+  }
+  CHECK(csi_module_settings_int(nullptr, "core.presence.motion_threshold", -1) == 41);
+  host_prefs().clear();
+  return 0;
+}
+
+static int test_the_privacy_ceiling_is_one_row() {
+  host_prefs().clear();
+  reboot_and_boot();
+  csi_event_set_privacy_ceiling(CSI_PRIVACY_P0);
+  auto post = [](const char* json) {
+    Preferences prefs;
+    if (!prefs.begin("csi", /*readOnly=*/false)) return false;
+    const bool stored = store_privacy_ceiling_from_settings(prefs, json);
+    prefs.end();
+    return stored;
+  };
+  auto get = []() {
+    Preferences prefs;
+    if (!prefs.begin("csi", /*readOnly=*/true)) return (int32_t)-1;
+    const int32_t v = read_privacy_ceiling(prefs);
+    prefs.end();
+    return v;
+  };
+  host_prefs().created.insert("csi");
+  CHECK(get() == (int32_t)CSI_PRIVACY_P0);                 // nothing stored: P0
+  CHECK(post("{\"pet_mode\":true,\"privacy_ceiling\":\"p2\"}"));
+  CHECK(get() == (int32_t)CSI_PRIVACY_P2);                 // GET /api/settings
+  CHECK(host_prefs().i32["csi/cp.pc"] == (int32_t)CSI_PRIVACY_P2);
+  apply_privacy_ceiling_from_nvs();                        // the boot, and the POST's apply
+  CHECK(csi_event_get_privacy_ceiling() == CSI_PRIVACY_P2);
+  CHECK(!post("{\"privacy_ceiling\":\"p9\"}"));            // ignored: the row survives
+  CHECK(!post("{\"privacy\":\"p1\"}"));
+  CHECK(get() == (int32_t)CSI_PRIVACY_P2);
+  CHECK(post("{\"privacy_ceiling\": \"p1\"}"));
+  apply_privacy_ceiling_from_nvs();
+  CHECK(csi_event_get_privacy_ceiling() == CSI_PRIVACY_P1);
+  host_prefs().i32["csi/cp.pc"] = 7;                       // out of range: P0, never more
+  apply_privacy_ceiling_from_nvs();
+  CHECK(csi_event_get_privacy_ceiling() == CSI_PRIVACY_P0);
+  csi_event_set_privacy_ceiling(CSI_PRIVACY_P0);
+  host_prefs().clear();
+  return 0;
+}
+
 // ── The table: every knob applies at once, to its own group ─────────────
 static int test_every_knob_applies_at_once_to_its_group() {
   for (size_t i = 0; i < TUNE_COEFF_COUNT; ++i) {
@@ -552,6 +726,89 @@ static size_t count_of(const std::string& s, const std::string& what) {
   return n;
 }
 
+// The string literals of a C++ source, comments skipped (a raw string's
+// body is one literal). Hand-rolled rather than std::regex: some sketch
+// sources are large, and libstdc++'s regex recurses per character.
+static std::vector<std::string> string_literals(const std::string& s) {
+  std::vector<std::string> out;
+  const size_t n = s.size();
+  size_t i = 0;
+  while (i < n) {
+    const char c = s[i];
+    if (c == '/' && i + 1 < n && s[i + 1] == '/') {
+      i = s.find('\n', i);
+      if (i == std::string::npos) break;
+      continue;
+    }
+    if (c == '/' && i + 1 < n && s[i + 1] == '*') {
+      i = s.find("*/", i + 2);
+      if (i == std::string::npos) break;
+      i += 2;
+      continue;
+    }
+    if (c == 'R' && i + 1 < n && s[i + 1] == '"' &&
+        (i == 0 || !(std::isalnum((unsigned char)s[i - 1]) || s[i - 1] == '_'))) {
+      const size_t open = s.find('(', i + 2);
+      if (open == std::string::npos) break;
+      const std::string close = ")" + s.substr(i + 2, open - (i + 2)) + "\"";
+      const size_t end = s.find(close, open + 1);
+      if (end == std::string::npos) break;
+      out.push_back(s.substr(open + 1, end - open - 1));
+      i = end + close.size();
+      continue;
+    }
+    if (c == '\'' && !(i > 0 && std::isxdigit((unsigned char)s[i - 1]) && i + 1 < n &&
+                       std::isxdigit((unsigned char)s[i + 1]))) {   // not a digit separator
+      for (++i; i < n && s[i] != '\''; ++i) {
+        if (s[i] == '\\') ++i;
+      }
+      ++i;
+      continue;
+    }
+    if (c == '"') {
+      std::string lit;
+      for (++i; i < n && s[i] != '"'; ++i) {
+        if (s[i] == '\\' && i + 1 < n) lit += s[i++];
+        lit += s[i];
+      }
+      ++i;
+      out.push_back(lit);
+      continue;
+    }
+    ++i;
+  }
+  return out;
+}
+
+// The NVS keys of the shared key map's rows start with a module's short
+// prefix ("cp." core.presence, "cb." core.breathing, "qh." Quiet Hours,
+// "ab." anomaly.baseline). A literal in a sketch source that starts with
+// one spells a module setting's key by hand (sweep F151): it must come from
+// the map (nvs_key_for()), which the module's own reads use, or a rename on
+// one side saves a value no module reads. Returns each such literal.
+static std::vector<std::string> hand_spelled_setting_keys(const std::string& src) {
+  std::vector<std::string> prefixes;
+  for (size_t i = 0; i < csi_module_settings_nvs::kKeyCount; ++i) {
+    const std::string nvs = csi_module_settings_nvs::kKeys[i].nvs;
+    const size_t dot = nvs.find('.');
+    if (dot == std::string::npos) continue;
+    const std::string prefix = nvs.substr(0, dot + 1);
+    if (std::find(prefixes.begin(), prefixes.end(), prefix) == prefixes.end()) prefixes.push_back(prefix);
+  }
+  std::vector<std::string> out;
+  for (const std::string& lit : string_literals(src)) {
+    for (const std::string& prefix : prefixes) {
+      if (lit.compare(0, prefix.size(), prefix) == 0 && lit.size() > prefix.size() &&
+          lit.size() <= 15 && lit.find(' ') == std::string::npos) {
+        out.push_back(lit);
+      }
+    }
+  }
+  return out;
+}
+
+static const char* const kCalibApply = R"(\besp_err_t\s+handle_calibrate_apply\s*\(\s*httpd_req_t\s*\*\s*req\s*\)\s*\{)";
+static const char* const kCalibStatus = R"(\besp_err_t\s+handle_calibrate_status\s*\(\s*httpd_req_t\s*\*\s*req\s*\)\s*\{)";
 static const char* const kSettingsGet = R"(\besp_err_t\s+handle_settings_get\s*\(\s*httpd_req_t\s*\*\s*req\s*\)\s*\{)";
 static const char* const kSettingsPost = R"(\besp_err_t\s+handle_settings_post\s*\(\s*httpd_req_t\s*\*\s*req\s*\)\s*\{)";
 static const char* const kTunePost = R"(\besp_err_t\s+handle_tune_post_coefficients\s*\(\s*httpd_req_t\s*\*\s*req\s*\)\s*\{)";
@@ -617,6 +874,50 @@ static std::vector<std::string> pin_problems(const std::string& integ) {
       std::regex_search(integ, std::regex(R"(\btune_post\s*\([^)]*\)\s*\{)"))) {
     out.push_back("csi_integration.cpp defines its own table, reader, apply or POST body");
   }
+  // F151: core.presence's rows and the privacy ceiling, through the tested
+  // stores and readers, by the key map.
+  if (count_of(get, "constPresenceSettingspresence=read_presence_settings(prefs);") != 1 ||
+      count_of(get, "read_privacy_ceiling(prefs)") != 1) {
+    out.push_back("GET /api/settings reads the presence rows or the ceiling other than through the tested readers");
+  }
+  const size_t presence_at = set.find("if(store_presence_from_settings(prefs,body))wrote_anything=true;");
+  if (presence_at == std::string::npos || count_of(set, "store_presence_from_settings(") != 1 ||
+      !(presence_at < end_at)) {
+    out.push_back("POST /api/settings does not store the presence rows through store_presence_from_settings(), as a write");
+  }
+  const size_t ceiling_at = set.find("constboolceiling_changed=store_privacy_ceiling_from_settings(prefs,body);"
+                                     "if(ceiling_changed)wrote_anything=true;");
+  const size_t ceiling_apply_at = set.find("if(ceiling_changed)apply_privacy_ceiling_from_nvs();");
+  if (ceiling_at == std::string::npos || count_of(set, "store_privacy_ceiling_from_settings(") != 1 ||
+      ceiling_apply_at == std::string::npos || count_of(set, "apply_privacy_ceiling_from_nvs(") != 1 ||
+      !(ceiling_at < end_at && end_at < ceiling_apply_at)) {
+    out.push_back("POST /api/settings does not store the ceiling through its store and apply it once, after closing NVS");
+  }
+  for (const char* own : {"\\\"pet_mode\\\"", "\\\"preset\\\"", "\\\"sensitivity\\\"",
+                          "\\\"privacy_ceiling\\\""}) {
+    if (set.find(own) != std::string::npos) {
+      out.push_back(std::string("POST /api/settings parses a presence or ceiling key itself: ") + own);
+    }
+  }
+  const std::string apply = code_body(integ, kCalibApply);
+  const size_t thresholds_at = apply.find("(void)store_presence_thresholds(prefs,proposed);prefs.end();");
+  const size_t reinit_at = apply.find("reinit_module(\"core.presence\");");
+  if (apply.empty() || thresholds_at == std::string::npos ||
+      count_of(apply, "store_presence_thresholds(") != 1 || apply.find("put") != std::string::npos ||
+      reinit_at == std::string::npos || !(thresholds_at < reinit_at)) {
+    out.push_back("the calibration's apply does not store its thresholds through store_presence_thresholds(), then re-init");
+  }
+  const std::string status = code_body(integ, kCalibStatus);
+  if (count_of(status, "current=read_presence_thresholds(prefs);") != 1 ||
+      status.find("getInt") != std::string::npos) {
+    out.push_back("the calibration's status reads the thresholds other than through read_presence_thresholds()");
+  }
+  if (std::regex_search(integ, std::regex(R"(\b(store_presence_from_settings|read_presence_settings|store_presence_thresholds|read_presence_thresholds|read_privacy_ceiling|store_privacy_ceiling_from_settings|apply_privacy_ceiling_from_nvs)\s*\([^)]*\)\s*\{)"))) {
+    out.push_back("csi_integration.cpp defines its own presence or ceiling store, reader or apply");
+  }
+  for (const std::string& lit : hand_spelled_setting_keys(integ)) {
+    out.push_back("csi_integration.cpp spells a module setting's NVS key by hand: \"" + lit + "\"");
+  }
   return out;
 }
 
@@ -664,6 +965,39 @@ static int test_csi_integration_is_thin_around_the_tested_code() {
      "  const bool qh_changed = store_quiet_hours_from_settings(prefs, body);\n"
      "  if (qh_changed) apply_quiet_hours_from_nvs();\n"},
     {"a Quiet-Hours-only settings POST answers 400", "  if (qh_changed) wrote_anything = true;\n", ""},
+    // F151: the item's own probe, in the form it takes now (the POST's
+    // sensitivity stored by hand under a renamed key), and its kin.
+    {"the settings POST stores the sensitivity by hand as cp.sen",
+     "if (store_presence_from_settings(prefs, body)) wrote_anything = true;",
+     "if (const char* k = strstr(body, \"\\\"sensitivity\\\"\")) {\n"
+     "    prefs.putInt(\"cp.sen\", (int32_t)strtol(strchr(k, ':') + 1, nullptr, 10));\n"
+     "    wrote_anything = true;\n  }"},
+    {"the settings POST adds a presence row by hand",
+     "if (store_presence_from_settings(prefs, body)) wrote_anything = true;",
+     "if (store_presence_from_settings(prefs, body)) wrote_anything = true;\n  prefs.putInt(\"cp.sen\", 50);"},
+    {"the settings POST drops the presence store",
+     "if (store_presence_from_settings(prefs, body)) wrote_anything = true;", ""},
+    {"a presence-only settings POST answers 400",
+     "if (store_presence_from_settings(prefs, body)) wrote_anything = true;",
+     "(void)store_presence_from_settings(prefs, body);"},
+    {"GET reads the sensitivity by hand",
+     "const PresenceSettings presence = read_presence_settings(prefs);",
+     "PresenceSettings presence = read_presence_settings(prefs);\n  presence.sensitivity = prefs.getInt(\"cp.sen\", 50);"},
+    {"GET reads the ceiling by hand", "const int32_t privacy_raw = read_privacy_ceiling(prefs);",
+     "const int32_t privacy_raw = prefs.getInt(\"cp.pc\", 0);"},
+    {"the calibration stores a threshold by hand", "(void)store_presence_thresholds(prefs, proposed);",
+     "(void)proposed;\n  prefs.putInt(\"cp.mt\", (int32_t)g_calibration.proposed_motion);"},
+    {"the calibration drops its store", "(void)store_presence_thresholds(prefs, proposed);", "(void)proposed;"},
+    {"the calibration re-inits before it stores", "  reinit_module(\"core.presence\");\n\n  /* Mark the calibration",
+     "\n  /* Mark the calibration"},
+    {"the calibration's status reads by hand", "current = read_presence_thresholds(prefs);",
+     "current.motion = prefs.getInt(\"cp.mt\", 35);"},
+    {"the settings POST stores the ceiling by hand",
+     "const bool ceiling_changed = store_privacy_ceiling_from_settings(prefs, body);",
+     "const bool ceiling_changed = strstr(body, \"\\\"privacy_ceiling\\\"\") != nullptr && prefs.putInt(\"cp.pc\", 1) > 0;"},
+    {"the settings POST does not apply the ceiling", "  if (ceiling_changed) apply_privacy_ceiling_from_nvs();\n", ""},
+    {"a local ceiling apply comes back", "void reinit_module(const char* module_id) {",
+     "void apply_privacy_ceiling_from_nvs() {}\nvoid reinit_module(const char* module_id) {"},
   };
   for (const Mutation& mu : kMutations) {
     std::string src = integ;
@@ -676,6 +1010,67 @@ static int test_csi_integration_is_thin_around_the_tested_code() {
       CHECK(false);
     }
   }
+  return 0;
+}
+
+// F151: no sketch source but the key map spells a module setting's NVS
+// key. Every source that touches NVS (it names Preferences) is read; the
+// map's own header is the one place the short keys live. Checked against
+// in-memory mutations of the sources that write those rows.
+static int test_no_sketch_source_spells_a_module_settings_key() {
+  namespace fs = std::filesystem;
+  std::vector<std::string> scanned;
+  for (const fs::directory_entry& e : fs::directory_iterator(WAP_SKETCH_DIR)) {
+    const std::string name = e.path().filename().string();
+    const std::string ext = e.path().extension().string();
+    if (ext != ".cpp" && ext != ".h" && ext != ".ino") continue;
+    if (name == "csi_module_settings_nvs.h") continue;   // the map
+    const std::string src = read_source(name.c_str());
+    if (src.find("Preferences") == std::string::npos) continue;
+    scanned.push_back(name);
+    for (const std::string& lit : hand_spelled_setting_keys(src)) {
+      std::fprintf(stderr, "%s spells a module setting's NVS key by hand: \"%s\"\n", name.c_str(), lit.c_str());
+      CHECK(false);
+    }
+  }
+  for (const char* must : {"csi_integration.cpp", "csi_settings_nvs.cpp", "csi_tune_lab.cpp",
+                           "csi_mqtt.cpp", "csi_event_egress.cpp", "canary_wap.ino"}) {
+    CHECK(std::find(scanned.begin(), scanned.end(), must) != scanned.end());
+  }
+
+  struct Mutation { const char* name; const char* file; const char* from; const char* to; };
+  const Mutation kMutations[] = {
+    {"the dashboard's store spells the sensitivity", "csi_settings_nvs.cpp",
+     "prefs.putInt(nvs_key_for(\"core.presence.sensitivity\"), (int32_t)n);",
+     "prefs.putInt(\"cp.sen\", (int32_t)n);"},
+    {"the calibration's store spells a threshold", "csi_settings_nvs.cpp",
+     "prefs.putInt(nvs_key_for(\"core.presence.motion_threshold\"), thresholds.motion) > 0;",
+     "prefs.putInt(\"cp.mt\", thresholds.motion) > 0;"},
+    {"the Quiet Hours reader spells a row", "csi_settings_nvs.cpp",
+     "prefs.getBool(nvs_key_for(\"core.quiet_hours.enabled\"), kQuietHoursDefaultEnabled);",
+     "prefs.getBool(\"qh.en\", kQuietHoursDefaultEnabled);"},
+    {"the sketch reads a presence row", "canary_wap.ino", "static const char* csi_zone_id() {",
+     "static int32_t csi_sens_peek(Preferences& p) { return p.getInt(\"cp.sens\", 50); }\n"
+     "static const char* csi_zone_id() {"},
+    {"the MQTT bridge reads an anomaly row", "csi_mqtt.cpp", "bool config_load(Config* out) {",
+     "static int32_t cd_peek(Preferences& p) { return p.getInt(\"ab.cd\", 600); }\n"
+     "bool config_load(Config* out) {"},
+  };
+  for (const Mutation& mu : kMutations) {
+    std::string src = read_source(mu.file);
+    if (!mutate(src, mu.from, mu.to)) {
+      std::fprintf(stderr, "mutation '%s' no longer applies: update it with the source\n", mu.name);
+      CHECK(false);
+    }
+    if (hand_spelled_setting_keys(src).empty()) {
+      std::fprintf(stderr, "mutation '%s' was not caught\n", mu.name);
+      CHECK(false);
+    }
+  }
+  // Comments and other namespaces' keys are not module settings.
+  CHECK(hand_spelled_setting_keys("// \"cp.sens\"\n/* \"qh.en\" */ x = \"csi.ff\"; y = \"tz.iana\";").empty());
+  CHECK((hand_spelled_setting_keys("p.putInt(\"cp.sen\", 1); q = R\"(cp.raw)\";") ==
+         std::vector<std::string>{"cp.sen", "cp.raw"}));
   return 0;
 }
 
@@ -693,6 +1088,12 @@ int main(int argc, char** argv) {
     {"the_quiet_hours_rows_keep_their_stored_names", test_the_quiet_hours_rows_keep_their_stored_names},
     {"every_knob_applies_at_once_to_its_group", test_every_knob_applies_at_once_to_its_group},
     {"the_post_stores_only_known_knobs", test_the_post_stores_only_known_knobs},
+    {"the_dashboard_writes_the_presence_rows_the_module_reads",
+     test_the_dashboard_writes_the_presence_rows_the_module_reads},
+    {"the_calibration_writes_the_thresholds_the_module_reads",
+     test_the_calibration_writes_the_thresholds_the_module_reads},
+    {"the_privacy_ceiling_is_one_row", test_the_privacy_ceiling_is_one_row},
+    {"no_sketch_source_spells_a_module_settings_key", test_no_sketch_source_spells_a_module_settings_key},
     {"csi_integration_is_thin_around_the_tested_code", test_csi_integration_is_thin_around_the_tested_code},
   };
   int ran = 0;

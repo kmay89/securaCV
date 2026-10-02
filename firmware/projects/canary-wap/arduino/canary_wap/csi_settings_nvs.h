@@ -72,4 +72,70 @@ bool store_quiet_hours_from_settings(Preferences& prefs, char* body);
  *  core.quiet_hours.* knob (tune_post(), sweep F128). */
 void apply_quiet_hours_from_nvs(void);
 
+/* ── core.presence: the dashboard and the calibration (sweep F151) ────────
+ * The dashboard's pet mode, preset and sensitivity (POST /api/settings) and
+ * the calibration's three thresholds (POST /api/csi/calibrate/apply) are
+ * core.presence's own settings, which its init() reads through the shared
+ * key map: core.presence.pet_mode, .preset, .sensitivity,
+ * .motion_threshold, .active_threshold and .breathing_threshold (cp.pet_mode,
+ * cp.preset, cp.sens, cp.mt, cp.at, cp.bt). The handlers wrote and read them
+ * by literal key in csi_integration.cpp, which no host suite compiles, so a
+ * key spelled differently there saved a value no module read (a renamed
+ * "cp.sens" passed every check). These write and read them by the map;
+ * test_wap_tune_lab.cpp runs them against the module's own reads and holds
+ * the handlers to them. */
+
+struct PresenceSettings {
+  bool    pet_mode;
+  int32_t preset;        /* 0 sensitive, 1 balanced, 2 quiet */
+  int32_t sensitivity;   /* 0..100 */
+};
+
+/** The stored pet mode, preset and sensitivity, each absent row
+ *  core.presence's own default (off, balanced, 50), as GET /api/settings
+ *  reports them. `prefs` is open on the "csi" namespace. */
+PresenceSettings read_presence_settings(Preferences& prefs);
+
+/** Store a POST /api/settings body's "pet_mode" (true|false), "preset"
+ *  ("sensitive"|"balanced"|"quiet", stored 0 / 1 / 2) and "sensitivity"
+ *  (0..100, clamped; a value sent as a string read as the bare one), each
+ *  key matched with its quotes. `prefs` is open read-write on the "csi"
+ *  namespace. Returns true when it stored any row (the caller re-runs
+ *  core.presence's init()). The parse is the handler's, moved unchanged. */
+bool store_presence_from_settings(Preferences& prefs, const char* body);
+
+struct PresenceThresholds {
+  int32_t motion;
+  int32_t active;
+  int32_t breathing;
+};
+
+/** The stored direct thresholds, each absent row the balanced 35 / 75 / 30
+ *  the calibration's status has always shown for it. */
+PresenceThresholds read_presence_thresholds(Preferences& prefs);
+
+/** Store a calibration's thresholds. `prefs` is open read-write on the "csi"
+ *  namespace. True when all three rows were stored. */
+bool store_presence_thresholds(Preferences& prefs, const PresenceThresholds& thresholds);
+
+/* ── The privacy ceiling ───────────────────────────────────────────────────
+ * core.privacy_ceiling in the shared key map (cp.pc): the persisted
+ * P0 / P1 / P2 choice (0 / 1 / 2), which the host reads and no module does.
+ * Written and read by the map too (sweep F151), not by "cp.pc" spelled in
+ * three places. */
+
+/** The stored ceiling as stored (0 when absent: P0, privacy-first). */
+int32_t read_privacy_ceiling(Preferences& prefs);
+
+/** Store a POST /api/settings body's "privacy_ceiling" ("p0"|"p1"|"p2");
+ *  anything else stores nothing. True when it stored the row (the caller
+ *  then re-applies with apply_privacy_ceiling_from_nvs()). */
+bool store_privacy_ceiling_from_settings(Preferences& prefs, const char* body);
+
+/** Push the stored ceiling into the chokepoint (csi_event_set_privacy_ceiling);
+ *  a value that is not 1 or 2 is P0, never a more permissive level. Called at
+ *  boot (csi_integration::init()) and after POST /api/settings stores it. A
+ *  namespace that will not open changes nothing. */
+void apply_privacy_ceiling_from_nvs(void);
+
 #endif /* SECURACV_WAP_CSI_SETTINGS_NVS_H */
