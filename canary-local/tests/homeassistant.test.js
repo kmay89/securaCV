@@ -228,13 +228,15 @@ test("the demo plays the WAP's discovery and counts on from the printed chain", 
       assert.ok(topics.includes(`homeassistant/update/canary_${id}/firmware/config  (retained)`), topics.join("\n"));
       const value = (name) => wrap.all("hub-ha-row").find((r) => r.all("hub-ha-name")[0].children[0].textContent === name)
         .all("hub-ha-value")[0].textContent;
-      // "device discovered" is the first timeline row: one record on from the wire
+      // discovery verifies the retained head the fleet step printed; it is
+      // not a new record, so nothing moves yet
       const chain = demo.chain_length;
-      assert.strictEqual(wrap.all("hub-ha-chain")[0].textContent, `chain ${chain + 1} · verified ✓ (Ed25519, pinned key)`);
-      assert.strictEqual(value(demo.tick_entity), (chain + 1).toLocaleString("en-US"));
+      assert.strictEqual(wrap.all("hub-ha-chain")[0].textContent, `chain ${chain} · verified ✓ (Ed25519, pinned key)`);
+      assert.strictEqual(value(demo.tick_entity), chain.toLocaleString("en-US"));
       tick();
-      assert.strictEqual(value(demo.tick_entity), (chain + 2).toLocaleString("en-US"), "the witness count ticks on from the wire, not from 1284");
-      assert.strictEqual(value(demo.chain_entity), (chain + 2).toLocaleString("en-US") + " blocks", "with the chain beside it, in its unit");
+      assert.strictEqual(value(demo.tick_entity), (chain + 1).toLocaleString("en-US"), "the witness count ticks on from the wire, not from 1284");
+      assert.strictEqual(value(demo.chain_entity), (chain + 1).toLocaleString("en-US") + " blocks", "with the chain beside it, in its unit");
+      assert.strictEqual(wrap.all("hub-ha-chain")[0].textContent, `chain ${chain + 1} · verified ✓ (Ed25519, pinned key)`);
     });
   } finally {
     globalThis.IntersectionObserver = saved.IO; globalThis.requestAnimationFrame = saved.raf;

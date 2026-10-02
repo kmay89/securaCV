@@ -103,16 +103,22 @@ export function buildHaDemo(demo, vars) {
   let discovered = false;
   let drilling = false;
 
-  function timelineAdd(text, cls = "") {
+  // A row that is a new witness record (a mute toggle, an acoustic
+  // detection: the WAP signs each into its chain) moves the chain and the
+  // count on; one that is not (the device appearing, an alarm clearing)
+  // leaves them where they are.
+  function timelineAdd(text, cls = "", record = true) {
     const row = el("div", "hub-ha-tlrow " + cls);
     const t = new Date();
     const hh = String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0");
-    seq += 1;
-    bumpCount();
+    if (record) {
+      seq += 1;
+      bumpCount();
+    }
     row.append(
       el("span", "hub-ha-tltime", hh),
       el("span", "hub-ha-tltext", text),
-      el("span", "hub-ha-tlsig", "✓ #" + seq));
+      el("span", "hub-ha-tlsig", record ? "✓ #" + seq : "✓"));
     tl.prepend(row);
     while (tl.children.length > 6) tl.lastChild.remove();
   }
@@ -188,7 +194,10 @@ export function buildHaDemo(demo, vars) {
     await sleep(500);
     discovery.textContent = "discovered in " + (demo.entities.length * 0.26).toFixed(1) +
       " s — on a real network: under 30 s from first MQTT publish";
-    timelineAdd("device discovered — key pinned on first contact (TOFU)");
+    // the retained chain head the fleet step printed, verified against the
+    // key just pinned: no new record
+    tlStatus.textContent = `chain ${seq} · verified ✓ (Ed25519, pinned key)`;
+    timelineAdd("device discovered — key pinned on first contact (TOFU)", "", false);
     // gentle liveness: uptime/witness count tick so the card feels inhabited
     liveTick();
   }
@@ -232,7 +241,7 @@ export function buildHaDemo(demo, vars) {
 
     toast.classList.remove("show");
     setValue(demo.drill.trigger_entity, "off", false);
-    timelineAdd("acoustic_event cleared — alarm stopped");
+    timelineAdd("acoustic_event cleared — alarm stopped", "", false);
     autoState.className = "hub-ha-auto idle";
     autoState.textContent = "idle — armed";
     drilling = false;
