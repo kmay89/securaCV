@@ -395,13 +395,14 @@ function instance({ plan, bin, args = [] }) {
     for (const t of argTypes || []) {
       if (t !== "number" && t !== "boolean") throw new Error(`${fn}: a native core passes number arguments only, not ${t}`);
     }
+    // Refused here, before any call runs: wasm would read a number as a
+    // string address, or hand back a string's address as a number.
+    if (returnType === "string" && e.kind !== "s") throw new Error(`${fn} returns ${e.ret}, not a C string`);
+    if (returnType !== "string" && e.kind === "s") {
+      throw new Error(`${fn} returns a C string: cwrap it as "string" (a native core has no wasm address for it)`);
+    }
     return (...args) => {
       const out = invoke(e, args);
-      if (returnType === "string") {
-        if (e.kind !== "s") throw new Error(`${fn} returns ${e.ret}, not a C string`);
-        return out;
-      }
-      if (e.kind === "s") throw new Error(`${fn} returns a C string: cwrap it as "string" (a native core has no wasm address for it)`);
       return returnType === "boolean" ? Boolean(out) : out;
     };
   };
