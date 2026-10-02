@@ -1010,6 +1010,48 @@ activity and scan callbacks are the channel's on both profiles.
     a removal; no field flickers between two values.
   - Artifact: `docs/audit/repro/F138/bt-panel/`.
 
+## canary-wap Chirp status reads and the unset-clock refusal (F138 Chirp half, F146) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`
+(`publish_view()`: the status at the end of every `update()` pass, after
+each owner command and from `init()`; the recent and nearby tables when a
+chirp frame, the 30-second prune, a command or `init()` changed them;
+`read_status()`, `read_nearby()` and `read_recent()` through
+`loop_snapshot.h`; the send command's `SEND_REFUSED_CLOCK_UNSYNCED`), the
+three GET handlers and the send handler in `chirp_api.h`, and the Chirp card
+in `web_ui.h` (`WebUiLogic.chirpSendGate`). Host-tested
+(`tests_host/test_chirp_commands_wap.cpp`, over real presence, witness and
+confirmation frames; `web_ui_logic.test.js`) and held by
+`firmware/scripts/check_wap_loop_commands.py` (rules CV1-CV6). The real
+radio, two tasks on two cores and the device's GPS clock are not something
+a host test can run. Compile is CI's. Owner: U1.
+
+- [ ] **The Chirp page reads as before while chirps arrive and age out**
+  - Setup: two canary-wap boards with Chirp on and a GPS fix (the clock
+    set), the web UI open on Community > Chirp on one.
+  - Repro: from the other board send a safety template (fire or smoke) and
+    confirm it from the first; refresh the page; mute 15 minutes and refresh
+    at once; dismiss the chirp and watch the list; power the other board
+    off and refresh after 4 minutes, then after 31.
+  - Expected: every refresh answers (no `chirp_busy` or `chirp_timeout` on
+    a GET); the nearby count and the list agree with each other; the chirp
+    shows (validated after the confirmation) and is gone from the list the
+    page reloads right after the dismiss; the mute shows at once; the other
+    board drops off nearby within about 3.5 minutes; no Guru Meditation or
+    watchdog reset.
+  - Artifact: `docs/audit/repro/F138/chirp-status-routes/`.
+- [ ] **A send before the clock is set says so**
+  - Setup: a canary-wap with no GPS fix since boot (antenna off, or
+    indoors), Chirp on for ten minutes.
+  - Repro: open Community > Chirp; press Send.
+  - Expected: the card reads "Waiting for GPS time..." with Send off (not
+    "Ready"), `GET /api/chirp` answers `"cannot_send_reason":
+    "clock_unsynced"`, and a send posted anyway (`curl -X POST
+    /api/chirp/send` with the device's API token) answers
+    `{"success":false,"error":"clock_unsynced",...}`, not `cooldown`; once
+    GPS sets the clock the card says Ready and a send goes out.
+  - Artifact: `docs/audit/repro/F146/unset-clock-send/`.
+
 ## One event-id space (F46) — on-device verification
 
 Code: `firmware/common/csi/src/csi_event.cpp` (one allocator, ids taken at

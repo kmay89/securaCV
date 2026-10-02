@@ -740,6 +740,23 @@ task has not started within 2 s is withdrawn and answers `503
 others are waiting answers `409 {"success":false,"error":"chirp_busy"}`.
 Neither changed anything. Every other answer keeps its shape.
 
+A send that does not go out says why, in this order: `chirp_disabled`,
+`presence_required` (ten minutes on), `cooldown` (with
+`cooldown_remaining_sec` and `cooldown_tier`), `clock_unsynced` (the wall
+clock is not set yet: the canary-wap sets it from GPS and has no SNTP, and
+origination is refused until it is, audit C10; sweep F146 — before it, this
+was answered as a `cooldown` with 0 seconds left), then `night_restricted`.
+`GET /api/chirp` names the same cases in `cannot_send_reason`
+(`disabled`, `cooldown`, `presence_required`, `clock_unsynced`).
+
+The GET routes (`/api/chirp`, `/nearby`, `/recent`) read what the loop task
+last published, never the live session, cooldowns or tables (sweep F138):
+the status at the end of every pass and after each owner command, the
+recent and nearby tables whenever a chirp frame, the 30-second prune or a
+command changed them. A read never waits for the loop task, so it never
+answers `chirp_busy` or `chirp_timeout`; a read right after a POST's answer
+shows what the POST did. The answers keep their shape.
+
 ### 8.2 Response Formats
 
 ```json
