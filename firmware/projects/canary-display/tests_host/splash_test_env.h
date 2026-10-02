@@ -27,6 +27,14 @@ inline int bubble_h(const char* txt, const Face& f, const sl::Family& fam) {
          2 * sl::kBubbleBorder;
 }
 
+// The family as splash.cpp draws it on a canvas `canvas_w` px wide: its
+// bubble no wider than the canvas less splash_layout.h's margin (F160).
+inline sl::Family sized(const sl::Family& f, int canvas_w) {
+  sl::Family s = f;
+  s.bubble_w = sl::bubble_w(canvas_w, f);
+  return s;
+}
+
 // The pseudonym's length (device_pseudonym.h: HEX_LEN = TOKEN_BYTES * 2;
 // read, since its host branch wants OpenSSL).
 static int g_hex_len = 0;

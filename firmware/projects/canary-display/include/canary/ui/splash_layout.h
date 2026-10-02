@@ -21,6 +21,11 @@
 //  * Then the bird sits lower than the speech bubble's centered seat
 //    expects, so the bubble hangs from just under the bird instead (its top
 //    fixed, growing down), clear of the bird's breath.
+//  * The bubble is as wide as its family asks, and no wider than the canvas
+//    less kBubbleMargin a side (bubble_w, F160): the small glass's 196 px
+//    bubble was drawn for the round watch's 240 px disc, and on the 172 and
+//    180 px wide portrait glass its sides ran 12 and 8 px past the canvas's,
+//    border and rounded corners off the glass.
 //
 // C++11 and constexpr-free functions, like onboard_layout.h: the Arduino
 // parity sketch compiles it on esp32 core 2.0.17 (gnu++11). Pure integer
@@ -40,7 +45,7 @@ struct Family {
   int hello_off;   // the hello-again bird (over the wordmark)
   int word_off;    // the wordmark
   int tag_off;     // the tagline
-  int bubble_w;    // the speech bubble's width
+  int bubble_w;    // the speech bubble's width, where the canvas holds it
   int bubble_off;  // the speech bubble, centered (its text grows both ways)
 };
 
@@ -52,6 +57,31 @@ constexpr Family kWideGlass = {96, -80, -66, 34, 78, 420, 24};
 constexpr int kBubblePad = 10;
 constexpr int kBubbleBorder = 1;
 constexpr int kBubbleTextInset = 24;
+
+// The least black kept between the bubble's sides and the canvas's (F160):
+// enough that its border and rounded corners read on the glass as a
+// bubble's, and no more. A narrower bubble wraps its lines sooner: at 4 px
+// the 180 px glass keeps every bubble height it had, and the 172 px glass
+// under Heirloom wraps its tallest line once more (94 px to 112; the host
+// tests measure it). At 8 (the rows' side pad) the 180 px glass would too.
+constexpr int kBubbleMargin = 4;
+
+// The speech bubble's width on a canvas `canvas_w` px wide (see the rule
+// above). Every canvas but the 172 and 180 px portrait glass keeps the
+// family's width.
+inline int bubble_w(int canvas_w, const Family& f) {
+  const int room = canvas_w - 2 * kBubbleMargin;
+  return f.bubble_w < room ? f.bubble_w : room;
+}
+
+// The tail (splash.cpp): a 12 px square turned 45 degrees, aligned
+// LV_ALIGN_OUT_TOP_MID on the bubble, kTailInset px into its top edge. It
+// is aligned again whenever the typed line changes (F158): a centered
+// bubble grows both ways as its line wraps, and a tail aligned once, to the
+// empty bubble, stayed inside the grown one (the round watch's tail top at
+// y 99 in a bubble at y 90..159, native LVGL 8.4).
+constexpr int kTailSide = 12;
+constexpr int kTailInset = 5;
 
 // How far a hop lifts the bird above its seat at most: canary_mark's 12 px
 // apex times the temperament's ceiling (1.25, so 15 px), plus the 9.4 %

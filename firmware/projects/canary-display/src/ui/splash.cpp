@@ -127,7 +127,12 @@ void splash_play(uint32_t hold_ms) {
 #endif
   constexpr int BIRD = GLASS.bird;
   constexpr int WORD_Y = GLASS.word_off, TAG_Y = GLASS.tag_off;
-  constexpr int BUB_W = GLASS.bubble_w, BUB_Y = GLASS.bubble_off;
+  constexpr int BUB_Y = GLASS.bubble_off;
+  // The bubble's width: the family's, and no wider than the canvas less a
+  // margin a side (F160: the 196 px small-glass bubble ran past the 172 and
+  // 180 px portrait glass's sides).
+  const int BUB_W =
+      splashlayout::bubble_w((int)lv_disp_get_hor_res(NULL), GLASS);
   // The seat holds the bird's hop on the canvas: on a canvas too short for
   // the usual one (the nightlight's 320x180 landscape) the bird drops just
   // enough, and the bubble hangs from under it instead of the center.
@@ -169,7 +174,7 @@ void splash_play(uint32_t hold_ms) {
   }
 
   lv_obj_t* tail = lv_obj_create(scr);
-  lv_obj_set_size(tail, 12, 12);
+  lv_obj_set_size(tail, splashlayout::kTailSide, splashlayout::kTailSide);
   lv_obj_set_style_bg_color(tail, col_surface(), 0);
   lv_obj_set_style_bg_opa(tail, LV_OPA_COVER, 0);
   lv_obj_set_style_border_color(tail, col_edge(), 0);
@@ -210,8 +215,12 @@ void splash_play(uint32_t hold_ms) {
     // is typed, so the timing lives with the writing instead of being
     // re-tuned here every time somebody edits the arc.
 
-    // The tail hangs off the bubble's top edge, under the bird.
-    lv_obj_align_to(tail, bub, LV_ALIGN_OUT_TOP_MID, 0, 5);
+    // The tail hangs off the bubble's top edge, under the bird. A centered
+    // bubble grows both ways as its line wraps, so the tail is aligned
+    // again whenever the line changes (below, F158); aligned once, to the
+    // empty bubble, it stayed inside the grown one.
+    lv_obj_align_to(tail, bub, LV_ALIGN_OUT_TOP_MID, 0,
+                    splashlayout::kTailInset);
     lv_obj_clear_flag(bub, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(tail, LV_OBJ_FLAG_HIDDEN);
 
@@ -240,6 +249,7 @@ void splash_play(uint32_t hold_ms) {
       teller.play(&canary::story::kHello, millis(), /*night=*/false);
 
       char buf[192];
+      char typed[sizeof(buf)] = {0};  // what the label holds now
       canary::story::Pose last = canary::story::Pose::Hold;
       bool bubble_up = true;
 
@@ -283,7 +293,15 @@ void splash_play(uint32_t hold_ms) {
           const size_t full = strlen(buf);
           const size_t shown = (size_t)f.chars < full ? (size_t)f.chars : full;
           buf[shown] = '\0';
-          lv_label_set_text(line, buf);
+          if (strcmp(typed, buf) != 0) {
+            memcpy(typed, buf, shown + 1);
+            lv_label_set_text(line, buf);
+            // The line may have wrapped: align_to lays the screen out
+            // first, so the tail lands on the bubble's top edge as it
+            // stands now (F158).
+            lv_obj_align_to(tail, bub, LV_ALIGN_OUT_TOP_MID, 0,
+                            splashlayout::kTailInset);
+          }
           if (!bubble_up) {
             lv_obj_clear_flag(bub, LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(tail, LV_OBJ_FLAG_HIDDEN);

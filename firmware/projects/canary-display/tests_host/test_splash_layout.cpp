@@ -21,7 +21,13 @@
 //    tallest form (the script's longest line, wrapped the way LVGL wraps a
 //    label, in each type ladder's label face) stays on the canvas and clear
 //    of the bird's breath. The wrap model is held to the bubble heights the
-//    real LVGL 8.4 drew in a native harness.
+//    real LVGL 8.4 drew in a native harness;
+//  * the bubble is bubble_w() wide on each canvas (F160): the family's
+//    width wherever the canvas less its margin holds it, else the canvas
+//    less its margin — so its sides stay on the glass — and its tallest
+//    form is measured at that width (pinned: only the 172 and 180 px
+//    portrait glass narrow it, and only the 172 px glass under Heirloom
+//    wraps a line more).
 // The bird/bubble overlap on the canvases whose seats did not move is
 // printed, not held: on the AMOLED the centered bubble's tallest form
 // reaches into the bird's box (filed).
@@ -89,7 +95,12 @@ int derived_hop_reach() {
 // and set every line of the first meeting in it, three pseudonyms each —
 // "2222222222222222", "WWWWWWWWWWWWWWWW" (wide letters: the token breaks
 // inside itself) and "iiiiiiiiiiiiiiii" — and these are the tallest
-// bubbles it measured, per ladder family and type.
+// bubbles it measured, per ladder family and type: at the families' widths,
+// and at the widths bubble_w() gives the 172 and 180 px portrait glass
+// (164 and 172 px, F160).
+const sl::Family k172 = sized(sl::kSmallGlass, 172);
+const sl::Family k180 = sized(sl::kSmallGlass, 180);
+
 void check_wrap_model() {
   std::printf("the bubble's wrap (LVGL 8.4's, against the native harness):\n");
   struct Pin {
@@ -108,6 +119,10 @@ void check_wrap_model() {
       {"the AMOLED", kBig, &sl::kSmallGlass, 1, {157, 184, 157}},
       {"wide glass", kBig, &sl::kWideGlass, 0, {66, 66, 66}},
       {"wide glass", kBig, &sl::kWideGlass, 1, {76, 103, 76}},
+      {"172 px glass", kStd, &k172, 0, {86, 86, 86}},
+      {"172 px glass", kStd, &k172, 1, {94, 112, 94}},
+      {"180 px glass", kStd, &k180, 0, {86, 86, 86}},
+      {"180 px glass", kStd, &k180, 1, {94, 94, 94}},
   };
   const char kSubject[3] = {'2', 'W', 'i'};
   for (size_t i = 0; i < sizeof(pins) / sizeof(pins[0]); ++i) {
@@ -144,7 +159,18 @@ void check_canvas(const Canvas& c, int which, int hop_reach,
   const Face* f = face_of(g_ladder[c.fam][which][kLabel]);
   CHECK(f != nullptr, "%s: no label face carried", who);
   if (!f) return;
-  const int tallest = tallest_bubble(*f, fam, nullptr);
+  // F160: the bubble as this canvas draws it — no wider than the canvas
+  // less its margin a side, the family's width wherever that holds it.
+  const sl::Family drawn = sized(fam, c.w);
+  CHECK(drawn.bubble_w <= c.w - 2 * sl::kBubbleMargin &&
+            (drawn.bubble_w == fam.bubble_w ||
+             drawn.bubble_w == c.w - 2 * sl::kBubbleMargin) &&
+            drawn.bubble_w - sl::kBubbleTextInset > 0,
+        "%s: the bubble is %d px wide on the %d px canvas (the family's %d, "
+        "the margin %d a side)", who, drawn.bubble_w, c.w, fam.bubble_w,
+        sl::kBubbleMargin);
+  const int tallest = tallest_bubble(*f, drawn, nullptr);
+  const int tallest_family = tallest_bubble(*f, fam, nullptr);
   std::string summary;
   for (int fm = 1; fm >= 0; --fm) {
     const bool first = fm == 1;
@@ -172,7 +198,7 @@ void check_canvas(const Canvas& c, int which, int hop_reach,
             "meeting's bubble hangs)", who, what, top, hop_reach);
       moved->push_back(std::string(who) + " " + what);
     }
-    char one[200];
+    char one[260];
     if (!first) {
       std::snprintf(one, sizeof(one), "  hello again y %3d..%3d%s", top,
                     top + fam.bird, s.bird_off != nominal_off ? " (moved)" : "");
@@ -203,11 +229,16 @@ void check_canvas(const Canvas& c, int which, int hop_reach,
     if (overlap > 0)
       std::snprintf(tail, sizeof(tail), " (in the bird's box by %d px)",
                     overlap);
+    char narrowed[64] = "";
+    if (drawn.bubble_w != fam.bubble_w)
+      std::snprintf(narrowed, sizeof(narrowed), " %d px wide (tallest %d at "
+                    "%d)", drawn.bubble_w, tallest_family, fam.bubble_w);
     std::snprintf(one, sizeof(one),
-                  "first meeting y %3d..%3d (hop to %3d)%s, bubble %s y "
+                  "first meeting y %3d..%3d (hop to %3d)%s, bubble %s%s y "
                   "%3d..%3d%s;", top, top + fam.bird, top - hop_reach,
                   s.bird_off != nominal_off ? " (moved)" : "",
-                  s.hang ? "hung" : "centered", b_top, b_bottom, tail);
+                  s.hang ? "hung" : "centered", narrowed, b_top, b_bottom,
+                  tail);
     summary = one + summary;
   }
   std::printf("  %-26s %s\n", who, summary.c_str());
@@ -242,6 +273,42 @@ int main() {
         "meeting should (first: %s)", (int)moved.size(),
         moved.empty() ? "none" : moved[0].c_str());
   CHECK(cs.size() >= 8, "only %d canvases", (int)cs.size());
+  // Pinned (F160): the bubble narrows on the 172 and 180 px portrait glass
+  // alone (164 and 172 px), and only the 172 px glass under Heirloom wraps
+  // its tallest line once more (94 px to 112, with a wide-lettered
+  // pseudonym). Anything else moving is a canvas whose bubble was right.
+  std::string narrowed, grew;
+  for (size_t i = 0; i < cs.size(); ++i) {
+    const sl::Family& fam = cs[i].wide ? sl::kWideGlass : sl::kSmallGlass;
+    const sl::Family drawn = sized(fam, cs[i].w);
+    char one[96];
+    if (drawn.bubble_w != fam.bubble_w) {
+      std::snprintf(one, sizeof(one), "%s%dx%d:%d", narrowed.empty() ? "" : " ",
+                    cs[i].w, cs[i].h, drawn.bubble_w);
+      if (narrowed.find(one + (narrowed.empty() ? 0 : 1)) == std::string::npos)
+        narrowed += one;
+    }
+    for (int which = 0; which < 2; ++which) {
+      const Face* f = face_of(g_ladder[cs[i].fam][which][kLabel]);
+      if (f == nullptr) continue;
+      const int was = tallest_bubble(*f, fam, nullptr);
+      const int now = tallest_bubble(*f, drawn, nullptr);
+      if (was == now) continue;
+      std::snprintf(one, sizeof(one), "%s%dx%d/%s:%d->%d",
+                    grew.empty() ? "" : " ", cs[i].w, cs[i].h,
+                    which ? "heirloom" : "default", was, now);
+      if (grew.find(one + (grew.empty() ? 0 : 1)) == std::string::npos)
+        grew += one;
+    }
+  }
+  std::printf("the bubble narrowed (F160): %s; its tallest grew: %s\n",
+              narrowed.c_str(), grew.c_str());
+  CHECK(narrowed == "172x320:164 180x320:172",
+        "the bubble narrows on \"%s\"; only the 172 and 180 px portrait "
+        "glass should (164 and 172 px)", narrowed.c_str());
+  CHECK(grew == "172x320/heirloom:94->112",
+        "the narrowed bubble's tallest grew on \"%s\"; only the 172 px "
+        "glass under Heirloom should (94 to 112 px)", grew.c_str());
   if (g_fail == 0) {
     std::printf("ALL SPLASH LAYOUT TESTS PASSED\n");
     return 0;
