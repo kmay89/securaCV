@@ -3700,8 +3700,8 @@ void test_pairing_over_the_air_with_a_pre_f97_joiner() {
       ++to_j;
       feed_pre_f97_joiner(cj, me, f.bytes, 50, &a);
     }
-    assert(to_j == 2);
-    assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+    assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);   /* not dropped */
+    assert(to_j == 2);                                           /* CONFIRM, COMPLETE */
     uint8_t got[32];
     assert(mesh_pairing::consume_opera_secret(cj, got));
     assert(std::memcmp(got, S, sizeof(S)) == 0);

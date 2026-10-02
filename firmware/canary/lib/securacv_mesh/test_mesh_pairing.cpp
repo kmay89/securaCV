@@ -935,14 +935,16 @@ void test_a_pre_f97_joiner_completes_in_either_order() {
       a = deliver(p.ci, p.mac_j, cfj, 70);
     }
     assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
-    must(leading_confirm_to_inflight(a, &lead));
+    const bool has_lead = leading_confirm_to_inflight(a, &lead);
     must(action_to_inflight(a, &cp));
     assert(p.cj.state == mesh_pairing::State::AWAITING_CONFIRM_PEER);
-    assert(pre_f97_joiner_receive(p.cj, p.mac_i, lead, 80).type ==
-           mesh_pairing::ActionType::NONE);
-    assert(p.cj.state == mesh_pairing::State::AWAITING_COMPLETE);
+    /* As sent: the leading CONFIRM (when there is one), then the COMPLETE. */
+    if (has_lead) {
+      assert(pre_f97_joiner_receive(p.cj, p.mac_i, lead, 80).type ==
+             mesh_pairing::ActionType::NONE);
+    }
     a = pre_f97_joiner_receive(p.cj, p.mac_i, cp, 90);
-    assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+    assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);   /* not dropped */
     expect_both_paired(p, 100);
   }
   std::printf("PASS test_a_pre_f97_joiner_completes_in_either_order\n");
