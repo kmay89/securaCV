@@ -17,6 +17,11 @@
 //   - real threads (one writer, four readers): every Value read is one
 //     published value, whole, and every Log read is one moment's records
 //     (whole records, consecutive sequence numbers, as many as were held).
+//     The writer starts only once all four readers are reading, and hands
+//     the CPU over every 10,000 writes until a reader has read since, so
+//     the readers read while it writes on one CPU too (`taskset -c 0`);
+//     each test checks that some read saw the writer mid-run (a value or a
+//     record from before its last write), not merely that reads happened.
 //
 // Run: ./test_loop_snapshot
 
@@ -258,32 +263,54 @@ static void test_log_read_the_loop_task_keeps_changing_ends_whole() {
 
 // ── Real threads ─────────────────────────────────────────────────────────
 
+constexpr int kReaders = 4;
+constexpr uint32_t kWrites = 200000;
+
+// The writer's half of the start latch: wait until every reader is in its
+// loop.
+void wait_for_readers(const std::atomic<int>& ready) {
+  while (ready.load() < kReaders) std::this_thread::yield();
+}
+
+// Every 10,000 writes, give the readers the CPU until one of them has read
+// (bounded, so a stuck reader fails a check instead of hanging the test).
+void let_readers_in(uint32_t n, const std::atomic<long>& reads) {
+  if (n % 10000 != 0) return;
+  const long before = reads.load();
+  for (int k = 0; k < 100000 && reads.load() == before; ++k) std::this_thread::yield();
+}
+
 static void test_threads_value_reads_are_whole() {
   std::printf("test_threads_value_reads_are_whole\n");
   ls::Value<View, MutexLock> v;
   std::atomic<bool> stop{false};
-  std::atomic<long> reads{0}, torn{0};
+  std::atomic<int> ready{0};
+  std::atomic<long> reads{0}, torn{0}, mid{0};
   std::vector<std::thread> readers;
-  for (int r = 0; r < 4; ++r) {
+  for (int r = 0; r < kReaders; ++r) {
     readers.emplace_back([&] {
       View out;
+      ++ready;
       while (!stop.load()) {
         if (v.read(&out)) {
           ++reads;
           if (!whole(out)) ++torn;
+          if (out.gen < kWrites) ++mid;            // read while the writer wrote
         }
       }
     });
   }
-  for (uint32_t gen = 1; gen <= 200000; ++gen) {
+  wait_for_readers(ready);
+  for (uint32_t gen = 1; gen <= kWrites; ++gen) {
     v.publish(view_of(gen));
     if (gen % 3 == 0) v.publish(view_of(gen));   // the same bytes again
+    let_readers_in(gen, reads);
   }
   stop = true;
   for (std::thread& t : readers) t.join();
   View last;
-  CHECK(v.read(&last) && last.gen == 200000);
-  CHECK(reads.load() > 0);
+  CHECK(v.read(&last) && last.gen == kWrites);
+  CHECK(mid.load() > 0);
   CHECK(torn.load() == 0);
 }
 
@@ -293,14 +320,19 @@ static void test_threads_log_reads_are_one_moment() {
   ls::Log<Rec, 8, MutexLock> log;
   log.attach(storage);
   std::atomic<bool> stop{false};
-  std::atomic<long> reads{0}, bad{0};
+  std::atomic<int> ready{0};
+  std::atomic<long> reads{0}, bad{0}, mid{0};
   std::vector<std::thread> readers;
-  for (int r = 0; r < 4; ++r) {
+  for (int r = 0; r < kReaders; ++r) {
     readers.emplace_back([&] {
       Rec out[8];
+      ++ready;
       while (!stop.load()) {
         const size_t n = log.read(out, 8);
         ++reads;
+        // The log the writer leaves ends at kWrites; a record below its
+        // last eight was read while the writer wrote.
+        if (n > 0 && out[0].seq + 8 <= kWrites) ++mid;
         std::vector<uint32_t> got = seqs(out, n);
         for (size_t i = 0; i < n; ++i) {
           if (!rec_whole(out[i]) || out[i].seq == 0) ++bad;
@@ -314,13 +346,15 @@ static void test_threads_log_reads_are_one_moment() {
       }
     });
   }
-  for (uint32_t seq = 1; seq <= 200000; ++seq) {
+  wait_for_readers(ready);
+  for (uint32_t seq = 1; seq <= kWrites; ++seq) {
     log.append(rec_of(seq));
     if (seq % 997 == 0) log.clear();
+    let_readers_in(seq, reads);
   }
   stop = true;
   for (std::thread& t : readers) t.join();
-  CHECK(reads.load() > 0);
+  CHECK(mid.load() > 0);
   CHECK(bad.load() == 0);
 }
 
