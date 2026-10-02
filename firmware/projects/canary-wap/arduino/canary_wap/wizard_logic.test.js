@@ -190,7 +190,7 @@ describe('the close-out link, on the routes the device serves (repo sweep F129)'
     // runs whatever page it is given as the browser would
     let helpers = '';
     for (const name of new Set([...m[0].matchAll(/\b([A-Za-z_$][\w$]*)\(/g)].map((c) => c[1]))) {
-      const h = src.match(new RegExp('\\n {2}function ' + name.replace(/\$/g, '\\$') + '\\([^)]*\\) \\{[\\s\\S]*?\\n {2}\\}\\n'));
+      const h = src.match(new RegExp('\\n {2}function ' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\([^)]*\\) \\{[\\s\\S]*?\\n {2}\\}\\n'));
       if (h && name !== 'updateMdnsLinkFromDevice') helpers += h[0];
     }
     const link = { href: 'http://canary.local/', textContent: 'Open canary.local' };
