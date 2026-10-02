@@ -1100,7 +1100,10 @@ running and its result discarded). A late result never answers a later
 request: the slot holds one request at a time and discards an abandoned
 one's result before it frees. The pairing routes' `mesh_disabled` and
 `rekey_in_flight` refusals are now decided on the main loop, after the
-handler's own `no_flash_encryption` check.
+handler's own `no_flash_encryption` check. `pair/confirm` answers
+`partner_refused` (409, F118) when this device cannot hold the partner
+(§5.2): the confirm ended the pairing and sent nothing; any other refusal
+of a confirm is still `confirm_failed` (400).
 
 **`pair/start` founds an opera (v0.3, F33):** with no opera secret in NVS
 the route no longer answers `no_opera`: the main loop founds one (§5.4) —
