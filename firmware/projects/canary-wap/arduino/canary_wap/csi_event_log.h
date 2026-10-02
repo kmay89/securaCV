@@ -126,11 +126,13 @@ constexpr size_t LOAD_TAIL_BYTES = 128u * 1024u;
  *
  * It restores what the log holds, and the log holds less than the Today
  * sheet shows live: append() is fed from csi_event_find(), and a bundle
- * the bundler closes (csi_bundler.cpp run_commit_hooks) never enters the
- * ring, so closed bundles are neither on the card nor restored. Only
- * direct (stateless / ambient) commits are. Found 2026-09 while wiring
- * this; not changed here, since bundle ids also come from a separate,
- * unpersisted allocator (0x80000000 up, reset every boot).
+ * the bundler closes (csi_bundler.cpp commit_closed, through the
+ * chokepoint's csi_event_commit_bundle_) never enters the ring, so closed
+ * bundles are neither on the card nor restored. Only direct (stateless /
+ * ambient) commits are. Found 2026-09 while wiring this. Since backlog F46
+ * a closed bundle takes its event id from the same persisted allocator as
+ * every other row, so the old reason not to log it (ids from a separate,
+ * unpersisted space) is gone; putting it in the ring is still open.
  *
  * A dismissal survives the reboot: a record the tail also holds a
  * dismissal line for (flush_dismissals() below) is restored dismissed, and
@@ -181,7 +183,10 @@ void test_rearm_load();
  * Iterate events with id strictly greater than `since_event_id` and
  * call `cb(record, user)` for each, oldest-first, up to BACKFILL_MAX.
  * Stops on the first cb that returns false (so the MQTT publisher
- * can bail mid-replay if the broker disconnects again).
+ * can bail mid-replay if the broker disconnects again). A line whose id
+ * is at or above the allocator's next id is skipped: this device never
+ * handed it out (forged or foreign), and replayed it would go out signed
+ * with this device's key (backlog F46).
  */
 typedef bool (*iterate_cb_t)(const csi_event_record_t* rec, void* user);
 size_t iterate_since(uint32_t since_event_id, iterate_cb_t cb, void* user);

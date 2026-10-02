@@ -292,7 +292,7 @@ EVLOAD_LIB = $(SRC_DIR)/csi_event_log.cpp $(SRC_DIR)/csi_event.cpp \
              $(SRC_DIR)/csi_module.cpp $(SRC_DIR)/csi_bundler.cpp
 
 $(EVLOAD_BIN): $(EVLOAD_SRC) $(EVLOAD_LIB) $(SRC_DIR)/csi_event_log.h $(SRC_DIR)/csi_event.h \
-               $(SRC_DIR)/csi_event_log_line.h $(wildcard stubs/sd_fake/*.h)
+               $(SRC_DIR)/csi_event_log_line.h $(SRC_DIR)/csi_event_id_floor.h $(wildcard stubs/sd_fake/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
 	  -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EVLOAD_SRC) $(EVLOAD_LIB)
 
@@ -313,7 +313,7 @@ EVDISMISS_BIN = test_csi_event_log_dismiss
 EVDISMISS_SRC = test_csi_event_log_dismiss.cpp
 
 $(EVDISMISS_BIN): $(EVDISMISS_SRC) $(EVLOAD_LIB) $(SRC_DIR)/csi_event_log.h $(SRC_DIR)/csi_event.h \
-                  $(SRC_DIR)/csi_event_log_line.h $(wildcard stubs/sd_fake/*.h)
+                  $(SRC_DIR)/csi_event_log_line.h $(SRC_DIR)/csi_event_id_floor.h $(wildcard stubs/sd_fake/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
 	  -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EVDISMISS_SRC) $(EVLOAD_LIB)
 
@@ -609,10 +609,12 @@ clean: clean-wire
 # The v0.4 review's three pre-existing receive-path gaps (host-tested only,
 # not bench-verified, awaiting crypto review): the replay counter convention
 # (first counter 1, strict greater-than, no rx==0 exemption — the same lines
-# pinned in the PIO mesh_session.cpp), the source MAC bound only after
-# signature + opera_id + replay (it was bound before verify), and every
-# struct-payload handler refusing any length but its struct's (the PIO
-# 6-byte TAMPER_ALERT, mesh_alert.h, used to be read as the 56-byte struct).
+# pinned in the PIO mesh_session.cpp), no frame moving a member's address
+# (spec §8.3: a frame from any address but the signer's bound one drops
+# before verify; it was re-bound after verify, and before that ahead of
+# it), and every struct-payload handler refusing any length but its
+# struct's (the PIO 6-byte TAMPER_ALERT, mesh_alert.h, used to be read as
+# the 56-byte struct).
 # Reads the real mesh_network.{h,cpp} (beacon_source_scan.h; paths passed in,
 # so the pins fail closed) and includes the PIO mesh_alert.h for its length.
 RX_GATES_BIN = test_mesh_rx_gates_wap
@@ -630,6 +632,33 @@ clean-rx-gates:
 
 run: run-rx-gates
 clean: clean-rx-gates
+
+# Which address canary-wap sends a member's frames to, and what may change
+# it (spec §8.3), run against the REAL mesh_network.cpp: the file is
+# #included and compiled on the host against stubs/mesh_net (an ESP-NOW peer
+# list and send log, an in-memory NVS, OpenSSL's Ed25519 / SHA-256 /
+# ChaCha20-Poly1305) and stubs/pair_crypto (OpenSSL's X25519), with the
+# real airtime governor, channel policy, deny-list, wire codecs and
+# mesh_crypto linked. mesh_net_sim.h runs several devices on that one image
+# and moves frames between them as bytes.
+MESH_ADDR_BIN = test_mesh_address_wap
+MESH_ADDR_SRC = test_mesh_address_wap.cpp
+MESH_ADDR_LINK = $(SRC_DIR)/airtime_governor.cpp $(SRC_DIR)/mesh_channel_policy.cpp \
+                 $(SRC_DIR)/mesh_revocation.cpp $(SRC_DIR)/mesh_beacon.cpp \
+                 $(SRC_DIR)/mesh_channel_hop.cpp $(SRC_DIR)/mesh_hub_election.cpp \
+                 $(SRC_DIR)/mesh_crypto.cpp
+
+$(MESH_ADDR_BIN): $(MESH_ADDR_SRC) mesh_net_sim.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(MESH_ADDR_LINK)
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(MESH_ADDR_SRC) $(MESH_ADDR_LINK) -lcrypto
+
+.PHONY: run-mesh-address clean-mesh-address
+run-mesh-address: $(MESH_ADDR_BIN)
+	$(call run_marked,$(MESH_ADDR_BIN))
+clean-mesh-address:
+	rm -f $(MESH_ADDR_BIN)
+
+run: run-mesh-address
+clean: clean-mesh-address
 
 # The CSI active probe under the airtime governor (the follow-up to sweep F4,
 # #1696), end to end — the REAL csi_probe scheduler (the sketch's staged copy,

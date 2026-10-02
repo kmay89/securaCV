@@ -2,6 +2,117 @@
 
 ## [Unreleased]
 
+### The canary and canary-wap meshes no longer learn a member's radio address from a frame, canary-wap's pairing waits for both owners, the Canary and the Canary WAP give every event one id space, the Lab's WAP page shows real fingerprints, and the display's onboarding bird sits at its seat and its scene lines fit on small glass (#1761)
+
+- **The canary mesh no longer learns a peer's radio address from a frame
+  (sweep F49 part 3, withdrawn).** #1756 let a verified opera frame from an
+  address the transport did not know move a trusted peer's binding to that
+  address, and persisted it. The envelope signs no source or destination
+  address, a sender spends one counter across every destination, and frames
+  are unencrypted. So anyone in range who recorded a member's frame the
+  receiver had not heard yet could re-send it from their own radio and
+  re-point the member there. A host probe showed the receiver's next key
+  rotation going to the outsider, and a silent member being dropped at the
+  60 s commit. Opera frames from unbound addresses are dropped again, before
+  verification, and a changed radio MAC means a re-pair. Four new
+  `test_mesh_session` tests fail on #1756's code. Spec §8.3 now says a
+  verified frame MUST NOT bind an address, and the threat model and
+  `firmware/LESSONS_LEARNED.md` are updated. The review found pre-existing
+  limits, now documented and not fixed. The 6-digit pairing code does not
+  cover the long-term keys, so an outsider relaying an owner-run pairing can
+  re-point a trusted member at its own radio, or get its own key trusted
+  (F69). Spec §11.1's man-in-the-middle and eavesdropping items are now
+  marked partial. A re-pair cannot start with eight members bound. During
+  any pairing, an outsider can steer where a member's rekey replies go
+  (F70). How a changed address could be learned safely is a decision (F68).
+  **Host-tested only**: the mesh exists only in the `[env:full]` developer
+  build, the compile is CI's, and it is not bench-tested.
+- **canary-wap no longer moves a mesh member to whatever address its frame
+  came from, and its pairing waits for both owners (spec §8.3; sweep F49,
+  F71-F76 filed).** canary-wap re-pointed a member's radio address at the
+  source of any frame that passed its signature and counter checks, and
+  those checks do not cover an address. So anyone in range who recorded a
+  member's frame that the receiver had not heard yet could re-send it from
+  their own radio and take that member's traffic: heartbeats, alerts and
+  Beacon events. Because canary-wap counts per destination, a frame the
+  member sent to *another* member worked too, and it silenced the member's
+  own frames for a while. A frame from any address but the member's own now
+  drops before verification. A member whose radio address really changed
+  comes back by re-pairing with each member, and that now works. A re-pair
+  used to add a duplicate entry that nothing read, and a duplicate an older
+  version saved is folded into one at startup. Since a pairing now moves an
+  address, the pairing itself was tightened. A joining canary-wap used to
+  finish a pairing before its owner confirmed the code. A canary-wap that
+  had just added a member kept that pairing's keys for two minutes, long
+  enough for a nearby radio to get the opera's secret. Both now follow the
+  PlatformIO Canary's pairing steps. A move is logged, because a relayed
+  pairing with matching codes can still claim a member's key. A new host
+  harness runs the real `mesh_network.cpp` (`test_mesh_address_wap`), and 15
+  of its 19 tests fail on the old code. **Host-tested only**: the Arduino
+  compile is CI's, and the canary-wap mesh (in the default build, active
+  once an owner forms an opera) has not run on two radios.
+- **One event-id space on the Canary and the Canary WAP (sweep F46).**
+  Presence and tamper rows that went through the CSI bundler took their
+  ids from a second counter (0x80000000 up, restarted every boot). So Home
+  Assistant refused as replays the ordinary rows after any presence row,
+  and every presence row after a reboot. Every committed row now takes its
+  id when it commits, from one allocator that starts at 0xC0000000 on
+  every device, under a lock that keeps ids in order between the main loop
+  and the Bluetooth task. An upgraded device needs no reset in Home
+  Assistant: its next ids are above anything older firmware sent. The SD
+  event log now reads ids as unsigned 32-bit numbers (the ESP32's 32-bit
+  `long` cut them off). Neither backfill sends or credits a card line at or
+  above the allocator's next id, so a forged id cannot push Home
+  Assistant's mark or the id floor toward the wrap; below that bound the
+  card is still trusted (F79). A device whose delivery record an older
+  firmware pushed there resumes its backfill once it is re-pinned in Home
+  Assistant. Not changed: the 2.4.15 notes said closed bundles reach the
+  event ring; they still do not (F77). **Host-tested only**: the ESP32
+  builds are CI's, and nothing was checked on a bench. The HACS mirror's
+  copy of the new integration test follows in a resync (sweep U6).
+- **The Lab's WAP page shows real fingerprints (sweep A25).** Its signed
+  MQTT examples and its boot log showed an 8-digit key fingerprint. A
+  Canary WAP's signed publishes carry 16 lowercase hex digits, and its boot
+  log prints the same 16 in capitals. The page now shows both spellings,
+  for the same test key the firmware and Home Assistant tests use. A new
+  page test fails on any fingerprint or public-key example in a Lab page's
+  generated data whose length or case differs from what that product
+  prints. Page data only; it reaches users with the next Lab and Flasher
+  release. #1760 landed a first fix on main, a 16-digit example that is no
+  key's fingerprint; this one replaces it with the test key's.
+- **The display's onboarding bird sits where its host placed it, and on
+  small glass no onboarding line is cut and the halo clears the text rows
+  and the QR card (sweep F64-F66).** canary_mark took the bird's base from
+  LVGL's laid-out box, which reads 0 before the first layout pass and the
+  anchor plus the offset after it. It now reads the host's own offset from
+  its anchor (`lv_obj_get_style_x/y`). #1760 landed the same fix on main first
+  (`record_base()`, with the wing and eye reads and an emulator check that
+  fails a bird drawn off the glass or over a line of text); this PR keeps
+  that code and adds the host tests below. A native LVGL 8.4 harness showed
+  every face's bird off its seat: the onboarding bird walked off the round
+  watch a scene at a time, and the 7" portrait column's sat over the clock.
+  Each now draws at its anchor plus its offset. On rectangular small glass
+  the halo sits between the Join title and credentials rows, concentric
+  with the QR card; the round watch keeps its rim ring. On the touch169
+  the card's canvas gives up 6-8 px so its corners clear the ring; the
+  module pitch stays the same. The onboarding's titles and bodies are
+  fitted inside the halo at their own latitude through `fit_line()`'s
+  ladder. Two lines have shorter forms, "Check your phone" and "No
+  address". The portrait glass needs them. The touch169 and the
+  AMOLED now show them too, because their lines sit inside the halo where
+  their old full-width rows held the whole lines (a decision, F86). A long
+  network name keeps its head and tail around "...". `test_canary_mark_seat`
+  and `test_onboard_scenes` (new) compile the real canary_mark.cpp and
+  onboard_ui.cpp against a model of LVGL 8's position rules and hold what
+  they draw; `test_onboard_layout` holds the layout rules on every
+  small-glass env. The onboard probe now also fails on a cut PhoneJoined
+  or Fail line. Still open: the landscape nightlight's first-meeting
+  splash bird now sits at its coded seat, where the top edge cuts its head
+  (F88); the dash's 300 px halo still runs through its lines (F84); and on
+  the touch169 the Success hop reaches the halo's top arc (F85). The
+  emulator dist is rebuilt in this PR by CI's pinned emsdk. **Host-tested
+  only**: the ESP32 builds are CI's, and nothing was checked on a bench.
+
 ### Home Assistant verifies a Canary WAP's signed publishes and the WAP now sends them in lowercase, Canary Sense and Sentinel show their full key, a Canary Display files a WAP's beacons on its own row and fits its join hints on narrow glass, the WAP's Bluetooth Device Info keeps its id, and the Quiet Hours wheels center (#1727)
 
 - **Home Assistant: a Canary WAP's signed publishes now verify (sweep

@@ -425,12 +425,59 @@ static OperaPeer* find_peer_by_fingerprint(const uint8_t* fp) {
   return nullptr;
 }
 
-static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name) {
-  if (g_peer_count >= MAX_OPERA_SIZE) {
+// A pairing with a device this one already holds moves that member to the
+// address the pairing completed from (spec §8.3: a re-pair is how a member
+// whose radio address changed is heard again). Only a pairing this
+// device's owner confirmed gets here: the initiator acts on the joiner's
+// CONFIRM only after its own owner's, and the joiner takes COMPLETE only
+// after its owner's (handle_pair_confirm, handle_pair_complete). The new
+// address is registered before the old one is dropped, so a refused add
+// leaves the member where it was (the PlatformIO tree's bind_peer_mac
+// order), and an address another member holds is refused: one address,
+// one member. The counters, state and name stay; a re-pair re-opens no
+// replay window. The move is logged: the 6-digit code does not cover the
+// long-term key a pairing presents (spec §11.1 item 5), so a relayed
+// pairing whose codes match can claim a member's key from another radio,
+// and this line is the owner's only sign.
+static bool rebind_peer(OperaPeer* peer, const uint8_t* mac) {
+  if (memcmp(peer->mac_addr, mac, 6) == 0) {
+    return true;
+  }
+  const OperaPeer* holder = find_peer_by_mac(mac);
+  if (holder != nullptr && holder != peer) {
     return false;
   }
+  if (!esp_now_is_peer_exist(mac)) {
+    esp_now_peer_info_t peer_info = {};
+    memcpy(peer_info.peer_addr, mac, 6);
+    peer_info.channel = ESPNOW_CHANNEL;
+    peer_info.encrypt = false;
+    if (esp_now_add_peer(&peer_info) != ESP_OK) {
+      return false;
+    }
+  }
+  esp_now_del_peer(peer->mac_addr);
+  memcpy(peer->mac_addr, mac, 6);
+  health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+             "opera: a re-pair moved a member to a new radio address");
+  return true;
+}
+
+static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name) {
   // F33: a deny-listed device is not taken back inside its grace.
   if (is_revoked_pubkey(pubkey)) {
+    return false;
+  }
+  // Already a member: a re-pair. This appended a second entry for the same
+  // key, which find_peer_by_fingerprint never reached (the first one, with
+  // the old address, answered every lookup), so the re-pair moved nothing
+  // and took a slot; and a full opera refused it outright.
+  for (uint8_t i = 0; i < g_peer_count; i++) {
+    if (memcmp(g_peers[i].pubkey, pubkey, PUBKEY_SIZE) == 0) {
+      return rebind_peer(&g_peers[i], mac);
+    }
+  }
+  if (g_peer_count >= MAX_OPERA_SIZE) {
     return false;
   }
 
@@ -701,6 +748,27 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
     return;
   }
 
+  // A member's frames come from the address its pairing bound (spec §8.3):
+  // drop one from any other address here, before the signature check, so
+  // it spends no counter, reaches no handler and moves nothing. The checks
+  // below prove who signed a frame, not which radio sent it — the envelope
+  // signs no address — so a genuine frame of the member's that this device
+  // has not heard yet passes them from any radio that re-sends it: one it
+  // missed, one sent to another member (counters are per destination, and
+  // the envelope names none), or one heard since the last counter save
+  // before a power cut. This used to re-point the member's address and its
+  // ESP-NOW registration at such a frame's source. A member whose radio
+  // address really changed is heard again after a re-pair with this device
+  // (add_peer), once its counter for this device passes the last one heard
+  // here (a member that rebooted restarts its counters: spec §3.3, open).
+  // ESP-NOW does not authenticate a source, so a radio copying the
+  // member's own address still gets past this line; nothing below moves an
+  // address.
+  if (memcmp(peer->mac_addr, mac, 6) != 0) {
+    g_auth_failures++;
+    return;
+  }
+
   // Verify signature. Nothing about the peer is changed before this
   // line: the sender fingerprint and opera_id are public, so a frame
   // that carries them proves nothing until the signature does.
@@ -728,26 +796,12 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
   peer->msg_counter_rx = counter;
   (void)timestamp;  // intentionally unused as of v0.2 (audit O1)
 
-  // Every check passed: at this instant the source MAC provably spoke for
-  // this fingerprint, so bind it (the device may have reconnected with a
-  // new address). This used to run BEFORE verify_signature, where a frame
-  // with a copied sender_fp and opera_id — both public — and any signature
-  // re-pointed a member's MAC at the attacker's radio, and re-registered
-  // the ESP-NOW peer there, until the real device's next verified frame:
-  // a denial of service with no key. The PIO session binds only after
-  // signature, opera_id and replay all passed; so does this now.
-  if (memcmp(peer->mac_addr, mac, 6) != 0) {
-    // Drop the OLD address's ESP-NOW registration before overwriting it
-    // (the old order deleted the new address, so the old entry leaked in
-    // ESP-NOW's 20-slot peer table), then register the verified one.
-    esp_now_del_peer(peer->mac_addr);
-    memcpy(peer->mac_addr, mac, 6);
-    esp_now_peer_info_t peer_info = {};
-    memcpy(peer_info.peer_addr, mac, 6);
-    peer_info.channel = ESPNOW_CHANNEL;
-    peer_info.encrypt = false;
-    esp_now_add_peer(&peer_info);
-  }
+  // Every check passed. Nothing here re-binds the member's address: the
+  // gate above only lets a frame through from the address the member
+  // already has (spec §8.3). This spot used to re-point that address and
+  // the ESP-NOW registration at the frame's source, and before that it ran
+  // ahead of verify_signature, where a forged frame from any radio did it
+  // with no key at all.
 
   // Update peer state
   peer->last_seen_ms = millis();
@@ -1116,7 +1170,11 @@ static void handle_pair_discover(const uint8_t* mac, const uint8_t* payload) {
 }
 
 static void handle_pair_offer(const uint8_t* mac, const uint8_t* payload) {
-  if (g_pairing.role != PAIR_ROLE_JOINER) {
+  // The first OFFER is the one (the PlatformIO tree's joiner_handle_offer):
+  // a later one used to re-key a pairing already showing its code, so an
+  // owner who compared one code could confirm another's, and the CONFIRM
+  // then went to whoever sent the later OFFER.
+  if (g_pairing.role != PAIR_ROLE_JOINER || g_mesh_state != MESH_PAIRING_JOIN) {
     return;
   }
 
@@ -1174,7 +1232,13 @@ static void handle_pair_offer(const uint8_t* mac, const uint8_t* payload) {
 }
 
 static void handle_pair_accept(const uint8_t* mac, const uint8_t* payload) {
-  if (g_pairing.role != PAIR_ROLE_INITIATOR) {
+  // One ACCEPT, from the address the OFFER went to, while no code is shown
+  // yet (the PlatformIO tree's initiator_handle_accept). This took any
+  // ACCEPT in any state: one from a radio that overheard the OFFER, a
+  // second one that re-keyed a pairing already showing its code, and one
+  // after the pairing had finished (see handle_pair_confirm).
+  if (g_pairing.role != PAIR_ROLE_INITIATOR || g_mesh_state != MESH_PAIRING_INIT ||
+      memcmp(mac, g_pairing.peer_mac, 6) != 0) {
     return;
   }
 
@@ -1236,16 +1300,31 @@ static void handle_pair_confirm(const uint8_t* mac, const uint8_t* payload) {
     add_peer(g_pairing.peer_pubkey, g_pairing.peer_mac, "New Device");
     persist_peers();
 
+    // Clear sensitive pairing data, as the joiner does. Kept, the finished
+    // pairing's ephemeral key and confirmed code let a radio that overheard
+    // the OFFER send its own ACCEPT and CONFIRM until the timeout, and this
+    // branch sealed the opera_secret under that radio's session key.
+    const PairingRole role = g_pairing.role;
+    const uint32_t code = g_pairing.confirmation_code;
+    secure_wipe(&g_pairing, sizeof(g_pairing));
+
     g_mesh_state = MESH_ACTIVE;
 
     if (g_pairing_callback) {
-      g_pairing_callback(g_pairing.role, g_pairing.confirmation_code, true);
+      g_pairing_callback(role, code, true);
     }
   }
 }
 
 static void handle_pair_complete(const uint8_t* mac, const uint8_t* payload) {
-  if (g_pairing.role != PAIR_ROLE_JOINER || g_mesh_state != MESH_PAIRING_CONFIRM) {
+  // Only after this device's owner confirmed the code (confirm_pairing):
+  // a real initiator sends COMPLETE only once that CONFIRM arrived. This
+  // took a COMPLETE as soon as the code was shown, so whoever answered the
+  // DISCOVER first finished the pairing with no owner on this side: it
+  // replaced the opera, or, holding the opera_secret and presenting a
+  // member's public key, re-bound that member to its own radio (add_peer).
+  if (g_pairing.role != PAIR_ROLE_JOINER || g_mesh_state != MESH_PAIRING_CONFIRM ||
+      !g_pairing.code_confirmed) {
     return;
   }
 
@@ -1363,6 +1442,53 @@ static bool persist_peers() {
   return true;
 }
 
+// Before add_peer re-bound a member it already held (#1761), a re-pair
+// appended a second entry for the same key at the address that pairing
+// came from, and persist_peers saved both. Lookups reached only the first,
+// and the verified-frame re-bind (gone, spec §8.3) kept its address
+// current. Loaded as they are, the first entry would hold the member at
+// the address it left, and the re-pair that should fix it would be refused
+// because the duplicate holds the new one (rebind_peer). So each duplicate
+// folds into the first entry, which keeps its name and counters
+// (load_replay_counters raises them to the highest saved for the key) and
+// takes the duplicate's address: the later pairing's, which is the only
+// thing spec §8.3 lets bind one. If another member holds that address, the
+// first entry keeps its own (one address, one member). Then the list is
+// saved and the fold logged, once.
+static void fold_duplicate_peers() {
+  bool folded = false;
+  for (uint8_t i = 0; i < g_peer_count; i++) {
+    for (uint8_t j = i + 1; j < g_peer_count;) {
+      if (memcmp(g_peers[j].pubkey, g_peers[i].pubkey, PUBKEY_SIZE) != 0) {
+        j++;
+        continue;
+      }
+      uint8_t later[6];
+      memcpy(later, g_peers[j].mac_addr, 6);
+      for (uint8_t k = j; k + 1 < g_peer_count; k++) {
+        g_peers[k] = g_peers[k + 1];
+      }
+      g_peer_count--;
+      secure_wipe(&g_peers[g_peer_count], sizeof(OperaPeer));
+      folded = true;
+      if (memcmp(g_peers[i].mac_addr, later, 6) == 0 || find_peer_by_mac(later) != nullptr) {
+        continue;  // the same address, or another member's: it stays registered
+      }
+      uint8_t earlier[6];
+      memcpy(earlier, g_peers[i].mac_addr, 6);
+      memcpy(g_peers[i].mac_addr, later, 6);
+      if (find_peer_by_mac(earlier) == nullptr) {
+        esp_now_del_peer(earlier);
+      }
+    }
+  }
+  if (folded) {
+    persist_peers();
+    health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+               "opera: folded a duplicate member entry into one");
+  }
+}
+
 static bool load_peers() {
   g_prefs.begin(NVS_NS, true);
   g_peer_count = g_prefs.getUChar(NVS_PEER_COUNT, 0);
@@ -1404,6 +1530,7 @@ static bool load_peers() {
   }
 
   g_prefs.end();
+  fold_duplicate_peers();
   return true;
 }
 

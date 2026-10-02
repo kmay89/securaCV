@@ -36,7 +36,7 @@ it should feel like the device is doing the work.
          radio pre-scans behind it)
   [QR]  "Scan me"                      camera sees WIFI: QR →
         SecuraCV-A7K2 · p7Rm2Kqf         "Join SecuraCV-A7K2?" → tap
-  "Nice — check your phone"            captive sheet pops automatically
+  "Nice - check your phone"            captive sheet pops automatically
         (breathing halo)               dark portal, network list already
                                          loaded (pre-scan), signal bars
                                        tap network → password → Join
@@ -59,10 +59,50 @@ key on the nightstand and nightlight, the title's band on the round watch
 (the title yields while the hint stands: with the QR up, the card speaks for
 itself; without one, the hint replaces "On your phone").
 None of those rows (the name, the key, the hint) is ever cut to an ellipsis
-(F45). The scene titles and bodies are not fitted that way yet: under
-Heirloom the round watch's title band is 142 px and cuts "On your phone"
-(154 px), which is what the Join scene says when its QR did not render, and
-the later scenes' titles and bodies are cut on the smallest glass too.
+(F45).
+
+Nor is any scene's title or body on small glass (F65). Each line is fitted
+to the width at its own latitude — the disc's chord on the round watch, the
+panel less its side pads on rectangular glass and no wider than the halo's
+inner chord there — and tries its words in the Character's own face, then a
+shorter form in fewer of the same words, then the default Character's face.
+Two lines have a shorter form: "Nice - check your phone" becomes "Check your
+phone", and the Fail reason "No address from the router" becomes "No
+address" (`join_failure_label_narrow()`; the fix under it still names the
+router). "No address" shows on every small glass except the round watch at
+the default type; "Check your phone" shows on the same glass except, also,
+the AMOLED at the default type. Three different reasons put them there:
+
+- on the 172/180x320 portrait glass no face holds the whole line in the
+  panel's 156/164 px;
+- on the 240x280 touch169 (both types) and the AMOLED, the panel would hold
+  it — the old rows did, 224 and 434 px wide — but the halo's inner chord
+  does not (a title gets 160 px on the touch169, 154 under Heirloom, and 314
+  on the AMOLED, 308): that is F66's cost, the lines now sit inside the
+  ring;
+- on the round watch under Heirloom, the ladder reaches the shorter form in
+  Heirloom's face before the whole line in the default face, though the
+  whole line would fit there (221 px of "No address from the router" on a
+  222 px line).
+
+The last two are decisions, not limits of the glass, and are filed as such
+(F86 and F87).
+Everything else reads whole, stepping down to the default Character's type
+under Heirloom where it must ("On your phone" on the round watch's 142 px
+title row; on the portrait glass and the touch169, the bodies, "Check your
+phone" and the other four Fail titles). Wide glass (the dash line) sets its
+scene titles and bodies content-sized, as before; only its network name is
+fitted.
+
+The one line whose words are not ours is the network name in "Joining
+<HomeNet>": it is whole in the line's face or the default Character's, and
+a name too wide for either keeps its head and its tail around "..." (the
+32-byte "Basement-Mesh-Extender-Office-5G" reads "Basement-M...-Office-5G"
+on the 172 px nightstand). The end of a network name is what tells a
+household's networks apart ("-5G", "_2.4", "-EXT"), and the 2.4 GHz band is
+the first thing a not-found failure asks about, so the tail stays; the cut
+falls between characters (the old 28-byte clip could split one). The dash
+fits the name the same way, on its panel's row.
 
 The same holds for the hints after the Join scene. When the phone sits on the
 setup network without opening the page, the glass adds "no page? open
@@ -97,7 +137,32 @@ the ambient UI — still enumerated, still rationed:
 | Portal: ✓ draw-in | 500 + 350 ms | completion, drawn not popped |
 
 Nothing else moves. The halo ring persists across every glass scene so the
-eye has continuity while the words change.
+eye has continuity while the words change. On the round watch it rides the
+rim, and every row sits inside it (fitted to the disc's chord at the ring's
+inner edge, so a full-width row's box reaches that edge, its corners within
+a pixel of the stroke; rectangular glass keeps 2 px). On
+rectangular small glass it sits in the band between the Join scene's title
+and its credentials rows, concentric with the QR card (the way the dash's
+halo is with its card), so no row under it — the credentials, the hint, a
+split coach line — runs through its arc; the old 236 px ring crossed the
+hint row on the 172/180x320 portrait glass and the 240x280 touch169 (F66).
+That band gives 196 px on the portrait glass (192 under Heirloom), 176 on
+the touch169 (172) and 328 on the AMOLED (322). On the narrow portrait glass
+the ring is wider than the panel and runs off its sides, as it always did.
+The centered lines are fitted inside it, which costs the touch169 and the
+AMOLED the shorter forms above. On the touch169 the 128 px QR card's rounded
+corners would have met that ring (the old one cleared them), so its canvas
+gives up a few pixels there — 106 px, 104 under Heirloom, still 3 px a
+module, the join code's pitch unchanged — and the card's corners stay
+inside the ring like the rows (`small_join()`).
+
+The bird sits where the scene places it: over the title, inside the halo
+(on the 240x280 touch169 under Heirloom, 1 px lower than elsewhere to stay
+inside), and in the QR card's empty seat when the Join scene has no code to
+show. It used to ride the panel's center behind "Hello." and then walk
+further off the glass at each scene: the mark read its seat from LVGL's
+layout before the layout had run (F64). The Success scene's one hop rises
+from that seat; on the touch169 the top of the hop reaches the halo's arc.
 
 ## No dead ends (the recovery matrix)
 
@@ -145,6 +210,8 @@ look failed on the phone — hard-won WAP lesson.)
 | State machine + AP + portal | `src/net/provision.cpp` (`FEATURE_ONBOARDING`) |
 | Glass scenes | `src/ui/onboard_ui.cpp` — own LVGL screen, auto-deleted at handoff |
 | Join-scene geometry | `include/canary/ui/onboard_layout.h` — title, QR card and caption lines stacked from the panel and the fonts' line heights, never crossing (host-tested on every display env's panel by `tests_host/test_onboard_layout.cpp`; `canary-local/tests/onboard_probe.mjs` checks the card is clean on each emulated flavor) |
+| Scene words and the halo | the same header's `scene_copy()` (every scene's title and body, and their shorter forms), `scene_line_w()` and `name_line()` (F65), `small_join()` (`halo_ring()` and the card inside it) and `scene_bird_top()` (F66). `tests_host/test_onboard_layout.cpp` holds the rules on every small-glass env (the round watch, the 172/180x320 portrait glass, the touch169, the AMOLED) with both ladders: it fits every title and body of every scene and requires each one whole (the network name: whole, or its head and tail around "..."), pins where the two shorter forms show, and holds every row of every scene, the QR card and the bird's seats clear of the halo's stroke. On wide glass it measures only the network name. `tests_host/test_onboard_scenes.cpp` holds `onboard_ui.cpp` to those rules: it compiles the real module against `tests_host/fake_lvgl/` (LVGL 8's position rules), drives every scene the way `provision.cpp` does on the same envs and ladders, and reads what each label says at what width in which font, where the halo, the card and the bird are drawn. The probe fails on an ellipsis in each flavor's PhoneJoined scene and its wrong-key and absent-network Fail scenes |
+| The bird's seat | `src/ui/canary_mark.cpp` records the host's own offset from its anchor (`lv_obj_get_style_x/y`), so the bird is drawn where `lv_obj_align` put it, before or after a layout pass (F64; `tests_host/test_canary_mark_seat.cpp`) |
 | Join-scene text | the same header's `join_lines()` — the credentials joined where they fit their row, else split (name, then key, and a standing hint on the note row: nothing displaces the name or the key), shorter forms before a smaller face, never an ellipsis (F45). The host test measures every glass and ladder with LVGL's glyph metrics (`tests_host/montserrat_metrics.h`, from `firmware/scripts/gen_montserrat_metrics.py`) over the widest name and key the unit can mint, and requires both on the glass with and without the stuck-phone hint; the probe fails on an ellipsis in each flavor's Join scene and reads the firmware's own labels (the emulator's `emu_screen_labels`) for the name and key it printed, before and after the hint. After the Join scene, `hint_lines()` gives the coach line both of the empty credentials rows: whole on one where it fits, else split at a clause over two, else the shorter form (F50). The host test runs every failure's fix and the "no page?" hint through it on every env and ladder and requires the whole form; the probe reads the whole "no page?" hint and the wrong-key and absent-network fixes off each flavor's glass |
 | NVS persistence | `canary::cfg::set_wifi_credentials()` (success only) |
 | Boot hook | `main.cpp`: placeholder creds → `provision_run()` before the watchdog arms |

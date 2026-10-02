@@ -1942,6 +1942,106 @@
   invisible to it).
 - **Date learned:** 2026-09
 
+### A verified frame proves who signed it, not which radio sent it
+- **What happened:** To spare a re-pair when a trusted mesh peer's radio MAC
+  changed, F49 part 3 (#1756) let an opera frame from an address the
+  transport did not know re-bind that peer's address — and persist it — once
+  it passed signature, `opera_id` and the strict counter. A host probe
+  against the merged code recorded a broadcast member B sent while receiver
+  A was not listening and re-sent it to A from a third radio's own address:
+  A moved B's binding to the outsider, B's real address left A's table, and
+  A's next rotation sent its OFFER to the outsider alone and, B being
+  silent, forgot B at the 60 s commit. A replayed `REKEY_OFFER` sent A's `REKEY_ACCEPT` to the
+  outsider the same way.
+- **Root cause:** "Fresh and verified" was read as "this address speaks for
+  this key". The envelope signs no source or destination address, the
+  PlatformIO sender spends one outbound counter across every destination,
+  and the frames are not encrypted, so any genuine frame the receiver has
+  not heard yet — a missed broadcast, a frame unicast to another member —
+  passes every check from wherever it is replayed. The strict counter only
+  stops frames the receiver already heard, the one case #1756's test tried.
+- **Fix:** The unknown-sender hook takes pairing frames only again; an opera
+  frame from an unbound address drops before verification, the learned-MAC
+  callback and `main.cpp`'s save of it are gone, and a changed radio MAC
+  means a re-pair (which binds the address the partner paired from). Binding
+  an address from a frame safely needs the address inside the signature (a
+  wire change) or a challenge the new address answers with the peer's key —
+  an open decision. canary-wap re-bound on any verified frame too; it drops
+  a frame from any address but the signer's own since 2026-10-01 (the next
+  entry).
+- **And the fallback is only as safe as its own proof:** the review then
+  ran the same outsider against the re-pair the fix pointed to. The 6-digit
+  code covers only the ephemeral exchange, not the long-term key the
+  DISCOVER or OFFER carries, so a relay of an owner-run pairing shows
+  matching codes while re-binding a trusted member to the relay's radio, or
+  getting the relay's own key trusted (pre-existing, open). The fix's
+  first draft (a test comment and the ledger's option text) called the
+  re-pair "the code confirmed on both screens" as if that settled it.
+  When a fix names the path that replaces a
+  withdrawn one, probe that path with the same adversary before the docs
+  lean on it.
+- **Regression check:** `test_mesh_session`'s
+  `test_unheard_broadcast_replayed_from_a_new_address_moves_nothing` and
+  `test_unheard_rekey_offer_replayed_from_a_new_address_moves_nothing` (both
+  fail on #1756's code), `test_bound_peer_new_address_is_dropped_not_learned`
+  and `test_repair_moves_a_trusted_peers_address`. When a test of a
+  "replayed frame" only replays one the receiver already heard, it has
+  tested the counter, not the trust decision.
+- **Date learned:** 2026-10
+
+### A pin on the order of a step is not a test of the step
+- **What happened:** canary-wap's `mesh_network.cpp` re-pointed a mesh
+  member's radio address, and its ESP-NOW registration, at the source of
+  any frame that passed `opera_id`, signature and replay. Spec §8.3 had
+  already withdrawn that step on the PlatformIO tree. The file needs
+  Arduino, ESP-NOW and the rweather crypto library, so no host test linked
+  it. Its receive path was held by source-text pins, and those pinned the
+  ORDER of the re-bind (after the signature, not before), which kept
+  passing while the step itself was the hole. Compiling the real file on
+  host stubs and replaying frames between simulated devices showed how
+  far it reached. canary-wap counts per destination and the envelope names
+  none, so a frame a member sent to *another* member re-pointed it too,
+  and it left the receiver's last-seen counter ahead, which silenced the
+  member's own frames. A copied member address made the receiver delete a
+  third member's ESP-NOW registration.
+- **Root cause:** Same as the entry above: a verified frame proves who
+  signed it, not which radio sent it or whom it was for. Plus a gap in the
+  tests: a text pin can say where a step sits, not what it does when an
+  adversary feeds it.
+- **Fix:** A frame whose source is not the signer's own bound address
+  drops before the signature check. The receive path writes no address.
+  A re-pair is the way back for a member whose radio really changed. That
+  path had its own defect, found only by running it: `add_peer` appended a
+  second entry for a key it already held, which no lookup reached, so a
+  re-pair moved nothing (the frame re-bind had been hiding that). It now
+  re-binds the entry it holds and logs the move.
+- **And the review of that fix found three more, by running it too:**
+  - Closing the frame path made the pairing handlers the only thing that
+    binds an address, and they had not been written for that. A joiner
+    took COMPLETE before its owner confirmed the code. An initiator kept a
+    finished pairing's keys until the timeout, and sealed the
+    `opera_secret` to whoever answered its old OFFER. Both are fixed: they
+    now follow the PlatformIO tree's pairing state machine.
+  - The new `add_peer` met what the old one had saved: an NVS duplicate
+    of the member, which now stranded it and blocked its re-pair. Such a
+    duplicate is now folded into one entry at boot.
+  - One regression check was vacuous. "The re-pair kept the counter"
+    compared 0 with 0, so a re-pair that reset the counter passed. It now
+    checks a counter that was raised first.
+- **Rule:** When a security property of a file "no host test can link" is
+  in question, stub the platform and run the real file. About 550 lines of
+  stubs and simulator (`tests_host/stubs/mesh_net`, `mesh_net_sim.h`) bought
+  the probe, the regression tests and the re-pair defect. When you close
+  one path to a piece of state, re-read every other path that writes it:
+  it is now the only one. When a fix changes what a writer stores, load
+  what the old writer stored. And check a value the bug would change: a
+  mutant that resets the field must fail the test.
+- **Regression check:** canary-wap `tests_host/test_mesh_address_wap`
+  (15 of its 19 tests fail on 89a4c56, and 6 fail on this change's first
+  version, 54861ef) and `test_mesh_rx_gates_wap`'s
+  `no_frame_moves_a_members_address`.
+- **Date learned:** 2026-10
+
 ### On a dual-stack listener an IPv4 client arrives as an IPv6 address
 - **What happened:** The canary's provisioning gate (backlog F20, gap #11)
   lets a phone on the SoftAP fetch its setup receipt without a bearer, and
@@ -2206,6 +2306,54 @@
   outlives the sender's RAM, with the same "already past everything handed
   out" invariant as the id floor.
 - **Date learned:** 2026-09
+
+### Two allocators feeding one monotonic counter is two counters, and `strtol` is 32 bits on the device
+- **What happened:** Porting the backfill (F37) found that rows through the
+  CSI bundler (presence, the `system.integrity` tampers) took ids from the
+  bundler's own counter: 0x80000000 upward, restarted every boot, no floor,
+  assigned when a bundle OPENED and committed when it closed. Home
+  Assistant's replay gate keeps one mark per device, so it refused the
+  chokepoint rows after any bundle, and every bundle after a reboot; and the
+  first bundled row handed over moved the backfill's persisted watermark
+  into the bundler's space for good (sweep F46). Two further faults sat
+  under it. The event-log parser read ids and millisecond marks with
+  `strtol`, which saturates at 2147483647 on the ESP32's 32-bit `long`, so
+  every bundler id read back wrong on the device while the 64-bit host tests
+  passed. And ble.scout emits from the NimBLE host task in both trees, so a
+  bundle could commit there while the loop task committed another: with ids
+  taken at commit, nothing ordered their arrival at the hooks.
+- **Root cause:** "Monotonic" was a property of each allocator, while the
+  receiver checks it across everything the device sends. An id taken at a
+  different moment from the one it is published at (bundle open versus
+  close) is out of order by construction. And a host test with a 64-bit
+  `long` cannot see a 32-bit parse.
+- **Fix:** One allocator (`csi_event.cpp` `commit_row()`): every row takes
+  its id at commit, and the id and the commit hooks run under one recursive
+  commit lock, so ids reach the witness, SD and MQTT hooks in order from
+  either task. An open bundle has a handle in [0x80000000, 0xC0000000), never
+  an event id. The space starts at 0xC0000000 on every device, above every
+  id an older firmware handed out, so an upgraded device's next id is above
+  Home Assistant's stored mark and nothing has to be reset; at boot the
+  floor is held above the delivery ceiling (`boot_floor()`), and a card line
+  at or above the allocator's next id is never sent or credited, so a forged
+  id cannot drag the floor to the wrap. A ceiling `boot_floor()` will not
+  follow (past 0xF0000000) is no record for the backfill either
+  (`csi_event_backfill::restore()`): the floor and the watermark are
+  restored by one rule, or the backfill reads every new row as delivered.
+  The parser reads uint32 fields digit by digit and refuses a sign or an
+  overflow.
+- **Regression check:** `firmware/tests_host/test_csi_event_id_space.cpp`
+  links the real chokepoint and bundler and fails on the old library in all
+  six scenarios; `test_csi_event_log_line.cpp` compiles the parser against a
+  `strtol` with the device's range; `test_csi_event_backfill.cpp` covers the
+  upgrade and a forged card id; `firmware/scripts/check_csi_commit_order.py`
+  holds the commit lock's shape (what a single-threaded host build cannot
+  run); `custom_components/securacv/tests/test_replay_one_id_space.py`
+  drives Home Assistant's real gate. When a receiver enforces an order, give
+  the sender one place that decides it, at the moment the value is sent;
+  and run a parser's numeric limits under the target's integer widths, not
+  the host's.
+- **Date learned:** 2026-10
 
 ## How to Add an Entry
 

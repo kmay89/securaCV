@@ -7,10 +7,28 @@
 //
 // Build/run: make -C firmware/tests_host (the CI "host tests" job).
 
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <stdlib.h>  // before the shim: libstdc++'s wrapper re-exports strtol
 
+// The ESP32's `long` is 32 bits; this host's is 64. A parser that reads a
+// uint32 field through strtol is right here and wrong on the device: every
+// id at or above 0x80000000 and every millisecond mark past 24.8 days comes
+// back as 2147483647 (backlog F46). So the header is compiled against a
+// strtol with the device's range, and the uint32 tests below fail on any
+// parser that still goes through `long`.
+static long strtol_ilp32(const char* s, char** end, int base) {
+  const long long v = std::strtoll(s, end, base);
+  if (v > INT32_MAX) { errno = ERANGE; return INT32_MAX; }
+  if (v < INT32_MIN) { errno = ERANGE; return INT32_MIN; }
+  return (long)v;
+}
+#define strtol strtol_ilp32
 #include "csi_event_log_line.h"
+#undef strtol
 // Both trees' SD adapters, for their paths and caps: the canary-wap's
 // declarations (no SD in the header) and the canary's (pure over
 // csi_event_backfill.h). The functions are only declared here.
@@ -214,6 +232,58 @@ static int test_both_trees_write_the_same_file() {
   return 0;
 }
 
+static int test_uint32_fields_survive_a_32_bit_long() {
+  // Backlog F46: the one event-id space starts at 0xC0000000, the old
+  // bundler's ids at 0x80000000, and a millisecond mark passes 2^31 after
+  // 24.8 days of uptime. All three must read back as written on a device
+  // whose long is 32 bits (the strtol shim above).
+  const uint32_t ids[] = {0x80000000u, 0xC0000000u, 0xC0000007u, 0xFFFFFFFFu};
+  for (uint32_t id : ids) {
+    csi_event_record_t r = presence_row();
+    r.event_id = id;
+    r.first_seen_ms = 0x80000001u;   // 24.8 days and a bit
+    r.last_seen_ms = 0xFFFFFFFEu;
+    char line[kLineMax];
+    const size_t n = marshal(&r, line, sizeof(line));
+    CHECK(n > 0);
+    line[n - 1] = '\0';
+    csi_event_record_t back;
+    CHECK(parse(line, &back));
+    CHECK(back.event_id == id);
+    CHECK(back.first_seen_ms == 0x80000001u);
+    CHECK(back.last_seen_ms == 0xFFFFFFFEu);
+  }
+  // The field reader on its own, at the edges of the range.
+  uint32_t v = 7;
+  CHECK(csi_event_log_line::json_u32("{\"id\":4294967295}", "id", &v) ==
+        csi_event_log_line::U32::kOk && v == 0xFFFFFFFFu);
+  CHECK(csi_event_log_line::json_u32("{\"id\":2147483648}", "id", &v) ==
+        csi_event_log_line::U32::kOk && v == 0x80000000u);
+  CHECK(csi_event_log_line::json_u32("{\"id\":3}", "last", &v) ==
+        csi_event_log_line::U32::kMissing && v == 0x80000000u);
+  return 0;
+}
+
+static int test_signed_and_overflowing_numbers_are_refused() {
+  // strtol took a sign and wrapped past 2^32 when cast: "-5" read back as
+  // 0xFFFFFFFB and 4294967297 as 1. A card line is input; neither is an id
+  // this format writes, and a forged one near the top of the space would
+  // reach the backfill (F46). Refused, not reinterpreted.
+  csi_event_record_t rec;
+  CHECK(!parse("{\"id\":-5,\"first\":1,\"last\":1}", &rec));
+  CHECK(rec.event_id == 0);
+  CHECK(!parse("{\"id\":4294967296,\"first\":1,\"last\":1}", &rec));
+  CHECK(!parse("{\"id\":4294967297,\"first\":1,\"last\":1}", &rec));
+  CHECK(!parse("{\"id\":99999999999999999999999}", &rec));
+  CHECK(!parse("{\"id\":,\"first\":1}", &rec));
+  CHECK(!parse("{\"id\":12,\"first\":-1,\"last\":1}", &rec));
+  CHECK(rec.event_id == 0 && rec.first_seen_ms == 0);
+  CHECK(!parse("{\"id\":12,\"first\":1,\"last\":4294967296}", &rec));
+  // A missing mark still reads 0, as it always did.
+  CHECK(parse("{\"id\":12}", &rec) && rec.first_seen_ms == 0 && rec.last_seen_ms == 0);
+  return 0;
+}
+
 int main() {
   if (test_presence_golden()) return 1;
   if (test_integrity_golden_and_empty_strings()) return 1;
@@ -221,6 +291,8 @@ int main() {
   if (test_widest_record_fits_and_overflow_is_zero()) return 1;
   if (test_parse_refuses_what_is_not_one_record()) return 1;
   if (test_both_trees_write_the_same_file()) return 1;
+  if (test_uint32_fields_survive_a_32_bit_long()) return 1;
+  if (test_signed_and_overflowing_numbers_are_refused()) return 1;
   std::printf("test_csi_event_log_line: %d checks passed\n", g_checks);
   return 0;
 }

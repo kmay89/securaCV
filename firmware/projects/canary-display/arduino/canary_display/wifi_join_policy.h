@@ -85,6 +85,28 @@ inline const char* join_failure_label(JoinFailure f) {
 }
 
 /**
+ * @brief The same label in fewer words, for a title too narrow for it.
+ *
+ * The display's onboarding glass shows the label as the Fail scene's title,
+ * and "No address from the router" is 221 px in the smallest face a title
+ * sets there, against 156-164 px on the portrait glass. The glass fits the
+ * label to its row in the title's own face, then this form, then the
+ * default Character's face (`onboardlayout::fit_line`, F65). A label that
+ * is already the shortest honest wording is its own narrow form: "Network
+ * not found" without "Network" no longer says what was not found, and
+ * "Wrong password" and "Couldn't connect" have no shorter true form.
+ */
+inline const char* join_failure_label_narrow(JoinFailure f) {
+  switch (f) {
+    case JoinFailure::NoAddress:   return "No address";
+    case JoinFailure::NotFound:
+    case JoinFailure::BadPassword:
+    case JoinFailure::Unknown:     break;
+  }
+  return join_failure_label(f);
+}
+
+/**
  * @brief The full sentence for a serial log or a portal banner.
  *
  * Says what happened AND that the device stays up, because the previous

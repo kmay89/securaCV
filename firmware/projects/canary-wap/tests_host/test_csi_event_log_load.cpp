@@ -29,6 +29,7 @@
 
 #include "csi_event_log.h"
 #include "csi_event_log_line.h"
+#include "csi_event_id_floor.h"
 #include "csi_module.h"
 
 #include <SD.h>
@@ -94,10 +95,15 @@ static std::string line_for(uint32_t id, const char* type) {
   return std::string(buf, n);
 }
 
+/* Ids this firmware hands out start at kIdSpaceBase (backlog F46: the one
+ * event-id space). The main log below is this firmware's; the boundary
+ * case near the end uses an older firmware's ids, which sit below it. */
+static const uint32_t B = csi_event_id_floor::kIdSpaceBase;
+
 int main() {
   csi_event_test_reset();
   csi_module_register(&MODULE);
-  csi_event_set_event_id_floor(200000);   // what NVS restores before the load
+  csi_event_set_event_id_floor(B + 200000);   // what NVS restores before the load
 
   // ── Build the card's log. ────────────────────────────────────────────────
   // 1000 same-length good lines (ids 100000..100999), so the tail window
@@ -105,22 +111,22 @@ int main() {
   // the last without its '\n' (whole, only the newline lost).
   std::string log;
   std::vector<std::pair<size_t, bool>> starts;   // (offset, restorable)
-  for (uint32_t id = 100000; id < 101000; ++id) {
+  for (uint32_t id = B + 100000; id < B + 101000; ++id) {
     starts.push_back({log.size(), true});
     log += line_for(id, "presence_changed");
   }
   const char* refused_lines[] = {nullptr};
   (void)refused_lines;
   std::vector<std::string> bad;
-  bad.push_back(line_for(200000, "presence_changed"));   // at the floor: this boot's id
-  bad.push_back(line_for(250000, "presence_changed"));   // above the floor
-  bad.push_back(line_for(101500, "no_such_type"));       // unregistered type
-  bad.push_back(line_for(101501, "breathing_rate"));     // P1 under the P0 ceiling
-  bad.push_back(line_for(100999, "presence_changed"));   // duplicate of a restored id
+  bad.push_back(line_for(B + 200000, "presence_changed"));   // at the floor: this boot's id
+  bad.push_back(line_for(B + 250000, "presence_changed"));   // above the floor
+  bad.push_back(line_for(B + 101500, "no_such_type"));       // unregistered type
+  bad.push_back(line_for(B + 101501, "breathing_rate"));     // P1 under the P0 ceiling
+  bad.push_back(line_for(B + 100999, "presence_changed"));   // duplicate of a restored id
   {
-    std::string torn = line_for(101502, "presence_changed");
+    std::string torn = line_for(B + 101502, "presence_changed");
     torn = torn.substr(0, torn.size() / 2);              // power cut mid-line ...
-    bad.push_back(torn + line_for(101503, "presence_changed"));  // ... glued to the next
+    bad.push_back(torn + line_for(B + 101503, "presence_changed"));  // ... glued to the next
   }
   bad.push_back(std::string(700, 'x') + "\n");           // longer than any record
   for (const std::string& b : bad) {
@@ -128,9 +134,9 @@ int main() {
     log += b;
   }
   starts.push_back({log.size(), true});
-  log += line_for(101600, "presence_changed");
+  log += line_for(B + 101600, "presence_changed");
   starts.push_back({log.size(), true});
-  std::string last = line_for(101601, "presence_changed");
+  std::string last = line_for(B + 101601, "presence_changed");
   last.pop_back();                                       // no trailing '\n'
   log += last;
 
@@ -196,31 +202,34 @@ int main() {
 
   csi_event_record_t out[4];
   const size_t n = csi_event_recent(out, 4);
-  CHECK(n == 4 && out[0].event_id == 101601, "the unterminated last line is newest");
-  CHECK(n == 4 && out[1].event_id == 101600, "then the line before it");
-  CHECK(n == 4 && out[2].event_id == 100999, "then the good run (refused lines skipped)");
+  CHECK(n == 4 && out[0].event_id == B + 101601, "the unterminated last line is newest");
+  CHECK(n == 4 && out[1].event_id == B + 101600, "then the line before it");
+  CHECK(n == 4 && out[2].event_id == B + 100999, "then the good run (refused lines skipped)");
   csi_event_record_t probe;
-  CHECK(!csi_event_find(200000, &probe) && !csi_event_find(250000, &probe),
+  CHECK(!csi_event_find(B + 200000, &probe) && !csi_event_find(B + 250000, &probe),
         "ids this boot can allocate are not in the ring");
-  CHECK(!csi_event_find(101500, &probe), "an unregistered type is not in the ring");
-  CHECK(!csi_event_find(101501, &probe), "a type above the ceiling is not in the ring");
-  CHECK(!csi_event_find(101502, &probe) && !csi_event_find(101503, &probe),
+  CHECK(!csi_event_find(B + 101500, &probe), "an unregistered type is not in the ring");
+  CHECK(!csi_event_find(B + 101501, &probe), "a type above the ceiling is not in the ring");
+  CHECK(!csi_event_find(B + 101502, &probe) && !csi_event_find(B + 101503, &probe),
         "a torn line glued to the next is not in the ring");
-  CHECK(!csi_event_find(100000, &probe), "a line before the tail window is not read");
-  CHECK(csi_event_find(100999, &probe) && strcmp(probe.values.state_name, "active") == 0
+  CHECK(!csi_event_find(B + 100000, &probe), "a line before the tail window is not read");
+  CHECK(csi_event_find(B + 100999, &probe) && strcmp(probe.values.state_name, "active") == 0
         && probe.values.motion_score == 50 && probe.first_seen_ms == 0,
         "a restored row carries its fields, not the earlier boot's clock");
 
   // ── Once per boot. ───────────────────────────────────────────────────────
   CHECK(csi_event_log::load_into_ring() == 0, "a second call restores nothing");
-  CHECK(csi_event_get_next_event_id() == 200000, "the load allocated no id");
+  CHECK(csi_event_get_next_event_id() == B + 200000, "the load allocated no id");
 
   // ── A window that starts exactly on a line boundary keeps its first line.
   //    6-digit ids make lines of length L, 7-digit ids of L + 1: a lines of
-  //    one and b of the other sum to exactly LOAD_TAIL_BYTES. ─────────────
+  //    one and b of the other sum to exactly LOAD_TAIL_BYTES. These are an
+  //    older firmware's ids (below kIdSpaceBase: a card from before F46),
+  //    so no boot of this firmware can allocate them and the floor does not
+  //    bound them. ───────────────────────────────────────────────────────
   {
     csi_event_test_reset();                  // reboot
-    csi_event_set_event_id_floor(2000000);
+    csi_event_set_event_id_floor(B + 2000000);
     csi_event_log::test_rearm_load();
     csi_event_log::arm_load();
     const size_t L = line_for(100000, "presence_changed").size();
@@ -252,11 +261,11 @@ int main() {
   // ── A late card after a live commit: nothing read, and latched. ─────────
   {
     csi_event_test_reset();                  // reboot
-    csi_event_set_event_id_floor(200000);
+    csi_event_set_event_id_floor(B + 200000);
     csi_event_log::test_rearm_load();
     csi_event_log::arm_load();
     SD.files["/EVENTS/today.ndjson"] = log;
-    std::string row = line_for(150000, "presence_changed");
+    std::string row = line_for(B + 150000, "presence_changed");
     row.pop_back();   // parse() takes the line without its '\n'
     csi_event_record_t live;
     CHECK(csi_event_log_line::parse(row.c_str(), &live) && csi_event_inject(&live),

@@ -30,8 +30,11 @@ enum class ObStage : uint8_t {
 void onboard_ui_create(const char* ap_ssid, const char* ap_pass);
 
 // Enter a stage. `detail` is stage-specific: the home SSID being joined
-// (Connecting), or the human failure reason (Fail). May be null.
-void onboard_ui_stage(ObStage st, const char* detail);
+// (Connecting), or the human failure reason (Fail). May be null. `narrow`
+// is the reason in fewer words (Fail: join_failure_label_narrow), for a
+// title too narrow for it (onboard_layout.h's scene lines, F65). May be null.
+void onboard_ui_stage(ObStage st, const char* detail,
+                      const char* narrow = nullptr);
 
 // Append/replace the small hint line on the current scene (e.g. the manual
 // "or visit 192.168.4.1" fallback if the captive sheet never popped).

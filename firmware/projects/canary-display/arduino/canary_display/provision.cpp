@@ -93,8 +93,9 @@ enum class St : uint8_t { Hello, Waiting, PhoneHere, Testing, Fail, Success };
 // wizard runs serial-guided (the portal itself is glass-independent).
 bool s_glass = false;
 
-void ui_stage(canary::ui::ObStage st, const char* detail) {
-  if (s_glass) canary::ui::onboard_ui_stage(st, detail);
+void ui_stage(canary::ui::ObStage st, const char* detail,
+              const char* narrow = nullptr) {
+  if (s_glass) canary::ui::onboard_ui_stage(st, detail, narrow);
 }
 void ui_hint(const char* line, const char* narrow = nullptr) {
   if (s_glass) canary::ui::onboard_ui_hint(line, narrow);
@@ -999,11 +1000,15 @@ void provision_run(bool glass_ok) {
                                       WiFi.localIP().toString().c_str());
         } else if (ws == WL_NO_SSID_AVAIL || ws == WL_CONNECT_FAILED ||
                    (int32_t)(now - ctx.st_since) > (int32_t)STA_TIMEOUT_MS) {
+          const canary::net::JoinFailure why = classify_status(ws);
           snprintf(ctx.fail_reason, sizeof(ctx.fail_reason), "%s",
                    sta_failure_reason(ws));
           WiFi.disconnect(/*wifioff=*/false, /*eraseap=*/false);
           enter(St::Fail, now);
-          ui_stage(canary::ui::ObStage::Fail, ctx.fail_reason);
+          // The reason titles the scene, with the same label in fewer words
+          // for a title too narrow for it ("No address", F65).
+          ui_stage(canary::ui::ObStage::Fail, ctx.fail_reason,
+                   canary::net::join_failure_label_narrow(why));
           // Every failure carries its most likely fix (the portal's own
           // tip() words a longer one for a wrong key and a missing
           // network). The classic silent killer is a 5 GHz-only network the
@@ -1012,11 +1017,8 @@ void provision_run(bool glass_ok) {
           // whose detail the boot path logs. The narrow form is the same fix
           // in fewer words, for a row that cannot hold the hint whole or
           // over two rows (onboardlayout::hint_lines, F50).
-          {
-            const canary::net::JoinFailure why = classify_status(ws);
-            ui_hint(canary::net::join_failure_hint(why),
-                    canary::net::join_failure_hint_narrow(why));
-          }
+          ui_hint(canary::net::join_failure_hint(why),
+                  canary::net::join_failure_hint_narrow(why));
         }
         break;
       }

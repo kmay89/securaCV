@@ -481,6 +481,7 @@ jobs:
           node --test canary-local/tests/homeassistant.test.js
           node --test canary-local/tests/hub_wizard.test.js
           node --test canary-local/tests/wap.test.js
+          node --test canary-local/tests/fingerprint_examples.test.js
           node --test canary-local/tests/onboard.test.js
           node --test canary-local/tests/vision.test.js
           node --test canary-local/tests/vision_checklist.test.js

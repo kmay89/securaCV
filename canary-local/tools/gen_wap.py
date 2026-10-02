@@ -21,6 +21,7 @@ Sources of truth (all in-repo, deterministic, offline):
       setup_page_html.h     CAPTIVE_PORTAL_HTML  (rendered verbatim)
       boot_banner.cpp       boot scene text
       csi_mqtt.cpp          MQTT prefix, topics, HA discovery entity/trigger set
+      mqtt_identity.h       the spelling of the MQTT fp and public_key (lowercase)
   docs/getting_started_canary.md   sensing pills, dashboard cards
   canary-local/devices/registry.json   fw_train + the canary-wap card facts
   canary-local/devices/boards.json     device -> board mapping
@@ -43,6 +44,7 @@ SETUP_PAGE_H = FW / "setup_page_html.h"
 BOOT_BANNER_CPP = FW / "boot_banner.cpp"
 CAPTIVE_PROBE_H = FW / "captive_probe.h"
 CSI_MQTT_CPP = FW / "csi_mqtt.cpp"
+MQTT_IDENTITY_H = FW / "mqtt_identity.h"
 COMPANION_H = FW / "companion_pwa.h"
 DOC = REPO / "docs/getting_started_canary.md"
 REGISTRY = REPO / "canary-local/devices/registry.json"
@@ -151,6 +153,25 @@ EX_ID = "canary-s3-ab7k"
 EX_SSID = f"{AP_SSID_PREFIX}{EX_SUFFIX}"
 EX_PASS = "cv-7Q2M9XKP4RTN"
 EX_MDNS = "canary-ab7k.local"
+
+# The fingerprint: the repo's Ed25519 test key's (seed 0x42 x 32, public key
+# 2152f8d1...81db12), the key the WAP's tests_host/test_mqtt_identity.cpp and
+# Home Assistant's tests/test_fingerprint_case.py sign with, so the page, the
+# firmware test and HA show one fingerprint (tests/fingerprint_examples.test.js
+# derives it from the seed). Two spellings of the same 8 bytes of pubkey_fp:
+# the envelope `fp` of every signed publish is mqtt_identity.h's lowercase
+# (sweep HA20; firmware 2.4.15 and older sent capitals), and the [PROV] boot
+# line prints g_device.fingerprint_hex, which hex_to_str spells in capitals.
+EX_FP = "7916ca487912fa1b"
+EX_FP_SERIAL = EX_FP.upper()
+must(MQTT_IDENTITY_H, 'kLowerHex[] = "0123456789abcdef"', "envelope fp spelled in lowercase")
+must(INO, "mqtt_identity::fingerprint_hex(mqtt_fp_hex, g_device.pubkey_fp);",
+     "envelope fp spelled by mqtt_identity::fingerprint_hex")
+must(INO, 'static const char hex[] = "0123456789ABCDEF";', "hex_to_str spells capitals")
+must(INO, "hex_to_str(g_device.fingerprint_hex, g_device.pubkey_fp, 8);",
+     "the boot line's fingerprint is hex_to_str of the 8-byte pubkey_fp")
+must(INO, 'Serial.printf("[PROV] Public key fingerprint: %s\\n", g_device.fingerprint_hex);',
+     "[PROV] fingerprint boot line")
 
 AP = {
     "ssid_example": EX_SSID,
@@ -316,9 +337,7 @@ BANNER = [
 BOOT = [
     {"tag": "[PROV]", "text": "Provisioning device identity..."},
     {"tag": "[PROV]", "text": "Loaded existing keypair from NVS"},
-    # g_device.fingerprint_hex: 8 bytes as 16 hex digits, in hex_to_str's
-    # capitals (the MQTT envelopes below carry the same bytes in lowercase).
-    {"tag": "[PROV]", "text": "Public key fingerprint: 7F3A9C21B04E6D58"},
+    {"tag": "[PROV]", "text": f"Public key fingerprint: {EX_FP_SERIAL}"},
     {"tag": "[PROV]", "text": f"Device ID: {EX_ID}"},
     {"tag": "[PROV]", "text": "Boot count: 5"},
     {"tag": "[..]", "text": "Initializing camera for peek/preview..."},
@@ -409,13 +428,13 @@ TOPICS = [
     {"suffix": "status", "retained": True, "cadence": "on connect + ~30 s",
      "payload": '{"online":true,"device_type":"canary-wap","csi_running":true,"wifi_connected":true,"rssi":-58}'},
     {"suffix": "events", "retained": False, "cadence": "per committed CSI event",
-     "payload": '{"event_id":1234,"event_type":"motion","state":"motion","motion":72,"breathing":8,"signed":true,"v":1,"alg":"ed25519","fp":"7f3a9c21b04e6d58","sig":"…"}'},
+     "payload": '{"event_id":1234,"event_type":"motion","state":"motion","motion":72,"breathing":8,"signed":true,"v":1,"alg":"ed25519","fp":"' + EX_FP + '","sig":"…"}'},
     {"suffix": "chain", "retained": True, "cadence": "on each new record",
-     "payload": '{"v":1,"length":312,"latest_hash":"a1b2…","algorithm":"ed25519","alg":"ed25519","fp":"7f3a9c21b04e6d58","sig":"…"}'},
+     "payload": '{"v":1,"length":312,"latest_hash":"a1b2…","algorithm":"ed25519","alg":"ed25519","fp":"' + EX_FP + '","sig":"…"}'},
     {"suffix": "health", "retained": True, "cadence": "~60 s",
      "payload": '{"battery":100,"battery_present":false,"memory_free":204800,"uptime":312,"firmware_version":"' + FW_VERSION + '","public_key":"…"}'},
     {"suffix": "counts", "retained": True, "cadence": "on each new record",
-     "payload": '{"v":1,"total":312,"alg":"ed25519","fp":"7f3a9c21b04e6d58","sig":"…"}'},
+     "payload": '{"v":1,"total":312,"alg":"ed25519","fp":"' + EX_FP + '","sig":"…"}'},
     {"suffix": "tamper", "retained": False, "cadence": "per committed system.integrity event (live only, never backfill)",
      "payload": '{"type":"sd_remove","severity":"tamper"}',
      "note": "type is a const.py tamper kind; the HA per-type tamper sensors key on it"},

@@ -73,6 +73,11 @@ constexpr const char* NVS_KEY_DISCOVERY = "mqtt.disc";
  * never comes back by default (lab mode must be chosen by name). */
 constexpr const char* NVS_KEY_TLS_MODE  = "mqtt.tlsmode";
 constexpr const char* NVS_KEY_CA        = "mqtt.ca";
+/* The backfill's delivery ceiling (F47): always above every event id handed
+ * to the broker, written before the id goes. The same key the canary PIO
+ * tree's egress writes. csi_integration reads it at boot too, to hold the
+ * event-id floor above it (csi_event_id_floor::boot_floor, backlog F46). */
+constexpr const char* NVS_KEY_DELIVERED = "csi.evsent";
 
 constexpr size_t MAX_HOST_LEN   = 128;
 constexpr size_t MAX_USER_LEN   = 64;

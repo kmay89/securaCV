@@ -11,7 +11,10 @@
  *   5. Hands the cleaned event to the bundler (csi_bundler.h).
  *   6. When the bundler commits, routes through the optional witness chain
  *      and the optional outbound stream callback.
- *   7. Returns a deterministic event_id so the dashboard can dedupe.
+ *   7. Gives every committed row its event_id AT COMMIT, from one allocator
+ *      (backlog F46): bundled and direct rows share one id space, and ids
+ *      rise in commit order, on every task. See csi_event_id_floor.h for
+ *      where the space starts (kIdSpaceBase) and why.
  *
  * The chokepoint is the only path from module to the rest of the system;
  * there is no back-channel. This is what makes the privacy contract
@@ -94,17 +97,21 @@ void csi_event_values_init(csi_event_values_t* out);
  *   values      Fields the module wants to publish. The chokepoint copies
  *               this struct, so the caller may discard its copy after emit.
  *
- * Returns the assigned event_id (non-zero) on success, or 0 if the event
- * was rejected (privacy / allow-list / module not registered / values
- * malformed). Rejection is silent by design — leaking "this would have been
- * blocked" is itself a side channel.
+ * Returns non-zero on success, or 0 if the event was rejected (privacy /
+ * allow-list / module not registered / values malformed). Rejection is
+ * silent by design — leaking "this would have been blocked" is itself a
+ * side channel.
  *
- * The chokepoint may bundle the emit with prior same-state events; in that
- * case it returns the existing bundle's event_id, signaling to the caller
- * that "this was rolled into a previous row."
+ * A direct commit (ambient, or a stateless emit) returns its event_id. A
+ * state-bearing emit goes into an open bundle, which has no event id until
+ * it commits; it returns the bundle's HANDLE instead, in
+ * [csi_event_id_floor::kHandleBase, kIdSpaceBase): never an event id, so
+ * nothing can mistake one for the other (backlog F46).
  *
- * Thread safety: callable from any task that produces CSI windows. NOT
- * callable from an ISR.
+ * Thread safety: callable from any task that produces CSI windows (the
+ * loop task; ble.scout's NimBLE host task). Commits are serialized by the
+ * chokepoint's commit lock. NOT callable from an ISR, and never from inside
+ * a commit hook.
  */
 uint32_t csi_event_emit(const char*               module_id,
                         const char*               type_name,
@@ -279,6 +286,10 @@ bool csi_event_dismiss(uint32_t event_id);
  *     restores the id floor from NVS before loading, so every id an earlier
  *     boot handed out is below it; an id at or above it is one this boot
  *     can still hand out (a lost floor, another device's card);
+ *   - its event_id is in [csi_event_id_floor::kHandleBase, kIdSpaceBase):
+ *     an open bundle's handle range, which no firmware's ring row ever
+ *     used (backlog F46), so an open row and a restored row never share
+ *     an id;
  *   - an event committed live this boot is already in the ring. Injecting
  *     after that would put older rows ahead of newer ones;
  *   - a row with the same event_id is already in the ring;
@@ -303,9 +314,13 @@ void csi_event_test_reset(void);
 
 /**
  * Move the event-id allocator's next-id floor up to at least `floor`.
- * No-op when floor <= the current next-id. Called from canary-wap's
- * csi_integration::init() at boot to restore the persisted high-water-
- * mark from NVS so allocations stay globally monotone across reboots.
+ * No-op when floor <= the current next-id. Called by both hosts at boot
+ * (canary-wap's csi_integration::init(), the canary's
+ * csi_event_egress_begin()) to restore the persisted high-water-mark from
+ * NVS so allocations stay globally monotone across reboots. The allocator
+ * starts at csi_event_id_floor::kIdSpaceBase, so a floor an older firmware
+ * persisted below it changes nothing (backlog F46); the hosts compute what
+ * to pass with csi_event_id_floor::boot_floor().
  *
  * Without this, csi_mqtt's reconnect-backfill watermark would be
  * ambiguous (previous-boot id=1 collides with current-boot id=1) and

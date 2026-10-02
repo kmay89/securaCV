@@ -103,7 +103,7 @@ Every key appears on every row — clients decode one shape. Open bundles
 {
   "events": [
     {
-      "id": 4013,
+      "id": 2147483649,
       "module": "core.presence",
       "type": "presence_changed",
       "category": "event",
@@ -119,7 +119,7 @@ Every key appears on every row — clients decode one shape. Open bundles
       "open": 1
     },
     {
-      "id": 4012,
+      "id": 3221229508,
       "module": "core.presence",
       "type": "presence_changed",
       "category": "event",
@@ -140,6 +140,7 @@ Every key appears on every row — clients decode one shape. Open bundles
 
 | Field | Notes |
 | --- | --- |
+| `id` | A uint32 (never decode it as a signed 32-bit integer). A committed row's `id` is its event id: every committed row, bundled or not, takes it when it commits, from one allocator, so ids rise in commit order and keep rising across reboots, from 3221225472 (0xC0000000) on every device (`firmware/common/csi/src/csi_event_id_floor.h`, `kIdSpaceBase`). An open row has no event id yet: its `id` is the bundle's handle, in [2147483648, 3221225472) (0x80000000 up to 0xC0000000), stable while the bundle is open and never equal to an event id. Use a committed row's `id` for `POST /api/events/dismiss`; an open row cannot be dismissed. |
 | `time_bucket` | 10-minute bucket (0..143). No finer-grain timestamp ever. Derived from the device's monotonic clock plus a clock offset once one is synced (`csi_event_set_clock_offset_minutes`); before a sync it is boot-relative — consistent within a session, not aligned to the wall-clock day. |
 | `bundled` | how many raw observations the bundler collapsed into this row |
 | `open` | `1` while the bundle is still collecting — the device's own present tense, serialized ahead of the ring; `0` for a committed ring row, which is history. Record vs siren: only an open row may drive live severity; a closed row must never latch it. |
@@ -198,15 +199,21 @@ those bodies `"replay":true`. On the canary base
   gate refuses an `event_id` below the last one it verified. That watermark
   survives a reboot through an NVS ceiling written with the event-id floor's
   policy, so a reboot inside an outage skips at most ten undelivered rows
-  and republishes none. (Rows that pass through the bundler — presence,
-  `system.integrity` — take ids from its own space, 0x80000000 upward,
-  which restarts every boot and commits in bundle-close order; the gate
-  refuses such a row once a higher id is verified, live or replayed, and
-  the backfill skips it rather than send a refused id. And once one bundled
-  row has been handed over, the watermark sits in the bundler's space for
-  good: from then on the backfill sends no chokepoint-id row at all, in that
-  boot or after a reboot. One id space is an open item, and its fix has to
-  reset the stored watermark (NVS `csi.evsent`) and Home Assistant's mark.);
+  and republishes none. Every row, the bundled ones (presence,
+  `system.integrity`) included, takes its id when it commits, from one
+  allocator, so the log is in id order and ids rise across reboots (sweep
+  F46). That allocator starts at 0xC0000000 on every device, above every id
+  an older firmware handed out (its bundler's ids started at 0x80000000 each
+  boot), so an upgraded device's next rows are above Home Assistant's
+  stored mark and nothing is reset, on the device or in Home Assistant. At
+  boot the id floor is held at or above the delivery ceiling (NVS
+  `csi.evsent`), unless that ceiling is past 0xF0000000 (an older firmware
+  wrote one for a forged card line): the floor and the backfill both treat
+  such a ceiling as no record. A card line at or above the allocator's next
+  id is never sent and never counted as delivered, so a forged id cannot
+  push Home Assistant's mark or the id floor toward the wrap. Below that
+  bound the log is trusted input: the backfill signs and sends what a line
+  says;
 - a row committed while the link was up but held behind the backlog is sent
   with `"replay":false`, since it is news; everything else the backfill sends
   says `"replay":true`;
@@ -235,7 +242,7 @@ thresholds. Nothing leaves the device.
 ```bash
 curl -X POST http://canary.local/api/events/dismiss \
      -H 'Content-Type: application/json' \
-     -d '{"event_id": 4012}'
+     -d '{"event_id": 3221229508}'
 ```
 
 ---

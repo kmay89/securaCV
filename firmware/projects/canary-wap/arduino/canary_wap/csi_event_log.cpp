@@ -543,6 +543,20 @@ void test_rearm_load() {
 }
 #endif
 
+/* A line the backfill may replay: one record, not a dismissal, above the
+ * watermark, and one this device handed out. Every id it handed out is below
+ * the allocator's next one (a line is appended after its id is taken), so a
+ * line at or above it is forged or foreign: replayed, it would go out signed
+ * with this device's key, raise Home Assistant's mark past every real id and
+ * the delivery ceiling with it, which the next boot holds the id floor above
+ * (backlog F46). Read per line, so a row committed during the walk is not
+ * mistaken for one. */
+static bool replayable(const char* line, uint32_t since_event_id, csi_event_record_t* rec) {
+  return csi_event_log_line::parse(line, rec) && !is_dismissal(rec) &&
+         rec->event_id > since_event_id &&
+         rec->event_id < csi_event_get_next_event_id();
+}
+
 size_t iterate_since(uint32_t since_event_id, iterate_cb_t cb, void* user) {
   if (!cb || !sd_path_ready()) return 0;
   File f = SD.open(LOG_PATH, FILE_READ);
@@ -557,8 +571,7 @@ size_t iterate_since(uint32_t since_event_id, iterate_cb_t cb, void* user) {
     if (c == '\n') {
       line[li] = '\0';
       csi_event_record_t rec;
-      if (csi_event_log_line::parse(line, &rec) && !is_dismissal(&rec) &&
-          rec.event_id > since_event_id) {
+      if (replayable(line, since_event_id, &rec)) {
         if (!cb(&rec, user)) { f.close(); return emitted; }
         emitted++;
       }
@@ -570,8 +583,7 @@ size_t iterate_since(uint32_t since_event_id, iterate_cb_t cb, void* user) {
   if (li > 0 && emitted < BACKFILL_MAX) {
     line[li] = '\0';
     csi_event_record_t rec;
-    if (csi_event_log_line::parse(line, &rec) && !is_dismissal(&rec) &&
-        rec.event_id > since_event_id) {
+    if (replayable(line, since_event_id, &rec)) {
       if (cb(&rec, user)) emitted++;
     }
   }

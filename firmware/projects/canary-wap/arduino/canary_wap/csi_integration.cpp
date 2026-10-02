@@ -618,7 +618,16 @@ void apply_filter_foreign_from_nvs() {
  * only every STRIDE ids and reused the ids of any boot shorter than
  * that. NVS write traffic stays bounded: one write per boot, plus ~14/day
  * at the per-module hourly ceiling (~6 events/hour, STRIDE=10), well
- * inside the cell wear budget. ────────────────────────────────────── */
+ * inside the cell wear budget.
+ *
+ * One id space (backlog F46): the allocator starts at kIdSpaceBase, above
+ * every id an older firmware handed out, so a floor an older firmware
+ * persisted changes nothing. The restore is boot_floor(): it also holds the
+ * floor at or above the MQTT backfill's delivery ceiling (csi_mqtt's
+ * NVS_KEY_DELIVERED, in this same namespace), so a boot whose floor writes
+ * failed while its ceiling writes did not never reissues an id Home
+ * Assistant already has. No extra write: the boot's first allocation is
+ * the write. g_id_floor_stored stays what NVS holds for the floor key. ── */
 
 constexpr const char*    NVS_KEY_EVENT_ID = "ev.next";
 uint32_t                 g_id_floor_stored = 0;
@@ -629,11 +638,10 @@ bool apply_event_id_floor_from_nvs() {
   Preferences prefs;
   if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) return false;
   const uint32_t persisted = (uint32_t)prefs.getULong(NVS_KEY_EVENT_ID, 0);
+  const uint32_t delivered = (uint32_t)prefs.getULong(csi_mqtt::NVS_KEY_DELIVERED, 0);
   prefs.end();
-  if (persisted > 0) {
-    csi_event_set_event_id_floor(persisted);
-    g_id_floor_stored = persisted;
-  }
+  csi_event_set_event_id_floor(csi_event_id_floor::boot_floor(persisted, delivered));
+  if (persisted > 0) g_id_floor_stored = persisted;
   return true;
 }
 
@@ -2873,9 +2881,10 @@ extern "C" void csi_event_on_committed(uint32_t                  event_id,
  * Fires on every event-id allocation. We throttle-persist the floor to
  * NVS (csi_event_id_floor.h's STRIDE) so a subsequent boot can resume
  * from "persisted + safety_margin" via apply_event_id_floor_from_nvs.
- * Without this, a reboot resets g_next_event_id to 1 and csi_mqtt's
- * reconnect-backfill watermark loses the ability to disambiguate
- * previous-boot vs current-boot events. ──────────────────────────── */
+ * Without this, a reboot restarts the allocator at kIdSpaceBase (backlog
+ * F46) and hands out ids an earlier boot already used, so csi_mqtt's
+ * reconnect-backfill watermark could not tell previous-boot events from
+ * current-boot ones. ──────────────────────────── */
 
 extern "C" void csi_event_on_id_advance(uint32_t new_id) {
   /* Cheap gate so we don't hit NVS on every event: one write per boot

@@ -19,7 +19,9 @@
 //     the glass's whole "no page?" hint is on the glass word for word, and so
 //     is each failure's whole fix after a wrong key and an absent network (F50,
 //     see coachOnGlass; never the shorter forms; --shots saves onboard_phone_hint_<flavor>.png and
-//     onboard_fail_<reason>_<flavor>.png); the captive DNS answers A with
+//     onboard_fail_<reason>_<flavor>.png), and nothing else on those scenes
+//     is cut to an ellipsis either: their titles and bodies are fitted too
+//     (F65, joinEllipses again); the captive DNS answers A with
 //     192.168.4.1 and AAAA with no data; the OS
 //     probe gets the 302; GET / serves PORTAL_HTML byte-for-byte as
 //     devices/display_portal.json pins it; /scan lists the staged LAN
@@ -179,9 +181,11 @@ function joinCard() {
 // the joined "SecuraCV-XXXX  •  <key>" line lost its key that way and the
 // stuck-phone hint its tail (F45); when the QR does not scan, that text is
 // the only way in. Text ink is anything brighter than 40: the halo ring
-// (col_edge at no more than 70 % opacity, ~27) stays under it, and the QR
-// card (the pure-white box, see joinCard) is left out. Returns the [x, y] of
-// each ellipsis' first dot.
+// (col_edge at no more than 70 % opacity, ~27) stays under it — the Fail
+// scene's amber ring does not, but it is one long arc, never a dot — and
+// the QR card (the pure-white box, see joinCard) is left out. Returns the
+// [x, y] of each ellipsis' first dot. Every scene with text is read this
+// way: Join (F45), and PhoneJoined and Fail (F65).
 function joinEllipses() {
   const cv = document.getElementById("glass");
   const w = cv.width, h = cv.height;
@@ -322,6 +326,16 @@ async function walkHarness(flavor) {
           `${JSON.stringify(ls.map((l) => l.text))}; forms ${JSON.stringify(forms)}) (F50)`);
       });
     await shotAs(`onboard_fail_${reason}`);
+    // F65: the reason above the fix, and the line under it, read whole too
+    // ("Network not found" was cut on the old round watch's 142 px title).
+    // This walk can cause two failures, the wrong key and the absent
+    // network; the other two reasons' titles are test_onboard_layout's and
+    // test_onboard_scenes' to hold.
+    await new Promise((r) => setTimeout(r, 400));
+    const cutFail = await E(joinEllipses);
+    check(cutFail.length === 0, `after a ${reason} failure the glass cuts ${cutFail.length} line(s) to an ` +
+      `ellipsis (first dots at ${JSON.stringify(cutFail)}; lines: ` +
+      `${JSON.stringify((await E(glassLines)).map((l) => l.text))}) (F65)`);
   };
 
   try {
@@ -404,6 +418,13 @@ async function walkHarness(flavor) {
         `${JSON.stringify(ls.map((l) => l.text))}; forms ${JSON.stringify(PHONE_HINTS)}) (F50)`);
     });
     await shotAs("onboard_phone_hint");
+    // F65: the scene's title and body are fitted like its coach line — the
+    // old glass cut "Nice - check your phone" on the round watch's 142 px
+    // title width and the nightstand's 156 px row.
+    const cutPhone = await E(joinEllipses);
+    check(cutPhone.length === 0, `the phone-joined scene cuts ${cutPhone.length} line(s) to an ellipsis (first ` +
+      `dots at ${JSON.stringify(cutPhone)}; lines: ${JSON.stringify((await E(glassLines)).map((l) => l.text))}) (F65)`);
+
     // F64: the PhoneJoined scene puts the bird on stage, and it sits where
     // the scene placed it: on the glass, clear of every line of text.
     // Before F64 it sat behind the title; after #1755 re-seated it per

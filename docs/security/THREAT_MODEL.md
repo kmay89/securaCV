@@ -600,6 +600,114 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
 - All frames Ed25519-signed; per-peer monotonic counter for replay
   protection (v0.2: wall-clock TTL retired per audit O1 — the counter is the
   authoritative freshness mechanism).
+- A signature proves who signed a frame, not which radio sent it or whom it
+  was for. The envelope signs no source or destination address, a
+  PlatformIO sender spends one outbound counter across every destination,
+  and frames go out unencrypted (peers registered with `encrypt = false`).
+  So a member's genuine frame that a receiver has not heard yet — a missed
+  broadcast, a rotation frame unicast to another member — can be recorded
+  and re-sent from any radio in range and still pass signature, `opera_id`
+  and counter. The PlatformIO tree therefore takes no radio address from a
+  frame: an opera frame from an address its transport table does not hold
+  is dropped before verification, and a member's address is bound only by a
+  completed pairing (or restored from NVS at boot), so a changed radio MAC
+  means a re-pair — with the two limits in the next bullet. F49 part 3
+  (#1756) briefly re-bound and persisted a member's address on such a
+  frame, which let an outsider re-point the member at its own radio (host
+  probe: the receiver's next rotation sent its OFFER to the outsider, and
+  the 60 s commit dropped the member when it stayed silent); withdrawn,
+  spec §8.3. canary-wap re-pointed a member's address, and its ESP-NOW
+  registration, at the source of any frame that passed its checks; a host
+  probe against its real `mesh_network.cpp` showed that a frame the
+  receiver missed, a frame the member sent to another member (canary-wap
+  counts per destination), or one heard before a power cut moved the member
+  to an outsider's radio, and a copied member address made the receiver
+  drop another member's ESP-NOW registration. Since 2026-10-01 it drops a
+  frame whose source is not the signer's own bound address before
+  verification, and a re-pair re-binds a member it already holds (logged).
+  A changed address therefore needs a re-pair with each member that holds
+  it, where one frame used to move it everywhere; an entry an older
+  firmware's re-pair duplicated is folded into one at boot (logged).
+- **canary-wap's pairing waits for its owners (2026-10-01).** Once a
+  re-pair could re-bind a member, the pairing handlers bound addresses,
+  and pairing frames are unsigned. Two ways to drive them with no owner
+  action were host-probed and closed. A joiner took COMPLETE as soon as it
+  showed its code, before its owner confirmed: an outsider that answered
+  its DISCOVER first finished the pairing, replacing the joiner's opera
+  or, holding the `opera_secret` and presenting a member's public key,
+  re-binding that member to its own radio. And an initiator kept a
+  finished pairing's ephemeral key and confirmed code until the 2-minute
+  timeout, so a radio that overheard its OFFER could send its own ACCEPT
+  and CONFIRM and get the `opera_secret` sealed to it in a COMPLETE anyone
+  in range can read (pre-existing). Now, as on the PlatformIO tree, the
+  joiner takes the first OFFER and a COMPLETE only after its owner
+  confirmed, and the initiator takes one ACCEPT, from where its OFFER
+  went, and wipes the pairing once COMPLETE is sent. Host-tested only.
+- **Still open on canary-wap: a radio copying a member's own address.**
+  ESP-NOW does not authenticate a source, so a radio that copies member
+  B's bound address passes canary-wap's address check. It can deliver B's
+  not-yet-heard frames: ones B sent to other members whose counter is above
+  the receiver's last-seen for B (B's counters are per destination and the
+  envelope names none), or, after a power cut, frames heard since the last
+  5-minute counter save. They are dispatched, and the receiver's last-seen
+  for B moves up, so B's own frames drop as replays until B's counter for
+  the receiver catches up. No address moves (host-probed; open). A
+  destination in the signed bytes would stop the cross-member case (a wire
+  change); the power-cut window is the counter-save cadence. Separately, a
+  rebooted canary-wap restarts its per-member counters at 1 (spec §3.3), so
+  every member that heard it drops its frames until they climb back past
+  what that member last saw (host-probed; open).
+- **The 6-digit pairing code does not cover the long-term keys**
+  (pre-existing; found in the review of the F49 part 3 withdrawal). The
+  code and the CONFIRM hash are derived from the ephemeral X25519 session
+  key alone, and the long-term Ed25519 key a pairing binds is taken as the
+  DISCOVER (joiner to initiator) or OFFER (initiator to joiner) carried it;
+  that key signs nothing in the exchange. So an outsider that relays an
+  owner-run pairing between the two devices, from its own address and
+  without touching the ephemeral keys, gets matching codes on both screens
+  while choosing the key the initiator records (the joiner takes the
+  OFFER's key the same way; that side was not probed). Claiming an
+  already-trusted member's key re-binds that member to the outsider's radio
+  and persists it, and the member's own frames then drop as coming from an
+  unbound address until another re-pair, which runs the same exchange.
+  Claiming its own key makes the outsider a trusted member, able to sign a
+  rotation that removes a real one. Host-probed on the PlatformIO tree,
+  with the same results before #1756, on #1756 and after the withdrawal.
+  canary-wap derives its code the same way. Since its re-pair re-binds a
+  member it already holds (2026-10-01), a relay claiming a member's key
+  re-binds that member to the relay's radio there too (host-probed;
+  before, the relay added a duplicate entry no lookup reached); the move
+  is logged as a health WARNING, the owner's only sign. What the code
+  does bind is the ephemeral exchange: by construction (not probed end to
+  end), a relay that swaps an ephemeral key shows different codes on the
+  two screens, which is what keeps the `opera_secret` sealed in COMPLETE
+  from it. Fixing the key substitution needs both long-term keys in the
+  code and the CONFIRM hash, or a transcript signed with them: a wire
+  change on both trees, open. On the PlatformIO tree the re-pair also
+  cannot start while eight members are bound: the transport table has no
+  slot for the new address, so the pairing's replies cannot be sent until
+  a member leaves or is removed (host-probed).
+- **Still open: where a verified frame's source is recorded.** The
+  PlatformIO receiver notes the address each member's last verified frame
+  arrived from (its liveness link), and that can be any address in the
+  transport table, not only the member's own binding. Two get there without
+  the member. While a pairing runs, the partner's address is in the
+  table, so an outsider that answers the pairing from its own address can
+  deliver a member's not-yet-heard frame there with no spoofing until the
+  pairing ends (probed with the receiver as initiator; as joiner it adds
+  the address of whoever sends it an OFFER the same way, not probed). And
+  because ESP-NOW does not
+  authenticate the source address, a radio that copies another bound
+  member's address can do the same. No binding moves, but the receiver
+  then records that address for the signer: its rekey replies to the
+  signer go there (host probe: a replayed `REKEY_OFFER` from the pairing
+  partner's address got the receiver's `REKEY_ACCEPT` sent to the
+  outsider), and a later removal of the signer takes that address out of
+  the transport table, which strands the member whose address was copied.
+  Host-probed on the PlatformIO tree, the same before #1756. A likely fix,
+  not built: record the link only when the frame comes from the signer's
+  own bound address, and send rekey unicasts and drop addresses by that
+  binding.
 - `opera_secret` storage requires flash encryption enabled
   (eFuse `FLASH_CRYPT_CNT > 0`); load/save paths refuse on FE-off devices
   and log loudly (v0.2 audit O2). That keeps the secret off un-fused

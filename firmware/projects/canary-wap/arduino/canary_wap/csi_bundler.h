@@ -11,20 +11,23 @@
  * Bundling is the only path emitted events take to persistence. The chokepoint
  * (csi_event::emit) calls `csi_bundler_admit` which returns:
  *
- *   CSI_BUNDLER_BUFFERED — emit was rolled into an open bundle. The bundle
- *                         will commit later (window close or explicit flush).
- *                         Out-param event_id is the bundle's id.
+ *   CSI_BUNDLER_BUFFERED — emit opened a bundle or was rolled into an open
+ *                         one. The bundle commits later (window close, quiet
+ *                         gap, or an explicit flush). Out-param is the open
+ *                         bundle's HANDLE, not an event id.
  *
- *   CSI_BUNDLER_COMMIT   — emit is the first observation of a new bundle (or
- *                         is a different state from the open bundle and the
- *                         old bundle was just committed). The chokepoint
- *                         should now persist normally. Out-param event_id
- *                         may be 0 (chokepoint allocates) or non-zero (the
- *                         bundler reused a freshly-closed bundle's id).
+ *   CSI_BUNDLER_COMMIT   — the emit cannot be keyed (ambient, or no state
+ *                         name): the chokepoint commits it directly.
+ *                         Out-param is 0.
  *
- *   CSI_BUNDLER_DROPPED  — the emit is a redundant ambient sample within a
- *                         very tight window and should be silently dropped.
- *                         (Reserved; current implementation does not drop.)
+ *   CSI_BUNDLER_DROPPED  — bad input (null module, type or values).
+ *
+ * Ids (backlog F46): a bundle takes its event id when it COMMITS, from the
+ * chokepoint's one allocator (csi_event_commit_bundle_ in csi_event.cpp,
+ * under the chokepoint's commit lock), so bundled and direct rows share one
+ * id space and ids rise in commit order. Until then it is known by a handle
+ * from [kHandleBase, kIdSpaceBase) (csi_event_id_floor.h), below every
+ * event id, so an open row is never mistaken for a committed one.
  *
  * The bundler only operates on category=EVENT or category=ANOMALY. Ambient
  * is always passed through untouched (returns COMMIT immediately).
@@ -67,15 +70,16 @@ typedef enum {
  *   COMMIT   — caller should persist this emit immediately. Reserved for
  *              ambient and stateless emits that the bundler cannot key.
  *   BUFFERED — emit was accepted into a new or existing bundle. The bundle
- *              will commit later via close_slot()'s commit hooks.
- *              `*event_id_out` carries the bundle's stable event id.
+ *              commits later, through the chokepoint, and takes its event
+ *              id then. `*handle_out` carries the open bundle's handle
+ *              (stable while it is open; not an event id).
  *   DROPPED  — emit rejected (currently only on bad input).
  */
 csi_bundler_outcome_t csi_bundler_admit(const char*           module_id,
                                         const char*           type_name,
                                         csi_privacy_class_t   privacy,
                                         csi_event_values_t*   values,
-                                        uint32_t*             event_id_out);
+                                        uint32_t*             handle_out);
 
 /**
  * Close any bundle past its window or quiet gap NOW, without waiting for
@@ -83,14 +87,15 @@ csi_bundler_outcome_t csi_bundler_admit(const char*           module_id,
  * goes quiet after a state-bearing event hold its last bundle "open"
  * indefinitely — snapshot_open would keep reporting it as current, and a
  * client's present-tense claim would be false. Call once per main loop
- * (cheap — a bounded slot scan that closes only when overdue); commit
- * hooks run on the caller's task, outside the lock, like every close.
+ * (cheap — a bounded slot scan that closes only when overdue); the commit
+ * runs on the caller's task, outside the slot lock, like every close.
  */
 void csi_bundler_tick(void);
 
 /**
- * Force-close every open bundle. Each closed bundle is re-committed via the
- * chokepoint's commit hooks so the host can update its persistence and UI.
+ * Force-close every open bundle. Each closed bundle is committed through
+ * the chokepoint (it takes its event id then) so the host can update its
+ * persistence and UI.
  * Called by csi_event_flush_bundles() and at firmware shutdown.
  */
 void csi_bundler_flush_all(void);
@@ -132,7 +137,9 @@ bool csi_bundler_has_open(const char* module_id,
  * Safe to call from the HTTP server task: the slot table is mutex-guarded
  * (see csi_bundler.cpp's threading note), and each record is a consistent
  * copy — never a live pointer into a slot the main loop may close. An open
- * record's `values.duration_sec` carries the LIVE span so far; its
+ * record's `event_id` is the bundle's HANDLE, in [kHandleBase,
+ * kIdSpaceBase): the bundle has no event id until it commits (backlog F46).
+ * Its `values.duration_sec` carries the LIVE span so far; its
  * `values.dismissed` is always 0 (only committed ring rows are dismissable).
  * This is what lets /api/events/today show an alarm while it is still
  * happening instead of only after its bundle closes.

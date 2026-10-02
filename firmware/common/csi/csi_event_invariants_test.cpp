@@ -54,6 +54,7 @@
 #include "csi_bundler.h"
 #include "csi_witness_payload.h"
 #include "csi_event_log_line.h"
+#include "csi_event_id_floor.h"
 #include "ble_events_module.h"
 #include "meta_quiet_hours.h"
 #include "core_multilink_fusion.h"
@@ -358,8 +359,12 @@ void test_bundler_snapshot_exposes_open_bundles() {
   csi_event_record_t open_rows[8];
   size_t nopen = csi_bundler_snapshot_open(open_rows, 8);
   EXPECT(nopen == 1, "two same-state emits must show as ONE open bundle");
-  EXPECT(open_rows[0].event_id >= 0x80000000u,
-         "an open bundle carries its bundler-minted id");
+  /* Backlog F46: an open bundle has no event id yet. Its row carries the
+   * bundle's handle, below every event id, so no client can take it for a
+   * committed row. */
+  EXPECT(open_rows[0].event_id >= csi_event_id_floor::kHandleBase
+         && open_rows[0].event_id < csi_event_id_floor::kIdSpaceBase,
+         "an open bundle carries a handle, never an event id");
   EXPECT(strcmp(open_rows[0].type_name, "test_state") == 0,
          "the open row keeps its type_name");
   EXPECT(open_rows[0].bundled_count == 2,
@@ -373,6 +378,9 @@ void test_bundler_snapshot_exposes_open_bundles() {
   nopen = csi_bundler_snapshot_open(open_rows, 8);
   EXPECT(nopen == 0, "a flushed bundle must leave the open snapshot");
   EXPECT(g_captured_count >= 1, "the flush still commits the bundle");
+  EXPECT(g_captured_count >= 1
+         && g_captured[0].event_id >= csi_event_id_floor::kIdSpaceBase,
+         "the committed bundle takes an event id from the one id space");
 }
 
 void test_witness_payload_includes_metadata() {
@@ -959,23 +967,27 @@ void inject_setup(uint32_t floor) {
   csi_event_set_event_id_floor(floor);
 }
 
+/* Ids of this firmware are kIdSpaceBase and up (backlog F46). */
+constexpr uint32_t kB = csi_event_id_floor::kIdSpaceBase;
+
 void test_inject_restores_rows_newest_first_without_hooks() {
-  inject_setup(100);
-  for (uint32_t id = 10; id <= 12; ++id) {
+  inject_setup(kB + 100);
+  for (uint32_t id = kB + 10; id <= kB + 12; ++id) {
     const csi_event_record_t r = make_persisted(id, "test_state");
     EXPECT(csi_event_inject(&r), "an earlier boot's row below the floor is restored");
   }
   csi_event_record_t out[8];
   const size_t n = csi_event_recent(out, 8);
   EXPECT(n == 3, "three rows restored");
-  EXPECT(n == 3 && out[0].event_id == 12 && out[1].event_id == 11 && out[2].event_id == 10,
+  EXPECT(n == 3 && out[0].event_id == kB + 12 && out[1].event_id == kB + 11
+         && out[2].event_id == kB + 10,
          "injected oldest-first, read back newest-first like live commits");
   csi_event_record_t found;
-  EXPECT(csi_event_find(11, &found) && found.values.motion_score == 40,
+  EXPECT(csi_event_find(kB + 11, &found) && found.values.motion_score == 40,
          "a restored row is findable (dismiss works on it)");
   EXPECT(g_captured_count == 0, "inject never fires the commit hook (no MQTT / SD re-append)");
   EXPECT(g_witness_commit_count == 0, "inject never re-witnesses an event");
-  EXPECT(csi_event_get_next_event_id() == 100, "inject allocates no id");
+  EXPECT(csi_event_get_next_event_id() == kB + 100, "inject allocates no id");
 
   /* A live commit after the restore still lands newest. */
   csi_event_values_t v;
@@ -984,47 +996,47 @@ void test_inject_restores_rows_newest_first_without_hooks() {
   v.present_fields = CSI_FIELD_MOTION_SCORE;   /* stateless: commits directly */
   v.motion_score   = 7;
   const uint32_t live = csi_event_emit("test.module", "test_state", &v);
-  EXPECT(live == 100, "the first live id starts at the floor");
-  EXPECT(csi_event_recent(out, 8) == 4 && out[0].event_id == 100,
+  EXPECT(live == kB + 100, "the first live id starts at the floor");
+  EXPECT(csi_event_recent(out, 8) == 4 && out[0].event_id == kB + 100,
          "a live commit sits ahead of the restored rows");
 }
 
 void test_inject_fails_closed() {
-  inject_setup(100);
+  inject_setup(kB + 100);
   EXPECT(!csi_event_inject(nullptr), "null refused");
   csi_event_record_t r = make_persisted(0, "test_state");
   EXPECT(!csi_event_inject(&r), "id 0 refused");
 
-  r = make_persisted(100, "test_state");
+  r = make_persisted(kB + 100, "test_state");
   EXPECT(!csi_event_inject(&r), "an id this boot can still allocate is refused");
   r = make_persisted(4000000000u, "test_state");
   EXPECT(!csi_event_inject(&r), "an id far above the floor is refused");
 
-  r = make_persisted(20, "test_state");
+  r = make_persisted(kB + 20, "test_state");
   strncpy(r.module_id, "not.a.module", CSI_EVENT_NAME_MAX - 1);
   EXPECT(!csi_event_inject(&r), "an unregistered module is refused");
-  r = make_persisted(20, "no_such_type");
+  r = make_persisted(kB + 20, "no_such_type");
   EXPECT(!csi_event_inject(&r), "an unregistered event type is refused");
 
   /* The card claims p0; the manifest says test_p1 is P1. The manifest wins. */
-  r = make_persisted(21, "test_p1");
+  r = make_persisted(kB + 21, "test_p1");
   r.privacy = CSI_PRIVACY_P0;
   EXPECT(!csi_event_inject(&r), "a P1 type is refused under a P0 ceiling whatever the card claims");
-  r = make_persisted(22, "test_p2");
+  r = make_persisted(kB + 22, "test_p2");
   EXPECT(!csi_event_inject(&r), "a P2 type is refused under a P0 ceiling");
 
   csi_event_record_t out[8];
   EXPECT(csi_event_recent(out, 8) == 0, "no refused record touched the ring");
 
   csi_event_set_privacy_ceiling(CSI_PRIVACY_P1);
-  r = make_persisted(21, "test_p1");
+  r = make_persisted(kB + 21, "test_p1");
   r.privacy = CSI_PRIVACY_P0;
   EXPECT(csi_event_inject(&r), "the same P1 row is restored once the owner consented to P1");
-  EXPECT(csi_event_find(21, &out[0]) && out[0].privacy == CSI_PRIVACY_P1,
+  EXPECT(csi_event_find(kB + 21, &out[0]) && out[0].privacy == CSI_PRIVACY_P1,
          "the restored row carries the manifest's class, not the card's");
   csi_event_set_privacy_ceiling(CSI_PRIVACY_P0);
 
-  r = make_persisted(30, "test_state");
+  r = make_persisted(kB + 30, "test_state");
   EXPECT(csi_event_inject(&r), "first copy restored");
   EXPECT(!csi_event_inject(&r), "a duplicate id is refused");
 
@@ -1034,18 +1046,51 @@ void test_inject_fails_closed() {
   v.category       = CSI_CATEGORY_EVENT;
   v.present_fields = CSI_FIELD_MOTION_SCORE;
   EXPECT(csi_event_emit("test.module", "test_state", &v) != 0, "live commit");
-  r = make_persisted(31, "test_state");
+  r = make_persisted(kB + 31, "test_state");
   EXPECT(!csi_event_inject(&r), "inject refuses after a live commit this boot");
 
-  /* No floor restored (NVS lost): next id is 1, so every id is refused. */
+  /* No floor restored (NVS lost): the allocator is at kIdSpaceBase, so every
+   * id this firmware handed out on an earlier boot is refused (this boot
+   * can hand it out again). A row an older firmware wrote, below the base,
+   * is one no boot of this firmware can allocate, and is restored. */
   inject_setup(0);
+  r = make_persisted(kB + 5, "test_state");
+  EXPECT(!csi_event_inject(&r), "without the NVS floor no row of this firmware is restored");
   r = make_persisted(5, "test_state");
-  EXPECT(!csi_event_inject(&r), "without the NVS floor nothing is restored");
+  EXPECT(csi_event_inject(&r), "an older firmware's id, below the one id space, is restored");
+
+  /* The handle range [kHandleBase, kIdSpaceBase) is an open bundle's `id`,
+   * never a ring row's, so a card line there is refused whatever the floor:
+   * restored, it would share its id with the next open row on
+   * /api/events/today, and a dismiss by that id would reach it instead. */
+  const uint32_t kH = csi_event_id_floor::kHandleBase;
+  const uint32_t floors[] = {0u, kB + 100};
+  for (uint32_t floor : floors) {
+    inject_setup(floor);
+    r = make_persisted(kH, "test_state");
+    EXPECT(!csi_event_inject(&r), "the first handle is refused");
+    r = make_persisted(kB - 1, "test_state");
+    EXPECT(!csi_event_inject(&r), "the last handle is refused");
+    r = make_persisted(kH - 1, "test_state");
+    EXPECT(csi_event_inject(&r), "an older firmware's id just below the handle range is restored");
+  }
+  inject_setup(kB + 100);
+  r = make_persisted(kH, "test_state");
+  (void)csi_event_inject(&r);
+  csi_event_values_t open_v;
+  csi_event_values_init(&open_v);
+  open_v.category       = CSI_CATEGORY_EVENT;
+  open_v.present_fields = CSI_FIELD_STATE_NAME;
+  strncpy(open_v.state_name, "active", sizeof(open_v.state_name) - 1);
+  const uint32_t handle = csi_event_emit("test.module", "test_state", &open_v);
+  EXPECT(handle == kH, "the boot's first open bundle takes the first handle");
+  csi_event_record_t ring_row;
+  EXPECT(!csi_event_find(handle, &ring_row), "no ring row shares an open bundle's id");
 }
 
 void test_inject_cleans_like_emit() {
-  inject_setup(100);
-  csi_event_record_t r = make_persisted(40, "test_state");
+  inject_setup(kB + 100);
+  csi_event_record_t r = make_persisted(kB + 40, "test_state");
   r.values.breathing_rate_bpm = 31;    /* not in test_state's allow-list */
   r.values.breathing_score    = 77;    /* not allowed */
   r.values.duration_sec       = 600;   /* not allowed */
@@ -1059,7 +1104,7 @@ void test_inject_cleans_like_emit() {
   EXPECT(csi_event_inject(&r), "restored");
 
   csi_event_record_t got;
-  EXPECT(csi_event_find(40, &got), "findable");
+  EXPECT(csi_event_find(kB + 40, &got), "findable");
   EXPECT(got.values.breathing_rate_bpm == 0, "disallowed bpm zeroed");
   EXPECT(got.values.breathing_score == 0, "disallowed breathing score zeroed");
   EXPECT(got.values.duration_sec == 0, "disallowed duration zeroed");
@@ -1076,8 +1121,8 @@ void test_inject_cleans_like_emit() {
 }
 
 void test_inject_roundtrips_the_log_line() {
-  inject_setup(1000);
-  csi_event_record_t r = make_persisted(500, "test_state");
+  inject_setup(kB + 1000);
+  csi_event_record_t r = make_persisted(kB + 500, "test_state");
   strncpy(r.values.confidence, "observed", sizeof(r.values.confidence) - 1);
   char line[csi_event_log_line::kLineMax];
   const size_t n = csi_event_log_line::marshal(&r, line, sizeof(line));
@@ -1087,7 +1132,7 @@ void test_inject_roundtrips_the_log_line() {
   EXPECT(csi_event_log_line::parse(line, &parsed), "parsed");
   EXPECT(csi_event_inject(&parsed), "a line the log wrote is restored");
   csi_event_record_t got;
-  EXPECT(csi_event_find(500, &got)
+  EXPECT(csi_event_find(kB + 500, &got)
          && strcmp(got.values.state_name, "active") == 0
          && strcmp(got.values.confidence, "observed") == 0
          && got.values.motion_score == 40
@@ -1098,6 +1143,10 @@ void test_inject_roundtrips_the_log_line() {
 }  /* namespace */
 
 extern "C" int csi_event_invariants_run() {
+  /* The allocator's static start, before any test resets it: what a boot
+   * runs with when the host cannot read NVS at all (no floor restored). */
+  EXPECT(csi_event_get_next_event_id() == csi_event_id_floor::kIdSpaceBase,
+         "the allocator starts at kIdSpaceBase before any floor is restored");
   test_disallowed_fields_are_zeroed();
   test_privacy_p1_blocked_under_p0_ceiling();
   test_privacy_p2_never_persists_to_witness();

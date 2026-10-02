@@ -60,7 +60,16 @@ cannot check for itself:
    `restore_event_id_floor()` and then hands `s_id_floor_stored` to
    `s_backfill.begin(` as its floor. A zero there would let the ceiling pass
    the floor once the two strides fall out of step (a failed NVS write),
-   and a new boot's first ids would read as delivered.
+   and a new boot's first ids would read as delivered. And the allocator's
+   next id (backlog F46): `current_link()` sets `link.id_next` once, from
+   `csi_event_get_next_event_id()`, and the pump hands that `link` to
+   `s_backfill.card_open(`. Without it the planner trusts only the ids it
+   saw committed this boot, and a forged card line is the only thing it
+   would have to go on for the rest. `restore_event_id_floor()` restores
+   `csi_event_id_floor::boot_floor(<floor>, <delivery ceiling>)`, the
+   ceiling read from `kNvsKeyDelivered`: the host test's model boots that
+   way (a boot whose floor writes failed while its ceiling writes did not
+   must not reissue ids Home Assistant has).
 5. The broker-change epoch, in the pump. Before any row is dequeued, an
    `if` whose `||` condition holds `!link.accepting` and a comparison of
    `s_dest_epoch` with `mqtt_destination_epoch()` calls
@@ -263,6 +272,7 @@ SIG_SEND_BACKFILL = r"\bsend_backfill\s*\([^)]*\)\s*(?:override\s*)?"
 SIG_RELOAD = r"\bvoid\s+apply_pending_reload\s*\(\s*(?:void)?\s*\)"
 SIG_EPOCH = r"\buint32_t\s+mqtt_destination_epoch\s*\(\s*(?:void)?\s*\)"
 SIG_BOOT_STORY = r"\bbool\s+boot_story_bridged_elsewhere\s*\(\s*const\s+char\s*\*\s*kind\s*\)"
+SIG_RESTORE = r"\bvoid\s+restore_event_id_floor\s*\(\s*(?:void)?\s*\)"
 
 # What the tamper bridge's `if` may test (each `&&` term, squashed).
 BRIDGE_TERMS = (
@@ -422,6 +432,35 @@ def check_floor_glue(egress_src: str, errors: list[str]) -> None:
                 f"{EGRESS_CPP}: current_link() must set link.id_floor once, from "
                 "s_id_floor_stored (the allocator's floor as NVS holds it) — the planner caps its "
                 "ceiling there, so a new boot's first ids are never read as delivered")
+        nexts = re.findall(r"\blink\.id_next\s*=(?!=)([^;]*);", body)
+        if len(nexts) != 1 or squash(nexts[0]) != "csi_event_get_next_event_id()":
+            errors.append(
+                f"{EGRESS_CPP}: current_link() must set link.id_next once, from "
+                "csi_event_get_next_event_id() — the planner never sends or credits a card line "
+                "at or above it, so a forged id near 0xFFFFFFFF never goes out under this "
+                "device's key (backlog F46)")
+    span = the_body(code, SIG_RESTORE, f"{EGRESS_CPP}: restore_event_id_floor()", errors)
+    if span is not None:
+        body = code[span[0]:span[1]]
+        reads = dict((m.group(2), m.group(1)) for m in re.finditer(
+            r"\b(\w+)\s*=\s*\(uint32_t\)\s*prefs\.getULong\(\s*(kNvsKey\w+)\s*,", body))
+        args = call_args(body, "csi_event_id_floor::boot_floor(")
+        sets = call_args(body, "csi_event_set_event_id_floor(")
+        if args is None or len(args) != 2 or sets is None or \
+                not sets[0].startswith("csi_event_id_floor::boot_floor(") or \
+                args[0] != reads.get("kNvsKeyEventId") or args[1] != reads.get("kNvsKeyDelivered"):
+            errors.append(f"{EGRESS_CPP}: restore_event_id_floor() must restore "
+                          "csi_event_set_event_id_floor(csi_event_id_floor::boot_floor(<floor>, "
+                          "<ceiling>)) from kNvsKeyEventId and kNvsKeyDelivered — the floor is held "
+                          "above the delivery ceiling (backlog F46)")
+    span_pump = the_body(code, SIG_PUMP, f"{EGRESS_CPP}: csi_event_egress_pump()", errors,
+                         need="xQueueReceive(")
+    if span_pump is not None:
+        args = call_args(code[span_pump[0]:span_pump[1]], "s_backfill.card_open(")
+        if args is None or len(args) != 3 or args[2] != "link":
+            errors.append(f"{EGRESS_CPP}: csi_event_egress_pump() must hand its `link` (the "
+                          "allocator's next id with it) to s_backfill.card_open() as the third "
+                          "argument — the card's tail is clamped below it")
     span = the_body(code, SIG_PUMP, f"{EGRESS_CPP}: csi_event_egress_pump()", errors,
                     need="xQueueReceive(")
     if span is not None:
@@ -681,6 +720,20 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      lambda m, e: (m, mutate_in(e, SIG_PUMP, r"=\s*current_link\(\)\s*;",
                                 "= csi_event_backfill::Link{mqtt_accepting(), mqtt_connected(), "
                                 "0, millis()};", need="xQueueReceive("))),
+    ("current_link() drops the allocator's next id",
+     lambda m, e: (m, mutate_in(e, SIG_CURRENT_LINK, r"(link\.id_next\s*=)[^;]*;", r"\1 0;"))),
+    ("current_link() sets no allocator next id",
+     lambda m, e: (m, mutate_in(e, SIG_CURRENT_LINK, r"\n[ \t]*link\.id_next\s*=[^;]*;", ""))),
+    ("the card opens with a link that has no next id",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"(s_backfill\.card_open\(\s*log_size\s*,\s*tail_id\s*,)\s*link\s*\)",
+                                r"\1 csi_event_backfill::Link{})", need="xQueueReceive("))),
+    ("the floor is restored without the delivery ceiling",
+     lambda m, e: (m, mutate_in(e, SIG_RESTORE, r"boot_floor\(\s*persisted\s*,\s*delivered\s*\)",
+                                "boot_floor(persisted, 0)"))),
+    ("the floor is restored raw, below the id space",
+     lambda m, e: (m, mutate_in(e, SIG_RESTORE,
+                                r"csi_event_id_floor::boot_floor\(\s*persisted\s*,\s*delivered\s*\)",
+                                "persisted"))),
     ("begin() hands the planner no floor",
      lambda m, e: (m, mutate_in(e, SIG_BEGIN, r"(s_backfill\.begin\(\s*ceiling\s*,).*?(,\s*s_port\s*\))",
                                 r"\1 0\2"))),

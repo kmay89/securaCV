@@ -402,19 +402,14 @@ Code: `firmware/canary/src/csi_event_egress.cpp` over the loop-task adapter
 `firmware/common/csi/src/csi_event_backfill.h` (host-tested against a model
 of Home Assistant's replay gate). Owner: U1.
 
-Read the results knowing one thing the backfill cannot change: rows that go
-through the CSI bundler (presence, and `system.integrity` tampers, which
-carry a state) take ids from the bundler's own space — 0x80000000 upward,
-restarting every boot, covered by no floor — and commit when their bundle
-closes, not in id order. Home Assistant's replay gate refuses a row whose
-id is below one it already verified, live or not, and the backfill skips
-exactly those rows. The first bundled row that goes out also moves the
-backfill's watermark into the bundler's space for good. After that, the
-backfill never sends a chokepoint-id row again on that canary, in the same
-boot or after a reboot; only live rows still go out. So judge "whole"
-against the rows HA could accept, on a canary whose presence module has
-not yet reported. A `replay` verdict on a LIVE row is that pre-existing
-id-space problem, not the backfill.
+Since sweep F46 every row, the bundled ones (presence, and
+`system.integrity` tampers, which carry a state) included, takes its event
+id when it commits, from one allocator that starts at 0xC0000000, so the
+log is in id order and ids keep rising across reboots. On firmware from
+before F46, bundled rows took ids from the bundler's own space (0x80000000
+upward, restarting every boot) and HA refused many of them, and the
+chokepoint rows after them, live. A `replay` verdict on any row from this
+firmware, live or backfilled, is now a finding.
 
 - [ ] **An outage longer than the offline queue arrives whole**
   - Setup: an HA-enabled canary image (`release_ha`) with a card in,
@@ -434,9 +429,8 @@ id-space problem, not the backfill.
     commit a few more, restart the broker.
   - Expected: the pre-reboot backlog arrives in id order with no `replay`
     verdict on any backfilled body (at most ten of its rows may be missing
-    — the NVS ceiling's stride). Post-reboot rows from the bundler restart
-    below the pre-reboot ids, so HA refuses them live and the backfill does
-    not send them — the id-space problem above, recorded as an open item.
+    — the NVS ceiling's stride). The post-reboot rows, presence included,
+    have higher ids and arrive after it, none refused.
   - Artifact: `docs/audit/repro/F37/reboot/`.
 - [ ] **Another device's card is left alone**
   - Setup: a card taken from a canary-wap (or another canary).
@@ -452,6 +446,54 @@ id-space problem, not the backfill.
     commit on the canary-wap, the card's `/EVENTS` is unchanged; back in the
     canary, the backfill sends none of the canary-wap's rows.
   - Artifact: `docs/audit/repro/F37/canary-card-in-wap/`.
+
+## One event-id space (F46) — on-device verification
+
+Code: `firmware/common/csi/src/csi_event.cpp` (one allocator, ids taken at
+commit under a recursive commit lock), `csi_bundler.cpp` (open bundles carry
+handles), `csi_event_id_floor.h` (`kIdSpaceBase`, `boot_floor`), the canary's
+`src/csi_event_egress.cpp` and the canary-wap's `csi_integration.cpp` /
+`csi_event_log.cpp`. Host-tested
+(`firmware/tests_host/test_csi_event_id_space.cpp` on the real library,
+`test_csi_event_backfill.cpp`, `test_csi_event_id_floor.cpp`) and held by
+`firmware/scripts/check_csi_commit_order.py`; the commit lock across the
+loop task and the NimBLE host task is not something a host test can run.
+Owner: U1.
+
+- [ ] **An upgraded device keeps reaching Home Assistant**
+  - Setup: a canary (`release_ha`) and a canary-wap, each paired to Home
+    Assistant on firmware from before F46, each having published a presence
+    row (so HA's mark sits at 0x80000000 or above).
+  - Repro: flash this firmware without erasing NVS; walk in front of each
+    sensor, and let it commit a few other events too.
+  - Expected: every body's `event_id` is 3221225472 (0xC0000000) or above,
+    rising in arrival order; HA shows no `replay` verdict; nothing was reset
+    in HA or on the device.
+  - Artifact: `docs/audit/repro/F46/upgrade/`.
+- [ ] **A bundle that closes after a reboot is accepted**
+  - Setup: as above, on this firmware.
+  - Repro: start presence, power-cycle mid-presence, let presence start and
+    end again.
+  - Expected: the post-reboot rows' ids are above every pre-reboot id; no
+    `replay` verdict.
+  - Artifact: `docs/audit/repro/F46/reboot-bundle/`.
+- [ ] **A Scout arrival and a loop-task commit at once stay in order**
+  - Setup: a canary with a paired BLE Scout beacon and an open presence
+    bundle near its quiet-gap close.
+  - Repro: bring the beacon in range as the presence bundle closes, a few
+    times; then repeat with the broker slowed or blocked (a firewall rule
+    that drops its packets), so a publish holds the commit lock.
+  - Expected: the `events` bodies' ids rise in publish order; no `replay`
+    verdict; no watchdog reset and no BLE supervision drop (the commit lock
+    is held across the commit hooks on both tasks, the canary-wap's MQTT
+    publish included).
+  - Artifact: `docs/audit/repro/F46/scout-race/`.
+- [ ] **Open rows carry handles**
+  - Setup: a canary-wap on this firmware.
+  - Repro: `GET /api/events/today` while presence is ongoing.
+  - Expected: the `"open":1` row's `id` is in [2147483648, 3221225472);
+    the dashboard shows it as happening now, with no dismiss button.
+  - Artifact: `docs/audit/repro/F46/open-row/`.
 
 ## SoftAP WPA2/WPA3 transition + PMF (F16) — on-device verification
 

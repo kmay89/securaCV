@@ -83,8 +83,10 @@ Two smaller one-time human acts, same flavor:
   `custom_components/securacv` files again in #1725 (and F55 one carried
   test), resynced in securacv-homeassistant#19, and HA18, HA17 and HA22
   moved them again in #1727, resynced by hand in securacv-homeassistant#20
-  (2026-10-01). Until the secret is set, every `main` change to the
-  carried set needs that again.
+  (2026-10-01). #1761 adds one carried test (F46's
+  `tests/test_replay_one_id_space.py`), which waits for the next resync.
+  Until the secret is set, every `main` change to the carried set needs
+  that again.
 - [ ] **U7 [human] Open the staged home-assistant/brands submission.**
   `brands/home-assistant/README.md` says "not submitted"; it is the only route
   to an integration icon on HA < 2026.3.
@@ -1157,7 +1159,7 @@ so — see D2 below.)
   make. `onboard_probe.mjs` fails on an ellipsis and reads the firmware's
   own labels, the hint included (4242eb7). The emulator dist is rebuilt.
   Bench (U1): real 172/180 px glass. Found here: F50.
-- [ ] **F46 [code] The CSI bundler's event ids live outside the chokepoint
+- [x] **F46 [code] The CSI bundler's event ids live outside the chokepoint
   id space.** Found by F37 (#1718). Rows that pass through the CSI bundler
   (presence, and the system.integrity tampers, since they carry a state)
   take ids from `common/csi/src/csi_bundler.cpp`'s own space, 0x80000000
@@ -1175,6 +1177,53 @@ so — see D2 below.)
   behavior). Recommended: allocate bundle ids from the chokepoint allocator
   at commit time, in both trees and the open-row display. The fix must
   reset or migrate `csi.evsent` and Home Assistant's stored mark.
+  *Done (#1761):* one event-id space, in both trees. Every committed
+  csi_event, bundled or direct, takes its id when it commits, from
+  csi_event.cpp's one allocator (`commit_row()`). An open bundle has no
+  event id, only a handle in [0x80000000, 0xC0000000). That handle is what
+  `csi_event_emit` returns for a buffered emit, and the `id` of an
+  `"open":1` row on the canary-wap's `/api/events/today`.
+  `csi_event_inject` refuses a card line in that range, so no restored row
+  shares an open row's id. The allocator starts at 0xC0000000
+  (`csi_event_id_floor.h` `kIdSpaceBase`) on every device, above every id
+  an older firmware handed out. So an upgraded device's next id is above
+  Home Assistant's stored mark, and nothing is reset: not `csi.evsent`, not
+  HA's mark. HA is unchanged; `tests/test_replay_one_id_space.py` drives
+  its real gate across restarts. The space holds 2^30 ids. That is about 16
+  years at the most a device can commit (183,960 a day: the uncapped
+  `wifi.channel_activity` at one row a second, the other 15 modules at the
+  255/hour override, and bundles reopened on a refunded refresh, F80), and
+  about 65 years at the shipped defaults. Under a boot every 5 s it lasts
+  about 17 years, at the NVS write rate F29 accepted. At exhaustion ids
+  restart at 1 and HA refuses the device, with nothing on the device to say
+  so (F82). `test_csi_event_id_floor.cpp` pins the numbers. Both hosts
+  restore `boot_floor(floor, csi.evsent)`: held at or above the delivery
+  ceiling, never past `kHoldLimit` (0xF0000000). Both backfills restore
+  their watermark with `csi_event_backfill::restore()`, which treats a
+  ceiling `boot_floor` did not follow as no record. So a device whose
+  ceiling an older firmware pushed to the top for a forged card line
+  resumes its backfill once HA is re-pinned. A recursive commit lock spans
+  allocate-and-hooks, because ble.scout commits from the NimBLE host task
+  in both trees; `firmware/scripts/check_csi_commit_order.py` (13
+  mutations, run by `check_csi_sync.sh`) holds that shape.
+  `csi_event_log_line.h` reads id/first/last as uint32 (strtol saturated at
+  2147483647 on the ESP32) and refuses a sign or an overflow. Neither
+  backfill (the canary's planner, the canary-wap's `iterate_since`) sends
+  or credits a card line at or above the allocator's next id, so a forged
+  id cannot push HA's mark or the id floor toward the wrap. Below that
+  bound the SD log is still trusted input (F79).
+  `test_one_bundled_row_moves_the_watermark_for_good` is replaced by
+  `test_upgrade_from_a_bundler_space_ceiling`. `test_csi_event_id_space.cpp`
+  runs the real library across interleaved bundled and direct rows,
+  out-of-order closes and reboots; all six of its tests fail on the old
+  library. The forged-id, handle-range and poisoned-ceiling tests each fail
+  on the code before their fix. Residual: HA refuses a device whose mark an
+  older firmware pushed near the top of the space until the owner re-pins
+  it. The HACS mirror carries the new HA test on its next resync (U6);
+  mirror PR securacv-homeassistant#21, open for #1727's files, does not
+  carry it. The emulator dist does not move. Host-tested; the ESP32
+  compile is CI's; not bench-verified (U1: the F46 rows in
+  `hardware_verification_checklist.md`). Found here: F77-F83 and HA23.
 - [x] **F47 [code] canary-wap's backfill watermark lives in RAM.** (#1754)
   Found by
   F37 (#1718). Its first reconnect after every boot replays up to 64 ids
@@ -1199,6 +1248,91 @@ so — see D2 below.)
   reproduces the reboot-then-spin scenario and pins zero reads while the
   log stands still (432 checks). Staged WAP copy re-synced. Not
   bench-verified on hardware (U1).
+- [ ] **F77 [code+decision] Closed bundles never reach the event ring.**
+  `csi_bundler.cpp` commits a closed bundle through
+  `csi_event_commit_bundle_()`, which runs the commit hooks but not
+  `persist_to_ring()` (F46 did not change this). So a presence or tamper
+  row leaves `/api/events/today` the moment its bundle closes. It is never
+  on the canary-wap's SD log either, because that hook appends only what
+  `csi_event_find` sees, so the WAP's backfill never replays it. The daily
+  summary misses it too: `meta_daily_summary.cpp` (both trees) counts its
+  active and quiet periods from `csi_event_recent()`, and those are
+  core.presence states, which always go through the bundler. Three places
+  say otherwise: the 2.4.15 release notes ("Closed bundles reach the event
+  ring, so `/api/events/today` and the daily summary see them"), the WAP
+  dashboard's comment ("the dismiss appears when the bundle commits",
+  `csi_dashboard_html.h`) and `docs/csi_developer_api.md`'s example of a
+  committed bundled row. A fourth, the roadmap's Wi-Fi sensing row ("closed
+  bundles reach the event ring"), is corrected in #1761. In a host probe,
+  one buffered emit then a flush leaves `csi_event_recent` returning 0. F46
+  removed the old reason (ids from an unpersisted space). Putting closed
+  bundles in the ring changes four things together: the Today sheet, the
+  daily summary's counts, the ring's live-row latch for `csi_event_inject`,
+  and what the WAP replays. Decide them together. Found by F46 (#1761).
+- [ ] **F78 [code] canary-wap's live publish overtakes its own backlog.** On
+  reconnect, `MQTT_EVENT_CONNECTED` sets `s_connected` on the esp_mqtt task
+  and only flags the backfill for the loop task. A row committed before
+  `csi_mqtt::loop()` drains it goes out live through `publish_and_advance`,
+  which moves `s_last_published_event_id` past every unsent row.
+  `iterate_since` then skips those rows, and HA would refuse them anyway.
+  The canary's planner holds new rows behind the backlog for exactly this
+  reason (F37); the WAP does not. Also, the live path runs on whichever
+  task commits (the NimBLE host task for a ble.scout close, now under the
+  chokepoint's commit lock), while the backfill runs on the loop task, and
+  both write `s_last_published_event_id` and `s_delivered_ceiling` with no
+  lock between them. Adopting `csi_event_backfill::Planner` on the WAP, as
+  F47 suggested, would fix both. Found by F46 (#1761).
+- [ ] **F79 [code+decision] Below the backfill's bound, the SD event log is
+  trusted input.** Both backfills (the canary's
+  `csi_event_backfill::Planner`, the canary-wap's `iterate_since`) refuse a
+  card line at or above the allocator's next id (F46). They sign and send
+  whatever a line below that bound says: its content, and its id, including
+  an id a reboot skipped or one the allocator had passed by the time the
+  walk read it. A forged line written ahead of real rows also moves the
+  watermark past them, so the real rows behind it are never delivered
+  (review probes on the real planner). Options: a per-line MAC under a
+  device key, or replaying only rows the witness chain vouches for. Not
+  tracked in the roadmap or the gaps ledger. Found by F46's review (#1761).
+- [ ] **F80 [code] A refresh refund can reopen a bundle without spending
+  the hourly ceiling.** `csi_event_emit` refunds an emit's ceiling slot
+  when `csi_bundler_has_open()` finds its key. But `csi_bundler_admit()`
+  then expires that slot (a gap of at least `CSI_BUNDLER_MAX_GAP_MS`, or
+  the 10-minute window) and opens a new bundle, which commits as a row the
+  ceiling never counted. In a host probe on the real library, one
+  state-bearing emit every 121 s commits 714 rows a day under a 6/hour
+  ceiling (144 allowed). The canary hides it by flushing every bundle every
+  window (F81); the canary-wap only ticks the bundler, so it is exposed.
+  F46's id-space headroom counts the leak. Fix: decide the refund from
+  admit's outcome (merged or opened), not from `has_open()` before it.
+  Found by F46's review (#1761).
+- [ ] **F81 [code] The canary flushes every open bundle on every CSI
+  window.** `firmware/canary/src/csi_modules_integration.cpp` calls
+  `csi_event_flush_bundles()` (close all) after each module tick. Its
+  comment says it drains bundles "whose 10-minute window has elapsed",
+  which is what `csi_bundler_tick()` does, and the canary-wap calls that.
+  So the canary never refreshes an open bundle: each core.presence refresh
+  commits a new row and spends the hourly ceiling. The 2.4.15 release
+  notes say "Same-state refreshes no longer spend the hourly ceiling"; on
+  the canary they still do. Switch to
+  `csi_bundler_tick()` together with F80, since the flush is what hides
+  that leak on the canary. Found by F46 (#1761).
+- [ ] **F82 [code+decision] Nothing warns before the event-id space runs
+  out.** The allocator has 2^30 ids from 0xC0000000 (F46), about 16 years
+  at the most a device can commit. At exhaustion ids restart at 1, and each
+  later boot first reissues 0xFFFFFFFF. Home Assistant then refuses the
+  device from then on, and nothing on the device says so. Add a health or
+  diagnostic flag once the allocator passes `kHoldLimit` (0xF0000000), and
+  decide the recovery (a re-pin plus a reset of the floor and
+  `csi.evsent`). Found by F46's review (#1761).
+- [ ] **F83 [code] The canary-wap can commit an event before its id floor
+  is restored.** `csi_integration::init` calls `register_v1_modules()`
+  before `apply_event_id_floor_from_nvs()`. `ble_scout_init()` emits
+  `initialized("failed")` when `ble_scout_key_init()` fails, and that
+  commit's floor write (with `g_id_floor_stored` still 0) overwrites the
+  persisted floor before the restore reads it. Only `boot_floor`'s hold at
+  `csi.evsent` then limits the reissued ids. It is rare (it needs a
+  key-store failure) and older than F46. Restore the floor first, as the
+  canary does (`csi_event_egress_begin`). Found by F46 (#1761).
 - [ ] **F48 [code+decision] canary-wap's mesh crypto and its interop with the
   PIO tree.** Found by F33 (#1718). canary-wap's AUTH exchange still runs
   X25519 over long-term Ed25519 keys, the bug class F33 part 2 fixed for
@@ -1222,7 +1356,7 @@ so — see D2 below.)
   PIO residual splits remain: both initiators already handed out, a mutual
   removal, or a lost ACK. A random-loss probe split 3 of 60 runs at 5%
   frame loss (spec §5.6 states it).
-  *Done (#1756), parts 1-3:*
+  *Done (#1756), parts 1-2; part 3 withdrawn (#1761):*
   (1) `GET /api/logs` now carries `uptime_ms` (handle_logs) and the log list
   renders each entry's `timestamp_ms` as an age against it (`formatLogAge`,
   shared with `formatAlertAge`) instead of `new Date(...)` — the made-up
@@ -1233,19 +1367,299 @@ so — see D2 below.)
   `SEND_ACCEPT` too (its code-derivation beat — there is no separate
   `NOTIFY_CODE_READY` on that side), with the same code `pairing_confirmation_code()`
   reports. Pinned by `test_joiner_offer_surfaces_code_with_accept`.
-  (3) A verified opera frame from a trusted peer whose radio MAC CHANGED
-  (reached via the transport's unknown-sender hook, which now routes opera
-  envelopes through the full signature + opera_id + strict-counter verify)
-  re-binds the transport table (`bind_peer_mac`) and fires a new
-  `PeerMacLearnedCallback`; `main.cpp` persists it (`save_peer_mac`) so the
-  next boot binds directly. A never-bound peer still drops (boot binds those
-  from NVS). Pinned by `test_peer_new_radio_mac_is_learned_from_a_verified_frame`
-  (replay and forgery from strange MACs move nothing). All 13 mesh C++
+  (3) **Withdrawn (#1761).** #1756 sent an opera envelope from an address
+  the transport did not hold through the full verify (signature + opera_id
+  + strict counter). On a pass it re-bound the signer's transport binding
+  to that address (`bind_peer_mac`) and persisted it
+  (`PeerMacLearnedCallback`, then `main.cpp` `save_peer_mac`). That verify
+  does not establish an address:
+  - the envelope signs no source or destination;
+  - the PIO sender spends one outbound counter across every destination;
+  - frames go out unencrypted (`encrypt = false`).
+  So any genuine member frame the receiver had not heard passed the verify
+  when an outsider re-sent it from its own address. That covers a missed
+  broadcast, a rekey frame unicast to another member, or, after the
+  receiver reboots, a frame heard since its last 5-minute counter save.
+  A host probe against main (c104f56) showed the receiver:
+  - moving B's binding to the outsider and dropping B's real address;
+  - sending its next rotation OFFER to the outsider alone (the 60 s commit
+    then forgot B when B stayed silent);
+  - answering a replayed `REKEY_OFFER` with its `REKEY_ACCEPT` to the
+    outsider.
+  #1756's own test replayed only a frame the receiver had already heard,
+  which the counter stops anyway.
+  Now:
+  - the unknown-sender hook takes pairing frames only again, so opera
+    frames from unbound addresses drop as `recv_dropped_no_peer` before any
+    verify;
+  - `on_opera_frame` is void again, with no `via_unknown`;
+  - the callback and `main.cpp`'s save of it are gone;
+  - a changed radio MAC means a re-pair, which re-binds an already-trusted
+    device.
+  Kept: `bind_peer_mac`'s add-before-remove order (#1756 review).
+  Pinned by four tests, each failing on #1756's code:
+  - `test_unheard_broadcast_replayed_from_a_new_address_moves_nothing`
+  - `test_unheard_rekey_offer_replayed_from_a_new_address_moves_nothing`
+  - `test_bound_peer_new_address_is_dropped_not_learned` (#1756's test,
+    rewritten)
+  - `test_repair_moves_a_trusted_peers_address`
+  Spec §8.3 now says a verified frame MUST NOT bind an address. How a
+  changed MAC could be learned
+  safely is F68.
+  The review of the withdrawal found pre-existing limits, and they are
+  documented here, not fixed:
+  - the re-pair it points to does not authenticate the long-term key (F69);
+  - on the PIO tree a re-pair cannot start with eight members bound,
+    because the transport table has no slot for the new address;
+  - the address a verified frame is recorded under can be a pairing
+    partner's, with no spoofing (F70).
+  Spec §11.1 items 4 and 5 are now marked partial. Host-tested only; not
+  bench-verified (U1).
+  canary-wap's half (#1761). canary-wap's `handle_received_message`
+  re-pointed a member's `mac_addr`, and its ESP-NOW registration, at the
+  source of any frame that passed `opera_id`, signature and its per-peer
+  counter. A host probe ran the real `mesh_network.cpp` on new host stubs
+  (`tests_host/stubs/mesh_net`, `mesh_net_sim.h`: several simulated devices,
+  frames carried as bytes). It showed:
+  - a frame B sent A that A missed, re-sent from an outsider's own address,
+    moved B to the outsider. A dropped B's address from its ESP-NOW list and
+    sent its frames for B there until B's next frame (its 30 s heartbeat)
+    arrived;
+  - canary-wap counts per destination and the envelope names none. So a
+    frame B sent C did the same whenever B's counter for C ran ahead of A's
+    last-seen for B. A also kept that counter, so B's own frames dropped as
+    replays and B stayed bound to the outsider until its counter for A
+    passed it;
+  - after a power cut, a frame A heard since its last 5-minute counter save
+    did the same;
+  - from C's copied address, B's next real frame deleted C's ESP-NOW
+    registration, so A could no longer reach C.
+  Now a frame whose source is not the signer's own bound address drops
+  before `verify_signature`. It spends no counter, reaches no handler and
+  counts in `auth_failures`. No signed frame writes an address. That is
+  stricter than the PIO tree (F70).
+  The re-pair path could not re-bind either: `add_peer` appended a second
+  entry for a key it already held, which no lookup reached, and a full opera
+  refused it. It now re-binds the existing entry:
+  - the new address is registered first;
+  - an address another member holds is refused;
+  - counters, name and state are kept;
+  - the move is logged as a health WARNING.
+  A changed address needs a re-pair with each member that holds it.
+  canary-wap keeps its key in NVS, so a swapped module joins as a new
+  member; an NVS image moved to another board, or a relay (F69), reaches the
+  re-bind. A full canary-wap opera (16) still takes a re-pair (host-tested
+  through `add_peer`, not a full pairing). A duplicate entry the old
+  `add_peer` saved is folded into one at boot. It takes the later pairing's
+  address unless another member holds it, and the fold is logged.
+  Since a pairing now binds addresses, the review ran the pairing handlers
+  the same way and found two paths that needed no owner:
+  - a joiner took COMPLETE before its owner confirmed. Whoever answered its
+    DISCOVER first replaced its opera, or, with the opera_secret and a
+    member's public key, re-bound that member;
+  - an initiator kept a finished pairing's keys until the 2-minute timeout,
+    so a radio that overheard its OFFER got the opera_secret sealed to it
+    (pre-existing).
+  Both are closed as on the PIO state machine. The joiner takes the first
+  OFFER, and a COMPLETE only after its owner confirmed. The initiator takes
+  one ACCEPT, from where its OFFER went, and wipes the pairing after
+  COMPLETE.
+  Pinned by `test_mesh_address_wap` (19 tests against the real file; 15 fail
+  on 89a4c56) and by `test_mesh_rx_gates_wap`'s
+  `no_frame_moves_a_members_address` (fails on 89a4c56). Spec §8.3, §4.5's
+  table, §3.3, §11.1 item 5, THREAT_MODEL and LESSONS_LEARNED are updated.
+  Still open on canary-wap: a radio copying a member's own address can
+  deliver that member's unheard frames, including ones sent to other
+  members. They are dispatched and silence the member until its counter
+  catches up (host-probed). Host-tested only; the Arduino compile is CI's;
+  not bench-verified (U1).
+  All 13 mesh C++
   suites + the webui node tests + the full firmware host suite pass; canary
   `[env:full]` compiles. **Part 4 (PIO residual splits) is left open — it
   rides F48's cross-tree wire decision (a mutual-removal convergence needs a
   `MSG_OPERA_REKEY` wire change), not something to land alone.** Not
   bench-verified on hardware (U1).
+- [ ] **F68 [decision] How may a mesh peer's changed radio MAC be learned
+  safely?** F49 part 3 (#1756) learned it from any verified opera frame,
+  and it was withdrawn (#1761): the envelope signs no address and one
+  counter serves every destination, so a replayed frame the receiver had
+  never heard re-pointed a member at an outsider's radio. Today a changed
+  MAC (a swapped module, a new locally-administered address) means a
+  re-pair on the PIO tree, and on canary-wap too since #1761. Options:
+  (a) **A signed self-asserted MAC.** The sender puts its own radio
+  address in the signed bytes (a payload field or a header field under the
+  shared `mesh_wire.h` registry). A receiver binds an address only when the
+  frame names it and it equals the frame's source. This is a cross-tree
+  wire change, so it is F48's territory. It stops a replay from the
+  outsider's own address. It does not stop ESP-NOW source spoofing, but a
+  spoofer can then only point the member at the member's own named
+  address.
+  (b) **A challenge the new address must answer.** A frame from a new
+  address for a trusted fingerprint triggers a fresh nonce, and the new
+  address must return it signed with the peer's key before any re-bind.
+  That defeats replay, but costs new message types (also a wire change), a
+  round trip, and a rate limit so strangers cannot make the device sign
+  and send on demand.
+  (c) **Keep re-pairing.** No wire change, but a re-pair is only as strong
+  as pairing. Pairing binds whatever long-term key the DISCOVER or OFFER
+  carried, and the 6-digit code covers only the ephemeral exchange. So an
+  outsider relaying an owner-run pairing from its own address can re-point
+  an already-trusted member at its own radio and persist it, or get its
+  own key trusted (F69). On the PIO tree a re-pair also cannot start with
+  eight members bound. Choosing (c) means F69 lands first.
+  canary-wap's side: it dropped its verified-frame re-bind (#1761), and it
+  re-pairs like the PIO tree, one member at a time. Whichever option is
+  chosen is carried to both trees. Found by the adversarial
+  review of #1756.
+
+- [ ] **F69 [code+decision] Pairing does not authenticate the
+  long-term keys.** On both trees the 6-digit code and the CONFIRM hash
+  are derived from the ephemeral X25519 session key only.
+  - PIO initiator: takes `ctx.peer_pubkey` from the plaintext DISCOVER and
+    ignores the ACCEPT's `device_pubkey`.
+  - PIO joiner: takes the OFFER's `device_pubkey`.
+  - The long-term key signs nothing in the exchange.
+  - canary-wap derives its code the same way (`mesh_pair_crypto`). Since
+    #1761 its re-pair re-binds a member it already holds. So a relayed
+    pairing whose codes match, claiming a member's key, re-binds that member
+    to the relay's radio there too, until another re-pair (host-probed);
+    before, it added an unreachable duplicate entry. On canary-wap the relay
+    is the main way to reach that re-bind: its key lives in NVS, so a
+    swapped module joins as a new member. The move is logged as a health
+    WARNING. canary-wap's joiner needed no relay at all before #1761, since
+    it took COMPLETE before its owner confirmed; #1761 closed that.
+  The review of #1761 host-probed the PIO tree. An outsider relays an
+  owner-run pairing (A and a new device D) from its own address, no
+  spoofing, without touching the ephemeral keys:
+  - both screens show the same code;
+  - claiming B's key made A re-bind trusted member B to the outsider's
+    radio, and main.cpp would persist it, so B's own frames then drop
+    until another re-pair;
+  - claiming its own key got it trusted, and it then signed a REKEY_OFFER
+    that removed B.
+  The results were identical before #1756, on c104f56 and on #1761. Spec
+  §11.1 item 5 ("Man-in-the-Middle: visual confirmation codes") is now
+  marked partial.
+  Decide:
+  - either bind both long-term public keys into the code and the CONFIRM
+    hash, or sign the transcript with each side's long-term key. Either is
+    a cross-tree wire change with canary-wap (F48's registry) and needs
+    maintainer crypto review;
+  - whether a pairing that presents an already-trusted fingerprint should
+    re-bind silently. Today the only sign is main.cpp's WARN "Peer pubkey
+    persisted but mesh_session register failed (table full or already
+    registered)".
+
+- [ ] **F70 [code] Record a verified frame's source only from the signer's
+  own binding.** `on_opera_frame` records the source of every verified
+  frame as the signer's link (`TrustedPeer::mac`). Any address in the
+  transport table qualifies, and two need nothing from the signer:
+  - while a pairing runs, the partner's address is in the table
+    (`ensure_pair_contact`), so an outsider that answers the pairing from
+    its own radio can replay a member's unheard frame there with no
+    spoofing until the pairing ends (host-probed with the receiver as
+    initiator);
+  - a radio copying another bound member's address can do the same
+    (ESP-NOW does not authenticate a source).
+  `send_rekey_frame` unicasts the signer's rekey replies to that link, and
+  `forget_peer` removes it from the transport table. So the outsider gets
+  the receiver's `REKEY_ACCEPT` (probed), and in the copy case a later
+  removal of the signer strands the copied member. This is pre-existing:
+  the same before #1756.
+  Fix, sketched by the #1761 review and not built:
+  - record the link only when the source equals the signer's `radio_mac`,
+    or drop opera frames whose source is only the pair contact;
+  - have `send_rekey_frame` and `forget_peer` use `radio_mac`.
+  This churns tests that inject from hand-added addresses. Documented in
+  THREAT_MODEL "Opera mesh", spec §8.3 (peer fields) and the PeerLink doc
+  in mesh_session.h.
+  canary-wap does not have this: since #1761 it accepts a member's frame
+  only from that member's own bound address and records nothing from a
+  frame's source.
+- [ ] **F71 [code] canary-wap's mesh send counters restart at 1 on every
+  boot.** `load_peers` sets each member's `msg_counter_tx` to 1, while
+  receivers keep and persist their last-seen. So after a canary-wap reboots,
+  every member drops its frames as replays until its counter for that member
+  climbs back past what the member last saw: one heartbeat per 30 s, for as
+  many frames as it sent that member before. Host-probed with the #1761
+  harness: after five heard heartbeats and a reboot, the sender's frames
+  1..5 dropped and 6 was heard. The PIO tree fixed the same thing in F33
+  part 3 (`mesh_out_ctr` reserve-ahead). canary-wap needs it per member, or
+  one counter (see the next item). It also decides how soon a member is
+  heard after a re-pair, if the member rebooted to change its address
+  (`test_mesh_address_wap`'s re-pair test pins that frames 1..3 drop). Spec
+  §3.3 now states it. Found by the canary-wap half of the F49 part 3
+  withdrawal (#1761).
+- [ ] **F72 [decision] canary-wap counts per destination, but its envelope
+  names no destination.** A receiver judges a frame its member sent to
+  another member against its own last-seen for that member. Such a frame is
+  fresh whenever the member's counter for the other member ran ahead. That
+  happens, for example, while the receiver sits at `PEER_UNKNOWN` in the
+  member's table, which broadcasts skip; a fresh pairing leaves the partner
+  there (host-probed with the #1761 harness). Since #1761 only a radio
+  copying the member's own address can deliver one (ESP-NOW does not
+  authenticate a source). It is dispatched and pushes the receiver's
+  last-seen ahead, which silences the member until its counter catches up
+  (host-probed). Options:
+  - put the destination fingerprint in the signed bytes (a wire change under
+    spec §4.5's registry, with F48);
+  - use one outbound counter per sender, as on the PIO tree. That makes any
+    unheard frame fresh at every member instead.
+  See THREAT_MODEL "Still open on canary-wap". Found by the canary-wap half
+  of the F49 part 3 withdrawal (#1761).
+- [ ] **F73 [code] canary-wap's pairing reports success when `add_peer`
+  refused the partner.** `handle_pair_confirm` (initiator) and
+  `handle_pair_complete` (joiner) ignore `add_peer`'s result. In each of
+  these cases the handler still persists the list, sets `MESH_ACTIVE` and
+  fires the pairing callback with success:
+  - a deny-listed key;
+  - a full opera (16) for a new member;
+  - since #1761, a re-pair onto an address another member holds, or one
+    ESP-NOW cannot register (its list holds 20).
+  It should return the failure to the owner instead. Found while fixing the
+  re-pair (#1761), from code.
+- [ ] **F74 [code] canary-wap's mesh does not keep the ESP-NOW broadcast
+  peer registered.** `send_pair_frame(BROADCAST_ADDR, MSG_PAIR_DISCOVER,
+  ...)` relies on another module's registration. `csi_probe::init` adds it
+  once; the WAP brings the CSI active probe up whenever csi_hal runs.
+  `chirp_channel`'s and `beacon_channel`'s broadcasts add it before each
+  send. `mesh_network`'s channel-change listener deletes it, and only chirp
+  and beacon add it back. `esp_now_send` refuses an address that is not in
+  the peer list (ESP_ERR_ESPNOW_NOT_FOUND). So after a channel change, with
+  Chirp off (its default) and no Beacon broadcast since, neither a joiner's
+  DISCOVER nor the CSI probe's own broadcast is sent. Whether the first
+  boot's channel poll lands before or after `csi_probe::init` is a timing
+  question, not established. In the #1761 host sim the first `poll_radio()`
+  dropped the registration this way. Found from code and the sim; not
+  bench-verified. Fix: register the broadcast peer where the DISCOVER is
+  sent, and have the listener re-add it instead of only deleting it.
+- [ ] **F75 [code] A canary-wap pairing completes only if the initiator's
+  owner confirms the code first.** `handle_pair_confirm` acts on the
+  joiner's CONFIRM only when this device's own `code_confirmed` is already
+  set, ignores it otherwise, and neither side sends its CONFIRM twice. So if
+  the joiner's owner confirms first, the initiator never sends COMPLETE, and
+  both sides time out after 2 minutes. Spec §5.2 asks the owner to confirm
+  on both devices, in no order. Host-probed with the #1761 harness: the same
+  on 89a4c56 and after #1761. The PlatformIO tree's state machine also drops
+  a peer's CONFIRM that arrives before its owner's (`either_handle_confirm`
+  acts only in AWAITING_CONFIRM_PEER); whether it re-sends was not checked.
+  Fix: keep an early CONFIRM and act on it at the owner's confirm, or
+  re-send CONFIRM until COMPLETE arrives. Found by the canary-wap half of
+  the F49 part 3 withdrawal (#1761).
+- [ ] **F76 [code] canary-wap's opera heartbeats only after it hears a
+  member, and two cases leave it nothing to hear.** update() sends a
+  heartbeat only in MESH_ACTIVE, and `broadcast_message` skips members
+  below PEER_CONNECTED. The two cases:
+  - after a fresh WAP-to-WAP pairing, each side holds the other at
+    PEER_UNKNOWN. Host-probed with the #1761 harness: neither side sent
+    the other a frame in 10 simulated minutes, on 89a4c56 and after #1761;
+  - after a reboot of every member, init() leaves the opera at
+    MESH_CONNECTING, and ACTIVE needs a member heard. Host-probed by the
+    #1761 review: three members booted from NVS stayed CONNECTING and sent
+    nothing for 2 minutes.
+  A Beacon event, a channel lock or a hub election (sent to OFFLINE members
+  too) would start it on a device. Not bench-verified. Found by the
+  canary-wap half of the F49 part 3 withdrawal (#1761).
 - [x] **F50 [code] The display's other join hints still cut on narrow glass.**
   (#1755, #1727) Found by F45 (#1718). The Fail-stage hints from `join_failure_hint` measure
   175-219 px at 12 px ("your router may be out of addresses" is 219), so
@@ -1383,7 +1797,7 @@ so — see D2 below.)
   input path on both. Which port that input would arrive on is F67's
   question, so settle F67 first. Found doing HA17.
 - [x] **F64 [code] The onboarding bird never sits where its host placed
-  it.** (#1760) canary_mark_mood() records the bird's base with lv_obj_get_x/y at
+  it.** (#1760, #1761) canary_mark_mood() records the bird's base with lv_obj_get_x/y at
   its first on-stage mood, and the breath and the poses then write that base
   back as the style offset. onboard_ui_create() reaches that mood (Hello,
   Idle) before LVGL's first layout pass, so the base reads 0. The bird then
@@ -1428,7 +1842,50 @@ so — see D2 below.)
   title (none was drawn before), the watch face's bird inside the ring
   above the clock (it sat on the ring), and the portrait face's bird at
   its `TOP_MID V(22)` seat. Not seen on real glass (U1).
-- [ ] **F65 [code] The onboarding's scene titles and bodies are cut on small
+  *Also (#1761), built independently with host tests:* canary_mark records the
+  bird's base as the host's style offset from its anchor
+  (`lv_obj_get_style_x/y`, the same call on LVGL 8 and 9). That is the one
+  coordinate every pose, breath and hop writes back, so the bird is drawn
+  where its host aligned it, under any anchor, whether its first mood comes
+  before LVGL's first layout pass or after. `canary_mark_rebase()` needed no
+  change of its own: it re-arms the same capture, which now reads the offset
+  the align just wrote. A native harness (LVGL 8.4.0 with the display's
+  lv_conf, the real faces linked, the bird's drawn box read after every
+  refresh) measured every face's bird off its seat before the fix:
+  - the onboarding bird sat at the panel's center (y 98..102 instead of 36
+    on the round watch, 62..66 px low on every small glass), then walked
+    another anchor-distance off the glass at each re-seat (PhoneJoined at
+    x 300, y 194; Success at x 700);
+  - the first-meeting splash bird sat at x 176 on the 240 px disc (x 704 on
+    the dash), and the hello-again splash 29..44 px low (53..68 on the 7");
+  - the glance bird sat at the disc's top edge, or at x 200 when it came on
+    stage after a layout pass;
+  - the dash bird sat at x 0, the 7" portrait column's at y 0 over the
+    clock instead of 360, and the nightstand7's 18 px left;
+  - the portrait faces' birds sat 17..43 px high, or 32..124 px right;
+  - the nightlight's sat 20..24 px low, or off the 320 px glass; in its
+    landscape composition (RIGHT_MID) 13..17 px low, or at x 453, past the
+    glass, after a layout pass.
+
+  Now each bird draws at its anchor plus its offset (dx 0, dy within the
+  2 px breath or the hop), and the round watch's no-QR Join bird draws at
+  `join_bird_top` (y 94). One seat that was never right now shows: the
+  landscape nightlight's first-meeting splash bird sits at its coded CENTER
+  -70, y -12 on the 180 px canvas, so the top edge cuts its head. Before,
+  it sat whole but at x 256 (F88). `test_canary_mark_seat` compiles the
+  real canary_mark.cpp against a model of LVGL 8's position rules
+  (`tests_host/fake_lvgl/`) that reproduces those numbers. It holds the
+  drawn box to the placement before and after a layout pass, under every
+  anchor and across the onboarding's re-seats; the old file fails 29 of
+  its checks. `test_onboard_scenes` holds the onboarding bird at the seat
+  `onboard_layout.h` names, in every scene, on every small-glass env with
+  both ladders; against the old canary_mark.cpp it fails 72 checks in its
+  round build and 362 in its rectangular one. Host-tested, and measured
+  natively (the harness is not in CI); the ESP32 builds are CI's; not
+  bench-tested. #1761 keeps #1760's `record_base()` and its wing and eye
+  reads on merging main; the emulator dist is rebuilt in this PR by CI's
+  pinned emsdk. Found here: F88, F89.
+- [x] **F65 [code] The onboarding's scene titles and bodies are cut on small
   glass.** Only the Join scene's credentials rows and the coach line are
   fitted (F45, F50). The titles and bodies keep LV_LABEL_LONG_DOT at a fixed
   width: the round watch's title band stays 142 px after the Join scene (138
@@ -1454,7 +1911,64 @@ so — see D2 below.)
   round glass. fit_line()'s ladder (shorter forms, then the floor face) with
   shorter copy covers the rest, and test_onboard_layout can hold each line
   the way it holds the coach line. Found by F50 (#1727).
-- [ ] **F66 [code] The onboarding halo ring runs through the low text rows
+  *Done (#1761):* on small glass, every scene's title and body is fitted
+  at its own latitude through `fit_line()`'s ladder: the Character's face,
+  then a shorter form, then the default Character's face. The width is
+  `onboardlayout::scene_line_w()`: the disc's chord on round glass; on
+  rectangular glass the panel less its pads, and no wider than the halo's
+  inner chord. The copy moved into `onboard_layout.h` (`scene_copy()`,
+  `join_title()`), where the host tests measure it, and the glass copy
+  audits now read that file. Two lines have a shorter form, made of fewer
+  of their own words (a test holds this): "Nice - check your phone" becomes
+  "Check your phone", and the Fail reason "No address from the router"
+  becomes "No address" (`join_failure_label_narrow()`, new in
+  `wifi_join_policy.h`, returns the label itself for the other reasons;
+  provision.cpp hands it over with the Fail stage, and the fix under the
+  title still names the router). "No address" shows on every small glass
+  except the round watch at the default type; "Check your phone" shows on
+  the same glass except also the AMOLED at the default type. Three reasons
+  put them there:
+  - on the 172/180x320 portrait glass, no face holds the whole line in
+    156/164 px;
+  - on the touch169 (both types) and the AMOLED, the old full-width rows
+    (224 and 434 px) held the whole line, but the lines now sit inside the
+    halo (F66), whose chord gives a title 160 px on the touch169 (154 under
+    Heirloom) and 314 px on the AMOLED (308). That is a decision, F86;
+  - on the round watch under Heirloom, the ladder reaches the shorter form
+    in Heirloom's face before it tries the whole line in the default face,
+    where it would fit (221 px on 222). That is a decision too, F87.
+
+  Every other line reads whole, stepping down to the default face under
+  Heirloom where it must. A long network name in the Connecting body is
+  shown whole in either face. If it does not fit, `name_line()` keeps its
+  head and its tail around "..." in the floor face: the 32-byte
+  "Basement-Mesh-Extender-Office-5G" reads "Basement-M...-Office-5G" on the
+  172 px nightstand. The tail stays because that is where a household's
+  networks differ ("-5G", "-EXT") and where the 2.4 GHz band shows, the
+  first thing a not-found failure asks about. The old `%.28s` clip counted
+  bytes and could split a UTF-8 character. The dash fits the name the same
+  way (a 32-byte name ran past its 800 px under Heirloom); its titles and
+  bodies stay content-sized and unmeasured (F84). `test_onboard_layout`
+  runs every line of every scene (each Fail reason, both Join titles, a
+  typical name and the widest) on every small-glass env (the round watch,
+  the portrait glass, the touch169, the AMOLED) with both ladders, and pins
+  where the two shorter forms show. Without the shorter forms it fails 33
+  checks, 18 of them a line that would be cut. `test_onboard_scenes`
+  compiles the real onboard_ui.cpp against `tests_host/fake_lvgl/` and
+  drives every scene the way provision.cpp does, on the same envs: every
+  label's text must fit the label in the font it carries and say one of
+  the scene's forms. A scene line set without `fit_line()` fails it 160
+  times on the rectangular glass and 6 on the round watch; dropping the
+  Fail reason's narrow form, 20 times; removing the shorter forms, 52. In
+  the native LVGL 8.4 harness, across the watch, nightstand, nightlight,
+  touch169 and AMOLED scenes, the old tree drew 7 cut lines at the default
+  ladder and 22 under Heirloom; the new tree draws none.
+  `onboard_probe.mjs` now also fails on an ellipsis in each flavor's
+  PhoneJoined scene and in its wrong-key and absent-network Fail scenes. It
+  reads the committed dist, which is rebuilt in this PR by CI's pinned
+  emsdk; it was not run locally. Host-tested; the ESP32 builds are CI's;
+  not bench-tested.
+- [x] **F66 [code] The onboarding halo ring runs through the low text rows
   on rectangular small glass.** onboard_ui.cpp draws one 236 px ring,
   centered, on every small glass. On the 172/180x320 portrait glass, its
   bottom arc (y 275..278 at the center) runs through the hint row
@@ -1468,6 +1982,131 @@ so — see D2 below.)
   the Join stack's rows, and have test_onboard_layout hold the rows inside
   the ring. Found by F50 (#1727), from the layout constants and seen in
   native LVGL 8.4 renders of onboard_ui.cpp.
+  *Done (#1761):* on rectangular small glass the halo now fills the band
+  between the Join scene's title row and its credentials row, kMinGap
+  clear of each (`onboardlayout::small_join()`, `halo_ring()`), concentric
+  with the QR card the way the dash's halo is with its card. Its sizes at
+  the default ladder (Heirloom in brackets):
+  - 196 px (192) from y 56 on the 172/180x320 portrait glass, wider than
+    the panel, so it runs off the sides, as the 236 px ring always did;
+  - 176 px (172) from y 46 on the 240x280 touch169;
+  - 328 px (322) on the AMOLED, whose centered titles had crossed the
+    236 px ring too.
+
+  No row of the stack can reach the halo: not the credentials, hint and
+  note rows, nor the coach lines that take them in PhoneJoined and Fail.
+  Every centered line is fitted inside it (F65's `scene_line_w()`). That is
+  why the touch169 and the AMOLED now show the two shorter forms where
+  their old full-width rows held the whole lines (F86). On the touch169,
+  the 128 px QR card's 10 px corners reached 86.4 px from the shared
+  center, in the 176 px ring's stroke (85..88) and past it under Heirloom.
+  `small_join()` trims that canvas two px at a time until the card's
+  rounded corners are kMinGap inside the ring, the trade `join_stack()`
+  already makes for air. The canvas ends at 106 px (104 under Heirloom),
+  still 3 px per module, so the join code keeps its pitch and LVGL fills
+  the canvas with a lower QR version. The rows and the ring do not move,
+  and no other glass is trimmed. In native LVGL 8.4 renders the card's
+  white inside the stroke band went from 20 px (128 under Heirloom) to 0.
+  No phone has scanned the smaller card yet. The round watch keeps its
+  236 px rim ring, with every row inside it. A full-width row there is
+  fitted to the disc's chord at the ring's inner edge, so its box corners
+  come within a pixel of the stroke; rectangular glass keeps 2 px. The
+  scenes' bird seat (`scene_bird_top()`) stays inside the halo: CENTER -64
+  as before, except 1 px lower on the touch169 under Heirloom.
+  `test_onboard_layout` checks, on every small-glass env with both ladders,
+  that the halo's stroke stays clear of every row of every scene, the Join
+  title row, the QR card's rounded corners and the bird's two seats (with
+  the breath). With the old ring it fails 40 checks, 26 of them a row or a
+  seat across the stroke; without the card trim it fails 4.
+  `test_onboard_scenes` holds onboard_ui.cpp to this: the arc it draws is
+  the one `small_join()` places, and the labels, the card and the bird's
+  breath stay clear of the stroke. On the rectangular glass, sizing the
+  ring at 236 fails it 640 times, aligning the bird CENTER 28 times, and
+  leaving the card untrimmed 72 times. Not held: on the touch169 the
+  Success hop's apex reaches the halo's top arc (F85), and the dash's
+  300 px halo still runs through its wider titles, bodies and long network
+  names (F84). Host-tested; the ESP32 builds are CI's; not bench-tested.
+  The emulator dist is rebuilt in this PR by CI's pinned emsdk.
+- [ ] **F84 [code] The dash's onboarding scene lines run through its 300 px
+  halo.** On the 800x480 wide glass (the dash, dash7 and nightstand7
+  envs), the scenes' titles and bodies are content-sized and centered on a
+  300 px halo. In native LVGL 8.4 renders:
+  - "No address from the router" in the 36 px title face spans x 150..650
+    at y 204..243, where the ring's sides are near x 254 and 546;
+  - "Let's get you connected." (x 252..547) and the body "looking for your
+    canaries" (x 251..549) touch the ring's sides;
+  - a long network name in the Connecting body (now its head and tail
+    around "...", up to 770 px) runs through both sides;
+  - the Hello and Success title and body boxes overlap each other by 4 px.
+
+  F66 placed the small glass's halo. The wide branch keeps its 300 px ring
+  and unfitted lines, and no host test measures them. Fit the wide lines
+  inside the ring's chord, or size the ring from them, and have
+  `test_onboard_layout`'s `check_wide_rows` and a wide build of
+  `test_onboard_scenes` hold it. Found by F66 (#1761).
+- [ ] **F85 [decision] On the touch169 the Success hop rises into the
+  halo's top arc.** The onboarding bird's scene seat stays inside the halo
+  (F66, `scene_bird_top`), but the one earned hop puts its head into the
+  arc's stroke at the apex on the 240x280 touch169. The hop is 12 px at the
+  default Character, at most 14 for a shipped one and 15 under
+  canary_mark's clamp of the temperament, plus the overshoot path's brief
+  swing past that. The seat is at y 56 and the halo starts at 46. In the
+  native harness the bird's top reaches y 43 at the apex, with 30 of its
+  pixels on the stroke (18 under Heirloom). Either accept it (the hop
+  crosses the halo for a moment) or seat the bird lower on that glass so
+  the whole hop stays inside. Found by F66 (#1761).
+- [ ] **F86 [decision] On the touch169 and the AMOLED: the halo's chord or
+  the whole line.** F66 fits every centered onboarding line inside the
+  halo's inner chord on rectangular small glass. That narrows a title from
+  the 224 px row it had to 160 px (154 under Heirloom) on the 240x280
+  touch169, and from 434 px to 314 (308) on the 450x600 AMOLED. So the
+  touch169 now shows "Check your phone" and "No address" at both types,
+  and the AMOLED shows "No address" (and "Check your phone" under
+  Heirloom). The old rows held "Nice - check your phone" and "No address
+  from the router" whole. It is the same truth in fewer words, but a
+  450 px panel now drops "from the router" to keep a decorative ring's
+  chord. Either keep it (the halo frames the scene's words), or on those
+  two glass let the centered lines take the panel's row and size or drop
+  the ring to clear them. `test_onboard_layout` pins where each shorter
+  form shows, so any change updates it. See also F87. Found by F66
+  (#1761).
+- [ ] **F87 [decision] A title's ladder: the Character's face or the whole
+  words.** `fit_line()` tries a line's forms in the Character's face first
+  (the whole line, then its shorter form), and only then in the default
+  Character's face; F45's rows and F50's coach lines use the same order.
+  So under Heirloom the round watch shows "No address", though "No address
+  from the router" fits its 222 px line in the default face (221 px), and
+  the AMOLED shows "Check your phone", though "Nice - check your phone"
+  fits its 308 px in the default face (295). For a title, the whole words
+  may matter more than the face. Either keep one ladder for every line, or
+  try a title's whole form in the floor face before its shorter form.
+  Found by F65 (#1761).
+- [ ] **F88 [code] The top edge cuts the landscape nightlight's
+  first-meeting splash bird.** `splash.cpp` seats the first-meeting bird
+  (64 px on small glass) at CENTER -70 (`INTRO_BIRD_Y`), a seat for a
+  canvas far taller than the nightlight's 320x180 landscape one. There the
+  bird sits at y -12, and in a native LVGL 8.4 run it drew from y -25 to
+  -10 through its intro, with its head off the glass. Before F64 it sat
+  whole, but at x 256 (the old base read), so the seat was never right on
+  that canvas. Only a first meeting with a saved landscape rotation
+  reaches it: no met-before flag while the rotation is kept in the
+  nightlight's own NVS namespace, which takes a partial wipe. Clamp the
+  first-meeting seat to the canvas, or scale it with the height. Found by
+  F64's review (#1761).
+- [ ] **F89 [code] No emulator probe reads where the bird is drawn.** F64's
+  bird was seen in the emulator, but nothing there checks where it sits:
+  `onboard_probe.mjs` reads the labels and the QR card, not the bird. A
+  framebuffer read of the mark's canary yellow (0xFFD44F, which nothing
+  else on a first boot paints) in the Hello and PhoneJoined scenes could
+  hold the bird's box to the seat each flavor's layout names, the way
+  `test_onboard_scenes` holds it on the host. Found by F64 (#1761).
+  *Partly done (#1760):* the emulator exports the mark's drawn box
+  (`emu_mark_box()`, the shell's `markBox()`), and
+  `canary-local/tests/bird_perch.mjs` fails a shown bird that is off the glass
+  or over a line of text: `boot_probe` runs it on every flavor's face, and
+  `onboard_probe` on the PhoneJoined scene, which must show the bird. Left:
+  the Hello scene, and holding the box to the seat each flavor's
+  `onboard_layout.h` names rather than only on the glass and clear of text.
 - [ ] **F67 [code] The C6 builds most likely send `Serial` to UART0 on the
   radar's pins, not to USB.** `firmware/envs/platformio/canary-sense.ini`
   :78 and `canary-sentinel.ini` :67 add `-UARDUINO_USB_CDC_ON_BOOT` (so do
@@ -1907,7 +2546,7 @@ so — see D2 below.)
   for an offline tile, and the paragraph's 8799 instruction does not work
   inside either app.
 - [x] **A25 [code] canary-local's WAP page shows an 8-digit example
-  fingerprint.** (#1760) `canary-local/tools/gen_wap.py`'s TOPICS examples for
+  fingerprint.** (#1760, #1761) `canary-local/tools/gen_wap.py`'s TOPICS examples for
   `events`, `chain` and `counts` carry `"fp":"7f3a9c21"`. The envelope `fp`
   is 16 hex digits (8 bytes of `pubkey_fp`), and since HA20 a canary-wap
   sends it in lowercase. The examples elide the signature with an ellipsis,
@@ -1918,6 +2557,108 @@ so — see D2 below.)
   boot log's `Public key fingerprint:` line carries the same 16 digits in
   `hex_to_str`'s capitals (it prints `g_device.fingerprint_hex`, which HA20
   left in capitals). `wap.json` regenerated; the CSP did not move.
+  *Then (#1761), replacing #1760's example:* `gen_wap.py`'s `events`,
+  `chain` and `counts` examples
+  now carry `"fp":"7916ca487912fa1b"`, and its `[PROV]` boot line reads
+  `Public key fingerprint: 7916CA487912FA1B`. Both are the repo's Ed25519
+  test key (seed 0x42 × 32, public key `2152f8d1…81db12`). The WAP's
+  `tests_host/test_mqtt_identity.cpp` (`kTestFp`) uses the same key, and so
+  do Home Assistant's `tests/test_fingerprint_case.py` fixtures (`WAP_FP`,
+  `WAP_EVENT`, `WAP_CHAIN`, `WAP_COUNTS`), so the page, the firmware test
+  and HA show one fingerprint. The boot line was a fourth 8-digit example.
+  It prints `g_device.fingerprint_hex`, which `hex_to_str` still spells in
+  capitals (HA20 moved only the two MQTT strings), so it shows 16 capitals
+  while the envelope `fp` is 16 lowercase. The generator now pins
+  `mqtt_identity.h`'s lowercase alphabet, the encoder call, `hex_to_str`'s
+  capitals and the `[PROV]` printf, and refuses to write when one of them
+  moves. The health `public_key` example stays elided (`…`). The other Lab
+  generators' examples already match their products: the Sense's `fp`
+  (`witness.cpp`, 16 lowercase), the Operator page's `short_fp` (`cli.rs`,
+  16 lowercase) and its trustee `--public-key 0123…` (elided;
+  `hex::decode` takes either case). The Vision, Sense Lab, Vault and Home
+  Assistant generators emit no such example. Two pages show one that this
+  item's gate cannot see: the Vision page's hand-written MQTT pane
+  (`assets/vision-ui.js`) shows a health `public_key` of `ed25519:…`, which
+  the Vision firmware does not send (A26), and the Home Assistant page's
+  WAP chain line has no `fp` at all, so HA's verifier would read it as
+  unsigned (A27). A new `canary-local/tests/fingerprint_examples.test.js`
+  runs in `canary-local.yml`'s logic tests. It walks every generated
+  `canary-local/devices/*.json` (not the pages' hand-written scripts) and
+  finds each fp, fingerprint, pubkey and public_key example: a property, a
+  key in an example payload, a console line's value or a CLI flag. Each
+  example must match exactly one rule, each rule's length and case are
+  pinned to the source that prints it, and an example no rule covers
+  fails. The test also derives the key from the seed with Node's Ed25519
+  and holds the WAP page and `test_mqtt_identity.cpp` to it. On the old
+  `wap.json`, 2 of its 5 tests fail (the four 8-digit examples); all 5
+  pass on the new one. Every file it reads is inside the workflow's path
+  filter. `wap.json` is regenerated, and `gen_csp.py --check` is unchanged
+  because the captive page did not move. The emulator dist does not move.
+  Page data only, host-tested; no firmware changed. The corrected examples
+  reach users with the next Lab and Flasher release. Found here: A26-A29.
+- [ ] **A26 [code] The Vision Lab page's simulated MQTT pane does not match
+  the firmware's publishes.** `canary-local/assets/vision-ui.js`
+  hand-writes its health row as `{"fw":…,"public_key":"ed25519:…"}`.
+  canary-vision's `publish_health_retained` (`src/net/mqtt_mgr.cpp`) sends
+  `battery`, `battery_present`, `memory_free`, `uptime`,
+  `firmware_version` and a `public_key` of 64 lowercase hex digits with no
+  prefix. Its chain row, `{"length":1,"head":"…"}`, is not
+  `publish_chain_retained`'s envelope either (`v`, `length`,
+  `latest_hash`, `algorithm`, `alg`, `fp`, `sig`). Give the rows the
+  firmware's keys with an elided bare `public_key`, or move the pane's
+  payloads into `gen_vision.py`'s data, so that
+  `fingerprint_examples.test.js` (which reads only the generated
+  `devices/*.json`) holds them. Then decide whether that test should also
+  read the pages' hand-written scripts. If it does, it needs a policy for
+  template values like `sense-ui.js`'s `${data.device.fp_example}`. Found
+  by A25's review (#1761).
+- [ ] **A27 [code] The Home Assistant Lab page's "real topic contract" is
+  not the WAP's.** `gen_homeassistant.py`'s "5 · Meet the fleet" step
+  shows a WAP chain line,
+  `{"length":1284,"latest_hash":"9f2c…","sig":"ed25519:…"}`. It has no
+  `v`, `alg` or `fp`, and its sig is not base64url.
+  `custom_components/securacv/signature.py`'s `_verify_with_kind` reads it
+  as unsigned ("Payload missing sig/fp/alg fields"), yet the page's note
+  says it is the line the integration verifies against the pinned key. The
+  step's `availability`, `status` and `health` lines also carry topics and
+  keys no WAP publishes: `csi_mqtt.cpp` sends
+  `{"online":true,"device_type":"canary-wap"}` on `status`, and its
+  `health` carries `public_key`, HA's TOFU anchor. Generate these lines
+  from `gen_wap.py`'s `TOPICS`, with the same test key and fp
+  `7916ca487912fa1b`. Then extend `fingerprint_examples.test.js` to require
+  an `fp` in every `events`, `chain` and `counts` example, since it checks
+  only the fps that are present. Found by A25's review (#1761).
+- [ ] **A28 [code] The Sense and Vision Lab pages show their Hardware ID as
+  hex.** `gen_sense.py`'s `EX_HWID` (`9f41c2d8a06be375`) and
+  `gen_vision.py`'s `EX_HEX` (`b3f2a9c41d5e`, 12 characters) are hex. But
+  `device_pseudonym::device_id_hex`
+  (`firmware/common/identity/device_pseudonym.h`) renders 16 characters of
+  the 54-character unambiguous alphabet, which has no `0` or `1`, so
+  neither is a value a unit can print. The Sense page's `EX_HOST`
+  (`canary-sense-001-b7e2c4`) borrows the fingerprint's first six digits;
+  `mdns_mgr.cpp`'s `make_hostname` appends the pseudonym's first six
+  characters instead, without lowercasing them. Give each example the
+  pseudonym's alphabet and length, and derive the host from it. Then
+  extend `fingerprint_examples.test.js`'s approach (find every example,
+  hold it to a rule pinned to the source) to the pseudonym. Found by A25
+  (#1761).
+- [ ] **A29 [code] The WAP's mDNS host examples do not have its fallback
+  hostname's shape.** With no friendly name set, `generate_mdns_hostname`
+  (`canary_wap.ino`) advertises `canary-%02x%02x` of `pubkey_fp[0..1]`:
+  four lowercase hex digits, not the device id's unambiguous suffix. The
+  Lab page (`gen_wap.py`'s `EX_MDNS`, `canary-ab7k.local`, beside device id
+  `canary-s3-ab7k`) and the docs (`firmware/projects/canary-wap/README.md`'s
+  `canary-ab7k.local`; `firmware/projects/canary-wap/arduino/canary_wap/README.md`
+  and `docs/homeassistant_setup.md`'s `http://canary-s3-ab7k.local`) show,
+  as the unnamed device's host, a name only a friendly name could produce:
+  `k` is not hex, and the fallback never carries `-s3-`. The page's SSID
+  (`SecuraCV-AB7K`) and device id (`canary-s3-ab7k`) also spell one suffix
+  in two cases, which one device cannot, because both come from the same
+  `unambiguous_suffix16`. Decide whether the page's identity examples
+  should all come from the repo test key (device id `canary-s3-4dC2`, HA's
+  `DEVICE_ID`; `SecuraCV-4dC2`; and `canary-7916.local` beside the
+  `7916ca487912fa1b` the page now shows), then correct the docs to the
+  fallback's real shape. Found by A25 (#1761).
 
 ---
 
@@ -2443,6 +3184,15 @@ so — see D2 below.)
   after lowercasing, before the pin task is scheduled.
   `test_fingerprint_case.py` gains four 64-character non-keys; the two
   whitespace forms fail on the old hook and pass after. Host-tested.
+- [ ] **HA23 [decision] Home Assistant accepts an event whose id equals its
+  mark.** `_replay_gate` (`sensor.py`) refuses only an id below the last
+  verified one. An equal counter passes on purpose: a broker re-delivers
+  the retained last event, and the chain and counts republish unchanged
+  while idle. So when a boot's NVS writes all fail and the device reissues
+  an id, HA accepts the second, different body under it (a review history
+  run through the real gate). This was true before F46, which does not
+  make it worse. Decide whether an equal id should pass only with an
+  identical body. Found by F46's review (#1761).
 - [ ] *(Mirror repo itself: no code work. It was byte-identical again as of
   securacv-homeassistant#17 (2026-09-24), which resynced the 33 carried
   files #1703, #1704 and #1718 had moved. The same PR brought the store
@@ -2450,7 +3200,9 @@ so — see D2 below.)
   and a `lint_readme.py` overclaim check that reads a hard-wrapped claim as
   one and refuses "encrypted by default". PR #1725's carried files
   followed in securacv-homeassistant#19 and PR #1727's in #20 (2026-10-01),
-  byte-identical again (U6). Its health
+  byte-identical again (U6). PR #1761 adds one carried test (F46's
+  `tests/test_replay_one_id_space.py`), which waits for the next resync.
+  Its health
   items are U6 and U7 above, plus the three monorepo-fixture tests its CI
   deselects, which is by design. A few more tests skip themselves there
   because they read firmware sources the mirror does not carry.)*

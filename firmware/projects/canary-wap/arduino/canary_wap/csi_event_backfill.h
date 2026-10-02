@@ -58,6 +58,22 @@
  * triggers fire on it); every other row it sends is a replay. The planner
  * remembers the last kFreshIds such rows; past that it says replay, the
  * conservative answer.
+ *
+ * One id space (backlog F46): every row, bundled or not, takes its id at
+ * commit from csi_event.cpp's one allocator, so the log is written in id
+ * order. A card is input, though: a line whose id this device never handed
+ * out (a forged or foreign line, or one near 0xFFFFFFFF) would be signed
+ * with this device's key and sent, would raise Home Assistant's mark past
+ * every real id, and, credited to the watermark, would push the delivery
+ * ceiling (which the hosts hold the id floor above, boot_floor) to the top
+ * of the space. So the planner never sends or credits a card line at or
+ * above the BOUND: the allocator's next id as the host reads it each pass
+ * (Link::id_next), or past the highest id commit() has seen this boot,
+ * whichever is higher. Every id this device handed out is below it. The
+ * converse does not hold: below the bound the log is trusted input. A
+ * forged line there (an id a reboot skipped, or one the allocator had
+ * passed by the time the walk read it) is signed and sent as it reads, and
+ * one written ahead of real rows moves the watermark past them.
  */
 
 #ifndef SECURACV_CSI_EVENT_BACKFILL_H
@@ -96,21 +112,57 @@ static_assert(kReadChunk >= csi_event_log_line::kLineMax,
  * guarantee), kStride past it (the write cadence), but no higher than the
  * allocator's persisted floor when `id` came from below that floor — the
  * next boot's ids start at the floor, and a ceiling above it would read
- * them as already delivered. An id at or above the floor (the bundler's
- * ids, which no floor covers, or one handed out after a failed floor write)
- * gets the plain stride.
+ * them as already delivered. An id at or above the floor (one handed out
+ * after a failed floor write, or the first of a boot that upgraded from an
+ * older firmware's floor) gets the plain stride, and the next boot holds
+ * its floor above that ceiling (csi_event_id_floor::boot_floor).
  *
- * A bundler id therefore moves the ceiling, and the watermark, into the
- * bundler's space (0x8000000A and up) the first time one is handed over,
- * and nothing lowers them again. From then on, on that device, every
- * chokepoint id reads as delivered: the backfill never sends a chokepoint
- * row again, in that boot or after a reboot (the live path still does).
- * The watermark cannot fall back into the chokepoint space by itself. So
- * the fix that makes one id space (an open item) must reset csi.evsent,
- * and Home Assistant's stored mark, when it lands. */
+ * Before backlog F46 the bundler's ids (0x80000000 up, no floor) took the
+ * plain stride too, and the first one handed over moved the ceiling and
+ * the watermark into the bundler's space for good: from then on every
+ * chokepoint id read as delivered. Now every id comes from one allocator
+ * that starts at kIdSpaceBase, above any ceiling an older firmware wrote,
+ * so an upgraded device's next rows are above its old watermark and
+ * nothing has to be reset. */
 inline uint32_t ceiling_for(uint32_t id, uint32_t id_floor) {
   const uint32_t c = csi_event_id_floor::floor_for(id);
   return (id_floor > id && id_floor < c) ? id_floor : c;
+}
+
+/* The delivery record a host restores at boot: Planner::begin's rule, and
+ * the canary-wap's csi_mqtt::init applies it to its own backfill. From the
+ * ceiling NVS holds (`nvs_ceiling`, 0 = none) and the event-id floor NVS
+ * holds (`id_floor`, 0 = none): `through` is the watermark, `write` the
+ * ceiling to persist now (0 = keep the one NVS holds).
+ *   - A ceiling on record: the watermark sits just under it.
+ *   - No ceiling (the first boot of this firmware on this device): every id
+ *     below the floor is treated as delivered (an earlier firmware may have
+ *     published it, and HA would refuse it again), and the record starts
+ *     there, written now, so rows held on the card this boot are still owed
+ *     after a reboot instead of falling under the same assumption. A
+ *     ceiling is never 0.
+ *   - A ceiling the allocator did not follow
+ *     (csi_event_id_floor::ceiling_ignored: past kHoldLimit, above the
+ *     floor; an older firmware wrote one for a forged card line): this
+ *     boot's ids start below it, so as the watermark it would read every
+ *     row this boot commits as delivered, and the backfill would never send
+ *     a held row again, on any boot (backlog F46). It is no record: the
+ *     watermark starts just under where the allocator starts
+ *     (boot_floor), and the ceiling is rewritten there. */
+struct Restored {
+  uint32_t through;
+  uint32_t write;
+};
+
+inline Restored restore(uint32_t nvs_ceiling, uint32_t id_floor) {
+  if (nvs_ceiling != 0 && !csi_event_id_floor::ceiling_ignored(id_floor, nvs_ceiling)) {
+    return Restored{nvs_ceiling - 1, 0};
+  }
+  const uint32_t start = (nvs_ceiling != 0)
+      ? csi_event_id_floor::boot_floor(id_floor, 0)
+      : id_floor;
+  const uint32_t through = (start != 0) ? start - 1 : 0;
+  return Restored{through, through + 1};
 }
 
 /* The id of the last whole, well-formed line in buf[0..n) — a read of the
@@ -205,6 +257,13 @@ struct Link {
   bool     connected;  /* the broker link is up now */
   uint32_t id_floor;   /* the event-id floor NVS holds now (0 = none) */
   uint32_t now_ms;     /* wraps; only differences are used */
+  uint32_t id_next;    /* the allocator's next id now
+                          (csi_event_get_next_event_id()): every id this
+                          device handed out is below it, so a card line at
+                          or above it is never sent or credited (F46).
+                          0 = unknown: then only ids commit() has seen are
+                          trusted, and the walk passes over the earlier
+                          boots' rows for good (counted as untrusted). */
 };
 
 enum class Route : uint8_t {
@@ -221,6 +280,7 @@ struct Stats {
   uint32_t queued;
   uint32_t replayed;
   uint32_t skipped;            /* lines passed over: delivered, torn or foreign to the format */
+  uint32_t untrusted;          /* lines whose id this device never handed out (also skipped) */
   uint32_t unsendable;         /* lines whose body would not build */
   uint32_t truncated_unsent;   /* retention truncations that dropped rows still waiting */
   uint32_t read_giveups;       /* walks abandoned after kReadFailLimit failed reads */
@@ -233,6 +293,7 @@ class Planner {
   void reset() {
     m_through = 0;
     m_stored = 0;
+    m_issued = 0;
     m_card_ok = false;
     m_size = 0;
     m_scan_off = 0;
@@ -248,26 +309,28 @@ class Planner {
   }
 
   /* Boot. `nvs_ceiling` is the persisted delivery ceiling (0 = never
-   * written), `id_floor` the event-id floor restored at boot (0 = none). */
+   * written), `id_floor` the event-id floor NVS holds (0 = none). The rule
+   * is restore()'s. A record that must be rewritten (none, or one the
+   * allocator did not follow) counts as none until the write lands, so a
+   * failed write is retried at the next hand-over. */
   void begin(uint32_t nvs_ceiling, uint32_t id_floor, Port& port) {
     reset();
-    m_stored = nvs_ceiling;
-    if (nvs_ceiling != 0) {
-      m_through = nvs_ceiling - 1;
+    const Restored r = restore(nvs_ceiling, id_floor);
+    m_through = r.through;
+    if (r.write == 0) {
+      m_stored = nvs_ceiling;
       return;
     }
-    /* No delivery record: the first boot of this firmware on this device.
-     * Every id handed out before this boot is treated as delivered (an
-     * earlier firmware may have published it, and HA would refuse it
-     * again), and the record starts here — written now, so that rows held
-     * on the card this boot are still owed after a reboot instead of
-     * falling under the same assumption. A ceiling is never 0. */
-    m_through = (id_floor != 0) ? id_floor - 1 : 0;
-    if (port.persist_ceiling(m_through + 1)) m_stored = m_through + 1;
+    if (port.persist_ceiling(r.write)) m_stored = r.write;
   }
 
-  /* The host opened this card's log: `size` bytes, last id `tail_id`. */
-  void card_open(uint32_t size, uint32_t tail_id) {
+  /* The host opened this card's log: `size` bytes, last id `tail_id`. A
+   * tail id at or above the bound (see the file header) is no id this
+   * device handed out; the card's highest is taken to be below the bound,
+   * so neither not_owed() nor the no-record rule below can credit it. */
+  void card_open(uint32_t size, uint32_t tail_id, const Link& link) {
+    const uint32_t bound = trust_bound(link);
+    if (tail_id >= bound) tail_id = bound - 1;
     m_card_ok = true;
     m_size = size;
     m_card_max = tail_id;
@@ -308,6 +371,9 @@ class Planner {
 
   /* One committed row, on the loop task: log it, then route it. */
   Route commit(const csi_event_record_t& rec, const Link& link, Port& port) {
+    /* The allocator issued this id: it, and every id below it this boot,
+     * is one this device handed out. */
+    if (rec.event_id > m_issued) m_issued = rec.event_id;
     const bool waiting = pending();
     bool on_card = false;
     uint32_t line_end = 0;
@@ -399,12 +465,16 @@ class Planner {
         const uint32_t step = (uint32_t)(len + 1);
         m_buf[pos + len] = '\0';
         csi_event_record_t rec;
-        if (len >= csi_event_log_line::kLineMax ||
-            !csi_event_log_line::parse(m_buf + pos, &rec) ||
-            rec.event_id <= m_through) {
+        const bool parsed = len < csi_event_log_line::kLineMax &&
+                            csi_event_log_line::parse(m_buf + pos, &rec);
+        const bool untrusted = parsed && rec.event_id >= trust_bound(link);
+        if (!parsed || untrusted || rec.event_id <= m_through) {
+          /* Delivered, torn, foreign to the format, or an id this device
+           * never handed out: passed over, never sent, never credited. */
           m_scan_off += step;
           pos += step;
           m_stats.skipped++;
+          if (untrusted) m_stats.untrusted++;
           continue;
         }
         if (!may_send || sent >= kSendsPerPass) {
@@ -460,6 +530,16 @@ class Planner {
  private:
   void advance(uint32_t id) {
     if (id > m_through) m_through = id;
+  }
+
+  /* Ids below this are ones this device handed out: the allocator's next
+   * id as the host read it, or one past the highest id commit() has seen
+   * this boot (a row committed after the host read the link), whichever is
+   * higher. Never 0. */
+  uint32_t trust_bound(const Link& link) const {
+    const uint32_t seen = (m_issued == UINT32_MAX) ? UINT32_MAX : m_issued + 1;
+    const uint32_t b = (link.id_next > seen) ? link.id_next : seen;
+    return b ? b : 1;
   }
 
   /* Before an id is handed over, NVS must already hold a ceiling above it
@@ -523,6 +603,7 @@ class Planner {
 
   uint32_t m_through;      /* the watermark */
   uint32_t m_stored;       /* the ceiling NVS holds (0 = none) */
+  uint32_t m_issued;       /* the highest id commit() has seen this boot */
   bool     m_card_ok;
   uint32_t m_size;         /* the log's size in bytes */
   uint32_t m_scan_off;     /* where the next unread line starts */
