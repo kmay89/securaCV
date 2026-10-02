@@ -68,11 +68,14 @@ function coreFactory(name) {
 
 // ── build.sh, read ──────────────────────────────────────────────────────────
 
-// $NAME / ${NAME} → vars[NAME]; anything else that starts with $ is refused.
-function expand(text, vars, where) {
+// $NAME / ${NAME} → vars[NAME]; anything else that starts with $ (or a
+// backquoted command) is refused. `used` collects the names it read.
+function expand(text, vars, where, used) {
+  if (text.includes("`")) throw new Error(`build.sh ${where}: cannot expand a backquoted command in ${JSON.stringify(text)}`);
   const out = text.replace(/\$(?:\{(\w+)\}|(\w+))/g, (whole, a, b) => {
     const k = a || b;
     if (!(k in vars)) throw new Error(`build.sh ${where}: $${k} is not a variable cores.js can resolve`);
+    if (used) used.add(k);
     return vars[k];
   });
   if (out.includes("$")) throw new Error(`build.sh ${where}: cannot expand ${JSON.stringify(text)}`);
@@ -80,8 +83,9 @@ function expand(text, vars, where) {
 }
 
 // The words of a shell array body or command: quotes, $VARs, comments, line
-// continuations, and a whole-word "${ARRAY[@]}" spliced in.
-function words(text, vars, arrays, where) {
+// continuations, and a whole-word "${ARRAY[@]}" spliced in. `seen` collects
+// the variables and arrays the words read.
+function words(text, vars, arrays, where, seen) {
   const out = [];
   let i = 0;
   while (i < text.length) {
@@ -92,6 +96,7 @@ function words(text, vars, arrays, where) {
     const splice = /^"\$\{(\w+)\[@\]\}"(?=\s|$)/.exec(text.slice(i));
     if (splice) {
       if (!arrays[splice[1]]) throw new Error(`build.sh ${where}: no array ${splice[1]} before it is used`);
+      seen.arrays.add(splice[1]);
       out.push(...arrays[splice[1]]);
       i += splice[0].length;
       continue;
@@ -106,7 +111,7 @@ function words(text, vars, arrays, where) {
       } else if (text[i] === '"') {
         const j = text.indexOf('"', i + 1);
         if (j < 0) throw new Error(`build.sh ${where}: unterminated "`);
-        w += expand(text.slice(i + 1, j), vars, where);
+        w += expand(text.slice(i + 1, j), vars, where, seen.vars);
         i = j + 1;
       } else if (text[i] === "\\") {
         w += text[i + 1];
@@ -114,7 +119,11 @@ function words(text, vars, arrays, where) {
       } else {
         let j = i;
         while (j < text.length && !/[\s'"\\]/.test(text[j])) j++;
-        w += expand(text.slice(i, j), vars, where);
+        // bash would glob or brace-expand these; cores.js would take them as written
+        if (/[*?[{]/.test(text.slice(i, j).replace(/\$\{\w+\}/g, ""))) {
+          throw new Error(`build.sh ${where}: cannot follow the unquoted pattern ${JSON.stringify(text.slice(i, j))}`);
+        }
+        w += expand(text.slice(i, j), vars, where, seen.vars);
         i = j;
       }
     }
@@ -125,15 +134,27 @@ function words(text, vars, arrays, where) {
 
 // NAME="value" lines, in order; a value cores.js cannot expand (a command
 // substitution, $PWD) is left out, and fails only if something uses it.
-function assignments(text, vars) {
+// deps[NAME] is the set of variables its value read.
+function assignments(text, vars, deps) {
   for (const m of text.matchAll(/^[ \t]*([A-Z_][A-Z0-9_]*)="([^"\n]*)"[ \t]*$/gm)) {
     if (m[1] in SEEDS) continue;
+    const used = new Set();
     try {
-      vars[m[1]] = expand(m[2], vars, m[1]);
+      vars[m[1]] = expand(m[2], vars, m[1], used);
+      deps[m[1]] = used;
     } catch {
       delete vars[m[1]];
     }
   }
+}
+
+// The lines of `text` (continuations joined) that write the shell name `v`:
+// v=, v+=, v[i]=, and declare/local/typeset/readonly/export/unset/mapfile/
+// readarray/read naming it.
+function writesOf(text, v) {
+  const assign = new RegExp(String.raw`(?:^|[\s;&|(!])${v}(?:\[[^\]\n]*\])?\+?=`);
+  const builtin = new RegExp(String.raw`(?:^|[\s;&|(!])(?:declare|local|typeset|readonly|export|unset|mapfile|readarray|read)\b[^\n;&|]*?[\s=]${v}\b`);
+  return text.replace(/\\\n/g, " ").split("\n").filter((l) => assign.test(l) || builtin.test(l)).map((l) => l.trim());
 }
 
 // The two build.sh values that come from the shell, not from a line.
@@ -174,33 +195,80 @@ function exportsOf(file) {
 
 // The build of one core, as build.sh does it for the core's flavor: its
 // sources (the array its `for src in` loop walks), the flags its `em++ -c`
-// line passes, and the link line's EXPORT_NAME and runtime methods.
-function buildPlan(name) {
+// line passes, and the link line's EXPORT_NAME and runtime methods. What it
+// cannot follow it refuses by name, never skips: an array or variable the
+// build reads that is written anywhere but its one literal (an append, a
+// reassignment, an element), a compile line with anything beyond the flags
+// array, EMCC_CFLAGS. `script` is build.sh's text (native_cores.test.js
+// hands it edited copies).
+function buildPlan(name, script = fs.readFileSync(join(EMU, "build.sh"), "utf8")) {
   const core = CORES[name];
   if (!core) throw new Error(`no Lab core ${name}`);
-  const script = fs.readFileSync(join(EMU, "build.sh"), "utf8");
   const head = `if [[ "$FLAVOR" == "${core.flavor}" ]]; then\n`;
   const start = script.indexOf(head);
   if (start < 0) throw new Error(`build.sh has no "${core.flavor}" flavor block (${head.trim()})`);
   const end = script.indexOf("\nfi\n", start);
   if (end < 0) throw new Error(`build.sh: the "${core.flavor}" block never closes`);
   const block = script.slice(start, end);
+  const refuse = (why) => {
+    throw new Error(`build.sh, for the "${core.flavor}" core: ${why}. cores.js cannot follow that, so it ` +
+      `refuses rather than build something build.sh does not (canary-local/tests/native/cores.js)`);
+  };
+  if (/\bEMCC_CFLAGS\b/.test(script)) refuse("EMCC_CFLAGS adds flags to every em++ call");
 
   // build.sh's top level (every flavor block cut out of it), then the block
+  const top = script.slice(0, start).replace(/^if \[\[ "\$FLAVOR" == "\w+" \]\]; then\n[\s\S]*?\nfi\n/gm, "");
   const vars = { ...SEEDS };
-  assignments(script.slice(0, start).replace(/^if \[\[ "\$FLAVOR" == "\w+" \]\]; then\n[\s\S]*?\nfi\n/gm, ""), vars);
-  assignments(block, vars);
+  const deps = {};
+  assignments(top, vars, deps);
+  assignments(block, vars, deps);
   if (vars.OUT_BASE !== name) {
     throw new Error(`build.sh's "${core.flavor}" block writes ${vars.OUT_BASE}.js, not ${name}.js`);
   }
   const arrays = {};
+  const reads = {};
   for (const m of block.matchAll(/^[ \t]*([A-Z_][A-Z0-9_]*)=\(\n([\s\S]*?)^[ \t]*\)[ \t]*$/gm)) {
-    arrays[m[1]] = words(m[2], vars, arrays, m[1]);
+    reads[m[1]] = { vars: new Set(), arrays: new Set() };
+    arrays[m[1]] = words(m[2], vars, arrays, m[1], reads[m[1]]);
   }
-  const srcArr = (/for src in "\$\{(\w+)\[@\]\}"/.exec(block) || [])[1];
-  const flagArr = (/em\+\+ -c "\$src" "\$\{(\w+)\[@\]\}"/.exec(block) || [])[1];
-  if (!srcArr || !arrays[srcArr]) throw new Error(`build.sh's "${core.flavor}" block: no \`for src in "\${…[@]}"\` over a source array`);
-  if (!flagArr || !arrays[flagArr]) throw new Error(`build.sh's "${core.flavor}" block: no \`em++ -c "$src" "\${…[@]}"\` line`);
+
+  // The loop and the compile line, exactly; any other shape is refused.
+  const lines = block.replace(/\\\n/g, " ").split("\n");
+  const loops = lines.filter((l) => /^\s*for\s+src\b/.test(l));
+  const compiles = lines.filter((l) => /(?:^|[\s;&|(])em(?:\+\+|cc)\s/.test(l) && /\s-c(?:\s|$)/.test(l));
+  const loopRe = /^\s*for src in "\$\{(\w+)\[@\]\}"; do\s*$/;
+  const compileRe = /^\s*em\+\+ -c "\$src" "\$\{(\w+)\[@\]\}" -o "\$obj"\s*$/;
+  if (loops.length !== 1 || !loopRe.test(loops[0])) {
+    refuse(`expected one \`for src in "\${SOURCES[@]}"; do\` line, found ${JSON.stringify(loops.map((l) => l.trim()))}`);
+  }
+  if (compiles.length !== 1 || !compileRe.test(compiles[0])) {
+    refuse(`expected one \`em++ -c "$src" "\${FLAGS[@]}" -o "$obj"\` line, found ${JSON.stringify(compiles.map((l) => l.trim()))}`);
+  }
+  const srcArr = loopRe.exec(loops[0])[1];
+  const flagArr = compileRe.exec(compiles[0])[1];
+  if (!arrays[srcArr]) refuse(`no ${srcArr}=( … ) source array`);
+  if (!arrays[flagArr]) refuse(`no ${flagArr}=( … ) flag array`);
+
+  // Every array the build reads (the two, and what they splice in) and every
+  // variable their words expand (and what those were built from) is written
+  // exactly once, by the line cores.js read; src is written only by the loop.
+  const readArrays = new Set([srcArr, flagArr]);
+  for (const a of readArrays) for (const b of reads[a].arrays) readArrays.add(b);
+  const readVars = new Set();
+  for (const a of readArrays) for (const v of reads[a].vars) readVars.add(v);
+  for (const v of readVars) for (const d of deps[v] || []) readVars.add(d);
+  const scope = top + "\n" + block;
+  for (const a of readArrays) {
+    const w = writesOf(scope, a);
+    if (w.length !== 1 || w[0] !== `${a}=(`) refuse(`${a} is written ${w.length} times (${JSON.stringify(w)}), not only by its ${a}=( … ) literal`);
+  }
+  for (const v of readVars) {
+    const w = writesOf(scope, v);
+    const literal = v in SEEDS ? w.length === 1 : w.length === 1 && new RegExp(String.raw`^${v}="[^"]*"$`).test(w[0]);
+    if (!literal) refuse(`$${v} is written ${w.length} times (${JSON.stringify(w)}), not only by one ${v}="…" line`);
+  }
+  const srcWrites = writesOf(block, "src");
+  if (srcWrites.length) refuse(`$src is written in the block (${JSON.stringify(srcWrites)}), not only by the loop`);
   const sources = arrays[srcArr];
   for (const s of sources) {
     if (!/\.(cpp|cc|cxx)$/.test(s)) throw new Error(`build.sh's ${srcArr} lists ${s}: cores.js builds C++ sources only`);

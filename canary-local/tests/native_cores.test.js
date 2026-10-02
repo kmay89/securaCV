@@ -6,11 +6,13 @@
 // nothing. It holds what the default promises — the tests get the committed
 // dist bundle, the very module they used to require — and holds the native
 // build's reading of build.sh and of the bindings to the dist it stands in
-// for, so a build.sh or bindings change the reader cannot follow fails here
-// rather than only under the opt-in. With LAB_CORES=native it also builds
-// both cores and drives each next to its committed dist, call for call: the
-// two agree while the dist is current, and a difference names a stale dist
-// (or a native build that is not the wasm one).
+// for: the reader refuses a build.sh shape it cannot follow (an appended or
+// reassigned array, an extra compile flag), and the pinned source lists
+// below change with build.sh's. With LAB_CORES=native it also builds both
+// cores and drives each next to its committed dist, call for call, on the
+// scenarios below: a difference names a stale dist, or a place where the
+// native build and the wasm one differ (another compiler, a 64-bit ABI).
+// Agreement covers the calls those scenarios make, not every input.
 
 const { test } = require("node:test");
 const assert = require("node:assert");
@@ -97,6 +99,59 @@ test("the audio plan is build.sh's two sources against the WAP's host stubs", ()
   assert.deepStrictEqual(incs, ["canary-local/emulator/audio", "firmware/projects/canary-wap/tests_host/stubs/audio",
     "firmware/projects/canary-wap/arduino/canary_wap"]);
   assert.strictEqual(plan.exportName, "createCanaryAudioCore");
+});
+
+// The reader refuses, by name, what it cannot follow. Each case is build.sh
+// with one edit made in the core's flavor block (or at its top level), found
+// by shape rather than by line, so a renamed array still gets every case.
+test("a build.sh edit the reader cannot follow is refused, never skipped", () => {
+  const sh = fs.readFileSync(join(ROOT, "emulator/build.sh"), "utf8");
+  const flavorOf = { "canary-vision-core": "vision", "canary-wap-audio": "audio" };
+  for (const name of NAMES) {
+    const head = `if [[ "$FLAVOR" == "${flavorOf[name]}" ]]; then\n`;
+    const at = sh.indexOf(head), end = sh.indexOf("\nfi\n", at);
+    assert.ok(at >= 0 && end > at, `build.sh has the ${flavorOf[name]} block`);
+    const block = sh.slice(at, end);
+    const SRCS = /^[ \t]*for src in "\$\{(\w+)\[@\]\}"; do$/m.exec(block)[1];
+    const compile = /^[ \t]*em\+\+ -c "\$src" "\$\{(\w+)\[@\]\}" -o "\$obj"$/m.exec(block);
+    const FLAGS = compile[1];
+    const INCLUDES = /"\$\{(\w+_INCLUDES)\[@\]\}"/.exec(block)[1];
+    const PROJ = /^[ \t]*(\w+_PROJ)="/m.exec(block)[1];
+    const inBlock = (f) => sh.slice(0, at) + f(block) + sh.slice(end);
+    const beforeLoop = (line) => inBlock((b) => b.replace(/^([ \t]*for src in )/m, `  ${line}\n$1`));
+    const inLoop = (line) => inBlock((b) => b.replace(/^([ \t]*for src in .*\n)/m, `$1    ${line}\n`));
+    const onCompile = (f) => inBlock((b) => b.replace(compile[0], f(compile[0])));
+    const inSources = (word) => inBlock((b) => b.replace(`${SRCS}=(\n`, `${SRCS}=(\n    ${word}\n`));
+    const plan = cores.buildPlan(name);
+    const refused = (text, why, label) => {
+      assert.notStrictEqual(text, sh, `${name}: the "${label}" edit applies`);
+      assert.throws(() => cores.buildPlan(name, text), why, `${name}: ${label}`);
+    };
+
+    assert.deepStrictEqual(cores.buildPlan(name, sh), plan, `${name}: the text and the file give one plan`);
+    // an array the build reads, written anywhere but its literal
+    refused(beforeLoop(`${FLAGS}+=(-DOPT_PROXIMITY_NEAR_PCT=50)`), new RegExp(`${FLAGS} is written 2 times`), "a flag appended");
+    refused(beforeLoop(`${SRCS}+=("$EMU_DIR/extra.cpp")`), new RegExp(`${SRCS} is written 2 times`), "a source appended");
+    refused(beforeLoop(`${INCLUDES}+=(-I "$EMU_DIR/x")`), new RegExp(`${INCLUDES} is written 2 times`), "an include appended");
+    refused(beforeLoop(`${FLAGS}=(-O0)`), new RegExp(`${FLAGS} is written 2 times`), "the flags reassigned on one line");
+    refused(beforeLoop(`${FLAGS}[0]=-O0`), new RegExp(`${FLAGS} is written 2 times`), "a flag element set");
+    refused(beforeLoop(`declare -a ${SRCS}`), new RegExp(`${SRCS} is written 2 times`), "the sources declared again");
+    // a variable the words expand, or one it was built from
+    refused(beforeLoop(`${PROJ}="$FW/elsewhere"`), new RegExp(`\\$${PROJ} is written 2 times`), "the project reassigned");
+    refused(sh.replace(/^FW=.*\n/m, (l) => l + 'FW+="/x"\n'), /\$FW is written 2 times/, "the firmware root appended");
+    refused(inLoop('src="${src%.cpp}_emu.cpp"'), /\$src is written in the block/, "the loop's src rewritten");
+    // the compile line, exactly
+    refused(onCompile((l) => l.replace(' -o "$obj"', ' -DPROBE_EXTRA=1 -o "$obj"')), /expected one `em\+\+ -c/, "an extra compile flag");
+    refused(onCompile((l) => l.replace(' -o "$obj"', ' \\\n      -DPROBE_EXTRA=1 -o "$obj"')), /expected one `em\+\+ -c/,
+      "an extra flag on a continuation line");
+    refused(onCompile((l) => `${l}\n    emcc -c extra.c -o extra.o`), /expected one `em\+\+ -c/, "a second compile");
+    refused(sh.replace(/^export LC_ALL=C$/m, "export LC_ALL=C\nexport EMCC_CFLAGS=-DX"), /EMCC_CFLAGS adds flags/, "EMCC_CFLAGS");
+    // words bash would expand differently from how they read
+    refused(inSources('"$EMU_DIR"/*.cpp'), /cannot follow the unquoted pattern/, "a glob");
+    refused(inSources('"`echo x`.cpp"'), /backquoted command/, "a backquoted command");
+    // a read is not a write
+    assert.deepStrictEqual(cores.buildPlan(name, beforeLoop(`echo "\${${FLAGS}[@]}"`)), plan, `${name}: an echo of the flags`);
+  }
 });
 
 test("the plan reads every export and runtime method the committed dist has", async () => {

@@ -28,9 +28,21 @@ can't fall back to the dist without you noticing.
 [`cores.js`](cores.js) reads [`build.sh`](../../emulator/build.sh) for the
 core's flavor (`vision` or `audio`): the source array its `for src in` loop
 walks, the flags and include paths its `em++ -c` line passes, and the link
-line's `-sEXPORTED_RUNTIME_METHODS`. A source added to `build.sh` is compiled
-here too, with nothing to edit. Those sources are compiled with g++ next to
-a one-line `<emscripten.h>` and [`core_server.cpp`](core_server.cpp).
+line's `-sEXPORTED_RUNTIME_METHODS`. Those sources are compiled with g++ next
+to a one-line `<emscripten.h>` and [`core_server.cpp`](core_server.cpp). A
+source added to the array is compiled here too, with nothing to edit in
+`cores.js`; `native_cores.test.js` pins each core's source list, so update
+that list in the same change.
+
+The reader takes `build.sh` in one shape and refuses any other by name,
+rather than build something `build.sh` does not. Each array the build reads
+(the sources, the flags and what they splice in) and each variable their
+words expand is written once, by the literal the reader parsed: an append
+(`VISION_FLAGS+=(…)`), a reassignment or an element write is refused. The
+compile line is exactly `em++ -c "$src" "${FLAGS[@]}" -o "$obj"`, so an
+extra flag on it is refused, and so are `EMCC_CFLAGS`, an unquoted glob and
+a backquoted command. If you reshape `build.sh` that way, teach `cores.js`
+the new shape and add the case to `native_cores.test.js`.
 
 | Core | Sources (`build.sh`) | Against |
 |---|---|---|
