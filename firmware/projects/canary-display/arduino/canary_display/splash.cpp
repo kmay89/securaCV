@@ -186,6 +186,12 @@ void splash_play(uint32_t hold_ms) {
   lv_obj_set_style_transform_angle(tail, 450, 0);
 #endif
   lv_obj_clear_flag(tail, LV_OBJ_FLAG_SCROLLABLE);
+  // Only the LVGL 9 builds draw it (the dash line and the C6 nightstand).
+  // LVGL 8.4 renders a turned object through a transform layer, a rounded
+  // one needs that layer's alpha, and 8.4 refuses an alpha layer while
+  // LV_COLOR_SCREEN_TRANSP is 0 (lv_draw_sw_layer_create): the 8.4 glass
+  // and the emulator draw no tail (filed). Where it sits is the same on
+  // both (below).
 
   // Fixed label width, centered text. A percent-sized child inside a
   // content-sized parent is circular in LVGL and inflated the bubble into

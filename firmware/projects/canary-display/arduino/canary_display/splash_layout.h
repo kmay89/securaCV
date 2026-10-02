@@ -78,8 +78,11 @@ inline int bubble_w(int canvas_w, const Family& f) {
 // LV_ALIGN_OUT_TOP_MID on the bubble, kTailInset px into its top edge. It
 // is aligned again whenever the typed line changes (F158): a centered
 // bubble grows both ways as its line wraps, and a tail aligned once, to the
-// empty bubble, stayed inside the grown one (the round watch's tail top at
-// y 99 in a bubble at y 90..159, native LVGL 8.4).
+// empty bubble, stayed inside the grown one (the round watch's tail object
+// at y 99 in a bubble at y 90..159, native LVGL 8.4). Only the LVGL 9
+// builds draw it (the dash line and the C6 nightstand): LVGL 8.4 refuses
+// the turned, rounded square's alpha layer, so the 8.4 glass and the
+// emulator show no tail, before F158 or after (see splash.cpp).
 constexpr int kTailSide = 12;
 constexpr int kTailInset = 5;
 
