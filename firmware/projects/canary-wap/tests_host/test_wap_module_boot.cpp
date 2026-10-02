@@ -5,9 +5,10 @@
 // /api/csi/calibrate/apply or a Tuning Lab change, so a preset, threshold,
 // pet mode or anomaly cooldown saved in an earlier boot did nothing until
 // the owner changed a setting again. csi_integration::init() now calls
-// csi_module_init_all() right after register_v1_modules().
+// csi_settings_nvs_init_modules() right after register_v1_modules(): every
+// registered module's init(), once, through one read-only NVS handle.
 //
-// What runs here is REAL: the canary-wap's settings readers
+// What runs here is REAL: the canary-wap's settings readers and boot init
 // (csi_settings_nvs.cpp, by the shared csi_module_settings_nvs.h rule), the
 // staged CSI library (csi_event, csi_bundler, csi_module) and the staged
 // modules, over a fake NVS that outlives a modeled reboot
@@ -15,7 +16,7 @@
 //
 // What is modeled: csi_integration.cpp, which no host suite compiles. A boot
 // here is its order: the event-id floor (apply_event_id_floor_from_nvs),
-// register_v1_modules(), then csi_module_init_all(nullptr); a window is
+// register_v1_modules(), then csi_settings_nvs_init_modules(); a window is
 // on_csi_window()'s csi_module_tick_all() and the loop's
 // csi_bundler_tick(). check_wap_event_egress.py's rule 3 holds init() to
 // that order. The model registers the modules register_v1_modules()
@@ -25,7 +26,7 @@
 //
 // Each test of a stored setting fails with csi_module_init_all() made a
 // no-op (the canary-wap before F93, which ran no init at boot); the commit
-// test passes there too, and guards the new boot path.
+// test and the source pin pass there too, and guard the new boot path.
 //
 // Build/run: make -C firmware/projects/canary-wap/tests_host
 
@@ -44,6 +45,7 @@
 #include "csi_event.h"
 #include "csi_event_id_floor.h"
 #include "csi_module.h"
+#include "csi_settings_nvs.h"
 
 #include "anomaly_baseline.h"
 #include "ble_events_module.h"
@@ -131,10 +133,11 @@ static void reboot_and_boot() {
   g_commits = 0;
   g_id_advances = 0;
   g_first_committed_id = 0;
+  host_prefs().begins = 0;
   host_prefs().opens = 0;
   host_prefs().gets.clear();
   register_v1_modules_model();                // register_v1_modules()
-  (void)csi_module_init_all(nullptr);         // F93
+  (void)csi_settings_nvs_init_modules();      // F93
 }
 
 // ── Windows (on_csi_window, then the loop's bundler tick) ───────────────
@@ -235,14 +238,17 @@ static int test_a_saved_anomaly_cooldown_applies_at_boot() {
 
 // Once per boot: the WAP's modules read the same 16 mapped rows as the
 // canary's (meta.quiet_hours, ble.events and system.integrity read none),
-// each once. A second csi_module_init_all() reads nothing. A settings
-// change still applies at once, through reinit_module()'s direct
-// deinit() + init() (modeled), which the boot's latch does not stop.
+// each once, all through the boot's one read-only handle. A second
+// csi_module_init_all() reads nothing. A settings change still applies at
+// once, through reinit_module()'s direct deinit() + init(nullptr)
+// (modeled), which the boot's latch does not stop and which reads with a
+// handle per row, as before F93.
 static int test_init_runs_once_per_boot_and_a_change_still_applies() {
   host_prefs().clear();
   store_int("cp.preset", 0);
   reboot_and_boot();
-  CHECK(host_prefs().opens == 16);
+  CHECK(host_prefs().begins == 1);
+  CHECK(host_prefs().opens == 1);
   CHECK(host_prefs().gets.size() == 16);
   for (const char* k : {"cp.pet_mode", "cp.preset", "cp.sens", "cp.mt", "cp.at", "cp.bt",
                         "cp.ps", "cp.srs", "cp.sdf", "cp.se", "cb.lt", "cb.cs",
@@ -250,7 +256,7 @@ static int test_init_runs_once_per_boot_and_a_change_still_applies() {
     CHECK(host_prefs().gets_of(std::string("csi/") + k) == 1);
   }
   CHECK(csi_module_init_all(nullptr) == 0);
-  CHECK(host_prefs().opens == 16);
+  CHECK(host_prefs().begins == 1);
 
   // /api/settings stores "quiet" (motion threshold 50) and reinits.
   store_int("cp.preset", 2);
@@ -258,8 +264,24 @@ static int test_init_runs_once_per_boot_and_a_change_still_applies() {
   CHECK(m != nullptr);
   m->deinit();
   m->init(nullptr);
+  CHECK(host_prefs().opens == 1 + 10);        // core.presence's ten rows
   hold(window_of(30));
   CHECK(!presence_open("subtle"));
+  return 0;
+}
+
+// A namespace that will not open (a device that never wrote one): the boot
+// tries once, not once per setting, and every module runs on its defaults.
+static int test_a_missing_namespace_costs_the_boot_one_open() {
+  host_prefs().clear();
+  host_prefs().fail_begin = true;
+  reboot_and_boot();
+  CHECK(host_prefs().begins == 1);
+  CHECK(host_prefs().opens == 0);
+  CHECK(host_prefs().gets.empty());
+  hold(window_of(30));
+  CHECK(presence_open("empty"));
+  host_prefs().clear();
   return 0;
 }
 
@@ -364,6 +386,7 @@ int main() {
   if (test_saved_thresholds_and_pet_mode_apply_at_boot()) return 1;
   if (test_a_saved_anomaly_cooldown_applies_at_boot()) return 1;
   if (test_init_runs_once_per_boot_and_a_change_still_applies()) return 1;
+  if (test_a_missing_namespace_costs_the_boot_one_open()) return 1;
   if (test_nothing_commits_during_the_boot_init()) return 1;
   if (test_the_model_is_register_v1_modules()) return 1;
   std::printf("ALL wap_module_boot TESTS PASSED (%d checks)\n", g_checks);

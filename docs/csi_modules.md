@@ -296,8 +296,14 @@ window can reach `csi_module_tick_all()`:
 
 ```c
 register_csi_modules();
-csi_module_init_all(nullptr);   // each module's init(), once, stored settings
+csi_module_init_all(nullptr);   // each module's init(), once
 ```
+
+`nullptr` suits a sketch on the library's weak settings helpers (every
+setting reads as its default). A host that stores settings passes its own
+handle; both SecuraCV trees pass a read session
+(`csi_module_settings_nvs.h`), so a boot opens NVS once for every
+module's settings, not once per key.
 
 Both trees do this at a fixed point in their boot: after the event-id floor
 is restored and the events egress has begun, so nothing a module commits

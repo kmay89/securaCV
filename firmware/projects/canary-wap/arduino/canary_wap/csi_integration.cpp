@@ -52,6 +52,7 @@
 #include <csi_types.h>
 #include <csi_module.h>
 #include "csi_module_settings_nvs.h"  // the module settings' NVS rule, shared with the canary (F93)
+#include "csi_settings_nvs.h"         // the modules' boot init (F93)
 #include <csi_event.h>
 #include "csi_event_id_floor.h"   // when to write the id floor (common/csi, host-tested)
 #include <csi_bundler.h>          // snapshot_open() — live rows for /api/events/today
@@ -418,7 +419,8 @@ void on_csi_window(const csi_features_t* features, void* /*user*/) {
  * csi_module_settings_nvs.h's, the one rule the canary reads them by too
  * (sweep F93). This TU's other "csi" keys (the time zone, the transmitter
  * filter, the event-id floor) share the namespace. The csi_module_settings_*
- * overrides that read them for the modules are in csi_settings_nvs.cpp. */
+ * overrides that read them for the modules, and the modules' boot init,
+ * are in csi_settings_nvs.cpp. */
 constexpr const char* SETTINGS_NS = csi_module_settings_nvs::kNamespace;
 
 using csi_module_settings_nvs::nvs_key_for;
@@ -2898,8 +2900,10 @@ bool init(httpd_handle_t server, const char* api_token) {
    * and the egress (no init() emits, and one that did would allocate from
    * the restored floor) and the modules; before the HAL installs the
    * features callback, the first tick (csi_module_tick_all ticks no module
-   * before its init). check_wap_event_egress.py's rule 3 holds the order. */
-  csi_module_init_all(nullptr);
+   * before its init). One read-only NVS handle serves every init()
+   * (csi_settings_nvs.cpp). check_wap_event_egress.py's rule 3 holds the
+   * order. */
+  csi_settings_nvs_init_modules();
 
   /* Restore persisted privacy ceiling (defaults to P0 — privacy-first).
    * Done before HAL start so the very first /api/csi/window request after

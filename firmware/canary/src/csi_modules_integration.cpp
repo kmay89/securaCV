@@ -348,27 +348,48 @@ static void on_csi_watchdog(uint32_t silent_ms, uint32_t attempt) {
  * (csi_module_settings_nvs.h: namespace "csi", the same short keys, the
  * same typed reads, an unmapped key or a closed namespace reads as the
  * default), so a row the canary-wap stored reads the same here. Nothing on
- * the canary writes these rows today. Read at boot, by
- * securacv_csi_modules_init()'s csi_module_init_all() (sweep F93).
+ * the canary writes these rows today.
+ *
+ * The settings handle is a read session: at boot, init_modules_from_nvs()
+ * opens the namespace once and every module's init() reads through it. A
+ * canary whose NVS has no "csi" namespace (nothing on the canary creates
+ * one) then costs one failed open at boot, not one per setting.
  * ────────────────────────────────────────────────────────────────────────── */
 
-extern "C" int32_t csi_module_settings_int(const csi_module_settings_t*,
+struct csi_module_settings : csi_module_settings_nvs::Session<Preferences> {};
+
+extern "C" int32_t csi_module_settings_int(const csi_module_settings_t* settings,
                                            const char* key,
                                            int32_t default_value) {
-  return csi_module_settings_nvs::read_int<Preferences>(key, default_value);
+  return csi_module_settings_nvs::read_int<Preferences>(settings, key, default_value);
 }
 
-extern "C" bool csi_module_settings_bool(const csi_module_settings_t*,
+extern "C" bool csi_module_settings_bool(const csi_module_settings_t* settings,
                                          const char* key,
                                          bool default_value) {
-  return csi_module_settings_nvs::read_bool<Preferences>(key, default_value);
+  return csi_module_settings_nvs::read_bool<Preferences>(settings, key, default_value);
 }
 
-extern "C" float csi_module_settings_float(const csi_module_settings_t*,
+extern "C" float csi_module_settings_float(const csi_module_settings_t* settings,
                                            const char* key,
                                            float default_value) {
-  return csi_module_settings_nvs::read_float<Preferences>(key, default_value);
+  return csi_module_settings_nvs::read_float<Preferences>(settings, key, default_value);
 }
+
+namespace {
+
+/* The modules' boot init (sweep F93): every registered module's init(),
+ * once, reading its stored settings through one read-only handle. The only
+ * csi_module_init_all() call in the canary tree. */
+size_t init_modules_from_nvs() {
+  csi_module_settings boot;
+  csi_module_settings_nvs::begin(boot);
+  const size_t ran = csi_module_init_all(&boot);
+  csi_module_settings_nvs::end(boot);
+  return ran;
+}
+
+}  /* namespace */
 
 /* ──────────────────────────────────────────────────────────────────────────
  * PUBLIC BRIDGE
@@ -462,7 +483,7 @@ extern "C" bool securacv_csi_modules_init(void) {
    * csi_module_register() and ble_scout_init(); no init() emits, and the
    * floor is already restored (csi_event_egress_begin() runs first in
    * main.cpp's setup()). */
-  csi_module_init_all(nullptr);
+  init_modules_from_nvs();
 
   csi_hal::set_watchdog(csi_hal::WATCHDOG_DEFAULT_TIMEOUT_MS,
                         &on_csi_watchdog);

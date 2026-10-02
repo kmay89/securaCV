@@ -18,8 +18,15 @@
  *     handle is opened for it;
  *   - a namespace that will not open, or a row that is absent, reads as the
  *     caller's default;
- *   - one read-only handle per read, closed before it returns (settings are
- *     read at boot and after a settings change, never per window);
+ *   - at boot, one read-only handle for every module's init(): the host
+ *     derives its csi_module_settings from Session below and hands one to
+ *     csi_module_init_all(), and a namespace that will not open makes every
+ *     read of that boot the default, after one attempt (Arduino's
+ *     Preferences logs each failed open, and a canary's NVS has no "csi"
+ *     namespace unless a canary-wap image made one);
+ *   - outside a session (a NULL handle: the canary-wap's re-init after a
+ *     settings change), one read-only handle per read, closed before it
+ *     returns;
  *   - the value is returned as stored, typed as asked (getInt / getBool /
  *     getFloat); range checks are the module's own (anomaly.baseline clamps
  *     on read, for one).
@@ -34,6 +41,20 @@
  * Header-only and Arduino-free: the readers take the Preferences type as a
  * template parameter, so the host tests instantiate them over a fake store.
  * C++11 (the canary's core-2.x envs).
+ *
+ * A host wires it up in three pieces (both trees do exactly this):
+ *
+ *   struct csi_module_settings : csi_module_settings_nvs::Session<Preferences> {};
+ *
+ *   extern "C" int32_t csi_module_settings_int(const csi_module_settings_t* s,
+ *                                              const char* key, int32_t d) {
+ *     return csi_module_settings_nvs::read_int<Preferences>(s, key, d);
+ *   }   // and _bool, _float
+ *
+ *   csi_module_settings boot;                 // the boot init
+ *   csi_module_settings_nvs::begin(boot);
+ *   csi_module_init_all(&boot);
+ *   csi_module_settings_nvs::end(boot);
  */
 
 #ifndef SECURACV_CSI_MODULE_SETTINGS_NVS_H
@@ -99,40 +120,60 @@ inline const char* nvs_key_for(const char* full_key) {
   return nullptr;
 }
 
-/* The three readers. `Prefs` is Arduino-ESP32's Preferences (or a test
- * fake with the same begin / end / getInt / getBool / getFloat). */
+/** One read-only handle for a run of reads: a boot's every module init().
+ *  `open` is false until begin() opens it, and stays false when the
+ *  namespace will not open; every read in the run then returns its
+ *  default. `Prefs` is Arduino-ESP32's Preferences, or a test fake with the
+ *  same begin / end / getInt / getBool / getFloat. */
+template <class Prefs>
+struct Session {
+  mutable Prefs prefs;
+  bool open = false;
+};
 
 template <class Prefs>
-int32_t read_int(const char* full_key, int32_t default_value) {
+void begin(Session<Prefs>& session) {
+  session.open = session.prefs.begin(kNamespace, /*readOnly=*/true);
+}
+
+template <class Prefs>
+void end(Session<Prefs>& session) {
+  if (session.open) session.prefs.end();
+  session.open = false;
+}
+
+/* One read: through `session` when there is one (opened or not), else
+ * through a handle of its own. */
+template <class Prefs, class T, class Get>
+T read(const Session<Prefs>* session, const char* full_key, T default_value, Get get) {
   const char* nvs_key = nvs_key_for(full_key);
   if (nvs_key == nullptr) return default_value;
+  if (session != nullptr) {
+    return session->open ? get(session->prefs, nvs_key, default_value) : default_value;
+  }
   Prefs prefs;
   if (!prefs.begin(kNamespace, /*readOnly=*/true)) return default_value;
-  const int32_t v = prefs.getInt(nvs_key, default_value);
+  const T v = get(prefs, nvs_key, default_value);
   prefs.end();
   return v;
 }
 
 template <class Prefs>
-bool read_bool(const char* full_key, bool default_value) {
-  const char* nvs_key = nvs_key_for(full_key);
-  if (nvs_key == nullptr) return default_value;
-  Prefs prefs;
-  if (!prefs.begin(kNamespace, /*readOnly=*/true)) return default_value;
-  const bool v = prefs.getBool(nvs_key, default_value);
-  prefs.end();
-  return v;
+int32_t read_int(const Session<Prefs>* session, const char* full_key, int32_t default_value) {
+  return read(session, full_key, default_value,
+              [](Prefs& p, const char* k, int32_t d) -> int32_t { return p.getInt(k, d); });
 }
 
 template <class Prefs>
-float read_float(const char* full_key, float default_value) {
-  const char* nvs_key = nvs_key_for(full_key);
-  if (nvs_key == nullptr) return default_value;
-  Prefs prefs;
-  if (!prefs.begin(kNamespace, /*readOnly=*/true)) return default_value;
-  const float v = prefs.getFloat(nvs_key, default_value);
-  prefs.end();
-  return v;
+bool read_bool(const Session<Prefs>* session, const char* full_key, bool default_value) {
+  return read(session, full_key, default_value,
+              [](Prefs& p, const char* k, bool d) -> bool { return p.getBool(k, d); });
+}
+
+template <class Prefs>
+float read_float(const Session<Prefs>* session, const char* full_key, float default_value) {
+  return read(session, full_key, default_value,
+              [](Prefs& p, const char* k, float d) -> float { return p.getFloat(k, d); });
 }
 
 }  /* namespace csi_module_settings_nvs */

@@ -124,11 +124,14 @@ bridge in that order but cannot compile `main.cpp`:
    before `csi::set_features_callback(` (the first window's tick) and
    `csi::start(`. In the bridge
    (`firmware/canary/src/csi_modules_integration.cpp`),
-   `securacv_csi_modules_init()` runs `csi_module_init_all(nullptr);` once,
+   `securacv_csi_modules_init()` runs `init_modules_from_nvs();` once,
    after its last `csi_module_register(` and `ble_scout_init(`, as a
-   statement of its own body (no `if`, block or `#if` around it). Across
-   `firmware/canary/src` and `firmware/canary/lib` that is the only call of
-   `csi_module_init_all(`, and `setup()`'s the only call of
+   statement of its own body (no `if`, block or `#if` around it), and
+   `init_modules_from_nvs()` holds the tree's one `csi_module_init_all(`
+   call, handed the boot's settings session (`&boot`), so every module's
+   init() reads through one NVS handle. Across `firmware/canary/src` and
+   `firmware/canary/lib` those are the only calls of `csi_module_init_all(`
+   and `init_modules_from_nvs(`, and `setup()`'s the only call of
    `securacv_csi_modules_init(`.
 
 ## It proves it bites
@@ -333,6 +336,7 @@ SIG_SETUP = r"\bvoid\s+setup\s*\(\s*(?:void)?\s*\)"
 SIG_LOOP = r"\bvoid\s+loop\s*\(\s*(?:void)?\s*\)"
 SIG_MODULES_INIT = r"\bbool\s+securacv_csi_modules_init\s*\(\s*(?:void)?\s*\)"
 SIG_MODULES_FEED = r"\bvoid\s+securacv_csi_modules_feed\s*\([^)]*\)"
+SIG_BOOT_INIT_FN = r"\bsize_t\s+init_modules_from_nvs\s*\(\s*(?:void)?\s*\)"
 
 # What the tamper bridge's `if` may test (each `&&` term, squashed).
 BRIDGE_TERMS = (
@@ -766,8 +770,8 @@ def check_boot(main_src: str, bridge_src: str, others: dict[str, str]) -> list[s
     span = the_body(code, SIG_MODULES_INIT, f"{BRIDGE_CPP}: securacv_csi_modules_init()", errors)
     if span is not None:
         body = code[span[0]:span[1]]
-        boot_init = "csi_module_init_all(nullptr);"
-        if body.count("csi_module_init_all(") != 1 or body.count(boot_init) != 1:
+        boot_init = "init_modules_from_nvs();"
+        if body.count("init_modules_from_nvs(") != 1 or body.count(boot_init) != 1:
             errors.append(f"{BRIDGE_CPP}: securacv_csi_modules_init() must run the modules' boot "
                           f"init, `{boot_init}`, exactly once — registration initializes nothing, "
                           "so a stored setting would never apply on the canary (F93)")
@@ -783,14 +787,26 @@ def check_boot(main_src: str, bridge_src: str, others: dict[str, str]) -> list[s
                 errors.append(f"{BRIDGE_CPP}: `{boot_init}` must be a statement of "
                               "securacv_csi_modules_init()'s own body — no `if`, block or `#if` "
                               "around it: every boot initializes the modules (F93)")
+    span = the_body(code, SIG_BOOT_INIT_FN, f"{BRIDGE_CPP}: init_modules_from_nvs()", errors)
+    if span is not None:
+        body = code[span[0]:span[1]]
+        args = call_args(body, "csi_module_init_all(")
+        if body.count("csi_module_init_all(") != 1 or args is None or len(args) != 1 or \
+                not args[0].startswith("&"):
+            errors.append(f"{BRIDGE_CPP}: init_modules_from_nvs() must call csi_module_init_all( "
+                          "once, with the boot's settings session (`&boot`) — every module's "
+                          "init() reads through one NVS handle, so a missing namespace costs one "
+                          "open, not one per setting (F93)")
     files = dict(others)
     files[MAIN_CPP] = main_src
     files[BRIDGE_CPP] = bridge_src
-    sites = call_sites(files, "csi_module_init_all")
-    if sites != [BRIDGE_CPP]:
-        errors.append(f"firmware/canary: `csi_module_init_all(` must be called once, in "
-                      f"{BRIDGE_CPP}'s securacv_csi_modules_init() (found {len(sites)}: "
-                      f"{', '.join(sorted(set(sites))) or 'none'}) (F93)")
+    for name, home in (("csi_module_init_all", "init_modules_from_nvs()"),
+                       ("init_modules_from_nvs", "securacv_csi_modules_init()")):
+        sites = call_sites(files, name)
+        if sites != [BRIDGE_CPP]:
+            errors.append(f"firmware/canary: `{name}(` must be called once, in {BRIDGE_CPP}'s "
+                          f"{home} (found {len(sites)}: "
+                          f"{', '.join(sorted(set(sites))) or 'none'}) (F93)")
     sites = call_sites(files, "securacv_csi_modules_init")
     span = the_body(blank_comments_and_strings(main_src), SIG_SETUP, f"{MAIN_CPP}: setup()", [])
     in_setup = span is not None and \
@@ -1001,26 +1017,34 @@ def on_bridge(sig: str, pat: str, repl: str) -> BootMutation:
     return lambda mn, br: (mn, mutate_in(br, sig, pat, repl))
 
 
-BOOT_INIT_LINE = r"\n[ \t]*csi_module_init_all\(nullptr\);"
+BOOT_INIT_LINE = r"\n[ \t]*init_modules_from_nvs\(\);"
+BOOT_INIT_CALL = r"(init_modules_from_nvs\(\);)"
 BOOT_MUTATIONS: list[tuple[str, BootMutation]] = [
     ("the bridge never runs the modules' boot init",
      on_bridge(SIG_MODULES_INIT, BOOT_INIT_LINE, "")),
     ("the boot init runs before the modules register",
      lambda mn, br: (mn, mutate_in(mutate_in(br, SIG_MODULES_INIT, BOOT_INIT_LINE, ""),
                                    SIG_MODULES_INIT, r"(csi_event_set_privacy_ceiling\()",
-                                   r"csi_module_init_all(nullptr); \1"))),
+                                   r"init_modules_from_nvs(); \1"))),
     ("the boot init runs before the last module registers",
      lambda mn, br: (mn, mutate_in(mutate_in(br, SIG_MODULES_INIT, BOOT_INIT_LINE, ""),
                                    SIG_MODULES_INIT, r"(csi_module_register\(tamper_events_module\(\)\);)",
-                                   r"csi_module_init_all(nullptr); \1"))),
+                                   r"init_modules_from_nvs(); \1"))),
     ("the boot init runs only on a second call",
-     on_bridge(SIG_MODULES_INIT, r"(csi_module_init_all\(nullptr\);)", r"if (s_initialized) \1")),
+     on_bridge(SIG_MODULES_INIT, BOOT_INIT_CALL, r"if (s_initialized) \1")),
     ("the boot init sits in a block",
-     on_bridge(SIG_MODULES_INIT, r"(csi_module_init_all\(nullptr\);)", r"{ if (!s_initialized) { \1 } }")),
+     on_bridge(SIG_MODULES_INIT, BOOT_INIT_CALL, r"{ if (!s_initialized) { \1 } }")),
     ("the boot init is compiled out on builds without the Scout",
-     on_bridge(SIG_MODULES_INIT, r"(csi_module_init_all\(nullptr\);)",
+     on_bridge(SIG_MODULES_INIT, BOOT_INIT_CALL,
                "\n#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN\n  \\1\n#endif\n")),
+    ("the boot init reads every setting through a handle of its own",
+     on_bridge(SIG_BOOT_INIT_FN, r"csi_module_init_all\(&boot\)", "csi_module_init_all(nullptr)")),
+    ("the boot init initializes nothing",
+     on_bridge(SIG_BOOT_INIT_FN, r"const\s+size_t\s+ran\s*=\s*csi_module_init_all\(&boot\);",
+               "const size_t ran = 0;")),
     ("the feed runs the boot init again",
+     on_bridge(SIG_MODULES_FEED, r"(csi_module_tick_all\(f\);)", r"init_modules_from_nvs(); \1")),
+    ("the feed initializes every module",
      on_bridge(SIG_MODULES_FEED, r"(csi_module_tick_all\(f\);)", r"csi_module_init_all(nullptr); \1")),
     ("setup() registers the modules before it restores the floor",
      lambda mn, br: (mutate_in(mutate_in(mn, SIG_SETUP, r"\n[ \t]*csi_event_egress_begin\(\);", ""),

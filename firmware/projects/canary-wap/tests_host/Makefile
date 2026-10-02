@@ -358,7 +358,8 @@ clean: clean-wap-egress
 
 # The CSI modules' boot init (sweep F93): the REAL csi_settings_nvs.cpp (the
 # sketch's csi_module_settings_* readers, by the shared
-# csi_module_settings_nvs.h rule), the staged CSI library and modules over a
+# csi_module_settings_nvs.h rule, and its boot init through one read-only
+# handle), the staged CSI library and modules over a
 # typed NVS that outlives a modeled reboot (stubs/module_boot), booted in
 # csi_integration::init()'s order: a saved preset, threshold, pet mode and
 # anomaly cooldown apply from the boot's first windows, each module's
@@ -376,6 +377,7 @@ MODBOOT_LIB = $(SRC_DIR)/csi_settings_nvs.cpp $(SRC_DIR)/csi_event.cpp $(SRC_DIR
               $(SRC_DIR)/tamper_events_module.cpp
 
 $(MODBOOT_BIN): $(MODBOOT_SRC) $(MODBOOT_LIB) $(SRC_DIR)/csi_module.h $(SRC_DIR)/csi_module_settings_nvs.h \
+                $(SRC_DIR)/csi_settings_nvs.h \
                 $(SRC_DIR)/csi_event.h $(SRC_DIR)/csi_bundler.h $(SRC_DIR)/csi_integration.cpp \
                 $(SRC_DIR)/acoustic_events_module.cpp $(SRC_DIR)/vault_events_module.cpp $(SRC_DIR)/ble_scout.cpp \
                 $(wildcard stubs/module_boot/*.h)

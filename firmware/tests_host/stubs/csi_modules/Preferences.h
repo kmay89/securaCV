@@ -7,8 +7,9 @@
  * test_csi_modules_integration.cpp leaves it empty, so every setting reads
  * as the module's own default, as on a device that was never configured.
  * Rows are typed as Arduino-ESP32's are: getInt finds only a row putInt
- * wrote, getBool only a putBool row. It counts the handles that opened and
- * the rows each get asked for, and can refuse every begin(). */
+ * wrote, getBool only a putBool row. It counts begin() calls and the
+ * handles they opened, and the rows each get asks for; it can refuse every
+ * begin(), as NVS refuses a read-only open of a namespace never created. */
 #ifndef STUB_CSI_MODULES_PREFERENCES_H
 #define STUB_CSI_MODULES_PREFERENCES_H
 
@@ -24,6 +25,7 @@ struct HostPrefs {
   std::map<std::string, bool>    flag;
   std::map<std::string, float>   f32;
   bool fail_begin = false;              /* every begin() refuses */
+  int  begins = 0;                      /* begin() calls, opened or refused */
   int  opens = 0;                       /* begin() calls that opened */
   std::vector<std::string> gets;        /* "<namespace>/<key>", one per get */
 
@@ -42,6 +44,7 @@ inline HostPrefs& host_prefs() {
 class Preferences {
  public:
   bool begin(const char* name, bool readOnly = false, const char* = nullptr) {
+    host_prefs().begins++;
     if (open_ || !name || host_prefs().fail_begin) return false;
     ns_ = name;
     ro_ = readOnly;

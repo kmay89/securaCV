@@ -108,10 +108,13 @@ typedef struct {
 
 /**
  * Opaque settings handle passed to a module's init(). Modules read fields
- * by name via the helpers below; they don't need to know the underlying
- * storage format. Both firmware trees pass NULL: their strong overrides of
- * the helpers read NVS by key (csi_module_settings_nvs.h, one key map and
- * one read rule for both), so the handle carries nothing today.
+ * by name via the helpers below, passing the handle through; they don't
+ * need to know the underlying storage format. The host defines it. Both
+ * firmware trees make it a read session over NVS
+ * (csi_module_settings_nvs.h, one key map and one read rule for both): at
+ * boot every module reads through one handle; a NULL handle (the
+ * canary-wap's re-init after a settings change) reads with a handle per
+ * key.
  */
 typedef struct csi_module_settings csi_module_settings_t;
 
@@ -194,10 +197,10 @@ const csi_module_t* csi_module_find(const char* id);
 /**
  * Run init() once for every registered module whose boot init has not run
  * yet, in registration order, passing `settings` through (both trees pass
- * NULL; see csi_module_settings_t). A module with no init() counts as
- * initialized. A second call runs nothing for a module already initialized,
- * so it initializes only modules registered since. Returns how many init()
- * calls it made.
+ * their boot read session; see csi_module_settings_t). A module with no
+ * init() counts as initialized. A second call runs nothing for a module
+ * already initialized, so it initializes only modules registered since.
+ * Returns how many init() calls it made.
  *
  * Registration alone does not initialize a module (sweep F93: neither tree
  * called init() at boot, so every stored setting was ignored until a

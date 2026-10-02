@@ -39,13 +39,15 @@ the egress's own rules the test reaches only through behavior.
    restored floor, never write a floor from the id space's base over the
    persisted one, and must find the egress's queue there. The canary does
    the same in `csi_event_egress_begin()`, before its modules. Then
-   (sweep F93) the modules' boot init: `csi_module_init_all(nullptr);`
+   (sweep F93) the modules' boot init: `csi_settings_nvs_init_modules();`
    once, a statement of `init()`'s own body (no `if`, no block, no `#if`
    around it), after `register_v1_modules();` and before
    `csi_set_features_callback(`, the first CSI window's tick (the library
    ticks no module before its init, so a late init is a dead pipeline and
-   a skipped one a device on defaults). It is the sketch's only call: one
-   in `register_v1_modules()`, `reinit_module()` or a handler would run a
+   a skipped one a device on defaults). That is its only caller in the
+   sketch, and the sketch's only `csi_module_init_all(` call is inside it
+   (`csi_settings_nvs.cpp`, which test_wap_module_boot.cpp runs): one in
+   `register_v1_modules()`, `reinit_module()` or a handler would run a
    module's boot init on another path (`reinit_module()` re-runs one
    module's `init()` directly).
 4. The loop task. `csi_mqtt::loop()` calls `csi_event_egress::pump();`.
@@ -160,6 +162,8 @@ SIG_MQTT_INIT = r"\bbool\s+init\s*\(\s*const\s+char\s*\*\s*device_id[^)]*\)"
 SIG_DEST_EPOCH = r"\buint32_t\s+destination_epoch\s*\(\s*\)"
 SIG_DISMISS = r"\besp_err_t\s+handle_events_dismiss\s*\([^)]*\)"
 SIG_INTEG_LOOP = r"\bvoid\s+loop\s*\(\s*bool\s+run_csi\s*\)"
+SETTINGS_CPP = f"{SKETCH}/csi_settings_nvs.cpp"
+SIG_BOOT_INIT_FN = r"\bsize_t\s+csi_settings_nvs_init_modules\s*\(\s*(?:void)?\s*\)"
 SIG_REINIT = r"\bvoid\s+reinit_module\s*\(\s*const\s+char\s*\*\s*module_id\s*\)"
 SIG_REGISTER = r"\bvoid\s+register_v1_modules\s*\(\s*\)"
 
@@ -191,24 +195,43 @@ def ifs_returning(text: str, ret: str) -> list[str]:
     return conds
 
 
+def call_sites(files: dict[str, str], name: str) -> list[str]:
+    """The file of every call of `name(` (comments and strings blanked); a
+    declaration or definition (`size_t name(`) is not a call."""
+    sites = []
+    for path, src in files.items():
+        if name not in src:
+            continue
+        code = blank_cached(src)
+        for m in re.finditer(r"\b" + name + r"\s*\(", code):
+            if not re.search(r"\bsize_t\s+$", code[:m.start()]):
+                sites.append(path)
+    return sites
+
+
 def check_boot_init_callers(integ: str, others: dict[str, str], errors: list[str]) -> None:
-    """Rule 3, F93: the modules' boot init has one caller in the sketch."""
+    """Rule 3, F93: the modules' boot init has one caller in the sketch, and
+    it is the sketch's only csi_module_init_all() call."""
     files = dict(others)
     files[INTEG_CPP] = integ
-    sites = []
-    for name, src in files.items():
-        code = blank_cached(src)
-        for m in re.finditer(r"\bcsi_module_init_all\s*\(", code):
-            # The staged library's own declaration and definition are not calls.
-            if re.search(r"\bsize_t\s+$", code[:m.start()]):
-                continue
-            sites.append(name)
+    sites = call_sites(files, "csi_settings_nvs_init_modules")
     if sites != [INTEG_CPP]:
-        errors.append(f"{SKETCH}: `csi_module_init_all(` must be called exactly once in the sketch, "
-                      f"in csi_integration::init() (found {len(sites)}: "
+        errors.append(f"{SKETCH}: `csi_settings_nvs_init_modules(` must be called exactly once in "
+                      f"the sketch, in csi_integration::init() (found {len(sites)}: "
                       f"{', '.join(sorted(set(sites))) or 'none'}) — a second caller runs a "
-                      "module's boot init on another path; a settings change re-runs one "
-                      "module's init() through reinit_module() (F93)")
+                      "module's boot init on another path (F93)")
+    sites = call_sites(files, "csi_module_init_all")
+    inside = False
+    if SETTINGS_CPP in files:
+        code = blank_cached(files[SETTINGS_CPP])
+        span = the_body(code, SIG_BOOT_INIT_FN, f"{SETTINGS_CPP}: csi_settings_nvs_init_modules()",
+                        errors)
+        inside = span is not None and code[span[0]:span[1]].count("csi_module_init_all(") == 1
+    if sites != [SETTINGS_CPP] or not inside:
+        errors.append(f"{SKETCH}: `csi_module_init_all(` must be called exactly once in the sketch, "
+                      f"in {SETTINGS_CPP}'s csi_settings_nvs_init_modules() (found {len(sites)}: "
+                      f"{', '.join(sorted(set(sites))) or 'none'}) — a settings change re-runs one "
+                      "module's init() through reinit_module(), never the boot init (F93)")
 
 
 def check_hook(integ: str, errors: list[str]) -> None:
@@ -274,9 +297,9 @@ def check_boot_order(integ: str, errors: list[str]) -> None:
                       f"(apply_event_id_floor_from_nvs()) and call `{begin}` before `{modules}` — "
                       "a module that commits while it registers would allocate from the id "
                       "space's base and write that floor over the persisted one (F83)")
-    boot_init = "csi_module_init_all(nullptr);"
+    boot_init = "csi_settings_nvs_init_modules();"
     callback = body.find("csi_set_features_callback(")
-    if body.count("csi_module_init_all(") != 1 or body.count(boot_init) != 1:
+    if body.count("csi_settings_nvs_init_modules(") != 1 or body.count(boot_init) != 1:
         errors.append(f"{INTEG_CPP}: csi_integration::init() must run the modules' boot init, "
                       f"`{boot_init}`, exactly once — registration initializes nothing, so a "
                       "saved preset, threshold or cooldown applies only after a settings change "
@@ -571,11 +594,15 @@ def moved_begin(i: str, e: str, m: str) -> "tuple[str, str, str]":
     return i, e, m
 
 
+BOOT_INIT_LINE = r"\n[ \t]*csi_settings_nvs_init_modules\(\);"
+BOOT_INIT_CALL = r"(csi_settings_nvs_init_modules\(\);)"
+
+
 def boot_init_before(anchor: str) -> Mutation:
-    """csi_module_init_all(nullptr); moved to just before `anchor` in init()."""
+    """csi_settings_nvs_init_modules(); moved to just before `anchor` in init()."""
     def mutate(i: str, e: str, m: str) -> "tuple[str, str, str]":
-        i = mutate_in(i, SIG_INIT, r"\n[ \t]*csi_module_init_all\(nullptr\);", "")
-        i = mutate_in(i, SIG_INIT, "(" + anchor + ")", r"csi_module_init_all(nullptr); \1")
+        i = mutate_in(i, SIG_INIT, BOOT_INIT_LINE, "")
+        i = mutate_in(i, SIG_INIT, "(" + anchor + ")", r"csi_settings_nvs_init_modules(); \1")
         return i, e, m
     return mutate
 
@@ -618,27 +645,31 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      on_i(SIG_INIT, r"(g_api_token\s*=\s*api_token\s*;)", r"\1 register_v1_modules();")),
     # Rule 3, F93: the modules' boot init, once, after they register.
     ("the modules are never initialized at boot",
-     on_i(SIG_INIT, r"\n[ \t]*csi_module_init_all\(nullptr\);", "")),
+     on_i(SIG_INIT, BOOT_INIT_LINE, "")),
     ("the boot init runs before the modules register",
      boot_init_before(r"register_v1_modules\(\);")),
     ("the boot init runs before the floor is restored",
      boot_init_before(r"const\s+bool\s+floor_restored")),
     ("the boot init runs after the first tick is installed",
-     lambda i, e, m: (mutate_in(mutate_in(i, SIG_INIT, r"\n[ \t]*csi_module_init_all\(nullptr\);", ""),
+     lambda i, e, m: (mutate_in(mutate_in(i, SIG_INIT, BOOT_INIT_LINE, ""),
                                 SIG_INIT, r"(csi_set_features_callback\([^;]*;)",
-                                r"\1 csi_module_init_all(nullptr);"), e, m)),
+                                r"\1 csi_settings_nvs_init_modules();"), e, m)),
     ("the boot init runs only when the floor was read",
-     on_i(SIG_INIT, r"(csi_module_init_all\(nullptr\);)", r"if (floor_restored) \1")),
+     on_i(SIG_INIT, BOOT_INIT_CALL, r"if (floor_restored) \1")),
     ("the boot init sits in a block",
-     on_i(SIG_INIT, r"(csi_module_init_all\(nullptr\);)", r"{ if (g_api_token) { \1 } }")),
+     on_i(SIG_INIT, BOOT_INIT_CALL, r"{ if (g_api_token) { \1 } }")),
     ("the boot init is compiled out",
-     on_i(SIG_INIT, r"(csi_module_init_all\(nullptr\);)", r"\n#if CSI_BOOT_INIT\n  \1\n#endif\n")),
+     on_i(SIG_INIT, BOOT_INIT_CALL, r"\n#if CSI_BOOT_INIT\n  \1\n#endif\n")),
     ("reinit_module() runs the boot init too",
+     on_i(SIG_REINIT, r"(if\s*\(\s*m->init\s*\))", r"csi_settings_nvs_init_modules(); \1")),
+    ("reinit_module() initializes every module",
      on_i(SIG_REINIT, r"(if\s*\(\s*m->init\s*\))", r"csi_module_init_all(nullptr); \1")),
     ("register_v1_modules() initializes the modules instead",
-     lambda i, e, m: (mutate_in(mutate_in(i, SIG_INIT, r"\n[ \t]*csi_module_init_all\(nullptr\);", ""),
+     lambda i, e, m: (mutate_in(mutate_in(i, SIG_INIT, BOOT_INIT_LINE, ""),
                                 SIG_REGISTER, r"(apply_quiet_hours_from_nvs\(\);)",
-                                r"csi_module_init_all(nullptr); \1"), e, m)),
+                                r"csi_settings_nvs_init_modules(); \1"), e, m)),
+    ("init() initializes the modules without the settings session",
+     lambda i, e, m: (mutate_in(i, SIG_INIT, BOOT_INIT_CALL, "csi_module_init_all(nullptr);"), e, m)),
     ("the esp_mqtt handler pumps the egress",
      on_m(SIG_HANDLER, r"(s_connected\.store\(true,[^;]*;)", r"\1 csi_event_egress::pump();")),
     ("the esp_mqtt handler publishes a row",

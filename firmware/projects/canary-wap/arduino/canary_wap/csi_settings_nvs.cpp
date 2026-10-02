@@ -10,33 +10,49 @@
  * default for an unmapped key, a row that is absent or a namespace that
  * will not open.
  *
- * A module reads them in its init(): once at boot, from
- * csi_integration::init()'s csi_module_init_all(), and again through
- * reinit_module() after /api/settings, /api/csi/calibrate/apply or a Tuning
- * Lab change writes a row. They lived in csi_integration.cpp, which no host
- * suite compiles; here tests_host/test_wap_module_boot.cpp builds them over
- * a fake Preferences, with the staged library and modules.
+ * A module reads them in its init(): once at boot, through
+ * csi_settings_nvs_init_modules() below (csi_integration::init() calls it
+ * right after register_v1_modules()), with one read-only handle for the
+ * whole boot; and again through reinit_module() after /api/settings,
+ * /api/csi/calibrate/apply or a Tuning Lab change writes a row, with a
+ * handle per read (a NULL settings handle). They lived in
+ * csi_integration.cpp, which no host suite compiles; here
+ * tests_host/test_wap_module_boot.cpp builds them over a fake Preferences,
+ * with the staged library and modules.
  */
+
+#include "csi_settings_nvs.h"
 
 #include <Preferences.h>
 
 #include "csi_module.h"
 #include "csi_module_settings_nvs.h"
 
-extern "C" int32_t csi_module_settings_int(const csi_module_settings_t*,
+/* The settings handle is a read session (csi_module_settings_nvs.h). */
+struct csi_module_settings : csi_module_settings_nvs::Session<Preferences> {};
+
+extern "C" int32_t csi_module_settings_int(const csi_module_settings_t* settings,
                                            const char* key,
                                            int32_t default_value) {
-  return csi_module_settings_nvs::read_int<Preferences>(key, default_value);
+  return csi_module_settings_nvs::read_int<Preferences>(settings, key, default_value);
 }
 
-extern "C" bool csi_module_settings_bool(const csi_module_settings_t*,
+extern "C" bool csi_module_settings_bool(const csi_module_settings_t* settings,
                                          const char* key,
                                          bool default_value) {
-  return csi_module_settings_nvs::read_bool<Preferences>(key, default_value);
+  return csi_module_settings_nvs::read_bool<Preferences>(settings, key, default_value);
 }
 
-extern "C" float csi_module_settings_float(const csi_module_settings_t*,
+extern "C" float csi_module_settings_float(const csi_module_settings_t* settings,
                                            const char* key,
                                            float default_value) {
-  return csi_module_settings_nvs::read_float<Preferences>(key, default_value);
+  return csi_module_settings_nvs::read_float<Preferences>(settings, key, default_value);
+}
+
+size_t csi_settings_nvs_init_modules(void) {
+  csi_module_settings boot;
+  csi_module_settings_nvs::begin(boot);
+  const size_t ran = csi_module_init_all(&boot);
+  csi_module_settings_nvs::end(boot);
+  return ran;
 }

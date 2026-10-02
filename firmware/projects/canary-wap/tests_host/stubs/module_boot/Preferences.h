@@ -5,8 +5,10 @@
  * One typed store that outlives every handle, as NVS outlives a reboot.
  * Rows are typed as Arduino-ESP32's are: getInt finds only a row putInt
  * wrote, getBool only a putBool row (the dashboard stores pet mode with
- * putBool, the preset and the thresholds with putInt). It counts the handles
- * that opened and the rows each get asked for. */
+ * putBool, the preset and the thresholds with putInt). It counts begin()
+ * calls and the handles they opened, and the rows each get asks for; it can
+ * refuse every begin(), as NVS refuses a read-only open of a namespace
+ * never created. */
 #ifndef STUB_MODULE_BOOT_PREFERENCES_H
 #define STUB_MODULE_BOOT_PREFERENCES_H
 
@@ -21,6 +23,8 @@ struct HostPrefs {
   std::map<std::string, int32_t> i32;   /* "<namespace>/<key>" */
   std::map<std::string, bool>    flag;
   std::map<std::string, float>   f32;
+  bool fail_begin = false;              /* every begin() refuses */
+  int  begins = 0;                      /* begin() calls, opened or refused */
   int  opens = 0;                       /* begin() calls that opened */
   std::vector<std::string> gets;        /* "<namespace>/<key>", one per get */
 
@@ -39,7 +43,8 @@ inline HostPrefs& host_prefs() {
 class Preferences {
  public:
   bool begin(const char* name, bool readOnly = false, const char* = nullptr) {
-    if (open_ || !name) return false;
+    host_prefs().begins++;
+    if (open_ || !name || host_prefs().fail_begin) return false;
     ns_ = name;
     ro_ = readOnly;
     open_ = true;

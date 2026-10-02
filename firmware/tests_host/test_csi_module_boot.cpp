@@ -100,6 +100,7 @@ static void reboot_and_boot() {
   g_commits = 0;
   g_id_advances = 0;
   g_first_committed_id = 0;
+  host_prefs().begins = 0;
   host_prefs().opens = 0;
   host_prefs().gets.clear();
   (void)securacv_csi_modules_init();
@@ -234,14 +235,15 @@ static int test_a_stored_anomaly_cooldown_applies_at_boot() {
 // Each module's init() runs once per boot. The canary's modules read 16
 // mapped rows between them (core.presence 10, core.breathing 2,
 // anomaly.baseline 4; wifi.channel_activity's three keys are not in the
-// map, so they read as defaults without opening NVS), each through its own
+// map, so they read as defaults), all through the boot's one read-only
 // handle. A second securacv_csi_modules_init() reads nothing: a row
 // changed between the two calls does not apply until the next boot.
 static int test_init_runs_once_per_boot() {
   host_prefs().clear();
   store_int("cp.preset", 0);
   reboot_and_boot();
-  CHECK(host_prefs().opens == 16);
+  CHECK(host_prefs().begins == 1);
+  CHECK(host_prefs().opens == 1);
   CHECK(host_prefs().gets.size() == 16);
   for (const char* k : {"cp.pet_mode", "cp.preset", "cp.sens", "cp.mt", "cp.at", "cp.bt",
                         "cp.ps", "cp.srs", "cp.sdf", "cp.se", "cb.lt", "cb.cs",
@@ -251,9 +253,26 @@ static int test_init_runs_once_per_boot() {
 
   store_int("cp.preset", 2);
   (void)securacv_csi_modules_init();
-  CHECK(host_prefs().opens == 16);
+  CHECK(host_prefs().gets.size() == 16);      // no row read again
   hold(window_of(30));
   CHECK(presence_open("subtle"));             // still the boot's "sensitive"
+  return 0;
+}
+
+// Nothing on the canary creates the "csi" namespace, and NVS refuses a
+// read-only open of a namespace never created (Arduino's Preferences logs
+// each refusal). The boot then tries once, not once per setting, and every
+// module runs on its defaults.
+static int test_a_missing_namespace_costs_the_boot_one_open() {
+  host_prefs().clear();
+  host_prefs().fail_begin = true;
+  reboot_and_boot();
+  CHECK(host_prefs().begins == 1);
+  CHECK(host_prefs().opens == 0);
+  CHECK(host_prefs().gets.empty());
+  hold(window_of(30));
+  CHECK(presence_open("empty"));              // the balanced default
+  host_prefs().clear();
   return 0;
 }
 
@@ -358,6 +377,35 @@ static int test_the_shared_settings_rule() {
   host_prefs().fail_begin = true;
   CHECK(csi_module_settings_int(nullptr, "core.presence.preset", 1) == 1);
   CHECK(csi_module_settings_float(nullptr, "core.presence.preset", 2.5f) == 2.5f);
+  host_prefs().fail_begin = false;
+
+  // Through a session: one handle for every read, the same answers.
+  {
+    csi_module_settings_nvs::Session<Preferences> session;
+    const int begins = host_prefs().begins;
+    nvs::begin(session);
+    CHECK(session.open);
+    CHECK(nvs::read_int<Preferences>(&session, "core.presence.preset", 1) == 0);
+    CHECK(nvs::read_bool<Preferences>(&session, "core.presence.pet_mode", false));
+    CHECK(nvs::read_int<Preferences>(&session, "core.presence.pet_mode", 7) == 7);
+    CHECK(nvs::read_int<Preferences>(&session, "wifi.channel_activity.cooldown_sec", 5) == 5);
+    CHECK(host_prefs().begins == begins + 1);
+    nvs::end(session);
+    CHECK(!session.open);
+  }
+  // A session whose open was refused answers every read with its default,
+  // and opens nothing more.
+  {
+    host_prefs().fail_begin = true;
+    csi_module_settings_nvs::Session<Preferences> session;
+    nvs::begin(session);
+    CHECK(!session.open);
+    const int begins = host_prefs().begins;
+    CHECK(nvs::read_int<Preferences>(&session, "core.presence.preset", 1) == 1);
+    CHECK(!nvs::read_bool<Preferences>(&session, "core.presence.pet_mode", false));
+    CHECK(host_prefs().begins == begins);
+    nvs::end(session);
+  }
   host_prefs().clear();
   return 0;
 }
@@ -368,6 +416,7 @@ int main() {
   if (test_stored_pet_mode_applies_at_boot()) return 1;
   if (test_a_stored_anomaly_cooldown_applies_at_boot()) return 1;
   if (test_init_runs_once_per_boot()) return 1;
+  if (test_a_missing_namespace_costs_the_boot_one_open()) return 1;
   if (test_nothing_commits_during_the_boot_init()) return 1;
   if (test_no_module_ticks_before_its_boot_init()) return 1;
   if (test_the_shared_settings_rule()) return 1;
