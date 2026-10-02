@@ -23,6 +23,11 @@
 //      sealing survives the wall mount;
 //    * slots point so the case slides DOWN to seat: gravity is the latch.
 //
+//  A SECOND, drop-durable hanger lives here too: the DOVETAIL LUG
+//  (mount_dovelug / mount_dovelug_pocket, below the click detent) — no
+//  stem to snap, the same 8.0 drop. The doorbell hangs on it; the coupon's
+//  POCKET station prints it between the keyholes.
+//
 //  The stud's Ø6.6 head overhangs its Ø4 stem by 1.3 mm — a bridge, not a
 //  cliff: it prints off the 1.2 mm cone below it (canary_cradle_lib's dock
 //  studs print the same way, and read their numbers from here).
@@ -127,10 +132,108 @@ module mount_keyhole_click(px, py, z, click = mount_kh_click()) {
 }
 
 // ---------------------------------------------------------------------------
+//  DOVETAIL LUG — the drop-durable hanger (the doorbell's, 2026-10).
+//
+//  The T-stud above is a Ø4 stem printed upright: its whole hold is one
+//  12.6 mm² layer interface at the stem root, under a sharp step into the
+//  cone, and a knock on the hung case loads exactly that interface in peel.
+//  A dropped doorbell plate snapped its studs off there. The lug designs that
+//  failure out instead of thickening it:
+//    * NO NECK. The lug is a dovetail prism: its narrowest section is the
+//      6.0 x 7.0 root (42 mm², 3.3x the stem), and a 45° root chamfer blends
+//      it into the plate so no sharp re-entrant corner concentrates the load;
+//    * NO KNIFE EDGE in the pocket. The lip the lug hooks under is a 1.2 mm
+//      straight land and a 45° flank, rooted along the pocket's whole length
+//      in the part — a wedge of the part, not a tab sticking out of it;
+//    * the same 8.0 drop as the keyhole (mount_kh_slot_l): offer the window
+//      over the lug, drop, the lug runs under the lips. Gravity is the latch.
+//  Profile (XZ, the slide along Y), lug base on z = 0:
+//      ___________  z = h = neck_h + flare   (top_w = neck_w + 2*flare)
+//      \         /  45° flare — the lips bear here
+//       |       |   neck_h straight land
+//      /         \  45° root chamfer (root)
+//  It prints upright off a plate with 45° flanks (self-supporting) and its
+//  pocket prints back-face down with a flat 9.6 mm bridge for a ceiling.
+// ---------------------------------------------------------------------------
+function mount_dt_neck_w()  = 6.0;   // lug width at the root, above the root chamfer
+function mount_dt_neck_h()  = 1.2;   // straight land height (the pocket lip's thickness at the face)
+function mount_dt_flare()   = 1.6;   // 45° flare above the land: each lip overlaps the lug by this
+function mount_dt_root()    = 0.5;   // 45° root chamfer, each side
+function mount_dt_len()     = 7.0;   // lug length along the slide
+function mount_dt_travel()  = 8.0;   // the drop — mount_kh_slot_l(), the catalog's one slide
+function mount_dt_clear()   = 0.2;   // pocket clearance per face (core_tol_slide)
+function mount_dt_relief()  = 0.3;   // pocket ceiling over the lug top
+function mount_dt_top_w()   = mount_dt_neck_w() + 2*mount_dt_flare();      // 9.2
+function mount_dt_h()       = mount_dt_neck_h() + mount_dt_flare();        // 2.8
+function mount_dt_depth()   = mount_dt_h() + mount_dt_relief();            // 3.1
+function mount_dt_window_w(clear = mount_dt_clear()) = mount_dt_top_w() + 2*clear + 0.4;
+function mount_dt_window_l(len = mount_dt_len(), clear = mount_dt_clear()) = len + 2*clear + 0.4;
+// the pocket's footprint along the slide, from the parked lug center:
+// [window start, channel end] — what an adopter asserts clear of its other cuts
+function mount_dt_pocket_y(cy, len = mount_dt_len(), travel = mount_dt_travel(),
+                           clear = mount_dt_clear()) =
+    [cy - travel - mount_dt_window_l(len, clear)/2, cy + len/2 + 0.6];
+
+// the lug's section (XZ); `sink` runs the root on down into the plate so the
+// lug fuses (CGAL hygiene: a shared face is not a join)
+module mount_dt_profile2d(sink = 0.3) {
+    nw = mount_dt_neck_w()/2; tw = mount_dt_top_w()/2; r = mount_dt_root();
+    nh = mount_dt_neck_h();  h = mount_dt_h();
+    polygon([[-nw - r, -sink], [nw + r, -sink], [nw + r, 0], [nw, r], [nw, nh],
+             [tw, h], [-tw, h], [-nw, nh], [-nw, r], [-nw - r, 0]]);
+}
+
+// ADD: the lug, slide along Y, centered on (0, cy), base on z = 0, +Z up
+module mount_dovelug(cy = 0, len = mount_dt_len(), sink = 0.3) {
+    translate([0, cy + len/2, 0]) rotate([90, 0, 0])
+        linear_extrude(len) mount_dt_profile2d(sink);
+}
+
+// SUBTRACT: the blind pocket, cut +Z from the outer face z0 of the hung part.
+// cy is where the lug PARKS; the drop-in window sits `travel` below it (-Y),
+// so the part is offered `travel` high and slides down onto the lug. A 1 mm
+// funnel leads the lug from the window into the dovetail; the channel runs
+// 0.6 past the parked lug so the case's stop is never the lug.
+module mount_dovelug_pocket(cy, z0, len = mount_dt_len(), travel = mount_dt_travel(),
+                            clear = mount_dt_clear()) {
+    assert(travel >= mount_dt_window_l(len, clear),
+           "mount_dovelug_pocket: the drop must carry the lug wholly out of its window");
+    d  = mount_dt_depth();
+    ww = mount_dt_window_w(clear);  wl = mount_dt_window_l(len, clear);
+    y_we = cy - travel + wl/2;                   // window's upper end = channel start
+    y_ce = cy + len/2 + 0.6;                     // channel end
+    module section2d() {
+        offset(delta = clear) mount_dt_profile2d(sink = 1.0);
+        translate([-mount_dt_top_w()/2 - clear, 0]) square([mount_dt_top_w() + 2*clear, d]);
+    }
+    translate([0, 0, z0]) {
+        // the drop-in window, full depth
+        translate([-ww/2, cy - travel - wl/2, -0.1]) cube([ww, wl, d + 0.1]);
+        // the dovetail channel
+        translate([0, y_ce, 0]) rotate([90, 0, 0]) linear_extrude(y_ce - y_we + 0.01) section2d();
+        // the funnel from window to channel
+        hull() {
+            translate([-ww/2, y_we - 0.01, -0.1]) cube([ww, 0.01, d + 0.1]);
+            translate([0, y_we + 1.0, 0]) rotate([90, 0, 0]) linear_extrude(0.01) section2d();
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 //  Self-check — the mating arithmetic the header promises. Call once from an
 //  adopter (the fit coupon does).
 // ---------------------------------------------------------------------------
 module mount_selfcheck() {
+    // the dovetail lug: it must drop clear of its window, fit the depth a
+    // keyhole pocket already budgets, and out-hold the stud it replaces
+    assert(mount_dt_travel() >= mount_dt_window_l(),
+           "mount: the dovetail drop must carry the lug wholly out of its window");
+    assert(mount_dt_depth() <= mount_kh_head_h(),
+           "mount: the dovetail pocket must fit the depth a keyhole pocket budgets");
+    assert(mount_dt_neck_w()*mount_dt_len() >= 3*PI*pow(mount_stud_d()/2, 2),
+           "mount: the dovetail's root section must be >= 3x the T-stud stem's");
+    assert(mount_dt_neck_h() > mount_dt_root() + 0.5,
+           "mount: the pocket lip needs a straight land above the root chamfer — no knife edge");
     // tolerance compares: 1.4 + 1.2 + 0.8 is not bit-equal to 3.4 in floats
     assert(abs(mount_stud_h() - 3.4) < 1e-6, "mount: stud stack must total 3.4");
     assert(abs(mount_stud_stem() - (mount_kh_face() + 0.4)) < 1e-6,

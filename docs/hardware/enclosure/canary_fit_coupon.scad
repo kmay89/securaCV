@@ -26,15 +26,21 @@
 //                scrap) in and feel the click        -> clip_t/clip_hook/clip_clear
 //      POCKET  — two blind keyhole pockets (gap 30): hang the MATE's studs,
 //                slide to the CLICK — a detent parks them so the mate
-//                doesn't slide back off (the doorbell-plate retention test)
+//                doesn't slide back off. Between them, a blind DOVETAIL
+//                pocket for the mate's lug (canary_mount_lib mount_dovelug,
+//                the doorbell's hanger): the lug drops in its window and
+//                runs under the lips on the same 8 mm slide   -> dt_clear
 //      INSERT  — heat-set boss (only if you'll use screw_insert)   -> insert_d
 //      GLYPH   — the SecuraCV bird debossed into the BED-SIDE face at full
 //                size: the first-layer / plate-texture test, and the one
 //                that matters most, because every case A-surface in this
 //                catalog prints face-down (see the knobs for why it lives
 //                on the underside and not between the stations)
-//    MATE (part="mate"): two T-studs + a bottom-flush slide tongue on the
-//                edge (in-plane, so the stud face stays flat for the hang test)
+//    MATE (part="mate"): two T-studs + a dovetail lug between them + a
+//                bottom-flush slide tongue on the edge (in-plane, so the stud
+//                face stays flat for the hang test). Snap a stud off and the
+//                lug still hangs the mate: the station outlives its own
+//                weakest feature, which is the doctrine it now tests
 //    STRIP (part="strip"): TPU gasket bar for the groove
 //
 //  If a station is tight/loose, adjust the matching tol_* / clip_* / screw
@@ -51,6 +57,16 @@
 //  the port profile from canary_port_lib — and runs all five lib self-checks
 //  on every render. A coupon that calibrates the catalog must print the
 //  catalog's actual modules, not private copies of them.
+//
+//  2026-10-02: DROP-DURABLE — the doorbell's v0.6 doctrine, applied here:
+//  a feature that snaps off must not take its station with it. The mate
+//  carries the dovetail lug beside its studs; the SCREW post and INSERT boss
+//  stand on 45° root collars (a post knocked sideways breaks at its root
+//  layer, and the station is gone). The CLIP beams stay the WAP's square
+//  root on purpose: the doorbell's clips take a root fillet (snap_boardclip
+//  root_r), but the gate reckons a fillet as a shorter beam and the WAP's
+//  4.7 mm beam goes over budget with one — a stiffer root on that beam would
+//  crack where the fillet was meant to save it.
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 // ============================================================================
@@ -81,6 +97,7 @@ kh_slot_l  = 8.0;   // slot travel — catalog standard, mount_kh_slot_l()
 kh_head_h  = 3.5;   // total pocket depth (face web + head cavity) — catalog standard, mount_kh_head_h()
 kh_face    = 1.0;   // face web the screw head grips behind — catalog standard, mount_kh_face()
 kh_click = 0.25;  // detent bump proud of the head-channel ceiling (0 = no click) — catalog standard, canary_mount_lib
+dt_clear = 0.2;   // dovetail pocket clearance per face — mount_dt_clear(), canary_mount_lib (the doorbell's hanger)
 
 /* [Interface dims — mirror the case defaults] */
 clip_w      = 6.0;   // board-clip tab width along the board edge — the WAP clip, snap_boardclip default, canary_snap_lib
@@ -88,6 +105,8 @@ clip_t      = 1.0;   // clip beam thickness — the WAP clip, snap_boardclip def
 clip_hook   = 0.5;   // lip overhang over the board top — the WAP clip, snap_boardclip default
 clip_hook_h = 1.2;   // lip + 45° lead-in height above the board top — the WAP clip, snap_boardclip default
 clip_clear  = 0.25;  // beam face to board edge — the WAP clip, snap_boardclip default
+clip_root_r = 0;     // root fillet (snap_boardclip root_r): 0 — the WAP's 4.7 mm beam cannot afford one (the strain gate,
+                     // which reckons a fillet as a shorter beam, reads 5.8 % at 0.6); the doorbell's 13 mm beams carry it
 clip_bw = 17.5;   // the WAP's board width — the CLIP station is its coupon verbatim
 pcb_t = 1.2;        // board thickness at the CLIP station — the WAP's XIAO, brd_t("xiao")
 standoff_h = 3.5;   // 3.5 = the WAP's standoff (beam 4.7: the measured 17.8 board under budget)
@@ -243,7 +262,8 @@ module stationclip(cx, cy, sy) {
     snap_boardclip(cx, cy + sy*clip_bw/2, sy,
                    z_floor = base_t, z_board = base_t + standoff_h + pcb_t,
                    w = clip_w, t = clip_t, hook = clip_hook,
-                   hook_h = clip_hook_h, clear = clip_clear, over = clip_over);
+                   hook_h = clip_hook_h, clear = clip_clear, over = clip_over,
+                   root_r = clip_root_r);
 }
 
 // Station anchors — one grid, every label gets clear air.
@@ -288,6 +308,9 @@ module base() {
             // POCKET station: keyhole pocket pair for the mate's studs (gap = stud_gap)
             keyhole_pocket(pocket_cx - stud_gap/2, -14);
             keyhole_pocket(pocket_cx + stud_gap/2, -14);
+            // ...and the dovetail pocket between them, parked where the studs
+            // park (the keyholes' slot end), on the same drop
+            translate([pocket_cx, 0, 0]) mount_dovelug_pocket(-14 + kh_slot_l/2, 0, clear = dt_clear);
             // labels — grid-aligned, none touching a neighbor
             lbl(-24, 21, "EMBOSS", 3);  lbl(-3, 20.5, "EMBLEM", 3);  lbl(22, 21, "DEBOSS", 3);
             lbl(-24, 9.5, "SLIDE");     lbl(2, 9.5, "PORT");     lbl(30, 9.5, "PRESS");
@@ -335,12 +358,13 @@ module base() {
             mount_keyhole_click(pocket_cx + s*stud_gap/2, -14, kh_head_h, kh_click);
         // SCREW station: M2 self-tap post
         translate([14, 1, base_t - 0.01]) difference() {
-            cylinder(d = 5, h = 8);
+            union() { cylinder(d = 5, h = 8); cylinder(d1 = 7, d2 = 5, h = 1); }   // 45° root collar
             translate([0, 0, 1.5]) cylinder(d = screw_d, h = 8);
         }
         // INSERT station: heat-set boss
         translate([34, -14, base_t - 0.01]) difference() {
-            cylinder(d = insert_d + 2.4, h = insert_h + 2);
+            union() { cylinder(d = insert_d + 2.4, h = insert_h + 2);
+                      cylinder(d1 = insert_d + 4.4, d2 = insert_d + 2.4, h = 1); }   // 45° root collar
             translate([0, 0, 2]) cylinder(d = insert_d - 0.3, h = insert_h + 2.1);   // 0.3 interference: the brass bites
         }
     }
@@ -358,6 +382,9 @@ module mate() {
         // contract (stem = pocket face web + 0.4 slide room)
         for (s = [1, -1]) translate([s*stud_gap/2, 0, 3 - 0.01])
             mount_tstud(stem = kh_face + 0.4);
+        // the dovetail lug between them (it parks with the studs: the mate is
+        // turned face-down onto the base, and x = 0 maps onto pocket_cx)
+        translate([0, 0, 3 - 0.01]) mount_dovelug(0);
         // slide tongue — bottom-flush on the +y EDGE, in the plate's plane, so
         // the stud face stays dead flat and the hang test seats fully (the v0.2
         // face rib propped the mate 3 mm off the base). Hold the mate on edge

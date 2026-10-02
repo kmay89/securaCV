@@ -159,16 +159,16 @@
    "overrides": {
     "part": "plate"
    },
-   "placement": "doorbell_fitcheck: face (the shell) at z = base_d; body (the plate) inside its walls at floor_t, back flush on the wall plate front (wplate_t), then the 0.5 slide down onto the foot",
+   "placement": "doorbell_fitcheck: face (the shell) at z = base_d; body (the plate) inside its walls at floor_t, back flush on the wall plate front (wplate_t), then the slide down into the collar",
    "mm_scad": [
-    44.7,
-    123.7,
+    49.9,
+    122.7,
     30.2
    ],
    "fig": {
-    "w": 44.7,
+    "w": 49.9,
     "d": 30.2,
-    "h": 123.7
+    "h": 122.7
    },
    "seams_fig_d": [
     4.0

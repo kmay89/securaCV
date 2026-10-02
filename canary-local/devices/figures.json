@@ -1944,12 +1944,12 @@
    "dims_source": "stl",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 44.7,
+    "w": 49.9,
     "d": 30.2,
-    "h": 123.7
+    "h": 122.7
    },
    "assembled": {
-    "placement": "doorbell_fitcheck: face (the shell) at z = base_d; body (the plate) inside its walls at floor_t, back flush on the wall plate front (wplate_t), then the 0.5 slide down onto the foot",
+    "placement": "doorbell_fitcheck: face (the shell) at z = base_d; body (the plate) inside its walls at floor_t, back flush on the wall plate front (wplate_t), then the slide down into the collar",
     "seams_fig_d": [
      4
     ]
@@ -1957,25 +1957,25 @@
    "traced_to": [
     {
      "file": "canary_vision_doorbell_plate.stl",
-     "triangles": 3684,
+     "triangles": 4184,
      "mm": [
-      44.7,
-      123.2,
+      49.9,
+      122.7,
       16.6
      ]
     },
     {
      "file": "canary_vision_doorbell_body.stl",
-     "triangles": 5372,
+     "triangles": 4712,
      "mm": [
       41.9,
       116.4,
-      19.2
+      19.8
      ]
     },
     {
      "file": "canary_vision_doorbell_face.stl",
-     "triangles": 11876,
+     "triangles": 12478,
      "mm": [
       44.7,
       119.2,
@@ -1989,7 +1989,7 @@
     "height_tol_mm": 2.5
    },
    "solids": 4,
-   "rev": "0089d465",
+   "rev": "eef6ec78",
    "svg": "canary-local/figures/device.canary-vision-doorbell.svg",
    "glyph": "canary-local/figures/device.canary-vision-doorbell.glyph.svg"
   },
@@ -2217,17 +2217,17 @@
    "sketch_note": null,
    "envelope_mm": {
     "w": 41.9,
-    "d": 19.2,
+    "d": 19.8,
     "h": 116.4
    },
    "traced_to": [
     {
      "file": "canary_vision_doorbell_body.stl",
-     "triangles": 5372,
+     "triangles": 4712,
      "mm": [
       41.9,
       116.4,
-      19.2
+      19.8
      ]
     }
    ],
@@ -2236,7 +2236,7 @@
     "depth_tol_mm": 4
    },
    "solids": 1,
-   "rev": "9db708a4",
+   "rev": "ee806c36",
    "svg": "canary-local/figures/part.doorbell.body.svg",
    "glyph": "canary-local/figures/part.doorbell.body.glyph.svg"
   },
@@ -2309,7 +2309,7 @@
    "traced_to": [
     {
      "file": "canary_vision_doorbell_face.stl",
-     "triangles": 11876,
+     "triangles": 12478,
      "mm": [
       44.7,
       119.2,
@@ -2474,17 +2474,17 @@
    "dims_source": "stl",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 44.7,
+    "w": 49.9,
     "d": 16.6,
-    "h": 123.2
+    "h": 122.7
    },
    "traced_to": [
     {
      "file": "canary_vision_doorbell_plate.stl",
-     "triangles": 3684,
+     "triangles": 4184,
      "mm": [
-      44.7,
-      123.2,
+      49.9,
+      122.7,
       16.6
      ]
     }
@@ -2494,7 +2494,7 @@
     "depth_tol_mm": 4
    },
    "solids": 1,
-   "rev": "2c8f1795",
+   "rev": "4dbf72cf",
    "svg": "canary-local/figures/part.doorbell.plate.svg",
    "glyph": "canary-local/figures/part.doorbell.plate.glyph.svg"
   },

@@ -75,6 +75,12 @@ function snap_window(ridge, play = 0.15) = ridge + 2*play;
 //                on top of the hook, and a gate that only saw the hook
 //                passed a 5.5 % insertion as 4.3 %. Pass it; the drawing
 //                does not move, the arithmetic does.
+//    root_r    — 45° root fillet, each face of the beam (0 = the WAP's square
+//                root, mesh-identical). A cantilever breaks at its root,
+//                where the bending moment peaks on a sharp re-entrant corner
+//                and — printed upright — a layer line; the fillet spreads
+//                both. The gate charges for it: the beam is reckoned
+//                root_r SHORTER (stiffer, so more strain), never longer.
 //
 //  The strain gate runs on every render: the beam's working length is the
 //  root-to-seat rise, the tip deflection is the full lip plus the real
@@ -82,8 +88,9 @@ function snap_window(ridge, play = 0.15) = ridge + 2*play;
 // ---------------------------------------------------------------------------
 module snap_boardclip(cx, ey, sy, z_floor, z_board,
                       w = 6.0, t = 1.0, hook = 0.5, hook_h = 1.2,
-                      clear = 0.25, budget = snap_budget_once(), over = 0) {
-    len = z_board - z_floor;
+                      clear = 0.25, budget = snap_budget_once(), over = 0,
+                      root_r = 0) {
+    len = z_board - z_floor - root_r;
     eps = snap_strain(t, hook + max(0, over), len);
     assert(len > 0, "snap_boardclip: board top must sit above the floor");
     assert(eps <= budget,
@@ -94,9 +101,15 @@ module snap_boardclip(cx, ey, sy, z_floor, z_board,
                "numbers crack vertical-print PETG"));
     bt = z_board;                        // board top surface (lip sits here)
     tp = bt + hook_h;                    // top of the clip
-    pts = [ [clear, z_floor], [clear + t, z_floor],
+    assert(root_r >= 0 && root_r <= clear + 0.5,
+           "snap_boardclip: root_r reaches under the board edge — keep it within clear + 0.5");
+    pts = root_r == 0
+        ? [ [clear, z_floor], [clear + t, z_floor],
             [clear + t, tp], [clear, tp],
-            [-hook, bt], [0, bt], [clear, bt - clear] ];
+            [-hook, bt], [0, bt], [clear, bt - clear] ]
+        : [ [clear - root_r, z_floor], [clear + t + root_r, z_floor],
+            [clear + t, z_floor + root_r], [clear + t, tp], [clear, tp],
+            [-hook, bt], [0, bt], [clear, bt - clear], [clear, z_floor + root_r] ];
     translate([cx, ey, 0]) scale([1, sy, 1]) translate([-w/2, 0, 0])
         rotate([0, 0, 90]) rotate([90, 0, 0])
             linear_extrude(height = w) polygon(pts);
