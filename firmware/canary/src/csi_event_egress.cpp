@@ -222,6 +222,20 @@ bool must_wait(const csi_event_backfill::Link& link) {
   return s_hold.count > 0 || hold_blocked(link);
 }
 
+/* A held row at or below the watermark has gone already, from the card. An
+ * append that lands every byte of its line but the newline reports a failure
+ * (csi_event_log::append), so its row waits in the hold, and the next append
+ * writes the newline first: the line is then a whole one the walk sends. HA's
+ * replay gate passes an equal id, so sending the hold's copy as well would
+ * fire its triggers twice. Otherwise the watermark passes a held row only
+ * where the planner already treats the rows below it as delivered: a newer
+ * row never goes while one waits, not_owed() empties the hold, and a card
+ * opened with no delivery record in NVS is taken as delivered up to its tail
+ * (Planner::card_open), the held rows below it with the rest. */
+bool delivered_from_card(const Held& h) {
+  return h.rec.event_id <= s_backfill.watermark();
+}
+
 size_t build_body(char* body, size_t cap, const csi_event_record_t& rec,
                   uint16_t bundled, bool replay) {
   const csi_event_wire::Signer signer = {
@@ -332,10 +346,15 @@ class EgressPort : public csi_event_backfill::Port {
   /* Rows in the hold older than `id` go first, live (the planner wrote the
    * ceiling for `id` before this send, and every held id is below it, so NVS
    * already covers them). False = one could not go now: it stays, and so
-   * does the card row. A held row whose body never builds is dropped. */
+   * does the card row. A held row whose body never builds is dropped, and so
+   * is one already delivered (delivered_from_card()). */
   bool send_held_below(uint32_t id) {
     while (s_hold.count > 0 && s_hold.front().rec.event_id < id) {
       const Held& h = s_hold.front();
+      if (delivered_from_card(h)) {
+        s_hold.pop();
+        continue;
+      }
       const size_t n = build_body(m_body, sizeof(m_body), h.rec, h.rec.bundled_count, !h.fresh);
       if (n > 0 && !mqtt_publish_event_live(m_body)) return false;
       s_hold.pop();
@@ -395,10 +414,15 @@ void route(const csi_event_record_t& rec, const csi_event_backfill::Link& link) 
 /* Rows in the hold, once nothing older waits (and, with a card open, the
  * link is up): through the planner, so each is under the NVS ceiling before
  * it is handed over and the watermark follows it. A row the MQTT layer
- * refuses stays for the next pass; one whose body never builds is dropped. */
+ * refuses stays for the next pass; one whose body never builds is dropped,
+ * and so is one already delivered from the card (delivered_from_card()). */
 void flush_held(const csi_event_backfill::Link& link) {
   while (s_hold.count > 0 && link.accepting && !hold_blocked(link)) {
     const Held h = s_hold.front();
+    if (delivered_from_card(h)) {
+      s_hold.pop();
+      continue;
+    }
     s_port.flushing = true;
     s_port.flush_fresh = h.fresh;
     s_port.flush_unbuildable = false;

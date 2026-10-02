@@ -107,8 +107,9 @@ class WapPort : public csi_event_backfill::Port {
   }
 
  private:
-  /* Rows in the RAM hold older than `id` go first. False = one could not
-   * go now (it stays, and so does `id`). */
+  /* Rows in the RAM hold older than `id` go first (one already delivered
+   * from the card is dropped: State::front_delivered). False = one could
+   * not go now (it stays, and so does `id`). */
   bool send_held_below(uint32_t id);
   State* m_st;
 };
@@ -147,6 +148,17 @@ struct State {
     held_head = (held_head + 1) % kHeldMax;
     --held_count;
   }
+  /* The oldest held row is at or below the watermark: it went already, from
+   * the card. A short write that lands every byte of the line but its
+   * newline reports a failed append, so its row waits here, and the next
+   * append writes the newline first: the line is then a whole one the walk
+   * sends. HA's replay gate passes an equal id, so sending this copy as
+   * well would fire its triggers twice (found by sweep F103's review).
+   * Otherwise the watermark passes a held row only where the planner
+   * already treats the rows below it as delivered: a newer row never goes
+   * while one waits, not_owed() empties the hold, and a card opened with no
+   * delivery record in NVS is taken as delivered up to its tail. */
+  bool front_delivered() const { return front().rec.event_id <= planner.watermark(); }
   /* Rows arrive in id order (the commit lock orders the queue), so the
    * hold stays in id order; past kHeldMax the oldest goes. An ambient row is
    * never held: csi_event.h's contract for CSI_CATEGORY_AMBIENT is "never
@@ -197,6 +209,10 @@ AppendResult WapPort::card_append(const char* line, size_t len) {
 
 bool WapPort::send_held_below(uint32_t id) {
   while (m_st->held_count > 0 && m_st->front().rec.event_id < id) {
+    if (m_st->front_delivered()) {
+      m_st->pop();
+      continue;
+    }
     const Held& h = m_st->front();
     /* The planner wrote the ceiling for `id` before this send, and every
      * held id is below it, so NVS already covers them. */
@@ -283,11 +299,16 @@ void route(const Committed& ev, const Link& link) {
 
 /* Rows in the RAM hold, once nothing older waits on the card (or on a card
  * that is not open now): through the planner, so each is under the NVS
- * ceiling before it goes and the watermark follows it. */
+ * ceiling before it goes and the watermark follows it. One already
+ * delivered from the card is dropped (State::front_delivered). */
 void flush_held(const Link& link) {
   State& st = *g_state;
   while (st.held_count > 0 && link.accepting && link.connected && !st.planner.pending() &&
          !st.card_wait) {
+    if (st.front_delivered()) {
+      st.pop();
+      continue;
+    }
     const Held h = st.front();
     st.port.row_on_card = false;
     st.port.flushing = true;

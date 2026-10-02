@@ -4,7 +4,9 @@
  * path -> bytes. A test inserts, pulls and fills the card through
  * SD.files / SD.dirs / SD.present, counts writes through SD.writes, makes
  * every write fail through SD.fail_writes, cuts the next write short through
- * SD.short_write_next (a power cut mid-line), and makes rename() fail
+ * SD.short_write_next (a power cut mid-line), cuts the next line's last
+ * bytes through SD.short_by_next (a line that lands without its newline),
+ * and makes rename() fail
  * through SD.fail_renames (a rewrite whose commit step fails). */
 #ifndef STUB_SD_FAKE_SD_H
 #define STUB_SD_FAKE_SD_H
@@ -72,6 +74,7 @@ class FakeSD {
   size_t writes = 0;   // every byte-changing call: write, mkdir, remove, rename, open-for-write
   bool fail_writes = false;   // File::write writes nothing (a card that refuses writes)
   size_t short_write_next = 0;  // >0: the next File::write writes only this many bytes, once
+  size_t short_by_next = 0;     // >0: the next File::write longer than this writes that many bytes fewer, once
   bool fail_renames = false;  // rename() fails, changing nothing
 
   sdcard_type_t cardType() const { return present ? CARD_SDHC : CARD_NONE; }
@@ -123,6 +126,10 @@ inline size_t File::write(const uint8_t* buf, size_t n) {
   if (fake_sd_instance().short_write_next > 0) {
     if (n > fake_sd_instance().short_write_next) n = fake_sd_instance().short_write_next;
     fake_sd_instance().short_write_next = 0;
+  }
+  if (fake_sd_instance().short_by_next > 0 && n > fake_sd_instance().short_by_next) {
+    n -= fake_sd_instance().short_by_next;
+    fake_sd_instance().short_by_next = 0;
   }
   fake_sd_instance().writes++;
   data_->append((const char*)buf, n);

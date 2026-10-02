@@ -326,6 +326,7 @@ static void fresh_device(bool card = true) {
   SD.present = card;
   SD.fail_writes = false;
   SD.short_write_next = 0;
+  SD.short_by_next = 0;
   SD.fail_renames = false;
   W = World();
   W.mounted = card;
@@ -542,6 +543,47 @@ static void test_failed_append_behind_a_held_row_covers_nothing() {
         "no ceiling was written for them: the three card rows after them arrive");
 }
 
+/* An append that lands every byte of its line but the newline reports a
+ * failure (csi_event_log::append: a short write), so the row waits in the
+ * hold; the next append writes the newline first, and the line it left is
+ * then a whole one the walk sends. The hold's copy must not go as well: HA's
+ * replay gate passes an equal id, so its triggers would fire twice. */
+static void test_torn_but_whole_line_is_sent_once() {
+  std::printf("-- F103: an append that lands all but its newline, a row after it: each arrives once\n");
+  fresh_device();
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 3; ++i) { ids.push_back(emit_ping()); loop_pass(); }   /* an outage */
+  SD.short_by_next = 1;
+  ids.push_back(emit_ping()); loop_pass();    /* its append fails: held, rows wait on the card */
+  ids.push_back(emit_ping()); loop_pass();    /* sealed: that row's line is now whole on the card */
+  connect();
+  drain();
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "the walk sends the card's copy; the held copy is not sent again");
+}
+
+static void test_torn_but_whole_line_then_a_close_is_sent_once() {
+  std::printf("-- F103: the same row's card copy sent, then the card closes: the held copy stays unsent\n");
+  fresh_device();
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 3; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  SD.short_by_next = 1;
+  const uint32_t r = emit_ping(); loop_pass();
+  const uint32_t s = emit_ping(); loop_pass();
+  ids.push_back(r);
+  ids.push_back(s);
+  connect();
+  for (int i = 0; i < 100 && !has(W.ha.accepted, r); ++i) loop_pass();
+  CHECK(has(W.ha.accepted, r) && !has(W.ha.accepted, s),
+        "the walk sent the card's copy of the row and parks before the next");
+  card_out();
+  drain();                                    /* the card wait ends; the hold flushes */
+  card_back();
+  drain();
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "nothing went twice: the flush passed over the delivered copy, then the card's last row");
+}
+
 /* ── F104: a card that is not open holds new rows, for a bounded time ──── */
 
 static void test_card_closed_mid_backlog_holds_new_rows() {
@@ -715,6 +757,8 @@ int main() {
   test_failed_append_with_nothing_waiting_goes_live();
   test_failed_append_waits_behind_a_held_row();
   test_failed_append_behind_a_held_row_covers_nothing();
+  test_torn_but_whole_line_is_sent_once();
+  test_torn_but_whole_line_then_a_close_is_sent_once();
   test_card_closed_mid_backlog_holds_new_rows();
   test_late_card_mount_holds_new_rows();
   test_card_wait_is_bounded();

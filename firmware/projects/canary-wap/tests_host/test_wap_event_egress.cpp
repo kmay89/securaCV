@@ -52,6 +52,9 @@
  * yet or briefly closed, for at most kCardWaitMs), ambient rows are never
  * held, the hook never blocks, and the card adapter (torn tails, short
  * writes, dismissal lines at the tail, a failed rewrite) keeps every row.
+ * A line that lands without its newline reaches HA once, not from the card
+ * and again from RAM (sweep F103's review; the two scenarios fail on the
+ * egress before that fix).
  * Built with -DEGRESS_BEFORE_REVIEW against the egress and card sources the
  * review fixes replaced, the late-card, closed-card, broker-change, ambient
  * and dismissal-wait scenarios fail.
@@ -335,6 +338,7 @@ static void fresh_device(bool card = true) {
   SD.present = card;
   SD.fail_writes = false;
   SD.short_write_next = 0;
+  SD.short_by_next = 0;
   SD.fail_renames = false;
   if (card) SD.dirs.insert("/EVENTS");
   W = World();
@@ -1203,6 +1207,47 @@ static void test_short_write_is_sealed() {
         "every row arrives once, in id order, the torn one from RAM");
 }
 
+/* A short write that lands every byte of the line but its newline: the row
+ * waits in RAM (its append failed), the next append writes the newline
+ * first, and the line is then a whole one the walk sends. HA's replay gate
+ * passes an equal id, so the RAM copy must not go as well (it would fire
+ * HA's triggers twice). Sweep F103's review found it on both devices. */
+static void test_torn_but_whole_line_is_sent_once() {
+  printf("-- a line that lands without its newline, a row after it: each arrives once\n");
+  fresh_device();
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 3; ++i) { ids.push_back(emit_ping()); loop_pass(); }   // an outage
+  SD.short_by_next = 1;
+  ids.push_back(emit_ping()); loop_pass();           // its append fails: RAM, rows wait on the card
+  ids.push_back(emit_ping()); loop_pass();           // sealed: that line is now whole on the card
+  connect();
+  drain();
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "the walk sends the card's copy; the RAM copy is not sent again");
+}
+
+static void test_torn_but_whole_line_then_a_close_is_sent_once() {
+  printf("-- the same row's card copy sent, then the card closes: the RAM copy stays unsent\n");
+  fresh_device();
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 3; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  SD.short_by_next = 1;
+  const uint32_t r = emit_ping(); loop_pass();
+  const uint32_t s = emit_ping(); loop_pass();
+  ids.push_back(r);
+  ids.push_back(s);
+  connect();
+  for (int i = 0; i < 100 && !has(W.ha.accepted, r); ++i) loop_pass();
+  CHECK(has(W.ha.accepted, r) && !has(W.ha.accepted, s),
+        "the walk sent the card's copy of the row and parks before the next");
+  SD.present = false;
+  drain();                                           // the card wait ends; RAM flushes
+  SD.present = true;
+  drain();
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "nothing went twice: the flush passed over the delivered copy, then the card's last row");
+}
+
 static void test_tail_dismissal_does_not_hide_unsent_rows() {
   printf("-- dismissal lines at the end of the log do not hide the unsent rows before them\n");
   for (int many = 0; many < 2; ++many) {
@@ -1332,6 +1377,8 @@ int main() {
   test_ambient_rows_are_not_held();
   test_torn_tail_at_open_is_sealed();
   test_short_write_is_sealed();
+  test_torn_but_whole_line_is_sent_once();
+  test_torn_but_whole_line_then_a_close_is_sent_once();
   test_tail_dismissal_does_not_hide_unsent_rows();
   test_idle_passes_read_nothing();
   test_broken_rewrite_closes_the_log();
